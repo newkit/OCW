@@ -1,0 +1,20 @@
+# The art project's hourly collector (art/ART-PROJECT.md §5.1): gather +
+# journal of yesterday and today, the mask check, the contact sheets in the
+# 23:xx run. Started by ocw-art-collect.timer; installed by
+# `make art-install-timer`, which fills in @REPO@ (the main checkout).
+[Unit]
+Description=OCW Build Diary: hourly collector (art/ART-PROJECT.md §5.1)
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+ExecStart=@REPO@/scripts/art-collect.sh
+# git, ffmpeg, flock, gh; not the pyenv shims (the script picks /usr/bin/python3).
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Up to 45 min waiting for a manual diary.py run (the lock), then the run itself.
+Environment=OCW_ART_LOCK_WAIT=2700
+TimeoutStartSec=75min
+# 75: another run held the lock (status "locked" in art.json), not a failure.
+SuccessExitStatus=75
+Nice=10
+IOSchedulingClass=idle

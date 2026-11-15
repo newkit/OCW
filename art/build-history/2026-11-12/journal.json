@@ -1,0 +1,3501 @@
+{
+ "day": "2026-11-12",
+ "number": 2,
+ "commits": [
+  {
+   "sha": "a07845c",
+   "time": "00:01:08",
+   "merge": true,
+   "subject": "Merge in-game menu M1: input contexts, Esc/Start menu, gamepad navigation, ride continues on autodrive",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "b898618",
+   "time": "00:07:31",
+   "merge": false,
+   "subject": "Collect agent screenshots and videos into the test-output build history",
+   "added": 90,
+   "removed": 2
+  },
+  {
+   "sha": "7fb7796",
+   "time": "00:10:31",
+   "merge": false,
+   "subject": "Menu M2: settings registry, settings.toml, set/get, rider profiles (spec §3.2.1)",
+   "added": 3096,
+   "removed": 35
+  },
+  {
+   "sha": "69bf15b",
+   "time": "00:13:23",
+   "merge": false,
+   "subject": "Structured workouts with ERG control (spec §2.8, §5.3)",
+   "added": 3043,
+   "removed": 12
+  },
+  {
+   "sha": "3207b93",
+   "time": "00:17:08",
+   "merge": true,
+   "subject": "Merge main (menu M1); hook the Settings and Workshop pages into the menu",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "73d60f7",
+   "time": "00:25:50",
+   "merge": false,
+   "subject": "Gradient feel: average gradient ahead, mini elevation profile, camera tilt (spec §3.2)",
+   "added": 1235,
+   "removed": 39
+  },
+  {
+   "sha": "2230599",
+   "time": "00:26:07",
+   "merge": true,
+   "subject": "Merge main into the gradient-feel branch (camera: menu input context)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "da8c939",
+   "time": "00:30:15",
+   "merge": false,
+   "subject": "QUIC transport groundwork: ocw-server --listen, ocw-desktop --server (spec §6.2)",
+   "added": 2352,
+   "removed": 44
+  },
+  {
+   "sha": "b9dcb21",
+   "time": "00:32:55",
+   "merge": true,
+   "subject": "Merge gradient feel: 100 m average gradient, mini elevation profile, camera tilt with the road",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "093696f",
+   "time": "00:33:20",
+   "merge": false,
+   "subject": "collect-test-output: index rows for fetched archive files without their index row",
+   "added": 25,
+   "removed": 0
+  },
+  {
+   "sha": "669b0d9",
+   "time": "00:34:38",
+   "merge": true,
+   "subject": "Merge main into workouts (menu plugin, README video text)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "0aea363",
+   "time": "00:35:14",
+   "merge": true,
+   "subject": "Merge structured workouts: TOML format, .erg/.mrc import, ERG control, HUD workout panel",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "b3fcd3d",
+   "time": "00:36:42",
+   "merge": true,
+   "subject": "Merge branch 'main' into worktree-agent-aba411746b9949897",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "902a48a",
+   "time": "00:39:43",
+   "merge": true,
+   "subject": "Merge QUIC transport groundwork: ocw-server --listen, ocw-desktop --server (spec §6.2)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "df75cfe",
+   "time": "00:43:07",
+   "merge": false,
+   "subject": "Menu pages: Workshop note as one paragraph, shorter fullscreen label",
+   "added": 2,
+   "removed": 3
+  },
+  {
+   "sha": "29c321a",
+   "time": "00:55:19",
+   "merge": true,
+   "subject": "Merge main (QUIC transport, elevation profile, camera tilt)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "7a8004e",
+   "time": "00:55:51",
+   "merge": true,
+   "subject": "Merge menu M2: settings registry and settings.toml, set/get, rider profiles (weight to server physics and trainer), Settings and Workshop pages",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "7a2d61e",
+   "time": "00:56:14",
+   "merge": false,
+   "subject": "Example rider names: neutral names in docs and tests",
+   "added": 33,
+   "removed": 33
+  },
+  {
+   "sha": "c7e7f4a",
+   "time": "00:57:08",
+   "merge": false,
+   "subject": "Example rider names: lower-case variants too",
+   "added": 7,
+   "removed": 7
+  },
+  {
+   "sha": "919d706",
+   "time": "00:57:17",
+   "merge": false,
+   "subject": "Dashboard mask test: neutral example home directory",
+   "added": 2,
+   "removed": 2
+  },
+  {
+   "sha": "cab06dd",
+   "time": "00:58:45",
+   "merge": false,
+   "subject": "Bundle Fira Mono as the UI font: non-ASCII street names, degree sign",
+   "added": 224,
+   "removed": 11
+  },
+  {
+   "sha": "0826aa5",
+   "time": "00:58:45",
+   "merge": true,
+   "subject": "Merge branch 'main' into worktree-agent-af4905a2faee382c1",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "204a46b",
+   "time": "00:59:55",
+   "merge": false,
+   "subject": "Neighbour packages at runtime: free ride crosses package borders (spec §2.2.2)",
+   "added": 2517,
+   "removed": 146
+  },
+  {
+   "sha": "3a48c4f",
+   "time": "01:21:14",
+   "merge": false,
+   "subject": "Seamless borders: --bbox parts take profiles and terrain from the roads around them; strips overlap the cut",
+   "added": 335,
+   "removed": 10
+  },
+  {
+   "sha": "85e24a6",
+   "time": "01:21:32",
+   "merge": true,
+   "subject": "Merge branch 'main' into worktree-agent-a06e0b830e326ed78",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "007ba83",
+   "time": "01:27:23",
+   "merge": false,
+   "subject": "Curated physics profiles, bike and look per rider, procedural bike types, Workshop Bike page (spec §2.5)",
+   "added": 2147,
+   "removed": 153
+  },
+  {
+   "sha": "9691ddd",
+   "time": "01:27:23",
+   "merge": true,
+   "subject": "Merge branch 'main' into worktree-agent-a7db2db773f1023e3",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "d44f9da",
+   "time": "01:36:47",
+   "merge": true,
+   "subject": "Merge Phase 4 groundwork: curated physics profiles, bike and look per rider, procedural bike types, Workshop Bike page",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "26c0f96",
+   "time": "01:42:29",
+   "merge": true,
+   "subject": "Merge neighbour packages at runtime: REGN region, WorldSet, seamless borders, free ride across package borders",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "7973c4b",
+   "time": "01:56:25",
+   "merge": true,
+   "subject": "Merge bundled Fira Mono UI font: non-ASCII street names, degree sign (OFL 1.1)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "4931aa9",
+   "time": "01:59:06",
+   "merge": false,
+   "subject": "Local events: race, group ride, time trial vs ghost (spec §2.3.1)",
+   "added": 4215,
+   "removed": 46
+  },
+  {
+   "sha": "2c3af89",
+   "time": "02:00:08",
+   "merge": true,
+   "subject": "Merge main into the local-events branch",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "7b22782",
+   "time": "02:11:46",
+   "merge": false,
+   "subject": "Events after the merge: ServerConfig in the new tests, menu test on the Navi placeholder",
+   "added": 5,
+   "removed": 3
+  },
+  {
+   "sha": "d8ad641",
+   "time": "02:17:17",
+   "merge": true,
+   "subject": "Merge local events: race, group ride, time trial vs own ghost (spec §2.3.1)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "a1e1cdf",
+   "time": "02:17:44",
+   "merge": false,
+   "subject": "WIP: in-app ride switch, Ride/Navi lists, menu paging (M3)",
+   "added": 2898,
+   "removed": 343
+  },
+  {
+   "sha": "25d69c7",
+   "time": "02:18:10",
+   "merge": false,
+   "subject": "remote.sh: OCW_REMOTE_JOBS also applies to main checkouts",
+   "added": 2,
+   "removed": 2
+  },
+  {
+   "sha": "8ec78d5",
+   "time": "02:18:55",
+   "merge": true,
+   "subject": "Merge main (local events) into M3: Ride -> Change ride sub page",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "6675050",
+   "time": "02:20:15",
+   "merge": false,
+   "subject": "M3 docs: README and spec (in-app ride switch, Navi lists, GPX import)",
+   "added": 40,
+   "removed": 4
+  },
+  {
+   "sha": "53b8264",
+   "time": "02:28:34",
+   "merge": false,
+   "subject": "M3: fix tests after the events merge; --at runs on app time (a ride switch does not reset it)",
+   "added": 22,
+   "removed": 10
+  },
+  {
+   "sha": "4292c75",
+   "time": "02:31:03",
+   "merge": false,
+   "subject": "M3: shorter list rows (two lines at most), Workshop paging test",
+   "added": 55,
+   "removed": 30
+  },
+  {
+   "sha": "73a9a27",
+   "time": "02:32:21",
+   "merge": false,
+   "subject": "Free ride: no back-and-forth after a U-turn on a one-way road (spec §2.2.1, §2.2.2)",
+   "added": 233,
+   "removed": 22
+  },
+  {
+   "sha": "4a17191",
+   "time": "02:32:42",
+   "merge": false,
+   "subject": "M3: GPX import test on a small road network",
+   "added": 73,
+   "removed": 0
+  },
+  {
+   "sha": "f7d2620",
+   "time": "02:33:26",
+   "merge": true,
+   "subject": "Merge branch 'main' into worktree-agent-ae002a0855f7ede36",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "1a78d83",
+   "time": "02:33:34",
+   "merge": false,
+   "subject": "README: --at counts app time",
+   "added": 1,
+   "removed": 1
+  },
+  {
+   "sha": "b65bc83",
+   "time": "02:35:04",
+   "merge": true,
+   "subject": "Merge menu M3: in-app ride switch, Change ride and Navi pages, GPX import, list paging",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "d6cf57b",
+   "time": "02:39:14",
+   "merge": true,
+   "subject": "Merge branch 'main' into worktree-agent-a1fda7ac7113f788d",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "160d04f",
+   "time": "02:41:01",
+   "merge": false,
+   "subject": "One-way U-turn test: ServerConfig field from main",
+   "added": 1,
+   "removed": 0
+  },
+  {
+   "sha": "d6f00c3",
+   "time": "02:41:33",
+   "merge": true,
+   "subject": "Merge U-turn fix on one-way roads (no double U-turn, no roundabout circling)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "25eecf7",
+   "time": "02:55:52",
+   "merge": false,
+   "subject": "Tunnels: tube and tunnel camera where the road runs under the terrain",
+   "added": 632,
+   "removed": 9
+  },
+  {
+   "sha": "396f438",
+   "time": "03:15:20",
+   "merge": false,
+   "subject": "Steep ramps: riders crawl instead of stalling; grade limit across junctions; corner heights by arc length",
+   "added": 617,
+   "removed": 25
+  },
+  {
+   "sha": "97a5805",
+   "time": "03:18:46",
+   "merge": true,
+   "subject": "Merge steep-ramp fixes: start from standstill on any grade, grade limit across junctions, corner heights by distance",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "a6ddb66",
+   "time": "03:21:42",
+   "merge": false,
+   "subject": "Tunnel camera: under the hillside at the entry portal",
+   "added": 98,
+   "removed": 9
+  },
+  {
+   "sha": "0f25268",
+   "time": "03:21:42",
+   "merge": true,
+   "subject": "Merge branch 'main' into worktree-agent-af2d574dade06721e",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "d0a9576",
+   "time": "03:23:35",
+   "merge": true,
+   "subject": "Merge tunnels: tube and tunnel camera where the road runs under the terrain (Stegertunnel)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "173d2c9",
+   "time": "03:51:43",
+   "merge": false,
+   "subject": "Ghost: no shadows (spec §2.3.1)",
+   "added": 61,
+   "removed": 1
+  },
+  {
+   "sha": "bb43e69",
+   "time": "03:51:51",
+   "merge": false,
+   "subject": "FIT laps, event start confirmation, Workouts menu page, FTP from the rider profile",
+   "added": 794,
+   "removed": 103
+  },
+  {
+   "sha": "2dc1892",
+   "time": "03:52:25",
+   "merge": true,
+   "subject": "Merge events/workouts polish: FIT laps, ghost without shadows, event start confirmation, Workouts menu page, FTP from the rider profile",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "8613029",
+   "time": "03:52:58",
+   "merge": false,
+   "subject": "Spec 2.8: Appendix B – autonomous development 2026-11-11/12, additions and assumptions",
+   "added": 262,
+   "removed": 1
+  },
+  {
+   "sha": "c5255a1",
+   "time": "04:31:41",
+   "merge": false,
+   "subject": "Final platform runs on 8613029 (Linux, macOS, Windows: 726 tests each); macOS DMG in release/; drive.sh prefers OCW_BUILD_ID",
+   "added": 32,
+   "removed": 4
+  },
+  {
+   "sha": "fe00c32",
+   "time": "06:44:11",
+   "merge": false,
+   "subject": "Release 0.1.0-c5255a1 for Linux (AppImage, binaries) and Windows (zip)",
+   "added": 25,
+   "removed": 0
+  },
+  {
+   "sha": "ec53449",
+   "time": "07:05:09",
+   "merge": false,
+   "subject": "Spec 2.9: route editor postponed; Phase 4 models/audio and Phase 6 voice start",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "c669b94",
+   "time": "07:13:48",
+   "merge": false,
+   "subject": "Spec 2.10: voice chat always on like a call; mic and speaker mute hotkeys (M / Shift+M, Select / R3)",
+   "added": 24,
+   "removed": 8
+  },
+  {
+   "sha": "dcb2e8a",
+   "time": "07:39:43",
+   "merge": false,
+   "subject": "Releases on GitHub Releases; binaries removed from history (commit-map.txt), spec 2.11",
+   "added": 207,
+   "removed": 40
+  },
+  {
+   "sha": "e461ad7",
+   "time": "07:42:32",
+   "merge": false,
+   "subject": "Game audio and Settings -> Audio (M5, spec §3.3, §3.2.1)",
+   "added": 3340,
+   "removed": 35
+  },
+  {
+   "sha": "cb197e6",
+   "time": "07:46:05",
+   "merge": false,
+   "subject": "make deps-linux-debian: clang 21 from apt.llvm.org (deps-llvm-debian) and libglib2.0-dev for the voice feature",
+   "added": 27,
+   "removed": 4
+  },
+  {
+   "sha": "a57b86e",
+   "time": "07:53:23",
+   "merge": false,
+   "subject": "Phase 4: generated glTF bikes and rider, asset validator, riding animation",
+   "added": 5175,
+   "removed": 550
+  },
+  {
+   "sha": "4cbf320",
+   "time": "07:55:13",
+   "merge": false,
+   "subject": "Spec 2.12: voice platform plan – LiveKit on every platform (desktop Rust SDK, browser livekit-client via wasm, mobile SDKs)",
+   "added": 12,
+   "removed": 1
+  },
+  {
+   "sha": "50d898d",
+   "time": "07:57:13",
+   "merge": false,
+   "subject": "Audio page: short output labels (ten-foot layout), one-paragraph note; ride make-up gain",
+   "added": 26,
+   "removed": 20
+  },
+  {
+   "sha": "66969b5",
+   "time": "08:13:35",
+   "merge": false,
+   "subject": "deps-linux: GLib/GIO headers for webrtc-sys on Fedora (glib2-devel) and Arch (glib2) too; README: CXX=clang++-21",
+   "added": 5,
+   "removed": 4
+  },
+  {
+   "sha": "67bdf2d",
+   "time": "08:26:23",
+   "merge": false,
+   "subject": "Phase 4: Bevy glTF loader integration test, TT riders stay on the extensions on mild climbs, clippy fixes, spec status",
+   "added": 122,
+   "removed": 16
+  },
+  {
+   "sha": "9b1cd14",
+   "time": "08:36:20",
+   "merge": false,
+   "subject": "Build-history media out of git: zips on the GitHub release build-history; spec 2.13",
+   "added": 216,
+   "removed": 195
+  },
+  {
+   "sha": "1fd04f8",
+   "time": "08:38:58",
+   "merge": false,
+   "subject": "Spec 2.14: Phase 4 models and animation",
+   "added": 2,
+   "removed": 1
+  },
+  {
+   "sha": "e952dac",
+   "time": "08:45:35",
+   "merge": false,
+   "subject": "Remove artwork/build-history; build history lives only on the GitHub release build-history (spec 2.15)",
+   "added": 10,
+   "removed": 187
+  },
+  {
+   "sha": "b9775e1",
+   "time": "08:52:47",
+   "merge": false,
+   "subject": "Phase 6 voice chat, first increment: rooms and tokens, ocw-voice, LiveKit backend, M8",
+   "added": 5659,
+   "removed": 38
+  },
+  {
+   "sha": "4b8329b",
+   "time": "08:54:56",
+   "merge": false,
+   "subject": "Spec 2.16: game audio (M5)",
+   "added": 2,
+   "removed": 1
+  },
+  {
+   "sha": "c71e9c3",
+   "time": "09:00:35",
+   "merge": false,
+   "subject": "Multiplayer test across machines: ocw-bot client, server stats and route files, test-* make targets",
+   "added": 2459,
+   "removed": 50
+  },
+  {
+   "sha": "dc21e39",
+   "time": "09:06:43",
+   "merge": false,
+   "subject": "Scene-rendering harness: scripts/scenes.toml, render-scenes.sh, make test-scenes",
+   "added": 703,
+   "removed": 1
+  },
+  {
+   "sha": "e7af0be",
+   "time": "09:10:54",
+   "merge": false,
+   "subject": "Spec 2.17: voice chat first increment; Strava account page moved to Navi; CLAUDE.md wasm check includes ocw-voice",
+   "added": 7,
+   "removed": 4
+  },
+  {
+   "sha": "a56b615",
+   "time": "09:23:38",
+   "merge": false,
+   "subject": "scenes.toml: Vaduz scenes tuned (front orbit for the buildings, raised chase camera without bots for the video)",
+   "added": 5,
+   "removed": 4
+  },
+  {
+   "sha": "f1540e3",
+   "time": "09:24:44",
+   "merge": false,
+   "subject": "Menu: group the audio and voice device lists in write_view (clippy too_many_arguments after merging M5 and M8); Cargo.lock",
+   "added": 1083,
+   "removed": 35
+  },
+  {
+   "sha": "d91b6f4",
+   "time": "09:29:34",
+   "merge": false,
+   "subject": "Spec 2.18: scene-rendering harness",
+   "added": 2,
+   "removed": 1
+  },
+  {
+   "sha": "2e2fd4b",
+   "time": "10:13:39",
+   "merge": false,
+   "subject": "Fix six bugs: event bot looks, menu overflow, teleport past the route end, ground after a teleport, tunnel portal wall, --world alone",
+   "added": 1375,
+   "removed": 179
+  },
+  {
+   "sha": "192d202",
+   "time": "10:13:44",
+   "merge": false,
+   "subject": "scenes.toml: route-end-teleport description (13.3 km route)",
+   "added": 1,
+   "removed": 1
+  },
+  {
+   "sha": "c0216f7",
+   "time": "10:14:43",
+   "merge": false,
+   "subject": "Spec 2.19: six bug fixes",
+   "added": 2,
+   "removed": 1
+  },
+  {
+   "sha": "03f1ead",
+   "time": "10:17:24",
+   "merge": false,
+   "subject": "Multiplayer test: camera client for a locked kiosk screen, caffeinate on macOS, lost-close and suspend handling in the verdict",
+   "added": 203,
+   "removed": 46
+  },
+  {
+   "sha": "4aec9de",
+   "time": "10:18:48",
+   "merge": false,
+   "subject": "ocw-bot: verdict test for a timeout long before the server's end",
+   "added": 5,
+   "removed": 1
+  },
+  {
+   "sha": "aa65b76",
+   "time": "10:23:36",
+   "merge": false,
+   "subject": "test-multiplayer: redact every machine's host and the server log's peer addresses (IPv6 too)",
+   "added": 15,
+   "removed": 6
+  },
+  {
+   "sha": "ea84a09",
+   "time": "10:26:12",
+   "merge": false,
+   "subject": "Spec 2.20: multiplayer test across machines, test-* make targets",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "690170e",
+   "time": "10:26:40",
+   "merge": false,
+   "subject": "Server Cargo.toml: one serde_json entry after merging voice and stats",
+   "added": 2,
+   "removed": 3
+  },
+  {
+   "sha": "5da9fa3",
+   "time": "10:28:42",
+   "merge": false,
+   "subject": "rustfmt: module order in the server crate",
+   "added": 18,
+   "removed": 1
+  },
+  {
+   "sha": "34148f3",
+   "time": "10:58:43",
+   "merge": false,
+   "subject": "Audio: freehub ticks only while coasting, drivetrain whirs (spec §3.3)",
+   "added": 346,
+   "removed": 101
+  },
+  {
+   "sha": "22fbc7d",
+   "time": "10:59:22",
+   "merge": false,
+   "subject": "Spec 2.21: freehub ticks only while coasting",
+   "added": 2,
+   "removed": 1
+  },
+  {
+   "sha": "9198206",
+   "time": "11:31:23",
+   "merge": false,
+   "subject": "Real render rate in the HUD, smooth 25 fps multiplayer videos",
+   "added": 542,
+   "removed": 67
+  },
+  {
+   "sha": "fbd2fce",
+   "time": "11:41:55",
+   "merge": false,
+   "subject": "Spec 2.22: render rate, FPS counter, smooth multiplayer videos",
+   "added": 2,
+   "removed": 1
+  },
+  {
+   "sha": "ed021e1",
+   "time": "12:23:00",
+   "merge": false,
+   "subject": "README: logo and two pictures of riders on the Malbun road (images on the build-history release); readme-* scenes",
+   "added": 31,
+   "removed": 0
+  },
+  {
+   "sha": "1daacc7",
+   "time": "16:29:44",
+   "merge": false,
+   "subject": "Packaging scripts: OCW_FEATURES for extra cargo features (voice in release builds)",
+   "added": 4,
+   "removed": 2
+  },
+  {
+   "sha": "765002f",
+   "time": "18:34:47",
+   "merge": false,
+   "subject": "Release builds with voice on Windows and macOS",
+   "added": 14,
+   "removed": 0
+  },
+  {
+   "sha": "9573ffe",
+   "time": "18:36:13",
+   "merge": false,
+   "subject": "build-appimage.sh: create the output directory",
+   "added": 1,
+   "removed": 0
+  },
+  {
+   "sha": "72238db",
+   "time": "19:28:53",
+   "merge": false,
+   "subject": "Voice: dropping the LiveKit backend waits for its threads",
+   "added": 55,
+   "removed": 7
+  },
+  {
+   "sha": "f055270",
+   "time": "19:36:48",
+   "merge": false,
+   "subject": "Spec 2.23: release builds with voice on all platforms; release notes 0.1.0-72238db",
+   "added": 42,
+   "removed": 5
+  },
+  {
+   "sha": "d95dd30",
+   "time": "22:00:42",
+   "merge": false,
+   "subject": "Art project: the OCW Build Diary (art/ART-PROJECT.md)",
+   "added": 1567,
+   "removed": 1
+  },
+  {
+   "sha": "5a0bf61",
+   "time": "22:03:22",
+   "merge": false,
+   "subject": "art/diary.py publish: upload SHA256SUMS of all zips and videos",
+   "added": 5,
+   "removed": 0
+  },
+  {
+   "sha": "96f3de0",
+   "time": "22:15:43",
+   "merge": false,
+   "subject": "Art project 1.1: ISO 8601 date and time in every photo and video",
+   "added": 126,
+   "removed": 10
+  },
+  {
+   "sha": "f03a863",
+   "time": "22:23:50",
+   "merge": false,
+   "subject": "Spec 2.24: Phase 8 – textures and regional look (planning)",
+   "added": 94,
+   "removed": 3
+  },
+  {
+   "sha": "9e65a55",
+   "time": "22:26:18",
+   "merge": false,
+   "subject": "CLAUDE.md: use the Mac and Windows build machines for dev tasks too",
+   "added": 1,
+   "removed": 1
+  },
+  {
+   "sha": "a19dffd",
+   "time": "22:39:23",
+   "merge": false,
+   "subject": "Spec 2.25: Phase 9 – sky, time, seasons and weather (planning)",
+   "added": 138,
+   "removed": 2
+  },
+  {
+   "sha": "8de0d28",
+   "time": "22:40:41",
+   "merge": false,
+   "subject": "World builder: gutters are not water, bike-open pedestrian streets are paved",
+   "added": 68,
+   "removed": 8
+  },
+  {
+   "sha": "0561281",
+   "time": "22:40:41",
+   "merge": false,
+   "subject": "world-builder: new manifest after in-place rewrites; route --bbox/--origin; areas",
+   "added": 244,
+   "removed": 42
+  },
+  {
+   "sha": "42f5083",
+   "time": "22:40:41",
+   "merge": false,
+   "subject": "Second world: the southern Black Forest (spec 2.27)",
+   "added": 308,
+   "removed": 46
+  },
+  {
+   "sha": "8e7a70f",
+   "time": "22:40:47",
+   "merge": false,
+   "subject": "Spec 2.26: Phase 8D – reference photos of how things really look",
+   "added": 16,
+   "removed": 5
+  },
+  {
+   "sha": "a07acce",
+   "time": "22:48:27",
+   "merge": false,
+   "subject": "Timestamped captures: ISO 8601 HUD stamp, JPEG/EXIF screenshots, 1440p test media, game sound in videos",
+   "added": 1879,
+   "removed": 143
+  },
+  {
+   "sha": "c35a760",
+   "time": "22:56:17",
+   "merge": false,
+   "subject": "Spec 2.28: Phase 9 decisions – virtual-world local time, extreme weather uncapped",
+   "added": 8,
+   "removed": 5
+  },
+  {
+   "sha": "fd8e665",
+   "time": "22:58:21",
+   "merge": false,
+   "subject": "Spec 2.29: decisions – realistic weather physics (organiser in races), best open data per region, attribution licences accepted",
+   "added": 5,
+   "removed": 4
+  }
+ ],
+ "merges": 27,
+ "lines_added": 51385,
+ "lines_removed": 3001,
+ "spec_versions": [
+  "2.8",
+  "2.9",
+  "2.10",
+  "2.11",
+  "2.12",
+  "2.13",
+  "2.14",
+  "2.15",
+  "2.16",
+  "2.17",
+  "2.18",
+  "2.19",
+  "2.20",
+  "2.21",
+  "2.22",
+  "2.23",
+  "2.24",
+  "2.25",
+  "2.27",
+  "2.26",
+  "2.28",
+  "2.29"
+ ],
+ "tests": 726,
+ "media": [
+  {
+   "file": "001724-shot-wayland-gf-hills.png",
+   "time": "00:17:24",
+   "kind": "image"
+  },
+  {
+   "file": "001742-shot-wayland-gf-hills-notilt.png",
+   "time": "00:17:42",
+   "kind": "image"
+  },
+  {
+   "file": "001900-shot-wayland-gf-pilot-1.5.png",
+   "time": "00:19:00",
+   "kind": "image"
+  },
+  {
+   "file": "001919-shot-wayland-gf-pilot-4.0.png",
+   "time": "00:19:19",
+   "kind": "image"
+  },
+  {
+   "file": "001938-shot-wayland-gf-pilot-7.0.png",
+   "time": "00:19:38",
+   "kind": "image"
+  },
+  {
+   "file": "002011-shot-wayland-ocw-workout-agent.png",
+   "time": "00:20:11",
+   "kind": "image"
+  },
+  {
+   "file": "002030-shot-wayland-gf-steep-1663,3336.png",
+   "time": "00:20:30",
+   "kind": "image"
+  },
+  {
+   "file": "002049-shot-wayland-gf-steep-983,4503.png",
+   "time": "00:20:49",
+   "kind": "image"
+  },
+  {
+   "file": "002108-shot-wayland-gf-steep378,6005.png",
+   "time": "00:21:08",
+   "kind": "image"
+  },
+  {
+   "file": "002148-video-wayland-ocw-workout-agent.mp4",
+   "time": "00:21:48",
+   "kind": "video"
+  },
+  {
+   "file": "002148-video-wayland-ocw-workout-agent.png",
+   "time": "00:21:48",
+   "kind": "image"
+  },
+  {
+   "file": "003048-video-wayland-gf-hills.mp4",
+   "time": "00:30:48",
+   "kind": "video"
+  },
+  {
+   "file": "003048-video-wayland-gf-hills.png",
+   "time": "00:30:48",
+   "kind": "image"
+  },
+  {
+   "file": "003332-agent-remote-server.png",
+   "time": "00:33:32",
+   "kind": "image"
+  },
+  {
+   "file": "003446-shot-wayland-ocw-m2-workshop.png",
+   "time": "00:34:46",
+   "kind": "image"
+  },
+  {
+   "file": "003501-shot-wayland-ocw-m2-display.png",
+   "time": "00:35:01",
+   "kind": "image"
+  },
+  {
+   "file": "003703-shot-wayland-ocw-main-workout.png",
+   "time": "00:37:03",
+   "kind": "image"
+  },
+  {
+   "file": "005713-shot-wayland-ocw-font-hud.png",
+   "time": "00:57:13",
+   "kind": "image"
+  },
+  {
+   "file": "005724-shot-wayland-ocw-font-menu.png",
+   "time": "00:57:24",
+   "kind": "image"
+  },
+  {
+   "file": "005826-shot-wayland-ocw-font-staedtle.png",
+   "time": "00:58:26",
+   "kind": "image"
+  },
+  {
+   "file": "010531-shot-wayland-a06-border-top.png",
+   "time": "01:05:31",
+   "kind": "image"
+  },
+  {
+   "file": "010758-shot-wayland-a06-dir.png",
+   "time": "01:07:58",
+   "kind": "image"
+  },
+  {
+   "file": "010912-shot-wayland-a06-p-2009.png",
+   "time": "01:09:12",
+   "kind": "image"
+  },
+  {
+   "file": "010920-shot-wayland-a06-p-2214.png",
+   "time": "01:09:20",
+   "kind": "image"
+  },
+  {
+   "file": "010927-shot-wayland-a06-p-2728.png",
+   "time": "01:09:27",
+   "kind": "image"
+  },
+  {
+   "file": "010934-shot-wayland-a06-p-2780.png",
+   "time": "01:09:34",
+   "kind": "image"
+  },
+  {
+   "file": "010942-shot-wayland-a06-p-2905.png",
+   "time": "01:09:42",
+   "kind": "image"
+  },
+  {
+   "file": "010949-shot-wayland-a06-p-3023.png",
+   "time": "01:09:49",
+   "kind": "image"
+  },
+  {
+   "file": "011012-video-wayland-a06-border.mp4",
+   "time": "01:10:12",
+   "kind": "video"
+  },
+  {
+   "file": "011012-video-wayland-a06-border.png",
+   "time": "01:10:12",
+   "kind": "image"
+  },
+  {
+   "file": "011238-shot-wayland-a06-cmp.png",
+   "time": "01:12:38",
+   "kind": "image"
+  },
+  {
+   "file": "011259-shot-wayland-a06-cmp.png",
+   "time": "01:12:59",
+   "kind": "image"
+  },
+  {
+   "file": "011316-shot-wayland-a06-n-2905.png",
+   "time": "01:13:16",
+   "kind": "image"
+  },
+  {
+   "file": "011325-shot-wayland-a06-n-3023.png",
+   "time": "01:13:25",
+   "kind": "image"
+  },
+  {
+   "file": "011335-shot-wayland-a06-n-2728.png",
+   "time": "01:13:35",
+   "kind": "image"
+  },
+  {
+   "file": "011344-shot-wayland-a06-n-2471.png",
+   "time": "01:13:44",
+   "kind": "image"
+  },
+  {
+   "file": "011353-shot-wayland-a06-n-2009.png",
+   "time": "01:13:53",
+   "kind": "image"
+  },
+  {
+   "file": "011403-shot-wayland-a06-n-3160.png",
+   "time": "01:14:03",
+   "kind": "image"
+  },
+  {
+   "file": "011424-video-wayland-a06-landstrasse.mp4",
+   "time": "01:14:24",
+   "kind": "video"
+  },
+  {
+   "file": "011424-video-wayland-a06-landstrasse.png",
+   "time": "01:14:24",
+   "kind": "image"
+  },
+  {
+   "file": "011435-shot-wayland-a06-landstrasse-side.png",
+   "time": "01:14:35",
+   "kind": "image"
+  },
+  {
+   "file": "011501-frame-landstrasse-11.png",
+   "time": "01:15:01",
+   "kind": "image"
+  },
+  {
+   "file": "011501-frame-landstrasse-3.png",
+   "time": "01:15:01",
+   "kind": "image"
+  },
+  {
+   "file": "011501-frame-landstrasse-7.png",
+   "time": "01:15:01",
+   "kind": "image"
+  },
+  {
+   "file": "012018-video-wayland-a06-landstrasse2.mp4",
+   "time": "01:20:18",
+   "kind": "video"
+  },
+  {
+   "file": "012018-video-wayland-a06-landstrasse2.png",
+   "time": "01:20:18",
+   "kind": "image"
+  },
+  {
+   "file": "012028-shot-wayland-a06-seam-top.png",
+   "time": "01:20:28",
+   "kind": "image"
+  },
+  {
+   "file": "012037-frame2-landstrasse-6.png",
+   "time": "01:20:37",
+   "kind": "image"
+  },
+  {
+   "file": "012037-frame2-landstrasse-7.png",
+   "time": "01:20:37",
+   "kind": "image"
+  },
+  {
+   "file": "012037-frame2-landstrasse-8.png",
+   "time": "01:20:37",
+   "kind": "image"
+  },
+  {
+   "file": "013515-shot-wayland-ocw-bikes-side.png",
+   "time": "01:35:15",
+   "kind": "image"
+  },
+  {
+   "file": "013523-shot-wayland-ocw-bikes-chase.png",
+   "time": "01:35:23",
+   "kind": "image"
+  },
+  {
+   "file": "013528-shot-wayland-ocw-workshop-bike.png",
+   "time": "01:35:28",
+   "kind": "image"
+  },
+  {
+   "file": "013609-shot-wayland-ocw-bike-local-tt.png",
+   "time": "01:36:09",
+   "kind": "image"
+  },
+  {
+   "file": "014047-shot-wayland-ev-countdown.png",
+   "time": "01:40:47",
+   "kind": "image"
+  },
+  {
+   "file": "014144-shot-wayland-ev-countdown.png",
+   "time": "01:41:44",
+   "kind": "image"
+  },
+  {
+   "file": "014144-video-wayland-a06-border-final.mp4",
+   "time": "01:41:44",
+   "kind": "video"
+  },
+  {
+   "file": "014144-video-wayland-a06-border-final.png",
+   "time": "01:41:44",
+   "kind": "image"
+  },
+  {
+   "file": "014151-frame3-final-7.png",
+   "time": "01:41:51",
+   "kind": "image"
+  },
+  {
+   "file": "014215-shot-wayland-ev-race.png",
+   "time": "01:42:15",
+   "kind": "image"
+  },
+  {
+   "file": "014312-shot-wayland-ev-results.png",
+   "time": "01:43:12",
+   "kind": "image"
+  },
+  {
+   "file": "014433-shot-wayland-ev-tt-ghost.png",
+   "time": "01:44:33",
+   "kind": "image"
+  },
+  {
+   "file": "014445-video-wayland-ev-go.mp4",
+   "time": "01:44:45",
+   "kind": "video"
+  },
+  {
+   "file": "014445-video-wayland-ev-go.png",
+   "time": "01:44:45",
+   "kind": "image"
+  },
+  {
+   "file": "015546-shot-wayland-ev-results.png",
+   "time": "01:55:46",
+   "kind": "image"
+  },
+  {
+   "file": "015616-shot-wayland-ev-tt-ghost.png",
+   "time": "01:56:16",
+   "kind": "image"
+  },
+  {
+   "file": "015627-video-wayland-ev-tt-ghost.mp4",
+   "time": "01:56:27",
+   "kind": "video"
+  },
+  {
+   "file": "015627-video-wayland-ev-tt-ghost.png",
+   "time": "01:56:27",
+   "kind": "image"
+  },
+  {
+   "file": "021527-shot-wayland-ev-race.png",
+   "time": "02:15:27",
+   "kind": "image"
+  },
+  {
+   "file": "021623-shot-wayland-ev-results.png",
+   "time": "02:16:23",
+   "kind": "image"
+  },
+  {
+   "file": "021634-video-wayland-ev-tt-ghost.mp4",
+   "time": "02:16:34",
+   "kind": "video"
+  },
+  {
+   "file": "021634-video-wayland-ev-tt-ghost.png",
+   "time": "02:16:34",
+   "kind": "image"
+  },
+  {
+   "file": "022919-shot-wayland-m3-ride-pages.png",
+   "time": "02:29:19",
+   "kind": "image"
+  },
+  {
+   "file": "022942-shot-wayland-m3-navi-routes.png",
+   "time": "02:29:42",
+   "kind": "image"
+  },
+  {
+   "file": "023138-video-wayland-m3-switch.mp4",
+   "time": "02:31:38",
+   "kind": "video"
+  },
+  {
+   "file": "023138-video-wayland-m3-switch.png",
+   "time": "02:31:38",
+   "kind": "image"
+  },
+  {
+   "file": "023143-shot-wayland-m3-change-ride.png",
+   "time": "02:31:43",
+   "kind": "image"
+  },
+  {
+   "file": "023608-video-wayland-ocw-uturn-ffj.mp4",
+   "time": "02:36:08",
+   "kind": "video"
+  },
+  {
+   "file": "023608-video-wayland-ocw-uturn-ffj.png",
+   "time": "02:36:08",
+   "kind": "image"
+  },
+  {
+   "file": "025051-agent-baseline-af2d-base-88.png",
+   "time": "02:50:51",
+   "kind": "image"
+  },
+  {
+   "file": "025126-shot-wayland-af2d-8.6.png",
+   "time": "02:51:26",
+   "kind": "image"
+  },
+  {
+   "file": "025135-shot-wayland-af2d-8.95.png",
+   "time": "02:51:35",
+   "kind": "image"
+  },
+  {
+   "file": "025144-shot-wayland-af2d-9.3.png",
+   "time": "02:51:44",
+   "kind": "image"
+  },
+  {
+   "file": "025257-shot-wayland-af2d-8.95.png",
+   "time": "02:52:57",
+   "kind": "image"
+  },
+  {
+   "file": "025410-shot-wayland-af2d-tunnel-km8.0.png",
+   "time": "02:54:10",
+   "kind": "image"
+  },
+  {
+   "file": "025417-shot-wayland-af2d-tunnel-km8.75.png",
+   "time": "02:54:17",
+   "kind": "image"
+  },
+  {
+   "file": "025425-shot-wayland-af2d-tunnel-km8.8.png",
+   "time": "02:54:25",
+   "kind": "image"
+  },
+  {
+   "file": "025432-shot-wayland-af2d-tunnel-km9.2.png",
+   "time": "02:54:32",
+   "kind": "image"
+  },
+  {
+   "file": "025439-shot-wayland-af2d-tunnel-km9.5.png",
+   "time": "02:54:39",
+   "kind": "image"
+  },
+  {
+   "file": "025447-shot-wayland-af2d-tunnel-side.png",
+   "time": "02:54:47",
+   "kind": "image"
+  },
+  {
+   "file": "025457-video-wayland-af2d-tunnel-entry.mp4",
+   "time": "02:54:57",
+   "kind": "video"
+  },
+  {
+   "file": "025457-video-wayland-af2d-tunnel-entry.png",
+   "time": "02:54:57",
+   "kind": "image"
+  },
+  {
+   "file": "025508-video-wayland-af2d-tunnel-exit.mp4",
+   "time": "02:55:08",
+   "kind": "video"
+  },
+  {
+   "file": "025508-video-wayland-af2d-tunnel-exit.png",
+   "time": "02:55:08",
+   "kind": "image"
+  },
+  {
+   "file": "025557-video-wayland-af2d-tunnel-entry2.mp4",
+   "time": "02:55:57",
+   "kind": "video"
+  },
+  {
+   "file": "025557-video-wayland-af2d-tunnel-entry2.png",
+   "time": "02:55:57",
+   "kind": "image"
+  },
+  {
+   "file": "031646-shot-wayland-corner.png",
+   "time": "03:16:46",
+   "kind": "image"
+  },
+  {
+   "file": "031651-video-wayland-af2d-tunnel-entry3.mp4",
+   "time": "03:16:51",
+   "kind": "video"
+  },
+  {
+   "file": "031651-video-wayland-af2d-tunnel-entry3.png",
+   "time": "03:16:51",
+   "kind": "image"
+  },
+  {
+   "file": "031801-shot-wayland-climb.png",
+   "time": "03:18:01",
+   "kind": "image"
+  },
+  {
+   "file": "031821-video-wayland-af2d-tunnel-entry4.mp4",
+   "time": "03:18:21",
+   "kind": "video"
+  },
+  {
+   "file": "031951-video-wayland-af2d-tunnel-entry5.mp4",
+   "time": "03:19:51",
+   "kind": "video"
+  },
+  {
+   "file": "032051-video-wayland-af2d-tunnel-entry.mp4",
+   "time": "03:20:51",
+   "kind": "video"
+  },
+  {
+   "file": "032051-video-wayland-af2d-tunnel-entry.png",
+   "time": "03:20:51",
+   "kind": "image"
+  },
+  {
+   "file": "032101-video-wayland-af2d-tunnel-exit.mp4",
+   "time": "03:21:01",
+   "kind": "video"
+  },
+  {
+   "file": "032101-video-wayland-af2d-tunnel-exit.png",
+   "time": "03:21:01",
+   "kind": "image"
+  },
+  {
+   "file": "032109-shot-wayland-af2d-tunnel-km8.8.png",
+   "time": "03:21:09",
+   "kind": "image"
+  },
+  {
+   "file": "032116-shot-wayland-af2d-tunnel-km9.2.png",
+   "time": "03:21:16",
+   "kind": "image"
+  },
+  {
+   "file": "034443-shot-wayland-ocw-workouts.png",
+   "time": "03:44:43",
+   "kind": "image"
+  },
+  {
+   "file": "034506-shot-wayland-ocw-tt-ghost.png",
+   "time": "03:45:06",
+   "kind": "image"
+  },
+  {
+   "file": "034556-shot-wayland-ocw-tt-ghost.png",
+   "time": "03:45:56",
+   "kind": "image"
+  },
+  {
+   "file": "034632-shot-wayland-ocw-tt-ghost.png",
+   "time": "03:46:32",
+   "kind": "image"
+  },
+  {
+   "file": "035625-shot-wayland-ocw-final.png",
+   "time": "03:56:25",
+   "kind": "image"
+  },
+  {
+   "file": "075420-audio-ride-sounds.wav",
+   "time": "07:54:20",
+   "kind": "audio"
+  },
+  {
+   "file": "075654-audio-settings-page.png",
+   "time": "07:56:54",
+   "kind": "image"
+  },
+  {
+   "file": "080642-models-side.png",
+   "time": "08:06:42",
+   "kind": "image"
+  },
+  {
+   "file": "080653-models-group.png",
+   "time": "08:06:53",
+   "kind": "image"
+  },
+  {
+   "file": "080739-models-sprint.png",
+   "time": "08:07:39",
+   "kind": "image"
+  },
+  {
+   "file": "080752-models-freewheel.png",
+   "time": "08:07:52",
+   "kind": "image"
+  },
+  {
+   "file": "080805-models-bikes.png",
+   "time": "08:08:05",
+   "kind": "image"
+  },
+  {
+   "file": "080811-models-ride.mp4",
+   "time": "08:08:11",
+   "kind": "video"
+  },
+  {
+   "file": "080811-video-wayland-m-ride.png",
+   "time": "08:08:11",
+   "kind": "image"
+  },
+  {
+   "file": "082539-shot-wayland-m-tt.png",
+   "time": "08:25:39",
+   "kind": "image"
+  },
+  {
+   "file": "082551-models-mtb.png",
+   "time": "08:25:51",
+   "kind": "image"
+  },
+  {
+   "file": "083649-models-tt.png",
+   "time": "08:36:49",
+   "kind": "image"
+  },
+  {
+   "file": "083659-shot-wayland-m-smoke.png",
+   "time": "08:36:59",
+   "kind": "image"
+  },
+  {
+   "file": "084221-shot-wayland-x-route.png",
+   "time": "08:42:21",
+   "kind": "image"
+  },
+  {
+   "file": "084231-shot-wayland-x-free.png",
+   "time": "08:42:31",
+   "kind": "image"
+  },
+  {
+   "file": "084316-shot-wayland-x-route2.png",
+   "time": "08:43:16",
+   "kind": "image"
+  },
+  {
+   "file": "084322-shot-wayland-x-freeA.png",
+   "time": "08:43:22",
+   "kind": "image"
+  },
+  {
+   "file": "084329-shot-wayland-x-freeB.png",
+   "time": "08:43:29",
+   "kind": "image"
+  },
+  {
+   "file": "084336-shot-wayland-x-menu.png",
+   "time": "08:43:36",
+   "kind": "image"
+  },
+  {
+   "file": "084411-voice-hud.png",
+   "time": "08:44:11",
+   "kind": "image"
+  },
+  {
+   "file": "084424-shot-wayland-x-t8.4.png",
+   "time": "08:44:24",
+   "kind": "image"
+  },
+  {
+   "file": "084430-shot-wayland-x-t8.5.png",
+   "time": "08:44:30",
+   "kind": "image"
+  },
+  {
+   "file": "084436-shot-wayland-x-t8.6.png",
+   "time": "08:44:36",
+   "kind": "image"
+  },
+  {
+   "file": "084443-shot-wayland-x-t8.7.png",
+   "time": "08:44:43",
+   "kind": "image"
+  },
+  {
+   "file": "084449-shot-wayland-x-t9.1.png",
+   "time": "08:44:49",
+   "kind": "image"
+  },
+  {
+   "file": "084456-shot-wayland-x-t9.3.png",
+   "time": "08:44:56",
+   "kind": "image"
+  },
+  {
+   "file": "084502-shot-wayland-x-t9.5.png",
+   "time": "08:45:02",
+   "kind": "image"
+  },
+  {
+   "file": "084510-shot-wayland-x-rhine.png",
+   "time": "08:45:10",
+   "kind": "image"
+  },
+  {
+   "file": "084603-shot-wayland-x-race.png",
+   "time": "08:46:03",
+   "kind": "image"
+  },
+  {
+   "file": "085240-shot-wayland-testroute-hills.png",
+   "time": "08:52:40",
+   "kind": "image"
+  },
+  {
+   "file": "085248-shot-wayland-console-overlay.png",
+   "time": "08:52:48",
+   "kind": "image"
+  },
+  {
+   "file": "085304-shot-wayland-workout-erg.png",
+   "time": "08:53:04",
+   "kind": "image"
+  },
+  {
+   "file": "085356-shot-wayland-race-results.png",
+   "time": "08:53:56",
+   "kind": "image"
+  },
+  {
+   "file": "085453-shot-wayland-tt-ghost.png",
+   "time": "08:54:53",
+   "kind": "image"
+  },
+  {
+   "file": "085459-shot-wayland-menu-main.png",
+   "time": "08:54:59",
+   "kind": "image"
+  },
+  {
+   "file": "085506-shot-wayland-menu-settings.png",
+   "time": "08:55:06",
+   "kind": "image"
+  },
+  {
+   "file": "085515-shot-wayland-menu-settings-display.png",
+   "time": "08:55:15",
+   "kind": "image"
+  },
+  {
+   "file": "085522-shot-wayland-menu-workshop-bike.png",
+   "time": "08:55:22",
+   "kind": "image"
+  },
+  {
+   "file": "085529-shot-wayland-menu-workouts.png",
+   "time": "08:55:29",
+   "kind": "image"
+  },
+  {
+   "file": "085535-shot-wayland-menu-ride.png",
+   "time": "08:55:35",
+   "kind": "image"
+  },
+  {
+   "file": "085542-shot-wayland-route-start-formation.png",
+   "time": "08:55:42",
+   "kind": "image"
+  },
+  {
+   "file": "085556-video-wayland-race-start-video.mp4",
+   "time": "08:55:56",
+   "kind": "video"
+  },
+  {
+   "file": "085556-video-wayland-race-start-video.png",
+   "time": "08:55:56",
+   "kind": "image"
+  },
+  {
+   "file": "085607-shot-wayland-camera-chase.png",
+   "time": "08:56:07",
+   "kind": "image"
+  },
+  {
+   "file": "085618-shot-wayland-camera-side.png",
+   "time": "08:56:18",
+   "kind": "image"
+  },
+  {
+   "file": "085629-shot-wayland-camera-top.png",
+   "time": "08:56:29",
+   "kind": "image"
+  },
+  {
+   "file": "085638-shot-wayland-camera-close.png",
+   "time": "08:56:38",
+   "kind": "image"
+  },
+  {
+   "file": "085654-video-wayland-orbit-video.mp4",
+   "time": "08:56:54",
+   "kind": "video"
+  },
+  {
+   "file": "085654-video-wayland-orbit-video.png",
+   "time": "08:56:54",
+   "kind": "image"
+  },
+  {
+   "file": "085705-shot-wayland-malbun-climb.png",
+   "time": "08:57:05",
+   "kind": "image"
+  },
+  {
+   "file": "085718-video-wayland-malbun-climb-video.mp4",
+   "time": "08:57:18",
+   "kind": "video"
+  },
+  {
+   "file": "085718-video-wayland-malbun-climb-video.png",
+   "time": "08:57:18",
+   "kind": "image"
+  },
+  {
+   "file": "085729-shot-wayland-malbun-arrival.png",
+   "time": "08:57:29",
+   "kind": "image"
+  },
+  {
+   "file": "085739-shot-wayland-tunnel-entry.png",
+   "time": "08:57:39",
+   "kind": "image"
+  },
+  {
+   "file": "085749-shot-wayland-tunnel-inside.png",
+   "time": "08:57:49",
+   "kind": "image"
+  },
+  {
+   "file": "085759-video-wayland-tunnel-video.mp4",
+   "time": "08:57:59",
+   "kind": "video"
+  },
+  {
+   "file": "085759-video-wayland-tunnel-video.png",
+   "time": "08:57:59",
+   "kind": "image"
+  },
+  {
+   "file": "085808-shot-wayland-vaduz-buildings.png",
+   "time": "08:58:08",
+   "kind": "image"
+  },
+  {
+   "file": "085818-video-wayland-vaduz-video.mp4",
+   "time": "08:58:18",
+   "kind": "video"
+  },
+  {
+   "file": "085818-video-wayland-vaduz-video.png",
+   "time": "08:58:18",
+   "kind": "image"
+  },
+  {
+   "file": "085819-shot-wayland-ocw-p4.png",
+   "time": "08:58:19",
+   "kind": "image"
+  },
+  {
+   "file": "085825-shot-wayland-freeride-junction.png",
+   "time": "08:58:25",
+   "kind": "image"
+  },
+  {
+   "file": "085834-shot-wayland-rhine-water.png",
+   "time": "08:58:34",
+   "kind": "image"
+  },
+  {
+   "file": "085847-shot-wayland-far-view.png",
+   "time": "08:58:47",
+   "kind": "image"
+  },
+  {
+   "file": "085855-shot-wayland-menu-navi-routes.png",
+   "time": "08:58:55",
+   "kind": "image"
+  },
+  {
+   "file": "090126-shot-wayland-ocw-main.png",
+   "time": "09:01:26",
+   "kind": "image"
+  },
+  {
+   "file": "090134-shot-wayland-route-start-formation.png",
+   "time": "09:01:34",
+   "kind": "image"
+  },
+  {
+   "file": "090143-video-wayland-race-start-video.mp4",
+   "time": "09:01:43",
+   "kind": "video"
+  },
+  {
+   "file": "090143-video-wayland-race-start-video.png",
+   "time": "09:01:43",
+   "kind": "image"
+  },
+  {
+   "file": "090200-shot-wayland-camera-chase.png",
+   "time": "09:02:00",
+   "kind": "image"
+  },
+  {
+   "file": "090211-shot-wayland-ocw-a.png",
+   "time": "09:02:11",
+   "kind": "image"
+  },
+  {
+   "file": "090218-shot-wayland-camera-side.png",
+   "time": "09:02:18",
+   "kind": "image"
+  },
+  {
+   "file": "090226-shot-wayland-ocw-b.png",
+   "time": "09:02:26",
+   "kind": "image"
+  },
+  {
+   "file": "090235-shot-wayland-camera-top.png",
+   "time": "09:02:35",
+   "kind": "image"
+  },
+  {
+   "file": "090244-shot-wayland-camera-close.png",
+   "time": "09:02:44",
+   "kind": "image"
+  },
+  {
+   "file": "090254-shot-wayland-malbun-climb.png",
+   "time": "09:02:54",
+   "kind": "image"
+  },
+  {
+   "file": "090304-video-wayland-malbun-climb-video.mp4",
+   "time": "09:03:04",
+   "kind": "video"
+  },
+  {
+   "file": "090304-video-wayland-malbun-climb-video.png",
+   "time": "09:03:04",
+   "kind": "image"
+  },
+  {
+   "file": "090313-shot-wayland-tunnel-entry.png",
+   "time": "09:03:13",
+   "kind": "image"
+  },
+  {
+   "file": "090323-shot-wayland-tunnel-inside.png",
+   "time": "09:03:23",
+   "kind": "image"
+  },
+  {
+   "file": "090338-video-wayland-tunnel-video.mp4",
+   "time": "09:03:38",
+   "kind": "video"
+  },
+  {
+   "file": "090338-video-wayland-tunnel-video.png",
+   "time": "09:03:38",
+   "kind": "image"
+  },
+  {
+   "file": "090346-shot-wayland-vaduz-buildings.png",
+   "time": "09:03:46",
+   "kind": "image"
+  },
+  {
+   "file": "090355-shot-wayland-rhine-water.png",
+   "time": "09:03:55",
+   "kind": "image"
+  },
+  {
+   "file": "090409-shot-wayland-far-view.png",
+   "time": "09:04:09",
+   "kind": "image"
+  },
+  {
+   "file": "090416-shot-wayland-menu-navi.png",
+   "time": "09:04:16",
+   "kind": "image"
+  },
+  {
+   "file": "090430-shot-wayland-far-view-b.png",
+   "time": "09:04:30",
+   "kind": "image"
+  },
+  {
+   "file": "090444-shot-wayland-far-view-c.png",
+   "time": "09:04:44",
+   "kind": "image"
+  },
+  {
+   "file": "090454-shot-wayland-tunnel-entry-b.png",
+   "time": "09:04:54",
+   "kind": "image"
+  },
+  {
+   "file": "090547-shot-wayland-tunnel-entry.png",
+   "time": "09:05:47",
+   "kind": "image"
+  },
+  {
+   "file": "090559-video-wayland-tunnel-video.mp4",
+   "time": "09:05:59",
+   "kind": "video"
+  },
+  {
+   "file": "090559-video-wayland-tunnel-video.png",
+   "time": "09:05:59",
+   "kind": "image"
+  },
+  {
+   "file": "090607-shot-wayland-vaduz-buildings.png",
+   "time": "09:06:07",
+   "kind": "image"
+  },
+  {
+   "file": "090620-shot-wayland-far-view.png",
+   "time": "09:06:20",
+   "kind": "image"
+  },
+  {
+   "file": "090705-testroute-hills.png",
+   "time": "09:07:05",
+   "kind": "image"
+  },
+  {
+   "file": "090712-console-overlay.png",
+   "time": "09:07:12",
+   "kind": "image"
+  },
+  {
+   "file": "090713-shot-wayland-console-overlay.png",
+   "time": "09:07:13",
+   "kind": "image"
+  },
+  {
+   "file": "090727-workout-erg.png",
+   "time": "09:07:27",
+   "kind": "image"
+  },
+  {
+   "file": "090728-shot-wayland-workout-erg.png",
+   "time": "09:07:28",
+   "kind": "image"
+  },
+  {
+   "file": "090819-race-results.png",
+   "time": "09:08:19",
+   "kind": "image"
+  },
+  {
+   "file": "090819-shot-wayland-race-results.png",
+   "time": "09:08:19",
+   "kind": "image"
+  },
+  {
+   "file": "090916-shot-wayland-tt-ghost.png",
+   "time": "09:09:16",
+   "kind": "image"
+  },
+  {
+   "file": "090916-tt-ghost.png",
+   "time": "09:09:16",
+   "kind": "image"
+  },
+  {
+   "file": "090921-menu-main.png",
+   "time": "09:09:21",
+   "kind": "image"
+  },
+  {
+   "file": "090928-menu-settings.png",
+   "time": "09:09:28",
+   "kind": "image"
+  },
+  {
+   "file": "090936-menu-settings-display.png",
+   "time": "09:09:36",
+   "kind": "image"
+  },
+  {
+   "file": "090943-menu-workshop-bike.png",
+   "time": "09:09:43",
+   "kind": "image"
+  },
+  {
+   "file": "090950-menu-workouts.png",
+   "time": "09:09:50",
+   "kind": "image"
+  },
+  {
+   "file": "090956-menu-ride.png",
+   "time": "09:09:56",
+   "kind": "image"
+  },
+  {
+   "file": "091003-route-start-formation.png",
+   "time": "09:10:03",
+   "kind": "image"
+  },
+  {
+   "file": "091003-shot-wayland-route-start-formation.png",
+   "time": "09:10:03",
+   "kind": "image"
+  },
+  {
+   "file": "091012-race-start-video.mp4",
+   "time": "09:10:12",
+   "kind": "video"
+  },
+  {
+   "file": "091012-video-wayland-race-start-video.png",
+   "time": "09:10:12",
+   "kind": "image"
+  },
+  {
+   "file": "091029-camera-chase.png",
+   "time": "09:10:29",
+   "kind": "image"
+  },
+  {
+   "file": "091030-shot-wayland-camera-chase.png",
+   "time": "09:10:30",
+   "kind": "image"
+  },
+  {
+   "file": "091047-camera-side.png",
+   "time": "09:10:47",
+   "kind": "image"
+  },
+  {
+   "file": "091047-shot-wayland-camera-side.png",
+   "time": "09:10:47",
+   "kind": "image"
+  },
+  {
+   "file": "091104-camera-top.png",
+   "time": "09:11:04",
+   "kind": "image"
+  },
+  {
+   "file": "091104-shot-wayland-camera-top.png",
+   "time": "09:11:04",
+   "kind": "image"
+  },
+  {
+   "file": "091116-camera-close.png",
+   "time": "09:11:16",
+   "kind": "image"
+  },
+  {
+   "file": "091116-shot-wayland-camera-close.png",
+   "time": "09:11:16",
+   "kind": "image"
+  },
+  {
+   "file": "091129-orbit-video.mp4",
+   "time": "09:11:29",
+   "kind": "video"
+  },
+  {
+   "file": "091129-video-wayland-orbit-video.png",
+   "time": "09:11:29",
+   "kind": "image"
+  },
+  {
+   "file": "091139-malbun-climb.png",
+   "time": "09:11:39",
+   "kind": "image"
+  },
+  {
+   "file": "091140-shot-wayland-malbun-climb.png",
+   "time": "09:11:40",
+   "kind": "image"
+  },
+  {
+   "file": "091150-malbun-climb-video.mp4",
+   "time": "09:11:50",
+   "kind": "video"
+  },
+  {
+   "file": "091150-video-wayland-malbun-climb-video.png",
+   "time": "09:11:50",
+   "kind": "image"
+  },
+  {
+   "file": "091201-malbun-arrival.png",
+   "time": "09:12:01",
+   "kind": "image"
+  },
+  {
+   "file": "091201-shot-wayland-malbun-arrival.png",
+   "time": "09:12:01",
+   "kind": "image"
+  },
+  {
+   "file": "091210-shot-wayland-tunnel-entry.png",
+   "time": "09:12:10",
+   "kind": "image"
+  },
+  {
+   "file": "091210-tunnel-entry.png",
+   "time": "09:12:10",
+   "kind": "image"
+  },
+  {
+   "file": "091220-shot-wayland-tunnel-inside.png",
+   "time": "09:12:20",
+   "kind": "image"
+  },
+  {
+   "file": "091220-tunnel-inside.png",
+   "time": "09:12:20",
+   "kind": "image"
+  },
+  {
+   "file": "091237-tunnel-video.mp4",
+   "time": "09:12:37",
+   "kind": "video"
+  },
+  {
+   "file": "091237-video-wayland-tunnel-video.png",
+   "time": "09:12:37",
+   "kind": "image"
+  },
+  {
+   "file": "091245-shot-wayland-vaduz-buildings.png",
+   "time": "09:12:45",
+   "kind": "image"
+  },
+  {
+   "file": "091255-video-wayland-vaduz-video.mp4",
+   "time": "09:12:55",
+   "kind": "video"
+  },
+  {
+   "file": "091255-video-wayland-vaduz-video.png",
+   "time": "09:12:55",
+   "kind": "image"
+  },
+  {
+   "file": "091303-freeride-junction.png",
+   "time": "09:13:03",
+   "kind": "image"
+  },
+  {
+   "file": "091303-shot-wayland-freeride-junction.png",
+   "time": "09:13:03",
+   "kind": "image"
+  },
+  {
+   "file": "091312-rhine-water.png",
+   "time": "09:13:12",
+   "kind": "image"
+  },
+  {
+   "file": "091312-shot-wayland-rhine-water.png",
+   "time": "09:13:12",
+   "kind": "image"
+  },
+  {
+   "file": "091325-far-view.png",
+   "time": "09:13:25",
+   "kind": "image"
+  },
+  {
+   "file": "091325-shot-wayland-far-view.png",
+   "time": "09:13:25",
+   "kind": "image"
+  },
+  {
+   "file": "091331-menu-navi.png",
+   "time": "09:13:31",
+   "kind": "image"
+  },
+  {
+   "file": "092206-shot-wayland-ocw-main.png",
+   "time": "09:22:06",
+   "kind": "image"
+  },
+  {
+   "file": "092223-shot-wayland-vaduz-buildings.png",
+   "time": "09:22:23",
+   "kind": "image"
+  },
+  {
+   "file": "092301-vaduz-buildings.png",
+   "time": "09:23:01",
+   "kind": "image"
+  },
+  {
+   "file": "092302-shot-wayland-vaduz-buildings.png",
+   "time": "09:23:02",
+   "kind": "image"
+  },
+  {
+   "file": "092310-vaduz-video.mp4",
+   "time": "09:23:10",
+   "kind": "video"
+  },
+  {
+   "file": "092310-video-wayland-vaduz-video.png",
+   "time": "09:23:10",
+   "kind": "image"
+  },
+  {
+   "file": "095035-shot-wayland-menu-ride.png",
+   "time": "09:50:35",
+   "kind": "image"
+  },
+  {
+   "file": "095046-video-wayland-tunnel-video.mp4",
+   "time": "09:50:46",
+   "kind": "video"
+  },
+  {
+   "file": "095046-video-wayland-tunnel-video.png",
+   "time": "09:50:46",
+   "kind": "image"
+  },
+  {
+   "file": "095053-shot-wayland-event-bots.png",
+   "time": "09:50:53",
+   "kind": "image"
+  },
+  {
+   "file": "095059-video-wayland-teleport-video.mp4",
+   "time": "09:50:59",
+   "kind": "video"
+  },
+  {
+   "file": "095059-video-wayland-teleport-video.png",
+   "time": "09:50:59",
+   "kind": "image"
+  },
+  {
+   "file": "095108-shot-wayland-route-end-teleport.png",
+   "time": "09:51:08",
+   "kind": "image"
+  },
+  {
+   "file": "095118-shot-wayland-world-only.png",
+   "time": "09:51:18",
+   "kind": "image"
+  },
+  {
+   "file": "100837-shot-wayland-menu-main.png",
+   "time": "10:08:37",
+   "kind": "image"
+  },
+  {
+   "file": "100844-shot-wayland-menu-settings.png",
+   "time": "10:08:44",
+   "kind": "image"
+  },
+  {
+   "file": "100850-shot-wayland-menu-ride.png",
+   "time": "10:08:50",
+   "kind": "image"
+  },
+  {
+   "file": "100859-shot-wayland-tunnel-entry.png",
+   "time": "10:08:59",
+   "kind": "image"
+  },
+  {
+   "file": "100908-shot-wayland-tunnel-inside.png",
+   "time": "10:09:08",
+   "kind": "image"
+  },
+  {
+   "file": "100920-video-wayland-tunnel-video.mp4",
+   "time": "10:09:20",
+   "kind": "video"
+  },
+  {
+   "file": "100927-shot-wayland-event-bots.png",
+   "time": "10:09:27",
+   "kind": "image"
+  },
+  {
+   "file": "100933-video-wayland-teleport-video.png",
+   "time": "10:09:33",
+   "kind": "image"
+  },
+  {
+   "file": "100942-shot-wayland-route-end-teleport.png",
+   "time": "10:09:42",
+   "kind": "image"
+  },
+  {
+   "file": "100951-shot-wayland-world-only.png",
+   "time": "10:09:51",
+   "kind": "image"
+  },
+  {
+   "file": "101028-agent-tele-after-t005.png",
+   "time": "10:10:28",
+   "kind": "image"
+  },
+  {
+   "file": "101028-agent-tele-after-t020.png",
+   "time": "10:10:28",
+   "kind": "image"
+  },
+  {
+   "file": "101029-agent-tele-after-t050.png",
+   "time": "10:10:29",
+   "kind": "image"
+  },
+  {
+   "file": "101032-agent-tele-after-end.png",
+   "time": "10:10:32",
+   "kind": "image"
+  },
+  {
+   "file": "101118-agent-tele-before-t005.png",
+   "time": "10:11:18",
+   "kind": "image"
+  },
+  {
+   "file": "101118-agent-tele-before-t020.png",
+   "time": "10:11:18",
+   "kind": "image"
+  },
+  {
+   "file": "101118-agent-tele-before-t050.png",
+   "time": "10:11:18",
+   "kind": "image"
+  },
+  {
+   "file": "101122-agent-tele-before-end.png",
+   "time": "10:11:22",
+   "kind": "image"
+  },
+  {
+   "file": "101204-agent-tele-before2-t000.png",
+   "time": "10:12:04",
+   "kind": "image"
+  },
+  {
+   "file": "101204-agent-tele-before2-t010.png",
+   "time": "10:12:04",
+   "kind": "image"
+  },
+  {
+   "file": "101204-agent-tele-before2-t030.png",
+   "time": "10:12:04",
+   "kind": "image"
+  },
+  {
+   "file": "101207-agent-tele-before2-end.png",
+   "time": "10:12:07",
+   "kind": "image"
+  },
+  {
+   "file": "101211-multiplayer-camera-camera.mp4",
+   "time": "10:12:11",
+   "kind": "video"
+  },
+  {
+   "file": "101211-multiplayer-camera-final.png",
+   "time": "10:12:11",
+   "kind": "image"
+  },
+  {
+   "file": "101211-multiplayer-camera-still-30.png",
+   "time": "10:12:11",
+   "kind": "image"
+  },
+  {
+   "file": "101211-multiplayer-camera-still-45.png",
+   "time": "10:12:11",
+   "kind": "image"
+  },
+  {
+   "file": "101211-multiplayer-camera-still-60.png",
+   "time": "10:12:11",
+   "kind": "image"
+  },
+  {
+   "file": "101642-multiplayer-camera-camera.mp4",
+   "time": "10:16:42",
+   "kind": "video"
+  },
+  {
+   "file": "101642-multiplayer-camera-still-30.png",
+   "time": "10:16:42",
+   "kind": "image"
+  },
+  {
+   "file": "101642-multiplayer-camera-still-45.png",
+   "time": "10:16:42",
+   "kind": "image"
+  },
+  {
+   "file": "101642-multiplayer-camera-still-60.png",
+   "time": "10:16:42",
+   "kind": "image"
+  },
+  {
+   "file": "101710-testroute-hills.png",
+   "time": "10:17:10",
+   "kind": "image"
+  },
+  {
+   "file": "101717-console-overlay.png",
+   "time": "10:17:17",
+   "kind": "image"
+  },
+  {
+   "file": "101718-shot-wayland-console-overlay.png",
+   "time": "10:17:18",
+   "kind": "image"
+  },
+  {
+   "file": "101733-shot-wayland-workout-erg.png",
+   "time": "10:17:33",
+   "kind": "image"
+  },
+  {
+   "file": "101733-workout-erg.png",
+   "time": "10:17:33",
+   "kind": "image"
+  },
+  {
+   "file": "101824-race-results.png",
+   "time": "10:18:24",
+   "kind": "image"
+  },
+  {
+   "file": "101824-shot-wayland-race-results.png",
+   "time": "10:18:24",
+   "kind": "image"
+  },
+  {
+   "file": "101921-shot-wayland-tt-ghost.png",
+   "time": "10:19:21",
+   "kind": "image"
+  },
+  {
+   "file": "101921-tt-ghost.png",
+   "time": "10:19:21",
+   "kind": "image"
+  },
+  {
+   "file": "101926-menu-main.png",
+   "time": "10:19:26",
+   "kind": "image"
+  },
+  {
+   "file": "101933-menu-settings.png",
+   "time": "10:19:33",
+   "kind": "image"
+  },
+  {
+   "file": "101941-menu-settings-display.png",
+   "time": "10:19:41",
+   "kind": "image"
+  },
+  {
+   "file": "101948-menu-workshop-bike.png",
+   "time": "10:19:48",
+   "kind": "image"
+  },
+  {
+   "file": "101955-menu-workouts.png",
+   "time": "10:19:55",
+   "kind": "image"
+  },
+  {
+   "file": "102001-menu-ride.png",
+   "time": "10:20:01",
+   "kind": "image"
+  },
+  {
+   "file": "102008-route-start-formation.png",
+   "time": "10:20:08",
+   "kind": "image"
+  },
+  {
+   "file": "102009-shot-wayland-route-start-formation.png",
+   "time": "10:20:09",
+   "kind": "image"
+  },
+  {
+   "file": "102018-race-start-video.mp4",
+   "time": "10:20:18",
+   "kind": "video"
+  },
+  {
+   "file": "102018-video-wayland-race-start-video.png",
+   "time": "10:20:18",
+   "kind": "image"
+  },
+  {
+   "file": "102035-camera-chase.png",
+   "time": "10:20:35",
+   "kind": "image"
+  },
+  {
+   "file": "102035-shot-wayland-camera-chase.png",
+   "time": "10:20:35",
+   "kind": "image"
+  },
+  {
+   "file": "102052-camera-side.png",
+   "time": "10:20:52",
+   "kind": "image"
+  },
+  {
+   "file": "102052-shot-wayland-camera-side.png",
+   "time": "10:20:52",
+   "kind": "image"
+  },
+  {
+   "file": "102110-camera-top.png",
+   "time": "10:21:10",
+   "kind": "image"
+  },
+  {
+   "file": "102110-shot-wayland-camera-top.png",
+   "time": "10:21:10",
+   "kind": "image"
+  },
+  {
+   "file": "102118-camera-close.png",
+   "time": "10:21:18",
+   "kind": "image"
+  },
+  {
+   "file": "102118-shot-wayland-camera-close.png",
+   "time": "10:21:18",
+   "kind": "image"
+  },
+  {
+   "file": "102127-orbit-video.mp4",
+   "time": "10:21:27",
+   "kind": "video"
+  },
+  {
+   "file": "102127-video-wayland-orbit-video.png",
+   "time": "10:21:27",
+   "kind": "image"
+  },
+  {
+   "file": "102138-malbun-climb.png",
+   "time": "10:21:38",
+   "kind": "image"
+  },
+  {
+   "file": "102138-shot-wayland-malbun-climb.png",
+   "time": "10:21:38",
+   "kind": "image"
+  },
+  {
+   "file": "102146-malbun-climb-video.mp4",
+   "time": "10:21:46",
+   "kind": "video"
+  },
+  {
+   "file": "102146-video-wayland-malbun-climb-video.png",
+   "time": "10:21:46",
+   "kind": "image"
+  },
+  {
+   "file": "102156-malbun-arrival.png",
+   "time": "10:21:56",
+   "kind": "image"
+  },
+  {
+   "file": "102156-shot-wayland-malbun-arrival.png",
+   "time": "10:21:56",
+   "kind": "image"
+  },
+  {
+   "file": "102205-shot-wayland-tunnel-entry.png",
+   "time": "10:22:05",
+   "kind": "image"
+  },
+  {
+   "file": "102205-tunnel-entry.png",
+   "time": "10:22:05",
+   "kind": "image"
+  },
+  {
+   "file": "102214-tunnel-inside.png",
+   "time": "10:22:14",
+   "kind": "image"
+  },
+  {
+   "file": "102215-shot-wayland-tunnel-inside.png",
+   "time": "10:22:15",
+   "kind": "image"
+  },
+  {
+   "file": "102226-multiplayer-camera-still-60.png",
+   "time": "10:22:26",
+   "kind": "image"
+  },
+  {
+   "file": "102226-multiplayer-camera.mp4",
+   "time": "10:22:26",
+   "kind": "video"
+  },
+  {
+   "file": "102226-multiplayer-still-30.png",
+   "time": "10:22:26",
+   "kind": "image"
+  },
+  {
+   "file": "102226-multiplayer-still-45.png",
+   "time": "10:22:26",
+   "kind": "image"
+  },
+  {
+   "file": "102226-tunnel-video.mp4",
+   "time": "10:22:26",
+   "kind": "video"
+  },
+  {
+   "file": "102226-video-wayland-tunnel-video.png",
+   "time": "10:22:26",
+   "kind": "image"
+  },
+  {
+   "file": "102234-shot-wayland-vaduz-buildings.png",
+   "time": "10:22:34",
+   "kind": "image"
+  },
+  {
+   "file": "102234-vaduz-buildings.png",
+   "time": "10:22:34",
+   "kind": "image"
+  },
+  {
+   "file": "102242-vaduz-video.mp4",
+   "time": "10:22:42",
+   "kind": "video"
+  },
+  {
+   "file": "102242-video-wayland-vaduz-video.png",
+   "time": "10:22:42",
+   "kind": "image"
+  },
+  {
+   "file": "102249-freeride-junction.png",
+   "time": "10:22:49",
+   "kind": "image"
+  },
+  {
+   "file": "102249-shot-wayland-freeride-junction.png",
+   "time": "10:22:49",
+   "kind": "image"
+  },
+  {
+   "file": "102257-rhine-water.png",
+   "time": "10:22:57",
+   "kind": "image"
+  },
+  {
+   "file": "102258-shot-wayland-rhine-water.png",
+   "time": "10:22:58",
+   "kind": "image"
+  },
+  {
+   "file": "102311-far-view.png",
+   "time": "10:23:11",
+   "kind": "image"
+  },
+  {
+   "file": "102311-shot-wayland-far-view.png",
+   "time": "10:23:11",
+   "kind": "image"
+  },
+  {
+   "file": "102317-menu-navi.png",
+   "time": "10:23:17",
+   "kind": "image"
+  },
+  {
+   "file": "102324-event-bots.png",
+   "time": "10:23:24",
+   "kind": "image"
+  },
+  {
+   "file": "102324-shot-wayland-event-bots.png",
+   "time": "10:23:24",
+   "kind": "image"
+  },
+  {
+   "file": "102330-teleport-video.mp4",
+   "time": "10:23:30",
+   "kind": "video"
+  },
+  {
+   "file": "102330-video-wayland-teleport-video.png",
+   "time": "10:23:30",
+   "kind": "image"
+  },
+  {
+   "file": "102339-route-end-teleport.png",
+   "time": "10:23:39",
+   "kind": "image"
+  },
+  {
+   "file": "102339-shot-wayland-route-end-teleport.png",
+   "time": "10:23:39",
+   "kind": "image"
+  },
+  {
+   "file": "102349-shot-wayland-world-only.png",
+   "time": "10:23:49",
+   "kind": "image"
+  },
+  {
+   "file": "102349-world-only.png",
+   "time": "10:23:49",
+   "kind": "image"
+  },
+  {
+   "file": "104859-audio-demo-freehub.wav",
+   "time": "10:48:59",
+   "kind": "audio"
+  },
+  {
+   "file": "114000-multiplayer-camera-camera.mp4",
+   "time": "11:40:00",
+   "kind": "video"
+  },
+  {
+   "file": "114000-multiplayer-camera-still-30.png",
+   "time": "11:40:00",
+   "kind": "image"
+  },
+  {
+   "file": "114000-multiplayer-camera-still-50.png",
+   "time": "11:40:00",
+   "kind": "image"
+  },
+  {
+   "file": "114000-multiplayer-camera-still-65.png",
+   "time": "11:40:00",
+   "kind": "image"
+  },
+  {
+   "file": "114000-multiplayer-kiosk-kiosk.mp4",
+   "time": "11:40:00",
+   "kind": "video"
+  },
+  {
+   "file": "114000-multiplayer-kiosk-still-12.png",
+   "time": "11:40:00",
+   "kind": "image"
+  },
+  {
+   "file": "114000-multiplayer-kiosk-still-25.png",
+   "time": "11:40:00",
+   "kind": "image"
+  },
+  {
+   "file": "114000-multiplayer-kiosk-still-40.png",
+   "time": "11:40:00",
+   "kind": "image"
+  },
+  {
+   "file": "122149-scenes-readme1-readme-climb-behind.png",
+   "time": "12:21:49",
+   "kind": "image"
+  },
+  {
+   "file": "122202-scenes-readme1-readme-climb-front.png",
+   "time": "12:22:02",
+   "kind": "image"
+  },
+  {
+   "file": "122216-scenes-readme1-readme-malbun-high.png",
+   "time": "12:22:16",
+   "kind": "image"
+  },
+  {
+   "file": "122229-scenes-readme1-readme-hairpins.png",
+   "time": "12:22:29",
+   "kind": "image"
+  },
+  {
+   "file": "194052-multiplayer-kiosk-kiosk.mp4",
+   "time": "19:40:52",
+   "kind": "video"
+  },
+  {
+   "file": "194052-multiplayer-kiosk-still-12.png",
+   "time": "19:40:52",
+   "kind": "image"
+  },
+  {
+   "file": "194052-multiplayer-kiosk-still-25.png",
+   "time": "19:40:52",
+   "kind": "image"
+  },
+  {
+   "file": "194052-multiplayer-kiosk-still-40.png",
+   "time": "19:40:52",
+   "kind": "image"
+  },
+  {
+   "file": "220440-shot-wayland-bf-freiburg-freeride.png",
+   "time": "22:04:40",
+   "kind": "image"
+  },
+  {
+   "file": "220449-video-wayland-bf-freiburg-video.mp4",
+   "time": "22:04:49",
+   "kind": "video"
+  },
+  {
+   "file": "220449-video-wayland-bf-freiburg-video.png",
+   "time": "22:04:49",
+   "kind": "image"
+  },
+  {
+   "file": "220502-shot-wayland-bf-schauinsland-climb.png",
+   "time": "22:05:02",
+   "kind": "image"
+  },
+  {
+   "file": "220511-video-wayland-bf-schauinsland-climb-video.mp4",
+   "time": "22:05:11",
+   "kind": "video"
+  },
+  {
+   "file": "220511-video-wayland-bf-schauinsland-climb-video.png",
+   "time": "22:05:11",
+   "kind": "image"
+  },
+  {
+   "file": "220526-shot-wayland-bf-schauinsland-group.png",
+   "time": "22:05:26",
+   "kind": "image"
+  },
+  {
+   "file": "220541-shot-wayland-bf-schauinsland-far-view.png",
+   "time": "22:05:41",
+   "kind": "image"
+  },
+  {
+   "file": "220553-shot-wayland-bf-feldberg.png",
+   "time": "22:05:53",
+   "kind": "image"
+  },
+  {
+   "file": "220606-shot-wayland-bf-titisee-water.png",
+   "time": "22:06:06",
+   "kind": "image"
+  },
+  {
+   "file": "220615-video-wayland-bf-titisee-video.mp4",
+   "time": "22:06:15",
+   "kind": "video"
+  },
+  {
+   "file": "220615-video-wayland-bf-titisee-video.png",
+   "time": "22:06:15",
+   "kind": "image"
+  },
+  {
+   "file": "220628-shot-wayland-bf-world-only.png",
+   "time": "22:06:28",
+   "kind": "image"
+  },
+  {
+   "file": "221624-shot-wayland-bf-freiburg-freeride.png",
+   "time": "22:16:24",
+   "kind": "image"
+  },
+  {
+   "file": "221633-video-wayland-bf-freiburg-video.mp4",
+   "time": "22:16:33",
+   "kind": "video"
+  },
+  {
+   "file": "221633-video-wayland-bf-freiburg-video.png",
+   "time": "22:16:33",
+   "kind": "image"
+  },
+  {
+   "file": "221646-shot-wayland-bf-schauinsland-climb.png",
+   "time": "22:16:46",
+   "kind": "image"
+  },
+  {
+   "file": "221655-video-wayland-bf-schauinsland-climb-video.mp4",
+   "time": "22:16:55",
+   "kind": "video"
+  },
+  {
+   "file": "221655-video-wayland-bf-schauinsland-climb-video.png",
+   "time": "22:16:55",
+   "kind": "image"
+  },
+  {
+   "file": "221710-shot-wayland-bf-schauinsland-group.png",
+   "time": "22:17:10",
+   "kind": "image"
+  },
+  {
+   "file": "221725-shot-wayland-bf-schauinsland-far-view.png",
+   "time": "22:17:25",
+   "kind": "image"
+  },
+  {
+   "file": "221738-shot-wayland-bf-feldberg.png",
+   "time": "22:17:38",
+   "kind": "image"
+  },
+  {
+   "file": "221751-shot-wayland-bf-titisee-water.png",
+   "time": "22:17:51",
+   "kind": "image"
+  },
+  {
+   "file": "221800-video-wayland-bf-titisee-video.mp4",
+   "time": "22:18:00",
+   "kind": "video"
+  },
+  {
+   "file": "221800-video-wayland-bf-titisee-video.png",
+   "time": "22:18:00",
+   "kind": "image"
+  },
+  {
+   "file": "221813-shot-wayland-bf-world-only.png",
+   "time": "22:18:13",
+   "kind": "image"
+  },
+  {
+   "file": "221902-scenes-bf-try-titisee-60.png",
+   "time": "22:19:02",
+   "kind": "image"
+  },
+  {
+   "file": "221913-scenes-bf-try-titisee-120.png",
+   "time": "22:19:13",
+   "kind": "image"
+  },
+  {
+   "file": "221925-scenes-bf-try-titisee-240.png",
+   "time": "22:19:25",
+   "kind": "image"
+  },
+  {
+   "file": "221937-scenes-bf-try-titisee-300.png",
+   "time": "22:19:37",
+   "kind": "image"
+  },
+  {
+   "file": "221949-scenes-bf-try-freiburg-high.png",
+   "time": "22:19:49",
+   "kind": "image"
+  },
+  {
+   "file": "222001-scenes-bf-try-freiburg-high2.png",
+   "time": "22:20:01",
+   "kind": "image"
+  },
+  {
+   "file": "222111-scenes-bf-try2-titisee-0.png",
+   "time": "22:21:11",
+   "kind": "image"
+  },
+  {
+   "file": "222123-scenes-bf-try2-titisee-90.png",
+   "time": "22:21:23",
+   "kind": "image"
+  },
+  {
+   "file": "222135-scenes-bf-try2-titisee-180.png",
+   "time": "22:21:35",
+   "kind": "image"
+  },
+  {
+   "file": "222147-scenes-bf-try2-titisee-270.png",
+   "time": "22:21:47",
+   "kind": "image"
+  },
+  {
+   "file": "222217-scenes-bf-try3-titisee-top.png",
+   "time": "22:22:17",
+   "kind": "image"
+  },
+  {
+   "file": "222229-scenes-bf-try3-titisee-p70.png",
+   "time": "22:22:29",
+   "kind": "image"
+  },
+  {
+   "file": "222241-scenes-bf-try3-titisee-w.png",
+   "time": "22:22:41",
+   "kind": "image"
+  },
+  {
+   "file": "222252-scenes-bf-try3-titisee-v2.png",
+   "time": "22:22:52",
+   "kind": "image"
+  },
+  {
+   "file": "222950-shot-wayland-bf-freiburg-freeride.png",
+   "time": "22:29:50",
+   "kind": "image"
+  },
+  {
+   "file": "222959-video-wayland-bf-freiburg-video.mp4",
+   "time": "22:29:59",
+   "kind": "video"
+  },
+  {
+   "file": "223012-shot-wayland-bf-schauinsland-climb.png",
+   "time": "22:30:12",
+   "kind": "image"
+  },
+  {
+   "file": "223022-video-wayland-bf-schauinsland-climb-video.mp4",
+   "time": "22:30:22",
+   "kind": "video"
+  },
+  {
+   "file": "223022-video-wayland-bf-schauinsland-climb-video.png",
+   "time": "22:30:22",
+   "kind": "image"
+  },
+  {
+   "file": "223036-shot-wayland-bf-schauinsland-group.png",
+   "time": "22:30:36",
+   "kind": "image"
+  },
+  {
+   "file": "223052-shot-wayland-bf-schauinsland-far-view.png",
+   "time": "22:30:52",
+   "kind": "image"
+  },
+  {
+   "file": "223104-shot-wayland-bf-feldberg.png",
+   "time": "22:31:04",
+   "kind": "image"
+  },
+  {
+   "file": "223117-shot-wayland-bf-titisee-water.png",
+   "time": "22:31:17",
+   "kind": "image"
+  },
+  {
+   "file": "223127-video-wayland-bf-titisee-video.mp4",
+   "time": "22:31:27",
+   "kind": "video"
+  },
+  {
+   "file": "223127-video-wayland-bf-titisee-video.png",
+   "time": "22:31:27",
+   "kind": "image"
+  },
+  {
+   "file": "223140-shot-wayland-bf-world-only.png",
+   "time": "22:31:40",
+   "kind": "image"
+  },
+  {
+   "file": "225250-shot-wayland-shot.jpg",
+   "time": "22:52:50",
+   "kind": "image"
+  },
+  {
+   "file": "225453-shot-wayland-hudoff.jpg",
+   "time": "22:54:53",
+   "kind": "image"
+  },
+  {
+   "file": "225503-shot-wayland-shot.png",
+   "time": "22:55:03",
+   "kind": "image"
+  },
+  {
+   "file": "225512-shot-wayland-shot720.jpg",
+   "time": "22:55:12",
+   "kind": "image"
+  },
+  {
+   "file": "225528-video-wayland-cap.jpg",
+   "time": "22:55:28",
+   "kind": "image"
+  },
+  {
+   "file": "225528-video-wayland-cap.mp4",
+   "time": "22:55:28",
+   "kind": "video"
+  },
+  {
+   "file": "225536-video-wayland-cap720.jpg",
+   "time": "22:55:36",
+   "kind": "image"
+  },
+  {
+   "file": "225536-video-wayland-cap720.mp4",
+   "time": "22:55:36",
+   "kind": "video"
+  },
+  {
+   "file": "225547-ts-verify-live-2026-11-12-21-55-40.mp4",
+   "time": "22:55:47",
+   "kind": "video"
+  },
+  {
+   "file": "225553-shot-wayland-live.jpg",
+   "time": "22:55:53",
+   "kind": "image"
+  },
+  {
+   "file": "225604-ts-verify-live-dev-2026-11-12-21-55-57.mp4",
+   "time": "22:56:04",
+   "kind": "video"
+  },
+  {
+   "file": "225610-shot-wayland-live-dev.jpg",
+   "time": "22:56:10",
+   "kind": "image"
+  }
+ ],
+ "images": 383,
+ "videos": 63,
+ "sounds": 2,
+ "builds": {
+  "runs": 0,
+  "seconds": 0,
+  "cargo_s": 0,
+  "compiled": 0,
+  "wait_s": 0,
+  "failed": [],
+  "machines": {},
+  "online": {},
+  "samples": 0
+ },
+ "prompts": [
+  {
+   "time": "00:06:33",
+   "iso": "2026-11-12T00:06:33+01:00",
+   "text": "keep adding created images or videos to the build-history"
+  },
+  {
+   "time": "06:30:04",
+   "iso": "2026-11-12T06:30:04+01:00",
+   "text": "build linux and windows release"
+  },
+  {
+   "time": "06:52:10",
+   "iso": "2026-11-12T06:52:10+01:00",
+   "text": "Why aren't we releasing the Liechtenstein world file? I mean, is there any license restriction, or is it just due to the big size?"
+  },
+  {
+   "time": "06:54:20",
+   "iso": "2026-11-12T06:54:20+01:00",
+   "text": "Yeah, better release it with GitHub release, and also release the binaries with GitHub release."
+  },
+  {
+   "time": "06:58:52",
+   "iso": "2026-11-12T06:58:52+01:00",
+   "text": "What's the development status?"
+  },
+  {
+   "time": "07:00:30",
+   "iso": "2026-11-12T07:00:30+01:00",
+   "text": "What do you mean by phase 5 backend? And which exactly steps are you referring to? Finishing phase 3. What about phase 4? And are there any other phases still open?"
+  },
+  {
+   "time": "07:04:32",
+   "iso": "2026-11-12T07:04:32+01:00",
+   "text": "postpone the root editor for now. Start with phase for and models and audio, and start also with the live communication feature."
+  },
+  {
+   "time": "07:12:58",
+   "iso": "2026-11-12T07:12:58+01:00",
+   "text": "Let's refine the specification for the voice chat feature. So it should be always on, similar to video conferences and calls, Teams or Google Meet for an example. There should be hotkeys on both keyboard and gamepad to mute your own microphone and also mute your speaker at all."
+  },
+  {
+   "time": "07:33:04",
+   "iso": "2026-11-12T07:33:04+01:00",
+   "text": "better switch to clang 21, let's install from debian backports"
+  },
+  {
+   "time": "07:35:58",
+   "iso": "2026-11-12T07:35:58+01:00",
+   "text": "gh is logged in on deb machine. release the world and the binaries via gh now. also remove the binaries from the git history,"
+  },
+  {
+   "time": "07:42:43",
+   "iso": "2026-11-12T07:42:43+01:00",
+   "text": "add installing the required clang version (here 21) via llvm debian repo into make deps-linux-debian"
+  },
+  {
+   "time": "07:49:52",
+   "iso": "2026-11-12T07:49:52+01:00",
+   "text": "why can'T you build the voice option with rust?"
+  },
+  {
+   "time": "07:52:45",
+   "iso": "2026-11-12T07:52:45+01:00",
+   "text": "okay. what are the options for voice when thinking about ios/android and pure browser option?"
+  },
+  {
+   "time": "07:54:53",
+   "iso": "2026-11-12T07:54:53+01:00",
+   "text": "yes, stay with option 1 and continue as proposed"
+  },
+  {
+   "time": "08:10:47",
+   "iso": "2026-11-12T08:10:47+01:00",
+   "text": "i need the make deps-llvm-debian command to install clang on the system."
+  },
+  {
+   "time": "08:12:59",
+   "iso": "2026-11-12T08:12:59+01:00",
+   "text": "can you verify we need libglib2.0-dev? if yes, add it better to the make deps-linux section. update that on marge."
+  },
+  {
+   "time": "08:14:27",
+   "iso": "2026-11-12T08:14:27+01:00",
+   "text": "done"
+  },
+  {
+   "time": "08:25:07",
+   "iso": "2026-11-12T08:25:07+01:00",
+   "text": "bg task: build a test harness that renders various scenes. take photos and videos, add them to the artwork/build-history"
+  },
+  {
+   "time": "08:31:45",
+   "iso": "2026-11-12T08:31:45+01:00",
+   "text": "bg task: make a multiplayer test where marge runs the server and GUI in kiosk mode. run headless bots on the available build machines and have them connect to the server.  add to makefile -> make test-multiplayer.  also restructure all the make commands that are actually tests and add a test- prefix. add the entire specification for this feature to the SPECIFICATION.md"
+  },
+  {
+   "time": "08:34:02",
+   "iso": "2026-11-12T08:34:02+01:00",
+   "text": "regarding the build-history, yes, keep that out of the github history as well. package it as zip file and put it next to the releases. open question: how to persist it locally?"
+  },
+  {
+   "time": "08:44:50",
+   "iso": "2026-11-12T08:44:50+01:00",
+   "text": "i ran the chown command as you suggested. remove the artwork/build-history entirely"
+  },
+  {
+   "time": "09:33:03",
+   "iso": "2026-11-12T09:33:03+01:00",
+   "text": "yes, fix the bugs above."
+  },
+  {
+   "time": "10:26:50",
+   "iso": "2026-11-12T10:26:50+01:00",
+   "text": "bg task: note that the typical clicking sound comes from the freehup and is only audible when the rider is not pedalling. fix that."
+  },
+  {
+   "time": "10:28:33",
+   "iso": "2026-11-12T10:28:33+01:00",
+   "text": "bg task: fix the performance issue in multiplayer. the videos show a video with a low frame rate (is the fps counter still visible? couldnt see it, fix that)."
+  },
+  {
+   "time": "12:19:38",
+   "iso": "2026-11-12T12:19:38+01:00",
+   "text": "Put a couple of photos showing multiple risers and mountains on the projects github start page. Add the logo there too."
+  },
+  {
+   "time": "16:28:07",
+   "iso": "2026-11-12T16:28:07+01:00",
+   "text": "check if all build artifacts are uptodate and release all platforms in a new release."
+  },
+  {
+   "time": "16:28:51",
+   "iso": "2026-11-12T16:28:51+01:00",
+   "text": "did the multiplayer test finish sucessfully?"
+  },
+  {
+   "time": "16:29:02",
+   "iso": "2026-11-12T16:29:02+01:00",
+   "text": "are there any open build items / issues?"
+  },
+  {
+   "time": "21:29:57",
+   "iso": "2026-11-12T21:29:57+01:00",
+   "text": "I want to creat an Art Project on the entire Build Process of this OCW App. Therefore it is super important to document every step we do with images, videos, text and audio. Every merge, commit and test is interesting as well. Thats why i asked earlier to keep all the photos and videos in build-history. I want you to create a video which documents the evolution of the world, the riders the images, the landscapes and such.  can you do this for every build day, adding each new day to the previous video from the day before? So that it becomes like a diary. Also keep the per day video seperately as well. Use a cool and stylish way of story telling and make it funny too. Make it appealing to the viewer. Use some time laps elements. Save this description in an art project specification so that later on we can always come back, add new elements and start the build of the video again."
+  },
+  {
+   "time": "21:40:37",
+   "iso": "2026-11-12T21:40:37+01:00",
+   "text": "BG Task: Create a new world: The Blackforest."
+  },
+  {
+   "time": "22:13:45",
+   "iso": "2026-11-12T22:13:45+01:00",
+   "text": "Important Addon: for every photo and video you take, we need to embedd the ISO Date and timestamp into bothe the file and the image itself. For adding it into the image, add it to the ingame HUd, top right corner."
+  },
+  {
+   "time": "22:17:29",
+   "iso": "2026-11-12T22:17:29+01:00",
+   "text": "increase the quality to 90% of the screenshots and videos taken. use jpg rather than png and a higher resulution. make sure the exportet and recorded videos contain the ingame audio."
+  },
+  {
+   "time": "22:21:26",
+   "iso": "2026-11-12T22:21:26+01:00",
+   "text": "Planning: Think about where to get textures from. The have to be license free or with an open license like MIT/Apache 2.0 compatible. Are there Satellite images auvailable and could be used? What about textures for the actial riders, bikes, roads and houses and so on? Where to get them from? Could they be generated? The should match the actual situation of how it really looks in that particular region. Add your results and and questions to the specification.md as a new phase."
+  },
+  {
+   "time": "22:26:06",
+   "iso": "2026-11-12T22:26:06+01:00",
+   "text": "you can use the mac and windows build machines too. they are a bit slower so might be better suited for smaller dev tasks but should be used from now on as well to speed up the entire development process."
+  },
+  {
+   "time": "22:37:11",
+   "iso": "2026-11-12T22:37:11+01:00",
+   "text": "Add planning for season and weather simulation for a later phase. also circadian (day/night/position of the sun and moon and stars, movement of sun/moon/stars). make it match the actual day and time of the rider in the position of the world where he is. but plan also for a feature called timemachine, where the user can set any time and date he wants. analog plan for a weather machine, where he can set the weather he wants. also plan for getting actual weather data for the position of the rider."
+  },
+  {
+   "time": "22:40:21",
+   "iso": "2026-11-12T22:40:21+01:00",
+   "text": "why is the exo/sentinel license problematic? another suggestion for textures and design of objects: look for photos on the internet e.g wikipedia or image search to get an idea of how things should look like."
+  },
+  {
+   "time": "22:46:21",
+   "iso": "2026-11-12T22:46:21+01:00",
+   "text": "time question: i mean the time of where the rider is in the virtual world, not the time the physical human is. weather should be realistic and also with extreme weather, no cap."
+  },
+  {
+   "time": "22:57:57",
+   "iso": "2026-11-12T22:57:57+01:00",
+   "text": "earlier you asked if to use more precise hight data: yes, use the best data you can find. same for the OSM, texture and other images."
+  },
+  {
+   "time": "22:57:57",
+   "iso": "2026-11-12T22:57:57+01:00",
+   "text": "create some pictures and videos (with timestamps as defined earlier) to show the region. Show a couple of well known places like mummelsee, feldberg, sasbachwalden, baden baden and so on."
+  },
+  {
+   "time": "22:57:57",
+   "iso": "2026-11-12T22:57:57+01:00",
+   "text": "Your question: Weather physics: should wind and wet roads change the physics, and in races too? I propose on in solo and free ride, off in races unless the organiser enables it.\n\nAnswer: yes, it should affect the physics realistically. i agree to your proposal about controlability in races by the organiser."
+  },
+  {
+   "time": "22:59:08",
+   "iso": "2026-11-12T22:59:08+01:00",
+   "text": "add planning for the browser based app"
+  }
+ ],
+ "tokens": {
+  "total": {
+   "input": 8070,
+   "cache_write": 12966513,
+   "cache_read": 856863828,
+   "output": 2803683,
+   "total": 872642094,
+   "messages": 3799
+  },
+  "features": {
+   "UI & menus": {
+    "input": 1120,
+    "cache_write": 2039792,
+    "cache_read": 110821257,
+    "output": 369922,
+    "total": 113232091,
+    "messages": 535
+   },
+   "Art project": {
+    "input": 732,
+    "cache_write": 680551,
+    "cache_read": 87554348,
+    "output": 207223,
+    "total": 88442854,
+    "messages": 314
+   },
+   "Build, release & infra": {
+    "input": 382,
+    "cache_write": 306734,
+    "cache_read": 20629285,
+    "output": 78025,
+    "total": 21014426,
+    "messages": 166
+   },
+   "Worlds & terrain": {
+    "input": 956,
+    "cache_write": 794147,
+    "cache_read": 115989051,
+    "output": 326939,
+    "total": 117111093,
+    "messages": 463
+   },
+   "Other": {
+    "input": 1912,
+    "cache_write": 3940181,
+    "cache_read": 180118137,
+    "output": 617254,
+    "total": 184677484,
+    "messages": 904
+   },
+   "Planning & spec": {
+    "input": 20,
+    "cache_write": 12648,
+    "cache_read": 1934224,
+    "output": 4391,
+    "total": 1951283,
+    "messages": 8
+   },
+   "Audio & voice": {
+    "input": 1028,
+    "cache_write": 3092427,
+    "cache_read": 121821795,
+    "output": 410142,
+    "total": 125325392,
+    "messages": 476
+   },
+   "Multiplayer & server": {
+    "input": 942,
+    "cache_write": 921667,
+    "cache_read": 108826404,
+    "output": 327645,
+    "total": 110076658,
+    "messages": 459
+   },
+   "Materials & look": {
+    "input": 348,
+    "cache_write": 272051,
+    "cache_read": 31926225,
+    "output": 123533,
+    "total": 32322157,
+    "messages": 170
+   },
+   "Sky, time & weather": {
+    "input": 52,
+    "cache_write": 41863,
+    "cache_read": 10358815,
+    "output": 26621,
+    "total": 10427351,
+    "messages": 23
+   },
+   "Riders & bikes": {
+    "input": 578,
+    "cache_write": 864452,
+    "cache_read": 66884287,
+    "output": 311988,
+    "total": 68061305,
+    "messages": 281
+   }
+  }
+ }
+}

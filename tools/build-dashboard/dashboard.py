@@ -1393,6 +1393,8 @@ class Dashboard:
         status = summarize(machines, getattr(self, "questions", None), getattr(self, "janitor", None),
                            getattr(self, "answers", None))
         bm = getattr(self, "build_machines", None)
+        if getattr(self, "art_log", None) is not None:
+            status["art"] = art_status(self.art_log)
         # The page shows the enable/disable and slot controls only then.
         status["machine_settings"] = bool(bm is not None and not bm.read_only and getattr(self, "token", None))
         return annotate_jobs(status, getattr(self, "prompts", None), getattr(self, "commits", None),
@@ -1602,6 +1604,8 @@ def format_text(status: dict) -> str:
             lines.append("  janitor: %s" % janitor_line(jr, status.get("generated_at")))
         lines.append("")
     lines += janitor_text(status.get("janitor") or {})
+    if "art" in status:
+        lines += art_text(status["art"])
     lines += questions_text(status.get("questions"))
     return "\n".join(lines)
 
@@ -1643,6 +1647,70 @@ def janitor_text(j: dict) -> list:
     for e in (j.get("recent") or [])[-5:]:
         out.append("  %s %s %s %s %s" % (e.get("time", "")[:16], e.get("machine"), e.get("action"),
                                          e.get("path", ""), fmt_bytes(e.get("bytes")) if e.get("bytes") else ""))
+    return out + [""]
+
+
+# --------------------------------------------------------------------------
+# Art project: the hourly collector (art/ART-PROJECT.md §5.1)
+# --------------------------------------------------------------------------
+
+ART_LATE_S = 2.5 * 3600  # the timer runs hourly: no run for 2.5 h is late
+ART_STALE_S = 2 * 3600  # "running" longer than the unit's timeout: it died
+
+
+def art_status(build_log: Path | None, now: float | None = None) -> dict | None:
+    """The art collector's latest run: the newest
+    test-output/build-log/DAY/art.json (written by scripts/art-collect.sh),
+    with `age_s` (since its end, or start) and `late` (no run for 2.5 h, or
+    a "running" run that never ended). None without any run."""
+    if build_log is None or not build_log.is_dir():
+        return None
+    now = time.time() if now is None else now
+    for f in sorted(build_log.glob("????-??-??/art.json"), reverse=True):
+        try:
+            st = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(st, dict):
+            continue
+        out = {k: st.get(k) for k in ("start", "end", "status", "new_files", "media", "mask_check", "sheets",
+                                      "days", "errors", "run_day")}
+        out["errors"] = list(out.get("errors") or [])[:5]
+        t = _epoch(st.get("end") or "") or _epoch(st.get("start") or "")
+        out["age_s"] = (now - t) if t else None
+        if out["status"] == "running" and out["age_s"] is not None and out["age_s"] > ART_STALE_S:
+            out["status"] = "stale"
+        out["late"] = out["age_s"] is None or out["age_s"] > ART_LATE_S or out["status"] == "stale"
+        return out
+    return None
+
+
+def art_line(a) -> str:
+    """"Art project: last collector run 14:02 (12m ago): ok, 3 new files,
+    214 media today, mask check ok"."""
+    if not a:
+        return "Art project: no collector run yet (make art-install-timer)"
+    when = (a.get("end") or a.get("start") or "?")[11:16]
+    ago = (" (%s ago)" % fmt_dur(a["age_s"])) if a.get("age_s") is not None else ""
+    parts = [str(a.get("status") or "?").upper() if a.get("status") != "ok" else "ok"]
+    if a.get("new_files") is not None:
+        parts.append("%s new file%s" % (a["new_files"], "" if a["new_files"] == 1 else "s"))
+    if a.get("media") is not None:
+        parts.append("%s media today" % a["media"])
+    if a.get("mask_check"):
+        parts.append("mask check %s" % a["mask_check"])
+    if a.get("sheets"):
+        parts.append("contact sheets")
+    line = "Art project: last collector run %s%s: %s" % (when, ago, ", ".join(parts))
+    if a.get("late"):
+        line += " - LATE: no run for over %s (make art-timer-status)" % fmt_dur(ART_LATE_S)
+    return line
+
+
+def art_text(a) -> list:
+    out = [art_line(a)]
+    for e in (a or {}).get("errors") or []:
+        out.append("  " + _shorten(e, 140))
     return out + [""]
 
 
@@ -2855,6 +2923,8 @@ def main(argv=None) -> int:
         cfg / build_machines.FILE_NAME, a.record or (main_repo / "test-output" / "build-log"))
     ssh = lambda m, script, timeout, stdin=None: run_ssh(m, script, timeout, stdin, dash.ctl)  # noqa: E731
     dash.janitor = janitor.Janitor(machines, main_repo, log_root, a.janitor, ssh)
+    # The art project's hourly collector writes its status there (art.json).
+    dash.art_log = main_repo / "test-output" / "build-log"
     if a.janitor_plan:
         print(janitor_plan_text(dash.janitor, machines))
         return 0
@@ -2864,6 +2934,7 @@ def main(argv=None) -> int:
         apply_settings(states, machines, dash.build_machines)
         status = annotate_jobs(summarize(states, dash.questions, None, dash.answers), mask=Masker([s for m in machines for s in m.secrets()], ()))
         status["janitor"]["mode"] = a.janitor
+        status["art"] = art_status(dash.art_log)
         print(json.dumps(status, indent=2) if a.json else format_text(status))
         return 0
     if a.no_machine_settings:

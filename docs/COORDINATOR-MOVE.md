@@ -32,7 +32,7 @@ build history and the GitHub CLI login. Today that is the Debian dev machine.
 3. **Copy** to marge:
    - `config/machines.toml` and `config/ssh/` by `scp`/`rsync`, never through git (step 4 above);
    - Claude memory: `~/.claude/projects/-home-nils-data-git-OCW/memory/` → `~/.claude/projects/-home-claude-coord-OCW/memory/`;
-   - `artwork/build-history/` (1.3 GB);
+   - `art/build-history/` (the media; its masked text files are in git; 2.6 GB);
    - `test-output/` (0.6 GB);
    - `data/pilot` and `data/blackforest` (or fetch them again).
 4. **`remote.sh`:** when the target machine is the one it runs on (marge), run in place instead of ssh + rsync to itself. Machine entry `local = true` in `machines.toml`.
