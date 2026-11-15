@@ -4,7 +4,7 @@
     scripts/test-web.py [--out test-output/web] [--seconds 12] [--query ...]
                         [--chromium chromium] [--size 1280x720] [--software]
                         [--world ID|URL [--route NAME] [--teleport KM] [--no-reload]]
-                        [--no-ui] [--god [--god-height M]]
+                        [--no-ui] [--god [--god-height M]] [--max-wasm-mb MB]
 
 Serves target/web/ (`make web`; with --world also the published worlds in
 target/web/worlds/, `make web-worlds`) on a free local port with range
@@ -41,7 +41,8 @@ With --world and --god: unicorn mode over the world after the ride
 
 Exits 0 when the module loaded, the server ticked, the rider rode and no
 uncaught exception happened (with --world: both loads were ready, the
-second from the cache); 1 otherwise (the log says why).
+second from the cache, and the wasm memory stayed below --max-wasm-mb,
+default 1500 MB); 1 otherwise (the log says why).
 """
 
 import argparse
@@ -145,6 +146,11 @@ def console_text(event):
 
 
 MB = r"([\d.]+) (MB|kB)"
+# A world ride fails above this much wasm memory (spec §14 Phase 8 T8: the
+# vegetation of v3.49 took 2.7 GB in Liechtenstein and ran out of the 4 GB
+# address space on Tenerife; a ride needs a few hundred MB). --max-wasm-mb
+# changes it, 0 turns the check off.
+WORLD_WASM_LIMIT_MB = 1500.0
 
 
 def mb(value, unit):
@@ -283,8 +289,29 @@ def visit(cdp, url, a, base, lines, label, world, stats):
         "server": dict(stats),
     })
     rode = float(last.get("distance_m", 0)) > 5.0
+    limit = wasm_limit(a, world)
+    r["wasm_limit_mb"] = limit or None
+    over = wasm_error(r["peak_wasm_mb"], limit)
+    if over:
+        errors.append(over)
     r["ok"] = first_tick is not None and rode and not errors and (ready is not None or not world)
     return r
+
+
+def wasm_limit(a, world):
+    """The wasm memory limit of a visit (MB; 0: none): --max-wasm-mb, else
+    WORLD_WASM_LIMIT_MB for world rides."""
+    limit = getattr(a, "max_wasm_mb", None)
+    if limit is None:
+        limit = WORLD_WASM_LIMIT_MB if world else 0.0
+    return float(limit)
+
+
+def wasm_error(peak_mb, limit_mb):
+    """The error of a visit whose wasm memory went above the limit, or None."""
+    if limit_mb and (peak_mb or 0) > limit_mb:
+        return f"wasm memory {peak_mb:.0f} MB, above the limit of {limit_mb:.0f} MB"
+    return None
 
 
 def chromium_flags(profile, w, h, gpu="webgpu", software=False):
@@ -371,6 +398,9 @@ def main():
                    help="with --god: put the unicorn this high above the ground first (m)")
     p.add_argument("--no-ui", action="store_true",
                    help="no UI part (menus, settings, downloads; B6)")
+    p.add_argument("--max-wasm-mb", type=float, default=None,
+                   help=f"fail when the wasm memory goes above this (MB; default {WORLD_WASM_LIMIT_MB:.0f} "
+                        "for world rides, none otherwise; 0: no check)")
     p.add_argument("--trust-root", default=None,
                    help="root public key (hex) the page trusts (default: target/web-keys/root.hex)")
     a = p.parse_args()
@@ -535,7 +565,7 @@ def main():
     for v in summary.get("visits", []):
         print(json.dumps({k: v.get(k) for k in (
             "label", "ok", "ready_s", "ready_app_s", "cache_mb", "network_mb", "requests",
-            "peak_resident_mb", "peak_wasm_mb", "dropped", "memory", "opfs", "server",
+            "peak_resident_mb", "peak_wasm_mb", "wasm_limit_mb", "dropped", "memory", "opfs", "server",
             "screenshot", "screenshot_teleport", "loading_screenshot", "errors")}, indent=2))
     print(f"log: {base}.log  screenshot: {base}.jpg")
     sys.exit(0 if summary["ok"] else 1)

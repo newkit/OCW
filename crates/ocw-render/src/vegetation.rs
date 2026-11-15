@@ -8,8 +8,18 @@
 //! banana plants, the stands of maize and cereals) drawn up to
 //! [`NEAR_FADE_M`] and a far mesh (simple models) drawn beyond it, the two
 //! cross-faded (dithered) by their visibility ranges.
+//!
+//! The near meshes are only built where they can be seen (spec §14 Phase 8
+//! T8, the memory fix): a tile keeps its chunks' near plants as recipes
+//! ([`NearPlants`], 56 bytes a plant instead of some 5 kB of mesh),
+//! and [`lazy_plants`] builds a chunk's near mesh on the task pool when a
+//! camera comes within [`NEAR_BUILD_M`] (detail chunks: [`DETAIL_BUILD_M`])
+//! and drops it again beyond [`NEAR_DROP_M`] ([`DETAIL_DROP_M`]). Built for
+//! every resident tile, the forests' near models alone took up to 100 MB
+//! a tile and 2.7 GB of wasm memory in the browser.
 
 use bevy::prelude::*;
+use bevy::tasks::{AsyncComputeTaskPool, Task, futures::check_ready};
 use ocw_sky::season::{Crop, CropStage, LeafType, SeasonDay};
 use ocw_world::flora::{FloraRegion, LeafGroup, Setting, Site, Species, pick_species, stature};
 use ocw_world::landuse::LandClass;
@@ -34,11 +44,324 @@ pub const DETAIL_FADE_M: std::ops::Range<f32> = 130.0..180.0;
 /// from the camera to a chunk's centre (m).
 pub const NEAR_FADE_M: std::ops::Range<f32> = 230.0..310.0;
 
+/// A chunk's near mesh is built when a camera comes within this distance
+/// of its centre (m): [`NEAR_FADE_M`]'s end and a margin for the ride.
+pub const NEAR_BUILD_M: f32 = NEAR_FADE_M.end + 120.0;
+/// … and dropped again beyond this one (m).
+pub const NEAR_DROP_M: f32 = NEAR_BUILD_M + 100.0;
+/// The same for the detail chunks (bananas, vines; m).
+pub const DETAIL_BUILD_M: f32 = DETAIL_FADE_M.end + 70.0;
+pub const DETAIL_DROP_M: f32 = DETAIL_BUILD_M + 60.0;
+/// Near meshes built ahead (within the build distance, not yet in view)
+/// per frame; those a camera can already see are built at once.
+pub const PREBUILD_PER_FRAME: usize = 2;
+/// Near meshes being built at a time (beyond those already in view).
+pub const MAX_LAZY_TASKS: usize = 4;
+
+/// A plant's near model ([`crate::flora::plant`]'s arguments).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NearPlant {
+    pub sp: Species,
+    pub at: PlantAt,
+    pub look: crate::flora::PlantLook,
+}
+
+/// A piece of a vine row ([`crate::flora::vine_row`]'s arguments).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VinePiece {
+    pub a: Vec3,
+    pub b: Vec3,
+    pub height: f32,
+    pub look: crate::flora::PlantLook,
+    pub colour: [f32; 3],
+}
+
+/// A field stand's cell ([`crate::flora::stand_cell`]'s arguments).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StandCell {
+    pub centre: Vec3,
+    pub size: f32,
+    pub ys: [f32; 4],
+    pub tops: [f32; 5],
+    pub shades: [f32; 5],
+    pub open: [bool; 4],
+    pub colour: [f32; 3],
+}
+
+/// A chunk's near plants as recipes (chunk-relative): the mesh is made by
+/// [`Self::build`] when a camera comes close ([`lazy_plants`]).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct NearPlants {
+    pub plants: Vec<NearPlant>,
+    pub vines: Vec<VinePiece>,
+    pub stands: Vec<StandCell>,
+}
+
+impl NearPlants {
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The parts (plants, vine pieces, stand cells).
+    pub fn len(&self) -> usize {
+        self.plants.len() + self.vines.len() + self.stands.len()
+    }
+
+    /// The near mesh (its arrays no longer than needed).
+    pub fn build(&self) -> MeshArrays {
+        let mut m = MeshArrays::default();
+        for p in &self.plants {
+            crate::flora::plant(&mut m, p.sp, &p.at, &p.look, Detail::Near);
+        }
+        for v in &self.vines {
+            crate::flora::vine_row(&mut m, v.a, v.b, v.height, &v.look, v.colour);
+        }
+        for c in &self.stands {
+            crate::flora::stand_cell(
+                &mut m, c.centre, c.size, c.ys, c.tops, c.shades, c.open, c.colour,
+            );
+        }
+        m.shrink_to_fit();
+        m
+    }
+
+    /// The bytes the recipes take.
+    pub fn bytes(&self) -> usize {
+        self.plants.capacity() * std::mem::size_of::<NearPlant>()
+            + self.vines.capacity() * std::mem::size_of::<VinePiece>()
+            + self.stands.capacity() * std::mem::size_of::<StandCell>()
+    }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.plants.shrink_to_fit();
+        self.vines.shrink_to_fit();
+        self.stands.shrink_to_fit();
+    }
+
+    /// The centre of the parts' feet (chunk-relative): about the centre of
+    /// the built mesh's bounding box, from which the visibility range is
+    /// measured (`use_aabb`).
+    pub fn centre(&self) -> Vec3 {
+        let feet = self
+            .plants
+            .iter()
+            .map(|p| p.at.base)
+            .chain(self.vines.iter().map(|v| (v.a + v.b) / 2.0))
+            .chain(self.stands.iter().map(|c| c.centre));
+        let (lo, hi) = feet.fold(
+            (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+            |(lo, hi), q| (lo.min(q), hi.max(q)),
+        );
+        if lo.x.is_finite() {
+            (lo + hi) / 2.0
+        } else {
+            Vec3::ZERO
+        }
+    }
+}
+
+/// The bytes of a tile's plants as built with the tile: the far meshes,
+/// the near recipes and the crowns (the near meshes come and go with the
+/// camera, [`lazy_plants`]).
+pub fn plant_bytes(p: &TilePlants) -> usize {
+    p.chunks
+        .iter()
+        .chain(p.details.iter())
+        .map(|c| c.far.bytes())
+        .sum::<usize>()
+        + resident_plant_bytes(p)
+}
+
+/// The bytes of a tile's plants the CPU keeps while the tile is resident:
+/// the near recipes and the crowns (the far meshes go to the GPU).
+pub fn resident_plant_bytes(p: &TilePlants) -> usize {
+    p.chunks
+        .iter()
+        .chain(p.details.iter())
+        .map(|c| c.near.bytes())
+        .sum::<usize>()
+        + p.crowns.len() * 16
+}
+
+/// A chunk's near plants on its entity: [`lazy_plants`] gives it its mesh
+/// when a camera comes within `build_m` of `centre` and takes it away
+/// beyond `drop_m`.
+#[derive(Component)]
+pub struct LazyPlants {
+    pub plants: std::sync::Arc<NearPlants>,
+    /// [`NearPlants::centre`] (entity-relative).
+    pub centre: Vec3,
+    /// Visible up to here (its visibility range's end and a margin): built
+    /// at once when nearer.
+    pub show_m: f32,
+    pub build_m: f32,
+    pub drop_m: f32,
+    pub material: Handle<crate::see_through::SeeThroughMaterial>,
+}
+
+/// What [`lazy_plants`] does with a chunk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LazyStep {
+    /// Build the mesh now (in view, or about to be).
+    Build,
+    /// Build it ahead when the frame's budget allows.
+    Prebuild,
+    /// Drop the mesh (far away).
+    Drop,
+    Keep,
+}
+
+impl LazyPlants {
+    /// A chunk's near plants (drawn up to [`NEAR_FADE_M`]).
+    pub fn near(
+        plants: NearPlants,
+        material: Handle<crate::see_through::SeeThroughMaterial>,
+    ) -> Self {
+        Self {
+            centre: plants.centre(),
+            plants: std::sync::Arc::new(plants),
+            show_m: NEAR_FADE_M.end + 20.0,
+            build_m: NEAR_BUILD_M,
+            drop_m: NEAR_DROP_M,
+            material,
+        }
+    }
+
+    /// A detail chunk's plants (drawn up to [`DETAIL_FADE_M`]).
+    pub fn detail(
+        plants: NearPlants,
+        material: Handle<crate::see_through::SeeThroughMaterial>,
+    ) -> Self {
+        Self {
+            centre: plants.centre(),
+            plants: std::sync::Arc::new(plants),
+            show_m: DETAIL_FADE_M.end + 20.0,
+            build_m: DETAIL_BUILD_M,
+            drop_m: DETAIL_DROP_M,
+            material,
+        }
+    }
+
+    /// The step for a camera `d` m from the centre, with or without the
+    /// mesh `built`.
+    pub fn step(&self, d: f32, built: bool) -> LazyStep {
+        match built {
+            true if d > self.drop_m => LazyStep::Drop,
+            true => LazyStep::Keep,
+            false if d <= self.show_m => LazyStep::Build,
+            false if d <= self.build_m => LazyStep::Prebuild,
+            false => LazyStep::Keep,
+        }
+    }
+}
+
+/// A chunk's near mesh being built on the task pool ([`lazy_plants`]).
+#[derive(Component)]
+pub struct LazyBuild(Task<MeshArrays>);
+
+/// Builds the near meshes of the chunks near a camera – those in view at
+/// once (in this frame), the others ahead on the task pool,
+/// [`PREBUILD_PER_FRAME`] a frame (nearest first, at most
+/// [`MAX_LAZY_TASKS`] at a time) – and drops the meshes (and builds) far
+/// away ([`LazyPlants`]).
+#[allow(clippy::type_complexity)]
+pub fn lazy_plants(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    mut chunks: Query<(
+        Entity,
+        Ref<GlobalTransform>,
+        &LazyPlants,
+        Has<Mesh3d>,
+        Option<&mut LazyBuild>,
+    )>,
+) {
+    let eyes: Vec<Vec3> = cameras
+        .iter()
+        .filter(|(c, _)| c.is_active)
+        .map(|(_, g)| g.translation())
+        .collect();
+    let mut ahead: Vec<(f32, Entity)> = Vec::new();
+    let mut now = Vec::new();
+    let mut busy = 0;
+    for (e, g, lazy, built, task) in &mut chunks {
+        // Spawned this frame: no global position yet.
+        if g.is_added() {
+            continue;
+        }
+        let at = g.transform_point(lazy.centre);
+        let d = eyes
+            .iter()
+            .map(|p| p.distance(at))
+            .fold(f32::INFINITY, f32::min);
+        if let Some(mut task) = task {
+            if d > lazy.drop_m {
+                commands.entity(e).remove::<LazyBuild>();
+            } else if let Some(m) = check_ready(&mut task.0) {
+                commands.entity(e).remove::<LazyBuild>().insert((
+                    Mesh3d(meshes.add(m.mesh())),
+                    MeshMaterial3d(lazy.material.clone()),
+                ));
+            } else {
+                busy += 1;
+            }
+            continue;
+        }
+        match lazy.step(d, built) {
+            LazyStep::Build => now.push((e, lazy.plants.clone(), lazy.material.clone())),
+            LazyStep::Prebuild => ahead.push((d, e)),
+            LazyStep::Drop => {
+                commands.entity(e).remove::<(
+                    Mesh3d,
+                    MeshMaterial3d<crate::see_through::SeeThroughMaterial>,
+                )>();
+            }
+            LazyStep::Keep => {}
+        }
+    }
+    // The chunks in view are built in this frame (a teleport, a new tile:
+    // like the urgent tiles), in parallel on the desktop.
+    #[cfg(not(target_arch = "wasm32"))]
+    let built: Vec<MeshArrays> = {
+        let tasks: Vec<Task<MeshArrays>> = now
+            .iter()
+            .map(|(_, plants, _)| {
+                let plants = plants.clone();
+                AsyncComputeTaskPool::get().spawn(async move { plants.build() })
+            })
+            .collect();
+        tasks.into_iter().map(bevy::tasks::block_on).collect()
+    };
+    #[cfg(target_arch = "wasm32")]
+    let built: Vec<MeshArrays> = now.iter().map(|(_, plants, _)| plants.build()).collect();
+    for ((e, _, material), m) in now.into_iter().zip(built) {
+        commands
+            .entity(e)
+            .insert((Mesh3d(meshes.add(m.mesh())), MeshMaterial3d(material)));
+    }
+    ahead.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let room = MAX_LAZY_TASKS.saturating_sub(busy).min(PREBUILD_PER_FRAME);
+    for &(_, e) in ahead.iter().take(room) {
+        if let Ok((_, _, lazy, _, _)) = chunks.get(e) {
+            start_lazy(&mut commands, e, lazy);
+        }
+    }
+}
+
+fn start_lazy(commands: &mut Commands, e: Entity, lazy: &LazyPlants) {
+    let plants = lazy.plants.clone();
+    let task = AsyncComputeTaskPool::get().spawn(async move { plants.build() });
+    commands.entity(e).insert(LazyBuild(task));
+}
+
 /// The plants of one chunk of a tile; positions relative to `origin`.
 #[derive(Default)]
 pub struct TreeChunk {
     pub origin: [f32; 3],
-    pub near: MeshArrays,
+    /// The near plants (their mesh built when a camera comes close).
+    pub near: NearPlants,
+    /// The far models (built with the tile).
     pub far: MeshArrays,
     /// Trees (grid, mapped and orchard trees) in the chunk.
     pub trees: usize,
@@ -219,7 +542,7 @@ pub fn tile_plants(
             hue: hash(bits.0, bits.1, 15),
             pick: hash(bits.0, bits.1, 18),
         };
-        crate::flora::plant(&mut ch.near, sp, &at, &look, Detail::Near);
+        ch.near.plants.push(NearPlant { sp, at, look });
         if !near_only {
             crate::flora::plant(&mut ch.far, sp, &at, &look, Detail::Far);
         }
@@ -322,13 +645,23 @@ pub fn tile_plants(
             } else {
                 1.6
             };
-            crate::flora::vine_row(&mut ch.near, q0, q1, height, &look, colour);
+            ch.near.vines.push(VinePiece {
+                a: q0,
+                b: q1,
+                height,
+                look,
+                colour,
+            });
         }
     }
     // The fields' stands.
     stands(pkg, key, &mut chunks, &chunk_of, keep, season);
-    chunks.retain(|c| !c.near.indices.is_empty() || !c.far.indices.is_empty());
-    details.retain(|c| !c.near.indices.is_empty());
+    chunks.retain(|c| !c.near.is_empty() || !c.far.indices.is_empty());
+    details.retain(|c| !c.near.is_empty());
+    for c in chunks.iter_mut().chain(details.iter_mut()) {
+        c.near.shrink_to_fit();
+        c.far.shrink_to_fit();
+    }
     TilePlants {
         chunks,
         details,
@@ -429,16 +762,15 @@ fn stands(
             let origin = Vec3::from(chunks[i].origin);
             let centre = Vec3::new(x as f32, hc, z as f32) - origin;
             let ys = ys.map(|y| y - origin.y);
-            crate::flora::stand_cell(
-                &mut chunks[i].near,
+            chunks[i].near.stands.push(StandCell {
                 centre,
-                cs as f32,
+                size: cs as f32,
                 ys,
                 tops,
                 shades,
                 open,
                 colour,
-            );
+            });
         }
     }
 }
@@ -489,5 +821,263 @@ mod tests {
         assert_eq!(stand(FieldCrop::Vineyard, Some(&jul), 200.0).0, 0.0);
         // No season: summer.
         assert!(stand(FieldCrop::Maize, None, 200.0).0 > 1.8);
+    }
+
+    // --- The memory budget (spec §14 Phase 8 T8, the fix of v3.54) -----------
+
+    use ocw_world::landuse::{LandUse, LandUseTile};
+    use ocw_world::vegetation::{NO_ROWS, Vegetation, VegetationTile, encode_direction};
+    use ocw_world::{Tile, WorldPackage};
+    use std::collections::BTreeMap;
+
+    use crate::package::MeshArrays;
+
+    /// A gently rising 1 km tile at (`lat`, `lon`), all of `class`, its
+    /// fields all `crop` (rows at 20°; `None`: no section `VEGE`).
+    fn worst_tile(lat: f64, lon: f64, class: LandClass, crop: Option<FieldCrop>) -> WorldPackage {
+        let key = TileKey { x: 0, z: 0 };
+        let n = 21u32;
+        let mut pkg = WorldPackage {
+            name: "Budget".into(),
+            origin: (lat, lon),
+            tile_size_m: 1000.0,
+            samples: n,
+            tiles: BTreeMap::from([(
+                key,
+                Tile {
+                    key,
+                    heights: (0..n * n).map(|i| 300.0 + (i % n) as f32).collect(),
+                    roads: Vec::new(),
+                },
+            )]),
+            graph: None,
+            landuse: None,
+            buildings: None,
+            bridges: None,
+            routes: Vec::new(),
+            region: None,
+            time_zone: None,
+            look: Default::default(),
+            obstacles: None,
+        };
+        let cells = 100usize;
+        pkg.landuse = Some(LandUse {
+            cells: cells as u32,
+            tiles: BTreeMap::from([(
+                key,
+                LandUseTile {
+                    classes: vec![class; cells * cells],
+                    water: Vec::new(),
+                },
+            )]),
+        });
+        if let Some(crop) = crop {
+            let rows = if plantings::row_spec(crop, FloraRegion::Other).is_some() {
+                encode_direction(20f32.to_radians())
+            } else {
+                NO_ROWS
+            };
+            pkg.look.vegetation = Some(Vegetation {
+                cells: cells as u32,
+                sources: Vec::new(),
+                tiles: BTreeMap::from([(
+                    key,
+                    VegetationTile {
+                        crops: vec![crop.code(); cells * cells],
+                        rows: vec![rows; cells * cells],
+                        trees: Vec::new(),
+                    },
+                )]),
+            });
+        }
+        pkg
+    }
+
+    /// What a tile's plants take (MB): built with the tile, kept on the CPU
+    /// while resident, the largest near and detail chunk built; and the
+    /// most vertices in one chunk.
+    fn budget_of(pkg: &WorldPackage) -> (f64, f64, f64, f64, usize) {
+        let m = crate::package::build_tile_meshes(pkg, TileKey { x: 0, z: 0 }).unwrap();
+        let mb = |b: usize| b as f64 / 1e6;
+        let largest = |cs: &[TreeChunk]| {
+            cs.iter()
+                .map(|c| c.near.build())
+                .map(|a| (a.bytes(), a.positions.len()))
+                .max()
+                .unwrap_or_default()
+        };
+        let (near, near_v) = largest(&m.plants.chunks);
+        let (detail, detail_v) = largest(&m.plants.details);
+        (
+            mb(plant_bytes(&m.plants)),
+            mb(resident_plant_bytes(&m.plants)),
+            mb(near),
+            mb(detail),
+            near_v.max(detail_v),
+        )
+    }
+
+    /// Chunks of `size` m whose centres can lie within `r` m of a camera.
+    fn chunks_within(r: f32, size: f32) -> f32 {
+        let reach = r + size * std::f32::consts::FRAC_1_SQRT_2;
+        std::f32::consts::PI * reach * reach / (size * size)
+    }
+
+    /// Spec §14 Phase 8 T8 (the memory regression of v3.49): the densest
+    /// tiles – a closed forest, a vineyard, a maize field (Vaduz), a banana
+    /// plantation and an orchard (Tenerife), each over the whole square
+    /// kilometre, denser than any real tile of the Liechtenstein or
+    /// Tenerife packages – keep a few MB while resident (far meshes, near
+    /// recipes), their largest built chunk stays bounded, and a ride with
+    /// the browser's 25 resident tiles of the worst kind and every chunk
+    /// within the drop distances built stays well under 1 GB. Before the
+    /// fix every near mesh was built with the tile: a Liechtenstein forest
+    /// tile took 108 MB, a Tenerife banana tile 624 MB.
+    #[test]
+    fn the_densest_tiles_keep_within_the_memory_budget() {
+        let cases = [
+            ("forest", worst_tile(47.14, 9.52, LandClass::Forest, None)),
+            (
+                "vineyard",
+                worst_tile(47.14, 9.52, LandClass::Vineyard, Some(FieldCrop::Vineyard)),
+            ),
+            (
+                "maize",
+                worst_tile(47.14, 9.52, LandClass::Farmland, Some(FieldCrop::Maize)),
+            ),
+            (
+                "banana",
+                worst_tile(28.39, -16.52, LandClass::Farmland, Some(FieldCrop::Banana)),
+            ),
+            (
+                "orchard",
+                worst_tile(28.39, -16.52, LandClass::Orchard, Some(FieldCrop::Orchard)),
+            ),
+        ];
+        for (name, pkg) in cases {
+            let (built, kept, near, detail, verts) = budget_of(&pkg);
+            let size = pkg.tile_size_m;
+            let (near_cs, detail_cs) = (size / CHUNKS as f32, size / DETAIL_CHUNKS as f32);
+            // The browser's wasm memory on a ride through 25 such tiles:
+            // what the resident tiles keep, the tiles pending upload, and
+            // after a jump every chunk in view built in one frame.
+            let wasm = 25.0 * kept
+                + crate::package::MAX_PENDING_TILES as f64 * built
+                + f64::from(chunks_within(NEAR_FADE_M.end + 20.0, near_cs)) * near
+                + f64::from(chunks_within(DETAIL_FADE_M.end + 20.0, detail_cs)) * detail;
+            // All the plants' meshes at once (GPU and CPU): 25 tiles, the
+            // chunks within the drop distances built.
+            let all = 25.0 * built
+                + f64::from(chunks_within(NEAR_DROP_M, near_cs)) * near
+                + f64::from(chunks_within(DETAIL_DROP_M, detail_cs)) * detail;
+            println!(
+                "{name}: built {built:.1} MB, kept {kept:.1} MB, largest chunk near {near:.1} MB, detail {detail:.1} MB ({verts} vertices); ride: wasm {wasm:.0} MB, all {all:.0} MB"
+            );
+            assert!(built < 60.0, "{name}: {built:.1} MB built per tile");
+            assert!(kept < 10.0, "{name}: {kept:.1} MB kept per tile");
+            assert!(near < 8.0, "{name}: near chunk {near:.1} MB");
+            assert!(detail < 10.0, "{name}: detail chunk {detail:.1} MB");
+            assert!(verts < 200_000, "{name}: {verts} vertices in a chunk");
+            assert!(wasm < 500.0, "{name}: wasm memory {wasm:.0} MB");
+            assert!(all < 1_700.0, "{name}: all meshes {all:.0} MB");
+        }
+    }
+
+    #[test]
+    fn near_meshes_come_and_go_with_the_distance() {
+        let l = LazyPlants::near(NearPlants::default(), Handle::default());
+        assert_eq!(l.step(100.0, false), LazyStep::Build);
+        assert_eq!(l.step(NEAR_FADE_M.end, false), LazyStep::Build);
+        assert_eq!(l.step(NEAR_BUILD_M - 1.0, false), LazyStep::Prebuild);
+        assert_eq!(l.step(NEAR_BUILD_M + 1.0, false), LazyStep::Keep);
+        assert_eq!(l.step(NEAR_DROP_M - 1.0, true), LazyStep::Keep);
+        assert_eq!(l.step(NEAR_DROP_M + 1.0, true), LazyStep::Drop);
+        let d = LazyPlants::detail(NearPlants::default(), Handle::default());
+        assert_eq!(d.step(DETAIL_FADE_M.end, false), LazyStep::Build);
+        assert_eq!(d.step(DETAIL_BUILD_M - 1.0, false), LazyStep::Prebuild);
+        assert_eq!(d.step(DETAIL_DROP_M + 1.0, true), LazyStep::Drop);
+        // Between building and dropping a chunk keeps what it has.
+        const { assert!(NEAR_FADE_M.end < NEAR_BUILD_M && NEAR_BUILD_M < NEAR_DROP_M) };
+        const { assert!(DETAIL_FADE_M.end < DETAIL_BUILD_M && DETAIL_BUILD_M < DETAIL_DROP_M) };
+    }
+
+    /// The chunks' near meshes are built near the camera only (the nearest
+    /// ahead first) and dropped again when it goes away; the recipes give
+    /// the same mesh as drawing the plants directly.
+    #[test]
+    fn lazy_plants_build_near_the_camera_and_drop_far_away() {
+        let pkg = worst_tile(47.14, 9.52, LandClass::Forest, None);
+        let m = crate::package::build_tile_meshes(&pkg, TileKey { x: 0, z: 0 }).unwrap();
+        let near = m.plants.chunks[0].near.clone();
+        let built = near.build();
+        let mut direct = MeshArrays::default();
+        for p in &near.plants {
+            crate::flora::plant(&mut direct, p.sp, &p.at, &p.look, Detail::Near);
+        }
+        assert_eq!(built.positions, direct.positions);
+        assert!(!built.indices.is_empty());
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<crate::see_through::SeeThroughMaterial>()
+            .add_systems(Update, lazy_plants);
+        let camera = app
+            .world_mut()
+            .spawn((
+                Camera3d::default(),
+                Camera::default(),
+                GlobalTransform::from_translation(Vec3::new(0.0, 2.0, 0.0)),
+            ))
+            .id();
+        let centre = near.centre();
+        let mut spawn = |x: f32| {
+            app.world_mut()
+                .spawn((
+                    LazyPlants::near(near.clone(), Handle::default()),
+                    GlobalTransform::from_translation(Vec3::new(x, 2.0, 0.0) - centre),
+                ))
+                .id()
+        };
+        // In view, ahead (one more than a frame's prebuilds), far away.
+        let seen = spawn(100.0);
+        let ahead: Vec<Entity> = (0..=PREBUILD_PER_FRAME)
+            .map(|i| spawn(NEAR_BUILD_M - 10.0 + i as f32))
+            .collect();
+        let far = spawn(NEAR_BUILD_M + 50.0);
+        let has = |app: &App, e: Entity| app.world().get::<Mesh3d>(e).is_some();
+        let started =
+            |app: &App, e: Entity| has(app, e) || app.world().get::<LazyBuild>(e).is_some();
+        // Until every started build is done (on the task pool's threads).
+        let settle = |app: &mut App| {
+            for _ in 0..500 {
+                app.update();
+                let w = app.world_mut();
+                if w.query::<&LazyBuild>().iter(w).next().is_none() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            panic!("near meshes not built");
+        };
+        app.update(); // Just spawned: no position yet.
+        assert!(!started(&app, seen));
+        app.update();
+        // In view: built in this frame; ahead: started.
+        assert!(has(&app, seen) && !started(&app, far));
+        let first: Vec<bool> = ahead.iter().map(|e| started(&app, *e)).collect();
+        assert_eq!(first.iter().filter(|b| **b).count(), PREBUILD_PER_FRAME);
+        assert!(!first[PREBUILD_PER_FRAME], "the farthest waits");
+        settle(&mut app);
+        assert!(has(&app, seen));
+        assert!(ahead.iter().all(|e| has(&app, *e)));
+        assert!(!started(&app, far));
+        // The camera goes away: the meshes are dropped.
+        app.world_mut()
+            .entity_mut(camera)
+            .insert(GlobalTransform::from_translation(Vec3::new(
+                5_000.0, 2.0, 0.0,
+            )));
+        app.update();
+        assert!(!has(&app, seen) && ahead.iter().all(|e| !has(&app, *e)));
     }
 }

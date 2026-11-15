@@ -35,7 +35,28 @@ ws = load("web_serve", "web-serve.py")
 rd = load("test_web_readme", "test-web-readme.py")
 site = load("web_preview_site", "web-preview-site.py")
 pwi = load("preview_worlds_index", "preview_worlds_index.py")
+tw = load("test_web", "test-web.py")
 KEY = "ab" * 32
+
+
+class WasmLimit(unittest.TestCase):
+    """spec §14 Phase 8 T8: a world ride fails above the wasm memory limit."""
+
+    def test_world_rides_have_a_default_limit(self):
+        from types import SimpleNamespace as NS
+        self.assertEqual(tw.wasm_limit(NS(max_wasm_mb=None), True), tw.WORLD_WASM_LIMIT_MB)
+        self.assertEqual(tw.wasm_limit(NS(max_wasm_mb=None), False), 0.0)
+        self.assertEqual(tw.wasm_limit(NS(max_wasm_mb=800), False), 800.0)
+        self.assertEqual(tw.wasm_limit(NS(max_wasm_mb=0), True), 0.0)
+        # The preview test's ride arguments have no such option.
+        self.assertEqual(tw.wasm_limit(NS(), True), tw.WORLD_WASM_LIMIT_MB)
+
+    def test_the_regression_fails(self):
+        # The Liechtenstein ride of v3.49 (2 705 MB) fails, a fixed one not.
+        self.assertIn("2705 MB", tw.wasm_error(2705.0, 1500.0))
+        self.assertIsNone(tw.wasm_error(320.0, 1500.0))
+        self.assertIsNone(tw.wasm_error(None, 1500.0))
+        self.assertIsNone(tw.wasm_error(2705.0, 0.0))
 
 
 class WebServe(unittest.TestCase):

@@ -22,7 +22,7 @@
 //! access, signature check) is the app's [`PackageLoader`], run on a
 //! background task.
 
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use bevy::asset::RenderAssetUsages;
@@ -119,6 +119,7 @@ impl Plugin for PackagePlugin {
                     upload_tiles,
                     crate::far_terrain::update_far_terrain,
                     crate::far_terrain::hide_far_under_near,
+                    crate::vegetation::lazy_plants,
                 )
                     .chain()
                     .run_if(resource_exists::<PackageWorld>),
@@ -161,6 +162,25 @@ impl MeshArrays {
     /// The material layer of the first vertex (roads; tests).
     pub fn roads_layer(&self) -> Option<f32> {
         self.uvs_b.first().map(|u| u[0])
+    }
+
+    /// The bytes of the arrays' data.
+    pub fn bytes(&self) -> usize {
+        self.positions.len() * 12
+            + self.normals.len() * 12
+            + self.colors.len() * 16
+            + (self.uvs.len() + self.uvs_b.len()) * 8
+            + self.indices.len() * 4
+    }
+
+    /// Frees the arrays' spare capacity (meshes kept until uploaded).
+    pub fn shrink_to_fit(&mut self) {
+        self.positions.shrink_to_fit();
+        self.normals.shrink_to_fit();
+        self.colors.shrink_to_fit();
+        self.uvs.shrink_to_fit();
+        self.uvs_b.shrink_to_fit();
+        self.indices.shrink_to_fit();
     }
 
     pub(crate) fn mesh(self) -> Mesh {
@@ -1296,6 +1316,9 @@ pub(crate) struct TileStreamer {
     /// Whether they were built with the seasons (spec §14 Phase 9, S8;
     /// console `season.fx`).
     seasons_on: bool,
+    /// Loaded tiles to build again (the season or world set changed; the
+    /// old meshes stay until the new ones are uploaded).
+    stale: HashSet<TileId>,
 }
 
 /// Neighbour tiles being loaded.
@@ -1610,27 +1633,47 @@ fn stream_tiles(
         streamer.season = season;
         streamer.seasons_on = seasons_on;
         streamer.building.clear();
-        let loaded: Vec<TileId> = streamer.loaded.keys().copied().collect();
-        for id in loaded {
-            if set.members()[id.0].is_resident() {
-                streamer
-                    .building
-                    .insert(id, build_task(set, id, &look(id.0)));
-            }
-        }
+        streamer.ready.clear();
+        // Rebuilt like new ones, a few at a time ([`tiles_to_build`]).
+        let stale: HashSet<TileId> = streamer
+            .loaded
+            .keys()
+            .copied()
+            .filter(|id| set.members()[id.0].is_resident())
+            .collect();
+        streamer.stale = stale;
     }
     let jumped = is_jump(streamer.last_position, p);
     streamer.last_position = Some(p);
-    let wanted = wanted_tiles_for(set, &focus);
+    let rings = wanted_tile_rings(set, &focus);
+    let wanted: Vec<TileId> = rings.iter().map(|&(_, id)| id).collect();
     if jumped {
-        // Work for the old place is dropped (its tiles go below).
+        // Work for the old place is dropped (its tiles go below); loaded
+        // tiles whose rebuild is dropped stay stale.
+        let dropped: Vec<TileId> = streamer
+            .building
+            .keys()
+            .copied()
+            .chain(streamer.ready.iter().map(|(id, _)| *id))
+            .filter(|id| !wanted.contains(id) && streamer.loaded.contains_key(id))
+            .collect();
+        streamer.stale.extend(dropped);
         streamer.building.retain(|id, _| wanted.contains(id));
         streamer.ready.retain(|(id, _)| wanted.contains(id));
     }
-    for &id in &wanted {
-        if streamer.loaded.contains_key(&id) || streamer.building.contains_key(&id) {
-            continue;
-        }
+    let pending: HashSet<TileId> = streamer
+        .building
+        .keys()
+        .copied()
+        .chain(streamer.ready.iter().map(|(id, _)| *id))
+        .collect();
+    for id in tiles_to_build(
+        &rings,
+        |id| streamer.loaded.contains_key(&id),
+        &streamer.stale,
+        &pending,
+    ) {
+        streamer.stale.remove(&id);
         streamer
             .building
             .insert(id, build_task(set, id, &look(id.0)));
@@ -1683,7 +1726,54 @@ fn stream_tiles(
         }
         streamer.building.remove(&id);
         streamer.ready.retain(|(r, _)| *r != id);
+        streamer.stale.remove(&id);
     }
+}
+
+/// Tile builds running or waiting for their upload at a time, beyond the
+/// urgent ring after a jump: a built tile keeps all its meshes until it is
+/// uploaded (one a frame), and the browser's task pool runs every task at
+/// once between two frames (spec §14 Phase 8 T8, the memory fix).
+pub const MAX_PENDING_TILES: usize = 3;
+
+/// The tiles to start building in this frame, nearest first: of the
+/// `wanted` ones (with their ring), those not loaded (or loaded but
+/// `stale`: built for another season or world set) and not `pending`
+/// (being built or waiting for their upload) – the urgent ring always,
+/// the others while fewer than [`MAX_PENDING_TILES`] are pending; then the
+/// stale tiles no longer wanted (still loaded, until they are dropped).
+pub(crate) fn tiles_to_build(
+    wanted: &[(i32, TileId)],
+    loaded: impl Fn(TileId) -> bool,
+    stale: &HashSet<TileId>,
+    pending: &HashSet<TileId>,
+) -> Vec<TileId> {
+    let mut out = Vec::new();
+    let mut busy = pending.len();
+    let rest = {
+        let mut r: Vec<TileId> = stale
+            .iter()
+            .copied()
+            .filter(|id| !wanted.iter().any(|(_, w)| w == id))
+            .collect();
+        r.sort();
+        r
+    };
+    let candidates = wanted
+        .iter()
+        .copied()
+        .chain(rest.into_iter().map(|id| (i32::MAX, id)));
+    for (ring, id) in candidates {
+        if (loaded(id) && !stale.contains(&id)) || pending.contains(&id) || out.contains(&id) {
+            continue;
+        }
+        if ring > URGENT_RING && busy >= MAX_PENDING_TILES {
+            continue;
+        }
+        busy += 1;
+        out.push(id);
+    }
+    out
 }
 
 /// The road materials made so far, by marking style, and whether they
@@ -1951,13 +2041,14 @@ fn upload_tile(
             }
             // The plants in chunks (spec §14 Phase 8 T8): the near models
             // up to `vegetation::NEAR_FADE_M`, the far ones beyond, as far as
-            // the quality preset says, cross-faded.
+            // the quality preset says, cross-faded. The near meshes are
+            // built only near a camera (`vegetation::lazy_plants`).
             // Banana plants and vine rows: up close only.
             for chunk in std::mem::take(&mut t.plants.details) {
                 c.spawn((
-                    Mesh3d(meshes.add(chunk.near.mesh())),
-                    MeshMaterial3d(materials.trees.clone()),
+                    crate::vegetation::LazyPlants::detail(chunk.near, materials.trees.clone()),
                     Transform::from_translation(Vec3::from(chunk.origin)),
+                    Visibility::default(),
                     CameraInteraction::SeeThrough,
                     TileDetail,
                     crate::quality::detail_plant_range(),
@@ -1965,11 +2056,11 @@ fn upload_tile(
             }
             for chunk in std::mem::take(&mut t.plants.chunks) {
                 let at = Transform::from_translation(Vec3::from(chunk.origin));
-                if !chunk.near.indices.is_empty() {
+                if !chunk.near.is_empty() {
                     c.spawn((
-                        Mesh3d(meshes.add(chunk.near.mesh())),
-                        MeshMaterial3d(materials.trees.clone()),
+                        crate::vegetation::LazyPlants::near(chunk.near, materials.trees.clone()),
                         at,
+                        Visibility::default(),
                         CameraInteraction::SeeThrough,
                         TileDetail,
                         crate::quality::near_tree_range(),
@@ -2798,7 +2889,7 @@ mod tests {
                 .plants
                 .chunks
                 .iter()
-                .map(|c| c.near.positions.len() + c.far.positions.len())
+                .map(|c| c.near.build().positions.len() + c.far.positions.len())
                 .sum::<usize>()
                 + m.houses.mid.as_ref().map_or(0, |p| p.mesh.positions.len())
                 + m.terrain.positions.len();
@@ -2808,6 +2899,169 @@ mod tests {
             total / 25.0 * 1e3,
             worst * 1e3
         );
+    }
+
+    /// Spec §14 Phase 8 T8 (the memory regression of v3.49): a tile
+    /// waiting for its upload is not built again in every frame (the queue
+    /// grew by all its tiles each frame, in the browser to gigabytes), at
+    /// most [`MAX_PENDING_TILES`] are pending beyond the urgent ring, and
+    /// stale tiles are rebuilt nearest first, the ones no longer wanted
+    /// last.
+    #[test]
+    fn tile_builds_are_bounded_and_never_repeated() {
+        let id = |x: i32, z: i32| (0usize, TileKey { x, z });
+        let mut wanted: Vec<(i32, TileId)> = (-2i32..=2)
+            .flat_map(|z| (-2i32..=2).map(move |x| (x.abs().max(z.abs()), id(x, z))))
+            .collect();
+        wanted.sort_by_key(|&(r, t)| (r, t));
+        let none = HashSet::new();
+        // The start: the urgent ring at once, nothing more while it is
+        // pending.
+        let first = tiles_to_build(&wanted, |_| false, &none, &none);
+        assert_eq!(first.len(), 9, "{first:?}");
+        assert!(
+            first
+                .iter()
+                .take(9)
+                .all(|t| t.1.x.abs() <= 1 && t.1.z.abs() <= 1)
+        );
+        // The urgent ones were uploaded, three ring-2 tiles wait in the
+        // queue: none of them is built again, nothing more is started.
+        let loaded: HashSet<TileId> = first.iter().take(9).copied().collect();
+        let queued: HashSet<TileId> = wanted
+            .iter()
+            .filter(|(r, _)| *r == 2)
+            .take(MAX_PENDING_TILES)
+            .map(|&(_, t)| t)
+            .collect();
+        let next = tiles_to_build(&wanted, |t| loaded.contains(&t), &none, &queued);
+        assert!(next.is_empty(), "{next:?}");
+        // One uploaded: one more starts, never one of the queued.
+        let mut queued = queued;
+        let up = *queued.iter().next().unwrap();
+        queued.remove(&up);
+        let mut loaded = loaded;
+        loaded.insert(up);
+        let next = tiles_to_build(&wanted, |t| loaded.contains(&t), &none, &queued);
+        assert_eq!(next.len(), 1);
+        assert!(!queued.contains(&next[0]) && !loaded.contains(&next[0]));
+        // Stale (a new season): rebuilt nearest first, a few at a time, the
+        // one no longer wanted last.
+        let all: HashSet<TileId> = wanted.iter().map(|&(_, t)| t).collect();
+        let mut stale = all.clone();
+        stale.insert(id(3, 0));
+        let next = tiles_to_build(
+            &wanted,
+            |t| all.contains(&t) || t == id(3, 0),
+            &stale,
+            &none,
+        );
+        assert_eq!(next.len(), 9, "the urgent ring: {next:?}");
+        assert_eq!(next[0], id(0, 0));
+        assert!(!next.contains(&id(3, 0)));
+        let fresh: HashSet<TileId> = all.clone();
+        let only_far: HashSet<TileId> = [id(3, 0)].into();
+        let next = tiles_to_build(
+            &wanted,
+            |t| fresh.contains(&t) || t == id(3, 0),
+            &only_far,
+            &none,
+        );
+        assert_eq!(next, vec![id(3, 0)]);
+    }
+
+    /// The plants' geometry per tile on a real package (not run by
+    /// default; spec §14 Phase 8 T8, the memory budget): what a resident
+    /// tile keeps (far meshes, near recipes), what all its near meshes
+    /// would take if built at once (as before v3.54) and the largest near
+    /// and detail chunk built.
+    /// `OCW_PACKAGE=data/pilot/liechtenstein.ocwpkg cargo test --release
+    /// -p ocw-render plant_geometry_report -- --ignored --nocapture`
+    #[test]
+    #[ignore = "needs a world package"]
+    fn plant_geometry_report() {
+        // The vertices of each species' near and far model.
+        for sp in ocw_world::flora::Species::ALL {
+            let at = crate::flora::PlantAt {
+                base: Vec3::ZERO,
+                scale: 1.0,
+                turn: 0.3,
+                shade: 0.5,
+                hue: 0.5,
+                pick: 0.5,
+            };
+            let look = crate::flora::PlantLook::SUMMER;
+            let count = |d| {
+                let mut m = MeshArrays::default();
+                crate::flora::plant(&mut m, sp, &at, &look, d);
+                m.positions.len()
+            };
+            println!(
+                "{sp:?}: near {} far {} vertices",
+                count(crate::flora::Detail::Near),
+                count(crate::flora::Detail::Far)
+            );
+        }
+        let path = std::env::var("OCW_PACKAGE").expect("OCW_PACKAGE");
+        let p = WorldPackage::from_bytes(&std::fs::read(path).unwrap()).unwrap();
+        let mut rows = Vec::new();
+        let t = std::time::Instant::now();
+        let limit: usize = std::env::var("OCW_TILES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(usize::MAX);
+        let mb = |b: usize| b as f64 / 1e6;
+        for &key in p.tiles.keys().take(limit) {
+            let Some(m) = build_tile_meshes(&p, key) else {
+                continue;
+            };
+            let pl = &m.plants;
+            let kept = crate::vegetation::plant_bytes(pl);
+            let built = |cs: &[crate::vegetation::TreeChunk]| -> (usize, usize, usize) {
+                cs.iter()
+                    .map(|c| {
+                        let a = c.near.build();
+                        (a.positions.len(), a.bytes())
+                    })
+                    .fold((0, 0, 0), |s, x| (s.0 + x.0, s.1 + x.1, s.2.max(x.1)))
+            };
+            let (nv, nb, nmax) = built(&pl.chunks);
+            let (dv, db, dmax) = built(&pl.details);
+            let fv: usize = pl.chunks.iter().map(|c| c.far.positions.len()).sum();
+            rows.push((kept, key, [nv, fv, dv], nb + db, [nmax, dmax], pl.trees()));
+        }
+        rows.sort_by_key(|r| std::cmp::Reverse(r.0));
+        let total: usize = rows.iter().map(|r| r.0).sum();
+        let all_built: usize = rows.iter().map(|r| r.0 + r.3).sum();
+        println!(
+            "{} tiles in {:.1} s: kept {:.1} MB in all ({:.2} MB mean, {:.1} MB worst); with every near mesh built {:.1} MB ({:.2} MB mean); largest chunk built: near {:.1} MB, detail {:.1} MB",
+            rows.len(),
+            t.elapsed().as_secs_f64(),
+            mb(total),
+            mb(total) / rows.len().max(1) as f64,
+            mb(rows.first().map_or(0, |r| r.0)),
+            mb(all_built),
+            mb(all_built) / rows.len().max(1) as f64,
+            mb(rows.iter().map(|r| r.4[0]).max().unwrap_or(0)),
+            mb(rows.iter().map(|r| r.4[1]).max().unwrap_or(0)),
+        );
+        let mut by_built: Vec<_> = rows.iter().collect();
+        by_built.sort_by_key(|r| std::cmp::Reverse(r.0 + r.3));
+        for r in rows.iter().take(8).chain(by_built.into_iter().take(8)) {
+            println!(
+                "tile {:>4},{:>4}: kept {:6.1} MB, all built {:6.1} MB; verts near {:>8} far {:>8} detail {:>8}; largest chunk near {:5.1} MB detail {:5.1} MB; trees {:>6}",
+                r.1.x,
+                r.1.z,
+                mb(r.0),
+                mb(r.0 + r.3),
+                r.2[0],
+                r.2[1],
+                r.2[2],
+                mb(r.4[0]),
+                mb(r.4[1]),
+                r.5,
+            );
+        }
     }
 
     /// Spec §14 Phase 8 T3: the measured roof colour reaches the building
