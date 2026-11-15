@@ -2265,3 +2265,67 @@ world = "tenerife"
 args = ["--world", "{world}", "--free-ride", "--start", "-31300,-9140", "--bots", "0"]
 at = ["0.5=time pause", "0.5=time 2026-07-15 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 120 14 22"]
 shot = 12
+
+[[scene]]
+name = "veg-bf-spruce-fir-meadows"
+description = "Vegetation, Black Forest: meadows and the spruce and fir forest on the Titisee - Feldberg road (km 4, 15 July)"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/titisee-feldberg.route", "--no-neighbours", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 4.0", "2.5=camera.orbit 100 14 26"]
+shot = 12
+
+[[scene]]
+name = "veg-bf-schauinsland-forest"
+description = "Vegetation, Black Forest: the spruce and fir forest along the Schauinsland road (940 m, 15 July), raised camera"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-5942,568", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 22 45"]
+shot = 12
+
+[[scene]]
+name = "veg-bf-kaiserstuhl-vineyards"
+description = "Vegetation, Black Forest: vineyards at the Kaiserstuhl (234 m, 15 July)"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-25100,-20140", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 120 18 28"]
+shot = 12
+
+[[scene]]
+name = "veg-bf-ortenau-vineyards"
+description = "Vegetation, Black Forest: vineyards in the Ortenau foothills (257 m, 20 October): vines yellow, forest above"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "1780,-60780", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-10-20 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 120 18 28"]
+shot = 12
+
+[[scene]]
+name = "veg-bf-ortenau-orchards"
+description = "Vegetation, Black Forest: orchards in the Ortenau below Sasbachwalden (176 m, 20 April): fruit trees in blossom in their rows"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "6820,-70140", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-04-20 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 100 16 30"]
+shot = 12
+
+[[scene]]
+name = "veg-bf-fields-summer"
+description = "Vegetation, Black Forest: Rhine plain fields with EUCROPMAP 2022 crops (192 m, 15 July): maize tall, cereals ripe"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-25060,-12820", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 100 18 30"]
+shot = 12
+
+[[scene]]
+name = "veg-bf-fields-harvest"
+description = "Vegetation, Black Forest: the same Rhine plain fields on 25 August: cereal stubble, maize still standing"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-25060,-12820", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-08-25 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 100 18 30"]
+shot = 12
+
+[[scene]]
+name = "veg-bf-fields-autumn"
+description = "Vegetation, Black Forest: the same fields on 30 October: maize harvested, the forest edge coloured"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-25060,-12820", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-10-30 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 100 18 30"]
+shot = 12
