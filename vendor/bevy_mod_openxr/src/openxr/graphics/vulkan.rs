@@ -99,6 +99,9 @@ unsafe impl GraphicsExt for openxr::Vulkan {
                     usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
                     view_formats: &[],
                 },
+                // wgpu 30: the wrapped image's state. OpenXR hands out
+                // swapchain images with undefined contents.
+                TextureUses::UNINITIALIZED,
             )
         };
         Ok(texture)

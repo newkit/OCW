@@ -1,5 +1,8 @@
 [workspace]
 resolver = "3"
+# The vendored bevy_mod_xr / bevy_mod_openxr port (spec §14 Phase 11 X1,
+# Q3 variant A) is its own workspace: upstream code, not linted here.
+exclude = ["vendor"]
 members = [
     "apps/desktop",
     "apps/web",
