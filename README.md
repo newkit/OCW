@@ -2463,6 +2463,44 @@ ocw-desktop --server 127.0.0.1 --insecure-dev     # server on the same machine o
 - The server runs until Ctrl+C (or SIGTERM), then closes all connections
   ("server shutting down"); `--seconds S` stops it earlier.
 
+### Riding on a server on the internet
+
+The desktop app connects to any `ocw-server` it can reach over UDP, whether on your LAN, a rented server or a home machine behind a router. Below, *server* means the machine running `ocw-server`, and *rider* means everyone running `ocw-desktop`.
+
+**On the server:**
+
+```bash
+# A fixed certificate (the same fingerprint after restarts) and the port open for UDP.
+cargo run --release -p ocw-server -- --listen 0.0.0.0:47800 --tls-dir ~/.local/share/ocw-server \
+    --world /srv/ocw/tenerife.ocwpkg --route puerto-de-la-cruz-teide --bots 5
+sudo ufw allow 47800/udp          # or your firewall's equivalent
+```
+
+- **The fingerprint.** At start the server prints its TLS certificate's SHA-256 fingerprint and the exact client command (`Clients connect with: ocw-desktop --server HOST:47800 --server-cert …`). Give the riders that line, with `HOST` replaced by the server's public name or address. With `--tls-dir` the fingerprint stays the same across restarts.
+- **Behind a home router:** forward **UDP 47800** to the server machine (port forwarding / "virtual server" in the router), and use the router's public address or a dynamic-DNS name as `HOST`. It is UDP only (QUIC); no TCP port is needed.
+  - Some internet lines (CGNAT, many mobile and some fibre lines) cannot accept incoming connections at all. Use IPv6 if both sides have it (`--listen [::]:47800`, `HOST` = the server's IPv6 address in brackets), or a small rented server or VPS.
+- **The course:** the server rides one world and route (`--world`, `--route`) or a test route (`--test-route loop|hills`). Riders must give the same; the server refuses a mismatch with a message saying what it rides.
+- **Sign-in (optional):** with an accounts server (see [Running the accounts server](#running-the-accounts-server)), `--auth-issuer https://accounts.example.org` checks riders' sign-in and `--auth-required` refuses anonymous riders.
+
+**On each rider's computer:**
+
+```bash
+ocw-desktop --server ride.example.org:47800 --server-cert 3f9a6c0e…c2 \
+    --world tenerife.ocwpkg --route puerto-de-la-cruz-teide
+```
+
+- **`--server HOST[:PORT]`:** a DNS name, an IPv4 address or `[IPv6]:PORT`; the port defaults to 47800.
+- **`--server-cert`:** the fingerprint the server printed. The app accepts only that certificate, so nobody in between can pretend to be the server. `--insecure-dev` (no check) works only for `127.0.0.1` / `::1`.
+- **The world:** each rider needs the same world package on their own disk. Fetch it from a world server with `--fetch-world https://…/manifest.json` (see [Hosting your own world server](#hosting-your-own-world-server)), or copy the `.ocwpkg` and its manifest. Packages signed by an unknown key open the trust dialog first.
+- **Sign-in:** when the server asks for it, sign in under **Settings → Account** first. The app's accounts server is set with `--account-server https://accounts.example.org`.
+- **To always join the same server,** put the options into `ocw-desktop.args` next to the executable (separated by spaces or newlines, `#` comments; see the default arguments above). The kiosk does it this way.
+- **If it doesn't connect:**
+  - `connection timed out` means no UDP reached the server: check the firewall, the router's port forwarding and the address;
+  - a certificate error means the server's certificate is not the pinned one, because it changed: get the new fingerprint, or use `--tls-dir` on the server;
+  - `world package mismatch: the server rides …` means your package or route differs from the server's.
+
+  Voice chat is separate (LiveKit, see [Voice chat](#voice-chat)) and needs its own server address.
+
 ### Browser riders (WebTransport)
 
 ```bash
