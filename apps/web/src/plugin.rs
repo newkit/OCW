@@ -115,7 +115,13 @@ impl Plugin for WebSessionPlugin {
             .add_systems(FixedUpdate, predict.run_if(resource_exists::<Session>))
             .add_systems(
                 Update,
-                (keys.run_if(ride_input), send_steer, update_view)
+                // Unicorn mode (spec §14 Phase 13B): the riding keys do
+                // nothing in flight, as on the desktop.
+                (
+                    keys.run_if(ride_input).run_if(ocw_ui::god::not_flying),
+                    send_steer,
+                    update_view,
+                )
                     .chain()
                     .in_set(ViewUpdated)
                     .run_if(riding),
