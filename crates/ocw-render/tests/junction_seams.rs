@@ -34,10 +34,10 @@ use std::collections::HashMap;
 
 use bevy::math::{Vec2, Vec3, Vec3Swizzles};
 use ocw_render::road_mesh::{Kind, RoadContext, decode_b, road_meshes};
+use ocw_world::WorldPackage;
 use ocw_world::geo::LocalProjection;
 use ocw_world::graph::RoadGraph;
 use ocw_world::road_dress::{MarkCode, MarkingStyle};
-use ocw_world::WorldPackage;
 
 const SAMPLE_M: f32 = 0.2;
 const MARGIN_M: f32 = 2.5;
@@ -88,7 +88,7 @@ fn grade_from(g: &RoadGraph, ei: usize, v: usize) -> f64 {
     if p.len() < 2 {
         return 0.0;
     }
-    let len = e.length_m().min(ocw_world::graph::PROFILE_STEP_M).max(1e-6);
+    let len = e.length_m().clamp(1e-6, ocw_world::graph::PROFILE_STEP_M);
     if e.from.0 as usize == v {
         (p[1] - p[0]) / len
     } else {
@@ -124,7 +124,9 @@ fn analyse(path: &str) {
         if edges.len() < 2
             || g.boundary_vertices
                 .contains(&ocw_world::graph::VertexId(v as u32))
-            || edges.iter().any(|&e| g.edges[e].bridge || g.edges[e].tunnel)
+            || edges
+                .iter()
+                .any(|&e| g.edges[e].bridge || g.edges[e].tunnel)
             || edges.iter().any(|&e| g.edges[e].from == g.edges[e].to)
         {
             continue;
@@ -155,7 +157,11 @@ fn analyse(path: &str) {
         let mut best: Option<(usize, f64)> = None;
         for dx in -1..=1 {
             for dz in -1..=1 {
-                for &(ei, si) in grid.get(&(k(p[0]) + dx, k(p[1]) + dz)).into_iter().flatten() {
+                for &(ei, si) in grid
+                    .get(&(k(p[0]) + dx, k(p[1]) + dz))
+                    .into_iter()
+                    .flatten()
+                {
                     let w = &g.edges[ei].points[si..si + 2];
                     let d = seg_dist(p, w[0], w[1]).0;
                     if best.is_none_or(|b| d < b.1) {
@@ -174,7 +180,10 @@ fn analyse(path: &str) {
             + MARGIN_M
     };
     let style = MarkingStyle::default();
-    let ground = |x: f32, z: f32| pkg.surface_height(f64::from(x), f64::from(z)).map(|h| h as f32);
+    let ground = |x: f32, z: f32| {
+        pkg.surface_height(f64::from(x), f64::from(z))
+            .map(|h| h as f32)
+    };
     let ctx = RoadContext {
         colours: None,
         ground: &ground,
@@ -216,7 +225,9 @@ fn analyse(path: &str) {
                 .filter(|&v| {
                     let c = Vec2::new(g.vertices[v][0] as f32, g.vertices[v][1] as f32);
                     let r = radius(v) + 3.0;
-                    s.points.iter().any(|p| Vec2::new(p[0], p[2]).distance(c) < r + 6.0)
+                    s.points
+                        .iter()
+                        .any(|p| Vec2::new(p[0], p[2]).distance(c) < r + 6.0)
                 })
                 .collect();
             if near.is_empty() {
@@ -242,7 +253,7 @@ fn analyse(path: &str) {
                     }
                 }
                 let j = &mut juncs[jidx[&v]];
-                for t in mesh.indices.chunks_exact(3) {
+                for t in mesh.indices.as_chunks::<3>().0 {
                     let p = [t[0], t[1], t[2]].map(|i| Vec3::from(mesh.positions[i as usize]));
                     let up = (p[1] - p[0]).cross(p[2] - p[0]);
                     if up.y.abs() < 1e-5 {
@@ -287,10 +298,7 @@ fn analyse(path: &str) {
         let a = SAMPLE_M * SAMPLE_M;
         for iz in 0..=steps {
             for ix in 0..=steps {
-                let p = c + Vec2::new(
-                    -r + ix as f32 * SAMPLE_M,
-                    -r + iz as f32 * SAMPLE_M,
-                );
+                let p = c + Vec2::new(-r + ix as f32 * SAMPLE_M, -r + iz as f32 * SAMPLE_M);
                 if p.distance(c) > r {
                     continue;
                 }
@@ -345,7 +353,9 @@ fn analyse(path: &str) {
         }
         for iz in 0..=steps as usize {
             for ix in 0..=steps as usize {
-                let Some((e0, h0)) = top[iz * w + ix] else { continue };
+                let Some((e0, h0)) = top[iz * w + ix] else {
+                    continue;
+                };
                 for (jx, jz) in [(ix + 1, iz), (ix, iz + 1)] {
                     if jx > steps as usize || jz > steps as usize {
                         continue;
@@ -369,7 +379,9 @@ fn analyse(path: &str) {
                     e.points.iter().rev().copied().collect()
                 };
                 let (a, b) = (pts[0], pts[1.min(pts.len() - 1)]);
-                let l = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt().max(1e-9);
+                let l = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2))
+                    .sqrt()
+                    .max(1e-9);
                 [(b[0] - a[0]) / l, (b[1] - a[1]) / l]
             })
             .collect();
@@ -402,7 +414,10 @@ fn analyse(path: &str) {
         ("degree 4 (crossings)", 4..5),
         ("degree >= 5", 5..99),
     ] {
-        let rs: Vec<&Result> = results.iter().filter(|r| filt.contains(&r.degree)).collect();
+        let rs: Vec<&Result> = results
+            .iter()
+            .filter(|r| filt.contains(&r.degree))
+            .collect();
         if rs.is_empty() {
             continue;
         }
@@ -415,9 +430,8 @@ fn analyse(path: &str) {
         steps.sort_by(f32::total_cmp);
         let pct = |q: f32| steps[((steps.len() - 1) as f32 * q) as usize];
         let n = rs.len() as f32;
-        let share = |f: &dyn Fn(&Result) -> bool| {
-            100.0 * rs.iter().filter(|r| f(r)).count() as f32 / n
-        };
+        let share =
+            |f: &dyn Fn(&Result) -> bool| 100.0 * rs.iter().filter(|r| f(r)).count() as f32 / n;
         println!(
             "{label}: {} | visible step <2cm {} | 2-5 {} | 5-10 {} | 10-25 {} | 25-50 {} | >50 {} | median {:.3} p90 {:.3} p99 {:.3} max {:.3} m",
             rs.len(),
@@ -446,8 +460,10 @@ fn analyse(path: &str) {
         );
         if filt.start == 2 {
             for (lo, hi) in [(0.0, 10.0), (10.0, 30.0), (30.0, 60.0), (60.0, 181.0)] {
-                let b: Vec<&&Result> =
-                    rs.iter().filter(|r| r.bend_deg >= lo && r.bend_deg < hi).collect();
+                let b: Vec<&&Result> = rs
+                    .iter()
+                    .filter(|r| r.bend_deg >= lo && r.bend_deg < hi)
+                    .collect();
                 if b.is_empty() {
                     continue;
                 }
@@ -464,7 +480,13 @@ fn analyse(path: &str) {
     let side: Vec<&Result> = results.iter().filter(|r| r.degree >= 3).collect();
     let flat_major = side.iter().filter(|r| r.major_grade.abs() < 0.03).count();
     println!("    degree >= 3 with the widest road under 3 %: {flat_major}");
-    for (lo, hi) in [(0.0, 0.03), (0.03, 0.06), (0.06, 0.10), (0.10, 0.15), (0.15, 1.0)] {
+    for (lo, hi) in [
+        (0.0, 0.03),
+        (0.03, 0.06),
+        (0.06, 0.10),
+        (0.10, 0.15),
+        (0.15, 1.0),
+    ] {
         let b: Vec<&&Result> = side
             .iter()
             .filter(|r| r.max_grade >= lo && r.max_grade < hi)
