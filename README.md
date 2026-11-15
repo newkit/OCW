@@ -608,7 +608,7 @@ modules on the fly is what `make test-web-preview PREVIEW_URL=…` reports
 **Build and try it locally:**
 
 ```bash
-make web-preview          # both modules into target/web-preview/ (about __BUILD_MIN__ minutes on a 12-core machine)
+make web-preview          # both modules into target/web-preview/ (about 14 minutes on marge, 12 cores)
 make web-preview-site     # the site into target/web-preview-site/ (with the worlds of target/web-preview-worlds/release/)
 make test-web-preview     # headless Chromium on that site, served as a public page (ocw-preview.test)
 make test-web-preview PREVIEW_URL=https://newkit.github.io/OCW/   # the same checks on the live site
