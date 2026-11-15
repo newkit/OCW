@@ -4,6 +4,7 @@
 //! renders whatever the app puts into [`RideView`]; it knows nothing about
 //! networking or devices.
 
+pub mod access;
 pub mod aids_hud;
 pub mod bridges;
 pub mod building_material;
@@ -452,6 +453,8 @@ impl Plugin for OcwRenderPlugins {
             quality::QualityPlugin,
             // WebGL 2's texture arrays (B7; nothing elsewhere).
             webgl::WebGlPlugin,
+            // Colour-safe status colours, high contrast (spec §3.2.1 M9).
+            access::AccessPlugin,
         ));
     }
 }

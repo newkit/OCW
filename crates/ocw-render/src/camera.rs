@@ -518,11 +518,25 @@ pub fn shake_offset(cam: &Transform, fx: &crate::CameraFx) -> Vec3 {
         + cam.forward().as_vec3() * fx.shake[2]
 }
 
-/// Mouse orbit (left button drag), zoom (wheel) and reset (`C`), only in
-/// the ride's input context (not while the menu or the console is open).
+/// The camera key (spec §3.2.1 M9: rebindable, `keys.camera`; the apps
+/// set it from the bindings, `None`: unbound).
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CameraKey(pub Option<KeyCode>);
+
+impl Default for CameraKey {
+    fn default() -> Self {
+        Self(Some(KeyCode::KeyC))
+    }
+}
+
+/// Mouse orbit (left button drag), zoom (wheel) and reset (`C`, the
+/// [`CameraKey`]), only in the ride's input context (not while the menu or
+/// the console is open).
+#[allow(clippy::too_many_arguments)] // a Bevy system
 fn orbit_input(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
+    camera_key: Option<Res<CameraKey>>,
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
     context: Option<Res<InputContext>>,
@@ -537,7 +551,8 @@ fn orbit_input(
     if view.is_some_and(|v| v.flight.is_some()) {
         return;
     }
-    if keys.just_pressed(KeyCode::KeyC) {
+    let key = camera_key.map_or(Some(KeyCode::KeyC), |k| k.0);
+    if key.is_some_and(|k| keys.just_pressed(k)) {
         *orbit = CameraOrbit::default();
         return;
     }

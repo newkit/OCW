@@ -1,6 +1,6 @@
 [package]
 name = "ocw-fit"
-description = "FIT activity file writer for Open Cycling World ride export (spec §2.8)"
+description = "FIT activity file writer and reader for Open Cycling World ride export and history (spec §2.8, §14 Phase 7)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

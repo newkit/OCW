@@ -91,6 +91,24 @@ impl Plugin for WebUiPlugin {
             rows: web_rows,
             ..MenuHooks::default()
         })
+        // The training history in the page's localStorage (spec §14
+        // Phase 7); a ride's FIT file is kept for this page's session.
+        .insert_resource(ocw_ui::history::HistoryHooks {
+            store: |_, _| crate::settings::history_store(),
+            rider: |_| ocw_client::riders::Rider::default().name,
+            export: |world, ride, _| {
+                let bytes = world
+                    .get_resource::<ocw_ui::history::TrainingHistory>()
+                    .and_then(|h| h.fits.get(&ride.id).cloned())
+                    .ok_or("this ride's FIT file is not kept (only the rides of this page)")?;
+                let name = download_name(ride.start_unix_s);
+                let downloads = world.resource::<Downloads>().clone();
+                (downloads.0)(&name, "application/vnd.ant.fit", bytes);
+                Ok(format!("downloading {name}"))
+            },
+            import: None,
+            refresh: ocw_ui::history::refresh_from_memory,
+        })
         .add_plugins((
             ocw_ui::menu::MenuPlugin,
             ocw_ui::weather::WeatherPlugin,
@@ -306,9 +324,31 @@ fn save_ride(world: &mut World) -> Result<String, String> {
         ride.activity.records.last().map_or(0.0, |r| r.distance_m) / 1000.0,
     );
     let downloads = world.resource::<Downloads>().clone();
-    (downloads.0)(&name, "application/vnd.ant.fit", bytes);
+    (downloads.0)(&name, "application/vnd.ant.fit", bytes.clone());
+    // The training history (spec §14 Phase 7), with the world of the page.
+    let world_name = world
+        .get_resource::<crate::world::WorldStream>()
+        .and_then(|s| s.identity.clone())
+        .unwrap_or_default();
+    let route = world
+        .get_resource::<RideView>()
+        .map(|v| v.route.name().to_string())
+        .unwrap_or_default();
+    let entry = ocw_client::history::RideEntry::from_activity(
+        &ride.activity,
+        ocw_client::history::RideContext {
+            id: ocw_client::recording::file_stem(ride.activity.start_unix_s),
+            world: world_name,
+            route,
+            ..Default::default()
+        },
+    );
+    let kept = match ocw_ui::history::add_ride(world, entry, Some(bytes)) {
+        Ok(()) => "",
+        Err(_) => " (the training history is not saved on this page)",
+    };
     Ok(format!(
-        "ride saved: {name} ({n} records, {km:.2} km); a new recording starts"
+        "ride saved: {name} ({n} records, {km:.2} km); a new recording starts{kept}"
     ))
 }
 
@@ -503,7 +543,11 @@ mod tests {
         }
         tap(&mut app, KeyCode::Enter);
         assert_eq!(view(&app).title, "Navi");
-        assert_eq!(view(&app).items, ["Riders in this ride", "Back"]);
+        assert_eq!(
+            view(&app).items,
+            ["Training history", "Riders in this ride", "Back"]
+        );
+        tap(&mut app, KeyCode::ArrowDown);
         tap(&mut app, KeyCode::Enter);
         let v = view(&app);
         assert_eq!(v.title, "Riders in this ride");

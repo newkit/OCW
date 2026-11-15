@@ -239,11 +239,14 @@ fn god_keys(world: &mut World) {
     if !ride_keys(world) {
         return;
     }
+    // G and C, or their bound keys (spec §3.2.1 M9); the pad's chords
+    // stay fixed.
+    let bindings = world.get_resource::<crate::bindings::ActiveBindings>();
     let (g, shift, c_key) = match world.get_resource::<ButtonInput<KeyCode>>() {
         Some(k) => (
-            k.just_pressed(KeyCode::KeyG),
+            crate::bindings::key_just_pressed(bindings, ocw_client::bindings::Action::GodMode, k),
             k.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]),
-            k.just_pressed(KeyCode::KeyC),
+            crate::bindings::key_just_pressed(bindings, ocw_client::bindings::Action::Camera, k),
         ),
         None => (false, false, false),
     };

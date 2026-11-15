@@ -88,6 +88,17 @@ impl Plugin for MenuPlugin {
             app.add_plugins(MenuCorePlugin);
         }
         crate::configure_sets(app);
+        // Rebinding, accessibility and the training history (spec §3.2.1
+        // M9, §14 Phase 7): pages of this menu.
+        if !app.is_plugin_added::<crate::bindings::BindingsPlugin>() {
+            app.add_plugins(crate::bindings::BindingsPlugin);
+        }
+        if !app.is_plugin_added::<crate::access::AccessPlugin>() {
+            app.add_plugins(crate::access::AccessPlugin);
+        }
+        if !app.is_plugin_added::<crate::history::HistoryPlugin>() {
+            app.add_plugins(crate::history::HistoryPlugin);
+        }
         app.init_resource::<MenuState>()
             .init_resource::<VoiceMenu>()
             .init_resource::<AudioDeviceMenu>()
@@ -179,10 +190,11 @@ pub fn row_setting(row: &Row) -> Option<&str> {
     rest.split_whitespace().next()
 }
 
-/// Leaves out the rows of settings this platform does not have.
+/// Leaves out the rows of settings and pages this platform does not have.
 pub fn for_platform(rows: Vec<Row>, platform: Platform) -> Vec<Row> {
     rows.into_iter()
         .filter(|r| row_setting(r).is_none_or(|k| applies(k, platform)))
+        .filter(|r| !matches!(r.confirm, Some(sub::Activate::Open(p)) if !p.on(platform)))
         .collect()
 }
 
@@ -194,7 +206,11 @@ pub fn sub_rows(world: &World, page: sub::Page) -> Vec<Row> {
         .get_resource::<MenuHooks>()
         .copied()
         .unwrap_or_default();
-    let rows = if page == sub::Page::RiderList {
+    let rows = if page.is_history_page() {
+        ocw_client::menu::history::rows(page, &crate::history::info(world))
+    } else if page.is_binding_page() {
+        sub::binding_rows(page, s, platform(world) == Platform::Desktop)
+    } else if page == sub::Page::RiderList {
         world
             .get_resource::<RiderList>()
             .map(|l| l.menu_rows())
@@ -246,10 +262,20 @@ fn menu_input(world: &mut World) {
             state.menu = Menu::for_platform(platform);
         }
     }
+    // A binding row waits for its new key or button (spec §3.2.1 M9):
+    // this frame's input is that, not the menu's.
+    if crate::bindings::capture(world) {
+        world.resource_mut::<MenuState>().repeat.reset();
+        world.resource_mut::<MenuPointer>().0.clear();
+        return;
+    }
+    let swap = settings(world)
+        .get("controls.pad_confirm")
+        .is_ok_and(|v| v.to_string() == "east");
     let mut pressed = {
         let keys = world.get_resource::<ButtonInput<KeyCode>>().cloned();
         let mut q = world.query::<&Gamepad>();
-        controls::pressed(keys.as_ref(), q.iter(world))
+        controls::pressed(keys.as_ref(), q.iter(world), swap)
     };
     let console_open = world.resource::<ConsoleState>().is_open();
     let open = world.resource::<MenuState>().menu.is_open();
@@ -351,6 +377,14 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
     let def = page.def();
     let weather = world.get_resource::<WeatherMenu>();
     let rider_list = world.get_resource::<RiderList>();
+    let history = match page {
+        Page::Sub(p) if p.is_history_page() => Some(crate::history::info(world)),
+        _ => None,
+    };
+    let history_text = match (page, &history) {
+        (Page::Sub(p), Some(h)) => ocw_client::menu::history::text(p, h),
+        _ => Vec::new(),
+    };
     MenuView {
         open: true,
         title: def.title.into(),
@@ -363,6 +397,11 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
             (Page::Sub(sub::Page::RiderList), _, _) => {
                 rider_list.map(|l| l.summary()).unwrap_or_default()
             }
+            (Page::Sub(p), _, _) if history.is_some() => {
+                ocw_client::menu::history::status(p, history.as_ref().expect("some"))
+            }
+            (Page::Sub(sub::Page::BindGroup(g)), _, _) => crate::bindings::status(world, Some(g)),
+            (Page::Sub(sub::Page::Bindings), _, _) => crate::bindings::status(world, None),
             _ => String::new(),
         },
         text: def
@@ -370,6 +409,7 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
             .iter()
             .map(|&s| s.to_owned())
             .chain(page_text(world, page))
+            .chain(history_text)
             .collect(),
         items: menu.labels(),
         focused: menu.focus(),
@@ -382,14 +422,34 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
             }
             _ => None,
         },
-        // The rider list's unicorns and damage dots (13E, 12F).
+        // The rider list's unicorns and damage dots (13E, 12F); the
+        // warning dot on a binding in conflict (M9).
         marks: match (page, rider_list) {
             (Page::Sub(sub::Page::RiderList), Some(l)) => menu
                 .shown_rows()
                 .into_iter()
                 .map(|r| r.and_then(|i| l.mark(i)).unwrap_or_default())
                 .collect(),
+            (Page::Sub(sub::Page::BindGroup(g)), _) => {
+                let actions = crate::bindings::group_actions(world, g);
+                let warn = ocw_sim::damage::Status::Warning;
+                menu.shown_rows()
+                    .into_iter()
+                    .map(|r| ocw_render::menu::RowMark {
+                        unicorn: false,
+                        dot: r
+                            .and_then(|i| actions.get(i))
+                            .filter(|a| crate::bindings::in_conflict(world, **a))
+                            .map(|_| (warn.icon().to_owned(), warn.rgb())),
+                    })
+                    .collect()
+            }
             _ => Vec::new(),
+        },
+        // The power curve (spec §14 Phase 7).
+        chart: match (page, &history) {
+            (Page::Sub(p), Some(h)) => ocw_client::menu::history::chart(p, h),
+            _ => None,
         },
     }
 }
@@ -536,13 +596,13 @@ mod tests {
                 .all(|r| row_setting(r) != Some("display.fullscreen"))
         );
         // God mode's rows are there (spec §14 Phase 13 G5: the browser
-        // flies too).
+        // flies too), on Controls -> Unicorn mode (M9: Controls is full).
         let controls = rows(&app, sub::Page::Controls);
+        let unicorn_row = Some(sub::Activate::Open(sub::Page::UnicornControls));
+        assert!(controls.iter().any(|r| r.confirm == unicorn_row));
+        let unicorn = rows(&app, sub::Page::UnicornControls);
         for key in ["controls.god_flight", "controls.invert_y"] {
-            assert!(
-                controls.iter().any(|r| row_setting(r) == Some(key)),
-                "{key}"
-            );
+            assert!(unicorn.iter().any(|r| row_setting(r) == Some(key)), "{key}");
         }
         let desktop = for_platform(
             sub::rows(

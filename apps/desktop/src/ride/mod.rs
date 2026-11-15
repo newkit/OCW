@@ -505,13 +505,11 @@ impl Args {
 
 /// Saves the ride so far like on exit (rides under a minute are dropped).
 fn save_ride(world: &mut World) {
-    let Some(mut rec) = world.get_resource_mut::<Recording>() else {
-        return;
-    };
-    if !rec.enabled {
+    if !world.get_resource::<Recording>().is_some_and(|r| r.enabled) {
         return;
     }
-    match rec.save(MIN_AUTO_SAVE_S) {
+    // The FIT file and the training history (spec §14 Phase 7).
+    match crate::recording::save_now(world, MIN_AUTO_SAVE_S) {
         Ok(Some(path)) => {
             info!(path = %path.display(), "ride saved");
             if let Some(s) = world.get_resource::<crate::strava::Strava>() {
