@@ -532,7 +532,9 @@ fn road_style(h: Helmet, skull: Vec3) -> RoadStyle {
                 nape: PI + 0.22,
                 ears: 0.3,
             },
-            lanes: &[0.0, 0.2, 0.38, 0.52, 0.72, 0.86, 1.06, 1.22, 1.38, FRAC_PI_2],
+            lanes: &[
+                0.0, 0.2, 0.38, 0.52, 0.72, 0.86, 1.06, 1.22, 1.38, FRAC_PI_2,
+            ],
             cols: 12,
             vents: &[
                 (1, 0.06, 0.3),
