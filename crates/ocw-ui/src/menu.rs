@@ -44,6 +44,11 @@ pub struct VoiceMenu(pub VoiceMenuInfo);
 #[derive(Resource, Debug, Clone, Default, PartialEq, Deref, DerefMut)]
 pub struct AccountMenu(pub ocw_client::account::AccountInfo);
 
+/// How the rider rides now – alone, on another server, hosting – for the
+/// Ride page's items (set by the app's connection glue).
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Deref, DerefMut)]
+pub struct MenuRideMode(pub ocw_client::menu::model::RideMode);
+
 /// The audio outputs for the Audio page (refreshed by the app's audio
 /// glue).
 #[derive(Resource, Debug, Clone, Default, PartialEq, Deref, DerefMut)]
@@ -108,10 +113,15 @@ impl Plugin for MenuPlugin {
         if !app.is_plugin_added::<crate::trust::TrustPlugin>() {
             app.add_plugins(crate::trust::TrustPlugin);
         }
+        // Ride → Join (spec §3.2.1, §6.2 *Join links*).
+        if !app.is_plugin_added::<crate::join::JoinPlugin>() {
+            app.add_plugins(crate::join::JoinPlugin);
+        }
         app.init_resource::<MenuState>()
             .init_resource::<VoiceMenu>()
             .init_resource::<AccountMenu>()
             .init_resource::<AudioDeviceMenu>()
+            .init_resource::<MenuRideMode>()
             .add_systems(
                 Update,
                 (menu_input, write_view).chain().after(crate::ViewExtrasSet),
@@ -253,6 +263,11 @@ pub fn sub_rows(world: &World, page: sub::Page) -> Vec<Row> {
             .get_resource::<crate::trust::TrustedKeys>()
             .unwrap_or(&empty);
         ocw_client::menu::trust::rows(page, &k.keys.keys, k.warning.as_deref())
+    } else if page == sub::Page::Join {
+        world
+            .get_resource::<crate::join::JoinUi>()
+            .map(|u| ocw_client::menu::join::rows(page, &u.info))
+            .unwrap_or_default()
     } else if page == sub::Page::TimeMachine {
         let info = world
             .get_resource::<TimeMachine>()
@@ -287,6 +302,12 @@ pub fn sub_rows(world: &World, page: sub::Page) -> Vec<Row> {
 
 /// Text of a page beyond its fixed description.
 fn page_text(world: &World, page: Page) -> Vec<String> {
+    if page == Page::Sub(sub::Page::Join) {
+        return world
+            .get_resource::<crate::join::JoinUi>()
+            .map(|u| ocw_client::menu::join::text(&u.info, crate::now(world)))
+            .unwrap_or_default();
+    }
     world
         .get_resource::<MenuHooks>()
         .map_or_else(Vec::new, |h| (h.text)(world, page))
@@ -299,6 +320,17 @@ fn menu_input(world: &mut World) {
         if state.menu.platform() != platform && !state.menu.is_open() {
             state.menu = Menu::for_platform(platform);
         }
+    }
+    let mode = world
+        .get_resource::<MenuRideMode>()
+        .map(|m| m.0)
+        .unwrap_or_default();
+    world.resource_mut::<MenuState>().menu.set_ride_mode(mode);
+    // A text field of Ride → Join is typed into: this frame's keys are its.
+    if crate::join::capture(world) {
+        world.resource_mut::<MenuState>().repeat.reset();
+        world.resource_mut::<MenuPointer>().0.clear();
+        return;
     }
     // A binding row waits for its new key or button (spec §3.2.1 M9):
     // this frame's input is that, not the menu's.

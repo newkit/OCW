@@ -18,7 +18,9 @@
 //!   rebindable ride keys and buttons (M9), [`access`]: the accessibility
 //!   options, [`history`]: the training history (spec §14 Phase 7),
 //! - [`trust`]: the trust dialog and the trusted world keys (spec §4.7
-//!   *User keys*), `world trust …`.
+//!   *User keys*), `world trust …`,
+//! - [`join`]: Ride → Join – the link field, the recent servers, `join`,
+//!   `leave` (spec §3.2.1, §6.2 *Join links*).
 //!
 //! The apps differ in how they hold the ride: the desktop has
 //! `ClientState` and a `Link` to its server, the browser a `WebSession`.
@@ -32,6 +34,7 @@ pub mod controls;
 pub mod events;
 pub mod god;
 pub mod history;
+pub mod join;
 pub mod menu;
 pub mod quality;
 pub mod riders_page;

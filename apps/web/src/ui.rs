@@ -161,7 +161,88 @@ impl Plugin for WebUiPlugin {
                 builtin,
             ));
         }
+        // Ride → Join (spec §3.2.1): the recent servers in localStorage;
+        // joining starts the page again on the shared ride (WebTransport).
+        app.insert_resource(ocw_ui::join::JoinUi::load(crate::settings::joins_store()))
+            .insert_resource(ocw_ui::join::JoinHooks {
+                connect: web_connect,
+                cancel: |_| {},
+                leave: web_leave,
+                paste: |_| crate::PASTED.lock().expect("not poisoned").take(),
+            })
+            .add_systems(Update, ride_mode);
         register_commands(app);
+    }
+}
+
+/// The page's query now (empty natively).
+fn page_query() -> String {
+    #[cfg(target_arch = "wasm32")]
+    return web_sys::window()
+        .and_then(|w| w.location().search().ok())
+        .unwrap_or_default();
+    #[cfg(not(target_arch = "wasm32"))]
+    String::new()
+}
+
+/// Opens the page with `query` (the ride starts again with it).
+fn open_page(query: &str) -> Result<(), String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let l = web_sys::window().ok_or("no window")?.location();
+        let path = l.pathname().unwrap_or_default();
+        l.assign(&format!("{path}{query}"))
+            .map_err(|_| "the page cannot be opened".to_string())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = query;
+        Ok(())
+    }
+}
+
+/// The page that joins (the remembered list first: the page starts again).
+fn web_connect(world: &mut World, link: ocw_protocol::join::JoinLink) -> Result<String, String> {
+    let query = crate::join_query(&page_query(), &link.to_link())?;
+    world.resource_mut::<ocw_ui::join::JoinUi>().remember(
+        &link,
+        link.world
+            .as_deref()
+            .or(link.route.as_deref())
+            .unwrap_or(""),
+    );
+    info!(query = %query, "joining: the page starts again on the shared ride");
+    open_page(&query)?;
+    Ok(format!(
+        "joining {}: the page starts again on the shared ride",
+        link.server_spec()
+    ))
+}
+
+fn web_leave(world: &mut World) -> Result<String, String> {
+    let remote = world
+        .get_resource::<crate::plugin::Session>()
+        .is_some_and(|s| s.0.is_remote());
+    if !remote {
+        return Err("not in a shared ride".into());
+    }
+    open_page(&crate::leave_query(&page_query()))?;
+    Ok("leaving the shared ride: the page starts again alone".into())
+}
+
+/// The Ride page's items: Leave in a shared ride.
+fn ride_mode(
+    session: Option<Res<crate::plugin::Session>>,
+    mut mode: ResMut<ocw_ui::menu::MenuRideMode>,
+) {
+    use ocw_client::menu::model::RideMode;
+    let m = if session.is_some_and(|s| s.0.is_remote()) {
+        RideMode::Joined
+    } else {
+        RideMode::Alone
+    };
+    if mode.0 != m {
+        mode.0 = m;
     }
 }
 
@@ -682,7 +763,7 @@ mod tests {
         tap(&mut app, KeyCode::Enter);
         assert_eq!(view(&app).title, "Ride");
         assert!(!view(&app).items.iter().any(|i| i == "Restart"));
-        for _ in 0..4 {
+        for _ in 0..1 {
             tap(&mut app, KeyCode::ArrowDown);
         }
         tap(&mut app, KeyCode::Enter);

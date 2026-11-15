@@ -87,9 +87,110 @@ pub fn resolve(spec: &str) -> Result<(SocketAddr, String), String> {
     Ok((addr, host.to_owned()))
 }
 
+/// This machine's addresses others reach it on (no loopback): the
+/// source address the system would use towards the internet, for IPv4
+/// and IPv6. Nothing is sent (a UDP socket is only connected).
+pub fn lan_addresses() -> Vec<std::net::IpAddr> {
+    let probe = |bind: &str, to: &str| -> Option<std::net::IpAddr> {
+        let s = std::net::UdpSocket::bind(bind).ok()?;
+        s.connect(to).ok()?;
+        let ip = s.local_addr().ok()?.ip();
+        (!ip.is_loopback() && !ip.is_unspecified()).then_some(ip)
+    };
+    // Documentation addresses (RFC 5737, RFC 3849): routed like any other.
+    [
+        probe("0.0.0.0:0", "192.0.2.1:9"),
+        probe("[::]:0", "[2001:db8::1]:9"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+/// The join links of a server bound to `local` (spec §6.2 *Join links*),
+/// for the console and the kiosk: one per address others reach (the LAN
+/// addresses for an unspecified bind), with the world and route.
+pub fn join_links(
+    local: SocketAddr,
+    fingerprint: &str,
+    world: Option<&str>,
+    route: Option<&str>,
+) -> Vec<String> {
+    let hosts: Vec<String> = if local.ip().is_unspecified() {
+        let lan = lan_addresses();
+        if lan.is_empty() {
+            vec!["HOST".into()]
+        } else {
+            lan.iter().map(ToString::to_string).collect()
+        }
+    } else {
+        vec![local.ip().to_string()]
+    };
+    hosts
+        .into_iter()
+        .map(|h| {
+            let mut l = ocw_protocol::join::JoinLink::new(h, local.port());
+            l.cert = Some(fingerprint.to_owned());
+            l.world = world.map(str::to_owned);
+            l.route = route.map(str::to_owned);
+            l.to_link()
+        })
+        .collect()
+}
+
+/// The printed block: "Join link (…):" and the links, indented.
+pub fn join_lines(
+    local: SocketAddr,
+    fingerprint: &str,
+    world: Option<&str>,
+    route: Option<&str>,
+) -> String {
+    let links = join_links(local, fingerprint, world, route);
+    let mut out = format!(
+        "Join link{} (in the app: Ride -> Join; or ocw-desktop --join LINK):",
+        if links.len() > 1 { "s" } else { "" }
+    );
+    for l in links {
+        out.push_str("\n  ");
+        out.push_str(&l);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_server_prints_its_join_link() {
+        let fp = "cd".repeat(32);
+        let local: SocketAddr = "127.0.0.1:47800".parse().unwrap();
+        let text = join_lines(
+            local,
+            &fp,
+            Some("europe/liechtenstein@3"),
+            Some("Vaduz Loop"),
+        );
+        assert_eq!(
+            text,
+            format!(
+                "Join link (in the app: Ride -> Join; or ocw-desktop --join LINK):\n  ocw://127.0.0.1?cert={fp}&world=europe/liechtenstein@3&route=Vaduz%20Loop"
+            )
+        );
+        let link = text.lines().nth(1).unwrap().trim();
+        let parsed = ocw_protocol::join::JoinLink::parse(link).unwrap();
+        assert_eq!(parsed.route.as_deref(), Some("Vaduz Loop"));
+        let v6: SocketAddr = "[::1]:47900".parse().unwrap();
+        assert_eq!(
+            join_links(v6, &fp, None, Some("hills")),
+            [format!("ocw://[::1]:47900?cert={fp}&route=hills")]
+        );
+        // An unspecified bind: an address of this machine, or HOST.
+        let any: SocketAddr = "0.0.0.0:47800".parse().unwrap();
+        for l in join_links(any, &fp, None, None) {
+            assert!(l.starts_with("ocw://") && !l.contains("0.0.0.0"), "{l}");
+        }
+    }
 
     #[test]
     fn resolves_addresses_with_and_without_port() {

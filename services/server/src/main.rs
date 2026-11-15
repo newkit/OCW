@@ -420,13 +420,13 @@ fn load_options(args: &Args) -> Result<ocw_worldstore::LoadOptions, String> {
 
 /// Free ride on a world package's road graph (a path or a cached id, its
 /// signature checked), from a seeded random start, or along one of its routes.
-fn free_ride(args: &Args, spec: &str) -> (Course, (f64, f64)) {
+fn free_ride(args: &Args, spec: &str) -> (Course, (f64, f64), ocw_protocol::v1::WorldChange) {
     let fail = |e: String| -> ! {
         eprintln!("{spec}: {e}");
         std::process::exit(1);
     };
     let opts = load_options(args).unwrap_or_else(|e| fail(e));
-    let (course, _, origin) = ocw_server::worlds::load_course_at(
+    let (course, change, origin) = ocw_server::worlds::load_course_at(
         spec,
         args.route.as_deref(),
         &opts,
@@ -434,7 +434,7 @@ fn free_ride(args: &Args, spec: &str) -> (Course, (f64, f64)) {
         args.seed,
     )
     .unwrap_or_else(|e| fail(e));
-    (course, origin)
+    (course, origin, change)
 }
 
 /// The worlds this server may switch to: the cache and the packages next
@@ -544,10 +544,21 @@ fn main() {
     let args = Args::parse();
     let mut route_sha256 = String::new();
     let mut geo_origin = None;
+    // What the join link names (spec §6.2 *Join links*): the package and
+    // the route.
+    let mut link_world: (Option<String>, Option<String>) = (None, None);
     let course = match (&args.world, &args.route_file) {
         (Some(spec), _) => {
-            let (course, origin) = free_ride(&args, spec);
+            let (course, origin, change) = free_ride(&args, spec);
             geo_origin = Some(origin);
+            link_world = (
+                Some(if change.package_id.starts_with("local/") {
+                    change.package_id.clone()
+                } else {
+                    format!("{}@{}", change.package_id, change.version)
+                }),
+                (!change.route.is_empty()).then(|| change.route.clone()),
+            );
             course
         }
         (None, Some(path)) => {
@@ -559,8 +570,14 @@ fn main() {
             route_sha256 = sha;
             Course::Route(route)
         }
-        (None, None) if args.test_route == "hills" => Course::Route(Route::test_hills()),
-        (None, None) => Course::Route(Route::test_loop()),
+        (None, None) if args.test_route == "hills" => {
+            link_world.1 = Some("hills".into());
+            Course::Route(Route::test_hills())
+        }
+        (None, None) => {
+            link_world.1 = Some("loop".into());
+            Course::Route(Route::test_loop())
+        }
     };
     match &course {
         Course::Route(route) => tracing::info!(
@@ -650,7 +667,7 @@ fn main() {
             "echo rider at the start (voice echo test; the echo_participant example joins as it)"
         );
     }
-    let mut net = args.listen.map(|addr| listen(&args, addr));
+    let mut net = args.listen.map(|addr| listen(&args, addr, &link_world));
     let stop = net.as_ref().map(NetServer::shutdown_on_signal);
     // When the WebTransport certificate was last checked for renewal.
     let mut cert_checked = Instant::now();
@@ -783,7 +800,11 @@ fn load_route_file(path: &std::path::Path) -> Result<(Route, String), String> {
 }
 
 /// Opens the QUIC endpoint and tells the user how to connect.
-fn listen(args: &Args, addr: std::net::SocketAddr) -> NetServer {
+fn listen(
+    args: &Args,
+    addr: std::net::SocketAddr,
+    (world, route): &(Option<String>, Option<String>),
+) -> NetServer {
     let identity = match &args.tls_dir {
         Some(dir) => ServerIdentity::load_or_create(dir),
         None => ServerIdentity::self_signed(),
@@ -810,6 +831,12 @@ fn listen(args: &Args, addr: std::net::SocketAddr) -> NetServer {
     } else {
         format!(":{}", local.port())
     };
+    // The join link first (spec §6.2 *Join links*): the kiosk reads both
+    // once the "Clients connect with" lines are there.
+    println!(
+        "{}",
+        ocw_server::net::join_lines(local, net.fingerprint(), world.as_deref(), route.as_deref())
+    );
     println!(
         "Clients connect with:\n  ocw-desktop --server {host}{port} --server-cert {}",
         net.fingerprint()
