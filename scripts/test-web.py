@@ -244,7 +244,14 @@ def visit(cdp, url, a, base, lines, label, world, stats):
                 cdp.eval(f"window.ocw && window.ocw.console('teleport {a.teleport}')")
                 teleported = now
             done_at = first_tick + a.seconds + (a.teleport_wait if teleported else 0)
-            if (label != "first" and world and ready is not None and now >= first_tick + 3) or \
+            # A later world ride stops once it is ready and the rider has
+            # moved (> 5 m, the "rode" rule below) – 3 s from the first tick
+            # were not always enough from a standstill (2026-11-15: the live
+            # preview's world checks failed at 16.7 km/h, 2-4 m ridden) – or
+            # after `seconds` at the latest.
+            moved = float(last.get("distance_m", 0) or 0) > 5.0
+            if (label != "first" and world and ready is not None and now >= first_tick + 3
+                    and (moved or now >= first_tick + max(a.seconds, 3))) or \
                (label == "first" and now >= done_at and (not a.teleport or teleported)):
                 break
         if errors and first_tick is None and not world:
