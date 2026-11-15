@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.59 – November 2026
+Version 3.60 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.60 | Decision from the build dashboard (2026-11-15): Phase 14 Q2 – **WebXR first** (the browser app in the headset's browser: no store, WebGL 2, trainers through the sensor bridge), the native Android OpenXR app later |
 | 3.59 | Decisions from the build dashboard (2026-11-15): Phase 9 Q12 – every ride starts at the real local date and time of the world's place with the season following it (the override is not remembered); Phase 16 Q1 – `ocw-studio` is its own desktop app; Q4 – the browser studio comes later; Q5 – the studio gets **simple mesh tools** (extrude, move / scale / rotate parts, normals; new stage E4b), larger shape work stays in Blender |
 | 3.58 | Decision by the user (2026-11-15): Phase 12 Q4 – a workout's **ERG step pauses while the rider is down** after a crash and runs on when the rider rides again (`ocw_sim::workout::WorkoutRun::set_down`, new state *paused: rider down*; `TrainerControl::is_down`; `ERG_STEP_RUNS_WHILE_DOWN = false`), tests updated (§14 Phase 12, 12J; §2.8) |
 | 3.57 | Decision from the build dashboard (2026-11-15): Phase 12 Q8 – the **riding aids are allowed by default in all races** for now (local and shared; the organiser may forbid them); `Event::aids_allowed` defaults to allowed, the setting `event.aids` *auto* and the console help follow, tests updated (§14 Phase 12, 12I) |
@@ -4104,7 +4105,7 @@ It builds on Phase 11 (the VR mode of the desktop app: OpenXR, the first-person 
 #### 14H – Open questions (for the user)
 
 - **Q1 – First headset: decided by the user (2026-11-14, v3.29): the Oculus Quest (first generation)** – the user's headset; focus on it, the other models are postponed. (The proposal was Quest 3 / 3S.) Consequences: the standalone quality tier targets the Snapdragon 835 at 72 Hz; distribution is sideloading (see Q3).
-- **Q2 – Native or WebXR first:** native Android OpenXR first (proposal: full performance, direct BLE works on Quest, WebGPU-in-WebXR is not shipped), or WebXR first (no store, reuses the browser app, but WebGL2 only and trainers only through the sensor bridge)?
+- **Q2 – Native or WebXR first: decided (2026-11-15, dashboard: "WebXR first … Native OpenXR later"):** **WebXR first** – the browser app (Phase 10) in the headset's browser: no store, no sideloading, the same build; it runs on **WebGL 2** (WebGPU in WebXR is not shipped yet) with the low preset and B7's workarounds, and trainers connect only **through the sensor bridge** (Phase 10, 10D.2; the headset browser has no Web Bluetooth). The **native Android OpenXR** app follows later. Was proposed: native first.
 - **Q3 – Distribution: decided by the user (2026-11-14, v3.31): sideloading only for now** – the standalone app is installed by sideloading (developer mode, `adb install`); no store listing (Meta Horizon or Pico) for now. (The Horizon Store takes no new Quest 1 apps anyway.) *Earlier proposal:* sideloading for testers first, then a free Horizon Store listing.
 - **Q4 – BLE fallback: postponed (2026-11-14, dashboard: "postpone")** – decided when standalone VR (Phase 14) starts; until then the question stays as written: if direct BLE on a headset turns out limited (Pico unverified; Quest reconnects reported flaky), is the **sensor bridge** through a PC or phone acceptable as the official way – and should that include a small **phone relay app** (Android first; iOS would be the first native iOS code, §1.3), or only the desktop and the browser app as bridges (Phase 10 Q2)?
 - **Q5 – Priority:** after Phase 11 X1 – X2 (proposal: the VR mode on the desktop first, then V1 – V2 while the browser app reaches B3), or later after the browser app (Phase 10) is done?
