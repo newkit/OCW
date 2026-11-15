@@ -2061,6 +2061,13 @@ fn vegetation(
         ocw_worldgen::vegetation::add_vegetation(&mut pkg, &areas, &trees, &proj, None)
     });
     println!("vegetation (VEGE): {}", st.summary());
+    // Where to look (scenes, checks): `--start X,Z` for free ride.
+    for s in stage("vegetation spots", || ocw_worldgen::vegetation::spots(&pkg)) {
+        println!(
+            "spot {:<20} --start {:.0},{:.0}  ({:.0} m, {} of 81 cells)",
+            s.name, s.at[0], s.at[1], s.alt_m, s.score
+        );
+    }
     if let Some(o) = &pkg.obstacles {
         let (by, trees) = o.counts();
         println!(

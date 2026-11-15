@@ -77,6 +77,13 @@ calibrate() { # package pbf...
   elif [ ${#forest[@]} -gt 0 ]; then
     $WB forest --world "$pkg" "${forest[@]}"
   fi
+  # The fields, plantations and mapped trees (section VEGE, spec §14 Phase 8
+  # T8; OCW_NO_VEGETATION=1 leaves them out); renews the trees of OBST.
+  if [ -z "${OCW_NO_VEGETATION:-}" ]; then
+    local vp=()
+    for p in "$@"; do vp+=(--pbf "$p"); done
+    $WB vegetation --world "$pkg" "${vp[@]}"
+  fi
 }
 for part in "${parts[@]}"; do
   [ -n "${BBOX[$part]:-}" ] || { echo "unknown part $part (south, middle, north)" >&2; exit 1; }

@@ -543,6 +543,175 @@ pub fn add_vegetation(
     st
 }
 
+/// A place to look at the vegetation (scenes, checks): a name, a point
+/// beside a road (package metres), its altitude and how much of what the
+/// spot looks for lies within 80 m (cells of 20 m, at most 81).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Spot {
+    pub name: &'static str,
+    pub at: [f64; 2],
+    pub alt_m: f64,
+    pub score: u32,
+}
+
+type SpotTest<'a> = Box<dyn Fn(f64, f64, f64) -> bool + Sync + 'a>;
+
+fn class_at(pkg: &WorldPackage, x: f64, z: f64) -> Option<ocw_world::landuse::LandClass> {
+    let size = f64::from(pkg.tile_size_m);
+    pkg.landuse.as_ref().and_then(|l| l.class_at(size, x, z))
+}
+
+fn crop_test(pkg: &WorldPackage, c: FieldCrop) -> SpotTest<'_> {
+    let size = f64::from(pkg.tile_size_m);
+    Box::new(move |x, z, _| {
+        pkg.look
+            .vegetation
+            .as_ref()
+            .is_some_and(|v| v.at(size, x, z).0 == c)
+    })
+}
+
+fn forest_test(
+    pkg: &WorldPackage,
+    lo: f64,
+    hi: f64,
+    b: std::ops::RangeInclusive<u8>,
+) -> SpotTest<'_> {
+    let size = f64::from(pkg.tile_size_m);
+    Box::new(move |x, z, alt| {
+        (lo..hi).contains(&alt)
+            && class_at(pkg, x, z) == Some(ocw_world::landuse::LandClass::Forest)
+            && pkg
+                .look
+                .forest
+                .as_ref()
+                .and_then(|f| f.cell(size, x, z))
+                .is_some_and(|c| c.density >= 50 && c.broadleaf.is_some_and(|s| b.contains(&s)))
+    })
+}
+
+/// The best places beside the roads to see each kind of vegetation of the
+/// package: plantations by crop, fields, palms in towns, forests by leaf
+/// type and altitude, the tree line, the Teide's broom.
+pub fn spots(pkg: &WorldPackage) -> Vec<Spot> {
+    use ocw_world::landuse::LandClass;
+    let region = FloraRegion::at(pkg.origin.0, pkg.origin.1);
+    let size = f64::from(pkg.tile_size_m);
+    let crop = |c: FieldCrop| crop_test(pkg, c);
+    let class = move |x: f64, z: f64| class_at(pkg, x, z);
+    let forest = |lo: f64, hi: f64, b: std::ops::RangeInclusive<u8>| forest_test(pkg, lo, hi, b);
+    let palms: SpotTest<'_> = Box::new(move |x, z, _| {
+        let key = TileKey::containing([x, z], size);
+        pkg.look
+            .vegetation
+            .as_ref()
+            .and_then(|v| v.tiles.get(&key))
+            .is_some_and(|t| {
+                t.trees.iter().any(|p| {
+                    matches!(p.species, Species::DatePalm | Species::SlenderPalm)
+                        && (f64::from(p.pos[0]) - x).abs() < 10.0
+                        && (f64::from(p.pos[1]) - z).abs() < 10.0
+                })
+            })
+    });
+    let line = region.tree_line_m();
+    let mut tests: Vec<(&'static str, SpotTest<'_>)> = vec![
+        ("vineyard", crop(FieldCrop::Vineyard)),
+        ("orchard", crop(FieldCrop::Orchard)),
+        ("banana", crop(FieldCrop::Banana)),
+        ("avocado-citrus", crop(FieldCrop::Subtropical)),
+        ("maize", crop(FieldCrop::Maize)),
+        ("cereal", crop(FieldCrop::Cereal)),
+        ("palms", palms),
+        ("forest-conifer-low", forest(f64::MIN, 900.0, 0..=20)),
+        ("forest-conifer-high", forest(900.0, 2400.0, 0..=20)),
+        ("forest-mixed", forest(600.0, 1400.0, 35..=65)),
+        ("forest-broadleaf", forest(f64::MIN, 1300.0, 75..=100)),
+        (
+            "tree-line",
+            Box::new(move |x, z, alt| {
+                (line - 250.0..line + 50.0).contains(&alt)
+                    && class(x, z) == Some(LandClass::Forest)
+            }),
+        ),
+    ];
+    if region == FloraRegion::Tenerife {
+        tests.push((
+            "broom",
+            Box::new(move |x, z, alt| {
+                (1900.0..2600.0).contains(&alt) && class(x, z) == Some(LandClass::Scrub)
+            }),
+        ));
+        tests.push((
+            "succulent-scrub",
+            Box::new(move |x, z, alt| alt < 600.0 && class(x, z) == Some(LandClass::Scrub)),
+        ));
+    }
+    let roads = crate::obstacles::StripIndex::new(pkg);
+    // Sample points every 40 m within 25 m of a road.
+    let mut samples: Vec<([f64; 2], f64)> = Vec::new();
+    for key in pkg.tiles.keys() {
+        let o = key.origin(size);
+        let n = (size / 40.0) as i64;
+        for k in 0..n {
+            for i in 0..n {
+                let p = [o[0] + (i as f64 + 0.5) * 40.0, o[1] + (k as f64 + 0.5) * 40.0];
+                if roads.nearest(p, 25.0).is_some()
+                    && let Some(y) = pkg.height(p[0], p[1])
+                {
+                    samples.push((p, y));
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (name, test) in &tests {
+        let scored = crate::par::map(&samples, crate::par::threads(), |(p, _)| {
+            let mut n = 0u32;
+            for dz in -4..=4 {
+                for dx in -4..=4 {
+                    let (x, z) = (p[0] + f64::from(dx) * 20.0, p[1] + f64::from(dz) * 20.0);
+                    if let Some(y) = pkg.height(x, z)
+                        && test(x, z, y)
+                    {
+                        n += 1;
+                    }
+                }
+            }
+            n
+        });
+        let mut best: Vec<(u32, usize)> = scored
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| **n >= 12)
+            .map(|(i, n)| (*n, i))
+            .collect();
+        best.sort_by_key(|b| (std::cmp::Reverse(b.0), b.1));
+        let mut picked: Vec<[f64; 2]> = Vec::new();
+        for (score, i) in best {
+            let (p, y) = samples[i];
+            // Spots at least 1.5 km apart.
+            if picked
+                .iter()
+                .any(|q| (q[0] - p[0]).hypot(q[1] - p[1]) < 1500.0)
+            {
+                continue;
+            }
+            picked.push(p);
+            out.push(Spot {
+                name,
+                at: p,
+                alt_m: y,
+                score,
+            });
+            if picked.len() == 3 {
+                break;
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

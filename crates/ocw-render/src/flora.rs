@@ -1049,6 +1049,16 @@ fn broadleaf(
     }
 }
 
+/// The conifers' canopy from afar (sRGB) in `region`: spruce and fir
+/// (`far_terrain::CANOPY`), the Canary pine's open, lighter crowns on
+/// Tenerife.
+pub fn far_conifers(region: ocw_world::flora::FloraRegion) -> [f32; 3] {
+    match region {
+        ocw_world::flora::FloraRegion::Tenerife => [0.17, 0.27, 0.12],
+        _ => crate::far_terrain::CANOPY,
+    }
+}
+
 /// The top of a plant's crown and its radius at scale `scale` (m): the
 /// flight's obstacles (spec §14 Phase 13B).
 pub fn crown_top(sp: Species, scale: f32) -> (f32, f32) {
