@@ -591,10 +591,19 @@ attribution, the licences and the privacy note.
 Sizes of one module (the WebGPU build; the WebGL 2 build is about the
 same; a browser downloads only one):
 
-__SIZES__
+| Build | raw | gzip | brotli |
+|---|---|---|---|
+| `make web` (`web-release`) | 76.3 MiB | 17.0 MiB | 10.7 MiB |
+| `make web-preview` before `wasm-opt` | 51.0 MiB | 12.6 MiB | 8.5 MiB |
+| `make web-preview` (after `wasm-opt -Oz`) | 42.2 MiB | 13.2 MiB | 8.8 MiB |
 
-GitHub Pages compresses the modules on the fly (`content-encoding: gzip`;
-__PAGES_COMPRESSION__).
+`wasm-opt` makes the module much smaller but the compressed download a
+little larger; the preview keeps it for the smaller module the browser
+compiles (spec §14 Phase 10, 10G *B8a* has all the variants measured).
+
+GitHub Pages cannot serve precompressed files; whether it gzips the
+modules on the fly is what `make test-web-preview PREVIEW_URL=…` reports
+(the module's `content-encoding`).
 
 **Build and try it locally:**
 
