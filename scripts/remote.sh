@@ -7,8 +7,10 @@
 #                                            (with ~/.cargo/env sourced); copies
 #                                            Cargo.lock back afterwards
 #   scripts/remote.sh MACHINE ssh [CMD...]   plain ssh (no sync)
-#   scripts/remote.sh MACHINE fetch REMOTE_PATH LOCAL_DIR
-#                                            copy files back (e.g. test-output/)
+#   scripts/remote.sh MACHINE fetch REMOTE_PATH LOCAL_DIR [RSYNC_OPT...]
+#                                            copy files back (e.g. test-output/);
+#                                            Linux/macOS: options for rsync
+#                                            (--include/--exclude, --delete)
 #   scripts/remote.sh MACHINE put LOCAL_FILE... REMOTE_DIR
 #                                            copy files (also git-ignored ones,
 #                                            e.g. logs, data) into REMOTE_DIR of
@@ -691,12 +693,12 @@ case "$action" in
     fi
     ;;
   fetch)
-    src=${1:?remote path}; dst=${2:?local dir}
+    src=${1:?remote path}; dst=${2:?local dir}; shift 2
     mkdir -p "$dst"
     if [ "$os" = windows ]; then
       "${SSH[@]}" "$target" "tar -cf - -C $(psq "$repo") $(psq "$src")" | tar -xf - -C "$dst"
     else
-      rsync -a -e "${SSH[*]}" "$target:$repo/$src" "$dst/"
+      rsync -a "$@" -e "${SSH[*]}" "$target:$repo/$src" "$dst/"
     fi
     ;;
   *) echo "unknown action '$action'" >&2; exit 2 ;;

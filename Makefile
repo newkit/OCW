@@ -16,6 +16,8 @@ WASM_CRATES := -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice 
 # of the wasm-bindgen crate in Cargo.lock.
 WASM_BINDGEN_VERSION := $(shell awk '/^name = "wasm-bindgen"$$/ { getline; gsub(/version = |"/, ""); print; exit }' Cargo.lock)
 WEB_PORT ?= 8080
+# make web-serve's address: 127.0.0.1, or 0.0.0.0 for the LAN (no secure context there: see the README).
+WEB_BIND ?= 127.0.0.1
 # Voice chat (spec §7): the LiveKit SDK's bindings need clang >= 21 on Linux
 # (`make deps-llvm-debian`). With clang-21 installed, `build` and `release`
 # include the desktop's `voice` feature; without it they build as before.
@@ -81,7 +83,7 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 .DEFAULT_GOAL := help
 .PHONY: help version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
-	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-world test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds deps-web test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
+	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-world test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds web-remote deps-web deps-browser test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
@@ -257,11 +259,18 @@ deps-web: ## The browser app's tools: wasm-bindgen-cli matching Cargo.lock (carg
 		echo "wasm-bindgen $(WASM_BINDGEN_VERSION) installed"; \
 	else $(CARGO) install wasm-bindgen-cli --version $(WASM_BINDGEN_VERSION) --locked; fi
 
-web: ## Build the browser app into target/web/ (the `web` profile; WEB_PROFILE=dev for a debug build)
+web: ## Build the browser app into target/web/ (the `web-release` profile; WEB_PROFILE=dev for a debug build)
 	scripts/build-web.sh
 
-web-serve: ## Serve target/web/ (and its worlds/, with range requests) on http://127.0.0.1:$(WEB_PORT)/ (COOP/COEP headers; WEB_PORT)
-	scripts/web-serve.py --port $(WEB_PORT)
+web-serve: ## Serve target/web/ (and its worlds/, with range requests) on http://$(WEB_BIND):$(WEB_PORT)/ (COOP/COEP headers; WEB_PORT, WEB_BIND=0.0.0.0 for the LAN); fails without a build
+	scripts/web-serve.py --port $(WEB_PORT) --bind $(WEB_BIND)
+
+web-remote: ## Build the browser app on build machine MACHINE (make web; WORLDS=1: also make web-worlds) and fetch the page into target/web/ here (no cargo output, no private keys)
+	@[ -n "$(MACHINE)" ] || { echo "usage: make web-remote MACHINE=<build machine> [WORLDS=1]" >&2; exit 2; }
+	WORLDS=$(WORLDS) scripts/web-remote.sh $(MACHINE)
+
+deps-browser: ## The browser tests' browser: pinned Chromium (scripts/browsers.json, SHA-256 checked) into ~/.cache/ocw/browsers/ (no sudo; Linux x64, macOS arm64, Windows x64)
+	python3 scripts/web_browser.py fetch
 
 # The pilot package (git-ignored data/): a branch checkout of scripts/remote.sh
 # (REPO_PATH-BRANCH) finds it in the main checkout next to it.
@@ -307,6 +316,9 @@ test-web-livekit: web ## Two headless browser riders in a real `livekit-server -
 	$(CARGO) build --release -p ocw-server -p ocw-bot
 	scripts/test-web-audio.py --out test-output/web --part livekit --livekit-server $(LIVEKIT_SERVER)
 
+test-web-readme: deps-browser ## The README's browser walkthrough in a fresh clone: deps-web, web, web-worlds, web-serve, every README URL in the pinned browser; screenshots + verdict into test-output/web/readme-<time>/ (README_FLAGS="--keep --reuse-target": quicker reruns)
+	scripts/test-web-readme.py --out test-output/web $(README_FLAGS)
+
 test-kiosk: ## Test the kiosk script with a fake app (no display or build needed)
 	scripts/test-kiosk.sh
 
@@ -324,7 +336,7 @@ windows-move-toolchain: ## Windows MACHINE: dry run of moving CARGO_HOME, RUSTUP
 	@[ -n "$(MACHINE)" ] || { echo "usage: make windows-move-toolchain MACHINE=<windows machine> [APPLY=1]" >&2; exit 2; }
 	scripts/remote.sh $(MACHINE) run 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows-move-toolchain.ps1 $(if $(APPLY),-Apply)'
 
-test-remote: ## Test remote.sh's build-slot order, tree snapshot and sync, and the build-log parser (no machine needed)
+test-remote: ## Test remote.sh's build-slot order, tree snapshot and sync, the build-log parser and the web scripts (web-serve, web_browser, the README walkthrough's parser; no machine needed)
 	scripts/test-remote.sh
 
 # Build profile (spec §11.2): clean, no-op and incremental builds of the main
