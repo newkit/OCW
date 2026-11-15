@@ -2,7 +2,7 @@
 """The README's browser walkthrough as a test (`make test-web-readme`;
 spec §11.4, §14 Phase 10): a new user following "Browser app (preview)".
 
-    scripts/test-web-readme.py [--out test-output/web] [--seconds 6] [--keep]
+    scripts/test-web-readme.py [--out test-output/web] [--seconds 12] [--keep]
                                [--reuse-target] [--chromium PATH] [--readme README.md]
 
 1. A fresh copy of the current commit in target/readme-walkthrough/OCW
@@ -319,7 +319,8 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--out", default="test-output/web")
     p.add_argument("--readme", default=os.path.join(ROOT, "README.md"))
-    p.add_argument("--seconds", type=float, default=6.0, help="riding per page after the first tick")
+    p.add_argument("--seconds", type=float, default=12.0,
+                   help="riding per page after the first tick (the app logs its distance every few seconds)")
     p.add_argument("--timeout", type=float, default=150.0, help="per page")
     p.add_argument("--work", default=os.path.join(ROOT, "target", "readme-walkthrough"))
     p.add_argument("--keep", action="store_true", help="keep the copy (and its target/)")
