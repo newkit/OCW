@@ -602,10 +602,7 @@ mod tests {
         assert!(controls.iter().any(|r| r.confirm == unicorn_row));
         let unicorn = rows(&app, sub::Page::UnicornControls);
         for key in ["controls.god_flight", "controls.invert_y"] {
-            assert!(
-                unicorn.iter().any(|r| row_setting(r) == Some(key)),
-                "{key}"
-            );
+            assert!(unicorn.iter().any(|r| row_setting(r) == Some(key)), "{key}");
         }
         let desktop = for_platform(
             sub::rows(
