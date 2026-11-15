@@ -241,7 +241,6 @@ pub fn boot(opts: &BootOptions) -> Result<Booted, XrError> {
         },
         main: MainHandle {
             shared: shared.clone(),
-            events: xr::EventDataBuffer::new(),
         },
         render: RenderHandle { shared },
     })
@@ -309,7 +308,6 @@ impl Shared {
 /// The main thread's handle.
 pub struct MainHandle {
     shared: Arc<Shared>,
-    events: xr::EventDataBuffer,
 }
 
 impl MainHandle {
@@ -323,11 +321,13 @@ impl MainHandle {
 
 impl XrRuntime for MainHandle {
     fn poll_event(&mut self) -> Result<Option<RuntimeEvent>, XrError> {
+        // A fresh buffer per poll: the buffer is not `Send`, the handle is.
+        let mut events = xr::EventDataBuffer::new();
         loop {
             let Some(e) = self
                 .shared
                 .instance
-                .poll_event(&mut self.events)
+                .poll_event(&mut events)
                 .map_err(xr_error)?
             else {
                 return Ok(None);
