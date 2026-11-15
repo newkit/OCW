@@ -32,16 +32,17 @@ Copy them from `git config user.name` / `user.email` in the old checkout; they a
 
 ```bash
 mkdir -p /home/claude/src
+git lfs install --skip-smudge     # once for claude: the LFS filters, no media downloads on clone or checkout
 git clone git@github.com:newkit/OCW.git     /home/claude/src/OCW       # or the HTTPS URLs
-git clone git@github.com:newkit/OCW-ART.git /home/claude/src/OCW-ART   # the art project, next to OCW
+GIT_LFS_SKIP_SMUDGE=1 git clone git@github.com:newkit/OCW-ART.git /home/claude/src/OCW-ART   # the art project, next to OCW
 cd /home/claude/src/OCW
 ```
 
-OCW-ART reads OCW from the checkout next to it (`../OCW`), so it needs no setting there.
+OCW-ART reads OCW from the checkout next to it (`../OCW`), so it needs no setting there. Its pictures and videos are in Git LFS (OCW-ART's ART-PROJECT.md §2.8): the clone skips them (skip-smudge, so it does not use the free plan's 10 GiB of monthly LFS bandwidth) and gets them by rsync in step 4.
 
 Local tools on deb only. Builds stay on the build machines.
 
-- Already installed: `python3` (3.11+ at `/usr/bin/python3`), `ffmpeg`, `rsync`, `gh`.
+- Already installed: `python3` (3.11+ at `/usr/bin/python3`), `ffmpeg`, `git-lfs` (3.6.1), `rsync`, `gh`. (`make -C /home/claude/src/OCW-ART deps` checks them.)
 - Rust (`rustup`) is needed only for the tools that `remote.sh` does not build remotely. Today nothing on deb needs a local cargo build.
 
 ## 4. Copy the git-ignored state [user, root]
@@ -55,7 +56,7 @@ It copies:
 
 - **`config/`:** `machines.toml`, `build-machines.toml`, `ssh/` and `dashboard-token`. Secrets stay mode 600.
 - **`test-output/`, `target/web/`** and the dev world key.
-- **The art archive's media** into `/home/claude/src/OCW-ART/build-history/` (from `/home/nils/data/git/OCW-ART/build-history/`, or from OCW's old `art/build-history/` if it has not moved yet; OCW-ART's ART-PROJECT.md §5.2).
+- **The art archive's media** into `/home/claude/src/OCW-ART/build-history/` (from `/home/nils/data/git/OCW-ART/build-history/`; OCW-ART's ART-PROJECT.md §5.2). They replace the LFS pointer files of the skip-smudge clone, so `git -C /home/claude/src/OCW-ART status` is clean afterwards.
 - **The Claude Code project folder:** transcripts and memory, into `claude`'s `~/.claude/projects/` under its old name. Its name for the new checkout is `-home-claude-src-OCW`. The art collector finds both histories through `~/.claude/projects/*OCW*/`.
 
 Re-running only copies what changed.
@@ -88,7 +89,7 @@ python3 tools/build-dashboard/dashboard.py --once --no-record | head
 
    ```bash
    make dashboard-install && make -C /home/claude/src/OCW-ART install-timer
-   systemctl --user list-timers | grep ocw-art   # ExecStart: /home/claude/src/OCW-ART/collect.sh
+   systemctl --user list-timers | grep ocw-art   # ExecStart: /home/claude/src/OCW-ART/bin/collect.sh
    curl -s localhost:8765/api/status | head -c 200
    ```
 
