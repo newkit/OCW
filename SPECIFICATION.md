@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.52 – November 2026
+Version 3.53 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.53 | Phase 15 Q1 – Q4 decided by the user (2026-11-15; §14 Phase 15, 15C, 15G): **keep the generators and commit Blender sources too** (every model gets a `.blend` in `artwork/3dmodels/sources/`, generated ones made from their `.glb` on marge), **Git LFS** for the model files and sources (the free quota is per account, shared with OCW-ART; CI caches the LFS objects), **third-party models whose licence only asks for attribution** (CC0, CC-BY 4.0, MIT, Apache-2.0, BSD; credits in the manifest and on the credits pages), **Blender on marge** (round-trip test, `.blend` sources). New Q5: the GPL Blender add-on (proposal: M6). The coordinator's user `claude@deb` has its own disk for its home (the user, 2026-11-15) – the art media and LFS objects move there with the user move (docs/MIGRATE-DEB-USER.md) |
 | 3.52 | Phase 11 Q9 decided (the user installed Monado on marge, 2026-11-15; §14 Phase 11, 11E): Monado 25.0.0 and the OpenXR loader 1.1.47 on marge for the VR tests with the simulated headset; new dependency targets **`make deps-vr`** and **`make deps-vr-linux`** (Debian / Fedora / Arch packages, runtime check; Windows and macOS hints), not part of `make deps` (README *Build and run*) |
 | 3.51 | Public web preview (§14 Phase 10 B8a, asked by the user 2026-11-15): **Tenerife** (version 8, 500 MB, five routes) joins Liechtenstein (version 4, 88 MB) – "only Tenerife for now", the Black Forest waits for a decision (Phase 10 Q7: Pages holds 1 GB, release files have no CORS headers); `publish-preview-worlds.sh` handles world ids with several levels (`scripts/preview_worlds_index.py`, regression test) and removes older versions' assets; each ride card shows its **download size and the load time** at 50 Mbit/s. Open questions brought up to date for the dashboard: Phase 11 Q1 marked decided (it was a decision, listed as open), new Phase 10 Q7 (Black Forest in the preview), Phase 11 Q8 (the Windows PC for Link), Q9 (Monado on marge), Phase 12 Q8 (riding aids in local races), §11.3 Q1 (the art files in OCW's history); Phase 15 Q2 with the Git LFS quota |
 | 3.50 | **The art project has its own repository** (decided by the user 2026-11-15: "Use this repository for everything ART related", "also move the build-history to the new art project location"): the OCW Build Diary moved with its history to [newkit/OCW-ART](https://github.com/newkit/OCW-ART) – the tool (`diary.py`, `music.py`, `features.py`, tests), the day scripts, `ART-PROJECT.md`, the collector (`collect.sh`, the systemd units; formerly `scripts/art-collect.sh`) and the archive's masked text. Day scripts, renders, publishing and the hourly collector run from an OCW-ART checkout next to this one; it reads this repository from outside (git log, this spec, `test-output/`, `config/machines.toml` through `scripts/remote.sh`) and still writes its status to `test-output/build-log/DAY/art.json`, so the build dashboard's "Art project" panel is unchanged. The archive's media move to OCW-ART's `build-history/`; new videos and day zips go to OCW-ART's release `build-history` (days 1–4 copied there; OCW's release keeps them and the README images). The `make art-*` targets here only say where they went (`art-uninstall-timer` still stops a timer installed from here). The regional reference boards serve the world look and stay here, moved to `docs/reference/` (§14 Phase 8D) |
@@ -4168,17 +4169,16 @@ artwork/3dmodels/
 ├── creatures/           # unicorn.glb
 ├── flora/               # one file per species (ocw_world::flora), with lod1 / billboard
 ├── props/               # bollard, post, pylon, block, gate, lift-gate, cycle-barrier, street lamps, …
-└── sources/             # optional editable sources (.blend), not loaded (Q1)
+└── sources/             # the Blender sources (.blend, LFS) of every model, not loaded (Q1)
 ```
 
 - **`assets/models/` moves here.** The include paths and `generate --out` follow, and the `assets/models` folder is removed. Textures of the material library stay in `assets/materials/` (§4.6): they are not models.
-- **Plain git, no LFS for now (Q2):**
-  - binary `.glb` files diff badly but are small;
-  - the validator enforces at most **2 MB per file** and **50 MB for the folder**;
-  - beyond that we move to Git LFS.
-
-    Caveat: GitHub Pages does not serve LFS objects, but the web build embeds the models anyway, so that is no blocker.
-- **Licence:** each file has a manifest entry (`license`, `source`, `author`; §8.1, §13). Own models are MIT OR Apache-2.0 like `artwork/`. Third-party models are only CC0-1.0 or CC-BY-4.0, with the author and the source URL (Q3).
+- **Git LFS (decided by the user 2026-11-15, Q2):** `*.glb`, `*.gltf` buffers (`*.bin`), textures and `*.blend` under `artwork/3dmodels/` are LFS objects (`.gitattributes`); the validator still warns above **2 MB per model file**. Notes:
+  - the free quota (10 GiB storage, 10 GiB download a month) is **per account** and shared with the art project's LFS media (OCW-ART), so the models' share is watched by the same budget check;
+  - every CI job that builds the app needs the models (they are embedded with `include_bytes!`), so CI checks out LFS (`lfs: true`) and caches the objects (`actions/cache` keyed on the LFS pointers' hash) – a fresh download per run would eat the bandwidth;
+  - `scripts/remote.sh` copies the working tree, so the build machines need no `git-lfs`; deb (the coordinator) and every clone that builds need it (`make deps`: git-lfs is added there when M1 lands);
+  - GitHub Pages does not serve LFS objects, but the web build embeds the models, so that is no blocker.
+- **Licence:** each file has a manifest entry (`license`, `source`, `author`; §8.1, §13). Own models are MIT OR Apache-2.0 like `artwork/`. Third-party models are accepted under licences that **only require attribution** (decided by the user 2026-11-15, Q3): CC0-1.0, CC-BY-4.0, MIT, Apache-2.0, BSD – with the author, the source URL and the attribution text in the manifest, shown on the credits pages; never share-alike, non-commercial or no-derivatives licences, never brands.
 
 #### 15D – Importer, exporter and loader
 
@@ -4274,17 +4274,11 @@ All of it lives in `ocw-assets` (pure, wasm-safe except the CLI's file access) p
 
 #### 15G – Open questions (to the user)
 
-- **Q1 – The source of truth for parametric models:** the bikes, the rider and the helmets follow from numbers today. Options:
-  - **(a)** the `.glb` files become the only source: export once, retire the generators, and edit in Blender from then on;
-  - **(b)** keep the generators as exporters for parametric models (bikes, rider, helmets) and use files as the source for everything else; an object switches to (a) when an artist takes it over;
-  - **(c)** commit Blender `.blend` sources in `sources/` next to every `.glb`.
-
-  **Proposal: (b).**
-- **Q2 – Git LFS:** plain git with the size limits of 15C (proposal), or LFS from the start? (GitHub Free includes 10 GiB of LFS storage and 10 GiB of download bandwidth a month; beyond that $0.07 per GiB stored and $0.0875 per GiB downloaded, every clone and CI run counting against the owner – checked 2026-11-15.)
-- **Q3 – Third-party models:** accept openly licensed models from outside, for example the CC0 sets of Kenney, Quaternius or Poly Haven, for props and plants? They would need a manifest entry with the author and the source, and no brands. **Proposal: yes, CC0-1.0 and CC-BY-4.0 only**, as the validator already allows.
-- **Q4 – Blender on the build machines and the add-on:**
-  - may Blender (Debian package, GPL) be installed on marge for the round-trip test?
-  - should the optional Blender add-on be built (GPL-2.0-or-later, in its own folder)?
+- **Q1 – The source of truth for parametric models: decided (2026-11-15, the user: "Keep the generators and commit Blender sources too"):** **(b) + (c)** – the generators stay as exporters for the parametric models (bikes, rider, helmets; `ocw-assets generate` writes their `.glb`), and **every model also has a Blender source** in `artwork/3dmodels/sources/<kind>/<id>.blend` (LFS, Q2). For generated models the `.blend` is made from the generated `.glb` (`blender -b --python tools/blender/glb_to_blend.py`, on marge) and refreshed when the generator's output changes; `model validate` checks that every `.glb` has its source and that a source is not older than its `.glb`. Hand-made models are edited in their `.blend` and exported with the preset (15D); an object leaves the generator when an artist takes it over.
+- **Q2 – Git LFS: decided (2026-11-15, the user: "LFS"):** the model files and their Blender sources are LFS objects from the start (15C). (GitHub Free includes 10 GiB of LFS storage and 10 GiB of download bandwidth a month, shared by all repositories of the account; beyond that $0.07 per GiB stored and $0.0875 per GiB downloaded – checked 2026-11-15.)
+- **Q3 – Third-party models: decided (2026-11-15, the user: "If the license only requires naming it, it's fine, we use those sources"):** openly licensed models from outside (for example Kenney, Quaternius, Poly Haven) are used for props and plants when their licence asks no more than attribution (15C *Licence*); the validator's licence list grows by MIT, Apache-2.0 and BSD for models, each with the attribution in the manifest.
+- **Q4 – Blender on marge: decided (2026-11-15, the user: "Yes, we can install Blender on marge"):** Blender is installed on marge for the round-trip test and the `.blend` sources (Q1); the official release tarball into `~/.local/opt/blender` (pinned version and SHA-256, no sudo; `make deps-blender`) or the Debian package. Blender is a tool there: nothing of it is linked or shipped, and the `.blend` files we save are ours (MIT OR Apache-2.0).
+- **Q5 – The Blender add-on:** should the optional add-on of 15D (export preset, kind / id panel, anchor names, budget check; GPL-2.0-or-later in its own folder `tools/blender/ocw_models/`, since add-ons that use `bpy` are GPL-derived) be built? **Proposal: yes, in M6**, after the format and the import tools have settled.
 
 ### Phase 16 – OCW Studio: the editor for models, worlds and routes (planning, 2026-11-15)
 
