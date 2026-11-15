@@ -604,9 +604,10 @@ same; a browser downloads only one):
 little larger; the preview keeps it for the smaller module the browser
 compiles (spec §14 Phase 10, 10G *B8a* has all the variants measured).
 
-GitHub Pages cannot serve precompressed files; whether it gzips the
-modules on the fly is what `make test-web-preview PREVIEW_URL=…` reports
-(the module's `content-encoding`).
+GitHub Pages cannot serve precompressed files, but it gzips the modules on
+the fly: the live site serves the WebGPU module with `content-encoding: gzip`
+(14.1 MB instead of 42 MB; measured 2026-11-15 with `make test-web-preview
+PREVIEW_URL=https://newkit.github.io/OCW/`).
 
 **Build and try it locally:**
 
