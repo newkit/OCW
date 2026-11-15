@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.60 – November 2026
+Version 3.61 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.61 | Decision from the build dashboard (2026-11-15): Phase 9 Q11 – choosing a season **jumps the date** to the season's representative day of the place (time of day kept); no season override decoupled from the date (S9b reduced accordingly) |
 | 3.60 | Decision from the build dashboard (2026-11-15): Phase 14 Q2 – **WebXR first** (the browser app in the headset's browser: no store, WebGL 2, trainers through the sensor bridge), the native Android OpenXR app later |
 | 3.59 | Decisions from the build dashboard (2026-11-15): Phase 9 Q12 – every ride starts at the real local date and time of the world's place with the season following it (the override is not remembered); Phase 16 Q1 – `ocw-studio` is its own desktop app; Q4 – the browser studio comes later; Q5 – the studio gets **simple mesh tools** (extrude, move / scale / rotate parts, normals; new stage E4b), larger shape work stays in Blender |
 | 3.58 | Decision by the user (2026-11-15): Phase 12 Q4 – a workout's **ERG step pauses while the rider is down** after a crash and runs on when the rider rides again (`ocw_sim::workout::WorkoutRun::set_down`, new state *paused: rider down*; `TrainerControl::is_down`; `ERG_STEP_RUNS_WHILE_DOWN = false`), tests updated (§14 Phase 12, 12J; §2.8) |
@@ -3291,7 +3292,7 @@ Today, *World → Time* (9I) changes the date only one day per press (← / →)
 - **Console:** `time date YYYY-MM-DD [HH:MM]` (fixed mode). `time` already takes an instant (9I); the console accepts the plain date form too.
 - **Shared sessions:** the server owns the date (9I, `ClockAccess`). The calendar is shown to everyone; setting a date is a `ClockRequest` (host or organiser, Q2). Riders without the right see it read-only, dimmed, with "who sets the time".
 
-**S9b – Changing the season without changing the date** (proposal; Q11):
+**S9b – Season choice (decided by Q11: a date jump; the decoupled override described below is not built):**
 
 - **Purpose:** ride on today's date and time with the sun and light of the real moment, but see the landscape of another season. For example, autumn colours in Vaduz in July, or a summer Malbun in January for training. A date change (S9a) changes both; this changes only the landscape.
 - **Setting:**
@@ -3360,7 +3361,7 @@ Today, *World → Time* (9I) changes the date only one day per press (← / →)
 - **Q8 – Historic weather: decided (2026-11-14, dashboard: keep it only if the data fits our licence) – kept, the data fits.** ERA5 (ECMWF / Copernicus C3S reanalysis, hourly from 1940) is published under **CC BY 4.0** for most datasets (e.g. ERA5 hourly single levels, ERA5-Land) and otherwise under the *Licence to use Copernicus products* – both are allowed by rule 8A (attribution: "Contains modified Copernicus Climate Change Service information [year]"; the exact licence is checked per dataset on its CDS page before use). Sources: the Copernicus Climate Data Store (free account needed for downloads, on our infrastructure) or Open-Meteo's historical API (ERA5-based, CC BY 4.0 data; its free API is non-commercial, which fits the decision of no commercial release); for the regions, MeteoSwiss and DWD historic station data (open data) refine it. If a dataset turns out to have an incompatible licence, that source is dropped, not the feature.
 - **Q9 – Extreme weather: decided (2026-11-12):** realistic, **no cap**. Storms, hail, heavy snow, thunderstorms with lightning, dense fog and gale-force wind are all part of the simulation, the weather machine and real weather. The only limit is the physics switch (Q4).
 - **Q10 – Priority: decided (2026-11-14):** after S1 and S3 (done), the order is **S2 → S4 → S5 → S7 → S8 → S6** (S2 done, 9I-S2; S4 done, 9I-S4; S5 done, 9I-S5; S7 done, 9I-S7).
-- **Q11 – Season override: decoupled from the date?** *(asked 2026-11-15)* The proposal (S9b) lets the landscape's season differ from the date while sun, light and weather follow the clock. Alternatively, "changing the season" could only **jump the date** to the season's representative day, keeping the time of day: simpler and always consistent, but it moves the sun as well. **Proposal: both.** The calendar's season shortcuts jump the date (S9a), and the override is a separate setting (S9b).
+- **Q11 – Season override: decoupled from the date? Decided (2026-11-15, dashboard: "the season override jumps only to the season's representative day"):** **no decoupled override** – choosing a season on *World → Time → Season* sets the clock's **date** to that season's representative day for the place (keeping the time of day), so landscape, sun, light and day length always match. S9b is built that way: no `season_override` field, no "· autumn look" mark; the season row is a date jump like the calendar's shortcuts.
 - **Q12 – Remember the season choice? Decided (2026-11-15, dashboard: "Start with the local date and time (and season) of where the world is rendered"):** every ride starts at the real local date and time of the world's place, and the season **follows that date** – the season override (S9b) is not remembered across rides, like the time machine (9A).
 
 ---
