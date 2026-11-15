@@ -341,7 +341,7 @@ fn setup(
             Camera2d,
             Camera {
                 order: -10,
-                clear_color: ClearColorConfig::Custom(Color::srgba(0.03, 0.04, 0.06, 0.78)),
+                clear_color: ClearColorConfig::Custom(Color::srgb(0.03, 0.04, 0.06)),
                 ..default()
             },
             RenderTarget::Image(hud.clone().into()),
@@ -362,18 +362,19 @@ fn setup(
         .with_child((
             Text::new(""),
             TextFont {
-                font_size: 52.0.into(),
+                font_size: 72.0.into(),
                 ..default()
             },
             TextColor(Color::srgb(0.95, 0.95, 0.92)),
             TextLayout::justify(Justify::Center),
             VrHudText,
         ));
-    // … on a quad the eyes see (not the chase camera).
+    // … on a quad the eyes see (not the chase camera); opaque, so it
+    // hides the road markings behind it (blended, it was sorted under them).
     let quad = materials.add(StandardMaterial {
         base_color_texture: Some(hud.clone()),
         unlit: true,
-        alpha_mode: AlphaMode::Blend,
+        alpha_mode: AlphaMode::Opaque,
         cull_mode: None,
         ..default()
     });
@@ -592,7 +593,7 @@ pub fn hud_line(view: &RideView) -> String {
         .map_or("– bpm".to_string(), |h| format!("{h:.0} bpm"));
     let t = view.elapsed_s.max(0.0) as u64;
     format!(
-        "{:.0} W   {:.1} km/h\n{cadence}   {hr}\n{grade:+.1} %   {:.2} km   {}:{:02}:{:02}",
+        "{:.0} W   {:.1} km/h\n{cadence}   {hr}\n{grade:+.1} %   {:.2} km\n{}:{:02}:{:02}",
         l.power_w,
         mps_to_kmh(l.state.speed),
         l.state.distance / 1000.0,
@@ -754,7 +755,7 @@ mod tests {
         });
         let l = hud_line(&v);
         assert!(
-            l.starts_with("250 W   36.0 km/h\n88 rpm   – bpm\n+1.0 %   0.50 km   1:02:05"),
+            l.starts_with("250 W   36.0 km/h\n88 rpm   – bpm\n+1.0 %   0.50 km\n1:02:05"),
             "{l}"
         );
     }
