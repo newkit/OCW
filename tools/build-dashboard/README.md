@@ -62,6 +62,12 @@ directory, never in the repository).
 - **Janitor:** its mode, the last pass per machine (what it deleted or, in
   dry-run mode, would delete, and why) and the recent log entries; the size
   of `test-output/` on this machine (never deleted).
+- **Art project:** the last run of the hourly art collector
+  (`scripts/art-collect.sh`, `art/ART-PROJECT.md` §5.1), from the newest
+  `test-output/build-log/DAY/art.json` of the main checkout: time, status
+  (ok / failed / locked), new files, media of today, the mask check and
+  any errors; "late" when no run ended for 2.5 h (or a run never ended).
+  Also in `--once` and `/api/status` (`art`).
 - **Open questions:** every question for the user in `SPECIFICATION.md`
   (below), grouped by phase, with its id, title, text and proposal; the
   count is in the overview. Decided ones are hidden behind "show decided".

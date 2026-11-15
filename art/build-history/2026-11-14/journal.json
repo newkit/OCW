@@ -1,0 +1,4733 @@
+{
+ "day": "2026-11-14",
+ "number": 4,
+ "commits": [
+  {
+   "sha": "427d41a",
+   "time": "00:01:51",
+   "merge": false,
+   "subject": "Spec 2.67: god mode refined – plane-like flight, + up / − down by typed character, no saddle cloth, bird-like wingbeat",
+   "added": 9,
+   "removed": 6
+  },
+  {
+   "sha": "6f7268e",
+   "time": "00:02:04",
+   "merge": false,
+   "subject": "Spec: 2.67 row at the top of the newest rows",
+   "added": 1,
+   "removed": 1
+  },
+  {
+   "sha": "f8392c9",
+   "time": "00:02:51",
+   "merge": true,
+   "subject": "Merge main (spec 2.67: refined god mode)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "27b9fd3",
+   "time": "00:03:02",
+   "merge": false,
+   "subject": "CLAUDE.md: Win11Builder resumed for Windows-related builds",
+   "added": 2,
+   "removed": 2
+  },
+  {
+   "sha": "03eaed0",
+   "time": "00:09:50",
+   "merge": false,
+   "subject": "Spec 2.68: Phase 4 decisions from the build dashboard – changes on leaving the workshop, bounded parts with Profile mode, hearts without daily cap, kit costs hearts (glasses free), touch testing postponed",
+   "added": 11,
+   "removed": 10
+  },
+  {
+   "sha": "2d9dbf9",
+   "time": "00:10:12",
+   "merge": false,
+   "subject": "CLAUDE.md: read and watch the dashboard's answer inbox, record answers in the spec",
+   "added": 1,
+   "removed": 0
+  },
+  {
+   "sha": "2d35dc4",
+   "time": "00:10:31",
+   "merge": false,
+   "subject": "build-dashboard: enable/disable build machines and set their build slots (spec 2.66)",
+   "added": 1040,
+   "removed": 38
+  },
+  {
+   "sha": "18500b8",
+   "time": "00:11:04",
+   "merge": false,
+   "subject": "Unicorn: a bird's wingbeat; touch steers on the left half; camera.orbit in flight (spec 2.68)",
+   "added": 661,
+   "removed": 76
+  },
+  {
+   "sha": "fc8c397",
+   "time": "00:11:16",
+   "merge": true,
+   "subject": "Merge build dashboard machine controls: enable/disable machines for building, slots per machine; remote.sh refuses disabled machines (deploys still allowed) (spec 2.66)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "8e3ba43",
+   "time": "00:13:12",
+   "merge": false,
+   "subject": "Spec 2.69: dashboard answers – time/weather control host-only in shared sessions; 3D building data postponed",
+   "added": 4,
+   "removed": 3
+  },
+  {
+   "sha": "888a33a",
+   "time": "00:14:27",
+   "merge": false,
+   "subject": "Spec 2.70: night keeps a minimum brightness; bike lights are bought and fitted in the workshop",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "1efbad1",
+   "time": "00:14:42",
+   "merge": false,
+   "subject": "Spec 2.71: wind load sent to trainers that support it",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "1c97a5e",
+   "time": "00:15:35",
+   "merge": false,
+   "subject": "Spec 2.72: weather providers MeteoSwiss + DWD, MET Norway fallback, Open-Meteo; selectable in the menu",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "c5bd97d",
+   "time": "00:18:08",
+   "merge": false,
+   "subject": "Spec 2.73: historic weather kept – ERA5 under CC BY 4.0 / Copernicus licence fits rule 8A",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "919f7cb",
+   "time": "00:18:16",
+   "merge": false,
+   "subject": "Spec: 2.73 row in place",
+   "added": 1,
+   "removed": 1
+  },
+  {
+   "sha": "cd44fdc",
+   "time": "00:19:28",
+   "merge": false,
+   "subject": "Spec 2.74: browser targets – Chromium for trainer rides, others with virtual power and the bridge",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "e68d49c",
+   "time": "00:19:43",
+   "merge": false,
+   "subject": "Spec 2.75: build the sensor bridge for browser rides",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "ff26081",
+   "time": "00:20:50",
+   "merge": false,
+   "subject": "Spec 2.76: browser app starts now (B1 first)",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "03650f5",
+   "time": "00:21:01",
+   "merge": false,
+   "subject": "Spec 2.77: browser app hosted on own servers for now",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "2e100e4",
+   "time": "00:22:05",
+   "merge": false,
+   "subject": "Spec 2.78: anonymous riding allowed with a plain bike and character; customization for logged-in users only",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "5c520a8",
+   "time": "00:22:20",
+   "merge": false,
+   "subject": "Spec 2.79: browser app with full parity",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "bb98a02",
+   "time": "00:22:36",
+   "merge": false,
+   "subject": "Spec 2.80: Linux VR is a target",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "8de74cc",
+   "time": "00:23:24",
+   "merge": false,
+   "subject": "Spec 2.81: VR spike builds and compares both OpenXR integrations",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "b40b1a9",
+   "time": "00:24:07",
+   "merge": true,
+   "subject": "Merge god mode refined: plane-like flight, + / − by typed character, no saddle cloth, bird-like wingbeat (spec 2.67)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "fd87152",
+   "time": "00:24:32",
+   "merge": false,
+   "subject": "Spec 2.83: VR steering stays on keys, gamepad and autodrive (no head-lean)",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "0fcf78f",
+   "time": "00:25:22",
+   "merge": false,
+   "subject": "Spec 2.84: standalone VR (Quest / Pico) and WebXR wanted – new phase",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "1adf7a8",
+   "time": "00:25:35",
+   "merge": false,
+   "subject": "Spec 2.85: VR at the end of the phase order",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "1120509",
+   "time": "00:25:46",
+   "merge": false,
+   "subject": "Spec 2.86: collisions on, damage off by default",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "01f90ad",
+   "time": "00:26:47",
+   "merge": false,
+   "subject": "Spec 2.87: star catalogue licence research for Phase 9 Q7 (proposal, still open)",
+   "added": 22,
+   "removed": 1
+  },
+  {
+   "sha": "c58c411",
+   "time": "00:27:04",
+   "merge": false,
+   "subject": "Spec 2.88: group rides soft bumps only, races full collision model",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "20fb1cb",
+   "time": "00:28:17",
+   "merge": false,
+   "subject": "Spec 2.89: chaotic bots as a setting",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "1bef6f6",
+   "time": "00:29:16",
+   "merge": false,
+   "subject": "Spec 2.90: falls as ragdolls with a physics engine",
+   "added": 4,
+   "removed": 3
+  },
+  {
+   "sha": "44c0f4a",
+   "time": "00:29:52",
+   "merge": false,
+   "subject": "Spec 2.91: Phase 14 planned – standalone VR (Quest / Pico native OpenXR) and WebXR",
+   "added": 121,
+   "removed": 5
+  },
+  {
+   "sha": "74f3837",
+   "time": "00:29:57",
+   "merge": false,
+   "subject": "Spec 2.91: persistent damage with repairs in the workshop",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "5237cd8",
+   "time": "00:30:27",
+   "merge": false,
+   "subject": "Spec: persistence decision renumbered to 2.92 (2.91 is Phase 14)",
+   "added": 2,
+   "removed": 2
+  },
+  {
+   "sha": "19a2d24",
+   "time": "00:31:09",
+   "merge": false,
+   "subject": "Spec 2.93: road gates and barriers hidden by default, a setting shows them",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "f1eb921",
+   "time": "00:31:41",
+   "merge": false,
+   "subject": "remote.sh: Windows sync sends the whole tree to a new checkout",
+   "added": 171,
+   "removed": 20
+  },
+  {
+   "sha": "5329910",
+   "time": "00:32:15",
+   "merge": false,
+   "subject": "Spec 2.94: Windows tree sync sends the whole tree to a new checkout",
+   "added": 8,
+   "removed": 7
+  },
+  {
+   "sha": "78acea9",
+   "time": "00:47:20",
+   "merge": false,
+   "subject": "Unicorn mode: the UI name of god mode (spec 2.94, Phase 13 Q6); trainer flat while flying (Q4)",
+   "added": 54,
+   "removed": 47
+  },
+  {
+   "sha": "94e5590",
+   "time": "00:48:53",
+   "merge": false,
+   "subject": "Release 0.2.1",
+   "added": 18,
+   "removed": 18
+  },
+  {
+   "sha": "5db3ec2",
+   "time": "01:04:00",
+   "merge": false,
+   "subject": "remote.sh: a new Windows checkout gets every file (empty manifest sent none)",
+   "added": 8,
+   "removed": 1
+  },
+  {
+   "sha": "c1ad780",
+   "time": "01:32:09",
+   "merge": false,
+   "subject": "Spec 2.80: Phase 10 B1 – the browser app on WebGPU with the local server in the frame loop",
+   "added": 2355,
+   "removed": 493
+  },
+  {
+   "sha": "0421d31",
+   "time": "01:34:00",
+   "merge": false,
+   "subject": "Voice echo test: an Echo rider plays your microphone back, delayed, when you are near it (spec 2.95, §7 Echo bot)",
+   "added": 2468,
+   "removed": 45
+  },
+  {
+   "sha": "b74653a",
+   "time": "01:42:37",
+   "merge": true,
+   "subject": "Merge Windows sync fix: new checkouts get the whole tree, manifest bound to its checkout, safety net for missing files (spec 2.95)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "1a347ba",
+   "time": "01:42:47",
+   "merge": false,
+   "subject": "Spec: header 2.95",
+   "added": 1,
+   "removed": 1
+  },
+  {
+   "sha": "55429b2",
+   "time": "01:43:14",
+   "merge": true,
+   "subject": "Merge voice echo bot: Echo rider, delayed spatial playback of your voice, Settings → Audio → Voice, voice.echo console, LiveKit echo participant (spec 2.96)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "0b2af39",
+   "time": "01:53:12",
+   "merge": false,
+   "subject": "Phase 8 T7: orthophoto corridor along the roads (spec 2.65)",
+   "added": 2438,
+   "removed": 15
+  },
+  {
+   "sha": "8df2552",
+   "time": "01:58:15",
+   "merge": true,
+   "subject": "Merge origin/main (voice echo bot, spec 2.96) into the browser app B1; B1 is spec 2.97",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "b7f3681",
+   "time": "01:58:21",
+   "merge": false,
+   "subject": "Cargo.lock: ocw-client and ocw-web at the workspace version 0.2.1",
+   "added": 2,
+   "removed": 2
+  },
+  {
+   "sha": "483417b",
+   "time": "01:58:40",
+   "merge": true,
+   "subject": "Merge Phase 10 B1: the browser app – shared ocw-client crate, apps/web on WebGPU, frame-driven local server, make web / web-serve / test-web (spec 2.97)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "391be91",
+   "time": "02:27:37",
+   "merge": false,
+   "subject": "Phase 8 T7: roofs masked, sky-lit shadows take the local ground colour; final sizes and frame times (spec 2.65)",
+   "added": 49,
+   "removed": 28
+  },
+  {
+   "sha": "e626c0a",
+   "time": "03:06:41",
+   "merge": false,
+   "subject": "Phase 12 K1 + K2: rider collisions, soft bumps, crashes and ragdoll falls with Avian (spec 2.98)",
+   "added": 5687,
+   "removed": 48
+  },
+  {
+   "sha": "fe448c1",
+   "time": "03:24:37",
+   "merge": true,
+   "subject": "Merge Phase 12 K1+K2: rider collisions, soft bumps, crashes with Avian ragdoll falls, autodrive avoidance (spec 2.98)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "d78f76d",
+   "time": "03:36:44",
+   "merge": false,
+   "subject": "Kiosk show mode without collisions (spec 12G)",
+   "added": 3,
+   "removed": 0
+  },
+  {
+   "sha": "55fb43f",
+   "time": "04:05:03",
+   "merge": false,
+   "subject": "ocw-assets: generated workshop room and layout (spec 14 Phase 4, 4A)",
+   "added": 1284,
+   "removed": 0
+  },
+  {
+   "sha": "abd5201",
+   "time": "04:07:39",
+   "merge": false,
+   "subject": "Parts catalogue: assets/parts.toml, price sources, validator and reprice (spec 14 Phase 4, 4H-4J)",
+   "added": 3200,
+   "removed": 1
+  },
+  {
+   "sha": "3b5b438",
+   "time": "04:16:13",
+   "merge": false,
+   "subject": "ocw-assets: workshop hotspot anchors and part variants in the bike generator (spec 14 Phase 4, 4B/4I, W2)",
+   "added": 754,
+   "removed": 37
+  },
+  {
+   "sha": "95366fe",
+   "time": "04:58:38",
+   "merge": false,
+   "subject": "Phase 4 W1 + W2: the workshop scene, parts and hearts (spec 2.99, 14 Phase 4 4M)",
+   "added": 7206,
+   "removed": 71
+  },
+  {
+   "sha": "31dd314",
+   "time": "05:03:00",
+   "merge": false,
+   "subject": "Phase 10 B2: worlds over HTTP in the browser app – streamed by chunk, verified, cached in OPFS, resident tiles within a memory budget (spec 3.00)",
+   "added": 5244,
+   "removed": 360
+  },
+  {
+   "sha": "ebd9507",
+   "time": "05:04:03",
+   "merge": true,
+   "subject": "Merge Phase 10 B2: worlds over HTTP in the browser – range-request streaming, SHA-256 + signature verification, OPFS cache, loading screen, memory budget (spec 2.99)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "fa2723f",
+   "time": "05:04:16",
+   "merge": false,
+   "subject": "Spec: B2 is version 2.99",
+   "added": 5,
+   "removed": 5
+  },
+  {
+   "sha": "3d07c8c",
+   "time": "05:08:39",
+   "merge": false,
+   "subject": "Workshop scenes: later shots for slow software rendering (X11)",
+   "added": 3,
+   "removed": 3
+  },
+  {
+   "sha": "4766822",
+   "time": "05:24:01",
+   "merge": true,
+   "subject": "Merge Phase 4 W1+W2: the 3D workshop – bikes on the stand and the wall, part hotspots and picker, 76-part catalogue in hearts, local wallet, server-credited hearts, BikeChange (spec 3.00)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "b24cf1d",
+   "time": "06:21:48",
+   "merge": false,
+   "subject": "Phase 10 B3: multiplayer in the browser – WebTransport endpoint next to native QUIC, browser riders in the same sessions (spec 3.01)",
+   "added": 4341,
+   "removed": 388
+  },
+  {
+   "sha": "05b8bc8",
+   "time": "06:39:03",
+   "merge": false,
+   "subject": "Spec 3.01: the build dashboard defined as a whole (§11.2.1)",
+   "added": 17,
+   "removed": 1
+  },
+  {
+   "sha": "c64b855",
+   "time": "06:39:11",
+   "merge": false,
+   "subject": "Spec §11.2.1: wording",
+   "added": 1,
+   "removed": 1
+  },
+  {
+   "sha": "e55d1a8",
+   "time": "06:40:22",
+   "merge": true,
+   "subject": "Merge Phase 10 B3: browser multiplayer over WebTransport (web-transport-quinn on our quinn endpoint), anonymous browser riders (spec 3.02)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "0e575d1",
+   "time": "06:46:15",
+   "merge": false,
+   "subject": "Phase 4 W3: build physics on the server – class steps and build caps, BikeChange applies parts, Profile / Open / Equal race modes, effect lines on the cards, others see your parts (spec 3.03)",
+   "added": 2756,
+   "removed": 149
+  },
+  {
+   "sha": "5f80016",
+   "time": "06:46:33",
+   "merge": false,
+   "subject": "Spec §2.6 / 4C: character editor wording follows the Phase 4 Q4 and Phase 10 Q5 decisions",
+   "added": 2,
+   "removed": 2
+  },
+  {
+   "sha": "235a725",
+   "time": "06:47:06",
+   "merge": true,
+   "subject": "Merge Phase 4 W3: parts physics within the caps, Profile / Equal / Open race modes, others see fitted parts (spec 3.03)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "739bf9f",
+   "time": "06:52:12",
+   "merge": false,
+   "subject": "Spec 3.04: kit gives a slight benefit with a benefit score per item (TT helmet faster), within the build caps",
+   "added": 10,
+   "removed": 4
+  },
+  {
+   "sha": "fc990eb",
+   "time": "06:59:16",
+   "merge": false,
+   "subject": "Spec 3.05: aero effects depend on speed – investigated thresholds and magnitudes, scores by speed, caps at three reference powers",
+   "added": 13,
+   "removed": 1
+  },
+  {
+   "sha": "17b34c9",
+   "time": "07:06:15",
+   "merge": false,
+   "subject": "Spec 3.06: no WASD in Unicorn mode, the gamepad instead",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "f1f6dab",
+   "time": "07:14:30",
+   "merge": false,
+   "subject": "Spec: version table in one numerical order, newest first",
+   "added": 57,
+   "removed": 57
+  },
+  {
+   "sha": "ba70dad",
+   "time": "07:58:36",
+   "merge": true,
+   "subject": "Merge origin/main into the T7 orthophoto corridor branch (spec 3.07)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "9535449",
+   "time": "08:22:05",
+   "merge": false,
+   "subject": "Phase 4 W4: the character corner – mirror editor with a planar reflection, free character, kit with hearts and small speed-dependent benefits, try on the bike (spec 3.07)",
+   "added": 5190,
+   "removed": 398
+  },
+  {
+   "sha": "d3f5168",
+   "time": "08:26:52",
+   "merge": true,
+   "subject": "Merge Phase 4 W4: the character corner – mirror editor, free character, kit for hearts with speed-dependent benefits, try on the bike (spec 3.07)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "356cdf1",
+   "time": "09:08:36",
+   "merge": false,
+   "subject": "Phase 9 S2: the night sky without stars – moon, planets, Milky Way, street lamps, light pollution (spec 3.08)",
+   "added": 3857,
+   "removed": 71
+  },
+  {
+   "sha": "6f4ba07",
+   "time": "09:14:15",
+   "merge": false,
+   "subject": "Spec: the shipped packages with the orthophoto corridor (sizes after the rebuild on marge)",
+   "added": 1,
+   "removed": 1
+  },
+  {
+   "sha": "996ea07",
+   "time": "09:14:35",
+   "merge": true,
+   "subject": "Merge origin/main (W4, spec 3.07): the T7 row becomes 3.08",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "44c4fd8",
+   "time": "09:23:10",
+   "merge": true,
+   "subject": "Merge Phase 9 S2: the night sky without stars – moon (ELP), planets, Milky Way, moonlight, street lamps (LITR), light pollution, bike lights follow the fitted part (spec 3.08)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "4c83f3d",
+   "time": "09:28:10",
+   "merge": true,
+   "subject": "Merge local main (Phase 9 S2, LITR, street lamps, spec 3.08): T7 becomes 3.09; ORTC and LITR both optional, streaming skips ORTC and keeps LITR",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "0dedf22",
+   "time": "09:28:41",
+   "merge": false,
+   "subject": "T7 tests: road strips with the LITR field",
+   "added": 2,
+   "removed": 0
+  },
+  {
+   "sha": "fce62bc",
+   "time": "09:44:50",
+   "merge": false,
+   "subject": "Phase 10 B4: devices in the browser – Web Bluetooth with the shared protocol, SIM / ERG, the real KICKR ridden from headless Chromium (spec 3.09)",
+   "added": 4384,
+   "removed": 658
+  },
+  {
+   "sha": "a7d82cb",
+   "time": "09:47:44",
+   "merge": true,
+   "subject": "Merge Phase 10 B4: devices in the browser – Web Bluetooth GattLink on the shared BLE protocol, reconnecting supervisor, SIM from the build in force (spec 3.09)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "43e797f",
+   "time": "09:47:55",
+   "merge": true,
+   "subject": "Merge local main (Phase 10 B4, spec 3.09): the T7 row becomes 3.10",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "947ea5d",
+   "time": "10:03:39",
+   "merge": false,
+   "subject": "Spec: shipped package sizes with ORTC and LITR",
+   "added": 1,
+   "removed": 1
+  },
+  {
+   "sha": "2625e71",
+   "time": "10:26:11",
+   "merge": true,
+   "subject": "Merge Phase 8 T7: orthophoto corridor (ORTC), on by default in every world package; packages rebuilt with ORTC and LITR (spec 3.10)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "6472c43",
+   "time": "10:58:23",
+   "merge": false,
+   "subject": "Phase 9 S4: weather simulation and rendering – clouds, rain / snow / hail, fog, wet roads, snow cover, wind in the trees, lightning and thunder (spec 3.11)",
+   "added": 7116,
+   "removed": 94
+  },
+  {
+   "sha": "f53b3b0",
+   "time": "10:59:14",
+   "merge": true,
+   "subject": "Merge main (Phase 8 T7, Phase 10 B4, spec 3.10) into Phase 9 S4: the S4 row becomes 3.11",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "85e4ed0",
+   "time": "11:10:29",
+   "merge": true,
+   "subject": "Merge Phase 9 S4: weather simulation and rendering – ocw-weather crate, session weather on the server, clouds, rain/snow/hail, fog, wet roads, snow cover, wind, lightning and thunder, weather sounds (spec 3.11)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "77631a2",
+   "time": "11:36:53",
+   "merge": false,
+   "subject": "Phase 8 T6: riders and bikes – real materials (bindless gear shader, CC0 knit / carbon / leather), jersey designer with patterns, colours, race numbers, kit colours and finishes (spec 3.12)",
+   "added": 3878,
+   "removed": 201
+  },
+  {
+   "sha": "9c12aac",
+   "time": "11:38:41",
+   "merge": true,
+   "subject": "Merge Phase 8 T6: rider and bike materials (carbon, spun metal, tyres, fabrics), jersey designer and kit colours (spec 3.12)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "5b0617e",
+   "time": "12:07:46",
+   "merge": false,
+   "subject": "Phase 9 S5: the weather machine – World -> Weather with mode, presets as an icon grid, custom editor, transitions, random weather; event weather set by the organiser; console weather.list / weather.status (spec 3.13)",
+   "added": 3795,
+   "removed": 265
+  },
+  {
+   "sha": "1249f33",
+   "time": "12:25:03",
+   "merge": false,
+   "subject": "Phase 12 K3: world objects – OBST section, wild-mode collisions with trees, buildings, walls and barriers, railings, tunnel walls, hard road-edge hits (spec 3.13)",
+   "added": 4766,
+   "removed": 267
+  },
+  {
+   "sha": "0b17e07",
+   "time": "12:28:56",
+   "merge": true,
+   "subject": "Merge Phase 9 S5: the weather machine – World → Weather with presets grid, custom editor, transitions, random weather; event weather set by organisers (spec 3.13)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "83bcc3c",
+   "time": "12:29:31",
+   "merge": false,
+   "subject": "Spec: remove conflict markers left by the T6 and S5 merges (header, version table, T6/T7 status)",
+   "added": 9,
+   "removed": 25
+  },
+  {
+   "sha": "ef7c7ea",
+   "time": "12:29:45",
+   "merge": false,
+   "subject": "CLAUDE.md: check for leftover conflict markers before committing a merge",
+   "added": 1,
+   "removed": 1
+  },
+  {
+   "sha": "1d8fadb",
+   "time": "12:34:56",
+   "merge": true,
+   "subject": "Merge Phase 12 K3: world objects – OBST section, wild-mode collisions with trees, fences, walls, railings and tunnel walls, road barriers hidden by default (spec 3.14)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "d0b6b2f",
+   "time": "13:06:35",
+   "merge": false,
+   "subject": "Open items of Phase 4 W2 / 4M, Phase 8 T5 / T6, Phase 9 9I-S2: groupset fitting, console over the workshop, near-black carbon, brushed metal, hip number plates, warm lit windows, kerbs in wild mode, round sidewalk corners (spec 3.15)",
+   "added": 2852,
+   "removed": 119
+  },
+  {
+   "sha": "0d62f45",
+   "time": "13:17:44",
+   "merge": true,
+   "subject": "Merge polish bundle: groupset fits its crankset/cassette/chain, console over the workshop, near-black carbon, hip number plates, brushed vs spun metal, warm varied lit windows, kerbs in wild mode, round sidewalk corners (spec 3.15)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "eb94eb4",
+   "time": "13:53:32",
+   "merge": false,
+   "subject": "Phase 9 S7: real weather – MeteoSwiss, DWD, MET Norway and Open-Meteo via the game server (region grid, cache, fallback, offline), ERA5 history (\"ride a day\"), World -> Weather -> Real weather with data source and attribution, HUD credit; deterministic a_finished_event_unlocks_the_weather (spec 3.16)",
+   "added": 6110,
+   "removed": 89
+  },
+  {
+   "sha": "c699d17",
+   "time": "13:55:49",
+   "merge": true,
+   "subject": "Merge Phase 9 S7: real weather – MeteoSwiss, DWD, MET Norway, Open-Meteo via the game server, ERA5 history (ride a day), Real weather page with attribution (spec 3.16)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "5f3769c",
+   "time": "14:29:25",
+   "merge": false,
+   "subject": "Phase 12 K4 + K5: damage, the damage indicator and visible damage; Phase 4 W6: repairs in the workshop (spec 3.17)",
+   "added": 5535,
+   "removed": 84
+  },
+  {
+   "sha": "2551b8f",
+   "time": "14:32:36",
+   "merge": false,
+   "subject": "Phase 12 K4 / W6: the bike change carries the garage's rider condition too, so a staged or kept injury is not overwritten by the ride's (spec 3.17)",
+   "added": 24,
+   "removed": 12
+  },
+  {
+   "sha": "39fbdf2",
+   "time": "14:51:04",
+   "merge": true,
+   "subject": "Merge main (3.16, S7 real weather) into Phase 12 K4 + K5 / Phase 4 W6",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "e107920",
+   "time": "14:51:29",
+   "merge": true,
+   "subject": "Merge Phase 12 K4 + K5 and Phase 4 W6 repairs: damage model, damage indicator and visible damage, persistent part conditions, repairs in hearts; crash notice on its own box (spec 3.17)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "1299cd6",
+   "time": "15:21:52",
+   "merge": false,
+   "subject": "Phase 9 S8: seasons – degree-day phenology by date and altitude, crop calendar, climatological snow line (spec 3.17)",
+   "added": 3019,
+   "removed": 33
+  },
+  {
+   "sha": "68340e6",
+   "time": "15:22:40",
+   "merge": true,
+   "subject": "Merge Phase 9 S8: seasons – phenology by degree days and altitude, deciduous trees and larches through the year, crop calendar, climatological snow line, real snow depth (spec 3.18)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "e9ffc2f",
+   "time": "15:22:54",
+   "merge": false,
+   "subject": "WIP Phase 9 S6: weather physics",
+   "added": 2436,
+   "removed": 52
+  },
+  {
+   "sha": "e164d9e",
+   "time": "15:24:24",
+   "merge": true,
+   "subject": "Merge main into the S6 branch",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "d567596",
+   "time": "15:44:15",
+   "merge": false,
+   "subject": "Phase 9 S6: weather physics – wind, air density and wet roads in the server's physics and the client's prediction; per-session switch and the organiser's event rule; trainer wind (FTMS, Wahoo, folded gradient for inclination-only trainers, virtual trainer); HUD wind indicator (spec 3.19)",
+   "added": 63,
+   "removed": 12
+  },
+  {
+   "sha": "baa2ba7",
+   "time": "15:44:57",
+   "merge": true,
+   "subject": "Merge Phase 9 S6: weather physics – headwind along the direction of travel, air density, wet-road rolling resistance and grip, crosswind drafting, tunnel shelter, trainer wind (FTMS / Wahoo) and folded gradient, HUD wind (spec 3.19)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "c49800e",
+   "time": "16:35:34",
+   "merge": false,
+   "subject": "Phase 8 T3 complete: forest type and density from the Copernicus HRL (spec 3.20)",
+   "added": 2039,
+   "removed": 47
+  },
+  {
+   "sha": "eb17602",
+   "time": "16:36:25",
+   "merge": true,
+   "subject": "Merge Phase 8 T3: forest type and density from the Copernicus HRL (Dominant Leaf Type, Tree Cover Density 2018) – section FRST, measured leaf type, density-driven tree placement and far canopy (spec 3.20)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "108e041",
+   "time": "16:56:15",
+   "merge": false,
+   "subject": "Phase 10 B5: audio and voice in the browser – shared ocw-audio mixer through Web Audio, LiveKit's JS SDK behind the shared voice controller (spec 3.21)",
+   "added": 7007,
+   "removed": 1947
+  },
+  {
+   "sha": "f8698e5",
+   "time": "17:09:44",
+   "merge": true,
+   "subject": "Merge main (3.20) into Phase 10 B5: weather.physics moved into the shared registry (ocw_client::settings), spec 3.21 on top of 3.20",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "284441f",
+   "time": "17:10:00",
+   "merge": true,
+   "subject": "Merge Phase 10 B5: audio and voice in the browser – shared ocw-audio mixer, Web Audio scheduling with the autoplay gate, LiveKit JS voice behind ocw_voice::web, shared settings registry, Sound & voice panel (spec 3.21)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "1a1a5d8",
+   "time": "17:10:09",
+   "merge": false,
+   "subject": "CLAUDE.md: code map for ocw-audio and ocw_client audio / voice / settings (B5)",
+   "added": 4,
+   "removed": 3
+  },
+  {
+   "sha": "9d87780",
+   "time": "17:49:39",
+   "merge": false,
+   "subject": "Build cleanup on the Mac: no zsh globs in remote snippets",
+   "added": 6,
+   "removed": 4
+  },
+  {
+   "sha": "b516e1f",
+   "time": "18:32:10",
+   "merge": false,
+   "subject": "Phase 12 / 13 leftovers: wet roads in crashes, the camera's shake, the aids as graphics, guided camera paths, the rider list page (spec 3.22)",
+   "added": 3876,
+   "removed": 86
+  },
+  {
+   "sha": "a044af8",
+   "time": "18:34:19",
+   "merge": false,
+   "subject": "Phase 4 leftovers: the bench catalogue, fitted lights in the ride, idle pose, kit colours, trainer SIM tests (spec 3.23)",
+   "added": 2721,
+   "removed": 152
+  },
+  {
+   "sha": "8ff4f87",
+   "time": "18:34:19",
+   "merge": true,
+   "subject": "Merge main into the Phase 4 leftovers branch",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "74151f9",
+   "time": "18:35:38",
+   "merge": true,
+   "subject": "Merge Phase 4 leftovers: bench catalogue (4D) with the + hook, fitted lights drive the ride's bike lights, trainer SIM per race mode test, idle pose at the mirror, kit colours for shorts / socks / shoes / gloves (spec 3.23)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "bcf6345",
+   "time": "18:43:27",
+   "merge": true,
+   "subject": "Merge main (3.21, B5 browser audio/voice) into the Phase 12 / 13 leftovers (3.22)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "d8ecdb0",
+   "time": "18:43:52",
+   "merge": false,
+   "subject": "Phase 10 B5: the real-LiveKit browser test passes – the second rider's page in its own window (a hidden tab gets no animation frames, so its game loop never joined), checks that both pages are visible and joined; empty favicon (no 404); spec B5 note updated",
+   "added": 29,
+   "removed": 5
+  },
+  {
+   "sha": "abe1abd",
+   "time": "18:46:27",
+   "merge": true,
+   "subject": "Merge Phase 12 / 13 leftovers: wet-road grip in crashes and skids (Slide), chase camera shake and wider orbit, last-moment warning and proximity arrow as graphics, guided camera paths (G5), rider list page; deterministic frame-server test (spec 3.22)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "500e293",
+   "time": "18:46:33",
+   "merge": true,
+   "subject": "Merge B5 follow-up: real LiveKit browser test passes (second rider in its own window, visibility and join checks), favicon 404 fixed",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "97b00c3",
+   "time": "20:11:12",
+   "merge": false,
+   "subject": "Phase 10 B6: UI parity – one menu, settings, time and weather machines, events and collisions for desktop and browser (new crate ocw-ui, ocw_client::menu), gamepad via the Gamepad API, timestamped screenshot / video / FIT downloads (spec 3.24)",
+   "added": 9873,
+   "removed": 7384
+  },
+  {
+   "sha": "b3cdc56",
+   "time": "20:11:48",
+   "merge": true,
+   "subject": "Merge Phase 10 B6: UI parity in the browser – shared menus, settings, HUD, time and weather machines in ocw-client / the new ocw-ui crate, platform filter, gamepad, timestamped captures (JPEG, WebM) and FIT download (spec 3.24)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "bfddece",
+   "time": "20:18:36",
+   "merge": false,
+   "subject": "Spec 3.25: test pictures stand alone – sent and archived one by one, joined only to show a comparison (§11.4, ART-PROJECT §2)",
+   "added": 10,
+   "removed": 2
+  },
+  {
+   "sha": "a979344",
+   "time": "20:23:28",
+   "merge": false,
+   "subject": "Phase 10 B6 follow-up: the browser test checks that the Devices panel steps aside while the menu is open and comes back with its chooser buttons",
+   "added": 34,
+   "removed": 0
+  },
+  {
+   "sha": "ee2aa6b",
+   "time": "20:27:21",
+   "merge": true,
+   "subject": "Merge B6 follow-up: browser test checks that the Devices panel hides while the menu is open and returns after",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "106cbd9",
+   "time": "21:29:47",
+   "merge": false,
+   "subject": "Phase 8 T4 open items: roofs over polygons, dormers, balconies, building:part (spec 3.26)",
+   "added": 4198,
+   "removed": 243
+  },
+  {
+   "sha": "f250b61",
+   "time": "21:30:30",
+   "merge": true,
+   "subject": "Merge Phase 8 T4 open items: straight-skeleton roofs on any footprint, dormers and roof windows, style-driven balconies, building:part (BPRT), min_height fix (spec 3.26)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "ce6a4ca",
+   "time": "22:05:13",
+   "merge": false,
+   "subject": "Phase 10 B7: WebGL 2 fallback and quality presets (spec 3.27)",
+   "added": 2016,
+   "removed": 79
+  },
+  {
+   "sha": "e57f2e2",
+   "time": "22:06:26",
+   "merge": true,
+   "subject": "Merge Phase 10 B7 (WebGL 2 part): a second web build for WebGL 2 chosen at page load, adapter-checked workarounds (simple sky, texture-array fallback, abrupt LOD ranges, one cascade), quality presets Low / Medium / High / Auto as display.quality for both apps, gpu and quality commands (spec 3.27)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "1d57b7a",
+   "time": "22:18:51",
+   "merge": false,
+   "subject": "Docs catch-up (spec 3.28): CLAUDE.md project status and code map (forest, roof skeleton, seasons, quality, WebGL 2), machine notes (Mac zsh globs, livekit-server on marge, package rollout); spec phase headings 8 / 9 / 10 with their status, janitor /bin/sh note",
+   "added": 10,
+   "removed": 6
+  },
+  {
+   "sha": "99dd6f9",
+   "time": "22:26:05",
+   "merge": false,
+   "subject": "Spec 3.29: VR development headset is the Oculus Quest (first generation) – focus on it, other models postponed; Quest 1 facts (Link / Air Link / ALVR, SD835 72 Hz, sideload only); new Phase 11 Q7 (which PC drives it)",
+   "added": 28,
+   "removed": 23
+  },
+  {
+   "sha": "b6e5662",
+   "time": "22:27:02",
+   "merge": false,
+   "subject": "Spec 3.30: Phase 14 Q4 (BLE fallback) postponed (dashboard)",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "c2157f9",
+   "time": "22:29:16",
+   "merge": false,
+   "subject": "Spec 3.31: VR starts with Oculus Link (Quest 1 as a viewing device of the desktop app); standalone app by sideloading only",
+   "added": 5,
+   "removed": 4
+  },
+  {
+   "sha": "0f8be5d",
+   "time": "22:36:28",
+   "merge": false,
+   "subject": "README: step-by-step guide to the browser app (prerequisites, build, serve, page options, worlds, multiplayer, devices, sound and voice, menus, graphics, tests, limitations); weather physics, the bench catalogue, fitted lights, kit colours, quality presets, riding aids, the rider list, T4 houses, T3 forest type",
+   "added": 486,
+   "removed": 59
+  },
+  {
+   "sha": "2250a8d",
+   "time": "22:37:00",
+   "merge": true,
+   "subject": "Merge README: step-by-step browser app guide (setup, build, serve, solo, worlds, multiplayer, devices, sound and voice, captures, graphics, tests, limits) and today's missing features",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "03659d6",
+   "time": "22:54:57",
+   "merge": false,
+   "subject": "README: full browser URLs for the test routes and for a streamed world (example trust-root key, a one-liner printing your own), other worlds and route names",
+   "added": 36,
+   "removed": 2
+  },
+  {
+   "sha": "d50652f",
+   "time": "23:13:06",
+   "merge": false,
+   "subject": "Art: day 4 script – The weather, the seasons and the 404",
+   "added": 210,
+   "removed": 0
+  },
+  {
+   "sha": "27ec9bc",
+   "time": "23:20:42",
+   "merge": false,
+   "subject": "Art: images 40 % longer, shots in capture order (images and videos mixed) in all day scripts; day 4 gets the early-morning chapters (collisions, workshop, trees) and more clips",
+   "added": 117,
+   "removed": 85
+  },
+  {
+   "sha": "a7faff9",
+   "time": "23:23:22",
+   "merge": false,
+   "subject": "Docs: build infrastructure chapter in the README, spec 3.36 (§11.2 overview, §11.2.1 dashboard install and page, §11.3 Windows zip)",
+   "added": 630,
+   "removed": 180
+  },
+  {
+   "sha": "f813e5a",
+   "time": "23:24:35",
+   "merge": false,
+   "subject": "README build infrastructure: root only for linger, one serving dashboard instance",
+   "added": 5,
+   "removed": 2
+  },
+  {
+   "sha": "5bf6b52",
+   "time": "23:28:58",
+   "merge": true,
+   "subject": "Merge build infrastructure docs: README Build infrastructure chapter (remote builds, dashboard, cleanup, kiosks, profiling, harness, releases, world builds), spec §11.2 / §11.2.1 / §11.3 (spec 3.32); make help lists targets with digits",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "5dd86ca",
+   "time": "23:29:22",
+   "merge": false,
+   "subject": "Untrack compiled Python files (__pycache__ is already git-ignored; running the dashboard rewrote them)",
+   "added": 0,
+   "removed": 0
+  }
+ ],
+ "merges": 46,
+ "lines_added": 126479,
+ "lines_removed": 14693,
+ "spec_versions": [
+  "2.67",
+  "2.67",
+  "2.68",
+  "2.66",
+  "2.68",
+  "2.66",
+  "2.69",
+  "2.70",
+  "2.71",
+  "2.72",
+  "2.73",
+  "2.74",
+  "2.75",
+  "2.76",
+  "2.77",
+  "2.78",
+  "2.79",
+  "2.80",
+  "2.81",
+  "2.67",
+  "2.83",
+  "2.84",
+  "2.85",
+  "2.86",
+  "2.87",
+  "2.88",
+  "2.89",
+  "2.90",
+  "2.91",
+  "2.91",
+  "2.93",
+  "2.94",
+  "2.94",
+  "2.80",
+  "2.95",
+  "2.95",
+  "2.96",
+  "2.65",
+  "2.96",
+  "2.97",
+  "2.65",
+  "2.98",
+  "2.98",
+  "2.99",
+  "3.00",
+  "2.99",
+  "3.00",
+  "3.01",
+  "3.01",
+  "3.02",
+  "3.03",
+  "3.03",
+  "3.04",
+  "3.05",
+  "3.06",
+  "3.07",
+  "3.07",
+  "3.07",
+  "3.08",
+  "3.07",
+  "3.08",
+  "3.08",
+  "3.09",
+  "3.09",
+  "3.09",
+  "3.10",
+  "3.11",
+  "3.10",
+  "3.11",
+  "3.12",
+  "3.12",
+  "3.13",
+  "3.13",
+  "3.13",
+  "3.14",
+  "3.15",
+  "3.15",
+  "3.16",
+  "3.16",
+  "3.17",
+  "3.17",
+  "3.17",
+  "3.17",
+  "3.18",
+  "3.19",
+  "3.19",
+  "3.20",
+  "3.20",
+  "3.21",
+  "3.21",
+  "3.21",
+  "3.22",
+  "3.23",
+  "3.23",
+  "3.22",
+  "3.24",
+  "3.24",
+  "3.25",
+  "3.26",
+  "3.26",
+  "3.27",
+  "3.27",
+  "3.28",
+  "3.29",
+  "3.30",
+  "3.31",
+  "3.36",
+  "3.32"
+ ],
+ "tests": null,
+ "media": [
+  {
+   "file": "001241-video-wayland-god-plane-video.jpg",
+   "time": "00:12:41",
+   "kind": "image"
+  },
+  {
+   "file": "001241-video-wayland-god-plane-video.mp4",
+   "time": "00:12:41",
+   "kind": "video"
+  },
+  {
+   "file": "010204-echo-echo-demo.wav",
+   "time": "01:02:04",
+   "kind": "audio"
+  },
+  {
+   "file": "010855-agent-web-web.jpg",
+   "time": "01:08:55",
+   "kind": "image"
+  },
+  {
+   "file": "012042-agent-web-web.jpg",
+   "time": "01:20:42",
+   "kind": "image"
+  },
+  {
+   "file": "012234-agent-scenes-menu-audio-voice.jpg",
+   "time": "01:22:34",
+   "kind": "image"
+  },
+  {
+   "file": "012246-agent-web-web.jpg",
+   "time": "01:22:46",
+   "kind": "image"
+  },
+  {
+   "file": "012645-agent-scenes-menu-audio-voice.jpg",
+   "time": "01:26:45",
+   "kind": "image"
+  },
+  {
+   "file": "012703-agent-web-web.jpg",
+   "time": "01:27:03",
+   "kind": "image"
+  },
+  {
+   "file": "015744-agent-web-web.jpg",
+   "time": "01:57:44",
+   "kind": "image"
+  },
+  {
+   "file": "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-malbun-after-wayland.jpg",
+   "time": "02:27:31",
+   "kind": "image"
+  },
+  {
+   "file": "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-malbun-after-x11.jpg",
+   "time": "02:27:31",
+   "kind": "image"
+  },
+  {
+   "file": "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-malbun-before-wayland.jpg",
+   "time": "02:27:31",
+   "kind": "image"
+  },
+  {
+   "file": "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-malbun-before-x11.jpg",
+   "time": "02:27:31",
+   "kind": "image"
+  },
+  {
+   "file": "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-schauinsland-after-wayland.jpg",
+   "time": "02:27:31",
+   "kind": "image"
+  },
+  {
+   "file": "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-schauinsland-after-x11.jpg",
+   "time": "02:27:31",
+   "kind": "image"
+  },
+  {
+   "file": "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-schauinsland-before-wayland.jpg",
+   "time": "02:27:31",
+   "kind": "image"
+  },
+  {
+   "file": "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-schauinsland-before-x11.jpg",
+   "time": "02:27:31",
+   "kind": "image"
+  },
+  {
+   "file": "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-tf21-after-wayland.jpg",
+   "time": "02:27:31",
+   "kind": "image"
+  },
+  {
+   "file": "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-tf21-after-x11.jpg",
+   "time": "02:27:31",
+   "kind": "image"
+  },
+  {
+   "file": "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-tf21-before-wayland.jpg",
+   "time": "02:27:31",
+   "kind": "image"
+  },
+  {
+   "file": "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-tf21-before-x11.jpg",
+   "time": "02:27:31",
+   "kind": "image"
+  },
+  {
+   "file": "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-triesenberg-chase-after-wayland.jpg",
+   "time": "02:27:31",
+   "kind": "image"
+  },
+  {
+   "file": "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-triesenberg-chase-after-x11.jpg",
+   "time": "02:27:31",
+   "kind": "image"
+  },
+  {
+   "file": "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-triesenberg-chase-before-wayland.jpg",
+   "time": "02:27:31",
+   "kind": "image"
+  },
+  {
+   "file": "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-triesenberg-chase-before-x11.jpg",
+   "time": "02:27:31",
+   "kind": "image"
+  },
+  {
+   "file": "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-vaduz-after-wayland.jpg",
+   "time": "02:27:31",
+   "kind": "image"
+  },
+  {
+   "file": "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-vaduz-after-x11.jpg",
+   "time": "02:27:31",
+   "kind": "image"
+  },
+  {
+   "file": "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-vaduz-before-wayland.jpg",
+   "time": "02:27:31",
+   "kind": "image"
+  },
+  {
+   "file": "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-vaduz-before-x11.jpg",
+   "time": "02:27:31",
+   "kind": "image"
+  },
+  {
+   "file": "025410-video-wayland-collision-bump-video.jpg",
+   "time": "02:54:10",
+   "kind": "image"
+  },
+  {
+   "file": "025410-video-wayland-collision-bump-video.mp4",
+   "time": "02:54:10",
+   "kind": "video"
+  },
+  {
+   "file": "025740-agent-build-history-2026-11-14-collision-crash-video.mp4",
+   "time": "02:57:40",
+   "kind": "video"
+  },
+  {
+   "file": "025740-video-wayland-collision-crash-video.jpg",
+   "time": "02:57:40",
+   "kind": "image"
+  },
+  {
+   "file": "025740-video-wayland-collision-crash-video.mp4",
+   "time": "02:57:40",
+   "kind": "video"
+  },
+  {
+   "file": "025754-shot-wayland-collision-crash.jpg",
+   "time": "02:57:54",
+   "kind": "image"
+  },
+  {
+   "file": "043525-agent-web-web-world.jpg",
+   "time": "04:35:25",
+   "kind": "image"
+  },
+  {
+   "file": "043810-shot-wayland-workshop-overview.jpg",
+   "time": "04:38:10",
+   "kind": "image"
+  },
+  {
+   "file": "043819-shot-wayland-workshop-stand-hotspots.jpg",
+   "time": "04:38:19",
+   "kind": "image"
+  },
+  {
+   "file": "043828-shot-wayland-workshop-picker.jpg",
+   "time": "04:38:28",
+   "kind": "image"
+  },
+  {
+   "file": "044028-agent-web-web-world-cached-loading.jpg",
+   "time": "04:40:28",
+   "kind": "image"
+  },
+  {
+   "file": "044028-agent-web-web-world-cached.jpg",
+   "time": "04:40:28",
+   "kind": "image"
+  },
+  {
+   "file": "044028-agent-web-web-world-first-loading.jpg",
+   "time": "04:40:28",
+   "kind": "image"
+  },
+  {
+   "file": "044028-agent-web-web-world-teleport.jpg",
+   "time": "04:40:28",
+   "kind": "image"
+  },
+  {
+   "file": "044028-agent-web-web-world.jpg",
+   "time": "04:40:28",
+   "kind": "image"
+  },
+  {
+   "file": "044825-agent-web-web-world-cached-loading.jpg",
+   "time": "04:48:25",
+   "kind": "image"
+  },
+  {
+   "file": "044825-agent-web-web-world-cached.jpg",
+   "time": "04:48:25",
+   "kind": "image"
+  },
+  {
+   "file": "044825-agent-web-web-world-first-loading.jpg",
+   "time": "04:48:25",
+   "kind": "image"
+  },
+  {
+   "file": "044825-agent-web-web-world-teleport.jpg",
+   "time": "04:48:25",
+   "kind": "image"
+  },
+  {
+   "file": "044825-agent-web-web-world.jpg",
+   "time": "04:48:25",
+   "kind": "image"
+  },
+  {
+   "file": "044904-agent-web-web.jpg",
+   "time": "04:49:04",
+   "kind": "image"
+  },
+  {
+   "file": "044936-shot-wayland-workshop-overview.jpg",
+   "time": "04:49:36",
+   "kind": "image"
+  },
+  {
+   "file": "044944-shot-wayland-workshop-wall.jpg",
+   "time": "04:49:44",
+   "kind": "image"
+  },
+  {
+   "file": "044952-shot-wayland-workshop-stand-hotspots.jpg",
+   "time": "04:49:52",
+   "kind": "image"
+  },
+  {
+   "file": "045001-shot-wayland-workshop-picker.jpg",
+   "time": "04:50:01",
+   "kind": "image"
+  },
+  {
+   "file": "045043-video-wayland-workshop-swap-video.jpg",
+   "time": "04:50:43",
+   "kind": "image"
+  },
+  {
+   "file": "045043-video-wayland-workshop-swap-video.mp4",
+   "time": "04:50:43",
+   "kind": "video"
+  },
+  {
+   "file": "045843-shot-wayland-workshop-overview.jpg",
+   "time": "04:58:43",
+   "kind": "image"
+  },
+  {
+   "file": "045851-shot-wayland-workshop-wall.jpg",
+   "time": "04:58:51",
+   "kind": "image"
+  },
+  {
+   "file": "045859-shot-wayland-workshop-stand-hotspots.jpg",
+   "time": "04:58:59",
+   "kind": "image"
+  },
+  {
+   "file": "045909-shot-wayland-workshop-picker.jpg",
+   "time": "04:59:09",
+   "kind": "image"
+  },
+  {
+   "file": "050000-video-wayland-workshop-swap-video.jpg",
+   "time": "05:00:00",
+   "kind": "image"
+  },
+  {
+   "file": "050000-video-wayland-workshop-swap-video.mp4",
+   "time": "05:00:00",
+   "kind": "video"
+  },
+  {
+   "file": "050030-shot-workshop-overview.jpg",
+   "time": "05:00:30",
+   "kind": "image"
+  },
+  {
+   "file": "050055-shot-workshop-wall.jpg",
+   "time": "05:00:55",
+   "kind": "image"
+  },
+  {
+   "file": "050123-shot-workshop-stand-hotspots.jpg",
+   "time": "05:01:23",
+   "kind": "image"
+  },
+  {
+   "file": "050147-shot-workshop-picker.jpg",
+   "time": "05:01:47",
+   "kind": "image"
+  },
+  {
+   "file": "050552-shot-workshop-wall.jpg",
+   "time": "05:05:52",
+   "kind": "image"
+  },
+  {
+   "file": "050616-shot-workshop-stand-hotspots.jpg",
+   "time": "05:06:16",
+   "kind": "image"
+  },
+  {
+   "file": "050642-shot-workshop-picker.jpg",
+   "time": "05:06:42",
+   "kind": "image"
+  },
+  {
+   "file": "055729-agent-web-web-mp.jpg",
+   "time": "05:57:29",
+   "kind": "image"
+  },
+  {
+   "file": "060628-agent-web-web-mp-desktop.jpg",
+   "time": "06:06:28",
+   "kind": "image"
+  },
+  {
+   "file": "060628-agent-web-web-mp.jpg",
+   "time": "06:06:28",
+   "kind": "image"
+  },
+  {
+   "file": "060727-agent-web-web.jpg",
+   "time": "06:07:27",
+   "kind": "image"
+  },
+  {
+   "file": "061235-agent-web-web-world-cached-loading.jpg",
+   "time": "06:12:35",
+   "kind": "image"
+  },
+  {
+   "file": "061235-agent-web-web-world-cached.jpg",
+   "time": "06:12:35",
+   "kind": "image"
+  },
+  {
+   "file": "061235-agent-web-web-world-first-loading.jpg",
+   "time": "06:12:35",
+   "kind": "image"
+  },
+  {
+   "file": "061235-agent-web-web-world-teleport.jpg",
+   "time": "06:12:35",
+   "kind": "image"
+  },
+  {
+   "file": "061235-agent-web-web-world.jpg",
+   "time": "06:12:35",
+   "kind": "image"
+  },
+  {
+   "file": "061908-agent-web-web-mp-desktop.jpg",
+   "time": "06:19:08",
+   "kind": "image"
+  },
+  {
+   "file": "061908-agent-web-web-mp.jpg",
+   "time": "06:19:08",
+   "kind": "image"
+  },
+  {
+   "file": "061942-agent-web-web.jpg",
+   "time": "06:19:42",
+   "kind": "image"
+  },
+  {
+   "file": "063247-shot-wayland-workshop-picker-effect.jpg",
+   "time": "06:32:47",
+   "kind": "image"
+  },
+  {
+   "file": "063344-agent-web-web-mp-desktop.jpg",
+   "time": "06:33:44",
+   "kind": "image"
+  },
+  {
+   "file": "063344-agent-web-web-mp.jpg",
+   "time": "06:33:44",
+   "kind": "image"
+  },
+  {
+   "file": "063419-agent-web-web.jpg",
+   "time": "06:34:19",
+   "kind": "image"
+  },
+  {
+   "file": "063436-video-wayland-sprint-open-video.jpg",
+   "time": "06:34:36",
+   "kind": "image"
+  },
+  {
+   "file": "063436-video-wayland-sprint-open-video.mp4",
+   "time": "06:34:36",
+   "kind": "video"
+  },
+  {
+   "file": "063603-shot-wayland-sprint-open-results.jpg",
+   "time": "06:36:03",
+   "kind": "image"
+  },
+  {
+   "file": "063730-shot-wayland-sprint-profile-results.jpg",
+   "time": "06:37:30",
+   "kind": "image"
+  },
+  {
+   "file": "063843-agent-web-web-world-cached-loading.jpg",
+   "time": "06:38:43",
+   "kind": "image"
+  },
+  {
+   "file": "063843-agent-web-web-world-cached.jpg",
+   "time": "06:38:43",
+   "kind": "image"
+  },
+  {
+   "file": "063843-agent-web-web-world-first-loading.jpg",
+   "time": "06:38:43",
+   "kind": "image"
+  },
+  {
+   "file": "063843-agent-web-web-world-teleport.jpg",
+   "time": "06:38:43",
+   "kind": "image"
+  },
+  {
+   "file": "063843-agent-web-web-world.jpg",
+   "time": "06:38:43",
+   "kind": "image"
+  },
+  {
+   "file": "075119-shot-wayland-workshop-mirror.jpg",
+   "time": "07:51:19",
+   "kind": "image"
+  },
+  {
+   "file": "075143-shot-wayland-workshop-helmet-picker.jpg",
+   "time": "07:51:43",
+   "kind": "image"
+  },
+  {
+   "file": "075206-shot-wayland-workshop-try-on.jpg",
+   "time": "07:52:06",
+   "kind": "image"
+  },
+  {
+   "file": "080708-shot-wayland-workshop-mirror.jpg",
+   "time": "08:07:08",
+   "kind": "image"
+  },
+  {
+   "file": "080859-shot-wayland-workshop-helmet-picker.jpg",
+   "time": "08:08:59",
+   "kind": "image"
+  },
+  {
+   "file": "081414-shot-wayland-workshop-try-on.jpg",
+   "time": "08:14:14",
+   "kind": "image"
+  },
+  {
+   "file": "081559-video-wayland-workshop-kit-video.jpg",
+   "time": "08:15:59",
+   "kind": "image"
+  },
+  {
+   "file": "081559-video-wayland-workshop-kit-video.mp4",
+   "time": "08:15:59",
+   "kind": "video"
+  },
+  {
+   "file": "081641-shot-workshop-mirror.jpg",
+   "time": "08:16:41",
+   "kind": "image"
+  },
+  {
+   "file": "081717-shot-workshop-helmet-picker.jpg",
+   "time": "08:17:17",
+   "kind": "image"
+  },
+  {
+   "file": "081756-shot-workshop-try-on.jpg",
+   "time": "08:17:56",
+   "kind": "image"
+  },
+  {
+   "file": "082307-shot-workshop-helmet-picker.jpg",
+   "time": "08:23:07",
+   "kind": "image"
+  },
+  {
+   "file": "082407-shot-workshop-try-on.jpg",
+   "time": "08:24:07",
+   "kind": "image"
+  },
+  {
+   "file": "082606-video-wayland-workshop-kit-video.jpg",
+   "time": "08:26:06",
+   "kind": "image"
+  },
+  {
+   "file": "082606-video-wayland-workshop-kit-video.mp4",
+   "time": "08:26:06",
+   "kind": "video"
+  },
+  {
+   "file": "083501-shot-wayland-sky-night-lights.jpg",
+   "time": "08:35:01",
+   "kind": "image"
+  },
+  {
+   "file": "083514-shot-wayland-sky-full-moon-canadas.jpg",
+   "time": "08:35:14",
+   "kind": "image"
+  },
+  {
+   "file": "083526-shot-wayland-sky-crescent-venus.jpg",
+   "time": "08:35:26",
+   "kind": "image"
+  },
+  {
+   "file": "083538-shot-wayland-sky-moonless-vaduz.jpg",
+   "time": "08:35:38",
+   "kind": "image"
+  },
+  {
+   "file": "083551-shot-wayland-sky-milky-way-teide.jpg",
+   "time": "08:35:51",
+   "kind": "image"
+  },
+  {
+   "file": "083602-shot-wayland-sky-full-moon-preset.jpg",
+   "time": "08:36:02",
+   "kind": "image"
+  },
+  {
+   "file": "083934-shot-wayland-sky-night-lights.jpg",
+   "time": "08:39:34",
+   "kind": "image"
+  },
+  {
+   "file": "083948-shot-wayland-sky-full-moon-canadas.jpg",
+   "time": "08:39:48",
+   "kind": "image"
+  },
+  {
+   "file": "084000-shot-wayland-sky-crescent-venus.jpg",
+   "time": "08:40:00",
+   "kind": "image"
+  },
+  {
+   "file": "084012-shot-wayland-sky-moonless-vaduz.jpg",
+   "time": "08:40:12",
+   "kind": "image"
+  },
+  {
+   "file": "084026-shot-wayland-sky-milky-way-teide.jpg",
+   "time": "08:40:26",
+   "kind": "image"
+  },
+  {
+   "file": "084037-shot-wayland-sky-full-moon-preset.jpg",
+   "time": "08:40:37",
+   "kind": "image"
+  },
+  {
+   "file": "085033-shot-wayland-sky-night-lights.jpg",
+   "time": "08:50:33",
+   "kind": "image"
+  },
+  {
+   "file": "085048-shot-wayland-sky-full-moon-canadas.jpg",
+   "time": "08:50:48",
+   "kind": "image"
+  },
+  {
+   "file": "085100-shot-wayland-sky-crescent-venus.jpg",
+   "time": "08:51:00",
+   "kind": "image"
+  },
+  {
+   "file": "085113-shot-wayland-sky-moonless-vaduz.jpg",
+   "time": "08:51:13",
+   "kind": "image"
+  },
+  {
+   "file": "085127-shot-wayland-sky-milky-way-teide.jpg",
+   "time": "08:51:27",
+   "kind": "image"
+  },
+  {
+   "file": "085139-shot-wayland-sky-full-moon-preset.jpg",
+   "time": "08:51:39",
+   "kind": "image"
+  },
+  {
+   "file": "090019-shot-sky-night-lights.jpg",
+   "time": "09:00:19",
+   "kind": "image"
+  },
+  {
+   "file": "090040-shot-sky-full-moon-canadas.jpg",
+   "time": "09:00:40",
+   "kind": "image"
+  },
+  {
+   "file": "090059-shot-sky-crescent-venus.jpg",
+   "time": "09:00:59",
+   "kind": "image"
+  },
+  {
+   "file": "090123-shot-sky-moonless-vaduz.jpg",
+   "time": "09:01:23",
+   "kind": "image"
+  },
+  {
+   "file": "090137-shot-sky-milky-way-teide.jpg",
+   "time": "09:01:37",
+   "kind": "image"
+  },
+  {
+   "file": "090200-shot-sky-full-moon-preset.jpg",
+   "time": "09:02:00",
+   "kind": "image"
+  },
+  {
+   "file": "091343-agent-scenes-t7-main-packages-ortho-vaduz.jpg",
+   "time": "09:13:43",
+   "kind": "image"
+  },
+  {
+   "file": "091359-agent-scenes-t7-main-packages-ortho-tf21.jpg",
+   "time": "09:13:59",
+   "kind": "image"
+  },
+  {
+   "file": "091429-shot-sky-night-lights.jpg",
+   "time": "09:14:29",
+   "kind": "image"
+  },
+  {
+   "file": "091508-shot-sky-full-moon-canadas.jpg",
+   "time": "09:15:08",
+   "kind": "image"
+  },
+  {
+   "file": "091544-shot-sky-crescent-venus.jpg",
+   "time": "09:15:44",
+   "kind": "image"
+  },
+  {
+   "file": "091636-shot-sky-moonless-vaduz.jpg",
+   "time": "09:16:36",
+   "kind": "image"
+  },
+  {
+   "file": "091658-shot-sky-milky-way-teide.jpg",
+   "time": "09:16:58",
+   "kind": "image"
+  },
+  {
+   "file": "091739-shot-sky-full-moon-preset.jpg",
+   "time": "09:17:39",
+   "kind": "image"
+  },
+  {
+   "file": "092106-agent-web-web-ble-fake-erg.jpg",
+   "time": "09:21:06",
+   "kind": "image"
+  },
+  {
+   "file": "092106-agent-web-web-ble-fake-nobt.jpg",
+   "time": "09:21:06",
+   "kind": "image"
+  },
+  {
+   "file": "092106-agent-web-web-ble-fake-reload.jpg",
+   "time": "09:21:06",
+   "kind": "image"
+  },
+  {
+   "file": "092106-agent-web-web-ble-fake-sim.jpg",
+   "time": "09:21:06",
+   "kind": "image"
+  },
+  {
+   "file": "092106-agent-web-web-ble-fake.jpg",
+   "time": "09:21:06",
+   "kind": "image"
+  },
+  {
+   "file": "092226-agent-web-web-ble-fake-erg.jpg",
+   "time": "09:22:26",
+   "kind": "image"
+  },
+  {
+   "file": "092226-agent-web-web-ble-fake-nobt.jpg",
+   "time": "09:22:26",
+   "kind": "image"
+  },
+  {
+   "file": "092226-agent-web-web-ble-fake-reload.jpg",
+   "time": "09:22:26",
+   "kind": "image"
+  },
+  {
+   "file": "092226-agent-web-web-ble-fake-sim.jpg",
+   "time": "09:22:26",
+   "kind": "image"
+  },
+  {
+   "file": "092226-agent-web-web-ble-fake.jpg",
+   "time": "09:22:26",
+   "kind": "image"
+  },
+  {
+   "file": "092701-agent-web-web-ble-emulation-emulation.jpg",
+   "time": "09:27:01",
+   "kind": "image"
+  },
+  {
+   "file": "092753-agent-web-web-ble-emulation-emulation.jpg",
+   "time": "09:27:53",
+   "kind": "image"
+  },
+  {
+   "file": "092815-agent-web-web-ble-real-real-erg.jpg",
+   "time": "09:28:15",
+   "kind": "image"
+  },
+  {
+   "file": "092815-agent-web-web-ble-real-real-sim.jpg",
+   "time": "09:28:15",
+   "kind": "image"
+  },
+  {
+   "file": "094407-agent-web-web.jpg",
+   "time": "09:44:07",
+   "kind": "image"
+  },
+  {
+   "file": "101808-agent-scenes-s4-wl-1-weather-light-rain-blackforest.jpg",
+   "time": "10:18:08",
+   "kind": "image"
+  },
+  {
+   "file": "101822-agent-scenes-s4-wl-1-weather-thunderstorm-tenerife.jpg",
+   "time": "10:18:22",
+   "kind": "image"
+  },
+  {
+   "file": "101835-agent-scenes-s4-wl-1-weather-fog-vaduz.jpg",
+   "time": "10:18:35",
+   "kind": "image"
+  },
+  {
+   "file": "102008-agent-scenes-s4-wl-1-weather-heavy-snow-feldberg.jpg",
+   "time": "10:20:08",
+   "kind": "image"
+  },
+  {
+   "file": "102019-agent-scenes-s4-wl-1-weather-overcast-flat-light.jpg",
+   "time": "10:20:19",
+   "kind": "image"
+  },
+  {
+   "file": "102253-agent-scenes-s4-wl-2-weather-light-rain-blackforest.jpg",
+   "time": "10:22:53",
+   "kind": "image"
+  },
+  {
+   "file": "102308-agent-scenes-s4-wl-2-weather-thunderstorm-tenerife.jpg",
+   "time": "10:23:08",
+   "kind": "image"
+  },
+  {
+   "file": "102333-agent-scenes-s4-wl-2-weather-thunderstorm-video.jpg",
+   "time": "10:23:33",
+   "kind": "image"
+  },
+  {
+   "file": "102427-agent-scenes-s4-wl-2-weather-thunderstorm-video.mp4",
+   "time": "10:24:27",
+   "kind": "video"
+  },
+  {
+   "file": "102440-agent-scenes-s4-wl-2-weather-fog-vaduz.jpg",
+   "time": "10:24:40",
+   "kind": "image"
+  },
+  {
+   "file": "102454-agent-scenes-s4-wl-2-weather-heavy-snow-feldberg.jpg",
+   "time": "10:24:54",
+   "kind": "image"
+  },
+  {
+   "file": "102505-agent-scenes-s4-wl-2-weather-overcast-flat-light.jpg",
+   "time": "10:25:05",
+   "kind": "image"
+  },
+  {
+   "file": "102529-agent-scenes-s4-wl-2-weather-rain-shower-video.jpg",
+   "time": "10:25:29",
+   "kind": "image"
+  },
+  {
+   "file": "102627-agent-scenes-s4-wl-2-weather-rain-shower-video.mp4",
+   "time": "10:26:27",
+   "kind": "video"
+  },
+  {
+   "file": "102649-agent-scenes-s4-wl-2-weather-gale-video.jpg",
+   "time": "10:26:49",
+   "kind": "image"
+  },
+  {
+   "file": "102714-agent-scenes-s4-wl-2-weather-gale-video.mp4",
+   "time": "10:27:14",
+   "kind": "video"
+  },
+  {
+   "file": "102739-agent-scenes-s4-x11-1-weather-light-rain-blackforest.jpg",
+   "time": "10:27:39",
+   "kind": "image"
+  },
+  {
+   "file": "102810-agent-scenes-s4-x11-1-weather-thunderstorm-tenerife.jpg",
+   "time": "10:28:10",
+   "kind": "image"
+  },
+  {
+   "file": "102836-agent-scenes-s4-x11-1-weather-fog-vaduz.jpg",
+   "time": "10:28:36",
+   "kind": "image"
+  },
+  {
+   "file": "102913-agent-scenes-s4-x11-1-weather-heavy-snow-feldberg.jpg",
+   "time": "10:29:13",
+   "kind": "image"
+  },
+  {
+   "file": "102946-agent-scenes-s4-x11-1-weather-overcast-flat-light.jpg",
+   "time": "10:29:46",
+   "kind": "image"
+  },
+  {
+   "file": "104632-shot-wayland-t6-carbon-stand.jpg",
+   "time": "10:46:32",
+   "kind": "image"
+  },
+  {
+   "file": "104641-shot-wayland-t6-group-front.jpg",
+   "time": "10:46:41",
+   "kind": "image"
+  },
+  {
+   "file": "104651-agent-scenes-s4-wl-3-weather-thunderstorm-tenerife.jpg",
+   "time": "10:46:51",
+   "kind": "image"
+  },
+  {
+   "file": "104708-agent-scenes-s4-wl-3-weather-thunderstorm-video.jpg",
+   "time": "10:47:08",
+   "kind": "image"
+  },
+  {
+   "file": "104722-shot-wayland-t6-jersey-designer.jpg",
+   "time": "10:47:22",
+   "kind": "image"
+  },
+  {
+   "file": "104730-agent-scenes-s4-wl-3-weather-thunderstorm-video.mp4",
+   "time": "10:47:30",
+   "kind": "video"
+  },
+  {
+   "file": "104750-agent-scenes-s4-wl-3-weather-rain-shower-video.jpg",
+   "time": "10:47:50",
+   "kind": "image"
+  },
+  {
+   "file": "104821-agent-scenes-s4-wl-3-weather-rain-shower-video.mp4",
+   "time": "10:48:21",
+   "kind": "video"
+  },
+  {
+   "file": "104905-shot-wayland-t6-group-back.jpg",
+   "time": "10:49:05",
+   "kind": "image"
+  },
+  {
+   "file": "104915-shot-wayland-t6-rider-close.jpg",
+   "time": "10:49:15",
+   "kind": "image"
+  },
+  {
+   "file": "104932-shot-t6-carbon-stand.jpg",
+   "time": "10:49:32",
+   "kind": "image"
+  },
+  {
+   "file": "104952-shot-t6-group-front.jpg",
+   "time": "10:49:52",
+   "kind": "image"
+  },
+  {
+   "file": "105011-video-wayland-t6-designer-video.jpg",
+   "time": "10:50:11",
+   "kind": "image"
+  },
+  {
+   "file": "105011-video-wayland-t6-designer-video.mp4",
+   "time": "10:50:11",
+   "kind": "video"
+  },
+  {
+   "file": "105016-shot-t6-group-back.jpg",
+   "time": "10:50:16",
+   "kind": "image"
+  },
+  {
+   "file": "105036-shot-t6-rider-close.jpg",
+   "time": "10:50:36",
+   "kind": "image"
+  },
+  {
+   "file": "105122-shot-t6-jersey-designer.jpg",
+   "time": "10:51:22",
+   "kind": "image"
+  },
+  {
+   "file": "105154-shot-wayland-t6-group-back.jpg",
+   "time": "10:51:54",
+   "kind": "image"
+  },
+  {
+   "file": "105204-shot-wayland-t6-rider-close.jpg",
+   "time": "10:52:04",
+   "kind": "image"
+  },
+  {
+   "file": "110913-agent-scenes-s4-merged-wl-weather-light-rain-blackforest.jpg",
+   "time": "11:09:13",
+   "kind": "image"
+  },
+  {
+   "file": "110928-agent-scenes-s4-merged-wl-weather-heavy-snow-feldberg.jpg",
+   "time": "11:09:28",
+   "kind": "image"
+  },
+  {
+   "file": "110945-agent-scenes-s4-merged-x11-weather-heavy-snow-feldberg.jpg",
+   "time": "11:09:45",
+   "kind": "image"
+  },
+  {
+   "file": "111052-shot-wayland-t6-carbon-stand.jpg",
+   "time": "11:10:52",
+   "kind": "image"
+  },
+  {
+   "file": "111102-shot-wayland-t6-rider-close.jpg",
+   "time": "11:11:02",
+   "kind": "image"
+  },
+  {
+   "file": "111611-shot-wayland-t6-carbon-stand.jpg",
+   "time": "11:16:11",
+   "kind": "image"
+  },
+  {
+   "file": "111620-shot-wayland-t6-group-front.jpg",
+   "time": "11:16:20",
+   "kind": "image"
+  },
+  {
+   "file": "111629-shot-wayland-t6-group-back.jpg",
+   "time": "11:16:29",
+   "kind": "image"
+  },
+  {
+   "file": "111638-shot-wayland-t6-rider-close.jpg",
+   "time": "11:16:38",
+   "kind": "image"
+  },
+  {
+   "file": "111719-shot-wayland-t6-jersey-designer.jpg",
+   "time": "11:17:19",
+   "kind": "image"
+  },
+  {
+   "file": "111810-video-wayland-t6-designer-video.jpg",
+   "time": "11:18:10",
+   "kind": "image"
+  },
+  {
+   "file": "111810-video-wayland-t6-designer-video.mp4",
+   "time": "11:18:10",
+   "kind": "video"
+  },
+  {
+   "file": "111851-shot-t6-carbon-stand.jpg",
+   "time": "11:18:51",
+   "kind": "image"
+  },
+  {
+   "file": "111918-shot-t6-group-front.jpg",
+   "time": "11:19:18",
+   "kind": "image"
+  },
+  {
+   "file": "111943-shot-t6-group-back.jpg",
+   "time": "11:19:43",
+   "kind": "image"
+  },
+  {
+   "file": "112015-shot-t6-rider-close.jpg",
+   "time": "11:20:15",
+   "kind": "image"
+  },
+  {
+   "file": "112108-shot-t6-jersey-designer.jpg",
+   "time": "11:21:08",
+   "kind": "image"
+  },
+  {
+   "file": "114857-shot-wayland-k3-road-bollards.jpg",
+   "time": "11:48:57",
+   "kind": "image"
+  },
+  {
+   "file": "114912-shot-wayland-k3-road-bollards-hidden.jpg",
+   "time": "11:49:12",
+   "kind": "image"
+  },
+  {
+   "file": "115052-video-wayland-k3-tree-crash-video.jpg",
+   "time": "11:50:52",
+   "kind": "image"
+  },
+  {
+   "file": "115052-video-wayland-k3-tree-crash-video.mp4",
+   "time": "11:50:52",
+   "kind": "video"
+  },
+  {
+   "file": "115115-shot-wayland-k3-tree-crash.jpg",
+   "time": "11:51:15",
+   "kind": "image"
+  },
+  {
+   "file": "115128-shot-wayland-k3-bridge-railing.jpg",
+   "time": "11:51:28",
+   "kind": "image"
+  },
+  {
+   "file": "115419-shot-wayland-k3-road-bollards.jpg",
+   "time": "11:54:19",
+   "kind": "image"
+  },
+  {
+   "file": "115521-video-wayland-k3-tree-crash-video.jpg",
+   "time": "11:55:21",
+   "kind": "image"
+  },
+  {
+   "file": "115521-video-wayland-k3-tree-crash-video.mp4",
+   "time": "11:55:21",
+   "kind": "video"
+  },
+  {
+   "file": "115542-shot-wayland-k3-tree-crash.jpg",
+   "time": "11:55:42",
+   "kind": "image"
+  },
+  {
+   "file": "115712-video-wayland-k3-tree-crash-video.jpg",
+   "time": "11:57:12",
+   "kind": "image"
+  },
+  {
+   "file": "115712-video-wayland-k3-tree-crash-video.mp4",
+   "time": "11:57:12",
+   "kind": "video"
+  },
+  {
+   "file": "115733-shot-wayland-k3-tree-crash.jpg",
+   "time": "11:57:33",
+   "kind": "image"
+  },
+  {
+   "file": "115737-shot-wayland-menu-world-weather.jpg",
+   "time": "11:57:37",
+   "kind": "image"
+  },
+  {
+   "file": "115754-shot-wayland-menu-weather-presets.jpg",
+   "time": "11:57:54",
+   "kind": "image"
+  },
+  {
+   "file": "115900-shot-wayland-k3t.jpg",
+   "time": "11:59:00",
+   "kind": "image"
+  },
+  {
+   "file": "115955-shot-wayland-k3t.jpg",
+   "time": "11:59:55",
+   "kind": "image"
+  },
+  {
+   "file": "120046-shot-wayland-k3t.jpg",
+   "time": "12:00:46",
+   "kind": "image"
+  },
+  {
+   "file": "120122-shot-wayland-k3-road-bollards.jpg",
+   "time": "12:01:22",
+   "kind": "image"
+  },
+  {
+   "file": "120137-shot-wayland-k3-road-bollards-hidden.jpg",
+   "time": "12:01:37",
+   "kind": "image"
+  },
+  {
+   "file": "120208-shot-wayland-menu-weather-custom.jpg",
+   "time": "12:02:08",
+   "kind": "image"
+  },
+  {
+   "file": "120215-shot-wayland-event-weather-start.jpg",
+   "time": "12:02:15",
+   "kind": "image"
+  },
+  {
+   "file": "120233-shot-k3-road-bollards.jpg",
+   "time": "12:02:33",
+   "kind": "image"
+  },
+  {
+   "file": "120248-video-wayland-k3-tree-crash-video.jpg",
+   "time": "12:02:48",
+   "kind": "image"
+  },
+  {
+   "file": "120248-video-wayland-k3-tree-crash-video.mp4",
+   "time": "12:02:48",
+   "kind": "video"
+  },
+  {
+   "file": "120313-shot-wayland-k3-tree-crash.jpg",
+   "time": "12:03:13",
+   "kind": "image"
+  },
+  {
+   "file": "120317-shot-k3-road-bollards-hidden.jpg",
+   "time": "12:03:17",
+   "kind": "image"
+  },
+  {
+   "file": "120358-shot-wayland-k3-bridge-railing.jpg",
+   "time": "12:03:58",
+   "kind": "image"
+  },
+  {
+   "file": "120629-agent-build-history-2026-11-14-menu-world-weather.jpg",
+   "time": "12:06:29",
+   "kind": "image"
+  },
+  {
+   "file": "120629-shot-wayland-menu-world-weather.jpg",
+   "time": "12:06:29",
+   "kind": "image"
+  },
+  {
+   "file": "120641-shot-wayland-menu-weather-presets.jpg",
+   "time": "12:06:41",
+   "kind": "image"
+  },
+  {
+   "file": "120653-agent-build-history-2026-11-14-menu-weather-custom.jpg",
+   "time": "12:06:53",
+   "kind": "image"
+  },
+  {
+   "file": "120653-shot-wayland-menu-weather-custom.jpg",
+   "time": "12:06:53",
+   "kind": "image"
+  },
+  {
+   "file": "120701-shot-wayland-event-weather-start.jpg",
+   "time": "12:07:01",
+   "kind": "image"
+  },
+  {
+   "file": "121002-video-wayland-k3-tree-crash-video.jpg",
+   "time": "12:10:02",
+   "kind": "image"
+  },
+  {
+   "file": "121002-video-wayland-k3-tree-crash-video.mp4",
+   "time": "12:10:02",
+   "kind": "video"
+  },
+  {
+   "file": "121021-shot-wayland-k3-tree-crash.jpg",
+   "time": "12:10:21",
+   "kind": "image"
+  },
+  {
+   "file": "121105-shot-wayland-k3t.jpg",
+   "time": "12:11:05",
+   "kind": "image"
+  },
+  {
+   "file": "121148-shot-wayland-k3-tree-crash.jpg",
+   "time": "12:11:48",
+   "kind": "image"
+  },
+  {
+   "file": "121249-shot-k3-road-bollards.jpg",
+   "time": "12:12:49",
+   "kind": "image"
+  },
+  {
+   "file": "121339-shot-k3-road-bollards-hidden.jpg",
+   "time": "12:13:39",
+   "kind": "image"
+  },
+  {
+   "file": "121356-agent-build-history-2026-11-14-weather-clear-to-thunderstorm-video.mp4",
+   "time": "12:13:56",
+   "kind": "video"
+  },
+  {
+   "file": "121358-video-wayland-weather-clear-to-thunderstorm-video.jpg",
+   "time": "12:13:58",
+   "kind": "image"
+  },
+  {
+   "file": "121358-video-wayland-weather-clear-to-thunderstorm-video.mp4",
+   "time": "12:13:58",
+   "kind": "video"
+  },
+  {
+   "file": "122330-shot-menu-world-weather.jpg",
+   "time": "12:23:30",
+   "kind": "image"
+  },
+  {
+   "file": "122418-shot-menu-weather-presets.jpg",
+   "time": "12:24:18",
+   "kind": "image"
+  },
+  {
+   "file": "122505-shot-menu-weather-custom.jpg",
+   "time": "12:25:05",
+   "kind": "image"
+  },
+  {
+   "file": "122534-shot-event-weather-start.jpg",
+   "time": "12:25:34",
+   "kind": "image"
+  },
+  {
+   "file": "122543-video-k3-tree-crash-video.jpg",
+   "time": "12:25:43",
+   "kind": "image"
+  },
+  {
+   "file": "122543-video-k3-tree-crash-video.mp4",
+   "time": "12:25:43",
+   "kind": "video"
+  },
+  {
+   "file": "122624-shot-menu-world-weather.jpg",
+   "time": "12:26:24",
+   "kind": "image"
+  },
+  {
+   "file": "122653-shot-menu-weather-presets.jpg",
+   "time": "12:26:53",
+   "kind": "image"
+  },
+  {
+   "file": "122717-shot-k3-tree-crash.jpg",
+   "time": "12:27:17",
+   "kind": "image"
+  },
+  {
+   "file": "122729-shot-menu-weather-custom.jpg",
+   "time": "12:27:29",
+   "kind": "image"
+  },
+  {
+   "file": "122752-shot-event-weather-start.jpg",
+   "time": "12:27:52",
+   "kind": "image"
+  },
+  {
+   "file": "122755-shot-k3-bridge-railing.jpg",
+   "time": "12:27:55",
+   "kind": "image"
+  },
+  {
+   "file": "123333-shot-wayland-sky-moonless-vaduz.jpg",
+   "time": "12:33:33",
+   "kind": "image"
+  },
+  {
+   "file": "123359-shot-wayland-fix-groupset-picker.jpg",
+   "time": "12:33:59",
+   "kind": "image"
+  },
+  {
+   "file": "123425-shot-wayland-fix-groupset-crankset.jpg",
+   "time": "12:34:25",
+   "kind": "image"
+  },
+  {
+   "file": "123439-shot-wayland-fix-console-workshop.jpg",
+   "time": "12:34:39",
+   "kind": "image"
+  },
+  {
+   "file": "123511-shot-wayland-fix-carbon-stand.jpg",
+   "time": "12:35:11",
+   "kind": "image"
+  },
+  {
+   "file": "123543-shot-wayland-fix-mtb-fork.jpg",
+   "time": "12:35:43",
+   "kind": "image"
+  },
+  {
+   "file": "123615-shot-wayland-fix-mtb-fork-front.jpg",
+   "time": "12:36:15",
+   "kind": "image"
+  },
+  {
+   "file": "123626-shot-wayland-fix-hip-number.jpg",
+   "time": "12:36:26",
+   "kind": "image"
+  },
+  {
+   "file": "123643-shot-wayland-fix-wild-kerb-vaduz.jpg",
+   "time": "12:36:43",
+   "kind": "image"
+  },
+  {
+   "file": "123654-shot-wayland-fix-sidewalk-corners-vaduz.jpg",
+   "time": "12:36:54",
+   "kind": "image"
+  },
+  {
+   "file": "123705-shot-wayland-fix-sidewalk-corners-aeule.jpg",
+   "time": "12:37:05",
+   "kind": "image"
+  },
+  {
+   "file": "123951-shot-wayland-sky-moonless-vaduz.jpg",
+   "time": "12:39:51",
+   "kind": "image"
+  },
+  {
+   "file": "124027-shot-wayland-fix-hip-number.jpg",
+   "time": "12:40:27",
+   "kind": "image"
+  },
+  {
+   "file": "124050-shot-wayland-fix-wild-kerb-vaduz.jpg",
+   "time": "12:40:50",
+   "kind": "image"
+  },
+  {
+   "file": "124101-shot-wayland-fix-sidewalk-corners-vaduz.jpg",
+   "time": "12:41:01",
+   "kind": "image"
+  },
+  {
+   "file": "124111-shot-wayland-fix-sidewalk-corners-aeule.jpg",
+   "time": "12:41:11",
+   "kind": "image"
+  },
+  {
+   "file": "124359-shot-wayland-fix-groupset-picker.jpg",
+   "time": "12:43:59",
+   "kind": "image"
+  },
+  {
+   "file": "124424-shot-wayland-fix-groupset-crankset.jpg",
+   "time": "12:44:24",
+   "kind": "image"
+  },
+  {
+   "file": "124438-shot-wayland-fix-console-workshop.jpg",
+   "time": "12:44:38",
+   "kind": "image"
+  },
+  {
+   "file": "124509-shot-wayland-fix-carbon-stand.jpg",
+   "time": "12:45:09",
+   "kind": "image"
+  },
+  {
+   "file": "124540-shot-wayland-fix-mtb-fork.jpg",
+   "time": "12:45:40",
+   "kind": "image"
+  },
+  {
+   "file": "124612-shot-wayland-fix-mtb-fork-front.jpg",
+   "time": "12:46:12",
+   "kind": "image"
+  },
+  {
+   "file": "124938-shot-wayland-fix-console-workshop.jpg",
+   "time": "12:49:38",
+   "kind": "image"
+  },
+  {
+   "file": "125010-shot-wayland-fix-carbon-stand.jpg",
+   "time": "12:50:10",
+   "kind": "image"
+  },
+  {
+   "file": "125032-shot-wayland-fix-wild-kerb-vaduz.jpg",
+   "time": "12:50:32",
+   "kind": "image"
+  },
+  {
+   "file": "125042-shot-wayland-fix-sidewalk-corners-vaduz.jpg",
+   "time": "12:50:42",
+   "kind": "image"
+  },
+  {
+   "file": "125053-shot-wayland-fix-sidewalk-corners-aeule.jpg",
+   "time": "12:50:53",
+   "kind": "image"
+  },
+  {
+   "file": "125440-shot-wayland-fix-wild-kerb-vaduz.jpg",
+   "time": "12:54:40",
+   "kind": "image"
+  },
+  {
+   "file": "125450-shot-wayland-fix-sidewalk-corners-vaduz.jpg",
+   "time": "12:54:50",
+   "kind": "image"
+  },
+  {
+   "file": "125501-shot-wayland-fix-sidewalk-corners-aeule.jpg",
+   "time": "12:55:01",
+   "kind": "image"
+  },
+  {
+   "file": "125628-shot-wayland-fix-wild-kerb-vaduz.jpg",
+   "time": "12:56:28",
+   "kind": "image"
+  },
+  {
+   "file": "125638-shot-wayland-fix-sidewalk-corners-vaduz.jpg",
+   "time": "12:56:38",
+   "kind": "image"
+  },
+  {
+   "file": "125917-shot-wayland-fix-wild-kerb-vaduz.jpg",
+   "time": "12:59:17",
+   "kind": "image"
+  },
+  {
+   "file": "130103-shot-wayland-fix-wild-kerb-vaduz-top.jpg",
+   "time": "13:01:03",
+   "kind": "image"
+  },
+  {
+   "file": "130501-shot-wayland-fix-wild-kerb-vaduz.jpg",
+   "time": "13:05:01",
+   "kind": "image"
+  },
+  {
+   "file": "130519-shot-wayland-fix-wild-kerb-vaduz-top.jpg",
+   "time": "13:05:19",
+   "kind": "image"
+  },
+  {
+   "file": "130555-agent-scenes-before-fix-wild-kerb-vaduz.jpg",
+   "time": "13:05:55",
+   "kind": "image"
+  },
+  {
+   "file": "134201-shot-wayland-menu-weather-real.jpg",
+   "time": "13:42:01",
+   "kind": "image"
+  },
+  {
+   "file": "134223-shot-wayland-weather-real-vaduz.jpg",
+   "time": "13:42:23",
+   "kind": "image"
+  },
+  {
+   "file": "134732-shot-wayland-weather-real-lothar-blackforest.jpg",
+   "time": "13:47:32",
+   "kind": "image"
+  },
+  {
+   "file": "134836-shot-menu-weather-real.jpg",
+   "time": "13:48:36",
+   "kind": "image"
+  },
+  {
+   "file": "134927-shot-weather-real-vaduz.jpg",
+   "time": "13:49:27",
+   "kind": "image"
+  },
+  {
+   "file": "135012-shot-weather-real-lothar-blackforest.jpg",
+   "time": "13:50:12",
+   "kind": "image"
+  },
+  {
+   "file": "140755-shot-wayland-k4-damage-crash.jpg",
+   "time": "14:07:55",
+   "kind": "image"
+  },
+  {
+   "file": "140833-video-wayland-k4-damage-crash-video.jpg",
+   "time": "14:08:33",
+   "kind": "image"
+  },
+  {
+   "file": "140833-video-wayland-k4-damage-crash-video.mp4",
+   "time": "14:08:33",
+   "kind": "video"
+  },
+  {
+   "file": "140842-shot-wayland-k4-buckled-wheel.jpg",
+   "time": "14:08:42",
+   "kind": "image"
+  },
+  {
+   "file": "140852-shot-wayland-k5-visible-damage.jpg",
+   "time": "14:08:52",
+   "kind": "image"
+  },
+  {
+   "file": "140916-shot-wayland-k4-workshop-repair.jpg",
+   "time": "14:09:16",
+   "kind": "image"
+  },
+  {
+   "file": "140937-shot-wayland-k4-workshop-repair-card.jpg",
+   "time": "14:09:37",
+   "kind": "image"
+  },
+  {
+   "file": "140958-shot-wayland-k4-workshop-injury.jpg",
+   "time": "14:09:58",
+   "kind": "image"
+  },
+  {
+   "file": "141619-shot-wayland-k4-damage-crash.jpg",
+   "time": "14:16:19",
+   "kind": "image"
+  },
+  {
+   "file": "141710-video-wayland-k4-damage-crash-video.jpg",
+   "time": "14:17:10",
+   "kind": "image"
+  },
+  {
+   "file": "141710-video-wayland-k4-damage-crash-video.mp4",
+   "time": "14:17:10",
+   "kind": "video"
+  },
+  {
+   "file": "142054-shot-wayland-k4-buckled-wheel.jpg",
+   "time": "14:20:54",
+   "kind": "image"
+  },
+  {
+   "file": "142112-shot-wayland-k5-visible-damage.jpg",
+   "time": "14:21:12",
+   "kind": "image"
+  },
+  {
+   "file": "142135-shot-wayland-k4-workshop-repair.jpg",
+   "time": "14:21:35",
+   "kind": "image"
+  },
+  {
+   "file": "142157-shot-wayland-k4-workshop-repair-card.jpg",
+   "time": "14:21:57",
+   "kind": "image"
+  },
+  {
+   "file": "142218-shot-wayland-k4-workshop-injury.jpg",
+   "time": "14:22:18",
+   "kind": "image"
+  },
+  {
+   "file": "142303-shot-k4-damage-crash.jpg",
+   "time": "14:23:03",
+   "kind": "image"
+  },
+  {
+   "file": "142556-shot-k4-buckled-wheel.jpg",
+   "time": "14:25:56",
+   "kind": "image"
+  },
+  {
+   "file": "142704-shot-k5-visible-damage.jpg",
+   "time": "14:27:04",
+   "kind": "image"
+  },
+  {
+   "file": "142802-shot-k4-workshop-repair.jpg",
+   "time": "14:28:02",
+   "kind": "image"
+  },
+  {
+   "file": "142850-shot-k4-workshop-repair-card.jpg",
+   "time": "14:28:50",
+   "kind": "image"
+  },
+  {
+   "file": "142941-shot-k4-workshop-injury.jpg",
+   "time": "14:29:41",
+   "kind": "image"
+  },
+  {
+   "file": "143143-shot-wayland-k4-workshop-injury.jpg",
+   "time": "14:31:43",
+   "kind": "image"
+  },
+  {
+   "file": "143228-shot-k4-workshop-injury.jpg",
+   "time": "14:32:28",
+   "kind": "image"
+  },
+  {
+   "file": "143646-shot-wayland-k4-damage-crash.jpg",
+   "time": "14:36:46",
+   "kind": "image"
+  },
+  {
+   "file": "143933-shot-k4-damage-crash.jpg",
+   "time": "14:39:33",
+   "kind": "image"
+  },
+  {
+   "file": "144414-shot-wayland-season-vaduz-winter.jpg",
+   "time": "14:44:14",
+   "kind": "image"
+  },
+  {
+   "file": "144426-shot-wayland-season-vaduz-spring.jpg",
+   "time": "14:44:26",
+   "kind": "image"
+  },
+  {
+   "file": "144439-shot-wayland-season-vaduz-summer.jpg",
+   "time": "14:44:39",
+   "kind": "image"
+  },
+  {
+   "file": "144451-shot-wayland-season-vaduz-autumn.jpg",
+   "time": "14:44:51",
+   "kind": "image"
+  },
+  {
+   "file": "144503-shot-wayland-season-fields-winter.jpg",
+   "time": "14:45:03",
+   "kind": "image"
+  },
+  {
+   "file": "144514-shot-wayland-season-fields-spring.jpg",
+   "time": "14:45:14",
+   "kind": "image"
+  },
+  {
+   "file": "144526-shot-wayland-season-fields-summer.jpg",
+   "time": "14:45:26",
+   "kind": "image"
+  },
+  {
+   "file": "144609-shot-wayland-season-fields-autumn.jpg",
+   "time": "14:46:09",
+   "kind": "image"
+  },
+  {
+   "file": "144759-shot-wayland-season-malbun-spring.jpg",
+   "time": "14:47:59",
+   "kind": "image"
+  },
+  {
+   "file": "145010-shot-k4-damage-crash.jpg",
+   "time": "14:50:10",
+   "kind": "image"
+  },
+  {
+   "file": "145053-shot-k4-damage-crash.jpg",
+   "time": "14:50:53",
+   "kind": "image"
+  },
+  {
+   "file": "145249-shot-wayland-season-malbun-winter.jpg",
+   "time": "14:52:49",
+   "kind": "image"
+  },
+  {
+   "file": "145800-shot-wayland-season-vaduz-winter.jpg",
+   "time": "14:58:00",
+   "kind": "image"
+  },
+  {
+   "file": "145812-shot-wayland-season-vaduz-spring.jpg",
+   "time": "14:58:12",
+   "kind": "image"
+  },
+  {
+   "file": "145824-shot-wayland-season-vaduz-summer.jpg",
+   "time": "14:58:24",
+   "kind": "image"
+  },
+  {
+   "file": "145835-shot-wayland-season-vaduz-autumn.jpg",
+   "time": "14:58:35",
+   "kind": "image"
+  },
+  {
+   "file": "145847-shot-wayland-season-fields-winter.jpg",
+   "time": "14:58:47",
+   "kind": "image"
+  },
+  {
+   "file": "145859-shot-wayland-season-fields-spring.jpg",
+   "time": "14:58:59",
+   "kind": "image"
+  },
+  {
+   "file": "145910-shot-wayland-season-fields-summer.jpg",
+   "time": "14:59:10",
+   "kind": "image"
+  },
+  {
+   "file": "145922-shot-wayland-season-fields-autumn.jpg",
+   "time": "14:59:22",
+   "kind": "image"
+  },
+  {
+   "file": "145934-shot-wayland-season-malbun-spring.jpg",
+   "time": "14:59:34",
+   "kind": "image"
+  },
+  {
+   "file": "145945-shot-wayland-season-malbun-winter.jpg",
+   "time": "14:59:45",
+   "kind": "image"
+  },
+  {
+   "file": "150215-shot-wayland-season-vaduz-winter.jpg",
+   "time": "15:02:15",
+   "kind": "image"
+  },
+  {
+   "file": "150227-shot-wayland-season-vaduz-spring.jpg",
+   "time": "15:02:27",
+   "kind": "image"
+  },
+  {
+   "file": "150238-shot-wayland-season-vaduz-summer.jpg",
+   "time": "15:02:38",
+   "kind": "image"
+  },
+  {
+   "file": "150250-shot-wayland-season-vaduz-autumn.jpg",
+   "time": "15:02:50",
+   "kind": "image"
+  },
+  {
+   "file": "150302-shot-wayland-season-fields-winter.jpg",
+   "time": "15:03:02",
+   "kind": "image"
+  },
+  {
+   "file": "150313-shot-wayland-season-fields-spring.jpg",
+   "time": "15:03:13",
+   "kind": "image"
+  },
+  {
+   "file": "150325-shot-wayland-season-fields-summer.jpg",
+   "time": "15:03:25",
+   "kind": "image"
+  },
+  {
+   "file": "150337-shot-wayland-season-fields-autumn.jpg",
+   "time": "15:03:37",
+   "kind": "image"
+  },
+  {
+   "file": "150348-shot-wayland-season-malbun-spring.jpg",
+   "time": "15:03:48",
+   "kind": "image"
+  },
+  {
+   "file": "150400-shot-wayland-season-malbun-winter.jpg",
+   "time": "15:04:00",
+   "kind": "image"
+  },
+  {
+   "file": "150528-shot-season-vaduz-winter.jpg",
+   "time": "15:05:28",
+   "kind": "image"
+  },
+  {
+   "file": "150553-shot-season-vaduz-spring.jpg",
+   "time": "15:05:53",
+   "kind": "image"
+  },
+  {
+   "file": "150619-shot-season-vaduz-summer.jpg",
+   "time": "15:06:19",
+   "kind": "image"
+  },
+  {
+   "file": "150646-shot-season-vaduz-autumn.jpg",
+   "time": "15:06:46",
+   "kind": "image"
+  },
+  {
+   "file": "150702-shot-season-fields-winter.jpg",
+   "time": "15:07:02",
+   "kind": "image"
+  },
+  {
+   "file": "150718-shot-season-fields-spring.jpg",
+   "time": "15:07:18",
+   "kind": "image"
+  },
+  {
+   "file": "150734-shot-season-fields-summer.jpg",
+   "time": "15:07:34",
+   "kind": "image"
+  },
+  {
+   "file": "150750-shot-season-fields-autumn.jpg",
+   "time": "15:07:50",
+   "kind": "image"
+  },
+  {
+   "file": "150818-shot-season-malbun-spring.jpg",
+   "time": "15:08:18",
+   "kind": "image"
+  },
+  {
+   "file": "150845-shot-season-malbun-winter.jpg",
+   "time": "15:08:45",
+   "kind": "image"
+  },
+  {
+   "file": "151158-shot-season-vaduz-winter.jpg",
+   "time": "15:11:58",
+   "kind": "image"
+  },
+  {
+   "file": "151224-shot-season-vaduz-spring.jpg",
+   "time": "15:12:24",
+   "kind": "image"
+  },
+  {
+   "file": "151250-shot-season-vaduz-summer.jpg",
+   "time": "15:12:50",
+   "kind": "image"
+  },
+  {
+   "file": "151317-shot-season-vaduz-autumn.jpg",
+   "time": "15:13:17",
+   "kind": "image"
+  },
+  {
+   "file": "151339-shot-season-fields-winter.jpg",
+   "time": "15:13:39",
+   "kind": "image"
+  },
+  {
+   "file": "151401-shot-season-fields-spring.jpg",
+   "time": "15:14:01",
+   "kind": "image"
+  },
+  {
+   "file": "151423-shot-season-fields-summer.jpg",
+   "time": "15:14:23",
+   "kind": "image"
+  },
+  {
+   "file": "151445-shot-season-fields-autumn.jpg",
+   "time": "15:14:45",
+   "kind": "image"
+  },
+  {
+   "file": "151512-shot-season-malbun-spring.jpg",
+   "time": "15:15:12",
+   "kind": "image"
+  },
+  {
+   "file": "151539-shot-season-malbun-winter.jpg",
+   "time": "15:15:39",
+   "kind": "image"
+  },
+  {
+   "file": "154202-shot-wayland-weather-physics-headwind-vaduz.jpg",
+   "time": "15:42:02",
+   "kind": "image"
+  },
+  {
+   "file": "154228-shot-wayland-weather-physics-tailwind-vaduz.jpg",
+   "time": "15:42:28",
+   "kind": "image"
+  },
+  {
+   "file": "154303-shot-weather-physics-headwind-vaduz.jpg",
+   "time": "15:43:03",
+   "kind": "image"
+  },
+  {
+   "file": "154335-shot-weather-physics-tailwind-vaduz.jpg",
+   "time": "15:43:35",
+   "kind": "image"
+  },
+  {
+   "file": "162333-shot-wayland-forest-vaduz-autumn.jpg",
+   "time": "16:23:33",
+   "kind": "image"
+  },
+  {
+   "file": "162351-shot-wayland-forest-vaduz-winter.jpg",
+   "time": "16:23:51",
+   "kind": "image"
+  },
+  {
+   "file": "162410-shot-wayland-forest-bf-autumn.jpg",
+   "time": "16:24:10",
+   "kind": "image"
+  },
+  {
+   "file": "162430-shot-wayland-forest-tf-pines.jpg",
+   "time": "16:24:30",
+   "kind": "image"
+  },
+  {
+   "file": "162643-shot-forest-vaduz-autumn.jpg",
+   "time": "16:26:43",
+   "kind": "image"
+  },
+  {
+   "file": "162717-shot-forest-vaduz-winter.jpg",
+   "time": "16:27:17",
+   "kind": "image"
+  },
+  {
+   "file": "162743-shot-forest-bf-autumn.jpg",
+   "time": "16:27:43",
+   "kind": "image"
+  },
+  {
+   "file": "162813-shot-forest-tf-pines.jpg",
+   "time": "16:28:13",
+   "kind": "image"
+  },
+  {
+   "file": "162833-shot-wayland-forest-vaduz-autumn.jpg",
+   "time": "16:28:33",
+   "kind": "image"
+  },
+  {
+   "file": "162851-shot-wayland-forest-vaduz-winter.jpg",
+   "time": "16:28:51",
+   "kind": "image"
+  },
+  {
+   "file": "163025-agent-web-web-audio-audio-locked.jpg",
+   "time": "16:30:25",
+   "kind": "image"
+  },
+  {
+   "file": "163025-agent-web-web-audio-audio-sound.jpg",
+   "time": "16:30:25",
+   "kind": "image"
+  },
+  {
+   "file": "163048-agent-web-web-audio-voice-echo.jpg",
+   "time": "16:30:48",
+   "kind": "image"
+  },
+  {
+   "file": "163048-agent-web-web-audio-voice-voice-muted.jpg",
+   "time": "16:30:48",
+   "kind": "image"
+  },
+  {
+   "file": "163048-agent-web-web-audio-voice-voice.jpg",
+   "time": "16:30:48",
+   "kind": "image"
+  },
+  {
+   "file": "163145-agent-web-web-audio-voice-echo.jpg",
+   "time": "16:31:45",
+   "kind": "image"
+  },
+  {
+   "file": "163145-agent-web-web-audio-voice-voice-muted.jpg",
+   "time": "16:31:45",
+   "kind": "image"
+  },
+  {
+   "file": "163145-agent-web-web-audio-voice-voice.jpg",
+   "time": "16:31:45",
+   "kind": "image"
+  },
+  {
+   "file": "163242-shot-wayland-forest-bf-autumn.jpg",
+   "time": "16:32:42",
+   "kind": "image"
+  },
+  {
+   "file": "163256-agent-web-web-audio-voice-echo.jpg",
+   "time": "16:32:56",
+   "kind": "image"
+  },
+  {
+   "file": "163256-agent-web-web-audio-voice-voice-muted.jpg",
+   "time": "16:32:56",
+   "kind": "image"
+  },
+  {
+   "file": "163256-agent-web-web-audio-voice-voice.jpg",
+   "time": "16:32:56",
+   "kind": "image"
+  },
+  {
+   "file": "163318-shot-forest-bf-autumn.jpg",
+   "time": "16:33:18",
+   "kind": "image"
+  },
+  {
+   "file": "163445-shot-forest-vaduz-autumn.jpg",
+   "time": "16:34:45",
+   "kind": "image"
+  },
+  {
+   "file": "163519-shot-forest-vaduz-winter.jpg",
+   "time": "16:35:19",
+   "kind": "image"
+  },
+  {
+   "file": "165518-agent-web-web-audio-audio-locked.jpg",
+   "time": "16:55:18",
+   "kind": "image"
+  },
+  {
+   "file": "165518-agent-web-web-audio-audio-sound.jpg",
+   "time": "16:55:18",
+   "kind": "image"
+  },
+  {
+   "file": "165518-agent-web-web-audio-voice-echo.jpg",
+   "time": "16:55:18",
+   "kind": "image"
+  },
+  {
+   "file": "165518-agent-web-web-audio-voice-voice-muted.jpg",
+   "time": "16:55:18",
+   "kind": "image"
+  },
+  {
+   "file": "165518-agent-web-web-audio-voice-voice.jpg",
+   "time": "16:55:18",
+   "kind": "image"
+  },
+  {
+   "file": "175102-video-wayland-k12-wet-slide-video.jpg",
+   "time": "17:51:02",
+   "kind": "image"
+  },
+  {
+   "file": "175102-video-wayland-k12-wet-slide-video.mp4",
+   "time": "17:51:02",
+   "kind": "video"
+  },
+  {
+   "file": "175114-shot-wayland-k12-wet-slide-down.jpg",
+   "time": "17:51:14",
+   "kind": "image"
+  },
+  {
+   "file": "175123-shot-wayland-k12d-warning-arrow.jpg",
+   "time": "17:51:23",
+   "kind": "image"
+  },
+  {
+   "file": "175135-shot-wayland-k13-rider-list.jpg",
+   "time": "17:51:35",
+   "kind": "image"
+  },
+  {
+   "file": "175258-video-wayland-g5-flyover-vaduz-video.jpg",
+   "time": "17:52:58",
+   "kind": "image"
+  },
+  {
+   "file": "175258-video-wayland-g5-flyover-vaduz-video.mp4",
+   "time": "17:52:58",
+   "kind": "video"
+  },
+  {
+   "file": "180146-shot-wayland-workshop-bench-catalogue.jpg",
+   "time": "18:01:46",
+   "kind": "image"
+  },
+  {
+   "file": "180708-shot-wayland-workshop-bench-plus-bought.jpg",
+   "time": "18:07:08",
+   "kind": "image"
+  },
+  {
+   "file": "180722-shot-wayland-lights-night-fitted.jpg",
+   "time": "18:07:22",
+   "kind": "image"
+  },
+  {
+   "file": "180736-shot-wayland-lights-night-none.jpg",
+   "time": "18:07:36",
+   "kind": "image"
+  },
+  {
+   "file": "180754-video-wayland-k12-wet-slide-video.jpg",
+   "time": "18:07:54",
+   "kind": "image"
+  },
+  {
+   "file": "180754-video-wayland-k12-wet-slide-video.mp4",
+   "time": "18:07:54",
+   "kind": "video"
+  },
+  {
+   "file": "180801-shot-wayland-workshop-mirror-idle-kit-colours.jpg",
+   "time": "18:08:01",
+   "kind": "image"
+  },
+  {
+   "file": "180813-shot-wayland-k12-wet-slide-down.jpg",
+   "time": "18:08:13",
+   "kind": "image"
+  },
+  {
+   "file": "180821-shot-wayland-k12d-warning-arrow.jpg",
+   "time": "18:08:21",
+   "kind": "image"
+  },
+  {
+   "file": "180827-shot-wayland-workshop-gloves-colour.jpg",
+   "time": "18:08:27",
+   "kind": "image"
+  },
+  {
+   "file": "180833-shot-wayland-k13-rider-list.jpg",
+   "time": "18:08:33",
+   "kind": "image"
+  },
+  {
+   "file": "180959-video-wayland-workshop-bench-video.jpg",
+   "time": "18:09:59",
+   "kind": "image"
+  },
+  {
+   "file": "180959-video-wayland-workshop-bench-video.mp4",
+   "time": "18:09:59",
+   "kind": "video"
+  },
+  {
+   "file": "181003-video-wayland-g5-flyover-vaduz-video.jpg",
+   "time": "18:10:03",
+   "kind": "image"
+  },
+  {
+   "file": "181003-video-wayland-g5-flyover-vaduz-video.mp4",
+   "time": "18:10:03",
+   "kind": "video"
+  },
+  {
+   "file": "181734-shot-workshop-bench-catalogue.jpg",
+   "time": "18:17:34",
+   "kind": "image"
+  },
+  {
+   "file": "181736-video-k12-wet-slide-video.jpg",
+   "time": "18:17:36",
+   "kind": "image"
+  },
+  {
+   "file": "181736-video-k12-wet-slide-video.mp4",
+   "time": "18:17:36",
+   "kind": "video"
+  },
+  {
+   "file": "181800-shot-k12-wet-slide-down.jpg",
+   "time": "18:18:00",
+   "kind": "image"
+  },
+  {
+   "file": "181818-shot-workshop-bench-plus-bought.jpg",
+   "time": "18:18:18",
+   "kind": "image"
+  },
+  {
+   "file": "181829-shot-k12d-warning-arrow.jpg",
+   "time": "18:18:29",
+   "kind": "image"
+  },
+  {
+   "file": "181905-shot-k13-rider-list.jpg",
+   "time": "18:19:05",
+   "kind": "image"
+  },
+  {
+   "file": "181906-shot-lights-night-fitted.jpg",
+   "time": "18:19:06",
+   "kind": "image"
+  },
+  {
+   "file": "182003-shot-lights-night-none.jpg",
+   "time": "18:20:03",
+   "kind": "image"
+  },
+  {
+   "file": "182104-shot-workshop-mirror-idle-kit-colours.jpg",
+   "time": "18:21:04",
+   "kind": "image"
+  },
+  {
+   "file": "182202-shot-workshop-gloves-colour.jpg",
+   "time": "18:22:02",
+   "kind": "image"
+  },
+  {
+   "file": "183030-video-g5-flyover-vaduz-video.jpg",
+   "time": "18:30:30",
+   "kind": "image"
+  },
+  {
+   "file": "183030-video-g5-flyover-vaduz-video.mp4",
+   "time": "18:30:30",
+   "kind": "video"
+  },
+  {
+   "file": "183148-shot-workshop-bench-plus-bought.jpg",
+   "time": "18:31:48",
+   "kind": "image"
+  },
+  {
+   "file": "183223-shot-k12-wet-slide-down.jpg",
+   "time": "18:32:23",
+   "kind": "image"
+  },
+  {
+   "file": "183248-shot-k12d-warning-arrow.jpg",
+   "time": "18:32:48",
+   "kind": "image"
+  },
+  {
+   "file": "183302-shot-workshop-bench-plus-bought.jpg",
+   "time": "18:33:02",
+   "kind": "image"
+  },
+  {
+   "file": "183314-shot-k13-rider-list.jpg",
+   "time": "18:33:14",
+   "kind": "image"
+  },
+  {
+   "file": "183355-shot-wayland-workshop-bench-plus-bought.jpg",
+   "time": "18:33:55",
+   "kind": "image"
+  },
+  {
+   "file": "183441-shot-workshop-bench-plus-bought.jpg",
+   "time": "18:34:41",
+   "kind": "image"
+  },
+  {
+   "file": "184203-agent-web-web-audio-livekit-livekit-ada.jpg",
+   "time": "18:42:03",
+   "kind": "image"
+  },
+  {
+   "file": "184203-agent-web-web-audio-livekit-livekit-bea.jpg",
+   "time": "18:42:03",
+   "kind": "image"
+  },
+  {
+   "file": "194420-agent-web-web-downloads-ocw-2026-11-14-19-45-01.jpg",
+   "time": "19:44:20",
+   "kind": "image"
+  },
+  {
+   "file": "194420-agent-web-web-downloads-ocw-2026-11-14-19-45-05.webm",
+   "time": "19:44:20",
+   "kind": "video"
+  },
+  {
+   "file": "194420-agent-web-web-gamepad.jpg",
+   "time": "19:44:20",
+   "kind": "image"
+  },
+  {
+   "file": "194420-agent-web-web-hud.jpg",
+   "time": "19:44:20",
+   "kind": "image"
+  },
+  {
+   "file": "194420-agent-web-web-menu.jpg",
+   "time": "19:44:20",
+   "kind": "image"
+  },
+  {
+   "file": "194420-agent-web-web-riders.jpg",
+   "time": "19:44:20",
+   "kind": "image"
+  },
+  {
+   "file": "194420-agent-web-web-settings.jpg",
+   "time": "19:44:20",
+   "kind": "image"
+  },
+  {
+   "file": "194420-agent-web-web-weather.jpg",
+   "time": "19:44:20",
+   "kind": "image"
+  },
+  {
+   "file": "194420-agent-web-web.jpg",
+   "time": "19:44:20",
+   "kind": "image"
+  },
+  {
+   "file": "200312-agent-web-web-downloads-ocw-2026-11-14-20-03-53.jpg",
+   "time": "20:03:12",
+   "kind": "image"
+  },
+  {
+   "file": "200312-agent-web-web-downloads-ocw-2026-11-14-20-03-56.webm",
+   "time": "20:03:12",
+   "kind": "video"
+  },
+  {
+   "file": "200312-agent-web-web-gamepad.jpg",
+   "time": "20:03:12",
+   "kind": "image"
+  },
+  {
+   "file": "200312-agent-web-web-hud.jpg",
+   "time": "20:03:12",
+   "kind": "image"
+  },
+  {
+   "file": "200312-agent-web-web-menu.jpg",
+   "time": "20:03:12",
+   "kind": "image"
+  },
+  {
+   "file": "200312-agent-web-web-riders.jpg",
+   "time": "20:03:12",
+   "kind": "image"
+  },
+  {
+   "file": "200312-agent-web-web-settings.jpg",
+   "time": "20:03:12",
+   "kind": "image"
+  },
+  {
+   "file": "200312-agent-web-web-weather.jpg",
+   "time": "20:03:12",
+   "kind": "image"
+  },
+  {
+   "file": "200312-agent-web-web.jpg",
+   "time": "20:03:12",
+   "kind": "image"
+  },
+  {
+   "file": "201030-agent-web-web-audio-audio-locked.jpg",
+   "time": "20:10:30",
+   "kind": "image"
+  },
+  {
+   "file": "201030-agent-web-web-audio-audio-sound.jpg",
+   "time": "20:10:30",
+   "kind": "image"
+  },
+  {
+   "file": "201030-web-web-audio-audio.mic.wav",
+   "time": "20:10:30",
+   "kind": "audio"
+  },
+  {
+   "file": "202223-agent-web-web-downloads-ocw-2026-11-14-20-23-06.jpg",
+   "time": "20:22:23",
+   "kind": "image"
+  },
+  {
+   "file": "202223-agent-web-web-downloads-ocw-2026-11-14-20-23-10.webm",
+   "time": "20:22:23",
+   "kind": "video"
+  },
+  {
+   "file": "202223-agent-web-web-gamepad.jpg",
+   "time": "20:22:23",
+   "kind": "image"
+  },
+  {
+   "file": "202223-agent-web-web-hud.jpg",
+   "time": "20:22:23",
+   "kind": "image"
+  },
+  {
+   "file": "202223-agent-web-web-menu.jpg",
+   "time": "20:22:23",
+   "kind": "image"
+  },
+  {
+   "file": "202223-agent-web-web-riders.jpg",
+   "time": "20:22:23",
+   "kind": "image"
+  },
+  {
+   "file": "202223-agent-web-web-settings.jpg",
+   "time": "20:22:23",
+   "kind": "image"
+  },
+  {
+   "file": "202223-agent-web-web-weather.jpg",
+   "time": "20:22:23",
+   "kind": "image"
+  },
+  {
+   "file": "202223-agent-web-web.jpg",
+   "time": "20:22:23",
+   "kind": "image"
+  },
+  {
+   "file": "205239-agent-web-web-webgl2.jpg",
+   "time": "20:52:39",
+   "kind": "image"
+  },
+  {
+   "file": "211148-agent-web-web-webgl2.jpg",
+   "time": "21:11:48",
+   "kind": "image"
+  },
+  {
+   "file": "212132-agent-scenes-t4b-wayland-look-houses-vaduz.jpg",
+   "time": "21:21:32",
+   "kind": "image"
+  },
+  {
+   "file": "212143-agent-scenes-t4b-wayland-look-houses-triesenberg.jpg",
+   "time": "21:21:43",
+   "kind": "image"
+  },
+  {
+   "file": "212155-agent-scenes-t4b-wayland-look-houses-malbun.jpg",
+   "time": "21:21:55",
+   "kind": "image"
+  },
+  {
+   "file": "212211-agent-scenes-t4b-wayland-look-houses-bf-stmaergen.jpg",
+   "time": "21:22:11",
+   "kind": "image"
+  },
+  {
+   "file": "212227-agent-scenes-t4b-wayland-look-houses-bf-hofsgrund.jpg",
+   "time": "21:22:27",
+   "kind": "image"
+  },
+  {
+   "file": "212243-agent-scenes-t4b-wayland-look-houses-tf-orotava.jpg",
+   "time": "21:22:43",
+   "kind": "image"
+  },
+  {
+   "file": "212257-agent-scenes-t4b-wayland-look-houses-tf-gigantes.jpg",
+   "time": "21:22:57",
+   "kind": "image"
+  },
+  {
+   "file": "212309-agent-scenes-t4b-wayland-look-houses-vaduz-polygons.jpg",
+   "time": "21:23:09",
+   "kind": "image"
+  },
+  {
+   "file": "212320-agent-scenes-t4b-wayland-look-houses-vaduz-cathedral.jpg",
+   "time": "21:23:20",
+   "kind": "image"
+  },
+  {
+   "file": "212332-agent-scenes-t4b-wayland-look-houses-triesen-church.jpg",
+   "time": "21:23:32",
+   "kind": "image"
+  },
+  {
+   "file": "212343-agent-scenes-t4b-wayland-look-houses-triesenberg-balconies.jpg",
+   "time": "21:23:43",
+   "kind": "image"
+  },
+  {
+   "file": "212355-agent-scenes-t4b-wayland-look-houses-malbun-dormers.jpg",
+   "time": "21:23:55",
+   "kind": "image"
+  },
+  {
+   "file": "212410-agent-scenes-t4b-wayland-look-houses-bf-farms-close.jpg",
+   "time": "21:24:10",
+   "kind": "image"
+  },
+  {
+   "file": "212440-agent-scenes-t4b-x11-look-houses-vaduz.jpg",
+   "time": "21:24:40",
+   "kind": "image"
+  },
+  {
+   "file": "212510-agent-scenes-t4b-x11-look-houses-triesenberg.jpg",
+   "time": "21:25:10",
+   "kind": "image"
+  },
+  {
+   "file": "212530-agent-scenes-t4b-x11-look-houses-malbun.jpg",
+   "time": "21:25:30",
+   "kind": "image"
+  },
+  {
+   "file": "212554-agent-scenes-t4b-x11-look-houses-bf-stmaergen.jpg",
+   "time": "21:25:54",
+   "kind": "image"
+  },
+  {
+   "file": "212619-agent-scenes-t4b-x11-look-houses-bf-hofsgrund.jpg",
+   "time": "21:26:19",
+   "kind": "image"
+  },
+  {
+   "file": "212641-agent-scenes-t4b-x11-look-houses-tf-orotava.jpg",
+   "time": "21:26:41",
+   "kind": "image"
+  },
+  {
+   "file": "212704-agent-scenes-t4b-x11-look-houses-tf-gigantes.jpg",
+   "time": "21:27:04",
+   "kind": "image"
+  },
+  {
+   "file": "212723-agent-scenes-t4b-x11-look-houses-vaduz-polygons.jpg",
+   "time": "21:27:23",
+   "kind": "image"
+  },
+  {
+   "file": "212741-agent-scenes-t4b-x11-look-houses-vaduz-cathedral.jpg",
+   "time": "21:27:41",
+   "kind": "image"
+  },
+  {
+   "file": "212808-agent-scenes-t4b-x11-look-houses-triesen-church.jpg",
+   "time": "21:28:08",
+   "kind": "image"
+  },
+  {
+   "file": "212832-agent-scenes-t4b-x11-look-houses-triesenberg-balconies.jpg",
+   "time": "21:28:32",
+   "kind": "image"
+  },
+  {
+   "file": "212850-agent-scenes-t4b-x11-look-houses-malbun-dormers.jpg",
+   "time": "21:28:50",
+   "kind": "image"
+  },
+  {
+   "file": "212916-agent-scenes-t4b-x11-look-houses-bf-farms-close.jpg",
+   "time": "21:29:16",
+   "kind": "image"
+  },
+  {
+   "file": "213813-agent-web-web.jpg",
+   "time": "21:38:13",
+   "kind": "image"
+  },
+  {
+   "file": "214742-agent-web-web-webgl2-menu.jpg",
+   "time": "21:47:42",
+   "kind": "image"
+  },
+  {
+   "file": "214742-agent-web-web-webgl2.jpg",
+   "time": "21:47:42",
+   "kind": "image"
+  },
+  {
+   "file": "214838-agent-web-web-compare-webgl2-graphics.jpg",
+   "time": "21:48:38",
+   "kind": "image"
+  },
+  {
+   "file": "214838-agent-web-web-compare-webgl2-low.jpg",
+   "time": "21:48:38",
+   "kind": "image"
+  },
+  {
+   "file": "214838-agent-web-web-compare-webgpu-high.jpg",
+   "time": "21:48:38",
+   "kind": "image"
+  },
+  {
+   "file": "214838-agent-web-web-compare.jpg",
+   "time": "21:48:38",
+   "kind": "image"
+  },
+  {
+   "file": "220337-agent-web-web-compare-webgl2-graphics.jpg",
+   "time": "22:03:37",
+   "kind": "image"
+  },
+  {
+   "file": "220337-agent-web-web-compare-webgl2-low.jpg",
+   "time": "22:03:37",
+   "kind": "image"
+  },
+  {
+   "file": "220337-agent-web-web-compare-webgpu-high.jpg",
+   "time": "22:03:37",
+   "kind": "image"
+  },
+  {
+   "file": "220337-agent-web-web-compare.jpg",
+   "time": "22:03:37",
+   "kind": "image"
+  }
+ ],
+ "images": 500,
+ "videos": 36,
+ "sounds": 2,
+ "builds": {
+  "runs": 654,
+  "seconds": 183950.8,
+  "cargo_s": 24942.9,
+  "compiled": 6125,
+  "wait_s": 23874.0,
+  "failed": [
+   {
+    "start": "2026-11-14T00:11:16+01:00",
+    "seconds": 20.3,
+    "machine": "Win11Builder",
+    "os": "windows",
+    "checkout": "agent-a3b317fb1393f6d1f",
+    "branch": "worktree-agent-a3b317fb1393f6d1f",
+    "command": "cargo clippy -p ocw-sim -p ocw-desktop --all-targets -- -D warnings 2>&1 | Select-String -Pattern \"^(error|warning)\" -Context 0,10 | Select-Object -First 40; Write-Output CLIPPY_EXIT $LASTEXITCODE;...",
+    "exit": 1,
+    "log": "001116-Win11Builder-1164637.log",
+    "sync_s": 14.6,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": null
+   },
+   {
+    "start": "2026-11-14T00:32:05+01:00",
+    "seconds": 428.4,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "OCW",
+    "branch": "main",
+    "command": "cargo fmt --all --check && cargo clippy -p ocw-desktop -p ocw-render --all-targets -- -D warnings && cargo test -p ocw-desktop -p ocw-render 2>&1 | grep -E \"^test result|FAILED|panicked\" | sort | u...",
+    "exit": 1,
+    "log": "003205-marge-1202102.log",
+    "sync_s": 0.6,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": 426
+   },
+   {
+    "start": "2026-11-14T00:39:21+01:00",
+    "seconds": 70.9,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "OCW",
+    "branch": "main",
+    "command": "cargo fmt --all --check && cargo clippy -p ocw-desktop -p ocw-render --all-targets -- -D warnings && cargo test -p ocw-desktop -p ocw-render 2>&1 | grep -E \"^test result|FAILED|panicked\" | sort | u...",
+    "exit": 1,
+    "log": "003921-marge-1209958.log",
+    "sync_s": 0.6,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": 69
+   },
+   {
+    "start": "2026-11-14T00:49:52+01:00",
+    "seconds": 719.9,
+    "machine": "Win11Builder",
+    "os": "windows",
+    "checkout": "OCW-release-0.2.1",
+    "branch": "release-0.2.1",
+    "command": "cargo build --release -p ocw-desktop -p ocw-server -p world-builder --features ocw-desktop/voice; if ($LASTEXITCODE -ne 0) { exit 1 }; Get-Item target\\release\\ocw-desktop.exe,target\\release\\ocw-ser...",
+    "exit": 1,
+    "log": "004952-Win11Builder-1222421.log",
+    "sync_s": 18.0,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": 696
+   },
+   {
+    "start": "2026-11-14T01:03:08+01:00",
+    "seconds": 18.5,
+    "machine": "Win11Builder",
+    "os": "windows",
+    "checkout": "agent-a281a46a07f822117",
+    "branch": "worktree-agent-a281a46a07f822117",
+    "command": "cargo check -p ocw-voice --features livekit --all-targets 2>&1 | Select-Object -Last 15",
+    "exit": 1,
+    "log": "010308-Win11Builder-1236574.log",
+    "sync_s": 13.7,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": null
+   },
+   {
+    "start": "2026-11-14T01:04:32+01:00",
+    "seconds": 1080.8,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "agent-a28ab4794ac3d1ad8",
+    "branch": "worktree-agent-a28ab4794ac3d1ad8",
+    "command": "cargo build -q --release -p ocw-desktop 2>&1 | tail -3; export OCW_PROFILE=release; S=\"ortho-vaduz,ortho-triesenberg-chase,ortho-malbun,ortho-schauinsland,ortho-tf21\"; for m in wayland x11; do X=; ...",
+    "exit": 1,
+    "log": "010432-marge-1239978.log",
+    "sync_s": 0.6,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": 715
+   },
+   {
+    "start": "2026-11-14T01:48:45+01:00",
+    "seconds": 20.1,
+    "machine": "leela",
+    "os": "linux",
+    "checkout": "OCW",
+    "branch": "main",
+    "command": "   set -e   D=/var/tmp/ocw   put() { install -m $1 \"$2\" \"$D/.$3.new\" && mv -f \"$D/.$3.new\" \"$D/$3\"; }   # Voice chat (spec §7) where clang 21 is installed (its bindings need it).   if command -v cl...",
+    "exit": 255,
+    "log": "014845-leela-1285578.log",
+    "sync_s": null,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": null
+   },
+   {
+    "start": "2026-11-14T02:51:06+01:00",
+    "seconds": 1842.4,
+    "machine": "Win11Builder",
+    "os": "windows",
+    "checkout": "agent-a507bcaff0a2af98c",
+    "branch": "worktree-agent-a507bcaff0a2af98c",
+    "command": "cargo clippy -p ocw-sim -p ocw-desktop --all-targets -- -D warnings 2>&1 | Select-String -Pattern \"^(error|warning)|-->\" | Select-Object -First 60; Write-Output CLIPPY_DONE; cargo test -p ocw-sim -...",
+    "exit": 101,
+    "log": "025106-Win11Builder-1348258.log",
+    "sync_s": 14.4,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": null
+   },
+   {
+    "start": "2026-11-14T04:04:20+01:00",
+    "seconds": 21.1,
+    "machine": "macos",
+    "os": "macos",
+    "checkout": "agent-aa68e332f9744e170",
+    "branch": "worktree-agent-aa68e332f9744e170",
+    "command": "cargo test -p ocw-assets tmp_print -- --nocapture 2>&1 | grep -E \"TRIS|OV \"; cargo clippy -p ocw-assets --all-targets -- -D warnings 2>&1 | tail -30; cargo fmt --all -- --check && echo FMT_OK",
+    "exit": 1,
+    "log": "040420-macos-1417260.log",
+    "sync_s": 0.7,
+    "cargo_s": 14.6,
+    "cargo_builds": 1,
+    "compiled": 29,
+    "wait_s": null
+   },
+   {
+    "start": "2026-11-14T04:42:44+01:00",
+    "seconds": 9.3,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "agent-a09cdbcff127205c5",
+    "branch": "worktree-agent-a09cdbcff127205c5",
+    "command": "scripts/render-scenes.sh --out test-output/scenes/2026-11-14-044244 --only 'workshop-*'",
+    "exit": 1,
+    "log": "044244-marge-1458350.log",
+    "sync_s": 0.5,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": null
+   },
+   {
+    "start": "2026-11-14T07:22:30+01:00",
+    "seconds": 22.7,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "agent-a99613c9983b557e5",
+    "branch": "worktree-agent-a99613c9983b557e5",
+    "command": "cargo run -q -p ocw-assets -- generate && cargo run -q -p ocw-assets -- parts validate && cargo test -q -p ocw-core -p ocw-assets -p ocw-sim 2>&1 | tail -60",
+    "exit": 101,
+    "log": "072230-marge-1627745.log",
+    "sync_s": 0.6,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": null
+   },
+   {
+    "start": "2026-11-14T07:23:09+01:00",
+    "seconds": 5.6,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "agent-a99613c9983b557e5",
+    "branch": "worktree-agent-a99613c9983b557e5",
+    "command": "cargo run -q -p ocw-assets -- generate && cargo run -q -p ocw-assets -- parts validate && cargo test -q -p ocw-core -p ocw-assets -p ocw-sim 2>&1 | grep -v \"^test .* ok$\" | tail -80",
+    "exit": 101,
+    "log": "072309-marge-1628710.log",
+    "sync_s": 0.5,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": null
+   },
+   {
+    "start": "2026-11-14T07:25:10+01:00",
+    "seconds": 1.7,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "agent-a99613c9983b557e5",
+    "branch": "worktree-agent-a99613c9983b557e5",
+    "command": "cargo run -q -p ocw-assets -- generate >/dev/null && git status --short assets/models",
+    "exit": 128,
+    "log": "072510-marge-1631378.log",
+    "sync_s": 0.5,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": null
+   },
+   {
+    "start": "2026-11-14T12:06:06+01:00",
+    "seconds": 95.2,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "agent-a14e20b4135819064",
+    "branch": "worktree-agent-a14e20b4135819064",
+    "command": "scripts/render-scenes.sh --out test-output/scenes/2026-11-14-120606 --only 'k3-tree-crash*' --world blackforest=k3/blackforest.ocwpkg",
+    "exit": 1,
+    "log": "120606-marge-1965620.log",
+    "sync_s": 0.6,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": 90
+   },
+   {
+    "start": "2026-11-14T12:34:27+01:00",
+    "seconds": 127.5,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "OCW",
+    "branch": "main",
+    "command": "   set -e   D=/var/tmp/ocw   put() { install -m $1 \"$2\" \"$D/.$3.new\" && mv -f \"$D/.$3.new\" \"$D/$3\"; }   # Voice chat (spec §7) where clang 21 is installed (its bindings need it).   if command -v cl...",
+    "exit": 101,
+    "log": "123427-marge-2001161.log",
+    "sync_s": 0.6,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": null
+   },
+   {
+    "start": "2026-11-14T12:38:46+01:00",
+    "seconds": 145.2,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "agent-ab2900937eba3f076",
+    "branch": "worktree-agent-ab2900937eba3f076",
+    "command": "scripts/render-scenes.sh --out test-output/scenes/2026-11-14-123846 --only 'fix-*,sky-moonless-vaduz'",
+    "exit": 1,
+    "log": "123846-marge-2006844.log",
+    "sync_s": 0.5,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": null
+   },
+   {
+    "start": "2026-11-14T13:39:26+01:00",
+    "seconds": 347.8,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "agent-a4505c166634b08e1",
+    "branch": "worktree-agent-a4505c166634b08e1",
+    "command": "scripts/render-scenes.sh --out test-output/scenes/2026-11-14-133926 --only menu-weather-real,weather-real-vaduz,weather-real-lothar-blackforest",
+    "exit": 1,
+    "log": "133926-marge-2083358.log",
+    "sync_s": 0.6,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": null
+   },
+   {
+    "start": "2026-11-14T15:35:38+01:00",
+    "seconds": 1.5,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "agent-a43ce31b19d29fdb9",
+    "branch": "worktree-agent-a43ce31b19d29fdb9",
+    "command": "df -h ~ | tail -1; pwd; ls ..; ls ../OCW/data ../OCW/data/pilot | head -50; python3 -c \"import numpy; print(numpy.__version__)\"; gdalinfo --version",
+    "exit": 127,
+    "log": "153538-marge-2246417.log",
+    "sync_s": 0.8,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": null
+   },
+   {
+    "start": "2026-11-14T17:59:58+01:00",
+    "seconds": 603.7,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "agent-a98249453c64264c9",
+    "branch": "worktree-agent-a98249453c64264c9",
+    "command": "cp apps/web/web/index.html target/web/ 2>/dev/null; ls target/web/ocw_web_bg.wasm target/release/ocw-server >/dev/null && scripts/test-web-audio.py --out test-output/web --part livekit 2>&1 | tail -22",
+    "exit": 2,
+    "log": "175958-marge-2470111.log",
+    "sync_s": 0.8,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": 603
+   },
+   {
+    "start": "2026-11-14T21:12:51+01:00",
+    "seconds": 865.6,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "agent-ab219a368de806d4e",
+    "branch": "worktree-agent-ab219a368de806d4e",
+    "command": "set -o pipefail; echo \"== fmt\"; cargo fmt --all --check 2>&1 | head -60; echo \"fmt rc=$?\"; echo \"== clippy\"; cargo clippy --workspace --all-targets -- -D warnings 2>&1 | grep -E \"^(error|warning)|-...",
+    "exit": 101,
+    "log": "211251-marge-2753485.log",
+    "sync_s": 0.5,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": null
+   },
+   {
+    "start": "2026-11-14T21:21:19+01:00",
+    "seconds": 484.3,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "agent-a13befb3a595ea7b4",
+    "branch": "worktree-agent-a13befb3a595ea7b4",
+    "command": "rm -rf test-output/scenes/t4b-wayland test-output/scenes/t4b-x11 test-output/scenes/tmp; OCW_PROFILE=release scripts/render-scenes.sh --only \"look-houses-*\" --out test-output/scenes/t4b-wayland 2>&...",
+    "exit": 1,
+    "log": "212119-marge-2763843.log",
+    "sync_s": 0.7,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": null
+   }
+  ],
+  "machines": {
+   "marge": {
+    "runs": 493,
+    "seconds": 150953.6999999999,
+    "failed": 15,
+    "cargo_s": 19477.600000000002,
+    "compiled": 4123,
+    "wait_s": 20748.0
+   },
+   "Win11Builder": {
+    "runs": 23,
+    "seconds": 12251.300000000001,
+    "failed": 4,
+    "cargo_s": 4655.6,
+    "compiled": 1259,
+    "wait_s": 751.0
+   },
+   "macos": {
+    "runs": 117,
+    "seconds": 18731.0,
+    "failed": 1,
+    "cargo_s": 809.6999999999999,
+    "compiled": 743,
+    "wait_s": 2375.0
+   },
+   "leela": {
+    "runs": 21,
+    "seconds": 2014.8000000000002,
+    "failed": 1,
+    "cargo_s": 0.0,
+    "compiled": 0,
+    "wait_s": 0.0
+   }
+  },
+  "online": {
+   "leela": 0.7004341534008683,
+   "marge": 1.0,
+   "Win11Builder": 0.9913169319826338,
+   "macos": 1.0
+  },
+  "samples": 1382
+ },
+ "prompts": [
+  {
+   "time": "00:00:34",
+   "iso": "2026-11-14T00:00:34+01:00",
+   "text": "god mode: have the unicorn move more its wings when flying. make the movement more organic, like a bird."
+  },
+  {
+   "time": "00:01:21",
+   "iso": "2026-11-14T00:01:21+01:00",
+   "text": "add the refined definition of god mode to specification."
+  },
+  {
+   "time": "00:02:47",
+   "iso": "2026-11-14T00:02:47+01:00",
+   "text": "continue the stopped build tasks on w11 builder."
+  },
+  {
+   "time": "00:09:03",
+   "iso": "2026-11-14T00:09:03+01:00",
+   "text": "check if the reporting back of answers to the user chatpot from the build-dashboard works."
+  },
+  {
+   "time": "00:11:15",
+   "iso": "2026-11-14T00:11:15+01:00",
+   "text": "to test the voice feature, enable an echo bot that when near, records your audio and plays it back to you a couple of ms later"
+  },
+  {
+   "time": "00:33:59",
+   "iso": "2026-11-14T00:33:59+01:00",
+   "text": "build a new release and release all platforms."
+  },
+  {
+   "time": "00:39:50",
+   "iso": "2026-11-14T00:39:50+01:00",
+   "text": "add the voice echo bot to the settings menu"
+  },
+  {
+   "time": "06:38:21",
+   "iso": "2026-11-14T06:38:21+01:00",
+   "text": "isthe build dashboard definition in the specification?"
+  },
+  {
+   "time": "06:41:28",
+   "iso": "2026-11-14T06:41:28+01:00",
+   "text": "should the open question section in build dashboard renew automatically or do we need a background job?"
+  },
+  {
+   "time": "06:46:18",
+   "iso": "2026-11-14T06:46:18+01:00",
+   "text": "give me the curren specification of the charackter editor?"
+  },
+  {
+   "time": "06:51:38",
+   "iso": "2026-11-14T06:51:38+01:00",
+   "text": "change the spec: remove 'Looks only: kit never changes the physics; a time-trial helmet is just a look.' and change it to: The accessory das give you a slight benefit. For example, a time trial helmet makes you a little bit faster than without. So we need a like a scoring system of how much the various items give you a benefit over the standard or other items."
+  },
+  {
+   "time": "06:58:22",
+   "iso": "2026-11-14T06:58:22+01:00",
+   "text": "fix spec that aero bike and aero components have an effect only at speeds higher speeds. investigate from which speed and how much. i also assume the effect gets better with higher speeds."
+  },
+  {
+   "time": "07:07:00",
+   "iso": "2026-11-14T07:07:00+01:00",
+   "text": "update the kiosk app on leela with the latest version"
+  },
+  {
+   "time": "07:14:07",
+   "iso": "2026-11-14T07:14:07+01:00",
+   "text": "fix the numerical order in the spec summary table"
+  },
+  {
+   "time": "07:21:15",
+   "iso": "2026-11-14T07:21:15+01:00",
+   "text": "how to start the kiosk on leela?"
+  },
+  {
+   "time": "07:22:07",
+   "iso": "2026-11-14T07:22:07+01:00",
+   "text": "rebuilt and execute the kiosk on leela"
+  },
+  {
+   "time": "07:48:19",
+   "iso": "2026-11-14T07:48:19+01:00",
+   "text": "check for unimplemented features"
+  },
+  {
+   "time": "17:42:16",
+   "iso": "2026-11-14T17:42:16+01:00",
+   "text": "yes, install livekit-server on marge"
+  },
+  {
+   "time": "17:43:23",
+   "iso": "2026-11-14T17:43:23+01:00",
+   "text": "why is macos disk full and with what?"
+  },
+  {
+   "time": "17:59:12",
+   "iso": "2026-11-14T17:59:12+01:00",
+   "text": "tell me, how are the 3d models implemented for drivers, bikes etc implemented? are the saves as files somehiw pr are they in code?"
+  },
+  {
+   "time": "20:18:08",
+   "iso": "2026-11-14T20:18:08+01:00",
+   "text": "spec change: do not join two or more images, rather than that, send me all picture stand alone (and save them alone for the art project). only join images when you want to show a comparison between the two images. save this to specfile and art spec."
+  },
+  {
+   "time": "22:17:15",
+   "iso": "2026-11-14T22:17:15+01:00",
+   "text": "are there thing no yet added to documentation and specfile? update"
+  },
+  {
+   "time": "22:17:38",
+   "iso": "2026-11-14T22:17:38+01:00",
+   "text": "add instructions on how to setup and run the web mode"
+  },
+  {
+   "time": "22:24:32",
+   "iso": "2026-11-14T22:24:32+01:00",
+   "text": "VR: correction, I have an Oculus Quest version 1. focus on this model for VR development. postpone the other models."
+  },
+  {
+   "time": "22:28:57",
+   "iso": "2026-11-14T22:28:57+01:00",
+   "text": "VR: start with oculus link to add the VR headset just as viewing device of the desktop app. do the standalone VR app via sideloading only for now."
+  },
+  {
+   "time": "22:30:18",
+   "iso": "2026-11-14T22:30:18+01:00",
+   "text": "which phase are we in now and whats open to develop?"
+  },
+  {
+   "time": "22:31:57",
+   "iso": "2026-11-14T22:31:57+01:00",
+   "text": "which signin provider could you include easily?"
+  },
+  {
+   "time": "22:34:18",
+   "iso": "2026-11-14T22:34:18+01:00",
+   "text": "compare keycloak and zitadel"
+  },
+  {
+   "time": "22:37:02",
+   "iso": "2026-11-14T22:37:02+01:00",
+   "text": "what about kanidm?"
+  },
+  {
+   "time": "22:39:48",
+   "iso": "2026-11-14T22:39:48+01:00",
+   "text": "where would be a good place to add a job for the art project that runs at the end of the day and collects all the data? who would ensure the job runs periodically?"
+  },
+  {
+   "time": "22:41:16",
+   "iso": "2026-11-14T22:41:16+01:00",
+   "text": "what about authentik as authentication provider?"
+  },
+  {
+   "time": "22:44:41",
+   "iso": "2026-11-14T22:44:41+01:00",
+   "text": "yes, enable the art job collector on deb as systemd job. also joint the directories art and build-history, put build-history under art. keep it in git."
+  },
+  {
+   "time": "22:48:53",
+   "iso": "2026-11-14T22:48:53+01:00",
+   "text": "stop the background task job for the art collector"
+  },
+  {
+   "time": "22:52:05",
+   "iso": "2026-11-14T22:52:05+01:00",
+   "text": "if the systemd art collector would run periodically. e.g. every hour, would it also work?"
+  },
+  {
+   "time": "22:54:01",
+   "iso": "2026-11-14T22:54:01+01:00",
+   "text": "update the readme with a full example of the browser URL to do a both the test hills but also a map and not only the shortend URL: http://127.0.0.1:8080/?world=liechtenstein&route=vaduz-malbun&trust-root=…"
+  },
+  {
+   "time": "22:57:48",
+   "iso": "2026-11-14T22:57:48+01:00",
+   "text": "for me the web mode does not work. no matter what URL I use, I always get\n\n Error response\n\nError code: 404\n\nMessage: File not found.\n\nError code explanation: 404 - Nothing matches the given URI.\n\n\nCan you add a browser that you download and then control add to your test workflow?"
+  },
+  {
+   "time": "22:59:03",
+   "iso": "2026-11-14T22:59:03+01:00",
+   "text": "have you created the daily art project videos?"
+  },
+  {
+   "time": "23:02:30",
+   "iso": "2026-11-14T23:02:30+01:00",
+   "text": "start over with the art collector. make it a systemd timer job that runs every hour and collects the data."
+  },
+  {
+   "time": "23:06:31",
+   "iso": "2026-11-14T23:06:31+01:00",
+   "text": "document the build dashboard and other build tools in the readme and in the spec file."
+  },
+  {
+   "time": "23:06:58",
+   "iso": "2026-11-14T23:06:58+01:00",
+   "text": "document the art collector in the art spec file. add also the files to git repo."
+  },
+  {
+   "time": "23:08:26",
+   "iso": "2026-11-14T23:08:26+01:00",
+   "text": "can the \"make web-serve\" webserver listen on 0.0.0.0?"
+  },
+  {
+   "time": "23:09:23",
+   "iso": "2026-11-14T23:09:23+01:00",
+   "text": "authenication: would is be for now possible to just implement oauth via google and strava for now?"
+  },
+  {
+   "time": "23:09:54",
+   "iso": "2026-11-14T23:09:54+01:00",
+   "text": "can you start with \"scripts/web-serve.py --bind 0.0.0.0 --port 8080\" on marge?"
+  },
+  {
+   "time": "23:19:35",
+   "iso": "2026-11-14T23:19:35+01:00",
+   "text": "cool video, make the shown images a bit longer. and mix images and videos (chronologically). rebuild the day 4 video. create systemd timer job (document for artproject and add to git). create also videos for the previous days."
+  },
+  {
+   "time": "23:20:56",
+   "iso": "2026-11-14T23:20:56+01:00",
+   "text": "make the helmets look cooler."
+  },
+  {
+   "time": "23:30:33",
+   "iso": "2026-11-14T23:30:33+01:00",
+   "text": "why does unicorn/god mode not work in browser mode?"
+  }
+ ],
+ "tokens": {
+  "total": {
+   "input": 17768,
+   "cache_write": 27898563,
+   "cache_read": 2995264313,
+   "output": 7588727,
+   "total": 3030769371,
+   "messages": 8511
+  },
+  "features": {
+   "Other": {
+    "input": 2106,
+    "cache_write": 2055168,
+    "cache_read": 342687863,
+    "output": 803398,
+    "total": 345548535,
+    "messages": 969
+   },
+   "Planning & spec": {
+    "input": 7202,
+    "cache_write": 11733143,
+    "cache_read": 1304672695,
+    "output": 3241927,
+    "total": 1319654967,
+    "messages": 3517
+   },
+   "Build, release & infra": {
+    "input": 854,
+    "cache_write": 2279090,
+    "cache_read": 76247014,
+    "output": 220648,
+    "total": 78747606,
+    "messages": 394
+   },
+   "UI & menus": {
+    "input": 618,
+    "cache_write": 408237,
+    "cache_read": 111590031,
+    "output": 170314,
+    "total": 112169200,
+    "messages": 269
+   },
+   "Audio & voice": {
+    "input": 1022,
+    "cache_write": 2034168,
+    "cache_read": 169301496,
+    "output": 406995,
+    "total": 171743681,
+    "messages": 474
+   },
+   "Riders & bikes": {
+    "input": 548,
+    "cache_write": 513179,
+    "cache_read": 76610779,
+    "output": 216874,
+    "total": 77341380,
+    "messages": 248
+   },
+   "Multiplayer & server": {
+    "input": 420,
+    "cache_write": 427747,
+    "cache_read": 63871064,
+    "output": 197694,
+    "total": 64496925,
+    "messages": 207
+   },
+   "Art project": {
+    "input": 566,
+    "cache_write": 499471,
+    "cache_read": 60505697,
+    "output": 174134,
+    "total": 61179868,
+    "messages": 258
+   },
+   "Sky, time & weather": {
+    "input": 2796,
+    "cache_write": 6179437,
+    "cache_read": 480107257,
+    "output": 1390845,
+    "total": 487680335,
+    "messages": 1365
+   },
+   "Materials & look": {
+    "input": 562,
+    "cache_write": 653142,
+    "cache_read": 117990362,
+    "output": 281763,
+    "total": 118925829,
+    "messages": 279
+   },
+   "Worlds & terrain": {
+    "input": 1074,
+    "cache_write": 1115781,
+    "cache_read": 191680055,
+    "output": 484135,
+    "total": 193281045,
+    "messages": 531
+   }
+  }
+ }
+}
