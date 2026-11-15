@@ -95,64 +95,7 @@ for m in "$out"/worlds/*/*/manifest.json; do
   done
 done
 
-python3 -I - "$out" "$tag" <<'EOF'
-import hashlib, json, os, shutil, sys
-out, tag = sys.argv[1], sys.argv[2]
-worlds = os.path.join(out, "worlds")
-release = os.path.join(out, "release")
-routes = [json.loads(l) for l in open(os.path.join(out, "routes.jsonl")) if l.strip()]
-
-def slug(name):
-    s = "".join(c if c.isalnum() else "-" for c in name.lower())
-    return "-".join(p for p in s.split("-") if p)
-
-def sha256(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for b in iter(lambda: f.read(1 << 20), b""):
-            h.update(b)
-    return h.hexdigest()
-
-index = {"release": tag, "worlds": []}
-sums = []
-for wid in sorted(os.listdir(worlds)):
-    wdir = os.path.join(worlds, wid)
-    latest = open(os.path.join(wdir, "latest")).read().strip()
-    vdir = os.path.join(wdir, latest)
-    manifest = json.load(open(os.path.join(vdir, "manifest.json")))
-    signed = manifest["signed"]
-    flat = wid.replace("/", "-")
-    files = {f"worlds/{wid}/latest": f"{flat}.latest",
-             f"worlds/{wid}/{latest}/manifest.json": f"{flat}-{latest}.manifest.json"}
-    for f in signed["files"]:
-        stem, ext = os.path.splitext(f["path"])
-        files[f"worlds/{wid}/{latest}/{f['path']}"] = f"{flat}-{latest}{ext}"
-    hashes = {}
-    for site_path, asset in files.items():
-        src = os.path.join(out, site_path)
-        dst = os.path.join(release, asset)
-        try:
-            os.link(src, dst)
-        except OSError:
-            shutil.copyfile(src, dst)
-        hashes[asset] = sha256(dst)
-        sums.append(f"{hashes[asset]}  {asset}")
-    key = manifest.get("signature", {}).get("key", {})
-    index["worlds"].append({
-        "id": wid, "name": signed["name"], "version": int(latest),
-        "bytes": sum(os.path.getsize(os.path.join(release, a)) for a in files.values()),
-        "routes": [{"name": r["name"], "slug": slug(r["name"]), "km": r["km"]}
-                   for r in routes if r["package"] == signed["files"][0]["path"]],
-        "files": files, "sha256": hashes,
-    })
-with open(os.path.join(release, "preview-worlds.json"), "w") as f:
-    json.dump(index, f, indent=2, ensure_ascii=False)
-    f.write("\n")
-with open(os.path.join(release, "SHA256SUMS"), "w") as f:
-    f.write("\n".join(sums) + "\n")
-for w in index["worlds"]:
-    print(f"{w['id']}@{w['version']}: {w['bytes'] / 1e6:.1f} MB, routes: {', '.join(r['name'] for r in w['routes']) or 'none'}")
-EOF
+python3 -I scripts/preview_worlds_index.py "$out" "$tag"
 rm -rf "$out/stage"
 ls -l "$out/release"
 
@@ -164,5 +107,10 @@ if [ $upload = 1 ]; then
 Map data © OpenStreetMap contributors, ODbL 1.0: the road graph in each package (section GRPH) is a Derivative Database offered here under the ODbL. Elevation, imagery and forest sources: see each manifest's attribution and the preview's credits page."
   fi
   gh release upload "$tag" -R "$repo" --clobber "$out"/release/*
+  # Assets of older versions (liechtenstein-3.ocwpkg after liechtenstein-4) go:
+  # preview-worlds.json names only the current ones.
+  gh release view "$tag" -R "$repo" --json assets -q '.assets[].name' | while read -r a; do
+    [ -e "$out/release/$a" ] || { gh release delete-asset "$tag" "$a" -R "$repo" -y && echo "removed old asset $a"; }
+  done
   echo "uploaded to the release $tag"
 fi

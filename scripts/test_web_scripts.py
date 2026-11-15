@@ -34,6 +34,7 @@ def load(name, file):
 ws = load("web_serve", "web-serve.py")
 rd = load("test_web_readme", "test-web-readme.py")
 site = load("web_preview_site", "web-preview-site.py")
+pwi = load("preview_worlds_index", "preview_worlds_index.py")
 KEY = "ab" * 32
 
 
@@ -271,6 +272,41 @@ class PreviewRideSizes(unittest.TestCase):
             n = site.app_bytes(d)
             self.assertGreater(n, 4000)  # random bytes do not compress
             self.assertEqual(site.app_bytes(os.path.join(d, "none")), 0)
+
+
+class PreviewWorldsIndex(unittest.TestCase):
+    """The preview's release index finds worlds whose ids have several levels
+    (europe/spain/tenerife; regression of 2026-11-15) as well as one level."""
+
+    def world(self, out, wid, version, pkg):
+        vdir = Path(out, "worlds", *wid.split("/"), str(version))
+        vdir.mkdir(parents=True)
+        Path(vdir.parent, "latest").write_text(f"{version}\n")
+        Path(vdir, pkg).write_bytes(wid.encode() * 10)
+        Path(vdir, "manifest.json").write_text(json.dumps(
+            {"signed": {"name": wid.split("/")[-1].title(), "files": [{"path": pkg}]}}))
+
+    def test_nested_and_flat_ids(self):
+        with tempfile.TemporaryDirectory() as out:
+            self.world(out, "liechtenstein", 4, "liechtenstein.ocwpkg")
+            self.world(out, "europe/spain/tenerife", 8, "tenerife.ocwpkg")
+            Path(out, "routes.jsonl").write_text(
+                json.dumps({"package": "tenerife.ocwpkg", "name": "Puerto de la Cruz - Teide", "km": 42.0}) + "\n")
+            self.assertEqual(pwi.world_ids(os.path.join(out, "worlds")),
+                             ["europe/spain/tenerife", "liechtenstein"])
+            index = pwi.build(out, "web-preview-worlds")
+            ten = index["worlds"][0]
+            self.assertEqual((ten["id"], ten["version"]), ("europe/spain/tenerife", 8))
+            self.assertEqual(ten["files"]["worlds/europe/spain/tenerife/8/tenerife.ocwpkg"],
+                             "europe-spain-tenerife-8.ocwpkg")
+            self.assertEqual(ten["routes"], [{"name": "Puerto de la Cruz - Teide",
+                                              "slug": "puerto-de-la-cruz-teide", "km": 42.0}])
+            for asset in ten["files"].values():
+                self.assertTrue(Path(out, "release", asset).is_file())
+            sums = Path(out, "release", "SHA256SUMS").read_text().splitlines()
+            self.assertEqual(len(sums), 6)
+            # A second run (the same out dir) replaces the release files.
+            pwi.build(out, "web-preview-worlds")
 
 
 if __name__ == "__main__":
