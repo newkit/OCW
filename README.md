@@ -2496,6 +2496,7 @@ ocw-desktop --server ride.example.org:47800 --server-cert 3f9a6c0e…c2 \
 - **To always join the same server,** put the options into `ocw-desktop.args` next to the executable (separated by spaces or newlines, `#` comments; see the default arguments above). The kiosk does it this way.
 - **If it doesn't connect:**
   - `connection timed out` means no UDP reached the server: check the firewall, the router's port forwarding and the address;
+  - **use the server's real address** from other machines: its LAN IP, or a name that resolves to it there. `localhost` and `127.0.0.1` only work on the server itself. On Debian, `/etc/hosts` maps a machine's own host name to `127.0.1.1`, so check what a name resolves to (`getent hosts NAME`);
   - a certificate error means the server's certificate is not the pinned one, because it changed: get the new fingerprint, or use `--tls-dir` on the server;
   - `world package mismatch: the server rides …` means your package or route differs from the server's.
 
