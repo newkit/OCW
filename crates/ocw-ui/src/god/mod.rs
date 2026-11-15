@@ -244,11 +244,7 @@ fn god_keys(world: &mut World) {
     let bindings = world.get_resource::<crate::bindings::ActiveBindings>();
     let (g, shift, c_key) = match world.get_resource::<ButtonInput<KeyCode>>() {
         Some(k) => (
-            crate::bindings::key_just_pressed(
-                bindings,
-                ocw_client::bindings::Action::GodMode,
-                k,
-            ),
+            crate::bindings::key_just_pressed(bindings, ocw_client::bindings::Action::GodMode, k),
             k.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]),
             crate::bindings::key_just_pressed(bindings, ocw_client::bindings::Action::Camera, k),
         ),
