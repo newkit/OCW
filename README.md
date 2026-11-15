@@ -1524,6 +1524,8 @@ event status | event cancel | event dismiss
 | `--capture DIR`, `--capture-fps N`, `--capture-seconds S`, `--capture-warmup S` | Save every frame with a fixed game-time step (smooth videos) as `frame_NNNNN.png`, plus `audio.wav` (game sound in step with the frames), `metadata.txt` (ffmpeg metadata) and `still.jpg` (last frame), then exit |
 | `--no-audio` | No sound: open no audio output (frame capture opens none anyway; videos still get the mixer's sound) |
 | `--echo-bot` | The voice echo test: an Echo rider on the road plays your microphone back, delayed, when you are near it (`voice.echo`, see *Voice chat*) |
+| `--vr` | Ride in a VR headset over OpenXR (the `vr` build; see *Riding in VR*); without a runtime or headset the app runs as before and says why (`vr.enabled`) |
+| `--vr-sim` | VR without a headset: both eye views from a simulated head side by side, with the HUD panel (any build) |
 | `--no-vsync` | Draw as fast as possible instead of waiting for the display's refresh (benchmarks) |
 | `--max-fps N` | Draw at most N frames per second (with `--no-vsync`: a steady rate even where the display gives no refresh, e.g. on a locked screen) |
 | `--log-fps S` | Log the real render rate every S seconds (`render rate fps=… worst_ms=…`; wall clock, also during `--capture`) |
@@ -1998,7 +2000,8 @@ for now).
 | `ride.riders` | The riders of the ride and who of them flies in god mode |
 | `god.trail on\|off`, `god.invert on\|off` | The rainbow trail; invert the mouse's Y (settings `display.unicorn_trail`, `controls.invert_y`) |
 | **Camera** | |
-| `quality [auto\|low\|medium\|high]` | The graphics preset for this session (`set display.quality` saves it); without an argument: what runs and why (spec §14 Phase 10 B7) |
+| `quality [auto\|low\|medium\|high\|vr]` | The graphics preset for this session (`set display.quality` saves it); without an argument: what runs and why (spec §14 Phase 10 B7); `vr` is the headset preset (`auto` picks it in VR) |
+| `vr [status\|recentre\|mirror [eye\|both\|chase]\|reconnect]` | VR (spec §14 Phase 11): the session, headset, IPD and frame times; recentre (key `C`); what the monitor shows; reconnect after the runtime went away |
 | `gpu` | The GPU API (the desktop's, WebGPU or WebGL 2), the adapter and the quality preset that runs |
 | `camera.mode chase\|side\|top` | Camera perspective |
 | `camera.orbit YAW PITCH [DISTANCE]` | Orbit the chase camera (degrees; 0 = behind, 180 = in front; metres) |
