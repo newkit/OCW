@@ -95,6 +95,14 @@ pub fn trusted_keys_store() -> Option<Box<dyn TextStore>> {
     None
 }
 
+/// The recent servers of Ride → Join (`localStorage`, none natively).
+pub fn joins_store() -> Option<Box<dyn TextStore>> {
+    #[cfg(target_arch = "wasm32")]
+    return Some(Box::new(LocalKey("ocw-joins")));
+    #[cfg(not(target_arch = "wasm32"))]
+    None
+}
+
 /// Makes the store when the app starts (`localStorage` on wasm32).
 #[derive(Resource)]
 pub struct MakeStore(pub Box<dyn Fn() -> Option<Box<dyn TextStore>> + Send + Sync>);

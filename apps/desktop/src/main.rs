@@ -111,6 +111,12 @@ pub struct Args {
     /// 47800). Ride the same course as the server (--route / --world).
     #[arg(long, value_name = "ADDR", conflicts_with = "capture")]
     pub server: Option<String>,
+    /// Join a shared ride by its link (spec §6.2 *Join links*;
+    /// `ocw://HOST[:PORT]?cert=SHA256&world=…&route=…`, as ocw-server and
+    /// Ride -> Host a ride print it): the app starts alone and switches to
+    /// the server's ride once its world is loaded (Ride -> Join).
+    #[arg(long, value_name = "LINK", conflicts_with_all = ["server", "capture"])]
+    pub join: Option<String>,
     /// SHA-256 fingerprint of the server's certificate (ocw-server prints
     /// it at start); the connection is refused if it does not match.
     #[arg(long, value_name = "SHA256", requires = "server")]
@@ -591,6 +597,10 @@ fn startup_commands(
     }
     // Relative to the working directory, which is `/` for an app started
     // from Finder: the macOS app bundle does not read one.
+    // `--join LINK`: the runtime join of Ride -> Join (spec §3.2.1).
+    if let Some(link) = &args.join {
+        console.queue(ride::join::startup_line(link));
+    }
     if std::path::Path::new("autoexec.cfg").exists() {
         console.queue("exec autoexec.cfg");
     }

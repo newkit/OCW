@@ -2476,6 +2476,33 @@ ocw-desktop --server 127.0.0.1 --insecure-dev     # server on the same machine o
 - The server runs until Ctrl+C (or SIGTERM), then closes all connections
   ("server shutting down"); `--seconds S` stops it earlier.
 
+### Join links: Ride → Join
+
+A **join link** names a server in one line to share (spec §6.2 *Join links*):
+
+```text
+ocw://HOST[:PORT]?cert=SHA256HEX[&world=ID[@VERSION]][&route=NAME][&name=TEXT]
+```
+
+- `ocw-server --listen` prints it at start (one per address of the machine, with its world and route), above the `Clients connect with` line; the kiosk writes it to `~/.local/state/ocw/server-connect.txt` (`ocw-kiosk.sh status` shows it).
+- **In the app:** menu → **Ride → Join a ride**: paste the link (Ctrl+V / ⌘V, or the *Paste link* row) or type it (Enter on *Link* starts typing, Enter or Esc ends; on a gamepad ↑ / ↓ turn the character at the cursor, ← / → move, B deletes, A ends), then *Join*. The last five servers are listed below; Enter joins one again.
+- **On the command line:** `ocw-desktop --join 'ocw://ride.example.org?cert=3f9a…c2'`; in the console `join LINK`, `join` (the recent servers), `join 2` (the second of them), `leave`.
+- Also accepted: the WebTransport form `https://HOST:PORT?cert-hash=HEX` (the desktop joins it too), a bare `HOST[:PORT]` with the fingerprint in its own field, and a pasted `ocw-desktop --server HOST:PORT --server-cert HEX` line.
+- **What happens:** the app connects in the background (your ride goes on), learns the server's world and route, loads them from the installed worlds and then switches to the shared ride. If the world is not installed, it says so (with `world=MANIFEST-URL` in the link: `--fetch-world URL`). A timeout (10 s), a certificate that is not the link's, a refusal (sign in first: Settings → Account) or another version of the world keep your ride and show the reason on the Join page.
+- **Security:** a link without `cert=` works only for this machine (`localhost`, `127.0.0.1`, `::1`); for anything else the fingerprint is required, so nobody in between can pretend to be the server.
+- **Leave shared ride** (Ride page, while joined) rides on alone on the same world and route.
+- **In the browser** the same page joins WebTransport servers (`https://…?cert-hash=…` links; the page starts again on the shared ride). An `ocw://` link says it needs the desktop app; the page option `?join=LINK` joins at the start.
+
+### Hosting from the menu: Ride → Host a ride
+
+The desktop app can host a shared ride itself – no separate server binary:
+
+1. menu → **Ride → Host a ride**: the **world** (the installed worlds and the test routes), the **route** (or free ride), **date and time** (real time, or a time machine preset and a few days on), the **weather** (simulated, real, or a preset), the **options** (bots 0–20, default 5; whether everyone may change time and weather; the UDP port, default 47800) and a **summary** with *Start hosting*;
+2. the app opens UDP `0.0.0.0:47800` (QUIC) with a certificate kept in `<data dir>/ocw/host-tls` (the fingerprint and link stay the same across restarts), loads the course and rides on its own server as the host;
+3. the Ride page shows **Hosting – N riders**, **Show join link** (the links with the machine's addresses, *Copy link*) and **Stop hosting**.
+
+Others join with the link (Ride → Join). On the LAN that is all; from the internet the router needs a forwarding of UDP 47800 to this computer, and the firewall must let UDP 47800 in (see the next section). A port in use – usually another server on this machine, such as the kiosk's – is reported with the offer to join it instead (`join ocw://localhost:47800`). *Stop hosting* closes the server (the others see "server shutting down") and you ride on alone on the same world, route, time and weather. Console: `host start [--world ID] [--route NAME] [--time real|PRESET] [--weather PRESET] [--bots N] [--port P]`, `host status`, `host copy`, `host stop`, and `host.plan …` for the wizard's steps. Browsers cannot open a server port: there the entry is dimmed.
+
 ### Riding on a server on the internet
 
 The desktop app connects to any `ocw-server` it can reach over UDP, whether on your LAN, a rented server or a home machine behind a router. Below, *server* means the machine running `ocw-server`, and *rider* means everyone running `ocw-desktop`.
@@ -2489,7 +2516,7 @@ cargo run --release -p ocw-server -- --listen 0.0.0.0:47800 --tls-dir ~/.local/s
 sudo ufw allow 47800/udp          # or your firewall's equivalent
 ```
 
-- **The fingerprint.** At start the server prints its TLS certificate's SHA-256 fingerprint and the exact client command (`Clients connect with: ocw-desktop --server HOST:47800 --server-cert …`). Give the riders that line, with `HOST` replaced by the server's public name or address. With `--tls-dir` the fingerprint stays the same across restarts.
+- **The fingerprint.** At start the server prints its TLS certificate's SHA-256 fingerprint, its **join link** (`ocw://HOST?cert=…&world=…&route=…`, see [Join links](#join-links-ride--join)) and the exact client command (`Clients connect with: ocw-desktop --server HOST:47800 --server-cert …`). Give the riders the link (or that line), with the host replaced by the server's public name or address. With `--tls-dir` the fingerprint stays the same across restarts.
 - **Behind a home router:** forward **UDP 47800** to the server machine (port forwarding / "virtual server" in the router), and use the router's public address or a dynamic-DNS name as `HOST`. It is UDP only (QUIC); no TCP port is needed.
   - Some internet lines (CGNAT, many mobile and some fibre lines) cannot accept incoming connections at all. Use IPv6 if both sides have it (`--listen [::]:47800`, `HOST` = the server's IPv6 address in brackets), or a small rented server or VPS.
 - **The course:** the server rides one world and route (`--world`, `--route`) or a test route (`--test-route loop|hills`). Riders must give the same; the server refuses a mismatch with a message saying what it rides.

@@ -132,15 +132,43 @@ shot = 5.5
 name = "menu-workouts"
 description = "In-game menu: Ride -> Workouts list (bundled examples)"
 args = ["--route", "hills", "--bots", "4"]
-at = ["2=menu open", "2.4=menu down", "2.8=menu select", "3.2=menu down", "3.4=menu down", "3.6=menu down", "3.8=menu down", "4.0=menu down", "4.4=menu select"]
+at = ["2=menu open", "2.4=menu down", "2.8=menu select", "3.2=menu down", "3.6=menu select"]
 shot = 6
 
 [[scene]]
 name = "menu-ride"
-description = "In-game menu: Ride page (local race, group ride, time trial, change ride, workouts)"
+description = "In-game menu: Ride page (events, workouts, join a ride, host a ride, restart; spec 3.73)"
 args = ["--route", "hills", "--bots", "4"]
 at = ["2=menu open", "2.4=menu down", "2.8=menu select"]
 shot = 4.5
+
+[[scene]]
+name = "menu-join"
+description = "Ride -> Join a ride (spec 3.73): the link field with a pasted join link, the status while connecting (a documentation address that never answers), Paste link, Cancel joining, the recent servers"
+args = ["--route", "hills", "--bots", "4"]
+at = ["2=menu open", "2.4=menu down", "2.8=menu select", "3.2=menu down", "3.4=menu down", "3.8=menu select", "4.2=join ocw://192.0.2.10?cert=3f9a6c0e5b2d4a713f9a6c0e5b2d4a713f9a6c0e5b2d4a713f9a6c0e5b2d4a71&route=hills&name=Tuesday%20Ride"]
+shot = 7
+
+[[scene]]
+name = "menu-host-world"
+description = "Ride -> Host a ride (spec 3.73): the wizard's first step, the world (the test routes and the installed worlds)"
+args = ["--route", "hills", "--bots", "4"]
+at = ["2=menu open", "2.4=menu down", "2.8=menu select", "3.2=menu down", "3.4=menu down", "3.6=menu down", "3.8=menu select"]
+shot = 5
+
+[[scene]]
+name = "menu-host-summary"
+description = "Ride -> Host a ride -> the summary (spec 3.73): world, route, time, weather, bots and port, Start hosting"
+args = ["--route", "hills", "--bots", "4"]
+at = ["1=host.plan world 0", "1=host.plan route hills", "1=host.plan time sunset", "1=host.plan weather fog", "1=host.plan bots 6", "2=menu open", "2.4=menu down", "2.8=menu select", "3.2=menu down", "3.4=menu down", "3.6=menu down", "3.8=menu select", "4.0=menu select", "4.2=menu select", "4.4=menu up", "4.5=menu up", "4.6=menu select", "4.8=menu up", "4.9=menu up", "5.0=menu select", "5.2=menu up", "5.3=menu up", "5.4=menu select"]
+shot = 7
+
+[[scene]]
+name = "menu-hosting"
+description = "Hosting (spec 3.73): the app's own server on UDP 47800 – the Ride page with Hosting, Show join link and Stop hosting, then the join link page with the machine's addresses and the firewall hint"
+args = ["--route", "hills", "--bots", "4"]
+at = ["1=host.plan world 0", "1=host.plan route hills", "1=host.plan bots 3", "1.2=host start --port 47870", "5=menu open", "5.4=menu down", "5.8=menu select", "6.2=menu down", "6.4=menu down", "6.6=menu down", "7=menu select"]
+shot = 9
 
 # --- Training history, rebinding, accessibility (spec §14 Phase 7, M9) ------
 
@@ -2206,9 +2234,9 @@ shot = 3.5
 
 [[scene]]
 name = "k6-organiser-rules-menu"
-description = "Ride -> Race -> \"Start the event?\" -> Organiser rules (spec §14 Phase 12 K6): the six rules of the events this rider starts – collisions, damage, riding aids allowed, chaotic bots, neutral service, DNF when badly injured (auto: by the kind of event)"
+description = "Ride -> Events -> Race -> \"Start the event?\" -> Organiser rules (spec §14 Phase 12 K6): the six rules of the events this rider starts – collisions, damage, riding aids allowed, chaotic bots, neutral service, DNF when badly injured (auto: by the kind of event)"
 args = ["--route", "loop", "--bots", "3", "--power", "200"]
-at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=set event.aids on", "1=set event.neutral_service on", "2=menu open", "2.3=menu down", "2.6=menu select", "2.9=menu select", "3.2=menu up", "3.5=menu select"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=set event.aids on", "1=set event.neutral_service on", "2=menu open", "2.3=menu down", "2.6=menu select", "2.8=menu select", "3.0=menu select", "3.2=menu up", "3.5=menu select"]
 shot = 5
 
 [[scene]]

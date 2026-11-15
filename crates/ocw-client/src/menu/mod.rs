@@ -18,6 +18,7 @@
 pub mod controls;
 pub mod devices;
 pub mod history;
+pub mod join;
 pub mod model;
 pub mod pages;
 pub mod time;

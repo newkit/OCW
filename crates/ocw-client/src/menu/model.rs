@@ -77,6 +77,10 @@ pub enum Effect {
 pub enum Page {
     Top,
     Ride,
+    /// Ride → Events: the local events (spec §2.3.1).
+    Events,
+    /// Ride → Host a ride in the browser: why it needs the desktop app.
+    HostBrowser,
     Navi,
     Settings,
     /// A Settings sub page, the Workshop or a list of the Ride / Navi
@@ -118,6 +122,10 @@ pub enum ItemKind {
     RunPending,
     /// Run the asked line and go back one page (the list stays open).
     RunPendingBack,
+    /// While hosting: "Hosting – N riders", opens the rider list.
+    Hosting,
+    /// Shown dimmed; opens a page that says why.
+    Dimmed(Page),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,6 +134,41 @@ pub struct Item {
     pub kind: ItemKind,
     /// The platform that shows it (`None`: all).
     pub only: Option<Platform>,
+    /// When it is shown (alone, in a shared ride, while hosting).
+    pub when: When,
+}
+
+/// How the rider rides now (the app sets it, [`Menu::set_ride_mode`]):
+/// the Ride page shows Join and Host alone, Leave in a shared ride, the
+/// hosting items while hosting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RideMode {
+    #[default]
+    Alone,
+    /// On another rider's server (Ride → Join, `--server`).
+    Joined,
+    /// On this app's own server, with this many riders (the host too).
+    Hosting { riders: u32 },
+}
+
+/// When an item is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum When {
+    Always,
+    Alone,
+    Joined,
+    Hosting,
+}
+
+impl When {
+    fn shows(self, mode: RideMode) -> bool {
+        match self {
+            Self::Always => true,
+            Self::Alone => mode == RideMode::Alone,
+            Self::Joined => mode == RideMode::Joined,
+            Self::Hosting => matches!(mode, RideMode::Hosting { .. }),
+        }
+    }
 }
 
 /// The app the menu runs in (spec §14 Phase 10, Q6: the same menu; what a
@@ -152,7 +195,13 @@ const fn item(label: &'static str, kind: ItemKind) -> Item {
         label,
         kind,
         only: None,
+        when: When::Always,
     }
+}
+
+/// `item` shown only `when`.
+const fn when(when: When, item: Item) -> Item {
+    Item { when, ..item }
 }
 
 /// An item only on `platform`.
@@ -161,6 +210,7 @@ const fn only(platform: Platform, label: &'static str, kind: ItemKind) -> Item {
         label,
         kind,
         only: Some(platform),
+        when: When::Always,
     }
 }
 
@@ -200,10 +250,68 @@ const TOP_ITEMS: &[Item] = &[
         ItemKind::Open(Page::Captures),
     ),
 ];
-/// Ride page: local events (spec §2.3), started as console commands after
-/// a confirmation (the menu closes so the countdown is visible), workouts
-/// and Restart. Another ride: World → Change world.
+/// Ride page: the events, workouts, shared rides (Join, Leave, Host a
+/// ride and the hosting items, by [`RideMode`]) and Restart – at most
+/// seven items in every mode. Another ride: World → Change world.
 const RIDE_ITEMS: &[Item] = &[
+    item("Events", ItemKind::Open(Page::Events)),
+    item("Workouts", ItemKind::Open(Page::Sub(sub::Page::Workouts))),
+    when(
+        When::Alone,
+        item("Join a ride", ItemKind::Open(Page::Sub(sub::Page::Join))),
+    ),
+    when(
+        When::Joined,
+        item(
+            "Leave shared ride",
+            ItemKind::Command {
+                line: "leave",
+                close: true,
+            },
+        ),
+    ),
+    when(
+        When::Alone,
+        only(
+            Platform::Desktop,
+            "Host a ride",
+            ItemKind::Open(Page::Sub(sub::Page::HostWorld)),
+        ),
+    ),
+    // Browsers cannot open a server port: dimmed, with the reason.
+    only(
+        Platform::Browser,
+        "Host a ride",
+        ItemKind::Dimmed(Page::HostBrowser),
+    ),
+    when(When::Hosting, item("Hosting", ItemKind::Hosting)),
+    when(
+        When::Hosting,
+        item(
+            "Show join link",
+            ItemKind::Open(Page::Sub(sub::Page::HostLink)),
+        ),
+    ),
+    when(
+        When::Hosting,
+        item(
+            "Stop hosting",
+            ItemKind::Command {
+                line: "host stop",
+                close: false,
+            },
+        ),
+    ),
+    only(
+        Platform::Desktop,
+        "Restart",
+        ItemKind::Open(Page::ConfirmRestart),
+    ),
+    BACK,
+];
+/// Ride → Events: local events (spec §2.3), started as console commands
+/// after a confirmation (the menu closes so the countdown is visible).
+const EVENT_LIST_ITEMS: &[Item] = &[
     item(
         "Race: 1 lap / 5 km, 5 bots",
         ItemKind::AskEvent("event race --bots 5"),
@@ -220,14 +328,9 @@ const RIDE_ITEMS: &[Item] = &[
             close: true,
         },
     ),
-    item("Workouts", ItemKind::Open(Page::Sub(sub::Page::Workouts))),
-    only(
-        Platform::Desktop,
-        "Restart",
-        ItemKind::Open(Page::ConfirmRestart),
-    ),
     BACK,
 ];
+const HOST_BROWSER_ITEMS: &[Item] = &[BACK];
 const NAVI_ITEMS: &[Item] = &[
     // Another route needs a ride switch, the rides and GPX files are
     // files, Strava goes through the backend (Phase 5): desktop only.
@@ -385,10 +488,26 @@ impl Page {
             Page::Ride => PageDef {
                 title: "Ride",
                 text: &[
-                    "Local events start on the line with 3-2-1-GO and end with results; a time trial races your ghost.",
-                    "Workouts: ERG mode. Another world or route: World -> Change world, Navi -> Routes.",
+                    "Events, workouts (ERG mode), shared rides: join one with its link or host one here.",
+                    "Another world or route: World -> Change world, Navi -> Routes.",
                 ],
                 items: RIDE_ITEMS,
+                initial_focus: 0,
+            },
+            Page::Events => PageDef {
+                title: "Events",
+                text: &[
+                    "Local events start on the line with 3-2-1-GO and end with results; a time trial races your ghost.",
+                ],
+                items: EVENT_LIST_ITEMS,
+                initial_focus: 0,
+            },
+            Page::HostBrowser => PageDef {
+                title: "Host a ride",
+                text: &[
+                    "Hosting needs the desktop app (browsers can't open a server port). Join a shared ride here with its https:// link.",
+                ],
+                items: HOST_BROWSER_ITEMS,
                 initial_focus: 0,
             },
             Page::Navi => PageDef {
@@ -505,6 +624,8 @@ pub struct Menu {
     pending: Option<String>,
     /// Which app's items are shown.
     platform: Platform,
+    /// Alone, joined or hosting (the Ride page's items).
+    ride: RideMode,
 }
 
 impl Menu {
@@ -518,6 +639,23 @@ impl Menu {
 
     pub fn platform(&self) -> Platform {
         self.platform
+    }
+
+    /// How the rider rides now (the app sets it every frame).
+    pub fn set_ride_mode(&mut self, mode: RideMode) {
+        if self.ride == mode {
+            return;
+        }
+        self.ride = mode;
+        // The Ride page's items changed: keep the focus on the page.
+        let n = self.item_count();
+        if n > 0 && self.focus() >= n {
+            self.set_focus(n - 1);
+        }
+    }
+
+    pub fn ride_mode(&self) -> RideMode {
+        self.ride
     }
 
     pub fn is_open(&self) -> bool {
@@ -550,7 +688,7 @@ impl Menu {
             p.def()
                 .items
                 .iter()
-                .filter(|i| self.platform.shows(i))
+                .filter(|i| self.platform.shows(i) && i.when.shows(self.ride))
                 .copied()
                 .collect()
         })
@@ -638,7 +776,11 @@ impl Menu {
                     _ => false,
                 })
                 .collect(),
-            _ => vec![false; self.items().len()],
+            _ => self
+                .items()
+                .iter()
+                .map(|i| matches!(i.kind, ItemKind::Dimmed(_)))
+                .collect(),
         }
     }
 
@@ -658,7 +800,17 @@ impl Menu {
                     })
                     .collect()
             }
-            _ => self.items().iter().map(|i| i.label.to_string()).collect(),
+            _ => self
+                .items()
+                .iter()
+                .map(|i| match (i.kind, self.ride) {
+                    (ItemKind::Hosting, RideMode::Hosting { riders }) => format!(
+                        "Hosting – {riders} rider{}",
+                        if riders == 1 { "" } else { "s" }
+                    ),
+                    _ => i.label.to_string(),
+                })
+                .collect(),
         }
     }
 
@@ -795,8 +947,13 @@ impl Menu {
         self.set_focus(i);
         match item.kind {
             ItemKind::Resume => self.close(),
-            ItemKind::Open(page) => {
+            ItemKind::Open(page) | ItemKind::Dimmed(page) => {
                 self.push(page);
+                Effect::None
+            }
+            ItemKind::Hosting => {
+                self.push(Page::Sub(sub::Page::RiderList));
+                self.rows.clear();
                 Effect::None
             }
             ItemKind::Back => self.back(),
@@ -850,6 +1007,11 @@ impl Menu {
                 self.push(Page::Sub(p));
                 self.rows.clear();
                 Effect::None
+            }
+            Some(Activate::RunOpen(line, p)) => {
+                self.push(Page::Sub(p));
+                self.rows.clear();
+                Effect::Command(line)
             }
             Some(Activate::Disabled) | None => Effect::None,
         }
@@ -1093,8 +1255,8 @@ mod tests {
         // The Back item of a page goes up too.
         m.apply(Action::Click(1));
         assert_eq!(m.page(), Some(Page::Ride));
-        assert_eq!(labels(&m)[4..], ["Workouts", "Restart", "Back"]);
-        m.apply(Action::Click(6));
+        assert_eq!(labels(&m)[3..], ["Host a ride", "Restart", "Back"]);
+        m.apply(Action::Click(5));
         assert_eq!((m.page(), m.focus()), (Some(Page::Top), 1));
         // World: its own page (rows from the ride catalog).
         m.apply(Action::Click(2));
@@ -1130,13 +1292,13 @@ mod tests {
         let mut m = Menu::default();
         m.apply(Action::Open);
         m.apply(Action::Click(1));
-        m.apply(Action::Click(5));
+        m.apply(Action::Click(4));
         assert_eq!(m.page(), Some(Page::ConfirmRestart));
         assert_eq!(labels(&m)[m.focus()], "Cancel");
         // Confirming Cancel goes back, nothing is run.
         assert_eq!(m.apply(Action::Confirm), Effect::None);
         assert_eq!(m.page(), Some(Page::Ride));
-        m.apply(Action::Click(5));
+        m.apply(Action::Click(4));
         m.apply(Action::Up);
         assert_eq!(m.apply(Action::Confirm), Effect::Command("reset".into()));
         // Quit.
@@ -1179,12 +1341,23 @@ mod tests {
         assert_eq!(
             labels(&m),
             [
+                "Events",
+                "Workouts",
+                "Join a ride",
+                "Host a ride",
+                "Restart",
+                "Back"
+            ]
+        );
+        m.apply(Action::Click(0));
+        assert_eq!(m.page(), Some(Page::Events));
+        assert_eq!(
+            labels(&m),
+            [
                 "Race: 1 lap / 5 km, 5 bots",
                 "Group ride at 150 W",
                 "Time trial vs your ghost",
                 "End the event",
-                "Workouts",
-                "Restart",
                 "Back"
             ]
         );
@@ -1201,13 +1374,13 @@ mod tests {
         assert_eq!(m.page(), Some(Page::ConfirmEvent));
         assert_eq!(m.pending(), Some("event race --bots 5"));
         m.apply(Action::Click(2));
-        assert_eq!(m.page(), Some(Page::Ride));
+        assert_eq!(m.page(), Some(Page::Events));
         m.apply(Action::Click(0));
         assert_eq!(m.page(), Some(Page::ConfirmEvent));
         m.set_focus(2);
-        // Cancel: back on the Ride page, nothing run.
+        // Cancel: back on the Events page, nothing run.
         assert_eq!(m.apply(Action::Confirm), Effect::None);
-        assert_eq!((m.page(), m.focus()), (Some(Page::Ride), 0));
+        assert_eq!((m.page(), m.focus()), (Some(Page::Events), 0));
         assert_eq!(m.pending(), None);
         // Start now: runs the line and closes for the countdown.
         m.apply(Action::Confirm);
@@ -1218,11 +1391,12 @@ mod tests {
         assert!(!m.is_open(), "closes for the countdown");
         m.apply(Action::Open);
         m.apply(Action::Click(1));
+        m.apply(Action::Click(0));
         m.apply(Action::Click(2));
         assert_eq!(m.pending(), Some("event tt"));
         // Back (Esc) cancels too.
         m.apply(Action::Back);
-        assert_eq!((m.page(), m.pending()), (Some(Page::Ride), None));
+        assert_eq!((m.page(), m.pending()), (Some(Page::Events), None));
         m.apply(Action::Click(2));
         assert_eq!(
             m.apply(Action::Click(0)),
@@ -1231,14 +1405,96 @@ mod tests {
         // Ending an event is not asked.
         m.apply(Action::Open);
         m.apply(Action::Click(1));
+        m.apply(Action::Click(0));
         assert_eq!(
             m.apply(Action::Click(3)),
             Effect::Command("event cancel".into())
         );
         m.apply(Action::Open);
         m.apply(Action::Click(1));
-        m.apply(Action::Click(6));
+        m.apply(Action::Click(5));
         assert_eq!(m.page(), Some(Page::Top));
+    }
+
+    #[test]
+    fn the_ride_page_follows_alone_joined_and_hosting() {
+        let mut m = Menu::default();
+        m.apply(Action::Open);
+        m.apply(Action::Click(1));
+        // Joined: Leave instead of Join; no hosting while on another server.
+        m.set_ride_mode(RideMode::Joined);
+        assert_eq!(
+            labels(&m),
+            ["Events", "Workouts", "Leave shared ride", "Restart", "Back"]
+        );
+        assert_eq!(m.apply(Action::Click(2)), Effect::Command("leave".into()));
+        assert!(!m.is_open());
+        // Hosting: the riders, the link, Stop – seven items.
+        m.set_ride_mode(RideMode::Hosting { riders: 3 });
+        m.apply(Action::Open);
+        m.apply(Action::Click(1));
+        assert_eq!(
+            m.labels(),
+            [
+                "Events",
+                "Workouts",
+                "Hosting – 3 riders",
+                "Show join link",
+                "Stop hosting",
+                "Restart",
+                "Back"
+            ]
+        );
+        m.apply(Action::Click(2));
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::RiderList)));
+        m.apply(Action::Back);
+        m.apply(Action::Click(3));
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::HostLink)));
+        m.apply(Action::Back);
+        assert_eq!(
+            m.apply(Action::Click(4)),
+            Effect::Command("host stop".into())
+        );
+        // The focus stays on the page when items go.
+        m.set_focus(6);
+        m.set_ride_mode(RideMode::Alone);
+        assert_eq!(m.focus(), 5);
+        // Join and Host open their pages.
+        m.apply(Action::Click(2));
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::Join)));
+        m.apply(Action::Back);
+        m.apply(Action::Click(3));
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::HostWorld)));
+    }
+
+    #[test]
+    fn the_host_wizard_runs_its_line_and_opens_the_next_step() {
+        let mut m = Menu::default();
+        m.apply(Action::Open);
+        m.apply(Action::Click(1));
+        let rows = |p: sub::Page| {
+            crate::host::rows(
+                p,
+                &crate::host::HostPlan::default(),
+                &[crate::host::HostWorld::test_routes()],
+                false,
+            )
+        };
+        m.apply_with(Action::Click(3), rows);
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::HostWorld)));
+        assert_eq!(m.labels(), ["Test routes:  chosen", "Back"]);
+        assert_eq!(
+            m.apply_with(Action::Confirm, rows),
+            Effect::Command("host.plan world 0".into())
+        );
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::HostRoute)));
+        // The plan is the default (the line runs in the app): no route chosen.
+        assert_eq!(m.labels(), ["hills", "loop", "Back"]);
+        m.apply_with(Action::Click(1), rows);
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::HostTime)));
+        // Back goes one step back.
+        m.apply_with(Action::Back, rows);
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::HostRoute)));
     }
 
     #[test]
@@ -1404,6 +1660,8 @@ mod tests {
             for page in [
                 Page::Top,
                 Page::Ride,
+                Page::Events,
+                Page::HostBrowser,
                 Page::Navi,
                 Page::Settings,
                 Page::ConfirmRestart,
@@ -1414,11 +1672,23 @@ mod tests {
                 Page::WorkshopLocked,
             ] {
                 let d = page.def();
-                let items: Vec<&Item> = d.items.iter().filter(|i| platform.shows(i)).collect();
-                assert!(
-                    !items.is_empty() && items.len() <= 7,
-                    "{platform:?} {page:?}"
-                );
+                for mode in [
+                    RideMode::Alone,
+                    RideMode::Joined,
+                    RideMode::Hosting { riders: 12 },
+                ] {
+                    let n = d
+                        .items
+                        .iter()
+                        .filter(|i| platform.shows(i) && i.when.shows(mode))
+                        .count();
+                    assert!(n > 0 && n <= 7, "{platform:?} {page:?} {mode:?}: {n}");
+                }
+                let items: Vec<&Item> = d
+                    .items
+                    .iter()
+                    .filter(|i| platform.shows(i) && i.when.shows(RideMode::Alone))
+                    .collect();
                 assert!(d.initial_focus < items.len(), "{page:?}");
                 // Every character has a glyph in the bundled UI font.
                 for s in d.text.iter().chain(items.iter().map(|i| &i.label)) {
@@ -1467,10 +1737,16 @@ mod tests {
         m.apply(Action::Open);
         m.apply(Action::Click(1));
         assert_eq!(
-            labels(&m)[4..],
-            ["Workouts", "Back"],
+            labels(&m),
+            ["Events", "Workouts", "Join a ride", "Host a ride", "Back"],
             "no Restart (a reload)"
         );
+        // Hosting is dimmed: the page says why.
+        assert_eq!(m.dimmed(), [false, false, false, true, false]);
+        m.apply(Action::Click(3));
+        assert_eq!(m.page(), Some(Page::HostBrowser));
+        assert!(m.page().unwrap().def().text[0].contains("desktop app"));
+        m.apply(Action::Back);
         m.apply(Action::Back);
         m.apply(Action::Click(4));
         assert_eq!(

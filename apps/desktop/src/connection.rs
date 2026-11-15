@@ -59,6 +59,9 @@ impl Plugin for ConnectionPlugin {
         });
         app.init_resource::<LinkNotice>()
             .init_resource::<WorldChangeInbox>()
+            .init_resource::<PendingLink>()
+            .init_resource::<HostStart>()
+            .init_resource::<Replay>()
             .add_systems(PreUpdate, (poll_server, link_status).chain())
             .add_systems(FixedUpdate, (step_server, predict).chain())
             .add_systems(
@@ -91,6 +94,53 @@ pub struct SessionStart(pub f64);
 /// its thread). Used at the start and by the ride switch (`ride` module).
 pub fn start_session(world: &mut World, route: Route) {
     start_session_with(world, route, false);
+}
+
+/// The link the next session rides on, made by Ride → Join (the probe
+/// connection, with what it received so far) or by Ride → Host a ride
+/// (the hosted local server); [`start_session_with`] takes it first.
+#[derive(Resource, Default)]
+pub struct PendingLink(pub Option<Mutex<(ServerLink, Vec<Vec<u8>>)>>);
+
+/// Ride → Host a ride: the next session's server takes riders over the
+/// network (`LocalServer::spawn_hosting`).
+pub struct HostNext {
+    /// The bound QUIC endpoint (bound before the course was loaded, so a
+    /// port in use is reported at once).
+    pub net: ocw_server::net::NetServer,
+    pub bots: u32,
+    /// Everyone may change the time and weather (else the host only).
+    pub open: bool,
+}
+
+/// The host start waiting for the session (taken by [`start_session_with`]).
+#[derive(Resource, Default)]
+pub struct HostStart(pub Option<Mutex<HostNext>>);
+
+/// The hosted server's counts (riders, network peers), while hosting.
+#[derive(Resource, Clone)]
+pub struct HostCounts(pub Arc<ocw_server::local::HostCounts>);
+
+/// Messages received before the session's client existed (the join's
+/// probe): handed to the new client first.
+#[derive(Resource, Default)]
+pub struct Replay(pub Vec<Vec<u8>>);
+
+/// The rider's hello as the next session would send it (profile, look,
+/// parts, damage, sign-in), without a course: Ride → Join's probe
+/// (`ocw_client::join::probe_hello` takes the world out).
+pub fn rider_hello(world: &mut World) -> Vec<u8> {
+    let args = world.resource::<Args>().clone();
+    let rider = crate::settings::local_rider(world);
+    let profile = rider.physics();
+    let parts = crate::workshop::riding_parts(world, &rider.name, profile.bike);
+    let damage = crate::workshop::riding_damage(world, &rider.name);
+    let mut client = ClientCore::new(Route::test_loop(), args.name.clone(), profile)
+        .with_look(rider.look())
+        .with_parts(&parts)
+        .with_damage(damage);
+    client.set_access_token(crate::account::access_token(world));
+    ocw_client::join::probe_hello(&client.hello())
 }
 
 /// A server's world change (spec §3.2.1), until the ride module loads it.
@@ -160,6 +210,11 @@ pub fn start_session_with(world: &mut World, route: Route, keep_link: bool) {
         Course::Route(route) => crate::start_point(&args, route),
         Course::FreeRide { .. } | Course::RouteRide { .. } => 0.0,
     };
+    // A link made by Join / Host (see [`PendingLink`]).
+    let pending = world
+        .get_resource_mut::<PendingLink>()
+        .and_then(|mut p| p.0.take())
+        .and_then(|m| m.into_inner().ok());
     // The old session's link goes first: its local server thread ends.
     let old = world.remove_resource::<Link>();
     let kept = match old {
@@ -171,7 +226,38 @@ pub fn start_session_with(world: &mut World, route: Route, keep_link: bool) {
         }
         _ => None,
     };
-    let mut server = if let Some(link) = kept {
+    let joined = pending.is_some();
+    let host = world
+        .get_resource_mut::<HostStart>()
+        .and_then(|mut h| h.0.take())
+        .and_then(|m| m.into_inner().ok());
+    world.remove_resource::<HostCounts>();
+    let mut server = if let Some((link, replay)) = pending {
+        world.insert_resource(Replay(replay));
+        link
+    } else if let Some(h) = host {
+        // Hosting (spec §3.2.1 *Host a ride*): the shared server's rules,
+        // the host decides (the conditions for everyone if asked).
+        let conditions = if h.open {
+            ocw_server::ClockAccess::Anyone
+        } else {
+            ocw_server::ClockAccess::Host
+        };
+        let config = ocw_server::ServerConfig {
+            bots: h.bots,
+            allow_dev_commands: false,
+            clock_access: conditions,
+            weather_access: conditions,
+            world_access: ocw_server::ClockAccess::Host,
+            god_access: ocw_server::ClockAccess::Host,
+            collision_access: ocw_server::ClockAccess::Host,
+            ..local_config_at(&args, start_m, geo_origin)
+        };
+        let (conn, counts) = LocalServer::spawn_hosting(course, config, h.net)
+            .expect("failed to start the hosted server thread");
+        world.insert_resource(HostCounts(counts));
+        ServerLink::Threaded(conn)
+    } else if let Some(link) = kept {
         link
     } else if let Some(spec) = &args.server {
         ServerLink::Remote(Box::new(connect_remote(&args, spec)))
@@ -192,7 +278,11 @@ pub fn start_session_with(world: &mut World, route: Route, keep_link: bool) {
     if matches!(server, ServerLink::Remote(_)) {
         client.set_access_token(crate::account::access_token(world));
     }
-    server.send(client.hello());
+    // A joined server has the hello of the probe (a second one is
+    // ignored); a hosted one gets it now.
+    if !(joined && matches!(server, ServerLink::Remote(_))) {
+        server.send(client.hello());
+    }
     // Real weather at the start of the ride (spec §14 Phase 9, 9A "default
     // = real", S7): on the local servers, by the setting `weather.real`,
     // not in screenshot / capture runs unless --real-weather true, never
@@ -382,10 +472,14 @@ fn poll_server(
     mut console: ResMut<ConsoleState>,
     voice: Option<ResMut<crate::voice::PendingVoiceGrants>>,
     inbox: Option<ResMut<WorldChangeInbox>>,
+    replay: Option<ResMut<Replay>>,
 ) {
     let mut voice = voice;
     let mut inbox = inbox;
-    let messages = link.server.lock().expect("not poisoned").receive();
+    let mut messages = replay
+        .map(|mut r| std::mem::take(&mut r.0))
+        .unwrap_or_default();
+    messages.extend(link.server.lock().expect("not poisoned").receive());
     let now = time.elapsed_secs_f64();
     for bytes in messages {
         match client.0.on_server_message(&bytes, now) {
@@ -838,7 +932,7 @@ fn register_commands(app: &mut App) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::time::{Duration, Instant};
 
     use clap::Parser;
@@ -888,7 +982,7 @@ mod tests {
 
     /// A networked game server on 127.0.0.1 (ephemeral port) with `bots`
     /// test riders, run like `ocw-server --listen` until `stop` is set.
-    fn remote_server(
+    pub(crate) fn remote_server(
         bots: u32,
     ) -> (
         std::net::SocketAddr,

@@ -282,3 +282,83 @@ fn server_shutdown_reaches_the_client() {
     };
     assert!(reason.contains("server shutting down"), "{reason}");
 }
+
+/// Ride → Host a ride (spec §3.2.1): the app's local server with the
+/// QUIC endpoint. The host's own connection is the first rider; another
+/// rider joins over the network and sees the host's course, clock and
+/// weather; stopping the host closes the others' link.
+#[test]
+fn a_hosted_local_server_takes_riders_over_the_network() {
+    use ocw_server::local::LocalServer;
+    let identity = ServerIdentity::self_signed().unwrap();
+    let net = NetServer::bind("127.0.0.1:0".parse().unwrap(), &identity).unwrap();
+    let (addr, fp) = (net.local_addr(), net.fingerprint().to_owned());
+    let config = ServerConfig {
+        weather: ocw_weather::presets::preset("fog"),
+        ..ocw_server::local::local_config(2, 0.0)
+    };
+    let (host, counts) = LocalServer::spawn_hosting(Route::test_hills(), config, net).unwrap();
+    host.to_server.send(hello("Host")).unwrap();
+    let host_welcome = loop {
+        match host.from_server.recv_timeout(Duration::from_secs(10)) {
+            Ok(b) => {
+                if let Ok(S::Welcome(w)) = decode_server(&b) {
+                    break w;
+                }
+            }
+            Err(e) => panic!("no welcome for the host: {e}"),
+        }
+    };
+    let trust = ServerTrust::Pinned(parse_fingerprint(&fp).unwrap());
+    let guest = NetClient::connect(addr, "localhost", &trust, ClientOptions::default()).unwrap();
+    guest.send(hello("Guest"));
+    let mut welcome = None;
+    let mut seen = Seen::default();
+    wait_until("the guest's welcome and a snapshot with both", || {
+        for bytes in guest.receive() {
+            match decode_server(&bytes).unwrap() {
+                S::Welcome(w) => welcome = Some(w),
+                S::Snapshot(s) => seen.snapshots.push(s),
+                _ => {}
+            }
+        }
+        welcome.is_some() && seen.last_riders().len() >= 4
+    });
+    let w = welcome.unwrap();
+    // The host's course, clock and weather.
+    assert_eq!(w.route_id, host_welcome.route_id);
+    assert_eq!(w.route_id, Route::test_hills().id());
+    assert!(w.clock.is_some());
+    let fog = ocw_weather::presets::preset("fog").unwrap();
+    let weather = w
+        .weather
+        .and_then(|s| s.now)
+        .expect("the session's weather");
+    assert!(
+        (weather.fog_visibility_m - fog.fog_visibility_m).abs() < 1.0,
+        "{weather:?}"
+    );
+    assert!(seen.last_riders().contains(&host_welcome.rider_id));
+    wait_until("counts", || {
+        counts.riders.load(Ordering::Relaxed) == 2 && counts.peers.load(Ordering::Relaxed) == 1
+    });
+    // Stop hosting: the guest hears it.
+    drop(host);
+    wait_until("closed", || matches!(guest.status(), LinkStatus::Closed(_)));
+    let LinkStatus::Closed(reason) = guest.status() else {
+        unreachable!()
+    };
+    assert!(reason.contains("server shutting down"), "{reason}");
+}
+
+/// A second server on a port in use fails plainly (the host offers to
+/// join the one there instead).
+#[test]
+fn a_port_in_use_is_reported() {
+    let identity = ServerIdentity::self_signed().unwrap();
+    let a = NetServer::bind("127.0.0.1:0".parse().unwrap(), &identity).unwrap();
+    let e = NetServer::bind(a.local_addr(), &identity)
+        .err()
+        .expect("in use");
+    assert!(e.contains("cannot listen on"), "{e}");
+}

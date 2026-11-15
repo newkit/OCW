@@ -304,8 +304,8 @@ pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) 
             // a ride reloaded on WebGL 2 after WebGPU failed (ocw-gpu.js).
             ("gpu", _) if matches!(value.as_str(), "webgpu" | "webgl2") => {}
             ("webgpu-failed", _) => {}
-            // Read below (B3; the origin after the route).
-            ("server" | "cert-hash", _) => {}
+            // Read below (B3; the origin after the route; a join link).
+            ("server" | "cert-hash" | "join", _) => {}
             // The accounts server (spec §9.1; `account`).
             ("auth", _) => {}
             ("origin", None) => {}
@@ -358,9 +358,135 @@ pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) 
             }
         }
     }
+    // `join=LINK` (spec §6.2 *Join links*): the server of an https://
+    // link, its world and route.
+    if let Some((_, value)) = pairs.iter().find(|(k, _)| k == "join") {
+        match web_join(value) {
+            Ok((r, link)) => {
+                remote = Some(r);
+                if let Some(w) = &link.world
+                    && world.is_none()
+                {
+                    let mut opts = world::WorldOptions::new(w);
+                    opts.route = link.route.clone();
+                    world = Some(opts);
+                } else if world.is_none() {
+                    match link.route.as_deref() {
+                        Some("hills") => config.route = Route::test_hills(),
+                        Some("loop") => config.route = Route::test_loop(),
+                        _ => {}
+                    }
+                }
+            }
+            Err(e) => warnings.push(format!("join={value}: {e}")),
+        }
+    }
     config.world = world;
     config.remote = remote;
     (config, warnings)
+}
+
+/// What the browser says about an `ocw://` link (spec §3.2.1 *Join*).
+pub const NO_WEBTRANSPORT: &str = "this server has no WebTransport for browsers (an ocw:// link): ask its host for an https:// link, or use the desktop app";
+
+/// A join link as the browser can use it: WebTransport with the
+/// certificate's hash (browsers take a self-signed certificate only by
+/// its hash).
+pub fn web_join(text: &str) -> Result<(RemoteOptions, ocw_protocol::join::JoinLink), String> {
+    use ocw_protocol::join::{JoinLink, LinkTransport};
+    let link = JoinLink::parse(text)?;
+    if link.transport != LinkTransport::WebTransport {
+        return Err(NO_WEBTRANSPORT.into());
+    }
+    let cert = link.cert.as_deref().ok_or(
+        "the browser needs the server's certificate hash (cert-hash= in the link) to connect",
+    )?;
+    let hash = ocw_world::manifest::Hex::<32>::parse(cert)
+        .map_err(|_| "the certificate hash has 64 hex digits".to_string())?;
+    Ok((
+        RemoteOptions {
+            url: link.web_url(),
+            cert_hashes: vec![hash.0],
+        },
+        link,
+    ))
+}
+
+/// The page's query for joining `link` (Ride → Join in the browser): the
+/// page starts again on the shared ride – `server`, `cert-hash` and the
+/// link's world and route replace the page's; its other options stay.
+pub fn join_query(query: &str, link: &str) -> Result<String, String> {
+    let (_, l) = web_join(link)?;
+    let mut drop = vec!["server", "cert-hash", "join"];
+    if l.world.is_some() {
+        drop.extend(["world", "route", "free"]);
+    } else if l.route.is_some() {
+        drop.push("route");
+    }
+    let mut out = kept_pairs(query, &drop);
+    out.push(format!("server={}", escape(&l.web_url())));
+    out.push(format!("cert-hash={}", l.cert.clone().unwrap_or_default()));
+    if let Some(w) = &l.world {
+        out.push(format!("world={}", escape(w)));
+    }
+    if let Some(r) = &l.route {
+        out.push(format!("route={}", escape(r)));
+    }
+    Ok(format!("?{}", out.join("&")))
+}
+
+/// The page's query for leaving the shared ride: without the server.
+pub fn leave_query(query: &str) -> String {
+    let out = kept_pairs(query, &["server", "cert-hash", "join"]);
+    if out.is_empty() {
+        String::new()
+    } else {
+        format!("?{}", out.join("&"))
+    }
+}
+
+fn kept_pairs(query: &str, drop: &[&str]) -> Vec<String> {
+    query
+        .trim_start_matches('?')
+        .split('&')
+        .filter(|p| !p.is_empty())
+        .filter(|p| !drop.contains(&p.split_once('=').map_or(*p, |(k, _)| k)))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Percent-encodes a query value.
+fn escape(v: &str) -> String {
+    let mut out = String::new();
+    for b in v.bytes() {
+        match b {
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'.'
+            | b'_'
+            | b'~'
+            | b'/'
+            | b':'
+            | b'@' => out.push(b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// Text the page's paste event brought (`window.ocw.paste(text)`), for
+/// Ride → Join's link field.
+pub static PASTED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// `window.ocw.paste(text)`: the page's paste event (index.html).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = paste)]
+pub fn page_paste(text: &str) {
+    *PASTED.lock().expect("not poisoned") = Some(text.to_owned());
+    // Pasting while the menu's link field is open puts it there.
+    queue_console("join.paste");
 }
 
 /// The browser app: Bevy with the canvas of the page, the shared renderer
@@ -954,5 +1080,54 @@ mod tests {
         assert!(id.ends_with(&format!(" web {GPU_API}")), "{id}");
         // Natively (the tests) neither browser build.
         assert_eq!(GPU_API, "native");
+    }
+
+    /// Ride → Join in the browser (spec §3.2.1): WebTransport links only,
+    /// the page's query with the server, `join=` as a page option.
+    #[test]
+    fn join_links_in_the_browser() {
+        let fp = "ef".repeat(32);
+        let e = web_join(&format!("ocw://10.0.0.5?cert={fp}")).unwrap_err();
+        assert_eq!(e, NO_WEBTRANSPORT);
+        assert!(
+            web_join("https://10.0.0.5")
+                .unwrap_err()
+                .contains("certificate hash")
+        );
+        let (r, _) = web_join(&format!("https://10.0.0.5:47801?cert-hash={fp}")).unwrap();
+        assert_eq!(r.url, "https://10.0.0.5:47801/ocw/1");
+        assert_eq!(r.cert_hashes, [[0xef; 32]]);
+        // The page's other options stay; the link's world and route win.
+        let q = join_query(
+            "?world=old&route=x&bots=3&server=https://a",
+            &format!(
+                "https://10.0.0.5:47801?cert-hash={fp}&world=fiction/valley@2&route=Lake%20Loop"
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            q,
+            format!(
+                "?bots=3&server=https://10.0.0.5:47801/ocw/1&cert-hash={fp}&world=fiction/valley@2&route=Lake%20Loop"
+            )
+        );
+        assert_eq!(
+            leave_query(&q),
+            "?bots=3&world=fiction/valley@2&route=Lake%20Loop"
+        );
+        assert_eq!(leave_query("?server=x&cert-hash=y"), "");
+        // join= at the start.
+        let (c, w) = parse_query(
+            &format!("join=https://10.0.0.5:47801?cert-hash={fp}%26route=loop"),
+            false,
+        );
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!(c.remote.unwrap().url, "https://10.0.0.5:47801/ocw/1");
+        assert_eq!(c.route.name(), Route::test_loop().name());
+        let (c, w) = parse_query(&format!("join=ocw://h?cert={fp}"), false);
+        assert!(
+            c.remote.is_none() && w[0].contains("no WebTransport"),
+            "{w:?}"
+        );
     }
 }

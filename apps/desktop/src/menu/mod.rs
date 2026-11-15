@@ -33,6 +33,12 @@ impl Plugin for MenuPlugin {
         app.insert_resource(MenuHooks {
             rows: desktop_rows,
             text: |world, page| {
+                if let Page::Sub(p) = page {
+                    let host = crate::ride::host::text(world, p);
+                    if !host.is_empty() {
+                        return host;
+                    }
+                }
                 page_text(
                     page,
                     world.get_resource::<RideCatalog>(),
@@ -53,6 +59,10 @@ impl Plugin for MenuPlugin {
 /// The rows of the desktop's own pages: the World and the Ride / Navi
 /// lists (from the ride catalog).
 fn desktop_rows(world: &World, page: settings_pages::Page) -> Option<Vec<settings_pages::Row>> {
+    // Ride → Host a ride and the hosting's join link.
+    if let Some(rows) = crate::ride::host::rows(world, page) {
+        return Some(rows);
+    }
     let empty = crate::ride::pages::Catalog::default();
     let catalog = world.get_resource::<RideCatalog>().map_or(&empty, |c| &c.0);
     if page.is_world_page() {
@@ -162,6 +172,14 @@ mod tests {
             TrustedKey(0),
             Devices,
             Device(0),
+            Join,
+            HostWorld,
+            HostRoute,
+            HostTime,
+            HostWeather,
+            HostOptions,
+            HostSummary,
+            HostLink,
         ];
         for p in &all {
             match p {
@@ -173,8 +191,9 @@ mod tests {
                 | WeatherReal | RidingAids | Graphics | RiderList | UnicornControls | Bindings
                 | BindGroup(_) | BindReset | Accessibility | History | HistoryRides
                 | HistoryRide(_) | HistoryClimbs(_) | HistoryWeeks | HistoryMonths
-                | HistoryBests | EventRules | Account | TrustedKeys | TrustedKey(_) | Devices
-                | Device(_) => {}
+                | HistoryBests | EventRules | Account | TrustedKeys | TrustedKey(_) | Join
+                | HostWorld | HostRoute | HostTime | HostWeather | HostOptions | HostSummary
+                | HostLink | Devices | Device(_) => {}
             }
         }
         all
@@ -197,6 +216,8 @@ mod tests {
         let pages = [
             Page::Top,
             Page::Ride,
+            Page::Events,
+            Page::HostBrowser,
             Page::Navi,
             Page::Settings,
             Page::ConfirmRestart,
@@ -247,7 +268,11 @@ mod tests {
                 _ => def
                     .items
                     .iter()
-                    .filter(|i| model::Platform::Desktop.shows(i))
+                    // The Ride page's longest mode: hosting.
+                    .filter(|i| {
+                        model::Platform::Desktop.shows(i)
+                            && !matches!(i.when, model::When::Alone | model::When::Joined)
+                    })
                     .map(|i| i.label.to_string())
                     .collect(),
             };

@@ -441,6 +441,32 @@ class UiTest:
         self.check("settings: saved in localStorage", "units" in stored, stored[:200])
         self.key("Escape", 2)
 
+        # Ride → Join a ride (spec 3.73): a pasted link in the field; Host
+        # a ride dimmed (browsers cannot open a server port).
+        m = self.wait_menu(lambda m: m.get("title") == "Open Cycling World")
+        ok = self.open_item("Ride", "Ride")
+        m = self.menu()
+        items = m.get("items", [])
+        host = items.index("Host a ride") if "Host a ride" in items else None
+        self.check("menu: Ride has Join a ride and a dimmed Host a ride",
+                   ok and "Join a ride" in items and host is not None
+                   and (m.get("dimmed") or [False] * 9)[host], (items, m.get("dimmed")))
+        self.shot("ride")
+        ok = self.open_item("Join a ride", "Join a ride")
+        cdp.eval("window.ocw.paste('ocw://192.0.2.10?cert=" + "ab" * 32 + "&route=hills')")
+        self.pump(0.6)
+        m = self.menu()
+        self.check("menu: Join shows the pasted link",
+                   ok and any("192.0.2.10" in i for i in m.get("items", [])), m.get("items"))
+        self.focus_item("Join")
+        self.key("Enter")
+        self.pump(0.6)
+        m = self.menu()
+        self.check("menu: an ocw:// link needs the desktop app in the browser",
+                   "no WebTransport" in " ".join(m.get("text", [])), m.get("text"))
+        self.shot("join")
+        self.key("Escape", 2)
+
         # World → Weather: the weather machine.
         m = self.wait_menu(lambda m: m.get("title") == "Open Cycling World")
         ok = self.open_item("World", "World")
