@@ -580,7 +580,7 @@ attribution, the licences and the privacy note.
 | | `make web` (dev) | `make web-preview` (the preview) |
 |---|---|---|
 | Output | `target/web/` | `target/web-preview/` |
-| Profile | `web`: `opt-level = "s"`, thin LTO | `web-preview`: the same with fat LTO and one codegen unit |
+| Profile | `web-release`: `opt-level = "s"`, thin LTO | `web-preview-release`: the same with fat LTO and one codegen unit |
 | `wasm-opt` | `-Os`, only when installed | `-Oz`, always: `scripts/fetch-binaryen.sh` fetches the pinned binaryen (version_133, SHA-256-checked) into `~/.cache/ocw/tools/` when none is installed |
 | Trusted worlds | the production roots (none yet); on localhost also `trust-root`, `trust=dev`, `allow-unsigned` | only the **web preview's root** (`crates/ocw-worldstore/keys/preview-roots.json`, feature `preview` of `ocw-web`); the localhost-only options stay localhost-only |
 | `config.json` | `channel: dev`: changes nothing | `channel: preview`, `worlds/`, empty `server`, `voice`, `signin`: no `?server=` and no voice on a public page, the start page's rides |

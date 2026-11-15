@@ -41,6 +41,8 @@ if [ "${1:-}" = --upload ]; then upload=1; shift; fi
 keys=${OCW_PREVIEW_KEYS:-$HOME/.config/ocw/preview-keys}
 key=${OCW_PREVIEW_SIGNING_KEY:-$keys/web-preview-2026.key}
 tag=${OCW_PREVIEW_RELEASE:-web-preview-worlds}
+# The repository (build checkouts have no .git for gh to ask).
+repo=${OCW_PREVIEW_REPO:-newkit/OCW}
 out=target/web-preview-worlds
 for f in "$key" "$keys/root.pub.json"; do
   [ -f "$f" ] || { echo "$f missing: the preview's keys live on the build machine that signs the worlds (marge)" >&2; exit 1; }
@@ -155,12 +157,12 @@ rm -rf "$out/stage"
 ls -l "$out/release"
 
 if [ $upload = 1 ]; then
-  if ! gh release view "$tag" >/dev/null 2>&1; then
-    gh release create "$tag" --prerelease --title "Web preview worlds" --notes \
+  if ! gh release view "$tag" -R "$repo" >/dev/null 2>&1; then
+    gh release create "$tag" -R "$repo" --prerelease --title "Web preview worlds" --notes \
 "World packages of the browser app's public preview (spec §14 Phase 10 B8a), signed by the web preview's root (key id $(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["key_id"])' "$keys/root.pub.json")). The Pages workflow (.github/workflows/web-preview.yml) copies them into the site; preview-worlds.json maps each asset to its path there.
 
 Map data © OpenStreetMap contributors, ODbL 1.0: the road graph in each package (section GRPH) is a Derivative Database offered here under the ODbL. Elevation, imagery and forest sources: see each manifest's attribution and the preview's credits page."
   fi
-  gh release upload "$tag" --clobber "$out"/release/*
+  gh release upload "$tag" -R "$repo" --clobber "$out"/release/*
   echo "uploaded to the release $tag"
 fi
