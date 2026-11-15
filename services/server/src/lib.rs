@@ -4351,7 +4351,7 @@ mod auth_tests {
             }))),
         );
         let kind = match decode_server(&reply[0]).unwrap() {
-            S::Welcome(w) => ServerMessageKind::Welcome(w),
+            S::Welcome(w) => ServerMessageKind::Welcome(Box::new(w)),
             S::Reject(r) => ServerMessageKind::Reject(r),
             m => panic!("{m:?}"),
         };
@@ -4360,7 +4360,7 @@ mod auth_tests {
 
     #[derive(Debug)]
     enum ServerMessageKind {
-        Welcome(v1::Welcome),
+        Welcome(Box<v1::Welcome>),
         Reject(v1::Reject),
     }
 

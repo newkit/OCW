@@ -185,8 +185,9 @@ impl AuthClient {
         let redirect = format!("http://127.0.0.1:{port}{}", client::LOOPBACK_PATH);
         let mut pending = PendingLogin::new(&random::<96>(), &redirect, provider);
         if let Some(s) = link {
+            let url = self.account_url("/link")?;
             let (status, body) = self.post(
-                &self.account_url("/link")?,
+                &url,
                 &client::form(&[("code_challenge", &pending.challenge())]),
                 Some(&s.access_token),
             )?;
