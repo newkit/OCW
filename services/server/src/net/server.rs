@@ -352,6 +352,13 @@ impl NetServer {
                     outbound,
                 } => {
                     let id = game.connect();
+                    // Where the rider reached us: the voice URL in their
+                    // grants (spec §7.1.1).
+                    game.set_connection_addresses(
+                        id,
+                        conn.quic().local_ip(),
+                        conn.remote_address(),
+                    );
                     let transport = conn.transport();
                     tracing::info!(remote = %conn.remote_address(), ?id, transport = transport.name(), "client connected");
                     match transport {

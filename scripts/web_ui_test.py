@@ -20,9 +20,17 @@ parity), used by scripts/test-web.py after the ride:
   complete, list and cycle (`window.ocw.consoleState()`), with the shared
   value providers (weather presets, setting keys);
 - the GPS line (spec 3.40; test-web.py gives the test route a geographic
-  origin, `origin=`): shown in the HUD, `rider.gps`, `hud.gps off / on`.
+  origin, `origin=`): shown in the HUD, `rider.gps`, `hud.gps off / on`;
+- touch steering (spec §3.2.3; CDP's touch emulation and
+  `Input.dispatchTouchEvent`, read through `window.ocw.steer()`): the
+  hints with `controls.touch_steer on` (chevrons, tip), hidden on a
+  desktop browser until a touch; a tap on the right half moves the line
+  +0.5 m, a 1 s hold on the left about −2 m (the glow); taps in the dead
+  band and the top band do not steer; a two-finger gesture across both
+  halves does not steer and neither zooms nor scrolls the page; a key
+  hides the hints.
 
-Screenshots: BASE-menu.jpg, -settings.jpg, -weather.jpg, -calendar.jpg, -hud.jpg,
+Screenshots: BASE-touch-hints.jpg, -touch-hold.jpg, -menu.jpg, -settings.jpg, -weather.jpg, -calendar.jpg, -hud.jpg,
 -console.jpg, -gps.jpg, -riders.jpg, -gamepad.jpg, -unicorn-flight.jpg,
 -unicorn-inspect.jpg, -unicorn-menu.jpg. Each check is a (name, ok,
 detail) row in the summary.
@@ -401,6 +409,95 @@ class UiTest:
         g = self.wait_god(lambda g: not g.get("active"), timeout=15.0)
         self.check("unicorn: G lands on the road", not g.get("active") and g.get("pos") is None, g)
 
+    # ------------------------------------------------------- touch steering
+
+    def steer(self):
+        raw = self.cdp.eval("window.ocw && window.ocw.steer ? window.ocw.steer() : ''")
+        try:
+            return json.loads(raw) if raw else {}
+        except ValueError:
+            return {}
+
+    def touches(self, kind, points):
+        self.cdp.call("Input.dispatchTouchEvent", {
+            "type": kind,
+            "touchPoints": [{"x": x, "y": y, "id": i} for i, (x, y) in enumerate(points)]})
+
+    def tap(self, x, y, hold=0.06):
+        self.touches("touchStart", [(x, y)])
+        self.pump(hold)
+        self.touches("touchEnd", [])
+        self.pump(0.3)
+
+    def touch_part(self):
+        """Touch steering (spec §3.2.3) with synthetic touches."""
+        cdp = self.cdp
+        w, h = cdp.eval("[innerWidth, innerHeight]") or [1280, 720]
+        st = self.steer()
+        self.check("touch: window.ocw.steer() while riding", st.get("riding") and st.get("active"), st)
+        self.check("touch: autodrive at the start (the zones move the line)", st.get("autodrive"), st)
+        # The hints on demand (chevrons and the first-ride tip).
+        self.console("set --temp controls.touch_steer on")
+        self.pump(0.5)
+        st = self.steer()
+        self.check("touch: `on` shows the hints and the tip", st.get("shown") and st.get("tip"), st)
+        self.shot("touch-hints")
+        self.console("set --temp controls.touch_steer auto")
+        self.pump(0.3)
+        st = self.steer()
+        self.check("touch: a desktop browser hides them until a touch (auto)", not st.get("shown"), st)
+        cdp.call("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 5})
+        self.pump(0.3)
+        line = lambda: float(self.steer().get("line_m") or 0.0)  # noqa: E731
+        l0 = line()
+        self.tap(w * 0.8, h * 0.6)
+        l1 = line()
+        st = self.steer()
+        self.check("touch: a tap on the right half moves the line +0.5 m", abs(l1 - l0 - 0.5) < 0.02,
+                   f"{l0:.3f} → {l1:.3f}")
+        self.check("touch: the first touch shows the hints", st.get("shown"), st)
+        self.check("touch: a touch keeps autodrive", st.get("autodrive"), st)
+        # A 1 s hold on the left: about −2 m (as ← held), the glow.
+        self.touches("touchStart", [(w * 0.2, h * 0.6)])
+        self.pump(0.5)
+        held = self.steer()
+        self.shot("touch-hold")
+        end = time.time() + max(0.0, 1.0 - 0.9)
+        while time.time() < end:
+            self.pump(0.05)
+        self.touches("touchEnd", [])
+        self.pump(0.3)
+        l2 = line()
+        self.check("touch: holding the left half steers left while held", held.get("left_held"), held)
+        self.check("touch: a hold on the left moves the line about 2 m/s", -3.6 < l2 - l1 < -0.8,
+                   f"{l1:.3f} → {l2:.3f} (held ~1.3 s with the screenshot)")
+        # The dead band and the top band do not steer.
+        self.tap(w * 0.5, h * 0.6)
+        self.tap(w * 0.2, h * 0.05)
+        l3 = line()
+        self.check("touch: taps in the dead band and the top band do not steer", abs(l3 - l2) < 1e-3,
+                   f"{l2:.3f} → {l3:.3f}")
+        # Two fingers across both halves: the camera, no steering, and
+        # the page neither zooms nor scrolls.
+        a, b = (w * 0.3, h * 0.6), (w * 0.7, h * 0.6)
+        self.touches("touchStart", [a, b])
+        self.pump(0.1)
+        for k in range(1, 6):
+            self.touches("touchMove", [(a[0] - 20 * k, a[1] - 10 * k), (b[0] + 20 * k, b[1] - 10 * k)])
+            self.pump(0.05)
+        self.touches("touchEnd", [])
+        self.pump(0.3)
+        l4 = line()
+        page = cdp.eval("[visualViewport ? visualViewport.scale : 1, scrollX, scrollY]")
+        self.check("touch: a two-finger pinch does not steer", abs(l4 - l3) < 1e-3, f"{l3:.3f} → {l4:.3f}")
+        self.check("touch: the page does not zoom or scroll", page == [1, 0, 0], page)
+        # A key hides the hints again.
+        self.key("Shift")
+        st = self.steer()
+        self.check("touch: a key hides the hints", not st.get("shown"), st)
+        cdp.call("Emulation.setTouchEmulationEnabled", {"enabled": False})
+        self.pump(0.2)
+
     # ------------------------------------------------------------ the part
 
     def run(self, reload_and_wait):
@@ -412,6 +509,8 @@ class UiTest:
         cdp.eval("document.getElementById('ocw-canvas').focus()")
         self.pump(0.6)
         self.close_menu()
+        # Touch steering (spec §3.2.3) on the fresh ride.
+        self.touch_part()
 
         # The top page by keyboard.
         self.key("Escape")

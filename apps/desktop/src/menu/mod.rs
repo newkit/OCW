@@ -221,6 +221,7 @@ mod tests {
             Page::Ride,
             Page::Events,
             Page::HostBrowser,
+            Page::StravaBrowser,
             Page::Navi,
             Page::Settings,
             Page::ConfirmRestart,

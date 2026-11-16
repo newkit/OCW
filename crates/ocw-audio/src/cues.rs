@@ -49,13 +49,17 @@ pub enum Cue {
     /// A buckled wheel's rim rubbing the brake once per turn (spec §14
     /// Phase 12E).
     Rub,
+    /// The ride photographer's photo (spec §2.11): the flash's capacitor
+    /// pop, the shutter's two clicks (open, close) and the flash
+    /// recharging with a faint rising whine.
+    Shutter,
     /// A test tone on a bus (`audio.play test-music` …).
     Test(Bus),
 }
 
 impl Cue {
     /// The names `audio.play` takes.
-    pub const NAMES: [(&'static str, Cue); 22] = [
+    pub const NAMES: [(&'static str, Cue); 23] = [
         ("move", Cue::UiMove),
         ("value", Cue::UiValue),
         ("confirm", Cue::UiConfirm),
@@ -73,6 +77,7 @@ impl Cue {
         ("remount", Cue::Remount),
         ("proximity", Cue::Proximity),
         ("rub", Cue::Rub),
+        ("shutter", Cue::Shutter),
         ("test-music", Cue::Test(Bus::Music)),
         ("test-effects", Cue::Test(Bus::Effects)),
         ("test-voice", Cue::Test(Bus::Voice)),
@@ -112,6 +117,7 @@ impl Cue {
             Cue::Remount => 0.3,
             Cue::Proximity => 0.5,
             Cue::Rub => 0.06,
+            Cue::Shutter => 0.45,
             Cue::Test(_) => 0.8,
         }
     }
@@ -272,6 +278,29 @@ impl CueVoice {
                 let band = self.filter.process(n).band;
                 band * 0.9 * (t / 0.002).min(1.0) * (-t / 0.012).exp()
                     + tone(t, 0.0, 0.03, 2400.0, 0.04)
+            }
+            Cue::Shutter => {
+                let n = self.noise.white();
+                let band = self.filter.process(n).band;
+                let click = |at: f32, tau: f32| {
+                    let x = t - at;
+                    if x >= 0.0 { (-x / tau).exp() } else { 0.0 }
+                };
+                // The pop of the flash, the shutter open and closed.
+                let pop = n * 0.35 * click(0.0, 0.002);
+                let clicks = band * (1.1 * click(0.004, 0.004) + 0.9 * click(0.07, 0.005));
+                // The flash recharging: a faint whine gliding up.
+                let whine = if (0.1..0.45).contains(&t) {
+                    let x = t - 0.1;
+                    let f = 2200.0 + 5200.0 * x;
+                    0.025
+                        * (x / 0.05).min(1.0)
+                        * ((0.35 - x) / 0.1).min(1.0)
+                        * (2.0 * PI * f * x).sin()
+                } else {
+                    0.0
+                };
+                pop + clicks + tone(t, 0.07, 0.04, 900.0, 0.08) + whine
             }
             Cue::Test(Bus::Music) => tone(t, 0.0, 0.8, 440.0, 0.3) + tone(t, 0.0, 0.8, 554.4, 0.2),
             Cue::Test(Bus::Effects) => tone(t, 0.0, 0.8, 660.0, 0.35),

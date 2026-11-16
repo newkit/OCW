@@ -69,6 +69,9 @@ pub struct SessionConfig {
     /// The quality preset for this visit (page option `quality`, B7: a
     /// temporary `display.quality`, not saved).
     pub quality: Option<String>,
+    /// Touch steering for this visit (page option `touch=auto|on|off`,
+    /// spec §3.2.3: a temporary `controls.touch_steer`).
+    pub touch: Option<String>,
     /// The signed-in rider's access token for a remote ride's hello (spec
     /// §9.1; this tab's, from the account's sign-in).
     pub access_token: Option<String>,
@@ -92,6 +95,7 @@ impl Default for SessionConfig {
             record: true,
             autodrive: true,
             quality: None,
+            touch: None,
             access_token: None,
             voice_off: None,
         }

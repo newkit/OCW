@@ -22,6 +22,8 @@
 //! The LiveKit URL, API key and secret come from the environment
 //! (`OCW_LIVEKIT_URL`, `OCW_LIVEKIT_API_KEY`, `OCW_LIVEKIT_API_SECRET`) or
 //! the server's command line; they are never part of the repository.
+//! Without them a server that others join starts its own LiveKit server
+//! with a fresh key pair ([`launcher`], spec §7.1.1, native only).
 
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
@@ -45,6 +47,11 @@ pub const MIN_REQUEST_INTERVAL_S: u64 = 2;
 pub const ENV_URL: &str = "OCW_LIVEKIT_URL";
 pub const ENV_API_KEY: &str = "OCW_LIVEKIT_API_KEY";
 pub const ENV_API_SECRET: &str = "OCW_LIVEKIT_API_SECRET";
+
+/// The bundled voice server: started, watched and stopped by whoever hosts
+/// (spec §7.1.1 (a)).
+#[cfg(not(target_arch = "wasm32"))]
+pub mod launcher;
 
 /// Unix time in seconds (a function, so tests can fix it).
 pub type Clock = Arc<dyn Fn() -> u64 + Send + Sync>;
@@ -71,6 +78,92 @@ pub struct VoiceConfig {
     /// This server instance (part of every room name).
     pub instance: String,
     pub clock: Clock,
+    /// A voice server of this game server's own (the bundled one, spec
+    /// §7.1.1): each grant names the address *that rider* reaches it on
+    /// ([`reach_url`]) instead of the fixed [`VoiceConfig::url`]. `None`
+    /// for an external LiveKit (`--livekit-url`): its URL is what it is.
+    pub reach: Option<VoiceReach>,
+}
+
+/// How riders reach a game server's own voice server (spec §7.1.1, §7.1.7
+/// Q5): its signalling port on the address the rider reached the game
+/// server on, or for riders from the internet the public host (the join
+/// link's host) when one is given.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceReach {
+    /// The signalling port (TCP, default 7880).
+    pub port: u16,
+    /// The host riders from the internet use (a name or an address).
+    pub public_host: Option<String>,
+}
+
+/// Whether `ip` is on this machine or the local network (loopback,
+/// private, link-local, unique local, carrier-grade NAT).
+pub fn is_local_network(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip.to_canonical() {
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                // 100.64.0.0/10 (RFC 6598): behind the same provider NAT.
+                || (o[0] == 100 && (o[1] & 0xc0) == 64)
+        }
+        IpAddr::V6(v6) => v6.is_loopback() || v6.is_unique_local() || v6.is_unicast_link_local(),
+    }
+}
+
+/// `host` as the host part of a URL (IPv6 addresses in brackets).
+pub fn url_host(host: &str) -> String {
+    match host.parse::<std::net::Ipv6Addr>() {
+        Ok(v6) => format!("[{v6}]"),
+        Err(_) => host.to_owned(),
+    }
+}
+
+/// The voice URL a rider connected from `remote` can reach, `local` being
+/// this server's address the rider's packets arrived at: riders on this
+/// machine or the local network get that address; riders from the
+/// internet the public host when one is given, else that address (a host
+/// with a public address of its own). `None`: nothing known, the
+/// configured URL stays.
+pub fn reach_url(
+    reach: &VoiceReach,
+    local: Option<std::net::IpAddr>,
+    remote: std::net::SocketAddr,
+) -> Option<String> {
+    let local = local
+        .map(|ip| ip.to_canonical())
+        .filter(|ip| !ip.is_unspecified());
+    let host = if is_local_network(remote.ip()) {
+        local.map(|ip| ip.to_string())
+    } else {
+        reach
+            .public_host
+            .clone()
+            .or_else(|| local.map(|ip| ip.to_string()))
+    }?;
+    Some(format!("ws://{}:{}", url_host(&host), reach.port))
+}
+
+/// What a voice access token allows (spec §7: join, subscribe, publish the
+/// microphone only). One place for the grants, so the per-rider grants of
+/// §7.1.7 Q6 / Q8 (who may hear whom) can narrow them later.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenGrants {
+    pub can_publish: bool,
+    pub can_subscribe: bool,
+}
+
+impl TokenGrants {
+    /// A rider's grants today: publish the microphone, subscribe.
+    pub fn rider() -> Self {
+        Self {
+            can_publish: true,
+            can_subscribe: true,
+        }
+    }
 }
 
 impl std::fmt::Debug for VoiceConfig {
@@ -102,6 +195,7 @@ impl VoiceConfig {
             room_prefix: "ocw".into(),
             instance: new_instance_id(),
             clock: system_clock(),
+            reach: None,
         }
     }
 
@@ -170,6 +264,18 @@ impl VoiceConfig {
     /// [`VoiceConfig::token_ttl_s`]: join, publish the microphone only,
     /// subscribe; no data, no video, no room administration.
     pub fn access_token(&self, room: &str, identity: &str, name: &str, now_unix_s: u64) -> String {
+        self.access_token_with(room, identity, name, now_unix_s, &TokenGrants::rider())
+    }
+
+    /// [`VoiceConfig::access_token`] with explicit grants.
+    pub fn access_token_with(
+        &self,
+        room: &str,
+        identity: &str,
+        name: &str,
+        now_unix_s: u64,
+        grants: &TokenGrants,
+    ) -> String {
         let claims = serde_json::json!({
             "iss": self.api_key,
             "sub": identity,
@@ -179,8 +285,8 @@ impl VoiceConfig {
             "video": {
                 "room": room,
                 "roomJoin": true,
-                "canPublish": true,
-                "canSubscribe": true,
+                "canPublish": grants.can_publish,
+                "canSubscribe": grants.can_subscribe,
                 "canPublishData": false,
                 "canPublishSources": ["microphone"],
                 "canUpdateOwnMetadata": false,
@@ -615,5 +721,87 @@ mod tests {
         );
         assert!(g.token.is_empty() && g.error.contains("invalid group name"));
         assert!(g.room.is_empty() && g.url.is_empty());
+    }
+
+    #[test]
+    fn reach_url_names_the_address_the_rider_reaches() {
+        let sa = |s: &str| s.parse::<std::net::SocketAddr>().unwrap();
+        let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
+        let lan = VoiceReach {
+            port: 7880,
+            public_host: None,
+        };
+        let public = VoiceReach {
+            port: 7880,
+            public_host: Some("ride.example.org".into()),
+        };
+        // This machine and the LAN: the address the packets arrived at.
+        for reach in [&lan, &public] {
+            assert_eq!(
+                reach_url(reach, Some(ip("127.0.0.1")), sa("127.0.0.1:5000")).as_deref(),
+                Some("ws://127.0.0.1:7880")
+            );
+            assert_eq!(
+                reach_url(reach, Some(ip("192.168.1.20")), sa("192.168.1.31:5000")).as_deref(),
+                Some("ws://192.168.1.20:7880")
+            );
+            assert_eq!(
+                reach_url(reach, Some(ip("fd00::20")), sa("[fd00::31]:5000")).as_deref(),
+                Some("ws://[fd00::20]:7880")
+            );
+        }
+        // IPv4-mapped addresses of a dual-stack socket count as IPv4.
+        assert_eq!(
+            reach_url(
+                &lan,
+                Some(ip("::ffff:10.0.0.2")),
+                sa("[::ffff:10.0.0.9]:5000")
+            )
+            .as_deref(),
+            Some("ws://10.0.0.2:7880")
+        );
+        // From the internet: the public host (the join link's host, Q5),
+        // else the address reached (a host with a public address).
+        assert_eq!(
+            reach_url(&public, Some(ip("192.168.1.20")), sa("203.0.113.7:5000")).as_deref(),
+            Some("ws://ride.example.org:7880")
+        );
+        assert_eq!(
+            reach_url(&lan, Some(ip("198.51.100.4")), sa("203.0.113.7:5000")).as_deref(),
+            Some("ws://198.51.100.4:7880")
+        );
+        // Nothing known: the configured URL stays.
+        assert_eq!(reach_url(&lan, None, sa("192.168.1.31:5000")), None);
+        assert_eq!(
+            reach_url(&lan, Some(ip("0.0.0.0")), sa("192.168.1.31:5000")),
+            None
+        );
+        assert_eq!(url_host("2001:db8::1"), "[2001:db8::1]");
+        assert_eq!(url_host("ride.example.org"), "ride.example.org");
+        assert!(is_local_network(ip("100.72.1.1")) && !is_local_network(ip("100.128.0.1")));
+    }
+
+    #[test]
+    fn grants_can_be_narrowed() {
+        let c = config(1_900_000_000);
+        let t = c.access_token_with(
+            "r",
+            "rider-1",
+            "Ada Rider",
+            1_900_000_000,
+            &TokenGrants {
+                can_publish: false,
+                can_subscribe: true,
+            },
+        );
+        let claims = verify_jwt_hs256(&t, c.api_secret.as_bytes()).unwrap();
+        assert_eq!(claims["video"]["canPublish"], false);
+        assert_eq!(claims["video"]["canSubscribe"], true);
+        let d = verify_jwt_hs256(
+            &c.access_token("r", "rider-1", "Ada Rider", 1_900_000_000),
+            c.api_secret.as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(d["video"]["canPublish"], true);
     }
 }

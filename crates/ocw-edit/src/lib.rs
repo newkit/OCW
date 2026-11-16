@@ -21,6 +21,12 @@
 //!   saved views). The world patch operations of 16C / E5 plug in as more
 //!   [`world::WorldOp`]s (or a document kind of their own).
 //!
+//! - [`route`]: the Routes workspace's document (via-points and legs on a
+//!   package's road graph, the imported track and its problem sections),
+//!   the [`route::Editor`] that turns route edits into commands with the
+//!   built-in planner, imports (GPX, TCX, GeoJSON, FIT, matched onto the
+//!   graph) and exports ([`route::formats`]).
+//!
 //! **Adding a document kind:** implement [`DocumentKind`] for the content
 //! type – `apply` changes it and returns the inverse operation, `merges`
 //! says which consecutive operations are one undo step (a drag, typing) –
@@ -28,6 +34,7 @@
 
 pub mod autosave;
 pub mod document;
+pub mod route;
 pub mod selection;
 pub mod session;
 pub mod validate;

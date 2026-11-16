@@ -91,6 +91,11 @@ impl GameAudio {
         self.engine.send(MixerMsg::Cue(cue, Instant::now()));
     }
 
+    /// Any mixer message (the ride photographer's shutter and drone).
+    pub fn send(&self, msg: MixerMsg) {
+        self.engine.send(msg);
+    }
+
     #[cfg(test)]
     pub fn status(&self) -> &AudioStatus {
         &self.status

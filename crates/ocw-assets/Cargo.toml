@@ -26,6 +26,8 @@ glam.workspace = true
 # glTF 2.0 reader (MIT OR Apache-2.0), the version Bevy's loader uses; no
 # `import` feature (no image decoding, no file access).
 gltf.workspace = true
+# Data-URI buffers of `.gltf` files (spec §14 Phase 15, 15D).
+base64.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true

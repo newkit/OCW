@@ -11,8 +11,9 @@ running on them and the queue of runs waiting for a build slot.
 Standard library only. The server listens on all addresses by default
 (--host 127.0.0.1 for local only). Its only write actions need the token of
 config/dashboard-token: answering the spec's open questions, and enabling or
-disabling build machines and setting their build slots
-(config/build-machines.toml, see build_machines.py).
+disabling build machines and setting their build slots, and the number of
+agents that may run on the coordinator (config/build-machines.toml, see
+build_machines.py).
 Host names, addresses and user names never leave this
 process: machines are identified by their config `name`, and every string
 taken from a machine or from ssh is masked before it is stored.
@@ -50,7 +51,7 @@ HERE = Path(__file__).resolve().parent
 # page knows the version it was served with and reloads itself when the
 # server runs another one (after a pull and a restart), so an open tab never
 # keeps an old page.
-VERSION = "1.4.1"
+VERSION = "1.5.0"
 POLL_INTERVAL_S = 5.0
 # Build slots per machine, as in scripts/remote.sh: the machine's `slots`
 # (or [defaults] slots) in machines.toml, else these per-OS defaults.
@@ -1420,6 +1421,7 @@ class Dashboard:
         if getattr(self, "art_log", None) is not None:
             status["art"] = art_status(self.art_log)
         add_coordinator(status, getattr(self, "coordinator", None), getattr(self, "prompt_mask", None))
+        add_agents(status, bm)
         # The page shows the enable/disable and slot controls only then.
         status["machine_settings"] = bool(bm is not None and not bm.read_only and getattr(self, "token", None))
         # The Restart button (with the token), and since when this process runs.
@@ -1452,6 +1454,41 @@ def add_coordinator(status: dict, coord, mask=None) -> dict:
         ct = coord.tasks.status(status.get("machines") or [], p.get("claude_sessions"), p.get("claude_session_rss"))
         status["claude_tasks"] = mask.deep(ct) if mask else ct
     return status
+
+
+def add_agents(status: dict, bm) -> dict:
+    """`agents`: how many agents may run on the coordinator (the setting of
+    build-machines.toml, else the default) against the running ones of the
+    Claude tasks ("agents N of M", level ok / warn at the limit / bad above
+    it), with the coordinator's available memory."""
+    setting = bm.coordinator() if bm is not None else {
+        "max_agents": build_machines.DEFAULT_AGENTS, "source": "default", "default": build_machines.DEFAULT_AGENTS,
+        "min": build_machines.MIN_AGENTS, "max": build_machines.MAX_AGENTS, "changed_by": "", "changed_at": ""}
+    ct = status.get("claude_tasks")
+    running = claude_tasks.count_running(ct.get("running") or []) if ct else None
+    a = dict(setting, **claude_tasks.agent_slots(running, setting["max_agents"]))
+    mem = (status.get("coordinator") or {}).get("memory") or {}
+    a["mem_available"], a["mem_total"] = mem.get("available"), mem.get("total")
+    status["agents"] = a
+    return status
+
+
+def agents_text(a: dict) -> str:
+    """The --once line of the agent limit."""
+    if not a:
+        return ""
+    extra = []
+    if a.get("free") is not None:
+        extra.append("%d free" % a["free"])
+    if a.get("level") == "warn":
+        extra.append("AT THE LIMIT")
+    elif a.get("level") == "bad":
+        extra.append("ABOVE THE LIMIT")
+    if a.get("mem_available") is not None:
+        extra.append("%s available" % fmt_bytes(a["mem_available"]))
+    return "Agents on the coordinator: %s (%s)%s" % (
+        a["text"], "set in the dashboard" if a.get("source") == "dashboard" else "default",
+        "; " + ", ".join(extra) if extra else "")
 
 
 def apply_settings(states: list, machines: list, bm) -> list:
@@ -1586,6 +1623,8 @@ def format_text(status: dict) -> str:
         lines += [x for x in coordinator.text_lines(status["coordinator"]) if not x.startswith(("ALERT ", "WARN "))]
     if "claude_tasks" in status:
         lines += claude_tasks.text_lines(status["claude_tasks"])
+    if status.get("agents"):
+        lines += [agents_text(status["agents"]), ""]
     for m in status["machines"]:
         setting = machine_setting_text(m)
         if not m.get("online"):
@@ -1949,6 +1988,8 @@ def make_handler(dash: Dashboard):
                 return self._post_machine()
             if path == "/api/restart":
                 return self._post_restart()
+            if path == "/api/coordinator":
+                return self._post_coordinator()
             if path != "/api/answers":
                 return self._send(404, b"not found\n", "text/plain")
             self._post_answer()
@@ -1976,6 +2017,25 @@ def make_handler(dash: Dashboard):
             except ValueError as ex:
                 return self._json(400, {"error": str(ex)[:200]})
             self._json(200, {"ok": True, "machine": m.name, "settings": e})
+
+        def _post_coordinator(self):
+            """POST /api/coordinator {"max_agents", "by"?} with the token
+            header: how many agents may run on the coordinator (1-16,
+            config/build-machines.toml)."""
+            bm, token = getattr(dash, "build_machines", None), getattr(dash, "token", None)
+            if bm is None or bm.read_only or not token:
+                return self._json(404, {"error": "machine settings are off"})
+            if not answers.token_ok(token, self.headers.get(answers.TOKEN_HEADER)):
+                return self._json(403, {"error": "wrong or missing token (config/dashboard-token)"})
+            body = self._body()
+            if body is None:
+                return
+            try:
+                c = bm.set_max_agents(body.get("max_agents"), body.get("by") or "dashboard", "dashboard",
+                                      [x.name for x in dash.machines])
+            except ValueError as ex:
+                return self._json(400, {"error": str(ex)[:200]})
+            self._json(200, {"ok": True, "settings": c})
 
         def _post_restart(self):
             """POST /api/restart with the token header: the dashboard starts
@@ -3118,6 +3178,7 @@ def main(argv=None) -> int:
             dash.coordinator.tick(block=True)
             dash.coordinator.tasks.refresh()
             add_coordinator(status, dash.coordinator, Masker([s for m in machines for s in m.secrets()], ()))
+        add_agents(status, dash.build_machines)
         print(json.dumps(status, indent=2) if a.json else format_text(status))
         return 0
     if a.no_machine_settings:

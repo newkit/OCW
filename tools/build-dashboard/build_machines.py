@@ -24,6 +24,18 @@ reads it with its `field` lookup:
   applies to runs started after the change.
 - `note`: a short free-text note shown on the dashboard card (any state).
 
+The same file holds the coordinator's setting (dashboard 1.5.0): how many
+agents (Claude Code subagents in worktrees) may run on the coordinator (deb)
+at once. The table comes before the machines; remote.sh's lookup skips it:
+
+    [coordinator]
+    max_agents = 5
+    changed_by = "dashboard"
+    changed_at = "2026-11-16T15:00:00+01:00"
+
+No table or no valid `max_agents`: the default (5). The dashboard and the
+CLI set 1-16; scripts/agent-slots.sh compares it with the running agents.
+
 The build dashboard changes it (POST /api/machines with the token of
 config/dashboard-token); every change is one JSON line in
 test-output/build-log/DAY/machines.jsonl (who, when, what) for the art
@@ -32,6 +44,7 @@ project. From a shell:
     python3 tools/build-dashboard/build_machines.py list
     python3 tools/build-dashboard/build_machines.py set leela --disable --reason "kiosk only"
     python3 tools/build-dashboard/build_machines.py set marge --enable --slots 3
+    python3 tools/build-dashboard/build_machines.py agents 4
 """
 
 from __future__ import annotations
@@ -50,6 +63,10 @@ FILE_NAME = "build-machines.toml"
 LOG_NAME = "machines.jsonl"
 MIN_SLOTS, MAX_SLOTS = 1, 8          # what the dashboard and the CLI may set
 MAX_FILE_SLOTS = 64                  # what a hand-edited file may hold (0 = no limit)
+MIN_AGENTS, MAX_AGENTS = 1, 16      # agents on the coordinator: what the dashboard and the CLI may set
+DEFAULT_AGENTS = 5                   # deb ran out of memory with ~10 agents (2026-11-15)
+MAX_FILE_AGENTS = 64                 # what a hand-edited file may hold
+COORDINATOR = "coordinator"          # the table's name, and the `machine` of its log lines
 MAX_REASON = 200
 MAX_BY = 40
 _CTRL = re.compile(r"[\x00-\x1f\x7f]")
@@ -60,6 +77,8 @@ HEADER = """\
 # git-ignored. scripts/remote.sh refuses `run` and `sync` on a machine with
 # enabled = false (exit 3; ssh, fetch, put and deploys stay allowed). `slots`
 # wins over machines.toml and the OS default; OCW_REMOTE_SLOTS wins for a call.
+# [coordinator] max_agents: agents that may run at once on the coordinator
+# (deb); scripts/agent-slots.sh reads it before an agent is started.
 """
 
 
@@ -108,10 +127,61 @@ def parse(text: str) -> dict:
     return out
 
 
-def render(entries: dict, order=()) -> str:
-    """The file for `entries` (name -> entry), machines in `order` first."""
+def _coordinator_table(text: str) -> dict:
+    """The raw keys of the [coordinator] table (tomllib when the file is
+    valid TOML, else a line parser like the tolerant one of machines.toml)."""
+    try:
+        import tomllib  # type: ignore
+
+        t = tomllib.loads(text).get(COORDINATOR)
+        return dict(t) if isinstance(t, dict) else {}
+    except Exception:  # ImportError or a syntax error in the file
+        pass
+    from dashboard import _KEY_RE, _parse_value
+
+    out, inside = {}, False
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        if s.startswith("["):
+            inside = s.replace(" ", "") == "[%s]" % COORDINATOR
+            continue
+        m = _KEY_RE.match(line)
+        if inside and m:
+            v = _parse_value(m.group(2))
+            if v is not None:
+                out[m.group(1)] = v
+    return out
+
+
+def parse_coordinator(text: str) -> dict:
+    """The [coordinator] table normalized: {max_agents (None when missing or
+    broken), changed_by, changed_at}."""
+    t = _coordinator_table(text)
+    n = t.get("max_agents")
+    if isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= MAX_FILE_AGENTS:
+        n = None
+    out = {"max_agents": n}
+    for k, ln in (("changed_by", MAX_BY), ("changed_at", 40)):
+        v = t.get(k)
+        out[k] = clean_text(v, ln) if isinstance(v, str) else ""
+    return out
+
+
+def render(entries: dict, order=(), coordinator: dict | None = None) -> str:
+    """The file for `entries` (name -> entry), machines in `order` first,
+    with the [coordinator] table first when it holds a limit."""
     names = [n for n in order if n in entries] + sorted(n for n in entries if n not in order)
     out = [HEADER]
+    c = coordinator or {}
+    if c.get("max_agents") is not None:
+        out.append("[%s]" % COORDINATOR)
+        out.append("max_agents = %d" % c["max_agents"])
+        for k in ("changed_by", "changed_at"):
+            if c.get(k):
+                out.append("%s = %s" % (k, toml_str(c[k])))
+        out.append("")
     for n in names:
         e = entries[n]
         out.append("[[machine]]")
@@ -137,6 +207,7 @@ class BuildMachines:
         self.lock = threading.Lock()
         self._key = None
         self._entries: dict = {}
+        self._coord: dict = {}
         self.error = None
         self.read_only = False  # dashboard --no-machine-settings
 
@@ -145,16 +216,47 @@ class BuildMachines:
             st = self.path.stat()
             key = (st.st_mtime_ns, st.st_size)
         except OSError:
-            self._key, self._entries, self.error = None, {}, None
+            self._key, self._entries, self._coord, self.error = None, {}, {}, None
             return {}
         if key != self._key:
             try:
-                self._entries = parse(self.path.read_text(encoding="utf-8"))
+                text = self.path.read_text(encoding="utf-8")
+                self._entries, self._coord = parse(text), parse_coordinator(text)
                 self.error = None
             except (OSError, UnicodeDecodeError) as e:
-                self._entries, self.error = {}, "%s: %s" % (self.path.name, type(e).__name__)
+                self._entries, self._coord, self.error = {}, {}, "%s: %s" % (self.path.name, type(e).__name__)
             self._key = key
         return self._entries
+
+    def coordinator(self) -> dict:
+        """The coordinator's setting: max_agents (the file, else the
+        default), where it is from, and who changed it when."""
+        self.entries()  # re-reads the file when it changed
+        c = self._coord or {}
+        n = c.get("max_agents")
+        return {"max_agents": n if n is not None else DEFAULT_AGENTS,
+                "source": "dashboard" if n is not None else "default", "default": DEFAULT_AGENTS,
+                "min": MIN_AGENTS, "max": MAX_AGENTS, "changed_by": c.get("changed_by") or "",
+                "changed_at": c.get("changed_at") or ""}
+
+    def set_max_agents(self, n, by: str = "dashboard", source: str = "dashboard", order=()) -> dict:
+        """Sets how many agents may run on the coordinator (validated, 1-16),
+        writes the file atomically (the machines' entries unchanged) and logs
+        the change; returns the new setting."""
+        if isinstance(n, bool) or not isinstance(n, int) or not MIN_AGENTS <= n <= MAX_AGENTS:
+            raise ValueError("max_agents must be a whole number from %d to %d" % (MIN_AGENTS, MAX_AGENTS))
+        by = clean_text(by, MAX_BY) or source
+        with self.lock:
+            entries = {k: dict(v) for k, v in self.entries().items()}
+            before = self.coordinator()
+            now = self.clock()
+            self._write(render(entries, order, {"max_agents": n, "changed_by": by, "changed_at": iso(now)}))
+            after = self.coordinator()
+            self._log_line(now, {"time": iso(now), "machine": COORDINATOR, "source": source, "by": by,
+                                 "changes": {"max_agents": [before["max_agents"], after["max_agents"]]}
+                                 if before["max_agents"] != after["max_agents"] else {},
+                                 "max_agents": after["max_agents"]})
+            return after
 
     def effective(self, m) -> dict:
         """The settings of Machine m that remote.sh applies: enabled, slots
@@ -202,7 +304,7 @@ class BuildMachines:
             now = self.clock()
             e["changed_by"], e["changed_at"] = by, iso(now)
             entries[m.name] = e
-            self._write(render(entries, order))
+            self._write(render(entries, order, self._coord))
             after = self.effective(m)
             self._log(now, m.name, source, by, before, after)
             return after
@@ -215,6 +317,11 @@ class BuildMachines:
                 f.write(text)
             os.chmod(tmp, 0o644)
             os.replace(tmp, self.path)
+            # What was written is the state now, also when a quick second
+            # write leaves the file's mtime and size as they were.
+            st = self.path.stat()
+            self._key, self._entries, self._coord = (st.st_mtime_ns, st.st_size), parse(text), parse_coordinator(text)
+            self.error = None
         except BaseException:
             try:
                 os.unlink(tmp)
@@ -223,11 +330,14 @@ class BuildMachines:
             raise
 
     def _log(self, now, name, source, by, before, after):
+        changes = {k: [before[k], after[k]] for k in ("enabled", "slots", "reason", "note") if before[k] != after[k]}
+        self._log_line(now, {"time": iso(now), "machine": name, "source": source, "by": by, "changes": changes,
+                             "enabled": after["enabled"], "slots": after["slots"], "reason": after["reason"],
+                             "note": after["note"]})
+
+    def _log_line(self, now, line: dict):
         if self.log_root is None:
             return
-        changes = {k: [before[k], after[k]] for k in ("enabled", "slots", "reason", "note") if before[k] != after[k]}
-        line = {"time": iso(now), "machine": name, "source": source, "by": by, "changes": changes,
-                "enabled": after["enabled"], "slots": after["slots"], "reason": after["reason"], "note": after["note"]}
         try:
             d = self.log_root / time.strftime("%Y-%m-%d", time.localtime(now))
             d.mkdir(parents=True, exist_ok=True)
@@ -254,6 +364,9 @@ def main(argv=None) -> int:
     s.add_argument("--reason")
     s.add_argument("--note", help="free-text note shown on the card (\"\" clears it)")
     s.add_argument("--by", default="cli")
+    ag = sub.add_parser("agents", help="show or set how many agents may run on the coordinator (deb)")
+    ag.add_argument("max_agents", nargs="?", type=int, help="the new limit (%d-%d)" % (MIN_AGENTS, MAX_AGENTS))
+    ag.add_argument("--by", default="cli")
     a = ap.parse_args(argv)
     repo = d.HERE.parent.parent
     cfg = a.config or d.find_config_dir(repo)
@@ -269,10 +382,23 @@ def main(argv=None) -> int:
         except ValueError as e:
             print(e, file=sys.stderr)
             return 2
+    if a.cmd == "agents":
+        if a.max_agents is not None:
+            try:
+                bm.set_max_agents(a.max_agents, a.by, "cli", [x.name for x in machines])
+            except ValueError as e:
+                print(e, file=sys.stderr)
+                return 2
+        c = bm.coordinator()
+        print("agents on the coordinator: at most %d (%s)" % (c["max_agents"], "set in the dashboard"
+                                                              if c["source"] == "dashboard" else "default"))
+        return 0
     for m in machines:
         e = bm.effective(m)
         print("%-14s %-8s slots %d (%s)%s" % (m.name, "enabled" if e["enabled"] else "DISABLED", e["slots"],
                                              e["slots_source"], "".join(" – " + x for x in (e["reason"], e["note"]) if x)))
+    c = bm.coordinator()
+    print("%-14s at most %d agents (%s)" % ("coordinator", c["max_agents"], c["source"]))
     return 0
 
 

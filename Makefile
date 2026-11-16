@@ -33,21 +33,21 @@ endif
 # ffmpeg for videos, rsync/git for scripts/remote.sh. FUSE 2 (to run
 # AppImages such as appimagetool) comes separately in deps-linux-debian:
 # libfuse2t64 on Debian 13 / Ubuntu 24.04, libfuse2 before.
-APT_PACKAGES := build-essential pkg-config curl git rsync \
+APT_PACKAGES := build-essential pkg-config curl git git-lfs rsync \
 	libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 \
 	libdbus-1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
 	mesa-vulkan-drivers vulkan-tools bluez \
 	xvfb xauth weston ffmpeg libglib2.0-dev
 # The same for Fedora / RHEL (dnf). ffmpeg is handled separately in
 # deps-linux-fedora: Fedora's ffmpeg-free conflicts with RPM Fusion's ffmpeg.
-DNF_PACKAGES := gcc gcc-c++ pkgconf-pkg-config curl git rsync \
+DNF_PACKAGES := gcc gcc-c++ pkgconf-pkg-config curl git git-lfs rsync \
 	alsa-lib-devel systemd-devel wayland-devel libxkbcommon-devel libxkbcommon-x11-devel \
 	dbus-devel libX11-devel libXcursor-devel libXrandr-devel libXi-devel libxcb-devel \
 	mesa-vulkan-drivers vulkan-tools bluez \
 	xorg-x11-server-Xvfb xorg-x11-xauth weston fuse-libs glib2-devel
 # The same for Arch / Manjaro (pacman); the Vulkan driver depends on the GPU
 # (vulkan-radeon, vulkan-intel, nvidia-utils), mesa covers OpenGL.
-PACMAN_PACKAGES := base-devel pkgconf curl git rsync \
+PACMAN_PACKAGES := base-devel pkgconf curl git git-lfs rsync \
 	alsa-lib systemd-libs wayland libxkbcommon libxkbcommon-x11 \
 	dbus libx11 libxcursor libxrandr libxi libxcb \
 	mesa vulkan-icd-loader vulkan-tools bluez bluez-utils \
@@ -93,7 +93,7 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 .DEFAULT_GOAL := help
 .PHONY: help test-web-account test-web-trust version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
-	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-gpu test-web-webkit deps-webkit test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser deps-vr deps-vr-linux deps-vr-linux-debian deps-vr-linux-fedora deps-vr-linux-arch deps-vr-linux-unknown deps-vr-windows deps-vr-macostest-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
+	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-gpu test-web-webkit deps-webkit test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-voice-bundled test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser deps-vr deps-vr-linux deps-vr-linux-debian deps-vr-linux-fedora deps-vr-linux-arch deps-vr-linux-unknown deps-vr-windows deps-vr-macostest-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
@@ -392,6 +392,9 @@ LIVEKIT_SERVER ?= livekit-server
 test-web-livekit: web ## Two headless browser riders in a real `livekit-server --dev` room (the real livekit-client; skipped without the binary): join, see and hear each other, mute
 	$(CARGO) build --release -p ocw-server -p ocw-bot
 	scripts/test-web-audio.py --out test-output/web --part livekit --livekit-server $(LIVEKIT_SERVER)
+
+test-voice-bundled: ## `ocw-server --listen` starts the bundled livekit-server by itself (secret only in its environment); two headless riders get grants and hear each other; SIGKILL of the server ends it (spec §7.1, V1; skipped without the binary)
+	scripts/test-voice-bundled.sh $(LIVEKIT_SERVER)
 
 test-web-readme: deps-browser ## The README's browser walkthrough in a fresh clone: deps-web, web, web-worlds, web-serve, every README URL in the pinned browser; screenshots + verdict into test-output/web/readme-<time>/ (README_FLAGS="--keep --reuse-target": quicker reruns)
 	scripts/test-web-readme.py --out test-output/web $(README_FLAGS)

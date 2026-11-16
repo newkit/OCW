@@ -15,6 +15,18 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      # The model files are Git LFS objects (spec §14 Phase 15, Q2): pulled
+      # once and cached by their pointers' hash (the shared LFS quota).
+      - name: LFS pointers
+        shell: bash
+        run: git lfs ls-files --long | cut -d ' ' -f1 | sort > .lfs-ids
+      - uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-ids') }}
+      - name: LFS objects
+        shell: bash
+        run: git lfs pull
       # Normally ~30 s. When the Ubuntu archive or its DNS is unreachable, apt
       # waits on every fetch and the step used to hang for ~1.5 h before
       # failing (exit 100): short apt timeouts, three attempts, and a step
@@ -75,6 +87,18 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      # The model files are Git LFS objects (spec §14 Phase 15, Q2): pulled
+      # once and cached by their pointers' hash (the shared LFS quota).
+      - name: LFS pointers
+        shell: bash
+        run: git lfs ls-files --long | cut -d ' ' -f1 | sort > .lfs-ids
+      - uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-ids') }}
+      - name: LFS objects
+        shell: bash
+        run: git lfs pull
       - name: Install toolchain from rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
@@ -88,6 +112,18 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      # The model files are Git LFS objects (spec §14 Phase 15, Q2): pulled
+      # once and cached by their pointers' hash (the shared LFS quota).
+      - name: LFS pointers
+        shell: bash
+        run: git lfs ls-files --long | cut -d ' ' -f1 | sort > .lfs-ids
+      - uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-ids') }}
+      - name: LFS objects
+        shell: bash
+        run: git lfs pull
       - name: Install toolchain from rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
@@ -111,6 +147,18 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      # The model files are Git LFS objects (spec §14 Phase 15, Q2): pulled
+      # once and cached by their pointers' hash (the shared LFS quota).
+      - name: LFS pointers
+        shell: bash
+        run: git lfs ls-files --long | cut -d ' ' -f1 | sort > .lfs-ids
+      - uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-ids') }}
+      - name: LFS objects
+        shell: bash
+        run: git lfs pull
       - name: Install toolchain from rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
@@ -124,6 +172,18 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      # The model files are Git LFS objects (spec §14 Phase 15, Q2): pulled
+      # once and cached by their pointers' hash (the shared LFS quota).
+      - name: LFS pointers
+        shell: bash
+        run: git lfs ls-files --long | cut -d ' ' -f1 | sort > .lfs-ids
+      - uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-ids') }}
+      - name: LFS objects
+        shell: bash
+        run: git lfs pull
       - name: Install toolchain from rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2

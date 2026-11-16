@@ -107,7 +107,8 @@ pub enum Page {
     /// with Google or Strava, with a code on a kiosk, link the other
     /// provider, sign out.
     Account,
-    /// Controls → Unicorn mode: invert the mouse, plane or hover (the
+    /// Controls → Touch and unicorn: touch steering (spec §3.2.3: auto /
+    /// on / off, the zones' height), the unicorn's mouse and flight (the
     /// Controls page is full).
     UnicornControls,
     /// Controls → Keys and buttons (spec §3.2.1 M9): the groups, the pad's
@@ -221,7 +222,7 @@ impl Page {
             Self::Graphics => "Graphics",
             Self::RiderList => "Riders in this ride",
             Self::Account => "Account",
-            Self::UnicornControls => "Unicorn mode controls",
+            Self::UnicornControls => "Touch and unicorn mode",
             Self::Bindings => "Keys and buttons",
             Self::BindGroup(g) => crate::bindings::Group::ALL
                 .get(g)
@@ -454,7 +455,7 @@ impl Page {
             ],
             Self::Account => &[crate::account::NOTE],
             Self::UnicornControls => &[
-                "Unicorn mode flies with the cursor keys and + / - (never W A S D), or the gamepad.",
+                "Touch: tap or hold a side to steer. Unicorn: cursor keys and + / -, or the gamepad.",
             ],
             Self::Bindings => &[
                 "One key and one gamepad button per action. The menu keys, the sticks, the triggers and unicorn mode's flight keys stay fixed.",
@@ -1116,11 +1117,16 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
                 Page::Bindings,
             ),
             open_row(
-                "Unicorn mode",
-                settings
-                    .get("controls.god_flight")
-                    .ok()
-                    .map(|v| v.to_string()),
+                "Touch and unicorn",
+                Some(format!(
+                    "touch {}, {}",
+                    settings
+                        .get("controls.touch_steer")
+                        .map_or_else(|_| "auto".into(), |v| v.to_string()),
+                    settings
+                        .get("controls.god_flight")
+                        .map_or_else(|_| "plane".into(), |v| v.to_string()),
+                )),
                 Page::UnicornControls,
             ),
             // Collisions (spec §14 Phase 12A, 12D).
@@ -1136,8 +1142,10 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             },
         ],
         Page::UnicornControls => vec![
-            setting_row(settings, "controls.invert_y", "Invert mouse Y"),
-            setting_row(settings, "controls.god_flight", "Flight"),
+            setting_row(settings, "controls.touch_steer", "Touch steering"),
+            setting_row(settings, "controls.touch_zones", "Touch zones"),
+            setting_row(settings, "controls.invert_y", "Unicorn: invert Y"),
+            setting_row(settings, "controls.god_flight", "Unicorn: flight"),
         ],
         Page::Bindings | Page::BindGroup(_) | Page::BindReset => binding_rows(page, settings, true),
         Page::Accessibility => vec![
@@ -1234,6 +1242,8 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             setting_row(settings, "display.sky", "Sky"),
             setting_row(settings, "display.fps", "FPS counter"),
             setting_row(settings, "display.fullscreen", "Fullscreen (next start)"),
+            // The ride photographer (spec §2.11): photos of the ride.
+            setting_row(settings, "photographer.enabled", "Ride photographer"),
         ],
         Page::Riders => {
             let mut out: Vec<Row> = riders

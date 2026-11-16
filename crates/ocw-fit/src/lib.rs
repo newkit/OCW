@@ -10,9 +10,13 @@
 //! (the web companion can offer FIT downloads with the same code).
 //!
 //! [`decode`] reads such files back (the training history's import of
-//! rides saved before it existed, spec §14 Phase 7).
+//! rides saved before it existed, spec §14 Phase 7); [`encode_course`]
+//! writes FIT courses for head units (the studio's route export, spec §14
+//! Phase 16).
 
+mod course;
 mod decode;
+pub use course::{Course, CoursePoint, encode_course};
 pub use decode::{DecodeError, decode};
 
 /// Seconds between the Unix epoch and the FIT epoch (1989-12-31 00:00 UTC).

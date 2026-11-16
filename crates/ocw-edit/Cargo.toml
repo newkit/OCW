@@ -12,6 +12,12 @@ publish.workspace = true
 # the core (autosaves go through `AutosaveStore`; the directory store is
 # native only).
 [dependencies]
+# The world patch format (`ocw_world::patch`, 16C): the World document's
+# content; pure and wasm-safe like this crate.
+ocw-world.workspace = true
+# FIT courses and activities in and out of the Routes workspace (16D, E2);
+# pure, no dependencies.
+ocw-fit.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
