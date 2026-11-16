@@ -53,10 +53,13 @@ APP_ENV=(WGPU_BACKEND=vulkan "RUST_LOG=${RUST_LOG:-info,wgpu=warn,naga=warn}")
 X11_ENV=()
 x11_adapter=${WGPU_ADAPTER_NAME:-${OCW_X11_ADAPTER-llvmpipe}}
 [ -n "$x11_adapter" ] && X11_ENV=("WGPU_ADAPTER_NAME=$x11_adapter")
-# Debug (default) or release build of ocw-desktop.
+# The app: ocw-desktop, or OCW_PACKAGE=ocw-studio for OCW Studio (shot
+# and shot-wayland; spec §14 Phase 16, 16G).
+PKG=${OCW_PACKAGE:-ocw-desktop}
+# Debug (default) or release build of the app.
 case "${OCW_PROFILE:-debug}" in
-  release) BUILD_FLAGS=(--release); APP=./target/release/ocw-desktop ;;
-  *) BUILD_FLAGS=(); APP=./target/debug/ocw-desktop ;;
+  release) BUILD_FLAGS=(--release); APP=./target/release/$PKG ;;
+  *) BUILD_FLAGS=(); APP=./target/debug/$PKG ;;
 esac
 # OCW_APP=PATH runs a saved ocw-desktop binary instead (no build): before /
 # after renders with another commit's build, e.g. the deployed main.
@@ -236,7 +239,7 @@ ARCHIVE_APP_ARGS=()
 case "$cmd" in
   shot)
     parse_shot_args "$@"
-    cargo build -q "${BUILD_FLAGS[@]}" -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
+    cargo build -q "${BUILD_FLAGS[@]}" -p "$PKG" ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     status=0
     timeout 300 xvfb-run -a -s "-screen 0 ${width}x${height}x24" \
       env -u WAYLAND_DISPLAY "${APP_ENV[@]}" "${X11_ENV[@]}" "$APP" "${APP_ARGS[@]}" \
@@ -245,7 +248,7 @@ case "$cmd" in
     ;;
   shot-wayland)
     parse_shot_args "$@"
-    cargo build -q "${BUILD_FLAGS[@]}" -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
+    cargo build -q "${BUILD_FLAGS[@]}" -p "$PKG" ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     start_weston "${out%.*}.weston.log"
     status=0
     timeout 300 env -u DISPLAY XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY="$socket" \
@@ -254,7 +257,7 @@ case "$cmd" in
     ;;
   video)
     parse_video_args "$@"
-    cargo build -q "${BUILD_FLAGS[@]}" -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
+    cargo build -q "${BUILD_FLAGS[@]}" -p "$PKG" ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     status=0
     timeout 1500 xvfb-run -a -s "-screen 0 ${width}x${height}x24" \
       env -u WAYLAND_DISPLAY "${APP_ENV[@]}" "${X11_ENV[@]}" "$APP" "${VIDEO_APP_ARGS[@]}" \
@@ -263,7 +266,7 @@ case "$cmd" in
     ;;
   video-wayland)
     parse_video_args "$@"
-    cargo build -q "${BUILD_FLAGS[@]}" -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
+    cargo build -q "${BUILD_FLAGS[@]}" -p "$PKG" ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     start_weston "${out%.*}.weston.log"
     status=0
     timeout 1500 env -u DISPLAY XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY="$socket" \

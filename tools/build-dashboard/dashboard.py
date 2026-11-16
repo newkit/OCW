@@ -45,6 +45,12 @@ import janitor
 import spec_questions
 
 HERE = Path(__file__).resolve().parent
+# The dashboard's version (README.md, "Versions"): bump it with every change
+# of the dashboard (server, page or systemd unit) and add a line there. The
+# page knows the version it was served with and reloads itself when the
+# server runs another one (after a pull and a restart), so an open tab never
+# keeps an old page.
+VERSION = "1.4.1"
 POLL_INTERVAL_S = 5.0
 # Build slots per machine, as in scripts/remote.sh: the machine's `slots`
 # (or [defaults] slots) in machines.toml, else these per-OS defaults.
@@ -1344,6 +1350,21 @@ def run_ssh(m: Machine, script: str, timeout: float, stdin: str | None = None, c
     return r.stdout
 
 
+def checkout_commit(repo: Path) -> str | None:
+    """The short commit of the dashboard's checkout ("-dirty" with local
+    changes), for the page's footer; None outside git."""
+    try:
+        sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "--short", "HEAD"],
+                             capture_output=True, text=True, timeout=10).stdout.strip()
+        if not sha:
+            return None
+        dirty = subprocess.run(["git", "-C", str(repo), "status", "--porcelain", "--untracked-files=no", "--",
+                                "tools/build-dashboard"], capture_output=True, text=True, timeout=10).stdout.strip()
+        return sha + ("-dirty" if dirty else "")
+    except Exception:
+        return None
+
+
 def main_checkout(repo: Path) -> Path:
     """The main checkout of a git worktree (or repo itself)."""
     try:
@@ -1404,6 +1425,7 @@ class Dashboard:
         # The Restart button (with the token), and since when this process runs.
         status["restart"] = bool(getattr(self, "token", None) and getattr(self, "restart", None))
         status["started_at"] = getattr(self, "started_at", None)
+        status["dashboard"] = {"version": VERSION, "commit": getattr(self, "commit", None)}
         watcher = getattr(self, "config_watcher", None)
         if watcher is not None and watcher.error:
             status["alerts"] = list(status.get("alerts") or []) + [{"level": "warn", "text": watcher.error}]
@@ -1863,7 +1885,8 @@ class ConfigWatcher:
 
 
 def make_handler(dash: Dashboard):
-    page = (HERE / "index.html").read_bytes()
+    # The page carries the version it was served with (@VERSION@).
+    page = (HERE / "index.html").read_bytes().replace(b"@VERSION@", VERSION.encode())
     # The tab's icon (a wheel with a status dot that the page recolours);
     # also for /favicon.ico, which browsers ask for on their own.
     icon = (HERE / "favicon.svg").read_bytes()
@@ -3027,6 +3050,7 @@ def make_coordinator(main_repo: Path, log_root: Path | None):
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="OCW build server dashboard (read-only)")
+    ap.add_argument("--version", action="version", version="OCW build dashboard " + VERSION)
     ap.add_argument("--host", default="0.0.0.0", help="address to listen on (default: all; 127.0.0.1 = local only)")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--once", action="store_true", help="poll all machines once, print text, exit")
@@ -3103,6 +3127,7 @@ def main(argv=None) -> int:
         print("writing (answers, machine settings): token in %s (enter it once on the page)"
               % (cfg / "dashboard-token").name)
     dash.started_at = time.time()
+    dash.commit = checkout_commit(repo)
     dash.restart = restart_process
     # A changed machines.toml restarts the dashboard with it.
     dash.config_watcher = ConfigWatcher(cfg, restart_process)
@@ -3123,7 +3148,8 @@ def main(argv=None) -> int:
         root = a.record or (repo / "test-output" / "build-log")
         threading.Thread(target=record_loop, args=(dash, root, a.record_interval), daemon=True).start()
     srv = ThreadingHTTPServer((a.host, a.port), make_handler(dash))
-    print("OCW build dashboard on http://%s:%d/ (%d machines, Ctrl+C to stop)" % (a.host, a.port, len(machines)))
+    print("OCW build dashboard %s (%s) on http://%s:%d/ (%d machines, Ctrl+C to stop)"
+          % (VERSION, dash.commit or "no git", a.host, a.port, len(machines)))
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

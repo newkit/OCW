@@ -54,6 +54,10 @@ run `source ~/.cargo/env` first (`drive.sh` does this itself).
 # The same on Wayland (headless weston):
 .claude/skills/run-ocw/drive.sh video-wayland /tmp/ride-wl.mp4 4 -- --cmd "camera.mode side" --cmd "teleport 2.2"
 
+# OCW Studio (spec §14 Phase 16) instead of the game: OCW_PACKAGE=ocw-studio
+# (shot / shot-wayland; studio options after --, e.g. --cmd "studio view add Pass"):
+OCW_PACKAGE=ocw-studio .claude/skills/run-ocw/drive.sh shot-wayland /tmp/studio.jpg 12 -- --world data/pilot/liechtenstein.ocwpkg
+
 # Show the console overlay in the screenshot:
 .claude/skills/run-ocw/drive.sh shot /tmp/ocw.jpg 6 -- --cmd "help" --cmd "console open"
 

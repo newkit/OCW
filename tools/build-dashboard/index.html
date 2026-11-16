@@ -146,9 +146,11 @@ footer { padding: 0 16px 24px; font-size: 12px; color: var(--muted); }
 <body>
 <header>
   <h1>OCW build servers</h1>
+  <span class="muted" id="version" title="build dashboard version (tools/build-dashboard/README.md, Versions)">v@VERSION@</span>
   <span class="muted" id="updated">loading…</span>
   <button type="button" id="restart" class="restartb" style="display:none">Restart</button>
 </header>
+<section id="update"></section>
 <section id="alerts"></section>
 <section class="overview" id="overview"></section>
 <section class="chips" id="chips"></section>
@@ -592,7 +594,7 @@ function renderCoordinator(c, alerts, now) {
 }
 
 // The Claude tasks (test-output/build-log/DAY/agents.jsonl; liveness only from the
-// task files' mtime and size, never their content), worktrees and the cutover check.
+// task files' mtime and size, never their content) and worktrees.
 let showFinished = false;
 try { showFinished = localStorage.getItem("ocw-show-finished") === "1"; } catch (e) {}
 function taskRow(t, now, done) {
@@ -608,23 +610,24 @@ function taskRow(t, now, done) {
     `<td class="n">${t.running_s != null ? dur(t.running_s) : ""}<div class="muted" style="font-size:11.5px">${t.started ? "since " + clock(t.started) : ""}</div></td>` +
     `<td>${act}</td><td class="n">${commits}</td><td>${pm}</td></tr>`;
 }
+// The worktree list stays as the viewer left it (open unless closed).
+let worktreesOpen = true;
+try { worktreesOpen = localStorage.getItem("ocw-worktrees-open") !== "0"; } catch (e) {}
 function renderTasks(ct, now) {
   const el = $("ctasks");
   if (!ct) { el.style.display = "none"; return; }
   el.style.display = "";
-  const c = ct.cutover || {}, run = ct.running || [], rec = ct.recent || [];
+  const run = ct.running || [], rec = ct.recent || [];
   const nrun = run.filter((t) => t.running).length;
   let html = `<h2><span class="dot ${nrun ? "ok" : ""}"></span>Claude tasks <span class="badge ${nrun ? "ok" : ""}">${nrun} running</span>` +
     `<span class="ctools"><label><input type="checkbox" id="show-finished"${showFinished ? " checked" : ""}> finished in 24 h (${rec.length})</label></span></h2>`;
   html += `<div class="sub">agents.jsonl of the coordinator · ${esc(ct.claude_sessions ?? "?")} Claude Code session${ct.claude_sessions === 1 ? "" : "s"} on ${esc((lastStatus.coordinator || {}).name || "deb")}` +
     `${ct.at ? ` · checked ${dur(now - ct.at)} ago` : ""}</div>`;
-  html += `<div class="cut${c.ok ? "" : " no"}"><b>${esc(c.text || "")}</b>` +
-    ((c.items || []).length ? `<ul>${c.items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>` : "") + `</div>`;
   const rows = run.map((t) => taskRow(t, now, false)).concat(showFinished ? rec.map((t) => taskRow(t, now, true)) : []);
   if (rows.length) html += `<div class="tscroll"><table><thead><tr><th>Task</th><th>Branch</th><th>State</th><th class="n">Running</th><th>Last activity</th><th class="n" title="commits on the branch not in main">Commits</th><th>Merged / pushed</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
   else html += `<div class="empty">No running tasks${showFinished ? " and none finished in the last 24 h" : ""}.</div>`;
   const wts = ct.worktrees || [], wc = ct.worktree_counts || {};
-  html += `<details class="wt"><summary>Worktrees <span class="muted">· ${esc(wc.total ?? wts.length)} in all, ${esc(wc.merged ?? "?")} merged into main, ${esc(wc.unmerged ?? "?")} not merged${wc.detached ? `, ${esc(wc.detached)} detached` : ""} – listed: main, unmerged branches with commits, and those of a task</span></summary>` +
+  html += `<details class="wt" id="wt-details"${worktreesOpen ? " open" : ""}><summary>Worktrees <span class="muted">· ${esc(wc.total ?? wts.length)} in all, ${esc(wc.merged ?? "?")} merged into main, ${esc(wc.unmerged ?? "?")} not merged${wc.detached ? `, ${esc(wc.detached)} detached` : ""} – listed: main, unmerged branches with commits, and those of a task</span></summary>` +
     `<div class="tscroll"><table><thead><tr><th>Branch</th><th>Last commit</th><th class="n">Commits</th><th>Merged / pushed</th><th>Task</th></tr></thead><tbody>` +
     wts.map((w) => `<tr><td class="wrap"><span class="cmd">${esc(w.repo)}: ${esc(w.branch || "(detached)")}</span></td>` +
       `<td class="wrap">${esc(w.sha)} ${esc(w.subject || "")}${w.commit_time ? ` <span class="muted">(${dur(now - w.commit_time)} ago)</span>` : ""}</td>` +
@@ -632,6 +635,11 @@ function renderTasks(ct, now) {
       `<td>${w.main ? `<span class="badge">main</span>` : w.new === false ? `<span class="badge">no commits yet</span>` : w.merged ? `<span class="badge ok">merged</span>` : `<span class="badge">not merged</span>`} <span class="muted">${esc(w.pushed || "")}</span></td>` +
       `<td>${esc(w.task || "")}</td></tr>`).join("") + `</tbody></table></div></details>`;
   el.innerHTML = html;
+  const wd = $("wt-details");
+  if (wd) wd.addEventListener("toggle", () => {
+    worktreesOpen = wd.open;
+    try { localStorage.setItem("ocw-worktrees-open", worktreesOpen ? "1" : "0"); } catch (err) {}
+  });
   const sf = $("show-finished");
   if (sf) sf.addEventListener("change", (e) => {
     showFinished = e.target.checked;
@@ -682,6 +690,27 @@ function render(st) {
   rb.disabled = !!restarting;
   rb.title = st.started_at ? "Restart the dashboard (running since " + new Date(st.started_at * 1000).toLocaleString() + ")" : "Restart the dashboard";
   setIcon(iconState(st));
+  checkVersion(st);
+}
+
+// The page knows the dashboard version it was served with; when the server
+// runs another one (pulled and restarted), the page reloads itself – unless
+// something is being typed, then a banner offers the reload.
+const PAGE_VERSION = "@VERSION@";
+function checkVersion(st) {
+  const d = st.dashboard || {};
+  if (d.version) $("version").textContent = "v" + PAGE_VERSION + (d.commit ? " · " + d.commit : "");
+  if (!d.version || d.version === PAGE_VERSION) { $("update").innerHTML = ""; return; }
+  const a = document.activeElement, typing = a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.value;
+  let tried = null;
+  try { tried = sessionStorage.getItem("ocw-dashboard-reload"); } catch (e) {}
+  if (!typing && tried !== d.version) {
+    try { sessionStorage.setItem("ocw-dashboard-reload", d.version); } catch (e) {}
+    location.reload();
+    return;
+  }
+  $("update").innerHTML = `<div class="alert warn">The dashboard was updated to v${esc(d.version)} (this page is v${esc(PAGE_VERSION)}). ` +
+    `<a href="" onclick="location.reload(); return false">Reload</a></div>`;
 }
 
 // The tab's icon shows the state at a glance (favicon.svg, its dot): red for

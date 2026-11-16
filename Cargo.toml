@@ -29,6 +29,8 @@ members = [
     "crates/ocw-xr",
     "crates/ocw-xr-openxr",
     "crates/ocw-auth",
+    "crates/ocw-edit",
+    "apps/studio",
     "services/accounts",
 ]
 
@@ -63,6 +65,7 @@ ocw-audio = { path = "crates/ocw-audio" }
 ocw-xr = { path = "crates/ocw-xr" }
 ocw-xr-openxr = { path = "crates/ocw-xr-openxr" }
 ocw-auth = { path = "crates/ocw-auth" }
+ocw-edit = { path = "crates/ocw-edit" }
 ocw-accounts = { path = "services/accounts" }
 
 # Bevy is pinned to an exact version (spec §3.1). Only ocw-render and apps/desktop may use it.

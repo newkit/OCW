@@ -24,7 +24,6 @@ mod known_devices;
 mod logfile;
 mod menu;
 mod monitor;
-mod platform;
 mod recording;
 mod restart;
 mod ride;
@@ -480,7 +479,7 @@ fn main() -> AppExit {
             input::InputPlugin,
             god::GodPlugin,
             automation::AutomationPlugin,
-            platform::PlatformPlugin,
+            ocw_render::platform::PlatformPlugin,
             monitor::MonitorPlugin,
             icon::IconPlugin,
         ))

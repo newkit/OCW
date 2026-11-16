@@ -290,7 +290,7 @@ fn god_keys(world: &mut World) {
 
 /// The keys of the flight: the arrows (and W A S D, Q3) by position, + / −
 /// by what they type.
-fn flight_keys(keys: &ButtonInput<KeyCode>, layout: &LayoutKeys) -> FlightKeys {
+pub fn flight_keys(keys: &ButtonInput<KeyCode>, layout: &LayoutKeys) -> FlightKeys {
     let any = |k: &[KeyCode]| keys.any_pressed(k.iter().copied());
     let pressed = |k: KeyCode| keys.pressed(k);
     let wasd = input::WASD_FLIES;
@@ -309,7 +309,7 @@ fn flight_keys(keys: &ButtonInput<KeyCode>, layout: &LayoutKeys) -> FlightKeys {
 /// A gamepad's flight controls; the triggers are read above their resting
 /// value ([`ocw_client::input::trigger_pull`]: pads differ in what a
 /// released trigger reads).
-fn pad_flight(p: &Gamepad, rest: &mut [Option<f32>; 2]) -> PadFlight {
+pub fn pad_flight(p: &Gamepad, rest: &mut [Option<f32>; 2]) -> PadFlight {
     use ocw_client::input::trigger_pull;
     let axis = |a| p.get(a).unwrap_or(0.0);
     let button = |b| p.get(b).unwrap_or(0.0);

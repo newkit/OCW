@@ -42,6 +42,8 @@ pub mod settings;
 pub mod timemachine;
 pub mod trust;
 pub mod weather;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod worlds;
 
 use bevy::prelude::*;
 use ocw_client::client::ClientCore;

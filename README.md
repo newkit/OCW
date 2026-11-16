@@ -1077,6 +1077,28 @@ FINGERPRINT`. The desktop keeps them in `~/.local/share/ocw/trusted-keys.json`
 server needs the key too (`ocw-server --trust-key FILE`); a rider who does not
 trust it leaves the ride when the host switches to that world.
 
+#### Editing a world: world patches
+
+World edits are **patches on the sources**, not edits of the built package
+(spec §14 Phase 16 16C): a TOML file `<package>.ocwpatch` that `world-builder`
+applies after reading OSM and before meshing, so the edit survives a rebuild
+from a newer extract. Operations so far: road attributes (`surface`,
+`width_m`, `class`, `oneway`, `bike = "closed"`, `name`), `remove_road`, and
+road height control points (`height_point`, `move_height_point`,
+`remove_height_point`), keyed to OSM ways / nodes, stable edge ids or
+`at = [lat, lon]`; the format and an example are in the spec. Real map errors
+belong in OpenStreetMap itself.
+
+```bash
+world-builder graph --probe X,Z                # roads near a point: way and edge ids
+world-builder package --id europe/liechtenstein --patch my.ocwpatch --out my.ocwpkg
+world-builder patch check --world my.ocwpkg my.ocwpatch [--pbf extract.osm.pbf]
+```
+
+Both list every operation as `ok`, `MISSING` (its target is gone – reported,
+never silently dropped; `patch check` exits 1) or unchecked. Sign the result
+with your own key as above.
+
 ## Connecting a gamepad
 
 Any controller that the operating system sees as a gamepad works (Xbox,

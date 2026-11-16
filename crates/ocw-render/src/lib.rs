@@ -6,6 +6,7 @@
 
 pub mod access;
 pub mod aids_hud;
+pub mod autoshot;
 pub mod bridges;
 pub mod building_material;
 pub mod camera;
@@ -33,6 +34,7 @@ pub mod night_sky;
 pub mod obstacles;
 pub mod ortho;
 pub mod package;
+pub mod platform;
 pub mod quality;
 pub mod ragdoll;
 pub mod region_look;
