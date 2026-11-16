@@ -14,17 +14,21 @@
 //! world-builder keys init-user --name "Ada Rider"  (your own key for worlds you share, spec §4.7)
 //! world-builder keys fingerprint FILE               (a key file's, a package's or a manifest's)
 //! world-builder sign --key KEY PKG | verify PKG | publish PKG --out DIR | diff OLD NEW
+//! world-builder package … --patch FILE.ocwpatch      (world patches, spec §14 Phase 16 16C)
+//! world-builder patch check --world PKG FILE [--pbf PBF]
 //! ```
 
 mod dist;
+mod patch_cmd;
 
 use std::path::PathBuf;
 use std::time::Instant;
 
 use clap::{Parser, Subcommand};
-use ocw_worldgen::build::{Polygon, Region, build_road_graph};
+use ocw_worldgen::build::{Polygon, Region, build_road_graph, build_road_graph_with};
 use ocw_worldgen::dem::{Dem, GridTile, HgtTile};
 use ocw_worldgen::osm::OsmData;
+use ocw_worldgen::patch::Patching;
 use ocw_worldgen::profile::add_profiles;
 use ocw_worldgen::stages::{end as stage_end, start as stage_start, time as stage};
 use ocw_worldgen::svg::{Colouring, graph_svg_with};
@@ -114,6 +118,16 @@ enum Cmd {
         /// stage; always printed at the end) as JSON to this file.
         #[arg(long, value_name = "FILE")]
         profile: Option<PathBuf>,
+        /// World patch (`.ocwpatch`, spec §14 Phase 16 16C) applied after
+        /// reading OSM and before meshing; repeat to stack patches (in
+        /// order). Operations whose target is gone are reported.
+        #[arg(long = "patch", value_name = "FILE")]
+        patch: Vec<PathBuf>,
+    },
+    /// World patches (spec §14 Phase 16 16C).
+    Patch {
+        #[command(subcommand)]
+        command: patch_cmd::PatchCmd,
     },
     /// Key management (spec §4.7): an offline root key signs online
     /// signing keys; signing keys sign package manifests.
@@ -1078,13 +1092,20 @@ fn prepared_graph(
     proj: &ocw_world::geo::LocalProjection,
     clean: Option<&ocw_worldgen::bridges::WaterTest>,
     log: bool,
+    mut patching: Option<&mut Patching>,
 ) -> (
     ocw_world::graph::RoadGraph,
     ocw_worldgen::build::BuildStats,
     Vec<ocw_worldgen::bridges::Span>,
 ) {
     use ocw_worldgen::clean;
-    let (mut graph, stats) = stage("build graph", || build_road_graph(osm, region));
+    let (mut graph, stats) = stage("build graph", || {
+        build_road_graph_with(osm, region, |g| {
+            if let Some(p) = patching.as_deref_mut() {
+                p.on_raw_graph(g);
+            }
+        })
+    });
     let mut snaps = Vec::new();
     if clean.is_some() {
         let h = stage("clean polylines", || clean::clean_polylines(&mut graph));
@@ -1128,6 +1149,11 @@ fn prepared_graph(
             );
         }
     }
+    // Height points last: the patch has the final say on the road heights,
+    // and the terrain is conformed to them afterwards (spec §4.3).
+    if let Some(p) = patching {
+        stage("patch: road heights", || p.on_profiles(&mut graph, proj));
+    }
     (graph, stats, spans)
 }
 
@@ -1168,14 +1194,23 @@ fn profiled_graph(
     region: &Region,
     context: Option<Region>,
     clean: Option<&ocw_worldgen::bridges::WaterTest>,
+    mut patching: Option<&mut Patching>,
 ) -> Profiled {
     let proj = region.projection();
     let (mut graph, stats, spans) = stage("region graph", || {
-        prepared_graph(osm, dem, region, &proj, clean, true)
+        prepared_graph(
+            osm,
+            dem,
+            region,
+            &proj,
+            clean,
+            true,
+            patching.as_deref_mut(),
+        )
     });
     let context = context.map(|c| {
         let (g, _, cspans) = stage("context graph", || {
-            prepared_graph(osm, dem, &c, &proj, clean, false)
+            prepared_graph(osm, dem, &c, &proj, clean, false, patching)
         });
         let taken = stage("transfer profiles", || {
             ocw_worldgen::profile::transfer_profiles(&mut graph, &g, 0.5)
@@ -1206,7 +1241,7 @@ fn route(args: RouteArgs) {
     let water = inputs
         .as_ref()
         .map(|i| ocw_worldgen::bridges::WaterTest::new(&i.areas, &i.lines, &i.outlines));
-    let graph = profiled_graph(&osm, &dem, &region, context, water.as_ref()).graph;
+    let graph = profiled_graph(&osm, &dem, &region, context, water.as_ref(), None).graph;
     let (a, b) = (
         proj.project(args.from.0, args.from.1),
         proj.project(args.to.0, args.to.1),
@@ -1363,6 +1398,8 @@ struct PackageArgs {
     origin: Option<(f64, f64)>,
     time_zone: Option<String>,
     out: PathBuf,
+    /// The world patch stack (spec §14 Phase 16 16C), in order.
+    patches: Vec<ocw_world::patch::LoadedPatch>,
 }
 
 /// The time zone a package gets (spec §14 Phase 9): `--time-zone` (checked
@@ -1387,12 +1424,18 @@ fn package(args: PackageArgs) {
         origin,
         time_zone,
         out,
+        patches,
     } = args;
     let t = Instant::now();
     let (region, context) = cut_region(&src.poly, bbox, origin);
     let proj = region.projection();
     let near = context.clone().unwrap_or_else(|| region.clone());
-    let osm = stage("read OSM roads", || read_osm(&src.pbf, &near));
+    let mut osm = stage("read OSM roads", || read_osm(&src.pbf, &near));
+    // World patches (spec §14 Phase 16 16C): the OSM tags first.
+    let mut patching = Patching::new(&patches);
+    if !patches.is_empty() {
+        stage("patch: OSM ways", || patching.on_osm(&mut osm));
+    }
     let dem = stage("elevation (DEM)", || load_dem(&src, &near));
     let clean = !no_clean;
     let ta = Instant::now();
@@ -1408,7 +1451,14 @@ fn package(args: PackageArgs) {
         })
     });
     let profiled = stage("road graph", || {
-        profiled_graph(&osm, &dem, &region, context, water_test.as_ref())
+        profiled_graph(
+            &osm,
+            &dem,
+            &region,
+            context,
+            water_test.as_ref(),
+            (!patches.is_empty()).then_some(&mut patching),
+        )
     });
     let (graph, stats) = (&profiled.graph, &profiled.stats);
     let base = |x: f64, z: f64| {
@@ -1453,9 +1503,9 @@ fn package(args: PackageArgs) {
     // strips as built (before any cleaning).
     let way_surfaces = ocw_worldgen::filter::way_surfaces(&osm);
     let surfaced = ocw_worldgen::package::apply_road_surfaces(&mut pkg, graph, |e| {
-        way_surfaces
-            .get(&e.osm_way)
-            .copied()
+        patching
+            .surface(e)
+            .or_else(|| way_surfaces.get(&e.osm_way).copied())
             .unwrap_or_else(|| ocw_world::RoadSurface::of_class(e.class))
     });
     // Lit roads from OSM `lit` (section LITR, spec §14 Phase 9 S2): the
@@ -1675,6 +1725,9 @@ fn package(args: PackageArgs) {
         println!("{line}");
     }
     print_sections(&bytes);
+    if !patches.is_empty() {
+        patch_cmd::print_report(&patching.report);
+    }
     let adj = graph.adjacency();
     println!(
         "road graph (format OCWPKG02): {} vertices, {} junctions, {} one-way edges, {} dead-end edges",
@@ -2888,8 +2941,11 @@ fn main() {
             manifest,
             sign_key,
             profile,
+            patch,
         } => {
-            // Read the key first: a bad key should not cost a whole build.
+            // Read the patches and the key first: a bad patch or key should
+            // not cost a whole build.
+            let patches = patch_cmd::load_for_build(&patch, &out, &manifest, &name);
             let key = sign_key.map(|k| {
                 ocw_worldstore::keys::read_signing_key(&k).unwrap_or_else(|e| {
                     eprintln!("{e}");
@@ -2910,12 +2966,14 @@ fn main() {
                 origin,
                 time_zone,
                 out: out.clone(),
+                patches,
             });
             stage("manifest + hash", || {
                 dist::write_manifest(&out, &manifest.args(Some(name)), key.as_ref());
             });
             print_stage_profile(profile.as_deref());
         }
+        Cmd::Patch { command } => patch_cmd::run(command),
         Cmd::Keys { command } => match command {
             KeysCmd::InitRoot { name, dir } => dist::keys_init_root(&name, dir),
             KeysCmd::InitUser { name, dir, days } => dist::keys_init_user(&name, dir, days),
@@ -3072,7 +3130,7 @@ fn main() {
                     }
                     if best <= 40.0 {
                         println!(
-                            "  {:5.1} m  {:?} {:<22} bridge {} tunnel {}  road height {:.1} m  way {}\n         {:.0} m long, v{} {:.1} m -> v{} {:.1} m, steepest {:.1} %",
+                            "  {:5.1} m  {:?} {:<22} bridge {} tunnel {}  road height {:.1} m  way {}  edge {}\n         {:.0} m long, v{} {:.1} m -> v{} {:.1} m, steepest {:.1} %",
                             best,
                             e.class,
                             e.name.as_deref().unwrap_or("-"),
@@ -3080,6 +3138,7 @@ fn main() {
                             e.tunnel,
                             e.height_at(at).unwrap_or(f64::NAN),
                             e.osm_way,
+                            e.id.0,
                             e.length_m(),
                             e.from.0,
                             e.profile.first().copied().unwrap_or(f64::NAN),
@@ -3197,6 +3256,49 @@ mod tests {
         assert_eq!(src.hgt, vec![PathBuf::from("data/pilot/N47E009.hgt")]);
         assert_eq!(src.dem_cell, Some(4.0));
         assert_eq!(manifest.dem_attribution, vec!["lgl-dgm1", "srtm"]);
+    }
+
+    /// World patches (spec §14 Phase 16 16C): a stack on `package`, and
+    /// `patch check`.
+    #[test]
+    fn patch_arguments() {
+        let cli = Cli::try_parse_from([
+            "world-builder",
+            "package",
+            "--patch",
+            "a.ocwpatch",
+            "--patch",
+            "b.ocwpatch",
+        ])
+        .unwrap();
+        let Cmd::Package { patch, .. } = cli.command else {
+            panic!("package");
+        };
+        assert_eq!(
+            patch,
+            vec![PathBuf::from("a.ocwpatch"), PathBuf::from("b.ocwpatch")]
+        );
+        let cli = Cli::try_parse_from([
+            "world-builder",
+            "patch",
+            "check",
+            "--world",
+            "w.ocwpkg",
+            "a.ocwpatch",
+            "--pbf",
+            "x.pbf",
+        ])
+        .unwrap();
+        let Cmd::Patch {
+            command: patch_cmd::PatchCmd::Check { world, patch, pbf },
+        } = cli.command
+        else {
+            panic!("patch check");
+        };
+        assert_eq!(world, PathBuf::from("w.ocwpkg"));
+        assert_eq!(patch.len(), 1);
+        assert_eq!(pbf.len(), 1);
+        assert!(Cli::try_parse_from(["world-builder", "patch", "check", "--world", "w"]).is_err());
     }
 
     #[test]

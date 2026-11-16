@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 4.01 – November 2026
+Version 4.02 – November 2026
 
 | Version | Change |
 |---|---|
+| 4.02 | **World patches: the `.ocwpatch` format and its application in `world-builder`** (§14 Phase 16 E5 step 1, 16C; tested without UI): a versioned TOML file (`ocwpatch = 1`, the target package id, `[[source]]` entries with the licence of imported data, §13) with a list of `[[op]]` operations keyed to OSM ways / nodes, stable edge ids (§4.4, as strings) or lat / lon; the first operations: road attributes (surface, width, class, one-way, bike access closed, name), removing a road from the ridable graph, and road height control points (add / move / remove, the road passing through the point, the correction fading along the graph over a radius, the terrain conformed afterwards, §4.3). `world-builder package … --patch FILE` (repeatable, a stack) applies it after reading OSM and before meshing; `world-builder patch check --world PKG FILE [--pbf …]` lists every operation as applied / MISSING (target gone, never silently dropped) / unchecked and exits 1 on a missing target; `graph --probe` prints edge ids. Pure, wasm-safe format and graph part in `ocw_world::patch`, the OSM tag part in `ocw_worldgen::patch`. Tests: round trip, errors with line numbers, each operation on a fixture graph and through the mini-region pipeline, a gone target after a rebuild from the newer extract, byte-identical packages, the Liechtenstein pilot sources |
 | 4.01 | **Voice built in and always on: the voice server comes with the app and every host starts it; Voice room *Everybody* by default, *Selected riders* as an option** (asked by the user 2026-11-16; §7.1, pointers in §2.4, §2.6, §3.2.1, §7, §11.2, §11.3, Phase 6, Phase 10 B5 / B8; planning). Today voice needs a separately run LiveKit server given to `ocw-server`; the in-app host and the kiosk have none. Proposal: bundle LiveKit's `livekit-server` (19–20 MB compressed, 57 MB unpacked; no macOS binary upstream) in every package and start it as a child of whoever hosts (Ride → Host a ride, the kiosk, `ocw-server`) with keys generated per start and one UDP port (TCP 7880 / 7881, UDP 7882), the grant carrying the URL each rider can reach; an own Rust audio SFU (`str0m`) in `ocw-server` as a later option; P2P not proposed. *Everybody*: the whole session heard, spatial volume never silent, 24 voices with active speakers first; *Selected riders* (`voice.room`, `voice.selected` by account id or rider name): only their tracks subscribed; *Who hears me* through LiveKit's track permissions, block and per-rider volume proposed; browsers on home hosts need a signalling bridge over WebTransport (no CA certificate for `wss://`). Open: §7.1.7 Q-V1 – Q-V9 |
 | 4.00 | **All four build machines build: leela again, Win11Builder for any work** (the user, 2026-11-16: "use all build servers now"; §11.2, CLAUDE.md): leela, excluded since 2026-11-13, takes heavy Linux work and full merge checks when marge is busy; Win11Builder takes general builds and tests behind its Windows work, within its one slow slot. All four were already enabled in the dashboard |
 | 3.99 | **All world packages are rebuilt and deployed once the junction profile work (J2) is checked; until then J1 runs on the current packages** (decision from the build dashboard, 2026-11-16; §4.8.8 Q5, as proposed). All §4.8.8 questions are decided |
@@ -5203,6 +5204,67 @@ A world package is **built** by `world-builder` from an OSM extract and a DEM (p
   - the package's name, description and the regional look (`region_look`).
 - **World set:** a package's bounds and tiles, and its neighbours (§4.7, geographic adjacency). Changing the bounds means a new build.
 
+**Built (v4.02, E5 step 1): the world patch format and its application in `world-builder`, without UI.**
+- **Where:** the format, its checks, the patch stack and everything that acts on a road graph are in `ocw_world::patch` (pure and wasm-safe, so the studio's live preview and the later browser studio can use it; `toml` was already used by the wasm client crates). The OSM tag edits of way targets are in `ocw_worldgen::patch` (they need the builder's `OsmData`), with `Patching`, which carries a stack through the build stages; the CLI is `apps/world-builder/src/patch_cmd.rs`. No new crate: the format belongs with the road graph types it refers to, and `ocw-edit` (16A) will hold the undo / redo commands over it.
+- **Format (`<package>.ocwpatch`, TOML):**
+  - header: `ocwpatch = 1` (the format version; a newer version is refused with "update OCW", a file without it is "not a world patch"), `package` (the manifest id it is made for; `package --patch` and `patch check` refuse a patch for another package), optional `title`, `author`, `description`;
+  - `[[source]]`: imported data the operations use, each with `what` and `licence` (required, §13), optional `by`, `url`;
+  - `[[op]]`: the operations in order, a later one wins; `op = "<kind>"` names the kind, every kind has an optional `note`. Unknown keys and kinds are errors (a typo is never ignored). Later kinds are new `op` names, so old patches keep their meaning.
+  - targets: `way = <OSM way id>` (every edge of the way; applied to the OSM tags, so rideability, class, width, surface and the road dress follow), `edge = "<stable edge id>"` (a decimal string, since the 64-bit ids exceed TOML integers; as in `ocw-graph-route` files; `world-builder graph --probe X,Z` prints them), `node = <OSM node id>` or `at = [lat, lon]` for positions.
+  - errors name the line (`line 14: [[op]] 3 (road): unknown surface "lava" …`); writing a patch and reading it back gives the same patch and the same text.
+- **Operations built:**
+  - `road` – any of `surface` (an OSM `surface` value; on a way it also drops `smoothness`), `width_m` (1 – 30 m), `class` (trunk, primary, secondary, tertiary, unclassified, residential, service, track, cycleway, path – the OSM `highway` values; on an edge the width follows the class when it was the old class's default; `path` on a way adds `bicycle=yes`, since paths are ridable only with bike access), `oneway` (`no`, `forward`, `backward` along the way / edge), `bike = "closed"` (on a way `bicycle=no`; the road leaves the ridable graph as OSM's own `bicycle=no` does), `name` (empty removes it);
+  - `remove_road` – the way or edge leaves the ridable graph (before the graph cleanup, so a part cut off by it is dropped as any fragment, §4.4);
+  - `height_point` (`id`, `at` or `node`, optional `edge` to snap only to that edge, `height_m` or `raise_m`, `radius_m` default 100 m), `move_height_point` (`id` and any of the same fields) and `remove_height_point` (`id`) – road profile control points. A point snaps to the nearest road with a profile within 15 m; the road passes through the asked height there (read as `Edge::height_at` reads it, between the 5 m samples), and the correction fades out by a raised cosine of the **distance along the graph**, so it crosses junctions and every road end at a junction keeps one height. Overlapping points are solved together (Gauss–Seidel on their amplitudes). They are applied last, after the profiles and their cleaning (§4.3, §4.8), so the patch has the final say, and the terrain is conformed to the changed road afterwards (§4.3 step 4); the gradient limits are not re-applied. Moves and removals may refer to points of an earlier patch in the stack (an official patch, then the user's).
+- **Application in the build** (`world-builder package … --patch FILE`, repeatable: a stack, in order): the way targets change the OSM tags right after reading OSM; edge targets act on the raw graph before its cleanup (`build::build_road_graph_with`; on the region and on a `--bbox` part's context graph); height points after the profiles; edge surfaces in the road surface section (`RSRF`). The build prints one line per operation: `ok` with what it did, **`MISSING`** with why (the way, edge, node or road is gone – reported, never silently dropped, and the build goes on) or `?` unchecked, and a warning when anything is missing.
+- **`world-builder patch check --world PKG FILE… [--pbf PBF]`:** checks a stack against a built package: edge targets and height points against the package's graph, way targets against the graph (or the OSM extract with `--pbf`, which also places node targets; without it they stay unchecked); exits 1 when a target is gone.
+- **Tests** (no network or GPU): parse / serialise round trip; errors with lines (unknown kind and key, bad surface, two targets, duplicate ids, versions, missing licence, broken TOML); each operation on a small hand-made graph (attributes on edges and ways, removal and closure, a point in a straight road, one next to a junction, overlapping points, points between samples, gone targets, a later patch moving and removing earlier points); the OSM tag edits on the mini fixture; the mini region through the whole pipeline with a patch (`tests/patch.rs`: class, name, surface and width in the strips, the removed way gone, the road 4 m lower at a node and the terrain following it, 200 m away unchanged); a rebuild from the newer extract `mini-v2` reports the removed way as missing and applies the rest; the same sources and patch give **byte-identical packages**; the Liechtenstein pilot sources (graph level, `$OCW_PILOT_DIR` or `data/pilot`); `patch check` against a package with and without the OSM sources. Checked end to end on the pilot on marge: two builds with the same patch had the same SHA-256, the patch check found the one missing way.
+- **Example:**
+
+```toml
+# Hand-made example (made-up edits).
+ocwpatch = 1
+package = "europe/liechtenstein"
+title = "Vaduz fixes"
+author = "Ada Rider"
+
+[[source]]
+what = "surfaces checked on site, 2026-11"
+licence = "CC0-1.0"
+by = "Ada Rider"
+
+[[op]]
+op = "road"
+way = 571067337
+surface = "paving_stones"
+name = "Städtle"
+
+[[op]]
+op = "road"
+edge = "16407270504395176405"
+width_m = 8.0
+oneway = "forward"
+
+[[op]]
+op = "remove_road"
+way = 677925751
+note = "closed for bikes on site"
+
+[[op]]
+op = "height_point"
+id = "staedtle-dip"
+at = [47.1410, 9.5215]
+raise_m = 3.0
+radius_m = 60
+
+[[op]]
+op = "move_height_point"     # e.g. in a later patch of the stack
+id = "staedtle-dip"
+height_m = 461.0
+```
+
+- **Still open after step 1:** the other operations of the list above (split / join, new connections, bridges and tunnels, smoothing, terrain stamps, areas, objects, buildings, ride metadata, world set); the patch shipped with the package and in the manifest (the ODbL offer of the Derivative Database); the studio UI (E5 step 2), live tile preview and user signing of a patched build (step 3); the questions for the user in 16H Q6.
+
 **Preview and build:**
 - **Live preview:** an operation re-builds only the **tiles it touches** in-process, with `world-builder`'s library on the edited tiles and the package's other sections as they are. This takes seconds per tile, and the result is drawn at once. A full, signed build is a separate step.
 - **Full build:**
@@ -5306,7 +5368,7 @@ The studio makes them interactive:
 - **E4 – Models workspace (edit):** node and anchor edits, slots, proxies, the manifest, and the Blender round trip with re-import (needs Phase 15 M2).
 - **E4b – Simple mesh tools (Q5):** face / part selection, extrude, move / scale / rotate, delete, normals, merge vertices; tests that each tool keeps the mesh valid (closed where it was, normals outward, indices in range) and undoes to the identical model.
 - **E5 – World workspace:**
-  - the world patch format and its application in `world-builder` (tested first without the UI: a patch file, a build, and the effect checked);
+  - the world patch format and its application in `world-builder` (tested first without the UI: a patch file, a build, and the effect checked); **built (v4.02, step 1)**: the format, road attributes, road removal and height control points, `package --patch`, `patch check` – see 16C *Built*;
   - then the UI: road attributes and height, objects and trees, areas, segments and start points;
   - live tile preview, full build, and user signing.
 - **E6 – Polish:** buildings and terrain stamps, the world set and bounds, "Fix in OSM", Windows and macOS, and the browser version (Q4).
@@ -5346,6 +5408,13 @@ The studio makes them interactive:
   - tests: the trait and the built-in planner on the test packages; GeoJSON parsing from recorded BRouter answers (no network in unit tests); matching a recorded Vaduz–Malbun BRouter track onto the Liechtenstein graph; a live test against a configured server only on request (`make test-planner-live URL=…`).
 - **Q4 – Browser studio: decided (2026-11-15, dashboard: "a browser version later"):** desktop first; the browser version comes later (after E5, as proposed) – the core `ocw-edit` stays wasm-safe for it.
 - **Q5 – Mesh editing: decided (2026-11-15, dashboard: "add simple mesh tools in the studio (extrude, scale parts)"):** the Models workspace (16B) gets **simple mesh tools**: select faces / parts of a node, extrude, move, scale and rotate parts, delete, flip normals, recompute normals, merge vertices – with undo, the model contract (15B) and the budgets checked live; anything beyond (sculpting, UV unwrapping, retopology, rigging) stays in Blender. A new stage **E4b** after E4.
+- **Q6 – World patches, details found while building E5 step 1 (open, 2026-11-16):**
+  - (a) *Closed for bikes* versus *removed*: today both take the road out of the ridable graph (as OSM's own `bicycle=no` does), so it is no longer drawn either. Should a closed road stay drawn (with a barrier sign) but offer no exit onto it? That needs a flag in the road graph and `RoadNetwork`.
+  - (b) A gone target in a build: now reported and the build goes on. Should official builds from our world sources fail instead (a `--strict-patch` flag in the build scripts), and user builds only warn?
+  - (c) Height points do not re-apply the class gradient limit (a ramp the user wants stays as asked; the report says what moved). Keep it, or limit and report?
+  - (d) Shipping the patch with the package (the ODbL offer of the Derivative Database, 16C *Licences*): proposed as `<package>.ocwpatch` next to the package, its SHA-256 in the manifest and copied by `world-builder publish`.
+  - (e) Where our official patches live: 16C says `data/<region>/patches/`, but `data/` is git-ignored – a tracked folder instead (for example `worlds/<region>/patches/`)?
+  - (f) The defaults: a height point's radius 100 m, snapping to a road within 15 m.
 
 ---
 
