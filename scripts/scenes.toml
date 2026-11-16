@@ -799,8 +799,8 @@ shot = 7
 name = "menu-time-calendar"
 description = "In-game menu: World -> Time -> Calendar (spec 9J, S9a): October 2026 at the rider's place (Vaduz), each day banded with its look (summer, autumn colours, bare), the moon's main phases, the focused day's sun times, leaves and snow line; the buttons over the grid, the time stepper and Back under it"
 args = ["--route", "hills", "--bots", "4"]
-at = ["1.5=time 2026-10-20 15:00", "2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu select", "3.6=menu down", "4=menu down", "4.4=menu down", "4.8=menu select", "5.2=menu down", "5.6=menu select", "6=menu right", "6.4=menu right"]
-shot = 8
+at = ["1.5=time 2026-10-20 15:00", "2=menu open", "2.6=menu down", "3.2=menu down", "3.8=menu select", "4.8=menu down", "5.4=menu down", "6=menu down", "6.6=menu select", "7.4=menu down", "8=menu select", "8.8=menu right", "9.4=menu right"]
+shot = 20
 
 [[scene]]
 name = "sky-sunset-timelapse"
