@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.94 – November 2026
+Version 3.95 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.95 | **Trees: at least three shape variants per species, more where variety needs it** (decision from the build dashboard, 2026-11-16; §14 Phase 15 Q8) |
 | 3.94 | **Models: only the exported model files are used and the generator code is removed; bikes keep their frame sizes, fitted to the rider at run time from the model's geometry and anchors** (decision from the build dashboard, 2026-11-16; §14 Phase 15 Q7) |
 | 3.93 | **The character editor's extras (muscle slider, earrings, tattoos, freckles, more glasses, prosthetics) come later, not in its first step** (decision from the build dashboard, 2026-11-16; §14 Phase 4 4N Q14) |
 | 3.92 | **The visible body shape is bounded to a band around what weight and height give, with a *Match my weight* marker** (decision from the build dashboard, 2026-11-16; §14 Phase 4 4N Q13). Follow-up Q13b: the band's width (proposal: one step either side) |
@@ -4954,7 +4955,7 @@ The validator checks every name against the pattern, that ids are unique, and th
 **Open questions (to the user):**
 - **Q6 – After the export, which is the source:** the **generator** until someone edits the file in Blender, then the file (per model, `source = "generator" | "blender"`; *proposal*), or the **files** from the export on, with all generators deleted at once?
 - **Q7 – Parametric models: decided (2026-11-16, dashboard): exported model files only, the generator code removed – but bikes keep their sizes** – the user: "use only the exported models and remove the code. but keep to ability to generate different sizes of the bike." The game loads only the exported model files (the 6 bikes, the 4 helmets, the parts of `parts.toml`); the shape code that generated them is removed once the files are in. **Bike sizes stay:** a bike model carries what is needed to size it (the frame's geometry numbers and its sizing anchors / bones in the model contract), and the loader scales and fits the exported frame to the rider's size at run time, so a new size needs no new file.
-- **Q8 – Tree variants:** **three** shape variants per species (*proposal*), more for the variety, or one file per species with the variety only from size, rotation and tint?
+- **Q8 – Tree variants: decided (2026-11-16, dashboard): three shape variants per species, more where variety needs it** – the user: "three shape variants per species, more for the variety". Every species gets at least three shape files; species that are common or seen up close (e.g. the main forest trees of a region) get more; size, rotation and tint vary on top as now.
 
 #### 15F – Tests (§11.4)
 
