@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 4.11 – November 2026
+Version 4.12 – November 2026
 
 | Version | Change |
 |---|---|
+| 4.12 | **Rider names are reserved per account worldwide and unique on every server** (decision by the user, 2026-11-16; §14 Phase 4 4N Q22): the backend refuses a name another account holds; a rider without an account whose name is taken on a server picks another when joining |
 | 4.11 | **Strava recording with the S key and ride photos from a virtual photographer planned** (asked by the user 2026-11-16; new §2.8.1): S starts and stops a Strava recording (its own FIT, the existing upload path, account details from `strava.toml` for now); while it runs a virtual photographer takes at most 5 photos, at least 20 minutes apart – the best view of each window, the camera angle chosen for the view (open view, water, landmarks, light; occlusion-tested poses around the rider), rendered off-screen without HUD – saved with position for a later upload. Flag: Strava's public API cannot add photos to an activity. Stages ST1–ST3; open questions §2.8.1 Q1–Q4 |
 | 4.10 | **W5's and the character editor's follow-up questions are in the dashboard: Phase 4 Q16–Q21 (W5: before the first purchase, what is needed to ride, base parts, which servers credit hearts, offline riding, existing riders) and Q22 (where names are unique), Q23 (the body-shape band's width)** (renumbered from Q-W1–Q-W6, Q8b, Q13b, which the dashboard did not read) |
 | 4.09 | **The world editor's open questions are in the dashboard: world patches §16H Q6–Q11 and the studio §16H Q12–Q15** (closed roads, strict official builds, height points vs gradient limits, shipping the patch, where official patches live, height point defaults; before, one heading with sub-points showed as an empty question) ; the studio shell's questions added as §16H Q12–Q15 (camera default, saved views, the trust dialog in the studio, the 2D map's layers) |
@@ -3399,7 +3400,7 @@ The first catalogue (about 30 entries; base parts at 0 ♥ for every slot and bi
 - **Q13 – Visible build vs the physics weight: decided (2026-11-16, dashboard): bounded to a band around the weight, with the *Match my weight* marker, from weight and height** – the user: "free with a Match my weight marker, bounded to a band around the weight). take users height into consideration." The shape (the seven steps of Q6) can be chosen only within a band around the shape that the rider's **weight and height** give (body-mass index → shape, N4); the marker shows that shape and *Match my weight* snaps to it. A change of weight or height in the profile moves the band; a shape outside it is moved to its nearest edge. The band's width is Q23.
 - **Q14 – Extras in the first step: decided (2026-11-16, dashboard): later** – none of the extras (muscle slider, earrings, tattoos, freckles, more glasses, prosthetic limbs) is in the first step of 4N; they come in a later step.
 - **Q15 – Renaming during a ride: decided (2026-11-16, the user): no** – the name can only be changed between rides, never during a ride or a running event.
-- **Q22 – Unique names: where (follow-up of Q8):** names must be unique (Q8). Proposal: **reserved per account worldwide** (a name belongs to one account, 4O: one rider per account); riders without an account are unique per server (a second rider with a taken name picks another when joining). Alternative: unique per server only.
+- **Q22 – Unique names: where (follow-up of Q8): decided (2026-11-16, the user): unique per account and per server** – the user: "unique per account and server". A rider name is **reserved for one account worldwide** (the backend refuses a name another account holds, 4O), and **every server keeps the names in a session unique**: a rider without an account whose name is taken there picks another when joining (no "(2)" suffixes, Q8).
 - **Q23 – The width of the body-shape band (follow-up of Q13):** the shape is bounded to a band around the shape that weight and height give (Q13). Proposal: **one step either side** of it, so three of the seven shapes are open to each rider. Or wider?
 
 #### 4O – W5 refined: accounts, inventory and hearts in the backend (planning, 2026-11-16, v3.88)
