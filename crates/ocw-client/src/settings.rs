@@ -347,6 +347,18 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::Command("photographer {}"),
     },
+    // Ride → Host a ride (spec §7.1.7 Q4): the router's ports opened by
+    // UPnP while hosting; read at *Start hosting*, switched on the wizard's
+    // Options page (`host.plan upnp`). The headless server has `--upnp`
+    // (off by default).
+    SettingDef {
+        key: "host.upnp",
+        kind: Kind::Bool,
+        default: "on",
+        description: "Host a ride: open the router's ports automatically (UPnP) while hosting, removed after",
+        scope: Scope::Live,
+        apply: Apply::App,
+    },
     SettingDef {
         key: "ride.bots",
         kind: Kind::Int {
@@ -937,6 +949,8 @@ const NOT_IN_BROWSER: &[&str] = &[
     // The photos are files of the desktop app (spec §2.11; the browser's
     // downloads are open).
     "photographer.enabled",
+    // Hosting needs the desktop app (browsers cannot open a port).
+    "host.upnp",
 ];
 
 /// Whether `key` takes effect on `platform` (the menu hides the others,
@@ -1233,6 +1247,19 @@ fn unknown(key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Host a ride opens the router's ports by default (spec §7.1.7 Q4);
+    /// the browser cannot host, so it has no such setting.
+    #[test]
+    fn host_upnp_is_on_by_default_and_desktop_only() {
+        let s = Settings::default();
+        assert_eq!(s.get("host.upnp").unwrap(), Value::Bool(true));
+        assert!(applies("host.upnp", crate::menu::model::Platform::Desktop));
+        assert!(!applies("host.upnp", crate::menu::model::Platform::Browser));
+        let (s, w) = Settings::parse("[host]\nupnp = false\n").unwrap();
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!(s.get("host.upnp").unwrap(), Value::Bool(false));
+    }
 
     #[test]
     fn registry_is_valid() {

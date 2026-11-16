@@ -62,6 +62,9 @@ ocw-accounts = { workspace = true, optional = true }
 # from the OS random source, its log and pid file under the data dir.
 getrandom.workspace = true
 dirs.workspace = true
+# Automatic port mapping on the router while hosting (UPnP-IGD, spec
+# §7.1.1 *Network*, §7.1.7 Q4; `portmap`): the blocking API only.
+igd-next.workspace = true
 
 # The voice server's job object: it ends with the host, also on a crash
 # (spec §7.1.1 *Lifecycle*; MIT OR Apache-2.0).
