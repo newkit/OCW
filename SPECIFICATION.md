@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.97 – November 2026
+Version 3.98 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.98 | **Signed in, riders are shown by their own rider name stored with the account; the Google / Strava name is never shown** (decision from the build dashboard, 2026-11-16; §14 Phase 4 4N Q10, as proposed) |
 | 3.97 | **After the export the model files are the only source; all shape generators are deleted at once** (decision from the build dashboard, 2026-11-16; §14 Phase 15 Q6) |
 | 3.96 | **The Blender add-on for model export is postponed: not built in Phase 15 for now** (decision from the build dashboard, 2026-11-16; §14 Phase 15 Q5) |
 | 3.95 | **Trees: at least three shape variants per species, more where variety needs it** (decision from the build dashboard, 2026-11-16; §14 Phase 15 Q8) |
@@ -3246,7 +3247,7 @@ The first catalogue (about 30 entries; base parts at 0 ♥ for every slot and bi
 - **Q7 – How the body choice is labelled: decided (2026-11-16, the user):** with the seven words of Q6 (anorexia, skinny, slim, normal, ample, fat, obese), each with its picture; no pronoun or gender field (unchanged).
 - **Q8 – Unique names: decided (2026-11-16, the user): names must be unique** – the user: "names must be unique". No "(2)" suffixes. **Follow-up Q8b (open):** unique where – per server (a second rider with a taken name is asked to pick another when joining), or reserved per account worldwide (a name belongs to one account; riders without an account are unique per server)?
 - **Q9 – Offensive names: decided (2026-11-16, the user): no filter** – the user: "do not block any names". No deny-list in the editor or on servers; `name::check` keeps only the technical rules of N1 (length, NFC, no control or invisible characters).
-- **Q10 – Signed-in name:** the rider's own rider name stored with the account, the provider's name never shown (proposal), or the account / provider name as today?
+- **Q10 – Signed-in name: decided (2026-11-16, dashboard): as proposed** – the rider's own **rider name** is stored with the account (one rider per account, 4O) and is what others see; the sign-in provider's name (Google, Strava) is never shown.
 - **Q11 – Scripts in names: decided (2026-11-16, the user): all scripts** – the user: "all". Names may use every Unicode script now; the app needs fonts that cover them (a fallback chain with CJK, Arabic, Hebrew, Indic and others; for the browser the extra fonts are loaded on demand, not in the first download).
 - **Q12 – Age on the face: decided (2026-11-16, the user): face, body, skin and hair** – the user: "face, body, skin, hair". The appearance age (N3) changes the face (lines at eyes and mouth, a softer jaw), the body (posture and shape), the skin (tone and texture) and the hair (greying, with *Keep my hair colour*). Still appearance only, never physics.
 - **Q13 – Visible build vs the physics weight: decided (2026-11-16, dashboard): bounded to a band around the weight, with the *Match my weight* marker, from weight and height** – the user: "free with a Match my weight marker, bounded to a band around the weight). take users height into consideration." The shape (the seven steps of Q6) can be chosen only within a band around the shape that the rider's **weight and height** give (body-mass index → shape, N4); the marker shows that shape and *Match my weight* snaps to it. A change of weight or height in the profile moves the band; a shape outside it is moved to its nearest edge. **Follow-up Q13b (open):** how wide is the band? (Proposal: one step either side of the marker, so three of the seven shapes are open to each rider.)
