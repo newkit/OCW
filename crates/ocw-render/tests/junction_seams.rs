@@ -33,7 +33,9 @@
 use std::collections::HashMap;
 
 use bevy::math::{Vec2, Vec3, Vec3Swizzles};
-use ocw_render::road_mesh::{Kind, RoadContext, decode_b, road_meshes};
+use ocw_render::junction_mesh::{Owner, PackageJunctions, patch_mesh, shape_tile};
+use ocw_render::package::MeshArrays;
+use ocw_render::road_mesh::{Kind, RoadContext, decode_b, road_meshes, road_meshes_rows};
 use ocw_world::WorldPackage;
 use ocw_world::geo::LocalProjection;
 use ocw_world::graph::RoadGraph;
@@ -42,6 +44,16 @@ use ocw_world::road_dress::{MarkCode, MarkingStyle};
 const SAMPLE_M: f32 = 0.2;
 const MARGIN_M: f32 = 2.5;
 const CELL_M: f32 = 1.0;
+/// Owner ids of junction surfaces: this + the vertex.
+const PATCH: usize = 1 << 40;
+
+#[derive(Debug, Clone, Copy)]
+enum Mode {
+    /// The strips as the package has them (before J1).
+    Before,
+    /// Shaped for the junction surfaces, with the patches (J1).
+    After,
+}
 
 /// Up-facing triangles near one junction, by incident edge, with their part.
 #[derive(Default)]
@@ -99,6 +111,13 @@ fn grade_from(g: &RoadGraph, ei: usize, v: usize) -> f64 {
 #[derive(Default, Clone)]
 struct Result {
     v: usize,
+    /// The vertex has a junction surface or mitre (J1).
+    patched: bool,
+    /// Why there is none (J1 falls back to the overlapping strips).
+    reason: Option<&'static str>,
+    /// The visible step less the slope between the samples (the jump of
+    /// the surface itself).
+    seam: f32,
     degree: usize,
     bend_deg: f64,
     overlap_dh: f32,
@@ -190,65 +209,126 @@ fn analyse(path: &str) {
         deck: &|_| false,
         style: &style,
     };
-    let mut lines_in: HashMap<usize, usize> = HashMap::new();
-    let mut unmatched = 0usize;
-    for tile in pkg.tiles.values() {
-        for s in &tile.roads {
-            let n = s.points.len();
-            if n < 2 {
-                continue;
+    let pj = PackageJunctions::new(&pkg).expect("road graph");
+    let size = f64::from(pkg.tile_size_m);
+    let base: Vec<usize> = juncs.iter().map(|j| j.v).collect();
+    for mode in [Mode::Before, Mode::After] {
+        let mut juncs: Vec<Junction> = base
+            .iter()
+            .map(|&v| Junction {
+                v,
+                ..Default::default()
+            })
+            .collect();
+        let mut lines_in: HashMap<usize, usize> = HashMap::new();
+        let mut unmatched = 0usize;
+        // The production path's time per tile (all strips together, as the
+        // renderer builds a tile; the patches are made on first use).
+        // A second pass: the patches made (the renderer keeps them).
+        for pass in ["", " (again)"] {
+            let t0 = std::time::Instant::now();
+            for tile in pkg.tiles.values() {
+                let junctions = match mode {
+                    Mode::Before => None,
+                    Mode::After => Some(&pj),
+                };
+                let m = ocw_render::package::tile_road_meshes(&pkg, tile, &[], None, junctions);
+                std::hint::black_box(m.roads.indices.len());
             }
-            let m = (n - 1) / 2;
-            let mid = [
-                f64::from(s.points[m][0] + s.points[m + 1][0]) / 2.0,
-                f64::from(s.points[m][2] + s.points[m + 1][2]) / 2.0,
-            ];
-            let Some((ei, d)) = nearest_edge(mid) else {
-                unmatched += 1;
-                continue;
+            let ms = t0.elapsed().as_secs_f64() * 1000.0;
+            println!(
+                "{mode:?}{pass}: road meshes of {} tiles in {ms:.0} ms ({:.2} ms per tile)",
+                pkg.tiles.len(),
+                ms / pkg.tiles.len().max(1) as f64
+            );
+        }
+        // The drawn parts: (owner, edge of a strip, its points, its paint, mesh).
+        type Part = (usize, Option<usize>, Vec<[f32; 3]>, bool, MeshArrays);
+        let mut parts: Vec<Part> = Vec::new();
+        for (key, tile) in &pkg.tiles {
+            match mode {
+                Mode::Before => {
+                    for s in &tile.roads {
+                        let n = s.points.len();
+                        if n < 2 {
+                            continue;
+                        }
+                        let m = (n - 1) / 2;
+                        let mid = [
+                            f64::from(s.points[m][0] + s.points[m + 1][0]) / 2.0,
+                            f64::from(s.points[m][2] + s.points[m + 1][2]) / 2.0,
+                        ];
+                        let Some((ei, d)) = nearest_edge(mid).filter(|b| b.1 <= 0.2) else {
+                            unmatched += 1;
+                            continue;
+                        };
+                        let _ = d;
+                        let code = MarkCode::of(&s.dress, s.class, s.surface).lines_code();
+                        let painted = (code >> 6) & 7 != 0 || (code >> 9) & 1 == 1;
+                        let mesh = road_meshes(std::slice::from_ref(s), &ctx).roads;
+                        parts.push((ei, Some(ei), s.points.clone(), painted, mesh));
+                    }
+                }
+                Mode::After => {
+                    let t = shape_tile(&g, &pj, *key, size, &tile.roads, &style);
+                    for i in 0..t.strips.len() {
+                        let s = &t.strips[i];
+                        let Owner::Edge(ei) = t.owners[i] else {
+                            unmatched += 1;
+                            continue;
+                        };
+                        let code = MarkCode::of(&s.dress, s.class, s.surface).lines_code();
+                        let painted = (code >> 6) & 7 != 0 || (code >> 9) & 1 == 1;
+                        let rows = [t.rows[i].as_deref()];
+                        let mesh = road_meshes_rows(std::slice::from_ref(s), &rows, &ctx).roads;
+                        parts.push((ei, Some(ei), s.points.clone(), painted, mesh));
+                    }
+                    for (p, looks) in &t.patches {
+                        let mut mesh = MeshArrays::default();
+                        patch_mesh(&mut mesh, p, looks, &ctx);
+                        parts.push((PATCH + p.vertex as usize, None, Vec::new(), false, mesh));
+                    }
+                }
+            }
+        }
+        for (owner, edge, points, painted, mesh) in &parts {
+            let near: Vec<usize> = match edge {
+                Some(ei) => {
+                    let e = &g.edges[*ei];
+                    [e.from.0 as usize, e.to.0 as usize]
+                        .into_iter()
+                        .filter(|v| jidx.contains_key(v))
+                        .filter(|&v| {
+                            let c = Vec2::new(g.vertices[v][0] as f32, g.vertices[v][1] as f32);
+                            let r = radius(v) + 3.0;
+                            points
+                                .iter()
+                                .any(|p| Vec2::new(p[0], p[2]).distance(c) < r + 6.0)
+                        })
+                        .collect()
+                }
+                None => [owner - PATCH]
+                    .into_iter()
+                    .filter(|v| jidx.contains_key(v))
+                    .collect(),
             };
-            if d > 0.2 {
-                unmatched += 1;
-                continue;
-            }
-            let e = &g.edges[ei];
-            let ends: Vec<usize> = [e.from.0 as usize, e.to.0 as usize]
-                .into_iter()
-                .filter(|v| jidx.contains_key(v))
-                .collect();
-            if ends.is_empty() {
-                continue;
-            }
-            // Near which junction ends is this strip at all?
-            let near: Vec<usize> = ends
-                .into_iter()
-                .filter(|&v| {
-                    let c = Vec2::new(g.vertices[v][0] as f32, g.vertices[v][1] as f32);
-                    let r = radius(v) + 3.0;
-                    s.points
-                        .iter()
-                        .any(|p| Vec2::new(p[0], p[2]).distance(c) < r + 6.0)
-                })
-                .collect();
-            if near.is_empty() {
-                continue;
-            }
-            // Markings running into a junction from a minor road's end.
-            let code = MarkCode::of(&s.dress, s.class, s.surface).lines_code();
-            let painted = (code >> 6) & 7 != 0 || (code >> 9) & 1 == 1;
-            let mesh = road_meshes(std::slice::from_ref(s), &ctx).roads;
             for &v in &near {
                 let c = Vec2::new(g.vertices[v][0] as f32, g.vertices[v][1] as f32);
                 let r = radius(v);
-                if painted && adj[v].len() >= 3 {
-                    let ends_here = [s.points[0], s.points[n - 1]]
+                if let Some(ei) = edge
+                    && *painted
+                    && adj[v].len() >= 3
+                {
+                    // Markings running into a junction from a minor road's end.
+                    let n = points.len();
+                    let ends_here = [points[0], points[n - 1]]
                         .iter()
                         .any(|p| Vec2::new(p[0], p[2]).distance(c) < 0.1);
                     let major = adj[v]
                         .iter()
                         .map(|&o| g.edges[o].width_m)
                         .fold(0.0, f64::max);
-                    if ends_here && e.width_m < major - 0.01 {
+                    if ends_here && g.edges[*ei].width_m < major - 0.01 {
                         *lines_in.entry(v).or_default() += 1;
                     }
                 }
@@ -263,304 +343,376 @@ fn analyse(path: &str) {
                         continue;
                     }
                     let (_, kind, _) = decode_b(mesh.uvs_b[t[0] as usize][0]);
-                    j.tris.push((p, ei, kind));
+                    j.tris.push((p, *owner, kind));
                 }
             }
         }
-    }
-    let mut results: Vec<Result> = Vec::new();
-    for j in &juncs {
-        let v = j.v;
-        let c = Vec2::new(g.vertices[v][0] as f32, g.vertices[v][1] as f32);
-        let r = radius(v);
-        // Triangle buckets.
-        let mut cells: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
-        let ck = |x: f32| (x / CELL_M).floor() as i32;
-        for (i, (t, _, _)) in j.tris.iter().enumerate() {
-            let lo = t[0].min(t[1]).min(t[2]);
-            let hi = t[0].max(t[1]).max(t[2]);
-            for x in ck(lo.x)..=ck(hi.x) {
-                for z in ck(lo.z)..=ck(hi.z) {
-                    cells.entry((x, z)).or_default().push(i as u32);
-                }
-            }
-        }
-        let steps = (2.0 * r / SAMPLE_M).ceil() as i32;
-        let w = (steps + 1) as usize;
-        // Per sample: the top carriageway (edge, h).
-        let mut top: Vec<Option<(usize, f32)>> = vec![None; w * w];
-        let mut res = Result {
-            v,
-            degree: adj[v].len(),
-            lines_in: lines_in.get(&v).copied().unwrap_or(0),
-            ..Default::default()
-        };
-        let a = SAMPLE_M * SAMPLE_M;
-        for iz in 0..=steps {
-            for ix in 0..=steps {
-                let p = c + Vec2::new(-r + ix as f32 * SAMPLE_M, -r + iz as f32 * SAMPLE_M);
-                if p.distance(c) > r {
-                    continue;
-                }
-                let mut surf: Vec<(usize, f32)> = Vec::new();
-                let mut verge: Vec<(usize, f32)> = Vec::new();
-                for &ti in cells.get(&(ck(p.x), ck(p.y))).into_iter().flatten() {
-                    let (t, ei, kind) = &j.tris[ti as usize];
-                    let Some(h) = tri_height(t, p) else { continue };
-                    if *kind == Kind::Surface as u8 {
-                        match surf.iter_mut().find(|s| s.0 == *ei) {
-                            Some(s) => s.1 = s.1.max(h),
-                            None => surf.push((*ei, h)),
-                        }
-                    } else if [Kind::Shoulder as u8, Kind::Sidewalk as u8, Kind::Kerb as u8]
-                        .contains(kind)
-                    {
-                        verge.push((*ei, h));
-                    }
-                }
-                let t = surf.iter().copied().max_by(|a, b| a.1.total_cmp(&b.1));
-                top[iz as usize * w + ix as usize] = t;
-                if surf.len() >= 2 {
-                    let lo = surf.iter().map(|s| s.1).fold(f32::INFINITY, f32::min);
-                    let hi = surf.iter().map(|s| s.1).fold(f32::NEG_INFINITY, f32::max);
-                    res.overlap_dh = res.overlap_dh.max(hi - lo);
-                    if hi - lo < 0.01 {
-                        res.zfight_m2 += a;
-                    }
-                }
-                if surf.is_empty() {
-                    let q = [f64::from(p.x), f64::from(p.y)];
-                    let inside = adj[v].iter().any(|&ei| {
-                        let e = &g.edges[ei];
-                        poly_dist(q, &e.points) < e.width_m / 2.0 - 0.1
-                    });
-                    if inside {
-                        res.gap_m2 += a;
-                    }
-                }
-                if let Some((te, th)) = t {
-                    let worst = verge
-                        .iter()
-                        .filter(|(ve, vh)| *ve != te && *vh > th + 0.01)
-                        .map(|(_, vh)| vh - th)
-                        .fold(0.0, f32::max);
-                    if worst > 0.0 {
-                        res.verge_m2 += a;
-                        res.verge_dh = res.verge_dh.max(worst);
+        let mut results: Vec<Result> = Vec::new();
+        for j in &juncs {
+            let v = j.v;
+            let c = Vec2::new(g.vertices[v][0] as f32, g.vertices[v][1] as f32);
+            let r = radius(v);
+            // Triangle buckets.
+            let mut cells: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
+            let ck = |x: f32| (x / CELL_M).floor() as i32;
+            for (i, (t, _, _)) in j.tris.iter().enumerate() {
+                let lo = t[0].min(t[1]).min(t[2]);
+                let hi = t[0].max(t[1]).max(t[2]);
+                for x in ck(lo.x)..=ck(hi.x) {
+                    for z in ck(lo.z)..=ck(hi.z) {
+                        cells.entry((x, z)).or_default().push(i as u32);
                     }
                 }
             }
-        }
-        for iz in 0..=steps as usize {
-            for ix in 0..=steps as usize {
-                let Some((e0, h0)) = top[iz * w + ix] else {
-                    continue;
-                };
-                for (jx, jz) in [(ix + 1, iz), (ix, iz + 1)] {
-                    if jx > steps as usize || jz > steps as usize {
+            let steps = (2.0 * r / SAMPLE_M).ceil() as i32;
+            let w = (steps + 1) as usize;
+            // Per sample: the top carriageway (edge, h).
+            let mut top: Vec<Option<(usize, f32)>> = vec![None; w * w];
+            let mut res = Result {
+                v,
+                patched: pj.set.rule(&g, v).is_some(),
+                reason: pj.set.fallback_reason(&g, v),
+                degree: adj[v].len(),
+                lines_in: lines_in.get(&v).copied().unwrap_or(0),
+                ..Default::default()
+            };
+            let a = SAMPLE_M * SAMPLE_M;
+            for iz in 0..=steps {
+                for ix in 0..=steps {
+                    let p = c + Vec2::new(-r + ix as f32 * SAMPLE_M, -r + iz as f32 * SAMPLE_M);
+                    if p.distance(c) > r {
                         continue;
                     }
-                    if let Some((e1, h1)) = top[jz * w + jx]
-                        && e1 != e0
-                    {
-                        res.step = res.step.max((h1 - h0).abs());
+                    let mut surf: Vec<(usize, f32)> = Vec::new();
+                    let mut verge: Vec<(usize, f32)> = Vec::new();
+                    for &ti in cells.get(&(ck(p.x), ck(p.y))).into_iter().flatten() {
+                        let (t, ei, kind) = &j.tris[ti as usize];
+                        let Some(h) = tri_height(t, p) else { continue };
+                        if *kind == Kind::Surface as u8 {
+                            match surf.iter_mut().find(|s| s.0 == *ei) {
+                                Some(s) => s.1 = s.1.max(h),
+                                None => surf.push((*ei, h)),
+                            }
+                        } else if [Kind::Shoulder as u8, Kind::Sidewalk as u8, Kind::Kerb as u8]
+                            .contains(kind)
+                        {
+                            verge.push((*ei, h));
+                        }
+                    }
+                    let t = surf.iter().copied().max_by(|a, b| a.1.total_cmp(&b.1));
+                    top[iz as usize * w + ix as usize] = t;
+                    if surf.len() >= 2 {
+                        let lo = surf.iter().map(|s| s.1).fold(f32::INFINITY, f32::min);
+                        let hi = surf.iter().map(|s| s.1).fold(f32::NEG_INFINITY, f32::max);
+                        res.overlap_dh = res.overlap_dh.max(hi - lo);
+                        if hi - lo < 0.01 {
+                            res.zfight_m2 += a;
+                        }
+                    }
+                    if surf.is_empty() {
+                        let q = [f64::from(p.x), f64::from(p.y)];
+                        let inside = adj[v].iter().any(|&ei| {
+                            let e = &g.edges[ei];
+                            poly_dist(q, &e.points) < e.width_m / 2.0 - 0.1
+                        });
+                        if inside {
+                            res.gap_m2 += a;
+                        }
+                    }
+                    if let Some((te, th)) = t {
+                        let worst = verge
+                            .iter()
+                            .filter(|(ve, vh)| *ve != te && *vh > th + 0.01)
+                            .map(|(_, vh)| vh - th)
+                            .fold(0.0, f32::max);
+                        if worst > 0.0 {
+                            res.verge_m2 += a;
+                            res.verge_dh = res.verge_dh.max(worst);
+                        }
                     }
                 }
             }
-        }
-        // Bend at a plain split; grades.
-        let dirs: Vec<[f64; 2]> = adj[v]
-            .iter()
-            .map(|&ei| {
-                let e = &g.edges[ei];
-                let pts: Vec<[f64; 2]> = if e.from.0 as usize == v {
-                    e.points.clone()
-                } else {
-                    e.points.iter().rev().copied().collect()
-                };
-                let (a, b) = (pts[0], pts[1.min(pts.len() - 1)]);
-                let l = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2))
-                    .sqrt()
-                    .max(1e-9);
-                [(b[0] - a[0]) / l, (b[1] - a[1]) / l]
-            })
-            .collect();
-        if dirs.len() == 2 {
-            let dot = (dirs[0][0] * dirs[1][0] + dirs[0][1] * dirs[1][1]).clamp(-1.0, 1.0);
-            res.bend_deg = 180.0 - dot.acos().to_degrees();
-        }
-        let major = adj[v]
-            .iter()
-            .copied()
-            .max_by(|&a, &b| g.edges[a].width_m.total_cmp(&g.edges[b].width_m))
-            .unwrap();
-        res.major_grade = grade_from(&g, major, v);
-        res.max_grade = adj[v]
-            .iter()
-            .map(|&e| grade_from(&g, e, v).abs())
-            .fold(0.0, f64::max);
-        results.push(res);
-    }
-    // Report.
-    println!("\n=== {path}");
-    println!(
-        "junction vertices analysed: {} (strips unmatched to an edge: {unmatched})",
-        results.len()
-    );
-    let bins = [0.02f32, 0.05, 0.10, 0.25, 0.50, f32::INFINITY];
-    for (label, filt) in [
-        ("degree 2 (way splits)", 2usize..3),
-        ("degree 3 (T / Y)", 3..4),
-        ("degree 4 (crossings)", 4..5),
-        ("degree >= 5", 5..99),
-    ] {
-        let rs: Vec<&Result> = results
-            .iter()
-            .filter(|r| filt.contains(&r.degree))
-            .collect();
-        if rs.is_empty() {
-            continue;
-        }
-        let mut counts = [0usize; 6];
-        for r in &rs {
-            let b = bins.iter().position(|&b| r.step < b).unwrap();
-            counts[b] += 1;
-        }
-        let mut steps: Vec<f32> = rs.iter().map(|r| r.step).collect();
-        steps.sort_by(f32::total_cmp);
-        let pct = |q: f32| steps[((steps.len() - 1) as f32 * q) as usize];
-        let n = rs.len() as f32;
-        let share =
-            |f: &dyn Fn(&Result) -> bool| 100.0 * rs.iter().filter(|r| f(r)).count() as f32 / n;
-        println!(
-            "{label}: {} | visible step <2cm {} | 2-5 {} | 5-10 {} | 10-25 {} | 25-50 {} | >50 {} | median {:.3} p90 {:.3} p99 {:.3} max {:.3} m",
-            rs.len(),
-            counts[0],
-            counts[1],
-            counts[2],
-            counts[3],
-            counts[4],
-            counts[5],
-            pct(0.5),
-            pct(0.9),
-            pct(0.99),
-            pct(1.0)
-        );
-        println!(
-            "    overlap dh > 5 cm: {:.1} % | z-fight (< 1 cm, > 0.5 m2): {:.1} %, mean {:.2} m2 | gap > 0.1 m2: {:.1} %, mean {:.2} m2, max {:.2} | verge on road > 0.1 m2: {:.1} % (max {:.2} m above) | minor-road lines into it: {:.1} %",
-            share(&|r| r.overlap_dh > 0.05),
-            share(&|r| r.zfight_m2 > 0.5),
-            rs.iter().map(|r| r.zfight_m2).sum::<f32>() / n,
-            share(&|r| r.gap_m2 > 0.1),
-            rs.iter().map(|r| r.gap_m2).sum::<f32>() / n,
-            rs.iter().map(|r| r.gap_m2).fold(0.0, f32::max),
-            share(&|r| r.verge_m2 > 0.1),
-            rs.iter().map(|r| r.verge_dh).fold(0.0, f32::max),
-            share(&|r| r.lines_in > 0),
-        );
-        if filt.start == 2 {
-            for (lo, hi) in [(0.0, 10.0), (10.0, 30.0), (30.0, 60.0), (60.0, 181.0)] {
-                let b: Vec<&&Result> = rs
-                    .iter()
-                    .filter(|r| r.bend_deg >= lo && r.bend_deg < hi)
-                    .collect();
-                if b.is_empty() {
-                    continue;
+            for iz in 0..=steps as usize {
+                for ix in 0..=steps as usize {
+                    let Some((e0, h0)) = top[iz * w + ix] else {
+                        continue;
+                    };
+                    for (jx, jz) in [(ix + 1, iz), (ix, iz + 1)] {
+                        if jx > steps as usize || jz > steps as usize {
+                            continue;
+                        }
+                        if let Some((e1, h1)) = top[jz * w + jx]
+                            && e1 != e0
+                        {
+                            res.step = res.step.max((h1 - h0).abs());
+                            // Less the slope: the second difference with the
+                            // sample before (same owner) or after.
+                            let (dx, dz) = (jx - ix, jz - iz);
+                            let before = (ix >= dx && iz >= dz)
+                                .then(|| top[(iz - dz) * w + ix - dx])
+                                .flatten()
+                                .filter(|q| q.0 == e0)
+                                .map(|q| h0 - q.1);
+                            let after = (jx + dx <= steps as usize && jz + dz <= steps as usize)
+                                .then(|| top[(jz + dz) * w + jx + dx])
+                                .flatten()
+                                .filter(|q| q.0 == e1)
+                                .map(|q| q.1 - h1);
+                            if let Some(slope) = before.or(after) {
+                                res.seam = res.seam.max((h1 - h0 - slope).abs());
+                            }
+                        }
+                    }
                 }
+            }
+            // Bend at a plain split; grades.
+            let dirs: Vec<[f64; 2]> = adj[v]
+                .iter()
+                .map(|&ei| {
+                    let e = &g.edges[ei];
+                    let pts: Vec<[f64; 2]> = if e.from.0 as usize == v {
+                        e.points.clone()
+                    } else {
+                        e.points.iter().rev().copied().collect()
+                    };
+                    let (a, b) = (pts[0], pts[1.min(pts.len() - 1)]);
+                    let l = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2))
+                        .sqrt()
+                        .max(1e-9);
+                    [(b[0] - a[0]) / l, (b[1] - a[1]) / l]
+                })
+                .collect();
+            if dirs.len() == 2 {
+                let dot = (dirs[0][0] * dirs[1][0] + dirs[0][1] * dirs[1][1]).clamp(-1.0, 1.0);
+                res.bend_deg = 180.0 - dot.acos().to_degrees();
+            }
+            let major = adj[v]
+                .iter()
+                .copied()
+                .max_by(|&a, &b| g.edges[a].width_m.total_cmp(&g.edges[b].width_m))
+                .unwrap();
+            res.major_grade = grade_from(&g, major, v);
+            res.max_grade = adj[v]
+                .iter()
+                .map(|&e| grade_from(&g, e, v).abs())
+                .fold(0.0, f64::max);
+            results.push(res);
+        }
+        // Report.
+        println!("\n=== {path} ({mode:?})");
+        println!(
+            "junction vertices analysed: {} (strips unmatched to an edge: {unmatched}); with a junction surface or mitre: {}",
+            results.len(),
+            results.iter().filter(|r| r.patched).count()
+        );
+        let bins = [0.02f32, 0.05, 0.10, 0.25, 0.50, f32::INFINITY];
+        for (label, filt) in [
+            ("degree 2 (way splits)", 2usize..3),
+            ("degree 3 (T / Y)", 3..4),
+            ("degree 4 (crossings)", 4..5),
+            ("degree >= 5", 5..99),
+        ] {
+            let rs: Vec<&Result> = results
+                .iter()
+                .filter(|r| filt.contains(&r.degree))
+                .collect();
+            if rs.is_empty() {
+                continue;
+            }
+            let mut counts = [0usize; 6];
+            for r in &rs {
+                let b = bins.iter().position(|&b| r.step < b).unwrap();
+                counts[b] += 1;
+            }
+            let mut steps: Vec<f32> = rs.iter().map(|r| r.step).collect();
+            steps.sort_by(f32::total_cmp);
+            let pct = |q: f32| steps[((steps.len() - 1) as f32 * q) as usize];
+            let n = rs.len() as f32;
+            let share =
+                |f: &dyn Fn(&Result) -> bool| 100.0 * rs.iter().filter(|r| f(r)).count() as f32 / n;
+            println!(
+                "{label}: {} | visible step <2cm {} | 2-5 {} | 5-10 {} | 10-25 {} | 25-50 {} | >50 {} | median {:.3} p90 {:.3} p99 {:.3} max {:.3} m",
+                rs.len(),
+                counts[0],
+                counts[1],
+                counts[2],
+                counts[3],
+                counts[4],
+                counts[5],
+                pct(0.5),
+                pct(0.9),
+                pct(0.99),
+                pct(1.0)
+            );
+            let mut seams: Vec<f32> = rs.iter().map(|r| r.seam).collect();
+            seams.sort_by(f32::total_cmp);
+            let sq = |q: f32| seams[((seams.len() - 1) as f32 * q) as usize];
+            println!(
+                "    seam (step less slope): median {:.3} p90 {:.3} max {:.3} m | > 2 cm {:.1} % | > 10 cm {:.1} % | patched {:.1} %",
+                sq(0.5),
+                sq(0.9),
+                sq(1.0),
+                share(&|r| r.seam > 0.02),
+                share(&|r| r.seam > 0.10),
+                share(&|r| r.patched),
+            );
+            println!(
+                "    step > 10 cm: {:.1} % | > 25 cm: {:.1} % | > 50 cm: {:.1} %",
+                share(&|r| r.step > 0.10),
+                share(&|r| r.step > 0.25),
+                share(&|r| r.step > 0.50),
+            );
+            println!(
+                "    overlap dh > 5 cm: {:.1} % | z-fight (< 1 cm, > 0.5 m2): {:.1} %, mean {:.2} m2 | gap > 0.1 m2: {:.1} %, mean {:.2} m2, max {:.2} | verge on road > 0.1 m2: {:.1} % (max {:.2} m above) | minor-road lines into it: {:.1} %",
+                share(&|r| r.overlap_dh > 0.05),
+                share(&|r| r.zfight_m2 > 0.5),
+                rs.iter().map(|r| r.zfight_m2).sum::<f32>() / n,
+                share(&|r| r.gap_m2 > 0.1),
+                rs.iter().map(|r| r.gap_m2).sum::<f32>() / n,
+                rs.iter().map(|r| r.gap_m2).fold(0.0, f32::max),
+                share(&|r| r.verge_m2 > 0.1),
+                rs.iter().map(|r| r.verge_dh).fold(0.0, f32::max),
+                share(&|r| r.lines_in > 0),
+            );
+            // The junctions with a surface (or mitre) alone, and why the
+            // others have none.
+            let p: Vec<&&Result> = rs.iter().filter(|r| r.patched).collect();
+            if !p.is_empty() {
+                let pn = p.len() as f32;
+                let ps = |f: &dyn Fn(&Result) -> bool| {
+                    100.0 * p.iter().filter(|r| f(r)).count() as f32 / pn
+                };
+                let mut st: Vec<f32> = p.iter().map(|r| r.step).collect();
+                st.sort_by(f32::total_cmp);
                 println!(
-                    "    bend {lo:.0}-{hi:.0} deg: {} splits, gap mean {:.2} m2, max {:.2} m2",
-                    b.len(),
-                    b.iter().map(|r| r.gap_m2).sum::<f32>() / b.len() as f32,
-                    b.iter().map(|r| r.gap_m2).fold(0.0, f32::max)
+                    "    with a surface ({}): step median {:.3} max {:.3} m | seam > 2 cm {:.1} % | > 10 cm {:.1} % | z-fight {:.1} % | gap {:.1} % | verge on road {:.1} %",
+                    p.len(),
+                    st[st.len() / 2],
+                    st[st.len() - 1],
+                    ps(&|r| r.seam > 0.02),
+                    ps(&|r| r.seam > 0.10),
+                    ps(&|r| r.zfight_m2 > 0.5),
+                    ps(&|r| r.gap_m2 > 0.1),
+                    ps(&|r| r.verge_m2 > 0.1),
                 );
             }
+            let mut why: Vec<(&str, usize)> = Vec::new();
+            for r in rs.iter().filter(|r| !r.patched) {
+                let k = r.reason.unwrap_or("?");
+                match why.iter_mut().find(|w| w.0 == k) {
+                    Some(w) => w.1 += 1,
+                    None => why.push((k, 1)),
+                }
+            }
+            why.sort_by_key(|w| std::cmp::Reverse(w.1));
+            if !why.is_empty() {
+                let list: Vec<String> = why.iter().map(|(k, c)| format!("{k} {c}")).collect();
+                println!("    without: {}", list.join(" | "));
+            }
+            if filt.start == 2 {
+                for (lo, hi) in [(0.0, 10.0), (10.0, 30.0), (30.0, 60.0), (60.0, 181.0)] {
+                    let b: Vec<&&Result> = rs
+                        .iter()
+                        .filter(|r| r.bend_deg >= lo && r.bend_deg < hi)
+                        .collect();
+                    if b.is_empty() {
+                        continue;
+                    }
+                    println!(
+                        "    bend {lo:.0}-{hi:.0} deg: {} splits, gap mean {:.2} m2, max {:.2} m2",
+                        b.len(),
+                        b.iter().map(|r| r.gap_m2).sum::<f32>() / b.len() as f32,
+                        b.iter().map(|r| r.gap_m2).fold(0.0, f32::max)
+                    );
+                }
+            }
         }
-    }
-    // Correlation: step vs the steepest road at T / crossings.
-    let side: Vec<&Result> = results.iter().filter(|r| r.degree >= 3).collect();
-    let flat_major = side.iter().filter(|r| r.major_grade.abs() < 0.03).count();
-    println!("    degree >= 3 with the widest road under 3 %: {flat_major}");
-    for (lo, hi) in [
-        (0.0, 0.03),
-        (0.03, 0.06),
-        (0.06, 0.10),
-        (0.10, 0.15),
-        (0.15, 1.0),
-    ] {
-        let b: Vec<&&Result> = side
-            .iter()
-            .filter(|r| r.max_grade >= lo && r.max_grade < hi)
-            .collect();
-        if b.is_empty() {
-            continue;
+        // Correlation: step vs the steepest road at T / crossings.
+        let side: Vec<&Result> = results.iter().filter(|r| r.degree >= 3).collect();
+        let flat_major = side.iter().filter(|r| r.major_grade.abs() < 0.03).count();
+        println!("    degree >= 3 with the widest road under 3 %: {flat_major}");
+        for (lo, hi) in [
+            (0.0, 0.03),
+            (0.03, 0.06),
+            (0.06, 0.10),
+            (0.10, 0.15),
+            (0.15, 1.0),
+        ] {
+            let b: Vec<&&Result> = side
+                .iter()
+                .filter(|r| r.max_grade >= lo && r.max_grade < hi)
+                .collect();
+            if b.is_empty() {
+                continue;
+            }
+            let mut s: Vec<f32> = b.iter().map(|r| r.step).collect();
+            s.sort_by(f32::total_cmp);
+            println!(
+                "    steepest road at the junction {:.0}-{:.0} %: {} junctions, step median {:.3} max {:.3} m",
+                lo * 100.0,
+                hi * 100.0,
+                b.len(),
+                s[s.len() / 2],
+                s[s.len() - 1]
+            );
         }
-        let mut s: Vec<f32> = b.iter().map(|r| r.step).collect();
-        s.sort_by(f32::total_cmp);
-        println!(
-            "    steepest road at the junction {:.0}-{:.0} %: {} junctions, step median {:.3} max {:.3} m",
-            lo * 100.0,
-            hi * 100.0,
-            b.len(),
-            s[s.len() / 2],
-            s[s.len() - 1]
-        );
-    }
-    let describe = |r: &Result| {
-        let p = g.vertices[r.v];
-        let (lat, lon) = proj.unproject(p);
-        let roads: Vec<String> = adj[r.v]
-            .iter()
-            .map(|&ei| {
-                let e = &g.edges[ei];
-                format!(
-                    "{:?} {} {:.1}m w{} {:+.0}%",
-                    e.class,
-                    e.name.as_deref().unwrap_or("-"),
-                    e.width_m,
-                    e.osm_way,
-                    grade_from(&g, ei, r.v) * 100.0
-                )
-            })
-            .collect();
-        format!(
-            "x {:.1} z {:.1} ({lat:.6}, {lon:.6}) deg {} step {:.3} overlap {:.3} zf {:.1} gap {:.2} verge {:.2}/{:.2} lines {} | {}",
-            p[0],
-            p[1],
-            r.degree,
-            r.step,
-            r.overlap_dh,
-            r.zfight_m2,
-            r.gap_m2,
-            r.verge_m2,
-            r.verge_dh,
-            r.lines_in,
-            roads.join(" ; ")
-        )
-    };
-    let mut by_step: Vec<&Result> = results.iter().filter(|r| r.degree >= 3).collect();
-    by_step.sort_by(|a, b| b.step.total_cmp(&a.step));
-    println!("worst visible steps (degree >= 3):");
-    for r in by_step.iter().take(15) {
-        println!("  {}", describe(r));
-    }
-    let mut by_gap: Vec<&Result> = results.iter().collect();
-    by_gap.sort_by(|a, b| b.gap_m2.total_cmp(&a.gap_m2));
-    println!("worst gaps:");
-    for r in by_gap.iter().take(8) {
-        println!("  {}", describe(r));
-    }
-    let mut by_verge: Vec<&Result> = results.iter().collect();
-    by_verge.sort_by(|a, b| b.verge_dh.total_cmp(&a.verge_dh));
-    println!("worst verges on a road:");
-    for r in by_verge.iter().take(8) {
-        println!("  {}", describe(r));
-    }
-    // Typical ones: degree 3, step near the median, for pictures.
-    let mut t3: Vec<&Result> = results.iter().filter(|r| r.degree == 3).collect();
-    t3.sort_by(|a, b| a.step.total_cmp(&b.step));
-    println!("typical T junctions (median step):");
-    for r in t3.iter().skip(t3.len() / 2).take(4) {
-        println!("  {}", describe(r));
+        let describe = |r: &Result| {
+            let p = g.vertices[r.v];
+            let (lat, lon) = proj.unproject(p);
+            let roads: Vec<String> = adj[r.v]
+                .iter()
+                .map(|&ei| {
+                    let e = &g.edges[ei];
+                    format!(
+                        "{:?} {} {:.1}m w{} {:+.0}%",
+                        e.class,
+                        e.name.as_deref().unwrap_or("-"),
+                        e.width_m,
+                        e.osm_way,
+                        grade_from(&g, ei, r.v) * 100.0
+                    )
+                })
+                .collect();
+            format!(
+                "x {:.1} z {:.1} ({lat:.6}, {lon:.6}) deg {} step {:.3} overlap {:.3} zf {:.1} gap {:.2} verge {:.2}/{:.2} lines {} | {}",
+                p[0],
+                p[1],
+                r.degree,
+                r.step,
+                r.overlap_dh,
+                r.zfight_m2,
+                r.gap_m2,
+                r.verge_m2,
+                r.verge_dh,
+                r.lines_in,
+                roads.join(" ; ")
+            )
+        };
+        let mut by_step: Vec<&Result> = results.iter().filter(|r| r.degree >= 3).collect();
+        by_step.sort_by(|a, b| b.step.total_cmp(&a.step));
+        println!("worst visible steps (degree >= 3):");
+        for r in by_step.iter().take(15) {
+            println!("  {}", describe(r));
+        }
+        let mut by_gap: Vec<&Result> = results.iter().collect();
+        by_gap.sort_by(|a, b| b.gap_m2.total_cmp(&a.gap_m2));
+        println!("worst gaps:");
+        for r in by_gap.iter().take(8) {
+            println!("  {}", describe(r));
+        }
+        let mut by_verge: Vec<&Result> = results.iter().collect();
+        by_verge.sort_by(|a, b| b.verge_dh.total_cmp(&a.verge_dh));
+        println!("worst verges on a road:");
+        for r in by_verge.iter().take(8) {
+            println!("  {}", describe(r));
+        }
+        // Typical ones: degree 3, step near the median, for pictures.
+        let mut t3: Vec<&Result> = results.iter().filter(|r| r.degree == 3).collect();
+        t3.sort_by(|a, b| a.step.total_cmp(&b.step));
+        println!("typical T junctions (median step):");
+        for r in t3.iter().skip(t3.len() / 2).take(4) {
+            println!("  {}", describe(r));
+        }
     }
 }
 
@@ -572,5 +724,118 @@ fn junction_seams_of_real_packages() {
     };
     for p in paths.to_string_lossy().split(':') {
         analyse(p);
+    }
+}
+
+/// One junction in detail (`OCW_JUNCTION_WORLD=pkg OCW_JUNCTION_AT=x,z`):
+/// its arms, mouths, blends and what becomes of the strips near it.
+#[test]
+fn junction_in_detail() {
+    let (Some(path), Some(at)) = (
+        std::env::var_os("OCW_JUNCTION_WORLD"),
+        std::env::var_os("OCW_JUNCTION_AT"),
+    ) else {
+        eprintln!("OCW_JUNCTION_AT not set: skipped");
+        return;
+    };
+    let path = path
+        .to_string_lossy()
+        .split(':')
+        .next()
+        .unwrap()
+        .to_string();
+    let at: Vec<f64> = at
+        .to_string_lossy()
+        .split(',')
+        .map(|v| v.parse().unwrap())
+        .collect();
+    let pkg = WorldPackage::from_bytes(&std::fs::read(path).unwrap()).unwrap();
+    let g = pkg.graph.as_ref().unwrap();
+    let pj = PackageJunctions::new(&pkg).unwrap();
+    let v = g.nearest_vertex([at[0], at[1]]).unwrap().0 as usize;
+    println!("vertex {v} at {:?}", g.vertices[v]);
+    for &ei in pj.set.edges_at(v) {
+        let e = &g.edges[ei];
+        println!(
+            "  edge {ei}: {:?} {:?} w {:.1} len {:.1} from {} to {} pts {} reach {:?}",
+            e.class,
+            e.name,
+            e.width_m,
+            e.length_m(),
+            e.from.0,
+            e.to.0,
+            e.points.len(),
+            pj.set.reach(g, ei)
+        );
+    }
+    match pj.set.rule(g, v) {
+        Some(ocw_world::junction::VertexRule::Patch(p)) => {
+            println!(
+                "  patch: through {:?}, {} outline points",
+                p.through,
+                p.outline.len()
+            );
+            for a in &p.arms {
+                println!(
+                    "    arm edge {} at_from {} mouth {:.2} blend {:.2} h {:.2} grade {:+.3}",
+                    a.edge, a.at_from, a.mouth_m, a.blend_m, a.h, a.grade
+                );
+            }
+        }
+        other => println!("  rule: {other:?}"),
+    }
+    let style = MarkingStyle::default();
+    let size = f64::from(pkg.tile_size_m);
+    let key = ocw_world::TileKey::containing(g.vertices[v], size);
+    let around: Vec<ocw_world::TileKey> = (-1..=1)
+        .flat_map(|dx| {
+            (-1..=1).map(move |dz| ocw_world::TileKey {
+                x: key.x + dx,
+                z: key.z + dz,
+            })
+        })
+        .collect();
+    for k in around {
+        let Some(tile) = pkg.tiles.get(&k) else {
+            continue;
+        };
+        let t = shape_tile(g, &pj, k, size, &tile.roads, &style);
+        let matched = ocw_render::junction_mesh::match_strips(g, pj.tile_edges(k), &tile.roads);
+        for (i, s) in tile.roads.iter().enumerate() {
+            let Some(ei) = matched[i] else { continue };
+            if !pj.set.edges_at(v).contains(&ei) {
+                continue;
+            }
+            let sh = pj.set.shape_strip(g, ei, &s.points, s.width_m / 2.0);
+            if let Some(sh) = &sh
+                && std::env::var_os("OCW_JUNCTION_ROWS").is_some()
+            {
+                for (p, r) in sh.points.iter().zip(&sh.rows).step_by(4) {
+                    let ground = pkg.surface_height(f64::from(p[0]), f64::from(p[2]));
+                    println!(
+                        "      {:?} rows y {:.2}/{:.2} ground {:?}",
+                        p, r[0][1], r[1][1], ground
+                    );
+                }
+            }
+            println!(
+                "  tile {k:?} strip {i} edge {ei} reversed {}: {} points",
+                ocw_world::junction::strip_reversed(&g.edges[ei], &s.points),
+                s.points.len()
+            );
+            println!(
+                "  strip {i} edge {ei}: {} points {:?}..{:?} -> {:?}",
+                s.points.len(),
+                s.points.first(),
+                s.points.last(),
+                sh.map(|x| (
+                    x.points.len(),
+                    x.cut_m,
+                    x.points.first().copied(),
+                    x.points.last().copied()
+                ))
+            );
+        }
+        println!("  tile strips {} -> {}", tile.roads.len(), t.strips.len());
     }
 }

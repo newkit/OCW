@@ -32,7 +32,7 @@ Settings → Display, World → Weather, the rider list, the HUD with weather,
 wind and damage, the GPS line (the test route gets `origin=` Vaduz) and
 the console's Tab completion (spec 3.40), Captures → screenshot / FIT
 downloads, a video, and a setting kept over a reload; screenshots
-OUT/web-<time>-menu.jpg, -settings.jpg, -weather.jpg, -hud.jpg,
+OUT/web-<time>-menu.jpg, -settings.jpg, -weather.jpg, -calendar.jpg, -hud.jpg,
 -gps.jpg, -console.jpg, -riders.jpg, -gamepad.jpg and the downloads in
 OUT/web-<time>-downloads/.
 

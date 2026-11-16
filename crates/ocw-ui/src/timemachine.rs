@@ -34,7 +34,13 @@ impl Plugin for TimeMachinePlugin {
         crate::configure_sets(app);
         app.init_resource::<TimeMachine>()
             .init_resource::<WorldPlace>()
-            .add_systems(Update, update_sky.in_set(crate::ViewExtrasSet));
+            .init_resource::<crate::calendar::CalendarMenu>()
+            .add_systems(
+                Update,
+                (update_sky, crate::calendar::update)
+                    .chain()
+                    .in_set(crate::ViewExtrasSet),
+            );
         register_commands(app);
     }
 }
@@ -159,6 +165,24 @@ fn run_time(world: &mut World, args: &[&str]) -> Result<String, String> {
             "{} sets the time of this ride",
             control_label(clock.as_ref(), false)
         ));
+    }
+    // A season: the date of its day at the place (spec §14 Phase 9 S9b,
+    // decision Q11), the time of day kept.
+    if let TimeCommand::Season(pick) = cmd {
+        let (change, d) = crate::calendar::season_change(world, pick, ms, &zone)?;
+        crate::send(world, ClientCore::clock_message(change));
+        let name = match pick {
+            ocw_sky::machine::SeasonPick::Season(s) => s.label().to_lowercase(),
+            ocw_sky::machine::SeasonPick::Day(n) => format!("day {n}"),
+        };
+        return Ok(match change {
+            ClockChange::Fixed(at) => format!(
+                "time: {} ({name} at your place, {})",
+                long_time(&zone, at),
+                ocw_sky::calendar::short_date(d)
+            ),
+            _ => String::new(),
+        });
     }
     let change = machine::resolve(&cmd, ms, &zone, latlon.0, latlon.1)?.expect("not Show");
     if let TimeCommand::Preset(p) = cmd {

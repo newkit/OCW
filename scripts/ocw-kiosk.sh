@@ -27,6 +27,10 @@
 # new build or a crash of either restarts both. OCW_KIOSK_SERVER=0: no
 # server, the app rides alone as before; OCW_KIOSK_BOTS (default 10) and
 # OCW_KIOSK_SERVER_ARGS (more ocw-server options) tune it.
+# Voice (spec §7.1.8): the game server starts the voice server it finds
+# next to itself (OCW_KIOSK_DIR/livekit-server, installed by the deploy) or
+# on PATH; riders who join talk to each other without any setup. Its
+# ports: TCP 7880 / 7881 and UDP 7882 (`--voice-ports`).
 # A game server already running on this machine (UDP port of
 # OCW_KIOSK_LISTEN busy, e.g. one started by hand) is joined instead of
 # starting another; OCW_KIOSK_SERVER=join always joins (waiting for it).
@@ -258,6 +262,7 @@ case "${1:-}" in
     if kill -0 "$(cat "$state/server.pid" 2>/dev/null || echo 0)" 2>/dev/null; then
       echo "game server: running; riders join with:"
       grep '^ ' "$state/server-connect.txt" 2>/dev/null
+      cat "$state/server.out" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -a -o "voice chat o[nf].*" | tail -n 1 | sed 's/^/voice: /'
     elif udp_busy "${listen##*:}"; then
       echo "game server: another one listens on UDP ${listen##*:} (the kiosk joins it)"
     else

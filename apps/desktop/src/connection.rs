@@ -76,6 +76,8 @@ impl Plugin for ConnectionPlugin {
             app.add_plugins((
                 ocw_ui::collisions::CollisionsPlugin,
                 ocw_ui::events::EventsPlugin,
+                // The rider status signs (spec §2.6).
+                ocw_ui::status::StatusPlugin,
             ));
         }
         register_commands(app);
@@ -111,6 +113,9 @@ pub struct HostNext {
     pub bots: u32,
     /// Everyone may change the time and weather (else the host only).
     pub open: bool,
+    /// The bundled voice server's configuration (spec §7.1.6 V2), when it
+    /// runs: the hosted server grants voice tokens with its keys.
+    pub voice: Option<ocw_server::voice::VoiceConfig>,
 }
 
 /// The host start waiting for the session (taken by [`start_session_with`]).
@@ -251,6 +256,8 @@ pub fn start_session_with(world: &mut World, route: Route, keep_link: bool) {
             world_access: ocw_server::ClockAccess::Host,
             god_access: ocw_server::ClockAccess::Host,
             collision_access: ocw_server::ClockAccess::Host,
+            // The bundled voice server of this hosting (§7.1.6 V2).
+            voice: h.voice,
             ..local_config_at(&args, start_m, geo_origin)
         };
         let (conn, counts) = LocalServer::spawn_hosting(course, config, h.net)

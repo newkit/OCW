@@ -612,10 +612,47 @@ fn sync_season(
 fn register_commands(app: &mut App) {
     app.console_command(ConsoleCommand::new(
         Permission::User,
-        Command::new("season").about(
-            "The season at the rider (spec 9C): leaves, grass, fields, the climatological snow line",
-        ),
-        |world, _| {
+        Command::new("season")
+            .about(
+                "The season at the rider (spec 9C): leaves, grass, fields, the climatological snow line; season set SEASON|DAY jumps the date there",
+            )
+            .arg(
+                clap::Arg::new("args")
+                    .num_args(0..)
+                    .action(clap::ArgAction::Append),
+            ),
+        |world, m| {
+            let args: Vec<&str> = m
+                .get_many::<String>("args")
+                .map(|v| v.map(String::as_str).collect())
+                .unwrap_or_default();
+            // `season set autumn`: the date jumps to the season's day of the
+            // place, the time of day kept (spec §14 Phase 9 S9b, decision
+            // Q11: no season apart from the date) – `time season`.
+            match args.as_slice() {
+                [] => {}
+                ["set", "follow"] => {
+                    return Ok("the season always follows the date (the time machine's)".into());
+                }
+                ["set", pick] => {
+                    if ocw_sky::machine::SeasonPick::parse(pick).is_none() {
+                        return Err(
+                            "season set spring|early-summer|summer|autumn|late-autumn|winter|DAY"
+                                .into(),
+                        );
+                    }
+                    world
+                        .resource_mut::<crate::console::ConsoleState>()
+                        .queue(format!("time season {pick}"));
+                    return Ok(String::new());
+                }
+                _ => {
+                    return Err(
+                        "season [set spring|early-summer|summer|autumn|late-autumn|winter|DAY]"
+                            .into(),
+                    );
+                }
+            }
             world.resource_scope(|world, mut cache: Mut<SeasonCache>| {
                 let Some(view) = world.get_resource::<RideView>() else {
                     return Err("no ride".into());

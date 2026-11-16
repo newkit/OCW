@@ -58,6 +58,18 @@ ureq.workspace = true
 # The accounts backend (spec §9.1), run by the binary (`--auth-config`,
 # `--auth-dev`); only with the `backend` feature (the apps leave it out).
 ocw-accounts = { workspace = true, optional = true }
+# The bundled voice server (spec §7.1.1, `voice::launcher`): fresh API keys
+# from the OS random source, its log and pid file under the data dir.
+getrandom.workspace = true
+dirs.workspace = true
+# Automatic port mapping on the router while hosting (UPnP-IGD, spec
+# §7.1.1 *Network*, §7.1.7 Q4; `portmap`): the blocking API only.
+igd-next.workspace = true
+
+# The voice server's job object: it ends with the host, also on a crash
+# (spec §7.1.1 *Lifecycle*; MIT OR Apache-2.0).
+[target.'cfg(windows)'.dependencies]
+win32job.workspace = true
 
 # The system clock in the browser (std's panics on wasm32-unknown-unknown).
 [target.'cfg(target_arch = "wasm32")'.dependencies]

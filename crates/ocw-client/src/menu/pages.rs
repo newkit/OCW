@@ -84,6 +84,16 @@ pub enum Page {
     AudioVoice,
     /// World → Time machine (spec §14 Phase 9; rows from `timemachine`).
     TimeMachine,
+    /// World → Time → Calendar (spec §14 Phase 9 S9a; rows and the grid
+    /// from `menu::calendar`): the month shown, the focus day to open on,
+    /// the time of day of the stepper.
+    Calendar(super::calendar::Cal),
+    /// Calendar → Dates: today, the equinoxes and solstices, the season
+    /// starts of the place (in the shown year).
+    CalendarDates(super::calendar::Cal),
+    /// World → Time → Season (S9b, decision Q11): the seasons of the
+    /// place as date jumps.
+    Season,
     /// Controls → Riding aids (spec §14 Phase 12C / 12D): the proximity
     /// cue and arrow, the "last moment" warning, the camera shake.
     RidingAids,
@@ -97,7 +107,8 @@ pub enum Page {
     /// with Google or Strava, with a code on a kiosk, link the other
     /// provider, sign out.
     Account,
-    /// Controls → Unicorn mode: invert the mouse, plane or hover (the
+    /// Controls → Touch and unicorn: touch steering (spec §3.2.3: auto /
+    /// on / off, the zones' height), the unicorn's mouse and flight (the
     /// Controls page is full).
     UnicornControls,
     /// Controls → Keys and buttons (spec §3.2.1 M9): the groups, the pad's
@@ -204,11 +215,14 @@ impl Page {
             Self::VoiceParticipants => "Voice participants",
             Self::AudioVoice => "Audio: voice",
             Self::TimeMachine => "Time machine",
+            Self::Calendar(_) => "Calendar",
+            Self::CalendarDates(_) => "Calendar: dates",
+            Self::Season => "Season",
             Self::RidingAids => "Riding aids",
             Self::Graphics => "Graphics",
             Self::RiderList => "Riders in this ride",
             Self::Account => "Account",
-            Self::UnicornControls => "Unicorn mode controls",
+            Self::UnicornControls => "Touch and unicorn mode",
             Self::Bindings => "Keys and buttons",
             Self::BindGroup(g) => crate::bindings::Group::ALL
                 .get(g)
@@ -286,6 +300,8 @@ impl Page {
     pub fn grid_columns(self) -> Option<usize> {
         match self {
             Self::WeatherPresets => Some(super::weather::GRID_COLUMNS),
+            // The month grid moves by its own rules (`calendar::navigate`).
+            Self::Calendar(_) => Some(super::calendar::COLUMNS),
             _ => None,
         }
     }
@@ -412,7 +428,15 @@ impl Page {
                 "Voice volume (Enter plays a test sound). Echo test: an Echo rider on the road plays your microphone back to you, delayed, when you ride near it.",
             ],
             Self::TimeMachine => &[
-                "Date, time and speed of the world's clock (sun and light). Solo you set it; in a shared ride the host does.",
+                "Date, time and speed of the world's clock (sun, light, season). Enter on Day: the calendar. Solo you set it; in a shared ride the host does.",
+            ],
+            // The grid needs the room (spec §14 Phase 9 S9a).
+            Self::Calendar(_) => &[],
+            Self::CalendarDates(_) => {
+                &["Dates of the shown year at your place and altitude; the time of day stays."]
+            }
+            Self::Season => &[
+                "Each season's day at your place and altitude: the date jumps there and the time of day stays, so sun and landscape always match.",
             ],
             Self::Graphics => &[
                 "Quality: Low and Medium draw fewer shadows, trees and houses for weaker GPUs, WebGL 2 and phones; auto chooses by GPU and device.",
@@ -431,7 +455,7 @@ impl Page {
             ],
             Self::Account => &[crate::account::NOTE],
             Self::UnicornControls => &[
-                "Unicorn mode flies with the cursor keys and + / - (never W A S D), or the gamepad.",
+                "Touch: tap or hold a side to steer. Unicorn: cursor keys and + / -, or the gamepad.",
             ],
             Self::Bindings => &[
                 "One key and one gamepad button per action. The menu keys, the sticks, the triggers and unicorn mode's flight keys stay fixed.",
@@ -471,7 +495,7 @@ impl Page {
                 "Others may need UDP open in the firewall and a port forwarding on the router (README).",
             ],
             Self::HostSummary => &[
-                "The server runs in this app on 0.0.0.0 (all addresses); you ride on it as the host.",
+                "The server and its voice server run in this app on all addresses; you ride on it as the host.",
             ],
             Self::HostLink => &[],
         }
@@ -1093,11 +1117,16 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
                 Page::Bindings,
             ),
             open_row(
-                "Unicorn mode",
-                settings
-                    .get("controls.god_flight")
-                    .ok()
-                    .map(|v| v.to_string()),
+                "Touch and unicorn",
+                Some(format!(
+                    "touch {}, {}",
+                    settings
+                        .get("controls.touch_steer")
+                        .map_or_else(|_| "auto".into(), |v| v.to_string()),
+                    settings
+                        .get("controls.god_flight")
+                        .map_or_else(|_| "plane".into(), |v| v.to_string()),
+                )),
                 Page::UnicornControls,
             ),
             // Collisions (spec §14 Phase 12A, 12D).
@@ -1113,8 +1142,10 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             },
         ],
         Page::UnicornControls => vec![
-            setting_row(settings, "controls.invert_y", "Invert mouse Y"),
-            setting_row(settings, "controls.god_flight", "Flight"),
+            setting_row(settings, "controls.touch_steer", "Touch steering"),
+            setting_row(settings, "controls.touch_zones", "Touch zones"),
+            setting_row(settings, "controls.invert_y", "Unicorn: invert Y"),
+            setting_row(settings, "controls.god_flight", "Unicorn: flight"),
         ],
         Page::Bindings | Page::BindGroup(_) | Page::BindReset => binding_rows(page, settings, true),
         Page::Accessibility => vec![
@@ -1214,6 +1245,8 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             // VR (spec §14 Phase 11, X1): the headset switch and the mirror.
             setting_row(settings, "vr.enabled", "VR headset (next start)"),
             setting_row(settings, "vr.mirror", "VR mirror"),
+            // The ride photographer (spec §2.11): photos of the ride.
+            setting_row(settings, "photographer.enabled", "Ride photographer"),
         ],
         Page::Riders => {
             let mut out: Vec<Row> = riders
@@ -1298,7 +1331,7 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         // From the voice state (`voice::page::rows`).
         Page::Voice | Page::VoiceDevices | Page::VoiceParticipants | Page::AudioVoice => Vec::new(),
         // From the world clock (`timemachine::rows`).
-        Page::TimeMachine => Vec::new(),
+        Page::TimeMachine | Page::Calendar(_) | Page::CalendarDates(_) | Page::Season => Vec::new(),
         // From the session weather (`weather::rows`).
         Page::Weather
         | Page::WeatherPresets

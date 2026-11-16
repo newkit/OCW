@@ -16,8 +16,10 @@
 //! (`ocw_voice::web`). The token comes over the game connection in both
 //! (`VoiceTokenRequest` → `VoiceGrant`; WebTransport in the browser).
 
+use ocw_core::RiderId;
 use ocw_protocol::v1;
-use ocw_render::voice::{EchoHud, VoiceHud};
+use ocw_render::Signs;
+use ocw_render::voice::{EchoHud, VoiceHud, VoiceSigns};
 use ocw_render::{RideView, RiderView};
 use ocw_voice::hotkeys::{Input, Toggle};
 use ocw_voice::spatial::Peer;
@@ -26,6 +28,95 @@ use ocw_world::Track;
 
 use crate::client::ClientCore;
 use crate::settings::{Settings, Value};
+
+/// The voice part of the own status signs (spec §2.6, §7.1.7 Q11): in the
+/// call, the microphone muted (the X mouth), and whom the rider does not
+/// hear – by [`not_hearing_reasons`].
+pub fn voice_signs(c: &VoiceController, voice_offered: bool) -> VoiceSigns {
+    let status = c.status();
+    let in_voice = matches!(status, Status::Connected | Status::Reconnecting);
+    let (hears_nobody, not_hearing) = not_hearing_reasons(c, &status, voice_offered);
+    VoiceSigns {
+        in_voice,
+        mic_muted: in_voice && c.mute().mic_muted,
+        hears_nobody,
+        not_hearing,
+    }
+}
+
+/// **Why a rider shows headphones ("cannot hear you") – spec §7.1.7 Q12,
+/// still OPEN.** Q11 decided the meaning (headphones = this rider does
+/// not receive the viewer's voice, seen per viewer); Q12 asks which
+/// reasons count. Built here from the proposal, with only what the voice
+/// state carries today:
+///
+/// - **hears nobody** (every viewer in the call sees the headphones): the
+///   speaker is muted (Shift+M, `voice.speaker_muted`), or voice is turned
+///   off in the settings while the server offers it;
+/// - **does not hear these riders** (only they see the headphones): the
+///   participants the rider muted for themselves (`voice.mute WHO`).
+///
+/// Not counted (the proposal: not merely distance): riders out of hearing
+/// range or beyond the subscription cap (`heard: None` without a mute).
+/// Later reasons slot in here once they exist: *Selected riders* without
+/// the viewer (§7.1.3), Block (Q9), *Who hears me* (Q8, that one is the
+/// other direction).
+pub fn not_hearing_reasons(
+    c: &VoiceController,
+    status: &Status,
+    voice_offered: bool,
+) -> (bool, Vec<RiderId>) {
+    let in_voice = matches!(status, Status::Connected | Status::Reconnecting);
+    let speaker_off = in_voice && c.mute().speaker_muted;
+    let voice_off = matches!(status, Status::Off) && voice_offered;
+    let mut muted: Vec<RiderId> = if in_voice {
+        c.participants()
+            .filter(|p| p.muted_by_me)
+            .filter_map(|p| p.rider)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    muted.sort_unstable();
+    muted.dedup();
+    (speaker_off || voice_off, muted)
+}
+
+/// The status signs `viewer` sees on rider `of` (spec §2.6, §7.1.7 Q11):
+/// the X mouth, the phone and the VR headset as `theirs` says; the
+/// headphones only when `of` does not hear the viewer (hears nobody, or
+/// has the viewer in `not_hearing`) while the viewer is in the call – and
+/// never on the own rider.
+pub fn signs_seen(
+    viewer: Option<RiderId>,
+    mine: &v1::RiderStatus,
+    of: RiderId,
+    theirs: &v1::RiderStatus,
+) -> Signs {
+    let me = viewer.filter(|v| *v != of);
+    let cannot_hear_you = me.is_some_and(|v| {
+        mine.in_voice && (theirs.hears_nobody || theirs.not_hearing.contains(&v.0))
+    });
+    Signs {
+        voice_muted: theirs.voice_muted,
+        in_menu: theirs.in_menu,
+        in_vr: theirs.in_vr,
+        cannot_hear_you,
+    }
+}
+
+/// The wire status from the own signs (spec §2.6): the voice part from
+/// [`voice_signs`], the menu and VR from the app.
+pub fn status_message(voice: &VoiceSigns, in_menu: bool, in_vr: bool) -> v1::RiderStatus {
+    v1::RiderStatus {
+        voice_muted: voice.mic_muted,
+        in_menu,
+        in_vr,
+        in_voice: voice.in_voice,
+        hears_nobody: voice.hears_nobody,
+        not_hearing: voice.not_hearing.iter().map(|r| r.0).collect(),
+    }
+}
 
 /// What the menu's voice pages show, refreshed every frame.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -333,6 +424,7 @@ impl VoiceDriver {
                 .collect(),
             speaking_names: names,
             echo: echo_hud(&c.echo_status(), c.levels(), c.echo_delay_ms()),
+            signs: voice_signs(c, client.is_some_and(ClientCore::voice_offered)),
         };
         out
     }
@@ -598,6 +690,7 @@ mod tests {
             wobble: 0.0,
             damage: None,
             cue: Default::default(),
+            signs: Default::default(),
         }
     }
 

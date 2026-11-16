@@ -17,6 +17,7 @@
 //! no Quit, Restart, files or Strava, its anonymous riders a locked
 //! workshop (Q5), and its own Captures page (downloads).
 
+use super::calendar;
 use super::pages::{self as sub, Activate, Row};
 
 /// At most this many items on a page (ten-foot UI, spec §3.2.1).
@@ -51,6 +52,9 @@ pub enum Action {
     /// The ‹ (−1) or › (+1) arrow of value row `i` was clicked or tapped
     /// (mouse and touch reach every value, spec §3.2.2).
     Step(usize, i8),
+    /// Shift + ← (−1) / → (+1): a fine step (the calendar's time stepper:
+    /// one minute, spec §14 Phase 9 S9a); elsewhere Left / Right.
+    Fine(i8),
     /// Open the menu at the rider list of the Workshop page (the scene's
     /// changing corner until the character editor, W4).
     RiderPage,
@@ -81,6 +85,9 @@ pub enum Page {
     Events,
     /// Ride → Host a ride in the browser: why it needs the desktop app.
     HostBrowser,
+    /// Ride → Strava recording in the browser: why it needs the desktop
+    /// app (spec §2.8.1).
+    StravaBrowser,
     Navi,
     Settings,
     /// A Settings sub page, the Workshop or a list of the Ride / Navi
@@ -158,12 +165,15 @@ pub enum When {
     Alone,
     Joined,
     Hosting,
+    /// Alone or in a shared ride, not while hosting.
+    NotHosting,
 }
 
 impl When {
     fn shows(self, mode: RideMode) -> bool {
         match self {
             Self::Always => true,
+            Self::NotHosting => !matches!(mode, RideMode::Hosting { .. }),
             Self::Alone => mode == RideMode::Alone,
             Self::Joined => mode == RideMode::Joined,
             Self::Hosting => matches!(mode, RideMode::Hosting { .. }),
@@ -283,6 +293,28 @@ const RIDE_ITEMS: &[Item] = &[
         Platform::Browser,
         "Host a ride",
         ItemKind::Dimmed(Page::HostBrowser),
+    ),
+    // The Strava recording (spec §2.8.1 ST1, the same as S); the browser
+    // shows it dimmed with the reason. Not while hosting: that page has
+    // its seven items (S and the pad button work there too).
+    when(
+        When::NotHosting,
+        only(
+            Platform::Desktop,
+            "Strava recording",
+            ItemKind::Command {
+                line: "strava.record",
+                close: true,
+            },
+        ),
+    ),
+    when(
+        When::NotHosting,
+        only(
+            Platform::Browser,
+            "Strava recording",
+            ItemKind::Dimmed(Page::StravaBrowser),
+        ),
     ),
     when(When::Hosting, item("Hosting", ItemKind::Hosting)),
     when(
@@ -487,10 +519,8 @@ impl Page {
             },
             Page::Ride => PageDef {
                 title: "Ride",
-                text: &[
-                    "Events, workouts (ERG mode), shared rides: join one with its link or host one here.",
-                    "Another world or route: World -> Change world, Navi -> Routes.",
-                ],
+                // Seven items in every mode (with Strava): no room for a text.
+                text: &[],
                 items: RIDE_ITEMS,
                 initial_focus: 0,
             },
@@ -506,6 +536,14 @@ impl Page {
                 title: "Host a ride",
                 text: &[
                     "Hosting needs the desktop app (browsers can't open a server port). Join a shared ride here with its https:// link.",
+                ],
+                items: HOST_BROWSER_ITEMS,
+                initial_focus: 0,
+            },
+            Page::StravaBrowser => PageDef {
+                title: "Strava recording",
+                text: &[
+                    "Strava needs the desktop app (S records, strava.toml links the account). Here the ride's FIT file is a download (Captures).",
                 ],
                 items: HOST_BROWSER_ITEMS,
                 initial_focus: 0,
@@ -832,11 +870,95 @@ impl Menu {
     }
 
     fn push(&mut self, page: Page) {
+        // The calendar opens on its day (spec §14 Phase 9 S9a).
+        let focus = match page {
+            Page::Sub(sub::Page::Calendar(c)) => c.cell_of((c.year, c.month, c.day)).unwrap_or(0),
+            _ => page.def().initial_focus,
+        };
         self.stack.push(Level {
             page,
-            focus: page.def().initial_focus,
+            focus,
             scroll: 0,
         });
+    }
+
+    /// Replaces the current page with `page` (the calendar's month).
+    fn replace_page(&mut self, page: Page) {
+        if let Some(l) = self.stack.last_mut() {
+            l.page = page;
+        }
+    }
+
+    /// The calendar's keys (spec §14 Phase 9 S9a): the focus by day and
+    /// week, the month and year, the time stepper (`calendar::navigate`);
+    /// `None`: the action is the generic one (Confirm on a day, Back, …).
+    fn calendar_action(&mut self, c: calendar::Cal, action: Action) -> Option<Effect> {
+        use calendar::Nav;
+        let minute = self
+            .rows
+            .get(calendar::TIME)
+            .and_then(|r| r.value.as_deref())
+            .and_then(|v| {
+                let (h, m) = v.split_once(':')?;
+                Some(h.parse::<u16>().ok()? * 60 + m.parse::<u16>().ok()?)
+            })
+            .unwrap_or(0);
+        let mut focus = self.focus();
+        let nav = match action {
+            Action::Left => Nav::Left,
+            Action::Right => Nav::Right,
+            Action::Up => Nav::Up,
+            Action::Down => Nav::Down,
+            Action::TabPrev => Nav::Month(-1),
+            Action::TabNext => Nav::Month(1),
+            Action::Fine(d) if focus == calendar::TIME => Nav::Minutes(i32::from(d)),
+            Action::Fine(d) if d < 0 => Nav::Left,
+            Action::Fine(_) => Nav::Right,
+            Action::Step(i, d) if i == calendar::TIME => {
+                focus = i;
+                Nav::Minutes(i32::from(d) * calendar::STEP_MIN)
+            }
+            Action::Step(..) => return Some(Effect::None),
+            Action::Confirm | Action::Click(_) => {
+                if let Action::Click(i) = action {
+                    focus = i;
+                }
+                match focus {
+                    calendar::YEAR_PREV => Nav::Year(-1),
+                    calendar::MONTH_PREV => Nav::Month(-1),
+                    calendar::MONTH_NEXT => Nav::Month(1),
+                    calendar::YEAR_NEXT => Nav::Year(1),
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        let mut c = c;
+        let f = calendar::navigate(&mut c, focus, nav, minute);
+        self.replace_page(Page::Sub(sub::Page::Calendar(c)));
+        self.set_focus(f);
+        Some(Effect::None)
+    }
+
+    /// After a `time date …` line from the calendar (a day, Today, a
+    /// shortcut): its month shows, the focus on the date.
+    fn follow_date(&mut self, effect: &Effect) {
+        let Effect::Command(line) = effect else {
+            return;
+        };
+        let Some(d) = calendar::line_date(line) else {
+            return;
+        };
+        if let Some(Page::Sub(sub::Page::Calendar(c))) = self.page() {
+            let next = calendar::Cal {
+                minute: c.minute,
+                ..calendar::Cal::at(d)
+            };
+            self.replace_page(Page::Sub(sub::Page::Calendar(next)));
+            if let Some(f) = next.cell_of((next.year, next.month, next.day)) {
+                self.set_focus(f);
+            }
+        }
     }
 
     fn close(&mut self) -> Effect {
@@ -1101,6 +1223,18 @@ impl Menu {
     /// Applies one action. A command item that closes the menu reports
     /// only its command; check [`Self::is_open`] for the close.
     pub fn apply(&mut self, action: Action) -> Effect {
+        if self.is_open()
+            && let Some(Page::Sub(sub::Page::Calendar(c))) = self.page()
+            && let Some(effect) = self.calendar_action(c, action)
+        {
+            return effect;
+        }
+        let effect = self.apply_generic(action);
+        self.follow_date(&effect);
+        effect
+    }
+
+    fn apply_generic(&mut self, action: Action) -> Effect {
         if action == Action::RiderPage {
             let opened = !self.is_open();
             self.stack.clear();
@@ -1123,6 +1257,7 @@ impl Menu {
         }
         match action {
             Action::Open | Action::RiderPage | Action::TrustDialog => Effect::None,
+            Action::Fine(d) => self.apply_generic(if d < 0 { Action::Left } else { Action::Right }),
             // A grid: the arrows move the focus in two directions.
             Action::Left | Action::Right if self.grid_columns().is_some() => {
                 self.move_focus(if action == Action::Right { 1 } else { -1 });
@@ -1255,8 +1390,11 @@ mod tests {
         // The Back item of a page goes up too.
         m.apply(Action::Click(1));
         assert_eq!(m.page(), Some(Page::Ride));
-        assert_eq!(labels(&m)[3..], ["Host a ride", "Restart", "Back"]);
-        m.apply(Action::Click(5));
+        assert_eq!(
+            labels(&m)[3..],
+            ["Host a ride", "Strava recording", "Restart", "Back"]
+        );
+        m.apply(Action::Click(6));
         assert_eq!((m.page(), m.focus()), (Some(Page::Top), 1));
         // World: its own page (rows from the ride catalog).
         m.apply(Action::Click(2));
@@ -1292,13 +1430,13 @@ mod tests {
         let mut m = Menu::default();
         m.apply(Action::Open);
         m.apply(Action::Click(1));
-        m.apply(Action::Click(4));
+        m.apply(Action::Click(5));
         assert_eq!(m.page(), Some(Page::ConfirmRestart));
         assert_eq!(labels(&m)[m.focus()], "Cancel");
         // Confirming Cancel goes back, nothing is run.
         assert_eq!(m.apply(Action::Confirm), Effect::None);
         assert_eq!(m.page(), Some(Page::Ride));
-        m.apply(Action::Click(4));
+        m.apply(Action::Click(5));
         m.apply(Action::Up);
         assert_eq!(m.apply(Action::Confirm), Effect::Command("reset".into()));
         // Quit.
@@ -1345,10 +1483,19 @@ mod tests {
                 "Workouts",
                 "Join a ride",
                 "Host a ride",
+                "Strava recording",
                 "Restart",
                 "Back"
             ]
         );
+        // The Strava recording: the same as S (spec §2.8.1), the menu closes.
+        assert_eq!(
+            m.apply(Action::Click(4)),
+            Effect::Command("strava.record".into())
+        );
+        assert!(!m.is_open());
+        m.apply(Action::Open);
+        m.apply(Action::Click(1));
         m.apply(Action::Click(0));
         assert_eq!(m.page(), Some(Page::Events));
         assert_eq!(
@@ -1412,7 +1559,7 @@ mod tests {
         );
         m.apply(Action::Open);
         m.apply(Action::Click(1));
-        m.apply(Action::Click(5));
+        m.apply(Action::Click(6));
         assert_eq!(m.page(), Some(Page::Top));
     }
 
@@ -1425,7 +1572,14 @@ mod tests {
         m.set_ride_mode(RideMode::Joined);
         assert_eq!(
             labels(&m),
-            ["Events", "Workouts", "Leave shared ride", "Restart", "Back"]
+            [
+                "Events",
+                "Workouts",
+                "Leave shared ride",
+                "Strava recording",
+                "Restart",
+                "Back"
+            ]
         );
         assert_eq!(m.apply(Action::Click(2)), Effect::Command("leave".into()));
         assert!(!m.is_open());
@@ -1457,8 +1611,9 @@ mod tests {
         );
         // The focus stays on the page when items go.
         m.set_focus(6);
-        m.set_ride_mode(RideMode::Alone);
+        m.set_ride_mode(RideMode::Joined);
         assert_eq!(m.focus(), 5);
+        m.set_ride_mode(RideMode::Alone);
         // Join and Host open their pages.
         m.apply(Action::Click(2));
         assert_eq!(m.page(), Some(Page::Sub(sub::Page::Join)));
@@ -1662,6 +1817,7 @@ mod tests {
                 Page::Ride,
                 Page::Events,
                 Page::HostBrowser,
+                Page::StravaBrowser,
                 Page::Navi,
                 Page::Settings,
                 Page::ConfirmRestart,
@@ -1738,11 +1894,22 @@ mod tests {
         m.apply(Action::Click(1));
         assert_eq!(
             labels(&m),
-            ["Events", "Workouts", "Join a ride", "Host a ride", "Back"],
+            [
+                "Events",
+                "Workouts",
+                "Join a ride",
+                "Host a ride",
+                "Strava recording",
+                "Back"
+            ],
             "no Restart (a reload)"
         );
-        // Hosting is dimmed: the page says why.
-        assert_eq!(m.dimmed(), [false, false, false, true, false]);
+        // Hosting and Strava are dimmed: the pages say why.
+        assert_eq!(m.dimmed(), [false, false, false, true, true, false]);
+        m.apply(Action::Click(4));
+        assert_eq!(m.page(), Some(Page::StravaBrowser));
+        assert!(m.page().unwrap().def().text[0].contains("desktop app"));
+        m.apply(Action::Back);
         m.apply(Action::Click(3));
         assert_eq!(m.page(), Some(Page::HostBrowser));
         assert!(m.page().unwrap().def().text[0].contains("desktop app"));

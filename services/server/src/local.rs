@@ -206,6 +206,11 @@ impl LocalServer {
             .name("ocw-host-server".into())
             .spawn(move || {
                 let conn = server.connect();
+                // The host's app is on this machine: its voice grant names
+                // the voice server's loopback address, never the public
+                // one (spec §7.1.6 V2; routers rarely loop back).
+                let here = std::net::IpAddr::from(std::net::Ipv4Addr::LOCALHOST);
+                server.set_connection_addresses(conn, Some(here), (here, 0).into());
                 let tick = Duration::from_secs_f64(SIM_DT);
                 let mut next = Instant::now();
                 'run: loop {
@@ -542,6 +547,7 @@ mod tests {
             heart_rate_bpm: None,
             brake: None,
             virtual_power: None,
+            status: None,
         })));
         f.send(&power);
         s.send(&power);

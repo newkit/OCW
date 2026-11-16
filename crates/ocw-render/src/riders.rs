@@ -222,11 +222,19 @@ fn contact_height(
     pavement: Option<&Pavement>,
     along: f64,
 ) -> f32 {
-    let d = state.distance + along * state.heading.cos();
-    let lateral = state.lateral_offset + along * state.heading.sin();
+    // Beside the centreline of a curve a metre of path is shorter (inside)
+    // or longer (outside): the wheel `along` ahead lies that much further
+    // along the path (tight junction corners on a climb, §4.8.8).
+    // And the straight bike leaves the curve: its wheels lie ½ κ s² to the
+    // curve's outside.
+    let k = track.curvature(state.distance);
+    let scale = (1.0 - k * state.lateral_offset).clamp(0.25, 4.0);
+    let d = state.distance + along * state.heading.cos() / scale;
+    let lateral = state.lateral_offset + along * state.heading.sin() - 0.5 * k * along * along;
     let p = to_vec3(track.sample(d).offset_position(lateral));
     let beyond = lateral.abs() - track.road_width_at(d) / 2.0;
-    let mut y = p.y + crate::ROAD_SURFACE_LIFT_M;
+    // The drawn surface (junction surfaces are not flat across, §4.8.8).
+    let mut y = track.surface_height(d, lateral) as f32 + crate::ROAD_SURFACE_LIFT_M;
     // Only at the road's edge or beyond (riders on the road keep 0.6 m
     // from it; the strips may be a little narrower than the track).
     if beyond > -0.25
@@ -494,6 +502,11 @@ pub fn hidden_rider_nodes(look: Option<&RiderLook>, kit: &[String]) -> Vec<&'sta
     if l.design.number > 0 {
         shown.extend(ocw_assets::rider::opt::HIP_NUMBER);
     }
+    // The pockets' top band in the pattern colour when the jersey
+    // designer has a second colour (spec §2.6, Phase 8 T6).
+    if l.design.second.is_some() && shown.contains(&ocw_assets::rider::POCKETS) {
+        shown.push(ocw_assets::rider::POCKET_BAND);
+    }
     ocw_assets::rider::optional()
         .into_iter()
         .filter(|n| !shown.contains(n))
@@ -689,7 +702,8 @@ pub const LOD_DISTANCE_M: f32 = 40.0;
 /// Width of the cross-fade between the two models (m).
 const LOD_FADE_M: f32 = 4.0;
 
-fn near_range() -> VisibilityRange {
+/// The near model's visibility range (up to [`LOD_DISTANCE_M`]).
+pub fn near_range() -> VisibilityRange {
     VisibilityRange {
         start_margin: 0.0..0.0,
         end_margin: LOD_DISTANCE_M - LOD_FADE_M..LOD_DISTANCE_M + LOD_FADE_M,
@@ -874,9 +888,7 @@ impl Library {
             .fitted
             .entry((profile, variants.to_vec()))
             .or_insert_with(|| {
-                static LOW: std::sync::OnceLock<Model> = std::sync::OnceLock::new();
-                let low =
-                    LOW.get_or_init(|| ocw_assets::rider::build(ocw_assets::rider::Detail::Low));
+                let low = ocw_assets::shipped::rider_low_model();
                 let ids: Vec<&str> = variants.iter().map(String::as_str).collect();
                 let m = ocw_assets::bikes::build_with(
                     profile,
@@ -913,6 +925,9 @@ pub struct AvatarRig {
     animator: Animator,
     wheel_angle: f32,
     bias: f64,
+    /// The phone in the hand from the last pose (spec §2.6; `None`: in the
+    /// pocket, or not posed far away).
+    phone: Option<(Vec3, Quat)>,
 }
 
 impl AvatarRig {
@@ -1101,8 +1116,14 @@ fn spawn_avatar(
     let rider_model = ocw_assets::shipped::rider_model();
     let character = built.look.map(|l| l.character).unwrap_or_default();
     // The body height (spec 4C): the rider scaled, the saddle moved so the
-    // legs fit (the bikes are made for the 1.78 m rider).
-    let body = pose::BodyFit::new(&lib.rider_rig, &lib.bike_rigs[b], character.scale());
+    // legs fit – the bike file's sizing data (spec §14 Phase 15, Q7: the
+    // frames are made for the 1.78 m rider and fitted to every size).
+    let body = pose::BodyFit::sized(
+        &lib.rider_rig,
+        &lib.bike_rigs[b],
+        character.scale(),
+        &ocw_assets::shipped::bike_sizing(built.bike),
+    );
     let bike = body.bike;
     let root = commands
         .spawn((
@@ -1205,14 +1226,47 @@ fn spawn_avatar(
         pelvis: find(nodes::PELVIS),
         posed,
         bike,
-        rider: body.rider,
+        // The back pocket (spec §2.6: the phone's) sits on the jersey,
+        // which is as wide and deep as the build's girth (x and z).
+        rider: RiderRig {
+            pocket: body.rider.pocket
+                * rider_model.node(nodes::TORSO).map_or(Vec3::ONE, |t| {
+                    ocw_assets::rider::girth(rider_model, t, character.validated().build)
+                }),
+            ..body.rider
+        },
         scale: body.scale,
         fit: body.fit,
         animator: Animator::new(id.0),
         wheel_angle: 0.0,
         bias: anim::bias(id.0),
+        phone: None,
     };
     commands.entity(root).insert(rig);
+    // The status signs (spec §2.6): worn at the head, the phone in the
+    // hand; not for the ghost.
+    if !ghost {
+        let glasses: Vec<Entity> = [
+            ocw_assets::rider::opt::GLASSES_SPORT,
+            ocw_assets::rider::opt::GLASSES_ROUND,
+        ]
+        .iter()
+        .filter_map(|n| rider_model.node(n))
+        .map(|i| rider_e[i])
+        .filter(|e| *e != Entity::PLACEHOLDER)
+        .collect();
+        let parts = crate::status_signs::spawn(
+            commands,
+            meshes,
+            materials.standard,
+            find(nodes::HEAD),
+            sway,
+            &bike,
+            glasses,
+            &colours,
+        );
+        commands.entity(root).insert(parts);
+    }
     root
 }
 
@@ -1221,15 +1275,21 @@ pub(crate) fn animate(
     time: Res<Time>,
     view: Res<RideView>,
     mut avatars: Query<
-        (&Avatar, &mut AvatarRig, &GlobalTransform),
+        (
+            &Avatar,
+            &mut AvatarRig,
+            &GlobalTransform,
+            Option<&crate::status_signs::SignParts>,
+        ),
         Without<crate::ragdoll::Ragdolled>,
     >,
     cameras: Query<&GlobalTransform, With<crate::camera::FollowCamera>>,
     mut transforms: Query<&mut Transform>,
+    mut visibility: Query<&mut Visibility>,
 ) {
     let dt = time.delta_secs();
     let eye = cameras.iter().next().map(GlobalTransform::translation);
-    for (avatar, mut rig, at) in &mut avatars {
+    for (avatar, mut rig, at, signs) in &mut avatars {
         let mut bent = [0.0f32; 2];
         let input = if avatar.id == GHOST_ID {
             let Some(g) = view.ghost else { continue };
@@ -1244,6 +1304,7 @@ pub(crate) fn animate(
                 bias: 0.0,
                 curvature: g.turn_curvature,
                 cue: anim::Cue::default(),
+                signs: Default::default(),
             }
         } else {
             let Some(r) = view.riders.iter().find(|r| r.id == avatar.id) else {
@@ -1262,6 +1323,8 @@ pub(crate) fn animate(
                 curvature: r.state.turn_curvature,
                 // The U-turn, the finish (from the client, spec §2.6).
                 cue: r.cue,
+                // The status signs (spec §2.6), as this viewer sees them.
+                signs: r.signs,
             }
         };
         let rig = &mut *rig;
@@ -1277,10 +1340,21 @@ pub(crate) fn animate(
             }
         }
         // Far away only the lod1 model shows: no pose needed.
-        if eye.is_some_and(|e| e.distance(at.translation()) > LOD_DISTANCE_M + LOD_FADE_M) {
-            continue;
+        let far = eye.is_some_and(|e| e.distance(at.translation()) > LOD_DISTANCE_M + LOD_FADE_M);
+        let p = (!far).then(|| pose::pose(&rig.rider, &rig.bike, &rig.fit, &params));
+        rig.phone = p.and_then(|p| p.phone);
+        if let Some(parts) = signs {
+            crate::status_signs::update(
+                parts,
+                &rig.animator.status,
+                rig.phone,
+                &mut transforms,
+                &mut visibility,
+            );
         }
-        let p = pose::pose(&rig.rider, &rig.bike, &rig.fit, &params);
+        let Some(p) = p else {
+            continue;
+        };
         if let Ok(mut t) = transforms.get_mut(rig.sway) {
             *t = sway_transform(p.bike_roll, &rig.bike);
         }
@@ -1345,6 +1419,7 @@ mod tests {
             wobble: 0.0,
             damage: None,
             cue: Default::default(),
+            signs: Default::default(),
         };
         {
             let mut v = app.world_mut().resource_mut::<RideView>();
@@ -1487,7 +1562,7 @@ mod tests {
     /// on the seat post – for every bike type that takes lights.
     #[test]
     fn fitted_lights_have_a_front_and_a_rear_lens() {
-        let low = ocw_assets::rider::build(ocw_assets::rider::Detail::Low);
+        let low = ocw_assets::shipped::rider_low_model();
         for p in ProfileId::ALL {
             let stock = ocw_assets::shipped::bike_model(p);
             assert!(lamp_lenses(stock).is_empty(), "{p:?}: no lights");
@@ -1497,7 +1572,7 @@ mod tests {
             let m = ocw_assets::bikes::build_with(
                 p,
                 ocw_assets::shipped::rider_model(),
-                &low,
+                low,
                 &["lights-set"],
             );
             let lenses = lamp_lenses(&m);
@@ -1537,6 +1612,7 @@ mod tests {
             wobble: 0.0,
             damage: None,
             cue: Default::default(),
+            signs: Default::default(),
         });
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
@@ -1658,6 +1734,7 @@ mod tests {
             wobble: 0.0,
             damage: None,
             cue: Default::default(),
+            signs: Default::default(),
         }
     }
 
@@ -1801,6 +1878,16 @@ mod tests {
         }
         assert!(hidden_rider_nodes(Some(&look), &[]).contains(&nodes::HELMET_AERO));
         assert!(!hidden_rider_nodes(Some(&look), &[]).contains(&nodes::HELMET_ROAD));
+        // The back pockets (spec §2.6): on every jersey but the skinsuit,
+        // their accent band only with the designer's second colour.
+        use ocw_assets::rider::{POCKET_BAND, POCKETS};
+        let plain = hidden_rider_nodes(Some(&look), &[]);
+        assert!(!plain.contains(&POCKETS) && plain.contains(&POCKET_BAND));
+        let mut accent = look;
+        accent.design.second = Some(ocw_core::Rgb(0x101010));
+        assert!(!hidden_rider_nodes(Some(&accent), &[]).contains(&POCKET_BAND));
+        let suit = hidden_rider_nodes(Some(&accent), &["skinsuit".to_string()]);
+        assert!(suit.contains(&POCKETS) && suit.contains(&POCKET_BAND));
     }
 
     /// Materials per node and LOD (spec §14 Phase 8 T6): every near part

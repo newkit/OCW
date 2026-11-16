@@ -479,7 +479,9 @@ the page's LiveKit SDK. The browser asks for the microphone at the first
 call. A `ws://` LiveKit URL works only for pages on localhost (an `https://`
 page needs `wss://`, i.e. LiveKit behind TLS). For browsers on other
 machines, give the server a LiveKit URL they can reach (`--bind 0.0.0.0`,
-TCP 7880 and UDP 7881–7882 open). M / Shift+M (gamepad Select / R3) mute the
+TCP 7880 and 7881 open plus its UDP media port: 7882 with `rtc.udp_port`
+set, as the bundled voice server does, else LiveKit's range 50000–60000).
+M / Shift+M (gamepad Select / R3) mute the
 microphone / the voices.
 
 #### Menus, settings and captures
@@ -527,8 +529,44 @@ itself), the next Esc opens the menu, a click locks the pointer again. If
 the browser refuses the lock, hold the left button to look. While flying,
 the trainer rides a flat road, and in a shared ride (WebTransport) the
 server's rules apply as on the desktop: by default only the host flies.
-The settings (*Settings → Controls*: invert Y, plane or hover; *Display*:
+The settings (*Settings → Controls → Touch and unicorn*: invert Y, plane or hover; *Display*:
 the rainbow trail) and the `god …` console commands are the desktop's.
+
+#### Touch steering in the browser
+
+On a phone, a tablet or any touch screen the ride steers by touch (spec
+§3.2.3): **tap or hold the left or right side of the screen**, as if you
+pressed or held ← / →.
+
+- **Hold** a side: it steers at once, like the held arrow key – in
+  autodrive the line moves 2 m per second, with manual steering the rider
+  leans into the curve.
+- **Tap** a side (lifted within 250 ms): one step – the line moves 0.5 m,
+  the lean changes by 0.1 rad (about 6°). With manual steering the lean
+  stays after the finger lifts; a tap on the other side straightens up
+  (stopping at upright first), as with the keys.
+- A touch never switches autodrive off; only the autodrive key or button
+  does. Both sides at once steer nothing (as ← and → together).
+- **Junctions** (free ride): the halves keep steering; tap an arrow of the
+  junction fan at the bottom centre to choose that exit.
+- **Two fingers move the camera**: drag to orbit, pinch to come closer or
+  go further back. One finger only steers.
+- Not steering: the band in the middle (12 % of the width), the band at the
+  top (15 % of the height), 16 px at every edge, the junction fan.
+
+**Hints:** faint chevrons ‹ › at the lower left and right show where to
+touch, a glow along the edge of the side you hold, and once per device a
+tip. They show from the start on phones and tablets (also an iPad that
+reports a Mac) and on any other device after the first touch, and hide
+again when you use a key, the mouse or a gamepad. *Settings → Controls →
+Touch and unicorn*: *Touch steering* `auto` (the default) / `on` (always
+the hints) / `off` (no steering by touch), *Touch zones* `full` (the whole
+height below the top band) / `lower` (only the lower half, so the upper
+half is free for the camera). Console: `set controls.touch_steer on`; page
+option `?touch=on|off` for one visit.
+
+The desktop app steers the same way on Windows and Linux touch screens
+(touch laptops, tablets, touch monitors); macOS has no touch screens.
 
 #### Graphics: WebGPU, WebGL 2 and the quality presets
 
@@ -719,9 +757,11 @@ keys new-signing`.
 | Route ride: back to the route after leaving it | J | North button (Y / △) |
 | Power ±10 W | PgUp / PgDn | |
 | Camera: orbit / zoom | mouse drag / wheel | |
+| Touch screen: steer (hold a side), one step (tap a side), camera (two fingers: drag, pinch), junction exit (tap its fan arrow); see [touch steering](#touch-steering-in-the-browser) | left / right side of the screen | |
 | Camera reset | C | |
 | Restart everything (as at program start; the ride is saved first) | R | |
 | Record a video (start / stop) | V | |
+| Strava recording (start / stop): the part between two presses is its own Strava activity | S | left-stick click (L3) |
 | Voice: mute / unmute your microphone | M | Select (Back / View / Share) |
 | Voice: mute / unmute the speaker (all voices; game sounds stay) | Shift+M | right-stick click (R3) |
 | Next screen | F11 | |
@@ -1098,6 +1138,44 @@ world-builder patch check --world my.ocwpkg my.ocwpatch [--pbf extract.osm.pbf]
 Both list every operation as `ok`, `MISSING` (its target is gone – reported,
 never silently dropped; `patch check` exits 1) or unchecked. Sign the result
 with your own key as above.
+
+**In OCW Studio** (`ocw-studio --world my.ocwpkg`, World workspace) the patch
+is the document you edit, with undo / redo (Ctrl + Z / Ctrl + Shift + Z) and
+autosave:
+
+1. **Click a road** in the 3D view or on the 2D map: its edge is highlighted
+   in both, and the *Road* panel shows the package's surface, width, class,
+   one-way, bike access and name next to the patch's changes. Each change is
+   one command (a combo box, the width, *closed for riding*, the name; `x`
+   takes a change out again); *the whole way* makes the edits act on the OSM
+   way instead of the one edge; *Remove road* / *Restore road*.
+2. **Height points:** *Place height point*, then click the road where it
+   goes (it snaps to the selected road and starts at the road's height); in
+   its panel set the *Height* or *Raise* and the radius along the road,
+   *Move* (then click the new spot) or *Remove*. A click on a point selects it.
+3. **The patch's operations** are listed under *World patch*, each with what
+   the preview found (`ok`, `MISSING` when its target is not in the package,
+   `?`); a click selects its road or point, `x` deletes it. Changed roads are
+   tinted orange, removed or closed ones red and struck through, height
+   points drawn with their radius, and the road profile they make in yellow
+   (the package's tiles are not re-meshed in the studio yet).
+4. **File → Save patch** (Ctrl + S) writes `my.ocwpatch` next to the package
+   (*Save patch as…* elsewhere); when you open the package again, that patch
+   is loaded. *Open patch…* loads another one – a patch made for another
+   package is refused. The saved camera views stay in the studio (autosave),
+   not in the patch.
+5. **File → Build package…** runs `world-builder package … --patch` on your
+   computer when the package's sources are there (`<name>.osm.pbf`,
+   `<name>.poly`, `.hgt` tiles or a DTM folder next to the package, or typed
+   in the dialog; `world-builder` next to `ocw-studio`, on the `PATH` or in
+   `OCW_WORLD_BUILDER`) and shows its output and the per-operation report.
+   The result goes to `patched/<name>.ocwpkg`; the original package is not
+   touched.
+
+The same from the console: `studio select X Z | latlon LAT LON`, `studio road
+surface gravel | width 4 | name Alter Weg | remove | focus`, `studio point add
+| raise 3 | radius 60 | move X Z | remove`, `studio patch list | save [PATH] |
+open PATH | build [OUT]`.
 
 ## Connecting a gamepad
 
@@ -1755,6 +1833,25 @@ event status | event cancel | event dismiss
   (or `client_id` / `client_secret` in `~/.config/ocw/strava.toml`), then
   `strava.connect` once. Saved rides upload in the background; failed uploads
   are retried.
+- **Strava recording with S** (spec §2.8.1): S (pad L3, *Ride → Strava
+  recording*, `strava.record`) starts and stops it; the HUD shows
+  "● Strava m:ss". The part between S and S is saved as its own activity in
+  `~/.local/share/ocw/rides/strava/` and uploaded like the rides; leaving or
+  saving the ride or quitting stops it. Without `strava.toml` S only says
+  "Strava is not set up (strava.toml)". The browser app shows the entry but
+  needs the desktop app for Strava.
+- **The ride photographer** (spec §2.11; setting `photographer.enabled`,
+  Settings → Display → Graphics, console `photographer on|off|status`):
+  up to 5 photos per ride, at least 20 minutes apart, of the nicest views
+  (open views, mountains, water, low sun; nothing in tunnels, forests or
+  fog). A photographer appears beside the road ahead and takes the photo with
+  a flash as you pass; where nobody can stand (water, rock, in the air) the
+  photographer flies a drone that follows you for half a minute to two
+  minutes before the shot. Photos: `~/.local/share/ocw/rides/<ride>/photos/
+  photo-N.jpg` (2560 × 1440, time and GPS in EXIF, no stamp) with a
+  `photo-N.toml` sidecar; *Navi → Training history → a ride → Photos* opens
+  the folder, to add them to the Strava activity by hand (Strava's API takes
+  no photos).
 
 ## Command-line options (`ocw-desktop`)
 
@@ -1831,6 +1928,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `display.road_barriers` | on / off (off): gates, bollards and barriers on the roads (section `OBST`; never solid on the road, spec §14 Phase 12 Q7) | at once |
 | `display.unicorn_trail` | on / off (on): the rainbow trail behind the unicorns of god mode (console `god.trail`; not on the full Display page) | at once |
 | `display.fullscreen` | on / off (off): borderless fullscreen (`--fullscreen`) | next start |
+| `photographer.enabled` | on / off (on): the ride photographer (spec §2.11) – up to 5 photos of nice views per ride by a person or a drone, with a flash; Settings → Display → Graphics (console `photographer`) | at once |
 | `ride.bots` | 0 to 50 (10): test riders (`--bots`) | next start |
 | `ride.random_start` | on / off (on): random start point (`--random-start`) | next start |
 | `ride.record` | on / off (on): save rides as FIT (`--record`) | next start |
@@ -1941,8 +2039,8 @@ feels (gravel is 2.5 ×, grass 6 × the road bike's asphalt value). Colours and
 kit are cosmetic only: the other riders see them (bots ride varied bikes and
 colours), the physics never does.
 
-Each bike is a 3D model (`assets/models/bike-<bike>.glb`) with the rider on
-it (`rider.glb`), in the frame, jersey and helmet colours (your own rider wears
+Each bike is a 3D model (`artwork/3dmodels/bikes/bike-<bike>.glb`) with the rider on
+it (`riders/rider-body.glb`), in the frame, jersey and helmet colours (your own rider wears
 a cotton cap). The wheels turn with the speed and the legs with your cadence
 (others at a typical cadence); riders sit up on the tops on climbs from 4 %,
 stand on the pedals from about 8.5 % and in sprints (650 W and more) with the
@@ -2336,6 +2434,9 @@ you can run are offered (no *Dev* commands on a remote server).
 | `strava.status` | Strava link and upload state |
 | `strava.sync [--retry]` | Upload every saved ride not on Strava yet (`--retry`: also failed ones) |
 | `strava.disconnect` | Unlink Strava (deletes the stored tokens) |
+| `strava.record [start\|stop\|toggle\|status]` | The Strava recording (key S): the part between start and stop is its own Strava activity |
+| `photographer [on\|off\|status\|now\|drone]` | The ride photographer (spec §2.11); `now` plans the next photo at once, `drone` the next by the drone (tests) |
+| `history.photos N` | Open the folder with ride N's photos (1 = the newest) |
 
 ## Workouts
 
@@ -2580,7 +2681,11 @@ The desktop app can host a shared ride itself – no separate server binary:
 2. the app opens UDP `0.0.0.0:47800` (QUIC) with a certificate kept in `<data dir>/ocw/host-tls` (the fingerprint and link stay the same across restarts), loads the course and rides on its own server as the host;
 3. the Ride page shows **Hosting – N riders**, **Show join link** (the links with the machine's addresses, *Copy link*) and **Stop hosting**.
 
-Others join with the link (Ride → Join). On the LAN that is all; from the internet the router needs a forwarding of UDP 47800 to this computer, and the firewall must let UDP 47800 in (see the next section). A port in use – usually another server on this machine, such as the kiosk's – is reported with the offer to join it instead (`join ocw://localhost:47800`). *Stop hosting* closes the server (the others see "server shutting down") and you ride on alone on the same world, route, time and weather. Console: `host start [--world ID] [--route NAME] [--time real|PRESET] [--weather PRESET] [--bots N] [--port P]`, `host status`, `host copy`, `host stop`, and `host.plan …` for the wizard's steps. Browsers cannot open a server port: there the entry is dimmed.
+**Voice comes with it** (spec §7.1.6 V2): *Start hosting* also starts the bundled voice server (`livekit-server`, next to the app or on `PATH`; see [Voice chat](#voice-chat)) with fresh keys, so everybody on the hosted ride can talk; it stops with *Stop hosting* and when the app quits (also if the app crashes: Linux kills it through the parent-death signal, Windows through a job object). Without the binary, or when it does not start, the ride is hosted without voice and the join link page says why.
+
+**Ports.** The summary and the join link page list what others must reach: **UDP 47800** (the game; the port you chose), **TCP 7880** (voice signalling), **TCP 7881** (voice over TCP) and **UDP 7882** (voice), with the firewall / port-forwarding hint. **Open the router's ports automatically** (Options page, setting `host.upnp`, **on** by default): while you host, the app asks the router over **UPnP** to forward these ports to this computer and removes the forwardings again when you stop (they are leased for an hour and renewed, so a crash leaves nothing open for long). The join link page shows the result – *opened (UPnP)*, *no UPnP router* (UPnP off on the router, or none answered within 3 s) or *failed* with the router's reason – and hosting never fails because of it. When the router names a public address, the first join link uses it and the voice server announces it to riders from the internet; behind double NAT or carrier-grade NAT the page says that the router's address is not public. NAT-PMP / PCP routers (some Apple and OpenWrt routers without UPnP) are not supported yet. `host start --upnp off` hosts once without it.
+
+Others join with the link (Ride → Join). On the LAN that is all; from the internet the router needs a forwarding of these ports to this computer (UPnP does that when the router allows it), and the firewall must let them in (see the next section). A port in use – usually another server on this machine, such as the kiosk's – is reported with the offer to join it instead (`join ocw://localhost:47800`). *Stop hosting* closes the server (the others see "server shutting down") and you ride on alone on the same world, route, time and weather. Console: `host start [--world ID] [--route NAME] [--time real|PRESET] [--weather PRESET] [--bots N] [--port P] [--upnp on|off]`, `host status` (links, ports, the voice server and the router's result), `host copy`, `host stop`, and `host.plan …` for the wizard's steps. Browsers cannot open a server port: there the entry is dimmed.
 
 ### Riding on a server on the internet
 
@@ -2619,7 +2724,7 @@ ocw-desktop --server ride.example.org:47800 --server-cert 3f9a6c0e…c2 \
   - a certificate error means the server's certificate is not the pinned one, because it changed: get the new fingerprint, or use `--tls-dir` on the server;
   - `world package mismatch: the server rides …` means your package or route differs from the server's.
 
-  Voice chat is separate (LiveKit, see [Voice chat](#voice-chat)) and needs its own server address.
+  Voice chat is separate (LiveKit, see [Voice chat](#voice-chat)): the server starts its own voice server, which needs TCP 7880–7881 and UDP 7882 open and forwarded too, and `--voice-public-host HOST` (the join link's host) for riders from the internet.
 
 ### Browser riders (WebTransport)
 
@@ -2675,7 +2780,7 @@ echo test, below); settings `voice.enabled`, `voice.volume`,
 `voice.spatial`, `voice.max_voices`, `voice.input`, `voice.output`,
 `audio.echo_bot`, `audio.echo_delay_ms`.
 
-Voice needs three things:
+Voice needs two things:
 
 1. **A desktop build with voice.** It is a cargo feature, off by default
    (the app builds and runs without it and says "not built in"):
@@ -2693,26 +2798,65 @@ Voice needs three things:
    and `libglib2.0-dev`). On
    macOS the Command Line Tools must have working C++ headers (`echo
    '#include <algorithm>' | clang++ -x c++ -fsyntax-only -` must pass).
-2. **A LiveKit server** (self-hosted, Apache-2.0; voice never goes over the
-   game connection and is never recorded). For development, its dev mode
-   on the same machine is enough:
+2. **A game server that hosts voice.** Every `ocw-server --listen …` (and
+   the kiosk's game server) **starts its own voice server** – LiveKit's
+   `livekit-server` (Apache-2.0; voice never goes over the game connection
+   and is never recorded) – before it opens its port, and stops it with
+   itself (spec §7.1.1). Nothing to configure: it makes a fresh API key pair
+   at every start (kept in memory, given to the voice server only in its
+   environment), and riders get their voice tokens from the game server as
+   before (10 minutes, one room, microphone only). Only the
+   `livekit-server` binary must be there – next to `ocw-server`, on `PATH`,
+   or named with `--voice-server PATH` (`scripts/deploy-test.sh` installs it
+   next to the kiosk's `ocw-server` in `/var/tmp/ocw`, so riders who join a
+   kiosk talk to each other; `ocw-kiosk.sh status` shows the voice line):
    ```bash
-   livekit-server --dev       # ws://127.0.0.1:7880, API key "devkey", secret "secret"
+   scripts/fetch-livekit-server.sh              # LiveKit 1.13.10 for this machine, SHA-256 checked → target/voice-server/PLATFORM/
+   cargo run --release -p ocw-server -- --listen --bots 3 \
+       --voice-server target/voice-server/linux-amd64/livekit-server
    ```
-   (install it from <https://docs.livekit.io/home/self-hosting/local/>; for
-   other machines run it with `--bind 0.0.0.0` and open TCP 7880 and UDP
-   7881–7882, or give it a config file with your own key pair).
-3. **A game server that knows it.** `ocw-server` issues short-lived access
-   tokens (10 minutes, one room, microphone only) to the riders connected to
-   it; the URL and key pair come from the environment (never from the
-   repository):
-   ```bash
-   export OCW_LIVEKIT_URL=ws://127.0.0.1:7880 OCW_LIVEKIT_API_KEY=devkey OCW_LIVEKIT_API_SECRET=secret
-   cargo run --release -p ocw-server -- --listen --bots 3
-   ```
-   (`--livekit-url`, `--livekit-api-key` override the first two; the secret
-   is only read from the environment.) Without them the server logs "voice
-   chat off" and the clients show "no voice on this server".
+   The log says `voice chat on (bundled LiveKit 1.13.10 …)`, or `voice chat
+   off: …` with the reason (no binary, a port in use, not ready within 10 s);
+   the ride then goes on without voice. `ocw-server` without `--listen` (a
+   simulation nobody joins) starts none.
+   - **Ports** of a host that others join over the network: **TCP 7880**
+     (voice signalling), **TCP 7881** (voice over TCP, for networks that
+     block UDP) and **UDP 7882** (all voice media), besides UDP 47800 for
+     the game – open them in the firewall and forward them in the router
+     like 47800 (`--voice-ports SIGNAL,TCP,UDP` changes them).
+   - **The address riders reach:** each rider's token names the address
+     they reached the game server on (riders on the LAN get the LAN
+     address). For riders from the internet give the join link's host –
+     your public name or address – with `--voice-public-host
+     ride.example.org`; without it the voice server asks a STUN server for
+     the public address at start (a few seconds).
+   - A crashed voice server is started again (after 2, 4 … 60 s); clients
+     reconnect by themselves. If `ocw-server` itself is killed, the voice
+     server goes too (Linux: `setpriv --pdeathsig` from util-linux; Windows:
+     a job object; macOS: ended at the next start through its pid file in
+     `~/Library/Application Support/ocw/voice/`, on Linux
+     `~/.local/share/ocw/voice/`, where its log `livekit-7880.log` is too).
+   - **Your own LiveKit** (a hosted deployment, several game servers on one
+     voice server) still works and then no voice server is started: the URL
+     and key pair come from the environment (never from the repository):
+     ```bash
+     livekit-server --dev       # for development: ws://127.0.0.1:7880, API key "devkey", secret "secret"
+     export OCW_LIVEKIT_URL=ws://127.0.0.1:7880 OCW_LIVEKIT_API_KEY=devkey OCW_LIVEKIT_API_SECRET=secret
+     cargo run --release -p ocw-server -- --listen --bots 3
+     ```
+     (`--livekit-url`, `--livekit-api-key` override the first two; the
+     secret is only read from the environment.)
+   - `--voice off`: no voice chat at all; the clients show "no voice on this
+     server".
+   - `--upnp`: open the game's and the voice server's ports on the router
+     by UPnP while the server runs (off by default for the headless server;
+     on by default in *Ride → Host a ride*); the router's public address
+     then names the first join link and, without `--voice-public-host`,
+     the voice server's media address.
+
+   *Ride → Host a ride* in the app hosts voice the same way (the same
+   code), see [Hosting from the menu](#hosting-from-the-menu-ride--host-a-ride);
+   `make test-host-voice` checks it on marge with the real `livekit-server`.
 
 There are no accounts yet (Phase 5): a token is bound to the rider of the
 connection (`rider-<id>`), and a voice group is open to everyone on the
@@ -2720,7 +2864,7 @@ server who knows its name.
 
 **Browser riders** join the same rooms with LiveKit's JS SDK, which `make
 web` fetches. They need no voice build, only a server with the three
-variables (see [Sound and voice in the
+variables or its own voice server (see [Sound and voice in the
 browser](#sound-and-voice-in-the-browser)). A `ws://` LiveKit URL works only
 for pages on localhost. Pages served over https need `wss://`.
 
@@ -2729,7 +2873,16 @@ set, `cargo test -p ocw-voice --features livekit --test
 livekit_two_participants -- --nocapture` connects two simulated
 participants (no sound card needed): one speaks a tone, the other must hear
 it and see the mute. Without the variables the test passes without doing
-anything, so `cargo test --workspace` stays offline.
+anything, so `cargo test --workspace` stays offline. `make
+test-voice-bundled` (marge, with `livekit-server` in `~/.local/bin`) checks
+the bundled voice server end to end: `ocw-server --listen` starts it, the
+secret is in its environment and not on its command line, two headless
+riders get grants from the game server and LiveKit lists both in the room,
+and a `kill -9` of `ocw-server` ends the voice server too. `make
+test-voice-live` puts the real desktop app (voice build, headless) in such a
+session as a rider: with a bot as the second human rider its voice joins by
+itself, LiveKit lists it with its microphone on, and the echo participant
+(joined as the Echo rider) hears it. Results in `test-output/voice-live/`.
 
 **Echo test** (spec §7 *Echo bot*). To check your microphone and voice
 alone: `voice.echo on` (or Settings → Audio → Voice → Echo test, or start
@@ -3583,7 +3736,7 @@ All test runs execute on the build machines (`scripts/remote.sh MACHINE run
   the day scripts, renders, publishing and the hourly collector live and run
   there, from a checkout next to this one (`../OCW-ART`).
 
-Release builds are published as GitHub Releases (`release/README.md` has the
+Release builds are published as GitHub Releases (each release's notes are its
 build notes); screenshots and videos from development
 are not in the repository: the art project stores them as one zip per day on
 the release [`build-history` of OCW-ART](https://github.com/newkit/OCW-ART/releases/tag/build-history)
@@ -3655,7 +3808,7 @@ make version | version-next | version-bump PART=minor   # by hand
 | Windows | Win11Builder | The same cargo build (static C runtime from `.cargo/config.toml`), then the three `.exe` files zipped (no script yet) | `OpenCyclingWorld-<version>-<sha>-windows-x86_64.zip` |
 | World packages | marge | `scripts/prepare-world-release.sh OUT_DIR PKG…` (no upload) | `ocw-world-<name>-v<N>.zip` (package, manifest, routes, `LICENSE-DATA.md`, `README.md`) and `<region>-osm-source.zip` (the ODbL offer) |
 
-`release/README.md` keeps the build notes of each release. Screenshots and
+Each GitHub release's notes keep its build notes. Screenshots and
 videos from development are not in the repository: the art project publishes
 them as one zip per day with an index on the release `build-history` of
 [OCW-ART](https://github.com/newkit/OCW-ART).
@@ -3709,9 +3862,10 @@ described in [Build infrastructure](#build-infrastructure). The other tools:
 | `world-builder calibrate` / `imagery-cells` | Measure a package's palette, roof colours and seasonal tint maps in the region's imagery and cut the orthophoto corridor along its roads (sections `PALT`, `ROOF`, `SEAS`, `ORTC`; manifest credits renewed); list the imagery cells a package covers |
 | `world-builder obstacles --world PKG --pbf PBF... [--out NEW]` | Static obstacles near the roads into a built package (section `OBST`, spec §14 Phase 12 K3): OSM barriers and posts with the 2 m corridor rule, the tree cells; prints rows of road bollards and the longest bridges; manifest renewed |
 | `world-builder dem-import` / `dem-tiles` / `dem-diff` | High-resolution DTMs: import XYZ / GeoTIFF tiles as 2 m GeoTIFFs, list the tiles of a box, compare with SRTM |
-| `cargo run -p ocw-assets -- generate [--check]` | Regenerate the bike and rider models in `assets/models/` (glTF, own work); `--check` only compares |
-| `cargo run -p ocw-assets -- validate [DIR]` | Asset validator: licence entry (`license`, `source`, `author`) in `manifest.toml` for every model, no physics values, required nodes and paint slots, triangle budgets |
-| `cargo run -p ocw-assets -- info FILE.glb` | A model's nodes, positions, triangles and materials |
+| `cargo run -p ocw-assets -- model export-all [--check]` | Export the bikes, the rider and the helmets from their generators into `artwork/3dmodels/` (glTF, own work, Git LFS; spec §14 Phase 15) with the manifest; `--check` only compares (`generate` is the old name) |
+| `cargo run -p ocw-render --example export-flora [-- --check]` | Export the plants (every species, at least three shape variants, each with `lod1`) into `artwork/3dmodels/flora/` |
+| `cargo run -p ocw-assets -- validate [DIR]` | Model validator (default `artwork/3dmodels`): licence entry (`license`, `source`, `author`) in `manifest.toml` for every model, the model contract (names, `extras.ocw`, folders per kind), no physics values, required nodes and paint slots, triangle budgets |
+| `cargo run -p ocw-assets -- info FILE.glb` | A model's nodes, positions, triangles, materials and `extras` (also `.gltf`) |
 | `scripts/fetch-materials.sh` (`make materials`) | Material library: download the pinned sources of `assets/materials.toml` (cache `~/.cache/ocw/material-sources`), check their SHA-256, convert to KTX2 into `assets/materials/` |
 | `cargo run -p ocw-assets -- materials validate [DIR]` | Material validator: `license`, `source`, `author` and a SHA-256 pin for every material, no share-alike / non-commercial / no-derivatives / unknown licence; with DIR the converted library too |
 | `cargo run -p ocw-assets -- materials credits` | The material credits (Markdown, as in `assets/materials/CREDITS.md`) |
@@ -3757,7 +3911,7 @@ by its public key file `root.pub.json`.
 | `crates/ocw-voice` | Voice chat (always-on logic, spatial audio, mixer; LiveKit backend with the `livekit` feature) |
 | `crates/ocw-render` | Bevy plugins: world, riders, camera, HUD, console; the bundled UI font (`assets/fonts/`) |
 | `crates/ocw-assets` | Bike and rider models: generator, glTF reader, asset validator, rider-on-bike pose, riding animation states; material library: licence rule, pinned manifest, KTX2, conversion and fetch (no Bevy) |
-| `assets/models/` | The shipped glTF models and their licence manifest (embedded in the app) |
+| `artwork/3dmodels/` | The model files (glTF, Git LFS) and their licence manifest, embedded in the app (`ocw_assets::library`; `ocw-desktop --models DIR` reads a folder); the contract in its `README.md` |
 | `artwork/` | Logos and other original artwork |
 
 ## License

@@ -185,6 +185,9 @@ pub struct RoadNetwork {
     /// Phase 12 K3: trees, buildings, walls, barriers, railings, tunnel
     /// walls), if its package has any.
     obstacles: Option<std::sync::Arc<crate::obstacles::WorldObstacles>>,
+    /// The junction surfaces (spec §4.8.8, J1): riders ride the heights
+    /// the renderer draws there.
+    junctions: std::sync::Arc<crate::junction::JunctionSet>,
 }
 
 impl RoadNetwork {
@@ -198,7 +201,9 @@ impl RoadNetwork {
             .map(|(i, e)| (e.id, i))
             .collect();
         let fingerprint = graph.fingerprint();
+        let junctions = std::sync::Arc::new(crate::junction::JunctionSet::new(&graph));
         Self {
+            junctions,
             graph,
             adjacency,
             geometry,
@@ -238,6 +243,11 @@ impl RoadNetwork {
 
     pub fn graph(&self) -> &RoadGraph {
         &self.graph
+    }
+
+    /// The junction surfaces of the graph (spec §4.8.8).
+    pub fn junctions(&self) -> &crate::junction::JunctionSet {
+        &self.junctions
     }
 
     pub fn edge(&self, i: usize) -> &Edge {

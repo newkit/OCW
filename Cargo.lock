@@ -573,6 +573,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "attohttpc"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16e2cdb6d5ed835199484bb92bb8b3edd526effe995c61732580439c1a67e2e9"
+dependencies = [
+ "base64 0.22.1",
+ "http",
+ "log",
+ "url",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5003,6 +5015,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "igd-next"
+version = "0.16.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "516893339c97f6011282d5825ac94fc1c7aad5cad26bdc2d0cee068c0bf97f97"
+dependencies = [
+ "attohttpc",
+ "log",
+ "rand 0.9.5",
+ "url",
+ "xmltree",
+]
+
+[[package]]
 name = "image"
 version = "0.25.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6742,6 +6767,7 @@ dependencies = [
 name = "ocw-assets"
 version = "0.2.2"
 dependencies = [
+ "base64 0.22.1",
  "clap",
  "glam",
  "gltf",
@@ -6885,6 +6911,8 @@ dependencies = [
 name = "ocw-edit"
 version = "0.2.2"
 dependencies = [
+ "ocw-fit",
+ "ocw-world",
  "serde",
  "serde_json",
 ]
@@ -6930,6 +6958,7 @@ dependencies = [
  "png",
  "raw-window-handle",
  "serde",
+ "serde_json",
  "texpresso",
  "toml",
  "ttf-parser",
@@ -6942,7 +6971,10 @@ version = "0.2.2"
 dependencies = [
  "bytes",
  "clap",
+ "dirs",
  "ed25519-dalek 2.2.0",
+ "getrandom 0.3.4",
+ "igd-next",
  "ocw-accounts",
  "ocw-auth",
  "ocw-core",
@@ -6968,6 +7000,7 @@ dependencies = [
  "url",
  "web-time",
  "web-transport-quinn",
+ "win32job",
 ]
 
 [[package]]
@@ -7012,6 +7045,9 @@ dependencies = [
  "ocw-ui",
  "ocw-world",
  "ocw-worldstore",
+ "serde",
+ "serde_json",
+ "ureq",
 ]
 
 [[package]]
@@ -7020,6 +7056,7 @@ version = "0.2.2"
 dependencies = [
  "bevy",
  "clap",
+ "ocw-audio",
  "ocw-client",
  "ocw-core",
  "ocw-fit",
@@ -7032,6 +7069,7 @@ dependencies = [
  "ocw-weather",
  "ocw-world",
  "ocw-worldstore",
+ "web-time",
 ]
 
 [[package]]
@@ -7047,6 +7085,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -10814,6 +10853,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "win32job"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21b25acac91041257d64f5625690b626133e0ca9e4e17814552b5803b1a82f7c"
+dependencies = [
+ "thiserror 1.0.69",
+ "windows",
+]
+
+[[package]]
 name = "winapi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11464,6 +11513,15 @@ name = "xml-rs"
 version = "0.8.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
+
+[[package]]
+name = "xmltree"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7d8a75eaf6557bb84a65ace8609883db44a29951042ada9b393151532e41fcb"
+dependencies = [
+ "xml-rs",
+]
 
 [[package]]
 name = "yasna"

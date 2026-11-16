@@ -175,8 +175,11 @@ pub fn control_label(clock: Option<&ocw_protocol::ClockInfo>, mine: bool) -> &'s
     }
 }
 
-/// The rows of World → Time, the time machine (six rows and Back, ten-foot rule).
-pub fn rows(info: &TimeMachineInfo) -> Vec<Row> {
+/// The rows of World → Time, the time machine (six rows and Back, ten-foot
+/// rule): Enter on the day opens the calendar, the season row jumps the
+/// date to the place's seasons (spec §14 Phase 9 S9, decision Q11). Who
+/// sets the time is the page's status line ([`status`]).
+pub fn rows(info: &TimeMachineInfo, cal: &super::calendar::CalendarInfo) -> Vec<Row> {
     let line = |l: &str| Some(l.to_owned());
     let speed_line = |dir| match machine::speed_step(info.speed, info.paused, dir) {
         ClockChange::Paused(true) => "time pause".to_owned(),
@@ -202,11 +205,11 @@ pub fn rows(info: &TimeMachineInfo) -> Vec<Row> {
             confirm: None,
         },
         Row {
-            label: "Day".into(),
+            label: "Day (Enter: calendar)".into(),
             value: Some(info.date.clone().unwrap_or_else(|| "-".into())),
             left: line("time -1d"),
             right: line("time +1d"),
-            confirm: None,
+            confirm: Some(Activate::Open(super::calendar::open_at(cal))),
         },
         Row {
             label: "Speed".into(),
@@ -237,14 +240,20 @@ pub fn rows(info: &TimeMachineInfo) -> Vec<Row> {
             right: None,
             confirm: Some(Activate::Command("time real".into())),
         },
-        Row {
-            label: "Who sets the time".into(),
-            value: Some(info.control.clone()),
-            left: None,
-            right: None,
-            confirm: None,
-        },
+        super::calendar::season_row(cal),
     ]
+}
+
+/// The status line of World → Time: who sets the time.
+pub fn status(info: &TimeMachineInfo) -> String {
+    if info.control.is_empty() {
+        return String::new();
+    }
+    format!(
+        "Set by {}{}",
+        info.control,
+        if info.may_change { "" } else { " (read only)" }
+    )
 }
 
 #[cfg(test)]
@@ -334,8 +343,20 @@ mod tests {
             may_change: true,
             ..Default::default()
         };
-        let r = rows(&i);
+        let cal = super::super::calendar::CalendarInfo {
+            date: Some((2026, 6, 21)),
+            ..Default::default()
+        };
+        let r = rows(&i, &cal);
         assert_eq!(r.len(), 6);
+        assert_eq!(
+            r[1].confirm,
+            Some(Activate::Open(super::super::pages::Page::Calendar(
+                super::super::calendar::Cal::at((2026, 6, 21))
+            )))
+        );
+        assert_eq!(r[5].label, "Season");
+        assert_eq!(status(&i), "Set by you");
         assert!(r.len() < super::super::model::MAX_ITEMS);
         assert_eq!(r[0].left.as_deref(), Some("time -1h"));
         assert_eq!(r[1].right.as_deref(), Some("time +1d"));
@@ -346,14 +367,14 @@ mod tests {
         assert_eq!(r[4].confirm, Some(Activate::Command("time real".into())));
         i.preset = Some(Preset::Sunset);
         i.paused = true;
-        let r = rows(&i);
+        let r = rows(&i, &cal);
         assert_eq!(r[3].right.as_deref(), Some("time preset blue-hour"));
         assert_eq!(r[3].left.as_deref(), Some("time preset noon"));
         assert_eq!(r[3].value.as_deref(), Some("Sunset"));
         assert_eq!(r[2].right.as_deref(), Some("time play"));
         assert_eq!(r[2].value.as_deref(), Some("paused"));
         // Every line parses as a time command.
-        for row in rows(&i) {
+        for row in rows(&i, &cal) {
             for l in [row.left, row.right].into_iter().flatten() {
                 let args: Vec<&str> = l.split_whitespace().skip(1).collect();
                 machine::parse(&args).unwrap_or_else(|e| panic!("{l}: {e}"));

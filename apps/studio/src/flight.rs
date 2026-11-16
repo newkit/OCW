@@ -24,6 +24,22 @@ pub const START_HEIGHT_M: f64 = 250.0;
 /// The start view's pitch (rad, down).
 pub const START_PITCH: f64 = -0.45;
 
+/// How far behind (south of) and above a selection the camera looks at it
+/// from (m).
+pub const LOOK_BACK_M: f64 = 140.0;
+pub const LOOK_UP_M: f64 = 90.0;
+
+/// A camera that looks north at `target` (x, height, z) from
+/// [`LOOK_BACK_M`] south of it and [`LOOK_UP_M`] above it: (eye, yaw,
+/// pitch).
+pub fn look_at(target: [f64; 3]) -> ([f64; 3], f64, f64) {
+    (
+        [target[0], target[1] + LOOK_UP_M, target[2] + LOOK_BACK_M],
+        0.0,
+        -(LOOK_UP_M.atan2(LOOK_BACK_M)),
+    )
+}
+
 /// The studio camera's flight.
 #[derive(Resource, Debug, Clone, PartialEq)]
 pub struct StudioFlight {
@@ -220,6 +236,16 @@ mod tests {
         assert_eq!(v.landing, None);
         let p = StudioFlight::at([0.0; 3], 0.0, FlightModel::Plane).view();
         assert_eq!(p.keys, KEYS_PLANE);
+    }
+
+    #[test]
+    fn the_camera_looks_at_a_selection_from_the_south() {
+        let (eye, yaw, pitch) = look_at([100.0, 400.0, 50.0]);
+        assert_eq!(eye, [100.0, 490.0, 190.0]);
+        assert_eq!(yaw, 0.0, "north");
+        // The view's line goes through the target.
+        let drop = -pitch.tan() * LOOK_BACK_M;
+        assert!((drop - LOOK_UP_M).abs() < 1e-9);
     }
 
     #[test]

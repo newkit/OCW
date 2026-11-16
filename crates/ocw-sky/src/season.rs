@@ -487,6 +487,19 @@ impl SeasonModel {
         }
     }
 
+    /// The state at one altitude on day `day` (interpolated between the
+    /// two bands around it, as [`SeasonDay::state`]; cheaper than a whole
+    /// [`SeasonModel::day`] – the calendar's bands, spec §14 Phase 9 S9).
+    pub fn state_at(&self, day: f64, alt_m: f64) -> State {
+        let x = ((alt_m - MIN_ALT_M) / BAND_M).clamp(0.0, (BANDS - 1) as f64);
+        let i = (x.floor() as usize).min(BANDS - 2);
+        State::lerp(
+            &self.band_state(i, day),
+            &self.band_state(i + 1, day),
+            (x - i as f64) as f32,
+        )
+    }
+
     /// The season on day `day` of the year (fractional, 1 = 1 January).
     pub fn day(&self, day: f64) -> SeasonDay {
         SeasonDay {

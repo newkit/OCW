@@ -52,7 +52,7 @@ const fn slot(name: &'static str, tint: Tint, color: u32, metallic: f32, roughne
 }
 
 /// All slots.
-pub const ALL: [Slot; 27] = [
+pub const ALL: [Slot; 33] = [
     slot("frame", Tint::Frame, 0x1E1E22, 0.1, 0.32),
     slot("tyre", Tint::Fixed, 0x1A1A1A, 0.0, 0.85),
     slot("tyre_wall", Tint::Fixed, 0x8A6A45, 0.0, 0.8),
@@ -84,6 +84,18 @@ pub const ALL: [Slot; 27] = [
     slot("carbon", Tint::Fixed, 0x0C0C0E, 0.15, 0.22),
     slot("light_front", Tint::Fixed, 0xFFF6E0, 0.0, 0.2),
     slot("light_rear", Tint::Fixed, 0xE0201C, 0.0, 0.2),
+    // Plants (spec §14 Phase 15, 15B): the crown is tinted per plant and
+    // by the season (`ocw-render::flora`; the file's colour is the summer
+    // default, its vertex colours the shading), bark per species, `dry`
+    // parts (dead fronds, stalks) by their vertex colours.
+    slot("leaf", Tint::Fixed, 0x3F6B2C, 0.0, 0.85),
+    slot("needle", Tint::Fixed, 0x2B4A2E, 0.0, 0.85),
+    slot("bark", Tint::Fixed, 0x5A4636, 0.0, 0.9),
+    slot("dry", Tint::Fixed, 0xFFFFFF, 0.0, 0.9),
+    // The rider status signs (spec §2.6): the X over a muted rider's mouth
+    // and the phone's screen (the renderer makes it glow).
+    slot("status_mark", Tint::Fixed, 0xD8261E, 0.0, 0.6),
+    slot("phone_screen", Tint::Fixed, 0x9EC4F0, 0.0, 0.15),
 ];
 
 /// The slot called `name`.

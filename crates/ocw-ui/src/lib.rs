@@ -8,7 +8,9 @@
 //! - [`settings`]: the settings registry's values and their store (a file
 //!   on the desktop, `localStorage` in the browser), `set` / `get`,
 //! - [`timemachine`] and [`weather`]: the world clock and the session
-//!   weather into the view and the menu, `time` / `weather …`,
+//!   weather into the view and the menu, `time` / `weather …`;
+//!   [`calendar`]: World → Time → Calendar and Season (spec §14 Phase 9
+//!   S9),
 //! - [`collisions`], [`events`]: the ride's rules and local events,
 //! - [`riders_page`]: Navi → Riders in this ride,
 //! - [`god`]: god mode – "Unicorn mode" (spec §14 Phase 13; shared since
@@ -19,6 +21,8 @@
 //!   options, [`history`]: the training history (spec §14 Phase 7),
 //! - [`trust`]: the trust dialog and the trusted world keys (spec §4.7
 //!   *User keys*), `world trust …`,
+//! - [`touch`]: touch steering in a ride (spec §3.2.3: the screen's
+//!   halves, the junction fan's arrows, two fingers for the camera),
 //! - [`join`]: Ride → Join – the link field, the recent servers, `join`,
 //!   `leave` (spec §3.2.1, §6.2 *Join links*).
 //!
@@ -29,6 +33,7 @@
 
 pub mod access;
 pub mod bindings;
+pub mod calendar;
 pub mod collisions;
 pub mod controls;
 pub mod events;
@@ -36,10 +41,13 @@ pub mod god;
 pub mod history;
 pub mod join;
 pub mod menu;
+pub mod photographer;
 pub mod quality;
 pub mod riders_page;
 pub mod settings;
+pub mod status;
 pub mod timemachine;
+pub mod touch;
 pub mod trust;
 pub mod weather;
 #[cfg(not(target_arch = "wasm32"))]

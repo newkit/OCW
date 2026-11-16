@@ -212,8 +212,7 @@ impl BikeModels {
 
 fn build_bike(profile: ProfileId, variants: &[String]) -> BuiltBike {
     let rider = ocw_assets::shipped::rider_model();
-    static LOW: std::sync::OnceLock<Model> = std::sync::OnceLock::new();
-    let low = LOW.get_or_init(|| ocw_assets::rider::build(ocw_assets::rider::Detail::Low));
+    let low = ocw_assets::shipped::rider_low_model();
     let ids: Vec<&str> = variants.iter().map(String::as_str).collect();
     let model = ocw_assets::bikes::build_with(profile, rider, low, &ids);
     let anchors = ocw_assets::bikes::HOTSPOT_SLOTS

@@ -7,18 +7,32 @@
 //! `<data dir>/ocw/studio/autosave/` once it has been left alone for a few
 //! seconds (and at quit), and opening a world offers the autosave an
 //! earlier session left for it.
+//!
+//! **World patches (E5 step 2, 16C):** the World document's content is the
+//! world patch; the road and height point commands below turn a click or a
+//! field in the panels into one patch operation each (undoable), File →
+//! Save writes `<package>.ocwpatch` next to the package, Open patch loads
+//! one for the open package (a patch for another package is refused), and
+//! *Build package* runs `world-builder` with it ([`crate::build`]).
 
 use std::path::PathBuf;
 
 use bevy::prelude::*;
-use clap::{Arg, Command, value_parser};
-use ocw_edit::world::{PackageRef, View, WorldDoc, WorldOp, check_views};
-use ocw_edit::{AutosaveStore, DocId, Document, Session, autosave_name};
+use clap::{Arg, ArgAction, Command, value_parser};
+use ocw_edit::world::{
+    PackageRef, PatchInfo, PatchTargets, RoadChange, RoadTarget, View, WorldDoc, WorldItem,
+    WorldOp, check_patch, check_targets, check_views, op_point_id, op_road_target,
+};
+use ocw_edit::{AutosaveStore, DocId, Document, Session, Severity, autosave_name};
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, Permission};
 use ocw_sim::god::FlightModel;
+use ocw_world::graph::EdgeId;
+use ocw_world::patch::{HeightPoint, PatchClass, PatchOneway};
 use ocw_worldstore::details::WorldDetails;
 
+use crate::build::{BuildJob, Sources};
 use crate::flight::StudioFlight;
+use crate::patch::StudioPackage;
 
 /// `<data dir>/ocw/studio/autosave` (`OCW_DATA_DIR` overrides
 /// `<data dir>/ocw`, as in the game).
@@ -52,6 +66,17 @@ pub struct Studio {
     pub restorable: Option<Restorable>,
     /// The last message (status line).
     pub status: String,
+    /// The open package, as the patch tools need it.
+    pub package: Option<StudioPackage>,
+    /// Where File → Save writes the patch (`None`: not saved yet; the
+    /// default is `<package>.ocwpatch` next to the package).
+    pub patch_file: Option<PathBuf>,
+    /// Road edits act on the selected edge's whole OSM way.
+    pub way_scope: bool,
+    /// The last *Build package*.
+    pub build: Option<BuildJob>,
+    /// The Routes workspace: its document, the road graph, the planners.
+    pub routes: crate::routes::RouteTools,
 }
 
 impl Studio {
@@ -63,12 +88,170 @@ impl Studio {
             world_doc: None,
             restorable: None,
             status: String::new(),
+            package: None,
+            patch_file: None,
+            way_scope: false,
+            build: None,
+            routes: crate::routes::RouteTools::default(),
         }
     }
 
     pub fn world(&self) -> Option<&Document<WorldDoc>> {
         self.session.get(self.world_doc?)
     }
+
+    fn world_mut(&mut self) -> Result<&mut Document<WorldDoc>, String> {
+        let id = self.world_doc.ok_or("no world is open")?;
+        self.session
+            .get_mut::<WorldDoc>(id)
+            .ok_or_else(|| "no world is open".into())
+    }
+
+    /// The selected road edge (its stable id), if one is selected.
+    pub fn selected_edge(&self) -> Option<u64> {
+        match self.world()?.selection.single()? {
+            WorldItem::Edge(e) => Some(*e),
+            _ => None,
+        }
+    }
+
+    /// The selected height point (its id).
+    pub fn selected_point(&self) -> Option<String> {
+        match self.world()?.selection.single()? {
+            WorldItem::HeightPoint(id) => Some(id.clone()),
+            _ => None,
+        }
+    }
+
+    /// What road edits act on: the selected edge, or its OSM way.
+    pub fn selected_target(&self) -> Option<RoadTarget> {
+        let e = self.selected_edge()?;
+        if self.way_scope {
+            let way = self.package.as_ref()?.edge(e)?.osm_way;
+            Some(RoadTarget::Way(way))
+        } else {
+            Some(RoadTarget::Edge(e))
+        }
+    }
+
+    /// Where Save writes: the file saved to or opened, else the default.
+    pub fn save_path(&self) -> Option<PathBuf> {
+        self.patch_file
+            .clone()
+            .or_else(|| self.package.as_ref().map(StudioPackage::default_patch_path))
+    }
+
+    /// A height point's position in package metres (x, z).
+    pub fn point_xz(&self, h: &HeightPoint) -> Option<[f64; 2]> {
+        let [lat, lon] = h.at?;
+        Some(self.package.as_ref()?.projection().project(lat, lon))
+    }
+
+    /// The World document of a package just opened (see
+    /// [`open_world_doc`]); the message about its patch file, if any.
+    pub fn open_package(
+        &mut self,
+        spec: &str,
+        source: &str,
+        details: &WorldDetails,
+        package: StudioPackage,
+        now_s: f64,
+    ) -> Option<String> {
+        if let Some(old) = self.world_doc.take() {
+            // Its last changes go to its autosave first.
+            if let Some(store) = self.store.as_deref_mut() {
+                self.session.autosave(store, now_s, 0.0);
+            }
+            self.session.close(old);
+        }
+        let package_ref = PackageRef {
+            spec: spec.into(),
+            id: details.id.clone(),
+            version: details.version,
+        };
+        // The patch next to the package is the document's start, if it is
+        // one for this package.
+        let default = package.default_patch_path();
+        let (patch, msg) = if default.is_file() {
+            match crate::patch::read_patch(&default, &details.id) {
+                Ok(p) => {
+                    let m = format!(
+                        "patch {} loaded ({} operations)",
+                        shown_path(&default),
+                        p.ops.len()
+                    );
+                    (Some(p), Some(m))
+                }
+                Err(e) => (None, Some(format!("patch not loaded: {e}"))),
+            }
+        } else {
+            (None, None)
+        };
+        self.patch_file = patch.is_some().then(|| default.clone());
+        let validators = world_validators(Some(&package));
+        let name = details.region.clone();
+        let id = self.session.open(|id| {
+            let mut content = WorldDoc::new(package_ref);
+            if let Some(p) = patch {
+                content.patch = p;
+            }
+            let mut d = Document::new(id, name, content).with_source(source.to_string());
+            for v in validators {
+                d = d.with_validator(v);
+            }
+            d
+        });
+        // Routes are edited on this package's roads; one on another
+        // package's is closed (its autosave stays).
+        self.routes.set_package(&package, &details.id);
+        if let Some(old) = self.routes.doc.take() {
+            if let Some(store) = self.store.as_deref_mut() {
+                self.session.autosave(store, now_s, 0.0);
+            }
+            self.session.close(old);
+        }
+        self.session.set_active(id);
+        self.package = Some(package);
+        self.world_doc = Some(id);
+        let record = autosave_name("world", source);
+        self.restorable = self
+            .store
+            .as_ref()
+            .and_then(|s| s.read(&record).ok().flatten())
+            .and_then(|json| {
+                let r: ocw_edit::AutosaveRecord<WorldDoc, WorldOp> =
+                    ocw_edit::AutosaveRecord::from_json(&json).ok()?;
+                let steps = r.history.undo.len();
+                Some(Restorable {
+                    name: record.clone(),
+                    summary: format!(
+                        "{} views, {} patch operations, {steps} steps of history",
+                        r.content.views.len(),
+                        r.content.patch.ops.len()
+                    ),
+                    json,
+                })
+            });
+        msg
+    }
+}
+
+/// A change of a height point in its panel.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PointChange {
+    /// The road's height there (m).
+    Height(f64),
+    /// A change of the built road's height (m).
+    Raise(f64),
+    /// The influence along the road (m).
+    Radius(f64),
+}
+
+/// What *Build package* builds.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BuildRequest {
+    pub sources: Sources,
+    pub out: PathBuf,
 }
 
 /// What the UI asks for.
@@ -92,6 +275,45 @@ pub enum StudioCommand {
     /// the ground or this one.
     FlyTo([f64; 2], Option<f64>),
     FlightModel(FlightModel),
+    /// Selects what is at a package point (x, z): a height point of the
+    /// patch, else the nearest road within the tolerance (m); nothing
+    /// there clears the selection.
+    SelectAt([f64; 2], f64),
+    SelectEdge(u64),
+    SelectPoint(String),
+    /// Selects the target of patch operation `i`.
+    SelectOp(usize),
+    ClearSelection,
+    /// Road edits act on the selected edge's whole OSM way (else on the
+    /// edge).
+    WayScope(bool),
+    /// Changes an attribute of the selected road (one command).
+    SetRoad(RoadChange),
+    RemoveRoad,
+    RestoreRoad,
+    /// Places a height point on the selected road, at the road point
+    /// nearest to this one (x, z), else in the road's middle.
+    AddPoint(Option<[f64; 2]>),
+    ChangePoint(String, PointChange),
+    /// Moves a height point to the road point nearest to (x, z).
+    MovePoint(String, [f64; 2]),
+    RemovePoint(String),
+    /// Deletes patch operation `i`.
+    DeleteOp(usize),
+    SetInfo(PatchInfo),
+    /// File → Save: the patch to its file (`<package>.ocwpatch` by default).
+    SavePatch,
+    SavePatchAs(String),
+    /// Loads a patch file onto the open package.
+    OpenPatch(String),
+    /// Flies the camera to look at the selected road or point.
+    Focus,
+    /// Builds the patched package with `world-builder`.
+    Build(BuildRequest),
+    /// A Routes workspace command (16D).
+    Route(crate::routes::RouteCommand),
+    /// The workspace shown: its document is the one Undo / Redo act on.
+    Workspace(crate::ui::Workspace),
 }
 
 /// The commands sent this frame, carried out by [`run_pending`].
@@ -110,58 +332,41 @@ fn now(world: &World) -> f64 {
         .map_or(0.0, |t| t.elapsed_secs_f64())
 }
 
-/// The World document's validators.
-fn world_validators() -> Vec<ocw_edit::Validator<WorldDoc>> {
-    vec![Box::new(check_views)]
+/// The World document's validators: the views, the patch's format and
+/// package id, its targets in the package's road graph.
+fn world_validators(package: Option<&StudioPackage>) -> Vec<ocw_edit::Validator<WorldDoc>> {
+    let targets = package
+        .and_then(StudioPackage::graph)
+        .map(PatchTargets::of)
+        .unwrap_or_default();
+    vec![
+        Box::new(check_views),
+        Box::new(check_patch),
+        check_targets(targets),
+    ]
 }
 
 /// Opens the World workspace's document for a package just shown (the
-/// previous one is closed – its changes are in its autosave) and looks
-/// for an autosave of it.
-pub fn open_world_doc(world: &mut World, spec: &str, details: &WorldDetails, now_s: f64) {
+/// previous one is closed – its changes are in its autosave), loads the
+/// patch next to the package if there is one for it, and looks for an
+/// autosave of it.
+pub fn open_world_doc(
+    world: &mut World,
+    spec: &str,
+    details: &WorldDetails,
+    package: StudioPackage,
+    now_s: f64,
+) {
     let source = std::fs::canonicalize(spec)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| spec.to_string());
     let Some(mut studio) = world.get_resource_mut::<Studio>() else {
         return;
     };
-    if let Some(old) = studio.world_doc.take() {
-        // Its last changes go to its autosave first.
-        let studio = &mut *studio;
-        if let Some(store) = studio.store.as_deref_mut() {
-            studio.session.autosave(store, now_s, 0.0);
-        }
-        studio.session.close(old);
+    if let Some(m) = studio.open_package(spec, &source, details, package, now_s) {
+        info!("{m}");
+        studio.status = m;
     }
-    let package = PackageRef {
-        spec: spec.into(),
-        id: details.id.clone(),
-        version: details.version,
-    };
-    let name = details.region.clone();
-    let id = studio.session.open(|id| {
-        let mut d = Document::new(id, name, WorldDoc::new(package)).with_source(source.clone());
-        for v in world_validators() {
-            d = d.with_validator(v);
-        }
-        d
-    });
-    studio.world_doc = Some(id);
-    let record = autosave_name("world", &source);
-    studio.restorable = studio
-        .store
-        .as_ref()
-        .and_then(|s| s.read(&record).ok().flatten())
-        .and_then(|json| {
-            let r: ocw_edit::AutosaveRecord<WorldDoc, WorldOp> =
-                ocw_edit::AutosaveRecord::from_json(&json).ok()?;
-            let steps = r.history.undo.len();
-            Some(Restorable {
-                name: record.clone(),
-                summary: format!("{} views, {steps} steps of history", r.content.views.len()),
-                json,
-            })
-        });
 }
 
 /// Carries out one command; the status line's message or an error.
@@ -189,6 +394,43 @@ pub fn apply(world: &mut World, cmd: StudioCommand) -> Result<String, String> {
             f.flight.model = m;
             f.flight.stop();
             Ok(format!("flight: {m:?}"))
+        }
+        StudioCommand::Focus => {
+            let target = focus_point(world.resource::<Studio>()).ok_or("nothing selected")?;
+            let (pos, yaw, pitch) = crate::flight::look_at(target);
+            world.resource_mut::<StudioFlight>().jump(pos, yaw, pitch);
+            // The 2D map shows it too, close up.
+            if let Some(mut w) = world.get_resource_mut::<crate::world::OpenWorld>() {
+                let mut v = w.map_view.unwrap_or_default();
+                v.centre = [target[0], target[2]];
+                v.m_per_px = v.m_per_px.min(1.5);
+                w.map_view = Some(v);
+            }
+            Ok(format!("looking at {:.0}, {:.0}", target[0], target[2]))
+        }
+        StudioCommand::Build(req) => start_build(&mut world.resource_mut::<Studio>(), req),
+        StudioCommand::Route(c) => {
+            let fit = matches!(
+                c,
+                crate::routes::RouteCommand::Import(_)
+                    | crate::routes::RouteCommand::PackageRoute(_)
+                    | crate::routes::RouteCommand::Fit
+            );
+            let msg = crate::routes::command(&mut world.resource_mut::<Studio>(), c, t)?;
+            if fit {
+                // The map shows the whole route (its view is made now).
+                crate::routes::refresh_view(&mut world.resource_mut::<Studio>());
+                let ext = crate::routes::route_extent(&world.resource::<Studio>().routes.view);
+                if let (Some((min, max)), Some(mut w)) =
+                    (ext, world.get_resource_mut::<crate::world::OpenWorld>())
+                {
+                    w.map_view = Some(crate::map::MapView {
+                        centre: [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5],
+                        m_per_px: ((max[0] - min[0]).max(max[1] - min[1]) / 420.0).max(0.5),
+                    });
+                }
+            }
+            Ok(msg)
         }
         StudioCommand::GoToView(id) => {
             let view = world
@@ -302,7 +544,7 @@ pub fn edit(
             let r = studio.restorable.take().ok_or("no autosave to restore")?;
             let id = studio
                 .session
-                .restore::<WorldDoc>(&r.json, world_validators())
+                .restore::<WorldDoc>(&r.json, world_validators(studio.package.as_ref()))
                 .map_err(|e| e.to_string())?;
             let same = match (
                 doc.and_then(|d| studio.session.get::<WorldDoc>(d)),
@@ -331,11 +573,508 @@ pub fn edit(
             }
             Ok("autosave discarded".into())
         }
+        StudioCommand::Route(c) => crate::routes::command(studio, c, now_s),
+        StudioCommand::Workspace(w) => {
+            let doc = match w {
+                crate::ui::Workspace::Routes => studio.routes.doc,
+                _ => studio.world_doc,
+            };
+            if let Some(id) = doc {
+                studio.session.set_active(id);
+            }
+            Ok(String::new())
+        }
         StudioCommand::Open(_)
         | StudioCommand::FlyTo(..)
         | StudioCommand::FlightModel(_)
-        | StudioCommand::GoToView(_) => Err("not a document command".into()),
+        | StudioCommand::GoToView(_)
+        | StudioCommand::Focus
+        | StudioCommand::Build(_) => Err("not a document command".into()),
+        other => patch_command(studio, other, now_s),
     }
+}
+
+/// Rounds degrees to 1e-7 (about a centimetre), so patch files stay tidy.
+fn round_deg(v: f64) -> f64 {
+    (v * 1e7).round() / 1e7
+}
+
+/// Rounds a height or a length to centimetres.
+fn round_cm(v: f64) -> f64 {
+    (v * 100.0).round() / 100.0
+}
+
+/// Executes a patch command (`None`: nothing would change); `seal`: the
+/// next edit starts a new undo step (a click; fields that are typed or
+/// dragged leave the step open and seal when they lose the focus).
+fn run_op(
+    studio: &mut Studio,
+    op: Option<WorldOp>,
+    now_s: f64,
+    seal: bool,
+    done: impl Into<String>,
+) -> Result<String, String> {
+    let Some(op) = op else {
+        return Ok("no change".into());
+    };
+    let d = studio.world_mut()?;
+    d.execute(op, now_s).map_err(|e| e.to_string())?;
+    if seal {
+        d.seal();
+    }
+    Ok(done.into())
+}
+
+fn select(studio: &mut Studio, item: Option<WorldItem>) -> Result<(), String> {
+    let d = studio.world_mut()?;
+    match item {
+        Some(i) => d.selection.select_only(i),
+        None => d.selection.clear(),
+    }
+    Ok(())
+}
+
+/// The patch file errors that keep it from being saved.
+fn patch_errors(studio: &Studio) -> Vec<String> {
+    studio
+        .world()
+        .map(|d| {
+            d.findings()
+                .iter()
+                .filter(|f| {
+                    f.severity == Severity::Error
+                        && f.target
+                            .as_deref()
+                            .is_some_and(|t| t == "patch" || t.starts_with("op "))
+                })
+                .map(|f| f.message.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The road and height point commands, saving and opening the patch.
+fn patch_command(studio: &mut Studio, cmd: StudioCommand, now_s: f64) -> Result<String, String> {
+    match cmd {
+        StudioCommand::SelectAt(at, tol) => {
+            let pkg = studio.package.as_ref().ok_or("no world is open")?;
+            let doc = studio.world().ok_or("no world is open")?;
+            // Height points first: they sit on the roads.
+            let point = doc
+                .content()
+                .height_points()
+                .filter_map(|(_, h)| {
+                    let p = studio.point_xz(h)?;
+                    let d = (p[0] - at[0]).hypot(p[1] - at[1]);
+                    (d <= tol).then(|| (d, h.id.clone()))
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0));
+            let pick = pkg
+                .graph()
+                .and_then(|g| crate::pick::pick_edge(g, at, tol).map(|p| g.edges[p.edge].id.0));
+            if let Some((_, id)) = point {
+                select(studio, Some(WorldItem::HeightPoint(id.clone())))?;
+                return Ok(format!("height point '{id}'"));
+            }
+            match pick {
+                Some(id) => {
+                    select(studio, Some(WorldItem::Edge(id)))?;
+                    Ok(road_message(studio, id))
+                }
+                None => {
+                    select(studio, None)?;
+                    Ok("no road here".into())
+                }
+            }
+        }
+        StudioCommand::SelectEdge(id) => {
+            let pkg = studio.package.as_ref().ok_or("no world is open")?;
+            pkg.edge(id)
+                .ok_or_else(|| format!("no edge {id} in the package"))?;
+            select(studio, Some(WorldItem::Edge(id)))?;
+            Ok(road_message(studio, id))
+        }
+        StudioCommand::SelectPoint(id) => {
+            let doc = studio.world().ok_or("no world is open")?;
+            doc.content()
+                .height_point(&id)
+                .ok_or_else(|| format!("no height point '{id}' in the patch"))?;
+            select(studio, Some(WorldItem::HeightPoint(id.clone())))?;
+            Ok(format!("height point '{id}'"))
+        }
+        StudioCommand::SelectOp(i) => {
+            let doc = studio.world().ok_or("no world is open")?;
+            let op = doc
+                .content()
+                .patch
+                .ops
+                .get(i)
+                .ok_or_else(|| format!("no patch operation {}", i + 1))?
+                .clone();
+            if let Some(t) = op_road_target(&op) {
+                let pkg = studio.package.as_ref().ok_or("no world is open")?;
+                let Some(&first) = pkg.target_edges(t).first() else {
+                    select(studio, None)?;
+                    return Ok(format!("{} is not in the package", t.describe()));
+                };
+                let id = pkg.graph().expect("an edge").edges[first].id.0;
+                studio.way_scope = matches!(t, RoadTarget::Way(_));
+                select(studio, Some(WorldItem::Edge(id)))?;
+                return Ok(road_message(studio, id));
+            }
+            let id = op_point_id(&op).unwrap_or_default().to_string();
+            let defined = studio
+                .world()
+                .is_some_and(|d| d.content().height_point(&id).is_some());
+            if defined {
+                select(studio, Some(WorldItem::HeightPoint(id.clone())))?;
+                Ok(format!("height point '{id}'"))
+            } else {
+                select(studio, None)?;
+                Ok(format!("height point '{id}' is not defined in this patch"))
+            }
+        }
+        StudioCommand::ClearSelection => {
+            select(studio, None)?;
+            Ok(String::new())
+        }
+        StudioCommand::WayScope(on) => {
+            studio.way_scope = on;
+            Ok(if on {
+                "road edits act on the whole OSM way".into()
+            } else {
+                "road edits act on the selected edge".into()
+            })
+        }
+        StudioCommand::SetRoad(change) => {
+            let t = studio.selected_target().ok_or("select a road first")?;
+            let op = studio
+                .world()
+                .and_then(|d| d.content().set_road(t, &change));
+            // Typed and dragged values merge until the field is left.
+            let seal = !matches!(change, RoadChange::Name(_) | RoadChange::Width(_));
+            run_op(studio, op, now_s, seal, format!("{} changed", t.describe()))
+        }
+        StudioCommand::RemoveRoad => {
+            let t = studio.selected_target().ok_or("select a road first")?;
+            let op = studio.world().and_then(|d| d.content().remove_road(t));
+            run_op(
+                studio,
+                op,
+                now_s,
+                true,
+                format!("{} removed from the ridable roads", t.describe()),
+            )
+        }
+        StudioCommand::RestoreRoad => {
+            let t = studio.selected_target().ok_or("select a road first")?;
+            let op = studio.world().and_then(|d| d.content().restore_road(t));
+            run_op(
+                studio,
+                op,
+                now_s,
+                true,
+                format!("{} restored", t.describe()),
+            )
+        }
+        StudioCommand::AddPoint(at) => {
+            let edge_id = studio.selected_edge().ok_or("select a road first")?;
+            let pkg = studio.package.as_ref().ok_or("no world is open")?;
+            let edge = pkg.edge(edge_id).ok_or("the road is not in the package")?;
+            let (arc, foot) = match at {
+                Some(p) => {
+                    let (_, arc, foot) = crate::pick::nearest_on_polyline(&edge.points, p);
+                    (arc, foot)
+                }
+                None => {
+                    let arc = edge.length_m() * 0.5;
+                    let foot = crate::pick::point_at(&edge.points, arc).ok_or("an empty road")?;
+                    (arc, foot)
+                }
+            };
+            let (lat, lon) = pkg.projection().unproject(foot);
+            let height = edge.height_at(arc).map(|h| (h * 10.0).round() / 10.0);
+            let doc = studio.world().ok_or("no world is open")?;
+            let id = doc.content().new_point_id();
+            let point = HeightPoint {
+                id: id.clone(),
+                at: Some([round_deg(lat), round_deg(lon)]),
+                edge: Some(EdgeId(edge_id)),
+                height_m: height,
+                raise_m: height.is_none().then_some(0.0),
+                radius_m: Some(ocw_world::patch::DEFAULT_RADIUS_M),
+                ..Default::default()
+            };
+            let op = doc.content().add_height_point(point);
+            let msg = match height {
+                Some(h) => format!("height point '{id}' at {h:.1} m on edge {edge_id}"),
+                None => format!("height point '{id}' on edge {edge_id}"),
+            };
+            run_op(studio, Some(op), now_s, true, msg.clone())?;
+            select(studio, Some(WorldItem::HeightPoint(id)))?;
+            Ok(msg)
+        }
+        StudioCommand::ChangePoint(id, change) => {
+            let op = studio.world().and_then(|d| {
+                d.content().change_height_point(&id, |h| match change {
+                    PointChange::Height(v) => {
+                        h.height_m = Some(round_cm(v));
+                        h.raise_m = None;
+                    }
+                    PointChange::Raise(v) => {
+                        h.raise_m = Some(round_cm(v));
+                        h.height_m = None;
+                    }
+                    PointChange::Radius(v) => h.radius_m = Some(round_cm(v)),
+                })
+            });
+            run_op(studio, op, now_s, false, String::new())
+        }
+        StudioCommand::MovePoint(id, at) => {
+            let pkg = studio.package.as_ref().ok_or("no world is open")?;
+            let graph = pkg.graph().ok_or("the package has no road graph")?;
+            let doc = studio.world().ok_or("no world is open")?;
+            let (_, h) = doc
+                .content()
+                .height_point(&id)
+                .ok_or_else(|| format!("no height point '{id}'"))?;
+            let snap = ocw_world::patch::SNAP_M;
+            // On its own road if that is near, else the nearest road.
+            let own = h.edge.and_then(|e| pkg.edge(e.0)).and_then(|e| {
+                let (d, _, foot) = crate::pick::nearest_on_polyline(&e.points, at);
+                (d <= snap).then_some((e.id, foot))
+            });
+            let (edge, foot) = own
+                .or_else(|| {
+                    crate::pick::pick_edge(graph, at, snap)
+                        .map(|p| (graph.edges[p.edge].id, p.foot))
+                })
+                .ok_or_else(|| format!("no road within {snap} m: a height point sits on a road"))?;
+            let (lat, lon) = pkg.projection().unproject(foot);
+            let op = doc.content().change_height_point(&id, |h| {
+                h.at = Some([round_deg(lat), round_deg(lon)]);
+                h.node = None;
+                h.edge = Some(edge);
+            });
+            run_op(
+                studio,
+                op,
+                now_s,
+                true,
+                format!("height point '{id}' moved"),
+            )
+        }
+        StudioCommand::RemovePoint(id) => {
+            let op = studio
+                .world()
+                .and_then(|d| d.content().remove_height_point(&id));
+            if op.is_none() {
+                return Err(format!("no height point '{id}' in this patch"));
+            }
+            run_op(
+                studio,
+                op,
+                now_s,
+                true,
+                format!("height point '{id}' removed"),
+            )
+        }
+        StudioCommand::DeleteOp(i) => {
+            let doc = studio.world().ok_or("no world is open")?;
+            let what = doc
+                .content()
+                .patch
+                .ops
+                .get(i)
+                .map(|o| o.describe())
+                .ok_or_else(|| format!("no patch operation {}", i + 1))?;
+            let op = WorldOp::RemoveOp {
+                index: i,
+                label: "Delete patch operation".into(),
+            };
+            run_op(studio, Some(op), now_s, true, format!("{what} deleted"))
+        }
+        StudioCommand::SetInfo(info) => {
+            let same = studio.world().is_some_and(|d| d.content().info() == info);
+            let op = (!same).then_some(WorldOp::SetInfo(info));
+            run_op(studio, op, now_s, false, String::new())
+        }
+        StudioCommand::SavePatch => {
+            let path = studio.save_path().ok_or("no world is open")?;
+            save_patch(studio, path)
+        }
+        StudioCommand::SavePatchAs(path) => {
+            let path = expand_home(path.trim());
+            if path.as_os_str().is_empty() {
+                return Err("no file name".into());
+            }
+            save_patch(studio, path)
+        }
+        StudioCommand::OpenPatch(path) => {
+            let path = expand_home(path.trim());
+            let doc = studio.world().ok_or("no world is open")?;
+            let id = doc.content().package.id.clone();
+            let patch = crate::patch::read_patch(&path, &id)?;
+            let n = patch.ops.len();
+            let d = studio.world_mut()?;
+            d.execute(WorldOp::SetPatch(Box::new(patch)), now_s)
+                .map_err(|e| e.to_string())?;
+            d.seal();
+            d.mark_saved();
+            d.selection.clear();
+            let msg = format!("patch {} opened ({n} operations)", shown_path(&path));
+            studio.patch_file = Some(path);
+            Ok(msg)
+        }
+        _ => Err("not a patch command".into()),
+    }
+}
+
+/// "edge 123 (way 45): Hauptstrasse, residential".
+pub fn road_message(studio: &Studio, id: u64) -> String {
+    let Some(e) = studio.package.as_ref().and_then(|p| p.edge(id)) else {
+        return format!("edge {id}");
+    };
+    format!(
+        "edge {id} (way {}): {}{}",
+        e.osm_way,
+        e.name
+            .as_deref()
+            .map(|n| format!("{n}, "))
+            .unwrap_or_default(),
+        class_name(e.class)
+    )
+}
+
+/// The OSM `highway` name of a road class.
+pub fn class_name(c: ocw_world::graph::RoadClass) -> &'static str {
+    use ocw_world::graph::RoadClass as C;
+    match c {
+        C::Trunk => "trunk",
+        C::Primary => "primary",
+        C::Secondary => "secondary",
+        C::Tertiary => "tertiary",
+        C::Unclassified => "unclassified",
+        C::Residential => "residential",
+        C::Service => "service",
+        C::Track => "track",
+        C::Cycleway => "cycleway",
+        C::Path => "path",
+    }
+}
+
+/// `~/x` → the home directory's `x` (paths typed in the dialogs).
+pub fn expand_home(p: &str) -> PathBuf {
+    match (p.strip_prefix("~/"), std::env::var_os("HOME")) {
+        (Some(rest), Some(home)) => PathBuf::from(home).join(rest),
+        _ => PathBuf::from(p),
+    }
+}
+
+/// Writes the patch to `path` and marks the document saved (refused while
+/// the patch has errors: it would not read back).
+fn save_patch(studio: &mut Studio, path: PathBuf) -> Result<String, String> {
+    let errors = patch_errors(studio);
+    if let Some(first) = errors.first() {
+        return Err(format!(
+            "not saved: the patch has {} error(s), first: {first}",
+            errors.len()
+        ));
+    }
+    let doc = studio.world().ok_or("no world is open")?;
+    let patch = doc.content().patch.clone();
+    crate::patch::write_patch(&path, &patch)?;
+    let d = studio.world_mut()?;
+    d.seal();
+    d.mark_saved();
+    let msg = format!(
+        "saved {} ({} operations)",
+        shown_path(&path),
+        patch.ops.len()
+    );
+    studio.patch_file = Some(path);
+    Ok(msg)
+}
+
+/// *Build package*: saves the patch if it changed, checks the sources and
+/// `world-builder`, and starts the build.
+pub fn start_build(studio: &mut Studio, req: BuildRequest) -> Result<String, String> {
+    if studio.build.as_ref().is_some_and(BuildJob::running) {
+        return Err("a build is running".into());
+    }
+    let missing = req.sources.missing();
+    if !missing.is_empty() {
+        return Err(format!(
+            "the build needs the package's source data, missing: {}",
+            missing.join("; ")
+        ));
+    }
+    let program = crate::build::world_builder().ok_or(
+        "world-builder was not found: put it next to ocw-studio, on the PATH, or name it in OCW_WORLD_BUILDER",
+    )?;
+    let needs_save = studio.patch_file.is_none() || studio.world().is_some_and(|d| d.is_dirty());
+    if needs_save {
+        let path = studio.save_path().ok_or("no world is open")?;
+        save_patch(studio, path)?;
+    }
+    let patch = studio.patch_file.clone().ok_or("the patch is not saved")?;
+    let pkg = studio.package.as_ref().ok_or("no world is open")?;
+    let doc = studio.world().ok_or("no world is open")?;
+    let facts = crate::build::PackageFacts {
+        name: pkg.pkg.name.clone(),
+        id: doc.content().package.id.clone(),
+        origin: pkg.pkg.origin,
+        time_zone: pkg.pkg.time_zone.clone(),
+    };
+    if let Some(dir) = req.out.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", shown_path(dir)))?;
+    }
+    // The package's manifest goes along, so the build keeps its id and its
+    // credits (spec §13) and counts the version on.
+    let side = {
+        let mut s = req.out.as_os_str().to_owned();
+        s.push(".manifest.json");
+        PathBuf::from(s)
+    };
+    if let Some(m) = &pkg.manifest
+        && !side.exists()
+    {
+        std::fs::copy(m, &side).map_err(|e| format!("{}: {e}", shown_path(&side)))?;
+    }
+    let args = crate::build::build_args(&req.sources, &facts, &patch, &req.out);
+    let job = BuildJob::start(&program, &args, req.out.clone());
+    info!("build: {}", job.command);
+    studio.build = Some(job);
+    Ok(format!("building {} …", shown_path(&req.out)))
+}
+
+/// The point the camera looks at for the selection: a height point, else
+/// the middle of the selected road (x, height, z).
+pub fn focus_point(studio: &Studio) -> Option<[f64; 3]> {
+    let pkg = studio.package.as_ref()?;
+    if let Some(id) = studio.selected_point() {
+        let doc = studio.world()?;
+        let (_, h) = doc.content().height_point(&id)?;
+        let p = studio.point_xz(h)?;
+        let y = h
+            .edge
+            .and_then(|e| pkg.edge(e.0))
+            .and_then(|e| {
+                let (_, arc, _) = crate::pick::nearest_on_polyline(&e.points, p);
+                e.height_at(arc)
+            })
+            .or_else(|| pkg.pkg.surface_height(p[0], p[1]))
+            .unwrap_or(0.0);
+        return Some([p[0], y, p[1]]);
+    }
+    let e = pkg.edge(studio.selected_edge()?)?;
+    let arc = e.length_m() * 0.5;
+    let p = crate::pick::point_at(&e.points, arc)?;
+    let y = e
+        .height_at(arc)
+        .or_else(|| pkg.pkg.surface_height(p[0], p[1]))
+        .unwrap_or(0.0);
+    Some([p[0], y, p[1]])
 }
 
 /// Carries out the commands sent this frame.
@@ -378,7 +1117,7 @@ fn autosave(mut studio: ResMut<Studio>, time: Res<Time<Real>>, mut exits: Messag
     }
 }
 
-/// Ctrl + Z, Ctrl + Shift + Z and Ctrl + Y (not while a text field has
+/// Ctrl + Z, Ctrl + Shift + Z, Ctrl + Y and Ctrl + S (not while a text field has
 /// the keyboard: it undoes its own typing).
 fn shortcut_keys(
     keys: Option<Res<ButtonInput<KeyCode>>>,
@@ -406,6 +1145,8 @@ fn shortcut_keys(
         });
     } else if ctrl && k.just_pressed(KeyCode::KeyY) {
         pending.send(StudioCommand::Redo);
+    } else if ctrl && k.just_pressed(KeyCode::KeyS) {
+        pending.send(StudioCommand::SavePatch);
     }
 }
 
@@ -419,7 +1160,7 @@ impl Plugin for EditPlugin {
         app.console_command(ConsoleCommand::new(
             Permission::User,
             Command::new("studio")
-                .about("OCW Studio: undo, redo, views, open, fly")
+                .about("OCW Studio: undo, redo, views, open, fly, world patch editing")
                 .subcommand_required(true)
                 .subcommand(Command::new("undo").about("Undo the last edit of the active document"))
                 .subcommand(Command::new("redo").about("Redo the last undone edit"))
@@ -468,13 +1209,283 @@ impl Plugin for EditPlugin {
                                     .value_parser(value_parser!(u32)),
                             ),
                         ),
-                ),
+                )
+                .subcommand(words(
+                    "select",
+                    "Select: X Z (package metres) | latlon LAT LON | edge ID | point ID | op N | none",
+                ))
+                .subcommand(words(
+                    "road",
+                    "The selected road: surface V | width M | class C | oneway no|forward|backward | bike closed|open | name TEXT (each `-`: back to the package) | remove | restore | scope edge|way | focus | info",
+                ))
+                .subcommand(words(
+                    "point",
+                    "Height points: add [X Z] | height M | raise M | radius M | move X Z | remove | focus (on the selected point)",
+                ))
+                .subcommand(words(
+                    "route",
+                    "The Routes workspace: new [NAME] | import PATH | package N | plan X Z X Z … | via add|insert|move|remove … | drag GX GZ X Z | reverse | loop on|off | outback | cut start|end N | split N | profile P | planner builtin|brouter | brouter url URL | brouter profile P | brouter ok | brouter plan | export PATH | save [PATH] | testride | info",
+                ))
+                .subcommand(words(
+                    "patch",
+                    "The world patch: list | save [PATH] | open PATH | delete N | title TEXT | author TEXT | build [OUT]",
+                )),
             studio_command,
         ));
     }
 }
 
+/// A console subcommand that takes free words (parsed by
+/// [`console_patch`]).
+fn words(name: &'static str, about: &'static str) -> Command {
+    Command::new(name).about(about).arg(
+        Arg::new("words")
+            .num_args(0..)
+            .allow_hyphen_values(true)
+            .trailing_var_arg(true)
+            .action(ArgAction::Append),
+    )
+}
+
+/// What a patch console command does: a command, or an answer.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Console {
+    Run(StudioCommand),
+    Say(String),
+}
+
+fn num(w: Option<&String>, what: &str) -> Result<f64, String> {
+    w.ok_or_else(|| format!("{what} is missing"))?
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| format!("{what} must be a number"))
+}
+
+fn rest(words: &[String], from: usize) -> Option<String> {
+    let t = words.get(from..).map(|w| w.join(" ")).unwrap_or_default();
+    (!t.is_empty()).then_some(t)
+}
+
+fn reset(v: &str) -> bool {
+    v == "-" || v == "package"
+}
+
+/// The `studio select | road | point | patch …` console commands (pure:
+/// the words to a command).
+pub fn console_patch(group: &str, words: &[String], studio: &Studio) -> Result<Console, String> {
+    let w0 = words.first().map(String::as_str).unwrap_or("");
+    let run = |c| Ok(Console::Run(c));
+    let point = || {
+        studio
+            .selected_point()
+            .ok_or_else(|| "select a height point first".to_string())
+    };
+    match (group, w0) {
+        ("select", "latlon") => {
+            let lat = num(words.get(1), "LAT")?;
+            let lon = num(words.get(2), "LON")?;
+            let pkg = studio.package.as_ref().ok_or("no world is open")?;
+            run(StudioCommand::SelectAt(
+                pkg.projection().project(lat, lon),
+                50.0,
+            ))
+        }
+        ("select", "edge") => run(StudioCommand::SelectEdge(
+            words
+                .get(1)
+                .and_then(|w| w.parse().ok())
+                .ok_or("an edge id")?,
+        )),
+        ("select", "point") => run(StudioCommand::SelectPoint(
+            rest(words, 1).ok_or("a height point id")?,
+        )),
+        ("select", "op") => {
+            let n = num(words.get(1), "N")? as usize;
+            run(StudioCommand::SelectOp(n.max(1) - 1))
+        }
+        ("select", "none") => run(StudioCommand::ClearSelection),
+        ("select", _) => {
+            let x = num(words.first(), "X")?;
+            let z = num(words.get(1), "Z")?;
+            run(StudioCommand::SelectAt([x, z], 50.0))
+        }
+        ("road", "remove") => run(StudioCommand::RemoveRoad),
+        ("road", "restore") => run(StudioCommand::RestoreRoad),
+        ("road", "focus") => run(StudioCommand::Focus),
+        ("road", "scope") => match words.get(1).map(String::as_str) {
+            Some("way") => run(StudioCommand::WayScope(true)),
+            Some("edge") => run(StudioCommand::WayScope(false)),
+            _ => Err("studio road scope edge|way".into()),
+        },
+        ("road", "info") => {
+            let id = studio.selected_edge().ok_or("select a road first")?;
+            Ok(Console::Say(road_message(studio, id)))
+        }
+        ("road", attr) if !attr.is_empty() => {
+            let v = rest(words, 1).ok_or_else(|| format!("studio road {attr} VALUE"))?;
+            let change = match attr {
+                "surface" => RoadChange::Surface((!reset(&v)).then_some(v)),
+                "width" => RoadChange::Width(if reset(&v) {
+                    None
+                } else {
+                    Some(num(Some(&v), "the width")?)
+                }),
+                "class" => RoadChange::Class(if reset(&v) {
+                    None
+                } else {
+                    Some(
+                        PATCH_CLASSES
+                            .iter()
+                            .copied()
+                            .find(|c| c.osm() == v)
+                            .ok_or_else(|| format!("unknown class `{v}`"))?,
+                    )
+                }),
+                "oneway" => RoadChange::Oneway(match v.as_str() {
+                    "-" | "package" => None,
+                    "no" => Some(PatchOneway::No),
+                    "forward" => Some(PatchOneway::Forward),
+                    "backward" => Some(PatchOneway::Backward),
+                    _ => return Err("oneway no|forward|backward|-".into()),
+                }),
+                "bike" => RoadChange::BikeClosed(match v.as_str() {
+                    "closed" => true,
+                    "open" | "-" => false,
+                    _ => return Err("bike closed|open".into()),
+                }),
+                "name" => RoadChange::Name(
+                    (!reset(&v)).then(|| if v == "\"\"" { String::new() } else { v }),
+                ),
+                _ => return Err(format!("no road attribute `{attr}`")),
+            };
+            run(StudioCommand::SetRoad(change))
+        }
+        ("point", "add") => {
+            let at = match (words.get(1), words.get(2)) {
+                (Some(_), Some(_)) => Some([num(words.get(1), "X")?, num(words.get(2), "Z")?]),
+                _ => None,
+            };
+            run(StudioCommand::AddPoint(at))
+        }
+        ("point", "height") => run(StudioCommand::ChangePoint(
+            point()?,
+            PointChange::Height(num(words.get(1), "the height")?),
+        )),
+        ("point", "raise") => run(StudioCommand::ChangePoint(
+            point()?,
+            PointChange::Raise(num(words.get(1), "the change")?),
+        )),
+        ("point", "radius") => run(StudioCommand::ChangePoint(
+            point()?,
+            PointChange::Radius(num(words.get(1), "the radius")?),
+        )),
+        ("point", "move") => run(StudioCommand::MovePoint(
+            point()?,
+            [num(words.get(1), "X")?, num(words.get(2), "Z")?],
+        )),
+        ("point", "remove") => run(StudioCommand::RemovePoint(point()?)),
+        ("point", "focus") => run(StudioCommand::Focus),
+        ("patch", "list") => Ok(Console::Say(patch_lines(studio).join("\n"))),
+        ("patch", "save") => match rest(words, 1) {
+            Some(path) => run(StudioCommand::SavePatchAs(path)),
+            None => run(StudioCommand::SavePatch),
+        },
+        ("patch", "open") => run(StudioCommand::OpenPatch(
+            rest(words, 1).ok_or("studio patch open PATH")?,
+        )),
+        ("patch", "delete") => {
+            let n = num(words.get(1), "N")? as usize;
+            run(StudioCommand::DeleteOp(n.max(1) - 1))
+        }
+        ("patch", "title" | "author") => {
+            let doc = studio.world().ok_or("no world is open")?;
+            let mut info = doc.content().info();
+            let v = rest(words, 1);
+            if w0 == "title" {
+                info.title = v;
+            } else {
+                info.author = v;
+            }
+            run(StudioCommand::SetInfo(info))
+        }
+        ("patch", "build") => {
+            let pkg = studio.package.as_ref().ok_or("no world is open")?;
+            let out = rest(words, 1)
+                .map(|p| expand_home(&p))
+                .unwrap_or_else(|| crate::build::default_output(&pkg.file));
+            run(StudioCommand::Build(BuildRequest {
+                sources: crate::build::find_sources(&pkg.file),
+                out,
+            }))
+        }
+        _ => Err(format!("studio {group}: see `help studio`")),
+    }
+}
+
+/// The road classes of the patch format, in the order of the panel.
+pub const PATCH_CLASSES: [PatchClass; 10] = [
+    PatchClass::Trunk,
+    PatchClass::Primary,
+    PatchClass::Secondary,
+    PatchClass::Tertiary,
+    PatchClass::Unclassified,
+    PatchClass::Residential,
+    PatchClass::Service,
+    PatchClass::Track,
+    PatchClass::Cycleway,
+    PatchClass::Path,
+];
+
+/// `studio patch list`: one line per operation, with the preview's
+/// status when there is one.
+pub fn patch_lines(studio: &Studio) -> Vec<String> {
+    let Some(doc) = studio.world() else {
+        return vec!["no world is open".into()];
+    };
+    let p = &doc.content().patch;
+    let mut out = vec![format!(
+        "patch for {}: {} operations{}",
+        p.package,
+        p.ops.len(),
+        if doc.is_dirty() { " (changed)" } else { "" }
+    )];
+    for (i, op) in p.ops.iter().enumerate() {
+        out.push(format!("  {:>3} {}", i + 1, op.describe()));
+    }
+    out
+}
+
 fn studio_command(world: &mut World, m: &clap::ArgMatches) -> Result<String, String> {
+    if let Some(("route", a)) = m.subcommand() {
+        let words: Vec<String> = a
+            .get_many::<String>("words")
+            .map(|w| w.cloned().collect())
+            .unwrap_or_default();
+        if words.first().map(String::as_str) == Some("info") {
+            return Ok(crate::routes::route_lines(world.resource::<Studio>()).join("\n"));
+        }
+        let cmd = crate::routes::console_route(&words)?;
+        let msg = apply(world, StudioCommand::Route(cmd))?;
+        if !msg.is_empty() {
+            world.resource_mut::<Studio>().status = msg.clone();
+        }
+        return Ok(msg);
+    }
+    if let Some((group @ ("select" | "road" | "point" | "patch"), a)) = m.subcommand() {
+        let words: Vec<String> = a
+            .get_many::<String>("words")
+            .map(|w| w.cloned().collect())
+            .unwrap_or_default();
+        let cmd = match console_patch(group, &words, world.resource::<Studio>())? {
+            Console::Say(text) => return Ok(text),
+            Console::Run(c) => c,
+        };
+        let msg = apply(world, cmd)?;
+        if !msg.is_empty() {
+            world.resource_mut::<Studio>().status = msg.clone();
+        }
+        return Ok(msg);
+    }
     let cmd = match m.subcommand() {
         Some(("undo", _)) => StudioCommand::Undo,
         Some(("redo", _)) => StudioCommand::Redo,
@@ -519,7 +1530,11 @@ fn studio_command(world: &mut World, m: &clap::ArgMatches) -> Result<String, Str
             }
             _ => return Err("studio view add|list|go|delete".into()),
         },
-        _ => return Err("studio undo|redo|status|open|fly|view".into()),
+        _ => {
+            return Err(
+                "studio undo|redo|status|open|fly|view|select|road|point|patch|route".into(),
+            );
+        }
     };
     let msg = apply(world, cmd)?;
     if !msg.is_empty() {
@@ -732,5 +1747,334 @@ mod tests {
             u.store.as_ref().unwrap().list().unwrap(),
             Vec::<String>::new()
         );
+    }
+
+    // --- World patches (E5 step 2) ---
+
+    use ocw_world::patch::{Operation, WorldPatch};
+
+    fn tmp_dir() -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "ocw-studio-edit-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// A studio with the test package (its file in `dir`) opened.
+    fn patch_studio(dir: &std::path::Path) -> Studio {
+        let mut s = Studio::new(Some(Box::new(MemoryStore::default())), None);
+        let mut pkg = crate::patch::tests::package();
+        pkg.file = dir.join("testland.ocwpkg");
+        let details = WorldDetails {
+            id: "local/testland".into(),
+            region: "Testland".into(),
+            ..Default::default()
+        };
+        let file = pkg.file.display().to_string();
+        let msg = s.open_package(&file, &file, &details, pkg, 0.0);
+        assert_eq!(msg, None, "no patch next to the package yet");
+        s
+    }
+
+    fn run(s: &mut Studio, c: StudioCommand, t: f64) -> String {
+        edit(s, c, CAM, t).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    #[test]
+    fn a_click_selects_a_road_and_its_attributes_are_edited_and_undone() {
+        let d = tmp_dir();
+        let mut s = patch_studio(&d);
+        assert_eq!(
+            run(&mut s, StudioCommand::SelectAt([20.0, 3.0], 5.0), 0.0),
+            "edge 100 (way 7): Hauptstrasse, primary"
+        );
+        assert_eq!(s.selected_edge(), Some(100));
+        assert_eq!(s.selected_target(), Some(RoadTarget::Edge(100)));
+        run(
+            &mut s,
+            StudioCommand::SetRoad(RoadChange::Surface(Some("gravel".into()))),
+            1.0,
+        );
+        // Typing a name: one undo step.
+        for (k, n) in ["A", "Al", "Alt"].iter().enumerate() {
+            run(
+                &mut s,
+                StudioCommand::SetRoad(RoadChange::Name(Some((*n).into()))),
+                2.0 + 0.1 * k as f64,
+            );
+        }
+        run(&mut s, StudioCommand::Seal, 2.5);
+        let doc = s.world().unwrap();
+        assert_eq!(doc.content().patch.ops.len(), 1);
+        assert_eq!(doc.history().undo.len(), 2);
+        assert!(doc.is_dirty());
+        // The whole way: a second operation, on way 7.
+        run(&mut s, StudioCommand::WayScope(true), 3.0);
+        assert_eq!(s.selected_target(), Some(RoadTarget::Way(7)));
+        run(&mut s, StudioCommand::RemoveRoad, 4.0);
+        assert_eq!(
+            run(&mut s, StudioCommand::RemoveRoad, 4.5),
+            "no change",
+            "removed already"
+        );
+        assert_eq!(s.world().unwrap().content().patch.ops.len(), 2);
+        run(&mut s, StudioCommand::Undo, 5.0);
+        run(&mut s, StudioCommand::Undo, 5.1);
+        run(&mut s, StudioCommand::Undo, 5.2);
+        assert!(s.world().unwrap().content().patch.ops.is_empty());
+        assert!(!s.world().unwrap().is_dirty());
+        // A click beside every road clears the selection.
+        assert_eq!(
+            run(&mut s, StudioCommand::SelectAt([20.0, 20.0], 5.0), 6.0),
+            "no road here"
+        );
+        assert_eq!(s.selected_edge(), None);
+        assert!(edit(&mut s, StudioCommand::RemoveRoad, CAM, 7.0).is_err());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn height_points_are_placed_on_the_selected_road_moved_and_removed() {
+        let d = tmp_dir();
+        let mut s = patch_studio(&d);
+        assert!(edit(&mut s, StudioCommand::AddPoint(None), CAM, 0.0).is_err());
+        run(&mut s, StudioCommand::SelectEdge(100), 0.0);
+        let msg = run(&mut s, StudioCommand::AddPoint(Some([30.0, 4.0])), 1.0);
+        assert_eq!(msg, "height point 'point-1' at 400.0 m on edge 100");
+        assert_eq!(s.selected_point().as_deref(), Some("point-1"));
+        let doc = s.world().unwrap();
+        let (_, h) = doc.content().height_point("point-1").unwrap();
+        assert_eq!(h.edge, Some(EdgeId(100)));
+        assert_eq!(h.radius_m, Some(ocw_world::patch::DEFAULT_RADIUS_M));
+        let at = s.point_xz(h).unwrap();
+        assert!(
+            (at[0] - 30.0).abs() < 0.01 && at[1].abs() < 0.01,
+            "on the road: {at:?}"
+        );
+        // A click on the point selects it again, before the road under it.
+        run(&mut s, StudioCommand::ClearSelection, 2.0);
+        run(&mut s, StudioCommand::SelectAt([31.0, 1.0], 5.0), 2.0);
+        assert_eq!(s.selected_point().as_deref(), Some("point-1"));
+        for (k, h) in [401.0, 402.5].iter().enumerate() {
+            run(
+                &mut s,
+                StudioCommand::ChangePoint("point-1".into(), PointChange::Height(*h)),
+                3.0 + 0.1 * k as f64,
+            );
+        }
+        run(
+            &mut s,
+            StudioCommand::ChangePoint("point-1".into(), PointChange::Radius(60.0)),
+            3.3,
+        );
+        run(&mut s, StudioCommand::Seal, 3.4);
+        run(
+            &mut s,
+            StudioCommand::ChangePoint("point-1".into(), PointChange::Raise(-1.5)),
+            5.0,
+        );
+        let doc = s.world().unwrap();
+        let (_, h) = doc.content().height_point("point-1").unwrap();
+        assert_eq!(
+            (h.height_m, h.raise_m, h.radius_m),
+            (None, Some(-1.5), Some(60.0))
+        );
+        // Moved to the crossing path: the point follows the road it is on.
+        run(
+            &mut s,
+            StudioCommand::MovePoint("point-1".into(), [52.0, 30.0]),
+            10.0,
+        );
+        let doc = s.world().unwrap();
+        let (_, h) = doc.content().height_point("point-1").unwrap();
+        assert_eq!(h.edge, Some(EdgeId(200)));
+        let at = s.point_xz(h).unwrap();
+        assert!((at[0] - 50.0).abs() < 0.01 && (at[1] - 30.0).abs() < 0.01);
+        assert!(
+            edit(
+                &mut s,
+                StudioCommand::MovePoint("point-1".into(), [300.0, 300.0]),
+                CAM,
+                11.0
+            )
+            .is_err(),
+            "no road there"
+        );
+        run(&mut s, StudioCommand::RemovePoint("point-1".into()), 12.0);
+        assert!(s.world().unwrap().content().patch.ops.is_empty());
+        assert_eq!(s.selected_point(), None);
+        run(&mut s, StudioCommand::Undo, 13.0);
+        run(&mut s, StudioCommand::SelectOp(0), 14.0);
+        assert_eq!(s.selected_point().as_deref(), Some("point-1"));
+        run(&mut s, StudioCommand::DeleteOp(0), 15.0);
+        assert!(s.world().unwrap().content().patch.ops.is_empty());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn save_and_open_give_the_identical_patch_and_a_foreign_one_is_refused() {
+        let d = tmp_dir();
+        let mut s = patch_studio(&d);
+        run(&mut s, StudioCommand::SelectEdge(200), 0.0);
+        run(
+            &mut s,
+            StudioCommand::SetRoad(RoadChange::Width(Some(2.5))),
+            0.0,
+        );
+        run(
+            &mut s,
+            StudioCommand::SetRoad(RoadChange::Oneway(Some(PatchOneway::Backward))),
+            0.5,
+        );
+        run(&mut s, StudioCommand::AddPoint(None), 1.0);
+        run(
+            &mut s,
+            StudioCommand::SetInfo(PatchInfo {
+                title: Some("Testland fixes".into()),
+                author: Some("Ada Rider".into()),
+                description: None,
+            }),
+            2.0,
+        );
+        let before = s.world().unwrap().content().patch.clone();
+        let saved = run(&mut s, StudioCommand::SavePatch, 3.0);
+        let path = d.join("testland.ocwpatch");
+        assert!(
+            saved.starts_with("saved ") && saved.ends_with("(2 operations)"),
+            "{saved}"
+        );
+        assert!(path.is_file(), "next to the package by default");
+        assert!(!s.world().unwrap().is_dirty());
+        assert_eq!(s.patch_file.as_deref(), Some(path.as_path()));
+        // Opening it again (a new session): the identical patch, clean.
+        let mut t = Studio::new(None, None);
+        let mut pkg = crate::patch::tests::package();
+        pkg.file = d.join("testland.ocwpkg");
+        let details = WorldDetails {
+            id: "local/testland".into(),
+            region: "Testland".into(),
+            ..Default::default()
+        };
+        let file = pkg.file.display().to_string();
+        let msg = t.open_package(&file, &file, &details, pkg, 0.0).unwrap();
+        assert!(msg.contains("loaded (2 operations)"), "{msg}");
+        assert_eq!(t.world().unwrap().content().patch, before);
+        assert!(!t.world().unwrap().is_dirty());
+        // File → Open patch… onto a changed document: replaced, undoable.
+        run(&mut t, StudioCommand::DeleteOp(0), 1.0);
+        let other = d.join("other.ocwpatch");
+        run(
+            &mut t,
+            StudioCommand::SavePatchAs(other.display().to_string()),
+            2.0,
+        );
+        let opened = run(
+            &mut t,
+            StudioCommand::OpenPatch(path.display().to_string()),
+            3.0,
+        );
+        assert!(opened.contains("opened (2 operations)"), "{opened}");
+        assert_eq!(t.world().unwrap().content().patch, before);
+        assert!(!t.world().unwrap().is_dirty());
+        assert_eq!(t.world().unwrap().undo_label(), Some("Open patch"));
+        // A patch for another package is refused, the document unchanged.
+        let mut foreign = WorldPatch::new("europe/elsewhere");
+        foreign.ops = before.ops.clone();
+        let fp = d.join("foreign.ocwpatch");
+        crate::patch::write_patch(&fp, &foreign).unwrap();
+        let e = edit(
+            &mut t,
+            StudioCommand::OpenPatch(fp.display().to_string()),
+            CAM,
+            4.0,
+        )
+        .unwrap_err();
+        assert!(
+            e.contains("`europe/elsewhere`") && e.contains("not loaded"),
+            "{e}"
+        );
+        assert_eq!(t.world().unwrap().content().patch, before);
+        // A patch with errors is not saved.
+        let id = t.world_doc.unwrap();
+        t.session
+            .execute::<WorldDoc>(
+                id,
+                WorldOp::push(Operation::RemoveRoad(Default::default())),
+                5.0,
+            )
+            .unwrap();
+        let e = edit(&mut t, StudioCommand::SavePatch, CAM, 6.0).unwrap_err();
+        assert!(e.starts_with("not saved: the patch has 1 error"), "{e}");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn the_console_words_become_patch_commands() {
+        let d = tmp_dir();
+        let mut s = patch_studio(&d);
+        let w = |t: &str| t.split(' ').map(String::from).collect::<Vec<_>>();
+        let c = |s: &Studio, g: &str, t: &str| console_patch(g, &w(t), s);
+        assert_eq!(
+            c(&s, "select", "20 3").unwrap(),
+            Console::Run(StudioCommand::SelectAt([20.0, 3.0], 50.0))
+        );
+        let Console::Run(StudioCommand::SelectAt(p, _)) = c(&s, "select", "latlon 47 9").unwrap()
+        else {
+            panic!()
+        };
+        assert!(p[0].abs() < 1e-9 && p[1].abs() < 1e-9, "the origin");
+        assert_eq!(
+            c(&s, "select", "op 2").unwrap(),
+            Console::Run(StudioCommand::SelectOp(1))
+        );
+        assert_eq!(
+            c(&s, "road", "name Alter Weg").unwrap(),
+            Console::Run(StudioCommand::SetRoad(RoadChange::Name(Some(
+                "Alter Weg".into()
+            ))))
+        );
+        assert_eq!(
+            c(&s, "road", "width -").unwrap(),
+            Console::Run(StudioCommand::SetRoad(RoadChange::Width(None)))
+        );
+        assert_eq!(
+            c(&s, "road", "class track").unwrap(),
+            Console::Run(StudioCommand::SetRoad(RoadChange::Class(Some(
+                PatchClass::Track
+            ))))
+        );
+        assert!(c(&s, "road", "class lava").is_err());
+        assert!(c(&s, "road", "oneway up").is_err());
+        assert!(c(&s, "point", "raise 3").is_err(), "no point selected");
+        run(&mut s, StudioCommand::SelectEdge(100), 0.0);
+        run(&mut s, StudioCommand::AddPoint(None), 1.0);
+        assert_eq!(
+            c(&s, "point", "raise -2.5").unwrap(),
+            Console::Run(StudioCommand::ChangePoint(
+                "point-1".into(),
+                PointChange::Raise(-2.5)
+            ))
+        );
+        let Console::Say(list) = c(&s, "patch", "list").unwrap() else {
+            panic!()
+        };
+        assert!(list.contains("1 operations (changed)") && list.contains("height_point `point-1`"));
+        let Console::Run(StudioCommand::Build(b)) = c(&s, "patch", "build").unwrap() else {
+            panic!()
+        };
+        assert_eq!(b.out, d.join("patched").join("testland.ocwpkg"));
+        assert!(
+            !b.sources.missing().is_empty(),
+            "no sources in the test folder"
+        );
+        let e = start_build(&mut s, b).unwrap_err();
+        assert!(e.contains("source data") && e.contains(".osm.pbf"), "{e}");
+        std::fs::remove_dir_all(&d).unwrap();
     }
 }

@@ -2,9 +2,12 @@
 //! power ramps, steering and lean ramps, junction keys, trigger rest
 //! values, the keyboard power ([`KeyThrottle`]). The Bevy systems that
 //! read the keys live in the apps (`apps/desktop/src/input.rs`,
-//! `apps/web`); this module is shared.
+//! `apps/web`); this module is shared. [`touch`]: touch steering by the
+//! screen's halves (spec §3.2.3; its Bevy glue is `ocw_ui::touch`).
 
 use crate::client::ClientCore;
+
+pub mod touch;
 
 /// Free ride: what the junction keys do this frame (spec §2.2.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

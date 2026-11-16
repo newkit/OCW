@@ -189,6 +189,34 @@ struct Args {
     /// only from $OCW_LIVEKIT_API_SECRET.
     #[arg(long, value_name = "KEY")]
     livekit_api_key: Option<String>,
+    /// Voice chat (spec §7.1): `auto` starts the bundled LiveKit server
+    /// (`livekit-server`) beside a server that others join (--listen),
+    /// unless --livekit-url / $OCW_LIVEKIT_URL name one; `off`: no voice.
+    #[arg(long, default_value = "auto", value_parser = ["auto", "off"])]
+    voice: String,
+    /// The voice server binary to start (default: livekit-server next to
+    /// this executable, then on PATH).
+    #[arg(long, value_name = "PATH")]
+    voice_server: Option<PathBuf>,
+    /// The bundled voice server's ports: signalling (TCP), ICE over TCP,
+    /// media (one UDP port).
+    #[arg(long, value_name = "SIGNAL,TCP,UDP", default_value = "7880,7881,7882",
+          value_parser = ocw_server::voice::launcher::VoicePorts::parse)]
+    voice_ports: ocw_server::voice::launcher::VoicePorts,
+    /// The host riders from the internet reach this server on (the join
+    /// link's host, a name or an address): the bundled voice server
+    /// announces its address for media, and their grants name it. Without
+    /// it the voice server asks a STUN server for the public address.
+    #[arg(long, value_name = "HOST")]
+    voice_public_host: Option<String>,
+    /// Open the router's ports automatically while running (UPnP-IGD,
+    /// spec §7.1.7 Q4): the game's UDP port (and WebTransport's) and the
+    /// bundled voice server's TCP / UDP ports, removed again at the end.
+    /// The router's public address then names the join link and the voice
+    /// server's media address (unless --voice-public-host is given). Off
+    /// by default for the headless server.
+    #[arg(long, requires = "listen")]
+    upnp: bool,
     /// Run the accounts backend (sign-in with Google and Strava, spec
     /// §9.1) in this process from this configuration (a copy of
     /// services/accounts/accounts.example.toml, git-ignored: it holds the client
@@ -600,22 +628,13 @@ fn main() {
     }
     // Voice chat (spec §7): LiveKit from the options or the environment;
     // the API secret only from the environment (not visible in `ps`).
-    let voice = ocw_server::voice::VoiceConfig::from_parts(
-        args.livekit_url.clone(),
-        args.livekit_api_key.clone(),
-        None,
-        |k| std::env::var(k).ok(),
-    )
-    .unwrap_or_else(|e| {
-        eprintln!("{e}");
-        std::process::exit(2);
-    });
-    match &voice {
-        Some(v) => tracing::info!(url = %v.url, room = %v.session_room(), "voice chat on"),
-        None => tracing::info!(
-            "voice chat off (set OCW_LIVEKIT_URL, OCW_LIVEKIT_API_KEY, OCW_LIVEKIT_API_SECRET)"
-        ),
-    }
+    // Without one, a server that others join starts the bundled voice
+    // server (spec §7.1.1) before it opens its port, and with --upnp the
+    // router's ports are opened (§7.1.7 Q4) – both on the hosting
+    // services' own thread (`ocw_server::hosting`, shared with the app's
+    // Host a ride).
+    let (voice, services) = voice_setup(&args);
+    let public_ip = services.as_ref().and_then(|s| s.status().public_ip);
     // Sign-in (spec §9.1): the backend in this process, or a remote one.
     let auth = start_auth(&args);
     if args.auth_required && auth.is_none() {
@@ -667,7 +686,9 @@ fn main() {
             "echo rider at the start (voice echo test; the echo_participant example joins as it)"
         );
     }
-    let mut net = args.listen.map(|addr| listen(&args, addr, &link_world));
+    let mut net = args
+        .listen
+        .map(|addr| listen(&args, addr, &link_world, public_ip));
     let stop = net.as_ref().map(NetServer::shutdown_on_signal);
     // When the WebTransport certificate was last checked for renewal.
     let mut cert_checked = Instant::now();
@@ -785,6 +806,98 @@ fn main() {
     if let Some(net) = net {
         net.shutdown();
     }
+    // The voice server and the router's ports go with the game server.
+    drop(services);
+}
+
+/// The voice of this server (spec §7, §7.1.1): an external LiveKit from
+/// the options or the environment (the API secret only from the
+/// environment, not visible in `ps`), else the bundled one started now for
+/// a server that others join, else none – the log says why. With --upnp
+/// the router's ports are opened too (§7.1.7 Q4). Both run on the hosting
+/// services' thread (`ocw_server::hosting`), stopped when it is dropped.
+fn voice_setup(
+    args: &Args,
+) -> (
+    Option<ocw_server::voice::VoiceConfig>,
+    Option<ocw_server::hosting::HostServices>,
+) {
+    use ocw_server::hosting::{HostServices, HostingOptions, VoicePlan};
+    use ocw_server::voice::launcher::{self, LaunchOptions};
+    let external = ocw_server::voice::VoiceConfig::from_parts(
+        args.livekit_url.clone(),
+        args.livekit_api_key.clone(),
+        None,
+        |k| std::env::var(k).ok(),
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(2);
+    });
+    let Some(listen) = args.listen else {
+        if args.voice == "off" {
+            tracing::info!("voice chat off (--voice off)");
+            return (None, None);
+        }
+        if let Some(v) = &external {
+            tracing::info!(url = %v.url, room = %v.session_room(), "voice chat on (external LiveKit)");
+        } else {
+            tracing::info!("voice chat off (no --listen: nobody to talk to)");
+        }
+        return (external, None);
+    };
+    let mut opts = HostingOptions {
+        web_udp: args.webtransport.map(|a| a.port()),
+        upnp: args.upnp.then(ocw_server::portmap::upnp::discover),
+        ..HostingOptions::new(listen)
+    };
+    let mut voice = None;
+    if args.voice == "off" {
+        tracing::info!("voice chat off (--voice off)");
+        opts.voice_off = "--voice off".into();
+    } else if let Some(v) = external {
+        tracing::info!(url = %v.url, room = %v.session_room(), "voice chat on (external LiveKit)");
+        opts.voice_off = "an external LiveKit".into();
+        voice = Some(v);
+    } else {
+        let exe = std::env::current_exe().ok();
+        match launcher::find_binary(
+            args.voice_server.as_deref(),
+            exe.as_deref().and_then(std::path::Path::parent),
+            std::env::var_os("PATH").as_deref(),
+        ) {
+            Ok(binary) => {
+                opts.voice = Some(VoicePlan {
+                    launch: LaunchOptions {
+                        ports: args.voice_ports,
+                        ..LaunchOptions::new(binary, launcher::default_state_dir())
+                    },
+                    public_host: args.voice_public_host.clone(),
+                });
+            }
+            Err(e) => {
+                tracing::warn!("voice chat off: {e}");
+                opts.voice_off = e;
+            }
+        }
+    }
+    if opts.voice.is_none() && opts.upnp.is_none() {
+        return (voice, None);
+    }
+    let services = HostServices::spawn(opts).unwrap_or_else(|e| {
+        eprintln!("cannot start the hosting services: {e}");
+        std::process::exit(1);
+    });
+    // The voice server before the port opens (the first riders get voice):
+    // the router search, then at most the voice server's ready time.
+    let within =
+        ocw_server::portmap::SEARCH_TIMEOUT + launcher::READY_TIMEOUT + Duration::from_secs(5);
+    if !services.wait_ready(within) {
+        tracing::warn!(
+            "the voice server and the router's ports are not ready yet; the game server starts anyway"
+        );
+    }
+    (voice.or_else(|| services.voice_config()), Some(services))
 }
 
 /// Loads an `ocw-route` file: the route and the SHA-256 of the file (so
@@ -804,6 +917,7 @@ fn listen(
     args: &Args,
     addr: std::net::SocketAddr,
     (world, route): &(Option<String>, Option<String>),
+    public_ip: Option<std::net::IpAddr>,
 ) -> NetServer {
     let identity = match &args.tls_dir {
         Some(dir) => ServerIdentity::load_or_create(dir),
@@ -835,7 +949,13 @@ fn listen(
     // once the "Clients connect with" lines are there.
     println!(
         "{}",
-        ocw_server::net::join_lines(local, net.fingerprint(), world.as_deref(), route.as_deref())
+        ocw_server::net::join_lines(
+            local,
+            net.fingerprint(),
+            world.as_deref(),
+            route.as_deref(),
+            public_ip
+        )
     );
     println!(
         "Clients connect with:\n  ocw-desktop --server {host}{port} --server-cert {}",
@@ -934,4 +1054,20 @@ fn utc(unix_s: i64) -> String {
         secs / 3600,
         secs % 3600 / 60
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// UPnP is off for the headless server unless asked (spec §7.1.7 Q4),
+    /// and needs --listen (nothing to open otherwise).
+    #[test]
+    fn upnp_is_off_by_default_for_the_headless_server() {
+        let a = Args::try_parse_from(["ocw-server", "--listen"]).unwrap();
+        assert!(!a.upnp);
+        let a = Args::try_parse_from(["ocw-server", "--listen", "--upnp"]).unwrap();
+        assert!(a.upnp);
+        assert!(Args::try_parse_from(["ocw-server", "--upnp"]).is_err());
+    }
 }

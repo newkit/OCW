@@ -40,6 +40,8 @@ pub const HORIZON_M: f64 = 2000.0;
 pub const PREVIEW_MAX_STEPS: usize = 64;
 /// Steps that ended more than this far behind the rider are dropped.
 pub const KEEP_BEHIND_M: f64 = 600.0;
+/// Path points lie at most this far apart on junction surfaces (m).
+const JUNCTION_STEP_M: f64 = 0.5;
 /// Radius of the rounded corner at junctions (m).
 pub const FILLET_RADIUS_M: f64 = 8.0;
 /// The climb of a rounded corner is spread over up to this much road
@@ -590,6 +592,14 @@ impl RidePath {
             if l < 0.05 || t < 0.05 {
                 continue;
             }
+            // Inside a junction surface the corner takes its heights
+            // (`junction_heights`).
+            if self
+                .start_vertex(step)
+                .is_some_and(|v| self.net.junctions().patch(self.net.graph(), v).is_some())
+            {
+                continue;
+            }
             let prev_body = prev.len_m - prev.fillet_len;
             let step_body = step.len_m - l;
             let x = CORNER_BLEND_M
@@ -615,6 +625,86 @@ impl RidePath {
         }
     }
 
+    /// The vertex a step starts at (its edge's end), if it starts at one.
+    fn start_vertex(&self, step: &Step) -> Option<usize> {
+        let Segment::Edge { edge, from_m, .. } = step.seg else {
+            return None;
+        };
+        let e = self.net.edge(edge);
+        if from_m < 1e-6 {
+            Some(e.from.0 as usize)
+        } else if (from_m - self.net.geometry(edge).length()).abs() < 1e-6 {
+            Some(e.to.0 as usize)
+        } else {
+            None
+        }
+    }
+
+    /// The drawn junction surface at `p` (x, z) for path distance `d`
+    /// (spec §4.8.8): in a rounded corner the patch of its vertex, on an
+    /// edge the patch or a side road's blend; `None` where the road's own
+    /// profile applies.
+    fn junction_height_at(&self, d: f64, p: [f64; 2]) -> Option<f64> {
+        let st = self.step_at(d);
+        let Segment::Edge { edge, from_m, .. } = st.seg else {
+            return None;
+        };
+        let (g, js) = (self.net.graph(), self.net.junctions());
+        if d - st.start_m < st.fillet_len
+            && let Some(v) = self.start_vertex(st)
+            && let Some(h) = js.patch_height(g, v, p)
+        {
+            return Some(h);
+        }
+        let along = (d - st.start_m - st.fillet_len).max(0.0) + st.trim_start;
+        let s = if st.forward() {
+            from_m + along
+        } else {
+            from_m - along
+        };
+        js.drawn_height(g, edge, s, p)
+    }
+
+    /// The path's points with the heights of the junction surfaces, ~1 m
+    /// apart where those apply (their surfaces are not straight between
+    /// the road's points): the ridden height is the drawn one.
+    fn junction_heights(&self, pts: Vec<[f64; 3]>) -> Vec<[f64; 3]> {
+        if pts.len() < 2 {
+            return pts;
+        }
+        let cum = cumulative(&pts);
+        let base = self.steps[0].start_m;
+        let at = |d: f64, q: [f64; 3]| self.junction_height_at(base + d, [q[0], q[2]]);
+        let mut out: Vec<[f64; 3]> = Vec::with_capacity(pts.len());
+        for i in 0..pts.len() {
+            let q = pts[i];
+            if i > 0 {
+                let (a, len) = (pts[i - 1], cum[i] - cum[i - 1]);
+                let mid = std::array::from_fn(|k| 0.5 * (a[k] + q[k]));
+                let near = at(cum[i - 1], a).is_some()
+                    || at(cum[i], q).is_some()
+                    || at(cum[i - 1] + 0.5 * len, mid).is_some();
+                if near && len > JUNCTION_STEP_M {
+                    let n = (len / JUNCTION_STEP_M).ceil() as usize;
+                    for k in 1..n {
+                        let f = k as f64 / n as f64;
+                        let mut r: [f64; 3] = std::array::from_fn(|c| a[c] + (q[c] - a[c]) * f);
+                        if let Some(h) = at(cum[i - 1] + len * f, r) {
+                            r[1] = h;
+                        }
+                        out.push(r);
+                    }
+                }
+            }
+            let mut r = q;
+            if let Some(h) = at(cum[i], q) {
+                r[1] = h;
+            }
+            out.push(r);
+        }
+        out
+    }
+
     fn rebuild_route(&mut self) {
         let mut pts: Vec<[f64; 3]> = Vec::new();
         for s in &self.steps {
@@ -622,6 +712,7 @@ impl RidePath {
             pts.extend(s.points.iter().skip(skip));
         }
         self.blend_corner_heights(&mut pts);
+        let pts = self.junction_heights(pts);
         let width = self.net.edge(self.steps[0].edge).width_m;
         self.route = Route::from_points("free-ride", "Free ride", pts, false, width)
             .unwrap_or_else(|_| placeholder_route_at(self.steps[0].points[0]));
@@ -1209,6 +1300,12 @@ impl Track for RidePath {
 
     fn road_width_at(&self, distance: f64) -> f64 {
         self.net.edge(self.step_at(distance).edge).width_m
+    }
+
+    fn surface_height(&self, distance: f64, lateral: f64) -> f64 {
+        let q = self.sample(distance).offset_position(lateral);
+        self.junction_height_at(distance, [q[0], q[2]])
+            .unwrap_or(q[1])
     }
 
     fn sheltered(&self, distance: f64) -> bool {

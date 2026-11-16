@@ -82,6 +82,10 @@ pub struct DeviceInfo {
     /// Memory in GB as the browser rounds it (`navigator.deviceMemory`,
     /// at most 8 in Chromium; 0: not known).
     pub memory_gb: f32,
+    /// `navigator.maxTouchPoints` (touch steering's hints, spec §3.2.3).
+    pub max_touch_points: u32,
+    /// An iPad that reports a Mac (`MacIntel` with `maxTouchPoints > 1`).
+    pub ipad_as_mac: bool,
 }
 
 impl DeviceInfo {
@@ -95,6 +99,19 @@ impl DeviceInfo {
             coarse_pointer: v["coarse_pointer"].as_bool().unwrap_or(false),
             cores: v["cores"].as_u64().map_or(0, |c| c.min(1024) as u32),
             memory_gb: v["memory_gb"].as_f64().map_or(0.0, |m| m as f32),
+            max_touch_points: v["max_touch_points"]
+                .as_u64()
+                .map_or(0, |n| n.min(1024) as u32),
+            ipad_as_mac: v["ipad_as_mac"].as_bool().unwrap_or(false),
+        }
+    }
+
+    /// What touch steering's hints decide by (spec §3.2.3 *Detection*).
+    pub fn touch_facts(&self) -> crate::input::touch::TouchFacts {
+        crate::input::touch::TouchFacts {
+            max_touch_points: self.max_touch_points,
+            coarse_pointer: self.coarse_pointer,
+            ipad_as_mac: self.ipad_as_mac,
         }
     }
 
@@ -188,6 +205,22 @@ mod tests {
             resolve(auto, GpuApi::WebGpu, &DeviceInfo::default()).0,
             High
         );
+    }
+
+    /// Touch steering's hints (spec §3.2.3): the page's touch facts.
+    #[test]
+    fn the_touch_facts_come_from_the_page() {
+        let phone = DeviceInfo::from_json(
+            r#"{"mobile": true, "coarse_pointer": true, "max_touch_points": 5}"#,
+        );
+        assert!(phone.touch_facts().touch_first());
+        let ipad = DeviceInfo::from_json(
+            r#"{"mobile": false, "coarse_pointer": false, "max_touch_points": 5, "ipad_as_mac": true}"#,
+        );
+        assert!(ipad.touch_facts().touch_first());
+        let laptop = DeviceInfo::from_json(r#"{"coarse_pointer": false, "max_touch_points": 10}"#);
+        assert!(!laptop.touch_facts().touch_first());
+        assert!(!DeviceInfo::default().touch_facts().touch_first());
     }
 
     #[test]

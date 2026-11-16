@@ -38,3 +38,4 @@ known_hosts
 
 # Python bytecode (tools/, scripts/)
 __pycache__/
+.lfs-ids

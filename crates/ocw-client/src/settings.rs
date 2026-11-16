@@ -173,6 +173,31 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::Command("god.flight {}"),
     },
+    // Touch steering (spec §3.2.3): read by `ocw_ui::touch` every frame.
+    SettingDef {
+        key: "controls.touch_steer",
+        kind: Kind::Choice(&crate::input::touch::TouchSetting::CHOICES),
+        default: "auto",
+        description: "Touch steering by the screen's left / right side: auto (hints on phones and tablets and after the first touch), on (always the hints) or off (no steering by touch) (spec §3.2.3)",
+        scope: Scope::Live,
+        apply: Apply::App,
+    },
+    SettingDef {
+        key: "controls.touch_zones",
+        kind: Kind::Choice(&["full", "lower"]),
+        default: "full",
+        description: "Touch steering zones: the full height below the top band, or only the lower half (spec §3.2.3)",
+        scope: Scope::Live,
+        apply: Apply::App,
+    },
+    SettingDef {
+        key: "controls.touch_tip_seen",
+        kind: Kind::Bool,
+        default: "off",
+        description: "The touch steering tip was shown on this device (set by the first touch steer)",
+        scope: Scope::Live,
+        apply: Apply::App,
+    },
     SettingDef {
         key: "trainer.difficulty",
         kind: Kind::Int {
@@ -330,6 +355,27 @@ pub const SETTINGS: &[SettingDef] = &[
         description: "What the monitor shows in VR: one eye, both eyes side by side, or the chase camera (for spectators; costs a third view)",
         scope: Scope::Live,
         apply: Apply::Command("vr mirror {}"),
+    },
+    // The ride photographer (spec §2.11).
+    SettingDef {
+        key: "photographer.enabled",
+        kind: Kind::Bool,
+        default: "on",
+        description: "The ride photographer: a person or a drone takes up to 5 photos of nice views per ride",
+        scope: Scope::Live,
+        apply: Apply::Command("photographer {}"),
+    },
+    // Ride → Host a ride (spec §7.1.7 Q4): the router's ports opened by
+    // UPnP while hosting; read at *Start hosting*, switched on the wizard's
+    // Options page (`host.plan upnp`). The headless server has `--upnp`
+    // (off by default).
+    SettingDef {
+        key: "host.upnp",
+        kind: Kind::Bool,
+        default: "on",
+        description: "Host a ride: open the router's ports automatically (UPnP) while hosting, removed after",
+        scope: Scope::Live,
+        apply: Apply::App,
     },
     SettingDef {
         key: "ride.bots",
@@ -858,6 +904,18 @@ pub const SETTINGS: &[SettingDef] = &[
         PAD_CHOICES,
         "Gamepad button: Restart"
     ),
+    binding!(
+        "keys.strava",
+        "S",
+        KEY_CHOICES,
+        "Key: Strava recording start / stop"
+    ),
+    binding!(
+        "pad.strava",
+        "L3",
+        PAD_CHOICES,
+        "Gamepad button: Strava recording start / stop"
+    ),
     binding!("keys.god", "G", KEY_CHOICES, "Key: Unicorn mode on / off"),
     binding!(
         "pad.god",
@@ -906,6 +964,11 @@ const NOT_IN_BROWSER: &[&str] = &[
     "pad.fullscreen",
     "keys.restart",
     "pad.restart",
+    // The photos are files of the desktop app (spec §2.11; the browser's
+    // downloads are open).
+    "photographer.enabled",
+    // Hosting needs the desktop app (browsers cannot open a port).
+    "host.upnp",
 ];
 
 /// Whether `key` takes effect on `platform` (the menu hides the others,
@@ -1202,6 +1265,19 @@ fn unknown(key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Host a ride opens the router's ports by default (spec §7.1.7 Q4);
+    /// the browser cannot host, so it has no such setting.
+    #[test]
+    fn host_upnp_is_on_by_default_and_desktop_only() {
+        let s = Settings::default();
+        assert_eq!(s.get("host.upnp").unwrap(), Value::Bool(true));
+        assert!(applies("host.upnp", crate::menu::model::Platform::Desktop));
+        assert!(!applies("host.upnp", crate::menu::model::Platform::Browser));
+        let (s, w) = Settings::parse("[host]\nupnp = false\n").unwrap();
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!(s.get("host.upnp").unwrap(), Value::Bool(false));
+    }
 
     #[test]
     fn registry_is_valid() {

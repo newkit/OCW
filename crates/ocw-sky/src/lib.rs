@@ -13,6 +13,7 @@
 //! passed in), so it builds for `wasm32-unknown-unknown` (spec §3.5).
 
 pub mod astro;
+pub mod calendar;
 pub mod clock;
 pub mod light;
 pub mod machine;

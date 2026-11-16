@@ -32,6 +32,14 @@ pub trait Track {
     fn sheltered(&self, _distance: f64) -> bool {
         false
     }
+    /// Height of the drawn road surface `lateral` metres right of the
+    /// centreline at `distance`: the centreline's height on a road drawn
+    /// flat across, the junction surface's where it is not (spec §4.8.8;
+    /// the wheels stand on it).
+    fn surface_height(&self, distance: f64, lateral: f64) -> f64 {
+        let _ = lateral;
+        self.sample(distance).position[1]
+    }
     /// Display name (route name, or the street the rider is on).
     fn name_at(&self, _distance: f64) -> String {
         String::new()

@@ -116,16 +116,29 @@ pub fn join_links(
     world: Option<&str>,
     route: Option<&str>,
 ) -> Vec<String> {
-    let hosts: Vec<String> = if local.ip().is_unspecified() {
+    join_links_with(local, fingerprint, world, route, None)
+}
+
+/// [`join_links`] with the hosting's public address (the router's, spec
+/// §7.1.7 Q4 / Q5) first: the link for riders from the internet.
+pub fn join_links_with(
+    local: SocketAddr,
+    fingerprint: &str,
+    world: Option<&str>,
+    route: Option<&str>,
+    public: Option<std::net::IpAddr>,
+) -> Vec<String> {
+    let mut hosts: Vec<String> = public.map(|ip| ip.to_string()).into_iter().collect();
+    if local.ip().is_unspecified() {
         let lan = lan_addresses();
-        if lan.is_empty() {
-            vec!["HOST".into()]
-        } else {
-            lan.iter().map(ToString::to_string).collect()
+        if lan.is_empty() && hosts.is_empty() {
+            hosts.push("HOST".into());
         }
+        hosts.extend(lan.iter().map(ToString::to_string));
     } else {
-        vec![local.ip().to_string()]
-    };
+        hosts.push(local.ip().to_string());
+    }
+    hosts.dedup();
     hosts
         .into_iter()
         .map(|h| {
@@ -138,14 +151,16 @@ pub fn join_links(
         .collect()
 }
 
-/// The printed block: "Join link (…):" and the links, indented.
+/// The printed block: "Join link (…):" and the links, indented; the
+/// public address's link first when there is one.
 pub fn join_lines(
     local: SocketAddr,
     fingerprint: &str,
     world: Option<&str>,
     route: Option<&str>,
+    public: Option<std::net::IpAddr>,
 ) -> String {
-    let links = join_links(local, fingerprint, world, route);
+    let links = join_links_with(local, fingerprint, world, route, public);
     let mut out = format!(
         "Join link{} (in the app: Ride -> Join; or ocw-desktop --join LINK):",
         if links.len() > 1 { "s" } else { "" }
@@ -170,6 +185,7 @@ mod tests {
             &fp,
             Some("europe/liechtenstein@3"),
             Some("Vaduz Loop"),
+            None,
         );
         assert_eq!(
             text,
@@ -190,6 +206,13 @@ mod tests {
         for l in join_links(any, &fp, None, None) {
             assert!(l.starts_with("ocw://") && !l.contains("0.0.0.0"), "{l}");
         }
+        // The router's public address first (spec §7.1.7 Q4, Q5).
+        let public = Some("81.2.69.160".parse().unwrap());
+        let links = join_links_with(any, &fp, None, Some("hills"), public);
+        assert_eq!(links[0], format!("ocw://81.2.69.160?cert={fp}&route=hills"));
+        let text = join_lines(local, &fp, None, None, public);
+        assert!(text.starts_with("Join links"), "{text}");
+        assert_eq!(text.lines().count(), 3);
     }
 
     #[test]

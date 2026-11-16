@@ -31,6 +31,7 @@
 pub mod cues;
 #[cfg(test)]
 mod demo;
+pub mod drone;
 pub mod dsp;
 pub mod mix;
 pub mod mixer;

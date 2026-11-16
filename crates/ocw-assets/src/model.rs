@@ -39,6 +39,12 @@ pub struct Primitive {
     pub normals: Vec<[f32; 3]>,
     /// Counter-clockwise triangles (front faces).
     pub indices: Vec<u32>,
+    /// Vertex colours, linear RGBA (glTF `COLOR_0`, multiplied with the
+    /// material's base colour); empty: none.
+    pub colors: Vec<[f32; 4]>,
+    /// Texture coordinates (glTF `TEXCOORD_0`); empty: none. The plants
+    /// keep the height above the stem base in `u` (the wind sway).
+    pub uvs: Vec<[f32; 2]>,
 }
 
 impl Primitive {
@@ -57,6 +63,8 @@ pub struct Node {
     pub rotation: Quat,
     pub scale: Vec3,
     pub primitives: Vec<Primitive>,
+    /// glTF node `extras` (Blender's custom properties); `Null`: none.
+    pub extras: serde_json::Value,
 }
 
 impl Node {
@@ -68,6 +76,7 @@ impl Node {
             rotation: Quat::IDENTITY,
             scale: Vec3::ONE,
             primitives: Vec::new(),
+            extras: serde_json::Value::Null,
         }
     }
 
@@ -86,9 +95,17 @@ pub struct Model {
     pub copyright: String,
     /// glTF `asset.generator`.
     pub generator: String,
+    /// glTF `asset.extras` (spec §14 Phase 15, 15B: `{"ocw": {"schema",
+    /// "kind", "id", …}}`); `Null`: none.
+    pub extras: serde_json::Value,
 }
 
 impl Model {
+    /// The model's `extras.ocw` table (15B), if any.
+    pub fn ocw(&self) -> Option<&serde_json::Map<String, serde_json::Value>> {
+        self.extras.get("ocw")?.as_object()
+    }
+
     /// Index of the node called `name`.
     pub fn node(&self, name: &str) -> Option<usize> {
         self.nodes.iter().position(|n| n.name == name)

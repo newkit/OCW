@@ -1,0 +1,1226 @@
+# The model files of Open Cycling World (spec §14 Phase 15, 15B / 15C):
+# one [[asset]] per file below this folder, its path as `file` (the id is
+# the path without `.glb`). Every file needs `license`, `source` and
+# `author` (spec §13); the validator (`cargo run -p ocw-assets -- validate
+# artwork/3dmodels`) rejects anything else, physics values included
+# (cosmetic models only name a physics profile).
+#
+# Written by the exporters (`cargo run -p ocw-assets -- model export-all`,
+# `cargo run -p ocw-render --example export-flora`); keep it sorted.
+
+[[asset]]
+file = "bikes/bike-gravel.glb"
+kind = "bike"
+profile = "gravel"
+generator = "ocw_assets::bikes::build(gravel)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "bikes/bike-mtb-hardtail.glb"
+kind = "bike"
+profile = "mtb"
+generator = "ocw_assets::bikes::build(mtb)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "bikes/bike-road-aero.glb"
+kind = "bike"
+profile = "road-aero"
+generator = "ocw_assets::bikes::build(road-aero)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "bikes/bike-road-climbing.glb"
+kind = "bike"
+profile = "road-climbing"
+generator = "ocw_assets::bikes::build(road-climbing)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "bikes/bike-road-endurance.glb"
+kind = "bike"
+profile = "road"
+generator = "ocw_assets::bikes::build(road)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "bikes/bike-tt.glb"
+kind = "bike"
+profile = "tt"
+generator = "ocw_assets::bikes::build(tt)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/cactus-pear-paddle-a.glb"
+kind = "plant"
+species = "PricklyPear"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::PricklyPear, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/cactus-pear-paddle-b.glb"
+kind = "plant"
+species = "PricklyPear"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::PricklyPear, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/cactus-pear-paddle-c.glb"
+kind = "plant"
+species = "PricklyPear"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::PricklyPear, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/palm-date-canary-a.glb"
+kind = "plant"
+species = "DatePalm"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::DatePalm, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/palm-date-canary-b.glb"
+kind = "plant"
+species = "DatePalm"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::DatePalm, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/palm-date-canary-c.glb"
+kind = "plant"
+species = "DatePalm"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::DatePalm, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/palm-slender-tall-a.glb"
+kind = "plant"
+species = "SlenderPalm"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::SlenderPalm, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/palm-slender-tall-b.glb"
+kind = "plant"
+species = "SlenderPalm"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::SlenderPalm, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/palm-slender-tall-c.glb"
+kind = "plant"
+species = "SlenderPalm"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::SlenderPalm, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/plant-banana-fronds-a.glb"
+kind = "plant"
+species = "Banana"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::Banana, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/plant-banana-fronds-b.glb"
+kind = "plant"
+species = "Banana"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::Banana, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/plant-banana-fronds-c.glb"
+kind = "plant"
+species = "Banana"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::Banana, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/shrub-alder-mountain-a.glb"
+kind = "plant"
+species = "GreenAlder"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::GreenAlder, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/shrub-alder-mountain-b.glb"
+kind = "plant"
+species = "GreenAlder"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::GreenAlder, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/shrub-alder-mountain-c.glb"
+kind = "plant"
+species = "GreenAlder"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::GreenAlder, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/shrub-broom-teide-a.glb"
+kind = "plant"
+species = "Broom"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::Broom, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/shrub-broom-teide-b.glb"
+kind = "plant"
+species = "Broom"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::Broom, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/shrub-broom-teide-c.glb"
+kind = "plant"
+species = "Broom"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::Broom, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/shrub-cardon-candelabra-a.glb"
+kind = "plant"
+species = "Cardon"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::Cardon, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/shrub-cardon-candelabra-b.glb"
+kind = "plant"
+species = "Cardon"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::Cardon, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/shrub-cardon-candelabra-c.glb"
+kind = "plant"
+species = "Cardon"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::Cardon, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/shrub-faya-heath-a.glb"
+kind = "plant"
+species = "FayaHeath"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::FayaHeath, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/shrub-faya-heath-b.glb"
+kind = "plant"
+species = "FayaHeath"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::FayaHeath, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/shrub-faya-heath-c.glb"
+kind = "plant"
+species = "FayaHeath"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::FayaHeath, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/shrub-pine-mountain-a.glb"
+kind = "plant"
+species = "MountainPine"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::MountainPine, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/shrub-pine-mountain-b.glb"
+kind = "plant"
+species = "MountainPine"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::MountainPine, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/shrub-pine-mountain-c.glb"
+kind = "plant"
+species = "MountainPine"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::MountainPine, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/shrub-tabaiba-cushion-a.glb"
+kind = "plant"
+species = "Tabaiba"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::Tabaiba, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/shrub-tabaiba-cushion-b.glb"
+kind = "plant"
+species = "Tabaiba"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::Tabaiba, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/shrub-tabaiba-cushion-c.glb"
+kind = "plant"
+species = "Tabaiba"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::Tabaiba, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/succulent-agave-rosette-a.glb"
+kind = "plant"
+species = "Agave"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::Agave, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/succulent-agave-rosette-b.glb"
+kind = "plant"
+species = "Agave"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::Agave, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/succulent-agave-rosette-c.glb"
+kind = "plant"
+species = "Agave"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::Agave, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-alder-oval-a.glb"
+kind = "plant"
+species = "Alder"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::Alder, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-alder-oval-b.glb"
+kind = "plant"
+species = "Alder"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::Alder, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-alder-oval-c.glb"
+kind = "plant"
+species = "Alder"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::Alder, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-ash-oval-a.glb"
+kind = "plant"
+species = "Ash"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::Ash, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-ash-oval-b.glb"
+kind = "plant"
+species = "Ash"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::Ash, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-ash-oval-c.glb"
+kind = "plant"
+species = "Ash"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::Ash, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-beech-round-a.glb"
+kind = "plant"
+species = "Beech"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::Beech, pick = 0.1)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-beech-round-b.glb"
+kind = "plant"
+species = "Beech"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::Beech, pick = 0.3)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-beech-round-c.glb"
+kind = "plant"
+species = "Beech"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::Beech, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-beech-round-d.glb"
+kind = "plant"
+species = "Beech"
+variant = "d"
+generator = "ocw_render::flora::plant(Species::Beech, pick = 0.7)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-beech-round-e.glb"
+kind = "plant"
+species = "Beech"
+variant = "e"
+generator = "ocw_render::flora::plant(Species::Beech, pick = 0.9)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-birch-slender-a.glb"
+kind = "plant"
+species = "Birch"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::Birch, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-birch-slender-b.glb"
+kind = "plant"
+species = "Birch"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::Birch, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-birch-slender-c.glb"
+kind = "plant"
+species = "Birch"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::Birch, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-broadleaf-generic-a.glb"
+kind = "plant"
+species = "Unknown"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::Unknown, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-broadleaf-generic-b.glb"
+kind = "plant"
+species = "Unknown"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::Unknown, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-broadleaf-generic-c.glb"
+kind = "plant"
+species = "Unknown"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::Unknown, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-chestnut-broad-a.glb"
+kind = "plant"
+species = "Chestnut"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::Chestnut, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-chestnut-broad-b.glb"
+kind = "plant"
+species = "Chestnut"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::Chestnut, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-chestnut-broad-c.glb"
+kind = "plant"
+species = "Chestnut"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::Chestnut, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-douglas-conical-a.glb"
+kind = "plant"
+species = "DouglasFir"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::DouglasFir, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-douglas-conical-b.glb"
+kind = "plant"
+species = "DouglasFir"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::DouglasFir, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-douglas-conical-c.glb"
+kind = "plant"
+species = "DouglasFir"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::DouglasFir, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-dragon-umbrella-a.glb"
+kind = "plant"
+species = "DragonTree"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::DragonTree, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-dragon-umbrella-b.glb"
+kind = "plant"
+species = "DragonTree"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::DragonTree, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-dragon-umbrella-c.glb"
+kind = "plant"
+species = "DragonTree"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::DragonTree, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-eucalyptus-tall-a.glb"
+kind = "plant"
+species = "Eucalyptus"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::Eucalyptus, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-eucalyptus-tall-b.glb"
+kind = "plant"
+species = "Eucalyptus"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::Eucalyptus, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-eucalyptus-tall-c.glb"
+kind = "plant"
+species = "Eucalyptus"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::Eucalyptus, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-fir-conical-a.glb"
+kind = "plant"
+species = "SilverFir"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::SilverFir, pick = 0.1)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-fir-conical-b.glb"
+kind = "plant"
+species = "SilverFir"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::SilverFir, pick = 0.3)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-fir-conical-c.glb"
+kind = "plant"
+species = "SilverFir"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::SilverFir, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-fir-conical-d.glb"
+kind = "plant"
+species = "SilverFir"
+variant = "d"
+generator = "ocw_render::flora::plant(Species::SilverFir, pick = 0.7)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-fir-conical-e.glb"
+kind = "plant"
+species = "SilverFir"
+variant = "e"
+generator = "ocw_render::flora::plant(Species::SilverFir, pick = 0.9)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-fruit-round-a.glb"
+kind = "plant"
+species = "FruitTree"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::FruitTree, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-fruit-round-b.glb"
+kind = "plant"
+species = "FruitTree"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::FruitTree, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-fruit-round-c.glb"
+kind = "plant"
+species = "FruitTree"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::FruitTree, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-fruit-subtropical-a.glb"
+kind = "plant"
+species = "SubtropicalFruit"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::SubtropicalFruit, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-fruit-subtropical-b.glb"
+kind = "plant"
+species = "SubtropicalFruit"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::SubtropicalFruit, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-fruit-subtropical-c.glb"
+kind = "plant"
+species = "SubtropicalFruit"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::SubtropicalFruit, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-larch-conical-a.glb"
+kind = "plant"
+species = "Larch"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::Larch, pick = 0.125)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-larch-conical-b.glb"
+kind = "plant"
+species = "Larch"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::Larch, pick = 0.375)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-larch-conical-c.glb"
+kind = "plant"
+species = "Larch"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::Larch, pick = 0.625)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-larch-conical-d.glb"
+kind = "plant"
+species = "Larch"
+variant = "d"
+generator = "ocw_render::flora::plant(Species::Larch, pick = 0.875)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-laurel-round-a.glb"
+kind = "plant"
+species = "Laurel"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::Laurel, pick = 0.125)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-laurel-round-b.glb"
+kind = "plant"
+species = "Laurel"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::Laurel, pick = 0.375)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-laurel-round-c.glb"
+kind = "plant"
+species = "Laurel"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::Laurel, pick = 0.625)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-laurel-round-d.glb"
+kind = "plant"
+species = "Laurel"
+variant = "d"
+generator = "ocw_render::flora::plant(Species::Laurel, pick = 0.875)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-lime-broad-a.glb"
+kind = "plant"
+species = "Lime"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::Lime, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-lime-broad-b.glb"
+kind = "plant"
+species = "Lime"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::Lime, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-lime-broad-c.glb"
+kind = "plant"
+species = "Lime"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::Lime, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-maple-round-a.glb"
+kind = "plant"
+species = "SycamoreMaple"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::SycamoreMaple, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-maple-round-b.glb"
+kind = "plant"
+species = "SycamoreMaple"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::SycamoreMaple, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-maple-round-c.glb"
+kind = "plant"
+species = "SycamoreMaple"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::SycamoreMaple, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-oak-broad-a.glb"
+kind = "plant"
+species = "Oak"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::Oak, pick = 0.125)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-oak-broad-b.glb"
+kind = "plant"
+species = "Oak"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::Oak, pick = 0.375)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-oak-broad-c.glb"
+kind = "plant"
+species = "Oak"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::Oak, pick = 0.625)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-oak-broad-d.glb"
+kind = "plant"
+species = "Oak"
+variant = "d"
+generator = "ocw_render::flora::plant(Species::Oak, pick = 0.875)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-pine-canary-a.glb"
+kind = "plant"
+species = "CanaryPine"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::CanaryPine, pick = 0.1)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-pine-canary-b.glb"
+kind = "plant"
+species = "CanaryPine"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::CanaryPine, pick = 0.3)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-pine-canary-c.glb"
+kind = "plant"
+species = "CanaryPine"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::CanaryPine, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-pine-canary-d.glb"
+kind = "plant"
+species = "CanaryPine"
+variant = "d"
+generator = "ocw_render::flora::plant(Species::CanaryPine, pick = 0.7)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-pine-canary-e.glb"
+kind = "plant"
+species = "CanaryPine"
+variant = "e"
+generator = "ocw_render::flora::plant(Species::CanaryPine, pick = 0.9)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-pine-scots-a.glb"
+kind = "plant"
+species = "ScotsPine"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::ScotsPine, pick = 0.125)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-pine-scots-b.glb"
+kind = "plant"
+species = "ScotsPine"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::ScotsPine, pick = 0.375)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-pine-scots-c.glb"
+kind = "plant"
+species = "ScotsPine"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::ScotsPine, pick = 0.625)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-pine-scots-d.glb"
+kind = "plant"
+species = "ScotsPine"
+variant = "d"
+generator = "ocw_render::flora::plant(Species::ScotsPine, pick = 0.875)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-spruce-conical-a.glb"
+kind = "plant"
+species = "NorwaySpruce"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::NorwaySpruce, pick = 0.1)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-spruce-conical-b.glb"
+kind = "plant"
+species = "NorwaySpruce"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::NorwaySpruce, pick = 0.3)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-spruce-conical-c.glb"
+kind = "plant"
+species = "NorwaySpruce"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::NorwaySpruce, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-spruce-conical-d.glb"
+kind = "plant"
+species = "NorwaySpruce"
+variant = "d"
+generator = "ocw_render::flora::plant(Species::NorwaySpruce, pick = 0.7)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-spruce-conical-e.glb"
+kind = "plant"
+species = "NorwaySpruce"
+variant = "e"
+generator = "ocw_render::flora::plant(Species::NorwaySpruce, pick = 0.9)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-willow-round-a.glb"
+kind = "plant"
+species = "Willow"
+variant = "a"
+generator = "ocw_render::flora::plant(Species::Willow, pick = 0.16666667)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-willow-round-b.glb"
+kind = "plant"
+species = "Willow"
+variant = "b"
+generator = "ocw_render::flora::plant(Species::Willow, pick = 0.5)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "flora/tree-willow-round-c.glb"
+kind = "plant"
+species = "Willow"
+variant = "c"
+generator = "ocw_render::flora::plant(Species::Willow, pick = 0.8333333)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "props/phone-slab.glb"
+kind = "prop"
+license = "MIT OR Apache-2.0"
+source = "own work, modelled for OCW (spec §2.6 rider status signs); the file is the source (spec §14 Phase 15 Q6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "riders/rider-body-low.glb"
+kind = "rider"
+generator = "ocw_assets::rider::build(Detail::Low)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "riders/rider-body.glb"
+kind = "rider"
+generator = "ocw_assets::rider::build(Detail::High)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/headphones-over-ear.glb"
+kind = "wearable"
+anchor = "head"
+license = "MIT OR Apache-2.0"
+source = "own work, modelled for OCW (spec §2.6 rider status signs); the file is the source (spec §14 Phase 15 Q6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/headset-vr-visor.glb"
+kind = "wearable"
+anchor = "head"
+license = "MIT OR Apache-2.0"
+source = "own work, modelled for OCW (spec §2.6 rider status signs); the file is the source (spec §14 Phase 15 Q6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/helmet-aero-road.glb"
+kind = "wearable"
+anchor = "head"
+generator = "ocw_assets::helmet::build(Helmet::AeroRoad)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/helmet-road-lightweight.glb"
+kind = "wearable"
+anchor = "head"
+generator = "ocw_assets::helmet::build(Helmet::Light)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/helmet-road-vented.glb"
+kind = "wearable"
+anchor = "head"
+generator = "ocw_assets::helmet::build(Helmet::Road)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/helmet-tt-teardrop.glb"
+kind = "wearable"
+anchor = "head"
+generator = "ocw_assets::helmet::build(Helmet::TimeTrial)"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/mark-mouth-cross.glb"
+kind = "wearable"
+anchor = "head"
+license = "MIT OR Apache-2.0"
+source = "own work, modelled for OCW (spec §2.6 rider status signs); the file is the source (spec §14 Phase 15 Q6)"
+author = "Open Cycling World contributors"

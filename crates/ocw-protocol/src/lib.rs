@@ -231,6 +231,8 @@ pub fn quantize(s: &ocw_sim::RiderSnapshot) -> v1::RiderUpdate {
             strength_mrad: (b.strength * 1000.0).round().max(0.0) as u32,
             side: if b.side < 0.0 { -1 } else { 1 },
         }),
+        // The server adds the rider's status signs (spec §2.6).
+        status: None,
     }
 }
 
@@ -1446,8 +1448,9 @@ mod tests {
             heart_rate_bpm: None,
             brake: Some(true),
             virtual_power: None,
+            status: None,
         };
-        let bytes = encode(&client_message(Msg::Sample(sample)));
+        let bytes = encode(&client_message(Msg::Sample(sample.clone())));
         match decode_client(&bytes).unwrap() {
             Msg::Sample(s) => assert_eq!(s, sample),
             other => panic!("unexpected {other:?}"),

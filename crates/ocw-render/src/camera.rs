@@ -541,6 +541,7 @@ fn orbit_input(
     scroll: Res<AccumulatedMouseScroll>,
     context: Option<Res<InputContext>>,
     view: Option<Res<RideView>>,
+    touches: Option<Res<bevy::input::touch::Touches>>,
     mut orbit: ResMut<CameraOrbit>,
 ) {
     if !crate::menu::ride_input(context) {
@@ -556,7 +557,12 @@ fn orbit_input(
         *orbit = CameraOrbit::default();
         return;
     }
-    let drag = if buttons.pressed(MouseButton::Left) {
+    // A finger is not the mouse (spec §3.2.3 Q7: one finger steers, two
+    // move the camera – `ocw_ui::touch`): the mouse Windows emulates
+    // from a touch does not orbit.
+    let touching = touches
+        .is_some_and(|t| t.iter().next().is_some() || t.iter_just_released().next().is_some());
+    let drag = if buttons.pressed(MouseButton::Left) && !touching {
         motion.delta
     } else {
         Vec2::ZERO
@@ -1104,6 +1110,7 @@ mod tests {
             wobble: 0.0,
             damage: None,
             cue: Default::default(),
+            signs: Default::default(),
         });
         let road_y = route.sample(100.0).position[1];
         let ground = crate::Ground(Arc::new(move |_, _| Some(road_y - 0.1)));
@@ -1271,6 +1278,7 @@ mod tests {
                 wobble: 0.0,
                 damage: None,
                 cue: Default::default(),
+                signs: Default::default(),
             });
             let mut app = App::new();
             app.add_plugins(MinimalPlugins)
@@ -1347,6 +1355,7 @@ mod tests {
                 wobble: 0.0,
                 damage: None,
                 cue: Default::default(),
+                signs: Default::default(),
             });
             let mut tunnels = Tunnels::default();
             tunnels.stretches = covered_stretches(&route, &hill, 0.0, 2000.0);
@@ -1609,6 +1618,7 @@ mod tests {
             wobble: 0.0,
             damage: None,
             cue: Default::default(),
+            signs: Default::default(),
         });
         view.guided_camera = guided;
         let mut app = App::new();

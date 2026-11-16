@@ -41,7 +41,7 @@ impl Plugin for HudPlugin {
                     update_look_ahead,
                     (update_hud, update_profile),
                     update_gps,
-                    update_recording,
+                    (update_recording, update_strava),
                     show_hud,
                 )
                     .chain(),
@@ -741,8 +741,91 @@ fn spawn_recording(mut commands: Commands) {
                 TextColor(Color::WHITE),
                 AppMessageText,
             ));
+            // The Strava recording (spec §2.8.1): "● Strava 12:34" and its
+            // notice under it.
+            top.spawn((
+                Node {
+                    display: Display::None,
+                    padding: UiRect::axes(px(8), px(4)),
+                    border_radius: BorderRadius::all(px(6)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.75)),
+                Text::new(""),
+                TextFont {
+                    font_size: 16.0.into(),
+                    ..default()
+                },
+                TextColor(STRAVA_ORANGE),
+                StravaBadge,
+            ));
+            top.spawn((
+                Node {
+                    display: Display::None,
+                    padding: UiRect::axes(px(8), px(4)),
+                    border_radius: BorderRadius::all(px(6)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.75)),
+                Text::new(""),
+                TextFont {
+                    font_size: 15.0.into(),
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                StravaNotice,
+            ));
             top.spawn(crate::frame_rate::badge_bundle());
         });
+}
+
+/// The Strava badge and its notice ([`RideView::strava_s`],
+/// [`RideView::strava_message`]).
+#[derive(Component)]
+struct StravaBadge;
+
+#[derive(Component)]
+struct StravaNotice;
+
+const STRAVA_ORANGE: Color = Color::srgb(0.99, 0.32, 0.0);
+
+/// The badge's text: "● Strava 12:34".
+pub fn strava_label(seconds: f64) -> String {
+    let s = seconds.max(0.0) as u64;
+    if s >= 3600 {
+        format!("● Strava {}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60)
+    } else {
+        format!("● Strava {}:{:02}", s / 60, s % 60)
+    }
+}
+
+type StravaParts = (&'static mut Node, &'static mut Text);
+
+fn update_strava(
+    view: Res<RideView>,
+    mut badge: Query<StravaParts, (With<StravaBadge>, Without<StravaNotice>)>,
+    mut notice: Query<StravaParts, (With<StravaNotice>, Without<StravaBadge>)>,
+) {
+    let show = |node: &mut Node, text: &mut Text, s: Option<String>| {
+        let display = if s.is_some() {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if node.display != display {
+            node.display = display;
+        }
+        let s = s.unwrap_or_default();
+        if text.0 != s {
+            text.0 = s;
+        }
+    };
+    if let Ok((mut n, mut t)) = badge.single_mut() {
+        show(&mut n, &mut t, view.strava_s.map(strava_label));
+    }
+    if let Ok((mut n, mut t)) = notice.single_mut() {
+        show(&mut n, &mut t, view.strava_message.clone());
+    }
 }
 
 type MessageParts = (&'static mut Node, &'static mut Text);
@@ -1153,6 +1236,39 @@ mod tests {
         app
     }
 
+    /// The Strava badge (spec §2.8.1) shows while recording, with its
+    /// notice under it.
+    #[test]
+    fn the_strava_badge_follows_the_view() {
+        let mut app = rec_app();
+        app.add_systems(Update, update_strava);
+        let state = |app: &mut App| {
+            let w = app.world_mut();
+            let (n, t) = w
+                .query_filtered::<(&Node, &Text), With<StravaBadge>>()
+                .single(w)
+                .unwrap();
+            let badge = (n.display, t.0.clone());
+            let (n, t) = w
+                .query_filtered::<(&Node, &Text), With<StravaNotice>>()
+                .single(w)
+                .unwrap();
+            (badge, (n.display, t.0.clone()))
+        };
+        app.update();
+        assert_eq!(state(&mut app).0.0, Display::None);
+        {
+            let mut v = app.world_mut().resource_mut::<RideView>();
+            v.strava_s = Some(754.0);
+            v.strava_message = Some("Strava recording started".into());
+        }
+        app.update();
+        let (badge, notice) = state(&mut app);
+        assert_eq!(badge, (Display::Flex, "● Strava 12:34".into()));
+        assert_eq!(notice, (Display::Flex, "Strava recording started".into()));
+        assert_eq!(strava_label(3725.0), "● Strava 1:02:05");
+    }
+
     fn rec_state(app: &mut App) -> (Display, String, Display, String) {
         let w = app.world_mut();
         let row = w
@@ -1391,6 +1507,7 @@ mod tests {
                 wobble: 0.0,
                 damage: None,
                 cue: Default::default(),
+                signs: Default::default(),
             });
         app.update();
         assert_eq!(panel_display(&mut app), Display::Flex);

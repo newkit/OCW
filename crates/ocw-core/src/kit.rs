@@ -236,7 +236,7 @@ pub mod layout {
     /// angle: they stay put and readable while riding). |x| from which a
     /// point is on a plate, the digits' centre (z, y) and height.
     pub const HIP_X: f32 = 0.174;
-    pub const HIP_CENTRE: [f32; 2] = [0.0, -0.035];
+    pub const HIP_CENTRE: [f32; 2] = [0.0, -0.07];
     pub const HIP_DIGIT: f32 = 0.036;
 }
 
