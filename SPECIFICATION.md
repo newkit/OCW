@@ -4043,7 +4043,7 @@ Decisions Q4 (realistic, on in solo and free ride, the organiser decides in even
 - **Scenes:** `weather-physics-headwind-vaduz` and `weather-physics-tailwind-vaduz` – the same 250 W on the same 10 % climb above Vaduz (km 2.4) into and with an 18 m/s wind.
 - **Not yet:** shelter by forests, buildings and terrain; a yaw-dependent CdA; the wind's side force on steering (gusts pushing a rider sideways); spray and the wet road's look are unchanged (S4); resistance-only trainers.
 
-#### 9J – S9 (calendar and season): planned 2026-11-15, built 2026-11-16 (v4.16)
+#### 9J – S9 (calendar and season): planned 2026-11-15, built 2026-11-16 (v4.28)
 
 **Asked by the user (2026-11-15):** "add a calendar for better date picking in the world section; also allow changing the season."
 
@@ -4099,7 +4099,7 @@ Today, *World → Time* (9I) changes the date only one day per press (← / →)
   - the client passes `season_override.unwrap_or(clock day)` to `SeasonCache` (`ocw-render::season`); `SeasonDay` and the tile rebuild per season bucket (4 days) work unchanged.
 - **Persistence:** like the time machine, every ride starts at "follow the date" (9A), unless Q12 decides otherwise.
 
-**Built (2026-11-16, v4.16; S9a and S9b as reduced by Q11 / Q12):**
+**Built (2026-11-16, v4.28; S9a and S9b as reduced by Q11 / Q12):**
 
 - **Pure logic in `ocw_sky::calendar`** (wasm, no clock reads): civil dates in the range 1900-01-01 … 2100-12-31 (leap years, weekdays, day / month steps clamped to the range, the day of the year, the nearest / next / previous date of a day of the year), the **month grid** of six Monday-first weeks (ISO 8601; `WEEK_START_MONDAY`, the locale later), the equinoxes and solstices of a year (the sun's apparent longitude 0 / 90 / 180 / 270°, Newton steps), the moon's main phases in an interval and their glyphs. **The look of a day** (`Look`: fresh green, summer, autumn colours, bare, lying snow, and – where trees are evergreen, the Canary Islands and the tropics – green or dry meadows) from S8's season model at the rider's altitude (`SeasonModel::state_at`, new: one altitude without the 129 bands) and the beech's foliage. **`SeasonYear`** (per place and altitude): the look of every day of the year, the **season starts** (first green, full leaf, peak autumn colours = the most coloured leaves still on, leaves gone, first lying snow; `None` where the place has none: no snow in Vaduz, no deciduous trees in Tenerife) and the **representative day of each season** (proposal, see Q13): spring = halfway from first green to full leaf, early summer = halfway from full leaf to summer, summer = the warmest day (at least 10 days after full leaf, 10 before peak colours), autumn = the peak colours, late autumn = two thirds of the way from the peak to leaves gone (falling, brown), winter = the middle of the longest snow season at that altitude, else the coldest day; where there are no deciduous trees, by the temperature's year (coldest day + 91 days, …, warmest day + 76 / 122 days). The season of a date is the season with the nearest representative day.
 - **The season jump (Q11):** `calendar::season_change` – the date of the season's representative day (or of a day of the year) **nearest to the world date** (proposal, Q13), **the time of day kept** (a winter wall clock stays the same wall clock in summer time). No season apart from the date (no `season_override` field, no "· autumn look" mark), and nothing is remembered: every ride starts at the real date and time (Q12, 9A).
