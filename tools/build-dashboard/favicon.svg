@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- The build dashboard's icon: a bicycle wheel on the page's accent blue,
+       with a status dot (index.html recolours it from /api/status). -->
+  <rect width="64" height="64" rx="14" fill="#2f6fde"/>
+  <circle cx="28" cy="36" r="19" fill="none" stroke="#fff" stroke-width="5"/>
+  <g stroke="#fff" stroke-width="2.5" stroke-linecap="round">
+    <line x1="11" y1="36" x2="45" y2="36"/>
+    <line x1="19.5" y1="21.28" x2="36.5" y2="50.72"/>
+    <line x1="36.5" y1="21.28" x2="19.5" y2="50.72"/>
+  </g>
+  <circle cx="28" cy="36" r="4.5" fill="#fff"/>
+  <circle id="status" cx="50" cy="14" r="10" fill="#1f9d55" stroke="#2f6fde" stroke-width="3"/>
+</svg>

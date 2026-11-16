@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OCW Build Servers</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <style>
 :root {
   --bg: #f6f7f9; --card: #ffffff; --fg: #1d2330; --muted: #677085; --line: #e3e6ec;
@@ -670,6 +671,31 @@ function render(st) {
   renderJanitor(janitorState, now);
   renderArt(st.art);
   $("updated").textContent = "updated " + new Date(now * 1000).toLocaleTimeString();
+  setIcon(iconState(st));
+}
+
+// The tab's icon shows the state at a glance (favicon.svg, its dot): red for
+// a red alert or an enabled machine that is unreachable, amber for a softer
+// alert or work waiting for a slot, green otherwise, grey without a server.
+const ICON_COLOURS = { ok: "#1f9d55", warn: "#d98e04", bad: "#d64545", unknown: "#8f98ab" };
+let iconSvg = null, iconShown = null;
+function iconState(st) {
+  const alerts = st.alerts || [];
+  if (alerts.some((a) => a.level !== "warn") ||
+      (st.machines || []).some((m) => m.enabled !== false && m.online === false)) return "bad";
+  if (alerts.length || ((st.overview || {}).waiting || 0) > 0) return "warn";
+  return "ok";
+}
+async function setIcon(state) {
+  if (state === iconShown) return;
+  try {
+    if (!iconSvg) iconSvg = await (await fetch("favicon.svg", { cache: "no-store" })).text();
+  } catch (e) {
+    return;
+  }
+  const svg = iconSvg.replace(/(<circle id="status"[^>]*fill=")[^"]*/, "$1" + ICON_COLOURS[state]);
+  document.querySelector('link[rel="icon"]').href = "data:image/svg+xml," + encodeURIComponent(svg);
+  iconShown = state;
 }
 
 async function refresh() {
@@ -678,6 +704,7 @@ async function refresh() {
     render(await r.json());
   } catch (e) {
     $("updated").textContent = "dashboard server not reachable (" + e.message + ")";
+    setIcon("unknown");
   }
 }
 refresh();

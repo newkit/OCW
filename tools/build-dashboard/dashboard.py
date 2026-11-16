@@ -1772,6 +1772,9 @@ def questions_text(q) -> list:
 
 def make_handler(dash: Dashboard):
     page = (HERE / "index.html").read_bytes()
+    # The tab's icon (a wheel with a status dot that the page recolours);
+    # also for /favicon.ico, which browsers ask for on their own.
+    icon = (HERE / "favicon.svg").read_bytes()
 
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code, body: bytes, ctype: str):
@@ -1786,6 +1789,8 @@ def make_handler(dash: Dashboard):
             path = self.path.split("?", 1)[0]
             if path in ("/", "/index.html"):
                 self._send(200, page, "text/html; charset=utf-8")
+            elif path in ("/favicon.svg", "/favicon.ico"):
+                self._send(200, icon, "image/svg+xml")
             elif path == "/api/status":
                 self._send(200, json.dumps(dash.snapshot()).encode(), "application/json")
             elif path == "/api/answers":

@@ -129,6 +129,17 @@ class HttpTest(unittest.TestCase):
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read() or b"{}")
 
+    def test_favicon(self):
+        # The tab's icon, also where browsers look for it by themselves.
+        for path in ("/favicon.svg", "/favicon.ico"):
+            with urllib.request.urlopen(self.base + path, timeout=10) as resp:
+                self.assertEqual(resp.headers["Content-Type"], "image/svg+xml")
+                body = resp.read().decode()
+            self.assertIn("<svg", body)
+            self.assertIn('id="status"', body, "the dot the page recolours")
+        with urllib.request.urlopen(self.base + "/", timeout=10) as resp:
+            self.assertIn('rel="icon"', resp.read().decode())
+
     def test_token_required(self):
         body = {"id": "Phase 12 Q1", "answer": "on"}
         self.assertEqual(self.req("/api/answers", body)[0], 403)
