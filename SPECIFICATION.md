@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.77 – November 2026
+Version 3.78 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.78 | **Touch steering planned: tap or hold the left / right side of the screen to steer** (asked by the user 2026-11-16; new §3.2.3, pointers in §2.2.1, §3.2.2's ride overlay, §5.2.1, M10, Phase 10 *Input*): the zones always answer a real touch; the hints (chevrons, edge glow, tip, touch power buttons) show on touch-first devices (`pointer: coarse` + `maxTouchPoints`, iPad as a Mac) and after the first real touch (hybrid laptops), and hide after key, mouse (≥ 4 px, emulated mouse filtered) or gamepad use; `controls.touch_steer auto\|on\|off`, `?touch=`; desktop on Windows / Linux touch screens through Bevy's `TouchInput`. Touch-down = the held arrow key (line 2 m/s in autodrive, `lean_ramp` in manual), a tap tops up to one step (0.5 m / 0.1 rad); in autodrive at an active junction one exit per touch; dead centre band (12 %), top band, safe areas, 16 px edges and HUD buttons excluded; U-turn stays a confirmed button; both sides = nothing. Also: haptics (`navigator.vibrate`, not iOS), handedness / zone size / tap-only settings, + / − / stop for the virtual trainer through `KeyThrottle`, page gesture blocking (overscroll, pinch, callout, `viewport-fit=cover`), wake lock, full screen / home-screen manifest, landscape, Unicorn mode's touch sharing one finger tracker. Found: the browser's ride system lacks junction exit keys, U-turn and rejoin – TS1 moves ride steering into one shared `ocw_ui` system first. Steps TS1 – TS7, tests (pure zone / tap / presence, headless touch = keys, Chromium touch emulation, WebKit iPhone, screenshots). Open: Q1 tap vs hold, Q2 lean stays or springs back, Q3 touch and autodrive, Q4 both sides, Q5 junction choice by the zones, Q6 desktop too, Q7 camera drag vs steering, Q8 zone height |
 | 3.77 | **Character editor refined (planning): name, body type, age, hair, facial hair, build and more** (asked by the user 2026-11-16; §14 Phase 4, 4N; pointer in §2.6): the rider's **name** (2–20 characters, NFC, no control / bidi characters or emoji, reserved names; one check `ocw_core::name::check` in the editor, the loader and the **server**, which today takes any name; duplicates suffixed per session; a deny-list; a signed-in rider's **own rider name in the account** instead of the provider's real name; an on-screen keyboard and a made-up-name dice); **three base bodies** A / B / C on the same rig (a shape choice, not a sex or pronoun field; nothing else depends on it); an **appearance age** in six steps (greying, face lines, idle posture); **18 hair styles**, each with a helmet shape (long hair, ponytails and braids out through the helmet's back, tested against every helmet), a natural palette + free colour, roots, greying; **moustache and beard** split from the face, their colour following the hair or own; the height is the profile's, a **build slider 0–100**, free, with a *Match my weight* marker – **looks never physics**; face shapes as head morph targets baked per look, eyes, eyebrows, freckles, more glasses, extras as proposals; the flow (categories, a live draft, helmet on / off, randomise with locks, reset, presets, saved looks, undo; both apps via `ocw_client::workshop` / `ocw-ui::workshop`), `riders.toml` v2 with migration, `RiderLook` fields 22–34 (≤ 128 bytes, not in snapshots), LOD, Phase 15 files and budget, tests and scenes. Open: Phase 4 Q6 – Q15 (number of bodies, their labels, unique names, name filter, signed-in name, scripts, age on the face, build vs weight, extras, renaming in a ride) |
 | 3.76 | **Riders in VR wear a VR headset on their avatar** (asked by the user 2026-11-16; §2.6 *Rider status signs*): a third status sign beside the headphones and the phone – a generic headset (`wear/vr_headset.glb`, Phase 15; glasses hidden while it is on) shown while the OpenXR session is visible / focused (off when the headset is taken off; also with `--vr-sim`), sent to everybody as a third flag `RiderState.in_vr`; a VR rider in the menu tilts the head instead of taking out the phone (*proposal*); the own avatar shows it in the chase mirror; looks only. Far LOD, tests and the scene `status-vr-headset` added |
 | 3.75 | **Junction markings per world from real images; give-way lines only where OSM tags them** (decisions from the build dashboard, 2026-11-16; §4.8.8 Q2, Q3). **Q2** – the lines through a junction come **per world from real images** of its region: the new §4.8.9 is the world builder's workflow (sample the junctions by kind and road classes, look at openly licensed orthophotos and street-level photos, extract the variants with their shares, record a table per region with a reference board, check with the `junction-*` scenes; OSM tags win; the former proposal is the fallback). **Q3** – give-way and stop lines only where OSM tags them (as proposed). Q1, Q4, Q5 stay open |
@@ -334,6 +335,7 @@ Exits are **ordered from leftmost to rightmost**. Keys move the selection throug
 - A pre-selection is allowed **before** the junction becomes active ("next junction: turn left") and is kept until the junction is reached.
 - **Lock point:** ~20 m before the junction the choice is locked; key presses after that apply to the following junction. (v1.6: earlier at speed – 20 m plus the distance needed to slow down from the current speed to 15 km/h at 2 m/s², so the slow-down for the chosen turn (§5.2) fits; e.g. ~100 m at 65 km/h.)
 - **Down arrow:** U-turn (§2.2.2). Only in free ride; rate-limited (e.g. once per 10 s).
+- **Touch (planned, v3.78, §3.2.3):** on touch screens a tap or hold on the left / right half of the screen does what ← / → do (line or lean steering; in autodrive at an active junction one exit per touch); U-turn is an overlay button.
 - All bindings are remappable. Later, gamepad and handlebar controller buttons map to the same actions (`turn_left`, `turn_right`, `u_turn`).
 
 **Decided key bindings (v1.6).** The arrow keys also steer (§5.2.1) and ↑ / ↓ set the keyboard power and brake, so the defaults are:
@@ -973,7 +975,7 @@ The user asked for a *World* entry where the rider chooses the world they ride i
 | M7 | Accounts / profile sync, Events (sessions, join), backend Strava, route sharing; start-screen dashboard (§2.1) | 5 (calendar 7) | L | API client against a mocked backend, disabled-page states offline, event list and join flow |
 | M8 | Voice settings (microphone device, microphone mute, speaker mute, voice volume, per-participant mute, spatial voice on / off) | 6 | S | device selection and mute state (§14 Phase 6) |
 | M9 | Rebinding of keys and buttons, accessibility (text size, colour-blind safe HUD, Confirm / Back swap per pad) – done v3.42, see *M9 implemented* | 7 | M | binding conflicts, persistence, defaults restore |
-| M10 | Input model for the whole UI (§3.2.2, v2.54): action mapper for keyboard, mouse, gamepad and touch, `ActiveInput` and device glyphs in a hint bar, touch mode (hit targets, gesture recogniser, emulated-mouse filter), ride touch overlay | 4 (with M6) | M | §3.2.2 tests: mapper, gestures, reachability of every page per device, hit-target sizes, overlay |
+| M10 | Input model for the whole UI (§3.2.2, v2.54): action mapper for keyboard, mouse, gamepad and touch, `ActiveInput` and device glyphs in a hint bar, touch mode (hit targets, gesture recogniser, emulated-mouse filter), ride touch overlay; touch steering by the screen's left / right half (§3.2.3, planned v3.78, TS1 – TS7) | 4 (with M6) | M | §3.2.2 tests: mapper, gestures, reachability of every page per device, hit-target sizes, overlay |
 
 **M9 implemented (Phase 7, v3.42):**
 
@@ -1054,7 +1056,7 @@ Devices that have all of them: Windows tablets and touch laptops, Linux touch la
 
 **During a ride (touch proposal):** riding is driven by the trainer; touch is for the HUD and the camera. A **touch overlay** (shown on the first touch, fades after 8 s without one; `controls.touch_overlay auto|on|off`):
 
-- ☰ menu (top left), **autodrive** toggle, **U-turn** (asks with a second tap, as the key does not), **lean ‹ ›** buttons at the lower left and right edges (held = lean, as the ← / → keys; only shown when autodrive is off), and at a junction the **exit arrows** of the junction overlay (§2.2.1) become tap targets (tap = choose that exit).
+- ☰ menu (top left), **autodrive** toggle, **U-turn** (asks with a second tap, as the key does not), ~~**lean ‹ ›** buttons at the lower left and right edges~~ (v3.78: replaced by **steering zones on the left / right half of the screen** – tap = one step, hold = as the held arrow key, for line and lean steering and the junction exit choice; §3.2.3), and at a junction the **exit arrows** of the junction overlay (§2.2.1) become tap targets (tap = choose that exit).
 - **Camera:** one-finger drag on the 3D view orbits (as the mouse), pinch changes the chase distance, double tap = camera reset (C), two-finger tap cycles the camera mode.
 - **Tap HUD elements:** the voice indicator (mute the microphone / speaker, §2.4), the mini elevation profile (zoom 1.5 km ↔ 5 km), the bike computer (cycle its fields), the event panel (expand the standings), the damage widget (Phase 12: the part list), the REC dot (stop recording).
 - **Virtual power** (no trainer, §2.9): + / − buttons beside the power field.
@@ -1073,6 +1075,148 @@ Devices that have all of them: Windows tablets and touch laptops, Linux touch la
 - **3D scenes:** orbit / zoom / pan reach the same camera states with each device; limits hold.
 - **Ride overlay:** taps on lean / autodrive / U-turn / exit arrows produce the same `ClientCore` inputs as the keys; overlay hidden with `hud off`.
 - **Screenshots:** the hint bar for each device and the touch overlay, X11 + Wayland (scene harness).
+
+#### 3.2.3 Touch Steering: tapping or holding the left / right side (planning, 2026-11-16, v3.78)
+
+The user asked (2026-11-16): "when running on a touch capable device (e.g. iOS/Android, but not limited to that, check browser capabilities) we need a way to control the steering (left/right) by tapping on the screen on the left or right side." This section is a **proposal**. It refines the ride touch overlay of §3.2.2 (M10): the small *lean ‹ ›* buttons there are replaced by the two **halves of the screen**. The open decisions are in *Open questions* at the end.
+
+**As found (2026-11-16, origin/main at v3.77):**
+
+- **Riding has no touch input yet.** The browser page sets `touch-action: none` on the canvas (`apps/web/web/index.html`) and reports `coarse_pointer` in `window.ocwDeviceInfo`, but only for the quality preset (B7). Touches reach the menu rows through `bevy_picking` (`ocw_render::menu::MenuPointer`). The handover notes say: "phone HUD wraps, no touch riding controls (M10)". `controls.touch` / `controls.touch_overlay` (§3.2.2) are not built.
+- **Unicorn mode already has touch** (`ocw_ui::god::touch`, Phase 13B, shared since v3.39). It is pure and keeps a `Finger { id, pos, start, prev }` per touch. A finger on the left half is a stick, a finger on the right half looks around, two fingers pinch, a third cancels, and the + / − buttons come from a layout shared with the renderer (`ocw_render::inspect_hud::touch_buttons`). In the same frame a touch also suppresses the mouse look (Windows' emulated mouse). Ride touch reuses this pattern: a shared finger tracker, a pure mapping and a button layout shared with the HUD.
+- **Ride steering keys are shared only in part.** `ocw_client::input` has the pure parts (`steer_direction`, `lean_ramp`, `LINE_KEY_RATE_MPS` = 2 m/s, `junction_key`, `KeyThrottle`). The Bevy systems that call them are still per app: `apps/desktop/src/input.rs::steer` and `apps/web/src/plugin.rs`. **Parity gap:** the browser's system has no junction exit keys (Q / E, the arrows at an active junction in autodrive), no U-turn and no rejoin, so a browser free ride cannot choose exits. Step TS1 closes this gap first, so touch steering is written once, in shared code.
+
+**Detection: when touch steering is active and when its hints show**
+
+- **Zones vs hints.** The two steering zones **always answer a real touch** in a ride, unless the setting is *off*: a touch is never ignored because detection guessed wrong. Detection decides only whether the **hints** (chevrons, the first-ride tip, the touch power buttons) are shown and whether the HUD uses touch-size targets. This is §3.2.2's `ActiveInput::Touch`.
+- **Browser facts**, read once by the page and added to `window.ocwDeviceInfo`: `navigator.maxTouchPoints`, `matchMedia('(pointer: coarse)')` (the primary pointer), `matchMedia('(any-pointer: coarse)')` (any touch screen), `matchMedia('(hover: none)')`, `'ontouchstart' in window`. Bevy's winit web backend turns Pointer Events with `pointerType == "touch"` into `TouchInput` (to verify in TS3; if it does not, a small page listener forwards them). Pen and mouse pointers stay pointers.
+- **The rule** (pure: `ocw_client::input::touch::TouchPresence`, fed with input events, their times and the facts):
+  1. **Shown at the start** on a touch-first device, where the primary pointer is coarse and `maxTouchPoints > 0`: phones, tablets, and an iPad that reports a Mac user agent (`MacIntel` with `maxTouchPoints > 1`, as `ocw-gpu.js` already tells them apart).
+  2. **Shown once a real touch arrives** (a `TouchInput` start), on any device. This covers **hybrid laptops** and touch monitors: their primary pointer is fine, so `any-pointer: coarse` alone does not show the hints.
+  3. **Hidden again** after another device is used: a key press, a mouse click or a mouse move of 4 px or more (§3.2.2: jitter below that does not count), or a gamepad button or stick beyond its dead zone. Mouse events within 500 ms of a touch at the same place are the system's emulated mouse (Windows) and do not count. The next touch shows the hints again. An iPad with a keyboard starts shown and hides on the first key.
+  4. **The setting overrides:** `controls.touch_steer auto|on|off` (default *auto*; Settings → Controls beside *Touch mode*; console `controls.touch_steer`). *on* always shows the hints. *off* turns the zones off as well, so taps reach only the HUD buttons, for riders who only want the camera on touch. In the browser, `?touch=on|off` sets it for the session (used by the tests).
+- **Desktop app:** the same code reads Bevy's `TouchInput` on Linux X11 (XInput 2.2), Wayland (`wl_touch`) and Windows. Devices: touch laptops, tablets, the Steam Deck, a touch monitor. Windows' emulated mouse is filtered as in §3.2.2. macOS has no touch screens (winit), so it never shows the hints. The kiosk stays untested on real touch (Phase 4 Q5, postponed).
+
+**The zones**
+
+- The ride view is split into a **left** and a **right zone**. Both are computed per frame (pure: `TouchZones { view, safe_insets, top_band, dead_band, excluded: Vec<Rect> }`, `zone_at(pos) -> Option<Side>`).
+- **Not part of a zone:**
+  - a **dead band in the centre**: 12 % of the view width, at least 48 px (a touch there does not steer; Q7 has what it does instead);
+  - a **top band**: 15 % of the view height, where the status line, the GPS / ride info and the ☰ button sit;
+  - the **safe-area insets** (notch, home indicator; `env(safe-area-inset-*)` in the browser);
+  - **16 px at every window edge** (§3.2.2: OS edge swipes, Android's back gesture, the iOS home bar);
+  - every **interactive HUD rectangle**: ☰, autodrive, U-turn, the junction fan's exit arrows, the power + / − buttons, the voice indicator, the elevation profile, the results panel. These rectangles come from the same layout functions the renderer draws with, as `touch_buttons` does today, so a tap on a button is never also a steer.
+- **The zone follows the finger.** A finger counts for the zone it is in now, like a held key. Sliding it into the dead band pauses the steering; sliding across into the other half steers the other way. Lifting the finger, or a `TouchPhase::Canceled` (an incoming call, the OS taking the gesture), releases the side.
+- **Not active** while the menu, a dialog, the console or the results panel is open (they take the taps), while the rider is down after a crash (§14 Phase 12), or in Unicorn mode (`not_flying`, as the keys). A finger that is already down when the menu closes or the rider lands counts only after it is lifted, so nothing carries over.
+
+**Tap vs press-and-hold** (proposal; Q1, Q2)
+
+- **Steering starts on touch-down, with no wait.** A finger in a zone is the arrow key of that side held down: it goes through the same `steer_direction` → line or lean code as the keys, so a hold steers exactly like holding ← / →. The 300 ms tap delay is not an issue: the page has `touch-action: none` and no double-tap zoom.
+- **A tap** is a touch lifted within **250 ms** that moved less than 10 px (the gesture recogniser's thresholds, §3.2.2). A tap gives a **guaranteed minimum step**. When the finger lifts, the steering it did is topped up to the step, at any frame rate:
+  - **line steering (autodrive):** a tap moves the line by **0.5 m** (`TAP_LINE_STEP_M`, about one rider's width; the arrow key moves it 2 m/s × the hold). A hold of 1 s moves it 2 m, like the key. The edge limits stay as they are (§5.2.1).
+  - **lean steering (manual, wild mode):** a tap changes the lean by **0.1 rad** (about 6°, `TAP_LEAN_STEP_RAD`; what a 0.25 s key hold gives with `LEAN_KEY_RATE`). As with the keys the lean **stays** after the finger lifts (Q2). The upright stop of `lean_ramp` applies: a tap toward upright from a small lean stops at upright, and a second tap leans on to the other side.
+- **Autodrive (Q3):** a touch does what an arrow key does. In autodrive it moves the line and does **not** switch autodrive off; the autodrive toggle switches it off. With autodrive off the zones lean.
+- **Junction exit choice (§2.2.1; Q5):** while a junction is **active** in autodrive, the zones choose the exit, as the arrows do (`junction_key` with the touch as the arrow press). Each touch-down is **one exit step** (Select ±1); holding does not repeat, and a second tap goes one exit further. The line does not move meanwhile. With manual steering the zones keep leaning, and the fan's exit arrows are tap targets (tap = choose that exit, §3.2.2): the touch form of Q / E. The overlay's lock point and the green locked arrow are unchanged; taps after the lock point apply to the next junction, as keys do.
+- **Route rides:** route rides are the same as with the keys. In solo route rides the zones choose exits, and choosing another exit leaves the route (§2.2.1). The HUD's "Off the route" line gets a **Rejoin** button. In group rides with "follow leader" the zones only move the line.
+- **U-turn:** U-turn stays a **button** (in the overlay, lower centre, beside autodrive). It asks with a second tap, as in §3.2.2, since a stray U-turn on a phone is costly. It is rate-limited like the key and shown only in free ride. There is no zone gesture for it (Q4 lists one as an option).
+- **Both sides at once (Q4):** the proposal is the key rule. ← and → together give `steer_direction` 0, so nothing steers while both are held, and a tap on the other side while one is held does nothing. Lifting one finger resumes the other side. Two fingers on the same side count as one.
+
+**Visual feedback** (`ocw-render::touch_hud`, part of the HUD layer: hidden with `hud off`; in captures only when shown)
+
+- **Chevrons** ‹ and › at the lower left and lower right, drawn at 40 % opacity while the hints are shown. They fade to 15 % after 8 s without a touch, the overlay rule of §3.2.2 (`OVERLAY_S`). In junction mode they become small exit arrows.
+- **An edge glow** on the side being held: a soft gradient 24 px wide along that screen edge, at 25 % opacity in the HUD's accent colour (M9's colour-blind-safe palette). A tap flashes the chevron for 150 ms.
+- **A first-ride tip:** "Tap or hold the left / right side to steer". It is shown once per device (setting `controls.touch_tip_seen`) and also listed on the help page.
+- The glow and the chevrons are hints only. The steering itself shows in the rider and the line marker, as with the keys.
+
+**Accessibility and size**
+
+- **Handedness:** `controls.touch_hand right|left` (default right) mirrors the overlay buttons (☰ stays top left; autodrive, U-turn and the power buttons move to the other side). It **never swaps the steering**: the left side always steers left.
+- **Zone size:** `controls.touch_zones full|lower` (default *full*: the whole height below the top band; *lower*: only the lower half, so the upper half is free for the camera on a tablet). The dead band's width is set with `controls.touch_dead_band` (5 – 30 %, default 12 %).
+- **Tap-only mode:** `controls.touch_hold on|off` (default on). With *off* a touch-down does nothing until the finger lifts, and each touch is exactly one step, however long it is held. This is for riders who cannot hold a finger still on a moving handlebar mount.
+- Hit targets and gaps of all overlay buttons follow §3.2.2 (≥ 9 mm and ≥ 48 px).
+
+**Haptics:** a short vibration (10 ms) on a tap step, an exit change and the exit locking (20 ms), through `navigator.vibrate` where it exists (Chrome and Firefox on Android). iOS Safari has no Vibration API, and desktop browsers ignore it. `ocw_ui` sends a `HapticPulse` message; the browser app plays it (`apps/web/src/browser.rs`, guarded, so it never fails where there is no API), and the desktop app ignores it (winit has no API; gamepad rumble stays separate). Setting `controls.haptics on|off` (default on).
+
+**Other touch needs it raises**
+
+- **Menu:** the ☰ button (top left, inside the safe area) is **always shown** while the hints are shown, not only after a mouse move (§3.2.2). The menu's Back button is shown in touch mode, as planned.
+- **Power without a trainer:** this is the virtual trainer of the preview (B8a) on a phone, where ↑ / ↓ do not exist. Proposed: **+ / − / stop buttons** at the right edge above the right zone (left edge with `touch_hand left`). A tap on + is one 25 W step, a hold ramps the power, and *stop* brakes. These are ↑ held, ↑ pressed and ↓ fed into the shared `KeyThrottle` as `ThrottleKeys` from the touch buttons, so the rules are the keyboard's. They are shown only when no power device is connected. A trainer or power meter hides them.
+- **Browser gestures must not move the page** (`apps/web/web/index.html`):
+  - `touch-action: none` also on `html` and `body`, not only the canvas;
+  - `overscroll-behavior: none` (no pull-to-refresh in Chrome Android, no rubber band in Safari);
+  - `-webkit-user-select: none` and `-webkit-touch-callout: none` on the canvas (no selection or callout on a long press);
+  - `contextmenu` prevented on the canvas (Android's long press);
+  - Safari's proprietary `gesturestart` / `gesturechange` prevented (pinch zoom: iOS ignores `user-scalable=no` since iOS 10, but `touch-action: none` together with these stops the pinch on the canvas);
+  - `touchmove` listened to with `{ passive: false }` and prevented on the canvas, for older Safari.
+  - The 300 ms click delay does not apply (`width=device-width` and `touch-action`).
+- **Safe areas:** the viewport gets `viewport-fit=cover`, so the canvas fills the whole screen behind the notch. The HUD and the zones then keep out of `env(safe-area-inset-*)`: the page passes the insets to the app in `window.ocwDeviceInfo` and on `resize`. Today the page stays inside the safe areas (the index.html note of B7).
+- **Full screen and staying awake:**
+  - A *Full screen* entry in the menu and the first-ride tip, where the Fullscreen API exists (Android Chrome, iPad Safari). It needs a user gesture, and a tap counts.
+  - The iPhone's Safari has no element full screen. There the page offers *Add to Home Screen*: a web app manifest with `display: fullscreen` (standalone on iOS) and an Apple touch icon.
+  - `navigator.wakeLock.request('screen')` keeps the screen on while riding (Chrome, Safari 16.4+). It is requested again after `visibilitychange`.
+- **Orientation:** landscape is preferred. `screen.orientation.lock('landscape')` is tried in full screen (Android; iOS has no lock). In portrait the ride still works, since the halves are halves either way and the HUD wraps (v3.68). A one-time tip says "turn your phone for a wider view".
+- **Audio unlock:** the first tap both steers and unlocks the audio gate (`ocw_audio::unlock::AudioGate`, §14 Phase 10 B5). Nothing extra is needed.
+- **Unicorn mode:** while flying, `ocw_ui::god::touch` owns the screen (left half = stick, right half = look). The ride zones and their hints are off and the god-mode + / − buttons show. Landing hands the screen back after all fingers have lifted. Both use one shared finger tracker (`ocw_ui::touch::Fingers`, moved out of `god::touch`), so ids, cancel and the emulated-mouse filter are handled once.
+
+**Where the code goes (both apps, full parity)**
+
+- `ocw_client::input::touch` (pure, wasm): `TouchZones`, `zone_at`, the per-frame `TouchSteer` state machine (fingers in → `TouchSide { left_held, right_held, left_tap, right_tap, left_down, right_down }`), the tap top-up (`TAP_LINE_STEP_M`, `TAP_LEAN_STEP_RAD`) and `TouchPresence`.
+- `ocw_ui::ride_input` (new, Bevy): **one ride-steering system for both apps.** It takes keys, pads and touches, and calls `junction_key`, `steer_direction`, `lean_ramp`, `u_turn`, `rejoin_route`, autodrive and wild mode as `apps/desktop/src/input.rs::steer` does today. It replaces that system and the browser's copy, which closes the parity gap. `ocw_ui::touch` adds the finger tracker and `TouchInput` → `TouchSteer`.
+- `ocw-render::touch_hud`: the chevrons, the glow, the overlay buttons and their shared layout (as `inspect_hud::touch_buttons`).
+- `apps/web`: the page CSS / JS above, the device facts and the insets, `HapticPulse`, wake lock, full screen and the manifest. `apps/desktop`: nothing of its own beyond the plugin.
+
+**Steps**
+
+- **TS1:** the shared ride-steering system in `ocw_ui` (junction keys, U-turn and rejoin also in the browser).
+- **TS2:** the pure zone, tap and presence logic, with its tests.
+- **TS3:** the Bevy glue and the HUD (chevrons, glow, tip, ☰).
+- **TS4:** the page: browser gestures, safe areas, wake lock, full screen, the manifest.
+- **TS5:** the touch power buttons and Rejoin.
+- **TS6:** haptics.
+- **TS7:** the browser and screenshot tests.
+
+TS1 – TS3 are what the user asked for; TS4 makes it usable on phones.
+
+**Tests (spec §11.4: no step without tests)**
+
+- **Pure (`ocw_client::input::touch`):**
+  - `zone_at` for both halves; the dead band at 12 % and its 48 px minimum; the top band; the safe insets; the 16 px edges; an excluded HUD rectangle (a tap on autodrive is never a steer); `touch_hand left` mirrors the buttons but not the sides.
+  - Tap vs hold at the thresholds (249 / 251 ms, 9 / 11 px).
+  - A tap moves the line exactly 0.5 m and leans exactly 0.1 rad at dt 1/30, 1/60 and 1/144. A 1 s hold moves the line 2 m, like the key.
+  - The upright stop on a tap toward upright.
+  - At an active junction in autodrive: one exit per touch, no repeat on hold, the line kept.
+  - Both sides at once give 0; one lifted resumes the other.
+  - A finger sliding into the dead band and across.
+  - `Canceled` releases; a finger down from before the menu closed is ignored.
+  - Tap-only mode.
+  - `TouchPresence`: coarse device shown at start; hybrid laptop hidden until a touch; a key, a click and a 4 px mouse move hide the hints; 3 px jitter and emulated mouse within 500 ms do not; gamepad beyond the dead zone hides them; *on* / *off* override; the iPad-as-Mac facts.
+- **Shared UI, headless** (`ocw-ui` with `MinimalPlugins` over the in-memory `FrameServer`, as the god-mode tests):
+  - Injected `TouchInput` sequences give the **same `ClientCore` state as the matching key presses**: line offset, lean, exit selection, U-turn through its button and confirmation, rejoin.
+  - Touches do nothing while the menu is open or the rider is flying.
+  - The touch power buttons drive `KeyThrottle` as ↑ / ↓ do.
+  - Both apps' plugin tests run the same cases (parity).
+- **Browser** (`scripts/test-web.py`, a new case `touch`; Chromium over the DevTools protocol with `Emulation.setTouchEmulationEnabled` and `Input.dispatchTouchEvent`; read through a new `window.ocw.steer()` JSON: line offset, lean, autodrive, zone state, hints shown):
+  - a tap on the right half moves the line by +0.5 m;
+  - a 1 s hold on the left moves it about −2 m;
+  - a tap in the dead band and on the ☰ button does not steer;
+  - a pinch does not zoom (`visualViewport.scale` stays 1) and a drag does not scroll (`scrollY` 0);
+  - the hints show after the first touch and hide after a key press.
+- **WebKit** (`scripts/test-web-webkit.py`, its `iphone` case: Playwright's iPhone 15 with `hasTouch`): `page.touchscreen.tap` on each half steers; the safe insets are passed in; the page throws nothing where `navigator.vibrate` is missing.
+- **Screenshots** (scene harness, X11 + Wayland, and the browser cases):
+  - the HUD with the chevrons, the glow on a held right side, junction mode with exit chevrons, the power buttons, the first-ride tip;
+  - iPhone 15 landscape and portrait;
+  - `hud off` hides everything.
+
+**Open questions (for the user)**
+
+- **Q1 – Tap vs hold:** proposal: touch-down steers at once like a held arrow key, and a tap (< 250 ms) is topped up to one step (line 0.5 m, lean 0.1 rad). Alternatives: (a) taps only, one step each, no holding; (b) hold only, with no minimum step. Is a step of 0.5 m right, or should a tap jump a whole "lane" (e.g. 1 m, or between the road's middle, left and right third)?
+- **Q2 – Lean steering on touch:** proposal: as the keys, so the lean stays after the finger lifts and is straightened with the other side. Alternative: like the stick, the lean springs back to upright when the finger lifts (easier on a phone, but different from the keys).
+- **Q3 – Does a touch switch autodrive off?** Proposal: no. As with the arrow keys, in autodrive a touch moves the line, and only the autodrive button switches it off.
+- **Q4 – Both sides at once:** proposal: nothing (as ← + →). Alternatives: straighten (line back to the middle in autodrive, upright in manual), brake, or a U-turn after holding both for 1 s.
+- **Q5 – Junction choice by the zones:** proposal: in autodrive at an active junction the halves choose the exit (one exit per touch, as the arrows), and with manual steering the fan's arrows are tapped. Or should exits be chosen only by tapping the fan's arrows, so the halves always steer?
+- **Q6 – Desktop app too:** proposal: yes (parity rule), on Windows / Linux touch screens with the same *auto* rule (hints after the first touch). The kiosk stays untested on touch (Phase 4 Q5). Or browser only for now?
+- **Q7 – Camera drag vs steering:** §3.2.2 planned one-finger drag on the 3D view = orbit. Proposal: in a ride the halves only steer; the camera is orbited by a one-finger drag that starts in the centre band, or by a two-finger drag anywhere (pinch = chase distance, as planned). Or should a drag beyond 10 px anywhere orbit (steering then waits 250 ms to tell taps from drags)?
+- **Q8 – Zone height:** proposal: full height below the top band, with *lower half* as a setting. Or the lower half by default?
 
 ### 3.3 Audio
 
@@ -1927,6 +2071,7 @@ Fundamental resistive forces:
 - **Surfaces:** asphalt, gravel (OSM tracks and paths; the `surface` tag later), grass (anything beside the road). Each has a factor on the rolling resistance coefficient (1, 2.5, 6), applied in the physics and sent to the trainer in SIM mode (Crr), so gravel and meadows are harder to ride. The bike's physics profile (§2.5) scales the part above asphalt: factor = 1 + (surface factor − 1) × off-road share, so a gravel bike (0.5) rolls on gravel at 1.75 × its asphalt Crr and a mountain bike (0.3) at 1.45 ×; asphalt stays 1 for every bike. The world package has no per-edge surface yet (only the road class: tracks and paths are gravel); the OSM `surface` tag (paved / unpaved / compacted / …) in the road graph comes later and feeds the same three surfaces.
 - Steering is an intent like the junction choice (§6.1): the server applies it, the client predicts it with the same rule; heading and ridden curvature are part of the rider state in snapshots.
 - **U-turns** (§2.2.2): slow-down to ~10 km/h, turn, continue in the opposite direction.
+- **Touch steering** (planned, v3.78, §3.2.3): the left / right half of a touch screen is the ← / → key held (line steering in autodrive, lean in manual); a tap is one step (0.5 m line, 0.1 rad lean).
 
 Training data is stored independently of rendering.
 
@@ -3760,7 +3905,7 @@ Today, *World → Time* (9I) changes the date only one day per press (← / →)
 - **Devices:** `WebBluetoothBackend` implements `DeviceBackend` on top of the pure `ocw-devices` protocol state machine (`gatt`, `ble::protocol`). Only the `GattLink` is new (navigator.bluetooth via `web-sys`). The user grants device access per page (browser chooser).
 - **Captures:** screenshots from the canvas as JPEG q90 with EXIF date and time written by our own encoder step. Videos via MediaRecorder / WebCodecs with game audio mixed in. The ISO timestamp is in the HUD top right (art project §2.1).
 - **Settings and rides:** settings in browser storage, with account sync via the backend (Phase 5). FIT export as a download; Strava upload through the backend (§2.8).
-- **Input:** the input model of §3.2.2 as on the desktop; touch is the main input on phones and tablets (the touch overlay in a ride, touch-mode hit targets everywhere), pointer events via `bevy_picking` as on the desktop.
+- **Input:** the input model of §3.2.2 as on the desktop; touch is the main input on phones and tablets (the touch overlay in a ride, touch-mode hit targets everywhere), pointer events via `bevy_picking` as on the desktop. Steering by tapping / holding the screen's left or right half, the page's gesture blocking (pull-to-refresh, pinch), safe areas, wake lock and full screen: §3.2.3 (planned, v3.78).
 - **Hosting:** static app + package CDN + game server endpoints, behind the same domain as the web companion. Single sign-on with the account (OIDC, §9). COOP / COEP headers for wasm threads. A strict CSP.
 
 #### 10C – Performance budget
