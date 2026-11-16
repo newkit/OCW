@@ -110,6 +110,11 @@ impl RideRecorder {
         }
     }
 
+    /// The ride's start (UTC Unix s), from its first record on.
+    pub fn start_unix_s(&self) -> Option<i64> {
+        self.start_unix_s
+    }
+
     /// The lap marks so far (elapsed s).
     pub fn laps(&self) -> &[f64] {
         &self.laps

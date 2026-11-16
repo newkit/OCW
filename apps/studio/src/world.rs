@@ -49,6 +49,9 @@ pub struct Loaded {
     pub map: MapData,
     /// Where the camera starts: above the middle of the package.
     pub start: [f64; 3],
+    /// The package file and its manifest (the patch goes next to it).
+    pub file: PathBuf,
+    pub manifest: Option<PathBuf>,
 }
 
 /// Loads `spec` (a path or an id) with its installed neighbours.
@@ -73,6 +76,8 @@ pub fn load(spec: &str, settings: &LoadSettings) -> Result<Loaded, String> {
     let ground = pkg.surface_height(mid[0], mid[1]).unwrap_or(0.0);
     let start = [mid[0], ground + crate::flight::START_HEIGHT_M, mid[1]];
     info!("world package {}", world.describe());
+    let file = world.path.clone();
+    let manifest = world.manifest_path.clone();
     drop(world);
     Ok(Loaded {
         spec: spec.into(),
@@ -81,6 +86,8 @@ pub fn load(spec: &str, settings: &LoadSettings) -> Result<Loaded, String> {
         rows,
         map,
         start,
+        file,
+        manifest,
     })
 }
 
@@ -107,7 +114,10 @@ pub fn show(world: &mut World, loaded: Loaded, now_s: f64, rebuild: bool) {
         rows,
         map,
         start,
+        file,
+        manifest,
     } = loaded;
+    let package = crate::patch::StudioPackage::new(render.home().clone(), file, manifest);
     world.insert_resource(render);
     if let Some(mut view) = world.get_resource_mut::<RideView>() {
         // No route, no riders: the package alone, as in a free ride.
@@ -121,7 +131,7 @@ pub fn show(world: &mut World, loaded: Loaded, now_s: f64, rebuild: bool) {
     if rebuild {
         ocw_render::rebuild_scene(world);
     }
-    crate::edit::open_world_doc(world, &spec, &details, now_s);
+    crate::edit::open_world_doc(world, &spec, &details, package, now_s);
     world.insert_resource(OpenWorld {
         spec,
         details,

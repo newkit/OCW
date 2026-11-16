@@ -108,13 +108,19 @@ details.qg summary .muted { font-weight: 400; }
 .stepper button { padding: 6px 0; font-size: 18px; line-height: 1; }
 .stepper b { min-width: 2.2em; text-align: center; font-variant-numeric: tabular-nums; }
 .mctl .src { font-size: 12px; color: var(--muted); }
+/* Agents on the coordinator: "agents N of M", amber at the limit, red above it. */
+.agents { padding: 6px 8px; border-left: 3px solid var(--ok); background: var(--chip); border-radius: 4px; }
+.agents.warn { border-left-color: var(--warn); } .agents.bad { border-left-color: var(--bad); }
+.agents .cnt { font-weight: 600; font-variant-numeric: tabular-nums; }
+.agents.warn .cnt { color: var(--warn); } .agents.bad .cnt { color: var(--bad); }
 .mmsg { font-size: 12px; color: var(--muted); flex-basis: 100%; }
 .card.off { border-style: dashed; }
 .card.off .meters, .card.off table, .card.off .line, .card.off .empty { opacity: .5; }
 .offnote { margin: 0 0 10px; padding: 6px 8px; border-left: 3px solid var(--bad); background: var(--chip); border-radius: 4px;
   font-size: 13px; overflow-wrap: anywhere; }
 .mnote { margin: 0 0 10px; font-size: 13px; overflow-wrap: anywhere; }
-.mnote .k { color: var(--muted); margin-right: 6px; }
+.mnote .k, .agents .k { color: var(--muted); margin-right: 6px; }
+.agents .k { flex-basis: 100%; }
 .chip.off { opacity: .7; border: 1px dashed var(--bad); }
 /* Coordinator (deb) card and Claude tasks, side by side above the machines. */
 .top { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 12px; padding: 0 16px 12px; }
@@ -159,7 +165,7 @@ footer { padding: 0 16px 24px; font-size: 12px; color: var(--muted); }
 <section class="panel" id="questions"></section>
 <section class="panel" id="janitor"></section>
 <section class="panel" id="art"></section>
-<footer>View of the machines in config/machines.toml, polled over SSH every 5 s (also machines disabled for building: read-only probes); on the machines it only changes the janitor's cleanup of build artefacts (target/) when a disk fills up. Enabled/Disabled and the build slots (with the token) go to config/build-machines.toml, which scripts/remote.sh reads. Open questions: from SPECIFICATION.md of the main checkout. The coordinator card reads this machine's /proc (process names and RSS, never command lines); its samples go to test-output/build-log/DAY/deb.jsonl. Claude tasks: agents.jsonl, the task files' mtime and size (never their content) and git. JSON: <a href="api/status">/api/status</a></footer>
+<footer>View of the machines in config/machines.toml, polled over SSH every 5 s (also machines disabled for building: read-only probes); on the machines it only changes the janitor's cleanup of build artefacts (target/) when a disk fills up. Enabled/Disabled, the build slots and the agents allowed on the coordinator (with the token) go to config/build-machines.toml, which scripts/remote.sh and scripts/agent-slots.sh read. Open questions: from SPECIFICATION.md of the main checkout. The coordinator card reads this machine's /proc (process names and RSS, never command lines); its samples go to test-output/build-log/DAY/deb.jsonl. Claude tasks: agents.jsonl, the task files' mtime and size (never their content) and git. JSON: <a href="api/status">/api/status</a></footer>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -533,6 +539,55 @@ const pctTxt = (v) => v == null ? "?" : `${v.toFixed(v < 10 ? 1 : 0)} %`;
 function clock(t) { return t ? new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "?"; }
 function dayClock(t) { return t ? new Date(t * 1000).toLocaleString([], { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "?"; }
 
+// Agents on the coordinator (POST /api/coordinator with the same token):
+// how many agents may run on deb at once; scripts/agent-slots.sh reads it.
+let agentsMsg = "", agentsBusy = false;
+function agentsBlock(a) {
+  if (!a) return "";
+  const lvl = a.level === "bad" ? "bad" : a.level === "warn" ? "warn" : "";
+  const n = a.max_agents, lo = a.min ?? 1, hi = a.max ?? 16, busy = agentsBusy ? " disabled" : "";
+  const state = a.level === "bad" ? " – above the limit" : a.level === "warn" ? " – at the limit" : a.free != null ? ` – ${esc(a.free)} free` : "";
+  let html = `<div class="mctl agents ${lvl}" id="agents-ctl"><span class="k">Agents on the coordinator (${esc((lastStatus.coordinator || {}).name || "deb")})</span>` +
+    `<span class="cnt" aria-live="polite">agents ${a.running == null ? "?" : esc(a.running)} of ${esc(n)}${state}</span>` +
+    (a.mem_available != null ? `<span class="muted">${bytes(a.mem_available)} memory available</span>` : "");
+  if (machineSettings) {
+    html += `<span class="stepper" role="group" aria-label="Agents allowed on the coordinator">` +
+      `<button type="button" data-act="agents-" aria-label="Fewer agents"${busy || n <= lo ? " disabled" : ""}>−</button>` +
+      `<b>${esc(n)}</b>` +
+      `<button type="button" data-act="agents+" aria-label="More agents"${busy || n >= hi ? " disabled" : ""}>+</button></span>`;
+  }
+  html += `<span class="src">limit: ${a.source === "dashboard" ? "set here" : "default"} (${esc(lo)}–${esc(hi)}; scripts/agent-slots.sh)` +
+    `${a.source === "dashboard" && a.changed_at ? ` · ${esc(a.changed_at)}` : ""}</span>`;
+  if (agentsMsg) html += `<span class="mmsg">${esc(agentsMsg)}</span>`;
+  return html + `</div>`;
+}
+async function changeAgents(n) {
+  let tok = getToken();
+  if (!tok) {
+    tok = (window.prompt("Token from config/dashboard-token (kept in this browser):") || "").trim();
+    if (!tok) return;
+    setToken(tok);
+  }
+  agentsBusy = true; agentsMsg = "saving…"; render(lastStatus);
+  try {
+    const r = await fetch("api/coordinator", { method: "POST", headers: { "Content-Type": "application/json", "X-OCW-Token": tok },
+      body: JSON.stringify({ max_agents: n }) });
+    const res = await r.json().catch(() => ({}));
+    if (r.status === 403) { setToken(""); agentsMsg = "The token was not accepted – try again."; }
+    else if (!r.ok) agentsMsg = "Not saved: " + (res.error || r.status);
+    else agentsMsg = "Saved – sessions check it before they start an agent (running agents go on).";
+  } catch (e) { agentsMsg = "Not saved: " + e.message; }
+  agentsBusy = false;
+  await refresh();
+}
+$("coord").addEventListener("click", (e) => {
+  const b = e.target.closest ? e.target.closest("#agents-ctl button[data-act]") : null;
+  if (!b || b.disabled || !lastStatus || !lastStatus.agents) return;
+  const a = lastStatus.agents;
+  if (b.dataset.act === "agents-") changeAgents(Math.max(a.min ?? 1, a.max_agents - 1));
+  else if (b.dataset.act === "agents+") changeAgents(Math.min(a.max ?? 16, a.max_agents + 1));
+});
+
 function renderCoordinator(c, alerts, now) {
   const el = $("coord");
   if (!c) { el.style.display = "none"; return; }
@@ -543,6 +598,7 @@ function renderCoordinator(c, alerts, now) {
   if (!c.available) { el.innerHTML = html + `<div class="sub">${c.pending ? "first sample pending…" : "not available on this system (no /proc)"}</div>`; return; }
   const p = c.processes || {}, mem = c.memory || {}, th = c.thresholds || {};
   html += `<div class="sub">this machine · ${esc(p.processes)} processes · sampled ${dur(now - c.at)} ago</div>`;
+  html += agentsBlock(lastStatus.agents);
   const m = [];
   if (mem.total) m.push(meter("Memory", 100 * mem.used / mem.total, `${bytes(mem.used)} / ${bytes(mem.total)} · ${bytes(mem.available)} available`,
     100 - (th.mem_avail_pct_below || [25])[0], 100 - (th.mem_avail_pct_below || [25, 15])[1]));
@@ -619,7 +675,9 @@ function renderTasks(ct, now) {
   el.style.display = "";
   const run = ct.running || [], rec = ct.recent || [];
   const nrun = run.filter((t) => t.running).length;
+  const ag = lastStatus.agents, agCls = ag ? (ag.level === "bad" ? "bad" : ag.level === "warn" ? "warn" : "ok") : "";
   let html = `<h2><span class="dot ${nrun ? "ok" : ""}"></span>Claude tasks <span class="badge ${nrun ? "ok" : ""}">${nrun} running</span>` +
+    (ag ? `<span class="badge ${agCls}" title="agents allowed on the coordinator (set on its card)">agents ${ag.running == null ? "?" : esc(ag.running)} of ${esc(ag.max_agents)}</span>` : "") +
     `<span class="ctools"><label><input type="checkbox" id="show-finished"${showFinished ? " checked" : ""}> finished in 24 h (${rec.length})</label></span></h2>`;
   html += `<div class="sub">agents.jsonl of the coordinator · ${esc(ct.claude_sessions ?? "?")} Claude Code session${ct.claude_sessions === 1 ? "" : "s"} on ${esc((lastStatus.coordinator || {}).name || "deb")}` +
     `${ct.at ? ` · checked ${dur(now - ct.at)} ago` : ""}</div>`;

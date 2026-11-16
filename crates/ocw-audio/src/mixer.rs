@@ -13,6 +13,7 @@ use std::time::Duration;
 use web_time::Instant;
 
 use super::cues::{Cue, CueVoice};
+use super::drone::{DroneSound, DroneSynth};
 use super::dsp::smoothing;
 use super::mix::{Bus, BusGains};
 use super::others::{OthersFrame, OthersSynth};
@@ -46,6 +47,11 @@ pub enum MixerMsg {
     Weather(WeatherParams),
     /// A thunder arrives now.
     Thunder(ThunderSound),
+    /// Play a cue placed in the world: its left and right gains (spec
+    /// §2.11: the shutter at the photographer's camera).
+    PlacedCue(Cue, [f32; 2], Instant),
+    /// The photographer's drone (every frame while it flies; `None`: gone).
+    Drone(Option<DroneSound>),
 }
 
 /// See the module docs.
@@ -61,6 +67,10 @@ pub struct Mixer {
     gains_target: BusGains,
     gains_now: BusGains,
     voices: Vec<CueVoice>,
+    /// Cues placed in the world, with their left and right gains.
+    placed: Vec<(CueVoice, [f32; 2])>,
+    drone: DroneSynth,
+    drone_sound: Option<DroneSound>,
     /// Coefficient of the per-block smoothing.
     smooth: f32,
     /// Samples into the current block.
@@ -86,6 +96,9 @@ impl Mixer {
             gains_target: gains,
             gains_now: gains,
             voices: Vec::new(),
+            placed: Vec::new(),
+            drone: DroneSynth::new(sr),
+            drone_sound: None,
             smooth: smoothing(0.06, sr, BLOCK),
             phase: 0,
             rx: None,
@@ -112,8 +125,10 @@ impl Mixer {
             self.ride = RideSynth::new(sr);
             self.others = OthersSynth::new(sr);
             self.weather = WeatherSynth::new(sr);
+            self.drone = DroneSynth::new(sr);
             self.smooth = smoothing(0.06, sr, BLOCK);
             self.voices.clear();
+            self.placed.clear();
         }
     }
 
@@ -129,6 +144,12 @@ impl Mixer {
                     self.play(cue);
                 }
             }
+            MixerMsg::PlacedCue(cue, gains, at) => {
+                if at.elapsed() <= CUE_MAX_AGE {
+                    self.play_placed(cue, gains);
+                }
+            }
+            MixerMsg::Drone(d) => self.drone_sound = d,
         }
     }
 
@@ -140,10 +161,18 @@ impl Mixer {
         self.voices.push(CueVoice::new(cue, self.sr));
     }
 
+    /// Starts a cue placed in the world (`gains`: left, right).
+    pub fn play_placed(&mut self, cue: Cue, gains: [f32; 2]) {
+        if self.placed.len() >= MAX_VOICES {
+            self.placed.remove(0);
+        }
+        self.placed.push((CueVoice::new(cue, self.sr), gains));
+    }
+
     /// Cues playing now.
     #[cfg(test)]
     pub fn playing(&self) -> usize {
-        self.voices.len()
+        self.voices.len() + self.placed.len()
     }
 
     fn drain(&mut self) {
@@ -238,9 +267,18 @@ impl Mixer {
         // The weather, on the effects bus, in stereo.
         let (wl, wr) = self.weather.sample(&self.weather_now);
         let fx = RIDE_LEVEL * g.get(Bus::Effects);
+        // The photographer's shutter and drone, placed, on the effects bus.
+        let (mut pl, mut pr) = self.drone.sample(self.drone_sound.as_ref());
+        for (v, [l, r]) in &mut self.placed {
+            let s = v.sample(sr);
+            pl += s * *l;
+            pr += s * *r;
+        }
+        self.placed.retain(|(v, _)| !v.done(sr));
+        let pfx = g.get(Bus::Effects);
         (
-            soft_limit(centre + RIDE_LEVEL * others * ol + fx * wl),
-            soft_limit(centre + RIDE_LEVEL * others * or + fx * wr),
+            soft_limit(centre + RIDE_LEVEL * others * ol + fx * wl + pfx * pl),
+            soft_limit(centre + RIDE_LEVEL * others * or + fx * wr + pfx * pr),
         )
     }
 }
@@ -286,6 +324,37 @@ mod tests {
             m.render(chunk, channels);
         }
         out
+    }
+
+    /// The photographer's sounds (spec §2.11): the shutter where the
+    /// camera is (here on the left), the drone's buzz while it flies.
+    #[test]
+    fn the_shutter_and_the_drone_are_placed() {
+        let mut m = Mixer::new(SR, full());
+        m.apply(MixerMsg::PlacedCue(
+            Cue::Shutter,
+            [0.9, 0.1],
+            Instant::now(),
+        ));
+        let out = render(&mut m, 0.2, 2);
+        let l: Vec<f32> = out.iter().step_by(2).copied().collect();
+        let r: Vec<f32> = out.iter().skip(1).step_by(2).copied().collect();
+        assert!(rms(&l) > 3.0 * rms(&r), "{} {}", rms(&l), rms(&r));
+        render(&mut m, 0.5, 2);
+        assert_eq!(m.playing(), 0, "the shutter is over");
+        let quiet = rms(&render(&mut m, 0.2, 2));
+        m.apply(MixerMsg::Drone(Some(DroneSound {
+            left: 0.5,
+            right: 0.5,
+            rotor: 1.0,
+            doppler: 1.0,
+            cutoff_hz: 10_000.0,
+        })));
+        let buzz = rms(&render(&mut m, 0.5, 2));
+        assert!(buzz > quiet + 0.005, "{buzz} vs {quiet}");
+        m.apply(MixerMsg::Drone(None));
+        render(&mut m, 0.5, 2);
+        assert!(rms(&render(&mut m, 0.2, 2)) <= quiet + 1e-4);
     }
 
     fn rms(x: &[f32]) -> f32 {

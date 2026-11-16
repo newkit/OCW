@@ -34,6 +34,7 @@ pub mod night_sky;
 pub mod obstacles;
 pub mod ortho;
 pub mod package;
+pub mod photographer;
 pub mod platform;
 pub mod quality;
 pub mod ragdoll;
@@ -145,6 +146,13 @@ pub struct RideView {
     /// A guided camera path being played (spec §14 Phase 13 G5, flyover
     /// videos): the camera is put here instead of following the rider.
     pub guided_camera: Option<GuidedCamera>,
+    /// The ride photographer (spec §2.11): the person or the drone and
+    /// the flash; `None`: nobody there.
+    pub photographer: Option<photographer::PhotographerView>,
+    /// The Strava recording (spec §2.8.1): seconds recorded so far (the
+    /// "● Strava" badge) and its notice (started, saved, not set up).
+    pub strava_s: Option<f64>,
+    pub strava_message: Option<String>,
 }
 
 /// The camera's pose on a guided path (spec §14 Phase 13 G5).
@@ -269,6 +277,9 @@ impl RideView {
             hit_warning: None,
             camera_fx: CameraFx::default(),
             guided_camera: None,
+            photographer: None,
+            strava_s: None,
+            strava_message: None,
         }
     }
 
@@ -465,6 +476,8 @@ impl Plugin for OcwRenderPlugins {
             webgl::WebGlPlugin,
             // Colour-safe status colours, high contrast (spec §3.2.1 M9).
             access::AccessPlugin,
+            // The ride photographer: person, drone, flash, photos (§2.11).
+            photographer::PhotographerPlugin,
         ));
     }
 }
