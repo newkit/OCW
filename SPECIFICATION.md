@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 4.14 – November 2026
+Version 4.15 – November 2026
 
 | Version | Change |
 |---|---|
+| 4.15 | **The unicorn turns back into the rider anywhere; landing away from a road switches wild mode on** (asked by the user 2026-11-16; §14 Phase 13 13A, changes Q2): on or near a road as before; within 60 m beside a road with today's wild mode; farther away with **free 2D riding off the road** (new: 2D position on the terrain, terrain gradient, off-road surfaces, collisions with buildings, trees and obstacles, water impassable); back to the road by riding onto it or with J. Open questions Phase 13 Q7–Q9 (steep terrain, where landing is allowed, counting off-road riding) |
 | 4.14 | **Strava recording: each S … S is its own activity; ride photos stay local with a folder link in the history, are taken only for a nice enough view, and carry their time in EXIF, not in the picture** (decisions by the user, 2026-11-16; §2.8.1 Q1–Q4, as proposed). All §2.8.1 questions are decided |
 | 4.13 | **Rider status signs cannot be hidden: headphones, phone and VR headset are always visible to everybody** (decision by the user, 2026-11-16; §2.6 Q3). All §2.6 questions are decided |
 | 4.12 | **Rider names are reserved per account worldwide and unique on every server** (decision by the user, 2026-11-16; §14 Phase 4 4N Q22): the backend refuses a name another account holds; a rider without an account whose name is taken on a server picks another when joining |
@@ -4638,6 +4639,14 @@ Both builds run at the headless page's 60 Hz cap on this GPU, so the presets' sa
 - **Hotkey G** (free today; rebindable later with the other keys, §3.2.1 Controls) toggles god mode; console `god [on|off]`; gamepad: Select / Back + North (a chord, so it is not pressed by accident). The menu gets *Ride → God mode* with the same switch.
 - **Entering:** a short transformation (0.6 s: a sparkle burst, the rider and bike fade out while the unicorn fades in and rises 3 m), the camera switches from the chase camera to the flight camera behind the unicorn, the mouse pointer is captured (hidden, relative motion).
 - **Leaving (G again) – lands where the unicorn is (decided, Q2):** the unicorn glides down (at most 2 s) and turns back into the rider and bike **on the nearest road below it**, standing still: in free ride (§2.2.1) the nearest road of the graph (`--start`-like placement, the path starts there); on a fixed route the nearest point of the route (the rider continues along the route from there). The landing spot is marked under the unicorn while flying (a glowing ring on the road), so the rider sees where they will land. **Shift + G** instead flies back to where the rider left the road (a quick, eased flight, at most 2 s however far) and rides on from there. Esc in god mode first releases the pointer (a second Esc opens the menu, §3.2.1).
+- **Landing anywhere, in wild mode off the road (asked by the user 2026-11-16, v4.15; changes Q2):** "make it for the unicorn possible to convert into a rider everywhere, turn on wild mode when landing away from road." The unicorn turns back into the rider **where it is**, not only on the nearest road:
+  - *On or near a road* (the landing spot within the road's width + 2 m): as before – on the road, the path starts there, wild mode as it was.
+  - *Away from a road:* the rider lands **on the terrain below the unicorn** (`Terrain::height`, never inside a building, a tree trunk, water or an obstacle of `OBST` – the landing ring moves to the nearest free spot and shows red where landing is impossible) and **wild mode is switched on** (autodrive off, manual lean steering, §5.2.1). The landing ring shows the spot as now.
+  - *Today's model allows at most 60 m beside a road* (§5.2.1 *Wild mode*: the rider moves along a path with a lateral offset). Landing within 60 m of a road uses that: the nearest road becomes the path, the offset is the distance. **Farther away needs free 2D riding off the road** (new, below).
+  - **Free 2D riding off the road (new, server-authoritative §6.1):** a rider in wild mode beyond the 60 m band (or landed there) moves in 2D on the terrain: position (x, z) and heading in the server's state (additive protocol fields, §6.2), the gradient from `Terrain::height` along the heading (not the road's), rolling resistance by the land use under the wheels (meadow, field, forest floor, gravel, rock, sand – the T2 surface classes plus off-road ones), collisions with buildings, trees, walls and fences (K3 `OBST`, the full model), water impassable (the rider stops at the shore). Steering is the lean steering of wild mode; the trainer gets the terrain gradient (SIM). Drafting only with riders within reach as on the road.
+  - *Back to the road:* riding onto a road within 2 m of its edge joins it (the path starts there, wild mode stays on until the rider switches it off, as today); **J** (rejoin) glides back to the nearest road like the unicorn's landing (at most 2 s); **G** flies again.
+  - *Steep terrain, cliffs and the edge of the world:* see the open questions Q7 – Q9 below.
+
 - **Who may use it:** single player on the local server: always. Shared sessions: the host decides (`ServerConfig.god_access`: anyone / host / nobody, like the world switch and the time machine, sent in `Welcome`); in a running **event** (race, group ride, time trial: from countdown to the rider's finish) god mode is **not available** – before and after it is. The kiosk / show mode never enters it by itself.
 
 #### 13B – Flight controls
@@ -4695,6 +4704,9 @@ Both builds run at the headless page's 60 Hz cap on this GPU, so the presets' sa
 - **Q4 – Trainer while flying: decided (2026-11-14, dashboard):** **flat road** (lowest resistance; ERG keeps its target) – as built.
 - **Q5 – Wings: decided (2026-11-13):** a classic unicorn with large feathered wings like a pegasus.
 - **Q6 – Name in the UI: decided (2026-11-14, dashboard):** **"Unicorn mode"** in the menu, HUD, settings and messages (World → Unicorn mode); the console commands stay `god`, `god.*`.
+- **Q7 – Steep terrain off the road:** proposal: the gradient is ridden as on a road up to **25 %**; steeper uphill the rider stops (a "too steep" notice, as at a wall), steeper downhill is ridden with the speed limited (no tumbling). Alternative: everything is rideable at its real gradient.
+- **Q8 – Where landing is allowed:** proposal: **anywhere on land inside the world's tiles** (not on water, buildings or obstacles; the ring shows red there). In **events and fixed routes** the unicorn still lands on the route as today (a race stays on its course); free ride and solo rides allow landing anywhere. Alternative: anywhere, also in events.
+- **Q9 – Riding off the road and the record:** proposal: off-road riding counts like any riding – distance, elevation and time in the FIT file (the GPS track follows the real off-road position) and hearts by work as always (4E). Alternative: off-road distance not counted.
 
 #### 13I – Status (v2.58: G1 and G2 done, G4 in part; v2.61: G3 done, the gaps closed; v3.22: the guided camera path and the rider list)
 
