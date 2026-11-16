@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.98 – November 2026
+Version 3.99 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.99 | **All world packages are rebuilt and deployed once the junction profile work (J2) is checked; until then J1 runs on the current packages** (decision from the build dashboard, 2026-11-16; §4.8.8 Q5, as proposed). All §4.8.8 questions are decided |
 | 3.98 | **Signed in, riders are shown by their own rider name stored with the account; the Google / Strava name is never shown** (decision from the build dashboard, 2026-11-16; §14 Phase 4 4N Q10, as proposed) |
 | 3.97 | **After the export the model files are the only source; all shape generators are deleted at once** (decision from the build dashboard, 2026-11-16; §14 Phase 15 Q6) |
 | 3.96 | **The Blender add-on for model export is postponed: not built in Phase 15 for now** (decision from the build dashboard, 2026-11-16; §14 Phase 15 Q5) |
@@ -2033,7 +2034,7 @@ Two optional, additive sections, which older clients skip: `JNCT` (precomputed p
 - **Q2 – The main road's centre line through a junction: decided (2026-11-16, dashboard): per world, from real images** – the user: "look at real images and extract the variants. add this workflow to the world builder spec. junctions might look different at different places in the world, so for each world look at the local data." The lines through a junction are no single global rule: each world takes them from its region's real junctions, with the workflow of §4.8.9. The former proposal (the main road's centre line **continues** across the junction, the edge lines break at the side roads' mouths, the side roads' lines end at the mouth) stays the fallback for a world without its table yet.
 - **Q3 – Give-way lines without OSM tags: decided (2026-11-16, dashboard): as proposed** – give-way and stop lines **only where OSM tags them** (`highway=stop|give_way`, as now); no line is invented on untagged side roads.
 - **Q4 – Kerb radii of the corners: decided (2026-11-16, dashboard): per world, from real images** – the user: "Not all roads have kerbs, e.g. outside of cities there are no curbs. Look at images." Whether a junction corner has a kerb at all, and its radius, come from the region's images with the workflow of §4.8.9 (by road class and setting: town or open country). Without a kerb the carriageway edge is still rounded, as the verge or shoulder. The former proposal's radii by the smaller road's class (8 m primary / secondary / trunk, 6 m tertiary / unclassified / residential, 3 m service / track, 1.5 m cycleway / path) stay the fallback for a world without its table, with kerbs only where the road already has them (towns, T5).
-- **Q5 – Package rebuild for J2:** proposal – rebuild and deploy all packages (Liechtenstein, the three Black Forest packages, Tenerife) once J2 is checked. Until then J1 runs on the current packages.
+- **Q5 – Package rebuild for J2: decided (2026-11-16, dashboard): as proposed** – all packages (Liechtenstein, the three Black Forest packages, Tenerife) are rebuilt and deployed once J2 is checked; until then J1 runs on the current packages.
 
 
 #### 4.8.9 Junction variants per region (decided 2026-11-16, §4.8.8 Q2)
