@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.99 – November 2026
+Version 4.00 – November 2026
 
 | Version | Change |
 |---|---|
+| 4.00 | **All four build machines build: leela again, Win11Builder for any work** (the user, 2026-11-16: "use all build servers now"; §11.2, CLAUDE.md): leela, excluded since 2026-11-13, takes heavy Linux work and full merge checks when marge is busy; Win11Builder takes general builds and tests behind its Windows work, within its one slow slot. All four were already enabled in the dashboard |
 | 3.99 | **All world packages are rebuilt and deployed once the junction profile work (J2) is checked; until then J1 runs on the current packages** (decision from the build dashboard, 2026-11-16; §4.8.8 Q5, as proposed). All §4.8.8 questions are decided |
 | 3.98 | **Signed in, riders are shown by their own rider name stored with the account; the Google / Strava name is never shown** (decision from the build dashboard, 2026-11-16; §14 Phase 4 4N Q10, as proposed) |
 | 3.97 | **After the export the model files are the only source; all shape generators are deleted at once** (decision from the build dashboard, 2026-11-16; §14 Phase 15 Q6) |
@@ -2512,9 +2513,9 @@ Platforms are implemented one after another, not in parallel:
   | Machine | System | Role |
   |---|---|---|
   | marge | Debian, 12 cores, AMD GPU, Bluetooth with the Wahoo KICKR, kiosk screen | Main Linux machine: full checks of every merge (fmt, clippy plain and with voice, `cargo test --workspace`, `make test-wasm`), X11 / Wayland screenshots, videos and scene renders, world packages, the kiosk, BLE hardware tests, release AppImages, the multiplayer test's server |
-  | leela | Fedora, 16 cores, AMD GPUs, second kiosk screen | Excluded from building until the user says otherwise (disabled in the dashboard); only its kiosk (Tenerife); deploys allowed |
+  | leela | Fedora, 16 cores, AMD GPUs, second kiosk screen | Building again since v4.00 (the user, 2026-11-16: "use all build servers now"; excluded 2026-11-13 – 2026-11-16): heavy Linux work in parallel with marge – agent checks, full checks of merges when marge is busy, release and world builds, renders – and its kiosk (Tenerife) |
   | macos | Mac M1, 8 cores, 16 GB | macOS builds and checks, the touched crates of a merge, smaller tasks (a crate's tests, clippy, the wasm check) |
-  | Win11Builder | Windows 11, 6 cores, 8 GB | Windows-related builds only: Windows checks of merged code, Windows-specific fixes, Windows release zips; one slot, at most 2 cargo jobs (each MSVC link of a Bevy binary takes ~5 GB: `OCW_REMOTE_JOBS=2` per call, or `jobs = 2` in its `machines.toml` entry) |
+  | Win11Builder | Windows 11, 6 cores, 8 GB | All work since v4.00 (before: Windows-related builds only), Windows first: Windows checks of merged code, Windows-specific fixes, Windows release zips; one slot, at most 2 cargo jobs (each MSVC link of a Bevy binary takes ~5 GB: `OCW_REMOTE_JOBS=2` per call, or `jobs = 2` in its `machines.toml` entry) |
 
 - **Configuration** (all git-ignored; a git worktree uses the main checkout's `config/`): `config/machines.toml` (hand-edited copy of the documented `config/machines.example.toml`: `name`, `os`, `host`, `user`, `identity_file`, `shell`, `repo_path`, optional `port`, `slots`, `jobs`, `sccache_size`, `connect_timeout_s`), `config/ssh/` (keys and `known_hosts`, strict host key checking), `config/build-machines.toml` (the dashboard's machine settings, the source of truth for which machines may build), `config/dashboard-token` (the dashboard's write token). `config/` is never copied to a machine; its contents are never printed, logged or committed.
 - **`scripts/remote.sh MACHINE ACTION`:** `run CMD` (snapshot, slot, sync, run; `Cargo.lock` copied back; the command's exit code), `sync`, `ssh [CMD]`, `fetch REMOTE_PATH LOCAL_DIR`, `put LOCAL_FILE… REMOTE_DIR` (also git-ignored files, e.g. world data, into the checkout), `field KEY` (a machine setting for scripts), `enabled` (exit 0 / 3) and `slots` (both without ssh). `main` builds in `repo_path`, every other branch in `<repo_path>-<branch>` with its own `target/` (`OCW_REMOTE_DIR` overrides); branch checkouts build with 4 cargo jobs, the main checkout with all cores, a machine's `jobs` caps both, `OCW_REMOTE_JOBS` overrides per call. `data/` and `target/` are never synced: world data is built on the machine or copied with `put`. Further switches: `OCW_REMOTE_SLOTS`, `OCW_SCCACHE=0`, `OCW_BUILD_LOG=0`, `OCW_PROFILE_SWEEP=0`, `OCW_REMOTE_DEPLOY=1`, `OCW_WIN_HANDSHAKE=1`, `OCW_SEED=1`, `OCW_CARGO_SPLIT=1` (the last two off, see below).
