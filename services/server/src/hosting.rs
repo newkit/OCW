@@ -390,7 +390,9 @@ mod tests {
     use super::*;
     use crate::portmap::MemoryRouter;
     use crate::portmap::tests::found;
+    #[cfg(unix)]
     use crate::voice::launcher::tests::{fake, port_lock};
+    #[cfg(unix)]
     use std::fs;
 
     fn listen() -> SocketAddr {

@@ -70,9 +70,14 @@ for _ in $(seq 1 1800); do
   sleep 0.1
 done
 grep -q "voice chat on (bundled LiveKit" "$log" 2>/dev/null; check "Host a ride starts the bundled voice server" $? "$(grep -i voice "$log" 2>/dev/null | tail -3)"
-app=$(pgrep -f "target/debug/ocw-desktop" | head -n 1)
-lk=$(pgrep -x livekit-server -P "$app" 2>/dev/null | head -n 1)
-[ -n "$lk" ]; check "livekit-server is the app's child" $?
+# Our voice server: the livekit-server whose config has this run's port
+# (another one may run on the machine, e.g. the kiosk's).
+lk=""
+for p in $(pgrep -x livekit-server); do
+  if tr '\0' '\n' <"/proc/$p/environ" 2>/dev/null | grep -qx "port: $sig"; then lk=$p; break; fi
+done
+app=$([ -n "$lk" ] && ps -o ppid= -p "$lk" | tr -d ' ')
+[ -n "$lk" ] && [ "$(ps -o comm= -p "$app" 2>/dev/null)" = ocw-desktop ]; check "livekit-server is the app's child" $? "$(ps -o comm= -p "$app" 2>/dev/null)"
 secret=$(tr '\0' '\n' <"/proc/$lk/environ" 2>/dev/null | sed -n 's/^LIVEKIT_KEYS=[^:]*: //p')
 [ ${#secret} = 64 ]; check "the API secret is in livekit-server's environment" $?
 ! tr '\0' ' ' <"/proc/$lk/cmdline" 2>/dev/null | grep -qF "$secret"; check "the secret is not on its command line" $?
