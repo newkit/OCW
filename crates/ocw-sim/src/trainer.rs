@@ -518,7 +518,9 @@ mod tests {
         assert!(!sent.is_empty(), "the keepalive");
         assert!(winds(&sent).iter().all(|w| *w == 5.0), "{:?}", winds(&sent));
         // The same wind lasting: it arrives within half a minute.
-        let t = *ride(&mut c, 32.5, 30.0, gust).last().expect("the stronger wind");
+        let t = *ride(&mut c, 32.5, 30.0, gust)
+            .last()
+            .expect("the stronger wind");
         assert_eq!(t.wind_speed_mps, 6.0);
         // A tailwind (the road turned): negative wind, a lower folded
         // gradient, once the smoothed wind has turned (a turn from +6 to
@@ -542,7 +544,10 @@ mod tests {
         assert_eq!(t.wind_speed_mps, 0.0);
         assert_eq!(t.wind_grade, t.grade);
         assert!((t.cw_kg_per_m - 0.5 * AIR_DENSITY * profile.cda_m2).abs() < 1e-12);
-        assert!(c.update_in(243.0 + dt, 0.04, 0.04, 1.0, None, 10.0).is_none());
+        assert!(
+            c.update_in(243.0 + dt, 0.04, 0.04, 1.0, None, 10.0)
+                .is_none()
+        );
         // Calm air folds nothing.
         assert_eq!(wind_as_grade(0.0, 10.0, 0.2, 80.0), 0.0);
     }

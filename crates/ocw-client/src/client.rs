@@ -4331,10 +4331,12 @@ mod tests {
 
         /// (min, max) of `f` over the commands sent.
         fn span(&self, f: impl Fn(&ocw_devices::SimulationParameters) -> f64) -> (f64, f64) {
-            self.sent.iter().map(|(_, p)| f(p)).fold(
-                (f64::INFINITY, f64::NEG_INFINITY),
-                |(lo, hi), v| (lo.min(v), hi.max(v)),
-            )
+            self.sent
+                .iter()
+                .map(|(_, p)| f(p))
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
+                    (lo.min(v), hi.max(v))
+                })
         }
 
         /// How often a Wahoo KICKR (its own control point, every write
@@ -4343,7 +4345,10 @@ mod tests {
             use ocw_devices::ble::protocol::TrainerProtocol;
             use ocw_devices::gatt::uuids;
             let mut proto = TrainerProtocol::new(
-                &[uuids::CYCLING_POWER_MEASUREMENT, uuids::WAHOO_TRAINER_CONTROL],
+                &[
+                    uuids::CYCLING_POWER_MEASUREMENT,
+                    uuids::WAHOO_TRAINER_CONTROL,
+                ],
                 None,
             );
             let mut count = std::collections::BTreeMap::new();
@@ -4400,8 +4405,13 @@ mod tests {
         for _ in 0..steps {
             h.ride(300.0, ocw_core::SIM_DT);
             let grade = h.client.track().sample(h.client.state().distance).grade;
-            assert!((grade - 0.1).abs() < 1e-6, "the road is 10 % everywhere: {grade}");
-            if let Some(ocw_devices::DeviceCommand::SetSimulation(p)) = t.follow(h.time_s, &h.client) {
+            assert!(
+                (grade - 0.1).abs() < 1e-6,
+                "the road is 10 % everywhere: {grade}"
+            );
+            if let Some(ocw_devices::DeviceCommand::SetSimulation(p)) =
+                t.follow(h.time_s, &h.client)
+            {
                 sent.push((h.time_s, p));
             }
         }
@@ -4431,8 +4441,18 @@ mod tests {
         // thinning air re-sent the KICKR's whole SIM mode on the climb.
         for (name, weather, max_span, max_wind_writes) in [
             ("still air", calm, 0.001, 0),
-            ("the default weather", ocw_weather::WeatherState::default(), 0.012, 4),
-            ("windy", ocw_weather::presets::preset("windy").unwrap(), 0.10, 30),
+            (
+                "the default weather",
+                ocw_weather::WeatherState::default(),
+                0.012,
+                4,
+            ),
+            (
+                "windy",
+                ocw_weather::presets::preset("windy").unwrap(),
+                0.10,
+                30,
+            ),
         ] {
             let r = ride_the_climb(weather, 300.0);
             let (g0, g1) = r.span(|p| p.grade);
@@ -4450,7 +4470,10 @@ mod tests {
                 r.wahoo_writes(),
             );
             assert!((g0, g1) == (0.05, 0.05), "{name}: 10 % at 50 % difficulty");
-            assert!((l1 - l0) / l0 <= max_span, "{name}: the load varies {l0:.1}..{l1:.1} N");
+            assert!(
+                (l1 - l0) / l0 <= max_span,
+                "{name}: the load varies {l0:.1}..{l1:.1} N"
+            );
             let writes = r.wahoo_writes();
             let wind_writes = writes.get(&ocw_devices::gatt::wahoo::op::SET_WIND_SPEED);
             assert!(
