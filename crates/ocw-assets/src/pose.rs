@@ -848,9 +848,186 @@ pub fn idle(rider: &RiderRig, t: f32) -> Pose {
     }
 }
 
+/// How far the hips drop when the photographer crouches (m), and how far
+/// back they go.
+const CROUCH_DROP: f32 = 0.42;
+const CROUCH_BACK: f32 = 0.14;
+/// The eyes in the head's frame (from the neck pivot), and the camera's
+/// lens in front of them (m).
+pub const EYES: Vec3 = Vec3::new(0.0, 0.11, -0.085);
+pub const LENS_AHEAD: f32 = 0.13;
+
+/// What the ride photographer holds (spec §2.11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Holding {
+    /// A camera to the eye.
+    Camera,
+    /// A drone's remote at the chest, the head up at the drone.
+    Remote,
+}
+
+/// The ride photographer (spec §2.11): the rider model on foot, standing
+/// or crouching, the camera held to the eye with both hands (or the
+/// drone's remote at the chest), the head (and the camera) pitched by
+/// `pitch` (rad, up), breathing a little with `t`. In the rider's own
+/// frame, the feet planted where the rest pose has them. Returns the pose
+/// and the lens (the camera's front, where the photo is taken from) and
+/// the hands' centre (the camera's body or the remote).
+pub fn photographer(
+    rider: &RiderRig,
+    crouch: bool,
+    pitch: f32,
+    holding: Holding,
+    t: f32,
+) -> (Pose, Vec3, Vec3) {
+    use std::f32::consts::TAU;
+    let breath = (TAU * t / 4.4).sin();
+    let pitch = pitch.clamp(-0.9, 1.1);
+    let (drop, back, lean) = if crouch {
+        (CROUCH_DROP, CROUCH_BACK, 0.42)
+    } else {
+        (IDLE_SINK, 0.0, 0.05)
+    };
+    let pelvis_pos = Vec3::new(0.0, -drop, back);
+    let pelvis_rot = Quat::IDENTITY;
+    // The upper body leans forward over the knees when crouching; the
+    // chest rises with the breath.
+    let torso_world = Quat::from_rotation_x(-lean + 0.01 * breath);
+    let torso_pos = pelvis_pos + pelvis_rot * rider.torso;
+    // Legs: the feet stay where they stand (two-bone IK to the rest
+    // ankles), the knees forward.
+    let mut thighs = [Quat::IDENTITY; 2];
+    let mut shins = [Quat::IDENTITY; 2];
+    let mut feet = [Quat::IDENTITY; 2];
+    for s in 0..2 {
+        let hip = pelvis_pos + pelvis_rot * rider.hips[s];
+        let ankle = rider.hips[s] - Vec3::Y * rider.leg();
+        let out = if s == 0 { -Vec3::X } else { Vec3::X };
+        let (knee, end) = two_bone(
+            hip,
+            ankle,
+            rider.thigh,
+            rider.shin,
+            Vec3::NEG_Z + out * 0.15,
+        );
+        let hinge = (end - hip).cross(knee - hip).normalize_or(Vec3::X);
+        let thigh_w = segment_rotation(knee - hip, hinge);
+        let shin_w = segment_rotation(end - knee, hinge);
+        thighs[s] = pelvis_rot.inverse() * thigh_w;
+        shins[s] = thigh_w.inverse() * shin_w;
+        feet[s] = shin_w.inverse();
+    }
+    // The head: level with the world (whatever the lean) and pitched.
+    let head_world = Quat::from_rotation_x(pitch);
+    let neck = torso_pos + torso_world * rider.neck;
+    let eyes = neck + head_world * EYES;
+    let look = head_world * Vec3::NEG_Z;
+    let lens = eyes + look * LENS_AHEAD;
+    // The hands: either side of the camera body (behind the lens), or on
+    // the remote in front of the chest.
+    let (centre, frame) = match holding {
+        Holding::Camera => (
+            eyes + look * (LENS_AHEAD * 0.45) - Vec3::Y * 0.035,
+            head_world,
+        ),
+        Holding::Remote => (
+            torso_pos + torso_world * Vec3::new(0.0, rider.neck.y * 0.55, -0.3),
+            torso_world * Quat::from_rotation_x(0.5),
+        ),
+    };
+    let mut upper_arms = [Quat::IDENTITY; 2];
+    let mut forearms = [Quat::IDENTITY; 2];
+    for s in 0..2 {
+        let side = if s == 0 { -1.0 } else { 1.0 };
+        let shoulder = torso_pos + torso_world * rider.shoulders[s];
+        let grip = centre + frame * Vec3::new(side * 0.075, 0.0, 0.0);
+        let pole = Vec3::new(side * 0.8, -0.9, 0.2);
+        let (elbow, end) = two_bone(shoulder, grip, rider.upper_arm, rider.forearm, pole);
+        let hinge = (end - shoulder)
+            .cross(elbow - shoulder)
+            .normalize_or(Vec3::X);
+        let upper_w = segment_rotation(elbow - shoulder, hinge);
+        let fore_w = segment_rotation(end - elbow, hinge);
+        upper_arms[s] = torso_world.inverse() * upper_w;
+        forearms[s] = upper_w.inverse() * fore_w;
+    }
+    (
+        Pose {
+            bike_roll: 0.0,
+            crank: Quat::IDENTITY,
+            pedals: [Quat::IDENTITY; 2],
+            pelvis: (pelvis_pos, pelvis_rot),
+            torso: pelvis_rot.inverse() * torso_world,
+            head: torso_world.inverse() * head_world,
+            thighs,
+            shins,
+            feet,
+            upper_arms,
+            forearms,
+        },
+        lens,
+        centre,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The ride photographer (spec §2.11): the feet planted, the hands at
+    /// the camera in front of the eyes, the lens ahead of the face and
+    /// along the pitch; crouching lowers the lens by about 0.6 m; with the
+    /// remote the hands are at the chest.
+    #[test]
+    fn the_photographer_holds_the_camera_to_the_eye() {
+        let mut m = crate::rider::build(crate::rider::Detail::High);
+        let rig = RiderRig::from_model(&m).unwrap();
+        let rest = m.clone();
+        let at =
+            |m: &Model, name: &str| m.world(m.node(name).unwrap()).transform_point3(Vec3::ZERO);
+        let ankles = nodes::FOOT.map(|f| at(&rest, f));
+        let mut lens_heights = Vec::new();
+        for crouch in [false, true] {
+            for pitch in [-0.2f32, 0.0, 0.3] {
+                let (p, lens, _) = photographer(&rig, crouch, pitch, Holding::Camera, 1.3);
+                p.apply(&mut m);
+                for (s, ankle) in ankles.iter().enumerate() {
+                    let a = at(&m, nodes::FOOT[s]);
+                    assert!(
+                        a.distance(*ankle) < 3e-3,
+                        "crouch {crouch}: ankle {s} at {a}"
+                    );
+                }
+                let head = at(&m, nodes::HEAD);
+                for s in 0..2 {
+                    let hand = at(&m, nodes::GRIP[s]);
+                    assert!(hand.distance(lens) < 0.2, "hand {s} {hand} lens {lens}");
+                    assert!(hand.z < head.z, "hands in front of the face");
+                }
+                assert!(lens.z < head.z - 0.1, "the lens ahead of the face");
+                let eyes = head + Quat::from_rotation_x(pitch) * EYES;
+                let dir = (lens - eyes).normalize();
+                assert!((dir.y - pitch.sin()).abs() < 0.15, "pitch {pitch}: {dir}");
+                if pitch == 0.0 {
+                    lens_heights.push(lens.y);
+                }
+            }
+        }
+        let drop = lens_heights[0] - lens_heights[1];
+        assert!(
+            (0.3..0.8).contains(&drop),
+            "crouching lowers the lens: {drop}"
+        );
+        // With the remote: the hands in front of the chest, the head up.
+        let (p, _, hands) = photographer(&rig, false, 0.6, Holding::Remote, 0.0);
+        p.apply(&mut m);
+        let head = at(&m, nodes::HEAD);
+        for s in 0..2 {
+            let hand = at(&m, nodes::GRIP[s]);
+            assert!(hand.y < head.y - 0.2 && hand.z < head.z, "{hand}");
+            assert!(hand.distance(hands) < 0.2, "on the remote: {hand} {hands}");
+        }
+    }
 
     /// The idle stance (spec 4C): both feet stay planted and flat, the
     /// arms hang beside the body with soft elbows (not out like the rest

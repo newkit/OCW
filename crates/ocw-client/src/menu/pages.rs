@@ -1211,6 +1211,8 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             setting_row(settings, "display.sky", "Sky"),
             setting_row(settings, "display.fps", "FPS counter"),
             setting_row(settings, "display.fullscreen", "Fullscreen (next start)"),
+            // The ride photographer (spec §2.11): photos of the ride.
+            setting_row(settings, "photographer.enabled", "Ride photographer"),
         ],
         Page::Riders => {
             let mut out: Vec<Row> = riders
