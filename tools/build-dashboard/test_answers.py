@@ -147,6 +147,20 @@ class HttpTest(unittest.TestCase):
         self.assertEqual(self.req("/api/restart", {}, token=self.dash.token)[0], 404)
         self.assertFalse(self.dash.snapshot()["restart"])
 
+    def test_version_in_page_status_and_readme(self):
+        # The page is served with its version (no placeholder left) and the
+        # status says which version and commit the server runs.
+        with urllib.request.urlopen(self.base + "/", timeout=10) as resp:
+            page = resp.read().decode()
+        self.assertNotIn("@VERSION@", page)
+        self.assertIn('const PAGE_VERSION = "%s"' % d.VERSION, page)
+        self.assertEqual(self.dash.snapshot()["dashboard"]["version"], d.VERSION)
+        # The newest line of README.md's Versions table is this version.
+        readme = (Path(d.__file__).parent / "README.md").read_text(encoding="utf-8")
+        rows = [ln for ln in readme.splitlines() if ln.startswith("| 1.") or ln.startswith("| 2.")]
+        self.assertTrue(rows, "README.md has a Versions table")
+        self.assertTrue(rows[0].startswith("| %s |" % d.VERSION), (rows[0], d.VERSION))
+
     def test_favicon(self):
         # The tab's icon, also where browsers look for it by themselves.
         for path in ("/favicon.svg", "/favicon.ico"):

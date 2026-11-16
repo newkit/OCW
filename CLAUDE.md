@@ -113,3 +113,4 @@ Linux first, then Windows, then macOS (§11.1). Linux is the primary dev/test pl
 ## Repository conventions
 
 - The main branch is `main`.
+- **The build dashboard is versioned** (user, 2026-11-16): every change of `tools/build-dashboard/` (server, page or systemd unit) bumps `VERSION` in `dashboard.py` and adds a row to the *Versions* table in its README (minor for features, patch for fixes; a test checks they match), noting whether the unit changed. After pushing, restart the running dashboard (the page's *Restart* button, or `systemctl --user restart ocw-build-dashboard.service` with `XDG_RUNTIME_DIR=/run/user/$(id -u)`) – a changed unit needs `make dashboard-install` in the main checkout; open pages reload themselves on the new version.

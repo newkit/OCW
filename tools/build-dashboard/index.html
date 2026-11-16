@@ -146,9 +146,11 @@ footer { padding: 0 16px 24px; font-size: 12px; color: var(--muted); }
 <body>
 <header>
   <h1>OCW build servers</h1>
+  <span class="muted" id="version" title="build dashboard version (tools/build-dashboard/README.md, Versions)">v@VERSION@</span>
   <span class="muted" id="updated">loading…</span>
   <button type="button" id="restart" class="restartb" style="display:none">Restart</button>
 </header>
+<section id="update"></section>
 <section id="alerts"></section>
 <section class="overview" id="overview"></section>
 <section class="chips" id="chips"></section>
@@ -682,6 +684,27 @@ function render(st) {
   rb.disabled = !!restarting;
   rb.title = st.started_at ? "Restart the dashboard (running since " + new Date(st.started_at * 1000).toLocaleString() + ")" : "Restart the dashboard";
   setIcon(iconState(st));
+  checkVersion(st);
+}
+
+// The page knows the dashboard version it was served with; when the server
+// runs another one (pulled and restarted), the page reloads itself – unless
+// something is being typed, then a banner offers the reload.
+const PAGE_VERSION = "@VERSION@";
+function checkVersion(st) {
+  const d = st.dashboard || {};
+  if (d.version) $("version").textContent = "v" + PAGE_VERSION + (d.commit ? " · " + d.commit : "");
+  if (!d.version || d.version === PAGE_VERSION) { $("update").innerHTML = ""; return; }
+  const a = document.activeElement, typing = a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.value;
+  let tried = null;
+  try { tried = sessionStorage.getItem("ocw-dashboard-reload"); } catch (e) {}
+  if (!typing && tried !== d.version) {
+    try { sessionStorage.setItem("ocw-dashboard-reload", d.version); } catch (e) {}
+    location.reload();
+    return;
+  }
+  $("update").innerHTML = `<div class="alert warn">The dashboard was updated to v${esc(d.version)} (this page is v${esc(PAGE_VERSION)}). ` +
+    `<a href="" onclick="location.reload(); return false">Reload</a></div>`;
 }
 
 // The tab's icon shows the state at a glance (favicon.svg, its dot): red for

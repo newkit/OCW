@@ -21,6 +21,29 @@ python3 -m unittest discover tools/build-dashboard            # tests (no networ
 In a git worktree it reads the main checkout's `config/` (like
 `scripts/remote.sh`); `--config DIR` overrides.
 
+## Versions
+
+The dashboard has its own version, `VERSION` in `dashboard.py` (also
+`dashboard.py --version`, the page's header with the checkout's commit, and
+`dashboard` in `/api/status`). **Every change of the dashboard – server, page
+or systemd unit – bumps it and adds a line here** (minor for features, patch
+for fixes; a test checks that the newest line here matches `VERSION`). An
+open page reloads itself when the server runs another version (after a pull
+and a restart); while something is typed it shows a banner instead.
+
+When a change touches `ocw-build-dashboard.service`, the running unit changes
+only after `make dashboard-install` (it copies the unit, reloads systemd and
+restarts); every other change needs only a restart (the page's *Restart*
+button, or `systemctl --user restart ocw-build-dashboard.service`).
+
+| Version | Date | Change | Unit changed |
+|---|---|---|---|
+| 1.4.0 | 2026-11-16 | Versioning: `VERSION`, `--version`, version and commit in the header and `/api/status`, the page reloads itself on a new version | no |
+| 1.3.0 | 2026-11-16 | Temp files on disk (`TMPDIR=%h/tmp` in the unit; deb's `/tmp` is a tmpfs); the Claude tasks section also reads `~/tmp/claude-*` | **yes** – `make dashboard-install` |
+| 1.2.0 | 2026-11-16 | *Restart* button (`POST /api/restart`, token), and a changed `config/machines.toml` restarts it with the new machines | no |
+| 1.1.0 | 2026-11-16 | Favicon: a bicycle wheel with a live status dot | no |
+| 1.0.0 | 2026-11-15 | Everything before versioning: machines, tasks and queue, open questions and answers, enable/disable and slots, janitor, art status, coordinator (deb) card, Claude tasks | – |
+
 ## What it shows
 
 Every machine is polled every 5 s in its own thread, with one SSH call that
