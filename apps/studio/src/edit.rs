@@ -75,6 +75,8 @@ pub struct Studio {
     pub way_scope: bool,
     /// The last *Build package*.
     pub build: Option<BuildJob>,
+    /// The Routes workspace: its document, the road graph, the planners.
+    pub routes: crate::routes::RouteTools,
 }
 
 impl Studio {
@@ -90,6 +92,7 @@ impl Studio {
             patch_file: None,
             way_scope: false,
             build: None,
+            routes: crate::routes::RouteTools::default(),
         }
     }
 
@@ -198,6 +201,16 @@ impl Studio {
             }
             d
         });
+        // Routes are edited on this package's roads; one on another
+        // package's is closed (its autosave stays).
+        self.routes.set_package(&package, &details.id);
+        if let Some(old) = self.routes.doc.take() {
+            if let Some(store) = self.store.as_deref_mut() {
+                self.session.autosave(store, now_s, 0.0);
+            }
+            self.session.close(old);
+        }
+        self.session.set_active(id);
         self.package = Some(package);
         self.world_doc = Some(id);
         let record = autosave_name("world", source);
@@ -297,6 +310,10 @@ pub enum StudioCommand {
     Focus,
     /// Builds the patched package with `world-builder`.
     Build(BuildRequest),
+    /// A Routes workspace command (16D).
+    Route(crate::routes::RouteCommand),
+    /// The workspace shown: its document is the one Undo / Redo act on.
+    Workspace(crate::ui::Workspace),
 }
 
 /// The commands sent this frame, carried out by [`run_pending`].
@@ -392,6 +409,29 @@ pub fn apply(world: &mut World, cmd: StudioCommand) -> Result<String, String> {
             Ok(format!("looking at {:.0}, {:.0}", target[0], target[2]))
         }
         StudioCommand::Build(req) => start_build(&mut world.resource_mut::<Studio>(), req),
+        StudioCommand::Route(c) => {
+            let fit = matches!(
+                c,
+                crate::routes::RouteCommand::Import(_)
+                    | crate::routes::RouteCommand::PackageRoute(_)
+                    | crate::routes::RouteCommand::Fit
+            );
+            let msg = crate::routes::command(&mut world.resource_mut::<Studio>(), c, t)?;
+            if fit {
+                // The map shows the whole route (its view is made now).
+                crate::routes::refresh_view(&mut world.resource_mut::<Studio>());
+                let ext = crate::routes::route_extent(&world.resource::<Studio>().routes.view);
+                if let (Some((min, max)), Some(mut w)) =
+                    (ext, world.get_resource_mut::<crate::world::OpenWorld>())
+                {
+                    w.map_view = Some(crate::map::MapView {
+                        centre: [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5],
+                        m_per_px: ((max[0] - min[0]).max(max[1] - min[1]) / 420.0).max(0.5),
+                    });
+                }
+            }
+            Ok(msg)
+        }
         StudioCommand::GoToView(id) => {
             let view = world
                 .resource::<Studio>()
@@ -532,6 +572,17 @@ pub fn edit(
                 s.remove(&r.name)?;
             }
             Ok("autosave discarded".into())
+        }
+        StudioCommand::Route(c) => crate::routes::command(studio, c, now_s),
+        StudioCommand::Workspace(w) => {
+            let doc = match w {
+                crate::ui::Workspace::Routes => studio.routes.doc,
+                _ => studio.world_doc,
+            };
+            if let Some(id) = doc {
+                studio.session.set_active(id);
+            }
+            Ok(String::new())
         }
         StudioCommand::Open(_)
         | StudioCommand::FlyTo(..)
@@ -1172,6 +1223,10 @@ impl Plugin for EditPlugin {
                     "Height points: add [X Z] | height M | raise M | radius M | move X Z | remove | focus (on the selected point)",
                 ))
                 .subcommand(words(
+                    "route",
+                    "The Routes workspace: new [NAME] | import PATH | package N | plan X Z X Z … | via add|insert|move|remove … | drag GX GZ X Z | reverse | loop on|off | outback | cut start|end N | split N | profile P | planner builtin|brouter | brouter url URL | brouter profile P | brouter ok | brouter plan | export PATH | save [PATH] | testride | info",
+                ))
+                .subcommand(words(
                     "patch",
                     "The world patch: list | save [PATH] | open PATH | delete N | title TEXT | author TEXT | build [OUT]",
                 )),
@@ -1401,6 +1456,21 @@ pub fn patch_lines(studio: &Studio) -> Vec<String> {
 }
 
 fn studio_command(world: &mut World, m: &clap::ArgMatches) -> Result<String, String> {
+    if let Some(("route", a)) = m.subcommand() {
+        let words: Vec<String> = a
+            .get_many::<String>("words")
+            .map(|w| w.cloned().collect())
+            .unwrap_or_default();
+        if words.first().map(String::as_str) == Some("info") {
+            return Ok(crate::routes::route_lines(world.resource::<Studio>()).join("\n"));
+        }
+        let cmd = crate::routes::console_route(&words)?;
+        let msg = apply(world, StudioCommand::Route(cmd))?;
+        if !msg.is_empty() {
+            world.resource_mut::<Studio>().status = msg.clone();
+        }
+        return Ok(msg);
+    }
     if let Some((group @ ("select" | "road" | "point" | "patch"), a)) = m.subcommand() {
         let words: Vec<String> = a
             .get_many::<String>("words")
@@ -1460,7 +1530,11 @@ fn studio_command(world: &mut World, m: &clap::ArgMatches) -> Result<String, Str
             }
             _ => return Err("studio view add|list|go|delete".into()),
         },
-        _ => return Err("studio undo|redo|status|open|fly|view|select|road|point|patch".into()),
+        _ => {
+            return Err(
+                "studio undo|redo|status|open|fly|view|select|road|point|patch|route".into(),
+            );
+        }
     };
     let msg = apply(world, cmd)?;
     if !msg.is_empty() {

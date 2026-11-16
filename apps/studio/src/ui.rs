@@ -31,6 +31,8 @@ use crate::edit::{
 use crate::flight::{StudioFlight, UiFocus};
 use crate::map::{MapView, Overlay};
 use crate::patch::{OpStatus, PatchPreview};
+use crate::routes::RouteCommand;
+use crate::routes_ui::RouteForm;
 use crate::world::OpenWorld;
 
 /// The workspaces (16A).
@@ -64,16 +66,47 @@ pub enum Tool {
     PlacePoint,
     /// Moves this height point there.
     MovePoint(String),
+    /// Moves this via-point of the route there (Routes).
+    RouteMoveVia(usize),
+    /// Inserts a via-point there before this one (Routes).
+    RouteInsertVia(usize),
 }
 
-/// The command a click at `at` (package x, z) sends with `tool`, and the
-/// tool afterwards (placing and moving are one click each).
-pub fn click_command(tool: &Tool, at: [f64; 2], tolerance_m: f64) -> (StudioCommand, Tool) {
+/// The command a click at `at` (package x, z) sends with `tool` in
+/// `workspace`, and the tool afterwards (placing and moving are one click
+/// each). In the Routes workspace a plain click selects the via-point
+/// there or adds one at the route's end.
+pub fn click_command(
+    tool: &Tool,
+    workspace: Workspace,
+    at: [f64; 2],
+    tolerance_m: f64,
+) -> (StudioCommand, Tool) {
+    let route = |c: RouteCommand| (StudioCommand::Route(c), Tool::Select);
     match tool {
+        Tool::Select if workspace == Workspace::Routes => {
+            route(RouteCommand::Click(at, tolerance_m))
+        }
         Tool::Select => (StudioCommand::SelectAt(at, tolerance_m), Tool::Select),
         Tool::PlacePoint => (StudioCommand::AddPoint(Some(at)), Tool::Select),
         Tool::MovePoint(id) => (StudioCommand::MovePoint(id.clone(), at), Tool::Select),
+        Tool::RouteMoveVia(i) => route(RouteCommand::MoveVia(*i, at)),
+        Tool::RouteInsertVia(i) => route(RouteCommand::InsertVia(*i, at)),
     }
+}
+
+/// Whether a press at `p` on the map grabs the route (a via-point or the
+/// line within `tol` m) rather than panning.
+pub fn grabs_route(view: &crate::routes::RouteView, p: [f64; 2], tol: f64) -> bool {
+    if view
+        .vias
+        .iter()
+        .any(|v| (v[0] - p[0]).hypot(v[1] - p[1]) <= tol)
+    {
+        return true;
+    }
+    let line: Vec<[f64; 2]> = view.line.iter().map(|q| [q[0], q[2]]).collect();
+    line.len() >= 2 && crate::pick::nearest_on_polyline(&line, p).0 <= tol
 }
 
 /// The Build dialog's fields.
@@ -137,6 +170,10 @@ pub struct UiState {
     /// The Build dialog (open while `Some`).
     pub build: Option<BuildForm>,
     pub tool: Tool,
+    /// The Routes panel's fields.
+    pub route_form: RouteForm,
+    /// Where the route drag was sent to last (package metres).
+    pub drag_sent: Option<[f64; 2]>,
 }
 
 impl Default for UiState {
@@ -149,6 +186,8 @@ impl Default for UiState {
             save_as: None,
             build: None,
             tool: Tool::Select,
+            route_form: RouteForm::default(),
+            drag_sent: None,
         }
     }
 }
@@ -370,6 +409,8 @@ fn panels(
                     .clicked()
                 {
                     state.workspace = w;
+                    state.tool = Tool::Select;
+                    pending.send(StudioCommand::Workspace(w));
                 }
             }
             ui.separator();
@@ -411,6 +452,20 @@ fn panels(
                         format!("Click a road to move '{id}' there (Esc: cancel)"),
                     );
                 }
+                Tool::RouteMoveVia(i) => {
+                    ui.separator();
+                    ui.colored_label(
+                        egui::Color32::from_rgb(120, 200, 255),
+                        format!("Click where via-point {} goes (Esc: cancel)", i + 1),
+                    );
+                }
+                Tool::RouteInsertVia(i) => {
+                    ui.separator();
+                    ui.colored_label(
+                        egui::Color32::from_rgb(120, 200, 255),
+                        format!("Click where the new via-point {} goes (Esc: cancel)", i + 1),
+                    );
+                }
             }
         });
     });
@@ -440,11 +495,17 @@ fn panels(
                     "Models",
                     "The Models workspace comes with stage E3 (view, stats, validator, try-on) and E4 (edit); it needs the model files of Phase 15 (M1, M2).",
                 ),
-                Workspace::Routes => placeholder(
-                    ui,
-                    "Routes",
-                    "The Routes workspace is the rest of stage E1: GPX import with map matching and problem sections, the built-in planner with via-points and route dragging, the elevation profile, GPX / graph-route export and Test ride (16D).",
-                ),
+                Workspace::Routes => {
+                    let st = &mut *state;
+                    crate::routes_ui::routes_panel(
+                        ui,
+                        &studio,
+                        world.as_deref(),
+                        &mut st.route_form,
+                        &mut st.tool,
+                        &mut pending,
+                    )
+                }
             });
         });
     if state.show_map {
@@ -457,12 +518,15 @@ fn panels(
                 let rect = ui.available_rect_before_wrap();
                 match world.as_mut() {
                     Some(w) => {
-                        let (input, m_per_px) = map_panel(ui, rect, w, &studio, &flight);
-                        if let Some(p) = input.fly {
+                        let routes = state.workspace == Workspace::Routes;
+                        let (input, m_per_px) = map_panel(ui, rect, w, &studio, &flight, routes);
+                        let tol = crate::pick::map_tolerance_m(m_per_px);
+                        if let Some(d) = input.drag {
+                            route_drag(&mut state, &mut pending, d, tol);
+                        } else if let Some(p) = input.fly {
                             pending.send(StudioCommand::FlyTo(p, None));
                         } else if let Some(p) = input.click {
-                            let tol = crate::pick::map_tolerance_m(m_per_px);
-                            let (cmd, next) = click_command(&state.tool, p, tol);
+                            let (cmd, next) = click_command(&state.tool, state.workspace, p, tol);
                             pending.send(cmd);
                             state.tool = next;
                         }
@@ -499,9 +563,12 @@ fn panels(
                     + (h[2] - f64::from(o.z)).powi(2))
                 .sqrt();
                 let tol = crate::pick::view_tolerance_m(dist);
-                let (cmd, next) = click_command(&state.tool, [h[0], h[2]], tol);
+                let (cmd, next) = click_command(&state.tool, state.workspace, [h[0], h[2]], tol);
                 pending.send(cmd);
                 state.tool = next;
+            }
+            None if state.workspace == Workspace::Routes => {
+                pending.send(StudioCommand::Route(RouteCommand::SelectVia(None)));
             }
             None => pending.send(StudioCommand::ClearSelection),
         }
@@ -1359,12 +1426,47 @@ fn build_window(
 }
 
 /// The map panel: what the pointer did, and the zoom (metres per point).
+/// A drag of the route on the map: started (grabbing a via-point or the
+/// line), moved on (sent again once the pointer moved half a pick
+/// tolerance), ended.
+fn route_drag(state: &mut UiState, pending: &mut Pending, d: crate::map::MapDrag, tol: f64) {
+    use crate::map::DragPhase;
+    let route = StudioCommand::Route;
+    match d.phase {
+        DragPhase::Start => {
+            pending.send(route(RouteCommand::DragStart {
+                grab: d.from,
+                to: d.to,
+                tol,
+            }));
+            state.drag_sent = Some(d.to);
+        }
+        DragPhase::Move => {
+            let far = state
+                .drag_sent
+                .is_none_or(|p| (p[0] - d.to[0]).hypot(p[1] - d.to[1]) >= tol * 0.5);
+            if far {
+                pending.send(route(RouteCommand::DragTo(d.to)));
+                state.drag_sent = Some(d.to);
+            }
+        }
+        DragPhase::End => {
+            if state.drag_sent != Some(d.to) {
+                pending.send(route(RouteCommand::DragTo(d.to)));
+            }
+            pending.send(route(RouteCommand::DragEnd));
+            state.drag_sent = None;
+        }
+    }
+}
+
 fn map_panel(
     ui: &mut egui::Ui,
     rect: egui::Rect,
     w: &mut OpenWorld,
     studio: &Studio,
     flight: &StudioFlight,
+    routes: bool,
 ) -> (crate::map::MapInput, f64) {
     if w.land_texture.is_none()
         && let Some(r) = &w.map.land
@@ -1393,8 +1495,18 @@ fn map_panel(
             })
             .unwrap_or_default(),
         graph: studio.package.as_ref().and_then(|p| p.graph()),
-        marks: crate::overlay::marks(studio),
+        marks: if routes {
+            crate::overlay::Marks::default()
+        } else {
+            crate::overlay::marks(studio)
+        },
+        route: studio.route().map(|_| &studio.routes.view),
     };
+    let tol = crate::pick::map_tolerance_m(view.m_per_px);
+    let route_view = &studio.routes.view;
+    let grab = move |p: [f64; 2]| grabs_route(route_view, p, tol);
+    let grab: Option<&dyn Fn([f64; 2]) -> bool> =
+        (routes && studio.route().is_some()).then_some(&grab as &dyn Fn([f64; 2]) -> bool);
     let input = crate::map::paint(
         ui,
         rect,
@@ -1402,6 +1514,7 @@ fn map_panel(
         &w.map,
         w.land_texture.as_ref(),
         &overlay,
+        grab,
     );
     w.map_view = Some(view);
     (input, view.m_per_px)
@@ -1442,19 +1555,60 @@ mod tests {
     #[test]
     fn a_click_selects_places_or_moves_with_the_tool() {
         let at = [10.0, 20.0];
+        let w = Workspace::World;
         assert_eq!(
-            click_command(&Tool::Select, at, 7.0),
+            click_command(&Tool::Select, w, at, 7.0),
             (StudioCommand::SelectAt(at, 7.0), Tool::Select)
         );
         assert_eq!(
-            click_command(&Tool::PlacePoint, at, 7.0),
+            click_command(&Tool::PlacePoint, w, at, 7.0),
             (StudioCommand::AddPoint(Some(at)), Tool::Select),
             "one click places one point"
         );
         assert_eq!(
-            click_command(&Tool::MovePoint("p".into()), at, 7.0),
+            click_command(&Tool::MovePoint("p".into()), w, at, 7.0),
             (StudioCommand::MovePoint("p".into(), at), Tool::Select)
         );
+        // In the Routes workspace a click adds or selects a via-point.
+        let r = Workspace::Routes;
+        assert_eq!(
+            click_command(&Tool::Select, r, at, 7.0),
+            (
+                StudioCommand::Route(RouteCommand::Click(at, 7.0)),
+                Tool::Select
+            )
+        );
+        assert_eq!(
+            click_command(&Tool::RouteMoveVia(2), r, at, 7.0),
+            (
+                StudioCommand::Route(RouteCommand::MoveVia(2, at)),
+                Tool::Select
+            )
+        );
+        assert_eq!(
+            click_command(&Tool::RouteInsertVia(1), r, at, 7.0),
+            (
+                StudioCommand::Route(RouteCommand::InsertVia(1, at)),
+                Tool::Select
+            )
+        );
+    }
+
+    #[test]
+    fn a_press_on_the_route_or_a_via_point_grabs_it() {
+        let v = crate::routes::RouteView {
+            line: vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]],
+            vias: vec![[0.0, 0.0], [100.0, 0.0]],
+            ..Default::default()
+        };
+        assert!(grabs_route(&v, [50.0, 3.0], 5.0));
+        assert!(grabs_route(&v, [100.0, 4.0], 5.0));
+        assert!(!grabs_route(&v, [50.0, 30.0], 5.0));
+        assert!(!grabs_route(
+            &crate::routes::RouteView::default(),
+            [0.0, 0.0],
+            5.0
+        ));
     }
 
     #[test]

@@ -2,8 +2,8 @@
 //! worlds and routes, its own desktop app (Q1) on the game's crates. This
 //! is the shell of stage E1: a world package drawn by the game's renderer
 //! (`ocw-render`, exactly as in a ride) in a 3D view flown with the
-//! unicorn's controls, a 2D map of the package, the workspaces (World;
-//! Models and Routes to come) and the document core `ocw-edit` behind the
+//! unicorn's controls, a 2D map of the package, the workspaces (World,
+//! Routes; Models to come) and the document core `ocw-edit` behind the
 //! Edit menu (undo / redo, autosave).
 //!
 //! - [`world`]: opening a package (verified like the game), the renderer's
@@ -17,6 +17,9 @@
 //!   road graph (E5 step 2), [`pick`]: clicks to roads, [`overlay`]: the
 //!   patch drawn over the 3D view, [`build`]: *Build package* with
 //!   `world-builder`;
+//! - [`routes`]: the Routes workspace (16D, E1; external planners E2):
+//!   the route document, imports with map matching, the built-in planner
+//!   and BRouter, exports, *Test ride*;
 //! - [`ui`]: the egui panels.
 
 mod build;
@@ -27,6 +30,8 @@ mod map;
 mod overlay;
 mod patch;
 mod pick;
+mod routes;
+mod routes_ui;
 mod ui;
 mod world;
 
@@ -88,6 +93,10 @@ pub struct Args {
     pub log_fps: Option<f64>,
     #[arg(long)]
     pub no_vsync: bool,
+    /// The BRouter server for planning (`route.planner.brouter_url`; there
+    /// is no default, 16H Q3). Saved with the planner settings.
+    #[arg(long, value_name = "URL")]
+    pub brouter_url: Option<String>,
     /// Where autosaves go (default `<data dir>/ocw/studio/autosave`).
     #[arg(long, value_name = "DIR")]
     pub autosave_dir: Option<PathBuf>,
@@ -167,7 +176,15 @@ fn main() -> AppExit {
         overlay::OverlayPlugin,
         ui::UiPlugin,
     ))
-    .add_systems(Startup, startup_commands);
+    .add_systems(Startup, startup_commands)
+    .add_systems(Update, routes::update_routes);
+    if let Some(url) = &args.brouter_url {
+        app.world_mut()
+            .resource_mut::<edit::Studio>()
+            .routes
+            .settings
+            .brouter_url = url.trim().to_string();
+    }
     if args.plane {
         app.world_mut()
             .resource_mut::<flight::StudioFlight>()
