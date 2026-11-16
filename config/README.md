@@ -133,7 +133,7 @@ packages) or `rebuild` (build the Liechtenstein package again),
   `scripts/setup-windows-buildserver.ps1 -PublicKeyFile <key>.pub` in PowerShell
   as Administrator (after `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`
   to allow scripts in that window) sets both up (any Windows language; user `claude` by
-  default), plus `make deps-windows` (winget: Git, Visual
+  default), and installs the build tools (winget: Git with Git LFS, Visual Studio Build Tools with the C++ workload; rustup as the build user; `-SkipTools` leaves them out, `-VR` also checks the OpenXR runtime) – the same as `make deps-windows` (winget: Git, Visual
   Studio Build Tools with the C++ workload, rustup; needs GNU make, e.g. from
   MSYS2 or `winget install ezwinports.make`). GUI runs need a logged-in user;
   they are started as a scheduled task in that session (programs started over

@@ -1,7 +1,10 @@
 <#
 .SYNOPSIS
-  Sets up a Windows machine as an OCW build/test server: OpenSSH server and a
-  local build user (not an administrator) that logs in with an SSH key.
+  Sets up a Windows machine as an OCW build/test server: OpenSSH server, a
+  local build user (not an administrator) that logs in with an SSH key, and
+  the build tools: Git (with Git LFS) and the Visual Studio Build Tools (C++
+  workload) via winget, and rustup for the build user. With -VR it also checks
+  the OpenXR runtime for a headset (Meta Quest Link, not on winget).
 
 .DESCRIPTION
   Works on any Windows language (German, English, ...): built-in groups are
@@ -16,6 +19,10 @@
   or with the key file copied to the machine:
 
     .\setup-windows-buildserver.ps1 -PublicKeyFile .\ocw_windows_ed25519.pub
+
+  For a machine with a VR headset (Meta Quest over USB / Link):
+
+    .\setup-windows-buildserver.ps1 -PublicKey '...' -VR
 
   Afterwards (on the Linux dev machine), see config/README.md:
     ssh-keyscan <ip> >> config/ssh/known_hosts
@@ -35,7 +42,15 @@
   writable for the build user. Default: C:\src\OCW.
 
 .PARAMETER Password
-  Password of the build user (asked for if not given and the user is new).
+  Password of the build user (asked for if not given and the user is new, or
+  to install rustup as the build user).
+
+.PARAMETER SkipTools
+  Only SSH and the user: do not install Git, the Build Tools and rustup.
+
+.PARAMETER VR
+  Also check the VR side: the active OpenXR runtime (Meta Quest Link or
+  SteamVR) and print what is missing.
 #>
 [CmdletBinding()]
 param(
@@ -43,7 +58,9 @@ param(
     [string]$PublicKey,
     [string]$PublicKeyFile,
     [string]$RepoPath = "C:\src\OCW",
-    [securestring]$Password
+    [securestring]$Password,
+    [switch]$SkipTools,
+    [switch]$VR
 )
 
 $ErrorActionPreference = "Stop"
@@ -149,6 +166,68 @@ icacls $RepoPath /grant "*${userSid}:(OI)(CI)M" | Out-Null
 
 Restart-Service sshd
 
+# --- Build tools ---------------------------------------------------------------
+function Test-Winget($id) {
+    [bool](winget list --id $id -e --accept-source-agreements 2>$null | Select-String -SimpleMatch $id)
+}
+function Install-Winget($id, [string[]]$extra) {
+    if (Test-Winget $id) { Write-Host "   $id already installed"; return }
+    Write-Host "   installing $id (this can take a while)"
+    winget install --id $id -e --silent --accept-source-agreements --accept-package-agreements @extra
+    # winget's exit code is not reliable (e.g. a pending restart): check the result instead.
+    if (-not (Test-Winget $id)) { throw "winget could not install $id" }
+}
+
+if (-not $SkipTools) {
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        throw "winget is missing: install 'App Installer' from the Microsoft Store, then run the script again (or use -SkipTools)."
+    }
+    Step "Git (with Git LFS)"
+    Install-Winget "Git.Git" @("--scope", "machine")
+    $git = "$env:ProgramFiles\Git\cmd\git.exe"
+    if (Test-Path $git) { & $git lfs install --system | Out-Null; Write-Host "   git lfs enabled for all users" }
+
+    Step "Visual Studio Build Tools (C++ workload)"
+    Install-Winget "Microsoft.VisualStudio.2022.BuildTools" @("--override",
+        "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended")
+
+    Step "rustup for $User"
+    $rustc = Join-Path $userProfile ".cargo\bin\rustc.exe"
+    if (Test-Path $rustc) {
+        Write-Host "   already installed"
+    } else {
+        # rustup installs per user: run its installer as the build user, from a
+        # folder that user can read, starting in the Windows folder (see the
+        # Profile folder step).
+        if (-not $Password) { $Password = Read-Host -AsSecureString "Password for $User (to install rustup as $User)" }
+        $cred = New-Object System.Management.Automation.PSCredential("$env:COMPUTERNAME\$User", $Password)
+        $dir = Join-Path $env:ProgramData "ocw-setup"
+        New-Item -ItemType Directory -Force $dir | Out-Null
+        $init = Join-Path $dir "rustup-init.exe"
+        $ProgressPreference = "SilentlyContinue"
+        Invoke-WebRequest -UseBasicParsing "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe" -OutFile $init
+        $p = Start-Process -FilePath $init -ArgumentList "-y --default-toolchain stable --profile minimal" `
+            -WorkingDirectory $env:SystemRoot -Credential $cred -LoadUserProfile -Wait -WindowStyle Hidden -PassThru
+        Remove-Item $init -ErrorAction SilentlyContinue
+        if ($p.ExitCode -ne 0 -or -not (Test-Path $rustc)) { throw "rustup-init failed for $User (exit $($p.ExitCode))" }
+        Write-Host "   installed (the toolchain of rust-toolchain.toml comes with the first build)"
+    }
+}
+
+# --- VR ------------------------------------------------------------------------
+$vrMissing = @()
+if ($VR) {
+    Step "VR: OpenXR runtime"
+    $active = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Khronos\OpenXR\1" -Name ActiveRuntime -ErrorAction SilentlyContinue).ActiveRuntime
+    if ($active) {
+        Write-Host "   active runtime: $active"
+        if ($active -notmatch "oculus|meta|steamvr") { Write-Warning "Unknown OpenXR runtime; OCW is tested with Meta Quest Link and SteamVR." }
+    } else {
+        $vrMissing += "Install the Meta Quest Link app (https://www.meta.com/help/quest/pcvr/), log in, connect the headset by USB once and set Link as the active OpenXR runtime (Settings > General > OpenXR Runtime). SteamVR is the alternative."
+        Write-Warning "No active OpenXR runtime."
+    }
+}
+
 # --- Summary -------------------------------------------------------------------
 $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
         $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } |
@@ -163,6 +242,9 @@ if ($profileName -eq 'Public') {
     Write-Warning "The network is 'Public' (Oeffentlich); if SSH does not connect, set it to 'Private'."
 }
 Write-Host ""
-Write-Host "Next steps (Windows, once, as an administrator): Visual Studio Build Tools (C++ workload)"
-Write-Host "and Git, e.g. 'make deps-windows' (see config/README.md); rustup as $User."
-Write-Host "GUI runs (screenshots, the app) need $User logged in on the desktop."
+if ($SkipTools) {
+    Write-Host "Build tools skipped (-SkipTools): install Git, the Visual Studio Build Tools (C++ workload)"
+    Write-Host "and rustup as $User, e.g. 'make deps-windows' (see config/README.md)."
+}
+foreach ($m in $vrMissing) { Write-Host "VR: $m" -ForegroundColor Yellow }
+Write-Host "GUI runs (screenshots, the app, VR) need $User logged in on the desktop."
