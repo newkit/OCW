@@ -247,8 +247,9 @@ mod tests {
     }
 
     /// The files in `artwork/3dmodels/` are what the generators make
-    /// (mesh by mesh, within the file's precision; on Linux x86-64 byte for
-    /// byte what the exporter writes): `cargo run -p ocw-assets -- model
+    /// (mesh by mesh, within the file's precision; byte for byte is
+    /// `model export-all --check` on the export machine, marge – other
+    /// machines' sin / cos may move a vertex by a grid step): `cargo run -p ocw-assets -- model
     /// export-all` after changing a generator.
     #[test]
     fn shipped_models_match_the_generators() {
@@ -259,14 +260,6 @@ mod tests {
                 .unwrap_or_else(|| panic!("{} not shipped", e.file));
             let file = glb::read(bytes).unwrap();
             same_mesh(&e.file, &model, &file);
-            // Byte for byte where the files were exported (Linux x86-64;
-            // `model export-all --check`): other platforms' last bits of
-            // sin / cos may move a vertex by one grid step.
-            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-            {
-                let same = *bytes == glb::write(&model).as_slice();
-                assert!(same, "{} bytes differ: run the export", e.file);
-            }
             let listed = library::ModelLibrary::embedded()
                 .entry(e.id())
                 .cloned()
