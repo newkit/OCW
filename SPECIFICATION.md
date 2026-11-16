@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.91 – November 2026
+Version 3.92 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.92 | **The visible body shape is bounded to a band around what weight and height give, with a *Match my weight* marker** (decision from the build dashboard, 2026-11-16; §14 Phase 4 4N Q13). Follow-up Q13b: the band's width (proposal: one step either side) |
 | 3.91 | **Model files: today's models exported into files named by function and shape, and the apps use the files instead of the code** (asked by the user 2026-11-16; §14 Phase 15, new 15H and stage MX): `ocw-assets model export-all` runs every generator once (helmets, parts, workshop pieces, unicorn, point obstacles, street lamps, flora with three variants per species; the rider and the bikes already are files) and writes `artwork/3dmodels/<category>/<function>-<shape>[-<detail>][-<variant>].glb`; the apps load only files (`ModelLibrary`), the mesh code moves into the exporter, `export-all --check` keeps generators and files byte-equal; screenshots before and after must match. Status: Phase 15 is planned only, nothing built. Open: Phase 15 Q6 (generator or file as the source), Q7 (parametric variants), Q8 (tree variants) |
 | 3.90 | **In a ride one finger steers and a two-finger drag moves the camera (pinch: chase distance)** (decision from the build dashboard, 2026-11-16; §3.2.3 Q7) |
 | 3.89 | **Touch steering in the desktop app too, on Windows / Linux touch screens** (decision from the build dashboard, 2026-11-16; §3.2.3 Q6, as proposed: parity rule, the same *auto* hints) |
@@ -3243,7 +3244,7 @@ The first catalogue (about 30 entries; base parts at 0 ♥ for every slot and bi
 - **Q10 – Signed-in name:** the rider's own rider name stored with the account, the provider's name never shown (proposal), or the account / provider name as today?
 - **Q11 – Scripts in names: decided (2026-11-16, the user): all scripts** – the user: "all". Names may use every Unicode script now; the app needs fonts that cover them (a fallback chain with CJK, Arabic, Hebrew, Indic and others; for the browser the extra fonts are loaded on demand, not in the first download).
 - **Q12 – Age on the face: decided (2026-11-16, the user): face, body, skin and hair** – the user: "face, body, skin, hair". The appearance age (N3) changes the face (lines at eyes and mouth, a softer jaw), the body (posture and shape), the skin (tone and texture) and the hair (greying, with *Keep my hair colour*). Still appearance only, never physics.
-- **Q13 – Visible build vs the physics weight:** free with a *Match my weight* marker (proposal), bounded to a band around the weight, or always derived from the weight?
+- **Q13 – Visible build vs the physics weight: decided (2026-11-16, dashboard): bounded to a band around the weight, with the *Match my weight* marker, from weight and height** – the user: "free with a Match my weight marker, bounded to a band around the weight). take users height into consideration." The shape (the seven steps of Q6) can be chosen only within a band around the shape that the rider's **weight and height** give (body-mass index → shape, N4); the marker shows that shape and *Match my weight* snaps to it. A change of weight or height in the profile moves the band; a shape outside it is moved to its nearest edge. **Follow-up Q13b (open):** how wide is the band? (Proposal: one step either side of the marker, so three of the seven shapes are open to each rider.)
 - **Q14 – Extras in the first step:** which of the muscle slider, earrings, tattoos, freckles, more glasses and prosthetic limbs (proposal: freckles, glasses and prosthetics first; tattoos and earrings later)?
 - **Q15 – Renaming during a ride: decided (2026-11-16, the user): no** – the name can only be changed between rides, never during a ride or a running event.
 
