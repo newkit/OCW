@@ -134,17 +134,33 @@ impl SyncState {
     }
 }
 
-/// The `.fit` files in `dir`, sorted (oldest first: names start with the date).
+/// The `.fit` files in `dir` and the Strava recordings in `dir/strava/`
+/// (spec §2.8.1: as `strava/<name>.fit`), sorted (oldest first: names
+/// start with the date).
 pub fn ride_files(dir: &Path) -> Vec<String> {
-    let mut files: Vec<String> = std::fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|n| n.ends_with(".fit"))
-        .collect();
+    let fits = |d: &Path| -> Vec<String> {
+        std::fs::read_dir(d)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|n| n.ends_with(".fit"))
+            .collect()
+    };
+    let mut files = fits(dir);
+    files.extend(
+        fits(&dir.join("strava"))
+            .into_iter()
+            .map(|n| format!("strava/{n}")),
+    );
     files.sort();
     files
+}
+
+/// Strava's `external_id` of a ride file (no path separators).
+pub fn external_id(file: &str) -> String {
+    file.replace('/', "-")
 }
 
 /// What to do after a status answer while polling an upload.
@@ -319,7 +335,7 @@ fn upload_one(
                     "Virtual ride in Open Cycling World. The GPS track is virtual.".into(),
                     |m| m.description,
                 ),
-                external_id: file.to_string(),
+                external_id: external_id(file),
             };
             let boundary = format!("ocw-{}", super::auth::random_state());
             let req = upload_request(access_token, file, &fit, &meta, &boundary);
@@ -545,6 +561,36 @@ mod tests {
         // Nothing left to do: no requests on the next sync.
         assert_eq!(fx.sync(&http, 2000), SyncReport::default());
         assert_eq!(http.urls().len(), 5);
+    }
+
+    /// The Strava recordings (spec §2.8.1, ST1) are queued with the rides:
+    /// `rides/strava/<name>.fit`, uploaded like a ride (mock Strava).
+    #[test]
+    fn strava_recordings_are_uploaded_too() {
+        let fx = Fixture::new("recordings", &["2026-01-01_10-00-00.fit"]);
+        let sdir = fx.paths.rides_dir.join("strava");
+        std::fs::create_dir_all(&sdir).unwrap();
+        std::fs::write(sdir.join("2026-01-01_10-20-00.fit"), b"FITDATA").unwrap();
+        std::fs::create_dir_all(fx.paths.rides_dir.join("2026-01-01_10-00-00/photos")).unwrap();
+        assert_eq!(
+            ride_files(&fx.paths.rides_dir),
+            vec![
+                "2026-01-01_10-00-00.fit".to_string(),
+                "strava/2026-01-01_10-20-00.fit".to_string()
+            ]
+        );
+        let http = MockHttp::default();
+        http.reply(201, r#"{"id":1,"error":null,"activity_id":7}"#)
+            .reply(201, r#"{"id":2,"error":null,"activity_id":8}"#);
+        let report = fx.sync(&http, 1000);
+        assert_eq!(
+            report.uploaded,
+            vec![
+                ("2026-01-01_10-00-00.fit".into(), Some(7)),
+                ("strava/2026-01-01_10-20-00.fit".into(), Some(8))
+            ]
+        );
+        assert_eq!(external_id("strava/a.fit"), "strava-a.fit");
     }
 
     #[test]

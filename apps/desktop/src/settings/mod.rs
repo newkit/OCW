@@ -794,7 +794,7 @@ mod tests {
                 }
             }
         }
-        let elsewhere = ["devices.", "strava.", "hud", "god."];
+        let elsewhere = ["devices.", "strava.", "hud", "god.", "photographer"];
         for line in lines {
             // God mode's settings apply through its own plugin (`god.invert`).
             if elsewhere.iter().any(|p| line.starts_with(p))
@@ -809,6 +809,8 @@ mod tests {
                 || line.contains("ride.proximity_cue")
                 || line.contains("ride.hit_warning")
                 || line.contains("display.camera_shake")
+                // The ride photographer's plugin is not in this test app.
+                || line.contains("photographer.enabled")
             {
                 continue;
             }

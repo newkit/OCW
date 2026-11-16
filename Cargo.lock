@@ -6742,6 +6742,7 @@ dependencies = [
 name = "ocw-assets"
 version = "0.2.2"
 dependencies = [
+ "base64 0.22.1",
  "clap",
  "glam",
  "gltf",
@@ -6885,6 +6886,7 @@ dependencies = [
 name = "ocw-edit"
 version = "0.2.2"
 dependencies = [
+ "ocw-world",
  "serde",
  "serde_json",
 ]
@@ -6930,6 +6932,7 @@ dependencies = [
  "png",
  "raw-window-handle",
  "serde",
+ "serde_json",
  "texpresso",
  "toml",
  "ttf-parser",
@@ -6942,7 +6945,9 @@ version = "0.2.2"
 dependencies = [
  "bytes",
  "clap",
+ "dirs",
  "ed25519-dalek 2.2.0",
+ "getrandom 0.3.4",
  "ocw-accounts",
  "ocw-auth",
  "ocw-core",
@@ -6968,6 +6973,7 @@ dependencies = [
  "url",
  "web-time",
  "web-transport-quinn",
+ "win32job",
 ]
 
 [[package]]
@@ -7020,6 +7026,7 @@ version = "0.2.2"
 dependencies = [
  "bevy",
  "clap",
+ "ocw-audio",
  "ocw-client",
  "ocw-core",
  "ocw-fit",
@@ -7032,6 +7039,7 @@ dependencies = [
  "ocw-weather",
  "ocw-world",
  "ocw-worldstore",
+ "web-time",
 ]
 
 [[package]]
@@ -10811,6 +10819,16 @@ checksum = "d920ac99c3c8edce110cb8d07dbb324d6d026011dce85b1e9355b70f0adacc4f"
 dependencies = [
  "bytemuck",
  "safe_arch",
+]
+
+[[package]]
+name = "win32job"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21b25acac91041257d64f5625690b626133e0ca9e4e17814552b5803b1a82f7c"
+dependencies = [
+ "thiserror 1.0.69",
+ "windows",
 ]
 
 [[package]]

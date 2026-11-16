@@ -29,6 +29,37 @@ pub struct HistoryInfo {
     pub exportable: BTreeSet<String>,
     /// Why the history is not saved (a newer or broken file).
     pub read_only: Option<String>,
+    /// The ride photographer's photos of each ride (spec §2.11; by ride
+    /// id), and how many of them lie in a Strava recording (§2.8.1 ST3).
+    pub photos: std::collections::BTreeMap<String, RidePhotos>,
+}
+
+/// A ride's photos (spec §2.11, §2.8.1 ST3).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RidePhotos {
+    /// The photo files (`photo-1.jpg`, …) with their ride seconds.
+    pub files: Vec<(String, f64)>,
+    /// How many of them were taken during a Strava recording, and the
+    /// recordings.
+    pub in_strava: usize,
+    pub recordings: usize,
+}
+
+impl RidePhotos {
+    /// The row's value: "3 photos (2 in Strava recordings)".
+    pub fn summary(&self) -> String {
+        let n = self.files.len();
+        let mut s = format!("{n} photo{}", if n == 1 { "" } else { "s" });
+        if self.recordings > 0 {
+            s.push_str(&format!(
+                ", {} in {} Strava recording{}",
+                self.in_strava,
+                self.recordings,
+                if self.recordings == 1 { "" } else { "s" }
+            ));
+        }
+        s
+    }
 }
 
 /// The durations shown as rows of the bests page (the chart has all; the
@@ -156,6 +187,17 @@ pub fn rows(page: Page, info: &HistoryInfo) -> Vec<Row> {
                     confirm: Some(Activate::Disabled),
                 }
             });
+            // The ride photographer's photos (spec §2.11): the row opens
+            // their folder, to add them in Strava by hand (§2.8.1 Q2).
+            if let Some(p) = info.photos.get(&r.id).filter(|p| !p.files.is_empty()) {
+                out.push(Row {
+                    label: "Photos: open the folder".into(),
+                    value: Some(p.summary()),
+                    left: None,
+                    right: None,
+                    confirm: Some(Activate::Command(format!("history.photos {}", k + 1))),
+                });
+            }
             out
         }
         Page::HistoryClimbs(k) => {
@@ -437,6 +479,39 @@ mod tests {
             importable: Some(2),
             ..Default::default()
         }
+    }
+
+    /// A ride's photos (spec §2.11, §2.8.1 ST3): a row with their number
+    /// (and those in Strava recordings) that opens their folder; none
+    /// without photos.
+    #[test]
+    fn a_rides_photos_open_their_folder() {
+        let mut i = info(2);
+        let page = Page::HistoryRide(0);
+        assert!(!rows(page, &i).iter().any(|r| r.label.starts_with("Photos")));
+        let id = i.history.nth_newest(0).unwrap().id.clone();
+        i.photos.insert(
+            id,
+            RidePhotos {
+                files: vec![
+                    ("photo-1.jpg".into(), 300.0),
+                    ("photo-2.jpg".into(), 1700.0),
+                ],
+                in_strava: 1,
+                recordings: 1,
+            },
+        );
+        let rows = rows(page, &i);
+        let row = rows.iter().find(|r| r.label.starts_with("Photos")).unwrap();
+        assert_eq!(
+            row.value.as_deref(),
+            Some("2 photos, 1 in 1 Strava recording")
+        );
+        assert_eq!(
+            row.confirm,
+            Some(Activate::Command("history.photos 1".into()))
+        );
+        assert!(rows.len() < MAX_ITEMS);
     }
 
     #[test]

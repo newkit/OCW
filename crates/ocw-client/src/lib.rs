@@ -26,6 +26,9 @@
 //! - [`history`]: the training history (spec §14 Phase 7): the rides,
 //!   weekly and monthly totals, personal bests and the power curve;
 //!   [`bindings`]: the rebindable keys and buttons (M9).
+//! - [`strava`]: the Strava recording with S (spec §2.8.1).
+//! - [`photographer`]: the ride photographer (spec §2.11): when and
+//!   where a photo is taken, the person or drone and the flash.
 //! - [`world_trust`]: following the host to a world signed by a user key
 //!   (spec §4.7 *User keys*): load, ask (the trust dialog) or leave.
 //!
@@ -49,12 +52,14 @@ pub mod host;
 pub mod input;
 pub mod join;
 pub mod menu;
+pub mod photographer;
 pub mod quality;
 pub mod recording;
 pub mod rider_list;
 pub mod riders;
 pub mod settings;
 pub mod sky;
+pub mod strava;
 pub mod trainer;
 pub mod view;
 pub mod voice;

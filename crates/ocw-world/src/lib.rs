@@ -29,6 +29,8 @@ pub mod ortho;
 pub mod package;
 pub mod patch;
 pub mod path;
+pub mod photo;
+pub mod photo_drone;
 pub mod plantings;
 pub mod region;
 pub mod road_dress;

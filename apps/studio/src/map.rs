@@ -315,16 +315,33 @@ fn overlaps(min: [f32; 2], max: [f32; 2], vis: &([f64; 2], [f64; 2])) -> bool {
 }
 
 /// Marks drawn over the map.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Overlay {
+#[derive(Debug, Clone, Default)]
+pub struct Overlay<'a> {
     /// The 3D camera: position (x, z) and yaw.
     pub camera: Option<([f64; 2], f64)>,
     /// Saved views: position (x, z) and name.
     pub views: Vec<([f64; 2], String)>,
+    /// The package's road graph, for the patch's marks.
+    pub graph: Option<&'a ocw_world::graph::RoadGraph>,
+    /// What the world patch does (E5 step 2).
+    pub marks: crate::overlay::Marks,
+}
+
+/// What the pointer did on the map this frame (package points).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct MapInput {
+    /// Double-clicked: fly there.
+    pub fly: Option<[f64; 2]>,
+    /// Clicked: select or place there.
+    pub click: Option<[f64; 2]>,
+}
+
+fn rgb(c: [u8; 3]) -> egui::Color32 {
+    egui::Color32::from_rgb(c[0], c[1], c[2])
 }
 
 /// Draws the map into `rect` and handles its input: drag to pan, wheel to
-/// zoom. Returns the package point double-clicked (fly there), if any.
+/// zoom, click, double-click.
 pub fn paint(
     ui: &mut egui::Ui,
     rect: egui::Rect,
@@ -332,7 +349,7 @@ pub fn paint(
     data: &MapData,
     land: Option<&egui::TextureHandle>,
     overlay: &Overlay,
-) -> Option<[f64; 2]> {
+) -> MapInput {
     let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
     let mid = [rect.center().x, rect.center().y];
     if response.dragged() {
@@ -347,11 +364,15 @@ pub fn paint(
             view.zoom_at(f64::from((scroll / 200.0).exp()), [p.x, p.y], mid);
         }
     }
-    let picked = response
-        .double_clicked()
-        .then(|| response.interact_pointer_pos())
-        .flatten()
-        .map(|p| view.to_world([p.x, p.y], mid));
+    let at = |r: bool| {
+        r.then(|| response.interact_pointer_pos())
+            .flatten()
+            .map(|p| view.to_world([p.x, p.y], mid))
+    };
+    let input = MapInput {
+        fly: at(response.double_clicked()),
+        click: at(response.clicked()),
+    };
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(38, 42, 46));
     let pos = |p: [f64; 2]| {
@@ -410,6 +431,9 @@ pub fn paint(
             ));
         }
     }
+    if let Some(g) = overlay.graph {
+        paint_marks(&painter, view, mid, g, &overlay.marks);
+    }
     for (p, name) in &overlay.views {
         let c = pos(*p);
         painter.circle_filled(c, 4.0, egui::Color32::from_rgb(255, 200, 40));
@@ -456,7 +480,80 @@ pub fn paint(
         egui::FontId::proportional(11.0),
         egui::Color32::from_gray(220),
     );
-    picked
+    input
+}
+
+/// The world patch's marks over the map: changed roads tinted, removed
+/// ones struck through, the selection highlighted, height points with
+/// their radius.
+fn paint_marks(
+    painter: &egui::Painter,
+    view: &MapView,
+    mid: [f32; 2],
+    g: &ocw_world::graph::RoadGraph,
+    m: &crate::overlay::Marks,
+) {
+    use crate::overlay::{CHANGED, POINT, REMOVED, SELECTED};
+    let pos = |p: [f64; 2]| {
+        let s = view.to_screen(p, mid);
+        egui::pos2(s[0], s[1])
+    };
+    let width = |e: &ocw_world::graph::Edge, min: f32| min.max((e.width_m / view.m_per_px) as f32);
+    let line = |i: usize, c: egui::Color32, min: f32| {
+        let e = &g.edges[i];
+        let pts: Vec<egui::Pos2> = e.points.iter().map(|p| pos(*p)).collect();
+        painter.add(egui::Shape::line(pts, egui::Stroke::new(width(e, min), c)));
+    };
+    for &i in &m.changed {
+        line(i, rgb(CHANGED), 3.0);
+    }
+    for &i in &m.removed {
+        let e = &g.edges[i];
+        line(i, rgb(REMOVED).gamma_multiply(0.85), 2.5);
+        // Struck through: a tick across the road every 18 points.
+        let len = e.length_m();
+        let step = (18.0 * view.m_per_px).max(2.0);
+        let mut d = step * 0.5;
+        while d < len {
+            if let (Some(p), Some(q)) = (
+                crate::pick::point_at(&e.points, d),
+                crate::pick::point_at(&e.points, (d + 0.5).min(len)),
+            ) {
+                let (a, b) = (pos(p), pos(q));
+                let dir = (b - a).normalized();
+                let n = egui::vec2(-dir.y, dir.x) * (width(e, 2.5) * 0.5 + 4.0);
+                painter.line_segment(
+                    [a - n - dir * 3.0, a + n + dir * 3.0],
+                    egui::Stroke::new(2.0, rgb(REMOVED)),
+                );
+            }
+            d += step;
+        }
+    }
+    for (k, &i) in m.selected.iter().enumerate() {
+        let c = if k == 0 {
+            rgb(SELECTED)
+        } else {
+            rgb(SELECTED).gamma_multiply(0.6)
+        };
+        line(i, c, 4.0);
+    }
+    for p in &m.points {
+        let c = pos(p.at);
+        let r = (p.radius_m / view.m_per_px) as f32;
+        painter.circle_stroke(c, r, egui::Stroke::new(1.5, rgb(POINT)));
+        painter.circle_filled(c, if p.selected { 6.0 } else { 4.5 }, rgb(POINT));
+        if p.selected {
+            painter.circle_stroke(c, 8.0, egui::Stroke::new(2.0, egui::Color32::WHITE));
+        }
+        painter.text(
+            c + egui::vec2(8.0, 6.0),
+            egui::Align2::LEFT_TOP,
+            format!("{} {}", p.id, p.label),
+            egui::FontId::proportional(12.0),
+            egui::Color32::WHITE,
+        );
+    }
 }
 
 /// The largest 1, 2 or 5 × 10ⁿ metres not above `m`.

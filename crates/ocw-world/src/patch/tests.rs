@@ -553,3 +553,67 @@ fn height_points_between_samples_are_met() {
         report.lines()
     );
 }
+
+#[test]
+fn every_broken_operation_is_listed_for_an_editor() {
+    let mut p = WorldPatch::new("europe/testland");
+    assert_eq!(p.header_problem(), None);
+    p.ops = vec![
+        Operation::Road(RoadEdit {
+            edge: Some(EdgeId(10)),
+            surface: Some("gravel".into()),
+            ..Default::default()
+        }),
+        Operation::Road(RoadEdit {
+            edge: Some(EdgeId(10)),
+            width_m: Some(55.0),
+            ..Default::default()
+        }),
+        Operation::RemoveRoad(RemoveRoad::default()),
+        point("a", [250.0, 0.0], Height::Raise(1.0), 50.0),
+        point("a", [260.0, 0.0], Height::Raise(1.0), 50.0),
+    ];
+    let problems = p.op_problems();
+    assert_eq!(
+        problems.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
+        vec![1, 2, 4]
+    );
+    assert!(problems[0].1.contains("1 – 30 m"));
+    assert!(problems[2].1.contains("defined twice"));
+    // `parse` refuses the first of them, with the same words.
+    let e = WorldPatch::parse(&p.to_toml()).unwrap_err();
+    assert!(e.message.starts_with("[[op]] 2 (road)"), "{e}");
+    p.package = " ".into();
+    assert!(p.header_problem().unwrap().contains("package"));
+}
+
+#[test]
+fn the_preview_applies_a_stack_to_a_package_graph() {
+    let s = stack(vec![
+        Operation::Road(RoadEdit {
+            edge: Some(EdgeId(11)),
+            name: Some("Neuer Weg".into()),
+            ..Default::default()
+        }),
+        Operation::RemoveRoad(RemoveRoad {
+            way: Some(2),
+            ..Default::default()
+        }),
+        Operation::RemoveRoad(RemoveRoad {
+            edge: Some(EdgeId(99)),
+            ..Default::default()
+        }),
+        point("dip", [250.0, 0.0], Height::Raise(-2.0), 60.0),
+    ]);
+    let (report, g) = preview(&graph(), (47.0, 9.5), &s);
+    assert_eq!(report.missing_count(), 1, "{:?}", report.lines());
+    assert!(matches!(
+        report.get(OpRef { patch: 0, op: 2 }).unwrap().outcome,
+        Outcome::Missing(_)
+    ));
+    assert_eq!(g.edges.len(), 2, "way 2 is gone");
+    assert_eq!(g.edges[1].name.as_deref(), Some("Neuer Weg"));
+    assert!(near(g.edges[0].height_at(250.0), 98.0, 1e-6));
+    // The package's graph itself is unchanged.
+    assert_eq!(graph().edges.len(), 3);
+}

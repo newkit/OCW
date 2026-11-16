@@ -15,3 +15,9 @@ Used as the window icon (`apps/desktop/src/icon.rs`, X11 and Windows), the
 desktop entry icon (`packaging/linux/ocw-desktop.desktop`, installed by
 `scripts/deploy-test.sh`; Wayland compositors take the icon from it via the
 app id `ocw-desktop`) and the AppImage icon (`scripts/build-appimage.sh`).
+
+## 3dmodels/
+
+The 3D models of the app as glTF 2.0 files (Git LFS), with their manifest
+and the model contract: see [`3dmodels/README.md`](3dmodels/README.md)
+(spec §14 Phase 15).

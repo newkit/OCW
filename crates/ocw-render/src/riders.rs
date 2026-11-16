@@ -882,9 +882,7 @@ impl Library {
             .fitted
             .entry((profile, variants.to_vec()))
             .or_insert_with(|| {
-                static LOW: std::sync::OnceLock<Model> = std::sync::OnceLock::new();
-                let low =
-                    LOW.get_or_init(|| ocw_assets::rider::build(ocw_assets::rider::Detail::Low));
+                let low = ocw_assets::shipped::rider_low_model();
                 let ids: Vec<&str> = variants.iter().map(String::as_str).collect();
                 let m = ocw_assets::bikes::build_with(
                     profile,
@@ -1090,8 +1088,14 @@ fn spawn_avatar(
     let rider_model = ocw_assets::shipped::rider_model();
     let character = built.look.map(|l| l.character).unwrap_or_default();
     // The body height (spec 4C): the rider scaled, the saddle moved so the
-    // legs fit (the bikes are made for the 1.78 m rider).
-    let body = pose::BodyFit::new(&lib.rider_rig, &lib.bike_rigs[b], character.scale());
+    // legs fit – the bike file's sizing data (spec §14 Phase 15, Q7: the
+    // frames are made for the 1.78 m rider and fitted to every size).
+    let body = pose::BodyFit::sized(
+        &lib.rider_rig,
+        &lib.bike_rigs[b],
+        character.scale(),
+        &ocw_assets::shipped::bike_sizing(built.bike),
+    );
     let bike = body.bike;
     let root = commands
         .spawn((
@@ -1476,7 +1480,7 @@ mod tests {
     /// on the seat post – for every bike type that takes lights.
     #[test]
     fn fitted_lights_have_a_front_and_a_rear_lens() {
-        let low = ocw_assets::rider::build(ocw_assets::rider::Detail::Low);
+        let low = ocw_assets::shipped::rider_low_model();
         for p in ProfileId::ALL {
             let stock = ocw_assets::shipped::bike_model(p);
             assert!(lamp_lenses(stock).is_empty(), "{p:?}: no lights");
@@ -1486,7 +1490,7 @@ mod tests {
             let m = ocw_assets::bikes::build_with(
                 p,
                 ocw_assets::shipped::rider_model(),
-                &low,
+                low,
                 &["lights-set"],
             );
             let lenses = lamp_lenses(&m);
