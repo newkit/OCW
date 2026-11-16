@@ -10,10 +10,12 @@
 //!
 //! Without them it passes without doing anything. Each rider joins the
 //! game, asks the game server for a voice grant and joins the LiveKit room
-//! with it; when the backend reports the other rider, one sends a tone and
-//! the other must hear it. `OCW_VOICE_TEST_HOLD_S` keeps both in the room
-//! that long first (the script checks the members through LiveKit's API).
+//! with it; both must see the other, send a tone and hear the other's.
+//! `OCW_VOICE_TEST_HOLD_S` keeps both in the room that long first (the
+//! script checks the members through LiveKit's API).
 #![cfg(feature = "livekit")]
+
+mod support;
 
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -25,6 +27,7 @@ use ocw_server::net::{ClientOptions, NetClient, ServerTrust};
 use ocw_voice::backend::{BackendCommand, BackendEvent, VoiceBackend};
 use ocw_voice::livekit::LiveKitBackend;
 use ocw_voice::mix::{FRAME_SAMPLES, VOICE_RATE};
+use support::wait_for;
 
 fn hello(name: &str) -> Vec<u8> {
     encode(&client_message(C::Hello(v1::Hello {
@@ -75,29 +78,6 @@ fn join_and_grant(
     panic!("{name}: no voice grant (welcomed: {welcomed})");
 }
 
-fn wait_for(
-    b: &mut LiveKitBackend,
-    seen: &mut Vec<BackendEvent>,
-    timeout: Duration,
-    what: impl Fn(&BackendEvent) -> bool,
-) -> bool {
-    if seen.iter().any(&what) {
-        return true;
-    }
-    let start = Instant::now();
-    while start.elapsed() < timeout {
-        for e in b.poll() {
-            let hit = what(&e);
-            seen.push(e);
-            if hit {
-                return true;
-            }
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    false
-}
-
 #[test]
 fn riders_get_grants_and_hear_each_other_on_the_bundled_server() {
     let (Ok(server), Ok(cert), Ok(url)) = (
@@ -132,10 +112,8 @@ fn riders_get_grants_and_hear_each_other_on_the_bundled_server() {
     let (mut ea, mut eb) = (Vec::new(), Vec::new());
     let t = Duration::from_secs(20);
     let connected = |e: &BackendEvent| matches!(e, BackendEvent::Connected { .. });
-    // One after the other: the second sees the first from its join. (A
-    // participant joining later is not reported to the Rust backend by
-    // `livekit-server` 1.13.10 – also with `--dev` and the older
-    // livekit_two_participants test; a backend issue, not the launcher's.)
+    // One after the other: Bea sees Ada from her join (reported in the
+    // same batch as `Connected`, kept by `wait_for`), Ada sees Bea join.
     a.send(BackendCommand::Connect {
         url: ada.url.clone(),
         token: ada.token.clone(),
@@ -166,55 +144,56 @@ fn riders_get_grants_and_hear_each_other_on_the_bundled_server() {
         std::thread::sleep(Duration::from_millis(50));
     }
     let joined = |who: String| move |e: &BackendEvent| matches!(e, BackendEvent::ParticipantJoined { identity, .. } if *identity == who);
-    if !wait_for(
-        &mut b,
-        &mut eb,
-        Duration::from_secs(10),
-        joined(ada.identity.clone()),
-    ) {
-        // Known (spec §7.1.8 *Open*): with livekit-server 1.13.10 the Rust
-        // backend (SDK 0.10.1) often lists no remote participants, also
-        // against `livekit-server --dev` in livekit_two_participants – a
-        // client issue, not the bundled server's.
-        println!("KNOWN: the Rust voice backend does not report Ada to Bea: {eb:?}");
-        a.send(BackendCommand::Disconnect);
-        b.send(BackendCommand::Disconnect);
-        return;
-    }
-    println!("Bea sees Ada");
+    assert!(
+        wait_for(&mut b, &mut eb, t, joined(ada.identity.clone())),
+        "Bea does not see Ada: {eb:?}"
+    );
+    assert!(
+        wait_for(&mut a, &mut ea, t, joined(bea.identity.clone())),
+        "Ada does not see Bea: {ea:?}"
+    );
+    println!("Ada and Bea see each other");
 
-    // Ada speaks (a tone in real time), Bea listens at full volume.
-    b.send(BackendCommand::Subscribe {
-        identity: ada.identity.clone(),
-        on: true,
-    });
-    b.send(BackendCommand::SetPlacement {
-        identity: ada.identity.clone(),
-        gain: 1.0,
-        pan: 0.0,
-    });
-    let mut energy = 0.0f64;
-    let mut phase = 0.0f32;
-    let start = Instant::now();
-    let mut frames = 0u64;
-    while start.elapsed() < Duration::from_secs(10) && energy <= 50.0 {
-        let block: Vec<f32> = (0..FRAME_SAMPLES)
+    // Both speak (tones in real time) and listen to the other at full
+    // volume.
+    for (backend, other) in [(&mut a, &bea.identity), (&mut b, &ada.identity)] {
+        backend.send(BackendCommand::Subscribe {
+            identity: other.clone(),
+            on: true,
+        });
+        backend.send(BackendCommand::SetPlacement {
+            identity: other.clone(),
+            gain: 1.0,
+            pan: 0.0,
+        });
+    }
+    let tone = |phase: &mut f32, hz: f32| -> Vec<f32> {
+        (0..FRAME_SAMPLES)
             .map(|_| {
-                phase += std::f32::consts::TAU * 440.0 / VOICE_RATE as f32;
+                *phase += std::f32::consts::TAU * hz / VOICE_RATE as f32;
                 0.3 * phase.sin()
             })
-            .collect();
-        a.push_microphone(&block);
-        let out = b.pull_output(FRAME_SAMPLES);
-        energy += out.iter().map(|s| f64::from(*s).powi(2)).sum::<f64>();
+            .collect()
+    };
+    let energy = |out: Vec<f32>| out.iter().map(|s| f64::from(*s).powi(2)).sum::<f64>();
+    let (mut heard_a, mut heard_b) = (0.0f64, 0.0f64);
+    let (mut pa, mut pb) = (0.0f32, 0.0f32);
+    let start = Instant::now();
+    let mut frames = 0u64;
+    while start.elapsed() < Duration::from_secs(10) && (heard_a <= 50.0 || heard_b <= 50.0) {
+        a.push_microphone(&tone(&mut pa, 440.0));
+        b.push_microphone(&tone(&mut pb, 660.0));
+        heard_a += energy(a.pull_output(FRAME_SAMPLES));
+        heard_b += energy(b.pull_output(FRAME_SAMPLES));
         frames += 1;
         let due = Duration::from_millis(10 * frames);
         if let Some(wait) = due.checked_sub(start.elapsed()) {
             std::thread::sleep(wait);
         }
     }
-    assert!(energy > 50.0, "Bea heard nothing (energy {energy:.2})");
-    println!("Bea hears Ada (energy {energy:.0})");
+    assert!(heard_b > 50.0, "Bea did not hear Ada (energy {heard_b:.2})");
+    assert!(heard_a > 50.0, "Ada did not hear Bea (energy {heard_a:.2})");
+    println!("Ada and Bea hear each other (energy {heard_a:.0} / {heard_b:.0})");
     a.send(BackendCommand::Disconnect);
     b.send(BackendCommand::Disconnect);
 }
