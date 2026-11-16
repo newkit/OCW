@@ -224,7 +224,8 @@ fn analyse(path: &str) {
         let mut unmatched = 0usize;
         // The production path's time per tile (all strips together, as the
         // renderer builds a tile; the patches are made on first use).
-        {
+        // A second pass: the patches made (the renderer keeps them).
+        for pass in ["", " (again)"] {
             let t0 = std::time::Instant::now();
             for tile in pkg.tiles.values() {
                 let junctions = match mode {
@@ -236,7 +237,7 @@ fn analyse(path: &str) {
             }
             let ms = t0.elapsed().as_secs_f64() * 1000.0;
             println!(
-                "{mode:?}: road meshes of {} tiles in {ms:.0} ms ({:.2} ms per tile)",
+                "{mode:?}{pass}: road meshes of {} tiles in {ms:.0} ms ({:.2} ms per tile)",
                 pkg.tiles.len(),
                 ms / pkg.tiles.len().max(1) as f64
             );
