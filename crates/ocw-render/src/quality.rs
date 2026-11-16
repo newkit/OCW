@@ -320,6 +320,23 @@ pub fn horizon_fog_share(view_m: Option<f32>, weather_vis_m: Option<f32>) -> f32
     by_view * by_weather
 }
 
+/// The atmosphere's own haze (its aerial perspective) is added over the
+/// fogged terrain, and the farther the fully fogged band lies the more:
+/// the horizon colour is scaled down (linear light) from 1 up to
+/// [`HAZE_NEAR_M`] to [`HAZE_SCALE_FAR`] from [`HAZE_FAR_M`] on (measured:
+/// the fogged band at 8 – 12 km from the Schauinsland was about 0.05
+/// brighter than the sky above it, at 2 km in Las Cañadas level with it).
+pub const HAZE_NEAR_M: f32 = 3_000.0;
+pub const HAZE_FAR_M: f32 = 10_000.0;
+pub const HAZE_SCALE_FAR: f32 = 0.85;
+
+/// [`HAZE_SCALE_FAR`]'s ramp at a view distance (`None`: unlimited).
+pub fn horizon_fog_scale(view_m: Option<f32>) -> f32 {
+    let v = view_m.unwrap_or(f32::INFINITY);
+    let t = ((v - HAZE_NEAR_M) / (HAZE_FAR_M - HAZE_NEAR_M)).clamp(0.0, 1.0);
+    1.0 + (HAZE_SCALE_FAR - 1.0) * t
+}
+
 /// Seconds the fog takes to follow a new render distance (95 % of the
 /// way).
 pub const FOG_EASE_S: f32 = 2.0;
@@ -641,6 +658,12 @@ mod tests {
         assert_eq!(horizon_fog_share(Some(12_000.0), Some(12_000.0)), 0.0);
         assert!((horizon_fog_share(Some(12_000.0), Some(18_000.0)) - 0.5).abs() < 1e-6);
         assert_eq!(horizon_fog_share(Some(12_000.0), Some(50_000.0)), 1.0);
+        // The haze scale: 1 at short distances, 0.85 from 10 km.
+        assert_eq!(horizon_fog_scale(Some(2_000.0)), 1.0);
+        assert_eq!(horizon_fog_scale(Some(10_000.0)), HAZE_SCALE_FAR);
+        assert_eq!(horizon_fog_scale(None), HAZE_SCALE_FAR);
+        let mid = horizon_fog_scale(Some(6_500.0));
+        assert!(mid < 1.0 && mid > HAZE_SCALE_FAR, "{mid}");
         let mut last = 1.0;
         for km in 1..=60 {
             let s = horizon_fog_share(Some(km as f32 * 1000.0), None);

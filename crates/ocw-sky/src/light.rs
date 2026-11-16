@@ -142,6 +142,62 @@ pub fn atmosphere_fog_srgb(el_deg: f64) -> [f32; 3] {
     keyed(&ATMOSPHERE_HORIZON, el_deg).map(|c| c as f32)
 }
 
+/// The fog's extra colour towards a low sun (linear, in the fog's input
+/// units, added to [`atmosphere_fog_srgb`] straight towards the sun and
+/// falling off as cos^[`SUN_GLOW_EXPONENT`] of the angle to it): the sky
+/// at the horizon is warmer and brighter there. Measured on the
+/// atmosphere's renders with a black fog, the sky just above the horizon
+/// all round (every 30°): at the top of the Schauinsland (1240 m) at
+/// 15:00 / 16:00 / 16:30 (sun 14° / 7° / 3°) towards the sun about +0.09
+/// red and +0.05 green over the opposite side (displayed); in Las Cañadas
+/// (Teide, 16:30 – 18:10) only +0.01 – 0.02. Red and green only (blue was
+/// not higher towards the sun); nothing from 25° on and below the horizon.
+const SUN_GLOW: [(f64, [f64; 3]); 5] = [
+    (-1.0, [0.0, 0.0, 0.0]),
+    (1.0, [0.40, 0.22, 0.0]),
+    (15.0, [0.40, 0.22, 0.0]),
+    (25.0, [0.0, 0.0, 0.0]),
+    (90.0, [0.0, 0.0, 0.0]),
+];
+
+/// How fast the glow falls off with the angle to the sun (cos^4: half at
+/// 33°, a quarter at 45°, none from 90°).
+pub const SUN_GLOW_EXPONENT: f32 = 4.0;
+
+/// [`SUN_GLOW`] at an apparent sun elevation (°).
+pub fn sun_glow_lin(el_deg: f64) -> [f32; 3] {
+    keyed(&SUN_GLOW, el_deg).map(|c| c as f32)
+}
+
+/// The colour for a fog's directional-light term (Bevy's `DistanceFog::
+/// directional_light_color`, which the renderer multiplies by the light's
+/// linear colour × illuminance and the camera's exposure) that adds
+/// `glow` straight towards a light of linear colour `rgb` and
+/// `illuminance` (lux) at the camera's `ev100` (exposure 2^-ev100 / 1.2).
+/// `None`: no light to carry it, or no glow.
+pub fn fog_light_colour(
+    glow: [f32; 3],
+    rgb: [f32; 3],
+    illuminance: f32,
+    ev100: f32,
+) -> Option<[f32; 3]> {
+    let exposure = 2f32.powf(-ev100) / 1.2;
+    if glow.iter().all(|g| *g <= 0.0) {
+        return None;
+    }
+    let mut out = [0.0; 3];
+    for i in 0..3 {
+        let carrier = rgb[i] * illuminance * exposure;
+        if glow[i] > 0.0 {
+            if carrier < 1e-4 {
+                return None;
+            }
+            out[i] = glow[i] / carrier;
+        }
+    }
+    Some(out)
+}
+
 fn keyed(keys: &[(f64, [f64; 3])], x: f64) -> [f64; 3] {
     if x <= keys[0].0 {
         return keys[0].1;
@@ -361,6 +417,40 @@ mod tests {
         assert!(dusk[0] > dusk[1] && dusk[1] > dusk[2], "{dusk:?}");
         let night = atmosphere_fog_srgb(-30.0);
         assert!(night.iter().all(|c| *c < 0.05), "{night:?}");
+    }
+
+    /// Regression (10G, the pale band towards a low sun): the fog's glow
+    /// towards the sun – warm (red over green, no blue) while the sun is
+    /// low, none high up or below the horizon – and the directional-light
+    /// colour that carries it gives back the glow through the renderer's
+    /// product (colour × light × illuminance × exposure).
+    #[test]
+    fn the_fog_glows_towards_a_low_sun() {
+        for el in [2.0, 7.0, 14.0] {
+            let g = sun_glow_lin(el);
+            assert!(g[0] > g[1] && g[1] > 0.0 && g[2] == 0.0, "{el}°: {g:?}");
+        }
+        for el in [-5.0, -1.0, 25.0, 40.0, 80.0] {
+            assert_eq!(sun_glow_lin(el), [0.0; 3], "{el}°");
+        }
+        // Halfway between 15° and 25°: half.
+        assert!((sun_glow_lin(20.0)[0] - 0.20).abs() < 1e-6);
+        // Round trip through the renderer's product.
+        let glow = sun_glow_lin(7.0);
+        let rgb = [1.0, 0.8, 0.6];
+        let (lux, ev) = (4436.0, 7.6);
+        let c = fog_light_colour(glow, rgb, lux, ev).unwrap();
+        let exposure = 2f32.powf(-ev) / 1.2;
+        for i in 0..3 {
+            let back = c[i] * rgb[i] * lux * exposure;
+            assert!((back - glow[i]).abs() < 1e-5, "{i}: {back} vs {}", glow[i]);
+        }
+        // No light (the sun down), or no glow: nothing.
+        assert_eq!(fog_light_colour(glow, rgb, 0.0, ev), None);
+        assert_eq!(fog_light_colour([0.0; 3], rgb, lux, ev), None);
+        // Falls off with the angle: cos^4 – a quarter at 45°.
+        let at45 = 45f32.to_radians().cos().powf(SUN_GLOW_EXPONENT);
+        assert!((at45 - 0.25).abs() < 1e-3);
     }
 
     #[test]

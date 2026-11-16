@@ -229,6 +229,11 @@ pub fn mix_linear(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     [0, 1, 2].map(|i| from(to(a[i]) + (to(b[i]) - to(a[i])) * t))
 }
 
+/// `c` (sRGB, values above 1 allowed) times `k` (0 … 1) in linear light.
+pub fn scale_linear(c: [f32; 3], k: f32) -> [f32; 3] {
+    mix_linear([0.0; 3], c, k)
+}
+
 fn linear(c: [f32; 3]) -> Color {
     Color::linear_rgb(c[0], c[1], c[2])
 }
@@ -361,7 +366,12 @@ fn apply_sky(
         Some(c) => c,
         None if atmosphere && !settings.legacy_fog && share > 0.0 => mix_linear(
             light.fog_srgb,
-            ocw_sky::light::atmosphere_fog_srgb(sky.sky.sun.elevation_deg),
+            scale_linear(
+                ocw_sky::light::atmosphere_fog_srgb(sky.sky.sun.elevation_deg),
+                quality
+                    .as_deref()
+                    .map_or(1.0, |q| crate::quality::horizon_fog_scale(q.0.view_m)),
+            ),
             share,
         ),
         None => light.fog_srgb,
@@ -409,9 +419,28 @@ fn apply_sky(
             *scene = want;
         }
     }
+    // Towards a low sun the horizon is warmer and brighter: the fog's
+    // directional-light term (10G), where the horizon colour is used.
+    let glow = (share > 0.0
+        && atmosphere
+        && !settings.legacy_fog
+        && settings.fog_override.is_none()
+        && !key.moon)
+        .then(|| {
+            let g = ocw_sky::light::sun_glow_lin(sky.sky.sun.elevation_deg)
+                .map(|c| c * share * (1.0 - grey));
+            let l = key.colour.to_linear();
+            ocw_sky::light::fog_light_colour(g, [l.red, l.green, l.blue], key.lux * daylight, ev)
+        })
+        .flatten();
+    let glow_colour = glow.map_or(Color::NONE, |c| Color::linear_rgba(c[0], c[1], c[2], 1.0));
     for (e, fog, cam_exposure) in &mut cameras {
         if let Some(mut fog) = fog {
             fog.color = srgb(fog_srgb);
+            if fog.directional_light_color != glow_colour {
+                fog.directional_light_color = glow_colour;
+                fog.directional_light_exponent = ocw_sky::light::SUN_GLOW_EXPONENT;
+            }
         }
         match cam_exposure {
             Some(mut x) => x.ev100 = ev,

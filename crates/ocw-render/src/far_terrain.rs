@@ -537,15 +537,18 @@ fn sea_plane(min: [f64; 2], max: [f64; 2]) -> Mesh {
 }
 
 /// How far the camera sees (m) when the render distance (spec §14 Phase
-/// 10, 10G) or a quality preset limits the view: far tiles wholly beyond
-/// it are hidden (the far plane alone culls nothing – the projection has
-/// no far clip – and they would stand in the fog's colour against the
-/// sky). `limit`: none without a limit; `off`: never (`far.cull off`, the
-/// look before 10G for comparisons).
+/// 10, 10G) or a quality preset limits the view, and whether far tiles
+/// wholly beyond it are hidden (the far plane alone culls nothing – the
+/// projection has no far clip) – only tiles that rise above the eye (see
+/// `hide_far_under_near`); `off`: never (`far.cull off`, comparisons).
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Default)]
 pub struct FarCull {
     pub limit: Option<f32>,
     pub off: bool,
+    /// Far tiles hidden beyond the limit in the last frame, and those
+    /// beyond it that stay because they lie below the eye (`far.cull`).
+    pub hidden: usize,
+    pub below_eye: usize,
 }
 
 /// `far.cull [on|off]`.
@@ -554,7 +557,7 @@ pub fn register_commands(app: &mut App) {
     app.console_command(ConsoleCommand::new(
         Permission::User,
         clap::Command::new("far.cull")
-            .about("Hide far terrain wholly beyond a limited view distance: on (default) or off (comparisons)")
+            .about("Hide far terrain wholly beyond 2 × a limited view distance and rising above the eye: on (default) or off (comparisons)")
             .arg(clap::Arg::new("state").value_parser(["on", "off"])),
         |world, m| {
             let mut c = world.get_resource_or_insert_with(FarCull::default);
@@ -562,12 +565,14 @@ pub fn register_commands(app: &mut App) {
                 c.off = s == "off";
             }
             Ok(format!(
-                "far cull {}{}",
+                "far cull {}{}, {} far tiles hidden, {} beyond it kept below the eye",
                 if c.off { "off" } else { "on" },
                 match c.limit {
                     Some(l) => format!(" (beyond {:.1} km)", l / 1000.0),
                     None => " (no limit now)".into(),
-                }
+                },
+                c.hidden,
+                c.below_eye
             ))
         },
     ));
@@ -588,7 +593,7 @@ pub fn box_distance(p: Vec3, centre: Vec3, half: Vec3) -> f32 {
 pub(crate) fn hide_far_under_near(
     far: Res<FarTerrain>,
     streamer: Res<TileStreamer>,
-    cull: Option<Res<FarCull>>,
+    cull: Option<ResMut<FarCull>>,
     cameras: Query<&GlobalTransform, With<FollowCamera>>,
     mut tiles: Query<
         (
@@ -600,7 +605,9 @@ pub(crate) fn hide_far_under_near(
     >,
 ) {
     let eye = cameras.iter().next().map(|g| g.translation());
-    let limit = cull.filter(|c| !c.off).and_then(|c| c.limit);
+    let limit = cull.as_deref().filter(|c| !c.off).and_then(|c| c.limit);
+    let mut hidden = 0;
+    let mut below_eye = 0;
     for (id, &e) in &far.tiles {
         let Ok((mut v, aabb, gt)) = tiles.get_mut(e) else {
             continue;
@@ -616,10 +623,17 @@ pub(crate) fn hide_far_under_near(
                     m.row(2).abs().dot(half),
                 );
                 let c = gt.transform_point(Vec3::from(b.center));
-                box_distance(eye, c, h) > limit
+                // Only tiles that rise above the eye: they would stand against
+                // the sky; lower ones lie on the ground below the horizon,
+                // and hiding them would open holes onto the atmosphere's
+                // ground haze (a pale band like a lake, seen from a summit).
+                let far_enough = box_distance(eye, c, h) > limit;
+                below_eye += usize::from(far_enough && c.y + h.y <= eye.y);
+                far_enough && c.y + h.y > eye.y
             }
             _ => false,
         };
+        hidden += usize::from(beyond);
         let want = if streamer.loaded.contains_key(id) || beyond {
             Visibility::Hidden
         } else {
@@ -628,6 +642,12 @@ pub(crate) fn hide_far_under_near(
         if *v != want {
             *v = want;
         }
+    }
+    if let Some(mut c) = cull
+        && (c.hidden, c.below_eye) != (hidden, below_eye)
+    {
+        c.hidden = hidden;
+        c.below_eye = below_eye;
     }
 }
 
