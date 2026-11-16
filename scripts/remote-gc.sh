@@ -70,7 +70,7 @@ verdict() {
   fi
 }
 
-# Janitor log for the art project (spec §11.2, art/ART-PROJECT.md §2).
+# Janitor log for the art project (spec §11.2, OCW-ART's ART-PROJECT.md §2).
 log_root="$(dirname "$config_dir")/test-output/build-log"
 json_str() { local b='\' q='"' s; s=${1//"$b"/"$b$b"}; printf '"%s"' "${s//"$q"/"$b$q"}"; }
 jlog() { # machine path kb reason action

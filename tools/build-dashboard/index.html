@@ -111,6 +111,29 @@ details.qg summary .muted { font-weight: 400; }
 .mnote { margin: 0 0 10px; font-size: 13px; overflow-wrap: anywhere; }
 .mnote .k { color: var(--muted); margin-right: 6px; }
 .chip.off { opacity: .7; border: 1px dashed var(--bad); }
+/* Coordinator (deb) card and Claude tasks, side by side above the machines. */
+.top { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 12px; padding: 0 16px 12px; }
+.alert.warn { background: var(--warn); color: #1d2330; }
+.sparks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 14px; margin: 4px 0 10px; }
+.spark .lbl { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; color: var(--muted); }
+.spark .lbl b { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+.spark svg { display: block; width: 100%; height: 34px; margin-top: 2px; background: var(--track); border-radius: 4px; }
+.spark .rng { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; align-items: start; }
+.tscroll { overflow-x: auto; max-width: 100%; }
+.tname { min-width: 8.5em; overflow-wrap: break-word; }
+.clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.cut { margin: 4px 0 10px; padding: 8px 10px; border-radius: 8px; font-size: 13px; border-left: 4px solid var(--ok); background: var(--chip); }
+.cut.no { border-left-color: var(--warn); }
+.cut b { display: block; }
+.cut ul { margin: 4px 0 0; padding-left: 18px; }
+.ctools { font-size: 12px; color: var(--muted); margin-left: auto; font-weight: 400; }
+.ctools label { cursor: pointer; }
+td.wrap { overflow-wrap: anywhere; }
+tr.done td { opacity: .7; }
+details.wt { margin-top: 10px; font-size: 13px; }
+details.wt summary { cursor: pointer; font-weight: 600; }
+@media (max-width: 560px) { .sparks, .two { grid-template-columns: 1fr; } }
 footer { padding: 0 16px 24px; font-size: 12px; color: var(--muted); }
 @media (max-width: 480px) { .meters { grid-template-columns: 1fr; } }
 </style>
@@ -123,11 +146,12 @@ footer { padding: 0 16px 24px; font-size: 12px; color: var(--muted); }
 <section id="alerts"></section>
 <section class="overview" id="overview"></section>
 <section class="chips" id="chips"></section>
+<section class="top" id="top"><div class="card" id="coord" style="display:none"></div><div class="card" id="ctasks" style="display:none"></div></section>
 <main id="cards"></main>
 <section class="panel" id="questions"></section>
 <section class="panel" id="janitor"></section>
 <section class="panel" id="art"></section>
-<footer>View of the machines in config/machines.toml, polled over SSH every 5 s (also machines disabled for building: read-only probes); on the machines it only changes the janitor's cleanup of build artefacts (target/) when a disk fills up. Enabled/Disabled and the build slots (with the token) go to config/build-machines.toml, which scripts/remote.sh reads. Open questions: from SPECIFICATION.md of the main checkout. JSON: <a href="api/status">/api/status</a></footer>
+<footer>View of the machines in config/machines.toml, polled over SSH every 5 s (also machines disabled for building: read-only probes); on the machines it only changes the janitor's cleanup of build artefacts (target/) when a disk fills up. Enabled/Disabled and the build slots (with the token) go to config/build-machines.toml, which scripts/remote.sh reads. Open questions: from SPECIFICATION.md of the main checkout. The coordinator card reads this machine's /proc (process names and RSS, never command lines); its samples go to test-output/build-log/DAY/deb.jsonl. Claude tasks: agents.jsonl, the task files' mtime and size (never their content) and git. JSON: <a href="api/status">/api/status</a></footer>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -457,14 +481,14 @@ function renderJanitor(j, now) {
 }
 
 // Art project: the hourly collector's last run (test-output/build-log/DAY/art.json,
-// art/ART-PROJECT.md §5.1). `undefined`: the dashboard does not look (hidden).
+// OCW-ART's ART-PROJECT.md §5.1). `undefined`: the dashboard does not look (hidden).
 function renderArt(a) {
   const el = $("art");
   if (a === undefined) { el.style.display = "none"; return; }
   el.style.display = "";
   if (!a) {
     el.innerHTML = `<h2>Art project <span class="badge warn">no run yet</span></h2>` +
-      `<div class="empty">The hourly collector has not run yet (make art-install-timer).</div>`;
+      `<div class="empty">The hourly collector has not run yet (make install-timer in OCW-ART).</div>`;
     return;
   }
   const ok = a.status === "ok" && !a.late;
@@ -476,9 +500,138 @@ function renderArt(a) {
   if (a.sheets) bits.push("contact sheets");
   let html = `<h2>Art project <span class="badge ${ok ? "ok" : "warn"}">${esc(a.status || "?")}${a.late ? " · late" : ""}</span></h2>` +
     `<div class="line">${bits.join(" · ")}</div>`;
-  if (a.late) html += `<div class="line warnt">No collector run for over 2.5 h: check the timer (make art-timer-status).</div>`;
+  if (a.late) html += `<div class="line warnt">No collector run for over 2.5 h: check the timer (make timer-status in OCW-ART).</div>`;
   for (const e of a.errors || []) html += `<div class="cmd">${esc(e)}</div>`;
   el.innerHTML = html;
+}
+
+// The coordinator (deb, the machine the dashboard runs on): memory, swap, the
+// biggest processes (names and RSS only), OOM kills, load and pressure, disks,
+// the big directories, activity, and sparklines of the last hours.
+function spark(label, vals, now, fmt, opts = {}) {
+  const xs = vals.filter((v) => v != null);
+  if (!xs.length) return `<div class="spark"><div class="lbl"><span>${esc(label)}</span><b>–</b></div><svg viewBox="0 0 100 30" preserveAspectRatio="none"></svg><div class="rng">no samples yet</div></div>`;
+  const lo = opts.min != null ? Math.min(opts.min, ...xs) : Math.min(...xs), hi = opts.max != null ? Math.max(opts.max, ...xs) : Math.max(...xs);
+  const span = hi - lo || 1, n = vals.length;
+  const pts = [];
+  vals.forEach((v, i) => { if (v != null) pts.push(`${(n === 1 ? 100 : 100 * i / (n - 1)).toFixed(2)},${(28 - 26 * (v - lo) / span).toFixed(2)}`); });
+  const area = pts.length > 1 ? `<polygon points="${pts[0].split(",")[0]},30 ${pts.join(" ")} ${pts[pts.length - 1].split(",")[0]},30" fill="var(--accent)" opacity=".15"/>` : "";
+  const line = `<polyline points="${pts.join(" ")}" fill="none" stroke="var(--${opts.color || "accent"})" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
+  return `<div class="spark"><div class="lbl"><span>${esc(label)}</span><b>${esc(fmt(xs[xs.length - 1]))}</b></div>` +
+    `<svg viewBox="0 0 100 30" preserveAspectRatio="none" role="img" aria-label="${esc(label)}">${area}${line}</svg>` +
+    `<div class="rng">min ${esc(fmt(Math.min(...xs)))} · max ${esc(fmt(Math.max(...xs)))}</div></div>`;
+}
+const pctTxt = (v) => v == null ? "?" : `${v.toFixed(v < 10 ? 1 : 0)} %`;
+function clock(t) { return t ? new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "?"; }
+function dayClock(t) { return t ? new Date(t * 1000).toLocaleString([], { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "?"; }
+
+function renderCoordinator(c, alerts, now) {
+  const el = $("coord");
+  if (!c) { el.style.display = "none"; return; }
+  el.style.display = "";
+  const mine = (alerts || []).filter((a) => a.machine === c.name && a.level);
+  const worst = mine.some((a) => a.level === "bad") ? "bad" : mine.length ? "warn" : "ok";
+  let html = `<h2><span class="dot ${c.available ? worst : ""}"></span>Coordinator (${esc(c.name)})<span class="os">coordinator</span></h2>`;
+  if (!c.available) { el.innerHTML = html + `<div class="sub">${c.pending ? "first sample pending…" : "not available on this system (no /proc)"}</div>`; return; }
+  const p = c.processes || {}, mem = c.memory || {}, th = c.thresholds || {};
+  html += `<div class="sub">this machine · ${esc(p.processes)} processes · sampled ${dur(now - c.at)} ago</div>`;
+  const m = [];
+  if (mem.total) m.push(meter("Memory", 100 * mem.used / mem.total, `${bytes(mem.used)} / ${bytes(mem.total)} · ${bytes(mem.available)} available`,
+    100 - (th.mem_avail_pct_below || [25])[0], 100 - (th.mem_avail_pct_below || [25, 15])[1]));
+  if (mem.swap_total) m.push(meter("Swap", mem.swap_pct, `${bytes(mem.swap_used)} / ${bytes(mem.swap_total)}`, ...(th.swap_used_pct || [50, 80])));
+  if (c.load && c.ncpu) m.push(meter("Load / core", 100 * c.load[0] / c.ncpu, `${c.load[0].toFixed(2)} / ${c.ncpu} (${c.load[1].toFixed(1)}, ${c.load[2].toFixed(1)})`, 100, 150));
+  const ps = c.pressure;
+  if (ps) {
+    const v = (k) => ((ps[k] || {}).some || {}).avg60;
+    m.push(meter("Pressure (some, 1 min)", v("memory"), `mem ${pctTxt(v("memory"))} · cpu ${pctTxt(v("cpu"))} · io ${pctTxt(v("io"))}`, ...(th.psi_memory_some_avg60 || [10, 30])));
+  }
+  for (const d of c.disks || []) m.push(meter(`Disk ${d.label}${d.in_ram ? " (tmpfs, in RAM)" : ""}`, d.pct,
+    `${d.pct == null ? "?" : d.pct.toFixed(0) + " %"} · ${bytes(d.free)} free`, ...(th.disk_pct || [85, 90])));
+  html += `<div class="meters">${m.join("")}</div>`;
+  const h = c.history || {};
+  if ((h.t || []).length) {
+    html += `<div class="sparks">` +
+      spark(`Memory available, ${Math.round((h.span || 21600) / 3600)} h`, h.mem_avail || [], now, bytes, { min: 0, color: "ok" }) +
+      spark("Load (1 min)", h.load1 || [], now, (v) => v.toFixed(2), { min: 0 }) +
+      spark("Root disk free", h.root_free || [], now, bytes, { min: 0, color: "warn" }) + `</div>`;
+  } else html += `<div class="empty">History: the first sample is written after a minute (test-output/build-log/DAY/deb.jsonl).</div>`;
+  const groups = Object.entries(p.groups || {}).filter(([k, g]) => g.count && k !== "other");
+  html += `<div class="two"><table><thead><tr><th>Top processes</th><th class="n">RSS</th></tr></thead><tbody>` +
+    (p.top || []).map((x) => `<tr><td>${esc(x.name)}</td><td class="n">${bytes(x.rss)}</td></tr>`).join("") + `</tbody></table>` +
+    `<table><thead><tr><th>Group</th><th class="n">#</th><th class="n">RSS</th></tr></thead><tbody>` +
+    (groups.length ? groups.map(([k, g]) => `<tr><td>${esc(k)}</td><td class="n">${g.count}</td><td class="n">${bytes(g.rss)}</td></tr>`).join("") : `<tr><td colspan="3" class="muted">none</td></tr>`) +
+    ((p.groups || {}).other ? `<tr><td class="muted">other</td><td class="n">${p.groups.other.count}</td><td class="n">${bytes(p.groups.other.rss)}</td></tr>` : "") +
+    `</tbody></table></div>`;
+  const wt = c.worktrees || {}, art = c.art_timer, dm = c.dashboard || {};
+  const sess = p.claude_sessions, srss = (p.claude_session_rss || []).reduce((a, b) => a + b, 0);
+  const acts = [`${esc(sess)} Claude Code session${sess === 1 ? "" : "s"}${sess ? ` (${bytes(srss)})` : ""}`,
+    `${esc(wt.linked)} worktree${wt.linked === 1 ? "" : "s"} + main${wt.stale ? ` <span class="muted">(+${wt.stale} stale)</span>` : ""}`,
+    `${p.ffmpeg ? `<b class="warnt">${p.ffmpeg} ffmpeg</b>` : "0 ffmpeg"}`,
+    `${p.qemu ? `<b class="warnt">${p.qemu} QEMU VM${p.qemu === 1 ? "" : "s"}</b>` : "0 QEMU VMs"}`,
+    `art timer ${art ? `<span class="badge ${art.state === "active" ? "ok" : "warn"}">${esc(art.state)}</span>${art.next ? ` next ${esc(String(art.next).replace(/^\w+ \d{4}-\d\d-\d\d /, "").replace(/:\d\d \w+$/, ""))}` : ""}` : "?"}`];
+  html += `<div class="line"><span class="k">Activity</span>${acts.join(" · ")}</div>`;
+  if (dm.used != null) html += `<div class="line"><span class="k">Dashboard</span>${bytes(dm.used)}${dm.max ? ` of MemoryMax ${bytes(dm.max)}` : ""}${dm.high ? ` (MemoryHigh ${bytes(dm.high)})` : ""} <span class="muted">${dm.in_unit ? "cgroup of the unit" : "RSS (not running as the unit)"}</span></div>`;
+  const oom = c.oom || {}, ev = oom.events || [];
+  const unread = Object.entries(oom.sources || {}).filter(([k, v]) => v !== "ok").map(([k, v]) => `${k}: ${v}`);
+  html += `<div class="line"><span class="k">OOM kills</span>${esc(oom.since_boot ?? "?")} since boot` +
+    (ev.length ? "" : " · none in the last 7 days") + `</div>`;
+  if (ev.length) html += `<table><thead><tr><th>OOM killer stopped</th><th>Source</th><th class="n">When</th></tr></thead><tbody>` +
+    ev.slice(0, 6).map((e) => `<tr><td class="wrap">${esc(e.name)}</td><td class="muted">${esc(e.source)}</td><td class="n${now - e.t < 86400 ? " warnt" : ""}">${dayClock(e.t)} (${dur(now - e.t)} ago)</td></tr>`).join("") + `</tbody></table>`;
+  if (unread.length) html += `<div class="empty">Not readable without root: ${unread.map(esc).join(" · ")}</div>`;
+  const dirs = (c.dirs || {}).items || [];
+  if (dirs.length) html += `<table><thead><tr><th>Big directories <span class="muted">(du, every 10 min${c.dirs.at ? `, ${dur(now - c.dirs.at)} ago` : ""})</span></th><th class="n">Size</th></tr></thead><tbody>` +
+    dirs.map((d) => `<tr><td class="wrap" title="${esc(d.path)}">${esc(d.label)} <span class="cmd">${esc(d.path)}</span></td><td class="n">${d.bytes != null ? bytes(d.bytes) : `<span class="muted">${esc(d.error)}</span>`}</td></tr>`).join("") + `</tbody></table>`;
+  else html += `<div class="empty">Directory sizes: measuring…</div>`;
+  el.innerHTML = html;
+}
+
+// The Claude tasks (test-output/build-log/DAY/agents.jsonl; liveness only from the
+// task files' mtime and size, never their content), worktrees and the cutover check.
+let showFinished = false;
+try { showFinished = localStorage.getItem("ocw-show-finished") === "1"; } catch (e) {}
+function taskRow(t, now, done) {
+  const w = t.worktree || {};
+  const act = t.activity === "unknown" || !t.activity ? `<span class="muted">unknown</span>` :
+    `<span class="${t.activity === "idle / waiting" ? "warnt" : ""}">${esc(t.activity)}</span> <span class="muted">${t.age_s != null ? dur(t.age_s) + " ago" : ""}</span>`;
+  const stCls = t.state === "running" ? "ok" : t.state === "interrupted" ? "bad" : "";
+  const commits = w.ahead != null ? `${w.ahead}` : "";
+  const pm = t.worktree ? `${w.new === false ? `<span class="badge">no commits yet</span>` : w.merged ? `<span class="badge ok">merged</span>` : `<span class="badge">not merged</span>`} <span class="muted">${esc(w.pushed || "")}</span>` : `<span class="muted">no worktree</span>`;
+  return `<tr class="${done ? "done" : ""}"><td class="tname"><b>${esc(t.task)}</b><div class="cmd">${esc(t.id_short || t.key)}${t.note ? " · " + esc(t.note) : ""}</div></td>` +
+    `<td class="wrap"><span class="cmd">${esc(t.branch)}</span>${w.sha ? `<div class="muted clamp" style="font-size:11.5px">${esc(w.sha)} ${esc(w.subject || "")}${w.commit_time ? ` (${dur(now - w.commit_time)} ago)` : ""}</div>` : ""}</td>` +
+    `<td><span class="badge ${stCls}">${esc(t.state)}</span><div class="muted" style="font-size:11.5px">${esc(t.last_event)} ${clock(t.last_event_t)}</div></td>` +
+    `<td class="n">${t.running_s != null ? dur(t.running_s) : ""}<div class="muted" style="font-size:11.5px">${t.started ? "since " + clock(t.started) : ""}</div></td>` +
+    `<td>${act}</td><td class="n">${commits}</td><td>${pm}</td></tr>`;
+}
+function renderTasks(ct, now) {
+  const el = $("ctasks");
+  if (!ct) { el.style.display = "none"; return; }
+  el.style.display = "";
+  const c = ct.cutover || {}, run = ct.running || [], rec = ct.recent || [];
+  const nrun = run.filter((t) => t.running).length;
+  let html = `<h2><span class="dot ${nrun ? "ok" : ""}"></span>Claude tasks <span class="badge ${nrun ? "ok" : ""}">${nrun} running</span>` +
+    `<span class="ctools"><label><input type="checkbox" id="show-finished"${showFinished ? " checked" : ""}> finished in 24 h (${rec.length})</label></span></h2>`;
+  html += `<div class="sub">agents.jsonl of the coordinator · ${esc(ct.claude_sessions ?? "?")} Claude Code session${ct.claude_sessions === 1 ? "" : "s"} on ${esc((lastStatus.coordinator || {}).name || "deb")}` +
+    `${ct.at ? ` · checked ${dur(now - ct.at)} ago` : ""}</div>`;
+  html += `<div class="cut${c.ok ? "" : " no"}"><b>${esc(c.text || "")}</b>` +
+    ((c.items || []).length ? `<ul>${c.items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>` : "") + `</div>`;
+  const rows = run.map((t) => taskRow(t, now, false)).concat(showFinished ? rec.map((t) => taskRow(t, now, true)) : []);
+  if (rows.length) html += `<div class="tscroll"><table><thead><tr><th>Task</th><th>Branch</th><th>State</th><th class="n">Running</th><th>Last activity</th><th class="n" title="commits on the branch not in main">Commits</th><th>Merged / pushed</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+  else html += `<div class="empty">No running tasks${showFinished ? " and none finished in the last 24 h" : ""}.</div>`;
+  const wts = ct.worktrees || [], wc = ct.worktree_counts || {};
+  html += `<details class="wt"><summary>Worktrees <span class="muted">· ${esc(wc.total ?? wts.length)} in all, ${esc(wc.merged ?? "?")} merged into main, ${esc(wc.unmerged ?? "?")} not merged${wc.detached ? `, ${esc(wc.detached)} detached` : ""} – listed: main, unmerged branches with commits, and those of a task</span></summary>` +
+    `<div class="tscroll"><table><thead><tr><th>Branch</th><th>Last commit</th><th class="n">Commits</th><th>Merged / pushed</th><th>Task</th></tr></thead><tbody>` +
+    wts.map((w) => `<tr><td class="wrap"><span class="cmd">${esc(w.repo)}: ${esc(w.branch || "(detached)")}</span></td>` +
+      `<td class="wrap">${esc(w.sha)} ${esc(w.subject || "")}${w.commit_time ? ` <span class="muted">(${dur(now - w.commit_time)} ago)</span>` : ""}</td>` +
+      `<td class="n">${w.ahead != null ? w.ahead : ""}</td>` +
+      `<td>${w.main ? `<span class="badge">main</span>` : w.new === false ? `<span class="badge">no commits yet</span>` : w.merged ? `<span class="badge ok">merged</span>` : `<span class="badge">not merged</span>`} <span class="muted">${esc(w.pushed || "")}</span></td>` +
+      `<td>${esc(w.task || "")}</td></tr>`).join("") + `</tbody></table></div></details>`;
+  el.innerHTML = html;
+  const sf = $("show-finished");
+  if (sf) sf.addEventListener("change", (e) => {
+    showFinished = e.target.checked;
+    try { localStorage.setItem("ocw-show-finished", showFinished ? "1" : "0"); } catch (err) {}
+    renderTasks(ct, now);
+  });
 }
 
 let lastStatus = null;
@@ -488,8 +641,10 @@ function render(st) {
   machineSettings = !!st.machine_settings;
   const now = st.generated_at, o = st.overview;
   janitorState = st.janitor || {};
-  $("alerts").innerHTML = (st.alerts || []).length ?
-    `<div class="alert">${st.alerts.map((a) => `<div>${esc(a.text)}</div>`).join("")}</div>` : "";
+  // Red banner: disks above 92 % and the coordinator's red alerts; amber: its softer ones.
+  const bad = (st.alerts || []).filter((a) => a.level !== "warn"), warn = (st.alerts || []).filter((a) => a.level === "warn");
+  $("alerts").innerHTML = (bad.length ? `<div class="alert">${bad.map((a) => `<div>${esc(a.text)}</div>`).join("")}</div>` : "") +
+    (warn.length ? `<div class="alert warn">${warn.map((a) => `<div>${esc(a.text)}</div>`).join("")}</div>` : "");
   const stats = [
     [`${o.online}/${o.machines}`, "machines online"],
     [o.tasks, "running"],
@@ -508,6 +663,8 @@ function render(st) {
     const off = m.enabled === false;
     return `<span class="chip${off ? " off" : ""}"${off ? ' title="disabled for building"' : ""}><span class="dot ${cls}"></span>${esc(m.name)} · ${info}${off ? " · disabled" : ""}</span>`;
   }).join("");
+  renderCoordinator(st.coordinator, st.alerts, now);
+  renderTasks(st.claude_tasks, now);
   $("cards").innerHTML = st.machines.map((m) => card(m, now)).join("");
   renderQuestions(st.questions);
   renderJanitor(janitorState, now);

@@ -356,7 +356,56 @@ pub struct PoseParams {
     pub tuck: f32,
     /// Side-to-side rocking of the bike (rad amplitude).
     pub rock: f32,
+    /// Cornering beyond the lean (spec §2.6; −1 … 1, + = a right-hand
+    /// bend): the upper body drops a little to the inside and the inside
+    /// knee opens.
+    pub corner: f32,
+    /// Head turn (rad, + = to the rider's right): into a bend, over the
+    /// shoulder before a U-turn; the shoulders turn [`LOOK_TORSO`] of it.
+    pub look: f32,
+    /// Head roll back towards level against the bike's lean (rad, + = to
+    /// the rider's left).
+    pub head_roll: f32,
+    /// One foot off its pedal: 0 clipped in … 1 on the ground beside the
+    /// bike (a stop); about half: held out low (a U-turn).
+    pub foot: f32,
+    /// The foot that comes off: 0 left, 1 right.
+    pub foot_side: usize,
+    /// Off the saddle onto the top tube with the bike tilted towards the
+    /// foot (standing at a stop).
+    pub straddle: f32,
+    /// Both arms up in a V, the rider sitting up (victory).
+    pub arms_up: f32,
+    /// Sitting up after the finish: upright, hands on the tops, the head
+    /// dropped.
+    pub sit_up: f32,
+    /// The bike throw at the finish line: hips back, arms straight.
+    pub throw: f32,
 }
+
+/// The bike's tilt towards the foot at a stop (rad, ~10°).
+pub const FOOT_TILT: f32 = 0.17;
+/// Share of that tilt the rider's body leans with the bike.
+pub const FOOT_TILT_BODY: f32 = 0.3;
+/// The ball of the foot on the ground this far out from the bike's centre
+/// plane (m).
+pub const FOOT_OUT_M: f32 = 0.27;
+/// Straddling the top tube at a stop: the hips this far forward of the
+/// seated hips (m), in front of the saddle's nose.
+pub const STRADDLE_FORWARD_M: f32 = 0.17;
+/// The foot rises this much on its way between pedal and ground (m).
+pub const FOOT_LIFT_M: f32 = 0.06;
+/// The inside knee opens by this (the knee's pole, sideways) in a full
+/// bend.
+pub const KNEE_OUT: f32 = 0.55;
+/// Share of the head turn the shoulders take.
+pub const LOOK_TORSO: f32 = 0.2;
+/// The upper body's extra roll to the inside in a full bend (rad).
+pub const CORNER_TORSO: f32 = 0.09;
+/// The torso lean (from vertical, rad) with the arms up.
+pub const ARMS_UP_LEAN: f32 = 0.2;
+/// The bike throw: the hips this far back (m).
+pub const THROW_BACK_M: f32 = 0.13;
 
 /// What the app writes into the nodes.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -550,10 +599,40 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
     use std::f32::consts::PI;
     let theta = p.crank;
     let stand = p.stand.clamp(0.0, 1.0);
-    let roll = p.rock * theta.sin();
-    // The rider stays above the contact line while the bike rocks under them.
-    let frame = Quat::from_rotation_z(-0.8 * roll);
-    let hip = fit.hip_seated.lerp(fit.hip_standing, stand);
+    let straddle = p.straddle.clamp(0.0, 1.0);
+    let foot_w = p.foot.clamp(0.0, 1.0);
+    let fs = p.foot_side.min(1);
+    let fsign = if fs == 0 { -1.0 } else { 1.0 };
+    // A stop: the bike tilts towards the foot on the ground (+ roll = to
+    // the rider's left).
+    let tilt = -fsign * FOOT_TILT * straddle;
+    let rock_roll = p.rock * theta.sin();
+    let roll = rock_roll + tilt;
+    // The rider stays above the contact line while the bike rocks under
+    // them, and leans only a little with the bike tilted to the foot.
+    let frame = Quat::from_rotation_z(-0.8 * rock_roll - (1.0 - FOOT_TILT_BODY) * tilt);
+    let mut hip = fit.hip_seated.lerp(fit.hip_standing, stand);
+    // The bike throw at the line: the hips go back.
+    hip += Vec3::new(0.0, -0.03, THROW_BACK_M) * p.throw;
+    // The foot on the ground (the ankle, in the rolled bike frame), flat
+    // on the road; and the straddle: forward off the saddle and down until
+    // that leg reaches the ground.
+    let unroll = Quat::from_rotation_z(roll).inverse();
+    let crown = Vec3::Y * bike.tyre_crown;
+    let to_sway = |q: Vec3| unroll * (q - (crown - Quat::from_rotation_z(roll) * crown));
+    let straddle_hip = fit.hip_seated - Vec3::Z * STRADDLE_FORWARD_M;
+    let ground_foot = unroll;
+    let ground_ankle =
+        to_sway(Vec3::new(fsign * FOOT_OUT_M, 0.0, straddle_hip.z - 0.06) - rider.cleat);
+    if straddle > 0.0 {
+        let mut h = straddle_hip;
+        let d = frame * (h + rider.hips[fs]) - ground_ankle;
+        let reach = 0.96 * rider.leg();
+        let flat = (d.x * d.x + d.z * d.z).min(reach * reach * 0.9);
+        let up = (reach * reach - flat).sqrt();
+        h.y -= (d.y - up).max(0.0);
+        hip = hip.lerp(h, straddle);
+    }
     // Seated: the hips rock a little with the pedal strokes.
     let rock = Quat::from_rotation_z(0.035 * (1.0 - stand) * theta.sin());
     let w_hoods = (1.0 - p.tops - p.drops).max(0.0);
@@ -561,7 +640,8 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
         bike.hoods[s] * w_hoods + bike.tops[s] * p.tops + bike.drops[s] * p.drops
     });
     let grip_centre = 0.5 * (grips[0] + grips[1]);
-    let reach = rider.arm() * (ARM_REACH - 0.1 * p.tuck - 0.04 * stand);
+    let reach =
+        rider.arm() * (ARM_REACH - 0.1 * p.tuck - 0.04 * stand + 0.08 * p.throw + 0.06 * p.sit_up);
     let pelvis_tilt = |lean: f32| Quat::from_rotation_x(-0.45 * lean);
     let shoulder_centre = |lean: f32| {
         let sh_y = 0.5 * (rider.shoulders[0].y + rider.shoulders[1].y);
@@ -588,9 +668,18 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
             0.5 * (lo + hi)
         }
     };
+    // Arms up (victory): no hands on the bars, the rider sits up.
+    let arms_up = p.arms_up.clamp(0.0, 1.0);
+    let lean = lean + (ARMS_UP_LEAN - lean) * arms_up;
     let pelvis_rot = frame * pelvis_tilt(lean) * rock;
     let pelvis_pos = frame * hip;
-    let torso_world = frame * Quat::from_rotation_x(-lean) * rock.inverse();
+    // The shoulders turn a little with the head and drop to the inside of
+    // a bend.
+    let torso_world = frame
+        * Quat::from_rotation_y(-LOOK_TORSO * p.look)
+        * Quat::from_rotation_z(-CORNER_TORSO * p.corner)
+        * Quat::from_rotation_x(-lean)
+        * rock.inverse();
     let torso_pos = pelvis_pos + pelvis_rot * rider.torso;
     // Legs.
     let mut thighs = [Quat::IDENTITY; 2];
@@ -603,15 +692,33 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
         let t = if s == 0 { theta + PI } else { theta };
         let pedal = bike.pedal(s, theta);
         let pitch = foot_pitch(t);
-        let foot_world = Quat::from_rotation_x(pitch);
+        let pedal_world = Quat::from_rotation_x(pitch);
+        let mut foot_world = pedal_world;
+        let mut target = ankle(rider, pedal, pitch);
+        // Unclipped: the foot goes out and down to the ground (lifted a
+        // little on the way), flat on the road.
+        if s == fs && foot_w > 0.0 {
+            target =
+                target.lerp(ground_ankle, foot_w) + Vec3::Y * (FOOT_LIFT_M * (PI * foot_w).sin());
+            foot_world = pedal_world.slerp(ground_foot, foot_w);
+        }
         let hip_joint = pelvis_pos + pelvis_rot * rider.hips[s];
         let out = if s == 0 { -Vec3::X } else { Vec3::X };
+        // The inside knee opens in a bend (and a foot held out its knee).
+        let inside = (s == 1 && p.corner > 0.0) || (s == 0 && p.corner < 0.0);
+        let mut knee_out = 0.08;
+        if inside {
+            knee_out += KNEE_OUT * p.corner.abs();
+        }
+        if s == fs {
+            knee_out += 0.3 * foot_w;
+        }
         let (knee, end) = two_bone(
             hip_joint,
-            ankle(rider, pedal, pitch),
+            target,
             rider.thigh,
             rider.shin,
-            forward + out * 0.08,
+            forward + out * knee_out,
         );
         let hinge = (end - hip_joint)
             .cross(knee - hip_joint)
@@ -621,7 +728,7 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
         thighs[s] = pelvis_rot.inverse() * thigh_w;
         shins[s] = thigh_w.inverse() * shin_w;
         feet[s] = shin_w.inverse() * foot_world;
-        pedals[s] = crank.inverse() * foot_world;
+        pedals[s] = crank.inverse() * pedal_world;
     }
     // Arms.
     let mut upper_arms = [Quat::IDENTITY; 2];
@@ -629,12 +736,19 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
     for s in 0..2 {
         let shoulder = torso_pos + torso_world * rider.shoulders[s];
         let out = if s == 0 { -Vec3::X } else { Vec3::X };
-        let pole = if bike.aero_bars {
+        let mut pole = if bike.aero_bars {
             Vec3::new(0.0, -1.0, 0.25)
         } else {
             out * 0.7 + Vec3::new(0.0, -0.35, 0.6)
         };
-        let (elbow, end) = two_bone(shoulder, grips[s], rider.upper_arm, rider.forearm, pole);
+        let mut grip = grips[s];
+        if arms_up > 0.0 {
+            // Up in a V above the shoulders, the elbows out.
+            let up = shoulder + Vec3::new(out.x * 0.45, 0.88, 0.1).normalize() * rider.arm() * 0.93;
+            grip = grip.lerp(up, arms_up);
+            pole = pole.lerp(out * 0.8 + Vec3::new(0.0, 0.0, 0.5), arms_up);
+        }
+        let (elbow, end) = two_bone(shoulder, grip, rider.upper_arm, rider.forearm, pole);
         let hinge = (end - shoulder)
             .cross(elbow - shoulder)
             .normalize_or(Vec3::X);
@@ -643,8 +757,12 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
         upper_arms[s] = torso_world.inverse() * upper_w;
         forearms[s] = upper_w.inverse() * fore_w;
     }
-    // Head: looking up the road, a little down.
-    let head_world = frame * Quat::from_rotation_x(-(0.12 + 0.12 * lean));
+    // Head: looking up the road, a little down; turned by `look`, held
+    // nearer level in a lean, dropped when sitting up after the line.
+    let head_world = frame
+        * Quat::from_rotation_y(-p.look)
+        * Quat::from_rotation_z(p.head_roll)
+        * Quat::from_rotation_x(-(0.12 + 0.12 * lean) - 0.25 * p.sit_up - 0.12 * p.throw);
     Pose {
         bike_roll: roll,
         crank,
@@ -965,6 +1083,202 @@ mod tests {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// A point of the posed rider (bike frame, rolled with the bike by
+    /// `roll` about the tyres' crown) back in the upright bike frame: the
+    /// road is y = 0 there.
+    fn unrolled(bike: &BikeRig, roll: f32, p: Vec3) -> Vec3 {
+        let r = Quat::from_rotation_z(roll);
+        let c = Vec3::Y * bike.tyre_crown;
+        r * p + (c - r * c)
+    }
+
+    /// Foot down at a stop (spec §2.6, v3.47): on every bike, either foot,
+    /// the unclipped foot stands flat on the road beside the bike, the bike
+    /// tilts towards it, the other foot stays on its pedal and the hands on
+    /// the bars.
+    #[test]
+    fn a_foot_goes_down_at_a_stop() {
+        let mut rider = crate::rider::build(crate::rider::Detail::High);
+        let rig = RiderRig::from_model(&rider).unwrap();
+        for profile in ocw_core::ProfileId::ALL {
+            let bike = crate::bikes::rig(profile);
+            let fit = Fit::new(&rig, &bike);
+            for side in 0..2 {
+                let params = PoseParams {
+                    crank: if side == 0 {
+                        crate::anim::READY_CRANK
+                    } else {
+                        crate::anim::READY_CRANK + std::f32::consts::PI
+                    },
+                    foot: 1.0,
+                    straddle: 1.0,
+                    foot_side: side,
+                    ..Default::default()
+                };
+                let p = pose(&rig, &bike, &fit, &params);
+                p.apply(&mut rider);
+                let sign = if side == 0 { -1.0 } else { 1.0 };
+                // Tilted towards the foot (+ roll = left).
+                assert!(
+                    p.bike_roll * sign < -0.1,
+                    "{profile:?} {side}: {}",
+                    p.bike_roll
+                );
+                let cleat = unrolled(
+                    &bike,
+                    p.bike_roll,
+                    rider.position(nodes::CLEAT[side]).unwrap(),
+                );
+                let ankle = unrolled(
+                    &bike,
+                    p.bike_roll,
+                    rider.position(nodes::FOOT[side]).unwrap(),
+                );
+                assert!(
+                    cleat.y.abs() < 0.03,
+                    "{profile:?} {side}: sole on the road {cleat}"
+                );
+                assert!(
+                    cleat.x * sign > 0.18,
+                    "{profile:?} {side}: beside the bike {cleat}"
+                );
+                assert!(
+                    ankle.y > cleat.y,
+                    "{profile:?} {side}: ankle above the sole"
+                );
+                // Flat: the toes point forward along the road.
+                let toe = Quat::from_rotation_z(p.bike_roll)
+                    * rider
+                        .world(rider.node(nodes::FOOT[side]).unwrap())
+                        .transform_vector3(Vec3::NEG_Z);
+                assert!(toe.y.abs() < 0.15, "{profile:?} {side}: flat foot {toe}");
+                let other = 1 - side;
+                let on = rider.position(nodes::CLEAT[other]).unwrap();
+                assert!(
+                    on.distance(bike.pedal(other, params.crank)) < 0.03,
+                    "{profile:?} {side}: the other foot on its pedal"
+                );
+                for s in 0..2 {
+                    let grip = rider.position(nodes::GRIP[s]).unwrap();
+                    assert!(
+                        grip.distance(bike.hoods[s]) < 0.05,
+                        "{profile:?} {side}: hands {grip}"
+                    );
+                }
+                // Off the saddle, in front of it.
+                let pelvis = rider.position(nodes::PELVIS).unwrap();
+                assert!(
+                    pelvis.z < fit.hip_seated.z - 0.1,
+                    "{profile:?}: forward {pelvis}"
+                );
+                assert!(pelvis.y < fit.hip_seated.y, "{profile:?}: lower {pelvis}");
+            }
+        }
+    }
+
+    /// Victory, sitting up, the throw and cornering change the body where
+    /// they should (spec §2.6, v3.47).
+    #[test]
+    fn victory_finish_and_cornering_poses() {
+        let mut rider = crate::rider::build(crate::rider::Detail::High);
+        let rig = RiderRig::from_model(&rider).unwrap();
+        for profile in ocw_core::ProfileId::ALL {
+            let bike = crate::bikes::rig(profile);
+            let fit = Fit::new(&rig, &bike);
+            // Arms up: both hands above the head, off the bars, wide.
+            let p = pose(
+                &rig,
+                &bike,
+                &fit,
+                &PoseParams {
+                    arms_up: 1.0,
+                    ..Default::default()
+                },
+            );
+            p.apply(&mut rider);
+            let head = rider.position(nodes::HEAD).unwrap();
+            for s in 0..2 {
+                let hand = rider.position(nodes::GRIP[s]).unwrap();
+                assert!(
+                    hand.y > head.y + 0.1,
+                    "{profile:?}: hand {s} up {hand} head {head}"
+                );
+                assert!(
+                    hand.distance(bike.hoods[s]) > 0.4,
+                    "{profile:?}: off the bars"
+                );
+                let sign = if s == 0 { -1.0 } else { 1.0 };
+                assert!(hand.x * sign > 0.2, "{profile:?}: a V {hand}");
+            }
+            // Sitting up on the tops: the hands there, the torso more upright.
+            let lean_of = |p: &Pose| ((p.pelvis.1 * p.torso) * Vec3::Y).angle_between(Vec3::Y);
+            let base = pose(&rig, &bike, &fit, &PoseParams::default());
+            let up = PoseParams {
+                tops: 1.0,
+                sit_up: 1.0,
+                ..Default::default()
+            };
+            let p = pose(&rig, &bike, &fit, &up);
+            p.apply(&mut rider);
+            for s in 0..2 {
+                let grip = rider.position(nodes::GRIP[s]).unwrap();
+                assert!(
+                    grip.distance(bike.tops[s]) < 0.05,
+                    "{profile:?}: tops {grip}"
+                );
+            }
+            assert!(lean_of(&p) < lean_of(&base), "{profile:?}: sits up");
+            // The throw: the hips back, the hands still on the bars.
+            let p = pose(
+                &rig,
+                &bike,
+                &fit,
+                &PoseParams {
+                    throw: 1.0,
+                    ..Default::default()
+                },
+            );
+            p.apply(&mut rider);
+            assert!(
+                p.pelvis.0.z > base.pelvis.0.z + 0.1,
+                "{profile:?}: hips back"
+            );
+            for s in 0..2 {
+                let grip = rider.position(nodes::GRIP[s]).unwrap();
+                assert!(
+                    grip.distance(bike.hoods[s]) < 0.05,
+                    "{profile:?}: throw hands {grip}"
+                );
+            }
+            // A right-hand bend: the right (inside) knee further out than in
+            // a straight line, the head turned right, feet on the pedals.
+            let straight = PoseParams {
+                crank: 0.4,
+                ..Default::default()
+            };
+            pose(&rig, &bike, &fit, &straight).apply(&mut rider);
+            let knee0 = rider.position(nodes::SHIN[1]).unwrap();
+            let bend = PoseParams {
+                corner: 1.0,
+                look: 0.3,
+                ..straight
+            };
+            let p = pose(&rig, &bike, &fit, &bend);
+            p.apply(&mut rider);
+            let knee = rider.position(nodes::SHIN[1]).unwrap();
+            assert!(
+                knee.x > knee0.x + 0.03,
+                "{profile:?}: inside knee out {knee} vs {knee0}"
+            );
+            let fwd = (p.head * Vec3::NEG_Z).x;
+            assert!(fwd > 0.1, "{profile:?}: head turned right {fwd}");
+            for s in 0..2 {
+                let cleat = rider.position(nodes::CLEAT[s]).unwrap();
+                assert!(cleat.distance(bike.pedal(s, bend.crank)) < 0.03);
             }
         }
     }

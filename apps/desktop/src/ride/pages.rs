@@ -235,7 +235,7 @@ mod tests {
         assert_eq!(m.labels(), ["2026-11-11 17:30:  Hills - uploaded", "Back"]);
         assert_eq!(m.apply_with(Action::Click(0), rows_of), Effect::None);
         // GPX import: import and ride, after asking.
-        let mut m = open(&c, &[4, 2]);
+        let mut m = open(&c, &[4, 3]);
         assert_eq!(m.labels()[0], "morning.gpx:  import and ride");
         m.apply_with(Action::Click(0), rows_of);
         assert_eq!(
@@ -248,7 +248,7 @@ mod tests {
             Effect::Command("ride.import-gpx \"/home/u/Downloads/morning.gpx\" --ride".into())
         );
         // Strava: the account page (moved from Settings, which is full).
-        let m = open(&c, &[4, 3]);
+        let m = open(&c, &[4, 4]);
         assert_eq!(
             m.page(),
             Some(MenuPage::Sub(crate::settings::pages::Page::Strava))
@@ -269,7 +269,7 @@ mod tests {
     fn workouts_start_from_the_menu_and_can_be_skipped_and_stopped() {
         let mut c = catalog();
         // Top → Ride → Workouts.
-        let mut m = open(&c, &[1, 4]);
+        let mut m = open(&c, &[1, 1]);
         assert_eq!(m.page(), Some(MenuPage::Sub(Page::Workouts)));
         assert_eq!(
             m.labels(),
@@ -285,14 +285,14 @@ mod tests {
             Effect::Command("workout start \"/home/u/ocw/workouts/my intervals.erg\"".into())
         );
         assert!(!m.is_open());
-        let mut m = open(&c, &[1, 4]);
+        let mut m = open(&c, &[1, 1]);
         assert_eq!(
             m.apply_with(Action::Click(1), |p| rows(p, &c)),
             Effect::Command("workout start --example short-demo".into())
         );
         // While one runs: its step, Skip (stays open) and Stop (closes).
         c.workout_now = Some(("Demo: 2-minute intervals".into(), "step 2/6".into()));
-        let mut m = open(&c, &[1, 4]);
+        let mut m = open(&c, &[1, 1]);
         let l = m.labels();
         assert_eq!(l[0], "Demo: 2-minute intervals:  step 2/6");
         assert_eq!(&l[1..3], ["Skip step", "Stop workout"]);

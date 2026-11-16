@@ -16,13 +16,31 @@
 # script's directory, /var/tmp/ocw); the log and lock in
 # ~/.local/state/ocw/. On first start, OCW_KIOSK_DIR/devices.toml (if any)
 # seeds ~/.config/ocw/devices.toml, so the trainer is connected right away.
+#
+# Game server (user, 2026-11-15): when OCW_KIOSK_DIR/ocw-server exists (the
+# deploy installs it), the kiosk first starts it - the same world and route
+# as the app (from ocw-desktop.args), bots, UDP OCW_KIOSK_LISTEN (default
+# 0.0.0.0:47800), a fixed certificate in ~/.local/state/ocw/server-tls - and
+# then the app as its client (--server 127.0.0.1:PORT --insecure-dev), so
+# other riders can join the kiosk's ride over the network with the line in
+# ~/.local/state/ocw/server-connect.txt (`ocw-kiosk.sh status` prints it). A
+# new build or a crash of either restarts both. OCW_KIOSK_SERVER=0: no
+# server, the app rides alone as before; OCW_KIOSK_BOTS (default 10) and
+# OCW_KIOSK_SERVER_ARGS (more ocw-server options) tune it.
+# A game server already running on this machine (UDP port of
+# OCW_KIOSK_LISTEN busy, e.g. one started by hand) is joined instead of
+# starting another; OCW_KIOSK_SERVER=join always joins (waiting for it).
 set -uo pipefail
 
 dir=${OCW_KIOSK_DIR:-$(cd "$(dirname "$0")" && pwd)}
 bin=$dir/ocw-desktop
+server_bin=$dir/ocw-server
+listen=${OCW_KIOSK_LISTEN:-0.0.0.0:47800}
+ready_s=${OCW_KIOSK_SERVER_READY_S:-180}   # world packages take a while to load
 state=${XDG_STATE_HOME:-$HOME/.local/state}/ocw
 log=$state/kiosk.log
 applog=$state/app.log
+serverlog=$state/server.log
 poll=${OCW_KIOSK_POLL_S:-2}        # how often to check for a new build
 settle=${OCW_KIOSK_SETTLE_S:-2}    # wait after a change before restarting
 quick=${OCW_KIOSK_QUICK_S:-15}     # an exit within this time counts as a crash
@@ -45,7 +63,83 @@ parse_args() {
   return 0
 }
 
-signature() { stat -c '%Y %i %s' "$bin" 2>/dev/null || echo missing; }
+signature() {
+  echo "$(stat -c '%Y %i %s' "$bin" 2>/dev/null || echo missing) $(stat -c '%Y %i %s' "$server_bin" 2>/dev/null || echo none)"
+}
+
+# The kiosk script itself: a deploy that replaces it makes the running
+# kiosk start the new one (exec), so changes to the kiosk need no login.
+self_sig() { stat -c '%Y %i %s' "$dir/ocw-kiosk.sh" 2>/dev/null || echo none; }
+
+server_wanted() { [ "${OCW_KIOSK_SERVER:-1}" != 0 ] && { [ -x "$server_bin" ] || [ "${OCW_KIOSK_SERVER:-1}" = join ]; }; }
+
+# Whether something listens on UDP port $1 on this machine.
+udp_busy() {
+  command -v ss >/dev/null 2>&1 || return 1
+  [ -n "$(ss -Hlun "sport = :$1" 2>/dev/null)" ]
+}
+
+# The last value of OPTION in the app's ocw-desktop.args (quotes removed).
+args_value() {
+  sed -n "s/^$1[[:space:]]\{1,\}//p" "$dir/ocw-desktop.args" 2>/dev/null | tail -n 1 |
+    sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
+}
+
+# Starts the game server for the app's world and route; sets SERVER_PID and
+# SERVER_ARGS (the app's options to join it), or leaves both empty.
+start_server() {
+  SERVER_PID="" SERVER_ARGS=()
+  server_wanted || return 0
+  local port=${listen##*:}
+  if [ "${OCW_KIOSK_SERVER:-1}" = join ] || udp_busy "$port"; then
+    local waited=0
+    until udp_busy "$port"; do
+      [ "$waited" -ge "$ready_s" ] && { say "no game server on UDP $port after ${ready_s} s; the app rides alone"; return 0; }
+      sleep 1; waited=$((waited + 1))
+    done
+    SERVER_ARGS=(--server "127.0.0.1:$port" --insecure-dev)
+    say "joining the game server already running on UDP $port (the app must ride its world and route)"
+    return 0
+  fi
+  local world route course=() extra=()
+  world=$(args_value --world)
+  route=$(args_value --route)
+  if [ -n "$world" ]; then
+    course=(--world "$world")
+    [ -n "$route" ] && course+=(--route "$route")
+  else
+    course=(--test-route hills)   # the app's own default route
+  fi
+  # shellcheck disable=SC2206 # options split on purpose
+  [ -n "${OCW_KIOSK_SERVER_ARGS:-}" ] && extra=($OCW_KIOSK_SERVER_ARGS)
+  mkdir -p "$state/server-tls"
+  : >"$state/server.out"
+  say "starting the game server (${course[*]}, $listen)"
+  "$server_bin" --listen "$listen" --tls-dir "$state/server-tls" --bots "${OCW_KIOSK_BOTS:-10}" \
+    "${course[@]}" "${extra[@]}" >"$state/server.out" 2>>"$serverlog" &
+  SERVER_PID=$!
+  echo "$SERVER_PID" >"$state/server.pid"
+  local waited=0
+  until grep -q "ocw-desktop --server" "$state/server.out" 2>/dev/null; do
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+      say "game server exited at start (see $serverlog); the app rides alone"
+      SERVER_PID=""
+      return 0
+    fi
+    if [ "$waited" -ge "$ready_s" ]; then
+      say "game server not ready after ${ready_s} s; the app rides alone"
+      stop_app "$SERVER_PID"; SERVER_PID=""
+      return 0
+    fi
+    sleep 1; waited=$((waited + 1))
+  done
+  cat "$state/server.out" >>"$serverlog"
+  # The join link(s) (Ride -> Join, ocw-desktop --join) and the command line.
+  { grep -A3 "^Join link" "$state/server.out" | grep -v "^Clients" | grep -v "ocw-desktop --server"
+    grep -A2 "Clients connect with" "$state/server.out"; } >"$state/server-connect.txt"
+  SERVER_ARGS=(--server "127.0.0.1:$port" --insecure-dev)
+  say "game server ready after ${waited} s: $(grep -m1 "ocw://" "$state/server-connect.txt" | sed 's/^ *//')"
+}
 
 stop_app() {
   local pid=$1
@@ -57,6 +151,7 @@ stop_app() {
 }
 
 run() {
+  local orig_args=("$@")
   parse_args "$@"
   mkdir -p "$state"
   exec 9>"$state/kiosk.lock"
@@ -69,18 +164,28 @@ run() {
     mkdir -p "$(dirname "$cfg")" && cp "$dir/devices.toml" "$cfg" && say "seeded $cfg"
   fi
   local child="" fails=0
-  trap 'say "kiosk stopping"; [ -n "$child" ] && stop_app "$child"; exit 0' TERM INT
+  SERVER_PID="" SERVER_ARGS=()
+  trap 'say "kiosk stopping"; [ -n "$child" ] && stop_app "$child"; [ -n "$SERVER_PID" ] && stop_app "$SERVER_PID"; exit 0' TERM INT
   say "kiosk started (dir $dir, args: ${APP_ARGS[*]:-none})"
+  local me
+  me=$(self_sig)
   while true; do
     until [ -x "$bin" ]; do sleep "$poll"; done
     local sig started reason=exited
     sig=$(signature)
     started=$(date +%s)
     say "starting $(cat "$dir/VERSION" 2>/dev/null || echo 'unknown build')"
-    "$bin" "${APP_ARGS[@]}" >>"$applog" 2>&1 &
+    start_server
+    "$bin" "${APP_ARGS[@]}" "${SERVER_ARGS[@]}" >>"$applog" 2>&1 &
     child=$!
     while kill -0 "$child" 2>/dev/null; do
       sleep "$poll"
+      if [ -n "$SERVER_PID" ] && ! kill -0 "$SERVER_PID" 2>/dev/null; then
+        say "game server exited, restarting both"
+        SERVER_PID=""
+        stop_app "$child"
+        break
+      fi
       if [ "$(signature)" != "$sig" ]; then
         sleep "$settle" # let the deployment finish
         reason=update
@@ -92,8 +197,14 @@ run() {
     wait "$child" 2>/dev/null
     local code=$?
     child=""
+    [ -n "$SERVER_PID" ] && { stop_app "$SERVER_PID"; SERVER_PID=""; }
     if [ "$reason" = update ]; then
       fails=0
+      if [ "$(self_sig)" != "$me" ] && [ -x "$dir/ocw-kiosk.sh" ]; then
+        say "new kiosk script deployed, restarting the kiosk"
+        exec 9>&-
+        exec "$dir/ocw-kiosk.sh" run "${orig_args[@]}"
+      fi
       continue
     fi
     if [ $(( $(date +%s) - started )) -lt "$quick" ]; then
@@ -144,6 +255,14 @@ case "${1:-}" in
     echo "build: $(cat "$dir/VERSION" 2>/dev/null || echo none) ($(signature))"
     echo "autostart: $([ -f "$autostart" ] && echo installed || echo not installed)"
     pgrep -af "ocw-kiosk.sh run" || echo "kiosk not running"
+    if kill -0 "$(cat "$state/server.pid" 2>/dev/null || echo 0)" 2>/dev/null; then
+      echo "game server: running; riders join with:"
+      grep '^ ' "$state/server-connect.txt" 2>/dev/null
+    elif udp_busy "${listen##*:}"; then
+      echo "game server: another one listens on UDP ${listen##*:} (the kiosk joins it)"
+    else
+      echo "game server: not running"
+    fi
     [ -f "$log" ] && tail -n 10 "$log"
     ;;
   *) sed -n '2,20p' "$0"; exit 2 ;;

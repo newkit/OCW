@@ -11,7 +11,8 @@
 # WEB_GPU, WEB_PROFILE and WEB_WORLD_PKGS are passed on to the build.
 #
 # Fetched: only what the page needs – index.html, the js / wasm of both
-# builds, the voice shim and LiveKit's SDK with its licence, sizes.txt – and
+# builds, the voice shim and LiveKit's SDK with its licence, the GPU choice
+# (ocw-gpu.js), sizes.txt – and
 # target/web/worlds/ when the machine has published worlds (rsync --delete:
 # the local copy follows the machine's). The private signing keys stay on
 # the build machine. Local worlds stay when the machine has none.
@@ -30,7 +31,7 @@ scripts/remote.sh "$machine" run "${env}${cmd}"
 
 # The page: only the files it loads (no cargo output, even from older builds
 # whose `web` profile wrote into target/web/).
-files=(index.html ocw-voice.js ocw_web.js ocw_web_bg.wasm ocw_web_webgl2.js ocw_web_webgl2_bg.wasm
+files=(index.html ocw-voice.js ocw-gpu.js ocw_web.js ocw_web_bg.wasm ocw_web_webgl2.js ocw_web_webgl2_bg.wasm
        livekit-client.umd.js livekit-client.LICENSE.txt sizes.txt)
 filters=(--include=/web/)
 for f in "${files[@]}"; do filters+=("--include=/web/$f"); done

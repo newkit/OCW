@@ -781,6 +781,7 @@ mod tests {
             pages::Page::Bike(0),
             pages::Page::RidingAids,
             pages::Page::Graphics,
+            pages::Page::EventRules,
         ]) {
             let rows = {
                 let w = app.world();

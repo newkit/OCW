@@ -24,10 +24,18 @@
 //!   the device's power (virtual or real trainer); it also releases the brake,
 //! - ↓ stops: keyboard and virtual-trainer power to 0, and the brake,
 //! - PageUp / PageDown change the keyboard power by 10 W.
+//!
+//! These are the defaults: every key and button here is rebindable
+//! (spec §3.2.1 M9, `ocw_client::bindings`, Settings → Controls → Keys and
+//! buttons); the systems read them through `ocw_ui::bindings::ActiveBindings`.
+//! The sticks and triggers stay fixed.
 
 use bevy::prelude::*;
 use ocw_devices::DeviceCommand;
 use ocw_render::menu::ride_input;
+
+use ocw_client::bindings::Action;
+use ocw_ui::bindings::ActiveBindings;
 
 use crate::connection::{ClientState, Link};
 use crate::devices::Devices;
@@ -61,25 +69,29 @@ fn steer(
     pads: Query<&Gamepad>,
     time: Res<Time>,
     link: Res<Link>,
+    bindings: Option<Res<ActiveBindings>>,
     mut client: ResMut<ClientState>,
     mut upright_pause: Local<f64>,
     mut stick_was_used: Local<bool>,
 ) {
-    let pad_pressed = |b: GamepadButton| pads.iter().any(|p| p.just_pressed(b));
+    let default = ActiveBindings::default();
+    let b = bindings.as_deref().unwrap_or(&default);
+    let key = |a| b.key_just_pressed(a, &keys);
+    let pad = |a| b.pad_just_pressed(a, pads.iter());
     // An event's results panel takes A / B (spec §2.3).
     let now = time.elapsed_secs_f64();
     let results = client.0.results_input(now);
+    // Select + North / West are god mode's chords, not these.
+    let select = pads.iter().any(|p| p.pressed(GamepadButton::Select));
     if client.0.is_free_ride() {
-        if (keys.just_pressed(KeyCode::KeyU) || (pad_pressed(GamepadButton::East) && !results))
+        if (key(Action::UTurn) || (pad(Action::UTurn) && !results))
             && let Some(msg) = client.0.u_turn(time.elapsed_secs_f64())
         {
             info!("U-turn");
             link.send_bytes(msg);
         }
-        // Route ride: back to the route after leaving it (Select + North
-        // is god mode's chord, not this).
-        let select = pads.iter().any(|p| p.pressed(GamepadButton::Select));
-        if keys.just_pressed(KeyCode::KeyJ) || (pad_pressed(GamepadButton::North) && !select) {
+        // Route ride: back to the route after leaving it.
+        if key(Action::Rejoin) || (pad(Action::Rejoin) && !select) {
             match client.0.rejoin_route() {
                 Ok(msg) => {
                     info!("rejoining the route");
@@ -88,15 +100,15 @@ fn steer(
                 Err(e) => info!("no rejoin: {e}"),
             }
         }
-        let (key, arrows_taken) = junction_key(
-            keys.just_pressed(KeyCode::KeyQ) || pad_pressed(GamepadButton::DPadLeft),
-            keys.just_pressed(KeyCode::KeyE) || pad_pressed(GamepadButton::DPadRight),
-            keys.just_pressed(KeyCode::ArrowLeft),
-            keys.just_pressed(KeyCode::ArrowRight),
+        let (jkey, arrows_taken) = junction_key(
+            key(Action::ExitLeft) || pad(Action::ExitLeft),
+            key(Action::ExitRight) || pad(Action::ExitRight),
+            key(Action::SteerLeft) || pad(Action::SteerLeft),
+            key(Action::SteerRight) || pad(Action::SteerRight),
             client.0.autodrive(),
             client.0.junction_active(),
         );
-        if let JunctionKey::Select(steps) = key
+        if let JunctionKey::Select(steps) = jkey
             && let Some(said) = client.0.turn(steps)
         {
             info!("{said}");
@@ -105,23 +117,23 @@ fn steer(
             return;
         }
     }
-    if (keys.just_pressed(KeyCode::KeyA) || pad_pressed(GamepadButton::South)) && results {
+    let autodrive = key(Action::Autodrive) || pad(Action::Autodrive);
+    if autodrive && results {
         client.0.dismiss_results(now);
-    } else if keys.just_pressed(KeyCode::KeyA) || pad_pressed(GamepadButton::South) {
+    } else if autodrive {
         let on = !client.0.autodrive();
         client.0.set_autodrive(on);
         info!("autodrive {}", if on { "on" } else { "off" });
     }
-    let select = pads.iter().any(|p| p.pressed(GamepadButton::Select));
-    if keys.just_pressed(KeyCode::KeyW) || (pad_pressed(GamepadButton::West) && !select) {
+    if key(Action::Wild) || (pad(Action::Wild) && !select) {
         let wild = !client.0.wild();
         client.0.set_wild(wild);
         info!("wild mode {}", if wild { "on" } else { "off" });
     }
     let dt = time.delta_secs_f64();
     let dir = steer_direction(
-        keys.pressed(KeyCode::ArrowLeft),
-        keys.pressed(KeyCode::ArrowRight),
+        b.pressed(Action::SteerLeft, &keys, pads.iter()),
+        b.pressed(Action::SteerRight, &keys, pads.iter()),
     );
     let stick = pads
         .iter()
@@ -160,20 +172,17 @@ fn throttle_and_brake(
     mut client: ResMut<ClientState>,
     mut key: ResMut<KeyPower>,
     mut ride_pads: Local<ocw_ui::controls::RidePads>,
+    bindings: Option<Res<ActiveBindings>>,
 ) {
     let now = time.elapsed_secs_f64();
+    let default = ActiveBindings::default();
+    let b = bindings.as_deref().unwrap_or(&default);
     // The pads' throttle (shared with the browser app: `ocw_ui::controls`).
-    let pad = ride_pads.read(pads.iter());
+    let pad = ride_pads.read_bound(pads.iter(), b);
     if pad.down_pressed {
         info!("gamepad: stop (power 0, brake)");
     }
-    let throttle = ThrottleKeys {
-        up_pressed: keys.just_pressed(KeyCode::ArrowUp) || pad.up_pressed,
-        up_held: keys.pressed(KeyCode::ArrowUp) || pad.up,
-        down_pressed: keys.just_pressed(KeyCode::ArrowDown) || pad.down_pressed,
-        page_up: keys.just_pressed(KeyCode::PageUp),
-        page_down: keys.just_pressed(KeyCode::PageDown),
-    };
+    let throttle = ocw_ui::controls::throttle_keys(b, &keys, &pad);
     let (msgs, stop) = key
         .0
         .update(&mut client.0, throttle, time.delta_secs_f64(), now);

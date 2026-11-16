@@ -417,6 +417,30 @@ pub struct Rules {
     /// Neutral service: a spare bike for a broken one (else DNF), and a
     /// 30 s stop restores the bike.
     pub neutral_service: bool,
+    /// The neutral service's wait for a spare wheel (a puncture) or a
+    /// spare bike (s; spec §14 Phase 12 K6, 12G: "spare wheels / bikes and
+    /// their delay"); `None`: the puncture mended in [`PUNCTURE_REPAIR_S`],
+    /// the spare bike in [`SPARE_BIKE_S`]. Only with `neutral_service`.
+    pub service_s: Option<u32>,
+}
+
+/// The neutral service's wait the organiser may set (s).
+pub const MAX_SERVICE_S: u32 = 600;
+
+impl Rules {
+    /// How long a stop of `kind` takes in an event with these rules
+    /// (`in_event`): the neutral service's wait for a spare wheel or bike,
+    /// else the stop's own time.
+    pub fn stop_s(&self, kind: StopKind, in_event: bool) -> f64 {
+        match (kind, self.service_s) {
+            (StopKind::Puncture | StopKind::SpareBike, Some(s))
+                if in_event && self.neutral_service =>
+            {
+                f64::from(s.min(MAX_SERVICE_S))
+            }
+            _ => kind.duration_s(),
+        }
+    }
 }
 
 /// What a rider's damage does to the physics now (the server and the
@@ -955,10 +979,11 @@ impl Damage {
     }
 
     fn begin(&mut self, kind: StopKind) -> TickOut {
-        self.stop = Some(Stop {
-            kind,
-            left_s: kind.duration_s(),
-        });
+        self.begin_for(kind, kind.duration_s())
+    }
+
+    fn begin_for(&mut self, kind: StopKind, s: f64) -> TickOut {
+        self.stop = Some(Stop { kind, left_s: s });
         TickOut::StopStarted(kind)
     }
 
@@ -1008,7 +1033,10 @@ impl Damage {
                     return TickOut::Abandon;
                 }
             }
-            return self.begin(StopKind::SpareBike);
+            return self.begin_for(
+                StopKind::SpareBike,
+                ctx.rules.stop_s(StopKind::SpareBike, ctx.in_event),
+            );
         }
         if self.rider < BADLY_INJURED_BELOW && !self.limited {
             if ctx.in_event && ctx.rules.dnf_badly_injured && !self.abandoned {
@@ -1023,6 +1051,10 @@ impl Damage {
         }
         if self.flat.iter().any(|f| *f) && (ctx.bot || self.still_s >= FLAT_STOP_S) {
             self.start_repair();
+            // The neutral service's spare wheel (K6): its own wait.
+            if let Some(stop) = &mut self.stop {
+                stop.left_s = ctx.rules.stop_s(StopKind::Puncture, ctx.in_event);
+            }
             return TickOut::StopStarted(StopKind::Puncture);
         }
         if self.limited && self.rider >= LIMIT_ENDS_ABOVE {
@@ -1433,6 +1465,54 @@ mod tests {
         // Carried over broken: ridden as a loaner.
         let d = Damage::carried(0.9, [0.05; PARTS]);
         assert!(d.spare && !d.broken());
+    }
+
+    /// The organiser's neutral service wait (spec §14 Phase 12 K6): a
+    /// spare bike and a spare wheel in that time; outside an event, or
+    /// without the service, the usual times.
+    #[test]
+    fn the_neutral_service_brings_spares_in_the_organisers_time() {
+        let stop_len = |d: &mut Damage, c: &TickCtx| {
+            let mut n = 0u32;
+            while d.stop.is_some() {
+                d.tick(c);
+                n += 1;
+            }
+            f64::from(n) * c.dt
+        };
+        let mut ev = ctx();
+        ev.speed = 0.0;
+        ev.in_event = true;
+        ev.rules.neutral_service = true;
+        ev.rules.service_s = Some(20);
+        let mut d = Damage::fresh();
+        d.parts = [0.05; PARTS];
+        assert_eq!(d.tick(&ev), TickOut::StopStarted(StopKind::SpareBike));
+        assert!((stop_len(&mut d, &ev) - 20.0).abs() < 0.05);
+        // A puncture: the spare wheel in 20 s (after standing for 2 s).
+        let mut d = Damage::fresh();
+        d.flat[1] = true;
+        let mut n = 0;
+        while d.stop.is_none() {
+            d.tick(&ev);
+            n += 1;
+            assert!(n < 500);
+        }
+        assert!((stop_len(&mut d, &ev) - 20.0).abs() < 0.05);
+        // Without the service the 30 s repair.
+        let rules = Rules {
+            service_s: Some(20),
+            ..Rules::default()
+        };
+        assert_eq!(rules.stop_s(StopKind::Puncture, true), PUNCTURE_REPAIR_S);
+        assert_eq!(
+            ev.rules.stop_s(StopKind::Puncture, false),
+            PUNCTURE_REPAIR_S
+        );
+        assert_eq!(ev.rules.stop_s(StopKind::Medical, true), MEDICAL_STOP_S);
+        // At most 10 minutes.
+        ev.rules.service_s = Some(5000);
+        assert_eq!(ev.rules.stop_s(StopKind::SpareBike, true), 600.0);
     }
 
     #[test]

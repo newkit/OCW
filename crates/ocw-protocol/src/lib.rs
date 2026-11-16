@@ -11,6 +11,7 @@ pub mod v1 {
     include!(concat!(env!("OUT_DIR"), "/ocw.v1.rs"));
 }
 
+pub mod join;
 mod weather;
 pub use weather::{
     PhysicsRule, WeatherChange, WeatherInfo, choice_from_wire, choice_to_wire,
@@ -446,6 +447,7 @@ pub fn damage_rules_to_wire(r: &ocw_sim::damage::Rules) -> v1::DamageRules {
         damage: r.on,
         dnf_badly_injured: r.dnf_badly_injured,
         neutral_service: r.neutral_service,
+        service_s: r.service_s,
     }
 }
 
@@ -454,6 +456,61 @@ pub fn damage_rules_from_wire(r: &v1::DamageRules) -> ocw_sim::damage::Rules {
         on: r.damage,
         dnf_badly_injured: r.dnf_badly_injured,
         neutral_service: r.neutral_service,
+        service_s: r.service_s.map(|s| s.min(ocw_sim::damage::MAX_SERVICE_S)),
+    }
+}
+
+/// Why a DNF did not finish, for the wire (spec §14 Phase 12 K6).
+pub fn dnf_reason_to_wire(r: Option<ocw_sim::event::DnfReason>) -> i32 {
+    use ocw_sim::event::DnfReason as R;
+    (match r {
+        None => v1::DnfReason::Unspecified,
+        Some(R::Left) => v1::DnfReason::Left,
+        Some(R::TimeLimit) => v1::DnfReason::TimeLimit,
+        Some(R::Injured) => v1::DnfReason::Injured,
+        Some(R::BikeBroken) => v1::DnfReason::BikeBroken,
+    }) as i32
+}
+
+pub fn dnf_reason_from_wire(v: i32) -> Option<ocw_sim::event::DnfReason> {
+    use ocw_sim::event::DnfReason as R;
+    match v1::DnfReason::try_from(v).ok()? {
+        v1::DnfReason::Unspecified => None,
+        v1::DnfReason::Left => Some(R::Left),
+        v1::DnfReason::TimeLimit => Some(R::TimeLimit),
+        v1::DnfReason::Injured => Some(R::Injured),
+        v1::DnfReason::BikeBroken => Some(R::BikeBroken),
+    }
+}
+
+/// The organiser's rules of an event request (spec §14 Phase 12 K6):
+/// collisions, race mode, weather physics, damage, the riding aids,
+/// chaotic bots and the time limit; absent fields: the defaults.
+pub fn event_rules(s: &v1::EventStart) -> ocw_sim::event::Rules {
+    ocw_sim::event::Rules {
+        collisions: s.collisions.map(collision_mode_from_wire),
+        physics: event_physics(s),
+        weather_physics: s.weather_physics,
+        damage: s.damage.as_ref().map(damage_rules_from_wire),
+        aids: s.aids,
+        chaotic_bots: s.chaotic_bots,
+        time_limit_s: s.time_limit_s.map(f64::from),
+    }
+}
+
+/// The organiser's rules on an event request (the other way).
+pub fn with_event_rules(start: v1::EventStart, r: &ocw_sim::event::Rules) -> v1::EventStart {
+    v1::EventStart {
+        collisions: r.collisions.map(collision_mode_to_wire),
+        physics: r.physics.map(physics_mode_to_wire),
+        weather_physics: r.weather_physics,
+        damage: r.damage.as_ref().map(damage_rules_to_wire),
+        aids: r.aids,
+        chaotic_bots: r.chaotic_bots,
+        time_limit_s: r
+            .time_limit_s
+            .map(|t| t.round().clamp(0.0, f64::from(u32::MAX)) as u32),
+        ..start
     }
 }
 
@@ -794,6 +851,9 @@ pub fn event_start(spec: &EventSpec, bots: Option<u32>) -> v1::EventStart {
         weather: None,
         weather_physics: None,
         damage: None,
+        aids: None,
+        chaotic_bots: None,
+        time_limit_s: None,
     }
 }
 
@@ -857,6 +917,7 @@ pub fn event_state(ev: Option<&Event>, standings: &[Standing], tick: u64) -> v1:
                     .clamp(i32::MIN as f64, i32::MAX as f64) as i32,
                 finish_ms: s.finish_s.map(ms),
                 dnf: s.dnf,
+                dnf_reason: dnf_reason_to_wire(s.dnf_reason),
                 gap_ahead_ms: s.gap_ahead_s.map(ms),
                 // Crashes and the condition: set by the server (it owns
                 // the riders' damage).
@@ -874,6 +935,12 @@ pub fn event_state(ev: Option<&Event>, standings: &[Standing], tick: u64) -> v1:
         weather: None,
         weather_physics: ev.weather_physics,
         damage: Some(damage_rules_to_wire(&ev.damage)),
+        aids: Some(ev.aids_allowed()),
+        // The session's switch may decide: set by the server.
+        chaotic_bots: ev.chaotic_bots.unwrap_or(false),
+        time_limit_s: ev
+            .time_limit_s
+            .map(|t| t.round().clamp(0.0, f64::from(u32::MAX)) as u32),
     }
 }
 
@@ -902,6 +969,14 @@ pub struct EventInfo {
     pub weather_physics: bool,
     /// The organiser's damage rules (spec §14 Phase 12E).
     pub damage: ocw_sim::damage::Rules,
+    /// The riding aids allowed (spec §14 Phase 12 K6; an older server:
+    /// yes).
+    pub aids: bool,
+    /// Chaotic bots in the event (Q3, K6).
+    pub chaotic_bots: bool,
+    /// The organiser's time limit after the winner (s; `None`: the default
+    /// rule).
+    pub time_limit_s: Option<f64>,
     /// Per rider: crashes and the final condition (rider, bike; spec §14
     /// Phase 12E: the results show them).
     pub conditions: Vec<(RiderId, u32, Option<f64>, Option<f64>)>,
@@ -974,6 +1049,9 @@ pub fn event_info(e: &v1::EventState) -> Option<EventInfo> {
             .and_then(weather::event_weather_from_wire)
             .map(|w| w.label()),
         weather_physics: e.weather_physics,
+        aids: e.aids.unwrap_or(true),
+        chaotic_bots: e.chaotic_bots,
+        time_limit_s: e.time_limit_s.map(f64::from),
         standings: e
             .standings
             .iter()
@@ -984,6 +1062,7 @@ pub fn event_info(e: &v1::EventState) -> Option<EventInfo> {
                 progress_m: f64::from(s.progress_cm) / 100.0,
                 finish_s: s.finish_ms.map(|m| f64::from(m) / 1000.0),
                 dnf: s.dnf,
+                dnf_reason: dnf_reason_from_wire(s.dnf_reason),
                 gap_ahead_s: s.gap_ahead_ms.map(|m| f64::from(m) / 1000.0),
             })
             .collect(),
@@ -1327,6 +1406,7 @@ mod tests {
                 progress_m: 8000.0,
                 finish_s: Some(612.345),
                 dnf: false,
+                dnf_reason: None,
                 gap_ahead_s: None,
             },
             Standing {
@@ -1335,7 +1415,8 @@ mod tests {
                 position: 2,
                 progress_m: 7990.5,
                 finish_s: None,
-                dnf: false,
+                dnf: true,
+                dnf_reason: Some(ocw_sim::event::DnfReason::Injured),
                 gap_ahead_s: Some(1.25),
             },
         ];
@@ -2072,8 +2153,15 @@ mod tests {
             on: Some(true),
             dnf_badly_injured: true,
             neutral_service: true,
+            service_s: Some(20),
         };
         assert_eq!(damage_rules_from_wire(&damage_rules_to_wire(&rules)), rules);
+        // The neutral service's wait at most 10 minutes.
+        let long = damage_rules_from_wire(&v1::DamageRules {
+            service_s: Some(99_999),
+            ..Default::default()
+        });
+        assert_eq!(long.service_s, Some(ocw_sim::damage::MAX_SERVICE_S));
         let m = decode_client(&encode(&rules_request(None, None, Some(true)))).unwrap();
         assert!(matches!(m, v1::client_message::Msg::Rules(r) if r.damage == Some(true)));
         let m = decode_client(&encode(&damage_request(true))).unwrap();
@@ -2096,6 +2184,78 @@ mod tests {
             }),
             None
         );
+    }
+
+    /// K6 (spec §14 Phase 12): the organiser's rules survive the request,
+    /// the event's state carries them and every DNF's reason; an older
+    /// server's state allows the aids.
+    #[test]
+    fn organiser_rules_and_dnf_reasons_round_trip() {
+        use ocw_sim::event::{DnfReason, Rules};
+        let rules = Rules {
+            collisions: Some(ocw_sim::collide::Mode::Soft),
+            physics: Some(ocw_sim::PhysicsMode::Equal),
+            weather_physics: Some(true),
+            damage: Some(ocw_sim::damage::Rules {
+                on: Some(true),
+                dnf_badly_injured: true,
+                neutral_service: true,
+                service_s: Some(15),
+            }),
+            aids: Some(true),
+            chaotic_bots: Some(true),
+            time_limit_s: Some(300.0),
+        };
+        let spec = EventSpec::Race {
+            laps: Some(1),
+            length_m: None,
+        };
+        let start = with_event_rules(event_start(&spec, Some(3)), &rules);
+        let bytes = encode(&client_message(Msg::Event(v1::EventRequest {
+            req: Some(v1::event_request::Req::Start(start)),
+        })));
+        let Msg::Event(v1::EventRequest {
+            req: Some(v1::event_request::Req::Start(back)),
+        }) = decode_client(&bytes).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(event_rules(&back), rules);
+        assert_eq!(event_rules(&event_start(&spec, None)), Rules::default());
+        // In the state.
+        let mut ev = Event::new(
+            3,
+            EventKind::Race {
+                length_m: 1000.0,
+                laps: None,
+            },
+            0,
+            0.0,
+            vec![(RiderId(1), "Ana".into())],
+        );
+        let wire = event_state(Some(&ev), &[], 1);
+        let info = event_info(&wire).unwrap();
+        assert!(info.aids, "a race: aids allowed by default (Phase 12 Q8)");
+        assert_eq!((info.chaotic_bots, info.time_limit_s), (false, None));
+        ev.set_rules(&rules);
+        let info = event_info(&event_state(Some(&ev), &[], 1)).unwrap();
+        assert!(info.aids && info.chaotic_bots);
+        assert_eq!(info.time_limit_s, Some(300.0));
+        assert_eq!(info.damage.service_s, Some(15));
+        // Every reason.
+        for r in [
+            None,
+            Some(DnfReason::Left),
+            Some(DnfReason::TimeLimit),
+            Some(DnfReason::Injured),
+            Some(DnfReason::BikeBroken),
+        ] {
+            assert_eq!(dnf_reason_from_wire(dnf_reason_to_wire(r)), r);
+        }
+        // An older server sends no aids rule: allowed.
+        let mut old = event_state(Some(&ev), &[], 1);
+        old.aids = None;
+        assert!(event_info(&old).unwrap().aids);
     }
 
     /// W3 (spec §14 Phase 4, 4G): the race mode in the event request and

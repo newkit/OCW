@@ -149,6 +149,7 @@ impl WorkoutPanel {
             RunState::Waiting => lines.push("start pedalling to begin".into()),
             RunState::Paused => lines.push("paused: not pedalling".into()),
             RunState::PausedByRider => lines.push("paused (workout resume)".into()),
+            RunState::PausedDown => lines.push("paused: rider down".into()),
             RunState::Running | RunState::Finished => {}
         }
         if let Some(t) = s.text.as_ref().filter(|_| s.state != RunState::Finished) {

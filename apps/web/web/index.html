@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Open Cycling World</title>
-  <!-- No favicon yet: an empty one, so the browser asks for none (no 404). -->
-  <link rel="icon" href="data:,">
+  <!-- The logo (artwork/logos/ocw.svg, copied by scripts/build-web.sh). -->
+  <link rel="icon" href="ocw.svg" type="image/svg+xml">
   <!--
     The browser app (spec §14 Phase 10, B1 – B5). Served from target/web/ by
     `make web-serve` (worlds from target/web/worlds/, `world-builder
@@ -19,6 +19,12 @@
     uses virtual power.
     A world package: ?world=liechtenstein&route=vaduz-malbun (dev pages on
     localhost also: allow-unsigned=1, trust=dev, trust-root=HEX).
+    The GPU (B7, ocw-gpu.js): ?gpu=webgl2 or ?gpu=webgpu choose the build;
+    without it WebGPU where the browser has an adapter, except Safari's
+    WebKit (macOS, iOS, iPadOS: WebGL 2) and a browser where WebGPU failed
+    before (remembered in localStorage). A WebGPU failure (device lost, a
+    validation error, no frame, a canvas of one colour) reloads the ride
+    with gpu=webgl2&quality=low&webgpu-failed=1 and a note.
     Sound and voice (B5): the game sound starts with the first click or key
     (the browser's autoplay rule). Voice uses LiveKit's JS SDK
     (livekit-client.umd.js, Apache-2.0, fetched and hash-checked by the
@@ -26,10 +32,20 @@
     The menus (B6): Esc or the gamepad's Start opens the desktop's in-game
     menu (the same app: Settings → Audio / Voice replace B5's panel);
     Captures → screenshot, video and the ride's FIT file are downloads.
+    The page configuration (B8a): config.json next to this page, read
+    before the module starts (window.ocwConfig): the worlds' base, the
+    hosted server / voice / sign-in (empty: none – the preview), and for
+    the public preview (channel "preview") the start page's rides
+    ("start"). Without a ride option in the query (route, world, server)
+    the preview shows its start page instead of loading the module.
   -->
   <style>
     html, body { margin: 0; height: 100%; background: #10141a; color: #d8dee9;
       font: 16px system-ui, sans-serif; overflow: hidden; }
+    /* Phones (B7 / B8a): the dynamic viewport height, so the canvas fits
+       between mobile Safari's bars; without viewport-fit=cover the page
+       stays inside the safe areas (notch, home indicator). */
+    @supports (height: 100dvh) { html, body { height: 100dvh; } }
     #ocw-canvas { display: block; width: 100%; height: 100%; outline: none; touch-action: none; }
     #ocw-status { position: fixed; inset: 0; display: flex; align-items: center;
       justify-content: center; text-align: left; padding: 16px; pointer-events: none;
@@ -61,10 +77,55 @@
       color: #10141a; background: #ebcb8b; border-radius: 4px; padding: 4px 10px;
       font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; pointer-events: none; }
     #ocw-sound-hint[hidden] { display: none; }
+    /* The GPU note (B7): WebGPU failed here, the ride runs on WebGL 2. */
+    #ocw-gpu-note { position: fixed; top: 44px; left: 50%; transform: translateX(-50%);
+      max-width: calc(100% - 32px); box-sizing: border-box; color: #10141a; background: #88c0d0;
+      border-radius: 4px; padding: 4px 10px; font: 13px system-ui, sans-serif; pointer-events: none; }
+    #ocw-gpu-note[hidden] { display: none; }
+    #ocw-status a { color: #88c0d0; pointer-events: auto; }
   </style>
-  <!-- Voice (B5): LiveKit's JS SDK, then the shim the app talks to. -->
-  <script src="livekit-client.umd.js"></script>
+  <!-- The GPU choice and the WebGPU watchdog (B7, B8a). -->
+  <script src="ocw-gpu.js"></script>
+  <!-- Voice (B5): the shim the app talks to; LiveKit's JS SDK is loaded
+       before the module unless the page configuration has no voice (B8a). -->
   <script src="ocw-voice.js"></script>
+  <style>
+    /* The public preview's start page and its line in the ride (B8a). */
+    #ocw-start { position: fixed; inset: 0; overflow-y: auto; background: #10141a; }
+    #ocw-start[hidden] { display: none; }
+    #ocw-start main { max-width: 860px; margin: 0 auto; padding: 32px 16px 48px; line-height: 1.5; }
+    #ocw-start h1 { font-size: 28px; margin: 0 0 4px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    #ocw-start h1 img { height: 40px; }
+    #ocw-start h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.06em;
+      color: #aab4c3; margin: 28px 0 10px; font-weight: 600; }
+    #ocw-start .lead { color: #c3cbd8; margin: 8px 0 0; }
+    #ocw-start .badge { display: inline-block; font-size: 12px; font-weight: 600; color: #10141a;
+      background: #ebcb8b; border-radius: 4px; padding: 1px 7px; }
+    #ocw-start .rides { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+    #ocw-start a.ride { display: block; text-decoration: none; color: inherit; padding: 14px 16px;
+      background: #18202b; border: 1px solid #2c3644; border-radius: 8px; }
+    #ocw-start a.ride:hover, #ocw-start a.ride:focus { border-color: #88c0d0; background: #1d2632; outline: none; }
+    #ocw-start a.ride b { display: block; font-size: 17px; color: #e5e9f0; }
+    #ocw-start a.ride span { display: block; font-size: 14px; color: #aab4c3; margin-top: 4px; }
+    #ocw-start a.ride span.size { font-size: 12px; color: #88c0d0; margin-top: 6px; }
+    #ocw-start .opts { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 14px; color: #c3cbd8; margin-top: 12px; }
+    #ocw-start .opts input { accent-color: #88c0d0; width: 22px; height: 22px; margin: 0; flex: none; }
+    #ocw-start .opts label { display: flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; }
+    #ocw-start ul { margin: 0; padding-left: 20px; color: #c3cbd8; }
+    #ocw-start .caps span { display: inline-block; margin-right: 14px; }
+    #ocw-start .yes { color: #a3d9a5; } #ocw-start .no { color: #ebcb8b; }
+    #ocw-start .soon { color: #c3cbd8; border-left: 3px solid #4c566a; padding: 4px 0 4px 12px; }
+    #ocw-start footer { margin-top: 32px; font-size: 14px; color: #aab4c3; }
+    #ocw-start a { color: #88c0d0; }
+    /* Above the HUD's height profile (bottom left), clear of the route
+       label (bottom centre) and the devices panel (bottom right). */
+    #ocw-preview-bar { position: fixed; left: 12px; bottom: 98px;
+      font: 12px system-ui, sans-serif; color: #c3cbd8; background: rgba(10, 13, 18, 0.6);
+      border-radius: 4px; padding: 2px 8px; white-space: nowrap; max-width: calc(100% - 16px);
+      overflow: hidden; text-overflow: ellipsis; }
+    #ocw-preview-bar a { color: #88c0d0; text-decoration: none; }
+    #ocw-preview-bar[hidden] { display: none; }
+  </style>
 </head>
 <body>
   <canvas id="ocw-canvas" tabindex="0"></canvas>
@@ -81,6 +142,38 @@
   </section>
   <button id="ocw-devices-show" hidden>Devices</button>
   <div id="ocw-sound-hint" hidden></div>
+  <div id="ocw-gpu-note" hidden></div>
+  <div id="ocw-preview-bar" hidden></div>
+  <section id="ocw-start" hidden aria-label="Start">
+    <main>
+      <h1><img src="ocw.svg" alt="" onerror="this.remove()">Open Cycling World <span class="badge">browser preview</span></h1>
+      <p class="lead">An open-source indoor cycling simulation, in your browser: ride solo on a test
+        route or in Liechtenstein, with virtual power or your smart trainer over Bluetooth (Chrome or Edge).
+        This is a development build – expect rough edges.</p>
+      <h2>Choose a ride</h2>
+      <div class="rides" id="ocw-start-rides"></div>
+      <div class="opts">
+        <label><input type="checkbox" id="ocw-start-webgl2"> WebGL 2 with low graphics (phones, Safari, older GPUs)</label>
+      </div>
+      <h2>Riding</h2>
+      <ul>
+        <li><b>Virtual power:</b> ↑ more power, ↓ brake, Page Up / Down ±10 W; A autodrive, ← / → your line or lean.</li>
+        <li><b>Smart trainer, power meter, heart rate:</b> the Devices panel, bottom right (Web Bluetooth:
+          Chrome or Edge on Windows, macOS, ChromeOS and Android; on Linux behind a flag).</li>
+        <li><b>Menu:</b> Esc (or the gamepad's Start) – events, workouts, the time and weather machines,
+          settings, screenshots and the ride's FIT file. Mouse: the camera, C resets it.</li>
+      </ul>
+      <p class="caps" id="ocw-start-caps"></p>
+      <p class="soon">Multiplayer, voice chat and sign-in are coming in the hosted version.</p>
+      <footer>
+        <a href="credits.html">Credits and licences</a> ·
+        <a href="credits.html#privacy">Privacy</a> ·
+        <a href="https://github.com/newkit/OCW">Source code</a> (MIT / Apache-2.0) ·
+        Map data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>
+        <div id="ocw-start-build" style="margin-top: 6px; font-size: 12px"></div>
+      </footer>
+    </main>
+  </section>
   <script>
     // Downloads (spec §14 Phase 10 B6): the app's captures and the ride's
     // FIT file, named by the app with the time; the list is for tests.
@@ -152,30 +245,93 @@
       pixel_ratio: devicePixelRatio || 1,
     });
     // The GPU API (B7): Bevy is compiled for WebGPU or WebGL 2, so there
-    // are two builds; WebGPU when the browser has it and gives an adapter,
-    // else WebGL 2. `?gpu=webgl2` (or `webgpu`) chooses one.
-    async function chooseGpu() {
-      const want = new URLSearchParams(location.search).get("gpu");
-      const webgl2 = () => {
-        try { return !!document.createElement("canvas").getContext("webgl2"); } catch (e) { return false; }
-      };
-      if (want === "webgl2") return {api: "webgl2", reason: "page option gpu=webgl2"};
-      let reason = "no WebGPU in this browser (navigator.gpu)";
-      if (navigator.gpu) {
-        try {
-          if (await navigator.gpu.requestAdapter()) return {api: "webgpu", reason: "WebGPU adapter found"};
-          reason = "WebGPU without an adapter (blocklisted or disabled GPU)";
-        } catch (e) {
-          reason = "WebGPU failed: " + e;
-        }
-      }
-      if (want === "webgpu") return {api: null, reason: reason + "; gpu=webgpu asked for it"};
-      if (!webgl2()) return {api: null, reason: reason + "; no WebGL 2 either"};
-      return {api: "webgl2", reason};
+    // are two builds; ocw-gpu.js decides (`?gpu=webgl2` / `webgpu` choose,
+    // a WebGPU failure remembered here and Safari's WebGPU take WebGL 2).
+    const gpuFacts = ocwGpuChoice.facts(navigator, window);
+    const pageStorage = (() => { try { return window.localStorage; } catch (e) { return null; } })();
+    const hasWebgl2 = () => {
+      try { return !!document.createElement("canvas").getContext("webgl2"); } catch (e) { return false; }
+    };
+    const chooseGpu = () => ocwGpuChoice.choose({
+      query: new URLSearchParams(location.search), facts: gpuFacts, gpu: navigator.gpu,
+      webgl2: hasWebgl2, storage: pageStorage,
+    });
+    // The page configuration (spec §14 Phase 10 B8a): config.json next to
+    // this page; the app reads window.ocwConfig (its text). Without the
+    // file: the empty configuration (every option, as before).
+    async function loadConfig() {
+      try {
+        const r = await fetch("config.json", {cache: "no-cache"});
+        return r.ok ? await r.text() : "";
+      } catch (e) { return ""; }
     }
+    window.ocwConfig = await loadConfig();
+    let config = {};
+    try { config = JSON.parse(window.ocwConfig || "{}") || {}; } catch (e) { console.warn("ocw-web: config.json: " + e); }
+    const preview = config.channel === "preview";
+    const query = new URLSearchParams(location.search);
+    const riding = ["route", "world", "server"].some((k) => query.has(k));
+    const loadScript = (src) => new Promise((ok) => {
+      const el = document.createElement("script");
+      el.src = src;
+      el.onload = () => ok(true);
+      el.onerror = () => { console.warn(`ocw-web: ${src} not loaded`); ok(false); };
+      document.head.appendChild(el);
+    });
+    if (preview && !riding && Array.isArray(config.start) && config.start.length) {
+      // The preview's start page: nothing big is fetched until a ride is chosen.
+      startPage();
+    } else {
+      if (preview) previewBar();
+      // Voice (B5): LiveKit's SDK, unless this page has no voice (B8a).
+      if (config.voice !== "") await loadScript("livekit-client.umd.js");
+      await ride();
+    }
+
+    // The preview's start page (B8a): the rides of config.start.
+    function startPage() {
+      const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+      const box = document.getElementById("ocw-start-rides");
+      const webgl2 = document.getElementById("ocw-start-webgl2");
+      const choice = ocwGpuChoice.startPage(gpuFacts, ocwGpuChoice.recall(pageStorage, gpuFacts.ua), !!navigator.gpu);
+      webgl2.checked = choice.ticked;
+      const href = (q) => "?" + q + choice.query(webgl2.checked);
+      const render = () => {
+        box.innerHTML = config.start.map((r) =>
+          `<a class="ride" href="${esc(href(r.query))}"><b>${esc(r.title)}</b><span>${esc(r.text || "")}</span>${r.size ? `<span class="size">${esc(r.size)}</span>` : ""}</a>`).join("");
+      };
+      webgl2.onchange = render;
+      render();
+      const caps = [
+        [choice.webgpuLabel, !!navigator.gpu],
+        ["WebGL 2", (() => { try { return !!document.createElement("canvas").getContext("webgl2"); } catch (e) { return false; } })()],
+        ["Web Bluetooth (trainers)", !!navigator.bluetooth],
+      ];
+      document.getElementById("ocw-start-caps").innerHTML = "This browser: " + caps.map(([n, ok]) =>
+        `<span class="${ok ? "yes" : "no"}">${ok ? "✓" : "✗"} ${esc(n)}</span>`).join("");
+      if (config.build) document.getElementById("ocw-start-build").textContent = "Build " + config.build;
+      status.hidden = true;
+      document.getElementById("ocw-start").hidden = false;
+      document.title = "Open Cycling World – browser preview";
+      console.log("ocw-web: the preview's start page");
+    }
+
+    // The preview's line in the ride (B8a): back to the rides, the credits.
+    function previewBar() {
+      const bar = document.getElementById("ocw-preview-bar");
+      const osm = query.has("world") ? " · © OpenStreetMap contributors" : "";
+      bar.innerHTML = `Browser preview · <a href="./">Rides</a> · <a href="credits.html">Credits</a>${osm}`;
+      bar.hidden = false;
+    }
+
+    async function ride() {
     const gpu = await chooseGpu();
     window.ocwGpu = gpu;
     console.log(`ocw-web: GPU API ${gpu.api || "none"} (${gpu.reason})`);
+    let started = false;
+    const watchdog = gpu.api === "webgpu" ? gpuWatchdog(gpu, () => started) : null;
+    if (!watchdog) window.ocwRenderFailed = (kind, what) => renderFailed(gpu, `${kind}: ${what}`);
+    if (gpu.note) gpuNote(gpu.note);
     if (!gpu.api) {
       fail("This browser can draw neither WebGPU nor WebGL 2 (" + gpu.reason + "). Open Cycling World needs Chrome / Edge 113+, Safari 26 or Firefox 141+ (spec §14 Phase 10).");
     } else {
@@ -185,20 +341,78 @@
         const ocw = await import(gpu.api === "webgl2" ? "./ocw_web_webgl2.js" : "./ocw_web.js");
         // window.ocw.console("teleport 3"), window.ocw.wasmMemory(): for tests.
         window.ocw = ocw;
+        // Ride -> Join: a pasted link goes to the link field (spec §3.2.1).
+        document.addEventListener("paste", (e) => {
+          const t = e.clipboardData && e.clipboardData.getData("text");
+          if (t && window.ocw && window.ocw.paste) window.ocw.paste(t);
+        });
         // Bevy's event loop throws a control-flow exception once it runs:
         // that is not an error.
         await ocw.default().catch((e) => {
           if (!String(e).includes("Using exceptions for control flow")) throw e;
         });
       } catch (e) {
-        if (!String(e).includes("Using exceptions for control flow")) fail("Start failed: " + e);
+        if (!String(e).includes("Using exceptions for control flow")) {
+          if (watchdog) watchdog.fail("the WebGPU module did not start: " + e);
+          else fail("Start failed: " + e);
+        }
       }
+      started = true;
       performance.mark("ocw-started");
       console.log(`ocw-web: module started in ${(performance.now() - t0).toFixed(0)} ms`);
       // The app hides the status (or shows a world's loading screen in it).
       document.getElementById("ocw-canvas").focus();
       devicesPanel();
       soundHint();
+    }
+    }
+
+    // The WebGPU watchdog (B7; ocw-gpu.js): a lost device, an uncaptured
+    // error, a renderer error from the app (window.ocwRenderFailed), no
+    // frame or a canvas of one colour → WebGL 2, never a silent black
+    // screen. window.ocwGpuWatch is its state (tests).
+    function gpuWatchdog(gpu, isStarted) {
+      const canvas = document.getElementById("ocw-canvas");
+      const w = ocwGpuChoice.watch({
+        win: window, canvas, started: isStarted,
+        ready: () => status.hidden,
+        onFail: (why) => renderFailed(gpu, why),
+        // WebGPU drew: a forced retry (gpu=webgpu) forgets an old failure.
+        onOk: () => { if (gpu.forced) ocwGpuChoice.forget(pageStorage); },
+      });
+      window.ocwRenderFailed = (kind, what) => w.fail(`the renderer stopped (${kind}): ${what}`);
+      window.ocwGpuWatch = w;
+      return w;
+    }
+
+    // A GPU failure: WebGPU chosen by the page falls back to WebGL 2 (the
+    // failure remembered in this browser, the same ride reloaded with low
+    // graphics); a forced API or WebGL 2 shows the error.
+    function renderFailed(gpu, why) {
+      console.error(`ocw-web: ${gpu.api || "no GPU"} failed: ${why}`);
+      window.ocwGpuFailure = why;
+      status.hidden = false;
+      if (gpu.api === "webgpu" && !gpu.forced && hasWebgl2()) {
+        ocwGpuChoice.remember(pageStorage, gpuFacts.ua, why, new Date().toISOString().slice(0, 10),
+          config.build || "");
+        status.className = "loading";
+        status.textContent = `WebGPU failed on this browser (${why}) – switching to WebGL 2 …`;
+        setTimeout(() => location.replace(ocwGpuChoice.fallbackUrl(location.href)), 1500);
+        return;
+      }
+      const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+      status.className = "error";
+      const other = gpu.api === "webgpu" && hasWebgl2()
+        ? `<br><a href="${esc(ocwGpuChoice.fallbackUrl(location.href))}">Ride with WebGL 2 instead</a>` : "";
+      status.innerHTML = `The ${gpu.api === "webgl2" ? "WebGL 2" : "WebGPU"} renderer failed: ${esc(why)}${other}`;
+    }
+
+    // The GPU note (B7): why this ride runs on WebGL 2; 12 s.
+    function gpuNote(text) {
+      const el = document.getElementById("ocw-gpu-note");
+      el.textContent = text;
+      el.hidden = false;
+      setTimeout(() => { el.hidden = true; }, 12000);
     }
 
     // The devices panel (spec §14 Phase 10 B4): the buttons open the

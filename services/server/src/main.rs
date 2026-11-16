@@ -127,6 +127,13 @@ struct Args {
     /// Also trust this root public key file (repeatable).
     #[arg(long, value_name = "FILE")]
     trust_root: Vec<PathBuf>,
+    /// Trust this user key (spec §4.7 *User keys*: a rider's own key that
+    /// signs their unofficial worlds) – its 64 hex digits, its .pub.json
+    /// file, or a package signed with it (repeatable). The keys in this
+    /// account's <data dir>/ocw/trusted-keys.json are trusted too. Riders
+    /// never make the server trust a key.
+    #[arg(long, value_name = "KEY|FILE")]
+    trust_key: Vec<String>,
     /// Seed of the free-ride start point.
     #[arg(long, default_value_t = 1)]
     seed: u64,
@@ -182,6 +189,206 @@ struct Args {
     /// only from $OCW_LIVEKIT_API_SECRET.
     #[arg(long, value_name = "KEY")]
     livekit_api_key: Option<String>,
+    /// Run the accounts backend (sign-in with Google and Strava, spec
+    /// §9.1) in this process from this configuration (a copy of
+    /// services/accounts/accounts.example.toml, git-ignored: it holds the client
+    /// secrets). The hello's access tokens are checked against its keys.
+    #[arg(long, value_name = "FILE", conflicts_with = "auth_dev")]
+    auth_config: Option<PathBuf>,
+    /// Development sign-in: the accounts backend with in-process FAKE
+    /// Google and Strava servers (every sign-in succeeds) on this address
+    /// (default 127.0.0.1:8480). Never for real riders.
+    #[arg(long, value_name = "ADDR", num_args = 0..=1, default_missing_value = "127.0.0.1:8480")]
+    auth_dev: Option<String>,
+    /// The browser app's page for --auth-dev: allowed as the browser's
+    /// redirect URI, its origin may call the token endpoint.
+    #[arg(long, value_name = "URL", requires = "auth_dev")]
+    auth_dev_web: Option<String>,
+    /// Write the --auth-dev URLs (backend, fake Google, fake Strava) as
+    /// JSON to this file, for scripts.
+    #[arg(long, value_name = "PATH", requires = "auth_dev")]
+    auth_info_file: Option<PathBuf>,
+    /// Check the access tokens of a separate accounts backend: its issuer
+    /// URL. Its keys come from its JWKS (fetched every five minutes and
+    /// when a token names an unknown key).
+    #[arg(long, value_name = "URL", conflicts_with_all = ["auth_config", "auth_dev"])]
+    auth_issuer: Option<String>,
+    /// The audience the access tokens must name.
+    #[arg(long, value_name = "AUD", default_value = ocw_auth::DEFAULT_AUDIENCE)]
+    auth_audience: String,
+    /// Refuse riders without an account (default: anonymous riders are
+    /// allowed, Phase 10 Q5).
+    #[arg(long)]
+    auth_required: bool,
+}
+
+/// Sign-in (spec §9.1): the verifier of the hello's tokens, and what keeps
+/// the backend (or the key refresher) running.
+struct Auth {
+    verifier: std::sync::Arc<ocw_auth::Verifier>,
+    _runtime: Option<tokio::runtime::Runtime>,
+}
+
+/// Fetches a backend's JWKS (through its discovery document).
+fn fetch_jwks(issuer: &str) -> Result<ocw_auth::Jwks, String> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(10)))
+        .build()
+        .into();
+    let get = |url: &str| -> Result<String, String> {
+        agent
+            .get(url)
+            .call()
+            .and_then(|mut r| r.body_mut().read_to_string())
+            .map_err(|e| format!("{url}: {e}"))
+    };
+    let disc: ocw_auth::oidc::Discovery =
+        serde_json::from_str(&get(&format!("{issuer}/.well-known/openid-configuration"))?)
+            .map_err(|e| format!("{issuer}: {e}"))?;
+    if disc.issuer != issuer {
+        return Err(format!(
+            "{issuer}: the discovery names another issuer ({})",
+            disc.issuer
+        ));
+    }
+    serde_json::from_str(&get(&disc.jwks_uri)?).map_err(|e| format!("{}: {e}", disc.jwks_uri))
+}
+
+/// Keeps a remote backend's keys fresh: every five minutes, and soon after
+/// a token named an unknown key (at most every 30 s).
+fn refresh_keys(issuer: String, verifier: std::sync::Arc<ocw_auth::Verifier>) {
+    let _ = thread::Builder::new()
+        .name("ocw-jwks".into())
+        .spawn(move || {
+            let mut last: Option<Instant> = None;
+            loop {
+                let due = last.is_none_or(|t| {
+                    t.elapsed() >= Duration::from_secs(300)
+                        || (t.elapsed() >= Duration::from_secs(30) && verifier.take_stale())
+                });
+                if due {
+                    last = Some(Instant::now());
+                    match fetch_jwks(&issuer) {
+                        Ok(keys) => {
+                            tracing::debug!(keys = keys.keys.len(), "JWKS refreshed");
+                            verifier.set_keys(keys);
+                        }
+                        Err(e) => tracing::warn!(%e, "JWKS fetch failed"),
+                    }
+                }
+                thread::sleep(Duration::from_secs(1));
+            }
+        });
+}
+
+#[cfg(feature = "backend")]
+fn start_backend(args: &Args) -> Option<Auth> {
+    use ocw_accounts::{AuthService, Config, fake::DevBackend};
+    let fail = |e: String| -> ! {
+        eprintln!("accounts backend: {e}");
+        std::process::exit(2);
+    };
+    if args.auth_config.is_none() && args.auth_dev.is_none() {
+        return None;
+    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("ocw-accounts")
+        .enable_all()
+        .build()
+        .unwrap_or_else(|e| fail(e.to_string()));
+    let service = if let Some(path) = &args.auth_config {
+        let cfg = Config::load(path).unwrap_or_else(|e| fail(e));
+        let listen = cfg.listen.clone();
+        let svc = std::sync::Arc::new(AuthService::new(cfg).unwrap_or_else(|e| fail(e)));
+        let listener = runtime
+            .block_on(tokio::net::TcpListener::bind(&listen))
+            .unwrap_or_else(|e| fail(format!("{listen}: {e}")));
+        let s = svc.clone();
+        runtime.spawn(async move { ocw_accounts::serve(s, listener).await });
+        tracing::info!(issuer = %svc.issuer(), %listen, providers = ?svc.providers(), "accounts backend on");
+        svc
+    } else {
+        let listen = args.auth_dev.clone().unwrap_or_default();
+        let web = args.auth_dev_web.clone().map(|page| {
+            let after = page.find("://").map_or(0, |i| i + 3);
+            let origin = page[after..]
+                .find('/')
+                .map_or(page.clone(), |i| page[..after + i].to_owned());
+            (page, origin)
+        });
+        let dev = runtime
+            .block_on(DevBackend::start(&listen, web))
+            .unwrap_or_else(|e| fail(e));
+        tracing::warn!(
+            issuer = %dev.issuer,
+            google = %dev.google.base,
+            strava = %dev.strava.base,
+            "DEVELOPMENT sign-in with FAKE Google and Strava (--auth-dev): not for real riders"
+        );
+        if let Some(path) = &args.auth_info_file {
+            let info = serde_json::json!({
+                "issuer": dev.issuer,
+                "fake_google": dev.google.base,
+                "fake_strava": dev.strava.base,
+            });
+            if let Err(e) = std::fs::write(path, info.to_string()) {
+                fail(format!("{}: {e}", path.display()));
+            }
+        }
+        // The fakes' servers run on the runtime; the handles may go.
+        dev.service.clone()
+    };
+    let verifier = std::sync::Arc::new(service.verifier());
+    // Key rotation, and the game server's copy of the keys.
+    let v = verifier.clone();
+    runtime.spawn(async move {
+        loop {
+            match service.maybe_rotate_keys() {
+                Ok(true) => tracing::info!("signing key rotated"),
+                Ok(false) => {}
+                Err(e) => tracing::warn!(%e, "key rotation failed"),
+            }
+            v.set_keys(service.jwks());
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        }
+    });
+    Some(Auth {
+        verifier,
+        _runtime: Some(runtime),
+    })
+}
+
+#[cfg(not(feature = "backend"))]
+fn start_backend(args: &Args) -> Option<Auth> {
+    if args.auth_config.is_some() || args.auth_dev.is_some() {
+        eprintln!("this ocw-server was built without the accounts backend (feature `backend`)");
+        std::process::exit(2);
+    }
+    None
+}
+
+/// The sign-in of this server: its own backend, a remote one, or none.
+fn start_auth(args: &Args) -> Option<Auth> {
+    if let Some(a) = start_backend(args) {
+        return Some(a);
+    }
+    let issuer = args
+        .auth_issuer
+        .as_deref()?
+        .trim_end_matches('/')
+        .to_owned();
+    let keys = fetch_jwks(&issuer).unwrap_or_else(|e| {
+        tracing::warn!(%e, "JWKS not available yet: signed-in riders are refused until it is");
+        ocw_auth::Jwks::default()
+    });
+    let verifier = std::sync::Arc::new(ocw_auth::Verifier::new(&issuer, &args.auth_audience, keys));
+    refresh_keys(issuer.clone(), verifier.clone());
+    tracing::info!(%issuer, audience = %args.auth_audience, "sign-in: access tokens checked against the backend's JWKS");
+    Some(Auth {
+        verifier,
+        _runtime: None,
+    })
 }
 
 const DEFAULT_LISTEN: &str = "0.0.0.0:47800";
@@ -189,8 +396,16 @@ const DEFAULT_WEBTRANSPORT: &str = "0.0.0.0:47801";
 
 /// How world packages are loaded and verified (spec §4.7).
 fn load_options(args: &Args) -> Result<ocw_worldstore::LoadOptions, String> {
+    let user_keys = args
+        .trust_key
+        .iter()
+        .map(|k| ocw_worldstore::userkeys::read_key(k).map_err(|e| format!("--trust-key {k}: {e}")))
+        .collect::<Result<Vec<_>, _>>()?;
     let trust = ocw_worldstore::trust::TrustConfig {
         root_files: args.trust_root.clone(),
+        user_keys,
+        // Load once is a rider's answer in an app, never the server's.
+        session_keys: false,
         ..ocw_worldstore::trust::TrustConfig::for_build()
     }
     .trust_store()?;
@@ -205,13 +420,13 @@ fn load_options(args: &Args) -> Result<ocw_worldstore::LoadOptions, String> {
 
 /// Free ride on a world package's road graph (a path or a cached id, its
 /// signature checked), from a seeded random start, or along one of its routes.
-fn free_ride(args: &Args, spec: &str) -> (Course, (f64, f64)) {
+fn free_ride(args: &Args, spec: &str) -> (Course, (f64, f64), ocw_protocol::v1::WorldChange) {
     let fail = |e: String| -> ! {
         eprintln!("{spec}: {e}");
         std::process::exit(1);
     };
     let opts = load_options(args).unwrap_or_else(|e| fail(e));
-    let (course, _, origin) = ocw_server::worlds::load_course_at(
+    let (course, change, origin) = ocw_server::worlds::load_course_at(
         spec,
         args.route.as_deref(),
         &opts,
@@ -219,7 +434,7 @@ fn free_ride(args: &Args, spec: &str) -> (Course, (f64, f64)) {
         args.seed,
     )
     .unwrap_or_else(|e| fail(e));
-    (course, origin)
+    (course, origin, change)
 }
 
 /// The worlds this server may switch to: the cache and the packages next
@@ -329,10 +544,21 @@ fn main() {
     let args = Args::parse();
     let mut route_sha256 = String::new();
     let mut geo_origin = None;
+    // What the join link names (spec §6.2 *Join links*): the package and
+    // the route.
+    let mut link_world: (Option<String>, Option<String>) = (None, None);
     let course = match (&args.world, &args.route_file) {
         (Some(spec), _) => {
-            let (course, origin) = free_ride(&args, spec);
+            let (course, origin, change) = free_ride(&args, spec);
             geo_origin = Some(origin);
+            link_world = (
+                Some(if change.package_id.starts_with("local/") {
+                    change.package_id.clone()
+                } else {
+                    format!("{}@{}", change.package_id, change.version)
+                }),
+                (!change.route.is_empty()).then(|| change.route.clone()),
+            );
             course
         }
         (None, Some(path)) => {
@@ -344,8 +570,14 @@ fn main() {
             route_sha256 = sha;
             Course::Route(route)
         }
-        (None, None) if args.test_route == "hills" => Course::Route(Route::test_hills()),
-        (None, None) => Course::Route(Route::test_loop()),
+        (None, None) if args.test_route == "hills" => {
+            link_world.1 = Some("hills".into());
+            Course::Route(Route::test_hills())
+        }
+        (None, None) => {
+            link_world.1 = Some("loop".into());
+            Course::Route(Route::test_loop())
+        }
     };
     match &course {
         Course::Route(route) => tracing::info!(
@@ -384,6 +616,12 @@ fn main() {
             "voice chat off (set OCW_LIVEKIT_URL, OCW_LIVEKIT_API_KEY, OCW_LIVEKIT_API_SECRET)"
         ),
     }
+    // Sign-in (spec §9.1): the backend in this process, or a remote one.
+    let auth = start_auth(&args);
+    if args.auth_required && auth.is_none() {
+        eprintln!("--auth-required needs --auth-config, --auth-dev or --auth-issuer");
+        std::process::exit(2);
+    }
     let mut server = GameServer::new(
         course,
         ServerConfig {
@@ -413,6 +651,8 @@ fn main() {
             real_weather: (args.weather.as_deref() == Some("real"))
                 .then_some(args.weather_provider),
             weather_physics: args.weather_physics == "on",
+            auth: auth.as_ref().map(|a| a.verifier.clone()),
+            auth_required: args.auth_required,
         },
     );
     // Real weather (spec §14 Phase 9, S7): the server asks the providers,
@@ -427,7 +667,7 @@ fn main() {
             "echo rider at the start (voice echo test; the echo_participant example joins as it)"
         );
     }
-    let mut net = args.listen.map(|addr| listen(&args, addr));
+    let mut net = args.listen.map(|addr| listen(&args, addr, &link_world));
     let stop = net.as_ref().map(NetServer::shutdown_on_signal);
     // When the WebTransport certificate was last checked for renewal.
     let mut cert_checked = Instant::now();
@@ -560,7 +800,11 @@ fn load_route_file(path: &std::path::Path) -> Result<(Route, String), String> {
 }
 
 /// Opens the QUIC endpoint and tells the user how to connect.
-fn listen(args: &Args, addr: std::net::SocketAddr) -> NetServer {
+fn listen(
+    args: &Args,
+    addr: std::net::SocketAddr,
+    (world, route): &(Option<String>, Option<String>),
+) -> NetServer {
     let identity = match &args.tls_dir {
         Some(dir) => ServerIdentity::load_or_create(dir),
         None => ServerIdentity::self_signed(),
@@ -587,6 +831,12 @@ fn listen(args: &Args, addr: std::net::SocketAddr) -> NetServer {
     } else {
         format!(":{}", local.port())
     };
+    // The join link first (spec §6.2 *Join links*): the kiosk reads both
+    // once the "Clients connect with" lines are there.
+    println!(
+        "{}",
+        ocw_server::net::join_lines(local, net.fingerprint(), world.as_deref(), route.as_deref())
+    );
     println!(
         "Clients connect with:\n  ocw-desktop --server {host}{port} --server-cert {}",
         net.fingerprint()

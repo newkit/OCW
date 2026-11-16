@@ -297,6 +297,15 @@ message EventStart {
   // The organizer's rule: the weather affects the physics during the event
   // (spec §14 Phase 9, S6, Q4; absent: off).
   optional bool weather_physics = 10;
+  // The organiser's rule on the riding aids – the "last moment" warning,
+  // the proximity arrow and bell (spec §14 Phase 12 K6, 12D; absent: by
+  // its kind – not in races, allowed in group rides and time trials).
+  optional bool aids = 11;
+  // The organiser's chaotic bots (Phase 12 Q3, K6; absent: the session's).
+  optional bool chaotic_bots = 12;
+  // The organiser's time limit after the winner (s, 30 – 7200; absent:
+  // 120 s or a quarter of the winner's time, whichever is longer).
+  optional uint32 time_limit_s = 13;
 }
 
 // An event's weather (spec §14 Phase 9, S5, Q4: the organizer decides).
@@ -386,6 +395,20 @@ message Hello {
   // client): rider_pm and parts_pm only. Absent: fresh. Anonymous riders
   // never send it.
   DamageState damage = 9;
+  // The rider's access token from our accounts backend (spec §9.1; a JWT
+  // signed with a key of the backend's JWKS). Absent: an anonymous rider
+  // (allowed, Phase 10 Q5). A server with sign-in checks signature,
+  // expiry, issuer and audience and rejects a bad token (Reject.auth);
+  // a server without it ignores the token.
+  optional string access_token = 10;
+}
+
+// The signed-in account of a rider (spec §9.1).
+message Account {
+  string account_id = 1;
+  string display_name = 2;
+  // The linked providers ("google", "strava").
+  repeated string providers = 3;
 }
 
 // Cosmetic look of a rider and bike (spec §2.5). Colours are sRGB
@@ -651,6 +674,14 @@ message EventState {
   // The weather affects the physics in this event (spec §14 Phase 9, S6,
   // Q4: the organizer's rule), shown in the event's info.
   bool weather_physics = 17;
+  // The riding aids allowed in this event (spec §14 Phase 12 K6; absent:
+  // an older server, allowed). The clients switch them off when not.
+  optional bool aids = 18;
+  // Chaotic bots in this event (Q3, K6).
+  bool chaotic_bots = 19;
+  // The organiser's time limit after the winner (s; absent: the default
+  // rule).
+  optional uint32 time_limit_s = 20;
 }
 
 message EventStanding {
@@ -670,6 +701,22 @@ message EventStanding {
   uint32 crashes = 8;
   optional uint32 rider_pm = 9;
   optional uint32 bike_pm = 10;
+  // Why a DNF did not finish (spec §14 Phase 12 K6; absent: not a DNF, or
+  // an older server).
+  DnfReason dnf_reason = 11;
+}
+
+// Why an entrant did not finish (spec §14 Phase 12 K6, the DNF rules).
+enum DnfReason {
+  DNF_REASON_UNSPECIFIED = 0;
+  // Left the session.
+  DNF_REASON_LEFT = 1;
+  // Over the time limit after the winner.
+  DNF_REASON_TIME_LIMIT = 2;
+  // Badly injured, with the organiser's rule.
+  DNF_REASON_INJURED = 3;
+  // The bike broken without the organiser's neutral service.
+  DNF_REASON_BIKE_BROKEN = 4;
 }
 
 // A rider's free-ride path (spec §5.2, §6.5): the server broadcasts the
@@ -737,6 +784,9 @@ message Welcome {
   // Damage in force (spec §14 Phase 12E: `ride.damage`, only with
   // collisions on).
   bool damage = 18;
+  // The account the server accepted from Hello.access_token (spec §9.1);
+  // absent: the rider rides anonymously.
+  Account account = 19;
 }
 
 enum ClockMode {
@@ -775,6 +825,9 @@ message WorldClock {
 
 message Reject {
   string reason = 1;
+  // The access token was refused (expired, bad signature, another
+  // issuer): refresh it or sign in again, then reconnect (spec §9.1).
+  bool auth = 2;
 }
 
 message DevCommandResult {
@@ -1106,6 +1159,10 @@ message DamageRules {
   // Neutral service: a spare bike for a broken one (else DNF), a 30 s
   // stop restores the bike.
   bool neutral_service = 3;
+  // The neutral service's wait for a spare wheel or a spare bike (s, at
+  // most 600; spec §14 Phase 12 K6; absent: a puncture mended in 30 s, a
+  // spare bike in 60 s).
+  optional uint32 service_s = 4;
 }
 
 message Bump {

@@ -83,6 +83,7 @@ impl BotRider {
             look: Some(config.look.into()),
             parts: Vec::new(),
             damage: None,
+            access_token: None,
         };
         // Exactly the profile the server will use for this hello.
         let profile = ocw_server::physics_profile(&hello);
@@ -504,6 +505,7 @@ mod tests {
         let mut b = BotRider::new(config("win-2", None), Route::test_loop());
         let reject = encode(&ocw_protocol::server_message(S::Reject(v1::Reject {
             reason: "protocol version 0 not supported".into(),
+            auth: false,
         })));
         b.on_message(&reject, 0.5);
         assert!(b.report().closed.unwrap().contains("rejected"));

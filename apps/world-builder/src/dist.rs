@@ -103,10 +103,17 @@ pub fn imagery_attribution(pkg: &ocw_world::WorldPackage) -> Vec<Attribution> {
         .forest
         .as_ref()
         .map_or(&[][..], |f| f.sources.as_slice());
+    // The measured crop maps of the vegetation (section VEGE).
+    let crops = pkg
+        .look
+        .vegetation
+        .as_ref()
+        .map_or(&[][..], |v| v.sources.as_slice());
     pkg.look
         .sources()
         .iter()
         .chain(forest)
+        .chain(crops)
         .map(|s| Attribution {
             source: s.name.clone(),
             licence: s.licence.clone(),
@@ -215,6 +222,67 @@ pub fn keys_init_root(name: &str, dir: Option<PathBuf>) {
         secret.display(),
         public.display()
     );
+}
+
+/// `keys init-user`: a user's own root and a signing key that embeds it
+/// (spec §4.7 *User keys*).
+pub fn keys_init_user(name: &str, dir: Option<PathBuf>, days: u32) {
+    let dir = dir.unwrap_or_else(default_key_dir);
+    let root = RootKeyPair::from_seed(name, random_seed().unwrap_or_else(|e| fail(e)));
+    let seed = random_seed().unwrap_or_else(|e| fail(e));
+    let now = now_unix_s();
+    let cert = root.certify(
+        name,
+        SigningKeyPair::public_key_of(seed),
+        now - 3600,
+        now + i64::from(days) * DAY_S,
+    );
+    let key = SigningKeyPair::new(seed, cert)
+        .and_then(|k| k.with_root(root.public()))
+        .unwrap_or_else(|e| fail(e));
+    let (secret, public, signing) = (
+        dir.join("user-root.key"),
+        dir.join("user-root.pub.json"),
+        dir.join("user.key"),
+    );
+    for p in [&secret, &public, &signing] {
+        if p.exists() {
+            fail(format!(
+                "{}: exists; not overwriting a key file",
+                p.display()
+            ));
+        }
+    }
+    write_new(&secret, &root.to_json(), true).unwrap_or_else(|e| fail(e));
+    write_new(&public, &root.public().to_json(), false).unwrap_or_else(|e| fail(e));
+    write_new(&signing, &key.to_json(), true).unwrap_or_else(|e| fail(e));
+    let fp = root.public().fingerprint();
+    println!(
+        "your key '{name}' (key id {}):\n  fingerprint: {fp}\n  root secret: {}  <- keep it safe, never share or commit\n  signing key: {}  <- world-builder sign --key {}\n  public key:  {}  <- others may add it: world trust add FILE\nTell others the fingerprint over a channel they trust (in person, a call); only it identifies your key.",
+        root.public().key_id,
+        secret.display(),
+        signing.display(),
+        signing.display(),
+        public.display()
+    );
+}
+
+/// `keys fingerprint FILE`: a key's fingerprint (spec §4.7 *User keys*).
+pub fn keys_fingerprint(file: &Path) {
+    let arg = file.to_string_lossy();
+    let key = ocw_worldstore::userkeys::read_key(&arg).or_else(|e| {
+        // A signing key file: its embedded root.
+        read_signing_key(file).ok().and_then(|k| k.root).ok_or(e)
+    });
+    match key {
+        Ok(k) => println!(
+            "'{}' (the name the key claims)\n  fingerprint: {}\n  key id:      {}",
+            k.name,
+            k.fingerprint(),
+            k.key_id
+        ),
+        Err(e) => fail(format!("{}: {e}", file.display())),
+    }
 }
 
 pub fn keys_new_signing(root: Option<PathBuf>, name: &str, days: u32, out: Option<PathBuf>) {

@@ -49,12 +49,37 @@ serde_json.workspace = true
 ureq.workspace = true
 # Game audio output (Apache-2.0; spec §3.3).
 cpal.workspace = true
+# The clipboard for Ride -> Join's Paste and Host's Copy link (MIT OR
+# Apache-2.0; the version egui already uses).
+arboard = { version = "3.7", default-features = false }
 # Voice chat logic (spec §7); the LiveKit backend only with `voice`.
 ocw-voice.workspace = true
 # VR (spec §14 Phase 11, X1): the pure parts; the OpenXR layer only with
 # `vr`.
 ocw-xr.workspace = true
 ocw-xr-openxr = { workspace = true, optional = true }
+
+# Sign-in (spec §9.1): the flows' forms and checks (ocw-auth), PKCE and
+# state from the OS random source (getrandom), the session in the OS
+# keyring (keyring, MIT OR Apache-2.0: the Secret Service over D-Bus on
+# Linux – libdbus is linked already by btleplug –, the Keychain on macOS,
+# the Credential Manager on Windows; a private file when none answers).
+ocw-auth.workspace = true
+getrandom.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { workspace = true, features = ["sync-secret-service", "crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { workspace = true, features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { workspace = true, features = ["windows-native"] }
+
+[dev-dependencies]
+# The sign-in end to end against the backend and its fake providers.
+ocw-accounts.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [features]
 # Voice chat with the LiveKit Rust SDK (spec §7). Off by default; on Linux

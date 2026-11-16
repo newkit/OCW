@@ -11,6 +11,8 @@
 //! world-builder package [--id europe/liechtenstein] [--sign-key KEY] [--bbox S,W,N,E] [--origin LAT,LON]
 //! world-builder keys init-root --name "OCW root"     (once, then keep root.key offline)
 //! world-builder keys new-signing --name "builds 2026" [--days 365]
+//! world-builder keys init-user --name "Ada Rider"  (your own key for worlds you share, spec §4.7)
+//! world-builder keys fingerprint FILE               (a key file's, a package's or a manifest's)
 //! world-builder sign --key KEY PKG | verify PKG | publish PKG --out DIR | diff OLD NEW
 //! ```
 
@@ -257,6 +259,29 @@ enum Cmd {
         /// OSM extracts the package was built from.
         #[arg(long, required = true)]
         pbf: Vec<PathBuf>,
+        /// Write the package here instead.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Sign the renewed manifest with this signing key.
+        #[arg(long, value_name = "KEY")]
+        sign_key: Option<PathBuf>,
+    },
+    /// Fields, plantations and mapped trees (spec §14 Phase 8 T8): the OSM
+    /// crops, vineyards, orchards, banana plantations, single trees and
+    /// tree rows into the section VEGE of an existing package; the trees of
+    /// OBST are renewed (the manifest too).
+    Vegetation {
+        /// The package (rewritten in place unless --out is given).
+        #[arg(long)]
+        world: PathBuf,
+        /// OSM extracts the package was built from.
+        #[arg(long, required = true)]
+        pbf: Vec<PathBuf>,
+        /// A measured crop map of `scripts/fetch-crops.sh` (index.json,
+        /// crops.u8): the crops of fields OSM does not tag, and fields and
+        /// plantations OSM does not map.
+        #[arg(long)]
+        crops: Option<PathBuf>,
         /// Write the package here instead.
         #[arg(long)]
         out: Option<PathBuf>,
@@ -702,6 +727,25 @@ enum KeysCmd {
         #[arg(long)]
         dir: Option<PathBuf>,
     },
+    /// Your own key for worlds you edit and share (spec §4.7 *User keys*):
+    /// a root of your own (DIR/user-root.key, DIR/user-root.pub.json) and a
+    /// signing key (DIR/user.key) that puts the root's public key into
+    /// every manifest it signs. Others trust it after comparing its
+    /// fingerprint with you.
+    InitUser {
+        /// Your name as others see it (not verified: the fingerprint is).
+        #[arg(long)]
+        name: String,
+        /// Key directory (default: $OCW_KEY_DIR or ~/.config/ocw/keys).
+        #[arg(long)]
+        dir: Option<PathBuf>,
+        /// Validity of the signing key in days.
+        #[arg(long, default_value_t = 3650)]
+        days: u32,
+    },
+    /// The fingerprint of a key: a .pub.json key file, a signing key file
+    /// (its root), a package or a manifest signed by a user key.
+    Fingerprint { file: PathBuf },
     /// Create a signing key certified by the root key.
     NewSigning {
         #[arg(long)]
@@ -2013,6 +2057,98 @@ fn package_box(pkg: &ocw_world::WorldPackage, margin_m: f64) -> (f64, f64, f64, 
 }
 
 /// The OSM barriers of the extracts near the package.
+/// `world-builder vegetation`: the section VEGE (spec §14 Phase 8 T8).
+fn vegetation(
+    world: &std::path::Path,
+    pbf: &[PathBuf],
+    crops: Option<&std::path::Path>,
+    out: Option<PathBuf>,
+    key: Option<&ocw_world::manifest::SigningKeyPair>,
+) {
+    let t = Instant::now();
+    let mut pkg = stage("read package", || read_package(world));
+    let before = std::fs::metadata(world).map_or(0, |m| m.len());
+    let bounds = package_box(&pkg, 100.0);
+    let mut areas = stage("read PBF areas", || {
+        ocw_worldgen::areas::AreaData::read_pbfs(pbf).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1);
+        })
+    });
+    stage("retain near", || areas.retain_near(bounds));
+    let mut trees = stage("read PBF trees", || {
+        ocw_worldgen::vegetation::TreeData::read_pbfs(pbf).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1);
+        })
+    });
+    trees.retain_near(bounds);
+    let proj = ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1);
+    let raster = crops.map(|dir| {
+        stage("read crop map", || {
+            ocw_worldgen::vegetation::CropRaster::load(dir).unwrap_or_else(|e| {
+                eprintln!("{e}");
+                std::process::exit(1);
+            })
+        })
+    });
+    let st = stage("vegetation (VEGE)", || {
+        ocw_worldgen::vegetation::add_vegetation(&mut pkg, &areas, &trees, &proj, raster.as_ref())
+    });
+    println!("vegetation (VEGE): {}", st.summary());
+    // Where to look (scenes, checks): `--start X,Z` for free ride.
+    for s in stage("vegetation spots", || ocw_worldgen::vegetation::spots(&pkg)) {
+        println!(
+            "spot {:<20} --start {:.0},{:.0}  ({:.0} m, {} of 81 cells)",
+            s.name, s.at[0], s.at[1], s.alt_m, s.score
+        );
+    }
+    if let Some(o) = &pkg.obstacles {
+        let (by, trees) = o.counts();
+        println!(
+            "obstacles (OBST) renewed: {trees} grid trees, {} planted trees",
+            by.get(&ocw_world::obstacles::ObstacleKind::PlantedTree)
+                .copied()
+                .unwrap_or(0)
+        );
+    }
+    let path = out.unwrap_or_else(|| world.to_path_buf());
+    let bytes = stage("serialise", || pkg.to_bytes());
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    stage("write", || {
+        std::fs::write(&path, &bytes).unwrap_or_else(|e| {
+            eprintln!("{}: {e}", path.display());
+            std::process::exit(1);
+        })
+    });
+    print_sections(&bytes);
+    println!(
+        "{}: {:.1} MB -> {:.1} MB ({:+.2} MB), {:.1} s",
+        path.display(),
+        before as f64 / 1e6,
+        bytes.len() as f64 / 1e6,
+        (bytes.len() as f64 - before as f64) / 1e6,
+        t.elapsed().as_secs_f64()
+    );
+    if path != world {
+        let _ = std::fs::copy(dist::sidecar(world), dist::sidecar(&path));
+    }
+    stage("manifest + hash", || {
+        dist::write_manifest(
+            &path,
+            &dist::ManifestArgs {
+                id: None,
+                name: None,
+                version: None,
+                dem_attribution: Vec::new(),
+            },
+            key,
+        )
+    });
+}
+
 fn read_barriers(
     pbf: &[PathBuf],
     pkg: &ocw_world::WorldPackage,
@@ -2551,6 +2687,22 @@ fn main() {
             forest(&world, &dir, cells, out, key.as_ref());
             print_stage_profile(None);
         }
+        Cmd::Vegetation {
+            world,
+            pbf,
+            crops,
+            out,
+            sign_key,
+        } => {
+            let key = sign_key.map(|k| {
+                ocw_worldstore::keys::read_signing_key(&k).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                })
+            });
+            vegetation(&world, &pbf, crops.as_deref(), out, key.as_ref());
+            print_stage_profile(None);
+        }
         Cmd::Obstacles {
             world,
             pbf,
@@ -2766,6 +2918,8 @@ fn main() {
         }
         Cmd::Keys { command } => match command {
             KeysCmd::InitRoot { name, dir } => dist::keys_init_root(&name, dir),
+            KeysCmd::InitUser { name, dir, days } => dist::keys_init_user(&name, dir, days),
+            KeysCmd::Fingerprint { file } => dist::keys_fingerprint(&file),
             KeysCmd::NewSigning {
                 name,
                 root,

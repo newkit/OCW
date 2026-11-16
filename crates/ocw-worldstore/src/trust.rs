@@ -5,10 +5,19 @@
 //! - **Development roots** (`keys/dev-roots.json`, public keys only, marked
 //!   `dev_only`): trusted by debug builds, and by release builds only with
 //!   `--trust-dev-root`. Their secret keys stay on the developers' machines.
+//! - **The web preview root** (`keys/preview-roots.json`, spec §14 Phase 10
+//!   B8a): the only root the browser app's preview build (GitHub Pages)
+//!   trusts. Its secret keys stay on the build machine that signs the
+//!   preview's worlds, never in the repository or CI.
 //! - **Extra roots:** `--trust-root FILE` and every `*.pub.json` in
 //!   `~/.config/ocw/trusted-roots/` (for private servers and own builds).
 //! - **Revoked keys** ([`REVOKED_KEY_IDS`]) are refused even if a trusted
 //!   root signed them.
+//! - **User keys** (spec §4.7 *User keys*): the keys the user trusted in
+//!   the trust dialog or with `world trust add` ([`crate::userkeys`]),
+//!   appended after all of the above and marked as user keys (their
+//!   packages are *unofficial*); a user key never replaces a built-in
+//!   root. Plus the keys accepted with *Load once* in this run.
 
 use std::path::{Path, PathBuf};
 
@@ -16,6 +25,10 @@ use ocw_world::manifest::{Hex, RootKey, TrustStore};
 
 /// Development root public keys (a JSON array of root public key objects).
 pub const DEV_ROOTS_JSON: &str = include_str!("../keys/dev-roots.json");
+
+/// The web preview's root public keys (spec §14 Phase 10 B8a; a JSON array
+/// like [`DEV_ROOTS_JSON`]).
+pub const PREVIEW_ROOTS_JSON: &str = include_str!("../keys/preview-roots.json");
 
 /// Production root public keys shipped with the client (none yet).
 pub const PRODUCTION_ROOTS: &[&str] = &[];
@@ -33,6 +46,12 @@ pub fn dev_roots() -> Vec<RootKey> {
             k
         })
         .collect()
+}
+
+/// The web preview's roots (B8a): not development roots, not production
+/// roots – trusted only by the preview build of the browser app.
+pub fn preview_roots() -> Vec<RootKey> {
+    parse_roots(PREVIEW_ROOTS_JSON).expect("keys/preview-roots.json is valid")
 }
 
 /// Parses a JSON array of root public keys.
@@ -65,6 +84,13 @@ pub struct TrustConfig {
     pub root_files: Vec<PathBuf>,
     /// A directory of `*.pub.json` root files (default [`user_roots_dir`]).
     pub roots_dir: Option<PathBuf>,
+    /// The user's trusted keys file (default
+    /// [`crate::userkeys::default_path`]; a corrupt file trusts none).
+    pub user_keys_file: Option<PathBuf>,
+    /// More trusted user keys (the browser's `localStorage` list).
+    pub user_keys: Vec<RootKey>,
+    /// Also the keys accepted with *Load once* in this run.
+    pub session_keys: bool,
 }
 
 impl TrustConfig {
@@ -75,10 +101,37 @@ impl TrustConfig {
             dev_roots: cfg!(debug_assertions),
             root_files: Vec::new(),
             roots_dir: user_roots_dir(),
+            user_keys_file: user_keys_path(),
+            user_keys: Vec::new(),
+            session_keys: true,
         }
     }
 
+    /// The built-in roots and the user's keys (see the module docs).
     pub fn trust_store(&self) -> Result<TrustStore, String> {
+        let builtin = self.builtin_store()?;
+        let mut user = self.file_keys();
+        user.extend(self.user_keys.iter().cloned());
+        if self.session_keys {
+            user.extend(crate::userkeys::once_roots());
+        }
+        Ok(crate::userkeys::with_user_keys(builtin, &user))
+    }
+
+    /// The trusted keys file's keys (none if it is missing or corrupt).
+    fn file_keys(&self) -> Vec<RootKey> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(p) = &self.user_keys_file {
+            let (keys, _) = crate::userkeys::UserKeys::load(crate::userkeys::read_file(p));
+            return keys.roots();
+        }
+        Vec::new()
+    }
+
+    /// The roots that are not user keys: production, development, preview
+    /// and extra roots (the user key list can neither remove nor replace
+    /// them).
+    pub fn builtin_store(&self) -> Result<TrustStore, String> {
         let mut roots: Vec<RootKey> = PRODUCTION_ROOTS
             .iter()
             .map(|j| RootKey::parse(j))
@@ -111,6 +164,16 @@ impl TrustConfig {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn user_keys_path() -> Option<PathBuf> {
+    crate::userkeys::default_path()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn user_keys_path() -> Option<PathBuf> {
+    None
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn read_root(path: &Path) -> Result<RootKey, String> {
     crate::keys::read_root_public(path)
 }
@@ -137,6 +200,19 @@ mod tests {
         for h in REVOKED_KEY_IDS {
             Hex::<8>::parse(h).unwrap();
         }
+        // The web preview's root (B8a): one key, not a development root,
+        // none of the development or production keys.
+        let preview = preview_roots();
+        assert_eq!(preview.len(), 1);
+        for k in &preview {
+            assert!(!k.dev_only && k.name.contains("preview"), "{}", k.name);
+            assert!(dev_roots().iter().all(|d| d.key_id != k.key_id));
+            assert!(
+                PRODUCTION_ROOTS
+                    .iter()
+                    .all(|j| RootKey::parse(j).unwrap().key_id != k.key_id)
+            );
+        }
     }
 
     #[test]
@@ -154,6 +230,7 @@ mod tests {
             dev_roots: false,
             root_files: vec![fa.clone()],
             roots_dir: Some(sub.clone()),
+            ..TrustConfig::default()
         }
         .trust_store()
         .unwrap();
@@ -177,5 +254,41 @@ mod tests {
             .is_err()
         );
         assert!(parse_roots("[]").unwrap().is_empty());
+    }
+
+    #[test]
+    fn user_keys_come_after_the_built_in_roots() {
+        use crate::userkeys::UserKeys;
+        let dir = tempfile::tempdir().unwrap();
+        let official = RootKeyPair::from_seed("own root", [5; 32]).public();
+        let ada = RootKeyPair::from_seed("Ada Rider", [6; 32]).public();
+        let fo = dir.path().join("own.pub.json");
+        std::fs::write(&fo, official.to_json()).unwrap();
+        let mut keys = UserKeys::default();
+        keys.add(&ada, None, None, 0, &TrustStore::default())
+            .unwrap();
+        // The file also names the built-in root (edited by hand): ignored.
+        let mut both = keys.clone();
+        both.add(&official, None, None, 0, &TrustStore::default())
+            .unwrap();
+        let file = dir.path().join(crate::userkeys::FILE_NAME);
+        std::fs::write(&file, both.to_json()).unwrap();
+        let config = TrustConfig {
+            root_files: vec![fo],
+            user_keys_file: Some(file.clone()),
+            ..TrustConfig::default()
+        };
+        let t = config.trust_store().unwrap();
+        assert_eq!(t.roots.len(), 2);
+        assert!(!t.root(official.key_id).unwrap().user, "stays built in");
+        assert!(t.root(ada.key_id).unwrap().user);
+        assert_eq!(
+            &config.builtin_store().unwrap().roots,
+            std::slice::from_ref(&official)
+        );
+        // A corrupt file: no user keys, the built-in roots still work.
+        std::fs::write(&file, "{ broken").unwrap();
+        let t = config.trust_store().unwrap();
+        assert_eq!(t.roots, [official]);
     }
 }

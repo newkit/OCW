@@ -270,6 +270,38 @@ pub fn crop_colour(base: [f32; 3], gdd: f32, cdd: f32, maize: f32) -> [f32; 3] {
 /// the season at `alt_m`: its meadow share as the grass, its farmland
 /// share as the fields (cereal and maize mixed).
 pub fn ground_colour(class: LandClass, srgb: [f32; 3], alt_m: f64, season: &SeasonDay) -> [f32; 3] {
+    ground_colour_with(
+        class,
+        srgb,
+        alt_m,
+        season,
+        season.climate.maize_share as f32,
+    )
+}
+
+/// The colour map under a plantation of section `VEGE` (sRGB): banana
+/// plantations and avocado / citrus groves darker green from afar (their
+/// plants are drawn only near).
+pub fn plantation_ground(crop: ocw_world::vegetation::FieldCrop, srgb: [f32; 3]) -> [f32; 3] {
+    use ocw_world::vegetation::FieldCrop;
+    let (target, t) = match crop {
+        FieldCrop::Banana => ([0.24, 0.38, 0.13], 0.6),
+        FieldCrop::Subtropical => ([0.16, 0.29, 0.12], 0.5),
+        FieldCrop::Orchard => ([0.26, 0.40, 0.17], 0.25),
+        _ => return srgb,
+    };
+    mix3(srgb, target, t)
+}
+
+/// [`ground_colour`] with the field's own share of summer crops (`maize`:
+/// 1 maize, potatoes, sunflowers; 0 winter cereals, rapeseed).
+pub fn ground_colour_with(
+    class: LandClass,
+    srgb: [f32; 3],
+    alt_m: f64,
+    season: &SeasonDay,
+    maize: f32,
+) -> [f32; 3] {
     let w = crate::ground::class_weights(class);
     let (wm, wf) = (w[crate::ground::MEADOW], w[crate::ground::FARMLAND]);
     if wm <= 0.0 && wf <= 0.0 {
@@ -280,11 +312,7 @@ pub fn ground_colour(class: LandClass, srgb: [f32; 3], alt_m: f64, season: &Seas
     let s = season.state(alt_m);
     let g = ocw_sky::season::grass(&season.climate, &s);
     let mut c = mix3(base, grass_colour(base, g.green, g.dry), wm);
-    c = mix3(
-        c,
-        crop_colour(c, s.gdd, s.cdd, season.climate.maize_share as f32),
-        wf,
-    );
+    c = mix3(c, crop_colour(c, s.gdd, s.cdd, maize), wf);
     let out = Color::linear_rgb(c[0], c[1], c[2]).to_srgba();
     [out.red, out.green, out.blue]
 }

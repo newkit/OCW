@@ -11,7 +11,7 @@ export PATH := $(OCW_CARGO_SHIM):$(PATH)
 endif
 
 CARGO ?= cargo
-WASM_CRATES := -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice -p ocw-sky -p ocw-weather -p ocw-devices -p ocw-worldstore -p ocw-audio -p ocw-xr
+WASM_CRATES := -p ocw-core -p ocw-auth -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice -p ocw-sky -p ocw-weather -p ocw-devices -p ocw-worldstore -p ocw-audio -p ocw-xr
 # The browser app (spec §14 Phase 10): wasm-bindgen-cli must be the version
 # of the wasm-bindgen crate in Cargo.lock.
 WASM_BINDGEN_VERSION := $(shell awk '/^name = "wasm-bindgen"$$/ { getline; gsub(/version = |"/, ""); print; exit }' Cargo.lock)
@@ -52,6 +52,16 @@ PACMAN_PACKAGES := base-devel pkgconf curl git rsync \
 	dbus libx11 libxcursor libxrandr libxi libxcb \
 	mesa vulkan-icd-loader vulkan-tools bluez bluez-utils \
 	xorg-server-xvfb xorg-xauth weston ffmpeg fuse2 glib2
+# VR (spec §14 Phase 11, 11D): the Khronos OpenXR loader and Monado, the
+# open-source OpenXR runtime (BSL-1.0), whose simulated headset lets the VR
+# tests run without hardware. Only for VR work and its tests; not part of
+# `make deps`. Debian 13 names (marge, 2026-11-15: monado-service 25.0.0,
+# libopenxr-loader1 1.1.47).
+VR_APT_PACKAGES := libopenxr-loader1 libopenxr1-monado monado-service
+VR_DNF_PACKAGES := openxr-libs monado
+VR_PACMAN_PACKAGES := openxr monado
+# The runtime manifest the loader picks when no other runtime is active.
+MONADO_RUNTIME_JSON := /usr/share/openxr/1/openxr_monado.json
 # Linux distribution family from /etc/os-release (ID, then ID_LIKE):
 # debian (Debian, Ubuntu, Mint, …), fedora (Fedora, RHEL, Rocky, Alma, …),
 # arch (Arch, Manjaro, EndeavourOS, …), or unknown.
@@ -81,9 +91,9 @@ VIDEO ?= /tmp/ocw.mp4
 VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
-.PHONY: help version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
+.PHONY: help test-web-account test-web-trust version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
-	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds web-remote deps-web deps-browser test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
+	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-gpu test-web-webkit deps-webkit test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser deps-vr deps-vr-linux deps-vr-linux-debian deps-vr-linux-fedora deps-vr-linux-arch deps-vr-linux-unknown deps-vr-windows deps-vr-macos test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list test-vr-monado \
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
@@ -158,6 +168,34 @@ deps-appimage: ## Linux: appimagetool to ~/.local/bin (no sudo; used by scripts/
 		echo "The downloaded appimagetool does not run: $(APPIMAGETOOL).download" >&2; exit 1; fi; \
 	mv "$(APPIMAGETOOL).download" "$(APPIMAGETOOL)"; \
 	echo "Installed $(APPIMAGETOOL)"
+
+deps-vr: deps-vr-$(PLATFORM) ## VR (Phase 11): the OpenXR loader and a runtime for this platform (Linux: Monado; sudo)
+
+deps-vr-linux: deps-vr-linux-$(LINUX_FAMILY) ## VR on Linux: OpenXR loader + Monado (its simulated headset runs the VR tests without hardware; sudo)
+	@command -v monado-service >/dev/null 2>&1 || { echo "monado-service not found after the install" >&2; exit 1; }
+	@if [ -f $(MONADO_RUNTIME_JSON) ]; then echo "Monado runtime: $(MONADO_RUNTIME_JSON)"; \
+	else echo "No $(MONADO_RUNTIME_JSON): set XR_RUNTIME_JSON to Monado's openxr_monado.json" >&2; fi
+	@echo "Active OpenXR runtime: $$(readlink -f /etc/xdg/openxr/1/active_runtime.json 2>/dev/null || echo 'none set (the loader then needs XR_RUNTIME_JSON)')"
+
+deps-vr-linux-debian:
+	sudo apt-get install -y $(VR_APT_PACKAGES)
+
+deps-vr-linux-fedora:
+	sudo dnf install -y --skip-unavailable $(VR_DNF_PACKAGES)
+
+deps-vr-linux-arch:
+	sudo pacman -S --needed --noconfirm $(VR_PACMAN_PACKAGES)
+
+deps-vr-linux-unknown:
+	@echo "Unknown Linux distribution: install the OpenXR loader and Monado by hand (Debian names: $(VR_APT_PACKAGES))" >&2
+	@exit 1
+
+deps-vr-windows: ## VR on Windows: prints what to install (the Meta Quest Link app is not on winget)
+	@echo "Install the Meta Quest Link app (https://www.meta.com/help/quest/pcvr/) and set it as the active OpenXR runtime;"
+	@echo "the OpenXR loader comes with it. SteamVR is the alternative runtime."
+
+deps-vr-macos: ## VR on macOS: none (no OpenXR runtime for macOS, spec §14 Phase 11)
+	@echo "No VR on macOS: there is no OpenXR runtime for it (spec §14 Phase 11)."
 
 deps-windows: ## Windows: Git, VS Build Tools (C++), rustup via winget + Rust toolchain
 	winget install --id Git.Git -e --accept-source-agreements --accept-package-agreements
@@ -272,23 +310,59 @@ web-remote: ## Build the browser app on build machine MACHINE (make web; WORLDS=
 deps-browser: ## The browser tests' browser: pinned Chromium (scripts/browsers.json, SHA-256 checked) into ~/.cache/ocw/browsers/ (no sudo; Linux x64, macOS arm64, Windows x64)
 	python3 scripts/web_browser.py fetch
 
+PLAYWRIGHT_VENV ?= $(HOME)/.cache/ocw/playwright-venv
+PLAYWRIGHT_VERSION ?= 1.65.2
+deps-webkit: ## Safari's engine for test-web-webkit: Playwright $(PLAYWRIGHT_VERSION) and its WebKit build in a venv ($(PLAYWRIGHT_VENV); no sudo; Linux needs WebKit's libraries, which Debian 13 has)
+	python3 -m venv $(PLAYWRIGHT_VENV)
+	$(PLAYWRIGHT_VENV)/bin/pip install -q playwright==$(PLAYWRIGHT_VERSION)
+	$(PLAYWRIGHT_VENV)/bin/python -m playwright install webkit
+
 # The pilot package (git-ignored data/): a branch checkout of scripts/remote.sh
 # (REPO_PATH-BRANCH) finds it in the main checkout next to it.
 WEB_WORLD_PKGS ?= $(firstword $(wildcard data/pilot/liechtenstein.ocwpkg ../OCW/data/pilot/liechtenstein.ocwpkg) data/pilot/liechtenstein.ocwpkg)
 web-worlds: ## Publish world packages for the web dev server into target/web/worlds/, signed by a dev root in target/web-keys/ (WEB_WORLD_PKGS)
 	scripts/publish-web-worlds.sh $(WEB_WORLD_PKGS)
 
+web-preview: ## The public preview's build into target/web-preview/ (spec §14 Phase 10 B8a): fat LTO, wasm-opt -Oz (pinned binaryen), only the web preview's signing root trusted, no LiveKit
+	scripts/build-web.sh --preview
+
+web-preview-site: ## Assemble the preview's site into target/web-preview-site/ (config.json, credits.html, the signed worlds of target/web-preview-worlds/release/ or a downloaded web-preview-worlds release; PREVIEW_WORLDS)
+	scripts/web-preview-site.py --worlds $(PREVIEW_WORLDS)
+
+web-preview-worlds: ## On marge only (the preview's keys): sign the preview's worlds, publish them and upload them to the pre-release web-preview-worlds
+	scripts/publish-preview-worlds.sh --upload
+
+test-web-preview: ## Headless Chromium on the preview: the assembled site (PREVIEW_SITE, served as a public page) or the live one (PREVIEW_URL=https://newkit.github.io/OCW/); start page, Hills, Liechtenstein from the preview root, dev trust ignored, WebGL 2, credits
+	scripts/test-web-preview.py $(if $(PREVIEW_URL),--url $(PREVIEW_URL),--site $(PREVIEW_SITE)) --out test-output/web-preview
+
 test-web: web ## Headless Chromium on WebGPU: load the web app, ride, screenshot into test-output/web/
 	scripts/test-web.py --out test-output/web
 
-test-web-webgl2: web ## Headless Chromium without WebGPU: the page falls back to the WebGL 2 build (ride, menus, fps); then WebGPU High vs WebGL 2 Low, same view, and the Graphics page (B7); into test-output/web/
+test-web-account: web ## Headless Chromium: sign in with the fake Google through the redirect, link Strava, sign out (ocw-server --auth-dev, spec §9.1); screenshots into test-output/web/
+	$(CARGO) build -p ocw-server
+	scripts/test-web-account.py --out test-output/web
+
+test-web-webgl2: web ## Headless Chromium without WebGPU: the page falls back to the WebGL 2 build (ride, menus, fps); then WebGPU High vs WebGL 2 Low, same view, and the Graphics page (B7); the GPU choice and the WebGPU fallback (test-web-gpu); into test-output/web/
 	scripts/test-web.py --out test-output/web --gpu webgl2
 	scripts/test-web-webgl2.py --out test-output/web
+	scripts/test-web-gpu.py --out test-output/web
 
+test-web-gpu: web ## Headless Chromium: the page's GPU choice (ocw-gpu.js rules), injected WebGPU failures fall back to WebGL 2 and draw, the remembered failure, gpu=webgpu, Safari on an iPhone takes WebGL 2 (B7, the iOS 26 report); into test-output/web/
+	scripts/test-web-gpu.py --out test-output/web
+
+test-web-webkit: web ## WebKit (Safari's engine, Playwright; make deps-webkit): Safari 26 with WebGPU takes the WebGL 2 build – an iPhone 15's start page and ride, Safari on macOS; rides and draws (B7); into test-output/web/
+	scripts/test-web-webkit.py --out test-output/web
+
+PREVIEW_WORLDS ?= target/web-preview-worlds/release
+PREVIEW_SITE ?= target/web-preview-site
+PREVIEW_URL ?=
 WEB_WORLD ?= liechtenstein
 WEB_WORLD_ROUTE ?= vaduz-malbun
 test-web-world: web web-worlds ## Headless Chromium: stream $(WEB_WORLD) from the dev server, ride $(WEB_WORLD_ROUTE), teleport, reload from the OPFS cache; screenshots into test-output/web/
 	scripts/test-web.py --out test-output/web --world $(WEB_WORLD) --route $(WEB_WORLD_ROUTE) --seconds 15 --teleport 6 --time noon
+
+test-web-trust: web ## Headless Chromium: a world signed by a throwaway user key opens the trust dialog (spec §4.7 User keys): fingerprint, Cancel focused, declined, trusted, remembered; screenshots into test-output/web/
+	scripts/test-web-trust.py --out test-output/web --package $(firstword $(WEB_WORLD_PKGS))
 
 test-web-unicorn: web web-worlds ## Headless Chromium: unicorn mode over $(WEB_WORLD) from $(WEB_WORLD_ROUTE)'s start (spec §14 Phase 13 G5): G, +, inspection, a pin, the menu row, landing; screenshots into test-output/web/
 	scripts/test-web.py --out test-output/web --world $(WEB_WORLD) --route $(WEB_WORLD_ROUTE) --seconds 8 --no-reload --god --time noon
@@ -417,56 +491,24 @@ clean: ## Remove build artefacts
 clean-test-output: ## Delete the archived screenshots and videos in test-output/
 	rm -rf test-output
 
-# Art project: the OCW Build Diary (art/ART-PROJECT.md). DAY=YYYY-MM-DD;
-# without DAY: every day (gather/publish) or every day with a script (render).
-ART_PYTHON ?= $(firstword $(wildcard /usr/bin/python3.13 /usr/bin/python3.12 /usr/bin/python3.11 /usr/bin/python3) python3)
-
-art-gather: ## Art: collect the day's images/videos/sounds/logs and write its journal (DAY=YYYY-MM-DD)
-	$(ART_PYTHON) art/diary.py gather $(DAY)
-	$(ART_PYTHON) art/diary.py journal $(DAY)
-
-art-sheets: ## Art: contact sheets of the day's media for writing art/days/DAY.toml
-	$(ART_PYTHON) art/diary.py sheet $(DAY)
-
-art-render: ## Art: render the day video(s) from art/days/*.toml
-	$(ART_PYTHON) art/diary.py render $(DAY)
-
-art-diary: ## Art: join all day videos into the diary video
-	$(ART_PYTHON) art/diary.py diary
-
-art-publish: ## Art: upload day zips and videos to the GitHub release build-history
-	$(ART_PYTHON) art/diary.py publish $(DAY)
-
-art-collect: ## Art: one run of the hourly collector now (gather + journal of yesterday and today, mask check; DAY=… for other days)
-	scripts/art-collect.sh $(DAY)
-
-art-check: ## Art: fail if a tracked text file of art/build-history/ holds a private pattern (FIX=1 masks them)
-	$(ART_PYTHON) art/diary.py check-masked $(if $(FIX),--fix)
-
-test-art: ## Art: unit tests of art/diary.py, art/music.py and scripts/art-collect.sh (fixture archive; local Python, no Rust build)
-	$(ART_PYTHON) -m unittest discover -s art -p 'test_*.py'
-
-ART_UNITS = ocw-art-collect.service ocw-art-collect.timer
+# Art project: the OCW Build Diary moved to its own repository on 2026-11-15,
+# https://github.com/newkit/OCW-ART (a checkout next to this one, ../OCW-ART).
+# The old targets only say where they went; art-uninstall-timer still works,
+# to stop a collector timer that was installed from this checkout.
+ART_MOVED = gather sheets render diary publish collect check install-timer timer-status
+OCW_ART ?= $(abspath $(CURDIR)/../OCW-ART)
 USER_UNITS = $(HOME)/.config/systemd/user
 
-art-install-timer: ## Art: install and start the hourly collector as a systemd user timer (this checkout; art/ART-PROJECT.md §5.1)
-	mkdir -p $(USER_UNITS)
-	for u in $(ART_UNITS); do sed 's|@REPO@|$(CURDIR)|g' art/systemd/$$u > $(USER_UNITS)/$$u; done
-	systemctl --user daemon-reload
-	systemctl --user enable --now ocw-art-collect.timer
-	@echo "Art collector: hourly (make art-timer-status); to run without a login: sudo loginctl enable-linger $$USER"
+$(addprefix art-,$(ART_MOVED)) test-art:
+	@t='$@'; t=$${t#art-}; [ "$$t" != test-art ] || t=test; \
+	  echo "The art project moved to https://github.com/newkit/OCW-ART: run 'make $$t' in its checkout ($(OCW_ART))." >&2; exit 1
 
-art-uninstall-timer: ## Art: stop and remove the hourly collector's systemd user timer
+art-uninstall-timer: ## Art: stop and remove the art collector's systemd user timer (the collector lives in OCW-ART now)
 	-systemctl --user disable --now ocw-art-collect.timer
 	-systemctl --user stop ocw-art-collect.service
 	rm -f $(USER_UNITS)/ocw-art-collect.service $(USER_UNITS)/ocw-art-collect.timer
 	systemctl --user daemon-reload
-
-art-timer-status: ## Art: the collector timer's next/last run and the last run's status file
-	-systemctl --user list-timers --all 'ocw-art-*'
-	@-systemctl --user --no-pager status ocw-art-collect.service 2>/dev/null | head -n 5
-	@f=$$(ls -1 test-output/build-log/*/art.json 2>/dev/null | sort | tail -n 1); \
-	  if [ -n "$$f" ]; then echo "Last run ($$f):"; cat "$$f"; else echo "No collector run yet (test-output/build-log/DAY/art.json)."; fi
+	@echo "Removed. Install it from OCW-ART: make -C $(OCW_ART) install-timer"
 
 dashboard-install: ## Install and start the build dashboard as a systemd user service (port 8765, starts at login)
 	mkdir -p $(HOME)/.config/systemd/user
@@ -509,7 +551,7 @@ version-bump: ## Bump the workspace version in Cargo.toml and Cargo.lock (PART=p
 	@set -e; root='$(VERSION_ROOT)'; cur=$$($(call version_of,$$root)); \
 	nv=$$($(MAKE) -s --no-print-directory version-next VERSION_ROOT="$$root" PART=$(PART)); \
 	members=$$(for m in $$(find "$$root/apps" "$$root/crates" "$$root/services" "$$root/tools" -name Cargo.toml -not -path '*/target/*' 2>/dev/null); do \
-	  grep -q '^version\.workspace *= *true' "$$m" && sed -n 's/^name *= *"\([^"]*\)".*/\1/p' "$$m" | head -1; done); \
+	  if grep -q '^version\.workspace *= *true' "$$m"; then sed -n 's/^name *= *"\([^"]*\)".*/\1/p' "$$m" | head -1; fi; done); \
 	awk -v cur="$$cur" -v nv="$$nv" '/^\[/ { sec = $$0 } sec == "[workspace.package]" && $$0 ~ "^version *= *\"" cur "\"" { sub(cur, nv) } { print }' \
 	  "$$root/Cargo.toml" > "$$root/Cargo.toml.tmp" && mv "$$root/Cargo.toml.tmp" "$$root/Cargo.toml"; \
 	if [ -f "$$root/Cargo.lock" ]; then \

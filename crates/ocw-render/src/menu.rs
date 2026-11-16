@@ -70,6 +70,12 @@ pub struct MenuView {
     pub status: String,
     /// Description paragraphs (placeholder pages, confirmation questions).
     pub text: Vec<String>,
+    /// Lines drawn large between the status and the text, never dropped
+    /// for room: the trust dialog's fingerprint (spec §4.7 *User keys*).
+    pub emphasis: Vec<String>,
+    /// Draw the panel wide (as a grid page): a page with long text that
+    /// must all fit (the trust dialog).
+    pub wide: bool,
     pub items: Vec<String>,
     pub focused: usize,
     /// Control hint at the bottom.
@@ -82,6 +88,33 @@ pub struct MenuView {
     /// Markers drawn with the items (the rider list: who flies in unicorn
     /// mode, the damage dot); missing entries have none.
     pub marks: Vec<RowMark>,
+    /// A bar chart between the text and the items (the training history's
+    /// power curve, spec §14 Phase 7).
+    pub chart: Option<MenuChart>,
+}
+
+/// A bar chart of a menu page: one bar per value, an optional mark per bar
+/// (the personal best), drawn between the description and the items.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct MenuChart {
+    /// The line over the bars ("Power curve: bars this ride, lines your best").
+    pub caption: String,
+    pub bars: Vec<ChartBar>,
+}
+
+/// One bar of a [`MenuChart`].
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct ChartBar {
+    /// Under the bar ("5s", "20m").
+    pub label: String,
+    /// Its height, 0–1 of the chart.
+    pub value: f32,
+    /// Over the bar ("812").
+    pub text: String,
+    /// A line across the bar at this height (0–1): the best so far.
+    pub mark: Option<f32>,
+    /// Drawn highlighted (the bar is the best so far).
+    pub best: bool,
 }
 
 /// Markers of one list item (spec §14 Phase 13E, 12F: the rider list).
@@ -177,7 +210,7 @@ impl Plugin for MenuPlugin {
             app.add_plugins(MenuCorePlugin);
         }
         app.add_systems(Startup, spawn_menu)
-            .add_systems(Update, draw_menu);
+            .add_systems(Update, (draw_menu, draw_chart));
     }
 }
 
@@ -186,6 +219,23 @@ const TITLE_VH: f32 = 6.0;
 const ITEM_VH: f32 = 4.2;
 const TEXT_VH: f32 = 3.2;
 const HINT_VH: f32 = 3.0;
+/// The emphasised lines (a fingerprint: monospaced, larger than the text).
+const EMPHASIS_VH: f32 = 4.0;
+
+/// The chart: bar area, the texts over and under the bars (vh).
+const CHART_BAR_VH: f32 = 9.0;
+const CHART_TEXT_VH: f32 = 2.4;
+const CHART_GAP_VH: f32 = 0.4;
+
+/// Height of a chart (vh): caption, values, bars, labels.
+pub fn chart_height_vh(chart: &MenuChart) -> f32 {
+    let caption = if chart.caption.is_empty() {
+        0.0
+    } else {
+        TEXT_VH * LINE_HEIGHT + CHART_GAP_VH
+    };
+    caption + 2.0 * (CHART_TEXT_VH * LINE_HEIGHT + CHART_GAP_VH) + CHART_BAR_VH
+}
 
 /// Panel layout in % of the window height (vh). [`page_height_vh`] adds
 /// these up; `spawn_menu` / `spawn_rows` use the same numbers.
@@ -262,7 +312,7 @@ fn panel_content_vh(panel_vh: f32, aspect: f32) -> f32 {
 /// The content width of `view`'s panel (a grid's is wider).
 fn view_content_vh(view: &MenuView, aspect: f32) -> f32 {
     panel_content_vh(
-        if view.grid.is_some() {
+        if view.grid.is_some() || view.wide {
             GRID_PANEL_WIDTH_VH
         } else {
             PANEL_WIDTH_VH
@@ -329,11 +379,18 @@ pub fn page_height_vh(view: &MenuView, aspect: f32, paragraphs: usize) -> f32 {
             rows + LIST_GAP_VH * view.items.len().saturating_sub(1) as f32 + 2.0 * LIST_MARGIN_VH
         }
     };
+    let chart = view
+        .chart
+        .as_ref()
+        .map_or(0.0, |c| chart_height_vh(c) + PANEL_GAP_VH);
     2.0 * (PANEL_PAD_Y_VH + PANEL_BORDER_VH)
+        + chart
         + 4.0 * PANEL_GAP_VH
         + lines(&view.title, TITLE_VH)
         + lines(&view.status, TEXT_VH)
         + lines(&text, TEXT_VH)
+        + PANEL_GAP_VH
+        + lines(&view.emphasis.join("\n"), EMPHASIS_VH)
         + list
         + lines(&view.hint, HINT_VH)
 }
@@ -358,6 +415,8 @@ const DIM: Color = Color::srgb(0.78, 0.8, 0.84);
 const DISABLED: Color = Color::srgba(1.0, 1.0, 1.0, 0.42);
 /// The frame of a grid's current choice.
 const MARKED: Color = Color::srgba(1.0, 1.0, 1.0, 0.55);
+/// A chart's bars (the best one is drawn in the focus colour).
+const CHART_BAR: Color = Color::srgb(0.45, 0.68, 0.95);
 
 #[derive(Component)]
 struct MenuRoot;
@@ -367,6 +426,8 @@ struct MenuTitle;
 struct MenuStatus;
 #[derive(Component)]
 struct MenuText;
+#[derive(Component)]
+struct MenuEmphasis;
 #[derive(Component)]
 struct MenuList;
 #[derive(Component)]
@@ -378,6 +439,12 @@ struct MenuRow(usize);
 struct Marked(bool);
 #[derive(Component)]
 struct MenuPanel;
+/// The chart's container (empty and hidden without a chart).
+#[derive(Component)]
+struct MenuChartNode;
+/// A bar of the chart (tests).
+#[derive(Component)]
+pub struct MenuChartBar;
 
 fn font(vh: f32) -> TextFont {
     TextFont {
@@ -402,6 +469,8 @@ fn spawn_menu(mut commands: Commands) {
             // Above the HUD and the junction overlay.
             GlobalZIndex(100),
             MenuRoot,
+            // The veil over the ride stays see-through with high contrast.
+            crate::access::AccessExempt,
         ))
         .observe(
             |click: On<PointerClick>, mut pointer: ResMut<MenuPointer>| {
@@ -445,9 +514,28 @@ fn spawn_menu(mut commands: Commands) {
                         ..default()
                     },
                     Text::new(""),
+                    font(EMPHASIS_VH),
+                    TextColor(TEXT),
+                    MenuEmphasis,
+                ));
+                panel.spawn((
+                    Node {
+                        display: Display::None,
+                        ..default()
+                    },
+                    Text::new(""),
                     font(TEXT_VH),
                     TextColor(DIM),
                     MenuText,
+                ));
+                panel.spawn((
+                    Node {
+                        display: Display::None,
+                        flex_direction: FlexDirection::Column,
+                        row_gap: vh(CHART_GAP_VH),
+                        ..default()
+                    },
+                    MenuChartNode,
                 ));
                 panel.spawn((
                     Node {
@@ -700,6 +788,7 @@ type ListFilter = (
     Without<MenuRoot>,
     Without<MenuStatus>,
     Without<MenuText>,
+    Without<MenuEmphasis>,
 );
 type PanelFilter = (
     With<MenuPanel>,
@@ -707,6 +796,7 @@ type PanelFilter = (
     Without<MenuList>,
     Without<MenuStatus>,
     Without<MenuText>,
+    Without<MenuEmphasis>,
 );
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)] // a Bevy system
@@ -733,6 +823,7 @@ fn draw_menu(
         Query<(&mut Text, &mut Node), (With<MenuStatus>, Without<MenuRoot>)>,
         Query<(&mut Text, &mut Node), (With<MenuText>, Without<MenuRoot>)>,
         Query<&mut Text, With<MenuHint>>,
+        Query<(&mut Text, &mut Node), (With<MenuEmphasis>, Without<MenuRoot>)>,
     )>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut last_aspect: Local<f32>,
@@ -796,7 +887,7 @@ fn draw_menu(
             }
         }
         if let Ok(mut p) = panel.single_mut() {
-            p.width = vh(if view.grid.is_some() {
+            p.width = vh(if view.grid.is_some() || view.wide {
                 GRID_PANEL_WIDTH_VH
             } else {
                 PANEL_WIDTH_VH
@@ -819,6 +910,101 @@ fn draw_menu(
     let shown = fitted_paragraphs(&view, aspect);
     set_text_or_hide(&mut texts.p2(), &view.text[..shown].join("\n"));
     set_text(&mut texts.p3(), &view.hint);
+    set_text_or_hide(&mut texts.p4(), &view.emphasis.join("\n"));
+}
+
+/// The chart's bars (spawned again when the chart changes).
+fn draw_chart(
+    mut commands: Commands,
+    view: Res<MenuView>,
+    mut node: Query<(Entity, &mut Node), With<MenuChartNode>>,
+    mut last: Local<Option<MenuChart>>,
+) {
+    let chart = view.chart.as_ref().filter(|_| view.open);
+    if chart == last.as_ref() {
+        return;
+    }
+    *last = chart.cloned();
+    let Ok((e, mut n)) = node.single_mut() else {
+        return;
+    };
+    commands.entity(e).despawn_children();
+    let Some(chart) = chart else {
+        n.display = Display::None;
+        return;
+    };
+    n.display = Display::Flex;
+    let width = 100.0 / chart.bars.len().max(1) as f32;
+    commands.entity(e).with_children(|c| {
+        if !chart.caption.is_empty() {
+            c.spawn((
+                Text::new(chart.caption.clone()),
+                font(TEXT_VH),
+                TextColor(DIM),
+            ));
+        }
+        c.spawn(Node {
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::FlexEnd,
+            ..default()
+        })
+        .with_children(|row| {
+            for bar in &chart.bars {
+                let colour = if bar.best { FOCUS } else { CHART_BAR };
+                row.spawn(Node {
+                    width: Val::Percent(width),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: vh(CHART_GAP_VH),
+                    ..default()
+                })
+                .with_children(|col| {
+                    col.spawn((
+                        Text::new(bar.text.clone()),
+                        font(CHART_TEXT_VH),
+                        TextColor(TEXT),
+                    ));
+                    col.spawn(Node {
+                        width: Val::Percent(64.0),
+                        height: vh(CHART_BAR_VH),
+                        flex_direction: FlexDirection::Column,
+                        justify_content: JustifyContent::FlexEnd,
+                        ..default()
+                    })
+                    .with_children(|area| {
+                        area.spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: vh(bar.value.clamp(0.0, 1.0) * CHART_BAR_VH),
+                                border_radius: BorderRadius::top(vh(0.5)),
+                                ..default()
+                            },
+                            BackgroundColor(colour),
+                            MenuChartBar,
+                        ));
+                        if let Some(m) = bar.mark {
+                            area.spawn((
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: Val::Percent(-12.0),
+                                    width: Val::Percent(124.0),
+                                    bottom: vh(m.clamp(0.0, 1.0) * CHART_BAR_VH),
+                                    height: vh(0.5),
+                                    ..default()
+                                },
+                                BackgroundColor(TEXT),
+                            ));
+                        }
+                    });
+                    col.spawn((
+                        Text::new(bar.label.clone()),
+                        font(CHART_TEXT_VH),
+                        TextColor(DIM),
+                    ));
+                });
+            }
+        });
+    });
 }
 
 /// Sets the text; an empty one takes no room (as [`page_height_vh`] counts).
@@ -961,6 +1147,56 @@ mod tests {
         // Short pages keep everything.
         let v = page(&[para], 3);
         assert_eq!(fitted_paragraphs(&v, 16.0 / 9.0), 1);
+    }
+
+    /// The training history's power curve (spec §14 Phase 7): its height
+    /// is counted, and its bars are drawn.
+    #[test]
+    fn a_chart_is_counted_and_drawn() {
+        let chart = MenuChart {
+            caption: "Power curve".into(),
+            bars: (0..10)
+                .map(|i| ChartBar {
+                    label: format!("{i}m"),
+                    value: 1.0 - i as f32 * 0.08,
+                    text: format!("{}", 800 - i * 50),
+                    mark: Some(0.9),
+                    best: i == 3,
+                })
+                .collect(),
+        };
+        let mut v = page(&["Short."], 3);
+        let without = page_height_vh(&v, 16.0 / 9.0, 1);
+        v.chart = Some(chart.clone());
+        let with = page_height_vh(&v, 16.0 / 9.0, 1);
+        assert!((with - without - chart_height_vh(&chart) - PANEL_GAP_VH).abs() < 1e-4);
+        assert!(with <= PANEL_MAX_VH);
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            bevy::asset::AssetPlugin::default(),
+            MenuPlugin,
+        ));
+        app.init_asset::<Image>();
+        app.update();
+        *app.world_mut().resource_mut::<MenuView>() = MenuView { open: true, ..v };
+        app.update();
+        app.update();
+        let bars = app
+            .world_mut()
+            .query::<&MenuChartBar>()
+            .iter(app.world())
+            .count();
+        assert_eq!(bars, 10);
+        app.world_mut().resource_mut::<MenuView>().chart = None;
+        app.update();
+        app.update();
+        let bars = app
+            .world_mut()
+            .query::<&MenuChartBar>()
+            .iter(app.world())
+            .count();
+        assert_eq!(bars, 0);
     }
 
     #[test]

@@ -4,16 +4,19 @@
 //! renders whatever the app puts into [`RideView`]; it knows nothing about
 //! networking or devices.
 
+pub mod access;
 pub mod aids_hud;
 pub mod bridges;
 pub mod building_material;
 pub mod camera;
+pub mod completion;
 pub mod console;
 pub mod damage_hud;
 pub mod damage_look;
 pub mod event_hud;
 pub mod far_terrain;
 pub mod flight_world;
+pub mod flora;
 pub mod font;
 pub mod frame_rate;
 pub mod gear;
@@ -47,6 +50,7 @@ pub mod terrain;
 pub mod tunnel;
 pub mod tunnel_cut;
 pub mod unicorn;
+pub mod vegetation;
 pub mod voice;
 // VR (spec §14 Phase 11, X1): eye cameras, the HUD panel, the mirror;
 // added by the app only when VR runs (`--vr`, `--vr-sim`).
@@ -396,7 +400,12 @@ pub struct RiderView {
     /// 12E, K5): scuffs, a bent wheel, a dropped chain, dust, a torn kit;
     /// `None` without damage.
     pub damage: Option<ocw_sim::damage::Visible>,
+    /// What the client knows for the animation beyond speed and power
+    /// (spec §2.6): a U-turn loop, the finish, the winner.
+    pub cue: AnimCue,
 }
+
+pub use ocw_assets::anim::{Cue as AnimCue, FINISH_CUE_S, FinishCue, UTurnCue};
 
 /// All rendering plugins of the desktop client.
 pub struct OcwRenderPlugins;
@@ -455,6 +464,8 @@ impl Plugin for OcwRenderPlugins {
             quality::QualityPlugin,
             // WebGL 2's texture arrays (B7; nothing elsewhere).
             webgl::WebGlPlugin,
+            // Colour-safe status colours, high contrast (spec §3.2.1 M9).
+            access::AccessPlugin,
         ));
     }
 }
@@ -594,6 +605,7 @@ mod tests {
             crash: None,
             wobble: 0.0,
             damage: None,
+            cue: Default::default(),
         });
         view.sky = Some(sky(12, 0));
         let mut app = App::new();
@@ -665,6 +677,7 @@ mod tests {
             crash: None,
             wobble: 0.0,
             damage: None,
+            cue: Default::default(),
         });
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))

@@ -39,10 +39,26 @@ use crate::{Platform, UiPlatform};
 #[derive(Resource, Debug, Clone, Default, PartialEq, Deref, DerefMut)]
 pub struct VoiceMenu(pub VoiceMenuInfo);
 
+/// The sign-in state for the Account page (spec §9.1; refreshed by the
+/// app's sign-in glue).
+#[derive(Resource, Debug, Clone, Default, PartialEq, Deref, DerefMut)]
+pub struct AccountMenu(pub ocw_client::account::AccountInfo);
+
+/// How the rider rides now – alone, on another server, hosting – for the
+/// Ride page's items (set by the app's connection glue).
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Deref, DerefMut)]
+pub struct MenuRideMode(pub ocw_client::menu::model::RideMode);
+
 /// The audio outputs for the Audio page (refreshed by the app's audio
 /// glue).
 #[derive(Resource, Debug, Clone, Default, PartialEq, Deref, DerefMut)]
 pub struct AudioDeviceMenu(pub AudioDevices);
+
+/// Settings → Trainer → Devices (spec §3.2.1 *Devices*): the trainers and
+/// sensors as the app's device layer sees them (the desktop's Bluetooth
+/// scan, the browser's Web Bluetooth devices), written by the app.
+#[derive(Resource, Debug, Clone, Default, PartialEq, Deref, DerefMut)]
+pub struct DevicesMenu(pub ocw_client::menu::devices::DevicesInfo);
 
 /// What an app adds to the shared menu: its own pages.
 #[derive(Resource, Clone, Copy)]
@@ -88,9 +104,31 @@ impl Plugin for MenuPlugin {
             app.add_plugins(MenuCorePlugin);
         }
         crate::configure_sets(app);
+        // Rebinding, accessibility and the training history (spec §3.2.1
+        // M9, §14 Phase 7): pages of this menu.
+        if !app.is_plugin_added::<crate::bindings::BindingsPlugin>() {
+            app.add_plugins(crate::bindings::BindingsPlugin);
+        }
+        if !app.is_plugin_added::<crate::access::AccessPlugin>() {
+            app.add_plugins(crate::access::AccessPlugin);
+        }
+        if !app.is_plugin_added::<crate::history::HistoryPlugin>() {
+            app.add_plugins(crate::history::HistoryPlugin);
+        }
+        // The trust dialog and the trusted world keys (spec §4.7).
+        if !app.is_plugin_added::<crate::trust::TrustPlugin>() {
+            app.add_plugins(crate::trust::TrustPlugin);
+        }
+        // Ride → Join (spec §3.2.1, §6.2 *Join links*).
+        if !app.is_plugin_added::<crate::join::JoinPlugin>() {
+            app.add_plugins(crate::join::JoinPlugin);
+        }
         app.init_resource::<MenuState>()
             .init_resource::<VoiceMenu>()
+            .init_resource::<AccountMenu>()
             .init_resource::<AudioDeviceMenu>()
+            .init_resource::<DevicesMenu>()
+            .init_resource::<MenuRideMode>()
             .add_systems(
                 Update,
                 (menu_input, write_view).chain().after(crate::ViewExtrasSet),
@@ -151,6 +189,14 @@ pub struct MenuState {
     queued: Vec<Action>,
 }
 
+impl MenuState {
+    /// Applies `action` next frame, as if it came from the input (the
+    /// steering is held and released as the menu opens and closes).
+    pub fn queue(&mut self, action: Action) {
+        self.queued.push(action);
+    }
+}
+
 /// The settings to show (the defaults without the settings plugin).
 fn settings(world: &World) -> &Settings {
     static DEFAULT: std::sync::OnceLock<Settings> = std::sync::OnceLock::new();
@@ -179,10 +225,11 @@ pub fn row_setting(row: &Row) -> Option<&str> {
     rest.split_whitespace().next()
 }
 
-/// Leaves out the rows of settings this platform does not have.
+/// Leaves out the rows of settings and pages this platform does not have.
 pub fn for_platform(rows: Vec<Row>, platform: Platform) -> Vec<Row> {
     rows.into_iter()
         .filter(|r| row_setting(r).is_none_or(|k| applies(k, platform)))
+        .filter(|r| !matches!(r.confirm, Some(sub::Activate::Open(p)) if !p.on(platform)))
         .collect()
 }
 
@@ -194,10 +241,39 @@ pub fn sub_rows(world: &World, page: sub::Page) -> Vec<Row> {
         .get_resource::<MenuHooks>()
         .copied()
         .unwrap_or_default();
-    let rows = if page == sub::Page::RiderList {
+    let rows = if page.is_history_page() {
+        ocw_client::menu::history::rows(page, &crate::history::info(world))
+    } else if page.is_binding_page() {
+        sub::binding_rows(page, s, platform(world) == Platform::Desktop)
+    } else if page == sub::Page::RiderList {
         world
             .get_resource::<RiderList>()
             .map(|l| l.menu_rows())
+            .unwrap_or_default()
+    } else if page == sub::Page::Account {
+        let empty = AccountMenu::default();
+        let info = world.get_resource::<AccountMenu>().unwrap_or(&empty);
+        let mut rows = ocw_client::account::rows(info, platform(world) == Platform::Desktop);
+        // The world keys this rider trusts (spec §4.7 *User keys*).
+        let n = world
+            .get_resource::<crate::trust::TrustedKeys>()
+            .map_or(0, |k| k.keys.keys.len());
+        rows.push(sub::open_row(
+            "Trusted world keys",
+            Some(n.to_string()),
+            sub::Page::TrustedKeys,
+        ));
+        rows
+    } else if matches!(page, sub::Page::TrustedKeys | sub::Page::TrustedKey(_)) {
+        let empty = crate::trust::TrustedKeys::default();
+        let k = world
+            .get_resource::<crate::trust::TrustedKeys>()
+            .unwrap_or(&empty);
+        ocw_client::menu::trust::rows(page, &k.keys.keys, k.warning.as_deref())
+    } else if page == sub::Page::Join {
+        world
+            .get_resource::<crate::join::JoinUi>()
+            .map(|u| ocw_client::menu::join::rows(page, &u.info))
             .unwrap_or_default()
     } else if page == sub::Page::TimeMachine {
         let info = world
@@ -215,6 +291,10 @@ pub fn sub_rows(world: &World, page: sub::Page) -> Vec<Row> {
         let empty = VoiceMenuInfo::default();
         let info = world.get_resource::<VoiceMenu>().map_or(&empty, |v| &v.0);
         ocw_client::menu::voice::rows(page, s, info)
+    } else if matches!(page, sub::Page::Devices | sub::Page::Device(_)) {
+        let empty = DevicesMenu::default();
+        let info = world.get_resource::<DevicesMenu>().unwrap_or(&empty);
+        ocw_client::menu::devices::rows(page, info)
     } else if page == sub::Page::Audio {
         let empty = AudioDevices::default();
         let devices = world
@@ -226,13 +306,29 @@ pub fn sub_rows(world: &World, page: sub::Page) -> Vec<Row> {
     } else {
         let default = Riders::default();
         let riders = (hooks.riders)(world).unwrap_or(&default);
-        sub::rows(page, s, riders)
+        let mut rows = sub::rows(page, s, riders);
+        // The Trainer page's Devices row shows what is connected.
+        if page == sub::Page::Trainer
+            && let Some(info) = world.get_resource::<DevicesMenu>()
+            && let Some(r) = rows
+                .iter_mut()
+                .find(|r| r.confirm == Some(sub::Activate::Open(sub::Page::Devices)))
+        {
+            r.value = Some(info.trainer_value());
+        }
+        rows
     };
     for_platform(rows, platform(world))
 }
 
 /// Text of a page beyond its fixed description.
 fn page_text(world: &World, page: Page) -> Vec<String> {
+    if page == Page::Sub(sub::Page::Join) {
+        return world
+            .get_resource::<crate::join::JoinUi>()
+            .map(|u| ocw_client::menu::join::text(&u.info, crate::now(world)))
+            .unwrap_or_default();
+    }
     world
         .get_resource::<MenuHooks>()
         .map_or_else(Vec::new, |h| (h.text)(world, page))
@@ -246,10 +342,31 @@ fn menu_input(world: &mut World) {
             state.menu = Menu::for_platform(platform);
         }
     }
+    let mode = world
+        .get_resource::<MenuRideMode>()
+        .map(|m| m.0)
+        .unwrap_or_default();
+    world.resource_mut::<MenuState>().menu.set_ride_mode(mode);
+    // A text field of Ride → Join is typed into: this frame's keys are its.
+    if crate::join::capture(world) {
+        world.resource_mut::<MenuState>().repeat.reset();
+        world.resource_mut::<MenuPointer>().0.clear();
+        return;
+    }
+    // A binding row waits for its new key or button (spec §3.2.1 M9):
+    // this frame's input is that, not the menu's.
+    if crate::bindings::capture(world) {
+        world.resource_mut::<MenuState>().repeat.reset();
+        world.resource_mut::<MenuPointer>().0.clear();
+        return;
+    }
+    let swap = settings(world)
+        .get("controls.pad_confirm")
+        .is_ok_and(|v| v.to_string() == "east");
     let mut pressed = {
         let keys = world.get_resource::<ButtonInput<KeyCode>>().cloned();
         let mut q = world.query::<&Gamepad>();
-        controls::pressed(keys.as_ref(), q.iter(world))
+        controls::pressed(keys.as_ref(), q.iter(world), swap)
     };
     let console_open = world.resource::<ConsoleState>().is_open();
     let open = world.resource::<MenuState>().menu.is_open();
@@ -351,10 +468,23 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
     let def = page.def();
     let weather = world.get_resource::<WeatherMenu>();
     let rider_list = world.get_resource::<RiderList>();
+    let history = match page {
+        Page::Sub(p) if p.is_history_page() => Some(crate::history::info(world)),
+        _ => None,
+    };
+    let history_text = match (page, &history) {
+        (Page::Sub(p), Some(h)) => ocw_client::menu::history::text(p, h),
+        _ => Vec::new(),
+    };
+    let (trust_status, trust_text, emphasis) = trust_view(world, menu, page);
     MenuView {
         open: true,
+        // The trust dialog's warning, world and data sources all fit.
+        wide: page == Page::ConfirmTrust,
         title: def.title.into(),
+        emphasis,
         status: match (page, world.get_resource::<RideView>(), weather) {
+            _ if !trust_status.is_empty() => trust_status,
             (Page::Top, Some(r), _) => ocw_client::menu::status_line(r),
             // The weather now and who sets it (spec §14 Phase 9, S5).
             (Page::Sub(p), _, Some(w)) if p.is_weather_page() => {
@@ -363,6 +493,19 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
             (Page::Sub(sub::Page::RiderList), _, _) => {
                 rider_list.map(|l| l.summary()).unwrap_or_default()
             }
+            (Page::Sub(sub::Page::Account), _, _) => world
+                .get_resource::<AccountMenu>()
+                .map(|a| a.status())
+                .unwrap_or_default(),
+            (Page::Sub(p), _, _) if history.is_some() => {
+                ocw_client::menu::history::status(p, history.as_ref().expect("some"))
+            }
+            (Page::Sub(p @ (sub::Page::Devices | sub::Page::Device(_))), _, _) => world
+                .get_resource::<DevicesMenu>()
+                .map(|d| ocw_client::menu::devices::status(p, d))
+                .unwrap_or_default(),
+            (Page::Sub(sub::Page::BindGroup(g)), _, _) => crate::bindings::status(world, Some(g)),
+            (Page::Sub(sub::Page::Bindings), _, _) => crate::bindings::status(world, None),
             _ => String::new(),
         },
         text: def
@@ -370,6 +513,16 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
             .iter()
             .map(|&s| s.to_owned())
             .chain(page_text(world, page))
+            // The device flow's code and URL, the last sign-in message.
+            .chain(match page {
+                Page::Sub(sub::Page::Account) => world
+                    .get_resource::<AccountMenu>()
+                    .map(|a| a.text())
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            })
+            .chain(history_text)
+            .chain(trust_text)
             .collect(),
         items: menu.labels(),
         focused: menu.focus(),
@@ -382,15 +535,75 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
             }
             _ => None,
         },
-        // The rider list's unicorns and damage dots (13E, 12F).
+        // The rider list's unicorns and damage dots (13E, 12F); the
+        // warning dot on a binding in conflict (M9).
         marks: match (page, rider_list) {
             (Page::Sub(sub::Page::RiderList), Some(l)) => menu
                 .shown_rows()
                 .into_iter()
                 .map(|r| r.and_then(|i| l.mark(i)).unwrap_or_default())
                 .collect(),
+            (Page::Sub(sub::Page::BindGroup(g)), _) => {
+                let actions = crate::bindings::group_actions(world, g);
+                let warn = ocw_sim::damage::Status::Warning;
+                menu.shown_rows()
+                    .into_iter()
+                    .map(|r| ocw_render::menu::RowMark {
+                        unicorn: false,
+                        dot: r
+                            .and_then(|i| actions.get(i))
+                            .filter(|a| crate::bindings::in_conflict(world, **a))
+                            .map(|_| (warn.icon().to_owned(), warn.rgb())),
+                    })
+                    .collect()
+            }
             _ => Vec::new(),
         },
+        // The power curve (spec §14 Phase 7).
+        chart: match (page, &history) {
+            (Page::Sub(p), Some(h)) => ocw_client::menu::history::chart(p, h),
+            _ => None,
+        },
+    }
+}
+
+/// The trust pages' status, text and large fingerprint (spec §4.7).
+fn trust_view(world: &World, menu: &Menu, page: Page) -> (String, Vec<String>, Vec<String>) {
+    use ocw_client::menu::trust as t;
+    let empty = crate::trust::TrustedKeys::default();
+    let keys = world
+        .get_resource::<crate::trust::TrustedKeys>()
+        .unwrap_or(&empty);
+    match page {
+        Page::ConfirmTrust => match world
+            .get_resource::<crate::trust::TrustDialog>()
+            .and_then(|d| d.request.as_ref().map(|r| (r, d.shared)))
+        {
+            Some((r, shared)) => (
+                t::dialog_status(r),
+                t::dialog_text(r, shared),
+                t::dialog_emphasis(r),
+            ),
+            None => (
+                String::new(),
+                vec!["No world is waiting for a decision.".into()],
+                Vec::new(),
+            ),
+        },
+        Page::ConfirmForget => match t::pending_key(menu.pending(), &keys.keys.keys) {
+            Some(k) => (
+                format!("'{}' (unverified name)", k.name),
+                Vec::new(),
+                k.fingerprint().lines(t::GROUPS_PER_LINE),
+            ),
+            None => Default::default(),
+        },
+        Page::Sub(p @ ocw_client::menu::pages::Page::TrustedKey(_)) => (
+            String::new(),
+            Vec::new(),
+            t::key_emphasis(p, &keys.keys.keys),
+        ),
+        _ => Default::default(),
     }
 }
 
@@ -439,6 +652,43 @@ mod tests {
 
     fn view(app: &App) -> MenuView {
         app.world().resource::<MenuView>().clone()
+    }
+
+    /// Settings → Trainer → Devices: the rows from the app's devices
+    /// (spec §3.2.1 *Devices*), the Trainer page's row shows what is
+    /// connected.
+    #[test]
+    fn the_devices_pages_come_from_the_apps_devices() {
+        use ocw_client::menu::devices::{DevicesInfo, Entry, Link, Role, Scan};
+        let mut app = app(Platform::Desktop);
+        // Nothing yet: scan, "no devices".
+        let rows = sub_rows(app.world(), sub::Page::Devices);
+        assert_eq!(rows[0].label, "Scan for devices");
+        assert_eq!(rows[1].label, "No devices yet");
+        app.world_mut().resource_mut::<DevicesMenu>().0 = DevicesInfo {
+            scan: Scan::Scanning { left_s: 4 },
+            entries: vec![Entry {
+                id: "hci0/dev_00_00_00_00_00_01".into(),
+                name: "KICKR".into(),
+                role: Role::Trainer,
+                rssi: Some(-58),
+                link: Link::Connected("Wahoo KICKR".into()),
+                remembered: true,
+            }],
+            ..Default::default()
+        };
+        let rows = sub_rows(app.world(), sub::Page::Devices);
+        assert_eq!(rows[0].label, "Stop the scan");
+        assert_eq!(rows[1].label, "KICKR");
+        assert_eq!(
+            rows[1].confirm,
+            Some(sub::Activate::Open(sub::Page::Device(0)))
+        );
+        let trainer = sub_rows(app.world(), sub::Page::Trainer);
+        let d = trainer.iter().find(|r| r.label == "Devices").unwrap();
+        assert_eq!(d.value.as_deref(), Some("KICKR"));
+        assert!(!sub_rows(app.world(), sub::Page::Device(0)).is_empty());
+        assert!(sub_rows(app.world(), sub::Page::Device(1)).is_empty());
     }
 
     #[test]
@@ -516,7 +766,9 @@ mod tests {
         assert_eq!(v.title, "Settings");
         assert_eq!(
             v.items,
-            ["Controls", "Trainer", "Audio", "Display", "Voice", "Back"]
+            [
+                "Account", "Controls", "Trainer", "Audio", "Display", "Voice", "Back"
+            ]
         );
         // Display → Graphics without fullscreen (B7: fullscreen moved
         // there).
@@ -536,13 +788,13 @@ mod tests {
                 .all(|r| row_setting(r) != Some("display.fullscreen"))
         );
         // God mode's rows are there (spec §14 Phase 13 G5: the browser
-        // flies too).
+        // flies too), on Controls -> Unicorn mode (M9: Controls is full).
         let controls = rows(&app, sub::Page::Controls);
+        let unicorn_row = Some(sub::Activate::Open(sub::Page::UnicornControls));
+        assert!(controls.iter().any(|r| r.confirm == unicorn_row));
+        let unicorn = rows(&app, sub::Page::UnicornControls);
         for key in ["controls.god_flight", "controls.invert_y"] {
-            assert!(
-                controls.iter().any(|r| row_setting(r) == Some(key)),
-                "{key}"
-            );
+            assert!(unicorn.iter().any(|r| row_setting(r) == Some(key)), "{key}");
         }
         let desktop = for_platform(
             sub::rows(
@@ -568,7 +820,8 @@ mod tests {
         }
         tap(&mut app, KeyCode::Enter);
         // Display: the first row is the HUD switch.
-        for _ in 0..3 {
+        // (Account comes first since the sign-in, spec §9.1.)
+        for _ in 0..4 {
             tap(&mut app, KeyCode::ArrowDown);
         }
         tap(&mut app, KeyCode::Enter);

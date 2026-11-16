@@ -66,6 +66,12 @@ impl Source {
 pub enum Status {
     /// Signed by a trusted root (the signer's name).
     Verified(String),
+    /// Signed by a user key the user trusted (spec §4.7 *User keys*): an
+    /// *unofficial* world; the name the key claims (not verified).
+    Unofficial(String),
+    /// Intact and signed by a user key nobody here trusts: choosing it
+    /// opens the trust dialog. The claimed name and the fingerprint.
+    UnknownKey { signer: String, fingerprint: String },
     /// No manifest, or a manifest without a signature.
     Unsigned,
     /// Signed, but not by a trusted root (or the key is not valid).
@@ -78,6 +84,8 @@ impl Status {
     pub fn label(&self) -> &'static str {
         match self {
             Self::Verified(_) => "verified",
+            Self::Unofficial(_) => "unofficial",
+            Self::UnknownKey { .. } => "unknown key",
             Self::Unsigned => "unsigned",
             Self::Untrusted(_) => "untrusted",
             Self::Broken(_) => "broken",
@@ -86,6 +94,26 @@ impl Status {
 
     pub fn is_broken(&self) -> bool {
         matches!(self, Self::Broken(_))
+    }
+
+    /// Signed by a key trusted here (official or a trusted user key).
+    pub fn is_trusted(&self) -> bool {
+        matches!(self, Self::Verified(_) | Self::Unofficial(_))
+    }
+
+    /// Signed by a user key (trusted or not): an *unofficial* world.
+    pub fn is_unofficial(&self) -> bool {
+        matches!(self, Self::Unofficial(_) | Self::UnknownKey { .. })
+    }
+
+    /// "unofficial, by 'Ada Rider'" / "unknown key, 'Ada Rider'" (the
+    /// list's badge), `None` for official and unsigned packages.
+    pub fn badge(&self) -> Option<String> {
+        match self {
+            Self::Unofficial(by) => Some(format!("unofficial, '{by}'")),
+            Self::UnknownKey { signer, .. } => Some(format!("unknown key, '{signer}'")),
+            _ => None,
+        }
     }
 }
 
@@ -391,8 +419,16 @@ fn judge(d: &Discovery, memo: &mut SummaryMemo, f: Found) -> WorldEntry {
                 _ => {}
             }
             e.status = match m.verify_signature(&d.trust, d.now_unix_s) {
+                Ok(s) if s.root_user => Status::Unofficial(s.root_name.clone()),
                 Ok(s) => Status::Verified(s.root_name.clone()),
                 Err(VerifyError::Unsigned) => Status::Unsigned,
+                Err(VerifyError::UntrustedKey(_)) => match m.embedded_root() {
+                    Some(root) => Status::UnknownKey {
+                        signer: root.name.clone(),
+                        fingerprint: root.fingerprint().to_string(),
+                    },
+                    None => Status::Untrusted("untrusted key".into()),
+                },
                 Err(err) if err.is_trust_failure() => Status::Untrusted(err.to_string()),
                 Err(err) => {
                     broken = broken.or(Some(err.to_string()));
@@ -411,8 +447,10 @@ fn judge(d: &Discovery, memo: &mut SummaryMemo, f: Found) -> WorldEntry {
         return e;
     }
     let from_cache = e.spec.contains('@') && !Path::new(&e.spec).is_file();
-    let trusted = matches!(e.status, Status::Verified(_));
-    if !trusted && from_cache && !d.allow_unsigned {
+    let trusted = e.status.is_trusted();
+    if matches!(e.status, Status::UnknownKey { .. }) {
+        // Choosable: the trust dialog asks before it is loaded.
+    } else if !trusted && from_cache && !d.allow_unsigned {
         e.blocked = Some(format!(
             "{} (cached packages must be signed by a trusted key; --allow-unsigned accepts it)",
             match &e.status {
@@ -858,6 +896,54 @@ mod tests {
         let broken: Vec<bool> = w.iter().map(|e| e.status.is_broken()).collect();
         let first_broken = broken.iter().position(|b| *b).unwrap();
         assert!(broken[first_broken..].iter().all(|b| *b), "{broken:?}");
+    }
+
+    #[test]
+    fn user_signed_packages_are_unofficial_or_an_unknown_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let dir = root.join("files");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (ada, key) = crate::userkeys::tests::user_key("Ada Rider", 71);
+        crate::load::tests::write_user_package(&dir, "ada-alps", &key);
+        // In the cache too: still choosable (the dialog asks first).
+        let cdir = root.join("cache/user/ada-cached/1");
+        std::fs::create_dir_all(&cdir).unwrap();
+        let bytes = crate::load::tests::package_bytes();
+        let mut m = Manifest::new("user/ada-cached", "Cached", 1, NOW - 5, "test", vec![]).unwrap();
+        m.add_file("package.ocwpkg", &bytes).unwrap();
+        std::fs::write(cdir.join("package.ocwpkg"), &bytes).unwrap();
+        std::fs::write(
+            cdir.join("manifest.json"),
+            SignedManifest::signed(&m, &key).to_json(),
+        )
+        .unwrap();
+        let d = discovery(root, None, std::slice::from_ref(&dir));
+        let w = discover(&d, &mut SummaryMemo::default());
+        for id in ["user/ada-alps", "user/ada-cached"] {
+            let e = w.iter().find(|e| e.id == id).unwrap();
+            assert_eq!(
+                e.status,
+                Status::UnknownKey {
+                    signer: "Ada Rider".into(),
+                    fingerprint: ada.public().fingerprint().to_string()
+                },
+                "{id}"
+            );
+            assert!(e.is_rideable(), "{id}: {:?}", e.blocked);
+            assert_eq!(e.status.label(), "unknown key");
+            assert!(e.status.badge().unwrap().contains("Ada Rider"));
+        }
+        // Trusted: unofficial, with the claimed name.
+        let trusting = Discovery {
+            trust: crate::userkeys::with_user_keys(d.trust.clone(), &[ada.public()]),
+            ..d.clone()
+        };
+        let w = discover(&trusting, &mut SummaryMemo::default());
+        let e = w.iter().find(|e| e.id == "user/ada-alps").unwrap();
+        assert_eq!(e.status, Status::Unofficial("Ada Rider".into()));
+        assert!(e.status.is_trusted() && e.status.is_unofficial());
+        assert_eq!(e.status.badge().unwrap(), "unofficial, 'Ada Rider'");
     }
 
     #[test]

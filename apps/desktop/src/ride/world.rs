@@ -37,8 +37,11 @@ pub struct WorldDetails {
     /// The region's name for people.
     pub region: String,
     pub created_unix_s: Option<i64>,
-    /// "verified", "unsigned" or "untrusted".
+    /// "verified", "unofficial" (a trusted user key, spec §4.7), "unsigned"
+    /// or "untrusted".
     pub trust: &'static str,
+    /// The name an unofficial package's key claims (not verified).
+    pub signer: Option<String>,
     /// The covered area (km²), the parts included.
     pub area_km2: Option<f64>,
     /// Lowest and highest terrain (m), the parts included.
@@ -78,6 +81,7 @@ impl WorldDetails {
             }
         }
         let trust = match &home.trust {
+            ocw_world::manifest::TrustStatus::Trusted(s) if s.root_user => "unofficial",
             ocw_world::manifest::TrustStatus::Trusted(_) => "verified",
             ocw_world::manifest::TrustStatus::Untrusted(_) if home.manifest.is_none() => "unsigned",
             ocw_world::manifest::TrustStatus::Untrusted(why) if why.contains("not signed") => {
@@ -94,6 +98,12 @@ impl WorldDetails {
                 .map_or_else(|| home.package.name.clone(), |m| m.name.clone()),
             created_unix_s: home.manifest.as_ref().map(|m| m.created_unix_s),
             trust,
+            signer: match &home.trust {
+                ocw_world::manifest::TrustStatus::Trusted(s) if s.root_user => {
+                    Some(s.root_name.clone())
+                }
+                _ => None,
+            },
             area_km2: (area > 0.0).then_some(area),
             elevation_m: elevation,
             time_zone: home.package.time_zone.clone(),
@@ -195,9 +205,18 @@ fn list_value(w: &WorldEntry) -> String {
         return "broken".into();
     }
     let mut v = ocw_worldstore::discover::megabytes(w.size_bytes);
-    if !matches!(w.status, Status::Verified(_)) {
-        v.push_str(", ");
-        v.push_str(w.status.label());
+    // A user's own world (spec §4.7 *User keys*): "unofficial, 'Ada
+    // Rider'" or "unknown key, 'Ada Rider'" (the name as the key claims).
+    match &w.status {
+        Status::Unofficial(by) => v.push_str(&format!(", unofficial, '{}'", short(by, 16))),
+        Status::UnknownKey { signer, .. } => {
+            v.push_str(&format!(", unknown key, '{}'", short(signer, 16)));
+        }
+        Status::Verified(_) => {}
+        s => {
+            v.push_str(", ");
+            v.push_str(s.label());
+        }
     }
     match w.parts.len() {
         0 => {}
@@ -240,7 +259,7 @@ fn is_current(c: &Catalog, w: &WorldEntry) -> bool {
     })
 }
 
-fn current_name(c: &Catalog) -> String {
+pub(crate) fn current_name(c: &Catalog) -> String {
     match (&c.world, &c.current) {
         (Some(w), _) if !w.details.region.is_empty() => w.details.region.clone(),
         (Some(w), _) => w.name.clone(),
@@ -340,7 +359,14 @@ pub fn rows(page: Page, c: &Catalog, tm: &TimeMachineInfo, weather: &WeatherStat
                     Page::WorldParts(i),
                 ));
             }
-            out.push(info("Package", short(&w.detail(), 30)));
+            out.push(match &w.status {
+                // Who signed it, as the key claims (spec §4.7 *User keys*).
+                Status::Unofficial(by) | Status::UnknownKey { signer: by, .. } => info(
+                    "Signed by",
+                    format!("'{}' (unverified), {}", short(by, 16), w.status.label()),
+                ),
+                _ => info("Package", short(&w.detail(), 30)),
+            });
             out
         }
         Page::WorldRoutes(i) => {
@@ -526,7 +552,14 @@ fn info_rows(c: &Catalog, tm: &TimeMachineInfo) -> Vec<Row> {
     vec![
         info(
             "World",
-            format!("{}, {}{parts}", short(&current_name(c), 22), d.trust),
+            match &d.signer {
+                Some(by) => format!(
+                    "{}, unofficial ('{}'){parts}",
+                    short(&current_name(c), 20),
+                    short(by, 14)
+                ),
+                None => format!("{}, {}{parts}", short(&current_name(c), 22), d.trust),
+            },
         ),
         info("Package", package),
         info("Area", area),
@@ -589,6 +622,17 @@ pub fn list_text(c: &Catalog) -> String {
             w.spec,
             match &w.status {
                 Status::Verified(by) => format!("signed by {by}"),
+                Status::Unofficial(by) => format!(
+                    "UNOFFICIAL: {}, a user key you trust",
+                    ocw_worldstore::userkeys::claimed(by)
+                ),
+                Status::UnknownKey {
+                    signer,
+                    fingerprint,
+                } => format!(
+                    "UNKNOWN KEY: {}, fingerprint {fingerprint}; world switch asks you to trust it",
+                    ocw_worldstore::userkeys::claimed(signer)
+                ),
                 Status::Unsigned => "no signature".into(),
                 Status::Untrusted(why) | Status::Broken(why) => why.clone(),
             }
@@ -628,7 +672,14 @@ pub fn info_text(c: &Catalog, tm: &TimeMachineInfo) -> String {
             let d = &w.details;
             line(
                 &mut out,
-                format!("world: {} ({})", current_name(c), d.trust),
+                match &d.signer {
+                    Some(by) => format!(
+                        "world: {} (UNOFFICIAL, {})",
+                        current_name(c),
+                        ocw_worldstore::userkeys::claimed(by)
+                    ),
+                    None => format!("world: {} ({})", current_name(c), d.trust),
+                },
             );
             line(
                 &mut out,
@@ -747,6 +798,17 @@ pub fn register_commands(app: &mut App) {
             .subcommand(Command::new("info").about(
                 "The world ridden now: package, area, data sources, time zone, sun times, routes",
             ))
+            .subcommand(ocw_ui::trust::command())
+            .subcommand(
+                Command::new("follow")
+                    .hide(true)
+                    .about("Follow the host's world change after the trust dialog"),
+            )
+            .subcommand(
+                Command::new("leave")
+                    .hide(true)
+                    .about("Leave the shared ride (its world's key was not trusted)"),
+            )
             .subcommand(
                 Command::new("switch")
                     .about("Ride another world (its first route, else a free ride); the ride so far is saved")
@@ -774,10 +836,27 @@ pub fn register_commands(app: &mut App) {
                     let choice = switch_choice(&c, arg)?;
                     super::begin_switch(world, choice)
                 }
-                _ => Err("world list | info | switch N|ID|NAME|PATH".into()),
+                Some(("trust", t)) => ocw_ui::trust::run(world, t),
+                Some(("follow", _)) => super::follow_after_trust(world),
+                Some(("leave", _)) => super::leave_shared_ride(world),
+                _ => Err("world list | info | switch N|ID|NAME|PATH | trust ...".into()),
             }
         },
-    ));
+    ))
+    // Tab completion (spec §2.9): the world ids found and the test routes.
+    .console_values("world switch", "world", |world, _| {
+        super::refresh_catalog(world);
+        switch_words(&world.resource::<super::RideCatalog>().0)
+    });
+}
+
+/// What `world switch` completes to: the worlds' ids and the test routes.
+pub fn switch_words(c: &Catalog) -> Vec<String> {
+    c.worlds
+        .iter()
+        .map(|w| w.id.clone())
+        .chain(super::choice::TEST_ROUTES.iter().map(|r| (*r).to_owned()))
+        .collect()
 }
 
 #[cfg(test)]
@@ -877,6 +956,7 @@ pub(crate) mod tests {
                     region: "Liechtenstein".into(),
                     created_unix_s: Some(1_794_528_000),
                     trust: "verified",
+                    signer: None,
                     area_km2: Some(160.4),
                     elevation_m: Some((430.0, 2599.0)),
                     time_zone: Some("Europe/Vaduz".into()),
@@ -924,6 +1004,25 @@ pub(crate) mod tests {
             m.apply_with(Action::Click(i), &r);
         }
         m
+    }
+
+    /// Tab after `world switch` (spec 3.40): the ids `switch_choice`
+    /// takes, and the test routes.
+    #[test]
+    fn world_switch_completes_to_ids_and_test_routes() {
+        let c = catalog();
+        let words = switch_words(&c);
+        for w in &c.worlds {
+            assert!(words.contains(&w.id), "{}", w.id);
+        }
+        assert!(words.iter().any(|w| w == "hills") && words.iter().any(|w| w == "loop"));
+        for w in &words {
+            assert!(
+                switch_choice(&c, w).is_ok()
+                    || c.worlds.iter().any(|e| e.id == *w && e.blocked.is_some()),
+                "{w}"
+            );
+        }
     }
 
     #[test]

@@ -46,7 +46,7 @@ cd "$(dirname "$0")/.."
 machine=${1:?usage: deploy-test.sh MACHINE}
 # Same commit id as the build id in the HUD (remote.sh passes it to the build).
 version="$(scripts/build-id.sh) $(date '+%F %T')"
-# The deploy log for the art project (art/ART-PROJECT.md §2.7): one JSON line
+# The deploy log for the art project (OCW-ART's ART-PROJECT.md §2.7): one JSON line
 # per deploy in the main checkout's test-output/build-log/DAY/deploys.jsonl
 # (start, end, machine, commit, exit). OCW_BUILD_LOG=0 turns it off.
 deploy_start=$(date --iso-8601=seconds)
@@ -80,6 +80,8 @@ OCW_REMOTE_DEPLOY=1 scripts/remote.sh "$machine" run "
   else
     cargo build -q --release -p ocw-desktop
   fi
+  # The kiosk's game server (ocw-kiosk.sh starts it; user 2026-11-15).
+  cargo build -q --release -p ocw-server
   W=$(printf '%q' "$data")
   if [ '$world' != 0 ] && { [ '$world' = rebuild ] || [ ! -f \"\$W/pilot/liechtenstein.ocwpkg\" ]; } && [ -f \"\$W/pilot/liechtenstein.osm.pbf\" ]; then
     echo 'building the pilot world package'
@@ -117,7 +119,19 @@ OCW_REMOTE_DEPLOY=1 scripts/remote.sh "$machine" run "
     rm -f \"\$D/ocw-desktop.args\"
   fi
   # Show mode (scripts/kiosk-show.args: virtual trainer at 500 W) for every world.
-  [ '$args_set' = set ] || { [ -f \"\$D/.args.tmp\" ] && grep -v '^#' scripts/kiosk-show.args >> \"\$D/.args.tmp\"; } || true
+  # Machine-local additions (kept across deploys): \$D/kiosk-local.args, e.g. the
+  # trainer at marge (--devices-file …). With a devices file there the show
+  # mode's virtual trainer (--virtual, --power) is left out, so the real
+  # trainer rides.
+  if [ '$args_set' != set ] && [ -f \"\$D/.args.tmp\" ]; then
+    if grep -q '^--devices-file' \"\$D/kiosk-local.args\" 2>/dev/null; then
+      grep -v '^#' scripts/kiosk-show.args | grep -vE '^--(virtual|power)' >> \"\$D/.args.tmp\"
+    else
+      grep -v '^#' scripts/kiosk-show.args >> \"\$D/.args.tmp\"
+    fi
+    [ -f \"\$D/kiosk-local.args\" ] && grep -v '^#' \"\$D/kiosk-local.args\" >> \"\$D/.args.tmp\"
+  fi
+  true
   if [ -f \"\$D/.args.tmp\" ]; then
     chmod 644 \"\$D/.args.tmp\" && mv -f \"\$D/.args.tmp\" \"\$D/ocw-desktop.args\"
     echo \"default arguments (\$D/ocw-desktop.args):\"; grep -v '^#' \"\$D/ocw-desktop.args\" | sed 's/^/  /'
@@ -125,6 +139,7 @@ OCW_REMOTE_DEPLOY=1 scripts/remote.sh "$machine" run "
   # Material library (spec §4.6) beside the binary, before it (the kiosk
   # restarts on the binary).
   OCW_MATERIALS_OPTIONAL=1 scripts/install-materials.sh \"\$D/materials\"
+  put 755 target/release/ocw-server ocw-server
   put 755 target/release/ocw-desktop ocw-desktop
   echo \"deployed \$(cat \"\$D/VERSION\") to \$D\"
 "

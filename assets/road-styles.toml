@@ -27,7 +27,7 @@
 # Values follow the national rules where we know them (German RMS 1980/93:
 # narrow line 12 cm, broad 25 cm, guide-line dashes 6 m / 12 m outside and
 # 3 m / 6 m inside towns, zebra bars 50 cm) and reference photos of the
-# regions (art/reference/) elsewhere; Switzerland and Liechtenstein paint
+# regions (docs/reference/) elsewhere; Switzerland and Liechtenstein paint
 # zebra crossings and cycle lanes yellow, Spain uses wider edge lines.
 
 [[style]]

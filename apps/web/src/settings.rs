@@ -47,6 +47,62 @@ impl TextStore for LocalStorage {
     }
 }
 
+/// The `localStorage` key of the training history (spec §14 Phase 7; the
+/// browser's one anonymous rider).
+pub const HISTORY_KEY: &str = "ocw-history";
+
+/// A text under `key` in the page's `localStorage`.
+#[cfg(target_arch = "wasm32")]
+pub struct LocalKey(pub &'static str);
+
+#[cfg(target_arch = "wasm32")]
+impl TextStore for LocalKey {
+    fn load(&self) -> Result<Option<String>, String> {
+        let storage = web_sys::window()
+            .and_then(|w| w.local_storage().ok().flatten())
+            .ok_or("no localStorage on this page")?;
+        storage
+            .get_item(self.0)
+            .map_err(|_| "localStorage is blocked".to_string())
+    }
+    fn save(&mut self, text: &str) -> Result<(), String> {
+        let s = web_sys::window()
+            .and_then(|w| w.local_storage().ok().flatten())
+            .ok_or("no localStorage on this page")?;
+        s.set_item(self.0, text)
+            .map_err(|_| "localStorage is full or blocked".to_string())
+    }
+    fn describe(&self) -> String {
+        format!("saved in this browser (localStorage {:?})", self.0)
+    }
+}
+
+/// The training history's store: `localStorage` in the browser, none
+/// natively (tests).
+pub fn history_store() -> Option<Box<dyn TextStore>> {
+    #[cfg(target_arch = "wasm32")]
+    return Some(Box::new(LocalKey(HISTORY_KEY)));
+    #[cfg(not(target_arch = "wasm32"))]
+    None
+}
+
+/// The trusted world keys' store (spec §4.7 *User keys*): `localStorage`
+/// in the browser, none natively (tests).
+pub fn trusted_keys_store() -> Option<Box<dyn TextStore>> {
+    #[cfg(target_arch = "wasm32")]
+    return Some(Box::new(LocalKey(ocw_worldstore::userkeys::STORAGE_KEY)));
+    #[cfg(not(target_arch = "wasm32"))]
+    None
+}
+
+/// The recent servers of Ride → Join (`localStorage`, none natively).
+pub fn joins_store() -> Option<Box<dyn TextStore>> {
+    #[cfg(target_arch = "wasm32")]
+    return Some(Box::new(LocalKey("ocw-joins")));
+    #[cfg(not(target_arch = "wasm32"))]
+    None
+}
+
 /// Makes the store when the app starts (`localStorage` on wasm32).
 #[derive(Resource)]
 pub struct MakeStore(pub Box<dyn Fn() -> Option<Box<dyn TextStore>> + Send + Sync>);

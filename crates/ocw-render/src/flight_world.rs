@@ -78,10 +78,17 @@ impl TreeCrowns {
     /// From the tree sites of a tile (the foot of the trunk and the scale).
     pub fn from_sites(sites: &[TreeSite]) -> Self {
         let (_, tip, radius) = crate::package::CROWN;
-        let trees: Vec<[f32; 4]> = sites
-            .iter()
-            .map(|(p, s)| [p.x, p.z, radius * s, p.y + tip * s])
-            .collect();
+        Self::from_crowns(
+            sites
+                .iter()
+                .map(|(p, s)| [p.x, p.z, radius * s, p.y + tip * s])
+                .collect(),
+        )
+    }
+
+    /// From the crowns of a tile's plants: (x, z, radius, top), package
+    /// metres (`vegetation::TilePlants::crowns`).
+    pub fn from_crowns(trees: Vec<[f32; 4]>) -> Self {
         if trees.is_empty() {
             return Self::default();
         }

@@ -92,6 +92,12 @@ pub enum ObstacleKind {
     Barrier = 7,
     /// A power line pylon (`power=tower`).
     Pylon = 8,
+    /// A tree off the tree grid (spec §14 Phase 8 T8): a mapped tree
+    /// (`natural=tree`, tree rows) or a fruit tree of an orchard's rows
+    /// (section `VEGE`, `crate::plantings`); its width is the trunk's
+    /// diameter. Solid as a [`ObstacleKind::Tree`]; drawn by the vegetation,
+    /// not as an object.
+    PlantedTree = 9,
     // Lines.
     Fence = 32,
     Wall = 33,
@@ -110,7 +116,7 @@ pub enum ObstacleKind {
 }
 
 impl ObstacleKind {
-    pub const ALL: [ObstacleKind; 18] = [
+    pub const ALL: [ObstacleKind; 19] = [
         Self::Bollard,
         Self::Post,
         Self::Gate,
@@ -119,6 +125,7 @@ impl ObstacleKind {
         Self::CycleBarrier,
         Self::Barrier,
         Self::Pylon,
+        Self::PlantedTree,
         Self::Fence,
         Self::Wall,
         Self::Hedge,
@@ -205,6 +212,7 @@ impl ObstacleKind {
             Self::CycleBarrier => 0.6,
             Self::Barrier => 0.3,
             Self::Pylon => 2.5,
+            Self::PlantedTree => crate::trees::TRUNK_RADIUS_M,
             _ => 0.0,
         }
     }
@@ -263,7 +271,7 @@ impl ObstacleKind {
             Self::Railing => "bridge railing",
             Self::TunnelWall => "tunnel wall",
             Self::Building => "building",
-            Self::Tree => "tree",
+            Self::Tree | Self::PlantedTree => "tree",
         }
     }
 }
@@ -770,12 +778,20 @@ impl WorldObstacles {
         let src = self.tiles.get(&key)?;
         let mut solids = Vec::new();
         for (i, p) in src.points.iter().enumerate() {
+            // Planted trees hit as trees, their trunk as wide as stored.
+            let (kind, r) = match p.kind {
+                ObstacleKind::PlantedTree if p.width_m > 0.0 => {
+                    (ObstacleKind::Tree, f64::from(p.width_m) / 2.0)
+                }
+                ObstacleKind::PlantedTree => (ObstacleKind::Tree, p.kind.radius_m()),
+                k => (k, k.radius_m()),
+            };
             solids.push(Solid {
                 shape: Shape::Circle {
                     c: [f64::from(p.pos[0]), f64::from(p.pos[1])],
-                    r: p.kind.radius_m(),
+                    r,
                 },
-                kind: p.kind,
+                kind,
                 y: None,
                 id: 5 << 56
                     | (key.x as u32 as u64 & 0xFFFF) << 40

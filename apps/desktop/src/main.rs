@@ -7,6 +7,7 @@
 //! - client-side prediction of the local rider and interpolation of others,
 //! - the Bevy renderer from `ocw-render`.
 
+mod account;
 mod argsfile;
 mod audio;
 mod automation;
@@ -111,6 +112,12 @@ pub struct Args {
     /// 47800). Ride the same course as the server (--route / --world).
     #[arg(long, value_name = "ADDR", conflicts_with = "capture")]
     pub server: Option<String>,
+    /// Join a shared ride by its link (spec §6.2 *Join links*;
+    /// `ocw://HOST[:PORT]?cert=SHA256&world=…&route=…`, as ocw-server and
+    /// Ride -> Host a ride print it): the app starts alone and switches to
+    /// the server's ride once its world is loaded (Ride -> Join).
+    #[arg(long, value_name = "LINK", conflicts_with_all = ["server", "capture"])]
+    pub join: Option<String>,
     /// SHA-256 fingerprint of the server's certificate (ocw-server prints
     /// it at start); the connection is refused if it does not match.
     #[arg(long, value_name = "SHA256", requires = "server")]
@@ -119,6 +126,11 @@ pub struct Args {
     /// server is on this machine (127.0.0.1 / ::1).
     #[arg(long, requires = "server", conflicts_with = "server_cert")]
     pub insecure_dev: bool,
+    /// The accounts server for sign-in (spec §9.1; Settings -> Account):
+    /// its base URL, e.g. https://accounts.example.org (default:
+    /// $OCW_ACCOUNT_SERVER; none: sign-in is off, riding stays anonymous).
+    #[arg(long, value_name = "URL")]
+    pub account_server: Option<String>,
     /// Window size as WIDTHxHEIGHT.
     #[arg(long, default_value = "1280x720", value_parser = parse_size)]
     pub window: (u32, u32),
@@ -382,10 +394,22 @@ fn main() -> AppExit {
             Err(e) => warn!("desktop integration: {e}"),
         }
     }
-    let setup = ride::setup::build(&args).unwrap_or_else(|e| {
-        eprintln!("{e}");
-        std::process::exit(1);
-    });
+    // `--world` signed by a user key nobody here trusts (spec §4.7 *User
+    // keys*): start on the built-in loop with the trust dialog open; the
+    // ride switches to the world once the key is trusted.
+    let consent = worlds::startup_consent(&args);
+    let setup = {
+        let mut build = args.clone();
+        if consent.is_some() {
+            build.world = None;
+            build.route = None;
+            build.free_ride = false;
+        }
+        ride::setup::build(&build).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1);
+        })
+    };
     // VR (spec §14 Phase 11): OpenXR makes the GPU device, so it starts
     // before the renderer.
     let mut vr_start = vr::prepare(&args);
@@ -480,6 +504,8 @@ fn main() -> AppExit {
             // Phase 13 G5) and the rider list (13E).
             camera_path::CameraPathPlugin,
             riders_page::RidersPagePlugin,
+            // Sign-in with Google or Strava (spec §9.1): Settings -> Account.
+            account::AccountPlugin::default(),
             // `display.quality` and the console's `quality` / `gpu` (spec §14
             // Phase 10 B7; auto is High here: the desktop's look).
             ocw_ui::quality::QualityPlugin,
@@ -487,6 +513,11 @@ fn main() -> AppExit {
         .add_systems(Startup, startup_commands)
         .add_systems(Update, timed_commands);
     vr::add(&mut app, vr_start);
+    if let Some(request) = consent {
+        let line = ride::choice::RideChoice::from_args(&args).to_line();
+        let msg = ocw_ui::trust::ask(app.world_mut(), request, Some(line), None, false);
+        eprintln!("{msg}");
+    }
     let exit = app.run();
     let surface_adapter = surface::restart_adapter();
     if surface_adapter.is_some() || restart::requested() {
@@ -586,6 +617,10 @@ fn startup_commands(
     }
     // Relative to the working directory, which is `/` for an app started
     // from Finder: the macOS app bundle does not read one.
+    // `--join LINK`: the runtime join of Ride -> Join (spec §3.2.1).
+    if let Some(link) = &args.join {
+        console.queue(ride::join::startup_line(link));
+    }
     if std::path::Path::new("autoexec.cfg").exists() {
         console.queue("exec autoexec.cfg");
     }

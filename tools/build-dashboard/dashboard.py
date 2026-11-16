@@ -38,6 +38,8 @@ from urllib.parse import parse_qs, urlsplit
 
 import answers
 import build_machines
+import claude_tasks
+import coordinator
 import janitor
 import spec_questions
 
@@ -1395,6 +1397,7 @@ class Dashboard:
         bm = getattr(self, "build_machines", None)
         if getattr(self, "art_log", None) is not None:
             status["art"] = art_status(self.art_log)
+        add_coordinator(status, getattr(self, "coordinator", None), getattr(self, "prompt_mask", None))
         # The page shows the enable/disable and slot controls only then.
         status["machine_settings"] = bool(bm is not None and not bm.read_only and getattr(self, "token", None))
         return annotate_jobs(status, getattr(self, "prompts", None), getattr(self, "commits", None),
@@ -1403,6 +1406,23 @@ class Dashboard:
     def states(self) -> list:
         with self.lock:
             return [dict(self.state[m.name]) for m in self.machines]
+
+
+def add_coordinator(status: dict, coord, mask=None) -> dict:
+    """The coordinator (deb) card and the Claude tasks: `coordinator`,
+    `claude_tasks` (with the cutover check against the machines' remote
+    runs), and the coordinator's alerts in `alerts` (each with its `level`:
+    bad = the red banner, warn = amber)."""
+    if coord is None:
+        return status
+    co = coord.status()
+    status["coordinator"] = co
+    status["alerts"] = list(status.get("alerts") or []) + list(co.get("alerts") or [])
+    if getattr(coord, "tasks", None) is not None:
+        p = co.get("processes") or {}
+        ct = coord.tasks.status(status.get("machines") or [], p.get("claude_sessions"), p.get("claude_session_rss"))
+        status["claude_tasks"] = mask.deep(ct) if mask else ct
+    return status
 
 
 def apply_settings(states: list, machines: list, bm) -> list:
@@ -1532,7 +1552,11 @@ def format_text(status: dict) -> str:
     lines = ["%d/%d machines online: %d running, %d waiting, build slots %d used of %d"
              % (o["online"], o["machines"], o["tasks"], o["waiting"], o["slots_used"], o["slots_total"]), ""]
     for a in status.get("alerts") or []:
-        lines.insert(0, "ALERT " + a["text"])
+        lines.insert(0, ("WARN " if a.get("level") == "warn" else "ALERT ") + a["text"])
+    if "coordinator" in status:
+        lines += [x for x in coordinator.text_lines(status["coordinator"]) if not x.startswith(("ALERT ", "WARN "))]
+    if "claude_tasks" in status:
+        lines += claude_tasks.text_lines(status["claude_tasks"])
     for m in status["machines"]:
         setting = machine_setting_text(m)
         if not m.get("online"):
@@ -1651,7 +1675,7 @@ def janitor_text(j: dict) -> list:
 
 
 # --------------------------------------------------------------------------
-# Art project: the hourly collector (art/ART-PROJECT.md §5.1)
+# Art project: the hourly collector (OCW-ART, https://github.com/newkit/OCW-ART, ART-PROJECT.md §5.1)
 # --------------------------------------------------------------------------
 
 ART_LATE_S = 2.5 * 3600  # the timer runs hourly: no run for 2.5 h is late
@@ -1660,7 +1684,7 @@ ART_STALE_S = 2 * 3600  # "running" longer than the unit's timeout: it died
 
 def art_status(build_log: Path | None, now: float | None = None) -> dict | None:
     """The art collector's latest run: the newest
-    test-output/build-log/DAY/art.json (written by scripts/art-collect.sh),
+    test-output/build-log/DAY/art.json (written by OCW-ART's collect.sh),
     with `age_s` (since its end, or start) and `late` (no run for 2.5 h, or
     a "running" run that never ended). None without any run."""
     if build_log is None or not build_log.is_dir():
@@ -1689,7 +1713,7 @@ def art_line(a) -> str:
     """"Art project: last collector run 14:02 (12m ago): ok, 3 new files,
     214 media today, mask check ok"."""
     if not a:
-        return "Art project: no collector run yet (make art-install-timer)"
+        return "Art project: no collector run yet (make install-timer in OCW-ART)"
     when = (a.get("end") or a.get("start") or "?")[11:16]
     ago = (" (%s ago)" % fmt_dur(a["age_s"])) if a.get("age_s") is not None else ""
     parts = [str(a.get("status") or "?").upper() if a.get("status") != "ok" else "ok"]
@@ -1703,7 +1727,7 @@ def art_line(a) -> str:
         parts.append("contact sheets")
     line = "Art project: last collector run %s%s: %s" % (when, ago, ", ".join(parts))
     if a.get("late"):
-        line += " - LATE: no run for over %s (make art-timer-status)" % fmt_dur(ART_LATE_S)
+        line += " - LATE: no run for over %s (make timer-status in OCW-ART)" % fmt_dur(ART_LATE_S)
     return line
 
 
@@ -2414,7 +2438,7 @@ def _classify_make(words) -> list:
 
 
 def _classify_script(name, words, env, regions, cmd) -> list:
-    """Repository scripts (scripts/*.sh, the run-ocw skill, art/diary.py)."""
+    """Repository scripts (scripts/*.sh, the run-ocw skill, OCW-ART's diary.py)."""
     args = words[1:]
     base = re.sub(r"\.(sh?|py?)$", "", name)
     if base.startswith("build-") and base not in ("build-appimage", "build-macos-app", "build-id", "build-profile"):
@@ -2499,7 +2523,7 @@ def _classify_script(name, words, env, regions, cmd) -> list:
         return [_act("route", "Building the demo GPX route", name)]
     if base == "diary":
         sub = args[0] if args else ""
-        return [_act("art", "Art project: " + (sub or "diary"), "art/diary.py " + " ".join(args))]
+        return [_act("art", "Art project: " + (sub or "diary"), "diary.py " + " ".join(args))]
     if base == "repro":
         return [_act("repro", "Reproduction run" + ((" (" + args[0] + ")") if args else ""),
                      name + " " + " ".join(args))]
@@ -2793,7 +2817,7 @@ RECORD_INTERVAL_S = 60.0
 
 def record_line(status: dict, now: float | None = None) -> str:
     """One JSON line of the build servers' state for the art project's build
-    log (art/ART-PROJECT.md §2): the dashboard's status (already masked: no
+    log (OCW-ART's ART-PROJECT.md §2): the dashboard's status (already masked: no
     host names, addresses or user names) with the time it was taken."""
     t = time.localtime(now if now is not None else time.time())
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S", t)
@@ -2818,6 +2842,11 @@ def record_loop(dash, root: Path, interval: float = RECORD_INTERVAL_S):
             q = st.get("questions")
             if q:  # counts only: the questions themselves are in the spec
                 st["questions"] = {k: q.get(k) for k in ("open", "decided", "spec_version")}
+            # The coordinator has its own log (DAY/deb.jsonl), the tasks agents.jsonl.
+            st.pop("coordinator", None)
+            ct = st.pop("claude_tasks", None)
+            if ct:
+                st["cutover"] = {k: ct["cutover"].get(k) for k in ("ok", "running_tasks", "remote_runs")}
             with open(p, "a", encoding="utf-8") as f:
                 f.write(record_line(st) + "\n")
         except Exception as e:  # recording must never stop the dashboard
@@ -2874,6 +2903,18 @@ def janitor_plan_text(jan, machines: list) -> str:
     return "\n".join(out)
 
 
+def make_coordinator(main_repo: Path, log_root: Path | None):
+    """The coordinator monitor with the Claude tasks: OCW's agent log
+    (test-output/build-log of the main checkout) and the worktrees of OCW and
+    of OCW-ART next to it."""
+    art = main_repo.parent / "OCW-ART"
+    art = art if (art / ".git").exists() else None
+    coord = coordinator.Coordinator(main_repo, log_root, art)
+    repos = [("OCW", main_repo)] + ([("OCW-ART", art)] if art else [])
+    coord.tasks = claude_tasks.ClaudeTasks(main_repo / "test-output" / "build-log", repos)
+    return coord
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="OCW build server dashboard (read-only)")
     ap.add_argument("--host", default="0.0.0.0", help="address to listen on (default: all; 127.0.0.1 = local only)")
@@ -2900,6 +2941,8 @@ def main(argv=None) -> int:
                     help="no answering of the open questions on the page (read-only)")
     ap.add_argument("--no-machine-settings", action="store_true",
                     help="no enabling/disabling of build machines and slot changes on the page")
+    ap.add_argument("--no-coordinator", action="store_true",
+                    help="no coordinator (deb) card and no Claude tasks (this machine's memory, disks, agents)")
     ap.add_argument("--spec", type=Path, default=None,
                     help="spec with the open questions (default: SPECIFICATION.md of the main checkout)")
     a = ap.parse_args(argv)
@@ -2928,6 +2971,8 @@ def main(argv=None) -> int:
     if a.janitor_plan:
         print(janitor_plan_text(dash.janitor, machines))
         return 0
+    # The coordinator (this machine, deb): its samples go to DAY/deb.jsonl.
+    dash.coordinator = None if a.no_coordinator else make_coordinator(main_repo, log_root)
     if a.once:
         with ThreadPoolExecutor(max_workers=max(1, len(machines))) as ex:
             states = list(ex.map(lambda m: poll_machine(m, dash.ctl, dash.settings(m)["slots"]), machines))
@@ -2935,6 +2980,10 @@ def main(argv=None) -> int:
         status = annotate_jobs(summarize(states, dash.questions, None, dash.answers), mask=Masker([s for m in machines for s in m.secrets()], ()))
         status["janitor"]["mode"] = a.janitor
         status["art"] = art_status(dash.art_log)
+        if dash.coordinator is not None:
+            dash.coordinator.tick(block=True)
+            dash.coordinator.tasks.refresh()
+            add_coordinator(status, dash.coordinator, Masker([s for m in machines for s in m.secrets()], ()))
         print(json.dumps(status, indent=2) if a.json else format_text(status))
         return 0
     if a.no_machine_settings:
@@ -2944,6 +2993,8 @@ def main(argv=None) -> int:
         print("writing (answers, machine settings): token in %s (enter it once on the page)"
               % (cfg / "dashboard-token").name)
     dash.start()
+    if dash.coordinator is not None:
+        dash.coordinator.start()
     # Also with --janitor off: the thread then only measures test-output/.
     threading.Thread(target=janitor_loop, args=(dash, dash.janitor, repo / "test-output"), daemon=True,
                      name="janitor").start()

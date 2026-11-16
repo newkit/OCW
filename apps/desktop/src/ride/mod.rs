@@ -29,6 +29,8 @@
 
 pub mod catalog;
 pub mod choice;
+pub mod host;
+pub mod join;
 pub mod pages;
 pub mod setup;
 pub mod world;
@@ -85,12 +87,27 @@ pub struct RideCatalog(pub Catalog);
 #[derive(Resource, Default)]
 struct Pending(Option<(Mutex<Receiver<Loaded>>, Option<Follow>)>);
 
-/// A world change of the server being followed.
+/// A world change of the server being followed, a join or a host start.
 #[derive(Debug, Clone, PartialEq)]
 struct Follow {
     name: String,
     /// The SHA-256 of the server's package (empty: not known).
     sha256: Vec<u8>,
+    /// The server's road graph (a join): the package loaded here must
+    /// have the same.
+    graph_hash: Option<u64>,
+    then: Then,
+}
+
+/// What a loaded ride is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Then {
+    /// The host switched the world: join again on the same connection.
+    Follow,
+    /// Ride → Join: ride on the probe's server ([`join`]).
+    Join,
+    /// Ride → Host a ride: ride on the hosted server ([`host`]).
+    Host,
 }
 
 /// Package summaries of the world list (read again only for changed files).
@@ -256,6 +273,7 @@ impl Plugin for RidePlugin {
         }
         app.init_resource::<Loading>()
             .init_resource::<Pending>()
+            .init_resource::<PendingFollow>()
             .init_resource::<RideCatalog>()
             .init_resource::<WorldMemo>()
             .add_systems(Startup, refresh_catalog)
@@ -265,6 +283,8 @@ impl Plugin for RidePlugin {
             );
         register_commands(app);
         world::register_commands(app);
+        join::build(app);
+        host::build(app);
     }
 }
 
@@ -282,6 +302,28 @@ fn refresh_on_menu_open(world: &mut World, mut was_open: Local<bool>) {
 /// Starts loading `choice` on a background thread (the ride goes on); on
 /// a remote server asks the server to switch instead (see the module docs).
 pub fn begin_switch(world: &mut World, choice: RideChoice) -> Result<String, String> {
+    // A world signed by a user key nobody here trusts (spec §4.7 *User
+    // keys*): the trust dialog first; this line runs again once the user
+    // trusted the key (or chose Load once).
+    if let RideChoice::World { world: spec, .. } = &choice {
+        let opts = crate::worlds::load_options(world.resource::<Args>())?;
+        match ocw_worldstore::consent_needed(spec, &opts) {
+            Ok(Some(request)) => {
+                return Ok(ocw_ui::trust::ask(
+                    world,
+                    request,
+                    Some(choice.to_line()),
+                    None,
+                    false,
+                ));
+            }
+            Ok(None) | Err(ocw_worldstore::LoadError::NotFound(..)) => {}
+            Err(e) => return Err(format!("REFUSED: {e}")),
+        }
+    }
+    if world.contains_resource::<host::Hosting>() {
+        return Err("you host a shared ride: stop hosting first (Ride -> Stop hosting)".into());
+    }
     if world.resource::<Args>().server.is_some() {
         return ask_server(world, &choice);
     }
@@ -392,15 +434,93 @@ fn follow_world_change(world: &mut World) {
             WorldMode::Route(change.route.clone())
         },
     };
+    // The host chose a world signed by a user key nobody here trusts
+    // (spec §4.7 *User keys*): ask; declining leaves the shared ride.
+    let opts = crate::worlds::load_options(world.resource::<Args>());
+    match opts.map(|o| ocw_worldstore::consent_needed(&entry.spec, &o)) {
+        Ok(Ok(Some(request))) => {
+            let msg = ocw_ui::trust::ask(
+                world,
+                request,
+                Some("world follow".into()),
+                Some("world leave".into()),
+                true,
+            );
+            world.insert_resource(PendingFollow(Some(change)));
+            world.resource_mut::<ConsoleState>().print(msg);
+            return;
+        }
+        Ok(Ok(None)) => {}
+        Ok(Err(e)) => {
+            // Damaged or tampered with: never ridden, the ride is left.
+            let msg = format!(
+                "The host rides {}, but your copy is refused: {e}",
+                change.name
+            );
+            leave_with(world, msg);
+            return;
+        }
+        Err(e) => warn!("world change: {e}"),
+    }
     let follow = Follow {
         name: change.name.clone(),
         sha256: change.content_sha256.clone(),
+        graph_hash: None,
+        then: Then::Follow,
     };
     if let Err(e) = start_load(world, choice, Some(follow)) {
         world
             .resource_mut::<ConsoleState>()
             .print(format!("cannot follow the world change: {e}"));
     }
+}
+
+/// The host's world change waiting for the trust dialog.
+#[derive(Resource, Default)]
+pub struct PendingFollow(pub Option<ocw_protocol::v1::WorldChange>);
+
+/// `world follow`: the user trusted the key of the host's new world (or
+/// chose Load once): follow the change now.
+pub fn follow_after_trust(world: &mut World) -> Result<String, String> {
+    let change = world
+        .get_resource_mut::<PendingFollow>()
+        .and_then(|mut p| p.0.take())
+        .ok_or("no world change of the host is waiting")?;
+    let name = change.name.clone();
+    world
+        .get_resource_mut::<connection::WorldChangeInbox>()
+        .ok_or("not in a shared ride")?
+        .0 = Some(change);
+    Ok(format!("following the host to {name}"))
+}
+
+/// `world leave`: the user did not trust the key of the host's new world:
+/// leave the shared ride and ride alone (the built-in loop).
+pub fn leave_shared_ride(world: &mut World) -> Result<String, String> {
+    let name = world
+        .get_resource_mut::<PendingFollow>()
+        .and_then(|mut p| p.0.take())
+        .map_or_else(|| "its world".to_owned(), |c| c.name);
+    Ok(leave_with(
+        world,
+        ocw_client::world_trust::leave_message(&name),
+    ))
+}
+
+/// Leaves the shared ride with `why`: the connection ends, a solo ride on
+/// the built-in loop starts (no world the user did not accept is ridden).
+fn leave_with(world: &mut World, why: String) -> String {
+    world.resource_mut::<Args>().server = None;
+    let msg = format!("{why} Riding alone on the built-in loop.");
+    warn!("{msg}");
+    world.resource_mut::<ConsoleState>().print(msg.clone());
+    if let Some(mut v) = world.get_resource_mut::<RideView>() {
+        v.app_message = Some(msg.clone());
+    }
+    if let Err(e) = start_load(world, RideChoice::TestRoute("loop".into()), None) {
+        warn!("cannot start the solo ride: {e}");
+    }
+    msg
 }
 
 /// Loads `choice` on a background thread.
@@ -470,14 +590,54 @@ fn finish_switch(world: &mut World) {
         }
         (r, _) => r,
     };
+    // A join: the package's road graph must be the server's.
+    let result = match (result, &follow) {
+        ((args, Ok(setup)), Some(f)) if f.graph_hash.is_some() => {
+            let ours = setup.free.as_ref().map(|fr| fr.net.fingerprint());
+            if ours == f.graph_hash {
+                (args, Ok(setup))
+            } else {
+                (
+                    args,
+                    Err(format!(
+                        "your copy of {} differs from the server's (another version: its road graph is not the same); install the package version the server rides",
+                        f.name
+                    )),
+                )
+            }
+        }
+        (r, _) => r,
+    };
+    let then = follow.as_ref().map(|f| f.then);
     match result {
-        (args, Ok(setup)) => {
+        (mut args, Ok(setup)) => {
             let what = setup.choice.describe();
-            apply_switch_with(world, args, setup, follow.is_some());
+            let ready = match then {
+                Some(Then::Join) => join::take_link(world, &mut args),
+                Some(Then::Host) => host::take_server(world),
+                _ => Ok(()),
+            };
+            if let Err(e) = ready {
+                warn!("ride switch: {e}");
+                world.resource_mut::<ConsoleState>().print(e);
+                return;
+            }
+            apply_switch_with(world, args, setup, then == Some(Then::Follow));
             info!("ride switch: riding {what}");
             world
                 .resource_mut::<ConsoleState>()
                 .print(format!("riding {what}"));
+            match then {
+                Some(Then::Join) => join::switched(world),
+                Some(Then::Host) => host::started(world),
+                _ => {}
+            }
+        }
+        (_, Err(e)) if then == Some(Then::Join) => {
+            join::load_failed(world, &e);
+        }
+        (_, Err(e)) if then == Some(Then::Host) => {
+            host::load_failed(world, &e);
         }
         (_, Err(e)) => {
             warn!("ride switch: {e}");
@@ -505,13 +665,11 @@ impl Args {
 
 /// Saves the ride so far like on exit (rides under a minute are dropped).
 fn save_ride(world: &mut World) {
-    let Some(mut rec) = world.get_resource_mut::<Recording>() else {
-        return;
-    };
-    if !rec.enabled {
+    if !world.get_resource::<Recording>().is_some_and(|r| r.enabled) {
         return;
     }
-    match rec.save(MIN_AUTO_SAVE_S) {
+    // The FIT file and the training history (spec §14 Phase 7).
+    match crate::recording::save_now(world, MIN_AUTO_SAVE_S) {
         Ok(Some(path)) => {
             info!(path = %path.display(), "ride saved");
             if let Some(s) = world.get_resource::<crate::strava::Strava>() {
@@ -523,6 +681,46 @@ fn save_ride(world: &mut World) {
         }
         Ok(None) => info!("ride too short, not saved"),
         Err(e) => error!("cannot save ride: {e}"),
+    }
+}
+
+/// Starts a new session on the course ridden now (the same world, route
+/// and render world): the ride so far is saved first. Leaving a shared
+/// ride and stopping hosting come back here.
+pub fn restart_alone(world: &mut World) {
+    save_ride(world);
+    {
+        let mut args = world.resource_mut::<Args>();
+        args.server = None;
+        args.server_cert = None;
+        args.insecure_dev = false;
+    }
+    let route = world.resource::<RideView>().route.clone();
+    clear_view(world);
+    connection::start_session_with(world, route, false);
+    if world
+        .get_resource::<crate::menu::MenuState>()
+        .is_some_and(|m| m.menu.is_open())
+    {
+        world.resource_mut::<ClientState>().0.hold_steering();
+    }
+    let name = world.resource::<ClientState>().0.course_name().to_string();
+    if let Some(mut rec) = world.get_resource_mut::<Recording>() {
+        rec.recorder = RideRecorder::new(name);
+    }
+    world.resource_mut::<ConsoleState>().permission = Permission::Dev;
+}
+
+/// The view's riders, paths and event of the old session go.
+fn clear_view(world: &mut World) {
+    if let Some(mut v) = world.get_resource_mut::<RideView>() {
+        v.riders.clear();
+        v.paths.clear();
+        v.junction = None;
+        v.notice = None;
+        v.route_status = None;
+        v.position = None;
+        v.event = None;
     }
 }
 
@@ -628,6 +826,22 @@ fn register_commands(app: &mut App) {
             begin_switch(world, choice)
         },
     ))
+    // Tab completion (spec §2.9): the test routes and the loaded package's
+    // routes; the worlds found.
+    .console_values("ride.switch", "route", |world, _| {
+        refresh_catalog(world);
+        let c = &world.resource::<RideCatalog>().0;
+        choice::TEST_ROUTES
+            .iter()
+            .map(|r| (*r).to_owned())
+            .chain(c.world.iter().flat_map(|w| w.routes.iter().map(|r| r.name.clone())))
+            .collect()
+    })
+    .console_values("ride.switch", "world", |world, _| {
+        refresh_catalog(world);
+        let c = &world.resource::<RideCatalog>().0;
+        c.worlds.iter().map(|w| w.id.clone()).collect()
+    })
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("ride.restart")
@@ -828,6 +1042,204 @@ mod tests {
         assert!(run(&mut app, "ride.current").contains("ride.switch --route hills"));
     }
 
+    fn join_state(w: &World) -> ocw_client::join::JoinState {
+        w.resource::<ocw_ui::join::JoinUi>().info.flow.state.clone()
+    }
+
+    /// Ride → Join (spec §3.2.1): a wrong fingerprint keeps the ride; the
+    /// right link switches to the server at runtime (its bots appear, the
+    /// options say where); Leave rides on alone on the same route.
+    #[test]
+    fn joins_a_shared_ride_at_runtime_and_leaves() {
+        use ocw_client::join::{JoinFailure, JoinState};
+        let (mut app, _) = app("join");
+        assert!(update_until(&mut app, |w| client(w).rider_id().is_some()
+            && w.resource::<RideView>().riders.len() == 2));
+        let (addr, fp, stop, thread) = crate::connection::tests::remote_server(3);
+        let port = addr.port();
+        // A certificate that is not the link's: refused, the ride goes on.
+        let log = run(
+            &mut app,
+            &format!("join ocw://127.0.0.1:{port}?cert={}", "00".repeat(32)),
+        );
+        assert!(log.contains("connecting to 127.0.0.1"), "{log}");
+        assert!(update_until(&mut app, |w| matches!(
+            join_state(w),
+            JoinState::Failed { .. }
+        )));
+        assert!(
+            matches!(
+                join_state(app.world()),
+                JoinState::Failed {
+                    why: JoinFailure::Certificate(_),
+                    ..
+                }
+            ),
+            "{:?}",
+            join_state(app.world())
+        );
+        assert!(app.world().resource::<Args>().server.is_none());
+        assert!(client(app.world()).rider_id().is_some(), "still riding");
+        // The right link: the server's route is loaded, then the switch.
+        run(
+            &mut app,
+            &format!("join ocw://127.0.0.1:{port}?cert={fp}&name=Test%20Ride"),
+        );
+        assert!(update_until(&mut app, |w| matches!(
+            join_state(w),
+            JoinState::Joined { .. }
+        ) && client(w)
+            .rider_id()
+            .is_some()
+            && w.resource::<RideView>().riders.len() == 4));
+        let w = app.world();
+        assert_eq!(
+            w.resource::<Args>().server.as_deref(),
+            Some(format!("127.0.0.1:{port}").as_str())
+        );
+        assert_eq!(
+            w.resource::<ocw_ui::menu::MenuRideMode>().0,
+            ocw_client::menu::model::RideMode::Joined
+        );
+        let recent = &w.resource::<ocw_ui::join::JoinUi>().info.recent;
+        assert_eq!(recent.entries.len(), 1);
+        assert!(
+            recent.entries[0].label().starts_with("Test Ride – route"),
+            "{:?}",
+            recent
+        );
+        assert_eq!(
+            w.resource::<ConsoleState>().permission,
+            Permission::User,
+            "no dev commands on a shared server"
+        );
+        // Leave: the local server again, its one bot.
+        let log = run(&mut app, "leave");
+        assert!(log.contains("riding on alone"), "{log}");
+        assert!(app.world().resource::<Args>().server.is_none());
+        assert!(update_until(&mut app, |w| client(w).rider_id().is_some()
+            && w.resource::<RideView>().riders.len() == 2));
+        assert_eq!(join_state(app.world()), JoinState::Idle);
+        assert_eq!(
+            client(app.world()).route().name(),
+            Route::test_loop().name()
+        );
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        thread.join().unwrap();
+        // Not in a shared ride: nothing to leave.
+        assert!(run(&mut app, "leave").contains("not in a shared ride"));
+    }
+
+    /// The server's world is not installed here: said plainly, the ride
+    /// goes on.
+    #[test]
+    fn a_missing_world_is_said_plainly() {
+        let (mut app, _) = app("join-missing");
+        let course = ocw_client::join::ServerCourse {
+            world: Some(("Fictional Valley".into(), 7)),
+            free_ride: true,
+            graph_route: String::new(),
+            route_id: String::new(),
+        };
+        // A probe as `join` makes it, with a link naming a manifest URL.
+        let link = ocw_protocol::join::JoinLink::parse(
+            "ocw://localhost?world=https://worlds.example.org/valley/manifest.json",
+        )
+        .unwrap();
+        let why = join::course_choice_for(app.world_mut(), &link, &course).unwrap_err();
+        let m = why.message();
+        assert!(
+            m.contains("Fictional Valley") && m.contains("not installed"),
+            "{m}"
+        );
+        assert!(
+            m.contains("--fetch-world https://worlds.example.org/valley/manifest.json"),
+            "{m}"
+        );
+        // A test route is found by its id.
+        let course = ocw_client::join::ServerCourse {
+            world: None,
+            free_ride: false,
+            graph_route: String::new(),
+            route_id: Route::test_hills().id().to_owned(),
+        };
+        assert_eq!(
+            join::course_choice_for(app.world_mut(), &link, &course).unwrap(),
+            RideChoice::TestRoute("hills".into())
+        );
+    }
+
+    /// Ride → Host a ride: the app's own server takes another rider over
+    /// QUIC; the host sees them; Stop rides on alone.
+    #[test]
+    fn hosts_a_ride_and_stops() {
+        use ocw_server::net::{ClientOptions, NetClient, ServerTrust};
+        let (mut app, _) = app("host");
+        assert!(update_until(&mut app, |w| client(w).rider_id().is_some()));
+        // An ephemeral port (tests): bind once to find a free one.
+        let port = std::net::UdpSocket::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        run(&mut app, "host.plan world 0");
+        run(&mut app, "host.plan route loop");
+        run(&mut app, "host.plan weather fog");
+        run(&mut app, "host.plan bots 0");
+        let log = run(&mut app, &format!("host start --port {port}"));
+        assert!(log.contains("hosting: loading"), "{log}");
+        assert!(update_until(&mut app, |w| w
+            .contains_resource::<host::Hosting>()
+            && client(w).rider_id().is_some()));
+        let links = app.world().resource::<host::Hosting>().links.clone();
+        assert!(links[0].contains(&format!(":{port}?cert=")), "{links:?}");
+        assert!(links[0].ends_with("&route=loop"), "{links:?}");
+        assert!(run(&mut app, "host status").contains("hosting on UDP"));
+        // Another rider joins by the link's fingerprint.
+        let link = ocw_protocol::join::JoinLink::parse(&links[0]).unwrap();
+        let trust = ServerTrust::Pinned(
+            ocw_server::net::tls::parse_fingerprint(link.cert.as_deref().unwrap()).unwrap(),
+        );
+        let addr: std::net::SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+        let guest =
+            NetClient::connect(addr, "localhost", &trust, ClientOptions::default()).unwrap();
+        guest.send(ocw_client::join::probe_hello(
+            &crate::client::ClientCore::new(
+                Route::test_loop(),
+                "Guest".to_string(),
+                ocw_core::RiderProfile::default(),
+            )
+            .hello(),
+        ));
+        assert!(update_until(&mut app, |w| w
+            .resource::<RideView>()
+            .riders
+            .len()
+            == 2
+            && matches!(
+                w.resource::<ocw_ui::menu::MenuRideMode>().0,
+                ocw_client::menu::model::RideMode::Hosting { riders: 2 }
+            )));
+        // A second start, or a join, while hosting: refused.
+        assert!(run(&mut app, "host start").contains("already hosting"));
+        assert!(run(&mut app, "join localhost").contains("stop hosting"));
+        // Stop: the guest's link closes, the host rides on alone.
+        let log = run(&mut app, "host stop");
+        assert!(log.contains("hosting stopped"), "{log}");
+        assert!(!app.world().contains_resource::<host::Hosting>());
+        assert!(update_until(&mut app, |_| matches!(
+            guest.status(),
+            ocw_server::net::LinkStatus::Closed(_)
+        )));
+        assert!(update_until(&mut app, |w| client(w).rider_id().is_some()));
+        assert_eq!(
+            app.world().resource::<ocw_ui::menu::MenuRideMode>().0,
+            ocw_client::menu::model::RideMode::Alone
+        );
+        // The port is free again: hosting can start again later.
+        std::net::UdpSocket::bind(("0.0.0.0", port)).expect("the port was closed");
+    }
+
     #[test]
     fn a_bad_switch_keeps_the_ride() {
         let (mut app, _) = app("bad");
@@ -859,6 +1271,131 @@ mod tests {
         // Without a world package there is nothing to match a GPX onto.
         let log = run(&mut app, "ride.import-gpx some.gpx");
         assert!(log.contains("no world package loaded"), "{log}");
+    }
+
+    /// A world package signed by a throwaway user key (test only; a
+    /// fictional name), written into `dir`.
+    fn user_signed_package(dir: &Path) -> PathBuf {
+        use ocw_world::manifest::{
+            Attribution, Manifest, RootKeyPair, SignedManifest, SigningKeyPair,
+        };
+        use ocw_world::package::{Tile, TileKey};
+        let now = ocw_worldstore::now_unix_s();
+        let root = RootKeyPair::from_seed("Ada Rider", [131; 32]);
+        let cert = root.certify(
+            "Ada Rider",
+            SigningKeyPair::public_key_of([132; 32]),
+            now - 3600,
+            now + 3600,
+        );
+        let key = SigningKeyPair::new([132; 32], cert)
+            .unwrap()
+            .with_root(root.public())
+            .unwrap();
+        let tile = TileKey { x: 0, z: 0 };
+        let bytes = ocw_world::WorldPackage {
+            name: "Ada's Mini".into(),
+            origin: (47.0, 9.5),
+            tile_size_m: 1000.0,
+            samples: 2,
+            tiles: [(
+                tile,
+                Tile {
+                    key: tile,
+                    heights: vec![0.0; 4],
+                    roads: Vec::new(),
+                },
+            )]
+            .into(),
+            graph: None,
+            routes: Vec::new(),
+            region: None,
+            time_zone: None,
+            landuse: None,
+            buildings: None,
+            bridges: None,
+            look: Default::default(),
+            obstacles: None,
+        }
+        .to_bytes();
+        std::fs::create_dir_all(dir).unwrap();
+        let mut m = Manifest::new(
+            "user/ada/mini",
+            "Ada's Mini",
+            1,
+            now,
+            "test",
+            vec![Attribution::openstreetmap()],
+        )
+        .unwrap();
+        m.add_file("ada-mini.ocwpkg", &bytes).unwrap();
+        let p = dir.join("ada-mini.ocwpkg");
+        std::fs::write(&p, &bytes).unwrap();
+        std::fs::write(
+            dir.join("ada-mini.ocwpkg.manifest.json"),
+            SignedManifest::signed(&m, &key).to_json(),
+        )
+        .unwrap();
+        p
+    }
+
+    /// Spec §4.7 *User keys*: a world signed by a key nobody here trusts
+    /// is not loaded; the trust dialog asks (Cancel focused), and
+    /// declining keeps the ride.
+    #[test]
+    fn a_world_by_an_unknown_user_key_asks_first() {
+        let (mut app, rides) = app("trust");
+        let pkg = user_signed_package(&rides.join("worlds"));
+        let log = run(&mut app, &format!("world switch \"{}\"", pkg.display()));
+        assert!(log.contains("(unverified name)"), "{log}");
+        let dialog = app.world().resource::<ocw_ui::trust::TrustDialog>();
+        let r = dialog.request.as_ref().expect("asks");
+        assert_eq!(r.claimed_signer, "Ada Rider");
+        assert!(!dialog.shared);
+        // Nothing is loading; the menu shows the dialog.
+        assert!(app.world().resource::<Pending>().0.is_none());
+        for _ in 0..3 {
+            app.update();
+        }
+        let menu = &app.world().resource::<crate::menu::MenuState>().menu;
+        assert_eq!(
+            menu.page(),
+            Some(ocw_client::menu::model::Page::ConfirmTrust)
+        );
+        assert_eq!(menu.focus(), 2, "Cancel");
+        // Enter on Cancel: declined, the ride goes on.
+        run(&mut app, "menu select");
+        for _ in 0..3 {
+            app.update();
+        }
+        assert!(
+            !app.world()
+                .resource::<ocw_ui::trust::TrustDialog>()
+                .is_pending()
+        );
+        assert!(app.world().resource::<Pending>().0.is_none());
+        assert!(
+            app.world()
+                .resource::<ConsoleState>()
+                .log()
+                .iter()
+                .any(|l| l.contains("did not trust")),
+            "{:?}",
+            app.world().resource::<ConsoleState>().log()
+        );
+        assert_eq!(
+            client(app.world()).route().name(),
+            Route::test_loop().name()
+        );
+        // Declining remembers nothing: the next try asks again.
+        let log = run(&mut app, &format!("world switch \"{}\"", pkg.display()));
+        assert!(log.matches("(unverified name)").count() >= 2, "{log}");
+        assert!(
+            app.world()
+                .resource::<ocw_ui::trust::TrustDialog>()
+                .is_pending()
+        );
+        let _ = std::fs::remove_dir_all(&rides);
     }
 
     #[test]

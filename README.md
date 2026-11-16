@@ -1,5 +1,10 @@
 # <img src="artwork/logos/ocw.svg" alt="OCW logo" height="40" align="top"> Open Cycling World
 
+**Try it in your browser: <https://newkit.github.io/OCW/>** – ride solo on the
+test routes or in Liechtenstein, with virtual power or a smart trainer over
+Bluetooth in Chrome or Edge. It is a development build (spec §14 Phase 10
+B8a); multiplayer and voice come with the hosted version.
+
 A cross-platform indoor cycling simulation in Rust: real bicycle hardware, real
 routes from OpenStreetMap, rendered locally with Bevy, with server-authoritative
 multiplayer.
@@ -17,10 +22,14 @@ in [SPECIFICATION.md](SPECIFICATION.md).
 ## Worlds
 
 Four regions, built from OpenStreetMap and official open elevation models, ridden
-with real gradients. Download them from the
+with real gradients, with the trees, crops and plantations of each landscape:
+spruce, fir and beech forests, vineyards and orchards around Vaduz and in the
+Black Forest's foothills, Canary pines, laurel forest, palms, banana
+plantations and the Teide's broom on Tenerife. Download them from the
 [latest release](https://github.com/newkit/OCW/releases) and start the app with
 `ocw-desktop --world path/to/<world>.ocwpkg`, or switch worlds in the app
-(menu → **World**).
+(menu → **World**). To serve worlds to other riders, see
+[Hosting your own world server](#hosting-your-own-world-server).
 
 <img src="https://github.com/newkit/OCW/releases/download/build-history/world-tenerife-teide-iconic.jpg?v=2" alt="Riders on the TF-21 through Las Cañadas, the Teide (3,715 m) straight ahead" width="100%">
 
@@ -44,6 +53,7 @@ MDT05 © Instituto Geográfico Nacional (CC BY 4.0); SRTM (NASA / USGS).</sub>
 
 ```bash
 make deps     # this platform: deps-linux (detects Debian/Ubuntu, Fedora, Arch) | deps-windows | deps-macos
+make deps-vr  # only for VR work (Phase 11): the OpenXR loader + Monado on Linux (deps-vr-linux), hints on Windows
 make check    # fmt, clippy, tests, wasm build – what CI runs
 make run      # desktop client with a virtual trainer and 4 test riders
 make help     # all targets (build, release, server, deploy, the test-* targets, ...)
@@ -115,8 +125,11 @@ trainers and sensors over **Web Bluetooth** (B4), play the game sound and
 join voice calls (B5), has the desktop's menus, settings, captures and
 gamepad support (B6), and flies in **Unicorn mode** like the desktop
 (Phase 13 G5). It draws with **WebGPU**, or with **WebGL 2** where
-WebGPU is missing (B7). There is no public hosting yet (B8): you build it
-and serve it yourself, as below.
+WebGPU is missing (B7). A **public preview** runs on GitHub Pages
+(<https://newkit.github.io/OCW/>, B8a): solo, the test routes and
+Liechtenstein; see [The public preview](#the-public-preview-github-pages)
+for how it is built and updated. Full hosting (B8) comes later; until
+then you build the app and serve it yourself, as below.
 
 #### 1. What you need
 
@@ -136,15 +149,21 @@ and serve it yourself, as below.
   Without network the build still succeeds, with a warning, and the page
   rides without voice. `python3` also runs the dev server and the browser
   tests.
-- **Optional:** `wasm-opt` (binaryen; `apt install binaryen`) shrinks the
-  modules when it is installed. The build machines do without it. Python's
+- **Optional:** `wasm-opt` (binaryen) shrinks the modules of `make web`
+  when it is installed; `make web-preview` always uses it and fetches the
+  pinned release itself (`scripts/fetch-binaryen.sh`; Debian's
+  `apt install binaryen` is too old for today's modules). Python's
   `brotli` module (or the `brotli` tool) adds the brotli size to
   `sizes.txt`.
 - **A browser.** Chrome or Edge 113+ draw with WebGPU, and they are the
   only ones with **Web Bluetooth**, so you need one of them to ride with a
-  trainer. On Debian: `sudo apt install chromium`. Firefox and Safari should
-  run the page with WebGPU or WebGL 2 and virtual power, but nobody has
-  tried them yet. On Linux, WebGPU and Web Bluetooth are still behind flags
+  trainer. On Debian: `sudo apt install chromium`. Firefox should run the
+  page with WebGPU or WebGL 2 and virtual power, but nobody has tried it yet.
+  **Safari** (macOS, and every browser on iPhone and iPad) gets the WebGL 2
+  build: Safari 26 has WebGPU on by default, but the WebGPU build gave an
+  iPhone 15 on iOS 26 sound and no image, so the page does not use Safari's
+  WebGPU yet (`?gpu=webgpu` tries it). Phones ride with virtual power (no
+  Web Bluetooth on iOS, no touch controls for riding yet). On Linux, WebGPU and Web Bluetooth are still behind flags
   in Chromium. Start it like this (the browser tests use the same flags):
   ```bash
   chromium --enable-unsafe-webgpu --enable-features=Vulkan --enable-experimental-web-platform-features
@@ -184,6 +203,7 @@ LTO) twice, because Bevy picks WebGPU or WebGL 2 when it is compiled:
 | File in `target/web/` | What it is |
 |---|---|
 | `index.html` | The page. It picks the build, then loads it |
+| `ocw-gpu.js` | The page's GPU choice and the WebGPU watchdog (the fallback to WebGL 2) |
 | `ocw_web.js`, `ocw_web_bg.wasm` | The WebGPU build (feature `webgpu`) |
 | `ocw_web_webgl2.js`, `ocw_web_webgl2_bg.wasm` | The WebGL 2 build (feature `webgl2`) |
 | `ocw-voice.js`, `livekit-client.umd.js`, `livekit-client.LICENSE.txt` | Voice: the page's shim and LiveKit's SDK (Apache-2.0) |
@@ -192,7 +212,14 @@ LTO) twice, because Bevy picks WebGPU or WebGL 2 when it is compiled:
 The page asks the browser for a WebGPU adapter. If it gets one, it loads the
 WebGPU build. With no `navigator.gpu`, no adapter or an error, it loads the
 WebGL 2 build. A browser with neither gets a message saying what it needs.
-`?gpu=webgl2` or `?gpu=webgpu` forces one build. The HUD's build id ends in
+Safari (WebKit, also every browser on iOS and iPadOS) always gets the WebGL 2
+build. If WebGPU fails while the page runs (the device is lost, a validation
+error, no frame drawn after 20 s, or a canvas of one colour once the ride
+shows), the page remembers that in this browser (`localStorage`, until the
+browser is updated) and reloads the ride on WebGL 2 with low graphics and a
+note, instead of leaving a black screen. `?gpu=webgl2` or `?gpu=webgpu`
+forces one build (a forced WebGPU shows its error instead of falling back,
+and forgets an old failure once it draws). The HUD's build id ends in
 `web WebGPU` or `web WebGL2`, and the console's `gpu` prints the API, the
 adapter and the quality preset. Each module is about 76 MiB raw, 16.9 MiB
 gzip and 10.7 MiB brotli. A browser downloads only one of them. On a
@@ -296,7 +323,8 @@ console:
 | `name=NAME` | Your rider's name (up to 32 characters) |
 | `ftp=W` | FTP for workouts' % FTP targets, 50–600 W |
 | `quality=auto\|low\|medium\|high` | The graphics preset for this visit (not saved) |
-| `gpu=webgpu\|webgl2` | Force the WebGPU or the WebGL 2 build |
+| `gpu=webgpu\|webgl2` | Force the WebGPU or the WebGL 2 build (`webgpu-failed=1` marks the page's own fallback reload) |
+| `origin=LAT,LON` | Give the test route a place on the globe (the GPS line in the HUD, the sun, the FIT track), e.g. `origin=47.13996,9.52151` |
 | `world=ID\|ID@VERSION\|URL` | Stream a world package (below) |
 | `free=1` | With `world=`: a free ride on its road network instead of a route (the junctions take their default exit; there are no junction keys in the browser yet) |
 | `tiles=1–8`, `keep=2–12` | With `world=`: fetch radius and keep radius in tiles around the rider |
@@ -459,7 +487,9 @@ microphone / the voices.
 Esc (or the gamepad's Start) opens the desktop's in-game menu: *Resume, Ride,
 World, Workshop, Navi, Settings, Captures*. The browser leaves out what it
 cannot do: Quit and Restart (close or reload the tab), routes, rides, GPX
-import, Strava and rider profiles. Every setting the browser has works as
+import, Strava and rider profiles. *Navi → Training history* and the key
+rebinding work as on the desktop (the history in `localStorage`,
+`ocw-history`). Every setting the browser has works as
 on the desktop (`set KEY VALUE`, `get`). They are kept in the site's
 `localStorage` (`ocw-settings`, the same TOML as `settings.toml`), so they
 survive reloads. Clearing the site's data resets them.
@@ -543,7 +573,10 @@ or the server and bot builds, where it needs them). Screenshots, logs and JSON s
 | `make deps-browser` | Not a test: downloads the tests' pinned Chromium (above) |
 | `make test-web-build` | Both builds compile for wasm32 (part of `make check`) |
 | `make test-web` | WebGPU: load, ride, the menus by keyboard and a fake gamepad, settings over a reload, the screenshot / video / FIT downloads, Unicorn mode (G, + climbs, the inspection, a pin, the menu row, landing), fps |
-| `make test-web-webgl2` | Chromium without WebGPU: the page falls back to the WebGL 2 build and rides. Then WebGPU High against WebGL 2 Low in the same view, and the Graphics page |
+| `make test-web-webgl2` | Chromium without WebGPU: the page falls back to the WebGL 2 build and rides. Then WebGPU High against WebGL 2 Low in the same view, and the Graphics page. Then `test-web-gpu` |
+| `make test-web-gpu` | The page's GPU choice (`ocw-gpu.js`'s rules, pure), then WebGPU failures injected into the real app (a validation error, a refused device, no frame): each ride comes back on WebGL 2 with the note and draws; the remembered failure; `?gpu=webgpu`; a healthy WebGPU ride raises no alarm; Safari on an iPhone 15 takes WebGL 2 |
+| `make test-web-webkit` | WebKit, Safari's engine (Playwright's build, `make deps-webkit`: a venv in `~/.cache/ocw/playwright-venv`, no sudo): an iPhone 15 and Safari on macOS, with Safari 26's `navigator.gpu` faked in – the start page's WebGL 2 box ticked, the ride on WebGL 2 rides and draws |
+| `scripts/test-web-safari.py` | The real Safari on a Mac over `safaridriver` (`--gpu webgpu` tries Safari's WebGPU): the GPU the page chose, the watchdog's state, a screenshot. It needs the Mac's desktop logged in and `sudo safaridriver --enable` once |
 | `make test-web-world` | Liechtenstein streamed from the dev server, a teleport, then a reload from the browser cache |
 | `make test-web-unicorn` | Unicorn mode over Vaduz (Liechtenstein streamed): fly up, the inspection, a pin, the menu row, landing (`--god`) |
 | `make test-web-multiplayer` | `ocw-server` and `ocw-bot` riders, the browser over WebTransport, 30 s |
@@ -558,13 +591,105 @@ or the server and bot builds, where it needs them). Screenshots, logs and JSON s
 `scripts/test-web.py --help` lists the options (`--query`, `--world`,
 `--gpu`, `--software` for SwiftShader without a GPU, `--no-ui`, `--god`).
 
+#### The public preview (GitHub Pages)
+
+<https://newkit.github.io/OCW/> is a solo preview of the browser app (spec
+§14 Phase 10 B8a): its start page offers the Hills and Loop test routes and
+Liechtenstein (Vaduz – Malbun and a free ride), with virtual power or a
+trainer over Web Bluetooth in Chromium. Multiplayer, voice and sign-in are
+off there ("coming in the hosted version"). `credits.html` has the
+attribution, the licences and the privacy note.
+
+**What is different from `make web`:**
+
+| | `make web` (dev) | `make web-preview` (the preview) |
+|---|---|---|
+| Output | `target/web/` | `target/web-preview/` |
+| Profile | `web-release`: `opt-level = "s"`, thin LTO | `web-preview-release`: the same with fat LTO and one codegen unit |
+| `wasm-opt` | `-Os`, only when installed | `-Oz`, always: `scripts/fetch-binaryen.sh` fetches the pinned binaryen (version_133, SHA-256-checked) into `~/.cache/ocw/tools/` when none is installed |
+| Trusted worlds | the production roots (none yet); on localhost also `trust-root`, `trust=dev`, `allow-unsigned` | only the **web preview's root** (`crates/ocw-worldstore/keys/preview-roots.json`, feature `preview` of `ocw-web`); the localhost-only options stay localhost-only |
+| `config.json` | `channel: dev`: changes nothing | `channel: preview`, `worlds/`, empty `server`, `voice`, `signin`: no `?server=` and no voice on a public page, the start page's rides |
+| Voice | LiveKit's SDK fetched | not included |
+
+Sizes of one module (the WebGPU build; the WebGL 2 build is about the
+same; a browser downloads only one):
+
+| Build | raw | gzip | brotli |
+|---|---|---|---|
+| `make web` (`web-release`) | 76.3 MiB | 17.0 MiB | 10.7 MiB |
+| `make web-preview` before `wasm-opt` | 51.0 MiB | 12.6 MiB | 8.5 MiB |
+| `make web-preview` (after `wasm-opt -Oz`) | 42.2 MiB | 13.2 MiB | 8.8 MiB |
+
+`wasm-opt` makes the module much smaller but the compressed download a
+little larger; the preview keeps it for the smaller module the browser
+compiles (spec §14 Phase 10, 10G *B8a* has all the variants measured).
+
+GitHub Pages cannot serve precompressed files, but it gzips the modules on
+the fly: the live site serves the WebGPU module with `content-encoding: gzip`
+(14.1 MB instead of 42 MB; measured 2026-11-15 with `make test-web-preview
+PREVIEW_URL=https://newkit.github.io/OCW/`).
+
+**Build and try it locally:**
+
+```bash
+make web-preview          # both modules into target/web-preview/ (about 14 minutes on marge, 12 cores)
+make web-preview-site     # the site into target/web-preview-site/ (with the worlds of target/web-preview-worlds/release/)
+make test-web-preview     # headless Chromium on that site, served as a public page (ocw-preview.test)
+make test-web-preview PREVIEW_URL=https://newkit.github.io/OCW/   # the same checks on the live site
+```
+
+`make web-preview-site` (`scripts/web-preview-site.py`) takes the build and
+the signed worlds and writes `config.json` (the page configuration: the
+worlds' base, no server / voice / sign-in, the start page's rides),
+`credits.html` (from the world manifests' attribution, the material and
+model manifests and, with `--crates`, the Rust crates in the module),
+`worlds/` in the `world-builder publish` layout, `.nojekyll` and
+`site.txt` (every file and the total; it fails over 1 GB, the Pages
+limit). `make test-web-preview` checks the start page, the Hills route,
+Liechtenstein from the preview root, that the dev trust options are
+ignored, the WebGL 2 fallback, the credits page and that nothing answers
+4xx/5xx; screenshots go to `test-output/web-preview/`.
+
+**The workflow** `.github/workflows/web-preview.yml` builds the preview
+on GitHub's runner (`make deps-web`, `scripts/fetch-binaryen.sh`, `make
+web-preview`), downloads the signed worlds from the pre-release
+`web-preview-worlds` (`gh release download`, no secret needed), assembles
+the site and deploys it with `actions/upload-pages-artifact` and
+`actions/deploy-pages` (Pages source: GitHub Actions). Building Bevy twice
+with fat LTO is slow, so it runs by hand (`gh workflow run web-preview.yml`
+or Actions → Web preview → Run workflow) and every Monday, both for
+`main` (the `github-pages` environment deploys only from `main`).
+
+**Updating the preview's worlds.** The preview trusts only packages signed
+by its own root. The root and the signing key live on marge in
+`~/.config/ocw/preview-keys/` (outside every checkout, mode 700): never
+copy, print or commit them, and they never go to CI. After a world
+rebuild, on marge:
+
+```bash
+make web-preview-worlds   # scripts/publish-preview-worlds.sh --upload [PKG...]
+gh workflow run web-preview.yml
+```
+
+The script signs a staged copy of each package (default
+`data/pilot/liechtenstein.ocwpkg`) with the preview's signing key, publishes
+it (`worlds/<id>/<version>/`, `<id>/latest`), verifies it against the
+preview root, writes the release assets (`liechtenstein-3.ocwpkg`,
+`liechtenstein-3.manifest.json`, `liechtenstein.latest`,
+`preview-worlds.json` with the layout, routes and hashes, `SHA256SUMS`)
+and uploads them to the pre-release `web-preview-worlds`, replacing the
+old ones. The signing key `web-preview-2026` is valid for two years;
+the script's header shows how to make the next one with `world-builder
+keys new-signing`.
+
 #### Limitations today
 
 - Trainers and sensors only in Chromium-based browsers (Chrome, Edge;
   on Linux with the flag). Elsewhere: virtual power.
 - Safari and Firefox are untested, and so are real phones and tablets
   (the browser matrix comes with hosting, B8).
-- No hosting or domain yet (B8): you serve the page yourself. Multiplayer
+- No hosting or domain yet (B8): the public preview on GitHub Pages is
+  solo only; for anything else you serve the page yourself. Multiplayer
   takes the server's self-signed certificate by hash, renewed every 11
   days.
 - Unicorn mode's touch controls are untried on real phones and tablets,
@@ -603,6 +728,33 @@ or the server and bot builds, where it needs them). Screenshots, logs and JSON s
 | Console (`help` lists the commands) | `` ` `` or F12 | |
 | Unicorn mode: fly as a unicorn / land on the road below | G | Select + North (Y / △) |
 | Unicorn mode: fly back to where you took off | Shift+G | Select + West (X / □) |
+
+**Rebinding keys and buttons** (spec §3.2.1 M9): every key and gamepad
+button of the table above except the menu (Esc / Start), the console (`` ` ``
+/ F12), the sticks and the triggers can be changed in *Settings → Controls →
+Keys and buttons*. Choose a group, then an action: Enter waits for the new
+key or pad button (Esc / Start cancel), ← / → step the key through the list.
+Two actions on one key are allowed but marked with "(!)" and a warning dot,
+and the page lists the conflicts; *Reset to defaults* puts everything back.
+Unicorn mode's flight keys (cursor keys, + / −, L) stay fixed – W A S D
+never fly. *Pad Confirm button* swaps the menu's Confirm and Back on a pad
+(east: the Nintendo layout). From the console:
+
+```text
+bind                      # all bindings and conflicts
+bind autodrive Z          # the key of an action (ids: bind lists them)
+bind u_turn LB --pad      # its gamepad button
+bind --capture camera     # the next key or button pressed
+bind --reset              # all defaults
+set keys.mute_voices Shift+N   # the same as settings ([keys], [pad] in settings.toml)
+```
+
+**Accessibility** (*Settings → Display → Accessibility*): *HUD size* (100 –
+200 %, the menu is sized by the window already), *Status colours*
+(colour-safe: blue, yellow, orange and purple instead of green to red, for
+red-green colour blindness; icons and words stay), *High-contrast HUD*
+(opaque panels, white text), *Reduced motion* (no camera shake, no
+flashing warnings) and *Camera shake*.
 
 **Unicorn mode** (spec §14 Phase 13; *World → Unicorn mode*, console `god`): the rider
 turns into a unicorn and flies freely over the world – like a plane: it always
@@ -894,6 +1046,36 @@ package. *Navi → GPX import* offers the `.gpx` files from
 In manual steering, the keys ramp the lean and it stays when released (press
 the other way to straighten up); the stick sets the lean directly, centred is
 upright. The road's bends have to be steered, see spec §5.2.1.
+
+#### Sharing a world you edited (your own key)
+
+A world you built or edited yourself is signed with **your own key** and can
+be shared (spec §4.7 *User keys*). Others see it as *unofficial* with your
+name – the name is only what your key claims; the **fingerprint** is what
+identifies it.
+
+```bash
+world-builder keys init-user --name "Ada Rider"     # once: prints your fingerprint
+world-builder sign my-alps.ocwpkg --key ~/.config/ocw/keys/user.key
+world-builder keys fingerprint my-alps.ocwpkg        # the fingerprint it carries
+```
+
+Send `my-alps.ocwpkg` and `my-alps.ocwpkg.manifest.json`. When someone opens
+it (World → Change world, `--world`, a link in the browser), a dialog shows
+the world, "signed by 'Ada Rider' (unverified name)" and the full fingerprint
+(16 groups of four hex digits). **Compare it with the owner digit by digit,
+in person or over a channel you trust** (a call, a message you know is
+theirs), then choose *Trust this key* (remembered), *Load once* (until the app
+quits) or *Cancel* (focused). Packages whose signature or files do not match
+are refused outright – no dialog.
+
+Trusted keys are listed in *Settings → Account → Trusted world keys* (remove
+one there) and in the console: `world trust list`, `world trust add
+KEY|FILE` (a `.pub.json`, a package or 64 hex digits), `world trust remove
+FINGERPRINT`. The desktop keeps them in `~/.local/share/ocw/trusted-keys.json`
+(`$OCW_TRUSTED_KEYS`), the browser in its `localStorage`. In a shared ride the
+server needs the key too (`ocw-server --trust-key FILE`); a rider who does not
+trust it leaves the ride when the host switches to that world.
 
 ## Connecting a gamepad
 
@@ -1240,6 +1422,22 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   far canopy. Packages without `FRST` guess the leaf type from land use and
   altitude.
 
+  **Plants, crops and plantations (spec §4.6.1, §14 Phase 8 T8):** the
+  build scripts end with `world-builder vegetation --world PKG --pbf ...`
+  (`OCW_NO_VEGETATION=1` leaves it out): the section `VEGE` with each
+  field's crop (OSM `crop` / `produce` / `trees`, else the region's crop
+  mix per parcel), the rows of vineyards, orchards, banana plantations and
+  avocado groves, and OSM's single trees and tree rows with their species;
+  the trees of `OBST` are renewed. It prints `spot` lines – free-ride
+  `--start X,Z` points beside a road for vineyards, bananas, palms, the
+  forest types, the tree line – for scenes. The client draws about thirty
+  species with their own models (spruce tiers, flat-topped firs, Scots and
+  Canary pines, beeches, maples, larches, fruit trees in blossom, laurel
+  forest, date palms, dragon trees, Teide broom, tabaibas and cardones,
+  agaves, banana plants), vine rows and stands of maize and cereals, all
+  following the seasons, near models up to about 300 m and simple ones
+  beyond.
+
   **Orthophoto corridor (spec §14 Phase 8 T7):** `calibrate` also cuts the
   orthophoto along the package's roads, ±50 m beside the road edges at
   0.5 m per pixel (the source's own size if coarser: 1 m in the Black
@@ -1368,10 +1566,23 @@ package is installed only when all its files match the manifest.
 
 - Without a remembered device the app rides with a **virtual trainer**
   (`--power`, PgUp/PgDn, `sim.power`). Bluetooth trainers and sensors (FTMS,
-  Cycling Power, Cadence, Heart Rate, Wahoo trainers): `devices.scan`,
-  `devices.connect N`; connected devices are remembered
-  (`~/.config/ocw/devices.toml`) and reconnected at the next start
+  Cycling Power, Cadence, Heart Rate, Wahoo trainers) are paired in the menu
+  (below) or with `devices.scan`, `devices.connect N`; connected devices are
+  remembered (`~/.config/ocw/devices.toml`) and reconnected at the next start
   (`--virtual` ignores them).
+- **Pairing a trainer from the menu:** Esc → *Settings* → *Trainer* →
+  *Devices* → *Scan for devices*. The trainers and sensors in range show up
+  while the scan runs (10 s; *Stop the scan* ends it early), with their role
+  and signal. Choose one, then *Connect*: the device page says *connecting*,
+  *connected* or why it failed (not found: wake the trainer up by pedalling,
+  and close other apps that hold it – a trainer takes one connection). Once
+  it is connected it replaces the virtual trainer and is written to
+  `devices.toml` (or the file `--devices-file` names), so the next start
+  connects it by itself. *Disconnect and forget* on the device page removes
+  it. In the browser the page has *Add a trainer* etc. instead of the scan:
+  the browser's own list, remembered in the page's `localStorage`.
+  `scripts/test-devices-menu.sh [shot|shot-wayland] DIR` walks this page
+  headless with the real Bluetooth stack (own config dir; screenshots in DIR).
 - Trainer control: **SIM** (default; the trainer simulates the road's
   gradient, scaled by `trainer.difficulty`, default 50 %), **ERG** (holds a
   power: `erg.target 200`), or `trainer.mode off`.
@@ -1420,7 +1631,7 @@ video). The files carry it too: screenshots are JPEG (quality 90) with EXIF
 `tEXt` chunks `Creation Time` and `Software`); videos have `creation_time`
 (UTC) and the build in `comment` (`ffprobe -show_format`, `exiftool`).
 
-**FPS counter:** `fps on` (console), *Settings → Display* or `set display.fps
+**FPS counter:** `fps on` (console), *Settings → Display → Graphics* or `set display.fps
 on` shows a small green badge at the top right, e.g. `58 fps  max 21 ms`: the
 frames the app really drew in the last second (wall clock) and the longest of
 them. It is off for riders by default and on in every test picture and video
@@ -1441,8 +1652,35 @@ event group [--watts W] [--bots N]          # bots hold W (default 150) and regr
 event tt [--laps N | --km X]                # alone, no drafting, against your best effort
 event race --physics open                   # race mode: open | profile (default) | equal
 event race --weather thunderstorm           # the organiser's weather, fixed for the event
+event race --aids on --chaotic-bots on      # the organiser's rules (below)
 event status | event cancel | event dismiss
 ```
+
+- **The organiser's rules** (spec §14 Phase 12 K6): you start the event, so
+  you set its rules; nobody can change them until it is over. All of them
+  work for `race`, `group` and `tt`:
+
+  | Option | Rule (default) |
+  |---|---|
+  | `--collisions off\|soft\|full` | collisions (group rides soft bumps only, races the full model) |
+  | `--damage on\|off` | damage (your `ride.damage`) |
+  | `--aids on\|off` | the riding aids – the last-moment warning, the proximity arrow and bell – allowed (not in races, else yes) |
+  | `--chaotic-bots on\|off` | bots that make mistakes (your `ride.chaotic_bots`) |
+  | `--neutral-service [--service-s S]` | a spare bike for a broken one (else DNF), a 30 s stop restores the bike; S: the wait for a spare wheel or bike (a puncture 30 s, a spare bike 60 s) |
+  | `--dnf-injured` | a badly injured rider is DNF |
+  | `--time-limit MIN` | time limit after the winner, 0.5–120 min (2 min or a quarter of the winner's time) |
+
+  The menu's *Ride* items use the page **"Start the event?" → Organiser
+  rules** (collisions, damage, riding aids, chaotic bots, neutral service,
+  DNF when badly injured; `auto` = the default); the console options win
+  over it. The rules show on the start line and under the results
+  ("Rules: collisions on, damage off, riding aids not allowed"), and a DNF
+  row says why (badly injured, bike broken, over the time limit, left).
+- **Animations** (spec §2.6): riders put a foot down when they stop (the
+  start formation shows it) and clip back in when they ride off, corner
+  with the head and the inside knee, look over the shoulder before a free
+  ride U-turn and hold the inside foot out in the loop, throw the bike at
+  the line, sit up after the finish – and the winner raises both arms.
 
 - Everyone (you and the bots) lines up in the start formation behind the
   start line - at the start / finish arch on a loop, at the beginning of a
@@ -1473,7 +1711,20 @@ event status | event cancel | event dismiss
 
 - Every ride is recorded and saved as a FIT file when the app closes (rides of
   at least a minute) or with `ride.save`: `~/.local/share/ocw/rides/`
-  (`--record false` turns it off). The FIT file has a lap at each workout
+  (`--record false` turns it off).
+- **Training history** (spec §14 Phase 7; *Navi → Training history*): every
+  saved ride also goes into the riding rider's history,
+  `~/.local/share/ocw/history/<rider>.json`: date, world and route, distance,
+  time, climbing, average and normalized power, heart rate, kJ, hearts,
+  crashes and damage, the workout, the power curve (5 s – 60 min) and the
+  climbs. The pages show the rides (newest first; a ride's page has its
+  power curve as a chart against your bests, its climbs and *Export the FIT
+  file*, to the downloads folder), the weekly and monthly totals and your
+  personal bests. *Import saved rides* (`history.import`) adds older FIT
+  files of the rides folder. Console: `history`, `history.show N`,
+  `history.bests`, `history.export N [--to DIR]`. The browser keeps its
+  history in `localStorage` (`ocw-history`); its FIT files can be
+  downloaded again only while the page is open. The FIT file has a lap at each workout
   step (start, step change, end, stop) and at an event's start, each event
   lap and your finish, so Strava and analysis tools show them as laps.
 - Strava (optional; interim direct upload until the backend exists): create a
@@ -1566,8 +1817,15 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `ride.proximity_cue` | on / off (off): a soft bell and a HUD arrow pointing at someone within 1 m beside or 2 m in front or behind (an aid; it never steers); Settings → Controls → Riding aids | at once |
 | `ride.hit_warning` | on / off (on): the "last moment" warning – an amber triangle about a second before a predicted hit and when the tyres slide on a wet road (it never steers); Settings → Controls → Riding aids | at once |
 | `display.camera_shake` | on / off (on): the chase camera shakes briefly after a crash or a hard bump (off for motion comfort; console `camera.shake`) | at once |
+| `display.ui_scale` | 100 to 200 (100): the HUD's size in % (console `ui.scale`); Settings → Display → Accessibility | at once |
+| `display.palette` | standard / colour-safe (standard): status colours for red-green colour blindness (console `ui.palette`) | at once |
+| `display.high_contrast` | on / off (off): opaque HUD panels with white text (console `ui.contrast`) | at once |
+| `display.reduced_motion` | on / off (off): no camera shake, no flashing warnings (console `ui.motion`) | at once |
+| `controls.pad_confirm` | south / east (south): the gamepad's Confirm button in the menu; Back is the other | at once |
+| `keys.<action>`, `pad.<action>` | a key name (`A`, `Up`, `PageUp`, `F5`, `Num+`, `Shift+M`, `none`) / a pad button (`South`, `East`, `North`, `West`, `LB`, `RB`, `Select`, `L3`, `R3`, `DPadUp` …, `none`): the bindings (`bind` lists the actions) | at once |
 | `ride.damage` | on / off (off): damage – hits hurt the rider and damage the bike (only with collisions on; carried over to the next ride, repairs in the workshop; in a shared ride the host decides, `ocw-server --damage`); Settings → Controls | at once |
 | `display.damage` | on / off (on): the damage indicator in the HUD (console `hud.damage`; the effects stay when hidden) | at once |
+| `display.gps` | on / off (on): the GPS line in the HUD, bottom left (console `hud.gps`; world packages and route files only) | at once |
 | `weather.physics` | on / off (on): the weather changes the physics – wind, air density, wet and icy roads; the trainer gets the wind (in shared rides the host decides, in events the organiser); World → Weather → Custom | at once |
 | `audio.master` | 0 to 100 (80): master volume in %, scales every bus | at once |
 | `audio.effects` | 0 to 100 (80): game sounds (bike, wind, tyres, menu, event and workout cues) | at once |
@@ -1673,7 +1931,7 @@ model.
 Manage them in the in-game menu (Esc / Start): the workshop's mirror corner
 (or `menu workshop-page`) chooses the rider and opens their *Bike* page (the bike, its physics numbers, frame / jersey /
 helmet colour and kit, all with ← / →),
-*Settings → Riders* edits them (weight, height, FTP with ← / →; add, delete),
+*Settings → Account → Rider profiles* (or *Workshop → Edit riders*) edits them (weight, height, FTP with ← / →; add, delete),
 and the other *Settings* pages (Controls, Trainer, Audio, Display, Voice; the
 Strava account page is under *Navi → Strava*, also reachable as a tab) change the
 settings above with ← / → (D-pad) and Enter (A); Q / E (LB / RB) switch between
@@ -1875,13 +2133,25 @@ free for non-commercial use) instead, which needs no account.
 
 Open the console with `` ` `` or F12; `help` lists the commands, `help NAME`
 shows one. *Dev* commands need the in-process local server (always the case
-for now).
+for now). ↑ / ↓ go through the history, Esc closes the console.
+
+**Tab completes** the word before the cursor, in the desktop and the browser
+app (spec §2.9): command names, subcommands, `--flags` and the values a command
+knows – setting keys and values (`set display.u` Tab → `set display.units `,
+Tab again → `imperial` / `metric`), world ids (`world switch`), weather presets,
+fields and data sources, time presets, `camera.path` actions and saved paths,
+quality levels, `help COMMAND`. One candidate is inserted with a space after
+it. Several: their common beginning is inserted and they are listed under the
+input line; each further Tab inserts the next one (Shift+Tab the previous),
+typing anything ends the list. Names with spaces go in quotes. Only commands
+you can run are offered (no *Dev* commands on a remote server).
 
 | Command | What it does |
 |---|---|
 | **General** | |
 | `help [COMMAND]` | List commands, or show help for one |
 | `console [open\|close\|toggle]` | Open, close or toggle the console |
+| `console input TEXT`, `console tab` | Type TEXT into the console's input line; press Tab (completion from scripts and tests) |
 | `clear` | Clear the console output |
 | `echo TEXT` | Print text |
 | `exec FILE` | Run the commands in a file, one per line |
@@ -1891,6 +2161,7 @@ for now).
 | `set [--temp] KEY VALUE` | Change a setting and save it in `settings.toml` (`--temp`: this session only); see [Settings](#settings-and-rider-profiles) |
 | `get [KEY]` | Show all settings with where their value comes from, or one with its range and description |
 | `hud.profile [on\|off]` | Show or hide the elevation profile of the road ahead (bottom left; on by default) |
+| `hud.gps [on\|off]` | Show or hide the GPS line (bottom left, under the profile; on by default; setting `display.gps`) |
 | `screenshot [PATH]` | Save a screenshot of the window (default `screenshot.jpg`: JPEG quality 90 with its time in EXIF; a `.png` path gives PNG) |
 | `reset` | Start everything again as at program start (key R); the ride is saved first |
 | `video [start\|stop\|toggle]` | Record the window as an MP4 (key V; needs `ffmpeg`) |
@@ -1956,7 +2227,7 @@ for now).
 | `bikes.buy FRAME [--with PART]...` | Buy a frameset as a new bike on a new hook (base parts); `--with`: a complete build at the sum of the prices |
 | `bikes.sell ID` | Sell a bike bought at the bench (the frameset's and its parts' refunds; not a starter bike, not the last one) |
 | `bikes.hang ITEM` | Hang a spare frameset from the shelf on a new hook, as a bike with the base parts |
-| `rider.gps` | Your rider's GPS position (also bottom-left in the HUD; route files and world packages only), with a copyable `lat, lon` line |
+| `rider.gps` | Your rider's GPS position (also bottom-left in the HUD; route files and world packages only; also in the browser), with a copyable `lat, lon` line |
 | `teleport KM` | *Dev:* move your rider to a distance on the route (free ride: along the path, taking default exits). On a route that ends, a distance past the end moves you to the end, where riders stop, and the reply says so; a loop takes any distance (laps on) |
 | `teleport.xz X Z` | *Dev:* free ride: move to the road nearest local x / z metres |
 | `ride.turn left\|right\|straight\|default\|+\|-\|N` | Free ride: choose the exit at the next junction |
@@ -1984,7 +2255,7 @@ for now).
 | `world info` | The world ridden now: package, area, elevation, data sources with their notices, routes, time zone, sun and twilight times |
 | `world switch N\|ID\|NAME\|PATH` | Ride another world without restarting (its first route, else a free ride; a test route: `hills`, `loop`); in a shared ride the host asks the server |
 | **Events** (spec §2.3) | |
-| `event race [--laps N\|--km X] [--bots N] [--physics MODE] [--weather W...] [--weather-physics on\|off] [--damage on\|off] [--dnf-injured] [--neutral-service]` | Race from the start formation to the finish (default 1 lap / 5 km; the organiser's damage rules – damage on or off, DNF when badly injured, neutral service: a spare bike and a 30 s service stop (spec §14 Phase 12E), also for `group` and `tt`; MODE: `profile` – the default, only the frame's profile counts –, `open` – parts count, capped –, `equal`; W: the organiser's weather – `PRESET [FIELD=VALUE...]`, `custom FIELD=VALUE...`, `random SEED`, `auto SEED` –, fixed for the event; also for `group` and `tt`) |
+| `event race [--laps N\|--km X] [--bots N] [--physics MODE] [--weather W...] [--weather-physics on\|off] [--damage on\|off] [--dnf-injured] [--neutral-service] [--service-s S] [--collisions off\|soft\|full] [--aids on\|off] [--chaotic-bots on\|off] [--time-limit MIN]` | Race from the start formation to the finish (default 1 lap / 5 km; the organiser's rules (spec §14 Phase 12 K6, see *Events*): collisions, riding aids, chaotic bots, the time limit, the neutral service's wait S; the organiser's damage rules – damage on or off, DNF when badly injured, neutral service: a spare bike and a 30 s service stop (spec §14 Phase 12E), also for `group` and `tt`; MODE: `profile` – the default, only the frame's profile counts –, `open` – parts count, capped –, `equal`; W: the organiser's weather – `PRESET [FIELD=VALUE...]`, `custom FIELD=VALUE...`, `random SEED`, `auto SEED` –, fixed for the event; also for `group` and `tt`) |
 | `event group [--watts W] [--bots N] [--physics MODE]` | Group ride: bots hold the pace and regroup (default mode `profile`) |
 | `event tt [--laps N\|--km X] [--physics MODE]` | Time trial alone against your ghost (default mode `open`) |
 | `event status` | The event, your HUD lines and the standings |
@@ -2020,13 +2291,20 @@ for now).
 | `workout skip` | Skip to the next step |
 | `workout pause\|resume` | Pause / resume the workout clock by hand |
 | `workout status` | Step, target, time left, next step |
-| `devices.scan` | Scan for Bluetooth trainers and sensors (in the background) |
-| `devices.connect N\|ID` | Connect a device from the last scan, and remember it |
-| `devices.list` | Running and remembered devices |
-| `devices.forget ID\|all` | Forget a remembered device (from the next start) |
+| `devices.scan [SECONDS] [--stop]` | Scan for Bluetooth trainers and sensors (in the background, 10 s; each is listed as it appears; `--stop` ends it) |
+| `devices.connect N\|ID` | Connect a device from the last scan; remembered once it connected |
+| `devices.list` | Running, remembered and found devices |
+| `devices.forget ID\|NAME\|all` | Disconnect and forget a device |
 | `devices.virtual` | Start an additional virtual trainer |
 | **Rides and Strava** | |
 | `ride.status` | The current recording |
+| `history` | The training history: this week, this month, the rides (numbered, newest first) |
+| `history.show N` | A ride in full (power curve, climbs) |
+| `history.bests` | Personal bests: the power curve 5 s – 60 min, the climbs |
+| `history.export N [--to DIR]` | Copy a ride's FIT file to the downloads folder (browser: download it again) |
+| `history.import` | Add the saved FIT files that are in no history yet to the riding rider's |
+| `bind [ACTION [KEY \| BUTTON --pad]] [--capture] [--reset]` | Show or change the key and button bindings |
+| `ui.scale P`, `ui.palette standard\|colour-safe`, `ui.contrast on\|off`, `ui.motion on\|off` | The accessibility options (the settings `display.*` run them) |
 | `ride.save` | End the ride, save it as FIT (and upload if Strava is linked); a new recording starts |
 | `ride.switch --route NAME \| --route-file FILE \| --world PKG [--free-ride] [--start X,Z] [--route NAME\|FILE] [--route-gpx FILE]` | Ride something else without restarting (the ride so far is saved, devices stay connected) |
 | `ride.restart` | Start the current ride again in the app (R after a switch) |
@@ -2063,7 +2341,7 @@ your progress.
   the workout ends or is stopped. With a power meter or a trainer without
   control the targets are guidance only. The virtual trainer holds the ERG
   target while its power is above 0.
-- **FTP:** targets in % FTP use the riding profile's FTP (Settings → Riders,
+- **FTP:** targets in % FTP use the riding profile's FTP (Settings → Account → Rider profiles,
   `riders.edit NAME --ftp W`); `--ftp W` on the command line overrides it;
   without either, 200 W.
 
@@ -2108,6 +2386,99 @@ twice is a step. The `MINUTES WATTS` / `MINUTES PERCENT` header line decides
 the unit (without it: the file extension). Comments (`;`, `#`), blank lines,
 CRLF and extra columns are accepted; distance-based (slope) courses are not
 workouts and are refused. FIT workout files are not imported yet.
+
+## Accounts and sign-in
+
+Riding needs no account: without one you ride anonymously (in the browser
+with the plain bike and character). Signing in keeps an **Open Cycling World
+account** across devices (spec §9.1). You sign in with **Google** or
+**Strava**; OCW's own accounts server brokers the sign-in and keeps only your
+name, the provider's account id (and your e-mail with Google). One account
+can have both linked.
+
+**Settings → Account** (console: `account …`):
+
+- *Sign in with Google* / *Sign in with Strava*: the desktop app opens your
+  browser; after the sign-in the browser tab says you can close it and the
+  page shows *Signed in as …*. In the browser app the page goes to the sign-in
+  and comes back.
+- *Sign in with a code (kiosk)*: for a kiosk, a trainer PC without a keyboard
+  or a headset. The page shows a URL and a code like `BCDF-GHJK`; open the URL
+  on your phone, check that the code matches, sign in there.
+- Signed in: *Link Strava* / *Link Google* adds the other provider to the same
+  account, *Unlink* removes one (never the last), *Sign out* ends the sign-in
+  on the server too. Strava asks whether OCW may upload activities: allow it
+  and the later Strava upload needs no second consent.
+- `account status`, `account export ocw-account.json` (your data as JSON),
+  `account delete --yes` (deletes the account; needs a sign-in in the last
+  15 minutes), `account cancel`.
+
+The desktop keeps the sign-in in the system keyring (Secret Service on
+Linux, the Keychain on macOS, the Credential Manager on Windows), or in a
+private file `~/.config/ocw/account.json` (mode 0600) when no keyring answers,
+and renews it in the background. On a shared ride (`--server`) the server
+gets your account's name. Until OCW's public accounts server exists, name one:
+`ocw-desktop --account-server https://accounts.example.org` (or
+`OCW_ACCOUNT_SERVER`); the browser app takes the page option
+`auth=https://accounts.example.org`. Without one, sign-in is off.
+`OCW_OPEN_URL="firefox --new-window"` chooses the browser the desktop opens.
+
+### Running the accounts server
+
+The accounts server is part of `ocw-server` (crate `services/accounts`). It
+speaks OpenID Connect towards the apps (`/.well-known/openid-configuration`,
+`/authorize`, `/token`, `/jwks`, `/device_authorization`, `/revoke`,
+`/userinfo`, `/account/…`), so Keycloak or Authentik could replace it later.
+
+**Try it locally with fake providers** (no registration, every sign-in
+succeeds as a test user; never for real riders):
+
+```bash
+cargo run -p ocw-server -- --auth-dev 127.0.0.1:8480 --bots 0
+cargo run -p ocw-desktop -- --account-server http://127.0.0.1:8480
+# With a shared ride on the same server (tokens checked in the hello):
+cargo run -p ocw-server -- --auth-dev --listen 127.0.0.1:47800 --bots 3
+cargo run -p ocw-desktop -- --account-server http://127.0.0.1:8480 --server 127.0.0.1:47800 --insecure-dev
+```
+
+`--auth-dev-web http://127.0.0.1:8000/` also allows the browser app served
+there (`make web-serve`, page `?auth=http://127.0.0.1:8480`).
+
+**Going live** needs, from the operator:
+
+1. **A public HTTPS domain** for the accounts server, e.g.
+   `accounts.example.org`, with a TLS reverse proxy (Caddy, nginx) in front of
+   the server's `listen` address (default `127.0.0.1:8480`). This URL is the
+   `issuer`.
+2. **A Google OAuth client:** Google Cloud Console → *APIs & Services* →
+   *OAuth consent screen* (app name Open Cycling World, scopes `openid`,
+   `profile`, `email`) → *Credentials* → *Create credentials* → *OAuth client
+   ID* → type **Web application**; *Authorized redirect URI*
+   `https://accounts.example.org/callback/google` (exactly). Note the client
+   id and secret.
+3. **A Strava API application:** <https://www.strava.com/settings/api>;
+   *Authorization Callback Domain* `accounts.example.org`. The server's
+   redirect URI is `https://accounts.example.org/callback/strava`. Note the
+   client id and secret. Strava's default limits (200 requests per 15
+   minutes, 2,000 per day) are respected by the server.
+4. **The configuration:** `cp services/accounts/accounts.example.toml
+   config/accounts.toml` (git-ignored), fill in `issuer`, the `[google]` and
+   `[strava]` ids and secrets, and for the browser app its page under
+   `[[clients]] id = "ocw-web"` (`redirect_uris`, `origins`). Signing keys,
+   the account store and the key that encrypts Strava's tokens are created
+   on first start under `config/accounts/` (mode 0600; back them up, never
+   commit them).
+5. **Run it:** `ocw-server --auth-config config/accounts.toml --listen …`
+   (the game server checks the tokens with the same keys). A game server
+   elsewhere checks them with `--auth-issuer https://accounts.example.org`;
+   `--auth-required` refuses anonymous riders.
+
+Redirect URIs at a glance: Google `https://<domain>/callback/google`, Strava
+callback domain `<domain>`; the desktop app uses a loopback redirect
+`http://127.0.0.1:<any port>/callback` (nothing to register), the browser app
+its exact page, kiosks the device code (`https://<domain>/device`). Accounts
+are kept in one private JSON file for now (`[storage] kind = "file"`);
+PostgreSQL follows with the hosted backend.
 
 ## Running the server
 
@@ -2161,6 +2532,72 @@ ocw-desktop --server 127.0.0.1 --insecure-dev     # server on the same machine o
   the HUD says so ("Disconnected: …"); restart the app to reconnect.
 - The server runs until Ctrl+C (or SIGTERM), then closes all connections
   ("server shutting down"); `--seconds S` stops it earlier.
+
+### Join links: Ride → Join
+
+A **join link** names a server in one line to share (spec §6.2 *Join links*):
+
+```text
+ocw://HOST[:PORT]?cert=SHA256HEX[&world=ID[@VERSION]][&route=NAME][&name=TEXT]
+```
+
+- `ocw-server --listen` prints it at start (one per address of the machine, with its world and route), above the `Clients connect with` line; the kiosk writes it to `~/.local/state/ocw/server-connect.txt` (`ocw-kiosk.sh status` shows it).
+- **In the app:** menu → **Ride → Join a ride**: paste the link (Ctrl+V / ⌘V, or the *Paste link* row) or type it (Enter on *Link* starts typing, Enter or Esc ends; on a gamepad ↑ / ↓ turn the character at the cursor, ← / → move, B deletes, A ends), then *Join*. The last five servers are listed below; Enter joins one again.
+- **On the command line:** `ocw-desktop --join 'ocw://ride.example.org?cert=3f9a…c2'`; in the console `join LINK`, `join` (the recent servers), `join 2` (the second of them), `leave`.
+- Also accepted: the WebTransport form `https://HOST:PORT?cert-hash=HEX` (the desktop joins it too), a bare `HOST[:PORT]` with the fingerprint in its own field, and a pasted `ocw-desktop --server HOST:PORT --server-cert HEX` line.
+- **What happens:** the app connects in the background (your ride goes on), learns the server's world and route, loads them from the installed worlds and then switches to the shared ride. If the world is not installed, it says so (with `world=MANIFEST-URL` in the link: `--fetch-world URL`). A timeout (10 s), a certificate that is not the link's, a refusal (sign in first: Settings → Account) or another version of the world keep your ride and show the reason on the Join page.
+- **Security:** a link without `cert=` works only for this machine (`localhost`, `127.0.0.1`, `::1`); for anything else the fingerprint is required, so nobody in between can pretend to be the server.
+- **Leave shared ride** (Ride page, while joined) rides on alone on the same world and route.
+- **In the browser** the same page joins WebTransport servers (`https://…?cert-hash=…` links; the page starts again on the shared ride). An `ocw://` link says it needs the desktop app; the page option `?join=LINK` joins at the start.
+
+### Hosting from the menu: Ride → Host a ride
+
+The desktop app can host a shared ride itself – no separate server binary:
+
+1. menu → **Ride → Host a ride**: the **world** (the installed worlds and the test routes), the **route** (or free ride), **date and time** (real time, or a time machine preset and a few days on), the **weather** (simulated, real, or a preset), the **options** (bots 0–20, default 5; whether everyone may change time and weather; the UDP port, default 47800) and a **summary** with *Start hosting*;
+2. the app opens UDP `0.0.0.0:47800` (QUIC) with a certificate kept in `<data dir>/ocw/host-tls` (the fingerprint and link stay the same across restarts), loads the course and rides on its own server as the host;
+3. the Ride page shows **Hosting – N riders**, **Show join link** (the links with the machine's addresses, *Copy link*) and **Stop hosting**.
+
+Others join with the link (Ride → Join). On the LAN that is all; from the internet the router needs a forwarding of UDP 47800 to this computer, and the firewall must let UDP 47800 in (see the next section). A port in use – usually another server on this machine, such as the kiosk's – is reported with the offer to join it instead (`join ocw://localhost:47800`). *Stop hosting* closes the server (the others see "server shutting down") and you ride on alone on the same world, route, time and weather. Console: `host start [--world ID] [--route NAME] [--time real|PRESET] [--weather PRESET] [--bots N] [--port P]`, `host status`, `host copy`, `host stop`, and `host.plan …` for the wizard's steps. Browsers cannot open a server port: there the entry is dimmed.
+
+### Riding on a server on the internet
+
+The desktop app connects to any `ocw-server` it can reach over UDP, whether on your LAN, a rented server or a home machine behind a router. Below, *server* means the machine running `ocw-server`, and *rider* means everyone running `ocw-desktop`.
+
+**On the server:**
+
+```bash
+# A fixed certificate (the same fingerprint after restarts) and the port open for UDP.
+cargo run --release -p ocw-server -- --listen 0.0.0.0:47800 --tls-dir ~/.local/share/ocw-server \
+    --world /srv/ocw/tenerife.ocwpkg --route puerto-de-la-cruz-teide --bots 5
+sudo ufw allow 47800/udp          # or your firewall's equivalent
+```
+
+- **The fingerprint.** At start the server prints its TLS certificate's SHA-256 fingerprint, its **join link** (`ocw://HOST?cert=…&world=…&route=…`, see [Join links](#join-links-ride--join)) and the exact client command (`Clients connect with: ocw-desktop --server HOST:47800 --server-cert …`). Give the riders the link (or that line), with the host replaced by the server's public name or address. With `--tls-dir` the fingerprint stays the same across restarts.
+- **Behind a home router:** forward **UDP 47800** to the server machine (port forwarding / "virtual server" in the router), and use the router's public address or a dynamic-DNS name as `HOST`. It is UDP only (QUIC); no TCP port is needed.
+  - Some internet lines (CGNAT, many mobile and some fibre lines) cannot accept incoming connections at all. Use IPv6 if both sides have it (`--listen [::]:47800`, `HOST` = the server's IPv6 address in brackets), or a small rented server or VPS.
+- **The course:** the server rides one world and route (`--world`, `--route`) or a test route (`--test-route loop|hills`). Riders must give the same; the server refuses a mismatch with a message saying what it rides.
+- **Sign-in (optional):** with an accounts server (see [Running the accounts server](#running-the-accounts-server)), `--auth-issuer https://accounts.example.org` checks riders' sign-in and `--auth-required` refuses anonymous riders.
+
+**On each rider's computer:**
+
+```bash
+ocw-desktop --server ride.example.org:47800 --server-cert 3f9a6c0e…c2 \
+    --world tenerife.ocwpkg --route puerto-de-la-cruz-teide
+```
+
+- **`--server HOST[:PORT]`:** a DNS name, an IPv4 address or `[IPv6]:PORT`; the port defaults to 47800.
+- **`--server-cert`:** the fingerprint the server printed. The app accepts only that certificate, so nobody in between can pretend to be the server. `--insecure-dev` (no check) works only for `127.0.0.1` / `::1`.
+- **The world:** each rider needs the same world package on their own disk. Fetch it from a world server with `--fetch-world https://…/manifest.json` (see [Hosting your own world server](#hosting-your-own-world-server)), or copy the `.ocwpkg` and its manifest. Packages signed by an unknown key open the trust dialog first.
+- **Sign-in:** when the server asks for it, sign in under **Settings → Account** first. The app's accounts server is set with `--account-server https://accounts.example.org`.
+- **To always join the same server,** put the options into `ocw-desktop.args` next to the executable (separated by spaces or newlines, `#` comments; see the default arguments above). The kiosk does it this way.
+- **If it doesn't connect:**
+  - `connection timed out` means no UDP reached the server: check the firewall, the router's port forwarding and the address;
+  - **use the server's real address** from other machines: its LAN IP, or a name that resolves to it there. `localhost` and `127.0.0.1` only work on the server itself. On Debian, `/etc/hosts` maps a machine's own host name to `127.0.1.1`, so check what a name resolves to (`getent hosts NAME`);
+  - a certificate error means the server's certificate is not the pinned one, because it changed: get the new fingerprint, or use `--tls-dir` on the server;
+  - `world package mismatch: the server rides …` means your package or route differs from the server's.
+
+  Voice chat is separate (LiveKit, see [Voice chat](#voice-chat)) and needs its own server address.
 
 ### Browser riders (WebTransport)
 
@@ -2404,6 +2841,101 @@ test changes no firewall: if a bot gets no answer, it reports that UDP 47800
 on the server machine seems blocked from that machine – open it there for
 UDP to fix it.
 
+### Hosting your own world server
+
+A world server is a **static HTTPS file server**: nginx, Caddy, Apache, an S3-style bucket or GitHub Pages (up to 1 GB). OCW needs no program of its own on the server. The desktop app downloads packages from it into its cache. The browser app streams them tile by tile.
+
+The server needs to:
+
+- **Serve HTTPS.** Browsers need it; the desktop also accepts `http://` and plain directories.
+- **Answer HTTP range requests** (`Accept-Ranges: bytes`, `206 Partial Content`). The desktop resumes interrupted downloads with them, and the browser fetches single tiles with them.
+- **Send CORS headers if browser riders open the app from another site**, for example the public preview at `newkit.github.io`:
+  - `Access-Control-Allow-Origin: *` (or the app's origin);
+  - `Access-Control-Allow-Headers: Range`;
+  - `Access-Control-Expose-Headers: Content-Range, Accept-Ranges, Content-Length`.
+
+  When the app and the worlds come from the same server, no CORS is needed.
+- **Not transform the files.** Gzip on the fly breaks byte ranges. The packages are already compressed where it helps, so turn compression off for `.ocwpkg`.
+
+**1. A package.** Build one with `world-builder package …` (see [World builds](#world-builds)) or take one from a [release](https://github.com/newkit/OCW/releases), together with its `*.ocwpkg.manifest.json`.
+
+**2. Your own keys.** A root key certifies a signing key, and the signing key signs the package. Riders trust your root by its public key. Keep `root.key` offline; the secret keys stay in `~/.config/ocw/keys` (`$OCW_KEY_DIR`) and never go on the server.
+
+```bash
+world-builder keys init-root --name "Ada's worlds"                   # once: root.key + root.pub.json
+world-builder keys new-signing --name "ada 2026" --days 365          # a signing key, certified by the root
+world-builder sign --key ~/.config/ocw/keys/ada-2026.key tenerife.ocwpkg
+world-builder verify tenerife.ocwpkg --trust-root ~/.config/ocw/keys/root.pub.json
+```
+
+**3. Publish into the server's directory.** `world-builder publish` writes the layout the apps expect:
+- `worlds/<id>/<version>/manifest.json`;
+- `worlds/<id>/<version>/<package>.ocwpkg`;
+- `worlds/<id>/latest`, which holds the newest version number.
+
+Run it once per package. A new version goes next to the old one, and `latest` moves.
+
+```bash
+world-builder publish tenerife.ocwpkg --out /srv/ocw/worlds
+# /srv/ocw/worlds/europe/spain/tenerife/8/manifest.json, …/tenerife.ocwpkg, …/tenerife/latest
+```
+
+**4. Serve it.** A minimal Caddy site (`/etc/caddy/Caddyfile`), with HTTPS certificates from Let's Encrypt. Range requests are built in:
+
+```caddyfile
+worlds.example.org {
+	root * /srv/ocw
+	file_server
+	header /worlds/* {
+		Access-Control-Allow-Origin *
+		Access-Control-Allow-Headers Range
+		Access-Control-Expose-Headers "Content-Range, Accept-Ranges, Content-Length"
+	}
+}
+```
+
+The same in nginx (inside the `server { … }` with your TLS settings):
+
+```nginx
+location /worlds/ {
+    root /srv/ocw;
+    gzip off;
+    add_header Access-Control-Allow-Origin * always;
+    add_header Access-Control-Allow-Headers Range always;
+    add_header Access-Control-Expose-Headers "Content-Range, Accept-Ranges, Content-Length" always;
+    if ($request_method = OPTIONS) { return 204; }
+}
+```
+
+Check it from a shell. The second line must answer `206` with a `Content-Range`:
+
+```bash
+curl -sI https://worlds.example.org/worlds/europe/spain/tenerife/latest
+curl -s -o /dev/null -D - -H 'Range: bytes=0-15' https://worlds.example.org/worlds/europe/spain/tenerife/8/tenerife.ocwpkg | grep -iE '^HTTP|content-range'
+```
+
+**5. Riders: desktop.** Trust your root once, then fetch and ride:
+
+```bash
+mkdir -p ~/.config/ocw/trusted-roots && cp root.pub.json ~/.config/ocw/trusted-roots/ada.pub.json   # or --trust-root root.pub.json
+ocw-desktop --fetch-world https://worlds.example.org/worlds/europe/spain/tenerife/8/manifest.json
+ocw-desktop --world europe/spain/tenerife --free-ride
+```
+
+`root.pub.json` holds only the public key, so you can hand it out freely. Riders should compare its `key_id` with you over a channel they trust.
+
+**6. Riders: browser.** Give the manifest's URL as `world=`, for example `https://YOUR-APP/?world=https://worlds.example.org/worlds/europe/spain/tenerife/8/manifest.json&route=puerto-de-la-cruz-teide`.
+- **Trust in the browser:** a world signed with a key the browser doesn't know opens the **trust dialog**. It shows the claimed signer name (unverified), the key's full fingerprint, the world and its data sources. *Trust this key* remembers the key in this browser, *Load once* loads it for this visit, and *Cancel* is the default.
+- **Your own key:** sign with a user key (`world-builder keys init-user --name "…"`; the signed manifest carries its root) and tell riders your fingerprint (`world-builder keys fingerprint FILE`) over a channel they trust.
+- **On a page served from `localhost`** (`make web-serve`), `trust-root=HEX` still adds a root directly: the `public_key` hex from `root.pub.json`.
+
+**7. Licences.**
+- Packages built from OpenStreetMap contain a Derivative Database under the **ODbL**. Offer the OSM extract the package was built from next to it, as our releases do: a link or the file in the same directory is enough.
+- Keep the attributions of the manifest. The apps show them in the World menu and on the credits page.
+- Elevation and imagery sources have their own notices, listed in each manifest.
+
+**Multiplayer:** a game server that rides a world (`ocw-server --world …`, [Hosting a ride over the network](#hosting-a-ride-over-the-network)) loads the package from its own disk or cache. The world server only delivers packages to the riders.
+
 ## Build infrastructure
 
 OCW is built and tested on dedicated **build machines**, never on the machine
@@ -2441,7 +2973,7 @@ many slots, is set in the [build dashboard](#build-dashboard).
 | Screenshots, videos, scenes, multiplayer and browser tests | [`make test-*`, `drive.sh`, `scripts/render-scenes.sh`](#test-and-media-harness) | `test-output/` with its `index.md` |
 | Release builds | [`scripts/build-appimage.sh`, `build-macos-app.sh`, `prepare-world-release.sh`, `make release-*`](#releases) | `target/…`, GitHub Releases |
 | World packages | [`scripts/fetch-pilot.sh`, `scripts/build-<region>.sh`](#world-builds) | `data/` on the build machine |
-| The art project (OCW Build Diary) | `make art-*` | see [art/ART-PROJECT.md](art/ART-PROJECT.md) |
+| The art project (OCW Build Diary) | its own repository, [newkit/OCW-ART](https://github.com/newkit/OCW-ART) (a checkout next to this one) | OCW-ART's `build-history/` and its release `build-history` |
 
 **Where the configuration and the results live** (all git-ignored; in a git
 worktree the tools read the main checkout's `config/` and write the main
@@ -2926,6 +3458,27 @@ deploys. Environment:
 | `OCW_WORLD_DATA` | Folder with `pilot/`, `blackforest/`, `tenerife/` on the machine (default: `data/` of the deploying checkout) |
 | `OCW_DEPLOY_DIR` | Install directory (default `/var/tmp/ocw`; for testing the script) |
 
+**Machine-local kiosk arguments** go into `/var/tmp/ocw/kiosk-local.args` on that machine, one option per line. Every deploy keeps the file and appends it to `ocw-desktop.args`. On marge it holds `--devices-file /tmp/ocw/kickr/devices.toml`, so the kiosk rides the **Wahoo KICKR**: with a devices file there, the deploy leaves out the show mode's virtual trainer (`--virtual`, `--power`).
+
+**The kiosk's game server.** The deploy also installs `ocw-server`. The kiosk then starts it first, with the same world and route as the app (read from `ocw-desktop.args`), 10 bots, UDP **47800** and a certificate kept in `~/.local/state/ocw/server-tls`, so its fingerprint stays the same across deploys. Then it runs the app as the server's first rider (`--server 127.0.0.1:47800 --insecure-dev`). Other riders join the kiosk's ride over the network (see [Riding on a server on the internet](#riding-on-a-server-on-the-internet)) with the line the server printed. `ocw-kiosk.sh status` shows it:
+
+```bash
+/var/tmp/ocw/ocw-kiosk.sh status          # … game server: running; riders join with:
+                                          #   ocw-desktop --server marge:47800 --server-cert 3f9a…
+```
+
+**If a game server already runs on the machine** (one started by hand, for example), the kiosk does not start another: when the UDP port is in use it joins that server (`--server 127.0.0.1:47800`). The server must ride the kiosk's world and route, or the app is refused with a message. A new build, or a crash of the server or the app, restarts both. If the server does not come up within 3 minutes, the app rides alone as before. These go into the kiosk's environment (its autostart entry):
+
+| Variable | Effect |
+|---|---|
+| `OCW_KIOSK_SERVER=0` | No game server: the app rides alone on its local server |
+| `OCW_KIOSK_SERVER=join` | Never start a server: wait for one on the port and join it |
+| `OCW_KIOSK_LISTEN` | The server's address and UDP port (default `0.0.0.0:47800`) |
+| `OCW_KIOSK_BOTS` | Bots on the server (default 10) |
+| `OCW_KIOSK_SERVER_ARGS` | More `ocw-server` options, e.g. `--auth-issuer https://…` |
+
+The server's log is `~/.local/state/ocw/server.log`. Open UDP 47800 in the machine's firewall for riders on other machines.
+
 **Setting up a kiosk**, once, as the user of the machine's desktop session (in
 a terminal on that desktop, not over SSH), after the first deploy:
 
@@ -3003,21 +3556,21 @@ All test runs execute on the build machines (`scripts/remote.sh MACHINE run
   videos of agent worktrees (default: every `.claude/worktrees/*`) into the
   main checkout's `test-output/` and its `index.md`; run it after each agent
   or merge. It never overwrites, so running it again is harmless.
-- **The art project** (`make art-collect`, `art-gather`, `art-sheets`, `art-render`,
-  `art-diary`, `art-publish`): a video per build day from all of this; see
-  [art/ART-PROJECT.md](art/ART-PROJECT.md).
+- **The art project**, the OCW Build Diary: a video per build day from all of
+  this. It has its own repository, [newkit/OCW-ART](https://github.com/newkit/OCW-ART):
+  the day scripts, renders, publishing and the hourly collector live and run
+  there, from a checkout next to this one (`../OCW-ART`).
 
 Release builds are published as GitHub Releases (`release/README.md` has the
 build notes); screenshots and videos from development
-are not in the repository: they are stored as one zip per day on the GitHub
-release `build-history`; new test runs land in the git-ignored `test-output/`.
-The art project's local archive is `art/build-history/`: its media are
-git-ignored, and its masked text files are tracked in git (`index.md`,
-`SHA256SUMS`, per day `journal.md`, `journal.json`, `tokens.json`; `make
-art-check`). An hourly systemd user timer collects yesterday and today into
-it. Install it with `make art-install-timer` from the main checkout, check it
-with `make art-timer-status`, and run `sudo loginctl enable-linger $USER` once.
-It is described in `art/ART-PROJECT.md` §5.1.
+are not in the repository: the art project stores them as one zip per day on
+the release [`build-history` of OCW-ART](https://github.com/newkit/OCW-ART/releases/tag/build-history)
+(days 1–4 also still on this repository's release `build-history`, which keeps
+the images of this README); new test runs land in the git-ignored
+`test-output/`. The archive, its hourly collector (a systemd user timer,
+`make install-timer` in OCW-ART) and the masking rules are described in
+OCW-ART's `ART-PROJECT.md`. The collector still writes its status to
+`test-output/build-log/DAY/art.json` here, which the build dashboard shows.
 
 ### Scene harness
 
@@ -3057,8 +3610,8 @@ scenes always run. `--pick` copies the good renders of a folder into
 `test-output/build-history/YYYY-MM-DD/HHMMSS-NAME.jpg|mp4` (images over 600 KB
 are made smaller – JPEG quality ~80, older PNGs a 256-colour palette – with
 their metadata kept; videos over 3 MB are re-encoded with sound and metadata) with one row per
-file in its `index.md` (the scene's description), ready for the zip of the
-GitHub release `build-history`. Look at every image before picking it.
+file in its `index.md` (the scene's description), ready for the art
+project's day zip (OCW-ART). Look at every image before picking it.
 
 ### Releases
 
@@ -3081,8 +3634,9 @@ make version | version-next | version-bump PART=minor   # by hand
 | World packages | marge | `scripts/prepare-world-release.sh OUT_DIR PKG…` (no upload) | `ocw-world-<name>-v<N>.zip` (package, manifest, routes, `LICENSE-DATA.md`, `README.md`) and `<region>-osm-source.zip` (the ODbL offer) |
 
 `release/README.md` keeps the build notes of each release. Screenshots and
-videos from development are not in the repository: they are published as one
-zip per day with an index on the GitHub release `build-history`.
+videos from development are not in the repository: the art project publishes
+them as one zip per day with an index on the release `build-history` of
+[OCW-ART](https://github.com/newkit/OCW-ART).
 
 ### World builds
 

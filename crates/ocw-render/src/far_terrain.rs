@@ -112,6 +112,12 @@ pub fn far_tile_arrays(pkg: &WorldPackage, tile: &Tile, look: &TileLook, keep: K
             .and_then(|p| p.get(c as usize).copied())
             .unwrap_or_else(|| land_colour(c))
     };
+    // The conifers' green from afar by region (spec §14 Phase 8 T8): the
+    // Canary pines lighter and more yellow than spruce and fir.
+    let conifers = crate::flora::far_conifers(ocw_world::flora::FloraRegion::at(
+        pkg.origin.0,
+        pkg.origin.1,
+    ));
     let mut out = MeshArrays::default();
     for k in 0..m {
         for i in 0..m {
@@ -140,7 +146,7 @@ pub fn far_tile_arrays(pkg: &WorldPackage, tile: &Tile, look: &TileLook, keep: K
             // woods bare or coloured), the climatological snow.
             let alt = f64::from(h(i, k));
             let day = look.season.as_deref();
-            let tones = day.map(|d| crate::season::CanopyTones::new(CANOPY, alt, d));
+            let tones = day.map(|d| crate::season::CanopyTones::new(conifers, alt, d));
             let mut trees = 0.0f32;
             let colour = match landuse {
                 Some((lu, cells)) => {
@@ -888,6 +894,7 @@ mod tests {
             crash: None,
             wobble: 0.0,
             damage: None,
+            cue: Default::default(),
         });
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))

@@ -23,12 +23,19 @@
 //! - [`menu`]: the in-game menu's model, pages and rows, [`riders`]: the
 //!   rider profiles, [`recording`]: the ride's FIT recording – shared with
 //!   the browser app since Phase 10 B6.
+//! - [`history`]: the training history (spec §14 Phase 7): the rides,
+//!   weekly and monthly totals, personal bests and the power curve;
+//!   [`bindings`]: the rebindable keys and buttons (M9).
+//! - [`world_trust`]: following the host to a world signed by a user key
+//!   (spec §4.7 *User keys*): load, ask (the trust dialog) or leave.
 //!
 //! No threads, file system or sockets: everything here also builds for
 //! `wasm32-unknown-unknown` (spec §3.5). The apps add the Bevy glue.
 
+pub mod account;
 pub mod aids;
 pub mod audio;
+pub mod bindings;
 pub mod camera_fx;
 pub mod camera_path;
 pub mod client;
@@ -37,7 +44,10 @@ pub mod damage;
 pub mod event;
 pub mod god_state;
 pub mod gps;
+pub mod history;
+pub mod host;
 pub mod input;
+pub mod join;
 pub mod menu;
 pub mod quality;
 pub mod recording;
@@ -50,3 +60,4 @@ pub mod view;
 pub mod voice;
 pub mod weather;
 pub mod workout;
+pub mod world_trust;

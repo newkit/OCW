@@ -56,6 +56,7 @@
 //! range requests, every chunk verified, cached in OPFS, the tiles kept
 //! resident around the rider within a memory budget.
 
+pub mod account;
 pub mod audio;
 #[cfg(target_arch = "wasm32")]
 mod browser;
@@ -67,6 +68,7 @@ mod browser_devices;
 mod browser_voice;
 pub mod devices;
 pub mod god;
+pub mod page_config;
 pub mod plugin;
 pub mod session;
 pub mod settings;
@@ -159,16 +161,21 @@ pub const CANVAS_ID: &str = "#ocw-canvas";
 /// keys: the browser has its own fullscreen).
 pub const WEB_KEYS: &str = "mouse: camera, C: camera reset | ` or F12: console";
 
-/// This build's id: version, commit, profile, "web" and the GPU API
-/// ([`GPU_API`], B7).
+/// This build's id: version, commit, profile, "web", the GPU API
+/// ([`GPU_API`], B7) and "preview" for the public preview (B8a).
 pub fn build_id() -> String {
     format!(
-        "{} web {GPU_API}",
+        "{} web {GPU_API}{}",
         build_id::build_id(
             env!("CARGO_PKG_VERSION"),
             env!("OCW_COMMIT"),
             cfg!(debug_assertions)
-        )
+        ),
+        if cfg!(feature = "preview") {
+            " preview"
+        } else {
+            ""
+        }
     )
 }
 
@@ -208,8 +215,9 @@ fn unescape(value: &str) -> String {
 /// (`dev_page`: localhost) also `allow-unsigned=1`, `trust=dev` and
 /// `trust-root=HEX` (a root public key). A remote server (B3): `server`
 /// (`https://HOST[:PORT]`) and `cert-hash` (its certificate's SHA-256 in
-/// hex, several separated by commas). Unknown keys and bad values are
-/// reported and ignored.
+/// hex, several separated by commas). `origin=LAT,LON` gives the test
+/// route a geographic origin (the GPS line). Unknown keys and bad values
+/// are reported and ignored.
 pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) {
     let mut config = SessionConfig::default();
     let mut warnings = Vec::new();
@@ -292,11 +300,33 @@ pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) 
                 Some(q) => config.quality = Some(q.name().into()),
                 None => bad(),
             },
-            // The page's choice of build (index.html, B7).
+            // The page's choice of build (index.html, B7), and its mark of
+            // a ride reloaded on WebGL 2 after WebGPU failed (ocw-gpu.js).
             ("gpu", _) if matches!(value.as_str(), "webgpu" | "webgl2") => {}
-            // Read below (B3).
-            ("server" | "cert-hash", _) => {}
+            ("webgpu-failed", _) => {}
+            // Read below (B3; the origin after the route; a join link).
+            ("server" | "cert-hash" | "join", _) => {}
+            // The accounts server (spec §9.1; `account`).
+            ("auth", _) => {}
+            ("origin", None) => {}
             _ => bad(),
+        }
+    }
+    // A geographic origin for the test route (`origin=LAT,LON`): its
+    // metres get a place on the globe, as a route file's have – the GPS
+    // line, the sun and the FIT track follow (spec 3.40; the browser
+    // test's GPS check).
+    if world.is_none()
+        && let Some((_, value)) = pairs.iter().find(|(k, _)| k == "origin")
+    {
+        match value
+            .split_once(',')
+            .and_then(|(a, b)| Some((a.trim().parse::<f64>().ok()?, b.trim().parse::<f64>().ok()?)))
+        {
+            Some((lat, lon)) if lat.abs() <= 85.0 && lon.abs() <= 180.0 => {
+                config.route = config.route.clone().with_geo_origin((lat, lon));
+            }
+            _ => warnings.push(format!("origin={value}: ignored")),
         }
     }
     let mut remote: Option<RemoteOptions> = None;
@@ -328,9 +358,135 @@ pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) 
             }
         }
     }
+    // `join=LINK` (spec §6.2 *Join links*): the server of an https://
+    // link, its world and route.
+    if let Some((_, value)) = pairs.iter().find(|(k, _)| k == "join") {
+        match web_join(value) {
+            Ok((r, link)) => {
+                remote = Some(r);
+                if let Some(w) = &link.world
+                    && world.is_none()
+                {
+                    let mut opts = world::WorldOptions::new(w);
+                    opts.route = link.route.clone();
+                    world = Some(opts);
+                } else if world.is_none() {
+                    match link.route.as_deref() {
+                        Some("hills") => config.route = Route::test_hills(),
+                        Some("loop") => config.route = Route::test_loop(),
+                        _ => {}
+                    }
+                }
+            }
+            Err(e) => warnings.push(format!("join={value}: {e}")),
+        }
+    }
     config.world = world;
     config.remote = remote;
     (config, warnings)
+}
+
+/// What the browser says about an `ocw://` link (spec §3.2.1 *Join*).
+pub const NO_WEBTRANSPORT: &str = "this server has no WebTransport for browsers (an ocw:// link): ask its host for an https:// link, or use the desktop app";
+
+/// A join link as the browser can use it: WebTransport with the
+/// certificate's hash (browsers take a self-signed certificate only by
+/// its hash).
+pub fn web_join(text: &str) -> Result<(RemoteOptions, ocw_protocol::join::JoinLink), String> {
+    use ocw_protocol::join::{JoinLink, LinkTransport};
+    let link = JoinLink::parse(text)?;
+    if link.transport != LinkTransport::WebTransport {
+        return Err(NO_WEBTRANSPORT.into());
+    }
+    let cert = link.cert.as_deref().ok_or(
+        "the browser needs the server's certificate hash (cert-hash= in the link) to connect",
+    )?;
+    let hash = ocw_world::manifest::Hex::<32>::parse(cert)
+        .map_err(|_| "the certificate hash has 64 hex digits".to_string())?;
+    Ok((
+        RemoteOptions {
+            url: link.web_url(),
+            cert_hashes: vec![hash.0],
+        },
+        link,
+    ))
+}
+
+/// The page's query for joining `link` (Ride → Join in the browser): the
+/// page starts again on the shared ride – `server`, `cert-hash` and the
+/// link's world and route replace the page's; its other options stay.
+pub fn join_query(query: &str, link: &str) -> Result<String, String> {
+    let (_, l) = web_join(link)?;
+    let mut drop = vec!["server", "cert-hash", "join"];
+    if l.world.is_some() {
+        drop.extend(["world", "route", "free"]);
+    } else if l.route.is_some() {
+        drop.push("route");
+    }
+    let mut out = kept_pairs(query, &drop);
+    out.push(format!("server={}", escape(&l.web_url())));
+    out.push(format!("cert-hash={}", l.cert.clone().unwrap_or_default()));
+    if let Some(w) = &l.world {
+        out.push(format!("world={}", escape(w)));
+    }
+    if let Some(r) = &l.route {
+        out.push(format!("route={}", escape(r)));
+    }
+    Ok(format!("?{}", out.join("&")))
+}
+
+/// The page's query for leaving the shared ride: without the server.
+pub fn leave_query(query: &str) -> String {
+    let out = kept_pairs(query, &["server", "cert-hash", "join"]);
+    if out.is_empty() {
+        String::new()
+    } else {
+        format!("?{}", out.join("&"))
+    }
+}
+
+fn kept_pairs(query: &str, drop: &[&str]) -> Vec<String> {
+    query
+        .trim_start_matches('?')
+        .split('&')
+        .filter(|p| !p.is_empty())
+        .filter(|p| !drop.contains(&p.split_once('=').map_or(*p, |(k, _)| k)))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Percent-encodes a query value.
+fn escape(v: &str) -> String {
+    let mut out = String::new();
+    for b in v.bytes() {
+        match b {
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'.'
+            | b'_'
+            | b'~'
+            | b'/'
+            | b':'
+            | b'@' => out.push(b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// Text the page's paste event brought (`window.ocw.paste(text)`), for
+/// Ride → Join's link field.
+pub static PASTED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// `window.ocw.paste(text)`: the page's paste event (index.html).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = paste)]
+pub fn page_paste(text: &str) {
+    *PASTED.lock().expect("not poisoned") = Some(text.to_owned());
+    // Pasting while the menu's link field is open puts it there.
+    queue_console("join.paste");
 }
 
 /// The browser app: Bevy with the canvas of the page, the shared renderer
@@ -383,6 +539,11 @@ pub fn app_with_settings(
             // by `audio::WebAudioPlugin` (B5).
             .disable::<bevy::audio::AudioPlugin>(),
     )
+    // A renderer error goes to the page (B7): WebGPU falls back to WebGL 2,
+    // otherwise the page shows it – never Bevy's quit with a black canvas.
+    .insert_resource(bevy::render::error_handler::RenderErrorHandler(
+        page_render_error,
+    ))
     .insert_resource(Time::<Fixed>::from_hz(f64::from(ocw_core::SIM_TICK_HZ)))
     .insert_resource(RideView::new(route))
     .insert_resource(VersionLabel(build_id()))
@@ -402,6 +563,15 @@ pub fn app_with_settings(
     // The page's Web Audio output and the voice shim (B5).
     #[cfg(target_arch = "wasm32")]
     app.insert_resource(audio::MakeAudioOut(Box::new(browser_audio::start)));
+    // No voice on this page (the page configuration, B8a): the Voice page
+    // and `voice.status` say why.
+    if let Some(why) = config.voice_off.clone()
+        && !app.world().contains_resource::<voice::MakeVoiceBackend>()
+    {
+        app.insert_resource(voice::MakeVoiceBackend(Box::new(move || {
+            voice::unavailable(&why)
+        })));
+    }
     app.add_plugins(plugin::WebSessionPlugin { config });
     // Settings first: audio and voice start with the saved values.
     app.add_plugins((
@@ -415,10 +585,69 @@ pub fn app_with_settings(
     app
 }
 
+/// Whether the renderer's error was already reported to the page (the
+/// handler runs every frame while rendering is stopped).
+static RENDER_ERROR_REPORTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// What the page is told of a renderer error (`window.ocwRenderFailed(kind,
+/// description)`): the error's kind and its first line, shortened.
+pub fn render_error_report(error: &bevy::render::error_handler::RenderError) -> (String, String) {
+    let first = error.description.lines().next().unwrap_or("").trim();
+    let text: String = first.chars().take(300).collect();
+    (format!("{:?}", error.ty), text)
+}
+
+/// The browser's renderer error handler (spec §14 Phase 10 B7): Bevy's
+/// default quits the app on any renderer error, which leaves a page with
+/// sound and a black canvas; here rendering stops, the app keeps running
+/// and the page is told once (`window.ocwRenderFailed`; index.html: WebGPU
+/// → the WebGL 2 build, else the error on the page).
+pub fn page_render_error(
+    error: &bevy::render::error_handler::RenderError,
+    _main: &mut World,
+    _render: &mut World,
+) -> bevy::render::error_handler::RenderErrorPolicy {
+    use std::sync::atomic::Ordering;
+    if !RENDER_ERROR_REPORTED.swap(true, Ordering::Relaxed) {
+        let (kind, text) = render_error_report(error);
+        error!("renderer stopped ({kind}): {text}; the page falls back or shows it");
+        #[cfg(target_arch = "wasm32")]
+        browser::render_failed(&kind, &text);
+    }
+    bevy::render::error_handler::RenderErrorPolicy::StopRendering
+}
+
 /// The canvas' scale factor for a device pixel ratio `base` under the
 /// preset's cap: `None` (the device's own) when it is within the cap.
 pub fn pixel_ratio_override(base: f32, cap: Option<f32>) -> Option<f32> {
     cap.filter(|&c| base > c)
+}
+
+/// The preset's pixel-ratio cap where the browser can apply it: winit sizes
+/// the canvas from `devicePixelContentBoxSize`, and without it (WebKit:
+/// Safari, every browser on iOS) the drawing buffer stays at the device's
+/// pixels while the override only shrinks the HUD and menus to a third on
+/// an iPhone (measured in WebKit, 2026-11-15) – so there no cap.
+pub fn usable_pixel_ratio_cap(cap: Option<f32>, device_pixel_box: bool) -> Option<f32> {
+    cap.filter(|_| device_pixel_box)
+}
+
+/// Whether the browser reports `devicePixelContentBoxSize` to resize
+/// observers (Chromium, Firefox; not WebKit); natively true.
+fn device_pixel_box() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        thread_local! {
+            static HAS: bool = web_sys::window()
+                .and_then(|w| js_sys::Reflect::get(&w, &"ResizeObserverEntry".into()).ok())
+                .and_then(|c| js_sys::Reflect::get(&c, &"prototype".into()).ok())
+                .is_some_and(|p| js_sys::Reflect::has(&p, &"devicePixelContentBoxSize".into()).unwrap_or(false));
+        }
+        HAS.with(|h| *h)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    true
 }
 
 /// Applies [`pixel_ratio_override`] to the page's window when the preset
@@ -428,7 +657,10 @@ fn cap_pixel_ratio(
     quality: Option<Res<ocw_render::quality::RenderQuality>>,
     mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
 ) {
-    let cap = quality.and_then(|q| q.0.max_pixel_ratio);
+    let cap = usable_pixel_ratio_cap(
+        quality.and_then(|q| q.0.max_pixel_ratio),
+        device_pixel_box(),
+    );
     for mut w in &mut windows {
         let want = pixel_ratio_override(w.resolution.base_scale_factor(), cap);
         if w.resolution.scale_factor_override() != want {
@@ -551,6 +783,15 @@ pub fn page_menu() -> String {
     ui::menu_json()
 }
 
+/// `window.ocw.consoleState()`: the console (open, input line, completion
+/// candidates, selected, the last log lines) and the HUD's GPS line as
+/// JSON (spec 3.40).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = consoleState)]
+pub fn page_console_state() -> String {
+    ui::console_json()
+}
+
 /// `window.ocw.god()`: unicorn mode as JSON (phase, pointer, position,
 /// height, the inspection's panel and crosshair, pins; Phase 13 G5 – the
 /// browser test flies with it).
@@ -588,14 +829,36 @@ pub fn start() {
         .as_ref()
         .and_then(|l| l.hostname().ok())
         .unwrap_or_default();
-    let (mut config, warnings) = parse_query(&query, is_dev_host(&host));
+    // Sign-in (spec §9.1): the backend's redirect brings the page back
+    // with a code; the ride's options are the query it left with.
+    let (query, account_start) = account::start_page(&query);
+    let dev_page = is_dev_host(&host);
+    let (mut config, mut warnings) = parse_query(&query, dev_page);
+    config.access_token = account::tab_access_token();
+    // The page configuration (config.json, B8a): the worlds' base, and on
+    // a public page without a hosted server no multiplayer and no voice.
+    let (page, page_error) = page_config::from_page();
+    warnings.extend(page_error);
+    page.apply(&mut config, dev_page, &mut warnings);
     // The settings read at the start, where the query leaves them out.
     let (settings, settings_warnings) = settings::WebSettings::load(settings::default_store());
     settings::apply_to_config(&settings, &mut config, &settings::query_keys(&query));
     let world = config.world.clone();
     let mut app = app_with_settings(config, settings, settings_warnings);
+    app.insert_resource(account_start)
+        .add_plugins(account::WebAccountPlugin);
     for w in warnings {
         warn!("page options: {w}");
+    }
+    if page.is_preview() {
+        info!(
+            "page: the public preview (worlds from {}; {}; {}; {})",
+            page.worlds.as_deref().unwrap_or(world::WORLDS_BASE),
+            page.multiplayer_off(dev_page)
+                .unwrap_or("multiplayer on".into()),
+            page.voice_off(dev_page).unwrap_or("voice on".into()),
+            page.signin_off(dev_page).unwrap_or("sign-in on".into()),
+        );
     }
     browser::start_world(&mut app, world);
     app.run();
@@ -610,6 +873,36 @@ pub fn is_dev_host(host: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A renderer error stops rendering and tells the page; the app is not
+    /// quit (Bevy's default), so the page can fall back to WebGL 2 (B7).
+    #[test]
+    fn render_errors_go_to_the_page() {
+        use bevy::render::error_handler::{ErrorType, RenderError, RenderErrorPolicy};
+        let error = RenderError {
+            ty: ErrorType::Validation,
+            description: "In a set_pipeline command\n  more".into(),
+            source: None,
+        };
+        assert_eq!(
+            render_error_report(&error),
+            (
+                "Validation".to_string(),
+                "In a set_pipeline command".to_string()
+            )
+        );
+        let mut main = World::new();
+        main.init_resource::<Messages<AppExit>>();
+        let mut render = World::new();
+        for _ in 0..2 {
+            let policy = page_render_error(&error, &mut main, &mut render);
+            assert!(matches!(policy, RenderErrorPolicy::StopRendering));
+        }
+        assert!(main.resource::<Messages<AppExit>>().is_empty());
+        // The page's mark of a WebGPU fallback is a known option.
+        let (_, w) = parse_query("route=hills&gpu=webgl2&quality=low&webgpu-failed=1", false);
+        assert!(w.is_empty(), "{w:?}");
+    }
 
     #[test]
     fn query_options() {
@@ -632,6 +925,13 @@ mod tests {
         let (c, w) = parse_query("bots=500&power=-3&route=moon&x=1&start=nan&ftp=9", false);
         assert_eq!(w.len(), 6, "{w:?}");
         assert_eq!((c.bots, c.power_w, c.start_m), (5, 200.0, 0.0));
+        // A geographic origin for the test route (the GPS line, spec 3.40).
+        let (c, w) = parse_query("route=loop&origin=47.13996,9.52151", false);
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!(c.route.geo_origin(), Some((47.13996, 9.52151)));
+        assert_eq!(c.route.length(), Route::test_loop().length());
+        let (c, w) = parse_query("origin=north", false);
+        assert_eq!((w.len(), c.route.geo_origin()), (1, None));
     }
 
     /// The world options (B2): with `world`, `route` names a package route;
@@ -755,6 +1055,15 @@ mod tests {
         );
         assert_eq!(pixel_ratio_override(3.0, cap(QualityLevel::High)), None);
         assert_eq!(pixel_ratio_override(1.0, cap(QualityLevel::Low)), None);
+        // WebKit sizes the canvas without devicePixelContentBoxSize: the
+        // override would only shrink the UI (the iPhone, 2026-11-15).
+        let low = cap(QualityLevel::Low);
+        assert_eq!(usable_pixel_ratio_cap(low, true), Some(1.0));
+        assert_eq!(usable_pixel_ratio_cap(low, false), None);
+        assert_eq!(
+            pixel_ratio_override(3.0, usable_pixel_ratio_cap(low, false)),
+            None
+        );
     }
 
     #[test]
@@ -772,5 +1081,54 @@ mod tests {
         assert!(id.ends_with(&format!(" web {GPU_API}")), "{id}");
         // Natively (the tests) neither browser build.
         assert_eq!(GPU_API, "native");
+    }
+
+    /// Ride → Join in the browser (spec §3.2.1): WebTransport links only,
+    /// the page's query with the server, `join=` as a page option.
+    #[test]
+    fn join_links_in_the_browser() {
+        let fp = "ef".repeat(32);
+        let e = web_join(&format!("ocw://10.0.0.5?cert={fp}")).unwrap_err();
+        assert_eq!(e, NO_WEBTRANSPORT);
+        assert!(
+            web_join("https://10.0.0.5")
+                .unwrap_err()
+                .contains("certificate hash")
+        );
+        let (r, _) = web_join(&format!("https://10.0.0.5:47801?cert-hash={fp}")).unwrap();
+        assert_eq!(r.url, "https://10.0.0.5:47801/ocw/1");
+        assert_eq!(r.cert_hashes, [[0xef; 32]]);
+        // The page's other options stay; the link's world and route win.
+        let q = join_query(
+            "?world=old&route=x&bots=3&server=https://a",
+            &format!(
+                "https://10.0.0.5:47801?cert-hash={fp}&world=fiction/valley@2&route=Lake%20Loop"
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            q,
+            format!(
+                "?bots=3&server=https://10.0.0.5:47801/ocw/1&cert-hash={fp}&world=fiction/valley@2&route=Lake%20Loop"
+            )
+        );
+        assert_eq!(
+            leave_query(&q),
+            "?bots=3&world=fiction/valley@2&route=Lake%20Loop"
+        );
+        assert_eq!(leave_query("?server=x&cert-hash=y"), "");
+        // join= at the start.
+        let (c, w) = parse_query(
+            &format!("join=https://10.0.0.5:47801?cert-hash={fp}%26route=loop"),
+            false,
+        );
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!(c.remote.unwrap().url, "https://10.0.0.5:47801/ocw/1");
+        assert_eq!(c.route.name(), Route::test_loop().name());
+        let (c, w) = parse_query(&format!("join=ocw://h?cert={fp}"), false);
+        assert!(
+            c.remote.is_none() && w[0].contains("no WebTransport"),
+            "{w:?}"
+        );
     }
 }

@@ -237,6 +237,8 @@ impl WorkoutSession {
                 resume: trainer.mode(),
             };
         }
+        // Down after a crash: the step waits (spec §14 Phase 12 Q4).
+        run.set_down(trainer.is_down());
         match run.advance(dt_s, power_w) {
             Some(Change::Step(i)) => {
                 self.laps += 1;

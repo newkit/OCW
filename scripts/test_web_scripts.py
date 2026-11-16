@@ -33,7 +33,30 @@ def load(name, file):
 
 ws = load("web_serve", "web-serve.py")
 rd = load("test_web_readme", "test-web-readme.py")
+site = load("web_preview_site", "web-preview-site.py")
+pwi = load("preview_worlds_index", "preview_worlds_index.py")
+tw = load("test_web", "test-web.py")
 KEY = "ab" * 32
+
+
+class WasmLimit(unittest.TestCase):
+    """spec §14 Phase 8 T8: a world ride fails above the wasm memory limit."""
+
+    def test_world_rides_have_a_default_limit(self):
+        from types import SimpleNamespace as NS
+        self.assertEqual(tw.wasm_limit(NS(max_wasm_mb=None), True), tw.WORLD_WASM_LIMIT_MB)
+        self.assertEqual(tw.wasm_limit(NS(max_wasm_mb=None), False), 0.0)
+        self.assertEqual(tw.wasm_limit(NS(max_wasm_mb=800), False), 800.0)
+        self.assertEqual(tw.wasm_limit(NS(max_wasm_mb=0), True), 0.0)
+        # The preview test's ride arguments have no such option.
+        self.assertEqual(tw.wasm_limit(NS(), True), tw.WORLD_WASM_LIMIT_MB)
+
+    def test_the_regression_fails(self):
+        # The Liechtenstein ride of v3.49 (2 705 MB) fails, a fixed one not.
+        self.assertIn("2705 MB", tw.wasm_error(2705.0, 1500.0))
+        self.assertIsNone(tw.wasm_error(320.0, 1500.0))
+        self.assertIsNone(tw.wasm_error(None, 1500.0))
+        self.assertIsNone(tw.wasm_error(2705.0, 0.0))
 
 
 class WebServe(unittest.TestCase):
@@ -239,6 +262,72 @@ class ReadmeWalkthrough(unittest.TestCase):
         self.assertEqual(rd.http_errors(ev, 2), [])
         log = '127.0.0.1 - - [x] "GET / HTTP/1.1" 200 -\n127.0.0.1 - - [x] "GET /y HTTP/1.1" 404 -\n'
         self.assertEqual(len(rd.server_errors(log)), 1)
+
+
+class PreviewRideSizes(unittest.TestCase):
+    """The start page tells the download size and load time of each ride."""
+
+    def test_load_time(self):
+        self.assertEqual(site.load_time(1e5), "under 1 s")
+        self.assertEqual(site.load_time(100e6), "about 16 s")  # 800 Mbit at 50 Mbit/s
+        self.assertEqual(site.load_time(500e6), "about 80 s")
+        self.assertEqual(site.load_time(600e6), "about 2 min")
+
+    def test_every_ride_has_a_size(self):
+        found = [{"id": "europe/spain/tenerife", "name": "Tenerife", "bytes": 500_000_000,
+                  "routes": [{"name": "Puerto - Teide", "km": 42.04, "slug": "puerto-teide"}]}]
+        rides = site.start_rides(found, app=15_000_000)
+        self.assertEqual(len(rides), len(site.TEST_RIDES) + 2)
+        for r in rides:
+            self.assertIn("MB", r["size"])
+        self.assertIn("no world data", rides[0]["size"])
+        self.assertEqual(rides[2]["size"], "Download: 15 MB app + up to 500 MB world, streamed while you ride"
+                         " (all of it: about 82 s at 50 Mbit/s); cached for the next visit.")
+        self.assertEqual(rides[2]["text"], "42.0 km on real roads.")
+        self.assertNotIn("size", site.TEST_RIDES[0])  # the constant stays untouched
+
+    def test_app_bytes(self):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "ocw_web_bg.wasm").write_bytes(os.urandom(4000))
+            Path(d, "ocw_web.js").write_bytes(b"x" * 100)
+            n = site.app_bytes(d)
+            self.assertGreater(n, 4000)  # random bytes do not compress
+            self.assertEqual(site.app_bytes(os.path.join(d, "none")), 0)
+
+
+class PreviewWorldsIndex(unittest.TestCase):
+    """The preview's release index finds worlds whose ids have several levels
+    (europe/spain/tenerife; regression of 2026-11-15) as well as one level."""
+
+    def world(self, out, wid, version, pkg):
+        vdir = Path(out, "worlds", *wid.split("/"), str(version))
+        vdir.mkdir(parents=True)
+        Path(vdir.parent, "latest").write_text(f"{version}\n")
+        Path(vdir, pkg).write_bytes(wid.encode() * 10)
+        Path(vdir, "manifest.json").write_text(json.dumps(
+            {"signed": {"name": wid.split("/")[-1].title(), "files": [{"path": pkg}]}}))
+
+    def test_nested_and_flat_ids(self):
+        with tempfile.TemporaryDirectory() as out:
+            self.world(out, "liechtenstein", 4, "liechtenstein.ocwpkg")
+            self.world(out, "europe/spain/tenerife", 8, "tenerife.ocwpkg")
+            Path(out, "routes.jsonl").write_text(
+                json.dumps({"package": "tenerife.ocwpkg", "name": "Puerto de la Cruz - Teide", "km": 42.0}) + "\n")
+            self.assertEqual(pwi.world_ids(os.path.join(out, "worlds")),
+                             ["europe/spain/tenerife", "liechtenstein"])
+            index = pwi.build(out, "web-preview-worlds")
+            ten = index["worlds"][0]
+            self.assertEqual((ten["id"], ten["version"]), ("europe/spain/tenerife", 8))
+            self.assertEqual(ten["files"]["worlds/europe/spain/tenerife/8/tenerife.ocwpkg"],
+                             "europe-spain-tenerife-8.ocwpkg")
+            self.assertEqual(ten["routes"], [{"name": "Puerto de la Cruz - Teide",
+                                              "slug": "puerto-de-la-cruz-teide", "km": 42.0}])
+            for asset in ten["files"].values():
+                self.assertTrue(Path(out, "release", asset).is_file())
+            sums = Path(out, "release", "SHA256SUMS").read_text().splitlines()
+            self.assertEqual(len(sums), 6)
+            # A second run (the same out dir) replaces the release files.
+            pwi.build(out, "web-preview-worlds")
 
 
 if __name__ == "__main__":

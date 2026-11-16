@@ -93,6 +93,69 @@ pub enum Page {
     /// Navi → Riders in this ride (spec §14 Phase 13E, 12F; rows from
     /// `rider_list`): who rides, where, who flies, who is hurt.
     RiderList,
+    /// Settings → Account (spec §9.1; rows from `crate::account`): sign in
+    /// with Google or Strava, with a code on a kiosk, link the other
+    /// provider, sign out.
+    Account,
+    /// Controls → Unicorn mode: invert the mouse, plane or hover (the
+    /// Controls page is full).
+    UnicornControls,
+    /// Controls → Keys and buttons (spec §3.2.1 M9): the groups, the pad's
+    /// Confirm button, reset.
+    Bindings,
+    /// One group of bindings (index into `bindings::Group::ALL`).
+    BindGroup(usize),
+    /// Keys and buttons → Reset to defaults (asks first).
+    BindReset,
+    /// Display → Accessibility (M9): HUD size, status colours, contrast,
+    /// reduced motion, camera shake.
+    Accessibility,
+    /// Navi → Training history (spec §14 Phase 7; rows from
+    /// `menu::history`): rides, totals, personal bests.
+    History,
+    /// The rides, newest first.
+    HistoryRides,
+    /// One ride (index: 0 = the newest) with its power curve.
+    HistoryRide(usize),
+    /// The climbs of a ride.
+    HistoryClimbs(usize),
+    /// Weekly totals.
+    HistoryWeeks,
+    /// Monthly totals.
+    HistoryMonths,
+    /// Personal bests: the power curve and the climbs.
+    HistoryBests,
+    /// "Start the event?" → Organiser rules (spec §14 Phase 12 K6): the
+    /// rules of the events this rider starts (the `event.*` settings).
+    EventRules,
+    /// Settings → Account → Trusted world keys (spec §4.7 *User keys*;
+    /// rows from `menu::trust`): the user keys trusted here.
+    TrustedKeys,
+    /// One of them (index): name, fingerprint, date; remove it.
+    TrustedKey(usize),
+    /// Settings → Trainer → Devices (spec §3.2.1 *Devices*; rows from
+    /// `menu::devices`): scan, the devices found, connected and
+    /// remembered.
+    Devices,
+    /// One of them (index into the list): connect or forget it.
+    Device(usize),
+    /// Ride → Join (spec §3.2.1; rows from `menu::join`): the link and
+    /// fingerprint fields, Paste, Join, the recent servers.
+    Join,
+    /// Ride → Host a ride (rows from `crate::host`): the world …
+    HostWorld,
+    /// … the route or free ride …
+    HostRoute,
+    /// … date and time …
+    HostTime,
+    /// … the weather …
+    HostWeather,
+    /// … bots, access, port, sign-in …
+    HostOptions,
+    /// … and the summary with Start hosting.
+    HostSummary,
+    /// While hosting: the join link (Copy link, Stop hosting).
+    HostLink,
 }
 
 impl Page {
@@ -144,6 +207,34 @@ impl Page {
             Self::RidingAids => "Riding aids",
             Self::Graphics => "Graphics",
             Self::RiderList => "Riders in this ride",
+            Self::Account => "Account",
+            Self::UnicornControls => "Unicorn mode controls",
+            Self::Bindings => "Keys and buttons",
+            Self::BindGroup(g) => crate::bindings::Group::ALL
+                .get(g)
+                .map_or("Keys", |g| g.label()),
+            Self::BindReset => "Reset keys and buttons?",
+            Self::Accessibility => "Accessibility",
+            Self::History => "Training history",
+            Self::HistoryRides => "Rides",
+            Self::HistoryRide(_) => "Ride",
+            Self::HistoryClimbs(_) => "Climbs of the ride",
+            Self::HistoryWeeks => "Weekly totals",
+            Self::HistoryMonths => "Monthly totals",
+            Self::HistoryBests => "Personal bests",
+            Self::EventRules => "Organiser rules",
+            Self::TrustedKeys => "Trusted world keys",
+            Self::TrustedKey(_) => "Trusted key",
+            Self::Devices => "Devices",
+            Self::Device(_) => "Device",
+            Self::Join => "Join a ride",
+            Self::HostWorld => "Host a ride: world",
+            Self::HostRoute => "Host a ride: route",
+            Self::HostTime => "Host a ride: date and time",
+            Self::HostWeather => "Host a ride: weather",
+            Self::HostOptions => "Host a ride: options",
+            Self::HostSummary => "Host a ride",
+            Self::HostLink => "Hosting: join link",
         }
     }
 
@@ -152,7 +243,12 @@ impl Page {
     pub fn is_ride_page(self) -> bool {
         matches!(
             self,
-            Self::Routes | Self::Rides | Self::GpxImport | Self::Workouts
+            Self::Routes
+                | Self::Rides
+                | Self::GpxImport
+                | Self::Workouts
+                | Self::HostWorld
+                | Self::HostRoute
         ) || self.is_world_page()
     }
 
@@ -194,6 +290,31 @@ impl Page {
         }
     }
 
+    /// The training history's pages (rows from `menu::history`).
+    pub fn is_history_page(self) -> bool {
+        matches!(
+            self,
+            Self::History
+                | Self::HistoryRides
+                | Self::HistoryRide(_)
+                | Self::HistoryClimbs(_)
+                | Self::HistoryWeeks
+                | Self::HistoryMonths
+                | Self::HistoryBests
+        )
+    }
+
+    /// The Keys and buttons pages (rows from [`binding_rows`]).
+    pub fn is_binding_page(self) -> bool {
+        matches!(self, Self::Bindings | Self::BindGroup(_) | Self::BindReset)
+    }
+
+    /// Whether `platform` has this page (both have every page since the
+    /// browser flies too, Phase 13 G5; kept for pages one app lacks).
+    pub fn on(self, _platform: super::model::Platform) -> bool {
+        true
+    }
+
     /// The voice pages (rows from `voice::page`).
     pub fn is_voice_page(self) -> bool {
         matches!(
@@ -212,8 +333,17 @@ impl Page {
             Self::WorldSource(_) => Some(Self::WorldSources),
             Self::VoiceDevices | Self::VoiceParticipants => Some(Self::Voice),
             Self::AudioVoice => Some(Self::Audio),
-            Self::RidingAids => Some(Self::Controls),
-            Self::Graphics => Some(Self::Display),
+            Self::RidingAids | Self::UnicornControls | Self::Bindings => Some(Self::Controls),
+            Self::BindGroup(_) | Self::BindReset => Some(Self::Bindings),
+            Self::Graphics | Self::Accessibility => Some(Self::Display),
+            Self::TrustedKey(_) => Some(Self::TrustedKeys),
+            Self::Devices => Some(Self::Trainer),
+            Self::Device(_) => Some(Self::Devices),
+            Self::HostRoute => Some(Self::HostWorld),
+            Self::HostTime => Some(Self::HostRoute),
+            Self::HostWeather => Some(Self::HostTime),
+            Self::HostOptions => Some(Self::HostWeather),
+            Self::HostSummary => Some(Self::HostOptions),
             _ => None,
         }
     }
@@ -293,9 +423,57 @@ impl Page {
             Self::RiderList => {
                 &["The unicorn: flying in unicorn mode. The dot: hurt, or the bike damaged."]
             }
+            Self::EventRules => &[
+                "The rules of the events you start; riders cannot change them until the event is over. Auto: by the kind of event (races: no riding aids).",
+            ],
             Self::Workouts => &[
                 "Structured workouts in ERG mode: yours from the workouts folder (.toml, .erg, .mrc), then the examples. % FTP targets use the rider's FTP.",
             ],
+            Self::Account => &[crate::account::NOTE],
+            Self::UnicornControls => &[
+                "Unicorn mode flies with the cursor keys and + / - (never W A S D), or the gamepad.",
+            ],
+            Self::Bindings => &[
+                "One key and one gamepad button per action. The menu keys, the sticks, the triggers and unicorn mode's flight keys stay fixed.",
+            ],
+            Self::BindGroup(_) => &[
+                "Enter: press the new key or button (Esc / Start: cancel). Left / Right: step through the keys.",
+            ],
+            Self::BindReset => &["Every key and button back to its default. Back keeps them."],
+            Self::Accessibility => &[
+                "Status colours always come with an icon and a word. Reduced motion: no camera shake, no flashing warnings.",
+            ],
+            Self::History => &[
+                "Your rides (this rider profile), the totals by week and month and your personal bests. Kept on this device.",
+            ],
+            Self::HistoryRides => &["Newest first. Choose one for its details and power curve."],
+            Self::HistoryRide(_) | Self::HistoryClimbs(_) => &[],
+            Self::HistoryWeeks | Self::HistoryMonths => &[],
+            Self::HistoryBests => &[],
+            Self::TrustedKeys => &[super::trust::KEYS_NOTE],
+            Self::TrustedKey(_) => &[super::trust::KEY_NOTE],
+            Self::Devices => &[super::devices::NOTE],
+            Self::Device(_) => &[super::devices::DEVICE_NOTE],
+            Self::Join => &[
+                "Paste or type the link the host shares (ocw://HOST:PORT?cert=...). Your ride goes on until the shared one is ready.",
+            ],
+            Self::HostWorld => &[
+                "Host a shared ride on this computer: others join with its link. First the world.",
+            ],
+            Self::HostRoute => &["The route, or a free ride on the world's roads."],
+            Self::HostTime => {
+                &["Real time, or a moment of the time machine (Left/Right step), a few days on."]
+            }
+            Self::HostWeather => {
+                &["Simulated, real weather at the place, or a preset of the weather machine."]
+            }
+            Self::HostOptions => &[
+                "Others may need UDP open in the firewall and a port forwarding on the router (README).",
+            ],
+            Self::HostSummary => &[
+                "The server runs in this app on 0.0.0.0 (all addresses); you ride on it as the host.",
+            ],
+            Self::HostLink => &[],
         }
     }
 }
@@ -496,6 +674,15 @@ pub enum Activate {
     /// Run a console command line and close the menu (starting a workout:
     /// its panel shows at once).
     Run(String),
+    /// Ask "Remove this key?" first, then run the line and go back
+    /// (Settings → Account → Trusted world keys).
+    AskForget(String),
+    /// Run a console line and go back one page (Devices → a device →
+    /// Disconnect and forget: the device may leave the list).
+    CommandBack(String),
+    /// Run a console command line, then open a page (the host wizard's
+    /// steps).
+    RunOpen(String, Page),
 }
 
 /// One row of a page.
@@ -511,7 +698,8 @@ pub struct Row {
 }
 
 impl Row {
-    fn action(label: &str, line: impl Into<String>) -> Self {
+    /// A row that runs a console line.
+    pub fn action(label: &str, line: impl Into<String>) -> Self {
         Self {
             label: label.into(),
             value: None,
@@ -557,6 +745,136 @@ fn aids_summary(settings: &Settings) -> String {
         "none".into()
     } else {
         names.join(", ")
+    }
+}
+
+/// The Accessibility row's value: what is on ("125 %, colour-safe").
+fn access_summary(settings: &Settings) -> String {
+    let get = |k: &str| settings.get(k).map(|v| v.to_string()).unwrap_or_default();
+    let mut out = Vec::new();
+    if get("display.ui_scale") != "100" {
+        out.push(format!("{} %", get("display.ui_scale")));
+    }
+    if get("display.palette") != "standard" {
+        out.push(get("display.palette"));
+    }
+    if get("display.high_contrast") == "on" {
+        out.push("contrast".into());
+    }
+    if get("display.reduced_motion") == "on" {
+        out.push("less motion".into());
+    }
+    if out.is_empty() {
+        "standard".into()
+    } else {
+        out.join(", ")
+    }
+}
+
+/// The Keys and buttons row's value: "defaults", "changed", "2 conflicts".
+pub fn bindings_summary(settings: &Settings, desktop: bool) -> String {
+    let b = crate::bindings::Bindings::from_settings(settings);
+    let n = b.conflicts(desktop).len();
+    match n {
+        0 if b.is_default() => "defaults".into(),
+        0 => "changed".into(),
+        1 => "1 conflict".into(),
+        n => format!("{n} conflicts"),
+    }
+}
+
+/// The rows of the Keys and buttons pages (spec §3.2.1 M9): the groups,
+/// the pad's Confirm button and reset; a group's actions, each "key |
+/// button" – ← / → step the key, Confirm waits for the new key or button
+/// (`bind --capture ID`); `desktop`: the platform has the desktop's
+/// actions (the browser leaves those out).
+pub fn binding_rows(page: Page, settings: &Settings, desktop: bool) -> Vec<Row> {
+    use crate::bindings::{
+        ACTIONS, Bindings, Device, Group, KEY_CHOICES, key_label, pad_label, step_choice,
+    };
+    let b = Bindings::from_settings(settings);
+    let conflicts = b.conflicts(desktop);
+    match page {
+        Page::Bindings => {
+            let mut out: Vec<Row> = Group::ALL
+                .iter()
+                .enumerate()
+                .map(|(i, g)| {
+                    let n = conflicts
+                        .iter()
+                        .filter(|c| c.action.def().group == *g)
+                        .count();
+                    let actions = ACTIONS
+                        .iter()
+                        .filter(|d| d.group == *g && (desktop || !d.desktop_only))
+                        .count();
+                    open_row(
+                        g.label(),
+                        Some(match n {
+                            0 => format!("{actions} actions"),
+                            1 => "1 conflict".into(),
+                            n => format!("{n} conflicts"),
+                        }),
+                        Page::BindGroup(i),
+                    )
+                })
+                .collect();
+            out.push(setting_row(
+                settings,
+                "controls.pad_confirm",
+                "Pad Confirm button",
+            ));
+            out.push(open_row(
+                "Reset to defaults",
+                Some(if b.is_default() {
+                    "nothing changed".into()
+                } else {
+                    "changed".into()
+                }),
+                Page::BindReset,
+            ));
+            out
+        }
+        Page::BindGroup(g) => {
+            let Some(group) = Group::ALL.get(g) else {
+                return Vec::new();
+            };
+            ACTIONS
+                .iter()
+                .filter(|d| d.group == *group && (desktop || !d.desktop_only))
+                .map(|d| {
+                    let key = b.key(d.action);
+                    let pad = b.pad(d.action);
+                    let marked = |dev| {
+                        if conflicts
+                            .iter()
+                            .any(|c| c.action == d.action && c.device == dev)
+                        {
+                            " (!)"
+                        } else {
+                            ""
+                        }
+                    };
+                    let set =
+                        |dir| format!("set keys.{} {}", d.id, step_choice(KEY_CHOICES, key, dir));
+                    Row {
+                        label: d.label.into(),
+                        value: Some(format!(
+                            "{}{} | {}{}",
+                            key_label(key),
+                            marked(Device::Key),
+                            pad_label(pad),
+                            marked(Device::Pad)
+                        )),
+                        left: Some(set(-1)),
+                        right: Some(set(1)),
+                        confirm: Some(Activate::Command(format!("bind --capture {}", d.id))),
+                    }
+                })
+                .collect()
+        }
+        Page::BindReset => vec![Row::action("Reset all keys and buttons", "bind --reset")],
+        _ => Vec::new(),
     }
 }
 
@@ -767,12 +1085,21 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         Page::Audio => audio_rows(settings, &AudioDevices::default()),
         Page::Controls => vec![
             setting_row(settings, "controls.autodrive", "Autodrive at the start"),
-            setting_row(
-                settings,
-                "controls.invert_y",
-                "Unicorn mode: invert mouse Y",
+            // Rebinding (M9) and the unicorn's controls have their own
+            // pages (the ten-foot rule: six rows).
+            open_row(
+                "Keys and buttons",
+                Some(bindings_summary(settings, true)),
+                Page::Bindings,
             ),
-            setting_row(settings, "controls.god_flight", "Unicorn mode: flight"),
+            open_row(
+                "Unicorn mode",
+                settings
+                    .get("controls.god_flight")
+                    .ok()
+                    .map(|v| v.to_string()),
+                Page::UnicornControls,
+            ),
             // Collisions (spec §14 Phase 12A, 12D).
             setting_row(settings, "ride.collisions", "Collisions"),
             setting_row(settings, "ride.chaotic_bots", "Chaotic bots"),
@@ -785,6 +1112,48 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
                 confirm: Some(Activate::Open(Page::RidingAids)),
             },
         ],
+        Page::UnicornControls => vec![
+            setting_row(settings, "controls.invert_y", "Invert mouse Y"),
+            setting_row(settings, "controls.god_flight", "Flight"),
+        ],
+        Page::Bindings | Page::BindGroup(_) | Page::BindReset => binding_rows(page, settings, true),
+        Page::Accessibility => vec![
+            setting_row(settings, "display.ui_scale", "HUD size (%)"),
+            setting_row(settings, "display.palette", "Status colours"),
+            setting_row(settings, "display.high_contrast", "High-contrast HUD"),
+            setting_row(settings, "display.reduced_motion", "Reduced motion"),
+            setting_row(settings, "display.camera_shake", "Camera shake"),
+        ],
+        // From the training history (`menu::history`).
+        Page::History
+        | Page::HistoryRides
+        | Page::HistoryRide(_)
+        | Page::HistoryClimbs(_)
+        | Page::HistoryWeeks
+        | Page::HistoryMonths
+        | Page::HistoryBests => Vec::new(),
+        // From the trusted world keys (`menu::trust`).
+        Page::TrustedKeys | Page::TrustedKey(_) => Vec::new(),
+        // From the app's devices (`menu::devices`).
+        Page::Devices | Page::Device(_) => Vec::new(),
+        // From the join state (`menu::join`) and the host wizard (`host`).
+        Page::Join
+        | Page::HostWorld
+        | Page::HostRoute
+        | Page::HostTime
+        | Page::HostWeather
+        | Page::HostOptions
+        | Page::HostSummary
+        | Page::HostLink => Vec::new(),
+        // The organiser's rules (spec §14 Phase 12 K6): six rows.
+        Page::EventRules => vec![
+            setting_row(settings, "event.collisions", "Collisions"),
+            setting_row(settings, "event.damage", "Damage"),
+            setting_row(settings, "event.aids", "Riding aids allowed"),
+            setting_row(settings, "event.chaotic_bots", "Chaotic bots"),
+            setting_row(settings, "event.neutral_service", "Neutral service"),
+            setting_row(settings, "event.dnf_injured", "DNF when badly injured"),
+        ],
         Page::RidingAids => vec![
             setting_row(settings, "ride.proximity_cue", "Proximity arrow and bell"),
             setting_row(settings, "ride.hit_warning", "Last-moment warning"),
@@ -792,6 +1161,8 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         ],
         // From the session (`rider_list`).
         Page::RiderList => Vec::new(),
+        // From the app's sign-in state (`crate::account::rows`).
+        Page::Account => crate::account::rows(&crate::account::AccountInfo::default(), true),
         Page::Trainer => vec![
             setting_row(settings, "trainer.difficulty", "Difficulty (%)"),
             setting_row(
@@ -799,8 +1170,9 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
                 "trainer.virtual_power",
                 "Virtual trainer power (W)",
             ),
-            Row::action("Scan for devices", "devices.scan"),
-            Row::action("Show devices", "devices.list"),
+            // Scan, connect, forget (spec §3.2.1 *Devices*; the value
+            // comes from the app's devices, `ocw_ui::menu`).
+            open_row("Devices", None, Page::Devices),
             // Damage (spec §14 Phase 12E; the Controls and Display pages
             // are full).
             setting_row(settings, "ride.damage", "Damage"),
@@ -817,8 +1189,13 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             setting_row(settings, "display.hud", "HUD"),
             setting_row(settings, "display.units", "Units"),
             setting_row(settings, "display.camera", "Camera"),
-            setting_row(settings, "display.fps", "FPS counter"),
             setting_row(settings, "display.night_brightness", "Night brightness (%)"),
+            // M9 (the FPS counter moved to Graphics: six rows).
+            open_row(
+                "Accessibility",
+                Some(access_summary(settings)),
+                Page::Accessibility,
+            ),
             // The quality preset has its own page (spec §14 Phase 10 B7;
             // the ten-foot rule: six rows), with fullscreen and the sky.
             Row {
@@ -832,6 +1209,7 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         Page::Graphics => vec![
             setting_row(settings, "display.quality", "Quality"),
             setting_row(settings, "display.sky", "Sky"),
+            setting_row(settings, "display.fps", "FPS counter"),
             setting_row(settings, "display.fullscreen", "Fullscreen (next start)"),
             // VR (spec §14 Phase 11, X1): the headset switch and the mirror.
             setting_row(settings, "vr.enabled", "VR headset (next start)"),
@@ -1036,8 +1414,8 @@ mod tests {
         assert_eq!(d.right.as_deref(), Some("set trainer.difficulty 55"));
         assert_eq!(d.confirm, None);
         assert_eq!(
-            row(&trainer, "Scan for devices").confirm,
-            cmd("devices.scan")
+            row(&trainer, "Devices").confirm,
+            Some(Activate::Open(Page::Devices))
         );
         let controls = rows(Page::Controls, &s, &Riders::default());
         assert_eq!(controls[0].confirm, cmd("set controls.autodrive off"));
@@ -1046,6 +1424,28 @@ mod tests {
             row(&strava, "Retry failed uploads").confirm,
             cmd("strava.sync --retry")
         );
+    }
+
+    /// K6 (spec §14 Phase 12): the Organiser rules page, six rows of
+    /// `event.*` settings (`auto` by the event's kind).
+    #[test]
+    fn the_organiser_rules_page_sets_the_event_settings() {
+        let (s, _) = Settings::parse("[event]\naids = \"on\"\n").unwrap();
+        let r = rows(Page::EventRules, &s, &Riders::default());
+        assert!(r.len() <= 6, "the ten-foot rule");
+        let c = row(&r, "Collisions");
+        assert_eq!(c.value.as_deref(), Some("auto"));
+        assert_eq!(c.right.as_deref(), Some("set event.collisions off"));
+        assert_eq!(row(&r, "Riding aids allowed").value.as_deref(), Some("on"));
+        assert_eq!(
+            row(&r, "Neutral service").confirm,
+            cmd("set event.neutral_service on")
+        );
+        assert_eq!(
+            row(&r, "DNF when badly injured").confirm,
+            cmd("set event.dnf_injured on")
+        );
+        assert_eq!(Page::EventRules.title(), "Organiser rules");
     }
 
     #[test]

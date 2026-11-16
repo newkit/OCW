@@ -183,7 +183,12 @@ where
         match attempt {
             Ok(RunEnd::Shutdown) => return RunEnd::Shutdown,
             Ok(RunEnd::Disconnected) => tracing::warn!(device = %name, "disconnected"),
-            Err(e) => tracing::warn!(device = %name, "{e}"),
+            Err(e) => {
+                tracing::warn!(device = %name, "{e}");
+                let _ = events.send(DeviceEvent::Failed {
+                    reason: crate::FailReason::of(&e),
+                });
+            }
         }
         if events.send(DeviceEvent::Disconnected).is_err() {
             return RunEnd::Shutdown; // app gone
@@ -578,6 +583,21 @@ mod tests {
             kinds[..4],
             ["disconnected", "connected", "disconnected", "connected"],
             "{events:?}"
+        );
+        // The failed attempt says why, before its `Disconnected` (the
+        // menu's status line); a drop is no failure.
+        assert_eq!(
+            events[0],
+            DeviceEvent::Failed {
+                reason: crate::FailReason::Connect
+            }
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, DeviceEvent::Failed { .. }))
+                .count(),
+            1
         );
         // Every connection's writes: control, start, the latest target.
         let writes = WRITES.with(|w| w.borrow().clone());

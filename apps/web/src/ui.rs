@@ -91,6 +91,24 @@ impl Plugin for WebUiPlugin {
             rows: web_rows,
             ..MenuHooks::default()
         })
+        // The training history in the page's localStorage (spec §14
+        // Phase 7); a ride's FIT file is kept for this page's session.
+        .insert_resource(ocw_ui::history::HistoryHooks {
+            store: |_, _| crate::settings::history_store(),
+            rider: |_| ocw_client::riders::Rider::default().name,
+            export: |world, ride, _| {
+                let bytes = world
+                    .get_resource::<ocw_ui::history::TrainingHistory>()
+                    .and_then(|h| h.fits.get(&ride.id).cloned())
+                    .ok_or("this ride's FIT file is not kept (only the rides of this page)")?;
+                let name = download_name(ride.start_unix_s);
+                let downloads = world.resource::<Downloads>().clone();
+                (downloads.0)(&name, "application/vnd.ant.fit", bytes);
+                Ok(format!("downloading {name}"))
+            },
+            import: None,
+            refresh: ocw_ui::history::refresh_from_memory,
+        })
         .add_plugins((
             ocw_ui::menu::MenuPlugin,
             ocw_ui::weather::WeatherPlugin,
@@ -126,8 +144,105 @@ impl Plugin for WebUiPlugin {
             Update,
             (record, show_video, audio_devices).after(ocw_ui::RideViewSet),
         )
-        .add_systems(Last, publish);
+        .add_systems(Last, (publish, publish_console));
+        // The trusted world keys in the page's localStorage (spec §4.7
+        // *User keys*); the built-in roots cannot be added.
+        // (Always: the menu plugin above put an empty default there.)
+        {
+            let mut builtin = ocw_worldstore::trust::TrustConfig {
+                dev_roots: true,
+                ..Default::default()
+            }
+            .builtin_store()
+            .unwrap_or_default();
+            builtin.roots.extend(ocw_worldstore::trust::preview_roots());
+            app.insert_resource(ocw_ui::trust::TrustedKeys::load(
+                crate::settings::trusted_keys_store(),
+                builtin,
+            ));
+        }
+        // Ride → Join (spec §3.2.1): the recent servers in localStorage;
+        // joining starts the page again on the shared ride (WebTransport).
+        app.insert_resource(ocw_ui::join::JoinUi::load(crate::settings::joins_store()))
+            .insert_resource(ocw_ui::join::JoinHooks {
+                connect: web_connect,
+                cancel: |_| {},
+                leave: web_leave,
+                paste: |_| crate::PASTED.lock().expect("not poisoned").take(),
+            })
+            .add_systems(Update, ride_mode);
         register_commands(app);
+    }
+}
+
+/// The page's query now (empty natively).
+fn page_query() -> String {
+    #[cfg(target_arch = "wasm32")]
+    return web_sys::window()
+        .and_then(|w| w.location().search().ok())
+        .unwrap_or_default();
+    #[cfg(not(target_arch = "wasm32"))]
+    String::new()
+}
+
+/// Opens the page with `query` (the ride starts again with it).
+fn open_page(query: &str) -> Result<(), String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let l = web_sys::window().ok_or("no window")?.location();
+        let path = l.pathname().unwrap_or_default();
+        l.assign(&format!("{path}{query}"))
+            .map_err(|_| "the page cannot be opened".to_string())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = query;
+        Ok(())
+    }
+}
+
+/// The page that joins (the remembered list first: the page starts again).
+fn web_connect(world: &mut World, link: ocw_protocol::join::JoinLink) -> Result<String, String> {
+    let query = crate::join_query(&page_query(), &link.to_link())?;
+    world.resource_mut::<ocw_ui::join::JoinUi>().remember(
+        &link,
+        link.world
+            .as_deref()
+            .or(link.route.as_deref())
+            .unwrap_or(""),
+    );
+    info!(query = %query, "joining: the page starts again on the shared ride");
+    open_page(&query)?;
+    Ok(format!(
+        "joining {}: the page starts again on the shared ride",
+        link.server_spec()
+    ))
+}
+
+fn web_leave(world: &mut World) -> Result<String, String> {
+    let remote = world
+        .get_resource::<crate::plugin::Session>()
+        .is_some_and(|s| s.0.is_remote());
+    if !remote {
+        return Err("not in a shared ride".into());
+    }
+    open_page(&crate::leave_query(&page_query()))?;
+    Ok("leaving the shared ride: the page starts again alone".into())
+}
+
+/// The Ride page's items: Leave in a shared ride.
+fn ride_mode(
+    session: Option<Res<crate::plugin::Session>>,
+    mut mode: ResMut<ocw_ui::menu::MenuRideMode>,
+) {
+    use ocw_client::menu::model::RideMode;
+    let m = if session.is_some_and(|s| s.0.is_remote()) {
+        RideMode::Joined
+    } else {
+        RideMode::Alone
+    };
+    if mode.0 != m {
+        mode.0 = m;
     }
 }
 
@@ -165,9 +280,49 @@ pub fn view_json(v: &ocw_render::menu::MenuView) -> String {
         "focused": v.focused,
         "hint": v.hint,
         "dimmed": v.dimmed,
+        "emphasis": v.emphasis,
         "grid": v.grid.as_ref().map(|g| g.columns),
     })
     .to_string()
+}
+
+/// The console and the HUD's GPS line as JSON for the page
+/// (`window.ocw.consoleState()`; the browser test's Tab completion and GPS
+/// checks, spec 3.40).
+static CONSOLE_JSON: Mutex<String> = Mutex::new(String::new());
+
+/// The console's state as JSON: open, the input line, the completion
+/// candidates and the selected one, the HUD's GPS line (null: hidden).
+pub fn console_json() -> String {
+    CONSOLE_JSON.lock().expect("not poisoned").clone()
+}
+
+/// The console's JSON (see [`console_json`]).
+pub fn console_view_json(
+    console: &ocw_render::console::ConsoleState,
+    gps: Option<&ocw_render::hud::HudGpsLine>,
+) -> String {
+    let (candidates, selected) = console.candidates();
+    serde_json::json!({
+        "open": console.is_open(),
+        "input": console.input(),
+        "candidates": candidates,
+        "selected": selected,
+        "gps": gps.and_then(|g| g.0.clone()),
+        "log": console.log().iter().rev().take(20).rev().collect::<Vec<_>>(),
+    })
+    .to_string()
+}
+
+fn publish_console(
+    console: Option<Res<ocw_render::console::ConsoleState>>,
+    gps: Option<Res<ocw_render::hud::HudGpsLine>>,
+) {
+    let Some(console) = console else { return };
+    let changed = console.is_changed() || gps.as_ref().is_some_and(|g| g.is_changed());
+    if changed || CONSOLE_JSON.lock().expect("not poisoned").is_empty() {
+        *CONSOLE_JSON.lock().expect("not poisoned") = console_view_json(&console, gps.as_deref());
+    }
 }
 
 /// Publishes the menu and the settings for the page when they change.
@@ -306,9 +461,31 @@ fn save_ride(world: &mut World) -> Result<String, String> {
         ride.activity.records.last().map_or(0.0, |r| r.distance_m) / 1000.0,
     );
     let downloads = world.resource::<Downloads>().clone();
-    (downloads.0)(&name, "application/vnd.ant.fit", bytes);
+    (downloads.0)(&name, "application/vnd.ant.fit", bytes.clone());
+    // The training history (spec §14 Phase 7), with the world of the page.
+    let world_name = world
+        .get_resource::<crate::world::WorldStream>()
+        .and_then(|s| s.identity.clone())
+        .unwrap_or_default();
+    let route = world
+        .get_resource::<RideView>()
+        .map(|v| v.route.name().to_string())
+        .unwrap_or_default();
+    let entry = ocw_client::history::RideEntry::from_activity(
+        &ride.activity,
+        ocw_client::history::RideContext {
+            id: ocw_client::recording::file_stem(ride.activity.start_unix_s),
+            world: world_name,
+            route,
+            ..Default::default()
+        },
+    );
+    let kept = match ocw_ui::history::add_ride(world, entry, Some(bytes)) {
+        Ok(()) => "",
+        Err(_) => " (the training history is not saved on this page)",
+    };
     Ok(format!(
-        "ride saved: {name} ({n} records, {km:.2} km); a new recording starts"
+        "ride saved: {name} ({n} records, {km:.2} km); a new recording starts{kept}"
     ))
 }
 
@@ -369,6 +546,31 @@ fn stop_video() -> Result<(), String> {
 }
 
 fn register_commands(app: &mut App) {
+    // `world trust …` (spec §4.7 *User keys*) and the trust dialog's lines
+    // for the streamed world.
+    app.console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("world")
+            .about("The world keys you trust (the page's world: World -> About)")
+            .subcommand_required(true)
+            .subcommand(ocw_ui::trust::command())
+            .subcommand(
+                Command::new("continue")
+                    .hide(true)
+                    .about("Go on streaming the world (its key is trusted now)"),
+            )
+            .subcommand(
+                Command::new("stop")
+                    .hide(true)
+                    .about("Do not load the world (its key was not trusted)"),
+            ),
+        |world, m| match m.subcommand() {
+            Some(("trust", t)) => ocw_ui::trust::run(world, t),
+            Some(("continue", _)) => crate::world::answer_trust(world, true),
+            Some(("stop", _)) => crate::world::answer_trust(world, false),
+            _ => Err("world trust list | add KEY | remove FINGERPRINT".into()),
+        },
+    ));
     app.console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("ride.save").about(
@@ -404,6 +606,10 @@ mod tests {
     /// The browser's session and UI without a window: the menu by keys,
     /// the downloads into a list.
     fn app(log: DownloadLog) -> App {
+        app_with(log, SessionConfig::default())
+    }
+
+    fn app_with(log: DownloadLog, config: SessionConfig) -> App {
         let mut app = App::new();
         // No InputPlugin: the tests press keys between the frames (its
         // PreUpdate would clear them first).
@@ -412,12 +618,50 @@ mod tests {
             .insert_resource(Time::<Fixed>::from_hz(f64::from(ocw_core::SIM_TICK_HZ)))
             .insert_resource(RideView::new(ocw_world::Route::test_hills()))
             .insert_resource(Downloads::logged(log))
-            .add_plugins(crate::plugin::WebSessionPlugin {
-                config: SessionConfig::default(),
-            })
+            .add_plugins(crate::plugin::WebSessionPlugin { config })
             .add_plugins((crate::settings::WebSettingsPlugin, WebUiPlugin::default()));
         app.update();
         app
+    }
+
+    /// Spec 3.40: Tab completion with the shared value providers (the
+    /// browser has the desktop's `weather`, `time`, `set`), and the GPS
+    /// position of a route with a geographic origin (`?origin=`).
+    #[test]
+    fn tab_completion_and_the_gps_position_in_the_browser() {
+        let config = SessionConfig {
+            route: ocw_world::Route::test_hills().with_geo_origin((47.13996, 9.52151)),
+            ..SessionConfig::default()
+        };
+        let mut app = app_with(DownloadLog::default(), config);
+        run_for(&mut app, 600);
+        let tab = |app: &mut App, line: &str| {
+            app.world_mut()
+                .resource_mut::<ConsoleState>()
+                .set_input(line);
+            ocw_render::console::tab_complete(app.world_mut(), line.len(), false);
+            app.update();
+            let s = app.world().resource::<ConsoleState>();
+            (s.input().to_owned(), s.candidates().0.to_vec())
+        };
+        assert_eq!(tab(&mut app, "weather thunder").0, "weather thunderstorm ");
+        assert_eq!(tab(&mut app, "time golden").0, "time golden-hour ");
+        assert_eq!(tab(&mut app, "set display.gp").0, "set display.gps ");
+        assert_eq!(tab(&mut app, "set display.gps o").1, ["off", "on"]);
+        assert_eq!(tab(&mut app, "rider.g").0, "rider.gps ");
+        // Dev commands run on the browser's local server: offered.
+        assert_eq!(tab(&mut app, "telep").0, "teleport ");
+        let json: serde_json::Value = serde_json::from_str(&console_view_json(
+            app.world().resource::<ConsoleState>(),
+            None,
+        ))
+        .unwrap();
+        assert_eq!(json["input"], "teleport ");
+        // The GPS position: in the view and from `rider.gps`.
+        let (lat, lon, _) = app.world().resource::<RideView>().position.expect("GPS");
+        assert!((lat - 47.14).abs() < 0.05 && (lon - 9.52).abs() < 0.05);
+        let out = console(&mut app, "rider.gps");
+        assert!(out.contains("° N") && out.contains("° E"), "{out}");
     }
 
     fn run_for(app: &mut App, ms: u64) {
@@ -503,7 +747,11 @@ mod tests {
         }
         tap(&mut app, KeyCode::Enter);
         assert_eq!(view(&app).title, "Navi");
-        assert_eq!(view(&app).items, ["Riders in this ride", "Back"]);
+        assert_eq!(
+            view(&app).items,
+            ["Training history", "Riders in this ride", "Back"]
+        );
+        tap(&mut app, KeyCode::ArrowDown);
         tap(&mut app, KeyCode::Enter);
         let v = view(&app);
         assert_eq!(v.title, "Riders in this ride");
@@ -515,7 +763,7 @@ mod tests {
         tap(&mut app, KeyCode::Enter);
         assert_eq!(view(&app).title, "Ride");
         assert!(!view(&app).items.iter().any(|i| i == "Restart"));
-        for _ in 0..4 {
+        for _ in 0..1 {
             tap(&mut app, KeyCode::ArrowDown);
         }
         tap(&mut app, KeyCode::Enter);
