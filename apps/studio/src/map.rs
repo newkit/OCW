@@ -325,6 +325,8 @@ pub struct Overlay<'a> {
     pub graph: Option<&'a ocw_world::graph::RoadGraph>,
     /// What the world patch does (E5 step 2).
     pub marks: crate::overlay::Marks,
+    /// The route of the Routes workspace (16D).
+    pub route: Option<&'a crate::routes::RouteView>,
 }
 
 /// What the pointer did on the map this frame (package points).
@@ -334,14 +336,33 @@ pub struct MapInput {
     pub fly: Option<[f64; 2]>,
     /// Clicked: select or place there.
     pub click: Option<[f64; 2]>,
+    /// A drag that grabbed something (the route): where it started, where
+    /// the pointer is, and how far it is.
+    pub drag: Option<MapDrag>,
+}
+
+/// A drag of something on the map (not a pan).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MapDrag {
+    pub from: [f64; 2],
+    pub to: [f64; 2],
+    pub phase: DragPhase,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DragPhase {
+    Start,
+    Move,
+    End,
 }
 
 fn rgb(c: [u8; 3]) -> egui::Color32 {
     egui::Color32::from_rgb(c[0], c[1], c[2])
 }
 
-/// Draws the map into `rect` and handles its input: drag to pan, wheel to
-/// zoom, click, double-click.
+/// Draws the map into `rect` and handles its input: drag to pan (or, where
+/// `grab` says a press grabs something, a [`MapDrag`]), wheel to zoom,
+/// click, double-click.
 pub fn paint(
     ui: &mut egui::Ui,
     rect: egui::Rect,
@@ -349,12 +370,60 @@ pub fn paint(
     data: &MapData,
     land: Option<&egui::TextureHandle>,
     overlay: &Overlay,
+    grab: Option<&dyn Fn([f64; 2]) -> bool>,
 ) -> MapInput {
     let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
     let mid = [rect.center().x, rect.center().y];
+    let grab_id = response.id.with("grab");
+    let mut drag: Option<MapDrag> = None;
+    let pointer = response
+        .interact_pointer_pos()
+        .map(|p| view.to_world([p.x, p.y], mid));
+    if response.drag_started() {
+        let grabbed = pointer.filter(|p| grab.is_some_and(|g| g(*p)));
+        ui.memory_mut(|m| m.data.insert_temp(grab_id, grabbed));
+        if let (Some(from), Some(to)) = (grabbed, pointer) {
+            drag = Some(MapDrag {
+                from,
+                to,
+                phase: DragPhase::Start,
+            });
+        }
+    }
+    let grabbed: Option<[f64; 2]> = ui
+        .memory(|m| m.data.get_temp::<Option<[f64; 2]>>(grab_id))
+        .flatten();
     if response.dragged() {
-        let d = response.drag_delta();
-        view.pan([d.x, d.y]);
+        match (grabbed, pointer) {
+            (Some(from), Some(to)) => {
+                if drag.is_none() {
+                    drag = Some(MapDrag {
+                        from,
+                        to,
+                        phase: DragPhase::Move,
+                    });
+                }
+            }
+            _ => {
+                let d = response.drag_delta();
+                view.pan([d.x, d.y]);
+            }
+        }
+    }
+    if response.drag_stopped() {
+        if let Some(from) = grabbed {
+            let to = response
+                .hover_pos()
+                .map(|p| view.to_world([p.x, p.y], mid))
+                .or(pointer)
+                .unwrap_or(from);
+            drag = Some(MapDrag {
+                from,
+                to,
+                phase: DragPhase::End,
+            });
+        }
+        ui.memory_mut(|m| m.data.remove::<Option<[f64; 2]>>(grab_id));
     }
     if response.hovered() {
         let scroll = ui.input(|i| i.smooth_scroll_delta.y);
@@ -372,6 +441,7 @@ pub fn paint(
     let input = MapInput {
         fly: at(response.double_clicked()),
         click: at(response.clicked()),
+        drag,
     };
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(38, 42, 46));
@@ -433,6 +503,9 @@ pub fn paint(
     }
     if let Some(g) = overlay.graph {
         paint_marks(&painter, view, mid, g, &overlay.marks);
+    }
+    if let Some(r) = overlay.route {
+        paint_route(&painter, view, mid, r);
     }
     for (p, name) in &overlay.views {
         let c = pos(*p);
@@ -551,6 +624,77 @@ fn paint_marks(
             egui::Align2::LEFT_TOP,
             format!("{} {}", p.id, p.label),
             egui::FontId::proportional(12.0),
+            egui::Color32::WHITE,
+        );
+    }
+}
+
+/// The route over the map (16D): the imported track grey with its
+/// problem sections, the route coloured by gradient, the numbered
+/// via-points (the start green, the finish red, the selected one ringed).
+fn paint_route(
+    painter: &egui::Painter,
+    view: &MapView,
+    mid: [f32; 2],
+    r: &crate::routes::RouteView,
+) {
+    let pos = |p: [f64; 2]| {
+        let s = view.to_screen(p, mid);
+        egui::pos2(s[0], s[1])
+    };
+    if r.track.len() >= 2 {
+        painter.add(egui::Shape::line(
+            r.track.iter().map(|p| pos(*p)).collect(),
+            egui::Stroke::new(1.5, egui::Color32::from_gray(150)),
+        ));
+    }
+    for (kind, pts) in &r.problems {
+        painter.add(egui::Shape::line(
+            pts.iter().map(|p| pos(*p)).collect(),
+            egui::Stroke::new(
+                6.0,
+                rgb(crate::routes_ui::problem_rgb(*kind)).gamma_multiply(0.85),
+            ),
+        ));
+    }
+    if r.line.len() >= 2 {
+        let pts: Vec<egui::Pos2> = r.line.iter().map(|p| pos([p[0], p[2]])).collect();
+        painter.add(egui::Shape::line(
+            pts.clone(),
+            egui::Stroke::new(6.0, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 150)),
+        ));
+        for (k, w) in pts.windows(2).enumerate() {
+            let g = r.grades.get(k).copied().unwrap_or(0.0);
+            painter.line_segment(
+                [w[0], w[1]],
+                egui::Stroke::new(3.5, rgb(crate::routes::grade_rgb(g))),
+            );
+        }
+    }
+    let last = r.vias.len().saturating_sub(1);
+    for (i, v) in r.vias.iter().enumerate() {
+        let c = pos(*v);
+        let fill = if i == 0 {
+            egui::Color32::from_rgb(60, 190, 90)
+        } else if i == last {
+            egui::Color32::from_rgb(220, 70, 60)
+        } else {
+            egui::Color32::from_rgb(40, 120, 230)
+        };
+        painter.circle_filled(c, 8.0, fill);
+        painter.circle_stroke(c, 8.0, egui::Stroke::new(1.5, egui::Color32::WHITE));
+        if r.selected == Some(i) {
+            painter.circle_stroke(
+                c,
+                12.0,
+                egui::Stroke::new(2.5, egui::Color32::from_rgb(255, 230, 60)),
+            );
+        }
+        painter.text(
+            c,
+            egui::Align2::CENTER_CENTER,
+            format!("{}", i + 1),
+            egui::FontId::proportional(10.0),
             egui::Color32::WHITE,
         );
     }

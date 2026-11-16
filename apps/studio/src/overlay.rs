@@ -149,7 +149,10 @@ impl Plugin for OverlayPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PatchPreview>()
             .add_systems(Startup, gizmo_style)
-            .add_systems(Update, (crate::patch::update_preview, draw_3d).chain());
+            .add_systems(
+                Update,
+                (crate::patch::update_preview, draw_3d, draw_route_3d).chain(),
+            );
     }
 }
 
@@ -171,6 +174,50 @@ fn v3(p: [f64; 3]) -> Vec3 {
 
 /// How high over the road the lines are drawn (m).
 const LIFT_M: f64 = 0.6;
+
+/// Draws the route of the Routes workspace in the 3D view (16D): the line
+/// over the road coloured by gradient, the via-points as rings with a
+/// post (the start green, the finish red).
+pub fn draw_route_3d(studio: Res<Studio>, mut gizmos: Gizmos) {
+    if studio.route().is_none() {
+        return;
+    }
+    let r = &studio.routes.view;
+    let lift = 1.0;
+    for (k, w) in r.line.windows(2).enumerate() {
+        let g = r.grades.get(k).copied().unwrap_or(0.0);
+        let up = |p: [f64; 3]| v3([p[0], p[1] + lift, p[2]]);
+        gizmos.line(up(w[0]), up(w[1]), colour(crate::routes::grade_rgb(g)));
+    }
+    let last = r.vias.len().saturating_sub(1);
+    for (i, v) in r.vias.iter().enumerate() {
+        // The via-point's height: the route's nearest point.
+        let h = r
+            .line
+            .iter()
+            .min_by(|a, b| {
+                let da = (a[0] - v[0]).hypot(a[2] - v[1]);
+                let db = (b[0] - v[0]).hypot(b[2] - v[1]);
+                da.total_cmp(&db)
+            })
+            .map_or(0.0, |p| p[1]);
+        let c = if i == 0 {
+            colour([60, 190, 90])
+        } else if i == last {
+            colour([220, 70, 60])
+        } else {
+            colour([40, 120, 230])
+        };
+        let base = v3([v[0], h, v[1]]);
+        let top = v3([v[0], h + 6.0, v[1]]);
+        gizmos.line(base, top, c);
+        let iso = Isometry3d::new(top, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2));
+        gizmos.circle(iso, 1.5, c);
+        if r.selected == Some(i) {
+            gizmos.circle(iso, 2.5, colour([255, 230, 60]));
+        }
+    }
+}
 
 /// Draws the marks in the 3D view.
 pub fn draw_3d(

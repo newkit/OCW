@@ -6885,6 +6885,7 @@ dependencies = [
 name = "ocw-edit"
 version = "0.2.2"
 dependencies = [
+ "ocw-fit",
  "ocw-world",
  "serde",
  "serde_json",
@@ -7013,6 +7014,9 @@ dependencies = [
  "ocw-ui",
  "ocw-world",
  "ocw-worldstore",
+ "serde",
+ "serde_json",
+ "ureq",
 ]
 
 [[package]]
