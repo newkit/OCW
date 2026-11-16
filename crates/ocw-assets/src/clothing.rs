@@ -427,6 +427,20 @@ mod tests {
     /// through the jersey's sides).
     #[test]
     fn the_bib_is_under_the_jersey_standing() {
+        // The bib's top on the torso closes the jersey above the hem (no
+        // look into the hollow torso when the jersey rides up).
+        for detail in [Detail::High, Detail::Low] {
+            let m = rider::build(detail);
+            let torso = m.node(nodes::TORSO).unwrap();
+            let shorts = m.material("shorts").unwrap();
+            assert!(
+                m.nodes[torso]
+                    .primitives
+                    .iter()
+                    .any(|p| p.material == shorts),
+                "{detail:?}"
+            );
+        }
         let f = failures(
             |m, detail, build| {
                 let rig = RiderRig::from_model(m).unwrap();

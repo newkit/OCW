@@ -815,6 +815,21 @@ pub fn build(detail: Detail) -> Model {
             false,
         );
     }
+    // The bib's top inside the jersey, carried by the torso: a lid in the
+    // bib's colour across the jersey 2.5 cm above the hem's middle, 8 mm
+    // inside it. A look up under the hem (the jersey rides up at the back
+    // in the crouch) meets the bib, not the hollow torso.
+    let lid_y = jersey_rings()[0].centre.y + 0.025;
+    let sides = jersey_sides(detail);
+    let rim: Vec<Vec3> = (0..sides)
+        .map(|k| shell_corner(sides, k, lid_y, -0.008).expect("below the shoulders"))
+        .collect();
+    let mut lid = vec![rim.iter().copied().sum::<Vec3>() / sides as f32];
+    lid.extend(&rim);
+    let fan: Vec<[u32; 3]> = (0..sides)
+        .map(|k| [0, 1 + (k + 1) % sides, 1 + k])
+        .collect();
+    p.slot("shorts").add_flat(&lid, &fan);
     p.attach(&mut m, torso);
     // The back pockets (spec §2.6) and the anchors at their openings.
     let (panel, band, anchors) = pockets(detail);
