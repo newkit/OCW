@@ -6885,6 +6885,7 @@ dependencies = [
 name = "ocw-edit"
 version = "0.2.2"
 dependencies = [
+ "ocw-world",
  "serde",
  "serde_json",
 ]
@@ -7020,6 +7021,7 @@ version = "0.2.2"
 dependencies = [
  "bevy",
  "clap",
+ "ocw-audio",
  "ocw-client",
  "ocw-core",
  "ocw-fit",
@@ -7032,6 +7034,7 @@ dependencies = [
  "ocw-weather",
  "ocw-world",
  "ocw-worldstore",
+ "web-time",
 ]
 
 [[package]]

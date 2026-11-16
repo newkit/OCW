@@ -154,6 +154,116 @@ pub fn exif_tiff(time: &MediaTime, software: &str) -> Vec<u8> {
     out
 }
 
+const BYTE: u16 = 1;
+const RATIONAL: u16 = 5;
+
+/// Unsigned rationals (numerator, denominator), little-endian.
+fn rationals(tag: u16, values: &[(u32, u32)]) -> Entry {
+    let mut data = Vec::new();
+    for (n, d) in values {
+        data.extend_from_slice(&n.to_le_bytes());
+        data.extend_from_slice(&d.to_le_bytes());
+    }
+    Entry {
+        tag,
+        kind: RATIONAL,
+        count: values.len() as u32,
+        data,
+    }
+}
+
+/// Degrees as EXIF's degrees, minutes, seconds (seconds to 1/10000).
+fn dms(deg: f64) -> [(u32, u32); 3] {
+    let a = deg.abs();
+    let d = a.floor();
+    let m = ((a - d) * 60.0).floor();
+    let s = ((a - d) * 60.0 - m) * 60.0;
+    [
+        (d as u32, 1),
+        (m as u32, 1),
+        ((s * 10_000.0).round() as u32, 10_000),
+    ]
+}
+
+/// Where a photo was taken: latitude, longitude (°, WGS84) and height (m).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GpsPosition {
+    pub lat: f64,
+    pub lon: f64,
+    pub height_m: f64,
+}
+
+/// The EXIF block (TIFF) of a photo taken at `time` by `software`, with
+/// its position (`GPSInfo`: latitude, longitude, altitude, the UTC date
+/// and time) – the ride photographer's photos (spec §2.11).
+pub fn exif_tiff_gps(time: &MediaTime, software: &str, gps: Option<GpsPosition>) -> Vec<u8> {
+    let Some(g) = gps else {
+        return exif_tiff(time, software);
+    };
+    let local = exif_local(time.unix_s, time.offset_s);
+    let offset = format_offset(time.offset_s);
+    let ifd0 = |exif_at: u32, gps_at: u32| {
+        vec![
+            ascii(0x0131, software),
+            ascii(0x0132, &local),
+            Entry {
+                tag: 0x8769,
+                kind: LONG,
+                count: 1,
+                data: exif_at.to_le_bytes().to_vec(),
+            },
+            Entry {
+                tag: 0x8825, // GPS IFD pointer
+                kind: LONG,
+                count: 1,
+                data: gps_at.to_le_bytes().to_vec(),
+            },
+        ]
+    };
+    let exif = [
+        Entry {
+            tag: 0x9000,
+            kind: UNDEFINED,
+            count: 4,
+            data: b"0232".to_vec(),
+        },
+        ascii(0x9003, &local),
+        ascii(0x9004, &local),
+        ascii(0x9010, &offset),
+        ascii(0x9011, &offset),
+        ascii(0x9012, &offset),
+    ];
+    let (y, mo, d, h, mi, s) = ocw_core::timestamp::civil(time.unix_s);
+    let gps = [
+        Entry {
+            tag: 0x0000, // GPSVersionID 2.3
+            kind: BYTE,
+            count: 4,
+            data: vec![2, 3, 0, 0],
+        },
+        ascii(0x0001, if g.lat >= 0.0 { "N" } else { "S" }),
+        rationals(0x0002, &dms(g.lat)),
+        ascii(0x0003, if g.lon >= 0.0 { "E" } else { "W" }),
+        rationals(0x0004, &dms(g.lon)),
+        Entry {
+            tag: 0x0005, // GPSAltitudeRef: 0 above sea level, 1 below
+            kind: BYTE,
+            count: 1,
+            data: vec![u8::from(g.height_m < 0.0)],
+        },
+        rationals(0x0006, &[((g.height_m.abs() * 100.0).round() as u32, 100)]),
+        rationals(0x0007, &[(h, 1), (mi, 1), (s, 1)]),
+        ascii(0x001d, &format!("{y:04}:{mo:02}:{d:02}")),
+    ];
+    let mut out = b"II\x2a\x00\x08\x00\x00\x00".to_vec();
+    let len0 = ifd(&ifd0(0, 0), 8, 0).len() as u32;
+    let len_exif = ifd(&exif, 8 + len0, 0).len() as u32;
+    out.extend(ifd(&ifd0(8 + len0, 8 + len0 + len_exif), 8, 0));
+    out.extend(ifd(&exif, 8 + len0, 0));
+    out.extend(ifd(&gps, 8 + len0 + len_exif, 0));
+    out
+}
+
 /// Encodes an RGB8 image as JPEG with the EXIF block `exif`.
 pub fn encode_jpeg(
     rgb: &[u8],
@@ -338,9 +448,14 @@ mod tests {
             for i in 0..n {
                 let e = at + 2 + 12 * i;
                 let (tag, kind, count) = (u16_at(e), u16_at(e + 2), u32_at(e + 4));
-                assert!(tag > last, "sorted tags");
+                assert!(i == 0 || tag > last, "sorted tags");
                 last = tag;
-                let size = count * if kind == LONG { 4 } else { 1 };
+                let size = count
+                    * match kind {
+                        LONG => 4,
+                        RATIONAL => 8,
+                        _ => 1,
+                    };
                 let v = if size <= 4 {
                     t[e + 8..e + 8 + size].to_vec()
                 } else {
@@ -348,7 +463,7 @@ mod tests {
                     assert_eq!(o % 2, 0, "word aligned");
                     t[o..o + size].to_vec()
                 };
-                if tag == 0x8769 {
+                if tag == 0x8769 || tag == 0x8825 {
                     todo.push(u32_at(e + 8));
                 }
                 tags.insert(tag, v);
@@ -360,6 +475,37 @@ mod tests {
 
     fn text(v: &[u8]) -> &str {
         std::str::from_utf8(v.strip_suffix(&[0]).expect("NUL terminated")).unwrap()
+    }
+
+    /// The photographer's photos (spec §2.11) carry their position.
+    #[test]
+    fn exif_has_the_gps_position() {
+        let gps = GpsPosition {
+            lat: 28.272_35,
+            lon: -16.642_5,
+            height_m: 2105.4,
+        };
+        let t = exif_tiff_gps(&T, "Open Cycling World", Some(gps));
+        let tags = read_tiff(&t);
+        assert_eq!(text(&tags[&0x0001]), "N");
+        assert_eq!(text(&tags[&0x0003]), "W");
+        let rat = |v: &[u8], i: usize| {
+            let n = u32::from_le_bytes(v[i * 8..i * 8 + 4].try_into().unwrap());
+            let d = u32::from_le_bytes(v[i * 8 + 4..i * 8 + 8].try_into().unwrap());
+            f64::from(n) / f64::from(d)
+        };
+        let deg = |v: &[u8]| rat(v, 0) + rat(v, 1) / 60.0 + rat(v, 2) / 3600.0;
+        assert!((deg(&tags[&0x0002]) - 28.272_35).abs() < 1e-6);
+        assert!((deg(&tags[&0x0004]) - 16.642_5).abs() < 1e-6);
+        assert!((rat(&tags[&0x0006], 0) - 2105.4).abs() < 0.01);
+        assert_eq!(tags[&0x0005], vec![0]);
+        assert_eq!(text(&tags[&0x001d]), "2026:11:12");
+        assert_eq!(text(&tags[&0x9003]), "2026:11:12 22:14:05");
+        let rgb = vec![90u8; 16 * 9 * 3];
+        let jpg = encode_jpeg(&rgb, 16, 9, 90, t).unwrap();
+        assert!(jpg.starts_with(b"\xff\xd8"));
+        assert!(jpg.windows(4).any(|w| w == b"Exif"));
+        assert_eq!(exif_tiff_gps(&T, "x", None), exif_tiff(&T, "x"));
     }
 
     #[test]

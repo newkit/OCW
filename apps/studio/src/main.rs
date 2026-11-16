@@ -13,12 +13,20 @@
 //! - [`info`]: the World workspace's package facts;
 //! - [`edit`]: the documents, the commands the UI sends, autosave,
 //!   `studio …` console commands;
+//! - [`patch`]: the world patch's file and its preview on the package's
+//!   road graph (E5 step 2), [`pick`]: clicks to roads, [`overlay`]: the
+//!   patch drawn over the 3D view, [`build`]: *Build package* with
+//!   `world-builder`;
 //! - [`ui`]: the egui panels.
 
+mod build;
 mod edit;
 mod flight;
 mod info;
 mod map;
+mod overlay;
+mod patch;
+mod pick;
 mod ui;
 mod world;
 
@@ -148,7 +156,7 @@ fn main() -> AppExit {
     .insert_resource(ui::UiState {
         workspace: args.workspace,
         show_map: !args.no_map,
-        open_path: None,
+        ..Default::default()
     })
     .insert_resource(args.clone())
     .add_plugins(OcwRenderPlugins)
@@ -156,6 +164,7 @@ fn main() -> AppExit {
         ocw_render::platform::PlatformPlugin,
         flight::FlightPlugin,
         edit::EditPlugin,
+        overlay::OverlayPlugin,
         ui::UiPlugin,
     ))
     .add_systems(Startup, startup_commands);

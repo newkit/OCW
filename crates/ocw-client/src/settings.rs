@@ -338,6 +338,15 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::NextStart,
         apply: Apply::Arg("fullscreen"),
     },
+    // The ride photographer (spec §2.11).
+    SettingDef {
+        key: "photographer.enabled",
+        kind: Kind::Bool,
+        default: "on",
+        description: "The ride photographer: a person or a drone takes up to 5 photos of nice views per ride",
+        scope: Scope::Live,
+        apply: Apply::Command("photographer {}"),
+    },
     SettingDef {
         key: "ride.bots",
         kind: Kind::Int {
@@ -865,6 +874,18 @@ pub const SETTINGS: &[SettingDef] = &[
         PAD_CHOICES,
         "Gamepad button: Restart"
     ),
+    binding!(
+        "keys.strava",
+        "S",
+        KEY_CHOICES,
+        "Key: Strava recording start / stop"
+    ),
+    binding!(
+        "pad.strava",
+        "L3",
+        PAD_CHOICES,
+        "Gamepad button: Strava recording start / stop"
+    ),
     binding!("keys.god", "G", KEY_CHOICES, "Key: Unicorn mode on / off"),
     binding!(
         "pad.god",
@@ -913,6 +934,9 @@ const NOT_IN_BROWSER: &[&str] = &[
     "pad.fullscreen",
     "keys.restart",
     "pad.restart",
+    // The photos are files of the desktop app (spec §2.11; the browser's
+    // downloads are open).
+    "photographer.enabled",
 ];
 
 /// Whether `key` takes effect on `platform` (the menu hides the others,
