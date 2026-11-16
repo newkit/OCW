@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 4.07 – November 2026
+Version 4.08 – November 2026
 
 | Version | Change |
 |---|---|
+| 4.08 | **A rider takes out the phone while in the in-game menu, the console or the workout and world pickers** (decision from the build dashboard, 2026-11-16; §2.6 Q2, as proposed) |
 | 4.07 | **Headphones show on a rider only while their microphone is muted in a voice room, not when voice is off** (decision from the build dashboard, 2026-11-16; §2.6 Q1, as proposed) |
 | 4.06 | **Touch steering zones cover the full screen height below the top band, with *lower half only* as a setting** (decision from the build dashboard, 2026-11-16; §3.2.3 Q8, as proposed). All §3.2.3 questions are decided |
 | 4.05 | **On touch the screen halves always steer; a junction's exit is chosen by tapping its arrow in the fan** (decision from the build dashboard, 2026-11-16; §3.2.3 Q5) |
@@ -670,7 +671,7 @@ The character editor is the **changing corner** of the workshop scene (mirror, b
   - **Safety and the rules:** looks only: the phone pose never changes the speed, the steering or the collisions; autodrive keeps steering while the rider reads (§2.2). In races the rider may still open the menu; the pose shows it to the others (*proposal*). Whether a rider may hide the own signs from others (a setting `display.show_status`) is Q3 below.
   - **Open questions (for the user):**
     - **Q1 – Headphones when: decided (2026-11-16, dashboard): as proposed** – the headphones show only for a muted microphone while the rider is in a voice room; with voice off entirely there are no headphones.
-    - **Q2 – Which screens count as "in the menu":** the in-game menu, the console, the workout and world pickers (proposal), or also the Unicorn mode inspection panel and settings opened from the start page?
+    - **Q2 – Which screens count as "in the menu": decided (2026-11-16, dashboard): as proposed** – the in-game menu, the console, and the workout and world pickers; not the Unicorn mode inspection panel or settings opened from the start page.
     - **Q3 – Hiding the status signs:** may a rider hide the own signs from others (privacy), or are they always shown (proposal: always – it is part of riding together)?
   - **Tests:** the animator's grab / hold / store timeline frame by frame (smooth, reversible mid-way, no flicker under 0.4 s), the hand reaching the pocket anchor and the phone in front of the stem on every bike and body build, the one-handed pose overriding standing / sprint, the headphones' anchor on every helmet, the VR headset on every helmet and a bare head without clipping (glasses hidden while it is on, back when it comes off), the headset following the session state (visible / focused → on, idle / stopping → off, `--vr-sim` → on), no phone for a VR rider in the menu, the flags through the protocol and the snapshot buffer to other clients, the renderer attaching the models; scenes `status-phone-grab` (a video, desktop and browser), `status-headphones`, `status-vr-headset` (a VR rider from the chase camera and from a rider beside), `status-group-mixed` (a group with one rider reading, one muted, one in VR) – single pictures.
 
