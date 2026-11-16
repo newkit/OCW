@@ -97,8 +97,12 @@ ureq = "3"
 # Pure Rust, no default features (no OS randomness), so ocw-world stays wasm-safe.
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "zeroize", "fast"] }
 sha2 = { version = "0.10", default-features = false, features = ["std"] }
-# OS randomness for key generation in the world builder only (MIT OR Apache-2.0).
+# OS randomness for key generation: the world builder, the accounts, the
+# bundled voice server's API keys (MIT OR Apache-2.0).
 getrandom = "0.3"
+# Windows job objects: the bundled voice server ends with the game server
+# that started it (spec §7.1.1; MIT OR Apache-2.0).
+win32job = "2.1"
 
 # QUIC game transport (spec §6.2), only in ocw-server: quinn (MIT OR
 # Apache-2.0) on rustls (Apache-2.0 OR ISC OR MIT) with the *ring* crypto

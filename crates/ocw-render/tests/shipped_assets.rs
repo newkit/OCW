@@ -10,19 +10,19 @@ use bevy::asset::LoadState;
 use bevy::gltf::{Gltf, GltfPlugin};
 use bevy::prelude::*;
 
-fn assets_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets")
+fn models_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../artwork/3dmodels")
 }
 
 #[test]
 fn shipped_assets_pass_the_validator() {
-    let checked = ocw_assets::manifest::validate_dir(&assets_dir().join("models"))
-        .unwrap_or_else(|e| panic!("{e:#?}"));
-    assert_eq!(checked.len(), 7);
+    let checked =
+        ocw_assets::manifest::validate_dir(&models_dir()).unwrap_or_else(|e| panic!("{e:#?}"));
+    assert_eq!(checked.len(), ocw_assets::shipped::files().len());
     // The embedded copies are the files on disk.
-    for (name, bytes) in ocw_assets::shipped::FILES {
-        let disk = std::fs::read(assets_dir().join("models").join(name)).unwrap();
-        assert_eq!(disk, bytes, "{name}");
+    for (name, bytes) in ocw_assets::shipped::files() {
+        let disk = std::fs::read(models_dir().join(name)).unwrap();
+        assert_eq!(&disk, bytes, "{name}");
     }
 }
 
@@ -32,7 +32,7 @@ fn shipped_assets_load_with_bevys_gltf_loader() {
     app.add_plugins((
         MinimalPlugins,
         AssetPlugin {
-            file_path: assets_dir().to_string_lossy().into_owned(),
+            file_path: models_dir().to_string_lossy().into_owned(),
             ..default()
         },
         bevy::scene::ScenePlugin,
@@ -45,13 +45,10 @@ fn shipped_assets_load_with_bevys_gltf_loader() {
     .init_asset::<bevy::animation::AnimationClip>();
     app.finish();
     app.cleanup();
-    let handles: Vec<(String, Handle<Gltf>)> = ocw_assets::shipped::FILES
+    let handles: Vec<(String, Handle<Gltf>)> = ocw_assets::shipped::files()
         .iter()
         .map(|(name, _)| {
-            let h = app
-                .world()
-                .resource::<AssetServer>()
-                .load(format!("models/{name}"));
+            let h = app.world().resource::<AssetServer>().load(name.to_string());
             (name.to_string(), h)
         })
         .collect();
@@ -74,10 +71,12 @@ fn shipped_assets_load_with_bevys_gltf_loader() {
     let gltfs = app.world().resource::<Assets<Gltf>>();
     for (name, h) in &handles {
         let g = gltfs.get(h).unwrap_or_else(|| panic!("{name} not loaded"));
-        let required: &[&str] = if name.starts_with("bike") {
+        let required: &[&str] = if name.starts_with("bikes/") {
             &ocw_assets::pose::bike_nodes::REQUIRED
-        } else {
+        } else if name.starts_with("riders/") {
             &ocw_assets::pose::nodes::REQUIRED
+        } else {
+            &[]
         };
         for n in required {
             assert!(g.named_nodes.contains_key(*n), "{name}: node {n}");

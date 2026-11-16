@@ -424,6 +424,7 @@ impl Parts {
                     .map(|n| inv.transform_vector3(*n).normalize().to_array())
                     .collect(),
                 indices: shape.indices,
+                ..Default::default()
             });
         }
     }

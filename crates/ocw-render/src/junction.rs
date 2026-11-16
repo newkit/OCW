@@ -24,6 +24,33 @@ const HEIGHT: f32 = 160.0;
 const PIVOT_Y: f32 = 108.0;
 const ARROW_LEN: f32 = 82.0;
 
+/// The overlay's distance from the window's bottom (px).
+const BOTTOM: f32 = 6.0;
+
+/// Where the fan is on a window of `window` logical px with the HUD scale
+/// `ui_scale` (Bevy's `UiScale`): its rectangle, the arrows' pivot (all
+/// in logical px) and the arrows' length. Touch taps on the arrows choose
+/// the exit (spec §3.2.3 Q5); this is the layout that is drawn.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FanGeometry {
+    pub min: Vec2,
+    pub max: Vec2,
+    pub pivot: Vec2,
+    pub arrow_len: f32,
+}
+
+pub fn fan_geometry(window: Vec2, ui_scale: f32) -> FanGeometry {
+    let s = ui_scale.max(0.1);
+    let (w, h) = (window.x / s, window.y / s);
+    let min = Vec2::new(w / 2.0 - WIDTH / 2.0, h - BOTTOM - HEIGHT);
+    FanGeometry {
+        min: min * s,
+        max: Vec2::new(w / 2.0 + WIDTH / 2.0, h - BOTTOM) * s,
+        pivot: Vec2::new(w / 2.0, min.y + PIVOT_Y) * s,
+        arrow_len: ARROW_LEN * s,
+    }
+}
+
 #[derive(Component)]
 struct Overlay;
 
@@ -52,7 +79,7 @@ fn spawn_overlay(mut commands: Commands) {
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                bottom: px(6),
+                bottom: px(BOTTOM),
                 left: percent(50),
                 margin: UiRect::left(px(-WIDTH / 2.0)),
                 width: px(WIDTH),
@@ -411,6 +438,22 @@ mod tests {
         // Locked: green as always.
         j.locked = true;
         assert_ne!(arrow_style(&j, 2).0, ROUTE_COLOUR);
+    }
+
+    /// The touch targets are where the fan is drawn (spec §3.2.3 Q5):
+    /// bottom centre, scaled with the HUD.
+    #[test]
+    fn the_fan_geometry_follows_the_window_and_the_hud_scale() {
+        let g = fan_geometry(Vec2::new(1280.0, 720.0), 1.0);
+        assert_eq!(g.min, Vec2::new(490.0, 554.0));
+        assert_eq!(g.max, Vec2::new(790.0, 714.0));
+        assert_eq!(g.pivot, Vec2::new(640.0, 662.0));
+        assert_eq!(g.arrow_len, ARROW_LEN);
+        let big = fan_geometry(Vec2::new(1280.0, 720.0), 1.5);
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-3;
+        assert!(near(big.max.y, 720.0 - 1.5 * BOTTOM), "{big:?}");
+        assert!(near(big.max.x - big.min.x, 1.5 * WIDTH), "{big:?}");
+        assert!(near(big.pivot.x, 640.0), "{big:?}");
     }
 
     #[test]

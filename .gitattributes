@@ -1,0 +1,11 @@
+# Git LFS (spec §14 Phase 15, 15C, Q2): the model files, their buffers,
+# textures and Blender sources under artwork/3dmodels/ are LFS objects.
+# A clone needs git-lfs (`make deps`) and `git lfs pull` when its LFS
+# filter skips the download; the build warns about pointer files.
+artwork/3dmodels/**/*.glb filter=lfs diff=lfs merge=lfs -text
+artwork/3dmodels/**/*.gltf filter=lfs diff=lfs merge=lfs -text
+artwork/3dmodels/**/*.bin filter=lfs diff=lfs merge=lfs -text
+artwork/3dmodels/**/*.png filter=lfs diff=lfs merge=lfs -text
+artwork/3dmodels/**/*.jpg filter=lfs diff=lfs merge=lfs -text
+artwork/3dmodels/**/*.ktx2 filter=lfs diff=lfs merge=lfs -text
+artwork/3dmodels/**/*.blend filter=lfs diff=lfs merge=lfs -text
