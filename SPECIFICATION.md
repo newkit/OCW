@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.93 – November 2026
+Version 3.94 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.94 | **Models: only the exported model files are used and the generator code is removed; bikes keep their frame sizes, fitted to the rider at run time from the model's geometry and anchors** (decision from the build dashboard, 2026-11-16; §14 Phase 15 Q7) |
 | 3.93 | **The character editor's extras (muscle slider, earrings, tattoos, freckles, more glasses, prosthetics) come later, not in its first step** (decision from the build dashboard, 2026-11-16; §14 Phase 4 4N Q14) |
 | 3.92 | **The visible body shape is bounded to a band around what weight and height give, with a *Match my weight* marker** (decision from the build dashboard, 2026-11-16; §14 Phase 4 4N Q13). Follow-up Q13b: the band's width (proposal: one step either side) |
 | 3.91 | **Model files: today's models exported into files named by function and shape, and the apps use the files instead of the code** (asked by the user 2026-11-16; §14 Phase 15, new 15H and stage MX): `ocw-assets model export-all` runs every generator once (helmets, parts, workshop pieces, unicorn, point obstacles, street lamps, flora with three variants per species; the rider and the bikes already are files) and writes `artwork/3dmodels/<category>/<function>-<shape>[-<detail>][-<variant>].glb`; the apps load only files (`ModelLibrary`), the mesh code moves into the exporter, `export-all --check` keeps generators and files byte-equal; screenshots before and after must match. Status: Phase 15 is planned only, nothing built. Open: Phase 15 Q6 (generator or file as the source), Q7 (parametric variants), Q8 (tree variants) |
@@ -4952,7 +4953,7 @@ The validator checks every name against the pattern, that ids are unique, and th
 
 **Open questions (to the user):**
 - **Q6 – After the export, which is the source:** the **generator** until someone edits the file in Blender, then the file (per model, `source = "generator" | "blender"`; *proposal*), or the **files** from the export on, with all generators deleted at once?
-- **Q7 – Parametric models:** export only the **variants in use** (the 6 bikes, the 4 helmets, the parts of `parts.toml`; *proposal*), or keep generating bike frames from their geometry numbers at run time, so a new frame size needs no file?
+- **Q7 – Parametric models: decided (2026-11-16, dashboard): exported model files only, the generator code removed – but bikes keep their sizes** – the user: "use only the exported models and remove the code. but keep to ability to generate different sizes of the bike." The game loads only the exported model files (the 6 bikes, the 4 helmets, the parts of `parts.toml`); the shape code that generated them is removed once the files are in. **Bike sizes stay:** a bike model carries what is needed to size it (the frame's geometry numbers and its sizing anchors / bones in the model contract), and the loader scales and fits the exported frame to the rider's size at run time, so a new size needs no new file.
 - **Q8 – Tree variants:** **three** shape variants per species (*proposal*), more for the variety, or one file per species with the variety only from size, rotation and tint?
 
 #### 15F – Tests (§11.4)
