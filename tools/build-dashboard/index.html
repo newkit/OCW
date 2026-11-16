@@ -22,6 +22,10 @@
 body { margin: 0; background: var(--bg); color: var(--fg);
   font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 header { padding: 16px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; }
+.restartb { margin-left: auto; font: inherit; font-size: 13px; padding: 4px 12px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--card); color: var(--fg); }
+.restartb:hover { border-color: var(--accent); }
+.restartb:disabled { opacity: .6; cursor: default; }
 h1 { font-size: 18px; margin: 0; font-weight: 650; }
 .muted { color: var(--muted); }
 .overview { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 16px 12px; }
@@ -143,6 +147,7 @@ footer { padding: 0 16px 24px; font-size: 12px; color: var(--muted); }
 <header>
   <h1>OCW build servers</h1>
   <span class="muted" id="updated">loading…</span>
+  <button type="button" id="restart" class="restartb" style="display:none">Restart</button>
 </header>
 <section id="alerts"></section>
 <section class="overview" id="overview"></section>
@@ -670,7 +675,12 @@ function render(st) {
   renderQuestions(st.questions);
   renderJanitor(janitorState, now);
   renderArt(st.art);
-  $("updated").textContent = "updated " + new Date(now * 1000).toLocaleTimeString();
+  if (restarting && st.started_at && st.started_at !== restarting) restarting = 0;
+  $("updated").textContent = restarting ? "restarting…" : "updated " + new Date(now * 1000).toLocaleTimeString();
+  const rb = $("restart");
+  rb.style.display = st.restart ? "" : "none";
+  rb.disabled = !!restarting;
+  rb.title = st.started_at ? "Restart the dashboard (running since " + new Date(st.started_at * 1000).toLocaleString() + ")" : "Restart the dashboard";
   setIcon(iconState(st));
 }
 
@@ -698,12 +708,34 @@ async function setIcon(state) {
   iconShown = state;
 }
 
+// The Restart button (POST /api/restart with the token): the server starts
+// afresh; the page keeps polling and shows "restarting…" until the new
+// process answers (another started_at than before the click).
+let restarting = 0;
+$("restart").addEventListener("click", async () => {
+  if (!window.confirm("Restart the build dashboard? It is back in a few seconds.")) return;
+  let tok = getToken();
+  if (!tok) {
+    tok = (window.prompt("Token from config/dashboard-token (kept in this browser):") || "").trim();
+    if (!tok) return;
+    setToken(tok);
+  }
+  try {
+    const r = await fetch("api/restart", { method: "POST", headers: { "Content-Type": "application/json", "X-OCW-Token": tok }, body: "{}" });
+    if (r.status === 403) { setToken(""); window.alert("The token was not accepted – try again."); return; }
+    if (!r.ok) { window.alert("Not restarted: " + ((await r.json().catch(() => ({}))).error || r.status)); return; }
+    restarting = (lastStatus && lastStatus.started_at) || -1;
+    $("updated").textContent = "restarting…";
+    $("restart").disabled = true;
+  } catch (e) { window.alert("Not restarted: " + e.message); }
+});
+
 async function refresh() {
   try {
     const r = await fetch("api/status", { cache: "no-store" });
     render(await r.json());
   } catch (e) {
-    $("updated").textContent = "dashboard server not reachable (" + e.message + ")";
+    $("updated").textContent = restarting ? "restarting…" : "dashboard server not reachable (" + e.message + ")";
     setIcon("unknown");
   }
 }

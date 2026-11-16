@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import re
@@ -1400,6 +1401,12 @@ class Dashboard:
         add_coordinator(status, getattr(self, "coordinator", None), getattr(self, "prompt_mask", None))
         # The page shows the enable/disable and slot controls only then.
         status["machine_settings"] = bool(bm is not None and not bm.read_only and getattr(self, "token", None))
+        # The Restart button (with the token), and since when this process runs.
+        status["restart"] = bool(getattr(self, "token", None) and getattr(self, "restart", None))
+        status["started_at"] = getattr(self, "started_at", None)
+        watcher = getattr(self, "config_watcher", None)
+        if watcher is not None and watcher.error:
+            status["alerts"] = list(status.get("alerts") or []) + [{"level": "warn", "text": watcher.error}]
         return annotate_jobs(status, getattr(self, "prompts", None), getattr(self, "commits", None),
                              getattr(self, "prompt_mask", None), getattr(self, "show_prompts", False))
 
@@ -1770,6 +1777,91 @@ def questions_text(q) -> list:
 # --------------------------------------------------------------------------
 
 
+# --------------------------------------------------------------- restart
+#
+# The page's Restart button (POST /api/restart with the token) and a changed
+# config/machines.toml restart the dashboard: the process replaces itself
+# with a fresh start of the same command line (os.execv – the same PID, so
+# systemd's unit stays active). Everything built from the machine list (the
+# pollers, the janitor, the masking of host names) starts again from the new
+# file; the SSH control masters live on in their own processes.
+
+RESTART_DELAY_S = 0.5  # lets the HTTP answer go out first
+CONFIG_POLL_S = 2.0
+
+
+def restart_process(reason: str, delay_s: float = RESTART_DELAY_S):
+    """Restarts this dashboard in `delay_s` (a thread; returns at once)."""
+    print("restarting: %s" % reason, file=sys.stderr, flush=True)
+
+    def go():
+        time.sleep(delay_s)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+
+    threading.Thread(target=go, daemon=True, name="restart").start()
+
+
+class ConfigWatcher:
+    """Watches config/machines.toml: when its content changed and stayed so
+    for one more poll (an editor's save is complete), the new file is read
+    with load_machines – valid: `on_change` (the dashboard restarts); broken:
+    `error` says why and the dashboard keeps the machines it has (an amber
+    alert on the page) until the file is fixed."""
+
+    def __init__(self, config_dir: Path, on_change, interval: float = CONFIG_POLL_S):
+        self.config_dir = Path(config_dir)
+        self.path = self.config_dir / "machines.toml"
+        self.on_change = on_change
+        self.interval = interval
+        self.loaded = self._hash()  # what the running dashboard was started with
+        self.seen = self.loaded
+        self.error: str | None = None
+        self.stop = threading.Event()
+
+    def _hash(self) -> str | None:
+        try:
+            return hashlib.sha256(self.path.read_bytes()).hexdigest()
+        except OSError:
+            return None
+
+    def check(self) -> bool:
+        """One poll; True when `on_change` was called."""
+        now = self._hash()
+        stable, self.seen = now == self.seen, now
+        if now == self.loaded:
+            self.error = None
+            return False
+        if not stable:
+            return False
+        if now is None:
+            self.error = "config/machines.toml is missing – still on the machines it had"
+            return False
+        try:
+            machines = load_machines(self.config_dir)
+        except Exception as e:  # any parse error: keep running on the old list
+            self.error = "config/machines.toml has an error (%s) – still on the machines it had" % str(e)[:160]
+            return False
+        if not machines:
+            self.error = "config/machines.toml lists no machines – still on the machines it had"
+            return False
+        self.error = None
+        self.loaded = now
+        self.on_change("config/machines.toml changed (%d machines)" % len(machines))
+        return True
+
+    def loop(self):
+        while not self.stop.wait(self.interval):
+            try:
+                self.check()
+            except Exception as e:  # the watcher must never stop the dashboard
+                print("config watcher: %s: %s" % (type(e).__name__, e), file=sys.stderr)
+
+    def start(self):
+        threading.Thread(target=self.loop, daemon=True, name="config-watcher").start()
+
+
 def make_handler(dash: Dashboard):
     page = (HERE / "index.html").read_bytes()
     # The tab's icon (a wheel with a status dot that the page recolours);
@@ -1832,6 +1924,8 @@ def make_handler(dash: Dashboard):
             path = self.path.split("?", 1)[0]
             if path == "/api/machines":
                 return self._post_machine()
+            if path == "/api/restart":
+                return self._post_restart()
             if path != "/api/answers":
                 return self._send(404, b"not found\n", "text/plain")
             self._post_answer()
@@ -1859,6 +1953,17 @@ def make_handler(dash: Dashboard):
             except ValueError as ex:
                 return self._json(400, {"error": str(ex)[:200]})
             self._json(200, {"ok": True, "machine": m.name, "settings": e})
+
+        def _post_restart(self):
+            """POST /api/restart with the token header: the dashboard starts
+            afresh (the page's Restart button)."""
+            restart, token = getattr(dash, "restart", None), getattr(dash, "token", None)
+            if restart is None or not token:
+                return self._json(404, {"error": "restart is off"})
+            if not answers.token_ok(token, self.headers.get(answers.TOKEN_HEADER)):
+                return self._json(403, {"error": "wrong or missing token (config/dashboard-token)"})
+            self._json(200, {"ok": True, "restarting": True})
+            restart("the Restart button")
 
         def _post_answer(self):
             """POST /api/answers {"id", "answer", "choice"?} with the token
@@ -2997,6 +3102,11 @@ def main(argv=None) -> int:
         dash.token = answers.load_token(cfg / "dashboard-token")
         print("writing (answers, machine settings): token in %s (enter it once on the page)"
               % (cfg / "dashboard-token").name)
+    dash.started_at = time.time()
+    dash.restart = restart_process
+    # A changed machines.toml restarts the dashboard with it.
+    dash.config_watcher = ConfigWatcher(cfg, restart_process)
+    dash.config_watcher.start()
     dash.start()
     if dash.coordinator is not None:
         dash.coordinator.start()

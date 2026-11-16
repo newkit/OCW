@@ -464,6 +464,18 @@ a login, once: `sudo loginctl enable-linger $USER`. Remove it with
   follow-up of the 2026-11-15 incident, when the OOM killer stopped the
   dashboard while deb ran out of memory (OCW-ART's `build-history/2026-11-15/incidents.md`).
   The OOM kill then took it down, and the systemd restart brought it back.
+- **Restart button:** the page's header has a *Restart* button (with the
+  token of `config/dashboard-token`, `POST /api/restart`): the dashboard
+  replaces its process with a fresh start of the same command line
+  (`os.execv`, the same PID, so the unit stays active) – e.g. after pulling
+  a new version of the dashboard. Its tooltip says since when it runs; the
+  page shows "restarting…" until the new process answers.
+- **`machines.toml` is watched:** a change of `config/machines.toml` (checked
+  every 2 s, acted on once the content stayed the same for one more check)
+  restarts the dashboard with the new machines. A file that lists no
+  machines, or is missing, keeps the machines it had and shows an amber
+  alert until it is fixed. `build-machines.toml` (the dashboard's own
+  settings) is not watched.
 - **Changing the unit:** the running unit changes only after a reinstall:
   `make dashboard-install` (it copies the unit again, then daemon-reload and
   restart).
