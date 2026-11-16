@@ -94,6 +94,27 @@ pub const WIND_STEP_MPS: f64 = 0.5;
 /// FTMS carries 0.01 kg/m).
 pub const DENSITY_STEP: f64 = 0.01;
 
+/// Time constant of the wind sent to the trainer (s). The weather's gusts
+/// change the headwind every few seconds; sent as they come, each 0.5 m/s
+/// step was a jump in the resistance on a road of constant gradient (the
+/// user's report, 2026-11-16: "while the road was constantly at 10 %
+/// inclination, the resistance varied a bit"). The trainer gets the wind
+/// smoothed over this long instead: gusts are damped, a lasting change (a
+/// stronger wind, a turn into it) arrives within two or three of these.
+/// The physics of the ride keeps every gust.
+pub const TRAINER_WIND_TAU_S: f64 = 15.0;
+
+/// Hysteresis of the wind steps, as a share of [`WIND_STEP_MPS`]: a new
+/// step is sent only once the smoothed wind is this far from the one sent,
+/// so a wind near a step boundary does not flip between two steps.
+pub const WIND_HYSTERESIS: f64 = 0.75;
+
+/// The trainer's wind coefficient is sent again for a change of the air's
+/// density only from this share on (2 %). Climbing, the air thins by about
+/// 1 % per 100 m; every density step re-sent a Wahoo KICKR's whole SIM
+/// mode (mass, Crr, cw) for a change worth well under 0.1 % of the load.
+pub const CW_RESEND_SHARE: f64 = 0.02;
+
 /// The wind's extra drag over still air on a rider at `speed` (m/s) with
 /// wind coefficient `cw_kg_per_m` and total mass `mass_kg`, as a gradient
 /// (rise over run): what a trainer without wind support gets on top of
@@ -117,6 +138,9 @@ pub struct SimController {
     mass_kg: f64,
     /// The wind last sent (m/s, in [`WIND_STEP_MPS`]).
     wind_sent: f64,
+    /// The headwind smoothed over [`TRAINER_WIND_TAU_S`] (`None`: no
+    /// weather wind).
+    wind_smooth: Option<f64>,
     /// Rate-limited gradient (what the trainer is moving towards).
     current: Option<f64>,
     last_update_s: Option<f64>,
@@ -134,6 +158,7 @@ impl SimController {
             cda_m2: profile.cda_m2,
             mass_kg: profile.rider_mass_kg + profile.bike_mass_kg,
             wind_sent: 0.0,
+            wind_smooth: None,
             current: None,
             last_update_s: None,
             last_sent: None,
@@ -188,8 +213,11 @@ impl SimController {
     /// Q5; `None`: still air at the standard density, as before) for a
     /// rider at `speed` (m/s): the trainer gets the headwind (FTMS and
     /// Wahoo simulate it) and the wind coefficient at the air's density,
-    /// both in steps ([`WIND_STEP_MPS`], [`DENSITY_STEP`]); a change of a
-    /// step is sent at the next interval. The target also carries the
+    /// both in steps ([`WIND_STEP_MPS`], [`DENSITY_STEP`]). The headwind is
+    /// smoothed over [`TRAINER_WIND_TAU_S`] with a hysteresis of
+    /// [`WIND_HYSTERESIS`] steps, and a density change is sent only from
+    /// [`CW_RESEND_SHARE`] on, so a steady road gives a steady load. The
+    /// target also carries the
     /// gradient with the wind folded in for trainers without wind
     /// ([`SimTarget::wind_grade`]). The gradient itself stays the road's.
     pub fn update_in(
@@ -205,13 +233,26 @@ impl SimController {
             (w.air_density / DENSITY_STEP).round() * DENSITY_STEP
         });
         let cw = 0.5 * density * self.cda_m2;
-        if (cw - self.cw_kg_per_m).abs() > 1e-12 {
+        if (cw - self.cw_kg_per_m).abs() >= CW_RESEND_SHARE * self.cw_kg_per_m {
             self.cw_kg_per_m = cw;
             self.coefficients_changed = true;
         }
-        let head = wind.map_or(0.0, |w| {
-            (w.head_mps / WIND_STEP_MPS).round() * WIND_STEP_MPS
-        });
+        self.wind_smooth = match (wind, self.wind_smooth, self.last_update_s) {
+            (None, _, _) => None,
+            (Some(w), Some(smooth), Some(t)) => {
+                let share = 1.0 - (-(now_s - t).max(0.0) / TRAINER_WIND_TAU_S).exp();
+                Some(smooth + share * (w.head_mps - smooth))
+            }
+            // The weather's first wind: as it is.
+            (Some(w), _, _) => Some(w.head_mps),
+        };
+        let head = match self.wind_smooth {
+            None => 0.0,
+            Some(smooth) if (smooth - self.wind_sent).abs() >= WIND_HYSTERESIS * WIND_STEP_MPS => {
+                (smooth / WIND_STEP_MPS).round() * WIND_STEP_MPS
+            }
+            Some(_) => self.wind_sent,
+        };
         // Look-ahead: aim between the gradient here and the one ahead, so the
         // trainer starts changing before the rider reaches a gradient change.
         let target = self
@@ -454,23 +495,39 @@ mod tests {
         assert!((0.015..0.03).contains(&fold), "{fold}");
         // The same wind: nothing new to send.
         assert!(c.update_in(dt, 0.04, 0.04, 1.0, Some(head), 10.0).is_none());
-        // A gust of a step: sent at the next interval.
+        // Every interval for `seconds` from `from_s` in `wind`: the targets
+        // sent (the keepalive re-sends one every 5 s).
+        let ride = |c: &mut SimController, from_s: f64, seconds: f64, wind: TrainerWind| {
+            let mut sent = Vec::new();
+            let mut t = from_s;
+            while t < from_s + seconds {
+                t += dt;
+                sent.extend(c.update_in(t, 0.04, 0.04, 1.0, Some(wind), 10.0));
+            }
+            sent
+        };
+        let winds = |sent: &[SimTarget]| sent.iter().map(|t| t.wind_speed_mps).collect::<Vec<_>>();
+        // A gust of two seconds, then the wind as before: the trainer keeps
+        // its wind (the user's report, 2026-11-16: the resistance varied on
+        // a steady 10 % road).
         let gust = TrainerWind {
             head_mps: 6.0,
             ..head
         };
-        let t = c
-            .update_in(2.0 * dt, 0.04, 0.04, 1.0, Some(gust), 10.0)
-            .unwrap();
+        let sent = [ride(&mut c, dt, 2.0, gust), ride(&mut c, 2.5, 30.0, head)].concat();
+        assert!(!sent.is_empty(), "the keepalive");
+        assert!(winds(&sent).iter().all(|w| *w == 5.0), "{:?}", winds(&sent));
+        // The same wind lasting: it arrives within half a minute.
+        let t = *ride(&mut c, 32.5, 30.0, gust).last().expect("the stronger wind");
         assert_eq!(t.wind_speed_mps, 6.0);
-        // A tailwind: negative wind, a lower folded gradient.
+        // A tailwind (the road turned): negative wind, a lower folded
+        // gradient, once the smoothed wind has turned (a turn from +6 to
+        // −4 m/s settles on its step after about 66 s).
         let tail = TrainerWind {
             head_mps: -4.0,
             ..head
         };
-        let t = c
-            .update_in(3.0 * dt, 0.04, 0.04, 1.0, Some(tail), 10.0)
-            .unwrap();
+        let t = *ride(&mut c, 62.5, 90.0, tail).last().expect("the tailwind");
         assert_eq!(t.wind_speed_mps, -4.0);
         assert!(t.wind_grade < t.grade);
         // The folded gradient stays within the trainer's limits.
@@ -478,18 +535,43 @@ mod tests {
             head_mps: -30.0,
             ..head
         };
-        let t = c
-            .update_in(4.0 * dt, 0.04, 0.04, 1.0, Some(gale), 10.0)
-            .unwrap();
+        let t = *ride(&mut c, 152.5, 90.0, gale).last().expect("the gale");
         assert_eq!(t.wind_grade, SimSettings::default().downhill_limit);
-        // The weather off again: still air at the standard density.
-        let t = c.update_in(5.0 * dt, 0.04, 0.04, 1.0, None, 10.0).unwrap();
+        // The weather off again: still air at the standard density, at once.
+        let t = c.update_in(243.0, 0.04, 0.04, 1.0, None, 10.0).unwrap();
         assert_eq!(t.wind_speed_mps, 0.0);
         assert_eq!(t.wind_grade, t.grade);
         assert!((t.cw_kg_per_m - 0.5 * AIR_DENSITY * profile.cda_m2).abs() < 1e-12);
-        assert!(c.update_in(6.0 * dt, 0.04, 0.04, 1.0, None, 10.0).is_none());
+        assert!(c.update_in(243.0 + dt, 0.04, 0.04, 1.0, None, 10.0).is_none());
         // Calm air folds nothing.
         assert_eq!(wind_as_grade(0.0, 10.0, 0.2, 80.0), 0.0);
+    }
+
+    /// Climbing, the air thins (about 1 % per 100 m): a small density
+    /// change does not re-send the coefficients (on a Wahoo KICKR the
+    /// whole SIM mode), a change of [`CW_RESEND_SHARE`] does.
+    #[test]
+    fn a_small_density_change_is_not_sent() {
+        let profile = RiderProfile::default();
+        let mut c = SimController::new(SimSettings::default(), &profile);
+        let still = |air_density| {
+            Some(TrainerWind {
+                head_mps: 0.0,
+                air_density,
+            })
+        };
+        let first = c.update_in(0.0, 0.1, 0.1, 1.0, still(1.10), 3.5).unwrap();
+        // 1 % thinner (about 100 m higher): only the keepalive, unchanged.
+        let mut t = 0.0;
+        while t < 4.0 {
+            t += 0.5;
+            assert!(c.update_in(t, 0.1, 0.1, 1.0, still(1.09), 3.5).is_none());
+        }
+        let keepalive = c.update_in(5.0, 0.1, 0.1, 1.0, still(1.09), 3.5).unwrap();
+        assert_eq!(keepalive.cw_kg_per_m, first.cw_kg_per_m);
+        // 3 % thinner: the new coefficient at the next interval.
+        let t = c.update_in(5.5, 0.1, 0.1, 1.0, still(1.067), 3.5).unwrap();
+        assert!((t.cw_kg_per_m - 0.5 * 1.07 * profile.cda_m2).abs() < 1e-12);
     }
 
     #[test]
