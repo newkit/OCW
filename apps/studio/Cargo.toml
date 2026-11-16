@@ -1,0 +1,31 @@
+[package]
+name = "ocw-studio"
+description = "OCW Studio: the editor for models, worlds and routes (spec §14 Phase 16)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "ocw-studio"
+path = "src/main.rs"
+
+[dependencies]
+# The document core: documents, commands, undo / redo, autosave (16A).
+ocw-edit.workspace = true
+ocw-sim.workspace = true
+ocw-world.workspace = true
+ocw-worldstore.workspace = true
+# The game's renderer: the world exactly as in a ride (16A).
+ocw-render.workspace = true
+# The unicorn flight input of Phase 13 (`ocw_ui::god::input`) and the
+# shared world loading.
+ocw-ui.workspace = true
+bevy.workspace = true
+bevy_egui.workspace = true
+clap.workspace = true
+dirs.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,19 @@
+[package]
+name = "ocw-edit"
+description = "The document core of OCW Studio: documents, selection, undoable commands, dirty flags, autosave, validators (spec §14 Phase 16, 16A)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Bevy-free and wasm-safe (spec §10, §14 Phase 16 Q4: the browser studio
+# comes later): no clock reads (callers pass the time), no file system in
+# the core (autosaves go through `AutosaveStore`; the directory store is
+# native only).
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

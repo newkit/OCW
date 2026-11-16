@@ -37,7 +37,6 @@ bevy.workspace = true
 # The version Bevy uses: probing window surfaces (`surface`).
 wgpu = { version = "=30.0.1", default-features = false }
 clap.workspace = true
-raw-window-handle.workspace = true
 winit.workspace = true
 serde.workspace = true
 toml.workspace = true
