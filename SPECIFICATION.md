@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 4.13 – November 2026
+Version 4.14 – November 2026
 
 | Version | Change |
 |---|---|
+| 4.14 | **Strava recording: each S … S is its own activity; ride photos stay local with a folder link in the history, are taken only for a nice enough view, and carry their time in EXIF, not in the picture** (decisions by the user, 2026-11-16; §2.8.1 Q1–Q4, as proposed). All §2.8.1 questions are decided |
 | 4.13 | **Rider status signs cannot be hidden: headphones, phone and VR headset are always visible to everybody** (decision by the user, 2026-11-16; §2.6 Q3). All §2.6 questions are decided |
 | 4.12 | **Rider names are reserved per account worldwide and unique on every server** (decision by the user, 2026-11-16; §14 Phase 4 4N Q22): the backend refuses a name another account holds; a rider without an account whose name is taken on a server picks another when joining |
 | 4.11 | **Strava recording with the S key and ride photos from a virtual photographer planned** (asked by the user 2026-11-16; new §2.8.1): S starts and stops a Strava recording (its own FIT, the existing upload path, account details from `strava.toml` for now); while it runs a virtual photographer takes at most 5 photos, at least 20 minutes apart – the best view of each window, the camera angle chosen for the view (open view, water, landmarks, light; occlusion-tested poses around the rider), rendered off-screen without HUD – saved with position for a later upload. Flag: Strava's public API cannot add photos to an activity. Stages ST1–ST3; open questions §2.8.1 Q1–Q4 |
@@ -743,15 +744,15 @@ GPX upload is also available in the web companion, where map matching runs on th
   - *Saved for later upload:* `<data dir>/ocw/rides/strava/<recording>/photo-N.jpg` with a small sidecar (`photo-N.toml`: time, position lat / lon / height, heading, the score and its parts, the camera pose) and EXIF time and GPS; the training history shows them with the ride.
 - **Uploading the photos – research first (flag):** Strava's **public API has no endpoint to add photos to an activity** (as far as known on 2026-11-16: the `uploads` endpoint takes FIT / TCX / GPX only, photos are added in Strava's own apps). So the photos are **saved for later**, as asked; how they reach Strava is Q2. To be re-checked against Strava's current API documentation before building ST3.
 
-**Stages:** **ST1** – S starts / stops the Strava recording (badge, notices, lap marks, the segment as its own FIT, queued with the existing upload, `strava.toml` check); **ST2** – the photographer (view score, camera candidates with occlusion tests, off-screen render, the 5 / 20-minute rules, saving with sidecar and EXIF, history view); **ST3** – the photo upload, once Q2 is answered.
+**Stages (all questions decided, ready to build):** **ST1** – S starts / stops the Strava recording (badge, notices, lap marks, the segment as its own FIT, queued with the existing upload, `strava.toml` check); **ST2** – the photographer (view score, camera candidates with occlusion tests, off-screen render, the 5 / 20-minute rules, saving with sidecar and EXIF, history view); **ST3** – the photo upload, once Q2 is answered.
 
 **Tests:** the start / stop state machine (S, leaving the ride, quit), the segment's FIT (start, end, laps, the totals of the part only); the photo limits as a pure function (never more than 5, never two within 20 minutes, the best of each window, a short recording); the view score on fixed scenes (a Tenerife ridge with the sea scores higher than a Black Forest track in the trees; a tunnel scores zero); the camera choice (an occluded pose is never chosen; the rider is in frame); the photo file and its sidecar (EXIF time and position); a headless photo run on marge archived in `test-output/`.
 
 **Open questions (for the user):**
-- **Q1 – Several recordings in one ride:** each S … S becomes **its own Strava activity** (proposal), or the stops are pauses inside one activity uploaded when the ride ends?
-- **Q2 – How the photos reach Strava** (the public API cannot add them): **keep them local and show them in the history, with a folder link to add them in Strava's app or site by hand** (proposal), or add them to the activity description as links to a place we host (needs the backend), or ask Strava for partner access to its photo upload?
-- **Q3 – A minimum score:** only take a photo when the view is nice enough – a short or dull recording may then get none (proposal) – or always take one per 20-minute window, the best of it whatever it is?
-- **Q4 – The time stamp on ride photos:** every screenshot carries an ISO time stamp in the corner (§11.4, v2.31). Ride photos meant for Strava: **without it, the time is in the EXIF data and the sidecar** (proposal), or with it like every other picture?
+- **Q1 – Several recordings in one ride: decided (2026-11-16, the user): each S … S is its own Strava activity** (own FIT, own upload, own photos).
+- **Q2 – How the photos reach Strava: decided (2026-11-16, the user): kept local and shown in the history, with a folder link** to add them in Strava's app or site by hand (Strava's public API cannot add photos). ST3 is this history view and link; an automatic upload only if Strava's API allows it later.
+- **Q3 – A minimum score: decided (2026-11-16, the user): yes** – a photo is taken only when the view is nice enough; a short or dull recording may get none.
+- **Q4 – The time stamp on ride photos: decided (2026-11-16, the user): none in the picture** – the time is in the EXIF data and the sidecar (the exception to §11.4's stamp in the corner, for ride photos meant for Strava only).
 
 ### 2.9 In-Game Console
 
