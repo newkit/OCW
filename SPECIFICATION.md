@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 4.17 – November 2026
+Version 4.18 – November 2026
 
 | Version | Change |
 |---|---|
+| 4.18 | **Voice: everybody joins muted (an X mouth shows it), *Who hears me* defaults to No one (else All nearby or Selected riders), voices fade to silence with distance and the server sends voice only to riders who can hear it; macOS server built from source, a browser signalling bridge, UPnP while hosting, the join link's host as the public address** (decisions by the user, 2026-11-16; §7.1.7 Q2–Q8). New follow-ups Q10 (hearing range, proposal 300 m) and Q11 (X mouth instead of the headphones?); Q9 stays open |
 | 4.17 | **Voice: LiveKit's `livekit-server` is bundled with the app now and started by whoever hosts** (decision by the user, 2026-11-16; §7.1.7 Q1, option (a); an own Rust SFU stays a later option). The voice questions are numbered §7.1.7 Q1–Q9 (were Q-V1–Q-V9) so the build dashboard lists them |
 | 4.16 | **The folder `release/` is removed** (asked by the user 2026-11-16): its build notes (`release/README.md`) live in the GitHub release notes, the commit map of the 2026-11-12 rewrite (`release/commit-map.txt`) stays in the git history; a future rewrite attaches its commit map to its release notes (§11.3 Q1) |
 | 4.15 | **The unicorn turns back into the rider anywhere; landing away from a road switches wild mode on** (asked by the user 2026-11-16; §14 Phase 13 13A, changes Q2): on or near a road as before; within 60 m beside a road with today's wild mode; farther away with **free 2D riding off the road** (new: 2D position on the terrain, terrain gradient, off-road surfaces, collisions with buildings, trees and obstacles, water impassable); back to the road by riding onto it or with J. Open questions Phase 13 Q7–Q9 (steep terrain, where landing is allowed, counting off-road riding) |
@@ -2413,14 +2414,16 @@ V1 launcher + headless server + kiosk (Linux, then Windows, macOS binary); V2 Ho
 #### 7.1.7 Open questions (for the user)
 
 - **Q1 – How the voice server comes with the app: decided (2026-11-16, the user): (a) bundle LiveKit's `livekit-server` now** – the user: "(a) bundle now". A second executable shipped in every package and started by whoever hosts (§7.1.1 (a)); an own Rust audio SFU inside `ocw-server` (b) stays a later option.
-- **Q2 – The macOS voice server:** LiveKit publishes no macOS binary on GitHub; build it from the pinned source tag on the Mac build machine (proposal), or use Homebrew's build?
-- **Q3 – Browser riders on home-hosted rides:** a signalling bridge through a second WebTransport session to the game server (proposal; only signalling, the audio stays WebRTC – the rule becomes "voice *media* never over the game connection"), or browsers get voice only on servers with a domain certificate?
-- **Q4 – Router ports:** open them automatically with UPnP / NAT-PMP while hosting from the app (proposal: on by default for Host a ride, off for the headless server), or only show the hint?
-- **Q5 – Finding the public address for voice:** let LiveKit ask a public STUN server (Google's by default), use our own STUN later, or take the address from the join link only (proposal: the join link's host, STUN only when none is given)?
-- **Q6 – Volume in *Everybody*:** spatial volume that is never silent (near louder, far at 30 %; proposal), or everybody equally loud by default?
-- **Q7 – Microphone when joining:** open microphone with a first-call notice (today's decision kept; proposal), muted-but-listening on the first ride only, or always join muted?
-- **Q8 – With *Selected riders*, who hears me:** a separate setting *Who hears me: Everybody / Same as my selection* (proposal, default Everybody), or does the selection always work both ways?
+- **Q2 – The macOS voice server: decided (2026-11-16, the user): built from LiveKit's pinned source tag on the Mac build machine**, like the other release binaries (not Homebrew).
+- **Q3 – Browser riders on home-hosted rides: decided (2026-11-16, the user): the signalling bridge** – a second WebTransport session to the game server carries LiveKit's signalling; the audio stays WebRTC (the rule becomes "voice *media* never over the game connection").
+- **Q4 – Router ports: decided (2026-11-16, the user): UPnP / NAT-PMP / PCP from the app while hosting** – on by default for *Host a ride*, off for the headless server; switchable.
+- **Q5 – Finding the public address for voice: decided (2026-11-16, the user): as proposed** – the join link's host; a STUN server only when none is given.
+- **Q6 – Volume in *Everybody*: decided (2026-11-16, the user): spatial, fading to silence with distance; the server sends voice only to riders who can hear it** – the user: "spatial, but riders get quieter the further away until the are not audible at all. server: save resources by sending voice data only to riders that can be heard." Volume falls with distance down to **zero** (no floor); the game server knows every position and grants each rider subscriptions only to the riders within hearing range (server-side, through LiveKit's subscription permissions / the grant), so voice data never travels to riders who could not hear it. The range is Q10.
+- **Q7 – Microphone when joining: decided (2026-11-16, the user): always join muted; muted riders show an X mouth** – the user: "join always muted, show as ingame status by giving muted riders an X mouth". Every rider joins every shared ride with the microphone **muted** (M unmutes; nothing remembered across rides); a muted rider's avatar shows an **X over the mouth** to everybody (a status sign, §2.6). Whether the headphones of §2.6 stay for a muted microphone is Q11.
+- **Q8 – With *Selected riders*, who hears me: decided (2026-11-16, the user): a setting *Who hears me*, default *No one*** – the user: "default: no one, other options all nearby, selected riders (names...)". *Who hears me*: **No one** (default) / **All nearby** (everybody within hearing range, Q6) / **Selected riders** (chosen by name in a list, remembered as in §7.1.3). Enforced by the server's grants (Q6) and LiveKit's track subscription permissions.
 - **Q9 – Block and per-rider volume:** add *Block* (remembered, both directions) and a per-rider volume to the participants' list (proposal), or keep only today's *Mute for me*?
+- **Q10 – Hearing range (follow-up of Q6):** at what distance does a rider fall silent? Proposal: **300 m** (today's voice range), with full volume up to 10 m and the volume falling smoothly to zero at the range; the server's grants follow the same range with a small margin so nobody pops in or out.
+- **Q11 – Muted: X mouth and headphones (follow-up of Q7, §2.6):** §2.6 shows **big headphones** for a muted microphone (decided v4.07). With the X mouth: **the X mouth replaces the headphones** (proposal: one clear sign for "muted"), or both together?
 
 ---
 
