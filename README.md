@@ -1099,6 +1099,44 @@ Both list every operation as `ok`, `MISSING` (its target is gone – reported,
 never silently dropped; `patch check` exits 1) or unchecked. Sign the result
 with your own key as above.
 
+**In OCW Studio** (`ocw-studio --world my.ocwpkg`, World workspace) the patch
+is the document you edit, with undo / redo (Ctrl + Z / Ctrl + Shift + Z) and
+autosave:
+
+1. **Click a road** in the 3D view or on the 2D map: its edge is highlighted
+   in both, and the *Road* panel shows the package's surface, width, class,
+   one-way, bike access and name next to the patch's changes. Each change is
+   one command (a combo box, the width, *closed for riding*, the name; `x`
+   takes a change out again); *the whole way* makes the edits act on the OSM
+   way instead of the one edge; *Remove road* / *Restore road*.
+2. **Height points:** *Place height point*, then click the road where it
+   goes (it snaps to the selected road and starts at the road's height); in
+   its panel set the *Height* or *Raise* and the radius along the road,
+   *Move* (then click the new spot) or *Remove*. A click on a point selects it.
+3. **The patch's operations** are listed under *World patch*, each with what
+   the preview found (`ok`, `MISSING` when its target is not in the package,
+   `?`); a click selects its road or point, `x` deletes it. Changed roads are
+   tinted orange, removed or closed ones red and struck through, height
+   points drawn with their radius, and the road profile they make in yellow
+   (the package's tiles are not re-meshed in the studio yet).
+4. **File → Save patch** (Ctrl + S) writes `my.ocwpatch` next to the package
+   (*Save patch as…* elsewhere); when you open the package again, that patch
+   is loaded. *Open patch…* loads another one – a patch made for another
+   package is refused. The saved camera views stay in the studio (autosave),
+   not in the patch.
+5. **File → Build package…** runs `world-builder package … --patch` on your
+   computer when the package's sources are there (`<name>.osm.pbf`,
+   `<name>.poly`, `.hgt` tiles or a DTM folder next to the package, or typed
+   in the dialog; `world-builder` next to `ocw-studio`, on the `PATH` or in
+   `OCW_WORLD_BUILDER`) and shows its output and the per-operation report.
+   The result goes to `patched/<name>.ocwpkg`; the original package is not
+   touched.
+
+The same from the console: `studio select X Z | latlon LAT LON`, `studio road
+surface gravel | width 4 | name Alter Weg | remove | focus`, `studio point add
+| raise 3 | radius 60 | move X Z | remove`, `studio patch list | save [PATH] |
+open PATH | build [OUT]`.
+
 ## Connecting a gamepad
 
 Any controller that the operating system sees as a gamepad works (Xbox,
