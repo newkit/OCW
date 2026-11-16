@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 4.05 – November 2026
+Version 4.06 – November 2026
 
 | Version | Change |
 |---|---|
+| 4.06 | **Touch steering zones cover the full screen height below the top band, with *lower half only* as a setting** (decision from the build dashboard, 2026-11-16; §3.2.3 Q8, as proposed). All §3.2.3 questions are decided |
 | 4.05 | **On touch the screen halves always steer; a junction's exit is chosen by tapping its arrow in the fan** (decision from the build dashboard, 2026-11-16; §3.2.3 Q5) |
 | 4.04 | **Touching both sides of the screen at once does nothing, like holding ← and → together** (decision from the build dashboard, 2026-11-16; §3.2.3 Q4, as proposed) |
 | 4.03 | **OCW Studio shell built: `ocw-edit` (documents, commands with undo / redo, dirty flags, autosave, validators) and `ocw-studio` (a world package in the game's renderer, flown with the unicorn's controls, a 2D map, the World workspace)** (§14 Phase 16 E1, part; 16A *Built*). `crates/ocw-edit` is Bevy-free and wasm-safe: every edit is an operation with its exact inverse (unlimited history per document, merged drags and typing, serialisable), dirty flags by never-reused history states, a selection, validators on every change, a `Session` of documents of any kind and autosave records (content and history) in `<data dir>/ocw/studio/autosave/`; the world patch operations of 16C plug in as document operations later. `apps/studio`: `--world` / File → Open, verified like the game; the 3D view (`ocw-render`, the first-person flight camera without the unicorn, hover by default); the 2D map from the package (land use, buildings, roads; never online tiles); Models / World / Routes tabs (World: id, version, signing and trust, bounds, tiles, sections, roads, buildings, routes; saved views with undo / redo; Models and Routes placeholders); `studio …` console commands. Shared instead of copied: `ocw_ui::worlds::package_world`, `ocw_worldstore::details::WorldDetails`, `ocw_render::{platform, autoshot}`, `ocw_ui::god::{flight_keys, pad_flight}`; `drive.sh` runs the studio with `OCW_PACKAGE=ocw-studio`. Open in E1: the Routes workspace (16D). Tests: `ocw-edit` (random command sequences undo to the identical document, merging, dirty tracking, autosave round trips), the studio's pure parts, a headless screenshot |
@@ -1245,7 +1246,7 @@ TS1 – TS3 are what the user asked for; TS4 makes it usable on phones.
 - **Q5 – Junction choice by the zones: decided (2026-11-16, dashboard): the halves always steer; exits are chosen by tapping the fan** – the user: "halves stay steering, select road by clicking the fan". At a junction, in autodrive and with manual steering alike, the screen halves keep steering; the exit is chosen only by tapping its arrow in the junction fan.
 - **Q6 – Desktop app too: decided (2026-11-16, dashboard): yes, as proposed** – touch steering in the desktop app too (parity rule), on Windows / Linux touch screens with the same *auto* rule (hints after the first touch). The kiosk stays untested on touch (Phase 4 Q5).
 - **Q7 – Camera drag vs steering: decided (2026-11-16, dashboard): two fingers move the camera** – the user: "make the camera drag when dragging with two fingers". In a ride one finger only steers (the halves, no 250 ms wait); a **two-finger drag** anywhere orbits the camera and a pinch sets the chase distance (as planned in §3.2.2). The one-finger orbit of §3.2.2 stays outside a ride (menus, the workshop, god mode's look).
-- **Q8 – Zone height:** proposal: full height below the top band, with *lower half* as a setting. Or the lower half by default?
+- **Q8 – Zone height: decided (2026-11-16, dashboard): as proposed** – the steering zones cover the full height below the top band; *lower half only* is a setting.
 
 ### 3.3 Audio
 
