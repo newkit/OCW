@@ -115,11 +115,14 @@ if ($inAdmins) {
 Step "Profile folder"
 $userProfile = (Get-CimInstance Win32_UserProfile | Where-Object { $_.SID -eq $userSid }).LocalPath
 if (-not $userProfile) {
-    # Create the profile by running a program as the user once.
+    # Create the profile by running a program as the user once. It starts in
+    # the Windows folder: by default it would start in the current folder
+    # (e.g. the admin's Downloads), which the new user cannot open, and
+    # Start-Process then fails with "The directory name is invalid".
     if (-not $Password) { $Password = Read-Host -AsSecureString "Password for $User (to create its profile)" }
     $cred = New-Object System.Management.Automation.PSCredential("$env:COMPUTERNAME\$User", $Password)
     Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" -ArgumentList '/c exit' `
-        -Credential $cred -LoadUserProfile -Wait -WindowStyle Hidden
+        -WorkingDirectory $env:SystemRoot -Credential $cred -LoadUserProfile -Wait -WindowStyle Hidden
     $userProfile = (Get-CimInstance Win32_UserProfile | Where-Object { $_.SID -eq $userSid }).LocalPath
 }
 if (-not $userProfile) { throw "No profile folder for $User; log in once as $User and run the script again." }
