@@ -309,6 +309,15 @@ pub struct Params {
     pub below_blocked: f32,
     /// Never below this distance (m).
     pub floor_m: f32,
+    /// A step down whose frame rate is above this share of the one where
+    /// the cutting began counts as a gain …
+    pub gain_ratio: f64,
+    /// … and with none down to this share of that distance the distance is
+    /// not what limits: back there, no steps down for this long …
+    pub no_gain_share: f32,
+    pub no_gain_hold_s: f64,
+    /// … unless the frame rate falls below this share of what it was.
+    pub worse_ratio: f64,
 }
 
 impl Default for Params {
@@ -332,6 +341,10 @@ impl Default for Params {
             failed_up_s: 10.0,
             below_blocked: 0.95,
             floor_m: FLOOR_M,
+            gain_ratio: 1.1,
+            no_gain_share: 0.25,
+            no_gain_hold_s: 300.0,
+            worse_ratio: 0.8,
         }
     }
 }
@@ -347,6 +360,9 @@ pub enum Why {
     Headroom { fps: f64 },
     /// The upper limit came down (the slider, the preset).
     Limit,
+    /// Shorter distances brought no frames: back to where the cutting
+    /// began (the CPU or another program limits the frame rate).
+    NoGain { fps: f64 },
 }
 
 /// One change of the distance (`None`: unlimited).
@@ -368,6 +384,9 @@ impl Step {
             Why::VerySlow { fps } => format!("{fps:.0} fps, below a third of {target:.0}"),
             Why::Headroom { fps } => format!("{fps:.0} fps, room to spare for 5 s"),
             Why::Limit => "the upper limit".into(),
+            Why::NoGain { fps } => format!(
+                "still {fps:.0} fps with a quarter of the distance: the distance is not the limit"
+            ),
         };
         format!("{} → {}: {why}", km_text(self.from), km_text(self.to))
     }
@@ -406,6 +425,11 @@ pub struct Controller {
     backoff_s: f64,
     /// The distance before the last step up (it was fine there).
     before_up: Option<f32>,
+    /// Where the cutting began or the frame rate last rose: (m, fps).
+    anchor: Option<(f32, f64)>,
+    /// No steps down for this many seconds, unless below this share of
+    /// that frame rate (the distance is not the limit).
+    no_gain: Option<(f64, f64)>,
     last: Option<Step>,
 }
 
@@ -435,6 +459,8 @@ impl Controller {
             blocked: None,
             backoff_s: params.backoff_s,
             before_up: None,
+            anchor: None,
+            no_gain: None,
             last: None,
         }
     }
@@ -464,6 +490,9 @@ impl Controller {
         self.grace_s = self.grace_s.max(self.params.settle_s);
         self.slow_s = 0.0;
         self.fast_s = 0.0;
+        // A new place: what limits the frame rate may differ.
+        self.anchor = None;
+        self.no_gain = None;
     }
 
     fn changed(&mut self, from: f32, why: Why) -> Option<Step> {
@@ -536,10 +565,43 @@ impl Controller {
             self.fast_s = 0.0;
         }
         let very_slow = fps < p.very_slow_ratio * target;
-        let down = (self.slow_s >= p.slow_after_s && self.since_change_s >= p.spacing_s)
+        let mut down = (self.slow_s >= p.slow_after_s && self.since_change_s >= p.spacing_s)
             || (very_slow && self.slow_s >= p.window_s && self.since_change_s >= p.window_s);
+        // The distance was found not to be what limits the frame rate: no
+        // steps down unless it gets clearly worse than it was.
+        if let Some((left, anchor_fps)) = &mut self.no_gain {
+            *left -= dt;
+            if *left <= 0.0 || fps < p.worse_ratio * *anchor_fps {
+                self.no_gain = None;
+            } else {
+                down = false;
+                self.slow_s = 0.0;
+            }
+        }
         if down && self.distance > floor {
             let from = self.distance;
+            // Where the frame rate last rose: shorter distances should help.
+            let reach = |m: f32| if m.is_infinite() { 2.0 * MAX_M } else { m };
+            let anchor = match self.anchor {
+                Some((d, f)) if fps <= p.gain_ratio * f => (d, f),
+                _ => (from, fps),
+            };
+            self.anchor = Some(anchor);
+            let next = if from.is_infinite() {
+                MAX_M
+            } else {
+                from * p.down
+            };
+            let failed_probe = self.before_up.is_some() && self.since_up_s <= p.failed_up_s;
+            if !failed_probe && next < p.no_gain_share * reach(anchor.0) {
+                // A quarter of the distance and no more frames: something
+                // else limits them (the CPU, another program). Back to where
+                // the cutting began, and leave it there.
+                self.distance = anchor.0.min(ceiling);
+                self.anchor = None;
+                self.no_gain = Some((p.no_gain_hold_s, anchor.1));
+                return self.changed(from, Why::NoGain { fps });
+            }
             match self.before_up.filter(|_| self.since_up_s <= p.failed_up_s) {
                 // A step up that failed: back to where it was fine, and no
                 // higher for twice as long as last time.
@@ -592,6 +654,7 @@ impl Controller {
                 self.distance = to;
                 self.since_up_s = 0.0;
                 self.before_up = Some(from);
+                self.anchor = None;
                 return self.changed(from, Why::Headroom { fps });
             }
             // Blocked: wait for the block to end.
@@ -904,13 +967,41 @@ mod tests {
         assert_eq!(c.update(Input { dt_s: 0.5, ..quiet }), None, "grace");
     }
 
+    /// A frame rate the distance does not change (the CPU or another
+    /// program limits it, as on a busy build machine): after a quarter of
+    /// the distance without a gain, back to where the cutting began, and
+    /// left there – unless it gets clearly worse.
+    #[test]
+    fn a_frame_rate_the_distance_does_not_change() {
+        // 80 fps whatever the distance, the target 144.
+        let cpu = |_: f64| Gpu {
+            ms: Box::new(|_| 12.5),
+            vsync_hz: None,
+        };
+        let mut c = Controller::new(None);
+        let run = simulate(&mut c, &cpu, 144.0, None, 300.0, &never);
+        let last = run.steps.last().expect("it tried").1;
+        assert!(matches!(last.why, Why::NoGain { .. }), "{:?}", run.steps);
+        assert_eq!(last.to, None, "back to unlimited");
+        assert!(run.steps.len() <= 8, "{:?}", run.steps);
+        assert_eq!(c.distance(), None);
+        assert_eq!(run.changes_between(40.0, 300.0), 0, "{:?}", run.steps);
+        // Much worse later (25 fps, below 80 % of the 80): it tries again.
+        let worse = |_: f64| Gpu {
+            ms: Box::new(|_| 40.0),
+            vsync_hz: None,
+        };
+        let run = simulate(&mut c, &worse, 144.0, None, 20.0, &never);
+        assert!(!run.steps.is_empty(), "steps again");
+    }
+
     /// Bounds: never below the floor, never above the slider; a lower
     /// slider at once; a slider below the floor is kept.
     #[test]
     fn floor_and_ceiling() {
-        // Hopeless: 5 fps at any distance.
+        // Hopeless: below 20 fps even at the floor.
         let gpu = |_: f64| Gpu {
-            ms: Box::new(|_| 200.0),
+            ms: linear(50.0, 5.0),
             vsync_hz: None,
         };
         let mut c = Controller::new(None);
