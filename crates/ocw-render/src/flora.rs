@@ -521,8 +521,20 @@ fn h01(p: f32, k: u32) -> f32 {
     x - x.floor()
 }
 
-/// Draws a plant of `sp` with `look` at `at` into `m` in `detail`.
+/// Draws a plant of `sp` with `look` at `at` into `m` in `detail`: from
+/// its model file with `OCW_FLORA=files` where the season keeps the file's
+/// shape (spec §14 Phase 15, M1; [`crate::flora_files`]), else from the
+/// generator ([`generate`]).
 pub fn plant(m: &mut MeshArrays, sp: Species, at: &PlantAt, look: &PlantLook, detail: Detail) {
+    if crate::flora_files::try_draw(m, sp, at, look, detail) {
+        return;
+    }
+    generate(m, sp, at, look, detail);
+}
+
+/// The generator of the plants (what the files in
+/// `artwork/3dmodels/flora/` were exported from).
+pub fn generate(m: &mut MeshArrays, sp: Species, at: &PlantAt, look: &PlantLook, detail: Detail) {
     use Species::*;
     let s = at.scale;
     let base = at.base;

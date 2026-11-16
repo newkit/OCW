@@ -305,6 +305,11 @@ pub struct Args {
     /// render rate where the display gives no refresh to wait for).
     #[arg(long, value_name = "FPS")]
     pub max_fps: Option<f64>,
+    /// Read the 3D models from this folder instead of the embedded ones
+    /// (spec §14 Phase 15, 15D: an artist's export seen at once; also
+    /// $OCW_MODELS), e.g. `--models artwork/3dmodels`.
+    #[arg(long, value_name = "DIR")]
+    pub models: Option<PathBuf>,
     /// Directory for videos (key V, console `video`; default
     /// ~/Videos/OCW/).
     #[arg(long, value_name = "DIR")]
@@ -384,6 +389,11 @@ fn main() -> AppExit {
         eprintln!("settings: {w}");
     }
     worlds::handle_cli(&args);
+    if let Some(dir) = &args.models
+        && !ocw_assets::library::use_folder(dir)
+    {
+        warn!("--models: the models were already read");
+    }
     // Desktop entry and icons for menus, docks and file managers (not for
     // the headless screenshot / capture runs).
     #[cfg(target_os = "linux")]

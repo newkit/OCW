@@ -33,21 +33,21 @@ endif
 # ffmpeg for videos, rsync/git for scripts/remote.sh. FUSE 2 (to run
 # AppImages such as appimagetool) comes separately in deps-linux-debian:
 # libfuse2t64 on Debian 13 / Ubuntu 24.04, libfuse2 before.
-APT_PACKAGES := build-essential pkg-config curl git rsync \
+APT_PACKAGES := build-essential pkg-config curl git git-lfs rsync \
 	libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 \
 	libdbus-1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
 	mesa-vulkan-drivers vulkan-tools bluez \
 	xvfb xauth weston ffmpeg libglib2.0-dev
 # The same for Fedora / RHEL (dnf). ffmpeg is handled separately in
 # deps-linux-fedora: Fedora's ffmpeg-free conflicts with RPM Fusion's ffmpeg.
-DNF_PACKAGES := gcc gcc-c++ pkgconf-pkg-config curl git rsync \
+DNF_PACKAGES := gcc gcc-c++ pkgconf-pkg-config curl git git-lfs rsync \
 	alsa-lib-devel systemd-devel wayland-devel libxkbcommon-devel libxkbcommon-x11-devel \
 	dbus-devel libX11-devel libXcursor-devel libXrandr-devel libXi-devel libxcb-devel \
 	mesa-vulkan-drivers vulkan-tools bluez \
 	xorg-x11-server-Xvfb xorg-x11-xauth weston fuse-libs glib2-devel
 # The same for Arch / Manjaro (pacman); the Vulkan driver depends on the GPU
 # (vulkan-radeon, vulkan-intel, nvidia-utils), mesa covers OpenGL.
-PACMAN_PACKAGES := base-devel pkgconf curl git rsync \
+PACMAN_PACKAGES := base-devel pkgconf curl git git-lfs rsync \
 	alsa-lib systemd-libs wayland libxkbcommon libxkbcommon-x11 \
 	dbus libx11 libxcursor libxrandr libxi libxcb \
 	mesa vulkan-icd-loader vulkan-tools bluez bluez-utils \
