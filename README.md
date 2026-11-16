@@ -2622,7 +2622,11 @@ The desktop app can host a shared ride itself – no separate server binary:
 2. the app opens UDP `0.0.0.0:47800` (QUIC) with a certificate kept in `<data dir>/ocw/host-tls` (the fingerprint and link stay the same across restarts), loads the course and rides on its own server as the host;
 3. the Ride page shows **Hosting – N riders**, **Show join link** (the links with the machine's addresses, *Copy link*) and **Stop hosting**.
 
-Others join with the link (Ride → Join). On the LAN that is all; from the internet the router needs a forwarding of UDP 47800 to this computer, and the firewall must let UDP 47800 in (see the next section). A port in use – usually another server on this machine, such as the kiosk's – is reported with the offer to join it instead (`join ocw://localhost:47800`). *Stop hosting* closes the server (the others see "server shutting down") and you ride on alone on the same world, route, time and weather. Console: `host start [--world ID] [--route NAME] [--time real|PRESET] [--weather PRESET] [--bots N] [--port P]`, `host status`, `host copy`, `host stop`, and `host.plan …` for the wizard's steps. Browsers cannot open a server port: there the entry is dimmed.
+**Voice comes with it** (spec §7.1.6 V2): *Start hosting* also starts the bundled voice server (`livekit-server`, next to the app or on `PATH`; see [Voice chat](#voice-chat)) with fresh keys, so everybody on the hosted ride can talk; it stops with *Stop hosting* and when the app quits (also if the app crashes: Linux kills it through the parent-death signal, Windows through a job object). Without the binary, or when it does not start, the ride is hosted without voice and the join link page says why.
+
+**Ports.** The summary and the join link page list what others must reach: **UDP 47800** (the game; the port you chose), **TCP 7880** (voice signalling), **TCP 7881** (voice over TCP) and **UDP 7882** (voice), with the firewall / port-forwarding hint. **Open the router's ports automatically** (Options page, setting `host.upnp`, **on** by default): while you host, the app asks the router over **UPnP** to forward these ports to this computer and removes the forwardings again when you stop (they are leased for an hour and renewed, so a crash leaves nothing open for long). The join link page shows the result – *opened (UPnP)*, *no UPnP router* (UPnP off on the router, or none answered within 3 s) or *failed* with the router's reason – and hosting never fails because of it. When the router names a public address, the first join link uses it and the voice server announces it to riders from the internet; behind double NAT or carrier-grade NAT the page says that the router's address is not public. NAT-PMP / PCP routers (some Apple and OpenWrt routers without UPnP) are not supported yet. `host start --upnp off` hosts once without it.
+
+Others join with the link (Ride → Join). On the LAN that is all; from the internet the router needs a forwarding of these ports to this computer (UPnP does that when the router allows it), and the firewall must let them in (see the next section). A port in use – usually another server on this machine, such as the kiosk's – is reported with the offer to join it instead (`join ocw://localhost:47800`). *Stop hosting* closes the server (the others see "server shutting down") and you ride on alone on the same world, route, time and weather. Console: `host start [--world ID] [--route NAME] [--time real|PRESET] [--weather PRESET] [--bots N] [--port P] [--upnp on|off]`, `host status` (links, ports, the voice server and the router's result), `host copy`, `host stop`, and `host.plan …` for the wizard's steps. Browsers cannot open a server port: there the entry is dimmed.
 
 ### Riding on a server on the internet
 
@@ -2783,8 +2787,15 @@ Voice needs two things:
      secret is only read from the environment.)
    - `--voice off`: no voice chat at all; the clients show "no voice on this
      server".
+   - `--upnp`: open the game's and the voice server's ports on the router
+     by UPnP while the server runs (off by default for the headless server;
+     on by default in *Ride → Host a ride*); the router's public address
+     then names the first join link and, without `--voice-public-host`,
+     the voice server's media address.
 
-   *Ride → Host a ride* in the app does not host voice yet (milestone V2).
+   *Ride → Host a ride* in the app hosts voice the same way (the same
+   code), see [Hosting from the menu](#hosting-from-the-menu-ride--host-a-ride);
+   `make test-host-voice` checks it on marge with the real `livekit-server`.
 
 There are no accounts yet (Phase 5): a token is bound to the rider of the
 connection (`rider-<id>`), and a voice group is open to everyone on the

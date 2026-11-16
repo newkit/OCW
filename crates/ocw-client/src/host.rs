@@ -83,6 +83,9 @@ pub struct HostPlan {
     pub open_conditions: bool,
     pub port: u16,
     pub sign_in: bool,
+    /// Open the router's ports automatically (UPnP; setting `host.upnp`,
+    /// spec §7.1.7 Q4: on by default for Host a ride).
+    pub upnp: bool,
 }
 
 impl Default for HostPlan {
@@ -97,6 +100,7 @@ impl Default for HostPlan {
             open_conditions: false,
             port: ocw_protocol::join::DEFAULT_PORT,
             sign_in: false,
+            upnp: true,
         }
     }
 }
@@ -156,10 +160,10 @@ impl HostPlan {
 
     /// Applies one `host.plan` line's words (`world N`, `route NAME|free`,
     /// `time real|PRESET|next|prev`, `day +1|-1|0`, `weather …`, `bots N`,
-    /// `open on|off`, `port N`, `sign-in on|off`).
+    /// `open on|off`, `port N`, `sign-in on|off`, `upnp on|off`).
     pub fn apply(&mut self, words: &[&str], worlds: &[HostWorld]) -> Result<String, String> {
         let usage = || {
-            "host.plan world N | route NAME|free | time real|PRESET|next|prev | day +1|-1|0 | weather simulated|real|PRESET|next|prev | bots N|+1|-1 | open on|off | port N|+1|-1 | sign-in on|off".to_string()
+            "host.plan world N | route NAME|free | time real|PRESET|next|prev | day +1|-1|0 | weather simulated|real|PRESET|next|prev | bots N|+1|-1 | open on|off | port N|+1|-1 | sign-in on|off | upnp on|off".to_string()
         };
         let (key, rest) = words.split_first().ok_or_else(usage)?;
         let value = rest.join(" ");
@@ -245,6 +249,10 @@ impl HostPlan {
                 self.open_conditions = parse_on(&value).ok_or_else(usage)?;
                 Ok(format!("host: {}", self.access_label()))
             }
+            "upnp" => {
+                self.upnp = parse_on(&value).ok_or_else(usage)?;
+                Ok(format!("host: {}", self.upnp_label()))
+            }
             "sign-in" => {
                 self.sign_in = parse_on(&value).ok_or_else(usage)?;
                 Ok(format!("host sign-in required: {}", on_off(self.sign_in)))
@@ -262,6 +270,15 @@ impl HostPlan {
                 Ok(format!("host port: {}", self.port))
             }
             _ => Err(usage()),
+        }
+    }
+
+    /// The router's ports, for people.
+    pub fn upnp_label(&self) -> &'static str {
+        if self.upnp {
+            "the router's ports are opened automatically (UPnP)"
+        } else {
+            "the router's ports are opened by hand"
         }
     }
 
@@ -293,6 +310,18 @@ fn value_row(label: &str, value: String, left: String, right: String) -> Row {
         left: Some(left),
         right: Some(right),
         confirm: None,
+    }
+}
+
+/// An on / off row: Left, Right and Enter switch it (`LINE on|off`).
+fn toggle_row(label: &str, on: bool, line: &str) -> Row {
+    let toggle = format!("{line} {}", on_off(!on));
+    Row {
+        label: label.into(),
+        value: Some(on_off(on).into()),
+        left: Some(toggle.clone()),
+        right: Some(toggle.clone()),
+        confirm: Some(Activate::Command(toggle)),
     }
 }
 
@@ -426,16 +455,14 @@ pub fn rows(page: Page, plan: &HostPlan, worlds: &[HostWorld], sign_in: bool) ->
                     "host.plan port -1".into(),
                     "host.plan port +1".into(),
                 ),
+                toggle_row("Open the router's ports", plan.upnp, "host.plan upnp"),
             ];
             if sign_in {
-                let toggle = format!("host.plan sign-in {}", on_off(!plan.sign_in));
-                out.push(Row {
-                    label: "Sign-in required".into(),
-                    value: Some(on_off(plan.sign_in).into()),
-                    left: Some(toggle.clone()),
-                    right: Some(toggle.clone()),
-                    confirm: Some(Activate::Command(toggle)),
-                });
+                out.push(toggle_row(
+                    "Sign-in required",
+                    plan.sign_in,
+                    "host.plan sign-in",
+                ));
             }
             out.push(next_row("Next: summary", Page::HostSummary));
             out
@@ -467,6 +494,165 @@ pub fn rows(page: Page, plan: &HostPlan, worlds: &[HostWorld], sign_in: bool) ->
         ],
         _ => Vec::new(),
     }
+}
+
+/// The voice server of a hosting, for its pages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostVoice {
+    /// Starting (the hosting waits for it).
+    Starting,
+    /// Running on TCP `signal`, TCP `tcp` and UDP `udp`.
+    On { signal: u16, tcp: u16, udp: u16 },
+    /// No voice server of its own: why (it did not start, no binary).
+    Off(String),
+}
+
+/// The router's ports of a hosting (spec §7.1.7 Q4), for its pages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostRouter {
+    /// *Open the router's ports* is off.
+    Off,
+    Searching,
+    /// Mapped: the router's public address (if it is one), how many of
+    /// the ports, and what to know (some refused, not public).
+    Opened {
+        public: Option<String>,
+        ports: usize,
+        of: usize,
+        note: Option<String>,
+    },
+    /// No UPnP router (or UPnP off on it): why.
+    NotAvailable(String),
+    /// The router refused: why.
+    Failed(String),
+}
+
+/// What a hosting's pages show about its network: the ports others
+/// reach, the voice server and the router (spec §7.1.1 *Network*,
+/// §7.1.6 V2). Filled by the desktop app from its hosting services; the
+/// browser cannot host ("Hosting needs the desktop app").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostNet {
+    /// The game's UDP port (QUIC).
+    pub game_udp: u16,
+    /// WebTransport's UDP port, if open (browsers).
+    pub web_udp: Option<u16>,
+    pub voice: HostVoice,
+    pub router: HostRouter,
+}
+
+/// The voice server's default ports (spec §7.1.1: TCP 7880, TCP 7881,
+/// UDP 7882).
+pub const VOICE_PORTS: (u16, u16, u16) = (7880, 7881, 7882);
+
+impl HostNet {
+    /// Before the start (the summary): the plan's port, the bundled voice
+    /// server's default ports, the router as planned.
+    pub fn planned(plan: &HostPlan) -> Self {
+        let (signal, tcp, udp) = VOICE_PORTS;
+        Self {
+            game_udp: plan.port,
+            web_udp: None,
+            voice: HostVoice::On { signal, tcp, udp },
+            router: if plan.upnp {
+                HostRouter::Searching
+            } else {
+                HostRouter::Off
+            },
+        }
+    }
+
+    /// The ports, short: `UDP 47800 · voice TCP 7880, 7881, UDP 7882`.
+    pub fn ports_label(&self) -> String {
+        let mut s = format!("UDP {}", self.game_udp);
+        if let Some(w) = self.web_udp {
+            s.push_str(&format!(", {w}"));
+        }
+        match &self.voice {
+            HostVoice::On { signal, tcp, udp } => {
+                s.push_str(&format!(" · voice TCP {signal}, {tcp}, UDP {udp}"));
+            }
+            HostVoice::Starting => s.push_str(" · voice starting"),
+            HostVoice::Off(_) => s.push_str(" · no voice"),
+        }
+        s
+    }
+
+    /// The ports, one per entry, with what they are for.
+    pub fn port_list(&self) -> Vec<String> {
+        let mut out = vec![format!("UDP {} (game)", self.game_udp)];
+        if let Some(w) = self.web_udp {
+            out.push(format!("UDP {w} (game, browsers)"));
+        }
+        if let HostVoice::On { signal, tcp, udp } = &self.voice {
+            out.push(format!("TCP {signal} (voice signalling)"));
+            out.push(format!("TCP {tcp} (voice over TCP)"));
+            out.push(format!("UDP {udp} (voice)"));
+        }
+        out
+    }
+
+    /// The router row's value.
+    pub fn router_label(&self) -> String {
+        match &self.router {
+            HostRouter::Off => "open them by hand".into(),
+            HostRouter::Searching => "opening (UPnP) …".into(),
+            HostRouter::Opened { ports, of, .. } if ports == of => "opened (UPnP)".into(),
+            HostRouter::Opened { ports, of, .. } => format!("{ports} of {of} opened (UPnP)"),
+            HostRouter::NotAvailable(_) => "no UPnP router".into(),
+            HostRouter::Failed(_) => "failed".into(),
+        }
+    }
+
+    /// The ports, the firewall / port-forwarding hint and what the router
+    /// did, for the page's text.
+    pub fn lines(&self) -> Vec<String> {
+        let mut out = vec![format!("Ports: {}.", self.port_list().join(", "))];
+        let by_hand = "Open them in this computer's firewall; for riders from the internet also forward them on the router (README: Riding on a server on the internet).";
+        match &self.router {
+            HostRouter::Off => out.push(by_hand.into()),
+            HostRouter::Searching => out.push(
+                "The app asks the router to open them (UPnP); open them in this computer's firewall."
+                    .into(),
+            ),
+            HostRouter::Opened { public, note, .. } => {
+                out.push(match public {
+                    Some(ip) => format!(
+                        "The router opened them (UPnP) while you host; riders from the internet reach {ip}. Open them in this computer's firewall too."
+                    ),
+                    None => "The router opened them (UPnP) while you host; open them in this computer's firewall too.".into(),
+                });
+                out.extend(note.clone());
+            }
+            HostRouter::NotAvailable(why) | HostRouter::Failed(why) => {
+                out.push(format!("The router did not open them: {why}."));
+                out.push(by_hand.into());
+            }
+        }
+        if let HostVoice::Off(why) = &self.voice {
+            out.push(format!("No voice on this ride: {why}."));
+        }
+        out
+    }
+
+    /// The rows of the join link page: the ports and the router.
+    pub fn rows(&self) -> Vec<Row> {
+        vec![
+            info_row("Ports", self.ports_label()),
+            info_row("Router", self.router_label()),
+        ]
+    }
+}
+
+/// The summary page's text: where the server runs, the ports, the router
+/// and the hint (spec §7.1.1 *Network*).
+pub fn summary_lines(plan: &HostPlan) -> Vec<String> {
+    let mut out = vec![
+        "The server and its voice server run in this app on all addresses; you ride on it as the host."
+            .to_owned(),
+    ];
+    out.extend(HostNet::planned(plan).lines());
+    out
 }
 
 fn short(s: &str, n: usize) -> String {
@@ -591,6 +777,126 @@ mod tests {
                 .unwrap_err()
                 .starts_with("host.plan world N")
         );
+    }
+
+    /// *Open the router's ports* (spec §7.1.7 Q4): on by default for Host
+    /// a ride, a row of the options, `host.plan upnp on|off`.
+    #[test]
+    fn the_router_switch_is_on_by_default_and_switchable() {
+        let mut p = HostPlan::default();
+        assert!(p.upnp);
+        let w = worlds();
+        let row = rows(Page::HostOptions, &p, &w, false)
+            .into_iter()
+            .find(|r| r.label == "Open the router's ports")
+            .expect("an options row");
+        assert_eq!(row.value.as_deref(), Some("on"));
+        assert_eq!(
+            row.confirm,
+            Some(Activate::Command("host.plan upnp off".into()))
+        );
+        assert_eq!(row.left.as_deref(), Some("host.plan upnp off"));
+        assert_eq!(
+            run(&mut p, "upnp off").unwrap(),
+            "host: the router's ports are opened by hand"
+        );
+        assert!(!p.upnp);
+        let row = rows(Page::HostOptions, &p, &w, false)
+            .into_iter()
+            .find(|r| r.label == "Open the router's ports")
+            .unwrap();
+        assert_eq!(row.value.as_deref(), Some("off"));
+        assert!(run(&mut p, "upnp maybe").is_err());
+    }
+
+    /// The summary's text lists the game and voice ports with the hint,
+    /// and what the router will do.
+    #[test]
+    fn the_summary_lists_the_ports_and_the_router() {
+        let mut p = HostPlan::default();
+        let text = summary_lines(&p).join("\n");
+        assert!(
+            text.contains(
+                "Ports: UDP 47800 (game), TCP 7880 (voice signalling), TCP 7881 (voice over TCP), UDP 7882 (voice)."
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("asks the router to open them (UPnP)"),
+            "{text}"
+        );
+        run(&mut p, "upnp off").unwrap();
+        run(&mut p, "port 47900").unwrap();
+        let text = summary_lines(&p).join("\n");
+        assert!(text.contains("UDP 47900 (game)"), "{text}");
+        assert!(
+            text.contains("also forward them on the router (README"),
+            "{text}"
+        );
+        // The summary's rows still fit (the ports are in its text).
+        assert!(rows(Page::HostSummary, &p, &worlds(), true).len() <= 6);
+    }
+
+    /// The join link page's rows and text while hosting: the ports, the
+    /// router's result (mapped / not available / failed and why), voice.
+    #[test]
+    fn the_hosting_shows_ports_router_and_voice() {
+        let mut net = HostNet {
+            game_udp: 47800,
+            web_udp: None,
+            voice: HostVoice::On {
+                signal: 7880,
+                tcp: 7881,
+                udp: 7882,
+            },
+            router: HostRouter::Opened {
+                public: Some("81.2.69.160".into()),
+                ports: 4,
+                of: 4,
+                note: None,
+            },
+        };
+        let r = net.rows();
+        assert_eq!(r[0].label, "Ports");
+        assert_eq!(
+            r[0].value.as_deref(),
+            Some("UDP 47800 · voice TCP 7880, 7881, UDP 7882")
+        );
+        assert_eq!(r[1].value.as_deref(), Some("opened (UPnP)"));
+        assert!(r.iter().all(|r| r.confirm.is_none()), "information only");
+        assert!(net.lines()[1].contains("riders from the internet reach 81.2.69.160"));
+        net.router = HostRouter::Opened {
+            public: None,
+            ports: 3,
+            of: 4,
+            note: Some("TCP 7881 (voice over TCP) not opened: in use".into()),
+        };
+        assert_eq!(net.router_label(), "3 of 4 opened (UPnP)");
+        assert!(net.lines().iter().any(|l| l.contains("7881")));
+        net.router = HostRouter::NotAvailable("no UPnP router answered within 3 s".into());
+        assert_eq!(net.router_label(), "no UPnP router");
+        let l = net.lines();
+        assert_eq!(
+            l[1],
+            "The router did not open them: no UPnP router answered within 3 s."
+        );
+        assert!(l[2].starts_with("Open them in this computer's firewall"));
+        net.router = HostRouter::Failed("the router refused".into());
+        assert_eq!(net.router_label(), "failed");
+        net.router = HostRouter::Off;
+        assert_eq!(net.router_label(), "open them by hand");
+        // Without voice: the game's port only, and why.
+        net.voice = HostVoice::Off("no livekit-server next to the app".into());
+        assert_eq!(net.ports_label(), "UDP 47800 · no voice");
+        assert_eq!(net.port_list(), ["UDP 47800 (game)"]);
+        assert!(
+            net.lines()
+                .last()
+                .unwrap()
+                .contains("No voice on this ride: no livekit-server")
+        );
+        net.web_udp = Some(47801);
+        assert_eq!(net.port_list()[1], "UDP 47801 (game, browsers)");
     }
 
     #[test]

@@ -20,16 +20,33 @@
 //! links. Stopping closes the server (the others hear "server shutting
 //! down") and the host rides on alone on the same world, route, time and
 //! weather.
+//!
+//! **Voice and the router (spec §7.1.6 V2).** With the port bound, the
+//! hosting's services start on their own thread while the course loads
+//! (`ocw_server::hosting`, the same code as `ocw-server --listen`): the
+//! router's ports opened by UPnP when the setting `host.upnp` is on (the
+//! default; *Open the router's ports* on the Options page) and the
+//! bundled `livekit-server` (next to the app, else on `PATH`) with fresh
+//! keys, its media address the router's public address when there is one,
+//! else STUN. The session starts when both are done (the voice server's
+//! keys go into the hosted server's config); neither ever stops the
+//! hosting – the pages say what happened. *Stop hosting*, a failed load
+//! and quitting stop the voice server and remove the mappings. The join
+//! link page and `host status` list the ports with the firewall /
+//! port-forwarding hint and the router's result; with a public address
+//! from the router the first link names it.
 
 use std::sync::Mutex;
 use std::sync::atomic::Ordering;
 
 use bevy::prelude::*;
 use clap::{Arg, Command, value_parser};
-use ocw_client::host::{HostPlan, HostWorld};
+use ocw_client::host::{HostNet, HostPlan, HostRouter, HostVoice, HostWorld};
 use ocw_client::menu::pages::{Activate, Page, Row};
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
+use ocw_server::hosting::{HostServices, HostStatus, HostingOptions, VoicePlan, VoiceState};
 use ocw_server::net::{NetServer, ServerIdentity};
+use ocw_server::portmap::{Discover, MapState};
 
 use super::choice::{RideChoice, WorldMode};
 use super::{Follow, RideCatalog, Then};
@@ -56,11 +73,28 @@ struct Starting {
     plan: HostPlan,
     world_id: Option<String>,
     fingerprint: String,
+    /// Router ports and voice server, starting (dropped: stopped).
+    services: Option<HostServices>,
+}
+
+/// While hosting: its voice server and router ports (dropped when the
+/// hosting stops – also at quit, [`stop_on_exit`]).
+#[derive(Resource)]
+pub struct HostRun(pub Option<HostServices>);
+
+/// What *Start hosting* starts beside the server instead of the real
+/// voice server and router (tests: a fake `livekit-server`, a router in
+/// memory). Taken at the start.
+#[derive(Resource, Default)]
+pub struct HostServicesFor {
+    pub voice: Mutex<Option<VoicePlan>>,
+    pub router: Mutex<Option<Discover>>,
 }
 
 pub fn build(app: &mut App) {
     app.init_resource::<HostPlanState>()
-        .add_systems(Update, ride_mode);
+        .add_systems(Update, ride_mode)
+        .add_systems(Last, stop_on_exit);
     app.console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("host.plan")
@@ -73,7 +107,14 @@ pub fn build(app: &mut App) {
                 .unwrap_or_default();
             let words: Vec<&str> = words.iter().map(String::as_str).collect();
             let worlds = host_worlds(world);
-            world.resource_mut::<HostPlanState>().0.apply(&words, &worlds)
+            sync_upnp(world);
+            let out = world.resource_mut::<HostPlanState>().0.apply(&words, &worlds)?;
+            // *Open the router's ports* is remembered (setting host.upnp).
+            if words.first() == Some(&"upnp") {
+                let on = world.resource::<HostPlanState>().0.upnp;
+                ocw_ui::settings::save_setting(world, "host.upnp", if on { "on" } else { "off" });
+            }
+            Ok(out)
         },
     ))
     .console_command(ConsoleCommand::new(
@@ -88,7 +129,13 @@ pub fn build(app: &mut App) {
                     .arg(Arg::new("time").long("time").value_name("real|PRESET"))
                     .arg(Arg::new("weather").long("weather").value_name("simulated|real|PRESET"))
                     .arg(Arg::new("bots").long("bots").value_parser(value_parser!(u32)))
-                    .arg(Arg::new("port").long("port").value_parser(value_parser!(u16))),
+                    .arg(Arg::new("port").long("port").value_parser(value_parser!(u16)))
+                    .arg(
+                        Arg::new("upnp")
+                            .long("upnp")
+                            .value_name("on|off")
+                            .help("Open the router's ports automatically (setting host.upnp)"),
+                    ),
             )
             .subcommand(Command::new("status").about("Hosting? The riders and the join links"))
             .subcommand(Command::new("stop").about("Stop hosting: ride on alone"))
@@ -118,9 +165,14 @@ pub fn build(app: &mut App) {
                     lines.push(format!("port {p}"));
                 }
                 let worlds = host_worlds(world);
+                sync_upnp(world);
                 for l in lines {
                     let words: Vec<&str> = l.split_whitespace().collect();
                     world.resource_mut::<HostPlanState>().0.apply(&words, &worlds)?;
+                }
+                // This start only (the setting stays).
+                if let Some(u) = get("upnp") {
+                    world.resource_mut::<HostPlanState>().0.apply(&["upnp", u.as_str()], &worlds)?;
                 }
                 start(world)
             }
@@ -246,13 +298,18 @@ pub fn start(world: &mut World) -> Result<String, String> {
     let net_fingerprint = net.fingerprint().to_owned();
     info!(
         port = plan.port,
-        "hosting: the port is open, loading the course"
+        upnp = plan.upnp,
+        "hosting: the port is open, loading the course; starting the voice server"
     );
+    // The router's ports and the voice server, while the course loads.
+    let services = HostServices::spawn(services_options(world, addr, plan.upnp))
+        .map_err(|e| format!("cannot start the hosting's voice server: {e}"))?;
     world.insert_resource(Starting {
         net: Mutex::new(Some(net)),
         plan: plan.clone(),
         world_id,
         fingerprint: net_fingerprint,
+        services: Some(services),
     });
     let follow = Follow {
         name: plan.route_label(),
@@ -263,7 +320,9 @@ pub fn start(world: &mut World) -> Result<String, String> {
     match super::start_load(world, choice, Some(follow)) {
         Ok(m) => Ok(format!("hosting: {m}")),
         Err(e) => {
-            world.remove_resource::<Starting>();
+            if let Some(mut s) = world.remove_resource::<Starting>() {
+                release(s.services.take());
+            }
             Err(e)
         }
     }
@@ -284,6 +343,7 @@ pub(super) fn take_server(world: &mut World) -> Result<(), String> {
         net,
         bots: s.plan.bots,
         open: s.plan.open_conditions,
+        voice: s.services.as_ref().and_then(HostServices::voice_config),
     };
     world.resource_mut::<HostStart>().0 = Some(Mutex::new(next));
     Ok(())
@@ -291,9 +351,12 @@ pub(super) fn take_server(world: &mut World) -> Result<(), String> {
 
 /// Hosting: the links, the plan's time and weather.
 pub(super) fn started(world: &mut World) {
-    let Some(s) = world.remove_resource::<Starting>() else {
+    let Some(mut s) = world.remove_resource::<Starting>() else {
         return;
     };
+    let services = s.services.take();
+    let public_ip = services.as_ref().and_then(|v| v.status().public_ip);
+    world.insert_resource(HostRun(services));
 
     let fingerprint = s.fingerprint.clone();
     let route = match world.resource::<super::CurrentRide>().choice.clone() {
@@ -324,8 +387,16 @@ pub(super) fn started(world: &mut World) {
             )
     });
     let local = std::net::SocketAddr::from(([0, 0, 0, 0], s.plan.port));
-    let links =
-        ocw_server::net::join_links(local, &fingerprint, world_id.as_deref(), route.as_deref());
+    // The router's public address first: the link for riders from the
+    // internet (spec §7.1.7 Q4, Q5).
+    let links = ocw_server::net::join_links_with(
+        local,
+        &fingerprint,
+        world_id.as_deref(),
+        route.as_deref(),
+        public_ip,
+    );
+    let net = net_view(world, s.plan.port);
     let mut console = world.resource_mut::<ConsoleState>();
     for line in s.plan.condition_lines() {
         console.queue(line);
@@ -337,15 +408,18 @@ pub(super) fn started(world: &mut World) {
         links,
         plan: s.plan,
     };
-    let msg = status_of(&h, 1);
+    let msg = status_of(&h, 1, &net);
     info!("{msg}");
     console.print(msg);
     world.insert_resource(h);
 }
 
 pub(super) fn load_failed(world: &mut World, e: &str) {
-    // Dropping the endpoint closes the port again.
-    world.remove_resource::<Starting>();
+    // Dropping the endpoint closes the port again; the voice server and
+    // the router's ports stop too.
+    if let Some(mut s) = world.remove_resource::<Starting>() {
+        release(s.services.take());
+    }
     let msg = format!("not hosting: cannot load the ride: {e}");
     warn!("{msg}");
     world.resource_mut::<ConsoleState>().print(msg);
@@ -353,13 +427,18 @@ pub(super) fn load_failed(world: &mut World, e: &str) {
 
 /// `host stop`.
 pub fn stop(world: &mut World) -> Result<String, String> {
-    if world.remove_resource::<Starting>().is_some() {
+    if let Some(mut s) = world.remove_resource::<Starting>() {
+        release(s.services.take());
         return Ok("hosting cancelled".into());
     }
     let h = world.remove_resource::<Hosting>().ok_or("not hosting")?;
     // The new local session ends the hosted server's thread (its link is
     // dropped): the others hear "server shutting down".
     super::restart_alone(world);
+    // Then the voice server stops and the router's ports close.
+    if let Some(mut run) = world.remove_resource::<HostRun>() {
+        release(run.0.take());
+    }
     let mut console = world.resource_mut::<ConsoleState>();
     for line in h.plan.condition_lines() {
         console.queue(line);
@@ -374,7 +453,7 @@ fn riders(world: &World) -> u32 {
         .map_or(1, |c| c.0.riders.load(Ordering::Relaxed).max(1) as u32)
 }
 
-fn status_of(h: &Hosting, riders: u32) -> String {
+fn status_of(h: &Hosting, riders: u32, net: &HostNet) -> String {
     let mut out = format!(
         "hosting on UDP {} ({riders} rider{}); others join with:\n",
         h.port,
@@ -384,25 +463,205 @@ fn status_of(h: &Hosting, riders: u32) -> String {
         out.push_str(&format!("  {l}\n"));
     }
     out.push_str(&format!("certificate SHA-256 {}\n", h.fingerprint));
-    out.push_str(&firewall_hint(h.port));
+    // The ports, the router's result and the hint (spec §7.1.6 V2).
+    for l in net.lines() {
+        out.push_str(&l);
+        out.push('\n');
+    }
+    out.push_str(&format!("router: {}", net.router_label()));
     out
 }
 
-/// What others may need (spec §6.2; README *Riding on a server on the
-/// internet*).
-pub fn firewall_hint(port: u16) -> String {
-    format!(
-        "Others may need UDP {port} open in this computer's firewall; over the internet also a port forwarding of UDP {port} on the router (README: Riding on a server on the internet)."
-    )
+/// Stops a hosting's voice server and removes its router ports on a
+/// thread of its own (a voice server still starting may take seconds;
+/// the ride goes on meanwhile).
+fn release(services: Option<HostServices>) {
+    if let Some(s) = services {
+        let _ = std::thread::Builder::new()
+            .name("ocw-host-stop".into())
+            .spawn(move || s.stop());
+    }
+}
+
+/// Quitting (or the app's restart) stops the voice server and removes
+/// the router's ports before the app ends.
+fn stop_on_exit(
+    mut exit: MessageReader<AppExit>,
+    run: Option<ResMut<HostRun>>,
+    starting: Option<ResMut<Starting>>,
+) {
+    if exit.read().next().is_none() {
+        return;
+    }
+    if let Some(mut r) = run {
+        drop(r.0.take());
+    }
+    if let Some(mut s) = starting {
+        drop(s.services.take());
+    }
+}
+
+/// The plan's router switch follows the setting `host.upnp` (spec §7.1.7
+/// Q4: on by default).
+fn sync_upnp(world: &mut World) {
+    let on = ocw_ui::settings::setting_on(world, "host.upnp");
+    world.resource_mut::<HostPlanState>().0.upnp = on;
+}
+
+/// What runs beside the hosted server (see the module docs): the voice
+/// server found next to the app or on `PATH`, the router by UPnP when
+/// `upnp` – or what a test put into [`HostServicesFor`]. Unit tests never
+/// start a real voice server or ask the network's router.
+fn services_options(world: &World, listen: std::net::SocketAddr, upnp: bool) -> HostingOptions {
+    use ocw_server::voice::launcher::{self, LaunchOptions};
+    let mut opts = HostingOptions::new(listen);
+    if let Some(f) = world.get_resource::<HostServicesFor>() {
+        opts.voice = f.voice.lock().expect("not poisoned").take();
+        opts.voice_off = "no voice server in this test".into();
+        opts.upnp = f
+            .router
+            .lock()
+            .expect("not poisoned")
+            .take()
+            .filter(|_| upnp);
+        return opts;
+    }
+    if cfg!(test) {
+        opts.voice_off = "no voice server in unit tests".into();
+        return opts;
+    }
+    let exe = std::env::current_exe().ok();
+    match launcher::find_binary(
+        None,
+        exe.as_deref().and_then(std::path::Path::parent),
+        std::env::var_os("PATH").as_deref(),
+    ) {
+        Ok(binary) => {
+            // OCW_HOST_VOICE_PORTS=SIGNAL,TCP,UDP: other ports than 7880,
+            // 7881, 7882 (another voice server on this machine, tests).
+            let ports = match std::env::var("OCW_HOST_VOICE_PORTS") {
+                Ok(p) => launcher::VoicePorts::parse(&p).unwrap_or_else(|e| {
+                    warn!("OCW_HOST_VOICE_PORTS: {e}; using the default ports");
+                    launcher::VoicePorts::default()
+                }),
+                Err(_) => launcher::VoicePorts::default(),
+            };
+            opts.voice = Some(VoicePlan {
+                launch: LaunchOptions {
+                    ports,
+                    ..LaunchOptions::new(binary, launcher::default_state_dir())
+                },
+                public_host: None,
+            });
+        }
+        Err(e) => {
+            warn!("hosting without voice: {e}");
+            opts.voice_off = e;
+        }
+    }
+    if upnp {
+        opts.upnp = Some(ocw_server::portmap::upnp::discover());
+    }
+    opts
+}
+
+/// Whether a host start may begin its session: the voice server and the
+/// router's ports are done (started or failed). The ride module waits
+/// for it after loading the course.
+pub(super) fn services_ready(world: &World) -> bool {
+    world
+        .get_resource::<Starting>()
+        .and_then(|s| s.services.as_ref())
+        .is_none_or(HostServices::is_ready)
+}
+
+/// The hosting's network for the pages (the shared `HostNet`).
+pub fn net_view(world: &World, port: u16) -> HostNet {
+    let status = world
+        .get_resource::<HostRun>()
+        .and_then(|r| r.0.as_ref())
+        .or_else(|| {
+            world
+                .get_resource::<Starting>()
+                .and_then(|s| s.services.as_ref())
+        })
+        .map(HostServices::status);
+    net_of(status.as_ref(), port)
+}
+
+/// [`HostNet`] from the hosting services' status.
+pub fn net_of(status: Option<&HostStatus>, port: u16) -> HostNet {
+    let Some(st) = status else {
+        return HostNet {
+            game_udp: port,
+            web_udp: None,
+            voice: HostVoice::Off("not started".into()),
+            router: HostRouter::Off,
+        };
+    };
+    let voice = match &st.voice {
+        VoiceState::On(p) => HostVoice::On {
+            signal: p.signal,
+            tcp: p.tcp,
+            udp: p.udp,
+        },
+        VoiceState::Starting => HostVoice::Starting,
+        VoiceState::Off(why) | VoiceState::Failed(why) => HostVoice::Off(why.clone()),
+    };
+    let router = match &st.router {
+        MapState::Off => HostRouter::Off,
+        MapState::Searching => HostRouter::Searching,
+        MapState::NotAvailable(why) => HostRouter::NotAvailable(why.clone()),
+        MapState::Failed(why) => HostRouter::Failed(why.clone()),
+        m @ MapState::Mapped {
+            mapped,
+            failed,
+            external,
+            not_public,
+            ..
+        } => {
+            let mut notes: Vec<String> = failed
+                .iter()
+                .map(|(p, why)| format!("{p} not opened: {why}."))
+                .collect();
+            if *not_public && let Some(ip) = external {
+                notes.push(format!(
+                    "The router's own address {ip} is not public (double NAT or carrier-grade NAT): riders from the internet still cannot reach this computer."
+                ));
+            }
+            HostRouter::Opened {
+                public: m.public_ip().map(|ip| ip.to_string()),
+                ports: mapped.len(),
+                of: mapped.len() + failed.len(),
+                note: (!notes.is_empty()).then(|| notes.join(" ")),
+            }
+        }
+    };
+    HostNet {
+        game_udp: port,
+        web_udp: None,
+        voice,
+        router,
+    }
 }
 
 /// `host status`.
 pub fn status(world: &World) -> String {
     if world.contains_resource::<Starting>() {
-        return "hosting: loading the course …".into();
+        let s = world.resource::<Starting>();
+        let st = s.services.as_ref().map(HostServices::status);
+        let mut out = "hosting: loading the course …".to_owned();
+        if let Some(st) = st {
+            out.push_str(&format!(
+                "\n{}\n{}",
+                st.voice.summary(),
+                st.router.summary()
+            ));
+        }
+        return out;
     }
     match world.get_resource::<Hosting>() {
-        Some(h) => status_of(h, riders(world)),
+        Some(h) => status_of(h, riders(world), &net_view(world, h.port)),
         None => "not hosting (Ride -> Host a ride, host start)".into(),
     }
 }
@@ -431,18 +690,24 @@ fn ride_mode(
 
 /// The rows of the wizard and of the join link page.
 pub fn rows(world: &World, page: Page) -> Option<Vec<Row>> {
-    let plan = world
+    let mut plan = world
         .get_resource::<HostPlanState>()
         .map(|p| p.0.clone())
         .unwrap_or_default();
+    plan.upnp = ocw_ui::settings::setting_on(world, "host.upnp");
     match page {
         Page::HostLink => {
             let h = world.get_resource::<Hosting>()?;
+            // At most two links (the internet's and the first LAN one;
+            // `host status` lists all), the ports and the router: the
+            // page stays within the ten-foot rule.
             let mut out: Vec<Row> = h
                 .links
                 .iter()
+                .take(2)
                 .map(|l| ocw_client::menu::pages::info_row(&short_link(l), None))
                 .collect();
+            out.extend(net_view(world, h.port).rows());
             out.push(Row::action("Copy link", "host copy"));
             out.push(Row {
                 label: "Stop hosting".into(),
@@ -469,9 +734,18 @@ pub fn rows(world: &World, page: Page) -> Option<Vec<Row>> {
     }
 }
 
-/// The link page's text: the links in full and the firewall hint.
+/// The link page's text: the links in full, the ports, the router and
+/// the firewall hint; the summary's: the ports it will open.
 pub fn text(world: &World, page: Page) -> Vec<String> {
     match (page, world.get_resource::<Hosting>()) {
+        (Page::HostSummary, _) => {
+            let mut plan = world
+                .get_resource::<HostPlanState>()
+                .map(|p| p.0.clone())
+                .unwrap_or_default();
+            plan.upnp = ocw_ui::settings::setting_on(world, "host.upnp");
+            ocw_client::host::summary_lines(&plan)
+        }
         (Page::HostLink, Some(h)) => {
             let mut out = vec![format!(
                 "{} rider(s) on UDP {}. Others join with Ride -> Join and this link (Copy link):",
@@ -481,10 +755,7 @@ pub fn text(world: &World, page: Page) -> Vec<String> {
             // The first link in full, in pieces the panel can wrap (a
             // fingerprint has no spaces); `host status` prints them all.
             out.extend(h.links.first().map(|l| link_lines(l)));
-            out.push(format!(
-                "Open UDP {0} in the firewall; from the internet also forward UDP {0} on the router.",
-                h.port
-            ));
+            out.extend(net_view(world, h.port).lines());
             out
         }
         _ => Vec::new(),
@@ -560,6 +831,9 @@ mod tests {
             plan_choice(&plan, &worlds).unwrap().0,
             RideChoice::World { mode: WorldMode::Route(r), .. } if r == "Lake Loop"
         ));
-        assert!(firewall_hint(47800).contains("UDP 47800"));
+        // The hint (spec §6.2, §7.1.6 V2): the ports, firewall and router.
+        let net = net_of(None, 47800);
+        assert!(net.lines()[0].starts_with("Ports: UDP 47800 (game)"));
+        assert!(net.lines()[1].contains("forward them on the router"));
     }
 }

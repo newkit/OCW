@@ -103,6 +103,8 @@ getrandom = "0.3"
 # Windows job objects: the bundled voice server ends with the game server
 # that started it (spec §7.1.1; MIT OR Apache-2.0).
 win32job = "2.1"
+# UPnP-IGD port mapping while hosting (spec §7.1.1 *Network*, §7.1.7 Q4; MIT).
+igd-next = { version = "0.16", default-features = false }
 
 # QUIC game transport (spec §6.2), only in ocw-server: quinn (MIT OR
 # Apache-2.0) on rustls (Apache-2.0 OR ISC OR MIT) with the *ring* crypto

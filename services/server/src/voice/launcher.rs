@@ -768,7 +768,7 @@ fn process_is_voice_server(pid: u32) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -975,7 +975,7 @@ mod tests {
 
     /// Tests that pick free ports run one at a time: ports freed by one
     /// are soon handed out again to another.
-    fn port_lock() -> std::sync::MutexGuard<'static, ()> {
+    pub(crate) fn port_lock() -> std::sync::MutexGuard<'static, ()> {
         static PORTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
         PORTS
             .lock()
@@ -1002,12 +1002,12 @@ mod tests {
 
     // ---------------------------------------------- with a fake voice server
     #[cfg(unix)]
-    mod fake {
+    pub(crate) mod fake {
         use super::*;
         use std::os::unix::fs::PermissionsExt;
 
         /// Free TCP + UDP ports for one fake start.
-        pub(super) fn free_ports() -> VoicePorts {
+        pub(crate) fn free_ports() -> VoicePorts {
             loop {
                 let a = TcpListener::bind("0.0.0.0:0").unwrap();
                 let b = TcpListener::bind("0.0.0.0:0").unwrap();
@@ -1026,7 +1026,7 @@ mod tests {
         /// A fake `livekit-server` in `dir`: records its argv, command
         /// line and environment, then (if `ready`) marks itself ready and
         /// sleeps as one process; `body` replaces the end.
-        pub(super) fn script(dir: &Path, body: &str) -> PathBuf {
+        pub(crate) fn script(dir: &Path, body: &str) -> PathBuf {
             let out = dir.display();
             let text = format!(
                 "#!/bin/sh\n\
@@ -1044,10 +1044,10 @@ mod tests {
             path
         }
 
-        pub(super) const READY: &str = "touch \"$(dirname \"$0\")/../ready\"\nexec sleep 1000";
+        pub(crate) const READY: &str = "touch \"$(dirname \"$0\")/../ready\"\nexec sleep 1000";
 
         /// Ready when the fake marked itself.
-        pub(super) fn options(dir: &Path, binary: PathBuf) -> LaunchOptions {
+        pub(crate) fn options(dir: &Path, binary: PathBuf) -> LaunchOptions {
             let marker = dir.join("ready");
             LaunchOptions {
                 ports: free_ports(),
@@ -1059,7 +1059,7 @@ mod tests {
         }
 
         /// Whether `pid` is a live process (zombies count as gone).
-        pub(super) fn alive(pid: u32) -> bool {
+        pub(crate) fn alive(pid: u32) -> bool {
             let out = Command::new("ps")
                 .args(["-o", "stat=", "-p", &pid.to_string()])
                 .output()
@@ -1069,7 +1069,7 @@ mod tests {
             !s.is_empty() && !s.starts_with('Z')
         }
 
-        pub(super) fn wait_gone(pid: u32, within: Duration) -> bool {
+        pub(crate) fn wait_gone(pid: u32, within: Duration) -> bool {
             let end = Instant::now() + within;
             while Instant::now() < end {
                 if !alive(pid) {
@@ -1080,7 +1080,7 @@ mod tests {
             !alive(pid)
         }
 
-        pub(super) fn read_pid(dir: &Path) -> u32 {
+        pub(crate) fn read_pid(dir: &Path) -> u32 {
             fs::read_to_string(dir.join("pid"))
                 .unwrap()
                 .trim()

@@ -495,7 +495,7 @@ impl Page {
                 "Others may need UDP open in the firewall and a port forwarding on the router (README).",
             ],
             Self::HostSummary => &[
-                "The server runs in this app on 0.0.0.0 (all addresses); you ride on it as the host.",
+                "The server and its voice server run in this app on all addresses; you ride on it as the host.",
             ],
             Self::HostLink => &[],
         }

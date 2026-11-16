@@ -7,6 +7,10 @@
 //!   QUIC with [`net`] (`--listen`, spec §6.2), and from the browser
 //!   over WebTransport (`--webtransport`, spec §14 Phase 10 B3).
 
+// What a hosting runs beside its game server: the router's port mappings
+// and the bundled voice server (spec §7.1.6 V2; native only).
+#[cfg(not(target_arch = "wasm32"))]
+pub mod hosting;
 pub mod local;
 // Real weather (spec §14 Phase 9, S7): the session's feed (pure) and the
 // HTTP requests (native only, `realweather::http`).
@@ -15,6 +19,9 @@ pub mod realweather;
 // app (spec §14 Phase 10) runs the server in its frame loop.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod net;
+// UPnP-IGD port mapping on the router while hosting (spec §7.1.7 Q4).
+#[cfg(not(target_arch = "wasm32"))]
+pub mod portmap;
 pub mod stats;
 // Snapshot timing at a client (interval, jitter, age; spec §14 Phase 10 B3).
 pub mod timing;

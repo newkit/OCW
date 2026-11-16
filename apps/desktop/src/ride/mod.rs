@@ -552,6 +552,16 @@ fn start_load(
 
 /// Applies a loaded switch (or reports why it failed; the ride goes on).
 fn finish_switch(world: &mut World) {
+    // A host start waits for its voice server and router ports (spec
+    // §7.1.6 V2; never longer than their own time limits).
+    let hosting = world
+        .resource::<Pending>()
+        .0
+        .as_ref()
+        .is_some_and(|(_, f)| f.as_ref().is_some_and(|f| f.then == Then::Host));
+    if hosting && !host::services_ready(world) {
+        return;
+    }
     let (result, follow) = {
         let mut pending = world.resource_mut::<Pending>();
         let Some((rx, _)) = pending.0.as_ref() else {
@@ -1238,6 +1248,137 @@ mod tests {
         );
         // The port is free again: hosting can start again later.
         std::net::UdpSocket::bind(("0.0.0.0", port)).expect("the port was closed");
+    }
+
+    /// Host a ride with voice and the router (spec §7.1.6 V2): the hosting
+    /// starts the voice server (a fake `livekit-server`) through the
+    /// launcher and opens the ports on the router (one in memory); the
+    /// join link names the router's public address, the hosted server
+    /// offers voice, the pages list the ports; Stop ends the voice server
+    /// and removes the mappings.
+    #[cfg(unix)]
+    #[test]
+    fn hosting_starts_the_voice_server_and_opens_the_router_ports() {
+        use ocw_server::hosting::VoicePlan;
+        use ocw_server::voice::launcher::{LaunchOptions, VoicePorts};
+        use std::os::unix::fs::PermissionsExt;
+        let (mut app, _) = app("host-voice");
+        assert!(update_until(&mut app, |w| client(w).rider_id().is_some()));
+        let dir = std::env::temp_dir().join(format!("ocw-host-voice-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join("livekit-server");
+        std::fs::write(
+            &bin,
+            format!(
+                "#!/bin/sh\necho $$ > '{0}/pid'\ntouch '{0}/ready'\nexec sleep 1000\n",
+                dir.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let free_tcp = || {
+            std::net::TcpListener::bind("0.0.0.0:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port()
+        };
+        let free_udp = || {
+            std::net::UdpSocket::bind("0.0.0.0:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port()
+        };
+        let mut ports = VoicePorts {
+            signal: free_tcp(),
+            tcp: free_tcp(),
+            udp: free_udp(),
+        };
+        while ports.tcp == ports.signal {
+            ports.tcp = free_tcp();
+        }
+        let marker = dir.join("ready");
+        let launch = LaunchOptions {
+            ports,
+            ready_timeout: Duration::from_secs(5),
+            probe: std::sync::Arc::new(move |_| marker.exists()),
+            ..LaunchOptions::new(bin, dir.join("state"))
+        };
+        let router = ocw_server::portmap::MemoryRouter {
+            external: Some("81.2.69.160".parse().unwrap()),
+            ..Default::default()
+        };
+        let table = router.table.clone();
+        app.world_mut().insert_resource(host::HostServicesFor {
+            voice: Mutex::new(Some(VoicePlan {
+                launch,
+                public_host: None,
+            })),
+            router: Mutex::new(Some(router.discover())),
+        });
+        let port = free_udp();
+        run(&mut app, "host.plan world 0");
+        run(&mut app, "host.plan route loop");
+        run(&mut app, "host.plan bots 0");
+        let log = run(&mut app, &format!("host start --port {port}"));
+        assert!(log.contains("hosting: loading"), "{log}");
+        assert!(update_until(&mut app, |w| w
+            .contains_resource::<host::Hosting>()
+            && client(w).rider_id().is_some()
+            && client(w).voice_offered()));
+        // The internet's link first: the router's public address.
+        let links = app.world().resource::<host::Hosting>().links.clone();
+        assert!(
+            links[0].starts_with(&format!("ocw://81.2.69.160:{port}?cert=")),
+            "{links:?}"
+        );
+        // The game's and the voice server's ports on the router.
+        let mapped: Vec<(String, u16)> = table.lock().unwrap().keys().cloned().collect();
+        for want in [
+            ("UDP".to_owned(), port),
+            ("TCP".to_owned(), ports.signal),
+            ("TCP".to_owned(), ports.tcp),
+            ("UDP".to_owned(), ports.udp),
+        ] {
+            assert!(mapped.contains(&want), "{want:?} in {mapped:?}");
+        }
+        // The pages: the ports, the router's result, the hint.
+        let status = run(&mut app, "host status");
+        assert!(
+            status.contains(&format!("TCP {} (voice signalling)", ports.signal)),
+            "{status}"
+        );
+        assert!(status.contains("router: opened (UPnP)"), "{status}");
+        assert!(status.contains("riders from the internet reach 81.2.69.160"));
+        let rows = host::rows(app.world(), ocw_client::menu::pages::Page::HostLink).unwrap();
+        let ports_row = rows.iter().find(|r| r.label == "Ports").unwrap();
+        assert!(
+            ports_row
+                .value
+                .as_deref()
+                .unwrap()
+                .contains(&format!("voice TCP {}", ports.signal)),
+            "{ports_row:?}"
+        );
+        let pid: u32 = std::fs::read_to_string(dir.join("pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let alive = |pid: u32| {
+            std::process::Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .status()
+                .is_ok_and(|s| s.success())
+        };
+        assert!(alive(pid), "the voice server runs while hosting");
+        // Stop: the voice server ends, the router's ports close.
+        assert!(run(&mut app, "host stop").contains("hosting stopped"));
+        assert!(update_until(&mut app, |_| !alive(pid)
+            && table.lock().unwrap().is_empty()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
