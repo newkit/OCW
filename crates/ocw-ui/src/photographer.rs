@@ -13,16 +13,23 @@
 //! Its own feature: it runs in every ride unless switched off in Settings
 //! (§2.11 Q1, decided); a Strava recording only uses the photos taken
 //! within it (spec §2.8.1).
+//!
+//! Other riders see it (spec §2.11 Q2, v4.33): the own shot goes to the
+//! server whenever it changes (`Photographer::shared`), the other riders'
+//! shots come back through the ride client (`ClientCore::remote_shots`)
+//! and are drawn (`RideView::photographers`) and heard (the shutter placed
+//! at their camera, the loudest drone) here, in both apps. The setting
+//! only stops the own photographer: the others' are drawn even when it is
+//! off, while flying as the unicorn and in scripted runs.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use bevy::prelude::*;
 use clap::{Arg, Command};
 use ocw_audio::cues::Cue;
-use ocw_audio::drone::DroneSound;
 use ocw_audio::mixer::MixerMsg;
-use ocw_audio::spatial::{Listener, place};
+use ocw_audio::spatial::Listener;
 use ocw_client::photographer::{self as ph, Limits, Photographer, Taken};
 use ocw_render::RideView;
 use ocw_render::camera::CameraObstacles;
@@ -32,6 +39,7 @@ use ocw_render::photographer::{PhotoCaptures, PhotoRequest, PhotoRequests, ViewF
 use ocw_world::landuse::LandClass;
 use ocw_world::package::WorldPackage;
 use ocw_world::photo::{Conditions, PhotoScene};
+use ocw_world::photo_share::SharedShot;
 
 /// What the app does with the photographer's output.
 #[derive(Resource, Clone, Copy)]
@@ -40,7 +48,7 @@ pub struct PhotographerHooks {
     /// needs).
     pub save: fn(&mut World, &Taken, Image),
     /// Play a mixer message (the shutter, the drone's buzz).
-    pub sound: fn(&World, MixerMsg),
+    pub sound: fn(&mut World, MixerMsg),
 }
 
 /// The ride's photographer and its switch.
@@ -57,6 +65,14 @@ pub struct RidePhotographer {
     next_id: u64,
     /// The drone was heard last frame.
     drone_heard: bool,
+    /// The game time the own photographer last ran at (never goes back).
+    last_t: Option<f64>,
+    /// The own shot as last sent to the server.
+    sent: Option<SharedShot>,
+    /// The other riders' shutters already played (rider, shot).
+    shutters_heard: BTreeSet<(u32, u32)>,
+    /// The other riders' shots drawn so far (rider, shot; logged once).
+    seen: BTreeSet<(u32, u32)>,
 }
 
 impl RidePhotographer {
@@ -69,12 +85,22 @@ impl RidePhotographer {
             pending: BTreeMap::new(),
             next_id: 1,
             drone_heard: false,
+            last_t: None,
+            sent: None,
+            shutters_heard: BTreeSet::new(),
+            seen: BTreeSet::new(),
         }
     }
 
     /// A new ride: the count starts again.
     pub fn new_ride(&mut self) {
         self.photographer.reset();
+        self.last_t = None;
+    }
+
+    /// The own shot as last sent to the server (spec §2.11).
+    pub fn sent(&self) -> Option<&SharedShot> {
+        self.sent.as_ref()
     }
 }
 
@@ -194,73 +220,152 @@ fn run(world: &mut World) {
         let Some(client) = crate::client(world) else {
             return;
         };
-        if client.rider_id().is_none() || client.god().active() {
-            None
-        } else {
+        let times = client.server_time_s(now).zip(client.photo_time_s(now));
+        if let (Some(_), Some((server_t, remote_t))) = (client.rider_id(), times) {
             let s = client.state();
             let (d, lateral, speed) = (s.distance, s.lateral_offset, s.speed);
             let head = client.track().sample(d).offset_position(lateral);
             let forward = client.track().sample(d).direction;
-            Some((d, lateral, speed, head, forward))
+            // The other riders' photographers, at the time the other
+            // riders are drawn at (spec §2.11, v4.33).
+            let remote = client.remote_shots().scenes(remote_t, &scene, head);
+            Some(Frame {
+                d,
+                lateral,
+                speed,
+                head,
+                forward,
+                server_t,
+                remote_t,
+                remote,
+                flying: client.god().active(),
+            })
+        } else {
+            None
         }
     };
-    let Some((d, lateral, speed, head, forward)) = out else {
-        set_view(world, None);
-        return;
-    };
-    if !enabled {
-        set_view(world, None);
+    let Some(f) = out else {
+        set_view(world, None, &[]);
         stop_drone_sound(world, hooks);
         return;
-    }
-    // The client's track is borrowed from the world: the photographer runs
-    // on a copy and is put back.
-    let ((scene_now, events), p) = {
-        let world_ref: &World = world;
-        let client = crate::client(world_ref).expect("checked");
-        let in_view =
-            |p: [f64; 3]| frustum.sees(Vec3::new(p[0] as f32, p[1] as f32 + 1.0, p[2] as f32));
-        let mut p = world_ref
-            .resource::<RidePhotographer>()
-            .photographer
-            .clone();
-        let r = p.frame(
-            now,
-            client.track(),
-            d,
-            lateral,
-            speed,
-            &scene,
-            &cond,
-            &in_view,
-        );
-        (r, p)
     };
-    world.resource_mut::<RidePhotographer>().photographer = p;
-    set_view(world, scene_now.as_ref());
-    let listener = Listener {
-        pos: [head[0], head[1] + 1.5, head[2]],
-        forward,
-        velocity: [forward[0] * speed, 0.0, forward[1] * speed],
+    // The game time the own photographer runs on: the server's, never
+    // going back by its jitter (a new session starts again at 0).
+    let t = {
+        let mut r = world.resource_mut::<RidePhotographer>();
+        let t = match r.last_t {
+            Some(l) if f.server_t < l && f.server_t > l - 2.0 => l,
+            _ => f.server_t,
+        };
+        r.last_t = Some(t);
+        t
     };
-    // The drone's buzz while it flies.
-    match scene_now.as_ref().and_then(|s| s.drone) {
-        Some(dr) if dr.rotor > 0.0 => {
-            let pl = place(&listener, dr.pos, dr.velocity);
-            (hooks.sound)(
-                world,
-                MixerMsg::Drone(Some(DroneSound::placed(&pl, dr.rotor))),
+    let mut own_scene = None;
+    let mut events = ph::Events::default();
+    if enabled && !f.flying {
+        // The client's track is borrowed from the world: the photographer
+        // runs on a copy and is put back.
+        let ((scene_now, ev), p) = {
+            let world_ref: &World = world;
+            let client = crate::client(world_ref).expect("checked");
+            let in_view =
+                |p: [f64; 3]| frustum.sees(Vec3::new(p[0] as f32, p[1] as f32 + 1.0, p[2] as f32));
+            let mut p = world_ref
+                .resource::<RidePhotographer>()
+                .photographer
+                .clone();
+            let r = p.frame(
+                t,
+                client.track(),
+                f.d,
+                f.lateral,
+                f.speed,
+                &scene,
+                &cond,
+                &in_view,
             );
+            (r, p)
+        };
+        world.resource_mut::<RidePhotographer>().photographer = p;
+        own_scene = scene_now;
+        events = ev;
+    } else {
+        // Switched off (or flying): the own photographer leaves; the
+        // others see it go.
+        world
+            .resource_mut::<RidePhotographer>()
+            .photographer
+            .stop(t);
+    }
+    share(world);
+    let remote: Vec<ph::Scene> = f.remote.iter().map(|r| r.scene.clone()).collect();
+    set_view(world, own_scene.as_ref(), &remote);
+    let listener = Listener {
+        pos: [f.head[0], f.head[1] + 1.5, f.head[2]],
+        forward: f.forward,
+        velocity: [f.forward[0] * f.speed, 0.0, f.forward[1] * f.speed],
+    };
+    // The drone heard: the loudest of the own and the others' (one voice).
+    let drones: Vec<_> = own_scene
+        .iter()
+        .chain(&remote)
+        .filter_map(|s| s.drone)
+        .collect();
+    match ph::loudest_drone(&listener, &drones) {
+        Some(sound) => {
+            (hooks.sound)(world, MixerMsg::Drone(Some(sound)));
             world.resource_mut::<RidePhotographer>().drone_heard = true;
         }
-        _ => stop_drone_sound(world, hooks),
+        None => stop_drone_sound(world, hooks),
     }
     if let Some(at) = events.shutter {
-        let pl = place(&listener, at, [0.0; 3]);
+        let g = ph::shutter_gains(&listener, at);
         (hooks.sound)(
             world,
-            MixerMsg::PlacedCue(Cue::Shutter, [pl.left, pl.right], web_time::Instant::now()),
+            MixerMsg::PlacedCue(Cue::Shutter, g, web_time::Instant::now()),
         );
+    }
+    for r in &f.remote {
+        let key = (r.rider, r.shot);
+        if world.resource_mut::<RidePhotographer>().seen.insert(key) {
+            info!(
+                rider = r.rider,
+                shot = r.shot,
+                drone = r.scene.drone.is_some(),
+                "another rider's photographer"
+            );
+        }
+    }
+    // The others' shutters, once each, placed where their camera is.
+    for r in &f.remote {
+        let Some((at, eye)) = r.flash else {
+            continue;
+        };
+        let key = (r.rider, r.shot);
+        let due = f.remote_t >= at && f.remote_t - at < 1.0;
+        let heard = world
+            .resource::<RidePhotographer>()
+            .shutters_heard
+            .contains(&key);
+        if due && !heard {
+            info!(
+                rider = r.rider,
+                shot = r.shot,
+                "another rider's photo (flash)"
+            );
+            world
+                .resource_mut::<RidePhotographer>()
+                .shutters_heard
+                .insert(key);
+            let g = ph::shutter_gains(&listener, eye);
+            (hooks.sound)(
+                world,
+                MixerMsg::PlacedCue(Cue::Shutter, g, web_time::Instant::now()),
+            );
+        }
+    }
+    if let Some(mut c) = crate::client_mut(world) {
+        c.prune_shots(now);
     }
     if let Some(t) = events.photo {
         let mut r = world.resource_mut::<RidePhotographer>();
@@ -281,6 +386,38 @@ fn run(world: &mut World) {
     }
 }
 
+/// What a frame needs of the ride client.
+struct Frame {
+    d: f64,
+    lateral: f64,
+    speed: f64,
+    head: [f64; 3],
+    forward: [f64; 2],
+    server_t: f64,
+    remote_t: f64,
+    remote: Vec<ph::RemoteScene>,
+    flying: bool,
+}
+
+/// Sends the own photographer's shot to the server whenever it changed
+/// (spec §2.11, v4.33): the others draw it.
+fn share(world: &mut World) {
+    let Some(r) = world.get_resource::<RidePhotographer>() else {
+        return;
+    };
+    let Some(shot) = r.photographer.shared() else {
+        return;
+    };
+    if r.sent.as_ref() == Some(shot) {
+        return;
+    }
+    let shot = shot.clone();
+    let bytes = ocw_client::client::ClientCore::photo_message(&shot);
+    if crate::send(world, bytes) {
+        world.resource_mut::<RidePhotographer>().sent = Some(shot);
+    }
+}
+
 fn stop_drone_sound(world: &mut World, hooks: PhotographerHooks) {
     let heard = world
         .get_resource::<RidePhotographer>()
@@ -291,12 +428,16 @@ fn stop_drone_sound(world: &mut World, hooks: PhotographerHooks) {
     }
 }
 
-fn set_view(world: &mut World, scene: Option<&ph::Scene>) {
-    let want = scene.map(ph::view);
-    if let Some(mut v) = world.get_resource_mut::<RideView>()
-        && v.photographer != want
-    {
-        v.photographer = want;
+fn set_view(world: &mut World, own: Option<&ph::Scene>, others: &[ph::Scene]) {
+    let want = own.map(ph::view);
+    let others: Vec<_> = others.iter().map(ph::view).collect();
+    if let Some(mut v) = world.get_resource_mut::<RideView>() {
+        if v.photographer != want {
+            v.photographer = want;
+        }
+        if v.photographers != others {
+            v.photographers = others;
+        }
     }
 }
 

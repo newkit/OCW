@@ -60,6 +60,11 @@ struct Args {
     /// Simulate as fast as possible instead of in real time.
     #[arg(long)]
     fast: bool,
+    /// Test runs (spec §2.11): the ride photographer's 20 minutes between
+    /// photos pass this many times faster (as `ocw-desktop
+    /// --photo-time-scale`), so the server relays the riders' faster shots.
+    #[arg(long, value_name = "FACTOR", default_value_t = 1.0, hide = true)]
+    photo_time_scale: f64,
     /// Put an Echo rider (the voice echo test, spec §7) at the start of
     /// every session and let riders move it (`voice.echo here`).
     #[arg(long)]
@@ -645,6 +650,7 @@ fn main() {
         course,
         ServerConfig {
             allow_dev_commands: false,
+            photo_gap_s: Some(ocw_world::photo_share::GAP_S / args.photo_time_scale.max(1.0)),
             bots: args.bots,
             start_m: 0.0,
             allow_local_events: false,

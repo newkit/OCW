@@ -12,6 +12,8 @@ pub mod v1 {
 }
 
 pub mod join;
+pub mod photo;
+pub use photo::{photo_from_wire, photo_message, photo_to_wire};
 mod weather;
 pub use weather::{
     PhysicsRule, WeatherChange, WeatherInfo, choice_from_wire, choice_to_wire,

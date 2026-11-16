@@ -152,6 +152,9 @@ pub struct RideView {
     /// The ride photographer (spec §2.11): the person or the drone and
     /// the flash; `None`: nobody there.
     pub photographer: Option<photographer::PhotographerView>,
+    /// The other riders' photographers near this rider (spec §2.11 Q2,
+    /// v4.33): the same people, drones and flashes they see.
+    pub photographers: Vec<photographer::PhotographerView>,
     /// The Strava recording (spec §2.8.1): seconds recorded so far (the
     /// "● Strava" badge) and its notice (started, saved, not set up).
     pub strava_s: Option<f64>,
@@ -281,6 +284,7 @@ impl RideView {
             camera_fx: CameraFx::default(),
             guided_camera: None,
             photographer: None,
+            photographers: Vec::new(),
             strava_s: None,
             strava_message: None,
         }

@@ -124,6 +124,22 @@ impl Plugin for WebUiPlugin {
             // Touch steering (spec §3.2.3), as on the desktop.
             ocw_ui::touch::TouchSteerPlugin,
         ));
+        // The ride photographer (spec §2.11): the other riders'
+        // photographers, drones and flashes are drawn and heard as on the
+        // desktop (Q2, v4.33); the browser takes no photos of its own
+        // (no files, Q3 open).
+        app.add_plugins(ocw_ui::photographer::PhotographerPlugin { scale: 1.0 })
+            .insert_resource(ocw_ui::photographer::PhotographerHooks {
+                save: |_, _, _| {},
+                sound: |world, msg| {
+                    if let Some(mut a) = world.get_resource_mut::<crate::audio::WebAudio>() {
+                        a.apply(vec![msg]);
+                    }
+                },
+            });
+        app.world_mut()
+            .resource_mut::<ocw_ui::photographer::RidePhotographer>()
+            .allowed = false;
         if !app.world().contains_resource::<Downloads>() {
             app.insert_resource(Downloads::page());
         }

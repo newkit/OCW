@@ -156,6 +156,11 @@ pub struct ServerConfig {
     /// Refuse riders without an account (`ocw-server --auth-required`).
     /// By default anonymous riders are allowed (Phase 10 Q5).
     pub auth_required: bool,
+    /// The least time between two ride photographer photos the server
+    /// lets through (s; spec §2.11). `None`: the photographer's 20 minutes
+    /// (no gap at all on a server with dev commands); test runs with a
+    /// faster photographer (`ocw-server --photo-time-scale`) shorten it.
+    pub photo_gap_s: Option<f64>,
 }
 
 pub use ocw_protocol::ClockAccess;
@@ -227,6 +232,10 @@ pub struct GameServer {
     real_pressure_y_m: Option<f64>,
     /// The accounts of signed-in riders (spec §9.1), by connection.
     accounts: BTreeMap<ConnectionId, v1::Account>,
+    /// The ride photographer's shots (spec §2.11, v4.33): each rider's
+    /// checked shots, and those to relay to everyone with the next tick.
+    photos: BTreeMap<RiderId, ocw_world::photo_share::ShotLog>,
+    photo_out: Vec<v1::PhotoShot>,
 }
 
 /// A world switch the host asked for (spec §3.2.1), checked and waiting
@@ -405,6 +414,8 @@ impl GameServer {
             geo_origin,
             real_pressure_y_m: None,
             accounts: BTreeMap::new(),
+            photos: BTreeMap::new(),
+            photo_out: Vec::new(),
         }
     }
 
@@ -885,6 +896,7 @@ impl GameServer {
         self.voice_issued.remove(&conn);
         self.peer_addrs.remove(&conn);
         if let Some(rider) = self.riders.remove(&conn) {
+            self.photos.remove(&rider);
             let name = self
                 .session
                 .snapshot()
@@ -958,6 +970,10 @@ impl GameServer {
                 Some(S::DevResult(v1::DevCommandResult { ok, message }))
             }
             (C::BikeChange(change), Some(rider)) => Some(self.bike_change(rider, &change)),
+            (C::Photo(shot), Some(rider)) => {
+                self.photo_shot(rider, &shot);
+                None
+            }
             (C::Turn(turn), Some(rider)) => {
                 if let Some(net) = self.session.network() {
                     let choice = ocw_protocol::turn_choice(&turn, net);
@@ -1023,6 +1039,14 @@ impl GameServer {
                 .map(|r| r.id)
                 .collect();
             out.extend(builds.into_iter().map(|id| self.build_message(id)));
+        }
+        // The photographers at work now (spec §2.11): the newcomer sees them.
+        if joined {
+            let now = self.game_time_s();
+            out.extend(self.photos.values().flat_map(|log| {
+                log.active(now)
+                    .map(|s| encode(&server_message(S::Photo(ocw_protocol::photo_to_wire(s)))))
+            }));
         }
         if joined && let Some(net) = self.session.network() {
             out.extend(
@@ -1682,6 +1706,17 @@ impl GameServer {
         for id in self.session.take_build_changes() {
             out.push(self.build_message(id));
         }
+        // The photographers' shots: reliable, relayed to everyone (spec
+        // §2.11; the clients draw those near their rider).
+        for shot in std::mem::take(&mut self.photo_out) {
+            out.push(encode(&server_message(S::Photo(shot))));
+        }
+        if self.session.tick().is_multiple_of(u64::from(SIM_TICK_HZ)) {
+            let now = self.game_time_s();
+            for log in self.photos.values_mut() {
+                log.prune(now);
+            }
+        }
         if let Some(net) = self.session.network().cloned() {
             for c in self.session.take_path_changes() {
                 out.push(encode(&server_message(S::Path(ocw_protocol::path_update(
@@ -1728,6 +1763,60 @@ impl GameServer {
 
     pub fn connections(&self) -> impl Iterator<Item = ConnectionId> + '_ {
         self.riders.keys().copied()
+    }
+
+    /// The game time the clients share (s): the session's tick / 50 (the
+    /// ride photographer's shots, spec §2.11).
+    pub fn game_time_s(&self) -> f64 {
+        self.session.tick() as f64 / f64::from(SIM_TICK_HZ)
+    }
+
+    /// The photos rider `id`'s photographer took in this session (game
+    /// times), as the server accepted them.
+    pub fn photos_taken(&self, id: RiderId) -> &[f64] {
+        self.photos.get(&id).map_or(&[], |l| l.taken())
+    }
+
+    /// A rider's photographer shot (spec §2.11, v4.33): checked (at most 5
+    /// photos per ride, 20 minutes apart – not on a server for tests –, the
+    /// camera near the rider, plausible times, the place fixed once shown,
+    /// not too many updates), then relayed to everyone with the next tick.
+    fn photo_shot(&mut self, rider: RiderId, wire: &v1::PhotoShot) {
+        if self.session.is_god(rider) {
+            return;
+        }
+        let Some(mut shot) = ocw_protocol::photo_from_wire(wire) else {
+            tracing::debug!(%rider, "incomplete photo shot dropped");
+            return;
+        };
+        shot.rider = rider.0;
+        let Some(state) = self.session.rider_state(rider) else {
+            return;
+        };
+        let at = self
+            .session
+            .track(rider)
+            .sample(state.distance)
+            .offset_position(state.lateral_offset);
+        let gap_s = match self.config.photo_gap_s {
+            Some(g) => g,
+            None if self.config.allow_dev_commands => 0.0,
+            None => ocw_world::photo_share::GAP_S,
+        };
+        let rules = ocw_world::photo_share::Rules {
+            gap_s,
+            ..Default::default()
+        };
+        let now = self.game_time_s();
+        match self
+            .photos
+            .entry(rider)
+            .or_default()
+            .accept(&shot, now, at, &rules)
+        {
+            Ok(()) => self.photo_out.push(ocw_protocol::photo_to_wire(&shot)),
+            Err(e) => tracing::debug!(%rider, shot = shot.shot, error = %e, "photo shot refused"),
+        }
     }
 
     /// The encoded `RiderBuild` of rider `id`.
@@ -4483,6 +4572,144 @@ mod tests {
             panic!("a result");
         };
         assert!(!r.ok, "{r:?}");
+    }
+
+    /// The ride photographer's shots (spec §2.11, v4.33).
+    mod photographer {
+        use super::*;
+        use ocw_world::photo::{CameraPose, Carrier, PoseKind};
+        use ocw_world::photo_share::SharedShot;
+
+        fn rider_at(server: &GameServer, id: RiderId) -> [f64; 3] {
+            let s = server.session().rider_state(id).unwrap();
+            ocw_world::Track::sample(server.session().track(id), s.distance)
+                .offset_position(s.lateral_offset)
+        }
+
+        fn shot(n: u32, near: [f64; 3], now: f64) -> SharedShot {
+            SharedShot {
+                rider: 99,
+                shot: n,
+                pose: CameraPose {
+                    kind: PoseKind::Side,
+                    carrier: Carrier::Person { crouch: false },
+                    feet: [near[0] + 12.0, near[1], near[2]],
+                    eye: [near[0] + 12.0, near[1] + 1.6, near[2]],
+                    look: [-1.0, 0.0, 0.0],
+                },
+                seed: 11,
+                appear_at: now,
+                planned_at: now + 8.0,
+                taken_at: None,
+                gone_at: None,
+                aborted_at: None,
+                flight: None,
+            }
+        }
+
+        fn send(server: &mut GameServer, conn: ConnectionId, s: &SharedShot) {
+            let replies = server.handle(conn, &encode(&ocw_protocol::photo_message(s)));
+            assert!(replies.is_empty());
+        }
+
+        fn relayed(out: &[Vec<u8>]) -> Vec<SharedShot> {
+            out.iter()
+                .filter_map(|b| match decode_server(b).ok()? {
+                    S::Photo(p) => ocw_protocol::photo_from_wire(&p),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        /// One rider's shot reaches everyone with its rider set by the
+        /// server, unchanged; a client joining later gets the open one.
+        #[test]
+        fn a_shot_is_relayed_to_everyone() {
+            let mut server = GameServer::new(Route::test_loop(), ServerConfig::default());
+            let (host, host_id) = joined(&mut server);
+            let (_guest, _) = joined(&mut server);
+            for _ in 0..10 {
+                server.tick();
+            }
+            let now = server.game_time_s();
+            let s = shot(1, rider_at(&server, host_id), now);
+            send(&mut server, host, &s);
+            let got = relayed(&server.tick());
+            assert_eq!(got.len(), 1, "once, to every connection");
+            assert_eq!(got[0].rider, host_id.0, "the server's rider id");
+            assert_eq!(
+                SharedShot {
+                    rider: 99,
+                    ..got[0].clone()
+                },
+                s
+            );
+            let late = server.connect();
+            let replies = server.handle(late, &hello(PROTOCOL_VERSION));
+            let open = relayed(&replies);
+            assert_eq!(open.len(), 1, "the newcomer sees the photographer");
+            assert_eq!(open[0].pose, s.pose);
+        }
+
+        /// The server's checks: the camera near the rider, at most one photo
+        /// in 20 minutes, the place fixed.
+        #[test]
+        fn far_too_frequent_or_moved_shots_are_not_relayed() {
+            let mut server = GameServer::new(Route::test_loop(), ServerConfig::default());
+            let (host, host_id) = joined(&mut server);
+            for _ in 0..10 {
+                server.tick();
+            }
+            let now = server.game_time_s();
+            let here = rider_at(&server, host_id);
+            let far = shot(1, [here[0] + 6000.0, here[1], here[2]], now);
+            send(&mut server, host, &far);
+            assert!(relayed(&server.tick()).is_empty(), "6 km away");
+            let mut s = shot(2, here, now);
+            send(&mut server, host, &s);
+            assert_eq!(relayed(&server.tick()).len(), 1);
+            let mut moved = s.clone();
+            moved.pose.eye[0] += 50.0;
+            moved.pose.feet[0] += 50.0;
+            send(&mut server, host, &moved);
+            assert!(relayed(&server.tick()).is_empty(), "moved");
+            let t = server.game_time_s();
+            s.taken_at = Some(t);
+            send(&mut server, host, &s);
+            assert_eq!(relayed(&server.tick()).len(), 1, "the photo");
+            assert_eq!(server.photos_taken(host_id).len(), 1);
+            s.gone_at = Some(server.game_time_s());
+            send(&mut server, host, &s);
+            assert_eq!(relayed(&server.tick()).len(), 1, "gone");
+            // The next photo 1 s later: not before 20 minutes.
+            for _ in 0..50 {
+                server.tick();
+            }
+            let now = server.game_time_s();
+            let next = shot(3, rider_at(&server, host_id), now);
+            send(&mut server, host, &next);
+            assert!(relayed(&server.tick()).is_empty(), "20 minutes apart");
+            // A server for tests (dev commands) leaves the gap out.
+            let mut dev = GameServer::new(
+                Route::test_loop(),
+                ServerConfig {
+                    allow_dev_commands: true,
+                    ..Default::default()
+                },
+            );
+            let (c, id) = joined(&mut dev);
+            dev.tick();
+            for n in 1..=7 {
+                let now = dev.game_time_s();
+                let mut s = shot(n, rider_at(&dev, id), now);
+                send(&mut dev, c, &s);
+                dev.tick();
+                s.taken_at = Some(dev.game_time_s());
+                send(&mut dev, c, &s);
+                dev.tick();
+            }
+            assert_eq!(dev.photos_taken(id).len(), 5, "never more than 5");
+        }
     }
 }
 
