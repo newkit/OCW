@@ -413,6 +413,18 @@ fn take_arrived(stream: &mut WorldStream, console: Option<&mut ConsoleState>) {
     }
 }
 
+/// The tile streaming for the renderer's ring of near tiles `ring` (the
+/// render distance, 10G): fetch one ring more, keep three more – the
+/// page's own policy (`?…` options) as the most (ring 2: the default 3 /
+/// 5; ring 1: 2 / 4).
+pub fn residency_for(page: Residency, ring: i32) -> Residency {
+    Residency {
+        fetch_radius: page.fetch_radius.min(ring + 1),
+        keep_radius: page.keep_radius.min(ring + 3),
+        budget_bytes: page.budget_bytes,
+    }
+}
+
 /// The streaming each frame: base → ride, arrived tiles, residency
 /// around the rider, the renderer's package, the log line.
 pub fn stream_world(world: &mut World) {
@@ -463,7 +475,14 @@ pub fn stream_world(world: &mut World) {
         let focus = world
             .get_resource::<RideView>()
             .and_then(ocw_render::flight_world::stream_focus);
+        // The render distance's tile ring (spec §14 Phase 10, 10G): a short
+        // distance fetches and keeps fewer tiles.
+        let ring = world
+            .get_resource::<ocw_render::package::StreamRadius>()
+            .map_or(ocw_render::package::STREAM_RADIUS, |r| r.0);
+        let policy = residency_for(stream.options.residency, ring);
         if let (Some(focus), Some(r)) = (focus, stream.resident.as_mut()) {
+            r.policy = policy;
             let wanted = r.update(focus.centre);
             stream.request(wanted);
         }
@@ -622,6 +641,23 @@ pub(crate) mod tests {
     use ocw_world::package::{RoadStrip, Tile};
     use ocw_world::{GraphRoute, RoadDress, RoadSurface, RouteStep};
     use ocw_worldstore::stream::{MemoryFetch, MemoryStore};
+
+    /// The render distance's ring (10G) narrows the streaming, never past
+    /// the page's own policy.
+    #[test]
+    fn the_render_distance_narrows_the_streaming() {
+        let page = Residency::default();
+        assert_eq!(residency_for(page, ocw_render::package::STREAM_RADIUS), page);
+        let near = residency_for(page, 1);
+        assert_eq!((near.fetch_radius, near.keep_radius), (2, 4));
+        assert_eq!(near.budget_bytes, page.budget_bytes);
+        let small = Residency {
+            fetch_radius: 1,
+            keep_radius: 2,
+            ..page
+        };
+        assert_eq!(residency_for(small, 2), small);
+    }
 
     /// A 5 × 2 tile package with a straight road along z = 500 from x 100
     /// to 4900 and a route on it.

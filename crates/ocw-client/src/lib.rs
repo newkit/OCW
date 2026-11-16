@@ -57,6 +57,7 @@ pub mod settings;
 pub mod sky;
 pub mod trainer;
 pub mod view;
+pub mod view_distance;
 pub mod voice;
 pub mod weather;
 pub mod workout;

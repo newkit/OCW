@@ -559,6 +559,7 @@ pub(crate) fn hide_far_under_near(
 /// With a package the camera sees to [`FAR_VIEW_M`] and the fog ends at
 /// the end of the terrain ([`package_fog`]); without one (a route world)
 /// the far plane and the fog of [`crate::world::fog`].
+#[allow(clippy::too_many_arguments)] // a Bevy system
 pub(crate) fn package_view(
     world: Option<Res<PackageWorld>>,
     far: Res<FarTerrain>,
@@ -566,6 +567,8 @@ pub(crate) fn package_view(
     clouds: Option<Res<crate::weather::clouds::CloudState>>,
     mut cameras: Query<(&mut Projection, Option<&mut DistanceFog>), With<FollowCamera>>,
     quality: Option<Res<crate::quality::RenderQuality>>,
+    time: Res<Time>,
+    mut eased: Local<Option<Option<f32>>>,
 ) {
     let p = view.as_deref().and_then(|view| {
         let l = view.local()?;
@@ -595,9 +598,24 @@ pub(crate) fn package_view(
         _ => falloff,
     };
     // The quality preset's view distance (spec §14 Phase 10 B7; High:
-    // none).
+    // none), or the render distance that replaces it (10G): eased over
+    // 2 s, so a step of the dynamic mode never jumps.
     let (far_m, falloff) = match quality.as_deref() {
-        Some(q) => q.0.limit_view(far_m, falloff),
+        Some(q) => {
+            let target = q.0.view_m;
+            let shown = match *eased {
+                Some(shown) => crate::quality::ease_view(
+                    shown,
+                    target,
+                    time.delta_secs().min(0.25),
+                    FAR_VIEW_M,
+                ),
+                // The first frame: at once.
+                None => target,
+            };
+            *eased = Some(shown);
+            crate::quality::limit_view_to(shown, far_m, falloff)
+        }
         None => (far_m, falloff),
     };
     for (mut projection, fog) in &mut cameras {

@@ -1103,6 +1103,34 @@ args = ["--world", "{world}", "--route-file", "{world_dir}/canadas.route", "--bo
 at = ["0.5=time pause", "0.5=time 2026-11-13 16:00", "0.5=hud off", "0.5=hud.profile off", "0.8=teleport 18.0", "1=camera.orbit 0 6 12"]
 shot = 12
 
+# The render distance (spec §14 Phase 10, 10G): the same view as
+# showcase-tf-teide-iconic (the Teide 6 km ahead) at 2 km, 12 km and
+# unlimited, fixed (`view KM auto off`; screenshot runs hold the dynamic
+# mode anyway). The FPS counter shows the distance.
+[[scene]]
+name = "view-distance-2km"
+description = "Render distance 2 km: the TF-21 in Las Cañadas, the fog closes 2 km ahead, the Teide hidden; trees to 1 km, the 3 × 3 near tiles"
+world = "tenerife"
+args = ["--world", "{world}", "--route-file", "{world_dir}/canadas-teide.route", "--bots", "7", "--power", "230"]
+at = ["0.5=time pause", "0.5=time 2026-11-13 16:00", "0.5=hud.profile off", "0.5=fps on", "0.5=view 2 auto off", "1=camera.orbit 0 6 12"]
+shot = 12
+
+[[scene]]
+name = "view-distance-12km"
+description = "Render distance 12 km: the same view, the Teide (6 km ahead) in the haze, the far ridges fogged out"
+world = "tenerife"
+args = ["--world", "{world}", "--route-file", "{world_dir}/canadas-teide.route", "--bots", "7", "--power", "230"]
+at = ["0.5=time pause", "0.5=time 2026-11-13 16:00", "0.5=hud.profile off", "0.5=fps on", "0.5=view 12 auto off", "1=camera.orbit 0 6 12"]
+shot = 12
+
+[[scene]]
+name = "view-distance-unlimited"
+description = "Render distance unlimited (High's own): the same view as far as the island reaches"
+world = "tenerife"
+args = ["--world", "{world}", "--route-file", "{world_dir}/canadas-teide.route", "--bots", "7", "--power", "230"]
+at = ["0.5=time pause", "0.5=time 2026-11-13 16:00", "0.5=hud.profile off", "0.5=fps on", "0.5=view unlimited auto off", "1=camera.orbit 0 6 12"]
+shot = 12
+
 [[scene]]
 name = "showcase-tf-teide-video"
 description = "Showcase video: riding through Las Cañadas on the TF-21 with 6 riders below the Teide, slowly orbiting camera"

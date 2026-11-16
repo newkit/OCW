@@ -253,6 +253,31 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::Command("quality {}"),
     },
+    // The render distance (spec §14 Phase 10, 10G; `view_distance`).
+    SettingDef {
+        key: "display.view_distance",
+        kind: Kind::Choice(crate::view_distance::DISTANCE_CHOICES),
+        default: "preset",
+        description: "Render distance in km (1 to 60) or unlimited; preset = the quality preset's (High unlimited, Medium 30, Low 8). The upper limit of the dynamic mode",
+        scope: Scope::Live,
+        apply: Apply::Command("view {}"),
+    },
+    SettingDef {
+        key: "display.view_distance_auto",
+        kind: Kind::Bool,
+        default: "on",
+        description: "Adjust the render distance to the frame rate: shorter below the target, longer when there is room (up to display.view_distance)",
+        scope: Scope::Live,
+        apply: Apply::Command("view auto {}"),
+    },
+    SettingDef {
+        key: "display.target_fps",
+        kind: Kind::Choice(crate::view_distance::TARGET_CHOICES),
+        default: "auto",
+        description: "Target frame rate of the dynamic render distance: auto = the display's refresh on the desktop, 60 in the browser; display, or a rate",
+        scope: Scope::Live,
+        apply: Apply::Command("view target {}"),
+    },
     SettingDef {
         key: "display.night_brightness",
         kind: Kind::Int {
@@ -975,11 +1000,20 @@ impl SettingDef {
             .expect("registry defaults are valid (tested)")
     }
 
-    /// "on / off", "0 to 100", "chase, side, top".
+    /// "on / off", "0 to 100", "chase, side, top"; a long list shortened
+    /// ("preset, 1, 2 … 60, unlimited").
     pub fn kind_text(&self) -> String {
         match self.kind {
             Kind::Bool => "on / off".into(),
             Kind::Int { min, max, .. } => format!("{min} to {max}"),
+            Kind::Choice(c) if c.len() > 12 => format!(
+                "{}, {}, {} … {}, {}",
+                c[0],
+                c[1],
+                c[2],
+                c[c.len() - 2],
+                c[c.len() - 1]
+            ),
             Kind::Choice(c) => c.join(", "),
             Kind::Text => "a name".into(),
         }

@@ -90,6 +90,9 @@ pub enum Page {
     /// Display → Graphics (spec §14 Phase 10 B7): the quality preset, the
     /// sky, fullscreen (the Display page is full).
     Graphics,
+    /// Graphics → Render distance (spec §14 Phase 10, 10G; rows from
+    /// `view_distance::rows`): the slider, the dynamic mode, the target.
+    ViewDistance,
     /// Navi → Riders in this ride (spec §14 Phase 13E, 12F; rows from
     /// `rider_list`): who rides, where, who flies, who is hurt.
     RiderList,
@@ -206,6 +209,7 @@ impl Page {
             Self::TimeMachine => "Time machine",
             Self::RidingAids => "Riding aids",
             Self::Graphics => "Graphics",
+            Self::ViewDistance => "Render distance",
             Self::RiderList => "Riders in this ride",
             Self::Account => "Account",
             Self::UnicornControls => "Unicorn mode controls",
@@ -336,6 +340,7 @@ impl Page {
             Self::RidingAids | Self::UnicornControls | Self::Bindings => Some(Self::Controls),
             Self::BindGroup(_) | Self::BindReset => Some(Self::Bindings),
             Self::Graphics | Self::Accessibility => Some(Self::Display),
+            Self::ViewDistance => Some(Self::Graphics),
             Self::TrustedKey(_) => Some(Self::TrustedKeys),
             Self::Devices => Some(Self::Trainer),
             Self::Device(_) => Some(Self::Devices),
@@ -413,6 +418,9 @@ impl Page {
             ],
             Self::TimeMachine => &[
                 "Date, time and speed of the world's clock (sun and light). Solo you set it; in a shared ride the host does.",
+            ],
+            Self::ViewDistance => &[
+                "How far the world is drawn: fog, trees, houses and tiles. Adjust to the frame rate: shorter when the frame rate stays below the target, longer when there is room; the slider is the upper limit. Confirm on the slider: the quality preset's distance.",
             ],
             Self::Graphics => &[
                 "Quality: Low and Medium draw fewer shadows, trees and houses for weaker GPUs, WebGL 2 and phones; auto chooses by GPU and device.",
@@ -1208,10 +1216,21 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         ],
         Page::Graphics => vec![
             setting_row(settings, "display.quality", "Quality"),
+            // Spec §14 Phase 10, 10G: its own page (four rows).
+            open_row(
+                "Render distance",
+                Some(crate::view_distance::summary(settings)),
+                Page::ViewDistance,
+            ),
             setting_row(settings, "display.sky", "Sky"),
             setting_row(settings, "display.fps", "FPS counter"),
             setting_row(settings, "display.fullscreen", "Fullscreen (next start)"),
         ],
+        // The app's shared UI fills in the preset and what runs now
+        // (`ocw_ui::view_distance`).
+        Page::ViewDistance => {
+            crate::view_distance::rows(settings, &crate::view_distance::ViewInfo::default())
+        }
         Page::Riders => {
             let mut out: Vec<Row> = riders
                 .riders

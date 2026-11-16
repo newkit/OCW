@@ -41,6 +41,7 @@ pub mod riders_page;
 pub mod settings;
 pub mod timemachine;
 pub mod trust;
+pub mod view_distance;
 pub mod weather;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod worlds;

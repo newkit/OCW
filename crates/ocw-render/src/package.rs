@@ -55,6 +55,28 @@ use crate::tunnel_cut::TunnelCut;
 
 /// Tiles kept around the rider (radius in tiles; 2 = 5 × 5).
 pub const STREAM_RADIUS: i32 = 2;
+/// The ring of near tiles meshed around a riding rider, set by the render
+/// distance (spec §14 Phase 10, 10G: `ocw_render::quality::
+/// stream_radius_for`; 1 below 2.5 km). Never more than
+/// [`STREAM_RADIUS`]; flight keeps its own wider rings.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamRadius(pub i32);
+
+impl Default for StreamRadius {
+    fn default() -> Self {
+        Self(STREAM_RADIUS)
+    }
+}
+
+impl StreamRadius {
+    /// The ring for `focus` (riding: at most this one).
+    pub fn cap(&self, focus: &mut crate::flight_world::StreamFocus, riding: bool) {
+        if riding {
+            focus.radius = focus.radius.min(self.0.clamp(1, STREAM_RADIUS));
+        }
+    }
+}
+
 /// The rider moving farther than this between two frames is a jump
 /// (teleport, start of a ride): the near tiles are then built and uploaded
 /// at once ([`urgent_tiles`]).
@@ -1578,11 +1600,19 @@ fn stream_tiles(
     mut flight_obstacles: ResMut<crate::flight_world::FlightObstacles>,
     library: Option<Res<MaterialLibrary>>,
     mut seasons: Option<ResMut<crate::season::SeasonCache>>,
+    radius: Option<Res<StreamRadius>>,
 ) {
     let set = &world.set;
-    let Some(focus) = crate::flight_world::stream_focus(&view) else {
+    let Some(mut focus) = crate::flight_world::stream_focus(&view) else {
         return;
     };
+    // The render distance's ring (10G): a short distance meshes fewer tiles.
+    if let Some(r) = radius.as_deref() {
+        r.cap(
+            &mut focus,
+            view.flight.is_none() && view.guided_camera.is_none(),
+        );
+    }
     let p = focus.centre;
     // The world date (the sky's local date at the rider, spec §14 Phase 9),
     // in buckets of a few days: the seasonal look changes with it.
@@ -2529,6 +2559,30 @@ mod tests {
             far_tiles(&set, [0.0, 50.0], &loaded).len(),
             loaded.iter().filter(|t| t.0 == 1).count()
         );
+    }
+
+    /// The render distance's ring (spec §14 Phase 10, 10G) caps the riding
+    /// ring, never widens it and leaves flight alone.
+    #[test]
+    fn the_render_distance_caps_the_riding_ring() {
+        let focus = |radius| crate::flight_world::StreamFocus {
+            centre: [0.0, 0.0],
+            radius,
+            ahead: None,
+        };
+        let mut f = focus(STREAM_RADIUS);
+        StreamRadius(1).cap(&mut f, true);
+        assert_eq!(f.radius, 1);
+        let mut f = focus(STREAM_RADIUS);
+        StreamRadius(9).cap(&mut f, true);
+        assert_eq!(f.radius, STREAM_RADIUS);
+        let mut f = focus(3);
+        StreamRadius(1).cap(&mut f, false);
+        assert_eq!(f.radius, 3, "flight keeps its ring");
+        let mut f = focus(STREAM_RADIUS);
+        StreamRadius(0).cap(&mut f, true);
+        assert_eq!(f.radius, 1, "at least the 3 × 3 tiles");
+        assert_eq!(StreamRadius::default().0, STREAM_RADIUS);
     }
 
     #[test]
