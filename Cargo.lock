@@ -6854,7 +6854,6 @@ dependencies = [
  "ocw-weather",
  "ocw-world",
  "ocw-worldstore",
- "raw-window-handle",
  "serde",
  "serde_json",
  "tokio",
@@ -6880,6 +6879,14 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-time",
+]
+
+[[package]]
+name = "ocw-edit"
+version = "0.2.2"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -6921,6 +6928,7 @@ dependencies = [
  "ocw-weather",
  "ocw-world",
  "png",
+ "raw-window-handle",
  "serde",
  "texpresso",
  "toml",
@@ -6988,6 +6996,22 @@ dependencies = [
  "clap",
  "ocw-core",
  "ocw-world",
+]
+
+[[package]]
+name = "ocw-studio"
+version = "0.2.2"
+dependencies = [
+ "bevy",
+ "bevy_egui",
+ "clap",
+ "dirs",
+ "ocw-edit",
+ "ocw-render",
+ "ocw-sim",
+ "ocw-ui",
+ "ocw-world",
+ "ocw-worldstore",
 ]
 
 [[package]]

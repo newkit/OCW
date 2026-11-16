@@ -16,6 +16,7 @@
 //! - [`load`]: `--world PATH | ID[@VERSION]` with verify-on-load
 //! - [`fetch`]: download a package into the cache, resumable, verified
 //! - [`neighbours`]: installed neighbour packages joined to a world set
+//! - [`details`]: what a loaded world is, for people (World menu, studio)
 //! - [`discover`]: the worlds that can be ridden here (the World menu)
 //! - [`stream`]: a package streamed by chunk over HTTP range requests,
 //!   verified chunk by chunk, cached behind a [`stream::ChunkStore`]
@@ -23,6 +24,8 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cache;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod details;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod discover;
 #[cfg(not(target_arch = "wasm32"))]

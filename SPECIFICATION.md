@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.85 – November 2026
+Version 3.86 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.86 | **OCW Studio shell built: `ocw-edit` (documents, commands with undo / redo, dirty flags, autosave, validators) and `ocw-studio` (a world package in the game's renderer, flown with the unicorn's controls, a 2D map, the World workspace)** (§14 Phase 16 E1, part; 16A *Built*). `crates/ocw-edit` is Bevy-free and wasm-safe: every edit is an operation with its exact inverse (unlimited history per document, merged drags and typing, serialisable), dirty flags by never-reused history states, a selection, validators on every change, a `Session` of documents of any kind and autosave records (content and history) in `<data dir>/ocw/studio/autosave/`; the world patch operations of 16C plug in as document operations later. `apps/studio`: `--world` / File → Open, verified like the game; the 3D view (`ocw-render`, the first-person flight camera without the unicorn, hover by default); the 2D map from the package (land use, buildings, roads; never online tiles); Models / World / Routes tabs (World: id, version, signing and trust, bounds, tiles, sections, roads, buildings, routes; saved views with undo / redo; Models and Routes placeholders); `studio …` console commands. Shared instead of copied: `ocw_ui::worlds::package_world`, `ocw_worldstore::details::WorldDetails`, `ocw_render::{platform, autoshot}`, `ocw_ui::god::{flight_keys, pad_flight}`; `drive.sh` runs the studio with `OCW_PACKAGE=ocw-studio`. Open in E1: the Routes workspace (16D). Tests: `ocw-edit` (random command sequences undo to the identical document, merging, dirty tracking, autosave round trips), the studio's pure parts, a headless screenshot |
 | 3.85 | **A touch does not switch autodrive off: in autodrive it moves the line, only the autodrive button ends it** (decision from the build dashboard, 2026-11-16; §3.2.3 Q3, as proposed) |
 | 3.84 | **Touch lean steering works like the keys: the lean stays after the finger lifts, the other side straightens it** (decision from the build dashboard, 2026-11-16; §3.2.3 Q2, as proposed) |
 | 3.83 | **Touch steering: touch-down steers at once like a held arrow key, a tap is topped up to one step (line 0.5 m, lean 0.1 rad)** (decision from the build dashboard, 2026-11-16; §3.2.3 Q1, as proposed) |
@@ -4904,7 +4905,7 @@ All of it lives in `ocw-assets` (pure, wasm-safe except the CLI's file access) p
 - **Q4 – Blender on marge: decided (2026-11-15, the user: "Yes, we can install Blender on marge"):** Blender is installed on marge for the round-trip test and the `.blend` sources (Q1); the official release tarball into `~/.local/opt/blender` (pinned version and SHA-256, no sudo; `make deps-blender`) or the Debian package. Blender is a tool there: nothing of it is linked or shipped, and the `.blend` files we save are ours (MIT OR Apache-2.0).
 - **Q5 – The Blender add-on:** should the optional add-on of 15D (export preset, kind / id panel, anchor names, budget check; GPL-2.0-or-later in its own folder `tools/blender/ocw_models/`, since add-ons that use `bpy` are GPL-derived) be built? **Proposal: yes, in M6**, after the format and the import tools have settled.
 
-### Phase 16 – OCW Studio: the editor for models, worlds and routes (planning, 2026-11-15)
+### Phase 16 – OCW Studio: the editor for models, worlds and routes (planning, 2026-11-15; the E1 core – the studio shell – built v3.86, see 16A; open in E1: the Routes workspace)
 
 **Goal (asked by the user, 2026-11-15):** an editor in which one can:
 - view and edit the 3D objects of Phase 15;
@@ -4941,6 +4942,22 @@ The technical and licence check is in 16E. The editor uses the game's own render
 - **Platforms:**
   - Linux first, then Windows and macOS, like the game (§11.1).
   - A **browser version** later (Q4): the core is wasm-safe. Files would go through the File System Access API and downloads; world builds run on the server.
+- **Built (v3.86, stage E1 core – the studio shell):**
+  - **`crates/ocw-edit`** (Bevy-free, wasm-safe, in `make test-wasm`):
+    - `Document<D>` over a `DocumentKind` (the content type, its `Op` enum, `apply` returning the exact inverse, `merges`, `contains`): commands with **unlimited undo / redo** per document; consecutive operations that `merges` accepts (a drag, typing a name) are one undo step while they come within 1 s and the step is not sealed;
+    - **dirty flags** by history state ids that are never reused (undoing back to the saved state is clean again, redoing to it too; a merge into the saved step is a change); `mark_saved`, `needs_autosave`, `autosave_due` (changed and left alone for 5 s);
+    - a **selection** per document (not in the history; it drops what a change removed) and **validators** that run after every execute, undo and redo (`Finding`: severity, message, target);
+    - `Session`: the open documents of every kind (`AnyDocument`), the active one (undo / redo of the Edit menu act on it), `autosave` of all that are due;
+    - **autosave**: one JSON record per document – content and the whole history, so undo / redo work on after a restore – in an `AutosaveStore` (`DirStore`: `<data dir>/ocw/studio/autosave/`, written to a temporary file and renamed; `MemoryStore` for tests and later the browser); record names `world-<file>-<FNV-1a hash of the path>.json`;
+    - `ocw_edit::world`: the World workspace's document (`WorldDoc`: the package opened – spec, id, version – and the **saved views**, named camera positions; `WorldOp` add / remove / rename / move with their inverses; the `check_views` validator). **The world patch operations of 16C (E5) plug in as further `WorldOp`s or a document kind of their own**; nothing of the patch format is assumed.
+  - **`apps/studio` (`ocw-studio`)**: `--world PATH.ocwpkg` (or File → Open world… with a path field, or `studio open PATH`), loaded and verified like the game (`ocw_worldstore`: signature, trust, the installed neighbours) and drawn by `ocw-render` exactly as in a ride (the game's `PackageWorld`, now built by the shared `ocw_ui::worlds::package_world`; `RideView` without riders, as a free ride);
+    - the **3D view** flown with the **unicorn's controls** (the shared `ocw_ui::god::{flight_keys, pad_flight}` and `input` mapping, `ocw_sim::god::Flight` over the terrain, buildings and tree crowns, inside the world set's bounds) as the renderer's first-person flight camera, no unicorn drawn; the mouse looks while a button is held over the view; *hover* by default (the camera stays put without input), *plane* in View → Flight or with `--plane`; the 3D camera draws into the window's free middle (its viewport), the panels have their own camera;
+    - the **2D map** of the package (right panel): the land use as a colour raster (one texel per land-use cell, coarser above 2048 texels a side), the buildings as triangles from 6 m per point in, the road graph's roads by class (minor ones only zoomed in), the camera's position and heading, the saved views, a scale bar and "© OpenStreetMap contributors"; drag pans, the wheel zooms at the pointer, a double-click flies the camera there; never online tiles;
+    - **panels** (`bevy_egui`): the menu bar (File, Edit with *Undo …* / *Redo …* named after the step, Ctrl + Z / Ctrl + Shift + Z / Ctrl + Y, View), the workspace tabs **Models / World / Routes** (Models and Routes are placeholders), the **World** workspace with the package facts (region, id, version, signing and trust – verified, unofficial with the claimed signer, unsigned, untrusted –, origin, bounds, extent, tiles, area, elevation, roads – edges, km, vertices –, buildings, routes, the package's sections with their sizes, time zone, joined neighbours, file size, credits), the saved views (rename, go, set, delete; *Save the camera's view*), the validator's findings, and the autosave offer (*Restore* / *Discard*) when an earlier session left one; the status line (last message, changed, findings, the autosave folder); the window title marks unsaved changes;
+    - the UI only **sends commands** (`StudioCommand`, carried out in one place, like `ClientCore`): undo, redo, views, open, fly; the console has them as `studio undo | redo | status | open PATH | fly X Z [H] | view add [NAME] | list | go ID | delete ID`; the autosave runs every frame for what is due and at quit;
+    - shared with the game rather than copied: the window-system log (`ocw_render::platform`), `--screenshot` (`ocw_render::autoshot`), the package facts (`ocw_worldstore::details::WorldDetails`, the World menu's *About this world*);
+    - tests: `ocw-edit` (undo / redo sequences, 200 random sequences of commands, undos, redos, seals and saves checked against a replayed model and undone to the empty document, merging, dirty tracking, validators on every change, the selection, autosave round trips through a memory and a directory store, records of another kind or format refused), the studio's pure parts (map raster, view pan / zoom, package rows, flight view, the document commands, autosave restore / discard, title and status line), and a headless screenshot (`OCW_PACKAGE=ocw-studio drive.sh shot-wayland …`, archived in `test-output/`).
+  - **Still open in E1:** the **Routes workspace** (16D: GPX import with matching and problem sections, the built-in planner, via-points and dragging, the elevation profile, GPX / graph-route export, *Test ride*); saving a world document (its file is the world patch of E5 – the views live in the autosave until then); the trust dialog for a package signed by an unknown user key (the studio refuses it with the loader's message today); neighbouring packages on the 2D map; the ortho colour map on the 2D map; Windows / macOS checks of the studio.
 
 #### 16B – Models workspace
 
@@ -5101,11 +5118,11 @@ The studio makes them interactive:
 #### 16F – Stages (each with tests, full checks, merge and deploy as usual)
 
 - **E1 – Studio shell and routes:**
-  - `ocw-edit` (documents, commands, undo / redo, autosave), `apps/studio` with the 2D map and 3D view of a package;
+  - `ocw-edit` (documents, commands, undo / redo, autosave), `apps/studio` with the 2D map and 3D view of a package – **built (v3.86, the E1 core, see 16A *Built*)**;
   - the **Routes workspace**: GPX import with matching and problem sections, the built-in planner with via-points and route dragging, the elevation profile;
   - GPX / graph-route export, and *Test ride*.
 
-  This needs nothing from Phase 15.
+  This needs nothing from Phase 15. **Open in E1:** the Routes workspace (the two items above).
 - **E2 – External planners:** the `RoutePlanner` interface, BRouter (self-hosted on marge for tests, and a configurable endpoint), GraphHopper (self-hosted or own key), and FIT / TCX / GeoJSON import and export.
 - **E3 – Models workspace (view):** the viewer, stats, validator panel and try-on (needs Phase 15 M1 and M2).
 - **E4 – Models workspace (edit):** node and anchor edits, slots, proxies, the manifest, and the Blender round trip with re-import (needs Phase 15 M2).

@@ -69,12 +69,7 @@ pub fn try_neighbourhood(
 /// The render resource: the world set, with a loader that reads (and
 /// verifies) a neighbour's tiles again when the rider comes near it.
 pub fn package_world(args: &Args, hood: Neighbourhood) -> ocw_render::package::PackageWorld {
-    let set = std::sync::Arc::new(hood.set.clone());
-    let loader: Option<ocw_render::package::PackageLoader> = match load_options(args) {
-        Ok(opts) if set.len() > 1 => Some(std::sync::Arc::new(move |i| hood.reload(i, &opts))),
-        _ => None,
-    };
-    ocw_render::package::PackageWorld { set, loader }
+    ocw_ui::worlds::package_world(hood, load_options(args).ok())
 }
 
 pub fn cache(args: &Args) -> WorldCache {
