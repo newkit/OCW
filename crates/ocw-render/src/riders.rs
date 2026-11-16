@@ -222,11 +222,19 @@ fn contact_height(
     pavement: Option<&Pavement>,
     along: f64,
 ) -> f32 {
-    let d = state.distance + along * state.heading.cos();
-    let lateral = state.lateral_offset + along * state.heading.sin();
+    // Beside the centreline of a curve a metre of path is shorter (inside)
+    // or longer (outside): the wheel `along` ahead lies that much further
+    // along the path (tight junction corners on a climb, §4.8.8).
+    // And the straight bike leaves the curve: its wheels lie ½ κ s² to the
+    // curve's outside.
+    let k = track.curvature(state.distance);
+    let scale = (1.0 - k * state.lateral_offset).clamp(0.25, 4.0);
+    let d = state.distance + along * state.heading.cos() / scale;
+    let lateral = state.lateral_offset + along * state.heading.sin() - 0.5 * k * along * along;
     let p = to_vec3(track.sample(d).offset_position(lateral));
     let beyond = lateral.abs() - track.road_width_at(d) / 2.0;
-    let mut y = p.y + crate::ROAD_SURFACE_LIFT_M;
+    // The drawn surface (junction surfaces are not flat across, §4.8.8).
+    let mut y = track.surface_height(d, lateral) as f32 + crate::ROAD_SURFACE_LIFT_M;
     // Only at the road's edge or beyond (riders on the road keep 0.6 m
     // from it; the strips may be a little narrower than the track).
     if beyond > -0.25
