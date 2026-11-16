@@ -3564,7 +3564,7 @@ All test runs execute on the build machines (`scripts/remote.sh MACHINE run
   the day scripts, renders, publishing and the hourly collector live and run
   there, from a checkout next to this one (`../OCW-ART`).
 
-Release builds are published as GitHub Releases (`release/README.md` has the
+Release builds are published as GitHub Releases (each release's notes are its
 build notes); screenshots and videos from development
 are not in the repository: the art project stores them as one zip per day on
 the release [`build-history` of OCW-ART](https://github.com/newkit/OCW-ART/releases/tag/build-history)
@@ -3636,7 +3636,7 @@ make version | version-next | version-bump PART=minor   # by hand
 | Windows | Win11Builder | The same cargo build (static C runtime from `.cargo/config.toml`), then the three `.exe` files zipped (no script yet) | `OpenCyclingWorld-<version>-<sha>-windows-x86_64.zip` |
 | World packages | marge | `scripts/prepare-world-release.sh OUT_DIR PKG…` (no upload) | `ocw-world-<name>-v<N>.zip` (package, manifest, routes, `LICENSE-DATA.md`, `README.md`) and `<region>-osm-source.zip` (the ODbL offer) |
 
-`release/README.md` keeps the build notes of each release. Screenshots and
+Each GitHub release's notes keep its build notes. Screenshots and
 videos from development are not in the repository: the art project publishes
 them as one zip per day with an index on the release `build-history` of
 [OCW-ART](https://github.com/newkit/OCW-ART).
