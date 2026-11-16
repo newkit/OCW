@@ -457,29 +457,47 @@ impl WorldPatch {
     /// The format rules beyond the types: one target per operation, values
     /// in range, known surfaces, unique height point ids.
     fn check(&self, lines: &[usize]) -> Result<(), PatchError> {
-        let top = |m: String| PatchError {
-            line: None,
-            message: m,
-        };
-        if self.package.trim().is_empty() {
-            return Err(top("`package` (the package id) is empty".into()));
+        if let Some(m) = self.header_problem() {
+            return Err(PatchError {
+                line: None,
+                message: m,
+            });
         }
-        for s in &self.sources {
-            if s.what.trim().is_empty() || s.licence.trim().is_empty() {
-                return Err(top(
-                    "every [[source]] needs `what` and `licence` (spec §13)".into(),
-                ));
-            }
-        }
-        let mut ids = BTreeSet::new();
-        for (i, op) in self.ops.iter().enumerate() {
-            let line = lines.get(i).copied();
-            check_op(op, &mut ids).map_err(|m| PatchError {
-                line,
-                message: format!("[[op]] {} ({}): {m}", i + 1, op.kind()),
-            })?;
+        if let Some((i, m)) = self.op_problems().into_iter().next() {
+            return Err(PatchError {
+                line: lines.get(i).copied(),
+                message: format!("[[op]] {} ({}): {m}", i + 1, self.ops[i].kind()),
+            });
         }
         Ok(())
+    }
+
+    /// What is wrong with the header and the sources (the first problem),
+    /// as [`WorldPatch::parse`] would refuse it.
+    pub fn header_problem(&self) -> Option<String> {
+        if self.package.trim().is_empty() {
+            return Some("`package` (the package id) is empty".into());
+        }
+        if self
+            .sources
+            .iter()
+            .any(|s| s.what.trim().is_empty() || s.licence.trim().is_empty())
+        {
+            return Some("every [[source]] needs `what` and `licence` (spec §13)".into());
+        }
+        None
+    }
+
+    /// Every operation that breaks the format rules (index, what is
+    /// wrong): the same checks [`WorldPatch::parse`] makes, but all of
+    /// them – an editor shows each (the studio's validator, 16C).
+    pub fn op_problems(&self) -> Vec<(usize, String)> {
+        let mut ids = BTreeSet::new();
+        self.ops
+            .iter()
+            .enumerate()
+            .filter_map(|(i, op)| check_op(op, &mut ids).err().map(|m| (i, m)))
+            .collect()
     }
 }
 
@@ -1065,6 +1083,26 @@ pub fn apply_road_edits(
         graph.retain_edges(&keep);
     }
     surfaces
+}
+
+/// What a patch stack does to a built package's road graph, without the
+/// OSM sources: way and edge targets against the graph ([`Targets::All`]),
+/// then the height points (`origin`: the package's projection origin).
+/// The report says what each operation did or why it found no target;
+/// the graph is the patched one (`world-builder patch check`, the
+/// studio's preview, 16C). Node positions stay unchecked.
+pub fn preview(
+    graph: &RoadGraph,
+    origin: (f64, f64),
+    stack: &[LoadedPatch],
+) -> (Report, RoadGraph) {
+    let mut report = Report::new(stack);
+    let plan = Plan::new(stack, &mut report);
+    let mut g = graph.clone();
+    apply_road_edits(&plan, &mut g, Targets::All, &mut report);
+    let proj = LocalProjection::new(origin.0, origin.1);
+    apply_height_points(&plan, &mut g, &proj, &mut report);
+    (report, g)
 }
 
 /// Arc position of profile sample `i` on an edge of length `len`.
