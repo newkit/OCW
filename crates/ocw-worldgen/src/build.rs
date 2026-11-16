@@ -345,7 +345,19 @@ pub fn raw_graph(osm: &OsmData, region: &Region) -> (RoadGraph, BuildStats) {
 
 /// Full road graph pipeline (spec §4.4, steps 1–4).
 pub fn build_road_graph(osm: &OsmData, region: &Region) -> (RoadGraph, BuildStats) {
+    build_road_graph_with(osm, region, |_| {})
+}
+
+/// [`build_road_graph`] with `edit` applied to the raw graph before the
+/// cleanup (a world patch's edge edits and removals, spec §14 Phase 16
+/// 16C: a removed road can split off a part, which the cleanup drops).
+pub fn build_road_graph_with(
+    osm: &OsmData,
+    region: &Region,
+    edit: impl FnOnce(&mut RoadGraph),
+) -> (RoadGraph, BuildStats) {
     let (mut graph, mut stats) = raw_graph(osm, region);
+    edit(&mut graph);
     stats.components = graph.components().len();
     graph.keep_largest_component();
     graph.prune_spurs(MIN_SPUR_M);
