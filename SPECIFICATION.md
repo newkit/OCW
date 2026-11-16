@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.90 – November 2026
+Version 3.91 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.91 | **Model files: today's models exported into files named by function and shape, and the apps use the files instead of the code** (asked by the user 2026-11-16; §14 Phase 15, new 15H and stage MX): `ocw-assets model export-all` runs every generator once (helmets, parts, workshop pieces, unicorn, point obstacles, street lamps, flora with three variants per species; the rider and the bikes already are files) and writes `artwork/3dmodels/<category>/<function>-<shape>[-<detail>][-<variant>].glb`; the apps load only files (`ModelLibrary`), the mesh code moves into the exporter, `export-all --check` keeps generators and files byte-equal; screenshots before and after must match. Status: Phase 15 is planned only, nothing built. Open: Phase 15 Q6 (generator or file as the source), Q7 (parametric variants), Q8 (tree variants) |
 | 3.90 | **In a ride one finger steers and a two-finger drag moves the camera (pinch: chase distance)** (decision from the build dashboard, 2026-11-16; §3.2.3 Q7) |
 | 3.89 | **Touch steering in the desktop app too, on Windows / Linux touch screens** (decision from the build dashboard, 2026-11-16; §3.2.3 Q6, as proposed: parity rule, the same *auto* hints) |
 | 3.88 | **W5 refined (planning): accounts, inventory and hearts in the backend inside `ocw-server`, on PostgreSQL; one wallet and one rider per account; no local wallet; 5,000 ♥ start, with which the rider buys bike and kit; the hosting kit is built, hosting is manual later** (decided by the user, 2026-11-16; §14 Phase 4 4O, replacing 4E's starter bikes, 500 ♥, local wallet and one-time import). Stages W5a–W5e; open questions Q-W1 – Q-W6 |
@@ -4684,7 +4685,7 @@ It builds on Phase 11 (the VR mode of the desktop app: OpenXR, the first-person 
 - **Q5 – Priority:** after Phase 11 X1 – X2 (proposal: the VR mode on the desktop first, then V1 – V2 while the browser app reaches B3), or later after the browser app (Phase 10) is done?
 
 
-### Phase 15 – Model files: 3D objects in a standard open format (planning, 2026-11-15)
+### Phase 15 – Model files: 3D objects in a standard open format (planning, 2026-11-15; nothing built yet; the export of today's models and the switch to files planned v3.91 – see 15H)
 
 **Goal (asked by the user, 2026-11-15):** stop encoding the shapes of 3D objects in code. Every object that can be a file becomes a model file in one standardised, open format, stored in **`artwork/3dmodels/`**. Artists can open these files in Blender and other tools, edit them and bring them back. The work has three parts:
 - choose the format (15A);
@@ -4900,6 +4901,7 @@ All of it lives in `ocw-assets` (pure, wasm-safe except the CLI's file access) p
   - `ModelLibrary` with the embedded table and the dev folder;
   - `assets/models/` moved to `artwork/3dmodels/` with the new manifest fields, the README and the contract.
   - **No visible change:** screenshots before and after must match.
+- **MX – Export all and switch (15H, asked by the user 2026-11-16):** every model the code draws exported into `artwork/3dmodels/`, named by function and shape; the apps load the files instead of the code, kind by kind; `export-all --check` keeps generators and files in step. After MX, M2 – M5 refine the files instead of moving objects.
 - **M2 – Tools, first props:**
   - `model import / export / diff`, the extended validator, and the Blender round-trip test;
   - point obstacles and street lamps as files.
@@ -4907,6 +4909,49 @@ All of it lives in `ocw-assets` (pure, wasm-safe except the CLI's file access) p
 - **M4 – The unicorn as a file**, with its procedural animation on named nodes.
 - **M5 – Flora:** the species models with LODs and billboards. This comes after the vegetation merge, and is checked against the frame-time budget (§15) on marge and in the browser (WebGL 2).
 - **M6 – Optional:** the Blender add-on (Q4), building kit parts, `KHR_mesh_quantization`, `optimize`.
+
+#### 15H – Export of today's models into files, and using the files (asked by the user 2026-11-16)
+
+**Goal:** every model the code draws today is exported **once** into its own file, named by its **function and shape**, and the apps then load **these files instead of building the meshes in code**. Afterwards a model is changed by editing (or regenerating) its file, and a new or better model is a file swap, not a code change.
+
+**Status before this step (2026-11-16):** none of Phase 15 is built. The reader and writer (`ocw_assets::glb`) and the validator exist; only the rider and the 6 bikes are files (`assets/models/*.glb`, written by `ocw_assets::generate`). Everything else is drawn in code: helmets and glasses (`ocw_assets::helmet`), the catalogue parts (inside the bike generator), the workshop room and furniture (`ocw-render::workshop`), the unicorn (`ocw-render::unicorn`), the point obstacles (`ocw-render::obstacles`: bollard, post, gate, lift gate, block, cycle barrier, pylon), the street lamps (`ocw-render::street_lamps`, per `LampKind`) and the flora (`ocw-render::flora` / `vegetation`: the OSM, forest and landuse trees and the vegetation species).
+
+**The export (`ocw-assets model export-all`):**
+- Runs **every generator** in the code and writes one `.glb` per model (and per variant actually used) into `artwork/3dmodels/` (15C), with a manifest entry each (`id`, `kind`, `license`, `source = "generator"`, the generator's name and its parameters).
+- **Variants:** a parametric model is exported for each variant the game uses, not as a parameter space: the 6 bikes with their `lod1`, each helmet style (near and far), each catalogue part of `parts.toml`, each `LampKind`, each obstacle kind, and **three shape variants per tree species** (`-a`, `-b`, `-c`; size, rotation and tint stay per instance, as today), each with its `lod1` and billboard (*proposal*, Q8).
+- **What stays fitting in code:** placing, scaling and tinting per instance; the rider's body build (per-node scale, later morph targets, 15A); the bike's fit to the rider (anchors); the workshop layout for N bikes (`workshop::layout` places the exported pieces); the unicorn's procedural flight animation, which drives the named nodes of its file (15E, M4).
+- **Never exported:** the per-place world geometry of 15E (roads, terrain, OSM houses, bridges, tunnels, line obstacles, sky, weather).
+
+**Names: function first, then shape** – `<category>/<function>-<shape>[-<detail>][-<variant>].glb`, lower-case ASCII with hyphens, no colours (colours are paint slots, 15B), no version numbers; the file's id is its path without `.glb`. Categories are the folders of 15C. Examples (the exporter's table is the source; the names below are the pattern):
+
+| Code today | File |
+|---|---|
+| Rider (near, far) | `riders/rider-body.glb`, `riders/rider-body-low.glb` |
+| Bike profiles | `bikes/bike-road-endurance.glb`, `bikes/bike-road-aero.glb`, `bikes/bike-road-climbing.glb`, `bikes/bike-gravel.glb`, `bikes/bike-mtb-hardtail.glb`, `bikes/bike-tt.glb` |
+| Helmet styles | `wear/helmet-road-vented.glb`, `wear/helmet-road-lightweight.glb`, `wear/helmet-aero-road.glb`, `wear/helmet-tt-teardrop.glb` |
+| Wear | `wear/glasses-wrap.glb`, `wear/cap-cycling.glb`, `wear/overshoe-aero.glb` |
+| Catalogue parts | `parts/wheel/wheel-carbon-deep-60mm.glb`, `parts/saddle/saddle-short-nose.glb`, `parts/bar/bar-drop-compact.glb` |
+| Workshop | `workshop/stand-repair-clamp.glb`, `workshop/bench-work-wood.glb`, `workshop/hook-wall-bike.glb`, `workshop/wall-tool-pegboard.glb`, `workshop/lamp-pendant-shade.glb`, `workshop/wall-segment.glb`, `workshop/floor-segment.glb`, `workshop/mirror-standing.glb` |
+| Unicorn | `creatures/unicorn-winged.glb` (with `lod1`) |
+| Point obstacles | `props/bollard-round.glb`, `props/post-square.glb`, `props/gate-swing.glb`, `props/barrier-lift-arm.glb`, `props/block-concrete-cube.glb`, `props/barrier-cycle-staggered.glb`, `props/pylon-cone.glb` |
+| Street lamps | `props/lamp-street-<pole>-<head>.glb` per `LampKind`, e.g. `props/lamp-street-pole-curved.glb`, `props/lamp-street-mast-lantern.glb` |
+| Flora | `flora/tree-spruce-conical-a.glb`, `flora/tree-beech-round-a.glb`, `flora/tree-larch-conical-a.glb`, `flora/palm-canary-fan-a.glb`, `flora/shrub-euphorbia-candelabra-a.glb`, … (`-b`, `-c` the other variants) |
+
+The validator checks every name against the pattern, that ids are unique, and that every file is used by the game or listed as spare.
+
+**Using the files instead of the code (the switch):**
+- The apps load **only** files, through `ModelLibrary` (15D): obstacles, lamps, flora, helmets, parts, the workshop pieces and the unicorn are spawned from their files; the mesh-building code leaves `ocw-render` and the apps. The generators move into the exporter (`ocw-assets`, not linked into the apps; the browser's wasm gets smaller by their code).
+- **Generator and file stay in step (Q1: the generators are kept):** `ocw-assets model export-all --check` regenerates every file whose manifest says `source = "generator"` and fails when a byte differs (the writer is deterministic, 15B), so a generator change without a new file – or a hand edit of a generated file – is caught in `make check`. A model edited in Blender is marked `source = "blender"` (its `.blend` committed, 15C) and its generator is retired (Q6).
+- **No visible change:** for every switched object, the screenshots of its scenes before and after differ by less than the threshold of 15F (X11, Wayland and the browser), and the frame time on marge and in the browser (WebGL 2) does not rise; per-tile merging of obstacles and flora stays (draw calls).
+
+**Stage:** the export and the switch are a new stage **MX** right after M1 (the loader and library): **MX – Export all, then switch kind by kind** (props → wear and parts → workshop → unicorn → flora), each kind a merge of its own with its screenshots. M2 – M5 then no longer move objects; they refine the files (Blender sources, colliders `col_*`, better LODs, the model viewer, the round-trip test).
+
+**Tests (§11.4):** the export is deterministic (two runs, identical bytes); every generator in the code is in the exporter's table (a test lists the mesh builders); names follow the pattern; each exported file passes the validator and the budgets (15B); loading a file gives the same mesh as the generator (vertex positions, normals, indices, slots within 1e-5); the scenes before and after match; `--check` fails on a changed generator and on a hand-edited generated file.
+
+**Open questions (to the user):**
+- **Q6 – After the export, which is the source:** the **generator** until someone edits the file in Blender, then the file (per model, `source = "generator" | "blender"`; *proposal*), or the **files** from the export on, with all generators deleted at once?
+- **Q7 – Parametric models:** export only the **variants in use** (the 6 bikes, the 4 helmets, the parts of `parts.toml`; *proposal*), or keep generating bike frames from their geometry numbers at run time, so a new frame size needs no file?
+- **Q8 – Tree variants:** **three** shape variants per species (*proposal*), more for the variety, or one file per species with the variety only from size, rotation and tint?
 
 #### 15F – Tests (§11.4)
 
