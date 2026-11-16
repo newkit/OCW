@@ -8,8 +8,8 @@
 #    OCW_LIVEKIT_* variable) starts livekit-server by itself; the API
 #    secret is in its environment, never on its command line or in the logs.
 # 2. Two headless riders (crates/ocw-voice/tests/bundled_voice_server.rs)
-#    join the game, get voice grants from it and join the room; one hears
-#    the other.
+#    join the game, get voice grants from it and join the room; both see
+#    and hear each other.
 # 3. Killing ocw-server with SIGKILL (no clean-up runs) ends livekit-server
 #    too (Linux: the parent-death signal).
 # 4. --voice off and --livekit-url start no voice server.
@@ -102,11 +102,8 @@ wait "$tp"; r=$?
 cp "$work/test" "$out/riders.log"
 cat "$work/out" "$work/err" >"$out/ocw-server.log"
 cp "$XDG_DATA_HOME/ocw/voice/livekit-$sig.log" "$out/livekit-server.log" 2>/dev/null
-if grep -q "^KNOWN:" "$work/test"; then
-  echo "KNOWN the Rust voice backend did not report the other rider (spec 7.1.8 Open); hearing not checked" | tee -a "$summary"
-else
-  grep -q "Bea hears Ada" "$work/test" && [ $r = 0 ]; check "one rider hears the other's tone" $? "$(tail -5 "$work/test")"
-fi
+grep -q "Ada and Bea see each other" "$work/test"; check "both riders see each other" $? "$(tail -5 "$work/test")"
+grep -q "Ada and Bea hear each other" "$work/test" && [ $r = 0 ]; check "both riders hear the other's tone" $? "$(tail -5 "$work/test")"
 grep -c "voice token issued" "$work/out" | grep -qx 2; check "the game server issued two voice tokens" $?
 
 # 3. No orphan: SIGKILL the game server, livekit-server goes too.

@@ -38,6 +38,8 @@ required-features = ["livekit"]
 [dev-dependencies]
 # The env-gated LiveKit test mints its tokens like the game server.
 ocw-server.workspace = true
+# RUST_LOG for the LiveKit tests (the SDK logs through `log`).
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true
