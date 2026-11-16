@@ -189,6 +189,26 @@ struct Args {
     /// only from $OCW_LIVEKIT_API_SECRET.
     #[arg(long, value_name = "KEY")]
     livekit_api_key: Option<String>,
+    /// Voice chat (spec §7.1): `auto` starts the bundled LiveKit server
+    /// (`livekit-server`) beside a server that others join (--listen),
+    /// unless --livekit-url / $OCW_LIVEKIT_URL name one; `off`: no voice.
+    #[arg(long, default_value = "auto", value_parser = ["auto", "off"])]
+    voice: String,
+    /// The voice server binary to start (default: livekit-server next to
+    /// this executable, then on PATH).
+    #[arg(long, value_name = "PATH")]
+    voice_server: Option<PathBuf>,
+    /// The bundled voice server's ports: signalling (TCP), ICE over TCP,
+    /// media (one UDP port).
+    #[arg(long, value_name = "SIGNAL,TCP,UDP", default_value = "7880,7881,7882",
+          value_parser = ocw_server::voice::launcher::VoicePorts::parse)]
+    voice_ports: ocw_server::voice::launcher::VoicePorts,
+    /// The host riders from the internet reach this server on (the join
+    /// link's host, a name or an address): the bundled voice server
+    /// announces its address for media, and their grants name it. Without
+    /// it the voice server asks a STUN server for the public address.
+    #[arg(long, value_name = "HOST")]
+    voice_public_host: Option<String>,
     /// Run the accounts backend (sign-in with Google and Strava, spec
     /// §9.1) in this process from this configuration (a copy of
     /// services/accounts/accounts.example.toml, git-ignored: it holds the client
@@ -600,22 +620,9 @@ fn main() {
     }
     // Voice chat (spec §7): LiveKit from the options or the environment;
     // the API secret only from the environment (not visible in `ps`).
-    let voice = ocw_server::voice::VoiceConfig::from_parts(
-        args.livekit_url.clone(),
-        args.livekit_api_key.clone(),
-        None,
-        |k| std::env::var(k).ok(),
-    )
-    .unwrap_or_else(|e| {
-        eprintln!("{e}");
-        std::process::exit(2);
-    });
-    match &voice {
-        Some(v) => tracing::info!(url = %v.url, room = %v.session_room(), "voice chat on"),
-        None => tracing::info!(
-            "voice chat off (set OCW_LIVEKIT_URL, OCW_LIVEKIT_API_KEY, OCW_LIVEKIT_API_SECRET)"
-        ),
-    }
+    // Without one, a server that others join starts the bundled voice
+    // server (spec §7.1.1) before it opens its port.
+    let (voice, mut voice_server) = voice_setup(&args);
     // Sign-in (spec §9.1): the backend in this process, or a remote one.
     let auth = start_auth(&args);
     if args.auth_required && auth.is_none() {
@@ -677,7 +684,15 @@ fn main() {
     // how late each tick starts against the fixed schedule.
     let mut stats = TickStats::default();
     let mut world_load: Option<WorldLoad> = None;
+    // When the voice server was last checked (restarted after a crash).
+    let mut voice_checked = Instant::now();
     loop {
+        if let Some(v) = &mut voice_server
+            && voice_checked.elapsed() >= Duration::from_secs(1)
+        {
+            voice_checked = Instant::now();
+            log_voice_event(v.poll());
+        }
         let started = Instant::now();
         let late = if args.fast {
             Duration::ZERO
@@ -784,6 +799,134 @@ fn main() {
     }
     if let Some(net) = net {
         net.shutdown();
+    }
+    // The voice server goes with the game server.
+    drop(voice_server);
+}
+
+/// The voice of this server (spec §7, §7.1.1): an external LiveKit from
+/// the options or the environment (the API secret only from the
+/// environment, not visible in `ps`), else the bundled one started now for
+/// a server that others join, else none – the log says why.
+fn voice_setup(
+    args: &Args,
+) -> (
+    Option<ocw_server::voice::VoiceConfig>,
+    Option<ocw_server::voice::launcher::VoiceServer>,
+) {
+    let external = ocw_server::voice::VoiceConfig::from_parts(
+        args.livekit_url.clone(),
+        args.livekit_api_key.clone(),
+        None,
+        |k| std::env::var(k).ok(),
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(2);
+    });
+    if args.voice == "off" {
+        tracing::info!("voice chat off (--voice off)");
+        return (None, None);
+    }
+    if let Some(v) = external {
+        tracing::info!(url = %v.url, room = %v.session_room(), "voice chat on (external LiveKit)");
+        return (Some(v), None);
+    }
+    let Some(listen) = args.listen else {
+        tracing::info!("voice chat off (no --listen: nobody to talk to)");
+        return (None, None);
+    };
+    match start_voice(args, listen) {
+        Ok((server, config)) => {
+            tracing::info!(
+                url = %config.url,
+                room = %config.session_room(),
+                ports = %server.ports(),
+                pid = server.pid().unwrap_or_default(),
+                "voice chat on (bundled LiveKit {})",
+                ocw_server::voice::launcher::PINNED_VERSION
+            );
+            (Some(config), Some(server))
+        }
+        Err(e) => {
+            tracing::warn!("voice chat off: {e}");
+            (None, None)
+        }
+    }
+}
+
+/// Starts the bundled voice server for a game server on `listen`.
+fn start_voice(
+    args: &Args,
+    listen: std::net::SocketAddr,
+) -> Result<
+    (
+        ocw_server::voice::launcher::VoiceServer,
+        ocw_server::voice::VoiceConfig,
+    ),
+    String,
+> {
+    use ocw_server::voice::launcher::{
+        LaunchOptions, RtcAddress, VoiceServer, default_state_dir, find_binary,
+    };
+    use std::net::ToSocketAddrs;
+    let exe = std::env::current_exe().ok();
+    let binary = find_binary(
+        args.voice_server.as_deref(),
+        exe.as_deref().and_then(std::path::Path::parent),
+        std::env::var_os("PATH").as_deref(),
+    )?;
+    // The join link's host (§7.1.7 Q5): its address is the one riders
+    // send their media to.
+    let public_ip = match &args.voice_public_host {
+        Some(host) => Some(
+            (host.as_str(), 0)
+                .to_socket_addrs()
+                .map_err(|e| format!("--voice-public-host {host}: {e}"))?
+                .next()
+                .ok_or_else(|| format!("--voice-public-host {host}: no address"))?
+                .ip(),
+        ),
+        None => None,
+    };
+    let ip = listen.ip();
+    let opts = LaunchOptions {
+        ports: args.voice_ports,
+        bind: ip.is_loopback().then_some(ip),
+        rtc: RtcAddress::choose(ip, public_ip),
+        ..LaunchOptions::new(binary, default_state_dir())
+    };
+    let server = VoiceServer::start(opts)?;
+    // Riders whose address is unknown get this host.
+    let fallback = args
+        .voice_public_host
+        .clone()
+        .or_else(|| (!ip.is_unspecified()).then(|| ip.to_string()))
+        .or_else(|| {
+            ocw_server::net::lan_addresses()
+                .first()
+                .map(ToString::to_string)
+        })
+        .unwrap_or_else(|| "127.0.0.1".into());
+    let config = server.voice_config(&fallback, args.voice_public_host.clone());
+    Ok((server, config))
+}
+
+fn log_voice_event(event: Option<ocw_server::voice::launcher::VoiceEvent>) {
+    use ocw_server::voice::launcher::VoiceEvent;
+    match event {
+        Some(VoiceEvent::Crashed { status, retry_in }) => tracing::warn!(
+            %status,
+            retry_in_s = retry_in.as_secs_f32(),
+            "the voice server ended; starting it again"
+        ),
+        Some(VoiceEvent::Restarted) => tracing::info!("the voice server is back"),
+        Some(VoiceEvent::RestartFailed { error, retry_in }) => tracing::warn!(
+            %error,
+            retry_in_s = retry_in.as_secs_f32(),
+            "the voice server could not be started again"
+        ),
+        None => {}
     }
 }
 

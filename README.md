@@ -2661,7 +2661,7 @@ ocw-desktop --server ride.example.org:47800 --server-cert 3f9a6c0e…c2 \
   - a certificate error means the server's certificate is not the pinned one, because it changed: get the new fingerprint, or use `--tls-dir` on the server;
   - `world package mismatch: the server rides …` means your package or route differs from the server's.
 
-  Voice chat is separate (LiveKit, see [Voice chat](#voice-chat)) and needs its own server address.
+  Voice chat is separate (LiveKit, see [Voice chat](#voice-chat)): the server starts its own voice server, which needs TCP 7880–7881 and UDP 7882 open and forwarded too, and `--voice-public-host HOST` (the join link's host) for riders from the internet.
 
 ### Browser riders (WebTransport)
 
@@ -2717,7 +2717,7 @@ echo test, below); settings `voice.enabled`, `voice.volume`,
 `voice.spatial`, `voice.max_voices`, `voice.input`, `voice.output`,
 `audio.echo_bot`, `audio.echo_delay_ms`.
 
-Voice needs three things:
+Voice needs two things:
 
 1. **A desktop build with voice.** It is a cargo feature, off by default
    (the app builds and runs without it and says "not built in"):
@@ -2735,26 +2735,56 @@ Voice needs three things:
    and `libglib2.0-dev`). On
    macOS the Command Line Tools must have working C++ headers (`echo
    '#include <algorithm>' | clang++ -x c++ -fsyntax-only -` must pass).
-2. **A LiveKit server** (self-hosted, Apache-2.0; voice never goes over the
-   game connection and is never recorded). For development, its dev mode
-   on the same machine is enough:
+2. **A game server that hosts voice.** Every `ocw-server --listen …` (and
+   the kiosk's game server) **starts its own voice server** – LiveKit's
+   `livekit-server` (Apache-2.0; voice never goes over the game connection
+   and is never recorded) – before it opens its port, and stops it with
+   itself (spec §7.1.1). Nothing to configure: it makes a fresh API key pair
+   at every start (kept in memory, given to the voice server only in its
+   environment), and riders get their voice tokens from the game server as
+   before (10 minutes, one room, microphone only). Only the
+   `livekit-server` binary must be there – next to `ocw-server`, on `PATH`,
+   or named with `--voice-server PATH`:
    ```bash
-   livekit-server --dev       # ws://127.0.0.1:7880, API key "devkey", secret "secret"
+   scripts/fetch-livekit-server.sh              # LiveKit 1.13.10 for this machine, SHA-256 checked → target/voice-server/PLATFORM/
+   cargo run --release -p ocw-server -- --listen --bots 3 \
+       --voice-server target/voice-server/linux-amd64/livekit-server
    ```
-   (install it from <https://docs.livekit.io/home/self-hosting/local/>; for
-   other machines run it with `--bind 0.0.0.0` and open TCP 7880 and UDP
-   7881–7882, or give it a config file with your own key pair).
-3. **A game server that knows it.** `ocw-server` issues short-lived access
-   tokens (10 minutes, one room, microphone only) to the riders connected to
-   it; the URL and key pair come from the environment (never from the
-   repository):
-   ```bash
-   export OCW_LIVEKIT_URL=ws://127.0.0.1:7880 OCW_LIVEKIT_API_KEY=devkey OCW_LIVEKIT_API_SECRET=secret
-   cargo run --release -p ocw-server -- --listen --bots 3
-   ```
-   (`--livekit-url`, `--livekit-api-key` override the first two; the secret
-   is only read from the environment.) Without them the server logs "voice
-   chat off" and the clients show "no voice on this server".
+   The log says `voice chat on (bundled LiveKit 1.13.10 …)`, or `voice chat
+   off: …` with the reason (no binary, a port in use, not ready within 10 s);
+   the ride then goes on without voice. `ocw-server` without `--listen` (a
+   simulation nobody joins) starts none.
+   - **Ports** of a host that others join over the network: **TCP 7880**
+     (voice signalling), **TCP 7881** (voice over TCP, for networks that
+     block UDP) and **UDP 7882** (all voice media), besides UDP 47800 for
+     the game – open them in the firewall and forward them in the router
+     like 47800 (`--voice-ports SIGNAL,TCP,UDP` changes them).
+   - **The address riders reach:** each rider's token names the address
+     they reached the game server on (riders on the LAN get the LAN
+     address). For riders from the internet give the join link's host –
+     your public name or address – with `--voice-public-host
+     ride.example.org`; without it the voice server asks a STUN server for
+     the public address at start (a few seconds).
+   - A crashed voice server is started again (after 2, 4 … 60 s); clients
+     reconnect by themselves. If `ocw-server` itself is killed, the voice
+     server goes too (Linux: `setpriv --pdeathsig` from util-linux; Windows:
+     a job object; macOS: ended at the next start through its pid file in
+     `~/Library/Application Support/ocw/voice/`, on Linux
+     `~/.local/share/ocw/voice/`, where its log `livekit-7880.log` is too).
+   - **Your own LiveKit** (a hosted deployment, several game servers on one
+     voice server) still works and then no voice server is started: the URL
+     and key pair come from the environment (never from the repository):
+     ```bash
+     livekit-server --dev       # for development: ws://127.0.0.1:7880, API key "devkey", secret "secret"
+     export OCW_LIVEKIT_URL=ws://127.0.0.1:7880 OCW_LIVEKIT_API_KEY=devkey OCW_LIVEKIT_API_SECRET=secret
+     cargo run --release -p ocw-server -- --listen --bots 3
+     ```
+     (`--livekit-url`, `--livekit-api-key` override the first two; the
+     secret is only read from the environment.)
+   - `--voice off`: no voice chat at all; the clients show "no voice on this
+     server".
+
+   *Ride → Host a ride* in the app does not host voice yet (milestone V2).
 
 There are no accounts yet (Phase 5): a token is bound to the rider of the
 connection (`rider-<id>`), and a voice group is open to everyone on the
@@ -2762,7 +2792,7 @@ server who knows its name.
 
 **Browser riders** join the same rooms with LiveKit's JS SDK, which `make
 web` fetches. They need no voice build, only a server with the three
-variables (see [Sound and voice in the
+variables or its own voice server (see [Sound and voice in the
 browser](#sound-and-voice-in-the-browser)). A `ws://` LiveKit URL works only
 for pages on localhost. Pages served over https need `wss://`.
 
@@ -2771,7 +2801,14 @@ set, `cargo test -p ocw-voice --features livekit --test
 livekit_two_participants -- --nocapture` connects two simulated
 participants (no sound card needed): one speaks a tone, the other must hear
 it and see the mute. Without the variables the test passes without doing
-anything, so `cargo test --workspace` stays offline.
+anything, so `cargo test --workspace` stays offline. `make
+test-voice-bundled` (marge, with `livekit-server` in `~/.local/bin`) checks
+the bundled voice server end to end: `ocw-server --listen` starts it, the
+secret is in its environment and not on its command line, two headless
+riders get grants from the game server and LiveKit lists both in the room,
+and a `kill -9` of `ocw-server` ends the voice server too. (The desktop's
+LiveKit backend does not yet see the other riders on `livekit-server`
+1.13.10 – spec §7.1.8 *Open* – so the hearing step is reported as KNOWN.)
 
 **Echo test** (spec §7 *Echo bot*). To check your microphone and voice
 alone: `voice.echo on` (or Settings → Audio → Voice → Echo test, or start
