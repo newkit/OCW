@@ -4,18 +4,33 @@
 //! on the right, the status line; the 3D view gets the rest of the window
 //! (the world camera's viewport). The panels only show the state and
 //! **send commands** ([`crate::edit::Pending`]).
+//!
+//! **Editing a world (E5 step 2, 16C):** a click on a road in the 3D view
+//! or on the 2D map selects its edge; the World panel then shows the
+//! road's attributes (the package's, and the patch's changes) and edits
+//! them, places height points (*Place height point*, then a click on the
+//! road), and lists the patch's operations with what the preview found
+//! for each. File → Save / Save as / Open patch / Build package.
 
 use bevy::camera::{CameraOutputMode, Viewport, visibility::RenderLayers};
 use bevy::prelude::*;
 use bevy::render::render_resource::BlendState;
 use bevy::window::PrimaryWindow;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
+use ocw_edit::world::{RoadChange, WorldDoc, op_road_target};
 use ocw_render::camera::FollowCamera;
 use ocw_sim::god::FlightModel;
+use ocw_world::patch::{Operation, PatchClass, PatchOneway};
+use ocw_world::road_surface::RoadSurface;
 
-use crate::edit::{Pending, Studio, StudioCommand};
+use crate::build::Sources;
+use crate::edit::{
+    BuildRequest, PATCH_CLASSES, Pending, PointChange, Studio, StudioCommand, class_name,
+    shown_path,
+};
 use crate::flight::{StudioFlight, UiFocus};
 use crate::map::{MapView, Overlay};
+use crate::patch::{OpStatus, PatchPreview};
 use crate::world::OpenWorld;
 
 /// The workspaces (16A).
@@ -39,6 +54,75 @@ impl Workspace {
     }
 }
 
+/// What a click in the views does.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Tool {
+    /// Selects the road or height point there.
+    #[default]
+    Select,
+    /// Places a height point on the selected road.
+    PlacePoint,
+    /// Moves this height point there.
+    MovePoint(String),
+}
+
+/// The command a click at `at` (package x, z) sends with `tool`, and the
+/// tool afterwards (placing and moving are one click each).
+pub fn click_command(tool: &Tool, at: [f64; 2], tolerance_m: f64) -> (StudioCommand, Tool) {
+    match tool {
+        Tool::Select => (StudioCommand::SelectAt(at, tolerance_m), Tool::Select),
+        Tool::PlacePoint => (StudioCommand::AddPoint(Some(at)), Tool::Select),
+        Tool::MovePoint(id) => (StudioCommand::MovePoint(id.clone(), at), Tool::Select),
+    }
+}
+
+/// The Build dialog's fields.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BuildForm {
+    pub pbf: String,
+    pub poly: String,
+    pub hgt: String,
+    pub dem: String,
+    pub out: String,
+}
+
+impl BuildForm {
+    /// The fields for the open package: its sources as found next to it.
+    pub fn of(studio: &Studio) -> Self {
+        let Some(pkg) = studio.package.as_ref() else {
+            return Self::default();
+        };
+        let s = crate::build::find_sources(&pkg.file);
+        Self {
+            pbf: Sources::list_text(&s.pbf),
+            poly: Sources::list_text(&s.poly),
+            hgt: Sources::list_text(&s.hgt),
+            dem: Sources::list_text(&s.dem),
+            out: crate::build::default_output(&pkg.file)
+                .display()
+                .to_string(),
+        }
+    }
+
+    pub fn request(&self) -> BuildRequest {
+        let list = |t: &str| {
+            Sources::parse_list(t)
+                .into_iter()
+                .map(|p| crate::edit::expand_home(&p.display().to_string()))
+                .collect()
+        };
+        BuildRequest {
+            sources: Sources {
+                pbf: list(&self.pbf),
+                poly: list(&self.poly),
+                hgt: list(&self.hgt),
+                dem: list(&self.dem),
+            },
+            out: crate::edit::expand_home(self.out.trim()),
+        }
+    }
+}
+
 /// What the panels show.
 #[derive(Resource, Debug, Clone, PartialEq)]
 pub struct UiState {
@@ -46,6 +130,13 @@ pub struct UiState {
     pub show_map: bool,
     /// File → Open's path field (open while `Some`).
     pub open_path: Option<String>,
+    /// File → Open patch's path field.
+    pub open_patch: Option<String>,
+    /// File → Save patch as's path field.
+    pub save_as: Option<String>,
+    /// The Build dialog (open while `Some`).
+    pub build: Option<BuildForm>,
+    pub tool: Tool,
 }
 
 impl Default for UiState {
@@ -54,6 +145,10 @@ impl Default for UiState {
             workspace: Workspace::World,
             show_map: true,
             open_path: None,
+            open_patch: None,
+            save_as: None,
+            build: None,
+            tool: Tool::Select,
         }
     }
 }
@@ -121,16 +216,58 @@ fn window_title(
     }
 }
 
+/// A path field dialog; the path when it is confirmed.
+fn path_dialog(
+    ctx: &egui::Context,
+    title: &str,
+    label: &str,
+    button: &str,
+    field: &mut Option<String>,
+) -> Option<String> {
+    let path = field.as_mut()?;
+    let mut open = true;
+    let mut go = false;
+    egui::Window::new(title)
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.label(label);
+            let r = ui.add(egui::TextEdit::singleline(path).desired_width(460.0));
+            if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                go = true;
+            }
+            if ui.button(button).clicked() {
+                go = true;
+            }
+        });
+    if go && !path.trim().is_empty() {
+        let p = path.clone();
+        *field = None;
+        Some(p)
+    } else {
+        if !open {
+            *field = None;
+        }
+        None
+    }
+}
+
+type ViewCameras<'w, 's> =
+    Query<'w, 's, (&'static mut Camera, &'static GlobalTransform), With<FollowCamera>>;
+
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn panels(
     mut contexts: EguiContexts,
     mut state: ResMut<UiState>,
-    studio: Res<Studio>,
+    (studio, preview): (Res<Studio>, Res<PatchPreview>),
     mut world: Option<ResMut<OpenWorld>>,
     flight: Res<StudioFlight>,
+    ground: Option<Res<ocw_render::Ground>>,
     mut pending: ResMut<Pending>,
     mut focus: ResMut<UiFocus>,
-    mut cameras: Query<&mut Camera, With<FollowCamera>>,
+    mut cameras: ViewCameras,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut exit: MessageWriter<AppExit>,
 ) -> Result {
@@ -148,6 +285,50 @@ fn panels(
                 if ui.button("Open world...").clicked() {
                     state.open_path =
                         Some(world.as_ref().map(|w| w.spec.clone()).unwrap_or_default());
+                    ui.close();
+                }
+                ui.separator();
+                let has_world = studio.world().is_some();
+                if ui
+                    .add_enabled(has_world, egui::Button::new("Open patch..."))
+                    .clicked()
+                {
+                    state.open_patch = Some(
+                        studio
+                            .save_path()
+                            .map(|p| shown_path(&p))
+                            .unwrap_or_default(),
+                    );
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(
+                        has_world,
+                        egui::Button::new("Save patch").shortcut_text("Ctrl+S"),
+                    )
+                    .clicked()
+                {
+                    pending.send(StudioCommand::SavePatch);
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(has_world, egui::Button::new("Save patch as..."))
+                    .clicked()
+                {
+                    state.save_as = Some(
+                        studio
+                            .save_path()
+                            .map(|p| shown_path(&p))
+                            .unwrap_or_default(),
+                    );
+                    ui.close();
+                }
+                ui.separator();
+                if ui
+                    .add_enabled(has_world, egui::Button::new("Build package..."))
+                    .clicked()
+                {
+                    state.build = Some(BuildForm::of(&studio));
                     ui.close();
                 }
                 ui.separator();
@@ -214,8 +395,28 @@ fn panels(
             {
                 pending.send(StudioCommand::Redo);
             }
+            match &state.tool {
+                Tool::Select => {}
+                Tool::PlacePoint => {
+                    ui.separator();
+                    ui.colored_label(
+                        egui::Color32::from_rgb(255, 120, 230),
+                        "Click the road to place the height point (Esc: cancel)",
+                    );
+                }
+                Tool::MovePoint(id) => {
+                    ui.separator();
+                    ui.colored_label(
+                        egui::Color32::from_rgb(255, 120, 230),
+                        format!("Click a road to move '{id}' there (Esc: cancel)"),
+                    );
+                }
+            }
         });
     });
+    if state.tool != Tool::Select && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        state.tool = Tool::Select;
+    }
     egui::Panel::bottom("studio-status").show(&mut root, |ui| {
         ui.horizontal(|ui| {
             ui.label(status_text(&studio));
@@ -223,10 +424,17 @@ fn panels(
     });
     egui::Panel::left("studio-workspace")
         .resizable(true)
-        .default_size(340.0)
+        .default_size(380.0)
         .show(&mut root, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| match state.workspace {
-                Workspace::World => world_panel(ui, &studio, world.as_deref(), &mut pending),
+                Workspace::World => world_panel(
+                    ui,
+                    &studio,
+                    &preview,
+                    world.as_deref(),
+                    &mut state.tool,
+                    &mut pending,
+                ),
                 Workspace::Models => placeholder(
                     ui,
                     "Models",
@@ -249,9 +457,14 @@ fn panels(
                 let rect = ui.available_rect_before_wrap();
                 match world.as_mut() {
                     Some(w) => {
-                        let picked = map_panel(ui, rect, w, &studio, &flight);
-                        if let Some(p) = picked {
+                        let (input, m_per_px) = map_panel(ui, rect, w, &studio, &flight);
+                        if let Some(p) = input.fly {
                             pending.send(StudioCommand::FlyTo(p, None));
+                        } else if let Some(p) = input.click {
+                            let tol = crate::pick::map_tolerance_m(m_per_px);
+                            let (cmd, next) = click_command(&state.tool, p, tol);
+                            pending.send(cmd);
+                            state.tool = next;
                         }
                     }
                     None => {
@@ -264,37 +477,67 @@ fn panels(
     let central = root.available_rect_before_wrap();
     let view = root.allocate_rect(central, egui::Sense::click_and_drag());
     focus.over_view = view.hovered() || view.dragged();
-    if let Some(path) = state.open_path.as_mut() {
-        let mut open = true;
-        let mut go = false;
-        egui::Window::new("Open world")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(&ctx, |ui| {
-                ui.label("World package (a .ocwpkg path, or an installed id):");
-                let r = ui.add(egui::TextEdit::singleline(path).desired_width(420.0));
-                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    go = true;
-                }
-                ui.horizontal(|ui| {
-                    if ui.button("Open").clicked() {
-                        go = true;
-                    }
-                });
-            });
-        if go && !path.trim().is_empty() {
-            pending.send(StudioCommand::Open(path.clone()));
-            state.open_path = None;
-        } else if !open {
-            state.open_path = None;
+    // A click (not a drag) in the 3D view picks what is under it.
+    if view.clicked()
+        && let Some(p) = view.interact_pointer_pos()
+        && let Ok((cam, transform)) = cameras.single()
+        && let Ok(ray) = cam.viewport_to_world(transform, Vec2::new(p.x, p.y))
+    {
+        let o = ray.origin;
+        let d = ray.direction;
+        let ground_fn = |x: f64, z: f64| ground.as_ref().and_then(|g| (g.0)(x, z));
+        let hit = crate::pick::ray_ground(
+            [f64::from(o.x), f64::from(o.y), f64::from(o.z)],
+            [f64::from(d.x), f64::from(d.y), f64::from(d.z)],
+            ground_fn,
+            30_000.0,
+        );
+        match hit {
+            Some(h) => {
+                let dist = ((h[0] - f64::from(o.x)).powi(2)
+                    + (h[1] - f64::from(o.y)).powi(2)
+                    + (h[2] - f64::from(o.z)).powi(2))
+                .sqrt();
+                let tol = crate::pick::view_tolerance_m(dist);
+                let (cmd, next) = click_command(&state.tool, [h[0], h[2]], tol);
+                pending.send(cmd);
+                state.tool = next;
+            }
+            None => pending.send(StudioCommand::ClearSelection),
         }
     }
+    if let Some(path) = path_dialog(
+        &ctx,
+        "Open world",
+        "World package (a .ocwpkg path, or an installed id):",
+        "Open",
+        &mut state.open_path,
+    ) {
+        pending.send(StudioCommand::Open(path));
+    }
+    if let Some(path) = path_dialog(
+        &ctx,
+        "Open patch",
+        "World patch (.ocwpatch) for the open package:",
+        "Open",
+        &mut state.open_patch,
+    ) {
+        pending.send(StudioCommand::OpenPatch(path));
+    }
+    if let Some(path) = path_dialog(
+        &ctx,
+        "Save patch as",
+        "Save the world patch as (.ocwpatch):",
+        "Save",
+        &mut state.save_as,
+    ) {
+        pending.send(StudioCommand::SavePatchAs(path));
+    }
+    build_window(&ctx, &mut state.build, &studio, &mut pending);
     focus.keyboard = ctx.egui_wants_keyboard_input();
     // The world camera draws into the 3D view only.
     let ppp = ctx.pixels_per_point();
-    if let (Ok(window), Ok(mut cam)) = (windows.single(), cameras.single_mut()) {
+    if let (Ok(window), Ok((mut cam, _))) = (windows.single(), cameras.single_mut()) {
         let max = UVec2::new(window.physical_width(), window.physical_height());
         let pos = UVec2::new(
             (central.min.x * ppp).max(0.0) as u32,
@@ -373,7 +616,7 @@ pub fn status_text(studio: &Studio) -> String {
         }
     }
     parts.push(match &studio.store_dir {
-        Some(dir) => format!("autosave: {}", crate::edit::shown_path(dir)),
+        Some(dir) => format!("autosave: {}", shown_path(dir)),
         None => "autosave off".into(),
     });
     parts.join("   |   ")
@@ -385,10 +628,66 @@ fn placeholder(ui: &mut egui::Ui, name: &str, text: &str) {
     ui.label(text);
 }
 
+/// The colour of an operation's status in the list.
+fn status_colour(s: &OpStatus) -> egui::Color32 {
+    match s {
+        OpStatus::Ok(_) => egui::Color32::from_rgb(110, 210, 110),
+        OpStatus::Missing(_) => egui::Color32::from_rgb(255, 90, 80),
+        OpStatus::Unchecked(_) | OpStatus::Pending => egui::Color32::from_gray(170),
+    }
+}
+
+/// The OSM `surface` values offered in the road panel (the patch takes
+/// any value the builder knows).
+pub const SURFACES: [&str; 12] = [
+    "asphalt",
+    "concrete",
+    "paving_stones",
+    "sett",
+    "cobblestone",
+    "compacted",
+    "fine_gravel",
+    "gravel",
+    "unpaved",
+    "dirt",
+    "ground",
+    "grass",
+];
+
+/// The surface's name in the panel.
+pub fn surface_name(s: RoadSurface) -> &'static str {
+    match s {
+        RoadSurface::Asphalt => "asphalt",
+        RoadSurface::WornAsphalt => "worn asphalt",
+        RoadSurface::Gravel => "gravel",
+        RoadSurface::Paving => "paving",
+        RoadSurface::Dirt => "dirt",
+    }
+}
+
+fn oneway_name(o: Option<PatchOneway>) -> &'static str {
+    match o {
+        None => "package",
+        Some(PatchOneway::No) => "no",
+        Some(PatchOneway::Forward) => "forward",
+        Some(PatchOneway::Backward) => "backward",
+    }
+}
+
+fn package_oneway(o: ocw_world::graph::Oneway) -> &'static str {
+    match o {
+        ocw_world::graph::Oneway::No => "no",
+        ocw_world::graph::Oneway::Forward => "forward",
+        ocw_world::graph::Oneway::Backward => "backward",
+    }
+}
+
 fn world_panel(
     ui: &mut egui::Ui,
     studio: &Studio,
+    preview: &PatchPreview,
     world: Option<&OpenWorld>,
+    tool: &mut Tool,
     pending: &mut Pending,
 ) {
     ui.heading("World");
@@ -409,20 +708,35 @@ fn world_panel(
             });
         });
     }
-    ui.label(egui::RichText::new("Package").strong());
-    egui::Grid::new("package-info")
-        .num_columns(2)
-        .striped(true)
+    if let Some(doc) = studio.world() {
+        if studio.selected_edge().is_some() {
+            road_panel(ui, studio, preview, doc, tool, pending);
+        } else if let Some(id) = studio.selected_point() {
+            point_panel(ui, studio, preview, doc, &id, tool, pending);
+        } else {
+            ui.label("Click a road in the 3D view or on the map to edit it.");
+        }
+        ui.add_space(8.0);
+        patch_panel(ui, studio, preview, doc, pending);
+    }
+    ui.add_space(8.0);
+    egui::CollapsingHeader::new(egui::RichText::new("Package").strong())
+        .default_open(false)
         .show(ui, |ui| {
-            for (label, value) in &w.rows {
-                ui.label(label);
-                ui.add(egui::Label::new(value).wrap());
-                ui.end_row();
-            }
+            egui::Grid::new("package-info")
+                .num_columns(2)
+                .striped(true)
+                .show(ui, |ui| {
+                    for (label, value) in &w.rows {
+                        ui.label(label);
+                        ui.add(egui::Label::new(value).wrap());
+                        ui.end_row();
+                    }
+                });
         });
     ui.add_space(8.0);
     ui.label(egui::RichText::new("Views").strong());
-    ui.label("Saved camera views (studio bookmarks, not part of the package).");
+    ui.label("Saved camera views (studio bookmarks, not part of the package or the patch).");
     if let Some(doc) = studio.world() {
         for v in &doc.content().views {
             ui.horizontal(|ui| {
@@ -463,14 +777,595 @@ fn world_panel(
     }
 }
 
-/// The map panel; the package point double-clicked.
+/// Sends `c`; seals the undo step when a field is left.
+fn seal_on(r: &egui::Response, pending: &mut Pending) {
+    if r.lost_focus() || r.drag_stopped() {
+        pending.send(StudioCommand::Seal);
+    }
+}
+
+/// The selected road: the package's attributes and the patch's changes.
+fn road_panel(
+    ui: &mut egui::Ui,
+    studio: &Studio,
+    preview: &PatchPreview,
+    doc: &ocw_edit::Document<WorldDoc>,
+    tool: &mut Tool,
+    pending: &mut Pending,
+) {
+    let Some(pkg) = studio.package.as_ref() else {
+        return;
+    };
+    let Some(edge_id) = studio.selected_edge() else {
+        return;
+    };
+    let Some(edge) = pkg.edge(edge_id) else {
+        ui.label(format!("edge {edge_id} is not in the package"));
+        return;
+    };
+    let Some(target) = studio.selected_target() else {
+        return;
+    };
+    let content = doc.content();
+    let edit = content.road_edit(target);
+    let removed = content.road_removal(target);
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Road").strong().size(16.0));
+            ui.label(format!("edge {edge_id}, OSM way {}", edge.osm_way));
+        });
+        ui.horizontal(|ui| {
+            ui.label("Edits act on");
+            if ui.radio(!studio.way_scope, "this edge").clicked() {
+                pending.send(StudioCommand::WayScope(false));
+            }
+            let n = pkg
+                .target_edges(ocw_edit::world::RoadTarget::Way(edge.osm_way))
+                .len();
+            if ui
+                .radio(studio.way_scope, format!("the whole way ({n} edges)"))
+                .clicked()
+            {
+                pending.send(StudioCommand::WayScope(true));
+            }
+        });
+        if removed.is_some() {
+            ui.colored_label(
+                egui::Color32::from_rgb(255, 90, 80),
+                format!(
+                    "{} is removed from the ridable roads by the patch",
+                    target.describe()
+                ),
+            );
+        }
+        let r = edit.map(|(_, r)| r);
+        let (surface, measured) = pkg.edge_surface(edge);
+        egui::Grid::new("road-attributes")
+            .num_columns(3)
+            .striped(true)
+            .show(ui, |ui| {
+                ui.label("");
+                ui.label(egui::RichText::new("package").weak());
+                ui.label(egui::RichText::new("patch").weak());
+                ui.end_row();
+                // Surface.
+                ui.label("Surface");
+                ui.label(format!(
+                    "{}{}",
+                    surface_name(surface),
+                    if measured { "" } else { " (class)" }
+                ));
+                let now = r.and_then(|r| r.surface.clone());
+                egui::ComboBox::from_id_salt("road-surface")
+                    .selected_text(now.as_deref().unwrap_or("-"))
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(now.is_none(), "- (package)").clicked() {
+                            pending.send(StudioCommand::SetRoad(RoadChange::Surface(None)));
+                        }
+                        for s in SURFACES {
+                            if ui.selectable_label(now.as_deref() == Some(s), s).clicked() {
+                                pending.send(StudioCommand::SetRoad(RoadChange::Surface(Some(
+                                    s.into(),
+                                ))));
+                            }
+                        }
+                    });
+                ui.end_row();
+                // Width.
+                ui.label("Width");
+                ui.label(format!("{:.1} m", edge.width_m));
+                ui.horizontal(|ui| {
+                    let mut wv = r.and_then(|r| r.width_m).unwrap_or(edge.width_m);
+                    let dv = ui.add(
+                        egui::DragValue::new(&mut wv)
+                            .range(1.0..=30.0)
+                            .speed(0.05)
+                            .fixed_decimals(1)
+                            .suffix(" m"),
+                    );
+                    if dv.changed() {
+                        pending.send(StudioCommand::SetRoad(RoadChange::Width(Some(
+                            (wv * 10.0).round() / 10.0,
+                        ))));
+                    }
+                    seal_on(&dv, pending);
+                    if r.and_then(|r| r.width_m).is_some() && ui.small_button("x").clicked() {
+                        pending.send(StudioCommand::SetRoad(RoadChange::Width(None)));
+                    }
+                });
+                ui.end_row();
+                // Class.
+                ui.label("Class");
+                ui.label(class_name(edge.class));
+                let now: Option<PatchClass> = r.and_then(|r| r.class);
+                egui::ComboBox::from_id_salt("road-class")
+                    .selected_text(now.map_or("-", PatchClass::osm))
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(now.is_none(), "- (package)").clicked() {
+                            pending.send(StudioCommand::SetRoad(RoadChange::Class(None)));
+                        }
+                        for c in PATCH_CLASSES {
+                            if ui.selectable_label(now == Some(c), c.osm()).clicked() {
+                                pending.send(StudioCommand::SetRoad(RoadChange::Class(Some(c))));
+                            }
+                        }
+                    });
+                ui.end_row();
+                // One-way.
+                ui.label("One-way");
+                ui.label(package_oneway(edge.oneway));
+                let now = r.and_then(|r| r.oneway);
+                egui::ComboBox::from_id_salt("road-oneway")
+                    .selected_text(if now.is_none() { "-" } else { oneway_name(now) })
+                    .show_ui(ui, |ui| {
+                        for o in [
+                            None,
+                            Some(PatchOneway::No),
+                            Some(PatchOneway::Forward),
+                            Some(PatchOneway::Backward),
+                        ] {
+                            let label = if o.is_none() {
+                                "- (package)"
+                            } else {
+                                oneway_name(o)
+                            };
+                            if ui.selectable_label(now == o, label).clicked() {
+                                pending.send(StudioCommand::SetRoad(RoadChange::Oneway(o)));
+                            }
+                        }
+                    });
+                ui.end_row();
+                // Bike access.
+                ui.label("Bikes");
+                ui.label("open");
+                let mut closed = r.is_some_and(|r| r.bike.is_some());
+                if ui.checkbox(&mut closed, "closed for riding").changed() {
+                    pending.send(StudioCommand::SetRoad(RoadChange::BikeClosed(closed)));
+                }
+                ui.end_row();
+                // Name.
+                ui.label("Name");
+                ui.label(edge.name.as_deref().unwrap_or("-"));
+                ui.horizontal(|ui| {
+                    let mut name = r
+                        .and_then(|r| r.name.clone())
+                        .or_else(|| edge.name.clone())
+                        .unwrap_or_default();
+                    let t = ui.add(egui::TextEdit::singleline(&mut name).desired_width(120.0));
+                    if t.changed() {
+                        pending.send(StudioCommand::SetRoad(RoadChange::Name(Some(name))));
+                    }
+                    seal_on(&t, pending);
+                    if r.and_then(|r| r.name.as_ref()).is_some() && ui.small_button("x").clicked() {
+                        pending.send(StudioCommand::SetRoad(RoadChange::Name(None)));
+                    }
+                });
+                ui.end_row();
+            });
+        if let Some((i, _)) = edit {
+            let s = preview.preview.status(i);
+            ui.colored_label(
+                status_colour(&s),
+                format!("operation {}: {} {}", i + 1, s.tag(), s.detail()),
+            );
+        }
+        ui.horizontal(|ui| {
+            if removed.is_some() {
+                if ui.button("Restore road").clicked() {
+                    pending.send(StudioCommand::RestoreRoad);
+                }
+            } else if ui.button("Remove road").clicked() {
+                pending.send(StudioCommand::RemoveRoad);
+            }
+            let placing = *tool == Tool::PlacePoint;
+            if ui
+                .selectable_label(placing, "Place height point")
+                .on_hover_text("Then click the road where the point goes")
+                .clicked()
+            {
+                *tool = if placing {
+                    Tool::Select
+                } else {
+                    Tool::PlacePoint
+                };
+            }
+            if ui.button("Look at it").clicked() {
+                pending.send(StudioCommand::Focus);
+            }
+        });
+    });
+}
+
+/// The selected height point.
+#[allow(clippy::too_many_arguments)] // the panel's parts
+fn point_panel(
+    ui: &mut egui::Ui,
+    studio: &Studio,
+    preview: &PatchPreview,
+    doc: &ocw_edit::Document<WorldDoc>,
+    id: &str,
+    tool: &mut Tool,
+    pending: &mut Pending,
+) {
+    let Some((i, h)) = doc.content().height_point(id) else {
+        return;
+    };
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Height point").strong().size(16.0));
+            ui.label(format!("'{id}'"));
+        });
+        if let Some([lat, lon]) = h.at {
+            ui.label(format!(
+                "at {lat:.6}, {lon:.6}{}",
+                h.edge
+                    .map(|e| format!(", on edge {}", e.0))
+                    .unwrap_or_default()
+            ));
+        }
+        let absolute = h.height_m.is_some();
+        ui.horizontal(|ui| {
+            if ui.radio(absolute, "Height").clicked() && !absolute {
+                let base = preview_height(studio, h).unwrap_or(0.0);
+                pending.send(StudioCommand::ChangePoint(
+                    id.into(),
+                    PointChange::Height(base + h.raise_m.unwrap_or(0.0)),
+                ));
+                pending.send(StudioCommand::Seal);
+            }
+            if ui.radio(!absolute, "Raise").clicked() && absolute {
+                pending.send(StudioCommand::ChangePoint(
+                    id.into(),
+                    PointChange::Raise(0.0),
+                ));
+                pending.send(StudioCommand::Seal);
+            }
+            let mut v = h.height_m.or(h.raise_m).unwrap_or(0.0);
+            let dv = ui.add(
+                egui::DragValue::new(&mut v)
+                    .speed(0.05)
+                    .fixed_decimals(2)
+                    .range(if absolute {
+                        -500.0..=9000.0
+                    } else {
+                        -500.0..=500.0
+                    })
+                    .suffix(" m"),
+            );
+            if dv.changed() {
+                let c = if absolute {
+                    PointChange::Height(v)
+                } else {
+                    PointChange::Raise(v)
+                };
+                pending.send(StudioCommand::ChangePoint(id.into(), c));
+            }
+            seal_on(&dv, pending);
+        });
+        ui.horizontal(|ui| {
+            ui.label("Radius along the road");
+            let mut r = h.radius_m.unwrap_or(ocw_world::patch::DEFAULT_RADIUS_M);
+            let dv = ui.add(
+                egui::DragValue::new(&mut r)
+                    .speed(1.0)
+                    .range(5.0..=5000.0)
+                    .fixed_decimals(0)
+                    .suffix(" m"),
+            );
+            if dv.changed() {
+                pending.send(StudioCommand::ChangePoint(
+                    id.into(),
+                    PointChange::Radius(r),
+                ));
+            }
+            seal_on(&dv, pending);
+        });
+        let s = preview.preview.status(i);
+        ui.colored_label(
+            status_colour(&s),
+            format!("operation {}: {} {}", i + 1, s.tag(), s.detail()),
+        );
+        ui.horizontal(|ui| {
+            let moving = matches!(tool, Tool::MovePoint(m) if m == id);
+            if ui
+                .selectable_label(moving, "Move")
+                .on_hover_text("Then click the road where it goes")
+                .clicked()
+            {
+                *tool = if moving {
+                    Tool::Select
+                } else {
+                    Tool::MovePoint(id.into())
+                };
+            }
+            if ui.button("Remove").clicked() {
+                pending.send(StudioCommand::RemovePoint(id.into()));
+            }
+            if ui.button("Look at it").clicked() {
+                pending.send(StudioCommand::Focus);
+            }
+        });
+    });
+}
+
+/// The road's height at a height point as the package has it.
+fn preview_height(studio: &Studio, h: &ocw_world::patch::HeightPoint) -> Option<f64> {
+    let pkg = studio.package.as_ref()?;
+    let p = studio.point_xz(h)?;
+    let e = pkg.edge(h.edge?.0)?;
+    let (_, arc, _) = crate::pick::nearest_on_polyline(&e.points, p);
+    e.height_at(arc)
+}
+
+/// The patch: its file and header, and every operation with what the
+/// preview found for it (a click selects its target).
+fn patch_panel(
+    ui: &mut egui::Ui,
+    studio: &Studio,
+    preview: &PatchPreview,
+    doc: &ocw_edit::Document<WorldDoc>,
+    pending: &mut Pending,
+) {
+    let p = &doc.content().patch;
+    ui.label(egui::RichText::new("World patch").strong());
+    let file = studio
+        .patch_file
+        .as_ref()
+        .map(|f| shown_path(f))
+        .unwrap_or_else(|| {
+            format!(
+                "not saved yet (Save: {})",
+                studio
+                    .save_path()
+                    .map(|f| shown_path(&f))
+                    .unwrap_or_default()
+            )
+        });
+    ui.label(format!(
+        "{file}{}",
+        if doc.is_dirty() { " – changed" } else { "" }
+    ));
+    let mut info = doc.content().info();
+    ui.horizontal(|ui| {
+        ui.label("Title");
+        let mut t = info.title.clone().unwrap_or_default();
+        let r = ui.add(egui::TextEdit::singleline(&mut t).desired_width(220.0));
+        if r.changed() {
+            info.title = (!t.is_empty()).then_some(t);
+            pending.send(StudioCommand::SetInfo(info.clone()));
+        }
+        seal_on(&r, pending);
+    });
+    ui.horizontal(|ui| {
+        ui.label("Author");
+        let mut a = info.author.clone().unwrap_or_default();
+        let r = ui.add(egui::TextEdit::singleline(&mut a).desired_width(220.0));
+        if r.changed() {
+            info.author = (!a.is_empty()).then_some(a);
+            pending.send(StudioCommand::SetInfo(info.clone()));
+        }
+        seal_on(&r, pending);
+    });
+    if p.ops.is_empty() {
+        ui.label("No operations yet.");
+    }
+    if let Some(n) = &preview.preview.note {
+        ui.label(egui::RichText::new(format!("preview: {n}")).weak());
+    }
+    let sel_edge = studio.selected_edge();
+    let sel_point = studio.selected_point();
+    egui::Grid::new("patch-ops")
+        .num_columns(3)
+        .striped(true)
+        .show(ui, |ui| {
+            for (i, op) in p.ops.iter().enumerate() {
+                let s = preview.preview.status(i);
+                let selected = match op {
+                    Operation::HeightPoint(h) => sel_point.as_deref() == Some(h.id.as_str()),
+                    _ => op_road_target(op).is_some_and(|t| {
+                        sel_edge.is_some_and(|e| {
+                            studio
+                                .package
+                                .as_ref()
+                                .and_then(|pk| pk.edge(e))
+                                .is_some_and(|edge| t.hits(e, edge.osm_way))
+                        })
+                    }),
+                };
+                if ui
+                    .selectable_label(selected, format!("{:>2} {}", i + 1, op_summary(op)))
+                    .clicked()
+                {
+                    pending.send(StudioCommand::SelectOp(i));
+                }
+                ui.colored_label(status_colour(&s), s.tag())
+                    .on_hover_text(s.detail());
+                if ui
+                    .small_button("x")
+                    .on_hover_text("Delete this operation")
+                    .clicked()
+                {
+                    pending.send(StudioCommand::DeleteOp(i));
+                }
+                ui.end_row();
+            }
+        });
+}
+
+/// One line about a patch operation: its kind, target and values.
+pub fn op_summary(op: &Operation) -> String {
+    let mut parts = vec![op.describe()];
+    match op {
+        Operation::Road(r) => {
+            if let Some(s) = &r.surface {
+                parts.push(format!("surface {s}"));
+            }
+            if let Some(w) = r.width_m {
+                parts.push(format!("{w} m"));
+            }
+            if let Some(c) = r.class {
+                parts.push(c.osm().into());
+            }
+            if let Some(o) = r.oneway {
+                parts.push(format!("one-way {}", oneway_name(Some(o))));
+            }
+            if r.bike.is_some() {
+                parts.push("closed for bikes".into());
+            }
+            if let Some(n) = &r.name {
+                parts.push(if n.is_empty() {
+                    "no name".into()
+                } else {
+                    format!("'{n}'")
+                });
+            }
+        }
+        Operation::HeightPoint(h) => {
+            if let Some(v) = h.height_m {
+                parts.push(format!("{v:.1} m"));
+            }
+            if let Some(v) = h.raise_m {
+                parts.push(format!("{v:+.1} m"));
+            }
+            parts.push(format!(
+                "r {:.0} m",
+                h.radius_m.unwrap_or(ocw_world::patch::DEFAULT_RADIUS_M)
+            ));
+        }
+        Operation::MoveHeightPoint(m) => {
+            if let Some(v) = m.height_m {
+                parts.push(format!("{v:.1} m"));
+            }
+            if let Some(v) = m.raise_m {
+                parts.push(format!("{v:+.1} m"));
+            }
+        }
+        Operation::RemoveRoad(_) | Operation::RemoveHeightPoint(_) => {}
+    }
+    parts.join(", ")
+}
+
+/// The Build dialog: the sources (found next to the package or typed),
+/// the output, the build's progress and its report.
+fn build_window(
+    ctx: &egui::Context,
+    form: &mut Option<BuildForm>,
+    studio: &Studio,
+    pending: &mut Pending,
+) {
+    let Some(f) = form.as_mut() else {
+        return;
+    };
+    let mut open = true;
+    egui::Window::new("Build package")
+        .open(&mut open)
+        .collapsible(false)
+        .default_width(620.0)
+        .show(ctx, |ui| {
+            ui.label("Builds the package again from its source data with the patch (world-builder package --patch), on this computer. The original package stays as it is.");
+            egui::Grid::new("build-sources").num_columns(2).show(ui, |ui| {
+                for (label, field) in [
+                    ("OSM extract (.osm.pbf)", &mut f.pbf),
+                    ("Region boundary (.poly)", &mut f.poly),
+                    ("SRTM tiles (.hgt)", &mut f.hgt),
+                    ("DTM folders (optional)", &mut f.dem),
+                    ("Output package", &mut f.out),
+                ] {
+                    ui.label(label);
+                    ui.add(egui::TextEdit::singleline(field).desired_width(420.0));
+                    ui.end_row();
+                }
+            });
+            let req = f.request();
+            let missing = req.sources.missing();
+            if !missing.is_empty() {
+                ui.colored_label(
+                    egui::Color32::from_rgb(255, 170, 60),
+                    "The build needs the source data the package was made from:",
+                );
+                for m in &missing {
+                    ui.label(format!("  - {m}"));
+                }
+            }
+            let program = crate::build::world_builder();
+            match &program {
+                Some(p) => ui.label(format!("world-builder: {}", shown_path(p))),
+                None => ui.colored_label(
+                    egui::Color32::from_rgb(255, 170, 60),
+                    "world-builder was not found: put it next to ocw-studio, on the PATH, or name it in OCW_WORLD_BUILDER.",
+                ),
+            };
+            let running = studio.build.as_ref().is_some_and(crate::build::BuildJob::running);
+            if ui
+                .add_enabled(
+                    missing.is_empty() && program.is_some() && !running,
+                    egui::Button::new("Build"),
+                )
+                .clicked()
+            {
+                pending.send(StudioCommand::Build(req));
+            }
+            if let Some(job) = &studio.build {
+                ui.separator();
+                ui.label(egui::RichText::new(job.summary()).strong());
+                let st = job.state.lock().map(|s| s.lines.clone()).unwrap_or_default();
+                let report = crate::build::report_lines(&st);
+                if !report.is_empty() {
+                    ui.label("Patch report:");
+                    for l in &report {
+                        let c = if l.starts_with("  MISSING") {
+                            egui::Color32::from_rgb(255, 90, 80)
+                        } else {
+                            egui::Color32::from_gray(220)
+                        };
+                        ui.colored_label(c, egui::RichText::new(l).monospace());
+                    }
+                }
+                egui::CollapsingHeader::new("Output").show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(240.0)
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            for l in st.iter().rev().take(400).rev() {
+                                ui.label(egui::RichText::new(l).monospace().size(11.0));
+                            }
+                        });
+                });
+            }
+        });
+    if !open {
+        *form = None;
+    }
+}
+
+/// The map panel: what the pointer did, and the zoom (metres per point).
 fn map_panel(
     ui: &mut egui::Ui,
     rect: egui::Rect,
     w: &mut OpenWorld,
     studio: &Studio,
     flight: &StudioFlight,
-) -> Option<[f64; 2]> {
+) -> (crate::map::MapInput, f64) {
     if w.land_texture.is_none()
         && let Some(r) = &w.map.land
     {
@@ -497,8 +1392,10 @@ fn map_panel(
                     .collect()
             })
             .unwrap_or_default(),
+        graph: studio.package.as_ref().and_then(|p| p.graph()),
+        marks: crate::overlay::marks(studio),
     };
-    let picked = crate::map::paint(
+    let input = crate::map::paint(
         ui,
         rect,
         &mut view,
@@ -507,14 +1404,16 @@ fn map_panel(
         &overlay,
     );
     w.map_view = Some(view);
-    picked
+    (input, view.m_per_px)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use ocw_edit::Document;
-    use ocw_edit::world::{PackageRef, View, WorldDoc, WorldOp};
+    use ocw_edit::world::{PackageRef, View, WorldOp};
+    use ocw_world::graph::EdgeId;
+    use ocw_world::patch::{HeightPoint, RemoveRoad, RoadEdit};
 
     #[test]
     fn the_title_and_the_status_line_show_changes() {
@@ -537,6 +1436,77 @@ mod tests {
         assert_eq!(
             Workspace::ALL.map(Workspace::name),
             ["Models", "World", "Routes"]
+        );
+    }
+
+    #[test]
+    fn a_click_selects_places_or_moves_with_the_tool() {
+        let at = [10.0, 20.0];
+        assert_eq!(
+            click_command(&Tool::Select, at, 7.0),
+            (StudioCommand::SelectAt(at, 7.0), Tool::Select)
+        );
+        assert_eq!(
+            click_command(&Tool::PlacePoint, at, 7.0),
+            (StudioCommand::AddPoint(Some(at)), Tool::Select),
+            "one click places one point"
+        );
+        assert_eq!(
+            click_command(&Tool::MovePoint("p".into()), at, 7.0),
+            (StudioCommand::MovePoint("p".into(), at), Tool::Select)
+        );
+    }
+
+    #[test]
+    fn operations_are_summed_up_in_one_line() {
+        let road = Operation::Road(RoadEdit {
+            edge: Some(EdgeId(5)),
+            surface: Some("gravel".into()),
+            width_m: Some(3.5),
+            class: Some(PatchClass::Track),
+            oneway: Some(PatchOneway::Forward),
+            name: Some(String::new()),
+            ..Default::default()
+        });
+        assert_eq!(
+            op_summary(&road),
+            "road edge 5, surface gravel, 3.5 m, track, one-way forward, no name"
+        );
+        let point = Operation::HeightPoint(HeightPoint {
+            id: "p".into(),
+            raise_m: Some(3.0),
+            ..Default::default()
+        });
+        assert_eq!(op_summary(&point), "height_point `p`, +3.0 m, r 100 m");
+        let rm = Operation::RemoveRoad(RemoveRoad {
+            way: Some(9),
+            ..Default::default()
+        });
+        assert_eq!(op_summary(&rm), "remove_road way 9");
+        assert_eq!(surface_name(RoadSurface::Paving), "paving");
+        assert!(
+            SURFACES
+                .iter()
+                .all(|s| RoadSurface::from_surface_tag(s).is_some())
+        );
+    }
+
+    #[test]
+    fn the_build_form_reads_its_fields() {
+        let f = BuildForm {
+            pbf: "a.osm.pbf".into(),
+            poly: "a.poly".into(),
+            hgt: "x.hgt; y.hgt".into(),
+            dem: String::new(),
+            out: " out/a.ocwpkg ".into(),
+        };
+        let r = f.request();
+        assert_eq!(r.sources.hgt.len(), 2);
+        assert!(r.sources.dem.is_empty());
+        assert_eq!(r.out, std::path::PathBuf::from("out/a.ocwpkg"));
+        assert_eq!(
+            BuildForm::of(&Studio::new(None, None)),
+            BuildForm::default()
         );
     }
 }

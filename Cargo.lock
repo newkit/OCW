@@ -6885,6 +6885,7 @@ dependencies = [
 name = "ocw-edit"
 version = "0.2.2"
 dependencies = [
+ "ocw-world",
  "serde",
  "serde_json",
 ]

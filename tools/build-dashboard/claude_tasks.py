@@ -375,6 +375,29 @@ def cutover(tasks: list, runs: list, sessions=None) -> dict:
             "Not ready for the cutover: %d running task(s), %d remote run(s)" % (len(running), len(runs))}
 
 
+def count_running(tasks: list) -> int:
+    """The agents running now: tasks whose last event is started / resumed
+    (interrupted ones are listed with them but hold no slot)."""
+    return sum(1 for t in tasks if t.get("running"))
+
+
+def agent_slots(running, limit: int) -> dict:
+    """The coordinator's agent slots: "agents N of M", the free slots and
+    the level (ok below the limit, warn at it, bad above it). `running`
+    None: unknown (no Claude tasks section)."""
+    if running is None:
+        return {"running": None, "limit": limit, "free": None, "level": "", "text": "agents ? of %d" % limit}
+    level = "ok" if running < limit else ("warn" if running == limit else "bad")
+    return {"running": running, "limit": limit, "free": max(0, limit - running), "level": level,
+            "text": "agents %d of %d" % (running, limit)}
+
+
+def read_agent_slots(build_log: Path | None, limit: int, now: float | None = None) -> dict:
+    """agent_slots() from agents.jsonl, the same source as the dashboard
+    (scripts/agent-slots.sh)."""
+    return agent_slots(count_running(task_states(read_events(build_log, now))), limit)
+
+
 class ClaudeTasks:
     """Collects the tasks in the dashboard's thread (`refresh`); `status()`
     is cheap."""
