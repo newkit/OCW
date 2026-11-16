@@ -148,13 +148,37 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|p| p.into_inner())
 }
 
+/// The loader's file names, tried in order. `Entry::load` alone opens only
+/// the unversioned `libopenxr_loader.so`, which on Linux comes with the
+/// development package; the runtime package (Debian's `libopenxr-loader1`,
+/// Fedora's `openxr-libs`) installs `libopenxr_loader.so.1`.
+fn loader_names() -> &'static [&'static str] {
+    if cfg!(target_os = "windows") {
+        &["openxr_loader.dll"]
+    } else if cfg!(target_os = "macos") {
+        &["libopenxr_loader.dylib"]
+    } else {
+        &["libopenxr_loader.so.1", "libopenxr_loader.so"]
+    }
+}
+
+/// Opens the first loader of [`loader_names`] that loads.
+fn load_entry() -> Result<xr::Entry, XrError> {
+    let mut errors = Vec::new();
+    for name in loader_names() {
+        #[allow(unsafe_code)]
+        // SAFETY: loading a library that follows the OpenXR loader ABI.
+        match unsafe { xr::Entry::load_from(std::path::Path::new(name)) } {
+            Ok(entry) => return Ok(entry),
+            Err(e) => errors.push(format!("{name}: {e}")),
+        }
+    }
+    Err(XrError::NoLoader(errors.join("; ")))
+}
+
 /// Boots OpenXR (see the crate docs).
 pub fn boot(opts: &BootOptions) -> Result<Booted, XrError> {
-    // SAFETY-free: `Entry::load` opens the loader library by its standard
-    // name (libopenxr_loader.so.1, openxr_loader.dll).
-    #[allow(unsafe_code)]
-    // SAFETY: loading a library that follows the OpenXR loader ABI.
-    let entry = unsafe { xr::Entry::load() }.map_err(|e| XrError::NoLoader(e.to_string()))?;
+    let entry = load_entry()?;
     let available = entry
         .enumerate_extensions()
         .map_err(|e| XrError::NoRuntime(e.to_string()))?;
@@ -575,6 +599,18 @@ impl FrameSink for RenderHandle {
 
 #[cfg(test)]
 mod tests {
+    /// Regression (2026-11-16, marge): with only the runtime package
+    /// installed there is no unversioned `libopenxr_loader.so`, so the
+    /// versioned name must come first on Linux.
+    #[test]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn the_versioned_loader_comes_first() {
+        assert_eq!(
+            loader_names(),
+            &["libopenxr_loader.so.1", "libopenxr_loader.so"]
+        );
+    }
+
     use super::*;
 
     #[test]

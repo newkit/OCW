@@ -52,9 +52,12 @@ cargo build -p ocw-desktop --features vr
 log=$out/monado.log
 app_log=$out/ocw-desktop.log
 # Headless: no compositor window, the simulated HMD (no hardware).
-XRT_COMPOSITOR_NULL=1 SIMULATED_ENABLE=1 XRT_COMPOSITOR_LOG=debug "$service" > "$log" 2>&1 &
+# monado-service watches its stdin with epoll, which fails on /dev/null (a
+# background job over ssh): "epoll_ctl(stdin) failed", "Failed to init ipc
+# main loop". Give it a pipe that stays open for the run.
+sleep 3600 | XRT_COMPOSITOR_NULL=1 SIMULATED_ENABLE=1 XRT_COMPOSITOR_LOG=debug "$service" > "$log" 2>&1 &
 svc=$!
-trap 'kill $svc 2>/dev/null || true' EXIT
+trap 'kill $svc 2>/dev/null || true; pkill -P $$ sleep 2>/dev/null || true' EXIT
 sleep 2
 XR_RUNTIME_JSON=$runtime_json xvfb-run -a -s "-screen 0 1280x720x24" \
   target/debug/ocw-desktop --vr --virtual --no-audio --random-start false --record false \
