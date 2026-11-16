@@ -88,7 +88,19 @@ vram_gb = 8
 cpu = "AMD Ryzen 5 5600 (6 cores)"
 ram_gb = 16
 display = "interactive-task"
-notes = "Needs OpenSSH Server, Git, rustup and the Visual Studio Build Tools (C++ workload)."
+notes = "Set up with scripts/setup-windows-buildserver.ps1 (OpenSSH Server, build user, Git with LFS, VS Build Tools, rustup)."
+
+[[machine]]
+name = "windows-vr"
+os = "windows"
+roles = ["build", "test", "VR"]
+host = "192.0.2.21"
+user = "claude"
+identity_file = "ocw_windows_ed25519"
+shell = "powershell"
+repo_path = "D:\\src\\OCW"
+display = "interactive-task"
+notes = "A headset on USB (Meta Quest Link as the OpenXR runtime): setup-windows-buildserver.ps1 -VR. VR runs need the build user logged in on the desktop."
 
 [[machine]]
 name = "macos"
