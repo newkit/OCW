@@ -38,6 +38,7 @@ button, or `systemctl --user restart ocw-build-dashboard.service`).
 
 | Version | Date | Change | Unit changed |
 |---|---|---|---|
+| 1.4.1 | 2026-11-16 | The cutover line is gone from the Claude tasks card; the worktree list stays open (kept in the browser across refreshes and updates) | no |
 | 1.4.0 | 2026-11-16 | Versioning: `VERSION`, `--version`, version and commit in the header and `/api/status`, the page reloads itself on a new version | no |
 | 1.3.0 | 2026-11-16 | Temp files on disk (`TMPDIR=%h/tmp` in the unit; deb's `/tmp` is a tmpfs); the Claude tasks section also reads `~/tmp/claude-*` | **yes** – `make dashboard-install` |
 | 1.2.0 | 2026-11-16 | *Restart* button (`POST /api/restart`, token), and a changed `config/machines.toml` restarts it with the new machines | no |
@@ -189,12 +190,12 @@ the coordinator thread; git at most every 2 min.
   origin/<branch>`, never fetched). Linked to a task by its branch or by
   `worktree-agent-<id>`. The page lists main, unmerged branches with
   commits and the tasks' worktrees; the rest are counts. Paths are shown as
-  `~/…`, Claude Code's session directories as `/tmp/claude-…`.
-- **Cutover check** (for the move of the coordinator to another user,
-  `docs/MIGRATE-DEB-USER.md`): "Cutover OK: no running tasks, no remote
-  runs", or the list of running tasks and of the remote runs (running and
-  queued, from the machines' job queue), with the number of Claude Code
-  sessions on the coordinator.
+  `~/…`, Claude Code's session directories as `/tmp/claude-…` (on deb
+  `~/tmp/claude-…`). The list is open unless the viewer closes it; the choice
+  is kept in the browser (refreshes, reloads, new versions).
+- The cutover check of the coordinator's move (`docs/MIGRATE-DEB-USER.md`) is
+  still in `/api/status` (`claude_tasks.cutover`) but no longer on the page
+  (1.4.1; the move is done).
 
 ## Open questions
 
