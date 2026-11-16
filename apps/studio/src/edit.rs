@@ -560,7 +560,12 @@ pub fn status_lines(s: &Studio) -> Vec<String> {
 /// A path as shown on screen: the home directory as `~`, so screenshots
 /// (published by the art project) never show the user name.
 pub fn shown_path(p: &std::path::Path) -> String {
-    shown_path_with(p, std::env::var_os("HOME").map(std::path::PathBuf::from).as_deref())
+    shown_path_with(
+        p,
+        std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .as_deref(),
+    )
 }
 
 fn shown_path_with(p: &std::path::Path, home: Option<&std::path::Path>) -> String {
@@ -581,12 +586,21 @@ mod tests {
         use std::path::Path;
         let home = Path::new("/home/ada");
         assert_eq!(
-            shown_path_with(Path::new("/home/ada/.local/share/ocw/studio/autosave"), Some(home)),
+            shown_path_with(
+                Path::new("/home/ada/.local/share/ocw/studio/autosave"),
+                Some(home)
+            ),
             "~/.local/share/ocw/studio/autosave"
         );
         assert_eq!(shown_path_with(home, Some(home)), "~");
-        assert_eq!(shown_path_with(Path::new("/var/tmp/x"), Some(home)), "/var/tmp/x");
-        assert_eq!(shown_path_with(Path::new("/home/ada/x"), None), "/home/ada/x");
+        assert_eq!(
+            shown_path_with(Path::new("/var/tmp/x"), Some(home)),
+            "/var/tmp/x"
+        );
+        assert_eq!(
+            shown_path_with(Path::new("/home/ada/x"), None),
+            "/home/ada/x"
+        );
     }
 
     fn studio() -> Studio {
