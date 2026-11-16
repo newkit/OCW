@@ -781,7 +781,7 @@ fn try_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Result<Patch, &'static s
     // The outline: per arm its mouth (P to Q), then the chain to the next.
     let mut outline: Vec<OutlinePoint> = Vec::new();
     let mut chains = Vec::with_capacity(n);
-    for i in 0..n {
+    for (i, corner) in corners.iter().enumerate() {
         let j = (i + 1) % n;
         let arm = &patch.arms[i];
         let (p, q) = (arm.p(), arm.q());
@@ -795,7 +795,7 @@ fn try_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Result<Patch, &'static s
         // The chain from Q_i to P_j.
         let next = &patch.arms[j];
         let mut pts2: Vec<P2> = vec![xz(q)];
-        match &corners[i] {
+        match corner {
             Some(cn) => {
                 if cn.si < arm.mouth_m - 0.05 {
                     pts2.push(cn.ti);
@@ -1176,10 +1176,15 @@ impl JunctionSet {
     /// The blended row of a side arm `s` metres from the vertex (strip
     /// orientation [left, right]); `s` in [mouth, mouth + blend].
     pub fn blend_row(g: &RoadGraph, p: &Patch, arm: usize, s: f64) -> [[f64; 3]; 2] {
+        let cum = cumulative(&g.edges[p.arms[arm].edge].points);
+        Self::blend_row_on(g, p, arm, s, &cum)
+    }
+
+    /// [`Self::blend_row`] with the edge's cumulative lengths.
+    fn blend_row_on(g: &RoadGraph, p: &Patch, arm: usize, s: f64, cum: &[f64]) -> [[f64; 3]; 2] {
         let a = &p.arms[arm];
         let e = &g.edges[a.edge];
-        let cum = cumulative(&e.points);
-        let (c, fwd) = frame_at(&e.points, &cum, a.s_edge(s));
+        let (c, fwd) = frame_at(&e.points, cum, a.s_edge(s));
         let right = side_pos(fwd);
         let l = a.blend_m.max(1e-9);
         let tt = ((s - a.mouth_m) / l).clamp(0.0, 1.0);
@@ -1227,8 +1232,9 @@ impl JunctionSet {
             if a.blend_m > 0.0 && m <= a.mouth_m + a.blend_m {
                 let steps = Self::blend_steps(a);
                 let i = steps.partition_point(|&x| x <= m).clamp(1, steps.len() - 1);
-                let r0 = Self::blend_row(g, patch, *ai, steps[i - 1]);
-                let r1 = Self::blend_row(g, patch, *ai, steps[i]);
+                let cum = cumulative(&g.edges[ei].points);
+                let r0 = Self::blend_row_on(g, patch, *ai, steps[i - 1], &cum);
+                let r1 = Self::blend_row_on(g, patch, *ai, steps[i], &cum);
                 // As the strip draws its quads: (l0, r0, l1), (r0, r1, l1).
                 for tri in [[r0[0], r0[1], r1[0]], [r0[1], r1[1], r1[0]]] {
                     if let Some(h) = tri_height(tri, p, 1e-6) {
@@ -1270,7 +1276,7 @@ impl JunctionSet {
             let drawn = if s <= a.mouth_m {
                 p.height_at(c).unwrap_or_else(|| p.field(c))
             } else {
-                let r = Self::blend_row(g, p, arm, s);
+                let r = Self::blend_row_on(g, p, arm, s, &cum);
                 0.5 * (r[0][1] + r[1][1])
             };
             let delta = drawn - height(e, a.s_edge(s));
@@ -1336,8 +1342,8 @@ fn project(e: &Edge, cum: &[f64], p: [f32; 3]) -> f64 {
     // a little beyond a region-border cut).
     let mut best = (f64::INFINITY, 0.0);
     let n = e.points.len();
-    for k in 0..n - 1 {
-        let (a, b) = (e.points[k], e.points[k + 1]);
+    for (k, w) in e.points.windows(2).enumerate() {
+        let (a, b) = (w[0], w[1]);
         let ab = sub(b, a);
         let l2 = dot(ab, ab);
         if l2 <= 0.0 {
@@ -1393,7 +1399,24 @@ impl JunctionSet {
         if pts.len() < 2 {
             return None;
         }
-        if !strip_reversed(&g.edges[ei], pts) {
+        // Far from both ends' junctions (straight-line distance, never more
+        // than along the road): nothing to do. Most pieces of long roads.
+        let e = &g.edges[ei];
+        let ends = self.ends(g, ei);
+        let near = |k: usize, v: VertexId| -> bool {
+            let reach = match ends[k] {
+                Some(EndRule::Patch(p, i)) => p.arms[i].mouth_m + p.arms[i].blend_m + 1.0,
+                Some(EndRule::Mitre(m, _)) => m.shift_m + 1.0,
+                None => return false,
+            };
+            let c = g.vertices[v.0 as usize];
+            pts.iter()
+                .any(|q| (f64::from(q[0]) - c[0]).hypot(f64::from(q[2]) - c[1]) <= reach)
+        };
+        if !near(0, e.from) && !near(1, e.to) {
+            return None;
+        }
+        if !strip_reversed(e, pts) {
             return self.shape_forward(g, ei, pts, half);
         }
         // A strip against its edge: shaped along the edge, then turned back.
@@ -1449,14 +1472,19 @@ impl JunctionSet {
                         let steps = Self::blend_steps(a);
                         let (b0, b1) = (a.s_edge(steps[0]), a.s_edge(*steps.last().unwrap()));
                         replaced.push((b0.min(b1), b0.max(b1)));
+                        // Only the rows on this piece of the strip.
+                        let on = |se: f64| se >= s_first - 1e-6 && se <= s_last + 1e-6;
                         for &st in &steps[1..] {
-                            generated.push((a.s_edge(st), Self::blend_row(g, p, *ai, st)));
+                            let se = a.s_edge(st);
+                            if on(se) {
+                                generated.push((se, Self::blend_row_on(g, p, *ai, st, &cum)));
+                            }
                         }
                         // The strip piece may start or end inside the blend.
                         for se in [s_first, s_last] {
                             let m = if k == 0 { se } else { len - se };
                             if m > a.mouth_m + 1e-6 && m < a.mouth_m + a.blend_m - 1e-6 {
-                                generated.push((se, Self::blend_row(g, p, *ai, m)));
+                                generated.push((se, Self::blend_row_on(g, p, *ai, m, &cum)));
                             }
                         }
                     }
@@ -1480,7 +1508,9 @@ impl JunctionSet {
         }
         // Kept plain points.
         let n = pts.len();
-        let mut items: Vec<(f64, [f32; 3], Option<[[f32; 3]; 2]>)> = Vec::new();
+        // (edge metres, centre, explicit row).
+        type Item = (f64, [f32; 3], Option<[[f32; 3]; 2]>);
+        let mut items: Vec<Item> = Vec::new();
         for i in 0..n {
             let si = s[i];
             if si <= lo + 1e-6 || si >= hi - 1e-6 {

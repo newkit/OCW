@@ -242,7 +242,8 @@ fn analyse(path: &str) {
             );
         }
         // The drawn parts: (owner, edge of a strip, its points, its paint, mesh).
-        let mut parts: Vec<(usize, Option<usize>, Vec<[f32; 3]>, bool, MeshArrays)> = Vec::new();
+        type Part = (usize, Option<usize>, Vec<[f32; 3]>, bool, MeshArrays);
+        let mut parts: Vec<Part> = Vec::new();
         for (key, tile) in &pkg.tiles {
             match mode {
                 Mode::Before => {
@@ -602,7 +603,7 @@ fn analyse(path: &str) {
                     None => why.push((k, 1)),
                 }
             }
-            why.sort_by(|a, b| b.1.cmp(&a.1));
+            why.sort_by_key(|w| std::cmp::Reverse(w.1));
             if !why.is_empty() {
                 let list: Vec<String> = why.iter().map(|(k, c)| format!("{k} {c}")).collect();
                 println!("    without: {}", list.join(" | "));

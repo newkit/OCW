@@ -188,8 +188,8 @@ fn way_splits_mitre_small_bends_and_patch_large_ones() {
         let p = set
             .patch(&g, 0)
             .unwrap_or_else(|| panic!("{label}: a patch"));
-        check_outline(&p);
-        check_mouths(&g, &p);
+        check_outline(p);
+        check_mouths(&g, p);
     }
     // Nearly straight: nothing.
     let g = split(0.2, 6.0, 6.0, 0.0);
@@ -265,9 +265,9 @@ fn trimmed_strips_meet_the_patch_without_overlap() {
             } else {
                 *sh.rows.last().unwrap()
             };
-            for k in 0..2 {
-                for c in 0..3 {
-                    assert!((f64::from(row[k][c]) - arm.row[k][c]).abs() < 1e-4);
+            for (got, want) in row.iter().zip(&arm.row) {
+                for (a, b) in got.iter().zip(want) {
+                    assert!((f64::from(*a) - b).abs() < 1e-4);
                 }
             }
         }
@@ -332,10 +332,23 @@ fn strips_far_from_a_junction_stay_as_they_are() {
     let (ei, s) = &strips[1];
     // The part of the strip beyond 40 m from the vertex.
     let far: Vec<[f32; 3]> = s.points.iter().copied().filter(|p| p[0] > 40.0).collect();
-    assert!(
-        set.shape_strip(&g, *ei, &far, 3.75)
-            .is_some_and(|sh| sh.points == far)
-    );
+    assert!(set.shape_strip(&g, *ei, &far, 3.75).is_none(), "unchanged");
+    // From 8 m on (beyond the 7.5 m mouth, within reach): kept as it is.
+    let near: Vec<[f32; 3]> = s.points.iter().copied().filter(|p| p[0] > 7.9).collect();
+    let mouth = set
+        .patch(&g, 0)
+        .unwrap()
+        .arms
+        .iter()
+        .find(|a| a.edge == *ei)
+        .unwrap()
+        .mouth_m;
+    if f64::from(near[0][0]) > mouth {
+        assert!(
+            set.shape_strip(&g, *ei, &near, 3.75)
+                .is_none_or(|sh| sh.points == near)
+        );
+    }
     // Its far end is a dead end: no rule there.
     assert!(set.ends(&g, *ei)[1].is_none());
 }

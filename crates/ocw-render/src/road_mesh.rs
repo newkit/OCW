@@ -481,10 +481,10 @@ pub(crate) fn side_dress(
             }
         }
         let sb = m.positions.len() as u32;
-        for i in 0..n {
+        for (i, top) in tops.iter().enumerate() {
             let (w, k) = d.kerbs[i];
             let edge = d.edge[i] + Vec3::Y * k;
-            for (q, u) in [(edge, side * half), (tops[i], side * (half + w))] {
+            for (q, u) in [(edge, side * half), (*top, side * (half + w))] {
                 vertex(
                     m,
                     q,
