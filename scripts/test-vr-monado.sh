@@ -33,7 +33,10 @@ for f in "${XR_RUNTIME_JSON:-}" "$HOME/.local/share/openxr/1/openxr_monado.json"
 done
 service=$(command -v monado-service || true)
 [ -z "$service" ] && [ -x "$HOME/.local/bin/monado-service" ] && service=$HOME/.local/bin/monado-service
-loader=$(ldconfig -p 2>/dev/null | grep -c 'libopenxr_loader.so.1' || true)
+# ldconfig lives in /sbin on Debian, which is not on a user's PATH: look there
+# too, and in the usual library folders.
+ldconfig_bin=$(command -v ldconfig || command -v /sbin/ldconfig || command -v /usr/sbin/ldconfig || true)
+loader=$( { [ -n "$ldconfig_bin" ] && "$ldconfig_bin" -p 2>/dev/null; ls /usr/lib/*/libopenxr_loader.so.1 /usr/lib64/libopenxr_loader.so.1 /usr/lib/libopenxr_loader.so.1 2>/dev/null; } | grep -c 'libopenxr_loader.so.1' || true)
 if [ -z "$runtime_json" ] || [ -z "$service" ] || [ "$loader" = 0 ]; then
   echo "test-vr-monado: skipped – missing:" \
     "$([ "$loader" = 0 ] && echo 'the OpenXR loader (libopenxr-loader1)')" \
