@@ -551,16 +551,43 @@ pub fn status_lines(s: &Studio) -> Vec<String> {
         })
         .collect();
     out.push(match &s.store_dir {
-        Some(d) => format!("autosave: {}", d.display()),
+        Some(d) => format!("autosave: {}", shown_path(d)),
         None => "autosave: off (no data directory)".into(),
     });
     out
+}
+
+/// A path as shown on screen: the home directory as `~`, so screenshots
+/// (published by the art project) never show the user name.
+pub fn shown_path(p: &std::path::Path) -> String {
+    shown_path_with(p, std::env::var_os("HOME").map(std::path::PathBuf::from).as_deref())
+}
+
+fn shown_path_with(p: &std::path::Path, home: Option<&std::path::Path>) -> String {
+    match home.and_then(|h| p.strip_prefix(h).ok()) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".into(),
+        Some(rest) => format!("~/{}", rest.display()),
+        None => p.display().to_string(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use ocw_edit::MemoryStore;
+
+    #[test]
+    fn paths_on_screen_hide_the_home_directory() {
+        use std::path::Path;
+        let home = Path::new("/home/ada");
+        assert_eq!(
+            shown_path_with(Path::new("/home/ada/.local/share/ocw/studio/autosave"), Some(home)),
+            "~/.local/share/ocw/studio/autosave"
+        );
+        assert_eq!(shown_path_with(home, Some(home)), "~");
+        assert_eq!(shown_path_with(Path::new("/var/tmp/x"), Some(home)), "/var/tmp/x");
+        assert_eq!(shown_path_with(Path::new("/home/ada/x"), None), "/home/ada/x");
+    }
 
     fn studio() -> Studio {
         let mut s = Studio::new(Some(Box::new(MemoryStore::default())), None);

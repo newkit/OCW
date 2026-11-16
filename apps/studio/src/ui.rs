@@ -373,7 +373,7 @@ pub fn status_text(studio: &Studio) -> String {
         }
     }
     parts.push(match &studio.store_dir {
-        Some(dir) => format!("autosave: {}", dir.display()),
+        Some(dir) => format!("autosave: {}", crate::edit::shown_path(dir)),
         None => "autosave off".into(),
     });
     parts.join("   |   ")
