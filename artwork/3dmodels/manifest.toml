@@ -1143,6 +1143,13 @@ source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
 author = "Open Cycling World contributors"
 
 [[asset]]
+file = "props/phone-slab.glb"
+kind = "prop"
+license = "MIT OR Apache-2.0"
+source = "own work, modelled for OCW (spec §2.6 rider status signs); the file is the source (spec §14 Phase 15 Q6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
 file = "riders/rider-body-low.glb"
 kind = "rider"
 generator = "ocw_assets::rider::build(Detail::Low)"
@@ -1156,6 +1163,22 @@ kind = "rider"
 generator = "ocw_assets::rider::build(Detail::High)"
 license = "MIT OR Apache-2.0"
 source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/headphones-over-ear.glb"
+kind = "wearable"
+anchor = "head"
+license = "MIT OR Apache-2.0"
+source = "own work, modelled for OCW (spec §2.6 rider status signs); the file is the source (spec §14 Phase 15 Q6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/headset-vr-visor.glb"
+kind = "wearable"
+anchor = "head"
+license = "MIT OR Apache-2.0"
+source = "own work, modelled for OCW (spec §2.6 rider status signs); the file is the source (spec §14 Phase 15 Q6)"
 author = "Open Cycling World contributors"
 
 [[asset]]
@@ -1192,4 +1215,12 @@ anchor = "head"
 generator = "ocw_assets::helmet::build(Helmet::TimeTrial)"
 license = "MIT OR Apache-2.0"
 source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/mark-mouth-cross.glb"
+kind = "wearable"
+anchor = "head"
+license = "MIT OR Apache-2.0"
+source = "own work, modelled for OCW (spec §2.6 rider status signs); the file is the source (spec §14 Phase 15 Q6)"
 author = "Open Cycling World contributors"

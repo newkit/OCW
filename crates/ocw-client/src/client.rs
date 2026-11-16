@@ -138,6 +138,10 @@ pub struct ClientCore {
     /// Every rider's bike and look from the snapshots (no look: an old
     /// server; the renderer picks colours).
     looks: BTreeMap<RiderId, (ProfileId, Option<RiderLook>)>,
+    /// The own status signs, sent with every sample (spec §2.6).
+    status: v1::RiderStatus,
+    /// The others' status signs from the snapshots (spec §2.6).
+    statuses: BTreeMap<RiderId, v1::RiderStatus>,
     power_w: f64,
     cadence_rpm: Option<f64>,
     heart_rate_bpm: Option<f64>,
@@ -236,6 +240,8 @@ impl ClientCore {
             others_now: Vec::new(),
             names: BTreeMap::new(),
             looks: BTreeMap::new(),
+            status: v1::RiderStatus::default(),
+            statuses: BTreeMap::new(),
             power_w: 0.0,
             cadence_rpm: None,
             heart_rate_bpm: None,
@@ -537,7 +543,26 @@ impl ClientCore {
             heart_rate_bpm: self.heart_rate_bpm.map(|h| h as f32),
             brake: Some(self.braking),
             virtual_power: Some(self.virtual_power()),
+            status: Some(self.status.clone()),
         })))
+    }
+
+    /// The own status signs (spec §2.6 *Rider status signs*): the menu, the
+    /// microphone, VR, whom the rider does not hear. Returns a sample to
+    /// send at once when they changed (the others see the change within a
+    /// snapshot, not only with the next trainer sample).
+    pub fn set_status(&mut self, status: v1::RiderStatus) -> Option<Vec<u8>> {
+        if status == self.status {
+            return None;
+        }
+        self.status = status;
+        self.rider_id?;
+        Some(self.sample())
+    }
+
+    /// The own status signs as sent.
+    pub fn status(&self) -> &v1::RiderStatus {
+        &self.status
     }
 
     /// Brake key pressed or released; returns a sample to send at once when
@@ -854,6 +879,14 @@ impl ClientCore {
             self.names
                 .insert(id, (u.display_name.clone(), f64::from(u.power_w)));
             self.looks.insert(id, ocw_protocol::rider_look(u));
+            match &u.status {
+                Some(st) => {
+                    self.statuses.insert(id, st.clone());
+                }
+                None => {
+                    self.statuses.remove(&id);
+                }
+            }
             self.build_hashes.insert(id, u.build_hash);
             if Some(id) == self.rider_id {
                 self.hearts = self.hearts.max(u.hearts);
@@ -1523,6 +1556,8 @@ impl ClientCore {
             wobble: self.collisions.wobble(own, tick_now),
             damage: self.damage.visible(own),
             cue: self.anim_cue(own, true, &own_state, own_path, tick_now),
+            // The own rider never sees headphones on itself.
+            signs: crate::voice::signs_seen(Some(own), &self.status, own, &self.status),
         }];
         for (id, state) in self.others.sample(now_s - INTERPOLATION_DELAY_S) {
             // Free ride: only riders whose path is known can be placed.
@@ -1557,6 +1592,9 @@ impl ClientCore {
                 // Others are drawn slightly in the past.
                 wobble: self.collisions.wobble(id, others_tick),
                 cue,
+                signs: self.statuses.get(&id).map_or_else(Default::default, |st| {
+                    crate::voice::signs_seen(Some(own), &self.status, id, st)
+                }),
             });
         }
         riders
@@ -2078,6 +2116,17 @@ impl ClientCore {
     pub fn bot_bike_message(bike: v1::BotBike) -> Vec<u8> {
         encode(&client_message(C::Dev(v1::DevCommand {
             cmd: Some(v1::dev_command::Cmd::BotBike(bike)),
+        })))
+    }
+
+    /// `dev.bot_status` (spec §2.6; local servers): the status signs of
+    /// bot `rider_id` (0: every bot).
+    pub fn bot_status_message(rider_id: u32, status: v1::RiderStatus) -> Vec<u8> {
+        encode(&client_message(C::Dev(v1::DevCommand {
+            cmd: Some(v1::dev_command::Cmd::BotStatus(v1::BotStatus {
+                rider_id,
+                status: Some(status),
+            })),
         })))
     }
 
@@ -4920,5 +4969,111 @@ mod tests {
             late.on_server_message(&b, 0.1);
         }
         assert_eq!(late.rider_design(oid).map(|d| d.number), Some(5));
+    }
+
+    /// The rider status signs end to end (spec §2.6, §7.1.7 Q11): rider A
+    /// muted → everybody sees the X mouth; B does not hear A → only A
+    /// sees headphones on B; C in the menu → everybody sees the phone.
+    #[test]
+    fn status_signs_reach_the_others_per_viewer() {
+        let mut server = GameServer::new(route(), ServerConfig::default());
+        let names = ["Ada Rider", "Bea Climber", "Cleo Sprinter"];
+        let mut conns = Vec::new();
+        let mut clients: Vec<ClientCore> = names
+            .iter()
+            .map(|n| ClientCore::new(route(), *n, RiderProfile::default()))
+            .collect();
+        for c in &mut clients {
+            let conn = server.connect();
+            for reply in server.handle(conn, &c.hello()) {
+                c.on_server_message(&reply, 0.0);
+            }
+            conns.push(conn);
+        }
+        let mut t = 0.0;
+        let mut run = |server: &mut GameServer, clients: &mut Vec<ClientCore>, ticks: usize| {
+            for _ in 0..ticks {
+                t += ocw_core::SIM_DT;
+                let out = server.tick();
+                for c in clients.iter_mut() {
+                    for b in &out {
+                        c.on_server_message(b, t);
+                    }
+                }
+            }
+            t
+        };
+        run(&mut server, &mut clients, 40);
+        let ids: Vec<RiderId> = clients.iter().map(|c| c.rider_id().unwrap()).collect();
+        let (a, b, c) = (ids[0], ids[1], ids[2]);
+        // Everybody in the call; A muted; B muted A for themselves; C reads.
+        let st = |muted: bool, menu: bool, not_hearing: Vec<u32>| v1::RiderStatus {
+            voice_muted: muted,
+            in_menu: menu,
+            in_voice: true,
+            not_hearing,
+            ..Default::default()
+        };
+        let wanted = [
+            st(true, false, vec![]),
+            st(false, false, vec![a.0]),
+            st(false, true, vec![]),
+        ];
+        for ((cl, conn), w) in clients.iter_mut().zip(&conns).zip(wanted) {
+            let msg = cl.set_status(w.clone()).expect("a change is sent at once");
+            server.handle(*conn, &msg);
+            assert!(cl.set_status(w).is_none(), "no change, nothing sent");
+        }
+        let now = run(&mut server, &mut clients, 40);
+        let seen = |viewer: usize, of: RiderId| -> ocw_render::Signs {
+            clients[viewer]
+                .view(now, 1.0)
+                .into_iter()
+                .find(|r| r.id == of)
+                .expect("rider in view")
+                .signs
+        };
+        for v in 0..3 {
+            assert!(seen(v, a).voice_muted, "viewer {v} sees A's X mouth");
+            assert!(!seen(v, b).voice_muted && !seen(v, c).voice_muted);
+            assert!(seen(v, c).in_menu, "viewer {v} sees C's phone");
+        }
+        assert!(seen(0, b).cannot_hear_you, "A sees headphones on B");
+        assert!(!seen(2, b).cannot_hear_you, "C does not");
+        assert!(!seen(1, b).cannot_hear_you, "never on the own rider");
+        assert!(!seen(1, a).cannot_hear_you && !seen(0, c).cannot_hear_you);
+        // B mutes the speaker: everybody in the call sees the headphones,
+        // unless the viewer is not in the call.
+        let msg = clients[1]
+            .set_status(v1::RiderStatus {
+                hears_nobody: true,
+                ..st(false, false, vec![])
+            })
+            .unwrap();
+        server.handle(conns[1], &msg);
+        let msg = clients[2].set_status(st(false, true, vec![])).map(|_| ());
+        assert!(msg.is_none());
+        let msg = clients[2]
+            .set_status(v1::RiderStatus {
+                in_voice: false,
+                ..st(false, true, vec![])
+            })
+            .unwrap();
+        server.handle(conns[2], &msg);
+        let now = run(&mut server, &mut clients, 40);
+        let seen = |viewer: usize, of: RiderId| -> ocw_render::Signs {
+            clients[viewer]
+                .view(now, 1.0)
+                .into_iter()
+                .find(|r| r.id == of)
+                .unwrap()
+                .signs
+        };
+        assert!(seen(0, b).cannot_hear_you);
+        assert!(!seen(2, b).cannot_hear_you, "C is not in the call");
+        // A leaves: the status goes with the rider.
+        server.disconnect(conns[0]);
+        let now = run(&mut server, &mut clients, 40);
+        assert!(clients[1].view(now, 1.0).iter().all(|r| r.id != a));
     }
 }

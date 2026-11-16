@@ -484,6 +484,32 @@ message SensorSample {
   // The power is virtual (keyboard power, sim.power, the virtual
   // trainer): it earns no hearts (spec §14 Phase 4, 4E).
   optional bool virtual_power = 7;
+  // What the rider is doing outside the ride (spec §2.6 *Rider status
+  // signs*): shown on the avatar to everybody; looks only, checked by
+  // nothing. Absent: an old client (no signs).
+  RiderStatus status = 8;
+}
+
+// The rider status signs (spec §2.6, §7.1.7 Q11): sent by each client with
+// its samples, relayed by the server in the snapshots (RiderUpdate.status).
+message RiderStatus {
+  // The microphone is muted in a session with voice: an X over the mouth,
+  // seen by everybody.
+  bool voice_muted = 1;
+  // The in-game menu, the console, the workout or world picker is open
+  // (§2.6 Q2): the rider takes out the phone.
+  bool in_menu = 2;
+  // Riding in VR with the headset on (§14 Phase 11): the VR headset.
+  bool in_vr = 3;
+  // The rider is in the voice call (can speak and hear at all).
+  bool in_voice = 4;
+  // The rider hears nobody by own choice (speaker muted, voice turned
+  // off): every viewer in the call sees headphones on this rider.
+  bool hears_nobody = 5;
+  // Riders this rider chose not to hear (muted for themselves): each of
+  // them sees headphones on this rider ("cannot hear you", per viewer,
+  // §7.1.7 Q11; which reasons count is Q12).
+  repeated uint32 not_hearing = 6;
 }
 
 // Commands that change the simulation. Only accepted by a local server (spec §2.9).
@@ -502,7 +528,16 @@ message DevCommand {
     // Stage damage for the asker (`dev.damage`, spec §14 Phase 12E):
     // screenshots and tests.
     StageDamage damage = 5;
+    // A bot's status signs (`dev.bot_status`, spec §2.6): scenes and tests
+    // of the signs on other riders.
+    BotStatus bot_status = 6;
   }
+}
+
+message BotStatus {
+  // The bot (0: every bot of the session).
+  uint32 rider_id = 1;
+  RiderStatus status = 2;
 }
 
 message BotBike {
@@ -1036,6 +1071,9 @@ message RiderUpdate {
   // Damage (spec §14 Phase 12E, K4): 2 Hz and on every change; absent:
   // unchanged (or a server without damage).
   DamageState damage = 20;
+  // The rider's status signs (spec §2.6), from the rider's own samples;
+  // absent: none (bots, old clients).
+  RiderStatus status = 21;
 }
 
 enum CrashPhase {

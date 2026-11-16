@@ -19,9 +19,9 @@ share-alike, non-commercial or no-derivatives licences, never brands.
 |---|---|---|
 | `bikes/` | `bike` | one bike per physics profile, with `lod1` |
 | `riders/` | `rider` | the rider (`rider-body`) and its far model (`rider-body-low`) |
-| `wear/` | `wearable` | helmets, later glasses and caps, worn at an anchor |
+| `wear/` | `wearable` | helmets, the status signs of spec §2.6 (headphones, VR headset, the X over a muted mouth), later glasses and caps, worn at an anchor |
 | `parts/<slot>/` | `part` | catalogue parts by workshop slot (later, M3) |
-| `props/` | `prop` | bollards, gates, lamps, benches (later, M2) |
+| `props/` | `prop` | the phone of the status signs (held in the hand: its origin is its centre); bollards, gates, lamps, benches (later, M2) |
 | `flora/` | `plant` | at least three shape variants per plant species, each with `lod1` |
 | `creatures/` | `creature` | the unicorn (later, M4) |
 | `workshop/` | `workshop` | the workshop's pieces (later, M3) |
@@ -89,7 +89,9 @@ share-alike, non-commercial or no-derivatives licences, never brands.
 `manifest.toml` has one `[[asset]]` per file: `file`, `kind`, `license`,
 `source`, `author`, and per kind `profile` (bike), `species` and `variant`
 (plant), `anchor` (wearable); `generator` names the code a file was exported
-from. It is sorted by `file`; the exporters keep it so.
+from. Files without `generator` were made as files (spec Q6: the file is the
+source; the status signs of §2.6): the exporters keep their entries.
+It is sorted by `file`; the exporters keep it so.
 
 ## Tools
 

@@ -241,8 +241,10 @@ pub fn manifest_text(entries: &[Entry]) -> String {
     out
 }
 
-/// The manifest `old` with every entry whose file starts with one of
-/// `prefixes` replaced by `new`.
+/// The manifest `old` with every exported entry (one with a `generator`)
+/// whose file starts with one of `prefixes` replaced by `new`. Files made
+/// as files (no generator, spec §14 Phase 15 Q6: the file is the source,
+/// e.g. the status signs of §2.6 in `wear/` and `props/`) are kept.
 pub fn write_manifest(old: &str, prefixes: &[&str], new: &[Entry]) -> Result<String, Vec<String>> {
     let old = if old.trim().is_empty() {
         Vec::new()
@@ -251,7 +253,7 @@ pub fn write_manifest(old: &str, prefixes: &[&str], new: &[Entry]) -> Result<Str
     };
     let mut all: Vec<Entry> = old
         .into_iter()
-        .filter(|e| !prefixes.iter().any(|p| e.file.starts_with(p)))
+        .filter(|e| e.generator.is_none() || !prefixes.iter().any(|p| e.file.starts_with(p)))
         .collect();
     all.extend(new.iter().cloned());
     Ok(manifest_text(&all))
@@ -289,6 +291,14 @@ mod tests {
         let both = write_manifest(&first, &OWN_PREFIXES, &own).unwrap();
         let again = write_manifest(&both, &OWN_PREFIXES, &own).unwrap();
         assert_eq!(both, again);
+        // A file made as a file (no generator) in an exporter's folder
+        // stays (spec §2.6's status signs in `wear/`).
+        let mut made = entry("wear/headphones-over-ear.glb", Kind::Wearable, "x");
+        made.generator = None;
+        made.anchor = Some("head".into());
+        let with = write_manifest(&both, &[], std::slice::from_ref(&made)).unwrap();
+        let kept = write_manifest(&with, &OWN_PREFIXES, &own).unwrap();
+        assert!(kept.contains("wear/headphones-over-ear.glb"));
         let m = crate::manifest::Manifest::parse(&both).unwrap();
         assert_eq!(m.assets.len(), own.len() + 1);
         assert!(m.assets.windows(2).all(|w| w[0].file < w[1].file));

@@ -76,6 +76,8 @@ impl Plugin for ConnectionPlugin {
             app.add_plugins((
                 ocw_ui::collisions::CollisionsPlugin,
                 ocw_ui::events::EventsPlugin,
+                // The rider status signs (spec §2.6).
+                ocw_ui::status::StatusPlugin,
             ));
         }
         register_commands(app);

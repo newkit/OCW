@@ -49,6 +49,123 @@ pub struct AnimInput {
     pub curvature: f64,
     /// What else the client knows: a U-turn, the finish.
     pub cue: Cue,
+    /// The rider's status signs (spec §2.6): the phone, the VR head tilt.
+    pub signs: Signs,
+}
+
+/// The rider status signs as one viewer sees them (spec §2.6, §7.1.7
+/// Q11): what a rider is doing outside the ride. Looks only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Signs {
+    /// The microphone is muted: an X over the mouth (everybody sees it).
+    pub voice_muted: bool,
+    /// In the menu (§2.6 Q2): the phone comes out of the back pocket.
+    pub in_menu: bool,
+    /// Riding in VR: the VR headset (and no phone in the menu).
+    pub in_vr: bool,
+    /// This rider cannot hear the viewer: headphones (per viewer, Q11).
+    pub cannot_hear_you: bool,
+}
+
+/// The phone's grab: pocket to hand to in front of the stem (s).
+pub const PHONE_GRAB_S: f32 = 1.2;
+/// The phone's store: back into the pocket, the hand back to the bar (s).
+pub const PHONE_STORE_S: f32 = 1.0;
+/// Menu visits shorter than this show nothing (no flicker from a quick
+/// Esc, s).
+pub const PHONE_DELAY_S: f32 = 0.4;
+/// The worn signs scale in and out in this time (s).
+pub const SIGN_SCALE_S: f32 = 0.25;
+/// The phone's timeline (0 stored … 1 held): the hand is at the pocket
+/// between these, and takes the phone out at [`PHONE_PICK`].
+pub const PHONE_AT_POCKET: (f32, f32) = (0.42, 0.56);
+pub const PHONE_PICK: f32 = 0.49;
+/// The head tilts down to the phone (rad) and, for a VR rider in the menu,
+/// a little (the menu is a panel in the headset, *proposal*).
+pub const PHONE_HEAD_DOWN: f32 = 0.35;
+pub const VR_HEAD_DOWN: f32 = 0.15;
+/// The torso's twist to the right while the hand reaches the pocket (rad,
+/// 10°); the head follows half.
+pub const PHONE_TWIST: f32 = 0.175;
+/// The VR rider's head tilt eases with this time constant (s).
+pub const VR_TILT_S: f32 = 0.3;
+
+/// The status signs' animation (spec §2.6): the phone's grab / hold /
+/// store timeline and the worn signs' scale. Deterministic, the same on
+/// every client (driven by the flags of the snapshots).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct StatusAnim {
+    /// The phone's timeline: 0 in the pocket … 1 held in front of the stem.
+    pub phone: f32,
+    /// How long the menu has been open (s; 0 while closed).
+    pub menu_s: f32,
+    /// Scale of the headphones, the X mouth and the VR headset (0 … 1).
+    pub headphones: f32,
+    pub mouth: f32,
+    pub headset: f32,
+    /// The VR rider's head tilt in the menu (0 … 1).
+    pub vr_look: f32,
+}
+
+impl StatusAnim {
+    /// One frame of `dt` seconds with the signs `s`.
+    pub fn update(&mut self, s: Signs, dt: f32) {
+        self.menu_s = if s.in_menu { self.menu_s + dt } else { 0.0 };
+        // Out once the menu stayed open; turns back at once while the
+        // phone is still on its way (opened again during the store).
+        let wants = s.in_menu && !s.in_vr && (self.menu_s >= PHONE_DELAY_S || self.phone > 0.0);
+        self.phone = if wants {
+            self.phone + dt / PHONE_GRAB_S
+        } else {
+            self.phone - dt / PHONE_STORE_S
+        }
+        .clamp(0.0, 1.0);
+        let toward = |v: &mut f32, on: bool, t: f32| {
+            let step = dt / t;
+            *v = if on {
+                (*v + step).min(1.0)
+            } else {
+                (*v - step).max(0.0)
+            };
+        };
+        toward(&mut self.headphones, s.cannot_hear_you, SIGN_SCALE_S);
+        toward(&mut self.mouth, s.voice_muted, SIGN_SCALE_S);
+        toward(&mut self.headset, s.in_vr, SIGN_SCALE_S);
+        let k = 1.0 - (-dt / VR_TILT_S).exp();
+        let aim = if s.in_vr && s.in_menu { 1.0 } else { 0.0 };
+        self.vr_look += (aim - self.vr_look) * k;
+    }
+
+    /// The phone is in the hand (else in the pocket, hidden).
+    pub fn phone_in_hand(&self) -> bool {
+        self.phone >= PHONE_PICK
+    }
+
+    /// Weight of the one-handed pose (the right hand off the bar).
+    pub fn one_hand(&self) -> f32 {
+        smoothstep(0.0, 0.2, f64::from(self.phone)) as f32
+    }
+
+    /// Writes the signs' pose into `p` (a copy of the riding pose): the
+    /// phone's timeline, the one-handed seated pose overriding standing,
+    /// sprinting and the hands on the tops or drops, the VR head tilt.
+    pub fn apply(&self, p: &mut PoseParams) {
+        let w = self.one_hand();
+        p.phone = self.phone;
+        p.one_hand = w;
+        for v in [
+            &mut p.stand,
+            &mut p.tops,
+            &mut p.drops,
+            &mut p.tuck,
+            &mut p.rock,
+            &mut p.arms_up,
+            &mut p.throw,
+        ] {
+            *v *= 1.0 - w;
+        }
+        p.head_down = VR_HEAD_DOWN * self.vr_look;
+    }
 }
 
 /// What the client knows about a rider beyond speed and power (spec §2.6):
@@ -475,7 +592,10 @@ pub fn hold_crank(theta: f32, target: f32, dt: f32) -> f32 {
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Animator {
     pub selector: Selector,
+    /// The riding pose's weights (without the status signs' overrides).
     pub params: PoseParams,
+    /// The status signs (spec §2.6).
+    pub status: StatusAnim,
     /// The foot this rider puts down at a stop ([`stop_foot`]).
     pub stop_foot: usize,
 }
@@ -493,6 +613,7 @@ impl Animator {
                 ..Default::default()
             },
             stop_foot,
+            status: StatusAnim::default(),
         }
     }
 
@@ -522,7 +643,11 @@ impl Animator {
             Some(h) if cadence <= 0.0 => hold_crank(self.params.crank, h, dt),
             _ => advance_crank(self.params.crank, cadence, dt),
         };
-        self.params
+        // The status signs (spec §2.6): the phone overrides the hands.
+        self.status.update(input.signs, dt);
+        let mut out = self.params;
+        self.status.apply(&mut out);
+        out
     }
 
     pub fn state(&self) -> Riding {
@@ -898,5 +1023,169 @@ mod tests {
                 b.update(i, false, 1.0 / 60.0)
             );
         }
+    }
+}
+
+/// The status signs' timeline (spec §2.6 *Rider status signs*).
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+
+    const DT: f32 = 1.0 / 60.0;
+
+    fn run(a: &mut StatusAnim, s: Signs, seconds: f32) -> Vec<f32> {
+        let n = (seconds / DT).round() as usize;
+        (0..n)
+            .map(|_| {
+                a.update(s, DT);
+                a.phone
+            })
+            .collect()
+    }
+
+    fn menu() -> Signs {
+        Signs {
+            in_menu: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_phone_comes_out_smoothly_and_goes_back() {
+        let mut a = StatusAnim::default();
+        let out = run(&mut a, menu(), 2.0);
+        // Nothing for the first 0.4 s, then the grab in 1.2 s.
+        let delay = (PHONE_DELAY_S / DT) as usize;
+        assert!(out[..delay - 1].iter().all(|p| *p == 0.0));
+        assert_eq!(a.phone, 1.0);
+        let grab_frames = out.iter().filter(|p| **p > 0.0 && **p < 1.0).count();
+        assert!((grab_frames as f32 * DT - PHONE_GRAB_S).abs() < 0.05);
+        // Frame by frame: never a jump.
+        for w in out.windows(2) {
+            assert!((w[1] - w[0]).abs() <= DT / PHONE_GRAB_S + 1e-6);
+        }
+        assert!(a.phone_in_hand());
+        let back = run(&mut a, Signs::default(), 1.2);
+        assert_eq!(a.phone, 0.0);
+        let store = back.iter().filter(|p| **p > 0.0).count();
+        assert!((store as f32 * DT - PHONE_STORE_S).abs() < 0.05);
+        for w in back.windows(2) {
+            assert!((w[1] - w[0]).abs() <= DT / PHONE_STORE_S + 1e-6);
+        }
+    }
+
+    #[test]
+    fn short_menu_visits_show_nothing() {
+        let mut a = StatusAnim::default();
+        for _ in 0..5 {
+            run(&mut a, menu(), 0.35);
+            assert_eq!(a.phone, 0.0);
+            run(&mut a, Signs::default(), 0.2);
+        }
+        assert_eq!(a.phone, 0.0);
+        assert_eq!(a.one_hand(), 0.0);
+    }
+
+    #[test]
+    fn the_grab_and_the_store_reverse_mid_way() {
+        let mut a = StatusAnim::default();
+        run(&mut a, menu(), PHONE_DELAY_S + 0.5);
+        let mid = a.phone;
+        assert!(mid > 0.2 && mid < 0.6, "{mid}");
+        // Closed during the grab: back from where the hand is.
+        a.update(Signs::default(), DT);
+        assert!(a.phone < mid && mid - a.phone < 0.02);
+        run(&mut a, Signs::default(), 0.2);
+        let lower = a.phone;
+        assert!(lower > 0.0);
+        // Opened again during the store: turns back at once (no new
+        // delay, no jump).
+        a.update(menu(), DT);
+        assert!(a.phone > lower && a.phone - lower < 0.02);
+    }
+
+    #[test]
+    fn a_vr_rider_tilts_the_head_instead_of_taking_out_the_phone() {
+        let mut a = StatusAnim::default();
+        let vr_menu = Signs {
+            in_menu: true,
+            in_vr: true,
+            ..Default::default()
+        };
+        run(&mut a, vr_menu, 2.0);
+        assert_eq!(a.phone, 0.0);
+        assert!(a.vr_look > 0.95);
+        assert_eq!(a.headset, 1.0);
+        let mut p = PoseParams::default();
+        a.apply(&mut p);
+        assert!((p.head_down - VR_HEAD_DOWN).abs() < 0.01);
+        assert_eq!(p.one_hand, 0.0);
+        // The headset off again: it scales out in 0.25 s.
+        let out: Vec<f32> = (0..20)
+            .map(|_| {
+                a.update(Signs::default(), DT);
+                a.headset
+            })
+            .collect();
+        assert_eq!(a.headset, 0.0);
+        assert!(out[0] > 0.9 && out.iter().filter(|h| **h > 0.0).count() <= 15);
+    }
+
+    #[test]
+    fn the_worn_signs_scale_in_and_out() {
+        let mut a = StatusAnim::default();
+        let s = Signs {
+            voice_muted: true,
+            cannot_hear_you: true,
+            ..Default::default()
+        };
+        a.update(s, 0.1);
+        assert!(a.mouth > 0.3 && a.mouth < 0.5 && a.headphones == a.mouth);
+        a.update(s, 0.2);
+        assert_eq!((a.mouth, a.headphones, a.headset), (1.0, 1.0, 0.0));
+        a.update(Signs::default(), 0.3);
+        assert_eq!((a.mouth, a.headphones), (0.0, 0.0));
+    }
+
+    #[test]
+    fn the_phone_overrides_standing_and_sprinting_with_one_hand() {
+        let mut an = Animator::new(3);
+        let sprint = AnimInput {
+            speed_mps: 12.0,
+            power_w: 900.0,
+            signs: menu(),
+            ..Default::default()
+        };
+        let mut p = PoseParams::default();
+        for _ in 0..240 {
+            p = an.update(&sprint, false, DT);
+        }
+        // The riding state is still the sprint, the pose is seated.
+        assert_eq!(an.state(), Riding::Sprinting);
+        assert!(an.params.stand > 0.9 && an.params.drops > 0.9);
+        assert_eq!(p.one_hand, 1.0);
+        assert!(p.stand < 1e-6 && p.drops < 1e-6 && p.rock < 1e-6);
+        assert_eq!(p.phone, 1.0);
+        // The phone stored: both hands back, standing again.
+        let mut sprint = sprint;
+        sprint.signs = Signs::default();
+        for _ in 0..120 {
+            p = an.update(&sprint, false, DT);
+        }
+        assert_eq!(p.one_hand, 0.0);
+        assert!(p.stand > 0.9);
+    }
+
+    #[test]
+    fn the_status_animation_is_deterministic() {
+        let mut a = StatusAnim::default();
+        let mut b = StatusAnim::default();
+        let seq = [menu(), menu(), Signs::default(), menu()];
+        for (i, s) in seq.iter().cycle().take(400).enumerate() {
+            let dt = if i % 3 == 0 { 0.02 } else { 0.013 };
+            a.update(*s, dt);
+            b.update(*s, dt);
+        }
+        assert_eq!(a, b);
     }
 }

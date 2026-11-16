@@ -227,6 +227,9 @@ pub struct GameServer {
     real_pressure_y_m: Option<f64>,
     /// The accounts of signed-in riders (spec §9.1), by connection.
     accounts: BTreeMap<ConnectionId, v1::Account>,
+    /// The riders' status signs (spec §2.6), from their samples (and
+    /// `dev.bot_status` for bots); relayed in the snapshots, looks only.
+    statuses: BTreeMap<RiderId, v1::RiderStatus>,
 }
 
 /// A world switch the host asked for (spec §3.2.1), checked and waiting
@@ -390,6 +393,7 @@ impl GameServer {
             config,
             session,
             riders: BTreeMap::new(),
+            statuses: BTreeMap::new(),
             next_connection: 1,
             event_dirty: false,
             names: BTreeMap::new(),
@@ -885,6 +889,7 @@ impl GameServer {
         self.voice_issued.remove(&conn);
         self.peer_addrs.remove(&conn);
         if let Some(rider) = self.riders.remove(&conn) {
+            self.statuses.remove(&rider);
             let name = self
                 .session
                 .snapshot()
@@ -922,6 +927,10 @@ impl GameServer {
                 // Virtual power earns no hearts (spec §14 Phase 4, 4E).
                 self.session
                     .set_virtual_power(rider, sample.virtual_power.unwrap_or(false));
+                // The status signs (spec §2.6): cosmetic, relayed as sent.
+                if let Some(st) = sample.status {
+                    self.statuses.insert(rider, sanitize_status(st));
+                }
                 None
             }
             (C::Dev(cmd), Some(rider)) => Some(self.dev_command(rider, cmd)),
@@ -1412,6 +1421,23 @@ impl GameServer {
                     Err(e) => result(false, e),
                 }
             }
+            Some(v1::dev_command::Cmd::BotStatus(b)) => {
+                let st = sanitize_status(b.status.unwrap_or_default());
+                let bots: Vec<RiderId> = self
+                    .session
+                    .bots()
+                    .iter()
+                    .copied()
+                    .filter(|id| b.rider_id == 0 || id.0 == b.rider_id)
+                    .collect();
+                if bots.is_empty() {
+                    return result(false, format!("no bot {}", b.rider_id));
+                }
+                for id in &bots {
+                    self.statuses.insert(*id, st.clone());
+                }
+                result(true, format!("status of {} bot(s) set", bots.len()))
+            }
             Some(v1::dev_command::Cmd::BotBike(b)) => match self.bot_bike(&b) {
                 Ok(m) => result(true, m),
                 Err(e) => result(false, e),
@@ -1712,6 +1738,7 @@ impl GameServer {
                     damage: (all || changed.contains(&r.id))
                         .then(|| self.session.damage(r.id).map(ocw_protocol::damage_to_wire))
                         .flatten(),
+                    status: self.statuses.get(&r.id).cloned(),
                     ..ocw_protocol::quantize(r)
                 })
                 .collect(),
@@ -1745,6 +1772,18 @@ impl GameServer {
         ))))
     }
 }
+
+/// A rider's status as relayed (spec §2.6): at most
+/// [`MAX_NOT_HEARING`] riders in `not_hearing` (a snapshot stays small).
+pub fn sanitize_status(mut st: v1::RiderStatus) -> v1::RiderStatus {
+    st.not_hearing.sort_unstable();
+    st.not_hearing.dedup();
+    st.not_hearing.truncate(MAX_NOT_HEARING);
+    st
+}
+
+/// The most riders one rider's `not_hearing` list carries.
+pub const MAX_NOT_HEARING: usize = 64;
 
 /// "+1.2 % flat, +0.9 % at 6 %, 7.4 kg" – a build's effect against the
 /// profile's stock bike (4G).
@@ -2288,6 +2327,7 @@ mod tests {
             heart_rate_bpm: None,
             brake: None,
             virtual_power: None,
+            status: None,
         })))
     }
 
@@ -2359,6 +2399,86 @@ mod tests {
                 _ => None,
             })
             .expect("a snapshot every 5 ticks")
+    }
+
+    /// The status signs (spec §2.6): relayed from the samples into the
+    /// snapshots, `dev.bot_status` for bots, gone with the rider.
+    #[test]
+    fn status_signs_travel_in_the_snapshots() {
+        let mut server = GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                bots: 2,
+                allow_dev_commands: true,
+                ..Default::default()
+            },
+        );
+        let (conn, w) = join(&mut server);
+        let me = w.rider_id;
+        let status = v1::RiderStatus {
+            voice_muted: true,
+            in_menu: true,
+            in_voice: true,
+            not_hearing: vec![9, 3, 9],
+            ..Default::default()
+        };
+        server.handle(
+            conn,
+            &encode(&client_message(C::Sample(v1::SensorSample {
+                seq: 1,
+                power_w: Some(100.0),
+                status: Some(status),
+                ..Default::default()
+            }))),
+        );
+        let s = next_snapshot(&mut server);
+        let mine = s.riders.iter().find(|r| r.rider_id == me).unwrap();
+        let st = mine.status.as_ref().expect("relayed");
+        assert!(st.voice_muted && st.in_menu && !st.in_vr);
+        assert_eq!(st.not_hearing, vec![3, 9], "sorted, once each");
+        assert!(
+            s.riders
+                .iter()
+                .filter(|r| r.rider_id != me)
+                .all(|r| r.status.is_none())
+        );
+        // A bot in VR (scenes and tests).
+        let bot = server.session().bots()[0];
+        let reply = server.handle(
+            conn,
+            &encode(&client_message(C::Dev(v1::DevCommand {
+                cmd: Some(v1::dev_command::Cmd::BotStatus(v1::BotStatus {
+                    rider_id: bot.0,
+                    status: Some(v1::RiderStatus {
+                        in_vr: true,
+                        ..Default::default()
+                    }),
+                })),
+            }))),
+        );
+        assert!(matches!(decode_server(&reply[0]), Ok(S::DevResult(r)) if r.ok));
+        let s = next_snapshot(&mut server);
+        let b = s.riders.iter().find(|r| r.rider_id == bot.0).unwrap();
+        assert!(b.status.as_ref().is_some_and(|st| st.in_vr));
+        // Not a bot: refused.
+        let reply = server.handle(
+            conn,
+            &encode(&client_message(C::Dev(v1::DevCommand {
+                cmd: Some(v1::dev_command::Cmd::BotStatus(v1::BotStatus {
+                    rider_id: me,
+                    status: None,
+                })),
+            }))),
+        );
+        assert!(matches!(decode_server(&reply[0]), Ok(S::DevResult(r)) if !r.ok));
+        server.disconnect(conn);
+        assert!(!server.statuses.contains_key(&RiderId(me)));
+        // At most MAX_NOT_HEARING riders.
+        let big = sanitize_status(v1::RiderStatus {
+            not_hearing: (0..500).collect(),
+            ..Default::default()
+        });
+        assert_eq!(big.not_hearing.len(), MAX_NOT_HEARING);
     }
 
     /// The world clock is server state (spec §14 Phase 9, §6.1): in the

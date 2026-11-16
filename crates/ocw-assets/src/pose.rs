@@ -28,6 +28,10 @@ pub struct RiderRig {
     pub upper_arm: f32,
     /// Elbow → grip (forearm plus hand).
     pub forearm: f32,
+    /// The jersey's centre back pocket in the torso frame (spec §2.6: the
+    /// hand takes the phone from it): the rider model's `anchor_pocket_c`
+    /// node, else [`POCKET`].
+    pub pocket: Vec3,
 }
 
 /// Where the bike holds the rider, from the bike model's anchor nodes.
@@ -198,6 +202,12 @@ impl RiderRig {
             neck: local(m, HEAD)?,
             upper_arm: local(m, FOREARM[0])?.length(),
             forearm: local(m, HAND[0])?.length() + local(m, GRIP[0])?.length(),
+            pocket: match (m.node(POCKET_ANCHOR), m.node(TORSO)) {
+                (Some(a), Some(t)) => {
+                    Vec3::from(m.world(a).translation) - Vec3::from(m.world(t).translation)
+                }
+                _ => POCKET,
+            },
         };
         if hips[0].x >= 0.0 || hips[1].x <= 0.0 {
             return Err("thigh_l must be on the left (-x), thigh_r on the right".into());
@@ -226,6 +236,7 @@ impl RiderRig {
             neck: self.neck * s,
             upper_arm: self.upper_arm * s,
             forearm: self.forearm * s,
+            pocket: self.pocket * s,
         }
     }
 
@@ -381,6 +392,15 @@ pub struct PoseParams {
     pub sit_up: f32,
     /// The bike throw at the finish line: hips back, arms straight.
     pub throw: f32,
+    /// The phone's timeline (spec §2.6 *Rider status signs*): 0 in the back
+    /// pocket … the right hand at the pocket … 1 held in front of the stem
+    /// ([`crate::anim::StatusAnim`]).
+    pub phone: f32,
+    /// The one-handed pose while the phone is out: the right hand off the
+    /// bar, the torso a little more upright.
+    pub one_hand: f32,
+    /// Extra head tilt down (rad; a VR rider in the menu).
+    pub head_down: f32,
 }
 
 /// The bike's tilt towards the foot at a stop (rad, ~10°).
@@ -423,7 +443,24 @@ pub struct Pose {
     pub feet: [Quat; 2],
     pub upper_arms: [Quat; 2],
     pub forearms: [Quat; 2],
+    /// The phone in the right hand (spec §2.6): its centre and rotation in
+    /// the bike's frame (the screen, the model's front −Z, towards the
+    /// eyes); `None` while it is in the pocket.
+    pub phone: Option<(Vec3, Quat)>,
 }
+
+/// The back jersey pocket (the centre one) in the torso's frame of the
+/// reference rider when the model has no [`POCKET_ANCHOR`] (spec §2.6: the
+/// hand reaches it): the centre of the lower back, about 12 cm above the
+/// jersey's hem, 2 cm outside the jersey.
+pub const POCKET: Vec3 = Vec3::new(0.0, 0.06, 0.12);
+/// The rider model's node at the centre back pocket's opening (added by the
+/// jersey pockets; until then [`POCKET`]).
+pub const POCKET_ANCHOR: &str = "anchor_pocket_c";
+/// The reference rider's lower back to neck (m): the rig's scale.
+const REFERENCE_NECK: f32 = 0.5;
+/// Torso lean taken off in the one-handed pose (rad).
+pub const ONE_HAND_UPRIGHT: f32 = 0.12;
 
 impl Pose {
     /// `(node, local rotation)` for every posed node except the pelvis.
@@ -726,12 +763,26 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
     // Arms up (victory): no hands on the bars, the rider sits up.
     let arms_up = p.arms_up.clamp(0.0, 1.0);
     let lean = lean + (ARMS_UP_LEAN - lean) * arms_up;
+    // The phone (spec §2.6): one hand on the bar, a little more upright;
+    // the torso twists to the right while the hand reaches the pocket.
+    let one_hand = p.one_hand.clamp(0.0, 1.0);
+    let lean = (lean - ONE_HAND_UPRIGHT * one_hand).max(0.05);
+    let ph = p.phone.clamp(0.0, 1.0);
+    let (pocket_a, pocket_b) = crate::anim::PHONE_AT_POCKET;
+    let twist = crate::anim::PHONE_TWIST
+        * crate::anim::window(
+            f64::from(ph),
+            0.05,
+            f64::from(pocket_a),
+            f64::from(pocket_b),
+            0.85,
+        ) as f32;
     let pelvis_rot = frame * pelvis_tilt(lean) * rock;
     let pelvis_pos = frame * hip;
     // The shoulders turn a little with the head and drop to the inside of
     // a bend.
     let torso_world = frame
-        * Quat::from_rotation_y(-LOOK_TORSO * p.look)
+        * Quat::from_rotation_y(-LOOK_TORSO * p.look - twist)
         * Quat::from_rotation_z(-CORNER_TORSO * p.corner)
         * Quat::from_rotation_x(-lean)
         * rock.inverse();
@@ -788,6 +839,7 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
     // Arms.
     let mut upper_arms = [Quat::IDENTITY; 2];
     let mut forearms = [Quat::IDENTITY; 2];
+    let mut hand_r = Vec3::ZERO;
     for s in 0..2 {
         let shoulder = torso_pos + torso_world * rider.shoulders[s];
         let out = if s == 0 { -Vec3::X } else { Vec3::X };
@@ -797,6 +849,19 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
             out * 0.7 + Vec3::new(0.0, -0.35, 0.6)
         };
         let mut grip = grips[s];
+        if s == 1 && ph > 0.0 {
+            // The right hand: bar → back pocket → in front of the stem.
+            let (target, phone_pole) = phone_hand(
+                rider,
+                ph,
+                torso_pos,
+                torso_world,
+                grip,
+                0.5 * (bike.tops[0] + bike.tops[1]),
+            );
+            grip = target;
+            pole = phone_pole;
+        }
         if arms_up > 0.0 {
             // Up in a V above the shoulders, the elbows out.
             let up = shoulder + Vec3::new(out.x * 0.45, 0.88, 0.1).normalize() * rider.arm() * 0.93;
@@ -811,13 +876,39 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
         let fore_w = segment_rotation(end - elbow, hinge);
         upper_arms[s] = torso_world.inverse() * upper_w;
         forearms[s] = upper_w.inverse() * fore_w;
+        if s == 1 {
+            hand_r = end;
+        }
     }
     // Head: looking up the road, a little down; turned by `look`, held
-    // nearer level in a lean, dropped when sitting up after the line.
+    // nearer level in a lean, dropped when sitting up after the line;
+    // down to the phone, following half the torso's twist.
+    let reading = crate::anim::smoothstep(f64::from(pocket_b), 1.0, f64::from(ph)) as f32;
     let head_world = frame
-        * Quat::from_rotation_y(-p.look)
+        * Quat::from_rotation_y(-p.look - 0.5 * twist)
         * Quat::from_rotation_z(p.head_roll)
-        * Quat::from_rotation_x(-(0.12 + 0.12 * lean) - 0.25 * p.sit_up - 0.12 * p.throw);
+        * Quat::from_rotation_x(
+            -(0.12 + 0.12 * lean)
+                - 0.25 * p.sit_up
+                - 0.12 * p.throw
+                - crate::anim::PHONE_HEAD_DOWN * reading
+                - p.head_down,
+        );
+    // The phone in the hand, its screen towards the eyes.
+    let phone = (ph >= crate::anim::PHONE_PICK).then(|| {
+        let k = rider.neck.length() / REFERENCE_NECK;
+        let eyes = torso_pos + torso_world * rider.neck + head_world * (EYES * k);
+        let to_eyes = (eyes - hand_r).normalize_or(Vec3::Y);
+        // The model's front (−Z) to the eyes, its top (+Y) forward-up.
+        let up = (Vec3::NEG_Z + Vec3::Y * 0.3).normalize();
+        let z = -to_eyes;
+        let x = up.cross(z).normalize_or(Vec3::X);
+        let y = z.cross(x);
+        (
+            hand_r,
+            Quat::from_mat3(&Mat3::from_cols(x, y, z)).normalize(),
+        )
+    });
     Pose {
         bike_roll: roll,
         crank,
@@ -830,7 +921,47 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
         feet,
         upper_arms,
         forearms,
+        phone,
     }
+}
+
+/// Where the right hand is on the phone's timeline `ph` (spec §2.6) and
+/// the elbow's pole: from its `grip` on the bar back to the jersey's
+/// centre pocket (the elbow out and back), out of it and forward to in
+/// front of the stem at chest height (the elbow down): halfway from the
+/// chest to the middle of the tops `bar` (the TT bike: its base bar).
+pub fn phone_hand(
+    rider: &RiderRig,
+    ph: f32,
+    torso_pos: Vec3,
+    torso_world: Quat,
+    grip: Vec3,
+    bar: Vec3,
+) -> (Vec3, Vec3) {
+    use crate::anim::{PHONE_AT_POCKET, smoothstep};
+    let k = rider.neck.length() / REFERENCE_NECK;
+    let pocket = torso_pos + torso_world * rider.pocket;
+    let sc = torso_pos + torso_world * (0.5 * (rider.shoulders[0] + rider.shoulders[1]));
+    // In front of the stem, chest high: halfway from the chest to the bars,
+    // a little up and to the right.
+    let hold = sc.lerp(bar, 0.5) + Vec3::new(0.05 * k, 0.04 * k, 0.0);
+    let (a, b) = PHONE_AT_POCKET;
+    let ph = f64::from(ph);
+    let to_pocket = smoothstep(0.0, f64::from(a), ph) as f32;
+    let to_hold = smoothstep(f64::from(b), 1.0, ph) as f32;
+    // The bar's grip → the pocket: an arc out to the side past the hip.
+    let side = Vec3::X * (0.12 * k) * (std::f32::consts::PI * to_pocket).sin();
+    let reach = grip.lerp(pocket, to_pocket) + side * (1.0 - to_hold);
+    let target = reach.lerp(hold, to_hold);
+    let back_pole = Vec3::new(0.9, 0.1, 0.5);
+    let fwd_pole = Vec3::new(0.7, -0.35, 0.6);
+    let down_pole = Vec3::new(0.5, -0.9, 0.1);
+    let pole = if to_hold > 0.0 {
+        back_pole.lerp(down_pole, to_hold)
+    } else {
+        fwd_pole.lerp(back_pole, to_pocket)
+    };
+    (target, pole)
 }
 
 /// How far the hips sink in the idle stance (m): the knees a little soft.
@@ -900,6 +1031,7 @@ pub fn idle(rider: &RiderRig, t: f32) -> Pose {
         feet,
         upper_arms,
         forearms,
+        phone: None,
     }
 }
 
@@ -1019,6 +1151,7 @@ pub fn photographer(
             feet,
             upper_arms,
             forearms,
+            phone: None,
         },
         lens,
         centre,
@@ -1518,5 +1651,127 @@ mod tests {
             let e = leg_extension(&rig, &bike, fit.hip_standing);
             assert!((e - EXTENSION_STANDING).abs() < 0.01, "{profile:?}: {e}");
         }
+    }
+}
+
+/// The phone's pose (spec §2.6 *Rider status signs*).
+#[cfg(test)]
+mod phone_tests {
+    use ocw_core::ProfileId;
+
+    use super::*;
+    use crate::anim::{PHONE_AT_POCKET, PHONE_PICK};
+
+    /// The right hand's end (the grip point) of a pose.
+    fn hand(rider: &RiderRig, p: &Pose) -> Vec3 {
+        let pelvis = p.pelvis;
+        let torso_w = pelvis.1 * p.torso;
+        let torso_pos = pelvis.0 + pelvis.1 * rider.torso;
+        let shoulder = torso_pos + torso_w * rider.shoulders[1];
+        let upper = torso_w * p.upper_arms[1];
+        let elbow = shoulder + upper * (Vec3::NEG_Y * rider.upper_arm);
+        let fore = upper * p.forearms[1];
+        elbow + fore * (Vec3::NEG_Y * rider.forearm)
+    }
+
+    #[test]
+    fn the_hand_reaches_the_pocket_and_holds_the_phone_before_the_stem() {
+        let base = crate::shipped::rider_rig();
+        for profile in ProfileId::ALL {
+            let bike = crate::shipped::bike_rig(profile);
+            for scale in [0.86f32, 1.0, 1.14] {
+                let body = BodyFit::new(&base, &bike, scale);
+                let (r, b, fit) = (body.rider, body.bike, body.fit);
+                let at = |ph: f32, stand: f32| {
+                    let params = PoseParams {
+                        phone: ph,
+                        one_hand: crate::anim::smoothstep(0.0, 0.2, f64::from(ph)) as f32,
+                        stand,
+                        ..Default::default()
+                    };
+                    pose(&r, &b, &fit, &params)
+                };
+                let k = r.neck.length() / REFERENCE_NECK;
+                // At the pocket: the hand on the jersey's back.
+                let p = at(0.5 * (PHONE_AT_POCKET.0 + PHONE_AT_POCKET.1), 0.0);
+                let torso_w = p.pelvis.1 * p.torso;
+                let torso_pos = p.pelvis.0 + p.pelvis.1 * r.torso;
+                let pocket = torso_pos + torso_w * r.pocket;
+                let h = hand(&r, &p);
+                assert!(
+                    h.distance(pocket) < 0.03 * k,
+                    "{profile:?} {scale}: hand {h} pocket {pocket}"
+                );
+                assert!(p.phone.is_some(), "picked up at the pocket");
+                // Held: in front of the rider's chest, behind the bars,
+                // between the bars' height and the shoulders, the screen
+                // towards the eyes.
+                let p = at(1.0, 0.0);
+                let (ph, q) = p.phone.expect("held");
+                let h = hand(&r, &p);
+                assert!(h.distance(ph) < 1e-4);
+                let bar = 0.5 * (b.tops[0] + b.tops[1]);
+                let torso_w = p.pelvis.1 * p.torso;
+                let head = p.pelvis.0 + p.pelvis.1 * r.torso + torso_w * r.neck;
+                let what = format!("{profile:?} {scale}: phone {ph} bar {bar} head {head}");
+                assert!(ph.z > bar.z && ph.z < head.z + 0.05, "{what}");
+                assert!(ph.y > bar.y - 0.02 && ph.y < head.y, "{what}");
+                let eyes = head + torso_w * p.head * (EYES * k);
+                let screen = q * Vec3::NEG_Z;
+                let facing = screen.dot((eyes - ph).normalize());
+                assert!(facing > 0.95, "{what}: screen {facing}");
+                // The left hand stays on the bar; the head looks down.
+                let rest = at(0.0, 0.0);
+                let left = p.upper_arms[0].angle_between(rest.upper_arms[0]);
+                assert!(left < 0.5, "{what}: left arm {left}");
+                assert!(rest.phone.is_none());
+                let pitch = |q: Quat| (q * Vec3::NEG_Z).y;
+                let hw = |p: &Pose| p.pelvis.1 * p.torso * p.head;
+                let (down, before) = (pitch(hw(&p)), pitch(hw(&rest)));
+                assert!(down < before - 0.2, "{what}: head {down} vs {before}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_hand_moves_smoothly_along_the_timeline() {
+        let r = crate::shipped::rider_rig();
+        let b = crate::shipped::bike_rig(ProfileId::Road);
+        let fit = Fit::new(&r, &b);
+        let mut last: Option<Vec3> = None;
+        for i in 0..=120 {
+            let ph = i as f32 / 120.0;
+            let params = PoseParams {
+                phone: ph,
+                one_hand: crate::anim::smoothstep(0.0, 0.2, f64::from(ph)) as f32,
+                ..Default::default()
+            };
+            let p = pose(&r, &b, &fit, &params);
+            let h = hand(&r, &p);
+            if let Some(l) = last {
+                assert!(h.distance(l) < 0.04, "{ph}: {h} {l}");
+            }
+            last = Some(h);
+            assert_eq!(p.phone.is_some(), ph >= PHONE_PICK, "{ph}");
+        }
+    }
+
+    #[test]
+    fn the_vr_head_tilt_looks_down_a_little() {
+        let r = crate::shipped::rider_rig();
+        let b = crate::shipped::bike_rig(ProfileId::Road);
+        let fit = Fit::new(&r, &b);
+        let rest = pose(&r, &b, &fit, &PoseParams::default());
+        let vr = pose(
+            &r,
+            &b,
+            &fit,
+            &PoseParams {
+                head_down: crate::anim::VR_HEAD_DOWN,
+                ..Default::default()
+            },
+        );
+        assert!((vr.head.angle_between(rest.head) - crate::anim::VR_HEAD_DOWN).abs() < 1e-3);
+        assert!(vr.phone.is_none());
     }
 }
