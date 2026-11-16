@@ -976,6 +976,14 @@ const IDLE_SINK: f32 = 0.012;
 /// about now and then. Smooth and periodic-ish (incommensurate periods),
 /// so it never visibly loops.
 pub fn idle(rider: &RiderRig, t: f32) -> Pose {
+    idle_aged(rider, t, 0.0)
+}
+
+/// [`idle`] with the shoulders rounded forward by `hunch` (rad; the
+/// appearance age's, spec §14 Phase 4, 4N N3 / Q12:
+/// `ocw_core::Age::idle_hunch`), the head lifted back as much so the
+/// rider still looks ahead.
+pub fn idle_aged(rider: &RiderRig, t: f32, hunch: f32) -> Pose {
     use std::f32::consts::TAU;
     let wave = |period: f32, phase: f32| (TAU * t / period + phase).sin();
     // Weight shift (+: onto the right foot), breath, a slow arm sway.
@@ -986,7 +994,8 @@ pub fn idle(rider: &RiderRig, t: f32) -> Pose {
     let pelvis_rot = Quat::from_rotation_z(0.03 * shift);
     // The upper body stays nearly upright over the hips; the chest lifts
     // back a touch on the breath in.
-    let torso_world = Quat::from_rotation_z(-0.012 * shift) * Quat::from_rotation_x(0.014 * breath);
+    let torso_world =
+        Quat::from_rotation_z(-0.012 * shift) * Quat::from_rotation_x(0.014 * breath - hunch);
     // Legs: the feet stay where they stand (two-bone IK to the rest
     // ankles), flat on the floor.
     let mut thighs = [Quat::IDENTITY; 2];
@@ -1025,7 +1034,7 @@ pub fn idle(rider: &RiderRig, t: f32) -> Pose {
         pedals: [Quat::IDENTITY; 2],
         pelvis: (pelvis_pos, pelvis_rot),
         torso: pelvis_rot.inverse() * torso_world,
-        head: Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch),
+        head: Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch + hunch),
         thighs,
         shins,
         feet,

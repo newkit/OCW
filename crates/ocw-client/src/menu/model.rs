@@ -1764,8 +1764,12 @@ mod tests {
         assert_eq!(tabbed.page(), Some(Page::Sub(sub::Page::Riders)));
         act(&mut m, Action::Back, &s, &r);
         assert_eq!(m.page(), Some(Page::Sub(sub::Page::Workshop)));
+        // "Character" opens the character's pages (spec §14 Phase 4, 4N).
+        let mut ch = m.clone();
+        act(&mut ch, Action::Click(3), &s, &r);
+        assert_eq!(ch.page(), Some(Page::Sub(sub::Page::Character)));
         // "Edit riders" opens the list, a rider opens the editor.
-        act(&mut m, Action::Click(3), &s, &r);
+        act(&mut m, Action::Click(4), &s, &r);
         assert_eq!(m.page(), Some(Page::Sub(sub::Page::Riders)));
         act(&mut m, Action::Click(0), &s, &r);
         assert_eq!(m.page(), Some(Page::Sub(sub::Page::Rider(0))));
@@ -1941,7 +1945,7 @@ mod tests {
         let mut r = Riders::default();
         for i in 0..8 {
             r.add(Rider {
-                name: format!("Rider {i}"),
+                name: format!("Ada Rider {i}"),
                 ..Rider::default()
             })
             .unwrap();

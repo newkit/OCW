@@ -705,6 +705,33 @@ mod tests {
         app.world().resource::<MenuView>().clone()
     }
 
+    /// Workshop → Character (spec §14 Phase 4, 4N N10): the same pages and
+    /// rows in both apps (one model, B6), each change a `character` line.
+    #[test]
+    fn the_character_pages_are_the_same_in_both_apps() {
+        let desktop = app(Platform::Desktop);
+        let browser = app(Platform::Browser);
+        let workshop = sub_rows(browser.world(), sub::Page::Workshop);
+        assert!(
+            workshop
+                .iter()
+                .any(|r| r.confirm == Some(sub::Activate::Open(sub::Page::Character))),
+            "the browser's Workshop has the Character row"
+        );
+        for page in std::iter::once(sub::Page::Character).chain(ocw_client::menu::character::PAGES)
+        {
+            let d = sub_rows(desktop.world(), page);
+            let b = sub_rows(browser.world(), page);
+            assert!(!d.is_empty(), "{page:?}");
+            assert_eq!(d, b, "{page:?}");
+            for r in &d {
+                for line in [&r.left, &r.right].into_iter().flatten() {
+                    assert!(line.starts_with("character "), "{page:?}: {line}");
+                }
+            }
+        }
+    }
+
     /// Settings → Trainer → Devices: the rows from the app's devices
     /// (spec §3.2.1 *Devices*), the Trainer page's row shows what is
     /// connected.

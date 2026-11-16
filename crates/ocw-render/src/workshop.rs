@@ -1533,7 +1533,7 @@ fn sync_rider(
                     layer(),
                 ))
                 .id();
-            let girth = ocw_assets::rider::girth(rider_model, i, c.build);
+            let (girth, shift) = ocw_assets::rider::girth_transform(rider_model, i, &c);
             for (mesh, mat) in &handles[i] {
                 let m = &rider_model.materials[*mat];
                 let material = part_material(
@@ -1547,7 +1547,7 @@ fn sync_rider(
                 commands.spawn((
                     Mesh3d(mesh.clone()),
                     MeshMaterial3d(material),
-                    Transform::from_scale(girth),
+                    Transform::from_translation(shift).with_scale(girth),
                     ChildOf(e),
                     layer(),
                 ));
@@ -1588,7 +1588,11 @@ fn sync_rider(
         }
         // Standing at ease (spec 4C): the idle animation, not the rest
         // pose; in the rider's own (unscaled) frame.
-        let p = ocw_assets::pose::idle(&rig, time.elapsed_secs());
+        let p = ocw_assets::pose::idle_aged(
+            &rig,
+            time.elapsed_secs(),
+            r.key.look.character.validated().age.idle_hunch(),
+        );
         let rider_model = ocw_assets::shipped::rider_model();
         let node = |name: &str| {
             rider_model

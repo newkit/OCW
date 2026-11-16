@@ -362,9 +362,13 @@ pub struct AvatarColours {
     pub helmet: Color,
     /// The kit pattern's colour: white on dark jerseys, black on light.
     pub accent: Color,
-    /// The character's skin and hair colours (spec 4C).
+    /// The character's skin and hair colours (spec 4C) as drawn: the
+    /// hair greyed by the age, the facial hair's own or the hair's, the
+    /// face's lines (spec §14 Phase 4, 4N).
     pub skin: Color,
     pub hair: Color,
+    pub facial_hair: Color,
+    pub skin_line: Color,
     /// The kit design (spec §14 Phase 8 T6).
     pub kit: KitColours,
     /// The jersey of the far model: the pattern's dominant colour.
@@ -461,7 +465,9 @@ pub fn avatar_colours(id: RiderId, is_local: bool, look: Option<&RiderLook>) -> 
         // The zip and trims: the design's second colour.
         accent: if look.is_some() { kit.second } else { accent },
         skin: rgb(character.skin_colour()),
-        hair: rgb(character.validated().hair_colour),
+        hair: rgb(character.hair_shown()),
+        facial_hair: rgb(character.facial_hair_shown()),
+        skin_line: rgb(character.skin_line_colour()),
         kit,
         far_jersey,
     }
@@ -489,6 +495,8 @@ pub fn tint_color(slot: &str, model_color: [f32; 4], colours: &AvatarColours) ->
         Tint::Accent => colours.accent,
         Tint::Skin => colours.skin,
         Tint::Hair => colours.hair,
+        Tint::FacialHair => colours.facial_hair,
+        Tint::SkinLine => colours.skin_line,
     }
 }
 
@@ -1011,7 +1019,7 @@ fn spawn_model(
     skip: &[usize],
     hidden: &[usize],
     far: Option<usize>,
-    build: ocw_core::BodyBuild,
+    body: Option<&ocw_core::Character>,
     owner: Option<Entity>,
     mut material: impl FnMut(&str, &str, [f32; 4], bool) -> PartMaterial,
 ) -> Vec<Entity> {
@@ -1042,13 +1050,16 @@ fn spawn_model(
         out[i] = e;
         let is_far = far.is_some_and(|f| model.is_below(i, f));
         let range = if is_far { far_range() } else { near_range() };
-        // The body build's girth (the rider model; 1 for bikes).
-        let girth = ocw_assets::rider::girth(model, i, build);
+        // The body's girth (spec 4C, 4N: shape, base body, age; the rider
+        // model only), about the torso's pivot or the limb's joint.
+        let (girth, shift) = body.map_or((Vec3::ONE, Vec3::ZERO), |c| {
+            ocw_assets::rider::girth_transform(model, i, c)
+        });
         for (mesh, mat) in &meshes.0[i] {
             let m = &model.materials[*mat];
             let mut part = commands.spawn((
                 Mesh3d(mesh.clone()),
-                Transform::from_scale(girth),
+                Transform::from_translation(shift).with_scale(girth),
                 range.clone(),
                 LodPart { far: is_far },
                 ChildOf(e),
@@ -1134,7 +1145,7 @@ fn spawn_avatar(
         &skip,
         &[],
         far,
-        ocw_core::BodyBuild::Medium,
+        None,
         (!ghost).then_some(root),
         |slot, node, c, is_far| lib.material(materials, slot, node, c, &colours, ghost, is_far),
     );
@@ -1176,7 +1187,7 @@ fn spawn_avatar(
         &skip_rider,
         &[],
         None,
-        character.validated().build,
+        Some(&character),
         None,
         |slot, node, c, is_far| lib.material(materials, slot, node, c, &colours, ghost, is_far),
     );
@@ -1212,7 +1223,7 @@ fn spawn_avatar(
         rider: RiderRig {
             pocket: body.rider.pocket
                 * rider_model.node(nodes::TORSO).map_or(Vec3::ONE, |t| {
-                    ocw_assets::rider::girth(rider_model, t, character.validated().build)
+                    ocw_assets::rider::girth(rider_model, t, &character)
                 }),
             ..body.rider
         },
@@ -1997,7 +2008,7 @@ mod tests {
         r.look = Some(RiderLook {
             character: ocw_core::Character {
                 height_cm: 195,
-                build: ocw_core::BodyBuild::Strong,
+                shape: ocw_core::BodyShape::Ample,
                 skin: 10,
                 hair: 3,
                 ..Default::default()

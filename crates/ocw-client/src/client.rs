@@ -113,6 +113,10 @@ pub struct ClientCore {
     /// The own cosmetic look (sent in the hello, spec §2.5).
     look: RiderLook,
     name: String,
+    /// The name the server shows and its note when it replaced the
+    /// hello's (spec §14 Phase 4, 4N N1; from the Welcome).
+    shown_name: Option<String>,
+    name_note: Option<String>,
     rider_id: Option<RiderId>,
     predictor: Predictor,
     /// Predicted state before the last physics step: rendering interpolates
@@ -227,6 +231,8 @@ impl ClientCore {
             build_hashes: BTreeMap::new(),
             look: RiderLook::default(),
             name: name.into(),
+            shown_name: None,
+            name_note: None,
             rider_id: None,
             predictor: Predictor::new(profile, RiderState::default()),
             prev_state: RiderState::default(),
@@ -623,6 +629,8 @@ impl ClientCore {
                 }
                 let id = RiderId(w.rider_id);
                 self.rider_id = Some(id);
+                self.shown_name = Some(w.display_name.clone()).filter(|n| !n.is_empty());
+                self.name_note = w.name_note.clone();
                 self.voice_offered = w.voice;
                 self.echo_bot = w.echo_bot;
                 self.world_access = Some(ocw_protocol::access_from_wire(w.world_access));
@@ -1985,6 +1993,15 @@ impl ClientCore {
         self.event.info()
     }
 
+    /// Whether the own rider is an entrant of a running event (spec §14
+    /// Phase 4, 4N Q15: the name is frozen then).
+    pub fn in_running_event(&self) -> bool {
+        self.event_info().is_some_and(|i| {
+            i.phase == ocw_sim::EventPhase::Running
+                && i.standings.iter().any(|s| Some(s.id) == self.rider_id)
+        })
+    }
+
     /// The time trial's ghost at client time `now_s`, beside the rider's
     /// line (it is not on the server, so nobody drafts it).
     pub fn ghost_state(&self, now_s: f64) -> Option<RiderState> {
@@ -2173,6 +2190,17 @@ impl ClientCore {
 
     pub fn rider_id(&self) -> Option<RiderId> {
         self.rider_id
+    }
+
+    /// The name others see (spec §14 Phase 4, 4N N1): the server's from
+    /// the Welcome, else the hello's.
+    pub fn shown_name(&self) -> &str {
+        self.shown_name.as_deref().unwrap_or(&self.name)
+    }
+
+    /// Why the server replaced the hello's name (`Rider NNNN`), if it did.
+    pub fn name_note(&self) -> Option<&str> {
+        self.name_note.as_deref()
     }
     pub fn state(&self) -> RiderState {
         self.predictor.state()
@@ -3008,6 +3036,7 @@ mod tests {
         let reject = encode(&ocw_protocol::server_message(S::Reject(v1::Reject {
             reason: "full".into(),
             auth: false,
+            name_taken: false,
         })));
         assert_eq!(
             c.on_server_message(&reject, 0.0),
@@ -4840,7 +4869,7 @@ mod tests {
         let conn = h.server.connect();
         let character = ocw_core::Character {
             height_cm: 188,
-            build: ocw_core::BodyBuild::Slim,
+            shape: ocw_core::BodyShape::Slim,
             skin: 7,
             hair: 2,
             ..Default::default()

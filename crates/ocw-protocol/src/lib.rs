@@ -92,12 +92,21 @@ impl From<ocw_core::RiderLook> for v1::RiderLook {
         let d = l.design.validated();
         Self {
             height_cm: Some(u32::from(c.height_cm)),
-            body_build: Some(c.build.wire()),
+            // For older apps: the nearest W4 build and face (spec §14
+            // Phase 4, 4N N12).
+            body_build: Some(c.shape.nearest_build().wire()),
             skin: Some(u32::from(c.skin)),
-            face: Some(u32::from(c.face)),
+            face: Some(u32::from(c.legacy_face())),
             hair: Some(u32::from(c.hair)),
             hair_rgb: Some(c.hair_colour.0),
             glasses: Some(u32::from(c.glasses)),
+            body_type: Some(c.base.wire()),
+            appearance_age: Some(c.age.wire()),
+            moustache: Some(u32::from(c.moustache)),
+            beard: Some(u32::from(c.beard)),
+            facial_hair_rgb: c.facial_hair_colour.map(|c| c.0),
+            greying: (!c.greying).then_some(false),
+            body_shape: Some(c.shape.wire()),
             kit_second_rgb: d.second.map(|c| c.0),
             kit_third_rgb: d.third.map(|c| c.0),
             race_number: (d.number > 0).then_some(u32::from(d.number)),
@@ -126,20 +135,67 @@ pub fn snapshot_look(l: &ocw_core::RiderLook) -> v1::RiderLook {
     }
 }
 
+/// The largest encoded `RiderLook` a server takes (spec §14 Phase 4, 4N
+/// N12): a larger one is replaced by the default look.
+pub const MAX_LOOK_BYTES: usize = 128;
+
+/// A look a client sent (Hello, BikeChange), as the server takes it
+/// (spec §14 Phase 4, 4N N12, Q13): the default look when it is larger
+/// than [`MAX_LOOK_BYTES`], else validated with the body shape bounded to
+/// the band of the rider's weight (`weight_kg`, the physics profile's;
+/// the height is the look's). Looks only, never physics.
+pub fn look_from_client(l: &v1::RiderLook, weight_kg: f64) -> ocw_core::RiderLook {
+    if prost::Message::encoded_len(l) > MAX_LOOK_BYTES {
+        return ocw_core::RiderLook::default();
+    }
+    let mut look = ocw_core::RiderLook::from(l);
+    look.character = look.character.bounded(weight_kg);
+    look
+}
+
 /// The character of a look from the network, validated (absent fields:
 /// the default's).
 pub fn character(l: &v1::RiderLook) -> ocw_core::Character {
     let d = ocw_core::Character::default();
     let small = |v: Option<u32>, d: u8| v.map_or(d, |v| v.min(255) as u8);
+    // An older app's look: the shape from its build, the facial hair
+    // from its face (spec §14 Phase 4, 4N N11 / N12).
+    let shape = l
+        .body_shape
+        .and_then(ocw_core::BodyShape::from_wire)
+        .or_else(|| {
+            l.body_build
+                .map(|b| ocw_core::BodyShape::from_build(ocw_core::BodyBuild::from_wire(b)))
+        })
+        .unwrap_or(d.shape);
+    let new_app = l.moustache.is_some() || l.beard.is_some();
+    let (moustache, beard) = if new_app {
+        (small(l.moustache, 0), small(l.beard, 0))
+    } else {
+        ocw_core::character::legacy_face(small(l.face, 0))
+    };
     ocw_core::Character {
         height_cm: l
             .height_cm
             .map_or(d.height_cm, |h| h.min(u32::from(u16::MAX)) as u16),
-        build: l.body_build.map_or(d.build, ocw_core::BodyBuild::from_wire),
+        base: l.body_type.map_or(d.base, ocw_core::BaseBody::from_wire),
+        shape,
+        age: l
+            .appearance_age
+            .map_or(d.age, ocw_core::character::Age::from_wire),
         skin: small(l.skin, d.skin),
-        face: small(l.face, d.face),
+        // The face's shape: an older app's face was its facial hair.
+        face: if new_app {
+            small(l.face, d.face)
+        } else {
+            d.face
+        },
         hair: small(l.hair, d.hair),
         hair_colour: l.hair_rgb.map_or(d.hair_colour, ocw_core::Rgb::from_wire),
+        greying: l.greying.unwrap_or(d.greying),
+        moustache,
+        beard,
+        facial_hair_colour: l.facial_hair_rgb.map(ocw_core::Rgb::from_wire),
         glasses: small(l.glasses, d.glasses),
     }
     .validated()
@@ -1821,12 +1877,14 @@ mod tests {
             jersey: ocw_core::Rgb(0x43A047),
             character: ocw_core::Character {
                 height_cm: 191,
-                build: ocw_core::BodyBuild::Strong,
+                shape: ocw_core::BodyShape::Ample,
                 skin: 9,
-                face: 1,
+                moustache: 2,
+                beard: 4,
                 hair: 3,
                 hair_colour: ocw_core::Rgb(0xB3482A),
                 glasses: 2,
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -1905,7 +1963,153 @@ mod tests {
         let c = character(&odd);
         let d = ocw_core::Character::default();
         assert_eq!(c.height_cm, ocw_core::character::HEIGHT_RANGE_CM.1);
-        assert_eq!((c.skin, c.hair, c.build), (d.skin, d.hair, d.build));
+        assert_eq!((c.skin, c.hair, c.shape), (d.skin, d.hair, d.shape));
+    }
+
+    /// The refined character (spec §14 Phase 4, 4N N12): base body,
+    /// shape, age, moustache, beard, their colour and greying round-trip;
+    /// an older app's look (no new fields) is migrated – its build to the
+    /// shape, its face to the facial hair; an older app reading ours gets
+    /// the nearest build and the W4 face; the whole look stays within
+    /// 128 bytes, and none of it is in the snapshots.
+    #[test]
+    fn the_refined_character_round_trips_and_older_apps_understand_it() {
+        use ocw_core::character::Age;
+        use ocw_core::{BaseBody, BodyShape, Character, Rgb};
+        for base in BaseBody::ALL {
+            for shape in BodyShape::ALL {
+                for age in Age::ALL {
+                    let c = Character {
+                        base,
+                        shape,
+                        age,
+                        hair: 20,
+                        moustache: 5,
+                        beard: 7,
+                        facial_hair_colour: Some(Rgb(0x6B4426)),
+                        greying: age != Age::Fifties,
+                        ..Character::default()
+                    };
+                    let look = ocw_core::RiderLook {
+                        character: c,
+                        ..Default::default()
+                    };
+                    let wire: v1::RiderLook = look.into();
+                    assert_eq!(character(&wire), c, "{base:?} {shape:?} {age:?}");
+                    assert_eq!(snapshot_look(&look).body_shape, None);
+                }
+            }
+        }
+        // The biggest look on the wire: every field set.
+        let full = ocw_core::RiderLook {
+            frame: Rgb(0xFFFFFF),
+            jersey: Rgb(0xFFFFFE),
+            helmet: Rgb(0xFFFFFD),
+            pattern: ocw_core::KitPattern::Gradient,
+            character: Character {
+                height_cm: 205,
+                base: BaseBody::C,
+                shape: BodyShape::Obese,
+                age: Age::Seventies,
+                skin: 11,
+                hair: 20,
+                hair_colour: Rgb(0xFFFFFF),
+                greying: false,
+                moustache: 5,
+                beard: 7,
+                facial_hair_colour: Some(Rgb(0xFFFFFF)),
+                glasses: 2,
+                ..Character::default()
+            },
+            design: ocw_core::KitDesign {
+                second: Some(Rgb(0xFFFFFF)),
+                third: Some(Rgb(0xFFFFFF)),
+                number: 999,
+                helmet_pattern: true,
+                shorts: Some(Rgb(0xFFFFFF)),
+                socks: Some(Rgb(0xFFFFFF)),
+                shoes: Some(Rgb(0xFFFFFF)),
+                gloves: Some(Rgb(0xFFFFFF)),
+                helmet_finish: ocw_core::Finish::Matte,
+                shoe_finish: ocw_core::Finish::Matte,
+            },
+        };
+        let wire: v1::RiderLook = full.into();
+        let bytes = prost::Message::encode_to_vec(&wire);
+        assert!(bytes.len() <= 128, "{} bytes", bytes.len());
+        // What an older app reads: the nearest build, the W4 face.
+        assert_eq!(wire.body_build, Some(ocw_core::BodyBuild::Strong.wire()));
+        assert_eq!(wire.face, Some(1), "a long beard reads as the W4 beard");
+        // An older app's look: build and face migrated.
+        let old = v1::RiderLook {
+            body_build: Some(0),
+            face: Some(2),
+            hair: Some(3),
+            ..Default::default()
+        };
+        let c = character(&old);
+        assert_eq!(c.shape, BodyShape::Slim);
+        assert_eq!((c.face, c.moustache, c.beard), (0, 1, 0));
+        assert_eq!(
+            (c.base, c.age, c.greying),
+            (BaseBody::A, Age::Thirties, true)
+        );
+        let stubble = character(&v1::RiderLook {
+            face: Some(3),
+            ..Default::default()
+        });
+        assert_eq!((stubble.moustache, stubble.beard), (0, 1));
+        // The server's view: bounded to the weight's band, a look over
+        // 128 bytes refused (the default look).
+        let heavy = ocw_core::RiderLook {
+            character: Character {
+                shape: BodyShape::Obese,
+                ..Character::default()
+            },
+            ..Default::default()
+        };
+        let taken = look_from_client(&heavy.into(), 75.0);
+        assert_eq!(taken.character.shape, BodyShape::Ample, "Normal ± 1");
+        assert_eq!(
+            look_from_client(&heavy.into(), 130.0).character.shape,
+            BodyShape::Obese
+        );
+        let mut huge: v1::RiderLook = heavy.into();
+        huge.frame_rgb = 0xFFFF_FFFF;
+        huge.facial_hair_rgb = Some(0xFFFF_FFFF);
+        huge.race_number = Some(u32::MAX);
+        huge.moustache = Some(u32::MAX);
+        huge.beard = Some(u32::MAX);
+        huge.appearance_age = Some(u32::MAX);
+        huge.body_type = Some(u32::MAX);
+        huge.height_cm = Some(u32::MAX);
+        huge.skin = Some(u32::MAX);
+        huge.hair = Some(u32::MAX);
+        huge.glasses = Some(u32::MAX);
+        huge.helmet_finish = Some(u32::MAX);
+        huge.shoe_finish = Some(u32::MAX);
+        huge.kit_pattern = u32::MAX;
+        huge.body_shape = Some(u32::MAX);
+        huge.body_build = Some(u32::MAX);
+        huge.face = Some(u32::MAX);
+        for c in [
+            &mut huge.kit_second_rgb,
+            &mut huge.kit_third_rgb,
+            &mut huge.shorts_rgb,
+            &mut huge.socks_rgb,
+            &mut huge.shoes_rgb,
+            &mut huge.gloves_rgb,
+            &mut huge.hair_rgb,
+        ] {
+            *c = Some(u32::MAX);
+        }
+        huge.helmet_pattern = Some(true);
+        huge.greying = Some(false);
+        assert!(prost::Message::encoded_len(&huge) > MAX_LOOK_BYTES);
+        assert_eq!(
+            look_from_client(&huge, 75.0),
+            ocw_core::RiderLook::default()
+        );
     }
 
     /// Looks from the network are validated: colours to 24 bits, unknown

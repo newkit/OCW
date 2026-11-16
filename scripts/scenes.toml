@@ -2858,3 +2858,736 @@ description = "Status signs in a group (spec §2.6): one bot reads the phone, on
 args = ["--route", "loop", "--bots", "4", "--power", "220"]
 at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "0.5=status.sign voice on", "1.5=dev.bot_bike 1 --power 220 --lane -1.2", "1.5=dev.bot_bike 2 --power 220 --lane -0.4", "1.5=dev.bot_bike 3 --power 220 --lane 0.4", "1.5=dev.bot_bike 4 --power 220 --lane 1.2", "2=dev.bot_status --bot 1 --menu", "2=dev.bot_status --bot 2 --muted", "2=dev.bot_status --bot 3 --vr", "2=dev.bot_status --bot 4 --deaf", "3=camera.orbit 165 12 6"]
 shot = 10
+
+# --- Character editor refined (spec §14 Phase 4, 4N): the seven shapes on
+# base bodies A / B / C in the workshop mirror and riding, the ages, the hair
+# styles and the facial hair. Made-up rider name only (Ada Rider).
+
+[[scene]]
+name = "char-shape-anorexia-a-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body A, shape anorexia (rider Ada Rider at 45 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 45.0\nheight_cm = 178.0\n"
+at = ["2=character --body a --shape anorexia", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "char-shape-anorexia-a-ride"
+description = "Character editor (4N): body A, shape anorexia riding seated on the Hills route, close orbit from the left (2.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 45.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body a --shape anorexia", "2.5=camera.orbit 90 4 2.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-shape-anorexia-b-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body B, shape anorexia (rider Ada Rider at 45 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 45.0\nheight_cm = 178.0\n"
+at = ["2=character --body b --shape anorexia", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "char-shape-anorexia-b-ride"
+description = "Character editor (4N): body B, shape anorexia riding seated on the Hills route, close orbit from the left (2.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 45.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body b --shape anorexia", "2.5=camera.orbit 90 4 2.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-shape-anorexia-c-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body C, shape anorexia (rider Ada Rider at 45 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 45.0\nheight_cm = 178.0\n"
+at = ["2=character --body c --shape anorexia", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "char-shape-anorexia-c-ride"
+description = "Character editor (4N): body C, shape anorexia riding seated on the Hills route, close orbit from the left (2.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 45.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body c --shape anorexia", "2.5=camera.orbit 90 4 2.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-shape-skinny-a-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body A, shape skinny (rider Ada Rider at 55 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 55.0\nheight_cm = 178.0\n"
+at = ["2=character --body a --shape skinny", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "char-shape-skinny-a-ride"
+description = "Character editor (4N): body A, shape skinny riding seated on the Hills route, close orbit from the left (2.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 55.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body a --shape skinny", "2.5=camera.orbit 90 4 2.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-shape-skinny-b-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body B, shape skinny (rider Ada Rider at 55 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 55.0\nheight_cm = 178.0\n"
+at = ["2=character --body b --shape skinny", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "char-shape-skinny-b-ride"
+description = "Character editor (4N): body B, shape skinny riding seated on the Hills route, close orbit from the left (2.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 55.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body b --shape skinny", "2.5=camera.orbit 90 4 2.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-shape-skinny-c-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body C, shape skinny (rider Ada Rider at 55 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 55.0\nheight_cm = 178.0\n"
+at = ["2=character --body c --shape skinny", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "char-shape-skinny-c-ride"
+description = "Character editor (4N): body C, shape skinny riding seated on the Hills route, close orbit from the left (2.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 55.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body c --shape skinny", "2.5=camera.orbit 90 4 2.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-shape-slim-a-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body A, shape slim (rider Ada Rider at 63 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 63.0\nheight_cm = 178.0\n"
+at = ["2=character --body a --shape slim", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "char-shape-slim-a-ride"
+description = "Character editor (4N): body A, shape slim riding seated on the Hills route, close orbit from the left (2.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 63.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body a --shape slim", "2.5=camera.orbit 90 4 2.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-shape-slim-b-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body B, shape slim (rider Ada Rider at 63 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 63.0\nheight_cm = 178.0\n"
+at = ["2=character --body b --shape slim", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "char-shape-slim-b-ride"
+description = "Character editor (4N): body B, shape slim riding seated on the Hills route, close orbit from the left (2.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 63.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body b --shape slim", "2.5=camera.orbit 90 4 2.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-shape-slim-c-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body C, shape slim (rider Ada Rider at 63 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 63.0\nheight_cm = 178.0\n"
+at = ["2=character --body c --shape slim", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "char-shape-slim-c-ride"
+description = "Character editor (4N): body C, shape slim riding seated on the Hills route, close orbit from the left (2.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 63.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body c --shape slim", "2.5=camera.orbit 90 4 2.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-shape-normal-a-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body A, shape normal (rider Ada Rider at 75 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["2=character --body a --shape normal", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "char-shape-normal-a-ride"
+description = "Character editor (4N): body A, shape normal riding seated on the Hills route, close orbit from the left (2.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body a --shape normal", "2.5=camera.orbit 90 4 2.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-shape-normal-b-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body B, shape normal (rider Ada Rider at 75 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["2=character --body b --shape normal", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "char-shape-normal-b-ride"
+description = "Character editor (4N): body B, shape normal riding seated on the Hills route, close orbit from the left (2.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body b --shape normal", "2.5=camera.orbit 90 4 2.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-shape-normal-c-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body C, shape normal (rider Ada Rider at 75 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["2=character --body c --shape normal", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "char-shape-normal-c-ride"
+description = "Character editor (4N): body C, shape normal riding seated on the Hills route, close orbit from the left (2.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body c --shape normal", "2.5=camera.orbit 90 4 2.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-shape-ample-a-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body A, shape ample (rider Ada Rider at 85 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 85.0\nheight_cm = 178.0\n"
+at = ["2=character --body a --shape ample", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "char-shape-ample-a-ride"
+description = "Character editor (4N): body A, shape ample riding seated on the Hills route, close orbit from the left (2.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 85.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body a --shape ample", "2.5=camera.orbit 90 4 2.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-shape-ample-b-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body B, shape ample (rider Ada Rider at 85 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 85.0\nheight_cm = 178.0\n"
+at = ["2=character --body b --shape ample", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "char-shape-ample-b-ride"
+description = "Character editor (4N): body B, shape ample riding seated on the Hills route, close orbit from the left (2.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 85.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body b --shape ample", "2.5=camera.orbit 90 4 2.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-shape-ample-c-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body C, shape ample (rider Ada Rider at 85 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 85.0\nheight_cm = 178.0\n"
+at = ["2=character --body c --shape ample", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "char-shape-ample-c-ride"
+description = "Character editor (4N): body C, shape ample riding seated on the Hills route, close orbit from the left (2.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 85.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body c --shape ample", "2.5=camera.orbit 90 4 2.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-shape-fat-a-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body A, shape fat (rider Ada Rider at 95 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 95.0\nheight_cm = 178.0\n"
+at = ["2=character --body a --shape fat", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "char-shape-fat-a-ride"
+description = "Character editor (4N): body A, shape fat riding seated on the Hills route, close orbit from the left (2.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 95.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body a --shape fat", "2.5=camera.orbit 90 4 2.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-shape-fat-b-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body B, shape fat (rider Ada Rider at 95 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 95.0\nheight_cm = 178.0\n"
+at = ["2=character --body b --shape fat", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "char-shape-fat-b-ride"
+description = "Character editor (4N): body B, shape fat riding seated on the Hills route, close orbit from the left (2.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 95.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body b --shape fat", "2.5=camera.orbit 90 4 2.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-shape-fat-c-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body C, shape fat (rider Ada Rider at 95 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 95.0\nheight_cm = 178.0\n"
+at = ["2=character --body c --shape fat", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "char-shape-fat-c-ride"
+description = "Character editor (4N): body C, shape fat riding seated on the Hills route, close orbit from the left (2.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 95.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body c --shape fat", "2.5=camera.orbit 90 4 2.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-shape-obese-a-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body A, shape obese (rider Ada Rider at 115 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 115.0\nheight_cm = 178.0\n"
+at = ["2=character --body a --shape obese", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "char-shape-obese-a-ride"
+description = "Character editor (4N): body A, shape obese riding seated on the Hills route, close orbit from the left (2.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 115.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body a --shape obese", "2.5=camera.orbit 90 4 2.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-shape-obese-b-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body B, shape obese (rider Ada Rider at 115 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 115.0\nheight_cm = 178.0\n"
+at = ["2=character --body b --shape obese", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "char-shape-obese-b-ride"
+description = "Character editor (4N): body B, shape obese riding seated on the Hills route, close orbit from the left (2.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 115.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body b --shape obese", "2.5=camera.orbit 90 4 2.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-shape-obese-c-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body C, shape obese (rider Ada Rider at 115 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 115.0\nheight_cm = 178.0\n"
+at = ["2=character --body c --shape obese", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "char-shape-obese-c-ride"
+description = "Character editor (4N): body C, shape obese riding seated on the Hills route, close orbit from the left (2.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 115.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body c --shape obese", "2.5=camera.orbit 90 4 2.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-age-20s"
+description = "Character editor (4N N3 / Q12): appearance age 20s – grey hair, face lines, a softer jaw, less saturated skin – close orbit from the front (1.1 m), riding, a full beard"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --age 20s --beard full --hair long --hair-colour brown", "2.5=camera.orbit 165 2 1.1"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-age-30s"
+description = "Character editor (4N N3 / Q12): appearance age 30s – grey hair, face lines, a softer jaw, less saturated skin – close orbit from the front (1.1 m), riding, a full beard"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --age 30s --beard full --hair long --hair-colour brown", "2.5=camera.orbit 165 2 1.1"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-age-40s"
+description = "Character editor (4N N3 / Q12): appearance age 40s – grey hair, face lines, a softer jaw, less saturated skin – close orbit from the front (1.1 m), riding, a full beard"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --age 40s --beard full --hair long --hair-colour brown", "2.5=camera.orbit 165 2 1.1"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-age-50s"
+description = "Character editor (4N N3 / Q12): appearance age 50s – grey hair, face lines, a softer jaw, less saturated skin – close orbit from the front (1.1 m), riding, a full beard"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --age 50s --beard full --hair long --hair-colour brown", "2.5=camera.orbit 165 2 1.1"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-age-60s"
+description = "Character editor (4N N3 / Q12): appearance age 60s – grey hair, face lines, a softer jaw, less saturated skin – close orbit from the front (1.1 m), riding, a full beard"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --age 60s --beard full --hair long --hair-colour brown", "2.5=camera.orbit 165 2 1.1"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-age-70plus"
+description = "Character editor (4N N3 / Q12): appearance age 70+ – grey hair, face lines, a softer jaw, less saturated skin – close orbit from the front (1.1 m), riding, a full beard"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --age 70+ --beard full --hair long --hair-colour brown", "2.5=camera.orbit 165 2 1.1"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-hair-short"
+description = "Character editor (4N N5): hair style short under the road helmet, riding, close orbit from behind left (1.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair short --hair-colour auburn", "2.5=camera.orbit 35 6 1.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-hair-buzz-cut"
+description = "Character editor (4N N5): hair style buzz-cut under the road helmet, riding, close orbit from behind left (1.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair buzz-cut --hair-colour auburn", "2.5=camera.orbit 35 6 1.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-hair-long"
+description = "Character editor (4N N5): hair style long under the road helmet, riding, close orbit from behind left (1.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair long --hair-colour auburn", "2.5=camera.orbit 35 6 1.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-hair-ponytail"
+description = "Character editor (4N N5): hair style ponytail under the road helmet, riding, close orbit from behind left (1.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair ponytail --hair-colour auburn", "2.5=camera.orbit 35 6 1.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-hair-bun"
+description = "Character editor (4N N5): hair style bun under the road helmet, riding, close orbit from behind left (1.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair bun --hair-colour auburn", "2.5=camera.orbit 35 6 1.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-hair-bald"
+description = "Character editor (4N N5): hair style bald under the road helmet, riding, close orbit from behind left (1.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair bald --hair-colour auburn", "2.5=camera.orbit 35 6 1.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-hair-shaved"
+description = "Character editor (4N N5): hair style shaved under the road helmet, riding, close orbit from behind left (1.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair shaved --hair-colour auburn", "2.5=camera.orbit 35 6 1.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-hair-crew-cut"
+description = "Character editor (4N N5): hair style crew-cut under the road helmet, riding, close orbit from behind left (1.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair crew-cut --hair-colour auburn", "2.5=camera.orbit 35 6 1.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-hair-short-textured"
+description = "Character editor (4N N5): hair style short-textured under the road helmet, riding, close orbit from behind left (1.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair short-textured --hair-colour auburn", "2.5=camera.orbit 35 6 1.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-hair-side-part"
+description = "Character editor (4N N5): hair style side-part under the road helmet, riding, close orbit from behind left (1.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair side-part --hair-colour auburn", "2.5=camera.orbit 35 6 1.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-hair-short-curly"
+description = "Character editor (4N N5): hair style short-curly under the road helmet, riding, close orbit from behind left (1.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair short-curly --hair-colour auburn", "2.5=camera.orbit 35 6 1.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-hair-afro"
+description = "Character editor (4N N5): hair style afro under the road helmet, riding, close orbit from behind left (1.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair afro --hair-colour auburn", "2.5=camera.orbit 35 6 1.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-hair-pixie"
+description = "Character editor (4N N5): hair style pixie under the road helmet, riding, close orbit from behind left (1.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair pixie --hair-colour auburn", "2.5=camera.orbit 35 6 1.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-hair-mid-length"
+description = "Character editor (4N N5): hair style mid-length under the road helmet, riding, close orbit from behind left (1.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair mid-length --hair-colour auburn", "2.5=camera.orbit 35 6 1.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-hair-long-curly"
+description = "Character editor (4N N5): hair style long-curly under the road helmet, riding, close orbit from behind left (1.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair long-curly --hair-colour auburn", "2.5=camera.orbit 35 6 1.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-hair-low-ponytail"
+description = "Character editor (4N N5): hair style low-ponytail under the road helmet, riding, close orbit from behind left (1.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair low-ponytail --hair-colour auburn", "2.5=camera.orbit 35 6 1.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-hair-single-braid"
+description = "Character editor (4N N5): hair style single-braid under the road helmet, riding, close orbit from behind left (1.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair single-braid --hair-colour auburn", "2.5=camera.orbit 35 6 1.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-hair-two-braids"
+description = "Character editor (4N N5): hair style two-braids under the road helmet, riding, close orbit from behind left (1.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair two-braids --hair-colour auburn", "2.5=camera.orbit 35 6 1.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-hair-low-bun"
+description = "Character editor (4N N5): hair style low-bun under the road helmet, riding, close orbit from behind left (1.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair low-bun --hair-colour auburn", "2.5=camera.orbit 35 6 1.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-hair-locs-tied-back"
+description = "Character editor (4N N5): hair style locs-tied-back under the road helmet, riding, close orbit from behind left (1.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair locs-tied-back --hair-colour auburn", "2.5=camera.orbit 35 6 1.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-hair-cornrows"
+description = "Character editor (4N N5): hair style cornrows under the road helmet, riding, close orbit from behind left (1.4 m)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair cornrows --hair-colour auburn", "2.5=camera.orbit 35 6 1.4"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-moustache-classic"
+description = "Character editor (4N N6): moustache classic under the helmet straps, close orbit from the front left (1.0 m), riding"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --moustache classic --hair short --hair-colour black", "2.5=camera.orbit 150 2 1.0"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-moustache-chevron"
+description = "Character editor (4N N6): moustache chevron under the helmet straps, close orbit from the front left (1.0 m), riding"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --moustache chevron --hair short --hair-colour black", "2.5=camera.orbit 150 2 1.0"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-moustache-handlebar"
+description = "Character editor (4N N6): moustache handlebar under the helmet straps, close orbit from the front left (1.0 m), riding"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --moustache handlebar --hair short --hair-colour black", "2.5=camera.orbit 150 2 1.0"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-moustache-horseshoe"
+description = "Character editor (4N N6): moustache horseshoe under the helmet straps, close orbit from the front left (1.0 m), riding"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --moustache horseshoe --hair short --hair-colour black", "2.5=camera.orbit 150 2 1.0"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-moustache-pencil"
+description = "Character editor (4N N6): moustache pencil under the helmet straps, close orbit from the front left (1.0 m), riding"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --moustache pencil --hair short --hair-colour black", "2.5=camera.orbit 150 2 1.0"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-beard-stubble"
+description = "Character editor (4N N6): beard stubble under the helmet straps, close orbit from the front left (1.0 m), riding"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --beard stubble --hair short --hair-colour black", "2.5=camera.orbit 150 2 1.0"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-beard-short-stubble-beard"
+description = "Character editor (4N N6): beard short-stubble-beard under the helmet straps, close orbit from the front left (1.0 m), riding"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --beard short-stubble-beard --hair short --hair-colour black", "2.5=camera.orbit 150 2 1.0"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-beard-short-boxed"
+description = "Character editor (4N N6): beard short-boxed under the helmet straps, close orbit from the front left (1.0 m), riding"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --beard short-boxed --hair short --hair-colour black", "2.5=camera.orbit 150 2 1.0"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-beard-full"
+description = "Character editor (4N N6): beard full under the helmet straps, close orbit from the front left (1.0 m), riding"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --beard full --hair short --hair-colour black", "2.5=camera.orbit 150 2 1.0"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-beard-goatee"
+description = "Character editor (4N N6): beard goatee under the helmet straps, close orbit from the front left (1.0 m), riding"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --beard goatee --hair short --hair-colour black", "2.5=camera.orbit 150 2 1.0"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-beard-chin-strap"
+description = "Character editor (4N N6): beard chin-strap under the helmet straps, close orbit from the front left (1.0 m), riding"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --beard chin-strap --hair short --hair-colour black", "2.5=camera.orbit 150 2 1.0"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-beard-long"
+description = "Character editor (4N N6): beard long under the helmet straps, close orbit from the front left (1.0 m), riding"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --beard long --hair short --hair-colour black", "2.5=camera.orbit 150 2 1.0"]
+shot = 9
+pick = false

@@ -305,4 +305,42 @@ mod tests {
             }
         }
     }
+
+    /// Every body (spec §14 Phase 4, 4N: each of the seven shapes on each
+    /// base body A / B / C, at every age) loads from the exported rider
+    /// files: the nodes its look shows are in the near and the far file,
+    /// the girth is finite and only widens torso and limbs.
+    #[test]
+    fn every_body_loads_from_the_exported_files() {
+        use ocw_core::{Age, BaseBody, BodyShape, Character};
+        let near = shipped::rider_model();
+        let far = shipped::rider_low_model();
+        assert!(RiderRig::from_model(near).is_ok());
+        for base in BaseBody::ALL {
+            for shape in BodyShape::ALL {
+                for age in Age::ALL {
+                    let c = Character {
+                        base,
+                        shape,
+                        age,
+                        hair: (shape.index() * 3 + age as usize) as u8 % 21,
+                        beard: (age as u8) % 8,
+                        moustache: (shape.index() as u8) % 6,
+                        ..Character::default()
+                    };
+                    for n in rider::visible(&c, &[]) {
+                        assert!(near.node(n).is_some(), "{n} for {c:?}");
+                        assert!(far.node(n).is_some(), "{n} (far) for {c:?}");
+                    }
+                    for i in 0..near.nodes.len() {
+                        let (s, t) = rider::girth_transform(near, i, &c);
+                        assert!(s.is_finite() && t.is_finite() && s.y == 1.0);
+                        assert!((0.6..1.6).contains(&s.x) && (0.6..1.6).contains(&s.z));
+                    }
+                    let head = near.node(pose::nodes::HEAD).unwrap();
+                    assert_eq!(rider::girth(near, head, &c), glam::Vec3::ONE);
+                }
+            }
+        }
+    }
 }

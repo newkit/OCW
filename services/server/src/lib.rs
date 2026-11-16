@@ -35,6 +35,7 @@ pub mod worlds;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use ocw_core::name::{self, NameRegistry};
 use ocw_core::{BROADCAST_HZ, RiderId, SIM_TICK_HZ, TICKS_PER_BROADCAST};
 use ocw_protocol::v1::{self, client_message::Msg as C, server_message::Msg as S};
 use ocw_protocol::{PROTOCOL_VERSION, decode_client, encode, server_message};
@@ -192,6 +193,9 @@ pub struct GameServer {
     event_dirty: bool,
     /// Display names from the hellos (voice tokens carry them).
     names: BTreeMap<ConnectionId, String>,
+    /// The names held in this session (spec §14 Phase 4, 4N Q22: unique
+    /// on every server), by connection.
+    taken: name::NameBook<ConnectionId>,
     /// When each connection got its last voice token (unix s).
     voice_issued: BTreeMap<ConnectionId, u64>,
     /// The addresses of each network connection (this server's address the
@@ -397,6 +401,7 @@ impl GameServer {
             next_connection: 1,
             event_dirty: false,
             names: BTreeMap::new(),
+            taken: name::NameBook::new(),
             voice_issued: BTreeMap::new(),
             peer_addrs: BTreeMap::new(),
             joined: Vec::new(),
@@ -885,6 +890,7 @@ impl GameServer {
     /// Removes a connection and its rider.
     pub fn disconnect(&mut self, conn: ConnectionId) {
         self.names.remove(&conn);
+        self.taken.release(&conn);
         self.accounts.remove(&conn);
         self.voice_issued.remove(&conn);
         self.peer_addrs.remove(&conn);
@@ -1009,6 +1015,7 @@ impl GameServer {
             (_, None) => Some(S::Reject(v1::Reject {
                 reason: "send Hello first".into(),
                 auth: false,
+                name_taken: false,
             })),
         };
         let mut out: Vec<Vec<u8>> = reply
@@ -1084,6 +1091,7 @@ impl GameServer {
                     hello.protocol_version
                 ),
                 auth: false,
+                name_taken: false,
             });
         }
         // Junctions are vertex indices: both sides need the same graph.
@@ -1097,6 +1105,7 @@ impl GameServer {
                     ours.name, ours.graph_hash, theirs.name, theirs.graph_hash
                 ),
                 auth: false,
+                name_taken: false,
             });
         }
         // Sign-in (spec §9.1): a signed-in rider rides under the
@@ -1105,24 +1114,74 @@ impl GameServer {
             Ok(a) => a,
             Err(reason) => {
                 tracing::info!(?conn, %reason, "hello refused");
-                return S::Reject(v1::Reject { reason, auth: true });
+                return S::Reject(v1::Reject {
+                    reason,
+                    auth: true,
+                    name_taken: false,
+                });
             }
         };
         let mut hello = hello;
         if let Some(a) = &account {
             hello.display_name = a.display_name.clone();
         }
+        // The name (spec §14 Phase 4, 4N N1, Q8 / Q22): the rules of
+        // `ocw_core::name`, unique on this server. A taken name is
+        // refused (the rider picks another); an invalid one becomes
+        // `Rider NNNN` with a note, so no client can put an invisible or
+        // overlong name on everyone's screen.
+        let checked = name::check(&hello.display_name);
+        if let Ok(n) = &checked
+            && self.taken.holder(n).is_some_and(|h| h != conn)
+        {
+            tracing::info!(?conn, name = %n, "hello refused: name taken");
+            return S::Reject(v1::Reject {
+                reason: format!(
+                    "the name \"{n}\" is taken on this server: choose another name (Settings -> Riders) and join again"
+                ),
+                auth: false,
+                name_taken: true,
+            });
+        }
         let profile = physics_profile(&hello);
         let rider = self.session.add_rider(hello.display_name.clone(), profile);
+        let name_note = match checked {
+            Ok(n) => {
+                hello.display_name = n;
+                None
+            }
+            Err(e) => {
+                let given = name::fallback(rider.0);
+                let note = if hello.display_name.trim().is_empty()
+                    || name::key(&hello.display_name) == "rider"
+                {
+                    format!("you ride as {given}: give yourself a name in Settings -> Riders")
+                } else {
+                    format!("your name is not allowed here ({e}): you ride as {given}")
+                };
+                tracing::info!(%rider, %given, reason = %e, "hello name replaced");
+                hello.display_name = given;
+                Some(note)
+            }
+        };
+        self.session.rename(rider, hello.display_name.clone());
+        self.taken.store(
+            conn,
+            name::key(&hello.display_name),
+            hello.display_name.clone(),
+        );
         // The bike's parts (spec §14 Phase 4, 4G): the server's own values.
         if !hello.parts.is_empty() {
             let build =
                 ocw_sim::build::build(ocw_sim::PartTable::shipped(), profile.bike, &hello.parts);
             self.session.set_bike(rider, profile, Some(build));
         }
-        // Cosmetic only (§2.5): validated, then passed through.
+        // Cosmetic only (§2.5): validated (the shape bounded to the
+        // weight's band, at most 128 bytes; spec §14 Phase 4, 4N), then
+        // passed through.
         if let Some(look) = &hello.look {
-            self.session.set_look(rider, look.into());
+            let look = ocw_protocol::look_from_client(look, profile.rider_mass_kg);
+            self.session.set_look(rider, look);
         }
         // The condition from earlier rides (spec §14 Phase 12 Q6): the
         // client keeps it until the backend does (Phase 5); a rider can
@@ -1163,6 +1222,8 @@ impl GameServer {
             weather: Some(self.weather_message()),
             damage: self.session.damage_on(),
             account,
+            display_name: hello.display_name.clone(),
+            name_note,
         })
     }
 
@@ -1240,7 +1301,8 @@ impl GameServer {
             Some(build),
         );
         if let Some(look) = &change.look {
-            self.session.set_look(rider, look.into());
+            self.session
+                .set_look(rider, ocw_protocol::look_from_client(look, kg));
         }
         // The bike's condition from the garage (spec §14 Phase 12 Q6, Phase
         // 4 W6): a repair or a swap applies with the bike.
@@ -1840,9 +1902,34 @@ mod tests {
     }
 
     fn hello_with(version: u32, world: Option<v1::WorldPackageId>) -> Vec<u8> {
+        hello_as(version, world, &tester("Tester"))
+    }
+
+    /// `base` for a test's first hello under it, then "base B", "base C",
+    /// … (names are unique on a server, spec §14 Phase 4, 4N Q22; every
+    /// test runs on its own thread).
+    fn tester(base: &str) -> String {
+        thread_local! {
+            static USED: std::cell::RefCell<BTreeMap<String, u8>> =
+                const { std::cell::RefCell::new(BTreeMap::new()) };
+        }
+        USED.with(|u| {
+            let mut u = u.borrow_mut();
+            let n = u.entry(base.to_string()).or_insert(0);
+            *n += 1;
+            if *n == 1 {
+                base.to_string()
+            } else {
+                format!("{base} {}", (b'A' + *n - 1) as char)
+            }
+        })
+    }
+
+    /// A hello under `name`.
+    fn hello_as(version: u32, world: Option<v1::WorldPackageId>, name: &str) -> Vec<u8> {
         encode(&client_message(C::Hello(v1::Hello {
             protocol_version: version,
-            display_name: "Tester".into(),
+            display_name: name.into(),
             profile: Some(ocw_core::RiderProfile::default().into()),
             world,
             rider_weight_kg: None,
@@ -1860,7 +1947,7 @@ mod tests {
             conn,
             &encode(&client_message(C::Hello(v1::Hello {
                 protocol_version: PROTOCOL_VERSION,
-                display_name: "Weighed".into(),
+                display_name: tester("Weighed"),
                 profile: None,
                 world: None,
                 rider_weight_kg: weight,
@@ -2153,7 +2240,7 @@ mod tests {
             conn,
             &encode(&client_message(C::Hello(v1::Hello {
                 protocol_version: PROTOCOL_VERSION,
-                display_name: "Styled".into(),
+                display_name: tester("Styled"),
                 bike_profile: Some("gravel".into()),
                 look: Some(v1::RiderLook {
                     frame_rgb: 0xFF12_3456,
@@ -2370,9 +2457,19 @@ mod tests {
         )
     }
 
+    /// "Tester", or "Tester B", "Tester C", … when taken (names are
+    /// unique on a server, spec §14 Phase 4, 4N Q22).
+    fn free_tester(server: &GameServer) -> String {
+        std::iter::repeat_with(|| tester("Tester"))
+            .take(26)
+            .find(|n| server.taken.holder(n).is_none())
+            .expect("a free name")
+    }
+
     fn join(server: &mut GameServer) -> (ConnectionId, v1::Welcome) {
         let conn = server.connect();
-        let reply = server.handle(conn, &hello(PROTOCOL_VERSION));
+        let name = free_tester(server);
+        let reply = server.handle(conn, &hello_as(PROTOCOL_VERSION, None, &name));
         match decode_server(&reply[0]).unwrap() {
             S::Welcome(w) => (conn, w),
             other => panic!("expected a welcome, got {other:?}"),
@@ -3631,6 +3728,170 @@ mod tests {
         assert_eq!((server.joined().len(), server.left().len()), (1, 1));
     }
 
+    fn welcome_or_reject(server: &mut GameServer, conn: ConnectionId, name: &str) -> S {
+        let reply = server.handle(conn, &hello_as(PROTOCOL_VERSION, None, name));
+        decode_server(&reply[0]).unwrap()
+    }
+
+    fn snapshot_name(server: &GameServer, rider: u32) -> String {
+        server
+            .session()
+            .snapshot()
+            .iter()
+            .find(|r| r.id.0 == rider)
+            .map(|r| r.name.clone())
+            .expect("in the session")
+    }
+
+    /// Names are unique on a server (spec §14 Phase 4, 4N Q8 / Q22): a
+    /// second "Ada Rider" (in any case) is refused and picks another, no
+    /// "(2)" suffix; the name is free again once its rider left.
+    #[test]
+    fn names_are_unique_on_a_server() {
+        let mut server = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let ada = server.connect();
+        let S::Welcome(w) = welcome_or_reject(&mut server, ada, "  Ada   Rider ") else {
+            panic!("welcome")
+        };
+        assert_eq!(w.display_name, "Ada Rider", "normalized");
+        assert_eq!(w.name_note, None);
+        assert_eq!(snapshot_name(&server, w.rider_id), "Ada Rider");
+        let other = server.connect();
+        let S::Reject(r) = welcome_or_reject(&mut server, other, "ada rider") else {
+            panic!("refused")
+        };
+        assert!(r.name_taken && !r.auth, "{r:?}");
+        assert!(r.reason.contains("taken"), "{}", r.reason);
+        assert_eq!(server.session().rider_count(), 1, "no rider added");
+        // Another name joins.
+        let S::Welcome(b) = welcome_or_reject(&mut server, other, "Bea Climber") else {
+            panic!("welcome")
+        };
+        assert_eq!(b.display_name, "Bea Climber");
+        // Once Ada leaves, her name is free.
+        server.disconnect(ada);
+        let third = server.connect();
+        assert!(matches!(
+            welcome_or_reject(&mut server, third, "Ada Rider"),
+            S::Welcome(_)
+        ));
+    }
+
+    /// The server checks names too (N1): an invalid name – invisible,
+    /// too long, reserved, the default "Rider" – becomes "Rider NNNN"
+    /// with a note; bots and the echo keep their reserved names.
+    #[test]
+    fn invalid_names_become_rider_numbers() {
+        let mut server = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let mut first = None;
+        for (name, note) in [
+            ("Ada\u{202E}Rider", "not allowed"),
+            (&"x".repeat(500)[..], "not allowed"),
+            ("Echo", "not allowed"),
+            ("Rider", "give yourself a name"),
+            ("", "give yourself a name"),
+        ] {
+            let conn = server.connect();
+            let S::Welcome(w) = welcome_or_reject(&mut server, conn, name) else {
+                panic!("welcome for {name:?}")
+            };
+            let given = format!("Rider {:04}", w.rider_id);
+            assert_eq!(w.display_name, given);
+            assert!(
+                w.name_note.as_deref().is_some_and(|n| n.contains(note)),
+                "{name:?}: {:?}",
+                w.name_note
+            );
+            assert_eq!(snapshot_name(&server, w.rider_id), given);
+            first.get_or_insert(w.rider_id);
+        }
+        // A fallback is unique (the rider id) and nobody can take it.
+        let conn = server.connect();
+        let taken = snapshot_name(&server, first.expect("joined"));
+        let S::Welcome(w) = welcome_or_reject(&mut server, conn, &taken) else {
+            panic!("welcome")
+        };
+        assert_ne!(w.display_name, taken);
+    }
+
+    /// Looks never change the physics (spec §2.5, §14 Phase 4, 4N N13): a
+    /// property test over many random characters – every base body,
+    /// shape, age, hair and facial hair – of riders with the same weight
+    /// and bike: the same physics profile on the server, whatever the
+    /// look says (the shape bounded to the weight's band only for the
+    /// looks).
+    #[test]
+    fn looks_never_change_the_physics() {
+        use ocw_core::character::{Age, HAIR_STYLES};
+        use ocw_core::{BaseBody, BodyShape, Character};
+        let mut server = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let mut seed: u64 = 0x5EED_4A11;
+        let mut next = |n: usize| {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            ((seed >> 33) % n as u64) as usize
+        };
+        let mut profiles = Vec::new();
+        for i in 0..40 {
+            let character = Character {
+                height_cm: 150 + next(56) as u16,
+                base: BaseBody::ALL[next(3)],
+                shape: BodyShape::ALL[next(7)],
+                age: Age::ALL[next(6)],
+                skin: next(12) as u8,
+                hair: next(HAIR_STYLES.len()) as u8,
+                moustache: next(6) as u8,
+                beard: next(8) as u8,
+                greying: next(2) == 0,
+                ..Character::default()
+            };
+            let look = ocw_core::RiderLook {
+                character,
+                ..Default::default()
+            };
+            let hello = v1::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                display_name: format!("Ada Rider {i}"),
+                profile: None,
+                world: None,
+                rider_weight_kg: Some(70.0),
+                bike_profile: Some("road-aero".into()),
+                look: Some(look.into()),
+                parts: Vec::new(),
+                damage: None,
+                access_token: None,
+            };
+            let conn = server.connect();
+            let reply = server.handle(conn, &encode(&client_message(C::Hello(hello))));
+            let S::Welcome(w) = decode_server(&reply[0]).unwrap() else {
+                panic!("welcome")
+            };
+            let id = RiderId(w.rider_id);
+            profiles.push(server.session().base_profile(id).expect("joined"));
+        }
+        assert!(profiles.windows(2).all(|w| w[0] == w[1]), "{profiles:?}");
+        assert_eq!(profiles[0].rider_mass_kg, 70.0);
+    }
+
+    /// No renaming during a ride (4N Q15): nothing a client sends after
+    /// the hello changes its name – a bike change keeps it.
+    #[test]
+    fn the_name_stays_for_the_whole_ride() {
+        let mut server = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let conn = server.connect();
+        let S::Welcome(w) = welcome_or_reject(&mut server, conn, "Cleo Sprinter") else {
+            panic!("welcome")
+        };
+        let change = encode(&client_message(C::BikeChange(v1::BikeChange {
+            bike_id: "road-aero".into(),
+            bike_profile: "road-aero".into(),
+            look: Some(v1::RiderLook::default()),
+            parts: Vec::new(),
+            damage: None,
+        })));
+        server.handle(conn, &change);
+        assert_eq!(snapshot_name(&server, w.rider_id), "Cleo Sprinter");
+    }
+
     fn event_msg(req: v1::event_request::Req) -> Vec<u8> {
         encode(&client_message(C::Event(v1::EventRequest {
             req: Some(req),
@@ -3904,7 +4165,8 @@ mod tests {
 
     fn joined(server: &mut GameServer) -> (ConnectionId, RiderId) {
         let conn = server.connect();
-        let reply = server.handle(conn, &hello(PROTOCOL_VERSION));
+        let name = free_tester(server);
+        let reply = server.handle(conn, &hello_as(PROTOCOL_VERSION, None, &name));
         match decode_server(&reply[0]).unwrap() {
             S::Welcome(w) => (conn, RiderId(w.rider_id)),
             other => panic!("expected a welcome, got {other:?}"),
@@ -4120,7 +4382,7 @@ mod tests {
             conn,
             &encode(&client_message(C::Hello(v1::Hello {
                 protocol_version: PROTOCOL_VERSION,
-                display_name: "Hurt".into(),
+                display_name: tester("Hurt"),
                 damage: Some(ocw_protocol::carried_damage(0.55, &parts)),
                 ..Default::default()
             }))),
@@ -4491,7 +4753,7 @@ mod tests {
             d,
             &encode(&client_message(C::Hello(v1::Hello {
                 protocol_version: PROTOCOL_VERSION,
-                display_name: "Fitted".into(),
+                display_name: tester("Fitted"),
                 bike_profile: Some("tt".into()),
                 parts: vec!["wheels.tt.disc".into(), "frame.mtb.upper".into()],
                 ..Default::default()

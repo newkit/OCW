@@ -16,6 +16,7 @@
 //! `ocw_ui::menu`, the same for both apps.
 
 pub mod calendar;
+pub mod character;
 pub mod controls;
 pub mod devices;
 pub mod history;

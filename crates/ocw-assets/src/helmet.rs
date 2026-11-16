@@ -852,24 +852,27 @@ mod tests {
     #[test]
     fn helmets_clear_hair_glasses_caps_and_the_head() {
         let m = rider::build(Detail::High);
-        let items = [
-            opt::HAIR_CAP,
-            opt::HAIR_BUZZ,
-            opt::HAIR_LONG,
-            opt::HAIR_TAIL,
-            opt::HAIR_BUN,
-            opt::FACE_BEARD,
-            opt::FACE_MOUSTACHE,
-            opt::FACE_STUBBLE,
+        // Every hair style of the 4N catalogue, every moustache and beard,
+        // the age's face (spec §14 Phase 4, 4N N5, N6).
+        let mut items: Vec<&str> = (0..ocw_core::character::HAIR_STYLES.len() as u8)
+            .flat_map(|h| rider::hair_nodes(h).iter().copied())
+            .collect();
+        items.sort_unstable();
+        items.dedup();
+        items.extend(opt::MOUSTACHE);
+        items.extend(opt::BEARD);
+        items.extend(opt::FACE_LINES);
+        items.extend([
+            opt::FACE_JAW,
             opt::GLASSES_SPORT,
             opt::GLASSES_ROUND,
             CAP,
             HEAD,
-        ];
+        ]);
         let mut clips = Vec::new();
         for h in Helmet::ALL {
             let shell = shell(h);
-            for item in items {
+            for &item in &items {
                 // The visor replaces the glasses and the cap
                 // (rider::visible).
                 if h == Helmet::TimeTrial && (item.starts_with("glasses") || item == CAP) {
@@ -889,6 +892,34 @@ mod tests {
                     .collect();
                 if let Some(at) = hits.first() {
                     clips.push(format!("{h:?} x {item}: {} edges, at {at}", hits.len()));
+                }
+            }
+        }
+        assert!(clips.is_empty(), "{clips:#?}");
+    }
+
+    /// The straps run over the facial hair (spec §14 Phase 4, 4N N6): no
+    /// moustache or beard comes out through a strap, the retention band
+    /// or the buckle of any helmet.
+    #[test]
+    fn the_straps_run_over_every_beard() {
+        let m = rider::build(Detail::High);
+        let mut clips = Vec::new();
+        for h in Helmet::ALL {
+            let straps = node_tris(&m, h.node(), Some(DETAIL));
+            assert!(!straps.is_empty(), "{h:?}");
+            for item in opt::MOUSTACHE.iter().chain(&opt::BEARD) {
+                let hits = node_tris(&m, item, None)
+                    .iter()
+                    .flat_map(|t| [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])])
+                    .filter(|(a, b)| {
+                        straps.iter().any(|s| {
+                            crossing(*a, *b, s).is_some_and(|k| (1e-4..1.0 - 1e-4).contains(&k))
+                        })
+                    })
+                    .count();
+                if hits > 0 {
+                    clips.push(format!("{h:?} x {item}: {hits} edges"));
                 }
             }
         }

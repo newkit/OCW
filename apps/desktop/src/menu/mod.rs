@@ -183,6 +183,11 @@ mod tests {
             Calendar(ocw_client::menu::calendar::Cal::at((2026, 11, 16))),
             CalendarDates(ocw_client::menu::calendar::Cal::at((2026, 11, 16))),
             Season,
+            Character,
+            CharacterBody,
+            CharacterFace,
+            CharacterHair,
+            CharacterFacialHair,
         ];
         for p in &all {
             match p {
@@ -196,7 +201,9 @@ mod tests {
                 | HistoryRide(_) | HistoryClimbs(_) | HistoryWeeks | HistoryMonths
                 | HistoryBests | EventRules | Account | TrustedKeys | TrustedKey(_) | Join
                 | HostWorld | HostRoute | HostTime | HostWeather | HostOptions | HostSummary
-                | HostLink | Devices | Device(_) | Calendar(_) | CalendarDates(_) | Season => {}
+                | HostLink | Devices | Device(_) | Calendar(_) | CalendarDates(_) | Season
+                | Character | CharacterBody | CharacterFace | CharacterHair
+                | CharacterFacialHair => {}
             }
         }
         all

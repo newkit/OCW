@@ -1,10 +1,22 @@
-//! The rider's character (spec §2.6, §14 Phase 4, 4C; milestone W4): body
-//! (height and build), skin tone, face, hair and glasses. Free choices –
-//! "who someone is never costs anything" (Phase 4 Q4) – and never physics:
-//! the kit (helmet, shoes, gloves, clothing) is made of catalogue items
-//! with prices and small effects, the character is only looks. Part of
+//! The rider's character (spec §2.6, §14 Phase 4, 4C; milestone W4;
+//! refined by 4N): body (height, base body, shape), appearance age, skin
+//! tone, face, hair, facial hair and glasses. Free choices – "who someone
+//! is never costs anything" (Phase 4 Q4) – and never physics: the kit
+//! (helmet, shoes, gloves, clothing) is made of catalogue items with
+//! prices and small effects, the character is only looks. Part of
 //! [`crate::RiderLook`]; on the wire the character travels once per
 //! change (`RiderBuild.look`), not in every snapshot.
+//!
+//! **The body (4N Q6, Q6b, Q7):** two independent dimensions – the
+//! **base body** A / B / C (shoulders, hips, chest; a shape choice, not a
+//! sex or gender field) and the **shape**, seven named steps from
+//! *anorexia* to *obese*. **The shape is bounded (Q13)** to a band
+//! around the shape the profile's weight and height give
+//! ([`weight_shape`], the *Match my weight* marker); the band's width is
+//! [`SHAPE_BAND_STEPS`] (Q23, open: built as proposed, one step either
+//! side). **The appearance age (Q12)** changes the face (lines, a softer
+//! jaw), the body (posture, a fuller middle), the skin (less saturated)
+//! and the hair (greying unless *Keep my hair colour*).
 
 use crate::bike::Rgb;
 
@@ -14,7 +26,9 @@ pub const DEFAULT_HEIGHT_CM: u16 = 178;
 /// outside is clamped for drawing only).
 pub const HEIGHT_RANGE_CM: (u16, u16) = (150, 205);
 
-/// The body build: girth of the rigid body parts.
+/// The body build of W4 (three steps): still sent on the wire
+/// (`RiderLook.body_build`) for older apps, as the nearest of the seven
+/// [`BodyShape`]s; read from older files and apps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum BodyBuild {
     Slim,
@@ -34,14 +48,6 @@ impl BodyBuild {
         }
     }
 
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Slim => "Slim",
-            Self::Medium => "Medium",
-            Self::Strong => "Strong",
-        }
-    }
-
     pub fn parse(s: &str) -> Option<Self> {
         Self::ALL
             .into_iter()
@@ -56,13 +62,340 @@ impl BodyBuild {
     pub fn from_wire(n: u32) -> Self {
         Self::ALL.get(n as usize).copied().unwrap_or_default()
     }
+}
 
-    /// Girth of the torso and limbs against the medium build.
-    pub fn girth(self) -> f32 {
+/// The base body (4N N2, Q6b): the same rig, node names and anchors;
+/// they differ in the shoulders, the hips (thighs) and the chest. Shown
+/// with neutral captions; nothing else depends on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
+pub enum BaseBody {
+    /// Broader shoulders, narrower hips, a flat chest (today's model is
+    /// closest to it: existing characters keep it).
+    #[default]
+    A,
+    /// Narrower shoulders, wider hips, a chest.
+    B,
+    /// In between.
+    C,
+}
+
+impl BaseBody {
+    pub const ALL: [BaseBody; 3] = [Self::A, Self::B, Self::C];
+
+    pub fn id(self) -> &'static str {
         match self {
-            Self::Slim => 0.9,
-            Self::Medium => 1.0,
-            Self::Strong => 1.12,
+            Self::A => "a",
+            Self::B => "b",
+            Self::C => "c",
+        }
+    }
+
+    /// "Body A".
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::A => "Body A",
+            Self::B => "Body B",
+            Self::C => "Body C",
+        }
+    }
+
+    /// What differs, for the editor's help line.
+    pub fn about(self) -> &'static str {
+        match self {
+            Self::A => "broader shoulders, narrower hips, flat chest",
+            Self::B => "narrower shoulders, wider hips, a chest",
+            Self::C => "in between",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        let s = s.trim();
+        let s = s
+            .strip_prefix("body ")
+            .or_else(|| s.strip_prefix("Body "))
+            .unwrap_or(s);
+        Self::ALL
+            .into_iter()
+            .find(|b| b.id().eq_ignore_ascii_case(s))
+    }
+
+    pub fn wire(self) -> u32 {
+        self as u32
+    }
+
+    /// Unknown numbers are body A.
+    pub fn from_wire(n: u32) -> Self {
+        Self::ALL.get(n as usize).copied().unwrap_or_default()
+    }
+}
+
+/// The body shape (4N Q6, Q7): seven named steps, each with its picture
+/// in the editor; bounded to a band around [`weight_shape`] (Q13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
+pub enum BodyShape {
+    Anorexia,
+    Skinny,
+    Slim,
+    #[default]
+    Normal,
+    Ample,
+    Fat,
+    Obese,
+}
+
+impl BodyShape {
+    pub const ALL: [BodyShape; 7] = [
+        Self::Anorexia,
+        Self::Skinny,
+        Self::Slim,
+        Self::Normal,
+        Self::Ample,
+        Self::Fat,
+        Self::Obese,
+    ];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Anorexia => "anorexia",
+            Self::Skinny => "skinny",
+            Self::Slim => "slim",
+            Self::Normal => "normal",
+            Self::Ample => "ample",
+            Self::Fat => "fat",
+            Self::Obese => "obese",
+        }
+    }
+
+    /// The label (Q7: the seven words).
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Anorexia => "Anorexia",
+            Self::Skinny => "Skinny",
+            Self::Slim => "Slim",
+            Self::Normal => "Normal",
+            Self::Ample => "Ample",
+            Self::Fat => "Fat",
+            Self::Obese => "Obese",
+        }
+    }
+
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    /// The shape at `i` (clamped to the seven).
+    pub fn at(i: isize) -> Self {
+        Self::ALL[i.clamp(0, Self::ALL.len() as isize - 1) as usize]
+    }
+
+    /// The id, or a W4 build's id (slim / medium / strong).
+    pub fn parse(s: &str) -> Option<Self> {
+        let s = s.trim();
+        Self::ALL
+            .into_iter()
+            .find(|b| b.id().eq_ignore_ascii_case(s))
+            .or_else(|| BodyBuild::parse(s).map(Self::from_build))
+    }
+
+    pub fn wire(self) -> u32 {
+        self as u32
+    }
+
+    pub fn from_wire(n: u32) -> Option<Self> {
+        Self::ALL.get(n as usize).copied()
+    }
+
+    /// The W4 build's shape (migration: slim / medium / strong → slim /
+    /// normal / ample).
+    pub fn from_build(b: BodyBuild) -> Self {
+        match b {
+            BodyBuild::Slim => Self::Slim,
+            BodyBuild::Medium => Self::Normal,
+            BodyBuild::Strong => Self::Ample,
+        }
+    }
+
+    /// The nearest W4 build (sent for older apps).
+    pub fn nearest_build(self) -> BodyBuild {
+        match self {
+            Self::Anorexia | Self::Skinny | Self::Slim => BodyBuild::Slim,
+            Self::Normal => BodyBuild::Medium,
+            Self::Ample | Self::Fat | Self::Obese => BodyBuild::Strong,
+        }
+    }
+
+    /// The girth of the torso and pelvis, and of the limbs, against the
+    /// normal shape (x and z of the rigid parts' meshes; the bellies of
+    /// the heavier shapes grow more than the limbs).
+    pub fn girth(self) -> (f32, f32) {
+        match self {
+            Self::Anorexia => (0.76, 0.72),
+            Self::Skinny => (0.85, 0.83),
+            Self::Slim => (0.92, 0.91),
+            Self::Normal => (1.0, 1.0),
+            Self::Ample => (1.11, 1.08),
+            Self::Fat => (1.24, 1.16),
+            Self::Obese => (1.38, 1.25),
+        }
+    }
+
+    /// The shape of a body-mass index (kg / m²): the *Match my weight*
+    /// marker (4N N4, Q13). Steps at 16, 18.5, 21, 25, 28 and 32.
+    pub fn from_bmi(bmi: f64) -> Self {
+        const STEPS: [f64; 6] = [16.0, 18.5, 21.0, 25.0, 28.0, 32.0];
+        Self::ALL[STEPS.iter().filter(|s| bmi >= **s).count()]
+    }
+}
+
+/// The body-shape band's width (4N Q13, **Q23 open**): the shape can be
+/// chosen this many steps either side of [`weight_shape`]. Built as
+/// proposed (one step either side: three of the seven shapes open to
+/// each rider) until the user decides Q23.
+pub const SHAPE_BAND_STEPS: usize = 1;
+
+/// The body-mass index of `weight_kg` at `height_cm`.
+pub fn bmi(weight_kg: f64, height_cm: f64) -> f64 {
+    let m = height_cm.max(1.0) / 100.0;
+    weight_kg / (m * m)
+}
+
+/// The *Match my weight* shape (4N Q13): what the profile's weight and
+/// height give (no height: the default 1.78 m).
+pub fn weight_shape(weight_kg: f64, height_cm: Option<f64>) -> BodyShape {
+    BodyShape::from_bmi(bmi(
+        weight_kg,
+        height_cm.unwrap_or(f64::from(DEFAULT_HEIGHT_CM)),
+    ))
+}
+
+/// The shapes open to a rider whose weight and height give `marker`:
+/// [`SHAPE_BAND_STEPS`] either side, within the seven.
+pub fn shape_band(marker: BodyShape) -> (BodyShape, BodyShape) {
+    let i = marker.index() as isize;
+    let w = SHAPE_BAND_STEPS as isize;
+    (BodyShape::at(i - w), BodyShape::at(i + w))
+}
+
+impl BodyShape {
+    /// This shape moved into the band around `marker` (the nearest edge
+    /// when outside, Q13).
+    pub fn bounded(self, marker: BodyShape) -> Self {
+        let (lo, hi) = shape_band(marker);
+        self.clamp(lo, hi)
+    }
+
+    /// Whether this shape is in the band around `marker`.
+    pub fn in_band(self, marker: BodyShape) -> bool {
+        self.bounded(marker) == self
+    }
+}
+
+/// The appearance age (4N N3): six steps, never a birth date or a number
+/// shown to others, never physics or animation tempo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
+pub enum Age {
+    Twenties,
+    #[default]
+    Thirties,
+    Forties,
+    Fifties,
+    Sixties,
+    Seventies,
+}
+
+impl Age {
+    pub const ALL: [Age; 6] = [
+        Self::Twenties,
+        Self::Thirties,
+        Self::Forties,
+        Self::Fifties,
+        Self::Sixties,
+        Self::Seventies,
+    ];
+
+    /// "20s" … "70+".
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Twenties => "20s",
+            Self::Thirties => "30s",
+            Self::Forties => "40s",
+            Self::Fifties => "50s",
+            Self::Sixties => "60s",
+            Self::Seventies => "70+",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        let s = s.trim();
+        let s = if s == "70s" { "70+" } else { s };
+        Self::ALL
+            .into_iter()
+            .find(|a| a.id().eq_ignore_ascii_case(s))
+    }
+
+    pub fn wire(self) -> u32 {
+        self as u32
+    }
+
+    /// Unknown numbers are the 30s.
+    pub fn from_wire(n: u32) -> Self {
+        Self::ALL.get(n as usize).copied().unwrap_or_default()
+    }
+
+    /// The hair's grey share at this age (0 none … 1 all grey), before
+    /// the rider's own spread ([`Character::grey_share`]).
+    pub fn grey(self) -> f32 {
+        match self {
+            Self::Twenties | Self::Thirties => 0.0,
+            Self::Forties => 0.15,
+            Self::Fifties => 0.35,
+            Self::Sixties => 0.6,
+            Self::Seventies => 0.82,
+        }
+    }
+
+    /// How much the skin's saturation drops (0 … 1).
+    pub fn skin_fade(self) -> f32 {
+        match self {
+            Self::Sixties => 0.05,
+            Self::Seventies => 0.12,
+            _ => 0.0,
+        }
+    }
+
+    /// The face's lines at the eyes and mouth: 0 none, 1 light (40s,
+    /// 50s), 2 deeper (60s, 70+).
+    pub fn face_lines(self) -> u8 {
+        match self {
+            Self::Twenties | Self::Thirties => 0,
+            Self::Forties | Self::Fifties => 1,
+            Self::Sixties | Self::Seventies => 2,
+        }
+    }
+
+    /// A softer jaw (from the 60s).
+    pub fn soft_jaw(self) -> bool {
+        self >= Self::Sixties
+    }
+
+    /// The body's middle, deeper with the years (z of the torso and
+    /// pelvis), and the limbs' girth (a little less muscle at 70+).
+    pub fn body(self) -> (f32, f32) {
+        match self {
+            Self::Twenties | Self::Thirties | Self::Forties => (1.0, 1.0),
+            Self::Fifties => (1.03, 1.0),
+            Self::Sixties => (1.05, 0.99),
+            Self::Seventies => (1.06, 0.97),
+        }
+    }
+
+    /// The idle stance's rounder shoulders (rad, forward; the workshop's
+    /// standing pose only – on the bike the pose comes from the IK).
+    pub fn idle_hunch(self) -> f32 {
+        match self {
+            Self::Sixties => 0.025,
+            Self::Seventies => 0.035,
+            _ => 0.0,
         }
     }
 }
@@ -83,63 +416,218 @@ pub const SKIN_TONES: [Rgb; 12] = [
     Rgb(0x3A2419),
 ];
 
-/// Face presets (generated shapes on the head).
-pub const FACES: [&str; 4] = ["Classic", "Beard", "Moustache", "Stubble"];
+/// Face shapes (the face's own presets; facial hair is its own choice
+/// since 4N N6).
+pub const FACES: [&str; 1] = ["Classic"];
 
-/// Hair styles (generated meshes; "Bald": none).
-pub const HAIR_STYLES: [&str; 6] = ["Short", "Buzz cut", "Long", "Ponytail", "Bun", "Bald"];
+/// The W4 faces, which held the facial hair (migrated, [`legacy_face`]).
+pub const LEGACY_FACES: [&str; 4] = ["Classic", "Beard", "Moustache", "Stubble"];
 
-/// Hair colours offered on the rows (any `#RRGGBB` from the console).
-pub const HAIR_COLOURS: [Rgb; 8] = [
-    Rgb(0x3B2A20),
-    Rgb(0x15110F),
-    Rgb(0x6B4426),
-    Rgb(0xA0703F),
-    Rgb(0xD8B27A),
-    Rgb(0xB3482A),
-    Rgb(0x9C9A96),
-    Rgb(0xE8E4DC),
+/// Hair styles (generated meshes; "Bald": none). Today's six keep their
+/// indices (wire and files), the 4N catalogue follows (N5); every style
+/// is drawn under every helmet (tails out through the helmet's back).
+pub const HAIR_STYLES: [&str; 21] = [
+    "Short",
+    "Buzz cut",
+    "Long",
+    "Ponytail",
+    "Bun",
+    "Bald",
+    "Shaved",
+    "Crew cut",
+    "Short textured",
+    "Side part",
+    "Short curly",
+    "Afro",
+    "Pixie",
+    "Mid-length",
+    "Long curly",
+    "Low ponytail",
+    "Single braid",
+    "Two braids",
+    "Low bun",
+    "Locs tied back",
+    "Cornrows",
 ];
+
+/// The hair style ids for files and the console (lower case, dashes).
+pub fn hair_id(i: u8) -> String {
+    HAIR_STYLES
+        .get(i as usize)
+        .unwrap_or(&HAIR_STYLES[0])
+        .to_lowercase()
+        .replace(' ', "-")
+}
+
+/// The hair style of an id or a name (or an index).
+pub fn hair_parse(s: &str) -> Option<u8> {
+    let k = s.trim().to_lowercase().replace([' ', '_'], "-");
+    (0..HAIR_STYLES.len() as u8)
+        .find(|i| hair_id(*i) == k)
+        .or_else(|| {
+            s.trim()
+                .parse::<u8>()
+                .ok()
+                .filter(|i| (*i as usize) < HAIR_STYLES.len())
+        })
+}
+
+/// The moustaches (4N N6).
+pub const MOUSTACHES: [&str; 6] = [
+    "None",
+    "Classic",
+    "Chevron",
+    "Handlebar",
+    "Horseshoe",
+    "Pencil",
+];
+
+/// The beards (4N N6).
+pub const BEARDS: [&str; 8] = [
+    "None",
+    "Stubble",
+    "Short stubble beard",
+    "Short boxed",
+    "Full",
+    "Goatee",
+    "Chin strap",
+    "Long",
+];
+
+/// An id of a list's entry ("Short boxed" → "short-boxed").
+pub fn list_id(list: &[&str], i: u8) -> String {
+    list.get(i as usize)
+        .unwrap_or(&list[0])
+        .to_lowercase()
+        .replace(' ', "-")
+}
+
+/// The entry of `list` named by an id, a name or an index.
+pub fn list_parse(list: &[&str], s: &str) -> Option<u8> {
+    let k = s.trim().to_lowercase().replace([' ', '_'], "-");
+    (0..list.len() as u8)
+        .find(|i| list_id(list, *i) == k)
+        .or_else(|| {
+            s.trim()
+                .parse::<u8>()
+                .ok()
+                .filter(|i| (*i as usize) < list.len())
+        })
+}
+
+/// The natural hair palette (4N N5): black, dark brown, brown, light
+/// brown, auburn, red, copper, strawberry blond, blond, platinum, grey,
+/// white. Any `#RRGGBB` is a custom colour (dyed hair).
+pub const HAIR_PALETTE: [(&str, Rgb); 12] = [
+    ("Black", Rgb(0x15110F)),
+    ("Dark brown", Rgb(0x3B2A20)),
+    ("Brown", Rgb(0x6B4426)),
+    ("Light brown", Rgb(0xA0703F)),
+    ("Auburn", Rgb(0x7E3A24)),
+    ("Red", Rgb(0xB3482A)),
+    ("Copper", Rgb(0xC0682E)),
+    ("Strawberry blond", Rgb(0xD39A6A)),
+    ("Blond", Rgb(0xD8B27A)),
+    ("Platinum", Rgb(0xE6DCC4)),
+    ("Grey", Rgb(0x9C9A96)),
+    ("White", Rgb(0xE8E4DC)),
+];
+
+/// The palette's colours (the rows; any `#RRGGBB` from the console).
+pub const HAIR_COLOURS: [Rgb; 12] = {
+    let mut out = [Rgb(0); 12];
+    let mut i = 0;
+    while i < 12 {
+        out[i] = HAIR_PALETTE[i].1;
+        i += 1;
+    }
+    out
+};
+
+/// The palette name of `c`, or `None` for a custom colour.
+pub fn hair_colour_name(c: Rgb) -> Option<&'static str> {
+    HAIR_PALETTE.iter().find(|(_, p)| *p == c).map(|(n, _)| *n)
+}
+
+/// What grey hair turns to (the grey share blends towards it).
+pub const GREY: Rgb = Rgb(0xC4C2BE);
 
 /// Glasses (free, spec 4C): none, the sport wrap, round frames.
 pub const GLASSES: [&str; 3] = ["None", "Sport wrap", "Round"];
+
+/// The W4 face `face` as (moustache, beard) (4N N11 migration: 1 beard
+/// → full beard, 2 moustache → classic, 3 stubble → stubble).
+pub fn legacy_face(face: u8) -> (u8, u8) {
+    match face {
+        1 => (0, 4),
+        2 => (1, 0),
+        3 => (0, 1),
+        _ => (0, 0),
+    }
+}
 
 /// The character part of a look.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Character {
     /// Body height (cm, from the rider profile).
     pub height_cm: u16,
-    pub build: BodyBuild,
+    pub base: BaseBody,
+    pub shape: BodyShape,
+    pub age: Age,
     /// Index into [`SKIN_TONES`].
     pub skin: u8,
-    /// Index into [`FACES`].
+    /// Index into [`FACES`] (the face's shape).
     pub face: u8,
     /// Index into [`HAIR_STYLES`].
     pub hair: u8,
     pub hair_colour: Rgb,
+    /// Greying with the age (*Keep my hair colour* turns it off).
+    pub greying: bool,
+    /// Index into [`MOUSTACHES`].
+    pub moustache: u8,
+    /// Index into [`BEARDS`].
+    pub beard: u8,
+    /// The moustache's and beard's own colour (`None`: the hair's,
+    /// greying included).
+    pub facial_hair_colour: Option<Rgb>,
     /// Index into [`GLASSES`].
     pub glasses: u8,
 }
 
 impl Default for Character {
-    /// The generated rider as shipped: 1.78 m, medium build, the fourth
-    /// skin tone, short dark-brown hair, sport glasses.
+    /// The generated rider as shipped: 1.78 m, body A, the normal shape,
+    /// in the 30s, the fourth skin tone, short dark-brown hair, no facial
+    /// hair, sport glasses.
     fn default() -> Self {
         Self {
             height_cm: DEFAULT_HEIGHT_CM,
-            build: BodyBuild::Medium,
+            base: BaseBody::A,
+            shape: BodyShape::Normal,
+            age: Age::Thirties,
             skin: 3,
             face: 0,
             hair: 0,
-            hair_colour: HAIR_COLOURS[0],
+            hair_colour: HAIR_PALETTE[1].1,
+            greying: true,
+            moustache: 0,
+            beard: 0,
+            facial_hair_colour: None,
             glasses: 1,
         }
     }
 }
 
+/// `c` moved `share` (0 … 1) towards `to` in sRGB.
+fn blend(c: Rgb, to: Rgb, share: f32) -> Rgb {
+    let a = c.channels();
+    let b = to.channels();
+    let mix = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * share).round() as u32;
+    Rgb((mix(a[0], b[0]) << 16) | (mix(a[1], b[1]) << 8) | mix(a[2], b[2]))
+}
+
 impl Character {
     /// Values from the network or a file, made valid: indices past the
-    /// palettes become the default's, the height is clamped to the drawn
+    /// lists become the default's, the height is clamped to the drawn
     /// range (0: the default height).
     pub fn validated(self) -> Self {
         let d = Self::default();
@@ -150,12 +638,28 @@ impl Character {
             } else {
                 self.height_cm.clamp(HEIGHT_RANGE_CM.0, HEIGHT_RANGE_CM.1)
             },
-            build: self.build,
+            base: self.base,
+            shape: self.shape,
+            age: self.age,
             skin: pick(self.skin, SKIN_TONES.len(), d.skin),
             face: pick(self.face, FACES.len(), d.face),
             hair: pick(self.hair, HAIR_STYLES.len(), d.hair),
             hair_colour: Rgb::from_wire(self.hair_colour.0),
+            greying: self.greying,
+            moustache: pick(self.moustache, MOUSTACHES.len(), d.moustache),
+            beard: pick(self.beard, BEARDS.len(), d.beard),
+            facial_hair_colour: self.facial_hair_colour.map(|c| Rgb::from_wire(c.0)),
             glasses: pick(self.glasses, GLASSES.len(), d.glasses),
+        }
+    }
+
+    /// The shape bounded to the band of the rider's weight (4N Q13; the
+    /// height is the character's).
+    pub fn bounded(self, weight_kg: f64) -> Self {
+        let marker = weight_shape(weight_kg, Some(f64::from(self.validated().height_cm)));
+        Self {
+            shape: self.shape.bounded(marker),
+            ..self
         }
     }
 
@@ -164,8 +668,77 @@ impl Character {
         f32::from(self.validated().height_cm) / f32::from(DEFAULT_HEIGHT_CM)
     }
 
+    /// The skin colour as drawn: the tone, a little less saturated in the
+    /// 60s and 70+ (4N Q12).
     pub fn skin_colour(&self) -> Rgb {
-        SKIN_TONES[self.validated().skin as usize]
+        let c = self.validated();
+        let tone = SKIN_TONES[c.skin as usize];
+        let fade = c.age.skin_fade();
+        if fade == 0.0 {
+            return tone;
+        }
+        let [r, g, b] = tone.channels();
+        let l = (u32::from(r) * 2126 + u32::from(g) * 7152 + u32::from(b) * 722) / 10_000;
+        let l = l.min(255);
+        blend(tone, Rgb((l << 16) | (l << 8) | l), fade)
+    }
+
+    /// The colour of the face's lines (4N Q12): the skin, darker.
+    pub fn skin_line_colour(&self) -> Rgb {
+        blend(self.skin_colour(), Rgb(0x2A1A12), 0.28)
+    }
+
+    /// A share in 0 … 1 that differs between riders with the same age
+    /// (from the look itself, so every app draws the same).
+    fn spread(&self) -> f32 {
+        let c = self.validated();
+        let mut h: u32 = 0x811C_9DC5;
+        for b in c.hair_colour.0.to_le_bytes().into_iter().chain([
+            c.hair,
+            c.skin,
+            c.base as u8,
+            c.shape as u8,
+            c.beard,
+        ]) {
+            h = (h ^ u32::from(b)).wrapping_mul(0x0100_0193);
+        }
+        (h % 1000) as f32 / 999.0
+    }
+
+    /// The hair's grey share (0 … 1): the age's, spread ±25 % per rider
+    /// (4N N3); 0 with *Keep my hair colour*.
+    pub fn grey_share(&self) -> f32 {
+        let c = self.validated();
+        if !c.greying {
+            return 0.0;
+        }
+        (c.age.grey() * (0.75 + 0.5 * c.spread())).min(1.0)
+    }
+
+    /// The hair colour as drawn: the chosen colour greyed by the age.
+    pub fn hair_shown(&self) -> Rgb {
+        let c = self.validated();
+        blend(c.hair_colour, GREY, c.grey_share())
+    }
+
+    /// The moustache's and beard's colour as drawn: their own colour, or
+    /// the hair's as drawn (greying included).
+    pub fn facial_hair_shown(&self) -> Rgb {
+        self.validated()
+            .facial_hair_colour
+            .unwrap_or_else(|| self.hair_shown())
+    }
+
+    /// The face of a W4 app (wire field `face` for older apps): the
+    /// facial hair as one of its four faces.
+    pub fn legacy_face(&self) -> u8 {
+        let c = self.validated();
+        match (c.moustache, c.beard) {
+            (_, 3 | 4 | 7) => 1,
+            (_, 1 | 2) => 3,
+            (m, _) if m > 0 => 2,
+            _ => 0,
+        }
     }
 
     /// The height of a rider profile (cm, `None`: the default).
@@ -179,15 +752,27 @@ impl Character {
         .validated()
     }
 
-    /// "1.78 m, medium build, skin 4 of 12, short hair #3B2A20, sport wrap".
+    /// "1.78 m, body A, normal, 30s, skin 4 of 12, short hair #3B2A20,
+    /// no facial hair, glasses: sport wrap".
     pub fn summary(&self) -> String {
         let c = self.validated();
+        let facial = match (c.moustache, c.beard) {
+            (0, 0) => "no facial hair".to_string(),
+            (m, 0) => format!("{} moustache", MOUSTACHES[m as usize].to_lowercase()),
+            (0, b) => format!("{} beard", BEARDS[b as usize].to_lowercase()),
+            (m, b) => format!(
+                "{} moustache, {} beard",
+                MOUSTACHES[m as usize].to_lowercase(),
+                BEARDS[b as usize].to_lowercase()
+            ),
+        };
         format!(
-            "{:.2} m, {} build, skin {} of 12, {} face, {} hair {}, glasses: {}",
+            "{:.2} m, {}, {}, {}, skin {} of 12, {} hair {}, {facial}, glasses: {}",
             f32::from(c.height_cm) / 100.0,
-            c.build.id(),
+            c.base.name().to_lowercase(),
+            c.shape.id(),
+            c.age.id(),
             c.skin + 1,
-            FACES[c.face as usize].to_lowercase(),
             HAIR_STYLES[c.hair as usize].to_lowercase(),
             c.hair_colour,
             GLASSES[c.glasses as usize].to_lowercase()
@@ -225,12 +810,200 @@ mod tests {
         assert_eq!(d.validated(), d);
         assert_eq!(d.scale(), 1.0);
         assert_eq!(d.skin_colour(), Rgb(0xD9A98C), "the shipped skin colour");
+        assert_eq!(d.hair_colour, Rgb(0x3B2A20), "the shipped hair colour");
+        assert_eq!(d.hair_shown(), d.hair_colour, "no grey in the 30s");
         for b in BodyBuild::ALL {
             assert_eq!(BodyBuild::parse(b.id()), Some(b));
             assert_eq!(BodyBuild::from_wire(b.wire()), b);
+            assert_eq!(BodyShape::from_build(b).nearest_build(), b);
         }
         assert_eq!(BodyBuild::from_wire(9), BodyBuild::Medium);
-        assert!(BodyBuild::Slim.girth() < 1.0 && BodyBuild::Strong.girth() > 1.0);
+        assert_eq!(HAIR_PALETTE.len(), 12, "the natural palette of N5");
+        assert_eq!(HAIR_COLOURS[11], Rgb(0xE8E4DC));
+        assert_eq!(hair_colour_name(Rgb(0xD8B27A)), Some("Blond"));
+        assert_eq!(hair_colour_name(Rgb(0x00FF88)), None);
+    }
+
+    #[test]
+    fn seven_shapes_and_three_base_bodies() {
+        // Q6 / Q7: the seven words, from very thin to very heavy.
+        let names: Vec<&str> = BodyShape::ALL.iter().map(|s| s.name()).collect();
+        assert_eq!(
+            names,
+            [
+                "Anorexia", "Skinny", "Slim", "Normal", "Ample", "Fat", "Obese"
+            ]
+        );
+        for w in BodyShape::ALL.windows(2) {
+            let (a, b) = (w[0].girth(), w[1].girth());
+            assert!(a.0 < b.0 && a.1 < b.1, "{w:?}");
+        }
+        assert_eq!(BodyShape::Normal.girth(), (1.0, 1.0));
+        for s in BodyShape::ALL {
+            assert_eq!(BodyShape::parse(s.id()), Some(s));
+            assert_eq!(BodyShape::from_wire(s.wire()), Some(s));
+        }
+        assert_eq!(BodyShape::parse("strong"), Some(BodyShape::Ample));
+        assert_eq!(BodyShape::from_wire(7), None);
+        // Q6b: base bodies, a second dimension.
+        for b in BaseBody::ALL {
+            assert_eq!(BaseBody::parse(b.id()), Some(b));
+            assert_eq!(BaseBody::parse(b.name()), Some(b));
+            assert_eq!(BaseBody::from_wire(b.wire()), b);
+        }
+        assert_eq!(BaseBody::from_wire(5), BaseBody::A);
+    }
+
+    /// The shape band (4N Q13): the marker from weight and height, the
+    /// band one step either side (Q23 proposal), a shape outside moved to
+    /// the nearest edge; a change of weight or height moves the band.
+    #[test]
+    fn the_shape_is_bounded_to_a_band_around_the_weight() {
+        assert_eq!(SHAPE_BAND_STEPS, 1, "Q23 open: built as proposed");
+        // BMI steps: 16, 18.5, 21, 25, 28, 32.
+        assert_eq!(BodyShape::from_bmi(14.0), BodyShape::Anorexia);
+        assert_eq!(BodyShape::from_bmi(17.0), BodyShape::Skinny);
+        assert_eq!(BodyShape::from_bmi(20.0), BodyShape::Slim);
+        assert_eq!(BodyShape::from_bmi(22.0), BodyShape::Normal);
+        assert_eq!(BodyShape::from_bmi(27.0), BodyShape::Ample);
+        assert_eq!(BodyShape::from_bmi(30.0), BodyShape::Fat);
+        assert_eq!(BodyShape::from_bmi(40.0), BodyShape::Obese);
+        assert!((bmi(75.0, 178.0) - 23.67).abs() < 0.01);
+        // The height counts (Q13: "take users height into consideration").
+        assert_eq!(weight_shape(75.0, Some(178.0)), BodyShape::Normal);
+        assert_eq!(weight_shape(75.0, Some(160.0)), BodyShape::Fat);
+        assert_eq!(weight_shape(75.0, Some(200.0)), BodyShape::Slim);
+        assert_eq!(weight_shape(75.0, None), BodyShape::Normal);
+        // Three shapes open in the middle, two at the ends.
+        assert_eq!(
+            shape_band(BodyShape::Normal),
+            (BodyShape::Slim, BodyShape::Ample)
+        );
+        assert_eq!(
+            shape_band(BodyShape::Anorexia),
+            (BodyShape::Anorexia, BodyShape::Skinny)
+        );
+        assert_eq!(
+            shape_band(BodyShape::Obese),
+            (BodyShape::Fat, BodyShape::Obese)
+        );
+        assert_eq!(
+            BodyShape::Obese.bounded(BodyShape::Normal),
+            BodyShape::Ample
+        );
+        assert_eq!(
+            BodyShape::Anorexia.bounded(BodyShape::Normal),
+            BodyShape::Slim
+        );
+        assert!(BodyShape::Ample.in_band(BodyShape::Normal));
+        assert!(!BodyShape::Fat.in_band(BodyShape::Normal));
+        let c = Character {
+            shape: BodyShape::Obese,
+            ..Character::default()
+        };
+        assert_eq!(c.bounded(75.0).shape, BodyShape::Ample);
+        assert_eq!(c.bounded(120.0).shape, BodyShape::Obese);
+        let short = Character {
+            height_cm: 160,
+            ..c
+        };
+        assert_eq!(short.bounded(75.0).shape, BodyShape::Obese, "Fat ± 1");
+    }
+
+    /// The appearance age (4N Q12): face, body, skin and hair; greying per
+    /// age and per rider, off with *Keep my hair colour*.
+    #[test]
+    fn the_age_changes_face_body_skin_and_hair() {
+        for a in Age::ALL {
+            assert_eq!(Age::parse(a.id()), Some(a));
+            assert_eq!(Age::from_wire(a.wire()), a);
+        }
+        assert_eq!(Age::parse("70s"), Some(Age::Seventies));
+        let at = |age: Age| Character {
+            age,
+            hair_colour: HAIR_PALETTE[0].1,
+            ..Character::default()
+        };
+        // Hair: no grey before the 40s, more with every step.
+        assert_eq!(at(Age::Twenties).grey_share(), 0.0);
+        assert_eq!(at(Age::Thirties).hair_shown(), HAIR_PALETTE[0].1);
+        let shares: Vec<f32> = Age::ALL.iter().map(|a| at(*a).grey_share()).collect();
+        for w in shares.windows(2) {
+            assert!(w[0] <= w[1], "{shares:?}");
+        }
+        assert!(shares[5] > 0.5, "{shares:?}");
+        let old = at(Age::Seventies);
+        assert_ne!(old.hair_shown(), old.hair_colour);
+        let kept = Character {
+            greying: false,
+            ..old
+        };
+        assert_eq!(kept.hair_shown(), kept.hair_colour, "keep my hair colour");
+        // The spread differs between riders, the same for the same look.
+        let other = Character {
+            hair: 3,
+            ..at(Age::Fifties)
+        };
+        assert_eq!(at(Age::Fifties).grey_share(), at(Age::Fifties).grey_share());
+        assert_ne!(at(Age::Fifties).grey_share(), other.grey_share());
+        // Facial hair follows the hair (greyed) or its own colour.
+        let bearded = Character { beard: 4, ..old };
+        assert_eq!(bearded.facial_hair_shown(), bearded.hair_shown());
+        let own = Character {
+            facial_hair_colour: Some(Rgb(0x6B4426)),
+            ..bearded
+        };
+        assert_eq!(own.facial_hair_shown(), Rgb(0x6B4426));
+        // Skin: less saturated at 70+, unchanged before the 60s.
+        assert_eq!(
+            at(Age::Fifties).skin_colour(),
+            at(Age::Twenties).skin_colour()
+        );
+        let sat = |c: Rgb| {
+            let [r, g, b] = c.channels();
+            i32::from(r.max(g).max(b)) - i32::from(r.min(g).min(b))
+        };
+        assert!(sat(old.skin_colour()) < sat(at(Age::Twenties).skin_colour()));
+        // Face and body.
+        assert_eq!(Age::Thirties.face_lines(), 0);
+        assert_eq!(Age::Forties.face_lines(), 1);
+        assert_eq!(Age::Seventies.face_lines(), 2);
+        assert!(Age::Sixties.soft_jaw() && !Age::Fifties.soft_jaw());
+        assert!(Age::Seventies.body().0 > 1.0 && Age::Thirties.body() == (1.0, 1.0));
+        assert!(Age::Seventies.idle_hunch() > 0.0 && Age::Fifties.idle_hunch() == 0.0);
+    }
+
+    #[test]
+    fn facial_hair_and_hair_catalogue() {
+        assert_eq!(HAIR_STYLES.len(), 21);
+        // Today's six keep their indices.
+        assert_eq!(
+            &HAIR_STYLES[..6],
+            &["Short", "Buzz cut", "Long", "Ponytail", "Bun", "Bald"]
+        );
+        for i in 0..HAIR_STYLES.len() as u8 {
+            assert_eq!(hair_parse(&hair_id(i)), Some(i));
+        }
+        assert_eq!(hair_parse("Single braid"), Some(16));
+        assert_eq!(hair_parse("3"), Some(3));
+        assert_eq!(hair_parse("mohawk"), None);
+        assert_eq!(list_parse(&BEARDS, "short-boxed"), Some(3));
+        assert_eq!(list_parse(&MOUSTACHES, "Handlebar"), Some(3));
+        assert_eq!(list_id(&BEARDS, 6), "chin-strap");
+        // The W4 faces split into face 0 and facial hair (N11).
+        assert_eq!(legacy_face(0), (0, 0));
+        assert_eq!(legacy_face(1), (0, 4));
+        assert_eq!(legacy_face(2), (1, 0));
+        assert_eq!(legacy_face(3), (0, 1));
+        for f in 0..4 {
+            let (moustache, beard) = legacy_face(f);
+            let c = Character {
+                moustache,
+                beard,
+                ..Character::default()
+            };
+            assert_eq!(c.legacy_face(), f, "round trip of face {f}");
+        }
     }
 
     #[test]
@@ -239,19 +1012,23 @@ mod tests {
             height_cm: 400,
             skin: 99,
             face: 40,
-            hair: 7,
+            hair: 70,
             hair_colour: Rgb(0xFF00_1234),
             glasses: 9,
+            moustache: 30,
+            beard: 30,
+            facial_hair_colour: Some(Rgb(0xFF00_0001)),
             ..Default::default()
         }
         .validated();
         let d = Character::default();
         assert_eq!(c.height_cm, HEIGHT_RANGE_CM.1);
         assert_eq!(
-            (c.skin, c.face, c.hair, c.glasses),
-            (d.skin, d.face, d.hair, d.glasses)
+            (c.skin, c.face, c.hair, c.glasses, c.moustache, c.beard),
+            (d.skin, d.face, d.hair, d.glasses, 0, 0)
         );
         assert_eq!(c.hair_colour, Rgb(0x001234));
+        assert_eq!(c.facial_hair_colour, Some(Rgb(1)));
         assert_eq!(
             Character { height_cm: 0, ..d }.validated().height_cm,
             DEFAULT_HEIGHT_CM
@@ -260,7 +1037,7 @@ mod tests {
         assert_eq!(d.with_height(None).height_cm, DEFAULT_HEIGHT_CM);
         assert_eq!(d.with_height(Some(120.0)).height_cm, HEIGHT_RANGE_CM.0);
         assert!(
-            d.summary().starts_with("1.78 m, medium build"),
+            d.summary().starts_with("1.78 m, body a, normal, 30s"),
             "{}",
             d.summary()
         );

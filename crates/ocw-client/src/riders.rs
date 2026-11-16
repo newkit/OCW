@@ -47,8 +47,8 @@
 use std::path::Path;
 
 use ocw_core::{
-    BodyBuild, Character, Finish, KitDesign, KitPattern, MAX_RIDER_WEIGHT_KG, MIN_RIDER_WEIGHT_KG,
-    ProfileId, Rgb, RiderLook, RiderProfile,
+    BaseBody, BodyBuild, BodyShape, Character, Finish, KitDesign, KitPattern, MAX_RIDER_WEIGHT_KG,
+    MIN_RIDER_WEIGHT_KG, ProfileId, Rgb, RiderLook, RiderProfile,
 };
 use serde::{Deserialize, Serialize};
 
@@ -94,6 +94,29 @@ pub struct Rider {
     pub hair_color: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glasses: Option<u8>,
+    /// The refined character (spec §14 Phase 4, 4N N11): version 2 of
+    /// the character keys, readable ids. `body_build`, `face` and `hair`
+    /// above stay written for older apps (the nearest build, the W4 face
+    /// of the facial hair, the style's index); a file without
+    /// `character_version` is version 1 and is migrated on reading.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub character_version: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub age: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hair_style: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub greying: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moustache: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beard: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub facial_hair_color: Option<String>,
     /// The kit design (spec §14 Phase 8 T6; `None` = the plain kit's).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kit_second: Option<String>,
@@ -136,6 +159,15 @@ impl Default for Rider {
             hair: None,
             hair_color: None,
             glasses: None,
+            character_version: None,
+            body: None,
+            shape: None,
+            age: None,
+            hair_style: None,
+            greying: None,
+            moustache: None,
+            beard: None,
+            facial_hair_color: None,
             kit_second: None,
             kit_third: None,
             race_number: None,
@@ -220,36 +252,108 @@ impl Rider {
         self.shoe_finish = finish(d.shoe_finish);
     }
 
-    /// The character (spec 4C): the height from the profile, the rest
-    /// from the character keys (unset: the default's).
+    /// Whether the character keys are version 2 (4N N11).
+    fn character_v2(&self) -> bool {
+        self.character_version.is_some_and(|v| v >= 2)
+    }
+
+    /// The character (spec 4C, 4N): the height from the profile, the rest
+    /// from the character keys (unset: the default's); a version-1 file
+    /// is migrated (N11: the build to the shape, the face's facial hair
+    /// to moustache and beard). The shape is bounded to the band of the
+    /// profile's weight and height (Q13: a change of weight or height
+    /// moves the band; a shape outside is moved to its nearest edge).
     pub fn character(&self) -> Character {
+        use ocw_core::character::{self as ch, Age, BEARDS, MOUSTACHES};
         let d = Character::default();
+        let v2 = self.character_v2();
+        let shape = self
+            .shape
+            .as_deref()
+            .and_then(BodyShape::parse)
+            .or_else(|| {
+                self.body_build
+                    .as_deref()
+                    .and_then(BodyBuild::parse)
+                    .map(BodyShape::from_build)
+            })
+            .unwrap_or(d.shape);
+        let (moustache, beard) = if v2 {
+            let pick = |v: &Option<String>, list: &[&str]| {
+                v.as_deref()
+                    .and_then(|v| ch::list_parse(list, v))
+                    .unwrap_or(0)
+            };
+            (
+                pick(&self.moustache, &MOUSTACHES),
+                pick(&self.beard, &BEARDS),
+            )
+        } else {
+            ch::legacy_face(self.face.unwrap_or(0))
+        };
         Character {
             height_cm: d.height_cm,
-            build: self
-                .body_build
+            base: self
+                .body
                 .as_deref()
-                .and_then(BodyBuild::parse)
-                .unwrap_or(d.build),
+                .and_then(BaseBody::parse)
+                .unwrap_or(d.base),
+            shape,
+            age: self.age.as_deref().and_then(Age::parse).unwrap_or(d.age),
             skin: self.skin.unwrap_or(d.skin),
-            face: self.face.unwrap_or(d.face),
-            hair: self.hair.unwrap_or(d.hair),
+            face: if v2 {
+                self.face.unwrap_or(d.face)
+            } else {
+                d.face
+            },
+            hair: self
+                .hair_style
+                .as_deref()
+                .and_then(ch::hair_parse)
+                .or(self.hair)
+                .unwrap_or(d.hair),
             hair_colour: self
                 .hair_color
                 .as_deref()
                 .and_then(Rgb::parse)
                 .unwrap_or(d.hair_colour),
+            greying: self.greying.unwrap_or(d.greying),
+            moustache,
+            beard,
+            facial_hair_colour: self.facial_hair_color.as_deref().and_then(Rgb::parse),
             glasses: self.glasses.unwrap_or(d.glasses),
         }
         .with_height(self.height_cm)
+        .bounded(self.weight_kg)
     }
 
-    /// Sets the character's free choices (the height stays the profile's).
+    /// The *Match my weight* shape of this profile (4N Q13).
+    pub fn weight_shape(&self) -> BodyShape {
+        ocw_core::character::weight_shape(self.weight_kg, self.height_cm)
+    }
+
+    /// Sets the character's free choices (the height stays the profile's;
+    /// the shape is bounded to the weight's band). Writes version 2 of the
+    /// keys, and the W4 keys for older apps.
     pub fn set_character(&mut self, c: Character) {
-        let c = c.validated();
-        self.body_build = Some(c.build.id().into());
+        use ocw_core::character::{self as ch, BEARDS, MOUSTACHES};
+        let c = c
+            .validated()
+            .with_height(self.height_cm)
+            .bounded(self.weight_kg);
+        self.character_version = Some(2);
+        self.body = Some(c.base.id().into());
+        self.shape = Some(c.shape.id().into());
+        self.age = Some(c.age.id().into());
+        self.hair_style = Some(ch::hair_id(c.hair));
+        self.greying = (!c.greying).then_some(false);
+        self.moustache = Some(ch::list_id(&MOUSTACHES, c.moustache));
+        self.beard = Some(ch::list_id(&BEARDS, c.beard));
+        self.facial_hair_color = c.facial_hair_colour.map(|c| c.to_string());
+        // For older apps (N11).
+        self.body_build = Some(c.shape.nearest_build().id().into());
         self.skin = Some(c.skin);
-        self.face = Some(c.face);
+        self.face = Some(c.legacy_face());
         self.hair = Some(c.hair);
         self.hair_color = Some(c.hair_colour.to_string());
         self.glasses = Some(c.glasses);
@@ -354,6 +458,30 @@ impl Rider {
             BodyBuild::parse(v).map(|b| b.id().into())
         });
         check(&mut self.hair_color, "hair colour", &colour);
+        // The 4N keys (N11): unknown values are warned about and take the
+        // default.
+        {
+            use ocw_core::character::{self as ch, Age, BEARDS, MOUSTACHES};
+            check(&mut self.facial_hair_color, "facial hair colour", &colour);
+            check(&mut self.body, "body", &|v| {
+                BaseBody::parse(v).map(|b| b.id().into())
+            });
+            check(&mut self.shape, "body shape", &|v| {
+                BodyShape::parse(v).map(|b| b.id().into())
+            });
+            check(&mut self.age, "age", &|v| {
+                Age::parse(v).map(|a| a.id().into())
+            });
+            check(&mut self.hair_style, "hair style", &|v| {
+                ch::hair_parse(v).map(ch::hair_id)
+            });
+            check(&mut self.moustache, "moustache", &|v| {
+                ch::list_parse(&MOUSTACHES, v).map(|i| ch::list_id(&MOUSTACHES, i))
+            });
+            check(&mut self.beard, "beard", &|v| {
+                ch::list_parse(&BEARDS, v).map(|i| ch::list_id(&BEARDS, i))
+            });
+        }
         for (field, what) in [
             (&mut self.kit_second, "second kit colour"),
             (&mut self.kit_third, "third kit colour"),
@@ -377,10 +505,22 @@ impl Rider {
         }
         let c = self.character();
         let v = c.validated();
+        // A version-1 face is the W4 face (0 … 3: the facial hair).
+        let face_ok = if self.character_v2() {
+            v.face
+        } else {
+            self.face
+                .filter(|f| (*f as usize) < ocw_core::character::LEGACY_FACES.len())
+                .unwrap_or(0)
+        };
+        let hair_ok = self
+            .hair
+            .filter(|h| (*h as usize) < HAIR_STYLES_LEN)
+            .unwrap_or(v.hair);
         for (what, field, ok) in [
             ("skin", &mut self.skin, v.skin),
-            ("face", &mut self.face, v.face),
-            ("hair", &mut self.hair, v.hair),
+            ("face", &mut self.face, face_ok),
+            ("hair", &mut self.hair, hair_ok),
             ("glasses", &mut self.glasses, v.glasses),
         ] {
             if let Some(x) = *field
@@ -393,6 +533,8 @@ impl Rider {
         warnings
     }
 }
+
+const HAIR_STYLES_LEN: usize = ocw_core::character::HAIR_STYLES.len();
 
 /// A number without a trailing ".0".
 fn fmt_num(v: f64) -> String {
@@ -557,8 +699,13 @@ impl Riders {
         !self.riders.is_empty() && self.active().name.eq_ignore_ascii_case(name)
     }
 
-    /// Adds a rider; the first one added becomes the active one.
+    /// Adds a rider; the first one added becomes the active one. A new
+    /// name follows the rules of `ocw_core::name` (spec §14 Phase 4, 4N
+    /// N1: 2–20 characters of any script, no invisible characters, not
+    /// reserved), normalized.
     pub fn add(&mut self, rider: Rider) -> Result<(), String> {
+        let mut rider = rider;
+        rider.name = ocw_core::name::check(&rider.name).map_err(|e| e.to_string())?;
         rider.validate()?;
         if self.find(&rider.name).is_some() {
             return Err(format!("there is already a rider {:?}", rider.name));
@@ -575,10 +722,12 @@ impl Riders {
         let i = self.find(name).ok_or_else(|| no_rider(name))?;
         let mut r = self.riders[i].clone();
         if let Some(n) = &edit.name {
-            if self.find(n).is_some_and(|j| j != i) {
+            // A new name follows the 4N rules (old names still load).
+            let n = ocw_core::name::check(n).map_err(|e| e.to_string())?;
+            if self.find(&n).is_some_and(|j| j != i) {
                 return Err(format!("there is already a rider {n:?}"));
             }
-            r.name = n.clone();
+            r.name = n;
         }
         if let Some(w) = edit.weight_kg {
             r.weight_kg = w;
@@ -633,17 +782,23 @@ impl Riders {
         Ok(self.riders[i].clone())
     }
 
-    /// A name for a new rider that is not taken: "Rider 2", "Rider 3", ...
+    /// A name for a new rider that is not taken: a made-up name from the
+    /// dice (spec §14 Phase 4, 4N N1: "Swift Climber"; "Rider N" is the
+    /// servers' reserved fallback).
     pub fn new_name(&self) -> String {
-        (1..)
-            .map(|n| {
-                if n == 1 {
-                    "Rider".to_string()
-                } else {
-                    format!("Rider {n}")
-                }
-            })
+        (self.riders.len() as u64..)
+            .map(ocw_core::name::dice)
             .find(|n| self.find(n).is_none())
+            .expect("a free name")
+    }
+
+    /// The dice's proposal for renaming rider `i` (4N N1): free, and not
+    /// the name *Add a rider* proposes.
+    pub fn dice_name(&self, i: usize) -> String {
+        let add = self.new_name();
+        (1000 + 7 * i as u64..)
+            .map(ocw_core::name::dice)
+            .find(|n| self.find(n).is_none() && *n != add)
             .expect("a free name")
     }
 }
@@ -908,10 +1063,42 @@ ftp_w = 5000
     #[test]
     fn new_names_are_free() {
         let mut r = Riders::default();
-        assert_eq!(r.new_name(), "Rider");
-        r.add(rider("Rider", 70.0)).unwrap();
-        r.add(rider("Rider 2", 70.0)).unwrap();
-        assert_eq!(r.new_name(), "Rider 3");
+        let first = r.new_name();
+        assert!(ocw_core::name::check(&first).is_ok(), "{first}");
+        r.add(rider(&first, 70.0)).unwrap();
+        let second = r.new_name();
+        assert_ne!(first, second);
+        r.add(rider(&second, 70.0)).unwrap();
+        assert!(r.find(&r.new_name()).is_none());
+    }
+
+    /// New names follow the 4N rules (spec §14 Phase 4, N1), normalized;
+    /// files with old names (the 32-character rule) still load.
+    #[test]
+    fn new_names_follow_the_4n_rules() {
+        let mut r = Riders::default();
+        // "Rider N" is the servers' fallback, reserved.
+        assert!(r.add(rider("Rider", 70.0)).is_err());
+        assert!(r.add(rider("Rider 2", 70.0)).is_err());
+        assert!(r.add(rider("Ada \u{1F6B4}", 70.0)).is_err());
+        assert!(r.add(rider("An overly long rider name", 70.0)).is_err());
+        r.add(rider("  Zoe\u{0308}  Fahrer ", 70.0)).unwrap();
+        assert_eq!(r.riders[0].name, "Zoë Fahrer");
+        r.add(rider("李小龍", 61.0)).unwrap();
+        let rename = |to: &str| RiderEdit {
+            name: Some(to.into()),
+            ..RiderEdit::default()
+        };
+        assert!(r.edit("Zoë Fahrer", rename("Echo")).is_err());
+        assert!(r.edit("Zoë Fahrer", rename("李小龍")).is_err());
+        assert_eq!(
+            r.edit("Zoë Fahrer", rename("Ada Rider")).unwrap().name,
+            "Ada Rider"
+        );
+        let old = "[[rider]]\nname = \"Rider\"\nweight_kg = 70.0\n\
+                   [[rider]]\nname = \"A rider with a long old name\"\nweight_kg = 71.0\n";
+        let (loaded, warnings) = Riders::parse(old).unwrap();
+        assert_eq!(loaded.riders.len(), 2, "{warnings:?}");
     }
 
     #[test]

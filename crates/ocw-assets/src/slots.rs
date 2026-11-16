@@ -19,8 +19,13 @@ pub enum Tint {
     Accent,
     /// The character's skin tone (spec §14 Phase 4, 4C).
     Skin,
-    /// The character's hair colour (hair, beards).
+    /// The character's hair colour as drawn (greyed by the age, spec
+    /// §14 Phase 4, 4N).
     Hair,
+    /// The moustache's and beard's colour (4N N6: the hair's, or own).
+    FacialHair,
+    /// The face's lines with the age (4N N3): the skin, darker.
+    SkinLine,
     /// The kit colours of the jersey designer (spec §14 Phase 8 T6; free):
     /// `KitDesign::{shorts, socks, shoes, gloves}`, the asset's colour
     /// when not chosen.
@@ -52,7 +57,7 @@ const fn slot(name: &'static str, tint: Tint, color: u32, metallic: f32, roughne
 }
 
 /// All slots.
-pub const ALL: [Slot; 33] = [
+pub const ALL: [Slot; 35] = [
     slot("frame", Tint::Frame, 0x1E1E22, 0.1, 0.32),
     slot("tyre", Tint::Fixed, 0x1A1A1A, 0.0, 0.85),
     slot("tyre_wall", Tint::Fixed, 0x8A6A45, 0.0, 0.8),
@@ -72,6 +77,9 @@ pub const ALL: [Slot; 33] = [
     slot("sock", Tint::Socks, 0xF4F4F0, 0.0, 0.8),
     slot("lens", Tint::Fixed, 0x101418, 0.6, 0.15),
     slot("hair", Tint::Hair, 0x3B2A20, 0.0, 0.9),
+    // The character of 4N: moustache and beard, the face's lines.
+    slot("facial_hair", Tint::FacialHair, 0x3B2A20, 0.0, 0.95),
+    slot("skin_line", Tint::SkinLine, 0xA87C62, 0.0, 0.8),
     // The kit's variants (spec 4C): aero socks, race shoes, overshoes,
     // gloves and the padded back of gel gloves.
     slot("sock_aero", Tint::Socks, 0x1E1F22, 0.0, 0.75),
@@ -130,6 +138,8 @@ mod tests {
             Tint::Accent,
             Tint::Skin,
             Tint::Hair,
+            Tint::FacialHair,
+            Tint::SkinLine,
             Tint::Shorts,
             Tint::Socks,
             Tint::Shoes,

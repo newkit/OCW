@@ -137,6 +137,13 @@ prost = "0.14"
 prost-build = "0.14"
 protox = "0.10"
 clap = { version = "4.6", features = ["derive"] }
+# Rider names (spec §14 Phase 4, 4N N1): NFC, general categories and
+# grapheme clusters for every script – ICU4X (Unicode-3.0, already in the
+# tree through url / idna) and unicode-segmentation (MIT OR Apache-2.0,
+# already Bevy's); pure Rust, wasm-safe.
+icu_normalizer = { version = "2.4", default-features = false, features = ["compiled_data"] }
+icu_properties = { version = "2.4", default-features = false, features = ["compiled_data"] }
+unicode-segmentation = "1.13"
 ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
 # Screenshots (spec §11.4): JPEG/PNG encoding with metadata, the same image
 # crate Bevy links (MIT OR Apache-2.0); chrono (MIT OR Apache-2.0, already in
