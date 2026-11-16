@@ -474,7 +474,12 @@ def main():
         # The render distance (spec §14 Phase 10, 10G): dynamic by default
         # (Q8), 60 fps in the browser (Q9); the distance it chose.
         cdp.eval("window.ocw && window.ocw.console('view')")
-        cdp.pump(1.0)
+        end = time.time() + 3.0
+        while time.time() < end:
+            cdp.pump(0.2)
+            if any(e["method"] == "Runtime.consoleAPICalled" and "view:" in console_text(e)
+                   for e in cdp.events[mark:]):
+                break
         said = [console_text(e) for e in cdp.events[mark:] if e["method"] == "Runtime.consoleAPICalled"]
         gpu_lines = [t for t in said if "gpu:" in t or "quality" in t]
         lines.extend(f"[gpu] {t}" for t in gpu_lines)

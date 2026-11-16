@@ -344,7 +344,7 @@ impl Default for Params {
             gain_ratio: 1.1,
             no_gain_share: 0.25,
             no_gain_hold_s: 300.0,
-            worse_ratio: 0.8,
+            worse_ratio: 0.6,
         }
     }
 }
@@ -599,7 +599,7 @@ impl Controller {
                 // the cutting began, and leave it there.
                 self.distance = anchor.0.min(ceiling);
                 self.anchor = None;
-                self.no_gain = Some((p.no_gain_hold_s, anchor.1));
+                self.no_gain = Some((p.no_gain_hold_s, anchor.1.min(fps)));
                 return self.changed(from, Why::NoGain { fps });
             }
             match self.before_up.filter(|_| self.since_up_s <= p.failed_up_s) {
@@ -983,7 +983,7 @@ mod tests {
         assert!(run.steps.len() <= 8, "{:?}", run.steps);
         assert_eq!(c.distance(), None);
         assert_eq!(run.changes_between(40.0, 300.0), 0, "{:?}", run.steps);
-        // Much worse later (25 fps, below 80 % of the 80): it tries again.
+        // Much worse later (25 fps, below 60 % of the 80): it tries again.
         let worse = |_: f64| Gpu {
             ms: Box::new(|_| 40.0),
             vsync_hz: None,
