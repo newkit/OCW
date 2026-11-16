@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.84 – November 2026
+Version 3.85 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.85 | **A touch does not switch autodrive off: in autodrive it moves the line, only the autodrive button ends it** (decision from the build dashboard, 2026-11-16; §3.2.3 Q3, as proposed) |
 | 3.84 | **Touch lean steering works like the keys: the lean stays after the finger lifts, the other side straightens it** (decision from the build dashboard, 2026-11-16; §3.2.3 Q2, as proposed) |
 | 3.83 | **Touch steering: touch-down steers at once like a held arrow key, a tap is topped up to one step (line 0.5 m, lean 0.1 rad)** (decision from the build dashboard, 2026-11-16; §3.2.3 Q1, as proposed) |
 | 3.82 | **Trainer: a steady road gives a steady load** (bug report by the user 2026-11-16: "while the road was constantly at 10 % inclination, the resistance varied a bit"; §14 Phase 9 S6, §5.3): the gradient sent was steady, but the weather's gusts reached the trainer in 0.5 m/s steps (the default weather 47 wind writes in 5 min, the load varying 2.2 %) and the thinning air of a climb re-sent a Wahoo KICKR's whole SIM mode. Now the headwind sent is smoothed over 15 s with a ¾-step hysteresis and the air's coefficient re-sent only from a 2 % change: 0.9 % and 2 wind writes, SIM mode once; the ride's physics keeps the gusts. Test `a_steady_climb_gives_the_trainer_a_steady_load` (an exact 10 % climb in still air, the default weather and windy) |
@@ -1217,7 +1218,7 @@ TS1 – TS3 are what the user asked for; TS4 makes it usable on phones.
 
 - **Q1 – Tap vs hold: decided (2026-11-16, dashboard): as proposed** – touch-down steers at once like a held arrow key, and a tap (< 250 ms) is topped up to one step (line 0.5 m, lean 0.1 rad).
 - **Q2 – Lean steering on touch: decided (2026-11-16, dashboard): as proposed** – as with the keys: the lean stays after the finger lifts and is straightened with the other side (it does not spring back to upright like the stick).
-- **Q3 – Does a touch switch autodrive off?** Proposal: no. As with the arrow keys, in autodrive a touch moves the line, and only the autodrive button switches it off.
+- **Q3 – Does a touch switch autodrive off? Decided (2026-11-16, dashboard): no, as proposed** – as with the arrow keys, in autodrive a touch moves the line, and only the autodrive button switches it off.
 - **Q4 – Both sides at once:** proposal: nothing (as ← + →). Alternatives: straighten (line back to the middle in autodrive, upright in manual), brake, or a U-turn after holding both for 1 s.
 - **Q5 – Junction choice by the zones:** proposal: in autodrive at an active junction the halves choose the exit (one exit per touch, as the arrows), and with manual steering the fan's arrows are tapped. Or should exits be chosen only by tapping the fan's arrows, so the halves always steer?
 - **Q6 – Desktop app too:** proposal: yes (parity rule), on Windows / Linux touch screens with the same *auto* rule (hints after the first touch). The kiosk stays untested on touch (Phase 4 Q5). Or browser only for now?
