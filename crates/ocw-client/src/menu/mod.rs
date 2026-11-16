@@ -15,6 +15,7 @@
 //! The Bevy glue (input → model → `ocw_render::menu::MenuView`) is
 //! `ocw_ui::menu`, the same for both apps.
 
+pub mod calendar;
 pub mod controls;
 pub mod devices;
 pub mod history;
@@ -49,6 +50,10 @@ pub fn status_line(view: &RideView) -> String {
 pub fn hint(page: Page, list_pages: usize, depth: usize) -> String {
     let back = if depth > 1 { "back" } else { "close" };
     match page {
+        // The calendar (spec §14 Phase 9, S9a): day, week, month.
+        Page::Sub(pages::Page::Calendar(_)) => {
+            return format!("←→ day  ↑↓ week  PgUp/PgDn, LB/RB month  Enter/A set  Esc/B {back}");
+        }
         // The preset grid (spec §14 Phase 9, S5): the arrows move.
         Page::Sub(p) if p.grid_columns().is_some() => {
             return format!("Arrows move   Enter/A choose   Esc/B {back}");

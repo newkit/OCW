@@ -91,6 +91,49 @@ pub struct MenuView {
     /// A bar chart between the text and the items (the training history's
     /// power curve, spec §14 Phase 7).
     pub chart: Option<MenuChart>,
+    /// Draw the items as a month calendar (spec §14 Phase 9 S9a): items
+    /// 0–41 the days, then the buttons ([`MenuCalendar`]).
+    pub calendar: Option<MenuCalendar>,
+}
+
+/// A month view (World → Time → Calendar): the buttons over the grid (items
+/// [`CALENDAR_DAYS`] … `+ 6`), the weekdays, six weeks of days (items 0 –
+/// 41), the time stepper and Back under it, the legend of the bands.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct MenuCalendar {
+    /// "November 2026".
+    pub title: String,
+    /// "Mon" … "Sun", in the grid's order.
+    pub weekdays: Vec<String>,
+    pub days: Vec<CalendarDay>,
+    /// The labels of the items after the days: seven buttons over the grid,
+    /// then the time stepper and Back.
+    pub controls: Vec<String>,
+    /// The bands' colours and names (sRGB 0–1), then the moon's glyphs.
+    pub legend: Vec<(String, [f32; 3])>,
+    pub moon_legend: String,
+}
+
+/// Days of a [`MenuCalendar`] (six weeks).
+pub const CALENDAR_DAYS: usize = 42;
+/// Buttons over the grid.
+pub const CALENDAR_BUTTONS: usize = 7;
+
+/// One day of a [`MenuCalendar`].
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct CalendarDay {
+    /// "16".
+    pub label: String,
+    /// The look of the day at the rider's place and altitude (sRGB 0–1).
+    pub band: Option<[f32; 3]>,
+    /// The moon's main phase that day ("●", "○", "◑", "◐").
+    pub moon: Option<String>,
+    /// A day of the neighbouring months (drawn faint).
+    pub outside: bool,
+    /// Today (the real date at the place).
+    pub today: bool,
+    /// The world clock's date (a frame, as a grid's current choice).
+    pub selected: bool,
 }
 
 /// A bar chart of a menu page: one bar per value, an optional mark per bar
@@ -168,6 +211,35 @@ pub enum MenuPointerEvent {
     Back,
     /// The ‹ (−1) or › (+1) arrow of value row `i` was clicked or tapped.
     Step(usize, i8),
+    /// A horizontal swipe over the menu (touch): +1 to the left (the next
+    /// month of the calendar), −1 to the right.
+    Swipe(i8),
+}
+
+/// A finished touch moved by (`dx`, `dy`) px in a window `width` px wide:
+/// a swipe if it went mostly sideways over 8 % of the width.
+pub fn swipe_dir(dx: f32, dy: f32, width: f32) -> Option<i8> {
+    (dx.abs() > 0.08 * width && dx.abs() > 2.0 * dy.abs()).then_some(if dx < 0.0 { 1 } else { -1 })
+}
+
+/// Swipes over the open menu (the calendar's months, spec §14 Phase 9 S9a).
+fn detect_swipe(
+    touches: Option<Res<Touches>>,
+    view: Res<MenuView>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    mut pointer: ResMut<MenuPointer>,
+) {
+    let Some(touches) = touches else { return };
+    if !view.open {
+        return;
+    }
+    let width = windows.single().map_or(1280.0, |w| w.width());
+    for t in touches.iter_just_released() {
+        let d = t.position() - t.start_position();
+        if let Some(dir) = swipe_dir(d.x, d.y, width) {
+            pointer.0.push(MenuPointerEvent::Swipe(dir));
+        }
+    }
 }
 
 #[derive(Resource, Debug, Default)]
@@ -181,7 +253,8 @@ impl Plugin for MenuCorePlugin {
         app.init_resource::<InputContext>()
             .init_resource::<MenuView>()
             .init_resource::<MenuPointer>()
-            .add_systems(PreUpdate, update_input_context);
+            .add_systems(PreUpdate, update_input_context)
+            .add_systems(Update, detect_swipe);
     }
 }
 
@@ -312,7 +385,7 @@ fn panel_content_vh(panel_vh: f32, aspect: f32) -> f32 {
 /// The content width of `view`'s panel (a grid's is wider).
 fn view_content_vh(view: &MenuView, aspect: f32) -> f32 {
     panel_content_vh(
-        if view.grid.is_some() || view.wide {
+        if view.grid.is_some() || view.calendar.is_some() || view.wide {
             GRID_PANEL_WIDTH_VH
         } else {
             PANEL_WIDTH_VH
@@ -351,6 +424,49 @@ fn grid_height_vh(grid: &MenuGrid, w: f32) -> f32 {
         + GRID_GAP_VH * (grid.cells.len().div_ceil(cols).saturating_sub(1)) as f32
 }
 
+/// The calendar's sizes (vh): button labels, weekdays, day numbers, the
+/// day's band, paddings, gaps, the legend.
+const CAL_LABEL_VH: f32 = 3.0;
+const CAL_WEEKDAY_VH: f32 = 2.6;
+const CAL_NUM_VH: f32 = 3.0;
+const CAL_BAND_VH: f32 = 0.9;
+const CAL_PAD_VH: f32 = 0.4;
+const CAL_BORDER_VH: f32 = 0.3;
+const CAL_ROW_GAP_VH: f32 = 0.5;
+const CAL_SECTION_GAP_VH: f32 = 0.8;
+const CAL_LEGEND_VH: f32 = 2.6;
+/// The legend's swatch (vh).
+const CAL_SWATCH_VH: (f32, f32) = (2.6, 1.2);
+
+fn cal_button_vh() -> f32 {
+    CAL_LABEL_VH * LINE_HEIGHT + 2.0 * (CAL_PAD_VH + CAL_BORDER_VH)
+}
+
+fn cal_day_vh() -> f32 {
+    CAL_NUM_VH * LINE_HEIGHT + CAL_BAND_VH + 2.0 * (CAL_PAD_VH + CAL_BORDER_VH) + CAL_ROW_GAP_VH
+}
+
+/// The legend as one text (for its wrapped height).
+fn cal_legend_text(c: &MenuCalendar) -> String {
+    c.legend
+        .iter()
+        .map(|(n, _)| format!("XX {n}"))
+        .chain([c.moon_legend.clone()])
+        .collect::<Vec<_>>()
+        .join("   ")
+}
+
+/// Height of a calendar (vh) in content `w` wide: the buttons, the
+/// weekdays, six weeks, the time and Back, the legend.
+pub fn calendar_height_vh(c: &MenuCalendar, w: f32) -> f32 {
+    let weeks = c.days.len().div_ceil(7) as f32;
+    let legend =
+        wrapped_lines(&cal_legend_text(c), w, CAL_LEGEND_VH) as f32 * CAL_LEGEND_VH * LINE_HEIGHT;
+    2.0 * cal_button_vh() + CAL_WEEKDAY_VH * LINE_HEIGHT + weeks * cal_day_vh() - CAL_ROW_GAP_VH
+        + legend
+        + 4.0 * CAL_SECTION_GAP_VH
+}
+
 /// Height of the menu panel for `view` (vh) in a window of `aspect`,
 /// showing the first `paragraphs` paragraphs of its text.
 pub fn page_height_vh(view: &MenuView, aspect: f32, paragraphs: usize) -> f32 {
@@ -373,9 +489,10 @@ pub fn page_height_vh(view: &MenuView, aspect: f32, paragraphs: usize) -> f32 {
                 + 2.0 * (ROW_PAD_Y_VH + ROW_BORDER_VH)
         })
         .sum();
-    let list = match &view.grid {
-        Some(g) => grid_height_vh(g, w) + 2.0 * LIST_MARGIN_VH,
-        None => {
+    let list = match (&view.grid, &view.calendar) {
+        (_, Some(c)) => calendar_height_vh(c, w) + 2.0 * LIST_MARGIN_VH,
+        (Some(g), _) => grid_height_vh(g, w) + 2.0 * LIST_MARGIN_VH,
+        (None, None) => {
             rows + LIST_GAP_VH * view.items.len().saturating_sub(1) as f32 + 2.0 * LIST_MARGIN_VH
         }
     };
@@ -742,6 +859,200 @@ fn spawn_grid(
     });
 }
 
+/// The calendar (spec §14 Phase 9 S9a): the buttons over the grid, the
+/// weekdays, the days with their bands and moon phases, the time stepper
+/// and Back, the legend. Items keep their indices (days 0 – 41, then the
+/// buttons, the time, Back), so focus and pointer work as on any page.
+fn spawn_calendar(commands: &mut Commands, list: Entity, view: &MenuView, c: &MenuCalendar) {
+    let cell_pct = grid_cell_pct(7);
+    let days = c.days.len();
+    let row = |gap: f32| Node {
+        flex_direction: FlexDirection::Row,
+        column_gap: Val::Percent(GRID_GAP_PCT),
+        margin: UiRect::bottom(vh(gap)),
+        ..default()
+    };
+    let cell = |width: f32| Node {
+        width: Val::Percent(width),
+        flex_direction: FlexDirection::Column,
+        align_items: AlignItems::Center,
+        justify_content: JustifyContent::Center,
+        padding: UiRect::all(vh(CAL_PAD_VH)),
+        border: UiRect::all(vh(CAL_BORDER_VH)),
+        border_radius: BorderRadius::all(vh(0.8)),
+        ..default()
+    };
+    let colour = |i: usize| TextColor(if view.is_dimmed(i) { DISABLED } else { TEXT });
+    commands.entity(list).despawn_children();
+    commands.entity(list).with_children(|l| {
+        // The buttons over the grid.
+        l.spawn(row(CAL_SECTION_GAP_VH)).with_children(|r| {
+            for k in 0..CALENDAR_BUTTONS {
+                let i = days + k;
+                let label = c.controls.get(k).cloned().unwrap_or_default();
+                let mut b = r.spawn((
+                    cell(cell_pct),
+                    BackgroundColor(ROW),
+                    BorderColor::all(Color::NONE),
+                    MenuRow(i),
+                ));
+                b.with_children(|b| {
+                    b.spawn((Text::new(label), font(CAL_LABEL_VH), colour(i)));
+                });
+                hover_and_click(&mut b, i);
+            }
+        });
+        // The weekdays.
+        l.spawn(row(CAL_ROW_GAP_VH)).with_children(|r| {
+            for wd in &c.weekdays {
+                r.spawn(Node {
+                    width: Val::Percent(cell_pct),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                })
+                .with_children(|n| {
+                    n.spawn((Text::new(wd.clone()), font(CAL_WEEKDAY_VH), TextColor(DIM)));
+                });
+            }
+        });
+        // Six weeks.
+        for week in 0..days.div_ceil(7) {
+            l.spawn(row(CAL_ROW_GAP_VH)).with_children(|r| {
+                for i in week * 7..(week * 7 + 7).min(days) {
+                    let d = &c.days[i];
+                    let mut n = r.spawn((
+                        cell(cell_pct),
+                        BackgroundColor(ROW),
+                        BorderColor::all(Color::NONE),
+                        MenuRow(i),
+                        Marked(d.selected),
+                    ));
+                    n.with_children(|n| {
+                        let num = if d.today {
+                            FOCUS
+                        } else if d.outside || view.is_dimmed(i) {
+                            DISABLED
+                        } else {
+                            TEXT
+                        };
+                        n.spawn(Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::SpaceBetween,
+                            padding: UiRect::horizontal(vh(0.6)),
+                            // Today: underlined as well as coloured.
+                            border: UiRect::bottom(vh(if d.today { 0.3 } else { 0.0 })),
+                            ..default()
+                        })
+                        .insert(BorderColor::all(FOCUS))
+                        .with_children(|t| {
+                            t.spawn((Text::new(d.label.clone()), font(CAL_NUM_VH), TextColor(num)));
+                            t.spawn((
+                                Text::new(d.moon.clone().unwrap_or_default()),
+                                font(CAL_NUM_VH),
+                                TextColor(if d.outside { DISABLED } else { DIM }),
+                                CalendarMoon,
+                            ));
+                        });
+                        let band = d.band.map_or(Color::NONE, |b| {
+                            let a = if d.outside { 0.45 } else { 1.0 };
+                            Color::srgba(b[0], b[1], b[2], a)
+                        });
+                        n.spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: vh(CAL_BAND_VH),
+                                border_radius: BorderRadius::all(vh(0.3)),
+                                ..default()
+                            },
+                            BackgroundColor(band),
+                            CalendarBand,
+                        ));
+                    });
+                    hover_and_click(&mut n, i);
+                }
+            });
+        }
+        // The time stepper (under the left four columns) and Back.
+        l.spawn(row(CAL_SECTION_GAP_VH)).with_children(|r| {
+            let time = days + CALENDAR_BUTTONS;
+            for (i, width) in [
+                (time, 4.0 * cell_pct + 3.0 * GRID_GAP_PCT),
+                (time + 1, 3.0 * cell_pct + GRID_GAP_PCT),
+            ] {
+                let label = c.controls.get(i - days).cloned().unwrap_or_default();
+                let mut b = r.spawn((
+                    Node {
+                        flex_direction: FlexDirection::Row,
+                        ..cell(width)
+                    },
+                    BackgroundColor(ROW),
+                    BorderColor::all(Color::NONE),
+                    MenuRow(i),
+                ));
+                b.with_children(|b| match split_value(&label) {
+                    Some((name, value)) => {
+                        b.spawn((Text::new(name), font(CAL_LABEL_VH), colour(i)));
+                        spawn_arrow(b, i, -1);
+                        b.spawn((
+                            Text::new(format!(" {value} ")),
+                            font(CAL_LABEL_VH),
+                            colour(i),
+                        ));
+                        spawn_arrow(b, i, 1);
+                    }
+                    None => {
+                        b.spawn((Text::new(label), font(CAL_LABEL_VH), colour(i)));
+                    }
+                });
+                hover_and_click(&mut b, i);
+            }
+        });
+        // The legend: the bands, the moon.
+        l.spawn(Node {
+            flex_direction: FlexDirection::Row,
+            flex_wrap: FlexWrap::Wrap,
+            align_items: AlignItems::Center,
+            column_gap: vh(1.6),
+            ..default()
+        })
+        .with_children(|r| {
+            for (name, rgb) in &c.legend {
+                r.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: vh(0.6),
+                    ..default()
+                })
+                .with_children(|e| {
+                    e.spawn((
+                        Node {
+                            width: vh(CAL_SWATCH_VH.0),
+                            height: vh(CAL_SWATCH_VH.1),
+                            border_radius: BorderRadius::all(vh(0.3)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(rgb[0], rgb[1], rgb[2])),
+                    ));
+                    e.spawn((Text::new(name.clone()), font(CAL_LEGEND_VH), TextColor(DIM)));
+                });
+            }
+            r.spawn((
+                Text::new(c.moon_legend.clone()),
+                font(CAL_LEGEND_VH),
+                TextColor(DIM),
+            ));
+        });
+    });
+}
+
+/// A calendar day's band (tests).
+#[derive(Component)]
+pub struct CalendarBand;
+/// A calendar day's moon glyph (tests).
+#[derive(Component)]
+pub struct CalendarMoon;
+
 /// The page's layout key: rows are respawned only when it changes, not on
 /// every focus move or status update.
 type PageKey = (
@@ -750,6 +1061,7 @@ type PageKey = (
     Vec<bool>,
     Option<MenuGrid>,
     Vec<RowMark>,
+    Option<MenuCalendar>,
 );
 
 /// The unicorn before a rider list item (spec §14 Phase 13E).
@@ -859,24 +1171,28 @@ fn draw_menu(
         view.dimmed.clone(),
         view.grid.clone(),
         view.marks.clone(),
+        view.calendar.clone(),
     );
     if page.as_ref() != Some(&key) {
         if let Ok((list, mut node)) = list.single_mut() {
-            // A grid wraps its cells into rows; a list is a column.
-            let (dir, wrap, gap) = match view.grid {
-                Some(_) => (FlexDirection::Row, FlexWrap::Wrap, vh(GRID_GAP_VH)),
-                None => (FlexDirection::Column, FlexWrap::NoWrap, vh(LIST_GAP_VH)),
+            // A grid wraps its cells into rows; a list is a column (the
+            // calendar's rows of cells too).
+            let (dir, wrap, gap) = match (&view.grid, &view.calendar) {
+                (_, Some(_)) => (FlexDirection::Column, FlexWrap::NoWrap, Val::ZERO),
+                (Some(_), _) => (FlexDirection::Row, FlexWrap::Wrap, vh(GRID_GAP_VH)),
+                (None, None) => (FlexDirection::Column, FlexWrap::NoWrap, vh(LIST_GAP_VH)),
             };
             node.flex_direction = dir;
             node.flex_wrap = wrap;
             node.row_gap = gap;
-            node.column_gap = match view.grid {
-                Some(_) => Val::Percent(GRID_GAP_PCT),
-                None => Val::ZERO,
+            node.column_gap = match (&view.grid, &view.calendar) {
+                (Some(_), None) => Val::Percent(GRID_GAP_PCT),
+                _ => Val::ZERO,
             };
-            match &view.grid {
-                Some(g) => spawn_grid(&mut commands, list, &view, g, &mut icons, &mut images),
-                None => {
+            match (&view.grid, &view.calendar) {
+                (_, Some(c)) => spawn_calendar(&mut commands, list, &view, c),
+                (Some(g), _) => spawn_grid(&mut commands, list, &view, g, &mut icons, &mut images),
+                (None, None) => {
                     let mark = view.marks.iter().any(|m| m.unicorn).then(|| {
                         unicorn
                             .get_or_insert_with(|| unicorn_mark(&mut images))
@@ -887,11 +1203,13 @@ fn draw_menu(
             }
         }
         if let Ok(mut p) = panel.single_mut() {
-            p.width = vh(if view.grid.is_some() || view.wide {
-                GRID_PANEL_WIDTH_VH
-            } else {
-                PANEL_WIDTH_VH
-            });
+            p.width = vh(
+                if view.grid.is_some() || view.calendar.is_some() || view.wide {
+                    GRID_PANEL_WIDTH_VH
+                } else {
+                    PANEL_WIDTH_VH
+                },
+            );
         }
         *page = Some(key);
     }
@@ -1062,6 +1380,133 @@ mod tests {
             hint: "Up/Down move   Enter/A select   Esc/B back".into(),
             ..Default::default()
         }
+    }
+
+    /// A month calendar as World → Time → Calendar shows it (spec §14
+    /// Phase 9 S9a): 42 days, seven buttons, the time, Back.
+    fn calendar_view() -> MenuView {
+        let days: Vec<CalendarDay> = (0..CALENDAR_DAYS)
+            .map(|i| CalendarDay {
+                label: format!("{}", i % 31 + 1),
+                band: Some([0.9, 0.5, 0.1]),
+                moon: (i % 7 == 3).then(|| "●".to_string()),
+                outside: i < 3,
+                today: i == 20,
+                selected: i == 21,
+            })
+            .collect();
+        let controls: Vec<String> = [
+            "« 2025",
+            "‹ Oct",
+            "Today",
+            "Dates",
+            "Season",
+            "Dec ›",
+            "2027 »",
+            "Time:  < 14:20 >",
+            "Back",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        let mut v = page(&[], 0);
+        v.title = "November 2026".into();
+        v.status = "Mon 16 Nov 2026: sunrise 07:33 · sunset 16:47 · day 9 h 14 min · beech bare · snow line 1,350 m · full moon".into();
+        v.items = days
+            .iter()
+            .map(|d| d.label.clone())
+            .chain(controls.clone())
+            .collect();
+        v.hint = "←→ day  ↑↓ week  PgUp/PgDn, LB/RB month  Enter/A set  Esc/B back".into();
+        v.calendar = Some(MenuCalendar {
+            title: v.title.clone(),
+            weekdays: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+                .map(str::to_owned)
+                .to_vec(),
+            days,
+            controls,
+            legend: ["fresh green", "summer", "autumn colours", "bare", "snow"]
+                .map(|n| (n.to_owned(), [0.5, 0.5, 0.5]))
+                .to_vec(),
+            moon_legend: "● full  ○ new  ◑ ◐ quarters".into(),
+        });
+        v
+    }
+
+    /// The calendar fits the ten-foot panel at 16:9 and 4:3 with its
+    /// status line, its texts have glyphs; the swipe rule.
+    #[test]
+    fn the_calendar_fits_the_panel() {
+        let v = calendar_view();
+        for aspect in [16.0 / 9.0, 4.0 / 3.0] {
+            let h = page_height_vh(&v, aspect, 0);
+            assert!(h <= PANEL_MAX_VH, "{aspect}: {h}");
+            assert!(h > 50.0, "{h}");
+        }
+        let c = v.calendar.as_ref().unwrap();
+        for s in c
+            .controls
+            .iter()
+            .chain([&c.moon_legend, &v.hint, &v.status])
+        {
+            assert!(crate::font::covers(s), "{s}: {:?}", crate::font::missing(s));
+        }
+        assert_eq!(
+            swipe_dir(-200.0, 20.0, 1280.0),
+            Some(1),
+            "to the left: next"
+        );
+        assert_eq!(swipe_dir(200.0, -30.0, 1280.0), Some(-1));
+        assert_eq!(swipe_dir(40.0, 0.0, 1280.0), None, "a tap");
+        assert_eq!(swipe_dir(200.0, 150.0, 1280.0), None, "mostly down");
+    }
+
+    /// Drawn headless: every item a pointer target (42 days, seven
+    /// buttons, the time, Back), a band per day, the moon glyphs.
+    #[test]
+    fn the_calendar_draws_headless() {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            bevy::asset::AssetPlugin::default(),
+            MenuPlugin,
+        ));
+        app.init_asset::<Image>();
+        app.update();
+        *app.world_mut().resource_mut::<MenuView>() = calendar_view();
+        app.update();
+        app.update();
+        let rows = app
+            .world_mut()
+            .query::<&MenuRow>()
+            .iter(app.world())
+            .map(|r| r.0)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(rows.len(), CALENDAR_DAYS + CALENDAR_BUTTONS + 2);
+        assert_eq!(
+            rows.iter().max(),
+            Some(&(CALENDAR_DAYS + CALENDAR_BUTTONS + 1))
+        );
+        let bands = app
+            .world_mut()
+            .query::<&CalendarBand>()
+            .iter(app.world())
+            .count();
+        assert_eq!(bands, CALENDAR_DAYS);
+        let moons = app
+            .world_mut()
+            .query::<(&CalendarMoon, &Text)>()
+            .iter(app.world())
+            .filter(|(_, t)| t.0 == "●")
+            .count();
+        assert_eq!(moons, 6);
+        let texts = app
+            .world_mut()
+            .query::<&Text>()
+            .iter(app.world())
+            .map(|t| t.0.clone())
+            .collect::<Vec<_>>();
+        assert!(texts.iter().any(|t| t == "Today"));
+        assert!(texts.iter().any(|t| t == "<") && texts.iter().any(|t| t == ">"));
     }
 
     #[test]

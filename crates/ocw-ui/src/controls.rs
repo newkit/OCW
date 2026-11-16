@@ -19,6 +19,7 @@ pub fn keyboard(keys: &ButtonInput<KeyCode>) -> Pressed {
         confirm: any(&[KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Space]),
         left: keys.just_pressed(KeyCode::ArrowLeft),
         right: keys.just_pressed(KeyCode::ArrowRight),
+        fine: shift,
         tab: dir(
             any(&[KeyCode::KeyQ, KeyCode::PageUp]),
             any(&[KeyCode::KeyE, KeyCode::PageDown]),
@@ -227,6 +228,15 @@ mod tests {
         assert_eq!(k(&[KeyCode::Backspace], true), [Back]);
         assert_eq!(k(&[KeyCode::ArrowLeft], true), [Left]);
         assert_eq!(k(&[KeyCode::ArrowRight], true), [Right]);
+        // Shift: fine steps (the calendar's time stepper, spec 9J).
+        assert_eq!(
+            k(&[KeyCode::ShiftLeft, KeyCode::ArrowRight], true),
+            [Fine(1)]
+        );
+        assert_eq!(
+            k(&[KeyCode::ShiftRight, KeyCode::ArrowLeft], true),
+            [Fine(-1)]
+        );
         assert_eq!(k(&[KeyCode::KeyQ], true), [TabPrev]);
         assert_eq!(k(&[KeyCode::PageDown], true), [TabNext]);
         assert!(

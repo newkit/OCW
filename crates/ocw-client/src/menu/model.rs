@@ -17,6 +17,7 @@
 //! no Quit, Restart, files or Strava, its anonymous riders a locked
 //! workshop (Q5), and its own Captures page (downloads).
 
+use super::calendar;
 use super::pages::{self as sub, Activate, Row};
 
 /// At most this many items on a page (ten-foot UI, spec §3.2.1).
@@ -51,6 +52,9 @@ pub enum Action {
     /// The ‹ (−1) or › (+1) arrow of value row `i` was clicked or tapped
     /// (mouse and touch reach every value, spec §3.2.2).
     Step(usize, i8),
+    /// Shift + ← (−1) / → (+1): a fine step (the calendar's time stepper:
+    /// one minute, spec §14 Phase 9 S9a); elsewhere Left / Right.
+    Fine(i8),
     /// Open the menu at the rider list of the Workshop page (the scene's
     /// changing corner until the character editor, W4).
     RiderPage,
@@ -832,11 +836,95 @@ impl Menu {
     }
 
     fn push(&mut self, page: Page) {
+        // The calendar opens on its day (spec §14 Phase 9 S9a).
+        let focus = match page {
+            Page::Sub(sub::Page::Calendar(c)) => c.cell_of((c.year, c.month, c.day)).unwrap_or(0),
+            _ => page.def().initial_focus,
+        };
         self.stack.push(Level {
             page,
-            focus: page.def().initial_focus,
+            focus,
             scroll: 0,
         });
+    }
+
+    /// Replaces the current page with `page` (the calendar's month).
+    fn replace_page(&mut self, page: Page) {
+        if let Some(l) = self.stack.last_mut() {
+            l.page = page;
+        }
+    }
+
+    /// The calendar's keys (spec §14 Phase 9 S9a): the focus by day and
+    /// week, the month and year, the time stepper (`calendar::navigate`);
+    /// `None`: the action is the generic one (Confirm on a day, Back, …).
+    fn calendar_action(&mut self, c: calendar::Cal, action: Action) -> Option<Effect> {
+        use calendar::Nav;
+        let minute = self
+            .rows
+            .get(calendar::TIME)
+            .and_then(|r| r.value.as_deref())
+            .and_then(|v| {
+                let (h, m) = v.split_once(':')?;
+                Some(h.parse::<u16>().ok()? * 60 + m.parse::<u16>().ok()?)
+            })
+            .unwrap_or(0);
+        let mut focus = self.focus();
+        let nav = match action {
+            Action::Left => Nav::Left,
+            Action::Right => Nav::Right,
+            Action::Up => Nav::Up,
+            Action::Down => Nav::Down,
+            Action::TabPrev => Nav::Month(-1),
+            Action::TabNext => Nav::Month(1),
+            Action::Fine(d) if focus == calendar::TIME => Nav::Minutes(i32::from(d)),
+            Action::Fine(d) if d < 0 => Nav::Left,
+            Action::Fine(_) => Nav::Right,
+            Action::Step(i, d) if i == calendar::TIME => {
+                focus = i;
+                Nav::Minutes(i32::from(d) * calendar::STEP_MIN)
+            }
+            Action::Step(..) => return Some(Effect::None),
+            Action::Confirm | Action::Click(_) => {
+                if let Action::Click(i) = action {
+                    focus = i;
+                }
+                match focus {
+                    calendar::YEAR_PREV => Nav::Year(-1),
+                    calendar::MONTH_PREV => Nav::Month(-1),
+                    calendar::MONTH_NEXT => Nav::Month(1),
+                    calendar::YEAR_NEXT => Nav::Year(1),
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        let mut c = c;
+        let f = calendar::navigate(&mut c, focus, nav, minute);
+        self.replace_page(Page::Sub(sub::Page::Calendar(c)));
+        self.set_focus(f);
+        Some(Effect::None)
+    }
+
+    /// After a `time date …` line from the calendar (a day, Today, a
+    /// shortcut): its month shows, the focus on the date.
+    fn follow_date(&mut self, effect: &Effect) {
+        let Effect::Command(line) = effect else {
+            return;
+        };
+        let Some(d) = calendar::line_date(line) else {
+            return;
+        };
+        if let Some(Page::Sub(sub::Page::Calendar(c))) = self.page() {
+            let next = calendar::Cal {
+                minute: c.minute,
+                ..calendar::Cal::at(d)
+            };
+            self.replace_page(Page::Sub(sub::Page::Calendar(next)));
+            if let Some(f) = next.cell_of((next.year, next.month, next.day)) {
+                self.set_focus(f);
+            }
+        }
     }
 
     fn close(&mut self) -> Effect {
@@ -1101,6 +1189,18 @@ impl Menu {
     /// Applies one action. A command item that closes the menu reports
     /// only its command; check [`Self::is_open`] for the close.
     pub fn apply(&mut self, action: Action) -> Effect {
+        if self.is_open()
+            && let Some(Page::Sub(sub::Page::Calendar(c))) = self.page()
+            && let Some(effect) = self.calendar_action(c, action)
+        {
+            return effect;
+        }
+        let effect = self.apply_generic(action);
+        self.follow_date(&effect);
+        effect
+    }
+
+    fn apply_generic(&mut self, action: Action) -> Effect {
         if action == Action::RiderPage {
             let opened = !self.is_open();
             self.stack.clear();
@@ -1123,6 +1223,7 @@ impl Menu {
         }
         match action {
             Action::Open | Action::RiderPage | Action::TrustDialog => Effect::None,
+            Action::Fine(d) => self.apply_generic(if d < 0 { Action::Left } else { Action::Right }),
             // A grid: the arrows move the focus in two directions.
             Action::Left | Action::Right if self.grid_columns().is_some() => {
                 self.move_focus(if action == Action::Right { 1 } else { -1 });

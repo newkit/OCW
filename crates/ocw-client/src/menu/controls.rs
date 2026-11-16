@@ -35,6 +35,9 @@ pub struct Pressed {
     pub confirm: bool,
     pub left: bool,
     pub right: bool,
+    /// Shift held: ← / → are fine steps ([`Action::Fine`]; the calendar's
+    /// time stepper by one minute).
+    pub fine: bool,
     /// Tab switch: −1 previous, +1 next, 0 none.
     pub tab: i32,
     /// Focus steps from presses that do not repeat (Tab / Shift+Tab).
@@ -54,6 +57,7 @@ impl Pressed {
             confirm: self.confirm || o.confirm,
             left: self.left || o.left,
             right: self.right || o.right,
+            fine: self.fine || o.fine,
             tab: (self.tab + o.tab).signum(),
             step: self.step + o.step,
             held: (self.held + o.held).signum(),
@@ -102,6 +106,7 @@ pub fn gamepad(p: PadState) -> Pressed {
         confirm: p.south,
         left: p.dpad_left,
         right: p.dpad_right,
+        fine: false,
         tab: dir(p.lb, p.rb),
         step: 0,
         held: (dir(p.dpad_up, p.dpad_down) + stick).signum(),
@@ -157,10 +162,18 @@ pub fn actions(p: &Pressed, step: i32, menu_open: bool) -> Vec<Action> {
         out.push(if step < 0 { Action::Up } else { Action::Down });
     }
     if p.left {
-        out.push(Action::Left);
+        out.push(if p.fine {
+            Action::Fine(-1)
+        } else {
+            Action::Left
+        });
     }
     if p.right {
-        out.push(Action::Right);
+        out.push(if p.fine {
+            Action::Fine(1)
+        } else {
+            Action::Right
+        });
     }
     match p.tab {
         -1 => out.push(Action::TabPrev),

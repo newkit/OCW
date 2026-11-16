@@ -796,6 +796,13 @@ at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu select", "3.6=m
 shot = 7
 
 [[scene]]
+name = "menu-time-calendar"
+description = "In-game menu: World -> Time -> Calendar (spec 9J, S9a): October 2026 at the rider's place (Vaduz), each day banded with its look (summer, autumn colours, bare), the moon's main phases, the focused day's sun times, leaves and snow line; the buttons over the grid, the time stepper and Back under it"
+args = ["--route", "hills", "--bots", "4"]
+at = ["1.5=time 2026-10-20 15:00", "2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu select", "3.6=menu down", "4=menu down", "4.4=menu down", "4.8=menu select", "5.2=menu down", "5.6=menu select", "6=menu right", "6.4=menu right"]
+shot = 8
+
+[[scene]]
 name = "sky-sunset-timelapse"
 description = "Video: time-lapse at x600 across the sunset on the Vaduz-Malbun road (21 June, 20:35 to 22:00 CEST): the sun sets in the west, the light reddens, dims and the bike lights come on"
 world = true

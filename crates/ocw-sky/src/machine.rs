@@ -163,10 +163,35 @@ pub enum TimeCommand {
     Speed(f64),
     Paused(bool),
     Preset(Preset),
+    /// Jump to a season's representative day of the place, or to the
+    /// nearest date with a day of the year, keeping the time of day
+    /// (spec §14 Phase 9 S9b, decision Q11; resolved with the place's
+    /// season year: [`crate::calendar::season_change`]).
+    Season(SeasonPick),
+}
+
+/// What `time season …` jumps to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeasonPick {
+    Season(crate::calendar::Season),
+    /// A day of the year (1–366).
+    Day(u32),
+}
+
+impl SeasonPick {
+    pub fn parse(s: &str) -> Option<Self> {
+        if let Some(season) = crate::calendar::Season::parse(s) {
+            return Some(Self::Season(season));
+        }
+        s.parse()
+            .ok()
+            .filter(|d| (1..=366).contains(d))
+            .map(Self::Day)
+    }
 }
 
 /// Help text of the console command.
-pub const USAGE: &str = "time [real | HH:MM | YYYY-MM-DD [HH:MM] | +2h | -30m | offset +3h | speed 1|10|60|600 | pause | play | PRESET]; presets: sunrise, golden-hour, noon, sunset, blue-hour, midnight, summer-solstice, winter-solstice, full-moon, new-moon";
+pub const USAGE: &str = "time [real | HH:MM | [date] YYYY-MM-DD [HH:MM] | season spring|early-summer|summer|autumn|late-autumn|winter|DAY | +2h | -30m | offset +3h | speed 1|10|60|600 | pause | play | PRESET]; presets: sunrise, golden-hour, noon, sunset, blue-hour, midnight, summer-solstice, winter-solstice, full-moon, new-moon";
 
 fn parse_hm(s: &str) -> Option<(u32, u32)> {
     let (h, m) = s.split_once(':')?;
@@ -225,6 +250,18 @@ pub fn parse(args: &[&str]) -> Result<TimeCommand, String> {
         }
         ["offset", d] => TimeCommand::Offset(parse_duration(d).ok_or_else(bad)?),
         ["preset", p] => TimeCommand::Preset(Preset::parse(p).ok_or_else(bad)?),
+        // The calendar's form (spec §14 Phase 9 S9a): a date, a date and time.
+        ["date", d] => {
+            let (y, m, d) = parse_date(d).ok_or_else(bad)?;
+            TimeCommand::Date(y, m, d)
+        }
+        ["date", d, t] => {
+            TimeCommand::DateTime(parse_date(d).ok_or_else(bad)?, parse_hm(t).ok_or_else(bad)?)
+        }
+        ["season", p] => TimeCommand::Season(SeasonPick::parse(p).ok_or_else(|| {
+            "time season spring|early-summer|summer|autumn|late-autumn|winter|DAY (1-366)"
+                .to_owned()
+        })?),
         [one] => {
             if let Some(p) = Preset::parse(one) {
                 TimeCommand::Preset(p)
@@ -279,6 +316,9 @@ pub fn resolve(
         TimeCommand::Speed(s) => ClockChange::Speed(s),
         TimeCommand::Paused(p) => ClockChange::Paused(p),
         TimeCommand::Preset(p) => ClockChange::Fixed(p.instant(now, zone, lat, lon)?),
+        TimeCommand::Season(_) => {
+            return Err("a season needs the place's year (calendar::season_change)".into());
+        }
     }))
 }
 
@@ -311,7 +351,16 @@ pub fn completions(before: &[&str]) -> Vec<String> {
         [] => Preset::ALL
             .iter()
             .map(|p| p.id().to_owned())
-            .chain(["real", "pause", "play", "speed", "offset", "+1h", "-1h"].map(str::to_owned))
+            .chain(
+                [
+                    "real", "pause", "play", "speed", "offset", "date", "season", "+1h", "-1h",
+                ]
+                .map(str::to_owned),
+            )
+            .collect(),
+        ["season"] => crate::calendar::Season::ALL
+            .iter()
+            .map(|s| s.id().to_owned())
             .collect(),
         ["speed"] => SPEEDS.iter().map(|s| format!("{s}")).collect(),
         ["offset"] => ["+1h", "-1h", "+30m"].map(str::to_owned).to_vec(),
@@ -331,7 +380,7 @@ mod tests {
         assert!(first.iter().any(|w| w == "golden-hour"));
         for w in &first {
             match w.as_str() {
-                "speed" | "offset" => {
+                "speed" | "offset" | "season" | "date" => {
                     for v in completions(&[w]) {
                         assert!(parse(&[w, &v]).is_ok(), "{w} {v}");
                     }
@@ -340,6 +389,41 @@ mod tests {
             }
         }
         assert!(completions(&["noon"]).is_empty());
+        assert_eq!(completions(&["season"]).len(), 6);
+    }
+
+    /// The calendar's forms (spec §14 Phase 9 S9): `time date`, `time
+    /// season` (a season or a day of the year).
+    #[test]
+    fn parses_the_calendar_forms() {
+        use crate::calendar::Season as S;
+        use TimeCommand::*;
+        assert_eq!(parse(&["date", "2026-05-03"]), Ok(Date(2026, 5, 3)));
+        assert_eq!(
+            parse(&["date", "2026-10-12", "07:45"]),
+            Ok(DateTime((2026, 10, 12), (7, 45)))
+        );
+        assert_eq!(
+            parse(&["season", "late-autumn"]),
+            Ok(Season(SeasonPick::Season(S::LateAutumn)))
+        );
+        assert_eq!(
+            parse(&["season", "Early_Summer"]),
+            Ok(Season(SeasonPick::Season(S::EarlySummer)))
+        );
+        assert_eq!(parse(&["season", "200"]), Ok(Season(SeasonPick::Day(200))));
+        for bad in [
+            &["season", "0"][..],
+            &["season", "367"],
+            &["season", "monsoon"],
+            &["date", "2026-02-30x"],
+            &["date"],
+        ] {
+            assert!(parse(bad).is_err(), "{bad:?}");
+        }
+        let z = zone();
+        let now = utc_midnight(2026, 6, 21);
+        assert!(resolve(&parse(&["season", "winter"]).unwrap(), now, &z, 47.1, 9.5).is_err());
     }
 
     const VADUZ: (f64, f64) = (47.141, 9.521);

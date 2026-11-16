@@ -8,7 +8,9 @@
 //! - [`settings`]: the settings registry's values and their store (a file
 //!   on the desktop, `localStorage` in the browser), `set` / `get`,
 //! - [`timemachine`] and [`weather`]: the world clock and the session
-//!   weather into the view and the menu, `time` / `weather …`,
+//!   weather into the view and the menu, `time` / `weather …`;
+//!   [`calendar`]: World → Time → Calendar and Season (spec §14 Phase 9
+//!   S9),
 //! - [`collisions`], [`events`]: the ride's rules and local events,
 //! - [`riders_page`]: Navi → Riders in this ride,
 //! - [`god`]: god mode – "Unicorn mode" (spec §14 Phase 13; shared since
@@ -29,6 +31,7 @@
 
 pub mod access;
 pub mod bindings;
+pub mod calendar;
 pub mod collisions;
 pub mod controls;
 pub mod events;
