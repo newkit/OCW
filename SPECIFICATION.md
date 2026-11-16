@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.95 – November 2026
+Version 3.96 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.96 | **The Blender add-on for model export is postponed: not built in Phase 15 for now** (decision from the build dashboard, 2026-11-16; §14 Phase 15 Q5) |
 | 3.95 | **Trees: at least three shape variants per species, more where variety needs it** (decision from the build dashboard, 2026-11-16; §14 Phase 15 Q8) |
 | 3.94 | **Models: only the exported model files are used and the generator code is removed; bikes keep their frame sizes, fitted to the rider at run time from the model's geometry and anchors** (decision from the build dashboard, 2026-11-16; §14 Phase 15 Q7) |
 | 3.93 | **The character editor's extras (muscle slider, earrings, tattoos, freckles, more glasses, prosthetics) come later, not in its first step** (decision from the build dashboard, 2026-11-16; §14 Phase 4 4N Q14) |
@@ -4982,7 +4983,7 @@ The validator checks every name against the pattern, that ids are unique, and th
 - **Q2 – Git LFS: decided (2026-11-15, the user: "LFS"):** the model files and their Blender sources are LFS objects from the start (15C). (GitHub Free includes 10 GiB of LFS storage and 10 GiB of download bandwidth a month, shared by all repositories of the account; beyond that $0.07 per GiB stored and $0.0875 per GiB downloaded – checked 2026-11-15.)
 - **Q3 – Third-party models: decided (2026-11-15, the user: "If the license only requires naming it, it's fine, we use those sources"):** openly licensed models from outside (for example Kenney, Quaternius, Poly Haven) are used for props and plants when their licence asks no more than attribution (15C *Licence*); the validator's licence list grows by MIT, Apache-2.0 and BSD for models, each with the attribution in the manifest.
 - **Q4 – Blender on marge: decided (2026-11-15, the user: "Yes, we can install Blender on marge"):** Blender is installed on marge for the round-trip test and the `.blend` sources (Q1); the official release tarball into `~/.local/opt/blender` (pinned version and SHA-256, no sudo; `make deps-blender`) or the Debian package. Blender is a tool there: nothing of it is linked or shipped, and the `.blend` files we save are ours (MIT OR Apache-2.0).
-- **Q5 – The Blender add-on:** should the optional add-on of 15D (export preset, kind / id panel, anchor names, budget check; GPL-2.0-or-later in its own folder `tools/blender/ocw_models/`, since add-ons that use `bpy` are GPL-derived) be built? **Proposal: yes, in M6**, after the format and the import tools have settled.
+- **Q5 – The Blender add-on: decided (2026-11-16, dashboard): later** – the optional add-on of 15D (export preset, kind / id panel, anchor names, budget check; GPL-2.0-or-later in `tools/blender/ocw_models/`) is not built now; it is taken up again after Phase 15's format and import tools have settled (not scheduled in M1–M6 until then).
 
 ### Phase 16 – OCW Studio: the editor for models, worlds and routes (planning, 2026-11-15)
 
