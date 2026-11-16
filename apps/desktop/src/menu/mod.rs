@@ -150,6 +150,7 @@ mod tests {
             WeatherReal,
             RidingAids,
             Graphics,
+            ViewDistance,
             RiderList,
             Account,
             UnicornControls,
@@ -191,7 +192,7 @@ mod tests {
                 | WorldInfo | WorldSun | WorldSources | WorldSource(_) | Weather | Routes
                 | Rides | GpxImport | Workouts | Voice | VoiceDevices | VoiceParticipants
                 | AudioVoice | TimeMachine | WeatherPresets | WeatherCustom | WeatherAir
-                | WeatherReal | RidingAids | Graphics | RiderList | UnicornControls | Bindings
+                | WeatherReal | RidingAids | Graphics | ViewDistance | RiderList | UnicornControls | Bindings
                 | BindGroup(_) | BindReset | Accessibility | History | HistoryRides
                 | HistoryRide(_) | HistoryClimbs(_) | HistoryWeeks | HistoryMonths
                 | HistoryBests | EventRules | Account | TrustedKeys | TrustedKey(_) | Join

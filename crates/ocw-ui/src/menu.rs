@@ -277,6 +277,9 @@ pub fn sub_rows(world: &World, page: sub::Page) -> Vec<Row> {
             .get_resource::<crate::join::JoinUi>()
             .map(|u| ocw_client::menu::join::rows(page, &u.info))
             .unwrap_or_default()
+    } else if page == sub::Page::ViewDistance {
+        // The preset's distance and what runs (spec §14 Phase 10, 10G).
+        ocw_client::view_distance::rows(s, &crate::view_distance::info(world))
     } else if page == sub::Page::TimeMachine {
         let info = world
             .get_resource::<TimeMachine>()

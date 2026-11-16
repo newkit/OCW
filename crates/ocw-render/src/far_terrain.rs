@@ -536,29 +536,125 @@ fn sea_plane(min: [f64; 2], max: [f64; 2]) -> Mesh {
     .mesh()
 }
 
-/// A far tile is hidden while its full tile is loaded.
+/// How far the camera sees (m) when the render distance (spec §14 Phase
+/// 10, 10G) or a quality preset limits the view, and whether far tiles
+/// wholly beyond it are hidden (the far plane alone culls nothing – the
+/// projection has no far clip) – only tiles that rise above the eye (see
+/// `hide_far_under_near`); `off`: never (`far.cull off`, comparisons).
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Default)]
+pub struct FarCull {
+    pub limit: Option<f32>,
+    pub off: bool,
+    /// Far tiles hidden beyond the limit in the last frame, and those
+    /// beyond it that stay because they lie below the eye (`far.cull`).
+    pub hidden: usize,
+    pub below_eye: usize,
+}
+
+/// `far.cull [on|off]`.
+pub fn register_commands(app: &mut App) {
+    use crate::console::{ConsoleAppExt, ConsoleCommand, Permission};
+    app.console_command(ConsoleCommand::new(
+        Permission::User,
+        clap::Command::new("far.cull")
+            .about("Hide far terrain wholly beyond 2 × a limited view distance and rising above the eye: on (default) or off (comparisons)")
+            .arg(clap::Arg::new("state").value_parser(["on", "off"])),
+        |world, m| {
+            let mut c = world.get_resource_or_insert_with(FarCull::default);
+            if let Some(s) = m.get_one::<String>("state") {
+                c.off = s == "off";
+            }
+            Ok(format!(
+                "far cull {}{}, {} far tiles hidden, {} beyond it kept below the eye",
+                if c.off { "off" } else { "on" },
+                match c.limit {
+                    Some(l) => format!(" (beyond {:.1} km)", l / 1000.0),
+                    None => " (no limit now)".into(),
+                },
+                c.hidden,
+                c.below_eye
+            ))
+        },
+    ));
+}
+
+/// Far tiles are hidden beyond this share of a limited far plane (the far
+/// plane is 1.5 × the view distance: 2 × it, where its fog leaves e^-6).
+pub const CULL_SHARE: f32 = 4.0 / 3.0;
+
+/// The distance from `p` to the box around `centre` with half sizes
+/// `half` (0 inside).
+pub fn box_distance(p: Vec3, centre: Vec3, half: Vec3) -> f32 {
+    ((p - centre).abs() - half).max(Vec3::ZERO).length()
+}
+
+/// A far tile is hidden while its full tile is loaded, and when it lies
+/// wholly beyond the view's limit ([`FarCull`]).
 pub(crate) fn hide_far_under_near(
     far: Res<FarTerrain>,
     streamer: Res<TileStreamer>,
-    mut tiles: Query<&mut Visibility, With<FarTile>>,
+    cull: Option<ResMut<FarCull>>,
+    cameras: Query<&GlobalTransform, With<FollowCamera>>,
+    mut tiles: Query<
+        (
+            &mut Visibility,
+            Option<&bevy::camera::primitives::Aabb>,
+            &GlobalTransform,
+        ),
+        With<FarTile>,
+    >,
 ) {
+    let eye = cameras.iter().next().map(|g| g.translation());
+    let limit = cull.as_deref().filter(|c| !c.off).and_then(|c| c.limit);
+    let mut hidden = 0;
+    let mut below_eye = 0;
     for (id, &e) in &far.tiles {
-        let want = if streamer.loaded.contains_key(id) {
+        let Ok((mut v, aabb, gt)) = tiles.get_mut(e) else {
+            continue;
+        };
+        let beyond = match (limit, eye, aabb) {
+            (Some(limit), Some(eye), Some(b)) => {
+                // The box in world space: the tile's frame scales x.
+                let m = gt.affine().matrix3;
+                let half = b.half_extents;
+                let h = Vec3::new(
+                    m.row(0).abs().dot(half),
+                    m.row(1).abs().dot(half),
+                    m.row(2).abs().dot(half),
+                );
+                let c = gt.transform_point(Vec3::from(b.center));
+                // Only tiles that rise above the eye: they would stand against
+                // the sky; lower ones lie on the ground below the horizon,
+                // and hiding them would open holes onto the atmosphere's
+                // ground haze (a pale band like a lake, seen from a summit).
+                let far_enough = box_distance(eye, c, h) > limit;
+                below_eye += usize::from(far_enough && c.y + h.y <= eye.y);
+                far_enough && c.y + h.y > eye.y
+            }
+            _ => false,
+        };
+        hidden += usize::from(beyond);
+        let want = if streamer.loaded.contains_key(id) || beyond {
             Visibility::Hidden
         } else {
             Visibility::Visible
         };
-        if let Ok(mut v) = tiles.get_mut(e)
-            && *v != want
-        {
+        if *v != want {
             *v = want;
         }
+    }
+    if let Some(mut c) = cull
+        && (c.hidden, c.below_eye) != (hidden, below_eye)
+    {
+        c.hidden = hidden;
+        c.below_eye = below_eye;
     }
 }
 
 /// With a package the camera sees to [`FAR_VIEW_M`] and the fog ends at
 /// the end of the terrain ([`package_fog`]); without one (a route world)
 /// the far plane and the fog of [`crate::world::fog`].
+#[allow(clippy::too_many_arguments)] // a Bevy system
 pub(crate) fn package_view(
     world: Option<Res<PackageWorld>>,
     far: Res<FarTerrain>,
@@ -566,6 +662,9 @@ pub(crate) fn package_view(
     clouds: Option<Res<crate::weather::clouds::CloudState>>,
     mut cameras: Query<(&mut Projection, Option<&mut DistanceFog>), With<FollowCamera>>,
     quality: Option<Res<crate::quality::RenderQuality>>,
+    time: Res<Time>,
+    mut eased: Local<Option<Option<f32>>>,
+    cull: Option<ResMut<FarCull>>,
 ) {
     let p = view.as_deref().and_then(|view| {
         let l = view.local()?;
@@ -595,11 +694,35 @@ pub(crate) fn package_view(
         _ => falloff,
     };
     // The quality preset's view distance (spec §14 Phase 10 B7; High:
-    // none).
+    // none), or the render distance that replaces it (10G): eased over
+    // 2 s, so a step of the dynamic mode never jumps.
     let (far_m, falloff) = match quality.as_deref() {
-        Some(q) => q.0.limit_view(far_m, falloff),
+        Some(q) => {
+            let target = q.0.view_m;
+            let shown = match *eased {
+                Some(shown) => crate::quality::ease_view(
+                    shown,
+                    target,
+                    time.delta_secs().min(0.25),
+                    FAR_VIEW_M,
+                ),
+                // The first frame: at once.
+                None => target,
+            };
+            *eased = Some(shown);
+            crate::quality::limit_view_to(shown, far_m, falloff)
+        }
         None => (far_m, falloff),
     };
+    // Far tiles wholly beyond a limited view are hidden (10G): from
+    // [`CULL_SHARE`] × the far plane on, where the fog has left 0.25 % of
+    // them – no edge shows.
+    let limit = (world.is_some() && far_m < FAR_VIEW_M).then_some(far_m * CULL_SHARE);
+    if let Some(mut c) = cull
+        && c.limit != limit
+    {
+        c.limit = limit;
+    }
     for (mut projection, fog) in &mut cameras {
         if let Projection::Perspective(pp) = &mut *projection
             && pp.far != far_m
@@ -647,6 +770,28 @@ mod tests {
 
     use super::*;
     use crate::camera::CameraObstacles;
+
+    /// The far tiles' cut-off (10G): the distance to a tile's box, 0
+    /// inside it; a 1 km tile 5 km away is beyond a 3 km view, one that
+    /// reaches into it is not.
+    #[test]
+    fn the_distance_to_a_far_tile() {
+        let half = Vec3::new(500.0, 200.0, 500.0);
+        assert_eq!(box_distance(Vec3::ZERO, Vec3::ZERO, half), 0.0);
+        let far = box_distance(Vec3::ZERO, Vec3::new(5_500.0, 0.0, 0.0), half);
+        assert!((far - 5_000.0).abs() < 1e-3, "{far}");
+        assert!(far > 3_000.0);
+        let near = box_distance(Vec3::ZERO, Vec3::new(3_300.0, 0.0, 0.0), half);
+        assert!(near < 3_000.0, "{near}");
+        // Diagonal and above.
+        let d = box_distance(
+            Vec3::new(0.0, 1_000.0, 0.0),
+            Vec3::new(3_500.0, 0.0, 4_500.0),
+            half,
+        );
+        let want = (3_000f32.powi(2) + 800f32.powi(2) + 4_000f32.powi(2)).sqrt();
+        assert!((d - want).abs() < 1e-2, "{d} {want}");
+    }
     use crate::ground::TerrainMaterial;
     use crate::package::PackagePlugin;
     use crate::see_through::SeeThroughMaterial;
