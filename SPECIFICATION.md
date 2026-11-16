@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 4.08 – November 2026
+Version 4.09 – November 2026
 
 | Version | Change |
 |---|---|
+| 4.09 | **The world editor's open questions are in the dashboard: world patches §16H Q6–Q11 and the studio §16H Q12–Q15** (closed roads, strict official builds, height points vs gradient limits, shipping the patch, where official patches live, height point defaults; before, one heading with sub-points showed as an empty question) ; the studio shell's questions added as §16H Q12–Q15 (camera default, saved views, the trust dialog in the studio, the 2D map's layers) |
 | 4.08 | **A rider takes out the phone while in the in-game menu, the console or the workout and world pickers** (decision from the build dashboard, 2026-11-16; §2.6 Q2, as proposed) |
 | 4.07 | **Headphones show on a rider only while their microphone is muted in a voice room, not when voice is off** (decision from the build dashboard, 2026-11-16; §2.6 Q1, as proposed) |
 | 4.06 | **Touch steering zones cover the full screen height below the top band, with *lower half only* as a setting** (decision from the build dashboard, 2026-11-16; §3.2.3 Q8, as proposed). All §3.2.3 questions are decided |
@@ -5430,13 +5431,16 @@ The studio makes them interactive:
   - tests: the trait and the built-in planner on the test packages; GeoJSON parsing from recorded BRouter answers (no network in unit tests); matching a recorded Vaduz–Malbun BRouter track onto the Liechtenstein graph; a live test against a configured server only on request (`make test-planner-live URL=…`).
 - **Q4 – Browser studio: decided (2026-11-15, dashboard: "a browser version later"):** desktop first; the browser version comes later (after E5, as proposed) – the core `ocw-edit` stays wasm-safe for it.
 - **Q5 – Mesh editing: decided (2026-11-15, dashboard: "add simple mesh tools in the studio (extrude, scale parts)"):** the Models workspace (16B) gets **simple mesh tools**: select faces / parts of a node, extrude, move, scale and rotate parts, delete, flip normals, recompute normals, merge vertices – with undo, the model contract (15B) and the budgets checked live; anything beyond (sculpting, UV unwrapping, retopology, rigging) stays in Blender. A new stage **E4b** after E4.
-- **Q6 – World patches, details found while building E5 step 1 (open, 2026-11-16):**
-  - (a) *Closed for bikes* versus *removed*: today both take the road out of the ridable graph (as OSM's own `bicycle=no` does), so it is no longer drawn either. Should a closed road stay drawn (with a barrier sign) but offer no exit onto it? That needs a flag in the road graph and `RoadNetwork`.
-  - (b) A gone target in a build: now reported and the build goes on. Should official builds from our world sources fail instead (a `--strict-patch` flag in the build scripts), and user builds only warn?
-  - (c) Height points do not re-apply the class gradient limit (a ramp the user wants stays as asked; the report says what moved). Keep it, or limit and report?
-  - (d) Shipping the patch with the package (the ODbL offer of the Derivative Database, 16C *Licences*): proposed as `<package>.ocwpatch` next to the package, its SHA-256 in the manifest and copied by `world-builder publish`.
-  - (e) Where our official patches live: 16C says `data/<region>/patches/`, but `data/` is git-ignored – a tracked folder instead (for example `worlds/<region>/patches/`)?
-  - (f) The defaults: a height point's radius 100 m, snapping to a road within 15 m.
+- **Q6 – A road closed for bikes (world patches, E5):** today *closed for bikes* takes the road out of the ridable graph like *remove road* (as OSM's own `bicycle=no` does), so it is no longer drawn either. Proposal: a closed road **stays drawn, with a barrier sign at its ends, and offers no exit onto it** (a new flag in the road graph and `RoadNetwork`). Alternative: keep it as now (closed = gone).
+- **Q7 – A patch target that is gone in a build (world patches, E5):** today it is reported and the build goes on. Proposal: **our official builds fail** (a `--strict-patch` flag in our build scripts), user builds only warn. Alternative: always warn only.
+- **Q8 – Height points and the gradient limits (world patches, E5):** a height point does not re-apply the road class's gradient limit (§4.3): a ramp the user wants stays as asked, and the build report says what moved. Proposal: **keep it so** (the user's height wins). Alternative: limit to the class gradient and report the difference.
+- **Q9 – Shipping the patch with the package (world patches, E5; the ODbL offer of 16C *Licences*):** proposal: the patch ships as **`<package>.ocwpatch` next to the package, its SHA-256 in the manifest**, copied by `world-builder publish` and into the release zips. Alternative: inside the package as a section.
+- **Q10 – Where our official patches live (world patches, E5):** 16C says `data/<region>/patches/`, but `data/` is git-ignored. Proposal: a **tracked folder `worlds/<region>/patches/`**, reviewed like code. Alternative: keep them in `data/` and copy them by hand.
+- **Q11 – Defaults for height points (world patches, E5):** a height point blends over a **radius of 100 m** and snaps to a road **within 15 m** of the clicked spot. Proposal: keep these defaults (both editable per point). Or other values?
+- **Q12 – The studio camera's default (E1):** the studio's 3D view flies with the unicorn's controls in two modes. Proposal: **hover** by default (the camera stays put without input – suited to editing), with the unicorn's **plane** model under View → Flight (`--plane`). Alternative: the plane by default, as in the game.
+- **Q13 – Saved camera views in the studio (E1):** named camera views (bookmarks such as "Vaduz") exist today and are kept per user in the studio's autosave, not in the package. Proposal: **keep them per user in the studio session**. Alternatives: store them in the world patch file (shared with the patch), or drop them.
+- **Q14 – Opening a package signed by an unknown user key in the studio (E1):** today the studio shows the loader's error. Proposal: the studio asks with **the game's trust dialog** (*Trust this key* / *Load once* / *Cancel*, §4.7 *User keys*), as both apps do. Alternative: refuse, the key must be trusted in the game first.
+- **Q15 – More on the studio's 2D map (E1):** today it draws the package's land use, roads, buildings and the camera. Proposal: also draw **the joined neighbouring packages** (dimmed) and, where the package has it, **the ortho colour map** (16A) as a switchable layer. Or keep it to the package alone?
 
 ---
 
