@@ -24,6 +24,7 @@ mod known_devices;
 mod logfile;
 mod menu;
 mod monitor;
+mod photos;
 mod recording;
 mod restart;
 mod ride;
@@ -246,6 +247,18 @@ pub struct Args {
     /// Default: on, except for --screenshot / --capture runs.
     #[arg(long, value_name = "BOOL", action = clap::ArgAction::Set)]
     pub record: Option<bool>,
+    /// Test runs (spec §2.11): the ride photographer's 20 minutes between
+    /// photos run this many times faster.
+    #[arg(long, value_name = "FACTOR", default_value_t = 1.0, hide = true)]
+    pub photo_time_scale: f64,
+    /// Test runs (spec §2.8.1): the Strava recording (S) works without
+    /// strava.toml; its activities are saved, nothing is uploaded.
+    #[arg(long, hide = true)]
+    pub strava_dry_run: bool,
+    /// Test runs (spec §2.11): screenshots of the window into DIR whenever
+    /// the photographer or the drone is in the rider's view (every 3 s).
+    #[arg(long, value_name = "DIR", hide = true)]
+    pub photo_chase_shots: Option<PathBuf>,
     /// Start the ride in real weather (spec §14 Phase 9, S7: the local
     /// server fetches it for the place and the clock's moment). Default:
     /// the setting `weather.real` (on), except for --screenshot / --capture
@@ -477,6 +490,8 @@ fn main() -> AppExit {
     .add_plugins((
         recording::RecordingPlugin::default(),
         strava::StravaPlugin::default(),
+        // The ride photographer's photos (spec §2.11).
+        photos::PhotosPlugin,
         restart::RestartPlugin,
         surface::SurfaceGuardPlugin,
         video::VideoPlugin,
@@ -499,6 +514,9 @@ fn main() -> AppExit {
         // `display.quality` and the console's `quality` / `gpu` (spec §14
         // Phase 10 B7; auto is High here: the desktop's look).
         ocw_ui::quality::QualityPlugin,
+        // Touch steering on Windows / Linux touch screens (spec §3.2.3
+        // Q6), shared with the browser app.
+        ocw_ui::touch::TouchSteerPlugin,
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, timed_commands);

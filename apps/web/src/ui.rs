@@ -121,6 +121,8 @@ impl Plugin for WebUiPlugin {
             // Unicorn mode (spec §14 Phase 13 G5) with the page's Pointer
             // Lock and `window.ocw.god()`.
             crate::god::WebGodPlugin,
+            // Touch steering (spec §3.2.3), as on the desktop.
+            ocw_ui::touch::TouchSteerPlugin,
         ));
         if !app.world().contains_resource::<Downloads>() {
             app.insert_resource(Downloads::page());
@@ -142,9 +144,9 @@ impl Plugin for WebUiPlugin {
         .init_resource::<Video>()
         .add_systems(
             Update,
-            (record, show_video, audio_devices).after(ocw_ui::RideViewSet),
+            (record, show_video, audio_devices, strava_key).after(ocw_ui::RideViewSet),
         )
-        .add_systems(Last, (publish, publish_console));
+        .add_systems(Last, (publish, publish_console, publish_steer));
         // The trusted world keys in the page's localStorage (spec §4.7
         // *User keys*); the built-in roots cannot be added.
         // (Always: the menu plugin above put an empty default there.)
@@ -251,6 +253,18 @@ static MENU_JSON: Mutex<String> = Mutex::new(String::new());
 
 /// The settings' text values for the page (`window.ocw.setting(key)`).
 static SETTINGS_TEXT: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+
+/// Touch steering's state for the page (`window.ocw.steer()`).
+static STEER_JSON: Mutex<String> = Mutex::new(String::new());
+
+/// The touch steering state as JSON (spec §3.2.3: the browser test).
+pub fn steer_json() -> String {
+    STEER_JSON.lock().expect("not poisoned").clone()
+}
+
+fn publish_steer(world: &mut World) {
+    *STEER_JSON.lock().expect("not poisoned") = ocw_ui::touch::state_json(world);
+}
 
 /// The menu as it shows now, as JSON.
 pub fn menu_json() -> String {
@@ -444,6 +458,35 @@ fn show_video(time: Res<Time>, video: Res<Video>, mut view: ResMut<RideView>) {
     let rec = video.0.as_ref().map(|(_, t0)| time.elapsed_secs_f64() - t0);
     if view.recording_s != rec {
         view.recording_s = rec;
+    }
+}
+
+/// What the Strava key (S, spec §2.8.1) says in the browser.
+pub const STRAVA_DESKTOP_ONLY: &str = "Strava needs the desktop app (Ride -> Strava recording)";
+
+/// S (or its pad button) in the browser: the notice that Strava needs the
+/// desktop app, for a few seconds.
+fn strava_key(
+    time: Res<Time>,
+    keys: Option<Res<ButtonInput<KeyCode>>>,
+    pads: Query<&Gamepad>,
+    bindings: Option<Res<ocw_ui::bindings::ActiveBindings>>,
+    context: Option<Res<ocw_render::menu::InputContext>>,
+    mut until: Local<f64>,
+    mut view: ResMut<RideView>,
+) {
+    use ocw_client::bindings::Action;
+    let now = time.elapsed_secs_f64();
+    if let Some(keys) = keys
+        && ocw_render::menu::ride_input(context)
+        && (ocw_ui::bindings::key_just_pressed(bindings.as_deref(), Action::Strava, &keys)
+            || ocw_ui::bindings::pad_just_pressed(bindings.as_deref(), Action::Strava, pads.iter()))
+    {
+        *until = now + ocw_client::strava::NOTICE_S;
+    }
+    let msg = (now < *until).then(|| STRAVA_DESKTOP_ONLY.to_string());
+    if view.strava_message != msg {
+        view.strava_message = msg;
     }
 }
 
@@ -692,6 +735,28 @@ mod tests {
         app.update();
         app.update();
         app.world().resource::<ConsoleState>().log().join("\n")
+    }
+
+    /// S in the browser (spec §2.8.1): the notice that Strava needs the
+    /// desktop app.
+    #[test]
+    fn the_strava_key_says_it_needs_the_desktop_app() {
+        let mut app = app(DownloadLog::default());
+        run_for(&mut app, 200);
+        assert_eq!(app.world().resource::<RideView>().strava_message, None);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyS);
+        app.update();
+        assert_eq!(
+            app.world().resource::<RideView>().strava_message.as_deref(),
+            Some(STRAVA_DESKTOP_ONLY)
+        );
+        assert_eq!(
+            app.world().resource::<RideView>().strava_s,
+            None,
+            "no recording"
+        );
     }
 
     #[test]

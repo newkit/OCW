@@ -88,6 +88,9 @@ pub struct TrainingHistory {
     pub importable: Option<usize>,
     /// The rides whose FIT file can be exported.
     pub exportable: BTreeSet<String>,
+    /// The ride photographer's photos by ride id (spec §2.11; the app
+    /// fills it when the history is refreshed).
+    pub photos: BTreeMap<String, ocw_client::menu::history::RidePhotos>,
 }
 
 impl TrainingHistory {
@@ -156,6 +159,7 @@ pub fn info(world: &World) -> HistoryInfo {
             importable: h.importable,
             exportable: h.exportable.clone(),
             read_only: h.read_only.clone(),
+            photos: h.photos.clone(),
         },
         None => HistoryInfo {
             now_unix: now,

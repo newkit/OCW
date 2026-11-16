@@ -527,8 +527,44 @@ itself), the next Esc opens the menu, a click locks the pointer again. If
 the browser refuses the lock, hold the left button to look. While flying,
 the trainer rides a flat road, and in a shared ride (WebTransport) the
 server's rules apply as on the desktop: by default only the host flies.
-The settings (*Settings → Controls*: invert Y, plane or hover; *Display*:
+The settings (*Settings → Controls → Touch and unicorn*: invert Y, plane or hover; *Display*:
 the rainbow trail) and the `god …` console commands are the desktop's.
+
+#### Touch steering in the browser
+
+On a phone, a tablet or any touch screen the ride steers by touch (spec
+§3.2.3): **tap or hold the left or right side of the screen**, as if you
+pressed or held ← / →.
+
+- **Hold** a side: it steers at once, like the held arrow key – in
+  autodrive the line moves 2 m per second, with manual steering the rider
+  leans into the curve.
+- **Tap** a side (lifted within 250 ms): one step – the line moves 0.5 m,
+  the lean changes by 0.1 rad (about 6°). With manual steering the lean
+  stays after the finger lifts; a tap on the other side straightens up
+  (stopping at upright first), as with the keys.
+- A touch never switches autodrive off; only the autodrive key or button
+  does. Both sides at once steer nothing (as ← and → together).
+- **Junctions** (free ride): the halves keep steering; tap an arrow of the
+  junction fan at the bottom centre to choose that exit.
+- **Two fingers move the camera**: drag to orbit, pinch to come closer or
+  go further back. One finger only steers.
+- Not steering: the band in the middle (12 % of the width), the band at the
+  top (15 % of the height), 16 px at every edge, the junction fan.
+
+**Hints:** faint chevrons ‹ › at the lower left and right show where to
+touch, a glow along the edge of the side you hold, and once per device a
+tip. They show from the start on phones and tablets (also an iPad that
+reports a Mac) and on any other device after the first touch, and hide
+again when you use a key, the mouse or a gamepad. *Settings → Controls →
+Touch and unicorn*: *Touch steering* `auto` (the default) / `on` (always
+the hints) / `off` (no steering by touch), *Touch zones* `full` (the whole
+height below the top band) / `lower` (only the lower half, so the upper
+half is free for the camera). Console: `set controls.touch_steer on`; page
+option `?touch=on|off` for one visit.
+
+The desktop app steers the same way on Windows and Linux touch screens
+(touch laptops, tablets, touch monitors); macOS has no touch screens.
 
 #### Graphics: WebGPU, WebGL 2 and the quality presets
 
@@ -719,9 +755,11 @@ keys new-signing`.
 | Route ride: back to the route after leaving it | J | North button (Y / △) |
 | Power ±10 W | PgUp / PgDn | |
 | Camera: orbit / zoom | mouse drag / wheel | |
+| Touch screen: steer (hold a side), one step (tap a side), camera (two fingers: drag, pinch), junction exit (tap its fan arrow); see [touch steering](#touch-steering-in-the-browser) | left / right side of the screen | |
 | Camera reset | C | |
 | Restart everything (as at program start; the ride is saved first) | R | |
 | Record a video (start / stop) | V | |
+| Strava recording (start / stop): the part between two presses is its own Strava activity | S | left-stick click (L3) |
 | Voice: mute / unmute your microphone | M | Select (Back / View / Share) |
 | Voice: mute / unmute the speaker (all voices; game sounds stay) | Shift+M | right-stick click (R3) |
 | Next screen | F11 | |
@@ -1098,6 +1136,44 @@ world-builder patch check --world my.ocwpkg my.ocwpatch [--pbf extract.osm.pbf]
 Both list every operation as `ok`, `MISSING` (its target is gone – reported,
 never silently dropped; `patch check` exits 1) or unchecked. Sign the result
 with your own key as above.
+
+**In OCW Studio** (`ocw-studio --world my.ocwpkg`, World workspace) the patch
+is the document you edit, with undo / redo (Ctrl + Z / Ctrl + Shift + Z) and
+autosave:
+
+1. **Click a road** in the 3D view or on the 2D map: its edge is highlighted
+   in both, and the *Road* panel shows the package's surface, width, class,
+   one-way, bike access and name next to the patch's changes. Each change is
+   one command (a combo box, the width, *closed for riding*, the name; `x`
+   takes a change out again); *the whole way* makes the edits act on the OSM
+   way instead of the one edge; *Remove road* / *Restore road*.
+2. **Height points:** *Place height point*, then click the road where it
+   goes (it snaps to the selected road and starts at the road's height); in
+   its panel set the *Height* or *Raise* and the radius along the road,
+   *Move* (then click the new spot) or *Remove*. A click on a point selects it.
+3. **The patch's operations** are listed under *World patch*, each with what
+   the preview found (`ok`, `MISSING` when its target is not in the package,
+   `?`); a click selects its road or point, `x` deletes it. Changed roads are
+   tinted orange, removed or closed ones red and struck through, height
+   points drawn with their radius, and the road profile they make in yellow
+   (the package's tiles are not re-meshed in the studio yet).
+4. **File → Save patch** (Ctrl + S) writes `my.ocwpatch` next to the package
+   (*Save patch as…* elsewhere); when you open the package again, that patch
+   is loaded. *Open patch…* loads another one – a patch made for another
+   package is refused. The saved camera views stay in the studio (autosave),
+   not in the patch.
+5. **File → Build package…** runs `world-builder package … --patch` on your
+   computer when the package's sources are there (`<name>.osm.pbf`,
+   `<name>.poly`, `.hgt` tiles or a DTM folder next to the package, or typed
+   in the dialog; `world-builder` next to `ocw-studio`, on the `PATH` or in
+   `OCW_WORLD_BUILDER`) and shows its output and the per-operation report.
+   The result goes to `patched/<name>.ocwpkg`; the original package is not
+   touched.
+
+The same from the console: `studio select X Z | latlon LAT LON`, `studio road
+surface gravel | width 4 | name Alter Weg | remove | focus`, `studio point add
+| raise 3 | radius 60 | move X Z | remove`, `studio patch list | save [PATH] |
+open PATH | build [OUT]`.
 
 ## Connecting a gamepad
 
@@ -1701,6 +1777,25 @@ event status | event cancel | event dismiss
   (or `client_id` / `client_secret` in `~/.config/ocw/strava.toml`), then
   `strava.connect` once. Saved rides upload in the background; failed uploads
   are retried.
+- **Strava recording with S** (spec §2.8.1): S (pad L3, *Ride → Strava
+  recording*, `strava.record`) starts and stops it; the HUD shows
+  "● Strava m:ss". The part between S and S is saved as its own activity in
+  `~/.local/share/ocw/rides/strava/` and uploaded like the rides; leaving or
+  saving the ride or quitting stops it. Without `strava.toml` S only says
+  "Strava is not set up (strava.toml)". The browser app shows the entry but
+  needs the desktop app for Strava.
+- **The ride photographer** (spec §2.11; setting `photographer.enabled`,
+  Settings → Display → Graphics, console `photographer on|off|status`):
+  up to 5 photos per ride, at least 20 minutes apart, of the nicest views
+  (open views, mountains, water, low sun; nothing in tunnels, forests or
+  fog). A photographer appears beside the road ahead and takes the photo with
+  a flash as you pass; where nobody can stand (water, rock, in the air) the
+  photographer flies a drone that follows you for half a minute to two
+  minutes before the shot. Photos: `~/.local/share/ocw/rides/<ride>/photos/
+  photo-N.jpg` (2560 × 1440, time and GPS in EXIF, no stamp) with a
+  `photo-N.toml` sidecar; *Navi → Training history → a ride → Photos* opens
+  the folder, to add them to the Strava activity by hand (Strava's API takes
+  no photos).
 
 ## Command-line options (`ocw-desktop`)
 
@@ -1775,6 +1870,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `display.road_barriers` | on / off (off): gates, bollards and barriers on the roads (section `OBST`; never solid on the road, spec §14 Phase 12 Q7) | at once |
 | `display.unicorn_trail` | on / off (on): the rainbow trail behind the unicorns of god mode (console `god.trail`; not on the full Display page) | at once |
 | `display.fullscreen` | on / off (off): borderless fullscreen (`--fullscreen`) | next start |
+| `photographer.enabled` | on / off (on): the ride photographer (spec §2.11) – up to 5 photos of nice views per ride by a person or a drone, with a flash; Settings → Display → Graphics (console `photographer`) | at once |
 | `ride.bots` | 0 to 50 (10): test riders (`--bots`) | next start |
 | `ride.random_start` | on / off (on): random start point (`--random-start`) | next start |
 | `ride.record` | on / off (on): save rides as FIT (`--record`) | next start |
@@ -2279,6 +2375,9 @@ you can run are offered (no *Dev* commands on a remote server).
 | `strava.status` | Strava link and upload state |
 | `strava.sync [--retry]` | Upload every saved ride not on Strava yet (`--retry`: also failed ones) |
 | `strava.disconnect` | Unlink Strava (deletes the stored tokens) |
+| `strava.record [start\|stop\|toggle\|status]` | The Strava recording (key S): the part between start and stop is its own Strava activity |
+| `photographer [on\|off\|status\|now\|drone]` | The ride photographer (spec §2.11); `now` plans the next photo at once, `drone` the next by the drone (tests) |
+| `history.photos N` | Open the folder with ride N's photos (1 = the newest) |
 
 ## Workouts
 
@@ -3526,7 +3625,7 @@ All test runs execute on the build machines (`scripts/remote.sh MACHINE run
   the day scripts, renders, publishing and the hourly collector live and run
   there, from a checkout next to this one (`../OCW-ART`).
 
-Release builds are published as GitHub Releases (`release/README.md` has the
+Release builds are published as GitHub Releases (each release's notes are its
 build notes); screenshots and videos from development
 are not in the repository: the art project stores them as one zip per day on
 the release [`build-history` of OCW-ART](https://github.com/newkit/OCW-ART/releases/tag/build-history)
@@ -3598,7 +3697,7 @@ make version | version-next | version-bump PART=minor   # by hand
 | Windows | Win11Builder | The same cargo build (static C runtime from `.cargo/config.toml`), then the three `.exe` files zipped (no script yet) | `OpenCyclingWorld-<version>-<sha>-windows-x86_64.zip` |
 | World packages | marge | `scripts/prepare-world-release.sh OUT_DIR PKG…` (no upload) | `ocw-world-<name>-v<N>.zip` (package, manifest, routes, `LICENSE-DATA.md`, `README.md`) and `<region>-osm-source.zip` (the ODbL offer) |
 
-`release/README.md` keeps the build notes of each release. Screenshots and
+Each GitHub release's notes keep its build notes. Screenshots and
 videos from development are not in the repository: the art project publishes
 them as one zip per day with an index on the release `build-history` of
 [OCW-ART](https://github.com/newkit/OCW-ART).

@@ -65,6 +65,13 @@ pub fn load_meta(fit_path: &Path) -> Option<RideMeta> {
     toml::from_str(&text).ok()
 }
 
+/// The game time now (s).
+pub fn game_now(world: &World) -> f64 {
+    world
+        .get_resource::<Time>()
+        .map_or(0.0, |t| t.elapsed_secs_f64())
+}
+
 pub(crate) fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -146,7 +153,20 @@ fn record(
     client: Res<ClientState>,
     workouts: Option<Res<crate::workout::Workouts>>,
     mut rec: ResMut<Recording>,
+    strava: Option<ResMut<crate::strava::recording::StravaRec>>,
 ) {
+    // The Strava recording (spec §2.8.1): the same samples, its own FIT.
+    if let Some(mut s) = strava
+        && s.0.is_recording()
+        && client.0.rider_id().is_some()
+    {
+        let t = time.elapsed_secs_f64();
+        let c = &client.0;
+        s.0.observe(c.track(), c.geo_origin(), sample(c, t), unix_now());
+        if let Some(crash) = c.own_crash(t) {
+            s.0.mark_crash(t - crash.elapsed_s);
+        }
+    }
     if !rec.enabled {
         return;
     }
@@ -229,6 +249,12 @@ fn ride_context(world: &World, hearts_start: Option<u32>, workout: Option<String
 /// Ends the ride and saves it (when it is at least `min_duration_s`
 /// long) as a FIT file and into the rider's training history.
 pub fn save_now(world: &mut World, min_duration_s: f64) -> Result<Option<PathBuf>, String> {
+    // The ride ends: a Strava recording in it ends and is saved too (spec
+    // §2.8.1), the photographer starts counting again (spec §2.11).
+    crate::strava::recording::stop(world);
+    if let Some(mut p) = world.get_resource_mut::<ocw_ui::photographer::RidePhotographer>() {
+        p.new_ride();
+    }
     let Some(rec) = world.get_resource::<Recording>() else {
         return Ok(None);
     };
@@ -302,6 +328,64 @@ fn fit_files(world: &World) -> Vec<(String, PathBuf)> {
     out
 }
 
+/// The Strava recordings (start, end: UTC Unix s) in `rides/strava/`.
+pub fn strava_recordings(rides: &Path) -> Vec<(i64, i64)> {
+    std::fs::read_dir(crate::strava::recording::strava_dir(rides))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "fit"))
+        .filter_map(|p| {
+            let a = ocw_fit::decode(&std::fs::read(p).ok()?).ok()?;
+            let end = a.start_unix_s + a.records.last()?.elapsed_s.ceil() as i64;
+            Some((a.start_unix_s, end))
+        })
+        .collect()
+}
+
+/// The photos of every ride in the history (spec §2.11) and those taken
+/// in its Strava recordings (§2.8.1 ST3).
+fn rides_photos(
+    world: &World,
+) -> std::collections::BTreeMap<String, ocw_client::menu::history::RidePhotos> {
+    let mut out = std::collections::BTreeMap::new();
+    let Some(dir) = world
+        .get_resource::<Recording>()
+        .and_then(|r| r.dir.clone())
+    else {
+        return out;
+    };
+    let Some(h) = world.get_resource::<ocw_ui::history::TrainingHistory>() else {
+        return out;
+    };
+    let recordings = strava_recordings(&dir);
+    for r in &h.history.rides {
+        let files = crate::photos::ride_photos(&dir, &r.id);
+        if files.is_empty() {
+            continue;
+        }
+        let end = r.start_unix_s + r.elapsed_s.ceil() as i64;
+        let within: Vec<&(i64, i64)> = recordings
+            .iter()
+            .filter(|(a, b)| *a <= end && *b >= r.start_unix_s)
+            .collect();
+        let in_strava = files
+            .iter()
+            .filter(|(_, _, t)| within.iter().any(|(a, b)| (*a..=*b).contains(t)))
+            .count();
+        out.insert(
+            r.id.clone(),
+            ocw_client::menu::history::RidePhotos {
+                files: files.into_iter().map(|(f, s, _)| (f, s)).collect(),
+                in_strava,
+                recordings: within.len(),
+            },
+        );
+    }
+    out
+}
+
 /// What can be imported and exported now.
 fn refresh_history(world: &mut World) {
     let files = fit_files(world);
@@ -311,7 +395,9 @@ fn refresh_history(world: &mut World) {
         .iter()
         .filter_map(|(_, p)| p.file_name().map(|n| n.to_string_lossy().into_owned()))
         .collect();
+    let photos = rides_photos(world);
     if let Some(mut h) = world.get_resource_mut::<ocw_ui::history::TrainingHistory>() {
+        h.photos = photos;
         h.importable = Some(importable);
         h.exportable = h
             .history
@@ -404,6 +490,7 @@ fn mark_laps(
     client: Res<ClientState>,
     workouts: Option<Res<crate::workout::Workouts>>,
     mut rec: ResMut<Recording>,
+    strava: Option<ResMut<crate::strava::recording::StravaRec>>,
     mut last: Local<LapKey>,
 ) {
     let now = (
@@ -413,6 +500,9 @@ fn mark_laps(
     if starts_lap(*last, now) {
         let t = time.elapsed_secs_f64();
         rec.recorder.mark_lap(t);
+        if let Some(mut s) = strava {
+            s.0.mark_lap(t);
+        }
     }
     *last = now;
 }
@@ -451,6 +541,33 @@ fn register_commands(app: &mut App) {
                 }
                 None => Err("nothing recorded yet".into()),
             }
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("history.photos")
+            .about("Open the folder with the ride photographer's photos of ride N (1 = the newest) – to add them in Strava by hand")
+            .arg(clap::Arg::new("n").required(true)),
+        |world, m| {
+            let n: usize = m
+                .get_one::<String>("n")
+                .expect("required")
+                .parse()
+                .map_err(|_| "expected a ride number".to_string())?;
+            let id = world
+                .get_resource::<ocw_ui::history::TrainingHistory>()
+                .and_then(|h| h.history.nth_newest(n.saturating_sub(1)).map(|r| r.id.clone()))
+                .ok_or("no such ride")?;
+            let dir = world
+                .get_resource::<Recording>()
+                .and_then(|r| r.dir.clone())
+                .ok_or("no rides folder")?;
+            let folder = crate::photos::photos_dir(&dir, &id);
+            if !folder.is_dir() {
+                return Err("this ride has no photos".into());
+            }
+            crate::strava::auth::open_browser(&folder.to_string_lossy())?;
+            Ok(format!("opened {}", folder.display()))
         },
     ))
     .console_command(ConsoleCommand::new(
