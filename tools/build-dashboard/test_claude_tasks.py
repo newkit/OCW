@@ -216,6 +216,22 @@ class WorktreeParsing(unittest.TestCase):
         self.assertEqual(ct.safe_path("/tmp/claude-1000/-proj/e8b4736e-3828/scratchpad/wt", "/home/u"),
                          "/tmp/claude-…/scratchpad/wt")
         self.assertEqual(ct.safe_path("/home/u/data/git/OCW", "/home/u"), "~/data/git/OCW")
+        # On deb Claude Code's temp directories are under ~/tmp (CLAUDE_CODE_TMPDIR).
+        self.assertEqual(ct.safe_path("/home/u/tmp/claude-1002/-proj/37d73bc5-711b/scratchpad/wt", "/home/u"),
+                         "~/tmp/claude-…/scratchpad/wt")
+
+    def test_task_files_from_every_tmp_root(self):
+        # /tmp and ~/tmp (deb: /tmp is a tmpfs, CLAUDE.md): both are searched.
+        with tempfile.TemporaryDirectory() as d:
+            for root, task in (("tmp", "aaa111"), ("home-tmp", "bbb222")):
+                t = Path(d) / root / "claude-1002" / "-proj" / "sess" / "tasks"
+                t.mkdir(parents=True)
+                (t / (task + ".output")).write_text("")
+            files = ct.task_files(tuple(str(Path(d) / r / "claude-*/*/*/tasks") for r in ("tmp", "home-tmp")))
+            self.assertEqual(sorted(files), ["aaa111", "bbb222"])
+            self.assertEqual(sorted(ct.task_files(str(Path(d) / "tmp" / "claude-*/*/*/tasks"))), ["aaa111"])
+        self.assertIn(os.path.expanduser("~/tmp") + "/claude-*/*/*/tasks", ct.TASK_GLOB)
+        self.assertIn("/tmp/claude-*/*/*/tasks", ct.TASK_GLOB)
 
     def test_branch_state_with_a_fake_git(self):
         A_BR = "worktree-agent-" + A

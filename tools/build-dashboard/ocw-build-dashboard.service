@@ -12,6 +12,9 @@ Type=simple
 WorkingDirectory=@REPO@
 ExecStart=/usr/bin/python3 @REPO@/tools/build-dashboard/dashboard.py --port 8765
 Environment=PYTHONDONTWRITEBYTECODE=1
+# deb: /tmp is a tmpfs (RAM, then swap) – temp files go to disk (CLAUDE.md).
+Environment=TMPDIR=%h/tmp
+ExecStartPre=/bin/mkdir -p %h/tmp
 Restart=on-failure
 RestartSec=10
 # The dashboard needs < 400 MB (peak 379 MB on 2026-11-15, when the OOM killer

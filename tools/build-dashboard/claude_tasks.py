@@ -33,7 +33,19 @@ RECENT_S = 24 * 3600          # finished tasks shown behind the toggle
 IDLE_S = 20 * 60              # a running task's file unchanged this long: idle / waiting
 DAYS_BACK = 3                 # agents.jsonl files read (today and the days before)
 GIT_INTERVAL_S = 120.0        # worktrees and branches
-TASK_GLOB = "/tmp/claude-*/*/*/tasks"
+# Claude Code's per-session task directories: under /tmp, and on deb under
+# ~/tmp (CLAUDE_CODE_TMPDIR – /tmp is a tmpfs there, CLAUDE.md), or wherever
+# CLAUDE_CODE_TMPDIR / TMPDIR point.
+def _tmp_roots() -> list:
+    roots = ["/tmp", os.path.expanduser("~/tmp")]
+    for var in ("CLAUDE_CODE_TMPDIR", "TMPDIR"):
+        v = os.environ.get(var, "").rstrip("/")
+        if v:
+            roots.append(v)
+    return list(dict.fromkeys(roots))
+
+
+TASK_GLOB = tuple(r + "/claude-*/*/*/tasks" for r in _tmp_roots())
 _FULL_ID = re.compile(r"^a[0-9a-f]{16}$")
 _BRANCH_ID = re.compile(r"(?:^|[-/])agent-(a[0-9a-f]{16})$")
 
@@ -137,11 +149,12 @@ def task_states(events: list) -> list:
 # --------------------------------------------------------------------------
 
 
-def task_files(pattern: str = TASK_GLOB) -> dict:
+def task_files(pattern=TASK_GLOB) -> dict:
     """task id -> path of its .output file, from the directory listings
-    only (names; nothing is opened)."""
+    only (names; nothing is opened). `pattern`: a glob or several."""
     out = {}
-    for d in glob.glob(pattern):
+    patterns = [pattern] if isinstance(pattern, str) else list(pattern)
+    for d in [d for pat in patterns for d in glob.glob(pat)]:
         try:
             with os.scandir(d) as it:
                 for e in it:
@@ -230,7 +243,7 @@ def parse_refs(text: str) -> dict:
 
 
 SUBJECT_MAX = 90
-_SESSION_DIR = re.compile(r"/tmp/claude-[^/]+/[^/]+/[^/]+")
+_SESSION_DIR = re.compile(r"(/tmp|/home/[^/]+/tmp)/claude-[^/]+/[^/]+/[^/]+")
 
 
 def _clip(s, n):
@@ -240,8 +253,8 @@ def _clip(s, n):
 def safe_path(p: str, home) -> str:
     """A worktree path for the page: the home directory as ~, and Claude
     Code's per-session directories (/tmp/claude-UID/PROJECT/SESSION, the
-    session id) as /tmp/claude-…"""
-    p = _SESSION_DIR.sub("/tmp/claude-…", p)
+    session id) as /tmp/claude-… (on deb ~/tmp/claude-…)"""
+    p = _SESSION_DIR.sub(r"\1/claude-…", p)
     h = str(home).rstrip("/")
     return "~" + p[len(h):] if p == h or p.startswith(h + "/") else p
 
