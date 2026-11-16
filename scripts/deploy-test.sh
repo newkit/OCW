@@ -18,7 +18,8 @@
 # (`--world`, `--route`, see config/README.md).
 #
 # The material library (scripts/fetch-materials.sh, spec §4.6) goes to
-# /var/tmp/ocw/materials beside the binary.
+# /var/tmp/ocw/materials beside the binary, LiveKit's voice server
+# (scripts/fetch-livekit-server.sh, spec §7.1.8) to /var/tmp/ocw/livekit-server.
 #
 # Environment:
 #   OCW_DEPLOY_DIR   install directory on the machine (default /var/tmp/ocw)
@@ -139,6 +140,15 @@ OCW_REMOTE_DEPLOY=1 scripts/remote.sh "$machine" run "
   # Material library (spec §4.6) beside the binary, before it (the kiosk
   # restarts on the binary).
   OCW_MATERIALS_OPTIONAL=1 scripts/install-materials.sh \"\$D/materials\"
+  # The voice server next to ocw-server (spec §7.1.8): the kiosk's game
+  # server finds it there and starts it (pinned, SHA-256 checked, fetched
+  # once into target/voice-vendor/). Without it the kiosk rides without voice.
+  if scripts/fetch-livekit-server.sh '' target/voice-server/kiosk > /dev/null; then
+    put 755 target/voice-server/kiosk/livekit-server livekit-server
+    put 644 target/voice-server/kiosk/livekit-server.LICENSE.txt livekit-server.LICENSE.txt
+  else
+    echo 'livekit-server not fetched: the kiosk game server runs without voice'
+  fi
   put 755 target/release/ocw-server ocw-server
   put 755 target/release/ocw-desktop ocw-desktop
   echo \"deployed \$(cat \"\$D/VERSION\") to \$D\"

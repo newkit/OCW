@@ -479,7 +479,9 @@ the page's LiveKit SDK. The browser asks for the microphone at the first
 call. A `ws://` LiveKit URL works only for pages on localhost (an `https://`
 page needs `wss://`, i.e. LiveKit behind TLS). For browsers on other
 machines, give the server a LiveKit URL they can reach (`--bind 0.0.0.0`,
-TCP 7880 and UDP 7881–7882 open). M / Shift+M (gamepad Select / R3) mute the
+TCP 7880 and 7881 open plus its UDP media port: 7882 with `rtc.udp_port`
+set, as the bundled voice server does, else LiveKit's range 50000–60000).
+M / Shift+M (gamepad Select / R3) mute the
 microphone / the voices.
 
 #### Menus, settings and captures
@@ -2748,7 +2750,9 @@ Voice needs two things:
    environment), and riders get their voice tokens from the game server as
    before (10 minutes, one room, microphone only). Only the
    `livekit-server` binary must be there – next to `ocw-server`, on `PATH`,
-   or named with `--voice-server PATH`:
+   or named with `--voice-server PATH` (`scripts/deploy-test.sh` installs it
+   next to the kiosk's `ocw-server` in `/var/tmp/ocw`, so riders who join a
+   kiosk talk to each other; `ocw-kiosk.sh status` shows the voice line):
    ```bash
    scripts/fetch-livekit-server.sh              # LiveKit 1.13.10 for this machine, SHA-256 checked → target/voice-server/PLATFORM/
    cargo run --release -p ocw-server -- --listen --bots 3 \
@@ -2817,9 +2821,11 @@ test-voice-bundled` (marge, with `livekit-server` in `~/.local/bin`) checks
 the bundled voice server end to end: `ocw-server --listen` starts it, the
 secret is in its environment and not on its command line, two headless
 riders get grants from the game server and LiveKit lists both in the room,
-and a `kill -9` of `ocw-server` ends the voice server too. (The desktop's
-LiveKit backend does not yet see the other riders on `livekit-server`
-1.13.10 – spec §7.1.8 *Open* – so the hearing step is reported as KNOWN.)
+and a `kill -9` of `ocw-server` ends the voice server too. `make
+test-voice-live` puts the real desktop app (voice build, headless) in such a
+session as a rider: with a bot as the second human rider its voice joins by
+itself, LiveKit lists it with its microphone on, and the echo participant
+(joined as the Echo rider) hears it. Results in `test-output/voice-live/`.
 
 **Echo test** (spec §7 *Echo bot*). To check your microphone and voice
 alone: `voice.echo on` (or Settings → Audio → Voice → Echo test, or start
