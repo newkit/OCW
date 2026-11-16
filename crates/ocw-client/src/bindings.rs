@@ -49,6 +49,7 @@ pub enum Action {
     Fullscreen,
     Restart,
     GodMode,
+    Strava,
     MuteMic,
     MuteVoices,
 }
@@ -134,7 +135,7 @@ const fn desktop(mut d: ActionDef) -> ActionDef {
 
 /// All actions with today's keys and buttons as defaults (spec §3.2.1,
 /// §3.2.2, the README's key table).
-pub const ACTIONS: [ActionDef; 19] = [
+pub const ACTIONS: [ActionDef; 20] = [
     def(
         Action::Faster,
         "faster",
@@ -256,6 +257,16 @@ pub const ACTIONS: [ActionDef; 19] = [
         Group::App,
         "G",
         "none",
+    )),
+    // The Strava recording (spec §2.8.1 ST1; the browser says that Strava
+    // needs the desktop app).
+    flying(def(
+        Action::Strava,
+        "strava",
+        "Strava recording",
+        Group::App,
+        "S",
+        "L3",
     )),
     flying(def(
         Action::MuteMic,

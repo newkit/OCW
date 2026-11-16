@@ -981,6 +981,12 @@ impl ClientCore {
         }
     }
 
+    /// The autodrive line (m from the road's middle, positive = right),
+    /// once it was set.
+    pub fn line_target(&self) -> Option<f64> {
+        self.lateral_target
+    }
+
     /// Moves the autodrive line sideways by `delta_m` (positive = right).
     pub fn steer_by(&mut self, delta_m: f64) {
         let t = self.lateral_target.unwrap_or(0.0);

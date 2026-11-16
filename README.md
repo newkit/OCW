@@ -527,8 +527,44 @@ itself), the next Esc opens the menu, a click locks the pointer again. If
 the browser refuses the lock, hold the left button to look. While flying,
 the trainer rides a flat road, and in a shared ride (WebTransport) the
 server's rules apply as on the desktop: by default only the host flies.
-The settings (*Settings → Controls*: invert Y, plane or hover; *Display*:
+The settings (*Settings → Controls → Touch and unicorn*: invert Y, plane or hover; *Display*:
 the rainbow trail) and the `god …` console commands are the desktop's.
+
+#### Touch steering in the browser
+
+On a phone, a tablet or any touch screen the ride steers by touch (spec
+§3.2.3): **tap or hold the left or right side of the screen**, as if you
+pressed or held ← / →.
+
+- **Hold** a side: it steers at once, like the held arrow key – in
+  autodrive the line moves 2 m per second, with manual steering the rider
+  leans into the curve.
+- **Tap** a side (lifted within 250 ms): one step – the line moves 0.5 m,
+  the lean changes by 0.1 rad (about 6°). With manual steering the lean
+  stays after the finger lifts; a tap on the other side straightens up
+  (stopping at upright first), as with the keys.
+- A touch never switches autodrive off; only the autodrive key or button
+  does. Both sides at once steer nothing (as ← and → together).
+- **Junctions** (free ride): the halves keep steering; tap an arrow of the
+  junction fan at the bottom centre to choose that exit.
+- **Two fingers move the camera**: drag to orbit, pinch to come closer or
+  go further back. One finger only steers.
+- Not steering: the band in the middle (12 % of the width), the band at the
+  top (15 % of the height), 16 px at every edge, the junction fan.
+
+**Hints:** faint chevrons ‹ › at the lower left and right show where to
+touch, a glow along the edge of the side you hold, and once per device a
+tip. They show from the start on phones and tablets (also an iPad that
+reports a Mac) and on any other device after the first touch, and hide
+again when you use a key, the mouse or a gamepad. *Settings → Controls →
+Touch and unicorn*: *Touch steering* `auto` (the default) / `on` (always
+the hints) / `off` (no steering by touch), *Touch zones* `full` (the whole
+height below the top band) / `lower` (only the lower half, so the upper
+half is free for the camera). Console: `set controls.touch_steer on`; page
+option `?touch=on|off` for one visit.
+
+The desktop app steers the same way on Windows and Linux touch screens
+(touch laptops, tablets, touch monitors); macOS has no touch screens.
 
 #### Graphics: WebGPU, WebGL 2 and the quality presets
 
@@ -719,9 +755,11 @@ keys new-signing`.
 | Route ride: back to the route after leaving it | J | North button (Y / △) |
 | Power ±10 W | PgUp / PgDn | |
 | Camera: orbit / zoom | mouse drag / wheel | |
+| Touch screen: steer (hold a side), one step (tap a side), camera (two fingers: drag, pinch), junction exit (tap its fan arrow); see [touch steering](#touch-steering-in-the-browser) | left / right side of the screen | |
 | Camera reset | C | |
 | Restart everything (as at program start; the ride is saved first) | R | |
 | Record a video (start / stop) | V | |
+| Strava recording (start / stop): the part between two presses is its own Strava activity | S | left-stick click (L3) |
 | Voice: mute / unmute your microphone | M | Select (Back / View / Share) |
 | Voice: mute / unmute the speaker (all voices; game sounds stay) | Shift+M | right-stick click (R3) |
 | Next screen | F11 | |
@@ -1739,6 +1777,25 @@ event status | event cancel | event dismiss
   (or `client_id` / `client_secret` in `~/.config/ocw/strava.toml`), then
   `strava.connect` once. Saved rides upload in the background; failed uploads
   are retried.
+- **Strava recording with S** (spec §2.8.1): S (pad L3, *Ride → Strava
+  recording*, `strava.record`) starts and stops it; the HUD shows
+  "● Strava m:ss". The part between S and S is saved as its own activity in
+  `~/.local/share/ocw/rides/strava/` and uploaded like the rides; leaving or
+  saving the ride or quitting stops it. Without `strava.toml` S only says
+  "Strava is not set up (strava.toml)". The browser app shows the entry but
+  needs the desktop app for Strava.
+- **The ride photographer** (spec §2.11; setting `photographer.enabled`,
+  Settings → Display → Graphics, console `photographer on|off|status`):
+  up to 5 photos per ride, at least 20 minutes apart, of the nicest views
+  (open views, mountains, water, low sun; nothing in tunnels, forests or
+  fog). A photographer appears beside the road ahead and takes the photo with
+  a flash as you pass; where nobody can stand (water, rock, in the air) the
+  photographer flies a drone that follows you for half a minute to two
+  minutes before the shot. Photos: `~/.local/share/ocw/rides/<ride>/photos/
+  photo-N.jpg` (2560 × 1440, time and GPS in EXIF, no stamp) with a
+  `photo-N.toml` sidecar; *Navi → Training history → a ride → Photos* opens
+  the folder, to add them to the Strava activity by hand (Strava's API takes
+  no photos).
 
 ## Command-line options (`ocw-desktop`)
 
@@ -1813,6 +1870,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `display.road_barriers` | on / off (off): gates, bollards and barriers on the roads (section `OBST`; never solid on the road, spec §14 Phase 12 Q7) | at once |
 | `display.unicorn_trail` | on / off (on): the rainbow trail behind the unicorns of god mode (console `god.trail`; not on the full Display page) | at once |
 | `display.fullscreen` | on / off (off): borderless fullscreen (`--fullscreen`) | next start |
+| `photographer.enabled` | on / off (on): the ride photographer (spec §2.11) – up to 5 photos of nice views per ride by a person or a drone, with a flash; Settings → Display → Graphics (console `photographer`) | at once |
 | `ride.bots` | 0 to 50 (10): test riders (`--bots`) | next start |
 | `ride.random_start` | on / off (on): random start point (`--random-start`) | next start |
 | `ride.record` | on / off (on): save rides as FIT (`--record`) | next start |
@@ -1923,8 +1981,8 @@ feels (gravel is 2.5 ×, grass 6 × the road bike's asphalt value). Colours and
 kit are cosmetic only: the other riders see them (bots ride varied bikes and
 colours), the physics never does.
 
-Each bike is a 3D model (`assets/models/bike-<bike>.glb`) with the rider on
-it (`rider.glb`), in the frame, jersey and helmet colours (your own rider wears
+Each bike is a 3D model (`artwork/3dmodels/bikes/bike-<bike>.glb`) with the rider on
+it (`riders/rider-body.glb`), in the frame, jersey and helmet colours (your own rider wears
 a cotton cap). The wheels turn with the speed and the legs with your cadence
 (others at a typical cadence); riders sit up on the tops on climbs from 4 %,
 stand on the pedals from about 8.5 % and in sprints (650 W and more) with the
@@ -2317,6 +2375,9 @@ you can run are offered (no *Dev* commands on a remote server).
 | `strava.status` | Strava link and upload state |
 | `strava.sync [--retry]` | Upload every saved ride not on Strava yet (`--retry`: also failed ones) |
 | `strava.disconnect` | Unlink Strava (deletes the stored tokens) |
+| `strava.record [start\|stop\|toggle\|status]` | The Strava recording (key S): the part between start and stop is its own Strava activity |
+| `photographer [on\|off\|status\|now\|drone]` | The ride photographer (spec §2.11); `now` plans the next photo at once, `drone` the next by the drone (tests) |
+| `history.photos N` | Open the folder with ride N's photos (1 = the newest) |
 
 ## Workouts
 
@@ -3727,9 +3788,10 @@ described in [Build infrastructure](#build-infrastructure). The other tools:
 | `world-builder calibrate` / `imagery-cells` | Measure a package's palette, roof colours and seasonal tint maps in the region's imagery and cut the orthophoto corridor along its roads (sections `PALT`, `ROOF`, `SEAS`, `ORTC`; manifest credits renewed); list the imagery cells a package covers |
 | `world-builder obstacles --world PKG --pbf PBF... [--out NEW]` | Static obstacles near the roads into a built package (section `OBST`, spec §14 Phase 12 K3): OSM barriers and posts with the 2 m corridor rule, the tree cells; prints rows of road bollards and the longest bridges; manifest renewed |
 | `world-builder dem-import` / `dem-tiles` / `dem-diff` | High-resolution DTMs: import XYZ / GeoTIFF tiles as 2 m GeoTIFFs, list the tiles of a box, compare with SRTM |
-| `cargo run -p ocw-assets -- generate [--check]` | Regenerate the bike and rider models in `assets/models/` (glTF, own work); `--check` only compares |
-| `cargo run -p ocw-assets -- validate [DIR]` | Asset validator: licence entry (`license`, `source`, `author`) in `manifest.toml` for every model, no physics values, required nodes and paint slots, triangle budgets |
-| `cargo run -p ocw-assets -- info FILE.glb` | A model's nodes, positions, triangles and materials |
+| `cargo run -p ocw-assets -- model export-all [--check]` | Export the bikes, the rider and the helmets from their generators into `artwork/3dmodels/` (glTF, own work, Git LFS; spec §14 Phase 15) with the manifest; `--check` only compares (`generate` is the old name) |
+| `cargo run -p ocw-render --example export-flora [-- --check]` | Export the plants (every species, at least three shape variants, each with `lod1`) into `artwork/3dmodels/flora/` |
+| `cargo run -p ocw-assets -- validate [DIR]` | Model validator (default `artwork/3dmodels`): licence entry (`license`, `source`, `author`) in `manifest.toml` for every model, the model contract (names, `extras.ocw`, folders per kind), no physics values, required nodes and paint slots, triangle budgets |
+| `cargo run -p ocw-assets -- info FILE.glb` | A model's nodes, positions, triangles, materials and `extras` (also `.gltf`) |
 | `scripts/fetch-materials.sh` (`make materials`) | Material library: download the pinned sources of `assets/materials.toml` (cache `~/.cache/ocw/material-sources`), check their SHA-256, convert to KTX2 into `assets/materials/` |
 | `cargo run -p ocw-assets -- materials validate [DIR]` | Material validator: `license`, `source`, `author` and a SHA-256 pin for every material, no share-alike / non-commercial / no-derivatives / unknown licence; with DIR the converted library too |
 | `cargo run -p ocw-assets -- materials credits` | The material credits (Markdown, as in `assets/materials/CREDITS.md`) |
@@ -3775,7 +3837,7 @@ by its public key file `root.pub.json`.
 | `crates/ocw-voice` | Voice chat (always-on logic, spatial audio, mixer; LiveKit backend with the `livekit` feature) |
 | `crates/ocw-render` | Bevy plugins: world, riders, camera, HUD, console; the bundled UI font (`assets/fonts/`) |
 | `crates/ocw-assets` | Bike and rider models: generator, glTF reader, asset validator, rider-on-bike pose, riding animation states; material library: licence rule, pinned manifest, KTX2, conversion and fetch (no Bevy) |
-| `assets/models/` | The shipped glTF models and their licence manifest (embedded in the app) |
+| `artwork/3dmodels/` | The model files (glTF, Git LFS) and their licence manifest, embedded in the app (`ocw_assets::library`; `ocw-desktop --models DIR` reads a folder); the contract in its `README.md` |
 | `artwork/` | Logos and other original artwork |
 
 ## License

@@ -295,6 +295,11 @@ pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) 
             ("name", _) if !value.trim().is_empty() => {
                 config.name = value.trim().chars().take(32).collect()
             }
+            // Touch steering for this visit (spec §3.2.3; the tests).
+            ("touch", _) => match value.as_str() {
+                "auto" | "on" | "off" => config.touch = Some(value.clone()),
+                _ => bad(),
+            },
             // The quality preset for this visit (B7).
             ("quality", _) => match ocw_client::quality::QualitySetting::parse(value) {
                 Some(q) => config.quality = Some(q.name().into()),
@@ -680,6 +685,11 @@ pub fn visit_quality(
     {
         warnings.push(format!("quality={q}: {e}"));
     }
+    if let Some(t) = &config.touch
+        && let Err(e) = settings.settings.set_temp("controls.touch_steer", t)
+    {
+        warnings.push(format!("touch={t}: {e}"));
+    }
 }
 
 /// This build's GPU API for the quality preset (the native tests count as
@@ -798,6 +808,15 @@ pub fn page_console_state() -> String {
 #[wasm_bindgen::prelude::wasm_bindgen(js_name = god)]
 pub fn page_god() -> String {
     god::god_json()
+}
+
+/// `window.ocw.steer()`: touch steering as JSON (the line, the lean,
+/// autodrive, the fingers, the sides held, the hints; spec §3.2.3 – the
+/// browser test taps with it).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = steer)]
+pub fn page_steer() -> String {
+    ui::steer_json()
 }
 
 /// `window.ocw.setting(key)`: a setting's value as text ("" for an unknown
@@ -1023,6 +1042,27 @@ mod tests {
         // `auto` here is the WebGPU build's: High on a desktop browser.
         assert_eq!(gpu_api(), ocw_client::quality::GpuApi::WebGpu);
         assert_eq!(device_info(), ocw_client::quality::DeviceInfo::default());
+    }
+
+    /// `?touch=on|off|auto` sets touch steering for the visit (spec
+    /// §3.2.3), not saved.
+    #[test]
+    fn the_touch_option_sets_touch_steering_for_the_visit() {
+        let (c, w) = parse_query("touch=on", false);
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!(c.touch.as_deref(), Some("on"));
+        let (c, w) = parse_query("touch=maybe", false);
+        assert_eq!((c.touch, w.len()), (None, 1));
+        let (c, _) = parse_query("touch=off", false);
+        let mut settings = settings::WebSettings::default();
+        let mut warnings = Vec::new();
+        visit_quality(&c, &mut settings, &mut warnings);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.value("controls.touch_steer").to_string(), "off");
+        assert!(
+            !settings.settings.to_toml().contains("touch_steer"),
+            "not saved"
+        );
     }
 
     /// `?quality=low` runs Low for the visit without saving it; without

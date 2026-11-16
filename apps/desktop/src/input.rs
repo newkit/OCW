@@ -194,3 +194,100 @@ fn throttle_and_brake(
         link.send_bytes(msg);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use bevy::input::touch::{TouchInput, TouchPhase};
+    use bevy::time::TimeUpdateStrategy;
+    use clap::Parser;
+    use ocw_render::RideView;
+    use ocw_render::console::ConsoleCorePlugin;
+    use ocw_world::Route;
+
+    use super::*;
+
+    /// Touch steering in the desktop app (spec §3.2.3 Q6: Windows / Linux
+    /// touch screens): Bevy's `TouchInput` on the desktop's local server
+    /// steers like the arrow keys – a tap +0.5 m, a hold as the held key –
+    /// and never ends autodrive.
+    #[test]
+    fn synthetic_touches_steer_like_the_arrow_keys() {
+        let argv = ["ocw-desktop", "--bots", "0", "--power", "150", "--virtual"];
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::input::InputPlugin, ConsoleCorePlugin))
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                20,
+            )))
+            .insert_resource(crate::Args::parse_from(argv))
+            .insert_resource(RideView::new(Route::test_loop()))
+            .insert_resource(crate::connection::Ghosts(None))
+            .init_resource::<ocw_render::camera::CameraObstacles>()
+            .add_plugins((
+                crate::connection::ConnectionPlugin {
+                    route: Route::test_loop(),
+                },
+                crate::devices::DevicesPlugin,
+                InputPlugin,
+                ocw_ui::touch::TouchSteerPlugin,
+            ));
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(4)
+            && app.world().resource::<ClientState>().0.rider_id().is_none()
+        {
+            app.update();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(app.world().resource::<ClientState>().0.rider_id().is_some());
+        app.world_mut()
+            .resource_mut::<ClientState>()
+            .0
+            .steer_to(0.0);
+        let line = |app: &App| {
+            app.world()
+                .resource::<ClientState>()
+                .0
+                .line_target()
+                .unwrap_or(0.0)
+        };
+        let touch = |app: &mut App, phase, x: f32| {
+            app.world_mut().write_message(TouchInput {
+                phase,
+                position: Vec2::new(x, 500.0),
+                window: Entity::PLACEHOLDER,
+                force: None,
+                id: 3,
+            });
+        };
+        touch(&mut app, TouchPhase::Started, 1100.0);
+        app.update();
+        touch(&mut app, TouchPhase::Ended, 1100.0);
+        app.update();
+        let tapped = line(&app);
+        assert!((tapped - 0.5).abs() < 1e-6, "{tapped}");
+        touch(&mut app, TouchPhase::Started, 150.0);
+        for _ in 0..20 {
+            app.update();
+        }
+        touch(&mut app, TouchPhase::Ended, 150.0);
+        app.update();
+        let by_touch = tapped - line(&app);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ArrowLeft);
+        for _ in 0..20 {
+            app.update();
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::ArrowLeft);
+        app.update();
+        let by_key = tapped - by_touch - line(&app);
+        assert!((by_touch - by_key).abs() < 1e-6, "{by_touch} vs {by_key}");
+        assert!((by_touch - 0.8).abs() < 1e-6, "{by_touch}");
+        assert!(app.world().resource::<ClientState>().0.autodrive());
+        let t = app.world().resource::<ocw_ui::touch::RideTouch>();
+        assert!(t.active && !t.shown, "the key hid the hints");
+    }
+}

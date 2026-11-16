@@ -37,6 +37,18 @@ jobs:
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
+      # The model files are Git LFS objects (spec §14 Phase 15, Q2): pulled
+      # once and cached by their pointers' hash (the shared LFS quota).
+      - name: LFS pointers
+        shell: bash
+        run: git lfs ls-files --long | cut -d ' ' -f1 | sort > .lfs-ids
+      - uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-ids') }}
+      - name: LFS objects
+        shell: bash
+        run: git lfs pull
       # Two wasm32 builds of Bevy with fat LTO need more than the runner's
       # free disk: drop preinstalled SDKs we do not use.
       - name: Free disk space

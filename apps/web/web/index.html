@@ -46,7 +46,11 @@
        between mobile Safari's bars; without viewport-fit=cover the page
        stays inside the safe areas (notch, home indicator). */
     @supports (height: 100dvh) { html, body { height: 100dvh; } }
-    #ocw-canvas { display: block; width: 100%; height: 100%; outline: none; touch-action: none; }
+    #ocw-canvas { display: block; width: 100%; height: 100%; outline: none; touch-action: none;
+      /* Touch steering (spec §3.2.3): no selection or callout on a long
+         press, no pull-to-refresh or rubber band. */
+      -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+    html, body { overscroll-behavior: none; }
     #ocw-status { position: fixed; inset: 0; display: flex; align-items: center;
       justify-content: center; text-align: left; padding: 16px; pointer-events: none;
       white-space: pre-line; line-height: 1.5; }
@@ -239,6 +243,10 @@
       mobile: !!(navigator.userAgentData ? navigator.userAgentData.mobile
         : /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)),
       coarse_pointer: !!(window.matchMedia && matchMedia("(pointer: coarse)").matches),
+      // Touch steering's hints (spec §3.2.3): a touch-first device, an
+      // iPad that reports a Mac.
+      max_touch_points: Number(navigator.maxTouchPoints || 0),
+      ipad_as_mac: navigator.platform === "MacIntel" && Number(navigator.maxTouchPoints || 0) > 1,
       cores: navigator.hardwareConcurrency || 0,
       memory_gb: navigator.deviceMemory || 0,
       screen_px: [screen.width * (devicePixelRatio || 1), screen.height * (devicePixelRatio || 1)],

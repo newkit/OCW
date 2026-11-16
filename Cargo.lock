@@ -6742,6 +6742,7 @@ dependencies = [
 name = "ocw-assets"
 version = "0.2.2"
 dependencies = [
+ "base64 0.22.1",
  "clap",
  "glam",
  "gltf",
@@ -6931,6 +6932,7 @@ dependencies = [
  "png",
  "raw-window-handle",
  "serde",
+ "serde_json",
  "texpresso",
  "toml",
  "ttf-parser",
@@ -7024,6 +7026,7 @@ version = "0.2.2"
 dependencies = [
  "bevy",
  "clap",
+ "ocw-audio",
  "ocw-client",
  "ocw-core",
  "ocw-fit",
@@ -7036,6 +7039,7 @@ dependencies = [
  "ocw-weather",
  "ocw-world",
  "ocw-worldstore",
+ "web-time",
 ]
 
 [[package]]
