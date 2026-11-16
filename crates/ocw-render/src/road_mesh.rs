@@ -234,17 +234,32 @@ fn shoulder_layer(surface: RoadSurface) -> u8 {
 /// Where two sidewalks meet at a junction the corner is rounded
 /// (`road_corners`): the strips' sidewalks end square at the arc.
 pub fn road_meshes(strips: &[RoadStrip], ctx: &RoadContext<'_>) -> RoadMeshes {
+    road_meshes_rows(strips, &[], ctx)
+}
+
+/// [`road_meshes`] with the carriageway edges of some strips given (strips
+/// shaped for a junction surface, `crate::junction_mesh`): those are drawn
+/// along their rows and get no sidewalk corner of `road_corners` (the
+/// junction surface's outline has its own).
+pub fn road_meshes_rows(
+    strips: &[RoadStrip],
+    rows: &[Option<&Rows>],
+    ctx: &RoadContext<'_>,
+) -> RoadMeshes {
     let mut out = RoadMeshes::default();
-    let corners = crate::road_corners::corners(strips);
+    let shaped = |i: usize| rows.get(i).copied().flatten().is_some();
+    let mut corners = crate::road_corners::corners(strips);
+    corners.retain(|c| c.ends.iter().all(|e| !shaped(e.0)));
     let trims = crate::road_corners::trims(&corners, strips.len());
-    for (s, trim) in strips.iter().zip(&trims) {
-        if trim.iter().flatten().any(Option::is_some) {
+    for (i, (s, trim)) in strips.iter().zip(&trims).enumerate() {
+        let r = rows.get(i).copied().flatten();
+        if r.is_none() && trim.iter().flatten().any(Option::is_some) {
             let cut = crate::road_corners::with_cuts(s, trim);
-            strip_mesh(&mut out.roads, &cut, ctx, trim);
+            strip_mesh(&mut out.roads, &cut, ctx, trim, None);
         } else {
-            strip_mesh(&mut out.roads, s, ctx, trim);
+            strip_mesh(&mut out.roads, s, ctx, trim, r);
         }
-        crossing_overlays(&mut out.overlays, s, ctx);
+        crossing_overlays(&mut out.overlays, s, ctx, r);
     }
     for c in &corners {
         crate::road_corners::corner_mesh(&mut out.roads, c, strips, ctx);
@@ -252,17 +267,19 @@ pub fn road_meshes(strips: &[RoadStrip], ctx: &RoadContext<'_>) -> RoadMeshes {
     out
 }
 
+/// The carriageway edges of a strip: per point [left, right] (drawn
+/// heights, before the lift).
+pub type Rows = [[[f32; 3]; 2]];
+
 fn strip_mesh(
     m: &mut MeshArrays,
     s: &RoadStrip,
     ctx: &RoadContext<'_>,
     trim: &[[Option<f32>; 2]; 2],
+    rows: Option<&Rows>,
 ) {
-    let p: Vec<Vec3> = s
-        .points
-        .iter()
-        .map(|q| Vec3::from(*q) + Vec3::Y * crate::ROAD_SURFACE_LIFT_M)
-        .collect();
+    let lift = Vec3::Y * crate::ROAD_SURFACE_LIFT_M;
+    let p: Vec<Vec3> = s.points.iter().map(|q| Vec3::from(*q) + lift).collect();
     let n = p.len();
     if n < 2 {
         return;
@@ -283,19 +300,31 @@ fn strip_mesh(
         local[i] = local[i - 1] + (p[i] - p[i - 1]).length();
         along[i] = s.dress.start_m + local[i];
     }
-    let rights: Vec<Vec3> = (0..n)
-        .map(|i| {
-            let d = direction(&p, i);
-            Vec3::new(-d.z, 0.0, d.x)
-        })
+    // The carriageway's edges and the direction to the right.
+    let edges: Vec<[Vec3; 2]> = match rows {
+        Some(r) if r.len() == n => r
+            .iter()
+            .map(|e| [Vec3::from(e[0]) + lift, Vec3::from(e[1]) + lift])
+            .collect(),
+        _ => (0..n)
+            .map(|i| {
+                let d = direction(&p, i);
+                let r = Vec3::new(-d.z, 0.0, d.x);
+                [p[i] - r * half, p[i] + r * half]
+            })
+            .collect(),
+    };
+    let rights: Vec<Vec3> = edges
+        .iter()
+        .map(|e| (e[1] - e[0]).with_y(0.0).normalize_or_zero())
         .collect();
     // The carriageway.
     let base = m.positions.len() as u32;
     for i in 0..n {
-        for side in [-half, half] {
+        for (k, side) in [-half, half].into_iter().enumerate() {
             vertex(
                 m,
-                p[i] + rights[i] * side,
+                edges[i][k],
                 Vec3::Y,
                 far,
                 half,
@@ -313,102 +342,175 @@ fn strip_mesh(
         );
         m.indices.extend([l0, r0, l1, r0, r1, l1]);
     }
-    let decks: Vec<[bool; 2]> = (0..n)
-        .map(|i| {
-            [-1.0f32, 1.0].map(|side| {
-                let top = p[i] + rights[i] * side * half;
-                (ctx.deck)([top.x, top.y - crate::ROAD_SURFACE_LIFT_M, top.z])
-            })
-        })
-        .collect();
-    let shoulder_colour = ctx.colour(shoulder_layer(s.surface), lin(0.55, 0.5, 0.42));
-    let wall_colour = ctx.colour(KERB_LAYER, EDGE_COLOUR);
-    let sidewalk_layer = if s.dress.sidewalk_asphalt {
-        RoadSurface::Asphalt.code()
-    } else {
-        SIDEWALK_LAYER
-    };
-    let sidewalk_colour = ctx.colour(sidewalk_layer, SIDEWALK_COLOUR);
-    let kerb_colour = ctx.colour(KERB_LAYER, KERB_COLOUR);
+    let look = DressLook::of(s, ctx);
     for (si, side) in [-1.0f32, 1.0].into_iter().enumerate() {
         let sidewalk = s.dress.sidewalk_m[si] > 0.0;
-        // Per point: the edge top beyond the sidewalk (where the shoulder
-        // starts) and the sidewalk's width and kerb height.
-        let mut tops = Vec::with_capacity(n);
-        let mut kerbs = Vec::with_capacity(n);
+        let edge: Vec<Vec3> = edges.iter().map(|e| e[si]).collect();
+        let out: Vec<Vec3> = rights.iter().map(|r| *r * side).collect();
+        let decks: Vec<bool> = edge
+            .iter()
+            .map(|top| (ctx.deck)([top.x, top.y - crate::ROAD_SURFACE_LIFT_M, top.z]))
+            .collect();
+        let kerbs: Vec<(f32, f32)> = (0..n)
+            .map(|i| {
+                if sidewalk && !decks[i] {
+                    crate::road_corners::kerb_trimmed(
+                        &s.dress,
+                        si,
+                        local[i],
+                        local[n - 1],
+                        &trim[si],
+                    )
+                } else {
+                    (0.0, 0.0)
+                }
+            })
+            .collect();
+        let narrow: Vec<bool> = local.iter().map(|&l| s.dress.in_junction(l)).collect();
+        side_dress(
+            m,
+            &SideDress {
+                side,
+                half,
+                sidewalk,
+                edge: &edge,
+                out: &out,
+                along: &along,
+                kerbs: &kerbs,
+                decks: &decks,
+                narrow: &narrow,
+            },
+            &look,
+            ctx,
+        );
+    }
+}
+
+/// The materials of a road's edge parts.
+pub(crate) struct DressLook {
+    pub shoulder_layer: u8,
+    pub shoulder_colour: [f32; 3],
+    pub wall_colour: [f32; 3],
+    pub sidewalk_layer: u8,
+    pub sidewalk_colour: [f32; 3],
+    pub kerb_colour: [f32; 3],
+}
+
+impl DressLook {
+    pub(crate) fn of(s: &RoadStrip, ctx: &RoadContext<'_>) -> Self {
+        let sidewalk_layer = if s.dress.sidewalk_asphalt {
+            RoadSurface::Asphalt.code()
+        } else {
+            SIDEWALK_LAYER
+        };
+        Self {
+            shoulder_layer: shoulder_layer(s.surface),
+            shoulder_colour: ctx.colour(shoulder_layer(s.surface), lin(0.55, 0.5, 0.42)),
+            wall_colour: ctx.colour(KERB_LAYER, EDGE_COLOUR),
+            sidewalk_layer,
+            sidewalk_colour: ctx.colour(sidewalk_layer, SIDEWALK_COLOUR),
+            kerb_colour: ctx.colour(KERB_LAYER, KERB_COLOUR),
+        }
+    }
+}
+
+/// One side of a road edge, as polylines of `n` points.
+pub(crate) struct SideDress<'a> {
+    /// −1: a strip's left side, +1 its right (winding and the sign of u).
+    pub side: f32,
+    pub half: f32,
+    /// Draw a kerb and sidewalk (where `kerbs` gives them a width).
+    pub sidewalk: bool,
+    /// The carriageway's edge (drawn) and the outward direction.
+    pub edge: &'a [Vec3],
+    pub out: &'a [Vec3],
+    pub along: &'a [f32],
+    /// Sidewalk width and kerb height per point.
+    pub kerbs: &'a [(f32, f32)],
+    pub decks: &'a [bool],
+    /// Keep the shoulder at its narrowest (junction zones).
+    pub narrow: &'a [bool],
+}
+
+/// The kerb, sidewalk, lip, shoulder and skirt (or retaining wall) beside a
+/// carriageway edge.
+pub(crate) fn side_dress(
+    m: &mut MeshArrays,
+    d: &SideDress<'_>,
+    look: &DressLook,
+    ctx: &RoadContext<'_>,
+) {
+    let n = d.edge.len();
+    if n < 2 {
+        return;
+    }
+    let (side, half) = (d.side, d.half);
+    // Per point: the edge top beyond the sidewalk (where the shoulder
+    // starts).
+    let tops: Vec<Vec3> = (0..n)
+        .map(|i| {
+            let (w, k) = d.kerbs[i];
+            d.edge[i] + d.out[i] * w + Vec3::Y * (k + w * SIDEWALK_FALL)
+        })
+        .collect();
+    if d.sidewalk {
+        // Kerb face (towards the road), then the sidewalk surface; the
+        // shader paints the kerb stones' top on its first centimetres.
+        let kb = m.positions.len() as u32;
         for i in 0..n {
-            let out = rights[i] * side;
-            let edge = p[i] + out * half;
-            let (w, k) = if sidewalk && !decks[i][si] {
-                crate::road_corners::kerb_trimmed(&s.dress, si, local[i], local[n - 1], &trim[si])
+            let k = d.kerbs[i].1;
+            for (y, u) in [(0.0, side * half), (k, side * (half - k))] {
+                vertex(
+                    m,
+                    d.edge[i] + Vec3::Y * y,
+                    -d.out[i],
+                    look.kerb_colour,
+                    half,
+                    [u, d.along[i]],
+                    [code_b(KERB_LAYER, Kind::Kerb, 0), 0.0],
+                );
+            }
+        }
+        // Bottom row then top row, interleaved: rows by stride 2.
+        for i in 0..n as u32 - 1 {
+            let (b0, t0, b1, t1) = (kb + 2 * i, kb + 2 * i + 1, kb + 2 * i + 2, kb + 2 * i + 3);
+            if side > 0.0 {
+                m.indices.extend([b0, t0, b1, t0, t1, b1]);
             } else {
-                (0.0, 0.0)
-            };
-            kerbs.push((w, k));
-            tops.push(edge + out * w + Vec3::Y * (k + w * SIDEWALK_FALL));
-        }
-        if sidewalk {
-            // Kerb face (towards the road), then the sidewalk surface; the
-            // shader paints the kerb stones' top on its first centimetres.
-            let kb = m.positions.len() as u32;
-            for i in 0..n {
-                let out = rights[i] * side;
-                let edge = p[i] + out * half;
-                let k = kerbs[i].1;
-                for (y, u) in [(0.0, side * half), (k, side * (half - k))] {
-                    vertex(
-                        m,
-                        edge + Vec3::Y * y,
-                        -out,
-                        kerb_colour,
-                        half,
-                        [u, along[i]],
-                        [code_b(KERB_LAYER, Kind::Kerb, 0), 0.0],
-                    );
-                }
-            }
-            // Bottom row then top row, interleaved: rows by stride 2.
-            for i in 0..n as u32 - 1 {
-                let (b0, t0, b1, t1) = (kb + 2 * i, kb + 2 * i + 1, kb + 2 * i + 2, kb + 2 * i + 3);
-                if side > 0.0 {
-                    m.indices.extend([b0, t0, b1, t0, t1, b1]);
-                } else {
-                    m.indices.extend([b0, b1, t0, t0, b1, t1]);
-                }
-            }
-            let sb = m.positions.len() as u32;
-            for i in 0..n {
-                let out = rights[i] * side;
-                let (w, k) = kerbs[i];
-                let edge = p[i] + out * half + Vec3::Y * k;
-                for (q, u) in [(edge, side * half), (tops[i], side * (half + w))] {
-                    vertex(
-                        m,
-                        q,
-                        Vec3::Y,
-                        sidewalk_colour,
-                        half,
-                        [u, along[i]],
-                        [code_b(sidewalk_layer, Kind::Sidewalk, 0), 0.0],
-                    );
-                }
-            }
-            for i in 0..n as u32 - 1 {
-                let (a0, b0, a1, b1) = (sb + 2 * i, sb + 2 * i + 1, sb + 2 * i + 2, sb + 2 * i + 3);
-                if side > 0.0 {
-                    m.indices.extend([a0, b0, a1, b0, b1, a1]);
-                } else {
-                    m.indices.extend([a0, a1, b0, b0, a1, b1]);
-                }
+                m.indices.extend([b0, b1, t0, t0, b1, t1]);
             }
         }
-        // Lip, shoulder and skirt (nothing on a bridge deck).
-        let rows = m.positions.len() as u32;
-        let mut shoulders = Vec::with_capacity(n);
-        for i in 0..n {
-            let out = rights[i] * side;
+        let sb = m.positions.len() as u32;
+        for (i, top) in tops.iter().enumerate() {
+            let (w, k) = d.kerbs[i];
+            let edge = d.edge[i] + Vec3::Y * k;
+            for (q, u) in [(edge, side * half), (*top, side * (half + w))] {
+                vertex(
+                    m,
+                    q,
+                    Vec3::Y,
+                    look.sidewalk_colour,
+                    half,
+                    [u, d.along[i]],
+                    [code_b(look.sidewalk_layer, Kind::Sidewalk, 0), 0.0],
+                );
+            }
+        }
+        for i in 0..n as u32 - 1 {
+            let (a0, b0, a1, b1) = (sb + 2 * i, sb + 2 * i + 1, sb + 2 * i + 2, sb + 2 * i + 3);
+            if side > 0.0 {
+                m.indices.extend([a0, b0, a1, b0, b1, a1]);
+            } else {
+                m.indices.extend([a0, a1, b0, b0, a1, b1]);
+            }
+        }
+    }
+    // Lip, shoulder and skirt (nothing on a bridge deck).
+    let rows = m.positions.len() as u32;
+    let shoulders: Vec<Shoulder> = (0..n)
+        .map(|i| {
             let top = tops[i];
-            let sh = if decks[i][si] {
+            if d.decks[i] {
                 Shoulder {
                     width: 0.0,
                     outer_y: top.y,
@@ -416,124 +518,119 @@ fn strip_mesh(
                     wall: false,
                 }
             } else {
-                shoulder(top, out, ctx.ground, s.dress.in_junction(local[i]))
-            };
-            shoulders.push(sh);
-        }
-        let e0 = side * half;
-        // Row 0: top; row 1: lip; row 2: shoulder outer; row 3: skirt bottom.
-        for row in 0..4 {
-            for i in 0..n {
-                let out = rights[i] * side;
-                let top = tops[i];
-                let sh = shoulders[i];
-                let lip = if decks[i][si] {
-                    top.y
-                } else {
-                    top.y - SHOULDER_STEP_M
-                };
-                let e = e0 + side * kerbs[i].0;
-                let outer = top + out * sh.width;
-                let (q, u, kind, layer, colour, normal) = match row {
-                    0 => (top, e, Kind::Wall, KERB_LAYER, wall_colour, out),
-                    1 => (
-                        top.with_y(lip),
-                        e + side * 0.03,
-                        Kind::Wall,
-                        KERB_LAYER,
-                        wall_colour,
-                        out,
-                    ),
-                    2 => {
-                        let n =
-                            (out * (lip - sh.outer_y) + Vec3::Y * sh.width.max(1e-3)).normalize();
-                        if sh.wall {
-                            (
-                                outer.with_y(sh.outer_y),
-                                e + side * sh.width,
-                                Kind::Wall,
-                                KERB_LAYER,
-                                wall_colour,
-                                n,
-                            )
-                        } else {
-                            (
-                                outer.with_y(sh.outer_y),
-                                e + side * sh.width,
-                                Kind::Shoulder,
-                                shoulder_layer(s.surface),
-                                shoulder_colour,
-                                n,
-                            )
-                        }
-                    }
-                    _ => (
-                        outer.with_y(sh.bottom_y),
-                        e + side * (sh.width + sh.outer_y - sh.bottom_y),
-                        Kind::Wall,
-                        KERB_LAYER,
-                        wall_colour,
-                        out,
-                    ),
-                };
-                vertex(
-                    m,
-                    q,
-                    normal,
-                    colour,
-                    half,
-                    [u, along[i]],
-                    [code_b(layer, kind, 0), 0.0],
-                );
+                shoulder(top, d.out[i], ctx.ground, d.narrow[i])
             }
+        })
+        .collect();
+    let e0 = side * half;
+    let lip_of = |i: usize| {
+        if d.decks[i] {
+            tops[i].y
+        } else {
+            tops[i].y - SHOULDER_STEP_M
         }
-        // The lip faces out; the shoulder up; the skirt both ways (seen
-        // from below a hairpin's upper leg too). Inner-edge vertices of the
-        // shoulder are the lip's bottom row with the wall kind: the
-        // shoulder gets its own copy for its material.
-        let nn = n as u32;
-        let (r0, r1, r2, r3) = (rows, rows + nn, rows + 2 * nn, rows + 3 * nn);
-        // Row 1 (the lip's bottom) closes the lip; the shoulder starts
-        // from its own copy of that row below.
-        let face = |m: &mut MeshArrays, a: u32, b: u32, both: bool| {
-            if side > 0.0 {
-                ribbon(m, a, b, nn, both);
-            } else {
-                ribbon(m, b, a, nn, both);
-            }
-        };
-        face(m, r0, r1, false);
-        // The shoulder's inner row in its own material.
-        let si_row = m.positions.len() as u32;
+    };
+    // Row 0: top; row 1: lip; row 2: shoulder outer; row 3: skirt bottom.
+    for row in 0..4 {
         for i in 0..n {
+            let out = d.out[i];
             let top = tops[i];
             let sh = shoulders[i];
-            let lip = if decks[i][si] {
-                top.y
-            } else {
-                top.y - SHOULDER_STEP_M
-            };
-            let out = rights[i] * side;
-            let nrm = (out * (lip - sh.outer_y) + Vec3::Y * sh.width.max(1e-3)).normalize();
-            let e = e0 + side * (kerbs[i].0 + 0.03);
-            let (layer, kind, colour) = if sh.wall {
-                (KERB_LAYER, Kind::Wall, wall_colour)
-            } else {
-                (shoulder_layer(s.surface), Kind::Shoulder, shoulder_colour)
+            let lip = lip_of(i);
+            let e = e0 + side * d.kerbs[i].0;
+            let outer = top + out * sh.width;
+            let (q, u, kind, layer, colour, normal) = match row {
+                0 => (top, e, Kind::Wall, KERB_LAYER, look.wall_colour, out),
+                1 => (
+                    top.with_y(lip),
+                    e + side * 0.03,
+                    Kind::Wall,
+                    KERB_LAYER,
+                    look.wall_colour,
+                    out,
+                ),
+                2 => {
+                    let n = (out * (lip - sh.outer_y) + Vec3::Y * sh.width.max(1e-3)).normalize();
+                    if sh.wall {
+                        (
+                            outer.with_y(sh.outer_y),
+                            e + side * sh.width,
+                            Kind::Wall,
+                            KERB_LAYER,
+                            look.wall_colour,
+                            n,
+                        )
+                    } else {
+                        (
+                            outer.with_y(sh.outer_y),
+                            e + side * sh.width,
+                            Kind::Shoulder,
+                            look.shoulder_layer,
+                            look.shoulder_colour,
+                            n,
+                        )
+                    }
+                }
+                _ => (
+                    outer.with_y(sh.bottom_y),
+                    e + side * (sh.width + sh.outer_y - sh.bottom_y),
+                    Kind::Wall,
+                    KERB_LAYER,
+                    look.wall_colour,
+                    out,
+                ),
             };
             vertex(
                 m,
-                top.with_y(lip),
-                nrm,
+                q,
+                normal,
                 colour,
                 half,
-                [e, along[i]],
+                [u, d.along[i]],
                 [code_b(layer, kind, 0), 0.0],
             );
         }
-        face(m, si_row, r2, false);
-        face(m, r2, r3, true);
     }
+    // The lip faces out; the shoulder up; the skirt both ways (seen from
+    // below a hairpin's upper leg too). Inner-edge vertices of the shoulder
+    // are the lip's bottom row with the wall kind: the shoulder gets its
+    // own copy for its material.
+    let nn = n as u32;
+    let (r0, r1, r2, r3) = (rows, rows + nn, rows + 2 * nn, rows + 3 * nn);
+    let face = |m: &mut MeshArrays, a: u32, b: u32, both: bool| {
+        if side > 0.0 {
+            ribbon(m, a, b, nn, both);
+        } else {
+            ribbon(m, b, a, nn, both);
+        }
+    };
+    face(m, r0, r1, false);
+    // The shoulder's inner row in its own material.
+    let si_row = m.positions.len() as u32;
+    for i in 0..n {
+        let top = tops[i];
+        let sh = shoulders[i];
+        let lip = lip_of(i);
+        let out = d.out[i];
+        let nrm = (out * (lip - sh.outer_y) + Vec3::Y * sh.width.max(1e-3)).normalize();
+        let e = e0 + side * (d.kerbs[i].0 + 0.03);
+        let (layer, kind, colour) = if sh.wall {
+            (KERB_LAYER, Kind::Wall, look.wall_colour)
+        } else {
+            (look.shoulder_layer, Kind::Shoulder, look.shoulder_colour)
+        };
+        vertex(
+            m,
+            top.with_y(lip),
+            nrm,
+            colour,
+            half,
+            [e, d.along[i]],
+            [code_b(layer, kind, 0), 0.0],
+        );
+    }
+    face(m, si_row, r2, false);
+    face(m, r2, r3, true);
 }
 
 /// A point at arc length `s` along a strip (with its cumulative lengths):
@@ -550,7 +647,12 @@ fn at_along(p: &[Vec3], cum: &[f32], s: f32) -> (Vec3, Vec3) {
 /// The overlays of a strip's crossings: short ribbons on the road surface
 /// over the painted length (plus a margin), uv = (across, metres from the
 /// start of the painted length).
-fn crossing_overlays(m: &mut MeshArrays, s: &RoadStrip, ctx: &RoadContext<'_>) {
+fn crossing_overlays(
+    m: &mut MeshArrays,
+    s: &RoadStrip,
+    ctx: &RoadContext<'_>,
+    rows: Option<&Rows>,
+) {
     if s.dress.crossings.is_empty()
         || !matches!(s.surface, RoadSurface::Asphalt | RoadSurface::WornAsphalt)
     {
@@ -579,14 +681,26 @@ fn crossing_overlays(m: &mut MeshArrays, s: &RoadStrip, ctx: &RoadContext<'_>) {
         } else {
             ctx.style.line_colour
         };
+        let lift = Vec3::Y * (crate::ROAD_SURFACE_LIFT_M + OVERLAY_LIFT_M);
         for j in 0..=steps {
             let t = -OVERLAY_MARGIN_M + (len + 2.0 * OVERLAY_MARGIN_M) * j as f32 / steps as f32;
             let (q, d) = at_along(&p, &cum, start + t);
             let right = Vec3::new(-d.z, 0.0, d.x);
-            for side in [-half, half] {
+            // On a shaped strip the overlay lies on its rows (not flat
+            // across).
+            let edges = rows.filter(|r| r.len() == p.len()).map(|r| {
+                let a = start + t;
+                let k = cum.partition_point(|&c| c <= a).clamp(1, p.len() - 1);
+                let seg = (cum[k] - cum[k - 1]).max(1e-6);
+                let f = ((a - cum[k - 1]) / seg).clamp(0.0, 1.0);
+                let e =
+                    |side: usize| Vec3::from(r[k - 1][side]).lerp(Vec3::from(r[k][side]), f) + lift;
+                [e(0), e(1)]
+            });
+            for (k, side) in [-half, half].into_iter().enumerate() {
                 vertex(
                     m,
-                    q + right * side,
+                    edges.map_or(q + right * side, |e| e[k]),
                     Vec3::Y,
                     colour,
                     half,

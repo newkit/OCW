@@ -28,6 +28,7 @@ pub mod houses;
 pub mod hud;
 pub mod inspect_hud;
 pub mod junction;
+pub mod junction_mesh;
 pub mod materials;
 pub mod media;
 pub mod menu;

@@ -18,6 +18,7 @@ pub mod gradient;
 pub mod graph;
 pub mod graph_route;
 pub mod inspect;
+pub mod junction;
 pub mod lamps;
 pub mod landuse;
 pub mod look;

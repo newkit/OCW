@@ -567,3 +567,90 @@ fn tyres_touch_the_road_on_the_fitted_route_file() {
         sorted.len()
     );
 }
+
+/// Riders through junction surfaces (spec §4.8.8 J1c): on the synthetic
+/// T junction (main road 8 %, side road 20 %), an equal crossing and a
+/// hairpin split, ridden straight on, left and right, the path's own
+/// heights are the drawn ones and the tyres of a rider on the centre line
+/// stay within 2 mm of the drawn surface (patch, trimmed and blended
+/// strips). Beside the centre (1.6 m) through the rounded corner of a turn
+/// the wheels are placed by path distance on a curve: within 5 mm at the T
+/// and the crossing; at the hairpin (a corner of ~3 m radius) printed only.
+#[test]
+fn tyres_touch_the_junction_surfaces() {
+    use ocw_world::junction::fixtures;
+    let style = ocw_world::road_dress::MarkingStyle::default();
+    let ground = |_: f32, _: f32| Some(-100.0f32);
+    let ctx = crate::road_mesh::RoadContext {
+        colours: None,
+        ground: &ground,
+        deck: &|_| false,
+        style: &style,
+    };
+    let junctions = [
+        (
+            "T 8 % / 20 %",
+            fixtures::t_junction(RoadClass::Secondary, 0.08, 0.20),
+        ),
+        ("crossing", fixtures::crossing([0.06, -0.04, 0.10, 0.0])),
+        ("hairpin", fixtures::split(150.0, 5.0, 5.0, 0.1)),
+    ];
+    let (mut centre, mut beside) = (0.0f32, 0.0f32);
+    for (label, g) in junctions {
+        let pj = crate::junction_mesh::PackageJunctions::of_graph(&g, 1000.0);
+        let strips: Vec<RoadStrip> = fixtures::strips(&g).into_iter().map(|s| s.1).collect();
+        let tile = crate::junction_mesh::shape_tile(
+            &g,
+            &pj,
+            ocw_world::TileKey { x: 0, z: 0 },
+            1000.0,
+            &strips,
+            &style,
+        );
+        let m = crate::junction_mesh::shaped_meshes(&tile, &ctx);
+        let road = Surface::new(&m.roads.positions, &m.roads.indices);
+        let net = std::sync::Arc::new(ocw_world::RoadNetwork::new(g.clone()));
+        // From 50 m before the vertex on the first edge.
+        let forward = net.edge(0).to.0 == 0;
+        let len = net.geometry(0).length();
+        let start = if forward { len - 50.0 } else { 50.0 };
+        for k in 0..3usize {
+            let mut path = ocw_world::RidePath::start(net.clone(), 0, start, forward, 0.0, 0);
+            // Through the junction (the exit locks 20 m before it).
+            for rider in [0.0, 40.0] {
+                path.extend(rider, &mut |j| k.min(j.exits.len() - 1));
+            }
+            let mut worst = [0.0f32; 2];
+            let mut d = 35.0;
+            while d < 75.0 {
+                let p = path.sample(d).position;
+                let lift = crate::ROAD_SURFACE_LIFT_M;
+                // The path's height is the drawn surface's.
+                let drawn = road
+                    .height_near(p[0] as f32, p[2] as f32, p[1] as f32 + lift)
+                    .expect("road under the path");
+                let dh = (p[1] as f32 + lift - drawn).abs();
+                assert!(
+                    dh < 0.003,
+                    "{label} exit {k}: path {dh} m off the drawn surface at {d}"
+                );
+                for (ci, (_, case)) in cases(&path, d).into_iter().take(2).enumerate() {
+                    let gp = gap(&path, &road, ProfileId::Road, Lod::Near, case);
+                    worst[ci] = worst[ci].max(gp.abs());
+                }
+                d += 0.5;
+            }
+            println!(
+                "{label} exit {k}: worst |gap| {:.2} mm on the centre line, {:.2} mm beside it",
+                worst[0] * 1000.0,
+                worst[1] * 1000.0
+            );
+            centre = centre.max(worst[0]);
+            if label != "hairpin" {
+                beside = beside.max(worst[1]);
+            }
+        }
+    }
+    assert!(centre <= TOLERANCE_M + 1e-4, "centre line {centre}");
+    assert!(beside <= 0.005, "beside the centre {beside}");
+}

@@ -538,12 +538,15 @@ pub fn road_arrays(strips: &[RoadStrip]) -> MeshArrays {
 }
 
 /// The road meshes of a tile of `pkg`: the terrain beside the roads from
-/// the package (the shoulders blend into it), no skirts on bridge decks.
+/// the package (the shoulders blend into it), no skirts on bridge decks;
+/// with `junctions`, the junction surfaces of spec §4.8.8 (J1,
+/// [`crate::junction_mesh`]), else the strips as the package has them.
 pub fn tile_road_meshes(
     pkg: &WorldPackage,
     tile: &Tile,
     bridges: &[&ocw_world::bridges::Bridge],
     colours: Option<&[[f32; 3]]>,
+    junctions: Option<&crate::junction_mesh::PackageJunctions>,
 ) -> crate::road_mesh::RoadMeshes {
     let style = crate::road_style::style_for(pkg.time_zone.as_deref());
     let ground = |x: f32, z: f32| {
@@ -551,15 +554,26 @@ pub fn tile_road_meshes(
             .map(|h| h as f32)
     };
     let deck = |p: [f32; 3]| crate::bridges::on_deck(bridges, p);
-    crate::road_mesh::road_meshes(
-        &tile.roads,
-        &crate::road_mesh::RoadContext {
-            colours,
-            ground: &ground,
-            deck: &deck,
-            style,
-        },
-    )
+    let ctx = crate::road_mesh::RoadContext {
+        colours,
+        ground: &ground,
+        deck: &deck,
+        style,
+    };
+    match (junctions, pkg.graph.as_ref()) {
+        (Some(pj), Some(g)) => {
+            let shaped = crate::junction_mesh::shape_tile(
+                g,
+                pj,
+                tile.key,
+                f64::from(pkg.tile_size_m),
+                &tile.roads,
+                style,
+            );
+            crate::junction_mesh::shaped_meshes(&shaped, &ctx)
+        }
+        _ => crate::road_mesh::road_meshes(&tile.roads, &ctx),
+    }
 }
 
 use ocw_world::trees::hash;
@@ -1141,12 +1155,27 @@ pub fn build_tile_meshes_kept(pkg: &WorldPackage, key: TileKey, keep: Keep) -> O
     build_tile_meshes_look(pkg, key, keep, &TileLook::default())
 }
 
-/// [`build_tile_meshes_kept`] for a [`TileLook`].
+/// [`build_tile_meshes_kept`] for a [`TileLook`] (the junction surfaces
+/// made for this call; resident packages keep theirs,
+/// [`build_tile_meshes_with`]).
 pub fn build_tile_meshes_look(
     pkg: &WorldPackage,
     key: TileKey,
     keep: Keep,
     look: &TileLook,
+) -> Option<TileMeshes> {
+    let junctions = crate::junction_mesh::PackageJunctions::new(pkg);
+    build_tile_meshes_with(pkg, key, keep, look, junctions.as_ref())
+}
+
+/// [`build_tile_meshes_look`] with the package's junction surfaces
+/// (`None`: none, the strips as the package has them).
+pub fn build_tile_meshes_with(
+    pkg: &WorldPackage,
+    key: TileKey,
+    keep: Keep,
+    look: &TileLook,
+    junctions: Option<&crate::junction_mesh::PackageJunctions>,
 ) -> Option<TileMeshes> {
     let tile = pkg.tiles.get(&key)?;
     let mut classed: Vec<(TreeSite, Option<LandClass>)> =
@@ -1205,13 +1234,23 @@ pub fn build_tile_meshes_look(
     let solid = kept
         .as_deref()
         .map_or_else(SolidFootprints::default, |b| building_footprints(b, &specs));
-    let roads = tile_road_meshes(pkg, tile, &near, look.road_colours.as_deref());
+    let roads = tile_road_meshes(pkg, tile, &near, look.road_colours.as_deref(), junctions);
+    let mut terrain = terrain_arrays_kept(pkg, tile, keep);
+    if let (Some(pj), Some(g)) = (junctions, pkg.graph.as_ref()) {
+        let patches = crate::junction_mesh::patches_near(g, pj, key);
+        let grid = crate::junction_mesh::TerrainGrid {
+            origin: key.origin(f64::from(pkg.tile_size_m)),
+            spacing: pkg.spacing_m(),
+            n: pkg.samples as usize,
+        };
+        crate::junction_mesh::lower_terrain(&mut terrain, g, &patches, grid);
+    }
     let mut plants =
         crate::vegetation::tile_plants(pkg, key, &classed, keep, look.season.as_deref());
     plants.crowns.shrink_to_fit();
     Some(TileMeshes {
         key,
-        terrain: terrain_arrays_kept(pkg, tile, keep),
+        terrain,
         colour_map: lu.map(|(lu, cells)| {
             colour_map_seasonal(
                 pkg,
@@ -1477,11 +1516,12 @@ fn build_task(set: &Arc<WorldSet>, id: TileId, look: &TileLook) -> Task<Option<T
 /// The meshes of a tile, built on this thread.
 fn build_now(set: &WorldSet, (i, key): TileId, look: &TileLook) -> Option<TileMeshes> {
     let pkg = set.members()[i].package()?.clone();
+    let junctions = crate::junction_mesh::package_junctions(&pkg);
     if set.has_seams() {
         let keep = |q: [f64; 2]| set.draws(i, q);
-        build_tile_meshes_look(&pkg, key, Some(&keep), look)
+        build_tile_meshes_with(&pkg, key, Some(&keep), look, junctions.as_deref())
     } else {
-        build_tile_meshes_look(&pkg, key, None, look)
+        build_tile_meshes_with(&pkg, key, None, look, junctions.as_deref())
     }
 }
 
