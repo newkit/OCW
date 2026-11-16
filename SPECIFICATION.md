@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.82 – November 2026
+Version 3.83 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.83 | **Touch steering: touch-down steers at once like a held arrow key, a tap is topped up to one step (line 0.5 m, lean 0.1 rad)** (decision from the build dashboard, 2026-11-16; §3.2.3 Q1, as proposed) |
 | 3.82 | **Trainer: a steady road gives a steady load** (bug report by the user 2026-11-16: "while the road was constantly at 10 % inclination, the resistance varied a bit"; §14 Phase 9 S6, §5.3): the gradient sent was steady, but the weather's gusts reached the trainer in 0.5 m/s steps (the default weather 47 wind writes in 5 min, the load varying 2.2 %) and the thinning air of a climb re-sent a Wahoo KICKR's whole SIM mode. Now the headwind sent is smoothed over 15 s with a ¾-step hysteresis and the air's coefficient re-sent only from a 2 % change: 0.9 % and 2 wind writes, SIM mode once; the ride's physics keeps the gusts. Test `a_steady_climb_gives_the_trainer_a_steady_load` (an exact 10 % climb in still air, the default weather and windy) |
 | 3.81 | **The art project's history leaves OCW: `art/` is removed from every commit** (decision from the build dashboard, 2026-11-16; §11.3 Q1). No binary images are left in OCW's history but the app logos in use (checked). The rewrite (git filter-repo, force push of branches and release tags, commit map) waits for the user's go-ahead |
 | 3.80 | **Junction corners per world from real images: kerbs only where the region has them, radii measured** (decision from the build dashboard, 2026-11-16; §4.8.8 Q4: "Not all roads have kerbs, e.g. outside of cities there are no curbs. Look at images."). §4.8.9 step 3 records per region and road class whether a corner has a kerb and its radius (kerb or plain carriageway edge); the former radii by road class are the fallback. Q5 stays open |
@@ -1213,7 +1214,7 @@ TS1 – TS3 are what the user asked for; TS4 makes it usable on phones.
 
 **Open questions (for the user)**
 
-- **Q1 – Tap vs hold:** proposal: touch-down steers at once like a held arrow key, and a tap (< 250 ms) is topped up to one step (line 0.5 m, lean 0.1 rad). Alternatives: (a) taps only, one step each, no holding; (b) hold only, with no minimum step. Is a step of 0.5 m right, or should a tap jump a whole "lane" (e.g. 1 m, or between the road's middle, left and right third)?
+- **Q1 – Tap vs hold: decided (2026-11-16, dashboard): as proposed** – touch-down steers at once like a held arrow key, and a tap (< 250 ms) is topped up to one step (line 0.5 m, lean 0.1 rad).
 - **Q2 – Lean steering on touch:** proposal: as the keys, so the lean stays after the finger lifts and is straightened with the other side. Alternative: like the stick, the lean springs back to upright when the finger lifts (easier on a phone, but different from the keys).
 - **Q3 – Does a touch switch autodrive off?** Proposal: no. As with the arrow keys, in autodrive a touch moves the line, and only the autodrive button switches it off.
 - **Q4 – Both sides at once:** proposal: nothing (as ← + →). Alternatives: straighten (line back to the middle in autodrive, upright in manual), brake, or a U-turn after holding both for 1 s.
