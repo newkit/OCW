@@ -42,7 +42,10 @@ pub fn prepare(args: &Args) -> Start {
         let opts = ocw_render::vr::openxr::BootOptions::default();
         match ocw_render::vr::openxr::boot(&opts) {
             Ok(b) => {
-                info!("VR: {}", ocw_render::vr::openxr::describe(&b.info));
+                // Before the app (and its logger) exists: print it too.
+                let msg = format!("VR: {}", ocw_render::vr::openxr::describe(&b.info));
+                eprintln!("{msg}");
+                info!("{msg}");
                 Start::Headset(Box::new(b))
             }
             Err(e) => Start::Unavailable(format!("VR is off: {e}")),

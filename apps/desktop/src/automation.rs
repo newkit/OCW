@@ -64,15 +64,36 @@ struct ScreenshotRun {
     frames_since_capture: Option<u32>,
 }
 
+/// The primary window, when it has a surface the renderer can draw to.
+type ShownWindow = (
+    With<bevy::window::PrimaryWindow>,
+    With<bevy::window::RawHandleWrapper>,
+);
+
+/// What a screenshot needs: its time stamp and build label, and where to
+/// take it from (the window, or the VR eyes when the window has no surface).
+#[derive(bevy::ecs::system::SystemParam)]
+struct ShotSource<'w, 's> {
+    now: Res<'w, MediaNow>,
+    label: Option<Res<'w, VersionLabel>>,
+    eyes: Option<Res<'w, ocw_render::vr::EyeImages>>,
+    shown: Query<'w, 's, (), ShownWindow>,
+}
+
 fn take_screenshot_and_exit(
     mut commands: Commands,
     args: Res<Args>,
     time: Res<Time<Real>>,
-    now: Res<MediaNow>,
-    label: Option<Res<VersionLabel>>,
+    src: ShotSource,
     mut run: ResMut<ScreenshotRun>,
     mut exit: MessageWriter<AppExit>,
 ) {
+    let ShotSource {
+        now,
+        label,
+        eyes,
+        shown,
+    } = src;
     let path = args
         .screenshot
         .clone()
@@ -80,8 +101,15 @@ fn take_screenshot_and_exit(
     if !run.requested && time.elapsed_secs_f64() >= args.screenshot_delay {
         run.requested = true;
         info!(path = %path.display(), "taking screenshot");
+        // VR on a GPU that cannot present to the window (surface.rs,
+        // `Verdict::Headless`): the window has no surface, so the left eye
+        // is the picture (else the capture never comes and the app waits).
+        let shot = match (&eyes, shown.is_empty()) {
+            (Some(eyes), true) => Screenshot::image(eyes.eyes[0].clone()),
+            _ => Screenshot::primary_window(),
+        };
         commands
-            .spawn(Screenshot::primary_window())
+            .spawn(shot)
             .observe(save_shot(path, ShotMeta::new(&now, label.as_deref())))
             .observe(
                 |_: On<ScreenshotCaptured>, mut run: ResMut<ScreenshotRun>| {
