@@ -402,8 +402,8 @@ pub fn skull_centre() -> Vec3 {
 /// than its centre), so the bib stays under the jersey when the rider
 /// folds forward (`crate::clothing` checks it).
 pub const JERSEY_SHELL: [[f32; 5]; 5] = [
-    [-0.07, 0.168, 0.114, -0.008, 0.03],
-    [0.03, 0.166, 0.108, -0.007, 0.0],
+    [-0.055, 0.16, 0.106, -0.008, 0.02],
+    [0.03, 0.162, 0.106, -0.007, 0.0],
     [0.14, 0.16, 0.1, -0.005, 0.0],
     [0.3, 0.18, 0.115, 0.005, 0.0],
     [0.42, 0.19, 0.105, 0.01, 0.0],
@@ -615,7 +615,8 @@ pub fn build(detail: Detail) -> Model {
         v: Vec3::NEG_Z * hd,
     };
     // The bib's seat: widest over the hips under the jersey's hem, then
-    // narrower under the hem and closed at its level (spec §2.6; bug
+    // narrower up to the hip joint's height, closed there just above the
+    // hem (spec §2.6; bug
     // 2026-11-16: the old waist was as wide as the jersey and reached 9 cm
     // above its hem, showing through it; `crate::clothing` checks the
     // layers).
@@ -623,8 +624,8 @@ pub fn build(detail: Detail) -> Model {
         p.slot(slot).loft(
             &[
                 ring(-0.07, 0.15 + k, 0.1 + k, 0.01),
-                ring(-0.03, 0.108 + k, 0.077 + k, 0.028),
-                ring(0.0, 0.1 + k, 0.072 + k, 0.028),
+                ring(-0.03, 0.138 + k, 0.094 + k, 0.016),
+                ring(0.0, 0.122 + k, 0.08 + k, 0.025),
             ],
             n + 2,
             false,
@@ -1286,12 +1287,20 @@ mod tests {
                     let p = w.transform_point3(Vec3::ZERO);
                     assert!(out.z > 0.7, "{n}: {out}");
                     // Between the jersey and the panel, at the opening.
-                    assert!(p.z > shell_point(sides, p.y, 1.5 * std::f32::consts::PI, 0.0).z - 0.05);
-                    assert!(above_hem(p) > 0.08 && above_hem(p) < pocket::TOP, "{n}: {p}");
+                    assert!(
+                        p.z > shell_point(sides, p.y, 1.5 * std::f32::consts::PI, 0.0).z - 0.05
+                    );
+                    assert!(
+                        above_hem(p) > 0.08 && above_hem(p) < pocket::TOP,
+                        "{n}: {p}"
+                    );
                     p
                 })
                 .collect();
-            assert!(at[0].x < -0.05 && at[1].x.abs() < 1e-4 && at[2].x > 0.05, "{at:?}");
+            assert!(
+                at[0].x < -0.05 && at[1].x.abs() < 1e-4 && at[2].x > 0.05,
+                "{at:?}"
+            );
             assert!(at.iter().all(|p| p.z > 0.1), "on the back: {at:?}");
             assert!(m.node(POCKETS).is_some() && m.node(POCKET_BAND).is_some());
         }
@@ -1299,7 +1308,10 @@ mod tests {
         assert!(visible(&c, &[]).contains(&POCKETS));
         assert!(visible(&c, &["jersey-aero"]).contains(&POCKETS));
         assert!(!visible(&c, &["skinsuit"]).contains(&POCKETS));
-        assert!(!visible(&c, &[]).contains(&POCKET_BAND), "the renderer's choice");
+        assert!(
+            !visible(&c, &[]).contains(&POCKET_BAND),
+            "the renderer's choice"
+        );
     }
 
     /// Every node knows its body region (T6: patterns and numbers).

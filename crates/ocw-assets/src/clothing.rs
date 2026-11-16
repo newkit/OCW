@@ -283,7 +283,9 @@ pub fn posed_worlds(m: &Model, pose: &Pose) -> Vec<Affine3A> {
         ..Default::default()
     };
     pose.apply(&mut skeleton);
-    (0..skeleton.nodes.len()).map(|i| skeleton.world(i)).collect()
+    (0..skeleton.nodes.len())
+        .map(|i| skeleton.world(i))
+        .collect()
 }
 
 /// [`bib_under_jersey`] with the pose's node transforms ([`posed_worlds`]).
@@ -429,13 +431,17 @@ mod tests {
             |m, detail, build| {
                 let rig = RiderRig::from_model(m).unwrap();
                 let rest: Vec<Affine3A> = (0..m.nodes.len()).map(|i| m.world(i)).collect();
-                let mut worst = bib_under_jersey_at(m, detail, build, Reach::WithLegs, &rest, "rest");
+                let mut worst =
+                    bib_under_jersey_at(m, detail, build, Reach::WithLegs, &rest, "rest");
                 for i in 0..120 {
                     let p = NamedPose {
                         name: format!("idle t {}", i as f32 * 0.25),
                         pose: pose::idle(&rig, i as f32 * 0.25),
                     };
-                    worst = worse(worst, bib_under_jersey(m, detail, build, Reach::WithLegs, &p));
+                    worst = worse(
+                        worst,
+                        bib_under_jersey(m, detail, build, Reach::WithLegs, &p),
+                    );
                 }
                 worst
             },
