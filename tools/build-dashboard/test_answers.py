@@ -8,6 +8,7 @@ import stat
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -129,6 +130,34 @@ class HttpTest(unittest.TestCase):
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read() or b"{}")
 
+    def test_restart_needs_the_token(self):
+        # The page's Restart button: POST /api/restart with the token.
+        calls = []
+        self.dash.restart = calls.append
+        self.assertEqual(self.req("/api/restart", {})[0], 403)
+        self.assertEqual(self.req("/api/restart", {}, token="wrong")[0], 403)
+        self.assertEqual(calls, [])
+        code, res = self.req("/api/restart", {}, token=self.dash.token)
+        self.assertEqual((code, res.get("restarting")), (200, True))
+        self.assertEqual(calls, ["the Restart button"])
+        self.assertTrue(self.dash.snapshot()["restart"], "the page shows the button")
+
+    def test_restart_off_without_a_restart(self):
+        self.dash.restart = None
+        self.assertEqual(self.req("/api/restart", {}, token=self.dash.token)[0], 404)
+        self.assertFalse(self.dash.snapshot()["restart"])
+
+    def test_favicon(self):
+        # The tab's icon, also where browsers look for it by themselves.
+        for path in ("/favicon.svg", "/favicon.ico"):
+            with urllib.request.urlopen(self.base + path, timeout=10) as resp:
+                self.assertEqual(resp.headers["Content-Type"], "image/svg+xml")
+                body = resp.read().decode()
+            self.assertIn("<svg", body)
+            self.assertIn('id="status"', body, "the dot the page recolours")
+        with urllib.request.urlopen(self.base + "/", timeout=10) as resp:
+            self.assertIn('rel="icon"', resp.read().decode())
+
     def test_token_required(self):
         body = {"id": "Phase 12 Q1", "answer": "on"}
         self.assertEqual(self.req("/api/answers", body)[0], 403)
@@ -192,3 +221,66 @@ global.setInterval = () => 0; global.fetch = async () => ({ json: async () => ({
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConfigWatcherTest(unittest.TestCase):
+    """A changed config/machines.toml restarts the dashboard once the file
+    is complete and valid; a broken one keeps the machines it had."""
+
+    ONE = '[[machine]]\nname = "marge"\nos = "linux"\nhost = "10.0.0.5"\nuser = "builder"\n'
+    TWO = ONE + '\n[[machine]]\nname = "macos"\nos = "macos"\nhost = "10.0.0.6"\nuser = "builder"\n'
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.file = self.dir / "machines.toml"
+        self.file.write_text(self.ONE, encoding="utf-8")
+        self.calls = []
+        self.w = d.ConfigWatcher(self.dir, self.calls.append, interval=0.01)
+
+    def tearDown(self):
+        shutil.rmtree(self.dir)
+
+    def test_unchanged_does_nothing(self):
+        self.assertFalse(self.w.check())
+        self.file.write_text(self.ONE, encoding="utf-8")  # saved again, same content
+        self.assertFalse(self.w.check())
+        self.assertEqual(self.calls, [])
+
+    def test_a_change_restarts_once_it_is_stable(self):
+        self.file.write_text(self.TWO, encoding="utf-8")
+        self.assertFalse(self.w.check(), "first seen: wait one poll")
+        self.assertTrue(self.w.check())
+        self.assertEqual(self.calls, ["config/machines.toml changed (2 machines)"])
+        self.assertFalse(self.w.check(), "only once")
+        self.assertIsNone(self.w.error)
+
+    def test_a_broken_file_keeps_the_old_machines(self):
+        self.file.write_text("# being edited\n", encoding="utf-8")
+        self.w.check()
+        self.assertFalse(self.w.check())
+        self.assertEqual(self.calls, [])
+        self.assertIn("no machines", self.w.error)
+        # The dashboard shows it as an amber alert.
+        dash = d.Dashboard([], use_control=False)
+        dash.config_watcher = self.w
+        alerts = dash.snapshot()["alerts"]
+        self.assertTrue(any(a["level"] == "warn" and "machines.toml" in a["text"] for a in alerts), alerts)
+        # Missing: the same.
+        self.file.unlink()
+        self.w.check()
+        self.assertFalse(self.w.check())
+        self.assertIn("missing", self.w.error)
+        # Back as it was: no alert, no restart.
+        self.file.write_text(self.ONE, encoding="utf-8")
+        self.assertFalse(self.w.check())
+        self.assertIsNone(self.w.error)
+        self.assertEqual(self.calls, [])
+
+    def test_the_loop_polls_until_stopped(self):
+        self.w.start()
+        self.file.write_text(self.TWO, encoding="utf-8")
+        deadline = time.time() + 5
+        while not self.calls and time.time() < deadline:
+            time.sleep(0.01)
+        self.w.stop.set()
+        self.assertEqual(len(self.calls), 1)

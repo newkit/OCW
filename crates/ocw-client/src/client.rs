@@ -4312,6 +4312,182 @@ mod tests {
         assert!(h.client.state().speed > 3.0);
     }
 
+    /// What the trainer was sent on a steady climb: the SIM commands of
+    /// one trainer control following the client frame by frame, and the
+    /// load each puts on an FTMS trainer turning at `speed` (N: gravity on
+    /// the gradient, rolling, the air with the headwind sent).
+    struct ClimbRecord {
+        sent: Vec<(f64, ocw_devices::SimulationParameters)>,
+    }
+
+    impl ClimbRecord {
+        fn load_n(p: &ocw_devices::SimulationParameters, speed: f64) -> f64 {
+            let g = ocw_core::GRAVITY;
+            let air = speed + p.wind_speed_mps;
+            p.mass_kg * g * p.grade.atan().sin()
+                + p.crr * p.mass_kg * g * p.grade.atan().cos()
+                + p.cw_kg_per_m * air * air.abs()
+        }
+
+        /// (min, max) of `f` over the commands sent.
+        fn span(&self, f: impl Fn(&ocw_devices::SimulationParameters) -> f64) -> (f64, f64) {
+            self.sent
+                .iter()
+                .map(|(_, p)| f(p))
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
+                    (lo.min(v), hi.max(v))
+                })
+        }
+
+        /// How often a Wahoo KICKR (its own control point, every write
+        /// answered at once) is written each op code for these commands.
+        fn wahoo_writes(&self) -> std::collections::BTreeMap<u8, usize> {
+            use ocw_devices::ble::protocol::TrainerProtocol;
+            use ocw_devices::gatt::uuids;
+            let mut proto = TrainerProtocol::new(
+                &[
+                    uuids::CYCLING_POWER_MEASUREMENT,
+                    uuids::WAHOO_TRAINER_CONTROL,
+                ],
+                None,
+            );
+            let mut count = std::collections::BTreeMap::new();
+            for (t, p) in &self.sent {
+                let now = Duration::from_secs_f64(*t);
+                let mut out = proto
+                    .on_command(ocw_devices::DeviceCommand::SetSimulation(*p), now)
+                    .control_writes;
+                while let Some(w) = out.pop() {
+                    *count.entry(w[0]).or_insert(0) += 1;
+                    out.extend(
+                        proto
+                            .on_notification(uuids::WAHOO_TRAINER_CONTROL, &[0x01, w[0], 0x01], now)
+                            .control_writes,
+                    );
+                }
+            }
+            count
+        }
+    }
+
+    /// A straight road climbing at exactly 10 % for 3 km.
+    fn ten_percent() -> Route {
+        let points = (0..=120)
+            .map(|i| {
+                let x = f64::from(i) * 25.0;
+                [x, 0.1 * x, 0.0]
+            })
+            .collect();
+        Route::from_points("ten", "Ten percent", points, false, 6.0).unwrap()
+    }
+
+    /// Rides `seconds` of the 10 % climb at 300 W in `weather`, the
+    /// trainer control following the client every physics step.
+    fn ride_the_climb(weather: ocw_weather::WeatherState, seconds: f64) -> ClimbRecord {
+        let mut h = Harness::with(
+            GameServer::new(
+                ten_percent(),
+                ServerConfig {
+                    weather: Some(weather),
+                    weather_seed: Some(7),
+                    // As in the app's solo ride (spec §14 Phase 9, Q4).
+                    weather_physics: true,
+                    allow_local_events: true,
+                    ..Default::default()
+                },
+            ),
+            ClientCore::new(ten_percent(), "Ada Rider", RiderProfile::default()),
+        );
+        h.ride(300.0, 20.0); // up to speed on the climb
+        let mut t = crate::trainer::TrainerControl::new(RiderProfile::default());
+        let mut sent = Vec::new();
+        let steps = (seconds * f64::from(ocw_core::SIM_TICK_HZ)) as u32;
+        for _ in 0..steps {
+            h.ride(300.0, ocw_core::SIM_DT);
+            let grade = h.client.track().sample(h.client.state().distance).grade;
+            assert!(
+                (grade - 0.1).abs() < 1e-6,
+                "the road is 10 % everywhere: {grade}"
+            );
+            if let Some(ocw_devices::DeviceCommand::SetSimulation(p)) =
+                t.follow(h.time_s, &h.client)
+            {
+                sent.push((h.time_s, p));
+            }
+        }
+        ClimbRecord { sent }
+    }
+
+    /// Bug report by the user (2026-11-16): "while the road was constantly
+    /// at 10 % inclination, the resistance [of the Wahoo trainer] varied a
+    /// bit". The road under the rider and its gradient are exactly 10 %
+    /// (asserted every step); this test looks at everything else SIM sends
+    /// on that climb, per weather. The cause: the weather's gusts reached
+    /// the trainer step by step and the thinning air re-sent the KICKR's
+    /// SIM mode (fixed in `ocw_sim::trainer`: the wind smoothed over
+    /// `TRAINER_WIND_TAU_S` with a hysteresis, the coefficients re-sent
+    /// for the air only from `CW_RESEND_SHARE`).
+    #[test]
+    fn a_steady_climb_gives_the_trainer_a_steady_load() {
+        let calm = ocw_weather::WeatherState {
+            wind_mps: 0.0,
+            gust_mps: 0.0,
+            ..Default::default()
+        };
+        let speed = 3.5; // m/s, about 300 W at 10 %
+        // (weather, the load's variation at most, the Wahoo wind writes at
+        // most in 300 s). Before the fix: the default weather 2.2 % with 47
+        // wind writes (each gust step a jump), windy 24 % with 114, and the
+        // thinning air re-sent the KICKR's whole SIM mode on the climb.
+        for (name, weather, max_span, max_wind_writes) in [
+            ("still air", calm, 0.001, 0),
+            (
+                "the default weather",
+                ocw_weather::WeatherState::default(),
+                0.012,
+                4,
+            ),
+            (
+                "windy",
+                ocw_weather::presets::preset("windy").unwrap(),
+                0.10,
+                30,
+            ),
+        ] {
+            let r = ride_the_climb(weather, 300.0);
+            let (g0, g1) = r.span(|p| p.grade);
+            let (w0, w1) = r.span(|p| p.wind_speed_mps);
+            let (c0, c1) = r.span(|p| p.crr);
+            let (a0, a1) = r.span(|p| p.cw_kg_per_m);
+            let (m0, m1) = r.span(|p| p.mass_kg);
+            let (l0, l1) = r.span(|p| ClimbRecord::load_n(p, speed));
+            eprintln!(
+                "{name}: {} commands in 300 s; grade {g0:.4}..{g1:.4}, wind {w0:+.1}..{w1:+.1} m/s, \
+                 crr {c0:.5}..{c1:.5}, cw {a0:.4}..{a1:.4} kg/m, mass {m0:.1}..{m1:.1} kg; \
+                 FTMS load at {speed} m/s {l0:.1}..{l1:.1} N ({:.1} %); Wahoo writes {:?}",
+                r.sent.len(),
+                100.0 * (l1 - l0) / l0,
+                r.wahoo_writes(),
+            );
+            assert!((g0, g1) == (0.05, 0.05), "{name}: 10 % at 50 % difficulty");
+            assert!(
+                (l1 - l0) / l0 <= max_span,
+                "{name}: the load varies {l0:.1}..{l1:.1} N"
+            );
+            let writes = r.wahoo_writes();
+            let wind_writes = writes.get(&ocw_devices::gatt::wahoo::op::SET_WIND_SPEED);
+            assert!(
+                wind_writes.copied().unwrap_or(0) <= max_wind_writes,
+                "{name}: {writes:?}"
+            );
+            assert_eq!(
+                writes.get(&ocw_devices::gatt::wahoo::op::SET_SIM_MODE),
+                Some(&1),
+                "{name}: the KICKR's SIM mode once, not again for the thinning air"
+            );
+        }
+    }
+
     /// The SIM parameters a fresh trainer control sends for the client
     /// now (its first update goes out at once).
     fn trainer_sim(h: &Harness) -> ocw_devices::SimulationParameters {
