@@ -420,7 +420,7 @@ impl Page {
                 "Date, time and speed of the world's clock (sun and light). Solo you set it; in a shared ride the host does.",
             ],
             Self::ViewDistance => &[
-                "How far the world is drawn: fog, trees, houses and tiles. Adjust to the frame rate: shorter when the frame rate stays below the target, longer when there is room; the slider is the upper limit. Confirm on the slider: the quality preset's distance.",
+                "How far the world is drawn. Adjusted: shorter below the target, longer with room, up to the slider (Confirm: the preset's).",
             ],
             Self::Graphics => &[
                 "Quality: Low and Medium draw fewer shadows, trees and houses for weaker GPUs, WebGL 2 and phones; auto chooses by GPU and device.",
