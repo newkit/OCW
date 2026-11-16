@@ -689,7 +689,8 @@ pub const LOD_DISTANCE_M: f32 = 40.0;
 /// Width of the cross-fade between the two models (m).
 const LOD_FADE_M: f32 = 4.0;
 
-fn near_range() -> VisibilityRange {
+/// The near model's visibility range (up to [`LOD_DISTANCE_M`]).
+pub fn near_range() -> VisibilityRange {
     VisibilityRange {
         start_margin: 0.0..0.0,
         end_margin: LOD_DISTANCE_M - LOD_FADE_M..LOD_DISTANCE_M + LOD_FADE_M,
@@ -911,6 +912,9 @@ pub struct AvatarRig {
     animator: Animator,
     wheel_angle: f32,
     bias: f64,
+    /// The phone in the hand from the last pose (spec §2.6; `None`: in the
+    /// pocket, or not posed far away).
+    phone: Option<(Vec3, Quat)>,
 }
 
 impl AvatarRig {
@@ -1190,14 +1194,47 @@ fn spawn_avatar(
         pelvis: find(nodes::PELVIS),
         posed,
         bike,
-        rider: body.rider,
+        // The back pocket (spec §2.6: the phone's) sits on the jersey,
+        // which is as wide and deep as the build's girth (x and z).
+        rider: RiderRig {
+            pocket: body.rider.pocket
+                * rider_model.node(nodes::TORSO).map_or(Vec3::ONE, |t| {
+                    ocw_assets::rider::girth(rider_model, t, character.validated().build)
+                }),
+            ..body.rider
+        },
         scale: body.scale,
         fit: body.fit,
         animator: Animator::new(id.0),
         wheel_angle: 0.0,
         bias: anim::bias(id.0),
+        phone: None,
     };
     commands.entity(root).insert(rig);
+    // The status signs (spec §2.6): worn at the head, the phone in the
+    // hand; not for the ghost.
+    if !ghost {
+        let glasses: Vec<Entity> = [
+            ocw_assets::rider::opt::GLASSES_SPORT,
+            ocw_assets::rider::opt::GLASSES_ROUND,
+        ]
+        .iter()
+        .filter_map(|n| rider_model.node(n))
+        .map(|i| rider_e[i])
+        .filter(|e| *e != Entity::PLACEHOLDER)
+        .collect();
+        let parts = crate::status_signs::spawn(
+            commands,
+            meshes,
+            materials.standard,
+            find(nodes::HEAD),
+            sway,
+            &bike,
+            glasses,
+            &colours,
+        );
+        commands.entity(root).insert(parts);
+    }
     root
 }
 
@@ -1206,15 +1243,21 @@ fn animate(
     time: Res<Time>,
     view: Res<RideView>,
     mut avatars: Query<
-        (&Avatar, &mut AvatarRig, &GlobalTransform),
+        (
+            &Avatar,
+            &mut AvatarRig,
+            &GlobalTransform,
+            Option<&crate::status_signs::SignParts>,
+        ),
         Without<crate::ragdoll::Ragdolled>,
     >,
     cameras: Query<&GlobalTransform, With<crate::camera::FollowCamera>>,
     mut transforms: Query<&mut Transform>,
+    mut visibility: Query<&mut Visibility>,
 ) {
     let dt = time.delta_secs();
     let eye = cameras.iter().next().map(GlobalTransform::translation);
-    for (avatar, mut rig, at) in &mut avatars {
+    for (avatar, mut rig, at, signs) in &mut avatars {
         let mut bent = [0.0f32; 2];
         let input = if avatar.id == GHOST_ID {
             let Some(g) = view.ghost else { continue };
@@ -1229,6 +1272,7 @@ fn animate(
                 bias: 0.0,
                 curvature: g.turn_curvature,
                 cue: anim::Cue::default(),
+                signs: Default::default(),
             }
         } else {
             let Some(r) = view.riders.iter().find(|r| r.id == avatar.id) else {
@@ -1247,6 +1291,8 @@ fn animate(
                 curvature: r.state.turn_curvature,
                 // The U-turn, the finish (from the client, spec §2.6).
                 cue: r.cue,
+                // The status signs (spec §2.6), as this viewer sees them.
+                signs: r.signs,
             }
         };
         let rig = &mut *rig;
@@ -1262,10 +1308,21 @@ fn animate(
             }
         }
         // Far away only the lod1 model shows: no pose needed.
-        if eye.is_some_and(|e| e.distance(at.translation()) > LOD_DISTANCE_M + LOD_FADE_M) {
-            continue;
+        let far = eye.is_some_and(|e| e.distance(at.translation()) > LOD_DISTANCE_M + LOD_FADE_M);
+        let p = (!far).then(|| pose::pose(&rig.rider, &rig.bike, &rig.fit, &params));
+        rig.phone = p.and_then(|p| p.phone);
+        if let Some(parts) = signs {
+            crate::status_signs::update(
+                parts,
+                &rig.animator.status,
+                rig.phone,
+                &mut transforms,
+                &mut visibility,
+            );
         }
-        let p = pose::pose(&rig.rider, &rig.bike, &rig.fit, &params);
+        let Some(p) = p else {
+            continue;
+        };
         if let Ok(mut t) = transforms.get_mut(rig.sway) {
             *t = sway_transform(p.bike_roll, &rig.bike);
         }
@@ -1330,6 +1387,7 @@ mod tests {
             wobble: 0.0,
             damage: None,
             cue: Default::default(),
+            signs: Default::default(),
         };
         {
             let mut v = app.world_mut().resource_mut::<RideView>();
@@ -1522,6 +1580,7 @@ mod tests {
             wobble: 0.0,
             damage: None,
             cue: Default::default(),
+            signs: Default::default(),
         });
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
@@ -1643,6 +1702,7 @@ mod tests {
             wobble: 0.0,
             damage: None,
             cue: Default::default(),
+            signs: Default::default(),
         }
     }
 

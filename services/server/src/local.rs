@@ -542,6 +542,7 @@ mod tests {
             heart_rate_bpm: None,
             brake: None,
             virtual_power: None,
+            status: None,
         })));
         f.send(&power);
         s.send(&power);

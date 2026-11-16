@@ -116,6 +116,8 @@ impl Plugin for WebUiPlugin {
             ocw_ui::riders_page::RidersPagePlugin,
             ocw_ui::collisions::CollisionsPlugin,
             ocw_ui::events::EventsPlugin,
+            // The rider status signs (spec §2.6), as on the desktop.
+            ocw_ui::status::StatusPlugin,
             // `display.quality`, `quality` and `gpu` (B7).
             ocw_ui::quality::QualityPlugin,
             // Unicorn mode (spec §14 Phase 13 G5) with the page's Pointer

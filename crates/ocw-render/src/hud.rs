@@ -1507,6 +1507,7 @@ mod tests {
                 wobble: 0.0,
                 damage: None,
                 cue: Default::default(),
+                signs: Default::default(),
             });
         app.update();
         assert_eq!(panel_display(&mut app), Display::Flex);

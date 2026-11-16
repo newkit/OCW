@@ -42,6 +42,7 @@ pub mod photographer;
 pub mod quality;
 pub mod riders_page;
 pub mod settings;
+pub mod status;
 pub mod timemachine;
 pub mod touch;
 pub mod trust;

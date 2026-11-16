@@ -27,6 +27,24 @@ pub struct VoiceHud {
     pub speaking_names: Vec<String>,
     /// The echo test (spec §7 *Echo bot*), while it is on.
     pub echo: Option<EchoHud>,
+    /// What the own rider's status signs say about voice (spec §2.6,
+    /// §7.1.7 Q11): sent to the others with the samples.
+    pub signs: VoiceSigns,
+}
+
+/// The voice part of the own rider's status signs (spec §2.6, §7.1.7 Q11,
+/// Q12): computed by `ocw_client::voice` from the call, sent in
+/// `RiderStatus`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VoiceSigns {
+    /// In the call (connected): can speak and hear at all.
+    pub in_voice: bool,
+    /// The microphone is muted in the call: the X mouth.
+    pub mic_muted: bool,
+    /// Hears nobody by own choice: headphones for every viewer in the call.
+    pub hears_nobody: bool,
+    /// Riders not heard by own choice: each of them sees headphones.
+    pub not_hearing: Vec<RiderId>,
 }
 
 /// The echo test's line: a hint and two level meters.

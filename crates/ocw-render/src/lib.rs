@@ -49,6 +49,7 @@ pub mod season;
 pub mod see_through;
 pub mod sky;
 pub mod stamp;
+pub mod status_signs;
 pub mod street_lamps;
 pub mod terrain;
 pub mod touch_hud;
@@ -415,9 +416,13 @@ pub struct RiderView {
     /// What the client knows for the animation beyond speed and power
     /// (spec §2.6): a U-turn loop, the finish, the winner.
     pub cue: AnimCue,
+    /// The rider status signs as the local rider sees them (spec §2.6):
+    /// the X mouth, the phone, the VR headset, headphones ("cannot hear
+    /// you", per viewer).
+    pub signs: Signs,
 }
 
-pub use ocw_assets::anim::{Cue as AnimCue, FINISH_CUE_S, FinishCue, UTurnCue};
+pub use ocw_assets::anim::{Cue as AnimCue, FINISH_CUE_S, FinishCue, Signs, UTurnCue};
 
 /// All rendering plugins of the desktop client.
 pub struct OcwRenderPlugins;
@@ -622,6 +627,7 @@ mod tests {
             wobble: 0.0,
             damage: None,
             cue: Default::default(),
+            signs: Default::default(),
         });
         view.sky = Some(sky(12, 0));
         let mut app = App::new();
@@ -694,6 +700,7 @@ mod tests {
             wobble: 0.0,
             damage: None,
             cue: Default::default(),
+            signs: Default::default(),
         });
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))

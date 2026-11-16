@@ -587,6 +587,7 @@ mod tests {
             wobble: 0.0,
             damage: None,
             cue: Default::default(),
+            signs: Default::default(),
         });
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, TransformPlugin, AssetPlugin::default()))

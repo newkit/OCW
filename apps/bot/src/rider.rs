@@ -352,6 +352,7 @@ impl BotRider {
             heart_rate_bpm: None,
             brake: Some(effort.brake),
             virtual_power: None,
+            status: None,
         })))]
     }
 

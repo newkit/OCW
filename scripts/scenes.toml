@@ -2719,3 +2719,48 @@ world = true
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-3116.9,488.5", "--bots", "0", "--power", "0"]
 at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 200 38 24"]
 shot = 9
+
+# --- Rider status signs (spec §2.6, §7.1.7 Q11) --------------------------------
+
+[[scene]]
+name = "status-phone-grab"
+description = "Video: the rider opens the menu and takes the phone out of the back jersey pocket, reads it riding one-handed with the head down, then stores it again (spec §2.6 rider status signs)"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=camera.orbit 115 8 2.6", "4=status.sign menu on", "8=status.sign menu off"]
+warmup = 3
+video = 7
+
+[[scene]]
+name = "status-phone-hold"
+description = "In the menu (spec §2.6): the rider holds the phone in front of the stem, the screen glowing, the left hand alone on the bar, the head down"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=camera.orbit 120 10 2.4", "3=status.sign menu on"]
+shot = 7
+
+[[scene]]
+name = "status-mouth-muted"
+description = "Microphone muted (spec §7.1.7 Q7, Q11): a red X over the mouth, seen by everybody; the own rider from the front"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=camera.orbit 165 4 1.6", "2=status.sign muted on"]
+shot = 6
+
+[[scene]]
+name = "status-vr-headset"
+description = "Riding in VR (spec §2.6): the own rider wears the VR headset (glasses hidden), from the chase camera beside the rider"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=camera.orbit 140 8 2.0", "2=status.sign vr on"]
+shot = 6
+
+[[scene]]
+name = "status-headphones"
+description = "Cannot hear you (spec §7.1.7 Q11): the bots muted their speakers, so the rider (in the voice call) sees big headphones on them"
+args = ["--route", "loop", "--bots", "2", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "0.5=status.sign voice on", "1.5=dev.bot_bike 1 --power 220 --lane -0.9", "1.5=dev.bot_bike 2 --power 220 --lane 0.9", "2=dev.bot_status --deaf", "3=camera.orbit 160 10 4"]
+shot = 9
+
+[[scene]]
+name = "status-group-mixed"
+description = "Status signs in a group (spec §2.6): one bot reads the phone, one is muted (X mouth), one rides in VR, one cannot hear the rider (headphones)"
+args = ["--route", "loop", "--bots", "4", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "0.5=status.sign voice on", "1.5=dev.bot_bike 1 --power 220 --lane -1.2", "1.5=dev.bot_bike 2 --power 220 --lane -0.4", "1.5=dev.bot_bike 3 --power 220 --lane 0.4", "1.5=dev.bot_bike 4 --power 220 --lane 1.2", "2=dev.bot_status --bot 1 --menu", "2=dev.bot_status --bot 2 --muted", "2=dev.bot_status --bot 3 --vr", "2=dev.bot_status --bot 4 --deaf", "3=camera.orbit 165 12 6"]
+shot = 10
