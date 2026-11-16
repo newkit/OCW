@@ -187,6 +187,10 @@ pub struct GameServer {
     names: BTreeMap<ConnectionId, String>,
     /// When each connection got its last voice token (unix s).
     voice_issued: BTreeMap<ConnectionId, u64>,
+    /// The addresses of each network connection (this server's address the
+    /// client reached, if known, and the client's), for the voice URL the
+    /// rider can reach (spec §7.1.1, §7.1.7 Q5).
+    peer_addrs: BTreeMap<ConnectionId, (Option<std::net::IpAddr>, std::net::SocketAddr)>,
     /// Display names of the clients that joined and left, in order (for
     /// the server's statistics, `ocw-server --stats-file`).
     joined: Vec<String>,
@@ -383,6 +387,7 @@ impl GameServer {
             event_dirty: false,
             names: BTreeMap::new(),
             voice_issued: BTreeMap::new(),
+            peer_addrs: BTreeMap::new(),
             joined: Vec::new(),
             left: Vec::new(),
             time_base_s: 0.0,
@@ -853,11 +858,25 @@ impl GameServer {
         id
     }
 
+    /// Tells the server where a network connection came from: `local` is
+    /// this server's address the client reached (`None`: unknown), `remote`
+    /// the client's. A bundled voice server's grants then name the address
+    /// this rider can reach (spec §7.1.1 *Joining needs nothing extra*).
+    pub fn set_connection_addresses(
+        &mut self,
+        conn: ConnectionId,
+        local: Option<std::net::IpAddr>,
+        remote: std::net::SocketAddr,
+    ) {
+        self.peer_addrs.insert(conn, (local, remote));
+    }
+
     /// Removes a connection and its rider.
     pub fn disconnect(&mut self, conn: ConnectionId) {
         self.names.remove(&conn);
         self.accounts.remove(&conn);
         self.voice_issued.remove(&conn);
+        self.peer_addrs.remove(&conn);
         if let Some(rider) = self.riders.remove(&conn) {
             let name = self
                 .session
@@ -1459,7 +1478,14 @@ impl GameServer {
             );
         }
         let name = self.names.get(&conn).map_or("", String::as_str);
-        let grant = voice::grant(cfg, req, rider, name, self.session.event(), now);
+        let mut grant = voice::grant(cfg, req, rider, name, self.session.event(), now);
+        if grant.error.is_empty()
+            && let Some(reach) = &cfg.reach
+            && let Some(&(local, remote)) = self.peer_addrs.get(&conn)
+            && let Some(url) = voice::reach_url(reach, local, remote)
+        {
+            grant.url = url;
+        }
         if grant.error.is_empty() {
             self.voice_issued.insert(conn, now);
             tracing::info!(%rider, room = %grant.room, "voice token issued");
@@ -1889,6 +1915,43 @@ mod tests {
             })
             .unwrap();
         assert_eq!(snap.human_riders, 2);
+    }
+
+    /// The bundled voice server (spec §7.1.1): each grant names the
+    /// address that rider reaches; an external LiveKit keeps its URL.
+    #[test]
+    fn voice_grant_url_per_connection() {
+        let now = Arc::new(std::sync::atomic::AtomicU64::new(1_900_000_000));
+        let mut external = voice_server(now.clone());
+        let mut bundled = voice_server(now);
+        if let Some(v) = &mut bundled.config.voice {
+            v.reach = Some(voice::VoiceReach {
+                port: 7890,
+                public_host: Some("ride.example.org".into()),
+            });
+        }
+        let lan: std::net::SocketAddr = "192.168.5.9:40000".parse().unwrap();
+        let web: std::net::SocketAddr = "203.0.113.7:40000".parse().unwrap();
+        let here: std::net::IpAddr = "192.168.5.2".parse().unwrap();
+        for (which, from, url) in [
+            (true, lan, "ws://192.168.5.2:7890"),
+            (true, web, "ws://ride.example.org:7890"),
+            (false, lan, "ws://127.0.0.1:7880"),
+        ] {
+            let server = if which { &mut bundled } else { &mut external };
+            let conn = server.connect();
+            server.set_connection_addresses(conn, Some(here), from);
+            server.handle(conn, &hello(PROTOCOL_VERSION));
+            let g = ask_voice(server, conn, v1::VoiceChannel::Session, "");
+            assert_eq!(g.url, url, "{from}");
+            server.disconnect(conn);
+            assert!(server.peer_addrs.is_empty());
+        }
+        // No address known (the in-process connection): the configured URL.
+        let conn = bundled.connect();
+        bundled.handle(conn, &hello(PROTOCOL_VERSION));
+        let g = ask_voice(&mut bundled, conn, v1::VoiceChannel::Session, "");
+        assert_eq!(g.url, "ws://127.0.0.1:7880");
     }
 
     #[test]
