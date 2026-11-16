@@ -113,6 +113,8 @@ struct Result {
     v: usize,
     /// The vertex has a junction surface or mitre (J1).
     patched: bool,
+    /// Why there is none (J1 falls back to the overlapping strips).
+    reason: Option<&'static str>,
     /// The visible step less the slope between the samples (the jump of
     /// the surface itself).
     seam: f32,
@@ -220,6 +222,25 @@ fn analyse(path: &str) {
             .collect();
         let mut lines_in: HashMap<usize, usize> = HashMap::new();
         let mut unmatched = 0usize;
+        // The production path's time per tile (all strips together, as the
+        // renderer builds a tile; the patches are made on first use).
+        {
+            let t0 = std::time::Instant::now();
+            for tile in pkg.tiles.values() {
+                let junctions = match mode {
+                    Mode::Before => None,
+                    Mode::After => Some(&pj),
+                };
+                let m = ocw_render::package::tile_road_meshes(&pkg, tile, &[], None, junctions);
+                std::hint::black_box(m.roads.indices.len());
+            }
+            let ms = t0.elapsed().as_secs_f64() * 1000.0;
+            println!(
+                "{mode:?}: road meshes of {} tiles in {ms:.0} ms ({:.2} ms per tile)",
+                pkg.tiles.len(),
+                ms / pkg.tiles.len().max(1) as f64
+            );
+        }
         // The drawn parts: (owner, edge of a strip, its points, its paint, mesh).
         let mut parts: Vec<(usize, Option<usize>, Vec<[f32; 3]>, bool, MeshArrays)> = Vec::new();
         for (key, tile) in &pkg.tiles {
@@ -348,6 +369,7 @@ fn analyse(path: &str) {
             let mut res = Result {
                 v,
                 patched: pj.set.rule(&g, v).is_some(),
+                reason: pj.set.fallback_reason(&g, v),
                 degree: adj[v].len(),
                 lines_in: lines_in.get(&v).copied().unwrap_or(0),
                 ..Default::default()
@@ -550,6 +572,41 @@ fn analyse(path: &str) {
                 rs.iter().map(|r| r.verge_dh).fold(0.0, f32::max),
                 share(&|r| r.lines_in > 0),
             );
+            // The junctions with a surface (or mitre) alone, and why the
+            // others have none.
+            let p: Vec<&&Result> = rs.iter().filter(|r| r.patched).collect();
+            if !p.is_empty() {
+                let pn = p.len() as f32;
+                let ps = |f: &dyn Fn(&Result) -> bool| {
+                    100.0 * p.iter().filter(|r| f(r)).count() as f32 / pn
+                };
+                let mut st: Vec<f32> = p.iter().map(|r| r.step).collect();
+                st.sort_by(f32::total_cmp);
+                println!(
+                    "    with a surface ({}): step median {:.3} max {:.3} m | seam > 2 cm {:.1} % | > 10 cm {:.1} % | z-fight {:.1} % | gap {:.1} % | verge on road {:.1} %",
+                    p.len(),
+                    st[st.len() / 2],
+                    st[st.len() - 1],
+                    ps(&|r| r.seam > 0.02),
+                    ps(&|r| r.seam > 0.10),
+                    ps(&|r| r.zfight_m2 > 0.5),
+                    ps(&|r| r.gap_m2 > 0.1),
+                    ps(&|r| r.verge_m2 > 0.1),
+                );
+            }
+            let mut why: Vec<(&str, usize)> = Vec::new();
+            for r in rs.iter().filter(|r| !r.patched) {
+                let k = r.reason.unwrap_or("?");
+                match why.iter_mut().find(|w| w.0 == k) {
+                    Some(w) => w.1 += 1,
+                    None => why.push((k, 1)),
+                }
+            }
+            why.sort_by(|a, b| b.1.cmp(&a.1));
+            if !why.is_empty() {
+                let list: Vec<String> = why.iter().map(|(k, c)| format!("{k} {c}")).collect();
+                println!("    without: {}", list.join(" | "));
+            }
             if filt.start == 2 {
                 for (lo, hi) in [(0.0, 10.0), (10.0, 30.0), (30.0, 60.0), (60.0, 181.0)] {
                     let b: Vec<&&Result> = rs

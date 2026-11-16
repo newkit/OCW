@@ -576,6 +576,12 @@ struct CornerArc {
 }
 
 fn build_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Option<Patch> {
+    try_patch(g, adj, v).ok()
+}
+
+/// [`build_patch`] with the reason when a vertex keeps its overlapping
+/// strips (diagnostics, the analysis test).
+fn try_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Result<Patch, &'static str> {
     let c = g.vertices[v];
     // Arms.
     struct Raw {
@@ -592,7 +598,7 @@ fn build_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Option<Patch> {
         let e = &g.edges[ei];
         let len = e.length_m();
         if len < 1.0 || e.profile.is_empty() {
-            return None;
+            return Err("a short edge or no profile");
         }
         let at_from = e.from.0 as usize == v;
         let cum = cumulative(&e.points);
@@ -627,7 +633,7 @@ fn build_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Option<Patch> {
         d
     };
     if (0..n).any(|i| gap(i) < MIN_CORNER_DEG.to_radians()) {
-        return None;
+        return Err("a fork: arms closer than 15 degrees");
     }
     let caps: Vec<f64> = raws
         .iter()
@@ -665,7 +671,7 @@ fn build_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Option<Patch> {
                 corners.push(None);
                 continue;
             }
-            return None;
+            return Err("an acute corner beyond the mouth limits");
         };
         let small = ri.class.max(rj.class);
         let half_phi = phi / 2.0;
@@ -719,7 +725,7 @@ fn build_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Option<Patch> {
     }
     // Through road: two arms of the highest class, nearly straight; only
     // one such pair.
-    let best = arms.iter().map(|a| a.class).min()?;
+    let best = arms.iter().map(|a| a.class).min().ok_or("no arms")?;
     let mut pairs = Vec::new();
     for i in 0..n {
         for j in i + 1..n {
@@ -876,30 +882,30 @@ fn build_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Option<Patch> {
     angles.push(prev);
     for o in &outline[1..] {
         if norm(sub(xz(o.p), c)) < 0.3 {
-            return None;
+            return Err("the outline passes the vertex");
         }
         let mut a = angle(c, xz(o.p));
         while a <= prev - 1e-12 {
             a += tau;
         }
         if a - prev < 1e-6 || a - prev > std::f64::consts::PI {
-            return None;
+            return Err("the outline is not star-shaped");
         }
         angles.push(a);
         prev = a;
     }
     if prev - angles[0] >= tau - 1e-6 {
-        return None;
+        return Err("the outline is not star-shaped");
     }
     let first = angles[0] + tau;
     if first - prev < 1e-6 || first - prev > std::f64::consts::PI {
-        return None;
+        return Err("the outline is not star-shaped");
     }
     patch.outline = outline;
     patch.angles = angles;
     patch.chains = chains;
     mesh(&mut patch);
-    Some(patch)
+    Ok(patch)
 }
 
 /// The star mesh: rings of the outline scaled towards the centre.
@@ -1102,6 +1108,37 @@ impl JunctionSet {
             rule.map(Arc::new)
         })
         .as_deref()
+    }
+
+    /// Why vertex `v` has no junction surface (`None`: it has one, or a
+    /// mitre): diagnostics for the analysis test.
+    pub fn fallback_reason(&self, g: &RoadGraph, v: usize) -> Option<&'static str> {
+        let adj = &self.adjacency[v];
+        if adj.len() < 2 {
+            return Some("a dead end");
+        }
+        if adj.len() > MAX_ARMS {
+            return Some("more than 8 arms");
+        }
+        if g.boundary_vertices.contains(&VertexId(v as u32)) {
+            return Some("the region border");
+        }
+        if adj.iter().any(|&e| {
+            let e = &g.edges[e];
+            e.bridge || e.tunnel
+        }) {
+            return Some("a bridge or tunnel");
+        }
+        if adj.iter().any(|&e| g.edges[e].from == g.edges[e].to) {
+            return Some("a loop edge");
+        }
+        if self.rule(g, v).is_some() {
+            return None;
+        }
+        if adj.len() == 2 {
+            return Some("a straight way split");
+        }
+        try_patch(g, adj, v).err()
     }
 
     pub fn patch(&self, g: &RoadGraph, v: usize) -> Option<&Patch> {
