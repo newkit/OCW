@@ -14,6 +14,7 @@ python3 tools/build-dashboard/dashboard.py --janitor dry-run  # log what the jan
 python3 tools/build-dashboard/dashboard.py --janitor-plan     # dry run on every machine now, then exit (make janitor-plan)
 python3 tools/build-dashboard/dashboard.py --no-coordinator   # without the coordinator card and the Claude tasks
 python3 tools/build-dashboard/coordinator.py                  # one sample of this machine as JSON
+scripts/agent-slots.sh                                        # agent limit, running agents, free slots (exit 0 / 3)
 curl -s localhost:8765/api/status                             # JSON for scripts
 python3 -m unittest discover tools/build-dashboard            # tests (no network)
 ```
@@ -38,6 +39,7 @@ button, or `systemctl --user restart ocw-build-dashboard.service`).
 
 | Version | Date | Change | Unit changed |
 |---|---|---|---|
+| 1.5.0 | 2026-11-16 | **Agents on the coordinator selectable**: `[coordinator] max_agents` in `config/build-machines.toml` (default 5, 1–16; − N + on the Coordinator card with the token, `POST /api/coordinator`, `build_machines.py agents N`), `agents` in `/api/status`, "agents N of M" on the card and in the Claude tasks header (amber at the limit, red above it) with deb's available memory, `scripts/agent-slots.sh` for the sessions | no |
 | 1.4.1 | 2026-11-16 | The cutover line is gone from the Claude tasks card; the worktree list stays open (kept in the browser across refreshes and updates) | no |
 | 1.4.0 | 2026-11-16 | Versioning: `VERSION`, `--version`, version and commit in the header and `/api/status`, the page reloads itself on a new version | no |
 | 1.3.0 | 2026-11-16 | Temp files on disk (`TMPDIR=%h/tmp` in the unit; deb's `/tmp` is a tmpfs); the Claude tasks section also reads `~/tmp/claude-*` | **yes** – `make dashboard-install` |
@@ -196,6 +198,53 @@ the coordinator thread; git at most every 2 min.
 - The cutover check of the coordinator's move (`docs/MIGRATE-DEB-USER.md`) is
   still in `/api/status` (`claude_tasks.cutover`) but no longer on the page
   (1.4.1; the move is done).
+
+## Agents on the coordinator
+
+How many agents (Claude Code subagents in worktrees) may run on the
+coordinator at once – each holds memory on deb, which ran out of memory on
+2026-11-15 with about ten agents plus VMs. The user sets the number on the
+Coordinator card; the sessions read it before they start an agent.
+
+- **Setting:** `[coordinator] max_agents` in `config/build-machines.toml`
+  (the file of the machine settings below; the table comes before the
+  machines, and `remote.sh`'s lookup skips it). Default **5** without the
+  table or with a broken value; the page and the CLI set **1–16** (a hand
+  edit may hold up to 64). `changed_by` / `changed_at` like a machine's.
+
+  ```toml
+  [coordinator]
+  max_agents = 5
+  changed_by = "dashboard"
+  changed_at = "2026-11-16T15:00:00+01:00"
+  ```
+- **Page:** a line on the Coordinator card, "agents N of M" with the free
+  slots and deb's available memory, and a − N + stepper (same token as the
+  other controls; without it only the numbers); amber at the limit, red
+  above it. The Claude tasks header has the same "agents N of M" badge.
+- **Counting:** the running tasks of the Claude tasks section – the tasks of
+  `agents.jsonl` whose last event is started / resumed (interrupted ones
+  hold no slot). So an agent counts only when its session logs its
+  `started` event (and frees its slot with `reported` / `merged` /
+  `abandoned`) with OCW-ART's `diary.py agent-event`.
+- **API:** `agents` in `/api/status`: `max_agents`, `source` (`dashboard` /
+  `default`), `default`, `min`, `max`, `running` (null without the Claude
+  tasks section), `free`, `level` (`ok`, `warn` at the limit, `bad` above
+  it), `text` ("agents N of M"), `mem_available`, `mem_total`,
+  `changed_by`, `changed_at`. `POST /api/coordinator {"max_agents", "by"?}`
+  with the `X-OCW-Token` header (403 without it, 400 for anything but a
+  JSON integer 1–16). Every change is a line in `machines.jsonl` with
+  `"machine": "coordinator"`. `--once` prints an `Agents on the
+  coordinator:` line.
+- **For the sessions:** `scripts/agent-slots.sh` prints `limit M
+  (dashboard|default)`, `running N`, `free F` and exits 0 when a slot is
+  free, 3 when not (`-q`: no output; python3's standard library only,
+  reads the two files, no network, works without the dashboard running).
+  Wait for a slot with Monitor, e.g. `until scripts/agent-slots.sh -q; do
+  sleep 60; done`. `OCW_AGENT_CONFIG` / `OCW_AGENT_LOG` point it at other
+  files (tests).
+- **CLI:** `python3 tools/build-dashboard/build_machines.py agents [N]`
+  shows or sets the limit (logged with source `cli`).
 
 ## Open questions
 
