@@ -952,7 +952,7 @@ impl AvatarRig {
             fit: self.fit,
             saddle_offset: 0.0,
         };
-        pose::steady_eye(&body, &self.params)
+        pose::steady_eye(&body, &self.params())
     }
 }
 
