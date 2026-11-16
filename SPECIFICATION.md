@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 4.12 – November 2026
+Version 4.13 – November 2026
 
 | Version | Change |
 |---|---|
+| 4.13 | **Rider status signs cannot be hidden: headphones, phone and VR headset are always visible to everybody** (decision by the user, 2026-11-16; §2.6 Q3). All §2.6 questions are decided |
 | 4.12 | **Rider names are reserved per account worldwide and unique on every server** (decision by the user, 2026-11-16; §14 Phase 4 4N Q22): the backend refuses a name another account holds; a rider without an account whose name is taken on a server picks another when joining |
 | 4.11 | **Strava recording with the S key and ride photos from a virtual photographer planned** (asked by the user 2026-11-16; new §2.8.1): S starts and stops a Strava recording (its own FIT, the existing upload path, account details from `strava.toml` for now); while it runs a virtual photographer takes at most 5 photos, at least 20 minutes apart – the best view of each window, the camera angle chosen for the view (open view, water, landmarks, light; occlusion-tested poses around the rider), rendered off-screen without HUD – saved with position for a later upload. Flag: Strava's public API cannot add photos to an activity. Stages ST1–ST3; open questions §2.8.1 Q1–Q4 |
 | 4.10 | **W5's and the character editor's follow-up questions are in the dashboard: Phase 4 Q16–Q21 (W5: before the first purchase, what is needed to ride, base parts, which servers credit hearts, offline riding, existing riders) and Q22 (where names are unique), Q23 (the body-shape band's width)** (renumbered from Q-W1–Q-W6, Q8b, Q13b, which the dashboard did not read) |
@@ -676,7 +677,7 @@ The character editor is the **changing corner** of the workshop scene (mirror, b
   - **Open questions (for the user):**
     - **Q1 – Headphones when: decided (2026-11-16, dashboard): as proposed** – the headphones show only for a muted microphone while the rider is in a voice room; with voice off entirely there are no headphones.
     - **Q2 – Which screens count as "in the menu": decided (2026-11-16, dashboard): as proposed** – the in-game menu, the console, and the workout and world pickers; not the Unicorn mode inspection panel or settings opened from the start page.
-    - **Q3 – Hiding the status signs:** may a rider hide the own signs from others (privacy), or are they always shown (proposal: always – it is part of riding together)?
+    - **Q3 – Hiding the status signs: decided (2026-11-16, the user): no, always visible to everybody** – a rider cannot hide the own signs; headphones, phone and VR headset show to every rider in the session (there is no setting).
   - **Tests:** the animator's grab / hold / store timeline frame by frame (smooth, reversible mid-way, no flicker under 0.4 s), the hand reaching the pocket anchor and the phone in front of the stem on every bike and body build, the one-handed pose overriding standing / sprint, the headphones' anchor on every helmet, the VR headset on every helmet and a bare head without clipping (glasses hidden while it is on, back when it comes off), the headset following the session state (visible / focused → on, idle / stopping → off, `--vr-sim` → on), no phone for a VR rider in the menu, the flags through the protocol and the snapshot buffer to other clients, the renderer attaching the models; scenes `status-phone-grab` (a video, desktop and browser), `status-headphones`, `status-vr-headset` (a VR rider from the chase camera and from a rider beside), `status-group-mixed` (a group with one rider reading, one muted, one in VR) – single pictures.
 
 ### 2.7 Routes and GPX Import
