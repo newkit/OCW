@@ -27,6 +27,8 @@ message ClientMessage {
     BikeChange bike_change = 16;
     WeatherRequest weather = 17;
     DamageRequest damage = 18;
+    // The ride photographer's shot, for the other riders (spec §2.11).
+    PhotoShot photo = 19;
   }
 }
 
@@ -579,6 +581,8 @@ message ServerMessage {
     WorldChange world_change = 8;
     GodResult god = 9;
     RiderBuild rider_build = 10;
+    // A rider's photographer shot, relayed (spec §2.11).
+    PhotoShot photo = 11;
   }
 }
 
@@ -1214,4 +1218,66 @@ message Bump {
 enum RiderMode {
   RIDER_MODE_RIDING = 0;
   RIDER_MODE_GOD = 1;
+}
+
+// ---------------------------------------------------------------- ride photographer
+
+// The ride photographer's shot (spec §2.11, §2.8.1 Q5, v4.33): the
+// photographed rider's client sends it once the photographer shows and on
+// every change (the drone's new timings, the photo, the end); the server
+// checks it (ocw_world::photo_share::ShotLog: at most 5 photos per ride,
+// 20 minutes apart, the camera near the rider) and relays it to every
+// client (reliable), which draws the same photographer, drone and flash at
+// the same game time. Times are game time: the server's tick / 50 (s). The
+// whole shot each time: a later message replaces the earlier.
+message PhotoShot {
+  // The photographed rider: set by the server (ignored from a client).
+  uint32 rider_id = 1;
+  // The shot's number from the rider's client (unique per connection).
+  uint32 shot = 2;
+  PhotoCarrier carrier = 3;
+  // ocw_world::photo::PoseKind (0 ahead low, 1 side, 2 behind, 3 wide,
+  // 4 behind above, 5 aerial wide).
+  uint32 kind = 4;
+  // The camera (local metres, y up), its unit view, the person's feet.
+  Vec3d eye = 5;
+  Vec3d look = 6;
+  Vec3d feet = 7;
+  // The drone's pilot (feet).
+  Vec3d pilot = 8;
+  // The look of the photographer (clothes, hair).
+  uint64 seed = 9;
+  double appear_at_s = 10;
+  double planned_at_s = 11;
+  optional double taken_at_s = 12;
+  optional double gone_at_s = 13;
+  optional double aborted_at_s = 14;
+  DroneFlightPlan flight = 15;
+}
+
+enum PhotoCarrier {
+  PHOTO_CARRIER_UNSPECIFIED = 0;
+  PHOTO_CARRIER_STANDING = 1;
+  PHOTO_CARRIER_CROUCHING = 2;
+  PHOTO_CARRIER_DRONE = 3;
+}
+
+message Vec3d {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+// The drone's flight (ocw_world::photo_drone::FlightPlan): a pure function
+// of game time and this, the same on every client.
+message DroneFlightPlan {
+  double duration_s = 1;
+  optional double launch_at_s = 2;
+  double path_step_m = 3;
+  // The rider's road from the spot back to the take-off: x, y, z of each
+  // point, path_step_m apart.
+  repeated double path_xyz = 4;
+  // The timings: at, to go (m), photo at – three per timing.
+  repeated double revisions = 5;
+  optional double abort_at_s = 6;
 }

@@ -32,6 +32,7 @@ pub mod patch;
 pub mod path;
 pub mod photo;
 pub mod photo_drone;
+pub mod photo_share;
 pub mod plan;
 pub mod plantings;
 pub mod region;

@@ -1,5 +1,6 @@
 //! The ride photographer in the world (spec §2.11): draws what
-//! [`RideView::photographer`] holds – the person (the rider model on
+//! [`RideView::photographer`] (the own) and [`RideView::photographers`]
+//! (the other riders', spec §2.11 Q2) hold – the person (the rider model on
 //! foot, plain clothes varied per photo, a camera to the eye or a drone's
 //! remote, built from the avatar's parts and pose system like the riders),
 //! the drone (a small quadcopter of simple shapes: body, arms, spinning
@@ -163,13 +164,43 @@ const HELMETS: [&str; 4] = [
     ocw_assets::rider::opt::HELMET_AERO_ROAD,
 ];
 
-/// The spawned figures.
+/// The spawned figures: slot 0 the own photographer, then the other
+/// riders' in the order of [`RideView::photographers`].
 #[derive(Resource, Default)]
 struct Figures {
+    slots: Vec<Slot>,
+    veil: Option<Entity>,
+}
+
+#[derive(Default)]
+struct Slot {
     person: Option<Person>,
     drone: Option<Drone>,
     flash: Option<Entity>,
-    veil: Option<Entity>,
+}
+
+/// What each slot draws this frame (slot 0: the own photographer).
+fn wanted(view: Option<&RideView>) -> Vec<PhotographerView> {
+    let Some(v) = view else {
+        return Vec::new();
+    };
+    std::iter::once(v.photographer.unwrap_or_default())
+        .chain(v.photographers.iter().copied())
+        .collect()
+}
+
+/// Grows or shrinks the slots to `n`, despawning what goes.
+fn fit_slots(commands: &mut Commands, figures: &mut Figures, n: usize) {
+    while figures.slots.len() > n {
+        let s = figures.slots.pop().expect("longer");
+        let roots = [s.person.map(|p| p.root), s.drone.map(|d| d.root), s.flash];
+        for e in roots.into_iter().flatten() {
+            commands.entity(e).try_despawn();
+        }
+    }
+    while figures.slots.len() < n {
+        figures.slots.push(Slot::default());
+    }
 }
 
 struct Person {
@@ -337,45 +368,51 @@ fn sync_person(
     mut materials: Option<ResMut<Assets<StandardMaterial>>>,
     mut transforms: Query<&mut Transform>,
 ) {
-    let want = view
-        .as_ref()
-        .and_then(|v| v.photographer)
-        .and_then(|p| p.person);
-    let Some(f) = want else {
-        if let Some(p) = figures.person.take() {
+    let all = wanted(view.as_deref());
+    fit_slots(&mut commands, &mut figures, all.len());
+    for (i, w) in all.iter().enumerate() {
+        let slot = &mut figures.slots[i];
+        let Some(f) = w.person else {
+            if let Some(p) = slot.person.take() {
+                commands.entity(p.root).try_despawn();
+            }
+            continue;
+        };
+        let (Some(meshes), Some(materials)) = (meshes.as_deref_mut(), materials.as_deref_mut())
+        else {
+            return;
+        };
+        if slot
+            .person
+            .as_ref()
+            .is_some_and(|p| p.key != (f.seed, f.remote))
+        {
+            let p = slot.person.take().expect("checked");
             commands.entity(p.root).try_despawn();
         }
-        return;
-    };
-    let (Some(meshes), Some(materials)) = (meshes.as_deref_mut(), materials.as_deref_mut()) else {
-        return;
-    };
-    if figures
-        .person
-        .as_ref()
-        .is_some_and(|p| p.key != (f.seed, f.remote))
-    {
-        let p = figures.person.take().expect("checked");
-        commands.entity(p.root).try_despawn();
+        if slot.person.is_none() {
+            slot.person = Some(spawn_person(
+                &mut commands,
+                meshes,
+                materials,
+                f.seed,
+                f.remote,
+            ));
+        }
+        let p = slot.person.as_ref().expect("spawned");
+        pose_person(p, &f, time.elapsed_secs(), &mut transforms);
     }
-    if figures.person.is_none() {
-        figures.person = Some(spawn_person(
-            &mut commands,
-            meshes,
-            materials,
-            f.seed,
-            f.remote,
-        ));
-    }
-    let p = figures.person.as_ref().expect("spawned");
+}
+
+/// Poses the spawned person `p` as `f` says.
+fn pose_person(p: &Person, f: &PersonFigure, now_s: f32, transforms: &mut Query<&mut Transform>) {
     let rig = ocw_assets::shipped::rider_rig();
     let holding = if f.remote {
         Holding::Remote
     } else {
         Holding::Camera
     };
-    let (pose, lens, hands) =
-        pose::photographer(&rig, f.crouch, f.pitch as f32, holding, time.elapsed_secs());
+    let (pose, lens, hands) = pose::photographer(&rig, f.crouch, f.pitch as f32, holding, now_s);
     // The lens exactly at the pose's eye (the pilot: the eyes).
     let rot = facing(f.yaw);
     let anchor = if f.remote {
@@ -532,24 +569,36 @@ fn sync_drone(
     mut transforms: Query<&mut Transform>,
     mut visibility: Query<&mut Visibility>,
 ) {
-    let want = view
-        .as_ref()
-        .and_then(|v| v.photographer)
-        .and_then(|p| p.drone);
-    let Some(d) = want else {
-        if let Some(dr) = figures.drone.take() {
-            commands.entity(dr.root).try_despawn();
-        }
-        return;
-    };
-    if figures.drone.is_none() {
-        let (Some(meshes), Some(materials)) = (meshes.as_deref_mut(), materials.as_deref_mut())
-        else {
-            return;
+    let all = wanted(view.as_deref());
+    fit_slots(&mut commands, &mut figures, all.len());
+    for (i, w) in all.iter().enumerate() {
+        let slot = &mut figures.slots[i];
+        let Some(d) = w.drone else {
+            if let Some(dr) = slot.drone.take() {
+                commands.entity(dr.root).try_despawn();
+            }
+            continue;
         };
-        figures.drone = Some(spawn_drone(&mut commands, meshes, materials));
+        if slot.drone.is_none() {
+            let (Some(meshes), Some(materials)) = (meshes.as_deref_mut(), materials.as_deref_mut())
+            else {
+                return;
+            };
+            slot.drone = Some(spawn_drone(&mut commands, meshes, materials));
+        }
+        let dr = slot.drone.as_mut().expect("spawned");
+        pose_drone(dr, &d, &time, &mut transforms, &mut visibility);
     }
-    let dr = figures.drone.as_mut().expect("spawned");
+}
+
+/// Places the spawned drone `dr` as `d` says, its rotors spinning.
+fn pose_drone(
+    dr: &mut Drone,
+    d: &DroneFigure,
+    time: &Time,
+    transforms: &mut Query<&mut Transform>,
+    visibility: &mut Query<&mut Visibility>,
+) {
     let look = v3(d.look).normalize_or(Vec3::NEG_Z);
     let yaw = look.x.atan2(-look.z);
     let pitch = look.y.clamp(-1.0, 1.0).asin();
@@ -616,41 +665,42 @@ fn sync_flash(
     cameras: Query<(&Camera, &GlobalTransform), With<FollowCamera>>,
     mut veil: Query<(&mut Node, &mut BackgroundColor), With<FlashVeil>>,
 ) {
-    let want = view
-        .as_ref()
-        .and_then(|v| v.photographer)
-        .and_then(|p| p.flash);
-    let mut in_view = 0.0;
-    match want {
-        Some((pos, f)) if f > 0.0 => {
-            let at = v3(pos);
-            let light = *figures.flash.get_or_insert_with(|| {
-                commands
-                    .spawn((
-                        PointLight {
-                            intensity: 0.0,
-                            range: FLASH_RANGE_M,
-                            color: Color::srgb(1.0, 0.98, 0.94),
-                            shadow_maps_enabled: false,
-                            ..default()
-                        },
-                        Transform::from_translation(at),
-                    ))
-                    .id()
-            });
-            if let Ok((mut l, mut t)) = lights.get_mut(light) {
-                l.intensity = FLASH_LM * f;
-                t.translation = at;
+    let all = wanted(view.as_deref());
+    fit_slots(&mut commands, &mut figures, all.len());
+    let mut in_view: f32 = 0.0;
+    for (i, w) in all.iter().enumerate() {
+        let slot = &mut figures.slots[i];
+        match w.flash {
+            Some((pos, f)) if f > 0.0 => {
+                let at = v3(pos);
+                let light = *slot.flash.get_or_insert_with(|| {
+                    commands
+                        .spawn((
+                            PointLight {
+                                intensity: 0.0,
+                                range: FLASH_RANGE_M,
+                                color: Color::srgb(1.0, 0.98, 0.94),
+                                shadow_maps_enabled: false,
+                                ..default()
+                            },
+                            Transform::from_translation(at),
+                        ))
+                        .id()
+                });
+                if let Ok((mut l, mut t)) = lights.get_mut(light) {
+                    l.intensity = FLASH_LM * f;
+                    t.translation = at;
+                }
+                if let Ok((cam, gt)) = cameras.single()
+                    && in_frame(cam, gt, at)
+                {
+                    in_view = in_view.max(f);
+                }
             }
-            if let Ok((cam, gt)) = cameras.single()
-                && in_frame(cam, gt, at)
-            {
-                in_view = f;
-            }
-        }
-        _ => {
-            if let Some(e) = figures.flash.take() {
-                commands.entity(e).try_despawn();
+            _ => {
+                if let Some(e) = slot.flash.take() {
+                    commands.entity(e).try_despawn();
+                }
             }
         }
     }
@@ -741,9 +791,13 @@ fn hide_during_photo(
     } else {
         Visibility::Hidden
     };
+    // The own photographer only (the others' are other people).
+    let Some(own) = figures.slots.first() else {
+        return;
+    };
     let roots = [
-        figures.person.as_ref().map(|p| p.root),
-        figures.drone.as_ref().map(|d| d.root),
+        own.person.as_ref().map(|p| p.root),
+        own.drone.as_ref().map(|d| d.root),
     ];
     for e in roots.into_iter().flatten() {
         if let Ok(mut v) = visibility.get_mut(e) {

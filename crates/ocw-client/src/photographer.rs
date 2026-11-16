@@ -24,13 +24,24 @@
 //!   stands beside the road.
 //! - **The flash** ([`flash`]): a 0.1 s burst at the camera with the
 //!   shutter sound.
+//! - **Shared with the other riders** (spec §2.11, v4.38): once the
+//!   photographer shows, the visit is a [`SharedShot`]
+//!   ([`Photographer::shared`]) that the app sends to the server on every
+//!   change; the other riders' shots arrive in [`RemoteShots`] (kept by
+//!   `ClientCore`), drawn at the game time the other riders are drawn at
+//!   ([`RemoteShots::scenes`]: the same person, the same drone flight from
+//!   its plan, the flash at the photo's time) and heard placed in the
+//!   world ([`shutter_gains`], [`loudest_drone`]). Only the photographed
+//!   rider's client saves the photo.
 
 use ocw_world::Track;
 use ocw_world::photo::{
     self, CameraPose, Carrier, Conditions, MIN_SCORE, PhotoScene, Shot, ShotSpot, ViewScore,
 };
 use ocw_world::photo_drone::{DroneFlight, DronePhase, DroneState, flight_duration};
+use ocw_world::photo_share::{RELEVANT_M, SharedShot};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// The photo's size (px).
 pub const PHOTO_W: u32 = 2560;
@@ -330,6 +341,11 @@ pub struct Photographer {
     /// `photographer drone`: the next photo by a drone (test runs).
     drone_only: bool,
     seed: u64,
+    /// The visit as the other riders see it (spec §2.11, v4.38): from the
+    /// moment the photographer shows; kept after its end until the next.
+    share: Option<SharedShot>,
+    /// The next shared shot's number (never reset: unique per client).
+    next_share: u32,
 }
 
 impl Photographer {
@@ -346,12 +362,61 @@ impl Photographer {
             forced: false,
             drone_only: false,
             seed,
+            share: None,
+            next_share: 1,
         }
     }
 
-    /// A new ride: no photos yet (an active visit is dropped).
+    /// A new ride: no photos yet (an active visit is dropped; the next
+    /// shared shot ends it for the others).
     pub fn reset(&mut self) {
+        let next = self.next_share;
         *self = Self::new(self.limits, self.seed.wrapping_add(1));
+        self.next_share = next;
+    }
+
+    /// Stops the photographer (switched off, flying): the visit is
+    /// dropped, the others see the photographer go.
+    pub fn stop(&mut self, t: f64) {
+        if let Some(s) = self.open_shot() {
+            s.aborted_at = Some(t);
+        }
+        self.plan = None;
+        self.visit = None;
+        self.last_tick = None;
+    }
+
+    /// The current (or the last) visit as the other riders see it (spec
+    /// §2.11): the app sends it to the server whenever it changes. The
+    /// rider id is the server's to set.
+    pub fn shared(&self) -> Option<&SharedShot> {
+        self.share.as_ref()
+    }
+
+    /// Opens the shared shot of this visit at `t` (the photographer shows).
+    fn open_share(&mut self, plan: &Plan, t: f64, planned_at: f64, flight: Option<&DroneFlight>) {
+        if self.share.as_ref().is_some_and(|s| s.ended().is_none()) {
+            return;
+        }
+        let shot = self.next_share;
+        self.next_share += 1;
+        self.share = Some(SharedShot {
+            rider: 0,
+            shot,
+            pose: plan.shot.pose,
+            seed: plan.seed,
+            appear_at: t,
+            planned_at,
+            taken_at: None,
+            gone_at: None,
+            aborted_at: None,
+            flight: flight.map(|f| f.plan.clone()),
+        });
+    }
+
+    /// The open shared shot (of the current visit).
+    fn open_shot(&mut self) -> Option<&mut SharedShot> {
+        self.share.as_mut().filter(|s| s.ended().is_none())
     }
 
     /// [`Self::force`] with a drone's shot (`photographer drone`, tests).
@@ -493,6 +558,11 @@ impl Photographer {
             self.drone_only = false;
         }
         if best != self.plan {
+            // A plan replaced after its photographer showed (a drone's
+            // pilot just before the take-off): the others' one goes.
+            if let Some(s) = self.open_shot() {
+                s.aborted_at = Some(t);
+            }
             self.plan = best;
             self.visit = self.plan.as_ref().map(|p| match p.shot.pose.carrier {
                 Carrier::Person { .. } => Visit::Person {
@@ -554,7 +624,6 @@ impl Photographer {
         let eta = (to_go > 0.0).then(|| to_go / speed.max(0.5));
         let passed = (-to_go).max(0.0);
         let off_path = moved > OFF_PATH_M || back;
-        let rider = track.sample(d).offset_position(lateral);
         let pose = plan.shot.pose;
         let mut scene_out = Scene {
             person: None,
@@ -565,11 +634,13 @@ impl Photographer {
         let mut finished = false;
         let ride_s = self.ride_s(t);
         let mut taken_now = false;
+        let mut share_ev: Option<ShareEvent> = None;
         match self.visit.as_mut() {
             Some(Visit::Person { phase, shot_at }) => {
                 if off_path && *phase != PersonPhase::Shot {
                     ev.aborted = true;
                     finished = true;
+                    share_ev = Some(ShareEvent::Aborted);
                 } else {
                     let since = shot_at.map(|s| t - s);
                     let next = person_phase(*phase, eta, passed, in_view(pose.feet), since);
@@ -577,20 +648,15 @@ impl Photographer {
                         *shot_at = Some(t);
                         taken_now = true;
                     }
+                    if *phase == PersonPhase::Hidden && next != PersonPhase::Hidden {
+                        share_ev = Some(ShareEvent::Open(t + eta.unwrap_or(0.0)));
+                    }
                     *phase = next;
                     if *phase == PersonPhase::Gone {
                         finished = true;
+                        share_ev = Some(ShareEvent::Gone);
                     } else if *phase != PersonPhase::Hidden {
-                        let (yaw, pitch) = pose.yaw_pitch();
-                        let crouch = matches!(pose.carrier, Carrier::Person { crouch: true });
-                        scene_out.person = Some(PersonView {
-                            feet: pose.feet,
-                            yaw,
-                            pitch,
-                            crouch,
-                            remote: false,
-                            lens: pose.eye,
-                        });
+                        scene_out.person = Some(person_view(&pose));
                     }
                     if let Some(s) = *shot_at {
                         let f = flash(t - s);
@@ -613,7 +679,9 @@ impl Photographer {
                     }
                     flight.abort(t);
                 }
-                let state = flight.step(t, rider, eta, scene);
+                let at_m = plan.at_m;
+                let road = |s: f64| track.sample(at_m - s).offset_position(lateral);
+                let state = flight.step(t, to_go, eta, &road, scene);
                 if state.shot {
                     *shot_at = Some(t);
                     taken_now = true;
@@ -622,7 +690,7 @@ impl Photographer {
                     *landed_at = Some(t);
                 }
                 let visible = state.phase != DronePhase::Waiting
-                    || eta.is_some_and(|e| e < flight.duration_s + 3.0);
+                    || eta.is_some_and(|e| e < flight.duration_s() + 3.0);
                 if let Some(l) = *landed_at {
                     let since = t - l;
                     if since >= LEAVE_MAX_S
@@ -634,25 +702,14 @@ impl Photographer {
                 }
                 if *gone {
                     finished = true;
+                    share_ev = Some(ShareEvent::Gone);
                 } else if visible {
-                    // The pilot looks up at the drone.
-                    let to = [
-                        state.pos[0] - pilot[0],
-                        state.pos[1] - (pilot[1] + photo::EYE_STANDING_M),
-                        state.pos[2] - pilot[2],
-                    ];
-                    let h = (to[0] * to[0] + to[2] * to[2]).sqrt().max(1e-6);
-                    scene_out.person = Some(PersonView {
-                        feet: *pilot,
-                        yaw: photo::azimuth_of([to[0], to[2]]),
-                        pitch: to[1].atan2(h).clamp(-0.6, 1.2),
-                        crouch: false,
-                        remote: true,
-                        lens: [pilot[0], pilot[1] + photo::EYE_STANDING_M, pilot[2]],
-                    });
+                    scene_out.person = Some(pilot_view(*pilot, state.pos));
                     if state.phase != DronePhase::Landed {
                         scene_out.drone = Some(state);
                     }
+                    let planned = flight.plan.shot_at().unwrap_or(t + eta.unwrap_or(0.0));
+                    share_ev = Some(ShareEvent::Flight(planned, Box::new(flight.plan.clone())));
                 }
                 if let Some(s) = *shot_at {
                     let f = flash(t - s);
@@ -662,6 +719,31 @@ impl Photographer {
                 }
             }
             None => {}
+        }
+        match share_ev {
+            Some(ShareEvent::Open(planned)) => self.open_share(&plan, t, planned, None),
+            Some(ShareEvent::Flight(planned, fp)) => {
+                if self.open_shot().is_none() {
+                    self.open_share(&plan, t, planned, None);
+                }
+                if let Some(s) = self.open_shot() {
+                    s.flight = Some(*fp);
+                }
+            }
+            Some(ShareEvent::Aborted) => {
+                if let Some(s) = self.open_shot() {
+                    s.aborted_at = Some(t);
+                }
+            }
+            Some(ShareEvent::Gone) => {
+                if let Some(s) = self.open_shot() {
+                    s.gone_at = Some(t);
+                }
+            }
+            None => {}
+        }
+        if taken_now && let Some(s) = self.open_shot() {
+            s.taken_at = Some(t);
         }
         if taken_now {
             self.taken.push(ride_s);
@@ -683,6 +765,198 @@ impl Photographer {
             scene_out.person.is_some() || scene_out.drone.is_some() || scene_out.flash.is_some();
         (any.then_some(scene_out), ev)
     }
+}
+
+/// What a frame changed of the shared shot.
+enum ShareEvent {
+    /// The person showed: the photo is due then.
+    Open(f64),
+    /// The drone (or its pilot) is visible: the flight as it is now.
+    Flight(f64, Box<ocw_world::photo_drone::FlightPlan>),
+    Aborted,
+    Gone,
+}
+
+/// The person with a camera at `pose` (standing or crouching, the lens at
+/// the eye): the same on every client.
+pub fn person_view(pose: &CameraPose) -> PersonView {
+    let (yaw, pitch) = pose.yaw_pitch();
+    PersonView {
+        feet: pose.feet,
+        yaw,
+        pitch,
+        crouch: matches!(pose.carrier, Carrier::Person { crouch: true }),
+        remote: false,
+        lens: pose.eye,
+    }
+}
+
+/// The drone's pilot at `pilot` looking up at the drone at `drone`.
+pub fn pilot_view(pilot: [f64; 3], drone: [f64; 3]) -> PersonView {
+    let to = [
+        drone[0] - pilot[0],
+        drone[1] - (pilot[1] + photo::EYE_STANDING_M),
+        drone[2] - pilot[2],
+    ];
+    let h = (to[0] * to[0] + to[2] * to[2]).sqrt().max(1e-6);
+    PersonView {
+        feet: pilot,
+        yaw: photo::azimuth_of([to[0], to[2]]),
+        pitch: to[1].atan2(h).clamp(-0.6, 1.2),
+        crouch: false,
+        remote: true,
+        lens: [pilot[0], pilot[1] + photo::EYE_STANDING_M, pilot[2]],
+    }
+}
+
+/// Another rider's shot as this client has it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoteShot {
+    pub shot: SharedShot,
+    /// The flash's game time here: the photo's, or when the news came if
+    /// it came after that (a slow link: the flash late, never lost).
+    pub flash_at: Option<f64>,
+}
+
+/// The other riders' photographer shots (spec §2.11, v4.38), by (rider,
+/// shot): what the server relayed, drawn at the game time the other riders
+/// are drawn at.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RemoteShots {
+    shots: BTreeMap<(u32, u32), RemoteShot>,
+}
+
+/// One of the other riders' shots in a frame.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoteScene {
+    pub rider: u32,
+    pub shot: u32,
+    pub scene: Scene,
+    /// The photo's flash: its game time and the camera (the shutter's
+    /// place), once taken.
+    pub flash: Option<(f64, [f64; 3])>,
+}
+
+impl RemoteShots {
+    /// A shot from the server, received at game time `t` (the drawn
+    /// time). A newer shot of a rider ends its older open ones (as the
+    /// server does).
+    pub fn on_message(&mut self, shot: SharedShot, t: f64) {
+        let key = (shot.rider, shot.shot);
+        for ((r, n), old) in self.shots.iter_mut() {
+            if *r == shot.rider && *n < shot.shot && old.shot.ended().is_none() {
+                old.shot.aborted_at = Some(t);
+            }
+        }
+        let flash_at = self
+            .shots
+            .get(&key)
+            .and_then(|o| o.flash_at)
+            .or_else(|| shot.taken_at.map(|at| at.max(t)));
+        self.shots.insert(key, RemoteShot { shot, flash_at });
+    }
+
+    pub fn get(&self, rider: u32, shot: u32) -> Option<&RemoteShot> {
+        self.shots.get(&(rider, shot))
+    }
+
+    pub fn len(&self) -> usize {
+        self.shots.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.shots.is_empty()
+    }
+
+    /// Forgets the shots long over.
+    pub fn prune(&mut self, t: f64) {
+        self.shots.retain(|_, s| !s.shot.expired(t));
+    }
+
+    /// What to draw at game time `t` of the shots whose camera is within
+    /// [`RELEVANT_M`] of `near` (the own rider).
+    pub fn scenes(&self, t: f64, scene: &dyn PhotoScene, near: [f64; 3]) -> Vec<RemoteScene> {
+        self.shots
+            .iter()
+            .filter(|(_, s)| s.shot.distance_to(near) <= RELEVANT_M)
+            .filter_map(|(&(rider, shot), s)| {
+                let sc = remote_scene(s, t, scene)?;
+                Some(RemoteScene {
+                    rider,
+                    shot,
+                    scene: sc,
+                    flash: s.flash_at.map(|f| (f, s.shot.pose.eye)),
+                })
+            })
+            .collect()
+    }
+}
+
+/// Another rider's shot at game time `t`: the person from its showing to
+/// its end, the drone along its plan, the flash at the photo.
+pub fn remote_scene(s: &RemoteShot, t: f64, scene: &dyn PhotoScene) -> Option<Scene> {
+    let shot = &s.shot;
+    if t < shot.appear_at {
+        return None;
+    }
+    // The end the rider's client sent, else a little after the photo (or
+    // after its time, if no photo came).
+    let end = shot.ended().unwrap_or(match shot.taken_at {
+        // (a drone lands and its pilot leaves within ~40 s of the photo)
+        Some(at) => at + LEAVE_MAX_S + 30.0,
+        None => shot.planned_at + LEAVE_MAX_S + 60.0,
+    });
+    if t >= end {
+        return None;
+    }
+    let mut out = Scene {
+        person: None,
+        drone: None,
+        flash: None,
+        seed: shot.seed,
+    };
+    match (&shot.pose.carrier, &shot.flight) {
+        (Carrier::Drone { pilot }, Some(plan)) => {
+            let state = plan.state(t, scene);
+            out.person = Some(pilot_view(*pilot, state.pos));
+            if state.phase != DronePhase::Landed {
+                out.drone = Some(state);
+            }
+        }
+        _ => out.person = Some(person_view(&shot.pose)),
+    }
+    if let Some(at) = s.flash_at {
+        let f = flash(t - at);
+        if f > 0.0 {
+            out.flash = Some((shot.pose.eye, f));
+        }
+    }
+    Some(out)
+}
+
+/// The shutter's channel gains for `listener` with the camera at `at`:
+/// placed in the world (distance, direction, behind), like every world
+/// sound (`ocw_audio::spatial::place`).
+pub fn shutter_gains(listener: &ocw_audio::spatial::Listener, at: [f64; 3]) -> [f32; 2] {
+    let p = ocw_audio::spatial::place(listener, at, [0.0; 3]);
+    [p.left, p.right]
+}
+
+/// The drone the rider hears: the loudest of `drones` (the own
+/// photographer's and the other riders'; one drone voice in the mixer).
+pub fn loudest_drone(
+    listener: &ocw_audio::spatial::Listener,
+    drones: &[DroneState],
+) -> Option<ocw_audio::drone::DroneSound> {
+    drones
+        .iter()
+        .filter(|d| d.rotor > 0.0)
+        .map(|d| {
+            let p = ocw_audio::spatial::place(listener, d.pos, d.velocity);
+            ocw_audio::drone::DroneSound::placed(&p, d.rotor)
+        })
+        .filter(|s| s.audible())
+        .max_by(|a, b| (a.left + a.right).total_cmp(&(b.left + b.right)))
 }
 
 /// A photo's sidecar (`photo-N.toml`): when, where, the score and its
@@ -1033,5 +1307,172 @@ mod tests {
         assert!(text.contains("person, standing"));
         assert_eq!(toml::from_str::<PhotoMeta>(&text).unwrap(), m);
         assert_eq!(photo_name(3), "photo-3.jpg");
+    }
+
+    fn remote(rider: u32, shot: u32, taken: Option<f64>) -> SharedShot {
+        SharedShot {
+            rider,
+            shot,
+            pose: CameraPose {
+                kind: photo::PoseKind::Side,
+                carrier: Carrier::Person { crouch: false },
+                feet: [20.0, 0.0, 0.0],
+                eye: [20.0, 1.6, 0.0],
+                look: [-1.0, 0.0, 0.0],
+            },
+            seed: 9,
+            appear_at: 100.0,
+            planned_at: 110.0,
+            taken_at: taken,
+            gone_at: None,
+            aborted_at: None,
+            flight: None,
+        }
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn flat() -> FnScene<
+        impl Fn(f64, f64) -> Option<f64>,
+        impl Fn(f64, f64) -> bool,
+        impl Fn(f64, f64) -> f64,
+    > {
+        FnScene {
+            ground: |_, _| Some(0.0),
+            water: |_, _| false,
+            canopy: |_, _| 0.0,
+            solids: Vec::new(),
+            landmarks: Vec::new(),
+        }
+    }
+
+    /// Another rider's person: drawn from its showing to its end, the
+    /// flash at the photo's time – or, when the news came late, at once
+    /// (never lost); a newer shot of the rider ends the older.
+    #[test]
+    fn another_riders_photographer_shows_flashes_and_goes() {
+        let scene = flat();
+        let mut shots = RemoteShots::default();
+        shots.on_message(remote(4, 1, None), 99.0);
+        let near = [0.0; 3];
+        assert!(shots.scenes(99.5, &scene, near).is_empty(), "not yet");
+        let s = shots.scenes(105.0, &scene, near);
+        assert_eq!(s.len(), 1);
+        let p = s[0].scene.person.unwrap();
+        assert_eq!(p.lens, [20.0, 1.6, 0.0]);
+        assert_eq!(s[0].scene.flash, None);
+        // The photo at 110, known at 109.9: the flash at 110.
+        shots.on_message(remote(4, 1, Some(110.0)), 109.9);
+        assert_eq!(shots.get(4, 1).unwrap().flash_at, Some(110.0));
+        let f = shots.scenes(110.01, &scene, near);
+        assert_eq!(f[0].scene.flash.map(|(at, _)| at), Some([20.0, 1.6, 0.0]));
+        assert_eq!(f[0].flash, Some((110.0, [20.0, 1.6, 0.0])));
+        // Too far from the own rider: not drawn.
+        assert!(shots.scenes(110.01, &scene, [5000.0, 0.0, 0.0]).is_empty());
+        // Late news (a slow link): the flash when it came.
+        let mut late = RemoteShots::default();
+        late.on_message(remote(5, 1, Some(110.0)), 110.5);
+        assert_eq!(late.get(5, 1).unwrap().flash_at, Some(110.5));
+        // Gone: no more drawn.
+        let mut g = remote(4, 1, Some(110.0));
+        g.gone_at = Some(120.0);
+        shots.on_message(g, 120.0);
+        assert!(shots.scenes(121.0, &scene, near).is_empty());
+        // A newer shot ends an open older one.
+        shots.on_message(remote(6, 1, None), 100.0);
+        shots.on_message(remote(6, 2, None), 104.0);
+        assert!(shots.get(6, 1).unwrap().shot.ended().is_some());
+        let drawn: Vec<(u32, u32)> = shots
+            .scenes(125.0, &scene, near)
+            .iter()
+            .map(|r| (r.rider, r.shot))
+            .collect();
+        assert_eq!(drawn, vec![(6, 2)]);
+        shots.prune(10_000.0);
+        assert!(shots.is_empty());
+    }
+
+    /// The others' shutter and drone are heard in the world (spec §2.11
+    /// Q2): fainter with distance, on the side they are, the loudest drone
+    /// of several.
+    #[test]
+    fn the_shutter_and_the_drone_are_placed_in_the_world() {
+        use ocw_audio::spatial::Listener;
+        // At the origin facing north (−z): right is +x.
+        let l = Listener {
+            pos: [0.0, 1.5, 0.0],
+            forward: [0.0, -1.0],
+            velocity: [0.0; 3],
+        };
+        let near = shutter_gains(&l, [8.0, 1.5, 0.0]);
+        let far = shutter_gains(&l, [80.0, 1.5, 0.0]);
+        assert!(near[1] > near[0], "on the right: {near:?}");
+        assert!(
+            far[0] + far[1] < (near[0] + near[1]) * 0.5,
+            "{near:?} {far:?}"
+        );
+        let left = shutter_gains(&l, [-8.0, 1.5, 0.0]);
+        assert!(left[0] > left[1]);
+        let drone = |x: f64, rotor: f64| DroneState {
+            pos: [x, 6.0, -10.0],
+            look: [0.0, 0.0, 1.0],
+            phase: DronePhase::Follow,
+            rotor,
+            shot: false,
+            velocity: [0.0; 3],
+        };
+        let heard = loudest_drone(&l, &[drone(150.0, 1.0), drone(-6.0, 1.0)]).unwrap();
+        assert!(heard.left > heard.right, "the near one, on the left");
+        assert!(loudest_drone(&l, &[drone(5.0, 0.0)]).is_none(), "landed");
+        assert!(loudest_drone(&l, &[]).is_none());
+    }
+
+    /// The own visit as the others see it: opened when the photographer
+    /// shows, the photo's time, the end; numbered on across rides.
+    #[test]
+    fn the_own_visit_is_shared_from_showing_to_leaving() {
+        let route = Route::test_loop();
+        let mut p = Photographer::new(Limits::scaled(10.0), 7);
+        p.force();
+        let scene = FnScene {
+            ground: |_, _| Some(-5.0),
+            water: |x: f64, _| x > 400.0,
+            canopy: |_, _| 0.0,
+            solids: Vec::new(),
+            landmarks: Vec::new(),
+        };
+        let mut t = 0.0;
+        let mut first_seen = None;
+        let mut photo_t = None;
+        while t < 400.0 {
+            let (sc, ev) = p.frame(
+                t,
+                &route,
+                8.0 * t,
+                0.0,
+                8.0,
+                &scene,
+                &Conditions::default(),
+                &|_| false,
+            );
+            if sc.is_some() && first_seen.is_none() {
+                first_seen = Some(t);
+                let s = p.shared().expect("shared when shown");
+                assert_eq!(s.appear_at, t);
+                assert_eq!(s.shot, 1);
+            }
+            if ev.photo.is_some() {
+                photo_t = Some(t);
+            }
+            if p.shared().is_some_and(|s| s.gone_at.is_some()) {
+                break;
+            }
+            t += 0.1;
+        }
+        let s = p.shared().unwrap().clone();
+        assert_eq!(s.taken_at, photo_t);
+        assert!(s.gone_at.is_some(), "{s:?}");
+        p.reset();
+        assert!(p.shared().is_none());
+        assert_eq!(p.next_share, 2, "numbered on");
     }
 }
