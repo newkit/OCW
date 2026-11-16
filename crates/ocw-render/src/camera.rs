@@ -541,6 +541,7 @@ fn orbit_input(
     scroll: Res<AccumulatedMouseScroll>,
     context: Option<Res<InputContext>>,
     view: Option<Res<RideView>>,
+    touches: Option<Res<bevy::input::touch::Touches>>,
     mut orbit: ResMut<CameraOrbit>,
 ) {
     if !crate::menu::ride_input(context) {
@@ -556,7 +557,12 @@ fn orbit_input(
         *orbit = CameraOrbit::default();
         return;
     }
-    let drag = if buttons.pressed(MouseButton::Left) {
+    // A finger is not the mouse (spec §3.2.3 Q7: one finger steers, two
+    // move the camera – `ocw_ui::touch`): the mouse Windows emulates
+    // from a touch does not orbit.
+    let touching = touches
+        .is_some_and(|t| t.iter().next().is_some() || t.iter_just_released().next().is_some());
+    let drag = if buttons.pressed(MouseButton::Left) && !touching {
         motion.delta
     } else {
         Vec2::ZERO

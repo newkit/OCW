@@ -527,8 +527,44 @@ itself), the next Esc opens the menu, a click locks the pointer again. If
 the browser refuses the lock, hold the left button to look. While flying,
 the trainer rides a flat road, and in a shared ride (WebTransport) the
 server's rules apply as on the desktop: by default only the host flies.
-The settings (*Settings → Controls*: invert Y, plane or hover; *Display*:
+The settings (*Settings → Controls → Touch and unicorn*: invert Y, plane or hover; *Display*:
 the rainbow trail) and the `god …` console commands are the desktop's.
+
+#### Touch steering in the browser
+
+On a phone, a tablet or any touch screen the ride steers by touch (spec
+§3.2.3): **tap or hold the left or right side of the screen**, as if you
+pressed or held ← / →.
+
+- **Hold** a side: it steers at once, like the held arrow key – in
+  autodrive the line moves 2 m per second, with manual steering the rider
+  leans into the curve.
+- **Tap** a side (lifted within 250 ms): one step – the line moves 0.5 m,
+  the lean changes by 0.1 rad (about 6°). With manual steering the lean
+  stays after the finger lifts; a tap on the other side straightens up
+  (stopping at upright first), as with the keys.
+- A touch never switches autodrive off; only the autodrive key or button
+  does. Both sides at once steer nothing (as ← and → together).
+- **Junctions** (free ride): the halves keep steering; tap an arrow of the
+  junction fan at the bottom centre to choose that exit.
+- **Two fingers move the camera**: drag to orbit, pinch to come closer or
+  go further back. One finger only steers.
+- Not steering: the band in the middle (12 % of the width), the band at the
+  top (15 % of the height), 16 px at every edge, the junction fan.
+
+**Hints:** faint chevrons ‹ › at the lower left and right show where to
+touch, a glow along the edge of the side you hold, and once per device a
+tip. They show from the start on phones and tablets (also an iPad that
+reports a Mac) and on any other device after the first touch, and hide
+again when you use a key, the mouse or a gamepad. *Settings → Controls →
+Touch and unicorn*: *Touch steering* `auto` (the default) / `on` (always
+the hints) / `off` (no steering by touch), *Touch zones* `full` (the whole
+height below the top band) / `lower` (only the lower half, so the upper
+half is free for the camera). Console: `set controls.touch_steer on`; page
+option `?touch=on|off` for one visit.
+
+The desktop app steers the same way on Windows and Linux touch screens
+(touch laptops, tablets, touch monitors); macOS has no touch screens.
 
 #### Graphics: WebGPU, WebGL 2 and the quality presets
 
@@ -719,6 +755,7 @@ keys new-signing`.
 | Route ride: back to the route after leaving it | J | North button (Y / △) |
 | Power ±10 W | PgUp / PgDn | |
 | Camera: orbit / zoom | mouse drag / wheel | |
+| Touch screen: steer (hold a side), one step (tap a side), camera (two fingers: drag, pinch), junction exit (tap its fan arrow); see [touch steering](#touch-steering-in-the-browser) | left / right side of the screen | |
 | Camera reset | C | |
 | Restart everything (as at program start; the ride is saved first) | R | |
 | Record a video (start / stop) | V | |

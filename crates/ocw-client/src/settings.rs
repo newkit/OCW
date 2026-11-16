@@ -173,6 +173,31 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::Command("god.flight {}"),
     },
+    // Touch steering (spec §3.2.3): read by `ocw_ui::touch` every frame.
+    SettingDef {
+        key: "controls.touch_steer",
+        kind: Kind::Choice(&crate::input::touch::TouchSetting::CHOICES),
+        default: "auto",
+        description: "Touch steering by the screen's left / right side: auto (hints on phones and tablets and after the first touch), on (always the hints) or off (no steering by touch) (spec §3.2.3)",
+        scope: Scope::Live,
+        apply: Apply::App,
+    },
+    SettingDef {
+        key: "controls.touch_zones",
+        kind: Kind::Choice(&["full", "lower"]),
+        default: "full",
+        description: "Touch steering zones: the full height below the top band, or only the lower half (spec §3.2.3)",
+        scope: Scope::Live,
+        apply: Apply::App,
+    },
+    SettingDef {
+        key: "controls.touch_tip_seen",
+        kind: Kind::Bool,
+        default: "off",
+        description: "The touch steering tip was shown on this device (set by the first touch steer)",
+        scope: Scope::Live,
+        apply: Apply::App,
+    },
     SettingDef {
         key: "trainer.difficulty",
         kind: Kind::Int {
