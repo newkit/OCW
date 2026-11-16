@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.89 – November 2026
+Version 3.90 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.90 | **In a ride one finger steers and a two-finger drag moves the camera (pinch: chase distance)** (decision from the build dashboard, 2026-11-16; §3.2.3 Q7) |
 | 3.89 | **Touch steering in the desktop app too, on Windows / Linux touch screens** (decision from the build dashboard, 2026-11-16; §3.2.3 Q6, as proposed: parity rule, the same *auto* hints) |
 | 3.88 | **W5 refined (planning): accounts, inventory and hearts in the backend inside `ocw-server`, on PostgreSQL; one wallet and one rider per account; no local wallet; 5,000 ♥ start, with which the rider buys bike and kit; the hosting kit is built, hosting is manual later** (decided by the user, 2026-11-16; §14 Phase 4 4O, replacing 4E's starter bikes, 500 ♥, local wallet and one-time import). Stages W5a–W5e; open questions Q-W1 – Q-W6 |
 | 3.87 | **Character editor: the body has two dimensions – base body A / B / C (shoulders, hips, chest) and the seven-step shape** (decision by the user, 2026-11-16; §14 Phase 4 4N Q6b) |
@@ -1226,7 +1227,7 @@ TS1 – TS3 are what the user asked for; TS4 makes it usable on phones.
 - **Q4 – Both sides at once:** proposal: nothing (as ← + →). Alternatives: straighten (line back to the middle in autodrive, upright in manual), brake, or a U-turn after holding both for 1 s.
 - **Q5 – Junction choice by the zones:** proposal: in autodrive at an active junction the halves choose the exit (one exit per touch, as the arrows), and with manual steering the fan's arrows are tapped. Or should exits be chosen only by tapping the fan's arrows, so the halves always steer?
 - **Q6 – Desktop app too: decided (2026-11-16, dashboard): yes, as proposed** – touch steering in the desktop app too (parity rule), on Windows / Linux touch screens with the same *auto* rule (hints after the first touch). The kiosk stays untested on touch (Phase 4 Q5).
-- **Q7 – Camera drag vs steering:** §3.2.2 planned one-finger drag on the 3D view = orbit. Proposal: in a ride the halves only steer; the camera is orbited by a one-finger drag that starts in the centre band, or by a two-finger drag anywhere (pinch = chase distance, as planned). Or should a drag beyond 10 px anywhere orbit (steering then waits 250 ms to tell taps from drags)?
+- **Q7 – Camera drag vs steering: decided (2026-11-16, dashboard): two fingers move the camera** – the user: "make the camera drag when dragging with two fingers". In a ride one finger only steers (the halves, no 250 ms wait); a **two-finger drag** anywhere orbits the camera and a pinch sets the chase distance (as planned in §3.2.2). The one-finger orbit of §3.2.2 stays outside a ride (menus, the workshop, god mode's look).
 - **Q8 – Zone height:** proposal: full height below the top band, with *lower half* as a setting. Or the lower half by default?
 
 ### 3.3 Audio
