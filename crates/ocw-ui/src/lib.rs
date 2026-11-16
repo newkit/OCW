@@ -36,6 +36,7 @@ pub mod god;
 pub mod history;
 pub mod join;
 pub mod menu;
+pub mod photographer;
 pub mod quality;
 pub mod riders_page;
 pub mod settings;

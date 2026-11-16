@@ -11,6 +11,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod recording;
 pub mod sync;
 pub mod worker;
 
@@ -110,8 +111,16 @@ impl Plugin for StravaPlugin {
         if strava.worker.is_none() {
             info!("{}", strava.off_reason.lines().next().unwrap_or_default());
         }
+        // The S recording (spec §2.8.1): with the set-up, or in test runs
+        // without it (nothing uploaded).
+        let dry_run = app
+            .world()
+            .get_resource::<crate::Args>()
+            .is_some_and(|a| a.strava_dry_run);
+        let configured = strava.worker.is_some() || dry_run;
         app.insert_resource(strava)
             .add_systems(Update, print_messages);
+        recording::build(app, configured);
         register_commands(app);
     }
 }
@@ -252,6 +261,24 @@ mod tests {
             );
         }
         assert!(app.world().resource::<Strava>().worker.is_none());
+        // S (`strava.record`) records nothing and says why (spec §2.8.1).
+        app.world_mut()
+            .resource_mut::<ConsoleState>()
+            .queue("strava.record");
+        app.update();
+        let log = app.world().resource::<ConsoleState>().log().to_vec();
+        assert!(
+            log.last()
+                .unwrap()
+                .contains("Strava is not set up (strava.toml)"),
+            "{log:?}"
+        );
+        assert!(
+            !app.world()
+                .resource::<recording::StravaRec>()
+                .0
+                .is_recording()
+        );
         // Nothing was written.
         assert!(!dir.exists());
     }

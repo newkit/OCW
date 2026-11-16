@@ -81,6 +81,9 @@ pub enum Page {
     Events,
     /// Ride → Host a ride in the browser: why it needs the desktop app.
     HostBrowser,
+    /// Ride → Strava recording in the browser: why it needs the desktop
+    /// app (spec §2.8.1).
+    StravaBrowser,
     Navi,
     Settings,
     /// A Settings sub page, the Workshop or a list of the Ride / Navi
@@ -158,12 +161,15 @@ pub enum When {
     Alone,
     Joined,
     Hosting,
+    /// Alone or in a shared ride, not while hosting.
+    NotHosting,
 }
 
 impl When {
     fn shows(self, mode: RideMode) -> bool {
         match self {
             Self::Always => true,
+            Self::NotHosting => !matches!(mode, RideMode::Hosting { .. }),
             Self::Alone => mode == RideMode::Alone,
             Self::Joined => mode == RideMode::Joined,
             Self::Hosting => matches!(mode, RideMode::Hosting { .. }),
@@ -283,6 +289,28 @@ const RIDE_ITEMS: &[Item] = &[
         Platform::Browser,
         "Host a ride",
         ItemKind::Dimmed(Page::HostBrowser),
+    ),
+    // The Strava recording (spec §2.8.1 ST1, the same as S); the browser
+    // shows it dimmed with the reason. Not while hosting: that page has
+    // its seven items (S and the pad button work there too).
+    when(
+        When::NotHosting,
+        only(
+            Platform::Desktop,
+            "Strava recording",
+            ItemKind::Command {
+                line: "strava.record",
+                close: true,
+            },
+        ),
+    ),
+    when(
+        When::NotHosting,
+        only(
+            Platform::Browser,
+            "Strava recording",
+            ItemKind::Dimmed(Page::StravaBrowser),
+        ),
     ),
     when(When::Hosting, item("Hosting", ItemKind::Hosting)),
     when(
@@ -487,10 +515,8 @@ impl Page {
             },
             Page::Ride => PageDef {
                 title: "Ride",
-                text: &[
-                    "Events, workouts (ERG mode), shared rides: join one with its link or host one here.",
-                    "Another world or route: World -> Change world, Navi -> Routes.",
-                ],
+                // Seven items in every mode (with Strava): no room for a text.
+                text: &[],
                 items: RIDE_ITEMS,
                 initial_focus: 0,
             },
@@ -506,6 +532,14 @@ impl Page {
                 title: "Host a ride",
                 text: &[
                     "Hosting needs the desktop app (browsers can't open a server port). Join a shared ride here with its https:// link.",
+                ],
+                items: HOST_BROWSER_ITEMS,
+                initial_focus: 0,
+            },
+            Page::StravaBrowser => PageDef {
+                title: "Strava recording",
+                text: &[
+                    "Strava needs the desktop app (S records, strava.toml links the account). Here the ride's FIT file is a download (Captures).",
                 ],
                 items: HOST_BROWSER_ITEMS,
                 initial_focus: 0,
@@ -1255,8 +1289,11 @@ mod tests {
         // The Back item of a page goes up too.
         m.apply(Action::Click(1));
         assert_eq!(m.page(), Some(Page::Ride));
-        assert_eq!(labels(&m)[3..], ["Host a ride", "Restart", "Back"]);
-        m.apply(Action::Click(5));
+        assert_eq!(
+            labels(&m)[3..],
+            ["Host a ride", "Strava recording", "Restart", "Back"]
+        );
+        m.apply(Action::Click(6));
         assert_eq!((m.page(), m.focus()), (Some(Page::Top), 1));
         // World: its own page (rows from the ride catalog).
         m.apply(Action::Click(2));
@@ -1292,13 +1329,13 @@ mod tests {
         let mut m = Menu::default();
         m.apply(Action::Open);
         m.apply(Action::Click(1));
-        m.apply(Action::Click(4));
+        m.apply(Action::Click(5));
         assert_eq!(m.page(), Some(Page::ConfirmRestart));
         assert_eq!(labels(&m)[m.focus()], "Cancel");
         // Confirming Cancel goes back, nothing is run.
         assert_eq!(m.apply(Action::Confirm), Effect::None);
         assert_eq!(m.page(), Some(Page::Ride));
-        m.apply(Action::Click(4));
+        m.apply(Action::Click(5));
         m.apply(Action::Up);
         assert_eq!(m.apply(Action::Confirm), Effect::Command("reset".into()));
         // Quit.
@@ -1345,10 +1382,19 @@ mod tests {
                 "Workouts",
                 "Join a ride",
                 "Host a ride",
+                "Strava recording",
                 "Restart",
                 "Back"
             ]
         );
+        // The Strava recording: the same as S (spec §2.8.1), the menu closes.
+        assert_eq!(
+            m.apply(Action::Click(4)),
+            Effect::Command("strava.record".into())
+        );
+        assert!(!m.is_open());
+        m.apply(Action::Open);
+        m.apply(Action::Click(1));
         m.apply(Action::Click(0));
         assert_eq!(m.page(), Some(Page::Events));
         assert_eq!(
@@ -1412,7 +1458,7 @@ mod tests {
         );
         m.apply(Action::Open);
         m.apply(Action::Click(1));
-        m.apply(Action::Click(5));
+        m.apply(Action::Click(6));
         assert_eq!(m.page(), Some(Page::Top));
     }
 
@@ -1425,7 +1471,14 @@ mod tests {
         m.set_ride_mode(RideMode::Joined);
         assert_eq!(
             labels(&m),
-            ["Events", "Workouts", "Leave shared ride", "Restart", "Back"]
+            [
+                "Events",
+                "Workouts",
+                "Leave shared ride",
+                "Strava recording",
+                "Restart",
+                "Back"
+            ]
         );
         assert_eq!(m.apply(Action::Click(2)), Effect::Command("leave".into()));
         assert!(!m.is_open());
@@ -1457,8 +1510,9 @@ mod tests {
         );
         // The focus stays on the page when items go.
         m.set_focus(6);
-        m.set_ride_mode(RideMode::Alone);
+        m.set_ride_mode(RideMode::Joined);
         assert_eq!(m.focus(), 5);
+        m.set_ride_mode(RideMode::Alone);
         // Join and Host open their pages.
         m.apply(Action::Click(2));
         assert_eq!(m.page(), Some(Page::Sub(sub::Page::Join)));
@@ -1662,6 +1716,7 @@ mod tests {
                 Page::Ride,
                 Page::Events,
                 Page::HostBrowser,
+                Page::StravaBrowser,
                 Page::Navi,
                 Page::Settings,
                 Page::ConfirmRestart,
@@ -1738,11 +1793,22 @@ mod tests {
         m.apply(Action::Click(1));
         assert_eq!(
             labels(&m),
-            ["Events", "Workouts", "Join a ride", "Host a ride", "Back"],
+            [
+                "Events",
+                "Workouts",
+                "Join a ride",
+                "Host a ride",
+                "Strava recording",
+                "Back"
+            ],
             "no Restart (a reload)"
         );
-        // Hosting is dimmed: the page says why.
-        assert_eq!(m.dimmed(), [false, false, false, true, false]);
+        // Hosting and Strava are dimmed: the pages say why.
+        assert_eq!(m.dimmed(), [false, false, false, true, true, false]);
+        m.apply(Action::Click(4));
+        assert_eq!(m.page(), Some(Page::StravaBrowser));
+        assert!(m.page().unwrap().def().text[0].contains("desktop app"));
+        m.apply(Action::Back);
         m.apply(Action::Click(3));
         assert_eq!(m.page(), Some(Page::HostBrowser));
         assert!(m.page().unwrap().def().text[0].contains("desktop app"));

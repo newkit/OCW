@@ -26,6 +26,9 @@ ocw-render.workspace = true
 ocw-client.workspace = true
 # The voice hotkeys' toggles (pure, wasm-safe without its livekit feature).
 ocw-voice.workspace = true
+# The ride photographer's shutter and drone (spec §2.11).
+ocw-audio.workspace = true
+web-time.workspace = true
 bevy.workspace = true
 clap.workspace = true
 

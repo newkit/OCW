@@ -722,6 +722,7 @@ keys new-signing`.
 | Camera reset | C | |
 | Restart everything (as at program start; the ride is saved first) | R | |
 | Record a video (start / stop) | V | |
+| Strava recording (start / stop): the part between two presses is its own Strava activity | S | left-stick click (L3) |
 | Voice: mute / unmute your microphone | M | Select (Back / View / Share) |
 | Voice: mute / unmute the speaker (all voices; game sounds stay) | Shift+M | right-stick click (R3) |
 | Next screen | F11 | |
@@ -1739,6 +1740,25 @@ event status | event cancel | event dismiss
   (or `client_id` / `client_secret` in `~/.config/ocw/strava.toml`), then
   `strava.connect` once. Saved rides upload in the background; failed uploads
   are retried.
+- **Strava recording with S** (spec §2.8.1): S (pad L3, *Ride → Strava
+  recording*, `strava.record`) starts and stops it; the HUD shows
+  "● Strava m:ss". The part between S and S is saved as its own activity in
+  `~/.local/share/ocw/rides/strava/` and uploaded like the rides; leaving or
+  saving the ride or quitting stops it. Without `strava.toml` S only says
+  "Strava is not set up (strava.toml)". The browser app shows the entry but
+  needs the desktop app for Strava.
+- **The ride photographer** (spec §2.11; setting `photographer.enabled`,
+  Settings → Display → Graphics, console `photographer on|off|status`):
+  up to 5 photos per ride, at least 20 minutes apart, of the nicest views
+  (open views, mountains, water, low sun; nothing in tunnels, forests or
+  fog). A photographer appears beside the road ahead and takes the photo with
+  a flash as you pass; where nobody can stand (water, rock, in the air) the
+  photographer flies a drone that follows you for half a minute to two
+  minutes before the shot. Photos: `~/.local/share/ocw/rides/<ride>/photos/
+  photo-N.jpg` (2560 × 1440, time and GPS in EXIF, no stamp) with a
+  `photo-N.toml` sidecar; *Navi → Training history → a ride → Photos* opens
+  the folder, to add them to the Strava activity by hand (Strava's API takes
+  no photos).
 
 ## Command-line options (`ocw-desktop`)
 
@@ -1813,6 +1833,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `display.road_barriers` | on / off (off): gates, bollards and barriers on the roads (section `OBST`; never solid on the road, spec §14 Phase 12 Q7) | at once |
 | `display.unicorn_trail` | on / off (on): the rainbow trail behind the unicorns of god mode (console `god.trail`; not on the full Display page) | at once |
 | `display.fullscreen` | on / off (off): borderless fullscreen (`--fullscreen`) | next start |
+| `photographer.enabled` | on / off (on): the ride photographer (spec §2.11) – up to 5 photos of nice views per ride by a person or a drone, with a flash; Settings → Display → Graphics (console `photographer`) | at once |
 | `ride.bots` | 0 to 50 (10): test riders (`--bots`) | next start |
 | `ride.random_start` | on / off (on): random start point (`--random-start`) | next start |
 | `ride.record` | on / off (on): save rides as FIT (`--record`) | next start |
@@ -2317,6 +2338,9 @@ you can run are offered (no *Dev* commands on a remote server).
 | `strava.status` | Strava link and upload state |
 | `strava.sync [--retry]` | Upload every saved ride not on Strava yet (`--retry`: also failed ones) |
 | `strava.disconnect` | Unlink Strava (deletes the stored tokens) |
+| `strava.record [start\|stop\|toggle\|status]` | The Strava recording (key S): the part between start and stop is its own Strava activity |
+| `photographer [on\|off\|status\|now\|drone]` | The ride photographer (spec §2.11); `now` plans the next photo at once, `drone` the next by the drone (tests) |
+| `history.photos N` | Open the folder with ride N's photos (1 = the newest) |
 
 ## Workouts
 

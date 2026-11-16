@@ -34,6 +34,7 @@
 #       advances 1/25 s per frame, so it is not a benchmark). Archived.
 #   drive.sh server [args...]
 #       Run the headless game server, e.g. --bots 3 --seconds 10 --fast.
+#   OCW_SHOT_TIMEOUT=SECONDS (default 300) ends a shot run that hangs.
 #   OCW_APP=PATH runs that ocw-desktop binary (nothing is built, not even
 #   the spike).
 #   OCW_PROFILE=release runs the release build of ocw-desktop instead of the
@@ -241,7 +242,7 @@ case "$cmd" in
     parse_shot_args "$@"
     cargo build -q "${BUILD_FLAGS[@]}" -p "$PKG" ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     status=0
-    timeout 300 xvfb-run -a -s "-screen 0 ${width}x${height}x24" \
+    timeout "${OCW_SHOT_TIMEOUT:-300}" xvfb-run -a -s "-screen 0 ${width}x${height}x24" \
       env -u WAYLAND_DISPLAY "${APP_ENV[@]}" "${X11_ENV[@]}" "$APP" "${APP_ARGS[@]}" \
       >"$log" 2>&1 || status=$?
     report x11 "$status"
@@ -251,7 +252,7 @@ case "$cmd" in
     cargo build -q "${BUILD_FLAGS[@]}" -p "$PKG" ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     start_weston "${out%.*}.weston.log"
     status=0
-    timeout 300 env -u DISPLAY XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY="$socket" \
+    timeout "${OCW_SHOT_TIMEOUT:-300}" env -u DISPLAY XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY="$socket" \
       "${APP_ENV[@]}" "$APP" "${APP_ARGS[@]}" >"$log" 2>&1 || status=$?
     report wayland "$status"
     ;;
