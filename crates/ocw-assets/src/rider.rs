@@ -100,7 +100,7 @@ pub mod opt {
 /// half thickness, centre (y, z), half size (y, z)). Outside the widest
 /// thigh (a skinsuit's) by a few millimetres: the thighs turn about the x
 /// axis, so they never cut through.
-pub const HIP_PLATE: (f32, f32, [f32; 2], [f32; 2]) = (0.178, 0.0015, [-0.035, 0.0], [0.03, 0.05]);
+pub const HIP_PLATE: (f32, f32, [f32; 2], [f32; 2]) = (0.178, 0.0015, [-0.07, 0.0], [0.03, 0.05]);
 
 /// A kit variant of the rider model: a catalogue item's `model` (spec 4C,
 /// `assets/parts.toml`, slot = a kit slot), and the nodes it shows.
@@ -230,6 +230,8 @@ pub fn optional() -> Vec<&'static str> {
         .chain([
             KIT_BAND,
             KIT_SASH,
+            POCKETS,
+            POCKET_BAND,
             opt::HAIR_CAP,
             opt::HAIR_BUZZ,
             opt::HAIR_LONG,
@@ -267,6 +269,11 @@ pub fn visible(character: &ocw_core::Character, variants: &[&str]) -> Vec<&'stat
             Some(v) => out.extend(v.nodes),
             None => out.extend(base_nodes(slot)),
         }
+    }
+    // The back pockets on every jersey but the skinsuit (its band in the
+    // pattern colour is the renderer's choice: the jersey designer's).
+    if !out.contains(&opt::SUIT_PELVIS) {
+        out.push(POCKETS);
     }
     out.extend(match c.hair {
         0 => &[opt::HAIR_CAP][..],
@@ -386,6 +393,212 @@ pub fn skull_centre() -> Vec3 {
     v(body::TORSO_PIVOT) + Vec3::Y * (body::TORSO + 0.15) + Vec3::new(0.0, 0.0, -0.015)
 }
 
+/// The jersey's torso shell (spec §2.6): rings from the hem to the
+/// shoulders as (height above the torso's pivot, half width, half depth,
+/// z offset from the pivot, the ring's tilt), m. The hem hangs over the
+/// hips (bug 2026-11-16: the old hem was narrower than the bib under it)
+/// and is cut higher at the front than at the back (a dropped tail: the
+/// tilt, the hem's back this much lower and its front this much higher
+/// than its centre), so the bib stays under the jersey when the rider
+/// folds forward (`crate::clothing` checks it).
+pub const JERSEY_SHELL: [[f32; 5]; 5] = [
+    [-0.07, 0.168, 0.114, -0.008, 0.03],
+    [0.03, 0.166, 0.108, -0.007, 0.0],
+    [0.14, 0.16, 0.1, -0.005, 0.0],
+    [0.3, 0.18, 0.115, 0.005, 0.0],
+    [0.42, 0.19, 0.105, 0.01, 0.0],
+];
+
+/// [`JERSEY_SHELL`] as loft rings (rest-pose model coordinates), each
+/// pushed `off` outwards (0: the jersey itself).
+pub fn jersey_rings_out(off: f32) -> Vec<Ring> {
+    let pivot = v(body::TORSO_PIVOT);
+    JERSEY_SHELL
+        .iter()
+        .map(|[y, hw, hd, z, tilt]| Ring {
+            centre: Vec3::new(0.0, pivot.y + y, pivot.z + z),
+            u: Vec3::X * (hw + off),
+            v: Vec3::new(0.0, *tilt, -(hd + off)),
+        })
+        .collect()
+}
+
+/// [`JERSEY_SHELL`] as loft rings (rest-pose model coordinates).
+pub fn jersey_rings() -> Vec<Ring> {
+    jersey_rings_out(0.0)
+}
+
+/// The sides of the jersey's shell (the far one ten, not eight: the
+/// bib's six sides need the rounder outline inside it).
+pub fn jersey_sides(detail: Detail) -> u32 {
+    match detail {
+        Detail::High => detail.sides() + 4,
+        Detail::Low => detail.sides() + 6,
+    }
+}
+
+/// Corner `k` (of `sides`, at angle `k / sides · 2π`: 0 the rider's
+/// right, a quarter turn the front, three quarters the back) of the
+/// jersey's faceted shell pushed `off` outwards, at height `y`: on the
+/// straight edge between the rings the loft draws, continued straight
+/// below the hem. `None` above the shoulders.
+pub fn shell_corner(sides: u32, k: u32, y: f32, off: f32) -> Option<Vec3> {
+    let rings = jersey_rings_out(off);
+    let a = k as f32 / sides as f32 * std::f32::consts::TAU;
+    let pts: Vec<Vec3> = rings
+        .iter()
+        .map(|r| r.centre + r.u * a.cos() + r.v * a.sin())
+        .collect();
+    if y > pts[pts.len() - 1].y {
+        return None;
+    }
+    let i = pts
+        .windows(2)
+        .position(|w| y <= w[1].y)
+        .unwrap_or(pts.len() - 2);
+    let (p, q) = (pts[i], pts[i + 1]);
+    Some(p + (q - p) * ((y - p.y) / (q.y - p.y)))
+}
+
+/// Whether `p` (rest-pose model coordinates, the torso's frame) is above
+/// the jersey's hem, and how far (m, negative below; measured
+/// vertically).
+pub fn above_hem(p: Vec3) -> f32 {
+    let hem = jersey_rings()[0];
+    let n = hem.u.cross(hem.v).normalize();
+    let n = if n.y < 0.0 { -n } else { n };
+    (p - hem.centre).dot(n) / n.y
+}
+
+/// The node of the jersey's back pockets (on the torso; spec §2.6): an
+/// optional node, shown with every jersey but the skinsuit.
+pub const POCKETS: &str = "jersey_pockets";
+/// The pockets' top band in the kit pattern's colour, shown when the
+/// jersey designer has a second colour (spec §14 Phase 8 T6).
+pub const POCKET_BAND: &str = "jersey_pockets_band";
+/// The anchors at the openings of the left, centre and right pocket
+/// (model contract, spec §14 Phase 15, 15B): children of the torso, the
+/// origin in the opening, +z out of the back, +y up along it. The phone
+/// of the status signs is taken from `anchor_pocket_c` (spec §2.6).
+pub const POCKET_ANCHORS: [&str; 3] = ["anchor_pocket_l", "anchor_pocket_c", "anchor_pocket_r"];
+
+/// The back pockets' measures (spec §2.6, reference: three open pockets
+/// side by side across the lower back, the opening 12–15 cm above the
+/// hem, an elastic band at the top, the same fabric as the jersey).
+pub mod pocket {
+    /// The panel's bottom above the hem where it is highest under the
+    /// panel (its sides), the opening (its top) above the hem's lowest
+    /// point (the middle of the back), m: the pockets sit level.
+    pub const BOTTOM: f32 = 0.012;
+    pub const TOP: f32 = 0.14;
+    /// The elastic band at the top (m).
+    pub const BAND: f32 = 0.018;
+    /// The panel reaches this far round the body each side of the
+    /// spine (rad; ~55°: most of the back's width).
+    pub const HALF_ANGLE: f32 = 0.96;
+    /// The panel's distance outside the jersey's shell: at the seams
+    /// between the pockets (a crease), on a pocket, at its bulge (half way
+    /// down: something inside), on the band and its top lip (m).
+    pub const SEAM: f32 = 0.0026;
+    pub const FLAT: f32 = 0.007;
+    pub const BULGE: f32 = 0.013;
+    pub const BAND_OUT: f32 = 0.009;
+    pub const LIP: f32 = 0.0026;
+}
+
+/// The point of the jersey's faceted shell (the loft of [`jersey_rings`]
+/// with `sides` corners) at height `y` and angle `theta` (0 = the
+/// rider's right, 3π/2 = the middle of the back), pushed `off` outwards:
+/// on the shell's facets, so a surface through such points runs parallel
+/// to the jersey.
+pub fn shell_point(sides: u32, y: f32, theta: f32, off: f32) -> Vec3 {
+    let step = std::f32::consts::TAU / sides as f32;
+    let th = theta.rem_euclid(std::f32::consts::TAU);
+    let k = (th / step).floor();
+    let f = th / step - k;
+    let corner = |k: u32| shell_corner(sides, k % sides, y, off).expect("below the shoulders");
+    corner(k as u32).lerp(corner(k as u32 + 1), f)
+}
+
+/// The back pockets' panel on the torso and the top band in the
+/// pattern colour (rest-pose model coordinates), and the anchors at the
+/// three openings: (position, outward direction).
+fn pockets(detail: Detail) -> (Parts, Parts, [(Vec3, Vec3); 3]) {
+    use pocket::*;
+    use std::f32::consts::PI;
+    let sides = jersey_sides(detail);
+    // The pockets sit level across the back: their bottom above the hem
+    // where it is highest under them (at the panel's sides: the hem drops
+    // to the back), the opening measured from the hem's lowest point.
+    let tilt = JERSEY_SHELL[0][4];
+    let centre = jersey_rings()[0].centre.y;
+    let hem = centre - tilt;
+    let side_hem = centre - tilt * HALF_ANGLE.cos();
+    let back = 1.5 * PI;
+    // Columns: per pocket its left seam, its middle; the last seam.
+    let cols: Vec<(f32, bool)> = (0..=6)
+        .map(|c| {
+            let theta = back - HALF_ANGLE + 2.0 * HALF_ANGLE * c as f32 / 6.0;
+            (theta, c % 2 == 0)
+        })
+        .collect();
+    // Rows: bottom, the bulge, the band's lower edge, the top, the lip.
+    let rows = [
+        (side_hem + BOTTOM, 0),
+        (0.5 * (side_hem + BOTTOM + hem + TOP - BAND), 1),
+        (hem + TOP - BAND, 2),
+        (hem + TOP, 3),
+        (hem + TOP + 0.004, 4),
+    ];
+    let off = |row: usize, seam: bool| match (row, seam) {
+        (4, _) => LIP,
+        (2 | 3, _) => BAND_OUT,
+        (_, true) => SEAM,
+        (1, false) => BULGE,
+        _ => FLAT,
+    };
+    let grid = |rows: &[(f32, usize)], extra: f32| -> (Vec<Vec3>, Vec<[u32; 3]>) {
+        let w = cols.len();
+        let verts: Vec<Vec3> = rows
+            .iter()
+            .flat_map(|&(y, r)| {
+                cols.iter()
+                    .map(move |&(th, seam)| shell_point(sides, y, th, off(r, seam) + extra))
+            })
+            .collect();
+        let mut tris = Vec::new();
+        for r in 0..rows.len() - 1 {
+            for c in 0..w - 1 {
+                let a = (r * w + c) as u32;
+                let (b, d, e) = (a + 1, a + w as u32, a + w as u32 + 1);
+                // Columns run from the rider's left to the right (−x … +x,
+                // left to right seen from behind), rows upwards: outward
+                // faces.
+                tris.push([a, b, d]);
+                tris.push([b, e, d]);
+            }
+        }
+        (verts, tris)
+    };
+    // The panel with its seams and bulges, the band and its lip: flat
+    // shaded, so the seams read as creases.
+    let mut panel = Parts::new();
+    let (v, t) = grid(&rows, 0.0);
+    panel.slot("jersey").add_flat(&v, &t);
+    // The band's accent copy just outside it.
+    let mut band = Parts::new();
+    let (v, t) = grid(&rows[2..4], 0.0012);
+    band.slot("accent").add_flat(&v, &t);
+    let anchors = [1usize, 3, 5].map(|c| {
+        let th = cols[c].0;
+        let y = hem + TOP - 0.01;
+        let at = shell_point(sides, y, th, 0.5 * FLAT);
+        let side = shell_point(sides, y, th + 0.01, 0.5 * FLAT) - at;
+        (at, side.cross(Vec3::Y).normalize())
+    });
+    (panel, band, anchors)
+}
+
 /// Builds the rider model.
 pub fn build(detail: Detail) -> Model {
     use body::{HIP_HALF_WIDTH, SHOULDER_HALF_WIDTH, SHOULDER_HEIGHT, TORSO_PIVOT};
@@ -401,12 +614,17 @@ pub fn build(detail: Detail) -> Model {
         u: Vec3::X * hw,
         v: Vec3::NEG_Z * hd,
     };
+    // The bib's seat: widest over the hips under the jersey's hem, then
+    // narrower under the hem and closed at its level (spec §2.6; bug
+    // 2026-11-16: the old waist was as wide as the jersey and reached 9 cm
+    // above its hem, showing through it; `crate::clothing` checks the
+    // layers).
     let seat = |p: &mut Parts, slot: &'static str, k: f32| {
         p.slot(slot).loft(
             &[
                 ring(-0.07, 0.15 + k, 0.1 + k, 0.01),
-                ring(0.0, 0.165 + k, 0.11 + k, 0.01),
-                ring(0.07, 0.155 + k, 0.105 + k, 0.015),
+                ring(-0.03, 0.108 + k, 0.077 + k, 0.028),
+                ring(0.0, 0.1 + k, 0.072 + k, 0.028),
             ],
             n + 2,
             false,
@@ -447,8 +665,10 @@ pub fn build(detail: Detail) -> Model {
         let shorts_end = hip - Vec3::Y * 0.3;
         let short_leg = |p: &mut Parts, slot: &'static str, k: f32| {
             p.slot(slot).sweep(
-                &[hip + Vec3::Y * 0.03, hip - Vec3::Y * 0.12, shorts_end],
-                &[0.075 + k, 0.072 + k, 0.06 + k],
+                // From 6 cm under the hip joint, inside the seat (the old
+                // leg began 3 cm above it, out through the jersey's sides).
+                &[hip - Vec3::Y * 0.06, hip - Vec3::Y * 0.14, shorts_end],
+                &[0.069 + k, 0.07 + k, 0.06 + k],
                 n,
                 false,
             );
@@ -563,13 +783,8 @@ pub fn build(detail: Detail) -> Model {
     let t = |y: f32, hw: f32, hd: f32, z: f32| ring(pivot.y + y, hw, hd, pivot.z + z);
     let neck = pivot + Vec3::Y * body::TORSO;
     p.slot("jersey").loft(
-        &[
-            t(-0.06, 0.152, 0.102, -0.01),
-            t(0.12, 0.158, 0.1, -0.005),
-            t(0.3, 0.18, 0.115, 0.005),
-            t(0.42, 0.19, 0.105, 0.01),
-        ],
-        n + 4,
+        &jersey_rings(),
+        jersey_sides(detail),
         false,
         Cap::Open,
         Cap::Point(neck - Vec3::Y * 0.01),
@@ -600,6 +815,16 @@ pub fn build(detail: Detail) -> Model {
         );
     }
     p.attach(&mut m, torso);
+    // The back pockets (spec §2.6) and the anchors at their openings.
+    let (panel, band, anchors) = pockets(detail);
+    let i = m.add(Node::new(POCKETS, Some(torso), Vec3::ZERO));
+    panel.attach(&mut m, i);
+    let i = m.add(Node::new(POCKET_BAND, Some(torso), Vec3::ZERO));
+    band.attach(&mut m, i);
+    for (name, (at, out)) in POCKET_ANCHORS.iter().zip(anchors) {
+        let i = m.add(Node::new(name, Some(torso), at - pivot));
+        m.nodes[i].rotation = Quat::from_rotation_arc(Vec3::Z, out);
+    }
     // Kit patterns: a chest band and a diagonal sash (one of them shown).
     let band = m.add(Node::new(KIT_BAND, Some(torso), Vec3::ZERO));
     let mut p = Parts::new();
@@ -1037,6 +1262,44 @@ mod tests {
         assert!(v.contains(&opt::FACE_BEARD) && v.contains(&opt::GLASSES_ROUND));
         let none = ocw_core::Character { glasses: 0, ..c };
         assert!(!visible(&none, &[]).iter().any(|n| n.starts_with("glasses")));
+    }
+
+    /// The back pockets (spec §2.6): three pockets across the lower back,
+    /// the anchors at their openings on the torso (model contract 15B) –
+    /// left, centre, right seen from behind, in the pocket (between the
+    /// jersey and the panel), +z out of the back; the pockets shown with
+    /// every jersey but the skinsuit.
+    #[test]
+    fn the_jersey_has_three_back_pockets_with_anchors() {
+        for detail in [Detail::High, Detail::Low] {
+            let m = build(detail);
+            let torso = m.node(TORSO).unwrap();
+            let sides = jersey_sides(detail);
+            let at: Vec<Vec3> = POCKET_ANCHORS
+                .iter()
+                .map(|n| {
+                    let i = m.node(n).unwrap_or_else(|| panic!("{n} ({detail:?})"));
+                    assert_eq!(m.nodes[i].parent, Some(torso), "{n}");
+                    assert!(m.nodes[i].primitives.is_empty());
+                    let w = m.world(i);
+                    let out = w.transform_vector3(Vec3::Z);
+                    let p = w.transform_point3(Vec3::ZERO);
+                    assert!(out.z > 0.7, "{n}: {out}");
+                    // Between the jersey and the panel, at the opening.
+                    assert!(p.z > shell_point(sides, p.y, 1.5 * std::f32::consts::PI, 0.0).z - 0.05);
+                    assert!(above_hem(p) > 0.08 && above_hem(p) < pocket::TOP, "{n}: {p}");
+                    p
+                })
+                .collect();
+            assert!(at[0].x < -0.05 && at[1].x.abs() < 1e-4 && at[2].x > 0.05, "{at:?}");
+            assert!(at.iter().all(|p| p.z > 0.1), "on the back: {at:?}");
+            assert!(m.node(POCKETS).is_some() && m.node(POCKET_BAND).is_some());
+        }
+        let c = ocw_core::Character::default();
+        assert!(visible(&c, &[]).contains(&POCKETS));
+        assert!(visible(&c, &["jersey-aero"]).contains(&POCKETS));
+        assert!(!visible(&c, &["skinsuit"]).contains(&POCKETS));
+        assert!(!visible(&c, &[]).contains(&POCKET_BAND), "the renderer's choice");
     }
 
     /// Every node knows its body region (T6: patterns and numbers).

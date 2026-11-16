@@ -119,7 +119,7 @@ const BIB_HALF: vec2<f32> = vec2<f32>(0.1, 0.075);
 const BIB_DIGIT: f32 = 0.075;
 const BIB_BACK_Z: f32 = 0.07;
 const HIP_X: f32 = 0.174;
-const HIP_CENTRE: vec2<f32> = vec2<f32>(0.0, -0.035);
+const HIP_CENTRE: vec2<f32> = vec2<f32>(0.0, -0.07);
 const HIP_DIGIT: f32 = 0.036;
 
 fn hash1(p: vec3<f32>) -> f32 {
