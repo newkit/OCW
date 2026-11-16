@@ -394,7 +394,9 @@ pub fn describe(world: &World) -> String {
         DistanceSetting::Preset => format!("the {} preset's {}", base.level, km_text(base.view_m)),
         other => km_text(other.ceiling(base.view_m)),
     };
-    let ring = s.radius.map_or(stream_radius_for(preset.view_m), |(r, _)| r);
+    let ring = s
+        .radius
+        .map_or(stream_radius_for(preset.view_m), |(r, _)| r);
     let mut out = format!(
         "view: {} ({}; limit {limit}; target {:.0} fps: {}) – trees {}, house LOD × {:.2}, tiles {n} × {n}",
         km_text(s.distance),
@@ -412,10 +414,7 @@ pub fn describe(world: &World) -> String {
         n = 2 * ring + 1,
     );
     if let Some(step) = s.controller.last() {
-        out.push_str(&format!(
-            "\nlast step: {}",
-            step.describe(s.target_fps)
-        ));
+        out.push_str(&format!("\nlast step: {}", step.describe(s.target_fps)));
     }
     out
 }
@@ -463,7 +462,10 @@ mod tests {
         // Low (WebGL 2) at its preset distance: Low's own numbers.
         assert_eq!(preset(&a), QualityPreset::of(QualityLevel::Low));
         let out = run(&mut a, "view");
-        assert!(out.contains("view: 8 km (auto; limit the low preset's 8 km"), "{out}");
+        assert!(
+            out.contains("view: 8 km (auto; limit the low preset's 8 km"),
+            "{out}"
+        );
         let out = run(&mut a, "view 2 auto off");
         assert!(out.contains("view: 2 km (fixed"), "{out}");
         let p = preset(&a);
@@ -484,15 +486,27 @@ mod tests {
         assert!(out.contains("(auto;"), "{out}");
         assert_eq!(preset(&a), QualityPreset::of(QualityLevel::Low));
         assert_eq!(a.world().resource::<FpsBadgeNote>().0, "8 km auto");
-        for bad in ["view 0", "view 61", "view auto maybe", "view target", "view far"] {
+        for bad in [
+            "view 0",
+            "view 61",
+            "view auto maybe",
+            "view target",
+            "view far",
+        ] {
             assert!(run(&mut a, bad).contains("error"), "{bad}");
         }
         // The desktop's auto target: the display's refresh, 60 where it is
         // not known (headless).
         let mut d = app(GpuApi::Native);
         let out = run(&mut d, "view");
-        assert!(out.contains("view: unlimited (auto; limit the high preset's unlimited"), "{out}");
-        assert!(out.contains("target 60 fps: the display's refresh is not known"), "{out}");
+        assert!(
+            out.contains("view: unlimited (auto; limit the high preset's unlimited"),
+            "{out}"
+        );
+        assert!(
+            out.contains("target 60 fps: the display's refresh is not known"),
+            "{out}"
+        );
     }
 
     /// A quality level changes the limit the dynamic mode starts from; a
@@ -533,14 +547,13 @@ mod tests {
         let s = a.world().resource::<ViewDistanceState>();
         assert_eq!(s.setting, DistanceSetting::Km(12));
         assert!(!s.auto);
-        let rows = crate::menu::sub_rows(
-            a.world(),
-            ocw_client::menu::pages::Page::ViewDistance,
-        );
+        let rows = crate::menu::sub_rows(a.world(), ocw_client::menu::pages::Page::ViewDistance);
         assert_eq!(rows[0].value.as_deref(), Some("12 km"));
-        assert_eq!(rows[3].value.as_deref(), Some("12 km, fixed, target 60 fps"));
-        let graphics =
-            crate::menu::sub_rows(a.world(), ocw_client::menu::pages::Page::Graphics);
+        assert_eq!(
+            rows[3].value.as_deref(),
+            Some("12 km, fixed, target 60 fps")
+        );
+        let graphics = crate::menu::sub_rows(a.world(), ocw_client::menu::pages::Page::Graphics);
         assert!(graphics.iter().any(|r| r.value.as_deref() == Some("12 km")));
     }
 

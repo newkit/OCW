@@ -553,7 +553,10 @@ mod tests {
             let t = tree_view_for(d).unwrap();
             let h = house_lod_for(d);
             let r = stream_radius_for(d);
-            assert!(t >= MIN_TREE_VIEW_M && t % TREE_VIEW_STEP_M == 0.0, "{k}: {t}");
+            assert!(
+                t >= MIN_TREE_VIEW_M && t % TREE_VIEW_STEP_M == 0.0,
+                "{k}: {t}"
+            );
             assert!((MIN_HOUSE_LOD..=1.0).contains(&h), "{k}: {h}");
             if let Some((t0, h0, r0)) = last {
                 assert!(t >= t0 && h >= h0 && r >= r0, "monotone at {k} km");
@@ -624,7 +627,10 @@ mod tests {
         let next = ease_view(None, Some(60_000.0), 1.0 / 60.0, u).unwrap();
         assert!(next > 115_000.0, "{next}");
         // A pause (dt 0) changes nothing.
-        assert_eq!(ease_view(Some(5_000.0), Some(1_000.0), 0.0, u), Some(5_000.0));
+        assert_eq!(
+            ease_view(Some(5_000.0), Some(1_000.0), 0.0, u),
+            Some(5_000.0)
+        );
     }
 
     #[test]

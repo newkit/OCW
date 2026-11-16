@@ -647,7 +647,10 @@ pub(crate) mod tests {
     #[test]
     fn the_render_distance_narrows_the_streaming() {
         let page = Residency::default();
-        assert_eq!(residency_for(page, ocw_render::package::STREAM_RADIUS), page);
+        assert_eq!(
+            residency_for(page, ocw_render::package::STREAM_RADIUS),
+            page
+        );
         let near = residency_for(page, 1);
         assert_eq!((near.fetch_radius, near.keep_radius), (2, 4));
         assert_eq!(near.budget_bytes, page.budget_bytes);

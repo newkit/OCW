@@ -768,7 +768,10 @@ mod tests {
 
     impl Run {
         fn changes_between(&self, a: f64, b: f64) -> usize {
-            self.steps.iter().filter(|(t, _)| (a..b).contains(t)).count()
+            self.steps
+                .iter()
+                .filter(|(t, _)| (a..b).contains(t))
+                .count()
         }
         fn at(&self, t: f64) -> (Option<f32>, f64) {
             let i = self
@@ -916,13 +919,7 @@ mod tests {
     #[test]
     fn spikes_and_ignored_windows_do_nothing() {
         let gpu = |t: f64| Gpu {
-            ms: Box::new(move |_| {
-                if (t % 3.0) < 0.017 {
-                    300.0
-                } else {
-                    10.0
-                }
-            }),
+            ms: Box::new(move |_| if (t % 3.0) < 0.017 { 300.0 } else { 10.0 }),
             vsync_hz: Some(60.0),
         };
         let mut c = Controller::new(Some(20.0 * KM));
@@ -1007,7 +1004,11 @@ mod tests {
         let mut c = Controller::new(None);
         let run = simulate(&mut c, &gpu, 60.0, None, 120.0, &never);
         assert_eq!(c.distance(), Some(FLOOR_M));
-        assert!(run.trace.iter().all(|(_, d, _)| d.unwrap_or(f32::MAX) >= FLOOR_M));
+        assert!(
+            run.trace
+                .iter()
+                .all(|(_, d, _)| d.unwrap_or(f32::MAX) >= FLOOR_M)
+        );
         // The way down from unlimited is 60 km, then -15 % steps.
         assert_eq!(run.steps[0].1.from, None);
         assert_eq!(run.steps[0].1.to, Some(MAX_M));
@@ -1147,13 +1148,18 @@ mod tests {
         );
         assert_eq!(
             r[1].confirm,
-            Some(Activate::Command("set display.view_distance_auto on".into()))
+            Some(Activate::Command(
+                "set display.view_distance_auto on".into()
+            ))
         );
         assert_eq!(r[3].value.as_deref(), Some("12 km, fixed"));
         // Unlimited and preset on the slider.
         s.set("display.view_distance", "unlimited").unwrap();
         let r = rows(&s, &info);
-        assert_eq!(r[0].right.as_deref(), Some("set display.view_distance unlimited"));
+        assert_eq!(
+            r[0].right.as_deref(),
+            Some("set display.view_distance unlimited")
+        );
         assert_eq!(r[0].left.as_deref(), Some("set display.view_distance 60"));
     }
 }
