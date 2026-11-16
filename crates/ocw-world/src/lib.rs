@@ -26,6 +26,7 @@ pub mod network;
 pub mod obstacles;
 pub mod ortho;
 pub mod package;
+pub mod patch;
 pub mod path;
 pub mod plantings;
 pub mod region;
