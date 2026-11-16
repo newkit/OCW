@@ -1,15 +1,19 @@
 //! Bike and rider 3D assets (spec §2.5, §2.6, §8): Bevy-free.
 //!
-//! - [`bikes`], [`rider`]: the generators of the shipped low-poly glTF
-//!   models (own work, MIT OR Apache-2.0), built from [`mesh`] primitives;
-//!   [`helmet`]: the rider's helmets (sculpted shells, vents, visor);
-//! - [`glb`]: writing and reading `.glb` files ([`model::Model`]);
-//! - [`manifest`]: the asset manifest and the validator (licence entries,
-//!   no physics in cosmetic assets, required nodes, triangle budgets);
-//! - [`pose`]: rider on bike – anchors, inverse kinematics;
+//! - [`bikes`], [`rider`]: the generators of the low-poly glTF models (own
+//!   work, MIT OR Apache-2.0), built from [`mesh`] primitives; [`helmet`]:
+//!   the rider's helmets (sculpted shells, vents, visor);
+//! - [`export`]: their export into `artwork/3dmodels/` (spec §14 Phase 15,
+//!   M1), [`kinds`] the model contract per kind (15B), [`library`] the
+//!   run-time loader of those files (embedded or a dev folder, 15D);
+//! - [`glb`]: writing and reading `.glb` / `.gltf` files ([`model::Model`]);
+//! - [`manifest`]: the model manifest and the validator (licence entries,
+//!   no physics in cosmetic assets, required nodes, names, budgets);
+//! - [`pose`]: rider on bike – anchors, inverse kinematics, the fit to the
+//!   rider's size;
 //! - [`anim`]: riding state selection from cadence / speed / power / grade;
-//! - [`shipped`]: the models in `assets/models/` and the parts catalogue,
-//!   embedded;
+//! - [`shipped`]: the shipped models (from [`library`]) and the parts
+//!   catalogue, embedded;
 //! - [`parts`]: the parts catalogue of the workshop, its price sources and
 //!   validator (spec §14 Phase 4, 4H–4J);
 //! - [`licence`]: the licence rule for every shipped asset (spec Phase 8A);
@@ -22,11 +26,14 @@ pub mod anim;
 pub mod bikes;
 #[cfg(feature = "tools")]
 pub mod convert;
+pub mod export;
 #[cfg(feature = "tools")]
 pub mod fetch;
 pub mod glb;
 pub mod helmet;
+pub mod kinds;
 pub mod ktx2;
+pub mod library;
 pub mod licence;
 pub mod manifest;
 pub mod materials;
@@ -45,51 +52,28 @@ use ocw_core::ProfileId;
 pub const COPYRIGHT: &str = "Open Cycling World contributors; licence MIT OR Apache-2.0";
 pub const GENERATOR: &str = "ocw-assets (Open Cycling World)";
 
-/// File name of the bike model of `p`.
-pub fn bike_file(p: ProfileId) -> String {
-    format!("bike-{}.glb", p.id())
+/// The model id of `p`'s bike (`bikes/…`, spec §14 Phase 15, 15H).
+pub fn bike_id(p: ProfileId) -> &'static str {
+    kinds::id_of(export::bike_file(p))
 }
 
-pub const RIDER_FILE: &str = "rider.glb";
+/// The model id of the rider (near) and of its far model.
+pub const RIDER_ID: &str = "riders/rider-body";
+pub const RIDER_LOW_ID: &str = "riders/rider-body-low";
 
-/// Generates every shipped model: `(file name, .glb bytes)`.
-pub fn generate() -> Vec<(String, Vec<u8>)> {
-    let mut rider = rider::build(rider::Detail::High);
-    let low = rider::build(rider::Detail::Low);
-    let mut out = Vec::new();
-    for p in ProfileId::ALL {
-        let mut m = bikes::build(p, &rider, &low);
-        m.copyright = COPYRIGHT.into();
-        m.generator = GENERATOR.into();
-        out.push((bike_file(p), glb::write(&m)));
-    }
-    rider.copyright = COPYRIGHT.into();
-    rider.generator = GENERATOR.into();
-    out.push((RIDER_FILE.into(), glb::write(&rider)));
-    out
-}
-
-/// The models shipped in `assets/models/` (embedded in the binary: no
-/// asset paths to find at runtime, on any platform).
+/// The shipped models (read from [`library::library`]: embedded, or a dev
+/// folder) and the parts catalogue (embedded: no asset paths to find at
+/// runtime, on any platform).
 pub mod shipped {
-    use std::sync::OnceLock;
+    use std::sync::{Arc, OnceLock};
 
     use ocw_core::ProfileId;
 
     use crate::model::Model;
-    use crate::pose::{BikeRig, RiderRig};
-
-    macro_rules! asset {
-        ($f:literal) => {
-            (
-                $f,
-                include_bytes!(concat!("../../../assets/models/", $f)) as &[u8],
-            )
-        };
-    }
+    use crate::pose::{BikeRig, BikeSizing, RiderRig};
 
     /// The manifest (licence entries) of the shipped models.
-    pub const MANIFEST: &str = include_str!("../../../assets/models/manifest.toml");
+    pub const MANIFEST: &str = crate::library::MANIFEST;
 
     /// The parts catalogue (spec §14 Phase 4, 4I) and its price
     /// references (4H).
@@ -114,49 +98,48 @@ pub mod shipped {
         })
     }
 
-    /// Every shipped model file.
-    pub const FILES: [(&str, &[u8]); 7] = [
-        asset!("bike-road.glb"),
-        asset!("bike-road-aero.glb"),
-        asset!("bike-road-climbing.glb"),
-        asset!("bike-tt.glb"),
-        asset!("bike-gravel.glb"),
-        asset!("bike-mtb.glb"),
-        asset!("rider.glb"),
-    ];
-
-    fn bytes(name: &str) -> &'static [u8] {
-        FILES
-            .iter()
-            .find(|(n, _)| *n == name)
-            .map(|(_, b)| *b)
-            .unwrap_or_else(|| panic!("no shipped asset {name}"))
+    /// Every embedded model file: (path in `artwork/3dmodels/`, bytes).
+    pub fn files() -> &'static [(&'static str, &'static [u8])] {
+        crate::library::embedded_files()
     }
 
-    fn load(name: &str) -> Model {
-        crate::glb::read(bytes(name)).unwrap_or_else(|e| panic!("shipped asset {name}: {e}"))
+    /// The model `id` of the app's library (a missing shipped model is a
+    /// build error, so this panics).
+    pub fn model(id: &str) -> Arc<Model> {
+        crate::library::library()
+            .get(id)
+            .unwrap_or_else(|e| panic!("shipped model: {e}"))
     }
 
     /// The rider model.
     pub fn rider_model() -> &'static Model {
-        static M: OnceLock<Model> = OnceLock::new();
-        M.get_or_init(|| load(crate::RIDER_FILE))
+        static M: OnceLock<Arc<Model>> = OnceLock::new();
+        M.get_or_init(|| model(crate::RIDER_ID))
+    }
+
+    /// The rider's far model (the bikes' `lod1` riders are built from it).
+    pub fn rider_low_model() -> &'static Model {
+        static M: OnceLock<Arc<Model>> = OnceLock::new();
+        M.get_or_init(|| model(crate::RIDER_LOW_ID))
     }
 
     /// The bike model of `p`.
     pub fn bike_model(p: ProfileId) -> &'static Model {
-        static M: OnceLock<Vec<Model>> = OnceLock::new();
+        static M: OnceLock<Vec<Arc<Model>>> = OnceLock::new();
         let all = M.get_or_init(|| {
             ProfileId::ALL
                 .iter()
-                .map(|p| load(&crate::bike_file(*p)))
+                .map(|p| model(crate::bike_id(*p)))
                 .collect()
         });
-        let i = ProfileId::ALL
+        &all[index(p)]
+    }
+
+    fn index(p: ProfileId) -> usize {
+        ProfileId::ALL
             .iter()
             .position(|q| *q == p)
-            .expect("profile");
-        &all[i]
+            .expect("profile")
     }
 
     pub fn rider_rig() -> RiderRig {
@@ -172,28 +155,29 @@ pub mod shipped {
                 .map(|p| BikeRig::from_model(bike_model(*p)).expect("shipped bike rig"))
                 .collect()
         });
-        let i = ProfileId::ALL
-            .iter()
-            .position(|q| *q == p)
-            .expect("profile");
-        all[i]
+        all[index(p)]
+    }
+
+    /// How `p`'s bike file is fitted to the rider's size (Q7).
+    pub fn bike_sizing(p: ProfileId) -> BikeSizing {
+        BikeSizing::from_model(bike_model(p))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pose::{BodyFit, EXTENSION_SEATED, RiderRig, leg_extension};
 
-    /// The shipped assets pass the validator, one bike per profile.
+    /// The shipped models pass the validator, one bike per profile.
     #[test]
     fn shipped_assets_are_valid_and_complete() {
-        let files: Vec<(String, Vec<u8>)> = shipped::FILES
+        let files: Vec<(String, Vec<u8>)> = shipped::files()
             .iter()
             .map(|(n, b)| (n.to_string(), b.to_vec()))
             .collect();
         let checked =
             manifest::validate(shipped::MANIFEST, &files).unwrap_or_else(|e| panic!("{e:#?}"));
-        assert_eq!(checked.len(), 7);
         for p in ProfileId::ALL {
             let n = checked
                 .iter()
@@ -203,43 +187,127 @@ mod tests {
             assert_eq!(shipped::bike_rig(p).aero_bars, p == ProfileId::TimeTrial);
         }
         assert!(shipped::rider_rig().leg() > 0.8);
+        assert!(RiderRig::from_model(shipped::rider_low_model()).is_ok());
     }
 
-    /// `assets/models/` is what the generator makes: run
-    /// `cargo run -p ocw-assets -- generate` after changing it.
-    #[test]
-    fn shipped_assets_match_the_generator() {
-        for (name, bytes) in generate() {
-            let new = glb::read(&bytes).unwrap();
-            let (_, old) = shipped::FILES
+    fn same_mesh(name: &str, a: &model::Model, b: &model::Model) {
+        let stale = format!("{name} is stale: run `cargo run -p ocw-assets -- model export-all`");
+        assert_eq!(a.nodes.len(), b.nodes.len(), "{stale}");
+        assert_eq!(a.materials.len(), b.materials.len(), "{stale}");
+        for (x, y) in a.materials.iter().zip(&b.materials) {
+            assert_eq!(x.name, y.name, "{stale}");
+            let off = x
+                .color
                 .iter()
-                .find(|(n, _)| *n == name)
-                .expect("shipped");
-            let old = glb::read(old).unwrap();
-            let stale = format!("{name} is stale: run `cargo run -p ocw-assets -- generate`");
-            assert_eq!(new.nodes.len(), old.nodes.len(), "{stale}");
-            assert_eq!(new.materials, old.materials, "{stale}");
-            for (a, b) in new.nodes.iter().zip(&old.nodes) {
-                assert_eq!((&a.name, a.parent), (&b.name, b.parent), "{stale}");
-                assert!(
-                    a.translation.distance(b.translation) < 1e-4,
-                    "{stale}: {}",
-                    a.name
-                );
-                assert_eq!(
-                    a.primitives.len(),
-                    b.primitives.len(),
-                    "{stale}: {}",
-                    a.name
-                );
-                for (p, q) in a.primitives.iter().zip(&b.primitives) {
-                    assert_eq!(p.indices, q.indices, "{stale}: {}", a.name);
-                    let far =
-                        p.positions.iter().zip(&q.positions).any(|(x, y)| {
-                            glam::Vec3::from(*x).distance(glam::Vec3::from(*y)) > 1e-4
-                        });
-                    assert!(!far, "{stale}: {}", a.name);
-                }
+                .zip(&y.color)
+                .any(|(u, v)| (u - v).abs() > 1e-4);
+            assert!(!off, "{stale}: material {}", x.name);
+            assert!(
+                (x.metallic - y.metallic).abs() < 1e-6 && (x.roughness - y.roughness).abs() < 1e-6
+            );
+        }
+        for (x, y) in a.nodes.iter().zip(&b.nodes) {
+            assert_eq!((&x.name, x.parent), (&y.name, y.parent), "{stale}");
+            assert!(
+                x.translation.distance(y.translation) < 1e-4,
+                "{stale}: {}",
+                x.name
+            );
+            assert!(
+                x.rotation.angle_between(y.rotation) < 1e-3,
+                "{stale}: {}",
+                x.name
+            );
+            assert_eq!(
+                x.primitives.len(),
+                y.primitives.len(),
+                "{stale}: {}",
+                x.name
+            );
+            for (p, q) in x.primitives.iter().zip(&y.primitives) {
+                assert_eq!(p.indices, q.indices, "{stale}: {}", x.name);
+                assert_eq!(p.material, q.material, "{stale}: {}", x.name);
+                // Positions within a few steps of the writer's 1/65536 m
+                // grid (sin / cos differ in the last bits between
+                // platforms), normals within its 1/32767.
+                let far = p
+                    .positions
+                    .iter()
+                    .zip(&q.positions)
+                    .any(|(u, v)| glam::Vec3::from(*u).distance(glam::Vec3::from(*v)) > 1e-4);
+                assert!(!far, "{stale}: {} positions", x.name);
+                let bent = p
+                    .normals
+                    .iter()
+                    .zip(&q.normals)
+                    .any(|(u, v)| glam::Vec3::from(*u).distance(glam::Vec3::from(*v)) > 1e-4);
+                assert!(!bent, "{stale}: {} normals", x.name);
+            }
+        }
+    }
+
+    /// The files in `artwork/3dmodels/` are what the generators make
+    /// (mesh by mesh, within the file's precision; on Linux x86-64 byte for
+    /// byte what the exporter writes): `cargo run -p ocw-assets -- model
+    /// export-all` after changing a generator.
+    #[test]
+    fn shipped_models_match_the_generators() {
+        for (e, model) in export::models() {
+            let (_, bytes) = shipped::files()
+                .iter()
+                .find(|(n, _)| *n == e.file)
+                .unwrap_or_else(|| panic!("{} not shipped", e.file));
+            let file = glb::read(bytes).unwrap();
+            same_mesh(&e.file, &model, &file);
+            // Byte for byte where the files were exported (Linux x86-64;
+            // `model export-all --check`): other platforms' last bits of
+            // sin / cos may move a vertex by one grid step.
+            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+            {
+                let same = *bytes == glb::write(&model).as_slice();
+                assert!(same, "{} bytes differ: run the export", e.file);
+            }
+            let listed = library::ModelLibrary::embedded()
+                .entry(e.id())
+                .cloned()
+                .unwrap_or_else(|| panic!("{} not in the manifest", e.file));
+            assert_eq!(listed, e);
+        }
+    }
+
+    /// Q7: the bikes keep their sizes – the frame from the file is fitted
+    /// to riders of 1.50 – 2.05 m (saddle along the seat tube within the
+    /// file's travel, legs at the seated extension), and the file carries
+    /// the frame's geometry numbers.
+    #[test]
+    fn bike_files_fit_every_rider_height() {
+        let rider = shipped::rider_rig();
+        for p in ProfileId::ALL {
+            let m = shipped::bike_model(p);
+            let rig = shipped::bike_rig(p);
+            let sizing = shipped::bike_sizing(p);
+            assert_eq!(sizing, pose::BikeSizing::default(), "{p:?}");
+            let frame = &m.ocw().unwrap()["frame"];
+            let d = bikes::design(p);
+            assert!((frame["stack_m"].as_f64().unwrap() as f32 - d.stack).abs() < 1e-4);
+            assert!((frame["reach_m"].as_f64().unwrap() as f32 - d.reach).abs() < 1e-4);
+            let saddle = frame["saddle_height_m"].as_f64().unwrap() as f32;
+            assert!(
+                (saddle - rig.saddle.distance(rig.crank)).abs() < 1e-3,
+                "{p:?}"
+            );
+            let mut last = f32::MIN;
+            for cm in [150u16, 160, 170, 178, 190, 205] {
+                let h = f32::from(cm) / 100.0;
+                let b = BodyFit::sized(&rider, &rig, sizing.scale(h), &sizing);
+                assert!(b.saddle_offset > last || cm == 150, "{p:?} {cm}");
+                last = b.saddle_offset;
+                assert!(b.saddle_offset.abs() < sizing.saddle_travel_m, "{p:?} {cm}");
+                let ext = leg_extension(&b.rider, &b.bike, b.fit.hip_seated);
+                assert!((ext - EXTENSION_SEATED).abs() < 0.01, "{p:?} {cm}: {ext}");
+                // The saddle moved along the file's seat tube.
+                let moved = b.bike.saddle - rig.saddle;
+                assert!(moved.cross(rig.seat_dir()).length() < 1e-4, "{p:?} {cm}");
             }
         }
     }

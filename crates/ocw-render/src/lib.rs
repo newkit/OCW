@@ -18,6 +18,7 @@ pub mod event_hud;
 pub mod far_terrain;
 pub mod flight_world;
 pub mod flora;
+pub mod flora_files;
 pub mod font;
 pub mod frame_rate;
 pub mod gear;

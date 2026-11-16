@@ -355,6 +355,7 @@ impl Mats {
                 positions: shape.positions.iter().map(|p| p.to_array()).collect(),
                 normals: shape.normals.iter().map(|n| n.to_array()).collect(),
                 indices: shape.indices,
+                ..Default::default()
             });
         }
     }

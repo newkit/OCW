@@ -1885,8 +1885,8 @@ feels (gravel is 2.5 ×, grass 6 × the road bike's asphalt value). Colours and
 kit are cosmetic only: the other riders see them (bots ride varied bikes and
 colours), the physics never does.
 
-Each bike is a 3D model (`assets/models/bike-<bike>.glb`) with the rider on
-it (`rider.glb`), in the frame, jersey and helmet colours (your own rider wears
+Each bike is a 3D model (`artwork/3dmodels/bikes/bike-<bike>.glb`) with the rider on
+it (`riders/rider-body.glb`), in the frame, jersey and helmet colours (your own rider wears
 a cotton cap). The wheels turn with the speed and the legs with your cadence
 (others at a typical cadence); riders sit up on the tops on climbs from 4 %,
 stand on the pedals from about 8.5 % and in sprints (650 W and more) with the
@@ -3652,9 +3652,10 @@ described in [Build infrastructure](#build-infrastructure). The other tools:
 | `world-builder calibrate` / `imagery-cells` | Measure a package's palette, roof colours and seasonal tint maps in the region's imagery and cut the orthophoto corridor along its roads (sections `PALT`, `ROOF`, `SEAS`, `ORTC`; manifest credits renewed); list the imagery cells a package covers |
 | `world-builder obstacles --world PKG --pbf PBF... [--out NEW]` | Static obstacles near the roads into a built package (section `OBST`, spec §14 Phase 12 K3): OSM barriers and posts with the 2 m corridor rule, the tree cells; prints rows of road bollards and the longest bridges; manifest renewed |
 | `world-builder dem-import` / `dem-tiles` / `dem-diff` | High-resolution DTMs: import XYZ / GeoTIFF tiles as 2 m GeoTIFFs, list the tiles of a box, compare with SRTM |
-| `cargo run -p ocw-assets -- generate [--check]` | Regenerate the bike and rider models in `assets/models/` (glTF, own work); `--check` only compares |
-| `cargo run -p ocw-assets -- validate [DIR]` | Asset validator: licence entry (`license`, `source`, `author`) in `manifest.toml` for every model, no physics values, required nodes and paint slots, triangle budgets |
-| `cargo run -p ocw-assets -- info FILE.glb` | A model's nodes, positions, triangles and materials |
+| `cargo run -p ocw-assets -- model export-all [--check]` | Export the bikes, the rider and the helmets from their generators into `artwork/3dmodels/` (glTF, own work, Git LFS; spec §14 Phase 15) with the manifest; `--check` only compares (`generate` is the old name) |
+| `cargo run -p ocw-render --example export-flora [-- --check]` | Export the plants (every species, at least three shape variants, each with `lod1`) into `artwork/3dmodels/flora/` |
+| `cargo run -p ocw-assets -- validate [DIR]` | Model validator (default `artwork/3dmodels`): licence entry (`license`, `source`, `author`) in `manifest.toml` for every model, the model contract (names, `extras.ocw`, folders per kind), no physics values, required nodes and paint slots, triangle budgets |
+| `cargo run -p ocw-assets -- info FILE.glb` | A model's nodes, positions, triangles, materials and `extras` (also `.gltf`) |
 | `scripts/fetch-materials.sh` (`make materials`) | Material library: download the pinned sources of `assets/materials.toml` (cache `~/.cache/ocw/material-sources`), check their SHA-256, convert to KTX2 into `assets/materials/` |
 | `cargo run -p ocw-assets -- materials validate [DIR]` | Material validator: `license`, `source`, `author` and a SHA-256 pin for every material, no share-alike / non-commercial / no-derivatives / unknown licence; with DIR the converted library too |
 | `cargo run -p ocw-assets -- materials credits` | The material credits (Markdown, as in `assets/materials/CREDITS.md`) |
@@ -3700,7 +3701,7 @@ by its public key file `root.pub.json`.
 | `crates/ocw-voice` | Voice chat (always-on logic, spatial audio, mixer; LiveKit backend with the `livekit` feature) |
 | `crates/ocw-render` | Bevy plugins: world, riders, camera, HUD, console; the bundled UI font (`assets/fonts/`) |
 | `crates/ocw-assets` | Bike and rider models: generator, glTF reader, asset validator, rider-on-bike pose, riding animation states; material library: licence rule, pinned manifest, KTX2, conversion and fetch (no Bevy) |
-| `assets/models/` | The shipped glTF models and their licence manifest (embedded in the app) |
+| `artwork/3dmodels/` | The model files (glTF, Git LFS) and their licence manifest, embedded in the app (`ocw_assets::library`; `ocw-desktop --models DIR` reads a folder); the contract in its `README.md` |
 | `artwork/` | Logos and other original artwork |
 
 ## License

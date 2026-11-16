@@ -540,6 +540,56 @@ impl Fit {
 /// enough for it).
 pub const MAX_SADDLE_OFFSET_M: f32 = 0.16;
 
+/// The rider height the models are made for (body scale 1).
+pub const REFERENCE_HEIGHT_M: f32 = ocw_core::character::DEFAULT_HEIGHT_CM as f32 / 100.0;
+
+/// How a bike model is fitted to a rider's size (spec §14 Phase 15, Q7):
+/// read from the file's `extras.ocw.sizing`, so an exported (or
+/// hand-made) frame serves every body height without a file per size.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BikeSizing {
+    /// The rider height the frame was made for.
+    pub reference_height_m: f32,
+    /// How far the saddle (and post) may move along the seat tube.
+    pub saddle_travel_m: f32,
+}
+
+impl Default for BikeSizing {
+    fn default() -> Self {
+        Self {
+            reference_height_m: REFERENCE_HEIGHT_M,
+            saddle_travel_m: MAX_SADDLE_OFFSET_M,
+        }
+    }
+}
+
+impl BikeSizing {
+    /// The sizing data of a bike model (the defaults where the file has
+    /// none).
+    pub fn from_model(m: &Model) -> Self {
+        let d = Self::default();
+        let Some(s) = m.ocw().and_then(|o| o.get("sizing")) else {
+            return d;
+        };
+        let num = |k: &str, or: f32| {
+            s.get(k)
+                .and_then(serde_json::Value::as_f64)
+                .map(|v| v as f32)
+                .filter(|v| v.is_finite() && *v > 0.0)
+                .unwrap_or(or)
+        };
+        Self {
+            reference_height_m: num("reference_rider_height_m", d.reference_height_m),
+            saddle_travel_m: num("saddle_travel_m", d.saddle_travel_m),
+        }
+    }
+
+    /// The body scale of a rider `height_m` tall on this frame.
+    pub fn scale(&self, height_m: f32) -> f32 {
+        height_m / self.reference_height_m
+    }
+}
+
 /// A rider of body scale `scale` (height / 1.78 m) fitted to a bike (spec
 /// §14 Phase 4, 4C): the scaled rig, the bike with the saddle at the
 /// height that fits the legs (the bikes are generated for the default
@@ -558,6 +608,11 @@ pub struct BodyFit {
 impl BodyFit {
     /// `rider`: the model's own rig (scale 1); `bike`: as generated.
     pub fn new(rider: &RiderRig, bike: &BikeRig, scale: f32) -> Self {
+        Self::sized(rider, bike, scale, &BikeSizing::default())
+    }
+
+    /// [`BodyFit::new`] with the bike file's own sizing data.
+    pub fn sized(rider: &RiderRig, bike: &BikeRig, scale: f32, sizing: &BikeSizing) -> Self {
         let scale = if scale.is_finite() {
             scale.clamp(0.7, 1.3)
         } else {
@@ -574,7 +629,7 @@ impl BodyFit {
         }
         let r = rider.scaled(scale);
         let hip = HIP_ABOVE_SADDLE * scale;
-        let lim = MAX_SADDLE_OFFSET_M;
+        let lim = sizing.saddle_travel_m;
         let saddle_offset = bisect(-lim, lim, EXTENSION_SEATED, |d| {
             // A higher saddle stretches the legs more.
             let b = bike.with_saddle_offset(d);

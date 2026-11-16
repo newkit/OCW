@@ -1,10 +1,12 @@
-//! `ocw-assets`: generate the shipped bike and rider models, validate an
-//! asset directory (spec §8.1 step 5), or list a model's nodes.
+//! `ocw-assets`: export the generated models into `artwork/3dmodels/`
+//! (spec §14 Phase 15, M1), validate a model folder (spec §8.1 step 5), or
+//! list a model's nodes.
 //!
 //! ```text
-//! ocw-assets generate [--out assets/models] [--check]
+//! ocw-assets model export-all [--out artwork/3dmodels] [--check]
+//! ocw-assets generate [--out artwork/3dmodels] [--check]   (the same)
 //! ocw-assets validate [DIR]
-//! ocw-assets info FILE.glb
+//! ocw-assets info FILE.glb|FILE.gltf
 //! ocw-assets materials fetch [--manifest assets/materials.toml] [--out assets/materials]
 //! ocw-assets materials validate [--manifest assets/materials.toml] [DIR]
 //! ocw-assets materials credits [--manifest assets/materials.toml]
@@ -26,17 +28,20 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Write the generated bikes and the rider as .glb files.
+    /// The same as `model export-all` (the old name).
     Generate {
-        #[arg(long, default_value = "assets/models")]
+        #[arg(long, default_value = "artwork/3dmodels")]
         out: PathBuf,
-        /// Only check that the files there are what the generator makes.
+        /// Only check that the files there are what the generators make.
         #[arg(long)]
         check: bool,
     },
-    /// Check the manifest and every model in a directory.
+    /// The model files (spec §14 Phase 15).
+    #[command(subcommand)]
+    Model(ModelCmd),
+    /// Check the manifest and every model below a directory.
     Validate {
-        #[arg(default_value = "assets/models")]
+        #[arg(default_value = "artwork/3dmodels")]
         dir: PathBuf,
     },
     /// Print a model's nodes, materials and triangle counts.
@@ -47,6 +52,72 @@ enum Cmd {
     /// The parts catalogue of the workshop (spec §14 Phase 4, 4H, 4I).
     #[command(subcommand)]
     Parts(PartsCmd),
+}
+
+#[derive(Subcommand)]
+enum ModelCmd {
+    /// Export every model of this crate's generators (bikes, riders,
+    /// helmets) with their manifest entries; the plants come from
+    /// `cargo run -p ocw-render --example export-flora`.
+    ExportAll {
+        #[arg(long, default_value = "artwork/3dmodels")]
+        out: PathBuf,
+        /// Only check that the files and the manifest are what the
+        /// generators make (byte for byte).
+        #[arg(long)]
+        check: bool,
+    },
+}
+
+/// Writes (or with `check` compares) the exported files and the manifest.
+fn export_all(out: &std::path::Path, check: bool) -> ExitCode {
+    let files = ocw_assets::export::files();
+    let mut stale = 0;
+    for (e, bytes) in &files {
+        let path = out.join(&e.file);
+        if check {
+            if !std::fs::read(&path).is_ok_and(|old| old == *bytes) {
+                println!("{} differs", path.display());
+                stale += 1;
+            }
+            continue;
+        }
+        if let Some(dir) = path.parent()
+            && let Err(err) = std::fs::create_dir_all(dir)
+        {
+            eprintln!("{}: {err}", dir.display());
+            return ExitCode::FAILURE;
+        }
+        if let Err(err) = std::fs::write(&path, bytes) {
+            eprintln!("{}: {err}", path.display());
+            return ExitCode::FAILURE;
+        }
+        println!("{} ({} KiB)", path.display(), bytes.len() / 1024);
+    }
+    let manifest = out.join(ocw_assets::manifest::MANIFEST);
+    let old = std::fs::read_to_string(&manifest).unwrap_or_default();
+    let entries: Vec<_> = files.into_iter().map(|(e, _)| e).collect();
+    let text =
+        match ocw_assets::export::write_manifest(&old, &ocw_assets::export::OWN_PREFIXES, &entries)
+        {
+            Ok(t) => t,
+            Err(errors) => return report(&errors),
+        };
+    if check {
+        if text != old {
+            println!("{} differs", manifest.display());
+            stale += 1;
+        }
+    } else if let Err(err) = std::fs::write(&manifest, text) {
+        eprintln!("{}: {err}", manifest.display());
+        return ExitCode::FAILURE;
+    }
+    if stale > 0 {
+        eprintln!("{stale} stale: run `cargo run -p ocw-assets -- model export-all`");
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 #[derive(Subcommand)]
@@ -267,37 +338,24 @@ fn main() -> ExitCode {
     match Cli::parse().cmd {
         Cmd::Materials(m) => materials(m),
         Cmd::Parts(p) => parts(p),
-        Cmd::Generate { out, check } => {
-            let mut stale = 0;
-            for (name, bytes) in ocw_assets::generate() {
-                let path = out.join(&name);
-                if check {
-                    let same = std::fs::read(&path).is_ok_and(|old| old == bytes);
-                    if !same {
-                        println!("{} differs", path.display());
-                        stale += 1;
-                    }
-                    continue;
-                }
-                if let Err(e) = std::fs::write(&path, &bytes) {
-                    eprintln!("{}: {e}", path.display());
-                    return ExitCode::FAILURE;
-                }
-                println!("{} ({} KiB)", path.display(), bytes.len() / 1024);
-            }
-            if stale > 0 {
-                ExitCode::FAILURE
-            } else {
-                ExitCode::SUCCESS
-            }
+        Cmd::Generate { out, check } | Cmd::Model(ModelCmd::ExportAll { out, check }) => {
+            export_all(&out, check)
         }
         Cmd::Validate { dir } => match ocw_assets::manifest::validate_dir(&dir) {
             Ok(checked) => {
                 for c in &checked {
                     println!(
-                        "ok  {:24} {:?} {} triangles, {} ({})",
-                        c.entry.file, c.entry.kind, c.triangles, c.entry.license, c.entry.author
+                        "ok  {:44} {:9} {:6} triangles {:7} B, {} ({})",
+                        c.entry.file,
+                        c.entry.kind.name(),
+                        c.triangles,
+                        c.bytes,
+                        c.entry.license,
+                        c.entry.author
                     );
+                    for w in c.warnings() {
+                        eprintln!("warning: {w}");
+                    }
                 }
                 ExitCode::SUCCESS
             }
@@ -308,37 +366,31 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        Cmd::Info { file } => {
-            let bytes = match std::fs::read(&file) {
-                Ok(b) => b,
-                Err(e) => {
-                    eprintln!("{}: {e}", file.display());
-                    return ExitCode::FAILURE;
+        Cmd::Info { file } => match ocw_assets::glb::read_file(&file) {
+            Ok(m) => {
+                println!("copyright: {}", m.copyright);
+                if !m.extras.is_null() {
+                    println!("extras: {}", m.extras);
                 }
-            };
-            match ocw_assets::glb::read(&bytes) {
-                Ok(m) => {
-                    println!("copyright: {}", m.copyright);
-                    for (i, n) in m.nodes.iter().enumerate() {
-                        let depth = std::iter::successors(n.parent, |p| m.nodes[*p].parent).count();
-                        println!(
-                            "{:indent$}{} {:?} – {} triangles",
-                            "",
-                            n.name,
-                            m.position(&n.name).unwrap_or_default(),
-                            m.triangles_below(Some(i)),
-                            indent = depth * 2
-                        );
-                    }
-                    let mats: Vec<&str> = m.materials.iter().map(|x| x.name.as_str()).collect();
-                    println!("materials: {}", mats.join(", "));
-                    ExitCode::SUCCESS
+                for (i, n) in m.nodes.iter().enumerate() {
+                    let depth = std::iter::successors(n.parent, |p| m.nodes[*p].parent).count();
+                    println!(
+                        "{:indent$}{} {:?} – {} triangles",
+                        "",
+                        n.name,
+                        m.position(&n.name).unwrap_or_default(),
+                        m.triangles_below(Some(i)),
+                        indent = depth * 2
+                    );
                 }
-                Err(e) => {
-                    eprintln!("{}: {e}", file.display());
-                    ExitCode::FAILURE
-                }
+                let mats: Vec<&str> = m.materials.iter().map(|x| x.name.as_str()).collect();
+                println!("materials: {}", mats.join(", "));
+                ExitCode::SUCCESS
             }
-        }
+            Err(e) => {
+                eprintln!("{}: {e}", file.display());
+                ExitCode::FAILURE
+            }
+        },
     }
 }

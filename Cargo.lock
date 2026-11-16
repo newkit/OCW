@@ -6742,6 +6742,7 @@ dependencies = [
 name = "ocw-assets"
 version = "0.2.2"
 dependencies = [
+ "base64 0.22.1",
  "clap",
  "glam",
  "gltf",
@@ -6930,6 +6931,7 @@ dependencies = [
  "png",
  "raw-window-handle",
  "serde",
+ "serde_json",
  "texpresso",
  "toml",
  "ttf-parser",
