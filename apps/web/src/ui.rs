@@ -121,6 +121,8 @@ impl Plugin for WebUiPlugin {
             // Unicorn mode (spec §14 Phase 13 G5) with the page's Pointer
             // Lock and `window.ocw.god()`.
             crate::god::WebGodPlugin,
+            // Touch steering (spec §3.2.3), as on the desktop.
+            ocw_ui::touch::TouchSteerPlugin,
         ));
         if !app.world().contains_resource::<Downloads>() {
             app.insert_resource(Downloads::page());
@@ -144,7 +146,7 @@ impl Plugin for WebUiPlugin {
             Update,
             (record, show_video, audio_devices).after(ocw_ui::RideViewSet),
         )
-        .add_systems(Last, (publish, publish_console));
+        .add_systems(Last, (publish, publish_console, publish_steer));
         // The trusted world keys in the page's localStorage (spec §4.7
         // *User keys*); the built-in roots cannot be added.
         // (Always: the menu plugin above put an empty default there.)
@@ -251,6 +253,18 @@ static MENU_JSON: Mutex<String> = Mutex::new(String::new());
 
 /// The settings' text values for the page (`window.ocw.setting(key)`).
 static SETTINGS_TEXT: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+
+/// Touch steering's state for the page (`window.ocw.steer()`).
+static STEER_JSON: Mutex<String> = Mutex::new(String::new());
+
+/// The touch steering state as JSON (spec §3.2.3: the browser test).
+pub fn steer_json() -> String {
+    STEER_JSON.lock().expect("not poisoned").clone()
+}
+
+fn publish_steer(world: &mut World) {
+    *STEER_JSON.lock().expect("not poisoned") = ocw_ui::touch::state_json(world);
+}
 
 /// The menu as it shows now, as JSON.
 pub fn menu_json() -> String {

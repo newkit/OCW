@@ -49,6 +49,7 @@ pub mod sky;
 pub mod stamp;
 pub mod street_lamps;
 pub mod terrain;
+pub mod touch_hud;
 pub mod tunnel;
 pub mod tunnel_cut;
 pub mod unicorn;
@@ -465,6 +466,8 @@ impl Plugin for OcwRenderPlugins {
             webgl::WebGlPlugin,
             // Colour-safe status colours, high contrast (spec §3.2.1 M9).
             access::AccessPlugin,
+            // Touch steering's hints (spec §3.2.3).
+            touch_hud::TouchHudPlugin,
         ));
     }
 }

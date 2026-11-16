@@ -489,6 +489,9 @@ fn main() -> AppExit {
         // `display.quality` and the console's `quality` / `gpu` (spec §14
         // Phase 10 B7; auto is High here: the desktop's look).
         ocw_ui::quality::QualityPlugin,
+        // Touch steering on Windows / Linux touch screens (spec §3.2.3
+        // Q6), shared with the browser app.
+        ocw_ui::touch::TouchSteerPlugin,
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, timed_commands);

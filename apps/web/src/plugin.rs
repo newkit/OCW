@@ -977,4 +977,96 @@ mod tests {
         assert_eq!(p.stats.network_bytes, 0, "{p:?}");
         assert!(p.stats.cache_chunks > 0);
     }
+
+    /// Touch steering in the browser app (spec §3.2.3): synthetic touches
+    /// through Bevy's input (as winit delivers the page's touch pointers)
+    /// steer like the arrow keys – a tap +0.5 m, a hold as the held key –
+    /// and never end autodrive.
+    #[test]
+    fn synthetic_touches_steer_like_the_arrow_keys() {
+        use bevy::input::touch::{TouchInput, TouchPhase};
+        use bevy::time::TimeUpdateStrategy;
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::input::InputPlugin, ConsoleCorePlugin))
+            .insert_resource(TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_millis(20),
+            ))
+            .insert_resource(Time::<Fixed>::from_hz(f64::from(ocw_core::SIM_TICK_HZ)))
+            .insert_resource(RideView::new(ocw_world::Route::test_hills()))
+            .add_plugins(WebSessionPlugin {
+                config: SessionConfig::default(),
+            })
+            .add_plugins(crate::ui::WebUiPlugin::default());
+        for _ in 0..300 {
+            app.update();
+            if app
+                .world()
+                .resource::<Session>()
+                .0
+                .client
+                .rider_id()
+                .is_some()
+            {
+                break;
+            }
+        }
+        let line = |app: &App| {
+            app.world()
+                .resource::<Session>()
+                .0
+                .client
+                .line_target()
+                .unwrap_or(0.0)
+        };
+        app.world_mut()
+            .resource_mut::<Session>()
+            .0
+            .client
+            .steer_to(0.0);
+        let touch = |app: &mut App, phase, x: f32| {
+            app.world_mut().write_message(TouchInput {
+                phase,
+                position: Vec2::new(x, 500.0),
+                window: Entity::PLACEHOLDER,
+                force: None,
+                id: 1,
+            });
+        };
+        // A tap on the right half.
+        touch(&mut app, TouchPhase::Started, 1100.0);
+        app.update();
+        touch(&mut app, TouchPhase::Ended, 1100.0);
+        app.update();
+        let tapped = line(&app);
+        assert!((tapped - 0.5).abs() < 1e-6, "{tapped}");
+        // Held on the left for 20 frames (longer than a tap) = ← held for 20 frames.
+        touch(&mut app, TouchPhase::Started, 150.0);
+        for _ in 0..20 {
+            app.update();
+        }
+        touch(&mut app, TouchPhase::Ended, 150.0);
+        app.update();
+        let by_touch = tapped - line(&app);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ArrowLeft);
+        for _ in 0..20 {
+            app.update();
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::ArrowLeft);
+        app.update();
+        let by_key = tapped - by_touch - line(&app);
+        assert!((by_touch - by_key).abs() < 1e-6, "{by_touch} vs {by_key}");
+        assert!((by_touch - 0.8).abs() < 1e-6, "{by_touch}");
+        let s = &app.world().resource::<Session>().0;
+        assert!(s.client.autodrive());
+        let json = ocw_ui::touch::state_json(app.world());
+        assert!(json.contains("\"active\": true"), "{json}");
+        assert!(
+            json.contains("\"shown\": false"),
+            "the key hid the hints: {json}"
+        );
+    }
 }

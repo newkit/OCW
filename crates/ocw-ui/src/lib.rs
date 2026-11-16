@@ -19,6 +19,8 @@
 //!   options, [`history`]: the training history (spec §14 Phase 7),
 //! - [`trust`]: the trust dialog and the trusted world keys (spec §4.7
 //!   *User keys*), `world trust …`,
+//! - [`touch`]: touch steering in a ride (spec §3.2.3: the screen's
+//!   halves, the junction fan's arrows, two fingers for the camera),
 //! - [`join`]: Ride → Join – the link field, the recent servers, `join`,
 //!   `leave` (spec §3.2.1, §6.2 *Join links*).
 //!
@@ -40,6 +42,7 @@ pub mod quality;
 pub mod riders_page;
 pub mod settings;
 pub mod timemachine;
+pub mod touch;
 pub mod trust;
 pub mod weather;
 #[cfg(not(target_arch = "wasm32"))]
