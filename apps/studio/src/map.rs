@@ -661,13 +661,16 @@ fn paint_route(
         let pts: Vec<egui::Pos2> = r.line.iter().map(|p| pos([p[0], p[2]])).collect();
         painter.add(egui::Shape::line(
             pts.clone(),
-            egui::Stroke::new(6.0, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 150)),
+            egui::Stroke::new(
+                7.0,
+                egui::Color32::from_rgba_unmultiplied(255, 255, 255, 220),
+            ),
         ));
         for (k, w) in pts.windows(2).enumerate() {
             let g = r.grades.get(k).copied().unwrap_or(0.0);
             painter.line_segment(
                 [w[0], w[1]],
-                egui::Stroke::new(3.5, rgb(crate::routes::grade_rgb(g))),
+                egui::Stroke::new(4.0, rgb(crate::routes::grade_rgb(g))),
             );
         }
     }
@@ -681,12 +684,12 @@ fn paint_route(
         } else {
             egui::Color32::from_rgb(40, 120, 230)
         };
-        painter.circle_filled(c, 8.0, fill);
-        painter.circle_stroke(c, 8.0, egui::Stroke::new(1.5, egui::Color32::WHITE));
+        painter.circle_filled(c, 6.5, fill);
+        painter.circle_stroke(c, 6.5, egui::Stroke::new(1.5, egui::Color32::WHITE));
         if r.selected == Some(i) {
             painter.circle_stroke(
                 c,
-                12.0,
+                10.0,
                 egui::Stroke::new(2.5, egui::Color32::from_rgb(255, 230, 60)),
             );
         }
@@ -694,7 +697,7 @@ fn paint_route(
             c,
             egui::Align2::CENTER_CENTER,
             format!("{}", i + 1),
-            egui::FontId::proportional(10.0),
+            egui::FontId::proportional(9.0),
             egui::Color32::WHITE,
         );
     }

@@ -139,8 +139,8 @@ pub fn routes_panel(
     if let Some(p) = &view.profile {
         ui.label(
             egui::RichText::new(format!(
-                "{}  ↑ {:.0} m  ↓ {:.0} m  steepest {:+.1} % / {:+.1} %{}",
-                crate::map::format_length(p.length_m),
+                "{}   climbing {:.0} m, descent {:.0} m, steepest {:+.1} % / {:+.1} %{}",
+                distance(p.length_m),
                 p.gain_m,
                 p.loss_m,
                 p.max_grade * 100.0,
@@ -353,6 +353,15 @@ pub fn routes_panel(
         egui::RichText::new("Exported tracks follow OSM roads: © OpenStreetMap contributors")
             .weak(),
     );
+}
+
+/// A route distance: "13.29 km", "850 m".
+pub fn distance(m: f64) -> String {
+    if m >= 1000.0 {
+        format!("{:.2} km", m / 1000.0)
+    } else {
+        format!("{m:.0} m")
+    }
 }
 
 fn slug(name: &str) -> String {
@@ -576,7 +585,7 @@ pub fn profile_widget(ui: &mut egui::Ui, view: &RouteView, height: f32) {
     text(
         egui::pos2(inner.right(), rect.bottom() - 2.0),
         egui::Align2::RIGHT_BOTTOM,
-        crate::map::format_length(len),
+        distance(len),
     );
     text(
         egui::pos2(inner.left(), rect.bottom() - 2.0),
@@ -603,7 +612,7 @@ pub fn profile_widget(ui: &mut egui::Ui, view: &RouteView, height: f32) {
         text(
             egui::pos2(q.x + 4.0, inner.top()),
             egui::Align2::LEFT_TOP,
-            format!("{}  {:.0} m", crate::map::format_length(s[0]), s[1]),
+            format!("{}  {:.0} m", distance(s[0]), s[1]),
         );
     }
 }
@@ -611,6 +620,12 @@ pub fn profile_widget(ui: &mut egui::Ui, view: &RouteView, height: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn distances_are_rounded() {
+        assert_eq!(distance(13_291.404_8), "13.29 km");
+        assert_eq!(distance(849.6), "850 m");
+    }
 
     #[test]
     fn export_names_are_slugs() {

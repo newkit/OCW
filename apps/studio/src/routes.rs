@@ -164,6 +164,7 @@ impl Default for RouteTools {
 
 impl RouteTools {
     /// Tools for tests: no settings file.
+    #[cfg(test)]
     pub fn detached() -> Self {
         Self {
             settings: PlannerSettings::default(),
@@ -255,6 +256,8 @@ pub enum RouteCommand {
     /// Saves and starts `ocw-desktop --world … --route …`.
     TestRide,
     Seal,
+    /// Fits the 2D map to the route.
+    Fit,
 }
 
 impl Studio {
@@ -765,6 +768,7 @@ pub fn command(studio: &mut Studio, cmd: RouteCommand, now_s: f64) -> Result<Str
             }
             Ok(String::new())
         }
+        C::Fit => Ok(String::new()),
         C::Seal => {
             if let Ok(d) = studio.route_mut() {
                 d.seal();
@@ -977,6 +981,39 @@ pub fn route_view(
     v
 }
 
+/// The bounding box (x, z) of the route, its via-points and its track.
+pub fn route_extent(v: &RouteView) -> Option<([f64; 2], [f64; 2])> {
+    let pts = v
+        .line
+        .iter()
+        .map(|p| [p[0], p[2]])
+        .chain(v.vias.iter().copied())
+        .chain(v.track.iter().copied());
+    let mut ext: Option<([f64; 2], [f64; 2])> = None;
+    for p in pts {
+        let (lo, hi) = ext.get_or_insert((p, p));
+        for k in 0..2 {
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
+        }
+    }
+    ext
+}
+
+/// Makes the route's view now (else the next frame does).
+pub fn refresh_view(studio: &mut Studio) {
+    let (Some(doc), Some(net)) = (studio.route(), studio.routes.net.clone()) else {
+        return;
+    };
+    let package = studio.package.as_ref();
+    let surface = |e: usize| match package {
+        Some(p) => p.edge_surface(net.edge(e)).0,
+        None => ocw_world::RoadSurface::of_class(net.edge(e).class),
+    };
+    let view = route_view(doc, &net, &surface);
+    studio.routes.view = view;
+}
+
 /// Keeps [`RouteTools::view`] up to date; takes BRouter's answers; reaps a
 /// finished test ride.
 pub fn update_routes(mut studio: ResMut<Studio>, time: Res<Time<Real>>) {
@@ -1032,6 +1069,12 @@ pub fn update_routes(mut studio: ResMut<Studio>, time: Res<Time<Real>>) {
         None => ocw_world::RoadSurface::of_class(net.edge(e).class),
     };
     let view = route_view(doc, &net, &surface);
+    debug!(
+        "route view: {} points, {} via-points, error {:?}",
+        view.line.len(),
+        view.vias.len(),
+        view.error
+    );
     studio.routes.view = view;
 }
 
@@ -1053,7 +1096,7 @@ pub fn console_route(words: &[String]) -> Result<RouteCommand, String> {
             .ok_or_else(|| "via-points count from 1".into())
     };
     let rest = |i: usize| words.get(i..).map(|r| r.join(" ")).unwrap_or_default();
-    let usage = "studio route new [NAME] | import PATH | package N | plan X Z X Z … | via add X Z | via insert N X Z | via move N X Z | via remove N | drag GX GZ X Z | reverse | loop on|off | outback | cut start|end N | split N | profile road|gravel|mtb|quiet | name TEXT | planner builtin|brouter | brouter url URL | brouter profile P | brouter ok | brouter plan | export PATH | save [PATH] | testride";
+    let usage = "studio route new [NAME] | import PATH | package N | fit | plan X Z X Z … | via add X Z | via insert N X Z | via move N X Z | via remove N | drag GX GZ X Z | reverse | loop on|off | outback | cut start|end N | split N | profile road|gravel|mtb|quiet | name TEXT | planner builtin|brouter | brouter url URL | brouter profile P | brouter ok | brouter plan | export PATH | save [PATH] | testride";
     Ok(match (w(0), w(1)) {
         (Some("new"), _) => C::New((words.len() > 1).then(|| rest(1))),
         (Some("import"), Some(_)) => C::Import(rest(1)),
@@ -1096,6 +1139,7 @@ pub fn console_route(words: &[String]) -> Result<RouteCommand, String> {
         (Some("export"), Some(_)) => C::Export(rest(1), None),
         (Some("save"), _) => C::Save((words.len() > 1).then(|| rest(1))),
         (Some("testride"), _) => C::TestRide,
+        (Some("fit"), _) => C::Fit,
         _ => return Err(usage.into()),
     })
 }
@@ -1472,6 +1516,13 @@ mod tests {
             console_route(&w("loop on")).unwrap(),
             RouteCommand::Loop(true)
         );
+        assert_eq!(console_route(&w("fit")).unwrap(), RouteCommand::Fit);
+        let v = RouteView {
+            line: vec![[0.0, 5.0, 10.0], [30.0, 5.0, -20.0]],
+            ..Default::default()
+        };
+        assert_eq!(route_extent(&v), Some(([0.0, -20.0], [30.0, 10.0])));
+        assert_eq!(route_extent(&RouteView::default()), None);
         assert!(console_route(&w("via remove 0")).is_err());
         assert!(console_route(&w("plan 1 2 3")).is_err());
         assert!(

@@ -444,9 +444,14 @@ pub fn plan_leg(
 }
 
 /// Totally ordered f64 for the heap (costs are never NaN).
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct Ord64(f64);
 impl Eq for Ord64 {}
+impl PartialOrd for Ord64 {
+    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
 impl Ord for Ord64 {
     fn cmp(&self, o: &Self) -> std::cmp::Ordering {
         self.0.total_cmp(&o.0)

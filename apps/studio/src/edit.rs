@@ -409,6 +409,29 @@ pub fn apply(world: &mut World, cmd: StudioCommand) -> Result<String, String> {
             Ok(format!("looking at {:.0}, {:.0}", target[0], target[2]))
         }
         StudioCommand::Build(req) => start_build(&mut world.resource_mut::<Studio>(), req),
+        StudioCommand::Route(c) => {
+            let fit = matches!(
+                c,
+                crate::routes::RouteCommand::Import(_)
+                    | crate::routes::RouteCommand::PackageRoute(_)
+                    | crate::routes::RouteCommand::Fit
+            );
+            let msg = crate::routes::command(&mut world.resource_mut::<Studio>(), c, t)?;
+            if fit {
+                // The map shows the whole route (its view is made now).
+                crate::routes::refresh_view(&mut world.resource_mut::<Studio>());
+                let ext = crate::routes::route_extent(&world.resource::<Studio>().routes.view);
+                if let (Some((min, max)), Some(mut w)) =
+                    (ext, world.get_resource_mut::<crate::world::OpenWorld>())
+                {
+                    w.map_view = Some(crate::map::MapView {
+                        centre: [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5],
+                        m_per_px: ((max[0] - min[0]).max(max[1] - min[1]) / 420.0).max(0.5),
+                    });
+                }
+            }
+            Ok(msg)
+        }
         StudioCommand::GoToView(id) => {
             let view = world
                 .resource::<Studio>()
