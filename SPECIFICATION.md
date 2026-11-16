@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.86 – November 2026
+Version 3.87 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.87 | **Character editor: the body has two dimensions – base body A / B / C (shoulders, hips, chest) and the seven-step shape** (decision by the user, 2026-11-16; §14 Phase 4 4N Q6b) |
 | 3.86 | **Character editor: seven body shapes (anorexia, skinny, slim, normal, ample, fat, obese), unique names without a filter, every script, age on face, body, skin and hair, no renaming during a ride** (decisions by the user, 2026-11-16; §14 Phase 4 4N Q6, Q7, Q8, Q9, Q11, Q12, Q15). New follow-ups Q6b (shoulder / hip / chest variants next to the shapes?) and Q8b (unique per server or reserved per account?); Q10, Q13, Q14 stay open |
 | 3.85 | **A touch does not switch autodrive off: in autodrive it moves the line, only the autodrive button ends it** (decision from the build dashboard, 2026-11-16; §3.2.3 Q3, as proposed) |
 | 3.84 | **Touch lean steering works like the keys: the lean stays after the finger lifts, the other side straightens it** (decision from the build dashboard, 2026-11-16; §3.2.3 Q2, as proposed) |
@@ -3231,7 +3232,7 @@ The first catalogue (about 30 entries; base parts at 0 ♥ for every slot and bi
 **N14 – Milestones (proposal):** **C1** name rules, the server's check, the account's rider name (after Q8 – Q11); **C2** data model v2, migration, protocol fields; **C3** facial hair split, the hair catalogue with the helmet fit, colours with roots; **C4** base bodies (after Q6, Q7) and the build slider (after Q13); **C5** age (after Q12); **C6** the new flow (categories, randomise, presets, on-screen keyboard) and the move into `ocw_client::workshop` / `ocw-ui::workshop` for the browser; **C7** the far-LOD look, extras (after Q14).
 
 **N15 – Open questions (for the user):**
-- **Q6 – How many base bodies: decided (2026-11-16, the user): seven body shapes** – the user: "anorexia, skinny, slim, normal, ample, fat, obese". The body choice is a scale of seven named shapes (N2 / N4 build), from very thin to very heavy. **Follow-up Q6b (open):** do the shoulder / hip / chest variants of the former base bodies A / B / C still exist next to the seven shapes (a second choice), or is the shape scale the only body choice?
+- **Q6 – How many base bodies: decided (2026-11-16, the user): seven body shapes** – the user: "anorexia, skinny, slim, normal, ample, fat, obese". The body choice is a scale of seven named shapes (N2 / N4 build), from very thin to very heavy. **Q6b – decided (2026-11-16, the user): yes, as a second dimension** – "keep the shoulder/hip/chest variants in as a second dimension": the body is chosen in two independent dimensions, the **base body** A / B / C (shoulders, hips, chest; N2) and the **shape** of the seven steps (build; N4); every combination exists.
 - **Q7 – How the body choice is labelled: decided (2026-11-16, the user):** with the seven words of Q6 (anorexia, skinny, slim, normal, ample, fat, obese), each with its picture; no pronoun or gender field (unchanged).
 - **Q8 – Unique names: decided (2026-11-16, the user): names must be unique** – the user: "names must be unique". No "(2)" suffixes. **Follow-up Q8b (open):** unique where – per server (a second rider with a taken name is asked to pick another when joining), or reserved per account worldwide (a name belongs to one account; riders without an account are unique per server)?
 - **Q9 – Offensive names: decided (2026-11-16, the user): no filter** – the user: "do not block any names". No deny-list in the editor or on servers; `name::check` keeps only the technical rules of N1 (length, NFC, no control or invisible characters).
