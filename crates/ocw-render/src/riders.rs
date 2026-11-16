@@ -502,6 +502,11 @@ pub fn hidden_rider_nodes(look: Option<&RiderLook>, kit: &[String]) -> Vec<&'sta
     if l.design.number > 0 {
         shown.extend(ocw_assets::rider::opt::HIP_NUMBER);
     }
+    // The pockets' top band in the pattern colour when the jersey
+    // designer has a second colour (spec §2.6, Phase 8 T6).
+    if l.design.second.is_some() && shown.contains(&ocw_assets::rider::POCKETS) {
+        shown.push(ocw_assets::rider::POCKET_BAND);
+    }
     ocw_assets::rider::optional()
         .into_iter()
         .filter(|n| !shown.contains(n))
@@ -1794,6 +1799,16 @@ mod tests {
         }
         assert!(hidden_rider_nodes(Some(&look), &[]).contains(&nodes::HELMET_AERO));
         assert!(!hidden_rider_nodes(Some(&look), &[]).contains(&nodes::HELMET_ROAD));
+        // The back pockets (spec §2.6): on every jersey but the skinsuit,
+        // their accent band only with the designer's second colour.
+        use ocw_assets::rider::{POCKET_BAND, POCKETS};
+        let plain = hidden_rider_nodes(Some(&look), &[]);
+        assert!(!plain.contains(&POCKETS) && plain.contains(&POCKET_BAND));
+        let mut accent = look;
+        accent.design.second = Some(ocw_core::Rgb(0x101010));
+        assert!(!hidden_rider_nodes(Some(&accent), &[]).contains(&POCKET_BAND));
+        let suit = hidden_rider_nodes(Some(&accent), &["skinsuit".to_string()]);
+        assert!(suit.contains(&POCKETS) && suit.contains(&POCKET_BAND));
     }
 
     /// Materials per node and LOD (spec §14 Phase 8 T6): every near part

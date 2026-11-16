@@ -2726,3 +2726,90 @@ world = true
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-3116.9,488.5", "--bots", "0", "--power", "0"]
 at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 200 38 24"]
 shot = 9
+
+# --- Rider clothing: bib under the jersey, back pockets (bug 2026-11-16) ------
+# The same views before / after the fix (spec §2.6, Phase 4 4C, Phase 8 T6).
+
+[[scene]]
+name = "bib-chase-riding"
+description = "Bib under the jersey (bug 2026-11-16): chase camera behind the own rider riding seated on the flat of the Hills route"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81"]
+shot = 9
+
+[[scene]]
+name = "bib-close-side-riding"
+description = "Bib under the jersey: close orbit from the left side (2.2 m), riding seated in the crouch on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2.5=camera.orbit 90 4 2.2"]
+shot = 9
+
+[[scene]]
+name = "bib-close-back-riding"
+description = "Bib under the jersey and the jersey's back pockets: close orbit from behind and above (2 m), riding seated"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2.5=camera.orbit 20 14 2.0"]
+shot = 9
+
+[[scene]]
+name = "bib-close-front-riding"
+description = "Bib under the jersey: close orbit from the front left (2.2 m), riding seated: the belly over the bib's front"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2.5=camera.orbit 150 4 2.2"]
+shot = 9
+
+[[scene]]
+name = "bib-close-side-standing"
+description = "Bib under the jersey: close orbit from the left side, standing on the pedals on the 11.5 % ramp of the Hills route"
+args = ["--route", "hills", "--bots", "0", "--power", "420"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 3.82", "2.5=camera.orbit 90 4 2.2"]
+shot = 9
+
+[[scene]]
+name = "bib-close-back-standing"
+description = "Bib under the jersey and the back pockets: close orbit from behind, standing on the pedals on the 11.5 % ramp"
+args = ["--route", "hills", "--bots", "0", "--power", "420"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 3.82", "2.5=camera.orbit 20 14 2.0"]
+shot = 9
+
+[[scene]]
+name = "bib-close-side-sprint"
+description = "Bib under the jersey: close orbit from the left side, sprinting at 1100 W on the flat"
+args = ["--route", "hills", "--bots", "0", "--power", "1100"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2.5=camera.orbit 90 4 2.2"]
+shot = 9
+
+[[scene]]
+name = "bib-close-side-strong"
+description = "Bib under the jersey: the strong body build, close orbit from the left side, riding seated"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --build strong", "2.5=teleport 0.81", "2.5=camera.orbit 90 4 2.2"]
+shot = 9
+
+[[scene]]
+name = "bib-close-back-slim"
+description = "Bib under the jersey and the back pockets: the slim body build, close orbit from behind, riding seated"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --build slim", "2.5=teleport 0.81", "2.5=camera.orbit 20 14 2.0"]
+shot = 9
+
+[[scene]]
+name = "bib-workshop-mirror"
+description = "Bib under the jersey: the rider at the workshop mirror (changing corner), front view of the kit"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=workshop open", "2.6=workshop mirror"]
+shot = 20
+
+[[scene]]
+name = "bib-pockets-close"
+description = "The jersey's three back pockets close up (1.3 m from behind and above), riding seated: the panel with its seams, the band at the openings, the bib under the jersey"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2.5=camera.orbit 8 32 1.3"]
+shot = 9
+
+[[scene]]
+name = "bib-pockets-accent"
+description = "The back pockets with the jersey designer's second colour set: the band at the openings in the pattern colour, close up from behind, on a dark blue jersey"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=kit.design --jersey #1E3A8A --second #FDD835", "2.5=teleport 0.81", "2.5=camera.orbit 8 32 1.3"]
+shot = 9
