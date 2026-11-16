@@ -756,6 +756,7 @@ mod tests {
             crash: None,
             wobble: 0.0,
             damage: None,
+            cue: Default::default(),
         });
         let l = hud_line(&v);
         assert!(
