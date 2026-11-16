@@ -297,6 +297,29 @@ pub fn stream_radius_for(view_m: Option<f32>) -> i32 {
     }
 }
 
+/// Up to this view distance the fog has the atmosphere's horizon colour
+/// (distant terrain fades into the sky) …
+pub const HORIZON_FOG_FULL_M: f32 = 30_000.0;
+/// … from this one on (and unlimited) the light model's, the look of High
+/// before the render distance; linear between.
+pub const HORIZON_FOG_NONE_M: f32 = 60_000.0;
+
+/// How much of the fog's colour is the atmosphere's horizon at a view
+/// distance (0 … 1; `None`: unlimited → 0): a limited view fogs whole
+/// mountains out, and they must fade into the sky, not stand in front of
+/// it as flat shapes in a darker colour (spec §14 Phase 10, 10G). A
+/// weather fog (`weather_vis_m`) nearer than the view distance keeps the
+/// weather's colour (none at or below the distance, all from twice it).
+pub fn horizon_fog_share(view_m: Option<f32>, weather_vis_m: Option<f32>) -> f32 {
+    let Some(v) = view_m else {
+        return 0.0;
+    };
+    let by_view =
+        ((HORIZON_FOG_NONE_M - v) / (HORIZON_FOG_NONE_M - HORIZON_FOG_FULL_M)).clamp(0.0, 1.0);
+    let by_weather = weather_vis_m.map_or(1.0, |w| (w / v.max(1.0) - 1.0).clamp(0.0, 1.0));
+    by_view * by_weather
+}
+
 /// Seconds the fog takes to follow a new render distance (95 % of the
 /// way).
 pub const FOG_EASE_S: f32 = 2.0;
@@ -598,6 +621,42 @@ mod tests {
         assert!((crate::far_terrain::fog_reach(&fog) - 2_000.0).abs() < 100.0);
         let (far_m, _) = limit_view_to(None, 120_000.0, clear);
         assert_eq!(far_m, 120_000.0);
+    }
+
+    /// Regression (10G, the flat silhouette): the fog takes the
+    /// atmosphere's horizon colour where the view is limited – fully up to
+    /// 30 km (Medium, Low, short distances), not at all unlimited (High's
+    /// look unchanged) – and the mix is in linear light.
+    #[test]
+    fn the_fog_colour_follows_the_view_limit() {
+        assert_eq!(horizon_fog_share(None, None), 0.0);
+        for km in [1.0, 2.0, 8.0, 12.0, 30.0] {
+            assert_eq!(horizon_fog_share(Some(km * 1000.0), None), 1.0, "{km}");
+        }
+        assert!((horizon_fog_share(Some(45_000.0), None) - 0.5).abs() < 1e-6);
+        assert_eq!(horizon_fog_share(Some(60_000.0), None), 0.0);
+        assert_eq!(horizon_fog_share(Some(200_000.0), None), 0.0);
+        // A weather fog nearer than the view: the weather's colour.
+        assert_eq!(horizon_fog_share(Some(12_000.0), Some(600.0)), 0.0);
+        assert_eq!(horizon_fog_share(Some(12_000.0), Some(12_000.0)), 0.0);
+        assert!((horizon_fog_share(Some(12_000.0), Some(18_000.0)) - 0.5).abs() < 1e-6);
+        assert_eq!(horizon_fog_share(Some(12_000.0), Some(50_000.0)), 1.0);
+        let mut last = 1.0;
+        for km in 1..=60 {
+            let s = horizon_fog_share(Some(km as f32 * 1000.0), None);
+            assert!(s <= last, "falls with the distance");
+            last = s;
+        }
+        use crate::sky::mix_linear;
+        let a = [0.62, 0.78, 0.95];
+        let b = [1.2, 1.3, 1.4];
+        let same = |x: [f32; 3], y: [f32; 3]| x.iter().zip(y).all(|(p, q)| (p - q).abs() < 1e-5);
+        assert!(same(mix_linear(a, b, 0.0), a));
+        assert!(same(mix_linear(a, b, 1.0), b));
+        // Halfway in linear light is brighter than halfway in sRGB.
+        let mid = mix_linear([0.0; 3], [1.0; 3], 0.5);
+        assert!((mid[0] - 0.7354).abs() < 1e-3, "{mid:?}");
+        assert!(same(mix_linear(a, b, 7.0), b), "clamped");
     }
 
     /// The fog eases to a new distance over about 2 s (no jump), also to

@@ -70,6 +70,12 @@ pub struct SkySettings {
     pub night_floor: f32,
     pub mode: SkyMode,
     pub lights: LightsMode,
+    /// The fog's colour (sRGB, before the weather greys it) instead of the
+    /// light model's (`sky.fog R G B`: comparisons and calibration).
+    pub fog_override: Option<[f32; 3]>,
+    /// The light model's fog colour also under the atmosphere (`sky.fog
+    /// legacy`: the look before 10G, for comparisons).
+    pub legacy_fog: bool,
 }
 
 impl Default for SkySettings {
@@ -78,6 +84,8 @@ impl Default for SkySettings {
             night_floor: ocw_sky::light::DEFAULT_NIGHT_FLOOR,
             mode: SkyMode::Atmosphere,
             lights: LightsMode::Auto,
+            fog_override: None,
+            legacy_fog: false,
         }
     }
 }
@@ -200,6 +208,27 @@ fn srgb(c: [f32; 3]) -> Color {
     Color::srgb(c[0], c[1], c[2])
 }
 
+/// `a` → `b` by `t` (0 … 1), mixed in linear light; sRGB in and out
+/// (values above 1 allowed).
+pub fn mix_linear(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    let t = t.clamp(0.0, 1.0);
+    let to = |c: f32| {
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let from = |l: f32| {
+        if l <= 0.003_130_8 {
+            12.92 * l
+        } else {
+            1.055 * l.powf(1.0 / 2.4) - 0.055
+        }
+    };
+    [0, 1, 2].map(|i| from(to(a[i]) + (to(b[i]) - to(a[i])) * t))
+}
+
 fn linear(c: [f32; 3]) -> Color {
     Color::linear_rgb(c[0], c[1], c[2])
 }
@@ -239,6 +268,7 @@ fn apply_sky(
     mut scene: Option<ResMut<crate::weather::SceneLight>>,
     mut commands: Commands,
     support: Res<AtmosphereSupport>,
+    quality: Option<Res<crate::quality::RenderQuality>>,
 ) {
     let Some(sky) = view.as_ref().and_then(|v| v.sky.as_ref()) else {
         return;
@@ -314,11 +344,36 @@ fn apply_sky(
         a.color = linear(ambient_rgb);
     }
     // Grey fog and plain sky under clouds, darker in a storm.
-    let fog_srgb = greyed(light.fog_srgb, grey, cl.map_or(0.0, |c| c.darkness));
+    // The fog's colour: with the atmosphere its horizon as drawn (distant
+    // terrain fades into the sky, spec §14 Phase 10, 10G), with the simple
+    // sky the light model's (the sky is that colour).
+    // Only where the view is limited (the render distance, a preset): the
+    // unlimited view keeps the look it had.
+    // A weather fog nearer than the view distance keeps its own colour
+    // (the clouds' haze mixes the same into the sky).
+    let weather_vis = view
+        .as_deref()
+        .and_then(|v| crate::weather::fog_visibility(v, clouds.as_deref()));
+    let share = quality.as_deref().map_or(0.0, |q| {
+        crate::quality::horizon_fog_share(q.0.view_m, weather_vis)
+    });
+    let base_fog = match settings.fog_override {
+        Some(c) => c,
+        None if atmosphere && !settings.legacy_fog && share > 0.0 => mix_linear(
+            light.fog_srgb,
+            ocw_sky::light::atmosphere_fog_srgb(sky.sky.sun.elevation_deg),
+            share,
+        ),
+        None => light.fog_srgb,
+    };
+    let darkness = cl.map_or(0.0, |c| c.darkness);
     // A flash lights the rain and the haze too.
-    let fog_srgb = flashed(fog_srgb, flash);
+    let fog_srgb = flashed(greyed(base_fog, grey, darkness), flash);
+    // The plain sky and the weather's haze in the clouds keep the light
+    // model's colour (the clouds' haze is the sky's, not the view's limit).
+    let haze_srgb = flashed(greyed(light.fog_srgb, grey, darkness), flash);
     if let Some(mut c) = clear {
-        let want = srgb(fog_srgb);
+        let want = srgb(haze_srgb);
         if c.0 != want {
             c.0 = want;
         }
@@ -344,7 +399,7 @@ fn apply_sky(
             ambient: ambient_now,
             ambient_rgb: Vec3::from(ambient_rgb),
             fog: {
-                let l = srgb(fog_srgb).to_linear();
+                let l = srgb(haze_srgb).to_linear();
                 Vec3::new(l.red, l.green, l.blue)
             },
             flash,
@@ -791,6 +846,45 @@ fn register_commands(app: &mut App) {
                 }
                 SkyMode::Atmosphere => "sky atmosphere".into(),
                 SkyMode::Simple => "sky simple".into(),
+            })
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("sky.fog")
+            .about("The fog's colour: auto (the sky's horizon), legacy (the light model's, as before 10G), or R G B in sRGB 0-4 (comparisons); without an argument: what runs")
+            .arg(Arg::new("rgb").num_args(0..=3)),
+        |world, m| {
+            let words: Vec<String> = m
+                .get_many::<String>("rgb")
+                .map(|v| v.cloned().collect())
+                .unwrap_or_default();
+            let mut s = world.resource_mut::<SkySettings>();
+            match words.as_slice() {
+                [] => {}
+                [w] if w == "auto" => {
+                    s.fog_override = None;
+                    s.legacy_fog = false;
+                }
+                [w] if w == "legacy" => {
+                    s.fog_override = None;
+                    s.legacy_fog = true;
+                }
+                [r, g, b] => {
+                    let p = |t: &String| {
+                        t.parse::<f32>()
+                            .ok()
+                            .filter(|v| (0.0..=4.0).contains(v))
+                            .ok_or_else(|| format!("not a colour value: {t}"))
+                    };
+                    s.fog_override = Some([p(r)?, p(g)?, p(b)?]);
+                }
+                _ => return Err("sky.fog auto | R G B".into()),
+            }
+            Ok(match (s.fog_override, s.legacy_fog) {
+                (Some(c), _) => format!("fog colour {:.3} {:.3} {:.3} (chosen)", c[0], c[1], c[2]),
+                (None, true) => "fog colour legacy (the light model's)".into(),
+                (None, false) => "fog colour auto (the sky's horizon)".into(),
             })
         },
     ))

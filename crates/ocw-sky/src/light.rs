@@ -109,6 +109,39 @@ const HORIZON: [(f64, [f64; 3]); 8] = [
     (90.0, [0.62, 0.78, 0.95]),
 ];
 
+/// The fog's colour where the sky is the renderer's atmosphere (sRGB
+/// input to the fog, by sun elevation): the colour that, mixed into the
+/// scene and tonemapped like it, shows as the atmosphere's horizon, so
+/// distant terrain fades into the sky instead of standing in front of it
+/// as a flat shape (spec §14 Phase 10, 10G). Measured on Bevy's
+/// atmosphere: the sky just above the horizon against fully fogged
+/// terrain in Las Cañadas (Tenerife, 13 Nov, `sky.fog`, 2026-11-16), the
+/// light model's fog corrected by the ratio of the two in linear light
+/// (three rounds: the tonemapping compresses the bright end; the clouds'
+/// haze keeps the light model's colour, so the sky stays as it was).
+/// Above 1: the fog is mixed in before the tonemapping, which compresses
+/// the bright sky. The sky toward the sun and away from it differ by
+/// less than 0.05 there, so one colour for every direction.
+const ATMOSPHERE_HORIZON: [(f64, [f64; 3]); 10] = [
+    (-23.0, [0.042, 0.029, 0.020]),
+    (-7.2, [0.113, 0.097, 0.083]),
+    (-1.8, [0.495, 0.278, 0.123]),
+    (2.4, [1.328, 1.279, 1.217]),
+    (6.3, [1.214, 1.344, 1.399]),
+    (11.2, [1.131, 1.328, 1.470]),
+    (19.7, [1.067, 1.287, 1.471]),
+    (34.2, [1.011, 1.237, 1.453]),
+    (42.2, [0.973, 1.205, 1.409]),
+    (90.0, [0.973, 1.205, 1.409]),
+];
+
+/// The fog's colour (sRGB input, may exceed 1) where the sky is the
+/// renderer's atmosphere, at an apparent sun elevation (°):
+/// [`ATMOSPHERE_HORIZON`], linear between its keys.
+pub fn atmosphere_fog_srgb(el_deg: f64) -> [f32; 3] {
+    keyed(&ATMOSPHERE_HORIZON, el_deg).map(|c| c as f32)
+}
+
 fn keyed(keys: &[(f64, [f64; 3])], x: f64) -> [f64; 3] {
     if x <= keys[0].0 {
         return keys[0].1;
@@ -282,6 +315,52 @@ mod tests {
         }
         let night = light(-40.0, 0.2);
         assert!(lum(night.fog_srgb) < 0.12 && lum(night.fog_srgb) > 0.05);
+    }
+
+    /// Regression (10G, the flat silhouette at short render distances):
+    /// under the atmosphere the fog takes the horizon's colour as drawn –
+    /// brighter than the light model's (its tonemapping compresses the
+    /// sky), the measured keys exactly, continuous between them, warm
+    /// right after sunset, dark at night, never negative or absurd.
+    #[test]
+    fn the_fog_under_the_atmosphere_is_its_horizon() {
+        // The measured keys.
+        for (el, rgb) in ATMOSPHERE_HORIZON {
+            let got = atmosphere_fog_srgb(el);
+            for i in 0..3 {
+                assert!((f64::from(got[i]) - rgb[i]).abs() < 1e-6, "{el}°");
+            }
+        }
+        // By day brighter than the light model's fog in every channel
+        // (the flat shape was darker than the sky).
+        for el in [3.0, 10.0, 20.0, 45.0, 70.0] {
+            let atmo = atmosphere_fog_srgb(el);
+            let model = light(el, DEFAULT_NIGHT_FLOOR).fog_srgb;
+            for i in 0..3 {
+                assert!(atmo[i] > model[i], "{el}°: {atmo:?} vs {model:?}");
+            }
+            // Blue above red by day (a clear sky).
+            if el >= 10.0 {
+                assert!(atmo[2] > atmo[0], "{el}°: {atmo:?}");
+            }
+        }
+        // Continuous: no jump over 0.15 per 0.5° anywhere.
+        let mut last = atmosphere_fog_srgb(-30.0);
+        let mut el = -30.0;
+        while el < 90.0 {
+            el += 0.5;
+            let now = atmosphere_fog_srgb(el);
+            for i in 0..3 {
+                assert!((now[i] - last[i]).abs() < 0.15, "{el}°: {last:?} → {now:?}");
+                assert!((0.0..=1.5).contains(&now[i]), "{el}°: {now:?}");
+            }
+            last = now;
+        }
+        // Warm just after sunset, dark at night.
+        let dusk = atmosphere_fog_srgb(-1.8);
+        assert!(dusk[0] > dusk[1] && dusk[1] > dusk[2], "{dusk:?}");
+        let night = atmosphere_fog_srgb(-30.0);
+        assert!(night.iter().all(|c| *c < 0.05), "{night:?}");
     }
 
     #[test]

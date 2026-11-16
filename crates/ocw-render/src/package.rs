@@ -132,6 +132,7 @@ impl Plugin for PackagePlugin {
             .init_resource::<NeighbourLoads>()
             .init_resource::<crate::flight_world::FlightObstacles>()
             .init_resource::<crate::far_terrain::FarTerrain>()
+            .init_resource::<crate::far_terrain::FarCull>()
             .add_systems(Startup, setup_materials)
             .add_systems(
                 Update,
@@ -148,6 +149,7 @@ impl Plugin for PackagePlugin {
             )
             .add_systems(Update, crate::far_terrain::package_view)
             .add_systems(Update, crate::flight_world::show_details);
+        crate::far_terrain::register_commands(app);
     }
 }
 
