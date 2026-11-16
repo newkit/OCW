@@ -296,6 +296,13 @@ pub fn view_json(v: &ocw_render::menu::MenuView) -> String {
         "dimmed": v.dimmed,
         "emphasis": v.emphasis,
         "grid": v.grid.as_ref().map(|g| g.columns),
+        // The calendar's month and its marked days (spec §14 Phase 9 S9a).
+        "calendar": v.calendar.as_ref().map(|c| serde_json::json!({
+            "title": c.title,
+            "selected": c.days.iter().position(|d| d.selected),
+            "bands": c.days.iter().filter(|d| d.band.is_some()).count(),
+            "moon": c.days.iter().filter(|d| d.moon.is_some()).count(),
+        })),
     })
     .to_string()
 }

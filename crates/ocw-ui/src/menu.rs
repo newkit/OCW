@@ -131,7 +131,9 @@ impl Plugin for MenuPlugin {
             .init_resource::<MenuRideMode>()
             .add_systems(
                 Update,
-                (menu_input, write_view).chain().after(crate::ViewExtrasSet),
+                (menu_input, crate::calendar::prepare, write_view)
+                    .chain()
+                    .after(crate::ViewExtrasSet),
             )
             .console_command(ConsoleCommand::new(
                 Permission::User,
@@ -280,7 +282,13 @@ pub fn sub_rows(world: &World, page: sub::Page) -> Vec<Row> {
             .get_resource::<TimeMachine>()
             .map(|t| t.0.clone())
             .unwrap_or_default();
-        ocw_client::menu::time::rows(&info)
+        ocw_client::menu::time::rows(&info, calendar_info(world))
+    } else if let sub::Page::Calendar(c) = page {
+        ocw_client::menu::calendar::rows(&c, calendar_info(world))
+    } else if let sub::Page::CalendarDates(c) = page {
+        ocw_client::menu::calendar::dates_rows(&c, calendar_info(world))
+    } else if page == sub::Page::Season {
+        ocw_client::menu::calendar::season_rows(calendar_info(world))
     } else if page.is_weather_page() {
         let w = world
             .get_resource::<WeatherMenu>()
@@ -319,6 +327,16 @@ pub fn sub_rows(world: &World, page: sub::Page) -> Vec<Row> {
         rows
     };
     for_platform(rows, platform(world))
+}
+
+/// The calendar's knowledge of the clock and the place (empty without the
+/// time machine's plugin).
+fn calendar_info(world: &World) -> &ocw_client::menu::calendar::CalendarInfo {
+    static EMPTY: std::sync::OnceLock<ocw_client::menu::calendar::CalendarInfo> =
+        std::sync::OnceLock::new();
+    world
+        .get_resource::<crate::calendar::CalendarMenu>()
+        .map_or_else(|| EMPTY.get_or_init(Default::default), |c| &c.0)
 }
 
 /// Text of a page beyond its fixed description.
@@ -391,6 +409,10 @@ fn menu_input(world: &mut World) {
         .get_resource::<AccumulatedMouseMotion>()
         .is_some_and(|m| m.delta != Vec2::ZERO);
     let pointer_events = std::mem::take(&mut world.resource_mut::<MenuPointer>().0);
+    let calendar_open = matches!(
+        world.resource::<MenuState>().menu.page(),
+        Some(Page::Sub(sub::Page::Calendar(_)))
+    );
     let mut actions = std::mem::take(&mut world.resource_mut::<MenuState>().queued);
     let results =
         !open && !console_open && crate::client(world).is_some_and(|c| c.results_showing(now));
@@ -427,6 +449,12 @@ fn menu_input(world: &mut World) {
             MenuPointerEvent::Click(i) => Some(Action::Click(i)),
             MenuPointerEvent::Step(i, dir) => Some(Action::Step(i, dir)),
             MenuPointerEvent::Back => Some(Action::Back),
+            // A swipe over the calendar: the next / previous month.
+            MenuPointerEvent::Swipe(dir) => calendar_open.then_some(if dir > 0 {
+                Action::TabNext
+            } else {
+                Action::TabPrev
+            }),
         }));
     }
     let mut lines = Vec::new();
@@ -477,7 +505,7 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
         _ => Vec::new(),
     };
     let (trust_status, trust_text, emphasis) = trust_view(world, menu, page);
-    MenuView {
+    let mut view = MenuView {
         open: true,
         // The trust dialog's warning, world and data sources all fit.
         wide: page == Page::ConfirmTrust,
@@ -505,6 +533,15 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
                 .map(|d| ocw_client::menu::devices::status(p, d))
                 .unwrap_or_default(),
             (Page::Sub(sub::Page::BindGroup(g)), _, _) => crate::bindings::status(world, Some(g)),
+            // Who sets the time; the calendar's focused day (spec §14
+            // Phase 9 S9).
+            (Page::Sub(sub::Page::TimeMachine), _, _) => world
+                .get_resource::<TimeMachine>()
+                .map(|t| ocw_client::menu::time::status(t))
+                .unwrap_or_default(),
+            (Page::Sub(sub::Page::Calendar(c)), _, _) => {
+                ocw_client::menu::calendar::status(&c, calendar_info(world), menu.focus())
+            }
             (Page::Sub(sub::Page::Bindings), _, _) => crate::bindings::status(world, None),
             _ => String::new(),
         },
@@ -529,7 +566,7 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
         hint: ocw_client::menu::hint(page, menu.list_pages(), menu.depth()),
         dimmed: menu.dimmed(),
         grid: match page {
-            Page::Sub(p) if p.grid_columns().is_some() => {
+            Page::Sub(p @ sub::Page::WeatherPresets) if p.grid_columns().is_some() => {
                 let clear = WeatherMenu::default();
                 Some(ocw_client::menu::weather::grid(weather.unwrap_or(&clear)))
             }
@@ -564,7 +601,21 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
             (Page::Sub(p), Some(h)) => ocw_client::menu::history::chart(p, h),
             _ => None,
         },
+        // The month grid (spec §14 Phase 9 S9a).
+        calendar: match page {
+            Page::Sub(p @ sub::Page::Calendar(c)) => Some(ocw_client::menu::calendar::view(
+                &c,
+                calendar_info(world),
+                &sub_rows(world, p),
+            )),
+            _ => None,
+        },
+    };
+    // The calendar's title is its month.
+    if let Some(c) = &view.calendar {
+        view.title = c.title.clone();
     }
+    view
 }
 
 /// The trust pages' status, text and large fingerprint (spec §4.7).

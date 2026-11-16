@@ -3,7 +3,8 @@ parity), used by scripts/test-web.py after the ride:
 
 - drives the in-game menu with the keyboard (CDP key events → the canvas):
   the top page (no Quit, Captures), Settings → Display (a setting changed
-  with →), World → Weather (the weather machine), Navi → Riders in this
+  with →), World → Weather (the weather machine), World → Time →
+  Calendar (the month grid, spec §14 Phase 9 S9a), Navi → Riders in this
   ride (the rider list);
 - the HUD with weather and wind and the damage widget;
 - a fake gamepad (`navigator.getGamepads`, the standard mapping) opens and
@@ -29,7 +30,7 @@ parity), used by scripts/test-web.py after the ride:
   halves does not steer and neither zooms nor scrolls the page; a key
   hides the hints.
 
-Screenshots: BASE-touch-hints.jpg, -touch-hold.jpg, -menu.jpg, -settings.jpg, -weather.jpg, -hud.jpg,
+Screenshots: BASE-touch-hints.jpg, -touch-hold.jpg, -menu.jpg, -settings.jpg, -weather.jpg, -calendar.jpg, -hud.jpg,
 -console.jpg, -gps.jpg, -riders.jpg, -gamepad.jpg, -unicorn-flight.jpg,
 -unicorn-inspect.jpg, -unicorn-menu.jpg. Each check is a (name, ok,
 detail) row in the summary.
@@ -48,6 +49,8 @@ KEYS = {
     "ArrowRight": ("ArrowRight", 39, ""),
     "Tab": ("Tab", 9, ""),
     "Shift": ("ShiftLeft", 16, ""),
+    "PageUp": ("PageUp", 33, ""),
+    "PageDown": ("PageDown", 34, ""),
     # Unicorn mode (spec §14 Phase 13 G5): G, I, P by position, + by what
     # it types (the US `=` key typing "+": `KeyboardEvent.key`).
     "g": ("KeyG", 71, "g"),
@@ -584,6 +587,38 @@ class UiTest:
         self.pump(0.5)
         self.key("Escape")
         self.shot("weather")
+        self.close_menu()
+
+        # World → Time → Calendar (spec §14 Phase 9 S9a): the month grid
+        # with the days' bands, ← / ↓ move with the day's sun in the
+        # status, Page Down / Up the month.
+        self.key("Escape")
+        m = self.wait_menu(lambda m: m.get("title") == "Open Cycling World")
+        ok = self.open_item("World", "World") and self.open_item("Time", "Time machine")
+        self.check("menu: World → Time (the time machine)", ok, self.menu().get("items"))
+        if self.focus_item("Day") is not None:
+            self.key("Enter")
+        m = self.wait_menu(lambda m: m.get("calendar"))
+        cal = m.get("calendar") or {}
+        self.check("menu: World → Time → Calendar (42 days with their bands, the world date marked)",
+                   cal.get("bands") == 42 and cal.get("selected") is not None
+                   and m.get("focused") == cal.get("selected"), cal)
+        self.key("ArrowRight")
+        self.key("ArrowDown")
+        m = self.menu()
+        self.check("calendar: the focused day's sun times and leaves",
+                   "sunrise" in str(m.get("status", "")) and "sunset" in str(m.get("status", "")),
+                   m.get("status"))
+        title = cal.get("title")
+        self.key("PageDown")
+        m = self.wait_menu(lambda m: (m.get("calendar") or {}).get("title") != title)
+        self.check("calendar: Page Down shows the next month",
+                   (m.get("calendar") or {}).get("title") not in (None, title), m.get("calendar"))
+        self.key("PageUp")
+        m = self.wait_menu(lambda m: (m.get("calendar") or {}).get("title") == title)
+        self.check("calendar: Page Up back", (m.get("calendar") or {}).get("title") == title,
+                   m.get("calendar"))
+        self.shot("calendar")
         self.close_menu()
 
         # The HUD: storm with wind, damage on and some damage.

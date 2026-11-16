@@ -180,6 +180,9 @@ mod tests {
             HostOptions,
             HostSummary,
             HostLink,
+            Calendar(ocw_client::menu::calendar::Cal::at((2026, 11, 16))),
+            CalendarDates(ocw_client::menu::calendar::Cal::at((2026, 11, 16))),
+            Season,
         ];
         for p in &all {
             match p {
@@ -193,7 +196,7 @@ mod tests {
                 | HistoryRide(_) | HistoryClimbs(_) | HistoryWeeks | HistoryMonths
                 | HistoryBests | EventRules | Account | TrustedKeys | TrustedKey(_) | Join
                 | HostWorld | HostRoute | HostTime | HostWeather | HostOptions | HostSummary
-                | HostLink | Devices | Device(_) => {}
+                | HostLink | Devices | Device(_) | Calendar(_) | CalendarDates(_) | Season => {}
             }
         }
         all
@@ -241,10 +244,29 @@ mod tests {
             };
             weather.ground = ocw_weather::Ground::settled(&weather.now.unwrap());
             let grid = match page {
-                Page::Sub(p) if p.grid_columns().is_some() => Some(crate::weather::grid(&weather)),
+                Page::Sub(settings_pages::Page::WeatherPresets) => {
+                    Some(crate::weather::grid(&weather))
+                }
+                _ => None,
+            };
+            // The calendar (spec §14 Phase 9 S9a): its days and buttons, the
+            // longest day line, read-only.
+            let cal_info = ocw_client::menu::calendar::CalendarInfo::default();
+            let calendar = match page {
+                Page::Sub(settings_pages::Page::Calendar(c)) => {
+                    let rows = ocw_client::menu::calendar::rows(&c, &cal_info);
+                    Some((
+                        ocw_client::menu::calendar::view(&c, &cal_info, &rows),
+                        rows.iter()
+                            .map(model::row_label)
+                            .chain(["Back".to_owned()])
+                            .collect::<Vec<_>>(),
+                    ))
+                }
                 _ => None,
             };
             let items: Vec<String> = match page {
+                Page::Sub(_) if calendar.is_some() => calendar.as_ref().unwrap().1.clone(),
                 // A grid: its cells.
                 Page::Sub(_) if grid.is_some() => grid
                     .as_ref()
@@ -321,6 +343,7 @@ mod tests {
                     Page::Sub(settings_pages::Page::BindGroup(_)) => {
                         "Conflict: V: Camera and Video recording; L: Camera and unicorn mode's flight keys".into()
                     }
+                    Page::Sub(settings_pages::Page::Calendar(_)) => "Read only, set by the organizer · Wed 30 Sep 2026: sunrise 07:22 · sunset 19:14 · day 11 h 52 min · beech in autumn colours · snow line 2,750 m · first quarter".into(),
                     _ => String::new(),
                 },
                 text: def
@@ -339,6 +362,7 @@ mod tests {
                 chart,
                 emphasis: Vec::new(),
                 wide: false,
+                calendar: calendar.map(|c| c.0),
             });
         }
     }

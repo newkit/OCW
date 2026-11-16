@@ -84,6 +84,16 @@ pub enum Page {
     AudioVoice,
     /// World → Time machine (spec §14 Phase 9; rows from `timemachine`).
     TimeMachine,
+    /// World → Time → Calendar (spec §14 Phase 9 S9a; rows and the grid
+    /// from `menu::calendar`): the month shown, the focus day to open on,
+    /// the time of day of the stepper.
+    Calendar(super::calendar::Cal),
+    /// Calendar → Dates: today, the equinoxes and solstices, the season
+    /// starts of the place (in the shown year).
+    CalendarDates(super::calendar::Cal),
+    /// World → Time → Season (S9b, decision Q11): the seasons of the
+    /// place as date jumps.
+    Season,
     /// Controls → Riding aids (spec §14 Phase 12C / 12D): the proximity
     /// cue and arrow, the "last moment" warning, the camera shake.
     RidingAids,
@@ -205,6 +215,9 @@ impl Page {
             Self::VoiceParticipants => "Voice participants",
             Self::AudioVoice => "Audio: voice",
             Self::TimeMachine => "Time machine",
+            Self::Calendar(_) => "Calendar",
+            Self::CalendarDates(_) => "Calendar: dates",
+            Self::Season => "Season",
             Self::RidingAids => "Riding aids",
             Self::Graphics => "Graphics",
             Self::RiderList => "Riders in this ride",
@@ -287,6 +300,8 @@ impl Page {
     pub fn grid_columns(self) -> Option<usize> {
         match self {
             Self::WeatherPresets => Some(super::weather::GRID_COLUMNS),
+            // The month grid moves by its own rules (`calendar::navigate`).
+            Self::Calendar(_) => Some(super::calendar::COLUMNS),
             _ => None,
         }
     }
@@ -413,7 +428,15 @@ impl Page {
                 "Voice volume (Enter plays a test sound). Echo test: an Echo rider on the road plays your microphone back to you, delayed, when you ride near it.",
             ],
             Self::TimeMachine => &[
-                "Date, time and speed of the world's clock (sun and light). Solo you set it; in a shared ride the host does.",
+                "Date, time and speed of the world's clock (sun, light, season). Enter on Day: the calendar. Solo you set it; in a shared ride the host does.",
+            ],
+            // The grid needs the room (spec §14 Phase 9 S9a).
+            Self::Calendar(_) => &[],
+            Self::CalendarDates(_) => {
+                &["Dates of the shown year at your place and altitude; the time of day stays."]
+            }
+            Self::Season => &[
+                "Each season's day at your place and altitude: the date jumps there and the time of day stays, so sun and landscape always match.",
             ],
             Self::Graphics => &[
                 "Quality: Low and Medium draw fewer shadows, trees and houses for weaker GPUs, WebGL 2 and phones; auto chooses by GPU and device.",
@@ -1305,7 +1328,7 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         // From the voice state (`voice::page::rows`).
         Page::Voice | Page::VoiceDevices | Page::VoiceParticipants | Page::AudioVoice => Vec::new(),
         // From the world clock (`timemachine::rows`).
-        Page::TimeMachine => Vec::new(),
+        Page::TimeMachine | Page::Calendar(_) | Page::CalendarDates(_) | Page::Season => Vec::new(),
         // From the session weather (`weather::rows`).
         Page::Weather
         | Page::WeatherPresets
