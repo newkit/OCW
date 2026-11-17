@@ -4,6 +4,11 @@
 #
 #   scripts/deploy-test.sh MACHINE      (machine from config/machines.toml)
 #
+# A Windows machine (os = "windows", e.g. Weela with the Meta Quest) gets
+# the VR kiosk instead: scripts/deploy-test-windows.sh (a `--features vr`
+# build, the OpenXR loader, the materials and the kiosk's world into
+# %LOCALAPPDATA%\OCW\kiosk for scripts/ocw-kiosk.ps1; spec §14 Phase 11, 11I).
+#
 # The world packages built on the machine are installed too, all side by
 # side in the install directory with their manifests and route files (the
 # app joins neighbouring packages of one folder, and its world list shows
@@ -61,6 +66,10 @@ deploy_log() {
     "$(date --iso-8601=seconds)" "$machine" "$(scripts/build-id.sh 2>/dev/null)" "$rc" >>"$root/deploys.jsonl" || true
 }
 trap deploy_log EXIT
+if [ "$(scripts/remote.sh "$machine" field os 2>/dev/null)" = windows ]; then
+  scripts/deploy-test-windows.sh "$machine"
+  exit 0
+fi
 dir=${OCW_DEPLOY_DIR:-/var/tmp/ocw}
 world=${OCW_DEPLOY_WORLD:-1}
 data=${OCW_WORLD_DATA:-data}
