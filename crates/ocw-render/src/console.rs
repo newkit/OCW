@@ -122,6 +122,7 @@ impl Plugin for ConsoleCorePlugin {
             .init_resource::<CameraOrbit>()
             .init_resource::<crate::camera::SkyLook>()
             .init_resource::<CameraTilt>()
+            .init_resource::<crate::drone_camera::DroneCamera>()
             .add_systems(Update, (run_tab_request, run_pending_commands).chain());
         register_builtin_commands(app);
     }
@@ -824,6 +825,32 @@ fn register_builtin_commands(app: &mut App) {
         },
     ))
     .console_command(ConsoleCommand::new(
+        Permission::Dev,
+        Command::new("camera.drone")
+            .about("Dev (videos, spec §2.11): the camera on the ride photographer's drone while it flies – pov (its camera's view), follow (behind and aside of it) or off")
+            .arg(Arg::new("mode").value_parser(["pov", "follow", "off"])),
+        |world, m| {
+            use crate::drone_camera::{DroneCamera, drone_of};
+            if let Some(v) = m.get_one::<String>("mode") {
+                *world.resource_mut::<DroneCamera>() = v.parse()?;
+            }
+            let mode = *world.resource::<DroneCamera>();
+            let flying = world
+                .get_resource::<crate::RideView>()
+                .and_then(drone_of)
+                .is_some();
+            Ok(format!(
+                "drone camera {}{}",
+                mode.label(),
+                match (mode, flying) {
+                    (DroneCamera::Off, _) => "",
+                    (_, true) => " (a drone is out)",
+                    (_, false) => " (waits for a drone: `photographer drone`)",
+                }
+            ))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
         User,
         Command::new("camera.orbit")
             .about("Orbit the chase camera: yaw (0 = behind, 180 = in front) and pitch in degrees, distance in m")
@@ -1053,6 +1080,22 @@ mod tests {
         assert!(run(&mut app, "camera.mode top")[1].contains("Top"));
         assert_eq!(*app.world().resource::<CameraMode>(), CameraMode::Top);
         assert!(run(&mut app, "camera.mode sideways")[1].starts_with("error:"));
+        // camera.drone is a dev command (spec §2.11, videos).
+        {
+            use crate::drone_camera::DroneCamera;
+            app.world_mut().resource_mut::<ConsoleState>().permission = Permission::User;
+            assert!(run(&mut app, "camera.drone pov")[1].contains("needs Dev permission"));
+            assert_eq!(*app.world().resource::<DroneCamera>(), DroneCamera::Off);
+            app.world_mut().resource_mut::<ConsoleState>().permission = Permission::Dev;
+            assert!(run(&mut app, "camera.drone pov")[1].starts_with("drone camera pov"));
+            assert_eq!(*app.world().resource::<DroneCamera>(), DroneCamera::Pov);
+            assert!(run(&mut app, "camera.drone follow")[1].starts_with("drone camera follow"));
+            assert_eq!(*app.world().resource::<DroneCamera>(), DroneCamera::Follow);
+            assert!(run(&mut app, "camera.drone")[1].starts_with("drone camera follow"));
+            assert!(run(&mut app, "camera.drone sideways")[1].starts_with("error:"));
+            assert!(run(&mut app, "camera.drone off")[1].starts_with("drone camera off"));
+            assert_eq!(*app.world().resource::<DroneCamera>(), DroneCamera::Off);
+        }
         assert_eq!(*app.world().resource::<CameraMode>(), CameraMode::Top);
         // camera.orbit sets the orbit in degrees, clamped.
         assert!(run(&mut app, "camera.orbit 90 30 12")[1].starts_with("camera orbit yaw 90"));

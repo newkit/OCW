@@ -73,6 +73,9 @@ pub struct RidePhotographer {
     shutters_heard: BTreeSet<(u32, u32)>,
     /// The other riders' shots drawn so far (rider, shot; logged once).
     seen: BTreeSet<(u32, u32)>,
+    /// The own drone's phase last frame (each change is logged: scripted
+    /// drone videos, `camera.drone`).
+    drone_phase: Option<ocw_world::photo_drone::DronePhase>,
 }
 
 impl RidePhotographer {
@@ -89,6 +92,7 @@ impl RidePhotographer {
             sent: None,
             shutters_heard: BTreeSet::new(),
             seen: BTreeSet::new(),
+            drone_phase: None,
         }
     }
 
@@ -296,6 +300,16 @@ fn run(world: &mut World) {
             .resource_mut::<RidePhotographer>()
             .photographer
             .stop(t);
+    }
+    let phase = own_scene.as_ref().and_then(|s| s.drone).map(|d| d.phase);
+    if world.resource::<RidePhotographer>().drone_phase != phase {
+        world.resource_mut::<RidePhotographer>().drone_phase = phase;
+        info!(
+            t = format!("{t:.1}"),
+            app_s = format!("{now:.1}"),
+            phase = ?phase,
+            "photographer's drone"
+        );
     }
     share(world);
     let remote: Vec<ph::Scene> = f.remote.iter().map(|r| r.scene.clone()).collect();

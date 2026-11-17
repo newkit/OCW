@@ -554,8 +554,10 @@ impl Photographer {
             ahead += step;
         }
         if best.is_some() {
+            // `drone_only` stays until that visit ends: the replans
+            // before the take-off only look for a better drone's shot
+            // (a person's would replace the forced drone).
             self.forced = false;
-            self.drone_only = false;
         }
         if best != self.plan {
             // A plan replaced after its photographer showed (a drone's
@@ -760,6 +762,7 @@ impl Photographer {
             self.plan = None;
             self.visit = None;
             self.last_tick = None;
+            self.drone_only = false;
         }
         let any =
             scene_out.person.is_some() || scene_out.drone.is_some() || scene_out.flash.is_some();
@@ -1394,6 +1397,49 @@ mod tests {
     /// The others' shutter and drone are heard in the world (spec §2.11
     /// Q2): fainter with distance, on the side they are, the loudest drone
     /// of several.
+    /// `photographer drone`: the photo is a drone's, also when a replan
+    /// before the take-off finds a person's shot that scores higher
+    /// (regression, 2026-11-17: the drone vanished after a second); the
+    /// next visit may be a person's again.
+    #[test]
+    fn a_forced_drone_stays_a_drone_until_its_photo() {
+        let route = Route::test_loop();
+        let mut p = Photographer::new(Limits::default(), 7);
+        let scene = FnScene {
+            ground: |_, _| Some(-5.0),
+            water: |x: f64, _| x > 400.0,
+            canopy: |_, _| 0.0,
+            solids: Vec::new(),
+            landmarks: Vec::new(),
+        };
+        let (dt, speed) = (0.1, 8.0);
+        let mut t = 0.0;
+        let mut photo = None;
+        let mut drone_seen = false;
+        p.force_drone();
+        while t < 400.0 && photo.is_none() {
+            let (sc, ev) = p.frame(
+                t,
+                &route,
+                speed * t,
+                0.0,
+                speed,
+                &scene,
+                &Conditions::default(),
+                &|_| false,
+            );
+            if let Some(pl) = p.plan() {
+                assert!(pl.shot.pose.is_drone(), "replanned to a person at {t:.1} s");
+            }
+            drone_seen |= sc.is_some_and(|s| s.drone.is_some());
+            photo = ev.photo;
+            t += dt;
+        }
+        let photo = photo.expect("the drone's photo");
+        assert!(photo.pose.is_drone());
+        assert!(drone_seen, "the drone flew before the photo");
+    }
+
     #[test]
     fn the_shutter_and_the_drone_are_placed_in_the_world() {
         use ocw_audio::spatial::Listener;

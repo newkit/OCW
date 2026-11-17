@@ -695,8 +695,10 @@ fn sync_flash(
                     l.intensity = FLASH_LM * f;
                     t.translation = at;
                 }
+                // In the picture, or the window's camera is the flash's
+                // own (the drone's view, `camera.drone pov`).
                 if let Ok((cam, gt)) = cameras.single()
-                    && in_frame(cam, gt, at)
+                    && (in_frame(cam, gt, at) || gt.translation().distance(at) < 1.0)
                 {
                     in_view = in_view.max(f);
                 }
