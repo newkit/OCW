@@ -24,7 +24,7 @@ param(
     [string[]]$Extra = @(),
     # A small window instead of the fullscreen mirror (measures the mirror's cost).
     [switch]$Windowed,
-    # The mirror window's size with -Windowed (v4.64: the kiosk's is 960x540).
+    # The mirror window's size with -Windowed (v4.71: the kiosk's is 960x540).
     [string]$Window = "640x360"
 )
 $ErrorActionPreference = "Stop"

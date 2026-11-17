@@ -6893,6 +6893,7 @@ dependencies = [
  "ocw-ui",
  "ocw-voice",
  "ocw-weather",
+ "ocw-winres",
  "ocw-world",
  "ocw-worldstore",
  "ocw-xr",
@@ -7002,6 +7003,7 @@ dependencies = [
  "ocw-sim",
  "ocw-sky",
  "ocw-weather",
+ "ocw-winres",
  "ocw-world",
  "ocw-worldstore",
  "quinn",
@@ -7063,6 +7065,7 @@ dependencies = [
  "ocw-render",
  "ocw-sim",
  "ocw-ui",
+ "ocw-winres",
  "ocw-world",
  "ocw-worldstore",
  "serde",
@@ -7137,6 +7140,7 @@ dependencies = [
  "ocw-ui",
  "ocw-voice",
  "ocw-weather",
+ "ocw-winres",
  "ocw-world",
  "ocw-worldstore",
  "serde",
@@ -7145,6 +7149,13 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "web-time",
+]
+
+[[package]]
+name = "ocw-winres"
+version = "0.2.2"
+dependencies = [
+ "png",
 ]
 
 [[package]]

@@ -397,7 +397,7 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::Command("vr mirror {}"),
     },
-    // The bike computer on the bar (spec §14 Phase 11, v4.52): its size
+    // The bike computer on the bar (spec §14 Phase 11, v4.68): its size
     // (times the real one, %; readable on the Quest 1 from 275 %) and the
     // tilt added to its aim at the eyes.
     SettingDef {
@@ -727,7 +727,7 @@ pub const SETTINGS: &[SettingDef] = &[
         key: "voice.spatial",
         kind: Kind::Bool,
         default: "on",
-        description: "Spatial voice: riders further away on the road sound quieter, down to silence at 300 m (off: the same volume up to 300 m)",
+        description: "Spatial voice: riders further away sound quieter, fading from 5 m to silence at 10 m; selected riders (Voice room) at full volume at any distance (off: the same volume up to 10 m)",
         scope: Scope::Live,
         apply: Apply::Command("voice.apply spatial {}"),
     },
@@ -747,7 +747,7 @@ pub const SETTINGS: &[SettingDef] = &[
         key: "voice.room",
         kind: Kind::Choice(&["everybody", "selected"]),
         default: "everybody",
-        description: "Voice room: listen to everybody nearby, or only to the selected riders (voice.select WHO)",
+        description: "Voice room: listen to everybody nearby (up to 10 m), or only to the selected riders, at any distance (voice.select WHO)",
         scope: Scope::Live,
         apply: Apply::Command("voice.apply room {}"),
     },
@@ -755,7 +755,7 @@ pub const SETTINGS: &[SettingDef] = &[
         key: "voice.heard_by",
         kind: Kind::Choice(&["no_one", "nearby", "selected"]),
         default: "no_one",
-        description: "Who hears me: no one, all nearby (up to 300 m), or the selected riders (voice.select WHO)",
+        description: "Who hears me: no one, all nearby (up to 10 m; riders who selected you at any distance), or the selected riders (voice.select WHO)",
         scope: Scope::Live,
         apply: Apply::Command("voice.apply heard_by {}"),
     },

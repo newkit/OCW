@@ -1,5 +1,5 @@
 //! The bike computer in VR (spec §14 Phase 11, 11B; decided 2026-11-17,
-//! v4.52): all ride information on a GPS unit on an out-front mount at the
+//! v4.68): all ride information on a GPS unit on an out-front mount at the
 //! centre of the handlebar – no floating panel in front of the rider. The
 //! model file is `parts/computer/computer-head-unit-wedge.glb` (Phase 15,
 //! `ocw_assets::computer`); its place, size and tilt are `ocw_xr::computer`

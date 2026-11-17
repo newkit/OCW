@@ -7,7 +7,7 @@
 //! monitor (no headset, any build: screenshots, tests).
 //!
 //! Riding stays on the trainer, the keyboard and the gamepad – the Touch
-//! controllers are one more gamepad (v4.52). All ride information is on
+//! controllers are one more gamepad (v4.68). All ride information is on
 //! the bike computer on the bar (no floating panel). The console's `vr
 //! status | recentre | mirror [eye|both|chase] | reconnect | computer size
 //! PERCENT | computer tilt DEG | look-down DEG`; `C` or both grips held

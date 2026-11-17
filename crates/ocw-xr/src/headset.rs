@@ -35,7 +35,7 @@ pub const QUEST_1: HeadsetProfile = HeadsetProfile {
 };
 
 /// The render scale on PC: the runtime's recommended eye size, but not
-/// more pixels than the panel has (v4.54). Meta Quest Link recommends
+/// more pixels than the panel has (v4.70). Meta Quest Link recommends
 /// 1808 × 2000 for the Quest 1's 1440 × 1600 panel (supersampled 1.25×);
 /// at that size Weela drew 36 fps for the 72 Hz headset – every other frame
 /// missed, reprojected, seen as flicker. The panel's size is ≈ 0.8 of it.

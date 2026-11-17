@@ -15,11 +15,12 @@
 #    they are apart; neither hears the other in the voice room – not even
 #    when Bea asks for Ada's voice itself – while Cleo hears both.
 #    Voice by range and audience (spec §7.1.7 Q6, Q8, Q10): three riders
-#    with *Who hears me: All nearby*; Cleo teleports 1.5 km away (the
-#    server runs with --dev-commands) – the game server sends her nobody's
-#    voice and hers to nobody, nobody hears her nor she anyone, her own
-#    request for Ada's voice is refused; back near, Ada's *Who hears me:
-#    Selected riders* (Bea) holds.
+#    with *Who hears me: All nearby*; Cleo teleports 20 m ahead, out of
+#    the 10 m range (spec §7.1.7 Q20; the server runs with --dev-commands)
+#    – the game server sends her nobody's voice and hers to nobody, nobody
+#    hears her nor she anyone, her own request for Ada's voice is refused;
+#    1 km away with *Voice room: Selected riders* (Ada) she hears Ada;
+#    back near, Ada's *Who hears me: Selected riders* (Bea) holds.
 # 4. Killing ocw-server with SIGKILL (no clean-up runs) ends livekit-server
 #    too (Linux: the parent-death signal).
 # 5. --voice off and --livekit-url start no voice server.
@@ -135,9 +136,10 @@ OCW_VOICE_TEST_SERVER=127.0.0.1:$game OCW_VOICE_TEST_CERT=$fp OCW_VOICE_TEST_URL
   cargo test -q -p ocw-voice --features livekit --test bundled_voice_server range_and_audiences -- --nocapture >"$work/range" 2>&1
 r=$?
 cp "$work/range" "$out/range.log"
-grep -q "the game server sends no voice to and from the far rider" "$work/range"; check "range: the game server sends no voice to and from a rider 1.5 km away (VoiceHearing over QUIC)" $? "$(tail -5 "$work/range")"
+grep -q "the game server sends no voice to and from the far rider" "$work/range"; check "range: the game server sends no voice to and from a rider 20 m away (VoiceHearing over QUIC)" $? "$(tail -5 "$work/range")"
 grep -q "PASS far: Bea Climber hears Ada Rider" "$work/range" && grep -q "PASS far: Cleo Sprinter does not hear Ada Rider" "$work/range" && grep -q "PASS far: Ada Rider does not hear Cleo Sprinter" "$work/range"; check "range: the near riders hear each other, the far one is not heard and hears nobody" $? "$(tail -5 "$work/range")"
 grep -q "the far rider is neither heard nor hears" "$work/range"; check "range: the far rider's own request for a voice is refused by the voice server" $? "$(tail -5 "$work/range")"
+grep -q "a selected rider 1 km away is heard" "$work/range" && grep -q "PASS selected 1 km away: Cleo Sprinter hears Ada Rider" "$work/range" && grep -q "PASS selected 1 km away: Cleo Sprinter does not hear Bea Climber" "$work/range" && grep -q "PASS selected 1 km away: Ada Rider does not hear Cleo Sprinter" "$work/range"; check "range: a selected rider 1 km away is heard (Voice room: Selected riders), the others are not" $? "$(tail -5 "$work/range")"
 grep -q "who hears me holds" "$work/range" && [ $r = 0 ]; check "who hears me: Selected riders (Bea) - Bea hears Ada, Cleo does not and is refused" $? "$(tail -5 "$work/range")"
 
 # 4. No orphan: SIGKILL the game server, livekit-server goes too.

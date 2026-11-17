@@ -129,8 +129,8 @@ impl QualityPreset {
                 max_pixel_ratio: Some(2.0),
             },
             // VR (Phase 11): each eye costs about a flat frame, at 72–90 Hz.
-            // One cascade over the near road (v4.54: every eye draws its own
-            // cascades), **no MSAA** (v4.64, measured on Weela with the Quest
+            // One cascade over the near road (v4.70: every eye draws its own
+            // cascades), **no MSAA** (v4.71, measured on Weela with the Quest
             // 1 over Link: MSAA 4× held the GPU at 36 fps, 2× at 50–62;
             // without it 68–72 – below 72 Link halves the rate to 36, which
             // reads as lag), the view and the trees between Medium and
@@ -586,7 +586,7 @@ mod tests {
     }
 
     /// VR: cheaper than Medium where the GPU pays per pixel and view
-    /// (shadows, view distance, trees), no MSAA (v4.64); named, not on the
+    /// (shadows, view distance, trees), no MSAA (v4.71); named, not on the
     /// ladder.
     #[test]
     fn the_vr_preset_fits_two_eyes_at_72_hz() {
@@ -603,7 +603,7 @@ mod tests {
         assert_eq!(vr.max_pixel_ratio, None);
         assert_eq!(QualityLevel::parse("vr"), Some(QualityLevel::Vr));
         assert!(!QualityLevel::ALL.contains(&QualityLevel::Vr));
-        // v4.54: one cascade (Weela drew 36 fps with two and 4×); v4.64: no
+        // v4.70: one cascade (Weela drew 36 fps with two and 4×); v4.71: no
         // MSAA (68–72 fps on the Quest 1 over Link instead of 50–62 with 2×).
         assert!(
             vr.summary().contains("× 1 over 70 m, MSAA off"),

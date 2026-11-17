@@ -1,4 +1,4 @@
-//! The frame loop's health (spec §14 Phase 11, 11I, v4.64): what every
+//! The frame loop's health (spec §14 Phase 11, 11I, v4.71): what every
 //! OpenXR frame call costs, how many frames reach the headset per second,
 //! the longest gap between two `xrEndFrame`s, the app's, the render
 //! thread's and the GPU's time – and, at once, every call that failed

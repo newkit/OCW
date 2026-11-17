@@ -158,7 +158,7 @@ function New-KioskArgs {
         foreach ($l in (Get-ShowLines $ShowText $LocalText)) { $lines.Add($l) }
     }
     $lines.Add("--vr")
-    # A small mirror window, not the full screen (v4.64, measured on Weela:
+    # A small mirror window, not the full screen (v4.71, measured on Weela:
     # the full-screen 2560 x 1600 mirror on the other GPU halved the headset's
     # rate to 36 fps; a small window keeps the 72 Hz; Q16 / Q17).
     $lines.Add("--window 960x540")

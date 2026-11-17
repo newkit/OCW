@@ -30,6 +30,7 @@ members = [
     "crates/ocw-xr-openxr",
     "crates/ocw-auth",
     "crates/ocw-edit",
+    "crates/ocw-winres",
     "apps/studio",
     "services/accounts",
 ]
@@ -65,6 +66,8 @@ ocw-audio = { path = "crates/ocw-audio" }
 ocw-xr = { path = "crates/ocw-xr" }
 ocw-xr-openxr = { path = "crates/ocw-xr-openxr" }
 ocw-auth = { path = "crates/ocw-auth" }
+# Build-script helper: the logo icon and version info in the Windows .exe files.
+ocw-winres = { path = "crates/ocw-winres" }
 ocw-edit = { path = "crates/ocw-edit" }
 ocw-accounts = { path = "services/accounts" }
 

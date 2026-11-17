@@ -250,7 +250,7 @@ fn frozen(world: &World) -> bool {
 }
 
 /// Why the dynamic mode holds still: a screenshot / capture run, or a VR
-/// headset (v4.54: its steps – down every 2 s, back up when the distance
+/// headset (v4.70: its steps – down every 2 s, back up when the distance
 /// was not the limit – popped the far terrain and the fog in and out, seen
 /// as flicker; in VR the frame rate is held by the render scale and the
 /// `vr` preset instead).

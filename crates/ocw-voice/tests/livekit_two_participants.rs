@@ -20,9 +20,10 @@
 //! (spec §7.1.7 Q9) has three controllers and an in-memory game server: A
 //! blocks B, the server keeps both apart, neither hears the other – not
 //! even when B asks the voice server for A's microphone itself – while C
-//! hears both and both hear C. A fourth (spec §7.1.7 Q6, Q8, Q10) places
-//! the riders on the road of the in-memory game server: a far rider is
-//! neither sent nor heard (and refused when it asks itself), a near one
+//! hears both and both hear C. A fourth (spec §7.1.7 Q6, Q8, Q10, Q20)
+//! places the riders on the road of the in-memory game server: a far rider
+//! (20 m) is neither sent nor heard (and refused when it asks itself), a
+//! selected rider 1 km away is heard by the rider who selected it, a near one
 //! is; *Who hears me: Selected riders*, *Voice room: Selected riders* and
 //! a block over a selection hold.
 #![cfg(feature = "livekit")]
@@ -444,6 +445,17 @@ fn nearby(selected: &[&str]) -> ocw_protocol::v1::VoiceAudience {
     }
 }
 
+/// *Who hears me: All nearby* and *Voice room: Selected riders* (them).
+fn listening_to(selected: &[&str]) -> ocw_protocol::v1::VoiceAudience {
+    use ocw_protocol::v1::{VoiceAudience, VoiceHeardBy, VoiceListen};
+    VoiceAudience {
+        heard_by: VoiceHeardBy::Nearby as i32,
+        listen: VoiceListen::Selected as i32,
+        selected_names: selected.iter().map(|s| (*s).to_owned()).collect(),
+        ..Default::default()
+    }
+}
+
 /// What the game server told `conn` last (`VoiceHearing`).
 fn hearing_of(
     game: &ocw_server::GameServer,
@@ -487,8 +499,9 @@ fn range_and_audiences_are_enforced_by_the_server() {
             game.tick();
         }
     };
-    // Cleo 1.5 km away (half the loop), Ada and Bea together.
-    teleport(&mut game, 2, 1.5);
+    // Cleo 20 m ahead (out of the 10 m range, spec §7.1.7 Q20), Ada and
+    // Bea together at the start.
+    teleport(&mut game, 2, 0.02);
     let h: Vec<_> = (0..3).map(|i| hearing_of(&game, joined[i].0)).collect();
     let ids: Vec<RiderId> = joined.iter().map(|(_, r)| *r).collect();
     assert_eq!(h[0].may_hear, [ids[1]].into(), "Ada may hear Bea only");
@@ -518,7 +531,7 @@ fn range_and_audiences_are_enforced_by_the_server() {
         (ids[1], TRIO[1], grant(1), none(), h[1].clone()),
         (ids[2], TRIO[2], grant(2), none(), h[2].clone()),
     ]);
-    trio.place(2, 1500.0);
+    trio.place(2, 20.0);
     assert!(
         trio.join(Duration::from_secs(30)),
         "not all three in the call: {}{log}",
@@ -534,9 +547,40 @@ fn range_and_audiences_are_enforced_by_the_server() {
         println!("PASS {line}");
     }
     println!("PASS {}", trio.check_refused("far", 2, 0, true, &log));
-    // Cleo comes back (20 m behind Ada); Ada: *Who hears me: Selected
-    // riders* with Bea only.
-    teleport(&mut game, 2, 0.02);
+    // Selected riders are always audible (spec §7.1.7 Q20): Cleo 1 km
+    // away listens to *Selected riders* with Ada – she hears Ada, nobody
+    // hears her, Bea (not selected) is not sent to her.
+    teleport(&mut game, 2, 1.0);
+    game.handle(
+        joined[2].0,
+        &client_bytes(C::VoiceAudience(listening_to(&["Ada Rider"]))),
+    );
+    for _ in 0..10 {
+        game.tick();
+    }
+    assert_eq!(
+        hearing_of(&game, joined[2].0).may_hear,
+        [ids[0]].into(),
+        "the selected Ada 1 km away is sent to Cleo"
+    );
+    trio.listen_to(2, &["Ada Rider"]);
+    for (i, (conn, _)) in joined.iter().enumerate() {
+        trio.set_hearing(i, hearing_of(&game, *conn));
+    }
+    trio.place(2, 1000.0);
+    let selected_far = [
+        [false, true, true],
+        [true, false, false],
+        [false, false, false],
+    ];
+    for line in trio.check_matrix("selected 1 km away", selected_far, &log) {
+        println!("PASS {line}");
+    }
+    // Cleo comes back (3 m from Ada, listening to everybody again); Ada:
+    // *Who hears me: Selected riders* with Bea only.
+    teleport(&mut game, 2, 0.003);
+    game.handle(joined[2].0, &client_bytes(C::VoiceAudience(nearby(&[]))));
+    trio.listen_to(2, &[]);
     game.handle(
         joined[0].0,
         &client_bytes(C::VoiceAudience(nearby(&["Bea Climber"]))),
@@ -563,7 +607,7 @@ fn range_and_audiences_are_enforced_by_the_server() {
     for (i, (conn, _)) in joined.iter().enumerate() {
         trio.set_hearing(i, hearing_of(&game, *conn));
     }
-    trio.place(2, 20.0);
+    trio.place(2, 3.0);
     let selected = [
         [false, true, false],
         [true, false, true],

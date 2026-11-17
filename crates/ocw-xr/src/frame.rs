@@ -8,7 +8,7 @@
 //!    ([`FrameSource::wait_frame`], main thread, start of the frame);
 //! 2. `xrLocateViews` for the time the frame will be on the display
 //!    ([`pose_time`]: the display time of the frame submitted with this
-//!    wait's timing – the desktop app's case, v4.64);
+//!    wait's timing – the desktop app's case, v4.71);
 //! 3. the world is simulated and drawn into the eye textures;
 //! 4. on the render thread ([`submit`]): `xrBeginFrame`, and if rendering:
 //!    acquire / wait / copy the eye textures in / release the swapchain
@@ -44,7 +44,7 @@ impl FrameTiming {
 /// The time to locate the views for: the display time, or one period later
 /// when a frame is submitted with the *next* wait's timing. The desktop
 /// app submits each frame with its own wait's display time, so it uses
-/// `pipelined = false` (v4.64; before, it located the head 13.9 ms too
+/// `pipelined = false` (v4.71; before, it located the head 13.9 ms too
 /// late on the Quest 1).
 pub fn pose_time(t: &FrameTiming, pipelined: bool) -> i64 {
     if pipelined {
@@ -169,7 +169,7 @@ impl FrameCall {
 }
 
 /// A frame call that failed: which, after how long, why (the log line of
-/// a lost session names the call – the kiosk's logs could not, v4.64).
+/// a lost session names the call – the kiosk's logs could not, v4.71).
 #[derive(Debug, Clone, PartialEq)]
 pub struct FrameFailure {
     pub call: FrameCall,
@@ -207,7 +207,7 @@ fn timed<T>(
 /// after it; [`FramePacer`] makes sure the next wait never comes before it.
 /// Where the binding calls it matters: on the Link runtime (Vulkan, AMD) a
 /// begin before the render graph made its compositor time out on the GPU
-/// (v4.64), so the desktop app begins right before [`finish`].
+/// (v4.71), so the desktop app begins right before [`finish`].
 pub fn begin(
     sink: &mut dyn FrameSink,
     clock: &mut dyn FnMut() -> f64,
@@ -238,7 +238,7 @@ pub fn finish(
     };
     // From here every failure still ends the frame (empty): a begun frame
     // left open makes the next `xrBeginFrame` discard it, and the Oculus
-    // runtime drops a session whose frames go missing (v4.64).
+    // runtime drops a session whose frames go missing (v4.71).
     let image = match timed(clock, report, FrameCall::AcquireImage, || {
         sink.acquire_image()
     }) {
@@ -302,7 +302,7 @@ pub fn submit(
 
 /// The handshake between the thread that calls `xrWaitFrame` (Bevy's main
 /// world) and the one that calls `xrBeginFrame` / `xrEndFrame` (the render
-/// world), v4.64: **a frame is waited for only after the last waited frame
+/// world), v4.71: **a frame is waited for only after the last waited frame
 /// was begun.** OpenXR says a second `xrWaitFrame` blocks until then; the
 /// Oculus runtime (Meta Quest Link 1.208) instead reports
 /// `ovr_WaitToBeginFrame missing ovr_Begin/EndFrame calls` and drops the

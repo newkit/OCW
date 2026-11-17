@@ -1,0 +1,16 @@
+[package]
+name = "ocw-winres"
+description = "Windows resources for the OCW executables: the logo as a multi-size icon and the version info (a build-script helper, spec §11.3)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Decodes the logo's PNGs into pixels for the small icon sizes (MIT OR
+# Apache-2.0; the version Bevy already locks).
+png = "0.18"
+
+[lints]
+workspace = true

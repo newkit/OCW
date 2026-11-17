@@ -12,11 +12,11 @@
 //!    │                                                            │
 //!    └──IDLE── Stopping ◀─────────────STOPPING────────────────────┘
 //!  LOSS_PENDING / errors ──▶ Lost ──retry every 2 s──▶ Idle
-//!  EXITING (not asked for) ──▶ Closed: the app quits (v4.54)
+//!  EXITING (not asked for) ──▶ Closed: the app quits (v4.70)
 //!  INSTANCE_LOSS_PENDING ──▶ Lost (needs a restart of the app)
 //! ```
 //!
-//! **EXITING without our request** (v4.54, the kiosk "crashes" on Weela,
+//! **EXITING without our request** (v4.70, the kiosk "crashes" on Weela,
 //! 2026-11-17): the runtime tells the app to quit – *Quit* in the
 //! headset's menu, or the runtime closing it. Before, it counted as a loss
 //! and a new session was created on the same instance; the Meta Quest
@@ -79,7 +79,7 @@ pub enum XrError {
     SessionLost,
     /// The instance is gone; only a restart helps.
     InstanceLost,
-    /// A new session is being created in the background (v4.64: the Oculus
+    /// A new session is being created in the background (v4.71: the Oculus
     /// runtime takes ~25 s for it; the app keeps running meanwhile).
     Reconnecting,
     Other(String),
@@ -131,7 +131,7 @@ pub trait XrRuntime {
     fn recreate_session(&mut self) -> Result<(), XrError>;
     /// The app quits: wait for the GPU, then destroy the swapchain, the
     /// frame stream and the session – before the GPU device and the
-    /// instance go (v4.52: the exit crash on the Quest 1 over Link came
+    /// instance go (v4.68: the exit crash on the Quest 1 over Link came
     /// from the other order). Nothing works on the session after it.
     fn shutdown(&mut self) {}
 }

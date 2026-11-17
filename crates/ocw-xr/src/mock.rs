@@ -67,7 +67,7 @@ pub struct MockRuntime {
     /// Breaks of OpenXR's frame rules seen (§10.4: wait → begin → end; an
     /// image acquired → waited → released before `xrEndFrame`), in order.
     pub violations: Vec<&'static str>,
-    /// Like the Oculus runtime (v4.64): a broken frame rule loses the
+    /// Like the Oculus runtime (v4.71): a broken frame rule loses the
     /// session (the call returns `SessionLost`).
     pub lose_on_violation: bool,
     /// A waited frame not begun yet.

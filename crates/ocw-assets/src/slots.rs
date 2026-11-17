@@ -115,7 +115,7 @@ pub const ALL: [Slot; 41] = [
     // and the phone's screen (the renderer makes it glow).
     slot("status_mark", Tint::Fixed, 0xD8261E, 0.0, 0.6),
     slot("phone_screen", Tint::Fixed, 0x9EC4F0, 0.0, 0.15),
-    // The VR bike computer (spec §14 Phase 11, v4.52): its body, the
+    // The VR bike computer (spec §14 Phase 11, v4.68): its body, the
     // screen window under the live screen, the LED bar (lit by the
     // renderer).
     slot("computer_body", Tint::Fixed, 0x2B2E34, 0.05, 0.55),

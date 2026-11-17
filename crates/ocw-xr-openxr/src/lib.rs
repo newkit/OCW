@@ -21,12 +21,12 @@
 //! ([`XrRuntime::recreate_session`]); the swapchain's generation changes,
 //! so the renderer re-reads the images.
 //!
-//! **Controllers** ([`controls`], v4.52): one action set with an action per
+//! **Controllers** ([`controls`], v4.68): one action set with an action per
 //! input of `ocw_xr::controllers` and its suggested bindings (Oculus
 //! Touch, the Khronos simple controller), attached to every session;
 //! [`MainHandle`] syncs it each frame ([`ControllerSource`]).
 //!
-//! **Frame pacing** (v4.64, the VR kiosk on Weela lost its session every
+//! **Frame pacing** (v4.71, the VR kiosk on Weela lost its session every
 //! ~30 s): `xrWaitFrame` runs only after the last waited frame's
 //! `xrBeginFrame` ([`ocw_xr::frame::FramePacer`], [`Shared::pacer`]) –
 //! the Oculus runtime does not block a second wait as OpenXR says, it
@@ -35,7 +35,7 @@
 //! ([`MainHandle::recreate_session`]): creating a session and its
 //! swapchain took the Oculus runtime ~25 s, which froze the app.
 //!
-//! **Teardown** (v4.52, the exit crash on the Quest 1 over Link): the app's
+//! **Teardown** (v4.68, the exit crash on the Quest 1 over Link): the app's
 //! last frame calls [`XrRuntime::shutdown`]: wait for the GPU, then drop the
 //! swapchain (the wrapped textures never own its images), the frame
 //! stream and the session – while the Vulkan device still lives. The
@@ -449,7 +449,7 @@ impl Shared {
 
 /// How long the main thread waits for the render thread to begin the last
 /// frame before it skips this frame's wait ([`MainHandle::ready_to_wait`]).
-/// Short on purpose (v4.64, measured on Weela): the render world sometimes
+/// Short on purpose (v4.71, measured on Weela): the render world sometimes
 /// needs the main thread itself (Bevy's main-thread executor, ticked only
 /// between the main world's systems), so a main thread blocked here for
 /// long holds the render thread too – with 1 s the loop stalled for 1 s
@@ -596,7 +596,7 @@ impl XrRuntime for MainHandle {
         );
     }
 
-    /// In the background (v4.64): the old session is destroyed here, the
+    /// In the background (v4.71): the old session is destroyed here, the
     /// new one is created on a thread – the Oculus runtime took ~25 s for
     /// `xrCreateSession` … `xrCreateSwapchain` on Weela, which froze the
     /// app on the monitor and in the headset. Until it is there this

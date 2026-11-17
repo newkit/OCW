@@ -63,7 +63,7 @@ pub struct BikeRig {
     pub aero_bars: bool,
     /// The bar's centre at the stem's clamp (the `handlebar` node): the VR
     /// bike computer's out-front mount sits ahead of it (spec §14 Phase
-    /// 11, v4.52).
+    /// 11, v4.68).
     pub bar_clamp: Vec3,
 }
 

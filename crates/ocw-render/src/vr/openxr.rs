@@ -10,16 +10,16 @@
 //! - Render world, after the render graph: `xrBeginFrame`, the eye images
 //!   copied into the swapchain's two layers, `xrEndFrame` with the
 //!   projection layer (`frame::finish`). (Begun before the graph the Link
-//!   runtime's compositor timed out on the GPU, v4.64: see
+//!   runtime's compositor timed out on the GPU, v4.71: see
 //!   [`begin_waited_frame`]; `OCW_VR_BEGIN=early` for other runtimes.)
 //!   The main world waits for a frame only after the last one was begun
-//!   (`FramePacer`, v4.64: the Oculus runtime lost the session otherwise).
+//!   (`FramePacer`, v4.71: the Oculus runtime lost the session otherwise).
 //! - The loop's health (`ocw_xr::watch`): every call timed, failures with
 //!   the call's name at once, a report line every 10 s (`vr status`).
 //! - The controllers: `xrSyncActions` after the wait, every frame of the
 //!   loop → [`VrState::controllers`] (the gamepad of `super::controllers`).
 //! - The app's exit ([`AppExit`], in [`Last`]): the session is torn down
-//!   before Bevy drops the GPU device (`XrRuntime::shutdown`, v4.52).
+//!   before Bevy drops the GPU device (`XrRuntime::shutdown`, v4.68).
 
 use std::sync::{Arc, Mutex};
 
@@ -307,7 +307,7 @@ fn frame_start(
                 // For this frame's own display time: the render world
                 // submits this frame with this wait's display time
                 // (`XrFrame`), so the eyes are drawn where the head will
-                // be then. Until v4.64 one period later (+13.9 ms): the
+                // be then. Until v4.71 one period later (+13.9 ms): the
                 // compositor had to reproject every frame from a pose the
                 // head had not reached yet.
                 let at = pose_time(&t, false);
@@ -361,7 +361,7 @@ fn frame_start(
     // The frame cap (the app sets it to the headset's rate): off while
     // `xrWaitFrame` paces the loop (a second clock could make a frame miss
     // its slot), on otherwise – headset off, a skipped wait – so the app
-    // never draws more frames than the headset shows (v4.64: uncapped it
+    // never draws more frames than the headset shows (v4.71: uncapped it
     // ran the laptop's GPU flat out).
     if let Some(limit) = limit.as_mut() {
         let cap = *idle_cap.get_or_insert(limit.max_fps);
@@ -420,7 +420,7 @@ fn begin_xr_frame(mut xr: ResMut<XrRender>, frame: Res<XrFrame>) {
 /// `xrBeginFrame` for the frame the main world waited for, on the session
 /// it waited on; lets the main world wait for the next frame.
 ///
-/// **Where** (v4.64, measured on Weela, Quest 1 over Link, AMD): by
+/// **Where** (v4.71, measured on Weela, Quest 1 over Link, AMD): by
 /// default right before the copy, after the render graph. Begun before the
 /// graph (`OCW_VR_BEGIN=early`, as `bevy_mod_openxr` does) the Link
 /// runtime's compositor timed out waiting on the GPU (`LiquidVRComputeContext::

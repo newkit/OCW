@@ -346,7 +346,7 @@ pub struct Args {
     pub vr_look_down: f32,
     /// VR: the eye images at this share of their size (the runtime's
     /// recommended size, at most the panel's; 0.5 – 1.5). Default 0.9
-    /// (v4.64: 1303 × 1440 on the Quest 1 – Weela's GPU reaches the 72 Hz
+    /// (v4.71: 1303 × 1440 on the Quest 1 – Weela's GPU reaches the 72 Hz
     /// only so; 1 for a faster GPU).
     #[arg(long, value_name = "SCALE", default_value_t = 0.9)]
     pub vr_render_scale: f32,
@@ -498,7 +498,7 @@ fn main() -> AppExit {
         .insert_resource(args.clone())
         .insert_resource(VersionLabel(build_id().to_string()))
         // In a headset session never more frames than the headset shows
-        // (v4.64): `xrWaitFrame` paces the frame loop, but while the
+        // (v4.71): `xrWaitFrame` paces the frame loop, but while the
         // headset is off (no frame loop) or a wait is skipped the app ran
         // uncapped with the window's vsync off – the GPU flat out, a laptop
         // on battery drained (Weela, 2026-11-17). `--max-fps` still wins.

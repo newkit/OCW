@@ -206,7 +206,7 @@ pub fn models() -> Vec<(Entry, Model)> {
         );
         out.push((e, m));
     }
-    // The VR bike computer (spec §14 Phase 11, v4.52).
+    // The VR bike computer (spec §14 Phase 11, v4.68).
     let mut m = crate::computer::build();
     let e = entry(
         crate::computer::FILE,

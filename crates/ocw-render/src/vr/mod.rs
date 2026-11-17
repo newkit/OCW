@@ -10,11 +10,11 @@
 //!   eye on the bike (`AvatarRig::steady_eye`), horizon-locked
 //!   (`ocw_xr::anchor`), plus the tracked head after the recentre.
 //!   The rider's own head is on [`OWN_HEAD_LAYER`]: drawn by every camera
-//!   but the eyes (the eyes are inside it), with its shadow (v4.64).
-//! - **The bike computer** ([`computer`], v4.52): no floating panel – all
+//!   but the eyes (the eyes are inside it), with its shadow (v4.71).
+//! - **The bike computer** ([`computer`], v4.68): no floating panel – all
 //!   ride information is on a GPS unit on an out-front mount at the bar's
 //!   centre, seen when looking down.
-//! - **The controllers** ([`controllers`], v4.52): the Touch controllers as
+//! - **The controllers** ([`controllers`], v4.68): the Touch controllers as
 //!   a gamepad, both grips held recentre.
 //! - **The mirror** on the monitor ([`VrMirror`]): one eye, both eyes side
 //!   by side, or the usual chase camera (for spectators and captures).
@@ -267,7 +267,7 @@ struct MirrorEye(usize);
 pub const VR_LAYER: usize = 7;
 
 /// The own rider's head – helmet, glasses, hair, face, the signs over it –
-/// in a headset session (v4.64): every camera but the eyes draws it (the
+/// in a headset session (v4.71): every camera but the eyes draws it (the
 /// chase mirror, the follow camera, screenshots of them), and the sun casts
 /// its shadow; the eye cameras never do (the eyes are inside it: no hard
 /// cut, no inside of the helmet). Before, the head was hidden for every
@@ -716,7 +716,7 @@ fn copy_camera_look(
 
 #[cfg(test)]
 mod tests {
-    /// v4.64 (the user: "the rider without the head looks weird … make sure
+    /// v4.71 (the user: "the rider without the head looks weird … make sure
     /// that for the POV view it's faded away"): the head and everything on
     /// it are on a layer the eyes do not draw and the other cameras and the
     /// sun do; a helmet put on later goes there too.

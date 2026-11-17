@@ -75,6 +75,10 @@ keyring = { workspace = true, features = ["apple-native"] }
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { workspace = true, features = ["windows-native"] }
 
+[build-dependencies]
+# The logo icon and version info of the Windows .exe (spec §11.3).
+ocw-winres.workspace = true
+
 [dev-dependencies]
 # The sign-in end to end against the backend and its fake providers.
 ocw-accounts.workspace = true
