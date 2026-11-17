@@ -94,9 +94,7 @@ pub fn way_surfaces(osm: &OsmData) -> std::collections::HashMap<i64, ocw_world::
 /// The OSM condition (`smoothness`, `tracktype`, the `surface` value) of
 /// every rideable way of `osm` that has any of them, by OSM way id (for
 /// [`crate::package::apply_road_condition`]; spec §4.6 *Road damage*).
-pub fn way_conditions(
-    osm: &OsmData,
-) -> std::collections::HashMap<i64, ocw_world::RoadCondition> {
+pub fn way_conditions(osm: &OsmData) -> std::collections::HashMap<i64, ocw_world::RoadCondition> {
     osm.ways
         .iter()
         .filter(|w| rideable(w).is_some())

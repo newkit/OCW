@@ -894,7 +894,12 @@ mod tests {
             &flat(-1.0),
         )
         .roads;
-        let code = MarkCode::of(&dress, RoadClass::Primary, RoadSurface::Asphalt, &Default::default());
+        let code = MarkCode::of(
+            &dress,
+            RoadClass::Primary,
+            RoadSurface::Asphalt,
+            &Default::default(),
+        );
         assert_eq!(code.centre, CentreLine::Dashed);
         let surf: Vec<usize> = (0..m.positions.len())
             .filter(|&i| decode_b(m.uvs_b[i][0]).1 == Kind::Surface as u8)
@@ -929,8 +934,8 @@ mod tests {
         worn.surface = RoadSurface::WornAsphalt;
         worn.condition.smoothness = ocw_world::road_condition::Smoothness::VeryBad;
         let (a, b) = (
-            meshes(&[main.clone()], &flat(-0.1)).roads,
-            meshes(&[worn.clone()], &flat(-0.1)).roads,
+            meshes(std::slice::from_ref(&main), &flat(-0.1)).roads,
+            meshes(std::slice::from_ref(&worn), &flat(-0.1)).roads,
         );
         let ga = MarkCode::of(&main.dress, main.class, main.surface, &main.condition).wear;
         let gb = MarkCode::of(&worn.dress, worn.class, worn.surface, &worn.condition).wear;

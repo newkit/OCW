@@ -682,6 +682,7 @@ mod tests {
             surface: RoadSurface::of_class(RoadClass::Residential),
             dress: RoadDress::of_class(RoadClass::Residential, 6.0),
             lit: Default::default(),
+            condition: Default::default(),
         };
         let mut t = BTreeMap::new();
         t.insert(

@@ -270,8 +270,10 @@ pub fn read_road_condition(bytes: &[u8]) -> Result<Vec<(TileKey, Vec<RoadConditi
         out.push((
             key,
             codes
-                .chunks_exact(2)
-                .map(|c| RoadCondition::from_code([c[0], c[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| RoadCondition::from_code(*c))
                 .collect(),
         ));
     }
