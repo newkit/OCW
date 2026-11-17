@@ -194,7 +194,14 @@ fn register_commands(app: &mut App) {
                     .help("Only for this session, not saved"),
             )
             .arg(Arg::new("key").required(true))
-            .arg(Arg::new("value").required(true).num_args(1..)),
+            // A negative number is a value, not a flag (`set vr.computer_tilt
+            // -10`, the first setting below zero).
+            .arg(
+                Arg::new("value")
+                    .required(true)
+                    .num_args(1..)
+                    .allow_hyphen_values(true),
+            ),
         |world, m| {
             let key = m.get_one::<String>("key").expect("required").clone();
             let value = m
@@ -417,5 +424,18 @@ mod tests {
         // Saved: a new page finds it.
         let again = UserSettings::load(Some(Box::new(mem.clone()))).0;
         assert_eq!(again.value("ride.bots"), Value::Int(3));
+    }
+
+    /// Regression (v4.38): a negative number is a value of `set`, not a
+    /// flag (`vr.computer_tilt` is the first setting below zero).
+    #[test]
+    fn set_takes_negative_numbers() {
+        let mem = MemoryStore::default();
+        let mut app = app(Platform::Desktop, &mem);
+        let log = run(&mut app, "set vr.computer_tilt -10");
+        let log = &log[log.rfind("> set").unwrap()..];
+        assert!(!log.contains("unexpected argument"), "{log}");
+        let again = UserSettings::load(Some(Box::new(mem.clone()))).0;
+        assert_eq!(again.value("vr.computer_tilt"), Value::Int(-10));
     }
 }
