@@ -73,8 +73,12 @@ pub struct SkySettings {
     /// The fog's colour (sRGB, before the weather greys it) instead of the
     /// light model's (`sky.fog R G B`: comparisons and calibration).
     pub fog_override: Option<[f32; 3]>,
-    /// The light model's fog colour also under the atmosphere (`sky.fog
-    /// legacy`: the look before 10G, for comparisons).
+    /// The light model's fog colour also under the atmosphere, no sun glow
+    /// and no far-terrain hiding: the look before 10G (`sky.fog legacy`,
+    /// **the default** – decided by the user 2026-11-17: "make fog.legacy
+    /// the default but keep the new mode as fog.new"); `false` is the new
+    /// mode (`sky.fog new`: the sky's horizon colour, the glow towards a low
+    /// sun, far tiles beyond a limited view hidden).
     pub legacy_fog: bool,
 }
 
@@ -85,7 +89,7 @@ impl Default for SkySettings {
             mode: SkyMode::Atmosphere,
             lights: LightsMode::Auto,
             fog_override: None,
-            legacy_fog: false,
+            legacy_fog: true,
         }
     }
 }
@@ -881,7 +885,7 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("sky.fog")
-            .about("The fog's colour: auto (the sky's horizon), legacy (the light model's, as before 10G), or R G B in sRGB 0-4 (comparisons); without an argument: what runs")
+            .about("The fog: legacy (default: the light model's colour, as before 10G), new (the sky's horizon colour, the glow towards a low sun and far terrain hidden beyond a limited view; `auto` is the same), or R G B in sRGB 0-4 (comparisons); without an argument: what runs")
             .arg(Arg::new("rgb").num_args(0..=3)),
         |world, m| {
             let words: Vec<String> = m
@@ -891,7 +895,7 @@ fn register_commands(app: &mut App) {
             let mut s = world.resource_mut::<SkySettings>();
             match words.as_slice() {
                 [] => {}
-                [w] if w == "auto" => {
+                [w] if w == "new" || w == "auto" => {
                     s.fog_override = None;
                     s.legacy_fog = false;
                 }
@@ -908,12 +912,12 @@ fn register_commands(app: &mut App) {
                     };
                     s.fog_override = Some([p(r)?, p(g)?, p(b)?]);
                 }
-                _ => return Err("sky.fog auto | R G B".into()),
+                _ => return Err("sky.fog legacy | new | R G B".into()),
             }
             Ok(match (s.fog_override, s.legacy_fog) {
                 (Some(c), _) => format!("fog colour {:.3} {:.3} {:.3} (chosen)", c[0], c[1], c[2]),
-                (None, true) => "fog colour legacy (the light model's)".into(),
-                (None, false) => "fog colour auto (the sky's horizon)".into(),
+                (None, true) => "fog legacy (the light model's colour; the default)".into(),
+                (None, false) => "fog new (the sky's horizon, the glow towards a low sun, far terrain hidden)".into(),
             })
         },
     ))
@@ -1470,5 +1474,29 @@ mod tests {
                 .iter()
                 .all(|(v, _)| *v == Visibility::Hidden)
         );
+    }
+
+    /// The legacy fog is the default (decided by the user 2026-11-17);
+    /// `sky.fog new` (and its old name `auto`) switches to the new fog of
+    /// 10G, `sky.fog legacy` back.
+    #[test]
+    fn the_legacy_fog_is_the_default_and_new_switches() {
+        assert!(SkySettings::default().legacy_fog);
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(crate::console::ConsoleCorePlugin)
+            .insert_resource(SkySettings::default());
+        register_commands(&mut app);
+        let mut run = |line: &str| {
+            app.world_mut()
+                .resource_mut::<crate::console::ConsoleState>()
+                .queue(line);
+            app.update();
+            app.world().resource::<SkySettings>().legacy_fog
+        };
+        assert!(!run("sky.fog new"));
+        assert!(run("sky.fog legacy"));
+        assert!(!run("sky.fog auto"));
+        assert!(run("sky.fog legacy"));
     }
 }

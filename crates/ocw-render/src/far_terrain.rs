@@ -557,7 +557,7 @@ pub fn register_commands(app: &mut App) {
     app.console_command(ConsoleCommand::new(
         Permission::User,
         clap::Command::new("far.cull")
-            .about("Hide far terrain wholly beyond 2 × a limited view distance and rising above the eye: on (default) or off (comparisons)")
+            .about("With the new fog (sky.fog new): hide far terrain wholly beyond 2 × a limited view distance and rising above the eye: on (default) or off (comparisons); the legacy fog (the default) hides nothing")
             .arg(clap::Arg::new("state").value_parser(["on", "off"])),
         |world, m| {
             let mut c = world.get_resource_or_insert_with(FarCull::default);
@@ -594,6 +594,7 @@ pub(crate) fn hide_far_under_near(
     far: Res<FarTerrain>,
     streamer: Res<TileStreamer>,
     cull: Option<ResMut<FarCull>>,
+    sky: Option<Res<crate::sky::SkySettings>>,
     cameras: Query<&GlobalTransform, With<FollowCamera>>,
     mut tiles: Query<
         (
@@ -605,7 +606,13 @@ pub(crate) fn hide_far_under_near(
     >,
 ) {
     let eye = cameras.iter().next().map(|g| g.translation());
-    let limit = cull.as_deref().filter(|c| !c.off).and_then(|c| c.limit);
+    // The hiding belongs to the new fog (`sky.fog new`); the legacy fog,
+    // the default, keeps every far tile as before 10G.
+    let new_fog = sky.is_some_and(|s| !s.legacy_fog);
+    let limit = cull
+        .as_deref()
+        .filter(|c| !c.off && new_fog)
+        .and_then(|c| c.limit);
     let mut hidden = 0;
     let mut below_eye = 0;
     for (id, &e) in &far.tiles {
