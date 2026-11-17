@@ -3,6 +3,9 @@
 //! `.git` (scripts/remote.sh copies only the files), so the scripts pass
 //! `OCW_BUILD_ID` (from scripts/build-id.sh); otherwise `git` is asked,
 //! and without either the build id is the plain version.
+//!
+//! On Windows (MSVC) it also links the logo icon and the version info into
+//! `ocw-desktop.exe` (`ocw-winres`, spec §11.3).
 
 use std::process::Command;
 
@@ -17,6 +20,11 @@ fn git(args: &[&str]) -> Option<String> {
 }
 
 fn main() {
+    // apps/web shares this script but has no binary to link a resource
+    // into (cargo rejects `rustc-link-arg-bins` there).
+    if std::env::var("CARGO_PKG_NAME").as_deref() == Ok("ocw-desktop") {
+        ocw_winres::embed(ocw_winres::PRODUCT_NAME);
+    }
     println!("cargo:rerun-if-env-changed=OCW_BUILD_ID");
     let commit = match std::env::var("OCW_BUILD_ID") {
         Ok(id) => id.trim().to_string(),

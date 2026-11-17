@@ -116,5 +116,10 @@ web-sys = { version = "0.3", features = [
     "History",
 ] }
 
+[build-dependencies]
+# Named by the desktop's build script, which this crate shares; it embeds
+# the Windows resources only for ocw-desktop, nothing for the browser.
+ocw-winres.workspace = true
+
 [lints]
 workspace = true

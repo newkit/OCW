@@ -1,6 +1,9 @@
 //! The app icon (artwork/logos): the unicorn on a bike over a rainbow.
 //!
-//! - X11 and Windows take the window icon from the app: set here.
+//! - X11 and Windows take the window icon from the app: set here. On
+//!   Windows the taskbar / Alt+Tab icon too (from the exe's icon resource,
+//!   which `build.rs` links in with `ocw-winres`; Explorer and shortcuts
+//!   such as the VR kiosk's show that resource).
 //! - Wayland compositors (and docks, menus, file managers) take it from the
 //!   desktop entry whose name matches the window's app id, [`APP_ID`]
 //!   (`packaging/linux/ocw-desktop.desktop`, installed with the icons by
@@ -14,6 +17,10 @@ use bevy::window::PrimaryWindow;
 
 /// App id (Wayland) / WM_CLASS (X11): matches the desktop entry's name.
 pub const APP_ID: &str = "ocw-desktop";
+
+/// The icon group's resource id in the Windows exe (`ocw_winres::ICON_ID`).
+#[cfg(target_os = "windows")]
+const WINDOWS_ICON_RESOURCE: u16 = 1;
 
 const ICON_PNG: &[u8] = include_bytes!("../../../artwork/logos/ocw-256.png");
 
@@ -137,11 +144,25 @@ fn set_window_icon(
             return;
         };
         *done = true;
-        match icon_rgba().and_then(|(rgba, width, height)| {
-            winit::window::Icon::from_rgba(rgba, width, height).ok()
-        }) {
+        let logo = || {
+            icon_rgba().and_then(|(rgba, width, height)| {
+                winit::window::Icon::from_rgba(rgba, width, height).ok()
+            })
+        };
+        match logo() {
             Some(icon) => w.set_window_icon(Some(icon)),
             None => warn!("could not decode the app icon"),
+        }
+        // Windows: `set_window_icon` sets only the small (title bar) icon;
+        // the taskbar and Alt+Tab use the big one. The exe's resource gives
+        // it at the system's size (all sizes are in it), the logo otherwise.
+        #[cfg(target_os = "windows")]
+        {
+            use winit::platform::windows::{IconExtWindows, WindowExtWindows};
+            let big = winit::window::Icon::from_resource(WINDOWS_ICON_RESOURCE, None)
+                .ok()
+                .or_else(logo);
+            w.set_taskbar_icon(big);
         }
     });
 }

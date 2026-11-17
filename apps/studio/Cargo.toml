@@ -32,5 +32,9 @@ serde.workspace = true
 serde_json.workspace = true
 ureq.workspace = true
 
+[build-dependencies]
+# The logo icon and version info of the Windows .exe (spec §11.3).
+ocw-winres.workspace = true
+
 [lints]
 workspace = true

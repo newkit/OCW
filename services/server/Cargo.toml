@@ -75,6 +75,10 @@ win32job.workspace = true
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-time.workspace = true
 
+[build-dependencies]
+# The logo icon and version info of the Windows .exe (spec §11.3).
+ocw-winres.workspace = true
+
 [dev-dependencies]
 # Test access tokens (spec §9.1).
 ed25519-dalek.workspace = true
