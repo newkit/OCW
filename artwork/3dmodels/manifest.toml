@@ -1283,6 +1283,177 @@ source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
 author = "Open Cycling World contributors"
 
 [[asset]]
+file = "wear/hair-bare-afro.glb"
+kind = "wearable"
+anchor = "head"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hair_afro_bare")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hair-bare-braid.glb"
+kind = "wearable"
+anchor = "head"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hair_braid_bare")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hair-bare-braids.glb"
+kind = "wearable"
+anchor = "head"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hair_braids_bare")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hair-bare-bun-low.glb"
+kind = "wearable"
+anchor = "head"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hair_bun_low_bare")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hair-bare-bun.glb"
+kind = "wearable"
+anchor = "head"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hair_bun_bare")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hair-bare-buzz.glb"
+kind = "wearable"
+anchor = "head"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hair_buzz_bare")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hair-bare-cap.glb"
+kind = "wearable"
+anchor = "head"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hair_cap_bare")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hair-bare-cornrows.glb"
+kind = "wearable"
+anchor = "head"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hair_cornrows_bare")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hair-bare-curls.glb"
+kind = "wearable"
+anchor = "head"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hair_curls_bare")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hair-bare-fringe.glb"
+kind = "wearable"
+anchor = "head"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hair_fringe_bare")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hair-bare-locs.glb"
+kind = "wearable"
+anchor = "head"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hair_locs_bare")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hair-bare-long-curly.glb"
+kind = "wearable"
+anchor = "head"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hair_long_curly_bare")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hair-bare-long.glb"
+kind = "wearable"
+anchor = "head"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hair_long_bare")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hair-bare-mid.glb"
+kind = "wearable"
+anchor = "head"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hair_mid_bare")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hair-bare-shaved.glb"
+kind = "wearable"
+anchor = "head"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hair_shaved_bare")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hair-bare-side-part.glb"
+kind = "wearable"
+anchor = "head"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hair_side_part_bare")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hair-bare-tail-low.glb"
+kind = "wearable"
+anchor = "head"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hair_tail_low_bare")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hair-bare-tail.glb"
+kind = "wearable"
+anchor = "head"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hair_tail_bare")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hair-bare-textured.glb"
+kind = "wearable"
+anchor = "head"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hair_textured_bare")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
 file = "wear/hair-braid.glb"
 kind = "wearable"
 anchor = "head"
@@ -1440,6 +1611,96 @@ file = "wear/hair-textured.glb"
 kind = "wearable"
 anchor = "head"
 generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hair_textured")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hand-hoods-l.glb"
+kind = "wearable"
+anchor = "hand_l"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hand_hoods_l")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hand-hoods-r.glb"
+kind = "wearable"
+anchor = "hand_r"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hand_hoods_r")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hand-open-l.glb"
+kind = "wearable"
+anchor = "hand_l"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hand_open_l")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hand-open-r.glb"
+kind = "wearable"
+anchor = "hand_r"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hand_open_r")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hand-phone-l.glb"
+kind = "wearable"
+anchor = "hand_l"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hand_phone_l")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hand-phone-r.glb"
+kind = "wearable"
+anchor = "hand_r"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hand_phone_r")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hand-relaxed-l.glb"
+kind = "wearable"
+anchor = "hand_l"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hand_relaxed_l")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hand-relaxed-r.glb"
+kind = "wearable"
+anchor = "hand_r"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hand_relaxed_r")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hand-wrap-l.glb"
+kind = "wearable"
+anchor = "hand_l"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hand_wrap_l")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hand-wrap-r.glb"
+kind = "wearable"
+anchor = "hand_r"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hand_wrap_r")'
 license = "MIT OR Apache-2.0"
 source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
 author = "Open Cycling World contributors"

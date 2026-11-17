@@ -163,6 +163,9 @@ pub struct WorkshopView {
     /// the rider's injury and the time to heal; the first line is the
     /// title. Empty: no card.
     pub condition: Vec<String>,
+    /// The helmet off (spec §14 Phase 4, 4N Q28): the worn kit's variants
+    /// while it hangs on the hook beside the mirror; `None`: worn.
+    pub helmet_on_hook: Option<Vec<String>>,
 }
 
 impl Default for WorkshopView {
@@ -189,6 +192,7 @@ impl Default for WorkshopView {
             rider: None,
             mirror: true,
             condition: Vec::new(),
+            helmet_on_hook: None,
         }
     }
 }
@@ -340,7 +344,14 @@ impl Plugin for WorkshopPlugin {
         app.init_resource::<Scene>()
             .add_systems(
                 Update,
-                (open_close, sync_bikes, sync_rider, draw_ui).chain(),
+                (
+                    open_close,
+                    sync_bikes,
+                    sync_rider,
+                    sync_helmet_hook,
+                    draw_ui,
+                )
+                    .chain(),
             )
             .add_systems(PostUpdate, (place_camera, place_mirror, ride_window));
     }
@@ -1482,7 +1493,11 @@ pub(crate) fn spawn_rider_model(
 ) -> (Entity, Vec<Entity>) {
     let rider_model = ocw_assets::shipped::rider_model();
     let c = look.character.validated();
-    let colours = crate::riders::avatar_colours(ocw_core::RiderId(0), true, Some(look));
+    let mut colours = crate::riders::avatar_colours(ocw_core::RiderId(0), true, Some(look));
+    colours.gloved_tips = ocw_assets::rider::hand::covers_fingertips(kit);
+    let hands_shown = pose.map_or([ocw_assets::rider::hand::HandShape::Relaxed; 2], |p| {
+        p.hand_shapes
+    });
     let hidden: Vec<usize> = crate::riders::hidden_rider_nodes(Some(look), kit)
         .into_iter()
         .filter_map(|n| rider_model.node(n))
@@ -1524,7 +1539,10 @@ pub(crate) fn spawn_rider_model(
                         node.scale
                     },
                 },
-                Visibility::Inherited,
+                match ocw_assets::rider::hand::of_node(&node.name) {
+                    Some((shape, side)) if hands_shown[side] != shape => Visibility::Hidden,
+                    _ => Visibility::Inherited,
+                },
                 ChildOf(parent),
                 layer.clone(),
             ))
@@ -1557,6 +1575,7 @@ fn sync_rider(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<GearMaterial>>,
     mut transforms: Query<&mut Transform>,
+    mut visibility: Query<&mut Visibility>,
 ) {
     if !view.open || scene.root.is_none() {
         return;
@@ -1733,6 +1752,13 @@ fn sync_rider(
             t.rotation = q;
         }
     }
+    // The hands round the bar (spec §14 Phase 4, 4N, the hands).
+    let hands: Vec<_> = ocw_assets::rider::hand::HandShape::ALL
+        .into_iter()
+        .flat_map(|s| [(s, 0), (s, 1)])
+        .filter_map(|(s, side)| Some((s, side, find(ocw_assets::rider::hand::node(s, side))?)))
+        .collect();
+    crate::riders::show_hands(&hands, p.hand_shapes, &mut visibility);
     // The saddle at the rider's height; the rear wheel turning.
     if let Some(i) = built.model.node(bike_nodes::SADDLE)
         && let Some(e) = bike_nodes.get(i)
@@ -1747,6 +1773,116 @@ fn sync_rider(
         t.rotation = Quat::from_rotation_x(-r.crank * 2.6);
     }
 }
+
+/// The helmet's hook beside the mirror and the helmet on it while the
+/// editor shows the bare head (spec §14 Phase 4, 4N Q28).
+#[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
+fn sync_helmet_hook(
+    mut commands: Commands,
+    view: Res<WorkshopView>,
+    mut scene: ResMut<Scene>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<GearMaterial>>,
+    mut std_materials: ResMut<Assets<StandardMaterial>>,
+    mut state: Local<HookState>,
+) {
+    let Some(root) = scene.root.filter(|_| view.open) else {
+        *state = (None, None);
+        return;
+    };
+    let layout = ocw_assets::workshop::layout(view.bikes.len());
+    let hook = layout.helmet_hook();
+    // The peg (spawned with the room, despawned with it).
+    if state.0.is_none_or(|e| commands.get_entity(e).is_err()) {
+        let peg = commands
+            .spawn((
+                Mesh3d(meshes.add(Cylinder::new(0.012, 0.09))),
+                MeshMaterial3d(std_materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.32, 0.3, 0.28),
+                    metallic: 0.6,
+                    perceptual_roughness: 0.4,
+                    ..default()
+                })),
+                Transform::from_translation(hook + Vec3::X * 0.02)
+                    .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2 + 0.25)),
+                ChildOf(root),
+                layer(),
+            ))
+            .id();
+        state.0 = Some(peg);
+        state.1 = None;
+    }
+    let want = view.helmet_on_hook.clone();
+    if state.1.as_ref().map(|(k, _)| k) == want.as_ref() {
+        return;
+    }
+    if let Some((_, e)) = state.1.take() {
+        commands.entity(e).try_despawn();
+    }
+    let Some(kit) = want else { return };
+    let model = ocw_assets::shipped::rider_model();
+    let ids: Vec<&str> = kit
+        .iter()
+        .map(String::as_str)
+        .filter(|k| *k != ocw_assets::rider::HELMET_OFF)
+        .collect();
+    let shown = ocw_assets::rider::visible(&ocw_core::Character::default(), &ids);
+    let Some((i, node)) = model.nodes.iter().enumerate().find(|(_, n)| {
+        ocw_assets::helmet::Helmet::ALL
+            .iter()
+            .any(|h| h.node() == n.name && shown.contains(&h.node()))
+    }) else {
+        return;
+    };
+    let look = view.rider.as_ref().map(|r| r.look).unwrap_or_default();
+    let colours = crate::riders::avatar_colours(ocw_core::RiderId(0), true, Some(&look));
+    let ptr = model as *const Model as usize;
+    let handles = scene
+        .meshes
+        .entry(ptr)
+        .or_insert_with(|| upload(model, &mut meshes, true))
+        .clone();
+    // The helmet in the head's frame: its skull centre under the peg, the
+    // front towards the room (−X), tipped a little.
+    let head = model.node(ocw_assets::pose::nodes::HEAD).expect("a head");
+    let skull = ocw_assets::rider::skull_centre() - Vec3::from(model.world(head).translation);
+    let rot = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(0.35);
+    let at = hook - Vec3::Y * 0.1 - rot * skull;
+    let e = commands
+        .spawn((
+            Transform::from_translation(at).with_rotation(rot),
+            Visibility::Inherited,
+            ChildOf(root),
+            layer(),
+            HelmetOnHook,
+        ))
+        .id();
+    for (mesh, mat) in &handles[i] {
+        let m = &model.materials[*mat];
+        let material = part_material(
+            &mut scene.materials,
+            &mut materials,
+            &m.name,
+            &node.name,
+            m.color,
+            &colours,
+        );
+        commands.spawn((
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(material),
+            ChildOf(e),
+            layer(),
+        ));
+    }
+    state.1 = Some((kit, e));
+}
+
+/// The hook's peg and the helmet on it (with the kit it shows).
+type HookState = (Option<Entity>, Option<(Vec<String>, Entity)>);
+
+/// The helmet hanging on its hook (tests).
+#[derive(Component)]
+pub struct HelmetOnHook;
 
 /// Keeps the mirror camera at the reflection of the workshop camera.
 fn place_mirror(

@@ -211,6 +211,27 @@ impl Workshop {
         }
     }
 
+    /// The bare head at the mirror (spec §14 Phase 4, 4N Q28): while a
+    /// hair, facial-hair, face or glasses slot is chosen in the editor
+    /// (not the helmet's and the cap's: they show the helmet), the helmet
+    /// hangs on its hook.
+    pub fn helmet_off(&self) -> bool {
+        use picker::CharSlot as C;
+        matches!(self.view(), View::Dress { .. })
+            && matches!(
+                self.dress.slot(),
+                MirrorSlot::Char(
+                    C::Hair
+                        | C::HairColour
+                        | C::Moustache
+                        | C::Beard
+                        | C::Age
+                        | C::Glasses
+                        | C::Skin
+                )
+            )
+    }
+
     /// The editor's view now: the face close-up while a picker of a head
     /// slot is open (spec §14 Phase 4, 4N), else the whole rider.
     fn dress_view_now(&self) -> View {
@@ -1196,8 +1217,24 @@ pub(crate) mod tests {
             if *slot == MirrorSlot::TryOn {
                 continue;
             }
+            // The helmet off for the hair, the face and the glasses, on for
+            // the helmet's and the cap's own pickers and the rest (Q28).
+            let bare = matches!(
+                slot,
+                MirrorSlot::Char(
+                    picker::CharSlot::Glasses
+                        | picker::CharSlot::Hair
+                        | picker::CharSlot::HairColour
+                        | picker::CharSlot::Moustache
+                        | picker::CharSlot::Beard
+                        | picker::CharSlot::Age
+                        | picker::CharSlot::Skin
+                )
+            );
+            assert_eq!(w.helmet_off(), bare, "{slot:?}");
             world.step(&mut w, &[Act::Confirm]);
             assert!(w.picker.is_some(), "{slot:?}");
+            assert_eq!(w.helmet_off(), bare, "{slot:?} picker");
             let face = matches!(
                 slot,
                 MirrorSlot::Kit(Slot::Helmet | Slot::Cap)

@@ -60,6 +60,7 @@ pub const HAIR_BUDGET: usize = 1_200;
 pub const BEARD_BUDGET: usize = 400;
 pub const MOUSTACHE_BUDGET: usize = 150;
 pub const BODY_PART_BUDGET: usize = 600;
+pub const HAND_BUDGET: usize = 700;
 
 /// `hair_side_part` → `side-part`, `moustache_classic` → `classic`.
 fn stem(node: &str, prefix: &str) -> String {
@@ -68,10 +69,17 @@ fn stem(node: &str, prefix: &str) -> String {
 
 /// Every part file, in a fixed order (the merged model's).
 pub fn part_files() -> Vec<PartFile> {
-    let hair = HAIR_PIECES.iter().map(|n| PartFile {
-        file: format!("wear/hair-{}.glb", stem(n, "hair_")),
-        node: n,
-    });
+    let hair = HAIR_PIECES
+        .iter()
+        .map(|n| PartFile {
+            file: format!("wear/hair-{}.glb", stem(n, "hair_")),
+            node: n,
+        })
+        // The bare-head shapes (4N Q28).
+        .chain(crate::rider::HAIR_BARE.iter().map(|(p, b, _)| PartFile {
+            file: format!("wear/hair-bare-{}.glb", stem(p, "hair_")),
+            node: b,
+        }));
     let moustache = opt::MOUSTACHE.iter().map(|n| PartFile {
         file: format!("wear/moustache-{}.glb", stem(n, "moustache_")),
         node: n,
@@ -84,7 +92,16 @@ pub fn part_files() -> Vec<PartFile> {
         file: format!("wear/body-{}.glb", n.replace('_', "-")),
         node: n,
     });
-    hair.chain(moustache).chain(beard).chain(body).collect()
+    // The hands' shapes (4N, the hands): one file per shape and hand.
+    let hands = crate::rider::hand::nodes().into_iter().map(|n| PartFile {
+        file: format!("wear/{}.glb", n.replace('_', "-")),
+        node: n,
+    });
+    hair.chain(moustache)
+        .chain(beard)
+        .chain(body)
+        .chain(hands)
+        .collect()
 }
 
 /// The budget of a part file's node.
@@ -93,8 +110,12 @@ pub fn budget(node: &str) -> usize {
         MOUSTACHE_BUDGET
     } else if opt::BEARD.contains(&node) {
         BEARD_BUDGET
-    } else if HAIR_PIECES.contains(&node) {
+    } else if HAIR_PIECES.contains(&node)
+        || crate::rider::HAIR_BARE.iter().any(|(_, b, _)| *b == node)
+    {
         HAIR_BUDGET
+    } else if crate::rider::hand::of_node(node).is_some() {
+        HAND_BUDGET
     } else {
         BODY_PART_BUDGET
     }
@@ -295,7 +316,7 @@ mod tests {
         let full = build(Detail::High);
         let base = strip(&full);
         let files = part_files();
-        assert_eq!(files.len(), 19 + 5 + 7 + 5);
+        assert_eq!(files.len(), 19 + 19 + 5 + 7 + 5 + 10);
         let mut seen = std::collections::BTreeSet::new();
         for p in &files {
             assert!(seen.insert(p.file.clone()), "{} twice", p.file);
@@ -326,16 +347,30 @@ mod tests {
         let tris = |n: &str| extract(&full, n).map_or(0, |m| m.triangles());
         let hair = (0..ocw_core::character::HAIR_STYLES.len() as u8)
             .map(|i| {
-                crate::rider::hair_nodes(i)
+                let under: usize = crate::rider::hair_nodes(i).iter().map(|n| tris(n)).sum();
+                let bare: usize = crate::rider::hair_nodes_bare(i)
                     .iter()
                     .map(|n| tris(n))
-                    .sum::<usize>()
+                    .sum();
+                under.max(bare)
             })
             .max()
             .unwrap();
         let most = |ns: &[&str]| ns.iter().map(|n| tris(n)).max().unwrap_or(0);
         let body = most(&opt::SHOULDERS) + most(&opt::CHEST);
-        let heaviest = base.triangles() + hair + most(&opt::MOUSTACHE) + most(&opt::BEARD) + body;
+        // One shape per hand is drawn at a time.
+        let hands: usize = (0..2)
+            .map(|s| {
+                crate::rider::hand::HandShape::ALL
+                    .iter()
+                    .map(|h| tris(crate::rider::hand::node(*h, s)))
+                    .max()
+                    .unwrap_or(0)
+            })
+            .sum();
+        assert!(hands > 0);
+        let heaviest =
+            base.triangles() + hair + most(&opt::MOUSTACHE) + most(&opt::BEARD) + body + hands;
         assert!(
             heaviest <= crate::manifest::MAX_TRIANGLES_RIDER,
             "{heaviest} (file {}, hair {hair}, body {body})",

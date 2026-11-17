@@ -223,6 +223,16 @@ impl Layout {
         self.bounds.1.x
     }
 
+    /// The helmet's hook (spec §14 Phase 4, 4N Q28): on the mirror's wall
+    /// between the window and the mirror, at head height; the helmet
+    /// hangs from it while the character editor shows the bare head.
+    pub fn helmet_hook(&self) -> Vec3 {
+        let (glass, half) = self.mirror_glass();
+        let window_edge = self.window.0.z + self.window.1.x * 0.5;
+        let z = 0.5 * (window_edge + glass.z - half.x);
+        Vec3::new(self.half_width() - 0.06, 1.55, z)
+    }
+
     /// Suggested *Overview* view: the stand and the wall.
     pub fn overview_view(&self) -> View {
         View {
@@ -1341,6 +1351,26 @@ mod tests {
             );
             assert!(v.eye.z > lo.z && v.eye.z <= hi.z);
             assert!(v.eye.distance(v.target) > 0.5);
+        }
+    }
+
+    /// The helmet's hook (4N Q28): on the mirror's wall, clear of the
+    /// glass and the window by a helmet's half width, at head height, in
+    /// the room, for any number of bikes.
+    #[test]
+    fn the_helmet_hook_is_beside_the_mirror() {
+        for bikes in [1, 6, 24] {
+            let l = layout(bikes);
+            let h = l.helmet_hook();
+            let (glass, half) = l.mirror_glass();
+            assert!((h.x - glass.x).abs() < 0.1, "on the mirror's wall");
+            assert!((h.z - glass.z).abs() > half.x + 0.14, "clear of the glass");
+            assert!(
+                (h.z - l.window.0.z).abs() > l.window.1.x * 0.5 + 0.14,
+                "clear of the window"
+            );
+            assert!((1.3..1.8).contains(&h.y));
+            assert!(h.z > l.bounds.0.z && h.z < l.bounds.1.z && h.x < l.bounds.1.x);
         }
     }
 }

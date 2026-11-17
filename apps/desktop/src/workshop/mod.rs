@@ -1560,10 +1560,14 @@ fn write_view(
     // The rider in the changing corner (W4): standing at the mirror, or on
     // the stand bike; with the live preview of the picker.
     let rider_show = scene.dressing().then(|| {
-        let (c, kit) = scene.rider_look(&ctx);
+        let (c, mut kit) = scene.rider_look(&ctx);
         // The jersey designer's draft (T6), else the rider's look.
         let mut look = scene.design_preview().unwrap_or(rider_look);
         look.character = c;
+        // The bare head (4N Q28): the helmet on its hook.
+        if scene.helmet_off() {
+            kit.push(ocw_assets::rider::HELMET_OFF.to_string());
+        }
         RiderShow {
             look,
             kit,
@@ -1620,6 +1624,10 @@ fn write_view(
         ride_window: state.ride_window,
         touch: state.active == ActiveInput::Touch,
         frame: rider.look().frame,
+        helmet_on_hook: rider_show
+            .as_ref()
+            .filter(|_| scene.helmet_off())
+            .map(|r| r.kit.clone()),
         rider: rider_show,
         mirror: state.mirror,
     };
@@ -1942,7 +1950,10 @@ fn fill_rider_tiles(v: &mut PickerView, p: &picker::Picker, scene: &Workshop, ct
             picker::Kind::Free(picker::Free::HairColour(c)) => row.swatch = Some(c),
             picker::Kind::Design(_) => {}
             _ => {
-                let (character, kit) = scene.rider_look_with(ctx, Some(r));
+                let (character, mut kit) = scene.rider_look_with(ctx, Some(r));
+                if scene.helmet_off() {
+                    kit.push(ocw_assets::rider::HELMET_OFF.to_string());
+                }
                 row.thumb = Some(ThumbKey::Rider(RiderThumb {
                     look: ocw_core::RiderLook {
                         character,

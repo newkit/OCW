@@ -556,12 +556,21 @@ pub fn tile_thumb(
 ) -> Option<ocw_render::thumbs::ThumbKey> {
     use ocw_render::thumbs::{RiderThumb, ThumbKey};
     let shot = thumb_shot(attr)?;
+    let mut kit = kit.to_vec();
+    // The face's pictures without the helmet (4N Q28: the hair as it is).
+    if matches!(
+        shot,
+        ocw_render::thumbs::RiderShot::Face | ocw_render::thumbs::RiderShot::FaceFront
+    ) && !kit.iter().any(|k| k == ocw_render::thumbs::HELMET_OFF)
+    {
+        kit.push(ocw_render::thumbs::HELMET_OFF.to_string());
+    }
     Some(ThumbKey::Rider(RiderThumb {
         look: ocw_core::RiderLook {
             character: t.preview,
             ..*look
         },
-        kit: kit.to_vec(),
+        kit,
         shot,
     }))
 }
@@ -732,7 +741,13 @@ mod tests {
                         assert_eq!(k.shot, shot);
                         assert_eq!(k.look.character, t.preview, "{a:?}: the tile's look");
                         assert_eq!(k.look.jersey, look.jersey, "the rider's kit colours");
-                        assert_eq!(k.kit, kit, "the worn kit");
+                        assert!(k.kit.starts_with(&kit), "the worn kit");
+                        let face = matches!(shot, RiderShot::Face | RiderShot::FaceFront);
+                        assert_eq!(
+                            k.kit.iter().any(|k| k == ocw_render::thumbs::HELMET_OFF),
+                            face,
+                            "{a:?}: the face's pictures bare-headed (Q28)"
+                        );
                     }
                 }
             }

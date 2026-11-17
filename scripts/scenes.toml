@@ -3922,3 +3922,151 @@ riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 7
 at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=workshop open", "2.6=workshop mirror", "4=workshop slot-prev", "4.3=workshop slot-prev", "4.6=workshop slot-prev", "4.9=workshop slot-prev", "5.2=workshop slot-prev", "5.5=workshop slot-prev", "5.8=workshop slot-prev", "6.4=workshop select", "7.0=workshop down", "7.4=workshop down", "7.8=workshop right"]
 shot = 12
 pick = false
+
+# The rider's hands (spec §14 Phase 4, 4N, v4.53): every grip and glove. Made-up rider name only.
+
+[[scene]]
+name = "hands-road-hoods-mitts"
+description = "The hands (4N): road bike, on the hoods, the base fingerless mitts (fingertips bare), right hand close-up"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup right-hand 115 25 0.42"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "hands-road-tops"
+description = "The hands (4N): road bike climbing, hands on the tops round the bar"
+args = ["--route", "hills", "--bots", "0", "--power", "260"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup right-hand 115 25 0.42"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "hands-road-drops"
+description = "The hands (4N): road bike sprinting on the drops"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1=sim.power 1100", "3.5=camera.closeup right-hand 115 25 0.42"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "hands-tt-extensions"
+description = "The hands (4N): TT bike, hands round the extensions"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\nbike = \"tt\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup right-hand 115 25 0.42"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "hands-mtb-grips"
+description = "The hands (4N): mountain bike, hands round the flat bar's grips"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\nbike = \"mtb\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup right-hand 115 25 0.42"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "hands-gravel-drops"
+description = "The hands (4N): gravel bike sprinting on the flared drops"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\nbike = \"gravel\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1=sim.power 1100", "3.5=camera.closeup right-hand 115 25 0.42"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "hands-gloves-gel"
+description = "The hands (4N): gel gloves (fingerless, padded back) on the hoods, right hand close-up"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=hearts.grant 3000", "1.8=workshop.buy gloves.gel.entry", "3.5=camera.closeup right-hand 115 25 0.42"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "hands-gloves-full"
+description = "The hands (4N): full gloves (fingertips covered) on the hoods, right hand close-up"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=hearts.grant 3000", "1.8=workshop.buy gloves.full.mid", "3.5=camera.closeup right-hand 115 25 0.42"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "hands-gloves-winter"
+description = "The hands (4N): winter gloves (covered, a long cuff) on the hoods, right hand close-up"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=hearts.grant 3000", "1.8=workshop.buy gloves.winter.upper", "3.5=camera.closeup right-hand 115 25 0.42"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "hands-left-hoods"
+description = "The hands (4N): the left hand on the hoods (the thumb on the inside)"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup left-hand 245 25 0.42"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "hands-phone"
+description = "The hands (4N): the phone of the status signs held in the right hand's fingers, the left on the hoods"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3=status.sign menu on", "4=camera.closeup right-hand 100 20 0.5"]
+shot = 8
+pick = false
+
+[[scene]]
+name = "hands-arms-up"
+description = "The hands (4N): arms up at the finish, the hands open"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.5=time pause", "1=event race --km 0.4 --bots 3", "1=sim.power 700", "40=camera.closeup right-hand 150 10 0.6", "43=event dismiss"]
+shot = 44.5
+pick = false
+
+# The helmet off in the character editor (4N Q28, decided 2026-11-17). Made-up rider name only.
+
+[[scene]]
+name = "bare-tiles-hair"
+description = "Helmet off (4N Q28): Hair -> Hair style tiles, every picture and the close-up with the bare head (long hair focused)"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --hair-colour auburn", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu down", "4.8=menu select", "5.2=menu select", "6=menu right", "6.4=menu right"]
+shot = 40
+pick = false
+
+[[scene]]
+name = "bare-face-close-up"
+description = "Helmet off (4N Q28): Face and age close-up with the bare head, an afro"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --hair afro --hair-colour black --age 40s", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "bare-mirror-helmet-hook"
+description = "Helmet off (4N Q28): the workshop mirror with the hair slot chosen, the rider bare-headed, the helmet hanging on its hook beside the mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --hair long --hair-colour blond", "2.2=workshop open", "2.8=workshop mirror", "4=workshop slot-next", "4.4=workshop slot-next", "4.8=workshop slot-next"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "bare-mirror-hair-tiles"
+description = "Helmet off (4N Q28): the mirror's hair picker as tiles, the bare head in the close-up and in every picture"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --hair-colour auburn", "2.2=workshop open", "2.8=workshop mirror", "4=workshop slot-next", "4.4=workshop slot-next", "4.8=workshop slot-next", "5.2=workshop select", "5.8=workshop right", "6.2=workshop right"]
+shot = 40
+pick = false

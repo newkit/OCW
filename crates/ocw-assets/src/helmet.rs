@@ -813,8 +813,10 @@ mod tests {
         }
         let base_far = lo.triangles_below(lo.node(HELMET_ROAD));
         assert!(base_far <= 48, "far base helmet: {base_far}");
-        eprintln!("rider: {} triangles", hi.triangles());
-        assert!(hi.triangles() <= crate::manifest::MAX_TRIANGLES_RIDER);
+        // The near rider file (its parts are files of their own, 4N N8).
+        let file = crate::rider_split::strip(&hi);
+        eprintln!("rider file: {} triangles", file.triangles());
+        assert!(file.triangles() <= crate::manifest::MAX_TRIANGLES_RIDER);
     }
 
     /// The shell is the helmet slot (colour, finish, the designer's

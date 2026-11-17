@@ -409,6 +409,30 @@ pub struct CloseUpShot {
     /// Where the head sits across the picture (normalised device x, −1 …
     /// 1; positive: right of the middle, beside a panel on the left).
     pub screen_x: f32,
+    /// What it looks at: the face, or a hand (`camera.closeup`).
+    pub on: CloseUpOn,
+}
+
+/// What a close-up looks at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CloseUpOn {
+    #[default]
+    Face,
+    /// The hand (0 left, 1 right; spec §14 Phase 4, 4N, the hands).
+    Hand(usize),
+}
+
+impl CloseUpShot {
+    /// A hand from `yaw` / `pitch` (rad) at `distance` (m), in the middle.
+    pub fn hand(side: usize, yaw: f32, pitch: f32, distance: f32) -> Self {
+        Self {
+            yaw,
+            pitch,
+            distance,
+            screen_x: 0.0,
+            on: CloseUpOn::Hand(side.min(1)),
+        }
+    }
 }
 
 impl CloseUpShot {
@@ -418,6 +442,7 @@ impl CloseUpShot {
         pitch: 0.2,
         distance: 0.74,
         screen_x: 0.36,
+        on: CloseUpOn::Face,
     };
     /// The face straight from the front (the glasses, the eyes).
     pub const FRONT: CloseUpShot = CloseUpShot {
@@ -425,6 +450,7 @@ impl CloseUpShot {
         pitch: 0.15,
         distance: 0.72,
         screen_x: 0.36,
+        on: CloseUpOn::Face,
     };
 }
 
@@ -463,6 +489,17 @@ pub fn close_up_eye(
 pub struct RiderHead {
     pub root: Entity,
 }
+
+/// Marks a hand node of the local rider's avatar (`camera.closeup`), with
+/// the avatar's root and the side.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct RiderHand {
+    pub root: Entity,
+    pub side: usize,
+}
+
+/// The middle of the palm in the hand node's frame.
+pub const PALM_IN_HAND: Vec3 = Vec3::new(0.0, -0.06, 0.0);
 
 pub const MIN_PITCH: f32 = -0.05;
 pub const MAX_PITCH: f32 = 1.45;
@@ -794,7 +831,14 @@ pub fn flight_up(f: &crate::FlightView) -> Vec3 {
 /// The close-up's resource and the local rider's head and avatar.
 type CloseUpParams<'w, 's> = (
     Option<Res<'w, CloseUp>>,
-    Query<'w, 's, (&'static RiderHead, &'static GlobalTransform)>,
+    Query<
+        'w,
+        's,
+        (
+            AnyOf<(&'static RiderHead, &'static RiderHand)>,
+            &'static GlobalTransform,
+        ),
+    >,
     Query<'w, 's, &'static GlobalTransform, With<crate::riders::Avatar>>,
     // Where the rider was last frame while in a close-up.
     Local<'s, Option<Vec3>>,
@@ -961,11 +1005,21 @@ pub(crate) fn follow(
     // frame, on the avatar of this one: no lag while riding).
     let (close_up, heads, roots, mut close_rider) = close;
     let close_up = close_up.and_then(|c| c.0);
-    let head_now = close_up.and_then(|_| {
-        let (h, g) = heads.iter().next()?;
-        let root = roots.get(h.root).ok()?;
-        let face = g.transform_point(FACE_IN_HEAD);
-        let local = root.affine().inverse().transform_point3(face);
+    let head_now = close_up.and_then(|shot| {
+        let (root, at) =
+            heads
+                .iter()
+                .find_map(|((head, hand), g)| match (shot.on, head, hand) {
+                    (CloseUpOn::Face, Some(h), _) => {
+                        Some((h.root, g.transform_point(FACE_IN_HEAD)))
+                    }
+                    (CloseUpOn::Hand(side), _, Some(h)) if h.side == side => {
+                        Some((h.root, g.transform_point(PALM_IN_HAND)))
+                    }
+                    _ => None,
+                })?;
+        let root = roots.get(root).ok()?;
+        let local = root.affine().inverse().transform_point3(at);
         Some(rider.transform_point(local))
     });
     let (eye, target) = match (close_up, head_now) {
