@@ -94,11 +94,16 @@ pub struct MenuView {
     /// Draw the items as a month calendar (spec §14 Phase 9 S9a): items
     /// 0–41 the days, then the buttons ([`MenuCalendar`]).
     pub calendar: Option<MenuCalendar>,
+    /// Dock the panel at the window's left edge, narrower and without the
+    /// dark veil, so the scene beside it stays visible (the character
+    /// editor: the rider framed in the free space, spec §14 Phase 4, 4N
+    /// *Visual editor*).
+    pub side: bool,
 }
 
 /// A month view (World → Time → Calendar): the buttons over the grid (items
 /// [`CALENDAR_DAYS`] … `+ 6`), the weekdays, six weeks of days (items 0 –
-/// 41), the time stepper and Back under it, the legend of the bands.
+/// 41), the time stepper, Select and Back under it, the legend of the bands.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct MenuCalendar {
     /// "November 2026".
@@ -107,7 +112,7 @@ pub struct MenuCalendar {
     pub weekdays: Vec<String>,
     pub days: Vec<CalendarDay>,
     /// The labels of the items after the days: seven buttons over the grid,
-    /// then the time stepper and Back.
+    /// then the time stepper, Select ("Select Tue 17 Nov 2026") and Back.
     pub controls: Vec<String>,
     /// The bands' colours and names (sRGB 0–1), then the moon's glyphs.
     pub legend: Vec<(String, [f32; 3])>,
@@ -118,6 +123,9 @@ pub struct MenuCalendar {
 pub const CALENDAR_DAYS: usize = 42;
 /// Buttons over the grid.
 pub const CALENDAR_BUTTONS: usize = 7;
+/// Select's place among the items under the grid (the time stepper, Select,
+/// Back).
+pub const CALENDAR_SELECT: usize = 1;
 
 /// One day of a [`MenuCalendar`].
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -183,6 +191,8 @@ pub struct MenuGrid {
 pub struct GridCell {
     pub label: String,
     pub icon: Option<ocw_weather::icon::Icon>,
+    /// A colour swatch instead of an icon (sRGB; skin, hair, facial hair).
+    pub swatch: Option<[u8; 3]>,
     /// The current choice (a thin frame).
     pub marked: bool,
 }
@@ -382,16 +392,24 @@ fn panel_content_vh(panel_vh: f32, aspect: f32) -> f32 {
     panel_vh.min(PANEL_MAX_VW * aspect) - 2.0 * (PANEL_PAD_X_VH + PANEL_BORDER_VH)
 }
 
+/// The width of the side panel (vh): about a third of a 16:9 window.
+pub const SIDE_PANEL_WIDTH_VH: f32 = 72.0;
+
+/// The width of `view`'s panel (vh): a grid's is wider, the side panel
+/// narrower.
+fn view_panel_vh(view: &MenuView) -> f32 {
+    if view.side {
+        SIDE_PANEL_WIDTH_VH
+    } else if view.grid.is_some() || view.calendar.is_some() || view.wide {
+        GRID_PANEL_WIDTH_VH
+    } else {
+        PANEL_WIDTH_VH
+    }
+}
+
 /// The content width of `view`'s panel (a grid's is wider).
 fn view_content_vh(view: &MenuView, aspect: f32) -> f32 {
-    panel_content_vh(
-        if view.grid.is_some() || view.calendar.is_some() || view.wide {
-            GRID_PANEL_WIDTH_VH
-        } else {
-            PANEL_WIDTH_VH
-        },
-        aspect,
-    )
+    panel_content_vh(view_panel_vh(view), aspect)
 }
 
 /// Width of a grid cell (% of the grid's width, its border included).
@@ -405,8 +423,21 @@ fn grid_cell_vh(columns: usize, w: f32) -> f32 {
     w * grid_cell_pct(columns) / 100.0
 }
 
+/// Whether a grid's cells have pictures (icons or swatches); named
+/// tiles without any are drawn without the picture's room.
+fn grid_pictures(grid: &MenuGrid) -> bool {
+    grid.cells
+        .iter()
+        .any(|c| c.icon.is_some() || c.swatch.is_some())
+}
+
 /// Height of a grid (vh) in content `w` wide.
 fn grid_height_vh(grid: &MenuGrid, w: f32) -> f32 {
+    let picture = if grid_pictures(grid) {
+        GRID_ICON_VH
+    } else {
+        0.0
+    };
     let cols = grid.columns.max(1);
     let cell = grid_cell_vh(cols, w);
     let label_w = cell - 2.0 * (GRID_PAD_VH + ROW_BORDER_VH);
@@ -418,7 +449,7 @@ fn grid_height_vh(grid: &MenuGrid, w: f32) -> f32 {
                 .map(|c| wrapped_lines(&c.label, label_w, GRID_LABEL_VH))
                 .max()
                 .unwrap_or(1) as f32;
-            GRID_ICON_VH + lines * GRID_LABEL_VH * LINE_HEIGHT + 2.0 * (GRID_PAD_VH + ROW_BORDER_VH)
+            picture + lines * GRID_LABEL_VH * LINE_HEIGHT + 2.0 * (GRID_PAD_VH + ROW_BORDER_VH)
         })
         .sum::<f32>()
         + GRID_GAP_VH * (grid.cells.len().div_ceil(cols).saturating_sub(1)) as f32
@@ -813,6 +844,7 @@ fn spawn_grid(
     images: &mut Assets<Image>,
 ) {
     let cell_pct = grid_cell_pct(grid.columns);
+    let pictures = grid_pictures(grid);
     commands.entity(list).despawn_children();
     commands.entity(list).with_children(|l| {
         for (i, cell) in grid.cells.iter().enumerate() {
@@ -835,6 +867,15 @@ fn spawn_grid(
                 Marked(cell.marked),
             ));
             node.with_children(|c| {
+                if !pictures {
+                    c.spawn((
+                        Text::new(cell.label.clone()),
+                        font(GRID_LABEL_VH),
+                        color,
+                        TextLayout::justify(Justify::Center),
+                    ));
+                    return;
+                }
                 let mut icon = c.spawn(Node {
                     width: vh(GRID_ICON_VH),
                     height: vh(GRID_ICON_VH),
@@ -846,6 +887,15 @@ fn spawn_grid(
                         img.color = Color::srgba(1.0, 1.0, 1.0, 0.45);
                     }
                     icon.insert(img);
+                } else if let Some([r, g, b]) = cell.swatch {
+                    icon.insert((
+                        BackgroundColor(Color::srgb_u8(r, g, b)),
+                        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.6)),
+                    ));
+                    icon.entry::<Node>().and_modify(|mut n| {
+                        n.border = UiRect::all(vh(0.3));
+                        n.border_radius = BorderRadius::all(vh(GRID_ICON_VH / 2.0));
+                    });
                 }
                 c.spawn((
                     Text::new(cell.label.clone()),
@@ -973,14 +1023,19 @@ fn spawn_calendar(commands: &mut Commands, list: Entity, view: &MenuView, c: &Me
                 }
             });
         }
-        // The time stepper (under the left four columns) and Back.
+        // Under the grid: the time stepper (columns 0 – 2), Select (3 – 5:
+        // the date picker's OK, framed and in the focus colour while it
+        // may set the date) and Back (6).
         l.spawn(row(CAL_SECTION_GAP_VH)).with_children(|r| {
             let time = days + CALENDAR_BUTTONS;
+            let select = time + CALENDAR_SELECT;
             for (i, width) in [
-                (time, 4.0 * cell_pct + 3.0 * GRID_GAP_PCT),
-                (time + 1, 3.0 * cell_pct + GRID_GAP_PCT),
+                (time, 3.0 * cell_pct + 2.0 * GRID_GAP_PCT),
+                (select, 3.0 * cell_pct + 2.0 * GRID_GAP_PCT),
+                (time + 2, cell_pct),
             ] {
                 let label = c.controls.get(i - days).cloned().unwrap_or_default();
+                let primary = i == select && !view.is_dimmed(i);
                 let mut b = r.spawn((
                     Node {
                         flex_direction: FlexDirection::Row,
@@ -989,7 +1044,11 @@ fn spawn_calendar(commands: &mut Commands, list: Entity, view: &MenuView, c: &Me
                     BackgroundColor(ROW),
                     BorderColor::all(Color::NONE),
                     MenuRow(i),
+                    Marked(primary),
                 ));
+                let colour = |i: usize| {
+                    if primary { TextColor(FOCUS) } else { colour(i) }
+                };
                 b.with_children(|b| match split_value(&label) {
                     Some((name, value)) => {
                         b.spawn((Text::new(name), font(CAL_LABEL_VH), colour(i)));
@@ -1116,15 +1175,18 @@ fn draw_menu(
     mut commands: Commands,
     view: Res<MenuView>,
     mut page: Local<Option<PageKey>>,
-    mut root: Query<&mut Node, With<MenuRoot>>,
+    mut root: Query<(&mut Node, &mut BackgroundColor), With<MenuRoot>>,
     mut list: Query<(Entity, &mut Node), ListFilter>,
     mut panel: Query<&mut Node, PanelFilter>,
-    mut rows: Query<(
-        Ref<MenuRow>,
-        &mut BackgroundColor,
-        &mut BorderColor,
-        Option<&Marked>,
-    )>,
+    mut rows: Query<
+        (
+            Ref<MenuRow>,
+            &mut BackgroundColor,
+            &mut BorderColor,
+            Option<&Marked>,
+        ),
+        Without<MenuRoot>,
+    >,
     (mut images, mut icons, mut unicorn): (
         ResMut<Assets<Image>>,
         Local<std::collections::HashMap<ocw_weather::icon::Icon, Handle<Image>>>,
@@ -1150,7 +1212,7 @@ fn draw_menu(
     if !view.is_changed() && !resized && !rows.iter().any(|(r, ..)| r.is_added()) {
         return;
     }
-    let Ok(mut node) = root.single_mut() else {
+    let Ok((mut node, mut veil)) = root.single_mut() else {
         return;
     };
     let display = if view.open {
@@ -1160,6 +1222,25 @@ fn draw_menu(
     };
     if node.display != display {
         node.display = display;
+    }
+    // The side panel (the character editor): docked left, the scene
+    // beside it free.
+    let justify = if view.side {
+        JustifyContent::FlexStart
+    } else {
+        JustifyContent::Center
+    };
+    let veil_colour = Color::srgba(0.0, 0.0, 0.0, if view.side { 0.0 } else { 0.45 });
+    if veil.0 != veil_colour {
+        veil.0 = veil_colour;
+    }
+    if node.justify_content != justify {
+        node.justify_content = justify;
+        node.padding = if view.side {
+            UiRect::left(vh(2.0))
+        } else {
+            UiRect::ZERO
+        };
     }
     if !view.open {
         *page = None;
@@ -1203,13 +1284,7 @@ fn draw_menu(
             }
         }
         if let Ok(mut p) = panel.single_mut() {
-            p.width = vh(
-                if view.grid.is_some() || view.calendar.is_some() || view.wide {
-                    GRID_PANEL_WIDTH_VH
-                } else {
-                    PANEL_WIDTH_VH
-                },
-            );
+            p.width = vh(view_panel_vh(&view));
         }
         *page = Some(key);
     }
@@ -1404,6 +1479,7 @@ mod tests {
             "Dec ›",
             "2027 »",
             "Time:  < 14:20 >",
+            "Select Tue 17 Nov 2026",
             "Back",
         ]
         .map(str::to_owned)
@@ -1461,7 +1537,8 @@ mod tests {
     }
 
     /// Drawn headless: every item a pointer target (42 days, seven
-    /// buttons, the time, Back), a band per day, the moon glyphs.
+    /// buttons, the time, Select, Back), a band per day, the moon glyphs;
+    /// Select framed as the page's main button.
     #[test]
     fn the_calendar_draws_headless() {
         let mut app = App::new();
@@ -1481,11 +1558,20 @@ mod tests {
             .iter(app.world())
             .map(|r| r.0)
             .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(rows.len(), CALENDAR_DAYS + CALENDAR_BUTTONS + 2);
+        assert_eq!(rows.len(), CALENDAR_DAYS + CALENDAR_BUTTONS + 3);
         assert_eq!(
             rows.iter().max(),
-            Some(&(CALENDAR_DAYS + CALENDAR_BUTTONS + 1))
+            Some(&(CALENDAR_DAYS + CALENDAR_BUTTONS + 2))
         );
+        let select = CALENDAR_DAYS + CALENDAR_BUTTONS + CALENDAR_SELECT;
+        let framed = app
+            .world_mut()
+            .query::<(&MenuRow, &Marked)>()
+            .iter(app.world())
+            .filter(|(r, m)| m.0 && r.0 >= CALENDAR_DAYS)
+            .map(|(r, _)| r.0)
+            .collect::<Vec<_>>();
+        assert_eq!(framed, [select]);
         let bands = app
             .world_mut()
             .query::<&CalendarBand>()
@@ -1506,6 +1592,7 @@ mod tests {
             .map(|t| t.0.clone())
             .collect::<Vec<_>>();
         assert!(texts.iter().any(|t| t == "Today"));
+        assert!(texts.iter().any(|t| t == "Select Tue 17 Nov 2026"));
         assert!(texts.iter().any(|t| t == "<") && texts.iter().any(|t| t == ">"));
     }
 
@@ -1528,6 +1615,7 @@ mod tests {
             .map(|p| GridCell {
                 label: ocw_weather::presets::title(p.0),
                 icon: ocw_weather::presets::preset(p.0).map(|w| ocw_weather::icon::Icon::of(&w)),
+                swatch: None,
                 marked: false,
             })
             .chain([GridCell {
@@ -1751,6 +1839,7 @@ mod tests {
             .map(|p| GridCell {
                 label: ocw_weather::presets::title(p.0),
                 icon: ocw_weather::presets::preset(p.0).map(|w| ocw_weather::icon::Icon::of(&w)),
+                swatch: None,
                 marked: p.0 == "rain",
             })
             .chain([GridCell {

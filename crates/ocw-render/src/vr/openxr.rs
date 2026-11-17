@@ -13,7 +13,7 @@
 //! - The controllers: `xrSyncActions` after the wait, every frame of the
 //!   loop → [`VrState::controllers`] (the gamepad of `super::controllers`).
 //! - The app's exit ([`AppExit`], in [`Last`]): the session is torn down
-//!   before Bevy drops the GPU device (`XrRuntime::shutdown`, v4.38).
+//!   before Bevy drops the GPU device (`XrRuntime::shutdown`, v4.52).
 
 use std::sync::{Arc, Mutex};
 

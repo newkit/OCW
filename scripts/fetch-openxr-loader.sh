@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The Khronos OpenXR loader for the Windows release (spec §14 Phase 11,
-# v4.38: "ship the official DLL"):
+# v4.52: "ship the official DLL"):
 #
 #   scripts/fetch-openxr-loader.sh [OUT_DIR]     (default target/openxr-vendor/out)
 #

@@ -507,6 +507,7 @@ mod tests {
         let reject = encode(&ocw_protocol::server_message(S::Reject(v1::Reject {
             reason: "protocol version 0 not supported".into(),
             auth: false,
+            name_taken: false,
         })));
         b.on_message(&reject, 0.5);
         assert!(b.report().closed.unwrap().contains("rejected"));

@@ -32,6 +32,12 @@ pub enum BackendCommand {
         gain: f32,
         pan: f32,
     },
+    /// Who may subscribe to the own microphone (LiveKit's track
+    /// subscription permissions, enforced by the voice server): `None`
+    /// everybody (the default of every new call), `Some(identities)` only
+    /// these – the riders the own rider is apart from (a voice block,
+    /// spec §7.1.7 Q9) are left out. Kept across reconnects.
+    SetSubscribers(Option<Vec<String>>),
     /// A confirmation sound.
     PlayCue(Cue),
     /// The echo test's local loopback (spec §7 *Echo bot*): the processed

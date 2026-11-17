@@ -266,11 +266,14 @@ fn update_overlay(
     fan: Query<Entity, With<Fan>>,
     mut label_text: Query<&mut Text, (With<Label>, Without<NoticeText>)>,
     mut shown: Local<Option<Vec<FanArrow>>>,
+    hud: Option<Res<crate::hud::ShowHud>>,
 ) {
     let (Ok(mut vis), Ok(fan)) = (overlay.single_mut(), fan.single()) else {
         return;
     };
-    let Some(j) = &view.junction else {
+    // `hud off` hides the fan too (clean pictures and videos).
+    let hud_off = hud.is_some_and(|h| !h.0);
+    let Some(j) = view.junction.as_ref().filter(|_| !hud_off) else {
         *vis = Visibility::Hidden;
         *shown = None;
         return;
@@ -394,6 +397,33 @@ mod tests {
         app.world_mut().resource_mut::<RideView>().notice = None;
         app.update();
         assert_eq!(state(&mut app).0, Display::None);
+    }
+
+    /// Regression (drone videos, 2026-11-17): the fan stayed on screen
+    /// with `hud off`.
+    #[test]
+    fn hud_off_hides_the_fan() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(RideView::new(ocw_world::Route::test_loop()))
+            .insert_resource(crate::hud::ShowHud(true))
+            .add_plugins(JunctionPlugin);
+        app.world_mut().resource_mut::<RideView>().junction = Some(view());
+        app.update();
+        app.update();
+        let vis = |app: &mut App| {
+            let w = app.world_mut();
+            *w.query_filtered::<&Visibility, With<Overlay>>()
+                .single(w)
+                .unwrap()
+        };
+        assert_eq!(vis(&mut app), Visibility::Inherited);
+        app.world_mut().resource_mut::<crate::hud::ShowHud>().0 = false;
+        app.update();
+        assert_eq!(vis(&mut app), Visibility::Hidden);
+        app.world_mut().resource_mut::<crate::hud::ShowHud>().0 = true;
+        app.update();
+        assert_eq!(vis(&mut app), Visibility::Inherited);
     }
 
     fn view() -> JunctionView {

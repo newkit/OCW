@@ -52,6 +52,8 @@ pub mod host;
 pub mod input;
 pub mod join;
 pub mod menu;
+/// The bike stand's part tiles (spec §14 Phase 4, 4G *Tiles*).
+pub mod part_tiles;
 pub mod photographer;
 pub mod quality;
 pub mod recording;
@@ -62,6 +64,7 @@ pub mod sky;
 pub mod strava;
 pub mod trainer;
 pub mod view;
+pub mod view_distance;
 pub mod voice;
 pub mod weather;
 pub mod workout;

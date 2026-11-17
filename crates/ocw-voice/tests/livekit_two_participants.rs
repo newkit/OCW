@@ -16,7 +16,11 @@
 //! headless (no sound card): both riders see each other, each "speaks" a
 //! tone and hears the other's, then rider 1 mutes and rider 2 sees the
 //! mute, rider 1 leaves and rider 2 sees it. A second test does the same
-//! through two `VoiceController`s, the desktop app's voice logic.
+//! through two `VoiceController`s, the desktop app's voice logic. A third
+//! (spec §7.1.7 Q9) has three controllers and an in-memory game server: A
+//! blocks B, the server keeps both apart, neither hears the other – not
+//! even when B asks the voice server for A's microphone itself – while C
+//! hears both and both hear C.
 #![cfg(feature = "livekit")]
 
 mod support;
@@ -293,5 +297,93 @@ fn two_desktop_controllers_hear_each_other() {
     }
     for (c, _) in &mut sides {
         c.new_session(false);
+    }
+}
+
+/// Voice block (spec §7.1.7 Q9) against a real LiveKit server: the game
+/// server (in memory) gets A's block and tells A and B they are apart;
+/// three desktop controllers in one room – A and B do not hear each
+/// other, C hears both, both hear C, and B's own request for A's voice is
+/// refused by the voice server (A's subscription permissions).
+#[test]
+fn a_block_is_enforced_both_ways_by_the_server() {
+    use ocw_protocol::v1::{client_message::Msg as C, server_message::Msg as S};
+    let Some((mut cfg, own)) = server() else {
+        eprintln!("skipped: no LiveKit server (see two_participants_hear_each_other)");
+        return;
+    };
+    let log = own
+        .as_ref()
+        .map(|s| format!(" (server log {})", s.log.display()))
+        .unwrap_or_default();
+    cfg.room_prefix = "ocw-block".into();
+    let room = cfg.session_room();
+    // The game server: three riders join, Ada blocks Bea.
+    let mut game = ocw_server::GameServer::new(
+        ocw_world::Route::test_loop(),
+        ocw_server::ServerConfig::default(),
+    );
+    let names = ["Ada Rider", "Bea Climber", "Cleo Sprinter"];
+    let mut joined = Vec::new();
+    for n in names {
+        let conn = game.connect();
+        let reply = game.handle(
+            conn,
+            &ocw_protocol::encode(&ocw_protocol::client_message(C::Hello(
+                ocw_protocol::v1::Hello {
+                    protocol_version: ocw_protocol::PROTOCOL_VERSION,
+                    display_name: n.into(),
+                    ..Default::default()
+                },
+            ))),
+        );
+        let Ok(S::Welcome(w)) = ocw_protocol::decode_server(&reply[0]) else {
+            panic!("{n} not welcomed");
+        };
+        joined.push((conn, RiderId(w.rider_id)));
+    }
+    game.handle(
+        joined[0].0,
+        &ocw_protocol::encode(&ocw_protocol::client_message(C::VoiceBlocks(
+            ocw_protocol::v1::VoiceBlocks {
+                names: vec!["Bea Climber".into()],
+                ..Default::default()
+            },
+        ))),
+    );
+    let mut apart = [(); 3].map(|_| std::collections::BTreeSet::new());
+    for (conn, bytes) in game.take_directed() {
+        let Ok(S::VoiceApart(a)) = ocw_protocol::decode_server(&bytes) else {
+            panic!("not a VoiceApart");
+        };
+        let i = joined.iter().position(|(c, _)| *c == conn).unwrap();
+        apart[i] = a.riders.into_iter().map(RiderId).collect();
+    }
+    assert_eq!(apart[0], [joined[1].1].into(), "Ada is apart from Bea");
+    assert_eq!(apart[1], [joined[0].1].into(), "Bea is apart from Ada");
+    assert!(apart[2].is_empty(), "Cleo is with both");
+    let unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let grant = |i: usize| {
+        let identity = ocw_protocol::voice_identity(joined[i].1);
+        ocw_protocol::v1::VoiceGrant {
+            url: cfg.url.clone(),
+            token: cfg.access_token(&room, &identity, names[i], unix),
+            room: room.clone(),
+            identity,
+            expires_unix_s: unix + cfg.token_ttl_s,
+            ..Default::default()
+        }
+    };
+    let [a0, a1, a2] = apart;
+    let mut trio = support::trio::Trio::new([
+        (joined[0].1, names[0], grant(0), a0),
+        (joined[1].1, names[1], grant(1), a1),
+        (joined[2].1, names[2], grant(2), a2),
+    ]);
+    for line in trio.check_block(&log) {
+        println!("PASS {line}");
     }
 }

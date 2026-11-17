@@ -1,4 +1,4 @@
-//! The controllers' actions (spec §14 Phase 11, v4.38): one OpenXR action
+//! The controllers' actions (spec §14 Phase 11, v4.52): one OpenXR action
 //! set with an action per `ocw_xr::controllers::Input`, the suggested
 //! bindings of `ocw_xr::controllers::BINDINGS` (Oculus Touch, the Khronos
 //! simple controller), attached to each session and synced every frame.

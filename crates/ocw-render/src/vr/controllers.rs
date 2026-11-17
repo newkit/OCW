@@ -1,4 +1,4 @@
-//! The VR controllers as a gamepad (spec §14 Phase 11, v4.38): the
+//! The VR controllers as a gamepad (spec §14 Phase 11, v4.52): the
 //! headset backend writes each frame's [`ControllerState`] into
 //! [`VrState::controllers`]; here it becomes a Bevy gamepad named "VR
 //! controllers", fed through Bevy's own raw gamepad events (so its

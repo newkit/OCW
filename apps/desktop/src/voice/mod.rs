@@ -280,6 +280,36 @@ fn register_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
+        Command::new("voice.volume")
+            .about("One rider's voice volume for you, 0 to 200 % (rider id, identity or name); remembered")
+            .arg(Arg::new("who").required(true))
+            .arg(
+                Arg::new("percent")
+                    .required(true)
+                    .value_parser(clap::value_parser!(i64)),
+            ),
+        |world, m| {
+            let who = m.get_one::<String>("who").expect("required").clone();
+            let pct = *m.get_one::<i64>("percent").expect("required");
+            with_voice(world, |c, store| voice_cmd::volume_command(c, store, &who, pct))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("voice.block")
+            .about("Block a rider in voice chat: neither of you hears the other; remembered, they are not told (rider id, identity, name or a remembered key; on, off, toggle)")
+            .arg(Arg::new("who").required(true))
+            .arg(Arg::new("state").value_parser(["on", "off", "toggle"])),
+        |world, m| {
+            let who = m.get_one::<String>("who").expect("required").clone();
+            let arg = m.get_one::<String>("state").cloned();
+            with_voice(world, |c, store| {
+                voice_cmd::block_command(c, store, &who, arg.as_deref())
+            })
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
         Command::new("voice.group")
             .about("Talk in a named group (private room) instead of the whole session; without a name: back to the session")
             .arg(Arg::new("name"))
@@ -379,6 +409,85 @@ mod tests {
         assert!(status.contains("microphone"), "{status}");
         assert!(run(&mut app, "voice.group Bad").contains("invalid group name"));
         assert!(run(&mut app, "voice.mute nobody").contains("nobody called"));
+        assert!(run(&mut app, "voice.volume nobody 50").contains("nobody called"));
+        assert!(run(&mut app, "voice.block nobody").contains("nobody called"));
+    }
+
+    /// Volume and Block (spec §7.1.7 Q9) from the console: a participant
+    /// by name, remembered in the settings, unblocked by its key.
+    #[test]
+    fn volume_and_block_commands_are_remembered() {
+        use ocw_voice::backend::{BackendCommand, BackendEvent, VoiceBackend};
+        /// Hands out its events once the call is being joined.
+        struct Late(Vec<BackendEvent>, bool);
+        impl VoiceBackend for Late {
+            fn available(&self) -> Result<(), String> {
+                Ok(())
+            }
+            fn input_devices(&mut self) -> Vec<String> {
+                Vec::new()
+            }
+            fn output_devices(&mut self) -> Vec<String> {
+                Vec::new()
+            }
+            fn send(&mut self, cmd: BackendCommand) {
+                self.1 |= matches!(cmd, BackendCommand::Connect { .. });
+            }
+            fn poll(&mut self) -> Vec<BackendEvent> {
+                if self.1 {
+                    std::mem::take(&mut self.0)
+                } else {
+                    Vec::new()
+                }
+            }
+        }
+        let mut app = app();
+        {
+            let voice = app.world().resource::<Voice>();
+            let mut c = voice.0.lock().unwrap();
+            let backend = Late(
+                vec![
+                    BackendEvent::Connected { room: "r".into() },
+                    BackendEvent::ParticipantJoined {
+                        identity: "rider-2".into(),
+                        name: "Bea Climber".into(),
+                    },
+                ],
+                false,
+            );
+            *c = VoiceController::new(
+                Box::new(backend),
+                VoiceSettings::default(),
+                MuteState::default(),
+            );
+            c.new_session(true);
+            c.set_human_riders(2);
+            assert!(c.update(0.0, &[]).is_some());
+            c.on_grant(
+                &v1::VoiceGrant {
+                    url: "ws://v".into(),
+                    token: "t".into(),
+                    room: "r".into(),
+                    identity: "rider-1".into(),
+                    ..Default::default()
+                },
+                0.1,
+            );
+            c.update(0.2, &[]);
+        }
+        assert!(run(&mut app, "voice.volume \"Bea Climber\" 155").contains("volume 160 %"));
+        assert!(run(&mut app, "voice.block rider-2").contains("Bea Climber blocked"));
+        let us = app.world().resource::<UserSettings>();
+        let prefs = us.settings.voice_riders();
+        let p = &prefs["name:local/Bea Climber"];
+        assert!(p.blocked && p.volume_pct == 160, "{p:?}");
+        assert!(run(&mut app, "voice.status").contains("blocked: Bea Climber"));
+        assert!(
+            run(&mut app, "voice.block \"name:local/Bea Climber\" off")
+                .contains("Bea Climber unblocked")
+        );
+        let us = app.world().resource::<UserSettings>();
+        assert!(!us.settings.voice_riders()["name:local/Bea Climber"].blocked);
     }
 
     #[test]

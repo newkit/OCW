@@ -117,7 +117,7 @@ pub trait XrRuntime {
     fn recreate_session(&mut self) -> Result<(), XrError>;
     /// The app quits: wait for the GPU, then destroy the swapchain, the
     /// frame stream and the session – before the GPU device and the
-    /// instance go (v4.38: the exit crash on the Quest 1 over Link came
+    /// instance go (v4.52: the exit crash on the Quest 1 over Link came
     /// from the other order). Nothing works on the session after it.
     fn shutdown(&mut self) {}
 }

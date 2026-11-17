@@ -26,6 +26,8 @@ pub mod stats;
 // Snapshot timing at a client (interval, jitter, age; spec §14 Phase 10 B3).
 pub mod timing;
 pub mod voice;
+/// Voice blocks: who exchanges no voice with whom (spec §7.1.7 Q9).
+pub mod voice_block;
 // The wire rules without I/O (frames, datagram rules, the client's link
 // state machine): shared with the browser app's WebTransport client.
 pub mod wire;
@@ -35,6 +37,7 @@ pub mod worlds;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use ocw_core::name::{self, NameRegistry};
 use ocw_core::{BROADCAST_HZ, RiderId, SIM_TICK_HZ, TICKS_PER_BROADCAST};
 use ocw_protocol::v1::{self, client_message::Msg as C, server_message::Msg as S};
 use ocw_protocol::{PROTOCOL_VERSION, decode_client, encode, server_message};
@@ -156,6 +159,11 @@ pub struct ServerConfig {
     /// Refuse riders without an account (`ocw-server --auth-required`).
     /// By default anonymous riders are allowed (Phase 10 Q5).
     pub auth_required: bool,
+    /// The least time between two ride photographer photos the server
+    /// lets through (s; spec §2.11). `None`: the photographer's 20 minutes
+    /// (no gap at all on a server with dev commands); test runs with a
+    /// faster photographer (`ocw-server --photo-time-scale`) shorten it.
+    pub photo_gap_s: Option<f64>,
 }
 
 pub use ocw_protocol::ClockAccess;
@@ -192,6 +200,9 @@ pub struct GameServer {
     event_dirty: bool,
     /// Display names from the hellos (voice tokens carry them).
     names: BTreeMap<ConnectionId, String>,
+    /// The names held in this session (spec §14 Phase 4, 4N Q22: unique
+    /// on every server), by connection.
+    taken: name::NameBook<ConnectionId>,
     /// When each connection got its last voice token (unix s).
     voice_issued: BTreeMap<ConnectionId, u64>,
     /// The addresses of each network connection (this server's address the
@@ -230,6 +241,16 @@ pub struct GameServer {
     /// The riders' status signs (spec §2.6), from their samples (and
     /// `dev.bot_status` for bots); relayed in the snapshots, looks only.
     statuses: BTreeMap<RiderId, v1::RiderStatus>,
+    /// The ride photographer's shots (spec §2.11, v4.38): each rider's
+    /// checked shots, and those to relay to everyone with the next tick.
+    photos: BTreeMap<RiderId, ocw_world::photo_share::ShotLog>,
+    photo_out: Vec<v1::PhotoShot>,
+    /// Whom each connection's rider blocked in voice (spec §7.1.7 Q9) and
+    /// the set of riders each was last told it is apart from.
+    voice_blocks: BTreeMap<ConnectionId, voice_block::Blocks>,
+    voice_apart: BTreeMap<ConnectionId, std::collections::BTreeSet<RiderId>>,
+    /// Messages for one connection only ([`GameServer::take_directed`]).
+    directed: Vec<(ConnectionId, Vec<u8>)>,
 }
 
 /// A world switch the host asked for (spec §3.2.1), checked and waiting
@@ -397,6 +418,7 @@ impl GameServer {
             next_connection: 1,
             event_dirty: false,
             names: BTreeMap::new(),
+            taken: name::NameBook::new(),
             voice_issued: BTreeMap::new(),
             peer_addrs: BTreeMap::new(),
             joined: Vec::new(),
@@ -409,6 +431,11 @@ impl GameServer {
             geo_origin,
             real_pressure_y_m: None,
             accounts: BTreeMap::new(),
+            photos: BTreeMap::new(),
+            photo_out: Vec::new(),
+            voice_blocks: BTreeMap::new(),
+            voice_apart: BTreeMap::new(),
+            directed: Vec::new(),
         }
     }
 
@@ -885,11 +912,16 @@ impl GameServer {
     /// Removes a connection and its rider.
     pub fn disconnect(&mut self, conn: ConnectionId) {
         self.names.remove(&conn);
+        self.taken.release(&conn);
         self.accounts.remove(&conn);
         self.voice_issued.remove(&conn);
         self.peer_addrs.remove(&conn);
+        self.voice_blocks.remove(&conn);
+        self.voice_apart.remove(&conn);
+        self.directed.retain(|(c, _)| *c != conn);
         if let Some(rider) = self.riders.remove(&conn) {
             self.statuses.remove(&rider);
+            self.photos.remove(&rider);
             let name = self
                 .session
                 .snapshot()
@@ -900,6 +932,7 @@ impl GameServer {
             self.left.push(name);
             self.session.remove_rider(rider);
             tracing::info!(%rider, "rider left");
+            self.refresh_voice_apart();
         }
     }
 
@@ -967,6 +1000,20 @@ impl GameServer {
                 Some(S::DevResult(v1::DevCommandResult { ok, message }))
             }
             (C::BikeChange(change), Some(rider)) => Some(self.bike_change(rider, &change)),
+            (C::Photo(shot), Some(rider)) => {
+                self.photo_shot(rider, &shot);
+                None
+            }
+            (C::VoiceBlocks(b), Some(_)) => {
+                let blocks = voice_block::Blocks::from_wire(&b);
+                if blocks.is_empty() {
+                    self.voice_blocks.remove(&conn);
+                } else {
+                    self.voice_blocks.insert(conn, blocks);
+                }
+                self.refresh_voice_apart();
+                None
+            }
             (C::Turn(turn), Some(rider)) => {
                 if let Some(net) = self.session.network() {
                     let choice = ocw_protocol::turn_choice(&turn, net);
@@ -1009,6 +1056,7 @@ impl GameServer {
             (_, None) => Some(S::Reject(v1::Reject {
                 reason: "send Hello first".into(),
                 auth: false,
+                name_taken: false,
             })),
         };
         let mut out: Vec<Vec<u8>> = reply
@@ -1016,6 +1064,11 @@ impl GameServer {
             .unwrap_or_default();
         // A client that just joined a free ride gets everyone's path.
         let joined = !had_rider && self.riders.contains_key(&conn);
+        // A newcomer may be blocked by someone already here (by name or
+        // account): both are told (spec §7.1.7 Q9).
+        if joined {
+            self.refresh_voice_apart();
+        }
         if joined && self.session.event().is_some() {
             out.push(encode(&server_message(S::Event(self.event_state()))));
         }
@@ -1032,6 +1085,14 @@ impl GameServer {
                 .map(|r| r.id)
                 .collect();
             out.extend(builds.into_iter().map(|id| self.build_message(id)));
+        }
+        // The photographers at work now (spec §2.11): the newcomer sees them.
+        if joined {
+            let now = self.game_time_s();
+            out.extend(self.photos.values().flat_map(|log| {
+                log.active(now)
+                    .map(|s| encode(&server_message(S::Photo(ocw_protocol::photo_to_wire(s)))))
+            }));
         }
         if joined && let Some(net) = self.session.network() {
             out.extend(
@@ -1084,6 +1145,7 @@ impl GameServer {
                     hello.protocol_version
                 ),
                 auth: false,
+                name_taken: false,
             });
         }
         // Junctions are vertex indices: both sides need the same graph.
@@ -1097,6 +1159,7 @@ impl GameServer {
                     ours.name, ours.graph_hash, theirs.name, theirs.graph_hash
                 ),
                 auth: false,
+                name_taken: false,
             });
         }
         // Sign-in (spec §9.1): a signed-in rider rides under the
@@ -1105,24 +1168,73 @@ impl GameServer {
             Ok(a) => a,
             Err(reason) => {
                 tracing::info!(?conn, %reason, "hello refused");
-                return S::Reject(v1::Reject { reason, auth: true });
+                return S::Reject(v1::Reject {
+                    reason,
+                    auth: true,
+                    name_taken: false,
+                });
             }
         };
         let mut hello = hello;
         if let Some(a) = &account {
             hello.display_name = a.display_name.clone();
         }
+        // The name (spec §14 Phase 4, 4N N1, Q8 / Q22): the rules of
+        // `ocw_core::name`, unique on this server. A taken name is
+        // refused (the rider picks another); an invalid one becomes
+        // `Rider NNNN` with a note, so no client can put an invisible or
+        // overlong name on everyone's screen.
+        let checked = name::check(&hello.display_name);
+        if let Ok(n) = &checked
+            && self.taken.holder(n).is_some_and(|h| h != conn)
+        {
+            tracing::info!(?conn, name = %n, "hello refused: name taken");
+            return S::Reject(v1::Reject {
+                reason: format!(
+                    "the name \"{n}\" is taken on this server: choose another name (Settings -> Riders) and join again"
+                ),
+                auth: false,
+                name_taken: true,
+            });
+        }
         let profile = physics_profile(&hello);
         let rider = self.session.add_rider(hello.display_name.clone(), profile);
+        let name_note = match checked {
+            Ok(n) => {
+                hello.display_name = n;
+                None
+            }
+            Err(e) => {
+                let given = name::fallback(rider.0);
+                let note = if hello.display_name.trim().is_empty()
+                    || name::key(&hello.display_name) == "rider"
+                {
+                    format!("you ride as {given}: give yourself a name in Settings -> Riders")
+                } else {
+                    format!("your name is not allowed here ({e}): you ride as {given}")
+                };
+                tracing::info!(%rider, %given, reason = %e, "hello name replaced");
+                hello.display_name = given;
+                Some(note)
+            }
+        };
+        self.session.rename(rider, hello.display_name.clone());
+        self.taken.store(
+            conn,
+            name::key(&hello.display_name),
+            hello.display_name.clone(),
+        );
         // The bike's parts (spec §14 Phase 4, 4G): the server's own values.
         if !hello.parts.is_empty() {
             let build =
                 ocw_sim::build::build(ocw_sim::PartTable::shipped(), profile.bike, &hello.parts);
             self.session.set_bike(rider, profile, Some(build));
         }
-        // Cosmetic only (§2.5): validated, then passed through.
+        // Cosmetic only (§2.5): validated (at most 128 bytes; spec §14
+        // Phase 4, 4N), then passed through.
         if let Some(look) = &hello.look {
-            self.session.set_look(rider, look.into());
+            let look = ocw_protocol::look_from_client(look);
+            self.session.set_look(rider, look);
         }
         // The condition from earlier rides (spec §14 Phase 12 Q6): the
         // client keeps it until the backend does (Phase 5); a rider can
@@ -1163,6 +1275,8 @@ impl GameServer {
             weather: Some(self.weather_message()),
             damage: self.session.damage_on(),
             account,
+            display_name: hello.display_name.clone(),
+            name_note,
         })
     }
 
@@ -1240,7 +1354,8 @@ impl GameServer {
             Some(build),
         );
         if let Some(look) = &change.look {
-            self.session.set_look(rider, look.into());
+            self.session
+                .set_look(rider, ocw_protocol::look_from_client(look));
         }
         // The bike's condition from the garage (spec §14 Phase 12 Q6, Phase
         // 4 W6): a repair or a swap applies with the bike.
@@ -1528,6 +1643,61 @@ impl GameServer {
         grant
     }
 
+    /// The riders `conn`'s rider exchanges no voice with (spec §7.1.7 Q9):
+    /// a block in either direction.
+    pub fn voice_apart(&self, conn: ConnectionId) -> std::collections::BTreeSet<RiderId> {
+        self.compute_voice_apart().remove(&conn).unwrap_or_default()
+    }
+
+    fn compute_voice_apart(&self) -> BTreeMap<ConnectionId, std::collections::BTreeSet<RiderId>> {
+        if self.voice_blocks.is_empty() {
+            return BTreeMap::new();
+        }
+        let riders: BTreeMap<ConnectionId, voice_block::Who> = self
+            .riders
+            .iter()
+            .map(|(c, r)| {
+                (
+                    *c,
+                    voice_block::Who {
+                        rider: *r,
+                        name: self.names.get(c).cloned().unwrap_or_default(),
+                        account_id: self.accounts.get(c).map(|a| a.account_id.clone()),
+                    },
+                )
+            })
+            .collect();
+        voice_block::apart(&riders, &self.voice_blocks)
+    }
+
+    /// Tells every rider whose set of riders apart changed (spec §7.1.7
+    /// Q9): a [`v1::VoiceApart`] to that rider alone. Riders who never had
+    /// one apart get nothing.
+    fn refresh_voice_apart(&mut self) {
+        let mut now = self.compute_voice_apart();
+        let conns: Vec<ConnectionId> = self.riders.keys().copied().collect();
+        for conn in conns {
+            let set = now.remove(&conn).unwrap_or_default();
+            let before = self.voice_apart.get(&conn);
+            if before.map_or(set.is_empty(), |b| *b == set) {
+                continue;
+            }
+            let msg = v1::VoiceApart {
+                riders: set.iter().map(|r| r.0).collect(),
+            };
+            self.directed
+                .push((conn, encode(&server_message(S::VoiceApart(msg)))));
+            self.voice_apart.insert(conn, set);
+        }
+    }
+
+    /// Takes the messages for single connections (a voice block's
+    /// [`v1::VoiceApart`]): the embedding sends each only to its
+    /// connection, after the tick's broadcast.
+    pub fn take_directed(&mut self) -> Vec<(ConnectionId, Vec<u8>)> {
+        std::mem::take(&mut self.directed)
+    }
+
     /// Starts or cancels an event (spec §2.3; local server only).
     fn event_request(&mut self, req: v1::EventRequest) -> S {
         let result = |ok: bool, message: String| S::DevResult(v1::DevCommandResult { ok, message });
@@ -1708,6 +1878,17 @@ impl GameServer {
         for id in self.session.take_build_changes() {
             out.push(self.build_message(id));
         }
+        // The photographers' shots: reliable, relayed to everyone (spec
+        // §2.11; the clients draw those near their rider).
+        for shot in std::mem::take(&mut self.photo_out) {
+            out.push(encode(&server_message(S::Photo(shot))));
+        }
+        if self.session.tick().is_multiple_of(u64::from(SIM_TICK_HZ)) {
+            let now = self.game_time_s();
+            for log in self.photos.values_mut() {
+                log.prune(now);
+            }
+        }
         if let Some(net) = self.session.network().cloned() {
             for c in self.session.take_path_changes() {
                 out.push(encode(&server_message(S::Path(ocw_protocol::path_update(
@@ -1723,6 +1904,17 @@ impl GameServer {
             return out;
         }
         let echo = self.session.echo_rider();
+        // The signed-in riders' accounts (spec §9.1), once a second: the
+        // stable key of a voice block or volume (§7.1.7 Q9).
+        let accounts: BTreeMap<RiderId, &str> =
+            if self.session.tick().is_multiple_of(u64::from(SIM_TICK_HZ)) {
+                self.riders
+                    .iter()
+                    .filter_map(|(c, r)| self.accounts.get(c).map(|a| (*r, a.account_id.as_str())))
+                    .collect()
+            } else {
+                BTreeMap::new()
+            };
         // Damage (spec §14 Phase 12E): at 2 Hz and on every change.
         let changed = self.session.take_damage_changes();
         let all = self.session.tick().is_multiple_of(DAMAGE_TICKS);
@@ -1739,6 +1931,10 @@ impl GameServer {
                         .then(|| self.session.damage(r.id).map(ocw_protocol::damage_to_wire))
                         .flatten(),
                     status: self.statuses.get(&r.id).cloned(),
+                    account_id: accounts
+                        .get(&r.id)
+                        .map(|a| (*a).to_owned())
+                        .unwrap_or_default(),
                     ..ocw_protocol::quantize(r)
                 })
                 .collect(),
@@ -1755,6 +1951,60 @@ impl GameServer {
 
     pub fn connections(&self) -> impl Iterator<Item = ConnectionId> + '_ {
         self.riders.keys().copied()
+    }
+
+    /// The game time the clients share (s): the session's tick / 50 (the
+    /// ride photographer's shots, spec §2.11).
+    pub fn game_time_s(&self) -> f64 {
+        self.session.tick() as f64 / f64::from(SIM_TICK_HZ)
+    }
+
+    /// The photos rider `id`'s photographer took in this session (game
+    /// times), as the server accepted them.
+    pub fn photos_taken(&self, id: RiderId) -> &[f64] {
+        self.photos.get(&id).map_or(&[], |l| l.taken())
+    }
+
+    /// A rider's photographer shot (spec §2.11, v4.38): checked (at most 5
+    /// photos per ride, 20 minutes apart – not on a server for tests –, the
+    /// camera near the rider, plausible times, the place fixed once shown,
+    /// not too many updates), then relayed to everyone with the next tick.
+    fn photo_shot(&mut self, rider: RiderId, wire: &v1::PhotoShot) {
+        if self.session.is_god(rider) {
+            return;
+        }
+        let Some(mut shot) = ocw_protocol::photo_from_wire(wire) else {
+            tracing::debug!(%rider, "incomplete photo shot dropped");
+            return;
+        };
+        shot.rider = rider.0;
+        let Some(state) = self.session.rider_state(rider) else {
+            return;
+        };
+        let at = self
+            .session
+            .track(rider)
+            .sample(state.distance)
+            .offset_position(state.lateral_offset);
+        let gap_s = match self.config.photo_gap_s {
+            Some(g) => g,
+            None if self.config.allow_dev_commands => 0.0,
+            None => ocw_world::photo_share::GAP_S,
+        };
+        let rules = ocw_world::photo_share::Rules {
+            gap_s,
+            ..Default::default()
+        };
+        let now = self.game_time_s();
+        match self
+            .photos
+            .entry(rider)
+            .or_default()
+            .accept(&shot, now, at, &rules)
+        {
+            Ok(()) => self.photo_out.push(ocw_protocol::photo_to_wire(&shot)),
+            Err(e) => tracing::debug!(%rider, shot = shot.shot, error = %e, "photo shot refused"),
+        }
     }
 
     /// The encoded `RiderBuild` of rider `id`.
@@ -1840,9 +2090,34 @@ mod tests {
     }
 
     fn hello_with(version: u32, world: Option<v1::WorldPackageId>) -> Vec<u8> {
+        hello_as(version, world, &tester("Tester"))
+    }
+
+    /// `base` for a test's first hello under it, then "base B", "base C",
+    /// … (names are unique on a server, spec §14 Phase 4, 4N Q22; every
+    /// test runs on its own thread).
+    fn tester(base: &str) -> String {
+        thread_local! {
+            static USED: std::cell::RefCell<BTreeMap<String, u8>> =
+                const { std::cell::RefCell::new(BTreeMap::new()) };
+        }
+        USED.with(|u| {
+            let mut u = u.borrow_mut();
+            let n = u.entry(base.to_string()).or_insert(0);
+            *n += 1;
+            if *n == 1 {
+                base.to_string()
+            } else {
+                format!("{base} {}", (b'A' + *n - 1) as char)
+            }
+        })
+    }
+
+    /// A hello under `name`.
+    fn hello_as(version: u32, world: Option<v1::WorldPackageId>, name: &str) -> Vec<u8> {
         encode(&client_message(C::Hello(v1::Hello {
             protocol_version: version,
-            display_name: "Tester".into(),
+            display_name: name.into(),
             profile: Some(ocw_core::RiderProfile::default().into()),
             world,
             rider_weight_kg: None,
@@ -1860,7 +2135,7 @@ mod tests {
             conn,
             &encode(&client_message(C::Hello(v1::Hello {
                 protocol_version: PROTOCOL_VERSION,
-                display_name: "Weighed".into(),
+                display_name: tester("Weighed"),
                 profile: None,
                 world: None,
                 rider_weight_kg: weight,
@@ -2153,7 +2428,7 @@ mod tests {
             conn,
             &encode(&client_message(C::Hello(v1::Hello {
                 protocol_version: PROTOCOL_VERSION,
-                display_name: "Styled".into(),
+                display_name: tester("Styled"),
                 bike_profile: Some("gravel".into()),
                 look: Some(v1::RiderLook {
                     frame_rgb: 0xFF12_3456,
@@ -2370,9 +2645,19 @@ mod tests {
         )
     }
 
+    /// "Tester", or "Tester B", "Tester C", … when taken (names are
+    /// unique on a server, spec §14 Phase 4, 4N Q22).
+    fn free_tester(server: &GameServer) -> String {
+        std::iter::repeat_with(|| tester("Tester"))
+            .take(26)
+            .find(|n| server.taken.holder(n).is_none())
+            .expect("a free name")
+    }
+
     fn join(server: &mut GameServer) -> (ConnectionId, v1::Welcome) {
         let conn = server.connect();
-        let reply = server.handle(conn, &hello(PROTOCOL_VERSION));
+        let name = free_tester(server);
+        let reply = server.handle(conn, &hello_as(PROTOCOL_VERSION, None, &name));
         match decode_server(&reply[0]).unwrap() {
             S::Welcome(w) => (conn, w),
             other => panic!("expected a welcome, got {other:?}"),
@@ -2399,6 +2684,144 @@ mod tests {
                 _ => None,
             })
             .expect("a snapshot every 5 ticks")
+    }
+
+    fn join_named(server: &mut GameServer, name: &str) -> (ConnectionId, RiderId) {
+        let conn = server.connect();
+        let reply = server.handle(
+            conn,
+            &encode(&client_message(C::Hello(v1::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                display_name: name.into(),
+                ..Default::default()
+            }))),
+        );
+        match decode_server(&reply[0]).unwrap() {
+            S::Welcome(w) => (conn, RiderId(w.rider_id)),
+            other => panic!("expected a welcome, got {other:?}"),
+        }
+    }
+
+    fn blocks(names: &[&str]) -> Vec<u8> {
+        encode(&client_message(C::VoiceBlocks(v1::VoiceBlocks {
+            names: names.iter().map(|n| (*n).to_owned()).collect(),
+            ..Default::default()
+        })))
+    }
+
+    /// The directed `VoiceApart` messages by connection (their riders).
+    fn aparts(server: &mut GameServer) -> BTreeMap<ConnectionId, Vec<u32>> {
+        server
+            .take_directed()
+            .into_iter()
+            .map(|(c, m)| match decode_server(&m).unwrap() {
+                S::VoiceApart(a) => (c, a.riders),
+                other => panic!("expected a VoiceApart, got {other:?}"),
+            })
+            .collect()
+    }
+
+    /// Voice blocks (spec §7.1.7 Q9) with three riders: A blocks B –
+    /// the server tells A and B, and only them, that they exchange no
+    /// voice (both directions, without saying who blocked whom); C is
+    /// told nothing and stays with both. Unblocking tells both again.
+    #[test]
+    fn a_block_keeps_both_riders_apart_and_no_one_else() {
+        let mut server = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let (a, ra) = join_named(&mut server, "Ada Rider");
+        let (b, rb) = join_named(&mut server, "Bea Climber");
+        let (c, _) = join_named(&mut server, "Cleo Sprinter");
+        assert!(server.take_directed().is_empty(), "no blocks, nothing said");
+        assert!(server.handle(a, &blocks(&["Bea Climber"])).is_empty());
+        let told = aparts(&mut server);
+        assert_eq!(told.get(&a), Some(&vec![rb.0]));
+        assert_eq!(told.get(&b), Some(&vec![ra.0]), "the blocked rider too");
+        assert!(!told.contains_key(&c), "C is not told anything");
+        assert_eq!(server.voice_apart(c), Default::default());
+        // The same list again: nothing new.
+        server.handle(a, &blocks(&["Bea Climber"]));
+        assert!(server.take_directed().is_empty());
+        // B's message names A, not who blocked whom: the same as when B
+        // had blocked A.
+        let mut other = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let (oa, _) = join_named(&mut other, "Ada Rider");
+        let (ob, _) = join_named(&mut other, "Bea Climber");
+        other.handle(ob, &blocks(&["Ada Rider"]));
+        let o = aparts(&mut other);
+        assert_eq!((o[&oa].len(), o[&ob].len()), (1, 1));
+        // Unblocked (an empty list): both told, the sets empty.
+        server.handle(a, &blocks(&[]));
+        let told = aparts(&mut server);
+        assert_eq!(told.get(&a), Some(&vec![]));
+        assert_eq!(told.get(&b), Some(&vec![]));
+        assert_eq!(told.len(), 2);
+        // The tick delivers nothing of it to everyone: broadcasts carry no
+        // VoiceApart.
+        server.handle(a, &blocks(&["Bea Climber"]));
+        let broadcast: Vec<Vec<u8>> = (0..10).flat_map(|_| server.tick()).collect();
+        assert!(
+            broadcast
+                .iter()
+                .all(|m| !matches!(decode_server(m), Ok(S::VoiceApart(_))))
+        );
+        assert_eq!(aparts(&mut server).len(), 2);
+    }
+
+    /// A rider who joins after the block (by name) is kept apart at once;
+    /// when the blocker leaves, the blocked rider is told.
+    #[test]
+    fn blocks_meet_newcomers_and_end_with_the_blocker() {
+        let mut server = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let (a, ra) = join_named(&mut server, "Ada Rider");
+        let (c, _) = join_named(&mut server, "Cleo Sprinter");
+        server.handle(a, &blocks(&["Bea Climber"]));
+        assert!(server.take_directed().is_empty(), "Bea is not here");
+        let (b, rb) = join_named(&mut server, "Bea Climber");
+        let told = aparts(&mut server);
+        assert_eq!(told.get(&a), Some(&vec![rb.0]));
+        assert_eq!(told.get(&b), Some(&vec![ra.0]));
+        assert!(!told.contains_key(&c));
+        server.disconnect(a);
+        let told = aparts(&mut server);
+        assert_eq!(told.get(&b), Some(&vec![]), "nobody apart any more");
+        assert_eq!(told.len(), 1);
+        // Messages queued for a connection that left are dropped.
+        server.handle(b, &blocks(&["Cleo Sprinter"]));
+        server.disconnect(c);
+        assert!(server.take_directed().iter().all(|(conn, _)| *conn != c));
+    }
+
+    /// The protocol's round trip of the two new messages.
+    #[test]
+    fn voice_block_messages_round_trip() {
+        let m = v1::VoiceBlocks {
+            account_ids: vec!["acc-1".into()],
+            names: vec!["Bea Climber".into()],
+        };
+        match ocw_protocol::decode_client(&encode(&client_message(C::VoiceBlocks(m.clone()))))
+            .unwrap()
+        {
+            C::VoiceBlocks(back) => assert_eq!(back, m),
+            other => panic!("{other:?}"),
+        }
+        let a = v1::VoiceApart { riders: vec![3, 7] };
+        match decode_server(&encode(&server_message(S::VoiceApart(a.clone())))).unwrap() {
+            S::VoiceApart(back) => assert_eq!(back, a),
+            other => panic!("{other:?}"),
+        }
+        let u = v1::RiderUpdate {
+            rider_id: 2,
+            account_id: "acc-2".into(),
+            ..Default::default()
+        };
+        let snap = v1::Snapshot {
+            riders: vec![u.clone()],
+            ..Default::default()
+        };
+        match decode_server(&encode(&server_message(S::Snapshot(snap)))).unwrap() {
+            S::Snapshot(back) => assert_eq!(back.riders[0], u),
+            other => panic!("{other:?}"),
+        }
     }
 
     /// The status signs (spec §2.6): relayed from the samples into the
@@ -3631,6 +4054,169 @@ mod tests {
         assert_eq!((server.joined().len(), server.left().len()), (1, 1));
     }
 
+    fn welcome_or_reject(server: &mut GameServer, conn: ConnectionId, name: &str) -> S {
+        let reply = server.handle(conn, &hello_as(PROTOCOL_VERSION, None, name));
+        decode_server(&reply[0]).unwrap()
+    }
+
+    fn snapshot_name(server: &GameServer, rider: u32) -> String {
+        server
+            .session()
+            .snapshot()
+            .iter()
+            .find(|r| r.id.0 == rider)
+            .map(|r| r.name.clone())
+            .expect("in the session")
+    }
+
+    /// Names are unique on a server (spec §14 Phase 4, 4N Q8 / Q22): a
+    /// second "Ada Rider" (in any case) is refused and picks another, no
+    /// "(2)" suffix; the name is free again once its rider left.
+    #[test]
+    fn names_are_unique_on_a_server() {
+        let mut server = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let ada = server.connect();
+        let S::Welcome(w) = welcome_or_reject(&mut server, ada, "  Ada   Rider ") else {
+            panic!("welcome")
+        };
+        assert_eq!(w.display_name, "Ada Rider", "normalized");
+        assert_eq!(w.name_note, None);
+        assert_eq!(snapshot_name(&server, w.rider_id), "Ada Rider");
+        let other = server.connect();
+        let S::Reject(r) = welcome_or_reject(&mut server, other, "ada rider") else {
+            panic!("refused")
+        };
+        assert!(r.name_taken && !r.auth, "{r:?}");
+        assert!(r.reason.contains("taken"), "{}", r.reason);
+        assert_eq!(server.session().rider_count(), 1, "no rider added");
+        // Another name joins.
+        let S::Welcome(b) = welcome_or_reject(&mut server, other, "Bea Climber") else {
+            panic!("welcome")
+        };
+        assert_eq!(b.display_name, "Bea Climber");
+        // Once Ada leaves, her name is free.
+        server.disconnect(ada);
+        let third = server.connect();
+        assert!(matches!(
+            welcome_or_reject(&mut server, third, "Ada Rider"),
+            S::Welcome(_)
+        ));
+    }
+
+    /// The server checks names too (N1): an invalid name – invisible,
+    /// too long, reserved, the default "Rider" – becomes "Rider NNNN"
+    /// with a note; bots and the echo keep their reserved names.
+    #[test]
+    fn invalid_names_become_rider_numbers() {
+        let mut server = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let mut first = None;
+        for (name, note) in [
+            ("Ada\u{202E}Rider", "not allowed"),
+            (&"x".repeat(500)[..], "not allowed"),
+            ("Echo", "not allowed"),
+            ("Rider", "give yourself a name"),
+            ("", "give yourself a name"),
+        ] {
+            let conn = server.connect();
+            let S::Welcome(w) = welcome_or_reject(&mut server, conn, name) else {
+                panic!("welcome for {name:?}")
+            };
+            let given = format!("Rider {:04}", w.rider_id);
+            assert_eq!(w.display_name, given);
+            assert!(
+                w.name_note.as_deref().is_some_and(|n| n.contains(note)),
+                "{name:?}: {:?}",
+                w.name_note
+            );
+            assert_eq!(snapshot_name(&server, w.rider_id), given);
+            first.get_or_insert(w.rider_id);
+        }
+        // A fallback is unique (the rider id) and nobody can take it.
+        let conn = server.connect();
+        let taken = snapshot_name(&server, first.expect("joined"));
+        let S::Welcome(w) = welcome_or_reject(&mut server, conn, &taken) else {
+            panic!("welcome")
+        };
+        assert_ne!(w.display_name, taken);
+    }
+
+    /// Looks never change the physics (spec §2.5, §14 Phase 4, 4N N13): a
+    /// property test over many random characters – every base body,
+    /// shape, age, hair and facial hair – of riders with the same weight
+    /// and bike: the same physics profile on the server, whatever the
+    /// look says (an obese shape at 70 kg too, 4N Q23).
+    #[test]
+    fn looks_never_change_the_physics() {
+        use ocw_core::character::{Age, HAIR_STYLES};
+        use ocw_core::{BaseBody, BodyShape, Character};
+        let mut server = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let mut seed: u64 = 0x5EED_4A11;
+        let mut next = |n: usize| {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            ((seed >> 33) % n as u64) as usize
+        };
+        let mut profiles = Vec::new();
+        for i in 0..40 {
+            let character = Character {
+                height_cm: 150 + next(56) as u16,
+                base: BaseBody::ALL[next(3)],
+                shape: BodyShape::ALL[next(7)],
+                age: Age::ALL[next(6)],
+                skin: next(12) as u8,
+                hair: next(HAIR_STYLES.len()) as u8,
+                moustache: next(6) as u8,
+                beard: next(8) as u8,
+                greying: next(2) == 0,
+                ..Character::default()
+            };
+            let look = ocw_core::RiderLook {
+                character,
+                ..Default::default()
+            };
+            let hello = v1::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                display_name: format!("Ada Rider {i}"),
+                profile: None,
+                world: None,
+                rider_weight_kg: Some(70.0),
+                bike_profile: Some("road-aero".into()),
+                look: Some(look.into()),
+                parts: Vec::new(),
+                damage: None,
+                access_token: None,
+            };
+            let conn = server.connect();
+            let reply = server.handle(conn, &encode(&client_message(C::Hello(hello))));
+            let S::Welcome(w) = decode_server(&reply[0]).unwrap() else {
+                panic!("welcome")
+            };
+            let id = RiderId(w.rider_id);
+            profiles.push(server.session().base_profile(id).expect("joined"));
+        }
+        assert!(profiles.windows(2).all(|w| w[0] == w[1]), "{profiles:?}");
+        assert_eq!(profiles[0].rider_mass_kg, 70.0);
+    }
+
+    /// No renaming during a ride (4N Q15): nothing a client sends after
+    /// the hello changes its name – a bike change keeps it.
+    #[test]
+    fn the_name_stays_for_the_whole_ride() {
+        let mut server = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let conn = server.connect();
+        let S::Welcome(w) = welcome_or_reject(&mut server, conn, "Cleo Sprinter") else {
+            panic!("welcome")
+        };
+        let change = encode(&client_message(C::BikeChange(v1::BikeChange {
+            bike_id: "road-aero".into(),
+            bike_profile: "road-aero".into(),
+            look: Some(v1::RiderLook::default()),
+            parts: Vec::new(),
+            damage: None,
+        })));
+        server.handle(conn, &change);
+        assert_eq!(snapshot_name(&server, w.rider_id), "Cleo Sprinter");
+    }
+
     fn event_msg(req: v1::event_request::Req) -> Vec<u8> {
         encode(&client_message(C::Event(v1::EventRequest {
             req: Some(req),
@@ -3904,7 +4490,8 @@ mod tests {
 
     fn joined(server: &mut GameServer) -> (ConnectionId, RiderId) {
         let conn = server.connect();
-        let reply = server.handle(conn, &hello(PROTOCOL_VERSION));
+        let name = free_tester(server);
+        let reply = server.handle(conn, &hello_as(PROTOCOL_VERSION, None, &name));
         match decode_server(&reply[0]).unwrap() {
             S::Welcome(w) => (conn, RiderId(w.rider_id)),
             other => panic!("expected a welcome, got {other:?}"),
@@ -4120,7 +4707,7 @@ mod tests {
             conn,
             &encode(&client_message(C::Hello(v1::Hello {
                 protocol_version: PROTOCOL_VERSION,
-                display_name: "Hurt".into(),
+                display_name: tester("Hurt"),
                 damage: Some(ocw_protocol::carried_damage(0.55, &parts)),
                 ..Default::default()
             }))),
@@ -4491,7 +5078,7 @@ mod tests {
             d,
             &encode(&client_message(C::Hello(v1::Hello {
                 protocol_version: PROTOCOL_VERSION,
-                display_name: "Fitted".into(),
+                display_name: tester("Fitted"),
                 bike_profile: Some("tt".into()),
                 parts: vec!["wheels.tt.disc".into(), "frame.mtb.upper".into()],
                 ..Default::default()
@@ -4604,6 +5191,144 @@ mod tests {
         };
         assert!(!r.ok, "{r:?}");
     }
+
+    /// The ride photographer's shots (spec §2.11, v4.38).
+    mod photographer {
+        use super::*;
+        use ocw_world::photo::{CameraPose, Carrier, PoseKind};
+        use ocw_world::photo_share::SharedShot;
+
+        fn rider_at(server: &GameServer, id: RiderId) -> [f64; 3] {
+            let s = server.session().rider_state(id).unwrap();
+            ocw_world::Track::sample(server.session().track(id), s.distance)
+                .offset_position(s.lateral_offset)
+        }
+
+        fn shot(n: u32, near: [f64; 3], now: f64) -> SharedShot {
+            SharedShot {
+                rider: 99,
+                shot: n,
+                pose: CameraPose {
+                    kind: PoseKind::Side,
+                    carrier: Carrier::Person { crouch: false },
+                    feet: [near[0] + 12.0, near[1], near[2]],
+                    eye: [near[0] + 12.0, near[1] + 1.6, near[2]],
+                    look: [-1.0, 0.0, 0.0],
+                },
+                seed: 11,
+                appear_at: now,
+                planned_at: now + 8.0,
+                taken_at: None,
+                gone_at: None,
+                aborted_at: None,
+                flight: None,
+            }
+        }
+
+        fn send(server: &mut GameServer, conn: ConnectionId, s: &SharedShot) {
+            let replies = server.handle(conn, &encode(&ocw_protocol::photo_message(s)));
+            assert!(replies.is_empty());
+        }
+
+        fn relayed(out: &[Vec<u8>]) -> Vec<SharedShot> {
+            out.iter()
+                .filter_map(|b| match decode_server(b).ok()? {
+                    S::Photo(p) => ocw_protocol::photo_from_wire(&p),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        /// One rider's shot reaches everyone with its rider set by the
+        /// server, unchanged; a client joining later gets the open one.
+        #[test]
+        fn a_shot_is_relayed_to_everyone() {
+            let mut server = GameServer::new(Route::test_loop(), ServerConfig::default());
+            let (host, host_id) = joined(&mut server);
+            let (_guest, _) = joined(&mut server);
+            for _ in 0..10 {
+                server.tick();
+            }
+            let now = server.game_time_s();
+            let s = shot(1, rider_at(&server, host_id), now);
+            send(&mut server, host, &s);
+            let got = relayed(&server.tick());
+            assert_eq!(got.len(), 1, "once, to every connection");
+            assert_eq!(got[0].rider, host_id.0, "the server's rider id");
+            assert_eq!(
+                SharedShot {
+                    rider: 99,
+                    ..got[0].clone()
+                },
+                s
+            );
+            let late = server.connect();
+            let replies = server.handle(late, &hello(PROTOCOL_VERSION));
+            let open = relayed(&replies);
+            assert_eq!(open.len(), 1, "the newcomer sees the photographer");
+            assert_eq!(open[0].pose, s.pose);
+        }
+
+        /// The server's checks: the camera near the rider, at most one photo
+        /// in 20 minutes, the place fixed.
+        #[test]
+        fn far_too_frequent_or_moved_shots_are_not_relayed() {
+            let mut server = GameServer::new(Route::test_loop(), ServerConfig::default());
+            let (host, host_id) = joined(&mut server);
+            for _ in 0..10 {
+                server.tick();
+            }
+            let now = server.game_time_s();
+            let here = rider_at(&server, host_id);
+            let far = shot(1, [here[0] + 6000.0, here[1], here[2]], now);
+            send(&mut server, host, &far);
+            assert!(relayed(&server.tick()).is_empty(), "6 km away");
+            let mut s = shot(2, here, now);
+            send(&mut server, host, &s);
+            assert_eq!(relayed(&server.tick()).len(), 1);
+            let mut moved = s.clone();
+            moved.pose.eye[0] += 50.0;
+            moved.pose.feet[0] += 50.0;
+            send(&mut server, host, &moved);
+            assert!(relayed(&server.tick()).is_empty(), "moved");
+            let t = server.game_time_s();
+            s.taken_at = Some(t);
+            send(&mut server, host, &s);
+            assert_eq!(relayed(&server.tick()).len(), 1, "the photo");
+            assert_eq!(server.photos_taken(host_id).len(), 1);
+            s.gone_at = Some(server.game_time_s());
+            send(&mut server, host, &s);
+            assert_eq!(relayed(&server.tick()).len(), 1, "gone");
+            // The next photo 1 s later: not before 20 minutes.
+            for _ in 0..50 {
+                server.tick();
+            }
+            let now = server.game_time_s();
+            let next = shot(3, rider_at(&server, host_id), now);
+            send(&mut server, host, &next);
+            assert!(relayed(&server.tick()).is_empty(), "20 minutes apart");
+            // A server for tests (dev commands) leaves the gap out.
+            let mut dev = GameServer::new(
+                Route::test_loop(),
+                ServerConfig {
+                    allow_dev_commands: true,
+                    ..Default::default()
+                },
+            );
+            let (c, id) = joined(&mut dev);
+            dev.tick();
+            for n in 1..=7 {
+                let now = dev.game_time_s();
+                let mut s = shot(n, rider_at(&dev, id), now);
+                send(&mut dev, c, &s);
+                dev.tick();
+                s.taken_at = Some(dev.game_time_s());
+                send(&mut dev, c, &s);
+                dev.tick();
+            }
+            assert_eq!(dev.photos_taken(id).len(), 5, "never more than 5");
+        }
+    }
 }
 
 /// Sign-in in the hello (spec §9.1): the game server checks the access
@@ -4668,6 +5393,52 @@ mod auth_tests {
             m => panic!("{m:?}"),
         };
         (conn, kind)
+    }
+
+    /// Accounts (spec §7.1.7 Q9): the snapshots carry a signed-in rider's
+    /// account once a second, and a block by account keeps that rider
+    /// apart whatever their name.
+    #[test]
+    fn accounts_in_snapshots_and_blocks_by_account() {
+        let mut s = server(false);
+        let (signed, _) = join(&mut s, Some(token(600, |_| {})));
+        let (anon, _) = join(&mut s, None);
+        let snaps: Vec<v1::Snapshot> = (0..u64::from(SIM_TICK_HZ) * 2)
+            .flat_map(|_| s.tick())
+            .filter_map(|b| match decode_server(&b) {
+                Ok(S::Snapshot(x)) => Some(x),
+                _ => None,
+            })
+            .collect();
+        let with: Vec<&v1::Snapshot> = snaps
+            .iter()
+            .filter(|x| x.riders.iter().any(|r| r.account_id == "acc_42"))
+            .collect();
+        assert_eq!(with.len(), 2, "once a second, of 20 snapshots");
+        assert!(
+            with.iter()
+                .all(|x| x.server_tick.is_multiple_of(u64::from(SIM_TICK_HZ)))
+        );
+        assert!(
+            snaps
+                .iter()
+                .flat_map(|x| &x.riders)
+                .filter(|r| r.account_id.is_empty())
+                .count()
+                > 20,
+            "the anonymous rider never has one"
+        );
+        s.take_directed();
+        s.handle(
+            anon,
+            &encode(&client_message(C::VoiceBlocks(v1::VoiceBlocks {
+                account_ids: vec!["acc_42".into()],
+                ..Default::default()
+            }))),
+        );
+        let told: Vec<ConnectionId> = s.take_directed().into_iter().map(|(c, _)| c).collect();
+        assert!(told.contains(&signed) && told.contains(&anon), "{told:?}");
+        assert!(!s.voice_apart(signed).is_empty());
     }
 
     #[derive(Debug)]

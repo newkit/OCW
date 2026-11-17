@@ -44,7 +44,7 @@ type ShownWindow = (
 );
 
 /// What a screenshot needs: its time stamp and build label, and where to
-/// take it from: the left eye in a headset session (v4.38: the first run on
+/// take it from: the left eye in a headset session (v4.52: the first run on
 /// the Quest 1 saved the window, the monitor's chase mirror), or when the
 /// window has no surface; the window otherwise (`--vr-sim` shows both
 /// eyes there).

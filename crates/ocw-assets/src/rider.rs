@@ -86,14 +86,77 @@ pub mod opt {
     pub const HAIR_LONG: &str = "hair_long";
     pub const HAIR_TAIL: &str = "hair_tail";
     pub const HAIR_BUN: &str = "hair_bun";
-    pub const FACE_BEARD: &str = "face_beard";
-    pub const FACE_MOUSTACHE: &str = "face_moustache";
-    pub const FACE_STUBBLE: &str = "face_stubble";
+    // The hair catalogue of spec §14 Phase 4, 4N N5: every shape lies
+    // under every helmet's shell; tails, braids and buns leave below its
+    // rim at the back (`crate::helmet` checks it).
+    pub const HAIR_SHAVED: &str = "hair_shaved";
+    pub const HAIR_FRINGE: &str = "hair_fringe";
+    pub const HAIR_TEXTURED: &str = "hair_textured";
+    pub const HAIR_SIDE_PART: &str = "hair_side_part";
+    pub const HAIR_CURLS: &str = "hair_curls";
+    pub const HAIR_AFRO: &str = "hair_afro";
+    pub const HAIR_MID: &str = "hair_mid";
+    pub const HAIR_LONG_CURLY: &str = "hair_long_curly";
+    pub const HAIR_TAIL_LOW: &str = "hair_tail_low";
+    pub const HAIR_BRAID: &str = "hair_braid";
+    pub const HAIR_BRAIDS: &str = "hair_braids";
+    pub const HAIR_BUN_LOW: &str = "hair_bun_low";
+    pub const HAIR_LOCS: &str = "hair_locs";
+    pub const HAIR_ROWS: &str = "hair_cornrows";
+    /// The moustaches of `ocw_core::character::MOUSTACHES` after "None"
+    /// (4N N6; paint slot `facial_hair`).
+    pub const MOUSTACHE: [&str; 5] = [
+        "moustache_classic",
+        "moustache_chevron",
+        "moustache_handlebar",
+        "moustache_horseshoe",
+        "moustache_pencil",
+    ];
+    /// The beards of `ocw_core::character::BEARDS` after "None".
+    pub const BEARD: [&str; 7] = [
+        "beard_stubble",
+        "beard_short_stubble",
+        "beard_short_boxed",
+        "beard_full",
+        "beard_goatee",
+        "beard_chin_strap",
+        "beard_long",
+    ];
+    /// The base bodies' shoulders (A, B, C; 4N N2) and chests (B, C).
+    pub const SHOULDERS: [&str; 3] = ["shoulders_a", "shoulders_b", "shoulders_c"];
+    pub const CHEST: [&str; 2] = ["chest_b", "chest_c"];
+    /// The face's lines with the age (light, deeper) and the softer jaw
+    /// (4N N3, Q12; paint slots `skin_line`, `skin`).
+    pub const FACE_LINES: [&str; 2] = ["face_lines_light", "face_lines_deep"];
+    pub const FACE_JAW: &str = "face_jaw_soft";
     pub const GLASSES_SPORT: &str = "glasses_sport";
     pub const GLASSES_ROUND: &str = "glasses_round";
     /// The race number's paper plates on the hips (spec §14 Phase 8 T6),
     /// on the pelvis: shown when the look has a race number.
     pub const HIP_NUMBER: [&str; 2] = ["hip_number_l", "hip_number_r"];
+}
+
+/// The face on the head (2026-11-17: "give the rider a mouth … and ears,
+/// eyes etc."; spec §14 Phase 4, 4N *Face*): eyes in their sockets under
+/// lids, eyebrows (in the hair's colour, greying with it), ears, the
+/// lips (paint slot `lips`), a chin; always shown, near model only (the
+/// far head stays plain).
+pub const FACE: &str = "face_features";
+
+/// Where the face's parts sit (rest-pose model coordinates, from the
+/// skull's centre, [`skull_centre`]), for the model and its tests.
+pub mod face {
+    /// The eyes' centres (x either side), under the round glasses' lenses.
+    pub const EYE: [f32; 3] = [0.031, 0.013, -0.0815];
+    pub const EYE_RADII: [f32; 3] = [0.0105, 0.006, 0.0035];
+    /// The eyebrows, above the round glasses' rims.
+    pub const BROW: [f32; 3] = [0.031, 0.0375, -0.081];
+    /// The ears' centres, behind the glasses' temples, under the helmet.
+    pub const EAR: [f32; 3] = [0.079, -0.011, -0.012];
+    pub const EAR_RADII: [f32; 3] = [0.0065, 0.016, 0.009];
+    /// The lips' centre: where the status sign's X is (`wear/mark-mouth-cross`).
+    pub const MOUTH: [f32; 3] = [0.0, -0.051, -0.0835];
+    pub const MOUTH_RADII: [f32; 3] = [0.019, 0.0048, 0.0055];
 }
 
 /// The hip plates (spec §14 Phase 8 T6): (|x| of the outer face, its
@@ -237,17 +300,68 @@ pub fn optional() -> Vec<&'static str> {
             opt::HAIR_LONG,
             opt::HAIR_TAIL,
             opt::HAIR_BUN,
-            opt::FACE_BEARD,
-            opt::FACE_MOUSTACHE,
-            opt::FACE_STUBBLE,
             opt::GLASSES_SPORT,
             opt::GLASSES_ROUND,
+            opt::FACE_JAW,
         ])
+        .chain(HAIR_EXTRA)
+        .chain(opt::MOUSTACHE)
+        .chain(opt::BEARD)
+        .chain(opt::SHOULDERS)
+        .chain(opt::CHEST)
+        .chain(opt::FACE_LINES)
         .chain(opt::HIP_NUMBER)
         .collect();
     v.sort_unstable();
     v.dedup();
     v
+}
+
+/// The hair nodes of the 4N catalogue.
+const HAIR_EXTRA: [&str; 14] = [
+    opt::HAIR_SHAVED,
+    opt::HAIR_FRINGE,
+    opt::HAIR_TEXTURED,
+    opt::HAIR_SIDE_PART,
+    opt::HAIR_CURLS,
+    opt::HAIR_AFRO,
+    opt::HAIR_MID,
+    opt::HAIR_LONG_CURLY,
+    opt::HAIR_TAIL_LOW,
+    opt::HAIR_BRAID,
+    opt::HAIR_BRAIDS,
+    opt::HAIR_BUN_LOW,
+    opt::HAIR_LOCS,
+    opt::HAIR_ROWS,
+];
+
+/// The nodes of hair style `i` (`ocw_core::character::HAIR_STYLES`).
+pub fn hair_nodes(i: u8) -> &'static [&'static str] {
+    use opt::*;
+    match i {
+        0 => &[HAIR_CAP],
+        1 => &[HAIR_BUZZ],
+        2 => &[HAIR_CAP, HAIR_LONG],
+        3 => &[HAIR_CAP, HAIR_TAIL],
+        4 => &[HAIR_CAP, HAIR_BUN],
+        5 => &[],
+        6 => &[HAIR_SHAVED],
+        7 => &[HAIR_BUZZ, HAIR_FRINGE],
+        8 => &[HAIR_CAP, HAIR_TEXTURED],
+        9 => &[HAIR_CAP, HAIR_SIDE_PART],
+        10 => &[HAIR_CAP, HAIR_CURLS],
+        11 => &[HAIR_CAP, HAIR_AFRO],
+        12 => &[HAIR_CAP, HAIR_FRINGE, HAIR_TEXTURED],
+        13 => &[HAIR_CAP, HAIR_MID],
+        14 => &[HAIR_CAP, HAIR_LONG_CURLY],
+        15 => &[HAIR_CAP, HAIR_TAIL_LOW],
+        16 => &[HAIR_CAP, HAIR_BRAID],
+        17 => &[HAIR_CAP, HAIR_BRAIDS],
+        18 => &[HAIR_CAP, HAIR_BUN_LOW],
+        19 => &[HAIR_CAP, HAIR_LOCS],
+        20 => &[HAIR_BUZZ, HAIR_ROWS],
+        _ => &[HAIR_CAP],
+    }
 }
 
 /// The optional nodes shown for a look: the kit `variants` (rider variant
@@ -275,20 +389,34 @@ pub fn visible(character: &ocw_core::Character, variants: &[&str]) -> Vec<&'stat
     if !out.contains(&opt::SUIT_PELVIS) {
         out.push(POCKETS);
     }
-    out.extend(match c.hair {
-        0 => &[opt::HAIR_CAP][..],
-        1 => &[opt::HAIR_BUZZ],
-        2 => &[opt::HAIR_CAP, opt::HAIR_LONG],
-        3 => &[opt::HAIR_CAP, opt::HAIR_TAIL],
-        4 => &[opt::HAIR_CAP, opt::HAIR_BUN],
-        _ => &[],
+    out.extend(hair_nodes(c.hair));
+    // Facial hair (4N N6) and the age's face (N3).
+    if c.moustache > 0 {
+        out.extend(opt::MOUSTACHE.get(c.moustache as usize - 1));
+    }
+    if c.beard > 0 {
+        out.extend(opt::BEARD.get(c.beard as usize - 1));
+    }
+    match c.age.face_lines() {
+        0 => {}
+        1 => out.push(opt::FACE_LINES[0]),
+        _ => out.push(opt::FACE_LINES[1]),
+    }
+    if c.age.soft_jaw() {
+        out.push(opt::FACE_JAW);
+    }
+    // The base body's shoulders and chest (N2).
+    use ocw_core::BaseBody;
+    out.push(match c.base {
+        BaseBody::A => opt::SHOULDERS[0],
+        BaseBody::B => opt::SHOULDERS[1],
+        BaseBody::C => opt::SHOULDERS[2],
     });
-    out.extend(match c.face {
-        1 => Some(opt::FACE_BEARD),
-        2 => Some(opt::FACE_MOUSTACHE),
-        3 => Some(opt::FACE_STUBBLE),
-        _ => None,
-    });
+    match c.base {
+        BaseBody::A => {}
+        BaseBody::B => out.push(opt::CHEST[0]),
+        BaseBody::C => out.push(opt::CHEST[1]),
+    }
     if out.contains(&HELMET_AERO) {
         out.retain(|n| *n != CAP);
     } else {
@@ -352,29 +480,111 @@ pub const GIRTH_NODES: [&str; 10] = [
     FOREARM[1],
 ];
 
-/// The scale of node `i`'s meshes for the body `build` (spec 4C): wider
-/// and deeper (x, z; the limbs hang along −y at rest) on the torso and
-/// limbs and the kit worn on them; 1 on the head, hands and feet (and
-/// what hangs on them), whose rig nodes are not in [`GIRTH_NODES`].
-pub fn girth(m: &Model, i: usize, build: ocw_core::BodyBuild) -> Vec3 {
-    let g = build.girth();
-    if (g - 1.0).abs() < 1e-6 {
-        return Vec3::ONE;
-    }
-    // The nearest rig node at or above `i`.
+/// The nearest rig node at or above node `i`.
+fn rig_of(m: &Model, i: usize) -> Option<usize> {
     let mut at = Some(i);
     while let Some(n) = at {
-        let name = m.nodes[n].name.as_str();
-        if REQUIRED.contains(&name) {
-            return if GIRTH_NODES.contains(&name) {
-                Vec3::new(g, 1.0, g)
-            } else {
-                Vec3::ONE
-            };
+        if REQUIRED.contains(&m.nodes[n].name.as_str()) {
+            return Some(n);
         }
         at = m.nodes[n].parent;
     }
-    Vec3::ONE
+    None
+}
+
+/// The girth of rig node `name` for the character `c` (spec 4C, 4N):
+/// x and z of its meshes (the limbs hang along −y at rest). The shape's
+/// torso girth on the torso and pelvis (the same on both: the jersey
+/// over the bib), wider for body B's hips, deeper with the age; the
+/// shape's limb girth on the limbs, the base body's on the thighs (hips)
+/// and upper arms (shoulders); 1 on the head, hands and feet.
+pub fn girth_of(name: &str, c: &ocw_core::Character) -> Vec3 {
+    use ocw_core::BaseBody;
+    let c = c.validated();
+    let (torso, limbs) = c.shape.girth();
+    let (middle, muscle) = c.age.body();
+    // Body A is today's model (W4); B has wider hips and narrower arms,
+    // C is in between.
+    let hips = match c.base {
+        BaseBody::A => 1.0,
+        BaseBody::B => 1.03,
+        BaseBody::C => 1.015,
+    };
+    let (thigh, arm) = match c.base {
+        BaseBody::A => (1.0, 1.0),
+        BaseBody::B => (1.07, 0.94),
+        BaseBody::C => (1.035, 0.97),
+    };
+    let l = limbs * muscle;
+    if name == PELVIS || name == TORSO {
+        Vec3::new(torso * hips, 1.0, torso * middle)
+    } else if THIGH.contains(&name) {
+        Vec3::new(l * thigh, 1.0, l * thigh)
+    } else if UPPER_ARM.contains(&name) {
+        Vec3::new(l * arm, 1.0, l * arm)
+    } else if GIRTH_NODES.contains(&name) {
+        Vec3::new(l, 1.0, l)
+    } else {
+        Vec3::ONE
+    }
+}
+
+/// The scale of node `i`'s meshes for the character `c` (spec 4C, 4N;
+/// [`girth_of`] its rig node); about [`girth_centre`].
+pub fn girth(m: &Model, i: usize, c: &ocw_core::Character) -> Vec3 {
+    rig_of(m, i).map_or(Vec3::ONE, |r| girth_of(&m.nodes[r].name, c))
+}
+
+/// The point node `i`'s meshes are scaled about (node `i`'s frame): the
+/// torso's pivot for the torso and pelvis and what they carry, so the
+/// bib on the pelvis and the jersey on the torso grow together (the
+/// layers' fit, `crate::clothing`); the joint of a limb.
+pub fn girth_centre(m: &Model, i: usize) -> Vec3 {
+    let Some(r) = rig_of(m, i) else {
+        return Vec3::ZERO;
+    };
+    let name = m.nodes[r].name.as_str();
+    let at = if name == PELVIS || name == TORSO {
+        // The pivot in the pelvis's frame.
+        let pelvis = if name == PELVIS {
+            r
+        } else {
+            m.nodes[r].parent.unwrap_or(r)
+        };
+        m.world(pelvis).transform_point3(v(body::TORSO_PIVOT))
+    } else {
+        m.world(r).transform_point3(Vec3::ZERO)
+    };
+    m.world(i).inverse().transform_point3(at)
+}
+
+/// The node translation of node `i` for the character `c` (its rest
+/// translation otherwise): the upper arms sit on the torso's shoulders,
+/// which the torso's girth moves in or out (spec §14 Phase 4, 4N: no
+/// arms standing off a thin body or sunk into a heavy one). The poses
+/// only turn the joints, so the arms keep it.
+pub fn node_translation(m: &Model, i: usize, c: &ocw_core::Character) -> Vec3 {
+    let node = &m.nodes[i];
+    if !UPPER_ARM.contains(&node.name.as_str()) {
+        return node.translation;
+    }
+    let g = girth_of(TORSO, c);
+    Vec3::new(
+        node.translation.x * g.x,
+        node.translation.y,
+        node.translation.z,
+    )
+}
+
+/// The mesh transform of node `i` for the character `c`: its girth
+/// about [`girth_centre`] as (scale, translation) in node `i`'s frame.
+pub fn girth_transform(m: &Model, i: usize, c: &ocw_core::Character) -> (Vec3, Vec3) {
+    let s = girth(m, i, c);
+    if s == Vec3::ONE {
+        return (s, Vec3::ZERO);
+    }
+    let centre = girth_centre(m, i);
+    (s, centre - s * centre)
 }
 
 /// Adds node `name` under `parent` (at the parent's origin) with the
@@ -599,6 +809,444 @@ fn pockets(detail: Detail) -> (Parts, Parts, [(Vec3, Vec3); 3]) {
     (panel, band, anchors)
 }
 
+/// The 4N hair catalogue, the moustaches and beards, and the age's face
+/// (spec §14 Phase 4, 4N N3, N5, N6) on the head, round the skull's
+/// centre `skull`: own work, generated (licence rule 8A). Every hair
+/// shape stays inside each helmet's shell or leaves below its rim at the
+/// back; the facial hair lies on the face under the straps
+/// (`crate::helmet` checks both).
+fn hair_and_face(m: &mut Model, head: usize, skull: Vec3, detail: Detail) {
+    use std::f32::consts::PI;
+    let hi = detail == Detail::High;
+    let n = detail.sides();
+    let bands = |h: u32, l: u32| if hi { h } else { l };
+    // A point on the back of the head below the rim: angle `a` (0 the
+    // back, ±π/2 the sides) at height `y` and radius scale `k`.
+    let round = |a: f32, y: f32, k: f32| {
+        skull + Vec3::new(0.079 * k * a.sin(), y, 0.012 + 0.087 * k * a.cos())
+    };
+    let bumps = |p: &mut Parts, at: &[Vec3], r: f32| {
+        for c in at {
+            p.slot("hair")
+                .ellipsoid(*c, Vec3::splat(r), Quat::IDENTITY, 3, 4);
+        }
+    };
+    opt_node(m, opt::HAIR_SHAVED, head, |p| {
+        p.slot("hair").ellipsoid(
+            skull + Vec3::new(0.0, 0.004, 0.01),
+            Vec3::new(0.0788, 0.0995, 0.0868),
+            Quat::from_rotation_x(-0.2),
+            bands(4, 3),
+            n,
+        )
+    });
+    opt_node(m, opt::HAIR_FRINGE, head, |p| {
+        // A short fringe over the forehead, under the helmet's brow.
+        p.slot("hair").ellipsoid(
+            skull + Vec3::new(0.0, 0.03, -0.083),
+            Vec3::new(0.05, 0.014, 0.014),
+            Quat::from_rotation_x(0.35),
+            bands(3, 3),
+            n,
+        )
+    });
+    opt_node(m, opt::HAIR_TEXTURED, head, |p| {
+        let at: Vec<Vec3> = (0..4)
+            .map(|k| {
+                round(
+                    (k as f32 - 1.5) * 0.6,
+                    -0.035 - 0.006 * ((k % 2) as f32),
+                    0.98,
+                )
+            })
+            .collect();
+        bumps(p, &at, 0.014);
+    });
+    opt_node(m, opt::HAIR_SIDE_PART, head, |p| {
+        // The longer side swept over the temple.
+        p.slot("hair").ellipsoid(
+            skull + Vec3::new(-0.07, 0.0, -0.045),
+            Vec3::new(0.014, 0.03, 0.034),
+            Quat::from_rotation_z(0.25),
+            bands(3, 3),
+            n,
+        )
+    });
+    opt_node(m, opt::HAIR_CURLS, head, |p| {
+        let mut at: Vec<Vec3> = (0..5)
+            .map(|k| round((k as f32 - 2.0) * 0.5, -0.05, 0.92))
+            .collect();
+        at.extend((0..3).map(|k| round((k as f32 - 1.0) * 0.7, -0.072, 0.9)));
+        bumps(p, &at, 0.015);
+    });
+    opt_node(m, opt::HAIR_AFRO, head, |p| {
+        // Pressed flat by the helmet: the volume below its rim.
+        p.slot("hair").ellipsoid(
+            skull + Vec3::new(0.0, -0.062, 0.03),
+            Vec3::new(0.086, 0.05, 0.088),
+            Quat::IDENTITY,
+            bands(4, 3),
+            n,
+        );
+        let at: Vec<Vec3> = (0..4)
+            .map(|k| round((k as f32 - 1.5) * 0.7, -0.085, 1.0))
+            .collect();
+        bumps(p, &at, 0.022);
+    });
+    opt_node(m, opt::HAIR_MID, head, |p| {
+        // To the jaw at the sides and the back.
+        p.slot("hair").ellipsoid(
+            skull + Vec3::new(0.0, -0.07, 0.03),
+            Vec3::new(0.086, 0.075, 0.072),
+            Quat::from_rotation_x(0.1),
+            bands(4, 3),
+            n,
+        )
+    });
+    opt_node(m, opt::HAIR_LONG_CURLY, head, |p| {
+        p.slot("hair").ellipsoid(
+            skull + Vec3::new(0.0, -0.11, 0.064),
+            Vec3::new(0.09, 0.13, 0.045),
+            Quat::from_rotation_x(0.12),
+            bands(4, 3),
+            n,
+        );
+        let at: Vec<Vec3> = (0..3)
+            .map(|k| {
+                let a = (k as f32 - 1.0) * 0.7;
+                let y = -0.08 - 0.035 * k as f32;
+                skull + Vec3::new(0.075 * a.sin(), y, 0.075 + 0.025 * a.cos())
+            })
+            .collect();
+        bumps(p, &at, 0.02);
+    });
+    opt_node(m, opt::HAIR_TAIL_LOW, head, |p| {
+        p.slot("hair").sweep(
+            &[
+                skull + Vec3::new(0.0, -0.075, 0.088),
+                skull + Vec3::new(0.0, -0.12, 0.112),
+                skull + Vec3::new(0.0, -0.215, 0.118),
+            ],
+            &[0.022, 0.022, 0.009],
+            bands(6, 4),
+            true,
+        )
+    });
+    // A braid: a chain of beads, narrowing.
+    let braid = |p: &mut Parts, top: Vec3, bottom: Vec3, beads: u32| {
+        for k in 0..beads {
+            let t = k as f32 / (beads - 1) as f32;
+            p.slot("hair").ellipsoid(
+                top + (bottom - top) * t,
+                Vec3::new(0.017, 0.022, 0.015) * (1.0 - 0.35 * t),
+                Quat::IDENTITY,
+                3,
+                4,
+            );
+        }
+    };
+    let beads = if hi { 4 } else { 3 };
+    opt_node(m, opt::HAIR_BRAID, head, |p| {
+        braid(
+            p,
+            skull + Vec3::new(0.0, -0.07, 0.095),
+            skull + Vec3::new(0.0, -0.25, 0.11),
+            beads,
+        )
+    });
+    opt_node(m, opt::HAIR_BRAIDS, head, |p| {
+        for s in [-1.0f32, 1.0] {
+            braid(
+                p,
+                skull + Vec3::new(s * 0.055, -0.07, 0.07),
+                skull + Vec3::new(s * 0.075, -0.24, 0.085),
+                beads,
+            );
+        }
+    });
+    opt_node(m, opt::HAIR_BUN_LOW, head, |p| {
+        p.slot("hair").ellipsoid(
+            skull + Vec3::new(0.0, -0.075, 0.105),
+            Vec3::new(0.04, 0.034, 0.034),
+            Quat::IDENTITY,
+            bands(4, 3),
+            n,
+        )
+    });
+    opt_node(m, opt::HAIR_LOCS, head, |p| {
+        // Locs gathered at the nape and tied back.
+        let tie = skull + Vec3::new(0.0, -0.065, 0.1);
+        for k in 0..4 {
+            let a = (k as f32 - 1.5) * 0.55;
+            p.slot("hair")
+                .tube(round(a, -0.04, 1.0), tie, 0.007, 0.009, 4, false);
+        }
+        for k in 0..3 {
+            let x = (k as f32 - 1.0) * 0.014;
+            p.slot("hair").tube(
+                tie + Vec3::new(x, 0.0, 0.0),
+                tie + Vec3::new(1.4 * x, -0.17, 0.02),
+                0.008,
+                0.006,
+                4,
+                true,
+            );
+        }
+    });
+    opt_node(m, opt::HAIR_ROWS, head, |p| {
+        // Rows from the hairline to the nape, close on the scalp (over the
+        // buzz cut, inside every helmet).
+        for k in 0..2 {
+            let x = (k as f32 - 0.5) * 0.034;
+            let side = (1.0 - (x / 0.08).powi(2)).max(0.0).sqrt();
+            let path: Vec<Vec3> = (0..7)
+                .map(|j| {
+                    let t = -0.35 * PI + j as f32 / 6.0 * 1.25 * PI;
+                    let r = Vec3::new(0.0, 0.1, 0.088) * 1.012;
+                    skull
+                        + Vec3::new(0.0, 0.006, 0.012)
+                        + Vec3::new(x, r.y * t.cos() * side, r.z * t.sin() * side)
+                })
+                .collect();
+            let radii = vec![0.0045; path.len()];
+            p.slot("hair").sweep(&path, &radii, 3, false);
+        }
+    });
+    // Moustaches (4N N6), in the facial hair's colour.
+    let lip = skull + Vec3::new(0.0, -0.038, -0.094);
+    let tash = |p: &mut Parts, r: Vec3| {
+        p.slot("facial_hair")
+            .ellipsoid(lip, r, Quat::IDENTITY, 3, if hi { 6 } else { 4 })
+    };
+    opt_node(m, opt::MOUSTACHE[0], head, |p| {
+        tash(p, Vec3::new(0.028, 0.008, 0.012))
+    });
+    opt_node(m, opt::MOUSTACHE[1], head, |p| {
+        tash(p, Vec3::new(0.032, 0.011, 0.014))
+    });
+    opt_node(m, opt::MOUSTACHE[2], head, |p| {
+        tash(p, Vec3::new(0.027, 0.0075, 0.012));
+        for s in [-1.0f32, 1.0] {
+            p.slot("facial_hair").ellipsoid(
+                lip + Vec3::new(s * 0.033, 0.006, 0.008),
+                Vec3::new(0.012, 0.004, 0.006),
+                Quat::from_rotation_z(s * 0.8),
+                3,
+                4,
+            );
+        }
+    });
+    opt_node(m, opt::MOUSTACHE[3], head, |p| {
+        tash(p, Vec3::new(0.03, 0.009, 0.012));
+        for s in [-1.0f32, 1.0] {
+            p.slot("facial_hair").ellipsoid(
+                lip + Vec3::new(s * 0.027, -0.022, 0.008),
+                Vec3::new(0.006, 0.022, 0.009),
+                Quat::IDENTITY,
+                3,
+                4,
+            );
+        }
+    });
+    opt_node(m, opt::MOUSTACHE[4], head, |p| {
+        tash(p, Vec3::new(0.025, 0.0035, 0.0105))
+    });
+    // Beards.
+    let chin = |p: &mut Parts, c: Vec3, r: Vec3, tilt: f32| {
+        p.slot("facial_hair").ellipsoid(
+            skull + c,
+            r,
+            Quat::from_rotation_x(tilt),
+            if hi { 4 } else { 3 },
+            n,
+        )
+    };
+    opt_node(m, opt::BEARD[0], head, |p| {
+        chin(
+            p,
+            Vec3::new(0.0, -0.056, -0.024),
+            Vec3::new(0.066, 0.042, 0.064),
+            0.15,
+        )
+    });
+    opt_node(m, opt::BEARD[1], head, |p| {
+        chin(
+            p,
+            Vec3::new(0.0, -0.057, -0.029),
+            Vec3::new(0.0665, 0.043, 0.066),
+            0.15,
+        )
+    });
+    opt_node(m, opt::BEARD[2], head, |p| {
+        chin(
+            p,
+            Vec3::new(0.0, -0.058, -0.038),
+            Vec3::new(0.067, 0.043, 0.064),
+            0.15,
+        )
+    });
+    opt_node(m, opt::BEARD[3], head, |p| {
+        chin(
+            p,
+            Vec3::new(0.0, -0.058, -0.043),
+            Vec3::new(0.066, 0.043, 0.062),
+            0.15,
+        )
+    });
+    opt_node(m, opt::BEARD[4], head, |p| {
+        chin(
+            p,
+            Vec3::new(0.0, -0.08, -0.08),
+            Vec3::new(0.022, 0.02, 0.017),
+            0.3,
+        )
+    });
+    opt_node(m, opt::BEARD[5], head, |p| {
+        // Along the jaw from ear to ear.
+        let path: Vec<Vec3> = (0..7)
+            .map(|k| {
+                let a = (k as f32 / 6.0 - 0.5) * 2.6;
+                skull
+                    + Vec3::new(
+                        0.068 * a.sin(),
+                        -0.035 - 0.05 * a.cos(),
+                        -0.083 * a.cos() + 0.012,
+                    )
+            })
+            .collect();
+        let radii = vec![0.0065; path.len()];
+        p.slot("facial_hair")
+            .sweep(&path, &radii, if hi { 4 } else { 3 }, true);
+    });
+    opt_node(m, opt::BEARD[6], head, |p| {
+        chin(
+            p,
+            Vec3::new(0.0, -0.058, -0.043),
+            Vec3::new(0.066, 0.043, 0.062),
+            0.15,
+        );
+        chin(
+            p,
+            Vec3::new(0.0, -0.1, -0.072),
+            Vec3::new(0.04, 0.035, 0.028),
+            0.15,
+        );
+    });
+    // The age (4N N3, Q12): lines at the eyes and mouth, deeper from the
+    // 60s with the forehead's; a softer jaw (near model only).
+    let lines = |p: &mut Parts, k: f32| {
+        if !hi {
+            return;
+        }
+        for s in [-1.0f32, 1.0] {
+            for (j, tilt) in [-0.3f32, 0.3].iter().enumerate() {
+                p.slot("skin_line").ellipsoid(
+                    skull + Vec3::new(s * 0.066, 0.012 - 0.008 * (j as f32 - 0.5), -0.054),
+                    Vec3::new(0.0022, 0.0022 * k, 0.012 * k),
+                    Quat::from_rotation_y(s * 0.9) * Quat::from_rotation_x(*tilt * s),
+                    3,
+                    3,
+                );
+            }
+            p.slot("skin_line").ellipsoid(
+                skull + Vec3::new(s * 0.03, -0.042, -0.081),
+                Vec3::new(0.0025 * k, 0.016, 0.0025),
+                Quat::from_rotation_z(-s * 0.3),
+                3,
+                3,
+            );
+        }
+    };
+    opt_node(m, opt::FACE_LINES[0], head, |p| lines(p, 1.0));
+    opt_node(m, opt::FACE_LINES[1], head, |p| {
+        lines(p, 1.5);
+        if hi {
+            // A forehead line.
+            p.slot("skin_line").ellipsoid(
+                skull + Vec3::new(0.0, 0.05 + 0.006f32, -0.088 + 0.006f32 * 0.12),
+                Vec3::new(0.03, 0.0022, 0.004),
+                Quat::from_rotation_x(-0.5),
+                3,
+                4,
+            );
+        }
+    });
+    opt_node(m, opt::FACE_JAW, head, |p| {
+        if hi {
+            for s in [-1.0f32, 1.0] {
+                p.slot("skin").ellipsoid(
+                    skull + Vec3::new(s * 0.048, -0.074, -0.05),
+                    Vec3::new(0.026, 0.02, 0.03),
+                    Quat::IDENTITY,
+                    3,
+                    5,
+                );
+            }
+        }
+    });
+}
+
+/// The face's node [`FACE`] on the head (near model only).
+fn opt_node_face(m: &mut Model, head: usize, skull: Vec3, detail: Detail) {
+    use face::*;
+    let i = m.add(Node::new(FACE, Some(head), Vec3::ZERO));
+    if detail != Detail::High {
+        return;
+    }
+    let mut p = Parts::new();
+    let at = |c: [f32; 3], s: f32| skull + Vec3::new(s * c[0], c[1], c[2]);
+    for s in [-1.0f32, 1.0] {
+        // The eye, a dark almond in its socket, the lid over it.
+        p.slot("eye").ellipsoid(
+            at(EYE, s),
+            Vec3::from(EYE_RADII),
+            Quat::from_rotation_y(s * 0.35),
+            3,
+            5,
+        );
+        p.slot("skin").ellipsoid(
+            at(EYE, s) + Vec3::new(0.0, 0.0055, 0.0005),
+            Vec3::new(0.0115, 0.0028, 0.0042),
+            Quat::from_rotation_y(s * 0.35),
+            3,
+            4,
+        );
+        // The eyebrow, in the hair's colour.
+        p.slot("hair").ellipsoid(
+            at(BROW, s),
+            Vec3::new(0.0135, 0.0028, 0.0038),
+            Quat::from_rotation_y(s * 0.4) * Quat::from_rotation_z(-s * 0.12),
+            3,
+            4,
+        );
+        // The ear, flat against the head, tilted back a little.
+        p.slot("skin").ellipsoid(
+            at(EAR, s),
+            Vec3::from(EAR_RADII),
+            Quat::from_rotation_x(-0.2),
+            3,
+            4,
+        );
+    }
+    // The lips.
+    p.slot("lips").ellipsoid(
+        at(MOUTH, 1.0),
+        Vec3::from(MOUTH_RADII),
+        Quat::IDENTITY,
+        3,
+        6,
+    );
+    // The chin.
+    p.slot("skin").ellipsoid(
+        skull + Vec3::new(0.0, -0.088, -0.066),
+        Vec3::new(0.024, 0.016, 0.018),
+        Quat::from_rotation_x(0.3),
+        3,
+        4,
+    );
+    p.attach(m, i);
+}
+
 /// Builds the rider model.
 pub fn build(detail: Detail) -> Model {
     use body::{HIP_HALF_WIDTH, SHOULDER_HALF_WIDTH, SHOULDER_HEIGHT, TORSO_PIVOT};
@@ -791,20 +1439,6 @@ pub fn build(detail: Detail) -> Model {
         Cap::Point(neck - Vec3::Y * 0.01),
     );
     if hi {
-        for s in [-1.0f32, 1.0] {
-            p.slot("jersey").ellipsoid(
-                pivot
-                    + Vec3::new(
-                        s * (SHOULDER_HALF_WIDTH - 0.01),
-                        SHOULDER_HEIGHT - 0.01,
-                        0.0,
-                    ),
-                Vec3::new(0.06, 0.055, 0.06),
-                Quat::IDENTITY,
-                4,
-                n,
-            );
-        }
         // The jersey's zip in the accent colour runs down the chest.
         p.slot("accent").tube(
             pivot + Vec3::new(0.0, 0.43, -0.103),
@@ -831,6 +1465,53 @@ pub fn build(detail: Detail) -> Model {
         .collect();
     p.slot("shorts").add_flat(&lid, &fan);
     p.attach(&mut m, torso);
+    // The base bodies (spec §14 Phase 4, 4N N2): the shoulders' caps –
+    // broader on A, narrower on B – and the chest of B and C, on the
+    // jersey (near model only: one far body for all three, N9).
+    for (k, name) in opt::SHOULDERS.iter().enumerate() {
+        // A: today's caps; B narrower; C in between.
+        let (inset, r) = [
+            (0.01, Vec3::new(0.06, 0.055, 0.06)),
+            (0.026, Vec3::new(0.052, 0.05, 0.055)),
+            (0.018, Vec3::new(0.056, 0.052, 0.058)),
+        ][k];
+        opt_node(&mut m, name, torso, |p| {
+            if hi {
+                for s in [-1.0f32, 1.0] {
+                    p.slot("jersey").ellipsoid(
+                        pivot
+                            + Vec3::new(
+                                s * (SHOULDER_HALF_WIDTH - inset),
+                                SHOULDER_HEIGHT - 0.01,
+                                0.0,
+                            ),
+                        r,
+                        Quat::IDENTITY,
+                        3,
+                        6,
+                    );
+                }
+            }
+        });
+    }
+    for (name, r, z) in [
+        (opt::CHEST[0], Vec3::new(0.05, 0.044, 0.04), -0.097),
+        (opt::CHEST[1], Vec3::new(0.043, 0.037, 0.026), -0.1),
+    ] {
+        opt_node(&mut m, name, torso, |p| {
+            if hi {
+                for s in [-1.0f32, 1.0] {
+                    p.slot("jersey").ellipsoid(
+                        pivot + Vec3::new(s * 0.052, 0.3, z),
+                        r,
+                        Quat::from_rotation_x(-0.25),
+                        3,
+                        6,
+                    );
+                }
+            }
+        });
+    }
     // The back pockets (spec §2.6) and the anchors at their openings.
     let (panel, band, anchors) = pockets(detail);
     let i = m.add(Node::new(POCKETS, Some(torso), Vec3::ZERO));
@@ -950,34 +1631,9 @@ pub fn build(detail: Detail) -> Model {
             n,
         )
     });
-    // Faces: a beard, a moustache, stubble (in the hair colour).
-    opt_node(&mut m, opt::FACE_BEARD, head, |p| {
-        p.slot("hair").ellipsoid(
-            skull + Vec3::new(0.0, -0.062, -0.042),
-            Vec3::new(0.072, 0.055, 0.06),
-            Quat::from_rotation_x(0.25),
-            if hi { 5 } else { 3 },
-            n,
-        )
-    });
-    opt_node(&mut m, opt::FACE_MOUSTACHE, head, |p| {
-        p.slot("hair").ellipsoid(
-            skull + Vec3::new(0.0, -0.038, -0.094),
-            Vec3::new(0.028, 0.008, 0.012),
-            Quat::IDENTITY,
-            3,
-            if hi { 8 } else { 4 },
-        )
-    });
-    opt_node(&mut m, opt::FACE_STUBBLE, head, |p| {
-        p.slot("hair").ellipsoid(
-            skull + Vec3::new(0.0, -0.058, -0.03),
-            Vec3::new(0.0715, 0.05, 0.068),
-            Quat::from_rotation_x(0.2),
-            if hi { 5 } else { 3 },
-            n,
-        )
-    });
+    // The face (eyes, brows, ears, lips, chin).
+    opt_node_face(&mut m, head, skull, detail);
+    hair_and_face(&mut m, head, skull, detail);
     // Glasses (free): the sport wrap and round frames.
     opt_node(&mut m, opt::GLASSES_SPORT, head, |p| {
         if hi {
@@ -1266,16 +1922,16 @@ mod tests {
             !tt.contains(&opt::GLASSES_SPORT),
             "the visor replaces the glasses"
         );
-        // The character: bald, a beard, round glasses.
+        // The character: bald, a full beard, round glasses.
         let ch = ocw_core::Character {
             hair: 5,
-            face: 1,
+            beard: 4,
             glasses: 2,
             ..c
         };
         let v = visible(&ch, &[]);
         assert!(!v.iter().any(|n| n.starts_with("hair_")));
-        assert!(v.contains(&opt::FACE_BEARD) && v.contains(&opt::GLASSES_ROUND));
+        assert!(v.contains(&opt::BEARD[3]) && v.contains(&opt::GLASSES_ROUND));
         let none = ocw_core::Character { glasses: 0, ..c };
         assert!(!visible(&none, &[]).iter().any(|n| n.starts_with("glasses")));
     }
@@ -1346,20 +2002,62 @@ mod tests {
         assert_eq!(at("rider"), Torso);
     }
 
-    /// The build widens the torso and limbs, never the head, hands, feet.
+    /// The shape widens the torso and limbs, never the head, hands, feet
+    /// (spec 4C, 4N); torso and pelvis alike, about the torso's pivot.
     #[test]
-    fn the_body_build_scales_torso_and_limbs_only() {
+    fn the_body_shape_scales_torso_and_limbs_only() {
+        use ocw_core::{BaseBody, BodyShape, Character};
         let m = build(Detail::High);
         let at = |n: &str| m.node(n).unwrap();
-        use ocw_core::BodyBuild::*;
-        assert_eq!(girth(&m, at(TORSO), Medium), Vec3::ONE);
-        let g = Strong.girth();
-        assert_eq!(girth(&m, at(TORSO), Strong), Vec3::new(g, 1.0, g));
+        let with = |shape| Character {
+            shape,
+            ..Character::default()
+        };
+        let normal = with(BodyShape::Normal);
+        for n in [TORSO, PELVIS, THIGH[0], UPPER_ARM[1], SHIN[0]] {
+            assert_eq!(girth(&m, at(n), &normal), Vec3::ONE, "{n}");
+        }
+        let fat = with(BodyShape::Fat);
+        let (t, l) = BodyShape::Fat.girth();
+        assert_eq!(girth(&m, at(TORSO), &fat), Vec3::new(t, 1.0, t));
+        assert_eq!(girth(&m, at(PELVIS), &fat), girth(&m, at(TORSO), &fat));
         assert_eq!(
-            girth(&m, at(opt::SLEEVE_LONG[0]), Strong),
-            Vec3::new(g, 1.0, g)
+            girth(&m, at(opt::SLEEVE_LONG[0]), &fat),
+            Vec3::new(l, 1.0, l)
         );
-        assert_eq!(girth(&m, at(opt::TIGHTS_SHIN[1]), Slim).x, Slim.girth());
+        let slim = with(BodyShape::Slim);
+        assert_eq!(
+            girth(&m, at(opt::TIGHTS_SHIN[1]), &slim).x,
+            BodyShape::Slim.girth().1
+        );
+        // The pelvis's meshes grow about the torso's pivot, the torso's
+        // about its own origin (the pivot): the bib keeps its place under
+        // the jersey.
+        assert_eq!(girth_centre(&m, at(TORSO)), Vec3::ZERO);
+        assert!(girth_centre(&m, at(PELVIS)).distance(v(body::TORSO_PIVOT)) < 1e-6);
+        assert!(girth_centre(&m, at(opt::SUIT_PELVIS)).distance(v(body::TORSO_PIVOT)) < 1e-6);
+        let (sc, tr) = girth_transform(&m, at(PELVIS), &fat);
+        let pivot = v(body::TORSO_PIVOT);
+        assert!((sc * pivot + tr).distance(pivot) < 1e-6, "the pivot stays");
+        assert_eq!(girth_transform(&m, at(HEAD), &fat), (Vec3::ONE, Vec3::ZERO));
+        // The arms follow the shoulders' width.
+        let arm = at(UPPER_ARM[1]);
+        let x = m.nodes[arm].translation.x;
+        assert_eq!(node_translation(&m, arm, &normal).x, x);
+        assert!((node_translation(&m, arm, &fat).x - x * t).abs() < 1e-6);
+        assert_eq!(
+            node_translation(&m, at(HEAD), &fat),
+            m.nodes[at(HEAD)].translation
+        );
+        // The base bodies: wider hips (thighs) and narrower arms on B.
+        let b = Character {
+            base: BaseBody::B,
+            ..normal
+        };
+        assert!(girth(&m, at(THIGH[0]), &b).x > 1.0);
+        assert!(girth(&m, at(UPPER_ARM[0]), &b).x < 1.0);
+        assert!(girth(&m, at(PELVIS), &b).x > 1.0);
+        let strong = with(BodyShape::Obese);
         for n in [
             HEAD,
             HELMET_ROAD,
@@ -1370,7 +2068,135 @@ mod tests {
             opt::SHOE_ROAD[0],
             "rider",
         ] {
-            assert_eq!(girth(&m, at(n), Strong), Vec3::ONE, "{n}");
+            assert_eq!(girth(&m, at(n), &strong), Vec3::ONE, "{n}");
         }
+    }
+
+    /// The face (2026-11-17): eyes, lids, brows, ears, lips and chin on
+    /// the head of the near model, at their places (the lips under the
+    /// nose, over the chin, the eyes level with the glasses, the ears at
+    /// the sides), in their paint slots; the far model's head stays plain;
+    /// the face is shown with every look.
+    #[test]
+    fn the_rider_has_a_face() {
+        let near = build(Detail::High);
+        let far = build(Detail::Low);
+        let i = near.node(FACE).expect("the face");
+        assert_eq!(near.nodes[i].parent, near.node(HEAD));
+        assert!(
+            far.node(FACE)
+                .is_some_and(|f| far.nodes[f].primitives.is_empty())
+        );
+        let w = near.world(i);
+        let skull = skull_centre();
+        let slot = |name: &str| near.material(name).expect(name);
+        let centre = |mat: usize| {
+            let pts: Vec<Vec3> = near.nodes[i]
+                .primitives
+                .iter()
+                .filter(|p| p.material == mat)
+                .flat_map(|p| {
+                    p.positions
+                        .iter()
+                        .map(|v| w.transform_point3(Vec3::from(*v)))
+                })
+                .collect();
+            assert!(!pts.is_empty());
+            (
+                pts.iter().copied().sum::<Vec3>() / pts.len() as f32 - skull,
+                pts,
+            )
+        };
+        let (lips, _) = centre(slot("lips"));
+        assert!(lips.distance(Vec3::from(face::MOUTH)) < 2e-3, "{lips}");
+        let (eyes, eye_pts) = centre(slot("eye"));
+        assert!(eyes.x.abs() < 1e-4 && (eyes.y - face::EYE[1]).abs() < 2e-3);
+        assert!(eye_pts.iter().any(|p| p.x - skull.x > 0.025));
+        assert!(eye_pts.iter().any(|p| p.x - skull.x < -0.025));
+        // Lips below the nose, above the chin, in front of the face.
+        assert!(lips.y < -0.035 && lips.y > -0.07 && lips.z < -0.075);
+        // The ears at the sides, behind the eyes.
+        const { assert!(face::EAR[0] > 0.07 && face::EAR[2] > face::EYE[2] + 0.05) };
+        for c in [
+            ocw_core::Character::default(),
+            ocw_core::Character {
+                age: ocw_core::Age::Seventies,
+                base: ocw_core::BaseBody::B,
+                shape: ocw_core::BodyShape::Obese,
+                beard: 7,
+                ..Default::default()
+            },
+        ] {
+            let shown = visible(&c, &[]);
+            assert!(!optional().contains(&FACE), "always shown");
+            assert!(base_nodes("helmet").iter().all(|n| *n != FACE));
+            let _ = shown;
+            assert_eq!(girth(&near, i, &c), Vec3::ONE, "the head keeps its size");
+        }
+    }
+
+    /// Every hair style, moustache, beard, base body and age shows its
+    /// own nodes (4N), which exist in both levels of detail.
+    #[test]
+    fn the_4n_character_shows_its_nodes() {
+        use ocw_core::character::{Age, BEARDS, HAIR_STYLES, MOUSTACHES};
+        use ocw_core::{BaseBody, Character};
+        let c = Character::default();
+        let low = build(Detail::Low);
+        let mut styles = std::collections::BTreeSet::new();
+        for h in 0..HAIR_STYLES.len() as u8 {
+            let v = visible(&Character { hair: h, ..c }, &[]);
+            let hair: Vec<&str> = v
+                .iter()
+                .copied()
+                .filter(|n| n.starts_with("hair_"))
+                .collect();
+            assert_eq!(hair, hair_nodes(h), "{}", HAIR_STYLES[h as usize]);
+            for n in &hair {
+                assert!(low.node(n).is_some(), "{n}");
+            }
+            assert!(
+                styles.insert(hair),
+                "{} is its own",
+                HAIR_STYLES[h as usize]
+            );
+        }
+        for (i, name) in MOUSTACHES.iter().enumerate().skip(1) {
+            let v = visible(
+                &Character {
+                    moustache: i as u8,
+                    ..c
+                },
+                &[],
+            );
+            assert!(v.contains(&opt::MOUSTACHE[i - 1]), "{name}");
+        }
+        for (i, name) in BEARDS.iter().enumerate().skip(1) {
+            let v = visible(
+                &Character {
+                    beard: i as u8,
+                    ..c
+                },
+                &[],
+            );
+            assert!(v.contains(&opt::BEARD[i - 1]), "{name}");
+            assert!(!v.iter().any(|n| n.starts_with("moustache")));
+        }
+        assert!(!visible(&c, &[]).iter().any(|n| n.starts_with("beard")));
+        for (k, b) in BaseBody::ALL.into_iter().enumerate() {
+            let v = visible(&Character { base: b, ..c }, &[]);
+            assert!(v.contains(&opt::SHOULDERS[k]), "{b:?}");
+            assert_eq!(v.iter().filter(|n| n.starts_with("shoulders")).count(), 1);
+            assert_eq!(v.iter().any(|n| n.starts_with("chest")), b != BaseBody::A);
+        }
+        let face = |a: Age| -> Vec<&str> {
+            visible(&Character { age: a, ..c }, &[])
+                .into_iter()
+                .filter(|n| n.starts_with("face_"))
+                .collect()
+        };
+        assert!(face(Age::Thirties).is_empty());
+        assert_eq!(face(Age::Forties), [opt::FACE_LINES[0]]);
+        assert_eq!(face(Age::Seventies), [opt::FACE_LINES[1], opt::FACE_JAW]);
     }
 }

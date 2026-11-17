@@ -1,4 +1,4 @@
-//! The GPS bike computer of VR (spec §14 Phase 11, 11B; v4.38): an
+//! The GPS bike computer of VR (spec §14 Phase 11, 11B; v4.52): an
 //! original, unbranded head unit for an out-front mount – a compact,
 //! wedge-like body (rounded sides, a slightly lower nose), a flat screen
 //! window on top, a row of LEDs above the screen's rear edge, two side

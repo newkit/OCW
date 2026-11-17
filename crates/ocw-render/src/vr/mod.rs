@@ -10,10 +10,10 @@
 //!   eye on the bike (`AvatarRig::steady_eye`), horizon-locked
 //!   (`ocw_xr::anchor`), plus the tracked head after the recentre.
 //!   The rider's own head is hidden (the eyes are inside it).
-//! - **The bike computer** ([`computer`], v4.38): no floating panel – all
+//! - **The bike computer** ([`computer`], v4.52): no floating panel – all
 //!   ride information is on a GPS unit on an out-front mount at the bar's
 //!   centre, seen when looking down.
-//! - **The controllers** ([`controllers`], v4.38): the Touch controllers as
+//! - **The controllers** ([`controllers`], v4.52): the Touch controllers as
 //!   a gamepad, both grips held recentre.
 //! - **The mirror** on the monitor ([`VrMirror`]): one eye, both eyes side
 //!   by side, or the usual chase camera (for spectators and captures).

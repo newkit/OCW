@@ -1,5 +1,5 @@
 //! The bike computer in VR (spec §14 Phase 11, 11B *HUD in VR*; decided
-//! 2026-11-17, v4.38): no floating panel in front of the rider – all ride
+//! 2026-11-17, v4.52): no floating panel in front of the rider – all ride
 //! information is on a GPS bike computer on an **out-front mount at the
 //! centre of the handlebar**, a little ahead of the bar in line with the
 //! stem, its screen tilted up toward the rider's eyes. It is part of the

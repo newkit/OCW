@@ -284,6 +284,8 @@ pub fn start_session_with(world: &mut World, route: Route, keep_link: bool) {
     // hello; the local servers have no sign-in (the rider is who they are).
     if matches!(server, ServerLink::Remote(_)) {
         client.set_access_token(crate::account::access_token(world));
+        // Voice choices by name are remembered per server (§7.1.7 Q9).
+        client.set_server_scope(args.server.as_deref().unwrap_or_default());
     }
     // A joined server has the hello of the probe (a second one is
     // ignored); a hosted one gets it now.
@@ -492,6 +494,10 @@ fn poll_server(
         match client.0.on_server_message(&bytes, now) {
             Some(Notice::Joined { rider_id, route_id }) => {
                 info!(rider = %rider_id, route = %route_id, "joined session");
+                // The server replaced the name (spec §14 Phase 4, 4N N1).
+                if let Some(note) = client.0.name_note() {
+                    console.print(note.to_string());
+                }
             }
             Some(Notice::Rejected(reason)) => {
                 error!(%reason, "server rejected us");

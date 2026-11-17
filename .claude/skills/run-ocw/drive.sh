@@ -17,6 +17,8 @@
 #       sound rendered in step with the frames; ffmpeg encodes (H.264 CRF 18,
 #       AAC 192k, creation time and build from the app's metadata.txt).
 #       Rides 3 s of game time first. Also writes OUT.jpg (last frame), OUT.log.
+#   OCW_CAPTURE_FPS=N records and encodes N fps instead of 25;
+#   OCW_VIDEO_TIMEOUT=SECONDS (default 1500) ends a video run that hangs.
 #   Size: OCW_SIZE=WIDTHxHEIGHT (default 2560x1440) sets the virtual screen
 #   and the window, unless the desktop args give --window (then that size).
 #   drive.sh video-wayland OUT.mp4 [SECONDS] [-- desktop args...]
@@ -125,7 +127,7 @@ parse_video_args() {
   log="${out%.*}.log"; shot="${out%.*}.jpg"
   frames=$(mktemp -d)
   pick_size "$@"
-  VIDEO_APP_ARGS=(--capture "$frames" --capture-fps 25 --capture-seconds "$seconds" "${FPS_ARGS[@]}" "${SIZE_ARGS[@]}" "$@")
+  VIDEO_APP_ARGS=(--capture "$frames" --capture-fps "${OCW_CAPTURE_FPS:-25}" --capture-seconds "$seconds" "${FPS_ARGS[@]}" "${SIZE_ARGS[@]}" "$@")
   ARCHIVE_APP_ARGS=(--capture-seconds "$seconds" "$@")
   rm -f "$out" "$shot"
   command -v ffmpeg >/dev/null || { echo "ffmpeg not installed (apt-get install ffmpeg)" >&2; exit 1; }
@@ -148,7 +150,7 @@ encode_frames() {
   else
     meta=(-metadata "creation_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -metadata "comment=$software")
   fi
-  ffmpeg -loglevel error -y -framerate 25 -i "$dir/frame_%05d.png" "${inputs[@]}" "${maps[@]}" \
+  ffmpeg -loglevel error -y -framerate "${OCW_CAPTURE_FPS:-25}" -i "$dir/frame_%05d.png" "${inputs[@]}" "${maps[@]}" \
     "${X264[@]}" "${meta[@]}" -movflags +faststart "$dst"
 }
 
@@ -260,7 +262,7 @@ case "$cmd" in
     parse_video_args "$@"
     cargo build -q "${BUILD_FLAGS[@]}" -p "$PKG" ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     status=0
-    timeout 1500 xvfb-run -a -s "-screen 0 ${width}x${height}x24" \
+    timeout "${OCW_VIDEO_TIMEOUT:-1500}" xvfb-run -a -s "-screen 0 ${width}x${height}x24" \
       env -u WAYLAND_DISPLAY "${APP_ENV[@]}" "${X11_ENV[@]}" "$APP" "${VIDEO_APP_ARGS[@]}" \
       >"$log" 2>&1 || status=$?
     encode_video x11 "$status"
@@ -270,7 +272,7 @@ case "$cmd" in
     cargo build -q "${BUILD_FLAGS[@]}" -p "$PKG" ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     start_weston "${out%.*}.weston.log"
     status=0
-    timeout 1500 env -u DISPLAY XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY="$socket" \
+    timeout "${OCW_VIDEO_TIMEOUT:-1500}" env -u DISPLAY XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY="$socket" \
       "${APP_ENV[@]}" "$APP" "${VIDEO_APP_ARGS[@]}" >"$log" 2>&1 || status=$?
     encode_video wayland "$status"
     ;;

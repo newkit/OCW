@@ -41,6 +41,21 @@ pub enum Kind {
 /// Longest [`Kind::Text`] value.
 pub const MAX_TEXT_LEN: usize = 200;
 
+/// The file's section of the rider's choices for single other riders in
+/// voice chat (spec §7.1.7 Q9): a volume and Block per rider key
+/// (`ocw_voice::riders`), not registered settings:
+///
+/// ```toml
+/// [voice_riders."name:ride.example.org/Bea Climber"]
+/// name = "Bea Climber"
+/// volume = 150
+/// blocked = false
+/// ```
+pub const VOICE_RIDERS: &str = "voice_riders";
+
+/// Most riders remembered in [`VOICE_RIDERS`].
+pub const MAX_VOICE_RIDERS: usize = 1000;
+
 /// When a changed value takes effect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
@@ -278,6 +293,31 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::Command("quality {}"),
     },
+    // The render distance (spec §14 Phase 10, 10G; `view_distance`).
+    SettingDef {
+        key: "display.view_distance",
+        kind: Kind::Choice(crate::view_distance::DISTANCE_CHOICES),
+        default: "preset",
+        description: "Render distance in km (1 to 60) or unlimited; preset = the quality preset's (High unlimited, Medium 30, Low 8). The upper limit of the dynamic mode",
+        scope: Scope::Live,
+        apply: Apply::Command("view {}"),
+    },
+    SettingDef {
+        key: "display.view_distance_auto",
+        kind: Kind::Bool,
+        default: "on",
+        description: "Adjust the render distance to the frame rate: shorter below the target, longer when there is room (up to display.view_distance)",
+        scope: Scope::Live,
+        apply: Apply::Command("view auto {}"),
+    },
+    SettingDef {
+        key: "display.target_fps",
+        kind: Kind::Choice(crate::view_distance::TARGET_CHOICES),
+        default: "auto",
+        description: "Target frame rate of the dynamic render distance: auto = the display's refresh on the desktop, 60 in the browser; display, or a rate",
+        scope: Scope::Live,
+        apply: Apply::Command("view target {}"),
+    },
     SettingDef {
         key: "display.night_brightness",
         kind: Kind::Int {
@@ -356,7 +396,7 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::Command("vr mirror {}"),
     },
-    // The bike computer on the bar (spec §14 Phase 11, v4.38): its size
+    // The bike computer on the bar (spec §14 Phase 11, v4.52): its size
     // (times the real one, %; readable on the Quest 1 from 275 %) and the
     // tilt added to its aim at the eyes.
     SettingDef {
@@ -1083,11 +1123,20 @@ impl SettingDef {
             .expect("registry defaults are valid (tested)")
     }
 
-    /// "on / off", "0 to 100", "chase, side, top".
+    /// "on / off", "0 to 100", "chase, side, top"; a long list shortened
+    /// ("preset, 1, 2 … 60, unlimited").
     pub fn kind_text(&self) -> String {
         match self.kind {
             Kind::Bool => "on / off".into(),
             Kind::Int { min, max, .. } => format!("{min} to {max}"),
+            Kind::Choice(c) if c.len() > 12 => format!(
+                "{}, {}, {} … {}, {}",
+                c[0],
+                c[1],
+                c[2],
+                c[c.len() - 2],
+                c[c.len() - 1]
+            ),
             Kind::Choice(c) => c.join(", "),
             Kind::Text => "a name".into(),
         }
@@ -1179,10 +1228,69 @@ impl Settings {
         std::fs::write(path, self.to_toml()).map_err(|e| format!("{}: {e}", path.display()))
     }
 
+    /// The rider's volume and Block for other riders ([`VOICE_RIDERS`]);
+    /// broken entries are skipped, volumes held in range.
+    pub fn voice_riders(&self) -> ocw_voice::riders::RiderPrefs {
+        use ocw_voice::riders::{RiderPref, clamp_volume};
+        let mut out = ocw_voice::riders::RiderPrefs::new();
+        let Some(t) = self.doc.get(VOICE_RIDERS).and_then(|v| v.as_table()) else {
+            return out;
+        };
+        for (key, v) in t.iter().take(MAX_VOICE_RIDERS) {
+            let Some(e) = v.as_table() else {
+                continue;
+            };
+            let pref = RiderPref {
+                name: e
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or_default()
+                    .to_owned(),
+                volume_pct: e
+                    .get("volume")
+                    .and_then(|n| n.as_integer())
+                    .map_or(ocw_voice::riders::DEFAULT_VOLUME_PCT, clamp_volume),
+                blocked: e.get("blocked").and_then(|b| b.as_bool()).unwrap_or(false),
+            };
+            if !pref.is_default() {
+                out.insert(key.clone(), pref);
+            }
+        }
+        out
+    }
+
+    /// Remembers the choice for one rider (to be saved); a choice back at
+    /// the defaults is forgotten.
+    pub fn set_voice_rider(&mut self, key: &str, pref: &ocw_voice::riders::RiderPref) {
+        let section = self
+            .doc
+            .entry(VOICE_RIDERS)
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        if !section.is_table() {
+            *section = toml::Value::Table(toml::Table::new());
+        }
+        let t = section.as_table_mut().expect("a table");
+        if pref.is_default() {
+            t.remove(key);
+        } else {
+            let mut e = toml::Table::new();
+            e.insert("name".into(), toml::Value::String(pref.name.clone()));
+            e.insert(
+                "volume".into(),
+                toml::Value::Integer(i64::from(pref.volume_pct)),
+            );
+            e.insert("blocked".into(), toml::Value::Boolean(pref.blocked));
+            t.insert(key.to_owned(), toml::Value::Table(e));
+        }
+        if t.is_empty() {
+            self.doc.remove(VOICE_RIDERS);
+        }
+    }
+
     /// Keys in the file the registry does not know, as `section.name`.
     pub fn unknown_keys(&self) -> Vec<String> {
         let mut out = Vec::new();
-        for (section, v) in &self.doc {
+        for (section, v) in self.doc.iter().filter(|(s, _)| s.as_str() != VOICE_RIDERS) {
             match v {
                 toml::Value::Table(t) => {
                     for name in t.keys() {
@@ -1292,6 +1400,56 @@ fn unknown(key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The per-rider voice choices (spec §7.1.7 Q9) survive a save and a
+    /// load, are no unknown keys, and broken entries do no harm.
+    #[test]
+    fn voice_riders_round_trip() {
+        use ocw_voice::riders::RiderPref;
+        let mut s = Settings::default();
+        assert!(s.voice_riders().is_empty());
+        let bea = RiderPref {
+            volume_pct: 150,
+            ..RiderPref::new("Bea Climber")
+        };
+        let ada = RiderPref {
+            blocked: true,
+            ..RiderPref::new("Ada Rider")
+        };
+        s.set_voice_rider("name:ride.example.org/Bea Climber", &bea);
+        s.set_voice_rider("acct:acc-1", &ada);
+        let text = s.to_toml();
+        let (back, warnings) = Settings::parse(&text).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let prefs = back.voice_riders();
+        assert_eq!(prefs.len(), 2);
+        assert_eq!(prefs["name:ride.example.org/Bea Climber"], bea);
+        assert_eq!(prefs["acct:acc-1"], ada);
+        // Back to the defaults: forgotten, the section gone with the last.
+        let mut back = back;
+        back.set_voice_rider("acct:acc-1", &RiderPref::new("Ada Rider"));
+        back.set_voice_rider(
+            "name:ride.example.org/Bea Climber",
+            &RiderPref::new("Bea Climber"),
+        );
+        assert!(back.voice_riders().is_empty());
+        assert!(!back.to_toml().contains("voice_riders"));
+        // Broken entries are skipped, volumes held in range.
+        let (s, w) = Settings::parse("voice_riders = 3\n[voice]\nvolume = 80\n").unwrap();
+        assert!(s.voice_riders().is_empty());
+        assert!(w.is_empty(), "{w:?}");
+        let (s, _) = Settings::parse(
+            "[voice_riders]\nx = 1\n[voice_riders.\"name:local/Cleo\"]\nvolume = 999\n",
+        )
+        .unwrap();
+        let p = s.voice_riders();
+        assert_eq!(p.len(), 1);
+        assert_eq!(p["name:local/Cleo"].volume_pct, 200);
+        // A section that was not a table is replaced on the next change.
+        let (mut s, _) = Settings::parse("voice_riders = 3\n").unwrap();
+        s.set_voice_rider("acct:z", &ada);
+        assert_eq!(s.voice_riders().len(), 1);
+    }
 
     /// Host a ride opens the router's ports by default (spec §7.1.7 Q4);
     /// the browser cannot host, so it has no such setting.

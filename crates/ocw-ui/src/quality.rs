@@ -68,6 +68,10 @@ impl Plugin for QualityPlugin {
             // The settings' start commands run only for values that are not
             // the default: `auto` is resolved here.
             .add_systems(PostStartup, apply_setting_at_start);
+        // The render distance (10G) goes with the preset in both apps.
+        if !app.is_plugin_added::<crate::view_distance::ViewDistancePlugin>() {
+            app.add_plugins(crate::view_distance::ViewDistancePlugin);
+        }
     }
 }
 
@@ -92,7 +96,9 @@ pub fn set_quality(world: &mut World, setting: QualitySetting) {
         level,
         reason,
     });
-    let preset = QualityPreset::of(level);
+    // With the render distance that runs (spec §14 Phase 10, 10G; at the
+    // preset's own distance its numbers unchanged).
+    let preset = crate::view_distance::adjusted(world, QualityPreset::of(level));
     if world.get_resource::<RenderQuality>().map(|q| q.0) != Some(preset) {
         world.insert_resource(RenderQuality(preset));
     }

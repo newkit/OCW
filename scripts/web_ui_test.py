@@ -619,6 +619,35 @@ class UiTest:
         self.check("calendar: Page Up back", (m.get("calendar") or {}).get("title") == title,
                    m.get("calendar"))
         self.shot("calendar")
+        # Select (user feedback 2026-11-17, v4.45): ↓ past the last week
+        # to the row under the grid, from there over the Season button up
+        # to Select; Enter sets the selected day and goes back to World →
+        # Time, which shows that day.
+        for _ in range(7):
+            if self.menu().get("focused", 0) >= 42:
+                break
+            self.key("ArrowDown")
+        label = lambda m: (m.get("items") or [""] * 99)[m.get("focused", 0)]
+        if not label(self.menu()).startswith("Select"):
+            self.key("ArrowDown")
+            for _ in range(7):
+                if label(self.menu()) == "Season":
+                    break
+                self.key("ArrowRight")
+            self.key("ArrowUp")
+        m = self.menu()
+        sel = label(m)
+        self.check("calendar: the Select button with the selected day",
+                   sel.startswith("Select ") and str(m.get("status", "")).startswith(sel[7:]),
+                   (sel, m.get("status")))
+        self.shot("calendar-select")
+        self.key("Enter")
+        day = sel[len("Select "):]
+        m = self.wait_menu(lambda m: m.get("title") == "Time machine"
+                           and any(day in it for it in m.get("items", [])))
+        self.check("calendar: Select sets the selected day and goes back to World → Time",
+                   m.get("title") == "Time machine" and any(day in it for it in m.get("items", [])),
+                   (day, m.get("title"), m.get("items")))
         self.close_menu()
 
         # The HUD: storm with wind, damage on and some damage.

@@ -306,4 +306,77 @@ mod tests {
             }
         }
     }
+
+    /// The status sign's X sits over the new mouth (2026-11-17): the
+    /// centre of `wear/mark-mouth-cross` (in the head's frame) is level
+    /// with the lips and in front of them, and the X is wider than they
+    /// are.
+    #[test]
+    fn the_mouth_sign_sits_over_the_lips() {
+        let rider = shipped::rider_model();
+        let head = rider.node(pose::nodes::HEAD).unwrap();
+        let lips_model = rider::skull_centre() + glam::Vec3::from(rider::face::MOUTH);
+        let lips = rider.world(head).inverse().transform_point3(lips_model);
+        let x = shipped::model("wear/mark-mouth-cross");
+        let pts: Vec<glam::Vec3> = (0..x.nodes.len())
+            .flat_map(|i| {
+                let w = x.world(i);
+                x.nodes[i]
+                    .primitives
+                    .iter()
+                    .flat_map(move |p| {
+                        p.positions
+                            .iter()
+                            .map(move |v| w.transform_point3(glam::Vec3::from(*v)))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let min = pts.iter().copied().reduce(glam::Vec3::min).unwrap();
+        let max = pts.iter().copied().reduce(glam::Vec3::max).unwrap();
+        let centre = (min + max) / 2.0;
+        assert!((centre.x - lips.x).abs() < 3e-3, "{centre} vs {lips}");
+        assert!((centre.y - lips.y).abs() < 5e-3, "{centre} vs {lips}");
+        assert!(max.z < lips.z, "in front of the lips: {max} vs {lips}");
+        let r = rider::face::MOUTH_RADII;
+        assert!(max.x - min.x > 2.0 * r[0], "the X covers the lips' width");
+    }
+
+    /// Every body (spec §14 Phase 4, 4N: each of the seven shapes on each
+    /// base body A / B / C, at every age) loads from the exported rider
+    /// files: the nodes its look shows are in the near and the far file,
+    /// the girth is finite and only widens torso and limbs.
+    #[test]
+    fn every_body_loads_from_the_exported_files() {
+        use ocw_core::{Age, BaseBody, BodyShape, Character};
+        let near = shipped::rider_model();
+        let far = shipped::rider_low_model();
+        assert!(RiderRig::from_model(near).is_ok());
+        for base in BaseBody::ALL {
+            for shape in BodyShape::ALL {
+                for age in Age::ALL {
+                    let c = Character {
+                        base,
+                        shape,
+                        age,
+                        hair: (shape.index() * 3 + age as usize) as u8 % 21,
+                        beard: (age as u8) % 8,
+                        moustache: (shape.index() as u8) % 6,
+                        ..Character::default()
+                    };
+                    for n in rider::visible(&c, &[]) {
+                        assert!(near.node(n).is_some(), "{n} for {c:?}");
+                        assert!(far.node(n).is_some(), "{n} (far) for {c:?}");
+                    }
+                    for i in 0..near.nodes.len() {
+                        let (s, t) = rider::girth_transform(near, i, &c);
+                        assert!(s.is_finite() && t.is_finite() && s.y == 1.0);
+                        assert!((0.6..1.6).contains(&s.x) && (0.6..1.6).contains(&s.z));
+                    }
+                    let head = near.node(pose::nodes::HEAD).unwrap();
+                    assert_eq!(rider::girth(near, head, &c), glam::Vec3::ONE);
+                }
+            }
+        }
+    }
 }

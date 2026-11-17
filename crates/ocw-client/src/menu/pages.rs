@@ -31,6 +31,22 @@ pub enum Page {
     Workshop,
     /// A rider's bike and look (index into the profiles; Workshop → Bike).
     Bike(usize),
+    /// Workshop → Character (spec §14 Phase 4, 4N N10; rows from
+    /// `menu::character`, for the active rider): its categories.
+    Character,
+    /// … the body: base body, shape (any; weight and height propose one,
+    /// *Match my weight*).
+    CharacterBody,
+    /// … face and age: the appearance age, skin, *Grey hair with age* (off),
+    /// glasses.
+    CharacterFace,
+    /// … hair: style and colour.
+    CharacterHair,
+    /// … facial hair: moustache, beard, their colour.
+    CharacterFacialHair,
+    /// One attribute's choices as tiles (4N *Visual editor*): a grid, the
+    /// focused tile shown on the rider at once, Confirm applies it.
+    CharacterPick(super::character::Attr),
     /// World (top level, spec §3.2.1): change world, about this world,
     /// routes, time, weather (rows from `ride::world`, like the World
     /// pages below).
@@ -77,8 +93,15 @@ pub enum Page {
     Voice,
     /// Voice → Devices and options.
     VoiceDevices,
-    /// Voice → Participants: mute single riders.
+    /// Voice → Participants: the riders in the voice room, each opens its
+    /// page; the blocked riders at the end.
     VoiceParticipants,
+    /// One participant (index into the voice room's list, spec §7.1.7
+    /// Q9): Mute for me, the rider's volume, Block.
+    VoiceRider(usize),
+    /// Participants → Blocked riders: every rider blocked, here or not;
+    /// Confirm unblocks.
+    VoiceBlocked,
     /// Audio → Voice: the voice volume and the echo test (spec §7 *Echo
     /// bot*; rows from `voice::page`, the Audio page is full).
     AudioVoice,
@@ -100,6 +123,9 @@ pub enum Page {
     /// Display → Graphics (spec §14 Phase 10 B7): the quality preset, the
     /// sky, fullscreen (the Display page is full).
     Graphics,
+    /// Graphics → Render distance (spec §14 Phase 10, 10G; rows from
+    /// `view_distance::rows`): the slider, the dynamic mode, the target.
+    ViewDistance,
     /// Navi → Riders in this ride (spec §14 Phase 13E, 12F; rows from
     /// `rider_list`): who rides, where, who flies, who is hurt.
     RiderList,
@@ -192,6 +218,12 @@ impl Page {
             Self::Rider(_) => "Rider",
             Self::Workshop => "Workshop",
             Self::Bike(_) => "Bike",
+            Self::Character => "Character",
+            Self::CharacterBody => "Character: body",
+            Self::CharacterFace => "Character: face and age",
+            Self::CharacterHair => "Character: hair",
+            Self::CharacterFacialHair => "Character: facial hair",
+            Self::CharacterPick(a) => a.title(),
             Self::WorldHome => "World",
             Self::Worlds => "Change world",
             Self::World(_) => "World",
@@ -213,6 +245,8 @@ impl Page {
             Self::Voice => "Voice",
             Self::VoiceDevices => "Voice devices",
             Self::VoiceParticipants => "Voice participants",
+            Self::VoiceRider(_) => "Voice: rider",
+            Self::VoiceBlocked => "Blocked riders",
             Self::AudioVoice => "Audio: voice",
             Self::TimeMachine => "Time machine",
             Self::Calendar(_) => "Calendar",
@@ -220,6 +254,7 @@ impl Page {
             Self::Season => "Season",
             Self::RidingAids => "Riding aids",
             Self::Graphics => "Graphics",
+            Self::ViewDistance => "Render distance",
             Self::RiderList => "Riders in this ride",
             Self::Account => "Account",
             Self::UnicornControls => "Touch and unicorn mode",
@@ -302,6 +337,8 @@ impl Page {
             Self::WeatherPresets => Some(super::weather::GRID_COLUMNS),
             // The month grid moves by its own rules (`calendar::navigate`).
             Self::Calendar(_) => Some(super::calendar::COLUMNS),
+            // The character editor's tiles (spec §14 Phase 4, 4N).
+            Self::CharacterPick(_) => Some(super::character::TILE_COLUMNS),
             _ => None,
         }
     }
@@ -335,7 +372,12 @@ impl Page {
     pub fn is_voice_page(self) -> bool {
         matches!(
             self,
-            Self::Voice | Self::VoiceDevices | Self::VoiceParticipants | Self::AudioVoice
+            Self::Voice
+                | Self::VoiceDevices
+                | Self::VoiceParticipants
+                | Self::VoiceRider(_)
+                | Self::VoiceBlocked
+                | Self::AudioVoice
         )
     }
 
@@ -343,15 +385,22 @@ impl Page {
     pub fn parent(self) -> Option<Self> {
         match self {
             Self::Rider(_) => Some(Self::Riders),
-            Self::Bike(_) => Some(Self::Workshop),
+            Self::Bike(_) | Self::Character => Some(Self::Workshop),
+            Self::CharacterBody
+            | Self::CharacterFace
+            | Self::CharacterHair
+            | Self::CharacterFacialHair => Some(Self::Character),
+            Self::CharacterPick(a) => Some(a.page()),
             Self::World(_) => Some(Self::Worlds),
             Self::WorldRoutes(i) | Self::WorldParts(i) => Some(Self::World(i)),
             Self::WorldSource(_) => Some(Self::WorldSources),
             Self::VoiceDevices | Self::VoiceParticipants => Some(Self::Voice),
+            Self::VoiceRider(_) | Self::VoiceBlocked => Some(Self::VoiceParticipants),
             Self::AudioVoice => Some(Self::Audio),
             Self::RidingAids | Self::UnicornControls | Self::Bindings => Some(Self::Controls),
             Self::BindGroup(_) | Self::BindReset => Some(Self::Bindings),
             Self::Graphics | Self::Accessibility => Some(Self::Display),
+            Self::ViewDistance => Some(Self::Graphics),
             Self::TrustedKey(_) => Some(Self::TrustedKeys),
             Self::Devices => Some(Self::Trainer),
             Self::Device(_) => Some(Self::Devices),
@@ -374,7 +423,21 @@ impl Page {
                 "Bike type and setup choose the physics profile (differences capped); colours are only for the looks. From the next start.",
             ],
             Self::Riders => &["Rider profiles: weight, height, FTP. Choose one in the Workshop."],
+            Self::Character => &[
+                "Who you are on the road: free, for everyone, and never physics (the weight stays the profile's).",
+            ],
+            Self::CharacterBody => {
+                &["Any shape; Match my weight picks the one your weight and height suggest."]
+            }
             Self::Rider(_) => &["Changes apply from the next start (Restart)."],
+            Self::CharacterFace => &["Age shows on face, body, skin and hair."],
+            Self::CharacterHair => &[
+                "Every style fits under every helmet. Any colour: character --hair-colour #RRGGBB.",
+            ],
+            Self::CharacterFacialHair => {
+                &["The colour follows your hair (greying too) or is its own."]
+            }
+            Self::CharacterPick(_) => &["Focus shows it on the rider; Confirm keeps it."],
             Self::Trainer => &["Devices, SIM difficulty and the virtual trainer."],
             Self::Strava => &[
                 "Uploads saved rides to Strava when an account is linked (API credentials: see README); the sync state is in Navi -> Rides.",
@@ -421,9 +484,13 @@ impl Page {
             Self::VoiceDevices => &[
                 "Microphone and speaker for voice chat; a missing device falls back to the default.",
             ],
-            Self::VoiceParticipants => {
-                &["Riders in the voice room. Confirm mutes or unmutes one for you."]
-            }
+            Self::VoiceParticipants => &[
+                "Riders in the voice room: Confirm opens one (mute for you, volume, block). Blocked riders at the end.",
+            ],
+            Self::VoiceRider(_) => &[
+                "Mute: for this ride. Volume and Block are remembered. Blocked: neither of you hears the other; they are not told.",
+            ],
+            Self::VoiceBlocked => &["Riders you blocked, here or not. Confirm unblocks one."],
             Self::AudioVoice => &[
                 "Voice volume (Enter plays a test sound). Echo test: an Echo rider on the road plays your microphone back to you, delayed, when you ride near it.",
             ],
@@ -437,6 +504,9 @@ impl Page {
             }
             Self::Season => &[
                 "Each season's day at your place and altitude: the date jumps there and the time of day stays, so sun and landscape always match.",
+            ],
+            Self::ViewDistance => &[
+                "How far the world is drawn. Adjusted: shorter below the target, longer with room, up to the slider (Confirm: the preset's).",
             ],
             Self::Graphics => &[
                 "Quality: Low and Medium draw fewer shadows, trees and houses for weaker GPUs, WebGL 2 and phones; auto chooses by GPU and device.",
@@ -1239,6 +1309,12 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         ],
         Page::Graphics => vec![
             setting_row(settings, "display.quality", "Quality"),
+            // Spec §14 Phase 10, 10G: its own page (four rows).
+            open_row(
+                "Render distance",
+                Some(crate::view_distance::summary(settings)),
+                Page::ViewDistance,
+            ),
             setting_row(settings, "display.sky", "Sky"),
             setting_row(settings, "display.fps", "FPS counter"),
             setting_row(settings, "display.fullscreen", "Fullscreen (next start)"),
@@ -1250,6 +1326,11 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             // The ride photographer (spec §2.11): photos of the ride.
             setting_row(settings, "photographer.enabled", "Ride photographer"),
         ],
+        // The app's shared UI fills in the preset and what runs now
+        // (`ocw_ui::view_distance`).
+        Page::ViewDistance => {
+            crate::view_distance::rows(settings, &crate::view_distance::ViewInfo::default())
+        }
         Page::Riders => {
             let mut out: Vec<Row> = riders
                 .riders
@@ -1277,12 +1358,23 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             let (hmin, hmax) = crate::riders::HEIGHT_RANGE_CM;
             let (fmin, fmax) = crate::riders::FTP_RANGE_W;
             vec![
+                // The name (spec §14 Phase 4, 4N N1): typed with
+                // `riders.edit NAME --rename NEW`; Confirm rolls the dice
+                // for a made-up one. A name from before the 4N rules is
+                // marked: servers show such a rider as "Rider NNNN".
                 Row {
                     label: "Name".into(),
-                    value: Some(n.clone()),
+                    value: Some(if ocw_core::name::check(n).is_ok() {
+                        n.clone()
+                    } else {
+                        format!("{n} (rename before a shared ride)")
+                    }),
                     left: None,
                     right: None,
-                    confirm: None,
+                    confirm: Some(Activate::Command(edit(
+                        n,
+                        &format!("--rename \"{}\"", riders.dice_name(i)),
+                    ))),
                 },
                 number_row(
                     "Weight",
@@ -1331,7 +1423,12 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         | Page::GpxImport
         | Page::Workouts => Vec::new(),
         // From the voice state (`voice::page::rows`).
-        Page::Voice | Page::VoiceDevices | Page::VoiceParticipants | Page::AudioVoice => Vec::new(),
+        Page::Voice
+        | Page::VoiceDevices
+        | Page::VoiceParticipants
+        | Page::VoiceRider(_)
+        | Page::VoiceBlocked
+        | Page::AudioVoice => Vec::new(),
         // From the world clock (`timemachine::rows`).
         Page::TimeMachine | Page::Calendar(_) | Page::CalendarDates(_) | Page::Season => Vec::new(),
         // From the session weather (`weather::rows`).
@@ -1382,6 +1479,15 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
                     .filter(|_| !riders.riders.is_empty())
                     .map(|i| Activate::Open(Page::Bike(i))),
             });
+            // The character of the rider who rides next (spec §14 Phase 4,
+            // 4N N10): body, face and age, hair, facial hair.
+            out.push(Row {
+                label: "Character".into(),
+                value: Some(active.character().summary()),
+                left: None,
+                right: None,
+                confirm: Some(Activate::Open(Page::Character)),
+            });
             out.push(Row {
                 label: "Edit riders".into(),
                 value: None,
@@ -1391,6 +1497,12 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             });
             out
         }
+        Page::Character
+        | Page::CharacterBody
+        | Page::CharacterFace
+        | Page::CharacterHair
+        | Page::CharacterFacialHair
+        | Page::CharacterPick(_) => super::character::rows(page, &riders.active()),
     }
 }
 
@@ -1488,7 +1600,7 @@ mod tests {
         let s = Settings::default();
         let r = riders();
         let w = rows(Page::Workshop, &s, &r);
-        assert_eq!(w.len(), 4);
+        assert_eq!(w.len(), 5);
         assert_eq!(w[0].value.as_deref(), Some("78 kg, FTP 250 W - riding"));
         assert_eq!(w[1].value.as_deref(), Some("61.5 kg"));
         assert_eq!(w[1].confirm, cmd("riders.select \"Anna\""));
@@ -1499,13 +1611,25 @@ mod tests {
             Some("Road - standard, frame #1E1E22, jersey #FF1472")
         );
         assert_eq!(w[2].confirm, Some(Activate::Open(Page::Bike(0))));
-        assert_eq!(w[3].confirm, Some(Activate::Open(Page::Riders)));
+        // The character (spec §14 Phase 4, 4N N10).
+        assert_eq!(w[3].label, "Character");
+        assert_eq!(w[3].confirm, Some(Activate::Open(Page::Character)));
+        assert!(w[3].value.as_deref().unwrap().contains("body a, normal"));
+        assert_eq!(w[4].confirm, Some(Activate::Open(Page::Riders)));
         // Without profiles: the default rider, and the way to the editor.
         let w = rows(Page::Workshop, &s, &Riders::default());
         assert_eq!(w[0].value.as_deref(), Some("75 kg - riding (default)"));
         assert_eq!(w[0].confirm, None);
         assert_eq!(w[1].confirm, None, "no profile to give a bike");
-        assert_eq!(w[2].confirm, Some(Activate::Open(Page::Riders)));
+        assert_eq!(w[2].confirm, Some(Activate::Open(Page::Character)));
+        assert_eq!(w[3].confirm, Some(Activate::Open(Page::Riders)));
+        // The character's pages come from `menu::character`, for the
+        // active rider; they go back to the Workshop.
+        for p in super::super::character::PAGES {
+            assert!(!rows(p, &s, &r).is_empty(), "{p:?}");
+            assert_eq!(p.parent(), Some(Page::Character));
+        }
+        assert_eq!(Page::Character.parent(), Some(Page::Workshop));
     }
 
     #[test]
@@ -1514,7 +1638,8 @@ mod tests {
         let r = riders();
         let list = rows(Page::Riders, &s, &r);
         assert_eq!(list[1].confirm, Some(Activate::Open(Page::Rider(1))));
-        assert_eq!(list.last().unwrap().confirm, cmd("riders.add \"Rider\""));
+        let add = format!("riders.add \"{}\"", r.new_name());
+        assert_eq!(list.last().unwrap().confirm, cmd(&add));
         let alex = rows(Page::Rider(0), &s, &r);
         let weight = row(&alex, "Weight");
         assert_eq!(weight.value.as_deref(), Some("78 kg"));

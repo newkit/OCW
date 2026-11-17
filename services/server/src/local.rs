@@ -56,6 +56,9 @@ pub fn local_config(bots: u32, start_m: f64) -> ServerConfig {
         // rides as they are; a token in the hello is ignored.
         auth: None,
         auth_required: false,
+        // The photographer's gap is the client's to keep here (dev
+        // commands: no gap on the server).
+        photo_gap_s: None,
     }
 }
 
@@ -146,7 +149,10 @@ impl LocalServer {
                             Err(TryRecvError::Disconnected) => break 'run,
                         }
                     }
-                    for msg in server.tick() {
+                    // One connection: its directed messages are its own.
+                    let out = server.tick();
+                    let directed = server.take_directed().into_iter().map(|(_, m)| m);
+                    for msg in out.into_iter().chain(directed) {
                         if server_tx.send(msg).is_err() {
                             break 'run;
                         }
@@ -230,9 +236,11 @@ impl LocalServer {
                     net.pump(&mut server);
                     let out = server.tick();
                     net.broadcast(&server, &out);
-                    // The host's own connection gets the same broadcast.
+                    // The host's own connection gets the same broadcast,
+                    // and the messages for it alone (spec §7.1.7 Q9).
+                    let mine = net.send_directed(server.take_directed(), Some(conn));
                     if server.connections().any(|c| c == conn) {
-                        for msg in out {
+                        for msg in out.into_iter().chain(mine) {
                             if server_tx.send(msg).is_err() {
                                 break 'run;
                             }
@@ -306,6 +314,9 @@ impl SteppedServer {
     pub fn tick(&mut self) {
         let messages = self.server.tick();
         self.outbox.extend(messages);
+        // One connection: the messages for it alone are its own.
+        self.outbox
+            .extend(self.server.take_directed().into_iter().map(|(_, m)| m));
     }
 
     /// Takes all messages sent to the client since the last call.

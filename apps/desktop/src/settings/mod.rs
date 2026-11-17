@@ -358,7 +358,9 @@ fn register_commands(app: &mut App) {
                 ..Rider::default()
             };
             let mut p = world.resource_mut::<RiderProfiles>();
-            p.riders.add(rider.clone())?;
+            p.riders.add(rider)?;
+            // The name as stored (normalized, spec §14 Phase 4, 4N N1).
+            let rider = p.riders.riders.last().cloned().expect("just added");
             let bike = bike_edit(m, RiderEdit::default());
             let rider = if bike == RiderEdit::default() {
                 rider
@@ -417,6 +419,17 @@ fn register_commands(app: &mut App) {
                 ..RiderEdit::default()
             };
             let edit = bike_edit(m, edit);
+            // The name is frozen while the rider is an entrant of a
+            // running event; otherwise a new name applies from the next
+            // ride (spec §14 Phase 4, 4N Q15).
+            if edit.name.is_some() {
+                let riding = &world.resource::<RiderProfiles>().riding.name;
+                let in_event = riding.eq_ignore_ascii_case(&name)
+                    && world
+                        .get_resource::<crate::connection::ClientState>()
+                        .is_some_and(|c| c.0.in_running_event());
+                ocw_core::name::rename_allowed(false, in_event)?;
+            }
             let bike_changed = edit.bike.is_some()
                 || edit.frame.is_some()
                 || edit.jersey.is_some()
@@ -781,6 +794,7 @@ mod tests {
             pages::Page::Bike(0),
             pages::Page::RidingAids,
             pages::Page::Graphics,
+            pages::Page::ViewDistance,
             pages::Page::EventRules,
         ]) {
             let rows = {
@@ -799,7 +813,12 @@ mod tests {
             }
         }
         let elsewhere = ["devices.", "strava.", "hud", "god.", "photographer"];
-        for line in lines {
+        // The name's dice renames the rider (spec §14 Phase 4, 4N N1): run
+        // last, the other lines name the rider.
+        let (renames, lines): (Vec<String>, Vec<String>) =
+            lines.into_iter().partition(|l| l.contains("--rename"));
+        assert!(!renames.is_empty(), "the Name row rolls the dice");
+        for line in lines.into_iter().chain(renames) {
             // God mode's settings apply through its own plugin (`god.invert`).
             if elsewhere.iter().any(|p| line.starts_with(p))
                 || line.contains("riders.remove")

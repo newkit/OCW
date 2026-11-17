@@ -9,7 +9,7 @@
 //   ocwVoice.available()   "" or why voice cannot work on this page
 //   ocwVoice.command(json) {"op": "connect" | "disconnect" | "mic_muted" |
 //                          "speaker_muted" | "input" | "output" |
-//                          "subscribe" | "place" | "echo", ...}
+//                          "subscribe" | "place" | "echo" | "subscribers", ...}
 //   ocwVoice.poll()        the events since the last call (a JSON array)
 //   ocwVoice.devices()     {"inputs": [labels], "outputs": [labels]}
 //   ocwVoice.levels()      {"input": rms, "echo": rms}
@@ -33,6 +33,9 @@
     want: new Map(), place: new Map(), tracks: new Map(), elements: new Map(),
     inputs: [], outputs: [], ids: { input: new Map(), output: new Map() },
     echoParams: null, echo: null, echoStarting: null, micMeter: null,
+    // Who may subscribe to the own microphone (null: everybody; spec
+    // §7.1.7 Q9, a voice block): LiveKit's track subscription permissions.
+    subscribers: null,
     ctx: null,
   };
 
@@ -183,6 +186,7 @@
       return;
     }
     if (gen !== st.gen || st.room !== room) { room.disconnect(); return; }
+    if (st.subscribers !== null) applySubscribers(room);
     push({ type: "connected", room: room.name });
     for (const p of room.remoteParticipants.values()) joined(p);
     // The microphone, published at once (always on, like a call) and
@@ -195,6 +199,20 @@
     }
     if (st.output) setOutput(st.output);
     if (st.echoParams) applyEcho();
+  }
+
+  // The allow list of the own microphone, enforced by the voice server.
+  function applySubscribers(room) {
+    room = room || st.room;
+    if (!room || !room.localParticipant.setTrackSubscriptionPermissions) return;
+    const allowed = st.subscribers;
+    try {
+      room.localParticipant.setTrackSubscriptionPermissions(
+        allowed === null,
+        allowed === null ? [] : allowed.map((id) => ({ participantIdentity: id, allowAll: true })));
+    } catch (e) {
+      push({ type: "device_error", error: "subscription permissions: " + msg(e) });
+    }
   }
 
   async function disconnect() {
@@ -327,6 +345,10 @@
         st.place.set(c.identity, { gain: c.gain, pan: c.pan });
         applyPlacement(c.identity);
         break;
+      case "subscribers":
+        st.subscribers = Array.isArray(c.allowed) ? c.allowed.map(String) : null;
+        applySubscribers();
+        break;
       case "echo":
         st.echoParams = { active: !!c.active, delay_ms: c.delay_ms, record_gain: c.record_gain };
         applyEcho();
@@ -347,6 +369,7 @@
       subscribed: [...st.want].filter(([, on]) => on).map(([id]) => id),
       placed: Object.fromEntries(st.place),
       tracks: [...st.tracks.keys()],
+      subscribers: st.subscribers,
       echo: st.echoParams, echo_running: !!st.echo,
       context: st.ctx ? st.ctx.state : null,
     }),

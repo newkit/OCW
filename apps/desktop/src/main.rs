@@ -495,6 +495,11 @@ fn main() -> AppExit {
         .insert_resource(ocw_render::frame_rate::LogRenderRate(
             args.log_fps.filter(|s| *s > 0.0),
         ))
+        // The render distance's dynamic mode holds still in screenshot and
+        // capture runs: reproducible pictures (spec §14 Phase 10, 10G).
+        .insert_resource(ocw_ui::view_distance::ViewDistanceContext {
+            frozen: args.screenshot.is_some() || args.capture.is_some(),
+        })
         .add_systems(Startup, || info!("Open Cycling World {}", build_id()))
         .add_plugins(OcwRenderPlugins)
         .add_plugins(settings::SettingsPlugin)

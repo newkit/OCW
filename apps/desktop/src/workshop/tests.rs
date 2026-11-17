@@ -178,7 +178,9 @@ fn the_stand_hotspots_and_the_picker_with_the_keyboard() {
     tap(&mut app, KeyCode::Enter);
     frames(&mut app, 2);
     let p = view(&app).picker.expect("picker");
-    assert_eq!(p.rows[0].group.as_deref(), Some("Equipped"));
+    // A part slot's picker shows tiles: the fitted part first.
+    assert!(p.tiles.is_some());
+    assert!(p.rows[0].right.contains("equipped"), "{:?}", p.rows[0]);
     assert!(!p.detail.is_empty());
     tap(&mut app, KeyCode::Escape);
     assert!(view(&app).picker.is_none());
@@ -499,11 +501,16 @@ fn the_character_command_and_the_front_view() {
     let mut app = app();
     run(
         &mut app,
-        "character --build strong --skin 9 --hair 4 --hair-colour #B3482A --face 2",
+        "character --shape ample --skin 9 --hair 4 --hair-colour #B3482A --beard full \
+         --body c --age 50s",
     );
     let c = app.world().resource::<RiderProfiles>().riding.character();
-    assert_eq!(c.build, ocw_core::BodyBuild::Strong);
-    assert_eq!((c.skin, c.hair, c.face), (8, 3, 1));
+    assert_eq!(c.shape, ocw_core::BodyShape::Ample);
+    assert_eq!((c.skin, c.hair, c.beard), (8, 3, 4));
+    assert_eq!(
+        (c.base, c.age),
+        (ocw_core::BaseBody::C, ocw_core::Age::Fifties)
+    );
     assert_eq!(c.hair_colour, Rgb(0xB3482A));
     // Outside the workshop it applies at once: the hello's look.
     let look = app.world().resource::<ClientState>().0.view(0.0, 1.0)[0]
@@ -588,4 +595,119 @@ fn kit_colours_go_into_the_garage() {
     let look = crate::settings::local_rider(app.world()).look();
     assert_eq!(look.design.gloves, Some(Rgb(0xE53935)));
     assert_eq!(riding_parts(app.world(), "Rider", ProfileId::Road), before);
+}
+
+/// The stand bike's variants as shown.
+fn stand_variants(app: &App) -> Vec<String> {
+    let v = view(app);
+    let mut m = v.bikes[v.stand].variants.clone();
+    m.sort();
+    m
+}
+
+/// The bike stand's tiles in the app (spec 4B / 4G *Tiles*): the wheels'
+/// tiles with thumbnails (keyed by part and paint), the gain against the
+/// base part on the flat and the climb and the weight, the bike's line
+/// under the title; the keyboard, the gamepad, the mouse and a tap move
+/// the focus and preview on the stand bike at once, a tap opens the
+/// dialog, Esc cancels it and then restores the fitted wheels.
+#[test]
+fn the_bike_stand_tiles_with_every_device() {
+    use bevy::input::gamepad::{Gamepad, GamepadButton};
+    let mut app = app();
+    run(&mut app, "workshop open");
+    tap(&mut app, KeyCode::Enter);
+    frames(&mut app, 40);
+    let wheels = ocw_assets::bikes::HOTSPOT_SLOTS
+        .iter()
+        .position(|s| *s == "wheels")
+        .unwrap();
+    while scene(&app).hotspot != wheels {
+        tap(&mut app, KeyCode::KeyE);
+    }
+    let fitted = stand_variants(&app);
+    tap(&mut app, KeyCode::Enter);
+    frames(&mut app, 2);
+    let p = view(&app).picker.expect("the wheels' picker");
+    let t = p.tiles.expect("tiles");
+    assert_eq!((t.cols, t.first), (3, 0));
+    assert_eq!(t.shown, p.rows.len().min(6));
+    assert!(
+        p.subtitle
+            .as_deref()
+            .is_some_and(|s| s.starts_with("This bike: ±0.0 % flat · ±0.0 % climb vs stock")),
+        "{:?}",
+        p.subtitle
+    );
+    for r in &p.rows {
+        let k = r.thumb.as_ref().expect("a thumbnail");
+        assert_eq!((k.profile, k.slot.as_str()), (ProfileId::Road, "wheels"));
+        assert!(
+            r.gain.contains(" flat · ") && r.gain.contains(" climb"),
+            "{r:?}"
+        );
+        assert!(
+            r.weight.ends_with(" g") || r.weight == "same weight",
+            "{r:?}"
+        );
+    }
+    // The base wheels: nothing; the carbon wheels: faster on both.
+    assert_eq!(p.rows[0].gain, "±0.0 % flat · ±0.0 % climb");
+    let carbon = p
+        .rows
+        .iter()
+        .find(|r| r.thumb.as_ref().unwrap().model == "wheel-carbon-50")
+        .expect("the top carbon wheels");
+    assert!(
+        carbon.gain.starts_with('+') && carbon.weight == "−650 g",
+        "{carbon:?}"
+    );
+    assert!(
+        p.detail
+            .iter()
+            .any(|l| l.starts_with("Against the base part: "))
+    );
+    // Keyboard: → previews the next tile on the stand bike.
+    tap(&mut app, KeyCode::ArrowRight);
+    assert_eq!(view(&app).picker.unwrap().focus, 1);
+    assert_ne!(stand_variants(&app), fitted, "the preview");
+    // Gamepad: the pad's ↓ one row down.
+    let pad = app.world_mut().spawn(Gamepad::default()).id();
+    app.world_mut()
+        .get_mut::<Gamepad>(pad)
+        .unwrap()
+        .digital_mut()
+        .press(GamepadButton::DPadDown);
+    app.update();
+    {
+        let mut g = app.world_mut().get_mut::<Gamepad>(pad).unwrap();
+        g.digital_mut().release(GamepadButton::DPadDown);
+        g.digital_mut().clear();
+    }
+    app.update();
+    assert_eq!(view(&app).picker.unwrap().focus, 4);
+    // Mouse hover over tile 2, then a tap / click on tile 1: the dialog.
+    app.world_mut()
+        .resource_mut::<WorkshopPointer>()
+        .0
+        .push(WorkshopPointerEvent::Row(2));
+    frames(&mut app, 2);
+    assert_eq!(view(&app).picker.unwrap().focus, 2);
+    app.world_mut()
+        .resource_mut::<WorkshopPointer>()
+        .0
+        .push(WorkshopPointerEvent::RowClick(1));
+    frames(&mut app, 2);
+    let p = view(&app).picker.unwrap();
+    assert_eq!(p.focus, 1);
+    assert!(p.dialog.is_some(), "apply asks first");
+    // Esc: the dialog goes, the preview stays; Esc again restores.
+    tap(&mut app, KeyCode::Escape);
+    let p = view(&app).picker.expect("still the picker");
+    assert!(p.dialog.is_none());
+    assert_ne!(stand_variants(&app), fitted);
+    tap(&mut app, KeyCode::Escape);
+    frames(&mut app, 2);
+    assert!(view(&app).picker.is_none());
+    assert_eq!(stand_variants(&app), fitted, "cancel restores");
 }

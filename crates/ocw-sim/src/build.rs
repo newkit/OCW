@@ -725,6 +725,150 @@ pub fn score(table: &PartTable, profile: ProfileId, id: &str) -> Option<Benefit>
     ))
 }
 
+/// What one part tile of the bike stand shows (spec §14 Phase 4, 4G
+/// *Tiles*): the speed the part gives in its slot **against the slot's
+/// base part**, on this bike as it is (the other parts fitted), within
+/// the caps – what the rider really gets – at the reference ride (250 W,
+/// 75 kg, steady state) on flat asphalt and on the 6 % climb.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct PartGain {
+    /// Speed against the base part, flat and climb (0.008 = 0.8 % faster).
+    pub flat: f64,
+    pub climb: f64,
+    /// The same before the caps (what the part would be worth without
+    /// them).
+    pub uncapped_flat: f64,
+    pub uncapped_climb: f64,
+    /// The part's weight against the slot's base part (grams; negative =
+    /// lighter).
+    pub mass_g: i64,
+    /// The caps cut the part's effect on this bike.
+    pub capped: bool,
+    /// The bike sits on the mass floor with the part (a weight saving
+    /// below it does not count).
+    pub floored: bool,
+}
+
+impl PartGain {
+    /// The gain between the bike with the slot's base part (`without`)
+    /// and with the part (`with`); `mass_g`: the part's weight against
+    /// the base part.
+    pub fn between(without: &Build, with: &Build, mass_g: i64) -> Self {
+        let raw = |b: &Build| {
+            let reference = BuildParams::of(b.profile).rider_profile(b.profile, REFERENCE_RIDER_KG);
+            gains(
+                &reference,
+                &b.raw.rider_profile(b.profile, REFERENCE_RIDER_KG),
+            )
+        };
+        let (wf, wc) = raw(with);
+        let (of, oc) = raw(without);
+        let flat = with.flat_gain - without.flat_gain;
+        let climb = with.climb_gain - without.climb_gain;
+        let (uncapped_flat, uncapped_climb) = (wf - of, wc - oc);
+        Self {
+            flat,
+            climb,
+            uncapped_flat,
+            uncapped_climb,
+            mass_g,
+            capped: (with.capped() || without.capped())
+                && ((uncapped_flat - flat).abs() > 5e-5 || (uncapped_climb - climb).abs() > 5e-5),
+            floored: with.mass_floored,
+        }
+    }
+
+    /// No speed change at all (a base part, a chain of the same weight).
+    pub fn is_none(&self) -> bool {
+        self.flat.abs() < 5e-5 && self.climb.abs() < 5e-5
+    }
+
+    /// The tile's line: "+0.8 % flat · −0.2 % climb" (a tenth of a
+    /// percent; "· capped" when the caps cut it).
+    pub fn line(&self) -> String {
+        let mut s = gain_pair(self.flat, self.climb);
+        if self.capped {
+            s.push_str(" · capped");
+        }
+        s
+    }
+
+    /// The weight line: "−240 g", "+150 g", "same weight".
+    pub fn grams(&self) -> String {
+        match self.mass_g.cmp(&0) {
+            std::cmp::Ordering::Less => format!("−{} g", -self.mass_g),
+            std::cmp::Ordering::Equal => "same weight".into(),
+            std::cmp::Ordering::Greater => format!("+{} g", self.mass_g),
+        }
+    }
+}
+
+/// "+0.8 % flat · −0.2 % climb": a speed pair at the reference ride.
+pub fn gain_pair(flat: f64, climb: f64) -> String {
+    format!("{} flat · {} climb", pct(flat), pct(climb))
+}
+
+/// `others` with `slot` taken by `part` (`None`: left to the slot's base
+/// part); unknown ids are kept.
+fn with_in_slot(
+    table: &PartTable,
+    others: &[String],
+    slot: &str,
+    part: Option<&str>,
+) -> Vec<String> {
+    let mut ids: Vec<String> = others
+        .iter()
+        .filter(|id| table.get(id).is_none_or(|p| p.slot != slot))
+        .cloned()
+        .collect();
+    if let Some(id) = part {
+        ids.push(id.to_string());
+    }
+    ids
+}
+
+/// The ids of the two builds of a tile: (the slot's base part, `part`) in
+/// `part`'s slot, the other slots from `others`; `None` for an unknown
+/// part.
+pub fn tile_ids(
+    table: &PartTable,
+    others: &[String],
+    part: &str,
+) -> Option<(Vec<String>, Vec<String>)> {
+    let p = table.get(part)?;
+    Some((
+        with_in_slot(table, others, &p.slot, None),
+        with_in_slot(table, others, &p.slot, (!p.base).then_some(part)),
+    ))
+}
+
+/// The weight of `part` against its slot's base part on `profile` (g).
+pub fn grams_over_base(table: &PartTable, profile: ProfileId, part: &str) -> Option<i64> {
+    let p = table.get(part)?;
+    let base = table.base(&p.slot, profile).map_or(0, |b| b.weight_g);
+    Some(i64::from(p.weight_g) - i64::from(base))
+}
+
+/// The tile gain of catalogue part `part` on a bike of `profile` whose
+/// other parts are `others` ([`PartGain`]); `None` for unknown parts and
+/// parts that do not fit the bike.
+pub fn part_gain(
+    table: &PartTable,
+    profile: ProfileId,
+    others: &[String],
+    part: &str,
+) -> Option<PartGain> {
+    if !table.get(part)?.fits(profile) {
+        return None;
+    }
+    let (without, with) = tile_ids(table, others, part)?;
+    Some(PartGain::between(
+        &build(table, profile, &without),
+        &build(table, profile, &with),
+        grams_over_base(table, profile, part)?,
+    ))
+}
+
 /// The best kit item of every kit slot for `profile` (by its own score,
 /// flat and climb together; a skinsuit's covered slots are left out):
 /// the "best kit" of the calibration (spec 4C) and the dev tools.
@@ -1410,5 +1554,154 @@ aero = -9
         assert!(!post.aero);
         assert!(post.line().contains(" at 6 %, "), "{}", post.line());
         assert_eq!(score(t(), ProfileId::Road, "frame.mtb.upper"), None);
+    }
+}
+
+#[cfg(test)]
+mod tile_tests {
+    //! The bike stand's tile gains (spec §14 Phase 4, 4G *Tiles*).
+    use super::*;
+
+    fn t() -> &'static PartTable {
+        PartTable::shipped()
+    }
+
+    fn gain(profile: ProfileId, others: &[String], id: &str) -> PartGain {
+        part_gain(t(), profile, others, id).unwrap_or_else(|| panic!("{id}"))
+    }
+
+    /// The two reference cases (250 W, 75 kg, steady state): on a stock
+    /// bike the tile equals the part's own score against the base part.
+    #[test]
+    fn a_tile_on_a_stock_bike_is_the_score_on_the_flat_and_the_climb() {
+        for id in [
+            "tyres.road.race",
+            "wheels.road-carbon.top",
+            "seatpost.carbon",
+            "groupset.road-electronic.top",
+            "bag.top_tube",
+        ] {
+            let g = gain(ProfileId::Road, &[], id);
+            let s = score(t(), ProfileId::Road, id).unwrap();
+            assert!((g.flat - s.flat).abs() < 1e-12, "{id}");
+            assert!((g.climb - s.climb).abs() < 1e-12, "{id}");
+            assert!(!g.capped, "{id}");
+            // The flat at 0 %, the climb at 6 %: two different numbers.
+            assert!((g.flat - g.climb).abs() > 1e-5, "{id}: {g:?}");
+        }
+    }
+
+    /// Signs per part class: aero parts gain most on the flat, light
+    /// parts on the climb, a drag-adding bag loses on both, base parts are
+    /// zero.
+    #[test]
+    fn signs_per_part_class() {
+        let road = ProfileId::Road;
+        // Aero wheels (aero +1 and 650 g lighter): faster on both.
+        let w = gain(road, &[], "wheels.road-carbon.top");
+        assert!(w.flat > 0.0 && w.climb > 0.0, "{w:?}");
+        assert_eq!(w.mass_g, 1350 - 2000);
+        // The integrated cockpit (aero +1, 170 g lighter): mostly flat.
+        let c = gain(road, &[], "cockpit.road.integrated");
+        assert!(c.flat > c.climb && c.climb > 0.0, "{c:?}");
+        // A light seat post (60 g, no aero): mostly the climb.
+        let p = gain(road, &[], "seatpost.carbon");
+        assert!(p.climb > p.flat && p.flat >= 0.0, "{p:?}");
+        assert_eq!(p.mass_g, -60);
+        // Race tyres: rolling −2 and lighter – faster on both.
+        let ty = gain(road, &[], "tyres.road.race");
+        assert!(ty.flat > 0.0 && ty.climb > 0.0, "{ty:?}");
+        // Training tyres roll worse: slower on the flat.
+        let tr = gain(road, &[], "tyres.road.training");
+        assert!(tr.flat < 0.0, "{tr:?}");
+        // The top-tube bag: drag and weight – slower everywhere.
+        let b = gain(road, &[], "bag.top_tube");
+        assert!(b.flat < 0.0 && b.climb < 0.0, "{b:?}");
+        assert_eq!(b.grams(), "+150 g");
+        // A base part against itself: nothing.
+        let base = gain(road, &[], "wheels.road.base");
+        assert!(base.is_none() && base.mass_g == 0, "{base:?}");
+        assert_eq!(base.line(), "±0.0 % flat · ±0.0 % climb");
+        // A part of another bike type has no tile.
+        assert_eq!(part_gain(t(), road, &[], "tyres.mtb.xc"), None);
+        assert_eq!(part_gain(t(), road, &[], "no.such.part"), None);
+    }
+
+    /// The tile replaces its slot: a part already on the bike is measured
+    /// against the base part, not against itself, and the other parts
+    /// stay.
+    #[test]
+    fn the_tile_replaces_its_slot_and_keeps_the_rest() {
+        let road = ProfileId::Road;
+        let fitted = vec![
+            "wheels.road-carbon.mid".to_string(),
+            "tyres.road.performance".to_string(),
+        ];
+        let (without, with) = tile_ids(t(), &fitted, "wheels.road-carbon.top").unwrap();
+        assert_eq!(without, vec!["tyres.road.performance".to_string()]);
+        assert_eq!(
+            with,
+            vec![
+                "tyres.road.performance".to_string(),
+                "wheels.road-carbon.top".to_string()
+            ]
+        );
+        let on = gain(road, &fitted, "wheels.road-carbon.mid");
+        let alone = gain(road, &[], "wheels.road-carbon.mid");
+        assert!(
+            on.flat > 0.0 && (on.flat - alone.flat).abs() < 0.002,
+            "{on:?}"
+        );
+    }
+
+    /// Within the caps: on a bike that is already at the cap the tile
+    /// shows what the rider really gets – less than the part alone – and
+    /// says so.
+    #[test]
+    fn the_caps_limit_the_tile_and_it_says_so() {
+        let aero = ProfileId::RoadAero;
+        let best = best_parts(t(), aero);
+        assert!(build(t(), aero, &best).capped());
+        let g = gain(aero, &best, "wheels.road-carbon.top");
+        assert!(g.capped, "{g:?}");
+        assert!(g.uncapped_flat > g.flat + 1e-4, "{g:?}");
+        assert!(g.flat >= 0.0);
+        assert!(g.line().ends_with(" · capped"), "{}", g.line());
+        // The whole build never passes the cap whatever the tile.
+        let (_, with) = tile_ids(t(), &best, "wheels.road-carbon.top").unwrap();
+        assert!(build(t(), aero, &with).flat_gain <= FLAT_CAP + 1e-9);
+        // On a stock bike the same wheels are not capped.
+        assert!(!gain(aero, &[], "wheels.road-carbon.top").capped);
+    }
+
+    /// On the mass floor a lighter part's weight does not count.
+    #[test]
+    fn the_mass_floor_is_marked() {
+        let climbing = ProfileId::RoadClimbing;
+        let best = best_parts(t(), climbing);
+        let g = gain(climbing, &best, "saddle.road.top");
+        assert!(g.floored, "{g:?}");
+        assert!(g.mass_g < 0);
+        assert!(g.climb.abs() < 1e-4, "{g:?}");
+        assert!(!gain(ProfileId::Road, &[], "saddle.road.top").floored);
+    }
+
+    #[test]
+    fn the_lines() {
+        assert_eq!(gain_pair(0.0081, -0.0024), "+0.8 % flat · −0.2 % climb");
+        assert_eq!(gain_pair(0.0, 0.0151), "±0.0 % flat · +1.5 % climb");
+        let g = PartGain {
+            mass_g: -240,
+            ..Default::default()
+        };
+        assert_eq!(g.grams(), "−240 g");
+        assert_eq!(
+            PartGain {
+                mass_g: 0,
+                ..Default::default()
+            }
+            .grams(),
+            "same weight"
+        );
     }
 }

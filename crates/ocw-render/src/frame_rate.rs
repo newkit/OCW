@@ -29,10 +29,16 @@ impl Plugin for FrameRatePlugin {
             .init_resource::<ShowFps>()
             .add_systems(First, measure)
             .init_resource::<FrameLimit>()
+            .init_resource::<FpsBadgeNote>()
             .add_systems(Update, update_badge)
             .add_systems(Last, limit_frame_rate);
     }
 }
+
+/// Text after the FPS counter's rate (the render distance of spec §14
+/// Phase 10, 10G: "12 km auto"); empty: none.
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
+pub struct FpsBadgeNote(pub String);
 
 /// Wall-clock frame times of the last [`FrameRateMeter::WINDOW_S`].
 #[derive(Debug, Clone, Default)]
@@ -212,6 +218,7 @@ fn update_badge(
     show: Res<ShowFps>,
     mut rate: ResMut<RenderRate>,
     mut badge: Query<(&mut Node, &mut Text), With<FpsBadge>>,
+    note: Option<Res<FpsBadgeNote>>,
 ) {
     let Ok((mut node, mut text)) = badge.single_mut() else {
         return;
@@ -223,7 +230,11 @@ fn update_badge(
     // Renewed twice a second: readable, and no text layout every frame.
     if show.0 && (rate.since_label >= 0.5 || text.0.is_empty()) {
         rate.since_label = 0.0;
-        let label = badge_label(&rate.meter);
+        let mut label = badge_label(&rate.meter);
+        if let Some(n) = note.as_deref().filter(|n| !n.0.is_empty()) {
+            label.push_str(" · ");
+            label.push_str(&n.0);
+        }
         if text.0 != label {
             text.0 = label;
         }

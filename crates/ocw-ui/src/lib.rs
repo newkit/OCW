@@ -34,6 +34,7 @@
 pub mod access;
 pub mod bindings;
 pub mod calendar;
+pub mod character;
 pub mod collisions;
 pub mod controls;
 pub mod events;
@@ -49,6 +50,7 @@ pub mod status;
 pub mod timemachine;
 pub mod touch;
 pub mod trust;
+pub mod view_distance;
 pub mod weather;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod worlds;

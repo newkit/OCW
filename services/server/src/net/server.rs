@@ -410,6 +410,26 @@ impl NetServer {
         }
     }
 
+    /// Sends the messages for single connections
+    /// ([`GameServer::take_directed`]) to their clients; those for `keep`
+    /// (a connection that is not a network peer: the host's own, spec
+    /// §3.2.1 *Host a ride*) are returned instead.
+    pub fn send_directed(
+        &mut self,
+        messages: Vec<(ConnectionId, Vec<u8>)>,
+        keep: Option<ConnectionId>,
+    ) -> Vec<Vec<u8>> {
+        let mut kept = Vec::new();
+        for (conn, bytes) in messages {
+            if Some(conn) == keep {
+                kept.push(bytes);
+            } else if let Some(peer) = self.peers.values().find(|p| p.id == conn) {
+                deliver(peer, bytes);
+            }
+        }
+        kept
+    }
+
     /// Sends one message to the given connections (a world change goes to
     /// the riders of the ended session, a late answer to its asker).
     pub fn send_to(&mut self, conns: &[ConnectionId], bytes: &[u8]) {

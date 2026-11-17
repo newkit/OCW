@@ -426,7 +426,7 @@ mod tests {
         assert_eq!(again.value("ride.bots"), Value::Int(3));
     }
 
-    /// Regression (v4.38): a negative number is a value of `set`, not a
+    /// Regression (v4.52): a negative number is a value of `set`, not a
     /// flag (`vr.computer_tilt` is the first setting below zero).
     #[test]
     fn set_takes_negative_numbers() {

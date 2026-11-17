@@ -44,8 +44,9 @@ use ocw_core::{ProfileId, Rgb, RiderLook};
 use ocw_render::RideView;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
 use ocw_render::menu::InputContext;
+use ocw_render::thumbs::ThumbKey;
 use ocw_render::workshop::{
-    BikeModels, BikeView, DialogView, HotspotView, PickerRowView, PickerView, RiderShow,
+    BikeModels, BikeView, DialogView, HotspotView, PickerRowView, PickerView, RiderShow, TilesView,
     WorkshopCorePlugin, WorkshopPointer, WorkshopPointerEvent, WorkshopView, bike_corners,
     bike_pose,
 };
@@ -338,45 +339,13 @@ fn register_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
-        Command::new("character")
-            .about("The rider's character: free choices, never physics (no options: the current one)")
-            .arg(
-                Arg::new("build")
-                    .long("build")
-                    .value_parser(ocw_core::BodyBuild::ALL.map(|b| b.id())),
-            )
-            .arg(index_arg("skin", ocw_core::character::SKIN_TONES.len()))
-            .arg(index_arg("face", ocw_core::character::FACES.len()))
-            .arg(index_arg("hair", ocw_core::character::HAIR_STYLES.len()))
-            .arg(
-                Arg::new("hair_colour")
-                    .long("hair-colour")
-                    .value_name("#RRGGBB")
-                    .value_parser(|s: &str| Rgb::parse(s).ok_or_else(|| format!("{s:?} is not a colour #RRGGBB"))),
-            )
-            .arg(index_arg("glasses", ocw_core::character::GLASSES.len())),
+        // One definition for both apps (spec §14 Phase 4, 4N; B6).
+        ocw_ui::character::command(),
         |world, m| {
-            let mut c = crate::settings::local_rider(world).character();
+            let rider = crate::settings::local_rider(world);
+            let mut c = rider.character();
             let before = c;
-            if let Some(b) = m.get_one::<String>("build").and_then(|b| ocw_core::BodyBuild::parse(b)) {
-                c.build = b;
-            }
-            let idx = |k: &str| m.get_one::<u8>(k).map(|v| v - 1);
-            if let Some(v) = idx("skin") {
-                c.skin = v;
-            }
-            if let Some(v) = idx("face") {
-                c.face = v;
-            }
-            if let Some(v) = idx("hair") {
-                c.hair = v;
-            }
-            if let Some(v) = m.get_one::<Rgb>("hair_colour") {
-                c.hair_colour = *v;
-            }
-            if let Some(v) = idx("glasses") {
-                c.glasses = v;
-            }
+            ocw_ui::character::apply(&mut c, m, rider.weight_kg, rider.height_cm)?;
             if c == before {
                 return Ok(c.summary());
             }
@@ -971,15 +940,6 @@ fn set_look(world: &mut World, l: RiderLook) -> Result<(), String> {
         s.save()?;
     }
     Ok(())
-}
-
-/// `--NAME N`: a 1-based index into a palette of `n`.
-fn index_arg(name: &'static str, n: usize) -> Arg {
-    Arg::new(name)
-        .long(name)
-        .value_name("N")
-        .value_parser(clap::value_parser!(u8).range(1..=n as i64))
-        .help(format!("1 … {n}"))
 }
 
 /// Sets the riding rider's character (and the saved profile's of the same
@@ -1586,7 +1546,14 @@ fn write_view(
     };
     let picker = scene.picker.as_ref().map(|p| {
         let server = client.as_ref().and_then(|c| c.0.own_effect());
-        picker_view(p, g, balance, scene, server, &character)
+        let mode = client
+            .as_ref()
+            .map_or(ocw_sim::PhysicsMode::Open, |c| c.0.physics_mode());
+        let mut v = picker_view(p, g, balance, scene, server, &character, rider.weight_kg);
+        if p.tiles() {
+            fill_tiles(&mut v, p, g, scene, mode, rider_look.frame);
+        }
+        v
     });
     // The rider in the changing corner (W4): standing at the mirror, or on
     // the stand bike; with the live preview of the picker.
@@ -1723,6 +1690,7 @@ fn picker_view(
     scene: &Workshop,
     server: Option<&ocw_protocol::BuildInfo>,
     character: &ocw_core::Character,
+    weight_kg: f64,
 ) -> PickerView {
     let bike = g.bike(&scene.bikes[scene.stand]);
     let mut last_group = "";
@@ -1751,6 +1719,7 @@ fn picker_view(
                 left,
                 right,
                 locked,
+                ..Default::default()
             }
         })
         .collect();
@@ -1785,13 +1754,26 @@ fn picker_view(
                 f.map_or_else(String::new, |f| f.name()),
                 "Free – who you are never costs hearts, and never changes the physics.".into(),
             ];
-            if p.character == Some(picker::CharSlot::Body) {
+            if matches!(
+                p.character,
+                Some(picker::CharSlot::Body | picker::CharSlot::Shape)
+            ) {
                 d.push(format!(
                     "Height {:.2} m: from the rider profile (Settings → Riders, riders.edit --height)",
                     f32::from(character.validated().height_cm) / 100.0
                 ));
+                if p.character == Some(picker::CharSlot::Shape) {
+                    let proposal = ocw_core::character::weight_shape(
+                        weight_kg,
+                        Some(f64::from(character.validated().height_cm)),
+                    );
+                    d.push(format!(
+                        "Match my weight: {} (what your weight and height propose; any shape is free)",
+                        proposal.name()
+                    ));
+                }
             }
-            if f.is_some_and(|f| picker::CharSlot::Glasses.choices().contains(&f))
+            if f.is_some_and(|f| matches!(f, picker::Free::Glasses(_)))
                 && g.kit_on(cat(), Slot::Helmet)
                     .is_some_and(|h| h.model == "helmet-tt")
             {
@@ -1854,6 +1836,83 @@ fn picker_view(
             buttons: d.buttons.iter().map(|b| b.label.clone()).collect(),
             focus: d.focus,
         }),
+        tiles: None,
+        subtitle: None,
+    }
+}
+
+/// The picker as tiles (spec §14 Phase 4, 4B / 4G *Tiles*): each row's
+/// thumbnail (the part's model on the bike's profile in its paint; a
+/// paint row: the bike in that colour), its gain against the slot's base
+/// part on this bike within the caps (flat and 6 % climb, or the race
+/// mode's word that parts are cosmetic) and its weight, the grid scrolled
+/// to the focus, and the whole bike against the stock bike under the
+/// title.
+fn fill_tiles(
+    v: &mut PickerView,
+    p: &picker::Picker,
+    g: &Garage,
+    scene: &Workshop,
+    mode: ocw_sim::PhysicsMode,
+    frame: ocw_core::Rgb,
+) {
+    use ocw_client::part_tiles::{self, COLUMNS, VISIBLE_ROWS};
+    let Some(bike) = g.bike(&scene.bikes[scene.stand]) else {
+        return;
+    };
+    let paint = bike.paint().unwrap_or(frame);
+    for (row, r) in v.rows.iter_mut().zip(&p.rows) {
+        row.group = None;
+        match (&r.kind, r.part.as_deref().and_then(|id| cat().get(id))) {
+            (picker::Kind::Paint(c), _) => {
+                row.thumb = Some(ThumbKey {
+                    profile: bike.profile(),
+                    slot: "paint".into(),
+                    model: "stock".into(),
+                    paint: c.unwrap_or(frame),
+                });
+                let t = part_tiles::tile_text(&row.left, &row.right, false, None, mode);
+                row.gain = t.gain;
+            }
+            (_, Some(part)) => {
+                row.thumb = Some(ThumbKey {
+                    profile: bike.profile(),
+                    slot: part.slot.id().into(),
+                    model: part.model.clone(),
+                    paint,
+                });
+                // The tile's name without the weight and tier of the row.
+                row.left = part.name.clone();
+                let gain = picker::tile_gain(cat(), g, bike, part);
+                let t =
+                    part_tiles::tile_text(&row.left, &row.right, row.locked, gain.as_ref(), mode);
+                row.gain = t.gain;
+                row.weight = t.weight;
+                row.capped = t.capped;
+                row.right = format!("{} · {}", part.tier.name(), row.right);
+            }
+            _ => {}
+        }
+    }
+    // The focused tile's numbers on the card too.
+    if let Some(r) = v.rows.get(v.focus).filter(|r| !r.weight.is_empty()) {
+        let line = format!("Against the base part: {} · {}", r.gain, r.weight);
+        let at = v.detail.len().min(2);
+        v.detail.insert(at, line);
+    }
+    let len = v.rows.len();
+    let first = part_tiles::first_row(v.focus, len, COLUMNS, VISIBLE_ROWS) * COLUMNS;
+    v.tiles = Some(TilesView {
+        cols: COLUMNS,
+        first,
+        shown: (VISIBLE_ROWS * COLUMNS).min(len.saturating_sub(first)),
+    });
+    if v.subtitle.is_none() && p.slot != Slot::Paint {
+        let now = picker::build_with(cat(), g, bike, None);
+        v.subtitle = Some(match part_tiles::cosmetic_now(mode) {
+            Some(note) => format!("{} – parts: {note}", part_tiles::bike_gain_line(&now)),
+            None => part_tiles::bike_gain_line(&now),
+        });
     }
 }
 

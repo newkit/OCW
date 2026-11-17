@@ -66,7 +66,7 @@ XR_RUNTIME_JSON=$runtime_json xvfb-run -a -s "-screen 0 1280x720x24" \
   --at "$((seconds > 3 ? seconds - 2 : 1))=vr status" > "$app_log" 2>&1 || code=$?
 
 fail=0
-# Regression (v4.38, the exit crash on Windows): the app ends the session
+# Regression (v4.52, the exit crash on Windows): the app ends the session
 # itself in its last frame and exits cleanly.
 [ "$code" = 0 ] || { echo "ocw-desktop exited with $code (see $app_log)"; fail=1; }
 grep -q "VR: session ended for the exit" "$app_log" || { echo "the session was not torn down at the exit"; fail=1; }

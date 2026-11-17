@@ -19,6 +19,7 @@ use crate::echo::{self, ECHO_IDENTITY, EchoConfig, EchoParams};
 use crate::join::{JoinPolicy, REQUEST_TIMEOUT_S, Retry, RideFacts};
 use crate::mix::Cue;
 use crate::mute::{MuteChange, MuteState, Switch};
+use crate::riders::{self, RiderKeys, RiderPrefs};
 use crate::spatial::{self, Peer, SpatialConfig};
 
 /// The rider's voice settings (`[voice]` in `settings.toml`; the mute
@@ -175,7 +176,16 @@ pub struct Participant {
     pub mic_muted: bool,
     /// Muted by the local rider (not heard).
     pub muted_by_me: bool,
-    /// Subscribed and the gain played at (spatial × volume).
+    /// Blocked by the local rider (spec §7.1.7 Q9): remembered, both
+    /// directions.
+    pub blocked_by_me: bool,
+    /// The game server says the two exchange no voice (a block in either
+    /// direction; which one is not said).
+    pub apart: bool,
+    /// The local rider's volume for this rider (0 … 200 %).
+    pub volume_pct: u16,
+    /// Subscribed and the gain played at (spatial × volume × the rider's
+    /// volume).
     pub heard: Option<f32>,
 }
 
@@ -208,6 +218,18 @@ pub struct VoiceController {
     placed: BTreeMap<String, (f32, f32)>,
     speaking: BTreeSet<String>,
     spatial: SpatialConfig,
+    /// The rider's volume and blocks for other riders (spec §7.1.7 Q9),
+    /// the server they are matched on (name keys) and what the snapshots
+    /// say of the riders (names, accounts).
+    prefs: RiderPrefs,
+    scope: String,
+    rider_names: BTreeMap<RiderId, String>,
+    rider_accounts: BTreeMap<RiderId, String>,
+    /// The riders the game server keeps apart from this one.
+    apart: BTreeSet<RiderId>,
+    /// Who may subscribe to the own microphone, as last told (`None`:
+    /// everybody, the default of every call).
+    subscribers: Option<Vec<String>>,
     echo: Echo,
     /// Messages for the console / log.
     messages: Vec<String>,
@@ -232,6 +254,12 @@ impl VoiceController {
             placed: BTreeMap::new(),
             speaking: BTreeSet::new(),
             spatial: SpatialConfig::default(),
+            prefs: RiderPrefs::new(),
+            scope: riders::LOCAL_SCOPE.into(),
+            rider_names: BTreeMap::new(),
+            rider_accounts: BTreeMap::new(),
+            apart: BTreeSet::new(),
+            subscribers: None,
             echo: Echo::default(),
             messages: Vec::new(),
         };
@@ -366,6 +394,121 @@ impl VoiceController {
         muted
     }
 
+    // ------------------------------------------------- volume and block
+
+    /// The remembered volumes and blocks (from the settings).
+    pub fn set_rider_prefs(&mut self, prefs: RiderPrefs) {
+        self.prefs = prefs;
+        self.refresh_participants();
+    }
+
+    pub fn rider_prefs(&self) -> &RiderPrefs {
+        &self.prefs
+    }
+
+    /// The server ridden on ([`riders::server_scope`]) and the riders'
+    /// names and signed-in accounts from the snapshots: the keys the
+    /// volumes and blocks are matched by.
+    pub fn set_rider_identities(
+        &mut self,
+        scope: &str,
+        names: BTreeMap<RiderId, String>,
+        accounts: BTreeMap<RiderId, String>,
+    ) {
+        if self.scope != scope || self.rider_names != names || self.rider_accounts != accounts {
+            self.scope = scope.to_owned();
+            self.rider_names = names;
+            self.rider_accounts = accounts;
+            self.refresh_participants();
+        }
+    }
+
+    pub fn scope(&self) -> &str {
+        &self.scope
+    }
+
+    /// The keys of a participant: the rider's account and name (from the
+    /// snapshots; the voice name if the rider is not on the road).
+    pub fn keys_of(&self, p: &Participant) -> RiderKeys {
+        let name = self.name_of(p);
+        let account = p
+            .rider
+            .and_then(|r| self.rider_accounts.get(&r))
+            .map(String::as_str);
+        RiderKeys::new(&self.scope, name, account)
+    }
+
+    /// A participant's rider name: the snapshots' (the voice name if the
+    /// rider is not on the road).
+    pub fn name_of<'a>(&'a self, p: &'a Participant) -> &'a str {
+        p.rider
+            .and_then(|r| self.rider_names.get(&r))
+            .filter(|n| !n.is_empty())
+            .map_or(p.name.as_str(), String::as_str)
+    }
+
+    /// The riders the game server keeps apart from this one (its
+    /// `VoiceApart`).
+    pub fn set_apart(&mut self, riders: BTreeSet<RiderId>) {
+        if self.apart != riders {
+            self.apart = riders;
+            self.refresh_participants();
+        }
+    }
+
+    pub fn apart(&self) -> &BTreeSet<RiderId> {
+        &self.apart
+    }
+
+    /// The blocks to tell the game server of this scope: (accounts,
+    /// names).
+    pub fn server_blocks(&self) -> (Vec<String>, Vec<String>) {
+        riders::blocks_for(&self.prefs, &self.scope)
+    }
+
+    fn refresh_participants(&mut self) {
+        let flags: Vec<(String, bool, u16)> = self
+            .participants
+            .values()
+            .map(|p| {
+                let k = self.keys_of(p);
+                (
+                    p.identity.clone(),
+                    k.blocked(&self.prefs),
+                    k.volume_pct(&self.prefs),
+                )
+            })
+            .collect();
+        for (identity, blocked, volume) in flags {
+            if let Some(p) = self.participants.get_mut(&identity) {
+                p.blocked_by_me = blocked;
+                p.volume_pct = volume;
+                p.apart = p.rider.is_some_and(|r| self.apart.contains(&r));
+            }
+        }
+    }
+
+    /// Who may subscribe to the own microphone: everybody but the riders
+    /// blocked or kept apart (spec §7.1.7 Q9). Sends only changes.
+    fn apply_subscribers(&mut self) {
+        let denied = self
+            .participants
+            .values()
+            .any(|p| p.blocked_by_me || p.apart);
+        let want = denied.then(|| {
+            self.participants
+                .values()
+                .filter(|p| !p.blocked_by_me && !p.apart)
+                .map(|p| p.identity.clone())
+                .collect::<Vec<_>>()
+        });
+        if want != self.subscribers {
+            self.backend
+                .send(BackendCommand::SetSubscribers(want.clone()));
+            self.subscribers = want;
+        }
+    }
+
     // ------------------------------------------------------------ update
 
     /// Advances the controller at `now_s` with the positions of the other
@@ -394,6 +537,7 @@ impl VoiceController {
         }
         if matches!(self.phase, Phase::Connected | Phase::Reconnecting) {
             self.place_voices(peers);
+            self.apply_subscribers();
         }
         self.drive_echo(peers);
         request
@@ -560,6 +704,10 @@ impl VoiceController {
         self.placed.clear();
         self.speaking.clear();
         self.room = None;
+        // A new call starts with everybody allowed (the backend's default).
+        if self.subscribers.take().is_some() {
+            self.backend.send(BackendCommand::SetSubscribers(None));
+        }
     }
 
     fn cue(&mut self, cue: Cue) {
@@ -622,9 +770,13 @@ impl VoiceController {
                         speaking: false,
                         mic_muted: false,
                         muted_by_me,
+                        blocked_by_me: false,
+                        apart: false,
+                        volume_pct: riders::DEFAULT_VOLUME_PCT,
                         heard: None,
                     },
                 );
+                self.refresh_participants();
                 if fresh {
                     self.cue(Cue::Joined);
                 }
@@ -655,11 +807,18 @@ impl VoiceController {
     fn place_voices(&mut self, peers: &[Peer]) {
         let volume = self.settings.volume.clamp(0.0, 2.0);
         let mut want: BTreeMap<String, (f32, f32)> = BTreeMap::new();
+        // Muted for me, blocked (both ways) and kept apart by the server
+        // are not heard (spec §7.1.7 Q9).
         let candidates: Vec<&Participant> = self
             .participants
             .values()
-            .filter(|p| !p.muted_by_me)
+            .filter(|p| !p.muted_by_me && !p.blocked_by_me && !p.apart)
             .collect();
+        let pct = |identity: &str| {
+            self.participants
+                .get(identity)
+                .map_or(riders::DEFAULT_VOLUME_PCT, |p| p.volume_pct)
+        };
         let spatial = self.settings.spatial && self.facts.group.is_none();
         if spatial {
             let by_rider: BTreeMap<RiderId, &Participant> = candidates
@@ -677,7 +836,11 @@ impl VoiceController {
                 .filter_map(|i| ocw_protocol::rider_of_voice_identity(i))
                 .collect();
             for (r, pl) in spatial::select(&known, &current, &self.spatial) {
-                want.insert(by_rider[&r].identity.clone(), (pl.gain * volume, pl.pan));
+                let identity = &by_rider[&r].identity;
+                want.insert(
+                    identity.clone(),
+                    (riders::gain(pl.gain, volume, pct(identity)), pl.pan),
+                );
             }
             // Riders not (yet) on the road and participants who are not
             // riders: quiet, while there is room.
@@ -692,12 +855,18 @@ impl VoiceController {
                     } else {
                         1.0
                     };
-                    want.insert(p.identity.clone(), (gain * volume, 0.0));
+                    want.insert(
+                        p.identity.clone(),
+                        (riders::gain(gain, volume, pct(&p.identity)), 0.0),
+                    );
                 }
             }
         } else {
             for p in &candidates {
-                want.insert(p.identity.clone(), (volume, 0.0));
+                want.insert(
+                    p.identity.clone(),
+                    (riders::gain(1.0, volume, pct(&p.identity)), 0.0),
+                );
             }
         }
         let gone: Vec<String> = self
@@ -1134,6 +1303,162 @@ mod tests {
             identity: "rider-3".into(),
             on: true
         }));
+    }
+
+    fn prefs(entries: &[(&str, u16, bool)]) -> RiderPrefs {
+        entries
+            .iter()
+            .map(|(k, v, b)| {
+                (
+                    (*k).to_owned(),
+                    riders::RiderPref {
+                        name: k.rsplit('/').next().unwrap().to_owned(),
+                        volume_pct: *v,
+                        blocked: *b,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// A rider's volume (spec §7.1.7 Q9) on top of the spatial gain and
+    /// the voice volume, matched by name on this server, by account first.
+    #[test]
+    fn a_riders_volume_scales_its_gain() {
+        let (mut c, b) = connected();
+        c.set_settings(VoiceSettings {
+            volume: 0.5,
+            ..Default::default()
+        });
+        c.set_rider_identities(
+            "ride.example.org",
+            [(RiderId(2), "Bea Climber".to_owned())].into(),
+            [(RiderId(3), "acc-3".to_owned())].into(),
+        );
+        c.set_rider_prefs(prefs(&[
+            ("name:ride.example.org/Bea Climber", 200, false),
+            ("acct:acc-3", 0, false),
+            // Another server's Bea: not this one.
+            ("name:other.example.org/Bea Climber", 10, false),
+        ]));
+        c.update(1.0, &[peer(2, 5.0), peer(3, 5.0)]);
+        fn of(c: &VoiceController, id: &str) -> Participant {
+            c.participants().find(|p| p.identity == id).unwrap().clone()
+        }
+        assert_eq!(of(&c, "rider-2").volume_pct, 200);
+        assert_eq!(of(&c, "rider-2").heard, Some(1.0), "1 × 0.5 × 200 %");
+        assert_eq!(of(&c, "rider-3").volume_pct, 0);
+        assert_eq!(of(&c, "rider-3").heard, Some(0.0), "subscribed, silent");
+        // Further away: the spatial gain times the rider's volume.
+        c.update(2.0, &[peer(2, 40.0), peer(3, 5.0)]);
+        let spatial = SpatialConfig::default().gain(40.0);
+        let heard = of(&c, "rider-2").heard.unwrap();
+        assert!((heard - spatial * 0.5 * 2.0).abs() < 1e-6, "{heard}");
+        // Without spatial voice too.
+        c.set_settings(VoiceSettings {
+            volume: 1.0,
+            spatial: false,
+            ..Default::default()
+        });
+        c.update(3.0, &[peer(2, 40.0), peer(3, 5.0)]);
+        assert_eq!(of(&c, "rider-2").heard, Some(2.0));
+        // Nothing was blocked: everybody may hear the rider.
+        assert!(
+            !b.take_sent()
+                .iter()
+                .any(|s| matches!(s, BackendCommand::SetSubscribers(_)))
+        );
+    }
+
+    /// Block (spec §7.1.7 Q9): the blocked rider is not heard, and the
+    /// own microphone is allowed to everybody else only; unblocking
+    /// allows everybody again.
+    #[test]
+    fn a_blocked_rider_is_neither_heard_nor_allowed_to_hear() {
+        let (mut c, b) = connected();
+        c.set_rider_identities(
+            "local",
+            [
+                (RiderId(2), "Bea Climber".to_owned()),
+                (RiderId(3), "Cleo Sprinter".to_owned()),
+            ]
+            .into(),
+            Default::default(),
+        );
+        c.update(1.0, &[peer(2, 5.0), peer(3, 5.0)]);
+        b.take_sent();
+        c.set_rider_prefs(prefs(&[("name:local/Bea Climber", 100, true)]));
+        c.update(1.1, &[peer(2, 5.0), peer(3, 5.0)]);
+        let sent = b.take_sent();
+        assert!(sent.contains(&BackendCommand::Subscribe {
+            identity: "rider-2".into(),
+            on: false
+        }));
+        assert!(
+            sent.contains(&BackendCommand::SetSubscribers(Some(vec![
+                "rider-3".into()
+            ]))),
+            "{sent:?}"
+        );
+        let bea = c.participants().find(|p| p.identity == "rider-2").unwrap();
+        assert!(bea.blocked_by_me && bea.heard.is_none());
+        assert_eq!(c.server_blocks(), (vec![], vec!["Bea Climber".to_owned()]));
+        // A newcomer is allowed to hear the rider at once.
+        b.push(BackendEvent::ParticipantJoined {
+            identity: "rider-4".into(),
+            name: "Dan Descender".into(),
+        });
+        c.update(1.2, &[peer(2, 5.0), peer(3, 5.0)]);
+        assert!(
+            b.take_sent()
+                .contains(&BackendCommand::SetSubscribers(Some(vec![
+                    "rider-3".into(),
+                    "rider-4".into()
+                ])))
+        );
+        // Unblocked: everybody again, Bea heard again.
+        c.set_rider_prefs(RiderPrefs::new());
+        c.update(1.3, &[peer(2, 5.0), peer(3, 5.0)]);
+        let sent = b.take_sent();
+        assert!(sent.contains(&BackendCommand::SetSubscribers(None)));
+        assert!(sent.contains(&BackendCommand::Subscribe {
+            identity: "rider-2".into(),
+            on: true
+        }));
+        assert!(c.server_blocks().1.is_empty());
+    }
+
+    /// The other direction: the game server keeps this rider apart from
+    /// one who blocked them (`VoiceApart`) – not heard, not allowed to
+    /// hear, without knowing who blocked whom; a new call starts open.
+    #[test]
+    fn riders_kept_apart_by_the_server_exchange_no_voice() {
+        let (mut c, b) = connected();
+        c.update(1.0, &[peer(2, 5.0), peer(3, 5.0)]);
+        b.take_sent();
+        c.set_apart([RiderId(3)].into());
+        c.update(1.1, &[peer(2, 5.0), peer(3, 5.0)]);
+        let sent = b.take_sent();
+        assert!(sent.contains(&BackendCommand::Subscribe {
+            identity: "rider-3".into(),
+            on: false
+        }));
+        assert!(sent.contains(&BackendCommand::SetSubscribers(Some(vec![
+            "rider-2".into()
+        ]))));
+        let cleo = c.participants().find(|p| p.identity == "rider-3").unwrap();
+        assert!(cleo.apart && !cleo.blocked_by_me);
+        // Nothing to tell the server: the block is not this rider's.
+        assert_eq!(c.server_blocks(), (vec![], vec![]));
+        // The call drops: the next one starts with everybody allowed.
+        b.push(BackendEvent::Disconnected {
+            reason: "gone".into(),
+        });
+        c.update(1.2, &[]);
+        assert!(
+            b.take_sent()
+                .contains(&BackendCommand::SetSubscribers(None))
+        );
     }
 
     #[test]

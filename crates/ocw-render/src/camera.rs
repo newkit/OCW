@@ -58,9 +58,15 @@ impl Plugin for CameraPlugin {
             .init_resource::<CameraObstacles>()
             .init_resource::<CameraFocus>()
             .init_resource::<CameraTilt>()
+            .init_resource::<crate::drone_camera::DroneCamera>()
             .add_systems(Startup, spawn_camera)
             .add_systems(Update, orbit_input)
-            .add_systems(PostUpdate, follow.before(TransformSystems::Propagate));
+            .add_systems(
+                PostUpdate,
+                (follow, crate::drone_camera::drone_camera)
+                    .chain()
+                    .before(TransformSystems::Propagate),
+            );
     }
 }
 

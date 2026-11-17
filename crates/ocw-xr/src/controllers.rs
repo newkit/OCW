@@ -1,4 +1,4 @@
-//! The VR controllers (spec §14 Phase 11, 11B *Input in VR*, X1 v4.38):
+//! The VR controllers (spec §14 Phase 11, 11B *Input in VR*, X1 v4.52):
 //! the Oculus Touch controllers of the Quest 1 as **one more gamepad**.
 //!
 //! In VR the hands are on the bars and riding stays on the trainer, the

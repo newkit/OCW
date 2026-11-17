@@ -7,13 +7,16 @@
 # scene, interleaved (A B A B) because the machine is shared.
 #
 #   scripts/measure-fps.sh [--app BIN] [--seconds N] [--warmup N]
-#                          [--size WxH] [--label TEXT] -- ocw-desktop args...
+#                          [--size WxH] [--label TEXT] [--log FILE] -- ocw-desktop args...
+#
+# --log FILE keeps the app's log (e.g. its `view distance:` lines, spec §14
+# Phase 10, 10G).
 #
 # BIN defaults to target/release/ocw-desktop (not built here: build it first,
 # or pass a saved binary, e.g. the previous commit's).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-app=target/release/ocw-desktop seconds=40 warmup=12 size=1280x720 label=""
+app=target/release/ocw-desktop seconds=40 warmup=12 size=1280x720 label="" keep_log=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --app) app=$2; shift 2 ;;
@@ -21,6 +24,7 @@ while [ $# -gt 0 ]; do
     --warmup) warmup=$2; shift 2 ;;
     --size) size=$2; shift 2 ;;
     --label) label=$2; shift 2 ;;
+    --log) keep_log=$2; shift 2 ;;
     --) shift; break ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
@@ -51,3 +55,4 @@ tail -n +$((skip + 1)) "$log.fps" | awk -v label="$label" -v n="$n" -v st="$stat
     printf "%s: %.1f fps mean (%.2f ms), min %.1f, %d samples: %s\n", label, s / c, 1000 * c / s, min, c, v
   }'
 rm -f "$log.fps"
+if [ -n "$keep_log" ]; then sed 's/\x1b\[[0-9;]*m//g' "$log" >"$keep_log"; fi

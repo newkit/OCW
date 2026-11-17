@@ -21,12 +21,12 @@
 //! ([`XrRuntime::recreate_session`]); the swapchain's generation changes,
 //! so the renderer re-reads the images.
 //!
-//! **Controllers** ([`controls`], v4.38): one action set with an action per
+//! **Controllers** ([`controls`], v4.52): one action set with an action per
 //! input of `ocw_xr::controllers` and its suggested bindings (Oculus
 //! Touch, the Khronos simple controller), attached to every session;
 //! [`MainHandle`] syncs it each frame ([`ControllerSource`]).
 //!
-//! **Teardown** (v4.38, the exit crash on the Quest 1 over Link): the app's
+//! **Teardown** (v4.52, the exit crash on the Quest 1 over Link): the app's
 //! last frame calls [`XrRuntime::shutdown`]: wait for the GPU, then drop the
 //! swapchain (the wrapped textures never own its images), the frame
 //! stream and the session – while the Vulkan device still lives. The
