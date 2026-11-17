@@ -502,7 +502,8 @@ message RiderLook {
   optional uint32 height_cm = 5;
   // 0 slim, 1 medium, 2 strong.
   optional uint32 body_build = 6;
-  // Index into the 12-step skin-tone palette.
+  // Index into the 12-step skin-tone palette (older apps; newer ones
+  // read `skin_tone`).
   optional uint32 skin = 7;
   // Face preset: 0 classic, 1 beard, 2 moustache, 3 stubble.
   optional uint32 face = 8;
@@ -557,6 +558,9 @@ message RiderLook {
   // 4 ample, 5 fat, 6 obese (N12 planned a 0-100 build slider here;
   // the decided seven steps take its number).
   optional uint32 body_shape = 32;
+  // The skin tone in the 16-step palette (spec §14 Phase 4, 4N, v4.51);
+  // `skin` (7) keeps the nearest of the 12-step palette for older apps.
+  optional uint32 skin_tone = 35;
 }
 
 // Identifies a world package's road graph: its name and a fingerprint of

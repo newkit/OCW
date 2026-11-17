@@ -375,6 +375,15 @@ mod tests {
                     Page::Sub(settings_pages::Page::BindGroup(_)) => {
                         "Conflict: V: Camera and Video recording; L: Camera and unicorn mode's flight keys".into()
                     }
+                    // The focused tile's name (the longest) under the
+                    // pictures (spec §14 Phase 4, 4N).
+                    Page::Sub(settings_pages::Page::CharacterPick(a)) => {
+                        let r = ocw_client::riders::Rider::default();
+                        (0..40)
+                            .map(|f| ocw_client::menu::character::status(a, &r, f))
+                            .max_by_key(|s| s.len())
+                            .unwrap_or_default()
+                    }
                     Page::Sub(settings_pages::Page::Calendar(_)) => "Read only, set by the organizer · Wed 30 Sep 2026: sunrise 07:22 · sunset 19:14 · day 11 h 52 min · beech in autumn colours · snow line 2,750 m · first quarter".into(),
                     _ => String::new(),
                 },

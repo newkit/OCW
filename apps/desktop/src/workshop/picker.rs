@@ -320,6 +320,28 @@ impl MirrorSlot {
 
     /// The rider's hotspot it belongs to (spec 4C: head, torso, hands,
     /// legs, feet; *Try on the bike*: none).
+    /// Whether its picker frames the head in a close-up (spec §14 Phase 4,
+    /// 4N): the head's slots and the skin tone (the face's page in the
+    /// menu).
+    pub fn frames_face(self) -> bool {
+        self.region() == Some(Region::Head) || self == Self::Char(CharSlot::Skin)
+    }
+
+    /// What its tiles' pictures frame (spec §14 Phase 4, 4N).
+    pub fn shot(self) -> ocw_render::thumbs::RiderShot {
+        use ocw_render::thumbs::RiderShot;
+        match self {
+            Self::Char(CharSlot::Glasses) => RiderShot::FaceFront,
+            Self::Char(CharSlot::Skin) => RiderShot::Face,
+            s => match s.region() {
+                Some(Region::Head) => RiderShot::Face,
+                Some(Region::Hands) => RiderShot::Hands,
+                Some(Region::Feet) => RiderShot::Feet,
+                _ => RiderShot::Body,
+            },
+        }
+    }
+
     pub fn region(self) -> Option<Region> {
         Some(match self {
             Self::Kit(Slot::Helmet | Slot::Cap)
@@ -1228,10 +1250,17 @@ impl Picker {
     /// The rows are tiles (spec 4B *Tiles*): the bike's part slots and its
     /// paint – not the kit, the bench, the character or the designer.
     pub fn tiles(&self) -> bool {
-        self.bench.is_none()
-            && self.character.is_none()
-            && self.design.is_none()
-            && !self.slot.is_kit()
+        // The stand's parts and paints (4B) and the mirror's character and
+        // kit pickers (4N: the same tile model as the menu's editor); the
+        // bench's catalogue, the jersey designer and the kit pickers with a
+        // colour row (shorts, socks, shoes, gloves: ← / → change the
+        // colour there) stay lists.
+        self.bench.is_none() && self.design.is_none()
+    }
+
+    /// The mirror's pickers (character and kit): tiles of the rider.
+    pub fn of_the_rider(&self) -> bool {
+        self.character.is_some() || self.slot.is_kit()
     }
 
     /// ← / → / ↑ / ↓ on the tiles ([`ocw_client::part_tiles::step`]).
@@ -1665,13 +1694,13 @@ mod tests {
         assert_eq!(d.iter().filter(|l| l.starts_with("Benefit:")).count(), 1);
         // Free rows: the current choice focused, a character line.
         let p = Picker::character(CharSlot::Skin, &Character::default());
-        assert_eq!(p.preview_free(), Some(Free::Skin(3)));
-        assert_eq!(Free::Skin(3).line(), "character --skin 4");
+        assert_eq!(p.preview_free(), Some(Free::Skin(4)));
+        assert_eq!(Free::Skin(4).line(), "character --skin 5");
         assert_eq!(Free::Glasses(2).apply(Character::default()).glasses, 2);
         let (left, right, _) = row_text(cat(), &p.rows[0], 0);
         assert_eq!(
             (left.as_str(), right.as_str()),
-            ("Skin tone 1 of 12", "free")
+            ("Skin tone 1 of 16", "free")
         );
         // Every slot of the corner has a region but Try on the bike.
         for s in MirrorSlot::ALL {

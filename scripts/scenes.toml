@@ -3756,3 +3756,169 @@ riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 7
 at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair ponytail --hair-colour blond", "2.2=status.sign muted on", "2.5=camera.orbit 165 4 2.5"]
 shot = 9
 pick = false
+
+# The character editor's second step (spec §14 Phase 4, 4N, v4.51): the
+# face close-up, the picture tiles, the mirror's tiles. Made-up rider name only.
+
+[[scene]]
+name = "char2-face-20s-slim"
+description = "Character editor face close-up (4N step 2): Workshop -> Character -> Face and age, the head framed from a three-quarter view; 20s, slim, no glasses"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --age 20s --shape slim --hair short --glasses 1", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 8
+pick = false
+
+[[scene]]
+name = "char2-face-40s-normal-sport"
+description = "Character editor face close-up (4N step 2): Workshop -> Character -> Face and age, the head framed from a three-quarter view; 40s, normal, sport glasses, a classic moustache"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --age 40s --shape normal --hair side-part --glasses 2 --moustache classic", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 8
+pick = false
+
+[[scene]]
+name = "char2-face-60s-ample-round"
+description = "Character editor face close-up (4N step 2): Workshop -> Character -> Face and age, the head framed from a three-quarter view; 60s, ample, round glasses, a full beard"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --age 60s --shape ample --hair long --glasses 3 --beard full", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 8
+pick = false
+
+[[scene]]
+name = "char2-face-70plus-obese-b"
+description = "Character editor face close-up (4N step 2): Workshop -> Character -> Face and age, the head framed from a three-quarter view; 70+, obese, base body B, round glasses, a low bun"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --body b --age 70+ --shape obese --hair low-bun --glasses 3", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 8
+pick = false
+
+[[scene]]
+name = "char2-face-30s-skinny-c"
+description = "Character editor face close-up (4N step 2): Workshop -> Character -> Face and age, the head framed from a three-quarter view; 30s, skinny, base body C, dark skin, a goatee"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --body c --age 30s --shape skinny --hair single-braid --skin 10 --glasses 1 --beard goatee", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 8
+pick = false
+
+[[scene]]
+name = "char2-face-glasses-front"
+description = "Character editor face close-up (4N step 2): Face and age -> Glasses tiles, the face straight from the front, round glasses focused"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --age 50s --glasses 1", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select", "4.8=menu down", "5.2=menu down", "5.6=menu down", "6.0=menu select", "6.6=menu right", "7.0=menu right"]
+shot = 30
+pick = false
+
+[[scene]]
+name = "char2-face-helmet-aero"
+description = "Character editor face close-up (4N step 2) with the aero helmet bought and worn: Face and age page"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=hearts.grant 3000", "2.1=workshop.buy helmet.tt.top", "2.2=character --age 40s --glasses 2", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char2-tiles-hair"
+description = "Character editor picture tiles (4N step 2): Hair -> Hair style, each tile a rendering of the rider's head with that style (status line: the focused one's name)"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu down", "4.8=menu select", "5.2=menu select", "6=menu right", "6.4=menu right"]
+shot = 40
+pick = false
+
+[[scene]]
+name = "char2-tiles-shape"
+description = "Character editor picture tiles (4N step 2): Body -> Shape, each tile the whole rider with that shape, Match my weight named"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.2=menu select", "4.6=menu down", "5.0=menu select", "5.6=menu right"]
+shot = 30
+pick = false
+
+[[scene]]
+name = "char2-tiles-base"
+description = "Character editor picture tiles (4N step 2): Body -> Base body A / B / C as renderings"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.2=menu select", "4.6=menu select"]
+shot = 25
+pick = false
+
+[[scene]]
+name = "char2-tiles-beard"
+description = "Character editor picture tiles (4N step 2): Facial hair -> Beard as renderings of the face"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu down", "4.8=menu down", "5.2=menu select", "5.6=menu down", "6.0=menu select", "6.6=menu right"]
+shot = 30
+pick = false
+
+[[scene]]
+name = "char2-tiles-age"
+description = "Character editor picture tiles (4N step 2): Face and age -> Age as renderings of the face (20s ... 70+)"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --hair short --hair-colour brown", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select", "4.8=menu select", "5.4=menu right", "5.8=menu right", "6.2=menu right"]
+shot = 30
+pick = false
+
+[[scene]]
+name = "char2-mirror-hair-tiles"
+description = "The workshop mirror (4N step 2): the hair picker as picture tiles, the face close-up in the mirror, the focused style on the rider"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=workshop open", "2.6=workshop mirror", "4=workshop slot-next", "4.4=workshop slot-next", "4.8=workshop slot-next", "5.2=workshop select", "5.8=workshop right", "6.2=workshop right"]
+shot = 40
+pick = false
+
+[[scene]]
+name = "char2-mirror-helmet-tiles"
+description = "The workshop mirror (4N step 2): the helmet picker as picture tiles of the rider wearing each helmet, the face close-up"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "1.8=hearts.grant 3000", "2=workshop open", "2.6=workshop mirror", "4.4=workshop select", "5.0=workshop right"]
+shot = 35
+pick = false
+
+[[scene]]
+name = "char2-mirror-shape-tiles"
+description = "The workshop mirror (4N step 2): the body shape picker as tiles of the whole rider"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=workshop open", "2.6=workshop mirror", "4=workshop slot-prev", "4.3=workshop slot-prev", "4.6=workshop slot-prev", "4.9=workshop slot-prev", "5.2=workshop slot-prev", "5.5=workshop slot-prev", "5.8=workshop slot-prev", "6.1=workshop slot-prev", "6.6=workshop select", "7.2=workshop right"]
+shot = 35
+pick = false
+
+# The skin tone selector (asked 2026-11-17; 4N, v4.51): 16 tones as swatches.
+[[scene]]
+name = "char2-tiles-skin"
+description = "Skin tone selector (4N, asked 2026-11-17): Face and age -> Skin tone, the 16 tones as swatches light to dark, the focused dark tone on the rider's face close-up"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select", "4.8=menu down", "5.2=menu select", "5.8=menu down", "6.2=menu down", "6.6=menu right", "7.0=menu right"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "char2-tiles-skin-light"
+description = "Skin tone selector (4N): the lightest tone focused on the face close-up"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select", "4.8=menu down", "5.2=menu select", "5.8=menu up", "6.2=menu left", "6.6=menu left", "7.0=menu left", "7.4=menu left"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "char2-mirror-skin-tiles"
+description = "The workshop mirror (4N): the skin tone picker as 16 swatch tiles, the face close-up, the focused tone on the rider"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=workshop open", "2.6=workshop mirror", "4=workshop slot-prev", "4.3=workshop slot-prev", "4.6=workshop slot-prev", "4.9=workshop slot-prev", "5.2=workshop slot-prev", "5.5=workshop slot-prev", "5.8=workshop slot-prev", "6.4=workshop select", "7.0=workshop down", "7.4=workshop down", "7.8=workshop right"]
+shot = 12
+pick = false

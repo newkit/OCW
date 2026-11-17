@@ -97,7 +97,8 @@ impl From<ocw_core::RiderLook> for v1::RiderLook {
             // For older apps: the nearest W4 build and face (spec §14
             // Phase 4, 4N N12).
             body_build: Some(c.shape.nearest_build().wire()),
-            skin: Some(u32::from(c.skin)),
+            skin: Some(u32::from(ocw_core::character::skin_to_legacy(c.skin))),
+            skin_tone: Some(u32::from(c.skin)),
             face: Some(u32::from(c.legacy_face())),
             hair: Some(u32::from(c.hair)),
             hair_rgb: Some(c.hair_colour.0),
@@ -182,7 +183,14 @@ pub fn character(l: &v1::RiderLook) -> ocw_core::Character {
         age: l
             .appearance_age
             .map_or(d.age, ocw_core::character::Age::from_wire),
-        skin: small(l.skin, d.skin),
+        // The 16-step tone; an older app's 12-step index migrated.
+        skin: match (l.skin_tone, l.skin) {
+            (Some(_), _) => small(l.skin_tone, d.skin),
+            (None, Some(s)) if (s as usize) < ocw_core::character::LEGACY_SKIN_TONES.len() => {
+                ocw_core::character::skin_from_legacy(s as u8)
+            }
+            _ => d.skin,
+        },
         // The face's shape: an older app's face was its facial hair.
         face: if new_app {
             small(l.face, d.face)
@@ -1946,6 +1954,31 @@ mod tests {
             ),
             (None, None, None)
         );
+        // The skin (spec §14 Phase 4, 4N, v4.51): the 16-step tone round
+        // trips, the 12-step index is written for older apps, and an older
+        // app's index (no `skin_tone`) becomes the nearest new tone.
+        for tone in 0..ocw_core::character::SKIN_TONES.len() as u8 {
+            let mut l = ocw_core::RiderLook::default();
+            l.character.skin = tone;
+            let w = v1::RiderLook::from(l);
+            assert_eq!(w.skin_tone, Some(u32::from(tone)));
+            assert_eq!(
+                w.skin,
+                Some(u32::from(ocw_core::character::skin_to_legacy(tone)))
+            );
+            assert_eq!(character(&w).skin, tone);
+        }
+        for old in 0..12u32 {
+            let w = v1::RiderLook {
+                skin: Some(old),
+                ..Default::default()
+            };
+            assert_eq!(
+                character(&w).skin,
+                ocw_core::character::skin_from_legacy(old as u8),
+                "{old}"
+            );
+        }
         // Out of range from the wire: the default's values, height clamped.
         let odd = v1::RiderLook {
             height_cm: Some(900),
@@ -2083,6 +2116,7 @@ mod tests {
         huge.body_type = Some(u32::MAX);
         huge.height_cm = Some(u32::MAX);
         huge.skin = Some(u32::MAX);
+        huge.skin_tone = Some(u32::MAX);
         huge.hair = Some(u32::MAX);
         huge.glasses = Some(u32::MAX);
         huge.helmet_finish = Some(u32::MAX);

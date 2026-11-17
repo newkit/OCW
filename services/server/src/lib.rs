@@ -4257,7 +4257,7 @@ mod tests {
                 base: BaseBody::ALL[next(3)],
                 shape: BodyShape::ALL[next(7)],
                 age: Age::ALL[next(6)],
-                skin: next(12) as u8,
+                skin: next(ocw_core::character::SKIN_TONES.len()) as u8,
                 hair: next(HAIR_STYLES.len()) as u8,
                 moustache: next(6) as u8,
                 beard: next(8) as u8,

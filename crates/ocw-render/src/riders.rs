@@ -1212,6 +1212,15 @@ fn spawn_avatar(
             .node(name)
             .map_or(Entity::PLACEHOLDER, |i| bike_nodes_e[i])
     };
+    // The character editor's close-up looks at the local rider's head.
+    if is_local && !ghost {
+        let head = find(nodes::HEAD);
+        if head != Entity::PLACEHOLDER {
+            commands
+                .entity(head)
+                .insert(crate::camera::RiderHead { root });
+        }
+    }
     let posed = pose::pose(&body.rider, &bike, &body.fit, &PoseParams::default())
         .rotations()
         .iter()

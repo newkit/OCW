@@ -268,22 +268,38 @@ fn preview_focused_tile(world: &mut World) {
 }
 
 /// The camera of the editor: in front of the rider, a little to its side
-/// (the panel covers the window's left third), close for the face.
-pub fn editor_orbit(page: sub::Page) -> ocw_render::camera::CameraOrbit {
-    let face = match page {
-        sub::Page::CharacterPick(a) => a.face(),
-        sub::Page::CharacterBody | sub::Page::Character => false,
-        _ => true,
-    };
+/// (the panel covers the window's left third), the whole rider; on the
+/// face pages the close-up of [`editor_close_up`] takes over from it.
+pub fn editor_orbit(_page: sub::Page) -> ocw_render::camera::CameraOrbit {
     ocw_render::camera::CameraOrbit {
         yaw: std::f32::consts::PI - 0.45,
-        pitch: if face { 0.42 } else { 0.22 },
-        distance: if face {
-            ocw_render::camera::MIN_DISTANCE
-        } else {
-            4.4
-        },
+        pitch: 0.22,
+        distance: 4.4,
     }
+}
+
+/// Whether `page` frames the head (face and age, hair, facial hair,
+/// glasses and the other face tiles); the others frame the whole rider.
+pub fn frames_the_face(page: sub::Page) -> bool {
+    match page {
+        sub::Page::CharacterPick(a) => a.face(),
+        sub::Page::CharacterFace | sub::Page::CharacterHair | sub::Page::CharacterFacialHair => {
+            true
+        }
+        _ => false,
+    }
+}
+
+/// The close-up of the head on a face page (spec §14 Phase 4, 4N: the
+/// eyes, ears, lips and the age clearly visible): straight from the front
+/// for the glasses, from a three-quarter view for the rest (the ears, the
+/// hair's side and its tail); `None`: the whole rider.
+pub fn editor_close_up(page: sub::Page) -> Option<ocw_render::camera::CloseUpShot> {
+    use ocw_render::camera::CloseUpShot;
+    frames_the_face(page).then_some(match page {
+        sub::Page::CharacterPick(editor::Attr::Glasses) => CloseUpShot::FRONT,
+        _ => CloseUpShot::THREE_QUARTER,
+    })
 }
 
 /// The camera's orbit before the editor opened (put back on leaving).
@@ -299,6 +315,12 @@ fn frame_the_rider(world: &mut World) {
     else {
         return;
     };
+    let close = page.and_then(editor_close_up);
+    if let Some(mut c) = world.get_resource_mut::<ocw_render::camera::CloseUp>()
+        && c.0 != close
+    {
+        c.0 = close;
+    }
     match (page, saved) {
         (Some(p), _) => {
             if saved.is_none() {
@@ -327,6 +349,43 @@ mod tests {
             .try_get_matches_from(args)
             .map_err(|e| e.to_string())?;
         apply(c, &m, kg, Some(178.0))
+    }
+
+    /// The camera per editor page (spec §14 Phase 4, 4N): the head in a
+    /// close-up on every face, hair, facial-hair and glasses page (from
+    /// the front for the glasses), the whole rider on the body pages and
+    /// the editor's first page.
+    #[test]
+    fn each_editor_page_frames_the_face_or_the_whole_rider() {
+        use editor::Attr;
+        use ocw_render::camera::CloseUpShot;
+        for p in [
+            sub::Page::CharacterFace,
+            sub::Page::CharacterHair,
+            sub::Page::CharacterFacialHair,
+        ] {
+            assert_eq!(
+                editor_close_up(p),
+                Some(CloseUpShot::THREE_QUARTER),
+                "{p:?}"
+            );
+        }
+        for a in Attr::ALL {
+            let want = match a {
+                Attr::Base | Attr::Shape => None,
+                Attr::Glasses => Some(CloseUpShot::FRONT),
+                _ => Some(CloseUpShot::THREE_QUARTER),
+            };
+            assert_eq!(editor_close_up(sub::Page::CharacterPick(a)), want, "{a:?}");
+        }
+        for p in [sub::Page::Character, sub::Page::CharacterBody] {
+            assert_eq!(editor_close_up(p), None, "{p:?}");
+            // The whole rider (1.8 m) in the picture from the orbit.
+            let o = editor_orbit(p);
+            let half = (ocw_render::camera::DEFAULT_FOV * 0.5).tan() * o.distance;
+            assert!(half * 2.0 > 1.9, "{p:?}");
+            assert!(o.yaw > 2.0, "in front");
+        }
     }
 
     #[test]
