@@ -436,6 +436,7 @@ mod tests {
         .insert_resource(crate::quality::QualityContext {
             api,
             device: DeviceInfo::default(),
+            vr: false,
         });
         app.update();
         app
