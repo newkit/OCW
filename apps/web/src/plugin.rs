@@ -92,6 +92,8 @@ impl Plugin for WebSessionPlugin {
         // server refuses them anyway.
         if self.config.remote.is_none() {
             app.add_systems(Startup, enable_dev_commands);
+        } else {
+            app.add_systems(Update, dev_from_server);
         }
         // The shared UI (spec §14 Phase 10, B6: the desktop's menus, time
         // and weather machines, events, collisions) reaches the session's
@@ -147,6 +149,19 @@ fn riding(session: Option<Res<Session>>, place: Option<Res<Place>>) -> bool {
 /// The local server allows dev commands (teleport …), as on the desktop.
 fn enable_dev_commands(mut console: ResMut<ConsoleState>) {
     console.permission = Permission::Dev;
+}
+
+/// A remote server that accepts dev commands (`ocw-server --dev-commands`,
+/// for tests; its welcome says so) allows them too.
+fn dev_from_server(session: Option<Res<Session>>, console: Option<ResMut<ConsoleState>>) {
+    let Some(mut console) = console else {
+        return;
+    };
+    if session.is_some_and(|s| s.0.client.dev_commands_allowed())
+        && console.permission < Permission::Dev
+    {
+        console.permission = Permission::Dev;
+    }
 }
 
 /// The frame's time into the session; the server's notices to the console.

@@ -163,6 +163,8 @@ pub struct Workshop {
     /// The mirror shows no reflection (low graphics quality,
     /// `workshop.mirror off`): the editor looks straight at the rider.
     pub front_view: bool,
+    /// The rider's height against the default (the face close-up's head).
+    pub rider_scale: f32,
 }
 
 impl Workshop {
@@ -172,7 +174,7 @@ impl Workshop {
         let bikes: Vec<String> = garage.bikes.iter().map(|b| b.id.clone()).collect();
         let stand = bikes.iter().position(|b| *b == garage.active).unwrap_or(0);
         let orbit = Orbit::default();
-        let at = Poses { layout }.pose(View::Overview, &orbit);
+        let at = Poses { layout, scale: 1.0 }.pose(View::Overview, &orbit);
         Self {
             bikes,
             stand,
@@ -188,6 +190,7 @@ impl Workshop {
             changed: false,
             dress: Dress::default(),
             front_view: false,
+            rider_scale: 1.0,
         }
     }
 
@@ -204,6 +207,37 @@ impl Workshop {
     fn dress_view(&self) -> View {
         View::Dress {
             front: self.front_view,
+            face: false,
+        }
+    }
+
+    /// The bare head at the mirror (spec §14 Phase 4, 4N Q28): while a
+    /// hair, facial-hair, face or glasses slot is chosen in the editor
+    /// (not the helmet's and the cap's: they show the helmet), the helmet
+    /// hangs on its hook.
+    pub fn helmet_off(&self) -> bool {
+        use picker::CharSlot as C;
+        matches!(self.view(), View::Dress { .. })
+            && matches!(
+                self.dress.slot(),
+                MirrorSlot::Char(
+                    C::Hair
+                        | C::HairColour
+                        | C::Moustache
+                        | C::Beard
+                        | C::Age
+                        | C::Glasses
+                        | C::Skin
+                )
+            )
+    }
+
+    /// The editor's view now: the face close-up while a picker of a head
+    /// slot is open (spec §14 Phase 4, 4N), else the whole rider.
+    fn dress_view_now(&self) -> View {
+        View::Dress {
+            front: self.front_view,
+            face: self.picker.is_some() && self.dress.slot().frames_face(),
         }
     }
 
@@ -239,6 +273,16 @@ impl Workshop {
     /// picker's focused free choice, and the worn kit's models with the
     /// focused kit row in its slot (the live preview).
     pub fn rider_look(&self, ctx: &Ctx) -> (ocw_core::Character, Vec<String>) {
+        self.rider_look_with(ctx, self.picker.as_ref().and_then(|p| p.focused()))
+    }
+
+    /// [`Self::rider_look`] with the picker's row `row` instead of the
+    /// focused one (the picture of each tile, spec §14 Phase 4, 4N).
+    pub fn rider_look_with(
+        &self,
+        ctx: &Ctx,
+        row: Option<&picker::Row>,
+    ) -> (ocw_core::Character, Vec<String>) {
         let mut character = ctx.character;
         let mut kit: Vec<(Slot, String)> = Slot::KIT
             .into_iter()
@@ -247,10 +291,10 @@ impl Workshop {
                 (!p.is_base()).then(|| (s, p.model.clone()))
             })
             .collect();
-        if let Some(p) = &self.picker {
-            if let Some(f) = p.preview_free() {
+        if let Some(row) = row {
+            if let Kind::Free(f) = row.kind {
                 character = f.apply(character);
-            } else if let Some(part) = p.preview().and_then(|id| ctx.cat.get(id))
+            } else if let Some(part) = row.part.as_deref().and_then(|id| ctx.cat.get(id))
                 && part.slot.is_kit()
             {
                 kit.retain(|(s, _)| *s != part.slot);
@@ -268,7 +312,11 @@ impl Workshop {
 
     /// The camera pose shown now.
     pub fn pose(&self, layout: &Layout) -> Pose {
-        let goal = Poses { layout }.pose(self.cam.view, &self.orbit);
+        let goal = Poses {
+            layout,
+            scale: self.rider_scale,
+        }
+        .pose(self.cam.view, &self.orbit);
         self.cam.pose(goal)
     }
 
@@ -430,6 +478,7 @@ impl Workshop {
 
     /// Applies the actions of one frame.
     pub fn update(&mut self, acts: &[Act], ctx: &Ctx) -> Vec<Out> {
+        self.rider_scale = ctx.character.scale();
         let mut out = Vec::new();
         for a in acts {
             if self.swap.is_some() {
@@ -458,6 +507,13 @@ impl Workshop {
             p.refresh(picker::rows(ctx.cat, ctx.garage, bike, p.slot));
         }
         self.hotspot = self.hotspot.min(ctx.anchors.len().saturating_sub(1));
+        // The editor frames the head while a head slot's picker is open.
+        if matches!(self.view(), View::Dress { .. }) {
+            let want = self.dress_view_now();
+            if want != self.view() {
+                self.go(want, ctx.layout);
+            }
+        }
         out
     }
 
@@ -649,6 +705,10 @@ impl Workshop {
                 Act::Row(i) if i < p.rows.len() => p.focus = i,
                 Act::RowClick(i) if i < p.rows.len() => {
                     p.focus = i;
+                    // A free choice's tile applies at once, as Confirm.
+                    if let Some(f) = p.preview_free() {
+                        return self.line(f.line());
+                    }
                     self.open_dialog(ctx);
                 }
                 Act::Confirm | Act::Action => {
@@ -1017,6 +1077,24 @@ pub(crate) mod tests {
             out
         }
 
+        /// `f` with the frame's context.
+        pub fn with_ctx<T>(&self, w: &Workshop, f: impl FnOnce(&Workshop, &Ctx) -> T) -> T {
+            let boxes = self.boxes(w);
+            let ctx = Ctx {
+                cat: ocw_assets::shipped::catalogue(),
+                garage: self.wallet.get("Ann").unwrap(),
+                balance: self.wallet.balance("Ann"),
+                layout: &self.layout,
+                size: Vec2::new(1920.0, 1080.0),
+                anchors: &self.anchors,
+                boxes: &boxes,
+                character: ocw_core::Character::default(),
+                look: ocw_core::RiderLook::default(),
+                rider_spots: &self.spots,
+            };
+            f(w, &ctx)
+        }
+
         pub fn ctx_points(&self, w: &Workshop) -> (Vec<Option<Vec2>>, Vec<Option<Rect>>) {
             let boxes = self.boxes(w);
             let ctx = Ctx {
@@ -1101,7 +1179,13 @@ pub(crate) mod tests {
         // Confirm at the mirror: the character editor (W4).
         let out = world.step(&mut w, &[Act::Confirm]);
         assert!(out.is_empty());
-        assert_eq!(w.view(), View::Dress { front: false });
+        assert_eq!(
+            w.view(),
+            View::Dress {
+                front: false,
+                face: false
+            }
+        );
         // Back: the corner; Back from a zone: the overview; Back there: leave.
         world.step(&mut w, &[Act::Back]);
         assert_eq!(w.view(), View::Mirror);
@@ -1115,6 +1199,77 @@ pub(crate) mod tests {
                 then: None
             }]
         );
+    }
+
+    /// The face close-up at the mirror (spec §14 Phase 4, 4N): a picker
+    /// of a head slot (helmet, glasses, hair, beard, age …, and the skin)
+    /// frames the head, the body's and the kit's below the head frame the
+    /// whole rider; closing the picker goes back to the whole rider.
+    #[test]
+    fn head_pickers_frame_the_face_in_the_mirror() {
+        let world = World::new();
+        let mut w = world.open();
+        world.step(&mut w, &[Act::Down, Act::Down, Act::Down]);
+        world.step(&mut w, &[Act::Confirm]);
+        world.settle(&mut w);
+        for (i, slot) in MirrorSlot::ALL.iter().enumerate() {
+            w.dress.slot = i;
+            if *slot == MirrorSlot::TryOn {
+                continue;
+            }
+            // The helmet off for the hair, the face and the glasses, on for
+            // the helmet's and the cap's own pickers and the rest (Q28).
+            let bare = matches!(
+                slot,
+                MirrorSlot::Char(
+                    picker::CharSlot::Glasses
+                        | picker::CharSlot::Hair
+                        | picker::CharSlot::HairColour
+                        | picker::CharSlot::Moustache
+                        | picker::CharSlot::Beard
+                        | picker::CharSlot::Age
+                        | picker::CharSlot::Skin
+                )
+            );
+            assert_eq!(w.helmet_off(), bare, "{slot:?}");
+            world.step(&mut w, &[Act::Confirm]);
+            assert!(w.picker.is_some(), "{slot:?}");
+            assert_eq!(w.helmet_off(), bare, "{slot:?} picker");
+            let face = matches!(
+                slot,
+                MirrorSlot::Kit(Slot::Helmet | Slot::Cap)
+                    | MirrorSlot::Char(
+                        picker::CharSlot::Glasses
+                            | picker::CharSlot::Hair
+                            | picker::CharSlot::HairColour
+                            | picker::CharSlot::Moustache
+                            | picker::CharSlot::Beard
+                            | picker::CharSlot::Age
+                            | picker::CharSlot::Skin
+                    )
+            );
+            assert_eq!(w.view(), View::Dress { front: false, face }, "{slot:?}");
+            world.settle(&mut w);
+            let pose = w.pose(&world.layout);
+            if face {
+                assert!(
+                    pose.fov < crate::workshop::camera::FOV_Y,
+                    "{slot:?}: closer"
+                );
+            }
+            // Back closes the picker: the whole rider again.
+            world.step(&mut w, &[Act::Back]);
+            assert!(w.picker.is_none(), "{slot:?}");
+            assert_eq!(
+                w.view(),
+                View::Dress {
+                    front: false,
+                    face: false
+                },
+                "{slot:?}"
+            );
+            world.settle(&mut w);
+        }
     }
 
     #[test]
@@ -1527,8 +1682,9 @@ pub(crate) mod tests {
         assert_eq!(stand_models(&world, &w), fitted, "cancel restores");
     }
 
-    /// The paint is tiles too, previewed on the frame; the kit and the
-    /// bench stay lists.
+    /// The paint is tiles too, previewed on the frame; the bench and the
+    /// jersey designer stay lists; the mirror's kit and character pickers
+    /// are tiles of the rider (spec §14 Phase 4, 4N).
     #[test]
     fn paint_tiles_preview_the_colour() {
         let world = World::new();
@@ -1548,12 +1704,97 @@ pub(crate) mod tests {
         world.step(&mut w, &[Act::Back]);
         assert_eq!(stand_models(&world, &w).1, before);
         let kit = Picker::kit(Slot::Helmet, Vec::new(), ocw_core::RiderLook::default());
-        assert!(!kit.tiles());
+        assert!(kit.tiles() && kit.of_the_rider());
         let mut catalogue = Picker::new(Slot::Frame, Vec::new());
         catalogue.bench = Some(bench::BenchPage::Top);
         assert!(!catalogue.tiles());
-        assert!(
-            !Picker::character(picker::CharSlot::Body, &ocw_core::Character::default()).tiles()
+        let body = Picker::character(picker::CharSlot::Body, &ocw_core::Character::default());
+        assert!(body.tiles() && body.of_the_rider());
+        let designer = Picker::designer(
+            super::super::designer::DesignPage::Jersey,
+            ocw_core::RiderLook::default(),
         );
+        assert!(!designer.tiles());
+    }
+
+    /// The mirror's pickers as tiles (spec §14 Phase 4, 4N), with every
+    /// input: the arrows (keyboard and pad: three columns) move the focus
+    /// over the hair styles and the rider shows the focused one at once;
+    /// the pointer's hover focuses and previews; Confirm and a click keep
+    /// a choice (one `character` line each); Back restores the saved look.
+    /// Each tile's look is the rider's with that row (the picture's key).
+    #[test]
+    fn the_mirror_picker_is_tiles_with_every_input() {
+        let world = World::new();
+        let mut w = world.open();
+        world.step(&mut w, &[Act::Down, Act::Down, Act::Down]);
+        world.step(&mut w, &[Act::Confirm]);
+        world.settle(&mut w);
+        let hair = MirrorSlot::ALL
+            .iter()
+            .position(|s| *s == MirrorSlot::Char(picker::CharSlot::Hair))
+            .unwrap();
+        w.dress.slot = hair;
+        world.step(&mut w, &[Act::Confirm]);
+        let ctx_char = ocw_core::Character::default();
+        let shown = |w: &Workshop| world.with_ctx(w, |w, ctx| w.rider_look(ctx).0.hair);
+        let p = w.picker.as_ref().unwrap();
+        assert!(p.tiles() && p.of_the_rider());
+        assert_eq!(p.rows.len(), ocw_core::character::HAIR_STYLES.len());
+        assert_eq!(p.focus, ctx_char.hair as usize, "the current style");
+        // Each tile's own look: that row's style.
+        for (i, r) in p.rows.iter().enumerate() {
+            let c = world.with_ctx(&w, |w, ctx| w.rider_look_with(ctx, Some(r)).0);
+            assert_eq!(c.hair as usize, i);
+        }
+        // Keyboard / pad arrows on the grid.
+        world.step(&mut w, &[Act::Right]);
+        assert_eq!(w.picker.as_ref().unwrap().focus, 1);
+        assert_eq!(shown(&w), 1, "previewed at once");
+        world.step(&mut w, &[Act::Down]);
+        assert_eq!(
+            w.picker.as_ref().unwrap().focus,
+            1 + ocw_client::part_tiles::COLUMNS
+        );
+        world.step(&mut w, &[Act::Left, Act::Up]);
+        assert_eq!(w.picker.as_ref().unwrap().focus, 0);
+        // Hover: focus and preview.
+        world.step(&mut w, &[Act::Row(9)]);
+        assert_eq!(shown(&w), 9);
+        // Confirm keeps it.
+        let out = world.step(&mut w, &[Act::Confirm]);
+        assert_eq!(out.len(), 1);
+        assert!(
+            matches!(&out[0], Out::Line(l) if l.starts_with("character --hair")),
+            "{out:?}"
+        );
+        // A click on a tile keeps that one.
+        let out = world.step(&mut w, &[Act::RowClick(5)]);
+        assert_eq!(w.picker.as_ref().unwrap().focus, 5);
+        assert!(
+            matches!(&out[0], Out::Line(l) if l.starts_with("character --hair")),
+            "{out:?}"
+        );
+        // Back: the picker closes, the saved look shows again.
+        world.step(&mut w, &[Act::Right, Act::Back]);
+        assert!(w.picker.is_none());
+        assert_eq!(shown(&w), ctx_char.hair, "Back restores");
+        // The helmets' picker is tiles too: each row its helmet on the rider.
+        let helmet = MirrorSlot::ALL
+            .iter()
+            .position(|s| *s == MirrorSlot::Kit(Slot::Helmet))
+            .unwrap();
+        w.dress.slot = helmet;
+        world.step(&mut w, &[Act::Confirm]);
+        let p = w.picker.as_ref().unwrap();
+        assert!(p.tiles());
+        let kits: Vec<Vec<String>> = p
+            .rows
+            .iter()
+            .filter(|r| r.part.is_some())
+            .map(|r| world.with_ctx(&w, |w, ctx| w.rider_look_with(ctx, Some(r)).1))
+            .collect();
+        assert!(kits.len() > 1);
+        assert!(kits.windows(2).any(|k| k[0] != k[1]), "{kits:?}");
     }
 }

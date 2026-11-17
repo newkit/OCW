@@ -1,0 +1,7 @@
+[Unit]
+Description=OCW build dashboard: keep the open questions current (fast-forward the main checkout, lint the questions)
+
+[Service]
+Type=oneshot
+Environment=TMPDIR=%h/tmp
+ExecStart=/usr/bin/python3 @REPO@/tools/build-dashboard/spec_questions.py refresh --repo @REPO@

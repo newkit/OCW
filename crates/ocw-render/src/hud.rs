@@ -34,6 +34,7 @@ impl Plugin for HudPlugin {
             .init_resource::<HudGpsLine>()
             .init_resource::<LookAhead>()
             .init_resource::<AppKeys>()
+            .init_resource::<TopPanelWidth>()
             .add_systems(Startup, (spawn_hud, spawn_recording))
             .add_systems(
                 Update,
@@ -195,6 +196,7 @@ fn fit_top_panel(
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     right: Query<&ComputedNode, With<HudTopRight>>,
     mut panel: Query<&mut Node, With<HudTopPanel>>,
+    mut width: ResMut<TopPanelWidth>,
 ) {
     let (Ok(w), Ok(r)) = (windows.single(), right.single()) else {
         return;
@@ -204,6 +206,9 @@ fn fit_top_panel(
         r.size().x,
         r.inverse_scale_factor(),
     );
+    // Not wider than the window either (the panel's 94 vw).
+    let max = max.min(w.resolution.physical_width() as f32 * r.inverse_scale_factor() * 0.94);
+    width.set_if_neq(TopPanelWidth(max.floor()));
     for mut n in &mut panel {
         let want = Val::Px(max.floor());
         if n.max_width != want {
@@ -411,7 +416,7 @@ fn spawn_hud(mut commands: Commands) {
                 // up); Bevy wraps text that is still too long. Narrowed to
                 // the room left of the top-right column ([`fit_top_panel`]).
                 max_width: Val::Vw(94.0),
-                padding: UiRect::all(px(10)),
+                padding: UiRect::all(px(PANEL_PAD)),
                 flex_direction: FlexDirection::Column,
                 row_gap: px(4),
                 border_radius: BorderRadius::all(px(6)),
@@ -425,7 +430,7 @@ fn spawn_hud(mut commands: Commands) {
             hud.spawn((
                 Text::new(""),
                 TextFont {
-                    font_size: 26.0.into(),
+                    font_size: BIG_FONT.into(),
                     ..default()
                 },
                 TextColor(Color::WHITE),
@@ -936,51 +941,123 @@ const SMALL_FONT: f32 = 15.0;
 const SMALL_CHAR_W: f32 = SMALL_FONT * 0.6;
 
 /// Breaks each line of `text` that is longer than `max_chars` at its
-/// " | " separators (then at ", "), greedily, so the HUD stays inside the
-/// window; a single piece longer than `max_chars` stays whole (Bevy wraps
-/// it at word boundaries). Continuation lines start with no separator.
+/// " | " separators (then at ", ", then between words), greedily, so the
+/// HUD stays inside its panel; a word longer than `max_chars` is cut.
+/// Continuation lines start with no separator. Every line of the result
+/// fits, so Bevy never wraps it again (bug 2026-11-17: a line Bevy
+/// wrapped by itself ran below the panel's bottom edge).
 pub fn wrap_hud_lines(text: &str, max_chars: usize) -> String {
-    fn wrap(line: &str, sep: &str, max: usize, out: &mut Vec<String>) {
-        let mut cur = String::new();
-        for piece in line.split(sep) {
-            let len = |s: &str| s.chars().count();
-            if !cur.is_empty() && len(&cur) + len(sep) + len(piece) > max {
-                out.push(std::mem::take(&mut cur));
-            }
-            if cur.is_empty() {
-                cur.push_str(piece);
-            } else {
-                cur.push_str(sep);
-                cur.push_str(piece);
+    wrap_with(text, max_chars, &[" | ", ", "])
+}
+
+/// The main line broken between its fields (three spaces apart), then
+/// between words, at `max_chars`.
+pub fn wrap_main_line(text: &str, max_chars: usize) -> String {
+    wrap_with(text, max_chars, &["   "])
+}
+
+fn len(s: &str) -> usize {
+    s.chars().count()
+}
+
+/// Joins the pieces of `line` split at `sep` greedily into lines of at
+/// most `max` characters (a longer piece stays whole).
+fn join_greedy(line: &str, sep: &str, max: usize, out: &mut Vec<String>) {
+    let mut cur = String::new();
+    for piece in line.split(sep) {
+        if !cur.is_empty() && len(&cur) + len(sep) + len(piece) > max {
+            out.push(std::mem::take(&mut cur));
+        }
+        if cur.is_empty() {
+            cur.push_str(piece);
+        } else {
+            cur.push_str(sep);
+            cur.push_str(piece);
+        }
+    }
+    out.push(cur);
+}
+
+/// `line` in lines of at most `max` characters: split at the first of
+/// `seps`, the pieces still too long at the next, at last between words
+/// and inside a too long word.
+fn wrap_piece(line: &str, max: usize, seps: &[&str], out: &mut Vec<String>) {
+    if len(line) <= max {
+        out.push(line.to_string());
+        return;
+    }
+    let mut parts = Vec::new();
+    match seps.split_first() {
+        Some((sep, rest)) => {
+            join_greedy(line, sep, max, &mut parts);
+            for part in parts {
+                wrap_piece(&part, max, rest, out);
             }
         }
-        out.push(cur);
+        None => {
+            join_greedy(line.trim(), " ", max, &mut parts);
+            for part in parts {
+                let chars: Vec<char> = part.chars().collect();
+                out.extend(chars.chunks(max).map(|c| c.iter().collect::<String>()));
+            }
+        }
     }
+}
+
+fn wrap_with(text: &str, max_chars: usize, seps: &[&str]) -> String {
     let max = max_chars.max(1);
     let mut out = Vec::new();
     for line in text.lines() {
-        if line.chars().count() <= max {
-            out.push(line.to_string());
-            continue;
-        }
-        let mut parts = Vec::new();
-        wrap(line, " | ", max, &mut parts);
-        for part in parts {
-            if part.chars().count() > max {
-                wrap(&part, ", ", max, &mut out);
-            } else {
-                out.push(part);
-            }
-        }
+        wrap_piece(line, max, seps, &mut out);
     }
     out.join("\n")
 }
 
 /// Characters of the small HUD font that fit in a window `width` logical
-/// pixels wide (panel margins and padding taken off).
+/// pixels wide (panel margins and padding taken off) – before the panel's
+/// own width is known ([`TopPanelWidth`]).
 fn small_chars_for(width: f32) -> usize {
     ((width * 0.94 - 2.0 * 10.0 - 4.0) / SMALL_CHAR_W).max(10.0) as usize
 }
+
+/// Font size of the big HUD line.
+const BIG_FONT: f32 = 26.0;
+/// The top panel's padding (px).
+const PANEL_PAD: f32 = 10.0;
+/// Bevy's line height (of the font size).
+const LINE_HEIGHT: f32 = 1.2;
+
+/// Characters of a monospaced line of `font` px that fit in the top panel
+/// `panel_px` wide (its padding taken off, one character to spare).
+pub fn panel_chars(panel_px: f32, font: f32) -> usize {
+    (((panel_px - 2.0 * PANEL_PAD) / (font * 0.6)).floor() as usize)
+        .saturating_sub(1)
+        .max(10)
+}
+
+/// The top panel's text broken for a panel `panel_px` wide (UI px): the
+/// big line and the small lines, each line inside the panel.
+pub fn top_panel_text(panel_px: f32, big: &str, small: &str) -> (String, String) {
+    (
+        wrap_main_line(big, panel_chars(panel_px, BIG_FONT)),
+        wrap_hud_lines(small, panel_chars(panel_px, SMALL_FONT)),
+    )
+}
+
+/// The top panel's height (UI px) with these (broken) lines: it grows with
+/// them (Bevy lays them out at [`LINE_HEIGHT`]).
+pub fn top_panel_height(big: &str, small: &str) -> f32 {
+    let lines = |t: &str| t.lines().count().max(1) as f32;
+    2.0 * PANEL_PAD
+        + lines(big) * BIG_FONT * LINE_HEIGHT
+        + 4.0
+        + lines(small) * SMALL_FONT * LINE_HEIGHT
+}
+
+/// The width the top panel may take now (UI px; [`fit_top_panel`]), 0
+/// before the first layout.
+#[derive(Resource, Default, Debug, Clone, Copy, PartialEq)]
+pub struct TopPanelWidth(pub f32);
 
 /// The compass point of a heading (degrees, 0 = north).
 pub fn compass(deg: f64) -> &'static str {
@@ -1045,6 +1122,7 @@ fn update_hud(
     ahead: Res<LookAhead>,
     units: Res<Units>,
     app_keys: Res<AppKeys>,
+    panel: Res<TopPanelWidth>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut big: Query<&mut Text, (With<HudText>, Without<HudSmallText>)>,
     mut small: Query<&mut Text, (With<HudSmallText>, Without<HudText>)>,
@@ -1064,9 +1142,6 @@ fn update_hud(
             Some(s) => format!("{line}   {}", s.hud),
             None => line,
         };
-        if big.0 != line {
-            big.0 = line;
-        }
         let mut lines = format!(
             "{}{} | {}",
             format_time(view.elapsed_s),
@@ -1077,8 +1152,10 @@ fn update_hud(
             lines.push('\n');
             lines.push_str(&view.status);
         }
-        let width = windows.single().map_or(1280.0, |w| w.width());
-        let lines = wrap_hud_lines(&lines, small_chars_for(width));
+        let (line, lines) = panel_text(panel_px(&panel, &windows), &line, &lines);
+        if big.0 != line {
+            big.0 = line;
+        }
         if small.0 != lines {
             small.0 = lines;
         }
@@ -1115,9 +1192,6 @@ fn update_hud(
         Some(s) => format!("{line}   {}", s.hud),
         None => line,
     };
-    if big.0 != line {
-        big.0 = line;
-    }
     let (place, keys) = if let Some(route) = &view.route_status {
         (
             format!("{route}: {}", track.name_at(local.state.distance)),
@@ -1146,10 +1220,36 @@ fn update_hud(
         lines.push('\n');
         lines.push_str(&view.status);
     }
-    let width = windows.single().map_or(1280.0, |w| w.width());
-    let lines = wrap_hud_lines(&lines, small_chars_for(width));
+    let (line, lines) = panel_text(panel_px(&panel, &windows), &line, &lines);
+    if big.0 != line {
+        big.0 = line;
+    }
     if small.0 != lines {
         small.0 = lines;
+    }
+}
+
+/// The top panel's width now (UI px): as [`fit_top_panel`] set it
+/// (`Ok`), or before the first layout only the window's width (`Err`).
+fn panel_px(
+    panel: &TopPanelWidth,
+    windows: &Query<&Window, With<bevy::window::PrimaryWindow>>,
+) -> Result<f32, f32> {
+    if panel.0 > 0.0 {
+        Ok(panel.0)
+    } else {
+        Err(windows.single().map_or(1280.0, |w| w.width()))
+    }
+}
+
+/// The big and the small lines broken for the panel.
+fn panel_text(width: Result<f32, f32>, big: &str, small: &str) -> (String, String) {
+    match width {
+        Ok(px) => top_panel_text(px, big, small),
+        Err(window) => (
+            big.to_string(),
+            wrap_hud_lines(small, small_chars_for(window)),
+        ),
     }
 }
 
@@ -1540,8 +1640,10 @@ mod tests {
             w("up: faster, down: stop, A: autodrive | F11: screen", 24),
             "up: faster, down: stop\nA: autodrive\nF11: screen"
         );
-        // Line breaks of the input are kept; an unbreakable piece stays whole.
-        assert_eq!(w("x\nabcdefghij", 4), "x\nabcdefghij");
+        // Line breaks of the input are kept; then words, a too long word
+        // is cut (bug 2026-11-17: Bevy wrapped what was left by itself).
+        assert_eq!(w("x\nabcdefghij", 4), "x\nabcd\nefgh\nij");
+        assert_eq!(w("one two three", 9), "one two\nthree");
         // Nothing longer than the limit where a break is possible.
         let keys = "Vaduz-Malbun: Landstrasse | 12.34 km | 0:42:00 | riders: 4\nup: faster, down: stop, left/right: steer, A: autodrive, W: wild | mouse: camera, C: camera reset, R: restart, V: video | F11: screen | ` or F12: console";
         for max in [40, 80, 120] {
@@ -1553,8 +1655,109 @@ mod tests {
         assert_eq!(w(keys, 1000), keys);
     }
 
+    /// Regression (2026-11-17, the browser at 1280×720: the "Virtual
+    /// trainer …" line ran below the top panel's bottom edge): at every
+    /// 16:9 size down to 1280×720 and at 4:3, with the HUD at 100 – 150 %,
+    /// in both apps (their key lines), with the long weather main line and
+    /// a long device status, every broken line fits the panel's width (so
+    /// Bevy never wraps it again and the panel grows with every line), and
+    /// the panel stays in the upper part of the window, clear of the
+    /// top-right column.
+    #[test]
+    fn the_top_panel_fits_every_window() {
+        let big = format!(
+            "{}   clear 18 °C   ↗ crosswind from the left 7 km/h   ☼ 09:44",
+            super::main_line(
+                200.0,
+                20.8,
+                Some(80.0),
+                7.7,
+                Some(8.3),
+                Some(142.0),
+                Units::Metric
+            )
+        );
+        let status = "Virtual trainer 200 W (no Web Bluetooth here) | trainer SIM +1.9 % (difficulty 50 %) | autodrive | gravel";
+        let keys = [
+            DESKTOP_KEYS,
+            "mouse: camera, C: camera reset | ` or F12: console",
+        ];
+        let route_keys = "up: faster, down: stop, left/right: steer or choose the exit (another than the route's leaves it), Q/E: exit, J: rejoin the route, U: U-turn, A: autodrive";
+        let sizes = [
+            (1280.0f32, 720.0f32),
+            (1366.0, 768.0),
+            (1600.0, 900.0),
+            (1920.0, 1080.0),
+            (2560.0, 1440.0),
+            (3840.0, 2160.0),
+            (1024.0, 768.0),
+            (1280.0, 960.0),
+            (1600.0, 1200.0),
+        ];
+        // The top-right column: the timestamp (14 px font, padding 8).
+        let stamp = 25.0 * 14.0 * 0.6 + 16.0;
+        for (w, h) in sizes {
+            for scale in [1.0f32, 1.25, 1.5] {
+                let panel = top_panel_max_px(w, stamp * scale, 1.0 / scale).min(w / scale * 0.94);
+                for app in keys {
+                    for k in [
+                        "up: faster, down: stop, left/right: steer, A: autodrive, W: wild",
+                        route_keys,
+                    ] {
+                        let small = format!(
+                            "Test Hills | 2.01 km | 0:00:24 | riders: 3\n{k} | {app}\n{status}"
+                        );
+                        let (b, sm) = top_panel_text(panel, &big, &small);
+                        let what = format!("{w}×{h} at {scale}: {app}");
+                        let fits = |t: &str, font: f32| {
+                            t.lines().all(|l| {
+                                l.chars().count() as f32 * font * 0.6 <= panel - 2.0 * PANEL_PAD
+                            })
+                        };
+                        assert!(fits(&b, BIG_FONT), "{what}: {b}");
+                        assert!(fits(&sm, SMALL_FONT), "{what}: {sm}");
+                        // Nothing lost or reordered, only broken.
+                        let words = |t: &str| t.split_whitespace().collect::<String>();
+                        assert_eq!(words(&b), words(&big), "{what}");
+                        let bare = |t: &str| words(t).replace(['|', ','], "");
+                        assert_eq!(bare(&sm), bare(&small), "{what}");
+                        assert!(sm.lines().last().unwrap().ends_with("gravel"), "{what}");
+                        // On screen and, at 100 %, in the upper half (a
+                        // larger HUD on a small window takes more).
+                        let height = (TOP_MARGIN_PX + top_panel_height(&b, &sm)) * scale;
+                        let room = if scale < 1.1 {
+                            Some(0.55)
+                        } else if scale < 1.3 {
+                            Some(0.75)
+                        } else {
+                            (w >= 1280.0).then_some(1.0)
+                        };
+                        if let Some(room) = room {
+                            assert!(height < h * room, "{what}: {height} px of {h}");
+                        }
+                    }
+                }
+            }
+        }
+        // The case of the picture: the browser at 1280×720.
+        let panel = top_panel_max_px(1280.0, stamp, 1.0);
+        let small = format!(
+            "Test Hills | 2.01 km | 0:00:24 | riders: 3\nup: faster, down: stop, left/right: steer, A: autodrive, W: wild | {} \n{status}",
+            keys[1]
+        );
+        let (b, sm) = top_panel_text(panel, &big, &small);
+        assert!(
+            b.lines().count() >= 2 && sm.lines().count() >= 4,
+            "{b}\n{sm}"
+        );
+        assert!(top_panel_height(&b, &sm) > 2.0 * PANEL_PAD + 6.0 * 18.0);
+    }
+
     #[test]
     fn hud_width_in_characters() {
+        // The panel's width: its padding off, one character to spare.
+        assert_eq!(panel_chars(920.0, SMALL_FONT), 99);
+        assert_eq!(panel_chars(100.0, BIG_FONT), 10);
         // 800x600: about 80 characters of the small font.
         assert!((75..=85).contains(&super::small_chars_for(800.0)));
         assert!(super::small_chars_for(2560.0) > 250);

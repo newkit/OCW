@@ -18,7 +18,7 @@ use ocw_world::obstacles::{LineObstacle, ObstacleKind, PointObstacle};
 use ocw_world::{TileKey, WorldPackage};
 
 use crate::console::{ConsoleAppExt, ConsoleCommand, Permission};
-use crate::package::{Keep, MeshArrays};
+use crate::package::{Keep, MeshArrays, TileGround};
 
 /// Obstacles are drawn this far from the camera (m).
 pub const DRAW_M: f32 = 350.0;
@@ -203,8 +203,9 @@ fn prism(
 }
 
 /// The ground under a point: the road surface on a road barrier, else the
-/// terrain (or the road's height where the terrain is missing).
-fn foot(pkg: &WorldPackage, x: f32, z: f32, on_road: bool) -> f32 {
+/// terrain as the tile draws it (`ground`: incl. the junction lowering,
+/// spec §4.6.1; the road's height where the terrain is missing).
+fn foot(pkg: &WorldPackage, ground: &TileGround, x: f32, z: f32, on_road: bool) -> f32 {
     let (xf, zf) = (f64::from(x), f64::from(z));
     let road = pkg
         .road_heights(xf, zf)
@@ -212,24 +213,27 @@ fn foot(pkg: &WorldPackage, x: f32, z: f32, on_road: bool) -> f32 {
         .fold(None::<f64>, |m, h| Some(m.map_or(h, |m| m.max(h))));
     match (on_road, road) {
         (true, Some(r)) => (r + ocw_world::package::ROAD_LIFT_M) as f32,
-        _ => pkg
-            .surface_height(xf, zf)
-            .or(road)
-            .map_or(0.0, |h| h as f32),
+        _ => ground.height(xf, zf).or(road).map_or(0.0, |h| h as f32),
     }
 }
 
 /// A point obstacle's mesh.
-fn point_mesh(m: &mut MeshArrays, pkg: &WorldPackage, p: &PointObstacle, c: &Palette) {
+fn point_mesh(
+    m: &mut MeshArrays,
+    pkg: &WorldPackage,
+    ground: &TileGround,
+    p: &PointObstacle,
+    c: &Palette,
+) {
     let on_road = p.road_barrier();
-    let y = foot(pkg, p.pos[0], p.pos[1], on_road);
+    let y = foot(pkg, ground, p.pos[0], p.pos[1], on_road);
     let at = [p.pos[0], y, p.pos[1]];
     let h = p.height_m.max(0.2);
     // Across the way the barrier stands on.
     let (ax, az) = (-p.angle.sin(), p.angle.cos());
     let across = |w: f32| {
         let q = [at[0] + ax * w, at[2] + az * w];
-        [q[0], foot(pkg, q[0], q[1], on_road), q[1]]
+        [q[0], foot(pkg, ground, q[0], q[1], on_road), q[1]]
     };
     let span = if p.width_m > 0.5 { p.width_m } else { 3.0 };
     match p.kind {
@@ -272,7 +276,7 @@ fn point_mesh(m: &mut MeshArrays, pkg: &WorldPackage, p: &PointObstacle, c: &Pal
                 let base = [at[0] + ux * off, at[2] + uz * off];
                 let q = |w: f32| {
                     let q = [base[0] + ax * w, base[1] + az * w];
-                    [q[0], foot(pkg, q[0], q[1], on_road), q[1]]
+                    [q[0], foot(pkg, ground, q[0], q[1], on_road), q[1]]
                 };
                 let (a, b) = (q(from), q(to));
                 beam(m, a, b, 0.03, h - 0.06, h, c.steel);
@@ -285,11 +289,17 @@ fn point_mesh(m: &mut MeshArrays, pkg: &WorldPackage, p: &PointObstacle, c: &Pal
 }
 
 /// A line obstacle's mesh (per segment, feet on the terrain).
-fn line_mesh(m: &mut MeshArrays, pkg: &WorldPackage, l: &LineObstacle, c: &Palette) {
-    let ground = |p: [f32; 2]| [p[0], foot(pkg, p[0], p[1], false), p[1]];
+fn line_mesh(
+    m: &mut MeshArrays,
+    pkg: &WorldPackage,
+    ground: &TileGround,
+    l: &LineObstacle,
+    c: &Palette,
+) {
+    let on_ground = |p: [f32; 2]| [p[0], foot(pkg, ground, p[0], p[1], false), p[1]];
     let h = l.height_m.max(0.3);
     for w in l.points.windows(2) {
-        let (a, b) = (ground(w[0]), ground(w[1]));
+        let (a, b) = (on_ground(w[0]), on_ground(w[1]));
         let len = (b[0] - a[0]).hypot(b[2] - a[2]);
         match l.kind {
             ObstacleKind::Wall => beam(m, a, b, 0.2, -0.3, h, c.stone),
@@ -298,7 +308,7 @@ fn line_mesh(m: &mut MeshArrays, pkg: &WorldPackage, l: &LineObstacle, c: &Palet
                 let posts = (len / 2.5).ceil().max(1.0) as usize;
                 for k in 0..=posts {
                     let t = k as f32 / posts as f32;
-                    let q = ground([
+                    let q = on_ground([
                         w[0][0] + (w[1][0] - w[0][0]) * t,
                         w[0][1] + (w[1][1] - w[0][1]) * t,
                     ]);
@@ -312,7 +322,7 @@ fn line_mesh(m: &mut MeshArrays, pkg: &WorldPackage, l: &LineObstacle, c: &Palet
                 let posts = (len / 4.0).ceil().max(1.0) as usize;
                 for k in 0..=posts {
                     let t = k as f32 / posts as f32;
-                    let q = ground([
+                    let q = on_ground([
                         w[0][0] + (w[1][0] - w[0][0]) * t,
                         w[0][1] + (w[1][1] - w[0][1]) * t,
                     ]);
@@ -328,7 +338,12 @@ fn line_mesh(m: &mut MeshArrays, pkg: &WorldPackage, l: &LineObstacle, c: &Palet
 
 /// The obstacle meshes of tile `key`: per chunk the road barriers and the
 /// rest, only what `keep` accepts (by the first point).
-pub fn tile_obstacle_meshes(pkg: &WorldPackage, key: TileKey, keep: Keep) -> TileObstacleMeshes {
+pub fn tile_obstacle_meshes(
+    pkg: &WorldPackage,
+    key: TileKey,
+    keep: Keep,
+    ground: &TileGround,
+) -> TileObstacleMeshes {
     let Some(t) = pkg.obstacles.as_ref().and_then(|o| o.tiles.get(&key)) else {
         return TileObstacleMeshes::default();
     };
@@ -357,14 +372,14 @@ pub fn tile_obstacle_meshes(pkg: &WorldPackage, key: TileKey, keep: Keep) -> Til
         } else {
             &mut rest
         };
-        point_mesh(&mut target[chunk_of(p.pos)], pkg, p, &colours);
+        point_mesh(&mut target[chunk_of(p.pos)], pkg, ground, p, &colours);
     }
     for l in t
         .lines
         .iter()
         .filter(|l| l.points.first().is_some_and(|p| kept(*p)))
     {
-        line_mesh(&mut rest[chunk_of(l.points[0])], pkg, l, &colours);
+        line_mesh(&mut rest[chunk_of(l.points[0])], pkg, ground, l, &colours);
     }
     let mut chunks = Vec::new();
     for (mesh, is_road) in road
@@ -540,7 +555,8 @@ mod tests {
     #[test]
     fn road_barriers_and_the_rest_are_separate_chunks_on_the_ground() {
         let pkg = package();
-        let mut m = tile_obstacle_meshes(&pkg, TileKey { x: 0, z: 0 }, None);
+        let ground = TileGround::new(&pkg, TileKey { x: 0, z: 0 }, None);
+        let mut m = tile_obstacle_meshes(&pkg, TileKey { x: 0, z: 0 }, None, &ground);
         // Back to package metres (the meshes are relative to their origin).
         for c in &mut m.chunks {
             assert_eq!(c.mesh.positions[0], [0.0; 3]);
@@ -579,7 +595,123 @@ mod tests {
         );
         // Kept out: nothing of a tile the keep filter refuses.
         let none: &(dyn Fn([f64; 2]) -> bool + Sync) = &|_| false;
-        assert!(tile_obstacle_meshes(&pkg, TileKey { x: 0, z: 0 }, Some(none)).is_empty());
+        assert!(tile_obstacle_meshes(&pkg, TileKey { x: 0, z: 0 }, Some(none), &ground).is_empty());
+    }
+
+    // --- Posts on the drawn ground (spec §4.6.1, 2026-11-17) ---------------
+
+    /// A tile on a 10 m terrain grid with the ground `height(i, k)` and
+    /// wooden posts (not on a road) every 3 m over `area` (x0, z0, x1, z1).
+    fn posts_tile(height: impl Fn(u32, u32) -> f32, area: [f32; 4]) -> WorldPackage {
+        let mut pkg = package();
+        let n = 101u32;
+        pkg.samples = n;
+        let key = TileKey { x: 0, z: 0 };
+        pkg.tiles.get_mut(&key).unwrap().heights =
+            (0..n * n).map(|v| height(v % n, v / n)).collect();
+        let mut points = Vec::new();
+        let mut z = area[1];
+        while z <= area[3] {
+            let mut x = area[0];
+            while x <= area[2] {
+                points.push(PointObstacle {
+                    kind: ObstacleKind::Post,
+                    flags: 0,
+                    pos: [x, z],
+                    angle: 0.0,
+                    width_m: 0.0,
+                    height_m: 1.2,
+                });
+                x += 3.0;
+            }
+            z += 3.0;
+        }
+        let t = pkg.obstacles.as_mut().unwrap().tiles.get_mut(&key).unwrap();
+        t.points = points;
+        t.lines.clear();
+        pkg
+    }
+
+    /// Each post's foot (its lowest vertex) against the drawn ground (the
+    /// tile's terrain mesh after the junction lowering) at the post: below
+    /// it (the post sinks in), but not deeper than half a metre. Returns
+    /// the number of posts checked.
+    fn post_feet_on_the_drawn_ground(pkg: &WorldPackage) -> usize {
+        let key = TileKey { x: 0, z: 0 };
+        let m = crate::package::build_tile_meshes(pkg, key).unwrap();
+        let ground = TileGround::new(pkg, key, Some(&m.terrain));
+        let verts: Vec<[f32; 3]> = m
+            .obstacles
+            .chunks
+            .iter()
+            .flat_map(|c| {
+                let o = c.origin;
+                c.mesh
+                    .positions
+                    .iter()
+                    .map(move |p| [p[0] + o[0], p[1] + o[1], p[2] + o[2]])
+            })
+            .collect();
+        let posts = &pkg.obstacles.as_ref().unwrap().tiles[&key].points;
+        for p in posts {
+            let foot = verts
+                .iter()
+                .filter(|v| (v[0] - p.pos[0]).hypot(v[2] - p.pos[1]) < 0.2)
+                .map(|v| v[1])
+                .fold(f32::MAX, f32::min);
+            let g = ground
+                .height(f64::from(p.pos[0]), f64::from(p.pos[1]))
+                .unwrap() as f32;
+            assert!(
+                foot <= g - 0.1 && foot >= g - 0.5,
+                "post at {:?}: foot {foot:.2}, drawn ground {g:.2}",
+                p.pos
+            );
+        }
+        posts.len()
+    }
+
+    /// Posts stand on the drawn terrain on terrace edges (the cells
+    /// twisted: one corner metres above the others).
+    #[test]
+    fn posts_stand_on_the_drawn_ground_on_terrace_edges() {
+        let terraces = |i: u32, k: u32| 300.0 + 4.0 * ((i * 7 + k * 13) % 5) as f32;
+        let pkg = posts_tile(terraces, [101.0, 101.0, 199.0, 199.0]);
+        assert!(post_feet_on_the_drawn_ground(&pkg) > 1_000);
+    }
+
+    /// Regression (2026-11-17): next to a junction the renderer lowers the
+    /// terrain under the side road's blend (`junction_mesh::lower_terrain`);
+    /// the posts there stand on the lowered ground. Before, they stood on
+    /// the package's terrain and floated over the lowered one.
+    #[test]
+    fn posts_follow_the_ground_lowered_at_a_junction() {
+        use ocw_world::graph::RoadClass;
+        use ocw_world::junction::fixtures::t_junction;
+        let mut pkg = posts_tile(
+            |_, k| {
+                let z = k as f32 * 10.0;
+                if z > 3.75 { 0.2 * z - 0.05 } else { -0.05 }
+            },
+            [1.0, 1.0, 40.0, 130.0],
+        );
+        pkg.graph = Some(t_junction(RoadClass::Secondary, 0.0, 0.2));
+        let key = TileKey { x: 0, z: 0 };
+        let m = crate::package::build_tile_meshes(&pkg, key).unwrap();
+        // The renderer lowered the ground under some of the posts.
+        let lowest = pkg.obstacles.as_ref().unwrap().tiles[&key]
+            .points
+            .iter()
+            .map(|p| {
+                let (x, z) = (f64::from(p.pos[0]), f64::from(p.pos[1]));
+                let drawn = TileGround::new(&pkg, key, Some(&m.terrain))
+                    .height(x, z)
+                    .unwrap();
+                pkg.surface_height(x, z).unwrap() - drawn
+            })
+            .fold(0.0, f64::max);
+        assert!(lowest > 0.3, "lowered by {lowest:.2} m under the posts");
+        assert!(post_feet_on_the_drawn_ground(&pkg) > 100);
     }
 
     #[test]

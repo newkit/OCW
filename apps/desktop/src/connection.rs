@@ -63,6 +63,7 @@ impl Plugin for ConnectionPlugin {
             .init_resource::<HostStart>()
             .init_resource::<Replay>()
             .add_systems(PreUpdate, (poll_server, link_status).chain())
+            .add_systems(Update, dev_from_server)
             .add_systems(FixedUpdate, (step_server, predict).chain())
             .add_systems(
                 Update,
@@ -410,6 +411,16 @@ pub struct Link {
     server: Mutex<ServerLink>,
 }
 
+impl Link {
+    /// A network link to a remote game server.
+    fn is_remote(&self) -> bool {
+        matches!(
+            *self.server.lock().expect("not poisoned"),
+            ServerLink::Remote(_)
+        )
+    }
+}
+
 /// The remote link's HUD line ([`ServerLink::hud_line`]), updated every frame.
 #[derive(Resource, Default)]
 pub struct LinkNotice(pub Option<String>);
@@ -426,6 +437,25 @@ impl Link {
 
 #[derive(Resource)]
 pub struct ClientState(pub ClientCore);
+
+/// A remote server that accepts dev commands (`ocw-server --dev-commands`,
+/// for tests; its welcome says so) allows the dev console commands, as the
+/// local server does.
+fn dev_from_server(
+    client: Option<Res<ClientState>>,
+    link: Option<Res<Link>>,
+    console: Option<ResMut<ConsoleState>>,
+) {
+    let Some(mut console) = console else {
+        return;
+    };
+    if link.is_some_and(|l| l.is_remote())
+        && client.is_some_and(|c| c.0.dev_commands_allowed())
+        && console.permission < Permission::Dev
+    {
+        console.permission = Permission::Dev;
+    }
+}
 
 /// Where time-trial ghosts are kept (`None`: nowhere, e.g. in tests).
 #[derive(Resource)]

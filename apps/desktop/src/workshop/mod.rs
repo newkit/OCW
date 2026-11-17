@@ -44,7 +44,7 @@ use ocw_core::{ProfileId, Rgb, RiderLook};
 use ocw_render::RideView;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
 use ocw_render::menu::InputContext;
-use ocw_render::thumbs::ThumbKey;
+use ocw_render::thumbs::{PartThumb, ThumbKey};
 use ocw_render::workshop::{
     BikeModels, BikeView, DialogView, HotspotView, PickerRowView, PickerView, RiderShow, TilesView,
     WorkshopCorePlugin, WorkshopPointer, WorkshopPointerEvent, WorkshopView, bike_corners,
@@ -1550,7 +1550,9 @@ fn write_view(
             .as_ref()
             .map_or(ocw_sim::PhysicsMode::Open, |c| c.0.physics_mode());
         let mut v = picker_view(p, g, balance, scene, server, &character, rider.weight_kg);
-        if p.tiles() {
+        if p.tiles() && p.of_the_rider() {
+            fill_rider_tiles(&mut v, p, scene, &ctx);
+        } else if p.tiles() {
             fill_tiles(&mut v, p, g, scene, mode, rider_look.frame);
         }
         v
@@ -1558,10 +1560,14 @@ fn write_view(
     // The rider in the changing corner (W4): standing at the mirror, or on
     // the stand bike; with the live preview of the picker.
     let rider_show = scene.dressing().then(|| {
-        let (c, kit) = scene.rider_look(&ctx);
+        let (c, mut kit) = scene.rider_look(&ctx);
         // The jersey designer's draft (T6), else the rider's look.
         let mut look = scene.design_preview().unwrap_or(rider_look);
         look.character = c;
+        // The bare head (4N Q28): the helmet on its hook.
+        if scene.helmet_off() {
+            kit.push(ocw_assets::rider::HELMET_OFF.to_string());
+        }
         RiderShow {
             look,
             kit,
@@ -1601,7 +1607,7 @@ fn write_view(
         open: true,
         eye: pose.eye,
         target: pose.target,
-        fov_y: camera::FOV_Y,
+        fov_y: pose.fov,
         bikes,
         stand: scene.stand,
         swap: scene.swap.map(|s| (s.from, s.to, s.progress())),
@@ -1618,6 +1624,10 @@ fn write_view(
         ride_window: state.ride_window,
         touch: state.active == ActiveInput::Touch,
         frame: rider.look().frame,
+        helmet_on_hook: rider_show
+            .as_ref()
+            .filter(|_| scene.helmet_off())
+            .map(|r| r.kit.clone()),
         rider: rider_show,
         mirror: state.mirror,
     };
@@ -1865,22 +1875,22 @@ fn fill_tiles(
         row.group = None;
         match (&r.kind, r.part.as_deref().and_then(|id| cat().get(id))) {
             (picker::Kind::Paint(c), _) => {
-                row.thumb = Some(ThumbKey {
+                row.thumb = Some(ThumbKey::Part(PartThumb {
                     profile: bike.profile(),
                     slot: "paint".into(),
                     model: "stock".into(),
                     paint: c.unwrap_or(frame),
-                });
+                }));
                 let t = part_tiles::tile_text(&row.left, &row.right, false, None, mode);
                 row.gain = t.gain;
             }
             (_, Some(part)) => {
-                row.thumb = Some(ThumbKey {
+                row.thumb = Some(ThumbKey::Part(PartThumb {
                     profile: bike.profile(),
                     slot: part.slot.id().into(),
                     model: part.model.clone(),
                     paint,
-                });
+                }));
                 // The tile's name without the weight and tier of the row.
                 row.left = part.name.clone();
                 let gain = picker::tile_gain(cat(), g, bike, part);
@@ -1900,6 +1910,13 @@ fn fill_tiles(
         let at = v.detail.len().min(2);
         v.detail.insert(at, line);
     }
+    // Under the tiles the renderer shows what fits of the card, in this
+    // order, without the name (on the focused tile; bug 2026-11-17: the
+    // card ran out at the panel's bottom).
+    if !v.detail.is_empty() {
+        v.detail.remove(0);
+    }
+    v.detail.sort_by_key(|l| picker::tile_card_rank(l));
     let len = v.rows.len();
     let first = part_tiles::first_row(v.focus, len, COLUMNS, VISIBLE_ROWS) * COLUMNS;
     v.tiles = Some(TilesView {
@@ -1915,6 +1932,57 @@ fn fill_tiles(
         });
     }
 }
+
+/// The mirror's pickers as tiles (spec §14 Phase 4, 4N; the same tile
+/// model as the menu's editor): each row a rendering of the rider wearing
+/// it – the face for the head's slots, the whole rider for the body's, the
+/// hands for the gloves – keyed by the look with that row, the colours as
+/// swatches; the focused tile previews on the rider at once, Confirm (or a
+/// click) keeps it, Back restores the saved look.
+fn fill_rider_tiles(v: &mut PickerView, p: &picker::Picker, scene: &Workshop, ctx: &Ctx) {
+    use ocw_client::part_tiles::{self, COLUMNS};
+    use ocw_render::thumbs::RiderThumb;
+    let shot = scene.dress.slot().shot();
+    for (row, r) in v.rows.iter_mut().zip(&p.rows) {
+        match r.kind {
+            picker::Kind::Free(picker::Free::Skin(i)) => {
+                row.swatch = Some(
+                    ocw_core::Character {
+                        skin: i,
+                        ..ctx.character
+                    }
+                    .skin_colour(),
+                );
+            }
+            picker::Kind::Free(picker::Free::HairColour(c)) => row.swatch = Some(c),
+            picker::Kind::Design(_) => {}
+            _ => {
+                let (character, mut kit) = scene.rider_look_with(ctx, Some(r));
+                if scene.helmet_off() {
+                    kit.push(ocw_assets::rider::HELMET_OFF.to_string());
+                }
+                row.thumb = Some(ThumbKey::Rider(RiderThumb {
+                    look: ocw_core::RiderLook {
+                        character,
+                        ..ctx.look
+                    },
+                    kit,
+                    shot,
+                }));
+            }
+        }
+    }
+    let len = v.rows.len();
+    let first = part_tiles::first_row(v.focus, len, COLUMNS, RIDER_TILE_ROWS) * COLUMNS;
+    v.tiles = Some(TilesView {
+        cols: COLUMNS,
+        first,
+        shown: (RIDER_TILE_ROWS * COLUMNS).min(len.saturating_sub(first)),
+    });
+}
+
+/// Rows of the rider's tiles shown at once (square pictures).
+pub const RIDER_TILE_ROWS: usize = 2;
 
 /// `workshop.apply`: run by the scene when it closes with a change.
 pub fn register_apply(app: &mut App) {

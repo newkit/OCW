@@ -144,6 +144,8 @@ mod tests {
             VoiceParticipants,
             VoiceRider(0),
             VoiceBlocked,
+            VoiceRoom,
+            VoiceSelect,
             AudioVoice,
             TimeMachine,
             WeatherPresets,
@@ -201,16 +203,16 @@ mod tests {
                 | Bike(_) | WorldHome | Worlds | World(_) | WorldRoutes(_) | WorldParts(_)
                 | WorldInfo | WorldSun | WorldSources | WorldSource(_) | Weather | Routes
                 | Rides | GpxImport | Workouts | Voice | VoiceDevices | VoiceParticipants
-                | VoiceRider(_) | VoiceBlocked | AudioVoice | TimeMachine | WeatherPresets
-                | WeatherCustom | WeatherAir | WeatherReal | RidingAids | Graphics
-                | ViewDistance | RiderList | UnicornControls | Bindings | BindGroup(_)
-                | BindReset | Accessibility | History | HistoryRides | HistoryRide(_)
-                | HistoryClimbs(_) | HistoryWeeks | HistoryMonths | HistoryBests | EventRules
-                | Account | TrustedKeys | TrustedKey(_) | Join | HostWorld | HostRoute
-                | HostTime | HostWeather | HostOptions | HostSummary | HostLink | Devices
-                | Device(_) | Calendar(_) | CalendarDates(_) | Season | Character
-                | CharacterBody | CharacterFace | CharacterHair | CharacterFacialHair
-                | CharacterPick(_) => {}
+                | VoiceRider(_) | VoiceBlocked | VoiceRoom | VoiceSelect | AudioVoice
+                | TimeMachine | WeatherPresets | WeatherCustom | WeatherAir | WeatherReal
+                | RidingAids | Graphics | ViewDistance | RiderList | UnicornControls | Bindings
+                | BindGroup(_) | BindReset | Accessibility | History | HistoryRides
+                | HistoryRide(_) | HistoryClimbs(_) | HistoryWeeks | HistoryMonths
+                | HistoryBests | EventRules | Account | TrustedKeys | TrustedKey(_) | Join
+                | HostWorld | HostRoute | HostTime | HostWeather | HostOptions | HostSummary
+                | HostLink | Devices | Device(_) | Calendar(_) | CalendarDates(_) | Season
+                | Character | CharacterBody | CharacterFace | CharacterHair
+                | CharacterFacialHair | CharacterPick(_) => {}
             }
         }
         all
@@ -372,6 +374,15 @@ mod tests {
                     Page::Sub(settings_pages::Page::Devices) => "Wahoo KICKR 0001: connected (smart trainer (Wahoo...".into(),
                     Page::Sub(settings_pages::Page::BindGroup(_)) => {
                         "Conflict: V: Camera and Video recording; L: Camera and unicorn mode's flight keys".into()
+                    }
+                    // The focused tile's name (the longest) under the
+                    // pictures (spec §14 Phase 4, 4N).
+                    Page::Sub(settings_pages::Page::CharacterPick(a)) => {
+                        let r = ocw_client::riders::Rider::default();
+                        (0..40)
+                            .map(|f| ocw_client::menu::character::status(a, &r, f))
+                            .max_by_key(|s| s.len())
+                            .unwrap_or_default()
                     }
                     Page::Sub(settings_pages::Page::Calendar(_)) => "Read only, set by the organizer · Wed 30 Sep 2026: sunrise 07:22 · sunset 19:14 · day 11 h 52 min · beech in autumn colours · snow line 2,750 m · first quarter".into(),
                     _ => String::new(),

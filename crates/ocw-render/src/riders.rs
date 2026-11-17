@@ -28,6 +28,7 @@ use bevy::prelude::*;
 use ocw_assets::anim::{self, AnimInput, Animator, Riding};
 use ocw_assets::model::Model;
 use ocw_assets::pose::{self, BikeRig, Fit, PoseParams, RiderRig, bike_nodes, nodes};
+use ocw_assets::rider::hand::HandShape;
 use ocw_assets::slots::{self, Tint};
 use ocw_core::{ProfileId, RiderId, RiderLook};
 
@@ -370,6 +371,9 @@ pub struct AvatarColours {
     pub facial_hair: Color,
     pub skin_line: Color,
     pub lips: Color,
+    /// Full or winter gloves: the fingertips in the gloves' colour, else
+    /// the skin (fingerless mitts; spec §14 Phase 4, 4N, the hands).
+    pub gloved_tips: bool,
     /// The kit design (spec §14 Phase 8 T6).
     pub kit: KitColours,
     /// The jersey of the far model: the pattern's dominant colour.
@@ -470,6 +474,7 @@ pub fn avatar_colours(id: RiderId, is_local: bool, look: Option<&RiderLook>) -> 
         facial_hair: rgb(character.facial_hair_shown()),
         skin_line: rgb(character.skin_line_colour()),
         lips: rgb(character.lip_colour()),
+        gloved_tips: false,
         kit,
         far_jersey,
     }
@@ -500,6 +505,8 @@ pub fn tint_color(slot: &str, model_color: [f32; 4], colours: &AvatarColours) ->
         Tint::FacialHair => colours.facial_hair,
         Tint::SkinLine => colours.skin_line,
         Tint::Lips => colours.lips,
+        Tint::FingerTip if colours.gloved_tips => colours.kit.gloves.unwrap_or(model),
+        Tint::FingerTip => colours.skin,
     }
 }
 
@@ -570,6 +577,10 @@ pub fn kit_variants(parts: &[String]) -> Vec<String> {
         .map(|p| p.model.clone())
         .filter(|m| ocw_assets::rider::variant(m).is_some())
         .collect();
+    // The helmet taken off in the character editor (4N Q28).
+    if parts.iter().any(|p| p == ocw_assets::rider::HELMET_OFF) {
+        v.push(ocw_assets::rider::HELMET_OFF.to_string());
+    }
     v.sort();
     v.dedup();
     v
@@ -939,6 +950,9 @@ pub struct AvatarRig {
     /// The phone in the hand from the last pose (spec §2.6; `None`: in the
     /// pocket, or not posed far away).
     phone: Option<(Vec3, Quat)>,
+    /// The hands' shape nodes (shape, side, entity) and the shapes shown.
+    hand_nodes: Vec<(HandShape, usize, Entity)>,
+    hands_shown: [HandShape; 2],
 }
 
 impl AvatarRig {
@@ -1121,7 +1135,8 @@ fn spawn_avatar(
     built: AvatarLook,
     transform: Transform,
 ) -> Entity {
-    let colours = avatar_colours(id, is_local, built.look.as_ref());
+    let mut colours = avatar_colours(id, is_local, built.look.as_ref());
+    colours.gloved_tips = ocw_assets::rider::hand::covers_fingertips(&built.kit);
     let ghost = id == GHOST_ID;
     let b = profile_index(built.bike);
     // The fitted parts' variants (the stock bike: the shipped model).
@@ -1203,13 +1218,19 @@ fn spawn_avatar(
         .into_iter()
         .filter_map(|n| rider_model.node(n))
         .collect();
+    // One hand shape shown per hand (the pose picks it; spec §14 Phase 4,
+    // 4N, the hands).
+    let hand_hidden: Vec<usize> = ocw_assets::rider::hand::others(HandShape::Relaxed)
+        .into_iter()
+        .filter_map(|n| rider_model.node(n))
+        .collect();
     let rider_e = spawn_model(
         commands,
         sway,
         rider_model,
         &rider_list,
         &skip_rider,
-        &[],
+        &hand_hidden,
         None,
         Some(&character),
         None,
@@ -1231,6 +1252,23 @@ fn spawn_avatar(
             .node(name)
             .map_or(Entity::PLACEHOLDER, |i| bike_nodes_e[i])
     };
+    // The character editor's close-up looks at the local rider's head.
+    if is_local && !ghost {
+        let head = find(nodes::HEAD);
+        if head != Entity::PLACEHOLDER {
+            commands
+                .entity(head)
+                .insert(crate::camera::RiderHead { root });
+        }
+        for side in 0..2 {
+            let hand = find(nodes::HAND[side]);
+            if hand != Entity::PLACEHOLDER {
+                commands
+                    .entity(hand)
+                    .insert(crate::camera::RiderHand { root, side });
+            }
+        }
+    }
     let posed = pose::pose(&body.rider, &bike, &body.fit, &PoseParams::default())
         .rotations()
         .iter()
@@ -1257,6 +1295,16 @@ fn spawn_avatar(
         wheel_angle: 0.0,
         bias: anim::bias(id.0),
         phone: None,
+        hand_nodes: rider_model
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, n)| {
+                let (shape, side) = ocw_assets::rider::hand::of_node(&n.name)?;
+                (rider_e[i] != Entity::PLACEHOLDER).then_some((shape, side, rider_e[i]))
+            })
+            .collect(),
+        hands_shown: [HandShape::Relaxed; 2],
     };
     commands.entity(root).insert(rig);
     // The status signs (spec §2.6): worn at the head, the phone in the
@@ -1384,6 +1432,28 @@ pub(crate) fn animate(
                 t.rotation = *q;
             }
         }
+        // The hands' shapes: round the bar, the phone, open, loose.
+        if p.hand_shapes != rig.hands_shown {
+            rig.hands_shown = p.hand_shapes;
+            show_hands(&rig.hand_nodes, p.hand_shapes, &mut visibility);
+        }
+    }
+}
+
+/// Shows hand shape `shapes[side]` on each hand, hides the others.
+pub fn show_hands(
+    nodes: &[(HandShape, usize, Entity)],
+    shapes: [HandShape; 2],
+    visibility: &mut Query<&mut Visibility>,
+) {
+    for (shape, side, e) in nodes {
+        if let Ok(mut v) = visibility.get_mut(*e) {
+            v.set_if_neq(if shapes[*side] == *shape {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            });
+        }
     }
 }
 
@@ -1403,6 +1473,36 @@ mod tests {
 
     fn close(a: Vec3, b: Vec3) -> bool {
         (a - b).length() < 1e-3
+    }
+
+    /// The fingertips (spec §14 Phase 4, 4N, the hands): the skin out of
+    /// fingerless mitts and gel gloves, the gloves' colour (the kit
+    /// colour when chosen) under full and winter gloves; the palm always
+    /// the glove's.
+    #[test]
+    fn the_fingertips_are_skin_or_glove() {
+        let look = RiderLook {
+            design: ocw_core::KitDesign {
+                gloves: Some(ocw_core::Rgb(0xE53935)),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let model = [0.1, 0.1, 0.1, 1.0];
+        for (kit, covered) in [
+            (vec![], false),
+            (vec!["gloves-gel".to_string()], false),
+            (vec!["gloves-full".to_string()], true),
+            (vec!["gloves-winter".to_string()], true),
+        ] {
+            let mut c = avatar_colours(RiderId(1), false, Some(&look));
+            c.gloved_tips = ocw_assets::rider::hand::covers_fingertips(&kit);
+            assert_eq!(c.gloved_tips, covered, "{kit:?}");
+            let tip = tint_color("fingertip", model, &c);
+            let palm = tint_color("glove", model, &c);
+            assert_eq!(palm, Color::srgb_u8(0xE5, 0x39, 0x35), "{kit:?}");
+            assert_eq!(tip, if covered { palm } else { c.skin }, "{kit:?}");
+        }
     }
 
     #[test]
@@ -1888,7 +1988,12 @@ mod tests {
             let bike = full(ocw_assets::shipped::bike_model(*p));
             // The whole bike (with its far LOD), the rider in the base kit
             // (the road helmet on every bike) with the band.
-            let expect = bike + full(rider) - hidden;
+            // One hand shape per hand shown (spec §14 Phase 4, 4N).
+            let hands: usize = ocw_assets::rider::hand::others(HandShape::Relaxed)
+                .iter()
+                .map(|n| prims(n))
+                .sum();
+            let expect = bike + full(rider) - hidden - hands;
             assert_eq!(shown, expect, "{p:?}");
             assert!(app.world().get::<AvatarRig>(e).is_some());
         }

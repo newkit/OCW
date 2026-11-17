@@ -19,6 +19,14 @@
 //! the game connection, the game server tells Ada and Bea – and only them
 //! – that they are apart, and in the voice room neither hears the other
 //! (not even when Bea asks for Ada's voice itself) while Cleo hears both.
+//!
+//! With `OCW_VOICE_TEST_RANGE=1` (the script's third run, the server with
+//! `--dev-commands`) the range test runs (spec §7.1.7 Q6, Q8, Q10): three
+//! riders with *Who hears me: All nearby*, Cleo teleports 1.5 km away –
+//! the game server tells her she may hear nobody and nobody may hear her,
+//! nobody hears her nor she anyone (her own request for Ada's voice is
+//! refused); back near, Ada switches to *Selected riders* with Bea only:
+//! Bea hears Ada, Cleo does not (and is refused), Ada hears both.
 #![cfg(feature = "livekit")]
 
 mod support;
@@ -84,10 +92,65 @@ fn join_and_grant(
     panic!("{name}: no voice grant (welcomed: {welcomed})");
 }
 
+/// What the game server told each rider last over the game connection.
+#[derive(Default)]
+struct Told {
+    apart: Vec<Option<Vec<u32>>>,
+    hearing: Vec<Option<v1::VoiceHearing>>,
+}
+
+impl Told {
+    fn new(n: usize) -> Self {
+        Self {
+            apart: vec![None; n],
+            hearing: vec![None; n],
+        }
+    }
+
+    /// Reads every rider's messages for `secs`.
+    fn pump(&mut self, joined: &[(NetClient, v1::VoiceGrant)], secs: f64) {
+        let until = Instant::now() + Duration::from_secs_f64(secs);
+        while Instant::now() < until {
+            for (i, (client, _)) in joined.iter().enumerate() {
+                for bytes in client.receive() {
+                    match decode_server(&bytes) {
+                        Ok(S::VoiceApart(a)) => self.apart[i] = Some(a.riders),
+                        Ok(S::VoiceHearing(h)) => self.hearing[i] = Some(h),
+                        _ => {}
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn hearing(&self, i: usize) -> ocw_voice::audience::Hearing {
+        self.hearing[i]
+            .as_ref()
+            .map(ocw_voice::audience::Hearing::from_wire)
+            .unwrap_or_default()
+    }
+}
+
+/// *Who hears me: All nearby*, or *Selected riders* with these names.
+fn audience(selected: &[&str]) -> Vec<u8> {
+    encode(&client_message(C::VoiceAudience(v1::VoiceAudience {
+        heard_by: if selected.is_empty() {
+            v1::VoiceHeardBy::Nearby
+        } else {
+            v1::VoiceHeardBy::Selected
+        } as i32,
+        selected_names: selected.iter().map(|s| (*s).to_owned()).collect(),
+        ..Default::default()
+    })))
+}
+
 #[test]
 fn riders_get_grants_and_hear_each_other_on_the_bundled_server() {
-    if std::env::var_os("OCW_VOICE_TEST_BLOCKS").is_some() {
-        eprintln!("skipped: the block run");
+    if std::env::var_os("OCW_VOICE_TEST_BLOCKS").is_some()
+        || std::env::var_os("OCW_VOICE_TEST_RANGE").is_some()
+    {
+        eprintln!("skipped: the block or range run");
         return;
     }
     let (Ok(server), Ok(cert), Ok(url)) = (
@@ -232,6 +295,10 @@ fn a_block_is_enforced_both_ways_on_the_bundled_server() {
         .map(|(_, g)| ocw_protocol::rider_of_voice_identity(&g.identity).expect("rider-N"))
         .collect();
     println!("three riders joined: {ids:?}");
+    // Everybody: *Who hears me: All nearby* (the default is no one).
+    for (client, _) in &joined {
+        client.send(audience(&[]));
+    }
     // Ada blocks Bea over the game connection.
     joined[0]
         .0
@@ -239,30 +306,14 @@ fn a_block_is_enforced_both_ways_on_the_bundled_server() {
             names: vec!["Bea Climber".into()],
             ..Default::default()
         }))));
-    let mut apart: Vec<Option<Vec<u32>>> = vec![None; 3];
+    let mut told = Told::new(3);
     let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline && (apart[0].is_none() || apart[1].is_none()) {
-        for (i, (client, _)) in joined.iter().enumerate() {
-            for bytes in client.receive() {
-                if let Ok(S::VoiceApart(a)) = decode_server(&bytes) {
-                    apart[i] = Some(a.riders);
-                }
-            }
-        }
-        std::thread::sleep(Duration::from_millis(20));
+    while Instant::now() < deadline && (told.apart[0].is_none() || told.apart[1].is_none()) {
+        told.pump(&joined, 0.1);
     }
     // Cleo is told nothing (a second more to be sure).
-    let until = Instant::now() + Duration::from_secs(1);
-    while Instant::now() < until {
-        for (i, (client, _)) in joined.iter().enumerate() {
-            for bytes in client.receive() {
-                if let Ok(S::VoiceApart(a)) = decode_server(&bytes) {
-                    apart[i] = Some(a.riders);
-                }
-            }
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    told.pump(&joined, 1.0);
+    let apart = told.apart.clone();
     assert_eq!(
         apart[0],
         Some(vec![ids[1].0]),
@@ -283,12 +334,165 @@ fn a_block_is_enforced_both_ways_on_the_bundled_server() {
             .collect()
     };
     let mut trio = support::trio::Trio::new([
-        (ids[0], names[0], joined[0].1.clone(), set(0)),
-        (ids[1], names[1], joined[1].1.clone(), set(1)),
-        (ids[2], names[2], joined[2].1.clone(), set(2)),
+        (
+            ids[0],
+            names[0],
+            joined[0].1.clone(),
+            set(0),
+            told.hearing(0),
+        ),
+        (
+            ids[1],
+            names[1],
+            joined[1].1.clone(),
+            set(1),
+            told.hearing(1),
+        ),
+        (
+            ids[2],
+            names[2],
+            joined[2].1.clone(),
+            set(2),
+            told.hearing(2),
+        ),
     ]);
     for line in trio.check_block("") {
         println!("PASS {line}");
     }
     println!("the block holds both ways");
+}
+
+/// Voice by range and audience on the real game server and its bundled
+/// voice server (spec §7.1.7 Q6, Q8, Q10): see the module docs.
+#[test]
+fn range_and_audiences_hold_on_the_bundled_server() {
+    let (Ok(server), Ok(cert), Some(_)) = (
+        std::env::var("OCW_VOICE_TEST_SERVER"),
+        std::env::var("OCW_VOICE_TEST_CERT"),
+        std::env::var_os("OCW_VOICE_TEST_RANGE"),
+    ) else {
+        eprintln!("skipped: run by scripts/test-voice-bundled.sh (OCW_VOICE_TEST_RANGE)");
+        return;
+    };
+    let addr: SocketAddr = server.parse().unwrap();
+    let trust = ServerTrust::Pinned(parse_fingerprint(&cert).unwrap());
+    let names = ["Ada Rider", "Bea Climber", "Cleo Sprinter"];
+    let joined: Vec<(NetClient, v1::VoiceGrant)> = names
+        .iter()
+        .map(|n| join_and_grant(addr, &trust, n))
+        .collect();
+    let ids: Vec<ocw_core::RiderId> = joined
+        .iter()
+        .map(|(_, g)| ocw_protocol::rider_of_voice_identity(&g.identity).expect("rider-N"))
+        .collect();
+    for (client, _) in &joined {
+        client.send(audience(&[]));
+    }
+    // Cleo rides 1.5 km away (a dev teleport: the server runs with
+    // --dev-commands for this test).
+    let teleport = |i: usize, km: f64| {
+        joined[i]
+            .0
+            .send(encode(&client_message(C::Dev(v1::DevCommand {
+                cmd: Some(v1::dev_command::Cmd::TeleportDistanceM(km * 1000.0)),
+            }))));
+    };
+    teleport(2, 1.5);
+    let mut told = Told::new(3);
+    told.pump(&joined, 2.0);
+    let set = |v: &[usize]| -> std::collections::BTreeSet<ocw_core::RiderId> {
+        v.iter().map(|i| ids[*i]).collect()
+    };
+    assert_eq!(told.hearing(0).may_hear, set(&[1]), "Ada may hear Bea only");
+    assert_eq!(told.hearing(0).heard_by, set(&[1]));
+    assert!(
+        told.hearing(2).may_hear.is_empty() && told.hearing(2).heard_by.is_empty(),
+        "Cleo far away: nobody either way ({:?})",
+        told.hearing[2]
+    );
+    println!("the game server sends no voice to and from the far rider");
+    let none = std::collections::BTreeSet::new;
+    let mut trio = support::trio::Trio::new([
+        (
+            ids[0],
+            names[0],
+            joined[0].1.clone(),
+            none(),
+            told.hearing(0),
+        ),
+        (
+            ids[1],
+            names[1],
+            joined[1].1.clone(),
+            none(),
+            told.hearing(1),
+        ),
+        (
+            ids[2],
+            names[2],
+            joined[2].1.clone(),
+            none(),
+            told.hearing(2),
+        ),
+    ]);
+    trio.place(2, 1500.0);
+    assert!(
+        trio.join(Duration::from_secs(30)),
+        "not all three in the call: {}",
+        trio.describe()
+    );
+    let far = [
+        [false, true, false],
+        [true, false, false],
+        [false, false, false],
+    ];
+    for line in trio.check_matrix("far", far, "") {
+        println!("PASS {line}");
+    }
+    println!("PASS {}", trio.check_refused("far", 2, 0, true, ""));
+    println!("the far rider is neither heard nor hears");
+    // Cleo comes back; Ada: *Who hears me: Selected riders*, Bea only.
+    teleport(2, 0.02);
+    joined[0].0.send(audience(&["Bea Climber"]));
+    told.pump(&joined, 2.0);
+    assert_eq!(told.hearing(0).heard_by, set(&[1]), "only Bea may hear Ada");
+    assert_eq!(
+        told.hearing(2).may_hear,
+        set(&[1]),
+        "Cleo may hear Bea only"
+    );
+    {
+        let a = &mut trio.riders[0].c;
+        let mut s = a.settings().clone();
+        s.heard_by = ocw_voice::audience::HeardBy::Selected;
+        a.set_settings(s);
+        a.set_rider_prefs(
+            [(
+                "name:local/Bea Climber".to_owned(),
+                ocw_voice::riders::RiderPref {
+                    selected: true,
+                    ..ocw_voice::riders::RiderPref::new("Bea Climber")
+                },
+            )]
+            .into(),
+        );
+    }
+    for i in 0..3 {
+        trio.set_hearing(i, told.hearing(i));
+    }
+    trio.place(2, 20.0);
+    let selected = [
+        [false, true, false],
+        [true, false, true],
+        [true, true, false],
+    ];
+    for line in trio.check_matrix("Ada heard by Bea only", selected, "") {
+        println!("PASS {line}");
+    }
+    println!(
+        "PASS {}",
+        trio.check_refused("Ada heard by Bea only", 2, 0, false, "")
+    );
+    println!("who hears me holds");
+    trio.leave();
 }

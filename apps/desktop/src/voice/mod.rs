@@ -2,10 +2,12 @@
 //! [`ocw_voice::VoiceController`].
 //!
 //! Always on, like a call: on a shared ride the app asks the game server
-//! for a LiveKit token and joins the voice room with an open microphone;
-//! solo rides do not connect. `M` / gamepad Select mute the microphone,
-//! `Shift+M` / R3 the speaker (all voices); the state is kept in
-//! `settings.toml` (`[voice]`). The menu page is [`page`].
+//! for a LiveKit token and joins the voice room with the microphone muted
+//! (spec §7.1.7 Q7); solo rides do not connect. `M` / gamepad Select
+//! (un)mute the microphone for this ride, `Shift+M` / R3 the speaker (all
+//! voices, kept in `settings.toml`, `[voice]`). Who hears the rider and
+//! whom the rider hears: *Who hears me* / *Voice room* and `voice.select`
+//! (spec §7.1.3, §7.1.7 Q8), decided by the game server (Q6).
 //!
 //! With the cargo feature `voice` off (the default) the controller runs on
 //! the null backend: the switches, settings and menu work, the status says
@@ -46,10 +48,12 @@ pub struct VoicePlugin;
 
 impl Plugin for VoicePlugin {
     fn build(&self, app: &mut App) {
+        // Joined muted (spec §7.1.7 Q7); the speaker comes from the
+        // settings.
         let mut controller = VoiceController::new(
             ocw_voice::default_backend(),
             VoiceSettings::default(),
-            MuteState::default(),
+            MuteState::joining(false),
         );
         // `--echo-bot`: the echo test from the start (the settings are
         // applied at the start only where they differ from the defaults).
@@ -140,6 +144,9 @@ fn drive(
         info!("{m}");
         console.print(m);
     }
+    for line in frame.run {
+        console.queue(line);
+    }
     menu.set_if_neq(VoiceMenuInfo(frame.menu));
     hud.set_if_neq(frame.hud);
 }
@@ -228,7 +235,7 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("voice.mute-mic")
-            .about("Mute or unmute your microphone (M, gamepad Select); remembered")
+            .about("Mute or unmute your microphone (M, gamepad Select); every shared ride is joined muted")
             .arg(switch_arg()),
         |world, m| set_mute(world, Toggle::Mic, m.get_one::<String>("state").map(String::as_str)),
     ))
@@ -310,6 +317,20 @@ fn register_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
+        Command::new("voice.select")
+            .about("Select a rider for the voice room and Who hears me (set voice.room / voice.heard_by selected); remembered (rider id, identity, name or a remembered key; on, off, toggle)")
+            .arg(Arg::new("who").required(true))
+            .arg(Arg::new("state").value_parser(["on", "off", "toggle"])),
+        |world, m| {
+            let who = m.get_one::<String>("who").expect("required").clone();
+            let arg = m.get_one::<String>("state").cloned();
+            with_voice(world, |c, store| {
+                voice_cmd::select_command(c, store, &who, arg.as_deref())
+            })
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
         Command::new("voice.group")
             .about("Talk in a named group (private room) instead of the whole session; without a name: back to the session")
             .arg(Arg::new("name"))
@@ -379,38 +400,84 @@ mod tests {
     }
 
     /// The console commands (also run by the hotkeys and the menu) flip
-    /// the switches, remember them in the settings and reach the HUD.
+    /// the switches and reach the HUD; the app starts muted and the
+    /// microphone is not remembered (spec §7.1.7 Q7), the speaker is.
     #[test]
-    fn mute_commands_are_remembered_and_shown() {
+    fn mute_commands_are_shown_and_only_the_speaker_remembered() {
         let mut app = app();
-        assert!(run(&mut app, "voice.mute-mic").contains("microphone muted"));
+        app.update();
+        assert!(app.world().resource::<VoiceHud>().mic_muted, "joined muted");
+        assert!(run(&mut app, "voice.mute-mic").contains("microphone on"));
         let us = app.world().resource::<UserSettings>();
-        assert_eq!(us.value("voice.mic_muted").as_bool(), Some(true));
-        assert!(run(&mut app, "voice.mute-mic toggle").contains("microphone on"));
+        assert_eq!(
+            us.value("voice.mic_muted").as_bool(),
+            Some(false),
+            "the default, not saved"
+        );
+        assert!(!us.settings.to_toml().contains("mic_muted"));
+        assert!(run(&mut app, "voice.mute-mic toggle").contains("microphone muted"));
         assert!(run(&mut app, "voice.mute-speaker on").contains("speaker muted"));
         assert!(
             run(&mut app, "voice.mute-speaker on").contains("speaker muted"),
             "idempotent"
         );
+        let us = app.world().resource::<UserSettings>();
+        assert_eq!(us.value("voice.speaker_muted").as_bool(), Some(true));
         app.update();
         let hud = app.world().resource::<VoiceHud>();
-        assert!(hud.speaker_muted && !hud.mic_muted);
+        assert!(hud.speaker_muted && hud.mic_muted);
         // Not in a call (no shared ride): the indicator is hidden.
         assert!(!hud.visible);
-        // A setting changed with `set` reaches the controller.
+        // `set voice.mic_muted off` unmutes now; another voice setting
+        // changed afterwards does not touch the microphone.
         app.world_mut()
             .resource_mut::<ConsoleState>()
-            .queue("set voice.mic_muted on");
+            .queue("set voice.mic_muted off");
         app.update();
         app.update();
         let voice = app.world().resource::<Voice>();
-        assert!(voice.0.lock().unwrap().mute().mic_muted);
+        assert!(!voice.0.lock().unwrap().mute().mic_muted);
+        run(&mut app, "voice.mute-mic on");
+        app.world_mut()
+            .resource_mut::<ConsoleState>()
+            .queue("set voice.volume 80");
+        app.update();
+        app.update();
+        let voice = app.world().resource::<Voice>();
+        assert!(
+            voice.0.lock().unwrap().mute().mic_muted,
+            "regression: applying the voice settings unmuted the microphone"
+        );
         let status = run(&mut app, "voice.status");
         assert!(status.contains("microphone"), "{status}");
+        assert!(
+            status.contains("voice room: everybody, who hears me: no one"),
+            "{status}"
+        );
         assert!(run(&mut app, "voice.group Bad").contains("invalid group name"));
         assert!(run(&mut app, "voice.mute nobody").contains("nobody called"));
         assert!(run(&mut app, "voice.volume nobody 50").contains("nobody called"));
         assert!(run(&mut app, "voice.block nobody").contains("nobody called"));
+        assert!(run(&mut app, "voice.select nobody").contains("nobody called"));
+    }
+
+    /// *Voice room* and *Who hears me* (spec §7.1.3, §7.1.7 Q8) are
+    /// settings; they reach the controller and are saved.
+    #[test]
+    fn voice_room_and_who_hears_me_are_settings() {
+        let mut app = app();
+        run(&mut app, "set voice.heard_by nearby");
+        run(&mut app, "set voice.room selected");
+        app.update();
+        let voice = app.world().resource::<Voice>();
+        let s = voice.0.lock().unwrap().settings().clone();
+        assert_eq!(s.heard_by, ocw_voice::audience::HeardBy::Nearby);
+        assert_eq!(s.listen, ocw_voice::audience::Listen::Selected);
+        let us = app.world().resource::<UserSettings>();
+        let toml = us.settings.to_toml();
+        assert!(toml.contains("heard_by = \"nearby\""), "{toml}");
+        assert!(toml.contains("room = \"selected\""), "{toml}");
+        assert!(run(&mut app, "set voice.heard_by everybody").contains("no_one, nearby, selected"));
     }
 
     /// Volume and Block (spec §7.1.7 Q9) from the console: a participant
@@ -488,6 +555,18 @@ mod tests {
         );
         let us = app.world().resource::<UserSettings>();
         assert!(!us.settings.voice_riders()["name:local/Bea Climber"].blocked);
+        // Selected riders (spec §7.1.3, §7.1.7 Q8): remembered like a block.
+        assert!(run(&mut app, "voice.select \"Bea Climber\"").contains("Bea Climber selected"));
+        let us = app.world().resource::<UserSettings>();
+        assert!(us.settings.voice_riders()["name:local/Bea Climber"].selected);
+        assert!(run(&mut app, "voice.status").contains("selected: Bea Climber"));
+        // A block wins over the selection.
+        assert!(run(&mut app, "voice.block rider-2 on").contains("blocked"));
+        assert!(run(&mut app, "voice.select rider-2 on").contains("the block wins"));
+        assert!(
+            run(&mut app, "voice.select \"name:local/Bea Climber\" off")
+                .contains("no longer selected")
+        );
     }
 
     #[test]
@@ -556,6 +635,9 @@ mod tests {
         app.update();
         app.update();
         let voice = app.world().resource::<Voice>();
-        assert!(voice.0.lock().unwrap().mute().mic_muted);
+        assert!(
+            !voice.0.lock().unwrap().mute().mic_muted,
+            "joined muted, M unmutes"
+        );
     }
 }

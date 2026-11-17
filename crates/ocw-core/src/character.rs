@@ -374,8 +374,34 @@ impl Age {
     }
 }
 
-/// The skin-tone palette: 12 steps from very light to very dark (sRGB).
-pub const SKIN_TONES: [Rgb; 12] = [
+/// The skin-tone palette (spec §14 Phase 4, 4N; asked 2026-11-17: "add
+/// skin tone selector to character editor"): 16 steps from very pale to
+/// very dark (sRGB), evenly spread in lightness (CIE L* from about 92 to
+/// 12, steps of 3.5 – 8.5) and alternating warm (red-pink) and neutral to
+/// golden / olive undertones in the light, the medium and the dark range.
+pub const SKIN_TONES: [Rgb; 16] = [
+    Rgb(0xF7E3D6),
+    Rgb(0xF1D5C1),
+    Rgb(0xE9CBAD),
+    Rgb(0xE1BA9C),
+    Rgb(0xD5AE8A),
+    Rgb(0xC89D7C),
+    Rgb(0xBB8F68),
+    Rgb(0xAC7D5C),
+    Rgb(0x9C6E4E),
+    Rgb(0x8C6646),
+    Rgb(0x77513A),
+    Rgb(0x66472F),
+    Rgb(0x543828),
+    Rgb(0x45301F),
+    Rgb(0x37231A),
+    Rgb(0x2A1C13),
+];
+
+/// The 12-step palette of W4 / 4C (all one warm undertone, L* 90 – 17):
+/// what older apps and files mean by a skin index ([`skin_from_legacy`],
+/// [`skin_to_legacy`]).
+pub const LEGACY_SKIN_TONES: [Rgb; 12] = [
     Rgb(0xF6DDCB),
     Rgb(0xF0CDB4),
     Rgb(0xE6BC9E),
@@ -389,6 +415,62 @@ pub const SKIN_TONES: [Rgb; 12] = [
     Rgb(0x4E3022),
     Rgb(0x3A2419),
 ];
+
+/// CIE L*a*b* (D65) of an sRGB colour.
+pub fn lab(c: Rgb) -> [f32; 3] {
+    let lin = |v: u8| {
+        let v = f32::from(v) / 255.0;
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let [r, g, b] = c.channels().map(lin);
+    let x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047;
+    let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    let z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883;
+    let f = |t: f32| {
+        if t > 0.008_856 {
+            t.cbrt()
+        } else {
+            7.787 * t + 16.0 / 116.0
+        }
+    };
+    [
+        116.0 * f(y) - 16.0,
+        500.0 * (f(x) - f(y)),
+        200.0 * (f(y) - f(z)),
+    ]
+}
+
+/// The index in `palette` nearest to `c` (in L*a*b*).
+fn nearest(palette: &[Rgb], c: Rgb) -> u8 {
+    let [l, a, b] = lab(c);
+    let d = |p: &Rgb| {
+        let [l2, a2, b2] = lab(*p);
+        (l - l2).powi(2) + (a - a2).powi(2) + (b - b2).powi(2)
+    };
+    palette
+        .iter()
+        .enumerate()
+        .min_by(|x, y| d(x.1).total_cmp(&d(y.1)))
+        .map_or(0, |(i, _)| i as u8)
+}
+
+/// An index of the 12-step palette (older apps, `riders.toml` before
+/// `skin_tone`) as the nearest tone of [`SKIN_TONES`].
+pub fn skin_from_legacy(i: u8) -> u8 {
+    let i = usize::from(i).min(LEGACY_SKIN_TONES.len() - 1);
+    nearest(&SKIN_TONES, LEGACY_SKIN_TONES[i])
+}
+
+/// A tone of [`SKIN_TONES`] as the nearest of the 12-step palette (written
+/// for older apps).
+pub fn skin_to_legacy(i: u8) -> u8 {
+    let i = usize::from(i).min(SKIN_TONES.len() - 1);
+    nearest(&LEGACY_SKIN_TONES, SKIN_TONES[i])
+}
 
 /// Face shapes (the face's own presets; facial hair is its own choice
 /// since 4N N6).
@@ -570,15 +652,15 @@ pub struct Character {
 
 impl Default for Character {
     /// The generated rider as shipped: 1.78 m, body A, the normal shape,
-    /// in the 30s, the fourth skin tone, short dark-brown hair, no facial
-    /// hair, sport glasses.
+    /// in the 30s, the fifth skin tone (the 12-step palette's fourth),
+    /// short dark-brown hair, no facial hair, sport glasses.
     fn default() -> Self {
         Self {
             height_cm: DEFAULT_HEIGHT_CM,
             base: BaseBody::A,
             shape: BodyShape::Normal,
             age: Age::Thirties,
-            skin: 3,
+            skin: 4,
             face: 0,
             hair: 0,
             hair_colour: HAIR_PALETTE[1].1,
@@ -722,7 +804,7 @@ impl Character {
         .validated()
     }
 
-    /// "1.78 m, body A, normal, 30s, skin 4 of 12, short hair #3B2A20,
+    /// "1.78 m, body A, normal, 30s, skin 5 of 16, short hair #3B2A20,
     /// no facial hair, glasses: sport wrap".
     pub fn summary(&self) -> String {
         let c = self.validated();
@@ -737,12 +819,13 @@ impl Character {
             ),
         };
         format!(
-            "{:.2} m, {}, {}, {}, skin {} of 12, {} hair {}, {facial}, glasses: {}",
+            "{:.2} m, {}, {}, {}, skin {} of {}, {} hair {}, {facial}, glasses: {}",
             f32::from(c.height_cm) / 100.0,
             c.base.name().to_lowercase(),
             c.shape.id(),
             c.age.id(),
             c.skin + 1,
+            SKIN_TONES.len(),
             HAIR_STYLES[c.hair as usize].to_lowercase(),
             c.hair_colour,
             GLASSES[c.glasses as usize].to_lowercase()
@@ -765,9 +848,63 @@ pub const LOCKED_MIRROR: &str =
 mod tests {
     use super::*;
 
+    /// The skin tones (spec §14 Phase 4, 4N, asked 2026-11-17) cover the
+    /// range of human skin evenly: from very pale (L* > 90) to very dark
+    /// (L* < 13), lighter to darker in every step, no step much larger
+    /// than another, and warm (red-pink) as well as neutral / golden /
+    /// olive undertones in the light, the medium and the dark third.
+    #[test]
+    fn the_skin_tones_cover_the_range_evenly_with_both_undertones() {
+        let l: Vec<[f32; 3]> = SKIN_TONES.iter().map(|c| lab(*c)).collect();
+        assert!(l[0][0] > 90.0 && l[15][0] < 13.0, "{:?} {:?}", l[0], l[15]);
+        let steps: Vec<f32> = l.windows(2).map(|w| w[0][0] - w[1][0]).collect();
+        for s in &steps {
+            assert!((3.0..9.0).contains(s), "{steps:?}");
+        }
+        let (lo, hi) = steps
+            .iter()
+            .fold((f32::MAX, 0.0f32), |(a, b), s| (a.min(*s), b.max(*s)));
+        assert!(hi <= 2.5 * lo, "even: {steps:?}");
+        // Undertone: the yellow–red ratio b*/a* (≥ 2: neutral to golden /
+        // olive; < 1.9: warm).
+        for third in [0..5, 5..11, 11..16] {
+            let r: Vec<f32> = l[third.clone()].iter().map(|c| c[2] / c[1]).collect();
+            assert!(r.iter().any(|x| *x >= 2.0), "{third:?}: {r:?}");
+            assert!(r.iter().any(|x| *x < 1.9), "{third:?}: {r:?}");
+        }
+        // All skin, never grey or saturated: a* and b* positive and modest.
+        for c in &l {
+            assert!(
+                c[1] > 3.0 && c[1] < 20.0 && c[2] > 7.0 && c[2] < 30.0,
+                "{c:?}"
+            );
+        }
+    }
+
+    /// The 12-step palette's indices (older apps and files) map to the
+    /// nearest new tone, in order, the default to the default; and back.
+    #[test]
+    fn old_skin_indices_map_to_the_nearest_new_tone() {
+        let new: Vec<u8> = (0..12).map(skin_from_legacy).collect();
+        assert!(new.windows(2).all(|w| w[0] <= w[1]), "in order: {new:?}");
+        assert_eq!(new[0], 1);
+        assert_eq!(new[11], 14);
+        assert_eq!(skin_from_legacy(3), Character::default().skin);
+        for (old, n) in new.iter().enumerate() {
+            let [l1, ..] = lab(LEGACY_SKIN_TONES[old]);
+            let [l2, ..] = lab(SKIN_TONES[*n as usize]);
+            assert!((l1 - l2).abs() < 6.0, "{old} → {n}");
+            let back = i16::from(skin_to_legacy(*n));
+            assert!((back - old as i16).abs() <= 1, "round trip {old}: {back}");
+        }
+        assert_eq!(skin_from_legacy(200), 14, "out of range: the darkest");
+        assert_eq!(skin_to_legacy(0), 0);
+        assert_eq!(skin_to_legacy(15), 11);
+    }
+
     #[test]
     fn palettes_and_defaults() {
-        assert_eq!(SKIN_TONES.len(), 12, "a 12-step palette (spec 4C)");
+        assert_eq!(SKIN_TONES.len(), 16, "a 16-step palette (spec 4N)");
         // From light to dark.
         let lum = |c: Rgb| {
             let [r, g, b] = c.channels();
@@ -779,7 +916,11 @@ mod tests {
         let d = Character::default();
         assert_eq!(d.validated(), d);
         assert_eq!(d.scale(), 1.0);
-        assert_eq!(d.skin_colour(), Rgb(0xD9A98C), "the shipped skin colour");
+        assert_eq!(d.skin_colour(), SKIN_TONES[4], "the shipped skin colour");
+        assert!(
+            (lab(d.skin_colour())[0] - lab(Rgb(0xD9A98C))[0]).abs() < 3.0,
+            "as before 4.51"
+        );
         assert_eq!(d.hair_colour, Rgb(0x3B2A20), "the shipped hair colour");
         assert_eq!(d.hair_shown(), d.hair_colour, "no grey in the 30s");
         for b in BodyBuild::ALL {

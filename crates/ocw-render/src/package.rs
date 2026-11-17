@@ -524,6 +524,71 @@ fn cell_kept(keep: Keep, o: [f64; 2], s: f64, i: usize, k: usize) -> bool {
     keep.is_none_or(|f| f([o[0] + (i as f64 + 0.5) * s, o[1] + (k as f64 + 0.5) * s]))
 }
 
+/// The ground as a tile draws it: the heights of its terrain mesh
+/// ([`terrain_arrays_kept`]'s `n × n` grid, after the renderer changed it –
+/// the terrain lowered under the junction surfaces), triangulated like the
+/// mesh (cells split along (i+1, k)–(i, k+1)); outside the tile, or
+/// without the mesh, the package's terrain triangulated the same way
+/// ([`WorldPackage::surface_height`]). What lies on the ground – the
+/// fields' stands – takes its heights from here, so it lies on the drawn
+/// terrain rather than on the bilinear [`WorldPackage::height`], which
+/// differs from it by up to the cell's twist (metres on terrace edges).
+pub struct TileGround<'a> {
+    pkg: &'a WorldPackage,
+    /// The tile's terrain mesh (its grid's vertices) and its origin.
+    mesh: Option<(&'a MeshArrays, [f64; 2])>,
+}
+
+impl<'a> TileGround<'a> {
+    /// The ground of tile `key` drawn as `mesh` (its vertices are the
+    /// tile's terrain grid; `None`: the package's terrain).
+    pub fn new(pkg: &'a WorldPackage, key: TileKey, mesh: Option<&'a MeshArrays>) -> Self {
+        let n = pkg.samples as usize;
+        let mesh = mesh
+            .filter(|m| n >= 2 && m.positions.len() == n * n)
+            .map(|m| (m, key.origin(f64::from(pkg.tile_size_m))));
+        Self { pkg, mesh }
+    }
+
+    /// The drawn ground's height at local (x, z).
+    pub fn height(&self, x: f64, z: f64) -> Option<f64> {
+        let Some((m, o)) = self.mesh else {
+            return self.pkg.surface_height(x, z);
+        };
+        let n = self.pkg.samples as usize;
+        let s = self.pkg.spacing_m();
+        let (fx, fz) = ((x - o[0]) / s, (z - o[1]) / s);
+        let last = (n - 1) as f64;
+        if !(0.0..=last).contains(&fx) || !(0.0..=last).contains(&fz) {
+            return self.pkg.surface_height(x, z);
+        }
+        let (i, k) = ((fx as usize).min(n - 2), (fz as usize).min(n - 2));
+        let (tx, tz) = (fx - i as f64, fz - k as f64);
+        let h = |i: usize, k: usize| f64::from(m.positions[k * n + i][1]);
+        let (h00, h10, h01, h11) = (h(i, k), h(i + 1, k), h(i, k + 1), h(i + 1, k + 1));
+        Some(if tx + tz <= 1.0 {
+            h00 + tx * (h10 - h00) + tz * (h01 - h00)
+        } else {
+            h11 + (1.0 - tx) * (h01 - h11) + (1.0 - tz) * (h10 - h11)
+        })
+    }
+
+    /// The lowest drawn ground under a foot of radius `r` at local (x, z)
+    /// (its centre and eight points round its rim): a trunk or a pole
+    /// standing there with its base this low reaches the ground all round,
+    /// also on a slope or a terrace edge.
+    pub fn foot(&self, x: f64, z: f64, r: f64) -> Option<f64> {
+        let mut low = self.height(x, z)?;
+        for k in 0..8 {
+            let a = f64::from(k) * std::f64::consts::FRAC_PI_4;
+            if let Some(h) = self.height(x + r * a.cos(), z + r * a.sin()) {
+                low = low.min(h);
+            }
+        }
+        Some(low)
+    }
+}
+
 /// Flat colour of a road (linear): by category where the surface is the
 /// category's default (as before the material library), else by surface.
 pub fn road_colour(class: RoadClass, surface: RoadSurface) -> [f32; 4] {
@@ -1269,9 +1334,14 @@ pub fn build_tile_meshes_with(
         };
         crate::junction_mesh::lower_terrain(&mut terrain, g, &patches, grid);
     }
+    // The plants, the fields' stands, the lamps and the obstacles stand
+    // on the ground as drawn (spec §4.6.1).
+    let ground = TileGround::new(pkg, key, Some(&terrain));
     let mut plants =
-        crate::vegetation::tile_plants(pkg, key, &classed, keep, look.season.as_deref());
+        crate::vegetation::tile_plants(pkg, key, &classed, keep, look.season.as_deref(), &ground);
     plants.crowns.shrink_to_fit();
+    let lamps = crate::street_lamps::tile_lamps(pkg, key, keep, &ground);
+    let obstacles = crate::obstacles::tile_obstacle_meshes(pkg, key, keep, &ground);
     Some(TileMeshes {
         key,
         terrain,
@@ -1305,8 +1375,8 @@ pub fn build_tile_meshes_with(
         bridges: crate::bridges::bridge_arrays(&own),
         solid,
         near_tint: look.near_tint,
-        lamps: crate::street_lamps::tile_lamps(pkg, key, keep),
-        obstacles: crate::obstacles::tile_obstacle_meshes(pkg, key, keep),
+        lamps,
+        obstacles,
     })
 }
 

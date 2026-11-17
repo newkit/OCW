@@ -153,7 +153,9 @@ pub fn models() -> Vec<(Entry, Model)> {
         stamp(&mut m, &e, bike_extras(p, &rig));
         out.push((e, m));
     }
-    for (file, detail, src) in [(RIDER, "High", &near), (RIDER_LOW, "Low", &low)] {
+    // The near rider without its part files (spec §14 Phase 4, 4N N8).
+    let near_file = crate::rider_split::strip(&near);
+    for (file, detail, src) in [(RIDER, "High", &near_file), (RIDER_LOW, "Low", &low)] {
         let mut m = src.clone();
         let e = entry(
             file,
@@ -165,6 +167,27 @@ pub fn models() -> Vec<(Entry, Model)> {
             &mut m,
             &e,
             json!({ "height_m": crate::pose::REFERENCE_HEIGHT_M, "leg_m": (rig.leg() * 10_000.0).round() / 10_000.0 }),
+        );
+        out.push((e, m));
+    }
+    // The part files: hair pieces, facial hair, the base bodies' parts,
+    // each at its anchor on the rider.
+    for p in crate::rider_split::part_files() {
+        let mut m = crate::rider_split::extract(&near, p.node).expect("a part node");
+        let anchor = crate::rider_split::anchor(&m).expect("a root").to_string();
+        let mut e = entry(
+            &p.file,
+            Kind::Wearable,
+            &format!(
+                "ocw_assets::rider_split::extract(rider::build(Detail::High), {:?})",
+                p.node
+            ),
+        );
+        e.anchor = Some(anchor.clone());
+        stamp(
+            &mut m,
+            &e,
+            json!({ "anchor": anchor, "rider_node": p.node }),
         );
         out.push((e, m));
     }
@@ -283,7 +306,9 @@ mod tests {
     fn the_export_is_deterministic_and_named_by_the_contract() {
         let a = files();
         let b = files();
-        assert_eq!(a.len(), 6 + 2 + 4 + 1);
+        // Bikes, the riders, the rider's part files (4N N8), helmets, the
+        // VR bike computer.
+        assert_eq!(a.len(), 6 + 2 + crate::rider_split::part_files().len() + 4 + 1);
         for ((ea, ba), (eb, bb)) in a.iter().zip(&b) {
             assert_eq!(ea, eb);
             assert_eq!(ba, bb, "{}", ea.file);
@@ -292,7 +317,7 @@ mod tests {
         let text = manifest_text(&a.iter().map(|(e, _)| e.clone()).collect::<Vec<_>>());
         let files: Vec<(String, Vec<u8>)> = a.into_iter().map(|(e, b)| (e.file, b)).collect();
         let checked = crate::manifest::validate(&text, &files).unwrap_or_else(|e| panic!("{e:#?}"));
-        assert_eq!(checked.len(), 13);
+        assert_eq!(checked.len(), 13 + crate::rider_split::part_files().len());
     }
 
     #[test]

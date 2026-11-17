@@ -247,7 +247,26 @@ pub fn previewed(world: &World) -> Option<Character> {
     editor::preview(attr, focus, &rider)
 }
 
+/// Whether the editor shows the bare head now (spec §14 Phase 4, 4N Q28:
+/// the face, hair, facial-hair and glasses pages – the helmet comes off;
+/// back on for the body and the editor's first page, and on leaving).
+pub fn helmet_off(world: &World) -> bool {
+    editor_page(world).is_some_and(|(p, _)| frames_the_face(p))
+}
+
 fn preview_focused_tile(world: &mut World) {
+    let bare = helmet_off(world);
+    if let Some(mut view) = world.get_resource_mut::<ocw_render::RideView>()
+        && let Some(r) = view.riders.iter_mut().find(|r| r.is_local)
+    {
+        let off = ocw_render::thumbs::HELMET_OFF;
+        let has = r.parts.iter().any(|p| p == off);
+        if bare && !has {
+            r.parts.push(off.to_string());
+        } else if !bare && has {
+            r.parts.retain(|p| p != off);
+        }
+    }
     let Some(c) = previewed(world) else {
         return;
     };
@@ -268,27 +287,47 @@ fn preview_focused_tile(world: &mut World) {
 }
 
 /// The camera of the editor: in front of the rider, a little to its side
-/// (the panel covers the window's left third), close for the face.
-pub fn editor_orbit(page: sub::Page) -> ocw_render::camera::CameraOrbit {
-    let face = match page {
-        sub::Page::CharacterPick(a) => a.face(),
-        sub::Page::CharacterBody | sub::Page::Character => false,
-        _ => true,
-    };
+/// (the panel covers the window's left third), the whole rider; on the
+/// face pages the close-up of [`editor_close_up`] takes over from it.
+pub fn editor_orbit(_page: sub::Page) -> ocw_render::camera::CameraOrbit {
     ocw_render::camera::CameraOrbit {
         yaw: std::f32::consts::PI - 0.45,
-        pitch: if face { 0.42 } else { 0.22 },
-        distance: if face {
-            ocw_render::camera::MIN_DISTANCE
-        } else {
-            4.4
-        },
+        pitch: 0.22,
+        distance: 4.4,
     }
+}
+
+/// Whether `page` frames the head (face and age, hair, facial hair,
+/// glasses and the other face tiles); the others frame the whole rider.
+pub fn frames_the_face(page: sub::Page) -> bool {
+    match page {
+        sub::Page::CharacterPick(a) => a.face(),
+        sub::Page::CharacterFace | sub::Page::CharacterHair | sub::Page::CharacterFacialHair => {
+            true
+        }
+        _ => false,
+    }
+}
+
+/// The close-up of the head on a face page (spec §14 Phase 4, 4N: the
+/// eyes, ears, lips and the age clearly visible): straight from the front
+/// for the glasses, from a three-quarter view for the rest (the ears, the
+/// hair's side and its tail); `None`: the whole rider.
+pub fn editor_close_up(page: sub::Page) -> Option<ocw_render::camera::CloseUpShot> {
+    use ocw_render::camera::CloseUpShot;
+    frames_the_face(page).then_some(match page {
+        sub::Page::CharacterPick(editor::Attr::Glasses) => CloseUpShot::FRONT,
+        _ => CloseUpShot::THREE_QUARTER,
+    })
 }
 
 /// The camera's orbit before the editor opened (put back on leaving).
 #[derive(Resource, Default)]
 struct SavedOrbit(Option<ocw_render::camera::CameraOrbit>);
+
+/// The close-up the editor set last.
+#[derive(Resource, Default)]
+struct EditorCloseUp(Option<ocw_render::camera::CloseUpShot>);
 
 fn frame_the_rider(world: &mut World) {
     let page = editor_page(world).map(|(p, _)| p);
@@ -299,6 +338,16 @@ fn frame_the_rider(world: &mut World) {
     else {
         return;
     };
+    // Only when the editor's page changes: `camera.closeup` may set it
+    // too while the editor is closed.
+    let close = page.and_then(editor_close_up);
+    let last = world.get_resource::<EditorCloseUp>().and_then(|e| e.0);
+    if close != last {
+        world.insert_resource(EditorCloseUp(close));
+        if let Some(mut c) = world.get_resource_mut::<ocw_render::camera::CloseUp>() {
+            c.0 = close;
+        }
+    }
     match (page, saved) {
         (Some(p), _) => {
             if saved.is_none() {
@@ -327,6 +376,43 @@ mod tests {
             .try_get_matches_from(args)
             .map_err(|e| e.to_string())?;
         apply(c, &m, kg, Some(178.0))
+    }
+
+    /// The camera per editor page (spec §14 Phase 4, 4N): the head in a
+    /// close-up on every face, hair, facial-hair and glasses page (from
+    /// the front for the glasses), the whole rider on the body pages and
+    /// the editor's first page.
+    #[test]
+    fn each_editor_page_frames_the_face_or_the_whole_rider() {
+        use editor::Attr;
+        use ocw_render::camera::CloseUpShot;
+        for p in [
+            sub::Page::CharacterFace,
+            sub::Page::CharacterHair,
+            sub::Page::CharacterFacialHair,
+        ] {
+            assert_eq!(
+                editor_close_up(p),
+                Some(CloseUpShot::THREE_QUARTER),
+                "{p:?}"
+            );
+        }
+        for a in Attr::ALL {
+            let want = match a {
+                Attr::Base | Attr::Shape => None,
+                Attr::Glasses => Some(CloseUpShot::FRONT),
+                _ => Some(CloseUpShot::THREE_QUARTER),
+            };
+            assert_eq!(editor_close_up(sub::Page::CharacterPick(a)), want, "{a:?}");
+        }
+        for p in [sub::Page::Character, sub::Page::CharacterBody] {
+            assert_eq!(editor_close_up(p), None, "{p:?}");
+            // The whole rider (1.8 m) in the picture from the orbit.
+            let o = editor_orbit(p);
+            let half = (ocw_render::camera::DEFAULT_FOV * 0.5).tan() * o.distance;
+            assert!(half * 2.0 > 1.9, "{p:?}");
+            assert!(o.yaw > 2.0, "in front");
+        }
     }
 
     #[test]

@@ -44,6 +44,7 @@ pub mod model;
 pub mod parts;
 pub mod pose;
 pub mod rider;
+pub mod rider_split;
 pub mod slots;
 pub mod workshop;
 
@@ -113,10 +114,21 @@ pub mod shipped {
             .unwrap_or_else(|e| panic!("shipped model: {e}"))
     }
 
-    /// The rider model.
+    /// The rider model: the near rider file with every part file (hair,
+    /// facial hair, the base bodies' parts; spec §14 Phase 4, 4N N8)
+    /// attached under its anchor ([`crate::rider_split::merge`]).
     pub fn rider_model() -> &'static Model {
-        static M: OnceLock<Arc<Model>> = OnceLock::new();
-        M.get_or_init(|| model(crate::RIDER_ID))
+        static M: OnceLock<Model> = OnceLock::new();
+        M.get_or_init(|| {
+            let base = model(crate::RIDER_ID);
+            let parts: Vec<Arc<Model>> = crate::rider_split::part_files()
+                .iter()
+                .map(|p| model(crate::kinds::id_of(&p.file)))
+                .collect();
+            let refs: Vec<&Model> = parts.iter().map(|m| m.as_ref()).collect();
+            crate::rider_split::merge(&base, &refs)
+                .unwrap_or_else(|e| panic!("shipped rider parts: {e}"))
+        })
     }
 
     /// The rider's far model (the bikes' `lod1` riders are built from it).

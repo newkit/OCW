@@ -30,6 +30,11 @@ pub struct VoiceHud {
     /// What the own rider's status signs say about voice (spec §2.6,
     /// §7.1.7 Q11): sent to the others with the samples.
     pub signs: VoiceSigns,
+    /// The room line (spec §7.1.4): "ROOM: everybody - heard by: no one",
+    /// "ROOM: 3 selected (2 here) - …".
+    pub room: String,
+    /// The first call's notice (spec §7.1.2), while it shows.
+    pub notice: Option<String>,
 }
 
 /// The voice part of the own rider's status signs (spec §2.6, §7.1.7 Q11,
@@ -84,6 +89,13 @@ pub fn lines(v: &VoiceHud) -> (String, String) {
     let mut second = format!("voice {}", v.status);
     if !v.speaking_names.is_empty() {
         second.push_str(&format!(" - talking: {}", v.speaking_names.join(", ")));
+    }
+    if !v.room.is_empty() {
+        second.push('\n');
+        second.push_str(&v.room);
+    }
+    if let Some(n) = &v.notice {
+        second = format!("{n}\n{second}");
     }
     (format!("{mic}   {spk}"), second)
 }
@@ -371,5 +383,18 @@ mod tests {
         v.mic_muted = false;
         v.self_speaking = true;
         assert!(lines(&v).0.starts_with("MIC on - talking"));
+        // The room line and the first call's notice (spec §7.1.2, §7.1.4).
+        v.room = "ROOM: everybody - heard by: no one".into();
+        v.speaking_names.clear();
+        assert_eq!(
+            lines(&v).1,
+            "voice connected (2)\nROOM: everybody - heard by: no one"
+        );
+        v.notice = Some("Voice: you join muted - M unmutes.".into());
+        assert!(
+            lines(&v)
+                .1
+                .starts_with("Voice: you join muted - M unmutes.\nvoice connected")
+        );
     }
 }

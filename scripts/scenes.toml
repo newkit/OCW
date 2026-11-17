@@ -3756,3 +3756,534 @@ riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 7
 at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair ponytail --hair-colour blond", "2.2=status.sign muted on", "2.5=camera.orbit 165 4 2.5"]
 shot = 9
 pick = false
+
+# The character editor's second step (spec §14 Phase 4, 4N, v4.51): the
+# face close-up, the picture tiles, the mirror's tiles. Made-up rider name only.
+
+[[scene]]
+name = "char2-face-20s-slim"
+description = "Character editor face close-up (4N step 2): Workshop -> Character -> Face and age, the head framed from a three-quarter view; 20s, slim, no glasses"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --age 20s --shape slim --hair short --glasses 1", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 8
+pick = false
+
+[[scene]]
+name = "char2-face-40s-normal-sport"
+description = "Character editor face close-up (4N step 2): Workshop -> Character -> Face and age, the head framed from a three-quarter view; 40s, normal, sport glasses, a classic moustache"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --age 40s --shape normal --hair side-part --glasses 2 --moustache classic", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 8
+pick = false
+
+[[scene]]
+name = "char2-face-60s-ample-round"
+description = "Character editor face close-up (4N step 2): Workshop -> Character -> Face and age, the head framed from a three-quarter view; 60s, ample, round glasses, a full beard"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --age 60s --shape ample --hair long --glasses 3 --beard full", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 8
+pick = false
+
+[[scene]]
+name = "char2-face-70plus-obese-b"
+description = "Character editor face close-up (4N step 2): Workshop -> Character -> Face and age, the head framed from a three-quarter view; 70+, obese, base body B, round glasses, a low bun"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --body b --age 70+ --shape obese --hair low-bun --glasses 3", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 8
+pick = false
+
+[[scene]]
+name = "char2-face-30s-skinny-c"
+description = "Character editor face close-up (4N step 2): Workshop -> Character -> Face and age, the head framed from a three-quarter view; 30s, skinny, base body C, dark skin, a goatee"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --body c --age 30s --shape skinny --hair single-braid --skin 10 --glasses 1 --beard goatee", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 8
+pick = false
+
+[[scene]]
+name = "char2-face-glasses-front"
+description = "Character editor face close-up (4N step 2): Face and age -> Glasses tiles, the face straight from the front, round glasses focused"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --age 50s --glasses 1", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select", "4.8=menu down", "5.2=menu down", "5.6=menu down", "6.0=menu select", "6.6=menu right", "7.0=menu right"]
+shot = 30
+pick = false
+
+[[scene]]
+name = "char2-face-helmet-aero"
+description = "Character editor face close-up (4N step 2) with the aero helmet bought and worn: Face and age page"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=hearts.grant 3000", "2.1=workshop.buy helmet.tt.top", "2.2=character --age 40s --glasses 2", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char2-tiles-hair"
+description = "Character editor picture tiles (4N step 2): Hair -> Hair style, each tile a rendering of the rider's head with that style (status line: the focused one's name)"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu down", "4.8=menu select", "5.2=menu select", "6=menu right", "6.4=menu right"]
+shot = 40
+pick = false
+
+[[scene]]
+name = "char2-tiles-shape"
+description = "Character editor picture tiles (4N step 2): Body -> Shape, each tile the whole rider with that shape, Match my weight named"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.2=menu select", "4.6=menu down", "5.0=menu select", "5.6=menu right"]
+shot = 30
+pick = false
+
+[[scene]]
+name = "char2-tiles-base"
+description = "Character editor picture tiles (4N step 2): Body -> Base body A / B / C as renderings"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.2=menu select", "4.6=menu select"]
+shot = 25
+pick = false
+
+[[scene]]
+name = "char2-tiles-beard"
+description = "Character editor picture tiles (4N step 2): Facial hair -> Beard as renderings of the face"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu down", "4.8=menu down", "5.2=menu select", "5.6=menu down", "6.0=menu select", "6.6=menu right"]
+shot = 30
+pick = false
+
+[[scene]]
+name = "char2-tiles-age"
+description = "Character editor picture tiles (4N step 2): Face and age -> Age as renderings of the face (20s ... 70+)"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --hair short --hair-colour brown", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select", "4.8=menu select", "5.4=menu right", "5.8=menu right", "6.2=menu right"]
+shot = 30
+pick = false
+
+[[scene]]
+name = "char2-mirror-hair-tiles"
+description = "The workshop mirror (4N step 2): the hair picker as picture tiles, the face close-up in the mirror, the focused style on the rider"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=workshop open", "2.6=workshop mirror", "4=workshop slot-next", "4.4=workshop slot-next", "4.8=workshop slot-next", "5.2=workshop select", "5.8=workshop right", "6.2=workshop right"]
+shot = 40
+pick = false
+
+[[scene]]
+name = "char2-mirror-helmet-tiles"
+description = "The workshop mirror (4N step 2): the helmet picker as picture tiles of the rider wearing each helmet, the face close-up"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "1.8=hearts.grant 3000", "2=workshop open", "2.6=workshop mirror", "4.4=workshop select", "5.0=workshop right"]
+shot = 35
+pick = false
+
+[[scene]]
+name = "char2-mirror-shape-tiles"
+description = "The workshop mirror (4N step 2): the body shape picker as tiles of the whole rider"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=workshop open", "2.6=workshop mirror", "4=workshop slot-prev", "4.3=workshop slot-prev", "4.6=workshop slot-prev", "4.9=workshop slot-prev", "5.2=workshop slot-prev", "5.5=workshop slot-prev", "5.8=workshop slot-prev", "6.1=workshop slot-prev", "6.6=workshop select", "7.2=workshop right"]
+shot = 35
+pick = false
+
+# The skin tone selector (asked 2026-11-17; 4N, v4.51): 16 tones as swatches.
+[[scene]]
+name = "char2-tiles-skin"
+description = "Skin tone selector (4N, asked 2026-11-17): Face and age -> Skin tone, the 16 tones as swatches light to dark, the focused dark tone on the rider's face close-up"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select", "4.8=menu down", "5.2=menu select", "5.8=menu down", "6.2=menu down", "6.6=menu right", "7.0=menu right"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "char2-tiles-skin-light"
+description = "Skin tone selector (4N): the lightest tone focused on the face close-up"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select", "4.8=menu down", "5.2=menu select", "5.8=menu up", "6.2=menu left", "6.6=menu left", "7.0=menu left", "7.4=menu left"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "char2-mirror-skin-tiles"
+description = "The workshop mirror (4N): the skin tone picker as 16 swatch tiles, the face close-up, the focused tone on the rider"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=workshop open", "2.6=workshop mirror", "4=workshop slot-prev", "4.3=workshop slot-prev", "4.6=workshop slot-prev", "4.9=workshop slot-prev", "5.2=workshop slot-prev", "5.5=workshop slot-prev", "5.8=workshop slot-prev", "6.4=workshop select", "7.0=workshop down", "7.4=workshop down", "7.8=workshop right"]
+shot = 12
+pick = false
+
+# The rider's hands (spec §14 Phase 4, 4N, v4.53): every grip and glove. Made-up rider name only.
+
+[[scene]]
+name = "hands-road-hoods-mitts"
+description = "The hands (4N): road bike, on the hoods, the base fingerless mitts (fingertips bare), right hand close-up"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup right-hand 115 25 0.42"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "hands-road-tops"
+description = "The hands (4N): road bike climbing, hands on the tops round the bar"
+args = ["--route", "hills", "--bots", "0", "--power", "260"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup right-hand 115 25 0.42"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "hands-road-drops"
+description = "The hands (4N): road bike sprinting on the drops"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1=sim.power 1100", "3.5=camera.closeup right-hand 115 25 0.42"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "hands-tt-extensions"
+description = "The hands (4N): TT bike, hands round the extensions"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\nbike = \"tt\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup right-hand 115 25 0.42"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "hands-mtb-grips"
+description = "The hands (4N): mountain bike, hands round the flat bar's grips"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\nbike = \"mtb\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup right-hand 115 25 0.42"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "hands-gravel-drops"
+description = "The hands (4N): gravel bike sprinting on the flared drops"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\nbike = \"gravel\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1=sim.power 1100", "3.5=camera.closeup right-hand 115 25 0.42"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "hands-gloves-gel"
+description = "The hands (4N): gel gloves (fingerless, padded back) on the hoods, right hand close-up"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=hearts.grant 3000", "1.8=workshop.buy gloves.gel.entry", "3.5=camera.closeup right-hand 115 25 0.42"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "hands-gloves-full"
+description = "The hands (4N): full gloves (fingertips covered) on the hoods, right hand close-up"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=hearts.grant 3000", "1.8=workshop.buy gloves.full.mid", "3.5=camera.closeup right-hand 115 25 0.42"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "hands-gloves-winter"
+description = "The hands (4N): winter gloves (covered, a long cuff) on the hoods, right hand close-up"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1.5=hearts.grant 3000", "1.8=workshop.buy gloves.winter.upper", "3.5=camera.closeup right-hand 115 25 0.42"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "hands-left-hoods"
+description = "The hands (4N): the left hand on the hoods (the thumb on the inside)"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup left-hand 245 25 0.42"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "hands-phone"
+description = "The hands (4N): the phone of the status signs held in the right hand's fingers, the left on the hoods"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3=status.sign menu on", "4=camera.closeup right-hand 100 20 0.5"]
+shot = 8
+pick = false
+
+[[scene]]
+name = "hands-arms-up"
+description = "The hands (4N): arms up at the finish, the hands open"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.5=time pause", "1=event race --km 0.4 --bots 3", "1=sim.power 700", "40=camera.closeup right-hand 150 10 0.6", "43=event dismiss"]
+shot = 44.5
+pick = false
+
+# The helmet off in the character editor (4N Q28, decided 2026-11-17). Made-up rider name only.
+
+[[scene]]
+name = "bare-tiles-hair"
+description = "Helmet off (4N Q28): Hair -> Hair style tiles, every picture and the close-up with the bare head (long hair focused)"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --hair-colour auburn", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu down", "4.8=menu select", "5.2=menu select", "6=menu right", "6.4=menu right"]
+shot = 40
+pick = false
+
+[[scene]]
+name = "bare-face-close-up"
+description = "Helmet off (4N Q28): Face and age close-up with the bare head, an afro"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --hair afro --hair-colour black --age 40s", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "bare-mirror-helmet-hook"
+description = "Helmet off (4N Q28): the workshop mirror with the hair slot chosen, the rider bare-headed, the helmet hanging on its hook beside the mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --hair long --hair-colour blond", "2.2=workshop open", "2.8=workshop mirror", "4=workshop slot-next", "4.4=workshop slot-next", "4.8=workshop slot-next"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "bare-mirror-hair-tiles"
+description = "Helmet off (4N Q28): the mirror's hair picker as tiles, the bare head in the close-up and in every picture"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --hair-colour auburn", "2.2=workshop open", "2.8=workshop mirror", "4=workshop slot-next", "4.4=workshop slot-next", "4.8=workshop slot-next", "5.2=workshop select", "5.8=workshop right", "6.2=workshop right"]
+shot = 40
+pick = false
+
+# --- Field stands on the terrain (spec §4.6.1, the stands of section VEGE) ---
+# The maize, potato and cereal stands of Tenerife's terraces on the routes the
+# drone videos and the kiosk ride (2026-11-17 bug: green slabs floating over
+# the brown ground). Summer noon, so the stands are up and green.
+
+[[scene]]
+name = "stands-masca-km9"
+description = "Buenavista - Masca - Santiago del Teide at km 9.1 (summer evening, the drone video's place): the terraced fields beside the road from above and behind, their maize and potato stands on the ground"
+world = "tenerife"
+args = ["--world", "{world}", "--route-file", "{world_dir}/buenavista-masca.route", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 20:30", "0.5=hud off", "0.5=hud.profile off", "0.8=teleport 9.12", "1=camera.orbit 20 32 22"]
+shot = 12
+pick = false
+
+# Fixes of 2026-11-17 (spec §14 Phase 4 4N / 4G, HUD §3.2): the palm, the
+# helmet on its hook, the standing rider's hands, the HUD panel on narrow
+# windows, the bike stand's card. Made-up rider name only.
+
+[[scene]]
+name = "fix-hud-1280x720"
+description = "HUD fit (§3.2): the top panel at 1280×720 with the wind and the clock in the main line – every wrapped line inside the panel"
+args = ["--route", "hills", "--bots", "3", "--power", "200", "--window", "1280x720"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 09:44", "1=weather windy"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-hud-1024x768"
+description = "HUD fit (§3.2): the top panel in a 4:3 window (1024×768), the lines wrapped at the separators, the panel grown with them"
+args = ["--route", "hills", "--bots", "3", "--power", "200", "--window", "1024x768"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 09:44", "1=weather windy"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-hud-1280x720-150"
+description = "HUD fit (§3.2): 1280×720 with the HUD at 150 % – the panel narrower than the window, every line inside it"
+args = ["--route", "hills", "--bots", "3", "--power", "200", "--window", "1280x720"]
+cmds = ["set display.ui_scale 150"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 09:44", "1=weather windy"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-stand-tiles-frame"
+description = "Bike stand tiles (4G): the frames as tiles, weights over 1,000 g with a thousands separator, the detail card inside the panel"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 5000", "2.2=workshop open", "2.8=workshop select", "4.2=workshop select", "5=workshop right"]
+shot = 24
+pick = false
+
+[[scene]]
+name = "fix-stand-tiles-groupset"
+description = "Bike stand tiles (4G): the groupsets as tiles, a top groupset focused – its detail card (with the parts it is fitted with) fits the panel"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 5000", "2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-next", "4.2=workshop slot-next", "4.6=workshop slot-next", "5=workshop select", "5.8=workshop down", "6.2=workshop right"]
+shot = 24
+pick = false
+
+[[scene]]
+name = "fix-stand-tiles-tyres"
+description = "Bike stand tiles (4G): the tyres picker as tiles, each tile's picture the whole 2:1 thumbnail framed on the part"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 5000", "2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-next", "4.2=workshop slot-next", "5.0=workshop select"]
+shot = 24
+pick = false
+
+[[scene]]
+name = "fix-stand-tiles-cockpit"
+description = "Bike stand tiles (4G): the cockpit picker as tiles, each tile's picture the whole 2:1 thumbnail framed on the part"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 5000", "2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-next", "4.2=workshop slot-next", "4.6=workshop slot-next", "5.0=workshop slot-next", "5.4=workshop slot-next", "5.8=workshop slot-next", "6.2=workshop slot-next", "7.0=workshop select"]
+shot = 24
+pick = false
+
+[[scene]]
+name = "fix-stand-tiles-saddle"
+description = "Bike stand tiles (4G): the saddle picker as tiles, each tile's picture the whole 2:1 thumbnail framed on the part"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 5000", "2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-next", "4.2=workshop slot-next", "4.6=workshop slot-next", "5.0=workshop slot-next", "5.4=workshop slot-next", "5.8=workshop slot-next", "6.2=workshop slot-next", "6.6=workshop slot-next", "7.0=workshop slot-next", "7.8=workshop select"]
+shot = 24
+pick = false
+
+[[scene]]
+name = "fix-stand-tiles-crankset"
+description = "Bike stand tiles (4G): the crankset picker as tiles, the drivetrain thumbnails without the wheels, square on from the drive side"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 5000", "2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-next", "4.2=workshop slot-next", "4.6=workshop slot-next", "5.0=workshop slot-next", "5.8=workshop select"]
+shot = 24
+pick = false
+
+[[scene]]
+name = "fix-stand-tiles-cassette"
+description = "Bike stand tiles (4G): the cassette picker as tiles, the drivetrain thumbnails without the wheels, square on from the drive side"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 5000", "2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-next", "4.2=workshop slot-next", "4.6=workshop slot-next", "5.0=workshop slot-next", "5.4=workshop slot-next", "6.2=workshop select"]
+shot = 24
+pick = false
+
+[[scene]]
+name = "fix-stand-tiles-chain"
+description = "Bike stand tiles (4G): the chain picker as tiles, the drivetrain thumbnails without the wheels, square on from the drive side"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 5000", "2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-next", "4.2=workshop slot-next", "4.6=workshop slot-next", "5.0=workshop slot-next", "5.4=workshop slot-next", "5.8=workshop slot-next", "6.6=workshop select"]
+shot = 24
+pick = false
+
+[[scene]]
+name = "fix-helmet-hook"
+description = "Helmet off (4N Q28): the hair slot at the mirror, the rider's helmet hanging upright on the peg between the window and the mirror, its shell facing the room"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --hair long --hair-colour blond", "2.2=workshop open", "2.8=workshop mirror", "4=workshop slot-next", "4.4=workshop slot-next", "4.8=workshop slot-next", "6=workshop orbit 35"]
+shot = 12
+pick = false
+
+[[scene]]
+name = "stands-masca-km79"
+description = "Masca road at km 7.9 from above (unicorn): potato terraces on a steep slope beside the road, the stands following the ground of every terrace"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-31715,-4790", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose -31705 -4775 22 300 -32"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "stands-masca-km108"
+description = "Masca road at km 10.85 (unicorn): potato fields at a terrace edge 25 m below the road, the stands on the ground on both levels"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-32240,-3630", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose -32225 -3620 25 235 -30"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "stands-teide-km11"
+description = "Puerto de la Cruz - Teide at km 11.2 (the kiosk ride, unicorn): potato terraces above La Orotava, the stands on the ground"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-640,-8500", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose -625 -8490 22 250 -32"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "stands-teide-km134"
+description = "Puerto de la Cruz - Teide at km 13.4 (unicorn): potato terraces beside the road at 985 m, the stands on the ground"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "1360,-8400", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose 1375 -8385 22 240 -32"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "stands-blackforest-maize"
+description = "Black Forest north (unicorn): maize stands on a field edge in the Rhine valley foothills, on the ground"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "16255,-61445", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose 16290 -61480 22 225 -30"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "stands-liechtenstein-cereal"
+description = "Liechtenstein (unicorn): cereal stands on a sloping field above the Rhine valley, on the ground"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-1500,2260", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose -1495 2255 22 225 -30"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "fix-standing-hands"
+description = "The standing rider at the mirror (4N): the idle pose with relaxed, curled hands following the arms"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2.2=workshop open", "2.8=workshop mirror", "4=workshop zoom 2"]
+shot = 12
+pick = false
+
+# Fixes of 2026-11-17 (spec §4.6.1, 4G): trees, bushes, posts and lamps on
+# the ground as drawn; the bike stand's part thumbnails framed on the part.
+
+[[scene]]
+name = "ground-bf-schauinsland-slope"
+description = "Black Forest (unicorn, low): the forest on the slope beside the Schauinsland road at km 14.5, the trunks standing on the drawn ground"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-5942,568", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose -5925 585 6 225 -12"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "ground-bf-schauinsland-slope-2"
+description = "Black Forest (unicorn, low): the slope across the Schauinsland road at km 14.5 from the other side, the trunks standing on the drawn ground"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-5942,568", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose -5960 550 6 45 -12"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "ground-masca-km108-low"
+description = "Masca road at km 10.85 (unicorn, low): the terrace edge below the road, trees, bushes and posts on the drawn ground"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-32240,-3630", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose -32225 -3620 8 235 -14"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "thumbs-dump"
+description = "Bike stand thumbnails (4G): every slot's part thumbnail of the road bike (stock and each fitting variant) saved as PNG into test-output/thumbs/dump/ (thumbs.dump, after the groupset tiles warmed the pipelines), the framing checked per slot"
+args = ["--route", "hills", "--bots", "0", "--power", "0"]
+at = ["2=hearts.grant 5000", "2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-next", "4.2=workshop slot-next", "4.6=workshop slot-next", "5=workshop select", "10=thumbs.dump test-output/thumbs/dump", "10=thumbs.dump test-output/thumbs/dump --profile mtb", "10=thumbs.dump test-output/thumbs/dump --profile tt"]
+shot = 60
+pick = false

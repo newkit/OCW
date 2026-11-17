@@ -389,14 +389,14 @@ test-web-voice: web ## Headless Chromium joins ocw-server (voice tokens, Echo ri
 	scripts/test-web-audio.py --out test-output/web --part voice
 
 LIVEKIT_SERVER ?= livekit-server
-test-web-livekit: web ## Three headless browser riders in a real `livekit-server --dev` room (the real livekit-client; skipped without the binary): join, see and hear each other, mute, a block both ways (spec §7.1.7 Q9)
+test-web-livekit: web ## Three headless browser riders in a real `livekit-server --dev` room (the real livekit-client; skipped without the binary): join (muted, heard by no one), see and hear each other, mute, a block both ways (spec §7.1.7 Q9), range (a far rider not sent nor heard, refused) and Who hears me / Voice room (§7.1.7 Q6, Q8)
 	$(CARGO) build --release -p ocw-server -p ocw-bot
 	scripts/test-web-audio.py --out test-output/web --part livekit --livekit-server $(LIVEKIT_SERVER)
 
-test-voice-livekit: ## The LiveKit Rust backend against its own livekit-server on free loopback ports: two riders and two desktop VoiceControllers see and hear each other, mute, leave; three controllers: a block holds both ways (§7.1.7 Q9) (spec §7.1.8; skipped without the binary; needs clang-21 on Linux)
+test-voice-livekit: ## The LiveKit Rust backend against its own livekit-server on free loopback ports: two riders and two desktop VoiceControllers see and hear each other, mute, leave; three controllers: a block holds both ways (§7.1.7 Q9), the game server's range and Who hears me hold (§7.1.7 Q6, Q8) (spec §7.1.8; skipped without the binary; needs clang-21 on Linux)
 	CC=clang-21 CXX=clang++-21 OCW_LIVEKIT_SERVER=$(if $(filter livekit-server,$(LIVEKIT_SERVER)),,$(LIVEKIT_SERVER)) $(CARGO) test -p ocw-voice --features livekit --test livekit_two_participants --test backend_events -- --nocapture
 
-test-voice-bundled: ## `ocw-server --listen` starts the bundled livekit-server by itself (secret only in its environment); two headless riders get grants and hear each other; three riders: a block holds both ways (§7.1.7 Q9); SIGKILL of the server ends it (spec §7.1, V1; skipped without the binary)
+test-voice-bundled: ## `ocw-server --listen` starts the bundled livekit-server by itself (secret only in its environment); two headless riders get grants and hear each other; three riders: a block holds both ways (§7.1.7 Q9); range and Who hears me over QUIC (§7.1.7 Q6, Q8); SIGKILL of the server ends it (spec §7.1, V1; skipped without the binary)
 	scripts/test-voice-bundled.sh $(LIVEKIT_SERVER)
 
 test-host-voice: ## Ride -> Host a ride (headless app) starts the bundled livekit-server through the shared launcher; two headless riders get grants and join the room; it ends with the app (spec §7.1, V2; skipped without the binary)
@@ -525,17 +525,22 @@ art-uninstall-timer: ## Art: stop and remove the art collector's systemd user ti
 	systemctl --user daemon-reload
 	@echo "Removed. Install it from OCW-ART: make -C $(OCW_ART) install-timer"
 
-dashboard-install: ## Install and start the build dashboard as a systemd user service (port 8765, starts at login)
+dashboard-install: ## Install and start the build dashboard as a systemd user service (port 8765, starts at login) and the 15-minute timer that keeps its open questions current
 	mkdir -p $(HOME)/.config/systemd/user
 	sed 's|@REPO@|$(CURDIR)|g' tools/build-dashboard/ocw-build-dashboard.service > $(HOME)/.config/systemd/user/ocw-build-dashboard.service
 	systemctl --user daemon-reload
 	systemctl --user enable --now ocw-build-dashboard.service
 	systemctl --user restart ocw-build-dashboard.service
+	sed 's|@REPO@|$(CURDIR)|g' tools/build-dashboard/ocw-spec-questions.service > $(HOME)/.config/systemd/user/ocw-spec-questions.service
+	cp tools/build-dashboard/ocw-spec-questions.timer $(HOME)/.config/systemd/user/ocw-spec-questions.timer
+	systemctl --user daemon-reload
+	systemctl --user enable --now ocw-spec-questions.timer
 	@echo "Dashboard: http://localhost:8765/  (start at boot without login: sudo loginctl enable-linger $$USER)"
 
 dashboard-uninstall: ## Stop and remove the build dashboard user service
 	-systemctl --user disable --now ocw-build-dashboard.service
-	rm -f $(HOME)/.config/systemd/user/ocw-build-dashboard.service
+	-systemctl --user disable --now ocw-spec-questions.timer
+	rm -f $(HOME)/.config/systemd/user/ocw-build-dashboard.service $(HOME)/.config/systemd/user/ocw-spec-questions.service $(HOME)/.config/systemd/user/ocw-spec-questions.timer
 	systemctl --user daemon-reload
 
 # --- Versions and GitHub releases (spec §11.3) ------------------------------

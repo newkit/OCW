@@ -35,6 +35,10 @@ pub enum Tint {
     Socks,
     Shoes,
     Gloves,
+    /// The middle and outer finger joints (spec §14 Phase 4, 4N, the
+    /// hands): the gloves' colour under full and winter gloves, the skin
+    /// out of fingerless mitts.
+    FingerTip,
 }
 
 /// A paint slot.
@@ -59,7 +63,7 @@ const fn slot(name: &'static str, tint: Tint, color: u32, metallic: f32, roughne
 }
 
 /// All slots.
-pub const ALL: [Slot; 40] = [
+pub const ALL: [Slot; 41] = [
     slot("frame", Tint::Frame, 0x1E1E22, 0.1, 0.32),
     slot("tyre", Tint::Fixed, 0x1A1A1A, 0.0, 0.85),
     slot("tyre_wall", Tint::Fixed, 0x8A6A45, 0.0, 0.8),
@@ -93,6 +97,7 @@ pub const ALL: [Slot; 40] = [
     slot("overshoe", Tint::Shoes, 0x0F0F11, 0.05, 0.45),
     slot("glove", Tint::Gloves, 0x18181A, 0.0, 0.7),
     slot("glove_pad", Tint::Fixed, 0x6A6E76, 0.0, 0.8),
+    slot("fingertip", Tint::FingerTip, 0x18181A, 0.0, 0.7),
     // Part variants (spec §14 Phase 4, 4B): bare carbon, and the lenses
     // of the light set (the renderer makes them glow).
     slot("carbon", Tint::Fixed, 0x0C0C0E, 0.15, 0.22),
@@ -157,6 +162,7 @@ mod tests {
             Tint::Socks,
             Tint::Shoes,
             Tint::Gloves,
+            Tint::FingerTip,
         ] {
             assert!(ALL.iter().any(|s| s.tint == t), "{t:?}");
         }

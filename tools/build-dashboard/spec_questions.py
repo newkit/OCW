@@ -32,7 +32,9 @@ _PHASE = re.compile(r"^Phase\s+(\d+)\s*[–-]\s*(.*)$")
 _SECTION = re.compile(r"^(\d+[A-Z]|\d+(?:\.\d+)+|\d+(?=\.\s)|[A-Z]\.\d+)\b")
 # "- **Q1 – Title: decided (…):** text" (the label may end with "?" or ":"
 # inside the bold part, or the colon may follow it).
-_QUESTION = re.compile(r"^\s*[-*]\s+\*\*Q(\d+)\s*[–-]\s*(.*?)\*\*\s*:?\s*(.*)$")
+# "Q30 – Title:", also "Q30 (open) – Title:" (a status in brackets before the
+# dash is moved into the label so _split_label sees it).
+_QUESTION = re.compile(r"^\s*[-*]\s+\*\*Q(\d+)\s*(\([^)]*\))?\s*[–-]\s*(.*?)\*\*\s*:?\s*(.*)$")
 _DECIDED = re.compile(r"\b(decided|postponed)\b", re.I)
 _DATE = re.compile(r"\((?:v[\d.]+|\d{4}-\d{2}-\d{2})[^)]*\)")
 _MILESTONE = re.compile(r"^\s*[-*]\s+\*\*([A-Z]\d+)\b[^*]*\*\*\s*(.*)$")
@@ -151,8 +153,12 @@ def parse_questions(text: str) -> list:
         if not q:
             continue
         n = int(q.group(1))
-        title, note = _split_label(plain(q.group(2)))
-        body = plain(q.group(3))
+        title, note = _split_label(plain(q.group(3).rstrip().rstrip(":")))
+        if q.group(2) and not note:  # "Q30 (open) – …": the bracket is the status
+            note = plain(q.group(2)).strip("() ")
+            if not _DECIDED.search(note):
+                note = ""
+        body = plain(q.group(4))
         if not title:  # "**Q1 – decided (v2.48):** an Oculus Rift CV1 …"
             title = re.split(r"[:(;,.]", body, maxsplit=1)[0].strip()[:60]
         decided = bool(_DECIDED.search(note))
@@ -160,8 +166,8 @@ def parse_questions(text: str) -> list:
         out.append({
             "phase": phase, "phase_title": phase_title, "section": section, "heading": heading,
             "id": "%s Q%d" % (where, n), "n": n, "title": title, "text": body,
-            "proposal": None if decided else proposal_of(q.group(3)),
-            "options": [] if decided else options_of(q.group(3)),
+            "proposal": None if decided else proposal_of(q.group(4)),
+            "options": [] if decided else options_of(q.group(4)),
             "status": "decided" if decided else "open", "status_note": note, "line": no,
         })
     return out
@@ -255,3 +261,87 @@ class SpecQuestions:
                 except Exception as e:  # a parse problem must not stop the dashboard
                     self.data = dict(self.data, error="%s: %s" % (type(e).__name__, e))
             return self.data
+
+
+# --- Keeping the question list current (periodic job, dashboard 1.6.0) -----
+
+# A bullet that starts like a question ("- **Q12" …) but that parse_questions
+# does not read, and a question whose decision is written outside its bold
+# label (the dashboard only reads "decided" in the label).
+_LOOKS_LIKE_Q = re.compile(r"^\s*[-*]\s+\*\*Q\d+")
+_DECIDED_IN_BODY = re.compile(r"^\W*(decided|postponed)\b", re.I)
+
+
+def lint(text: str) -> list:
+    """Format problems of the spec's question bullets: dicts with line, kind
+    ("unparsed" / "decision outside the label") and the line's start."""
+    out = []
+    parsed = {q["line"]: q for q in parse_questions(text)}
+    for no, line in enumerate(text.splitlines(), 1):
+        if _LOOKS_LIKE_Q.match(line) and no not in parsed:
+            out.append({"line": no, "kind": "unparsed", "text": line.strip()[:120]})
+        q = parsed.get(no)
+        if q and q["status"] == "open" and _DECIDED_IN_BODY.search(plain(q["text"]) or ""):
+            out.append({"line": no, "kind": "decision outside the label", "text": line.strip()[:120]})
+    return out
+
+
+def _git(repo: Path, *args: str) -> tuple:
+    import subprocess
+    p = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
+    return p.returncode, (p.stdout + p.stderr).strip()
+
+
+def refresh(repo: Path, report: Path | None = None) -> dict:
+    """Fast-forward the main checkout to origin/main when it is on main and has
+    no changes of tracked files (the dashboard re-reads the spec by its mtime),
+    then lint the spec's questions; writes the result as JSON to `report`."""
+    import json
+    import time as _time
+    res = {"time": _time.strftime("%Y-%m-%dT%H:%M:%S%z"), "pulled": False, "note": ""}
+    rc, branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    rc2, dirty = _git(repo, "status", "--porcelain", "--untracked-files=no")
+    if rc or branch != "main":
+        res["note"] = "not on main (%s): not pulled" % branch
+    elif rc2 or dirty:
+        res["note"] = "tracked changes in the checkout: not pulled"
+    else:
+        rc, out = _git(repo, "fetch", "-q", "origin", "main")
+        if rc == 0:
+            rc, out = _git(repo, "merge", "-q", "--ff-only", "origin/main")
+            res["pulled"] = rc == 0
+            res["note"] = "up to date" if rc == 0 else "fast-forward failed: " + out[:200]
+        else:
+            res["note"] = "fetch failed: " + out[:200]
+    spec = repo / "SPECIFICATION.md"
+    text = spec.read_text(encoding="utf-8")
+    qs = parse_questions(text)
+    res.update(open=sum(q["status"] == "open" for q in qs), decided=sum(q["status"] == "decided" for q in qs),
+               problems=lint(text))
+    if report:
+        report.parent.mkdir(parents=True, exist_ok=True)
+        tmp = report.with_suffix(".tmp")
+        tmp.write_text(json.dumps(res, indent=1), encoding="utf-8")
+        tmp.replace(report)
+    return res
+
+
+if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser(description="Open questions of SPECIFICATION.md (the build dashboard's question list)")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    r = sub.add_parser("refresh", help="fast-forward the main checkout and lint the questions (the periodic job)")
+    r.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[2])
+    r.add_argument("--report", type=Path, help="JSON report (default: REPO/test-output/answers/questions-refresh.json)")
+    sub.add_parser("lint", help="list question bullets the dashboard cannot read").add_argument("spec", type=Path)
+    a = ap.parse_args()
+    if a.cmd == "refresh":
+        out = refresh(a.repo, a.report or a.repo / "test-output" / "answers" / "questions-refresh.json")
+        print("%s; %d open, %d decided, %d format problems" % (out["note"], out["open"], out["decided"], len(out["problems"])))
+        for p in out["problems"]:
+            print("  line %d: %s: %s" % (p["line"], p["kind"], p["text"]))
+    else:
+        probs = lint(a.spec.read_text(encoding="utf-8"))
+        for p in probs:
+            print("line %d: %s: %s" % (p["line"], p["kind"], p["text"]))
+        raise SystemExit(1 if probs else 0)

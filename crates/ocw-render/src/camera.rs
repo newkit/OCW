@@ -58,6 +58,7 @@ impl Plugin for CameraPlugin {
             .init_resource::<CameraObstacles>()
             .init_resource::<CameraFocus>()
             .init_resource::<CameraTilt>()
+            .init_resource::<CloseUp>()
             .init_resource::<crate::drone_camera::DroneCamera>()
             .add_systems(Startup, spawn_camera)
             .add_systems(Update, orbit_input)
@@ -387,6 +388,119 @@ impl Default for CameraOrbit {
     }
 }
 
+/// A close-up of the local rider's head (spec §14 Phase 4, 4N *Visual
+/// editor*: the character editor's face, hair, facial-hair and glasses
+/// pages): while set, the chase camera stands this close to the head,
+/// whatever [`CameraOrbit`] says ([`close_up_eye`]); `None`: the orbit.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Default)]
+pub struct CloseUp(pub Option<CloseUpShot>);
+
+/// Where the close-up camera stands around the head.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CloseUpShot {
+    /// Around the head, relative to the riding direction (0 = behind,
+    /// π = straight in front, π − 0.5 = a three-quarter view from the
+    /// rider's right).
+    pub yaw: f32,
+    /// Above the head's level (rad).
+    pub pitch: f32,
+    /// From the head's centre (m).
+    pub distance: f32,
+    /// Where the head sits across the picture (normalised device x, −1 …
+    /// 1; positive: right of the middle, beside a panel on the left).
+    pub screen_x: f32,
+    /// What it looks at: the face, or a hand (`camera.closeup`).
+    pub on: CloseUpOn,
+}
+
+/// What a close-up looks at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CloseUpOn {
+    #[default]
+    Face,
+    /// The hand (0 left, 1 right; spec §14 Phase 4, 4N, the hands).
+    Hand(usize),
+}
+
+impl CloseUpShot {
+    /// A hand from `yaw` / `pitch` (rad) at `distance` (m), in the middle.
+    pub fn hand(side: usize, yaw: f32, pitch: f32, distance: f32) -> Self {
+        Self {
+            yaw,
+            pitch,
+            distance,
+            screen_x: 0.0,
+            on: CloseUpOn::Hand(side.min(1)),
+        }
+    }
+}
+
+impl CloseUpShot {
+    /// The face from a three-quarter view (the ears, the side of the hair).
+    pub const THREE_QUARTER: CloseUpShot = CloseUpShot {
+        yaw: std::f32::consts::PI - 0.55,
+        pitch: 0.2,
+        distance: 0.74,
+        screen_x: 0.36,
+        on: CloseUpOn::Face,
+    };
+    /// The face straight from the front (the glasses, the eyes).
+    pub const FRONT: CloseUpShot = CloseUpShot {
+        yaw: std::f32::consts::PI - 0.12,
+        pitch: 0.15,
+        distance: 0.72,
+        screen_x: 0.36,
+        on: CloseUpOn::Face,
+    };
+}
+
+/// The face's centre in the head node's frame (the node's origin is the
+/// neck's pivot; `ocw_assets::pose::EYES` are a little above and ahead).
+pub const FACE_IN_HEAD: Vec3 = Vec3::new(0.0, 0.09, -0.04);
+
+/// The vertical extent of the head the close-up keeps in the picture
+/// (m: chin to helmet top, about).
+pub const HEAD_HEIGHT_M: f32 = 0.34;
+
+/// Eye and look-at point of a close-up of a head at `head` (its centre)
+/// on a rider riding along `forward`, for a camera of vertical field of
+/// view `fov_y` in a window of `aspect`: the eye `shot.distance` from the
+/// head, the head at `shot.screen_x` across the picture.
+pub fn close_up_eye(
+    head: Vec3,
+    forward: Vec3,
+    shot: &CloseUpShot,
+    fov_y: f32,
+    aspect: f32,
+) -> (Vec3, Vec3) {
+    let forward = Vec3::new(forward.x, 0.0, forward.z).normalize_or(Vec3::NEG_Z);
+    let back = Quat::from_rotation_y(shot.yaw) * -forward;
+    let eye = head + (back * shot.pitch.cos() + Vec3::Y * shot.pitch.sin()) * shot.distance;
+    // Look beside the head so that it sits at `screen_x`.
+    let to_head = (head - eye).normalize_or(Vec3::NEG_Z);
+    let right = to_head.cross(Vec3::Y).normalize_or(Vec3::X);
+    let half_w = (fov_y * 0.5).tan() * aspect.max(0.1) * shot.distance;
+    (eye, head - right * shot.screen_x * half_w)
+}
+
+/// Marks the head node of the local rider's avatar (the close-up's
+/// target), with the avatar's root.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct RiderHead {
+    pub root: Entity,
+}
+
+/// Marks a hand node of the local rider's avatar (`camera.closeup`), with
+/// the avatar's root and the side.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct RiderHand {
+    pub root: Entity,
+    pub side: usize,
+}
+
+/// The middle of the palm in the hand node's frame.
+pub const PALM_IN_HAND: Vec3 = Vec3::new(0.0, -0.06, 0.0);
+
 pub const MIN_PITCH: f32 = -0.05;
 pub const MAX_PITCH: f32 = 1.45;
 pub const MIN_DISTANCE: f32 = 2.5;
@@ -714,6 +828,22 @@ pub fn flight_up(f: &crate::FlightView) -> Vec3 {
     Quat::from_axis_angle(dir, f.roll as f32) * Vec3::Y
 }
 
+/// The close-up's resource and the local rider's head and avatar.
+type CloseUpParams<'w, 's> = (
+    Option<Res<'w, CloseUp>>,
+    Query<
+        'w,
+        's,
+        (
+            AnyOf<(&'static RiderHead, &'static RiderHand)>,
+            &'static GlobalTransform,
+        ),
+    >,
+    Query<'w, 's, &'static GlobalTransform, With<crate::riders::Avatar>>,
+    // Where the rider was last frame while in a close-up.
+    Local<'s, Option<Vec3>>,
+);
+
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 pub(crate) fn follow(
     view: Res<RideView>,
@@ -731,6 +861,7 @@ pub(crate) fn follow(
     mut smoothed_target: Local<Option<Vec3>>,
     mut tilt: Local<TiltState>,
     sky_look: Option<Res<SkyLook>>,
+    close: CloseUpParams,
 ) {
     // A guided camera path (spec §14 Phase 13 G5, flyover videos): the
     // camera stands where the path says, whatever the rider does.
@@ -869,19 +1000,71 @@ pub(crate) fn follow(
             rider.translation,
         ),
     };
+    // The character editor's close-up of the head (spec §14 Phase 4, 4N):
+    // the head where it is drawn now (its offset in the avatar of the last
+    // frame, on the avatar of this one: no lag while riding).
+    let (close_up, heads, roots, mut close_rider) = close;
+    let close_up = close_up.and_then(|c| c.0);
+    let head_now = close_up.and_then(|shot| {
+        let (root, at) =
+            heads
+                .iter()
+                .find_map(|((head, hand), g)| match (shot.on, head, hand) {
+                    (CloseUpOn::Face, Some(h), _) => {
+                        Some((h.root, g.transform_point(FACE_IN_HEAD)))
+                    }
+                    (CloseUpOn::Hand(side), _, Some(h)) if h.side == side => {
+                        Some((h.root, g.transform_point(PALM_IN_HAND)))
+                    }
+                    _ => None,
+                })?;
+        let root = roots.get(root).ok()?;
+        let local = root.affine().inverse().transform_point3(at);
+        Some(rider.transform_point(local))
+    });
+    let (eye, target) = match (close_up, head_now) {
+        (Some(shot), Some(head)) => {
+            let (fov, aspect) = projections
+                .iter()
+                .find_map(|p| match p {
+                    Projection::Perspective(pp) => Some((pp.fov, pp.aspect_ratio)),
+                    _ => None,
+                })
+                .unwrap_or((DEFAULT_FOV, 16.0 / 9.0));
+            close_up_eye(head, forward, &shot, fov, aspect)
+        }
+        _ => (eye, target),
+    };
     // Smooth the eye position; snap if far away (teleport, mode switch at start).
     // While the tunnel camera is (partly) on, the chase eye is kept apart.
     let k = 1.0 - (-8.0 * time.delta_secs()).exp();
-    let prev = match tilt.outside_eye {
+    let mut prev = match tilt.outside_eye {
         Some(e) if was_in_tunnel => e,
         _ => cam.translation - tilt.shaken,
     };
+    // In a close-up the camera rides along: smoothed in the rider's frame
+    // (in the world's it would trail a metre behind a rider at speed –
+    // behind the head, 0.6 m in front of which it should be).
+    if head_now.is_some() {
+        if let Some(last) = *close_rider {
+            let moved = rider.translation - last;
+            if moved.length() < 50.0 {
+                prev += moved;
+                if let Some(t) = (*smoothed_target).as_mut() {
+                    *t += moved;
+                }
+            }
+        }
+        *close_rider = Some(rider.translation);
+    } else {
+        *close_rider = None;
+    }
     cam.translation = if prev.distance(eye) > 50.0 {
         eye
     } else {
         prev.lerp(eye, k)
     };
-    let rider_head = rider.translation + Vec3::Y * 1.2;
+    let rider_head = head_now.unwrap_or(rider.translation + Vec3::Y * 1.2);
     focus.set_if_neq(CameraFocus(Some(rider_head)));
     // Only solid objects move the camera: never below them (also while
     // smoothing towards a low eye), and none between the eye and the rider
@@ -944,6 +1127,77 @@ mod tests {
 
     fn close(a: Vec3, b: Vec3) -> bool {
         (a - b).length() < 1e-4
+    }
+
+    /// `p` in normalised device coordinates for a camera at `eye`
+    /// looking at `target`.
+    #[allow(deprecated)]
+    fn ndc(eye: Vec3, target: Vec3, fov: f32, aspect: f32, p: Vec3) -> Vec2 {
+        let m =
+            Mat4::perspective_rh(fov, aspect, 0.05, 100.0) * Mat4::look_at_rh(eye, target, Vec3::Y);
+        let c = m * p.extend(1.0);
+        assert!(c.w > 0.0, "in front of the camera");
+        Vec2::new(c.x / c.w, c.y / c.w)
+    }
+
+    /// The character editor's close-up (spec §14 Phase 4, 4N): the camera
+    /// stands well under a metre in front of the face, the whole head –
+    /// chin to helmet – in the picture and filling much of it, beside the
+    /// panel (right of the middle), for both shots and any riding
+    /// direction.
+    #[test]
+    fn the_close_up_frames_the_head_beside_the_panel() {
+        let aspect = 16.0 / 9.0;
+        for forward in [Vec3::NEG_Z, Vec3::X, Vec3::new(0.6, 0.0, 0.8)] {
+            let head = Vec3::new(3.0, 1.55, -7.0);
+            for shot in [CloseUpShot::THREE_QUARTER, CloseUpShot::FRONT] {
+                let (eye, target) = close_up_eye(head, forward, &shot, DEFAULT_FOV, aspect);
+                assert!(
+                    eye.distance(head) < 0.8,
+                    "really close: {}",
+                    eye.distance(head)
+                );
+                // In front of the face (the riding direction), not behind.
+                assert!(
+                    (eye - head).dot(forward) > 0.4 * shot.distance,
+                    "{forward} {shot:?}"
+                );
+                let c = ndc(eye, target, DEFAULT_FOV, aspect, head);
+                assert!((c.x - shot.screen_x).abs() < 0.08, "{c}");
+                assert!(c.y.abs() < 0.15, "{c}");
+                let top = ndc(
+                    eye,
+                    target,
+                    DEFAULT_FOV,
+                    aspect,
+                    head + Vec3::Y * HEAD_HEIGHT_M * 0.5,
+                );
+                let chin = ndc(
+                    eye,
+                    target,
+                    DEFAULT_FOV,
+                    aspect,
+                    head - Vec3::Y * HEAD_HEIGHT_M * 0.5,
+                );
+                assert!(
+                    top.y < 0.95 && chin.y > -0.95,
+                    "the whole head: {top} {chin}"
+                );
+                assert!(
+                    top.y - chin.y > 0.7,
+                    "it fills the picture: {}",
+                    top.y - chin.y
+                );
+            }
+        }
+        // The three-quarter view shows the side of the face, the front
+        // view looks straight at it.
+        let side = |shot: CloseUpShot| {
+            let (eye, _) = close_up_eye(Vec3::ZERO, Vec3::NEG_Z, &shot, DEFAULT_FOV, aspect);
+            eye.x.abs() / eye.length()
+        };
+        assert!(side(CloseUpShot::THREE_QUARTER) > 0.4);
+        assert!(side(CloseUpShot::FRONT) < 0.2);
     }
 
     #[test]

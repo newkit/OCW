@@ -117,6 +117,11 @@ pub struct Rider {
     pub beard: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub facial_hair_color: Option<String>,
+    /// The skin tone in the 16-step palette (spec §14 Phase 4, 4N, v4.51);
+    /// `skin` above keeps the 12-step palette's nearest for older apps,
+    /// and a file without `skin_tone` is migrated from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skin_tone: Option<u8>,
     /// The kit design (spec §14 Phase 8 T6; `None` = the plain kit's).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kit_second: Option<String>,
@@ -168,6 +173,7 @@ impl Default for Rider {
             moustache: None,
             beard: None,
             facial_hair_color: None,
+            skin_tone: None,
             kit_second: None,
             kit_third: None,
             race_number: None,
@@ -299,7 +305,14 @@ impl Rider {
                 .unwrap_or(d.base),
             shape,
             age: self.age.as_deref().and_then(Age::parse).unwrap_or(d.age),
-            skin: self.skin.unwrap_or(d.skin),
+            skin: self
+                .skin_tone
+                .or_else(|| {
+                    self.skin
+                        .filter(|s| usize::from(*s) < ocw_core::character::LEGACY_SKIN_TONES.len())
+                        .map(ocw_core::character::skin_from_legacy)
+                })
+                .unwrap_or(d.skin),
             face: if v2 {
                 self.face.unwrap_or(d.face)
             } else {
@@ -347,7 +360,8 @@ impl Rider {
         self.facial_hair_color = c.facial_hair_colour.map(|c| c.to_string());
         // For older apps (N11).
         self.body_build = Some(c.shape.nearest_build().id().into());
-        self.skin = Some(c.skin);
+        self.skin = Some(ocw_core::character::skin_to_legacy(c.skin));
+        self.skin_tone = Some(c.skin);
         self.face = Some(c.legacy_face());
         self.hair = Some(c.hair);
         self.hair_color = Some(c.hair_colour.to_string());
@@ -512,8 +526,13 @@ impl Rider {
             .hair
             .filter(|h| (*h as usize) < HAIR_STYLES_LEN)
             .unwrap_or(v.hair);
+        let skin_ok = self
+            .skin
+            .filter(|s| usize::from(*s) < ocw_core::character::LEGACY_SKIN_TONES.len())
+            .unwrap_or(u8::MAX);
         for (what, field, ok) in [
-            ("skin", &mut self.skin, v.skin),
+            ("skin", &mut self.skin, skin_ok),
+            ("skin tone", &mut self.skin_tone, v.skin),
             ("face", &mut self.face, face_ok),
             ("hair", &mut self.hair, hair_ok),
             ("glasses", &mut self.glasses, v.glasses),
@@ -996,6 +1015,47 @@ mod tests {
         let (b, warnings) = Riders::parse(bad).unwrap();
         assert_eq!(warnings.len(), 3, "{warnings:?}");
         assert_eq!(b.active().design(), KitDesign::default());
+    }
+
+    /// The skin tone (spec §14 Phase 4, 4N, v4.51): a file with only the
+    /// 12-step `skin` index (versions 1 and 2) loads as the nearest of the
+    /// 16 tones; saving writes `skin_tone` and the 12-step index for older
+    /// apps; an unknown tone is dropped with a warning.
+    #[test]
+    fn skin_tones_migrate_from_the_twelve_step_palette() {
+        use ocw_core::character::{SKIN_TONES, skin_from_legacy, skin_to_legacy};
+        for old in 0..12u8 {
+            let text = format!(
+                "[[rider]]\nname = \"Ada Rider\"\nweight_kg = 70.0\ncharacter_version = 2\nskin = {old}\n"
+            );
+            let (r, warnings) = Riders::parse(&text).unwrap();
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert_eq!(r.riders[0].character().skin, skin_from_legacy(old), "{old}");
+        }
+        for tone in 0..SKIN_TONES.len() as u8 {
+            let mut rider = Rider {
+                name: "Ada Rider".into(),
+                ..Rider::default()
+            };
+            let c = Character {
+                skin: tone,
+                ..Character::default()
+            };
+            rider.set_character(c);
+            assert_eq!(rider.skin_tone, Some(tone));
+            assert_eq!(rider.skin, Some(skin_to_legacy(tone)));
+            let riders = Riders {
+                riders: vec![rider],
+                ..Riders::default()
+            };
+            let (again, warnings) = Riders::parse(&riders.to_toml()).unwrap();
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert_eq!(again.riders[0].character().skin, tone);
+        }
+        let bad = "[[rider]]\nname = \"Ada Rider\"\nweight_kg = 70.0\nskin_tone = 40\n";
+        let (r, warnings) = Riders::parse(bad).unwrap();
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert_eq!(r.riders[0].character().skin, Character::default().skin);
     }
 
     /// Files from before Phase 4 parse unchanged; invalid bike and look

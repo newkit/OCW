@@ -315,7 +315,13 @@ fn to_mirror(app: &mut App) {
     assert_eq!(scene(app).view(), camera::View::Mirror);
     tap(app, KeyCode::Enter);
     frames(app, 40);
-    assert_eq!(scene(app).view(), camera::View::Dress { front: false });
+    assert_eq!(
+        scene(app).view(),
+        camera::View::Dress {
+            front: false,
+            face: false
+        }
+    );
 }
 
 /// The changing corner with the keyboard (spec 4C, W4): the rider's five
@@ -361,9 +367,10 @@ fn the_character_corner_with_the_keyboard() {
         p.rows[tt]
     );
     run(&mut app, "hearts.grant 1");
-    // Focus it: the live preview wears it; the card shows its benefit.
+    // Focus it (the picker's tiles: → one tile, spec §14 Phase 4, 4N):
+    // the live preview wears it; the card shows its benefit.
     for _ in 0..tt {
-        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::ArrowRight);
     }
     let v = view(&app);
     assert_eq!(v.rider.as_ref().unwrap().kit, vec!["helmet-tt".to_string()]);
@@ -388,8 +395,8 @@ fn the_character_corner_with_the_keyboard() {
     let p = view(&app).picker.unwrap();
     assert!(p.title.starts_with("Glasses"), "{}", p.title);
     assert_eq!(p.rows[0].right, "free");
-    // A free choice applies at once: round glasses.
-    tap(&mut app, KeyCode::ArrowDown);
+    // A free choice applies at once: round glasses (the next tile).
+    tap(&mut app, KeyCode::ArrowRight);
     tap(&mut app, KeyCode::Enter);
     frames(&mut app, 3);
     let riding = &app.world().resource::<RiderProfiles>().riding;
@@ -454,7 +461,13 @@ fn the_character_corner_with_gamepad_mouse_and_touch() {
     assert!(view(&app).hint.contains("Ⓑ"), "{}", view(&app).hint);
     press(&mut app, GamepadButton::East);
     frames(&mut app, 40);
-    assert_eq!(scene(&app).view(), camera::View::Dress { front: false });
+    assert_eq!(
+        scene(&app).view(),
+        camera::View::Dress {
+            front: false,
+            face: false
+        }
+    );
     // The hotspots' screen positions (the 1280 × 720 default window).
     let points = {
         let st = app.world().resource::<WorkshopState>();
@@ -517,7 +530,7 @@ fn the_character_command_and_the_front_view() {
         .look
         .unwrap();
     assert_eq!(look.character.skin, 8);
-    run(&mut app, "character --skin 13");
+    run(&mut app, "character --skin 17");
     assert_eq!(
         app.world()
             .resource::<RiderProfiles>()
@@ -538,7 +551,13 @@ fn to_mirror_front(app: &mut App) {
     tap(app, KeyCode::ArrowDown);
     tap(app, KeyCode::Enter);
     frames(app, 40);
-    assert_eq!(scene(app).view(), camera::View::Dress { front: true });
+    assert_eq!(
+        scene(app).view(),
+        camera::View::Dress {
+            front: true,
+            face: false
+        }
+    );
 }
 
 /// The bench (spec 4D) in the app: `workshop plus` opens the catalogue on
@@ -640,7 +659,9 @@ fn the_bike_stand_tiles_with_every_device() {
         p.subtitle
     );
     for r in &p.rows {
-        let k = r.thumb.as_ref().expect("a thumbnail");
+        let Some(ocw_render::thumbs::ThumbKey::Part(k)) = r.thumb.as_ref() else {
+            panic!("a part's thumbnail: {r:?}");
+        };
         assert_eq!((k.profile, k.slot.as_str()), (ProfileId::Road, "wheels"));
         assert!(
             r.gain.contains(" flat · ") && r.gain.contains(" climb"),
@@ -656,7 +677,9 @@ fn the_bike_stand_tiles_with_every_device() {
     let carbon = p
         .rows
         .iter()
-        .find(|r| r.thumb.as_ref().unwrap().model == "wheel-carbon-50")
+        .find(|r| {
+            matches!(r.thumb.as_ref(), Some(ocw_render::thumbs::ThumbKey::Part(k)) if k.model == "wheel-carbon-50")
+        })
         .expect("the top carbon wheels");
     assert!(
         carbon.gain.starts_with('+') && carbon.weight == "−650 g",
@@ -667,6 +690,29 @@ fn the_bike_stand_tiles_with_every_device() {
             .iter()
             .any(|l| l.starts_with("Against the base part: "))
     );
+    // Regression (2026-11-17, the card ran out at the panel's bottom):
+    // under the tiles the card starts with the benefit and the bike (the
+    // name is on the focused tile), where parts count comes last, and what
+    // the renderer shows of it is a part of it, in order, at 16:9 and 4:3.
+    assert!(
+        p.detail[0].starts_with("Benefit:") || p.detail[0].starts_with("On the bike now"),
+        "{:?}",
+        p.detail
+    );
+    assert!(p.detail.iter().all(|l| *l != p.rows[p.focus].left));
+    assert_eq!(
+        p.detail.last().map(String::as_str),
+        Some(picker::WHERE_PARTS_COUNT)
+    );
+    for aspect in [16.0 / 9.0, 4.0 / 3.0] {
+        let shown = ocw_render::workshop::fitted_card(&p, aspect);
+        assert!(!shown.is_empty(), "{aspect}");
+        let mut rest = p.detail.iter();
+        assert!(
+            shown.iter().all(|l| rest.any(|d| d == l)),
+            "{aspect}: {shown:?}"
+        );
+    }
     // Keyboard: → previews the next tile on the stand bike.
     tap(&mut app, KeyCode::ArrowRight);
     assert_eq!(view(&app).picker.unwrap().focus, 1);

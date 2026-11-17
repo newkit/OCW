@@ -14,6 +14,12 @@
 #    game connection; the game server tells Ada and Bea (only them) that
 #    they are apart; neither hears the other in the voice room – not even
 #    when Bea asks for Ada's voice itself – while Cleo hears both.
+#    Voice by range and audience (spec §7.1.7 Q6, Q8, Q10): three riders
+#    with *Who hears me: All nearby*; Cleo teleports 1.5 km away (the
+#    server runs with --dev-commands) – the game server sends her nobody's
+#    voice and hers to nobody, nobody hears her nor she anyone, her own
+#    request for Ada's voice is refused; back near, Ada's *Who hears me:
+#    Selected riders* (Bea) holds.
 # 4. Killing ocw-server with SIGKILL (no clean-up runs) ends livekit-server
 #    too (Linux: the parent-death signal).
 # 5. --voice off and --livekit-url start no voice server.
@@ -65,7 +71,7 @@ unset OCW_LIVEKIT_URL OCW_LIVEKIT_API_KEY OCW_LIVEKIT_API_SECRET
 
 # 1. The game server starts its voice server.
 "$server" --listen "127.0.0.1:$game" --bots 0 --voice-server "$lks" \
-  --voice-ports "$sig,$tcp,$udp" >"$work/out" 2>"$work/err" &
+  --voice-ports "$sig,$tcp,$udp" --dev-commands >"$work/out" 2>"$work/err" &
 gs=$!; pids+=("$gs")
 for _ in $(seq 1 600); do grep -q "Clients connect with" "$work/out" && break; kill -0 "$gs" 2>/dev/null || break; sleep 0.1; done
 # ocw-server logs to stdout.
@@ -122,6 +128,17 @@ cp "$work/blocks" "$out/blocks.log"
 grep -q "the game server keeps Ada and Bea apart, Cleo is told nothing" "$work/blocks"; check "a block: the game server tells only the two riders (VoiceApart over QUIC)" $? "$(tail -5 "$work/blocks")"
 grep -q "Cleo Sprinter hears Ada Rider, Bea Climber does not" "$work/blocks" && grep -q "Cleo Sprinter hears Bea Climber, Ada Rider does not" "$work/blocks"; check "a block: neither rider hears the other, the third hears both" $? "$(tail -5 "$work/blocks")"
 grep -q "the block holds both ways" "$work/blocks" && [ $r = 0 ]; check "a block: the voice server refuses the blocked rider's own request" $? "$(tail -5 "$work/blocks")"
+
+# 3b. Voice by range and audience.
+OCW_VOICE_TEST_SERVER=127.0.0.1:$game OCW_VOICE_TEST_CERT=$fp OCW_VOICE_TEST_URL=ws://127.0.0.1:$sig \
+  OCW_VOICE_TEST_RANGE=1 \
+  cargo test -q -p ocw-voice --features livekit --test bundled_voice_server range_and_audiences -- --nocapture >"$work/range" 2>&1
+r=$?
+cp "$work/range" "$out/range.log"
+grep -q "the game server sends no voice to and from the far rider" "$work/range"; check "range: the game server sends no voice to and from a rider 1.5 km away (VoiceHearing over QUIC)" $? "$(tail -5 "$work/range")"
+grep -q "PASS far: Bea Climber hears Ada Rider" "$work/range" && grep -q "PASS far: Cleo Sprinter does not hear Ada Rider" "$work/range" && grep -q "PASS far: Ada Rider does not hear Cleo Sprinter" "$work/range"; check "range: the near riders hear each other, the far one is not heard and hears nobody" $? "$(tail -5 "$work/range")"
+grep -q "the far rider is neither heard nor hears" "$work/range"; check "range: the far rider's own request for a voice is refused by the voice server" $? "$(tail -5 "$work/range")"
+grep -q "who hears me holds" "$work/range" && [ $r = 0 ]; check "who hears me: Selected riders (Bea) - Bea hears Ada, Cleo does not and is refused" $? "$(tail -5 "$work/range")"
 
 # 4. No orphan: SIGKILL the game server, livekit-server goes too.
 kill -9 "$gs"; wait "$gs" 2>/dev/null
