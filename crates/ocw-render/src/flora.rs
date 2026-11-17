@@ -1257,18 +1257,27 @@ pub fn vine_row(
 }
 
 /// A field's stand (maize, cereal, sunflower, potato, rapeseed) over one
-/// cell of `size` m at `centre`: its feet at the four corners' ground
-/// heights `ys` (x−z−, x+z−, x−z+, x+z+), its top `tops` m above the ground
-/// at those corners and the centre (a bumpy canopy: neighbouring cells
-/// share their corners), each top vertex shaded by `shades`; its sides only
-/// where `open[side]` (x−, x+, z−, z+: the neighbour is not the same
-/// stand), darker towards the ground.
+/// cell of `size` m at `centre`: its feet at the ground heights `ys` of the
+/// four corners (x−z−, x+z−, x−z+, x+z+) and of the centre, its top `tops`
+/// m above the ground at those five points (a bumpy canopy: neighbouring
+/// cells share their corners), each top vertex shaded by `shades`; its
+/// sides only where `open[side]` (x−, x+, z−, z+: the neighbour is not the
+/// same stand), darker towards the ground.
+///
+/// The top is a fan of four triangles around the centre, so it follows the
+/// ground wherever the ground is two triangles split along the x+z−/x−z+
+/// diagonal with the centre on it: the rendered terrain's cells
+/// (`package::terrain_arrays`) when the stand's cell is one of them and
+/// `ys` are the rendered ground ([`crate::package::TileGround`]). Before
+/// 2026-11-17 the centre stood at the corners' mean: on a terrace edge up
+/// to 7 m above the drawn ground, a green slab floating over it. The top's
+/// normals are the ground's, so a stand on a slope is lit like the slope.
 #[allow(clippy::too_many_arguments)]
 pub fn stand_cell(
     m: &mut MeshArrays,
     centre: Vec3,
     size: f32,
-    ys: [f32; 4],
+    ys: [f32; 5],
     tops: [f32; 5],
     shades: [f32; 5],
     open: [bool; 4],
@@ -1279,17 +1288,31 @@ pub fn stand_cell(
     let top: Vec<Vec3> = (0..4)
         .map(|i| Vec3::new(centre.x + xz[i][0], ys[i] + tops[i], centre.z + xz[i][1]))
         .collect();
-    let mid_y = ys.iter().sum::<f32>() / 4.0;
-    let mid = Vec3::new(centre.x, mid_y + tops[4], centre.z);
+    let mid = Vec3::new(centre.x, ys[4] + tops[4], centre.z);
     let foot: Vec<Vec3> = (0..4)
         .map(|i| Vec3::new(centre.x + xz[i][0], ys[i] - 0.1, centre.z + xz[i][1]))
         .collect();
+    // The ground's normals: each face of the ground's fan (centre, a, b)
+    // adds its normal to its three vertices.
+    let ground: Vec<Vec3> = (0..4)
+        .map(|i| Vec3::new(xz[i][0], ys[i], xz[i][1]))
+        .chain(std::iter::once(Vec3::new(0.0, ys[4], 0.0)))
+        .collect();
+    let mut normals = [Vec3::ZERO; 5];
+    for (a, b) in [(1usize, 0usize), (3, 1), (2, 3), (0, 2)] {
+        let n = (ground[a] - ground[4])
+            .cross(ground[b] - ground[4])
+            .normalize_or(Vec3::Y);
+        for v in [a, b, 4] {
+            normals[v] += n;
+        }
+    }
     // The top: a fan of four triangles around the centre.
     let start = m.positions.len() as u32;
     for (k, p) in top.iter().chain(std::iter::once(&mid)).enumerate() {
         m.positions.push(p.to_array());
         m.uvs.push([tops[k], 0.0]);
-        m.normals.push([0.0, 1.0, 0.0]);
+        m.normals.push(normals[k].normalize_or(Vec3::Y).to_array());
         m.colors.push(rgba(shade3(colour, shades[k])));
     }
     let c = start + 4;
@@ -1607,7 +1630,7 @@ mod tests {
             &mut s,
             Vec3::new(5.0, 0.0, 5.0),
             10.0,
-            [1.0, 1.2, 1.1, 1.3],
+            [1.0, 1.2, 1.1, 1.3, 1.15],
             [2.5, 2.4, 2.6, 2.5, 2.7],
             [1.0, 0.9, 1.1, 1.0, 1.05],
             [true, false, false, true],
@@ -1615,7 +1638,7 @@ mod tests {
         );
         check(&s);
         assert_eq!(s.indices.len() / 3, 4 + 2 * 2);
-        // The centre stands highest here: 1.15 (mean ground) + 2.7.
+        // The centre stands highest here: 1.15 (its ground) + 2.7.
         let top = s.positions.iter().map(|p| p[1]).fold(f32::MIN, f32::max);
         assert!((top - 3.85).abs() < 1e-5, "{top}");
     }

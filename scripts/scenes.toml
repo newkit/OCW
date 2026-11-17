@@ -4070,3 +4070,71 @@ riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 7
 at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --hair-colour auburn", "2.2=workshop open", "2.8=workshop mirror", "4=workshop slot-next", "4.4=workshop slot-next", "4.8=workshop slot-next", "5.2=workshop select", "5.8=workshop right", "6.2=workshop right"]
 shot = 40
 pick = false
+
+# --- Field stands on the terrain (spec §4.6.1, the stands of section VEGE) ---
+# The maize, potato and cereal stands of Tenerife's terraces on the routes the
+# drone videos and the kiosk ride (2026-11-17 bug: green slabs floating over
+# the brown ground). Summer noon, so the stands are up and green.
+
+[[scene]]
+name = "stands-masca-km9"
+description = "Buenavista - Masca - Santiago del Teide at km 9.1 (summer evening, the drone video's place): the terraced fields beside the road from above and behind, their maize and potato stands on the ground"
+world = "tenerife"
+args = ["--world", "{world}", "--route-file", "{world_dir}/buenavista-masca.route", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 20:30", "0.5=hud off", "0.5=hud.profile off", "0.8=teleport 9.12", "1=camera.orbit 20 32 22"]
+shot = 12
+pick = false
+
+[[scene]]
+name = "stands-masca-km79"
+description = "Masca road at km 7.9 from above (unicorn): potato terraces on a steep slope beside the road, the stands following the ground of every terrace"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-31715,-4790", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose -31705 -4775 22 300 -32"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "stands-masca-km108"
+description = "Masca road at km 10.85 (unicorn): potato fields at a terrace edge 25 m below the road, the stands on the ground on both levels"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-32240,-3630", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose -32225 -3620 25 235 -30"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "stands-teide-km11"
+description = "Puerto de la Cruz - Teide at km 11.2 (the kiosk ride, unicorn): potato terraces above La Orotava, the stands on the ground"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-640,-8500", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose -625 -8490 22 250 -32"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "stands-teide-km134"
+description = "Puerto de la Cruz - Teide at km 13.4 (unicorn): potato terraces beside the road at 985 m, the stands on the ground"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "1360,-8400", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose 1375 -8385 22 240 -32"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "stands-blackforest-maize"
+description = "Black Forest north (unicorn): maize stands on a field edge in the Rhine valley foothills, on the ground"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "16255,-61445", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose 16290 -61480 22 225 -30"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "stands-liechtenstein-cereal"
+description = "Liechtenstein (unicorn): cereal stands on a sloping field above the Rhine valley, on the ground"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-1500,2260", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose -1495 2255 22 225 -30"]
+shot = 10
+pick = false

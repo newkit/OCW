@@ -29,7 +29,7 @@ use ocw_world::vegetation::FieldCrop;
 use ocw_world::{TileKey, WorldPackage};
 
 use crate::flora::{Detail, PlantAt};
-use crate::package::{Keep, MeshArrays, TreeSite};
+use crate::package::{Keep, MeshArrays, TileGround, TreeSite};
 
 /// Chunks per tile side (200 m chunks for 1 km tiles).
 pub const CHUNKS: u32 = 5;
@@ -57,6 +57,11 @@ pub const DETAIL_DROP_M: f32 = DETAIL_BUILD_M + 60.0;
 pub const PREBUILD_PER_FRAME: usize = 2;
 /// Near meshes being built at a time (beyond those already in view).
 pub const MAX_LAZY_TASKS: usize = 4;
+/// Stands lower than this (m: potatoes, beet, cereals) come down to the
+/// ground at their edges instead of ending in a side.
+pub const TAPER_BELOW_M: f32 = 1.0;
+/// … to this height above the ground (m), clear of the terrain's surface.
+pub const EDGE_LIFT_M: f32 = 0.04;
 
 /// A plant's near model ([`crate::flora::plant`]'s arguments).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -81,7 +86,8 @@ pub struct VinePiece {
 pub struct StandCell {
     pub centre: Vec3,
     pub size: f32,
-    pub ys: [f32; 4],
+    /// The drawn ground at the four corners and the centre.
+    pub ys: [f32; 5],
     pub tops: [f32; 5],
     pub shades: [f32; 5],
     pub open: [bool; 4],
@@ -455,13 +461,15 @@ pub fn stand(crop: FieldCrop, day: Option<&SeasonDay>, alt_m: f64) -> (f32, [f32
 
 /// Builds a tile's plants: the grid's `classed` trees (already filtered by
 /// `keep`), the mapped trees, the plantations' rows and the fields'
-/// stands, on the `season` day.
+/// stands, on the `season` day; the vine rows and the stands on the
+/// `ground` as the tile draws it.
 pub fn tile_plants(
     pkg: &WorldPackage,
     key: TileKey,
     classed: &[(TreeSite, Option<LandClass>)],
     keep: Keep,
     season: Option<&SeasonDay>,
+    ground: &TileGround,
 ) -> TilePlants {
     let size = pkg.tile_size_m;
     let o = key.origin(f64::from(size));
@@ -628,7 +636,7 @@ pub fn tile_plants(
             if !kept(mid.x, mid.y) {
                 continue;
             }
-            let y = |p: Vec2| pkg.height(f64::from(p.x), f64::from(p.y)).unwrap_or(0.0) as f32;
+            let y = |p: Vec2| ground.height(f64::from(p.x), f64::from(p.y)).unwrap_or(0.0) as f32;
             let ch = &mut details[detail_of(mid.x, mid.y)];
             let origin = Vec3::from(ch.origin);
             let (q0, q1) = (
@@ -655,7 +663,7 @@ pub fn tile_plants(
         }
     }
     // The fields' stands.
-    stands(pkg, key, &mut chunks, &chunk_of, keep, season);
+    stands(pkg, key, &mut chunks, &chunk_of, keep, season, ground);
     chunks.retain(|c| !c.near.is_empty() || !c.far.indices.is_empty());
     details.retain(|c| !c.near.is_empty());
     for c in chunks.iter_mut().chain(details.iter_mut()) {
@@ -669,9 +677,11 @@ pub fn tile_plants(
     }
 }
 
-/// The stands of maize, cereals, sunflowers, rapeseed and potatoes: a slab
-/// per cell of section `VEGE` (near chunks only), its sides where the
-/// neighbour is not the same crop.
+/// The stands of maize, cereals, sunflowers, rapeseed and potatoes: a
+/// canopy per cell of section `VEGE` (near chunks only) on the drawn
+/// `ground` at its corners and its centre; where the neighbour has not the
+/// same stand, a tall stand ends in a side, a low one comes down to the
+/// ground ([`TAPER_BELOW_M`]).
 fn stands(
     pkg: &WorldPackage,
     key: TileKey,
@@ -679,77 +689,108 @@ fn stands(
     chunk_of: &dyn Fn(f32, f32) -> usize,
     keep: Keep,
     season: Option<&SeasonDay>,
+    ground: &TileGround,
 ) {
     let Some(veg) = pkg.look.vegetation.as_ref() else {
         return;
     };
-    let Some(v) = veg.tiles.get(&key).filter(|v| !v.crops.is_empty()) else {
+    if !veg.tiles.get(&key).is_some_and(|v| !v.crops.is_empty()) {
         return;
-    };
+    }
     let size = f64::from(pkg.tile_size_m);
-    let o = key.origin(size);
     let n = veg.cells as usize;
     let cs = size / n as f64;
-    // The stand per crop at the tile's mean altitude band (100 m steps).
+    let ni = n as i64;
+    // The stand per crop at the cell's altitude band (100 m steps).
     let mut cache: std::collections::HashMap<(u8, i64), (f32, [f32; 3])> = Default::default();
-    let crop_at = |c: isize, r: isize| -> Option<u8> {
-        (c >= 0 && r >= 0 && (c as usize) < n && (r as usize) < n)
-            .then(|| v.crops[r as usize * n + c as usize])
-    };
-    for r in 0..n {
-        for c in 0..n {
-            let code = v.crops[r * n + c];
-            let Some(crop) = FieldCrop::from_code(code) else {
-                continue;
-            };
-            if !matches!(
-                crop,
-                FieldCrop::Maize
-                    | FieldCrop::Sunflower
-                    | FieldCrop::Cereal
-                    | FieldCrop::Rapeseed
-                    | FieldCrop::Potato
-                    | FieldCrop::Beet
-            ) {
-                continue;
-            }
-            let (x, z) = (o[0] + (c as f64 + 0.5) * cs, o[1] + (r as f64 + 0.5) * cs);
+    // Whether a stand is drawn in global cell (gc, gr) – its crop code, its
+    // height and colour – also in the neighbouring tiles: a stand's edge is
+    // where its neighbour has none, not only where the neighbour's crop
+    // differs (before 2026-11-17 the cells kept free along a road counted
+    // as the same field, and the stand's edge there had no side: its top
+    // hung in the air over the ground).
+    type Drawn = Option<(u8, f32, [f32; 3])>;
+    let mut drawn: std::collections::HashMap<(i64, i64), Drawn> = Default::default();
+    let mut present = |gc: i64, gr: i64| -> Drawn {
+        if let Some(d) = drawn.get(&(gc, gr)) {
+            return *d;
+        }
+        let tk = TileKey {
+            x: gc.div_euclid(ni) as i32,
+            z: gr.div_euclid(ni) as i32,
+        };
+        let d = (|| {
+            let t = veg.tiles.get(&tk).filter(|t| !t.crops.is_empty())?;
+            let code = t.crops[(gr.rem_euclid(ni) * ni + gc.rem_euclid(ni)) as usize];
+            let crop = FieldCrop::from_code(code).filter(|c| {
+                matches!(
+                    c,
+                    FieldCrop::Maize
+                        | FieldCrop::Sunflower
+                        | FieldCrop::Cereal
+                        | FieldCrop::Rapeseed
+                        | FieldCrop::Potato
+                        | FieldCrop::Beet
+                )
+            })?;
+            let (x, z) = ((gc as f64 + 0.5) * cs, (gr as f64 + 0.5) * cs);
             if keep.is_some_and(|f| !f([x, z])) || plantings_blocked(pkg, x, z) {
-                continue;
+                return None;
             }
-            let h = |dx: f64, dz: f64| pkg.height(x + dx, z + dz).unwrap_or(0.0) as f32;
-            let hc = h(0.0, 0.0);
-            let band = (f64::from(hc) / 100.0).round() as i64;
+            let band = (ground.height(x, z).unwrap_or(0.0) / 100.0).round() as i64;
             let (height, colour) = *cache
                 .entry((code, band))
                 .or_insert_with(|| stand(crop, season, band as f64 * 100.0));
-            if height <= 0.0 {
-                continue;
-            }
-            let hs = cs / 2.0;
-            let ys = [h(-hs, -hs), h(hs, -hs), h(-hs, hs), h(hs, hs)];
-            let (ci, ri) = (c as isize, r as isize);
-            let open = [
-                crop_at(ci - 1, ri) != Some(code),
-                crop_at(ci + 1, ri) != Some(code),
-                crop_at(ci, ri - 1) != Some(code),
-                crop_at(ci, ri + 1) != Some(code),
-            ];
-            // Global corner indices: neighbouring cells share their corners'
+            (height > 0.0).then_some((code, height, colour))
+        })();
+        drawn.insert((gc, gr), d);
+        d
+    };
+    for r in 0..ni {
+        for c in 0..ni {
+            // Global cell indices: neighbouring cells share their corners'
             // heights and shades, so the canopy is one bumpy surface.
-            let (gc, gr) = (
-                c as i64 + i64::from(key.x) * n as i64,
-                r as i64 + i64::from(key.z) * n as i64,
-            );
+            let (gc, gr) = (c + i64::from(key.x) * ni, r + i64::from(key.z) * ni);
+            let Some((code, height, colour)) = present(gc, gr) else {
+                continue;
+            };
+            let (x, z) = ((gc as f64 + 0.5) * cs, (gr as f64 + 0.5) * cs);
+            let h = |dx: f64, dz: f64| ground.height(x + dx, z + dz).unwrap_or(0.0) as f32;
+            let hc = h(0.0, 0.0);
+            let hs = cs / 2.0;
+            let ys = [h(-hs, -hs), h(hs, -hs), h(-hs, hs), h(hs, hs), hc];
+            let mut same = |dc: i64, dr: i64| {
+                present(gc + dc, gr + dr).is_some_and(|(other, ..)| other == code)
+            };
+            let open = [!same(-1, 0), !same(1, 0), !same(0, -1), !same(0, 1)];
+            // A low stand (potatoes, beet, cereals) comes down to the ground
+            // at its edge instead of ending in a side: at every corner
+            // shared with a cell without the same stand its top lies just
+            // above the ground, so the field swells gently out of the ground
+            // (a 0.4 m box with sides read as a slab floating over it).
+            let low = height < TAPER_BELOW_M;
+            let inside = |dc: i64, dr: i64, same: &mut dyn FnMut(i64, i64) -> bool| {
+                !low || [(dc - 1, dr - 1), (dc, dr - 1), (dc - 1, dr), (dc, dr)]
+                    .iter()
+                    .all(|&(a, b)| (a, b) == (0, 0) || same(a, b))
+            };
             let corner = |dc: i64, dr: i64, seed: u64| hash(gc + dc, gr + dr, seed);
             let bump = |v: f32| height * (0.86 + 0.24 * v);
+            let mut top_at = |dc: i64, dr: i64| {
+                if inside(dc, dr, &mut same) {
+                    bump(corner(dc, dr, 45))
+                } else {
+                    EDGE_LIFT_M
+                }
+            };
             let tops = [
-                bump(corner(0, 0, 45)),
-                bump(corner(1, 0, 45)),
-                bump(corner(0, 1, 45)),
-                bump(corner(1, 1, 45)),
+                top_at(0, 0),
+                top_at(1, 0),
+                top_at(0, 1),
+                top_at(1, 1),
                 height * (0.95 + 0.2 * hash(gc, gr, 47)),
             ];
+            let open = if low { [false; 4] } else { open };
             let shade = |v: f32| 0.84 + 0.3 * v;
             let shades = [
                 shade(corner(0, 0, 46)),
@@ -980,6 +1021,219 @@ mod tests {
             assert!(verts < 200_000, "{name}: {verts} vertices in a chunk");
             assert!(wasm < 500.0, "{name}: wasm memory {wasm:.0} MB");
             assert!(all < 1_700.0, "{name}: all meshes {all:.0} MB");
+        }
+    }
+
+    // --- Stands on the drawn ground (the floating slabs of 2026-11-17) ------
+
+    /// A potato tile on Tenerife on a 10 m terrain grid (the packages'
+    /// spacing, the stands' cells one terrain cell each), the ground
+    /// `height(i, k)` at the grid's vertices.
+    fn field_tile(height: impl Fn(u32, u32) -> f32) -> WorldPackage {
+        let mut pkg = worst_tile(28.39, -16.52, LandClass::Farmland, Some(FieldCrop::Potato));
+        let n = 101u32;
+        pkg.samples = n;
+        let t = pkg.tiles.get_mut(&TileKey { x: 0, z: 0 }).unwrap();
+        t.heights = (0..n * n).map(|v| height(v % n, v / n)).collect();
+        pkg
+    }
+
+    /// How high the stands' tops stand over the drawn ground, as shares of
+    /// the stand's height: sampled over every top triangle of every stand
+    /// cell of the tile (the drawn ground: its terrain mesh, after the
+    /// renderer lowered it under the junctions). The stand's top is 0.86 …
+    /// 1.15 of its height above the ground at its five vertices, a low
+    /// stand's [`EDGE_LIFT_M`] at its edge.
+    fn stand_heights_over_the_ground(pkg: &WorldPackage) -> (Vec<f32>, usize) {
+        let key = TileKey { x: 0, z: 0 };
+        let m = crate::package::build_tile_meshes(pkg, key).unwrap();
+        let ground = TileGround::new(pkg, key, Some(&m.terrain));
+        let (height, _) = stand(FieldCrop::Potato, None, 0.0);
+        let mut shares = Vec::new();
+        let mut cells = 0;
+        for ch in &m.plants.chunks {
+            let o = Vec3::from(ch.origin);
+            for c in &ch.near.stands {
+                cells += 1;
+                let mut s = MeshArrays::default();
+                crate::flora::stand_cell(
+                    &mut s, c.centre, c.size, c.ys, c.tops, c.shades, c.open, c.colour,
+                );
+                // The top: the first four triangles.
+                for t in s.indices[..12].chunks(3) {
+                    let p: [Vec3; 3] =
+                        std::array::from_fn(|k| Vec3::from(s.positions[t[k] as usize]) + o);
+                    for (a, b) in [(0.0, 0.0), (0.3, 0.3), (0.1, 0.8), (0.8, 0.1), (0.45, 0.1)] {
+                        let q = p[0] + (p[1] - p[0]) * a + (p[2] - p[0]) * b;
+                        let g = ground.height(f64::from(q.x), f64::from(q.z)).unwrap() as f32;
+                        shares.push((q.y - g) / height);
+                    }
+                }
+            }
+        }
+        (shares, cells)
+    }
+
+    /// Regression (2026-11-17, Tenerife: green slabs floating over the
+    /// terraces of the Masca road and above La Orotava): a stand's top
+    /// follows the ground as the tile draws it, at every point of the cell,
+    /// also where the cell's corners are twisted (terrace edges: one corner
+    /// metres above the others). Before, the centre of each cell stood at
+    /// its corners' mean (the bilinear ground), which on a terrace edge is
+    /// metres above the drawn terrain's diagonal.
+    #[test]
+    fn stands_lie_on_the_drawn_ground_on_terrace_edges() {
+        // Terraces 4 m high every 30 m, every third column of vertices a
+        // step up: most cells are twisted.
+        let terraces = |i: u32, k: u32| 300.0 + 4.0 * ((i * 7 + k * 13) % 5) as f32;
+        let pkg = field_tile(terraces);
+        // The bilinear ground differs from the drawn one by metres here.
+        let key = TileKey { x: 0, z: 0 };
+        let drawn = TileGround::new(&pkg, key, None);
+        let twist = (0..99)
+            .map(|c| {
+                let (x, z) = (c as f64 * 10.0 + 5.0, 505.0);
+                (pkg.height(x, z).unwrap() - drawn.height(x, z).unwrap()).abs()
+            })
+            .fold(0.0, f64::max);
+        assert!(twist > 2.0, "twist {twist}");
+        let (shares, cells) = stand_heights_over_the_ground(&pkg);
+        assert!(cells > 9_000, "{cells} stand cells");
+        let (lo, hi) = shares
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), s| (lo.min(*s), hi.max(*s)));
+        // Never under the ground, never above its own height (only the
+        // edges, tapered, come below 0.8 of it).
+        assert!(
+            lo > 0.05 && hi < 1.2,
+            "stand top {lo} … {hi} of its height over the ground"
+        );
+        let full = shares.iter().filter(|s| **s > 0.8).count();
+        assert!(
+            full * 10 > shares.len() * 9,
+            "{full} of {} at full height",
+            shares.len()
+        );
+    }
+
+    /// The same next to a junction, where the renderer lowers the terrain
+    /// under the side road's blend (`junction_mesh::lower_terrain`): the
+    /// stands there follow the lowered ground, not the package's.
+    #[test]
+    fn stands_follow_the_ground_lowered_at_a_junction() {
+        use ocw_world::graph::RoadClass;
+        use ocw_world::junction::fixtures::t_junction;
+        // A T junction at the tile's corner (0, 0): the main road along
+        // z = 0, a 20 % side road up along x = 0; the ground 5 cm under the
+        // roads' profiles as the world builder settles it.
+        let mut pkg = field_tile(|_, k| {
+            let z = k as f32 * 10.0;
+            if z > 3.75 { 0.2 * z - 0.05 } else { -0.05 }
+        });
+        pkg.graph = Some(t_junction(RoadClass::Secondary, 0.0, 0.2));
+        let key = TileKey { x: 0, z: 0 };
+        let m = crate::package::build_tile_meshes(&pkg, key).unwrap();
+        // The renderer lowered the ground beside the side road.
+        let tile = pkg.tiles.get(&key).unwrap();
+        let lowered = m
+            .terrain
+            .positions
+            .iter()
+            .zip(&tile.heights)
+            .map(|(p, h)| h - p[1])
+            .fold(0.0, f32::max);
+        assert!(lowered > 0.3, "lowered by {lowered} m");
+        let (shares, cells) = stand_heights_over_the_ground(&pkg);
+        assert!(cells > 9_000, "{cells} stand cells");
+        let (lo, hi) = shares
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), s| (lo.min(*s), hi.max(*s)));
+        // Never under the ground, never above its own height (only the
+        // edges, tapered, come below 0.8 of it).
+        assert!(
+            lo > 0.05 && hi < 1.2,
+            "stand top {lo} … {hi} of its height over the ground"
+        );
+        let full = shares.iter().filter(|s| **s > 0.8).count();
+        assert!(
+            full * 10 > shares.len() * 9,
+            "{full} of {} at full height",
+            shares.len()
+        );
+    }
+
+    /// A flat field of `crop` with a road across it along x = 500 (the
+    /// cells within its reach are kept free): its stand cells.
+    fn field_by_a_road(crop: FieldCrop) -> Vec<StandCell> {
+        let mut pkg = field_tile(|_, _| 300.0);
+        let v = pkg.look.vegetation.as_mut().unwrap();
+        let t = v.tiles.get_mut(&TileKey { x: 0, z: 0 }).unwrap();
+        t.crops.iter_mut().for_each(|c| *c = crop.code());
+        let tile = pkg.tiles.get_mut(&TileKey { x: 0, z: 0 }).unwrap();
+        tile.roads.push(ocw_world::RoadStrip {
+            class: ocw_world::graph::RoadClass::Secondary,
+            width_m: 6.0,
+            points: vec![[500.0, 300.0, 0.0], [500.0, 300.0, 1000.0]],
+            surface: ocw_world::RoadSurface::Asphalt,
+            dress: ocw_world::RoadDress::of_class(ocw_world::graph::RoadClass::Secondary, 6.0),
+            lit: ocw_world::RoadLit::Unknown,
+        });
+        let m = crate::package::build_tile_meshes(&pkg, TileKey { x: 0, z: 0 }).unwrap();
+        let mut cells = Vec::new();
+        for ch in &m.plants.chunks {
+            let o = Vec3::from(ch.origin);
+            cells.extend(ch.near.stands.iter().map(|c| StandCell {
+                centre: c.centre + o,
+                ..*c
+            }));
+        }
+        cells
+    }
+
+    /// Regression (2026-11-17): the cells kept free along a road counted as
+    /// the same field, so the stand's edge beside the road had no side and
+    /// its top hung in the air over the verge. A tall stand (maize) now ends
+    /// in a side there; a low one (potatoes) comes down to the ground at its
+    /// edge, with no side anywhere.
+    #[test]
+    fn stands_end_at_the_road_in_a_side_or_on_the_ground() {
+        // The road (6 m) keeps the cells within 7 m of x = 500 free: the
+        // columns from 490 to 510; the field's edges are at x 490 and 510.
+        let maize = field_by_a_road(FieldCrop::Maize);
+        assert!(!maize.is_empty());
+        let by_road: Vec<&StandCell> = maize
+            .iter()
+            .filter(|c| (c.centre.x - 485.0).abs() < 0.1 && c.centre.z > 20.0 && c.centre.z < 980.0)
+            .collect();
+        assert!(!by_road.is_empty());
+        // The x+ side (towards the road) is open; the rows inside are not.
+        assert!(
+            by_road
+                .iter()
+                .all(|c| c.open == [false, true, false, false]),
+            "{:?}",
+            by_road[0].open
+        );
+        let (tall, _) = stand(FieldCrop::Maize, None, 300.0);
+        assert!(
+            by_road
+                .iter()
+                .all(|c| c.tops.iter().all(|t| *t > 0.8 * tall))
+        );
+        // Potatoes: no sides; the corners on the road's side lie on the
+        // ground, those inside the field at the stand's height.
+        let potato = field_by_a_road(FieldCrop::Potato);
+        assert!(potato.iter().all(|c| c.open == [false; 4]));
+        let by_road: Vec<&StandCell> = potato
+            .iter()
+            .filter(|c| (c.centre.x - 485.0).abs() < 0.1 && c.centre.z > 20.0 && c.centre.z < 980.0)
+            .collect();
+        assert!(!by_road.is_empty());
+        let (low, _) = stand(FieldCrop::Potato, None, 300.0);
+        for c in by_road {
+            // Corners x−z−, x+z−, x−z+, x+z+: x+ is the road's side.
+            assert_eq!([c.tops[1], c.tops[3]], [EDGE_LIFT_M; 2]);
+            assert!(c.tops[0] > 0.8 * low && c.tops[2] > 0.8 * low);
         }
     }
 
