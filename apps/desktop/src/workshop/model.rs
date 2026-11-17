@@ -633,6 +633,17 @@ impl Workshop {
                 }
             }
             match a {
+                // The tiles (spec 4B *Tiles*): the focus moves over the
+                // grid; the stand bike previews the focused tile.
+                Act::Up | Act::Down | Act::Left | Act::Right if p.tiles() => {
+                    use ocw_client::part_tiles::Dir;
+                    p.step_tiles(match a {
+                        Act::Up => Dir::Up,
+                        Act::Down => Dir::Down,
+                        Act::Left => Dir::Left,
+                        _ => Dir::Right,
+                    });
+                }
                 Act::Up => p.step(-1),
                 Act::Down => p.step(1),
                 Act::Row(i) if i < p.rows.len() => p.focus = i,
@@ -1414,6 +1425,135 @@ pub(crate) mod tests {
                 apply: true,
                 then: None
             }]
+        );
+    }
+
+    /// The models and paint on the stand bike (with the live preview).
+    fn stand_models(world: &World, w: &Workshop) -> (Vec<String>, Option<Rgb>) {
+        let boxes = world.boxes(w);
+        let ctx = Ctx {
+            cat: ocw_assets::shipped::catalogue(),
+            garage: world.wallet.get("Ann").unwrap(),
+            balance: world.wallet.balance("Ann"),
+            layout: &world.layout,
+            size: Vec2::new(1920.0, 1080.0),
+            anchors: &world.anchors,
+            boxes: &boxes,
+            character: ocw_core::Character::default(),
+            look: ocw_core::RiderLook::default(),
+            rider_spots: &world.spots,
+        };
+        w.stand_look(&ctx)
+    }
+
+    /// Opens the stand bike's picker of `slot`.
+    fn open_slot(world: &World, w: &mut Workshop, slot: Slot) {
+        world.step(w, &[Act::Confirm]);
+        world.settle(w);
+        w.hotspot = world.anchors.iter().position(|(s, _)| *s == slot).unwrap();
+        world.step(w, &[Act::Confirm]);
+    }
+
+    /// The bike stand's tiles (spec 4B *Tiles*): the part pickers and the
+    /// paint are tile grids, the kit, the bench and the character lists;
+    /// the focus moves over the grid with the arrows (keyboard and the
+    /// gamepad's pad / stick give the same actions), the mouse's hover and
+    /// a click or tap; the stand bike shows the focused tile at once, a
+    /// confirm (or click / tap) applies through the dialog, Cancel keeps
+    /// the picker, Back restores the fitted part.
+    #[test]
+    fn tiles_move_preview_apply_and_cancel_with_every_input() {
+        let world = World::new();
+        let mut w = world.open();
+        open_slot(&world, &mut w, Slot::Wheels);
+        let p = w.picker.as_ref().unwrap();
+        assert!(p.tiles());
+        // Equipped base wheels, then four road wheelsets in the shop.
+        assert_eq!(p.rows.len(), 5, "{:?}", p.rows);
+        let fitted = stand_models(&world, &w);
+        let model_of = |w: &Workshop| {
+            let id = w.picker.as_ref().unwrap().preview().unwrap().to_string();
+            ocw_assets::shipped::catalogue()
+                .get(&id)
+                .unwrap()
+                .model
+                .clone()
+        };
+        // Keyboard / gamepad: → one tile, ↓ one row (3 columns), ← back,
+        // ↑ at the top stays.
+        world.step(&mut w, &[Act::Right]);
+        assert_eq!(w.picker.as_ref().unwrap().focus, 1);
+        assert!(
+            stand_models(&world, &w).0.contains(&model_of(&w)),
+            "preview"
+        );
+        world.step(&mut w, &[Act::Down]);
+        assert_eq!(w.picker.as_ref().unwrap().focus, 4);
+        world.step(&mut w, &[Act::Down]);
+        assert_eq!(w.picker.as_ref().unwrap().focus, 4, "the last row holds");
+        world.step(&mut w, &[Act::Left]);
+        assert_eq!(w.picker.as_ref().unwrap().focus, 3);
+        world.step(&mut w, &[Act::Up]);
+        assert_eq!(w.picker.as_ref().unwrap().focus, 0);
+        world.step(&mut w, &[Act::Up]);
+        assert_eq!(w.picker.as_ref().unwrap().focus, 0);
+        assert_eq!(stand_models(&world, &w), fitted, "the base tile");
+        // Mouse hover: focus and preview at once.
+        world.step(&mut w, &[Act::Row(2)]);
+        assert_eq!(w.picker.as_ref().unwrap().focus, 2);
+        let previewed = model_of(&w);
+        assert!(stand_models(&world, &w).0.contains(&previewed));
+        // A click / tap on a tile: focused and the dialog (apply); Cancel
+        // keeps the picker and the preview.
+        world.step(&mut w, &[Act::RowClick(1)]);
+        let p = w.picker.as_ref().unwrap();
+        assert_eq!(p.focus, 1);
+        let d = p.dialog.clone().expect("the buy dialog");
+        assert_eq!(d.buttons[d.focus].label, "Cancel");
+        world.step(&mut w, &[Act::Confirm]);
+        assert!(w.picker.as_ref().unwrap().dialog.is_none());
+        assert!(stand_models(&world, &w).0.contains(&model_of(&w)));
+        // Confirm on the focused tile, then the buy button: applied.
+        let part = w.picker.as_ref().unwrap().preview().unwrap().to_string();
+        world.step(&mut w, &[Act::Confirm]);
+        let out = world.step(&mut w, &[Act::Up, Act::Confirm]);
+        assert_eq!(
+            out,
+            vec![Out::Line(format!("workshop.buy {part} --bike road"))]
+        );
+        // Back: the fitted part again (nothing was bought in this test).
+        world.step(&mut w, &[Act::Right, Act::Back]);
+        assert!(w.picker.is_none());
+        assert_eq!(stand_models(&world, &w), fitted, "cancel restores");
+    }
+
+    /// The paint is tiles too, previewed on the frame; the kit and the
+    /// bench stay lists.
+    #[test]
+    fn paint_tiles_preview_the_colour() {
+        let world = World::new();
+        let mut w = world.open();
+        open_slot(&world, &mut w, Slot::Paint);
+        let p = w.picker.as_ref().unwrap();
+        assert!(p.tiles());
+        let before = stand_models(&world, &w).1;
+        world.step(&mut w, &[Act::Right]);
+        let after = stand_models(&world, &w).1;
+        assert_ne!(before, after);
+        assert_eq!(
+            Some(after),
+            w.picker.as_ref().unwrap().preview_paint(),
+            "the focused colour on the frame"
+        );
+        world.step(&mut w, &[Act::Back]);
+        assert_eq!(stand_models(&world, &w).1, before);
+        let kit = Picker::kit(Slot::Helmet, Vec::new(), ocw_core::RiderLook::default());
+        assert!(!kit.tiles());
+        let mut catalogue = Picker::new(Slot::Frame, Vec::new());
+        catalogue.bench = Some(bench::BenchPage::Top);
+        assert!(!catalogue.tiles());
+        assert!(
+            !Picker::character(picker::CharSlot::Body, &ocw_core::Character::default()).tiles()
         );
     }
 }

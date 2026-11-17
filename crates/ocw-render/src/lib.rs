@@ -53,6 +53,7 @@ pub mod stamp;
 pub mod status_signs;
 pub mod street_lamps;
 pub mod terrain;
+pub mod thumbs;
 pub mod touch_hud;
 pub mod tunnel;
 pub mod tunnel_cut;

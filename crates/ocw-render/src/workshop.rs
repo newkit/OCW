@@ -79,6 +79,14 @@ pub struct PickerRowView {
     pub left: String,
     pub right: String,
     pub locked: bool,
+    /// The tile (spec 4B *Tiles*, when the picker shows tiles): the
+    /// part's thumbnail …
+    pub thumb: Option<crate::thumbs::ThumbKey>,
+    /// … its gain ("+0.8 % flat · −0.2 % climb") and weight ("−240 g")
+    /// against the slot's base part, and whether the caps cut it.
+    pub gain: String,
+    pub weight: String,
+    pub capped: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -98,6 +106,23 @@ pub struct PickerView {
     /// Both cards side by side when a part is pinned (A) for comparing.
     pub compare: Option<Vec<String>>,
     pub dialog: Option<DialogView>,
+    /// The rows as a grid of tiles with thumbnails and gains (spec 4B
+    /// *Tiles*; the grid's model is `ocw_client::part_tiles`); `None`: a
+    /// list.
+    pub tiles: Option<TilesView>,
+    /// A line under the title (the whole bike against the stock bike).
+    pub subtitle: Option<String>,
+}
+
+/// The tile grid as shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TilesView {
+    /// Tiles per row.
+    pub cols: usize,
+    /// The first tile shown and how many (whole rows, scrolled to the
+    /// focus).
+    pub first: usize,
+    pub shown: usize,
 }
 
 /// What the workshop shows; written by the app's scene model.
@@ -306,6 +331,9 @@ impl Plugin for WorkshopPlugin {
     fn build(&self, app: &mut App) {
         if !app.is_plugin_added::<WorkshopCorePlugin>() {
             app.add_plugins(WorkshopCorePlugin);
+        }
+        if !app.is_plugin_added::<crate::thumbs::ThumbnailPlugin>() {
+            app.add_plugins(crate::thumbs::ThumbnailPlugin);
         }
         app.init_resource::<Scene>()
             .add_systems(
@@ -837,7 +865,7 @@ fn spawn_ui(commands: &mut Commands, image: Handle<Image>) -> Entity {
 
 /// A built bike's (or the rider's) meshes on the GPU, per node, with the
 /// gear shader's rest coordinates (spec §14 Phase 8 T6).
-fn upload(model: &Model, meshes: &mut Assets<Mesh>, rider: bool) -> NodeMeshes {
+pub(crate) fn upload(model: &Model, meshes: &mut Assets<Mesh>, rider: bool) -> NodeMeshes {
     model
         .nodes
         .iter()
@@ -854,7 +882,7 @@ fn upload(model: &Model, meshes: &mut Assets<Mesh>, rider: bool) -> NodeMeshes {
 
 /// The gear material of a part (spec §14 Phase 8 T6): its kind from slot
 /// and node, its colours from `colours`; the light set's lenses glow.
-fn part_material(
+pub(crate) fn part_material(
     cache: &mut HashMap<Vec<u32>, Handle<GearMaterial>>,
     materials: &mut Assets<GearMaterial>,
     slot: &str,
@@ -871,7 +899,7 @@ fn part_material(
 }
 
 /// The colours of a bike in `paint` (the parts keep the model's).
-fn bike_colours(paint: Rgb) -> crate::riders::AvatarColours {
+pub(crate) fn bike_colours(paint: Rgb) -> crate::riders::AvatarColours {
     let look = ocw_core::RiderLook {
         frame: paint,
         ..Default::default()
@@ -1037,6 +1065,8 @@ fn draw_ui(
     markers: Query<Entity, With<Markers>>,
     mut last: Local<Option<WorkshopView>>,
     mut last_ui: Local<Option<Entity>>,
+    mut thumbs: ResMut<crate::thumbs::Thumbnails>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     if !view.open || scene.ui.is_none() {
         *last = None;
@@ -1283,7 +1313,7 @@ fn draw_ui(
             };
             commands.entity(panel).despawn_children();
             if let Some(p) = &view.picker {
-                spawn_picker(&mut commands, panel, p);
+                spawn_picker(&mut commands, panel, p, &mut thumbs, &mut images);
             }
         }
         if let Ok((dialog, mut n)) = nodes.p1().single_mut() {
@@ -1699,7 +1729,13 @@ fn place_mirror(
 
 const FOCUS: Color = Color::srgb(1.0, 0.78, 0.24);
 
-fn spawn_picker(commands: &mut Commands, panel: Entity, p: &PickerView) {
+fn spawn_picker(
+    commands: &mut Commands,
+    panel: Entity,
+    p: &PickerView,
+    thumbs: &mut crate::thumbs::Thumbnails,
+    images: &mut Assets<Image>,
+) {
     let font = |vh: f32| TextFont {
         font_size: FontSize::Vh(vh),
         ..default()
@@ -1710,13 +1746,43 @@ fn spawn_picker(commands: &mut Commands, panel: Entity, p: &PickerView) {
         .focus
         .saturating_sub(SHOWN / 2)
         .min(p.rows.len().saturating_sub(SHOWN));
+    // Tiles: the thumbnails' images (kept, or queued for rendering).
+    let tile_images: Vec<Option<Handle<Image>>> = p
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let shown = p
+                .tiles
+                .is_some_and(|t| i >= t.first && i < t.first + t.shown);
+            r.thumb
+                .as_ref()
+                .filter(|_| shown)
+                .map(|k| thumbs.image(k, images))
+        })
+        .collect();
     commands.entity(panel).with_children(|c| {
         c.spawn((
             Text::new(p.title.clone()),
             font(4.2),
             TextColor(Color::WHITE),
         ));
-        for (i, r) in p.rows.iter().enumerate().skip(start).take(SHOWN) {
+        if let Some(s) = &p.subtitle {
+            c.spawn((
+                Text::new(s.clone()),
+                font(2.0),
+                TextColor(Color::srgb(0.75, 0.9, 0.8)),
+            ));
+        }
+        if let Some(t) = p.tiles {
+            spawn_tiles(c, p, t, &tile_images);
+        }
+        let list_start = if p.tiles.is_some() {
+            p.rows.len()
+        } else {
+            start
+        };
+        for (i, r) in p.rows.iter().enumerate().skip(list_start).take(SHOWN) {
             if let Some(g) = &r.group {
                 c.spawn((
                     Text::new(g.clone()),
@@ -1805,6 +1871,120 @@ fn spawn_picker(commands: &mut Commands, panel: Entity, p: &PickerView) {
             });
         }
     });
+}
+
+/// The picker's tiles (spec 4B *Tiles*): the shown rows of the grid, each
+/// a thumbnail of the part, its name, its gain and weight against the
+/// slot's base part and its badge (equipped, owned, price, lock).
+fn spawn_tiles(
+    c: &mut ChildSpawnerCommands,
+    p: &PickerView,
+    t: TilesView,
+    images: &[Option<Handle<Image>>],
+) {
+    let font = |vh: f32| TextFont {
+        font_size: FontSize::Vh(vh),
+        ..default()
+    };
+    let dim = Color::srgb(0.7, 0.72, 0.76);
+    if t.first > 0 {
+        c.spawn((Text::new("More above"), font(1.8), TextColor(dim)));
+    }
+    let cols = t.cols.max(1) as f32;
+    c.spawn(Node {
+        flex_direction: FlexDirection::Row,
+        flex_wrap: FlexWrap::Wrap,
+        column_gap: vh(0.8),
+        row_gap: vh(0.8),
+        ..default()
+    })
+    .with_children(|g| {
+        for (i, r) in p.rows.iter().enumerate().skip(t.first).take(t.shown) {
+            let focused = i == p.focus;
+            let gain_colour = if r.gain.starts_with('+') {
+                Color::srgb(0.6, 0.92, 0.65)
+            } else if r.gain.starts_with('−') {
+                Color::srgb(0.95, 0.65, 0.6)
+            } else {
+                Color::srgb(0.85, 0.87, 0.9)
+            };
+            g.spawn((
+                Node {
+                    width: percent((100.0 - 2.5 * (cols - 1.0)) / cols),
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(vh(0.5)),
+                    border: UiRect::all(vh(0.35)),
+                    border_radius: BorderRadius::all(vh(0.8)),
+                    row_gap: vh(0.2),
+                    min_height: px(48),
+                    overflow: Overflow::clip(),
+                    ..default()
+                },
+                BackgroundColor(if focused {
+                    Color::srgba(1.0, 0.78, 0.24, 0.22)
+                } else {
+                    Color::srgba(1.0, 1.0, 1.0, 0.06)
+                }),
+                BorderColor::all(if focused { FOCUS } else { Color::NONE }),
+            ))
+            .with_children(|tile| {
+                let mut pic = tile.spawn((
+                    Node {
+                        width: percent(100),
+                        aspect_ratio: Some(
+                            crate::thumbs::THUMB_SIZE.x as f32 / crate::thumbs::THUMB_SIZE.y as f32,
+                        ),
+                        border_radius: BorderRadius::all(vh(0.5)),
+                        ..default()
+                    },
+                    // Darker than the rendered background until it fills in.
+                    BackgroundColor(Color::srgb(0.16, 0.16, 0.17)),
+                ));
+                if let Some(Some(img)) = images.get(i) {
+                    pic.insert(ImageNode::new(img.clone()));
+                }
+                tile.spawn((
+                    Text::new(r.left.clone()),
+                    font(1.75),
+                    TextColor(Color::WHITE),
+                ));
+                if !r.gain.is_empty() {
+                    tile.spawn((Text::new(r.gain.clone()), font(1.5), TextColor(gain_colour)));
+                }
+                let mut foot: Vec<&str> = Vec::new();
+                if !r.weight.is_empty() {
+                    foot.push(&r.weight);
+                }
+                if !r.right.is_empty() {
+                    foot.push(&r.right);
+                }
+                tile.spawn((
+                    Text::new(foot.join(" · ")),
+                    font(1.6),
+                    TextColor(if r.locked {
+                        Color::srgb(0.75, 0.55, 0.55)
+                    } else {
+                        Color::srgb(1.0, 0.6, 0.7)
+                    }),
+                ));
+            })
+            .observe(
+                move |_: On<PointerOver>, mut ptr: ResMut<WorkshopPointer>| {
+                    ptr.0.push(WorkshopPointerEvent::Row(i));
+                },
+            )
+            .observe(
+                move |click: On<PointerClick>, mut ptr: ResMut<WorkshopPointer>| {
+                    if click.button == PointerButton::Primary {
+                        ptr.0.push(WorkshopPointerEvent::RowClick(i));
+                    }
+                },
+            );
+        }
+    });
+    if t.first + t.shown < p.rows.len() {
+        c.spawn((Text::new("More below"), font(1.8), TextColor(dim)));
+    }
 }
 
 fn spawn_dialog(commands: &mut Commands, root: Entity, d: &DialogView) {

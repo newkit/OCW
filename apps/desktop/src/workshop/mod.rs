@@ -44,8 +44,9 @@ use ocw_core::{ProfileId, Rgb, RiderLook};
 use ocw_render::RideView;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
 use ocw_render::menu::InputContext;
+use ocw_render::thumbs::ThumbKey;
 use ocw_render::workshop::{
-    BikeModels, BikeView, DialogView, HotspotView, PickerRowView, PickerView, RiderShow,
+    BikeModels, BikeView, DialogView, HotspotView, PickerRowView, PickerView, RiderShow, TilesView,
     WorkshopCorePlugin, WorkshopPointer, WorkshopPointerEvent, WorkshopView, bike_corners,
     bike_pose,
 };
@@ -1545,7 +1546,14 @@ fn write_view(
     };
     let picker = scene.picker.as_ref().map(|p| {
         let server = client.as_ref().and_then(|c| c.0.own_effect());
-        picker_view(p, g, balance, scene, server, &character, rider.weight_kg)
+        let mode = client
+            .as_ref()
+            .map_or(ocw_sim::PhysicsMode::Open, |c| c.0.physics_mode());
+        let mut v = picker_view(p, g, balance, scene, server, &character, rider.weight_kg);
+        if p.tiles() {
+            fill_tiles(&mut v, p, g, scene, mode, rider_look.frame);
+        }
+        v
     });
     // The rider in the changing corner (W4): standing at the mirror, or on
     // the stand bike; with the live preview of the picker.
@@ -1711,6 +1719,7 @@ fn picker_view(
                 left,
                 right,
                 locked,
+                ..Default::default()
             }
         })
         .collect();
@@ -1827,6 +1836,83 @@ fn picker_view(
             buttons: d.buttons.iter().map(|b| b.label.clone()).collect(),
             focus: d.focus,
         }),
+        tiles: None,
+        subtitle: None,
+    }
+}
+
+/// The picker as tiles (spec §14 Phase 4, 4B / 4G *Tiles*): each row's
+/// thumbnail (the part's model on the bike's profile in its paint; a
+/// paint row: the bike in that colour), its gain against the slot's base
+/// part on this bike within the caps (flat and 6 % climb, or the race
+/// mode's word that parts are cosmetic) and its weight, the grid scrolled
+/// to the focus, and the whole bike against the stock bike under the
+/// title.
+fn fill_tiles(
+    v: &mut PickerView,
+    p: &picker::Picker,
+    g: &Garage,
+    scene: &Workshop,
+    mode: ocw_sim::PhysicsMode,
+    frame: ocw_core::Rgb,
+) {
+    use ocw_client::part_tiles::{self, COLUMNS, VISIBLE_ROWS};
+    let Some(bike) = g.bike(&scene.bikes[scene.stand]) else {
+        return;
+    };
+    let paint = bike.paint().unwrap_or(frame);
+    for (row, r) in v.rows.iter_mut().zip(&p.rows) {
+        row.group = None;
+        match (&r.kind, r.part.as_deref().and_then(|id| cat().get(id))) {
+            (picker::Kind::Paint(c), _) => {
+                row.thumb = Some(ThumbKey {
+                    profile: bike.profile(),
+                    slot: "paint".into(),
+                    model: "stock".into(),
+                    paint: c.unwrap_or(frame),
+                });
+                let t = part_tiles::tile_text(&row.left, &row.right, false, None, mode);
+                row.gain = t.gain;
+            }
+            (_, Some(part)) => {
+                row.thumb = Some(ThumbKey {
+                    profile: bike.profile(),
+                    slot: part.slot.id().into(),
+                    model: part.model.clone(),
+                    paint,
+                });
+                // The tile's name without the weight and tier of the row.
+                row.left = part.name.clone();
+                let gain = picker::tile_gain(cat(), g, bike, part);
+                let t =
+                    part_tiles::tile_text(&row.left, &row.right, row.locked, gain.as_ref(), mode);
+                row.gain = t.gain;
+                row.weight = t.weight;
+                row.capped = t.capped;
+                row.right = format!("{} · {}", part.tier.name(), row.right);
+            }
+            _ => {}
+        }
+    }
+    // The focused tile's numbers on the card too.
+    if let Some(r) = v.rows.get(v.focus).filter(|r| !r.weight.is_empty()) {
+        let line = format!("Against the base part: {} · {}", r.gain, r.weight);
+        let at = v.detail.len().min(2);
+        v.detail.insert(at, line);
+    }
+    let len = v.rows.len();
+    let first = part_tiles::first_row(v.focus, len, COLUMNS, VISIBLE_ROWS) * COLUMNS;
+    v.tiles = Some(TilesView {
+        cols: COLUMNS,
+        first,
+        shown: (VISIBLE_ROWS * COLUMNS).min(len.saturating_sub(first)),
+    });
+    if v.subtitle.is_none() && p.slot != Slot::Paint {
+        let now = picker::build_with(cat(), g, bike, None);
+        v.subtitle = Some(match part_tiles::cosmetic_now(mode) {
+            Some(note) => format!("{} – parts: {note}", part_tiles::bike_gain_line(&now)),
+            None => part_tiles::bike_gain_line(&now),
+        });
     }
 }
 
