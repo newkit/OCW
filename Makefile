@@ -412,7 +412,7 @@ test-kiosk: ## Test the kiosk script with a fake app (no display or build needed
 	scripts/test-kiosk.sh
 
 test-kiosk-windows: ## The Windows VR kiosk script (scripts/ocw-kiosk.ps1): PowerShell parse check and its selftest on MACHINE (default Win11Builder; no app started)
-	OCW_REMOTE_JOBS=2 scripts/remote.sh $(or $(MACHINE),Win11Builder) run '$$ProgressPreference = "SilentlyContinue"; Set-ExecutionPolicy -Scope Process Bypass -Force; foreach ($$f in "scripts\ocw-kiosk.ps1","scripts\win-gui-run.ps1") { $$e = $$null; [void][Management.Automation.Language.Parser]::ParseFile((Resolve-Path $$f), [ref]$$null, [ref]$$e); if ($$e) { $$e | ForEach-Object { "$$f : $$($$_.Extent.StartLineNumber): $$($$_.Message)" }; exit 1 } else { "parse ok: $$f" } }; & .\scripts\ocw-kiosk.ps1 selftest'
+	OCW_REMOTE_JOBS=2 scripts/remote.sh $(or $(MACHINE),Win11Builder) run '$$ProgressPreference = "SilentlyContinue"; Set-ExecutionPolicy -Scope Process Bypass -Force; foreach ($$f in "scripts\ocw-kiosk.ps1","scripts\win-gui-run.ps1","scripts\vr-soak.ps1") { $$e = $$null; [void][Management.Automation.Language.Parser]::ParseFile((Resolve-Path $$f), [ref]$$null, [ref]$$e); if ($$e) { $$e | ForEach-Object { "$$f : $$($$_.Extent.StartLineNumber): $$($$_.Message)" }; exit 1 } else { "parse ok: $$f" } }; & .\scripts\ocw-kiosk.ps1 selftest'
 
 test-vr-monado: ## VR: `ocw-desktop --vr` (vr build) against Monado's simulated headset, headless (spec §14 Phase 11 X1; skipped while Monado and the OpenXR loader are not installed)
 	scripts/test-vr-monado.sh
