@@ -15,7 +15,7 @@
 #
 # The ride: Tenerife, OCW_DRONE_ROUTE (default Buenavista - Masca -
 # Santiago del Teide) from km OCW_DRONE_KM (default 9), a summer evening
-# (OCW_DRONE_TIME, default 2026-07-15 19:45), clear, the virtual trainer
+# (OCW_DRONE_TIME, default 2026-07-15 20:30), clear, the virtual trainer
 # at 230 W, the HUD off; `photographer drone` OCW_DRONE_AT (default 2) s
 # into the ride. The same settings give the same flight in each run
 # (stepped server, fixed start).
@@ -29,7 +29,7 @@ pkg=$data/tenerife/tenerife.ocwpkg
 route=${OCW_DRONE_ROUTE:-Buenavista - Masca - Santiago del Teide}
 km=${OCW_DRONE_KM:-9}
 at=${OCW_DRONE_AT:-2}
-when=${OCW_DRONE_TIME:-2026-07-15 19:45}
+when=${OCW_DRONE_TIME:-2026-07-15 20:30}
 [ -f "$pkg" ] || { echo "no $pkg (OCW_WORLD_DATA)" >&2; exit 2; }
 mkdir -p "$out"
 common=(--world "$pkg" --route "$route" --virtual --power 230 --no-hearts
