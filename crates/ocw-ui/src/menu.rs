@@ -123,6 +123,11 @@ impl Plugin for MenuPlugin {
         if !app.is_plugin_added::<crate::join::JoinPlugin>() {
             app.add_plugins(crate::join::JoinPlugin);
         }
+        // Workshop → Character: the side panel's live rider (spec §14
+        // Phase 4, 4N *Visual editor*).
+        if !app.is_plugin_added::<crate::character::CharacterEditorPlugin>() {
+            app.add_plugins(crate::character::CharacterEditorPlugin);
+        }
         app.init_resource::<MenuState>()
             .init_resource::<VoiceMenu>()
             .init_resource::<AccountMenu>()
@@ -573,8 +578,20 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
                 let clear = WeatherMenu::default();
                 Some(ocw_client::menu::weather::grid(weather.unwrap_or(&clear)))
             }
+            // The character editor's tiles (spec §14 Phase 4, 4N).
+            Page::Sub(sub::Page::CharacterPick(a)) => {
+                let hooks = world
+                    .get_resource::<MenuHooks>()
+                    .copied()
+                    .unwrap_or_default();
+                let rider = (hooks.riders)(world)
+                    .map_or_else(ocw_client::riders::Rider::default, Riders::active);
+                Some(ocw_client::menu::character::grid(a, &rider))
+            }
             _ => None,
         },
+        // The character editor: the panel at the side, the rider beside it.
+        side: matches!(page, Page::Sub(p) if ocw_client::menu::character::is_editor_page(p)),
         // The rider list's unicorns and damage dots (13E, 12F); the
         // warning dot on a binding in conflict (M9).
         marks: match (page, rider_list) {
@@ -732,6 +749,71 @@ mod tests {
                     assert!(line.starts_with("character "), "{page:?}: {line}");
                 }
             }
+        }
+    }
+
+    /// The character editor's live view (spec §14 Phase 4, 4N *Visual
+    /// editor*), the same in both apps: the editor's pages dock the panel
+    /// at the side; on a tile page the rider previews the focused tile at
+    /// once (moved by the keys, the pad's arrows or the pointer's hover)
+    /// and the camera frames the face; leaving puts the camera back and
+    /// the saved character on the rider.
+    #[test]
+    fn the_character_editor_shows_the_rider_and_previews_the_focused_tile() {
+        use ocw_client::menu::character::Attr;
+        use ocw_render::camera::CameraOrbit;
+        for platform in [Platform::Desktop, Platform::Browser] {
+            let mut app = app(platform);
+            app.insert_resource(CameraOrbit::default());
+            let go = |app: &mut App, a: Action| {
+                app.world_mut().resource_mut::<MenuState>().queue(a);
+                app.update();
+                app.update();
+            };
+            go(&mut app, Action::RiderPage);
+            let workshop = sub_rows(app.world(), sub::Page::Workshop);
+            let at = workshop
+                .iter()
+                .position(|r| r.confirm == Some(sub::Activate::Open(sub::Page::Character)))
+                .expect("the Character row");
+            go(&mut app, Action::Click(at));
+            assert!(view(&app).side, "{platform:?}: the panel at the side");
+            assert!(view(&app).open);
+            go(&mut app, Action::Click(2)); // Hair
+            go(&mut app, Action::Click(0)); // Hair style
+            let v = view(&app);
+            assert_eq!(v.title, "Hair style");
+            let grid = v.grid.expect("tiles");
+            assert_eq!(grid.cells.len(), 22, "21 styles and Back");
+            assert!(grid.cells[0].marked, "the current style (short)");
+            // The camera turned to the face.
+            let orbit = *app.world().resource::<CameraOrbit>();
+            assert_eq!(
+                orbit,
+                crate::character::editor_orbit(sub::Page::CharacterPick(Attr::HairStyle))
+            );
+            assert!(orbit.yaw > 2.0, "in front of the rider");
+            // The focused tile is previewed, by the arrows and the pointer.
+            go(&mut app, Action::Right);
+            assert_eq!(
+                crate::character::previewed(app.world()).map(|c| c.hair),
+                Some(1)
+            );
+            go(&mut app, Action::Hover(16));
+            assert_eq!(
+                crate::character::previewed(app.world()).map(|c| c.hair),
+                Some(16)
+            );
+            // Back to the category, then out: no preview, the camera back.
+            go(&mut app, Action::Back);
+            assert_eq!(crate::character::previewed(app.world()), None);
+            go(&mut app, Action::Close);
+            assert!(!view(&app).side);
+            assert_eq!(
+                *app.world().resource::<CameraOrbit>(),
+                CameraOrbit::default(),
+                "{platform:?}: the camera put back"
+            );
         }
     }
 

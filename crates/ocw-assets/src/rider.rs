@@ -136,6 +136,29 @@ pub mod opt {
     pub const HIP_NUMBER: [&str; 2] = ["hip_number_l", "hip_number_r"];
 }
 
+/// The face on the head (2026-11-17: "give the rider a mouth … and ears,
+/// eyes etc."; spec §14 Phase 4, 4N *Face*): eyes in their sockets under
+/// lids, eyebrows (in the hair's colour, greying with it), ears, the
+/// lips (paint slot `lips`), a chin; always shown, near model only (the
+/// far head stays plain).
+pub const FACE: &str = "face_features";
+
+/// Where the face's parts sit (rest-pose model coordinates, from the
+/// skull's centre, [`skull_centre`]), for the model and its tests.
+pub mod face {
+    /// The eyes' centres (x either side), under the round glasses' lenses.
+    pub const EYE: [f32; 3] = [0.031, 0.013, -0.0815];
+    pub const EYE_RADII: [f32; 3] = [0.0105, 0.006, 0.0035];
+    /// The eyebrows, above the round glasses' rims.
+    pub const BROW: [f32; 3] = [0.031, 0.0375, -0.081];
+    /// The ears' centres, behind the glasses' temples, under the helmet.
+    pub const EAR: [f32; 3] = [0.079, -0.011, -0.012];
+    pub const EAR_RADII: [f32; 3] = [0.0065, 0.016, 0.009];
+    /// The lips' centre: where the status sign's X is (`wear/mark-mouth-cross`).
+    pub const MOUTH: [f32; 3] = [0.0, -0.051, -0.0835];
+    pub const MOUTH_RADII: [f32; 3] = [0.019, 0.0048, 0.0055];
+}
+
 /// The hip plates (spec §14 Phase 8 T6): (|x| of the outer face, its
 /// half thickness, centre (y, z), half size (y, z)). Outside the widest
 /// thigh (a skinsuit's) by a few millimetres: the thighs turn about the x
@@ -828,10 +851,10 @@ fn hair_and_face(m: &mut Model, head: usize, skull: Vec3, detail: Detail) {
         )
     });
     opt_node(m, opt::HAIR_TEXTURED, head, |p| {
-        let at: Vec<Vec3> = (0..5)
+        let at: Vec<Vec3> = (0..4)
             .map(|k| {
                 round(
-                    (k as f32 - 2.0) * 0.5,
+                    (k as f32 - 1.5) * 0.6,
                     -0.035 - 0.006 * ((k % 2) as f32),
                     0.98,
                 )
@@ -888,10 +911,10 @@ fn hair_and_face(m: &mut Model, head: usize, skull: Vec3, detail: Detail) {
             bands(4, 3),
             n,
         );
-        let at: Vec<Vec3> = (0..4)
+        let at: Vec<Vec3> = (0..3)
             .map(|k| {
-                let a = (k % 2) as f32 * 1.4 - 0.7;
-                let y = -0.08 - 0.07 * (k / 2) as f32;
+                let a = (k as f32 - 1.0) * 0.7;
+                let y = -0.08 - 0.035 * k as f32;
                 skull + Vec3::new(0.075 * a.sin(), y, 0.075 + 0.025 * a.cos())
             })
             .collect();
@@ -973,8 +996,8 @@ fn hair_and_face(m: &mut Model, head: usize, skull: Vec3, detail: Detail) {
     opt_node(m, opt::HAIR_ROWS, head, |p| {
         // Rows from the hairline to the nape, close on the scalp (over the
         // buzz cut, inside every helmet).
-        for k in 0..3 {
-            let x = (k as f32 - 1.0) * 0.03;
+        for k in 0..2 {
+            let x = (k as f32 - 0.5) * 0.034;
             let side = (1.0 - (x / 0.08).powi(2)).max(0.0).sqrt();
             let path: Vec<Vec3> = (0..7)
                 .map(|j| {
@@ -1138,15 +1161,14 @@ fn hair_and_face(m: &mut Model, head: usize, skull: Vec3, detail: Detail) {
     opt_node(m, opt::FACE_LINES[1], head, |p| {
         lines(p, 1.5);
         if hi {
-            for dy in [0.0f32, 0.012] {
-                p.slot("skin_line").ellipsoid(
-                    skull + Vec3::new(0.0, 0.05 + dy, -0.088 + dy * 0.12),
-                    Vec3::new(0.03, 0.0022, 0.004),
-                    Quat::from_rotation_x(-0.5),
-                    3,
-                    4,
-                );
-            }
+            // A forehead line.
+            p.slot("skin_line").ellipsoid(
+                skull + Vec3::new(0.0, 0.05 + 0.006f32, -0.088 + 0.006f32 * 0.12),
+                Vec3::new(0.03, 0.0022, 0.004),
+                Quat::from_rotation_x(-0.5),
+                3,
+                4,
+            );
         }
     });
     opt_node(m, opt::FACE_JAW, head, |p| {
@@ -1162,6 +1184,67 @@ fn hair_and_face(m: &mut Model, head: usize, skull: Vec3, detail: Detail) {
             }
         }
     });
+}
+
+/// The face's node [`FACE`] on the head (near model only).
+fn opt_node_face(m: &mut Model, head: usize, skull: Vec3, detail: Detail) {
+    use face::*;
+    let i = m.add(Node::new(FACE, Some(head), Vec3::ZERO));
+    if detail != Detail::High {
+        return;
+    }
+    let mut p = Parts::new();
+    let at = |c: [f32; 3], s: f32| skull + Vec3::new(s * c[0], c[1], c[2]);
+    for s in [-1.0f32, 1.0] {
+        // The eye, a dark almond in its socket, the lid over it.
+        p.slot("eye").ellipsoid(
+            at(EYE, s),
+            Vec3::from(EYE_RADII),
+            Quat::from_rotation_y(s * 0.35),
+            3,
+            5,
+        );
+        p.slot("skin").ellipsoid(
+            at(EYE, s) + Vec3::new(0.0, 0.0055, 0.0005),
+            Vec3::new(0.0115, 0.0028, 0.0042),
+            Quat::from_rotation_y(s * 0.35),
+            3,
+            4,
+        );
+        // The eyebrow, in the hair's colour.
+        p.slot("hair").ellipsoid(
+            at(BROW, s),
+            Vec3::new(0.0135, 0.0028, 0.0038),
+            Quat::from_rotation_y(s * 0.4) * Quat::from_rotation_z(-s * 0.12),
+            3,
+            4,
+        );
+        // The ear, flat against the head, tilted back a little.
+        p.slot("skin").ellipsoid(
+            at(EAR, s),
+            Vec3::from(EAR_RADII),
+            Quat::from_rotation_x(-0.2),
+            3,
+            4,
+        );
+    }
+    // The lips.
+    p.slot("lips").ellipsoid(
+        at(MOUTH, 1.0),
+        Vec3::from(MOUTH_RADII),
+        Quat::IDENTITY,
+        3,
+        6,
+    );
+    // The chin.
+    p.slot("skin").ellipsoid(
+        skull + Vec3::new(0.0, -0.088, -0.066),
+        Vec3::new(0.024, 0.016, 0.018),
+        Quat::from_rotation_x(0.3),
+        3,
+        4,
+    );
+    p.attach(m, i);
 }
 
 /// Builds the rider model.
@@ -1548,6 +1631,8 @@ pub fn build(detail: Detail) -> Model {
             n,
         )
     });
+    // The face (eyes, brows, ears, lips, chin).
+    opt_node_face(&mut m, head, skull, detail);
     hair_and_face(&mut m, head, skull, detail);
     // Glasses (free): the sport wrap and round frames.
     opt_node(&mut m, opt::GLASSES_SPORT, head, |p| {
@@ -1984,6 +2069,69 @@ mod tests {
             "rider",
         ] {
             assert_eq!(girth(&m, at(n), &strong), Vec3::ONE, "{n}");
+        }
+    }
+
+    /// The face (2026-11-17): eyes, lids, brows, ears, lips and chin on
+    /// the head of the near model, at their places (the lips under the
+    /// nose, over the chin, the eyes level with the glasses, the ears at
+    /// the sides), in their paint slots; the far model's head stays plain;
+    /// the face is shown with every look.
+    #[test]
+    fn the_rider_has_a_face() {
+        let near = build(Detail::High);
+        let far = build(Detail::Low);
+        let i = near.node(FACE).expect("the face");
+        assert_eq!(near.nodes[i].parent, near.node(HEAD));
+        assert!(
+            far.node(FACE)
+                .is_some_and(|f| far.nodes[f].primitives.is_empty())
+        );
+        let w = near.world(i);
+        let skull = skull_centre();
+        let slot = |name: &str| near.material(name).expect(name);
+        let centre = |mat: usize| {
+            let pts: Vec<Vec3> = near.nodes[i]
+                .primitives
+                .iter()
+                .filter(|p| p.material == mat)
+                .flat_map(|p| {
+                    p.positions
+                        .iter()
+                        .map(|v| w.transform_point3(Vec3::from(*v)))
+                })
+                .collect();
+            assert!(!pts.is_empty());
+            (
+                pts.iter().copied().sum::<Vec3>() / pts.len() as f32 - skull,
+                pts,
+            )
+        };
+        let (lips, _) = centre(slot("lips"));
+        assert!(lips.distance(Vec3::from(face::MOUTH)) < 2e-3, "{lips}");
+        let (eyes, eye_pts) = centre(slot("eye"));
+        assert!(eyes.x.abs() < 1e-4 && (eyes.y - face::EYE[1]).abs() < 2e-3);
+        assert!(eye_pts.iter().any(|p| p.x - skull.x > 0.025));
+        assert!(eye_pts.iter().any(|p| p.x - skull.x < -0.025));
+        // Lips below the nose, above the chin, in front of the face.
+        assert!(lips.y < -0.035 && lips.y > -0.07 && lips.z < -0.075);
+        // The ears at the sides, behind the eyes.
+        const { assert!(face::EAR[0] > 0.07 && face::EAR[2] > face::EYE[2] + 0.05) };
+        for c in [
+            ocw_core::Character::default(),
+            ocw_core::Character {
+                age: ocw_core::Age::Seventies,
+                base: ocw_core::BaseBody::B,
+                shape: ocw_core::BodyShape::Obese,
+                beard: 7,
+                ..Default::default()
+            },
+        ] {
+            let shown = visible(&c, &[]);
+            assert!(!optional().contains(&FACE), "always shown");
+            assert!(base_nodes("helmet").iter().all(|n| *n != FACE));
+            let _ = shown;
+            assert_eq!(girth(&near, i, &c), Vec3::ONE, "the head keeps its size");
         }
     }
 

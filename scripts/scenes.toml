@@ -2897,7 +2897,7 @@ description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body A, shape 
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 45.0\nheight_cm = 178.0\n"
 at = ["2=character --body a --shape anorexia", "2.6=workshop open", "3.2=workshop mirror"]
-shot = 7
+shot = 11
 pick = false
 
 [[scene]]
@@ -2915,7 +2915,7 @@ description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body B, shape 
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 45.0\nheight_cm = 178.0\n"
 at = ["2=character --body b --shape anorexia", "2.6=workshop open", "3.2=workshop mirror"]
-shot = 7
+shot = 11
 pick = false
 
 [[scene]]
@@ -2933,7 +2933,7 @@ description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body C, shape 
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 45.0\nheight_cm = 178.0\n"
 at = ["2=character --body c --shape anorexia", "2.6=workshop open", "3.2=workshop mirror"]
-shot = 7
+shot = 11
 pick = false
 
 [[scene]]
@@ -2951,7 +2951,7 @@ description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body A, shape 
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 55.0\nheight_cm = 178.0\n"
 at = ["2=character --body a --shape skinny", "2.6=workshop open", "3.2=workshop mirror"]
-shot = 7
+shot = 11
 pick = false
 
 [[scene]]
@@ -2969,7 +2969,7 @@ description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body B, shape 
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 55.0\nheight_cm = 178.0\n"
 at = ["2=character --body b --shape skinny", "2.6=workshop open", "3.2=workshop mirror"]
-shot = 7
+shot = 11
 pick = false
 
 [[scene]]
@@ -2987,7 +2987,7 @@ description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body C, shape 
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 55.0\nheight_cm = 178.0\n"
 at = ["2=character --body c --shape skinny", "2.6=workshop open", "3.2=workshop mirror"]
-shot = 7
+shot = 11
 pick = false
 
 [[scene]]
@@ -3005,7 +3005,7 @@ description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body A, shape 
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 63.0\nheight_cm = 178.0\n"
 at = ["2=character --body a --shape slim", "2.6=workshop open", "3.2=workshop mirror"]
-shot = 7
+shot = 11
 pick = false
 
 [[scene]]
@@ -3023,7 +3023,7 @@ description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body B, shape 
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 63.0\nheight_cm = 178.0\n"
 at = ["2=character --body b --shape slim", "2.6=workshop open", "3.2=workshop mirror"]
-shot = 7
+shot = 11
 pick = false
 
 [[scene]]
@@ -3041,7 +3041,7 @@ description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body C, shape 
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 63.0\nheight_cm = 178.0\n"
 at = ["2=character --body c --shape slim", "2.6=workshop open", "3.2=workshop mirror"]
-shot = 7
+shot = 11
 pick = false
 
 [[scene]]
@@ -3059,7 +3059,7 @@ description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body A, shape 
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
 at = ["2=character --body a --shape normal", "2.6=workshop open", "3.2=workshop mirror"]
-shot = 7
+shot = 11
 pick = false
 
 [[scene]]
@@ -3077,7 +3077,7 @@ description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body B, shape 
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
 at = ["2=character --body b --shape normal", "2.6=workshop open", "3.2=workshop mirror"]
-shot = 7
+shot = 11
 pick = false
 
 [[scene]]
@@ -3095,7 +3095,7 @@ description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body C, shape 
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
 at = ["2=character --body c --shape normal", "2.6=workshop open", "3.2=workshop mirror"]
-shot = 7
+shot = 11
 pick = false
 
 [[scene]]
@@ -3113,7 +3113,7 @@ description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body A, shape 
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 85.0\nheight_cm = 178.0\n"
 at = ["2=character --body a --shape ample", "2.6=workshop open", "3.2=workshop mirror"]
-shot = 7
+shot = 11
 pick = false
 
 [[scene]]
@@ -3131,7 +3131,7 @@ description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body B, shape 
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 85.0\nheight_cm = 178.0\n"
 at = ["2=character --body b --shape ample", "2.6=workshop open", "3.2=workshop mirror"]
-shot = 7
+shot = 11
 pick = false
 
 [[scene]]
@@ -3149,7 +3149,7 @@ description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body C, shape 
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 85.0\nheight_cm = 178.0\n"
 at = ["2=character --body c --shape ample", "2.6=workshop open", "3.2=workshop mirror"]
-shot = 7
+shot = 11
 pick = false
 
 [[scene]]
@@ -3167,7 +3167,7 @@ description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body A, shape 
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 95.0\nheight_cm = 178.0\n"
 at = ["2=character --body a --shape fat", "2.6=workshop open", "3.2=workshop mirror"]
-shot = 7
+shot = 11
 pick = false
 
 [[scene]]
@@ -3185,7 +3185,7 @@ description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body B, shape 
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 95.0\nheight_cm = 178.0\n"
 at = ["2=character --body b --shape fat", "2.6=workshop open", "3.2=workshop mirror"]
-shot = 7
+shot = 11
 pick = false
 
 [[scene]]
@@ -3203,7 +3203,7 @@ description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body C, shape 
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 95.0\nheight_cm = 178.0\n"
 at = ["2=character --body c --shape fat", "2.6=workshop open", "3.2=workshop mirror"]
-shot = 7
+shot = 11
 pick = false
 
 [[scene]]
@@ -3221,7 +3221,7 @@ description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body A, shape 
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 115.0\nheight_cm = 178.0\n"
 at = ["2=character --body a --shape obese", "2.6=workshop open", "3.2=workshop mirror"]
-shot = 7
+shot = 11
 pick = false
 
 [[scene]]
@@ -3239,7 +3239,7 @@ description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body B, shape 
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 115.0\nheight_cm = 178.0\n"
 at = ["2=character --body b --shape obese", "2.6=workshop open", "3.2=workshop mirror"]
-shot = 7
+shot = 11
 pick = false
 
 [[scene]]
@@ -3257,7 +3257,7 @@ description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body C, shape 
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 115.0\nheight_cm = 178.0\n"
 at = ["2=character --body c --shape obese", "2.6=workshop open", "3.2=workshop mirror"]
-shot = 7
+shot = 11
 pick = false
 
 [[scene]]
@@ -3617,5 +3617,107 @@ description = "Character editor (4N N6): beard long under the helmet straps, clo
 args = ["--route", "hills", "--bots", "0", "--power", "200"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
 at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --beard long --hair short --hair-colour black", "2.5=camera.orbit 150 2 1.0"]
+shot = 9
+pick = false
+
+# The character editor as the user saw it (2026-11-17: "the character
+# should be shown in screen …") and after the fix (spec §14 Phase 4, 4N
+# *Visual editor*). Made-up rider name only.
+[[scene]]
+name = "char-editor-menu-body"
+description = "Character editor in the in-game menu: Workshop -> Character -> Body"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=menu workshop-page", "2.4=menu down", "2.8=menu down", "3.2=menu select", "3.8=menu select"]
+shot = 6
+pick = false
+
+[[scene]]
+name = "char-editor-menu-hair"
+description = "Character editor in the in-game menu: Workshop -> Character -> Hair, the hair style chosen"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=menu workshop-page", "2.4=menu down", "2.8=menu down", "3.2=menu select", "3.6=menu down", "4.0=menu down", "4.4=menu select", "5.0=menu select", "5.6=menu right"]
+shot = 7.5
+pick = false
+
+[[scene]]
+name = "char-editor-mirror-hair"
+description = "Character editor in the workshop's changing corner: the mirror with the hair picker open"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=workshop open", "2.6=workshop mirror", "4=workshop slot-next", "4.4=workshop slot-next", "4.8=workshop slot-next", "5.2=workshop select", "5.8=workshop down"]
+shot = 8
+pick = false
+
+[[scene]]
+name = "char-editor-tiles-hair"
+description = "Character editor (4N Visual editor): Workshop -> Character -> Hair -> Hair style as tiles in the side panel, the focused tile (long curly) shown on the rider at once, the camera on the face"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=menu workshop-page", "2.4=menu down", "2.8=menu down", "3.2=menu select", "3.6=menu down", "4.0=menu down", "4.4=menu select", "4.8=menu select", "5.4=menu down", "5.8=menu down", "6.2=menu down", "6.6=menu right", "7.0=menu right"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-editor-tiles-shape"
+description = "Character editor (4N Visual editor): Body -> Shape as tiles, Match my weight marked, the focused shape (fat) on the whole rider beside the panel"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=menu workshop-page", "2.4=menu down", "2.8=menu down", "3.2=menu select", "3.8=menu select", "4.2=menu down", "4.6=menu select", "5.2=menu down", "5.6=menu right"]
+shot = 8
+pick = false
+
+[[scene]]
+name = "char-editor-tiles-hair-colour"
+description = "Character editor (4N Visual editor): Hair -> Hair colour as colour swatches, the focused colour on the rider"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=menu workshop-page", "2.4=menu down", "2.8=menu down", "3.2=menu select", "3.6=menu down", "4.0=menu down", "4.4=menu select", "4.8=menu down", "5.2=menu select", "5.8=menu right", "6.2=menu right", "6.6=menu right", "7.0=menu down"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-face-front"
+description = "The rider's face (2026-11-17): eyes, brows, ears, lips, chin, front close orbit, riding"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair short --hair-colour brown", "2.5=camera.orbit 170 4 2.5"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-face-three-quarter"
+description = "The face from three quarters with round glasses and a full beard"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --glasses 3 --beard full --hair long --hair-colour auburn", "2.5=camera.orbit 140 6 2.5"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-face-side"
+description = "The face from the side: the ear under the helmet and behind the glasses' temple"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --glasses 2 --hair buzz-cut", "2.5=camera.orbit 95 4 2.5"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-face-70plus"
+description = "The face at 70+ on body B, obese: grey brows and hair, lines, softer jaw"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --age 70+ --body b --shape obese --hair mid-length --hair-colour #3B2A20", "2.5=camera.orbit 165 4 2.5"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "char-face-muted"
+description = "The X of a muted microphone over the lips"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --hair ponytail --hair-colour blond", "2.2=status.sign muted on", "2.5=camera.orbit 165 4 2.5"]
 shot = 9
 pick = false

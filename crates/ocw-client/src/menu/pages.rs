@@ -44,6 +44,9 @@ pub enum Page {
     CharacterHair,
     /// … facial hair: moustache, beard, their colour.
     CharacterFacialHair,
+    /// One attribute's choices as tiles (4N *Visual editor*): a grid, the
+    /// focused tile shown on the rider at once, Confirm applies it.
+    CharacterPick(super::character::Attr),
     /// World (top level, spec §3.2.1): change world, about this world,
     /// routes, time, weather (rows from `ride::world`, like the World
     /// pages below).
@@ -213,6 +216,7 @@ impl Page {
             Self::CharacterFace => "Character: face and age",
             Self::CharacterHair => "Character: hair",
             Self::CharacterFacialHair => "Character: facial hair",
+            Self::CharacterPick(a) => a.title(),
             Self::WorldHome => "World",
             Self::Worlds => "Change world",
             Self::World(_) => "World",
@@ -324,6 +328,8 @@ impl Page {
             Self::WeatherPresets => Some(super::weather::GRID_COLUMNS),
             // The month grid moves by its own rules (`calendar::navigate`).
             Self::Calendar(_) => Some(super::calendar::COLUMNS),
+            // The character editor's tiles (spec §14 Phase 4, 4N).
+            Self::CharacterPick(_) => Some(super::character::TILE_COLUMNS),
             _ => None,
         }
     }
@@ -370,6 +376,7 @@ impl Page {
             | Self::CharacterFace
             | Self::CharacterHair
             | Self::CharacterFacialHair => Some(Self::Character),
+            Self::CharacterPick(a) => Some(a.page()),
             Self::World(_) => Some(Self::Worlds),
             Self::WorldRoutes(i) | Self::WorldParts(i) => Some(Self::World(i)),
             Self::WorldSource(_) => Some(Self::WorldSources),
@@ -404,9 +411,9 @@ impl Page {
             Self::Character => &[
                 "Who you are on the road: free, for everyone, and never physics (the weight stays the profile's).",
             ],
-            Self::CharacterBody => &[
-                "Base body and shape: any shape; Match my weight takes the one your weight and height propose.",
-            ],
+            Self::CharacterBody => {
+                &["Any shape; Match my weight takes the one your weight and height propose."]
+            }
             Self::Rider(_) => &["Changes apply from the next start (Restart)."],
             Self::CharacterFace => &[
                 "The age shows on the face, the body, the skin and the hair (greying unless you keep your hair colour).",
@@ -417,6 +424,7 @@ impl Page {
             Self::CharacterFacialHair => {
                 &["The colour follows your hair (greying too) or is its own."]
             }
+            Self::CharacterPick(_) => &["The rider shows the focused choice; Confirm keeps it."],
             Self::Trainer => &["Devices, SIM difficulty and the virtual trainer."],
             Self::Strava => &[
                 "Uploads saved rides to Strava when an account is linked (API credentials: see README); the sync state is in Navi -> Rides.",
@@ -1466,7 +1474,8 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         | Page::CharacterBody
         | Page::CharacterFace
         | Page::CharacterHair
-        | Page::CharacterFacialHair => super::character::rows(page, &riders.active()),
+        | Page::CharacterFacialHair
+        | Page::CharacterPick(_) => super::character::rows(page, &riders.active()),
     }
 }
 

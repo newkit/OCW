@@ -76,8 +76,16 @@ fn palette_at(c: Rgb) -> Option<usize> {
 }
 
 /// The rows of the character pages for `rider` (the active profile;
-/// the default rider without profiles).
+/// the default rider without profiles): the categories' rows (Confirm
+/// opens an attribute's tiles, ← / → step it) and the tile pages.
 pub fn rows(page: Page, rider: &Rider) -> Vec<Row> {
+    match page {
+        Page::CharacterPick(a) => tile_rows(a, rider),
+        p => with_tiles(p, category_rows(p, rider)),
+    }
+}
+
+fn category_rows(page: Page, rider: &Rider) -> Vec<Row> {
     let c = rider.character();
     let marker = rider.weight_shape();
     match page {
@@ -127,7 +135,7 @@ pub fn rows(page: Page, rider: &Rider) -> Vec<Row> {
             vec![
                 stepper(
                     "Base body",
-                    format!("{} ({})", c.base.name(), c.base.about()),
+                    c.base.name().into(),
                     at,
                     BaseBody::ALL.len(),
                     |i| format!("--body {}", BaseBody::ALL[i].id()),
@@ -148,7 +156,7 @@ pub fn rows(page: Page, rider: &Rider) -> Vec<Row> {
                 // page, shown here.
                 Row {
                     label: "Height".into(),
-                    value: Some(format!("{:.2} m (the rider profile's)", c.scale() * 1.78)),
+                    value: Some(format!("{:.2} m (profile)", c.scale() * 1.78)),
                     left: None,
                     right: None,
                     confirm: None,
@@ -261,6 +269,325 @@ pub fn rows(page: Page, rider: &Rider) -> Vec<Row> {
         }
         _ => Vec::new(),
     }
+}
+
+/// One attribute of the character, chosen on a page of tiles (spec §14
+/// Phase 4, 4N *Visual editor*: every choice a picture or a swatch, the
+/// rider beside the panel showing the focused one at once).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Attr {
+    Base,
+    Shape,
+    Age,
+    Skin,
+    Glasses,
+    HairStyle,
+    HairColour,
+    Moustache,
+    Beard,
+    FacialColour,
+}
+
+impl Attr {
+    pub const ALL: [Attr; 10] = [
+        Attr::Base,
+        Attr::Shape,
+        Attr::Age,
+        Attr::Skin,
+        Attr::Glasses,
+        Attr::HairStyle,
+        Attr::HairColour,
+        Attr::Moustache,
+        Attr::Beard,
+        Attr::FacialColour,
+    ];
+
+    /// The row of the category pages that opens its tiles.
+    pub fn row_label(self) -> &'static str {
+        match self {
+            Attr::Base => "Base body",
+            Attr::Shape => "Shape",
+            Attr::Age => "Age",
+            Attr::Skin => "Skin tone",
+            Attr::Glasses => "Glasses",
+            Attr::HairStyle => "Hair style",
+            Attr::HairColour => "Hair colour",
+            Attr::Moustache => "Moustache",
+            Attr::Beard => "Beard",
+            Attr::FacialColour => "Colour",
+        }
+    }
+
+    /// The tiles' page title.
+    pub fn title(self) -> &'static str {
+        match self {
+            Attr::Base => "Base body",
+            Attr::Shape => "Body shape",
+            Attr::Age => "Age",
+            Attr::Skin => "Skin tone",
+            Attr::Glasses => "Glasses",
+            Attr::HairStyle => "Hair style",
+            Attr::HairColour => "Hair colour",
+            Attr::Moustache => "Moustache",
+            Attr::Beard => "Beard",
+            Attr::FacialColour => "Facial hair colour",
+        }
+    }
+
+    /// The category page it belongs to.
+    pub fn page(self) -> Page {
+        match self {
+            Attr::Base | Attr::Shape => Page::CharacterBody,
+            Attr::Age | Attr::Skin | Attr::Glasses => Page::CharacterFace,
+            Attr::HairStyle | Attr::HairColour => Page::CharacterHair,
+            Attr::Moustache | Attr::Beard | Attr::FacialColour => Page::CharacterFacialHair,
+        }
+    }
+
+    /// Whether the camera frames the face (else the whole rider).
+    pub fn face(self) -> bool {
+        !matches!(self, Attr::Base | Attr::Shape)
+    }
+
+    fn of_row(label: &str, page: Page) -> Option<Attr> {
+        Attr::ALL
+            .into_iter()
+            .find(|a| a.row_label() == label && a.page() == page)
+    }
+}
+
+/// Columns of the tile pages.
+pub const TILE_COLUMNS: usize = 5;
+
+/// One choice shown as a tile: its label, a colour swatch (colours) or
+/// none (a named choice), whether it is the current one, the console line
+/// that applies it and the character it shows (the preview).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Tile {
+    pub label: String,
+    pub swatch: Option<Rgb>,
+    pub current: bool,
+    pub line: String,
+    pub preview: ocw_core::Character,
+}
+
+/// The tiles of `attr` for `rider` (the active profile), in list order.
+/// The shape's tile that weight and height propose says so (*Match my
+/// weight*, 4N Q13 / Q23); every tile can be chosen.
+pub fn tiles(attr: Attr, rider: &Rider) -> Vec<Tile> {
+    let c = rider.character();
+    let marker = rider.weight_shape();
+    let tile =
+        |label: String, swatch: Option<Rgb>, args: String, preview: ocw_core::Character| Tile {
+            current: preview == c,
+            label,
+            swatch,
+            line: line(&args),
+            preview,
+        };
+    use ocw_core::Character as C;
+    match attr {
+        Attr::Base => BaseBody::ALL
+            .into_iter()
+            .map(|b| {
+                tile(
+                    b.name().into(),
+                    None,
+                    format!("--body {}", b.id()),
+                    C { base: b, ..c },
+                )
+            })
+            .collect(),
+        Attr::Shape => BodyShape::ALL
+            .into_iter()
+            .map(|s| {
+                let label = if s == marker {
+                    format!("{} (Match my weight)", s.name())
+                } else {
+                    s.name().into()
+                };
+                tile(
+                    label,
+                    None,
+                    format!("--shape {}", s.id()),
+                    C { shape: s, ..c },
+                )
+            })
+            .collect(),
+        Attr::Age => Age::ALL
+            .into_iter()
+            .map(|a| {
+                tile(
+                    a.id().into(),
+                    None,
+                    format!("--age {}", a.id()),
+                    C { age: a, ..c },
+                )
+            })
+            .collect(),
+        Attr::Skin => (0..SKIN_TONES.len() as u8)
+            .map(|i| {
+                let p = C { skin: i, ..c };
+                tile(
+                    format!("{}", i + 1),
+                    Some(p.skin_colour()),
+                    format!("--skin {}", i + 1),
+                    p,
+                )
+            })
+            .collect(),
+        Attr::Glasses => (0..GLASSES.len() as u8)
+            .map(|i| {
+                tile(
+                    GLASSES[i as usize].into(),
+                    None,
+                    format!("--glasses {}", i + 1),
+                    C { glasses: i, ..c },
+                )
+            })
+            .collect(),
+        Attr::HairStyle => (0..HAIR_STYLES.len() as u8)
+            .map(|i| {
+                tile(
+                    HAIR_STYLES[i as usize].into(),
+                    None,
+                    format!("--hair {}", ch::hair_id(i)),
+                    C { hair: i, ..c },
+                )
+            })
+            .collect(),
+        Attr::HairColour => HAIR_PALETTE
+            .iter()
+            .map(|(name, rgb)| {
+                tile(
+                    (*name).into(),
+                    Some(*rgb),
+                    format!("--hair-colour {rgb}"),
+                    C {
+                        hair_colour: *rgb,
+                        ..c
+                    },
+                )
+            })
+            .collect(),
+        Attr::Moustache => (0..MOUSTACHES.len() as u8)
+            .map(|i| {
+                tile(
+                    MOUSTACHES[i as usize].into(),
+                    None,
+                    format!("--moustache {}", ch::list_id(&MOUSTACHES, i)),
+                    C { moustache: i, ..c },
+                )
+            })
+            .collect(),
+        Attr::Beard => (0..BEARDS.len() as u8)
+            .map(|i| {
+                tile(
+                    BEARDS[i as usize].into(),
+                    None,
+                    format!("--beard {}", ch::list_id(&BEARDS, i)),
+                    C { beard: i, ..c },
+                )
+            })
+            .collect(),
+        Attr::FacialColour => std::iter::once(tile(
+            "The hair's".into(),
+            Some(
+                C {
+                    facial_hair_colour: None,
+                    ..c
+                }
+                .facial_hair_shown(),
+            ),
+            "--facial-hair-colour hair".into(),
+            C {
+                facial_hair_colour: None,
+                ..c
+            },
+        ))
+        .chain(HAIR_PALETTE.iter().map(|(name, rgb)| {
+            tile(
+                (*name).into(),
+                Some(*rgb),
+                format!("--facial-hair-colour {rgb}"),
+                C {
+                    facial_hair_colour: Some(*rgb),
+                    ..c
+                },
+            )
+        }))
+        .collect(),
+    }
+}
+
+/// The rows of a tile page: one per tile (Confirm applies it), then the
+/// Back the menu adds.
+pub fn tile_rows(attr: Attr, rider: &Rider) -> Vec<Row> {
+    tiles(attr, rider)
+        .into_iter()
+        .map(|t| Row {
+            label: t.label,
+            value: None,
+            left: None,
+            right: None,
+            confirm: Some(Activate::Command(t.line)),
+        })
+        .collect()
+}
+
+/// The tile page as a grid of cells (swatches for the colours, the
+/// current choice framed), Back last.
+pub fn grid(attr: Attr, rider: &Rider) -> ocw_render::menu::MenuGrid {
+    use ocw_render::menu::{GridCell, MenuGrid};
+    MenuGrid {
+        columns: TILE_COLUMNS,
+        cells: tiles(attr, rider)
+            .into_iter()
+            .map(|t| GridCell {
+                label: t.label,
+                icon: None,
+                swatch: t.swatch.map(|c| c.channels()),
+                marked: t.current,
+            })
+            .chain([GridCell {
+                label: "Back".into(),
+                ..Default::default()
+            }])
+            .collect(),
+    }
+}
+
+/// The character the rider beside the panel shows while tile `focus` of
+/// `attr` has the focus (the live preview; `None` on Back: the saved
+/// character).
+pub fn preview(attr: Attr, focus: usize, rider: &Rider) -> Option<ocw_core::Character> {
+    tiles(attr, rider).get(focus).map(|t| t.preview)
+}
+
+/// Whether `page` is one of the character editor's pages (the side panel
+/// and the framed rider).
+pub fn is_editor_page(page: Page) -> bool {
+    matches!(
+        page,
+        Page::Character
+            | Page::CharacterBody
+            | Page::CharacterFace
+            | Page::CharacterHair
+            | Page::CharacterFacialHair
+            | Page::CharacterPick(_)
+    )
+}
+
+/// Category rows open their tiles on Confirm (← / → still step).
+fn with_tiles(page: Page, rows: Vec<Row>) -> Vec<Row> {
+    rows.into_iter()
+        .map(|mut r| {
+            if let Some(a) = Attr::of_row(&r.label, page) {
+                r.confirm = Some(Activate::Open(Page::CharacterPick(a)));
+            }
+            r
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -397,5 +724,114 @@ mod tests {
         assert!(base.value.as_deref().unwrap().starts_with("Body A"));
         assert_eq!(base.right.as_deref(), Some("character --body b"));
         assert_eq!(base.left.as_deref(), Some("character --body c"));
+    }
+
+    /// The tile model (4N *Visual editor*): every attribute's choices as
+    /// tiles – colours as swatches, the current one marked, the shape that
+    /// weight and height propose labelled *Match my weight* –, each with
+    /// the line that applies it and the character it previews.
+    #[test]
+    fn every_attribute_has_its_tiles() {
+        let r = rider(75.0, Some(178.0));
+        let c = r.character();
+        let counts = [
+            (Attr::Base, 3),
+            (Attr::Shape, 7),
+            (Attr::Age, 6),
+            (Attr::Skin, 12),
+            (Attr::Glasses, 3),
+            (Attr::HairStyle, 21),
+            (Attr::HairColour, 12),
+            (Attr::Moustache, 6),
+            (Attr::Beard, 8),
+            (Attr::FacialColour, 13),
+        ];
+        for (a, n) in counts {
+            let t = tiles(a, &r);
+            assert_eq!(t.len(), n, "{a:?}");
+            assert_eq!(t.iter().filter(|t| t.current).count(), 1, "{a:?}");
+            let colours = matches!(a, Attr::Skin | Attr::HairColour | Attr::FacialColour);
+            assert!(t.iter().all(|t| t.swatch.is_some() == colours), "{a:?}");
+            assert!(t.iter().all(|t| t.line.starts_with("character --")));
+            // Each tile previews a different character; the current one is
+            // the saved character.
+            let previews: std::collections::BTreeSet<String> =
+                t.iter().map(|t| format!("{:?}", t.preview)).collect();
+            assert_eq!(previews.len(), n, "{a:?}");
+            assert!(t.iter().any(|t| t.preview == c));
+            // The grid: one cell per tile, Back last, the current framed.
+            let g = grid(a, &r);
+            assert_eq!(g.cells.len(), n + 1);
+            assert_eq!(g.cells.last().unwrap().label, "Back");
+            assert_eq!(g.columns, TILE_COLUMNS);
+            assert_eq!(tile_rows(a, &r).len(), n);
+            assert_eq!(preview(a, n, &r), None, "Back previews nothing");
+            // Each attribute's row opens its tiles.
+            let row_ = rows(a.page(), &r)
+                .into_iter()
+                .find(|row| row.label == a.row_label())
+                .expect("its row");
+            assert_eq!(row_.confirm, Some(Activate::Open(Page::CharacterPick(a))));
+            assert_eq!(Page::CharacterPick(a).parent(), Some(a.page()));
+        }
+        let shape = tiles(Attr::Shape, &rider(120.0, Some(178.0)));
+        assert_eq!(shape[6].label, "Obese (Match my weight)");
+        assert!(shape.iter().filter(|t| t.label.contains("Match")).count() == 1);
+        let skin = tiles(Attr::Skin, &r);
+        assert_eq!(skin[3].swatch, Some(ocw_core::Rgb(0xD9A98C)));
+        assert_eq!(skin[3].line, "character --skin 4");
+        assert_eq!(
+            preview(Attr::HairStyle, 16, &r).map(|c| c.hair),
+            Some(16),
+            "the focused tile is what the rider shows"
+        );
+    }
+
+    /// The tiles are selectable with every input (4N *Visual editor*):
+    /// the arrows (keyboard and pad) move the focus over the grid – right
+    /// one tile, down a row –, the pointer's hover focuses a tile and its
+    /// click applies it, Confirm applies the focused one.
+    #[test]
+    fn tiles_are_selected_with_keys_pad_and_pointer() {
+        use crate::menu::model::{Action, Effect, Menu, Page as M};
+        use crate::riders::Riders;
+        let s = crate::settings::Settings::default();
+        let mut riders = Riders::default();
+        riders.add(rider(75.0, Some(178.0))).unwrap();
+        let act = |m: &mut Menu, a: Action| {
+            m.apply_with(a, |p| super::super::pages::rows(p, &s, &riders))
+        };
+        let mut m = Menu::default();
+        act(&mut m, Action::RiderPage);
+        assert_eq!(m.page(), Some(M::Sub(Page::Workshop)));
+        // Workshop: the rider, Bike, Character, Edit riders.
+        act(&mut m, Action::Click(2));
+        assert_eq!(m.page(), Some(M::Sub(Page::Character)));
+        act(&mut m, Action::Click(2));
+        assert_eq!(m.page(), Some(M::Sub(Page::CharacterHair)));
+        act(&mut m, Action::Click(0));
+        assert_eq!(m.page(), Some(M::Sub(Page::CharacterPick(Attr::HairStyle))));
+        assert_eq!(m.grid_columns(), Some(TILE_COLUMNS));
+        let at = m.focus();
+        act(&mut m, Action::Right);
+        assert_eq!(m.focus(), at + 1);
+        act(&mut m, Action::Down);
+        assert_eq!(m.focus(), at + 1 + TILE_COLUMNS);
+        assert_eq!(
+            act(&mut m, Action::Confirm),
+            Effect::Command(format!(
+                "character --hair {}",
+                ch::hair_id((at + 1 + TILE_COLUMNS) as u8)
+            ))
+        );
+        act(&mut m, Action::Hover(11));
+        assert_eq!(m.focus(), 11);
+        assert_eq!(
+            act(&mut m, Action::Click(16)),
+            Effect::Command("character --hair single-braid".into())
+        );
+        // Back goes to the category page.
+        act(&mut m, Action::Back);
+        assert_eq!(m.page(), Some(M::Sub(Page::CharacterHair)));
     }
 }

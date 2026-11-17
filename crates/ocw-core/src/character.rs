@@ -647,6 +647,12 @@ impl Character {
         blend(tone, Rgb((l << 16) | (l << 8) | l), fade)
     }
 
+    /// The lips' colour: the skin as drawn (age included), redder and a
+    /// little darker.
+    pub fn lip_colour(&self) -> Rgb {
+        blend(self.skin_colour(), Rgb(0x9A3F3A), 0.32)
+    }
+
     /// The colour of the face's lines (4N Q12): the skin, darker.
     pub fn skin_line_colour(&self) -> Rgb {
         blend(self.skin_colour(), Rgb(0x2A1A12), 0.28)

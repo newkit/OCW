@@ -8,7 +8,10 @@
 //! `--match-weight` takes the shape they propose. Looks only, never
 //! physics.
 
+use bevy::prelude::*;
 use clap::{Arg, ArgAction, ArgMatches, Command};
+use ocw_client::menu::character as editor;
+use ocw_client::menu::pages as sub;
 use ocw_core::character::{self as ch, Age, BEARDS, GLASSES, MOUSTACHES, SKIN_TONES};
 use ocw_core::{BaseBody, BodyShape, Character, Rgb};
 
@@ -186,6 +189,132 @@ pub fn apply(
     }
     *c = c.validated();
     Ok(())
+}
+
+/// The character editor's live view (spec §14 Phase 4, 4N *Visual
+/// editor*; both apps): while a character page of the menu is open the
+/// panel is docked at the side (`MenuView::side`), the camera turns to the
+/// rider's front – close on the face for face, hair and age, the whole
+/// rider for the body – and on a tile page the rider shows the focused
+/// tile at once (no apply step); leaving the editor puts the camera back
+/// and the rider shows its saved character again.
+pub struct CharacterEditorPlugin;
+
+impl Plugin for CharacterEditorPlugin {
+    fn build(&self, app: &mut App) {
+        crate::configure_sets(app);
+        app.init_resource::<SavedOrbit>().add_systems(
+            Update,
+            (preview_focused_tile, frame_the_rider).in_set(crate::ViewExtrasSet),
+        );
+    }
+}
+
+/// The open menu page and its focus, if the menu is open.
+fn open_page(world: &World) -> Option<(ocw_client::menu::model::Page, usize)> {
+    let state = world.get_resource::<crate::menu::MenuState>()?;
+    let m = &state.menu;
+    if !m.is_open() {
+        return None;
+    }
+    m.page().map(|p| (p, m.focus()))
+}
+
+/// The editor page open now (a character page of Workshop → Character).
+pub fn editor_page(world: &World) -> Option<(sub::Page, usize)> {
+    match open_page(world)? {
+        (ocw_client::menu::model::Page::Sub(p), focus) if editor::is_editor_page(p) => {
+            Some((p, focus))
+        }
+        _ => None,
+    }
+}
+
+/// The character the rider beside the panel shows (`None`: the saved
+/// one): the focused tile's on a tile page.
+pub fn previewed(world: &World) -> Option<Character> {
+    let (sub::Page::CharacterPick(attr), focus) = editor_page(world)? else {
+        return None;
+    };
+    let hooks = world
+        .get_resource::<crate::menu::MenuHooks>()
+        .copied()
+        .unwrap_or_default();
+    let rider = (hooks.riders)(world).map_or_else(
+        ocw_client::riders::Rider::default,
+        ocw_client::riders::Riders::active,
+    );
+    editor::preview(attr, focus, &rider)
+}
+
+fn preview_focused_tile(world: &mut World) {
+    let Some(c) = previewed(world) else {
+        return;
+    };
+    let Some(mut view) = world.get_resource_mut::<ocw_render::RideView>() else {
+        return;
+    };
+    if let Some(r) = view.riders.iter_mut().find(|r| r.is_local) {
+        let mut look = r.look.unwrap_or_default();
+        // The height stays the profile's (and the view's).
+        look.character = Character {
+            height_cm: look.character.height_cm,
+            ..c
+        };
+        if r.look != Some(look) {
+            r.look = Some(look);
+        }
+    }
+}
+
+/// The camera of the editor: in front of the rider, a little to its side
+/// (the panel covers the window's left third), close for the face.
+pub fn editor_orbit(page: sub::Page) -> ocw_render::camera::CameraOrbit {
+    let face = match page {
+        sub::Page::CharacterPick(a) => a.face(),
+        sub::Page::CharacterBody | sub::Page::Character => false,
+        _ => true,
+    };
+    ocw_render::camera::CameraOrbit {
+        yaw: std::f32::consts::PI - 0.45,
+        pitch: if face { 0.42 } else { 0.22 },
+        distance: if face {
+            ocw_render::camera::MIN_DISTANCE
+        } else {
+            4.4
+        },
+    }
+}
+
+/// The camera's orbit before the editor opened (put back on leaving).
+#[derive(Resource, Default)]
+struct SavedOrbit(Option<ocw_render::camera::CameraOrbit>);
+
+fn frame_the_rider(world: &mut World) {
+    let page = editor_page(world).map(|(p, _)| p);
+    let saved = world.get_resource::<SavedOrbit>().and_then(|s| s.0);
+    let Some(orbit) = world
+        .get_resource::<ocw_render::camera::CameraOrbit>()
+        .copied()
+    else {
+        return;
+    };
+    match (page, saved) {
+        (Some(p), _) => {
+            if saved.is_none() {
+                world.insert_resource(SavedOrbit(Some(orbit)));
+            }
+            let want = editor_orbit(p);
+            if orbit != want {
+                *world.resource_mut::<ocw_render::camera::CameraOrbit>() = want;
+            }
+        }
+        (None, Some(o)) => {
+            *world.resource_mut::<ocw_render::camera::CameraOrbit>() = o;
+            world.insert_resource(SavedOrbit(None));
+        }
+        (None, None) => {}
+    }
 }
 
 #[cfg(test)]

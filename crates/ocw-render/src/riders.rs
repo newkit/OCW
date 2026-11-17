@@ -369,6 +369,7 @@ pub struct AvatarColours {
     pub hair: Color,
     pub facial_hair: Color,
     pub skin_line: Color,
+    pub lips: Color,
     /// The kit design (spec §14 Phase 8 T6).
     pub kit: KitColours,
     /// The jersey of the far model: the pattern's dominant colour.
@@ -468,6 +469,7 @@ pub fn avatar_colours(id: RiderId, is_local: bool, look: Option<&RiderLook>) -> 
         hair: rgb(character.hair_shown()),
         facial_hair: rgb(character.facial_hair_shown()),
         skin_line: rgb(character.skin_line_colour()),
+        lips: rgb(character.lip_colour()),
         kit,
         far_jersey,
     }
@@ -497,6 +499,7 @@ pub fn tint_color(slot: &str, model_color: [f32; 4], colours: &AvatarColours) ->
         Tint::Hair => colours.hair,
         Tint::FacialHair => colours.facial_hair,
         Tint::SkinLine => colours.skin_line,
+        Tint::Lips => colours.lips,
     }
 }
 
