@@ -352,7 +352,7 @@ pub fn patch_mesh(m: &mut MeshArrays, p: &Patch, looks: &[ArmLook], ctx: &RoadCo
     let code = MarkCode::of(&look.dress, look.class, look.surface);
     // With lines: a through road's (its centre line runs on); without: the
     // side where other roads leave (no edge line, no cycle lane line).
-    let track = u32::from(code.track) << 4;
+    let plain = code.plain_extra_code();
     let (on, off) = if p.through.is_some() {
         let mut open = code;
         open.edge_lines = false;
@@ -362,7 +362,7 @@ pub fn patch_mesh(m: &mut MeshArrays, p: &Patch, looks: &[ArmLook], ctx: &RoadCo
             (open.lines_code(), open.extra_code()),
         )
     } else {
-        ((0, track), (0, track))
+        ((0, plain), (0, plain))
     };
     let base = m.positions.len() as u32;
     let uvs: Vec<[f64; 2]> = p.vertices.iter().map(|q| p.uv([q[0], q[2]])).collect();

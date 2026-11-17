@@ -524,6 +524,9 @@ pub struct MarkCode {
     pub cycle: [CycleLane; 2],
     /// A track (`highway=track`): grass in the middle, wheel ruts.
     pub track: bool,
+    /// The wear grade (`crate::road_wear::wear_grade`, 0 … 7): cracks,
+    /// patches and potholes the shader draws.
+    pub wear: u8,
 }
 
 impl MarkCode {
@@ -547,6 +550,7 @@ impl MarkCode {
                 [CycleLane::None; 2]
             },
             track: class == RoadClass::Track,
+            wear: crate::road_wear::wear_grade(class, surface),
         }
     }
 
@@ -561,10 +565,23 @@ impl MarkCode {
             | u32::from(self.town) << 11
     }
 
-    /// The extra bits beside the layer and the kind (`uv_b.x / 64`, < 32):
-    /// cycle lanes and the track look.
+    /// The extra bits beside the layer and the kind (`uv_b.x / 64`, < 256):
+    /// cycle lanes, the track look and the wear grade.
     pub fn extra_code(&self) -> u32 {
-        self.cycle[0] as u32 | (self.cycle[1] as u32) << 2 | u32::from(self.track) << 4
+        self.cycle[0] as u32
+            | (self.cycle[1] as u32) << 2
+            | u32::from(self.track) << 4
+            | u32::from(self.wear.min(crate::road_wear::MAX_GRADE)) << 5
+    }
+
+    /// The extra bits of a surface without lines (a junction patch without
+    /// a through road): the track look and the wear grade.
+    pub fn plain_extra_code(&self) -> u32 {
+        Self {
+            cycle: [CycleLane::None; 2],
+            ..*self
+        }
+        .extra_code()
     }
 
     pub fn decode(lines: u32, extra: u32) -> Self {
@@ -577,6 +594,7 @@ impl MarkCode {
             town: lines >> 11 & 1 == 1,
             cycle: [cyc(extra), cyc(extra >> 2)],
             track: extra >> 4 & 1 == 1,
+            wear: (extra >> 5 & 7) as u8,
         }
     }
 }
@@ -1275,7 +1293,11 @@ mod tests {
             ..RoadDress::of_class(RoadClass::Primary, 9.0)
         };
         let c = MarkCode::of(&d, RoadClass::Primary, RoadSurface::Asphalt);
-        assert!(c.lines_code() < 4096 && c.extra_code() < 32);
+        assert!(c.lines_code() < 4096 && c.extra_code() < 256);
+        assert_eq!(
+            c.wear,
+            crate::road_wear::wear_grade(RoadClass::Primary, RoadSurface::Asphalt)
+        );
         assert_eq!(MarkCode::decode(c.lines_code(), c.extra_code()), c);
         // No paint on cobbles or gravel; the track look only on tracks.
         let cobbles = MarkCode::of(&d, RoadClass::Primary, RoadSurface::Paving);

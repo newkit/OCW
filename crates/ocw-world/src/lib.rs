@@ -38,6 +38,7 @@ pub mod plantings;
 pub mod region;
 pub mod road_dress;
 pub mod road_surface;
+pub mod road_wear;
 pub mod roof_skeleton;
 mod route;
 pub mod route_file;

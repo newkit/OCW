@@ -11,6 +11,12 @@
 // The markings are coverage integrated over each pixel's footprint in road
 // metres (box filter, Rust twins in ocw_world::road_dress): crisp near, the
 // mean grey far away, no shimmer. Independent of the light setup.
+//
+// Damage (ocw_world::road_wear, the placement's Rust twin): by the strip's
+// wear grade (bits 5-7 of extra) - transverse and longitudinal cracks,
+// sealed cracks, alligator areas, repaired patches, wheel tracks, worn
+// paint, and potholes recessed by a parallax step and their normals (the
+// road's geometry is not changed), holding water when the road is wet.
 
 import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
@@ -45,8 +51,16 @@ struct RoadLook {
     cycle_colour: vec4<f32>,
     // rgb; w: kerb stones' top width (m).
     crossing_colour: vec4<f32>,
-    // patch chance asphalt, worn; crack chance worn, asphalt.
-    wear: vec4<f32>,
+    // The wear per grade (ocw_world::road_wear::wear_density; index =
+    // grade, 0 draws nothing): x transverse, y longitudinal crack chance,
+    // z alligator area chance, w pothole chance.
+    damage: array<vec4<f32>, 8>,
+    // x patch chance, y sealed share of the cracks, z pothole zone from the
+    // edge (m), w wheel track strength.
+    repair: array<vec4<f32>, 8>,
+    // The quality preset (crate::road_material::damage_detail): x 1 = the
+    // alligator crack pattern is drawn; y damage drawn up to (m).
+    detail: vec4<f32>,
     // The weather: x wetness, y puddles, z snow cover, w wind sway.
     weather: vec4<f32>,
     // The season (spec §14 Phase 9, S8): x, y the climatological snow
@@ -273,18 +287,187 @@ fn patch_cov(half: f32, u: f32, du: f32, v: f32, dv: f32, chance: f32) -> f32 {
     return across * band_cov(v, dv, start, start + len);
 }
 
-// A transverse crack, gone when the pixel is wider than a few centimetres.
-fn crack_cov(u: f32, du: f32, v: f32, dv: f32, half: f32, chance: f32) -> f32 {
+// A transverse crack (x) or its sealing line (y), filtered; a fine crack
+// fades when the pixel is wider than a few centimetres.
+fn transverse(u: f32, du: f32, v: f32, dv: f32, half: f32, chance: f32, sealed: f32) -> vec2<f32> {
     let k = i32(floor(v / 11.0));
     let h = hash2(k, 101);
     if unit(h) >= chance {
-        return 0.0;
+        return vec2<f32>(0.0);
     }
     let v0 = (f32(k) + 0.15 + 0.7 * unit(hash2(k, 103))) * 11.0
         + 0.15 * sin(u * 1.7 + unit(h) * 40.0) + 0.04 * sin(u * 6.1);
     let reach = half * (0.4 + 0.6 * unit(hash2(k, 107)));
-    let fade = 1.0 - smoothstep(0.015, 0.05, dv);
-    return band_cov(v, max(dv, 1e-3), v0 - 0.008, v0 + 0.008) * band_cov(u, du, -reach, reach) * fade;
+    let across = band_cov(u, du, -reach, reach);
+    let fp = max(dv, 1e-3);
+    if unit(hash2(k, 109)) < sealed {
+        return vec2<f32>(0.0, band_cov(v, fp, v0 - 0.022, v0 + 0.022) * across);
+    }
+    let fade = 1.0 - smoothstep(0.03, 0.12, dv);
+    return vec2<f32>(band_cov(v, fp, v0 - 0.006, v0 + 0.006) * across * fade, 0.0);
+}
+
+// The longitudinal cracks (ocw_world::road_wear::longitudinal_in_cell):
+// beside the middle joint and in the edge zones; (crack, sealing line).
+fn longitudinal(u: f32, du: f32, v: f32, dv: f32, half: f32, chance: f32, sealed: f32) -> vec2<f32> {
+    let k = i32(floor(v / 16.0));
+    var out = vec2<f32>(0.0);
+    for (var slot = 0; slot < 3; slot++) {
+        if unit(hash2(k, 401 + slot)) >= chance {
+            continue;
+        }
+        let start = f32(k) * 16.0 + 0.5 + 6.0 * unit(hash2(k, 409 + slot));
+        let len = 2.0 + 7.0 * unit(hash2(k, 419 + slot));
+        let along = band_cov(v, dv, start, start + len);
+        if along <= 0.0 {
+            continue;
+        }
+        let o = unit(hash2(k, 421 + slot));
+        var uc = 0.08 + 0.12 * o;
+        if slot == 1 {
+            uc = -(half - 0.3 - 0.5 * o);
+        } else if slot == 2 {
+            uc = half - 0.3 - 0.5 * o;
+        }
+        let ph = o * 37.0;
+        uc = uc + 0.06 * sin(v * 0.9 + ph) + 0.02 * sin(v * 3.7 + ph * 1.3);
+        let fp = max(du, 1e-3);
+        if unit(hash2(k, 431 + slot)) < sealed {
+            out.y = max(out.y, band_cov(u, fp, uc - 0.022, uc + 0.022) * along);
+        } else {
+            let fade = 1.0 - smoothstep(0.03, 0.12, du);
+            out.x = max(out.x, band_cov(u, fp, uc - 0.006, uc + 0.006) * along * fade);
+        }
+    }
+    return out;
+}
+
+// Alligator (fatigue) cracking (ocw_world::road_wear::alligator_in_cell):
+// (area, crack lines). The lines are the edges of a Voronoi pattern of
+// ~22 cm cells, only drawn when `pattern` (the quality preset).
+fn alligator(u: f32, du: f32, v: f32, dv: f32, half: f32, chance: f32, track: bool, pattern: bool) -> vec2<f32> {
+    let k = i32(floor(v / 20.0));
+    var area = 0.0;
+    for (var side = 0; side < 2; side++) {
+        if unit(hash2(k, 307 + side)) >= chance {
+            continue;
+        }
+        let start = (f32(k) + 0.1 + 0.5 * unit(hash2(k, 311 + side))) * 20.0;
+        let len = 2.0 + 5.0 * unit(hash2(k, 313 + side));
+        var at = max(half - 0.9, 0.3);
+        if track {
+            at = 0.8;
+        }
+        let uc = select(-1.0, 1.0, side == 1) * at;
+        let hw = min(0.25 + 0.35 * unit(hash2(k, 317 + side)), half * 0.5);
+        let a = (u - uc) / hw;
+        let b = (v - start - 0.5 * len) / (0.5 * len);
+        let e = a * a + b * b + 0.6 * (vnoise(vec2<f32>(u, v) * 2.5 + f32(side) * 13.0) - 0.5);
+        area = max(area, 1.0 - smoothstep(0.7, 1.0, e));
+    }
+    if area <= 0.0 || !pattern {
+        return vec2<f32>(area, 0.0);
+    }
+    let p = vec2<f32>(u, v) / 0.22;
+    let ip = floor(p);
+    let fp = p - ip;
+    var f1 = 8.0;
+    var f2 = 8.0;
+    for (var j = -1; j <= 1; j++) {
+        for (var i = -1; i <= 1; i++) {
+            let x = i32(ip.x) + i;
+            let y = i32(ip.y) + j;
+            let o = vec2<f32>(unit(hash2(x, y * 7 + 501)), unit(hash2(x * 13 + 3, y + 509)));
+            let d = length(vec2<f32>(f32(i), f32(j)) + 0.15 + 0.7 * o - fp);
+            if d < f1 {
+                f2 = f1;
+                f1 = d;
+            } else if d < f2 {
+                f2 = d;
+            }
+        }
+    }
+    let edge = 0.5 * (f2 - f1) * 0.22;
+    let fpm = max(max(du, dv), 1e-3);
+    let fade = 1.0 - smoothstep(0.04, 0.12, fpm);
+    return vec2<f32>(area, band_cov(edge, fpm, -0.007, 0.007) * fade * area);
+}
+
+// A pothole as the pixel sees it: cover (inside the outline, filtered),
+// wall (1: the far wall is seen, 0: the bottom), the tilt of the normal in
+// the strip frame (across, along), the broken rim around it and q, the
+// distance from the middle (1 at the outline).
+struct Hole {
+    cover: f32,
+    wall: f32,
+    tilt: vec2<f32>,
+    rim: f32,
+    q: f32,
+}
+
+// The potholes of the pixel's cell on both sides
+// (ocw_world::road_wear::pothole_in_cell). `vt`: the view direction in
+// the strip frame (across, along, up), for the parallax of the bottom.
+fn pothole(u: f32, du: f32, v: f32, dv: f32, half: f32, chance: f32, zone: f32, track: bool, vt: vec3<f32>) -> Hole {
+    var out: Hole;
+    out.cover = 0.0;
+    out.wall = 0.0;
+    out.tilt = vec2<f32>(0.0);
+    out.rim = 0.0;
+    out.q = 2.0;
+    let k = i32(floor(v / 7.0));
+    for (var side = 0; side < 2; side++) {
+        if unit(hash2(k, 211 + side)) >= chance {
+            continue;
+        }
+        let a = unit(hash2(k, 223 + side));
+        var r = 0.12 + 0.33 * a * a;
+        let vc = (f32(k) + 0.2 + 0.6 * unit(hash2(k, 227 + side))) * 7.0;
+        if abs(v - vc) > 0.6 {
+            continue;
+        }
+        let sgn = select(-1.0, 1.0, side == 1);
+        let e = unit(hash2(k, 233 + side));
+        var uc = 0.0;
+        if track {
+            uc = sgn * (0.8 + 0.2 * (e - 0.5));
+            r = min(r, 0.35);
+        } else if unit(hash2(k, 229 + side)) < 0.35 {
+            uc = sgn * (half - 0.25 * r);
+        } else {
+            let span = max(min(zone, half - r) - r - 0.1, 0.0);
+            uc = sgn * (half - r - 0.1 - span * e * e);
+        }
+        let d = vec2<f32>(u - uc, v - vc);
+        // A ragged outline (the noise is seeded by the cell, not the tile).
+        let seed = vec2<f32>(unit(hash2(k, 239 + side)) * 50.0, 0.0);
+        let rr = r * (0.8 + 0.4 * vnoise(d * (2.0 / r) + seed));
+        let q = length(d) / rr;
+        if q > 1.3 {
+            continue;
+        }
+        let aa = max(max(du, dv), 1e-3) / rr;
+        let cover = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, q);
+        // Parallax: where the view ray meets the bottom (3-5 cm deep).
+        let depth = 0.03 + 0.05 * r;
+        var off = vt.xy / max(vt.z, 0.12) * depth;
+        let ol = length(off);
+        if ol > 1.2 * r {
+            off = off * (1.2 * r / ol);
+        }
+        let qb = length(d - off) / (0.78 * rr);
+        let wall = smoothstep(0.85, 1.05, qb);
+        let rim = (smoothstep(0.92, 1.0, q) - smoothstep(1.06, 1.25, q))
+            * (1.0 - smoothstep(0.08, 0.2, max(du, dv)));
+        if cover > out.cover {
+            out.cover = cover;
+            out.wall = wall;
+            out.tilt = -normalize(d + vec2<f32>(1e-5, 0.0)) * 0.75 * wall;
+            out.q = q;
+        }
+        out.rim = max(out.rim, rim);
+    }
+    return out;
 }
 
 // Tyre tracks: two per lane, 0.8 m either side of its middle.
@@ -346,19 +529,19 @@ fn fragment(
     if kind == 4u && abs(u) - half < look.crossing_colour.w {
         lay = 6u;
     }
+    // Cotangent frame: T along +u (across), B along +v (along the road).
+    let dp2perp = cross(dp2, geo_n);
+    let dp1perp = cross(geo_n, dp1);
+    var T = dp2perp * duv1.x + dp1perp * duv2.x;
+    var B = dp2perp * duv1.y + dp1perp * duv2.y;
+    let inv = inverseSqrt(max(max(dot(T, T), dot(B, B)), 1e-12));
+    T = T * inv;
+    B = B * inv;
     if look.mode.x > 0.5 && kind != 5u && dist < look.mode.z {
         let s = look.sizes[lay / 4u][lay % 4u];
         let uv = in.uv / s;
         let a = textureSampleGrad(albedo_array, array_sampler, uv, i32(lay), duv1 / s, duv2 / s);
         let nt = textureSampleGrad(normal_array, array_sampler, uv, i32(lay), duv1 / s, duv2 / s).xy * 2.0 - 1.0;
-        // Cotangent frame: T along +u (across), B along +v (along the road).
-        let dp2perp = cross(dp2, geo_n);
-        let dp1perp = cross(geo_n, dp1);
-        var T = dp2perp * duv1.x + dp1perp * duv2.x;
-        var B = dp2perp * duv1.y + dp1perp * duv2.y;
-        let inv = inverseSqrt(max(max(dot(T, T), dot(B, B)), 1e-12));
-        T = T * inv;
-        B = B * inv;
         // GL normal maps: green up = image up = -v.
         let nw = normalize(geo_n + look.mode.w * (T * nt.x - B * nt.y));
         let t = smoothstep(look.mode.y, look.mode.z, dist);
@@ -367,17 +550,36 @@ fn fragment(
         N = normalize(mix(nw, N, t));
     }
 
-    // Wear on asphalt: tyre tracks, repaired patches, cracks, a little
-    // variation in tone (deterministic per position).
+    // Wear on asphalt (ocw_world::road_wear, by the strip's grade): tyre
+    // tracks, repaired patches, cracks and their sealing, alligator areas,
+    // a little variation in tone (deterministic per position). The cracks
+    // are applied after the markings (the paint cracks with the road).
+    let grade = (extra >> 5u) & 7u;
+    let track = ((extra >> 4u) & 1u) == 1u;
+    let dmg = look.damage[grade];
+    let rep = look.repair[grade];
+    let damaged = look.line_colour.w > 0.0 && kind == 0u && grade > 0u
+        && abs(u) <= half + 0.01 && dist < look.detail.y;
+    var crack = 0.0;
+    var seal = 0.0;
+    var pc = 0.0;
     if kind == 0u && layer <= 1u && look.line_colour.w > 0.0 {
         let tr = tracks(u, half, lines & 7u, (lines >> 3u) & 7u);
-        albedo = albedo * (1.0 - 0.1 * tr);
+        let ts = select(0.1, rep.w, grade > 0u);
+        albedo = albedo * (1.0 - ts * tr);
         rough = rough - 0.08 * tr;
-        let worn = layer == 1u;
-        let pc = patch_cov(half, u, du, v, dv, select(look.wear.x, look.wear.y, worn));
+        pc = patch_cov(half, u, du, v, dv, rep.x);
         albedo = mix(albedo, albedo * 0.8, pc);
-        let cc = crack_cov(u, du, v, dv, half, select(look.wear.w, look.wear.z, worn));
-        albedo = mix(albedo, albedo * 0.35, cc);
+        if damaged {
+            let tc = transverse(u, du, v, dv, half, dmg.x, rep.y);
+            let lc = longitudinal(u, du, v, dv, half, dmg.y, rep.y);
+            let al = alligator(u, du, v, dv, half, dmg.z, track, look.detail.x > 0.5);
+            // A patch is newer than the cracks around it.
+            crack = max(max(tc.x, lc.x), al.y) * (1.0 - pc);
+            seal = max(tc.y, lc.y) * (1.0 - pc);
+            albedo = albedo * (1.0 - 0.12 * al.x * (1.0 - pc));
+            rough = rough + 0.05 * al.x;
+        }
         albedo = albedo * (0.94 + 0.12 * vnoise(wp.xz / 9.0));
     }
     // Tracks: grass between the wheel ruts.
@@ -402,14 +604,62 @@ fn fragment(
     } else if kind == 1u {
         albedo = albedo * 0.8;
     }
-    // Markings on the carriageway.
+    // Markings on the carriageway: on worn roads the paint is worn in
+    // flecks and missing on the repaired patches.
     if kind == 0u {
-        let m = markings(u, du, v, dv, half, lines, extra) * 0.92;
+        var m = markings(u, du, v, dv, half, lines, extra) * 0.92;
+        if grade > 0u {
+            let tw = f32(grade - 1u) / 6.0;
+            let fleck = smoothstep(0.55, 0.85, vnoise(vec2<f32>(u * 6.0, v * 1.5)));
+            m = m * (1.0 - (0.1 + 0.45 * tw) * fleck) * (1.0 - smoothstep(0.4, 0.9, tw) * 0.7 * pc);
+        }
         albedo = mix(albedo, look.line_colour.rgb, m.x);
         albedo = mix(albedo, look.cycle_colour.rgb, m.y);
         let cov = max(m.x, m.y);
         rough = mix(rough, 0.55, cov);
         N = normalize(mix(N, geo_n, cov));
+    }
+    // Cracks (dark, a little rough) and sealing lines (bitumen: dark and
+    // glossy), over the paint too.
+    albedo = mix(albedo, albedo * 0.32, crack);
+    rough = rough + 0.1 * crack;
+    let bitumen = vec3<f32>(0.035, 0.034, 0.033);
+    albedo = mix(albedo, min(albedo * 0.6, bitumen + 0.4 * albedo), seal * 0.85);
+    rough = mix(rough, 0.32, seal);
+    // Potholes and edge breaks (asphalt, rarely on paving, hollows on
+    // gravel and dirt; ocw_world::road_wear::surface_factors): a recess
+    // drawn by parallax, normals and shading - the ridden surface is not
+    // lowered.
+    var hole: Hole;
+    hole.cover = 0.0;
+    hole.wall = 0.0;
+    hole.tilt = vec2<f32>(0.0);
+    hole.rim = 0.0;
+    hole.q = 2.0;
+    if damaged && layer <= 4u {
+        var factor = 1.0;
+        if layer == 3u {
+            factor = 0.3;
+        } else if layer == 2u || layer == 4u {
+            factor = 1.5;
+        }
+        let V = normalize(view.world_position.xyz - wp);
+        let vt = vec3<f32>(dot(V, T), dot(V, B), dot(V, geo_n));
+        hole = pothole(u, du, v, dv, half, dmg.w * factor, rep.z, track, vt);
+        if hole.cover > 0.0 || hole.rim > 0.0 {
+            let grit = 0.75 + 0.5 * vnoise(vec2<f32>(u, v) * 40.0);
+            let paved = layer <= 1u || layer == 3u;
+            // The bottom: coarse, dusty aggregate in the wall's shadow; the
+            // far wall: the broken asphalt edge, lit.
+            let bottom = albedo * select(0.6, 0.45, paved) * grit;
+            let wall = albedo * select(0.75, 0.62, paved) * (0.85 + 0.3 * grit);
+            let inside = mix(bottom, wall, hole.wall);
+            albedo = albedo * (1.0 + select(0.05, 0.16, paved) * hole.rim * (1.0 - hole.cover));
+            albedo = mix(albedo, inside, hole.cover);
+            rough = mix(rough, 0.95, hole.cover);
+            let nh = normalize(geo_n + T * hole.tilt.x + B * hole.tilt.y);
+            N = normalize(mix(N, nh, hole.cover));
+        }
     }
     var alpha = pbr_input.material.base_color.a;
     if kind == 5u {
@@ -440,6 +690,16 @@ fn fragment(
             let water = smoothstep(level, level + 0.04, hollow) * smoothstep(0.0, 0.2, pud);
             albedo = mix(albedo, albedo * 0.45, water);
             rough = mix(rough, 0.04, water);
+            N = normalize(mix(N, geo_n, water));
+        }
+        // Water stands in the potholes first: from a well wet road on, and
+        // to the rim when the puddles fill.
+        let fill = clamp(max(1.6 * pud, 1.4 * (wet - 0.3)), 0.0, 1.0);
+        if hole.cover > 0.0 && fill > 0.0 {
+            let water = hole.cover * (1.0 - smoothstep(0.55 + 0.4 * fill, 0.65 + 0.4 * fill, hole.q))
+                * smoothstep(0.0, 0.25, fill);
+            albedo = mix(albedo, albedo * 0.4, water);
+            rough = mix(rough, 0.03, water);
             N = normalize(mix(N, geo_n, water));
         }
     }

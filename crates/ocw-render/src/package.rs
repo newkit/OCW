@@ -185,7 +185,9 @@ pub struct MeshArrays {
 impl MeshArrays {
     /// The material layer of the first vertex (roads; tests).
     pub fn roads_layer(&self) -> Option<f32> {
-        self.uvs_b.first().map(|u| u[0])
+        self.uvs_b
+            .first()
+            .map(|u| f32::from(crate::road_mesh::decode_b(u[0]).0))
     }
 
     /// The bytes of the arrays' data.
@@ -2938,7 +2940,7 @@ mod tests {
                 .uvs_b
                 .iter()
                 .filter(|u| surface(u))
-                .all(|u| u[0] == 0.0),
+                .all(|u| crate::road_mesh::decode_b(u[0]).0 == 0),
             "asphalt layer"
         );
         let along = m.roads.uvs.iter().map(|u| u[1]).fold(0.0f32, f32::max);

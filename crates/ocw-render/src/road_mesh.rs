@@ -908,6 +908,35 @@ mod tests {
         // Codes survive the float round trip.
         let (layer, kind, extra) = decode_b(code_b(6, Kind::Crossing, 21));
         assert_eq!((layer, kind, extra), (6, Kind::Crossing as u8, 21));
+        let (_, _, extra) = decode_b(code_b(1, Kind::Surface, 255));
+        assert_eq!(extra, 255, "the wear grade's bits survive too");
+        // The wear grade rides along in the extra bits.
+        let (_, _, extra) = decode_b(m.uvs_b[surf[0]][0]);
+        assert_eq!(MarkCode::decode(0, extra).wear, code.wear);
+        assert!(code.wear > 0);
+    }
+
+    /// Road damage is drawn only (spec §4.6, *Road look*): a worn minor
+    /// road and a kept-up main road on the same line have the same
+    /// geometry – the ridden surface does not change with the wear grade.
+    #[test]
+    fn the_wear_grade_changes_no_geometry() {
+        let dress = RoadDress::of_class(RoadClass::Primary, 6.0);
+        let main = strip(RoadClass::Primary, 6.0, 0.0, dress.clone());
+        let mut worn = strip(RoadClass::Primary, 6.0, 0.0, dress.clone());
+        worn.class = RoadClass::Unclassified;
+        worn.surface = RoadSurface::WornAsphalt;
+        let (a, b) = (
+            meshes(&[main.clone()], &flat(-0.1)).roads,
+            meshes(&[worn.clone()], &flat(-0.1)).roads,
+        );
+        let ga = MarkCode::of(&main.dress, main.class, main.surface).wear;
+        let gb = MarkCode::of(&worn.dress, worn.class, worn.surface).wear;
+        assert!(gb > ga + 2, "{ga} {gb}");
+        assert_eq!(a.positions, b.positions);
+        assert_eq!(a.normals, b.normals);
+        assert_eq!(a.indices, b.indices);
+        assert_eq!(a.uvs, b.uvs);
     }
 
     #[test]
