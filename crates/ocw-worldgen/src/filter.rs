@@ -91,6 +91,22 @@ pub fn way_surfaces(osm: &OsmData) -> std::collections::HashMap<i64, ocw_world::
         .collect()
 }
 
+/// The OSM condition (`smoothness`, `tracktype`, the `surface` value) of
+/// every rideable way of `osm` that has any of them, by OSM way id (for
+/// [`crate::package::apply_road_condition`]; spec §4.6 *Road damage*).
+pub fn way_conditions(
+    osm: &OsmData,
+) -> std::collections::HashMap<i64, ocw_world::RoadCondition> {
+    osm.ways
+        .iter()
+        .filter(|w| rideable(w).is_some())
+        .filter_map(|w| {
+            let c = ocw_world::RoadCondition::from_osm(|k| w.tag(k));
+            (!c.is_unknown()).then_some((w.id, c))
+        })
+        .collect()
+}
+
 /// Whether each rideable way of `osm` with a `lit` tag is lit at night
 /// (spec §14 Phase 9 S2), by OSM way id (for
 /// [`crate::package::apply_road_lit`]); untagged ways are left out.
@@ -118,6 +134,32 @@ mod tests {
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
         }
+    }
+
+    #[test]
+    fn conditions_of_ways_by_id() {
+        use ocw_world::road_condition::{Smoothness, SurfaceKind};
+        let mut bad = way(&[
+            ("highway", "unclassified"),
+            ("surface", "asphalt"),
+            ("smoothness", "bad"),
+        ]);
+        bad.id = 3;
+        let mut track = way(&[("highway", "track"), ("tracktype", "grade4")]);
+        track.id = 4;
+        let mut plain = way(&[("highway", "residential")]);
+        plain.id = 5;
+        let mut footway = way(&[("highway", "footway"), ("smoothness", "good")]);
+        footway.id = 6;
+        let osm = OsmData {
+            ways: vec![bad, track, plain, footway],
+            ..Default::default()
+        };
+        let m = way_conditions(&osm);
+        assert_eq!(m[&3].smoothness, Smoothness::Bad);
+        assert_eq!(m[&3].kind, SurfaceKind::Asphalt);
+        assert_eq!(m[&4].tracktype, 4);
+        assert_eq!(m.len(), 2, "untagged and unrideable ways are left out");
     }
 
     #[test]

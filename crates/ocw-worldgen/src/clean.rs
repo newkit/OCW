@@ -961,6 +961,7 @@ mod tests {
             surface: ocw_world::RoadSurface::Asphalt,
             dress: ocw_world::RoadDress::of_class(RoadClass::Residential, 5.0),
             lit: ocw_world::RoadLit::Unknown,
+            condition: Default::default(),
         };
         let mut pkg = tile_pkg(100.0, vec![road]);
         let before = pkg.road_pokes(1.0).2;

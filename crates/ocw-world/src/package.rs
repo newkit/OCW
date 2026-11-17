@@ -74,6 +74,9 @@ use crate::obstacles::{OBSTACLES_TAG, Obstacles, read_obstacles, write_obstacles
 use crate::ortho::{ORTHO_TAG, read_ortho, write_ortho};
 use crate::region::{PackageRegion, REGION_TAG, read_region, write_region};
 use crate::road_dress::{ROAD_DRESS_TAG, RoadDress, read_road_dress, write_road_dress};
+use crate::road_condition::{
+    ROAD_CONDITION_TAG, RoadCondition, read_road_condition, write_road_condition,
+};
 use crate::road_surface::{ROAD_SURFACE_TAG, RoadSurface, read_road_surfaces, write_road_surfaces};
 use crate::vegetation::{VEGETATION_TAG, read_vegetation, write_vegetation};
 
@@ -133,6 +136,10 @@ pub struct RoadStrip {
     /// Lit at night (section `LITR`, OSM `lit`, spec §14 Phase 9 S2;
     /// packages without it: [`RoadLit::Unknown`], lit in towns).
     pub lit: RoadLit,
+    /// OSM `smoothness`, `tracktype` and the `surface` value (section
+    /// `RCND`, spec §4.6 *Road damage*; packages without it:
+    /// [`RoadCondition::UNKNOWN`], the condition is estimated).
+    pub condition: RoadCondition,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -438,6 +445,13 @@ impl WorldPackage {
         ) {
             sections.push((ROAD_LIT_TAG, payload));
         }
+        let mut payload = Vec::new();
+        if write_road_condition(
+            self.tiles.values().map(|t| (t.key, t.roads.as_slice())),
+            &mut payload,
+        ) {
+            sections.push((ROAD_CONDITION_TAG, payload));
+        }
         b.extend_from_slice(if sections.is_empty() { MAGIC } else { MAGIC_V2 });
         b.extend((self.name.len() as u32).to_le_bytes());
         b.extend(self.name.as_bytes());
@@ -540,6 +554,12 @@ impl WorldPackage {
                 .get_mut(key)
                 .ok_or("road lit state of a tile the package does not have")?;
             apply_lit(tile, lit)?;
+        }
+        for (key, c) in &sections.condition {
+            let tile = tiles
+                .get_mut(key)
+                .ok_or("road condition of a tile the package does not have")?;
+            apply_condition(tile, c)?;
         }
         Ok(sections.into_package(head, tiles))
     }
@@ -644,6 +664,7 @@ fn read_tile(r: &mut Bytes, samples: u32, full: bool) -> Result<Tile, String> {
             surface: RoadSurface::of_class(class),
             dress: RoadDress::of_class(class, width_m),
             lit: RoadLit::Unknown,
+            condition: Default::default(),
         });
     }
     Ok(Tile {
@@ -669,6 +690,16 @@ fn apply_lit(tile: &mut Tile, lit: &[RoadLit]) -> Result<(), String> {
     }
     for (strip, l) in tile.roads.iter_mut().zip(lit) {
         strip.lit = *l;
+    }
+    Ok(())
+}
+
+fn apply_condition(tile: &mut Tile, c: &[RoadCondition]) -> Result<(), String> {
+    if c.len() != tile.roads.len() {
+        return Err("road conditions do not match the tile's road strips".into());
+    }
+    for (strip, c) in tile.roads.iter_mut().zip(c) {
+        strip.condition = *c;
     }
     Ok(())
 }
@@ -699,6 +730,7 @@ struct Sections {
     surfaces: Vec<(TileKey, Vec<RoadSurface>)>,
     dress: Vec<(TileKey, Vec<RoadDress>)>,
     lit: Vec<(TileKey, Vec<RoadLit>)>,
+    condition: Vec<(TileKey, Vec<RoadCondition>)>,
 }
 
 impl Sections {
@@ -821,6 +853,8 @@ fn read_sections(
             s.surfaces.extend(read_road_surfaces(payload)?);
         } else if &tag == ROAD_LIT_TAG && full {
             s.lit.extend(read_road_lit(payload)?);
+        } else if &tag == ROAD_CONDITION_TAG && full {
+            s.condition.extend(read_road_condition(payload)?);
         } else if &tag == ROAD_DRESS_TAG && full {
             match read_road_dress(payload) {
                 Ok(dress) => s.dress.extend(dress),
@@ -859,6 +893,7 @@ pub struct StreamedPackage {
     surfaces: BTreeMap<TileKey, Vec<RoadSurface>>,
     dress: BTreeMap<TileKey, Vec<RoadDress>>,
     lit: BTreeMap<TileKey, Vec<RoadLit>>,
+    condition: BTreeMap<TileKey, Vec<RoadCondition>>,
 }
 
 impl StreamedPackage {
@@ -884,12 +919,14 @@ impl StreamedPackage {
         let surfaces = s.surfaces.iter().cloned().collect();
         let dress = s.dress.iter().cloned().collect();
         let lit = s.lit.iter().cloned().collect();
+        let condition = s.condition.iter().cloned().collect();
         Ok(Self {
             base: s.into_package(head.clone(), BTreeMap::new()),
             head,
             surfaces,
             dress,
             lit,
+            condition,
         })
     }
 
@@ -911,6 +948,9 @@ impl StreamedPackage {
         }
         if let Some(l) = self.lit.get(&tile.key) {
             apply_lit(&mut tile, l)?;
+        }
+        if let Some(c) = self.condition.get(&tile.key) {
+            apply_condition(&mut tile, c)?;
         }
         Ok(tile)
     }
@@ -1425,6 +1465,7 @@ mod tests {
                         surface: RoadSurface::Asphalt,
                         dress: RoadDress::of_class(RoadClass::Secondary, 6.5),
                         lit: crate::RoadLit::Unknown,
+                        condition: Default::default(),
                     }],
                 },
             );
@@ -1482,6 +1523,7 @@ mod tests {
             surface: RoadSurface::Asphalt,
             dress,
             lit: crate::RoadLit::Unknown,
+            condition: Default::default(),
         }];
         let road = 10.0 + ROAD_LIFT_M;
         let ix = PavementIndex::new(&p);
@@ -1682,6 +1724,7 @@ mod tests {
                 surface: RoadSurface::Dirt,
                 dress: RoadDress::of_class(RoadClass::Track, 3.0),
                 lit: crate::RoadLit::Unknown,
+                condition: Default::default(),
             });
         p.tiles.get_mut(&TileKey { x: 0, z: 0 }).unwrap().roads[0].surface = RoadSurface::Paving;
         let b = p.to_bytes();
@@ -1751,6 +1794,44 @@ mod tests {
                 .values()
                 .flat_map(|t| &t.roads)
                 .all(|s| s.lit == crate::RoadLit::Unknown)
+        );
+    }
+
+    /// Spec §4.6 *Road damage*: OSM `smoothness`, `tracktype` and the
+    /// surface value (section `RCND`) are only added: they round-trip, a
+    /// package without them has no section, older readers skip it and the
+    /// strips read as unknown (estimated).
+    #[test]
+    fn road_conditions_round_trip_as_an_optional_section() {
+        use crate::road_condition::{Smoothness, SurfaceKind};
+        assert!(
+            section_sizes(&package().to_bytes())
+                .iter()
+                .all(|(t, _)| t != ROAD_CONDITION_TAG)
+        );
+        let mut p = package();
+        let c = RoadCondition {
+            smoothness: Smoothness::Bad,
+            tracktype: 2,
+            kind: SurfaceKind::Concrete,
+        };
+        p.tiles.get_mut(&TileKey { x: 0, z: 0 }).unwrap().roads[0].condition = c;
+        let b = p.to_bytes();
+        let back = WorldPackage::from_bytes(&b).unwrap();
+        assert_eq!(back, p);
+        assert_eq!(back.tiles[&TileKey { x: 0, z: 0 }].roads[0].condition, c);
+        let mut old = b.clone();
+        let at = old
+            .windows(4)
+            .rposition(|w| w == ROAD_CONDITION_TAG)
+            .unwrap();
+        old[at..at + 4].copy_from_slice(b"XXXX");
+        let old = WorldPackage::from_bytes(&old).unwrap();
+        assert!(
+            old.tiles
+                .values()
+                .flat_map(|t| &t.roads)
+                .all(|s| s.condition.is_unknown())
         );
     }
 

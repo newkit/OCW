@@ -524,15 +524,27 @@ pub struct MarkCode {
     pub cycle: [CycleLane; 2],
     /// A track (`highway=track`): grass in the middle, wheel ruts.
     pub track: bool,
-    /// The wear grade (`crate::road_wear::wear_grade`, 0 … 7): cracks,
-    /// patches and potholes the shader draws.
+    /// The wear grade (`crate::road_wear::wear_grade`, 0 … 7: OSM
+    /// `smoothness`, else estimated): cracks, patches, potholes and loose
+    /// stones the shader draws.
     pub wear: u8,
+    /// Concrete slabs (OSM `surface=concrete*`): joints, a lighter tone.
+    pub concrete: bool,
+    /// A main road (trunk, primary, secondary): potholes near the edges
+    /// only (`crate::road_wear::MAIN_ROAD_ZONE_M`).
+    pub main: bool,
 }
 
 impl MarkCode {
     /// The code of a strip: its dress where the surface takes paint
-    /// (asphalt), nothing painted elsewhere.
-    pub fn of(dress: &RoadDress, class: RoadClass, surface: RoadSurface) -> Self {
+    /// (asphalt), nothing painted elsewhere; the wear from its OSM
+    /// condition.
+    pub fn of(
+        dress: &RoadDress,
+        class: RoadClass,
+        surface: RoadSurface,
+        condition: &crate::RoadCondition,
+    ) -> Self {
         let paint = matches!(surface, RoadSurface::Asphalt | RoadSurface::WornAsphalt);
         Self {
             lanes: dress.lanes,
@@ -550,7 +562,9 @@ impl MarkCode {
                 [CycleLane::None; 2]
             },
             track: class == RoadClass::Track,
-            wear: crate::road_wear::wear_grade(class, surface),
+            wear: crate::road_wear::wear_grade(class, surface, condition),
+            concrete: condition.kind.concrete(),
+            main: crate::road_wear::main_road(class),
         }
     }
 
@@ -565,13 +579,15 @@ impl MarkCode {
             | u32::from(self.town) << 11
     }
 
-    /// The extra bits beside the layer and the kind (`uv_b.x / 64`, < 256):
-    /// cycle lanes, the track look and the wear grade.
+    /// The extra bits beside the layer and the kind (`uv_b.x / 64`, < 1024):
+    /// cycle lanes, the track look, the wear grade, concrete, main road.
     pub fn extra_code(&self) -> u32 {
         self.cycle[0] as u32
             | (self.cycle[1] as u32) << 2
             | u32::from(self.track) << 4
             | u32::from(self.wear.min(crate::road_wear::MAX_GRADE)) << 5
+            | u32::from(self.concrete) << 8
+            | u32::from(self.main) << 9
     }
 
     /// The extra bits of a surface without lines (a junction patch without
@@ -595,6 +611,8 @@ impl MarkCode {
             cycle: [cyc(extra), cyc(extra >> 2)],
             track: extra >> 4 & 1 == 1,
             wear: (extra >> 5 & 7) as u8,
+            concrete: extra >> 8 & 1 == 1,
+            main: extra >> 9 & 1 == 1,
         }
     }
 }
@@ -1292,15 +1310,26 @@ mod tests {
             sidewalk_m: [2.0, 0.0],
             ..RoadDress::of_class(RoadClass::Primary, 9.0)
         };
-        let c = MarkCode::of(&d, RoadClass::Primary, RoadSurface::Asphalt);
-        assert!(c.lines_code() < 4096 && c.extra_code() < 256);
+        let unknown = crate::RoadCondition::UNKNOWN;
+        let c = MarkCode::of(&d, RoadClass::Primary, RoadSurface::Asphalt, &unknown);
+        assert!(c.lines_code() < 4096 && c.extra_code() < 1024);
         assert_eq!(
             c.wear,
-            crate::road_wear::wear_grade(RoadClass::Primary, RoadSurface::Asphalt)
+            crate::road_wear::wear_grade(RoadClass::Primary, RoadSurface::Asphalt, &unknown)
         );
+        assert!(c.main && !c.concrete);
+        // The OSM condition rides along: bad concrete.
+        let bad = crate::RoadCondition {
+            smoothness: crate::road_condition::Smoothness::Bad,
+            kind: crate::road_condition::SurfaceKind::Concrete,
+            ..unknown
+        };
+        let b = MarkCode::of(&d, RoadClass::Residential, RoadSurface::Asphalt, &bad);
+        assert_eq!((b.wear, b.concrete, b.main), (5, true, false));
+        assert_eq!(MarkCode::decode(b.lines_code(), b.extra_code()), b);
         assert_eq!(MarkCode::decode(c.lines_code(), c.extra_code()), c);
         // No paint on cobbles or gravel; the track look only on tracks.
-        let cobbles = MarkCode::of(&d, RoadClass::Primary, RoadSurface::Paving);
+        let cobbles = MarkCode::of(&d, RoadClass::Primary, RoadSurface::Paving, &unknown);
         assert_eq!(cobbles.centre, CentreLine::None);
         assert!(!cobbles.edge_lines && !cobbles.lane_lines);
         assert_eq!(cobbles.cycle, [CycleLane::None; 2]);
@@ -1308,6 +1337,7 @@ mod tests {
             &RoadDress::of_class(RoadClass::Track, 3.0),
             RoadClass::Track,
             RoadSurface::Gravel,
+            &unknown,
         );
         assert!(track.track && MarkCode::decode(track.lines_code(), track.extra_code()).track);
     }
@@ -1470,6 +1500,7 @@ mod tests {
             surface: RoadSurface::Asphalt,
             dress,
             lit: crate::RoadLit::Unknown,
+            condition: Default::default(),
         };
         let plain = vec![strip(
             RoadClass::Tertiary,

@@ -752,6 +752,7 @@ pub mod tests {
                 surface: ocw_world::RoadSurface::Asphalt,
                 dress: ocw_world::RoadDress::of_class(RoadClass::Secondary, 6.0),
                 lit: ocw_world::RoadLit::Unknown,
+                condition: Default::default(),
             }],
         };
         let classes = vec![

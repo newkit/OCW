@@ -13,10 +13,13 @@
 // mean grey far away, no shimmer. Independent of the light setup.
 //
 // Damage (ocw_world::road_wear, the placement's Rust twin): by the strip's
-// wear grade (bits 5-7 of extra) - transverse and longitudinal cracks,
-// sealed cracks, alligator areas, repaired patches, wheel tracks, worn
-// paint, and potholes recessed by a parallax step and their normals (the
-// road's geometry is not changed), holding water when the road is wet.
+// wear grade (bits 5-7 of extra; from OSM smoothness, else estimated) -
+// transverse and longitudinal cracks, sealed cracks, alligator areas,
+// repaired patches, wheel tracks, worn paint, loose stones, ruts on
+// unpaved roads, concrete joints (bit 8), and potholes recessed by a
+// parallax step and their normals (the road's geometry is not changed),
+// holding water when the road is wet; main roads (bit 9) keep their
+// potholes near the edges.
 
 import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
@@ -58,6 +61,8 @@ struct RoadLook {
     // x patch chance, y sealed share of the cracks, z pothole zone from the
     // edge (m), w wheel track strength.
     repair: array<vec4<f32>, 8>,
+    // x loose stone chance per 10 cm cell, y rut depth of unpaved roads.
+    loose: array<vec4<f32>, 8>,
     // The quality preset (crate::road_material::damage_detail): x 1 = the
     // alligator crack pattern is drawn; y damage drawn up to (m).
     detail: vec4<f32>,
@@ -393,6 +398,28 @@ fn alligator(u: f32, du: f32, v: f32, dv: f32, half: f32, chance: f32, track: bo
     return vec2<f32>(area, band_cov(edge, fpm, -0.007, 0.007) * fade * area);
 }
 
+// A loose stone (ocw_world::road_wear::stone_in_cell) in its 10 cm cell:
+// (cover, shade 0 … 1, the tilt of its dome's normal across and along).
+fn stone(u: f32, v: f32, fp: f32, chance: f32) -> vec4<f32> {
+    let c = 0.1;
+    let i = i32(floor(u / c));
+    let j = i32(floor(v / c));
+    if unit(hash2(i * 7 + 601, j)) >= chance {
+        return vec4<f32>(0.0);
+    }
+    let r = 0.008 + 0.017 * unit(hash2(i + 613, j * 3));
+    let ou = r + (c - 2.0 * r) * unit(hash2(i * 5 + 617, j + 11));
+    let ov = r + (c - 2.0 * r) * unit(hash2(i + 619, j * 5 + 13));
+    let d = vec2<f32>(u - (f32(i) * c + ou), v - (f32(j) * c + ov)) / r;
+    let q = length(d);
+    let aa = max(fp, 1e-4) / r;
+    let cover = (1.0 - smoothstep(1.0 - aa, 1.0 + aa, q)) * (1.0 - smoothstep(0.015, 0.05, fp));
+    if cover <= 0.0 {
+        return vec4<f32>(0.0);
+    }
+    return vec4<f32>(cover, unit(hash2(i + 631, j + 7)), d * 0.8 * min(q, 1.0));
+}
+
 // A pothole as the pixel sees it: cover (inside the outline, filtered),
 // wall (1: the far wall is seen, 0: the bottom), the tilt of the normal in
 // the strip frame (across, along), the broken rim around it and q, the
@@ -558,6 +585,9 @@ fn fragment(
     let track = ((extra >> 4u) & 1u) == 1u;
     let dmg = look.damage[grade];
     let rep = look.repair[grade];
+    let loose = look.loose[grade];
+    let concrete = ((extra >> 8u) & 1u) == 1u;
+    let main_road = ((extra >> 9u) & 1u) == 1u;
     let damaged = look.line_colour.w > 0.0 && kind == 0u && grade > 0u
         && abs(u) <= half + 0.01 && dist < look.detail.y;
     var crack = 0.0;
@@ -571,7 +601,14 @@ fn fragment(
         pc = patch_cov(half, u, du, v, dv, rep.x);
         albedo = mix(albedo, albedo * 0.8, pc);
         if damaged {
-            let tc = transverse(u, du, v, dv, half, dmg.x, rep.y);
+            var tc = transverse(u, du, v, dv, half, dmg.x, rep.y);
+            if concrete {
+                // Slabs: a sealed joint every 5 m and along the middle,
+                // fewer random cracks (broken slabs).
+                let jv = v - round(v / 5.0) * 5.0;
+                let joints = max(band_cov(jv, max(dv, 1e-3), -0.007, 0.007), band_cov(u, max(du, 1e-3), -0.007, 0.007));
+                tc = vec2<f32>(tc.x * 0.5, max(tc.y, joints));
+            }
             let lc = longitudinal(u, du, v, dv, half, dmg.y, rep.y);
             let al = alligator(u, du, v, dv, half, dmg.z, track, look.detail.x > 0.5);
             // A patch is newer than the cracks around it.
@@ -581,6 +618,20 @@ fn fragment(
             rough = rough + 0.05 * al.x;
         }
         albedo = albedo * (0.94 + 0.12 * vnoise(wp.xz / 9.0));
+        if concrete {
+            // Concrete is a lighter, cooler grey than asphalt.
+            let l = dot(albedo, vec3<f32>(0.3, 0.59, 0.11));
+            albedo = mix(albedo, vec3<f32>(1.7 * l + 0.05), 0.75);
+        }
+    }
+    // Unpaved roads (gravel, dirt): two ruts, darker and compacted, the
+    // loose material lighter between them.
+    if damaged && (layer == 2u || layer == 4u) {
+        let d = (abs(u) - 0.8) / 0.28;
+        let g = exp(-d * d);
+        albedo = albedo * (1.0 - 0.18 * loose.y * g) * (1.0 + 0.08 * loose.y * (1.0 - g));
+        let tilt = loose.y * 0.6 * (2.0 * d * g) * sign(u);
+        N = normalize(N + T * tilt);
     }
     // Tracks: grass between the wheel ruts.
     if kind == 0u && ((extra >> 4u) & 1u) == 1u {
@@ -645,7 +696,11 @@ fn fragment(
         }
         let V = normalize(view.world_position.xyz - wp);
         let vt = vec3<f32>(dot(V, T), dot(V, B), dot(V, geo_n));
-        hole = pothole(u, du, v, dv, half, dmg.w * factor, rep.z, track, vt);
+        var zone = rep.z;
+        if main_road {
+            zone = min(zone, 1.2);
+        }
+        hole = pothole(u, du, v, dv, half, dmg.w * factor, zone, track, vt);
         if hole.cover > 0.0 || hole.rim > 0.0 {
             let grit = 0.75 + 0.5 * vnoise(vec2<f32>(u, v) * 40.0);
             let paved = layer <= 1u || layer == 3u;
@@ -659,6 +714,26 @@ fn fragment(
             rough = mix(rough, 0.95, hole.cover);
             let nh = normalize(geo_n + T * hole.tilt.x + B * hole.tilt.y);
             N = normalize(mix(N, nh, hole.cover));
+        }
+        // Loose stones and grit (bad roads; every unpaved road a few):
+        // mostly at the edges and between the wheel tracks, swept out of
+        // the tracks themselves.
+        let unpaved = layer == 2u || layer == 4u;
+        var chance = loose.x + select(0.0, 0.06, unpaved);
+        if chance > 0.0 {
+            let tr = tracks(u, half, lines & 7u, (lines >> 3u) & 7u);
+            chance = chance * (1.3 - 0.9 * tr) * (0.6 + 0.8 * smoothstep(0.5 * half, half, abs(u)));
+            let st = stone(u, v, max(du, dv), chance);
+            if st.x > 0.0 {
+                var c = mix(vec3<f32>(0.10, 0.098, 0.095), vec3<f32>(0.42, 0.40, 0.37), st.y);
+                if unpaved {
+                    c = albedo * mix(0.6, 1.6, st.y);
+                }
+                albedo = mix(albedo, c, st.x);
+                rough = mix(rough, 0.75, st.x);
+                let ns = normalize(geo_n + T * st.z + B * st.w);
+                N = normalize(mix(N, ns, st.x));
+            }
         }
     }
     var alpha = pbr_input.material.base_color.a;

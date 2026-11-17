@@ -658,6 +658,7 @@ mod tests {
             surface: ocw_world::RoadSurface::Asphalt,
             dress,
             lit: ocw_world::RoadLit::Unknown,
+            condition: Default::default(),
         }
     }
 

@@ -302,6 +302,7 @@ mod tests {
             surface: RoadSurface::of_class(class),
             dress: RoadDress::of_class(class, 6.0),
             lit,
+            condition: Default::default(),
         }
     }
 

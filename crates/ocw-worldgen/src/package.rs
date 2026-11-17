@@ -346,6 +346,7 @@ pub fn road_strips(
                     surface: RoadSurface::of_class(e.class),
                     dress,
                     lit: ocw_world::RoadLit::Unknown,
+                    condition: Default::default(),
                 },
             ));
         }
@@ -409,6 +410,60 @@ pub fn apply_road_lit(
         }
     }
     known
+}
+
+/// Gives the road strips of `pkg` the OSM condition of their edge,
+/// `condition(edge)` (spec §4.6 *Road damage*: `smoothness`, `tracktype`,
+/// the `surface` value; section `RCND`). Works on a package built from
+/// `graph` and also on one changed since (cleaned, patched): where a tile's
+/// strips are not those of [`road_strips`] one for one, each strip takes the
+/// edge of the built strip of its class that starts nearest to it (within
+/// 2 m; others stay unknown). Returns (strips with a known condition,
+/// strips not matched).
+pub fn apply_road_condition(
+    pkg: &mut WorldPackage,
+    graph: &RoadGraph,
+    condition: impl Fn(&ocw_world::graph::Edge) -> ocw_world::RoadCondition,
+) -> (usize, usize) {
+    let (mut known, mut unmatched) = (0, 0);
+    for (key, strips) in road_strips(graph, f64::from(pkg.tile_size_m)) {
+        let Some(tile) = pkg.tiles.get_mut(&key) else {
+            continue;
+        };
+        let same = tile.roads.len() == strips.len()
+            && tile
+                .roads
+                .iter()
+                .zip(&strips)
+                .all(|(a, (_, b))| a.class == b.class && a.points.first() == b.points.first());
+        for (i, road) in tile.roads.iter_mut().enumerate() {
+            let edge = if same {
+                Some(strips[i].0)
+            } else {
+                let start = road.points.first().copied().unwrap_or_default();
+                strips
+                    .iter()
+                    .filter(|(_, b)| b.class == road.class)
+                    .filter_map(|(ei, b)| {
+                        let q = b.points.first()?;
+                        let d = (q[0] - start[0]).powi(2) + (q[2] - start[2]).powi(2);
+                        (d <= 4.0).then_some((d, *ei))
+                    })
+                    .min_by(|a, b| a.0.total_cmp(&b.0))
+                    .map(|(_, ei)| ei)
+            };
+            match edge {
+                Some(ei) => {
+                    road.condition = condition(&graph.edges[ei]);
+                    if !road.condition.is_unknown() {
+                        known += 1;
+                    }
+                }
+                None => unmatched += 1,
+            }
+        }
+    }
+    (known, unmatched)
 }
 
 /// Builds the package: tiles covering all roads plus `margin_tiles`, terrain
@@ -735,6 +790,52 @@ mod tests {
         assert_eq!(tiles_with_paving.len(), 2, "{tiles_with_paving:?}");
         let back = WorldPackage::from_bytes(&pkg.to_bytes()).unwrap();
         assert_eq!(all(&back), all(&pkg));
+    }
+
+    /// Spec §4.6 *Road damage*: the OSM condition reaches every strip of its
+    /// edge, also in a package whose strips were changed since it was built
+    /// (matched by their start), and survives the round trip.
+    #[test]
+    fn road_conditions_follow_their_edges_also_into_changed_packages() {
+        use ocw_world::road_condition::Smoothness;
+        let mut g = graph();
+        g.edges[1].bridge = false;
+        let bad = ocw_world::RoadCondition {
+            smoothness: Smoothness::Bad,
+            ..ocw_world::RoadCondition::UNKNOWN
+        };
+        let cond = |e: &ocw_world::graph::Edge| {
+            if e.osm_way == 2 {
+                bad
+            } else {
+                ocw_world::RoadCondition::UNKNOWN
+            }
+        };
+        let mut pkg = build_package("t", (47.0, 9.5), &g, |_, _| 100.0, 500.0, 11, 0);
+        assert_eq!(apply_road_condition(&mut pkg, &g, cond), (2, 0));
+        let back = WorldPackage::from_bytes(&pkg.to_bytes()).unwrap();
+        let bad_strips = |p: &WorldPackage| {
+            p.tiles
+                .values()
+                .flat_map(|t| &t.roads)
+                .filter(|r| r.condition == bad)
+                .count()
+        };
+        assert_eq!(bad_strips(&back), 2);
+        // A changed package (a strip dropped, the order reversed): matched
+        // by geometry.
+        let mut changed = build_package("t", (47.0, 9.5), &g, |_, _| 100.0, 500.0, 11, 0);
+        for t in changed.tiles.values_mut() {
+            t.roads.reverse();
+            if t.roads.len() > 1 {
+                t.roads.pop();
+            }
+        }
+        let n: usize = changed.tiles.values().map(|t| t.roads.len()).sum();
+        let (known, unmatched) = apply_road_condition(&mut changed, &g, cond);
+        assert_eq!(unmatched, 0);
+        assert_eq!(known, bad_strips(&changed));
+        assert!(n > 0);
     }
 
     #[test]

@@ -346,6 +346,7 @@ pub(crate) mod tests {
                             surface: RoadSurface::of_class(class),
                             dress: RoadDress::of_class(class, 6.0),
                             lit: ocw_world::RoadLit::Unknown,
+                            condition: Default::default(),
                         }],
                     },
                 );

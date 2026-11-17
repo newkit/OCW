@@ -72,6 +72,9 @@ pub struct RoadLook {
     /// Per wear grade: x patch chance, y sealed share of the cracks, z the
     /// pothole zone from the edge (m), w wheel track strength.
     pub repair: [Vec4; 8],
+    /// Per wear grade: x loose stone chance per 10 cm cell, y rut depth of
+    /// unpaved roads.
+    pub loose: [Vec4; 8],
     /// The quality preset's damage ([`damage_detail`]): x 1 = alligator
     /// crack pattern, y damage drawn up to (m).
     pub detail: Vec4,
@@ -87,15 +90,40 @@ pub struct RoadLook {
 /// The damage tables of `road.wesl` for the quality preset's share of the
 /// features: per wear grade (index) the chances and the repair look of
 /// `ocw_world::road_wear::wear_density`.
-pub fn damage_tables(share: f32) -> ([Vec4; 8], [Vec4; 8]) {
-    let mut damage = [Vec4::ZERO; 8];
-    let mut repair = [Vec4::ZERO; 8];
+pub fn damage_tables(share: f32) -> DamageTables {
+    let mut t = DamageTables {
+        damage: [Vec4::ZERO; 8],
+        repair: [Vec4::ZERO; 8],
+        loose: [Vec4::ZERO; 8],
+    };
     for g in 0..=ocw_world::road_wear::MAX_GRADE {
         let d = ocw_world::road_wear::wear_density(g, share);
-        damage[usize::from(g)] = Vec4::new(d.transverse, d.longitudinal, d.alligator, d.pothole);
-        repair[usize::from(g)] = Vec4::new(d.patch, d.sealed, d.pothole_zone_m, d.tracks);
+        let i = usize::from(g);
+        t.damage[i] = Vec4::new(d.transverse, d.longitudinal, d.alligator, d.pothole);
+        t.repair[i] = Vec4::new(d.patch, d.sealed, d.pothole_zone_m, d.tracks);
+        if g > 0 {
+            t.loose[i] = Vec4::new(d.stones, d.ruts, 0.0, 0.0);
+        }
     }
-    (damage, repair)
+    t
+}
+
+/// The three per-grade tables of [`RoadLook`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DamageTables {
+    pub damage: [Vec4; 8],
+    pub repair: [Vec4; 8],
+    pub loose: [Vec4; 8],
+}
+
+impl DamageTables {
+    fn of(l: &RoadLook) -> Self {
+        Self {
+            damage: l.damage,
+            repair: l.repair,
+            loose: l.loose,
+        }
+    }
 }
 
 /// The `detail` vector of `road.wesl` for a quality preset: x 1 when the
@@ -121,21 +149,22 @@ pub fn sync_damage(
         return;
     };
     let q = quality.map(|q| q.0).unwrap_or_default();
-    let (damage, repair) = damage_tables(q.road_damage_share);
+    let t = damage_tables(q.road_damage_share);
     let detail = damage_detail(&q);
     let stale: Vec<_> = roads
         .iter()
         .filter(|(_, m)| {
             let l = &m.extension.look;
-            l.detail != detail || l.damage != damage || l.repair != repair
+            l.detail != detail || DamageTables::of(l) != t
         })
         .map(|(id, _)| id)
         .collect();
     for id in stale {
         if let Some(mut m) = roads.get_mut(id) {
             let l = &mut m.extension.look;
-            l.damage = damage;
-            l.repair = repair;
+            l.damage = t.damage;
+            l.repair = t.repair;
+            l.loose = t.loose;
             l.detail = detail;
         }
     }
@@ -171,8 +200,9 @@ impl RoadLook {
                 f32::from(u8::from(style.cycle_default == CycleLane::Exclusive)),
             ),
             crossing_colour: c(style.crossing_colour, 0.15),
-            damage: damage_tables(1.0).0,
-            repair: damage_tables(1.0).1,
+            damage: damage_tables(1.0).damage,
+            repair: damage_tables(1.0).repair,
+            loose: damage_tables(1.0).loose,
             detail: damage_detail(&crate::quality::QualityPreset::default()),
             weather: Vec4::ZERO,
             season: Vec4::ZERO,
@@ -307,8 +337,11 @@ mod tests {
         let l = RoadLook::default();
         assert_eq!(l.damage[0], Vec4::ZERO, "grade 0 draws nothing");
         assert_eq!(l.repair[0], Vec4::ZERO);
-        // Trunk roads (grade 1): no potholes; tracks (5) and worn minor
-        // roads (7): the most.
+        assert_eq!(l.loose[0], Vec4::ZERO);
+        // Excellent roads (grade 1): no potholes, no loose stones; bad (5)
+        // and worse: the most.
+        assert_eq!(l.loose[1].x, 0.0);
+        assert!(l.loose[7].x > l.loose[5].x && l.loose[5].x > 0.0);
         assert_eq!(l.damage[1].w, 0.0);
         assert!(l.damage[7].w > l.damage[5].w && l.damage[5].w > l.damage[2].w);
         let d = ocw_world::road_wear::wear_density(4, 1.0);
@@ -325,8 +358,9 @@ mod tests {
         assert!(low.road_damage_m < high.road_damage_m);
         assert_eq!(damage_detail(&high).x, 1.0);
         assert_eq!(damage_detail(&low).x, 0.0);
-        let (lo, _) = damage_tables(low.road_damage_share);
-        assert!(lo[6].w < l.damage[6].w && lo[6].x < l.damage[6].x);
+        let lo = damage_tables(low.road_damage_share);
+        assert!(lo.damage[6].w < l.damage[6].w && lo.damage[6].x < l.damage[6].x);
+        assert!(lo.loose[6].x < l.loose[6].x);
     }
 
     #[test]
@@ -349,7 +383,8 @@ mod tests {
         let mats = app.world().resource::<Assets<RoadMaterial>>();
         let look = mats.get(&h).expect("material").extension.look;
         assert_eq!(look.detail, damage_detail(&low));
-        assert_eq!(look.damage, damage_tables(low.road_damage_share).0);
+        assert_eq!(look.damage, damage_tables(low.road_damage_share).damage);
+        assert_eq!(look.loose, damage_tables(low.road_damage_share).loose);
     }
 
     #[test]

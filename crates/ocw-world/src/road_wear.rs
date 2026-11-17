@@ -1,28 +1,35 @@
-//! Road damage (spec §4.6 step 6, *Road look*): cracks, crack sealing,
-//! alligator areas, repaired patches, worn wheel tracks and potholes on the
-//! carriageway, drawn by `road.wesl` from the strip's **wear grade** and
-//! the strip frame (across, along in metres) – no textures, no geometry:
-//! the road surface riders stand on is not changed (`Track::surface_height`
-//! and the road meshes' positions are the same for every grade).
+//! Road damage (spec §4.6 step 6, *Road damage*): cracks, crack sealing,
+//! alligator areas, repaired patches, worn wheel tracks, potholes, edge
+//! breaks and loose stones on the carriageway, drawn by `road.wesl` from
+//! the strip's **wear grade** and the strip frame (across, along in metres)
+//! – no textures, no geometry: the road surface riders stand on is not
+//! changed (`Track::surface_height` and the road meshes' positions are the
+//! same for every grade).
 //!
-//! The grade (1 … 7, 0: none drawn) comes from the road class and the
-//! surface ([`wear_grade`]): main roads are kept up (few cracks, mostly
-//! sealed, no potholes but at the very edge), minor roads, service roads and
-//! tracks are worn, and OSM `smoothness` (intermediate or worse, which makes
-//! the surface [`RoadSurface::WornAsphalt`]) adds two grades. Each grade has
-//! its chances ([`wear_density`], scaled by the quality preset's share);
-//! where a feature lies is a hash of the cell along the road, so it is the
-//! same on every machine, in both apps and across tile borders (the along
+//! **The grade (1 … 7, 0: none drawn) comes from OSM `smoothness`** where
+//! the road has it ([`smoothness_grade`]; section `RCND`,
+//! [`crate::road_condition`]): excellent almost no damage, good a few fine
+//! cracks, intermediate cracks, sealing lines, patches and the odd small
+//! pothole, bad many cracks, alligator areas, potholes, broken edges and
+//! loose stones, very bad and worse heavy damage. **Without the tag it is
+//! an estimate** ([`estimate_grade`]): from `tracktype` on tracks, else from
+//! the road class (main roads kept up, minor roads, service roads and
+//! tracks worn) and the surface. Each grade has its chances
+//! ([`wear_density`], scaled by the quality preset's share); main roads
+//! keep their potholes within [`MAIN_ROAD_ZONE_M`] of the edge. Where a
+//! feature lies is a hash of the cell along the road, so it is the same on
+//! every machine, in both apps and across tile borders (the along
 //! coordinate runs on over the tiles and through a junction patch on the
 //! main road).
 //!
 //! This module is the shader's twin: the placement functions below compute
 //! exactly what `road.wesl` draws (same hashes, same constants), so the
-//! tests can check the density per class and that potholes stay off the
-//! middle of main roads.
+//! tests can check the density per smoothness and class and that potholes
+//! stay off the middle of main roads.
 
 use crate::RoadSurface;
 use crate::graph::RoadClass;
+use crate::road_condition::{RoadCondition, Smoothness};
 use crate::road_dress::{hash2, unit};
 
 /// The highest wear grade.
@@ -41,22 +48,84 @@ pub const MAX_POTHOLE_R: f32 = 0.45;
 /// Half the distance between the wheel ruts of a track (m; the shader's
 /// track look).
 pub const RUT_M: f32 = 0.8;
+/// On main roads (trunk, primary, secondary) a pothole's centre lies at
+/// most this far from the edge, whatever the grade (m).
+pub const MAIN_ROAD_ZONE_M: f32 = 1.2;
+/// Cell size (m, both ways) of the loose stones.
+pub const STONE_CELL_M: f32 = 0.1;
 
-/// How worn a strip draws: 1 (motorway-like, kept up) … 7 (broken), 0 for
-/// parts without a strip frame (the corner fans of `road_corners`).
-pub fn wear_grade(class: RoadClass, surface: RoadSurface) -> u8 {
-    let base: u8 = match class {
-        RoadClass::Trunk => 1,
-        RoadClass::Primary | RoadClass::Secondary => 2,
-        RoadClass::Tertiary | RoadClass::Residential | RoadClass::Cycleway => 3,
-        RoadClass::Unclassified | RoadClass::Service | RoadClass::Path => 4,
-        RoadClass::Track => 5,
+/// Trunk, primary and secondary roads.
+pub fn main_road(class: RoadClass) -> bool {
+    matches!(
+        class,
+        RoadClass::Trunk | RoadClass::Primary | RoadClass::Secondary
+    )
+}
+
+/// The grade of an OSM `smoothness` value (`None`: not tagged).
+pub fn smoothness_grade(s: Smoothness) -> Option<u8> {
+    Some(match s {
+        Smoothness::Unknown => return None,
+        Smoothness::Excellent => 1,
+        Smoothness::Good => 2,
+        Smoothness::Intermediate => 4,
+        Smoothness::Bad => 5,
+        Smoothness::VeryBad => 6,
+        Smoothness::Horrible | Smoothness::VeryHorrible | Smoothness::Impassable => 7,
+    })
+}
+
+/// The estimated grade of a road without `smoothness`: from `tracktype`
+/// (grade 1 … 5, 0: none) where it is tagged, else from the class (main
+/// roads kept up, minor roads and tracks worn) and the surface (worn asphalt
+/// at least 5).
+pub fn estimate_grade(class: RoadClass, surface: RoadSurface, tracktype: u8) -> u8 {
+    let base: u8 = match tracktype {
+        1 => 4,
+        2 | 3 => 5,
+        4 => 6,
+        5 => 7,
+        _ => match class {
+            RoadClass::Trunk => 1,
+            RoadClass::Primary | RoadClass::Secondary => 2,
+            RoadClass::Tertiary | RoadClass::Residential | RoadClass::Cycleway => 3,
+            RoadClass::Unclassified | RoadClass::Service | RoadClass::Path => 4,
+            RoadClass::Track => 5,
+        },
     };
     if surface == RoadSurface::WornAsphalt {
-        (base + 2).max(5).min(MAX_GRADE)
+        base.max(5)
     } else {
         base
     }
+}
+
+/// The wear of a strip: its grade and whether it is an estimate (no OSM
+/// `smoothness`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Wear {
+    pub grade: u8,
+    pub estimated: bool,
+}
+
+/// The wear of a strip of `class` and `surface` in `condition`:
+/// `smoothness` first, else [`estimate_grade`].
+pub fn wear_of(class: RoadClass, surface: RoadSurface, condition: &RoadCondition) -> Wear {
+    match smoothness_grade(condition.smoothness) {
+        Some(grade) => Wear {
+            grade,
+            estimated: false,
+        },
+        None => Wear {
+            grade: estimate_grade(class, surface, condition.tracktype),
+            estimated: true,
+        },
+    }
+}
+
+/// The grade alone ([`wear_of`]).
+pub fn wear_grade(class: RoadClass, surface: RoadSurface, condition: &RoadCondition) -> u8 {
+    wear_of(class, surface, condition).grade
 }
 
 /// The chances of one grade (`road.wesl`'s `damage` and `repair` tables).
@@ -78,7 +147,15 @@ pub struct WearDensity {
     pub pothole_zone_m: f32,
     /// How much the wheel tracks darken and polish.
     pub tracks: f32,
+    /// A loose stone per [`STONE_CELL_M`] cell on a paved road (unpaved
+    /// roads add [`UNPAVED_STONES`]).
+    pub stones: f32,
+    /// How deep the ruts of an unpaved road look (0 … 1).
+    pub ruts: f32,
 }
+
+/// The loose stones every unpaved road has, on top of its grade's.
+pub const UNPAVED_STONES: f32 = 0.06;
 
 /// The chances of `grade` with the quality preset's `share` (0 … 1) of the
 /// features (chances only; the sealed share, the pothole zone and the
@@ -90,11 +167,11 @@ pub fn wear_density(grade: u8, share: f32) -> WearDensity {
     let t = f32::from(grade.min(MAX_GRADE) - 1) / f32::from(MAX_GRADE - 1);
     let s = share.clamp(0.0, 1.0);
     WearDensity {
-        transverse: (0.04 + 0.5 * t) * s,
-        longitudinal: (0.03 + 0.45 * t) * s,
+        transverse: (0.012 + 0.5 * t) * s,
+        longitudinal: (0.008 + 0.45 * t) * s,
         alligator: 0.4 * t.powf(1.5) * s,
         pothole: 0.25 * t * t * s,
-        patch: (0.04 + 0.3 * t) * s,
+        patch: (0.01 + 0.3 * t) * s,
         sealed: 0.75 - 0.6 * t,
         pothole_zone_m: if t <= 1.0 / 3.0 {
             0.7
@@ -102,6 +179,8 @@ pub fn wear_density(grade: u8, share: f32) -> WearDensity {
             0.7 + 4.0 * (t - 1.0 / 3.0)
         },
         tracks: 0.05 + 0.12 * t,
+        stones: 0.5 * (t - 0.5).max(0.0) * s,
+        ruts: 0.2 + 0.6 * t,
     }
 }
 
@@ -243,6 +322,41 @@ pub fn longitudinal_in_cell(
     })
 }
 
+/// The pothole zone of a road: its grade's, at most
+/// [`MAIN_ROAD_ZONE_M`] on main roads (the shader's `zone`).
+pub fn pothole_zone(zone_m: f32, main: bool) -> f32 {
+    if main {
+        zone_m.min(MAIN_ROAD_ZONE_M)
+    } else {
+        zone_m
+    }
+}
+
+/// A loose stone (grit, a broken-off piece of the surface) in the strip
+/// frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Stone {
+    pub u: f32,
+    pub v: f32,
+    pub r: f32,
+}
+
+/// The stone of cell (`i` across, `j` along; [`STONE_CELL_M`]) for a chance
+/// per cell. The shader's `stones`: it stays inside its cell.
+pub fn stone_in_cell(i: i32, j: i32, chance: f32) -> Option<Stone> {
+    if unit(hash2(i * 7 + 601, j)) >= chance {
+        return None;
+    }
+    let r = 0.008 + 0.017 * unit(hash2(i + 613, j * 3));
+    let c = STONE_CELL_M;
+    let ou = r + (c - 2.0 * r) * unit(hash2(i * 5 + 617, j + 11));
+    let ov = r + (c - 2.0 * r) * unit(hash2(i + 619, j * 5 + 13));
+    Some(Stone {
+        u: i as f32 * c + ou,
+        v: j as f32 * c + ov,
+        r,
+    })
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,27 +382,80 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn grades_follow_class_and_smoothness() {
-        for c in ALL_CLASSES {
-            let g = wear_grade(c, RoadSurface::Asphalt);
-            assert!((1..=MAX_GRADE).contains(&g), "{c:?}");
-            // OSM smoothness intermediate or worse: more worn.
-            assert!(wear_grade(c, RoadSurface::WornAsphalt) > g, "{c:?}");
-            assert!(wear_grade(c, RoadSurface::WornAsphalt) >= 5);
+    fn cond(s: Smoothness) -> RoadCondition {
+        RoadCondition {
+            smoothness: s,
+            ..RoadCondition::UNKNOWN
         }
-        let g = |c| wear_grade(c, RoadSurface::Asphalt);
+    }
+
+    #[test]
+    fn smoothness_drives_the_grade_and_the_class_only_estimates() {
+        // Tagged: the class does not matter.
+        for c in ALL_CLASSES {
+            for (sm, g) in [
+                (Smoothness::Excellent, 1),
+                (Smoothness::Good, 2),
+                (Smoothness::Intermediate, 4),
+                (Smoothness::Bad, 5),
+                (Smoothness::VeryBad, 6),
+                (Smoothness::Horrible, 7),
+                (Smoothness::VeryHorrible, 7),
+            ] {
+                let w = wear_of(c, RoadSurface::Asphalt, &cond(sm));
+                assert_eq!(
+                    w,
+                    Wear {
+                        grade: g,
+                        estimated: false
+                    },
+                    "{c:?} {sm:?}"
+                );
+            }
+        }
+        // Worse smoothness, more damage.
+        let mut last = 0;
+        for sm in &Smoothness::ALL[1..] {
+            let g = smoothness_grade(*sm).unwrap();
+            assert!(g >= last);
+            last = g;
+        }
+        // Untagged: an estimate from the class …
+        let e = |c| wear_of(c, RoadSurface::Asphalt, &RoadCondition::UNKNOWN);
+        assert!(e(RoadClass::Primary).estimated);
+        let g = |c| e(c).grade;
         assert!(g(RoadClass::Trunk) < g(RoadClass::Primary));
         assert!(g(RoadClass::Primary) < g(RoadClass::Residential));
         assert!(g(RoadClass::Residential) < g(RoadClass::Unclassified));
         assert!(g(RoadClass::Unclassified) < g(RoadClass::Track));
-        assert_eq!(
-            wear_grade(RoadClass::Track, RoadSurface::WornAsphalt),
-            MAX_GRADE
+        for c in ALL_CLASSES {
+            assert!((1..=MAX_GRADE).contains(&g(c)), "{c:?}");
+        }
+        // … from `tracktype` where a track has it …
+        let tt = |t| {
+            let c = RoadCondition {
+                tracktype: t,
+                ..RoadCondition::UNKNOWN
+            };
+            wear_of(RoadClass::Track, RoadSurface::Gravel, &c)
+        };
+        assert!(tt(1).grade < tt(3).grade && tt(3).grade < tt(5).grade);
+        assert!(tt(4).estimated);
+        // … and worn asphalt at least 5; smoothness wins over tracktype.
+        let worn = wear_grade(
+            RoadClass::Trunk,
+            RoadSurface::WornAsphalt,
+            &RoadCondition::UNKNOWN,
         );
+        assert!(worn >= 5);
+        let both = RoadCondition {
+            smoothness: Smoothness::Excellent,
+            tracktype: 5,
+            ..RoadCondition::UNKNOWN
+        };
+        assert_eq!(wear_grade(RoadClass::Track, RoadSurface::Asphalt, &both), 1);
         assert_eq!(wear_density(0, 1.0), WearDensity::default());
     }
-
     #[test]
     fn density_grows_with_the_grade_and_the_quality_share() {
         for g in 1..MAX_GRADE {
@@ -299,9 +466,18 @@ mod tests {
             assert!(b.sealed < a.sealed, "minor roads are sealed less");
             assert!(b.pothole_zone_m >= a.pothole_zone_m);
         }
-        // Main roads: no potholes on a trunk road, no alligator areas.
-        assert_eq!(wear_density(1, 1.0).pothole, 0.0);
-        assert_eq!(wear_density(1, 1.0).alligator, 0.0);
+        // Excellent (grade 1): almost nothing – no potholes, no alligator
+        // areas, no loose stones, a crack every kilometre or so.
+        let ex = wear_density(1, 1.0);
+        assert_eq!((ex.pothole, ex.alligator, ex.stones), (0.0, 0.0, 0.0));
+        assert!(ex.transverse < 0.02 && ex.longitudinal < 0.01);
+        // Loose stones from bad (5) on, more the worse.
+        assert_eq!(wear_density(4, 1.0).stones, 0.0);
+        assert!(wear_density(5, 1.0).stones > 0.0);
+        assert!(wear_density(7, 1.0).stones > wear_density(6, 1.0).stones);
+        // Intermediate: the odd small pothole, far fewer than bad.
+        let (im, bad) = (wear_density(4, 1.0), wear_density(5, 1.0));
+        assert!(im.pothole > 0.0 && im.pothole < 0.6 * bad.pothole);
         let (hi, lo) = (wear_density(5, 1.0), wear_density(5, 0.5));
         assert!((lo.pothole - 0.5 * hi.pothole).abs() < 1e-6);
         assert_eq!(lo.sealed, hi.sealed);
@@ -309,26 +485,41 @@ mod tests {
     }
 
     #[test]
-    fn placement_is_deterministic_and_counts_follow_the_class() {
+    fn placement_is_deterministic_and_counts_follow_the_smoothness() {
         // The same cell gives the same hole, whatever else was asked.
         let a = potholes(6, 2.5, 2000, false);
         let b = potholes(6, 2.5, 2000, false);
         assert_eq!(a, b);
-        let count = |c: RoadClass, s: RoadSurface| {
+        let count = |c: RoadClass, sm: Smoothness| {
             let half = c.default_width_m() as f32 / 2.0;
-            potholes(wear_grade(c, s), half, 5000, c == RoadClass::Track).len()
+            let g = wear_grade(c, RoadSurface::Asphalt, &cond(sm));
+            potholes(g, half, 5000, false).len()
         };
-        let primary = count(RoadClass::Primary, RoadSurface::Asphalt);
-        let residential = count(RoadClass::Residential, RoadSurface::Asphalt);
-        let worn = count(RoadClass::Residential, RoadSurface::WornAsphalt);
-        let track = count(RoadClass::Track, RoadSurface::Asphalt);
-        assert_eq!(count(RoadClass::Trunk, RoadSurface::Asphalt), 0);
-        // 35 km of road: a few on a primary road, many on a track.
-        assert!(primary > 0 && primary < 120, "{primary}");
-        assert!(residential > 3 * primary, "{residential} vs {primary}");
-        assert!(worn > residential, "{worn} vs {residential}");
-        assert!(track > residential, "{track} vs {residential}");
-        // Cracks too: a residential road has more than a primary one.
+        // 35 km of road each.
+        let n: Vec<usize> = Smoothness::ALL[1..8]
+            .iter()
+            .map(|&sm| count(RoadClass::Residential, sm))
+            .collect();
+        assert_eq!(n[0], 0, "excellent: none");
+        assert!(n[1] < 120, "good: a few ({})", n[1]);
+        assert!(
+            n[2] > n[1] && n[3] > n[2] && n[4] > n[3] && n[5] > n[4],
+            "{n:?}"
+        );
+        // A bad primary road has about the potholes of a bad residential
+        // road (the class only limits where they lie).
+        let bad = count(RoadClass::Primary, Smoothness::Bad);
+        assert!(bad * 2 > n[3], "{bad} vs {}", n[3]);
+        // Untagged (estimated): a primary road few, a track many.
+        let est = |c: RoadClass| {
+            let half = c.default_width_m() as f32 / 2.0;
+            let g = wear_grade(c, RoadSurface::Asphalt, &RoadCondition::UNKNOWN);
+            potholes(g, half, 5000, c == RoadClass::Track).len()
+        };
+        assert_eq!(est(RoadClass::Trunk), 0);
+        assert!(est(RoadClass::Residential) > 3 * est(RoadClass::Primary));
+        assert!(est(RoadClass::Track) > est(RoadClass::Residential));
+        // Cracks and loose stones too.
         let cracks = |g: u8| {
             let d = wear_density(g, 1.0);
             (0..5000)
@@ -339,22 +530,50 @@ mod tests {
                 .count()
         };
         assert!(cracks(5) > 2 * cracks(2));
+        assert!(cracks(2) > 5 * cracks(1));
+        let stones = |g: u8| {
+            let d = wear_density(g, 1.0);
+            (0..60)
+                .flat_map(|i| (0..1000).map(move |j| (i, j)))
+                .filter(|&(i, j)| stone_in_cell(i, j, d.stones).is_some())
+                .count()
+        };
+        assert_eq!(stones(4), 0);
+        assert!(stones(7) > stones(5) && stones(5) > 0);
     }
-
     #[test]
     fn potholes_stay_off_the_middle_of_main_roads() {
-        for c in [RoadClass::Primary, RoadClass::Secondary] {
+        // Estimated and every tagged smoothness, even horrible: the holes of
+        // a main road stay near its edges.
+        for c in [RoadClass::Trunk, RoadClass::Primary, RoadClass::Secondary] {
             let half = c.default_width_m() as f32 / 2.0;
-            let g = wear_grade(c, RoadSurface::Asphalt);
-            let zone = wear_density(g, 1.0).pothole_zone_m;
-            let holes = potholes(g, half, 50_000, false);
-            assert!(!holes.is_empty(), "{c:?}");
-            for p in holes {
-                assert!(p.u.abs() >= half - zone, "{c:?}: {p:?}");
-                // The whole hole lies in the outer metre.
-                assert!(p.u.abs() - p.r >= half - 1.0 - MAX_POTHOLE_R, "{p:?}");
+            for sm in Smoothness::ALL {
+                let g = wear_grade(c, RoadSurface::Asphalt, &cond(sm));
+                let d = wear_density(g, 1.0);
+                let zone = pothole_zone(d.pothole_zone_m, main_road(c));
+                assert!(zone <= MAIN_ROAD_ZONE_M);
+                let holes: Vec<Pothole> = (0..20_000)
+                    .flat_map(|k| (0..2).map(move |s| (k, s)))
+                    .filter_map(|(k, s)| pothole_in_cell(k, s, half, d.pothole, zone, false))
+                    .collect();
+                for p in &holes {
+                    assert!(p.u.abs() >= half - zone, "{c:?} {sm:?}: {p:?}");
+                    assert!(p.u.abs() - p.r >= half - MAIN_ROAD_ZONE_M - MAX_POTHOLE_R);
+                }
+                if sm == Smoothness::Bad {
+                    assert!(!holes.is_empty(), "{c:?}");
+                }
             }
         }
+        // The estimate of a primary road: within 0.7 m of the edge.
+        let g = wear_grade(
+            RoadClass::Primary,
+            RoadSurface::Asphalt,
+            &RoadCondition::UNKNOWN,
+        );
+        assert_eq!(wear_density(g, 1.0).pothole_zone_m, 0.7);
+        assert!(!main_road(RoadClass::Tertiary));
+        assert_eq!(pothole_zone(3.0, false), 3.0);
         // A minor road's holes may lie anywhere on its half, never across
         // the middle (each side's cell keeps to its side).
         for p in potholes(6, 2.5, 20_000, false) {
@@ -379,6 +598,15 @@ mod tests {
                 if let Some(a) = alligator_in_cell(k, s, 3.0, 1.0, false) {
                     let c0 = k as f32 * ALLIGATOR_CELL_M;
                     assert!(a.v.0 >= c0 && a.v.1 <= c0 + ALLIGATOR_CELL_M, "{a:?}");
+                }
+            }
+            for j in 0..2 {
+                if let Some(st) = stone_in_cell(k, j, 1.0) {
+                    let (u0, v0) = (k as f32 * STONE_CELL_M, j as f32 * STONE_CELL_M);
+                    assert!(st.u - st.r >= u0 - 1e-5);
+                    assert!(st.u + st.r <= u0 + STONE_CELL_M + 1e-5);
+                    assert!(st.v - st.r >= v0 - 1e-5);
+                    assert!(st.v + st.r <= v0 + STONE_CELL_M + 1e-5);
                 }
             }
             for slot in 0..3 {
