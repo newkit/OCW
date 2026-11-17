@@ -416,14 +416,14 @@ impl CloseUpShot {
     pub const THREE_QUARTER: CloseUpShot = CloseUpShot {
         yaw: std::f32::consts::PI - 0.55,
         pitch: 0.2,
-        distance: 0.62,
+        distance: 0.74,
         screen_x: 0.36,
     };
     /// The face straight from the front (the glasses, the eyes).
     pub const FRONT: CloseUpShot = CloseUpShot {
         yaw: std::f32::consts::PI - 0.12,
         pitch: 0.15,
-        distance: 0.6,
+        distance: 0.72,
         screen_x: 0.36,
     };
 }
@@ -796,6 +796,8 @@ type CloseUpParams<'w, 's> = (
     Option<Res<'w, CloseUp>>,
     Query<'w, 's, (&'static RiderHead, &'static GlobalTransform)>,
     Query<'w, 's, &'static GlobalTransform, With<crate::riders::Avatar>>,
+    // Where the rider was last frame while in a close-up.
+    Local<'s, Option<Vec3>>,
 );
 
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
@@ -957,7 +959,7 @@ pub(crate) fn follow(
     // The character editor's close-up of the head (spec §14 Phase 4, 4N):
     // the head where it is drawn now (its offset in the avatar of the last
     // frame, on the avatar of this one: no lag while riding).
-    let (close_up, heads, roots) = close;
+    let (close_up, heads, roots, mut close_rider) = close;
     let close_up = close_up.and_then(|c| c.0);
     let head_now = close_up.and_then(|_| {
         let (h, g) = heads.iter().next()?;
@@ -982,10 +984,27 @@ pub(crate) fn follow(
     // Smooth the eye position; snap if far away (teleport, mode switch at start).
     // While the tunnel camera is (partly) on, the chase eye is kept apart.
     let k = 1.0 - (-8.0 * time.delta_secs()).exp();
-    let prev = match tilt.outside_eye {
+    let mut prev = match tilt.outside_eye {
         Some(e) if was_in_tunnel => e,
         _ => cam.translation - tilt.shaken,
     };
+    // In a close-up the camera rides along: smoothed in the rider's frame
+    // (in the world's it would trail a metre behind a rider at speed –
+    // behind the head, 0.6 m in front of which it should be).
+    if head_now.is_some() {
+        if let Some(last) = *close_rider {
+            let moved = rider.translation - last;
+            if moved.length() < 50.0 {
+                prev += moved;
+                if let Some(t) = (*smoothed_target).as_mut() {
+                    *t += moved;
+                }
+            }
+        }
+        *close_rider = Some(rider.translation);
+    } else {
+        *close_rider = None;
+    }
     cam.translation = if prev.distance(eye) > 50.0 {
         eye
     } else {
