@@ -1,6 +1,7 @@
 //! Windows resources for the OCW executables (spec §11.3 *Windows icon and
-//! version info*): the logo of `artwork/logos/` as a multi-size icon
-//! (16, 24, 32, 48, 64, 128 and 256 px) and a version block (product
+//! version info*): a logo of `artwork/logos/` as a multi-size icon
+//! (16, 24, 32, 48, 64, 128 and 256 px; the game's [`OCW`] or the
+//! editor's [`OCW_STUDIO`]) and a version block (product
 //! "Open Cycling World", file and product version from Cargo).
 //!
 //! A build-script helper: an app's `build.rs` calls [`embed`], which on an
@@ -27,15 +28,43 @@ pub const ICON_ID: u16 = 1;
 /// The icon sizes in the `.ico` and the resource, smallest first.
 pub const ICON_SIZES: [u32; 7] = [16, 24, 32, 48, 64, 128, 256];
 
-/// The logo's PNG files (`artwork/logos/`) by size.
-pub const LOGO_PNGS: [(u32, &[u8]); 6] = [
-    (16, include_bytes!("../../../artwork/logos/ocw-16.png")),
-    (32, include_bytes!("../../../artwork/logos/ocw-32.png")),
-    (48, include_bytes!("../../../artwork/logos/ocw-48.png")),
-    (64, include_bytes!("../../../artwork/logos/ocw-64.png")),
-    (128, include_bytes!("../../../artwork/logos/ocw-128.png")),
-    (256, include_bytes!("../../../artwork/logos/ocw-256.png")),
-];
+/// One logo of `artwork/logos/`: its PNG renders by size.
+#[derive(Clone, Copy, Debug)]
+pub struct Logo {
+    /// The file stem, e.g. `ocw` (`ocw-16.png`, …).
+    pub name: &'static str,
+    pub pngs: [(u32, &'static [u8]); 6],
+}
+
+/// The PNG renders of `artwork/logos/<name>-<size>.png`, 16 … 256 px.
+macro_rules! logo {
+    ($name:literal) => {
+        Logo {
+            name: $name,
+            pngs: [
+                logo!(@png $name, 16),
+                logo!(@png $name, 32),
+                logo!(@png $name, 48),
+                logo!(@png $name, 64),
+                logo!(@png $name, 128),
+                logo!(@png $name, 256),
+            ],
+        }
+    };
+    (@png $name:literal, $size:literal) => {
+        (
+            $size,
+            include_bytes!(concat!("../../../artwork/logos/", $name, "-", $size, ".png")),
+        )
+    };
+}
+
+/// The game's logo (the unicorn on a bike over a rainbow): `ocw-desktop`,
+/// `ocw-server`.
+pub const OCW: Logo = logo!("ocw");
+
+/// OCW Studio's logo (the pencil drawing the rainbow): `ocw-studio`.
+pub const OCW_STUDIO: Logo = logo!("ocw-studio");
 
 /// The product name in every executable's version block.
 pub const PRODUCT_NAME: &str = "Open Cycling World";
@@ -153,12 +182,12 @@ pub fn halve(rgba: &[u8], size: u32) -> Vec<u8> {
 }
 
 /// The logo in every size of [`ICON_SIZES`].
-pub fn logo_images() -> Result<Vec<IconImage>, String> {
+pub fn logo_images(logo: &Logo) -> Result<Vec<IconImage>, String> {
     let mut images = Vec::new();
-    for (size, png) in LOGO_PNGS {
+    for (size, png) in logo.pngs {
         let (rgba, w, h) = decode_png(png)?;
         if (w, h) != (size, size) {
-            return Err(format!("ocw-{size}.png is {w}×{h}"));
+            return Err(format!("{}-{size}.png is {w}×{h}", logo.name));
         }
         images.push(IconImage {
             size,
@@ -404,18 +433,24 @@ pub fn res_file(images: &[IconImage], app: &AppInfo) -> Vec<u8> {
     out
 }
 
-/// For an app's `build.rs`: writes `ocw.ico` into `OUT_DIR` and, when the
-/// target is Windows with MSVC, `<name>.res` linked into the package's
-/// binaries (icon and version info; the package needs a bin target).
-/// Other targets get no resource.
+/// For an app's `build.rs`: [`embed_logo`] with the game's logo, [`OCW`].
+pub fn embed(description: &str) {
+    embed_logo(description, &OCW);
+}
+
+/// For an app's `build.rs`: writes `<logo>.ico` into `OUT_DIR` and, when
+/// the target is Windows with MSVC, `<name>.res` linked into the package's
+/// binaries (the logo's icon and the version info; the package needs a bin
+/// target). Other targets get no resource.
 /// `description` is the file description, which Task Manager and the
 /// taskbar's jump list show as the app's name.
-pub fn embed(description: &str) {
+pub fn embed_logo(description: &str, logo: &Logo) {
     let out_dir = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
     let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
-    let images = logo_images().expect("the logo decodes");
-    std::fs::write(out_dir.join("ocw.ico"), ico_file(&images)).expect("write ocw.ico");
+    let images = logo_images(logo).expect("the logo decodes");
+    let ico = format!("{}.ico", logo.name);
+    std::fs::write(out_dir.join(&ico), ico_file(&images)).expect("write the .ico file");
     if os != "windows" {
         return;
     }
@@ -473,7 +508,24 @@ mod tests {
 
     #[test]
     fn the_ico_has_every_size_and_each_decodes() {
-        let images = logo_images().unwrap();
+        for logo in [OCW, OCW_STUDIO] {
+            ico_has_every_size_and_each_decodes(&logo);
+        }
+    }
+
+    #[test]
+    fn the_studio_gets_its_own_logo() {
+        assert_eq!(OCW_STUDIO.name, "ocw-studio");
+        let game = logo_images(&OCW).unwrap();
+        let studio = logo_images(&OCW_STUDIO).unwrap();
+        for (g, s) in game.iter().zip(&studio) {
+            assert_eq!(g.size, s.size);
+            assert_ne!(g.rgba, s.rgba, "{} px: the studio's icon differs", s.size);
+        }
+    }
+
+    fn ico_has_every_size_and_each_decodes(logo: &Logo) {
+        let images = logo_images(logo).unwrap();
         let ico = ico_file(&images);
         assert_eq!(&ico[..4], &[0, 0, 1, 0]);
         let count = u16_at(&ico, 4) as usize;
@@ -545,7 +597,7 @@ mod tests {
 
     #[test]
     fn the_res_file_holds_icons_group_and_version() {
-        let images = logo_images().unwrap();
+        let images = logo_images(&OCW).unwrap();
         let res = res_file(&images, &app());
         let mut i = 0;
         let mut entries = Vec::new();

@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- OCW Studio logo: a horn-gold pencil drawing the rainbow on drafting paper.
+     The editor's sibling of ocw.svg (same tile, sky, rainbow and clouds).
+     Original artwork for this project, licensed like the code (MIT OR Apache-2.0). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7fc8ff"/>
+      <stop offset="1" stop-color="#d9c8ff"/>
+    </linearGradient>
+    <!-- The pencil's body: the unicorn's horn gold, across the body. -->
+    <linearGradient id="horn" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff1a8"/>
+      <stop offset="1" stop-color="#f7b500"/>
+    </linearGradient>
+    <clipPath id="tile">
+      <rect x="16" y="16" width="480" height="480" rx="96"/>
+    </clipPath>
+  </defs>
+
+  <!-- Tile -->
+  <rect x="16" y="16" width="480" height="480" rx="96" fill="url(#sky)"/>
+
+  <g clip-path="url(#tile)">
+    <!-- Drafting grid -->
+    <g stroke="#ffffff" stroke-width="3" opacity="0.45">
+      <path d="M 56 0 V 512 M 136 0 V 512 M 216 0 V 512 M 296 0 V 512 M 376 0 V 512 M 456 0 V 512"/>
+      <path d="M 0 56 H 512 M 0 136 H 512 M 0 216 H 512 M 0 296 H 512 M 0 376 H 512 M 0 456 H 512"/>
+    </g>
+
+    <!-- Rainbow: concentric arcs around (256, 500) like ocw.svg, drawn from
+         the left foot up to 70 degrees; the rest is still a construction line. -->
+    <g fill="none" stroke-width="22">
+      <path d="M 26 500 A 230 230 0 0 1 334.7 283.9" stroke="#ff3b4e"/>
+      <path d="M 48 500 A 208 208 0 0 1 327.1 304.5" stroke="#ff9a1f"/>
+      <path d="M 70 500 A 186 186 0 0 1 319.6 325.2" stroke="#ffe11f"/>
+      <path d="M 92 500 A 164 164 0 0 1 312.1 345.9" stroke="#3fd16b"/>
+      <path d="M 114 500 A 142 142 0 0 1 304.6 366.6" stroke="#2f8cff"/>
+      <path d="M 136 500 A 120 120 0 0 1 297.0 387.2" stroke="#8a4dff"/>
+    </g>
+    <!-- Construction lines of the part still to draw -->
+    <g fill="none" stroke="#3a2f55" stroke-width="5" stroke-dasharray="16 12"
+       stroke-linecap="round" opacity="0.7">
+      <path d="M 338.4 273.5 A 241 241 0 0 1 497 500"/>
+      <path d="M 293.3 397.6 A 109 109 0 0 1 365 500"/>
+      <path d="M 338.4 273.5 L 293.3 397.6"/>
+    </g>
+
+    <!-- Clouds at the rainbow's feet -->
+    <g fill="#ffffff">
+      <circle cx="60" cy="492" r="34"/>
+      <circle cx="104" cy="504" r="30"/>
+      <circle cx="30" cy="514" r="26"/>
+      <circle cx="452" cy="492" r="34"/>
+      <circle cx="408" cy="504" r="30"/>
+      <circle cx="482" cy="514" r="26"/>
+    </g>
+  </g>
+
+  <!-- Sparkles of the drawing tip -->
+  <g fill="#ffffff" stroke="#3a2f55" stroke-width="3" stroke-linejoin="round">
+    <path d="M 232 232 L 240 252 L 260 260 L 240 268 L 232 288 L 224 268 L 204 260 L 224 252 Z"/>
+    <path d="M 386 360 L 391 372 L 403 377 L 391 382 L 386 394 L 381 382 L 369 377 L 381 372 Z"/>
+  </g>
+
+  <!-- Pencil: tip at the rainbow's drawing end (316, 336), body up to the
+       top right. Drawn along +x from the tip, then turned. -->
+  <g transform="translate(316 336) rotate(-55)" stroke="#3a2f55" stroke-width="6"
+     stroke-linejoin="round" stroke-linecap="round">
+    <!-- Body: the horn, with its spiral grooves -->
+    <path d="M 62 -28 L 196 -28 L 196 28 L 62 28 Z" fill="url(#horn)"/>
+    <path d="M 92 -28 L 76 28 M 124 -28 L 108 28 M 156 -28 L 140 28 M 188 -28 L 172 28"
+          stroke="#c98a00" stroke-width="5" fill="none"/>
+    <!-- Ferrule and eraser (the mane's pink) -->
+    <path d="M 196 -28 L 220 -28 L 220 28 L 196 28 Z" fill="#d6d0e6"/>
+    <path d="M 220 -28 L 236 -28 C 250 -28 254 -18 254 0 C 254 18 250 28 236 28 L 220 28 Z"
+          fill="#ff7ab8"/>
+    <!-- Sharpened wood and the graphite tip -->
+    <path d="M 0 0 L 62 -28 L 62 28 Z" fill="#f6d7a7"/>
+    <path d="M 0 0 L 22 -10 L 22 10 Z" fill="#3a2f55"/>
+  </g>
+</svg>

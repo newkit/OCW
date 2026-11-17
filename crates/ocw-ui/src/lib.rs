@@ -32,6 +32,8 @@
 //! [`ClientCore`] and sends messages to the server.
 
 pub mod access;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod app_icon;
 pub mod bindings;
 pub mod calendar;
 pub mod character;
