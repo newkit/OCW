@@ -91,6 +91,11 @@ struct RideArgs {
     /// the bots ride their own power.
     #[arg(long, value_name = "NAME")]
     follow: Option<String>,
+    /// Let all nearby riders hear the bots in voice (*Who hears me: All
+    /// nearby*, spec §7.1.7 Q8; the default is no one) – for the voice
+    /// tests, where a page plays a bot's (fake) voice.
+    #[arg(long)]
+    voice_nearby: bool,
     /// Give up on a rider without a Welcome after this many seconds.
     #[arg(long, default_value_t = 25.0)]
     join_timeout: f64,
@@ -221,6 +226,16 @@ fn ride(args: &RideArgs) -> i32 {
             }
             .unwrap_or_else(|e| fail(e));
             net.send(rider.hello());
+            if args.voice_nearby {
+                net.send(ocw_protocol::encode(&ocw_protocol::client_message(
+                    ocw_protocol::v1::client_message::Msg::VoiceAudience(
+                        ocw_protocol::v1::VoiceAudience {
+                            heard_by: ocw_protocol::v1::VoiceHeardBy::Nearby as i32,
+                            ..Default::default()
+                        },
+                    ),
+                )));
+            }
             Link {
                 rider,
                 net: Some(net),

@@ -7,14 +7,18 @@
 //! Always on, like a call: on a shared ride (a remote server with voice and
 //! another human rider) the app asks the game server for a LiveKit token
 //! over the game connection (WebTransport) and joins the room; the local
-//! server in the page has no voice (a solo ride). `M` mutes the microphone,
-//! `Shift+M` the speaker (all voices); the switches are kept in the
-//! settings (`voice.mic_muted`, `voice.speaker_muted`). The HUD's voice
+//! server in the page has no voice (a solo ride). Every shared ride is
+//! joined muted (spec §7.1.7 Q7): `M` unmutes the microphone for the ride,
+//! `Shift+M` mutes the speaker (all voices; kept in the settings,
+//! `voice.speaker_muted`). Who hears the rider and whom the rider hears:
+//! `voice.heard_by`, `voice.room`, `voice.select WHO` (spec §7.1.3,
+//! §7.1.7 Q8), decided by the game server (Q6). The HUD's voice
 //! indicator is the shared one (`ocw_render::voice`). The echo test
 //! (`voice.echo …`) works on solo rides too (the browser's microphone
 //! through a delay in the shim). Console as on the desktop: `voice.status`,
 //! `voice.mute-mic`, `voice.mute-speaker`, `voice.mute WHO`,
-//! `voice.volume WHO PERCENT`, `voice.block WHO`, `voice.group`,
+//! `voice.volume WHO PERCENT`, `voice.block WHO`, `voice.select WHO`,
+//! `voice.group`,
 //! `voice.devices`, `voice.echo`, `voice.apply`.
 
 use std::sync::Mutex;
@@ -99,8 +103,9 @@ impl Plugin for WebVoicePlugin {
             Some(m) => (m.0)(),
             None => default_backend(),
         };
+        // Joined muted (spec §7.1.7 Q7); the speaker from the settings.
         let mut controller =
-            VoiceController::new(backend, VoiceSettings::default(), MuteState::default());
+            VoiceController::new(backend, VoiceSettings::default(), MuteState::joining(false));
         // The saved settings, before the first frame (the startup commands
         // apply them again, as on the desktop).
         if let Some(ws) = app.world().get_resource::<WebSettings>() {
@@ -177,6 +182,9 @@ fn drive(
         info!("{m}");
         console.print(m);
     }
+    for line in frame.run {
+        console.queue(line);
+    }
     info.set_if_neq(VoiceInfo(frame.menu));
     hud.set_if_neq(frame.hud);
 }
@@ -205,7 +213,21 @@ pub fn voice_json(c: &VoiceController, info: &VoiceMenuInfo, hud: &VoiceHud) -> 
             "identity": p.identity, "name": p.name, "mic_muted": p.mic_muted,
             "muted_by_me": p.muted_by_me, "heard": p.heard,
             "blocked": p.blocked, "volume": p.volume_pct,
+            "selected": p.selected, "may_hear": p.may_hear,
+            "distance_m": p.distance_m,
         })).collect::<Vec<_>>(),
+        // Who hears whom (spec §7.1.3, §7.1.7 Q6, Q8).
+        "voice_room": s.listen.key(),
+        "heard_by": s.heard_by.key(),
+        "selected": info.choices.iter().filter(|r| r.selected).map(|r| serde_json::json!({
+            "who": r.who, "name": r.name, "here": r.here,
+        })).collect::<Vec<_>>(),
+        "hearing": c.hearing().map(|h| serde_json::json!({
+            "may_hear": h.may_hear.iter().map(|r| r.0).collect::<Vec<_>>(),
+            "heard_by": h.heard_by.iter().map(|r| r.0).collect::<Vec<_>>(),
+        })),
+        "hud_room": hud.room,
+        "notice": hud.notice,
         "blocked": info.blocked.iter().map(|b| serde_json::json!({
             "key": b.key, "name": b.name,
         })).collect::<Vec<_>>(),
@@ -401,6 +423,20 @@ fn register_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
+        Command::new("voice.select")
+            .about("Select a rider for the voice room and Who hears me (set voice.room / voice.heard_by selected); remembered (rider id, identity, name or a remembered key; on, off, toggle)")
+            .arg(Arg::new("who").required(true))
+            .arg(Arg::new("state").value_parser(["on", "off", "toggle"])),
+        |world, m| {
+            let who = m.get_one::<String>("who").expect("required").clone();
+            let arg = m.get_one::<String>("state").cloned();
+            with_voice(world, |c, store| {
+                shared::select_command(c, store, &who, arg.as_deref())
+            })
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
         Command::new("voice.group")
             .about("Talk in a named group (private room) instead of the whole session; without a name: back to the session")
             .arg(Arg::new("name"))
@@ -480,33 +516,37 @@ mod tests {
         log[before.min(log.len())..].join("\n")
     }
 
-    /// The switches: the console (and M / Shift+M) flip them, they reach
-    /// the backend and the HUD and are saved in the page's storage; a
-    /// reload starts with them.
+    /// The switches: the console (and M / Shift+M) flip them and they
+    /// reach the backend and the HUD; the page starts muted (spec §7.1.7
+    /// Q7: the microphone is not remembered), the speaker is saved in the
+    /// page's storage and a reload starts with it.
     #[test]
     fn mute_switches_are_saved_and_shown() {
         let backend = Shared::default();
         let mem = MemoryStore::default();
         let mut a = app(backend.clone(), mem.clone());
-        assert!(run(&mut a, "voice.mute-mic").contains("microphone muted"));
         assert!(
             backend
                 .0
                 .lock()
                 .unwrap()
                 .0
-                .contains(&BackendCommand::SetMicMuted(true))
+                .contains(&BackendCommand::SetMicMuted(true)),
+            "joined muted"
         );
+        assert!(run(&mut a, "voice.mute-mic").contains("microphone on"));
+        assert!(run(&mut a, "voice.mute-mic").contains("microphone muted"));
         a.update();
         let hud = a.world().resource::<VoiceHud>().clone();
         assert!(hud.mic_muted && !hud.speaker_muted && !hud.visible);
         assert!(
-            mem.0
+            !mem.0
                 .lock()
                 .unwrap()
                 .as_deref()
-                .unwrap()
-                .contains("mic_muted = true")
+                .unwrap_or_default()
+                .contains("mic_muted"),
+            "the microphone is not saved"
         );
         // M with Shift: the speaker.
         a.init_resource::<ButtonInput<KeyCode>>()
@@ -657,6 +697,32 @@ mod tests {
         let voice = a2.world().resource::<Voice>();
         let prefs = voice.0.lock().unwrap().rider_prefs().clone();
         assert!(prefs["name:local/Bea Climber"].blocked);
+        // Selected riders and Who hears me (spec §7.1.3, §7.1.7 Q8): the
+        // same commands as on the desktop, saved in the page.
+        assert!(run(&mut a, "voice.block 2 off").contains("unblocked"));
+        assert!(run(&mut a, "voice.select 2").contains("Bea Climber selected"));
+        assert!(run(&mut a, "set voice.heard_by selected").contains("voice.heard_by = selected"));
+        a.update();
+        let text = mem.0.lock().unwrap().clone().unwrap();
+        assert!(text.contains("selected = true"), "{text}");
+        assert!(text.contains("heard_by = \"selected\""), "{text}");
+        let info = a.world().resource::<VoiceInfo>().0.clone();
+        let hud = a.world().resource::<VoiceHud>().clone();
+        let voice = a.world().resource::<Voice>();
+        let j: serde_json::Value =
+            serde_json::from_str(&voice_json(&voice.0.lock().unwrap(), &info, &hud)).unwrap();
+        assert_eq!(j["heard_by"], "selected");
+        assert_eq!(j["voice_room"], "everybody");
+        assert_eq!(j["participants"][0]["selected"], true);
+        assert_eq!(j["selected"][0]["name"], "Bea Climber");
+        let a3 = app(Shared::default(), mem.clone());
+        let voice = a3.world().resource::<Voice>();
+        let c = voice.0.lock().unwrap();
+        assert!(c.rider_prefs()["name:local/Bea Climber"].selected);
+        assert_eq!(
+            c.settings().heard_by,
+            ocw_voice::audience::HeardBy::Selected
+        );
     }
 
     #[test]

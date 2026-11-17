@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use ocw_core::RiderId;
 use ocw_protocol::v1;
 
+use crate::audience::{HeardBy, Hearing, Listen};
 use crate::backend::{BackendCommand, BackendEvent, VoiceBackend};
 use crate::device;
 use crate::echo::{self, ECHO_IDENTITY, EchoConfig, EchoParams};
@@ -21,6 +22,11 @@ use crate::mix::Cue;
 use crate::mute::{MuteChange, MuteState, Switch};
 use crate::riders::{self, RiderKeys, RiderPrefs};
 use crate::spatial::{self, Peer, SpatialConfig};
+
+/// A rider who talked this long ago (s) still counts as talking for the
+/// cap (spec §7.1.2), so a pause between two sentences does not swap the
+/// voices.
+pub const TALKED_RECENTLY_S: f64 = 5.0;
 
 /// The rider's voice settings (`[voice]` in `settings.toml`; the mute
 /// switches are kept in [`MuteState`]).
@@ -32,11 +38,19 @@ pub struct VoiceSettings {
     pub spatial: bool,
     /// Voice volume, 0 … 2 (1 = as received).
     pub volume: f32,
-    /// Nearest-N: at most this many voices in the session room.
+    /// At most this many voices in the session room (talking first, then
+    /// the nearest; spec §7.1.2).
     pub max_voices: usize,
     /// Microphone and speaker by name (`None`: the system default).
     pub input: Option<String>,
     pub output: Option<String>,
+    /// *Who hears me* (spec §7.1.7 Q8; default no one).
+    pub heard_by: HeardBy,
+    /// *Voice room*: whom the rider listens to (spec §7.1.3).
+    pub listen: Listen,
+    /// The first call's notice is still to be shown (spec §7.1.2;
+    /// `voice.first_call_notice`, shown by the apps' driver).
+    pub notice: bool,
 }
 
 impl Default for VoiceSettings {
@@ -48,6 +62,9 @@ impl Default for VoiceSettings {
             max_voices: SpatialConfig::default().max_voices,
             input: None,
             output: None,
+            heard_by: HeardBy::default(),
+            listen: Listen::default(),
+            notice: true,
         }
     }
 }
@@ -184,6 +201,14 @@ pub struct Participant {
     pub apart: bool,
     /// The local rider's volume for this rider (0 … 200 %).
     pub volume_pct: u16,
+    /// One of the local rider's *Selected riders* (spec §7.1.3).
+    pub selected: bool,
+    /// The game server lets the local rider hear this one (in range, their
+    /// *Who hears me* allows it, the own *Voice room* includes them and no
+    /// block; spec §7.1.7 Q6). Group rooms are not limited by it.
+    pub may_hear: bool,
+    /// How far away on the road, if the rider is on it.
+    pub distance_m: Option<f64>,
     /// Subscribed and the gain played at (spatial × volume × the rider's
     /// volume).
     pub heard: Option<f32>,
@@ -228,8 +253,15 @@ pub struct VoiceController {
     /// The riders the game server keeps apart from this one.
     apart: BTreeSet<RiderId>,
     /// Who may subscribe to the own microphone, as last told (`None`:
-    /// everybody, the default of every call).
+    /// everybody, the backend's default of every call).
     subscribers: Option<Vec<String>>,
+    /// The game server's `VoiceHearing` (spec §7.1.7 Q6): `None` until the
+    /// first one of the session – nobody is heard and nobody hears the
+    /// rider in the session room until it comes.
+    hearing: Option<Hearing>,
+    /// When each rider last talked (s): riders who talked a moment ago
+    /// keep their place in the cap (spec §7.1.2).
+    last_talked: BTreeMap<RiderId, f64>,
     echo: Echo,
     /// Messages for the console / log.
     messages: Vec<String>,
@@ -260,6 +292,8 @@ impl VoiceController {
             rider_accounts: BTreeMap::new(),
             apart: BTreeSet::new(),
             subscribers: None,
+            hearing: None,
+            last_talked: BTreeMap::new(),
             echo: Echo::default(),
             messages: Vec::new(),
         };
@@ -281,6 +315,8 @@ impl VoiceController {
         self.facts.human_riders = 0;
         self.policy = JoinPolicy::default();
         self.retry.succeeded();
+        self.hearing = None;
+        self.last_talked.clear();
     }
 
     /// Human riders in the session (from the snapshots).
@@ -327,6 +363,9 @@ impl VoiceController {
         }
         self.room = Some(g.room.clone());
         self.own_identity = Some(g.identity.clone());
+        // Who may hear the rider, before the microphone is published
+        // (the backends apply it at the connect).
+        self.apply_subscribers();
         self.backend.send(BackendCommand::Connect {
             url: g.url.clone(),
             token: g.token.clone(),
@@ -466,8 +505,31 @@ impl VoiceController {
         riders::blocks_for(&self.prefs, &self.scope)
     }
 
+    /// The audience to tell the game server (spec §7.1.7 Q8, §7.1.3):
+    /// *Who hears me*, *Voice room* and the selected riders of this scope.
+    pub fn server_audience(&self) -> v1::VoiceAudience {
+        crate::audience::audience_message(
+            self.settings.heard_by,
+            self.settings.listen,
+            riders::selected_for(&self.prefs, &self.scope),
+        )
+    }
+
+    /// The game server's `VoiceHearing` (spec §7.1.7 Q6): whose voice the
+    /// rider may receive and who may receive the rider's.
+    pub fn set_hearing(&mut self, hearing: Option<Hearing>) {
+        if self.hearing != hearing {
+            self.hearing = hearing;
+            self.refresh_participants();
+        }
+    }
+
+    pub fn hearing(&self) -> Option<&Hearing> {
+        self.hearing.as_ref()
+    }
+
     fn refresh_participants(&mut self) {
-        let flags: Vec<(String, bool, u16)> = self
+        let flags: Vec<(String, bool, u16, bool)> = self
             .participants
             .values()
             .map(|p| {
@@ -476,37 +538,101 @@ impl VoiceController {
                     p.identity.clone(),
                     k.blocked(&self.prefs),
                     k.volume_pct(&self.prefs),
+                    k.selected(&self.prefs),
                 )
             })
             .collect();
-        for (identity, blocked, volume) in flags {
+        for (identity, blocked, volume, selected) in flags {
             if let Some(p) = self.participants.get_mut(&identity) {
                 p.blocked_by_me = blocked;
                 p.volume_pct = volume;
+                p.selected = selected;
                 p.apart = p.rider.is_some_and(|r| self.apart.contains(&r));
+                p.may_hear = p.rider.is_some_and(|r| {
+                    self.hearing
+                        .as_ref()
+                        .is_some_and(|h| h.may_hear.contains(&r))
+                });
             }
         }
     }
 
-    /// Who may subscribe to the own microphone: everybody but the riders
-    /// blocked or kept apart (spec §7.1.7 Q9). Sends only changes.
+    /// In a group room everybody in it is heard (the group is the
+    /// selection, spec §7.1.3); elsewhere the game server's hearing rules.
+    fn in_group(&self) -> bool {
+        self.facts.group.is_some()
+    }
+
+    /// Who may subscribe to the own microphone (LiveKit's track
+    /// subscription permissions, enforced by the voice server):
+    ///
+    /// - in a group room everybody but the riders blocked or kept apart
+    ///   (spec §7.1.7 Q9; `None` when nobody is denied);
+    /// - in the session and event rooms (spec §7.1.7 Q6, Q8): nobody with
+    ///   *Who hears me: No one* or before the game server said; else the
+    ///   riders the game server lets hear the rider (`heard_by`: in range,
+    ///   their room, the own selection), never a blocked one – a block
+    ///   always wins.
+    ///
+    /// Sends only changes.
     fn apply_subscribers(&mut self) {
-        let denied = self
-            .participants
-            .values()
-            .any(|p| p.blocked_by_me || p.apart);
-        let want = denied.then(|| {
-            self.participants
+        let want = if self.in_group() {
+            let denied = self
+                .participants
                 .values()
-                .filter(|p| !p.blocked_by_me && !p.apart)
-                .map(|p| p.identity.clone())
-                .collect::<Vec<_>>()
-        });
+                .any(|p| p.blocked_by_me || p.apart);
+            denied.then(|| {
+                self.participants
+                    .values()
+                    .filter(|p| !p.blocked_by_me && !p.apart)
+                    .map(|p| p.identity.clone())
+                    .collect::<Vec<_>>()
+            })
+        } else {
+            let denied: BTreeSet<RiderId> = self
+                .participants
+                .values()
+                .filter(|p| p.blocked_by_me || p.apart)
+                .filter_map(|p| p.rider)
+                .chain(self.apart.iter().copied())
+                .collect();
+            let allowed: Vec<String> = match (self.settings.heard_by, &self.hearing) {
+                (HeardBy::NoOne, _) | (_, None) => Vec::new(),
+                (heard_by, Some(h)) => h
+                    .heard_by
+                    .iter()
+                    .filter(|r| !denied.contains(r))
+                    .filter(|r| {
+                        // The own selection, also before the server knows
+                        // of a change.
+                        heard_by != HeardBy::Selected || self.rider_selected(**r)
+                    })
+                    .map(|r| ocw_protocol::voice_identity(*r))
+                    .collect(),
+            };
+            Some(allowed)
+        };
         if want != self.subscribers {
             self.backend
                 .send(BackendCommand::SetSubscribers(want.clone()));
             self.subscribers = want;
         }
+    }
+
+    /// Whether rider `r` is one of the selected riders (by the snapshots'
+    /// name and account; spec §7.1.3).
+    fn rider_selected(&self, r: RiderId) -> bool {
+        let Some(name) = self.rider_names.get(&r) else {
+            // Not on the road (yet): a participant's voice name.
+            let identity = ocw_protocol::voice_identity(r);
+            return self.participants.get(&identity).is_some_and(|p| p.selected);
+        };
+        RiderKeys::new(
+            &self.scope,
+            name,
+            self.rider_accounts.get(&r).map(String::as_str),
+        )
+        .selected(&self.prefs)
     }
 
     // ------------------------------------------------------------ update
@@ -536,7 +662,7 @@ impl VoiceController {
             _ => {}
         }
         if matches!(self.phase, Phase::Connected | Phase::Reconnecting) {
-            self.place_voices(peers);
+            self.place_voices(peers, now_s);
             self.apply_subscribers();
         }
         self.drive_echo(peers);
@@ -694,6 +820,12 @@ impl VoiceController {
             if self.phase == Phase::Connected {
                 self.messages.push("voice: left the room".into());
             }
+            // The next call starts muted (spec §7.1.7 Q7: every shared
+            // ride is joined muted; nothing is remembered across rides).
+            if !self.mute.mic_muted {
+                self.mute.mic_muted = true;
+                self.backend.send(BackendCommand::SetMicMuted(true));
+            }
         }
         self.clear_room();
         self.phase = Phase::Idle;
@@ -773,6 +905,9 @@ impl VoiceController {
                         blocked_by_me: false,
                         apart: false,
                         volume_pct: riders::DEFAULT_VOLUME_PCT,
+                        selected: false,
+                        may_hear: false,
+                        distance_m: None,
                         heard: None,
                     },
                 );
@@ -804,23 +939,57 @@ impl VoiceController {
     }
 
     /// Chooses the voices to hear and their placement; sends only changes.
-    fn place_voices(&mut self, peers: &[Peer]) {
+    ///
+    /// - Never: muted for me, blocked (both ways) or kept apart by the
+    ///   server (spec §7.1.7 Q9) – a block always wins.
+    /// - In the session and event rooms only the riders the game server
+    ///   lets the rider hear (`may_hear`: in range, their *Who hears me*,
+    ///   the own *Voice room*; spec §7.1.7 Q6, Q8) and, with *Voice room:
+    ///   Selected riders*, only the selected ones; spatial: the gain falls
+    ///   to zero at 300 m, at most `max_voices` – talking riders first,
+    ///   then the nearest (spec §7.1.2).
+    /// - In a group room everybody in it.
+    fn place_voices(&mut self, peers: &[Peer], now_s: f64) {
         let volume = self.settings.volume.clamp(0.0, 2.0);
+        // Who talked a moment ago (the cap's priority).
+        for r in self
+            .speaking
+            .iter()
+            .filter_map(|i| ocw_protocol::rider_of_voice_identity(i))
+        {
+            self.last_talked.insert(r, now_s);
+        }
+        self.last_talked
+            .retain(|_, t| now_s - *t <= TALKED_RECENTLY_S && *t <= now_s);
+        let talking: BTreeSet<RiderId> = self.last_talked.keys().copied().collect();
+        for p in self.participants.values_mut() {
+            p.distance_m = p
+                .rider
+                .and_then(|r| peers.iter().find(|q| q.rider == r))
+                .map(|q| q.gap_m.abs());
+        }
         let mut want: BTreeMap<String, (f32, f32)> = BTreeMap::new();
-        // Muted for me, blocked (both ways) and kept apart by the server
-        // are not heard (spec §7.1.7 Q9).
+        let group = self.in_group();
+        let listen = self.settings.listen;
         let candidates: Vec<&Participant> = self
             .participants
             .values()
             .filter(|p| !p.muted_by_me && !p.blocked_by_me && !p.apart)
+            .filter(|p| group || (p.may_hear && (listen == Listen::Everybody || p.selected)))
             .collect();
         let pct = |identity: &str| {
             self.participants
                 .get(identity)
                 .map_or(riders::DEFAULT_VOLUME_PCT, |p| p.volume_pct)
         };
-        let spatial = self.settings.spatial && self.facts.group.is_none();
-        if spatial {
+        if group {
+            for p in &candidates {
+                want.insert(
+                    p.identity.clone(),
+                    (riders::gain(1.0, volume, pct(&p.identity)), 0.0),
+                );
+            }
+        } else {
             let by_rider: BTreeMap<RiderId, &Participant> = candidates
                 .iter()
                 .filter_map(|p| p.rider.map(|r| (r, *p)))
@@ -835,23 +1004,28 @@ impl VoiceController {
                 .keys()
                 .filter_map(|i| ocw_protocol::rider_of_voice_identity(i))
                 .collect();
-            for (r, pl) in spatial::select(&known, &current, &self.spatial) {
+            for (r, pl) in spatial::select(&known, &current, &talking, &self.spatial) {
                 let identity = &by_rider[&r].identity;
+                let (gain, pan) = if self.settings.spatial {
+                    (pl.gain, pl.pan)
+                } else {
+                    (1.0, 0.0)
+                };
                 want.insert(
                     identity.clone(),
-                    (riders::gain(pl.gain, volume, pct(identity)), pl.pan),
+                    (riders::gain(gain, volume, pct(identity)), pan),
                 );
             }
-            // Riders not (yet) on the road and participants who are not
-            // riders: quiet, while there is room.
+            // Riders the server lets the rider hear whose place is not
+            // known yet: quiet, while there is room.
             for p in &candidates {
                 if want.len() >= self.spatial.max_voices {
                     break;
                 }
                 let placed = p.rider.is_some_and(|r| known.iter().any(|k| k.rider == r));
                 if !placed && !want.contains_key(&p.identity) {
-                    let gain = if p.rider.is_some() {
-                        self.spatial.min_gain
+                    let gain = if self.settings.spatial {
+                        spatial::UNPLACED_GAIN
                     } else {
                         1.0
                     };
@@ -860,13 +1034,6 @@ impl VoiceController {
                         (riders::gain(gain, volume, pct(&p.identity)), 0.0),
                     );
                 }
-            }
-        } else {
-            for p in &candidates {
-                want.insert(
-                    p.identity.clone(),
-                    (riders::gain(1.0, volume, pct(&p.identity)), 0.0),
-                );
             }
         }
         let gone: Vec<String> = self
@@ -1043,9 +1210,26 @@ mod tests {
         }
     }
 
-    /// Brings a controller into a connected call with riders 2 and 3.
+    /// *Who hears me: All nearby* (the tests' usual case; the default is
+    /// no one).
+    fn nearby() -> VoiceSettings {
+        VoiceSettings {
+            heard_by: HeardBy::Nearby,
+            ..Default::default()
+        }
+    }
+
+    fn hearing(may_hear: &[u32], heard_by: &[u32]) -> Option<Hearing> {
+        Some(Hearing {
+            may_hear: may_hear.iter().copied().map(RiderId).collect(),
+            heard_by: heard_by.iter().copied().map(RiderId).collect(),
+        })
+    }
+
+    /// Brings a controller into a connected call with riders 2 and 3, the
+    /// game server letting all of them hear each other.
     fn connected() -> (VoiceController, Shared) {
-        let (mut c, b) = controller(VoiceSettings::default(), MuteState::default());
+        let (mut c, b) = controller(nearby(), MuteState::default());
         c.new_session(true);
         c.set_human_riders(3);
         assert!(c.update(0.0, &[]).is_some());
@@ -1059,6 +1243,7 @@ mod tests {
                 name: id.into(),
             });
         }
+        c.set_hearing(hearing(&[2, 3], &[2, 3]));
         c.update(0.2, &[]);
         assert_eq!(c.status(), Status::Connected);
         b.take_sent();
@@ -1315,6 +1500,7 @@ mod tests {
                         name: k.rsplit('/').next().unwrap().to_owned(),
                         volume_pct: *v,
                         blocked: *b,
+                        selected: false,
                     },
                 )
             })
@@ -1328,7 +1514,7 @@ mod tests {
         let (mut c, b) = connected();
         c.set_settings(VoiceSettings {
             volume: 0.5,
-            ..Default::default()
+            ..nearby()
         });
         c.set_rider_identities(
             "ride.example.org",
@@ -1358,11 +1544,11 @@ mod tests {
         c.set_settings(VoiceSettings {
             volume: 1.0,
             spatial: false,
-            ..Default::default()
+            ..nearby()
         });
         c.update(3.0, &[peer(2, 40.0), peer(3, 5.0)]);
         assert_eq!(of(&c, "rider-2").heard, Some(2.0));
-        // Nothing was blocked: everybody may hear the rider.
+        // Nothing was blocked: the permissions stay as the server said.
         assert!(
             !b.take_sent()
                 .iter()
@@ -1403,12 +1589,21 @@ mod tests {
         let bea = c.participants().find(|p| p.identity == "rider-2").unwrap();
         assert!(bea.blocked_by_me && bea.heard.is_none());
         assert_eq!(c.server_blocks(), (vec![], vec!["Bea Climber".to_owned()]));
-        // A newcomer is allowed to hear the rider at once.
+        // A newcomer is allowed to hear the rider as soon as the game
+        // server says so (in range).
         b.push(BackendEvent::ParticipantJoined {
             identity: "rider-4".into(),
             name: "Dan Descender".into(),
         });
         c.update(1.2, &[peer(2, 5.0), peer(3, 5.0)]);
+        assert!(
+            !b.take_sent()
+                .iter()
+                .any(|s| matches!(s, BackendCommand::SetSubscribers(_)))
+        );
+        // The server lists Bea too (a stale answer); the block wins.
+        c.set_hearing(hearing(&[2, 3, 4], &[2, 3, 4]));
+        c.update(1.25, &[peer(2, 5.0), peer(3, 5.0)]);
         assert!(
             b.take_sent()
                 .contains(&BackendCommand::SetSubscribers(Some(vec![
@@ -1416,11 +1611,15 @@ mod tests {
                     "rider-4".into()
                 ])))
         );
-        // Unblocked: everybody again, Bea heard again.
+        // Unblocked: everybody the server lists again, Bea heard again.
         c.set_rider_prefs(RiderPrefs::new());
         c.update(1.3, &[peer(2, 5.0), peer(3, 5.0)]);
         let sent = b.take_sent();
-        assert!(sent.contains(&BackendCommand::SetSubscribers(None)));
+        assert!(sent.contains(&BackendCommand::SetSubscribers(Some(vec![
+            "rider-2".into(),
+            "rider-3".into(),
+            "rider-4".into()
+        ]))));
         assert!(sent.contains(&BackendCommand::Subscribe {
             identity: "rider-2".into(),
             on: true
@@ -1450,7 +1649,8 @@ mod tests {
         assert!(cleo.apart && !cleo.blocked_by_me);
         // Nothing to tell the server: the block is not this rider's.
         assert_eq!(c.server_blocks(), (vec![], vec![]));
-        // The call drops: the next one starts with everybody allowed.
+        // The call drops: the backend is reset (the next call's list is
+        // sent before it connects).
         b.push(BackendEvent::Disconnected {
             reason: "gone".into(),
         });
@@ -1488,7 +1688,8 @@ mod tests {
         });
         c.update(1.0, &[peer(2, 5.0), peer(3, -250.0)]);
         assert!(c.participants().all(|p| p.heard == Some(0.8)));
-        // Riders whose position is unknown are heard quietly with spatial on.
+        // Riders the server lets the rider hear whose position is unknown
+        // are heard quietly with spatial on.
         let (mut c, _b) = connected();
         c.update(1.0, &[peer(2, 5.0)]);
         let p3 = c
@@ -1496,7 +1697,7 @@ mod tests {
             .find(|p| p.identity == "rider-3")
             .unwrap()
             .heard;
-        assert_eq!(p3, Some(SpatialConfig::default().min_gain));
+        assert_eq!(p3, Some(spatial::UNPLACED_GAIN));
     }
 
     #[test]
@@ -1504,7 +1705,12 @@ mod tests {
         let (mut c, b) = connected();
         assert!(c.set_group(Some("Bad Name".into())).is_err());
         c.set_group(Some("team-1".into())).unwrap();
-        assert!(b.take_sent().contains(&BackendCommand::Disconnect));
+        let sent = b.take_sent();
+        assert!(sent.contains(&BackendCommand::Disconnect));
+        // Every call is joined muted (spec §7.1.7 Q7).
+        assert!(sent.contains(&BackendCommand::SetMicMuted(true)));
+        assert!(c.mute().mic_muted);
+        c.set_mic(Switch::Off);
         let req = c.update(1.0, &[]).unwrap();
         assert_eq!(
             (req.channel(), req.group.as_str()),
@@ -1533,6 +1739,242 @@ mod tests {
         c.update(1.3, &[]);
         assert!(b.take_sent().contains(&BackendCommand::PlayCue(Cue::Left)));
         assert_eq!(c.speaking_riders(), vec![RiderId(1)]);
+    }
+
+    fn heard(c: &VoiceController) -> Vec<String> {
+        c.participants()
+            .filter(|p| p.heard.is_some())
+            .map(|p| p.identity.clone())
+            .collect()
+    }
+
+    fn last_subscribers(sent: &[BackendCommand]) -> Option<Option<Vec<String>>> {
+        sent.iter().rev().find_map(|c| match c {
+            BackendCommand::SetSubscribers(a) => Some(a.clone()),
+            _ => None,
+        })
+    }
+
+    /// Spec §7.1.7 Q6: in the session room the rider hears only whom the
+    /// game server allows (`may_hear`), nobody before it said; a rider
+    /// beyond 300 m is not heard even if allowed.
+    #[test]
+    fn the_game_server_decides_whom_the_rider_hears() {
+        let (mut c, b) = connected();
+        c.set_hearing(None);
+        c.update(1.0, &[peer(2, 5.0), peer(3, 5.0)]);
+        assert!(heard(&c).is_empty(), "nothing from the server: nobody");
+        assert_eq!(last_subscribers(&b.take_sent()), Some(Some(vec![])));
+        c.set_hearing(hearing(&[2], &[2, 3]));
+        c.update(1.1, &[peer(2, 5.0), peer(3, 5.0)]);
+        assert_eq!(heard(&c), ["rider-2"], "rider 3 not allowed (far, private)");
+        let three = c.participants().find(|p| p.identity == "rider-3").unwrap();
+        assert!(!three.may_hear && three.distance_m == Some(5.0));
+        c.set_hearing(hearing(&[2, 3], &[2, 3]));
+        c.update(1.2, &[peer(2, 320.0), peer(3, 5.0)]);
+        assert_eq!(heard(&c), ["rider-3"], "past 300 m: silent, unsubscribed");
+        // A group room is not limited by the server's range.
+        c.set_hearing(hearing(&[], &[]));
+        c.set_group(Some("team-1".into())).unwrap();
+        c.update(2.0, &[]);
+        c.on_grant(&grant("ocw-x-group-team-1"), 2.1);
+        b.push(BackendEvent::Connected {
+            room: "ocw-x-group-team-1".into(),
+        });
+        for id in ["rider-2", "rider-3"] {
+            b.push(BackendEvent::ParticipantJoined {
+                identity: id.into(),
+                name: id.into(),
+            });
+        }
+        c.update(2.2, &[peer(2, 2000.0), peer(3, 5.0)]);
+        assert_eq!(heard(&c), ["rider-2", "rider-3"]);
+        assert_eq!(last_subscribers(&b.take_sent()), Some(None), "group: open");
+    }
+
+    /// *Who hears me* (spec §7.1.7 Q8): No one (the default) allows
+    /// nobody, before the call connects; All nearby the riders the server
+    /// lists; Selected riders only the selected among them; a block always
+    /// wins.
+    #[test]
+    fn who_hears_me_sets_the_microphone_permissions() {
+        let (mut c, b) = controller(VoiceSettings::default(), MuteState::default());
+        assert_eq!(c.settings().heard_by, HeardBy::NoOne);
+        c.new_session(true);
+        c.set_human_riders(3);
+        c.update(0.0, &[]);
+        b.take_sent();
+        c.on_grant(&grant("ocw-x"), 0.1);
+        let sent = b.take_sent();
+        let allow = sent
+            .iter()
+            .position(|s| *s == BackendCommand::SetSubscribers(Some(vec![])))
+            .expect("nobody may hear the rider");
+        let connect = sent
+            .iter()
+            .position(|s| matches!(s, BackendCommand::Connect { .. }))
+            .unwrap();
+        assert!(allow < connect, "set before the microphone is published");
+        b.push(BackendEvent::Connected {
+            room: "ocw-x".into(),
+        });
+        for id in ["rider-2", "rider-3", "rider-4"] {
+            b.push(BackendEvent::ParticipantJoined {
+                identity: id.into(),
+                name: id.into(),
+            });
+        }
+        c.set_rider_identities(
+            "local",
+            [
+                (RiderId(2), "Bea Climber".to_owned()),
+                (RiderId(3), "Cleo Sprinter".to_owned()),
+                (RiderId(4), "Dan Descender".to_owned()),
+            ]
+            .into(),
+            Default::default(),
+        );
+        c.set_hearing(hearing(&[2, 3, 4], &[2, 3, 4]));
+        c.update(0.2, &[]);
+        assert!(
+            !b.take_sent()
+                .iter()
+                .any(|s| matches!(s, BackendCommand::SetSubscribers(_))),
+            "still no one"
+        );
+        // All nearby: whom the server lists.
+        c.set_settings(nearby());
+        c.update(0.3, &[]);
+        assert_eq!(
+            last_subscribers(&b.take_sent()),
+            Some(Some(vec![
+                "rider-2".into(),
+                "rider-3".into(),
+                "rider-4".into()
+            ]))
+        );
+        // Selected riders: Bea and Dan selected, Dan blocked.
+        let pick = |selected: bool, blocked: bool, name: &str| riders::RiderPref {
+            selected,
+            blocked,
+            ..riders::RiderPref::new(name)
+        };
+        c.set_rider_prefs(
+            [
+                (
+                    "name:local/Bea Climber".to_owned(),
+                    pick(true, false, "Bea Climber"),
+                ),
+                (
+                    "name:local/Dan Descender".to_owned(),
+                    pick(true, true, "Dan Descender"),
+                ),
+            ]
+            .into(),
+        );
+        c.set_settings(VoiceSettings {
+            heard_by: HeardBy::Selected,
+            ..Default::default()
+        });
+        c.update(0.4, &[]);
+        assert_eq!(
+            last_subscribers(&b.take_sent()),
+            Some(Some(vec!["rider-2".into()])),
+            "Bea only: Cleo not selected, Dan blocked (a block wins)"
+        );
+        let a = c.server_audience();
+        assert_eq!(a.heard_by(), v1::VoiceHeardBy::Selected);
+        assert_eq!(
+            a.selected_names,
+            ["Bea Climber"],
+            "a blocked rider is not sent"
+        );
+        // No one again.
+        c.set_settings(VoiceSettings::default());
+        c.update(0.5, &[]);
+        assert_eq!(last_subscribers(&b.take_sent()), Some(Some(vec![])));
+    }
+
+    /// *Voice room: Selected riders* (spec §7.1.3): only the selected
+    /// riders are heard (within range, as the server allows).
+    #[test]
+    fn voice_room_selected_hears_only_the_selection() {
+        let (mut c, _b) = connected();
+        c.set_rider_identities(
+            "local",
+            [
+                (RiderId(2), "Bea Climber".to_owned()),
+                (RiderId(3), "Cleo Sprinter".to_owned()),
+            ]
+            .into(),
+            Default::default(),
+        );
+        c.set_rider_prefs(
+            [(
+                "name:local/Cleo Sprinter".to_owned(),
+                riders::RiderPref {
+                    selected: true,
+                    ..riders::RiderPref::new("Cleo Sprinter")
+                },
+            )]
+            .into(),
+        );
+        c.update(1.0, &[peer(2, 5.0), peer(3, 5.0)]);
+        assert_eq!(heard(&c), ["rider-2", "rider-3"], "everybody");
+        c.set_settings(VoiceSettings {
+            listen: Listen::Selected,
+            ..nearby()
+        });
+        c.update(1.1, &[peer(2, 5.0), peer(3, 5.0)]);
+        assert_eq!(heard(&c), ["rider-3"]);
+        assert_eq!(c.server_audience().listen(), v1::VoiceListen::Selected);
+        // Out of range the selection is not heard either.
+        c.update(1.2, &[peer(2, 5.0), peer(3, 400.0)]);
+        assert!(heard(&c).is_empty());
+    }
+
+    /// The cap (spec §7.1.2): riders who talk come first, and keep their
+    /// place for a moment after they stop.
+    #[test]
+    fn talking_riders_come_first_in_the_cap() {
+        let (mut c, b) = connected();
+        c.set_settings(VoiceSettings {
+            max_voices: 1,
+            ..nearby()
+        });
+        c.update(1.0, &[peer(2, 50.0), peer(3, 5.0)]);
+        assert_eq!(heard(&c), ["rider-3"], "the nearest");
+        b.push(BackendEvent::Speaking(vec!["rider-2".into()]));
+        c.update(1.1, &[peer(2, 50.0), peer(3, 5.0)]);
+        assert_eq!(heard(&c), ["rider-2"], "the talking one");
+        b.push(BackendEvent::Speaking(vec![]));
+        c.update(
+            1.2 + TALKED_RECENTLY_S - 0.5,
+            &[peer(2, 50.0), peer(3, 5.0)],
+        );
+        assert_eq!(heard(&c), ["rider-2"], "a pause keeps the place");
+        c.update(
+            1.2 + TALKED_RECENTLY_S + 0.5,
+            &[peer(2, 50.0), peer(3, 5.0)],
+        );
+        assert_eq!(heard(&c), ["rider-3"]);
+        assert_eq!(VoiceSettings::default().max_voices, 24);
+    }
+
+    /// Spec §7.1.7 Q7: every shared ride is joined muted – the apps start
+    /// muted and a call that ends mutes the next; unmuting holds within the
+    /// call.
+    #[test]
+    fn every_call_is_joined_muted() {
+        let (mut c, b) = controller(nearby(), MuteState::joining(false));
+        assert!(c.mute().mic_muted && !c.mute().speaker_muted);
+        assert!(b.take_sent().contains(&BackendCommand::SetMicMuted(true)));
+        c.set_mic(Switch::Off);
+        let (mut c, b) = connected();
+        assert!(!c.mute().mic_muted, "unmuted in this call");
+        c.new_session(true);
+        assert!(c.mute().mic_muted, "the next ride starts muted");
+        assert!(b.take_sent().contains(&BackendCommand::SetMicMuted(true)));
     }
 
     #[test]

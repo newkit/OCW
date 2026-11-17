@@ -1,8 +1,9 @@
 //! Voice chat for Open Cycling World (spec §7, §2.4).
 //!
 //! Voice is **always on, like a call**: on a shared ride the client joins
-//! the voice room automatically with an open microphone; the rider has two
-//! mute switches (own microphone, speaker = all incoming voices). Voice
+//! the voice room automatically, with the microphone muted (spec §7.1.7
+//! Q7: M unmutes) and heard only by whom *Who hears me* allows; the rider
+//! has two mute switches (own microphone, speaker = all incoming voices). Voice
 //! goes to a self-hosted LiveKit SFU, never over the game connection, and
 //! is never recorded or stored.
 //!
@@ -11,14 +12,16 @@
 //! - [`hotkeys`]: M / Shift+M, gamepad Select / R3 → the switches,
 //! - [`join`]: when to join and leave the voice room (shared vs. solo
 //!   rides, retries),
-//! - [`spatial`]: attenuation by distance on the road and nearest-N
-//!   selection,
+//! - [`spatial`]: attenuation by distance on the road (to zero at 300 m)
+//!   and the cap with talking riders first,
 //! - [`device`]: microphone / speaker selection with fallback,
 //! - [`mix`]: the voice mixer (per-voice gain and pan), resampling and the
 //!   confirmation sounds,
 //! - [`echo`]: the echo test (an Echo rider plays the own microphone
 //!   back, delayed, from its place on the road),
-//! - [`riders`]: the rider's volume and Block for single other riders,
+//! - [`audience`]: *Who hears me* and *Voice room* (spec §7.1.3, §7.1.7
+//!   Q8) and the game server's answer, whose voice may reach whom,
+//! - [`riders`]: the rider's volume, Block and selection for single other riders,
 //!   remembered by account or by name per server (spec §7.1.7 Q9),
 //! - [`controller`]: ties them together and drives a [`backend::VoiceBackend`];
 //! - [`web`]: the browser's backend (spec §14 Phase 10 B5): the same
@@ -37,6 +40,7 @@
 //! lists are whatever the backend last learnt (a browser enumerates them
 //! asynchronously).
 
+pub mod audience;
 pub mod backend;
 pub mod controller;
 pub mod device;

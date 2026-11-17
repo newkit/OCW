@@ -4,6 +4,12 @@
 //! rider speaks alone in turn while the others' outputs are measured, and
 //! last B behaves like a modified client – it asks the voice server for
 //! A's microphone itself – which A's subscription permissions must refuse.
+//!
+//! The range and audience tests (spec §7.1.7 Q6, Q8, Q10) use the same
+//! riders with the game server's `VoiceHearing` ([`Trio::set_hearing`]),
+//! places on the road ([`Trio::place`]) and a matrix of who must hear whom
+//! ([`Trio::check_matrix`]); [`Trio::check_refused`] is the modified
+//! client asking for a voice it is not allowed.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
@@ -11,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use ocw_core::RiderId;
 use ocw_protocol::v1;
+use ocw_voice::audience::{HeardBy, Hearing};
 use ocw_voice::backend::{BackendCommand, BackendEvent, VoiceBackend};
 use ocw_voice::livekit::LiveKitBackend;
 use ocw_voice::mix::{FRAME_SAMPLES, VOICE_RATE};
@@ -59,6 +66,8 @@ pub struct Heard(pub [f64; 3]);
 
 pub struct Trio {
     pub riders: Vec<Rider>,
+    /// Where each rider is on the road (m along the route).
+    pub places: [f64; 3],
     start: Instant,
 }
 
@@ -73,21 +82,26 @@ fn tone(phase: &mut f32, hz: f32) -> Vec<f32> {
 
 impl Trio {
     /// The three riders with their grants (from the game server or
-    /// minted like it) and the riders the game server keeps apart from
-    /// each.
-    pub fn new(riders: [(RiderId, &str, v1::VoiceGrant, BTreeSet<RiderId>); 3]) -> Self {
+    /// minted like it), the riders the game server keeps apart from each
+    /// and its hearing for each (`VoiceHearing`); *Who hears me: All
+    /// nearby*, microphones on.
+    pub fn new(riders: [(RiderId, &str, v1::VoiceGrant, BTreeSet<RiderId>, Hearing); 3]) -> Self {
         let riders = riders
             .into_iter()
-            .map(|(id, name, grant, apart)| {
+            .map(|(id, name, grant, apart, hearing)| {
                 let b = Shared(Arc::new(Mutex::new(LiveKitBackend::headless())));
                 let mut c = VoiceController::new(
                     Box::new(b.clone()),
-                    VoiceSettings::default(),
+                    VoiceSettings {
+                        heard_by: HeardBy::Nearby,
+                        ..Default::default()
+                    },
                     MuteState::default(),
                 );
                 c.new_session(true);
                 c.set_human_riders(3);
                 c.set_apart(apart);
+                c.set_hearing(Some(hearing));
                 Rider {
                     id,
                     name: name.to_owned(),
@@ -100,8 +114,19 @@ impl Trio {
             .collect();
         Self {
             riders,
+            places: [0.0, 5.0, 10.0],
             start: Instant::now(),
         }
+    }
+
+    /// The game server's new answer for rider `i`.
+    pub fn set_hearing(&mut self, i: usize, hearing: Hearing) {
+        self.riders[i].c.set_hearing(Some(hearing));
+    }
+
+    /// Rider `i`'s place on the road (m).
+    pub fn place(&mut self, i: usize, at_m: f64) {
+        self.places[i] = at_m;
     }
 
     fn ids(&self) -> Vec<RiderId> {
@@ -117,14 +142,16 @@ impl Trio {
         let mut frames = 0u64;
         while begin.elapsed() < Duration::from_secs_f64(seconds) {
             let t = self.start.elapsed().as_secs_f64();
+            let places = self.places;
             for (i, r) in self.riders.iter_mut().enumerate() {
-                // Everybody 5 m from everybody.
+                // The others where they are on the road.
                 let peers: Vec<Peer> = ids
                     .iter()
-                    .filter(|id| **id != r.id)
-                    .map(|id| Peer {
+                    .enumerate()
+                    .filter(|(_, id)| **id != r.id)
+                    .map(|(j, id)| Peer {
                         rider: *id,
-                        gap_m: 5.0,
+                        gap_m: places[j] - places[i],
                         lateral_m: 0.0,
                     })
                     .collect();
@@ -191,6 +218,130 @@ impl Trio {
             })
             .collect::<Vec<_>>()
             .join("; ")
+    }
+
+    /// Who hears whom: `expect[speaker][listener]` (the diagonal is
+    /// ignored). Each rider speaks alone in turn (until the expected
+    /// listeners hear it, at most 10 s, then 3 s more); panics with what
+    /// went wrong; the lines it passed, prefixed with `what`.
+    pub fn check_matrix(&mut self, what: &str, expect: [[bool; 3]; 3], log: &str) -> Vec<String> {
+        let mut passed = Vec::new();
+        // Subscriptions and permissions settle; old audio drains.
+        self.run(2.0, None);
+        let names: Vec<String> = self.riders.iter().map(|r| r.name.clone()).collect();
+        for speaker in 0..3 {
+            let should: Vec<usize> = (0..3)
+                .filter(|&l| l != speaker && expect[speaker][l])
+                .collect();
+            let not: Vec<usize> = (0..3)
+                .filter(|&l| l != speaker && !expect[speaker][l])
+                .collect();
+            let mut total = Heard::default();
+            let begin = Instant::now();
+            loop {
+                let h = self.run(0.5, Some(speaker));
+                for i in 0..3 {
+                    total.0[i] += h.0[i];
+                }
+                if should.iter().all(|&i| total.0[i] > HEARD) || begin.elapsed().as_secs() > 10 {
+                    break;
+                }
+            }
+            let more = self.run(3.0, Some(speaker));
+            for i in 0..3 {
+                total.0[i] += more.0[i];
+            }
+            self.run(0.5, None);
+            let s = &names[speaker];
+            for &l in &should {
+                assert!(
+                    total.0[l] > HEARD,
+                    "{what}: {} does not hear {s} (energy {:.2}): {}{log}",
+                    names[l],
+                    total.0[l],
+                    self.describe()
+                );
+                passed.push(format!("{what}: {} hears {s}", names[l]));
+            }
+            for &l in &not {
+                assert!(
+                    total.0[l] < SILENT,
+                    "{what}: {} hears {s} although they must not (energy {:.2}): {}{log}",
+                    names[l],
+                    total.0[l],
+                    self.describe()
+                );
+                passed.push(format!("{what}: {} does not hear {s}", names[l]));
+            }
+        }
+        passed
+    }
+
+    /// `listener` as a modified client asks the voice server for
+    /// `speaker`'s microphone itself: the speaker's subscription
+    /// permissions must refuse it (the third rider still hears the
+    /// speaker if `third_hears`). Panics if not; the line passed.
+    pub fn check_refused(
+        &mut self,
+        what: &str,
+        listener: usize,
+        speaker: usize,
+        third_hears: bool,
+        log: &str,
+    ) -> String {
+        let names: Vec<String> = self.riders.iter().map(|r| r.name.clone()).collect();
+        let s = ocw_protocol::voice_identity(self.riders[speaker].id);
+        {
+            let mut b = self.riders[listener].b.0.lock().unwrap();
+            b.send(BackendCommand::Subscribe {
+                identity: s.clone(),
+                on: true,
+            });
+            b.send(BackendCommand::SetPlacement {
+                identity: s,
+                gain: 1.0,
+                pan: 0.0,
+            });
+        }
+        self.run(1.0, None);
+        let h = self.run(4.0, Some(speaker));
+        let third = 3 - listener - speaker;
+        if third_hears {
+            assert!(
+                h.0[third] > HEARD,
+                "{what}: {} does not hear {} (energy {:.2}){log}",
+                names[third],
+                names[speaker],
+                h.0[third]
+            );
+        }
+        assert!(
+            h.0[listener] < SILENT,
+            "{what}: {} hears {} after subscribing by itself: the voice server let it (energy {:.2}): {}{log}",
+            names[listener],
+            names[speaker],
+            h.0[listener],
+            self.describe()
+        );
+        // Back to what the controller wants.
+        {
+            let mut b = self.riders[listener].b.0.lock().unwrap();
+            b.send(BackendCommand::Subscribe {
+                identity: ocw_protocol::voice_identity(self.riders[speaker].id),
+                on: false,
+            });
+        }
+        format!(
+            "{what}: {} asking for {}'s voice itself is refused by the voice server",
+            names[listener], names[speaker]
+        )
+    }
+
+    /// Leaves the call.
+    pub fn leave(&mut self) {
+        for r in &mut self.riders {
+            r.c.new_session(false);
+        }
     }
 
     /// The block test (A = 0, B = 1 kept apart, C = 2): panics with what

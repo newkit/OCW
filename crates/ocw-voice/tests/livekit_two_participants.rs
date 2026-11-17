@@ -20,7 +20,11 @@
 //! (spec §7.1.7 Q9) has three controllers and an in-memory game server: A
 //! blocks B, the server keeps both apart, neither hears the other – not
 //! even when B asks the voice server for A's microphone itself – while C
-//! hears both and both hear C.
+//! hears both and both hear C. A fourth (spec §7.1.7 Q6, Q8, Q10) places
+//! the riders on the road of the in-memory game server: a far rider is
+//! neither sent nor heard (and refused when it asks itself), a near one
+//! is; *Who hears me: Selected riders*, *Voice room: Selected riders* and
+//! a block over a selection hold.
 #![cfg(feature = "livekit")]
 
 mod support;
@@ -211,15 +215,26 @@ fn two_desktop_controllers_hear_each_other() {
     let riders = [RiderId(1), RiderId(2)];
     let mut sides: Vec<(VoiceController, Shared)> = riders
         .iter()
-        .map(|_| {
+        .enumerate()
+        .map(|(i, _)| {
             let b = Shared(Arc::new(Mutex::new(LiveKitBackend::headless())));
+            // Both let all nearby hear them (the default is no one, spec
+            // §7.1.7 Q8); the game server lets each hear the other (Q6).
             let mut c = VoiceController::new(
                 Box::new(b.clone()),
-                VoiceSettings::default(),
+                VoiceSettings {
+                    heard_by: ocw_voice::audience::HeardBy::Nearby,
+                    ..Default::default()
+                },
                 MuteState::default(),
             );
             c.new_session(true);
             c.set_human_riders(2);
+            let other = riders[1 - i];
+            c.set_hearing(Some(ocw_voice::audience::Hearing {
+                may_hear: [other].into(),
+                heard_by: [other].into(),
+            }));
             (c, b)
         })
         .collect();
@@ -318,30 +333,9 @@ fn a_block_is_enforced_both_ways_by_the_server() {
         .unwrap_or_default();
     cfg.room_prefix = "ocw-block".into();
     let room = cfg.session_room();
-    // The game server: three riders join, Ada blocks Bea.
-    let mut game = ocw_server::GameServer::new(
-        ocw_world::Route::test_loop(),
-        ocw_server::ServerConfig::default(),
-    );
-    let names = ["Ada Rider", "Bea Climber", "Cleo Sprinter"];
-    let mut joined = Vec::new();
-    for n in names {
-        let conn = game.connect();
-        let reply = game.handle(
-            conn,
-            &ocw_protocol::encode(&ocw_protocol::client_message(C::Hello(
-                ocw_protocol::v1::Hello {
-                    protocol_version: ocw_protocol::PROTOCOL_VERSION,
-                    display_name: n.into(),
-                    ..Default::default()
-                },
-            ))),
-        );
-        let Ok(S::Welcome(w)) = ocw_protocol::decode_server(&reply[0]) else {
-            panic!("{n} not welcomed");
-        };
-        joined.push((conn, RiderId(w.rider_id)));
-    }
+    // The game server: three riders join (all nearby), Ada blocks Bea.
+    let (mut game, joined) = game_with_trio(&cfg);
+    let names = TRIO;
     game.handle(
         joined[0].0,
         &ocw_protocol::encode(&ocw_protocol::client_message(C::VoiceBlocks(
@@ -353,8 +347,9 @@ fn a_block_is_enforced_both_ways_by_the_server() {
     );
     let mut apart = [(); 3].map(|_| std::collections::BTreeSet::new());
     for (conn, bytes) in game.take_directed() {
+        // The VoiceHearing answers go to the riders too.
         let Ok(S::VoiceApart(a)) = ocw_protocol::decode_server(&bytes) else {
-            panic!("not a VoiceApart");
+            continue;
         };
         let i = joined.iter().position(|(c, _)| *c == conn).unwrap();
         apart[i] = a.riders.into_iter().map(RiderId).collect();
@@ -377,13 +372,233 @@ fn a_block_is_enforced_both_ways_by_the_server() {
             ..Default::default()
         }
     };
+    let hearing = |game: &ocw_server::GameServer, i: usize| hearing_of(game, joined[i].0);
     let [a0, a1, a2] = apart;
     let mut trio = support::trio::Trio::new([
-        (joined[0].1, names[0], grant(0), a0),
-        (joined[1].1, names[1], grant(1), a1),
-        (joined[2].1, names[2], grant(2), a2),
+        (joined[0].1, names[0], grant(0), a0, hearing(&game, 0)),
+        (joined[1].1, names[1], grant(1), a1, hearing(&game, 1)),
+        (joined[2].1, names[2], grant(2), a2, hearing(&game, 2)),
     ]);
     for line in trio.check_block(&log) {
         println!("PASS {line}");
     }
+}
+
+const TRIO: [&str; 3] = ["Ada Rider", "Bea Climber", "Cleo Sprinter"];
+
+fn client_bytes(m: ocw_protocol::v1::client_message::Msg) -> Vec<u8> {
+    ocw_protocol::encode(&ocw_protocol::client_message(m))
+}
+
+/// An in-memory game server with voice (this LiveKit's keys) and dev
+/// commands (the riders are placed by teleports); Ada, Bea and Cleo join
+/// with *Who hears me: All nearby*. Their connections and riders.
+fn game_with_trio(
+    cfg: &VoiceConfig,
+) -> (
+    ocw_server::GameServer,
+    Vec<(ocw_server::ConnectionId, RiderId)>,
+) {
+    use ocw_protocol::v1::{client_message::Msg as C, server_message::Msg as S};
+    let mut game = ocw_server::GameServer::new(
+        ocw_world::Route::test_loop(),
+        ocw_server::ServerConfig {
+            voice: Some(cfg.clone()),
+            allow_dev_commands: true,
+            ..Default::default()
+        },
+    );
+    let mut joined = Vec::new();
+    for n in TRIO {
+        let conn = game.connect();
+        let reply = game.handle(
+            conn,
+            &client_bytes(C::Hello(ocw_protocol::v1::Hello {
+                protocol_version: ocw_protocol::PROTOCOL_VERSION,
+                display_name: n.into(),
+                ..Default::default()
+            })),
+        );
+        let Ok(S::Welcome(w)) = ocw_protocol::decode_server(&reply[0]) else {
+            panic!("{n} not welcomed");
+        };
+        joined.push((conn, RiderId(w.rider_id)));
+    }
+    for (conn, _) in &joined {
+        game.handle(*conn, &client_bytes(C::VoiceAudience(nearby(&[]))));
+    }
+    (game, joined)
+}
+
+/// *Who hears me: All nearby* or, with names, *Selected riders* (them).
+fn nearby(selected: &[&str]) -> ocw_protocol::v1::VoiceAudience {
+    use ocw_protocol::v1::{VoiceAudience, VoiceHeardBy};
+    VoiceAudience {
+        heard_by: if selected.is_empty() {
+            VoiceHeardBy::Nearby
+        } else {
+            VoiceHeardBy::Selected
+        } as i32,
+        selected_names: selected.iter().map(|s| (*s).to_owned()).collect(),
+        ..Default::default()
+    }
+}
+
+/// What the game server told `conn` last (`VoiceHearing`).
+fn hearing_of(
+    game: &ocw_server::GameServer,
+    conn: ocw_server::ConnectionId,
+) -> ocw_voice::audience::Hearing {
+    let h = game.voice_hearing(conn);
+    ocw_voice::audience::Hearing {
+        may_hear: h.may_hear,
+        heard_by: h.heard_by,
+    }
+}
+
+/// Voice by range and audience against a real LiveKit server (spec
+/// §7.1.7 Q6, Q8, Q10, §7.1.3): the in-memory game server places the
+/// riders and decides who receives whose voice; the controllers follow it
+/// and the voice server enforces the speakers' permissions.
+#[test]
+fn range_and_audiences_are_enforced_by_the_server() {
+    use ocw_protocol::v1::client_message::Msg as C;
+    let Some((mut cfg, own)) = server() else {
+        eprintln!("skipped: no LiveKit server (see two_participants_hear_each_other)");
+        return;
+    };
+    let log = own
+        .as_ref()
+        .map(|s| format!(" (server log {})", s.log.display()))
+        .unwrap_or_default();
+    cfg.room_prefix = "ocw-range".into();
+    let room = cfg.session_room();
+    let (mut game, joined) = game_with_trio(&cfg);
+    let teleport = |game: &mut ocw_server::GameServer, i: usize, km: f64| {
+        game.handle(
+            joined[i].0,
+            &client_bytes(C::Dev(ocw_protocol::v1::DevCommand {
+                cmd: Some(ocw_protocol::v1::dev_command::Cmd::TeleportDistanceM(
+                    km * 1000.0,
+                )),
+            })),
+        );
+        for _ in 0..10 {
+            game.tick();
+        }
+    };
+    // Cleo 1.5 km away (half the loop), Ada and Bea together.
+    teleport(&mut game, 2, 1.5);
+    let h: Vec<_> = (0..3).map(|i| hearing_of(&game, joined[i].0)).collect();
+    let ids: Vec<RiderId> = joined.iter().map(|(_, r)| *r).collect();
+    assert_eq!(h[0].may_hear, [ids[1]].into(), "Ada may hear Bea only");
+    assert!(
+        h[2].may_hear.is_empty() && h[2].heard_by.is_empty(),
+        "Cleo: nobody"
+    );
+    println!("PASS the game server sends nobody's voice to the far rider and hers to nobody");
+    let unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let grant = |i: usize| {
+        let identity = ocw_protocol::voice_identity(joined[i].1);
+        ocw_protocol::v1::VoiceGrant {
+            url: cfg.url.clone(),
+            token: cfg.access_token(&room, &identity, TRIO[i], unix),
+            room: room.clone(),
+            identity,
+            expires_unix_s: unix + cfg.token_ttl_s,
+            ..Default::default()
+        }
+    };
+    let none = std::collections::BTreeSet::new;
+    let mut trio = support::trio::Trio::new([
+        (ids[0], TRIO[0], grant(0), none(), h[0].clone()),
+        (ids[1], TRIO[1], grant(1), none(), h[1].clone()),
+        (ids[2], TRIO[2], grant(2), none(), h[2].clone()),
+    ]);
+    trio.place(2, 1500.0);
+    assert!(
+        trio.join(Duration::from_secs(30)),
+        "not all three in the call: {}{log}",
+        trio.describe()
+    );
+    println!("PASS all three riders in the call");
+    let far = [
+        [false, true, false],
+        [true, false, false],
+        [false, false, false],
+    ];
+    for line in trio.check_matrix("far", far, &log) {
+        println!("PASS {line}");
+    }
+    println!("PASS {}", trio.check_refused("far", 2, 0, true, &log));
+    // Cleo comes back (20 m behind Ada); Ada: *Who hears me: Selected
+    // riders* with Bea only.
+    teleport(&mut game, 2, 0.02);
+    game.handle(
+        joined[0].0,
+        &client_bytes(C::VoiceAudience(nearby(&["Bea Climber"]))),
+    );
+    for _ in 0..10 {
+        game.tick();
+    }
+    {
+        let a = &mut trio.riders[0].c;
+        let mut s = a.settings().clone();
+        s.heard_by = ocw_voice::audience::HeardBy::Selected;
+        a.set_settings(s);
+        a.set_rider_prefs(
+            [(
+                "name:local/Bea Climber".to_owned(),
+                ocw_voice::riders::RiderPref {
+                    selected: true,
+                    ..ocw_voice::riders::RiderPref::new("Bea Climber")
+                },
+            )]
+            .into(),
+        );
+    }
+    for (i, (conn, _)) in joined.iter().enumerate() {
+        trio.set_hearing(i, hearing_of(&game, *conn));
+    }
+    trio.place(2, 20.0);
+    let selected = [
+        [false, true, false],
+        [true, false, true],
+        [true, true, false],
+    ];
+    for line in trio.check_matrix("Ada heard by Bea only", selected, &log) {
+        println!("PASS {line}");
+    }
+    println!(
+        "PASS {}",
+        trio.check_refused("Ada heard by Bea only", 2, 0, false, &log)
+    );
+    // A block wins over the selection: Ada blocks Bea.
+    game.handle(
+        joined[0].0,
+        &client_bytes(C::VoiceBlocks(ocw_protocol::v1::VoiceBlocks {
+            names: vec!["Bea Climber".into()],
+            ..Default::default()
+        })),
+    );
+    for _ in 0..10 {
+        game.tick();
+    }
+    for (i, (conn, _)) in joined.iter().enumerate() {
+        trio.riders[i].c.set_apart(game.voice_apart(*conn));
+        trio.set_hearing(i, hearing_of(&game, *conn));
+    }
+    assert!(hearing_of(&game, joined[0].0).heard_by.is_empty());
+    let blocked = [
+        [false, false, false],
+        [false, false, true],
+        [true, true, false],
+    ];
+    for line in trio.check_matrix("a block over a selection", blocked, &log) {
+        println!("PASS {line}");
+    }
+    trio.leave();
 }

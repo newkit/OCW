@@ -481,8 +481,10 @@ page needs `wss://`, i.e. LiveKit behind TLS). For browsers on other
 machines, give the server a LiveKit URL they can reach (`--bind 0.0.0.0`,
 TCP 7880 and 7881 open plus its UDP media port: 7882 with `rtc.udp_port`
 set, as the bundled voice server does, else LiveKit's range 50000–60000).
-M / Shift+M (gamepad Select / R3) mute the
-microphone / the voices.
+Every ride is joined muted: M / Shift+M (gamepad Select / R3) switch the
+microphone / the voices; *Settings → Voice → Voice room* says who hears you
+(no one until you choose *All nearby* or *Selected riders*) and whom you
+hear, as on the desktop.
 
 #### Menus, settings and captures
 
@@ -2709,19 +2711,29 @@ app](#browser-app-preview).
 
 Voice is **always on, like a call** (spec §2.4, §7): on a shared ride – a
 server with other riders, or a voice group – the app joins the voice room by
-itself with an open microphone; solo rides (the local server, bots only)
-never connect. **M** / gamepad **Select** mutes your microphone, **Shift+M** /
-**R3** mutes all voices; both are remembered in `settings.toml` and shown in
-the HUD's voice indicator (with the connection state and who is talking).
-Settings → Voice has the switches, the voice volume, the participants (mute
-one rider for yourself), the microphone and speaker and spatial voice (riders
-further away on the road sound quieter; only the nearest 10 are heard).
+itself, **with your microphone muted** (every ride; spec §7.1.7 Q7); solo
+rides (the local server, bots only) never connect. **M** / gamepad
+**Select** unmutes / mutes your microphone for this ride, **Shift+M** /
+**R3** mutes all voices (remembered in `settings.toml`); the HUD's voice
+indicator shows both, the connection state, who is talking and the room
+(`ROOM: everybody - heard by: no one`). Riders are at full volume up to
+10 m and fade to silence at 300 m; the game server sends a rider's voice
+only to riders who can hear it (spec §7.1.7 Q6, Q10). **Who hears you** is
+yours to choose: *No one* (the default), *All nearby* or *Selected riders*;
+and whom you hear: *Voice room: Everybody* or *Selected riders* (Settings →
+Voice → Voice room, *Choose riders*; spec §7.1.3, Q8). A block always wins.
+Settings → Voice has the switches, the voice room, the participants (mute
+one rider for yourself, a volume, Block), the devices, the voice volume and
+spatial voice (at most 24 voices at once, those talking first).
 Console: `voice.status`, `voice.mute-mic [on|off|toggle]`,
-`voice.mute-speaker [on|off|toggle]`, `voice.mute RIDER`, `voice.group NAME`
-(a private room; `--leave` goes back), `voice.devices`, `voice.echo` (the
-echo test, below); settings `voice.enabled`, `voice.volume`,
-`voice.spatial`, `voice.max_voices`, `voice.input`, `voice.output`,
-`audio.echo_bot`, `audio.echo_delay_ms`.
+`voice.mute-speaker [on|off|toggle]`, `voice.mute RIDER`, `voice.volume
+RIDER PERCENT`, `voice.block RIDER`, `voice.select RIDER [on|off|toggle]`,
+`voice.group NAME` (a private room; `--leave` goes back), `voice.devices`,
+`voice.echo` (the echo test, below); settings `voice.enabled`,
+`voice.heard_by` (`no_one`, `nearby`, `selected`), `voice.room`
+(`everybody`, `selected`), `voice.volume`, `voice.spatial`,
+`voice.max_voices`, `voice.input`, `voice.output`, `audio.echo_bot`,
+`audio.echo_delay_ms`.
 
 Voice needs two things:
 

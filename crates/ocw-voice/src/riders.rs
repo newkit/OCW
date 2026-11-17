@@ -1,7 +1,9 @@
 //! What the rider chose for single other riders (spec §7.1.7 Q9, built
 //! §7.1.10): a **volume** (0 – 200 %, 10 % steps, on top of the spatial
-//! gain and the voice volume) and **Block** (both directions, enforced by
-//! the game server and the voice server). Remembered across sessions by a
+//! gain and the voice volume), **Block** (both directions, enforced by
+//! the game server and the voice server) and **Selected** (spec §7.1.3,
+//! §7.1.7 Q8: the *Selected riders* of *Voice room* and *Who hears me*;
+//! a block wins). Remembered across sessions by a
 //! stable key: the rider's signed-in account (`acct:ID`, the same on every
 //! server) where there is one, else the rider's name on that server
 //! (`name:SERVER/NAME`; names are unique on a server, spec §14 Phase 4
@@ -25,6 +27,10 @@ pub struct RiderPref {
     pub name: String,
     pub volume_pct: u16,
     pub blocked: bool,
+    /// One of the *Selected riders* (spec §7.1.3, §7.1.7 Q8): heard with
+    /// *Voice room: Selected riders*, hearing the own rider with *Who
+    /// hears me: Selected riders*. A block wins over it.
+    pub selected: bool,
 }
 
 impl RiderPref {
@@ -33,12 +39,13 @@ impl RiderPref {
             name: name.into(),
             volume_pct: DEFAULT_VOLUME_PCT,
             blocked: false,
+            selected: false,
         }
     }
 
     /// Nothing changed: not worth remembering.
     pub fn is_default(&self) -> bool {
-        self.volume_pct == DEFAULT_VOLUME_PCT && !self.blocked
+        self.volume_pct == DEFAULT_VOLUME_PCT && !self.blocked && !self.selected
     }
 }
 
@@ -115,6 +122,14 @@ impl RiderKeys {
             .any(|k| prefs.get(k).is_some_and(|p| p.blocked))
     }
 
+    /// Selected under either key (spec §7.1.3).
+    pub fn selected(&self, prefs: &RiderPrefs) -> bool {
+        self.account
+            .iter()
+            .chain(std::iter::once(&self.name))
+            .any(|k| prefs.get(k).is_some_and(|p| p.selected))
+    }
+
     pub fn volume_pct(&self, prefs: &RiderPrefs) -> u16 {
         self.lookup(prefs)
             .map_or(DEFAULT_VOLUME_PCT, |(_, p)| p.volume_pct)
@@ -140,10 +155,25 @@ pub fn gain(spatial: f32, voice_volume: f32, rider_pct: u16) -> f32 {
 /// (`VoiceBlocks`): every blocked account and the names blocked on this
 /// server.
 pub fn blocks_for(prefs: &RiderPrefs, scope: &str) -> (Vec<String>, Vec<String>) {
+    keys_for(prefs, scope, |p| p.blocked)
+}
+
+/// The selected riders on the server of `scope`, for the game server
+/// (`VoiceAudience`): every selected account and the names selected on
+/// this server. A blocked rider is never in it (a block wins).
+pub fn selected_for(prefs: &RiderPrefs, scope: &str) -> (Vec<String>, Vec<String>) {
+    keys_for(prefs, scope, |p| p.selected && !p.blocked)
+}
+
+fn keys_for(
+    prefs: &RiderPrefs,
+    scope: &str,
+    pick: impl Fn(&RiderPref) -> bool,
+) -> (Vec<String>, Vec<String>) {
     let prefix = format!("name:{scope}/");
     let mut accounts = Vec::new();
     let mut names = Vec::new();
-    for (k, _) in prefs.iter().filter(|(_, p)| p.blocked) {
+    for (k, _) in prefs.iter().filter(|(_, p)| pick(p)) {
         if let Some(a) = k.strip_prefix("acct:") {
             accounts.push(a.to_owned());
         } else if let Some(n) = k.strip_prefix(&prefix) {
@@ -155,9 +185,18 @@ pub fn blocks_for(prefs: &RiderPrefs, scope: &str) -> (Vec<String>, Vec<String>)
 
 /// The blocked riders (key, name), by name.
 pub fn blocked_list(prefs: &RiderPrefs) -> Vec<(String, String)> {
+    list_of(prefs, |p| p.blocked)
+}
+
+/// The selected riders (key, name), by name (spec §7.1.3: here or not).
+pub fn selected_list(prefs: &RiderPrefs) -> Vec<(String, String)> {
+    list_of(prefs, |p| p.selected)
+}
+
+fn list_of(prefs: &RiderPrefs, pick: impl Fn(&RiderPref) -> bool) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = prefs
         .iter()
-        .filter(|(_, p)| p.blocked)
+        .filter(|(_, p)| pick(p))
         .map(|(k, p)| (k.clone(), p.name.clone()))
         .collect();
     out.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
@@ -270,5 +309,45 @@ mod tests {
         assert_eq!(names, ["Ada Rider", "Bea Climber", "Cleo Sprinter"]);
         assert!(RiderPref::new("x").is_default());
         assert!(!blocked("x").is_default());
+    }
+
+    /// *Selected riders* (spec §7.1.3, §7.1.7 Q8): by account everywhere,
+    /// by name on this server; a blocked rider is never selected for the
+    /// server (a block wins).
+    #[test]
+    fn selections_for_this_server_and_a_block_wins() {
+        let mut prefs = RiderPrefs::new();
+        let selected = |name: &str| RiderPref {
+            selected: true,
+            ..RiderPref::new(name)
+        };
+        prefs.insert("acct:acc-1".into(), selected("Ada Rider"));
+        prefs.insert(
+            "name:ride.example.org/Bea Climber".into(),
+            selected("Bea Climber"),
+        );
+        prefs.insert(
+            "name:other.example.org/Cleo Sprinter".into(),
+            selected("Cleo Sprinter"),
+        );
+        prefs.insert(
+            "name:ride.example.org/Dan Descender".into(),
+            RiderPref {
+                blocked: true,
+                ..selected("Dan Descender")
+            },
+        );
+        let (a, n) = selected_for(&prefs, "ride.example.org");
+        assert_eq!(a, ["acc-1"]);
+        assert_eq!(n, ["Bea Climber"], "Dan is blocked: not selected");
+        let names: Vec<String> = selected_list(&prefs).into_iter().map(|(_, n)| n).collect();
+        assert_eq!(
+            names,
+            ["Ada Rider", "Bea Climber", "Cleo Sprinter", "Dan Descender"]
+        );
+        assert!(!selected("x").is_default(), "a selection is remembered");
+        let k = RiderKeys::new("ride.example.org", "Bea Climber", Some("acc-9"));
+        assert!(k.selected(&prefs), "by name, though signed in now");
+        assert!(!RiderKeys::new("ride.example.org", "Eve", None).selected(&prefs));
     }
 }

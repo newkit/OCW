@@ -50,6 +50,7 @@ pub const MAX_TEXT_LEN: usize = 200;
 /// name = "Bea Climber"
 /// volume = 150
 /// blocked = false
+/// selected = true
 /// ```
 pub const VOICE_RIDERS: &str = "voice_riders";
 
@@ -653,9 +654,9 @@ pub const SETTINGS: &[SettingDef] = &[
         key: "voice.mic_muted",
         kind: Kind::Bool,
         default: "off",
-        description: "Own microphone muted (M, gamepad Select)",
+        description: "Own microphone muted now (M, gamepad Select); every shared ride is joined muted, so it is not remembered for the next",
         scope: Scope::Live,
-        apply: Apply::Command("voice.apply mic_muted {}"),
+        apply: Apply::Command("voice.mute-mic {}"),
     },
     SettingDef {
         key: "voice.speaker_muted",
@@ -681,7 +682,7 @@ pub const SETTINGS: &[SettingDef] = &[
         key: "voice.spatial",
         kind: Kind::Bool,
         default: "on",
-        description: "Spatial voice: riders further away on the road sound quieter",
+        description: "Spatial voice: riders further away on the road sound quieter, down to silence at 300 m (off: the same volume up to 300 m)",
         scope: Scope::Live,
         apply: Apply::Command("voice.apply spatial {}"),
     },
@@ -689,13 +690,37 @@ pub const SETTINGS: &[SettingDef] = &[
         key: "voice.max_voices",
         kind: Kind::Int {
             min: 1,
-            max: 20,
+            max: 32,
             step: 1,
         },
-        default: "10",
-        description: "Hear at most this many riders at once (the nearest)",
+        default: "24",
+        description: "Hear at most this many riders at once (those talking first, then the nearest)",
         scope: Scope::Live,
         apply: Apply::Command("voice.apply max_voices {}"),
+    },
+    SettingDef {
+        key: "voice.room",
+        kind: Kind::Choice(&["everybody", "selected"]),
+        default: "everybody",
+        description: "Voice room: listen to everybody nearby, or only to the selected riders (voice.select WHO)",
+        scope: Scope::Live,
+        apply: Apply::Command("voice.apply room {}"),
+    },
+    SettingDef {
+        key: "voice.heard_by",
+        kind: Kind::Choice(&["no_one", "nearby", "selected"]),
+        default: "no_one",
+        description: "Who hears me: no one, all nearby (up to 300 m), or the selected riders (voice.select WHO)",
+        scope: Scope::Live,
+        apply: Apply::Command("voice.apply heard_by {}"),
+    },
+    SettingDef {
+        key: "voice.first_call_notice",
+        kind: Kind::Bool,
+        default: "on",
+        description: "Show the voice notice (joined muted, who hears you) at the next call; off once shown",
+        scope: Scope::Live,
+        apply: Apply::Command("voice.apply first_call_notice {}"),
     },
     SettingDef {
         key: "voice.input",
@@ -1206,6 +1231,7 @@ impl Settings {
                     .and_then(|n| n.as_integer())
                     .map_or(ocw_voice::riders::DEFAULT_VOLUME_PCT, clamp_volume),
                 blocked: e.get("blocked").and_then(|b| b.as_bool()).unwrap_or(false),
+                selected: e.get("selected").and_then(|b| b.as_bool()).unwrap_or(false),
             };
             if !pref.is_default() {
                 out.insert(key.clone(), pref);
@@ -1235,6 +1261,7 @@ impl Settings {
                 toml::Value::Integer(i64::from(pref.volume_pct)),
             );
             e.insert("blocked".into(), toml::Value::Boolean(pref.blocked));
+            e.insert("selected".into(), toml::Value::Boolean(pref.selected));
             t.insert(key.to_owned(), toml::Value::Table(e));
         }
         if t.is_empty() {
@@ -1371,17 +1398,26 @@ mod tests {
             blocked: true,
             ..RiderPref::new("Ada Rider")
         };
+        // A selected rider (spec §7.1.3, §7.1.7 Q8): remembered like a block.
+        let cleo = RiderPref {
+            selected: true,
+            ..RiderPref::new("Cleo Sprinter")
+        };
         s.set_voice_rider("name:ride.example.org/Bea Climber", &bea);
         s.set_voice_rider("acct:acc-1", &ada);
+        s.set_voice_rider("acct:acc-3", &cleo);
         let text = s.to_toml();
+        assert!(text.contains("selected = true"), "{text}");
         let (back, warnings) = Settings::parse(&text).unwrap();
         assert!(warnings.is_empty(), "{warnings:?}");
         let prefs = back.voice_riders();
-        assert_eq!(prefs.len(), 2);
+        assert_eq!(prefs.len(), 3);
         assert_eq!(prefs["name:ride.example.org/Bea Climber"], bea);
         assert_eq!(prefs["acct:acc-1"], ada);
+        assert_eq!(prefs["acct:acc-3"], cleo);
         // Back to the defaults: forgotten, the section gone with the last.
         let mut back = back;
+        back.set_voice_rider("acct:acc-3", &RiderPref::new("Cleo Sprinter"));
         back.set_voice_rider("acct:acc-1", &RiderPref::new("Ada Rider"));
         back.set_voice_rider(
             "name:ride.example.org/Bea Climber",

@@ -495,6 +495,11 @@ mod tests {
         assert_eq!(req.channel, v1::VoiceChannel::Session as i32);
         c.on_grant(&grant("good"), 0.1);
         assert_eq!(c.status(), Status::Connecting);
+        // The game server lets the rider hear Ada (spec §7.1.7 Q6).
+        c.set_hearing(Some(crate::audience::Hearing {
+            may_hear: [RiderId(2)].into(),
+            heard_by: [RiderId(2)].into(),
+        }));
         let peer = Peer {
             rider: RiderId(2),
             gap_m: 10.0,
