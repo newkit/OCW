@@ -12,7 +12,9 @@
 //!
 //! Items: 0 – 41 the days ([`ocw_sky::calendar::month_grid`]), then the
 //! buttons over the grid ([`YEAR_PREV`] … [`YEAR_NEXT`]), the time stepper
-//! ([`TIME`]) and Back ([`BACK`], the model's slot after the rows).
+//! ([`TIME`]), Select ([`SELECT`]: the selected day with the stepper's
+//! time, then back to World → Time, like a date picker's OK) and Back
+//! ([`BACK`], the model's slot after the rows: cancels, the date kept).
 
 use std::sync::Arc;
 
@@ -60,6 +62,12 @@ impl Cal {
         cal::grid_index(self.year, self.month, d)
     }
 
+    /// The selected day: the one the focus was last on (by keys, a click,
+    /// a date jump), which Select sets.
+    pub fn selected(&self) -> Date {
+        (self.year, self.month, self.day)
+    }
+
     fn in_month(&self, d: Date) -> bool {
         (d.0, d.1) == (self.year, self.month) && d >= cal::FIRST && d <= cal::LAST
     }
@@ -77,9 +85,11 @@ pub const DATES: usize = DAYS + 3;
 pub const SEASON: usize = DAYS + 4;
 pub const MONTH_NEXT: usize = DAYS + 5;
 pub const YEAR_NEXT: usize = DAYS + 6;
-/// The time stepper under the grid, then Back.
+/// Under the grid: the time stepper, Select (the selected day with the
+/// stepper's time, then back), Back (cancel).
 pub const TIME: usize = DAYS + 7;
-pub const BACK: usize = DAYS + 8;
+pub const SELECT: usize = DAYS + 8;
+pub const BACK: usize = DAYS + 9;
 /// Rows of the page (Back is the model's).
 pub const ROWS: usize = BACK;
 /// The stepper's steps (minutes): ← / →, Shift for one minute.
@@ -248,7 +258,19 @@ fn shown_minute(c: &Cal, info: &CalendarInfo) -> u16 {
     c.minute.unwrap_or(info.minute)
 }
 
-/// The rows of the calendar page: the 42 days, the buttons, the time.
+/// A day of the range 1900 – 2100 (the others cannot be set).
+fn in_range(d: Date) -> bool {
+    d >= cal::FIRST && d <= cal::LAST
+}
+
+/// "Select Tue 17 Nov 2026".
+pub fn select_label(d: Date) -> String {
+    let wd = cal::WEEKDAYS[cal::weekday(d) as usize];
+    format!("Select {wd} {}", cal::short_date(d))
+}
+
+/// The rows of the calendar page: the 42 days, the buttons, the time,
+/// Select.
 pub fn rows(c: &Cal, info: &CalendarInfo) -> Vec<Row> {
     let set = |line: String| {
         Some(if info.may_change {
@@ -265,7 +287,7 @@ pub fn rows(c: &Cal, info: &CalendarInfo) -> Vec<Row> {
             value: None,
             left: None,
             right: None,
-            confirm: if d < cal::FIRST || d > cal::LAST {
+            confirm: if !in_range(d) {
                 Some(Activate::Disabled)
             } else {
                 set(date_line(d, c.minute))
@@ -307,6 +329,17 @@ pub fn rows(c: &Cal, info: &CalendarInfo) -> Vec<Row> {
             Some(Activate::Disabled)
         },
     });
+    // Select: the selected day with the stepper's time (none: the time of
+    // day kept), then back to World → Time.
+    let sel = c.selected();
+    out.push(button(
+        &select_label(sel),
+        Some(if info.may_change && in_range(sel) {
+            Activate::CommandBack(date_line(sel, c.minute))
+        } else {
+            Activate::Disabled
+        }),
+    ));
     out
 }
 
@@ -324,6 +357,25 @@ pub enum Nav {
     Year(i32),
     /// The time stepper by minutes.
     Minutes(i32),
+}
+
+/// The item under the grid's column `k`: the stepper (columns 0 – 2),
+/// Select (3 – 5), Back (6), as the renderer draws them.
+fn under(k: usize) -> usize {
+    match k {
+        0..=2 => TIME,
+        3..=5 => SELECT,
+        _ => BACK,
+    }
+}
+
+/// The grid's column over an item under the grid (its middle).
+fn over(f: usize) -> usize {
+    match f {
+        TIME => 1,
+        SELECT => 4,
+        _ => 6,
+    }
 }
 
 /// Moves the focus `focus` on page `c` (the days by day and week, past the
@@ -377,8 +429,8 @@ pub fn navigate(c: &mut Cal, focus: usize, nav: Nav, minute: u16) -> usize {
             if c.in_month(to) && to != d {
                 to_day(c, to)
             } else if down {
-                // Under the grid: the stepper (left half) or Back.
-                if col(f) < 4 { TIME } else { BACK }
+                // Under the grid: the stepper, Select or Back below.
+                under(col(f))
             } else {
                 YEAR_PREV + col(f)
             }
@@ -393,13 +445,7 @@ pub fn navigate(c: &mut Cal, focus: usize, nav: Nav, minute: u16) -> usize {
             c.day = c.grid()[i].2;
             i
         }
-        (Nav::Up, f) if (YEAR_PREV..=YEAR_NEXT).contains(&f) => {
-            if f - YEAR_PREV < 4 {
-                TIME
-            } else {
-                BACK
-            }
-        }
+        (Nav::Up, f) if (YEAR_PREV..=YEAR_NEXT).contains(&f) => under(f - YEAR_PREV),
         // Under the grid: ← / → step the time (Shift: a minute).
         (Nav::Left | Nav::Right, TIME) => {
             let step = if nav == Nav::Right {
@@ -409,30 +455,28 @@ pub fn navigate(c: &mut Cal, focus: usize, nav: Nav, minute: u16) -> usize {
             };
             navigate(c, TIME, Nav::Minutes(step), minute)
         }
-        (Nav::Left, BACK) => TIME,
+        (Nav::Left, SELECT) => TIME,
+        (Nav::Right, SELECT) => BACK,
+        (Nav::Left, BACK) => SELECT,
         (Nav::Right, BACK) => BACK,
-        (Nav::Up, f @ (TIME | BACK)) => {
-            let k = if f == TIME { 1 } else { 5 };
-            let i = last_in(&*c, k);
+        // Up into the last week, down to the buttons over the grid: the
+        // middle column under each (the stepper 0 – 2, Select 3 – 5, Back 6).
+        (Nav::Up, f @ (TIME | SELECT | BACK)) => {
+            let i = last_in(&*c, over(f));
             c.day = c.grid()[i].2;
             i
         }
-        (Nav::Down, f @ (TIME | BACK)) => {
-            if f == TIME {
-                MONTH_PREV
-            } else {
-                MONTH_NEXT
-            }
-        }
+        (Nav::Down, f @ (TIME | SELECT | BACK)) => YEAR_PREV + over(f),
         (_, f) => f,
     }
 }
 
 /// A month (or year) step: on a day the same day of that month, on a
-/// button the focus stays.
+/// button the focus stays (the selected day kept in the new month, so
+/// Select shows it).
 fn month_jump(c: &mut Cal, focus: usize, n: i32) -> usize {
     let day = c.date_of(focus).filter(|d| c.in_month(*d)).map(|d| d.2);
-    let d = cal::add_months((c.year, c.month, day.unwrap_or(1)), n);
+    let d = cal::add_months((c.year, c.month, day.unwrap_or(c.day)), n);
     *c = Cal {
         year: d.0,
         month: d.1,
@@ -503,10 +547,10 @@ pub fn view(c: &Cal, info: &CalendarInfo, rows: &[Row]) -> MenuCalendar {
     }
 }
 
-/// The line under the title: the focused day (on a button, the world
-/// date), read-only in a shared ride without the right.
+/// The line under the title: the focused day (on Select the selected
+/// day, on another button the world date), read-only in a shared ride without the right.
 pub fn status(c: &Cal, info: &CalendarInfo, focus: usize) -> String {
-    let d = c.date_of(focus).or(info.date);
+    let d = status_date(c, info, focus);
     let day = match (d, &info.line) {
         (Some(d), Some((at, line))) if *at == d => {
             let wd = cal::WEEKDAYS[cal::weekday(d) as usize];
@@ -522,9 +566,12 @@ pub fn status(c: &Cal, info: &CalendarInfo, focus: usize) -> String {
     }
 }
 
-/// The day the status describes (the app computes its line).
+/// The day the status describes (the app computes its line): the focused
+/// day, on Select the selected one, on another button the world date.
 pub fn status_date(c: &Cal, info: &CalendarInfo, focus: usize) -> Option<Date> {
-    c.date_of(focus).or(info.date)
+    c.date_of(focus)
+        .or_else(|| (focus == SELECT).then(|| c.selected()))
+        .or(info.date)
 }
 
 /// Calendar → Dates: today, the equinoxes and solstices, the season starts
@@ -981,6 +1028,203 @@ mod tests {
             m.apply_with(Action::Back, rows);
             assert_eq!(m.page(), Some(M::Sub(Page::TimeMachine)));
         }
+    }
+
+    /// The Select button (user feedback 2026-11-17: "i miss the select
+    /// button that accepts and sets the selected date"): its row shows the
+    /// selected day, sets it with the stepper's time and goes back; dimmed
+    /// without the clock right or out of the range.
+    #[test]
+    fn select_sets_the_selected_day_and_goes_back() {
+        let i = info();
+        let c = Cal::at((2026, 11, 17));
+        let r = rows(&c, &i);
+        assert_eq!(r.len(), ROWS);
+        assert_eq!(r[SELECT].label, "Select Tue 17 Nov 2026");
+        assert_eq!(
+            r[SELECT].confirm,
+            Some(Activate::CommandBack("time date 2026-11-17".into())),
+            "the time of day kept"
+        );
+        // With the stepper's time.
+        let c = Cal {
+            minute: Some(6 * 60 + 15),
+            ..c
+        };
+        let r = rows(&c, &i);
+        let Some(Activate::CommandBack(line)) = &r[SELECT].confirm else {
+            panic!("{:?}", r[SELECT].confirm)
+        };
+        assert_eq!(line, "time date 2026-11-17 06:15");
+        let args: Vec<&str> = line.split_whitespace().skip(1).collect();
+        ocw_sky::machine::parse(&args).unwrap();
+        assert!(ocw_render::font::covers(&r[SELECT].label));
+        // The view's controls: the seven buttons, Time, Select, Back.
+        let v = view(&c, &i, &r);
+        assert_eq!(v.controls.len(), 10);
+        assert_eq!(v.controls[SELECT - DAYS], "Select Tue 17 Nov 2026");
+        assert_eq!(v.controls[BACK - DAYS], "Back");
+        // The status on Select describes the selected day.
+        assert_eq!(status_date(&c, &i, SELECT), Some((2026, 11, 17)));
+        assert_eq!(status_date(&c, &i, TODAY), i.date, "another button");
+        // Without the right: dimmed, the label still the day.
+        let mut ro = info();
+        ro.may_change = false;
+        let r = rows(&c, &ro);
+        assert_eq!(r[SELECT].confirm, Some(Activate::Disabled));
+        assert_eq!(r[SELECT].label, "Select Tue 17 Nov 2026");
+        // Out of the range 1900 – 2100: dimmed like the day cells.
+        for (year, month, day) in [(2101, 1, 3), (1899, 12, 31)] {
+            let out = Cal {
+                year,
+                month,
+                day,
+                minute: None,
+            };
+            assert_eq!(rows(&out, &i)[SELECT].confirm, Some(Activate::Disabled));
+        }
+        // The ends of the range are fine.
+        let last = Cal::at((2100, 12, 31));
+        assert_eq!(
+            rows(&last, &i)[SELECT].confirm,
+            Some(Activate::CommandBack("time date 2100-12-31".into()))
+        );
+    }
+
+    /// The arrows reach Select: down from the middle columns of the last
+    /// week, between the stepper and Back, up from the buttons over the
+    /// grid; the month buttons keep the selected day.
+    #[test]
+    fn the_arrows_reach_select() {
+        // November 2026: the 26th is a Thursday (column 3) of the last week.
+        let mut c = Cal::at((2026, 11, 26));
+        let f = c.cell_of((2026, 11, 26)).unwrap();
+        assert_eq!(f % COLUMNS, 3);
+        assert_eq!(navigate(&mut c, f, Nav::Down, 0), SELECT);
+        assert_eq!(navigate(&mut c, SELECT, Nav::Left, 0), TIME);
+        assert_eq!(navigate(&mut c, SELECT, Nav::Right, 0), BACK);
+        assert_eq!(navigate(&mut c, BACK, Nav::Left, 0), SELECT);
+        assert_eq!(navigate(&mut c, BACK, Nav::Right, 0), BACK);
+        assert_eq!(navigate(&mut c, SELECT, Nav::Down, 0), SEASON);
+        assert_eq!(navigate(&mut c, TIME, Nav::Down, 0), MONTH_PREV);
+        assert_eq!(navigate(&mut c, BACK, Nav::Down, 0), YEAR_NEXT);
+        assert_eq!(navigate(&mut c, SEASON, Nav::Up, 0), SELECT);
+        assert_eq!(navigate(&mut c, DATES, Nav::Up, 0), SELECT);
+        assert_eq!(navigate(&mut c, MONTH_PREV, Nav::Up, 0), TIME);
+        assert_eq!(navigate(&mut c, YEAR_NEXT, Nav::Up, 0), BACK);
+        assert_eq!(c.selected(), (2026, 11, 26), "the buttons keep the day");
+        // Up from Select: the last week's Friday, now the selected day.
+        let f = navigate(&mut c, SELECT, Nav::Up, 0);
+        assert_eq!(c.date_of(f), Some((2026, 11, 27)));
+        assert_eq!(c.selected(), (2026, 11, 27));
+        // The month buttons: the selected day kept (31 → 28 in February).
+        let mut c = Cal::at((2026, 1, 31));
+        assert_eq!(navigate(&mut c, MONTH_NEXT, Nav::Month(1), 0), MONTH_NEXT);
+        assert_eq!(c.selected(), (2026, 2, 28));
+        navigate(&mut c, YEAR_PREV, Nav::Year(-1), 0);
+        assert_eq!(c.selected(), (2025, 2, 28));
+    }
+
+    /// Select in the menu model, in both apps: Enter (A) or a click on it
+    /// sets the selected day with the stepper's time and goes back to
+    /// World → Time; Esc (B) / Back cancels with no command; dimmed it
+    /// does nothing. Enter on a day still sets the day and stays (as
+    /// before Select).
+    #[test]
+    fn select_in_the_menu_model() {
+        use super::super::model::{Action, Effect, Menu, Page as M, Platform};
+        let tm = super::super::time::TimeMachineInfo {
+            date: Some("Mon 16 Nov 2026".into()),
+            time: Some("14:20 CET".into()),
+            control: "you".into(),
+            may_change: true,
+            ..Default::default()
+        };
+        let pages = |i: CalendarInfo| {
+            let tm = tm.clone();
+            let home = super::super::pages::WorldHome {
+                name: "Test loop".into(),
+                ..Default::default()
+            };
+            let weather = super::super::weather::WeatherState::default();
+            move |p: Page| match p {
+                Page::WorldHome => super::super::pages::world_home_rows(&home, &tm, &weather),
+                Page::TimeMachine => super::super::time::rows(&tm, &i),
+                Page::Calendar(c) => rows(&c, &i),
+                _ => Vec::new(),
+            }
+        };
+        // Top → World → Time → Day (Enter): the calendar on 16 November.
+        let open = |platform, rows: &dyn Fn(Page) -> Vec<Row>| {
+            let mut m = Menu::for_platform(platform);
+            m.apply(Action::Open);
+            let world = m.labels().iter().position(|l| l == "World").unwrap();
+            m.apply_with(Action::Click(world), rows);
+            m.apply_with(Action::Click(1), rows);
+            assert_eq!(m.page(), Some(M::Sub(Page::TimeMachine)));
+            m.apply_with(Action::Down, rows);
+            m.apply_with(Action::Confirm, rows);
+            assert!(matches!(m.page(), Some(M::Sub(Page::Calendar(_)))));
+            assert_eq!(m.focus(), 21);
+            m
+        };
+        let calendar = |m: &Menu| matches!(m.page(), Some(M::Sub(Page::Calendar(_))));
+        let rows = pages(info());
+        let rows = &rows;
+        for platform in [Platform::Desktop, Platform::Browser] {
+            // By keys: ↓ past the last week to the stepper (Monday's
+            // column), → 15 minutes on, ↑ into the last week (Tuesday the
+            // 24th), → → Thursday the 26th, ↓ Select, Enter.
+            let mut m = open(platform, rows);
+            for _ in 0..3 {
+                m.apply_with(Action::Down, rows);
+            }
+            assert_eq!(m.focus(), TIME);
+            m.apply_with(Action::Right, rows);
+            m.apply_with(Action::Up, rows);
+            m.apply_with(Action::Right, rows);
+            m.apply_with(Action::Right, rows);
+            m.apply_with(Action::Down, rows);
+            assert_eq!(m.focus(), SELECT, "below Thursday: Select");
+            assert_eq!(m.labels()[SELECT], "Select Thu 26 Nov 2026");
+            let e = m.apply_with(Action::Confirm, rows);
+            assert_eq!(e, Effect::Command("time date 2026-11-26 14:35".into()));
+            assert_eq!(
+                m.page(),
+                Some(M::Sub(Page::TimeMachine)),
+                "back to World → Time"
+            );
+            // A click or tap on it: the same.
+            let mut m = open(platform, rows);
+            m.apply_with(Action::Left, rows);
+            let e = m.apply_with(Action::Click(SELECT), rows);
+            assert_eq!(e, Effect::Command("time date 2026-11-15".into()));
+            assert_eq!(m.page(), Some(M::Sub(Page::TimeMachine)));
+            // Esc / B and the Back button: no command, back.
+            let mut m = open(platform, rows);
+            m.apply_with(Action::Right, rows);
+            assert_eq!(m.apply_with(Action::Back, rows), Effect::None);
+            assert_eq!(m.page(), Some(M::Sub(Page::TimeMachine)));
+            let mut m = open(platform, rows);
+            assert_eq!(m.apply_with(Action::Click(BACK), rows), Effect::None);
+            assert_eq!(m.page(), Some(M::Sub(Page::TimeMachine)));
+            // Enter on a day: sets it and stays on the calendar (as before).
+            let mut m = open(platform, rows);
+            m.apply_with(Action::Right, rows);
+            assert_eq!(
+                m.apply_with(Action::Confirm, rows),
+                Effect::Command("time date 2026-11-17".into())
+            );
+            assert!(calendar(&m));
+            assert_eq!(m.labels()[SELECT], "Select Tue 17 Nov 2026");
+        }
+        // Without the right: Select dimmed, does nothing, the page stays.
+        let mut ro = info();
+        ro.may_change = false;
+        let ro = pages(ro);
+        let mut m = open(Platform::Desktop, &ro);
+        assert_eq!(m.apply_with(Action::Click(SELECT), &ro), Effect::None);
+        assert!(calendar(&m));
     }
 
     /// Calendar → Dates and World → Time → Season.
