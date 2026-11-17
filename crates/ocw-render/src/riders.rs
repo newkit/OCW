@@ -1037,7 +1037,9 @@ fn spawn_model(
         let e = commands
             .spawn((
                 Transform {
-                    translation: node.translation,
+                    translation: body.map_or(node.translation, |c| {
+                        ocw_assets::rider::node_translation(model, i, c)
+                    }),
                     rotation: node.rotation,
                     scale: node.scale,
                 },

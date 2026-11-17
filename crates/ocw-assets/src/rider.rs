@@ -535,6 +535,20 @@ pub fn girth_centre(m: &Model, i: usize) -> Vec3 {
     m.world(i).inverse().transform_point3(at)
 }
 
+/// The node translation of node `i` for the character `c` (its rest
+/// translation otherwise): the upper arms sit on the torso's shoulders,
+/// which the torso's girth moves in or out (spec §14 Phase 4, 4N: no
+/// arms standing off a thin body or sunk into a heavy one). The poses
+/// only turn the joints, so the arms keep it.
+pub fn node_translation(m: &Model, i: usize, c: &ocw_core::Character) -> Vec3 {
+    let node = &m.nodes[i];
+    if !UPPER_ARM.contains(&node.name.as_str()) {
+        return node.translation;
+    }
+    let g = girth_of(TORSO, c);
+    Vec3::new(node.translation.x * g.x, node.translation.y, node.translation.z)
+}
+
 /// The mesh transform of node `i` for the character `c`: its girth
 /// about [`girth_centre`] as (scale, translation) in node `i`'s frame.
 pub fn girth_transform(m: &Model, i: usize, c: &ocw_core::Character) -> (Vec3, Vec3) {
@@ -1937,6 +1951,15 @@ mod tests {
         let pivot = v(body::TORSO_PIVOT);
         assert!((sc * pivot + tr).distance(pivot) < 1e-6, "the pivot stays");
         assert_eq!(girth_transform(&m, at(HEAD), &fat), (Vec3::ONE, Vec3::ZERO));
+        // The arms follow the shoulders' width.
+        let arm = at(UPPER_ARM[1]);
+        let x = m.nodes[arm].translation.x;
+        assert_eq!(node_translation(&m, arm, &normal).x, x);
+        assert!((node_translation(&m, arm, &fat).x - x * t).abs() < 1e-6);
+        assert_eq!(
+            node_translation(&m, at(HEAD), &fat),
+            m.nodes[at(HEAD)].translation
+        );
         // The base bodies: wider hips (thighs) and narrower arms on B.
         let b = Character {
             base: BaseBody::B,

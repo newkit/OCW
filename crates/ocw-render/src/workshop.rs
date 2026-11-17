@@ -1520,7 +1520,7 @@ fn sync_rider(
             let e = commands
                 .spawn((
                     Transform {
-                        translation: node.translation,
+                        translation: ocw_assets::rider::node_translation(rider_model, i, &c),
                         rotation: node.rotation,
                         scale: if node.parent.is_none() {
                             Vec3::splat(body.scale)
