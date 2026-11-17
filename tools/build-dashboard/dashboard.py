@@ -39,6 +39,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import answers
+import battery
 import build_machines
 import claude_tasks
 import coordinator
@@ -51,7 +52,7 @@ HERE = Path(__file__).resolve().parent
 # page knows the version it was served with and reloads itself when the
 # server runs another one (after a pull and a restart), so an open tab never
 # keeps an old page.
-VERSION = "1.6.0"
+VERSION = "1.7.0"
 POLL_INTERVAL_S = 5.0
 # Build slots per machine, as in scripts/remote.sh: the machine's `slots`
 # (or [defaults] slots) in machines.toml, else these per-OS defaults.
@@ -1389,6 +1390,7 @@ class Dashboard:
         self.last_ok: dict = {}
         self.stop = threading.Event()
         self.build_machines = None  # a build_machines.BuildMachines
+        self.battery = None  # a battery.BatteryMonitor
 
     def settings(self, m: Machine) -> dict | None:
         bm = getattr(self, "build_machines", None)
@@ -1415,6 +1417,7 @@ class Dashboard:
         with self.lock:
             machines = [dict(self.state[m.name]) for m in self.machines]
         apply_settings(machines, self.machines, getattr(self, "build_machines", None))
+        add_battery(machines, getattr(self, "battery", None))
         status = summarize(machines, getattr(self, "questions", None), getattr(self, "janitor", None),
                            getattr(self, "answers", None))
         bm = getattr(self, "build_machines", None)
@@ -1507,6 +1510,19 @@ def apply_settings(states: list, machines: list, bm) -> list:
         st.update(enabled=e["enabled"], disabled_reason=e["reason"] if not e["enabled"] else "",
                   slots=e["slots"], slots_source=e["slots_source"], slots_config=e["slots_config"],
                   note=e["note"], changed_by=e["changed_by"], changed_at=e["changed_at"])
+    return states
+
+
+def add_battery(states: list, mon, now: float | None = None) -> list:
+    """`battery` on each machine state that has a battery or a Meta Quest
+    (battery.BatteryMonitor.view; polled in its own threads every ~2 min,
+    so an unreachable machine keeps its last value with its age)."""
+    if mon is None:
+        return states
+    for st in states:
+        v = mon.view(st.get("name"), now)
+        if v is not None:
+            st["battery"] = v
     return states
 
 
@@ -1632,6 +1648,9 @@ def format_text(status: dict) -> str:
             lines.append("%-14s %-7s UNREACHABLE (%s)%s" % (m["name"], m["os"], m.get("error"), det))
             if setting:
                 lines.append("  " + setting)
+            bl = battery.text_line(m.get("battery"), status.get("generated_at") or time.time())
+            if bl:
+                lines.append(bl)
             lines.append("")
             continue
         parts = []
@@ -1662,6 +1681,9 @@ def format_text(status: dict) -> str:
         lines.append("%-14s %-7s online  %s" % (m["name"], m["os"], ", ".join(parts)))
         if setting:
             lines.append("  " + setting)
+        bl = battery.text_line(m.get("battery"), status.get("generated_at") or time.time())
+        if bl:
+            lines.append(bl)
         q = m.get("queue")
         if q:
             held = ", ".join("slot %d: %s" % (s["slot"], s["holder"] or "held") for s in q["slots"] if s["held"])
@@ -3037,6 +3059,11 @@ def record_loop(dash, root: Path, interval: float = RECORD_INTERVAL_S):
                 st["questions"] = {k: q.get(k) for k in ("open", "decided", "spec_version")}
             # The coordinator has its own log (DAY/deb.jsonl), the tasks agents.jsonl.
             st.pop("coordinator", None)
+            for m in st.get("machines") or []:
+                b = m.get("battery")
+                if b:
+                    m["battery"] = {k: ({kk: vv for kk, vv in v.items() if kk != "history"} if isinstance(v, dict) else v)
+                                    for k, v in b.items() if k != "history"}
             ct = st.pop("claude_tasks", None)
             if ct:
                 st["cutover"] = {k: ct["cutover"].get(k) for k in ("ok", "running_tasks", "remote_runs")}
@@ -3137,6 +3164,8 @@ def main(argv=None) -> int:
                     help="no enabling/disabling of build machines and slot changes on the page")
     ap.add_argument("--no-coordinator", action="store_true",
                     help="no coordinator (deb) card and no Claude tasks (this machine's memory, disks, agents)")
+    ap.add_argument("--no-battery", action="store_true",
+                    help="don't poll the machines' batteries (laptops) and a Meta Quest on Link")
     ap.add_argument("--spec", type=Path, default=None,
                     help="spec with the open questions (default: SPECIFICATION.md of the main checkout)")
     a = ap.parse_args(argv)
@@ -3160,6 +3189,9 @@ def main(argv=None) -> int:
         cfg / build_machines.FILE_NAME, a.record or (main_repo / "test-output" / "build-log"))
     ssh = lambda m, script, timeout, stdin=None: run_ssh(m, script, timeout, stdin, dash.ctl)  # noqa: E731
     dash.janitor = janitor.Janitor(machines, main_repo, log_root, a.janitor, ssh)
+    # Batteries (laptops, a Meta Quest on Link): every ~2 min per machine.
+    dash.battery = None if a.no_battery else battery.BatteryMonitor(
+        machines, lambda m, script, timeout: run_ssh(m, script, timeout, None, dash.ctl))
     # The art project's hourly collector writes its status there (art.json).
     dash.art_log = main_repo / "test-output" / "build-log"
     if a.janitor_plan:
@@ -3171,6 +3203,10 @@ def main(argv=None) -> int:
         with ThreadPoolExecutor(max_workers=max(1, len(machines))) as ex:
             states = list(ex.map(lambda m: poll_machine(m, dash.ctl, dash.settings(m)["slots"]), machines))
         apply_settings(states, machines, dash.build_machines)
+        if dash.battery is not None:
+            with ThreadPoolExecutor(max_workers=max(1, len(machines))) as ex:
+                list(ex.map(dash.battery.poll, machines))
+            add_battery(states, dash.battery)
         status = annotate_jobs(summarize(states, dash.questions, None, dash.answers), mask=Masker([s for m in machines for s in m.secrets()], ()))
         status["janitor"]["mode"] = a.janitor
         status["art"] = art_status(dash.art_log)
@@ -3194,6 +3230,8 @@ def main(argv=None) -> int:
     dash.config_watcher = ConfigWatcher(cfg, restart_process)
     dash.config_watcher.start()
     dash.start()
+    if dash.battery is not None:
+        dash.battery.start()
     if dash.coordinator is not None:
         dash.coordinator.start()
     # Also with --janitor off: the thread then only measures test-output/.
