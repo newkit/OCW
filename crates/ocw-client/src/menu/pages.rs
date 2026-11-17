@@ -437,7 +437,7 @@ impl Page {
             Self::CharacterFacialHair => {
                 &["The colour follows your hair (greying too) or is its own."]
             }
-            Self::CharacterPick(_) => &["Focus previews it; Confirm keeps it."],
+            Self::CharacterPick(_) => &["Confirm keeps the focused one."],
             Self::Trainer => &["Devices, SIM difficulty and the virtual trainer."],
             Self::Strava => &[
                 "Uploads saved rides to Strava when an account is linked (API credentials: see README); the sync state is in Navi -> Rides.",

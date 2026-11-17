@@ -336,6 +336,18 @@ const GRID_PANEL_WIDTH_VH: f32 = 150.0;
 /// Grid cells: icon size, label size, padding, gaps (vh).
 const GRID_ICON_VH: f32 = 8.0;
 const GRID_LABEL_VH: f32 = 3.0;
+/// The names under rendered pictures (the character's tiles) are smaller:
+/// a picture says most of it.
+const GRID_THUMB_LABEL_VH: f32 = 2.2;
+
+/// The label size of `grid`'s cells.
+fn grid_label_vh(grid: &MenuGrid) -> f32 {
+    if grid_thumbs(grid) {
+        GRID_THUMB_LABEL_VH
+    } else {
+        GRID_LABEL_VH
+    }
+}
 const GRID_PAD_VH: f32 = 0.8;
 const GRID_GAP_VH: f32 = 1.0;
 /// The gap between the cells of a grid row (% of the grid's width).
@@ -423,7 +435,10 @@ fn view_content_vh(view: &MenuView, aspect: f32) -> f32 {
 /// Width of a grid cell (% of the grid's width, its border included).
 fn grid_cell_pct(columns: usize) -> f32 {
     let c = columns.max(1) as f32;
-    (100.0 - GRID_GAP_PCT * (c - 1.0)) / c
+    // A hair under the exact share: the layout's rounding must not wrap
+    // the last cell of a row onto the next (the editor's five columns
+    // showed as four).
+    (100.0 - GRID_GAP_PCT * (c - 1.0)) / c - 0.1
 }
 
 /// Width of a grid cell (vh, its border included) in content `w` wide.
@@ -478,12 +493,12 @@ fn grid_height_vh(grid: &MenuGrid, w: f32) -> f32 {
                 .map(|c| {
                     let (picture, label) = cell_parts(grid, c);
                     let lines = if label {
-                        wrapped_lines(&c.label, label_w, GRID_LABEL_VH) as f32
+                        wrapped_lines(&c.label, label_w, grid_label_vh(grid)) as f32
                     } else {
                         0.0
                     };
                     (if picture { GRID_ICON_VH } else { 0.0 })
-                        + lines * GRID_LABEL_VH * LINE_HEIGHT
+                        + lines * grid_label_vh(grid) * LINE_HEIGHT
                         + 2.0 * (GRID_PAD_VH + ROW_BORDER_VH)
                 })
                 .fold(0.0, f32::max)
@@ -882,6 +897,7 @@ fn spawn_grid(
     mut thumbs: Option<&mut crate::thumbs::Thumbnails>,
 ) {
     let cell_pct = grid_cell_pct(grid.columns);
+    let label_vh = grid_label_vh(grid);
     commands.entity(list).despawn_children();
     commands.entity(list).with_children(|l| {
         for (i, cell) in grid.cells.iter().enumerate() {
@@ -890,6 +906,9 @@ fn spawn_grid(
             let mut node = l.spawn((
                 Node {
                     width: Val::Percent(cell_pct),
+                    // Never wider than its share (a long word would
+                    // push the row's last cell onto the next row).
+                    min_width: Val::ZERO,
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
                     justify_content: JustifyContent::Center,
@@ -912,7 +931,7 @@ fn spawn_grid(
                 if !picture {
                     c.spawn((
                         Text::new(cell.label.clone()),
-                        font(GRID_LABEL_VH),
+                        font(label_vh),
                         color,
                         TextLayout::justify(Justify::Center),
                     ));
@@ -953,7 +972,7 @@ fn spawn_grid(
                 if label {
                     c.spawn((
                         Text::new(cell.label.clone()),
-                        font(GRID_LABEL_VH),
+                        font(label_vh),
                         color,
                         TextLayout::justify(Justify::Center),
                     ));

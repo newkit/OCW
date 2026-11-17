@@ -15,7 +15,7 @@
 //! mirror ([`RiderShow`]: the look with the character and the worn kit,
 //! the picker's preview applied), seen over the shoulder and in the
 //! mirror – a planar reflection: a second camera at the reflection of the
-//! workshop camera renders the room at full resolution into an image
+//! workshop camera renders the room at half resolution into an image
 //! shown on the glass ([`mirror_cam`], [`mirror_uv`]; off with
 //! `workshop.mirror off`: a direct front view instead). *Try on the bike*
 //! puts the rider on the stand bike, pedalling slowly.
@@ -548,11 +548,9 @@ fn open_close(
     scene.camera = Some(camera);
     let layout_m = ocw_assets::workshop::layout(view.bikes.len());
     if view.mirror {
-        // The mirror (spec 4C): a second camera.
+        // The mirror (spec 4C): a second camera at half resolution.
         let (glass, half) = layout_m.mirror_glass();
-        // At the window's full height: the face close-up (spec §14 Phase 4,
-        // 4N) fills the view with the glass.
-        let mh = h.max(64);
+        let mh = (h / 2).max(64);
         let mw = ((mh as f32) * half.x / half.y).round().max(32.0) as u32;
         let mimage = images.add(Image::new_target_texture(
             mw,

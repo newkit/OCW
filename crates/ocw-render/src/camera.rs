@@ -415,18 +415,22 @@ impl CloseUpShot {
     /// The face from a three-quarter view (the ears, the side of the hair).
     pub const THREE_QUARTER: CloseUpShot = CloseUpShot {
         yaw: std::f32::consts::PI - 0.55,
-        pitch: 0.08,
+        pitch: 0.2,
         distance: 0.62,
         screen_x: 0.36,
     };
     /// The face straight from the front (the glasses, the eyes).
     pub const FRONT: CloseUpShot = CloseUpShot {
         yaw: std::f32::consts::PI - 0.12,
-        pitch: 0.05,
+        pitch: 0.15,
         distance: 0.6,
         screen_x: 0.36,
     };
 }
+
+/// The face's centre in the head node's frame (the node's origin is the
+/// neck's pivot; `ocw_assets::pose::EYES` are a little above and ahead).
+pub const FACE_IN_HEAD: Vec3 = Vec3::new(0.0, 0.09, -0.04);
 
 /// The vertical extent of the head the close-up keeps in the picture
 /// (m: chin to helmet top, about).
@@ -789,7 +793,7 @@ pub fn flight_up(f: &crate::FlightView) -> Vec3 {
 
 /// The close-up's resource and the local rider's head and avatar.
 type CloseUpParams<'w, 's> = (
-    Res<'w, CloseUp>,
+    Option<Res<'w, CloseUp>>,
     Query<'w, 's, (&'static RiderHead, &'static GlobalTransform)>,
     Query<'w, 's, &'static GlobalTransform, With<crate::riders::Avatar>>,
 );
@@ -954,13 +958,15 @@ pub(crate) fn follow(
     // the head where it is drawn now (its offset in the avatar of the last
     // frame, on the avatar of this one: no lag while riding).
     let (close_up, heads, roots) = close;
-    let head_now = close_up.0.and_then(|_| {
+    let close_up = close_up.and_then(|c| c.0);
+    let head_now = close_up.and_then(|_| {
         let (h, g) = heads.iter().next()?;
         let root = roots.get(h.root).ok()?;
-        let local = root.affine().inverse().transform_point3(g.translation());
+        let face = g.transform_point(FACE_IN_HEAD);
+        let local = root.affine().inverse().transform_point3(face);
         Some(rider.transform_point(local))
     });
-    let (eye, target) = match (close_up.0, head_now) {
+    let (eye, target) = match (close_up, head_now) {
         (Some(shot), Some(head)) => {
             let (fov, aspect) = projections
                 .iter()

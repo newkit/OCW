@@ -335,7 +335,8 @@ pub fn framing(bike: &BuiltBike, slot: &str) -> (Vec3, Vec3) {
 /// The character thumbnail camera for `shot` of a rider `scale` times
 /// the default height standing with the feet at the origin, facing −Z:
 /// (eye, target). The face from 0.75 m, the head filling the picture; the
-/// whole rider from the front, a little to the side.
+/// body from the helmet to the thighs, from the front, a little to the
+/// side.
 pub fn rider_framing(scale: f32, shot: RiderShot) -> (Vec3, Vec3) {
     let half = (FOV_Y * 0.5).tan();
     // From the rider's front (−Z), turned towards its right (+X) by `a`.
@@ -343,7 +344,8 @@ pub fn rider_framing(scale: f32, shot: RiderShot) -> (Vec3, Vec3) {
     let (at, radius, dir) = match shot {
         RiderShot::Face => (Vec3::new(0.0, 1.66, -0.03), 0.2, from(0.6, 0.08)),
         RiderShot::FaceFront => (Vec3::new(0.0, 1.66, -0.03), 0.19, from(0.12, 0.05)),
-        RiderShot::Body => (Vec3::new(0.0, 0.92, 0.0), 1.0, from(0.35, 0.12)),
+        // Head to thighs: where the shapes and bodies differ.
+        RiderShot::Body => (Vec3::new(0.0, 1.22, 0.0), 0.6, from(0.35, 0.12)),
         RiderShot::Hands => (Vec3::new(0.12, 0.86, -0.04), 0.3, from(0.45, 0.25)),
         RiderShot::Feet => (Vec3::new(0.05, 0.12, -0.04), 0.3, from(0.45, 0.45)),
     };
@@ -681,8 +683,8 @@ mod tests {
 
     /// The character pictures' framing: the head in the middle and filling
     /// the picture for the face shots (from the front, a little to the
-    /// rider's right for the three-quarter view), the whole rider – feet
-    /// to helmet – for the body, at every height.
+    /// rider's right for the three-quarter view), the body from the helmet
+    /// to the thighs (where the shapes differ), at every height.
     #[test]
     fn a_character_picture_frames_its_shot() {
         let half = (FOV_Y * 0.5).tan();
@@ -705,8 +707,8 @@ mod tests {
                         assert!(d.length() < 1.0, "close: {}", d.length());
                     }
                     RiderShot::Body => {
-                        assert!(target.y + seen > 1.85 * scale, "the helmet");
-                        assert!(target.y - seen < 0.0, "the feet");
+                        assert!(target.y + seen > 1.8 * scale, "the helmet");
+                        assert!(target.y - seen < 0.7 * scale, "the thighs");
                     }
                     _ => assert!(seen < 0.4 * scale),
                 }
