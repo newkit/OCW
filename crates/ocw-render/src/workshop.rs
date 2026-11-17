@@ -114,6 +114,24 @@ pub struct PickerView {
     pub tiles: Option<TilesView>,
     /// A line under the title (the whole bike against the stock bike).
     pub subtitle: Option<String>,
+    /// EXPERIMENTAL (spec 4N Q30 mock-up): the kit's colour as a row of
+    /// swatches above the tiles.
+    pub swatches: Option<SwatchRowView>,
+}
+
+/// A row of colour swatches above the tiles (Q30 mock-up).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SwatchRowView {
+    /// The choices (`None`: the kit's standard colour).
+    pub colours: Vec<Option<Rgb>>,
+    /// The chosen one.
+    pub chosen: usize,
+    /// The row has the focus (left / right change the colour).
+    pub focused: bool,
+    /// The chosen colour's name.
+    pub label: String,
+    /// The standard colour (drawn for the `None` choice).
+    pub standard: Rgb,
 }
 
 /// The tile grid as shown.
@@ -1821,6 +1839,9 @@ fn spawn_picker(
                 TextColor(Color::srgb(0.75, 0.9, 0.8)),
             ));
         }
+        if let Some(sw) = &p.swatches {
+            spawn_swatches(c, sw);
+        }
         if let Some(t) = p.tiles {
             spawn_tiles(c, p, t, &tile_images);
         }
@@ -1917,6 +1938,76 @@ fn spawn_picker(
                 }
             });
         }
+    });
+}
+
+/// The swatch row above the tiles (EXPERIMENTAL, spec 4N Q30 mock-up).
+fn spawn_swatches(c: &mut ChildSpawnerCommands, sw: &SwatchRowView) {
+    let font = |vh: f32| TextFont {
+        font_size: FontSize::Vh(vh),
+        ..default()
+    };
+    c.spawn((
+        Node {
+            flex_direction: FlexDirection::Column,
+            padding: UiRect::all(vh(0.6)),
+            border: UiRect::all(vh(0.35)),
+            border_radius: BorderRadius::all(vh(0.8)),
+            row_gap: vh(0.5),
+            ..default()
+        },
+        BackgroundColor(if sw.focused {
+            Color::srgba(1.0, 0.78, 0.24, 0.22)
+        } else {
+            Color::srgba(1.0, 1.0, 1.0, 0.06)
+        }),
+        BorderColor::all(if sw.focused { FOCUS } else { Color::NONE }),
+    ))
+    .with_children(|row| {
+        row.spawn((
+            Text::new(format!("Colour: ‹ {} ›", sw.label)),
+            font(1.9),
+            TextColor(Color::WHITE),
+        ));
+        row.spawn(Node {
+            flex_direction: FlexDirection::Row,
+            flex_wrap: FlexWrap::Wrap,
+            column_gap: vh(0.6),
+            row_gap: vh(0.6),
+            ..default()
+        })
+        .with_children(|strip| {
+            for (i, col) in sw.colours.iter().enumerate() {
+                let chosen = i == sw.chosen;
+                let [r, g, b] = col.unwrap_or(sw.standard).channels();
+                let mut e = strip.spawn((
+                    Node {
+                        width: vh(3.4),
+                        height: vh(3.4),
+                        border: UiRect::all(vh(if chosen { 0.45 } else { 0.15 })),
+                        border_radius: BorderRadius::all(vh(0.6)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb_u8(r, g, b)),
+                    BorderColor::all(if chosen {
+                        FOCUS
+                    } else {
+                        Color::srgba(1.0, 1.0, 1.0, 0.35)
+                    }),
+                ));
+                if col.is_none() {
+                    // The kit's standard colour: marked "S".
+                    let ink = if u32::from(r) + u32::from(g) + u32::from(b) > 380 {
+                        Color::BLACK
+                    } else {
+                        Color::WHITE
+                    };
+                    e.with_child((Text::new("S"), font(1.6), TextColor(ink)));
+                }
+            }
+        });
     });
 }
 

@@ -3922,3 +3922,52 @@ riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 7
 at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=workshop open", "2.6=workshop mirror", "4=workshop slot-prev", "4.3=workshop slot-prev", "4.6=workshop slot-prev", "4.9=workshop slot-prev", "5.2=workshop slot-prev", "5.5=workshop slot-prev", "5.8=workshop slot-prev", "6.4=workshop select", "7.0=workshop down", "7.4=workshop down", "7.8=workshop right"]
 shot = 12
 pick = false
+
+# --- 4N Q30 mock-up (EXPERIMENTAL, undecided; branch q30-kit-tiles-mockup) ---
+# The shorts, socks, shoes and gloves pickers as picture tiles with the colour
+# as a row of swatches above (workshop.kit_tiles on), and today's list.
+
+[[scene]]
+name = "q30-shorts-tiles"
+description = "Q30 mock-up: the shorts picker as tiles of the rider in each pair of shorts, the colour (blue) as a swatch row above; the equipped shorts focused"
+args = ["--route", "hills", "--bots", "0", "--window", "1920x1080"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "1=workshop.kit_tiles on", "1.2=kit.design --shorts #1E88E5", "2=workshop open", "2.6=workshop mirror", "4=workshop slot-prev", "4.3=workshop slot-prev", "4.6=workshop slot-prev", "4.9=workshop slot-prev", "5.2=workshop slot-prev", "5.8=workshop select", "6.4=workshop down"]
+shot = 40
+pick = false
+
+[[scene]]
+name = "q30-socks-tiles"
+description = "Q30 mock-up: the socks picker, the swatch row focused and stepped to yellow (from the standard white) – the tiles' pictures follow the colour"
+args = ["--route", "hills", "--bots", "0", "--window", "1920x1080"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "1=workshop.kit_tiles on", "2=workshop open", "2.6=workshop mirror", "4=workshop slot-prev", "4.3=workshop slot-prev", "4.6=workshop slot-prev", "4.9=workshop slot-prev", "5.6=workshop select", "6.2=workshop right", "6.6=workshop right", "7.0=workshop right", "7.4=workshop right"]
+shot = 40
+pick = false
+
+[[scene]]
+name = "q30-shoes-tiles"
+description = "Q30 mock-up: the shoes picker as tiles of the feet, the standard colour chosen in the swatch row; the second tile focused"
+args = ["--route", "hills", "--bots", "0", "--window", "1920x1080"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "1=workshop.kit_tiles on", "2=workshop open", "2.6=workshop mirror", "4=workshop slot-prev", "4.3=workshop slot-prev", "5=workshop select", "5.6=workshop down", "6.0=workshop right"]
+shot = 40
+pick = false
+
+[[scene]]
+name = "q30-gloves-tiles"
+description = "Q30 mock-up: the gloves picker as tiles of the hands in red gloves, the swatch row above; the equipped gloves focused"
+args = ["--route", "hills", "--bots", "0", "--window", "1920x1080"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "1=workshop.kit_tiles on", "1.2=kit.design --gloves #E53935", "2=workshop open", "2.6=workshop mirror", "4=workshop slot-prev", "4.3=workshop slot-prev", "4.6=workshop slot-prev", "4.9=workshop slot-prev", "5.2=workshop slot-prev", "5.5=workshop slot-prev", "6.1=workshop select", "6.7=workshop down"]
+shot = 40
+pick = false
+
+[[scene]]
+name = "q30-shorts-list"
+description = "Q30 comparison: today's shorts picker (a text list, the colour row ‹ blue › changed with left / right), the same rider and colour as q30-shorts-tiles"
+args = ["--route", "hills", "--bots", "0", "--window", "1920x1080"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "1.2=kit.design --shorts #1E88E5", "2=workshop open", "2.6=workshop mirror", "4=workshop slot-prev", "4.3=workshop slot-prev", "4.6=workshop slot-prev", "4.9=workshop slot-prev", "5.2=workshop slot-prev", "5.8=workshop select"]
+shot = 30
+pick = false

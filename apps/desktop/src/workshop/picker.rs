@@ -333,6 +333,8 @@ impl MirrorSlot {
         match self {
             Self::Char(CharSlot::Glasses) => RiderShot::FaceFront,
             Self::Char(CharSlot::Skin) => RiderShot::Face,
+            // Q30 mock-up: the socks framed at the feet, not the whole rider.
+            Self::Kit(Slot::Socks) if kit_tiles_mockup() => RiderShot::Feet,
             s => match s.region() {
                 Some(Region::Head) => RiderShot::Face,
                 Some(Region::Hands) => RiderShot::Hands,
@@ -427,10 +429,15 @@ pub fn kit_rows(cat: &Catalogue, garage: &Garage, slot: Slot) -> Vec<Row> {
     }
     // The kit's own colour (free, looks only), whatever item is worn.
     if let Some(f) = kit_colour_field(slot) {
-        out.push(Row {
-            part: None,
-            kind: Kind::Design(f),
-        });
+        // Q30 mock-up: the swatch row comes first (above the tiles).
+        let at = if kit_tiles_mockup() { 0 } else { out.len() };
+        out.insert(
+            at,
+            Row {
+                part: None,
+                kind: Kind::Design(f),
+            },
+        );
     }
     for it in &garage.items {
         let Some(p) = cat.get(&it.part) else { continue };
@@ -1132,6 +1139,21 @@ pub struct Picker {
     pub bench: Option<super::bench::BenchPage>,
 }
 
+/// EXPERIMENTAL mock-up for spec §14 Phase 4, 4N Q30 (not decided, off by
+/// default; `workshop.kit_tiles on`): the shorts, socks, shoes and gloves
+/// pickers as picture tiles with their colour as a row of swatches above.
+static KIT_TILES_MOCKUP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the Q30 mock-up is on ([`KIT_TILES_MOCKUP`]).
+pub fn kit_tiles_mockup() -> bool {
+    KIT_TILES_MOCKUP.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Turns the Q30 mock-up on or off (`workshop.kit_tiles`).
+pub fn set_kit_tiles_mockup(on: bool) {
+    KIT_TILES_MOCKUP.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// The colour field of a kit slot (spec 4C: the kit's own colours, looks
 /// only): shorts, socks, shoes and gloves.
 pub fn kit_colour_field(slot: Slot) -> Option<Field> {
@@ -1255,7 +1277,17 @@ impl Picker {
         // bench's catalogue, the jersey designer and the kit pickers with a
         // colour row (shorts, socks, shoes, gloves: ← / → change the
         // colour there) stay lists.
-        self.bench.is_none() && self.design.is_none()
+        self.bench.is_none() && (self.design.is_none() || self.swatch_row())
+    }
+
+    /// Q30 mock-up: a kit picker whose colour row (row 0) is drawn as a
+    /// row of swatches above the tiles.
+    pub fn swatch_row(&self) -> bool {
+        kit_tiles_mockup()
+            && self.slot.is_kit()
+            && kit_colour_field(self.slot).is_some()
+            && self.design.is_some()
+            && matches!(self.rows.first().map(|r| &r.kind), Some(Kind::Design(_)))
     }
 
     /// The mirror's pickers (character and kit): tiles of the rider.
@@ -1265,6 +1297,24 @@ impl Picker {
 
     /// ← / → / ↑ / ↓ on the tiles ([`ocw_client::part_tiles::step`]).
     pub fn step_tiles(&mut self, dir: ocw_client::part_tiles::Dir) {
+        use ocw_client::part_tiles::{COLUMNS, Dir};
+        if self.swatch_row() {
+            // Row 0 is the swatch row; the tiles are rows 1 ….
+            let tiles = self.rows.len().saturating_sub(1);
+            if self.focus == 0 {
+                if dir == Dir::Down && tiles > 0 {
+                    self.focus = 1;
+                }
+                return;
+            }
+            let t = self.focus - 1;
+            if dir == Dir::Up && t < COLUMNS {
+                self.focus = 0;
+                return;
+            }
+            self.focus = 1 + ocw_client::part_tiles::step(t, tiles, COLUMNS, dir);
+            return;
+        }
         self.focus = ocw_client::part_tiles::step(
             self.focus,
             self.rows.len(),

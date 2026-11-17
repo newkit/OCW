@@ -322,6 +322,17 @@ fn register_commands(app: &mut App) {
         },
     ))
     .console_command(ConsoleCommand::new(
+        Permission::Dev,
+        Command::new("workshop.kit_tiles")
+            .about("EXPERIMENTAL mock-up (spec 4N Q30, undecided): shorts, socks, shoes and gloves pickers as tiles with a swatch row (takes effect on the next picker)")
+            .arg(Arg::new("on").value_parser(["on", "off"]).required(true)),
+        |_, m| {
+            let on = m.get_one::<String>("on").is_some_and(|v| v == "on");
+            picker::set_kit_tiles_mockup(on);
+            Ok(format!("kit tiles mock-up {}", if on { "on" } else { "off" }))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
         Permission::User,
         kit_design_command(),
         |world, m| {
@@ -1840,6 +1851,7 @@ fn picker_view(
         }),
         tiles: None,
         subtitle: None,
+        swatches: None,
     }
 }
 
@@ -1928,6 +1940,35 @@ fn fill_rider_tiles(v: &mut PickerView, p: &picker::Picker, scene: &Workshop, ct
     use ocw_client::part_tiles::{self, COLUMNS};
     use ocw_render::thumbs::RiderThumb;
     let shot = scene.dress.slot().shot();
+    // Q30 mock-up: the tiles' pictures in the draft colour of the swatch
+    // row (row 0), drawn above the tiles.
+    let swatch_row = p.swatch_row();
+    let look = match p.design {
+        Some((_, draft)) if swatch_row => draft,
+        _ => ctx.look,
+    };
+    if swatch_row
+        && let (Some(picker::Kind::Design(f)), Some((_, draft))) =
+            (p.rows.first().map(|r| r.kind.clone()), p.design)
+    {
+        let d = &draft.design;
+        let (now, standard) = match f {
+            designer::Field::Shorts => (d.shorts, Rgb(0x1E1E22)),
+            designer::Field::Socks => (d.socks, Rgb(0xF2F2EE)),
+            designer::Field::Shoes => (d.shoes, Rgb(0x2A2A2E)),
+            _ => (d.gloves, Rgb(0x1E1E22)),
+        };
+        let colours: Vec<Option<Rgb>> = std::iter::once(None)
+            .chain(ocw_core::bike::PALETTE.iter().copied().map(Some))
+            .collect();
+        v.swatches = Some(ocw_render::workshop::SwatchRowView {
+            chosen: colours.iter().position(|c| *c == now).unwrap_or(0),
+            colours,
+            focused: p.focus == 0,
+            label: f.value(&draft),
+            standard,
+        });
+    }
     for (row, r) in v.rows.iter_mut().zip(&p.rows) {
         match r.kind {
             picker::Kind::Free(picker::Free::Skin(i)) => {
@@ -1944,15 +1985,24 @@ fn fill_rider_tiles(v: &mut PickerView, p: &picker::Picker, scene: &Workshop, ct
             _ => {
                 let (character, kit) = scene.rider_look_with(ctx, Some(r));
                 row.thumb = Some(ThumbKey::Rider(RiderThumb {
-                    look: ocw_core::RiderLook {
-                        character,
-                        ..ctx.look
-                    },
+                    look: ocw_core::RiderLook { character, ..look },
                     kit,
                     shot,
                 }));
             }
         }
+    }
+    if swatch_row {
+        // The tiles are rows 1 …; the swatch row is above them.
+        let len = v.rows.len().saturating_sub(1);
+        let focus = v.focus.saturating_sub(1);
+        let first = part_tiles::first_row(focus, len, COLUMNS, RIDER_TILE_ROWS) * COLUMNS;
+        v.tiles = Some(TilesView {
+            cols: COLUMNS,
+            first: 1 + first,
+            shown: (RIDER_TILE_ROWS * COLUMNS).min(len.saturating_sub(first)),
+        });
+        return;
     }
     let len = v.rows.len();
     let first = part_tiles::first_row(v.focus, len, COLUMNS, RIDER_TILE_ROWS) * COLUMNS;
