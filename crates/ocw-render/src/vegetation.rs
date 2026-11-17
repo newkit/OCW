@@ -709,9 +709,9 @@ fn stands(
     // differs (before 2026-11-17 the cells kept free along a road counted
     // as the same field, and the stand's edge there had no side: its top
     // hung in the air over the ground).
-    let mut drawn: std::collections::HashMap<(i64, i64), Option<(u8, f32, [f32; 3])>> =
-        Default::default();
-    let mut present = |gc: i64, gr: i64| -> Option<(u8, f32, [f32; 3])> {
+    type Drawn = Option<(u8, f32, [f32; 3])>;
+    let mut drawn: std::collections::HashMap<(i64, i64), Drawn> = Default::default();
+    let mut present = |gc: i64, gr: i64| -> Drawn {
         if let Some(d) = drawn.get(&(gc, gr)) {
             return *d;
         }
