@@ -114,7 +114,8 @@ impl Trio {
             .collect();
         Self {
             riders,
-            places: [0.0, 5.0, 10.0],
+            // Within the 5 m of full volume (spec §7.1.7 Q20).
+            places: [0.0, 2.0, 4.0],
             start: Instant::now(),
         }
     }
@@ -335,6 +336,33 @@ impl Trio {
             "{what}: {} asking for {}'s voice itself is refused by the voice server",
             names[listener], names[speaker]
         )
+    }
+
+    /// Rider `i` listens to *Voice room: Selected riders* with `selected`
+    /// (names; empty: back to *Everybody*, nobody selected).
+    pub fn listen_to(&mut self, i: usize, selected: &[&str]) {
+        let c = &mut self.riders[i].c;
+        let mut s = c.settings().clone();
+        s.listen = if selected.is_empty() {
+            ocw_voice::audience::Listen::Everybody
+        } else {
+            ocw_voice::audience::Listen::Selected
+        };
+        c.set_settings(s);
+        c.set_rider_prefs(
+            selected
+                .iter()
+                .map(|n| {
+                    (
+                        format!("name:local/{n}"),
+                        ocw_voice::riders::RiderPref {
+                            selected: true,
+                            ..ocw_voice::riders::RiderPref::new(n)
+                        },
+                    )
+                })
+                .collect(),
+        );
     }
 
     /// Leaves the call.

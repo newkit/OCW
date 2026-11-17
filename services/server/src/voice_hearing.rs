@@ -9,10 +9,13 @@
 //!
 //! A listener L receives speaker S when all hold:
 //!
-//! - **range** (Q6 / Q10): the two are at most [`GRANT_M`] apart (the
-//!   voices fade to zero at 300 m; the margin lets a voice be ready before
-//!   it is audible), and once granted the grant holds up to [`KEEP_M`] –
-//!   nobody pops in and out at the edge;
+//! - **range** (Q6 / Q10 / Q20): the two are at most [`GRANT_M`] apart
+//!   (the voices fade from 5 m to zero at 10 m; the margin lets a voice be
+//!   ready before it is audible), and once granted the grant holds up to
+//!   [`KEEP_M`] – nobody pops in and out at the edge. **No range** when L
+//!   listens to *Voice room: Selected riders* and S is among them (Q20:
+//!   selected riders are always audible); with the Echo rider on either
+//!   side the Echo rider's wider range ([`ECHO_GRANT_M`], [`ECHO_KEEP_M`]);
 //! - **Who hears me** of S (Q8): *All nearby*, or *Selected riders* with L
 //!   among S's selection (*No one*, the default, lets nobody hear S);
 //! - **Voice room** of L (§7.1.3): *Everybody*, or *Selected riders* with S
@@ -39,11 +42,18 @@ use ocw_protocol::v1;
 
 use crate::voice_block::{self, Who};
 
-/// A voice is granted within this distance (m): the 300 m of the hearing
-/// range (spec §7.1.7 Q10) and a margin.
-pub const GRANT_M: f64 = 310.0;
-/// A granted voice is kept up to this distance (m).
-pub const KEEP_M: f64 = 340.0;
+/// A voice is granted within this distance (m): the 10 m of the hearing
+/// range (spec §7.1.7 Q20) and a margin of half a metre.
+pub const GRANT_M: f64 = 10.5;
+/// A granted voice is kept up to this distance (m): a rider riding away
+/// keeps the (silent) voice for 2 m more, so two riders riding side by
+/// side at the edge are not granted and revoked with every snapshot.
+pub const KEEP_M: f64 = 12.0;
+/// The Echo rider's range (spec §7 *Echo bot*: its playback fades to zero
+/// at 300 m, `ocw_voice::spatial::ECHO_RANGE_M`), granted within …
+pub const ECHO_GRANT_M: f64 = 310.0;
+/// … and kept up to this distance (m).
+pub const ECHO_KEEP_M: f64 = 340.0;
 
 /// *Who hears me* (spec §7.1.7 Q8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -115,6 +125,12 @@ impl Audience {
             Listen::Everybody => true,
             Listen::Selected => self.selected.blocks(speaker),
         }
+    }
+
+    /// Hears `speaker` at any distance (spec §7.1.7 Q20): listens to
+    /// *Selected riders* and `speaker` is among them.
+    fn always_hears(&self, speaker: &Who) -> bool {
+        self.listen == Listen::Selected && self.selected.blocks(speaker)
     }
 }
 
@@ -209,14 +225,18 @@ pub fn hearing<K: Ord + Copy>(
             if kept_apart || !s.audience.lets_hear(&l.who) || !l.audience.listens_to(&s.who) {
                 continue;
             }
-            let d = distance(s.place, l.place, loop_m);
-            let limit = if granted_before(s, l) {
-                KEEP_M
-            } else {
-                GRANT_M
-            };
-            if d > limit {
-                continue;
+            if !l.audience.always_hears(&s.who) {
+                let echo = s.key.is_none() || l.key.is_none();
+                let (grant, keep) = if echo {
+                    (ECHO_GRANT_M, ECHO_KEEP_M)
+                } else {
+                    (GRANT_M, KEEP_M)
+                };
+                let d = distance(s.place, l.place, loop_m);
+                let limit = if granted_before(s, l) { keep } else { grant };
+                if d > limit {
+                    continue;
+                }
             }
             if let Some(h) = l.key.and_then(|k| out.get_mut(&k)) {
                 h.may_hear.insert(s.who.rider);
@@ -293,13 +313,15 @@ mod tests {
         );
     }
 
-    /// Range (Q6 / Q10): near riders hear each other, a far one nobody;
-    /// moving in grants at 310 m, moving out keeps the grant to 340 m.
+    /// Range (Q20, changing Q10): near riders hear each other, a far one
+    /// nobody; moving in grants at 10.5 m, moving out keeps the grant to
+    /// 12 m.
     #[test]
     fn range_with_a_margin_in_and_out() {
+        assert_eq!((GRANT_M, KEEP_M), (10.5, 12.0));
         let mut members = vec![
             member(1, "Ada Rider", 0.0, nearby()),
-            member(2, "Bea Climber", 5.0, nearby()),
+            member(2, "Bea Climber", 3.0, nearby()),
             member(3, "Cleo Sprinter", 1000.0, nearby()),
         ];
         let none = BTreeMap::new();
@@ -308,30 +330,74 @@ mod tests {
         assert_eq!(ids(&h[&1].heard_by), [2]);
         assert_eq!(ids(&h[&2].may_hear), [1]);
         assert!(h[&3].may_hear.is_empty() && h[&3].heard_by.is_empty());
-        // Cleo comes nearer: 320 m from Ada, 315 m from Bea – not yet.
-        members[2].place = Place::Route(320.0);
+        // A rider about 20 m away is not sent either.
+        members[2].place = Place::Route(20.0);
         let h = hearing(&members, &none, &h, None);
-        assert!(h[&3].may_hear.is_empty(), "outside 310 m: not yet");
-        // 312 m from Ada, 307 m from Bea: Bea only.
-        members[2].place = Place::Route(312.0);
+        assert!(h[&3].may_hear.is_empty() && h[&3].heard_by.is_empty());
+        // Cleo comes nearer: 14 m from Ada, 11 m from Bea - not yet.
+        members[2].place = Place::Route(14.0);
+        let h = hearing(&members, &none, &h, None);
+        assert!(h[&3].may_hear.is_empty(), "outside 10.5 m: not yet");
+        // 13 m from Ada, 10 m from Bea: Bea only.
+        members[2].place = Place::Route(13.0);
         let h = hearing(&members, &none, &h, None);
         assert_eq!(ids(&h[&3].may_hear), [2]);
-        members[2].place = Place::Route(309.0);
+        members[2].place = Place::Route(10.4);
         let h = hearing(&members, &none, &h, None);
-        assert_eq!(ids(&h[&3].may_hear), [1, 2], "both within 310 m");
-        // Moving away: kept up to 340 m, then gone.
-        members[2].place = Place::Route(339.0);
+        assert_eq!(ids(&h[&3].may_hear), [1, 2], "both within 10.5 m");
+        // Moving away: kept up to 12 m, then gone.
+        members[2].place = Place::Route(11.9);
         let h = hearing(&members, &none, &h, None);
         assert_eq!(ids(&h[&3].may_hear), [1, 2]);
         assert_eq!(ids(&h[&1].heard_by), [2, 3]);
-        members[2].place = Place::Route(346.0);
+        members[2].place = Place::Route(15.5);
         let h = hearing(&members, &none, &h, None);
-        assert!(h[&3].may_hear.is_empty(), "past 340 m from both");
+        assert!(h[&3].may_hear.is_empty(), "past 12 m from both");
         assert_eq!(ids(&h[&1].heard_by), [2]);
-        // And back in only within 310 m again.
-        members[2].place = Place::Route(330.0);
+        // And back in only within 10.5 m again: 8 m from Bea, 11 m from
+        // Ada.
+        members[2].place = Place::Route(11.0);
         let h = hearing(&members, &none, &h, None);
-        assert!(h[&3].may_hear.is_empty());
+        assert_eq!(ids(&h[&3].may_hear), [2]);
+    }
+
+    /// Selected riders are always audible (Q20): with *Voice room:
+    /// Selected riders* the listener receives them at any distance; the
+    /// speaker's *Who hears me* still decides, and a block still wins.
+    #[test]
+    fn selected_riders_are_sent_at_any_distance() {
+        let none = BTreeMap::new();
+        let ada = Audience {
+            heard_by: HeardBy::Nearby,
+            listen: Listen::Selected,
+            selected: selecting(&["Bea Climber"]),
+        };
+        let mut members = vec![
+            member(1, "Ada Rider", 0.0, ada),
+            member(2, "Bea Climber", 1000.0, nearby()),
+            member(3, "Cleo Sprinter", 1000.0, nearby()),
+        ];
+        let h = hearing(&members, &none, &BTreeMap::new(), None);
+        assert_eq!(ids(&h[&1].may_hear), [2], "the selected Bea 1 km away");
+        assert_eq!(ids(&h[&2].heard_by), [1, 3]);
+        assert!(
+            h[&1].heard_by.is_empty(),
+            "Bea listens to everybody: Ada 1 km away is out of her range"
+        );
+        assert!(!h[&3].heard_by.contains(&RiderId(1)), "Cleo not selected");
+        // Bea's *Who hears me: No one*: not even her selector hears her.
+        members[1].audience.heard_by = HeardBy::NoOne;
+        let h = hearing(&members, &none, &BTreeMap::new(), None);
+        assert!(h[&1].may_hear.is_empty());
+        // A block wins over the selection, however far.
+        members[1].audience.heard_by = HeardBy::Nearby;
+        let apart: BTreeMap<u8, BTreeSet<RiderId>> = [(2, [RiderId(1)].into())].into();
+        let h = hearing(&members, &apart, &BTreeMap::new(), None);
+        assert!(h[&1].may_hear.is_empty() && h[&2].heard_by.is_empty());
+        // *Everybody* again: the range holds for Bea too.
+        members[0].audience.listen = Listen::Everybody;
+        let h = hearing(&members, &none, &BTreeMap::new(), None);
+        assert!(h[&1].may_hear.is_empty());
     }
 
     /// *Who hears me* (Q8): No one (the default) – nobody; All nearby;
@@ -358,7 +424,8 @@ mod tests {
         assert_eq!(ids(&h[&1].heard_by), [3], "only the selected Cleo");
         assert_eq!(ids(&h[&3].may_hear), [1, 2]);
         assert_eq!(ids(&h[&2].may_hear), [3], "Bea does not hear Ada");
-        // The selected rider far away: not heard either.
+        // The selected rider far away: not heard either (*Who hears me* is
+        // not the *Voice room*: Cleo listens to everybody, by range).
         members[2].place = Place::Route(900.0);
         let h = hearing(&members, &none, &BTreeMap::new(), None);
         assert!(h[&1].heard_by.is_empty());
@@ -446,11 +513,20 @@ mod tests {
             echo,
         ];
         let h = hearing(&members, &none, &BTreeMap::new(), None);
-        assert_eq!(ids(&h[&1].heard_by), [2, 9], "Bea and the Echo rider");
+        assert_eq!(
+            ids(&h[&1].heard_by),
+            [2, 9],
+            "Bea and the Echo rider 20 m away (its own, wider range)"
+        );
         assert_eq!(ids(&h[&1].may_hear), [9], "Bea is heard by no one");
         assert_eq!(ids(&h[&2].may_hear), [1, 9]);
         assert!(h[&2].heard_by.is_empty(), "not even by the Echo rider");
         assert_eq!(h.len(), 2, "the Echo rider gets no answer");
+        // Its range ends at 310 m (kept to 340 m).
+        let mut members = members;
+        members[2].place = Place::Route(311.0);
+        let h = hearing(&members, &none, &BTreeMap::new(), None);
+        assert_eq!(ids(&h[&1].heard_by), [2]);
     }
 
     #[test]

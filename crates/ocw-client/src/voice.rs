@@ -1604,8 +1604,8 @@ mod tests {
         for s in &w.sides {
             assert_eq!(s.subscribed().len(), 2, "all at the start: all heard");
         }
-        // Cleo rides 1.5 km away (half the 3.9 km loop): out of range.
-        w.place(2, 1.5);
+        // Cleo rides 20 m ahead: out of the 10 m range (spec §7.1.7 Q20).
+        w.place(2, 0.02);
         w.run(10);
         assert_eq!(w.sides[0].subscribed(), w.set(&[1]));
         assert_eq!(w.sides[1].subscribed(), w.set(&[0]));
@@ -1626,8 +1626,8 @@ mod tests {
             .find(|p| p.rider == Some(w.ids[2]))
             .unwrap();
         assert!(!cleo.may_hear && cleo.heard.is_none());
-        // Back near (20 m): heard again.
-        w.place(2, 0.02);
+        // Back near (3 m): heard again.
+        w.place(2, 0.003);
         w.run(10);
         for s in &w.sides {
             assert_eq!(s.subscribed().len(), 2, "back in range");
@@ -1680,6 +1680,20 @@ mod tests {
         w.run(10);
         assert_eq!(w.sides[2].subscribed(), w.set(&[0]));
         assert_eq!(w.allowed(0), Some(w.set(&[2])));
+        // Selected riders are always audible (Q20): Cleo rides 1 km away
+        // and still hears her selected Ada, at full volume; Ada (listening
+        // to everybody) no longer gets Cleo.
+        w.place(2, 1.0);
+        w.run(10);
+        assert_eq!(w.sides[2].subscribed(), w.set(&[0]), "1 km: still Ada");
+        assert_eq!(w.allowed(0), Some(w.set(&[2])));
+        let ada = w.sides[2]
+            .c
+            .participants()
+            .find(|p| p.rider == Some(w.ids[0]))
+            .unwrap();
+        assert_eq!(ada.heard, Some(1.0));
+        assert!(!w.sides[0].subscribed().contains(&w.identity(2)));
         // A block always wins: Ada blocks her selected Cleo.
         block_command(&mut w.sides[0].c, None, "Cleo Sprinter", Some("on")).unwrap();
         w.run(10);

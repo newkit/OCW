@@ -764,7 +764,7 @@ impl VoiceController {
         if local && let Some(p) = peer {
             let volume = self.settings.volume.clamp(0.0, 2.0);
             let (gain, pan) = if self.settings.spatial {
-                let pl = self.spatial.place(p);
+                let pl = SpatialConfig::echo().place(p);
                 (pl.gain * volume, pl.pan)
             } else {
                 (volume, 0.0)
@@ -945,9 +945,12 @@ impl VoiceController {
     /// - In the session and event rooms only the riders the game server
     ///   lets the rider hear (`may_hear`: in range, their *Who hears me*,
     ///   the own *Voice room*; spec §7.1.7 Q6, Q8) and, with *Voice room:
-    ///   Selected riders*, only the selected ones; spatial: the gain falls
-    ///   to zero at 300 m, at most `max_voices` – talking riders first,
-    ///   then the nearest (spec §7.1.2).
+    ///   Selected riders*, only the selected ones; spatial: full to 5 m,
+    ///   the gain falls to zero at 10 m, but the selected riders of
+    ///   *Voice room: Selected riders* are heard at full volume at any
+    ///   distance (spec §7.1.7 Q20); at most `max_voices` – talking riders
+    ///   first, then the nearest (spec §7.1.2). Without spatial voice
+    ///   everybody at the same volume, still within the range (Q21).
     /// - In a group room everybody in it.
     fn place_voices(&mut self, peers: &[Peer], now_s: f64) {
         let volume = self.settings.volume.clamp(0.0, 2.0);
@@ -1004,7 +1007,14 @@ impl VoiceController {
                 .keys()
                 .filter_map(|i| ocw_protocol::rider_of_voice_identity(i))
                 .collect();
-            for (r, pl) in spatial::select(&known, &current, &talking, &self.spatial) {
+            // *Voice room: Selected riders*: every candidate is selected
+            // and heard at any distance (spec §7.1.7 Q20).
+            let always: BTreeSet<RiderId> = if listen == Listen::Selected {
+                by_rider.keys().copied().collect()
+            } else {
+                BTreeSet::new()
+            };
+            for (r, pl) in spatial::select(&known, &current, &talking, &always, &self.spatial) {
                 let identity = &by_rider[&r].identity;
                 let (gain, pan) = if self.settings.spatial {
                     (pl.gain, pl.pan)
@@ -1017,14 +1027,15 @@ impl VoiceController {
                 );
             }
             // Riders the server lets the rider hear whose place is not
-            // known yet: quiet, while there is room.
+            // known yet (joining, or too far for the snapshots): quiet,
+            // while there is room – selected ones at full volume (Q20).
             for p in &candidates {
                 if want.len() >= self.spatial.max_voices {
                     break;
                 }
                 let placed = p.rider.is_some_and(|r| known.iter().any(|k| k.rider == r));
                 if !placed && !want.contains_key(&p.identity) {
-                    let gain = if self.settings.spatial {
+                    let gain = if self.settings.spatial && listen == Listen::Everybody {
                         spatial::UNPLACED_GAIN
                     } else {
                         1.0
@@ -1447,7 +1458,7 @@ mod tests {
         let (mut c, b) = connected();
         // Joined before their positions were known: already subscribed
         // (quietly, see below); now placed by distance.
-        c.update(1.0, &[peer(2, 5.0), peer(3, -40.0)]);
+        c.update(1.0, &[peer(2, 5.0), peer(3, -8.0)]);
         let sent = b.take_sent();
         for id in ["rider-2", "rider-3"] {
             assert!(
@@ -1463,11 +1474,11 @@ mod tests {
         assert_eq!(gain_of(&c, "rider-2"), Some(1.0));
         assert!(gain_of(&c, "rider-3").unwrap() < 0.5, "behind: quieter");
         // Nothing moved: no commands.
-        c.update(1.1, &[peer(2, 5.0), peer(3, -40.0)]);
+        c.update(1.1, &[peer(2, 5.0), peer(3, -8.0)]);
         assert!(b.take_sent().is_empty());
         // Muting rider 3 unsubscribes them.
         assert!(c.mute_participant("rider-3", Switch::Toggle));
-        c.update(1.2, &[peer(2, 5.0), peer(3, -40.0)]);
+        c.update(1.2, &[peer(2, 5.0), peer(3, -8.0)]);
         assert_eq!(
             b.take_sent(),
             vec![BackendCommand::Subscribe {
@@ -1478,7 +1489,7 @@ mod tests {
         assert_eq!(gain_of(&c, "rider-3"), None);
         // Out of range: not heard.
         c.mute_participant("rider-3", Switch::Off);
-        c.update(1.3, &[peer(2, 1000.0), peer(3, -40.0)]);
+        c.update(1.3, &[peer(2, 1000.0), peer(3, -8.0)]);
         let sent = b.take_sent();
         assert!(sent.contains(&BackendCommand::Subscribe {
             identity: "rider-2".into(),
@@ -1536,8 +1547,8 @@ mod tests {
         assert_eq!(of(&c, "rider-3").volume_pct, 0);
         assert_eq!(of(&c, "rider-3").heard, Some(0.0), "subscribed, silent");
         // Further away: the spatial gain times the rider's volume.
-        c.update(2.0, &[peer(2, 40.0), peer(3, 5.0)]);
-        let spatial = SpatialConfig::default().gain(40.0);
+        c.update(2.0, &[peer(2, 7.0), peer(3, 5.0)]);
+        let spatial = SpatialConfig::default().gain(7.0);
         let heard = of(&c, "rider-2").heard.unwrap();
         assert!((heard - spatial * 0.5 * 2.0).abs() < 1e-6, "{heard}");
         // Without spatial voice too.
@@ -1546,7 +1557,7 @@ mod tests {
             spatial: false,
             ..nearby()
         });
-        c.update(3.0, &[peer(2, 40.0), peer(3, 5.0)]);
+        c.update(3.0, &[peer(2, 7.0), peer(3, 5.0)]);
         assert_eq!(of(&c, "rider-2").heard, Some(2.0));
         // Nothing was blocked: the permissions stay as the server said.
         assert!(
@@ -1668,7 +1679,7 @@ mod tests {
             max_voices: 1,
             ..Default::default()
         });
-        c.update(1.0, &[peer(2, 50.0), peer(3, 5.0)]);
+        c.update(1.0, &[peer(2, 8.0), peer(3, 5.0)]);
         let heard: Vec<String> = c
             .participants()
             .filter(|p| p.heard.is_some())
@@ -1686,8 +1697,11 @@ mod tests {
             volume: 0.8,
             ..Default::default()
         });
-        c.update(1.0, &[peer(2, 5.0), peer(3, -250.0)]);
+        c.update(1.0, &[peer(2, 5.0), peer(3, -9.0)]);
         assert!(c.participants().all(|p| p.heard == Some(0.8)));
+        // Q21 as built: the same volume, but only within the 10 m range.
+        c.update(1.1, &[peer(2, 5.0), peer(3, -250.0)]);
+        assert_eq!(heard(&c), ["rider-2"]);
         // Riders the server lets the rider hear whose position is unknown
         // are heard quietly with spatial on.
         let (mut c, _b) = connected();
@@ -1757,7 +1771,7 @@ mod tests {
 
     /// Spec §7.1.7 Q6: in the session room the rider hears only whom the
     /// game server allows (`may_hear`), nobody before it said; a rider
-    /// beyond 300 m is not heard even if allowed.
+    /// beyond 10 m is not heard even if allowed.
     #[test]
     fn the_game_server_decides_whom_the_rider_hears() {
         let (mut c, b) = connected();
@@ -1771,8 +1785,8 @@ mod tests {
         let three = c.participants().find(|p| p.identity == "rider-3").unwrap();
         assert!(!three.may_hear && three.distance_m == Some(5.0));
         c.set_hearing(hearing(&[2, 3], &[2, 3]));
-        c.update(1.2, &[peer(2, 320.0), peer(3, 5.0)]);
-        assert_eq!(heard(&c), ["rider-3"], "past 300 m: silent, unsubscribed");
+        c.update(1.2, &[peer(2, 10.5), peer(3, 5.0)]);
+        assert_eq!(heard(&c), ["rider-3"], "past 10 m: silent, unsubscribed");
         // A group room is not limited by the server's range.
         c.set_hearing(hearing(&[], &[]));
         c.set_group(Some("team-1".into())).unwrap();
@@ -1896,7 +1910,9 @@ mod tests {
     }
 
     /// *Voice room: Selected riders* (spec §7.1.3): only the selected
-    /// riders are heard (within range, as the server allows).
+    /// riders are heard (as the server allows), at full volume at any
+    /// distance (spec §7.1.7 Q20); with *Everybody* a selected rider is
+    /// heard by range like anyone.
     #[test]
     fn voice_room_selected_hears_only_the_selection() {
         let (mut c, _b) = connected();
@@ -1928,9 +1944,31 @@ mod tests {
         c.update(1.1, &[peer(2, 5.0), peer(3, 5.0)]);
         assert_eq!(heard(&c), ["rider-3"]);
         assert_eq!(c.server_audience().listen(), v1::VoiceListen::Selected);
-        // Out of range the selection is not heard either.
-        c.update(1.2, &[peer(2, 5.0), peer(3, 400.0)]);
-        assert!(heard(&c).is_empty());
+        // Not placed yet (too far for the snapshots): at full volume.
+        c.update(1.15, &[peer(2, 5.0)]);
+        assert_eq!(heard(&c), ["rider-3"]);
+        let cleo = c.participants().find(|p| p.identity == "rider-3").unwrap();
+        assert_eq!(cleo.heard, Some(1.0));
+        // 1 km away the selection is still heard, at full volume.
+        c.update(1.2, &[peer(2, 5.0), peer(3, 1000.0)]);
+        assert_eq!(heard(&c), ["rider-3"]);
+        let cleo = c.participants().find(|p| p.identity == "rider-3").unwrap();
+        assert_eq!(cleo.heard, Some(1.0));
+        // Without spatial voice too.
+        c.set_settings(VoiceSettings {
+            listen: Listen::Selected,
+            spatial: false,
+            ..nearby()
+        });
+        c.update(1.3, &[peer(2, 5.0), peer(3, 1000.0)]);
+        assert_eq!(heard(&c), ["rider-3"]);
+        // *Everybody*: the range holds for the selected Cleo too.
+        c.set_settings(nearby());
+        c.update(1.4, &[peer(2, 5.0), peer(3, 1000.0)]);
+        assert_eq!(heard(&c), ["rider-2"]);
+        c.update(1.5, &[peer(2, 5.0), peer(3, 7.5)]);
+        let cleo = c.participants().find(|p| p.identity == "rider-3").unwrap();
+        assert!((cleo.heard.unwrap() - 1.0 / 3.0).abs() < 1e-6, "{cleo:?}");
     }
 
     /// The cap (spec §7.1.2): riders who talk come first, and keep their
@@ -1942,21 +1980,15 @@ mod tests {
             max_voices: 1,
             ..nearby()
         });
-        c.update(1.0, &[peer(2, 50.0), peer(3, 5.0)]);
+        c.update(1.0, &[peer(2, 8.0), peer(3, 5.0)]);
         assert_eq!(heard(&c), ["rider-3"], "the nearest");
         b.push(BackendEvent::Speaking(vec!["rider-2".into()]));
-        c.update(1.1, &[peer(2, 50.0), peer(3, 5.0)]);
+        c.update(1.1, &[peer(2, 8.0), peer(3, 5.0)]);
         assert_eq!(heard(&c), ["rider-2"], "the talking one");
         b.push(BackendEvent::Speaking(vec![]));
-        c.update(
-            1.2 + TALKED_RECENTLY_S - 0.5,
-            &[peer(2, 50.0), peer(3, 5.0)],
-        );
+        c.update(1.2 + TALKED_RECENTLY_S - 0.5, &[peer(2, 8.0), peer(3, 5.0)]);
         assert_eq!(heard(&c), ["rider-2"], "a pause keeps the place");
-        c.update(
-            1.2 + TALKED_RECENTLY_S + 0.5,
-            &[peer(2, 50.0), peer(3, 5.0)],
-        );
+        c.update(1.2 + TALKED_RECENTLY_S + 0.5, &[peer(2, 8.0), peer(3, 5.0)]);
         assert_eq!(heard(&c), ["rider-3"]);
         assert_eq!(VoiceSettings::default().max_voices, 24);
     }

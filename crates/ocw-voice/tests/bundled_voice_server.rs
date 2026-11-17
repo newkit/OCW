@@ -21,12 +21,14 @@
 //! (not even when Bea asks for Ada's voice itself) while Cleo hears both.
 //!
 //! With `OCW_VOICE_TEST_RANGE=1` (the script's third run, the server with
-//! `--dev-commands`) the range test runs (spec §7.1.7 Q6, Q8, Q10): three
-//! riders with *Who hears me: All nearby*, Cleo teleports 1.5 km away –
-//! the game server tells her she may hear nobody and nobody may hear her,
-//! nobody hears her nor she anyone (her own request for Ada's voice is
-//! refused); back near, Ada switches to *Selected riders* with Bea only:
-//! Bea hears Ada, Cleo does not (and is refused), Ada hears both.
+//! `--dev-commands`) the range test runs (spec §7.1.7 Q6, Q8, Q10, Q20):
+//! three riders with *Who hears me: All nearby*, Cleo teleports 20 m ahead
+//! (out of the 10 m range) – the game server tells her she may hear nobody
+//! and nobody may hear her, nobody hears her nor she anyone (her own
+//! request for Ada's voice is refused); 1 km away with *Voice room:
+//! Selected riders* (Ada) she hears Ada and nobody else; back near (3 m),
+//! Ada switches to *Selected riders* with Bea only: Bea hears Ada, Cleo
+//! does not (and is refused), Ada hears both.
 #![cfg(feature = "livekit")]
 
 mod support;
@@ -140,6 +142,16 @@ fn audience(selected: &[&str]) -> Vec<u8> {
         } else {
             v1::VoiceHeardBy::Selected
         } as i32,
+        selected_names: selected.iter().map(|s| (*s).to_owned()).collect(),
+        ..Default::default()
+    })))
+}
+
+/// *Who hears me: All nearby* and *Voice room: Selected riders* (them).
+fn listening_to(selected: &[&str]) -> Vec<u8> {
+    encode(&client_message(C::VoiceAudience(v1::VoiceAudience {
+        heard_by: v1::VoiceHeardBy::Nearby as i32,
+        listen: v1::VoiceListen::Selected as i32,
         selected_names: selected.iter().map(|s| (*s).to_owned()).collect(),
         ..Default::default()
     })))
@@ -388,8 +400,8 @@ fn range_and_audiences_hold_on_the_bundled_server() {
     for (client, _) in &joined {
         client.send(audience(&[]));
     }
-    // Cleo rides 1.5 km away (a dev teleport: the server runs with
-    // --dev-commands for this test).
+    // Cleo rides 20 m ahead, out of the 10 m range (spec §7.1.7 Q20; a
+    // dev teleport: the server runs with --dev-commands for this test).
     let teleport = |i: usize, km: f64| {
         joined[i]
             .0
@@ -397,7 +409,7 @@ fn range_and_audiences_hold_on_the_bundled_server() {
                 cmd: Some(v1::dev_command::Cmd::TeleportDistanceM(km * 1000.0)),
             }))));
     };
-    teleport(2, 1.5);
+    teleport(2, 0.02);
     let mut told = Told::new(3);
     told.pump(&joined, 2.0);
     let set = |v: &[usize]| -> std::collections::BTreeSet<ocw_core::RiderId> {
@@ -435,7 +447,7 @@ fn range_and_audiences_hold_on_the_bundled_server() {
             told.hearing(2),
         ),
     ]);
-    trio.place(2, 1500.0);
+    trio.place(2, 20.0);
     assert!(
         trio.join(Duration::from_secs(30)),
         "not all three in the call: {}",
@@ -451,8 +463,39 @@ fn range_and_audiences_hold_on_the_bundled_server() {
     }
     println!("PASS {}", trio.check_refused("far", 2, 0, true, ""));
     println!("the far rider is neither heard nor hears");
-    // Cleo comes back; Ada: *Who hears me: Selected riders*, Bea only.
-    teleport(2, 0.02);
+    // Selected riders are always audible (spec §7.1.7 Q20): Cleo 1 km
+    // away listens to *Selected riders* with Ada.
+    teleport(2, 1.0);
+    joined[2].0.send(listening_to(&["Ada Rider"]));
+    told.pump(&joined, 2.0);
+    assert_eq!(
+        told.hearing(2).may_hear,
+        set(&[0]),
+        "the selected Ada 1 km away is sent to Cleo"
+    );
+    assert!(
+        told.hearing(2).heard_by.is_empty(),
+        "Cleo is heard by nobody"
+    );
+    trio.listen_to(2, &["Ada Rider"]);
+    for i in 0..3 {
+        trio.set_hearing(i, told.hearing(i));
+    }
+    trio.place(2, 1000.0);
+    let selected_far = [
+        [false, true, true],
+        [true, false, false],
+        [false, false, false],
+    ];
+    for line in trio.check_matrix("selected 1 km away", selected_far, "") {
+        println!("PASS {line}");
+    }
+    println!("a selected rider 1 km away is heard");
+    // Cleo comes back (3 m, listening to everybody again); Ada: *Who
+    // hears me: Selected riders*, Bea only.
+    teleport(2, 0.003);
+    joined[2].0.send(audience(&[]));
+    trio.listen_to(2, &[]);
     joined[0].0.send(audience(&["Bea Climber"]));
     told.pump(&joined, 2.0);
     assert_eq!(told.hearing(0).heard_by, set(&[1]), "only Bea may hear Ada");
@@ -480,7 +523,7 @@ fn range_and_audiences_hold_on_the_bundled_server() {
     for i in 0..3 {
         trio.set_hearing(i, told.hearing(i));
     }
-    trio.place(2, 20.0);
+    trio.place(2, 3.0);
     let selected = [
         [false, true, false],
         [true, false, true],

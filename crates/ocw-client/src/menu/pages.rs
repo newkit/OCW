@@ -494,10 +494,10 @@ impl Page {
                 "Voice chat is always on: shared rides join you, muted. M: microphone, Shift+M: voices (pad: Select, R3).",
             ],
             Self::VoiceDevices => &[
-                "Microphone and speaker for voice chat; a missing device falls back to the default. Voices fade to silence at 300 m.",
+                "Microphone and speaker for voice chat; a missing device falls back to the default. Voices fade from 5 m to silence at 10 m.",
             ],
             Self::VoiceRoom => &[
-                "Voice room: whom you hear. Who hears me: who hears you (no one until you change it). Riders are heard up to 300 m; a block always wins.",
+                "Voice room: whom you hear. Who hears me: who hears you (no one until you change it). Riders are heard up to 10 m, selected riders at any distance; a block always wins.",
             ],
             Self::VoiceSelect => &[
                 "Confirm selects a rider or takes them off. Your selection is remembered, also for riders not here now.",

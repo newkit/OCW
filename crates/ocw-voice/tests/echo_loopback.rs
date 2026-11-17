@@ -114,7 +114,7 @@ fn near_the_echo_rider_the_tone_comes_back_delayed_and_placed() {
     assert_eq!(onset - input_onset, delay_samples(DEFAULT_DELAY_MS));
     assert_eq!(DEFAULT_DELAY_MS, 300);
     // Level and pan: the spatial placement of a rider at that spot.
-    let pl = SpatialConfig::default().place(&Peer {
+    let pl = SpatialConfig::echo().place(&Peer {
         rider: ECHO,
         gap_m: 5.0,
         lateral_m: 2.0,
@@ -149,7 +149,7 @@ fn the_echo_fades_with_distance_and_stops_far_away() {
     let far = level_at(100.0);
     // 40 m: two thirds recorded (fading from 30 to 60 m), played at
     // 10 m / 40 m.
-    let c = SpatialConfig::default();
+    let c = SpatialConfig::echo();
     let expect = |gap: f64, rec: f32| {
         let (l, _) = pan_gains(0.0);
         0.5 / 2f32.sqrt() * rec * c.gain(gap) * l
