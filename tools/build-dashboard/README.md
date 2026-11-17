@@ -39,6 +39,7 @@ button, or `systemctl --user restart ocw-build-dashboard.service`).
 
 | Version | Date | Change | Unit changed |
 |---|---|---|---|
+| 1.6.0 | 2026-11-17 | **Open questions kept current**: "Q30 (open) – …" bullets are read (a status in brackets before the dash), `spec_questions.py refresh` fast-forwards the main checkout (only on `main` without tracked changes) and lints the questions (bullets the dashboard cannot read, answers written outside the bold label), every 15 minutes by the new `ocw-spec-questions.timer` (report `test-output/answers/questions-refresh.json`); `spec_questions.py lint SPEC` | yes (new timer; `make dashboard-install`) |
 | 1.5.0 | 2026-11-16 | **Agents on the coordinator selectable**: `[coordinator] max_agents` in `config/build-machines.toml` (default 5, 1–16; − N + on the Coordinator card with the token, `POST /api/coordinator`, `build_machines.py agents N`), `agents` in `/api/status`, "agents N of M" on the card and in the Claude tasks header (amber at the limit, red above it) with deb's available memory, `scripts/agent-slots.sh` for the sessions | no |
 | 1.4.1 | 2026-11-16 | The cutover line is gone from the Claude tasks card; the worktree list stays open (kept in the browser across refreshes and updates) | no |
 | 1.4.0 | 2026-11-16 | Versioning: `VERSION`, `--version`, version and commit in the header and `/api/status`, the page reloads itself on a new version | no |

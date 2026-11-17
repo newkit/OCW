@@ -519,17 +519,22 @@ art-uninstall-timer: ## Art: stop and remove the art collector's systemd user ti
 	systemctl --user daemon-reload
 	@echo "Removed. Install it from OCW-ART: make -C $(OCW_ART) install-timer"
 
-dashboard-install: ## Install and start the build dashboard as a systemd user service (port 8765, starts at login)
+dashboard-install: ## Install and start the build dashboard as a systemd user service (port 8765, starts at login) and the 15-minute timer that keeps its open questions current
 	mkdir -p $(HOME)/.config/systemd/user
 	sed 's|@REPO@|$(CURDIR)|g' tools/build-dashboard/ocw-build-dashboard.service > $(HOME)/.config/systemd/user/ocw-build-dashboard.service
 	systemctl --user daemon-reload
 	systemctl --user enable --now ocw-build-dashboard.service
 	systemctl --user restart ocw-build-dashboard.service
+	sed 's|@REPO@|$(CURDIR)|g' tools/build-dashboard/ocw-spec-questions.service > $(HOME)/.config/systemd/user/ocw-spec-questions.service
+	cp tools/build-dashboard/ocw-spec-questions.timer $(HOME)/.config/systemd/user/ocw-spec-questions.timer
+	systemctl --user daemon-reload
+	systemctl --user enable --now ocw-spec-questions.timer
 	@echo "Dashboard: http://localhost:8765/  (start at boot without login: sudo loginctl enable-linger $$USER)"
 
 dashboard-uninstall: ## Stop and remove the build dashboard user service
 	-systemctl --user disable --now ocw-build-dashboard.service
-	rm -f $(HOME)/.config/systemd/user/ocw-build-dashboard.service
+	-systemctl --user disable --now ocw-spec-questions.timer
+	rm -f $(HOME)/.config/systemd/user/ocw-build-dashboard.service $(HOME)/.config/systemd/user/ocw-spec-questions.service $(HOME)/.config/systemd/user/ocw-spec-questions.timer
 	systemctl --user daemon-reload
 
 # --- Versions and GitHub releases (spec §11.3) ------------------------------

@@ -157,5 +157,37 @@ class FileTest(unittest.TestCase):
         self.assertEqual(sq.SpecQuestions(None).get()["open"], 0)
 
 
+
+class BracketStatusAndLint(unittest.TestCase):
+    """Regression (2026-11-17): "Q30 (open) – …" bullets were not read, and
+    answers written outside the bold label stayed "open" in the dashboard."""
+
+    TEXT = """### 14 Phases
+
+#### 4N – Character editor
+
+  - **Q30 (open) – kit pickers as tiles:** proposal: tiles with a colour row.
+  - **Q28 – hair tiles without the helmet: decided (2026-11-17, the user): yes** – done.
+- **Q5 – Riders see the drone?** **Decided 2026-11-16: yes** – written outside the label.
+- **Q7 broken label without a dash** text
+"""
+
+    def test_a_bracketed_status_before_the_dash_is_read(self):
+        qs = {q["n"]: q for q in sq.parse_questions(self.TEXT)}
+        self.assertEqual(qs[30]["title"], "kit pickers as tiles")
+        self.assertEqual(qs[30]["status"], "open")
+        self.assertEqual(qs[28]["status"], "decided")
+
+    def test_lint_names_unreadable_bullets_and_answers_outside_the_label(self):
+        kinds = {(p["line"], p["kind"]) for p in sq.lint(self.TEXT)}
+        self.assertIn((7, "decision outside the label"), kinds)
+        self.assertIn((8, "unparsed"), kinds)
+        self.assertEqual(len(kinds), 2)
+
+    def test_the_real_spec_has_no_format_problems(self):
+        spec = Path(__file__).resolve().parents[2] / "SPECIFICATION.md"
+        if spec.exists():
+            self.assertEqual(sq.lint(spec.read_text(encoding="utf-8")), [])
+
 if __name__ == "__main__":
     unittest.main()
