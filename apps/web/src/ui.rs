@@ -164,7 +164,7 @@ impl Plugin for WebUiPlugin {
             Update,
             (record, show_video, audio_devices, strava_key).after(ocw_ui::RideViewSet),
         )
-        .add_systems(Last, (publish, publish_console, publish_steer));
+        .add_systems(Last, (publish, publish_console, publish_steer, publish_map));
         // The trusted world keys in the page's localStorage (spec §4.7
         // *User keys*); the built-in roots cannot be added.
         // (Always: the menu plugin above put an empty default there.)
@@ -361,6 +361,36 @@ fn publish_console(
     let changed = console.is_changed() || gps.as_ref().is_some_and(|g| g.is_changed());
     if changed || CONSOLE_JSON.lock().expect("not poisoned").is_empty() {
         *CONSOLE_JSON.lock().expect("not poisoned") = console_view_json(&console, gps.as_deref());
+    }
+}
+
+/// The HUD's navigation map as JSON for the page (`window.ocw.hudMap()`:
+/// the Devices panel steps above it; the browser test checks it).
+static MAP_JSON: Mutex<String> = Mutex::new(String::new());
+
+pub fn map_json() -> String {
+    MAP_JSON.lock().expect("not poisoned").clone()
+}
+
+/// The map's JSON: shown, its box (CSS px: left, top, width, height),
+/// the banner, the zoom, day or night, the tiles drawn so far.
+pub fn map_view_json(info: &ocw_render::navi_map::NaviMapInfo) -> String {
+    serde_json::json!({
+        "shown": info.rect.is_some(),
+        "rect": info.rect,
+        "banner": info.banner,
+        "level": info.level,
+        "auto": info.auto,
+        "night": info.shade == ocw_render::navi_map::Shade::Night,
+        "tiles": info.tiles_drawn,
+    })
+    .to_string()
+}
+
+fn publish_map(info: Option<Res<ocw_render::navi_map::NaviMapInfo>>) {
+    let Some(info) = info else { return };
+    if info.is_changed() || MAP_JSON.lock().expect("not poisoned").is_empty() {
+        *MAP_JSON.lock().expect("not poisoned") = map_view_json(&info);
     }
 }
 

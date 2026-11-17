@@ -270,8 +270,39 @@ impl Plugin for BindingsPlugin {
         app.init_resource::<ActiveBindings>()
             .init_resource::<BindCapture>()
             .init_resource::<ocw_render::camera::CameraKey>()
-            .add_systems(PreUpdate, refresh);
+            .add_systems(PreUpdate, refresh)
+            .add_systems(Update, map_keys);
         register_commands(app);
+    }
+}
+
+/// The navigation map's keys (spec §3.2 *Navigation map*): N shows or
+/// hides it, Z steps the zoom (auto → 1 … 7 → auto); both as settings
+/// (`display.map`, `display.map_zoom`), so they are kept.
+pub fn map_keys(
+    keys: Option<Res<ButtonInput<KeyCode>>>,
+    pads: Query<&Gamepad>,
+    bindings: Option<Res<ActiveBindings>>,
+    context: Option<Res<ocw_render::menu::InputContext>>,
+    show: Option<Res<ocw_render::navi_map::ShowMap>>,
+    zoom: Option<Res<ocw_render::navi_map::MapZoom>>,
+    console: Option<ResMut<ocw_render::console::ConsoleState>>,
+) {
+    let (Some(keys), Some(mut console)) = (keys, console) else {
+        return;
+    };
+    if !ocw_render::menu::ride_input(context) {
+        return;
+    }
+    let b = bindings.as_deref();
+    let pressed = |a: Action| key_just_pressed(b, a, &keys) || pad_just_pressed(b, a, pads.iter());
+    if pressed(Action::Map) {
+        let on = show.is_some_and(|s| s.0);
+        console.queue(format!("set display.map {}", if on { "off" } else { "on" }));
+    }
+    if pressed(Action::MapZoom) {
+        let next = zoom.map(|z| z.0).unwrap_or_default().cycle();
+        console.queue(format!("set display.map_zoom {}", next.label()));
     }
 }
 
@@ -556,12 +587,12 @@ mod tests {
         keys.press(KeyCode::KeyA);
         let b = app.world().resource::<ActiveBindings>().clone();
         assert!(b.key_just_pressed(Action::Autodrive, &keys));
-        let out = run(&mut app, "bind autodrive Z");
-        assert!(out.contains("keys.autodrive = Z"), "{out}");
+        let out = run(&mut app, "bind autodrive Y");
+        assert!(out.contains("keys.autodrive = Y"), "{out}");
         app.update();
         let b = app.world().resource::<ActiveBindings>().clone();
         assert!(!b.key_just_pressed(Action::Autodrive, &keys));
-        keys.press(KeyCode::KeyZ);
+        keys.press(KeyCode::KeyY);
         assert!(b.key_just_pressed(Action::Autodrive, &keys));
         // A conflict is said; the camera key follows its binding.
         let out = run(&mut app, "bind camera V");

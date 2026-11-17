@@ -33,6 +33,7 @@ pub mod junction_mesh;
 pub mod materials;
 pub mod media;
 pub mod menu;
+pub mod navi_map;
 pub mod night_sky;
 pub mod obstacles;
 pub mod ortho;
@@ -494,6 +495,8 @@ impl Plugin for OcwRenderPlugins {
             touch_hud::TouchHudPlugin,
             // The ride photographer: person, drone, flash, photos (§2.11).
             photographer::PhotographerPlugin,
+            // The HUD's navigation map, bottom right (spec §3.2).
+            navi_map::NaviMapPlugin,
         ));
     }
 }

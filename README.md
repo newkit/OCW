@@ -766,6 +766,8 @@ keys new-signing`.
 | Strava recording (start / stop): the part between two presses is its own Strava activity | S | left-stick click (L3) |
 | Voice: mute / unmute your microphone | M | Select (Back / View / Share) |
 | Voice: mute / unmute the speaker (all voices; game sounds stay) | Shift+M | right-stick click (R3) |
+| Navigation map (bottom right) on / off | N | |
+| Navigation map zoom: auto (by speed, closer at junctions), then 1 (closest) … 7, then auto | Z | |
 | Next screen | F11 | |
 | Console (`help` lists the commands) | `` ` `` or F12 | |
 | Unicorn mode: fly as a unicorn / land on the road below | G | Select + North (Y / △) |

@@ -11,6 +11,8 @@ publish.workspace = true
 ocw-core.workspace = true
 ocw-sim.workspace = true
 ocw-world.workspace = true
+# The HUD's navigation map: projection, tiles, zoom and banner rules (spec §3.2).
+ocw-map.workspace = true
 # The light model and sky state it draws (spec §14 Phase 9).
 ocw-sky.workspace = true
 # The weather it draws (spec §14 Phase 9, S4).
