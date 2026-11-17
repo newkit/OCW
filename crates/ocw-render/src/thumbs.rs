@@ -97,6 +97,8 @@ pub enum RiderShot {
     Hands,
     /// The feet (shoes, socks).
     Feet,
+    /// Hips to ankles (EXPERIMENTAL, 4N Q30 mock-up: shorts and tights).
+    Legs,
 }
 
 /// A part's model in a slot of a bike of a profile, in a frame paint.
@@ -348,6 +350,8 @@ pub fn rider_framing(scale: f32, shot: RiderShot) -> (Vec3, Vec3) {
         RiderShot::Body => (Vec3::new(0.0, 1.22, 0.0), 0.6, from(0.35, 0.12)),
         RiderShot::Hands => (Vec3::new(0.12, 0.86, -0.04), 0.3, from(0.45, 0.25)),
         RiderShot::Feet => (Vec3::new(0.05, 0.12, -0.04), 0.3, from(0.45, 0.45)),
+        // EXPERIMENTAL (4N Q30 mock-up): hips to ankles (shorts / tights).
+        RiderShot::Legs => (Vec3::new(0.0, 0.62, 0.0), 0.52, from(0.35, 0.1)),
     };
     let at = at * scale;
     (at + dir * (radius * scale / half), at)
@@ -695,6 +699,7 @@ mod tests {
                 RiderShot::Body,
                 RiderShot::Hands,
                 RiderShot::Feet,
+                RiderShot::Legs,
             ] {
                 let (eye, target) = rider_framing(scale, shot);
                 let d = eye - target;
@@ -710,6 +715,7 @@ mod tests {
                         assert!(target.y + seen > 1.8 * scale, "the helmet");
                         assert!(target.y - seen < 0.7 * scale, "the thighs");
                     }
+                    RiderShot::Legs => assert!(target.y - seen < 0.15 * scale, "the ankles"),
                     _ => assert!(seen < 0.4 * scale),
                 }
             }

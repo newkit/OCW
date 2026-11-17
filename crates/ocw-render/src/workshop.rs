@@ -2025,7 +2025,8 @@ fn spawn_tiles(
         ..default()
     };
     let dim = Color::srgb(0.7, 0.72, 0.76);
-    if t.first > 0 {
+    // The Q30 mock-up's swatch row is row 0, not a tile.
+    if t.first > usize::from(p.swatches.is_some()) {
         c.spawn((Text::new("More above"), font(1.8), TextColor(dim)));
     }
     let cols = t.cols.max(1) as f32;

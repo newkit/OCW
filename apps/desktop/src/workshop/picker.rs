@@ -335,6 +335,7 @@ impl MirrorSlot {
             Self::Char(CharSlot::Skin) => RiderShot::Face,
             // Q30 mock-up: the socks framed at the feet, not the whole rider.
             Self::Kit(Slot::Socks) if kit_tiles_mockup() => RiderShot::Feet,
+            Self::Kit(Slot::Shorts) if kit_tiles_mockup() => RiderShot::Legs,
             s => match s.region() {
                 Some(Region::Head) => RiderShot::Face,
                 Some(Region::Hands) => RiderShot::Hands,

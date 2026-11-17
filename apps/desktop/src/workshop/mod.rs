@@ -1955,7 +1955,7 @@ fn fill_rider_tiles(v: &mut PickerView, p: &picker::Picker, scene: &Workshop, ct
         let (now, standard) = match f {
             designer::Field::Shorts => (d.shorts, Rgb(0x1E1E22)),
             designer::Field::Socks => (d.socks, Rgb(0xF2F2EE)),
-            designer::Field::Shoes => (d.shoes, Rgb(0x2A2A2E)),
+            designer::Field::Shoes => (d.shoes, Rgb(0xEDEDE8)),
             _ => (d.gloves, Rgb(0x1E1E22)),
         };
         let colours: Vec<Option<Rgb>> = std::iter::once(None)
