@@ -4287,3 +4287,196 @@ args = ["--route", "hills", "--bots", "0", "--power", "0"]
 at = ["2=hearts.grant 5000", "2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-next", "4.2=workshop slot-next", "4.6=workshop slot-next", "5=workshop select", "10=thumbs.dump test-output/thumbs/dump", "10=thumbs.dump test-output/thumbs/dump --profile mtb", "10=thumbs.dump test-output/thumbs/dump --profile tt"]
 shot = 60
 pick = false
+
+# The grips the right way up (bug 2026-11-17: "the hand position on the handlebar
+# looks wrong (upside down)"; spec §14 Phase 4, 4N): every grip from each side and
+# from above. Made-up rider name only.
+
+[[scene]]
+name = "fix-grip-hoods-right"
+description = "Hands the right way up (4N fix): road bike on the hoods, the right hand from the side"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup right-hand 90 8 0.45"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-grip-hoods-left"
+description = "Hands the right way up (4N fix): road bike on the hoods, the left hand from the side"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup left-hand 270 8 0.45"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-grip-hoods-above"
+description = "Hands the right way up (4N fix): road bike on the hoods, both hands from above"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup right-hand 160 72 0.75"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-grip-tops-right"
+description = "Hands the right way up (4N fix): road bike climbing, hands on the tops, the right hand from the side"
+args = ["--route", "hills", "--bots", "0", "--power", "260"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup right-hand 90 8 0.45"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-grip-tops-left"
+description = "Hands the right way up (4N fix): road bike climbing, hands on the tops, the left hand from the side"
+args = ["--route", "hills", "--bots", "0", "--power", "260"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup left-hand 270 8 0.45"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-grip-tops-above"
+description = "Hands the right way up (4N fix): road bike climbing, hands on the tops, both hands from above"
+args = ["--route", "hills", "--bots", "0", "--power", "260"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup right-hand 160 72 0.75"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-grip-drops-right"
+description = "Hands the right way up (4N fix): road bike sprinting on the drops, the right hand from the side"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1=sim.power 1100", "3.5=camera.closeup right-hand 90 8 0.45"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-grip-drops-left"
+description = "Hands the right way up (4N fix): road bike sprinting on the drops, the left hand from the side"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1=sim.power 1100", "3.5=camera.closeup left-hand 270 8 0.45"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-grip-drops-above"
+description = "Hands the right way up (4N fix): road bike sprinting on the drops, both hands from above"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1=sim.power 1100", "3.5=camera.closeup right-hand 160 72 0.75"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-grip-tt-right"
+description = "Hands the right way up (4N fix): TT bike, hands round the extensions, the right hand from the side"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\nbike = \"tt\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup right-hand 90 8 0.45"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-grip-tt-left"
+description = "Hands the right way up (4N fix): TT bike, hands round the extensions, the left hand from the side"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\nbike = \"tt\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup left-hand 270 8 0.45"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-grip-tt-above"
+description = "Hands the right way up (4N fix): TT bike, hands round the extensions, both hands from above"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\nbike = \"tt\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup right-hand 160 72 0.75"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-grip-mtb-right"
+description = "Hands the right way up (4N fix): mountain bike, hands round the flat bar's grips, the right hand from the side"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\nbike = \"mtb\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup right-hand 90 8 0.45"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-grip-mtb-left"
+description = "Hands the right way up (4N fix): mountain bike, hands round the flat bar's grips, the left hand from the side"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\nbike = \"mtb\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup left-hand 270 8 0.45"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-grip-mtb-above"
+description = "Hands the right way up (4N fix): mountain bike, hands round the flat bar's grips, both hands from above"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\nbike = \"mtb\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup right-hand 160 72 0.75"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-grip-gravel-right"
+description = "Hands the right way up (4N fix): gravel bike sprinting on the flared drops, the right hand from the side"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\nbike = \"gravel\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1=sim.power 1100", "3.5=camera.closeup right-hand 90 8 0.45"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-grip-gravel-left"
+description = "Hands the right way up (4N fix): gravel bike sprinting on the flared drops, the left hand from the side"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\nbike = \"gravel\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1=sim.power 1100", "3.5=camera.closeup left-hand 270 8 0.45"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-grip-gravel-above"
+description = "Hands the right way up (4N fix): gravel bike sprinting on the flared drops, both hands from above"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\nbike = \"gravel\"\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1=sim.power 1100", "3.5=camera.closeup right-hand 160 72 0.75"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-grip-phone-right"
+description = "Hands the right way up (4N fix): the phone of the status signs in the right hand, the left on the hoods, the right hand from the side"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3=status.sign menu on", "4.5=camera.closeup right-hand 90 8 0.45"]
+shot = 8
+pick = false
+
+[[scene]]
+name = "fix-grip-phone-left"
+description = "Hands the right way up (4N fix): the phone of the status signs in the right hand, the left on the hoods, the left hand from the side"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3=status.sign menu on", "4.5=camera.closeup left-hand 270 8 0.45"]
+shot = 8
+pick = false
+
+[[scene]]
+name = "fix-grip-phone-above"
+description = "Hands the right way up (4N fix): the phone of the status signs in the right hand, the left on the hoods, both hands from above"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3=status.sign menu on", "4.5=camera.closeup right-hand 160 72 0.75"]
+shot = 8
+pick = false
