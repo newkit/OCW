@@ -242,6 +242,7 @@ function Stop-App($Proc) {
     if ($null -eq $Proc -or $Proc.HasExited) { return }
     try { [void]$Proc.CloseMainWindow() } catch {}
     if (-not $Proc.WaitForExit(15000)) {
+        # Still loading its world (no window yet, VR not started) or hung.
         Write-KioskLog "app did not stop, killing it"
         try { $Proc.Kill() } catch {}
         [void]$Proc.WaitForExit(5000)
@@ -290,7 +291,7 @@ function Invoke-Supervisor {
             if ((Get-FileSha $script) -ne $me) { $reason = "script"; break }
             if (-not $vrSeen) {
                 $vr = Get-VrState (Read-Text $applog)
-                if ($vr.State -eq "on") { $vrSeen = $true; Write-KioskLog ("VR session: " + $vr.Line) }
+                if ($vr.State -eq "on") { $vrSeen = $true; Write-KioskLog ("VR runtime: " + $vr.Line) }
                 elseif ($vr.State -eq "off") {
                     $vrSeen = $true
                     if ($vrRetry -gt 0) {
