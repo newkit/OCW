@@ -528,19 +528,64 @@ pub fn tile_rows(attr: Attr, rider: &Rider) -> Vec<Row> {
         .collect()
 }
 
-/// The tile page as a grid of cells (swatches for the colours, the
-/// current choice framed), Back last.
+/// What a tile's picture frames (spec §14 Phase 4, 4N: a rendering of
+/// the model for every choice that is not a colour); `None`: a colour
+/// swatch.
+pub fn thumb_shot(attr: Attr) -> Option<ocw_render::thumbs::RiderShot> {
+    use ocw_render::thumbs::RiderShot;
+    match attr {
+        Attr::Base | Attr::Shape => Some(RiderShot::Body),
+        Attr::Glasses => Some(RiderShot::FaceFront),
+        Attr::Age | Attr::HairStyle | Attr::Moustache | Attr::Beard => Some(RiderShot::Face),
+        Attr::Skin | Attr::HairColour | Attr::FacialColour => None,
+    }
+}
+
+/// The picture of tile `t` of `attr`: the rider standing with `look` (its
+/// kit colours) and the tile's character, wearing `kit`.
+pub fn tile_thumb(
+    attr: Attr,
+    t: &Tile,
+    look: &ocw_core::RiderLook,
+    kit: &[String],
+) -> Option<ocw_render::thumbs::ThumbKey> {
+    use ocw_render::thumbs::{RiderThumb, ThumbKey};
+    let shot = thumb_shot(attr)?;
+    Some(ThumbKey::Rider(RiderThumb {
+        look: ocw_core::RiderLook {
+            character: t.preview,
+            ..*look
+        },
+        kit: kit.to_vec(),
+        shot,
+    }))
+}
+
+/// The tile page as a grid of cells (renderings for the shapes, styles,
+/// beards …, swatches for the colours, the current choice framed), Back
+/// last – for the default look without kit ([`grid_for`]: the rider's).
 pub fn grid(attr: Attr, rider: &Rider) -> ocw_render::menu::MenuGrid {
+    grid_for(attr, rider, &ocw_core::RiderLook::default(), &[])
+}
+
+/// [`grid`] with the pictures of the rider's `look` and worn `kit`.
+pub fn grid_for(
+    attr: Attr,
+    rider: &Rider,
+    look: &ocw_core::RiderLook,
+    kit: &[String],
+) -> ocw_render::menu::MenuGrid {
     use ocw_render::menu::{GridCell, MenuGrid};
     MenuGrid {
         columns: TILE_COLUMNS,
         cells: tiles(attr, rider)
             .into_iter()
             .map(|t| GridCell {
-                label: t.label,
+                thumb: tile_thumb(attr, &t, look, kit),
                 icon: None,
                 swatch: t.swatch.map(|c| c.channels()),
                 marked: t.current,
+                label: t.label,
             })
             .chain([GridCell {
                 label: "Back".into(),
@@ -548,6 +593,21 @@ pub fn grid(attr: Attr, rider: &Rider) -> ocw_render::menu::MenuGrid {
             }])
             .collect(),
     }
+}
+
+/// The status line of a tile page: the focused tile's name where the
+/// pictures stand without names (a large grid of renderings, the hair
+/// styles), else empty.
+pub fn status(attr: Attr, rider: &Rider, focus: usize) -> String {
+    let g = grid(attr, rider);
+    if ocw_render::menu::grid_labels(&g) {
+        return String::new();
+    }
+    g.cells
+        .get(focus)
+        .filter(|c| c.thumb.is_some())
+        .map(|c| c.label.clone())
+        .unwrap_or_default()
 }
 
 /// The character the rider beside the panel shows while tile `focus` of
@@ -586,6 +646,60 @@ fn with_tiles(page: Page, rows: Vec<Row>) -> Vec<Row> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The tiles' pictures (spec §14 Phase 4, 4N): every choice that is
+    /// not a colour shows a rendering of the rider with that choice – the
+    /// face for hair, facial hair and age, the face from the front for the
+    /// glasses, the whole rider for the bodies and shapes – keyed by the
+    /// look with the tile's character, the rider's kit colours and its
+    /// worn kit; colours stay swatches; Back is a name.
+    #[test]
+    fn every_non_colour_tile_shows_a_rendering_of_its_look() {
+        use ocw_render::thumbs::{RiderShot, ThumbKey};
+        let r = Rider::default();
+        let look = ocw_core::RiderLook {
+            jersey: Rgb(0x2266AA),
+            ..Default::default()
+        };
+        let kit = vec!["helmet-road".to_string()];
+        for a in Attr::ALL {
+            let g = grid_for(a, &r, &look, &kit);
+            let ts = tiles(a, &r);
+            assert_eq!(g.cells.len(), ts.len() + 1, "{a:?}");
+            let back = g.cells.last().unwrap();
+            assert!(back.thumb.is_none() && back.swatch.is_none());
+            for (cell, t) in g.cells.iter().zip(&ts) {
+                match thumb_shot(a) {
+                    None => {
+                        assert!(cell.thumb.is_none() && cell.swatch.is_some(), "{a:?}")
+                    }
+                    Some(shot) => {
+                        let Some(ThumbKey::Rider(k)) = &cell.thumb else {
+                            panic!("{a:?}: a rendering");
+                        };
+                        assert!(cell.swatch.is_none());
+                        assert_eq!(k.shot, shot);
+                        assert_eq!(k.look.character, t.preview, "{a:?}: the tile's look");
+                        assert_eq!(k.look.jersey, look.jersey, "the rider's kit colours");
+                        assert_eq!(k.kit, kit, "the worn kit");
+                    }
+                }
+            }
+            // Each tile its own picture.
+            let mut keys: Vec<_> = g.cells.iter().filter_map(|c| c.thumb.clone()).collect();
+            let n = keys.len();
+            keys.dedup();
+            assert_eq!(keys.len(), n, "{a:?}");
+        }
+        assert_eq!(thumb_shot(Attr::Shape), Some(RiderShot::Body));
+        assert_eq!(thumb_shot(Attr::Glasses), Some(RiderShot::FaceFront));
+        assert_eq!(thumb_shot(Attr::HairStyle), Some(RiderShot::Face));
+        // The 21 hair styles stand without names: the status names the
+        // focused one; the shapes keep theirs (the *Match my weight* one).
+        assert_eq!(status(Attr::HairStyle, &r, 3), HAIR_STYLES[3]);
+        assert_eq!(status(Attr::Shape, &r, 3), "");
+        assert_eq!(status(Attr::HairStyle, &r, HAIR_STYLES.len()), "", "Back");
+    }
 
     fn rider(kg: f64, cm: Option<f64>) -> Rider {
         Rider {

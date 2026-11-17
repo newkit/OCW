@@ -15,7 +15,7 @@
 //! mirror ([`RiderShow`]: the look with the character and the worn kit,
 //! the picker's preview applied), seen over the shoulder and in the
 //! mirror – a planar reflection: a second camera at the reflection of the
-//! workshop camera renders the room at half resolution into an image
+//! workshop camera renders the room at full resolution into an image
 //! shown on the glass ([`mirror_cam`], [`mirror_uv`]; off with
 //! `workshop.mirror off`: a direct front view instead). *Try on the bike*
 //! puts the rider on the stand bike, pedalling slowly.
@@ -82,6 +82,8 @@ pub struct PickerRowView {
     /// The tile (spec 4B *Tiles*, when the picker shows tiles): the
     /// part's thumbnail …
     pub thumb: Option<crate::thumbs::ThumbKey>,
+    /// … or a colour swatch (the mirror's skin and hair colours, 4N).
+    pub swatch: Option<Rgb>,
     /// … its gain ("+0.8 % flat · −0.2 % climb") and weight ("−240 g")
     /// against the slot's base part, and whether the caps cut it.
     pub gain: String,
@@ -375,7 +377,7 @@ struct Scene {
 /// A spawned bike: (key, paint, entity, the model's node entities).
 type SpawnedBike = (BikeKey, Rgb, Entity, Vec<Entity>);
 /// A model's meshes on the GPU: `(mesh, material index)` per node.
-type NodeMeshes = Vec<Vec<(Handle<Mesh>, usize)>>;
+pub(crate) type NodeMeshes = Vec<Vec<(Handle<Mesh>, usize)>>;
 /// The ride's UI roots (hidden while the workshop is open).
 type RideUiRoots<'w, 's> = Query<
     'w,
@@ -546,9 +548,11 @@ fn open_close(
     scene.camera = Some(camera);
     let layout_m = ocw_assets::workshop::layout(view.bikes.len());
     if view.mirror {
-        // The mirror (spec 4C): a second camera at half resolution.
+        // The mirror (spec 4C): a second camera.
         let (glass, half) = layout_m.mirror_glass();
-        let mh = (h / 2).max(64);
+        // At the window's full height: the face close-up (spec §14 Phase 4,
+        // 4N) fills the view with the glass.
+        let mh = h.max(64);
         let mw = ((mh as f32) * half.x / half.y).round().max(32.0) as u32;
         let mimage = images.add(Image::new_target_texture(
             mw,
@@ -1459,6 +1463,92 @@ struct ShownRider {
     parent: Option<Entity>,
 }
 
+/// Spawns the rider model with `look` and the worn `kit` on `layer`: its
+/// root (scaled to the body height, `scale`) and the node entities
+/// (`Entity::PLACEHOLDER` for the hidden ones). With `pose`, the nodes
+/// take that standing pose at once (the thumbnails, which are never
+/// animated); else the caller poses them. Shared by the changing corner
+/// and the character thumbnails (spec §14 Phase 4, 4N).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn spawn_rider_model(
+    commands: &mut Commands,
+    look: &ocw_core::RiderLook,
+    kit: &[String],
+    layer: RenderLayers,
+    scale: f32,
+    pose: Option<&ocw_assets::pose::Pose>,
+    meshes: &mut Assets<Mesh>,
+    mesh_cache: &mut HashMap<usize, NodeMeshes>,
+    materials: &mut Assets<GearMaterial>,
+    mat_cache: &mut HashMap<Vec<u32>, Handle<GearMaterial>>,
+) -> (Entity, Vec<Entity>) {
+    let rider_model = ocw_assets::shipped::rider_model();
+    let c = look.character.validated();
+    let colours = crate::riders::avatar_colours(ocw_core::RiderId(0), true, Some(look));
+    let hidden: Vec<usize> = crate::riders::hidden_rider_nodes(Some(look), kit)
+        .into_iter()
+        .filter_map(|n| rider_model.node(n))
+        .collect();
+    let ptr = rider_model as *const Model as usize;
+    let handles = mesh_cache
+        .entry(ptr)
+        .or_insert_with(|| upload(rider_model, meshes, true))
+        .clone();
+    let root = commands
+        .spawn((Transform::default(), Visibility::default(), layer.clone()))
+        .id();
+    let posed: HashMap<&str, Quat> = pose
+        .map(|p| p.rotations().into_iter().collect())
+        .unwrap_or_default();
+    let mut nodes: Vec<Entity> = vec![Entity::PLACEHOLDER; rider_model.nodes.len()];
+    for (i, node) in rider_model.nodes.iter().enumerate() {
+        if hidden.iter().any(|h| rider_model.is_below(i, *h)) {
+            continue;
+        }
+        let parent = node.parent.map_or(root, |p| nodes[p]);
+        let mut translation = ocw_assets::rider::node_translation(rider_model, i, &c);
+        let mut rotation = node.rotation;
+        if let Some(p) = pose {
+            if node.name == ocw_assets::pose::nodes::PELVIS {
+                (translation, rotation) = p.pelvis;
+            } else if let Some(q) = posed.get(node.name.as_str()) {
+                rotation = *q;
+            }
+        }
+        let e = commands
+            .spawn((
+                Transform {
+                    translation,
+                    rotation,
+                    scale: if node.parent.is_none() {
+                        Vec3::splat(scale)
+                    } else {
+                        node.scale
+                    },
+                },
+                Visibility::Inherited,
+                ChildOf(parent),
+                layer.clone(),
+            ))
+            .id();
+        let (girth, shift) = ocw_assets::rider::girth_transform(rider_model, i, &c);
+        for (mesh, mat) in &handles[i] {
+            let m = &rider_model.materials[*mat];
+            let material =
+                part_material(mat_cache, materials, &m.name, &node.name, m.color, &colours);
+            commands.spawn((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(material),
+                Transform::from_translation(shift).with_scale(girth),
+                ChildOf(e),
+                layer.clone(),
+            ));
+        }
+        nodes[i] = e;
+    }
+    (root, nodes)
+}
+
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn sync_rider(
     mut commands: Commands,
@@ -1519,7 +1609,6 @@ fn sync_rider(
             // Respawned by `sync_bikes`: the saddle and cranks as built.
             commands.entity(e).despawn();
         }
-        let rider_model = ocw_assets::shipped::rider_model();
         let rig = ocw_assets::shipped::rider_rig();
         let c = show.look.character.validated();
         let bike_rig = stand_bike
@@ -1527,63 +1616,23 @@ fn sync_rider(
             .and_then(|b| ocw_assets::pose::BikeRig::from_model(&b.model).ok())
             .unwrap_or_else(|| ocw_assets::shipped::bike_rig(ProfileId::Road));
         let body = ocw_assets::pose::BodyFit::new(&rig, &bike_rig, c.scale());
-        let colours = crate::riders::avatar_colours(ocw_core::RiderId(0), true, Some(&show.look));
-        let hidden: Vec<usize> = crate::riders::hidden_rider_nodes(Some(&show.look), &show.kit)
-            .into_iter()
-            .filter_map(|n| rider_model.node(n))
-            .collect();
-        let ptr = rider_model as *const Model as usize;
-        let handles = scene
-            .meshes
-            .entry(ptr)
-            .or_insert_with(|| upload(rider_model, &mut meshes, true))
-            .clone();
-        let root = commands
-            .spawn((Transform::default(), Visibility::default(), layer()))
-            .id();
-        let mut nodes: Vec<Entity> = vec![Entity::PLACEHOLDER; rider_model.nodes.len()];
-        for (i, node) in rider_model.nodes.iter().enumerate() {
-            if hidden.iter().any(|h| rider_model.is_below(i, *h)) {
-                continue;
-            }
-            let parent = node.parent.map_or(root, |p| nodes[p]);
-            let e = commands
-                .spawn((
-                    Transform {
-                        translation: ocw_assets::rider::node_translation(rider_model, i, &c),
-                        rotation: node.rotation,
-                        scale: if node.parent.is_none() {
-                            Vec3::splat(body.scale)
-                        } else {
-                            node.scale
-                        },
-                    },
-                    Visibility::Inherited,
-                    ChildOf(parent),
-                    layer(),
-                ))
-                .id();
-            let (girth, shift) = ocw_assets::rider::girth_transform(rider_model, i, &c);
-            for (mesh, mat) in &handles[i] {
-                let m = &rider_model.materials[*mat];
-                let material = part_material(
-                    &mut scene.materials,
-                    &mut materials,
-                    &m.name,
-                    &node.name,
-                    m.color,
-                    &colours,
-                );
-                commands.spawn((
-                    Mesh3d(mesh.clone()),
-                    MeshMaterial3d(material),
-                    Transform::from_translation(shift).with_scale(girth),
-                    ChildOf(e),
-                    layer(),
-                ));
-            }
-            nodes[i] = e;
-        }
+        let Scene {
+            meshes: mesh_cache,
+            materials: mat_cache,
+            ..
+        } = &mut *scene;
+        let (root, nodes) = spawn_rider_model(
+            &mut commands,
+            &show.look,
+            &show.kit,
+            layer(),
+            body.scale,
+            None,
+            &mut meshes,
+            mesh_cache,
+            &mut materials,
+            mat_cache,
+        );
         scene.rider = Some(ShownRider {
             key: show.clone(),
             root,
@@ -1931,9 +1980,16 @@ fn spawn_tiles(
                 let mut pic = tile.spawn((
                     Node {
                         width: percent(100),
-                        aspect_ratio: Some(
-                            crate::thumbs::THUMB_SIZE.x as f32 / crate::thumbs::THUMB_SIZE.y as f32,
-                        ),
+                        // The part's 2 : 1, the rider's square (4N), a
+                        // swatch square too.
+                        aspect_ratio: Some(match (&r.thumb, r.swatch) {
+                            (Some(k), _) => k.aspect(),
+                            (None, Some(_)) => 1.0,
+                            (None, None) => {
+                                crate::thumbs::THUMB_SIZE.x as f32
+                                    / crate::thumbs::THUMB_SIZE.y as f32
+                            }
+                        }),
                         border_radius: BorderRadius::all(vh(0.5)),
                         ..default()
                     },
@@ -1942,6 +1998,9 @@ fn spawn_tiles(
                 ));
                 if let Some(Some(img)) = images.get(i) {
                     pic.insert(ImageNode::new(img.clone()));
+                } else if let Some(c) = r.swatch {
+                    let [red, g, b] = c.channels();
+                    pic.insert(BackgroundColor(Color::srgb_u8(red, g, b)));
                 }
                 tile.spawn((
                     Text::new(r.left.clone()),

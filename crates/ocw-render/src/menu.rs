@@ -193,6 +193,9 @@ pub struct GridCell {
     pub icon: Option<ocw_weather::icon::Icon>,
     /// A colour swatch instead of an icon (sRGB; skin, hair, facial hair).
     pub swatch: Option<[u8; 3]>,
+    /// A rendering of the model instead of an icon (the character
+    /// editor's tiles, spec §14 Phase 4, 4N: [`crate::thumbs`]).
+    pub thumb: Option<crate::thumbs::ThumbKey>,
     /// The current choice (a thin frame).
     pub marked: bool,
 }
@@ -291,6 +294,11 @@ impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
         if !app.is_plugin_added::<MenuCorePlugin>() {
             app.add_plugins(MenuCorePlugin);
+        }
+        // The character editor's tiles show renderings (spec §14 Phase 4,
+        // 4N).
+        if !app.is_plugin_added::<crate::thumbs::ThumbnailPlugin>() {
+            app.add_plugins(crate::thumbs::ThumbnailPlugin);
         }
         app.add_systems(Startup, spawn_menu)
             .add_systems(Update, (draw_menu, draw_chart));
@@ -423,33 +431,62 @@ fn grid_cell_vh(columns: usize, w: f32) -> f32 {
     w * grid_cell_pct(columns) / 100.0
 }
 
-/// Whether a grid's cells have pictures (icons or swatches); named
-/// tiles without any are drawn without the picture's room.
+/// Whether a grid's cells have pictures (icons, swatches or renderings);
+/// named tiles without any are drawn without the picture's room.
 fn grid_pictures(grid: &MenuGrid) -> bool {
     grid.cells
         .iter()
-        .any(|c| c.icon.is_some() || c.swatch.is_some())
+        .any(|c| c.icon.is_some() || c.swatch.is_some() || c.thumb.is_some())
+}
+
+/// Whether a grid's pictures are renderings of the models (the character
+/// editor's tiles).
+pub fn grid_thumbs(grid: &MenuGrid) -> bool {
+    grid.cells.iter().any(|c| c.thumb.is_some())
+}
+
+/// Rows of rendered tiles that still show their names under the pictures:
+/// a larger grid of renderings (the 21 hair styles) shows only the
+/// pictures, and the page's status line names the focused tile.
+pub const THUMB_LABEL_ROWS: usize = 2;
+
+/// Whether the rendered tiles of `grid` show their names (see
+/// [`THUMB_LABEL_ROWS`]); always for the other grids.
+pub fn grid_labels(grid: &MenuGrid) -> bool {
+    !grid_thumbs(grid) || grid.cells.len().div_ceil(grid.columns.max(1)) <= THUMB_LABEL_ROWS
+}
+
+/// What a grid cell shows: (the picture's room, its label).
+fn cell_parts(grid: &MenuGrid, cell: &GridCell) -> (bool, bool) {
+    if !grid_thumbs(grid) {
+        return (grid_pictures(grid), true);
+    }
+    // A grid of renderings: Back and the like are a name only.
+    let picture = cell.thumb.is_some() || cell.icon.is_some() || cell.swatch.is_some();
+    (picture, !picture || grid_labels(grid))
 }
 
 /// Height of a grid (vh) in content `w` wide.
 fn grid_height_vh(grid: &MenuGrid, w: f32) -> f32 {
-    let picture = if grid_pictures(grid) {
-        GRID_ICON_VH
-    } else {
-        0.0
-    };
     let cols = grid.columns.max(1);
     let cell = grid_cell_vh(cols, w);
     let label_w = cell - 2.0 * (GRID_PAD_VH + ROW_BORDER_VH);
     grid.cells
         .chunks(cols)
         .map(|row| {
-            let lines = row
-                .iter()
-                .map(|c| wrapped_lines(&c.label, label_w, GRID_LABEL_VH))
-                .max()
-                .unwrap_or(1) as f32;
-            picture + lines * GRID_LABEL_VH * LINE_HEIGHT + 2.0 * (GRID_PAD_VH + ROW_BORDER_VH)
+            row.iter()
+                .map(|c| {
+                    let (picture, label) = cell_parts(grid, c);
+                    let lines = if label {
+                        wrapped_lines(&c.label, label_w, GRID_LABEL_VH) as f32
+                    } else {
+                        0.0
+                    };
+                    (if picture { GRID_ICON_VH } else { 0.0 })
+                        + lines * GRID_LABEL_VH * LINE_HEIGHT
+                        + 2.0 * (GRID_PAD_VH + ROW_BORDER_VH)
+                })
+                .fold(0.0, f32::max)
         })
         .sum::<f32>()
         + GRID_GAP_VH * (grid.cells.len().div_ceil(cols).saturating_sub(1)) as f32
@@ -842,9 +879,9 @@ fn spawn_grid(
     grid: &MenuGrid,
     icons: &mut IconCache,
     images: &mut Assets<Image>,
+    mut thumbs: Option<&mut crate::thumbs::Thumbnails>,
 ) {
     let cell_pct = grid_cell_pct(grid.columns);
-    let pictures = grid_pictures(grid);
     commands.entity(list).despawn_children();
     commands.entity(list).with_children(|l| {
         for (i, cell) in grid.cells.iter().enumerate() {
@@ -866,8 +903,13 @@ fn spawn_grid(
                 MenuRow(i),
                 Marked(cell.marked),
             ));
+            let (picture, label) = cell_parts(grid, cell);
+            let thumb = match (cell.thumb.as_ref(), thumbs.as_mut()) {
+                (Some(k), Some(t)) => Some((k.aspect(), t.image(k, images))),
+                _ => None,
+            };
             node.with_children(|c| {
-                if !pictures {
+                if !picture {
                     c.spawn((
                         Text::new(cell.label.clone()),
                         font(GRID_LABEL_VH),
@@ -881,7 +923,18 @@ fn spawn_grid(
                     height: vh(GRID_ICON_VH),
                     ..default()
                 });
-                if let Some(ic) = cell.icon {
+                if let Some((aspect, img)) = thumb {
+                    // The rendering (square for the character's tiles),
+                    // on a dark ground until it has been drawn.
+                    icon.insert((
+                        ImageNode::new(img),
+                        BackgroundColor(Color::srgb(0.16, 0.16, 0.17)),
+                    ));
+                    icon.entry::<Node>().and_modify(move |mut n| {
+                        n.width = vh(GRID_ICON_VH * aspect);
+                        n.border_radius = BorderRadius::all(vh(0.6));
+                    });
+                } else if let Some(ic) = cell.icon {
                     let mut img = ImageNode::new(icon_image(ic, icons, images));
                     if dimmed {
                         img.color = Color::srgba(1.0, 1.0, 1.0, 0.45);
@@ -897,12 +950,14 @@ fn spawn_grid(
                         n.border_radius = BorderRadius::all(vh(GRID_ICON_VH / 2.0));
                     });
                 }
-                c.spawn((
-                    Text::new(cell.label.clone()),
-                    font(GRID_LABEL_VH),
-                    color,
-                    TextLayout::justify(Justify::Center),
-                ));
+                if label {
+                    c.spawn((
+                        Text::new(cell.label.clone()),
+                        font(GRID_LABEL_VH),
+                        color,
+                        TextLayout::justify(Justify::Center),
+                    ));
+                }
             });
             hover_and_click(&mut node, i);
         }
@@ -1187,10 +1242,11 @@ fn draw_menu(
         ),
         Without<MenuRoot>,
     >,
-    (mut images, mut icons, mut unicorn): (
+    (mut images, mut icons, mut unicorn, mut thumbs): (
         ResMut<Assets<Image>>,
         Local<std::collections::HashMap<ocw_weather::icon::Icon, Handle<Image>>>,
         Local<Option<Handle<Image>>>,
+        Option<ResMut<crate::thumbs::Thumbnails>>,
     ),
     mut texts: ParamSet<(
         Query<&mut Text, With<MenuTitle>>,
@@ -1272,7 +1328,15 @@ fn draw_menu(
             };
             match (&view.grid, &view.calendar) {
                 (_, Some(c)) => spawn_calendar(&mut commands, list, &view, c),
-                (Some(g), _) => spawn_grid(&mut commands, list, &view, g, &mut icons, &mut images),
+                (Some(g), _) => spawn_grid(
+                    &mut commands,
+                    list,
+                    &view,
+                    g,
+                    &mut icons,
+                    &mut images,
+                    thumbs.as_deref_mut(),
+                ),
                 (None, None) => {
                     let mark = view.marks.iter().any(|m| m.unicorn).then(|| {
                         unicorn
@@ -1606,6 +1670,49 @@ mod tests {
         assert_eq!(split_value("Back"), None);
     }
 
+    /// A grid of renderings (the character editor's tiles, spec §14 Phase
+    /// 4, 4N): every tile gets the picture's room; up to two rows show the
+    /// names under the pictures, a larger grid only the pictures (the
+    /// status line names the focused one); Back is a name.
+    #[test]
+    fn rendered_tiles_get_their_pictures_and_names_when_they_fit() {
+        use crate::thumbs::{RiderShot, RiderThumb, ThumbKey};
+        let tile = |i: u8| GridCell {
+            label: format!("Style {i}"),
+            thumb: Some(ThumbKey::Rider(RiderThumb {
+                look: ocw_core::RiderLook::default(),
+                kit: Vec::new(),
+                shot: RiderShot::Face,
+            })),
+            ..Default::default()
+        };
+        let back = GridCell {
+            label: "Back".into(),
+            ..Default::default()
+        };
+        let small = MenuGrid {
+            columns: 5,
+            cells: (0..7).map(tile).chain([back.clone()]).collect(),
+        };
+        let large = MenuGrid {
+            columns: 5,
+            cells: (0..21).map(tile).chain([back.clone()]).collect(),
+        };
+        assert!(grid_thumbs(&small) && grid_labels(&small));
+        assert!(grid_thumbs(&large) && !grid_labels(&large));
+        assert_eq!(cell_parts(&small, &small.cells[0]), (true, true));
+        assert_eq!(cell_parts(&large, &large.cells[0]), (true, false));
+        assert_eq!(cell_parts(&large, &back), (false, true));
+        // The heights: a picture row each, the names only on the small one.
+        let w = 60.0;
+        let row = GRID_ICON_VH + 2.0 * (GRID_PAD_VH + ROW_BORDER_VH);
+        let h = grid_height_vh(&large, w);
+        assert!((h - (5.0 * row + 4.0 * GRID_GAP_VH)).abs() < 1e-3, "{h}");
+        assert!(grid_height_vh(&small, w) > 2.0 * row);
+        // A weather grid keeps its labels.
+        assert!(grid_labels(&MenuGrid::default()));
+    }
+
     /// A grid page (the weather presets): its height counts the rows of
     /// cells, and 17 presets and Back fit a 16:9 and a 4:3 window.
     #[test]
@@ -1617,6 +1724,7 @@ mod tests {
                 icon: ocw_weather::presets::preset(p.0).map(|w| ocw_weather::icon::Icon::of(&w)),
                 swatch: None,
                 marked: false,
+                ..Default::default()
             })
             .chain([GridCell {
                 label: "Back".into(),
@@ -1841,6 +1949,7 @@ mod tests {
                 icon: ocw_weather::presets::preset(p.0).map(|w| ocw_weather::icon::Icon::of(&w)),
                 swatch: None,
                 marked: p.0 == "rain",
+                ..Default::default()
             })
             .chain([GridCell {
                 label: "Back".into(),

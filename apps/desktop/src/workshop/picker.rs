@@ -320,6 +320,28 @@ impl MirrorSlot {
 
     /// The rider's hotspot it belongs to (spec 4C: head, torso, hands,
     /// legs, feet; *Try on the bike*: none).
+    /// Whether its picker frames the head in a close-up (spec §14 Phase 4,
+    /// 4N): the head's slots and the skin tone (the face's page in the
+    /// menu).
+    pub fn frames_face(self) -> bool {
+        self.region() == Some(Region::Head) || self == Self::Char(CharSlot::Skin)
+    }
+
+    /// What its tiles' pictures frame (spec §14 Phase 4, 4N).
+    pub fn shot(self) -> ocw_render::thumbs::RiderShot {
+        use ocw_render::thumbs::RiderShot;
+        match self {
+            Self::Char(CharSlot::Glasses) => RiderShot::FaceFront,
+            Self::Char(CharSlot::Skin) => RiderShot::Face,
+            s => match s.region() {
+                Some(Region::Head) => RiderShot::Face,
+                Some(Region::Hands) => RiderShot::Hands,
+                Some(Region::Feet) => RiderShot::Feet,
+                _ => RiderShot::Body,
+            },
+        }
+    }
+
     pub fn region(self) -> Option<Region> {
         Some(match self {
             Self::Kit(Slot::Helmet | Slot::Cap)
@@ -1228,10 +1250,17 @@ impl Picker {
     /// The rows are tiles (spec 4B *Tiles*): the bike's part slots and its
     /// paint – not the kit, the bench, the character or the designer.
     pub fn tiles(&self) -> bool {
-        self.bench.is_none()
-            && self.character.is_none()
-            && self.design.is_none()
-            && !self.slot.is_kit()
+        // The stand's parts and paints (4B) and the mirror's character and
+        // kit pickers (4N: the same tile model as the menu's editor); the
+        // bench's catalogue, the jersey designer and the kit pickers with a
+        // colour row (shorts, socks, shoes, gloves: ← / → change the
+        // colour there) stay lists.
+        self.bench.is_none() && self.design.is_none()
+    }
+
+    /// The mirror's pickers (character and kit): tiles of the rider.
+    pub fn of_the_rider(&self) -> bool {
+        self.character.is_some() || self.slot.is_kit()
     }
 
     /// ← / → / ↑ / ↓ on the tiles ([`ocw_client::part_tiles::step`]).

@@ -21,19 +21,39 @@ pub const MAX_PITCH: f32 = 70.0 * std::f32::consts::PI / 180.0;
 pub const INERTIA_S: f32 = 0.3;
 /// The part close-up: the camera this far from the part (m).
 pub const PART_DIST: f32 = 1.1;
+/// The face close-up's vertical field of view (rad; spec §14 Phase 4,
+/// 4N: the head fills much of the picture).
+pub const FACE_FOV_Y: f32 = 0.36;
+/// The face close-up: the camera this far in front of the glass (m).
+pub const FACE_GLASS_M: f32 = 0.12;
+/// … and where the head sits across the picture (normalised x: left of
+/// the middle, beside the picker on the right).
+pub const FACE_SCREEN_X: f32 = -0.3;
 
 /// Where the camera is and what it looks at.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Pose {
     pub eye: Vec3,
     pub target: Vec3,
+    /// Vertical field of view (rad).
+    pub fov: f32,
 }
 
 impl Pose {
+    /// A pose with the room's field of view ([`FOV_Y`]).
+    pub fn new(eye: Vec3, target: Vec3) -> Pose {
+        Pose {
+            eye,
+            target,
+            fov: FOV_Y,
+        }
+    }
+
     pub fn lerp(self, o: Pose, t: f32) -> Pose {
         Pose {
             eye: self.eye.lerp(o.eye, t),
             target: self.target.lerp(o.target, t),
+            fov: self.fov + (o.fov - self.fov) * t,
         }
     }
 
@@ -41,7 +61,7 @@ impl Pose {
     // glam's older names: the same matrices as the new free functions.
     #[allow(deprecated)]
     pub fn view_proj(&self, aspect: f32) -> Mat4 {
-        Mat4::perspective_rh(FOV_Y, aspect.max(0.1), 0.05, 100.0)
+        Mat4::perspective_rh(self.fov, aspect.max(0.1), 0.05, 100.0)
             * Mat4::look_at_rh(self.eye, self.target, Vec3::Y)
     }
 
@@ -150,8 +170,11 @@ pub enum View {
     /// The changing corner (4C).
     Mirror,
     /// The character editor (W4): over the rider's shoulder into the
-    /// mirror; `front`: straight at the rider (no reflection, low quality).
-    Dress { front: bool },
+    /// mirror; `front`: straight at the rider (no reflection, low quality);
+    /// `face`: the head in a close-up (a face, hair, facial-hair, glasses
+    /// or helmet picker is open, spec §14 Phase 4, 4N) – in the mirror
+    /// from just in front of the glass, or straight at the face.
+    Dress { front: bool, face: bool },
     /// *Try on the bike*: the rider on the stand bike, from the side.
     TryOn,
 }
@@ -159,6 +182,8 @@ pub enum View {
 /// The fixed poses of the room's views.
 pub struct Poses<'a> {
     pub layout: &'a Layout,
+    /// The rider's height against the default (the head's height).
+    pub scale: f32,
 }
 
 impl Poses<'_> {
@@ -170,25 +195,19 @@ impl Poses<'_> {
     pub fn pose(&self, view: View, orbit: &Orbit) -> Pose {
         let l = self.layout;
         let stand = self.stand_centre();
-        let from = |v: ocw_assets::workshop::View| Pose {
-            eye: v.eye,
-            target: v.target,
-        };
+        let from = |v: ocw_assets::workshop::View| Pose::new(v.eye, v.target);
         match view {
             View::Overview => from(l.overview_view()),
             View::Wall(i) => {
                 // Further back than the layout's view: the whole hung bike and
                 // its card (above the hint bar) in the picture.
                 let v = l.wall_view(i.min(l.hooks.len().saturating_sub(1)));
-                Pose {
-                    eye: Vec3::new(v.eye.x, 1.45, v.eye.z + 1.6),
-                    target: Vec3::new(v.target.x, 1.35, v.target.z),
-                }
+                Pose::new(
+                    Vec3::new(v.eye.x, 1.45, v.eye.z + 1.6),
+                    Vec3::new(v.target.x, 1.35, v.target.z),
+                )
             }
-            View::Stand => Pose {
-                eye: orbit.eye(stand),
-                target: stand,
-            },
+            View::Stand => Pose::new(orbit.eye(stand), stand),
             View::Part(anchor) => {
                 // From the orbit's direction, close, the part at the left
                 // third (the picker takes the right 40 %).
@@ -196,15 +215,49 @@ impl Poses<'_> {
                 let eye = anchor + dir * PART_DIST;
                 let right = (anchor - eye).cross(Vec3::Y).normalize_or(Vec3::X);
                 let shift = PART_DIST * (FOV_Y * 0.5).tan() * (16.0 / 9.0) * 0.35;
-                Pose {
-                    eye: eye + right * shift,
-                    target: anchor + right * shift,
-                }
+                Pose::new(eye + right * shift, anchor + right * shift)
             }
             View::Bench => from(l.bench_view()),
             View::Mirror => from(l.mirror_view()),
-            View::Dress { front } => from(l.dress_view(front)),
+            View::Dress { front, face: true } => self.face_close_up(front),
+            View::Dress { front, .. } => from(l.dress_view(front)),
             View::TryOn => from(l.try_on_view()),
+        }
+    }
+}
+
+impl Poses<'_> {
+    /// The head of the rider standing at the mirror (world).
+    pub fn head(&self) -> Vec3 {
+        self.layout.rider_hotspots(self.scale)[0]
+    }
+
+    /// The face close-up (spec §14 Phase 4, 4N): with the reflection, from
+    /// just in front of the glass at the head's height, looking at the
+    /// head's mirror image (the face from the front, as the rider sees
+    /// it); without, straight at the face from a little to its side.
+    /// Either way the head left of the middle (the picker on the right).
+    fn face_close_up(&self, front: bool) -> Pose {
+        let head = self.head();
+        let (glass, _) = self.layout.mirror_glass();
+        let (eye, at) = if front {
+            // The rider faces +X: in front of the face, a little to its
+            // right (+Z) for the ears.
+            (head + Vec3::new(1.2, 0.03, 0.32), head)
+        } else {
+            let mirrored = Vec3::new(2.0 * glass.x - head.x, head.y, head.z);
+            (
+                Vec3::new(glass.x - FACE_GLASS_M, head.y + 0.03, head.z + 0.05),
+                mirrored,
+            )
+        };
+        let d = eye.distance(at);
+        let right = (at - eye).cross(Vec3::Y).normalize_or(Vec3::Z);
+        let half_w = (FACE_FOV_Y * 0.5).tan() * (16.0 / 9.0) * d;
+        Pose {
+            eye,
+            target: at - right * FACE_SCREEN_X * half_w,
+            fov: FACE_FOV_Y,
         }
     }
 }
@@ -264,7 +317,10 @@ mod tests {
     #[test]
     fn moves_are_eased_and_never_cut() {
         let l = layout();
-        let p = Poses { layout: &l };
+        let p = Poses {
+            layout: &l,
+            scale: 1.0,
+        };
         let o = Orbit::default();
         let mut m = CameraMachine::new(View::Overview, p.pose(View::Overview, &o));
         let start = m.pose(p.pose(View::Overview, &o));
@@ -322,7 +378,10 @@ mod tests {
     #[test]
     fn every_view_looks_at_its_place() {
         let l = layout();
-        let p = Poses { layout: &l };
+        let p = Poses {
+            layout: &l,
+            scale: 1.0,
+        };
         let o = Orbit::default();
         let aspect = 16.0 / 9.0;
         // The stand bike is in the middle of the overview and the stand view.
@@ -348,12 +407,55 @@ mod tests {
         }
     }
 
+    /// The face close-up in the mirror and without it (spec §14 Phase 4,
+    /// 4N): the head – its mirror image, or itself – left of the middle
+    /// and filling much of the picture (for a short and a tall rider),
+    /// the eye in front of the glass (the mirror camera sees the room),
+    /// and the reflection's line of sight through the glass.
+    #[test]
+    fn the_face_close_up_frames_the_head() {
+        let l = layout();
+        let o = Orbit::default();
+        let aspect = 16.0 / 9.0;
+        let (glass, half) = l.mirror_glass();
+        for scale in [0.85, 1.0, 1.15] {
+            let p = Poses { layout: &l, scale };
+            let head = p.head();
+            for front in [false, true] {
+                let pose = p.pose(View::Dress { front, face: true }, &o);
+                let seen = if front {
+                    head
+                } else {
+                    Vec3::new(2.0 * glass.x - head.x, head.y, head.z)
+                };
+                let c = pose.project(aspect, seen).unwrap();
+                assert!(
+                    (c.x - FACE_SCREEN_X).abs() < 0.1 && c.y.abs() < 0.2,
+                    "{scale} {front}: {c}"
+                );
+                let top = pose.project(aspect, seen + Vec3::Y * 0.17).unwrap();
+                let chin = pose.project(aspect, seen - Vec3::Y * 0.17).unwrap();
+                assert!(
+                    top.y - chin.y > 0.7 && top.y < 1.0 && chin.y > -1.0,
+                    "{scale} {front}: {top} {chin}"
+                );
+                if !front {
+                    assert!(pose.eye.x < glass.x - 0.05, "in front of the glass");
+                    // Where the line to the mirror image crosses the glass.
+                    let t = (glass.x - pose.eye.x) / (seen.x - pose.eye.x);
+                    let hit = pose.eye.lerp(seen, t);
+                    assert!((hit.z - glass.z).abs() < half.x && (hit.y - glass.y).abs() < half.y);
+                }
+                // The close-up differs from the whole-rider view.
+                let whole = p.pose(View::Dress { front, face: false }, &o);
+                assert!(whole.fov > pose.fov);
+            }
+        }
+    }
+
     #[test]
     fn projection_matches_the_window() {
-        let pose = Pose {
-            eye: Vec3::new(0.0, 0.0, 5.0),
-            target: Vec3::ZERO,
-        };
+        let pose = Pose::new(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO);
         let size = Vec2::new(1920.0, 1080.0);
         let c = pose.to_screen(size, Vec3::ZERO).unwrap();
         assert!(c.distance(size / 2.0) < 1e-3);

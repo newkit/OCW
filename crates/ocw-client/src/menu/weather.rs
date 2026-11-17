@@ -485,12 +485,14 @@ pub fn grid(w: &WeatherState) -> MenuGrid {
                 icon: preset(name).map(|p| ocw_weather::icon::Icon::of(&p)),
                 swatch: None,
                 marked: current == Some(*name),
+                thumb: None,
             })
             .chain([GridCell {
                 label: "Back".into(),
                 icon: None,
                 swatch: None,
                 marked: false,
+                thumb: None,
             }])
             .collect(),
     }

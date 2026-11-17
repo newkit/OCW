@@ -551,6 +551,16 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
                 ocw_client::menu::calendar::status(&c, calendar_info(world), menu.focus())
             }
             (Page::Sub(sub::Page::Bindings), _, _) => crate::bindings::status(world, None),
+            // The focused tile's name under pictures without names (4N).
+            (Page::Sub(sub::Page::CharacterPick(a)), _, _) => {
+                let hooks = world
+                    .get_resource::<MenuHooks>()
+                    .copied()
+                    .unwrap_or_default();
+                let rider = (hooks.riders)(world)
+                    .map_or_else(ocw_client::riders::Rider::default, Riders::active);
+                ocw_client::menu::character::status(a, &rider, menu.focus())
+            }
             _ => String::new(),
         },
         text: def
@@ -586,7 +596,18 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
                     .unwrap_or_default();
                 let rider = (hooks.riders)(world)
                     .map_or_else(ocw_client::riders::Rider::default, Riders::active);
-                Some(ocw_client::menu::character::grid(a, &rider))
+                // The pictures show the rider's own kit colours and the
+                // kit it wears (spec §14 Phase 4, 4N).
+                let local = world
+                    .get_resource::<RideView>()
+                    .and_then(|v| v.riders.iter().find(|r| r.is_local));
+                let look = local.and_then(|r| r.look).unwrap_or_default();
+                let kit = local
+                    .map(|r| ocw_render::riders::kit_variants(&r.parts))
+                    .unwrap_or_default();
+                Some(ocw_client::menu::character::grid_for(
+                    a, &rider, &look, &kit,
+                ))
             }
             _ => None,
         },
@@ -765,6 +786,7 @@ mod tests {
         for platform in [Platform::Desktop, Platform::Browser] {
             let mut app = app(platform);
             app.insert_resource(CameraOrbit::default());
+            app.init_resource::<ocw_render::camera::CloseUp>();
             let go = |app: &mut App, a: Action| {
                 app.world_mut().resource_mut::<MenuState>().queue(a);
                 app.update();
@@ -793,6 +815,11 @@ mod tests {
                 crate::character::editor_orbit(sub::Page::CharacterPick(Attr::HairStyle))
             );
             assert!(orbit.yaw > 2.0, "in front of the rider");
+            assert_eq!(
+                app.world().resource::<ocw_render::camera::CloseUp>().0,
+                Some(ocw_render::camera::CloseUpShot::THREE_QUARTER),
+                "{platform:?}: the head in a close-up"
+            );
             // The focused tile is previewed, by the arrows and the pointer.
             go(&mut app, Action::Right);
             assert_eq!(
@@ -809,6 +836,10 @@ mod tests {
             assert_eq!(crate::character::previewed(app.world()), None);
             go(&mut app, Action::Close);
             assert!(!view(&app).side);
+            assert_eq!(
+                app.world().resource::<ocw_render::camera::CloseUp>().0,
+                None
+            );
             assert_eq!(
                 *app.world().resource::<CameraOrbit>(),
                 CameraOrbit::default(),

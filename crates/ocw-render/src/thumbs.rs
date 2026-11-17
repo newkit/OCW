@@ -1,5 +1,8 @@
-//! Thumbnails of the bike stand's parts (spec §14 Phase 4, 4B *Tiles*):
-//! small renderings of the real part models, made off screen – the bike
+//! Thumbnails of the bike stand's parts (spec §14 Phase 4, 4B *Tiles*)
+//! and of the character editor's choices (4N: hair styles, facial hair,
+//! body shapes, glasses, helmets … – [`RiderThumb`]: the standing rider
+//! with the look, framed on the face, the whole body or the hands):
+//! small renderings of the real models, made off screen – the bike
 //! of the slot's profile with the part fitted, framed on the part from
 //! the drive side, against a neutral background under a neutral light –
 //! rendered **once** into an image and kept ([`Thumbnails`]: keyed by
@@ -9,8 +12,9 @@
 //! most [`AT_ONCE`] cameras at a time; then the camera and the bike are
 //! despawned and only the image stays).
 //!
-//! The bookkeeping ([`ThumbCache`]) and the framing ([`framing`]) are pure
-//! and tested without a GPU; [`ThumbnailPlugin`] spawns the cameras.
+//! The bookkeeping ([`ThumbCache`]) and the framings ([`framing`],
+//! [`rider_framing`]) are pure and tested without a GPU;
+//! [`ThumbnailPlugin`] spawns the cameras.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -19,7 +23,7 @@ use bevy::camera::{ClearColorConfig, RenderTarget};
 use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
 use ocw_assets::pose::bike_nodes;
-use ocw_core::{ProfileId, Rgb};
+use ocw_core::{ProfileId, Rgb, RiderLook};
 
 use crate::gear::GearMaterial;
 use crate::workshop::{BikeModels, BuiltBike};
@@ -40,10 +44,64 @@ pub const BACKGROUND: Color = Color::srgb(0.30, 0.31, 0.33);
 /// The thumbnail camera's vertical field of view (rad).
 pub const FOV_Y: f32 = 0.5;
 
-/// What a thumbnail shows: a part's model in a slot of a bike of a
-/// profile, in a frame paint.
+/// The character thumbnails' size (square: the menu's picture tiles).
+pub const RIDER_THUMB_SIZE: UVec2 = UVec2::new(192, 192);
+
+/// What a thumbnail shows: a bike part, or the rider with a look.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ThumbKey {
+pub enum ThumbKey {
+    Part(PartThumb),
+    Rider(RiderThumb),
+}
+
+impl ThumbKey {
+    /// The image's size (pixels).
+    pub fn size(&self) -> UVec2 {
+        match self {
+            ThumbKey::Part(_) => THUMB_SIZE,
+            ThumbKey::Rider(_) => RIDER_THUMB_SIZE,
+        }
+    }
+
+    /// Width over height of the image.
+    pub fn aspect(&self) -> f32 {
+        let s = self.size();
+        s.x as f32 / s.y as f32
+    }
+}
+
+/// The rider standing with a look (spec §14 Phase 4, 4N): a character
+/// tile's picture – keyed by the whole look, the worn kit and the shot,
+/// so each choice (and each combination with the rest of the look) is
+/// rendered once.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RiderThumb {
+    pub look: RiderLook,
+    /// The worn kit's models (`ocw_assets::bikes` variant ids: helmet,
+    /// cap, gloves …).
+    pub kit: Vec<String>,
+    pub shot: RiderShot,
+}
+
+/// What a character thumbnail frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RiderShot {
+    /// The head from a three-quarter view (hair, facial hair, the age,
+    /// the skin, helmets, caps).
+    Face,
+    /// The head straight from the front (glasses).
+    FaceFront,
+    /// The whole rider (base bodies, shapes, jerseys, shorts …).
+    Body,
+    /// The hands (gloves).
+    Hands,
+    /// The feet (shoes, socks).
+    Feet,
+}
+
+/// A part's model in a slot of a bike of a profile, in a frame paint.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PartThumb {
     pub profile: ProfileId,
     /// One of `ocw_assets::bikes::HOTSPOT_SLOTS` (frames and paints: the
     /// whole bike).
@@ -274,6 +332,25 @@ pub fn framing(bike: &BuiltBike, slot: &str) -> (Vec3, Vec3) {
     (at + dir * (r / half), at)
 }
 
+/// The character thumbnail camera for `shot` of a rider `scale` times
+/// the default height standing with the feet at the origin, facing −Z:
+/// (eye, target). The face from 0.75 m, the head filling the picture; the
+/// whole rider from the front, a little to the side.
+pub fn rider_framing(scale: f32, shot: RiderShot) -> (Vec3, Vec3) {
+    let half = (FOV_Y * 0.5).tan();
+    // From the rider's front (−Z), turned towards its right (+X) by `a`.
+    let from = |a: f32, up: f32| Vec3::new(a.sin(), up, -a.cos()).normalize();
+    let (at, radius, dir) = match shot {
+        RiderShot::Face => (Vec3::new(0.0, 1.66, -0.03), 0.2, from(0.6, 0.08)),
+        RiderShot::FaceFront => (Vec3::new(0.0, 1.66, -0.03), 0.19, from(0.12, 0.05)),
+        RiderShot::Body => (Vec3::new(0.0, 0.92, 0.0), 1.0, from(0.35, 0.12)),
+        RiderShot::Hands => (Vec3::new(0.12, 0.86, -0.04), 0.3, from(0.45, 0.25)),
+        RiderShot::Feet => (Vec3::new(0.05, 0.12, -0.04), 0.3, from(0.45, 0.45)),
+    };
+    let at = at * scale;
+    (at + dir * (radius * scale / half), at)
+}
+
 /// The thumbnails of the session (requested by the picker's tiles).
 #[derive(Resource, Default)]
 pub struct Thumbnails {
@@ -281,16 +358,19 @@ pub struct Thumbnails {
     /// The entities of each render under way (camera, bike) and its spot.
     jobs: HashMap<ThumbKey, (Vec<Entity>, usize)>,
     materials: HashMap<Vec<u32>, Handle<GearMaterial>>,
+    /// The rider model's meshes (uploaded once).
+    rider_meshes: HashMap<usize, crate::workshop::NodeMeshes>,
     light: Option<Entity>,
 }
 
 impl Thumbnails {
     /// The image of `key` (kept, or new and queued).
     pub fn image(&mut self, key: &ThumbKey, images: &mut Assets<Image>) -> Handle<Image> {
+        let size = key.size();
         self.cache.request(key, || {
             images.add(Image::new_target_texture(
-                THUMB_SIZE.x,
-                THUMB_SIZE.y,
+                size.x,
+                size.y,
                 TextureFormat::Bgra8UnormSrgb,
                 None,
             ))
@@ -321,10 +401,14 @@ fn layer() -> RenderLayers {
 fn render_thumbs(
     mut commands: Commands,
     mut thumbs: ResMut<Thumbnails>,
-    models: Res<BikeModels>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<GearMaterial>>,
+    models: Option<Res<BikeModels>>,
+    meshes: Option<ResMut<Assets<Mesh>>>,
+    materials: Option<ResMut<Assets<GearMaterial>>>,
 ) {
+    // Without a renderer (headless tests) nothing is drawn.
+    let (Some(mut meshes), Some(mut materials)) = (meshes, materials) else {
+        return;
+    };
     let thumbs = &mut *thumbs;
     for key in thumbs.cache.frame() {
         if let Some((ents, _)) = thumbs.jobs.remove(&key) {
@@ -370,13 +454,63 @@ fn render_thumbs(
         let used: Vec<usize> = thumbs.jobs.values().map(|(_, s)| *s).collect();
         let k = (0..AT_ONCE * 2).find(|s| !used.contains(s)).unwrap_or(0);
         let at = spot(k);
-        let variants = if key.model == "stock" {
-            Vec::new()
-        } else {
-            vec![key.model.clone()]
+        let (eye, target, subject) = match &key {
+            ThumbKey::Part(part) => {
+                let variants = if part.model == "stock" {
+                    Vec::new()
+                } else {
+                    vec![part.model.clone()]
+                };
+                let built = models
+                    .as_deref()
+                    .cloned()
+                    .unwrap_or_default()
+                    .get(part.profile, &variants);
+                let (eye, target) = framing(&built, &part.slot);
+                let bike = spawn_bike(
+                    &mut commands,
+                    &built,
+                    part.paint,
+                    at,
+                    &mut meshes,
+                    &mut materials,
+                    &mut thumbs.materials,
+                );
+                (eye, target, bike)
+            }
+            ThumbKey::Rider(r) => {
+                let c = r.look.character.validated();
+                let scale = c.scale();
+                let rig = ocw_assets::shipped::rider_rig();
+                // Standing at ease, as at the mirror (never animated).
+                let pose = ocw_assets::pose::idle_aged(&rig, 0.0, c.age.idle_hunch());
+                let Thumbnails {
+                    rider_meshes,
+                    materials: mat_cache,
+                    ..
+                } = &mut *thumbs;
+                let (root, _) = crate::workshop::spawn_rider_model(
+                    &mut commands,
+                    &r.look,
+                    &r.kit,
+                    layer(),
+                    scale,
+                    Some(&pose),
+                    &mut meshes,
+                    rider_meshes,
+                    &mut materials,
+                    mat_cache,
+                );
+                // The feet on the spot's floor (the model's root at the
+                // hips).
+                let sole = rig.leg() - rig.cleat.y;
+                commands
+                    .entity(root)
+                    .insert(Transform::from_translation(at + Vec3::Y * sole * scale));
+                let (eye, target) = rider_framing(scale, r.shot);
+                (eye, target, root)
+            }
         };
-        let built = models.get(key.profile, &variants);
-        let (eye, target) = framing(&built, &key.slot);
         let camera = commands
             .spawn((
                 Camera3d::default(),
@@ -401,16 +535,7 @@ fn render_thumbs(
                 layer(),
             ))
             .id();
-        let bike = spawn_bike(
-            &mut commands,
-            &built,
-            key.paint,
-            at,
-            &mut meshes,
-            &mut materials,
-            &mut thumbs.materials,
-        );
-        thumbs.jobs.insert(key, (vec![camera, bike], k));
+        thumbs.jobs.insert(key, (vec![camera, subject], k));
     }
 }
 
@@ -476,12 +601,123 @@ mod tests {
     use super::*;
 
     fn key(model: &str, paint: u32) -> ThumbKey {
-        ThumbKey {
+        ThumbKey::Part(PartThumb {
             profile: ProfileId::Road,
             slot: "wheels".into(),
             model: model.into(),
             paint: Rgb(paint),
+        })
+    }
+
+    fn rider(look: RiderLook, shot: RiderShot) -> ThumbKey {
+        ThumbKey::Rider(RiderThumb {
+            look,
+            kit: vec!["helmet-road".into()],
+            shot,
+        })
+    }
+
+    /// The character tiles' pictures (spec §14 Phase 4, 4N): keyed by the
+    /// whole look, the kit and the shot – another hair style, beard,
+    /// shape, age, skin or colour is another picture, the same look again
+    /// the same one, rendered once; part and rider pictures never mix.
+    #[test]
+    fn a_character_picture_is_keyed_by_the_look_and_rendered_once() {
+        use ocw_core::Character;
+        let mut c: ThumbCache<u32> = ThumbCache::new(64);
+        let mut next = 0u32;
+        let mut make = || {
+            next += 1;
+            next
+        };
+        let base = RiderLook::default();
+        let with = |f: &dyn Fn(&mut Character)| {
+            let mut l = base;
+            f(&mut l.character);
+            l
+        };
+        let looks = [
+            base,
+            with(&|ch| ch.hair = 7),
+            with(&|ch| ch.beard = 4),
+            with(&|ch| ch.moustache = 2),
+            with(&|ch| ch.shape = ocw_core::BodyShape::Ample),
+            with(&|ch| ch.base = ocw_core::BaseBody::B),
+            with(&|ch| ch.age = ocw_core::character::Age::Sixties),
+            with(&|ch| ch.glasses = 2),
+            with(&|ch| ch.hair_colour = Rgb(0xD8B27A)),
+        ];
+        let imgs: Vec<u32> = looks
+            .iter()
+            .map(|l| c.request(&rider(*l, RiderShot::Face), &mut make))
+            .collect();
+        let mut uniq = imgs.clone();
+        uniq.sort();
+        uniq.dedup();
+        assert_eq!(uniq.len(), looks.len(), "one picture per look");
+        // The same look again: the same picture, no new render.
+        assert_eq!(
+            c.request(&rider(looks[1], RiderShot::Face), &mut make),
+            imgs[1]
+        );
+        // Another shot or another helmet: another picture.
+        assert_ne!(c.request(&rider(base, RiderShot::Body), &mut make), imgs[0]);
+        let bare = ThumbKey::Rider(RiderThumb {
+            look: base,
+            kit: Vec::new(),
+            shot: RiderShot::Face,
+        });
+        assert_ne!(c.request(&bare, &mut make), imgs[0]);
+        assert_ne!(c.request(&key("stock", 0), &mut make), imgs[0]);
+        while !c.start(AT_ONCE).is_empty() {
+            for _ in 0..FRAMES_PER_THUMB {
+                c.frame();
+            }
         }
+        assert_eq!(c.renders, looks.len() + 3);
+        assert_eq!(rider(base, RiderShot::Face).size(), RIDER_THUMB_SIZE);
+        assert_eq!(key("stock", 0).size(), THUMB_SIZE);
+    }
+
+    /// The character pictures' framing: the head in the middle and filling
+    /// the picture for the face shots (from the front, a little to the
+    /// rider's right for the three-quarter view), the whole rider – feet
+    /// to helmet – for the body, at every height.
+    #[test]
+    fn a_character_picture_frames_its_shot() {
+        let half = (FOV_Y * 0.5).tan();
+        for scale in [0.84, 1.0, 1.15] {
+            for shot in [
+                RiderShot::Face,
+                RiderShot::FaceFront,
+                RiderShot::Body,
+                RiderShot::Hands,
+                RiderShot::Feet,
+            ] {
+                let (eye, target) = rider_framing(scale, shot);
+                let d = eye - target;
+                assert!(d.z < 0.0, "{shot:?}: from the rider's front");
+                let seen = half * d.length();
+                match shot {
+                    RiderShot::Face | RiderShot::FaceFront => {
+                        assert!((target.y - 1.66 * scale).abs() < 0.05);
+                        assert!(seen < 0.25 * scale && seen > 0.17 * scale, "{shot:?}");
+                        assert!(d.length() < 1.0, "close: {}", d.length());
+                    }
+                    RiderShot::Body => {
+                        assert!(target.y + seen > 1.85 * scale, "the helmet");
+                        assert!(target.y - seen < 0.0, "the feet");
+                    }
+                    _ => assert!(seen < 0.4 * scale),
+                }
+            }
+        }
+        let side = |shot| {
+            let (eye, target) = rider_framing(1.0, shot);
+            let d = (eye - target).normalize();
+            d.x
+        };
+        assert!(side(RiderShot::Face) > 0.4 && side(RiderShot::FaceFront) < 0.2);
     }
 
     /// Render once, reuse: a second request of the same part and paint
