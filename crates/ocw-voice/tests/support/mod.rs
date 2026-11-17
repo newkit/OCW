@@ -9,6 +9,10 @@ use std::time::{Duration, Instant};
 
 use ocw_voice::backend::{BackendEvent, VoiceBackend};
 
+/// Three controllers for the voice block tests (spec §7.1.7 Q9).
+#[cfg(feature = "livekit")]
+pub mod trio;
+
 /// Polls `b` until an event matches `what` (true) or `timeout` passes
 /// (false). Every polled event is kept in `seen` – also the ones after the
 /// match in the same batch: `poll` drains the backend's queue, so an event

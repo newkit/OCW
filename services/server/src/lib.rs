@@ -26,6 +26,8 @@ pub mod stats;
 // Snapshot timing at a client (interval, jitter, age; spec §14 Phase 10 B3).
 pub mod timing;
 pub mod voice;
+/// Voice blocks: who exchanges no voice with whom (spec §7.1.7 Q9).
+pub mod voice_block;
 // The wire rules without I/O (frames, datagram rules, the client's link
 // state machine): shared with the browser app's WebTransport client.
 pub mod wire;
@@ -243,6 +245,12 @@ pub struct GameServer {
     /// checked shots, and those to relay to everyone with the next tick.
     photos: BTreeMap<RiderId, ocw_world::photo_share::ShotLog>,
     photo_out: Vec<v1::PhotoShot>,
+    /// Whom each connection's rider blocked in voice (spec §7.1.7 Q9) and
+    /// the set of riders each was last told it is apart from.
+    voice_blocks: BTreeMap<ConnectionId, voice_block::Blocks>,
+    voice_apart: BTreeMap<ConnectionId, std::collections::BTreeSet<RiderId>>,
+    /// Messages for one connection only ([`GameServer::take_directed`]).
+    directed: Vec<(ConnectionId, Vec<u8>)>,
 }
 
 /// A world switch the host asked for (spec §3.2.1), checked and waiting
@@ -425,6 +433,9 @@ impl GameServer {
             accounts: BTreeMap::new(),
             photos: BTreeMap::new(),
             photo_out: Vec::new(),
+            voice_blocks: BTreeMap::new(),
+            voice_apart: BTreeMap::new(),
+            directed: Vec::new(),
         }
     }
 
@@ -905,6 +916,9 @@ impl GameServer {
         self.accounts.remove(&conn);
         self.voice_issued.remove(&conn);
         self.peer_addrs.remove(&conn);
+        self.voice_blocks.remove(&conn);
+        self.voice_apart.remove(&conn);
+        self.directed.retain(|(c, _)| *c != conn);
         if let Some(rider) = self.riders.remove(&conn) {
             self.statuses.remove(&rider);
             self.photos.remove(&rider);
@@ -918,6 +932,7 @@ impl GameServer {
             self.left.push(name);
             self.session.remove_rider(rider);
             tracing::info!(%rider, "rider left");
+            self.refresh_voice_apart();
         }
     }
 
@@ -989,6 +1004,16 @@ impl GameServer {
                 self.photo_shot(rider, &shot);
                 None
             }
+            (C::VoiceBlocks(b), Some(_)) => {
+                let blocks = voice_block::Blocks::from_wire(&b);
+                if blocks.is_empty() {
+                    self.voice_blocks.remove(&conn);
+                } else {
+                    self.voice_blocks.insert(conn, blocks);
+                }
+                self.refresh_voice_apart();
+                None
+            }
             (C::Turn(turn), Some(rider)) => {
                 if let Some(net) = self.session.network() {
                     let choice = ocw_protocol::turn_choice(&turn, net);
@@ -1039,6 +1064,11 @@ impl GameServer {
             .unwrap_or_default();
         // A client that just joined a free ride gets everyone's path.
         let joined = !had_rider && self.riders.contains_key(&conn);
+        // A newcomer may be blocked by someone already here (by name or
+        // account): both are told (spec §7.1.7 Q9).
+        if joined {
+            self.refresh_voice_apart();
+        }
         if joined && self.session.event().is_some() {
             out.push(encode(&server_message(S::Event(self.event_state()))));
         }
@@ -1613,6 +1643,61 @@ impl GameServer {
         grant
     }
 
+    /// The riders `conn`'s rider exchanges no voice with (spec §7.1.7 Q9):
+    /// a block in either direction.
+    pub fn voice_apart(&self, conn: ConnectionId) -> std::collections::BTreeSet<RiderId> {
+        self.compute_voice_apart().remove(&conn).unwrap_or_default()
+    }
+
+    fn compute_voice_apart(&self) -> BTreeMap<ConnectionId, std::collections::BTreeSet<RiderId>> {
+        if self.voice_blocks.is_empty() {
+            return BTreeMap::new();
+        }
+        let riders: BTreeMap<ConnectionId, voice_block::Who> = self
+            .riders
+            .iter()
+            .map(|(c, r)| {
+                (
+                    *c,
+                    voice_block::Who {
+                        rider: *r,
+                        name: self.names.get(c).cloned().unwrap_or_default(),
+                        account_id: self.accounts.get(c).map(|a| a.account_id.clone()),
+                    },
+                )
+            })
+            .collect();
+        voice_block::apart(&riders, &self.voice_blocks)
+    }
+
+    /// Tells every rider whose set of riders apart changed (spec §7.1.7
+    /// Q9): a [`v1::VoiceApart`] to that rider alone. Riders who never had
+    /// one apart get nothing.
+    fn refresh_voice_apart(&mut self) {
+        let mut now = self.compute_voice_apart();
+        let conns: Vec<ConnectionId> = self.riders.keys().copied().collect();
+        for conn in conns {
+            let set = now.remove(&conn).unwrap_or_default();
+            let before = self.voice_apart.get(&conn);
+            if before.map_or(set.is_empty(), |b| *b == set) {
+                continue;
+            }
+            let msg = v1::VoiceApart {
+                riders: set.iter().map(|r| r.0).collect(),
+            };
+            self.directed
+                .push((conn, encode(&server_message(S::VoiceApart(msg)))));
+            self.voice_apart.insert(conn, set);
+        }
+    }
+
+    /// Takes the messages for single connections (a voice block's
+    /// [`v1::VoiceApart`]): the embedding sends each only to its
+    /// connection, after the tick's broadcast.
+    pub fn take_directed(&mut self) -> Vec<(ConnectionId, Vec<u8>)> {
+        std::mem::take(&mut self.directed)
+    }
+
     /// Starts or cancels an event (spec §2.3; local server only).
     fn event_request(&mut self, req: v1::EventRequest) -> S {
         let result = |ok: bool, message: String| S::DevResult(v1::DevCommandResult { ok, message });
@@ -1819,6 +1904,17 @@ impl GameServer {
             return out;
         }
         let echo = self.session.echo_rider();
+        // The signed-in riders' accounts (spec §9.1), once a second: the
+        // stable key of a voice block or volume (§7.1.7 Q9).
+        let accounts: BTreeMap<RiderId, &str> =
+            if self.session.tick().is_multiple_of(u64::from(SIM_TICK_HZ)) {
+                self.riders
+                    .iter()
+                    .filter_map(|(c, r)| self.accounts.get(c).map(|a| (*r, a.account_id.as_str())))
+                    .collect()
+            } else {
+                BTreeMap::new()
+            };
         // Damage (spec §14 Phase 12E): at 2 Hz and on every change.
         let changed = self.session.take_damage_changes();
         let all = self.session.tick().is_multiple_of(DAMAGE_TICKS);
@@ -1835,6 +1931,10 @@ impl GameServer {
                         .then(|| self.session.damage(r.id).map(ocw_protocol::damage_to_wire))
                         .flatten(),
                     status: self.statuses.get(&r.id).cloned(),
+                    account_id: accounts
+                        .get(&r.id)
+                        .map(|a| (*a).to_owned())
+                        .unwrap_or_default(),
                     ..ocw_protocol::quantize(r)
                 })
                 .collect(),
@@ -2584,6 +2684,144 @@ mod tests {
                 _ => None,
             })
             .expect("a snapshot every 5 ticks")
+    }
+
+    fn join_named(server: &mut GameServer, name: &str) -> (ConnectionId, RiderId) {
+        let conn = server.connect();
+        let reply = server.handle(
+            conn,
+            &encode(&client_message(C::Hello(v1::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                display_name: name.into(),
+                ..Default::default()
+            }))),
+        );
+        match decode_server(&reply[0]).unwrap() {
+            S::Welcome(w) => (conn, RiderId(w.rider_id)),
+            other => panic!("expected a welcome, got {other:?}"),
+        }
+    }
+
+    fn blocks(names: &[&str]) -> Vec<u8> {
+        encode(&client_message(C::VoiceBlocks(v1::VoiceBlocks {
+            names: names.iter().map(|n| (*n).to_owned()).collect(),
+            ..Default::default()
+        })))
+    }
+
+    /// The directed `VoiceApart` messages by connection (their riders).
+    fn aparts(server: &mut GameServer) -> BTreeMap<ConnectionId, Vec<u32>> {
+        server
+            .take_directed()
+            .into_iter()
+            .map(|(c, m)| match decode_server(&m).unwrap() {
+                S::VoiceApart(a) => (c, a.riders),
+                other => panic!("expected a VoiceApart, got {other:?}"),
+            })
+            .collect()
+    }
+
+    /// Voice blocks (spec §7.1.7 Q9) with three riders: A blocks B –
+    /// the server tells A and B, and only them, that they exchange no
+    /// voice (both directions, without saying who blocked whom); C is
+    /// told nothing and stays with both. Unblocking tells both again.
+    #[test]
+    fn a_block_keeps_both_riders_apart_and_no_one_else() {
+        let mut server = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let (a, ra) = join_named(&mut server, "Ada Rider");
+        let (b, rb) = join_named(&mut server, "Bea Climber");
+        let (c, _) = join_named(&mut server, "Cleo Sprinter");
+        assert!(server.take_directed().is_empty(), "no blocks, nothing said");
+        assert!(server.handle(a, &blocks(&["Bea Climber"])).is_empty());
+        let told = aparts(&mut server);
+        assert_eq!(told.get(&a), Some(&vec![rb.0]));
+        assert_eq!(told.get(&b), Some(&vec![ra.0]), "the blocked rider too");
+        assert!(!told.contains_key(&c), "C is not told anything");
+        assert_eq!(server.voice_apart(c), Default::default());
+        // The same list again: nothing new.
+        server.handle(a, &blocks(&["Bea Climber"]));
+        assert!(server.take_directed().is_empty());
+        // B's message names A, not who blocked whom: the same as when B
+        // had blocked A.
+        let mut other = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let (oa, _) = join_named(&mut other, "Ada Rider");
+        let (ob, _) = join_named(&mut other, "Bea Climber");
+        other.handle(ob, &blocks(&["Ada Rider"]));
+        let o = aparts(&mut other);
+        assert_eq!((o[&oa].len(), o[&ob].len()), (1, 1));
+        // Unblocked (an empty list): both told, the sets empty.
+        server.handle(a, &blocks(&[]));
+        let told = aparts(&mut server);
+        assert_eq!(told.get(&a), Some(&vec![]));
+        assert_eq!(told.get(&b), Some(&vec![]));
+        assert_eq!(told.len(), 2);
+        // The tick delivers nothing of it to everyone: broadcasts carry no
+        // VoiceApart.
+        server.handle(a, &blocks(&["Bea Climber"]));
+        let broadcast: Vec<Vec<u8>> = (0..10).flat_map(|_| server.tick()).collect();
+        assert!(
+            broadcast
+                .iter()
+                .all(|m| !matches!(decode_server(m), Ok(S::VoiceApart(_))))
+        );
+        assert_eq!(aparts(&mut server).len(), 2);
+    }
+
+    /// A rider who joins after the block (by name) is kept apart at once;
+    /// when the blocker leaves, the blocked rider is told.
+    #[test]
+    fn blocks_meet_newcomers_and_end_with_the_blocker() {
+        let mut server = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let (a, ra) = join_named(&mut server, "Ada Rider");
+        let (c, _) = join_named(&mut server, "Cleo Sprinter");
+        server.handle(a, &blocks(&["Bea Climber"]));
+        assert!(server.take_directed().is_empty(), "Bea is not here");
+        let (b, rb) = join_named(&mut server, "Bea Climber");
+        let told = aparts(&mut server);
+        assert_eq!(told.get(&a), Some(&vec![rb.0]));
+        assert_eq!(told.get(&b), Some(&vec![ra.0]));
+        assert!(!told.contains_key(&c));
+        server.disconnect(a);
+        let told = aparts(&mut server);
+        assert_eq!(told.get(&b), Some(&vec![]), "nobody apart any more");
+        assert_eq!(told.len(), 1);
+        // Messages queued for a connection that left are dropped.
+        server.handle(b, &blocks(&["Cleo Sprinter"]));
+        server.disconnect(c);
+        assert!(server.take_directed().iter().all(|(conn, _)| *conn != c));
+    }
+
+    /// The protocol's round trip of the two new messages.
+    #[test]
+    fn voice_block_messages_round_trip() {
+        let m = v1::VoiceBlocks {
+            account_ids: vec!["acc-1".into()],
+            names: vec!["Bea Climber".into()],
+        };
+        match ocw_protocol::decode_client(&encode(&client_message(C::VoiceBlocks(m.clone()))))
+            .unwrap()
+        {
+            C::VoiceBlocks(back) => assert_eq!(back, m),
+            other => panic!("{other:?}"),
+        }
+        let a = v1::VoiceApart { riders: vec![3, 7] };
+        match decode_server(&encode(&server_message(S::VoiceApart(a.clone())))).unwrap() {
+            S::VoiceApart(back) => assert_eq!(back, a),
+            other => panic!("{other:?}"),
+        }
+        let u = v1::RiderUpdate {
+            rider_id: 2,
+            account_id: "acc-2".into(),
+            ..Default::default()
+        };
+        let snap = v1::Snapshot {
+            riders: vec![u.clone()],
+            ..Default::default()
+        };
+        match decode_server(&encode(&server_message(S::Snapshot(snap)))).unwrap() {
+            S::Snapshot(back) => assert_eq!(back.riders[0], u),
+            other => panic!("{other:?}"),
+        }
     }
 
     /// The status signs (spec §2.6): relayed from the samples into the
@@ -5155,6 +5393,52 @@ mod auth_tests {
             m => panic!("{m:?}"),
         };
         (conn, kind)
+    }
+
+    /// Accounts (spec §7.1.7 Q9): the snapshots carry a signed-in rider's
+    /// account once a second, and a block by account keeps that rider
+    /// apart whatever their name.
+    #[test]
+    fn accounts_in_snapshots_and_blocks_by_account() {
+        let mut s = server(false);
+        let (signed, _) = join(&mut s, Some(token(600, |_| {})));
+        let (anon, _) = join(&mut s, None);
+        let snaps: Vec<v1::Snapshot> = (0..u64::from(SIM_TICK_HZ) * 2)
+            .flat_map(|_| s.tick())
+            .filter_map(|b| match decode_server(&b) {
+                Ok(S::Snapshot(x)) => Some(x),
+                _ => None,
+            })
+            .collect();
+        let with: Vec<&v1::Snapshot> = snaps
+            .iter()
+            .filter(|x| x.riders.iter().any(|r| r.account_id == "acc_42"))
+            .collect();
+        assert_eq!(with.len(), 2, "once a second, of 20 snapshots");
+        assert!(
+            with.iter()
+                .all(|x| x.server_tick.is_multiple_of(u64::from(SIM_TICK_HZ)))
+        );
+        assert!(
+            snaps
+                .iter()
+                .flat_map(|x| &x.riders)
+                .filter(|r| r.account_id.is_empty())
+                .count()
+                > 20,
+            "the anonymous rider never has one"
+        );
+        s.take_directed();
+        s.handle(
+            anon,
+            &encode(&client_message(C::VoiceBlocks(v1::VoiceBlocks {
+                account_ids: vec!["acc_42".into()],
+                ..Default::default()
+            }))),
+        );
+        let told: Vec<ConnectionId> = s.take_directed().into_iter().map(|(c, _)| c).collect();
+        assert!(told.contains(&signed) && told.contains(&anon), "{told:?}");
+        assert!(!s.voice_apart(signed).is_empty());
     }
 
     #[derive(Debug)]

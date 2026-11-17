@@ -93,8 +93,15 @@ pub enum Page {
     Voice,
     /// Voice → Devices and options.
     VoiceDevices,
-    /// Voice → Participants: mute single riders.
+    /// Voice → Participants: the riders in the voice room, each opens its
+    /// page; the blocked riders at the end.
     VoiceParticipants,
+    /// One participant (index into the voice room's list, spec §7.1.7
+    /// Q9): Mute for me, the rider's volume, Block.
+    VoiceRider(usize),
+    /// Participants → Blocked riders: every rider blocked, here or not;
+    /// Confirm unblocks.
+    VoiceBlocked,
     /// Audio → Voice: the voice volume and the echo test (spec §7 *Echo
     /// bot*; rows from `voice::page`, the Audio page is full).
     AudioVoice,
@@ -238,6 +245,8 @@ impl Page {
             Self::Voice => "Voice",
             Self::VoiceDevices => "Voice devices",
             Self::VoiceParticipants => "Voice participants",
+            Self::VoiceRider(_) => "Voice: rider",
+            Self::VoiceBlocked => "Blocked riders",
             Self::AudioVoice => "Audio: voice",
             Self::TimeMachine => "Time machine",
             Self::Calendar(_) => "Calendar",
@@ -363,7 +372,12 @@ impl Page {
     pub fn is_voice_page(self) -> bool {
         matches!(
             self,
-            Self::Voice | Self::VoiceDevices | Self::VoiceParticipants | Self::AudioVoice
+            Self::Voice
+                | Self::VoiceDevices
+                | Self::VoiceParticipants
+                | Self::VoiceRider(_)
+                | Self::VoiceBlocked
+                | Self::AudioVoice
         )
     }
 
@@ -381,6 +395,7 @@ impl Page {
             Self::WorldRoutes(i) | Self::WorldParts(i) => Some(Self::World(i)),
             Self::WorldSource(_) => Some(Self::WorldSources),
             Self::VoiceDevices | Self::VoiceParticipants => Some(Self::Voice),
+            Self::VoiceRider(_) | Self::VoiceBlocked => Some(Self::VoiceParticipants),
             Self::AudioVoice => Some(Self::Audio),
             Self::RidingAids | Self::UnicornControls | Self::Bindings => Some(Self::Controls),
             Self::BindGroup(_) | Self::BindReset => Some(Self::Bindings),
@@ -469,9 +484,13 @@ impl Page {
             Self::VoiceDevices => &[
                 "Microphone and speaker for voice chat; a missing device falls back to the default.",
             ],
-            Self::VoiceParticipants => {
-                &["Riders in the voice room. Confirm mutes or unmutes one for you."]
-            }
+            Self::VoiceParticipants => &[
+                "Riders in the voice room: Confirm opens one (mute for you, volume, block). Blocked riders at the end.",
+            ],
+            Self::VoiceRider(_) => &[
+                "Mute: for this ride. Volume and Block are remembered. Blocked: neither of you hears the other; they are not told.",
+            ],
+            Self::VoiceBlocked => &["Riders you blocked, here or not. Confirm unblocks one."],
             Self::AudioVoice => &[
                 "Voice volume (Enter plays a test sound). Echo test: an Echo rider on the road plays your microphone back to you, delayed, when you ride near it.",
             ],
@@ -1399,7 +1418,12 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         | Page::GpxImport
         | Page::Workouts => Vec::new(),
         // From the voice state (`voice::page::rows`).
-        Page::Voice | Page::VoiceDevices | Page::VoiceParticipants | Page::AudioVoice => Vec::new(),
+        Page::Voice
+        | Page::VoiceDevices
+        | Page::VoiceParticipants
+        | Page::VoiceRider(_)
+        | Page::VoiceBlocked
+        | Page::AudioVoice => Vec::new(),
         // From the world clock (`timemachine::rows`).
         Page::TimeMachine | Page::Calendar(_) | Page::CalendarDates(_) | Page::Season => Vec::new(),
         // From the session weather (`weather::rows`).

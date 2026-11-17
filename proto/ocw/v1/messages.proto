@@ -29,6 +29,8 @@ message ClientMessage {
     DamageRequest damage = 18;
     // The ride photographer's shot, for the other riders (spec §2.11).
     PhotoShot photo = 19;
+    // The riders this rider blocked for voice (spec §7.1.7 Q9).
+    VoiceBlocks voice_blocks = 20;
   }
 }
 
@@ -241,6 +243,28 @@ message VoiceTokenRequest {
   // and '-'; others are refused). Anyone in the session who knows the name
   // can join until accounts and invitations exist (Phase 5).
   string group = 2;
+}
+
+// Block in voice chat (spec §7.1.7 Q9, §7.1.10): the riders this rider
+// blocked, sent at the join and on every change (the whole list each
+// time; reliable). A block works both ways: the server tells both riders
+// that they exchange no voice (VoiceApart) and never says who blocked
+// whom. Entries match a rider by the signed-in account (account_ids,
+// RiderUpdate.account_id) or by the display name on this server (names).
+// At most 256 entries of each; longer lists are cut.
+message VoiceBlocks {
+  repeated string account_ids = 1;
+  repeated string names = 2;
+}
+
+// The riders this rider exchanges no voice with (spec §7.1.7 Q9): a block
+// in either direction, the direction not said. Sent to this rider only,
+// at the join if not empty and on every change (the whole set). The
+// client neither subscribes to their microphones nor lets them subscribe
+// to its own (LiveKit's track subscription permissions, enforced by the
+// voice server). Reliable.
+message VoiceApart {
+  repeated uint32 riders = 1;
 }
 
 enum VoiceChannel {
@@ -610,6 +634,8 @@ message ServerMessage {
     RiderBuild rider_build = 10;
     // A rider's photographer shot, relayed (spec §2.11).
     PhotoShot photo = 11;
+    // Voice block (spec §7.1.7 Q9): to this rider only.
+    VoiceApart voice_apart = 12;
   }
 }
 
@@ -1113,6 +1139,11 @@ message RiderUpdate {
   // The rider's status signs (spec §2.6), from the rider's own samples;
   // absent: none (bots, old clients).
   RiderStatus status = 21;
+  // The rider's signed-in account (spec §9.1; Account.account_id), the
+  // stable key of a voice block or a rider's volume (§7.1.7 Q9): in every
+  // snapshot of a whole second (1 Hz) only; empty: anonymous (or not in
+  // this snapshot).
+  string account_id = 22;
 }
 
 enum CrashPhase {

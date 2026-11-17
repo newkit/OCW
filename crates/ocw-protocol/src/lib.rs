@@ -288,6 +288,8 @@ pub fn quantize(s: &ocw_sim::RiderSnapshot) -> v1::RiderUpdate {
         }),
         // The server adds the rider's status signs (spec §2.6).
         status: None,
+        // The server adds the account once a second (spec §7.1.7 Q9).
+        account_id: String::new(),
     }
 }
 

@@ -320,7 +320,9 @@ impl VoiceBackend for LoopbackBackend {
             BackendCommand::Disconnect => {}
             BackendCommand::SetMicMuted(m) => self.mic_muted = m,
             BackendCommand::SetSpeakerMuted(m) => self.mixer.muted = m,
-            BackendCommand::SetInputDevice(_) | BackendCommand::SetOutputDevice(_) => {}
+            BackendCommand::SetInputDevice(_)
+            | BackendCommand::SetOutputDevice(_)
+            | BackendCommand::SetSubscribers(_) => {}
             BackendCommand::Subscribe { identity, on } => {
                 if !on {
                     self.mixer.remove(&identity);

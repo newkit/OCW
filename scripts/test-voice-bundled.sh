@@ -10,9 +10,13 @@
 # 2. Two headless riders (crates/ocw-voice/tests/bundled_voice_server.rs)
 #    join the game, get voice grants from it and join the room; both see
 #    and hear each other.
-# 3. Killing ocw-server with SIGKILL (no clean-up runs) ends livekit-server
+# 3. Voice block (spec §7.1.7 Q9): three riders, Ada blocks Bea over the
+#    game connection; the game server tells Ada and Bea (only them) that
+#    they are apart; neither hears the other in the voice room – not even
+#    when Bea asks for Ada's voice itself – while Cleo hears both.
+# 4. Killing ocw-server with SIGKILL (no clean-up runs) ends livekit-server
 #    too (Linux: the parent-death signal).
-# 4. --voice off and --livekit-url start no voice server.
+# 5. --voice off and --livekit-url start no voice server.
 # Skipped (exit 0) without a livekit-server binary. Voice builds need clang
 # >= 21 on Linux (CC=clang-21 CXX=clang++-21, set here when installed).
 # Results: test-output/voice-bundled/summary.txt.
@@ -76,9 +80,12 @@ secret=$(tr '\0' '\n' <"/proc/$lk/environ" 2>/dev/null | sed -n 's/^LIVEKIT_KEYS
 fp=$(sed -n 's/.*--server-cert \([0-9a-fA-F:]*\).*/\1/p' "$work/out" | head -n 1)
 
 # 2. Two riders get grants and join the room.
+# Only that test (the block test runs below): with both in one run, cargo
+# -q printed a progress dot before the "grants:" line and the room name
+# was not found (2026-11-17).
 OCW_VOICE_TEST_SERVER=127.0.0.1:$game OCW_VOICE_TEST_CERT=$fp OCW_VOICE_TEST_URL=ws://127.0.0.1:$sig \
   OCW_VOICE_TEST_HOLD_S=6 \
-  cargo test -q -p ocw-voice --features livekit --test bundled_voice_server -- --nocapture >"$work/test" 2>&1 &
+  cargo test -q -p ocw-voice --features livekit --test bundled_voice_server riders_get_grants -- --nocapture >"$work/test" 2>&1 &
 tp=$!; pids+=("$tp")
 for _ in $(seq 1 600); do grep -q "both riders connected" "$work/test" && break; kill -0 "$tp" 2>/dev/null || break; sleep 0.1; done
 grep -q "both riders connected" "$work/test"; check "two riders get grants naming the voice URL and connect to the room" $? "$(tail -5 "$work/test")"
@@ -106,7 +113,17 @@ grep -q "Ada and Bea see each other" "$work/test"; check "both riders see each o
 grep -q "Ada and Bea hear each other" "$work/test" && [ $r = 0 ]; check "both riders hear the other's tone" $? "$(tail -5 "$work/test")"
 grep -c "voice token issued" "$work/out" | grep -qx 2; check "the game server issued two voice tokens" $?
 
-# 3. No orphan: SIGKILL the game server, livekit-server goes too.
+# 3. Voice block: three riders, Ada blocks Bea.
+OCW_VOICE_TEST_SERVER=127.0.0.1:$game OCW_VOICE_TEST_CERT=$fp OCW_VOICE_TEST_URL=ws://127.0.0.1:$sig \
+  OCW_VOICE_TEST_BLOCKS=1 \
+  cargo test -q -p ocw-voice --features livekit --test bundled_voice_server a_block_is_enforced -- --nocapture >"$work/blocks" 2>&1
+r=$?
+cp "$work/blocks" "$out/blocks.log"
+grep -q "the game server keeps Ada and Bea apart, Cleo is told nothing" "$work/blocks"; check "a block: the game server tells only the two riders (VoiceApart over QUIC)" $? "$(tail -5 "$work/blocks")"
+grep -q "Cleo Sprinter hears Ada Rider, Bea Climber does not" "$work/blocks" && grep -q "Cleo Sprinter hears Bea Climber, Ada Rider does not" "$work/blocks"; check "a block: neither rider hears the other, the third hears both" $? "$(tail -5 "$work/blocks")"
+grep -q "the block holds both ways" "$work/blocks" && [ $r = 0 ]; check "a block: the voice server refuses the blocked rider's own request" $? "$(tail -5 "$work/blocks")"
+
+# 4. No orphan: SIGKILL the game server, livekit-server goes too.
 kill -9 "$gs"; wait "$gs" 2>/dev/null
 gone=1
 for _ in $(seq 1 50); do
@@ -116,7 +133,7 @@ for _ in $(seq 1 50); do
 done
 check "livekit-server ends when ocw-server is killed (SIGKILL)" $gone
 
-# 4. --voice off, --livekit-url: no voice server of its own.
+# 5. --voice off, --livekit-url: no voice server of its own.
 for mode in off external; do
   read -r game2 _ _ _ < <(free_ports)
   if [ $mode = off ]; then extra=(--voice off); else extra=(--livekit-url ws://127.0.0.1:9 --livekit-api-key devkey); fi

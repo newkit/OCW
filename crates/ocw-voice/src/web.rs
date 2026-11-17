@@ -23,7 +23,10 @@
 //!   `{"op":"input","device":name|null}`, `{"op":"output","device":name|null}`,
 //!   `{"op":"subscribe","identity":…,"on":bool}`,
 //!   `{"op":"place","identity":…,"gain":f,"pan":f}`,
-//!   `{"op":"echo","active":bool,"delay_ms":n,"record_gain":f}`;
+//!   `{"op":"echo","active":bool,"delay_ms":n,"record_gain":f}`,
+//!   `{"op":"subscribers","allowed":[identities]|null}` (who may subscribe
+//!   to the own microphone: LiveKit's track subscription permissions; null
+//!   = everybody; spec §7.1.7 Q9);
 //! - events (an array): `{"type":"connected","room":…}`, `reconnecting`,
 //!   `reconnected`, `{"type":"disconnected","reason":…}`,
 //!   `{"type":"connect_failed","error":…}`,
@@ -79,6 +82,9 @@ pub fn encode(cmd: &BackendCommand) -> Option<String> {
             "delay_ms": p.delay_ms,
             "record_gain": p.record_gain,
         }),
+        BackendCommand::SetSubscribers(allowed) => {
+            json!({"op": "subscribers", "allowed": allowed})
+        }
         BackendCommand::PlayCue(_) => return None,
     };
     Some(v.to_string())
@@ -399,6 +405,17 @@ mod tests {
             r#"{"device":null,"op":"input"}"#
         );
         assert_eq!(encode(&BackendCommand::PlayCue(Cue::On)), None);
+        assert_eq!(
+            encode(&BackendCommand::SetSubscribers(Some(vec![
+                "rider-3".into()
+            ])))
+            .unwrap(),
+            r#"{"allowed":["rider-3"],"op":"subscribers"}"#
+        );
+        assert_eq!(
+            encode(&BackendCommand::SetSubscribers(None)).unwrap(),
+            r#"{"allowed":null,"op":"subscribers"}"#
+        );
         let e = encode(&BackendCommand::SetEcho(EchoParams {
             active: true,
             delay_ms: 300,

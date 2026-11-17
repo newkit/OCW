@@ -7087,6 +7087,7 @@ dependencies = [
  "ocw-core",
  "ocw-protocol",
  "ocw-server",
+ "ocw-world",
  "serde_json",
  "tokio",
  "tracing",

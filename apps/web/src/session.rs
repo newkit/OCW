@@ -172,8 +172,10 @@ impl WebSession {
         transport: Option<Box<dyn Transport>>,
     ) -> Self {
         let mut client = client;
-        if config.remote.is_some() {
+        if let Some(remote) = &config.remote {
             client.set_access_token(config.access_token.clone());
+            // Voice choices by name are remembered per server (§7.1.7 Q9).
+            client.set_server_scope(&remote.url);
         }
         let session = match (&config.remote, transport) {
             (Some(remote), Some(t)) => Self::remote(

@@ -722,8 +722,11 @@ fn main() {
             rotate_web_cert(&args, n);
         }
         let broadcast = server.tick();
+        let directed = server.take_directed();
         if let Some(net) = &mut net {
             net.broadcast(&server, &broadcast);
+            // A voice block's VoiceApart (spec §7.1.7 Q9): to one rider each.
+            net.send_directed(directed, None);
         }
         let took = started.elapsed();
         stats.record(took, late, server.session().rider_count());
