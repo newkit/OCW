@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 4.42 – November 2026
+Version 4.43 – November 2026
 
 | Version | Change |
 |---|---|
+| 4.43 | **Riding needs no purchase: the starter city bike, sneakers, jeans and hoodie are ridden until bought items replace them one by one** (decision from the build dashboard, 2026-11-17; §14 Phase 4 Q17, follows Q16) |
 | 4.42 | **A new account starts in sneakers, jeans and a hoodie on an old, rusty city bike; everything else is bought** (decision from the build dashboard, 2026-11-17; §14 Phase 4 Q16, W5) – needs new models (city bike, street clothes); the city bike's physics and whether the starter items can be sold are proposals |
 | 4.41 | **Character editor: every body shape can be chosen, whatever weight and height; their shape is only a proposal** (decision from the build dashboard, 2026-11-17; §14 Phase 4 4N Q23, replaces the band of Q13): the shape from weight and height is preselected and marked (*Match my weight*), never a limit |
 | 4.40 | **Browsers join a ride hosted in the desktop app with V5: *Host a ride* opens WebTransport on PORT+1 together with the browser signalling bridge** (decision from the build dashboard, 2026-11-17; §7.1.7 Q14) – not before V5 |
@@ -3580,7 +3581,7 @@ The first catalogue (about 30 entries; base parts at 0 ♥ for every slot and bi
 
 **Open questions (to the user; proposals in brackets):**
 - **Q16 – Before the first purchase: decided (2026-11-17, dashboard): street clothes and an old, rusty city bike** – the user: "A new account user wears sneakers, jeans and hoodie. His bike is an old and rusty city bike. Everything else needs to be purchased." A new account starts in sneakers, jeans and a hoodie on an old, rusty city bike; bike, shoes, helmet, jerseys and every other part or piece of kit are bought with the 5000-heart start budget or earned hearts. *Details not decided (proposals):* the city bike gets its own physics profile (heavy, upright position, slower); the starter outfit and bike are owned from the start, free, and cannot be sold.
-- **Q17 – What is needed to ride your own bike:** (proposal: a frameset with its base parts, a helmet and shoes; jersey and shorts are bought too, but a plain default jersey and shorts are worn until then.)
+- **Q17 – What is needed to ride your own bike: decided (2026-11-17, dashboard): nothing – the starter equipment of Q16 is ridden until something is bought** – the user: "you are equipped with a rusty city bike, sneakers and hoody." A new rider rides the rusty city bike in sneakers, jeans and a hoodie; each item bought (a bike, shoes, helmet, jersey, shorts, …) replaces its starter counterpart when equipped. There is no plain default jersey or shorts and no minimum set to buy before riding.
 - **Q18 – Base parts:** does a bought frameset still come with free base parts (wheels, groupset, tyres of the entry tier, 4F), or is every part bought? (Proposal: base parts included, so 5,000 ♥ buys a complete bike.)
 - **Q19 – Which game servers credit hearts:** (proposal: only servers whose key is signed by our root credit directly; rides on other servers – your own, a friend's, Ride → Host a ride – count through the uploaded ride summary and its checks.)
 - **Q20 – Offline riding:** (proposal: a signed-in rider can ride offline with the last synced bikes and kit, read-only; the ride summary is queued and uploaded later, then credited after the checks.)
