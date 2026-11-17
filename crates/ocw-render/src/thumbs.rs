@@ -329,11 +329,23 @@ fn around(at: Vec3, half: Vec3) -> (Vec3, Vec3) {
 }
 
 /// Where the part of `slot` is on `bike` (bike coordinates: min, max):
-/// its own geometry where it has its own node (the front wheel, the
-/// chainrings and arms, the bar, the saddle, the drive-side pedal), else
-/// a box around the slot's anchor; the groupset and the chain are the
-/// whole drivetrain from the chainrings to the rear derailleur.
+/// the union of its pieces ([`part_boxes`]).
 pub fn part_box(bike: &BuiltBike, slot: &str) -> (Vec3, Vec3) {
+    let boxes = part_boxes(bike, slot);
+    boxes[1..].iter().fold(boxes[0], |a, b| union(a, *b))
+}
+
+/// The pieces of the part of `slot` on `bike` (bike coordinates: min,
+/// max each; never empty): its own geometry where it has its own node (the
+/// front wheel, the chainrings and arms, the bar, the saddle, the
+/// drive-side pedal), else a box around the slot's anchor; the groupset
+/// and the chain are the drivetrain's pieces – the chainrings, the front
+/// derailleur over them, the cassette and the rear derailleur –, the
+/// cassette its cogs and the rear derailleur. The thumbnail fits the
+/// pieces' corners ([`framing`]), not one box round them all: a box round
+/// pieces far apart in depth has corners far off the parts, and the parts
+/// came out small beside empty room.
+pub fn part_boxes(bike: &BuiltBike, slot: &str) -> Vec<(Vec3, Vec3)> {
     let m = &bike.model;
     let anchor = |s: &str| {
         bike.anchors
@@ -353,9 +365,19 @@ pub fn part_box(bike: &BuiltBike, slot: &str) -> (Vec3, Vec3) {
     // below it.
     let cassette = around(rear + Vec3::X * 0.04, Vec3::new(0.03, 0.07, 0.07));
     let derailleur = around(anchor("groupset"), Vec3::splat(0.04));
+    // The front derailleur: on the seat tube just over the big ring.
+    let front_derailleur = rings.map(|(lo, hi)| {
+        let bb = m.position(bike_nodes::CRANK).unwrap_or((lo + hi) * 0.5);
+        let up = m
+            .position(bike_nodes::SADDLE)
+            .map_or(Vec3::Y, |s| (s - bb).normalize_or(Vec3::Y));
+        around(bb + up * (0.5 * (hi.y - lo.y) + 0.02), Vec3::splat(0.025))
+    });
     let drivetrain = || {
-        let back = union(cassette, derailleur);
-        rings.map_or(back, |r| union(r, back))
+        let mut v = vec![cassette, derailleur];
+        v.extend(rings);
+        v.extend(front_derailleur);
+        v
     };
     let saddle_y = m.position(bike_nodes::SADDLE).map_or(0.0, |p| p.y);
     // The bar, its drops and the stem's clamp (not the cables running
@@ -365,13 +387,16 @@ pub fn part_box(bike: &BuiltBike, slot: &str) -> (Vec3, Vec3) {
         .unwrap_or_else(|| anchor("cockpit"));
     let near_bar = |v: Vec3| v.distance(clamp) < 0.32;
     let b = match slot {
+        "groupset" | "chain" => return drivetrain(),
+        "cassette" => return vec![cassette, derailleur],
+        "cockpit" => {
+            let stem = around(anchor(slot), Vec3::splat(0.03));
+            return node_box(bike, bike_nodes::HANDLEBAR, false, near_bar)
+                .map_or(vec![stem], |b| vec![b, stem]);
+        }
         "wheels" => node_box(bike, bike_nodes::WHEEL_FRONT, true, |_| true),
         "tyres" => Some(around(anchor(slot), Vec3::new(0.04, 0.14, 0.14))),
-        "groupset" | "chain" => Some(drivetrain()),
         "crankset" => rings,
-        "cassette" => Some(union(cassette, derailleur)),
-        "cockpit" => node_box(bike, bike_nodes::HANDLEBAR, false, near_bar)
-            .map(|b| union(b, around(anchor(slot), Vec3::splat(0.03)))),
         "bar_tape" => node_box(bike, bike_nodes::HANDLEBAR, false, |v| {
             v.x > 0.0 && near_bar(v)
         }),
@@ -383,7 +408,7 @@ pub fn part_box(bike: &BuiltBike, slot: &str) -> (Vec3, Vec3) {
         _ if whole_bike(slot) => Some(bike.bounds),
         _ => None,
     };
-    b.unwrap_or(at_anchor)
+    vec![b.unwrap_or(at_anchor)]
 }
 
 /// Where the thumbnail of `slot` looks from (unit vector from the part
@@ -414,9 +439,10 @@ fn view_dir(slot: &str, front: Vec3) -> Vec3 {
 }
 
 /// The thumbnail camera for `slot` on `bike` (bike coordinates): (eye,
-/// target). From the drive side ([`view_dir`]), on the middle of the
-/// part's box ([`part_box`], at least [`slot_radius`] around it), as close
-/// as the whole box fits the view with a margin.
+/// target). From the drive side ([`view_dir`]), as close as the corners of
+/// the part's pieces ([`part_boxes`]) fit the 2 : 1 picture with a margin,
+/// and aimed so that what they cover sits in the picture's middle
+/// ([`fit_view`]); never closer than [`slot_radius`] fills the view.
 pub fn framing(bike: &BuiltBike, slot: &str) -> (Vec3, Vec3) {
     let m = &bike.model;
     let front = match (
@@ -426,62 +452,153 @@ pub fn framing(bike: &BuiltBike, slot: &str) -> (Vec3, Vec3) {
         (Some(f), Some(r)) if (f - r).length() > 0.1 => (f - r).normalize(),
         _ => Vec3::NEG_Z,
     };
-    let (lo, hi) = part_box(bike, slot);
-    let dir = view_dir(slot, front);
-    let centre = (lo + hi) * 0.5;
-    (
-        centre + dir * fit_distance(lo, hi, dir, slot_radius(slot)),
-        centre,
+    let points: Vec<Vec3> = part_boxes(bike, slot)
+        .into_iter()
+        .flat_map(box_corners)
+        .collect();
+    let min_d = slot_radius(slot) / (FOV_Y * 0.5).tan();
+    fit_view(
+        &points,
+        view_dir(slot, front),
+        min_d,
+        THUMB_SIZE.x as f32 / THUMB_SIZE.y as f32,
     )
 }
 
-/// The part fills this share of the view at most (a margin all round).
-const FILL: f32 = 0.88;
-
-/// The distance from the box's centre along `dir` at which the box
-/// (`lo`, `hi`) fits a thumbnail's view (and a sphere of `min_r` round its
-/// centre does).
-fn fit_distance(lo: Vec3, hi: Vec3, dir: Vec3, min_r: f32) -> f32 {
-    let half_y = (FOV_Y * 0.5).tan() * FILL;
-    let half_x = half_y * THUMB_SIZE.x as f32 / THUMB_SIZE.y as f32;
-    let fwd = -dir;
-    let right = fwd.cross(Vec3::Y).normalize();
-    let up = right.cross(fwd);
-    let centre = (lo + hi) * 0.5;
-    let mut d = min_r / (FOV_Y * 0.5).tan();
-    for k in 0..8 {
-        let c = Vec3::new(
+/// The eight corners of a box (min, max).
+pub fn box_corners((lo, hi): (Vec3, Vec3)) -> [Vec3; 8] {
+    std::array::from_fn(|k| {
+        Vec3::new(
             if k & 1 == 0 { lo.x } else { hi.x },
             if k & 2 == 0 { lo.y } else { hi.y },
             if k & 4 == 0 { lo.z } else { hi.z },
-        );
-        let v = c - centre;
-        let depth = v.dot(fwd);
-        d = d
-            .max(v.dot(up).abs() / half_y - depth)
-            .max(v.dot(right).abs() / half_x - depth);
-    }
-    d.max(0.1)
+        )
+    })
+}
+
+/// The points fill this share of the view at most (a margin all round).
+const FILL: f32 = 0.88;
+
+/// The camera looking along −`dir` (unit vector from the subject to the
+/// camera) that sees all `points` in a picture `aspect` wide over high
+/// with the [`FILL`] margin: (eye, target). As close as they fit (at least
+/// `min_d` from them), then shifted across the view so that their
+/// projection's box is centred in the picture both ways – no empty side.
+pub fn fit_view(points: &[Vec3], dir: Vec3, min_d: f32, aspect: f32) -> (Vec3, Vec3) {
+    let fwd = -dir;
+    let right = fwd.cross(Vec3::Y).normalize();
+    let up = right.cross(fwd);
+    let c = points.iter().copied().sum::<Vec3>() / points.len().max(1) as f32;
+    // Each point across (right, up) and in depth from c.
+    let pts: Vec<(Vec2, f32)> = points
+        .iter()
+        .map(|p| {
+            let q = *p - c;
+            (Vec2::new(q.dot(right), q.dot(up)), q.dot(fwd))
+        })
+        .collect();
+    let ky = (FOV_Y * 0.5).tan() * FILL;
+    let k = Vec2::new(ky * aspect, ky);
+    let range = |axis: usize| {
+        pts.iter().fold((f32::MAX, f32::MIN), |(lo, hi), (h, _)| {
+            (lo.min(h[axis]), hi.max(h[axis]))
+        })
+    };
+    // The least distance at which every point fits along `axis` with the
+    // view's axis at offset `a` (convex in `a`).
+    let need = |axis: usize, a: f32| {
+        pts.iter()
+            .map(|(h, z)| (h[axis] - a).abs() / k[axis] - z)
+            .fold(f32::MIN, f32::max)
+    };
+    let least = |axis: usize| {
+        let (mut lo, mut hi) = range(axis);
+        for _ in 0..80 {
+            let (m1, m2) = (lo + (hi - lo) / 3.0, hi - (hi - lo) / 3.0);
+            if need(axis, m1) <= need(axis, m2) {
+                hi = m2;
+            } else {
+                lo = m1;
+            }
+        }
+        need(axis, 0.5 * (lo + hi))
+    };
+    let nearest = pts.iter().map(|(_, z)| -z).fold(f32::MIN, f32::max) + 0.05;
+    let d = least(0).max(least(1)).max(min_d).max(nearest).max(0.1);
+    // At distance d: the offset that centres the projection along `axis`
+    // (its leftmost and rightmost points equally far from the middle).
+    let centre = |axis: usize| {
+        let (mut lo, mut hi) = range(axis);
+        let off = |a: f32| {
+            let (mn, mx) = pts.iter().fold((f32::MAX, f32::MIN), |(mn, mx), (h, z)| {
+                let x = (h[axis] - a) / (z + d);
+                (mn.min(x), mx.max(x))
+            });
+            mn + mx
+        };
+        for _ in 0..80 {
+            let mid = 0.5 * (lo + hi);
+            if off(mid) > 0.0 {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        0.5 * (lo + hi)
+    };
+    let target = c + right * centre(0) + up * centre(1);
+    (target + dir * d, target)
+}
+
+/// Half the height a head shot shows of a rider of the default height
+/// (m): the head – chin to crown with the hair about 0.2 m (measured in
+/// the rendered tiles, 2026-11-17) – fills about 70 % of the square
+/// picture, with room for a helmet or a bun.
+pub const HEAD_SHOT_HALF: f32 = 0.145;
+
+/// Half the head's height, chin to crown, of a rider of the default
+/// height (m).
+pub const HEAD_HALF: f32 = 0.1;
+
+/// The middle of the head of a rider `scale` times the default height
+/// standing at ease with `hunch` (the age's, `Age::idle_hunch`), the feet
+/// at the origin (as the thumbnails stand it): from the rider rig's pose,
+/// halfway between the chin and the crown, so a short, tall or hunched
+/// rider's head is framed where it is.
+pub fn head_centre(scale: f32, hunch: f32) -> Vec3 {
+    let rig = ocw_assets::shipped::rider_rig();
+    let p = ocw_assets::pose::idle_aged(&rig, 0.0, hunch);
+    let torso = p.pelvis.1 * p.torso;
+    let neck = p.pelvis.0 + p.pelvis.1 * rig.torso + torso * rig.neck;
+    // The head's middle, halfway between chin and crown, in the head's
+    // frame over the rig's neck pivot – calibrated against the rendered
+    // tiles (2026-11-17: the eyes show about 0.165 m over this pivot, the
+    // head's middle at their height; 0.10 m put the head high in the
+    // picture, a fixed 1.66 m a little low).
+    let mid = neck + torso * p.head * Vec3::new(0.0, 0.158, -0.02);
+    // The model's root is at the hips, the feet `leg - cleat.y` below.
+    (mid + Vec3::Y * (rig.leg() - rig.cleat.y)) * scale
 }
 
 /// The character thumbnail camera for `shot` of a rider `scale` times
-/// the default height standing with the feet at the origin, facing −Z:
-/// (eye, target). The face from 0.75 m, the head filling the picture; the
-/// body from the helmet to the thighs, from the front, a little to the
-/// side.
-pub fn rider_framing(scale: f32, shot: RiderShot) -> (Vec3, Vec3) {
+/// the default height standing at ease with `hunch` (see [`head_centre`]),
+/// the feet at the origin, facing −Z: (eye, target). The head shots on
+/// the head's middle, the head filling most of the picture
+/// ([`HEAD_SHOT_HALF`]); the body from the helmet to the thighs, from the
+/// front, a little to the side.
+pub fn rider_framing(scale: f32, hunch: f32, shot: RiderShot) -> (Vec3, Vec3) {
     let half = (FOV_Y * 0.5).tan();
     // From the rider's front (−Z), turned towards its right (+X) by `a`.
     let from = |a: f32, up: f32| Vec3::new(a.sin(), up, -a.cos()).normalize();
+    let head = head_centre(scale, hunch);
     let (at, radius, dir) = match shot {
-        RiderShot::Face => (Vec3::new(0.0, 1.66, -0.03), 0.2, from(0.6, 0.08)),
-        RiderShot::FaceFront => (Vec3::new(0.0, 1.66, -0.03), 0.19, from(0.12, 0.05)),
+        RiderShot::Face => (head, HEAD_SHOT_HALF, from(0.6, 0.08)),
+        RiderShot::FaceFront => (head, HEAD_SHOT_HALF, from(0.12, 0.05)),
         // Head to thighs: where the shapes and bodies differ.
-        RiderShot::Body => (Vec3::new(0.0, 1.22, 0.0), 0.6, from(0.35, 0.12)),
-        RiderShot::Hands => (Vec3::new(0.12, 0.86, -0.04), 0.3, from(0.45, 0.25)),
-        RiderShot::Feet => (Vec3::new(0.05, 0.12, -0.04), 0.3, from(0.45, 0.45)),
+        RiderShot::Body => (Vec3::new(0.0, 1.22, 0.0) * scale, 0.6, from(0.35, 0.12)),
+        RiderShot::Hands => (Vec3::new(0.12, 0.86, -0.04) * scale, 0.3, from(0.45, 0.25)),
+        RiderShot::Feet => (Vec3::new(0.05, 0.12, -0.04) * scale, 0.3, from(0.45, 0.45)),
     };
-    let at = at * scale;
     (at + dir * (radius * scale / half), at)
 }
 
@@ -731,7 +848,7 @@ fn render_thumbs(
                 commands
                     .entity(root)
                     .insert(Transform::from_translation(at + Vec3::Y * sole * scale));
-                let (eye, target) = rider_framing(scale, r.shot);
+                let (eye, target) = rider_framing(scale, c.age.idle_hunch(), r.shot);
                 (eye, target, root)
             }
         };
@@ -918,14 +1035,19 @@ mod tests {
                 RiderShot::Hands,
                 RiderShot::Feet,
             ] {
-                let (eye, target) = rider_framing(scale, shot);
+                let (eye, target) = rider_framing(scale, 0.0, shot);
                 let d = eye - target;
                 assert!(d.z < 0.0, "{shot:?}: from the rider's front");
                 let seen = half * d.length();
                 match shot {
                     RiderShot::Face | RiderShot::FaceFront => {
-                        assert!((target.y - 1.66 * scale).abs() < 0.05);
-                        assert!(seen < 0.25 * scale && seen > 0.17 * scale, "{shot:?}");
+                        assert!(target.distance(head_centre(scale, 0.0)) < 1e-4);
+                        assert!(
+                            (target.y / scale - 1.62).abs() < 0.1,
+                            "{}",
+                            target.y / scale
+                        );
+                        assert!((seen - HEAD_SHOT_HALF * scale).abs() < 1e-3, "{shot:?}");
                         assert!(d.length() < 1.0, "close: {}", d.length());
                     }
                     RiderShot::Body => {
@@ -937,11 +1059,50 @@ mod tests {
             }
         }
         let side = |shot| {
-            let (eye, target) = rider_framing(1.0, shot);
+            let (eye, target) = rider_framing(1.0, 0.0, shot);
             let d = (eye - target).normalize();
             d.x
         };
         assert!(side(RiderShot::Face) > 0.4 && side(RiderShot::FaceFront) < 0.2);
+    }
+
+    /// Regression (2026-11-17, the hair tiles showed a small head low in
+    /// the picture): a head shot (hair, facial hair, face, glasses,
+    /// helmets, caps) is aimed at the head's middle from the rider rig's
+    /// pose – for short, tall and hunched riders –, and the head (chin to
+    /// crown, about 0.2 m at the default height: [`HEAD_HALF`]) fills at
+    /// least half of the square picture, in its middle.
+    #[test]
+    fn a_head_shot_fills_the_picture_with_the_head() {
+        for scale in [0.84, 1.0, 1.15] {
+            for hunch in [0.0, 0.5, 1.0] {
+                let head = head_centre(scale, hunch);
+                let rig = ocw_assets::shipped::rider_rig();
+                let p = ocw_assets::pose::idle_aged(&rig, 0.0, hunch);
+                let torso = p.pelvis.1 * p.torso;
+                let neck = (p.pelvis.0
+                    + p.pelvis.1 * rig.torso
+                    + torso * rig.neck
+                    + Vec3::Y * (rig.leg() - rig.cleat.y))
+                    * scale;
+                assert!(
+                    head.y > neck.y + 0.1 * scale && head.y < neck.y + 0.2 * scale,
+                    "{scale} {hunch}: head {head} over the neck {neck}"
+                );
+                for shot in [RiderShot::Face, RiderShot::FaceFront] {
+                    let (eye, target) = rider_framing(scale, hunch, shot);
+                    let (x, y, _) = project_in(eye, target, head, 1.0);
+                    assert!(x.abs() < 0.05 && y.abs() < 0.05, "{shot:?}: in the middle");
+                    let crown = project_in(eye, target, head + Vec3::Y * HEAD_HALF * scale, 1.0).1;
+                    let chin = project_in(eye, target, head - Vec3::Y * HEAD_HALF * scale, 1.0).1;
+                    let fill = (crown - chin) / 2.0;
+                    assert!(
+                        fill >= 0.5 && crown < 1.0 && chin > -1.0,
+                        "{shot:?}: head fills {fill:.2}"
+                    );
+                }
+            }
+        }
     }
 
     /// Render once, reuse: a second request of the same part and paint
@@ -1044,25 +1205,28 @@ mod tests {
         (v.dot(right) / (z * t * aspect), v.dot(up) / (z * t), z)
     }
 
-    fn corners((lo, hi): (Vec3, Vec3)) -> [Vec3; 8] {
-        std::array::from_fn(|k| {
-            Vec3::new(
-                if k & 1 == 0 { lo.x } else { hi.x },
-                if k & 2 == 0 { lo.y } else { hi.y },
-                if k & 4 == 0 { lo.z } else { hi.z },
-            )
-        })
+    fn corners(b: (Vec3, Vec3)) -> [Vec3; 8] {
+        box_corners(b)
     }
 
-    /// The part's box in the view of its thumbnail: every corner inside
-    /// the picture, in front of the camera, the box filling a good share of
-    /// it (the part is the subject, not a speck on the bike).
+    /// The corners of all of the part's pieces ([`part_boxes`]).
+    fn piece_corners(bike: &BuiltBike, slot: &str) -> Vec<Vec3> {
+        part_boxes(bike, slot)
+            .into_iter()
+            .flat_map(box_corners)
+            .collect()
+    }
+
+    /// The part's pieces in the view of its thumbnail: every corner inside
+    /// the picture, in front of the camera, filling a good share of it (the
+    /// part is the subject, not a speck on the bike), and centred: the
+    /// middle of what they cover within 10 % of the picture's middle both
+    /// ways (no empty side; regression 2026-11-17).
     fn assert_framed(bike: &BuiltBike, slot: &str, what: &str) {
         let (eye, target) = framing(bike, slot);
         assert!(eye.x - target.x > 0.0, "{what}: from the drive side");
-        let b = part_box(bike, slot);
         let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
-        for c in corners(b) {
+        for c in piece_corners(bike, slot) {
             let (x, y, z) = project(eye, target, c);
             assert!(z > 0.05, "{what}: corner {c} behind the camera");
             assert!(
@@ -1076,6 +1240,14 @@ mod tests {
         assert!(
             fill > 0.4,
             "{what}: the part fills only {fill:.2} of the picture"
+        );
+        // NDC −1 … 1: 10 % of the picture is 0.2.
+        let mid = (lo + hi) / 2.0;
+        assert!(
+            mid.x.abs() <= 0.2 && mid.y.abs() <= 0.2,
+            "{what}: the part's middle at ({:.2}, {:.2}) of the picture",
+            mid.x / 2.0,
+            mid.y / 2.0
         );
     }
 
@@ -1144,8 +1316,9 @@ mod tests {
     /// rear wheel): the groupset is framed on the drivetrain – the
     /// chainrings and the rear derailleur both in the picture, the view's
     /// middle between the bottom bracket and the rear hub, the chainrings
-    /// over 30 % of its height. Before, the camera looked
-    /// at the derailleur from 0.16 m around: the picture was the rear hub,
+    /// at least 45 % of its height (30 % before the pieces were fitted,
+    /// 2026-11-17). Before, the camera looked at the derailleur from
+    /// 0.16 m around: the picture was the rear hub,
     /// spokes and rim.
     #[test]
     fn the_groupset_shows_the_drivetrain_not_the_rear_wheel() {
@@ -1190,7 +1363,7 @@ mod tests {
                     (lo, hi) = (lo.min(y), hi.max(y));
                 }
                 assert!(
-                    hi - lo > 0.6,
+                    hi - lo >= 0.9,
                     "{what}: the chainrings {:.2} of the picture high",
                     (hi - lo) / 2.0
                 );
@@ -1265,7 +1438,7 @@ mod tests {
                     models.get(profile, std::slice::from_ref(&model))
                 };
                 let (eye, target) = framing(&bike, &slot);
-                for c in corners(part_box(&bike, &slot)) {
+                for c in piece_corners(&bike, &slot) {
                     let (x, y, z) = project_in(eye, target, c, drawn);
                     assert!(
                         z > 0.05 && x.abs() <= 1.0 && y.abs() <= 1.0,
@@ -1295,7 +1468,7 @@ mod tests {
                 ..Default::default()
             };
             assert!((crate::workshop::tile_picture_aspect(&row) - rendered).abs() < 1e-4);
-            let (eye, target) = rider_framing(1.0, shot);
+            let (eye, target) = rider_framing(1.0, 0.0, shot);
             let (x, y, _) = project_in(eye, target, target, w / h);
             assert!(
                 x.abs() < 1e-3 && y.abs() < 1e-3,
