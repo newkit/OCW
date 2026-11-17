@@ -1197,4 +1197,110 @@ mod tests {
             }
         }
     }
+
+    /// Where `p` lands in a picture `aspect` wide over high seen by the
+    /// camera (eye, target): (x, y) in −1 … 1 inside it, and its depth.
+    fn project_in(eye: Vec3, target: Vec3, p: Vec3, aspect: f32) -> (f32, f32, f32) {
+        let fwd = (target - eye).normalize();
+        let right = fwd.cross(Vec3::Y).normalize();
+        let up = right.cross(fwd);
+        let v = p - eye;
+        let z = v.dot(fwd);
+        let t = (FOV_Y * 0.5).tan();
+        (v.dot(right) / (z * t * aspect), v.dot(up) / (z * t), z)
+    }
+
+    /// Regression (2026-11-17, "the stand's tiles show only the upper part
+    /// of the thumbnail"): the picture a tile draws has the aspect of the
+    /// image its thumbnail is rendered into – the bike stand's tiles
+    /// (`workshop::tile_picture_aspect`, every slot of every profile, and
+    /// every variant) and the character editor's grid tiles
+    /// (`menu::thumb_picture_vh`, every rider shot) –, so the whole
+    /// rendering shows, neither cropped nor stretched; and the part's box
+    /// lies inside the drawn picture (projected at the drawn rect's aspect),
+    /// the rider's shot centred in it.
+    #[test]
+    fn tiles_draw_the_whole_thumbnail() {
+        let mut images = Assets::<Image>::default();
+        let mut thumbs = Thumbnails::default();
+        let image_aspect = |k: &ThumbKey, thumbs: &mut Thumbnails, images: &mut Assets<Image>| {
+            let h = thumbs.image(k, images);
+            let s = images.get(&h).expect("the thumbnail's image").size();
+            assert_eq!(s, k.size());
+            s.x as f32 / s.y as f32
+        };
+        let models = BikeModels::default();
+        for profile in ProfileId::ALL {
+            let plain = models.get(profile, &[]);
+            let fitted = ocw_assets::bikes::HOTSPOT_SLOTS
+                .iter()
+                .map(|slot| (slot.to_string(), "stock".to_string()))
+                .chain(
+                    ocw_assets::bikes::VARIANTS
+                        .iter()
+                        .filter(|v| v.fits.contains(&profile.bike()))
+                        .map(|v| (v.slot.to_string(), v.id.to_string())),
+                );
+            for (slot, model) in fitted {
+                let what = format!("{} {slot} {model}", profile.id());
+                let k = ThumbKey::Part(PartThumb {
+                    profile,
+                    slot: slot.clone(),
+                    model: model.clone(),
+                    paint: Rgb(0x2a6fb0),
+                });
+                let row = crate::workshop::PickerRowView {
+                    thumb: Some(k.clone()),
+                    ..Default::default()
+                };
+                let drawn = crate::workshop::tile_picture_aspect(&row);
+                let rendered = image_aspect(&k, &mut thumbs, &mut images);
+                assert!(
+                    (drawn - rendered).abs() < 1e-4,
+                    "{what}: tile {drawn} vs image {rendered}"
+                );
+                let bike = if model == "stock" {
+                    plain.clone()
+                } else {
+                    models.get(profile, std::slice::from_ref(&model))
+                };
+                let (eye, target) = framing(&bike, &slot);
+                for c in corners(part_box(&bike, &slot)) {
+                    let (x, y, z) = project_in(eye, target, c, drawn);
+                    assert!(
+                        z > 0.05 && x.abs() <= 1.0 && y.abs() <= 1.0,
+                        "{what}: corner {c} outside the drawn picture at ({x:.2}, {y:.2})"
+                    );
+                }
+            }
+        }
+        for shot in [
+            RiderShot::Face,
+            RiderShot::FaceFront,
+            RiderShot::Body,
+            RiderShot::Hands,
+            RiderShot::Feet,
+        ] {
+            let k = rider(RiderLook::default(), shot);
+            let (w, h) = crate::menu::thumb_picture_vh(k.aspect());
+            let rendered = image_aspect(&k, &mut thumbs, &mut images);
+            assert!(
+                (w / h - rendered).abs() < 1e-4,
+                "{shot:?}: tile {} vs image {rendered}",
+                w / h
+            );
+            // The stand's tiles show rider pictures at their aspect too.
+            let row = crate::workshop::PickerRowView {
+                thumb: Some(k.clone()),
+                ..Default::default()
+            };
+            assert!((crate::workshop::tile_picture_aspect(&row) - rendered).abs() < 1e-4);
+            let (eye, target) = rider_framing(1.0, shot);
+            let (x, y, _) = project_in(eye, target, target, w / h);
+            assert!(
+                x.abs() < 1e-3 && y.abs() < 1e-3,
+                "{shot:?}: the shot in the middle"
+            );
+        }
+    }
 }
