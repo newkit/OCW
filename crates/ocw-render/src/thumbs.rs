@@ -422,13 +422,14 @@ fn view_dir(slot: &str, front: Vec3) -> Vec3 {
     let (ahead, up) = match slot {
         "wheels" => (0.0, 0.12),
         _ if whole_bike(slot) => (0.06, 0.12),
-        // The drivetrain from ahead of the drive side: the chainrings near
-        // and big, the chain running back to the derailleur, the rear wheel
-        // further off (square on, it filled the picture); the cassette
-        // from behind.
-        "groupset" | "chain" => (0.8, 0.35),
-        "cassette" => (-0.6, 0.3),
-        "crankset" => (0.12, 0.22),
+        // The drivetrain nearly square on from the drive side, a little
+        // over its height: the chainrings and cogs read round; the wheels
+        // are not drawn in these pictures ([`hides_wheels`]), so nothing
+        // fills the background (2026-11-17: from ahead and above the rear
+        // wheel's spokes and tyre took the picture).
+        "groupset" | "chain" => (0.1, 0.1),
+        "cassette" => (-0.12, 0.1),
+        "crankset" => (0.06, 0.08),
         // Mostly from ahead: the bar's width across the wide picture.
         "cockpit" | "bar_tape" => (1.6, 0.7),
         "lights" | "computer" => (0.7, 0.55),
@@ -436,6 +437,57 @@ fn view_dir(slot: &str, front: Vec3) -> Vec3 {
         _ => (0.35, 0.3),
     };
     (Vec3::X + front * ahead + Vec3::Y * up).normalize()
+}
+
+/// Whether the thumbnails of `slot` leave the wheels out (the drivetrain
+/// slots: groupset, chain, cassette, crankset): the front wheel is not
+/// drawn, of the rear wheel only the hub and the cassette on it
+/// ([`drivetrain_model`]), so the drivetrain and the frame's lower part
+/// stand against the plain background.
+pub fn hides_wheels(slot: &str) -> bool {
+    matches!(slot, "groupset" | "chain" | "cassette" | "crankset")
+}
+
+/// What of the rear wheel a drivetrain thumbnail keeps: the triangles
+/// within this distance of the hub's axis (m) – the hub, its flanges and
+/// the cassette (up to 0.052 m); the spokes, the rim, the tyre and a disc
+/// rotor reach further out and go.
+pub const HUB_KEEP_R: f32 = 0.06;
+
+/// `model` as the drivetrain thumbnails draw it ([`hides_wheels`]): the
+/// front wheel without its geometry, of the rear wheel only the triangles
+/// whose corners all lie within [`HUB_KEEP_R`] of the hub's axis.
+pub fn drivetrain_model(model: &ocw_assets::model::Model) -> ocw_assets::model::Model {
+    let mut m = model.clone();
+    for (name, keep_hub) in [
+        (bike_nodes::WHEEL_FRONT, false),
+        (bike_nodes::WHEEL_REAR, true),
+    ] {
+        let Some(i) = m.node(name) else { continue };
+        let w = m.world(i);
+        let hub = w.transform_point3(Vec3::ZERO);
+        let axis = w.transform_vector3(Vec3::X).normalize_or(Vec3::X);
+        let near = |v: &[f32; 3]| {
+            let d = w.transform_point3(Vec3::from(*v)) - hub;
+            (d - axis * d.dot(axis)).length() < HUB_KEEP_R
+        };
+        for prim in &mut m.nodes[i].primitives {
+            if !keep_hub {
+                prim.indices.clear();
+                continue;
+            }
+            let kept: Vec<u32> = prim
+                .indices
+                .chunks(3)
+                .filter(|t| t.iter().all(|&k| near(&prim.positions[k as usize])))
+                .flatten()
+                .copied()
+                .collect();
+            prim.indices = kept;
+        }
+        m.nodes[i].primitives.retain(|p| !p.indices.is_empty());
+    }
+    m
 }
 
 /// The thumbnail camera for `slot` on `bike` (bike coordinates): (eye,
@@ -808,9 +860,16 @@ fn render_thumbs(
                     .unwrap_or_default()
                     .get(part.profile, &variants);
                 let (eye, target) = framing(&built, &part.slot);
+                let drivetrain;
+                let model = if hides_wheels(&part.slot) {
+                    drivetrain = drivetrain_model(&built.model);
+                    &drivetrain
+                } else {
+                    &built.model
+                };
                 let bike = spawn_bike(
                     &mut commands,
-                    &built,
+                    model,
                     part.paint,
                     at,
                     &mut meshes,
@@ -883,14 +942,13 @@ fn render_thumbs(
 /// The bike's near model at `at`, on the thumbnails' layer.
 fn spawn_bike(
     commands: &mut Commands,
-    built: &BuiltBike,
+    model: &ocw_assets::model::Model,
     paint: Rgb,
     at: Vec3,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<GearMaterial>,
     cache: &mut HashMap<Vec<u32>, Handle<GearMaterial>>,
 ) -> Entity {
-    let model = &built.model;
     let handles = crate::workshop::upload(model, meshes, false);
     let colours = crate::workshop::bike_colours(paint);
     let root = commands
@@ -1312,12 +1370,64 @@ mod tests {
         assert!(inside("saddle", pos(bike_nodes::SADDLE)));
     }
 
+    /// Regression (2026-11-17, the groupset tile still read as a rear
+    /// wheel: its spokes and tyre filled the background): the drivetrain
+    /// slots' thumbnails draw no wheel – the front wheel has no triangle
+    /// left, the rear wheel only the hub and the cassette within
+    /// [`HUB_KEEP_R`] of its axis, the cassette's cogs kept –, the other
+    /// slots draw the whole bike; and they look nearly square on from the
+    /// drive side, so the chainrings read round.
+    #[test]
+    fn the_drivetrain_thumbnails_hide_the_wheels() {
+        let models = BikeModels::default();
+        for profile in ProfileId::ALL {
+            let bike = models.get(profile, &[]);
+            let shown = drivetrain_model(&bike.model);
+            let front = shown.node(bike_nodes::WHEEL_FRONT).unwrap();
+            assert!(
+                shown.nodes[front]
+                    .primitives
+                    .iter()
+                    .all(|p| p.indices.is_empty()),
+                "{profile:?}: the front wheel hidden"
+            );
+            let rear = shown.node(bike_nodes::WHEEL_REAR).unwrap();
+            let w = shown.world(rear);
+            let hub = w.transform_point3(Vec3::ZERO);
+            let mut cogs = false;
+            for p in &shown.nodes[rear].primitives {
+                for &k in &p.indices {
+                    let d = w.transform_point3(Vec3::from(p.positions[k as usize])) - hub;
+                    let r = Vec2::new(d.y, d.z).length();
+                    assert!(r < HUB_KEEP_R, "{profile:?}: rear wheel part at {r:.3} m");
+                    cogs |= d.x > 0.03 && r > 0.045;
+                }
+            }
+            assert!(cogs, "{profile:?}: the cassette's cogs kept");
+            // The rest of the bike as it is.
+            let crank = shown.node(bike_nodes::CRANK).unwrap();
+            assert_eq!(shown.nodes[crank], bike.model.nodes[crank]);
+            for slot in ocw_assets::bikes::HOTSPOT_SLOTS {
+                let drivetrain = ["groupset", "chain", "cassette", "crankset"].contains(&slot);
+                assert_eq!(hides_wheels(slot), drivetrain, "{slot}");
+                if drivetrain {
+                    let (eye, target) = framing(&bike, slot);
+                    let d = (eye - target).normalize();
+                    assert!(
+                        d.x > 0.95,
+                        "{profile:?} {slot}: square on from the drive side, {d}"
+                    );
+                }
+            }
+        }
+    }
+
     /// Regression (2026-11-17, the bike stand's groupset tiles showed a
     /// rear wheel): the groupset is framed on the drivetrain – the
     /// chainrings and the rear derailleur both in the picture, the view's
     /// middle between the bottom bracket and the rear hub, the chainrings
-    /// at least 45 % of its height (30 % before the pieces were fitted,
-    /// 2026-11-17). Before, the camera looked at the derailleur from
+    /// at least 55 % of its height (30 % before the pieces were fitted,
+    /// 45 % before the square-on view, 2026-11-17). Before, the camera looked at the derailleur from
     /// 0.16 m around: the picture was the rear hub,
     /// spokes and rim.
     #[test]
@@ -1363,7 +1473,7 @@ mod tests {
                     (lo, hi) = (lo.min(y), hi.max(y));
                 }
                 assert!(
-                    hi - lo >= 0.9,
+                    hi - lo >= 1.1,
                     "{what}: the chainrings {:.2} of the picture high",
                     (hi - lo) / 2.0
                 );
