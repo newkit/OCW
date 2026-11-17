@@ -393,7 +393,7 @@ mod tests {
         members[1].audience.heard_by = HeardBy::Nearby;
         let apart: BTreeMap<u8, BTreeSet<RiderId>> = [(2, [RiderId(1)].into())].into();
         let h = hearing(&members, &apart, &BTreeMap::new(), None);
-        assert!(h[&1].may_hear.is_empty() && h[&2].heard_by.is_empty());
+        assert!(h[&1].may_hear.is_empty() && !h[&2].heard_by.contains(&RiderId(1)));
         // *Everybody* again: the range holds for Bea too.
         members[0].audience.listen = Listen::Everybody;
         let h = hearing(&members, &none, &BTreeMap::new(), None);

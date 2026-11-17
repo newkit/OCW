@@ -357,7 +357,7 @@ impl Trio {
                         format!("name:local/{n}"),
                         ocw_voice::riders::RiderPref {
                             selected: true,
-                            ..ocw_voice::riders::RiderPref::new(n)
+                            ..ocw_voice::riders::RiderPref::new(*n)
                         },
                     )
                 })

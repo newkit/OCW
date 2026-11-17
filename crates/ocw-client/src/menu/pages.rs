@@ -497,7 +497,7 @@ impl Page {
                 "Microphone and speaker for voice chat; a missing device falls back to the default. Voices fade from 5 m to silence at 10 m.",
             ],
             Self::VoiceRoom => &[
-                "Voice room: whom you hear. Who hears me: who hears you (no one until you change it). Riders are heard up to 10 m, selected riders at any distance; a block always wins.",
+                "Voice room: whom you hear. Who hears me: who hears you (no one until you change it). Heard to 10 m, selected riders always; blocks win.",
             ],
             Self::VoiceSelect => &[
                 "Confirm selects a rider or takes them off. Your selection is remembered, also for riders not here now.",
