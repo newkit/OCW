@@ -222,10 +222,13 @@ mod tests {
     fn every_menu_page_fits_a_16_9_window_with_its_text() {
         use ocw_render::menu::{PANEL_MAX_VH, fitted_paragraphs, page_height_vh};
         let aspect = 16.0 / 9.0;
-        let check = |view: MenuView| {
+        // Every page is measured; the failures are listed together.
+        let mut too_tall = Vec::new();
+        let mut check = |view: MenuView| {
             let h = page_height_vh(&view, aspect, view.text.len());
-            assert!(h <= PANEL_MAX_VH, "{}: {h:.1} vh", view.title);
-            assert_eq!(fitted_paragraphs(&view, aspect), view.text.len());
+            if h > PANEL_MAX_VH || fitted_paragraphs(&view, aspect) != view.text.len() {
+                too_tall.push(format!("{}: {h:.1} vh", view.title));
+            }
         };
         let pages = [
             Page::Top,
@@ -390,6 +393,10 @@ mod tests {
                 side: matches!(page, Page::Sub(p) if ocw_client::menu::character::is_editor_page(p)),
             });
         }
+        assert!(
+            too_tall.is_empty(),
+            "pages taller than {PANEL_MAX_VH} vh: {too_tall:?}"
+        );
     }
 
     /// The desktop's ride, input and menu plugins without a window: a

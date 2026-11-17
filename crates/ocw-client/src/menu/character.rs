@@ -177,15 +177,8 @@ fn category_rows(page: Page, rider: &Rider) -> Vec<Row> {
                     |i| format!("--skin {}", i + 1),
                 ),
                 Row {
-                    label: "Keep my hair colour".into(),
-                    value: Some(
-                        if c.greying {
-                            "off (greys with the age)"
-                        } else {
-                            "on"
-                        }
-                        .into(),
-                    ),
+                    label: "Grey hair with age".into(),
+                    value: Some(if c.greying { "on" } else { "off" }.into()),
                     left: None,
                     right: None,
                     confirm: Some(Activate::Command(line(if c.greying {
@@ -330,7 +323,7 @@ impl Attr {
             Attr::HairColour => "Hair colour",
             Attr::Moustache => "Moustache",
             Attr::Beard => "Beard",
-            Attr::FacialColour => "Facial hair colour",
+            Attr::FacialColour => "Beard colour",
         }
     }
 
@@ -491,7 +484,7 @@ pub fn tiles(attr: Attr, rider: &Rider) -> Vec<Tile> {
             })
             .collect(),
         Attr::FacialColour => std::iter::once(tile(
-            "The hair's".into(),
+            "Hair's".into(),
             Some(
                 C {
                     facial_hair_colour: None,
@@ -630,7 +623,7 @@ mod tests {
             Some("character --age 20s")
         );
         assert_eq!(
-            row(&face, "Keep my hair colour").confirm,
+            row(&face, "Grey hair with age").confirm,
             Some(Activate::Command("character --greying off".into()))
         );
         let hair = rows(Page::CharacterHair, &r);

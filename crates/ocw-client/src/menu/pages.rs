@@ -37,7 +37,7 @@ pub enum Page {
     /// … the body: base body, shape (any; weight and height propose one,
     /// *Match my weight*).
     CharacterBody,
-    /// … face and age: the appearance age, skin, *Keep my hair colour*,
+    /// … face and age: the appearance age, skin, *Grey hair with age* (off),
     /// glasses.
     CharacterFace,
     /// … hair: style and colour.
@@ -415,16 +415,14 @@ impl Page {
                 &["Any shape; Match my weight picks the one your weight and height suggest."]
             }
             Self::Rider(_) => &["Changes apply from the next start (Restart)."],
-            Self::CharacterFace => &[
-                "The age shows on the face, the body, the skin and the hair (greying unless you keep your hair colour).",
-            ],
+            Self::CharacterFace => &["Age shows on face, body, skin and hair."],
             Self::CharacterHair => &[
                 "Every style fits under every helmet. Any colour: character --hair-colour #RRGGBB.",
             ],
             Self::CharacterFacialHair => {
                 &["The colour follows your hair (greying too) or is its own."]
             }
-            Self::CharacterPick(_) => &["The rider shows the focused choice; Confirm keeps it."],
+            Self::CharacterPick(_) => &["Focus shows it on the rider; Confirm keeps it."],
             Self::Trainer => &["Devices, SIM difficulty and the virtual trainer."],
             Self::Strava => &[
                 "Uploads saved rides to Strava when an account is linked (API credentials: see README); the sync state is in Navi -> Rides.",
