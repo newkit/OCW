@@ -26,6 +26,15 @@
 //! Touch, the Khronos simple controller), attached to every session;
 //! [`MainHandle`] syncs it each frame ([`ControllerSource`]).
 //!
+//! **Frame pacing** (v4.64, the VR kiosk on Weela lost its session every
+//! ~30 s): `xrWaitFrame` runs only after the last waited frame's
+//! `xrBeginFrame` ([`ocw_xr::frame::FramePacer`], [`Shared::pacer`]) –
+//! the Oculus runtime does not block a second wait as OpenXR says, it
+//! reports "ovr_WaitToBeginFrame missing ovr_Begin/EndFrame calls" and
+//! loses the session. **Reconnects run in the background**
+//! ([`MainHandle::recreate_session`]): creating a session and its
+//! swapchain took the Oculus runtime ~25 s, which froze the app.
+//!
 //! **Teardown** (v4.52, the exit crash on the Quest 1 over Link): the app's
 //! last frame calls [`XrRuntime::shutdown`]: wait for the GPU, then drop the
 //! swapchain (the wrapped textures never own its images), the frame
@@ -37,10 +46,12 @@ pub mod controls;
 pub mod vulkan;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use ocw_xr::controllers::{ControllerSource, ControllerState};
-use ocw_xr::frame::{FrameSink, FrameSource, FrameTiming};
+use ocw_xr::frame::{FramePacer, FrameSink, FrameSource, FrameTiming};
 use ocw_xr::headset::{self, HeadsetProfile};
 use ocw_xr::projection::Fov;
 use ocw_xr::session::{RuntimeEvent, RuntimeState, XrError, XrRuntime};
@@ -151,6 +162,17 @@ struct Shared {
     controls: Option<controls::Controls>,
     /// Bumped by every new session (new swapchain images).
     generation: AtomicU64,
+    /// Which waited frame was begun ([`FramePacer`]); `begun` wakes the
+    /// main thread waiting for it.
+    pacer: Mutex<FramePacer>,
+    begun: Condvar,
+    /// The app quits: a session made in the background is dropped at once.
+    closing: AtomicBool,
+    /// `OCW_VR_PACE=end`: the next wait only after the last frame's
+    /// `xrEndFrame`, not its `xrBeginFrame` (stricter than OpenXR asks, no
+    /// overlap of simulation and rendering: a fallback for runtimes that
+    /// want it).
+    pace_after_end: bool,
     /// Between `xrBeginSession` and `xrEndSession` / the session's end:
     /// the render thread submits frames only then (a frame extracted
     /// before STOPPING reached `xrBeginFrame` after `xrEndSession`).
@@ -288,6 +310,10 @@ pub fn boot(opts: &BootOptions) -> Result<Booted, XrError> {
         live: Mutex::new(None),
         controls,
         generation: AtomicU64::new(0),
+        pacer: Mutex::new(FramePacer::default()),
+        begun: Condvar::new(),
+        closing: AtomicBool::new(false),
+        pace_after_end: std::env::var("OCW_VR_PACE").is_ok_and(|v| v == "end"),
         running: AtomicBool::new(false),
         instance,
         device: dev.device.clone(),
@@ -312,6 +338,8 @@ pub fn boot(opts: &BootOptions) -> Result<Booted, XrError> {
         },
         main: MainHandle {
             shared: shared.clone(),
+            reconnect: None,
+            frame_id: 0,
         },
         render: RenderHandle { shared },
     })
@@ -363,6 +391,12 @@ impl Shared {
         } else {
             None
         };
+        if self.closing.load(Ordering::SeqCst) {
+            // Made in the background while the app quit: never installed
+            // (it must not outlive the device).
+            return Ok(refresh);
+        }
+        lock(&self.pacer).new_session();
         *lock(&self.stream) = Some(Stream {
             textures,
             swapchain,
@@ -390,8 +424,33 @@ impl Shared {
         *lock(&self.stream) = None;
         *lock(&self.waiter) = None;
         *lock(&self.live) = None;
+        // Nothing of the old session is outstanding: wake a waiting main
+        // thread.
+        lock(&self.pacer).new_session();
+        self.begun.notify_all();
+    }
+
+    /// A new session on the same instance and device (see
+    /// [`MainHandle::recreate_session`]).
+    fn create_new(&self) -> Result<(), XrError> {
+        let system = self
+            .instance
+            .system(xr::FormFactor::HEAD_MOUNTED_DISPLAY)
+            .map_err(xr_error)?;
+        if system != self.system {
+            // Another system would need another device: a restart.
+            return Err(XrError::InstanceLost);
+        }
+        let (session, waiter, stream) =
+            vulkan::create_session(&self.instance, self.system, &self.session_info)?;
+        self.install(session, waiter, stream).map(|_| ())
     }
 }
+
+/// How long the main thread waits for the render thread to begin the last
+/// frame before it skips a wait (a render frame that slow is a hitch: the
+/// frame is late, the session survives).
+const BEGIN_TIMEOUT: Duration = Duration::from_millis(1000);
 
 impl Drop for Shared {
     fn drop(&mut self) {
@@ -403,6 +462,10 @@ impl Drop for Shared {
 /// The main thread's handle.
 pub struct MainHandle {
     shared: Arc<Shared>,
+    /// A session being created in the background, and since when.
+    reconnect: Option<(JoinHandle<Result<(), XrError>>, Instant)>,
+    /// The last waited frame's id ([`FramePacer`]), for the render world.
+    frame_id: u64,
 }
 
 impl MainHandle {
@@ -411,6 +474,28 @@ impl MainHandle {
             Some(l) => f(l),
             None => Err(XrError::SessionLost),
         }
+    }
+
+    /// The id of the frame the last [`FrameSource::wait_frame`] returned:
+    /// the render world hands it back with [`RenderHandle::begin_frame_for`].
+    pub fn frame_id(&self) -> u64 {
+        self.frame_id
+    }
+
+    /// The session generation (changes with every new session).
+    pub fn generation(&self) -> u64 {
+        self.shared.generation.load(Ordering::SeqCst)
+    }
+
+    /// Waits (at most `timeout`) until the last waited frame was begun.
+    fn wait_for_begin(&self, timeout: Duration) -> bool {
+        let pacer = lock(&self.shared.pacer);
+        let (pacer, _) = self
+            .shared
+            .begun
+            .wait_timeout_while(pacer, timeout, |p| !p.may_wait())
+            .unwrap_or_else(|p| p.into_inner());
+        pacer.may_wait()
     }
 }
 
@@ -430,6 +515,19 @@ impl XrRuntime for MainHandle {
             use xr::Event as E;
             use xr::SessionState as S;
             let ours = match e {
+                // An event of a session already destroyed (queued before a
+                // reconnect) must not drive the new one.
+                E::SessionStateChanged(s)
+                    if lock(&self.shared.live)
+                        .as_ref()
+                        .is_none_or(|l| l.session.as_raw() != s.session()) =>
+                {
+                    tracing::info!(
+                        "VR: runtime state {:?} of an old session ignored",
+                        s.state()
+                    );
+                    None
+                }
                 E::SessionStateChanged(s) => Some(RuntimeEvent::State(match s.state() {
                     S::IDLE => RuntimeState::Idle,
                     S::READY => RuntimeState::Ready,
@@ -471,27 +569,51 @@ impl XrRuntime for MainHandle {
     }
 
     fn shutdown(&mut self) {
+        self.shared.closing.store(true, Ordering::SeqCst);
+        if let Some((job, since)) = self.reconnect.take() {
+            // A session made in the background must not outlive the device.
+            tracing::info!(
+                "VR: waiting for the session being created ({:.1} s so far)",
+                since.elapsed().as_secs_f32()
+            );
+            let _ = job.join();
+        }
         self.shared.drop_session();
         tracing::info!(
             "VR: session torn down (swapchain, frame stream, session) before the GPU device"
         );
     }
 
+    /// In the background (v4.64): the old session is destroyed here, the
+    /// new one is created on a thread – the Oculus runtime took ~25 s for
+    /// `xrCreateSession` … `xrCreateSwapchain` on Weela, which froze the
+    /// app on the monitor and in the headset. Until it is there this
+    /// answers [`XrError::Reconnecting`].
     fn recreate_session(&mut self) -> Result<(), XrError> {
-        let s = &self.shared;
-        s.drop_session();
-        // Is the headset back?
-        let system = s
-            .instance
-            .system(xr::FormFactor::HEAD_MOUNTED_DISPLAY)
-            .map_err(xr_error)?;
-        if system != s.system {
-            // Another system would need another device: a restart.
-            return Err(XrError::InstanceLost);
+        if let Some((job, since)) = self.reconnect.take() {
+            if !job.is_finished() {
+                self.reconnect = Some((job, since));
+                return Err(XrError::Reconnecting);
+            }
+            let r = job
+                .join()
+                .unwrap_or_else(|_| Err(XrError::Other("the reconnect thread panicked".into())));
+            tracing::info!(
+                "VR: new session {} after {:.1} s",
+                if r.is_ok() { "created" } else { "failed" },
+                since.elapsed().as_secs_f32()
+            );
+            return r;
         }
-        let (session, waiter, stream) =
-            vulkan::create_session(&s.instance, s.system, &s.session_info)?;
-        s.install(session, waiter, stream).map(|_| ())
+        self.shared.drop_session();
+        let shared = self.shared.clone();
+        let job = std::thread::Builder::new()
+            .name("ocw-xr-reconnect".into())
+            .spawn(move || shared.create_new())
+            .map_err(|e| XrError::Other(format!("cannot start the reconnect thread: {e}")))?;
+        tracing::info!("VR: old session destroyed, creating a new one in the background");
+        self.reconnect = Some((job, Instant::now()));
+        Err(XrError::Reconnecting)
     }
 }
 
@@ -543,9 +665,22 @@ fn from_fov(f: &Fov) -> xr::Fovf {
 
 impl FrameSource for MainHandle {
     fn wait_frame(&mut self) -> Result<FrameTiming, XrError> {
+        // Never wait again before the last waited frame was begun (the
+        // Oculus runtime loses the session for that, see the crate docs).
+        if !self.wait_for_begin(BEGIN_TIMEOUT) {
+            // Given up on that frame (never stall for good): the next
+            // frame waits again.
+            lock(&self.shared.pacer).handled(self.frame_id);
+            return Err(XrError::Other(format!(
+                "frame {} not begun by the render thread within {} ms: this frame's xrWaitFrame skipped",
+                self.frame_id,
+                BEGIN_TIMEOUT.as_millis()
+            )));
+        }
         let mut w = lock(&self.shared.waiter);
         let w = w.as_mut().ok_or(XrError::SessionLost)?;
         let s = w.wait().map_err(xr_error)?;
+        self.frame_id = lock(&self.shared.pacer).waited();
         Ok(FrameTiming {
             display_time_ns: s.predicted_display_time.as_nanos(),
             period_ns: s.predicted_display_period.as_nanos(),
@@ -624,6 +759,44 @@ impl RenderHandle {
         (g, images)
     }
 
+    /// `xrBeginFrame` for the waited frame `id` of session `generation`,
+    /// under the frame lock; tells the main thread it may wait for the
+    /// next frame. `Ok(false)`: not begun (the session ended or is another
+    /// one now) – nothing to finish.
+    pub fn begin_frame_for(&mut self, id: u64, generation: u64) -> Result<bool, XrError> {
+        let shared = self.shared.clone();
+        let _frame = lock(&shared.frame);
+        let current = self.running() && shared.generation.load(Ordering::SeqCst) == generation;
+        let r = if current {
+            self.begin_frame().map(|()| true)
+        } else {
+            Ok(false)
+        };
+        if !(shared.pace_after_end && matches!(r, Ok(true))) {
+            lock(&shared.pacer).handled(id);
+            shared.begun.notify_all();
+        }
+        r
+    }
+
+    /// The begun frame `id` is finished (ended, or given up): with
+    /// `OCW_VR_PACE=end` the main thread may wait for the next one now.
+    pub fn frame_ended(&self, id: u64) {
+        lock(&self.shared.pacer).handled(id);
+        self.shared.begun.notify_all();
+    }
+
+    /// Whether the main thread waits for the last frame's end (not only
+    /// its begin) – `OCW_VR_PACE=end`.
+    pub fn paces_after_end(&self) -> bool {
+        self.shared.pace_after_end
+    }
+
+    /// The session generation (changes with every new session).
+    pub fn generation(&self) -> u64 {
+        self.shared.generation.load(Ordering::SeqCst)
+    }
+
     /// Held for a whole frame submission: the teardown waits for it.
     pub fn frame_guard(&self) -> MutexGuard<'_, ()> {
         lock(&self.shared.frame)
@@ -649,7 +822,10 @@ impl RenderHandle {
     ) -> Result<R, XrError> {
         match lock(&self.shared.stream).as_mut() {
             Some(s) => f(s),
-            None => Err(XrError::SessionLost),
+            // Ours, not the runtime's: the session was torn down meanwhile.
+            None => Err(XrError::Other(
+                "no swapchain (the session was torn down)".into(),
+            )),
         }
     }
 }
@@ -682,7 +858,9 @@ impl FrameSink for RenderHandle {
     ) -> Result<(), XrError> {
         let extent = self.shared.extent;
         let live = lock(&self.shared.live);
-        let live = live.as_ref().ok_or(XrError::SessionLost)?;
+        let live = live
+            .as_ref()
+            .ok_or_else(|| XrError::Other("no session (it was torn down)".into()))?;
         self.with_stream(|s| {
             let time = xr::Time::from_nanos(display_time_ns);
             let blend = xr::EnvironmentBlendMode::OPAQUE;

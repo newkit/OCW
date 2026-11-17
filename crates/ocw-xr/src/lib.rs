@@ -22,6 +22,8 @@
 //!   stopping → lost, reconnect) over a mockable [`session::XrRuntime`].
 //! - [`frame`]: the frame loop's order of calls and its timing statistics
 //!   (frame time, latency, missed frames).
+//! - [`watch`]: the frame loop's health for the log (each call's cost,
+//!   frames per second, stalls, failed calls, a session never shown).
 //! - [`swapchain`]: the colour format choice and the eye texture size.
 //! - [`headset`]: headset profiles (Oculus Quest 1: 1440 × 1600 per eye,
 //!   72 Hz) and the 72–90 Hz budget.
@@ -38,6 +40,7 @@ pub mod recentre;
 pub mod session;
 pub mod swapchain;
 pub mod view;
+pub mod watch;
 
 pub use glam::{Mat4, Quat, Vec3};
 

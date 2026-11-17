@@ -79,6 +79,9 @@ pub enum XrError {
     SessionLost,
     /// The instance is gone; only a restart helps.
     InstanceLost,
+    /// A new session is being created in the background (v4.64: the Oculus
+    /// runtime takes ~25 s for it; the app keeps running meanwhile).
+    Reconnecting,
     Other(String),
 }
 
@@ -104,6 +107,7 @@ impl fmt::Display for XrError {
             Self::InstanceLost => {
                 f.write_str("the OpenXR runtime went away (restart the app to reconnect)")
             }
+            Self::Reconnecting => f.write_str("a new VR session is being created"),
             Self::Other(e) => f.write_str(e),
         }
     }
@@ -272,7 +276,15 @@ impl SessionMachine {
                     self.phase = Phase::Idle;
                 }
                 Err(XrError::InstanceLost) => self.lose(true, XrError::InstanceLost),
-                Err(e) => self.last_error = Some(e),
+                // Still being created (in the background): ask again next
+                // frame, the last error stays the loss's.
+                Err(XrError::Reconnecting) => self.since_retry_s = self.retry_s,
+                Err(e) => {
+                    if self.log.len() < 64 {
+                        self.log.push(format!("reconnect failed: {e}"));
+                    }
+                    self.last_error = Some(e);
+                }
             }
             return;
         }
@@ -365,6 +377,9 @@ impl SessionMachine {
     }
 
     fn lose(&mut self, restart: bool, why: XrError) {
+        if self.log.len() < 64 && !matches!(self.phase, Phase::Lost { .. }) {
+            self.log.push(format!("session lost: {why}"));
+        }
         self.running = false;
         self.since_retry_s = 0.0;
         self.last_error = Some(why);
@@ -539,6 +554,47 @@ mod tests {
         // A frame call that loses the session reconnects too.
         m.frame_error(XrError::SessionLost);
         assert_eq!(*m.phase(), Phase::Lost { restart: false });
+    }
+
+    /// Regression (2026-11-17, Weela): creating a session on the Oculus
+    /// runtime took ~25 s and froze the app (monitor and headset). Now the
+    /// binding creates it in the background and answers `Reconnecting`
+    /// meanwhile: the machine asks again every frame (no 2 s pause), the
+    /// loss stays the last error, and the log says what happened.
+    #[test]
+    fn a_reconnect_in_the_background_is_polled_every_frame() {
+        let mut rt = MockRuntime::default();
+        let mut m = SessionMachine::new();
+        run(&mut m, &mut rt, &[RuntimeEvent::State(S::Ready)]);
+        m.take_log();
+        m.frame_error(XrError::SessionLost);
+        assert_eq!(m.take_log(), ["session lost: the VR session was lost"]);
+        // A second error of the same loss is not logged again.
+        m.frame_error(XrError::SessionLost);
+        assert!(m.take_log().is_empty());
+        rt.recreate_results.push_back(Err(XrError::Reconnecting));
+        rt.recreate_results.push_back(Err(XrError::Reconnecting));
+        m.update(&mut rt, 2.0);
+        m.update(&mut rt, 0.016);
+        m.update(&mut rt, 0.016);
+        let tries = rt
+            .calls
+            .iter()
+            .filter(|c| **c == Call::RecreateSession)
+            .count();
+        assert_eq!(tries, 3, "asked every frame while it is being created");
+        assert_eq!(*m.phase(), Phase::Idle);
+        assert_eq!(m.reconnects, 1);
+        assert_eq!(m.last_error, Some(XrError::SessionLost));
+        // A failure says so in the log.
+        m.frame_error(XrError::SessionLost);
+        rt.recreate_results.push_back(Err(XrError::NoHeadset));
+        m.update(&mut rt, 2.0);
+        assert!(
+            m.take_log()
+                .iter()
+                .any(|l| l.starts_with("reconnect failed: no headset"))
+        );
     }
 
     /// Regression (2026-11-17, the VR kiosk on Weela "keeps crashing"): an

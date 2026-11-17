@@ -57,6 +57,11 @@ $sum.Add("clean exit: " + [bool]($log -match "session torn down"))
 $sum.Add("panics: " + @($log -match "panicked").Count)
 $sum.Add("session changes:")
 $log | Select-String -Pattern "VR session: |^VR: |VR is off" | ForEach-Object { $sum.Add("  " + $_.Line) }
+$sum.Add("session losses: " + @($log -match "VR session lost: ").Count + ", reconnects done: " + @($log -match "VR: new session created").Count)
+$sum.Add("failed frame calls: " + @($log -match "VR frame: ").Count + ", stalls: " + @($log -match "VR loop: no frame reached").Count + ", sessions never shown: " + @($log -match "does not show it").Count)
+$log | Select-String -Pattern "VR session lost: |VR frame: |VR loop: (no frame|the session runs)" | Select-Object -First 20 | ForEach-Object { $sum.Add("  " + $_.Line) }
+$sum.Add("frame loop (the last reports, every 10 s):")
+$log | Select-String -Pattern "VR loop \d+ s:" | Select-Object -Last 4 | ForEach-Object { $sum.Add("  " + $_.Line) }
 $sum.Add("frame statistics (vr status):")
 $log | Select-String -Pattern "frames? .*missed|missed" | Select-Object -Last 12 | ForEach-Object { $sum.Add("  " + $_.Line) }
 $sum.Add("render distance steps: " + @($log -match "view distance:").Count)

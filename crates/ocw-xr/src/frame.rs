@@ -7,7 +7,8 @@
 //!    gives the predicted display time and whether to render
 //!    ([`FrameSource::wait_frame`], main thread, start of the frame);
 //! 2. `xrLocateViews` for the time the frame will be on the display
-//!    ([`pose_time`]: one frame later with Bevy's pipelined renderer);
+//!    ([`pose_time`]: the display time of the frame submitted with this
+//!    wait's timing – the desktop app's case, v4.64);
 //! 3. the world is simulated and drawn into the eye textures;
 //! 4. on the render thread ([`submit`]): `xrBeginFrame`, and if rendering:
 //!    acquire / wait / copy the eye textures in / release the swapchain
@@ -40,9 +41,11 @@ impl FrameTiming {
     }
 }
 
-/// The time to locate the views for: the display time, one period later
-/// when the renderer draws a frame behind the simulation (Bevy's
-/// pipelined rendering).
+/// The time to locate the views for: the display time, or one period later
+/// when a frame is submitted with the *next* wait's timing. The desktop
+/// app submits each frame with its own wait's display time, so it uses
+/// `pipelined = false` (v4.64; before, it located the head 13.9 ms too
+/// late on the Quest 1).
 pub fn pose_time(t: &FrameTiming, pipelined: bool) -> i64 {
     if pipelined {
         t.display_time_ns + t.period_ns
@@ -97,7 +100,7 @@ pub struct SubmitCounts {
 }
 
 impl SubmitCounts {
-    pub fn count(&mut self, r: &Result<Submitted, XrError>) {
+    pub fn count<E>(&mut self, r: &Result<Submitted, E>) {
         match r {
             Ok(Submitted::Shown) => self.shown += 1,
             Ok(Submitted::Empty) => self.empty += 1,
@@ -113,34 +116,231 @@ impl SubmitCounts {
     }
 }
 
-/// One frame's submission. `copy(image)` puts the eye textures into
-/// swapchain image `image` (records and submits the GPU copy). A failed
-/// copy still releases the image and ends the frame (empty), so the
-/// runtime's frame loop never stalls.
+/// The OpenXR calls of the frame loop, for the log: which one failed, and
+/// what each one cost ([`crate::watch::LoopWatch`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FrameCall {
+    PollEvent,
+    WaitFrame,
+    LocateViews,
+    SyncActions,
+    BeginFrame,
+    AcquireImage,
+    WaitImage,
+    /// Our copy of the eye textures into the swapchain image (GPU commands).
+    Copy,
+    ReleaseImage,
+    EndFrame,
+}
+
+impl FrameCall {
+    pub const ALL: [FrameCall; 10] = [
+        Self::PollEvent,
+        Self::WaitFrame,
+        Self::LocateViews,
+        Self::SyncActions,
+        Self::BeginFrame,
+        Self::AcquireImage,
+        Self::WaitImage,
+        Self::Copy,
+        Self::ReleaseImage,
+        Self::EndFrame,
+    ];
+
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    /// The OpenXR function (or our step).
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::PollEvent => "xrPollEvent",
+            Self::WaitFrame => "xrWaitFrame",
+            Self::LocateViews => "xrLocateViews",
+            Self::SyncActions => "xrSyncActions",
+            Self::BeginFrame => "xrBeginFrame",
+            Self::AcquireImage => "xrAcquireSwapchainImage",
+            Self::WaitImage => "xrWaitSwapchainImage",
+            Self::Copy => "the eye copy",
+            Self::ReleaseImage => "xrReleaseSwapchainImage",
+            Self::EndFrame => "xrEndFrame",
+        }
+    }
+}
+
+/// A frame call that failed: which, after how long, why (the log line of
+/// a lost session names the call – the kiosk's logs could not, v4.64).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FrameFailure {
+    pub call: FrameCall,
+    pub error: XrError,
+    pub ms: f32,
+}
+
+impl FrameFailure {
+    pub fn line(&self) -> String {
+        format!(
+            "{} failed after {:.1} ms: {}",
+            self.call.name(),
+            self.ms,
+            self.error
+        )
+    }
+}
+
+/// Runs one call, timed by `clock` (ms, any origin: the binding passes the
+/// real one, tests a fake one – this crate reads no clock); `report(call, ms)` hears of every call.
+fn timed<T>(
+    clock: &mut dyn FnMut() -> f64,
+    report: &mut dyn FnMut(FrameCall, f32),
+    call: FrameCall,
+    f: impl FnOnce() -> Result<T, XrError>,
+) -> Result<T, FrameFailure> {
+    let t0 = clock();
+    let r = f();
+    let ms = (clock() - t0) as f32;
+    report(call, ms);
+    r.map_err(|error| FrameFailure { call, error, ms })
+}
+
+/// `xrBeginFrame` (timed). OpenXR lets the next `xrWaitFrame` return only
+/// after it; [`FramePacer`] makes sure the next wait never comes before it.
+/// Where the binding calls it matters: on the Link runtime (Vulkan, AMD) a
+/// begin before the render graph made its compositor time out on the GPU
+/// (v4.64), so the desktop app begins right before [`finish`].
+pub fn begin(
+    sink: &mut dyn FrameSink,
+    clock: &mut dyn FnMut() -> f64,
+    report: &mut dyn FnMut(FrameCall, f32),
+) -> Result<(), FrameFailure> {
+    timed(clock, report, FrameCall::BeginFrame, || sink.begin_frame())
+}
+
+/// The rest of a begun frame, after the render graph: if rendering,
+/// acquire / wait / `copy(image)` / release the swapchain image, then
+/// `xrEndFrame` with the projection layer (or none). Every acquired image
+/// is released and every begun frame ended – also when the copy fails –
+/// so the runtime's frame loop never stalls on us.
+pub fn finish(
+    sink: &mut dyn FrameSink,
+    timing: &FrameTiming,
+    views: Option<&StereoViews>,
+    copy: &mut dyn FnMut(u32) -> Result<(), XrError>,
+    clock: &mut dyn FnMut() -> f64,
+    report: &mut dyn FnMut(FrameCall, f32),
+) -> Result<Submitted, FrameFailure> {
+    let at = timing.display_time_ns;
+    let Some(views) = views.filter(|_| timing.should_render) else {
+        timed(clock, report, FrameCall::EndFrame, || {
+            sink.end_frame(at, None)
+        })?;
+        return Ok(Submitted::Empty);
+    };
+    // From here every failure still ends the frame (empty): a begun frame
+    // left open makes the next `xrBeginFrame` discard it, and the Oculus
+    // runtime drops a session whose frames go missing (v4.64).
+    let image = match timed(clock, report, FrameCall::AcquireImage, || {
+        sink.acquire_image()
+    }) {
+        Ok(i) => i,
+        Err(f) => return end_empty_after(sink, at, f, clock, report),
+    };
+    let waited = timed(clock, report, FrameCall::WaitImage, || sink.wait_image());
+    // A wait that failed leaves the image acquired: still released.
+    let copied = match waited {
+        Ok(()) => timed(clock, report, FrameCall::Copy, || copy(image)),
+        Err(f) => Err(f),
+    };
+    let released = timed(clock, report, FrameCall::ReleaseImage, || {
+        sink.release_image()
+    });
+    match (copied, released) {
+        (Ok(()), Ok(())) => {
+            timed(clock, report, FrameCall::EndFrame, || {
+                sink.end_frame(at, Some(views))
+            })?;
+            Ok(Submitted::Shown)
+        }
+        (Err(f), _) | (Ok(()), Err(f)) => end_empty_after(sink, at, f, clock, report),
+    }
+}
+
+/// Ends a begun frame without layers after `failure`; returns the failure
+/// (the first one: the end's own error only if it fails too and is a
+/// lost session).
+fn end_empty_after(
+    sink: &mut dyn FrameSink,
+    at: i64,
+    failure: FrameFailure,
+    clock: &mut dyn FnMut() -> f64,
+    report: &mut dyn FnMut(FrameCall, f32),
+) -> Result<Submitted, FrameFailure> {
+    match timed(clock, report, FrameCall::EndFrame, || {
+        sink.end_frame(at, None)
+    }) {
+        Err(end) if end.error == XrError::SessionLost => Err(end),
+        _ => Err(failure),
+    }
+}
+
+/// One frame's submission ([`begin`] then [`finish`], untimed).
+/// `copy(image)` puts the eye textures into swapchain image `image`
+/// (records and submits the GPU copy). A failed copy still releases the
+/// image and ends the frame (empty), so the runtime's frame loop never
+/// stalls.
 pub fn submit(
     sink: &mut dyn FrameSink,
     timing: &FrameTiming,
     views: Option<&StereoViews>,
     copy: &mut dyn FnMut(u32) -> Result<(), XrError>,
 ) -> Result<Submitted, XrError> {
-    sink.begin_frame()?;
-    let Some(views) = views.filter(|_| timing.should_render) else {
-        sink.end_frame(timing.display_time_ns, None)?;
-        return Ok(Submitted::Empty);
-    };
-    let image = sink.acquire_image()?;
-    sink.wait_image()?;
-    let copied = copy(image);
-    sink.release_image()?;
-    match copied {
-        Ok(()) => {
-            sink.end_frame(timing.display_time_ns, Some(views))?;
-            Ok(Submitted::Shown)
-        }
-        Err(e) => {
-            sink.end_frame(timing.display_time_ns, None)?;
-            Err(e)
-        }
+    let mut clock = || 0.0;
+    let mut report = |_: FrameCall, _: f32| {};
+    begin(sink, &mut clock, &mut report).map_err(|f| f.error)?;
+    finish(sink, timing, views, copy, &mut clock, &mut report).map_err(|f| f.error)
+}
+
+/// The handshake between the thread that calls `xrWaitFrame` (Bevy's main
+/// world) and the one that calls `xrBeginFrame` / `xrEndFrame` (the render
+/// world), v4.64: **a frame is waited for only after the last waited frame
+/// was begun.** OpenXR says a second `xrWaitFrame` blocks until then; the
+/// Oculus runtime (Meta Quest Link 1.208) instead reports
+/// `ovr_WaitToBeginFrame missing ovr_Begin/EndFrame calls` and drops the
+/// session ("HMD no longer present", `XR_ERROR_SESSION_LOST`) – the VR
+/// kiosk on Weela lost its session every ~30 s that way (2026-11-17).
+/// Frame ids only grow; a new session forgets what was outstanding.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FramePacer {
+    waited: u64,
+    handled: u64,
+}
+
+impl FramePacer {
+    /// The last waited frame was begun (or dropped): `xrWaitFrame` may run.
+    pub fn may_wait(&self) -> bool {
+        self.handled >= self.waited
+    }
+
+    /// A wait returned a frame: its id (for the render world).
+    pub fn waited(&mut self) -> u64 {
+        self.waited += 1;
+        self.waited
+    }
+
+    /// The render world called `xrBeginFrame` for frame `id` (whatever it
+    /// returned), or will never submit it (the session ended).
+    pub fn handled(&mut self, id: u64) {
+        self.handled = self.handled.max(id);
+    }
+
+    /// A new session: nothing of the old one is outstanding.
+    pub fn new_session(&mut self) {
+        self.handled = self.waited;
+    }
+
+    /// Frames waited for and not begun yet.
+    pub fn outstanding(&self) -> u64 {
+        self.waited.saturating_sub(self.handled)
     }
 }
 
@@ -277,9 +477,9 @@ mod counts_tests {
     #[test]
     fn submissions_are_counted() {
         let mut c = SubmitCounts::default();
-        c.count(&Ok(Submitted::Shown));
-        c.count(&Ok(Submitted::Shown));
-        c.count(&Ok(Submitted::Empty));
+        c.count::<XrError>(&Ok(Submitted::Shown));
+        c.count::<XrError>(&Ok(Submitted::Shown));
+        c.count::<XrError>(&Ok(Submitted::Empty));
         c.count(&Err(XrError::Other("the eye images are not ready".into())));
         assert_eq!(
             c,

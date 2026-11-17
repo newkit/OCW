@@ -182,10 +182,14 @@ function Get-VrState([string]$LogText) {
 }
 
 # The app's session changes ("VR session: idle", "... focused", "lost, ..."),
-# without the log's time stamps and colours, in order.
+# why a session was lost ("VR session lost: ...", "VR frame: xrEndFrame
+# failed ...") and the frame loop's alarms (a stall, a session never shown;
+# spec 11I, v4.55), without the log's time stamps and colours, in order.
+# The loop's 10 s report lines stay in app.log only.
 function Get-VrSessionLines([string]$LogText) {
     $clean = $LogText -replace "\x1b\[[0-9;]*m", ""
-    return @([regex]::Matches($clean, "VR session: [^\r\n]*") | ForEach-Object { $_.Value })
+    $pat = "VR (session: |session lost: |frame: |loop: (no frame|frames reach|the session runs))[^\r\n]*"
+    return @([regex]::Matches($clean, $pat) | ForEach-Object { $_.Value })
 }
 
 # Crash pacing as on Linux: an exit within $QuickS seconds counts; three
@@ -654,6 +658,7 @@ function Invoke-SelfTest {
     Check "vr on line" (Get-VrState "VR: Oculus on Quest (x)`r`nmore").Line "VR: Oculus on Quest (x)"
     Check "vr off" (Get-VrState "`e[33mWARN`e[0m ocw_desktop::vr: VR is off: no OpenXR runtime`n").Line "VR is off: no OpenXR runtime"
     Check "session lines" ((Get-VrSessionLines "a`n2026 INFO x: VR session: ready`r`nb`nVR session: focused`n") -join "|") "VR session: ready|VR session: focused"
+    Check "loss lines" ((Get-VrSessionLines "x VR session lost: the VR session was lost`nVR loop 10 s: 72.0 waits/s`nVR frame: xrEndFrame failed after 1.0 ms: lost`nVR loop: xrWaitFrame took 300 ms`nVR loop: no frame reached the runtime for 600 ms`n") -join "|") "VR session lost: the VR session was lost|VR frame: xrEndFrame failed after 1.0 ms: lost|VR loop: no frame reached the runtime for 600 ms"
     Check "no session lines" (@(Get-VrSessionLines "nothing")).Count 0
     Check "vr unknown" (Get-VrState "starting").State "unknown"
     $d = Get-RestartDelay 0 100 15; Check "slow exit" "$($d.Fails) $($d.WaitS)" "0 3"

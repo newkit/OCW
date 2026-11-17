@@ -153,6 +153,8 @@ pub struct VrState {
     pub look_down_deg: f32,
     /// Frames shown, empty and failed in the headset (`vr status`).
     pub submitted: ocw_xr::frame::SubmitCounts,
+    /// The frame loop's last health line (`ocw_xr::watch`, every 10 s).
+    pub loop_line: String,
 }
 
 impl VrState {
@@ -197,6 +199,9 @@ impl VrState {
         if cfg.mode == VrMode::Headset {
             lines.push(format!("  {}", self.stats.summary().line()));
             lines.push(format!("  {}", self.submitted.line()));
+            if !self.loop_line.is_empty() {
+                lines.push(format!("  {}", self.loop_line));
+            }
             lines.push(format!("  controllers: {}", self.controllers_line()));
         }
         if self.look_down_deg != 0.0 {
