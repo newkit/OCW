@@ -64,9 +64,11 @@ pub const FOLLOW_BACK_M: f32 = 3.0;
 pub const FOLLOW_SIDE_M: f32 = 1.2;
 pub const FOLLOW_UP_M: f32 = 0.6;
 pub const FOLLOW_LOOK_M: f32 = 2.0;
-/// Smoothing of the follow camera's heading, eye and look-at point (s).
+/// Smoothing of the follow camera's heading and eye (s; the eye lags
+/// ~1.5 m at the drone's 13 m/s, its look-at point is not smoothed: the
+/// drone stays in the picture).
 pub const HEADING_TAU_S: f32 = 1.2;
-pub const EYE_TAU_S: f32 = 0.35;
+pub const EYE_TAU_S: f32 = 0.12;
 /// The follow camera snaps instead of gliding over a longer way (m).
 pub const SNAP_M: f32 = 60.0;
 /// At least this far above the ground or a solid object (m).
@@ -123,7 +125,6 @@ pub fn glide(prev: Option<Vec3>, goal: Vec3, dt: f32) -> Vec3 {
 pub(crate) struct FollowState {
     heading: Option<Vec3>,
     eye: Option<Vec3>,
-    target: Option<Vec3>,
 }
 
 #[allow(clippy::too_many_arguments)] // a Bevy system
@@ -179,11 +180,9 @@ pub(crate) fn drone_camera(
     ) {
         eye.y = eye.y.max(top as f32 + CLEARANCE_M);
     }
-    let target = glide(state.target, target, dt);
     *state = FollowState {
         heading: Some(h),
         eye: Some(eye),
-        target: Some(target),
     };
     cam.translation = eye;
     cam.look_at(target, Vec3::Y);
@@ -274,7 +273,16 @@ mod tests {
         assert!(h.x > 0.0 && h.x < 0.1, "turns a little per frame: {h}");
         assert_eq!(smooth_heading(None, Vec3::X, 0.1), Vec3::X);
         let e = glide(Some(Vec3::ZERO), Vec3::new(1.0, 0.0, 0.0), 1.0 / 30.0);
-        assert!(e.x > 0.0 && e.x < 0.2);
+        assert!(e.x > 0.0 && e.x < 0.3, "{e}");
+        // Following a drone at 13 m/s: the eye lags less than 2 m.
+        let mut eye = Some(Vec3::ZERO);
+        let mut goal = Vec3::ZERO;
+        for _ in 0..90 {
+            goal.x += 13.0 / 30.0;
+            eye = Some(glide(eye, goal, 1.0 / 30.0));
+        }
+        let lag = goal.x - eye.unwrap().x;
+        assert!(lag > 0.5 && lag < 2.0, "lag {lag}");
         let far = Vec3::new(SNAP_M + 1.0, 0.0, 0.0);
         assert_eq!(glide(Some(Vec3::ZERO), far, 1.0 / 30.0), far);
         assert_eq!(glide(None, far, 0.0), far);
