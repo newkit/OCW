@@ -217,6 +217,19 @@ pub mod hand {
     pub const KNUCKLE_Y: f32 = -0.085;
     /// Where a grip's bar crosses the hand's long axis (y).
     pub const BAR_Y: f32 = -0.07;
+    /// The wrap thumb's joints' angles round the bar (rad, in the hand's
+    /// (x, y) plane about the bar's centre: 0 = the side away from the
+    /// palm, π/2 = towards the wrist): from the palm's edge over the
+    /// wrist's side round to the far side, against the fingers (a power
+    /// grip), over the index finger.
+    pub const WRAP_THUMB_PHI: [f32; 3] = [2.2, 1.3, 0.5];
+    /// The thumb over a hood past its base (x towards the palm's side,
+    /// y, z): down the hood's inner side and forward.
+    pub const HOOD_THUMB: [[f32; 3]; 3] = [
+        [0.02, -0.045, -0.04],
+        [0.034, -0.06, -0.038],
+        [0.044, -0.075, -0.034],
+    ];
     /// The relaxed hand's bend at the index finger's base, middle and
     /// outer joint (rad; each finger towards the little one a little more).
     pub const RELAXED_BEND: [f32; 3] = [0.25, 0.45, 0.25];
@@ -494,19 +507,34 @@ pub mod hand {
             .collect()
     }
 
-    /// The thumb of `shape` on hand `side`: from the palm's front edge;
-    /// on a bar it lies along the bar, over it on the palm's side.
+    /// The thumb of `shape` on hand `side`: from the palm's front edge.
+    /// Round a bar it wraps it against the fingers (bug 2026-11-17, the
+    /// hands upside down): behind and under the tops and the flat grips,
+    /// over the drops and the TT bars. Over a hood it hooks down the
+    /// hood's inner side, forward.
     pub fn thumb(shape: HandShape, side: usize) -> Digit {
         let n = palm_sign(side);
         let base = Vec3::new(n * 0.006, -0.028, -0.034);
+        if shape == HandShape::Hoods {
+            let at = |p: [f32; 3]| Vec3::new(n * p[0], p[1], p[2]);
+            return Digit {
+                points: vec![
+                    base,
+                    at(HOOD_THUMB[0]),
+                    at(HOOD_THUMB[1]),
+                    at(HOOD_THUMB[2]),
+                ],
+                base_end: 2,
+            };
+        }
         match bar_centre(shape, side).filter(|_| shape != HandShape::Phone) {
             Some(b) => {
                 let r = shape.wrap_radius().unwrap_or(WRAP_RADIUS);
                 let rf = r + FINGER_RADIUS + 0.0008;
-                let phi = std::f32::consts::PI - 0.75;
-                let on = |z: f32| b + Vec3::new(n * rf * phi.cos(), rf * phi.sin(), z);
+                let on = |z: f32, phi: f32| b + Vec3::new(n * rf * phi.cos(), rf * phi.sin(), z);
+                let [a, m, e] = WRAP_THUMB_PHI;
                 Digit {
-                    points: vec![base, on(-0.045), on(-0.062), on(-0.08)],
+                    points: vec![base, on(-0.03, a), on(-0.026, m), on(-0.024, e)],
                     base_end: 2,
                 }
             }
