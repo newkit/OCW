@@ -12,6 +12,8 @@ pub mod v1 {
 }
 
 pub mod join;
+pub mod photo;
+pub use photo::{photo_from_wire, photo_message, photo_to_wire};
 mod weather;
 pub use weather::{
     PhysicsRule, WeatherChange, WeatherInfo, choice_from_wire, choice_to_wire,
@@ -140,17 +142,14 @@ pub fn snapshot_look(l: &ocw_core::RiderLook) -> v1::RiderLook {
 pub const MAX_LOOK_BYTES: usize = 128;
 
 /// A look a client sent (Hello, BikeChange), as the server takes it
-/// (spec §14 Phase 4, 4N N12, Q13): the default look when it is larger
-/// than [`MAX_LOOK_BYTES`], else validated with the body shape bounded to
-/// the band of the rider's weight (`weight_kg`, the physics profile's;
-/// the height is the look's). Looks only, never physics.
-pub fn look_from_client(l: &v1::RiderLook, weight_kg: f64) -> ocw_core::RiderLook {
+/// (spec §14 Phase 4, 4N N12): the default look when it is larger than
+/// [`MAX_LOOK_BYTES`], else validated. Any body shape for any weight
+/// (Q23). Looks only, never physics.
+pub fn look_from_client(l: &v1::RiderLook) -> ocw_core::RiderLook {
     if prost::Message::encoded_len(l) > MAX_LOOK_BYTES {
         return ocw_core::RiderLook::default();
     }
-    let mut look = ocw_core::RiderLook::from(l);
-    look.character = look.character.bounded(weight_kg);
-    look
+    ocw_core::RiderLook::from(l)
 }
 
 /// The character of a look from the network, validated (absent fields:
@@ -2059,8 +2058,8 @@ mod tests {
             ..Default::default()
         });
         assert_eq!((stubble.moustache, stubble.beard), (0, 1));
-        // The server's view: bounded to the weight's band, a look over
-        // 128 bytes refused (the default look).
+        // The server's view: any shape for any weight (Q23), a look over
+        // 128 bytes refused.
         let heavy = ocw_core::RiderLook {
             character: Character {
                 shape: BodyShape::Obese,
@@ -2068,10 +2067,8 @@ mod tests {
             },
             ..Default::default()
         };
-        let taken = look_from_client(&heavy.into(), 75.0);
-        assert_eq!(taken.character.shape, BodyShape::Ample, "Normal ± 1");
         assert_eq!(
-            look_from_client(&heavy.into(), 130.0).character.shape,
+            look_from_client(&heavy.into()).character.shape,
             BodyShape::Obese
         );
         let mut huge: v1::RiderLook = heavy.into();
@@ -2106,10 +2103,7 @@ mod tests {
         huge.helmet_pattern = Some(true);
         huge.greying = Some(false);
         assert!(prost::Message::encoded_len(&huge) > MAX_LOOK_BYTES);
-        assert_eq!(
-            look_from_client(&huge, 75.0),
-            ocw_core::RiderLook::default()
-        );
+        assert_eq!(look_from_client(&huge), ocw_core::RiderLook::default());
     }
 
     /// Looks from the network are validated: colours to 24 bits, unknown

@@ -241,20 +241,13 @@ impl CharSlot {
         }
     }
 
-    /// The choices, in palette order; the shapes in the band of
-    /// `weight_kg` at the character's height (4N Q13).
-    pub fn choices(self, c: &Character, weight_kg: f64) -> Vec<Free> {
+    /// The choices, in palette order (every shape for every rider, 4N
+    /// Q23).
+    pub fn choices(self) -> Vec<Free> {
         let n = |len: usize| 0..len as u8;
         match self {
             Self::Body => BaseBody::ALL.into_iter().map(Free::Base).collect(),
-            Self::Shape => {
-                let marker = ch::weight_shape(weight_kg, Some(f64::from(c.validated().height_cm)));
-                BodyShape::ALL
-                    .into_iter()
-                    .filter(|s| s.in_band(marker))
-                    .map(Free::Shape)
-                    .collect()
-            }
+            Self::Shape => BodyShape::ALL.into_iter().map(Free::Shape).collect(),
             Self::Age => Age::ALL.into_iter().map(Free::Age).collect(),
             Self::Skin => n(SKIN_TONES.len()).map(Free::Skin).collect(),
             Self::Hair => n(HAIR_STYLES.len()).map(Free::Hair).collect(),
@@ -389,8 +382,8 @@ impl Region {
 
 /// The rows of a free character slot; the current choice first is not
 /// moved – the picker focuses it ([`Picker::focus_current`]).
-pub fn free_rows(slot: CharSlot, c: &Character, weight_kg: f64) -> Vec<Row> {
-    slot.choices(c, weight_kg)
+pub fn free_rows(slot: CharSlot) -> Vec<Row> {
+    slot.choices()
         .into_iter()
         .map(|f| Row {
             part: None,
@@ -1162,10 +1155,9 @@ impl Picker {
         }
     }
 
-    /// The picker of a free character slot, the current choice focused
-    /// (the shapes: those in the band of `weight_kg`, 4N Q13).
-    pub fn character(slot: CharSlot, now: &Character, weight_kg: f64) -> Self {
-        let rows = free_rows(slot, now, weight_kg);
+    /// The picker of a free character slot, the current choice focused.
+    pub fn character(slot: CharSlot, now: &Character) -> Self {
+        let rows = free_rows(slot);
         let cur = slot.current(now);
         let focus = rows
             .iter()
@@ -1625,7 +1617,7 @@ mod tests {
         assert!(d.iter().any(|l| l.contains("drivetrain +0.1 %")), "{d:?}");
         assert_eq!(d.iter().filter(|l| l.starts_with("Benefit:")).count(), 1);
         // Free rows: the current choice focused, a character line.
-        let p = Picker::character(CharSlot::Skin, &Character::default(), 75.0);
+        let p = Picker::character(CharSlot::Skin, &Character::default());
         assert_eq!(p.preview_free(), Some(Free::Skin(3)));
         assert_eq!(Free::Skin(3).line(), "character --skin 4");
         assert_eq!(Free::Glasses(2).apply(Character::default()).glasses, 2);

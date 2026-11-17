@@ -91,8 +91,6 @@ pub struct Ctx<'a> {
     pub boxes: &'a [[Vec3; 8]],
     /// The rider's character now (spec 4C).
     pub character: ocw_core::Character,
-    /// The rider profile's weight (kg): the shape's band (4N Q13).
-    pub weight_kg: f64,
     /// The rider's whole look now (the designer's start, Phase 8 T6).
     pub look: ocw_core::RiderLook,
     /// The standing rider's hotspots (world; [`Region::ALL`] order).
@@ -221,7 +219,7 @@ impl Workshop {
     /// Opens the picker of the editor's slot (not *Try on the bike*).
     fn open_mirror_picker(&mut self, ctx: &Ctx) {
         self.picker = match self.dress.slot() {
-            MirrorSlot::Char(c) => Some(Picker::character(c, &ctx.character, ctx.weight_kg)),
+            MirrorSlot::Char(c) => Some(Picker::character(c, &ctx.character)),
             MirrorSlot::Kit(slot) => Some(Picker::kit(
                 slot,
                 picker::kit_rows(ctx.cat, ctx.garage, slot),
@@ -991,7 +989,6 @@ pub(crate) mod tests {
                 anchors: &self.anchors,
                 boxes: &boxes,
                 character: ocw_core::Character::default(),
-                weight_kg: 75.0,
                 look: ocw_core::RiderLook::default(),
                 rider_spots: &self.spots,
             };
@@ -1020,7 +1017,6 @@ pub(crate) mod tests {
                 anchors: &self.anchors,
                 boxes: &boxes,
                 character: ocw_core::Character::default(),
-                weight_kg: 75.0,
                 look: ocw_core::RiderLook::default(),
                 rider_spots: &self.spots,
             };
@@ -1350,7 +1346,6 @@ pub(crate) mod tests {
                 anchors: &world.anchors,
                 boxes: &boxes,
                 character: ocw_core::Character::default(),
-                weight_kg: 75.0,
                 look: ocw_core::RiderLook::default(),
                 rider_spots: &world.spots,
             };
@@ -1370,7 +1365,6 @@ pub(crate) mod tests {
             anchors: &world.anchors,
             boxes: &boxes,
             character: ocw_core::Character::default(),
-            weight_kg: 75.0,
             look: ocw_core::RiderLook::default(),
             rider_spots: &world.spots,
         };

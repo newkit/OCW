@@ -10,11 +10,11 @@
 //! **The body (4N Q6, Q6b, Q7):** two independent dimensions – the
 //! **base body** A / B / C (shoulders, hips, chest; a shape choice, not a
 //! sex or gender field) and the **shape**, seven named steps from
-//! *anorexia* to *obese*. **The shape is bounded (Q13)** to a band
-//! around the shape the profile's weight and height give
-//! ([`weight_shape`], the *Match my weight* marker); the band's width is
-//! [`SHAPE_BAND_STEPS`] (Q23, open: built as proposed, one step either
-//! side). **The appearance age (Q12)** changes the face (lines, a softer
+//! *anorexia* to *obese*. **Every shape can be chosen whatever weight
+//! and height say (Q23, replacing Q13's band):** the shape the profile's
+//! weight and height give ([`weight_shape`]) is only a proposal – the
+//! preselected shape of a new rider and the *Match my weight* marker,
+//! never a limit. **The appearance age (Q12)** changes the face (lines, a softer
 //! jaw), the body (posture, a fuller middle), the skin (less saturated)
 //! and the hair (greying unless *Keep my hair colour*).
 
@@ -130,7 +130,8 @@ impl BaseBody {
 }
 
 /// The body shape (4N Q6, Q7): seven named steps, each with its picture
-/// in the editor; bounded to a band around [`weight_shape`] (Q13).
+/// in the editor; any of them for any rider (Q23), [`weight_shape`]
+/// proposes one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
 pub enum BodyShape {
     Anorexia,
@@ -247,47 +248,20 @@ impl BodyShape {
     }
 }
 
-/// The body-shape band's width (4N Q13, **Q23 open**): the shape can be
-/// chosen this many steps either side of [`weight_shape`]. Built as
-/// proposed (one step either side: three of the seven shapes open to
-/// each rider) until the user decides Q23.
-pub const SHAPE_BAND_STEPS: usize = 1;
-
 /// The body-mass index of `weight_kg` at `height_cm`.
 pub fn bmi(weight_kg: f64, height_cm: f64) -> f64 {
     let m = height_cm.max(1.0) / 100.0;
     weight_kg / (m * m)
 }
 
-/// The *Match my weight* shape (4N Q13): what the profile's weight and
-/// height give (no height: the default 1.78 m).
+/// The *Match my weight* shape (4N Q13, Q23): what the profile's weight
+/// and height give (no height: the default 1.78 m) – a proposal (a new
+/// rider's preselected shape, the editor's marker), never a limit.
 pub fn weight_shape(weight_kg: f64, height_cm: Option<f64>) -> BodyShape {
     BodyShape::from_bmi(bmi(
         weight_kg,
         height_cm.unwrap_or(f64::from(DEFAULT_HEIGHT_CM)),
     ))
-}
-
-/// The shapes open to a rider whose weight and height give `marker`:
-/// [`SHAPE_BAND_STEPS`] either side, within the seven.
-pub fn shape_band(marker: BodyShape) -> (BodyShape, BodyShape) {
-    let i = marker.index() as isize;
-    let w = SHAPE_BAND_STEPS as isize;
-    (BodyShape::at(i - w), BodyShape::at(i + w))
-}
-
-impl BodyShape {
-    /// This shape moved into the band around `marker` (the nearest edge
-    /// when outside, Q13).
-    pub fn bounded(self, marker: BodyShape) -> Self {
-        let (lo, hi) = shape_band(marker);
-        self.clamp(lo, hi)
-    }
-
-    /// Whether this shape is in the band around `marker`.
-    pub fn in_band(self, marker: BodyShape) -> bool {
-        self.bounded(marker) == self
-    }
 }
 
 /// The appearance age (4N N3): six steps, never a birth date or a number
@@ -653,16 +627,6 @@ impl Character {
         }
     }
 
-    /// The shape bounded to the band of the rider's weight (4N Q13; the
-    /// height is the character's).
-    pub fn bounded(self, weight_kg: f64) -> Self {
-        let marker = weight_shape(weight_kg, Some(f64::from(self.validated().height_cm)));
-        Self {
-            shape: self.shape.bounded(marker),
-            ..self
-        }
-    }
-
     /// The scale of the rider model's lengths (1 = 1.78 m).
     pub fn scale(&self) -> f32 {
         f32::from(self.validated().height_cm) / f32::from(DEFAULT_HEIGHT_CM)
@@ -854,12 +818,10 @@ mod tests {
         assert_eq!(BaseBody::from_wire(5), BaseBody::A);
     }
 
-    /// The shape band (4N Q13): the marker from weight and height, the
-    /// band one step either side (Q23 proposal), a shape outside moved to
-    /// the nearest edge; a change of weight or height moves the band.
+    /// The *Match my weight* proposal (4N Q13, Q23): the shape of the
+    /// body-mass index of weight and height – a proposal, not a limit.
     #[test]
-    fn the_shape_is_bounded_to_a_band_around_the_weight() {
-        assert_eq!(SHAPE_BAND_STEPS, 1, "Q23 open: built as proposed");
+    fn weight_and_height_propose_a_shape() {
         // BMI steps: 16, 18.5, 21, 25, 28, 32.
         assert_eq!(BodyShape::from_bmi(14.0), BodyShape::Anorexia);
         assert_eq!(BodyShape::from_bmi(17.0), BodyShape::Skinny);
@@ -874,40 +836,8 @@ mod tests {
         assert_eq!(weight_shape(75.0, Some(160.0)), BodyShape::Fat);
         assert_eq!(weight_shape(75.0, Some(200.0)), BodyShape::Slim);
         assert_eq!(weight_shape(75.0, None), BodyShape::Normal);
-        // Three shapes open in the middle, two at the ends.
-        assert_eq!(
-            shape_band(BodyShape::Normal),
-            (BodyShape::Slim, BodyShape::Ample)
-        );
-        assert_eq!(
-            shape_band(BodyShape::Anorexia),
-            (BodyShape::Anorexia, BodyShape::Skinny)
-        );
-        assert_eq!(
-            shape_band(BodyShape::Obese),
-            (BodyShape::Fat, BodyShape::Obese)
-        );
-        assert_eq!(
-            BodyShape::Obese.bounded(BodyShape::Normal),
-            BodyShape::Ample
-        );
-        assert_eq!(
-            BodyShape::Anorexia.bounded(BodyShape::Normal),
-            BodyShape::Slim
-        );
-        assert!(BodyShape::Ample.in_band(BodyShape::Normal));
-        assert!(!BodyShape::Fat.in_band(BodyShape::Normal));
-        let c = Character {
-            shape: BodyShape::Obese,
-            ..Character::default()
-        };
-        assert_eq!(c.bounded(75.0).shape, BodyShape::Ample);
-        assert_eq!(c.bounded(120.0).shape, BodyShape::Obese);
-        let short = Character {
-            height_cm: 160,
-            ..c
-        };
-        assert_eq!(short.bounded(75.0).shape, BodyShape::Obese, "Fat ± 1");
+        assert_eq!(weight_shape(45.0, Some(178.0)), BodyShape::Anorexia);
+        assert_eq!(weight_shape(120.0, Some(178.0)), BodyShape::Obese);
     }
 
     /// The appearance age (4N Q12): face, body, skin and hair; greying per

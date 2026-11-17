@@ -1,6 +1,7 @@
 //! The character pages of the in-game menu (spec §14 Phase 4, 4N N10;
 //! both apps, B6): Workshop → Character with Body (base body A / B / C,
-//! the seven shapes bounded to the band of the weight with the *Match my
+//! the seven shapes – any of them, weight and height only propose one with
+//! the *Match my
 //! weight* marker), Face and age, Hair, Facial hair. Every change is a
 //! `character …` console line (the same command in both apps; the
 //! browser's anonymous rider gets the locked mirror's answer, Phase 10
@@ -41,12 +42,12 @@ fn stepper(label: &str, value: String, at: usize, n: usize, arg: impl Fn(usize) 
     }
 }
 
-/// The shape row (Q13): ← / → within the band only (no wrap), the value
-/// with the *Match my weight* marker.
+/// The shape row: ← / → through all seven (4N Q23: no limit; no wrap
+/// from obese to anorexia), the value with the *Match my weight* marker
+/// (the shape weight and height propose, Q13).
 fn shape_row(now: BodyShape, marker: BodyShape) -> Row {
-    let (lo, hi) = ch::shape_band(marker);
     let step = |d: isize| {
-        let s = BodyShape::at(now.index() as isize + d).clamp(lo, hi);
+        let s = BodyShape::at(now.index() as isize + d);
         (s != now).then(|| line(&format!("--shape {}", s.id())))
     };
     let mark = if now == marker {
@@ -331,10 +332,10 @@ mod tests {
         assert_eq!(row(&facial, "Colour").value.as_deref(), Some("the hair's"));
     }
 
-    /// The shape row stays in the band (4N Q13; one step either side,
-    /// Q23 as proposed) and shows the *Match my weight* marker.
+    /// The shape row reaches every shape for any weight (4N Q23) and
+    /// shows the *Match my weight* proposal.
     #[test]
-    fn the_shape_row_stays_in_the_band_of_the_weight() {
+    fn the_shape_row_reaches_every_shape_and_marks_the_proposal() {
         let r = rider(75.0, Some(178.0));
         let body = rows(Page::CharacterBody, &r);
         let shape = row(&body, "Shape");
@@ -354,7 +355,7 @@ mod tests {
         let body = rows(Page::CharacterBody, &ample);
         let shape = row(&body, "Shape");
         assert_eq!(shape.value.as_deref(), Some("Ample (your weight: Normal)"));
-        assert_eq!(shape.right, None, "fat is outside the band");
+        assert_eq!(shape.right.as_deref(), Some("character --shape fat"));
         assert_eq!(
             row(&body, "Match my weight").confirm,
             Some(Activate::Command("character --match-weight".into()))
@@ -365,6 +366,27 @@ mod tests {
         assert!(shape.value.unwrap().contains("your weight: Obese"));
         let tall = rider(75.0, Some(200.0));
         assert_eq!(tall.weight_shape(), BodyShape::Slim);
+        // Walking the row from anorexia reaches obese at 75 kg.
+        let mut walk = r.clone();
+        walk.set_character(ocw_core::Character {
+            shape: BodyShape::Anorexia,
+            ..r.character()
+        });
+        assert_eq!(row(&rows(Page::CharacterBody, &walk), "Shape").left, None);
+        let mut seen = vec![walk.character().shape];
+        while let Some(next) = row(&rows(Page::CharacterBody, &walk), "Shape")
+            .right
+            .clone()
+        {
+            let id = next.trim_start_matches("character --shape ");
+            let shape = BodyShape::parse(id).unwrap();
+            walk.set_character(ocw_core::Character {
+                shape,
+                ..walk.character()
+            });
+            seen.push(shape);
+        }
+        assert_eq!(seen, BodyShape::ALL);
     }
 
     #[test]

@@ -790,6 +790,7 @@ mod tests {
             pages::Page::Bike(0),
             pages::Page::RidingAids,
             pages::Page::Graphics,
+            pages::Page::ViewDistance,
             pages::Page::EventRules,
         ]) {
             let rows = {

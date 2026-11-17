@@ -546,7 +546,11 @@ pub fn node_translation(m: &Model, i: usize, c: &ocw_core::Character) -> Vec3 {
         return node.translation;
     }
     let g = girth_of(TORSO, c);
-    Vec3::new(node.translation.x * g.x, node.translation.y, node.translation.z)
+    Vec3::new(
+        node.translation.x * g.x,
+        node.translation.y,
+        node.translation.z,
+    )
 }
 
 /// The mesh transform of node `i` for the character `c`: its girth

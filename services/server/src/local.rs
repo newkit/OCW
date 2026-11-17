@@ -56,6 +56,9 @@ pub fn local_config(bots: u32, start_m: f64) -> ServerConfig {
         // rides as they are; a token in the hello is ignored.
         auth: None,
         auth_required: false,
+        // The photographer's gap is the client's to keep here (dev
+        // commands: no gap on the server).
+        photo_gap_s: None,
     }
 }
 

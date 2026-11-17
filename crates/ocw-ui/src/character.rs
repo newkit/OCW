@@ -4,8 +4,8 @@
 //! gets the locked mirror's answer, Phase 10 Q5). The rows of the menu's
 //! character pages (`ocw_client::menu::character`) are lines of it.
 //!
-//! The shape is bounded to the band around what the profile's weight and
-//! height give (4N Q13; `--match-weight` snaps to it); looks only, never
+//! Every shape can be chosen whatever weight and height say (4N Q23);
+//! `--match-weight` takes the shape they propose. Looks only, never
 //! physics.
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
@@ -54,7 +54,7 @@ pub fn command() -> Command {
                         format!("{s:?}: anorexia, skinny, slim, normal, ample, fat or obese")
                     })
                 })
-                .help("Body shape, within the band of your weight and height"),
+                .help("Body shape (any; --match-weight: the one your weight and height propose)"),
         )
         .arg(
             Arg::new("build")
@@ -130,8 +130,8 @@ pub fn command() -> Command {
 }
 
 /// Applies the options to `c` for a rider of `weight_kg` and
-/// `height_cm` (the profile's): `Err` for a shape outside the band
-/// (Q13). The result is validated and bounded.
+/// `height_cm` (the profile's: they give `--match-weight`'s shape). The
+/// result is validated.
 pub fn apply(
     c: &mut Character,
     m: &ArgMatches,
@@ -148,16 +148,6 @@ pub fn apply(
             .map(BodyShape::from_build)
     });
     if let Some(s) = shape {
-        if !s.in_band(marker) {
-            let (lo, hi) = ch::shape_band(marker);
-            return Err(format!(
-                "{} is outside your band: {} to {} (Match my weight: {}, from your weight and height)",
-                s.id(),
-                lo.id(),
-                hi.id(),
-                marker.id()
-            ));
-        }
         c.shape = s;
     }
     if m.get_flag("match_weight") {
@@ -194,7 +184,7 @@ pub fn apply(
     if let Some(v) = idx("glasses") {
         c.glasses = v;
     }
-    *c = c.validated().bounded(weight_kg);
+    *c = c.validated();
     Ok(())
 }
 
@@ -238,22 +228,26 @@ mod tests {
         assert!(run(&mut c, "--age 90s", 75.0).is_err());
     }
 
-    /// The shape stays in the band of the weight (4N Q13), and
-    /// `--match-weight` snaps to its marker.
+    /// Every shape can be chosen for any weight and height (4N Q23);
+    /// `--match-weight` takes the proposed one.
     #[test]
-    fn the_shape_is_bounded_and_matches_the_weight() {
+    fn every_shape_is_selectable_and_match_weight_proposes() {
+        for kg in [45.0, 75.0, 130.0] {
+            for s in BodyShape::ALL {
+                let mut c = Character::default();
+                run(&mut c, &format!("--shape {}", s.id()), kg).unwrap();
+                assert_eq!(c.shape, s, "{kg} kg");
+            }
+        }
         let mut c = Character::default();
-        let e = run(&mut c, "--shape obese", 75.0).unwrap_err();
-        assert!(e.contains("slim to ample"), "{e}");
-        assert_eq!(c.shape, BodyShape::Normal, "unchanged");
-        run(&mut c, "--shape ample", 75.0).unwrap();
-        assert_eq!(c.shape, BodyShape::Ample);
         run(&mut c, "--match-weight", 75.0).unwrap();
         assert_eq!(c.shape, BodyShape::Normal);
         run(&mut c, "--match-weight", 120.0).unwrap();
         assert_eq!(c.shape, BodyShape::Obese);
-        // An older line (W4 builds) still works, inside the band.
-        run(&mut c, "--build strong", 90.0).unwrap();
+        run(&mut c, "--match-weight", 45.0).unwrap();
+        assert_eq!(c.shape, BodyShape::Anorexia);
+        // An older line (W4 builds) still works.
+        run(&mut c, "--build strong", 50.0).unwrap();
         assert_eq!(c.shape, BodyShape::Ample);
     }
 }

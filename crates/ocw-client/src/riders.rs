@@ -260,9 +260,8 @@ impl Rider {
     /// The character (spec 4C, 4N): the height from the profile, the rest
     /// from the character keys (unset: the default's); a version-1 file
     /// is migrated (N11: the build to the shape, the face's facial hair
-    /// to moustache and beard). The shape is bounded to the band of the
-    /// profile's weight and height (Q13: a change of weight or height
-    /// moves the band; a shape outside is moved to its nearest edge).
+    /// to moustache and beard). Any shape (4N Q23: weight and height only
+    /// propose one, [`Rider::weight_shape`]).
     pub fn character(&self) -> Character {
         use ocw_core::character::{self as ch, Age, BEARDS, MOUSTACHES};
         let d = Character::default();
@@ -324,23 +323,19 @@ impl Rider {
             glasses: self.glasses.unwrap_or(d.glasses),
         }
         .with_height(self.height_cm)
-        .bounded(self.weight_kg)
     }
 
-    /// The *Match my weight* shape of this profile (4N Q13).
+    /// The *Match my weight* shape of this profile (4N Q13, Q23): a
+    /// proposal – a new rider starts with it –, never a limit.
     pub fn weight_shape(&self) -> BodyShape {
         ocw_core::character::weight_shape(self.weight_kg, self.height_cm)
     }
 
-    /// Sets the character's free choices (the height stays the profile's;
-    /// the shape is bounded to the weight's band). Writes version 2 of the
-    /// keys, and the W4 keys for older apps.
+    /// Sets the character's free choices (the height stays the profile's).
+    /// Writes version 2 of the keys, and the W4 keys for older apps.
     pub fn set_character(&mut self, c: Character) {
         use ocw_core::character::{self as ch, BEARDS, MOUSTACHES};
-        let c = c
-            .validated()
-            .with_height(self.height_cm)
-            .bounded(self.weight_kg);
+        let c = c.validated().with_height(self.height_cm);
         self.character_version = Some(2);
         self.body = Some(c.base.id().into());
         self.shape = Some(c.shape.id().into());
@@ -707,6 +702,11 @@ impl Riders {
         let mut rider = rider;
         rider.name = ocw_core::name::check(&rider.name).map_err(|e| e.to_string())?;
         rider.validate()?;
+        // A new rider starts with the shape weight and height propose
+        // (4N Q23), unless it brings one.
+        if rider.shape.is_none() && rider.body_build.is_none() {
+            rider.shape = Some(rider.weight_shape().id().into());
+        }
         if self.find(&rider.name).is_some() {
             return Err(format!("there is already a rider {:?}", rider.name));
         }
@@ -1070,6 +1070,42 @@ ftp_w = 5000
         assert_ne!(first, second);
         r.add(rider(&second, 70.0)).unwrap();
         assert!(r.find(&r.new_name()).is_none());
+    }
+
+    /// The shape (spec §14 Phase 4, 4N Q23): a new rider starts with the
+    /// shape weight and height propose; any shape can be set and is kept
+    /// (saved and loaded) whatever the weight, also after the weight
+    /// changes.
+    #[test]
+    fn any_shape_is_kept_and_a_new_rider_starts_with_the_proposal() {
+        use ocw_core::BodyShape;
+        let mut r = Riders::default();
+        r.add(Rider {
+            name: "Ada Rider".into(),
+            weight_kg: 120.0,
+            height_cm: Some(178.0),
+            ..Rider::default()
+        })
+        .unwrap();
+        assert_eq!(r.riders[0].character().shape, BodyShape::Obese);
+        for s in BodyShape::ALL {
+            let mut a = r.riders[0].clone();
+            a.set_character(Character {
+                shape: s,
+                ..a.character()
+            });
+            assert_eq!(a.character().shape, s);
+            let text = toml::to_string(&Riders {
+                riders: vec![a.clone()],
+                ..Riders::default()
+            })
+            .unwrap();
+            let (back, _) = Riders::parse(&text).unwrap();
+            assert_eq!(back.riders[0].character().shape, s, "{text}");
+            a.weight_kg = 55.0;
+            assert_eq!(a.character().shape, s, "the weight does not move it");
+            assert_eq!(a.weight_shape(), BodyShape::Skinny);
+        }
     }
 
     /// New names follow the 4N rules (spec §14 Phase 4, N1), normalized;

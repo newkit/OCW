@@ -209,6 +209,8 @@ pub struct ClientCore {
     carried: Option<v1::DamageState>,
     /// The signed-in rider's access token for the hello (spec §9.1).
     access_token: Option<String>,
+    /// The other riders' photographer shots (spec §2.11, v4.38).
+    photos: crate::photographer::RemoteShots,
 }
 
 /// Steering mode before the menu opened (spec §3.2.1), restored on closing.
@@ -282,6 +284,7 @@ impl ClientCore {
             damage: Default::default(),
             carried: None,
             access_token: None,
+            photos: Default::default(),
             route,
         }
     }
@@ -691,6 +694,15 @@ impl ClientCore {
                     self.steer_sent = None;
                 }
                 self.refresh_physics();
+                None
+            }
+            S::Photo(p) => {
+                if let Some(shot) = ocw_protocol::photo_from_wire(&p)
+                    && Some(RiderId(shot.rider)) != self.rider_id
+                {
+                    let t = self.photo_time_s(now_s).unwrap_or(0.0);
+                    self.photos.on_message(shot, t);
+                }
                 None
             }
             S::RiderBuild(b) => {
@@ -1947,6 +1959,40 @@ impl ClientCore {
                 .map(|b| (b, (tick - b.tick as f64) * ocw_core::SIM_DT)),
             shake,
         )
+    }
+
+    /// The game time now (s): the server's tick time (tick / 50), estimated
+    /// from the last snapshot – the time base every client shares (the
+    /// ride photographer's shots, spec §2.11); `None` before the first
+    /// snapshot (the welcome comes first: a 0 there would start the
+    /// photographer's ride at the session's start).
+    pub fn server_time_s(&self, now_s: f64) -> Option<f64> {
+        self.last_snapshot_at?;
+        Some(self.server_tick_now(now_s) * ocw_core::SIM_DT)
+    }
+
+    /// The game time the other riders are drawn at (s): slightly in the
+    /// past, as their interpolated places; their photographers are drawn
+    /// at it too.
+    pub fn photo_time_s(&self, now_s: f64) -> Option<f64> {
+        Some(self.server_time_s(now_s)? - INTERPOLATION_DELAY_S)
+    }
+
+    /// The other riders' photographer shots (spec §2.11).
+    pub fn remote_shots(&self) -> &crate::photographer::RemoteShots {
+        &self.photos
+    }
+
+    /// Forgets the other riders' shots that are long over.
+    pub fn prune_shots(&mut self, now_s: f64) {
+        if let Some(t) = self.photo_time_s(now_s) {
+            self.photos.prune(t);
+        }
+    }
+
+    /// The message announcing or updating the own photographer's shot.
+    pub fn photo_message(shot: &ocw_world::photo_share::SharedShot) -> Vec<u8> {
+        ocw_protocol::encode(&ocw_protocol::photo_message(shot))
     }
 
     /// The server tick now, estimated from the last snapshot.
@@ -4212,6 +4258,183 @@ mod tests {
             h.client.ghost_state(h.time_s).is_none(),
             "gone at the finish"
         );
+    }
+
+    /// Regression (v4.38): the game time the photographer runs on exists
+    /// only from the first snapshot – the welcome comes before it, and a 0
+    /// then started the photographer's ride at the session's start (a
+    /// photo at once after joining a server that had run for minutes).
+    #[test]
+    fn the_shared_game_time_starts_with_the_first_snapshot() {
+        let server = GameServer::new(route(), ServerConfig::default());
+        let mut h = Harness::with(
+            server,
+            ClientCore::new(route(), "Ada Rider", RiderProfile::default()),
+        );
+        assert!(h.client.rider_id().is_some(), "welcomed");
+        assert_eq!(h.client.server_time_s(h.time_s), None);
+        assert_eq!(h.client.photo_time_s(h.time_s), None);
+        h.ride(200.0, 1.0);
+        let t = h.client.server_time_s(h.time_s).unwrap();
+        assert!((t - h.server.game_time_s()).abs() < 0.2, "{t}");
+        let p = h.client.photo_time_s(h.time_s).unwrap();
+        assert!((t - p - INTERPOLATION_DELAY_S).abs() < 1e-9);
+    }
+
+    /// The ride photographer seen by another rider (spec §2.11 Q2, v4.38):
+    /// the first rider's client shares its drone shot through the server;
+    /// the second rider's client draws the same pilot and the same drone
+    /// flight at the same game time, the flash at the photo's moment.
+    #[test]
+    fn another_rider_sees_the_photographer_at_the_same_place_and_time() {
+        use crate::photographer::{Limits, Photographer, RemoteShot, remote_scene};
+        use ocw_world::photo::{Conditions, FnScene};
+        use ocw_world::photo_share::SharedShot;
+        let mut h = Harness::new(0, true);
+        h.ride(250.0, 2.0);
+        let me = h.client.rider_id().unwrap();
+        let conn = h.server.connect();
+        let mut guest = ClientCore::new(route(), "Bea Climber", RiderProfile::default());
+        for r in h.server.handle(conn, &guest.hello()) {
+            guest.on_server_message(&r, h.time_s);
+        }
+        let scene = FnScene {
+            ground: |_, _| Some(-5.0),
+            water: |x: f64, _| x > 400.0,
+            canopy: |_, _| 0.0,
+            solids: Vec::new(),
+            landmarks: Vec::new(),
+        };
+        let mut p = Photographer::new(Limits::scaled(10.0), 5);
+        p.force_drone();
+        let mut sent: Option<SharedShot> = None;
+        let mut first: Option<SharedShot> = None;
+        let mut owner = Vec::new();
+        let mut live = Vec::new();
+        let mut taken = None;
+        let mut gone = false;
+        let ticks = 450 * ocw_core::SIM_TICK_HZ;
+        for _ in 0..ticks {
+            if (h.time_s * 4.0).fract() < 1e-9
+                && let Some(sample) = h.client.on_device_event(power(250.0, h.time_s))
+            {
+                h.send(&sample);
+            }
+            for msg in h.server.tick() {
+                h.receive(&msg);
+                guest.on_server_message(&msg, h.time_s);
+            }
+            h.client.predict_step();
+            let t = h.client.server_time_s(h.time_s).unwrap();
+            let st = h.client.state();
+            let (sc, ev) = p.frame(
+                t,
+                h.client.track(),
+                st.distance,
+                st.lateral_offset,
+                st.speed,
+                &scene,
+                &Conditions::default(),
+                &|_| false,
+            );
+            if ev.photo.is_some() && taken.is_none() {
+                taken = Some(t);
+            }
+            if let Some(s) = p.shared()
+                && sent.as_ref() != Some(s)
+            {
+                let bytes = ClientCore::photo_message(s);
+                h.send(&bytes);
+                if s.shot == 1 {
+                    // (the next shot is planned after this one)
+                    first = Some(s.clone());
+                    gone = s.gone_at.is_some();
+                }
+                sent = Some(s.clone());
+            }
+            if let Some(sc) = sc
+                && first
+                    .as_ref()
+                    .is_some_and(|f| f.ended().is_none_or(|e| t < e))
+            {
+                owner.push((t, sc));
+            }
+            let gt = guest.photo_time_s(h.time_s).unwrap_or(f64::NEG_INFINITY);
+            let near = guest.track().sample(guest.state().distance).position;
+            if let Some(r) = guest
+                .remote_shots()
+                .scenes(gt, &scene, near)
+                .iter()
+                .find(|r| r.shot == 1)
+            {
+                live.push((gt, r.scene.clone()));
+            }
+            h.time_s += ocw_core::SIM_DT;
+            h.time_s = (h.time_s * 1000.0).round() / 1000.0;
+            if gone && taken.is_some() && guest.photo_time_s(h.time_s).is_some_and(|g| g > t + 1.0)
+            {
+                break;
+            }
+        }
+        let taken = taken.expect("the photo");
+        assert!(
+            gone,
+            "the photographer left: taken {taken}, now {}, {:?}, visit {:?}",
+            h.client.server_time_s(h.time_s).unwrap(),
+            p.shared()
+                .map(|s| (s.shot, s.taken_at, s.gone_at, s.aborted_at)),
+            p.visit()
+                .map(|v| matches!(v, crate::photographer::Visit::Drone { .. }))
+        );
+        let shot: &RemoteShot = guest
+            .remote_shots()
+            .get(me.0, 1)
+            .expect("the guest got the shot");
+        assert!(shot.shot.flight.is_some(), "a drone's shot");
+        assert_eq!(shot.shot.taken_at, Some(taken));
+        assert_eq!(shot.flash_at, Some(taken), "the flash at the photo's time");
+        let mine = first.unwrap();
+        assert_eq!(
+            SharedShot {
+                rider: me.0,
+                ..mine
+            },
+            shot.shot
+        );
+        // The guest draws at every moment what the owner drew then.
+        let mut drone_frames = 0;
+        for (t, o) in &owner {
+            let r = remote_scene(shot, *t, &scene).expect("drawn by the guest");
+            assert_eq!(r.person, o.person, "t {t}");
+            assert_eq!(r.flash, o.flash, "t {t}");
+            assert_eq!(r.seed, o.seed);
+            match (r.drone, o.drone) {
+                (Some(a), Some(b)) => {
+                    assert_eq!(
+                        (a.pos, a.look, a.phase, a.rotor),
+                        (b.pos, b.look, b.phase, b.rotor)
+                    );
+                    drone_frames += 1;
+                }
+                (a, b) => assert_eq!(a.is_some(), b.is_some(), "t {t}"),
+            }
+        }
+        assert!(drone_frames > 30 * 50, "the drone flew: {drone_frames}");
+        // And the guest's own frames, with what it knew then, agree.
+        assert!(!live.is_empty());
+        for (t, l) in &live {
+            let r = remote_scene(shot, *t, &scene).unwrap();
+            assert_eq!(
+                l.drone.map(|d| d.pos),
+                r.drone.map(|d| d.pos),
+                "the guest at {t}"
+            );
+        }
+        assert!(
+            live.iter().any(|(_, l)| l.flash.is_some()),
+            "the guest saw the flash"
+        );
+        assert_eq!(h.server.photos_taken(me).first(), Some(&taken));
     }
 
     /// God mode end to end (spec §14 Phase 13F): enter, the poses reach the

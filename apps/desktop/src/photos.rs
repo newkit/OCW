@@ -72,21 +72,45 @@ fn chase_shots(
     label: Option<Res<ocw_render::hud::VersionLabel>>,
     mut shots: ResMut<ChaseShots>,
 ) {
-    let Some(p) = view.photographer else {
-        return;
-    };
     let v = |a: [f64; 3]| Vec3::new(a[0] as f32, a[1] as f32, a[2] as f32);
-    let person = p.person.is_some_and(|f| frustum.sees(v(f.lens)));
-    let drone = p
-        .drone
-        .is_some_and(|d| d.rotor > 0.5 && frustum.sees(v(d.pos)));
+    let seen = |p: &ocw_render::photographer::PhotographerView| {
+        let person = p.person.is_some_and(|f| frustum.sees(v(f.lens)));
+        let drone = p
+            .drone
+            .is_some_and(|d| d.rotor > 0.5 && frustum.sees(v(d.pos)));
+        let flash = p.flash.is_some_and(|(at, _)| frustum.sees(v(at)));
+        (person, drone, flash)
+    };
+    // The own photographer, else another rider's (spec §2.11 Q2).
+    let own = view.photographer.as_ref().map(seen);
+    let other = view
+        .photographers
+        .iter()
+        .map(seen)
+        .find(|(p, d, _)| *p || *d);
+    let (person, drone, flash, theirs) = match (own, other) {
+        (Some((p, d, f)), _) if p || d => (p, d, f, false),
+        (_, Some((p, d, f))) => (p, d, f, true),
+        _ => return,
+    };
     let t = time.elapsed_secs_f64();
-    if !(person || drone) || t - shots.last < 3.0 || shots.n >= 60 {
+    // Not in the first seconds (the window may not show the world yet).
+    if t < 8.0 {
+        return;
+    }
+    // A flash in view is shot at once (it lasts a tenth of a second).
+    if !(person || drone) || (t - shots.last < 3.0 && !flash) || shots.n >= 60 {
         return;
     }
     shots.last = t;
     shots.n += 1;
-    let kind = if drone { "drone" } else { "photographer" };
+    let kind = match (theirs, drone, flash) {
+        (false, true, _) => "drone",
+        (false, false, _) => "photographer",
+        (true, _, true) => "other-flash",
+        (true, true, false) => "other-drone",
+        (true, false, false) => "other-photographer",
+    };
     let path = shots.dir.join(format!("chase-{:02}-{kind}.jpg", shots.n));
     let _ = std::fs::create_dir_all(&shots.dir);
     info!(path = %path.display(), "chase view with the {kind}");
@@ -98,7 +122,7 @@ fn chase_shots(
         ));
 }
 
-fn play(world: &World, msg: MixerMsg) {
+fn play(world: &mut World, msg: MixerMsg) {
     if let Some(a) = world.get_resource::<crate::audio::GameAudio>() {
         a.send(msg);
     }

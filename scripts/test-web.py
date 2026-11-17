@@ -471,15 +471,29 @@ def main():
             cdp.pump(0.2)
         f1 = cdp.eval("[window.ocwFrames, performance.now()]")
         fps = (f1[0] - f0[0]) * 1000.0 / max(1.0, f1[1] - f0[1]) if f0 and f1 else None
+        # The render distance (spec §14 Phase 10, 10G): dynamic by default
+        # (Q8), 60 fps in the browser (Q9); the distance it chose.
+        cdp.eval("window.ocw && window.ocw.console('view')")
+        end = time.time() + 3.0
+        while time.time() < end:
+            cdp.pump(0.2)
+            if any(e["method"] == "Runtime.consoleAPICalled" and "view:" in console_text(e)
+                   for e in cdp.events[mark:]):
+                break
         said = [console_text(e) for e in cdp.events[mark:] if e["method"] == "Runtime.consoleAPICalled"]
         gpu_lines = [t for t in said if "gpu:" in t or "quality" in t]
         lines.extend(f"[gpu] {t}" for t in gpu_lines)
+        view_lines = [t for t in said if "view:" in t or "view distance:" in t]
+        lines.extend(f"[view] {t}" for t in view_lines)
+        summary["view_console"] = view_lines
+        summary["view_ok"] = any("view:" in t and "(auto" in t and "target 60 fps" in t
+                                 for t in view_lines)
         want_api = {"webgpu": "WebGPU", "webgl2": "WebGL2"}[a.gpu]
         summary["fps"] = round(fps, 1) if fps is not None else None
         summary["gpu_console"] = gpu_lines
         summary["gpu_ok"] = bool(summary["gpu"] and summary["gpu"].get("api") == a.gpu
                                  and any(want_api in t for t in gpu_lines))
-        first["ok"] = first["ok"] and summary["gpu_ok"]
+        first["ok"] = first["ok"] and summary["gpu_ok"] and summary["view_ok"]
         if not a.world and not a.no_ui and first["ok"]:
             sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
             import web_ui_test
@@ -562,7 +576,7 @@ def main():
     with open(base + ".json", "w") as f:
         json.dump(summary, f, indent=2)
     print("\n".join(lines[-20:]))
-    keys = ("ok", "gpu", "gpu_ok", "gpu_console", "fps", "adapter", "page_timing", "joined_s",
+    keys = ("ok", "gpu", "gpu_ok", "gpu_console", "view_ok", "view_console", "fps", "adapter", "page_timing", "joined_s",
             "first_tick_s", "ticks", "last", "errors", "error", "second_load")
     print(json.dumps({k: summary.get(k) for k in keys}, indent=2))
     if "ui" in summary:

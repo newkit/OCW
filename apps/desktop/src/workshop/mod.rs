@@ -1384,7 +1384,6 @@ fn workshop_input(
         anchors: &anchors,
         boxes: &boxes,
         character,
-        weight_kg: riders.as_ref().map_or(75.0, |r| r.riding.weight_kg),
         look: rider_look,
         rider_spots: &spots,
     };
@@ -1453,7 +1452,6 @@ fn write_view(
         anchors: &anchors,
         boxes: &boxes,
         character,
-        weight_kg: rider.weight_kg,
         look: rider_look,
         rider_spots: &spots,
     };
@@ -1547,7 +1545,7 @@ fn write_view(
     };
     let picker = scene.picker.as_ref().map(|p| {
         let server = client.as_ref().and_then(|c| c.0.own_effect());
-        picker_view(p, g, balance, scene, server, &character)
+        picker_view(p, g, balance, scene, server, &character, rider.weight_kg)
     });
     // The rider in the changing corner (W4): standing at the mirror, or on
     // the stand bike; with the live preview of the picker.
@@ -1684,6 +1682,7 @@ fn picker_view(
     scene: &Workshop,
     server: Option<&ocw_protocol::BuildInfo>,
     character: &ocw_core::Character,
+    weight_kg: f64,
 ) -> PickerView {
     let bike = g.bike(&scene.bikes[scene.stand]);
     let mut last_group = "";
@@ -1754,6 +1753,16 @@ fn picker_view(
                     "Height {:.2} m: from the rider profile (Settings → Riders, riders.edit --height)",
                     f32::from(character.validated().height_cm) / 100.0
                 ));
+                if p.character == Some(picker::CharSlot::Shape) {
+                    let proposal = ocw_core::character::weight_shape(
+                        weight_kg,
+                        Some(f64::from(character.validated().height_cm)),
+                    );
+                    d.push(format!(
+                        "Match my weight: {} (what your weight and height propose; any shape is free)",
+                        proposal.name()
+                    ));
+                }
             }
             if f.is_some_and(|f| matches!(f, picker::Free::Glasses(_)))
                 && g.kit_on(cat(), Slot::Helmet)
