@@ -103,7 +103,7 @@ pub struct MenuView {
 
 /// A month view (World → Time → Calendar): the buttons over the grid (items
 /// [`CALENDAR_DAYS`] … `+ 6`), the weekdays, six weeks of days (items 0 –
-/// 41), the time stepper and Back under it, the legend of the bands.
+/// 41), the time stepper, Select and Back under it, the legend of the bands.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct MenuCalendar {
     /// "November 2026".
@@ -112,7 +112,7 @@ pub struct MenuCalendar {
     pub weekdays: Vec<String>,
     pub days: Vec<CalendarDay>,
     /// The labels of the items after the days: seven buttons over the grid,
-    /// then the time stepper and Back.
+    /// then the time stepper, Select ("Select Tue 17 Nov 2026") and Back.
     pub controls: Vec<String>,
     /// The bands' colours and names (sRGB 0–1), then the moon's glyphs.
     pub legend: Vec<(String, [f32; 3])>,
@@ -123,6 +123,9 @@ pub struct MenuCalendar {
 pub const CALENDAR_DAYS: usize = 42;
 /// Buttons over the grid.
 pub const CALENDAR_BUTTONS: usize = 7;
+/// Select's place among the items under the grid (the time stepper, Select,
+/// Back).
+pub const CALENDAR_SELECT: usize = 1;
 
 /// One day of a [`MenuCalendar`].
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -1020,14 +1023,19 @@ fn spawn_calendar(commands: &mut Commands, list: Entity, view: &MenuView, c: &Me
                 }
             });
         }
-        // The time stepper (under the left four columns) and Back.
+        // Under the grid: the time stepper (columns 0 – 2), Select (3 – 5:
+        // the date picker's OK, framed and in the focus colour while it
+        // may set the date) and Back (6).
         l.spawn(row(CAL_SECTION_GAP_VH)).with_children(|r| {
             let time = days + CALENDAR_BUTTONS;
+            let select = time + CALENDAR_SELECT;
             for (i, width) in [
-                (time, 4.0 * cell_pct + 3.0 * GRID_GAP_PCT),
-                (time + 1, 3.0 * cell_pct + GRID_GAP_PCT),
+                (time, 3.0 * cell_pct + 2.0 * GRID_GAP_PCT),
+                (select, 3.0 * cell_pct + 2.0 * GRID_GAP_PCT),
+                (time + 2, cell_pct),
             ] {
                 let label = c.controls.get(i - days).cloned().unwrap_or_default();
+                let primary = i == select && !view.is_dimmed(i);
                 let mut b = r.spawn((
                     Node {
                         flex_direction: FlexDirection::Row,
@@ -1036,7 +1044,11 @@ fn spawn_calendar(commands: &mut Commands, list: Entity, view: &MenuView, c: &Me
                     BackgroundColor(ROW),
                     BorderColor::all(Color::NONE),
                     MenuRow(i),
+                    Marked(primary),
                 ));
+                let colour = |i: usize| {
+                    if primary { TextColor(FOCUS) } else { colour(i) }
+                };
                 b.with_children(|b| match split_value(&label) {
                     Some((name, value)) => {
                         b.spawn((Text::new(name), font(CAL_LABEL_VH), colour(i)));
@@ -1467,6 +1479,7 @@ mod tests {
             "Dec ›",
             "2027 »",
             "Time:  < 14:20 >",
+            "Select Tue 17 Nov 2026",
             "Back",
         ]
         .map(str::to_owned)
@@ -1524,7 +1537,8 @@ mod tests {
     }
 
     /// Drawn headless: every item a pointer target (42 days, seven
-    /// buttons, the time, Back), a band per day, the moon glyphs.
+    /// buttons, the time, Select, Back), a band per day, the moon glyphs;
+    /// Select framed as the page's main button.
     #[test]
     fn the_calendar_draws_headless() {
         let mut app = App::new();
@@ -1544,11 +1558,20 @@ mod tests {
             .iter(app.world())
             .map(|r| r.0)
             .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(rows.len(), CALENDAR_DAYS + CALENDAR_BUTTONS + 2);
+        assert_eq!(rows.len(), CALENDAR_DAYS + CALENDAR_BUTTONS + 3);
         assert_eq!(
             rows.iter().max(),
-            Some(&(CALENDAR_DAYS + CALENDAR_BUTTONS + 1))
+            Some(&(CALENDAR_DAYS + CALENDAR_BUTTONS + 2))
         );
+        let select = CALENDAR_DAYS + CALENDAR_BUTTONS + CALENDAR_SELECT;
+        let framed = app
+            .world_mut()
+            .query::<(&MenuRow, &Marked)>()
+            .iter(app.world())
+            .filter(|(r, m)| m.0 && r.0 >= CALENDAR_DAYS)
+            .map(|(r, _)| r.0)
+            .collect::<Vec<_>>();
+        assert_eq!(framed, [select]);
         let bands = app
             .world_mut()
             .query::<&CalendarBand>()
@@ -1569,6 +1592,7 @@ mod tests {
             .map(|t| t.0.clone())
             .collect::<Vec<_>>();
         assert!(texts.iter().any(|t| t == "Today"));
+        assert!(texts.iter().any(|t| t == "Select Tue 17 Nov 2026"));
         assert!(texts.iter().any(|t| t == "<") && texts.iter().any(|t| t == ">"));
     }
 

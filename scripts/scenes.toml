@@ -803,6 +803,13 @@ at = ["1.5=time 2026-10-20 15:00", "2=menu open", "2.6=menu down", "3.2=menu dow
 shot = 20
 
 [[scene]]
+name = "menu-time-calendar-select"
+description = "In-game menu: World -> Time -> Calendar with the focus on Select (spec 9J, v4.45): Thursday 22 October chosen by the arrows, then down past the last week to the Select button under the grid ('Select Thu 29 Oct 2026', framed in the focus colour) between the time stepper and Back"
+args = ["--route", "hills", "--bots", "4"]
+at = ["1.5=time 2026-10-20 15:00", "2=menu open", "2.6=menu down", "3.2=menu down", "3.8=menu select", "4.8=menu down", "5.4=menu down", "6=menu down", "6.6=menu select", "7.4=menu down", "8=menu select", "8.8=menu right", "9.4=menu right", "10=menu down", "10.6=menu down"]
+shot = 20
+
+[[scene]]
 name = "sky-sunset-timelapse"
 description = "Video: time-lapse at x600 across the sunset on the Vaduz-Malbun road (21 June, 20:35 to 22:00 CEST): the sun sets in the west, the light reddens, dims and the bike lights come on"
 world = true
