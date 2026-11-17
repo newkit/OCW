@@ -14,7 +14,7 @@ use ocw_world::package::{TileKey, WorldPackage};
 use crate::RideView;
 use crate::building_material::night_factor;
 use crate::camera::FollowCamera;
-use crate::package::{Keep, MeshArrays};
+use crate::package::{Keep, MeshArrays, TileGround};
 
 /// Point lights in the pool around the camera.
 pub const LAMP_LIGHTS: usize = 12;
@@ -113,18 +113,23 @@ pub fn lamp_arrays(lamps: &[(Lamp, f32)]) -> TileLamps {
     out
 }
 
+/// A lamp pole's foot sinks this far (m) below the lowest drawn ground
+/// round it (spec §4.6.1).
+pub const POLE_SINK_M: f32 = 0.05;
+
 /// The lamps of a package tile with the heights of their feet: on the
-/// terrain beside the road, or at the road's height where the ground is far
-/// off (on bridges, along walls and cuttings).
-pub fn tile_lamps(pkg: &WorldPackage, key: TileKey, keep: Keep) -> TileLamps {
+/// `ground` as the tile draws it beside the road (the lowest point under
+/// the pole, [`POLE_SINK_M`] into it), or at the road's height where the
+/// ground is far off (on bridges, along walls and cuttings).
+pub fn tile_lamps(pkg: &WorldPackage, key: TileKey, keep: Keep, ground: &TileGround) -> TileLamps {
     let lamps: Vec<(Lamp, f32)> = ocw_world::lamps::tile_lamps(pkg, key)
         .into_iter()
         .filter(|l| keep.is_none_or(|f| f([f64::from(l.foot[0]), f64::from(l.foot[2])])))
         .map(|l| {
             let road = l.foot[1];
-            let ground = pkg
-                .surface_height(f64::from(l.foot[0]), f64::from(l.foot[2]))
-                .map(|h| h as f32)
+            let ground = ground
+                .foot(f64::from(l.foot[0]), f64::from(l.foot[2]), 0.1)
+                .map(|h| h as f32 - POLE_SINK_M)
                 .filter(|h| (h - road).abs() < 1.5)
                 .unwrap_or(road);
             (l, ground)
