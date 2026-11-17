@@ -530,7 +530,7 @@ fn the_character_command_and_the_front_view() {
         .look
         .unwrap();
     assert_eq!(look.character.skin, 8);
-    run(&mut app, "character --skin 13");
+    run(&mut app, "character --skin 17");
     assert_eq!(
         app.world()
             .resource::<RiderProfiles>()

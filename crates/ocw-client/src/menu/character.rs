@@ -116,7 +116,12 @@ fn category_rows(page: Page, rider: &Rider) -> Vec<Row> {
                 open(
                     "Face and age",
                     Page::CharacterFace,
-                    format!("{}, skin {} of 12", c.age.id(), c.skin + 1),
+                    format!(
+                        "{}, skin {} of {}",
+                        c.age.id(),
+                        c.skin + 1,
+                        SKIN_TONES.len()
+                    ),
                 ),
                 open(
                     "Hair",
@@ -647,6 +652,52 @@ fn with_tiles(page: Page, rows: Vec<Row>) -> Vec<Row> {
 mod tests {
     use super::*;
 
+    /// The skin tone selector (asked 2026-11-17: "add skin tone selector
+    /// to character editor"): the face page's row opens a page of all 16
+    /// tones as swatches, light to dark, the current one framed; each tile
+    /// previews its tone on the rider (the lips and the age's tone follow
+    /// it) and applies with one `character --skin N` line; Back previews
+    /// nothing.
+    #[test]
+    fn the_skin_tone_page_is_a_grid_of_every_tone() {
+        let r = Rider::default();
+        let row = rows(Page::CharacterFace, &r)
+            .into_iter()
+            .find(|row| row.label == "Skin tone")
+            .expect("the face page's skin row");
+        assert_eq!(
+            row.confirm,
+            Some(Activate::Open(Page::CharacterPick(Attr::Skin)))
+        );
+        let g = grid(Attr::Skin, &r);
+        assert_eq!(g.cells.len(), SKIN_TONES.len() + 1, "16 tones and Back");
+        for (i, (cell, tone)) in g.cells.iter().zip(SKIN_TONES).enumerate() {
+            assert_eq!(cell.swatch, Some(tone.channels()), "{i}");
+            assert!(cell.thumb.is_none(), "a swatch, not a rendering");
+            assert_eq!(cell.marked, i == usize::from(r.character().skin));
+        }
+        let ts = tiles(Attr::Skin, &r);
+        for (i, t) in ts.iter().enumerate() {
+            assert_eq!(t.line, format!("character --skin {}", i + 1));
+            let c = preview(Attr::Skin, i, &r).expect("a preview");
+            assert_eq!(usize::from(c.skin), i);
+            assert_eq!(c.skin_colour(), SKIN_TONES[i], "30s: the tone itself");
+            // The lips and an older face follow the tone.
+            assert_ne!(c.lip_colour(), c.skin_colour());
+            let old = ocw_core::Character {
+                age: Age::Seventies,
+                ..c
+            };
+            assert_ne!(old.skin_colour(), c.skin_colour());
+            if i > 0 {
+                let prev = preview(Attr::Skin, i - 1, &r).unwrap();
+                assert_ne!(prev.lip_colour(), c.lip_colour());
+            }
+        }
+        assert_eq!(preview(Attr::Skin, SKIN_TONES.len(), &r), None, "Back");
+        assert_eq!(thumb_shot(Attr::Skin), None, "colours stay swatches");
+    }
+
     /// The tiles' pictures (spec §14 Phase 4, 4N): every choice that is
     /// not a colour shows a rendering of the rider with that choice – the
     /// face for hair, facial hair and age, the face from the front for the
@@ -845,7 +896,7 @@ mod tests {
             (Attr::Base, 3),
             (Attr::Shape, 7),
             (Attr::Age, 6),
-            (Attr::Skin, 12),
+            (Attr::Skin, 16),
             (Attr::Glasses, 3),
             (Attr::HairStyle, 21),
             (Attr::HairColour, 12),
@@ -885,7 +936,7 @@ mod tests {
         assert_eq!(shape[6].label, "Obese (Match my weight)");
         assert!(shape.iter().filter(|t| t.label.contains("Match")).count() == 1);
         let skin = tiles(Attr::Skin, &r);
-        assert_eq!(skin[3].swatch, Some(ocw_core::Rgb(0xD9A98C)));
+        assert_eq!(skin[3].swatch, Some(SKIN_TONES[3]));
         assert_eq!(skin[3].line, "character --skin 4");
         assert_eq!(
             preview(Attr::HairStyle, 16, &r).map(|c| c.hair),

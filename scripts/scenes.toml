@@ -3894,3 +3894,31 @@ riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 7
 at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=workshop open", "2.6=workshop mirror", "4=workshop slot-prev", "4.3=workshop slot-prev", "4.6=workshop slot-prev", "4.9=workshop slot-prev", "5.2=workshop slot-prev", "5.5=workshop slot-prev", "5.8=workshop slot-prev", "6.1=workshop slot-prev", "6.6=workshop select", "7.2=workshop right"]
 shot = 35
 pick = false
+
+# The skin tone selector (asked 2026-11-17; 4N, v4.51): 16 tones as swatches.
+[[scene]]
+name = "char2-tiles-skin"
+description = "Skin tone selector (4N, asked 2026-11-17): Face and age -> Skin tone, the 16 tones as swatches light to dark, the focused dark tone on the rider's face close-up"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select", "4.8=menu down", "5.2=menu select", "5.8=menu down", "6.2=menu down", "6.6=menu right", "7.0=menu right"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "char2-tiles-skin-light"
+description = "Skin tone selector (4N): the lightest tone focused on the face close-up"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select", "4.8=menu down", "5.2=menu select", "5.8=menu up", "6.2=menu left", "6.6=menu left", "7.0=menu left", "7.4=menu left"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "char2-mirror-skin-tiles"
+description = "The workshop mirror (4N): the skin tone picker as 16 swatch tiles, the face close-up, the focused tone on the rider"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=workshop open", "2.6=workshop mirror", "4=workshop slot-prev", "4.3=workshop slot-prev", "4.6=workshop slot-prev", "4.9=workshop slot-prev", "5.2=workshop slot-prev", "5.5=workshop slot-prev", "5.8=workshop slot-prev", "6.4=workshop select", "7.0=workshop down", "7.4=workshop down", "7.8=workshop right"]
+shot = 12
+pick = false

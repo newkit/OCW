@@ -1694,13 +1694,13 @@ mod tests {
         assert_eq!(d.iter().filter(|l| l.starts_with("Benefit:")).count(), 1);
         // Free rows: the current choice focused, a character line.
         let p = Picker::character(CharSlot::Skin, &Character::default());
-        assert_eq!(p.preview_free(), Some(Free::Skin(3)));
-        assert_eq!(Free::Skin(3).line(), "character --skin 4");
+        assert_eq!(p.preview_free(), Some(Free::Skin(4)));
+        assert_eq!(Free::Skin(4).line(), "character --skin 5");
         assert_eq!(Free::Glasses(2).apply(Character::default()).glasses, 2);
         let (left, right, _) = row_text(cat(), &p.rows[0], 0);
         assert_eq!(
             (left.as_str(), right.as_str()),
-            ("Skin tone 1 of 12", "free")
+            ("Skin tone 1 of 16", "free")
         );
         // Every slot of the corner has a region but Try on the bike.
         for s in MirrorSlot::ALL {
