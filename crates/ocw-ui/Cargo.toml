@@ -32,6 +32,11 @@ web-time.workspace = true
 bevy.workspace = true
 clap.workspace = true
 
+# The app icon (`app_icon`, native only): window icon, desktop entry.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+winit.workspace = true
+dirs.workspace = true
+
 [dev-dependencies]
 ocw-fit.workspace = true
 ocw-server.workspace = true

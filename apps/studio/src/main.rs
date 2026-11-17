@@ -25,6 +25,7 @@
 mod build;
 mod edit;
 mod flight;
+mod icon;
 mod info;
 mod map;
 mod overlay;
@@ -130,13 +131,25 @@ fn main() -> AppExit {
     let store = store_dir
         .clone()
         .map(|d| Box::new(ocw_edit::DirStore::new(d)) as Box<dyn ocw_edit::AutosaveStore>);
+    // Desktop entry and icons for menus, docks and file managers (not for
+    // the headless screenshot runs).
+    #[cfg(target_os = "linux")]
+    if args.screenshot.is_none() {
+        match icon::ICON.install_desktop_integration() {
+            Ok(0) => {}
+            Ok(n) => info!("desktop integration: {n} files written"),
+            Err(e) => warn!("desktop integration: {e}"),
+        }
+    }
     let mut app = App::new();
     app.add_plugins(
         DefaultPlugins
             .set(WindowPlugin {
                 primary_window: Some(Window {
                     title: "OCW Studio".into(),
-                    name: Some("org.opencyclingworld.Studio".into()),
+                    // App id (Wayland) / WM_CLASS (X11): the desktop entry
+                    // `ocw-studio.desktop` and its icon.
+                    name: Some(icon::APP_ID.into()),
                     resolution: WindowResolution::new(args.window.0, args.window.1),
                     present_mode: if args.no_vsync {
                         PresentMode::AutoNoVsync
@@ -171,6 +184,7 @@ fn main() -> AppExit {
     .add_plugins(OcwRenderPlugins)
     .add_plugins((
         ocw_render::platform::PlatformPlugin,
+        ocw_ui::app_icon::AppIconPlugin(&icon::ICON),
         flight::FlightPlugin,
         edit::EditPlugin,
         overlay::OverlayPlugin,

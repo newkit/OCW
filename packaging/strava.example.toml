@@ -1,0 +1,27 @@
+# OCW – Strava upload (spec §2.8.1, interim desktop upload)
+#
+# This file lives in OCW's config folder next to devices.toml and settings.toml:
+#   Linux    ~/.config/ocw/strava.toml
+#   Windows  %APPDATA%\ocw\strava.toml
+#   macOS    ~/Library/Application Support/ocw/strava.toml
+# (OCW_CONFIG_DIR points the app at another folder.)
+#
+# Strava needs an API application of your own – no credentials ship with OCW:
+#   1. https://www.strava.com/settings/api → create an application,
+#      "Authorization Callback Domain" = 127.0.0.1
+#   2. copy its Client ID and Client Secret below and remove the leading '#'
+#   3. start OCW, open the console (` or F12) and run `strava.connect`:
+#      a browser opens, you sign in to Strava and allow access; the token is
+#      kept in strava-token.toml next to this file and refreshed by the app.
+#   4. rides recorded with S are uploaded as Virtual Ride.
+#      Console: strava.status, strava.sync, strava.disconnect
+#
+# The environment variables OCW_STRAVA_CLIENT_ID / OCW_STRAVA_CLIENT_SECRET
+# win over this file. Keep this file private (it holds a secret).
+# While both values are commented out, Strava stays off.
+
+# client_id = "12345"
+# client_secret = "your-client-secret"
+
+# Upload every saved ride automatically (default true).
+# auto_upload = true

@@ -933,9 +933,23 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
         let fore_w = segment_rotation(end - elbow, hinge);
         upper_arms[s] = torso_world.inverse() * upper_w;
         forearms[s] = upper_w.inverse() * fore_w;
+        // Holding the phone up, the hand turns at the wrist so the palm
+        // faces the eyes, the phone in the fingers in front of it (bug
+        // 2026-11-17: the back of the hand was up, over the screen).
+        let free_w = if s == 1 && ph > 0.0 {
+            let hold_t = crate::anim::smoothstep(
+                f64::from(crate::anim::PHONE_AT_POCKET.1),
+                1.0,
+                f64::from(ph),
+            ) as f32;
+            let face = torso_pos + torso_world * rider.neck;
+            fore_w.slerp(palm_towards(fore_w, s, face - end), hold_t)
+        } else {
+            fore_w
+        };
         let hand_w = match held {
-            Some((_, on_bar, _)) => on_bar.slerp(fore_w, free_t),
-            None => fore_w,
+            Some((_, on_bar, _)) => on_bar.slerp(free_w, free_t),
+            None => free_w,
         };
         hands[s] = fore_w.inverse() * hand_w;
         hand_shapes[s] = match held {
@@ -1025,7 +1039,13 @@ pub fn bar_at(bike: &BikeRig, grip: Vec3, w: [f32; 3]) -> (HandShape, Vec3, Vec3
             grip + Vec3::new(0.0, -HOOD_BELOW_GRIP, -0.007) * w[0],
         ),
         1 => (HandShape::Wrap, Vec3::X, grip),
-        _ => (HandShape::Wrap, Vec3::Z, grip),
+        // The drops: a little behind the hook's bend, so the thumb over the
+        // top and the index finger stay clear of it.
+        _ => (
+            HandShape::Wrap,
+            Vec3::Z,
+            grip + Vec3::Z * (DROPS_BACK * w[2]),
+        ),
     }
 }
 
@@ -1035,15 +1055,23 @@ fn aero_axis(w: [f32; 3]) -> Vec3 {
     Vec3::new(0.0, w[0] / 3.0, -1.0).normalize()
 }
 
+/// On the tops and flat grips, how much the hand's long axis follows the
+/// forearm (the rest: lying flatter, the wrist bent back a little).
+pub const TOPS_WRIST_FOLLOW: f32 = 0.2;
+
+/// How far behind the drops' grip anchor the hand holds them (m).
+pub const DROPS_BACK: f32 = 0.035;
+
 /// How far the hood's body lies below its grip anchor (m).
 pub const HOOD_BELOW_GRIP: f32 = 0.011;
 
 /// A hand holding the bar: its shape, its rotation (bike frame) and where
 /// the wrist goes, for side `s` at grip `grip` with the shoulder at
 /// `shoulder`, a hand `hand_len` long. The hand's knuckle line lies along
-/// the bar, its long axis points from the bar towards the shoulder, the
-/// palm on the bar's side towards the rider (on a drop bar's tops and
-/// drops from above and behind, on the hoods from the inside), so the
+/// the bar, its long axis points from the bar towards the wrist (the
+/// shoulder's side), and the palm faces the way the grip is held: down on
+/// the hoods, the tops and flat grips (the knuckles up), inward on the
+/// drops and the TT bars (the knuckles out, the thumb on top), so the
 /// fingers wrap it ([`crate::rider::hand::bar_centre`] at the bar's
 /// centre).
 pub fn hand_on_bar(
@@ -1056,28 +1084,36 @@ pub fn hand_on_bar(
 ) -> (HandShape, Quat, Vec3) {
     let (shape, k, c) = bar_at(bike, grip, w);
     let n = hand::palm_sign(s);
-    let to_sh = shoulder - c;
-    // Over a hood the wrist is behind it, the palm on top (on a TT bar
-    // the forearm lies along the extension: the wrist towards the elbow).
-    let to_sh = if shape == HandShape::Hoods && !bike.aero_bars {
-        Vec3::new(0.0, 0.25, 1.0)
+    let to_sh = (shoulder - c).normalize_or(Vec3::Y);
+    let inward = if s == 0 { Vec3::X } else { Vec3::NEG_X };
+    // The hand's long axis (bar → wrist) and the way the palm faces
+    // (bike frame; bug 2026-11-17: "the hand position on the handlebar
+    // looks wrong (upside down)"): the palm was turned by a test against
+    // a fixed down-and-forward direction, which flipped it to face up
+    // under the tops when the shoulder was high above the bar and to face
+    // out on the drops and the TT bars (the fingers wrapped from the
+    // inside). Now each grip says which way the palm faces:
+    // - the hoods: the palm on top of the hood, the wrist behind it;
+    // - the tops and flat / MTB grips (across): the palm down on the bar,
+    //   the wrist a little bent back so the hand lies flatter than the
+    //   forearm;
+    // - the drops, the TT extensions and base bar ends (along): the palm
+    //   inward to the bike, the fingers round the bar from the outside.
+    let across = k.x.abs() > 0.7;
+    let (y_dir, palm_to) = if shape == HandShape::Hoods && !bike.aero_bars {
+        (Vec3::new(0.0, 0.25, 1.0), Vec3::NEG_Y)
+    } else if across && !bike.aero_bars {
+        let flat = Vec3::new(0.0, 0.3, 1.0).normalize();
+        (
+            (to_sh * TOPS_WRIST_FOLLOW + flat * (1.0 - TOPS_WRIST_FOLLOW)),
+            Vec3::new(0.0, -1.0, 0.3),
+        )
     } else {
-        to_sh
+        (to_sh, inward)
     };
-    let y = (to_sh - k * to_sh.dot(k)).normalize_or(Vec3::Y);
-    let mut nn = k.cross(y).normalize_or(Vec3::NEG_Z);
-    let press = Vec3::new(0.0, -0.6, -1.0).normalize();
-    let out = if s == 0 { Vec3::NEG_X } else { Vec3::X };
-    if nn.dot(press).abs() < 0.3 {
-        if nn.dot(out) < 0.0 {
-            nn = -nn;
-        }
-    } else if nn.dot(press) < 0.0 {
-        nn = -nn;
-    }
-    // On a TT base bar's end the thumb lies along the end, forward (behind
-    // the hand the bar bends in).
-    if bike.aero_bars && w[0] < 0.5 && -(nn * n).cross(y).dot(Vec3::NEG_Z) < 0.0 {
+    let y = (y_dir - k * y_dir.dot(k)).normalize_or(Vec3::Y);
+    let mut nn = k.cross(y).normalize_or(palm_to);
+    if nn.dot(palm_to) < 0.0 {
         nn = -nn;
     }
     let x = nn * n;
@@ -1085,6 +1121,20 @@ pub fn hand_on_bar(
     let scale = hand_len / crate::rider::body::HAND;
     let b = hand::bar_centre(shape, s).unwrap_or(Vec3::NEG_Y * hand_len) * scale;
     (shape, rot, c - rot * b)
+}
+
+/// The hand's rotation (bike frame) along the forearm rotation `fore`
+/// (its long axis kept), turned about that axis so the palm of hand `s`
+/// faces along `to` as far as it can.
+pub fn palm_towards(fore: Quat, s: usize, to: Vec3) -> Quat {
+    let y = fore * Vec3::Y;
+    let d = to - y * to.dot(y);
+    if d.length_squared() < 1e-8 {
+        return fore;
+    }
+    // The palm faces the hand's x times its palm sign.
+    let x = d.normalize() * hand::palm_sign(s);
+    Quat::from_mat3(&Mat3::from_cols(x, y, x.cross(y))).normalize()
 }
 
 /// Where the right hand is on the phone's timeline `ph` (spec §2.6) and
@@ -2139,6 +2189,147 @@ mod hand_tests {
                     }
                 }
             }
+        }
+    }
+
+    /// The palm's normal (out of its inner face), the palm's centre and
+    /// the thumb's tip of hand `side` in shape `shape`, posed (bike frame).
+    fn palm_frame(m: &Model, side: usize, shape: HandShape) -> (Vec3, Vec3, Vec3) {
+        let w = m.world(m.node(nodes::HAND[side]).expect("hand"));
+        let normal = w
+            .transform_vector3(Vec3::X * hand::palm_sign(side))
+            .normalize();
+        let centre = w.transform_point3(Vec3::new(0.0, hand::PALM_Y, 0.0));
+        let thumb = w.transform_point3(*hand::thumb(shape, side).points.last().unwrap());
+        (normal, centre, thumb)
+    }
+
+    /// Regression (bug 2026-11-17: "the hand position on the handlebar
+    /// looks wrong (upside down)"): on every bike, at three heights, both
+    /// hands hold each grip the way riders do – the palm down on the
+    /// hoods, the tops and the flat grips (within 30°, the knuckles up),
+    /// inward on the drops and the TT bars (within 30°, the knuckles out);
+    /// the thumb inside the hood, behind and under the tops and flat grips
+    /// and inward of the palm, over the drops and the TT bars; the
+    /// fingertips under the tops and flat grips, inward round the drops
+    /// and TT bars; the left hand the right one's mirror image.
+    #[test]
+    fn the_hands_hold_every_grip_the_right_way_up() {
+        let near = build(Detail::High);
+        let rig = RiderRig::from_model(&near).unwrap();
+        let cos30 = 30f32.to_radians().cos();
+        for profile in ProfileId::ALL {
+            let bike = crate::shipped::bike_rig(profile);
+            let flat = !bike.aero_bars && bike.hoods == bike.drops;
+            for scale in [0.84, 1.0, 1.15] {
+                let body = BodyFit::new(&rig, &bike, scale);
+                for (name, tops, drops) in
+                    [("hoods", 0.0, 0.0), ("tops", 1.0, 0.0), ("drops", 0.0, 1.0)]
+                {
+                    let params = PoseParams {
+                        tops,
+                        drops,
+                        ..Default::default()
+                    };
+                    let p = pose(&body.rider, &body.bike, &body.fit, &params);
+                    let m = posed(&near, &p, scale);
+                    let what = format!("{profile:?} {name} ×{scale}");
+                    let along = bike.aero_bars || (!flat && name == "drops");
+                    let mut normals = Vec::with_capacity(2);
+                    for side in 0..2 {
+                        let shape = p.hand_shapes[side];
+                        let inward = if side == 0 { Vec3::X } else { Vec3::NEG_X };
+                        let (normal, centre, thumb) = palm_frame(&m, side, shape);
+                        normals.push(normal);
+                        let bar = held_point(&m, &p, side);
+                        let tips: Vec<Vec3> = digits(&m, side, shape)[..4]
+                            .iter()
+                            .map(|d| *d.last().unwrap())
+                            .collect();
+                        let s = format!("{what} side {side}");
+                        if along {
+                            assert!(
+                                normal.dot(inward) >= cos30,
+                                "{s}: the palm faces {normal}, not inward"
+                            );
+                            assert!(thumb.y > bar.y, "{s}: the thumb over the bar");
+                            for t in &tips {
+                                assert!(
+                                    (*t - bar).dot(inward) > 0.0,
+                                    "{s}: a fingertip {t} not round the bar's inside {bar}"
+                                );
+                            }
+                        } else {
+                            assert!(
+                                normal.dot(Vec3::NEG_Y) >= cos30,
+                                "{s}: the palm faces {normal}, not down"
+                            );
+                            assert!(
+                                (thumb - centre).dot(inward) > 0.01,
+                                "{s}: the thumb {thumb} not inward of the palm {centre}"
+                            );
+                            assert!(thumb.y < centre.y, "{s}: the thumb under the palm");
+                            if shape == HandShape::Wrap {
+                                assert!(thumb.z > bar.z, "{s}: the thumb behind the bar");
+                                for t in &tips {
+                                    assert!(t.y < bar.y, "{s}: a fingertip {t} not under the bar");
+                                }
+                            } else {
+                                // Over the hood: the fingers forward and
+                                // down over its front.
+                                for t in &tips {
+                                    assert!(
+                                        t.z < centre.z && t.y < centre.y,
+                                        "{s}: a fingertip {t} not over the hood's front"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    // Left and right mirror each other.
+                    let mirrored = normals[1] * Vec3::new(-1.0, 1.0, 1.0);
+                    assert!(
+                        normals[0].dot(mirrored) > 15f32.to_radians().cos(),
+                        "{what}: the palms {normals:?} not mirrored"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Regression (bug 2026-11-17, the phone grip upside down): holding
+    /// the phone up, the right palm faces the rider's face, the phone in
+    /// front of it.
+    #[test]
+    fn the_phone_lies_in_the_palm_facing_the_eyes() {
+        let near = build(Detail::High);
+        let rig = RiderRig::from_model(&near).unwrap();
+        for profile in ProfileId::ALL {
+            let bike = crate::shipped::bike_rig(profile);
+            let body = BodyFit::new(&rig, &bike, 1.0);
+            let p = pose(
+                &body.rider,
+                &body.bike,
+                &body.fit,
+                &PoseParams {
+                    phone: 1.0,
+                    one_hand: 1.0,
+                    ..Default::default()
+                },
+            );
+            let m = posed(&near, &p, 1.0);
+            let (normal, centre, _) = palm_frame(&m, 1, HandShape::Phone);
+            let head = m.position(nodes::HEAD).expect("head");
+            let to_head = (head - centre).normalize();
+            assert!(
+                normal.dot(to_head) > 0.5,
+                "{profile:?}: the palm faces {normal}, the head is {to_head}"
+            );
+            let (phone, _) = p.phone.expect("the phone out");
+            assert!(
+                (phone - centre).dot(normal) > 0.0,
+                "{profile:?}: the phone on the palm's side"
+            );
         }
     }
 

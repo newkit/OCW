@@ -39,6 +39,7 @@ button, or `systemctl --user restart ocw-build-dashboard.service`).
 
 | Version | Date | Change | Unit changed |
 |---|---|---|---|
+| 1.7.0 | 2026-11-17 | **Battery on the machine cards** (`battery.py`): laptops (Windows `GetSystemPowerStatus` + `CallNtPowerInformation`, Linux `/sys/class/power_supply`, macOS `pmset -g batt`) with percent, charging / on mains but discharging / on battery, rate and time left, red below 20 %, amber below 40 % or when draining on mains (with a warning), a 4 h sparkline; the **Meta Quest** on a Windows machine with the Meta runtime (level, charging / discharging, USB / Link, Touch controllers from the runtime's `DeviceCache.json` and service log); every 2 min per machine with a 25 s timeout, unreachable machines keep the last value with its age; `--no-battery` | no |
 | 1.6.0 | 2026-11-17 | **Open questions kept current**: "Q30 (open) – …" bullets are read (a status in brackets before the dash), `spec_questions.py refresh` fast-forwards the main checkout (only on `main` without tracked changes) and lints the questions (bullets the dashboard cannot read, answers written outside the bold label), every 15 minutes by the new `ocw-spec-questions.timer` (report `test-output/answers/questions-refresh.json`); `spec_questions.py lint SPEC` | yes (new timer; `make dashboard-install`) |
 | 1.5.0 | 2026-11-16 | **Agents on the coordinator selectable**: `[coordinator] max_agents` in `config/build-machines.toml` (default 5, 1–16; − N + on the Coordinator card with the token, `POST /api/coordinator`, `build_machines.py agents N`), `agents` in `/api/status`, "agents N of M" on the card and in the Claude tasks header (amber at the limit, red above it) with deb's available memory, `scripts/agent-slots.sh` for the sessions | no |
 | 1.4.1 | 2026-11-16 | The cutover line is gone from the Claude tasks card; the worktree list stays open (kept in the browser across refreshes and updates) | no |
@@ -106,6 +107,57 @@ directory, never in the repository).
   (below), grouped by phase, with its id, title, text and proposal; the
   count is in the overview. Decided ones are hidden behind "show decided".
   Milestones that name an open question are listed as blocked work.
+
+## Battery (laptops, Meta Quest)
+
+`battery.py`: a card shows a **Battery** line when the machine has a system
+battery (a laptop build machine; desktops, a mouse's battery and a Mac mini
+show nothing), and a **Quest** line when a Windows machine has the Meta
+Quest runtime (`%LOCALAPPDATA%\Oculus`, e.g. Weela with the Quest on Link).
+Each machine is probed in its own thread every **2 min** (machines without
+a battery every 10 min) over the same SSH control socket, with a **25 s**
+timeout, so a slow or unreachable machine never holds up the page. Also in
+`/api/status` (`battery` of a machine), `--once` and the build log
+(`servers.jsonl`, without the sparkline). `--no-battery` turns it off.
+
+| Platform | Source (read-only, no admin rights) |
+|---|---|
+| Windows | kernel32 `GetSystemPowerStatus` (percent, mains, charging) and powrprof `CallNtPowerInformation(SystemBatteryState)` (capacity, rate in mW, Windows' estimate), bound in memory like the main poll's Win32 calls; CIM (`Win32_Battery`) is denied over SSH, `powercfg` and Windows Forms are not needed |
+| Linux | `/sys/class/power_supply/*`: the first `type=Battery` without `scope=Device` (mice and keyboards report `Device`); `Mains`/`USB` `online` for the mains |
+| macOS | `pmset -g batt` |
+
+- **Shown:** battery icon, percent, state (charging, on mains but
+  discharging, on battery, full, on mains not charging), the rate in W
+  (+ charging, − discharging) and the time left or until full when the
+  system gives it; a sparkline of the last 4 h (5-min buckets, the lowest
+  value of each; kept in memory for 6 h, empty after a restart).
+- **Colours** (`battery.level`): red below 20 %, amber below 40 % **or
+  when the battery drains on mains** ("On mains but discharging (−12 W): the
+  power supply is too weak for the load" – Weela's power supply cannot carry
+  a full build plus VR); green otherwise. The same thresholds for the Quest.
+- **Unreachable / stale:** a failed probe shows "unreachable – last value
+  N min ago" (and the reason) with the last known values; no successful
+  probe for 7 min shows "no fresh value". A machine that never showed a
+  battery shows nothing.
+- **Meta Quest** (read-only; nothing is started on the machine – no
+  OculusDebugTool, no adb, no OpenXR session, which another app may hold –
+  so a running VR app or the kiosk is never disturbed): the headset entry of
+  the runtime's `DeviceCache.json` (its last battery level, `connectionState`,
+  `isUsingAirLink`, `lastSeenAt`) and the last 1 MB of the newest
+  `Service_*.txt` log (opened shared; the runtime keeps writing it). Its
+  `[RemoteHeadset] HMD battery level update: from A to B` lines give the
+  level while the headset is on Link and, from A → B, whether it is charging
+  or discharging; `[winusb detector] … added/removed`, `Connected participant
+  on transport winusb`, `Streaming session got invited` / `HMD Startup time
+  first displayed frame` and `Received request to stop Link` /
+  `didDisconnect` give USB and Link ("Link streaming (USB)", "on USB, Link
+  not running", "not connected"); `Battery level for ovrControllerType_…`
+  the Touch controllers. The newer of log and cache wins; when the headset
+  is not on Link the level is shown with its age ("last report 20 min
+  ago"). Whether the headset is **on the face is not available**: neither
+  file has a proximity state, and reading it would need the headset (adb in
+  developer mode) or an OpenXR session. Only derived values leave the
+  parser, never raw log lines (they can hold device serials).
 
 ## Coordinator (deb)
 

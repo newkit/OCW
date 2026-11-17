@@ -6739,7 +6739,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-accounts"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -6765,7 +6765,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-assets"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "base64 0.22.1",
  "clap",
@@ -6785,7 +6785,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-audio"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "ocw-core",
  "ocw-sim",
@@ -6796,7 +6796,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-auth"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek 2.2.0",
@@ -6809,7 +6809,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-bot"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "clap",
  "ocw-core",
@@ -6825,7 +6825,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-client"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "ocw-audio",
  "ocw-auth",
@@ -6849,7 +6849,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-core"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "icu_normalizer",
  "icu_properties",
@@ -6858,7 +6858,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-desktop"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "arboard",
  "bevy",
@@ -6898,7 +6898,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-devices"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "btleplug",
  "futures",
@@ -6915,7 +6915,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-edit"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "ocw-fit",
  "ocw-world",
@@ -6925,14 +6925,14 @@ dependencies = [
 
 [[package]]
 name = "ocw-fit"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "fitparser",
 ]
 
 [[package]]
 name = "ocw-protocol"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "ocw-core",
  "ocw-sim",
@@ -6947,7 +6947,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-render"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "avian3d",
  "bevy",
@@ -6973,7 +6973,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-server"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "bytes",
  "clap",
@@ -7012,7 +7012,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-sim"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "ocw-core",
  "ocw-weather",
@@ -7023,14 +7023,14 @@ dependencies = [
 
 [[package]]
 name = "ocw-sky"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "jiff",
 ]
 
 [[package]]
 name = "ocw-spike"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "bevy",
  "clap",
@@ -7040,7 +7040,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-studio"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "bevy",
  "bevy_egui",
@@ -7060,10 +7060,11 @@ dependencies = [
 
 [[package]]
 name = "ocw-ui"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "bevy",
  "clap",
+ "dirs",
  "ocw-audio",
  "ocw-client",
  "ocw-core",
@@ -7078,11 +7079,12 @@ dependencies = [
  "ocw-world",
  "ocw-worldstore",
  "web-time",
+ "winit",
 ]
 
 [[package]]
 name = "ocw-voice"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "cpal",
  "futures",
@@ -7099,14 +7101,14 @@ dependencies = [
 
 [[package]]
 name = "ocw-weather"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "ocw-web"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "bevy",
  "clap",
@@ -7138,14 +7140,14 @@ dependencies = [
 
 [[package]]
 name = "ocw-winres"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "png",
 ]
 
 [[package]]
 name = "ocw-world"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "ed25519-dalek 2.2.0",
  "miniz_oxide 0.8.9",
@@ -7158,7 +7160,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-worldgen"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "image",
  "ocw-core",
@@ -7178,7 +7180,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-worldstore"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "dirs",
  "getrandom 0.3.4",
@@ -11409,7 +11411,7 @@ dependencies = [
 
 [[package]]
 name = "world-builder"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "clap",
  "ocw-sky",

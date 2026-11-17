@@ -8,6 +8,10 @@
 #   OUT_DIR/OpenCyclingWorld-<version>-<sha>-macos-<arch>.dmg   (drag to Applications)
 #   OUT_DIR/OpenCyclingWorld-<version>-<sha>-macos-<arch>.zip
 #
+# OCW_APP=studio builds the editor instead: OUT_DIR/OCW Studio.app
+# (ocw-studio, its own icon from artwork/logos/ocw-studio-*.png), packed as
+# OCWStudio-<version>-<sha>-macos-<arch>.{dmg,zip}.
+#
 # Ad-hoc signed, not notarised: Gatekeeper asks before the first start
 # (right-click → Open, or System Settings → Privacy & Security → Open Anyway).
 # Set CODESIGN_IDENTITY to a "Developer ID Application: …" identity to sign
@@ -17,9 +21,17 @@ cd "$(dirname "$0")/.."
 [ "$(uname -s)" = Darwin ] || { echo "build-macos-app.sh runs on macOS" >&2; exit 1; }
 
 out=${1:-target/macos}
-name="Open Cycling World"
-bundle_id=org.opencyclingworld.desktop
-exe=ocw-desktop
+case ${OCW_APP:-desktop} in
+  desktop)
+    name="Open Cycling World"; pack=OpenCyclingWorld
+    bundle_id=org.opencyclingworld.desktop; exe=ocw-desktop; logo=ocw
+    category=public.app-category.sports ;;
+  studio)
+    name="OCW Studio"; pack=OCWStudio
+    bundle_id=org.opencyclingworld.studio; exe=ocw-studio; logo=ocw-studio
+    category=public.app-category.graphics-design ;;
+  *) echo "OCW_APP must be desktop or studio" >&2; exit 2 ;;
+esac
 
 version=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' Cargo.toml)
 # OCW_SHA: commit for copies without .git (scripts/remote.sh).
@@ -34,7 +46,7 @@ if ! printf '#include <string>\n' | c++ -x c++ -std=c++17 -fsyntax-only - 2>/dev
   echo "libc++ headers not found by c++; using the SDK's ($CXXFLAGS)"
 fi
 # OCW_FEATURES: extra cargo features, e.g. ocw-desktop/voice (release builds).
-cargo build --release -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
+cargo build --release -p "$exe" ${OCW_FEATURES:+--features "$OCW_FEATURES"}
 bin=target/release/$exe
 
 # Minimum macOS version the binary was built for (LC_BUILD_VERSION minos).
@@ -53,13 +65,13 @@ scripts/install-materials.sh "$app/Contents/Resources/materials"
 
 # Icon: iconset from the PNG renders (the 1024 px 512@2x is missing: no
 # render of that size yet, and upscaling would only blur it).
-iconset=$(mktemp -d)/ocw.iconset
+iconset=$(mktemp -d)/$logo.iconset
 mkdir -p "$iconset"
 for s in 16 32 128 256 512; do
-  cp "artwork/logos/ocw-$s.png" "$iconset/icon_${s}x${s}.png"
-  [ "$s" = 512 ] || cp "artwork/logos/ocw-$((s * 2)).png" "$iconset/icon_${s}x${s}@2x.png"
+  cp "artwork/logos/$logo-$s.png" "$iconset/icon_${s}x${s}.png"
+  [ "$s" = 512 ] || cp "artwork/logos/$logo-$((s * 2)).png" "$iconset/icon_${s}x${s}@2x.png"
 done
-iconutil -c icns -o "$app/Contents/Resources/ocw.icns" "$iconset"
+iconutil -c icns -o "$app/Contents/Resources/$logo.icns" "$iconset"
 rm -rf "$(dirname "$iconset")"
 
 cat >"$app/Contents/Info.plist" <<PLIST
@@ -76,9 +88,9 @@ cat >"$app/Contents/Info.plist" <<PLIST
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleShortVersionString</key><string>$version</string>
   <key>CFBundleVersion</key><string>$version+$sha</string>
-  <key>CFBundleIconFile</key><string>ocw</string>
+  <key>CFBundleIconFile</key><string>$logo</string>
   <key>LSMinimumSystemVersion</key><string>$minos</string>
-  <key>LSApplicationCategoryType</key><string>public.app-category.sports</string>
+  <key>LSApplicationCategoryType</key><string>$category</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
   <key>NSBluetoothAlwaysUsageDescription</key>
@@ -98,7 +110,7 @@ fi
 codesign --verify --deep --strict --verbose=2 "$app"
 spctl -a -vv "$app" || echo "(Gatekeeper rejects ad-hoc signed apps: expected without a Developer ID and notarisation)"
 
-base="$out/OpenCyclingWorld-$version-$sha-macos-$arch"
+base="$out/$pack-$version-$sha-macos-$arch"
 rm -f "$base.zip" "$base.dmg"
 ditto -c -k --keepParent "$app" "$base.zip"
 # DMG with the app and a link to /Applications to drag it onto.
