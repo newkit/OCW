@@ -298,7 +298,7 @@ mod tests {
     /// day kept (Q11); `time season` and `season set` do the same.
     #[test]
     fn the_calendar_by_keys_in_both_apps() {
-        use ocw_client::menu::calendar::TIME;
+        use ocw_client::menu::calendar::{SELECT, TIME};
         for platform in [Platform::Desktop, Platform::Browser] {
             let mut app = app(platform);
             frames(&mut app, 10);
@@ -338,10 +338,13 @@ mod tests {
             let v = view(&app);
             assert_eq!(v.title, "December 2026");
             assert!(v.status.starts_with("Thu 17 Dec 2026"), "{}", v.status);
-            // Down past the last week: the time stepper; Shift+→ a minute.
+            // Down past the last week (Thursday's column): Select; ← the
+            // time stepper; Shift+→ a minute.
             for _ in 0..3 {
                 tap(&mut app, &[KeyCode::ArrowDown]);
             }
+            assert_eq!(view(&app).focused, SELECT);
+            tap(&mut app, &[KeyCode::ArrowLeft]);
             assert_eq!(view(&app).focused, TIME);
             tap(&mut app, &[KeyCode::ShiftLeft, KeyCode::ArrowRight]);
             tap(&mut app, &[KeyCode::ArrowRight]);
@@ -376,6 +379,66 @@ mod tests {
             frames(&mut app, 3);
             assert_eq!(date(&app), Some((2026, 5, 3)));
             assert_eq!(app.world().resource::<CalendarMenu>().minute, 7 * 60 + 45);
+        }
+    }
+
+    /// Regression (user feedback 2026-11-17: "i miss the select button
+    /// that accepts and sets the selected date"): the calendar has a Select
+    /// button showing the selected day; Enter (A) on it sets that day on
+    /// the server's clock, the time of day kept, and goes back to World →
+    /// Time; Esc after browsing changes nothing. Both apps.
+    #[test]
+    fn select_applies_the_selected_date_in_both_apps() {
+        use ocw_client::menu::calendar::SELECT;
+        for platform in [Platform::Desktop, Platform::Browser] {
+            let mut app = app(platform);
+            frames(&mut app, 10);
+            run(&mut app, "time 2026-11-16 14:20");
+            frames(&mut app, 5);
+            tap(&mut app, &[KeyCode::Escape]);
+            open(&mut app, "World");
+            open(&mut app, "Time");
+            open(&mut app, "Day");
+            assert_eq!(view(&app).focused, 21, "16 November");
+            // → → → Thursday the 19th, ↓ the 26th, ↓ Select.
+            for k in [
+                KeyCode::ArrowRight,
+                KeyCode::ArrowRight,
+                KeyCode::ArrowRight,
+                KeyCode::ArrowDown,
+                KeyCode::ArrowDown,
+            ] {
+                tap(&mut app, &[k]);
+            }
+            let v = view(&app);
+            assert_eq!(v.focused, SELECT, "{platform:?}");
+            assert_eq!(v.items[SELECT], "Select Thu 26 Nov 2026");
+            assert!(!v.dimmed[SELECT]);
+            assert!(v.status.starts_with("Thu 26 Nov 2026"), "{}", v.status);
+            assert_eq!(
+                v.calendar.as_ref().unwrap().controls[SELECT - 42],
+                "Select Thu 26 Nov 2026"
+            );
+            assert_eq!(date(&app), Some((2026, 11, 16)), "browsing sets nothing");
+            tap(&mut app, &[KeyCode::Enter]);
+            frames(&mut app, 5);
+            assert_eq!(date(&app), Some((2026, 11, 26)), "{platform:?}");
+            assert_eq!(app.world().resource::<CalendarMenu>().minute, 14 * 60 + 20);
+            let v = view(&app);
+            assert_eq!(v.title, "Time machine", "back to World → Time");
+            assert!(
+                v.items.iter().any(|i| i.contains("Thu 26 Nov 2026")),
+                "{:?}",
+                v.items
+            );
+            // Browse again and Esc: the date kept.
+            open(&mut app, "Day");
+            assert_eq!(view(&app).items[SELECT], "Select Thu 26 Nov 2026");
+            tap(&mut app, &[KeyCode::ArrowRight]);
+            tap(&mut app, &[KeyCode::Escape]);
+            frames(&mut app, 5);
+            assert_eq!(view(&app).title, "Time machine");
+            assert_eq!(date(&app), Some((2026, 11, 26)));
         }
     }
 }
