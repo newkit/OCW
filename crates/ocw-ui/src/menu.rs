@@ -820,6 +820,10 @@ mod tests {
                 Some(ocw_render::camera::CloseUpShot::THREE_QUARTER),
                 "{platform:?}: the head in a close-up"
             );
+            assert!(
+                crate::character::helmet_off(app.world()),
+                "{platform:?}: the helmet off for the hair (4N Q28)"
+            );
             // The focused tile is previewed, by the arrows and the pointer.
             go(&mut app, Action::Right);
             assert_eq!(
@@ -839,6 +843,10 @@ mod tests {
             assert_eq!(
                 app.world().resource::<ocw_render::camera::CloseUp>().0,
                 None
+            );
+            assert!(
+                !crate::character::helmet_off(app.world()),
+                "back on when it closes"
             );
             assert_eq!(
                 *app.world().resource::<CameraOrbit>(),

@@ -852,6 +852,43 @@ fn register_builtin_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         User,
+        Command::new("camera.closeup")
+            .about("A close-up of the own rider (scenes, spec §14 Phase 4, 4N): the face, a hand, or off; yaw (0 = behind, 180 = in front) and pitch in degrees, distance in m")
+            .arg(Arg::new("on").required(true).value_parser(["face", "left-hand", "right-hand", "off"]))
+            .arg(Arg::new("yaw").allow_negative_numbers(true).value_parser(value_parser!(f32)))
+            .arg(Arg::new("pitch").allow_negative_numbers(true).value_parser(value_parser!(f32)))
+            .arg(Arg::new("distance").value_parser(value_parser!(f32))),
+        |world, m| {
+            use crate::camera::{CloseUp, CloseUpOn, CloseUpShot};
+            let on = m.get_one::<String>("on").expect("required").clone();
+            let yaw = m.get_one::<f32>("yaw").copied().unwrap_or(150.0).to_radians();
+            let pitch = m.get_one::<f32>("pitch").copied().unwrap_or(15.0).to_radians();
+            let distance = m.get_one::<f32>("distance").copied().unwrap_or(0.5).clamp(0.2, 3.0);
+            let shot = match on.as_str() {
+                "face" => Some(CloseUpShot {
+                    yaw,
+                    pitch,
+                    distance,
+                    screen_x: 0.0,
+                    on: CloseUpOn::Face,
+                }),
+                "left-hand" => Some(CloseUpShot::hand(0, yaw, pitch, distance)),
+                "right-hand" => Some(CloseUpShot::hand(1, yaw, pitch, distance)),
+                _ => None,
+            };
+            world.insert_resource(CloseUp(shot));
+            Ok(match shot {
+                Some(_) => format!(
+                    "close-up on the {on}: yaw {:.0}, pitch {:.0}, {distance:.2} m",
+                    yaw.to_degrees(),
+                    pitch.to_degrees()
+                ),
+                None => "close-up off".into(),
+            })
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        User,
         Command::new("camera.orbit")
             .about("Orbit the chase camera: yaw (0 = behind, 180 = in front) and pitch in degrees, distance in m")
             .arg(Arg::new("yaw").required(true).allow_negative_numbers(true).value_parser(value_parser!(f32)))

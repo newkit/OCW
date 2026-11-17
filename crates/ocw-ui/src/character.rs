@@ -247,7 +247,26 @@ pub fn previewed(world: &World) -> Option<Character> {
     editor::preview(attr, focus, &rider)
 }
 
+/// Whether the editor shows the bare head now (spec §14 Phase 4, 4N Q28:
+/// the face, hair, facial-hair and glasses pages – the helmet comes off;
+/// back on for the body and the editor's first page, and on leaving).
+pub fn helmet_off(world: &World) -> bool {
+    editor_page(world).is_some_and(|(p, _)| frames_the_face(p))
+}
+
 fn preview_focused_tile(world: &mut World) {
+    let bare = helmet_off(world);
+    if let Some(mut view) = world.get_resource_mut::<ocw_render::RideView>()
+        && let Some(r) = view.riders.iter_mut().find(|r| r.is_local)
+    {
+        let off = ocw_render::thumbs::HELMET_OFF;
+        let has = r.parts.iter().any(|p| p == off);
+        if bare && !has {
+            r.parts.push(off.to_string());
+        } else if !bare && has {
+            r.parts.retain(|p| p != off);
+        }
+    }
     let Some(c) = previewed(world) else {
         return;
     };
@@ -306,6 +325,10 @@ pub fn editor_close_up(page: sub::Page) -> Option<ocw_render::camera::CloseUpSho
 #[derive(Resource, Default)]
 struct SavedOrbit(Option<ocw_render::camera::CameraOrbit>);
 
+/// The close-up the editor set last.
+#[derive(Resource, Default)]
+struct EditorCloseUp(Option<ocw_render::camera::CloseUpShot>);
+
 fn frame_the_rider(world: &mut World) {
     let page = editor_page(world).map(|(p, _)| p);
     let saved = world.get_resource::<SavedOrbit>().and_then(|s| s.0);
@@ -315,11 +338,15 @@ fn frame_the_rider(world: &mut World) {
     else {
         return;
     };
+    // Only when the editor's page changes: `camera.closeup` may set it
+    // too while the editor is closed.
     let close = page.and_then(editor_close_up);
-    if let Some(mut c) = world.get_resource_mut::<ocw_render::camera::CloseUp>()
-        && c.0 != close
-    {
-        c.0 = close;
+    let last = world.get_resource::<EditorCloseUp>().and_then(|e| e.0);
+    if close != last {
+        world.insert_resource(EditorCloseUp(close));
+        if let Some(mut c) = world.get_resource_mut::<ocw_render::camera::CloseUp>() {
+            c.0 = close;
+        }
     }
     match (page, saved) {
         (Some(p), _) => {

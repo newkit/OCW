@@ -136,6 +136,287 @@ pub mod opt {
     pub const HIP_NUMBER: [&str; 2] = ["hip_number_l", "hip_number_r"];
 }
 
+/// The rider's hands (asked by the user 2026-11-17: "give the rider real
+/// hands"; spec §14 Phase 4, 4N, Q25): a palm, a thumb and four fingers
+/// with their knuckle segments, in one shape per grip ([`HandShape`]) –
+/// nodes `hand_<shape>_<l|r>` under the hand, one shown at a time (the
+/// pose picks it, [`crate::pose::Pose::hand_shapes`]). Each lies in the
+/// hand's frame: the wrist at the origin, the fingers towards −y, the
+/// knuckles along z (the index finger in front, −z), the palm's inner face
+/// towards the body's middle (+x on the left hand, −x on the right). A
+/// grip's bar runs along z through [`bar_centre`], the fingers wrap it at
+/// its radius plus a finger's. Paint: the palm and the first finger
+/// joints `glove` (every glove covers them), the middle and outer joints
+/// `fingertip` (the skin out of fingerless mitts, the glove under full
+/// and winter gloves). The far rider keeps the mitten (the low model's
+/// glove ellipsoid).
+pub mod hand {
+    use glam::Vec3;
+
+    /// A hand's shape.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum HandShape {
+        /// Round a bar: tops, drops, the TT extensions and base bar, the
+        /// MTB grips.
+        Wrap,
+        /// Round a road lever's hood (thicker).
+        Hoods,
+        /// Holding the phone of the status signs.
+        Phone,
+        /// Loose, a little curled: standing, the hand off the bar.
+        Relaxed,
+        /// Open, the fingers straight: arms up at the finish.
+        Open,
+    }
+
+    impl HandShape {
+        pub const ALL: [HandShape; 5] = [
+            HandShape::Wrap,
+            HandShape::Hoods,
+            HandShape::Phone,
+            HandShape::Relaxed,
+            HandShape::Open,
+        ];
+
+        pub fn id(self) -> &'static str {
+            match self {
+                HandShape::Wrap => "wrap",
+                HandShape::Hoods => "hoods",
+                HandShape::Phone => "phone",
+                HandShape::Relaxed => "relaxed",
+                HandShape::Open => "open",
+            }
+        }
+
+        /// The radius the fingers wrap (model metres, at the default
+        /// height; a short rider's hand is smaller, so it is generous):
+        /// `None` for the free shapes.
+        pub fn wrap_radius(self) -> Option<f32> {
+            match self {
+                HandShape::Wrap => Some(WRAP_RADIUS),
+                HandShape::Hoods => Some(HOODS_RADIUS),
+                HandShape::Phone => Some(PHONE_RADIUS),
+                HandShape::Relaxed | HandShape::Open => None,
+            }
+        }
+    }
+
+    /// Bar radii the shapes wrap (model metres): bars and grips up to
+    /// 1.65 cm (with tape) for a rider 0.84 times the default height; a
+    /// hood's body; the phone's edge.
+    pub const WRAP_RADIUS: f32 = 0.0205;
+    pub const HOODS_RADIUS: f32 = 0.042;
+    pub const PHONE_RADIUS: f32 = 0.03;
+    /// A finger's radius at its base and at its tip.
+    pub const FINGER_RADIUS: f32 = 0.0085;
+    pub const TIP_RADIUS: f32 = 0.0068;
+    /// The palm: its half thickness (x), half length (y), half width (z),
+    /// its centre's y, and the knuckles' y.
+    pub const PALM_HALF: [f32; 3] = [0.012, 0.041, 0.037];
+    pub const PALM_Y: f32 = -0.046;
+    pub const KNUCKLE_Y: f32 = -0.085;
+    /// Where a grip's bar crosses the hand's long axis (y).
+    pub const BAR_Y: f32 = -0.07;
+    /// The fingers: knuckle z (index in front), joint lengths (base,
+    /// middle, outer).
+    pub const FINGERS: [(f32, [f32; 3]); 4] = [
+        (-0.027, [0.040, 0.025, 0.020]),
+        (-0.009, [0.044, 0.028, 0.021]),
+        (0.009, [0.041, 0.026, 0.020]),
+        (0.026, [0.032, 0.020, 0.018]),
+    ];
+
+    /// The node of `shape` on hand `side` (0 left, 1 right).
+    pub fn node(shape: HandShape, side: usize) -> &'static str {
+        const NAMES: [[&str; 2]; 5] = [
+            ["hand_wrap_l", "hand_wrap_r"],
+            ["hand_hoods_l", "hand_hoods_r"],
+            ["hand_phone_l", "hand_phone_r"],
+            ["hand_relaxed_l", "hand_relaxed_r"],
+            ["hand_open_l", "hand_open_r"],
+        ];
+        let i = HandShape::ALL.iter().position(|s| *s == shape).unwrap_or(0);
+        NAMES[i][side.min(1)]
+    }
+
+    /// The shape and side of a hand node.
+    pub fn of_node(name: &str) -> Option<(HandShape, usize)> {
+        HandShape::ALL.into_iter().find_map(|s| {
+            (0..2)
+                .find(|side| node(s, *side) == name)
+                .map(|side| (s, side))
+        })
+    }
+
+    /// Every hand shape node.
+    pub fn nodes() -> Vec<&'static str> {
+        HandShape::ALL
+            .into_iter()
+            .flat_map(|s| [node(s, 0), node(s, 1)])
+            .collect()
+    }
+
+    /// The hand nodes not shown while both hands are `shape`.
+    pub fn others(shape: HandShape) -> Vec<&'static str> {
+        HandShape::ALL
+            .into_iter()
+            .filter(|s| *s != shape)
+            .flat_map(|s| [node(s, 0), node(s, 1)])
+            .collect()
+    }
+
+    /// Whether a worn kit's gloves cover the fingertips (full and winter
+    /// gloves; the base mitts and gel gloves are fingerless). `kit`: the
+    /// rider variant ids of the worn items.
+    pub fn covers_fingertips(kit: &[String]) -> bool {
+        kit.iter()
+            .any(|k| k == "gloves-full" || k == "gloves-winter")
+    }
+
+    /// +1 on the left hand (the palm faces +x), −1 on the right.
+    pub fn palm_sign(side: usize) -> f32 {
+        if side == 0 { 1.0 } else { -1.0 }
+    }
+
+    /// The centre of the bar `shape` wraps, in the hand's frame (its axis
+    /// along z): beside the palm's inner face, level with the base of the
+    /// fingers.
+    pub fn bar_centre(shape: HandShape, side: usize) -> Option<Vec3> {
+        let r = shape.wrap_radius()?;
+        Some(Vec3::new(palm_sign(side) * (PALM_HALF[0] + r), BAR_Y, 0.0))
+    }
+
+    /// A finger's or the thumb's centre line in the hand's frame, from its
+    /// knuckle to its tip, with the index (in the line's points) where the
+    /// base joint ends (the glove's edge of a fingerless mitt).
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct Digit {
+        pub points: Vec<Vec3>,
+        pub base_end: usize,
+    }
+
+    /// Points per joint along a finger's line.
+    const PER_JOINT: [usize; 3] = [3, 2, 2];
+
+    /// A line `len` long through the 2D path `at(t)` (t in 0 … `len`),
+    /// sampled per joint; `z` across.
+    fn sampled(lens: [f32; 3], z: f32, at: impl Fn(f32) -> (f32, f32), n: f32) -> Digit {
+        let mut points = Vec::new();
+        let mut s = 0.0;
+        let mut base_end = 0;
+        let (u, v) = at(0.0);
+        points.push(Vec3::new(n * u, v, z));
+        for (j, len) in lens.iter().enumerate() {
+            for k in 1..=PER_JOINT[j] {
+                let (u, v) = at(s + len * k as f32 / PER_JOINT[j] as f32);
+                points.push(Vec3::new(n * u, v, z));
+            }
+            s += len;
+            if j == 0 {
+                base_end = points.len() - 1;
+            }
+        }
+        Digit { points, base_end }
+    }
+
+    /// The four fingers of `shape` on hand `side` (index first).
+    pub fn fingers(shape: HandShape, side: usize) -> Vec<Digit> {
+        let n = palm_sign(side);
+        // In the hand's frame across the palm: u towards the bar (n·x), v
+        // = y.
+        let knuckle = (PALM_HALF[0] * 0.35, KNUCKLE_Y + 0.002);
+        FINGERS
+            .iter()
+            .enumerate()
+            .map(|(i, (z, lens))| {
+                let spread = (i as f32 - 1.5) * 0.004;
+                match shape.wrap_radius() {
+                    Some(r) => {
+                        // Round the bar at its radius plus a finger's.
+                        let (bu, bv) = (PALM_HALF[0] + r, BAR_Y);
+                        let rf = r + FINGER_RADIUS + 0.0008;
+                        let phi0 = (knuckle.1 - bv).atan2(knuckle.0 - bu);
+                        // Over a hood's (or a bar end's) front and the
+                        // phone's edge only partly: then straight on.
+                        let limit = match shape {
+                            HandShape::Hoods => 1.35,
+                            HandShape::Phone => 1.6,
+                            _ => f32::MAX,
+                        };
+                        sampled(
+                            *lens,
+                            *z,
+                            |t| {
+                                let a = (t / rf).min(limit);
+                                let phi = phi0 + a;
+                                let rest = t - a * rf;
+                                (
+                                    bu + rf * phi.cos() - rest * phi.sin(),
+                                    bv + rf * phi.sin() + rest * phi.cos(),
+                                )
+                            },
+                            n,
+                        )
+                    }
+                    None if shape == HandShape::Open => sampled(
+                        *lens,
+                        *z + spread,
+                        |t| (knuckle.0 + 0.04 * t, knuckle.1 - t),
+                        n,
+                    ),
+                    None => {
+                        // A loose curl round a wide circle.
+                        let (cu, cv, rr) = (knuckle.0 + 0.05, knuckle.1, 0.05);
+                        sampled(
+                            *lens,
+                            *z,
+                            |t| {
+                                let phi = std::f32::consts::PI + t / rr;
+                                (cu + rr * phi.cos(), cv + rr * phi.sin())
+                            },
+                            n,
+                        )
+                    }
+                }
+            })
+            .collect()
+    }
+
+    /// The thumb of `shape` on hand `side`: from the palm's front edge;
+    /// on a bar it lies along the bar, over it on the palm's side.
+    pub fn thumb(shape: HandShape, side: usize) -> Digit {
+        let n = palm_sign(side);
+        let base = Vec3::new(n * 0.006, -0.028, -0.034);
+        match bar_centre(shape, side).filter(|_| shape != HandShape::Phone) {
+            Some(b) => {
+                let r = shape.wrap_radius().unwrap_or(WRAP_RADIUS);
+                let rf = r + FINGER_RADIUS + 0.0008;
+                let phi = std::f32::consts::PI - 0.75;
+                let on = |z: f32| b + Vec3::new(n * rf * phi.cos(), rf * phi.sin(), z);
+                Digit {
+                    points: vec![base, on(-0.045), on(-0.062), on(-0.08)],
+                    base_end: 2,
+                }
+            }
+            None => {
+                let curl = match shape {
+                    HandShape::Open => 0.0,
+                    _ => 1.0,
+                };
+                Digit {
+                    points: vec![
+                        base,
+                        Vec3::new(n * (0.016 + 0.004 * curl), -0.05, -0.05),
+                        Vec3::new(n * (0.022 + 0.008 * curl), -0.066, -0.058),
+                        Vec3::new(n * (0.024 + 0.012 * curl), -0.08, -0.06),
+                    ],
+                    base_end: 2,
+                }
+            }
+        }
+    }
+}
+
 /// The face on the head (2026-11-17: "give the rider a mouth … and ears,
 /// eyes etc."; spec §14 Phase 4, 4N *Face*): eyes in their sockets under
 /// lids, eyebrows (in the hair's colour, greying with it), ears, the
@@ -311,10 +592,54 @@ pub fn optional() -> Vec<&'static str> {
         .chain(opt::CHEST)
         .chain(opt::FACE_LINES)
         .chain(opt::HIP_NUMBER)
+        .chain(HAIR_BARE.iter().map(|(_, b, _)| *b))
         .collect();
     v.sort_unstable();
     v.dedup();
     v
+}
+
+/// The helmet taken off (spec §14 Phase 4, 4N Q28, decided 2026-11-17:
+/// "show without helmet. hang helmet on a hook on the wall"): a pseudo
+/// kit id; with it in a look's kit [`visible`] shows no helmet or cap and
+/// the bare-head hair ([`HAIR_BARE`]).
+pub const HELMET_OFF: &str = "helmet-off";
+
+/// Every hair piece and its bare-head shape (not pressed under a helmet:
+/// fuller, as the hair falls without one).
+pub const HAIR_BARE: [(&str, &str, f32); 19] = [
+    (opt::HAIR_CAP, "hair_cap_bare", 1.08),
+    (opt::HAIR_BUZZ, "hair_buzz_bare", 1.02),
+    (opt::HAIR_LONG, "hair_long_bare", 1.05),
+    (opt::HAIR_TAIL, "hair_tail_bare", 1.03),
+    (opt::HAIR_BUN, "hair_bun_bare", 1.04),
+    (opt::HAIR_SHAVED, "hair_shaved_bare", 1.01),
+    (opt::HAIR_FRINGE, "hair_fringe_bare", 1.07),
+    (opt::HAIR_TEXTURED, "hair_textured_bare", 1.13),
+    (opt::HAIR_SIDE_PART, "hair_side_part_bare", 1.09),
+    (opt::HAIR_CURLS, "hair_curls_bare", 1.16),
+    (opt::HAIR_AFRO, "hair_afro_bare", 1.38),
+    (opt::HAIR_MID, "hair_mid_bare", 1.08),
+    (opt::HAIR_LONG_CURLY, "hair_long_curly_bare", 1.11),
+    (opt::HAIR_TAIL_LOW, "hair_tail_low_bare", 1.03),
+    (opt::HAIR_BRAID, "hair_braid_bare", 1.03),
+    (opt::HAIR_BRAIDS, "hair_braids_bare", 1.03),
+    (opt::HAIR_BUN_LOW, "hair_bun_low_bare", 1.04),
+    (opt::HAIR_LOCS, "hair_locs_bare", 1.07),
+    (opt::HAIR_ROWS, "hair_cornrows_bare", 1.02),
+];
+
+/// The bare-head shape of hair piece `piece`.
+pub fn bare_of(piece: &str) -> Option<&'static str> {
+    HAIR_BARE
+        .iter()
+        .find(|(p, _, _)| *p == piece)
+        .map(|(_, b, _)| *b)
+}
+
+/// The nodes of hair style `i` without a helmet.
+pub fn hair_nodes_bare(i: u8) -> Vec<&'static str> {
+    hair_nodes(i).iter().filter_map(|n| bare_of(n)).collect()
 }
 
 /// The hair nodes of the 4N catalogue.
@@ -373,8 +698,13 @@ pub fn hair_nodes(i: u8) -> &'static [&'static str] {
 /// of W4 stay in the model for older apps but are never shown.
 pub fn visible(character: &ocw_core::Character, variants: &[&str]) -> Vec<&'static str> {
     let c = character.validated();
+    let bare = variants.contains(&HELMET_OFF);
     let mut out: Vec<&'static str> = Vec::new();
     for slot in KIT_SLOTS {
+        // The helmet off (Q28): no helmet, no cap.
+        if bare && (slot == "helmet" || slot == "cap") {
+            continue;
+        }
         match variants
             .iter()
             .filter_map(|id| variant(id))
@@ -389,7 +719,11 @@ pub fn visible(character: &ocw_core::Character, variants: &[&str]) -> Vec<&'stat
     if !out.contains(&opt::SUIT_PELVIS) {
         out.push(POCKETS);
     }
-    out.extend(hair_nodes(c.hair));
+    if bare {
+        out.extend(hair_nodes_bare(c.hair));
+    } else {
+        out.extend(hair_nodes(c.hair));
+    }
     // Facial hair (4N N6) and the age's face (N3).
     if c.moustache > 0 {
         out.extend(opt::MOUSTACHE.get(c.moustache as usize - 1));
@@ -1634,6 +1968,31 @@ pub fn build(detail: Detail) -> Model {
     // The face (eyes, brows, ears, lips, chin).
     opt_node_face(&mut m, head, skull, detail);
     hair_and_face(&mut m, head, skull, detail);
+    // The bare-head hair (Q28): each piece as it falls without a helmet,
+    // fuller about the skull.
+    {
+        let head_at = Vec3::from(m.world(head).translation);
+        let centre = skull - head_at;
+        for (piece, name, k) in HAIR_BARE {
+            let Some(i) = m.node(piece) else { continue };
+            let mut node = Node::new(name, Some(head), m.nodes[i].translation);
+            let off = m.nodes[i].translation;
+            node.primitives = m.nodes[i]
+                .primitives
+                .iter()
+                .map(|p| {
+                    let mut q = p.clone();
+                    for v in &mut q.positions {
+                        let at = Vec3::from(*v) + off;
+                        let out = centre + (at - centre) * k - off;
+                        *v = out.to_array();
+                    }
+                    q
+                })
+                .collect();
+            m.add(node);
+        }
+    }
     // Glasses (free): the sport wrap and round frames.
     opt_node(&mut m, opt::GLASSES_SPORT, head, |p| {
         if hi {
@@ -1780,11 +2139,39 @@ pub fn build(detail: Detail) -> Model {
         let hand = m.add(Node::new(HAND[s], Some(fore), Vec3::NEG_Y * body::FOREARM));
         // Gloves round the bar: fingers forward of the grip point.
         let palm = wrist - Vec3::Y * 0.06 + Vec3::Z * -0.005;
+        let cuff = |p: &mut Parts, r: f32, len: f32| {
+            p.slot("glove").tube(
+                wrist + Vec3::Y * 0.004,
+                wrist - Vec3::Y * len,
+                r,
+                r * 0.95,
+                n,
+                false,
+            );
+        };
+        let ns = hand::palm_sign(s);
         opt_node(&mut m, opt::GLOVE_MITT[s], hand, |p| {
-            p.slot("glove")
-                .ellipsoid(palm, Vec3::new(0.03, 0.055, 0.03), Quat::IDENTITY, 4, n)
+            if hi {
+                // The hand shapes are the glove; a short cuff at the wrist.
+                cuff(p, 0.03, 0.012);
+            } else {
+                p.slot("glove")
+                    .ellipsoid(palm, Vec3::new(0.03, 0.055, 0.03), Quat::IDENTITY, 4, n)
+            }
         });
         opt_node(&mut m, opt::GLOVE_GEL[s], hand, |p| {
+            if hi {
+                cuff(p, 0.03, 0.014);
+                // The padded back in a light grey, on the back of the hand.
+                p.slot("glove_pad").ellipsoid(
+                    wrist + Vec3::new(-ns * (hand::PALM_HALF[0] + 0.002), hand::PALM_Y, 0.0),
+                    Vec3::new(0.004, 0.03, 0.028),
+                    Quat::IDENTITY,
+                    3,
+                    n,
+                );
+                return;
+            }
             p.slot("glove")
                 .ellipsoid(palm, Vec3::new(0.031, 0.056, 0.031), Quat::IDENTITY, 4, n);
             // The padded back in a light grey.
@@ -1797,6 +2184,10 @@ pub fn build(detail: Detail) -> Model {
             );
         });
         opt_node(&mut m, opt::GLOVE_FULL[s], hand, |p| {
+            if hi {
+                cuff(p, 0.031, 0.02);
+                return;
+            }
             p.slot("glove").ellipsoid(
                 palm - Vec3::Y * 0.01,
                 Vec3::new(0.032, 0.07, 0.032),
@@ -1806,13 +2197,15 @@ pub fn build(detail: Detail) -> Model {
             )
         });
         opt_node(&mut m, opt::GLOVE_WINTER[s], hand, |p| {
-            p.slot("glove").ellipsoid(
-                palm - Vec3::Y * 0.01,
-                Vec3::new(0.038, 0.075, 0.038),
-                Quat::IDENTITY,
-                4,
-                n,
-            );
+            if !hi {
+                p.slot("glove").ellipsoid(
+                    palm - Vec3::Y * 0.01,
+                    Vec3::new(0.038, 0.075, 0.038),
+                    Quat::IDENTITY,
+                    4,
+                    n,
+                );
+            }
             // The cuff over the wrist.
             p.slot("glove").tube(
                 wrist + Vec3::Y * 0.05,
@@ -1823,9 +2216,45 @@ pub fn build(detail: Detail) -> Model {
                 false,
             );
         });
+        // The hands' shapes (4N, the hands): near model only.
+        if hi {
+            for shape in hand::HandShape::ALL {
+                opt_node(&mut m, hand::node(shape, s), hand, |p| {
+                    hand_parts(p, wrist, shape, s)
+                });
+            }
+        }
         m.add(Node::new(GRIP[s], Some(hand), Vec3::NEG_Y * body::HAND));
     }
     m
+}
+
+/// One hand shape's parts ([`hand`]) at the wrist `wrist` (rest-pose model
+/// coordinates).
+fn hand_parts(p: &mut Parts, wrist: Vec3, shape: hand::HandShape, side: usize) {
+    let [hx, hy, hz] = hand::PALM_HALF;
+    // The palm and the back of the hand, a little rounded at the knuckles.
+    p.slot("glove").cuboid(
+        wrist + Vec3::new(0.0, hand::PALM_Y, 0.0),
+        Vec3::new(hx, hy, hz),
+        Quat::IDENTITY,
+    );
+    let sides = 5;
+    let digit = |p: &mut Parts, d: &hand::Digit, r0: f32| {
+        let pts: Vec<Vec3> = d.points.iter().map(|q| wrist + *q).collect();
+        let n = pts.len();
+        let radius = |k: usize| r0 + (hand::TIP_RADIUS - r0) * k as f32 / (n - 1) as f32;
+        let base: Vec<f32> = (0..=d.base_end).map(radius).collect();
+        let tip: Vec<f32> = (d.base_end..n).map(radius).collect();
+        p.slot("glove")
+            .sweep(&pts[..=d.base_end], &base, sides, true);
+        p.slot("fingertip")
+            .sweep(&pts[d.base_end..], &tip, sides, true);
+    };
+    for f in hand::fingers(shape, side) {
+        digit(p, &f, hand::FINGER_RADIUS);
+    }
+    digit(p, &hand::thumb(shape, side), hand::FINGER_RADIUS + 0.001);
 }
 
 #[cfg(test)]
@@ -1863,7 +2292,16 @@ mod tests {
         let rig = RiderRig::from_model(&m).unwrap();
         assert!((rig.leg() - 0.86).abs() < 1e-5);
         assert!((rig.forearm - 0.33).abs() < 1e-5);
-        let shown = base_only(&m);
+        // One hand shape per hand is shown at a time.
+        let others = hand::others(hand::HandShape::Relaxed);
+        let shown: Vec<usize> = base_only(&m)
+            .into_iter()
+            .filter(|i| {
+                !others
+                    .iter()
+                    .any(|o| m.node(o).is_some_and(|h| m.is_below(*i, h)))
+            })
+            .collect();
         let tris = triangles(&m, &shown);
         assert!((1500..6000).contains(&tris), "{tris} triangles");
         assert!(m.triangles() < 16_000, "all variants: {}", m.triangles());
@@ -2198,5 +2636,127 @@ mod tests {
         assert!(face(Age::Thirties).is_empty());
         assert_eq!(face(Age::Forties), [opt::FACE_LINES[0]]);
         assert_eq!(face(Age::Seventies), [opt::FACE_LINES[1], opt::FACE_JAW]);
+    }
+
+    /// The hands' gloves (spec §14 Phase 4, 4N, the hands): every hand
+    /// shape has a palm, four fingers and a thumb with knuckle segments;
+    /// the palm and the base joints are the glove's, the middle and outer
+    /// joints `fingertip` (out of fingerless mitts and gel gloves, covered
+    /// by full and winter gloves); every glove variant of the catalogue is
+    /// one or the other; the near gloves no longer hide the hand (a cuff,
+    /// the gel's pad), the far one stays a mitten.
+    #[test]
+    fn the_gloves_cover_or_expose_the_fingertips() {
+        use hand::HandShape;
+        let m = build(Detail::High);
+        let mat = |slot: &str| m.material(slot).unwrap_or(usize::MAX);
+        for shape in HandShape::ALL {
+            for side in 0..2 {
+                let i = m.node(hand::node(shape, side)).unwrap();
+                let slots: Vec<usize> = m.nodes[i].primitives.iter().map(|p| p.material).collect();
+                assert!(
+                    slots.contains(&mat("glove")),
+                    "{shape:?} {side}: the palm and base joints"
+                );
+                assert!(
+                    slots.contains(&mat("fingertip")),
+                    "{shape:?} {side}: the tips"
+                );
+                assert!(
+                    slots
+                        .iter()
+                        .all(|s| *s == mat("glove") || *s == mat("fingertip"))
+                );
+                // Five digits of three (thumb: two) joints.
+                assert_eq!(hand::fingers(shape, side).len(), 4);
+                for f in hand::fingers(shape, side) {
+                    assert_eq!(f.points.len(), 8, "base, middle and outer joints");
+                    assert!(f.base_end > 0 && f.base_end < f.points.len() - 1);
+                }
+            }
+        }
+        let gloves: Vec<&Variant> = VARIANTS.iter().filter(|v| v.slot == "gloves").collect();
+        assert!(gloves.len() >= 3);
+        for v in gloves {
+            let full = hand::covers_fingertips(&[v.id.to_string()]);
+            assert_eq!(
+                full,
+                v.id == "gloves-full" || v.id == "gloves-winter",
+                "{}",
+                v.id
+            );
+        }
+        assert!(
+            !hand::covers_fingertips(&[]),
+            "the base mitts are fingerless"
+        );
+        // The near glove nodes are cuffs now: small next to a hand shape.
+        let tris = |n: &str| {
+            let i = m.node(n).unwrap();
+            m.nodes[i]
+                .primitives
+                .iter()
+                .map(|p| p.triangles())
+                .sum::<usize>()
+        };
+        let hand_tris = tris(hand::node(HandShape::Wrap, 0));
+        for g in [opt::GLOVE_MITT[0], opt::GLOVE_FULL[0]] {
+            assert!(tris(g) > 0 && tris(g) < hand_tris, "{g}");
+        }
+        let low = build(Detail::Low);
+        let i = low.node(opt::GLOVE_MITT[0]).unwrap();
+        assert!(
+            low.nodes[i].primitives.iter().any(|p| p.triangles() > 20),
+            "the far mitten"
+        );
+    }
+
+    /// The helmet off (spec §14 Phase 4, 4N Q28): no helmet or cap shown,
+    /// and every one of the 21 hair styles has its bare-head shape (fuller
+    /// than under the helmet, no piece left out) as well as its shape under
+    /// the helmet.
+    #[test]
+    fn every_hair_style_has_a_bare_head_shape() {
+        let m = build(Detail::High);
+        let size = |n: &str| {
+            let i = m.node(n).unwrap_or_else(|| panic!("{n}"));
+            let mut r = 0.0f32;
+            let head = Vec3::from(m.world(m.nodes[i].parent.unwrap()).translation);
+            let centre = skull_centre() - head;
+            for p in &m.nodes[i].primitives {
+                for v in &p.positions {
+                    r = r.max((Vec3::from(*v) + m.nodes[i].translation - centre).length());
+                }
+            }
+            r
+        };
+        for i in 0..ocw_core::character::HAIR_STYLES.len() as u8 {
+            let c = ocw_core::Character {
+                hair: i,
+                ..Default::default()
+            };
+            let on = visible(&c, &[]);
+            let off = visible(&c, &[HELMET_OFF]);
+            assert!(
+                on.contains(&HELMET_ROAD) && !off.contains(&HELMET_ROAD),
+                "{i}"
+            );
+            assert!(!off.contains(&CAP));
+            let under = hair_nodes(i);
+            let bare = hair_nodes_bare(i);
+            assert_eq!(under.len(), bare.len(), "style {i}: every piece bare");
+            for (u, b) in under.iter().zip(&bare) {
+                assert!(
+                    on.contains(u) && !on.contains(b),
+                    "{i}: {u} under the helmet"
+                );
+                assert!(off.contains(b) && !off.contains(u), "{i}: {b} bare");
+                assert!(size(b) >= size(u), "{b} as full as {u}");
+            }
+        }
+        assert!(
+            size("hair_afro_bare") > size(opt::HAIR_AFRO) * 1.3,
+            "the afro unpressed"
+        );
     }
 }

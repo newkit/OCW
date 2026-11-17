@@ -8,6 +8,7 @@
 use glam::{Mat3, Quat, Vec3};
 
 use crate::model::Model;
+use crate::rider::hand::{self, HandShape};
 
 /// The rider's joints and segment lengths, from the rider model's rest
 /// pose (all node rotations identity, limbs hanging along −Y).
@@ -243,6 +244,12 @@ impl RiderRig {
     pub fn arm(&self) -> f32 {
         self.upper_arm + self.forearm
     }
+
+    /// Wrist → grip (the hand's share of [`Self::forearm`]).
+    pub fn hand(&self) -> f32 {
+        use crate::rider::body::{FOREARM, HAND};
+        self.forearm * HAND / (FOREARM + HAND)
+    }
 }
 
 impl BikeRig {
@@ -447,6 +454,11 @@ pub struct Pose {
     /// the bike's frame (the screen, the model's front −Z, towards the
     /// eyes); `None` while it is in the pocket.
     pub phone: Option<(Vec3, Quat)>,
+    /// The hands' turn at the wrist (left, right; spec §14 Phase 4, 4N,
+    /// the hands): on a bar the fingers wrap it, else none.
+    pub hands: [Quat; 2],
+    /// The hands' shapes (which `hand_<shape>_<side>` node is shown).
+    pub hand_shapes: [HandShape; 2],
 }
 
 /// The back jersey pocket (the centre one) in the torso's frame of the
@@ -464,7 +476,7 @@ pub const ONE_HAND_UPRIGHT: f32 = 0.12;
 
 impl Pose {
     /// `(node, local rotation)` for every posed node except the pelvis.
-    pub fn rotations(&self) -> [(&'static str, Quat); 15] {
+    pub fn rotations(&self) -> [(&'static str, Quat); 17] {
         use nodes::*;
         [
             (TORSO, self.torso),
@@ -479,6 +491,8 @@ impl Pose {
             (UPPER_ARM[1], self.upper_arms[1]),
             (FOREARM[0], self.forearms[0]),
             (FOREARM[1], self.forearms[1]),
+            (HAND[0], self.hands[0]),
+            (HAND[1], self.hands[1]),
             (bike_nodes::CRANK, self.crank),
             (bike_nodes::PEDAL[0], self.pedals[0]),
             (bike_nodes::PEDAL[1], self.pedals[1]),
@@ -839,7 +853,10 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
     // Arms.
     let mut upper_arms = [Quat::IDENTITY; 2];
     let mut forearms = [Quat::IDENTITY; 2];
+    let mut hands = [Quat::IDENTITY; 2];
+    let mut hand_shapes = [HandShape::Relaxed; 2];
     let mut hand_r = Vec3::ZERO;
+    let hand_len = rider.hand();
     for s in 0..2 {
         let shoulder = torso_pos + torso_world * rider.shoulders[s];
         let out = if s == 0 { -Vec3::X } else { Vec3::X };
@@ -868,7 +885,47 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
             grip = grip.lerp(up, arms_up);
             pole = pole.lerp(out * 0.8 + Vec3::new(0.0, 0.0, 0.5), arms_up);
         }
-        let (elbow, end) = two_bone(shoulder, grip, rider.upper_arm, rider.forearm, pole);
+        // On the bar the hand turns at the wrist so the fingers wrap it
+        // (spec §14 Phase 4, 4N, the hands): the arm reaches the wrist.
+        // Off the bar (the phone, arms up) the hand follows the forearm;
+        // in between both blend, so the hand never jumps.
+        let phone_t = if s == 1 {
+            crate::anim::smoothstep(0.0, 0.12, f64::from(ph)) as f32
+        } else {
+            0.0
+        };
+        let free_t = phone_t.max(arms_up);
+        let (free_elbow, free_end) = two_bone(shoulder, grip, rider.upper_arm, rider.forearm, pole);
+        let free_wrist = free_end - (free_end - free_elbow).normalize_or(Vec3::NEG_Y) * hand_len;
+        let held = (free_t < 1.0).then(|| {
+            let (shape, rot, mut w) = hand_on_bar(
+                bike,
+                s,
+                grips[s],
+                shoulder,
+                [w_hoods, p.tops, p.drops],
+                hand_len,
+            );
+            // A TT bar too far for a short rider: the hand slides back
+            // along the extension until the arm reaches it.
+            let reach = rider.upper_arm + rider.forearm - hand_len;
+            let short = w.distance(shoulder) - 0.995 * reach;
+            if bike.aero_bars && short > 0.0 {
+                w -= aero_axis([w_hoods, p.tops, p.drops]) * short.min(0.15);
+            }
+            (shape, rot, w)
+        });
+        let wrist = match held {
+            Some((_, _, w)) => w.lerp(free_wrist, free_t),
+            None => free_wrist,
+        };
+        let (elbow, end) = two_bone(
+            shoulder,
+            wrist,
+            rider.upper_arm,
+            rider.forearm - hand_len,
+            pole,
+        );
         let hinge = (end - shoulder)
             .cross(elbow - shoulder)
             .normalize_or(Vec3::X);
@@ -876,8 +933,23 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
         let fore_w = segment_rotation(end - elbow, hinge);
         upper_arms[s] = torso_world.inverse() * upper_w;
         forearms[s] = upper_w.inverse() * fore_w;
+        let hand_w = match held {
+            Some((_, on_bar, _)) => on_bar.slerp(fore_w, free_t),
+            None => fore_w,
+        };
+        hands[s] = fore_w.inverse() * hand_w;
+        hand_shapes[s] = match held {
+            Some((shape, _, _)) if free_t < 0.5 => shape,
+            _ if arms_up >= 0.5 => HandShape::Open,
+            _ if ph >= crate::anim::PHONE_PICK => HandShape::Phone,
+            _ => HandShape::Relaxed,
+        };
         if s == 1 {
-            hand_r = end;
+            // The phone in the fingers, beside the palm: where the phone
+            // shape's fingers close.
+            let scale = hand_len / crate::rider::body::HAND;
+            let b = hand::bar_centre(HandShape::Phone, 1).unwrap_or(Vec3::ZERO);
+            hand_r = end + hand_w * (b * scale);
         }
     }
     // Head: looking up the road, a little down; turned by `look`, held
@@ -922,7 +994,97 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
         upper_arms,
         forearms,
         phone,
+        hands,
+        hand_shapes,
     }
+}
+
+/// The bar a hand holds (spec §14 Phase 4, 4N, the hands): the shape, the
+/// axis and the centre of the bar at grip `grip` (bike frame) for grip
+/// weights `w` (hoods, tops, drops), the most held one deciding. Drop bars:
+/// the drops run forward, the tops (and the hand across the hoods) across;
+/// TT bars (extensions, base bar ends) forward; flat bars across.
+pub fn bar_at(bike: &BikeRig, grip: Vec3, w: [f32; 3]) -> (HandShape, Vec3, Vec3) {
+    let flat = !bike.aero_bars && bike.hoods == bike.drops;
+    if bike.aero_bars {
+        // The extensions and the base bar's ends run forward (the
+        // extensions rising to their tips): round them.
+        return (HandShape::Wrap, aero_axis(w), grip);
+    }
+    if flat {
+        return (HandShape::Wrap, Vec3::X, grip);
+    }
+    let most = (0..3).max_by(|a, b| w[*a].total_cmp(&w[*b])).unwrap_or(0);
+    match most {
+        // The hood's body: below and ahead of where the hand rests on it;
+        // the palm on top, the fingers over its front (not round it: the
+        // bar runs under it).
+        0 => (
+            HandShape::Hoods,
+            Vec3::X,
+            grip + Vec3::new(0.0, -HOOD_BELOW_GRIP, -0.007) * w[0],
+        ),
+        1 => (HandShape::Wrap, Vec3::X, grip),
+        _ => (HandShape::Wrap, Vec3::Z, grip),
+    }
+}
+
+/// The TT bar's direction at the hands (forward; the extensions rise to
+/// their tips by a third, the base bar's ends run level).
+fn aero_axis(w: [f32; 3]) -> Vec3 {
+    Vec3::new(0.0, w[0] / 3.0, -1.0).normalize()
+}
+
+/// How far the hood's body lies below its grip anchor (m).
+pub const HOOD_BELOW_GRIP: f32 = 0.011;
+
+/// A hand holding the bar: its shape, its rotation (bike frame) and where
+/// the wrist goes, for side `s` at grip `grip` with the shoulder at
+/// `shoulder`, a hand `hand_len` long. The hand's knuckle line lies along
+/// the bar, its long axis points from the bar towards the shoulder, the
+/// palm on the bar's side towards the rider (on a drop bar's tops and
+/// drops from above and behind, on the hoods from the inside), so the
+/// fingers wrap it ([`crate::rider::hand::bar_centre`] at the bar's
+/// centre).
+pub fn hand_on_bar(
+    bike: &BikeRig,
+    s: usize,
+    grip: Vec3,
+    shoulder: Vec3,
+    w: [f32; 3],
+    hand_len: f32,
+) -> (HandShape, Quat, Vec3) {
+    let (shape, k, c) = bar_at(bike, grip, w);
+    let n = hand::palm_sign(s);
+    let to_sh = shoulder - c;
+    // Over a hood the wrist is behind it, the palm on top (on a TT bar
+    // the forearm lies along the extension: the wrist towards the elbow).
+    let to_sh = if shape == HandShape::Hoods && !bike.aero_bars {
+        Vec3::new(0.0, 0.25, 1.0)
+    } else {
+        to_sh
+    };
+    let y = (to_sh - k * to_sh.dot(k)).normalize_or(Vec3::Y);
+    let mut nn = k.cross(y).normalize_or(Vec3::NEG_Z);
+    let press = Vec3::new(0.0, -0.6, -1.0).normalize();
+    let out = if s == 0 { Vec3::NEG_X } else { Vec3::X };
+    if nn.dot(press).abs() < 0.3 {
+        if nn.dot(out) < 0.0 {
+            nn = -nn;
+        }
+    } else if nn.dot(press) < 0.0 {
+        nn = -nn;
+    }
+    // On a TT base bar's end the thumb lies along the end, forward (behind
+    // the hand the bar bends in).
+    if bike.aero_bars && w[0] < 0.5 && -(nn * n).cross(y).dot(Vec3::NEG_Z) < 0.0 {
+        nn = -nn;
+    }
+    let x = nn * n;
+    let rot = Quat::from_mat3(&Mat3::from_cols(x, y, x.cross(y))).normalize();
+    let scale = hand_len / crate::rider::body::HAND;
+    let b = hand::bar_centre(shape, s).unwrap_or(Vec3::NEG_Y * hand_len) * scale;
+    (shape, rot, c - rot * b)
 }
 
 /// Where the right hand is on the phone's timeline `ph` (spec §2.6) and
@@ -1041,6 +1203,8 @@ pub fn idle_aged(rider: &RiderRig, t: f32, hunch: f32) -> Pose {
         upper_arms,
         forearms,
         phone: None,
+        hands: [Quat::IDENTITY; 2],
+        hand_shapes: [HandShape::Relaxed; 2],
     }
 }
 
@@ -1161,10 +1325,23 @@ pub fn photographer(
             upper_arms,
             forearms,
             phone: None,
+            hands: [Quat::IDENTITY; 2],
+            hand_shapes: [HandShape::Relaxed; 2],
         },
         lens,
         centre,
     )
+}
+
+/// Where hand `side` of a posed rider model holds (tests): the centre of
+/// the bar its fingers wrap, else the grip node.
+#[cfg(test)]
+pub(crate) fn held_point(m: &Model, p: &Pose, side: usize) -> Vec3 {
+    let shape = p.hand_shapes[side];
+    match (m.node(nodes::HAND[side]), hand::bar_centre(shape, side)) {
+        (Some(i), Some(b)) if shape != HandShape::Phone => m.world(i).transform_point3(b),
+        _ => m.position(nodes::GRIP[side]).unwrap_or(Vec3::ZERO),
+    }
 }
 
 #[cfg(test)]
@@ -1345,9 +1522,9 @@ mod tests {
                             cleat.distance(pedal) < 0.03,
                             "{profile:?} stand {stand} crank {i}: cleat {cleat} pedal {pedal}"
                         );
-                        let grip = rider.position(nodes::GRIP[s]).unwrap();
+                        let grip = held_point(&rider, &p, s);
                         assert!(
-                            grip.distance(bike.hoods[s]) < 0.04,
+                            grip.distance(bike.hoods[s]) < 0.05,
                             "{profile:?} stand {stand}: grip {grip} hoods {}",
                             bike.hoods[s]
                         );
@@ -1421,9 +1598,12 @@ mod tests {
                                 cleat.distance(pedal) < 0.03,
                                 "{profile:?} {cm} stand {stand}: cleat {cleat} pedal {pedal}"
                             );
-                            let grip = posed.position(nodes::GRIP[side]).unwrap() * s;
+                            let grip = held_point(&posed, &p, side) * s;
+                            // A short rider's hands slide back along a TT
+                            // bar's extensions until the arms reach.
+                            let tol = if b.bike.aero_bars { 0.16 } else { 0.05 };
                             assert!(
-                                grip.distance(b.bike.hoods[side]) < 0.04,
+                                grip.distance(b.bike.hoods[side]) < tol,
                                 "{profile:?} {cm} stand {stand}: grip {grip} hoods {}",
                                 b.bike.hoods[side]
                             );
@@ -1510,7 +1690,7 @@ mod tests {
                     "{profile:?} {side}: the other foot on its pedal"
                 );
                 for s in 0..2 {
-                    let grip = rider.position(nodes::GRIP[s]).unwrap();
+                    let grip = held_point(&rider, &p, s);
                     assert!(
                         grip.distance(bike.hoods[s]) < 0.05,
                         "{profile:?} {side}: hands {grip}"
@@ -1572,7 +1752,7 @@ mod tests {
             let p = pose(&rig, &bike, &fit, &up);
             p.apply(&mut rider);
             for s in 0..2 {
-                let grip = rider.position(nodes::GRIP[s]).unwrap();
+                let grip = held_point(&rider, &p, s);
                 assert!(
                     grip.distance(bike.tops[s]) < 0.05,
                     "{profile:?}: tops {grip}"
@@ -1595,10 +1775,14 @@ mod tests {
                 "{profile:?}: hips back"
             );
             for s in 0..2 {
-                let grip = rider.position(nodes::GRIP[s]).unwrap();
+                let grip = held_point(&rider, &p, s);
+                // Where the hand holds the hoods (on a TT bar: over the
+                // extension's end).
+                let at = bar_at(&bike, bike.hoods[s], [1.0, 0.0, 0.0]).2;
+                let tol = if bike.aero_bars { 0.16 } else { 0.05 };
                 assert!(
-                    grip.distance(bike.hoods[s]) < 0.05,
-                    "{profile:?}: throw hands {grip}"
+                    grip.distance(at) < tol,
+                    "{profile:?}: throw hands {grip} {at}"
                 );
             }
             // A right-hand bend: the right (inside) knee further out than in
@@ -1672,7 +1856,10 @@ mod phone_tests {
     use crate::anim::{PHONE_AT_POCKET, PHONE_PICK};
 
     /// The right hand's end (the grip point) of a pose.
-    fn hand(rider: &RiderRig, p: &Pose) -> Vec3 {
+    /// The right hand's grasp: where the phone shape's fingers close (the
+    /// hand turned at the wrist; spec §14 Phase 4, 4N, the hands), before
+    /// it holds the phone the grip point.
+    fn hand_at(rider: &RiderRig, p: &Pose, grasp: bool) -> Vec3 {
         let pelvis = p.pelvis;
         let torso_w = pelvis.1 * p.torso;
         let torso_pos = pelvis.0 + pelvis.1 * rider.torso;
@@ -1680,7 +1867,19 @@ mod phone_tests {
         let upper = torso_w * p.upper_arms[1];
         let elbow = shoulder + upper * (Vec3::NEG_Y * rider.upper_arm);
         let fore = upper * p.forearms[1];
-        elbow + fore * (Vec3::NEG_Y * rider.forearm)
+        let wrist = elbow + fore * (Vec3::NEG_Y * (rider.forearm - rider.hand()));
+        let scale = rider.hand() / crate::rider::body::HAND;
+        let b = if grasp {
+            crate::rider::hand::bar_centre(HandShape::Phone, 1).unwrap()
+        } else {
+            Vec3::new(0.0, crate::rider::hand::BAR_Y, 0.0)
+        };
+        wrist + fore * p.hands[1] * (b * scale)
+    }
+
+    /// The right hand's grip point (its palm's end).
+    fn hand(rider: &RiderRig, p: &Pose) -> Vec3 {
+        hand_at(rider, p, false)
     }
 
     #[test]
@@ -1717,8 +1916,8 @@ mod phone_tests {
                 // towards the eyes.
                 let p = at(1.0, 0.0);
                 let (ph, q) = p.phone.expect("held");
-                let h = hand(&r, &p);
-                assert!(h.distance(ph) < 1e-4);
+                let h = hand_at(&r, &p, true);
+                assert!(h.distance(ph) < 1e-4, "in the fingers");
                 let bar = 0.5 * (b.tops[0] + b.tops[1]);
                 let torso_w = p.pelvis.1 * p.torso;
                 let head = p.pelvis.0 + p.pelvis.1 * r.torso + torso_w * r.neck;
@@ -1782,5 +1981,210 @@ mod phone_tests {
         );
         assert!((vr.head.angle_between(rest.head) - crate::anim::VR_HEAD_DOWN).abs() < 1e-3);
         assert!(vr.phone.is_none());
+    }
+}
+
+/// The hands (asked by the user 2026-11-17: "give the rider real hands";
+/// spec §14 Phase 4, 4N).
+#[cfg(test)]
+mod hand_tests {
+    use super::*;
+    use crate::rider::hand::{self, HandShape};
+    use crate::rider::{Detail, build};
+    use ocw_core::ProfileId;
+
+    /// The near rider posed with `p` at body scale `scale` (bike frame).
+    fn posed(m: &Model, p: &Pose, scale: f32) -> Model {
+        let mut m = m.clone();
+        p.apply(&mut m);
+        if let Some(i) = m.node(nodes::PELVIS) {
+            m.nodes[i].translation = p.pelvis.0 / scale;
+        }
+        if let Some(i) = m.node("rider") {
+            m.nodes[i].scale = Vec3::splat(scale);
+        }
+        m
+    }
+
+    /// The digits of hand `side` in shape `shape`, posed (bike frame).
+    fn digits(m: &Model, side: usize, shape: HandShape) -> Vec<Vec<Vec3>> {
+        let w = m.world(m.node(nodes::HAND[side]).expect("hand"));
+        hand::fingers(shape, side)
+            .into_iter()
+            .chain([hand::thumb(shape, side)])
+            .map(|d| d.points.iter().map(|q| w.transform_point3(*q)).collect())
+            .collect()
+    }
+
+    /// Distance from `p` to a tube's centre line, and the tube's radius
+    /// there.
+    fn to_tube(p: Vec3, pts: &[Vec3], radii: &[f32]) -> (f32, f32) {
+        pts.windows(2)
+            .zip(radii.windows(2))
+            .map(|(seg, r)| {
+                let ab = seg[1] - seg[0];
+                let t = ((p - seg[0]).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
+                (p.distance(seg[0] + ab * t), r[0] + (r[1] - r[0]) * t)
+            })
+            .min_by(|a, b| (a.0 - a.1).total_cmp(&(b.0 - b.1)))
+            .expect("a segment")
+    }
+
+    /// Every bike's grips (hoods, tops, drops; the TT extensions and base
+    /// bar; the MTB grips) for a short, a default and a tall rider: the
+    /// hand takes the grip's shape, no finger or thumb cuts into a bar, a
+    /// grip or a hood's body, and the fingers wrap the bar they hold (the
+    /// fingertips close round it).
+    #[test]
+    fn fingers_wrap_every_bikes_grips_without_clipping() {
+        let near = build(Detail::High);
+        let rig = RiderRig::from_model(&near).unwrap();
+        for profile in ProfileId::ALL {
+            let held = crate::bikes::held_bars(profile);
+            let bike = crate::shipped::bike_rig(profile);
+            for scale in [0.84, 1.0, 1.15] {
+                let body = BodyFit::new(&rig, &bike, scale);
+                for (name, tops, drops) in
+                    [("hoods", 0.0, 0.0), ("tops", 1.0, 0.0), ("drops", 0.0, 1.0)]
+                {
+                    let params = PoseParams {
+                        tops,
+                        drops,
+                        ..Default::default()
+                    };
+                    let p = pose(&body.rider, &body.bike, &body.fit, &params);
+                    let what = format!("{profile:?} {name} ×{scale}");
+                    let drop_hoods = name == "hoods" && !bike.aero_bars && bike.hoods != bike.drops;
+                    let want = if drop_hoods {
+                        HandShape::Hoods
+                    } else {
+                        HandShape::Wrap
+                    };
+                    assert_eq!(p.hand_shapes, [want; 2], "{what}");
+                    let m = posed(&near, &p, scale);
+                    let finger_r = hand::TIP_RADIUS * scale - 0.0015;
+                    for side in 0..2 {
+                        let ds = digits(&m, side, want);
+                        for (k, d) in ds.iter().enumerate() {
+                            for q in d {
+                                for (t, (pts, radii)) in held.tubes.iter().enumerate() {
+                                    let (dist, r) = to_tube(*q, pts, radii);
+                                    assert!(
+                                        dist >= r + finger_r,
+                                        "{what} side {side} digit {k} point {q}: {dist:.4} into bar {t} of {r:.4} ({pts:?}); held at {} for {}",
+                                        held_point(&m, &p, side),
+                                        bar_at(
+                                            &body.bike,
+                                            [body.bike.hoods, body.bike.tops, body.bike.drops]
+                                                [if tops > 0.0 {
+                                                    1
+                                                } else if drops > 0.0 {
+                                                    2
+                                                } else {
+                                                    0
+                                                }][side],
+                                            [1.0 - tops - drops, tops, drops]
+                                        )
+                                        .2
+                                    );
+                                }
+                                for (c, radii, rot) in &held.hoods {
+                                    let l = rot.inverse() * (*q - *c);
+                                    let e = l / (*radii + Vec3::splat(finger_r));
+                                    assert!(
+                                        e.length() >= 1.0,
+                                        "{what} side {side} digit {k}: into the hood ({})",
+                                        e.length()
+                                    );
+                                }
+                            }
+                        }
+                        // The fingertips close round (or over the end of)
+                        // what the hand holds.
+                        for d in &ds[..4] {
+                            let tip = *d.last().unwrap();
+                            let near_bar = held
+                                .tubes
+                                .iter()
+                                .map(|(pts, radii)| {
+                                    let (dist, r) = to_tube(tip, pts, radii);
+                                    dist - r
+                                })
+                                .fold(f32::MAX, f32::min);
+                            let near_hood = held
+                                .hoods
+                                .iter()
+                                .map(|(c, _, _)| tip.distance(*c) - 0.04)
+                                .fold(f32::MAX, f32::min);
+                            assert!(
+                                near_bar.min(near_hood) < 0.06,
+                                "{what} side {side}: a fingertip {near_bar:.3} / {near_hood:.3} away"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The other shapes: open hands with the arms up, the phone held in
+    /// the right hand's fingers (the left on the bar), loose hands standing.
+    #[test]
+    fn the_hands_open_hold_the_phone_and_hang_loose() {
+        let near = build(Detail::High);
+        let rig = RiderRig::from_model(&near).unwrap();
+        let bike = crate::shipped::bike_rig(ProfileId::Road);
+        let body = BodyFit::new(&rig, &bike, 1.0);
+        let up = pose(
+            &body.rider,
+            &body.bike,
+            &body.fit,
+            &PoseParams {
+                arms_up: 1.0,
+                ..Default::default()
+            },
+        );
+        assert_eq!(up.hand_shapes, [HandShape::Open; 2]);
+        assert_eq!(up.hands, [Quat::IDENTITY; 2]);
+        let ph = pose(
+            &body.rider,
+            &body.bike,
+            &body.fit,
+            &PoseParams {
+                phone: 1.0,
+                one_hand: 1.0,
+                ..Default::default()
+            },
+        );
+        assert_eq!(ph.hand_shapes, [HandShape::Hoods, HandShape::Phone]);
+        let (phone, _) = ph.phone.expect("the phone out");
+        let m = posed(&near, &ph, 1.0);
+        let w = m.world(m.node(nodes::HAND[1]).unwrap());
+        let palm = w.transform_point3(Vec3::new(0.0, hand::PALM_Y, 0.0));
+        let grasp = w.transform_point3(hand::bar_centre(HandShape::Phone, 1).unwrap());
+        assert!(
+            phone.distance(grasp) < 0.003,
+            "the phone where the fingers close"
+        );
+        assert!(phone.distance(palm) < 0.05, "beside the palm");
+        for d in digits(&m, 1, HandShape::Phone).iter().take(4) {
+            assert!(
+                d.last().unwrap().distance(phone) < 0.06,
+                "a finger round the phone"
+            );
+        }
+        let idle = idle(&rig, 1.0);
+        assert_eq!(idle.hand_shapes, [HandShape::Relaxed; 2]);
+        // Every shape's node exists on both hands of the near model, none
+        // on the far one (its mitten).
+        let low = build(Detail::Low);
+        for shape in HandShape::ALL {
+            for side in 0..2 {
+                let n = hand::node(shape, side);
+                assert!(near.node(n).is_some(), "{n}");
+                assert!(low.node(n).is_none(), "{n} far");
+                assert_eq!(hand::of_node(n), Some((shape, side)));
+            }
+        }
     }
 }

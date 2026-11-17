@@ -260,9 +260,11 @@ fn spawn_person(
     let (look, kit) = look_of(seed);
     let c = look.character.validated();
     let colours = crate::riders::avatar_colours(ocw_core::RiderId(0), false, Some(&look));
+    let hands = ocw_assets::rider::hand::others(ocw_assets::rider::hand::HandShape::Relaxed);
     let mut hidden: Vec<usize> = crate::riders::hidden_rider_nodes(Some(&look), &kit)
         .into_iter()
         .chain(HELMETS)
+        .chain(hands)
         .filter_map(|n| model.node(n))
         .collect();
     hidden.sort_unstable();

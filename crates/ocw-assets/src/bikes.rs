@@ -852,18 +852,8 @@ fn bars(p: &mut Parts, d: &Design, kit: &Kit, c: Vec3, sides: u32, hi: bool) {
             flare,
         } => {
             let hw = width * 0.5;
-            let path = [
-                Vec3::new(0.0, 0.0, 0.0),
-                Vec3::new(hw - 0.04, 0.0, 0.0),
-                Vec3::new(hw, 0.0, -0.03),
-                Vec3::new(hw + flare * 0.1, -0.006, -reach + 0.012),
-                Vec3::new(hw + flare * 0.3, -0.032, -reach - 0.004),
-                Vec3::new(hw + flare * 0.65, -drop * 0.62, -reach + 0.004),
-                Vec3::new(hw + flare, -drop, -reach + 0.045),
-                Vec3::new(hw + flare, -drop - 0.004, -reach + 0.12),
-            ];
-            let radii =
-                [0.0155, 0.0135, 0.012, 0.012, 0.012, 0.012, 0.012, 0.012].map(|r| r * kit.tape);
+            let (path, radii) = drop_bar_path(width, reach, drop, flare);
+            let radii = radii.map(|r| r * kit.tape);
             for side in [-1.0f32, 1.0] {
                 let pts: Vec<Vec3> = path
                     .iter()
@@ -872,14 +862,9 @@ fn bars(p: &mut Parts, d: &Design, kit: &Kit, c: Vec3, sides: u32, hi: bool) {
                 p.slot("bar_tape").sweep(&pts, &radii, sides, true);
                 if hi {
                     // Hood and brake lever.
-                    let hood = c + Vec3::new(side * (hw + flare * 0.15), 0.014, -reach - 0.012);
-                    p.slot("component").ellipsoid(
-                        hood,
-                        Vec3::new(0.016, 0.024, 0.038),
-                        Quat::from_rotation_x(-0.25),
-                        4,
-                        6,
-                    );
+                    let (hood, radii, rot) = hood_body(hw, reach, flare, side);
+                    let hood = c + hood;
+                    p.slot("component").ellipsoid(hood, radii, rot, 4, 6);
                     p.slot("component").sweep(
                         &[
                             hood + Vec3::new(0.0, 0.0, -0.03),
@@ -897,26 +882,13 @@ fn bars(p: &mut Parts, d: &Design, kit: &Kit, c: Vec3, sides: u32, hi: bool) {
             }
         }
         Bars::Aero => {
-            let base = [
-                Vec3::new(0.0, 0.0, 0.0),
-                Vec3::new(0.16, 0.0, -0.01),
-                Vec3::new(0.205, -0.005, -0.05),
-                Vec3::new(0.218, 0.0, -0.13),
-            ];
             for side in [-1.0f32, 1.0] {
                 let s = |v: Vec3| c + Vec3::new(v.x * side, v.y, v.z);
-                let pts: Vec<Vec3> = base.iter().map(|v| s(*v)).collect();
-                p.slot("bar_tape")
-                    .sweep(&pts, &[0.016, 0.014, 0.013, 0.013], sides, true);
+                let pts: Vec<Vec3> = AERO_BASE.0.iter().map(|v| s(*v)).collect();
+                p.slot("bar_tape").sweep(&pts, &AERO_BASE.1, sides, true);
                 // Extension with a ski bend at the tip.
-                let ext = [
-                    Vec3::new(0.06, 0.062, 0.05),
-                    Vec3::new(0.055, 0.07, -0.24),
-                    Vec3::new(0.05, 0.1, -0.33),
-                ];
-                let pts: Vec<Vec3> = ext.iter().map(|v| s(*v)).collect();
-                p.slot("component")
-                    .sweep(&pts, &[0.011, 0.011, 0.011], sides, true);
+                let pts: Vec<Vec3> = AERO_EXT.0.iter().map(|v| s(*v)).collect();
+                p.slot("component").sweep(&pts, &AERO_EXT.1, sides, true);
                 // Arm pad on a riser.
                 p.slot("component").tube(
                     s(Vec3::new(0.075, 0.0, 0.0)),
@@ -962,14 +934,8 @@ fn bars(p: &mut Parts, d: &Design, kit: &Kit, c: Vec3, sides: u32, hi: bool) {
             );
             for side in [-1.0f32, 1.0] {
                 let s = |v: Vec3| c + Vec3::new(v.x * side, v.y, v.z);
-                p.slot("tyre").tube(
-                    s(Vec3::new(hw - 0.13, rise, 0.022)),
-                    s(Vec3::new(hw + 0.005, rise, 0.026)),
-                    0.017,
-                    0.017,
-                    sides,
-                    true,
-                );
+                let (a, b, r) = flat_grip(hw, rise);
+                p.slot("tyre").tube(s(a), s(b), r, r, sides, true);
                 if hi {
                     p.slot("component").tube(
                         s(Vec3::new(hw - 0.15, rise + 0.01, 0.018)),
@@ -983,6 +949,115 @@ fn bars(p: &mut Parts, d: &Design, kit: &Kit, c: Vec3, sides: u32, hi: bool) {
             }
         }
     }
+}
+
+/// One side's drop bar centre line (right side, from the stem clamp) and
+/// its radii (before the tape's thickness).
+fn drop_bar_path(width: f32, reach: f32, drop: f32, flare: f32) -> ([Vec3; 8], [f32; 8]) {
+    let hw = width * 0.5;
+    (
+        [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(hw - 0.04, 0.0, 0.0),
+            Vec3::new(hw, 0.0, -0.03),
+            Vec3::new(hw + flare * 0.1, -0.006, -reach + 0.012),
+            Vec3::new(hw + flare * 0.3, -0.032, -reach - 0.004),
+            Vec3::new(hw + flare * 0.65, -drop * 0.62, -reach + 0.004),
+            Vec3::new(hw + flare, -drop, -reach + 0.045),
+            Vec3::new(hw + flare, -drop - 0.004, -reach + 0.12),
+        ],
+        [0.0155, 0.0135, 0.012, 0.012, 0.012, 0.012, 0.012, 0.012],
+    )
+}
+
+/// A road lever's hood body on side `side` (±1): centre (from the stem
+/// clamp), radii, rotation.
+fn hood_body(hw: f32, reach: f32, flare: f32, side: f32) -> (Vec3, Vec3, Quat) {
+    (
+        Vec3::new(side * (hw + flare * 0.15), 0.014, -reach - 0.012),
+        Vec3::new(0.016, 0.024, 0.038),
+        Quat::from_rotation_x(-0.25),
+    )
+}
+
+/// The TT base bar and extension (right side, from the clamp) with radii.
+const AERO_BASE: ([Vec3; 4], [f32; 4]) = (
+    [
+        Vec3::new(0.0, 0.0, 0.0),
+        Vec3::new(0.16, 0.0, -0.01),
+        Vec3::new(0.205, -0.005, -0.05),
+        Vec3::new(0.218, 0.0, -0.13),
+    ],
+    [0.016, 0.014, 0.013, 0.013],
+);
+const AERO_EXT: ([Vec3; 3], [f32; 3]) = (
+    [
+        Vec3::new(0.06, 0.062, 0.05),
+        Vec3::new(0.055, 0.07, -0.24),
+        Vec3::new(0.05, 0.1, -0.33),
+    ],
+    [0.011, 0.011, 0.011],
+);
+
+/// A flat bar's grip (right side): its ends and radius.
+fn flat_grip(hw: f32, rise: f32) -> (Vec3, Vec3, f32) {
+    (
+        Vec3::new(hw - 0.13, rise, 0.022),
+        Vec3::new(hw + 0.005, rise, 0.026),
+        0.017,
+    )
+}
+
+/// What the hands hold on `profile`'s bike (bike frame, its stock parts;
+/// spec §14 Phase 4, 4N, the hands): the bars' and grips' centre lines
+/// with their radii (the tape included), and the hoods' bodies (centre,
+/// radii, rotation). The levers, lamps and pads are left out (a finger may
+/// rest on a lever).
+pub struct HeldBars {
+    pub tubes: Vec<(Vec<Vec3>, Vec<f32>)>,
+    pub hoods: Vec<(Vec3, Vec3, Quat)>,
+}
+
+pub fn held_bars(profile: ProfileId) -> HeldBars {
+    let rig = RiderRig::from_model(crate::shipped::rider_model()).expect("rider rig");
+    let (d, kit) = configure(profile, &[]);
+    let c = Frame::new(&design(profile), &rig).bar_clamp;
+    let mut out = HeldBars {
+        tubes: Vec::new(),
+        hoods: Vec::new(),
+    };
+    for side in [-1.0f32, 1.0] {
+        let s = |v: Vec3| c + Vec3::new(v.x * side, v.y, v.z);
+        match d.bars {
+            Bars::Drop {
+                width,
+                reach,
+                drop,
+                flare,
+            } => {
+                let (path, radii) = drop_bar_path(width, reach, drop, flare);
+                out.tubes.push((
+                    path.iter().map(|v| s(*v)).collect(),
+                    radii.iter().map(|r| r * kit.tape).collect(),
+                ));
+                let (h, r, q) = hood_body(width * 0.5, reach, flare, side);
+                out.hoods.push((c + h, r, q));
+            }
+            Bars::Aero => {
+                for (pts, radii) in [
+                    (AERO_BASE.0.to_vec(), AERO_BASE.1.to_vec()),
+                    (AERO_EXT.0.to_vec(), AERO_EXT.1.to_vec()),
+                ] {
+                    out.tubes.push((pts.iter().map(|v| s(*v)).collect(), radii));
+                }
+            }
+            Bars::Flat { width, rise } => {
+                let (a, b, r) = flat_grip(width * 0.5, rise);
+                out.tubes.push((vec![s(a), s(b)], vec![r, r]));
+            }
+        }
+    }
+    out
 }
 
 /// Builds the bike of `profile` with the rider (for the saddle height and

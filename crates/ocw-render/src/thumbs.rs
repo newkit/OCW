@@ -44,6 +44,10 @@ pub const BACKGROUND: Color = Color::srgb(0.30, 0.31, 0.33);
 /// The thumbnail camera's vertical field of view (rad).
 pub const FOV_Y: f32 = 0.5;
 
+/// The helmet taken off (spec §14 Phase 4, 4N Q28): the pseudo kit id
+/// of `ocw_assets::rider::HELMET_OFF`, for the crates without the assets.
+pub const HELMET_OFF: &str = ocw_assets::rider::HELMET_OFF;
+
 /// The character thumbnails' size (square: the menu's picture tiles).
 pub const RIDER_THUMB_SIZE: UVec2 = UVec2::new(192, 192);
 
