@@ -60,10 +60,10 @@ impl std::str::FromStr for DroneCamera {
 pub const POV_AHEAD_M: f32 = 0.45;
 /// The follow camera: behind the drone's heading, to its right, above it
 /// (m), and how far along the drone's view it looks (m).
-pub const FOLLOW_BACK_M: f32 = 7.0;
-pub const FOLLOW_SIDE_M: f32 = 3.0;
-pub const FOLLOW_UP_M: f32 = 1.8;
-pub const FOLLOW_LOOK_M: f32 = 3.0;
+pub const FOLLOW_BACK_M: f32 = 3.0;
+pub const FOLLOW_SIDE_M: f32 = 1.2;
+pub const FOLLOW_UP_M: f32 = 0.6;
+pub const FOLLOW_LOOK_M: f32 = 2.0;
 /// Smoothing of the follow camera's heading, eye and look-at point (s).
 pub const HEADING_TAU_S: f32 = 1.2;
 pub const EYE_TAU_S: f32 = 0.35;
