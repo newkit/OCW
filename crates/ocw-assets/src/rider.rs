@@ -219,7 +219,7 @@ pub mod hand {
     pub const BAR_Y: f32 = -0.07;
     /// The relaxed hand's bend at the index finger's base, middle and
     /// outer joint (rad; each finger towards the little one a little more).
-    pub const RELAXED_BEND: [f32; 3] = [0.42, 0.62, 0.38];
+    pub const RELAXED_BEND: [f32; 3] = [0.25, 0.45, 0.25];
     /// The fingers: knuckle z (index in front), joint lengths (base,
     /// middle, outer).
     pub const FINGERS: [(f32, [f32; 3]); 4] = [
@@ -344,11 +344,11 @@ pub mod hand {
                     u += (thenar + hypo) * c.powf(0.5);
                 } else {
                     // The back: the knuckles over the fingers' bases.
-                    let ridge: f32 = FINGERS
-                        .iter()
-                        .map(|(fz, _)| bump(z, *fz, 0.0085))
-                        .sum();
-                    u -= 0.003 * (0.5 + 0.5 * ridge.min(1.0)) * bump(y, KNUCKLE_Y + 0.001, 0.011) * (-c).powf(0.5);
+                    let ridge: f32 = FINGERS.iter().map(|(fz, _)| bump(z, *fz, 0.0085)).sum();
+                    u -= 0.003
+                        * (0.5 + 0.5 * ridge.min(1.0))
+                        * bump(y, KNUCKLE_Y + 0.001, 0.011)
+                        * (-c).powf(0.5);
                 }
                 verts.push(Vec3::new(n * u, y, z));
             }
@@ -461,16 +461,12 @@ pub mod hand {
                     ),
                     None => {
                         // A relaxed hand (bug 2026-11-17: the standing
-                        // rider's hands looked loose): each joint bent a
-                        // little more than the one before, the little
+                        // rider's hands looked loose): every joint bent
+                        // a little, the middle joint most, the little
                         // finger curled most, as a hand hangs at rest.
                         let k = i as f32;
                         let bend = RELAXED_BEND;
-                        let angles = [
-                            bend[0] + 0.07 * k,
-                            bend[1] + 0.08 * k,
-                            bend[2] + 0.04 * k,
-                        ];
+                        let angles = [bend[0] + 0.04 * k, bend[1] + 0.05 * k, bend[2] + 0.02 * k];
                         sampled(
                             *lens,
                             *z,
@@ -520,7 +516,7 @@ pub mod hand {
                     base,
                     Vec3::new(n * 0.017, -0.052, -0.047),
                     Vec3::new(n * 0.026, -0.075, -0.05),
-                    Vec3::new(n * 0.031, -0.097, -0.044),
+                    Vec3::new(n * 0.029, -0.104, -0.043),
                 ],
                 base_end: 2,
             },

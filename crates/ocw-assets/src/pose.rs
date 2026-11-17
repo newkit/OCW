@@ -1217,11 +1217,11 @@ pub fn idle_aged(rider: &RiderRig, t: f32, hunch: f32) -> Pose {
 /// follows the arm's swing (about the knuckles' axis, z of the hand's
 /// frame; the palm faces +x on the left hand).
 pub fn idle_wrist(side: usize, sway: f32) -> Quat {
-    Quat::from_rotation_z(hand::palm_sign(side) * (IDLE_WRIST_FLEX + 0.05 * sway))
+    Quat::from_rotation_z(hand::palm_sign(side) * (IDLE_WRIST_FLEX + 0.04 * sway))
 }
 
 /// The idle wrist's flex towards the palm (rad).
-pub const IDLE_WRIST_FLEX: f32 = 0.14;
+pub const IDLE_WRIST_FLEX: f32 = 0.1;
 
 /// How far the hips drop when the photographer crouches (m), and how far
 /// back they go.
@@ -2165,9 +2165,9 @@ mod hand_tests {
                 let tip = *f.points.last().unwrap();
                 assert!(n * tip.x > 0.025, "finger {k} curls to the palm: {tip}");
                 assert!(tip.y < hand::PALM_END_Y, "finger {k} below the palm");
-                assert!((0.8..2.4).contains(&curl(f)), "finger {k}: {}", curl(f));
+                assert!((0.5..2.0).contains(&curl(f)), "finger {k}: {}", curl(f));
             }
-            assert!(curl(&fingers[3]) > curl(&fingers[0]) + 0.2);
+            assert!(curl(&fingers[3]) > curl(&fingers[0]) + 0.15);
             let thumb = hand::thumb(HandShape::Relaxed, side);
             let index_mid = fingers[0].points[fingers[0].base_end];
             assert!(thumb.points.last().unwrap().distance(index_mid) < 0.04);

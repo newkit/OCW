@@ -1700,15 +1700,19 @@ mod tests {
             for scale in [1.0f32, 1.25, 1.5] {
                 let panel = top_panel_max_px(w, stamp * scale, 1.0 / scale).min(w / scale * 0.94);
                 for app in keys {
-                    for k in ["up: faster, down: stop, left/right: steer, A: autodrive, W: wild", route_keys] {
+                    for k in [
+                        "up: faster, down: stop, left/right: steer, A: autodrive, W: wild",
+                        route_keys,
+                    ] {
                         let small = format!(
                             "Test Hills | 2.01 km | 0:00:24 | riders: 3\n{k} | {app}\n{status}"
                         );
                         let (b, sm) = top_panel_text(panel, &big, &small);
                         let what = format!("{w}×{h} at {scale}: {app}");
                         let fits = |t: &str, font: f32| {
-                            t.lines()
-                                .all(|l| l.chars().count() as f32 * font * 0.6 <= panel - 2.0 * PANEL_PAD)
+                            t.lines().all(|l| {
+                                l.chars().count() as f32 * font * 0.6 <= panel - 2.0 * PANEL_PAD
+                            })
                         };
                         assert!(fits(&b, BIG_FONT), "{what}: {b}");
                         assert!(fits(&sm, SMALL_FONT), "{what}: {sm}");
@@ -1742,7 +1746,10 @@ mod tests {
             keys[1]
         );
         let (b, sm) = top_panel_text(panel, &big, &small);
-        assert!(b.lines().count() >= 2 && sm.lines().count() >= 4, "{b}\n{sm}");
+        assert!(
+            b.lines().count() >= 2 && sm.lines().count() >= 4,
+            "{b}\n{sm}"
+        );
         assert!(top_panel_height(&b, &sm) > 2.0 * PANEL_PAD + 6.0 * 18.0);
     }
 

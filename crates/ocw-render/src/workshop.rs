@@ -1908,8 +1908,8 @@ fn sync_helmet_hook(
 /// `hook` on the wall at x = `wall` (spec §14 Phase 4, 4N Q28; bug
 /// 2026-11-17: it hung half in the wall): upright – the crown up, tipped
 /// back towards the wall a little –, its front towards the room (−X), the
-/// skull's centre 10 cm under the peg, the back of the shell (a TT
-/// helmet's tail too) against the wall.
+/// skull's centre 7 cm under the peg (the peg hidden in the shell), the
+/// back of the shell (a TT helmet's tail too) against the wall.
 pub fn hook_helmet_transform(model: &Model, helmet: usize, hook: Vec3, wall: f32) -> Transform {
     let head = model.node(ocw_assets::pose::nodes::HEAD).expect("a head");
     let skull = ocw_assets::rider::skull_centre() - Vec3::from(model.world(head).translation);
@@ -1921,7 +1921,7 @@ pub fn hook_helmet_transform(model: &Model, helmet: usize, hook: Vec3, wall: f32
         .flat_map(|p| &p.positions)
         .map(|q| (rot * (Vec3::from(*q) - skull)).x)
         .fold(0.0f32, f32::max);
-    let centre = Vec3::new(wall - 0.008 - back, hook.y - 0.1, hook.z);
+    let centre = Vec3::new(wall - 0.008 - back, hook.y - 0.07, hook.z);
     Transform::from_translation(centre - rot * skull).with_rotation(rot)
 }
 
@@ -1933,7 +1933,13 @@ pub fn inner_lining(p: &Primitive) -> Primitive {
         .positions
         .iter()
         .zip(&normals)
-        .map(|(q, n)| [q[0] + n[0] * 0.001, q[1] + n[1] * 0.001, q[2] + n[2] * 0.001])
+        .map(|(q, n)| {
+            [
+                q[0] + n[0] * 0.001,
+                q[1] + n[1] * 0.001,
+                q[2] + n[2] * 0.001,
+            ]
+        })
         .collect();
     let indices = p
         .indices
@@ -2225,8 +2231,7 @@ pub fn panel_room(p: &PickerView, aspect: f32) -> (f32, f32, f32) {
                 (Some(k), _) => text_w / k.aspect(),
                 (None, Some(_)) => text_w,
                 (None, None) => {
-                    text_w * crate::thumbs::THUMB_SIZE.y as f32
-                        / crate::thumbs::THUMB_SIZE.x as f32
+                    text_w * crate::thumbs::THUMB_SIZE.y as f32 / crate::thumbs::THUMB_SIZE.x as f32
                 }
             };
             let foot = [r.weight.as_str(), r.right.as_str()]
@@ -2276,7 +2281,8 @@ pub fn fitted_card(p: &PickerView, aspect: f32) -> Vec<String> {
     let (used, inner_h, inner_w) = panel_room(p, aspect);
     let text_w = inner_w - 2.0 * CARD_PAD;
     // Half a line to spare: the estimate never cuts the card.
-    let mut room = inner_h - used - GAP - CARD_MARGIN - 2.0 * CARD_PAD - text_vh(1, CARD_TEXT) * 0.5;
+    let mut room =
+        inner_h - used - GAP - CARD_MARGIN - 2.0 * CARD_PAD - text_vh(1, CARD_TEXT) * 0.5;
     let mut out = Vec::new();
     for line in card {
         // Under the tiles every line in the card's text size (the name is
@@ -2510,7 +2516,10 @@ mod tests {
                     .collect();
                 let max = pts.iter().fold(Vec3::MIN, |a, b| a.max(*b));
                 let min = pts.iter().fold(Vec3::MAX, |a, b| a.min(*b));
-                assert!(max.x < wall && max.x > wall - 0.03, "{h:?} against the wall: {max}");
+                assert!(
+                    max.x < wall && max.x > wall - 0.03,
+                    "{h:?} against the wall: {max}"
+                );
                 assert!(min.x > wall - 0.6, "{h:?}");
                 // The peg (from the wall to the hook) inside the shell's
                 // height and width.
@@ -2519,7 +2528,7 @@ mod tests {
                 // The skull's centre (where a head would be) under the peg.
                 let head = model.node(ocw_assets::pose::nodes::HEAD).unwrap();
                 let c = t.transform_point(skull - Vec3::from(model.world(head).translation));
-                assert!((hook.y - c.y - 0.1).abs() < 1e-4);
+                assert!((hook.y - c.y - 0.07).abs() < 1e-4);
             }
         }
         // The liner: the shell's triangles turned to face its middle.
@@ -2612,12 +2621,18 @@ mod tests {
         let v = groupset_tiles(long.clone(), 6);
         let (used, inner_h, _) = panel_room(&v, 16.0 / 9.0);
         assert!((60.0..72.0).contains(&used), "{used} vh above the card");
-        assert!(used + 2.0 * CARD_PAD + text_vh(long.len(), CARD_TEXT) > inner_h, "it ran out");
+        assert!(
+            used + 2.0 * CARD_PAD + text_vh(long.len(), CARD_TEXT) > inner_h,
+            "it ran out"
+        );
         for aspect in [16.0 / 9.0, 16.0 / 10.0, 4.0 / 3.0, 21.0 / 9.0] {
             let shown = fitted_card(&v, aspect);
             assert!(!shown.is_empty(), "{aspect}");
             let mut rest = long.iter();
-            assert!(shown.iter().all(|l| rest.any(|d| d == l)), "{aspect}: {shown:?}");
+            assert!(
+                shown.iter().all(|l| rest.any(|d| d == l)),
+                "{aspect}: {shown:?}"
+            );
             let (used, inner_h, inner_w) = panel_room(&v, aspect);
             let w = inner_w - 2.0 * CARD_PAD;
             let card: f32 = shown
@@ -2632,7 +2647,10 @@ mod tests {
         assert_eq!(fitted_card(&v, 16.0 / 9.0)[0], long[0]);
         // One row of tiles and a short card: whole.
         let short = vec!["Benefit: +0.1 % flat".to_string(), "Bike: 8.00 kg".into()];
-        assert_eq!(fitted_card(&groupset_tiles(short.clone(), 3), 16.0 / 9.0), short);
+        assert_eq!(
+            fitted_card(&groupset_tiles(short.clone(), 3), 16.0 / 9.0),
+            short
+        );
         // Under a list the card is whole.
         let mut list = groupset_tiles(long.clone(), 6);
         list.tiles = None;
