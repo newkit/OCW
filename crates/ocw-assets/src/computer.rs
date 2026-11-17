@@ -108,8 +108,16 @@ pub fn build() -> Model {
         true,
     );
     p.attach(&mut m, root);
-    m.add(Node::new(SCREEN_ANCHOR, Some(root), screen + Vec3::Y * 0.0006));
-    m.add(Node::new(MOUNT_ANCHOR, Some(root), Vec3::new(0.0, puck, 0.0)));
+    m.add(Node::new(
+        SCREEN_ANCHOR,
+        Some(root),
+        screen + Vec3::Y * 0.0006,
+    ));
+    m.add(Node::new(
+        MOUNT_ANCHOR,
+        Some(root),
+        Vec3::new(0.0, puck, 0.0),
+    ));
     m
 }
 

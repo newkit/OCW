@@ -456,9 +456,9 @@ pub fn place_vr(
     }
     // Before the first tracked frame (or with the headset off its head,
     // where the runtime may track nothing): the rider's eye, resting.
-    let views = state.views.unwrap_or_else(|| {
-        view::sim_views(&ocw_xr::Pose::IDENTITY, cfg.sim_ipd_m, &cfg.sim_fov)
-    });
+    let views = state
+        .views
+        .unwrap_or_else(|| view::sim_views(&ocw_xr::Pose::IDENTITY, cfg.sim_ipd_m, &cfg.sim_fov));
     let head = view::head(&views);
     if state.recentre_now || state.anchor.is_none() {
         state.recentre = Recentre::at(&head);
@@ -699,7 +699,10 @@ mod tests {
         assert!(s.contains("VR: unavailable: no headset"), "{s}");
         assert!(s.contains("IPD 64.0 mm"), "{s}");
         assert!(s.contains("missed 0 of 0"), "{s}");
-        assert!(s.contains("controllers: not synced (no profile bound yet)"), "{s}");
+        assert!(
+            s.contains("controllers: not synced (no profile bound yet)"),
+            "{s}"
+        );
         st.controllers = Some(ControllerState::at_rest(true));
         st.controller_profiles = [
             "/interaction_profiles/oculus/touch_controller".into(),

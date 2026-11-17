@@ -23,7 +23,9 @@ pub enum Call {
     AcquireImage,
     WaitImage,
     ReleaseImage,
-    EndFrame { layer: bool },
+    EndFrame {
+        layer: bool,
+    },
     SyncActions,
     /// The session's teardown (`XrRuntime::shutdown`).
     Shutdown,

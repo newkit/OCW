@@ -126,7 +126,10 @@ fn rear_and_down(scale: f32, tilt: f32) -> (f32, f32) {
 /// The unit for a bar, aimed at `eye` (bike frame).
 pub fn place(mount: &BarMount, eye: Vec3, setup: &ComputerSetup) -> Placement {
     let scale = setup.size.clamp(MIN_SIZE, MAX_SIZE);
-    let extra = setup.tilt_deg.clamp(-MAX_TILT_DEG, MAX_TILT_DEG).to_radians();
+    let extra = setup
+        .tilt_deg
+        .clamp(-MAX_TILT_DEG, MAX_TILT_DEG)
+        .to_radians();
     // First guess of the centre (for the aim), then the reach that keeps
     // the tilted unit ahead of the bar, then the aim again from there.
     let base = match mount.aero_tips {
@@ -227,7 +230,14 @@ mod tests {
         let (bar, eye) = road();
         for size in [1.0, DEFAULT_SIZE, MAX_SIZE] {
             for tilt in [-MAX_TILT_DEG, 0.0, MAX_TILT_DEG] {
-                let p = place(&bar, eye, &ComputerSetup { size, tilt_deg: tilt });
+                let p = place(
+                    &bar,
+                    eye,
+                    &ComputerSetup {
+                        size,
+                        tilt_deg: tilt,
+                    },
+                );
                 // Every corner ahead of the bar's front (or above it).
                 for c in p.corners() {
                     let ahead = c.z < bar.clamp.z - BAR_RADIUS_M;
@@ -243,7 +253,14 @@ mod tests {
                 assert!((MIN_REACH_M - 1e-5..0.25).contains(&reach), "{reach}");
             }
             // Without an added tilt the screen faces the eye.
-            let p = place(&bar, eye, &ComputerSetup { size, tilt_deg: 0.0 });
+            let p = place(
+                &bar,
+                eye,
+                &ComputerSetup {
+                    size,
+                    tilt_deg: 0.0,
+                },
+            );
             let (c, n) = p.screen();
             let to_eye = (eye - c).normalize();
             assert!(n.dot(to_eye) > 0.995, "size {size}: {}", n.dot(to_eye));

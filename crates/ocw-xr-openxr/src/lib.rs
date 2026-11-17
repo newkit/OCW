@@ -449,7 +449,9 @@ impl XrRuntime for MainHandle {
 
     fn shutdown(&mut self) {
         self.shared.drop_session();
-        tracing::info!("VR: session torn down (swapchain, frame stream, session) before the GPU device");
+        tracing::info!(
+            "VR: session torn down (swapchain, frame stream, session) before the GPU device"
+        );
     }
 
     fn recreate_session(&mut self) -> Result<(), XrError> {

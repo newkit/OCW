@@ -105,11 +105,7 @@ fn fit(s: &str, n: usize) -> String {
 /// The screen's text from the ride (the same numbers as the desktop HUD).
 pub fn screen_view(view: &RideView, track: &dyn ocw_world::Track, units: Units) -> ScreenView {
     let mut out = ScreenView {
-        clock: view
-            .sky
-            .as_ref()
-            .map(|s| clock(&s.hud))
-            .unwrap_or_default(),
+        clock: view.sky.as_ref().map(|s| clock(&s.hud)).unwrap_or_default(),
         weather: view
             .weather
             .as_ref()
@@ -725,7 +721,9 @@ fn screen_text(
             n.display = d;
         }
     }
-    let lit = s.band.map_or(Color::srgb(0.3, 0.3, 0.3), |b| band_color(b, false));
+    let lit = s
+        .band
+        .map_or(Color::srgb(0.3, 0.3, 0.3), |b| band_color(b, false));
     for (led, mut bg) in &mut leds {
         let c = if led.0 < s.leds.max(1) {
             lit
@@ -945,7 +943,9 @@ mod tests {
     #[test]
     fn the_model_file_is_the_generators() {
         assert_eq!(format!("{MODEL}.glb"), ocw_assets::computer::FILE);
-        let m = ocw_assets::library::library().get(MODEL).expect("in the library");
+        let m = ocw_assets::library::library()
+            .get(MODEL)
+            .expect("in the library");
         assert!(m.position(ocw_assets::computer::SCREEN_ANCHOR).is_some());
         let parts = meshes_of(&m);
         assert!(parts.iter().any(|(_, s, _)| s == "computer_led"));

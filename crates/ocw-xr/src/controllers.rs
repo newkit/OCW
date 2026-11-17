@@ -578,9 +578,8 @@ mod tests {
         let ok = |s: &str| {
             !s.is_empty()
                 && s.len() < 64
-                && s.bytes().all(|c| {
-                    c.is_ascii_lowercase() || c.is_ascii_digit() || b"-_.".contains(&c)
-                })
+                && s.bytes()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b"-_.".contains(&c))
         };
         assert!(ok(ACTION_SET));
         let mut names: Vec<&str> = Input::ALL.iter().map(|i| i.name()).collect();
