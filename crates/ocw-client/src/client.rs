@@ -176,6 +176,8 @@ pub struct ClientCore {
     /// The server lets riders put an Echo rider on the road
     /// (`Welcome.echo_bot`) and the one on the road (spec §7 *Echo bot*).
     echo_bot: bool,
+    /// The server accepts dev commands (`Welcome.dev_commands`).
+    dev_commands: bool,
     echo_rider: Option<RiderId>,
     /// The session's world clock (spec §14 Phase 9): the server's, advanced
     /// smoothly between snapshots, and its last message.
@@ -218,6 +220,9 @@ pub struct ClientCore {
     server_scope: String,
     accounts: BTreeMap<RiderId, String>,
     voice_apart: std::collections::BTreeSet<RiderId>,
+    /// Whose voice this rider may receive and who may receive its own
+    /// (`VoiceHearing`, spec §7.1.7 Q6); `None` until the server said.
+    voice_hearing: Option<ocw_voice::audience::Hearing>,
 }
 
 /// Steering mode before the menu opened (spec §3.2.1), restored on closing.
@@ -274,6 +279,7 @@ impl ClientCore {
             voice_offered: false,
             human_riders: 0,
             echo_bot: false,
+            dev_commands: false,
             echo_rider: None,
             clock: ocw_sky::ClockPredictor::default(),
             clock_info: None,
@@ -295,6 +301,7 @@ impl ClientCore {
             server_scope: ocw_voice::riders::LOCAL_SCOPE.into(),
             accounts: BTreeMap::new(),
             voice_apart: Default::default(),
+            voice_hearing: None,
             route,
         }
     }
@@ -647,8 +654,10 @@ impl ClientCore {
                 self.voice_offered = w.voice;
                 // A new session: its server says again whom to keep apart.
                 self.voice_apart.clear();
+                self.voice_hearing = None;
                 self.accounts.clear();
                 self.echo_bot = w.echo_bot;
+                self.dev_commands = w.dev_commands;
                 self.world_access = Some(ocw_protocol::access_from_wire(w.world_access));
                 self.god_access = Some(ocw_protocol::access_from_wire(w.god_access));
                 self.collisions.on_welcome(&w);
@@ -684,6 +693,10 @@ impl ClientCore {
             S::Voice(g) => Some(Notice::Voice(g)),
             S::VoiceApart(a) => {
                 self.voice_apart = a.riders.into_iter().map(RiderId).collect();
+                None
+            }
+            S::VoiceHearing(h) => {
+                self.voice_hearing = Some(ocw_voice::audience::Hearing::from_wire(&h));
                 None
             }
             S::God(r) => Some(Notice::God {
@@ -2251,6 +2264,12 @@ impl ClientCore {
         })))
     }
 
+    /// The own voice audience for the server (spec §7.1.7 Q8, §7.1.3):
+    /// *Who hears me*, *Voice room* and the selected riders.
+    pub fn voice_audience_message(a: v1::VoiceAudience) -> Vec<u8> {
+        encode(&client_message(C::VoiceAudience(a)))
+    }
+
     /// The server this client rides on, for the voice choices remembered
     /// by name (`ocw_voice::riders::server_scope` of the address joined;
     /// `local` for the app's own servers).
@@ -2279,6 +2298,11 @@ impl ClientCore {
         &self.voice_apart
     }
 
+    /// The server's last `VoiceHearing` of this session (spec §7.1.7 Q6).
+    pub fn voice_hearing(&self) -> Option<&ocw_voice::audience::Hearing> {
+        self.voice_hearing.as_ref()
+    }
+
     /// The echo test's request (spec §7 *Echo bot*).
     pub fn echo_request_message(on: bool, here: bool) -> Vec<u8> {
         encode(&ocw_protocol::echo_request(on, here))
@@ -2287,6 +2311,13 @@ impl ClientCore {
     /// The server lets riders put an Echo rider on the road.
     pub fn echo_bot_allowed(&self) -> bool {
         self.echo_bot
+    }
+
+    /// The server accepts dev commands (`Welcome.dev_commands`: its local
+    /// server, or `ocw-server --dev-commands` for tests): the apps then
+    /// allow their dev console commands for it.
+    pub fn dev_commands_allowed(&self) -> bool {
+        self.dev_commands
     }
 
     /// The session's Echo rider (from the last snapshot).
@@ -3108,6 +3139,9 @@ mod tests {
         assert!(
             matches!(h.notices.last(), Some(Notice::CommandResult(m)) if m.starts_with("error"))
         );
+        assert!(!h.client.dev_commands_allowed(), "the welcome says so");
+        let local = Harness::new(0, true);
+        assert!(local.client.dev_commands_allowed());
     }
 
     #[test]
@@ -4038,6 +4072,7 @@ mod tests {
             world_access: 0,
             god_access: 0,
             echo_bot: false,
+            dev_commands: false,
             ..Default::default()
         })));
         h.receive(&welcome);

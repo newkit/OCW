@@ -54,6 +54,15 @@ pub enum MuteChange {
 }
 
 impl MuteState {
+    /// How the apps start (spec §7.1.7 Q7: every rider joins every shared
+    /// ride muted; M unmutes): the microphone muted, the speaker as saved.
+    pub fn joining(speaker_muted: bool) -> Self {
+        Self {
+            mic_muted: true,
+            speaker_muted,
+        }
+    }
+
     /// Sets the microphone switch; the change, if there was one.
     pub fn set_mic(&mut self, s: Switch) -> Option<MuteChange> {
         let new = s.apply(self.mic_muted);

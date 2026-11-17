@@ -69,6 +69,11 @@ struct Args {
     /// every session and let riders move it (`voice.echo here`).
     #[arg(long)]
     echo_bot: bool,
+    /// Tests only: accept the clients' dev commands (`teleport` …), so a
+    /// test can place riders near and far (the voice range tests, spec
+    /// §7.1.7 Q6). Never on a public server.
+    #[arg(long, hide = true)]
+    dev_commands: bool,
     /// Who may change the world clock with the time machine (spec §14
     /// Phase 9, 9D): the host (the rider connected longest), anyone, or
     /// nobody (the clock stays real time).
@@ -649,7 +654,7 @@ fn main() {
     let mut server = GameServer::new(
         course,
         ServerConfig {
-            allow_dev_commands: false,
+            allow_dev_commands: args.dev_commands,
             photo_gap_s: Some(ocw_world::photo_share::GAP_S / args.photo_time_scale.max(1.0)),
             bots: args.bots,
             start_m: 0.0,

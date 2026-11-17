@@ -226,7 +226,7 @@ mod tests {
             "all defaults"
         );
         ws.settings.set("audio.master", "40").unwrap();
-        ws.settings.set("voice.mic_muted", "on").unwrap();
+        ws.settings.set("voice.speaker_muted", "on").unwrap();
         ws.settings.set("display.units", "imperial").unwrap();
         SettingsStore::save(&mut ws).unwrap();
         let text = mem.load().unwrap().unwrap();

@@ -28,6 +28,9 @@ pub mod timing;
 pub mod voice;
 /// Voice blocks: who exchanges no voice with whom (spec §7.1.7 Q9).
 pub mod voice_block;
+/// Who receives whose voice: range, *Who hears me*, *Voice room*, blocks
+/// (spec §7.1.7 Q6, Q8, Q10).
+pub mod voice_hearing;
 // The wire rules without I/O (frames, datagram rules, the client's link
 // state machine): shared with the browser app's WebTransport client.
 pub mod wire;
@@ -249,6 +252,11 @@ pub struct GameServer {
     /// the set of riders each was last told it is apart from.
     voice_blocks: BTreeMap<ConnectionId, voice_block::Blocks>,
     voice_apart: BTreeMap<ConnectionId, std::collections::BTreeSet<RiderId>>,
+    /// Each connection's voice audience (spec §7.1.7 Q8: *Who hears me*,
+    /// *Voice room*, the selected riders) and the hearing each was last
+    /// told (spec §7.1.7 Q6).
+    voice_audience: BTreeMap<ConnectionId, voice_hearing::Audience>,
+    voice_hearing: BTreeMap<ConnectionId, voice_hearing::Hearing>,
     /// Messages for one connection only ([`GameServer::take_directed`]).
     directed: Vec<(ConnectionId, Vec<u8>)>,
 }
@@ -435,6 +443,8 @@ impl GameServer {
             photo_out: Vec::new(),
             voice_blocks: BTreeMap::new(),
             voice_apart: BTreeMap::new(),
+            voice_audience: BTreeMap::new(),
+            voice_hearing: BTreeMap::new(),
             directed: Vec::new(),
         }
     }
@@ -918,6 +928,8 @@ impl GameServer {
         self.peer_addrs.remove(&conn);
         self.voice_blocks.remove(&conn);
         self.voice_apart.remove(&conn);
+        self.voice_audience.remove(&conn);
+        self.voice_hearing.remove(&conn);
         self.directed.retain(|(c, _)| *c != conn);
         if let Some(rider) = self.riders.remove(&conn) {
             self.statuses.remove(&rider);
@@ -1012,6 +1024,12 @@ impl GameServer {
                     self.voice_blocks.insert(conn, blocks);
                 }
                 self.refresh_voice_apart();
+                None
+            }
+            (C::VoiceAudience(a), Some(_)) => {
+                self.voice_audience
+                    .insert(conn, voice_hearing::Audience::from_wire(&a));
+                self.refresh_voice_hearing();
                 None
             }
             (C::Turn(turn), Some(rider)) => {
@@ -1269,6 +1287,7 @@ impl GameServer {
             world_access: ocw_protocol::access_to_wire(self.config.world_access),
             god_access: ocw_protocol::access_to_wire(self.config.god_access),
             echo_bot: self.config.allow_echo_bot,
+            dev_commands: self.config.allow_dev_commands,
             collisions: ocw_protocol::collision_mode_to_wire(self.session.collision_mode()),
             collision_access: ocw_protocol::access_to_wire(self.config.collision_access),
             chaotic_bots: self.session.chaotic_bots(),
@@ -1689,6 +1708,79 @@ impl GameServer {
                 .push((conn, encode(&server_message(S::VoiceApart(msg)))));
             self.voice_apart.insert(conn, set);
         }
+        self.refresh_voice_hearing();
+    }
+
+    /// Whose voice `conn`'s rider may receive and who may receive its own
+    /// (spec §7.1.7 Q6), as last told.
+    pub fn voice_hearing(&self, conn: ConnectionId) -> voice_hearing::Hearing {
+        self.voice_hearing.get(&conn).cloned().unwrap_or_default()
+    }
+
+    /// Where a rider is for the hearing range: on its free-ride path, else
+    /// along the route.
+    fn voice_place(&self, rider: RiderId) -> Option<voice_hearing::Place> {
+        let state = self.session.rider_state(rider)?;
+        Some(match self.session.path(rider) {
+            Some(p) => {
+                let at = ocw_world::Track::sample(p, state.distance).position;
+                voice_hearing::Place::Free([at[0], at[2]])
+            }
+            None => voice_hearing::Place::Route(state.distance),
+        })
+    }
+
+    /// Recomputes who receives whose voice (spec §7.1.7 Q6, Q8): range,
+    /// audiences, blocks; tells every rider whose answer changed (a
+    /// [`v1::VoiceHearing`] to that rider alone). Only on servers with
+    /// voice.
+    fn refresh_voice_hearing(&mut self) {
+        if self.config.voice.is_none() {
+            return;
+        }
+        let mut members: Vec<voice_hearing::Member<ConnectionId>> = self
+            .riders
+            .iter()
+            .filter_map(|(c, r)| {
+                Some(voice_hearing::Member {
+                    key: Some(*c),
+                    who: voice_block::Who {
+                        rider: *r,
+                        name: self.names.get(c).cloned().unwrap_or_default(),
+                        account_id: self.accounts.get(c).map(|a| a.account_id.clone()),
+                    },
+                    place: self.voice_place(*r)?,
+                    audience: self.voice_audience.get(c).cloned().unwrap_or_default(),
+                })
+            })
+            .collect();
+        if let Some(echo) = self.session.echo_rider()
+            && let Some(place) = self.voice_place(echo)
+        {
+            members.push(voice_hearing::Member {
+                key: None,
+                who: voice_block::Who {
+                    rider: echo,
+                    name: ECHO_NAME.into(),
+                    account_id: None,
+                },
+                place,
+                audience: voice_hearing::Audience::echo(),
+            });
+        }
+        let route = self.session.route();
+        let loop_m = (route.is_loop() && !self.session.is_free_ride()).then(|| route.length());
+        let apart = self.compute_voice_apart();
+        let now = voice_hearing::hearing(&members, &apart, &self.voice_hearing, loop_m);
+        for (conn, h) in now {
+            let before = self.voice_hearing.get(&conn);
+            if before.map_or(h == Default::default(), |b| *b == h) {
+                continue;
+            }
+            self.directed
+                .push((conn, encode(&server_message(S::VoiceHearing(h.to_wire())))));
+            self.voice_hearing.insert(conn, h);
+        }
     }
 
     /// Takes the messages for single connections (a voice block's
@@ -1903,6 +1995,9 @@ impl GameServer {
         {
             return out;
         }
+        // Voice by range (spec §7.1.7 Q6): with every snapshot, sent only
+        // when it changes.
+        self.refresh_voice_hearing();
         let echo = self.session.echo_rider();
         // The signed-in riders' accounts (spec §9.1), once a second: the
         // stable key of a voice block or volume (§7.1.7 Q9).

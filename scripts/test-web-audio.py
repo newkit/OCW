@@ -31,7 +31,8 @@ DevTools protocol (scripts/test-web.py's Cdp).
   active speakers reach the HUD; a network drop shows reconnecting, a lost
   connection fails and rejoins with a new token; the echo test (`voice.echo
   here`) runs the shim's loopback on Chromium's fake microphone (input and
-  echo levels); a reload keeps the switches.
+  echo levels); every ride is joined muted, also after a reload (spec
+  §7.1.7 Q7); the bot lets all nearby hear it (`ocw-bot --voice-nearby`).
 
 --part livekit (`make test-web-livekit`, when a `livekit-server` binary is
   there): a real `livekit-server --dev` on localhost, the real
@@ -40,7 +41,14 @@ DevTools protocol (scripts/test-web.py's Cdp).
   microphones (active speakers), a mute in one page shows in the other;
   then Ada blocks Bea (spec §7.1.7 Q9): the game server tells both, neither
   plays the other's track (Bea's own request for Ada's is refused by the
-  voice server), Cleo plays both; unblocked, all as before.
+  voice server), Cleo plays both; unblocked, all as before. Every page
+  joins muted and heard by no one (§7.1.7 Q7, Q8), then lets all nearby
+  hear it. Range and audience (§7.1.7 Q6, Q8, Q10; the server with
+  --dev-commands, the pages teleport): a rider 1.5 km away is not played
+  and plays nobody, the game server sends her no voice and hers to nobody,
+  her own request for Ada's track is refused; back near, all play again;
+  Ada's *Who hears me: Selected riders* (Bea) and Cleo's *Voice room:
+  Selected riders* hold.
 
 Not testable headlessly: what the sound sounds like on speakers (the
 mixer's output is checked as numbers: chunks, level), a real microphone
@@ -371,7 +379,7 @@ def part_audio(r, port):
 # ---------------------------------------------------------------- voice
 
 
-def start_server(a, work, livekit_url, key, secret, echo=True):
+def start_server(a, work, livekit_url, key, secret, echo=True, dev=False):
     quic, wt = mp.free_udp_port(), mp.free_udp_port()
     info_file = os.path.join(work, "web.json")
     env_cmd = [os.path.join(a.bin, "ocw-server"), "--listen", f"127.0.0.1:{quic}",
@@ -380,6 +388,9 @@ def start_server(a, work, livekit_url, key, secret, echo=True):
                "--livekit-url", livekit_url, "--livekit-api-key", key]
     if echo:
         env_cmd.append("--echo-bot")
+    if dev:
+        # Tests only: the pages' teleports place riders near and far.
+        env_cmd.append("--dev-commands")
     os.environ["OCW_LIVEKIT_API_SECRET"] = secret
     server = mp.Proc("server", env_cmd)
     if not server.wait_for(r"listening \(WebTransport", 20):
@@ -394,7 +405,7 @@ def part_voice(r, port, a, procs):
     procs.append(server)
     bot = mp.Proc("bot", [os.path.join(a.bin, "ocw-bot"), "--server", f"127.0.0.1:{quic}",
                           "--insecure-dev", "--riders", "1", "--seconds", "0", "--route", "hills",
-                          "--name-prefix", "quic", "--follow", "Voice"])
+                          "--name-prefix", "quic", "--follow", "Voice", "--voice-nearby"])
     procs.append(bot)
     with open(os.path.join(HERE, "web-voice-fake.js")) as f:
         r.cdp.call("Page.addScriptToEvaluateOnNewDocument", {"source": f.read()})
@@ -413,7 +424,9 @@ def part_voice(r, port, a, procs):
     r.check("voice: the shim connected with the game server's token", bool(st.get("room")) and
             str(st.get("identity", "")).startswith("rider-"), (st.get("room"), st.get("identity")))
     r.check("voice: voices through Web Audio (webAudioMix)", st.get("webAudioMix") is True)
-    r.check("voice: the microphone is published (always on)", st.get("mic") is True)
+    # Every shared ride is joined muted (spec §7.1.7 Q7): published, muted.
+    r.check("voice: the microphone is published, joined muted",
+            st.get("mic") is False and v.get("mic_muted") is True, (st.get("mic"), v.get("mic_muted")))
     # The bot's participant joins the room.
     riders = v.get("riders") or []
     bot_r = next((x for x in riders if not x["local"] and x["name"].startswith("quic")), None)
@@ -434,7 +447,11 @@ def part_voice(r, port, a, procs):
     spk = r.wait("speaking", lambda: bot_r["name"] in ((r.voice() or {}).get("speaking") or []), 5)
     r.check("voice: active speakers reach the HUD", spk)
     r.shot("voice")
-    # M: the microphone.
+    # M: the microphone (joined muted: M unmutes, M again mutes).
+    r.key("KeyM", "m")
+    on = r.wait("mic on", lambda: (r.voice() or {}).get("mic_muted") is False, 5)
+    r.pump(0.5)
+    r.check("voice: M unmutes the microphone", on and lk().get("mic") is True, lk().get("mic"))
     r.key("KeyM", "m")
     muted = r.wait("mic muted", lambda: (r.voice() or {}).get("mic_muted") is True, 5)
     r.pump(0.5)
@@ -479,12 +496,14 @@ def part_voice(r, port, a, procs):
     r.console("voice.echo off")
     r.console("voice.mute-mic on")
     r.pump(1.0)
-    # A reload keeps the switches (localStorage).
+    # A reload is a new ride: joined muted again, whatever was set before.
+    r.console("voice.mute-mic off")
+    r.pump(0.5)
     r.cdp.call("Page.reload", {})
     mark = len(r.lines)
     r.wait("rejoined after reload", lambda: any("joined the remote server" in l for l in r.lines[mark:]), 60)
     v = r.wait("voice after reload", r.voice, 10) or {}
-    r.check("voice: the microphone switch survived the reload", v.get("mic_muted") is True, v.get("mic_muted"))
+    r.check("voice: after a reload the ride is joined muted again", v.get("mic_muted") is True, v.get("mic_muted"))
     r.console("voice.mute-mic off")
     r.pump(0.5)
 
@@ -508,7 +527,8 @@ def part_livekit(r, port, a, procs):
         r.check("livekit: the server started", False, lk.text()[-2000:])
         return
     work = tempfile.mkdtemp(prefix="ocw-web-lk-")
-    server, quic, info = start_server(a, work, f"ws://127.0.0.1:{lk_port}", "devkey", "secret", echo=False)
+    server, quic, info = start_server(a, work, f"ws://127.0.0.1:{lk_port}", "devkey", "secret",
+                                      echo=False, dev=True)
     procs.append(server)
     names = ["Ada", "Bea", "Cleo"]
     for i, name in enumerate(names):
@@ -541,6 +561,19 @@ def part_livekit(r, port, a, procs):
         r.click()
         ok[name] = r.wait(f"{name} in the call", lambda: (r.voice() or {}).get("status") == "connected", 40)
     r.check("livekit: all pages joined the real LiveKit room", all(ok.values()), ok)
+    # Every shared ride is joined muted and heard by no one (spec §7.1.7
+    # Q7, Q8): each page checks, then unmutes and lets all nearby hear it.
+    muted = {}
+    for name in names:
+        r.use(name)
+        v = r.voice() or {}
+        muted[name] = (v.get("mic_muted"), v.get("heard_by"), (v.get("hearing") or {}).get("heard_by"))
+    r.check("livekit: every page joins muted, heard by no one",
+            all(m[0] is True and m[1] == "no_one" and not m[2] for m in muted.values()), muted)
+    for name in names:
+        r.use(name)
+        r.console("set voice.heard_by nearby")
+        r.console("voice.mute-mic off")
     seen = {}
     for name in names:
         others = [o for o in names if o != name]
@@ -565,6 +598,7 @@ def part_livekit(r, port, a, procs):
     r.console("voice.mute-mic off")
     r.pump(0.5)
     livekit_block(r, names, joined)
+    livekit_range(r, names, joined)
 
 
 def livekit_block(r, names, joined):
@@ -621,6 +655,92 @@ def livekit_block(r, names, joined):
     back_b = r.wait("Bea plays Ada again", lambda: ident["Ada"] in tracks("Bea"), 20)
     r.check("livekit: unblocked, both play each other again", back_a and back_b,
             {"Ada": sorted(tracks("Ada")), "Bea": sorted(tracks("Bea"))})
+
+
+def livekit_range(r, names, joined):
+    """Voice by range and audience (spec §7.1.7 Q6, Q8, Q10, §7.1.3) in the
+    browser: the game server decides who receives whose voice from the
+    riders' places. A far rider is neither played nor plays anyone (her own
+    request is refused by the voice server), a near one is; *Who hears me:
+    Selected riders* and *Voice room: Selected riders* hold."""
+    ident = {n: f"rider-{joined[n]}" for n in names}
+
+    def tracks(name):
+        r.use(name)
+        return set((r.json("window.ocwVoice.state()") or {}).get("tracks") or [])
+
+    def allowed(name):
+        r.use(name)
+        s = (r.json("window.ocwVoice.state()") or {}).get("subscribers")
+        return None if s is None else set(s)
+
+    def hearing(name):
+        r.use(name)
+        return (r.voice() or {}).get("hearing") or {}
+
+    # All three together at 2 km, then Cleo 1.5 km further on.
+    for name in names:
+        r.use(name)
+        r.console("teleport 2.0")
+    r.pump(2.0)
+    together = {}
+    for name in names:
+        want = {ident[o] for o in names if o != name}
+        together[name] = bool(r.wait(f"{name} plays both others", lambda: want <= tracks(name), 30))
+    r.check("livekit range: together every page plays both others", all(together.values()), together)
+    r.use("Cleo")
+    r.console("teleport 3.5")
+    gone = r.wait("Ada stops playing the far Cleo", lambda: ident["Cleo"] not in tracks("Ada"), 20)
+    alone = r.wait("Cleo plays nobody", lambda: not tracks("Cleo"), 20)
+    r.check("livekit range: a rider 1.5 km away is not played, and plays nobody", gone and alone,
+            {n: sorted(tracks(n)) for n in names})
+    h = hearing("Cleo")
+    r.check("livekit range: the game server sends the far rider nobody's voice and hers to nobody",
+            not h.get("may_hear") and not h.get("heard_by"), h)
+    r.check("livekit range: Ada's microphone is not allowed to the far rider",
+            ident["Cleo"] not in (allowed("Ada") or set()) and ident["Bea"] in (allowed("Ada") or set()),
+            sorted(allowed("Ada") or []))
+    r.check("livekit range: Bea still plays Ada", ident["Ada"] in tracks("Bea"), sorted(tracks("Bea")))
+    # Cleo as a modified client asks for Ada's track herself.
+    r.use("Cleo")
+    r.js("window.ocwVoice.command(%s)" % json.dumps(json.dumps(
+        {"op": "subscribe", "identity": ident["Ada"], "on": True})))
+    r.pump(5.0)
+    r.check("livekit range: the far rider asking for Ada's track herself is refused by the voice server",
+            ident["Ada"] not in tracks("Cleo"), sorted(tracks("Cleo")))
+    r.shot("livekit-range-far")
+    # Back together.
+    r.use("Cleo")
+    r.console("teleport 2.0")
+    back = r.wait("Ada plays Cleo again", lambda: ident["Cleo"] in tracks("Ada"), 30)
+    back_c = r.wait("Cleo plays Ada again", lambda: ident["Ada"] in tracks("Cleo"), 30)
+    r.check("livekit range: back near, both play each other again", back and back_c,
+            {n: sorted(tracks(n)) for n in names})
+    # Ada: Who hears me = Selected riders, with Bea.
+    r.use("Ada")
+    r.console("voice.select Bea on")
+    r.console("set voice.heard_by selected")
+    only_bea = r.wait("Ada allows Bea only", lambda: allowed("Ada") == {ident["Bea"]}, 15)
+    r.check("livekit audience: Who hears me = Selected riders allows only Bea", only_bea,
+            sorted(allowed("Ada") or []))
+    stop = r.wait("Cleo stops playing Ada", lambda: ident["Ada"] not in tracks("Cleo"), 20)
+    r.check("livekit audience: Cleo (not selected) no longer plays Ada, Bea does",
+            stop and ident["Ada"] in tracks("Bea"), {n: sorted(tracks(n)) for n in names})
+    r.use("Ada")
+    v = r.voice()
+    r.check("livekit audience: the selection is shown and remembered",
+            any(s.get("name") == "Bea" for s in (v or {}).get("selected") or []), (v or {}).get("selected"))
+    # Cleo: Voice room = Selected riders, nobody selected yet, then Bea.
+    r.use("Cleo")
+    r.console("set voice.room selected")
+    quiet = r.wait("Cleo plays nobody", lambda: not tracks("Cleo"), 20)
+    r.use("Cleo")
+    r.console("voice.select Bea on")
+    bea = r.wait("Cleo plays Bea only", lambda: tracks("Cleo") == {ident["Bea"]}, 20)
+    r.check("livekit audience: Voice room = Selected riders plays only the selection", quiet and bea,
+            sorted(tracks("Cleo")))
+    r.use("Cleo")
+    r.shot("livekit-selected")
 
 
 def main():

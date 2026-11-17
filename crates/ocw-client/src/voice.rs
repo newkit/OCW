@@ -25,6 +25,7 @@ use ocw_protocol::v1;
 use ocw_render::Signs;
 use ocw_render::voice::{EchoHud, VoiceHud, VoiceSigns};
 use ocw_render::{RideView, RiderView};
+use ocw_voice::audience::{HeardBy, Listen};
 use ocw_voice::hotkeys::{Input, Toggle};
 use ocw_voice::spatial::Peer;
 use ocw_voice::{EchoStatus, Levels, MuteState, Status, Switch, VoiceController, VoiceSettings};
@@ -60,11 +61,14 @@ pub fn voice_signs(c: &VoiceController, voice_offered: bool) -> VoiceSigns {
 /// - **does not hear these riders** (only they see the headphones): the
 ///   participants the rider muted for themselves (`voice.mute WHO`).
 ///
+/// - **listens to *Selected riders* without them** (spec §7.1.3, the
+///   proposal's "they listen to Selected riders without you"): the riders
+///   in the call who are not selected.
+///
 /// Not counted (the proposal: not merely distance): riders out of hearing
-/// range or beyond the subscription cap (`heard: None` without a mute).
-/// Later reasons slot in here once they exist: *Selected riders* without
-/// the viewer (§7.1.3), *Who hears me* (Q8, that one is the other
-/// direction). **Block (Q9, built) does not count here** and neither does
+/// range or beyond the subscription cap (`heard: None` without a mute),
+/// and *Who hears me* (Q8, the other direction: the viewer is not heard).
+/// **Block (Q9, built) does not count here** and neither does
 /// a rider's volume at 0 %: whether the headphones show for them is the
 /// open question §7.1.7 Q18 (a blocked rider would learn of the block
 /// from the sign; Q12 / Q17 are open too), so today's signs stay as they
@@ -77,9 +81,10 @@ pub fn not_hearing_reasons(
     let in_voice = matches!(status, Status::Connected | Status::Reconnecting);
     let speaker_off = in_voice && c.mute().speaker_muted;
     let voice_off = matches!(status, Status::Off) && voice_offered;
+    let selective = c.settings().listen == Listen::Selected && c.group().is_none();
     let mut muted: Vec<RiderId> = if in_voice {
         c.participants()
-            .filter(|p| p.muted_by_me)
+            .filter(|p| p.muted_by_me || (selective && !p.selected && !p.blocked_by_me))
             .filter_map(|p| p.rider)
             .collect()
     } else {
@@ -140,6 +145,30 @@ pub struct VoiceMenuInfo {
     pub echo: String,
     /// The riders blocked (spec §7.1.7 Q9), by name: present or not.
     pub blocked: Vec<BlockedRider>,
+    /// The microphone is muted now (riders join muted, spec §7.1.7 Q7).
+    pub mic_muted: bool,
+    /// *Voice room* and *Who hears me* (spec §7.1.3, §7.1.7 Q8).
+    pub listen: Listen,
+    pub heard_by: HeardBy,
+    /// The riders to choose from for *Selected riders* (spec §7.1.3): the
+    /// riders in the session (bots and the Echo rider not), then the
+    /// selected ones not here now.
+    pub choices: Vec<ChoiceRider>,
+}
+
+/// A rider of the *Choose riders* list (spec §7.1.3).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChoiceRider {
+    /// For `voice.select`: the rider id when here, else the remembered key.
+    pub who: String,
+    pub name: String,
+    pub selected: bool,
+    /// In this session (else greyed, under *Not here now*).
+    pub here: bool,
+    /// Distance on the road (m), when here and known.
+    pub distance_m: Option<f64>,
+    /// Talking now.
+    pub speaking: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -153,6 +182,12 @@ pub struct MenuParticipant {
     pub blocked: bool,
     /// The own rider's volume for this rider (0 … 200 %).
     pub volume_pct: u16,
+    /// One of the selected riders (spec §7.1.3).
+    pub selected: bool,
+    /// The game server lets the own rider hear this one (spec §7.1.7 Q6).
+    pub may_hear: bool,
+    /// How far away (m), if known.
+    pub distance_m: Option<f64>,
 }
 
 /// A blocked rider of the Voice page's list (spec §7.1.7 Q9).
@@ -217,14 +252,19 @@ pub fn settings_of(s: &Settings) -> (VoiceSettings, MuteState) {
             .map(|v| v.to_string())
             .filter(|v| !v.is_empty() && v != "default")
     };
+    let text = |k: &str| s.get(k).ok().map(|v| v.to_string()).unwrap_or_default();
     (
         VoiceSettings {
             enabled: on("voice.enabled"),
             spatial: on("voice.spatial"),
             volume: int("voice.volume", 100) as f32 / 100.0,
-            max_voices: int("voice.max_voices", 10).max(1) as usize,
+            max_voices: int("voice.max_voices", ocw_voice::spatial::MAX_VOICES as i64).max(1)
+                as usize,
             input: device("voice.input"),
             output: device("voice.output"),
+            heard_by: HeardBy::parse(&text("voice.heard_by")).unwrap_or_default(),
+            listen: Listen::parse(&text("voice.room")).unwrap_or_default(),
+            notice: notice_pending(s),
         },
         MuteState {
             mic_muted: on("voice.mic_muted"),
@@ -278,6 +318,29 @@ pub fn echo_hud(s: &EchoStatus, levels: Levels, delay_ms: u32) -> Option<EchoHud
         input: q(levels.input),
         echo: q(levels.echo),
     })
+}
+
+/// The HUD's room line (spec §7.1.4): "ROOM: everybody" or "ROOM: 3
+/// selected (2 here)", and who hears the rider.
+pub fn room_text(c: &VoiceController) -> String {
+    let s = c.settings();
+    let selected = ocw_voice::riders::selected_list(c.rider_prefs())
+        .into_iter()
+        .filter(|(k, _)| !c.rider_prefs().get(k).is_some_and(|p| p.blocked))
+        .count();
+    let here = c
+        .participants()
+        .filter(|p| p.selected && !p.blocked_by_me)
+        .count();
+    let room = match (c.group(), s.listen) {
+        (Some(g), _) => format!("group {g}"),
+        (None, Listen::Everybody) => "everybody".to_owned(),
+        (None, Listen::Selected) => format!("{selected} selected ({here} here)"),
+    };
+    format!(
+        "ROOM: {room} - heard by: {}",
+        s.heard_by.label().to_lowercase()
+    )
 }
 
 /// The HUD text of a status (with the number of others in the room).
@@ -337,6 +400,9 @@ pub struct VoiceFrame {
     pub console: Vec<String>,
     pub menu: VoiceMenuInfo,
     pub hud: VoiceHud,
+    /// Console commands for the app to run (the first call's notice turns
+    /// its setting off).
+    pub run: Vec<String>,
 }
 
 /// The per-frame voice logic of both apps (see the module docs).
@@ -347,6 +413,13 @@ pub struct VoiceDriver {
     echo_ask: EchoAsk,
     /// The blocks told to the game server last, and in which session.
     blocks_sent: Option<((u64, bool), ServerBlocks)>,
+    /// The audience told to the game server last, and in which session.
+    audience_sent: Option<((u64, bool), v1::VoiceAudience)>,
+    /// The first call's notice: shown until then (s); asked to be
+    /// forgotten once.
+    notice_until: Option<f64>,
+    notice_done: bool,
+    was_connected: bool,
 }
 
 /// The blocks as told to the game server: (account ids, names).
@@ -368,6 +441,23 @@ impl VoiceDriver {
         }
         self.blocks_sent = Some((session, blocks.clone()));
         Some(ClientCore::voice_blocks_message(blocks.0, blocks.1))
+    }
+
+    /// The own audience for the server (spec §7.1.7 Q8, §7.1.3): at the
+    /// join (if not the default) and on every change; `None` if nothing
+    /// is to be sent.
+    fn audience_message(&mut self, c: &VoiceController) -> Option<Vec<u8>> {
+        let session = self.seen.filter(|(_, joined)| *joined)?;
+        let audience = c.server_audience();
+        let default = audience == v1::VoiceAudience::default();
+        match &self.audience_sent {
+            Some((s, a)) if *s == session && *a == audience => return None,
+            Some((s, _)) if *s != session && default => return None,
+            None if default => return None,
+            _ => {}
+        }
+        self.audience_sent = Some((session, audience.clone()));
+        Some(ClientCore::voice_audience_message(audience))
     }
 }
 
@@ -403,6 +493,12 @@ impl VoiceDriver {
             if let Some(m) = self.blocks_message(c) {
                 out.send.push(m);
             }
+            // Who hears whom (spec §7.1.7 Q6, Q8): the own audience to the
+            // server, its answer to the controller.
+            if let Some(m) = self.audience_message(c) {
+                out.send.push(m);
+            }
+            c.set_hearing(client.voice_hearing().cloned());
             // The echo test: ask the server for the Echo rider once per
             // session while it is on and none is on the road; take it away
             // when turned off.
@@ -439,8 +535,24 @@ impl VoiceDriver {
                 heard: p.heard,
                 blocked: p.blocked_by_me,
                 volume_pct: p.volume_pct,
+                selected: p.selected,
+                may_hear: p.may_hear,
+                distance_m: p.distance_m,
             })
             .collect();
+        // The first call's notice (spec §7.1.2): once, 8 s, then the
+        // setting is turned off.
+        let connected = matches!(status, Status::Connected);
+        if connected && !self.was_connected && c.settings().notice && !self.notice_done {
+            self.notice_done = true;
+            self.notice_until = Some(now_s + NOTICE_S);
+            out.run.push("set voice.first_call_notice off".into());
+        }
+        self.was_connected = connected;
+        let notice = self
+            .notice_until
+            .filter(|until| now_s < *until)
+            .map(|_| first_call_notice(c.settings().heard_by));
         let text = status_text(&status, participants.len());
         let inputs = c.input_devices();
         let outputs = c.output_devices();
@@ -463,13 +575,19 @@ impl VoiceDriver {
                 .into_iter()
                 .map(|(key, name)| BlockedRider { key, name })
                 .collect(),
+            mic_muted: c.mute().mic_muted,
+            listen: s.listen,
+            heard_by: s.heard_by,
+            choices: choices(c, client),
         };
         let own = client.and_then(|c| c.rider_id());
-        let names: Vec<String> = c
+        // Selected riders who talk first (spec §7.1.4).
+        let mut talking: Vec<&ocw_voice::Participant> = c
             .participants()
             .filter(|p| p.speaking && p.rider != own)
-            .map(|p| p.name.clone())
             .collect();
+        talking.sort_by_key(|p| !p.selected);
+        let names: Vec<String> = talking.iter().map(|p| p.name.clone()).collect();
         let mute = c.mute();
         out.hud = VoiceHud {
             visible: status.in_call(),
@@ -485,9 +603,53 @@ impl VoiceDriver {
             speaking_names: names,
             echo: echo_hud(&c.echo_status(), c.levels(), c.echo_delay_ms()),
             signs: voice_signs(c, client.is_some_and(ClientCore::voice_offered)),
+            room: room_text(c),
+            notice,
         };
         out
     }
+}
+
+/// The *Choose riders* list (spec §7.1.3): the riders in the voice room
+/// by name (the humans of the session in the call – bots never join it –
+/// without the Echo rider; with their distance and a speaking marker),
+/// then the selected riders not here.
+fn choices(c: &VoiceController, client: Option<&ClientCore>) -> Vec<ChoiceRider> {
+    let mut out = Vec::new();
+    let mut here_keys = std::collections::BTreeSet::new();
+    let echo = client.and_then(ClientCore::echo_rider);
+    for p in c.participants() {
+        if p.rider.is_none() || p.rider == echo {
+            continue;
+        }
+        let keys = c.keys_of(p);
+        if let Some(a) = &keys.account {
+            here_keys.insert(a.clone());
+        }
+        here_keys.insert(keys.name.clone());
+        out.push(ChoiceRider {
+            who: p.identity.clone(),
+            name: c.name_of(p).to_owned(),
+            selected: p.selected,
+            here: true,
+            distance_m: p.distance_m,
+            speaking: p.speaking,
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    for (key, name) in ocw_voice::riders::selected_list(c.rider_prefs()) {
+        if !here_keys.contains(&key) {
+            out.push(ChoiceRider {
+                who: key,
+                name,
+                selected: true,
+                here: false,
+                distance_m: None,
+                speaking: false,
+            });
+        }
+    }
+    out
 }
 
 // ------------------------------------------------------------- commands
@@ -517,8 +679,9 @@ fn remember(store: Option<&mut dyn SettingsStore>, key: &str, value: &str) -> St
 }
 
 /// `voice.mute-mic` / `voice.mute-speaker [on|off|toggle]` (M / Shift+M,
-/// gamepad Select / R3): the switch is remembered in the settings
-/// (`voice.mic_muted`, `voice.speaker_muted`) and applied to the call.
+/// gamepad Select / R3): applied to the call; the speaker is remembered in
+/// the settings (`voice.speaker_muted`), the microphone is not – every
+/// shared ride is joined muted (spec §7.1.7 Q7).
 pub fn mute_command(
     c: &mut VoiceController,
     store: Option<&mut dyn SettingsStore>,
@@ -526,20 +689,23 @@ pub fn mute_command(
     arg: Option<&str>,
 ) -> Result<String, String> {
     let s = Switch::parse(arg)?;
-    let (key, now) = match which {
-        Toggle::Mic => ("voice.mic_muted", c.mute().mic_muted),
-        Toggle::Speaker => ("voice.speaker_muted", c.mute().speaker_muted),
+    let note = match which {
+        // Not remembered (spec §7.1.7 Q7).
+        Toggle::Mic => String::new(),
+        Toggle::Speaker => {
+            let key = "voice.speaker_muted";
+            // The saved value is the truth (a `set --temp` may differ from
+            // the controller's until applied).
+            let mut store = store;
+            let saved_now = store
+                .as_deref_mut()
+                .and_then(|st| st.settings_mut().get(key).ok())
+                .and_then(|v| v.as_bool())
+                .unwrap_or(c.mute().speaker_muted);
+            let new = s.apply(saved_now);
+            remember(store, key, if new { "on" } else { "off" })
+        }
     };
-    // The saved value is the truth (a `set --temp` may differ from the
-    // controller's until applied).
-    let mut store = store;
-    let saved_now = store
-        .as_deref_mut()
-        .and_then(|st| st.settings_mut().get(key).ok())
-        .and_then(|v| v.as_bool())
-        .unwrap_or(now);
-    let new = s.apply(saved_now);
-    let note = remember(store, key, if new { "on" } else { "off" });
     match which {
         Toggle::Mic => c.set_mic(s),
         Toggle::Speaker => c.set_speaker(s),
@@ -563,10 +729,33 @@ pub fn apply_settings(c: &mut VoiceController, settings: &Settings, echo_bot: bo
     c.set_echo(echo);
     c.set_echo_delay(delay);
     let on = |b: bool| if b { Switch::On } else { Switch::Off };
-    c.set_mic(on(mute.mic_muted));
+    // Not the microphone: every shared ride is joined muted (spec §7.1.7
+    // Q7) and a change of another voice setting must not unmute it.
     c.set_speaker(on(mute.speaker_muted));
     c.set_rider_prefs(settings.voice_riders());
 }
+
+/// Whether the first-call notice is still to be shown
+/// (`voice.first_call_notice`).
+pub fn notice_pending(settings: &Settings) -> bool {
+    settings
+        .get("voice.first_call_notice")
+        .ok()
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
+}
+
+/// The first call's notice (spec §7.1.2, adapted to Q7 / Q8: joined
+/// muted, *Who hears me*), 8 s on the HUD.
+pub fn first_call_notice(heard_by: HeardBy) -> String {
+    format!(
+        "Voice: you join muted - M unmutes. Who hears you: {} (Settings > Voice > Voice room).",
+        heard_by.label().to_lowercase()
+    )
+}
+
+/// How long the first call's notice stays (s).
+pub const NOTICE_S: f64 = 8.0;
 
 /// What `voice.echo here` sends: the Echo rider 20 m ahead.
 pub fn echo_here_message() -> Vec<u8> {
@@ -651,14 +840,39 @@ pub fn status_command(c: &VoiceController, note: Option<&str>) -> String {
     if let Some(g) = c.group() {
         out.push(format!("group: {g}"));
     }
+    let s = c.settings();
+    out.push(format!(
+        "voice room: {}, who hears me: {}",
+        s.listen.label().to_lowercase(),
+        s.heard_by.label().to_lowercase()
+    ));
+    if let Some(h) = c.hearing() {
+        let list = |set: &std::collections::BTreeSet<RiderId>| {
+            set.iter()
+                .map(|r| r.0.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        out.push(format!(
+            "server: may hear [{}], heard by [{}]",
+            list(&h.may_hear),
+            list(&h.heard_by)
+        ));
+    }
     for p in c.participants() {
         out.push(format!(
-            "  {} ({}){}{}{}{}{}",
+            "  {} ({}){}{}{}{}{}{}{}",
             p.name,
             p.identity,
             if p.speaking { ", talking" } else { "" },
             if p.muted_by_me { ", muted by you" } else { "" },
             if p.blocked_by_me { ", blocked" } else { "" },
+            if p.selected { ", selected" } else { "" },
+            if p.may_hear || c.group().is_some() {
+                ""
+            } else {
+                ", not heard here"
+            },
             if p.volume_pct != ocw_voice::riders::DEFAULT_VOLUME_PCT {
                 format!(", volume {} %", p.volume_pct)
             } else {
@@ -673,6 +887,11 @@ pub fn status_command(c: &VoiceController, note: Option<&str>) -> String {
     if !blocked.is_empty() {
         let names: Vec<&str> = blocked.iter().map(|(_, n)| n.as_str()).collect();
         out.push(format!("blocked: {}", names.join(", ")));
+    }
+    let selected = ocw_voice::riders::selected_list(c.rider_prefs());
+    if !selected.is_empty() {
+        let names: Vec<&str> = selected.iter().map(|(_, n)| n.as_str()).collect();
+        out.push(format!("selected: {}", names.join(", ")));
     }
     if let Some(n) = note {
         out.push(format!("({n})"));
@@ -799,6 +1018,41 @@ pub fn block_command(
         format!("{name} blocked: you do not hear each other{note}")
     } else {
         format!("{name} unblocked{note}")
+    })
+}
+
+/// `voice.select WHO [on|off|toggle]` (spec §7.1.3, §7.1.7 Q8): one of
+/// the *Selected riders* – heard with *Voice room: Selected riders*,
+/// hearing the own rider with *Who hears me: Selected riders*;
+/// remembered like a block (by account, else by name on this server). A
+/// block wins: a blocked rider stays unheard and does not hear the rider.
+pub fn select_command(
+    c: &mut VoiceController,
+    store: Option<&mut dyn SettingsStore>,
+    who: &str,
+    arg: Option<&str>,
+) -> Result<String, String> {
+    use ocw_voice::riders::RiderPref;
+    let s = Switch::parse(arg)?;
+    let (key, name) = whom(c, who)?;
+    let mut pref = c
+        .rider_prefs()
+        .get(&key)
+        .cloned()
+        .unwrap_or_else(|| RiderPref::new(name.clone()));
+    pref.name = name.clone();
+    pref.selected = s.apply(pref.selected);
+    let (selected, blocked) = (pref.selected, pref.blocked);
+    let note = remember_rider(c, store, &key, pref);
+    let set = c.settings();
+    Ok(match (selected, blocked) {
+        (true, true) => format!("{name} selected, but blocked: the block wins{note}"),
+        (true, false) => format!(
+            "{name} selected (voice room: {}, who hears me: {}){note}",
+            set.listen.label().to_lowercase(),
+            set.heard_by.label().to_lowercase()
+        ),
+        (false, _) => format!("{name} no longer selected{note}"),
     })
 }
 
@@ -1127,81 +1381,115 @@ mod tests {
         }
     }
 
-    /// Block (spec §7.1.7 Q9) end to end without a network: three riders
-    /// on one in-memory game server, each with the shared driver and
-    /// controller. A blocks B from the console: A's client tells the
-    /// server, the server tells A and B, and neither subscribes to the
-    /// other nor lets the other subscribe; C hears both and may be heard
-    /// by both. Unblocking restores everything.
-    #[test]
-    fn three_riders_block_both_ways() {
-        use ocw_server::GameServer;
-        let mut server = GameServer::new(
-            ocw_world::Route::test_loop(),
-            ocw_server::ServerConfig {
-                voice: Some(ocw_server::voice::VoiceConfig::new(
-                    "ws://127.0.0.1:7880",
-                    "k",
-                    "secret-secret-secret-secret-0000",
-                )),
-                ..Default::default()
-            },
-        );
-        let names = ["Ada Rider", "Bea Climber", "Cleo Sprinter"];
-        let mut sides: Vec<Side> = names
-            .iter()
-            .map(|n| {
-                let backend = std::sync::Arc::new(std::sync::Mutex::new(MockBackend::default()));
-                Side {
-                    conn: server.connect(),
-                    client: ClientCore::new(
-                        ocw_world::Route::test_loop(),
-                        *n,
-                        ocw_core::RiderProfile::default(),
-                    ),
-                    c: VoiceController::new(
-                        Box::new(Recording(backend.clone())),
-                        VoiceSettings::default(),
-                        MuteState::default(),
-                    ),
-                    backend,
-                    d: VoiceDriver::default(),
-                    grants: Vec::new(),
+    const TRIO: [&str; 3] = ["Ada Rider", "Bea Climber", "Cleo Sprinter"];
+
+    /// Three riders on one in-memory game server with voice (dev commands
+    /// on: the tests place riders), each with the shared driver and
+    /// controller, *Who hears me: All nearby*.
+    struct Trio {
+        server: ocw_server::GameServer,
+        sides: Vec<Side>,
+        ids: Vec<RiderId>,
+        t: f64,
+    }
+
+    impl Trio {
+        fn new() -> Self {
+            let mut server = ocw_server::GameServer::new(
+                ocw_world::Route::test_loop(),
+                ocw_server::ServerConfig {
+                    voice: Some(ocw_server::voice::VoiceConfig::new(
+                        "ws://127.0.0.1:7880",
+                        "k",
+                        "secret-secret-secret-secret-0000",
+                    )),
+                    allow_dev_commands: true,
+                    ..Default::default()
+                },
+            );
+            let mut sides: Vec<Side> = TRIO
+                .iter()
+                .map(|n| {
+                    let backend =
+                        std::sync::Arc::new(std::sync::Mutex::new(MockBackend::default()));
+                    Side {
+                        conn: server.connect(),
+                        client: ClientCore::new(
+                            ocw_world::Route::test_loop(),
+                            *n,
+                            ocw_core::RiderProfile::default(),
+                        ),
+                        c: VoiceController::new(
+                            Box::new(Recording(backend.clone())),
+                            VoiceSettings {
+                                heard_by: HeardBy::Nearby,
+                                ..Default::default()
+                            },
+                            MuteState::default(),
+                        ),
+                        backend,
+                        d: VoiceDriver::default(),
+                        grants: Vec::new(),
+                    }
+                })
+                .collect();
+            for s in &mut sides {
+                let hello = s.client.hello();
+                for r in server.handle(s.conn, &hello) {
+                    Self::deliver(s, &r, 0.0);
                 }
-            })
-            .collect();
-        let deliver = |side: &mut Side, bytes: &[u8], t: f64| {
+            }
+            let ids = sides.iter().map(|s| s.client.rider_id().unwrap()).collect();
+            Self {
+                server,
+                sides,
+                ids,
+                t: 0.0,
+            }
+        }
+
+        fn deliver(side: &mut Side, bytes: &[u8], t: f64) {
             if let Some(crate::client::Notice::Voice(g)) = side.client.on_server_message(bytes, t) {
                 side.grants.push(g);
             }
-        };
-        for s in &mut sides {
-            let hello = s.client.hello();
-            for r in server.handle(s.conn, &hello) {
-                deliver(s, &r, 0.0);
-            }
         }
-        let ids: Vec<RiderId> = sides.iter().map(|s| s.client.rider_id().unwrap()).collect();
-        let identity = |i: usize| ocw_protocol::voice_identity(ids[i]);
-        let mut t = 0.0;
-        let step = |sides: &mut [Side], server: &mut GameServer, t: &mut f64| {
-            *t += 0.02;
-            let out = server.tick();
-            let directed = server.take_directed();
-            for s in sides.iter_mut() {
+
+        fn identity(&self, i: usize) -> String {
+            ocw_protocol::voice_identity(self.ids[i])
+        }
+
+        /// Puts rider `i` at `km` on the loop (a dev teleport).
+        fn place(&mut self, i: usize, km: f64) {
+            let msg = ocw_protocol::encode(&ocw_protocol::client_message(
+                v1::client_message::Msg::Dev(v1::DevCommand {
+                    cmd: Some(v1::dev_command::Cmd::TeleportDistanceM(km * 1000.0)),
+                }),
+            ));
+            let conn = self.sides[i].conn;
+            self.server.handle(conn, &msg);
+        }
+
+        /// One tick of the server and a frame of every client.
+        fn step(&mut self) {
+            self.t += 0.02;
+            let t = self.t;
+            let out = self.server.tick();
+            let directed = self.server.take_directed();
+            let ids = self.ids.clone();
+            for s in self.sides.iter_mut() {
                 for m in &out {
-                    deliver(s, m, *t);
+                    Self::deliver(s, m, t);
                 }
                 let conn = s.conn;
                 for (_, m) in directed.iter().filter(|(c, _)| *c == conn) {
-                    deliver(s, m, *t);
+                    Self::deliver(s, m, t);
                 }
                 let grants = std::mem::take(&mut s.grants);
-                let f = s.d.frame(&mut s.c, Some(&s.client), 1, grants, None, *t);
+                let f = s.d.frame(&mut s.c, Some(&s.client), 1, grants, None, t);
                 for bytes in f.send {
-                    let replies = server.handle(s.conn, &bytes);
+                    let replies = self.server.handle(s.conn, &bytes);
                     for r in replies {
-                        deliver(s, &r, *t);
+                        Self::deliver(s, &r, t);
                     }
                 }
                 // The voice server: once asked to connect, the call is up
@@ -1221,60 +1509,190 @@ mod tests {
                         if *id != me {
                             b.events.push(BackendEvent::ParticipantJoined {
                                 identity: ocw_protocol::voice_identity(*id),
-                                name: names[i].into(),
+                                name: TRIO[i].into(),
                             });
                         }
                     }
                 }
             }
-        };
-        for _ in 0..30 {
-            step(&mut sides, &mut server, &mut t);
         }
-        for s in &sides {
+
+        fn run(&mut self, steps: usize) {
+            for _ in 0..steps {
+                self.step();
+            }
+        }
+
+        fn set(&self, idx: &[usize]) -> std::collections::BTreeSet<String> {
+            idx.iter().map(|i| self.identity(*i)).collect()
+        }
+
+        fn allowed(&self, i: usize) -> Option<std::collections::BTreeSet<String>> {
+            self.sides[i].subscribers().map(|v| v.into_iter().collect())
+        }
+    }
+
+    /// Block (spec §7.1.7 Q9) end to end without a network: three riders
+    /// on one in-memory game server, each with the shared driver and
+    /// controller. A blocks B from the console: A's client tells the
+    /// server, the server tells A and B, and neither subscribes to the
+    /// other nor lets the other subscribe; C hears both and may be heard
+    /// by both. Unblocking restores everything.
+    #[test]
+    fn three_riders_block_both_ways() {
+        let mut w = Trio::new();
+        w.run(30);
+        for (i, s) in w.sides.iter().enumerate() {
             assert_eq!(s.c.status(), ocw_voice::Status::Connected);
             assert_eq!(s.subscribed().len(), 2, "everybody hears everybody");
-            assert_eq!(s.subscribers(), None);
+            let others: Vec<usize> = (0..3).filter(|j| *j != i).collect();
+            assert_eq!(w.allowed(i), Some(w.set(&others)), "both others may hear");
         }
         // A blocks B (by name, from the console).
-        let reply = block_command(&mut sides[0].c, None, "Bea Climber", Some("on")).unwrap();
+        let reply = block_command(&mut w.sides[0].c, None, "Bea Climber", Some("on")).unwrap();
         assert!(reply.contains("Bea Climber blocked"), "{reply}");
-        for _ in 0..10 {
-            step(&mut sides, &mut server, &mut t);
-        }
-        let (a, b, c) = (&sides[0], &sides[1], &sides[2]);
-        assert_eq!(a.subscribed(), [identity(2)].into(), "A does not hear B");
-        assert_eq!(b.subscribed(), [identity(2)].into(), "B does not hear A");
-        assert_eq!(
-            c.subscribed(),
-            [identity(0), identity(1)].into(),
-            "C hears both"
-        );
-        assert_eq!(a.subscribers(), Some(vec![identity(2)]), "B may not hear A");
-        assert_eq!(b.subscribers(), Some(vec![identity(2)]), "A may not hear B");
-        assert_eq!(c.subscribers(), None, "both may hear C");
+        w.run(10);
+        let (a, b, c) = (&w.sides[0], &w.sides[1], &w.sides[2]);
+        assert_eq!(a.subscribed(), w.set(&[2]), "A does not hear B");
+        assert_eq!(b.subscribed(), w.set(&[2]), "B does not hear A");
+        assert_eq!(c.subscribed(), w.set(&[0, 1]), "C hears both");
+        assert_eq!(w.allowed(0), Some(w.set(&[2])), "B may not hear A");
+        assert_eq!(w.allowed(1), Some(w.set(&[2])), "A may not hear B");
+        assert_eq!(w.allowed(2), Some(w.set(&[0, 1])), "both may hear C");
         // B is not told who blocked whom: only that A is apart.
-        assert_eq!(b.client.voice_apart(), &[ids[0]].into());
+        assert_eq!(b.client.voice_apart(), &[w.ids[0]].into());
         assert!(b.c.rider_prefs().is_empty(), "B blocked nobody");
         let bea_sees_ada =
             b.c.participants()
-                .find(|p| p.rider == Some(ids[0]))
+                .find(|p| p.rider == Some(w.ids[0]))
                 .unwrap();
         assert!(bea_sees_ada.apart && !bea_sees_ada.blocked_by_me);
         // The menu of A lists Bea as blocked.
-        let a = &mut sides[0];
+        let t = w.t;
+        let a = &mut w.sides[0];
         let f = a.d.frame(&mut a.c, Some(&a.client), 1, Vec::new(), None, t);
         assert_eq!(f.menu.blocked.len(), 1);
         assert_eq!(f.menu.blocked[0].name, "Bea Climber");
         // Unblocked: all as before.
-        block_command(&mut sides[0].c, None, "name:local/Bea Climber", Some("off")).unwrap();
-        for _ in 0..10 {
-            step(&mut sides, &mut server, &mut t);
+        block_command(
+            &mut w.sides[0].c,
+            None,
+            "name:local/Bea Climber",
+            Some("off"),
+        )
+        .unwrap();
+        w.run(10);
+        for i in 0..3 {
+            assert_eq!(w.sides[i].subscribed().len(), 2);
+            let others: Vec<usize> = (0..3).filter(|j| *j != i).collect();
+            assert_eq!(w.allowed(i), Some(w.set(&others)));
+            assert!(w.sides[i].client.voice_apart().is_empty());
         }
-        for s in &sides {
-            assert_eq!(s.subscribed().len(), 2);
-            assert_eq!(s.subscribers(), None);
-            assert!(s.client.voice_apart().is_empty());
+    }
+
+    /// Voice by range and audience end to end without a network (spec
+    /// §7.1.7 Q6, Q8, Q10, §7.1.3): the game server decides who receives
+    /// whose voice from the riders' places; each client subscribes only to
+    /// whom it may hear and allows its microphone only to whom the server
+    /// lists. A far rider is neither sent nor heard, coming back near it
+    /// is; *Who hears me: No one* (the default) and *Selected riders*,
+    /// *Voice room: Selected riders* and a block over a selection hold.
+    #[test]
+    fn three_riders_hear_by_range_and_audience() {
+        let mut w = Trio::new();
+        w.run(30);
+        for s in &w.sides {
+            assert_eq!(s.subscribed().len(), 2, "all at the start: all heard");
         }
+        // Cleo rides 1.5 km away (half the 3.9 km loop): out of range.
+        w.place(2, 1.5);
+        w.run(10);
+        assert_eq!(w.sides[0].subscribed(), w.set(&[1]));
+        assert_eq!(w.sides[1].subscribed(), w.set(&[0]));
+        assert!(w.sides[2].subscribed().is_empty(), "Cleo hears nobody");
+        assert_eq!(
+            w.allowed(0),
+            Some(w.set(&[1])),
+            "Ada's voice not sent to Cleo"
+        );
+        assert_eq!(
+            w.allowed(2),
+            Some(w.set(&[])),
+            "Cleo's voice sent to nobody"
+        );
+        let cleo = w.sides[0]
+            .c
+            .participants()
+            .find(|p| p.rider == Some(w.ids[2]))
+            .unwrap();
+        assert!(!cleo.may_hear && cleo.heard.is_none());
+        // Back near (20 m): heard again.
+        w.place(2, 0.02);
+        w.run(10);
+        for s in &w.sides {
+            assert_eq!(s.subscribed().len(), 2, "back in range");
+        }
+        // Ada: *Who hears me: Selected riders* with Cleo selected.
+        assert!(
+            select_command(&mut w.sides[0].c, None, "Cleo Sprinter", None)
+                .unwrap()
+                .contains("Cleo Sprinter selected")
+        );
+        let mut s = w.sides[0].c.settings().clone();
+        s.heard_by = HeardBy::Selected;
+        w.sides[0].c.set_settings(s);
+        w.run(10);
+        assert_eq!(w.allowed(0), Some(w.set(&[2])), "only Cleo may hear Ada");
+        assert_eq!(w.sides[1].subscribed(), w.set(&[2]), "Bea does not get Ada");
+        assert_eq!(w.sides[2].subscribed(), w.set(&[0, 1]));
+        assert_eq!(
+            w.sides[0].subscribed(),
+            w.set(&[1, 2]),
+            "Ada still hears both"
+        );
+        // Bea: *Who hears me: No one* (the default).
+        let mut s = w.sides[1].c.settings().clone();
+        s.heard_by = HeardBy::NoOne;
+        w.sides[1].c.set_settings(s);
+        w.run(10);
+        assert_eq!(w.allowed(1), Some(w.set(&[])));
+        assert_eq!(w.sides[0].subscribed(), w.set(&[2]));
+        assert_eq!(w.sides[2].subscribed(), w.set(&[0]));
+        // Cleo: *Voice room: Selected riders* with nobody selected: hears
+        // nobody, and the server sends her nothing.
+        let mut s = w.sides[2].c.settings().clone();
+        s.listen = Listen::Selected;
+        w.sides[2].c.set_settings(s);
+        w.run(10);
+        assert!(w.sides[2].subscribed().is_empty());
+        assert!(w.server.voice_hearing(w.sides[2].conn).may_hear.is_empty());
+        assert_eq!(
+            w.allowed(0),
+            Some(w.set(&[])),
+            "Ada's voice reaches nobody now"
+        );
+        // The headphones (Q12's proposal): Cleo shows them to the riders
+        // she does not listen to.
+        let signs = voice_signs(&w.sides[2].c, true);
+        assert_eq!(signs.not_hearing, vec![w.ids[0], w.ids[1]]);
+        // Cleo selects Ada and listens to her again.
+        select_command(&mut w.sides[2].c, None, "Ada Rider", Some("on")).unwrap();
+        w.run(10);
+        assert_eq!(w.sides[2].subscribed(), w.set(&[0]));
+        assert_eq!(w.allowed(0), Some(w.set(&[2])));
+        // A block always wins: Ada blocks her selected Cleo.
+        block_command(&mut w.sides[0].c, None, "Cleo Sprinter", Some("on")).unwrap();
+        w.run(10);
+        assert_eq!(
+            w.allowed(0),
+            Some(w.set(&[])),
+            "the block wins over the selection"
+        );
+        assert!(w.sides[2].subscribed().is_empty());
+        assert!(!w.sides[0].subscribed().contains(&w.identity(2)));
+        // What the server was told: Ada's selection without the blocked
+        // Cleo.
+        let a = w.sides[0].c.server_audience();
+        assert!(a.selected_names.is_empty(), "{a:?}");
     }
 }

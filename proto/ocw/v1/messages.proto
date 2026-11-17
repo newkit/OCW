@@ -31,6 +31,8 @@ message ClientMessage {
     PhotoShot photo = 19;
     // The riders this rider blocked for voice (spec §7.1.7 Q9).
     VoiceBlocks voice_blocks = 20;
+    // Who hears this rider and whom it listens to (spec §7.1.7 Q6, Q8).
+    VoiceAudience voice_audience = 21;
   }
 }
 
@@ -265,6 +267,53 @@ message VoiceBlocks {
 // voice server). Reliable.
 message VoiceApart {
   repeated uint32 riders = 1;
+}
+
+// Who hears this rider (spec §7.1.7 Q8: *Who hears me*, default no one).
+enum VoiceHeardBy {
+  // No one (the default, also of a client that never said).
+  VOICE_HEARD_BY_NO_ONE = 0;
+  // Everybody within hearing range (spec §7.1.7 Q6, Q10).
+  VOICE_HEARD_BY_NEARBY = 1;
+  // The selected riders (within hearing range).
+  VOICE_HEARD_BY_SELECTED = 2;
+}
+
+// Whom this rider listens to (spec §7.1.3 *Voice room*).
+enum VoiceListen {
+  // Everybody within hearing range (the default).
+  VOICE_LISTEN_EVERYBODY = 0;
+  // Only the selected riders (within hearing range).
+  VOICE_LISTEN_SELECTED = 1;
+}
+
+// The rider's voice audience (spec §7.1.7 Q6, Q8, §7.1.3): *Who hears me*,
+// the *Voice room* and the selected riders (one list for both: account ids
+// and display names on this server, matched like VoiceBlocks; at most 256
+// of each). Sent at the join and on every change (the whole state;
+// reliable). The game server decides from it, the riders' places and the
+// blocks who receives whose voice (VoiceHearing).
+message VoiceAudience {
+  VoiceHeardBy heard_by = 1;
+  VoiceListen listen = 2;
+  repeated string selected_account_ids = 3;
+  repeated string selected_names = 4;
+}
+
+// Whose voice this rider receives and who receives this rider's (spec
+// §7.1.7 Q6: the server sends voice only to riders who can hear it). A
+// rider hears another when both are within hearing range (300 m, with a
+// margin: granted within 310 m, kept up to 340 m), the speaker's *Who
+// hears me* allows the listener, the listener's *Voice room* includes the
+// speaker and no block keeps them apart (a block always wins). Sent to
+// this rider only, when it changes (the whole sets; reliable). The client
+// subscribes only to may_hear (nearest and talking first, at most
+// voice.max_voices) and allows its microphone only to heard_by (LiveKit's
+// track subscription permissions, enforced by the voice server). Group
+// rooms are not limited by it (everybody in the group is heard).
+message VoiceHearing {
+  repeated uint32 may_hear = 1;
+  repeated uint32 heard_by = 2;
 }
 
 enum VoiceChannel {
@@ -636,6 +685,8 @@ message ServerMessage {
     PhotoShot photo = 11;
     // Voice block (spec §7.1.7 Q9): to this rider only.
     VoiceApart voice_apart = 12;
+    // Voice by range and audience (spec §7.1.7 Q6, Q8): to this rider only.
+    VoiceHearing voice_hearing = 13;
   }
 }
 
@@ -884,6 +935,10 @@ message Welcome {
   // it (then name_note says why). Older servers leave it empty.
   string display_name = 20;
   optional string name_note = 21;
+  // The server accepts dev commands (teleport …): its local server, or
+  // `ocw-server --dev-commands` for tests (spec §7.1.11). The clients then
+  // allow their dev console commands.
+  bool dev_commands = 22;
 }
 
 enum ClockMode {
