@@ -874,7 +874,10 @@ mod tests {
         }
         // All skin, never grey or saturated: a* and b* positive and modest.
         for c in &l {
-            assert!(c[1] > 3.0 && c[1] < 20.0 && c[2] > 7.0 && c[2] < 30.0, "{c:?}");
+            assert!(
+                c[1] > 3.0 && c[1] < 20.0 && c[2] > 7.0 && c[2] < 30.0,
+                "{c:?}"
+            );
         }
     }
 
@@ -914,7 +917,10 @@ mod tests {
         assert_eq!(d.validated(), d);
         assert_eq!(d.scale(), 1.0);
         assert_eq!(d.skin_colour(), SKIN_TONES[4], "the shipped skin colour");
-        assert!((lab(d.skin_colour())[0] - lab(Rgb(0xD9A98C))[0]).abs() < 3.0, "as before 4.51");
+        assert!(
+            (lab(d.skin_colour())[0] - lab(Rgb(0xD9A98C))[0]).abs() < 3.0,
+            "as before 4.51"
+        );
         assert_eq!(d.hair_colour, Rgb(0x3B2A20), "the shipped hair colour");
         assert_eq!(d.hair_shown(), d.hair_colour, "no grey in the 30s");
         for b in BodyBuild::ALL {
