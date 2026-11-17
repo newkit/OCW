@@ -838,6 +838,32 @@ pub fn detail(
     out
 }
 
+/// A card line's place under the tiles (stable: lines of one rank keep
+/// their order): the benefit and the bike first, then the part's figures
+/// and its gain against the base part (both on the tile too), the
+/// server's word, the classes, the groupset's parts, a kit item's score
+/// and where parts count – the renderer leaves out what does not fit
+/// (`ocw_render::workshop::fitted_card`; bug 2026-11-17).
+pub fn tile_card_rank(line: &str) -> u8 {
+    if line.starts_with("Benefit:") || line.starts_with("On the bike now") {
+        0
+    } else if line.starts_with("Bike:") {
+        1
+    } else if line.starts_with("Riding now") {
+        3
+    } else if line.starts_with("Effect:") {
+        4
+    } else if line.starts_with("Fitted with:") || line.starts_with("Comes with its groupset") {
+        5
+    } else if line.starts_with("Score over the standard item") {
+        6
+    } else if line == WHERE_PARTS_COUNT {
+        7
+    } else {
+        2
+    }
+}
+
 /// The groupset line of a card (spec 4B): "Fitted with: …" for a
 /// groupset, "Comes with the groupset …" for its crankset, cassette and
 /// chain; empty for other parts.

@@ -1910,6 +1910,13 @@ fn fill_tiles(
         let at = v.detail.len().min(2);
         v.detail.insert(at, line);
     }
+    // Under the tiles the renderer shows what fits of the card, in this
+    // order, without the name (on the focused tile; bug 2026-11-17: the
+    // card ran out at the panel's bottom).
+    if !v.detail.is_empty() {
+        v.detail.remove(0);
+    }
+    v.detail.sort_by_key(|l| picker::tile_card_rank(l));
     let len = v.rows.len();
     let first = part_tiles::first_row(v.focus, len, COLUMNS, VISIBLE_ROWS) * COLUMNS;
     v.tiles = Some(TilesView {

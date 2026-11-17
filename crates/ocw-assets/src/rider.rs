@@ -217,6 +217,9 @@ pub mod hand {
     pub const KNUCKLE_Y: f32 = -0.085;
     /// Where a grip's bar crosses the hand's long axis (y).
     pub const BAR_Y: f32 = -0.07;
+    /// The relaxed hand's bend at the index finger's base, middle and
+    /// outer joint (rad; each finger towards the little one a little more).
+    pub const RELAXED_BEND: [f32; 3] = [0.42, 0.62, 0.38];
     /// The fingers: knuckle z (index in front), joint lengths (base,
     /// middle, outer).
     pub const FINGERS: [(f32, [f32; 3]); 4] = [
@@ -284,6 +287,98 @@ pub mod hand {
     pub fn bar_centre(shape: HandShape, side: usize) -> Option<Vec3> {
         let r = shape.wrap_radius()?;
         Some(Vec3::new(palm_sign(side) * (PALM_HALF[0] + r), BAR_Y, 0.0))
+    }
+
+    /// The palm's ends (y): the heel's rounded end at the wrist and the
+    /// knuckle end, hidden in the fingers' bases.
+    pub const PALM_HEEL_Y: f32 = -0.003;
+    pub const PALM_END_Y: f32 = -0.09;
+    /// Rings along the palm and points per ring.
+    const PALM_RINGS: usize = 8;
+    const PALM_SIDES: usize = 12;
+
+    /// A smooth bump: 1 at `c`, falling to 0 at `half` away (cos²).
+    fn bump(x: f32, c: f32, half: f32) -> f32 {
+        let d = ((x - c) / half).abs();
+        if d >= 1.0 {
+            0.0
+        } else {
+            (d * std::f32::consts::FRAC_PI_2).cos().powi(2)
+        }
+    }
+
+    /// The palm of hand `side` in the hand's frame (bug 2026-11-17: "the
+    /// palm is a plain box"): a rounded slab, narrower at the wrist than
+    /// at the knuckles, its heel rounded, the thumb's ball (thenar) and
+    /// the little finger's edge (hypothenar) raised on the inner face
+    /// above where a bar lies, a ridge of knuckles on the back over each
+    /// finger's base. Its inner face stays at [`PALM_HALF`]`[0]` where the
+    /// grips' bars lie ([`bar_centre`]). Vertices and outward triangles
+    /// (smooth normals).
+    pub fn palm(side: usize) -> (Vec<Vec3>, Vec<[u32; 3]>) {
+        use std::f32::consts::TAU;
+        let n = palm_sign(side);
+        // Along the palm (0 = heel, 1 = knuckles) and the end rounding.
+        const T: [f32; PALM_RINGS] = [0.0, 0.08, 0.22, 0.42, 0.62, 0.8, 0.92, 1.0];
+        const ROUND: [f32; PALM_RINGS] = [0.55, 0.84, 0.97, 1.0, 1.0, 0.99, 0.9, 0.62];
+        let mut verts = Vec::with_capacity(PALM_RINGS * PALM_SIDES + 2);
+        for (t, round) in T.iter().zip(ROUND) {
+            let y = PALM_HEEL_Y + (PALM_END_Y - PALM_HEEL_Y) * t;
+            // Tapered: the wrist narrower than the knuckle line, thinner
+            // towards the knuckles.
+            let widen = (t / 0.7).min(1.0);
+            let hz = (0.029 + (PALM_HALF[2] - 0.029) * widen * (2.0 - widen)) * round;
+            let hx = (0.0128 - 0.0015 * t) * round.sqrt();
+            for k in 0..PALM_SIDES {
+                let a = (k as f32 + 0.5) / PALM_SIDES as f32 * TAU;
+                let (s, c) = a.sin_cos();
+                // A rounded box's section (superellipse).
+                let shape = |v: f32| v.signum() * v.abs().powf(0.55);
+                let mut u = hx * shape(c);
+                let z = hz * shape(s);
+                if c > 0.0 {
+                    // The inner face: the thumb's ball (index side, −z)
+                    // and the little finger's edge, above the bars.
+                    let thenar = 0.0065 * bump(y, -0.03, 0.026) * bump(z, -0.021, 0.022);
+                    let hypo = 0.0035 * bump(y, -0.034, 0.02) * bump(z, 0.022, 0.018);
+                    u += (thenar + hypo) * c.powf(0.5);
+                } else {
+                    // The back: the knuckles over the fingers' bases.
+                    let ridge: f32 = FINGERS
+                        .iter()
+                        .map(|(fz, _)| bump(z, *fz, 0.0085))
+                        .sum();
+                    u -= 0.003 * (0.5 + 0.5 * ridge.min(1.0)) * bump(y, KNUCKLE_Y + 0.001, 0.011) * (-c).powf(0.5);
+                }
+                verts.push(Vec3::new(n * u, y, z));
+            }
+        }
+        let heel = verts.len() as u32;
+        verts.push(Vec3::new(0.0, PALM_HEEL_Y + 0.004, 0.0));
+        let tip = heel + 1;
+        verts.push(Vec3::new(0.0, PALM_END_Y - 0.0035, 0.0));
+        let at = |i: usize, k: usize| (i * PALM_SIDES + k % PALM_SIDES) as u32;
+        let mut tris = Vec::with_capacity(2 * PALM_SIDES * PALM_RINGS);
+        for i in 0..PALM_RINGS - 1 {
+            for k in 0..PALM_SIDES {
+                tris.push([at(i, k), at(i, k + 1), at(i + 1, k)]);
+                tris.push([at(i, k + 1), at(i + 1, k + 1), at(i + 1, k)]);
+            }
+        }
+        for k in 0..PALM_SIDES {
+            tris.push([heel, at(0, k + 1), at(0, k)]);
+            tris.push([tip, at(PALM_RINGS - 1, k), at(PALM_RINGS - 1, k + 1)]);
+        }
+        // Outward: away from the palm's centre line.
+        for t in &mut tris {
+            let [a, b, c] = t.map(|i| verts[i as usize]);
+            let centre = (a + b + c) / 3.0;
+            let axis = Vec3::new(0.0, centre.y.clamp(PALM_END_Y, PALM_HEEL_Y), 0.0);
+            if (b - a).cross(c - a).dot(centre - axis) < 0.0 {
+                t.swap(1, 2);
+            }
+        }
+        (verts, tris)
     }
 
     /// A finger's or the thumb's centre line in the hand's frame, from its
@@ -365,14 +460,35 @@ pub mod hand {
                         n,
                     ),
                     None => {
-                        // A loose curl round a wide circle.
-                        let (cu, cv, rr) = (knuckle.0 + 0.05, knuckle.1, 0.05);
+                        // A relaxed hand (bug 2026-11-17: the standing
+                        // rider's hands looked loose): each joint bent a
+                        // little more than the one before, the little
+                        // finger curled most, as a hand hangs at rest.
+                        let k = i as f32;
+                        let bend = RELAXED_BEND;
+                        let angles = [
+                            bend[0] + 0.07 * k,
+                            bend[1] + 0.08 * k,
+                            bend[2] + 0.04 * k,
+                        ];
                         sampled(
                             *lens,
                             *z,
                             |t| {
-                                let phi = std::f32::consts::PI + t / rr;
-                                (cu + rr * phi.cos(), cv + rr * phi.sin())
+                                let (mut u, mut v) = knuckle;
+                                let mut a = 0.0;
+                                let mut rest = t;
+                                for (j, (bent, len)) in angles.iter().zip(lens).enumerate() {
+                                    a += bent;
+                                    let (su, cv) = a.sin_cos();
+                                    if rest <= *len || j == 2 {
+                                        return (u + su * rest, v - cv * rest);
+                                    }
+                                    u += su * len;
+                                    v -= cv * len;
+                                    rest -= len;
+                                }
+                                (u, v)
                             },
                             n,
                         )
@@ -398,6 +514,16 @@ pub mod hand {
                     base_end: 2,
                 }
             }
+            None if shape == HandShape::Relaxed => Digit {
+                // Resting along the index finger's side.
+                points: vec![
+                    base,
+                    Vec3::new(n * 0.017, -0.052, -0.047),
+                    Vec3::new(n * 0.026, -0.075, -0.05),
+                    Vec3::new(n * 0.031, -0.097, -0.044),
+                ],
+                base_end: 2,
+            },
             None => {
                 let curl = match shape {
                     HandShape::Open => 0.0,
@@ -2232,13 +2358,11 @@ pub fn build(detail: Detail) -> Model {
 /// One hand shape's parts ([`hand`]) at the wrist `wrist` (rest-pose model
 /// coordinates).
 fn hand_parts(p: &mut Parts, wrist: Vec3, shape: hand::HandShape, side: usize) {
-    let [hx, hy, hz] = hand::PALM_HALF;
-    // The palm and the back of the hand, a little rounded at the knuckles.
-    p.slot("glove").cuboid(
-        wrist + Vec3::new(0.0, hand::PALM_Y, 0.0),
-        Vec3::new(hx, hy, hz),
-        Quat::IDENTITY,
-    );
+    // The palm and the back of the hand: tapered, the heel and the thumb's
+    // ball rounded, the knuckles raised (`hand::palm`).
+    let (verts, tris) = hand::palm(side);
+    let verts: Vec<Vec3> = verts.into_iter().map(|q| wrist + q).collect();
+    p.slot("glove").add_smooth(&verts, &tris);
     let sides = 5;
     let digit = |p: &mut Parts, d: &hand::Digit, r0: f32| {
         let pts: Vec<Vec3> = d.points.iter().map(|q| wrist + *q).collect();
@@ -2281,6 +2405,79 @@ mod tests {
             .flat_map(|i| &m.nodes[*i].primitives)
             .map(|p| p.indices.len() / 3)
             .sum()
+    }
+
+    /// Regression (2026-11-17, "the palm is a plain box"): the palm is a
+    /// closed, smooth shape – narrower at the wrist than at the knuckles,
+    /// the thumb's ball raised on the inner face, the knuckles on the back
+    /// – with few triangles, and its inner face stays out of every bar and
+    /// hood the hand holds.
+    #[test]
+    fn the_palm_is_shaped_and_stays_out_of_the_bars() {
+        use hand::{HandShape, palm, palm_sign};
+        for side in 0..2 {
+            let n = palm_sign(side);
+            let (v, tris) = palm(side);
+            assert!(tris.len() <= 220, "{} triangles", tris.len());
+            assert!(v.len() > 8, "not a box");
+            // Closed: every edge in two triangles, once each way.
+            let mut edges = std::collections::HashMap::new();
+            for t in &tris {
+                for k in 0..3 {
+                    *edges.entry((t[k], t[(k + 1) % 3])).or_insert(0) += 1;
+                }
+            }
+            for ((a, b), c) in &edges {
+                assert_eq!(*c, 1, "edge {a}-{b}");
+                assert_eq!(edges.get(&(*b, *a)), Some(&1), "edge {a}-{b} open");
+            }
+            // Outward faces.
+            for t in &tris {
+                let [a, b, c] = t.map(|i| v[i as usize]);
+                let centre = (a + b + c) / 3.0;
+                let out = centre - Vec3::new(0.0, hand::PALM_Y, 0.0);
+                assert!((b - a).cross(c - a).dot(out) > 0.0, "{t:?}");
+            }
+            // Tapered: the width (z) near the wrist and at the knuckles.
+            let width = |y0: f32, y1: f32| {
+                let zs = v.iter().filter(|q| q.y <= y0 && q.y >= y1).map(|q| q.z);
+                zs.clone().fold(f32::MIN, f32::max) - zs.fold(f32::MAX, f32::min)
+            };
+            let (wrist, knuckles) = (width(-0.01, -0.03), width(-0.065, -0.085));
+            assert!(wrist + 0.008 < knuckles, "{wrist} vs {knuckles}");
+            // The thumb's ball stands out of the inner face; the knuckles
+            // out of the back.
+            let inner = |pick: &dyn Fn(&Vec3) -> bool| {
+                v.iter()
+                    .filter(|q| pick(q))
+                    .map(|q| n * q.x)
+                    .fold(f32::MIN, f32::max)
+            };
+            let ball = inner(&|q| q.z < -0.01 && (-0.04..=-0.02).contains(&q.y));
+            let flat = inner(&|q| (-0.08..=-0.06).contains(&q.y));
+            assert!(ball > flat + 0.003, "thumb ball {ball} vs {flat}");
+            let back = |pick: &dyn Fn(&Vec3) -> bool| {
+                v.iter()
+                    .filter(|q| pick(q))
+                    .map(|q| -n * q.x)
+                    .fold(f32::MIN, f32::max)
+            };
+            let knuckle = back(&|q| (-0.09..=-0.078).contains(&q.y));
+            let mid = back(&|q| (-0.06..=-0.04).contains(&q.y));
+            assert!(knuckle > mid + 0.0005, "knuckles {knuckle} vs {mid}");
+            // Out of what the hand holds: every vertex outside the bar's
+            // (or the hood's) radius in the hand's frame.
+            for shape in HandShape::ALL {
+                let (Some(r), Some(c)) = (shape.wrap_radius(), hand::bar_centre(shape, side))
+                else {
+                    continue;
+                };
+                for q in &v {
+                    let d = glam::Vec2::new(q.x - c.x, q.y - c.y).length();
+                    assert!(d >= r - 0.0004, "{shape:?} {side}: {q} {d:.4} < {r}");
+                }
+            }
+        }
     }
 
     #[test]

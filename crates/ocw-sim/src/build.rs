@@ -793,14 +793,37 @@ impl PartGain {
         s
     }
 
-    /// The weight line: "−240 g", "+150 g", "same weight".
+    /// The weight line: "−240 g", "+1,150 g", "same weight".
     pub fn grams(&self) -> String {
         match self.mass_g.cmp(&0) {
-            std::cmp::Ordering::Less => format!("−{} g", -self.mass_g),
             std::cmp::Ordering::Equal => "same weight".into(),
-            std::cmp::Ordering::Greater => format!("+{} g", self.mass_g),
+            _ => signed_grams(self.mass_g),
         }
     }
+}
+
+/// Grams with a thousands separator: "950 g", "1,240 g", "12,000 g"
+/// (bug 2026-11-17: the bike stand's tiles showed "1240 g").
+pub fn grams(g: u64) -> String {
+    let digits = g.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    format!("{out} g")
+}
+
+/// A weight difference: "−1,240 g", "+150 g", "0 g".
+pub fn signed_grams(g: i64) -> String {
+    let sign = match g.cmp(&0) {
+        std::cmp::Ordering::Less => "−",
+        std::cmp::Ordering::Equal => "",
+        std::cmp::Ordering::Greater => "+",
+    };
+    format!("{sign}{}", grams(g.unsigned_abs()))
 }
 
 /// "+0.8 % flat · −0.2 % climb": a speed pair at the reference ride.
@@ -981,6 +1004,28 @@ mod tests {
 
     fn ids(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Regression (2026-11-17): weights over 1,000 g on the bike stand's
+    /// tiles had no thousands separator.
+    #[test]
+    fn weights_have_a_thousands_separator() {
+        assert_eq!(grams(0), "0 g");
+        assert_eq!(grams(950), "950 g");
+        assert_eq!(grams(1000), "1,000 g");
+        assert_eq!(grams(1240), "1,240 g");
+        assert_eq!(grams(12_000), "12,000 g");
+        assert_eq!(grams(1_234_567), "1,234,567 g");
+        assert_eq!(signed_grams(-1240), "−1,240 g");
+        assert_eq!(signed_grams(150), "+150 g");
+        let gain = |mass_g| PartGain {
+            mass_g,
+            ..PartGain::default()
+        };
+        assert_eq!(gain(-1650).grams(), "−1,650 g");
+        assert_eq!(gain(2100).grams(), "+2,100 g");
+        assert_eq!(gain(-240).grams(), "−240 g");
+        assert_eq!(gain(0).grams(), "same weight");
     }
 
     fn best_parts(profile: ProfileId) -> Vec<String> {
