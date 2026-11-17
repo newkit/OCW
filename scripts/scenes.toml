@@ -4131,6 +4131,30 @@ shot = 24
 pick = false
 
 [[scene]]
+name = "fix-stand-tiles-tyres"
+description = "Bike stand tiles (4G): the tyres picker as tiles, each tile's picture the whole 2:1 thumbnail framed on the part"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 5000", "2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-next", "4.2=workshop slot-next", "5.0=workshop select"]
+shot = 24
+pick = false
+
+[[scene]]
+name = "fix-stand-tiles-cockpit"
+description = "Bike stand tiles (4G): the cockpit picker as tiles, each tile's picture the whole 2:1 thumbnail framed on the part"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 5000", "2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-next", "4.2=workshop slot-next", "4.6=workshop slot-next", "5.0=workshop slot-next", "5.4=workshop slot-next", "5.8=workshop slot-next", "6.2=workshop slot-next", "7.0=workshop select"]
+shot = 24
+pick = false
+
+[[scene]]
+name = "fix-stand-tiles-saddle"
+description = "Bike stand tiles (4G): the saddle picker as tiles, each tile's picture the whole 2:1 thumbnail framed on the part"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 5000", "2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-next", "4.2=workshop slot-next", "4.6=workshop slot-next", "5.0=workshop slot-next", "5.4=workshop slot-next", "5.8=workshop slot-next", "6.2=workshop slot-next", "6.6=workshop slot-next", "7.0=workshop slot-next", "7.8=workshop select"]
+shot = 24
+pick = false
+
+[[scene]]
 name = "fix-helmet-hook"
 description = "Helmet off (4N Q28): the hair slot at the mirror, the rider's helmet hanging upright on the peg between the window and the mirror, its shell facing the room"
 args = ["--route", "hills", "--bots", "0"]

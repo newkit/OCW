@@ -2227,13 +2227,7 @@ pub fn panel_room(p: &PickerView, aspect: f32) -> (f32, f32, f32) {
         let tile_w = inner_w * (100.0 - 2.5 * (cols - 1.0)) / cols / 100.0;
         let text_w = tile_w - 2.0 * (TILE_PAD + TILE_BORDER);
         let tile_h = |r: &PickerRowView| {
-            let pic = match (&r.thumb, r.swatch) {
-                (Some(k), _) => text_w / k.aspect(),
-                (None, Some(_)) => text_w,
-                (None, None) => {
-                    text_w * crate::thumbs::THUMB_SIZE.y as f32 / crate::thumbs::THUMB_SIZE.x as f32
-                }
-            };
+            let pic = text_w / tile_picture_aspect(r);
             let foot = [r.weight.as_str(), r.right.as_str()]
                 .into_iter()
                 .filter(|s| !s.is_empty())
@@ -2298,6 +2292,19 @@ pub fn fitted_card(p: &PickerView, aspect: f32) -> Vec<String> {
     out
 }
 
+/// Width over height of a tile's picture (spec 4G *Tiles*): the
+/// thumbnail's own aspect – the part's 2 : 1 ([`crate::thumbs::THUMB_SIZE`]),
+/// the rider's square (4N) –, so the tile shows the whole rendering,
+/// neither cropped nor stretched; a swatch is square, a tile without a
+/// picture keeps the parts' room.
+pub fn tile_picture_aspect(r: &PickerRowView) -> f32 {
+    match (&r.thumb, r.swatch) {
+        (Some(k), _) => k.aspect(),
+        (None, Some(_)) => 1.0,
+        (None, None) => crate::thumbs::THUMB_SIZE.x as f32 / crate::thumbs::THUMB_SIZE.y as f32,
+    }
+}
+
 /// The picker's tiles (spec 4B *Tiles*): the shown rows of the grid, each
 /// a thumbnail of the part, its name, its gain and weight against the
 /// slot's base part and its badge (equipped, owned, price, lock).
@@ -2356,16 +2363,9 @@ fn spawn_tiles(
                 let mut pic = tile.spawn((
                     Node {
                         width: percent(100),
-                        // The part's 2 : 1, the rider's square (4N), a
-                        // swatch square too.
-                        aspect_ratio: Some(match (&r.thumb, r.swatch) {
-                            (Some(k), _) => k.aspect(),
-                            (None, Some(_)) => 1.0,
-                            (None, None) => {
-                                crate::thumbs::THUMB_SIZE.x as f32
-                                    / crate::thumbs::THUMB_SIZE.y as f32
-                            }
-                        }),
+                        // The whole thumbnail, neither cropped nor
+                        // stretched: its own aspect (tile_picture_aspect).
+                        aspect_ratio: Some(tile_picture_aspect(r)),
                         border_radius: BorderRadius::all(vh(0.5)),
                         ..default()
                     },

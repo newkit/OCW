@@ -454,6 +454,14 @@ fn grid_pictures(grid: &MenuGrid) -> bool {
         .any(|c| c.icon.is_some() || c.swatch.is_some() || c.thumb.is_some())
 }
 
+/// The picture of a rendered grid tile (the character editor's, spec
+/// §14 Phase 4, 4N): (width, height) in vh for a thumbnail `aspect`
+/// (width / height) – the rendering's own aspect, so the whole picture
+/// shows, neither cropped nor stretched.
+pub fn thumb_picture_vh(aspect: f32) -> (f32, f32) {
+    (GRID_ICON_VH * aspect, GRID_ICON_VH)
+}
+
 /// Whether a grid's pictures are renderings of the models (the character
 /// editor's tiles).
 pub fn grid_thumbs(grid: &MenuGrid) -> bool {
@@ -949,8 +957,10 @@ fn spawn_grid(
                         ImageNode::new(img),
                         BackgroundColor(Color::srgb(0.16, 0.16, 0.17)),
                     ));
+                    let (w, h) = thumb_picture_vh(aspect);
                     icon.entry::<Node>().and_modify(move |mut n| {
-                        n.width = vh(GRID_ICON_VH * aspect);
+                        n.width = vh(w);
+                        n.height = vh(h);
                         n.border_radius = BorderRadius::all(vh(0.6));
                     });
                 } else if let Some(ic) = cell.icon {
