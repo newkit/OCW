@@ -7064,6 +7064,7 @@ version = "0.2.2"
 dependencies = [
  "bevy",
  "clap",
+ "dirs",
  "ocw-audio",
  "ocw-client",
  "ocw-core",
@@ -7078,6 +7079,7 @@ dependencies = [
  "ocw-world",
  "ocw-worldstore",
  "web-time",
+ "winit",
 ]
 
 [[package]]
