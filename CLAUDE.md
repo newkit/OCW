@@ -102,6 +102,8 @@ These cut across many sections and shape all future code:
 
 ## Testing
 
+**Send the user every test picture and video** (user, 2026-11-11, repeated 2026-11-17 after it got lost: it was only in one session's memory). The session that talks to the user sends each screenshot and short video of an app or test run with `SendUserFile` (load it with ToolSearch `select:SendUserFile`), with a one-line caption saying what it shows – the files themselves, not a description. **One picture per file**, never a grid or contact sheet; a joined image only for a comparison (before / after), and then the single pictures too. Videos over 30 MB as a compressed copy (art diary videos: 1280 px for days, 960 px for the long diary). Agents cannot send files to the user: they archive every picture and video in `test-output/` (via `drive.sh`, with `test-output/index.md`) and **list the paths in their report**, and the coordinator sends them when the report arrives. A test run with pictures is not done until they are sent.
+
 No step is done without unit tests (spec §11.4, per-phase test lists in §14). **Test data uses only made-up names** (user, 2026-11-16): fake accounts, riders, athletes, sign-in identities, e-mails and fixtures get fictional names (Ada Rider, Bea Climber, …), never a real person's name – screenshots of test runs are published by the art project (a fake Google user named after a real cyclist reached the gallery on 2026-11-15). Tests run without hardware, network or GPU: use the virtual trainer / mock `DeviceBackend`, in-process channels instead of sockets, and keep logic outside Bevy so it can be tested headless. Every bug fix gets a regression test.
 
 ## Platform rollout
