@@ -412,7 +412,7 @@ impl Page {
                 "Who you are on the road: free, for everyone, and never physics (the weight stays the profile's).",
             ],
             Self::CharacterBody => {
-                &["Any shape; Match my weight takes the one your weight and height propose."]
+                &["Any shape; Match my weight picks the one your weight and height suggest."]
             }
             Self::Rider(_) => &["Changes apply from the next start (Restart)."],
             Self::CharacterFace => &[

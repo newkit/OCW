@@ -51,9 +51,9 @@ fn shape_row(now: BodyShape, marker: BodyShape) -> Row {
         (s != now).then(|| line(&format!("--shape {}", s.id())))
     };
     let mark = if now == marker {
-        " (matches your weight)".to_string()
+        " (your weight)".to_string()
     } else {
-        format!(" (your weight: {})", marker.name())
+        format!(" (weight: {})", marker.name())
     };
     Row {
         label: "Shape".into(),
@@ -666,7 +666,7 @@ mod tests {
         let r = rider(75.0, Some(178.0));
         let body = rows(Page::CharacterBody, &r);
         let shape = row(&body, "Shape");
-        assert_eq!(shape.value.as_deref(), Some("Normal (matches your weight)"));
+        assert_eq!(shape.value.as_deref(), Some("Normal (your weight)"));
         assert_eq!(shape.left.as_deref(), Some("character --shape slim"));
         assert_eq!(shape.right.as_deref(), Some("character --shape ample"));
         assert_eq!(
@@ -681,7 +681,7 @@ mod tests {
         });
         let body = rows(Page::CharacterBody, &ample);
         let shape = row(&body, "Shape");
-        assert_eq!(shape.value.as_deref(), Some("Ample (your weight: Normal)"));
+        assert_eq!(shape.value.as_deref(), Some("Ample (weight: Normal)"));
         assert_eq!(shape.right.as_deref(), Some("character --shape fat"));
         assert_eq!(
             row(&body, "Match my weight").confirm,
@@ -690,7 +690,7 @@ mod tests {
         // The weight and the height move the band.
         let heavy = rider(120.0, Some(178.0));
         let shape = row(&rows(Page::CharacterBody, &heavy), "Shape").clone();
-        assert!(shape.value.unwrap().contains("your weight: Obese"));
+        assert!(shape.value.unwrap().contains("(weight: Obese)"));
         let tall = rider(75.0, Some(200.0));
         assert_eq!(tall.weight_shape(), BodyShape::Slim);
         // Walking the row from anorexia reaches obese at 75 kg.
