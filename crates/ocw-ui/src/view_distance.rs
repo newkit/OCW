@@ -246,9 +246,23 @@ pub fn adjusted(world: &World, base: QualityPreset) -> QualityPreset {
 }
 
 fn frozen(world: &World) -> bool {
-    world
-        .get_resource::<ViewDistanceContext>()
-        .is_some_and(|c| c.frozen)
+    hold_reason(world).is_some()
+}
+
+/// Why the dynamic mode holds still: a screenshot / capture run, or a VR
+/// headset (v4.54: its steps – down every 2 s, back up when the distance
+/// was not the limit – popped the far terrain and the fog in and out, seen
+/// as flicker; in VR the frame rate is held by the render scale and the
+/// `vr` preset instead).
+fn hold_reason(world: &World) -> Option<&'static str> {
+    let c = world.get_resource::<ViewDistanceContext>()?;
+    if c.frozen {
+        Some("screenshot / capture run")
+    } else if c.headset_hz.is_some() {
+        Some("VR headset")
+    } else {
+        None
+    }
 }
 
 /// The target frame rate (and why) from the setting, the app, the
@@ -370,12 +384,12 @@ pub fn status(world: &World) -> String {
     let Some(s) = world.get_resource::<ViewDistanceState>() else {
         return String::new();
     };
-    let mode = if frozen(world) && s.auto {
-        "auto held (screenshot run)"
-    } else if s.auto {
-        "auto"
-    } else {
-        "fixed"
+    let held = hold_reason(world).filter(|_| s.auto);
+    let mode = match held {
+        Some("VR headset") => "auto held (VR)",
+        Some(_) => "auto held (screenshot run)",
+        None if s.auto => "auto",
+        None => "fixed",
     };
     format!(
         "{}, {mode}, target {:.0} fps",
@@ -410,12 +424,11 @@ pub fn describe(world: &World) -> String {
     let mut out = format!(
         "view: {} ({}; limit {limit}; target {:.0} fps: {}) – trees {}, house LOD × {:.2}, tiles {n} × {n}",
         km_text(s.distance),
-        if frozen(world) && s.auto {
-            "auto, held for this screenshot / capture run"
-        } else if s.auto {
-            "auto"
-        } else {
-            "fixed"
+        match hold_reason(world).filter(|_| s.auto) {
+            Some("VR headset") => "auto, held in the VR headset",
+            Some(_) => "auto, held for this screenshot / capture run",
+            None if s.auto => "auto",
+            None => "fixed",
         },
         s.target_fps,
         s.target_reason,
@@ -594,6 +607,8 @@ mod tests {
         );
         let out = run(&mut a, "view auto on");
         assert!(out.contains("72 fps"), "{out}");
+        // and the dynamic mode holds still (no popping in the headset).
+        assert!(out.contains("held in the VR headset"), "{out}");
         assert_eq!(a.world().resource::<ViewDistanceState>().target_fps, 72.0);
     }
 

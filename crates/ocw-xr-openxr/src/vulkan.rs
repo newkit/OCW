@@ -22,6 +22,8 @@ pub struct VulkanDevice {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub session_info: xr::vulkan::SessionCreateInfo,
+    /// The GPU the runtime chose for the headset (its Vulkan name).
+    pub gpu_name: String,
 }
 
 /// The Vulkan version we ask for: 1.2 where the runtime allows (wgpu's
@@ -229,6 +231,10 @@ pub fn create_device(
         device,
         queue,
         session_info,
+        gpu_name: props
+            .device_name_as_c_str()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
     })
 }
 

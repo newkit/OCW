@@ -344,6 +344,10 @@ pub struct Args {
     /// it tilts the world.
     #[arg(long, value_name = "DEG", default_value_t = 0.0)]
     pub vr_look_down: f32,
+    /// VR: the eye images at this share of the runtime's recommended size
+    /// (0.5 – 1.5; default 1). Fewer pixels for a slower GPU.
+    #[arg(long, value_name = "SCALE", default_value_t = 1.0)]
+    pub vr_render_scale: f32,
 }
 
 impl Args {

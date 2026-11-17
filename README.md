@@ -1284,6 +1284,14 @@ spectators – it costs a third view); `vr reconnect` after the runtime went
 away. The quality preset `vr` (`quality vr`, picked by `auto` in VR) trims
 shadows, view distance and trees for the headset's frame rate.
 
+**Frame rate and stability:** the eyes are drawn at most at the headset
+panel's size (`--vr-render-scale 0.9` draws fewer pixels on a slower GPU);
+in the headset the render distance holds still. *Quit* in the headset's
+menu quits the app. `scripts/vr-soak.ps1 -Minutes 30` (on the Windows VR
+machine, through `scripts/remote.sh … run`) rides in the headset for that
+long, logs `vr status` every 30 s (frame times, missed frames, frames shown /
+empty / failed), takes left-eye screenshots and checks a clean exit.
+
 **Without a headset:** `ocw-desktop --vr-sim` renders both eyes from a
 simulated head that looks around, side by side on the monitor, with the bike
 computer – every build, no OpenXR needed (screenshots, tests). A screenshot in

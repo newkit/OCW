@@ -86,6 +86,33 @@ pub enum Submitted {
     Empty,
 }
 
+/// What became of the submitted frames (`vr status`): an empty or failed
+/// frame shows nothing new in the headset – the runtime repeats or
+/// reprojects the last one, seen as a flicker.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SubmitCounts {
+    pub shown: u64,
+    pub empty: u64,
+    pub failed: u64,
+}
+
+impl SubmitCounts {
+    pub fn count(&mut self, r: &Result<Submitted, XrError>) {
+        match r {
+            Ok(Submitted::Shown) => self.shown += 1,
+            Ok(Submitted::Empty) => self.empty += 1,
+            Err(_) => self.failed += 1,
+        }
+    }
+
+    pub fn line(&self) -> String {
+        format!(
+            "submitted: {} shown, {} empty, {} failed",
+            self.shown, self.empty, self.failed
+        )
+    }
+}
+
 /// One frame's submission. `copy(image)` puts the eye textures into
 /// swapchain image `image` (records and submits the GPU copy). A failed
 /// copy still releases the image and ends the frame (empty), so the
@@ -240,6 +267,29 @@ impl StatsSummary {
     /// Within budget: the p95 frame fits the display's period.
     pub fn in_budget(&self) -> bool {
         self.period_ms > 0.0 && self.p95_ms <= self.period_ms
+    }
+}
+
+#[cfg(test)]
+mod counts_tests {
+    use super::*;
+
+    #[test]
+    fn submissions_are_counted() {
+        let mut c = SubmitCounts::default();
+        c.count(&Ok(Submitted::Shown));
+        c.count(&Ok(Submitted::Shown));
+        c.count(&Ok(Submitted::Empty));
+        c.count(&Err(XrError::Other("the eye images are not ready".into())));
+        assert_eq!(
+            c,
+            SubmitCounts {
+                shown: 2,
+                empty: 1,
+                failed: 1
+            }
+        );
+        assert_eq!(c.line(), "submitted: 2 shown, 1 empty, 1 failed");
     }
 }
 

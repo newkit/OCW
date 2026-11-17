@@ -27,13 +27,19 @@
 
 .PARAMETER TimeoutSec
   Ends the program after this many seconds (default 300).
+
+.PARAMETER EnvVars
+  Environment variables for the program, NAME=VALUE each (e.g.
+  RUST_BACKTRACE=1, OCW_ARGS_FILE=...): the task does not inherit the SSH
+  session's environment.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Exe,
     [string]$Arguments = "",
     [string]$Log = "test-output\gui-run.log",
-    [int]$TimeoutSec = 300
+    [int]$TimeoutSec = 300,
+    [string[]]$EnvVars = @()
 )
 $ErrorActionPreference = "Stop"
 
@@ -53,9 +59,11 @@ $name = "ocw-gui-run-$PID"
 $wrapper = Join-Path $env:TEMP "$name.cmd"
 $done = Join-Path $env:TEMP "$name.exit"
 Remove-Item $done -ErrorAction SilentlyContinue
+$sets = ($EnvVars | Where-Object { $_ -match '^[A-Za-z_][A-Za-z0-9_]*=' } | ForEach-Object { "set `"$_`"" }) -join "`r`n"
 @"
 @echo off
 cd /d "$dir"
+$sets
 "$exePath" $Arguments > "$logPath" 2>&1
 echo %ERRORLEVEL% > "$done"
 "@ | Set-Content -Encoding ascii $wrapper

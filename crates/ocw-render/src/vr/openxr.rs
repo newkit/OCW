@@ -68,13 +68,16 @@ pub fn boot(opts: &BootOptions) -> Result<Boot, XrError> {
 /// The runtime one line (`vr status`).
 pub fn describe(info: &XrInfo) -> String {
     format!(
-        "{} on {} ({}), {}{}",
+        "{} on {} ({}), {}{}, eyes {}×{} px, GPU {}",
         info.runtime,
         info.system,
         info.profile.name,
         info.format.name(),
         info.refresh_hz
-            .map_or(String::new(), |hz| format!(", {hz:.0} Hz"))
+            .map_or(String::new(), |hz| format!(", {hz:.0} Hz")),
+        info.eye_px.0,
+        info.eye_px.1,
+        if info.gpu.is_empty() { "?" } else { &info.gpu }
     )
 }
 
@@ -91,6 +94,10 @@ struct XrMain(Mutex<MainHandle>);
 /// Errors the render world met (the session machine hears of them).
 #[derive(Resource, Clone, Default)]
 struct XrErrors(Arc<Mutex<Vec<XrError>>>);
+
+/// The render world's submission counts, read by the main world.
+#[derive(Resource, Clone, Default)]
+struct XrCounts(Arc<Mutex<ocw_xr::frame::SubmitCounts>>);
 
 /// What the render world submits for this frame.
 #[derive(Resource, Clone, Default)]
@@ -115,6 +122,7 @@ struct XrRender {
     generation: u64,
     images: Vec<wgpu::Texture>,
     errors: XrErrors,
+    counts: XrCounts,
 }
 
 impl Plugin for OpenXrPlugin {
@@ -123,8 +131,10 @@ impl Plugin for OpenXrPlugin {
             return;
         };
         let errors = XrErrors::default();
+        let counts = XrCounts::default();
         app.insert_resource(XrMain(Mutex::new(main)))
             .insert_resource(errors.clone())
+            .insert_resource(counts.clone())
             .insert_resource(VrState {
                 session: Some(SessionMachine::new()),
                 device: describe(&self.info),
@@ -142,6 +152,7 @@ impl Plugin for OpenXrPlugin {
                     generation: u64::MAX,
                     images: Vec::new(),
                     errors,
+                    counts,
                 })
                 .add_systems(
                     Render,
@@ -158,26 +169,39 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 /// Events, the session, `xrWaitFrame`, `xrLocateViews`.
+#[allow(clippy::too_many_arguments)] // a Bevy system
 fn frame_start(
     main: Res<XrMain>,
     errors: Res<XrErrors>,
+    counts: Res<XrCounts>,
     eyes: Option<Res<EyeImages>>,
     mut state: ResMut<VrState>,
     mut frame: ResMut<XrFrame>,
-    mut last: Local<Option<Instant>>,
-    mut polls: Local<u64>,
+    mut loop_state: Local<(Option<Instant>, u64)>,
+    mut exit: MessageWriter<AppExit>,
 ) {
+    let (last, polls) = &mut *loop_state;
     let mut rt = lock(&main.0);
     let now = Instant::now();
     let dt = last.map_or(0.0, |l| now.duration_since(l).as_secs_f32());
+    state.submitted = *lock(&counts.0);
     let mut machine = state.session.take().unwrap_or_default();
     for e in lock(&errors.0).drain(..) {
         machine.frame_error(e);
     }
     let before = machine.phase().clone();
     machine.update(&mut *rt, dt);
+    for line in machine.take_log() {
+        info!("VR {line}");
+    }
     if *machine.phase() != before {
         info!("VR session: {}", machine.summary());
+    }
+    if std::mem::take(&mut machine.quit_wanted) {
+        // EXITING not asked for: the runtime wants the app closed (Quit in
+        // the headset's menu). Staying made Link end the process.
+        info!("VR: the runtime closed the app (Quit in the headset's menu): quitting");
+        exit.write(AppExit::Success);
     }
     if std::mem::take(&mut machine.recentre_wanted) {
         state.recentre_now = true;
@@ -266,6 +290,11 @@ fn submit_frame(
     // The whole submission under the frame lock: the teardown waits.
     let held = xr.handle.clone();
     let _frame = held.frame_guard();
+    // Extracted before STOPPING / a loss, submitted after it: skip (it
+    // reached `xrBeginFrame` on an ended session before).
+    if !held.running() {
+        return;
+    }
     let (generation, images) = xr.handle.images();
     if generation != xr.generation {
         xr.generation = generation;
@@ -338,7 +367,9 @@ fn submit_frame(
         queue.submit([enc.finish()]);
         Ok(())
     };
-    if let Err(e) = submit(&mut handle, &timing, frame.views.as_ref(), &mut copy) {
+    let result = submit(&mut handle, &timing, frame.views.as_ref(), &mut copy);
+    lock(&xr.counts.0).count(&result);
+    if let Err(e) = result {
         lock(&xr.errors.0).push(e);
     }
 }

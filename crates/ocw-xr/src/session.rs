@@ -11,9 +11,19 @@
 //!    ▲               (frame loop runs from Ready until Stopping)  │
 //!    │                                                            │
 //!    └──IDLE── Stopping ◀─────────────STOPPING────────────────────┘
-//!  LOSS_PENDING / EXITING / errors ──▶ Lost ──retry every 2 s──▶ Idle
+//!  LOSS_PENDING / errors ──▶ Lost ──retry every 2 s──▶ Idle
+//!  EXITING (not asked for) ──▶ Closed: the app quits (v4.54)
 //!  INSTANCE_LOSS_PENDING ──▶ Lost (needs a restart of the app)
 //! ```
+//!
+//! **EXITING without our request** (v4.54, the kiosk "crashes" on Weela,
+//! 2026-11-17): the runtime tells the app to quit – *Quit* in the
+//! headset's menu, or the runtime closing it. Before, it counted as a loss
+//! and a new session was created on the same instance; the Meta Quest
+//! Link runtime then ended the process about 20 s later without any
+//! message (no panic, no crash dump). Now the session is ended and the app
+//! quits cleanly ([`SessionMachine::quit_wanted`]); a kiosk starts it
+//! again. Every runtime event is kept for the log ([`SessionMachine::take_log`]).
 //!
 //! A lost session (the headset unplugged, Link restarted, the runtime's
 //! dashboard closed the app) is **reconnected**: every
@@ -142,6 +152,9 @@ pub enum Phase {
     Lost { restart: bool },
     /// The session ended because the app asked.
     Exited,
+    /// The runtime ended the session and wants the app to quit (EXITING
+    /// that the app did not ask for).
+    Closed,
 }
 
 impl Phase {
@@ -155,6 +168,7 @@ impl Phase {
             Self::Stopping => "stopping",
             Self::Lost { .. } => "lost",
             Self::Exited => "exited",
+            Self::Closed => "closed by the runtime",
         }
     }
 }
@@ -175,6 +189,12 @@ pub struct SessionMachine {
     pub last_error: Option<XrError>,
     /// Set when the runtime moved its reference space: redo the recentre.
     pub recentre_wanted: bool,
+    /// The runtime asked the app to quit (EXITING not asked for): the app
+    /// exits cleanly.
+    pub quit_wanted: bool,
+    /// The runtime's events since the last [`Self::take_log`] (for the log:
+    /// which state came when).
+    log: Vec<String>,
 }
 
 impl SessionMachine {
@@ -200,6 +220,8 @@ impl SessionMachine {
             reconnects: 0,
             last_error: None,
             recentre_wanted: false,
+            quit_wanted: false,
+            log: Vec::new(),
         }
     }
 
@@ -217,6 +239,11 @@ impl SessionMachine {
         matches!(self.phase, Phase::Visible | Phase::Focused)
     }
 
+    /// The runtime's events since the last call, as log lines.
+    pub fn take_log(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.log)
+    }
+
     pub fn is_available(&self) -> bool {
         !matches!(self.phase, Phase::Unavailable(_))
     }
@@ -224,7 +251,10 @@ impl SessionMachine {
     /// Handles the runtime's events and reconnects; `dt`: seconds since
     /// the last call.
     pub fn update(&mut self, rt: &mut dyn XrRuntime, dt: f32) {
-        if matches!(self.phase, Phase::Unavailable(_) | Phase::Exited) {
+        if matches!(
+            self.phase,
+            Phase::Unavailable(_) | Phase::Exited | Phase::Closed
+        ) {
             return;
         }
         if let Phase::Lost { restart } = self.phase {
@@ -262,6 +292,12 @@ impl SessionMachine {
 
     fn on_event(&mut self, rt: &mut dyn XrRuntime, e: RuntimeEvent) {
         use RuntimeState as S;
+        if self.log.len() < 64 {
+            self.log.push(match e {
+                RuntimeEvent::State(s) => format!("runtime state {s:?}"),
+                other => format!("runtime event {other:?}"),
+            });
+        }
         match e {
             RuntimeEvent::InstanceLossPending => self.lose(true, XrError::InstanceLost),
             RuntimeEvent::ReferenceSpaceChanged => self.recentre_wanted = true,
@@ -308,9 +344,22 @@ impl SessionMachine {
                     self.running = false;
                     self.phase = Phase::Exited;
                 }
-                // The runtime closed us (its dashboard, Link turned off):
-                // reconnect when it lets us.
-                S::Exiting | S::LossPending => self.lose(false, XrError::SessionLost),
+                // The runtime wants us to quit (Quit in the headset's menu):
+                // end the session, the app exits. Reconnecting here made the
+                // Link runtime end the process ~20 s later (2026-11-17).
+                S::Exiting => {
+                    if self.running {
+                        if let Err(e) = rt.end_session() {
+                            self.last_error = Some(e);
+                        }
+                        self.running = false;
+                    }
+                    self.phase = Phase::Closed;
+                    self.quit_wanted = true;
+                }
+                // The session will be lost (Link unplugged, the runtime
+                // restarting): reconnect when it lets us.
+                S::LossPending => self.lose(false, XrError::SessionLost),
             },
         }
     }
@@ -490,10 +539,62 @@ mod tests {
         // A frame call that loses the session reconnects too.
         m.frame_error(XrError::SessionLost);
         assert_eq!(*m.phase(), Phase::Lost { restart: false });
-        // The runtime's own exit (its dashboard) is a loss, not our exit.
+    }
+
+    /// Regression (2026-11-17, the VR kiosk on Weela "keeps crashing"): an
+    /// EXITING the app did not ask for is the runtime telling it to quit.
+    /// It was taken for a loss and a new session made; the Link runtime
+    /// then ended the process silently. Now: the session is ended, nothing
+    /// is recreated, and the app is told to quit.
+    #[test]
+    fn the_runtime_closing_us_quits_and_never_reconnects() {
+        let mut rt = MockRuntime::default();
         let mut m = SessionMachine::new();
-        run(&mut m, &mut rt, &[RuntimeEvent::State(S::Exiting)]);
-        assert_eq!(*m.phase(), Phase::Lost { restart: false });
+        run(
+            &mut m,
+            &mut rt,
+            &[
+                RuntimeEvent::State(S::Ready),
+                RuntimeEvent::State(S::Focused),
+                RuntimeEvent::State(S::Exiting),
+            ],
+        );
+        assert_eq!(*m.phase(), Phase::Closed);
+        assert!(m.quit_wanted && !m.frame_loop());
+        assert_eq!(rt.calls, [Call::BeginSession, Call::EndSession]);
+        for _ in 0..10 {
+            m.update(&mut rt, 5.0);
+        }
+        assert!(!rt.calls.contains(&Call::RecreateSession));
+        assert_eq!(
+            m.take_log(),
+            [
+                "runtime state Ready",
+                "runtime state Focused",
+                "runtime state Exiting"
+            ]
+        );
+        assert!(m.take_log().is_empty());
+        // The usual order (STOPPING ends the session first): one end only.
+        let mut rt = MockRuntime::default();
+        let mut m = SessionMachine::new();
+        run(
+            &mut m,
+            &mut rt,
+            &[
+                RuntimeEvent::State(S::Ready),
+                RuntimeEvent::State(S::Stopping),
+                RuntimeEvent::State(S::Idle),
+                RuntimeEvent::State(S::Exiting),
+            ],
+        );
+        assert_eq!(*m.phase(), Phase::Closed);
+        assert_eq!(rt.calls, [Call::BeginSession, Call::EndSession]);
+        assert!(
+            m.summary().starts_with("closed by the runtime"),
+            "{}",
+            m.summary()
+        );
     }
 
     #[test]

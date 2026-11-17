@@ -898,7 +898,7 @@ fn register_builtin_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         User,
         Command::new("screenshot")
-            .about("Save a screenshot of the window: JPEG with its time in EXIF (a .png path: PNG); in the browser a download named with the time")
+            .about("Save a screenshot of the window (in a headset session: the left eye): JPEG with its time in EXIF (a .png path: PNG); in the browser a download named with the time")
             .arg(Arg::new("path")),
         |world, m| {
             let meta = crate::stamp::ShotMeta::of(world);
@@ -917,11 +917,25 @@ fn register_builtin_commands(app: &mut App) {
                 .get_one::<String>("path")
                 .cloned()
                 .unwrap_or_else(|| "screenshot.jpg".into());
+            // A headset session: the left eye, as `--screenshot` (the
+            // window is the mirror, with the flat HUD over it).
+            let headset = world
+                .get_resource::<crate::vr::VrConfig>()
+                .is_some_and(|c| c.mode == crate::vr::VrMode::Headset);
+            let eye = world
+                .get_resource::<crate::vr::EyeImages>()
+                .map(|e| e.eyes[0].clone());
+            let (source, what) = match (eye, crate::autoshot::shot_from(true, headset, true)) {
+                (Some(eye), crate::autoshot::ShotFrom::LeftEye) if headset => {
+                    (Screenshot::image(eye), "the left eye")
+                }
+                _ => (Screenshot::primary_window(), "the window"),
+            };
             world
                 .commands()
-                .spawn(Screenshot::primary_window())
+                .spawn(source)
                 .observe(crate::stamp::save_shot(path.clone(), meta));
-            Ok(format!("saving screenshot to {path}"))
+            Ok(format!("saving a screenshot of {what} to {path}"))
         },
     ))
     .console_command(ConsoleCommand::new(

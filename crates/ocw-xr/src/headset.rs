@@ -34,6 +34,22 @@ pub const QUEST_1: HeadsetProfile = HeadsetProfile {
     render_scale_standalone: 0.8,
 };
 
+/// The render scale on PC: the runtime's recommended eye size, but not
+/// more pixels than the panel has (v4.54). Meta Quest Link recommends
+/// 1808 × 2000 for the Quest 1's 1440 × 1600 panel (supersampled 1.25×);
+/// at that size Weela drew 36 fps for the 72 Hz headset – every other frame
+/// missed, reprojected, seen as flicker. The panel's size is ≈ 0.8 of it.
+/// Unknown panels: the profile's scale.
+pub fn pc_render_scale(profile: &HeadsetProfile, recommended: (u32, u32)) -> f32 {
+    let (pw, ph) = profile.panel_px;
+    let (rw, rh) = recommended;
+    if pw == 0 || ph == 0 || rw == 0 || rh == 0 {
+        return profile.render_scale_pc;
+    }
+    let to_panel = (pw as f32 / rw as f32).max(ph as f32 / rh as f32);
+    profile.render_scale_pc.min(to_panel)
+}
+
 /// Any other headset: the runtime's own numbers.
 pub const GENERIC: HeadsetProfile = HeadsetProfile {
     id: "generic",
@@ -122,5 +138,17 @@ mod tests {
         assert_eq!(target_rate(&[]), None);
         assert_eq!(target_rate(&[f32::NAN]), None);
         assert_eq!(frame_budget_ms(0.0), f32::INFINITY);
+    }
+
+    /// The Quest 1 over Link: the recommended 1808 × 2000 is rendered at
+    /// the panel's 1440 × 1600; a runtime that recommends less keeps its
+    /// size; an unknown panel keeps the profile's scale.
+    #[test]
+    fn the_pc_render_scale_stops_at_the_panel() {
+        let s = pc_render_scale(&QUEST_1, (1808, 2000));
+        assert!((s - 0.8).abs() < 0.01, "{s}");
+        assert_eq!(pc_render_scale(&QUEST_1, (1344, 1504)), 1.0);
+        assert_eq!(pc_render_scale(&GENERIC, (2000, 2000)), 1.0);
+        assert_eq!(pc_render_scale(&QUEST_1, (0, 0)), 1.0);
     }
 }

@@ -272,11 +272,16 @@ function Invoke-Supervisor {
         if (-not $exe -or -not (Test-Path -LiteralPath $exe)) { Start-Sleep -Seconds $poll; continue }
         $applog = Join-Path $state "app.log"
         if (Test-Path -LiteralPath $applog) { Move-Item -Force -LiteralPath $applog -Destination (Join-Path $state "app.prev.log") }
+        $appout = Join-Path $state "app.out.log"
+        if (Test-Path -LiteralPath $appout) { Move-Item -Force -LiteralPath $appout -Destination (Join-Path $state "app.out.prev.log") }
         $ver = (Read-Text (Join-Path $build "VERSION")).Trim()
         if (-not $ver) { $ver = "unknown build" }
         Write-KioskLog "starting $ver ($cur)"
         $proc = Start-Process -FilePath $exe -WorkingDirectory $build -NoNewWindow -PassThru `
-            -RedirectStandardError $applog -RedirectStandardOutput (Join-Path $state "app.out.log")
+            -RedirectStandardError $applog -RedirectStandardOutput $appout
+        # The handle now: without it PowerShell's process object has no
+        # exit code later (the kiosk logged "code " for a crash).
+        $null = $proc.Handle
         Set-Content -Path (Join-Path $state "app.pid") -Value $proc.Id
         $t0 = Get-Date
         $reason = "exited"
@@ -306,7 +311,7 @@ function Invoke-Supervisor {
             if ($null -ne $retryAt -and (Get-Date) -ge $retryAt) { $reason = "vr-retry"; Write-KioskLog "restarting the app to try VR again"; break }
         }
         Stop-App $proc
-        $code = if ($proc.HasExited) { $proc.ExitCode } else { "?" }
+        $code = if ($proc.HasExited) { "{0} (0x{0:X8})" -f $proc.ExitCode } else { "?" }
         Remove-Item -LiteralPath (Join-Path $state "app.pid") -ErrorAction SilentlyContinue
         switch ($reason) {
             "stop" { Remove-Item -LiteralPath $stopFile -ErrorAction SilentlyContinue; Write-KioskLog "kiosk stopping"; return 0 }
@@ -373,7 +378,10 @@ function New-TaskXml([string]$Script, [bool]$Logon) {
     $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $esc = [Security.SecurityElement]::Escape($me)
     $trigger = if ($Logon) { "<Triggers><LogonTrigger><Enabled>true</Enabled><UserId>$esc</UserId></LogonTrigger></Triggers>" } else { "<Triggers />" }
-    $arg = [Security.SecurityElement]::Escape("-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Script`" run")
+    # conhost --headless: no console window on the kiosk's screen (with
+    # Windows Terminal as the default console, -WindowStyle Hidden still
+    # showed the kiosk's log in a terminal window, 2026-11-17).
+    $arg = [Security.SecurityElement]::Escape("--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Script`" run")
     return @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -390,7 +398,7 @@ function New-TaskXml([string]$Script, [bool]$Logon) {
     <IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings>
     <Enabled>true</Enabled>
   </Settings>
-  <Actions Context="Author"><Exec><Command>powershell.exe</Command><Arguments>$arg</Arguments></Exec></Actions>
+  <Actions Context="Author"><Exec><Command>conhost.exe</Command><Arguments>$arg</Arguments></Exec></Actions>
 </Task>
 "@
 }

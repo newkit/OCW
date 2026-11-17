@@ -151,6 +151,8 @@ pub struct VrState {
     /// Look down by this much (degrees) – screenshots of the bike computer
     /// (`--vr-look-down`, `vr look-down`); 0 in a ride.
     pub look_down_deg: f32,
+    /// Frames shown, empty and failed in the headset (`vr status`).
+    pub submitted: ocw_xr::frame::SubmitCounts,
 }
 
 impl VrState {
@@ -194,6 +196,7 @@ impl VrState {
         }
         if cfg.mode == VrMode::Headset {
             lines.push(format!("  {}", self.stats.summary().line()));
+            lines.push(format!("  {}", self.submitted.line()));
             lines.push(format!("  controllers: {}", self.controllers_line()));
         }
         if self.look_down_deg != 0.0 {

@@ -36,7 +36,7 @@
 pub mod controls;
 pub mod vulkan;
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use ocw_xr::controllers::{ControllerSource, ControllerState};
@@ -97,6 +97,8 @@ pub struct XrInfo {
     pub format: ColorFormat,
     /// The refresh rate asked for (Hz), when the runtime lets us choose.
     pub refresh_hz: Option<f32>,
+    /// The GPU the runtime chose (its Vulkan name).
+    pub gpu: String,
 }
 
 /// The wgpu objects for the renderer.
@@ -149,6 +151,10 @@ struct Shared {
     controls: Option<controls::Controls>,
     /// Bumped by every new session (new swapchain images).
     generation: AtomicU64,
+    /// Between `xrBeginSession` and `xrEndSession` / the session's end:
+    /// the render thread submits frames only then (a frame extracted
+    /// before STOPPING reached `xrBeginFrame` after `xrEndSession`).
+    running: AtomicBool,
     instance: xr::Instance,
     device: wgpu::Device,
 }
@@ -244,7 +250,13 @@ pub fn boot(opts: &BootOptions) -> Result<Booted, XrError> {
         v.recommended_image_rect_height,
     );
     let max = (v.max_image_rect_width, v.max_image_rect_height);
-    let extent = eye_extent(recommended, max, opts.render_scale);
+    // Not more pixels than the panel (the Quest 1 over Link: 1808 × 2000
+    // recommended, 1440 × 1600 drawn), times the option.
+    let extent = eye_extent(
+        recommended,
+        max,
+        opts.render_scale * headset::pc_render_scale(profile, recommended),
+    );
     // The action set and its bindings come before the session (they are
     // the instance's; each session attaches them). Without them the
     // controllers do nothing – the first headset run (2026-11-17) had none.
@@ -257,6 +269,7 @@ pub fn boot(opts: &BootOptions) -> Result<Booted, XrError> {
     };
     let dev = vulkan::create_device(&instance, system, &opts.app_name)?;
     let (session, waiter, stream) = vulkan::create_session(&instance, system, &dev.session_info)?;
+    let gpu = dev.gpu_name.clone();
     let formats = session.enumerate_swapchain_formats().map_err(xr_error)?;
     let offered: Vec<i64> = formats.iter().map(|f| i64::from(*f)).collect();
     let format = choose_format(&offered, FormatSpace::Vulkan).ok_or_else(|| {
@@ -275,6 +288,7 @@ pub fn boot(opts: &BootOptions) -> Result<Booted, XrError> {
         live: Mutex::new(None),
         controls,
         generation: AtomicU64::new(0),
+        running: AtomicBool::new(false),
         instance,
         device: dev.device.clone(),
     });
@@ -294,6 +308,7 @@ pub fn boot(opts: &BootOptions) -> Result<Booted, XrError> {
             recommended_px: recommended,
             format,
             refresh_hz,
+            gpu,
         },
         main: MainHandle {
             shared: shared.clone(),
@@ -366,6 +381,7 @@ impl Shared {
     /// instance stay (a new session may follow).
     fn drop_session(&self) {
         let _frame = lock(&self.frame);
+        self.running.store(false, Ordering::SeqCst);
         if lock(&self.stream).is_some()
             && let Err(e) = self.device.poll(wgpu::PollType::wait_indefinitely())
         {
@@ -436,10 +452,17 @@ impl XrRuntime for MainHandle {
     }
 
     fn begin_session(&mut self) -> Result<(), XrError> {
-        self.with_session(|l| l.session.begin(VIEW_TYPE).map(|_| ()).map_err(xr_error))
+        self.with_session(|l| l.session.begin(VIEW_TYPE).map(|_| ()).map_err(xr_error))?;
+        self.shared.running.store(true, Ordering::SeqCst);
+        Ok(())
     }
 
+    /// Under the frame lock: never while the render thread is inside
+    /// `xrBeginFrame` … `xrEndFrame` (the session is externally
+    /// synchronised); frames after it are skipped (`running`).
     fn end_session(&mut self) -> Result<(), XrError> {
+        let _frame = lock(&self.shared.frame);
+        self.shared.running.store(false, Ordering::SeqCst);
         self.with_session(|l| l.session.end().map(|_| ()).map_err(xr_error))
     }
 
@@ -604,6 +627,12 @@ impl RenderHandle {
     /// Held for a whole frame submission: the teardown waits for it.
     pub fn frame_guard(&self) -> MutexGuard<'_, ()> {
         lock(&self.shared.frame)
+    }
+
+    /// The session runs (begun, not ended): frames may be submitted. Read
+    /// it under [`Self::frame_guard`].
+    pub fn running(&self) -> bool {
+        self.shared.running.load(Ordering::SeqCst)
     }
 
     pub fn format(&self) -> wgpu::TextureFormat {

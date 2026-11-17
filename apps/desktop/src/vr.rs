@@ -44,7 +44,10 @@ pub fn prepare(args: &Args) -> Start {
     }
     #[cfg(feature = "vr")]
     {
-        let opts = ocw_render::vr::openxr::BootOptions::default();
+        let opts = ocw_render::vr::openxr::BootOptions {
+            render_scale: args.vr_render_scale.clamp(0.5, 1.5),
+            ..Default::default()
+        };
         match ocw_render::vr::openxr::boot(&opts) {
             Ok(b) => {
                 // Before the app (and its logger) exists: print it too.
