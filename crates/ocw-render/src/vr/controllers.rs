@@ -73,7 +73,10 @@ fn feed(
     mut state: ResMut<VrState>,
     mut pad: ResMut<PadFeed>,
     mut raw: MessageWriter<RawGamepadEvent>,
+    menu: Option<Res<crate::menu::MenuView>>,
 ) {
+    // The left stick moves through the menu only while it is open (Q10).
+    pad.mapper.menu_open = menu.is_some_and(|m| m.open);
     let Some(c) = state.controllers else {
         // No controllers this frame: release what is held.
         if pad.entity.is_some() && (!pad.sent.is_empty() || !pad.axes.is_empty()) {
@@ -179,13 +182,15 @@ mod tests {
         set(&mut app, |s| {
             s.set(Input::A, InputValue::Button(true));
             s.set(Input::RightTrigger, InputValue::Value(0.9));
-            s.set(Input::LeftStick, InputValue::Stick([-0.5, 0.0]));
+            // The right stick rides (Q10): the gamepad's left stick, past
+            // the dead zone ((0.5 − 0.15) / 0.85 ≈ 0.41).
+            s.set(Input::RightStick, InputValue::Stick([-0.5, 0.0]));
         });
         app.update();
         pad(&mut app, |p| {
             assert!(p.just_pressed(GamepadButton::South));
             assert!((p.get(GamepadButton::RightTrigger2).unwrap() - 0.9).abs() < 1e-3);
-            assert!((p.get(GamepadAxis::LeftStickX).unwrap() + 0.5).abs() < 0.05);
+            assert!((p.get(GamepadAxis::LeftStickX).unwrap() + 0.41).abs() < 0.05);
         });
         app.update();
         pad(&mut app, |p| {
@@ -195,7 +200,12 @@ mod tests {
         set(&mut app, |_| {});
         app.update();
         assert!(pad(&mut app, |p| p.just_released(GamepadButton::South)));
-        // The menu button is Start; a stick flick the D-pad.
+        // The menu button is Start; with the menu open a left-stick flick
+        // is the D-pad (Q10).
+        app.insert_resource(crate::menu::MenuView {
+            open: true,
+            ..default()
+        });
         set(&mut app, |s| {
             s.set(Input::Menu, InputValue::Button(true));
             s.set(Input::LeftStick, InputValue::Stick([0.0, -0.95]));

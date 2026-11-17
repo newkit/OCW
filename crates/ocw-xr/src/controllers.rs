@@ -3,24 +3,35 @@
 //!
 //! In VR the hands are on the bars and riding stays on the trainer, the
 //! keys and the gamepad (Q4, Q7); the world-space menus with a controller
-//! ray come with X3. Until then the Touch controllers drive exactly what a
-//! gamepad drives – the ride (throttle on the triggers, steering and the
-//! junction exits on the left stick, the mode buttons) and the in-game
-//! menu (Start, the stick as the D-pad, A / B) – plus the VR recentre:
+//! ray come with X3. Until then the Touch controllers drive what a gamepad
+//! drives, mapped for VR (**decided 2026-11-17, Q10**: "VR mode: use the
+//! controls. create a sensible mapping. make one analog stick for
+//! front/back/left/right"): **the right stick rides** (the gamepad's left
+//! stick: forward = faster, back = stop, left / right = steer and the
+//! junction exits), **the left stick moves through the menu** while it is
+//! open (D-pad flicks, its click confirms) and is free otherwise (the
+//! gamepad's right stick: the unicorn's look):
 //!
-//! | Touch | Gamepad (Bevy) | Riding (default bindings) | Menu |
+//! | Touch | Gamepad (Bevy) | Riding (default bindings) | Menu open |
 //! |---|---|---|---|
 //! | ☰ menu (left) | Start | open the menu | close |
+//! | **right stick** | **left stick** | **forward faster, back stop, left / right steer and exits** | moves too |
+//! | **left stick** | right stick (menu closed) / D-pad flicks (menu open) | (unicorn mode: look) | **move** |
+//! | left stick click | L3 / South (menu open) | Strava recording | **confirm** |
+//! | right stick click | R3 | mute the voices | – |
 //! | A | South | autodrive | confirm |
 //! | B | East | U-turn | back |
 //! | X | West | wild mode | – |
 //! | Y | North | back to the route | – |
-//! | left stick | left stick + D-pad flicks | steer, exits (left / right), faster / stop (up / down) | move |
-//! | right stick | right stick | (unicorn mode: look) | – |
-//! | left / right trigger | LT2 / RT2 (analog) | stop / faster | – |
+//! | left / right trigger | LT2 / RT2 (analog) | stop / faster (as before; *proposal*: free them for the Strava recording and the camera) | – |
 //! | left / right grip | LB / RB | – | previous / next tab |
-//! | left / right stick click | L3 / R3 | Strava recording / mute the voices | – |
 //! | **both grips held 0.6 s** | – | **recentre the view** | – |
+//!
+//! The riding stick has a radial dead zone ([`STICK_DEAD_ZONE`]): a
+//! resting thumb neither steers nor changes the power. Faster and stop work
+//! like the keyboard's ↑ / ↓ (the game's pad rule: beyond half way; held
+//! forward ramps the power like a held ↑); steering is proportional to the
+//! stick's deflection, as with a gamepad.
 //!
 //! The binding tables ([`BINDINGS`]) are what the OpenXR layer suggests to
 //! the runtime (`xrSuggestInteractionProfileBindings`) for the Touch
@@ -134,8 +145,8 @@ impl Input {
             Input::RightTrigger => "Right trigger (faster)",
             Input::LeftGrip => "Left grip",
             Input::RightGrip => "Right grip",
-            Input::LeftStick => "Left stick (steer, exits, menu)",
-            Input::RightStick => "Right stick",
+            Input::LeftStick => "Left stick (menu)",
+            Input::RightStick => "Right stick (ride: faster, stop, steer, exits)",
             Input::LeftStickClick => "Left stick click",
             Input::RightStickClick => "Right stick click",
         }
@@ -388,6 +399,21 @@ pub const PAD_BUTTONS: &[(Input, PadButton)] = &[
     (Input::RightTrigger, PadButton::RightTrigger2),
 ];
 
+/// The riding stick's radial dead zone: below it the stick rests, beyond
+/// it the deflection is rescaled to 0 … 1 (no jump at the edge).
+pub const STICK_DEAD_ZONE: f32 = 0.15;
+
+/// `v` (a stick, −1 … 1 each) without the dead zone: 0 inside, rescaled
+/// outside, the direction kept.
+pub fn dead_zone(v: [f32; 2]) -> [f32; 2] {
+    let len = v[0].hypot(v[1]);
+    if len <= STICK_DEAD_ZONE {
+        return [0.0; 2];
+    }
+    let k = ((len - STICK_DEAD_ZONE) / (1.0 - STICK_DEAD_ZONE)).min(1.0) / len;
+    [v[0] * k, v[1] * k]
+}
+
 /// A stick is flicked (a D-pad press) beyond this …
 pub const FLICK_ON: f32 = 0.7;
 /// … and released below this (hysteresis: no chatter at the edge).
@@ -422,14 +448,18 @@ impl PadFrame {
     }
 }
 
-/// Turns controller states into gamepad frames: the left stick's flicks
-/// as D-pad presses (with hysteresis) and the recentre gesture.
+/// Turns controller states into gamepad frames (Q10's map, see the module
+/// docs): the right stick to the riding stick, the left stick's flicks as
+/// D-pad presses (with hysteresis) while the menu is open, and the
+/// recentre gesture.
 #[derive(Debug, Clone, Default)]
 pub struct PadMapper {
     /// D-pad up, down, left, right held by the stick.
     flick: [bool; 4],
     grips_s: f32,
     recentred: bool,
+    /// The in-game menu is open (the renderer sets it every frame).
+    pub menu_open: bool,
 }
 
 impl PadMapper {
@@ -437,13 +467,32 @@ impl PadMapper {
         // Inactive (no focus, controllers off): everything at rest.
         let rest = ControllerState::default();
         let s = if s.active { s } else { &rest };
+        let menu = self.menu_open;
         let mut buttons: Vec<(PadButton, f32)> = PAD_BUTTONS
             .iter()
+            // In the menu the left stick's click confirms (South, below).
+            .filter(|(i, _)| !(menu && *i == Input::LeftStickClick))
             .map(|(i, b)| (*b, s.value(*i).clamp(0.0, 1.0)))
             .collect();
+        if menu {
+            let confirm = s.value(Input::A).max(s.value(Input::LeftStickClick));
+            if let Some(south) = buttons.iter_mut().find(|(b, _)| *b == PadButton::South) {
+                south.1 = confirm.clamp(0.0, 1.0);
+            }
+            buttons.push((PadButton::LeftThumb, 0.0));
+        }
+        // The right stick rides (the gamepad's left stick); the left stick
+        // moves through the menu, or is the free right stick.
+        let [rx, ry] = dead_zone(s.stick(Input::RightStick));
         let [lx, ly] = s.stick(Input::LeftStick);
-        let [rx, ry] = s.stick(Input::RightStick);
-        let dirs = [ly, -ly, -lx, lx];
+        let (fx, fy) = if menu { (lx, ly) } else { (0.0, 0.0) };
+        let (free_x, free_y) = if menu {
+            (0.0, 0.0)
+        } else {
+            let [x, y] = dead_zone([lx, ly]);
+            (x, y)
+        };
+        let dirs = [fy, -fy, -fx, fx];
         for (held, v) in self.flick.iter_mut().zip(dirs) {
             *held = if *held { v > FLICK_OFF } else { v > FLICK_ON };
         }
@@ -473,10 +522,10 @@ impl PadMapper {
         PadFrame {
             buttons,
             axes: vec![
-                (PadAxis::LeftStickX, lx),
-                (PadAxis::LeftStickY, ly),
-                (PadAxis::RightStickX, rx),
-                (PadAxis::RightStickY, ry),
+                (PadAxis::LeftStickX, rx),
+                (PadAxis::LeftStickY, ry),
+                (PadAxis::RightStickX, free_x),
+                (PadAxis::RightStickY, free_y),
             ],
             recentre,
         }
@@ -620,14 +669,15 @@ mod tests {
         let s = state(|s| {
             s.set(Input::A, InputValue::Button(true));
             s.set(Input::RightTrigger, InputValue::Value(0.6));
-            s.set(Input::LeftStick, InputValue::Stick([0.3, -0.2]));
+            s.set(Input::RightStick, InputValue::Stick([0.6, -0.8]));
         });
         let f = m.map(&s, 0.014);
         assert_eq!(f.button(PadButton::South), 1.0);
         assert_eq!(f.button(PadButton::East), 0.0);
         assert!((f.button(PadButton::RightTrigger2) - 0.6).abs() < 1e-6);
-        assert!((f.axis(PadAxis::LeftStickX) - 0.3).abs() < 1e-6);
-        assert!((f.axis(PadAxis::LeftStickY) + 0.2).abs() < 1e-6);
+        // Full deflection stays full past the dead zone.
+        assert!((f.axis(PadAxis::LeftStickX) - 0.6).abs() < 1e-6);
+        assert!((f.axis(PadAxis::LeftStickY) + 0.8).abs() < 1e-6);
         assert!(!f.recentre);
         // A value of the wrong kind is ignored.
         let mut s2 = s;
@@ -646,10 +696,76 @@ mod tests {
         assert!(f.axes.iter().all(|(_, v)| *v == 0.0));
     }
 
-    /// Stick flicks are D-pad presses with hysteresis.
+    /// Q10 (2026-11-17): the right stick rides – forward faster, back
+    /// stop, left / right steer – through the gamepad's left stick, with a
+    /// dead zone and proportional beyond it; the left stick does not ride.
+    #[test]
+    fn the_right_stick_rides() {
+        let mut m = PadMapper::default();
+        let right = |x: f32, y: f32| state(|s| s.set(Input::RightStick, InputValue::Stick([x, y])));
+        // A resting thumb: nothing.
+        let f = m.map(&right(0.1, -0.08), 0.01);
+        assert_eq!(
+            (f.axis(PadAxis::LeftStickX), f.axis(PadAxis::LeftStickY)),
+            (0.0, 0.0)
+        );
+        // Proportional steering beyond the dead zone.
+        let half = m.map(&right(0.575, 0.0), 0.01).axis(PadAxis::LeftStickX);
+        assert!((half - 0.5).abs() < 1e-5, "{half}");
+        let full = m.map(&right(-1.0, 0.0), 0.01).axis(PadAxis::LeftStickX);
+        assert!((full + 1.0).abs() < 1e-6);
+        // Forward and back reach the game's pad rule (beyond half: faster /
+        // stop), the left stick never does.
+        let fwd = m.map(&right(0.0, 0.9), 0.01).axis(PadAxis::LeftStickY);
+        assert!(fwd > 0.5 + 0.15, "{fwd}");
+        let back = m.map(&right(0.0, -0.9), 0.01).axis(PadAxis::LeftStickY);
+        assert!(back < -0.65, "{back}");
+        let left = state(|s| s.set(Input::LeftStick, InputValue::Stick([0.9, 0.9])));
+        let f = m.map(&left, 0.01);
+        assert_eq!(f.axis(PadAxis::LeftStickX), 0.0);
+        assert_eq!(f.axis(PadAxis::LeftStickY), 0.0);
+        assert_eq!(
+            f.button(PadButton::DPadUp),
+            0.0,
+            "no D-pad outside the menu"
+        );
+        // … it is the free right stick then.
+        assert!(f.axis(PadAxis::RightStickY) > 0.6);
+        assert_eq!(dead_zone([0.0, 0.0]), [0.0, 0.0]);
+        assert_eq!(dead_zone([0.15, 0.0]), [0.0, 0.0]);
+    }
+
+    /// Q10: with the menu open the left stick moves (D-pad) and its click
+    /// confirms; the riding stick still works.
+    #[test]
+    fn in_the_menu_the_left_stick_moves_and_its_click_confirms() {
+        let mut m = PadMapper {
+            menu_open: true,
+            ..Default::default()
+        };
+        let click = state(|s| s.set(Input::LeftStickClick, InputValue::Button(true)));
+        let f = m.map(&click, 0.01);
+        assert_eq!(f.button(PadButton::South), 1.0, "confirm");
+        assert_eq!(f.button(PadButton::LeftThumb), 0.0, "not the Strava key");
+        let down = state(|s| s.set(Input::LeftStick, InputValue::Stick([0.0, -0.9])));
+        let f = m.map(&down, 0.01);
+        assert_eq!(f.button(PadButton::DPadDown), 1.0);
+        assert_eq!(f.axis(PadAxis::RightStickY), 0.0);
+        // Closed again: the click is L3 (the Strava recording).
+        m.menu_open = false;
+        let f = m.map(&click, 0.01);
+        assert_eq!(f.button(PadButton::LeftThumb), 1.0);
+        assert_eq!(f.button(PadButton::South), 0.0);
+    }
+
+    /// Stick flicks are D-pad presses with hysteresis (the left stick in the
+    /// menu).
     #[test]
     fn the_left_stick_flicks_the_dpad() {
-        let mut m = PadMapper::default();
+        let mut m = PadMapper {
+            menu_open: true,
+            ..Default::default()
+        };
         let up = |y: f32| state(|s| s.set(Input::LeftStick, InputValue::Stick([0.0, y])));
         assert_eq!(m.map(&up(0.6), 0.01).button(PadButton::DPadUp), 0.0);
         assert_eq!(m.map(&up(0.8), 0.01).button(PadButton::DPadUp), 1.0);

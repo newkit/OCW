@@ -9,7 +9,8 @@
 //! - **The camera rig** ([`place_vr`]): the rider's steady first-person
 //!   eye on the bike (`AvatarRig::steady_eye`), horizon-locked
 //!   (`ocw_xr::anchor`), plus the tracked head after the recentre.
-//!   The rider's own head is hidden (the eyes are inside it).
+//!   The rider's own head is on [`OWN_HEAD_LAYER`]: drawn by every camera
+//!   but the eyes (the eyes are inside it), with its shadow (v4.64).
 //! - **The bike computer** ([`computer`], v4.52): no floating panel – all
 //!   ride information is on a GPS unit on an out-front mount at the bar's
 //!   centre, seen when looking down.
@@ -265,6 +266,26 @@ struct MirrorEye(usize);
 /// The render layer only the eye cameras see (the bike computer).
 pub const VR_LAYER: usize = 7;
 
+/// The own rider's head – helmet, glasses, hair, face, the signs over it –
+/// in a headset session (v4.64): every camera but the eyes draws it (the
+/// chase mirror, the follow camera, screenshots of them), and the sun casts
+/// its shadow; the eye cameras never do (the eyes are inside it: no hard
+/// cut, no inside of the helmet). Before, the head was hidden for every
+/// camera, and the rider looked headless on the monitor.
+pub const OWN_HEAD_LAYER: usize = 10;
+
+/// What the eye cameras draw: the world and the VR-only things (the bike
+/// computer), not [`OWN_HEAD_LAYER`].
+pub fn eye_layers() -> RenderLayers {
+    RenderLayers::from_layers(&[0, VR_LAYER])
+}
+
+/// What the other world cameras and the sun see in a headset session: the
+/// world and the own head.
+pub fn world_layers() -> RenderLayers {
+    RenderLayers::from_layers(&[0, OWN_HEAD_LAYER])
+}
+
 /// An eye's projection: OpenXR's asymmetric field of view, infinite
 /// reverse Z (Bevy's convention).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -322,7 +343,62 @@ impl Plugin for VrPlugin {
                     .after(crate::riders::animate)
                     .before(TransformSystems::Propagate),
             )
+            .add_systems(Update, (own_head_layers, see_own_head))
             .add_systems(Last, copy_camera_look);
+    }
+}
+
+/// The own rider's head and everything under it (helmet, glasses, hair,
+/// face, the status signs; also what a changed helmet or hairstyle spawns
+/// later) on [`OWN_HEAD_LAYER`] only: hidden in the eyes, seen elsewhere.
+fn own_head_layers(
+    mut commands: Commands,
+    avatars: Query<(&Avatar, &AvatarRig)>,
+    children: Query<&Children>,
+    layers: Query<Option<&RenderLayers>>,
+) {
+    let Some(head) = avatars
+        .iter()
+        .find(|(a, _)| a.is_local)
+        .and_then(|(_, rig)| rig.head_entity())
+    else {
+        return;
+    };
+    put_on_head_layer(&mut commands, head, &children, &layers);
+}
+
+/// `head` and its descendants on [`OWN_HEAD_LAYER`] (only those not there yet).
+fn put_on_head_layer(
+    commands: &mut Commands,
+    head: Entity,
+    children: &Query<&Children>,
+    layers: &Query<Option<&RenderLayers>>,
+) {
+    let want = RenderLayers::layer(OWN_HEAD_LAYER);
+    for e in std::iter::once(head).chain(children.iter_descendants(head)) {
+        if let Ok(have) = layers.get(e)
+            && have != Some(&want)
+        {
+            commands.entity(e).insert(want.clone());
+        }
+    }
+}
+
+/// The follow camera (chase mirror, screenshots) and the sun see the own
+/// head: the rider has a head on the monitor and in every shadow.
+#[allow(clippy::type_complexity)] // a Bevy query
+fn see_own_head(
+    mut commands: Commands,
+    viewers: Query<
+        (Entity, Option<&RenderLayers>),
+        Or<(With<FollowCamera>, With<crate::sky::Sun>)>,
+    >,
+) {
+    let want = world_layers();
+    for (e, have) in &viewers {
+        if have != Some(&want) {
+            commands.entity(e).insert(want.clone());
+        }
     }
 }
 
@@ -359,7 +435,7 @@ fn setup(mut commands: Commands, cfg: Res<VrConfig>, mut images: ResMut<Assets<I
             // camera) requires it, and switching later re-specialises every
             // pipeline of the eye while it runs.
             bevy::camera::Hdr,
-            RenderLayers::from_layers(&[0, VR_LAYER]),
+            eye_layers(),
             EyeCamera(i),
         ));
     }
@@ -444,18 +520,10 @@ pub fn place_vr(
         (&mut Transform, &mut Camera),
         (With<FollowCamera>, Without<EyeCamera>, Without<Avatar>),
     >,
-    mut visibility: Query<&mut Visibility>,
 ) {
     let Some((_, bike, rig)) = avatars.iter().find(|(a, _, _)| a.is_local) else {
         return;
     };
-    // The rider's head is where the eyes are: hidden.
-    if let Some(head) = rig.head_entity()
-        && let Ok(mut v) = visibility.get_mut(head)
-        && *v != Visibility::Hidden
-    {
-        *v = Visibility::Hidden;
-    }
     let anchor = world_from_anchor(&pose_of(bike), rig.steady_eye(), cfg.horizon_lock);
     if cfg.mode == VrMode::Sim {
         let head = view::sim_head(time.elapsed_secs());
@@ -648,6 +716,55 @@ fn copy_camera_look(
 
 #[cfg(test)]
 mod tests {
+    /// v4.64 (the user: "the rider without the head looks weird … make sure
+    /// that for the POV view it's faded away"): the head and everything on
+    /// it are on a layer the eyes do not draw and the other cameras and the
+    /// sun do; a helmet put on later goes there too.
+    #[test]
+    fn the_own_head_is_drawn_by_every_camera_but_the_eyes() {
+        use bevy::ecs::system::RunSystemOnce;
+        assert!(!eye_layers().intersects(&RenderLayers::layer(OWN_HEAD_LAYER)));
+        assert!(eye_layers().intersects(&RenderLayers::layer(0)));
+        assert!(eye_layers().intersects(&RenderLayers::layer(VR_LAYER)));
+        assert!(world_layers().intersects(&RenderLayers::layer(OWN_HEAD_LAYER)));
+        assert!(world_layers().intersects(&RenderLayers::layer(0)));
+        let mut world = World::new();
+        let helmet = world.spawn_empty().id();
+        let strap = world.spawn_empty().id();
+        world.entity_mut(helmet).add_child(strap);
+        let head = world.spawn_empty().id();
+        world.entity_mut(head).add_child(helmet);
+        let body = world.spawn_empty().id();
+        let put = move |mut c: Commands, ch: Query<&Children>, l: Query<Option<&RenderLayers>>| {
+            put_on_head_layer(&mut c, head, &ch, &l);
+        };
+        world.run_system_once(put).unwrap();
+        for e in [head, helmet, strap] {
+            assert_eq!(
+                world.get::<RenderLayers>(e),
+                Some(&RenderLayers::layer(OWN_HEAD_LAYER)),
+                "{e:?}"
+            );
+        }
+        assert_eq!(world.get::<RenderLayers>(body), None, "the body stays on 0");
+        // A pair of glasses put on later joins the layer.
+        let glasses = world.spawn_empty().id();
+        world.entity_mut(head).add_child(glasses);
+        world.run_system_once(put).unwrap();
+        assert_eq!(
+            world.get::<RenderLayers>(glasses),
+            Some(&RenderLayers::layer(OWN_HEAD_LAYER))
+        );
+        // The follow camera and the sun see the head (its shadow too).
+        let cam = world.spawn(FollowCamera).id();
+        let sun = world.spawn(crate::sky::Sun).id();
+        let eye = world.spawn((EyeCamera(0), eye_layers())).id();
+        world.run_system_once(see_own_head).unwrap();
+        assert_eq!(world.get::<RenderLayers>(cam), Some(&world_layers()));
+        assert_eq!(world.get::<RenderLayers>(sun), Some(&world_layers()));
+        assert_eq!(world.get::<RenderLayers>(eye), Some(&eye_layers()));
+    }
+
     use super::*;
 
     #[test]

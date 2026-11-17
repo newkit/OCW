@@ -55,6 +55,8 @@ pub struct LoopWatch {
     pub unseen_s: f64,
     window_start_s: Option<f64>,
     waits: u64,
+    /// Waits skipped because the last frame was not begun yet (the pacer).
+    skips: u64,
     window: SubmitCounts,
     /// All frames since the start.
     pub total: SubmitCounts,
@@ -86,6 +88,7 @@ impl Default for LoopWatch {
             unseen_s: 10.0,
             window_start_s: None,
             waits: 0,
+            skips: 0,
             window: SubmitCounts::default(),
             total: SubmitCounts::default(),
             calls: [Stat::default(); FrameCall::ALL.len()],
@@ -134,6 +137,12 @@ impl LoopWatch {
         if let Some(ms) = app_ms {
             self.app_ms.add(ms);
         }
+    }
+
+    /// A main-world frame without `xrWaitFrame`: the last waited frame was
+    /// not begun yet (`ocw_xr::frame::FramePacer`).
+    pub fn skipped(&mut self) {
+        self.skips += 1;
     }
 
     /// The render thread's time from `xrBeginFrame` to the frame's
@@ -256,6 +265,7 @@ impl LoopWatch {
     fn reset_window(&mut self, now_s: f64) {
         self.window_start_s = Some(now_s);
         self.waits = 0;
+        self.skips = 0;
         self.window = SubmitCounts::default();
         self.calls = [Stat::default(); FrameCall::ALL.len()];
         self.app_ms = Stat::default();
@@ -275,11 +285,12 @@ impl LoopWatch {
         let per_s = |n: u64| if secs > 0.0 { n as f64 / secs } else { 0.0 };
         let stat = |s: &Stat| format!("{:.1} (max {:.1})", s.mean(), s.max);
         let mut out = format!(
-            "VR loop {secs:.0} s: {:.1} waits/s, {:.1} shown/s, {:.1} empty/s, {} failed; period {:.1} ms; longest gap between frames {:.0} ms; app {} ms, render {} ms, GPU done ≤ {} ms",
+            "VR loop {secs:.0} s: {:.1} waits/s, {:.1} shown/s, {:.1} empty/s, {} failed, {} waits skipped (frame not begun yet); period {:.1} ms; longest gap between frames {:.0} ms; app {} ms, render {} ms, GPU done ≤ {} ms",
             per_s(self.waits),
             per_s(self.window.shown),
             per_s(self.window.empty),
             self.window.failed,
+            self.skips,
             self.period_ms,
             self.max_end_gap_ms,
             stat(&self.app_ms),

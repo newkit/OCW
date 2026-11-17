@@ -227,8 +227,9 @@ pub struct ComputerImage(pub Handle<Image>);
 pub fn plugin(app: &mut App) {
     app.init_resource::<ComputerSettings>()
         .init_resource::<Mounted>()
+        .init_resource::<ControlsHint>()
         .add_systems(Startup, setup)
-        .add_systems(Update, (screen_text, profile))
+        .add_systems(Update, (controls_hint, screen_text, profile).chain())
         .add_systems(
             PostUpdate,
             mount
@@ -666,8 +667,50 @@ fn mount(
     mounted.key = Some(key);
 }
 
+/// The controls, shown on the screen for [`HINT_S`] when the headset
+/// starts showing the ride (Q10, 2026-11-17).
+pub const CONTROLS_HINT: &str = "Right stick: ride · Left stick: menu · ☰ menu";
+/// How long the hint stays (s).
+pub const HINT_S: f32 = 5.0;
+
+/// When the controls hint ends (s of app time), and whether the ride was
+/// shown last frame.
+#[derive(Resource, Default)]
+struct ControlsHint {
+    until_s: Option<f32>,
+    shown: bool,
+}
+
+/// The hint starts each time the headset starts showing the ride (a new
+/// session, the headset put on again); `--vr-sim` from the start.
+fn controls_hint(
+    time: Res<Time>,
+    state: Option<Res<super::VrState>>,
+    cfg: Option<Res<super::VrConfig>>,
+    mut hint: ResMut<ControlsHint>,
+) {
+    let sim = cfg.is_some_and(|c| c.mode == super::VrMode::Sim);
+    let shown = sim
+        || state
+            .as_ref()
+            .and_then(|s| s.session.as_ref())
+            .is_some_and(|m| m.visible());
+    if shown && !hint.shown {
+        hint.until_s = Some(time.elapsed_secs() + HINT_S);
+    }
+    hint.shown = shown;
+}
+
+/// The banner's text: the controls hint while it lasts (unless something
+/// more urgent is shown), else the ride's message.
+fn toast_text(hint_active: bool, ride: Option<String>) -> Option<String> {
+    ride.or_else(|| hint_active.then(|| CONTROLS_HINT.to_string()))
+}
+
 #[allow(clippy::too_many_arguments)] // a Bevy system
 fn screen_text(
+    hint: Res<ControlsHint>,
+    time: Res<Time>,
     view: Option<Res<RideView>>,
     ahead: Option<Res<LookAhead>>,
     units: Option<Res<Units>>,
@@ -680,11 +723,13 @@ fn screen_text(
 ) {
     let Some(view) = view else { return };
     let units = units.map(|u| *u).unwrap_or_default();
-    let s = match (view.local(), &ahead) {
+    let mut s = match (view.local(), &ahead) {
         (Some(l), Some(a)) => screen_view(&view, a.track(&view, l.id), units),
         (Some(l), None) => screen_view(&view, view.track(l.id), units),
         (None, _) => screen_view(&view, &view.route, units),
     };
+    let hint_active = hint.until_s.is_some_and(|t| time.elapsed_secs() < t);
+    s.toast = toast_text(hint_active, s.toast.take());
     for (part, mut t, ui) in &mut texts {
         let want = match *part {
             ScreenText::Clock => s.clock.clone(),
@@ -789,6 +834,24 @@ fn profile(
 
 #[cfg(test)]
 mod tests {
+    /// Q10 (2026-11-17): the controls are on the screen for 5 s when the
+    /// headset starts showing the ride, unless a ride message needs it.
+    #[test]
+    fn the_controls_hint_shows_unless_a_message_needs_the_banner() {
+        assert_eq!(
+            super::toast_text(true, None).as_deref(),
+            Some(super::CONTROLS_HINT)
+        );
+        assert_eq!(
+            super::toast_text(true, Some("Dead end in 800 m".into())).as_deref(),
+            Some("Dead end in 800 m")
+        );
+        assert_eq!(super::toast_text(false, None), None);
+        assert!(super::CONTROLS_HINT.contains("Right stick: ride"));
+        assert!(super::CONTROLS_HINT.contains("Left stick: menu"));
+        assert_eq!(super::HINT_S, 5.0);
+    }
+
     use super::*;
     use ocw_core::ProfileId;
 

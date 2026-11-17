@@ -448,9 +448,13 @@ impl Shared {
 }
 
 /// How long the main thread waits for the render thread to begin the last
-/// frame before it skips a wait (a render frame that slow is a hitch: the
-/// frame is late, the session survives).
-const BEGIN_TIMEOUT: Duration = Duration::from_millis(1000);
+/// frame before it skips this frame's wait ([`MainHandle::ready_to_wait`]).
+/// Short on purpose (v4.64, measured on Weela): the render world sometimes
+/// needs the main thread itself (Bevy's main-thread executor, ticked only
+/// between the main world's systems), so a main thread blocked here for
+/// long holds the render thread too – with 1 s the loop stalled for 1 s
+/// every few seconds (32 fps). The normal wait is one render frame.
+pub const BEGIN_TIMEOUT: Duration = Duration::from_millis(40);
 
 impl Drop for Shared {
     fn drop(&mut self) {
@@ -485,6 +489,14 @@ impl MainHandle {
     /// The session generation (changes with every new session).
     pub fn generation(&self) -> u64 {
         self.shared.generation.load(Ordering::SeqCst)
+    }
+
+    /// Whether `xrWaitFrame` may run now: the last waited frame was begun
+    /// (waits at most `timeout` for it). `false`: skip this frame's wait –
+    /// the frame stays outstanding until the render world begins it, so
+    /// the next wait still never comes before that begin.
+    pub fn ready_to_wait(&self, timeout: Duration) -> bool {
+        self.wait_for_begin(timeout)
     }
 
     /// Waits (at most `timeout`) until the last waited frame was begun.
@@ -667,14 +679,12 @@ impl FrameSource for MainHandle {
     fn wait_frame(&mut self) -> Result<FrameTiming, XrError> {
         // Never wait again before the last waited frame was begun (the
         // Oculus runtime loses the session for that, see the crate docs).
-        if !self.wait_for_begin(BEGIN_TIMEOUT) {
-            // Given up on that frame (never stall for good): the next
-            // frame waits again.
-            lock(&self.shared.pacer).handled(self.frame_id);
+        // The caller asked [`Self::ready_to_wait`] first; this guard only
+        // keeps the rule.
+        if !lock(&self.shared.pacer).may_wait() {
             return Err(XrError::Other(format!(
-                "frame {} not begun by the render thread within {} ms: this frame's xrWaitFrame skipped",
-                self.frame_id,
-                BEGIN_TIMEOUT.as_millis()
+                "frame {} not begun yet: xrWaitFrame not called",
+                self.frame_id
             )));
         }
         let mut w = lock(&self.shared.waiter);

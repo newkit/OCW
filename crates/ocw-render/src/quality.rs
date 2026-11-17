@@ -130,9 +130,10 @@ impl QualityPreset {
             },
             // VR (Phase 11): each eye costs about a flat frame, at 72–90 Hz.
             // One cascade over the near road (v4.54: every eye draws its own
-            // cascades), MSAA 2× (4× on two 1440 × 1600 eyes held Weela's
-            // GPU at 36 fps for the Quest 1's 72 Hz; 2× still smooths the
-            // edges without TAA), the view and the trees between Medium and
+            // cascades), **no MSAA** (v4.64, measured on Weela with the Quest
+            // 1 over Link: MSAA 4× held the GPU at 36 fps, 2× at 50–62;
+            // without it 68–72 – below 72 Link halves the rate to 36, which
+            // reads as lag), the view and the trees between Medium and
             // Low. The same numbers suit the standalone Quest (Phase 14)
             // with its own render scale.
             QualityLevel::Vr => Self {
@@ -141,7 +142,7 @@ impl QualityPreset {
                 shadow_cascades: 1,
                 shadow_distance_m: 70.0,
                 first_cascade_m: 70.0,
-                msaa_samples: 2,
+                msaa_samples: 1,
                 view_m: Some(12_000.0),
                 tree_view_m: Some(1_500.0),
                 house_lod_scale: 0.6,
@@ -585,7 +586,8 @@ mod tests {
     }
 
     /// VR: cheaper than Medium where the GPU pays per pixel and view
-    /// (shadows, view distance, trees), MSAA 2×; named, not on the ladder.
+    /// (shadows, view distance, trees), no MSAA (v4.64); named, not on the
+    /// ladder.
     #[test]
     fn the_vr_preset_fits_two_eyes_at_72_hz() {
         let vr = QualityPreset::of(QualityLevel::Vr);
@@ -597,13 +599,14 @@ mod tests {
         assert!(vr.view_m.unwrap() < medium.view_m.unwrap());
         assert!(vr.tree_view_m.unwrap() < medium.tree_view_m.unwrap());
         assert!(vr.view_m.unwrap() > low.view_m.unwrap());
-        assert_eq!(vr.msaa(), Msaa::Sample2);
+        assert_eq!(vr.msaa(), Msaa::Off);
         assert_eq!(vr.max_pixel_ratio, None);
         assert_eq!(QualityLevel::parse("vr"), Some(QualityLevel::Vr));
         assert!(!QualityLevel::ALL.contains(&QualityLevel::Vr));
-        // v4.54: one cascade, MSAA 2× (Weela drew 36 fps with two and 4×).
+        // v4.54: one cascade (Weela drew 36 fps with two and 4×); v4.64: no
+        // MSAA (68–72 fps on the Quest 1 over Link instead of 50–62 with 2×).
         assert!(
-            vr.summary().contains("× 1 over 70 m, MSAA 2×"),
+            vr.summary().contains("× 1 over 70 m, MSAA off"),
             "{}",
             vr.summary()
         );

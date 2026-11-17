@@ -1274,10 +1274,13 @@ Look down at the **bike computer** on the out-front mount ahead of the bar:
 the clock and the weather, power, speed, cadence, heart rate, gradient,
 distance and time, the next turn, the elevation profile ahead and the
 messages; *Settings → Display → Graphics → VR bike computer size / tilt*
-(`vr computer size 275`, `vr computer tilt -10`). The **Touch controllers**
-are a gamepad: ☰ opens the menu, the left stick steers and moves through the
-menu, A confirms (autodrive), B goes back (U-turn), the right trigger is
-faster, the left trigger stop. The view keeps the horizon
+(`vr computer size 275`, `vr computer tilt -10`). The **Touch controllers**:
+the **right stick rides** – forward faster, back stop, left / right steer and
+choose the exit at junctions; the **left stick moves through the menu** (☰
+opens it; the stick's click or A confirms, B goes back); A autodrive, B U-turn,
+X wild mode, Y back to the route; the triggers are still faster / stop; both
+grips held recentre. The bike computer shows this for 5 s when the headset
+starts showing the ride. The view keeps the horizon
 level in corners and on climbs. The console's `vr status` shows the session,
 the headset, the IPD and the frame times (time per frame against the
 headset's 13.9 ms at 72 Hz, the latency, missed frames); `vr mirror eye|both|chase`
@@ -1286,8 +1289,11 @@ spectators – it costs a third view); `vr reconnect` after the runtime went
 away. The quality preset `vr` (`quality vr`, picked by `auto` in VR) trims
 shadows, view distance and trees for the headset's frame rate.
 
-**Frame rate and stability:** the eyes are drawn at most at the headset
-panel's size (`--vr-render-scale 0.9` draws fewer pixels on a slower GPU);
+**Frame rate and stability:** the eyes are drawn at 90 % of the headset
+panel's size by default (`--vr-render-scale 1` for the full panel on a
+faster GPU), without MSAA; a large or full-screen mirror window costs the
+headset frames on a laptop whose monitor hangs on the other GPU (the VR
+kiosk uses a 960 × 540 window);
 in the headset the render distance holds still. *Quit* in the headset's
 menu quits the app. `scripts/vr-soak.ps1 -Minutes 30` (on the Windows VR
 machine, through `scripts/remote.sh … run`) rides in the headset for that

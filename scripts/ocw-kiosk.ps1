@@ -28,7 +28,7 @@
 
   The app runs in the build user's interactive desktop session (windows,
   the GPU and the headset are only there; the scheduled task runs only
-  there, see scripts/win-gui-run.ps1): fullscreen on the monitor (the left
+  there, see scripts/win-gui-run.ps1): a 960 x 540 window on the monitor (the left
   eye mirrored), VR in the headset. Without a headset (Link off, runtime
   missing) the app runs as before with the message "VR is off: ..."; the
   kiosk logs it and restarts the app every OCW_KIOSK_VR_RETRY_S seconds
@@ -42,7 +42,7 @@
                       last, the kiosk restarts the app on a change
     builds\ID\        ocw-desktop.exe, openxr_loader.dll (+ licence),
                       materials\, ocw-desktop.args (the kiosk's world, show
-                      mode, --vr --fullscreen), VERSION
+                      mode, --vr --window 960x540), VERSION
     worlds\           world packages with manifests and the route files
     kiosk-local.args  machine-local arguments (kept, appended)
     deploying         while it exists the kiosk stops the app (a deploy
@@ -139,7 +139,7 @@ function Get-ShowLines([string]$ShowText, [string]$LocalText) {
 }
 
 # ocw-desktop.args of a build: the world and route, the show mode, VR and
-# fullscreen, then the machine's local arguments. $Override (OCW_KIOSK_ARGS)
+# a 960 x 540 mirror window, then the machine's local arguments. $Override (OCW_KIOSK_ARGS)
 # replaces the world and show parts.
 function New-KioskArgs {
     param([string]$WorldsDir, $Choice, [string]$Route, [string]$ShowText,
@@ -158,7 +158,10 @@ function New-KioskArgs {
         foreach ($l in (Get-ShowLines $ShowText $LocalText)) { $lines.Add($l) }
     }
     $lines.Add("--vr")
-    $lines.Add("--fullscreen")
+    # A small mirror window, not the full screen (v4.64, measured on Weela:
+    # the full-screen 2560 x 1600 mirror on the other GPU halved the headset's
+    # rate to 36 fps; a small window keeps the 72 Hz; Q16 / Q17).
+    $lines.Add("--window 960x540")
     foreach ($l in ($LocalText -split "`r?`n")) {
         if ($l.Trim() -and -not $l.StartsWith("#")) { $lines.Add($l) }
     }
@@ -643,12 +646,12 @@ function Invoke-SelfTest {
     Check "show lines" ((Get-ShowLines $show "") -join "|") '--virtual|--power 500|--cmd "ride.collisions off"|--no-hearts'
     Check "show lines, real trainer" ((Get-ShowLines $show "--devices-file x") -join "|") '--cmd "ride.collisions off"|--no-hearts'
     $a = New-KioskArgs -WorldsDir 'C:\k\worlds' -Choice (Get-WorldChoice "tenerife" @("tenerife.ocwpkg")) -Route "" -ShowText $show -LocalText "# local`n--monitor 1`n"
-    $want = "# Written by ocw-kiosk.ps1 deploy (the Windows VR kiosk)`n# Tenerife (OCW_KIOSK_WORLD)`n--world 'C:\k\worlds\tenerife.ocwpkg'`n--route 'Puerto de la Cruz - Teide'`n--virtual`n--power 500`n--cmd `"ride.collisions off`"`n--no-hearts`n--vr`n--fullscreen`n--monitor 1`n"
+    $want = "# Written by ocw-kiosk.ps1 deploy (the Windows VR kiosk)`n# Tenerife (OCW_KIOSK_WORLD)`n--world 'C:\k\worlds\tenerife.ocwpkg'`n--route 'Puerto de la Cruz - Teide'`n--virtual`n--power 500`n--cmd `"ride.collisions off`"`n--no-hearts`n--vr`n--window 960x540`n--monitor 1`n"
     Check "kiosk args" $a $want
     $a = New-KioskArgs -WorldsDir 'C:\k' -Choice (Get-WorldChoice "tenerife" @("tenerife.ocwpkg")) -Route "Los Cristianos - Teide" -ShowText "" -LocalText ""
     Check "kiosk args, route" (($a -split "`n") -match '^--route') "--route 'Los Cristianos - Teide'"
     $a = New-KioskArgs -WorldsDir 'C:\k' -Choice $null -Route "" -ShowText $show -LocalText "" -Override "--test-route hills"
-    Check "kiosk args, override" (($a -split "`n" | Where-Object { $_ -and -not $_.StartsWith("#") }) -join "|") "--test-route hills|--vr|--fullscreen"
+    Check "kiosk args, override" (($a -split "`n" | Where-Object { $_ -and -not $_.StartsWith("#") }) -join "|") "--test-route hills|--vr|--window 960x540"
     $a = New-KioskArgs -WorldsDir 'C:\k' -Choice $null -Route "" -ShowText $show -LocalText ""
     Check "kiosk args, no world" (($a -split "`n") -match '^--world').Count 0
     Check "deployment same" (Test-NewDeployment "builds\1" "builds\1`r`n") $false

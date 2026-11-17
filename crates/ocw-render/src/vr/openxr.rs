@@ -252,6 +252,8 @@ fn frame_start(
     mut frame: ResMut<XrFrame>,
     mut loop_state: Local<(Option<Instant>, u64)>,
     mut exit: MessageWriter<AppExit>,
+    mut limit: Option<ResMut<crate::frame_rate::FrameLimit>>,
+    mut idle_cap: Local<Option<Option<f64>>>,
 ) {
     let (last, polls) = &mut *loop_state;
     let mut rt = lock(&main.0);
@@ -290,7 +292,13 @@ fn frame_start(
         lock(&watch.watch).failed(&f);
         machine.frame_error(f.error);
     };
-    if machine.frame_loop() {
+    // The last waited frame not begun yet (the render world is late, or
+    // waits for this thread): no wait this frame, never one too early.
+    let ready = !machine.frame_loop() || rt.ready_to_wait(ocw_xr_openxr::BEGIN_TIMEOUT);
+    if !ready {
+        lock(&watch.watch).skipped();
+        state.should_render = false;
+    } else if machine.frame_loop() {
         // The app's own work since the last wait (the blocking wait is
         // not the app's time).
         let work_ms = last.map(|l| now.duration_since(l).as_secs_f32() * 1000.0);
@@ -349,6 +357,22 @@ fn frame_start(
             info!("{line}");
         }
         state.loop_line = w.last_report().to_string();
+    }
+    // The frame cap (the app sets it to the headset's rate): off while
+    // `xrWaitFrame` paces the loop (a second clock could make a frame miss
+    // its slot), on otherwise – headset off, a skipped wait – so the app
+    // never draws more frames than the headset shows (v4.64: uncapped it
+    // ran the laptop's GPU flat out).
+    if let Some(limit) = limit.as_mut() {
+        let cap = *idle_cap.get_or_insert(limit.max_fps);
+        let want = if machine.frame_loop() && ready {
+            None
+        } else {
+            cap
+        };
+        if limit.max_fps != want {
+            limit.max_fps = want;
+        }
     }
     state.session = Some(machine);
     // Written every frame: the render world submits exactly this frame.

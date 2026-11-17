@@ -344,9 +344,11 @@ pub struct Args {
     /// it tilts the world.
     #[arg(long, value_name = "DEG", default_value_t = 0.0)]
     pub vr_look_down: f32,
-    /// VR: the eye images at this share of the runtime's recommended size
-    /// (0.5 – 1.5; default 1). Fewer pixels for a slower GPU.
-    #[arg(long, value_name = "SCALE", default_value_t = 1.0)]
+    /// VR: the eye images at this share of their size (the runtime's
+    /// recommended size, at most the panel's; 0.5 – 1.5). Default 0.9
+    /// (v4.64: 1303 × 1440 on the Quest 1 – Weela's GPU reaches the 72 Hz
+    /// only so; 1 for a faster GPU).
+    #[arg(long, value_name = "SCALE", default_value_t = 0.9)]
     pub vr_render_scale: f32,
 }
 
@@ -495,7 +497,14 @@ fn main() -> AppExit {
         })
         .insert_resource(args.clone())
         .insert_resource(VersionLabel(build_id().to_string()))
-        .insert_resource(ocw_render::frame_rate::FrameLimit::new(args.max_fps))
+        // In a headset session never more frames than the headset shows
+        // (v4.64): `xrWaitFrame` paces the frame loop, but while the
+        // headset is off (no frame loop) or a wait is skipped the app ran
+        // uncapped with the window's vsync off – the GPU flat out, a laptop
+        // on battery drained (Weela, 2026-11-17). `--max-fps` still wins.
+        .insert_resource(ocw_render::frame_rate::FrameLimit::new(
+            args.max_fps.or(vr_start.headset_hz()),
+        ))
         .insert_resource(ocw_render::frame_rate::LogRenderRate(
             args.log_fps.filter(|s| *s > 0.0),
         ))

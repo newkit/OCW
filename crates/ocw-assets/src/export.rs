@@ -308,7 +308,10 @@ mod tests {
         let b = files();
         // Bikes, the riders, the rider's part files (4N N8), helmets, the
         // VR bike computer.
-        assert_eq!(a.len(), 6 + 2 + crate::rider_split::part_files().len() + 4 + 1);
+        assert_eq!(
+            a.len(),
+            6 + 2 + crate::rider_split::part_files().len() + 4 + 1
+        );
         for ((ea, ba), (eb, bb)) in a.iter().zip(&b) {
             assert_eq!(ea, eb);
             assert_eq!(ba, bb, "{}", ea.file);

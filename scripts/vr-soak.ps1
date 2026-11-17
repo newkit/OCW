@@ -23,7 +23,9 @@ param(
     [string]$Out = "",
     [string[]]$Extra = @(),
     # A small window instead of the fullscreen mirror (measures the mirror's cost).
-    [switch]$Windowed
+    [switch]$Windowed,
+    # The mirror window's size with -Windowed (v4.64: the kiosk's is 960x540).
+    [string]$Window = "640x360"
 )
 $ErrorActionPreference = "Stop"
 if (-not $Out) { $Out = "test-output\vr-soak-" + (Get-Date -Format "yyyyMMdd-HHmmss") }
@@ -34,7 +36,7 @@ $lines = New-Object Collections.Generic.List[string]
 if ($World) { $lines.Add("--world '$World'") }
 if ($Route) { $lines.Add("--route '$Route'") }
 foreach ($l in @("--virtual", "--power 500", '--cmd "ride.collisions off"', "--no-hearts", '--cmd "camera.shake off"', "--vr")) { $lines.Add($l) }
-$lines.Add($(if ($Windowed) { "--window 640x360" } else { "--fullscreen" }))
+$lines.Add($(if ($Windowed) { "--window $Window" } else { "--fullscreen" }))
 for ($t = 20; $t -lt $secs; $t += $StatusEveryS) { $lines.Add("--at `"$t=vr status`"") }
 $n = 0
 for ($t = 60; $t -lt $secs; $t += $ShotEveryS) {
