@@ -13,7 +13,8 @@
 //! indicator is the shared one (`ocw_render::voice`). The echo test
 //! (`voice.echo …`) works on solo rides too (the browser's microphone
 //! through a delay in the shim). Console as on the desktop: `voice.status`,
-//! `voice.mute-mic`, `voice.mute-speaker`, `voice.mute WHO`, `voice.group`,
+//! `voice.mute-mic`, `voice.mute-speaker`, `voice.mute WHO`,
+//! `voice.volume WHO PERCENT`, `voice.block WHO`, `voice.group`,
 //! `voice.devices`, `voice.echo`, `voice.apply`.
 
 use std::sync::Mutex;
@@ -203,7 +204,12 @@ pub fn voice_json(c: &VoiceController, info: &VoiceMenuInfo, hud: &VoiceHud) -> 
         "participants": info.participants.iter().map(|p| serde_json::json!({
             "identity": p.identity, "name": p.name, "mic_muted": p.mic_muted,
             "muted_by_me": p.muted_by_me, "heard": p.heard,
+            "blocked": p.blocked, "volume": p.volume_pct,
         })).collect::<Vec<_>>(),
+        "blocked": info.blocked.iter().map(|b| serde_json::json!({
+            "key": b.key, "name": b.name,
+        })).collect::<Vec<_>>(),
+        "apart": c.apart().iter().map(|r| r.0).collect::<Vec<_>>(),
         "speaking": hud.speaking_names,
         "self_speaking": hud.self_speaking,
         "echo": {
@@ -361,6 +367,36 @@ fn register_commands(app: &mut App) {
             let voice = world.resource::<Voice>();
             let mut c = voice.0.lock().expect("not poisoned");
             shared::mute_who_command(&mut c, who, m.get_one::<String>("state").map(String::as_str))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("voice.volume")
+            .about("One rider's voice volume for you, 0 to 200 % (rider id, identity or name); remembered")
+            .arg(Arg::new("who").required(true))
+            .arg(
+                Arg::new("percent")
+                    .required(true)
+                    .value_parser(clap::value_parser!(i64)),
+            ),
+        |world, m| {
+            let who = m.get_one::<String>("who").expect("required").clone();
+            let pct = *m.get_one::<i64>("percent").expect("required");
+            with_voice(world, |c, store| shared::volume_command(c, store, &who, pct))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("voice.block")
+            .about("Block a rider in voice chat: neither of you hears the other; remembered, they are not told (rider id, identity, name or a remembered key; on, off, toggle)")
+            .arg(Arg::new("who").required(true))
+            .arg(Arg::new("state").value_parser(["on", "off", "toggle"])),
+        |world, m| {
+            let who = m.get_one::<String>("who").expect("required").clone();
+            let arg = m.get_one::<String>("state").cloned();
+            with_voice(world, |c, store| {
+                shared::block_command(c, store, &who, arg.as_deref())
+            })
         },
     ))
     .console_command(ConsoleCommand::new(
@@ -560,6 +596,67 @@ mod tests {
         assert!(run(&mut a, "voice.devices").contains("Built-in microphone"));
         assert!(run(&mut a, "voice.status").contains("voice: no voice on this server"));
         assert!(run(&mut a, "voice.group Bad").contains("invalid group name"));
+    }
+
+    /// Volume and Block (spec §7.1.7 Q9) in the browser: the same commands,
+    /// saved in the page's storage, applied again after a reload.
+    #[test]
+    fn volume_and_block_are_saved_in_the_page() {
+        let backend = Shared::default();
+        let mem = MemoryStore::default();
+        let mut a = app(backend.clone(), mem.clone());
+        {
+            let voice = a.world().resource::<Voice>();
+            let mut c = voice.0.lock().unwrap();
+            c.new_session(true);
+            c.set_human_riders(2);
+            assert!(c.update(0.0, &[]).is_some());
+            c.on_grant(
+                &v1::VoiceGrant {
+                    url: "wss://v".into(),
+                    token: "t".into(),
+                    room: "r".into(),
+                    identity: "rider-1".into(),
+                    ..Default::default()
+                },
+                0.1,
+            );
+        }
+        backend.0.lock().unwrap().1.extend([
+            BackendEvent::Connected { room: "r".into() },
+            BackendEvent::ParticipantJoined {
+                identity: "rider-2".into(),
+                name: "Bea Climber".into(),
+            },
+        ]);
+        a.update();
+        assert!(run(&mut a, "voice.volume 2 40").contains("Bea Climber: volume 40 %"));
+        assert!(run(&mut a, "voice.block 2 on").contains("blocked"));
+        a.update();
+        let text = mem.0.lock().unwrap().clone().unwrap();
+        assert!(
+            text.contains("voice_riders") && text.contains("Bea Climber"),
+            "{text}"
+        );
+        // Blocked: unsubscribed, and only nobody else may hear the rider.
+        let sent = backend.0.lock().unwrap().0.clone();
+        assert!(
+            sent.contains(&BackendCommand::SetSubscribers(Some(Vec::new()))),
+            "{sent:?}"
+        );
+        let info = a.world().resource::<VoiceInfo>().0.clone();
+        let hud = a.world().resource::<VoiceHud>().clone();
+        let voice = a.world().resource::<Voice>();
+        let j: serde_json::Value =
+            serde_json::from_str(&voice_json(&voice.0.lock().unwrap(), &info, &hud)).unwrap();
+        assert_eq!(j["participants"][0]["blocked"], true);
+        assert_eq!(j["participants"][0]["volume"], 40);
+        assert_eq!(j["blocked"][0]["name"], "Bea Climber");
+        // A reload: remembered.
+        let a2 = app(Shared::default(), mem.clone());
+        let voice = a2.world().resource::<Voice>();
+        let prefs = voice.0.lock().unwrap().rider_prefs().clone();
+        assert!(prefs["name:local/Bea Climber"].blocked);
     }
 
     #[test]

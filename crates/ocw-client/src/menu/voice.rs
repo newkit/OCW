@@ -1,6 +1,7 @@
 //! Settings → Voice (spec §3.2.1 M8, §2.4) as rows of command lines, like
 //! the other Settings pages: the mute switches, volume, participants
-//! (mute one for yourself), devices and options. Bevy-free.
+//! (each with Mute for me, a volume and Block, spec §7.1.7 Q9), the blocked
+//! riders, devices and options. Bevy-free.
 
 use super::pages::{Activate, Page, Row, setting_row};
 use crate::settings::Settings;
@@ -49,6 +50,45 @@ fn device_row(label: &str, key: &str, saved: &str, present: &[String], missing: 
     }
 }
 
+/// A row that only informs.
+fn info_line(label: &str) -> Row {
+    Row {
+        label: label.into(),
+        value: None,
+        left: None,
+        right: None,
+        confirm: None,
+    }
+}
+
+fn info_line_value(label: &str, value: String) -> Row {
+    Row {
+        value: Some(value),
+        ..info_line(label)
+    }
+}
+
+/// A participant's state in the list: blocked, muted, the microphone
+/// off, heard at how much, or out of hearing; the own volume if changed.
+fn participant_state(p: &crate::voice::MenuParticipant) -> String {
+    let state = if p.blocked {
+        "blocked".to_owned()
+    } else if p.muted_by_me {
+        "muted by you".to_owned()
+    } else if p.mic_muted {
+        "microphone off".to_owned()
+    } else if let Some(g) = p.heard {
+        format!("heard {:.0} %", g * 100.0)
+    } else {
+        "too far away".to_owned()
+    };
+    if p.volume_pct == ocw_voice::riders::DEFAULT_VOLUME_PCT || p.blocked {
+        state
+    } else {
+        format!("{state}, volume {} %", p.volume_pct)
+    }
+}
+
 /// The rows of a voice page.
 pub fn rows(page: Page, settings: &Settings, info: &VoiceMenuInfo) -> Vec<Row> {
     let text = |key: &str| settings.get(key).map(|v| v.to_string()).unwrap_or_default();
@@ -78,7 +118,15 @@ pub fn rows(page: Page, settings: &Settings, info: &VoiceMenuInfo) -> Vec<Row> {
             setting_row(settings, "voice.volume", "Voice volume (%)"),
             open(
                 "Participants",
-                info.participants.len().to_string(),
+                if info.blocked.is_empty() {
+                    info.participants.len().to_string()
+                } else {
+                    format!(
+                        "{}, {} blocked",
+                        info.participants.len(),
+                        info.blocked.len()
+                    )
+                },
                 Page::VoiceParticipants,
             ),
             open("Devices and options", String::new(), Page::VoiceDevices),
@@ -140,29 +188,74 @@ pub fn rows(page: Page, settings: &Settings, info: &VoiceMenuInfo) -> Vec<Row> {
             setting_row(settings, "audio.echo_delay_ms", "Echo delay (ms)"),
         ],
         Page::VoiceParticipants => {
-            if info.participants.is_empty() {
-                return vec![Row {
-                    label: "Nobody else in the voice room".into(),
-                    value: None,
+            let mut out: Vec<Row> = info
+                .participants
+                .iter()
+                .enumerate()
+                .map(|(i, p)| open(&p.name, participant_state(p), Page::VoiceRider(i)))
+                .collect();
+            if out.is_empty() {
+                out.push(info_line("Nobody else in the voice room"));
+            }
+            out.push(open(
+                "Blocked riders",
+                info.blocked.len().to_string(),
+                Page::VoiceBlocked,
+            ));
+            out
+        }
+        Page::VoiceRider(i) => {
+            let Some(p) = info.participants.get(i) else {
+                return vec![info_line("Not in the voice room any more")];
+            };
+            let id = &p.identity;
+            let step = i64::from(ocw_voice::riders::VOLUME_STEP_PCT);
+            let vol = |d: i64| {
+                format!(
+                    "voice.volume {id} {}",
+                    ocw_voice::riders::clamp_volume(i64::from(p.volume_pct) + d * step)
+                )
+            };
+            let block = format!("voice.block {id} {}", if p.blocked { "off" } else { "on" });
+            vec![
+                info_line_value(&p.name, participant_state(p)),
+                toggle(
+                    "Mute for me",
+                    if p.muted_by_me { "muted" } else { "off" },
+                    &format!("voice.mute {id}"),
+                ),
+                Row {
+                    label: "Volume (%)".into(),
+                    value: Some(p.volume_pct.to_string()),
+                    left: Some(vol(-1)),
+                    right: Some(vol(1)),
+                    // Confirm: back to 100 %.
+                    confirm: Some(Activate::Command(format!(
+                        "voice.volume {id} {}",
+                        ocw_voice::riders::DEFAULT_VOLUME_PCT
+                    ))),
+                },
+                Row {
+                    label: "Block".into(),
+                    value: Some(if p.blocked { "blocked" } else { "off" }.into()),
+                    left: Some(block.clone()),
+                    right: Some(block.clone()),
+                    confirm: Some(Activate::Command(block)),
+                },
+            ]
+        }
+        Page::VoiceBlocked => {
+            if info.blocked.is_empty() {
+                return vec![info_line("Nobody blocked")];
+            }
+            info.blocked
+                .iter()
+                .map(|b| Row {
+                    label: b.name.clone(),
+                    value: Some("blocked".into()),
                     left: None,
                     right: None,
-                    confirm: None,
-                }];
-            }
-            info.participants
-                .iter()
-                .map(|p| {
-                    let line = format!("voice.mute {}", p.identity);
-                    let state = if p.muted_by_me {
-                        "muted by you".to_owned()
-                    } else if p.mic_muted {
-                        "microphone off".to_owned()
-                    } else if let Some(g) = p.heard {
-                        format!("heard {:.0} %", g * 100.0)
-                    } else {
-                        "too far away".to_owned()
-                    };
-                    toggle(&p.name, &state, &line)
+                    confirm: Some(Activate::Command(format!("voice.block \"{}\" off", b.key))),
                 })
                 .collect()
         }
@@ -200,6 +293,8 @@ mod tests {
                     muted_by_me: false,
                     mic_muted: false,
                     heard: Some(0.5),
+                    blocked: false,
+                    volume_pct: 100,
                 },
                 MenuParticipant {
                     identity: "rider-3".into(),
@@ -207,8 +302,11 @@ mod tests {
                     muted_by_me: true,
                     mic_muted: false,
                     heard: None,
+                    blocked: false,
+                    volume_pct: 150,
                 },
             ],
+            blocked: Vec::new(),
         }
     }
 
@@ -288,19 +386,84 @@ mod tests {
         );
     }
 
+    /// The participants' list (spec §7.1.7 Q9): each rider opens a page
+    /// with Mute for me, the volume and Block; the blocked riders at the
+    /// end, Confirm unblocks.
     #[test]
-    fn participants_page_mutes_one_rider() {
+    fn participants_page_opens_each_rider() {
         let r = rows(Page::VoiceParticipants, &Settings::default(), &info());
-        assert_eq!(r.len(), 2);
+        assert_eq!(r.len(), 3);
         assert_eq!(r[0].value.as_deref(), Some("heard 50 %"));
-        assert_eq!(r[0].confirm, cmd("voice.mute rider-2"));
-        assert_eq!(r[1].value.as_deref(), Some("muted by you"));
+        assert_eq!(r[0].confirm, Some(Activate::Open(Page::VoiceRider(0))));
+        assert_eq!(r[1].value.as_deref(), Some("muted by you, volume 150 %"));
+        assert_eq!(r[2].label, "Blocked riders");
+        assert_eq!(r[2].value.as_deref(), Some("0"));
+        assert_eq!(r[2].confirm, Some(Activate::Open(Page::VoiceBlocked)));
         let empty = rows(
             Page::VoiceParticipants,
             &Settings::default(),
             &VoiceMenuInfo::default(),
         );
-        assert_eq!(empty.len(), 1);
+        assert_eq!(empty.len(), 2);
         assert_eq!(empty[0].confirm, None);
+    }
+
+    #[test]
+    fn a_riders_page_mutes_sets_the_volume_and_blocks() {
+        let r = rows(Page::VoiceRider(1), &Settings::default(), &info());
+        assert!(r.len() < crate::menu::model::MAX_ITEMS, "fits one page");
+        assert_eq!(r[0].label, "Rider Three");
+        assert_eq!(r[0].confirm, None);
+        let mute = row(&r, "Mute for me");
+        assert_eq!(mute.value.as_deref(), Some("muted"));
+        assert_eq!(mute.confirm, cmd("voice.mute rider-3"));
+        let vol = row(&r, "Volume (%)");
+        assert_eq!(vol.value.as_deref(), Some("150"));
+        assert_eq!(vol.left.as_deref(), Some("voice.volume rider-3 140"));
+        assert_eq!(vol.right.as_deref(), Some("voice.volume rider-3 160"));
+        assert_eq!(vol.confirm, cmd("voice.volume rider-3 100"));
+        let block = row(&r, "Block");
+        assert_eq!(block.value.as_deref(), Some("off"));
+        assert_eq!(block.confirm, cmd("voice.block rider-3 on"));
+        // At the ends of the range the steps stop.
+        let mut i = info();
+        i.participants[0].volume_pct = 200;
+        i.participants[0].blocked = true;
+        let r = rows(Page::VoiceRider(0), &Settings::default(), &i);
+        assert_eq!(
+            row(&r, "Volume (%)").right.as_deref(),
+            Some("voice.volume rider-2 200")
+        );
+        assert_eq!(row(&r, "Block").value.as_deref(), Some("blocked"));
+        assert_eq!(row(&r, "Block").confirm, cmd("voice.block rider-2 off"));
+        assert_eq!(r[0].value.as_deref(), Some("blocked"));
+        // The rider left: the page says so.
+        let gone = rows(Page::VoiceRider(9), &Settings::default(), &info());
+        assert_eq!(gone.len(), 1);
+        assert_eq!(gone[0].confirm, None);
+    }
+
+    #[test]
+    fn the_blocked_list_unblocks() {
+        let mut i = info();
+        i.blocked = vec![crate::voice::BlockedRider {
+            key: "name:ride.example.org/Bea Climber".into(),
+            name: "Bea Climber".into(),
+        }];
+        let r = rows(Page::VoiceBlocked, &Settings::default(), &i);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].label, "Bea Climber");
+        assert_eq!(
+            r[0].confirm,
+            cmd("voice.block \"name:ride.example.org/Bea Climber\" off")
+        );
+        let voice = rows(Page::Voice, &Settings::default(), &i);
+        assert_eq!(
+            row(&voice, "Participants").value.as_deref(),
+            Some("2, 1 blocked")
+        );
+        let none = rows(Page::VoiceBlocked, &Settings::default(), &info());
+        assert_eq!(none[0].label, "Nobody blocked");
+        assert_eq!(none[0].confirm, None);
     }
 }

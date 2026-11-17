@@ -142,6 +142,8 @@ mod tests {
             Voice,
             VoiceDevices,
             VoiceParticipants,
+            VoiceRider(0),
+            VoiceBlocked,
             AudioVoice,
             TimeMachine,
             WeatherPresets,
@@ -191,14 +193,14 @@ mod tests {
                 | Bike(_) | WorldHome | Worlds | World(_) | WorldRoutes(_) | WorldParts(_)
                 | WorldInfo | WorldSun | WorldSources | WorldSource(_) | Weather | Routes
                 | Rides | GpxImport | Workouts | Voice | VoiceDevices | VoiceParticipants
-                | AudioVoice | TimeMachine | WeatherPresets | WeatherCustom | WeatherAir
-                | WeatherReal | RidingAids | Graphics | ViewDistance | RiderList
-                | UnicornControls | Bindings | BindGroup(_) | BindReset | Accessibility
-                | History | HistoryRides | HistoryRide(_) | HistoryClimbs(_) | HistoryWeeks
-                | HistoryMonths | HistoryBests | EventRules | Account | TrustedKeys
-                | TrustedKey(_) | Join | HostWorld | HostRoute | HostTime | HostWeather
-                | HostOptions | HostSummary | HostLink | Devices | Device(_) | Calendar(_)
-                | CalendarDates(_) | Season => {}
+                | VoiceRider(_) | VoiceBlocked | AudioVoice | TimeMachine | WeatherPresets
+                | WeatherCustom | WeatherAir | WeatherReal | RidingAids | Graphics
+                | ViewDistance | RiderList | UnicornControls | Bindings | BindGroup(_)
+                | BindReset | Accessibility | History | HistoryRides | HistoryRide(_)
+                | HistoryClimbs(_) | HistoryWeeks | HistoryMonths | HistoryBests | EventRules
+                | Account | TrustedKeys | TrustedKey(_) | Join | HostWorld | HostRoute
+                | HostTime | HostWeather | HostOptions | HostSummary | HostLink | Devices
+                | Device(_) | Calendar(_) | CalendarDates(_) | Season => {}
             }
         }
         all

@@ -14,6 +14,10 @@
 //!   that is played.
 //! - **Mute:** the microphone track stays published and is muted (others
 //!   see it muted; unmuting is instant); while muted no samples are sent.
+//! - **Who may hear the rider** ([`BackendCommand::SetSubscribers`],
+//!   spec §7.1.7 Q9): LiveKit's track subscription permissions on the own
+//!   microphone – the voice server refuses everyone not allowed, whatever
+//!   their client does; kept across reconnects and new calls.
 //! - **Echo test** (spec §7 *Echo bot*): with [`BackendCommand::SetEcho`]
 //!   active, the processed microphone frames also go through an
 //!   [`EchoLoop`] into the mixer as the voice [`ECHO_IDENTITY`] – in a call
@@ -29,6 +33,7 @@ use std::time::{Duration, Instant};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use futures::StreamExt;
 use livekit::options::TrackPublishOptions;
+use livekit::participant::ParticipantTrackPermission;
 use livekit::prelude::*;
 use livekit::webrtc::audio_source::native::NativeAudioSource;
 use livekit::webrtc::audio_stream::native::NativeAudioStream;
@@ -244,6 +249,31 @@ enum AudioCmd {
 }
 
 /// The audio thread: owns the cpal streams.
+/// Sets who may subscribe to the own microphone (`None`: everybody):
+/// LiveKit's track subscription permissions, an allow list.
+async fn permit(room: &Room, subscribers: &Option<Vec<String>>) {
+    let (all, permissions) = match subscribers {
+        None => (true, Vec::new()),
+        Some(ids) => (
+            false,
+            ids.iter()
+                .map(|id| ParticipantTrackPermission {
+                    participant_identity: id.clone().into(),
+                    allow_all: true,
+                    allowed_track_sids: Vec::new(),
+                })
+                .collect(),
+        ),
+    };
+    if let Err(e) = room
+        .local_participant()
+        .set_track_subscription_permissions(all, permissions)
+        .await
+    {
+        tracing::warn!(%e, "voice: subscription permissions");
+    }
+}
+
 fn audio_thread(
     shared: Arc<Shared>,
     rx: mpsc::Receiver<AudioCmd>,
@@ -427,6 +457,8 @@ struct Worker {
     output: Option<String>,
     /// Identities whose voice is wanted.
     wanted: BTreeSet<String>,
+    /// Who may subscribe to the own microphone (`None`: everybody).
+    subscribers: Option<Vec<String>>,
     /// Running receive tasks per identity.
     streams: BTreeMap<String, tokio::task::JoinHandle<()>>,
     capture_task: Option<tokio::task::JoinHandle<()>>,
@@ -457,6 +489,7 @@ impl Worker {
             input: None,
             output: None,
             wanted: BTreeSet::new(),
+            subscribers: None,
             streams: BTreeMap::new(),
             capture_task: None,
             echo: EchoParams::default(),
@@ -581,6 +614,10 @@ impl Worker {
                     mx.set_placement(&identity, gain, pan);
                 }
             }
+            BackendCommand::SetSubscribers(allowed) => {
+                self.subscribers = allowed;
+                self.apply_subscribers().await;
+            }
             BackendCommand::PlayCue(c) => {
                 if let Ok(mut mx) = self.shared.mixer.lock() {
                     mx.play_cue(c);
@@ -599,6 +636,13 @@ impl Worker {
             }
         }
         None
+    }
+
+    /// Tells the voice server who may subscribe to the own microphone.
+    async fn apply_subscribers(&self) {
+        if let Some(room) = &self.room {
+            permit(room, &self.subscribers).await;
+        }
     }
 
     /// The echo test's local loopback (spec §7): without a call, the
@@ -674,6 +718,10 @@ impl Worker {
         }
         if self.mic_muted {
             track.mute();
+        }
+        // Who may hear the rider, before anyone can subscribe for long.
+        if self.subscribers.is_some() {
+            permit(&room, &self.subscribers).await;
         }
         self.emit(BackendEvent::Connected { room: room.name() });
         for p in room.remote_participants().values() {

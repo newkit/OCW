@@ -207,6 +207,13 @@ pub struct ClientCore {
     access_token: Option<String>,
     /// The other riders' photographer shots (spec §2.11, v4.38).
     photos: crate::photographer::RemoteShots,
+    /// Voice blocks (spec §7.1.7 Q9): the server this client rides on
+    /// (the scope of name keys, `ocw_voice::riders::server_scope`), the
+    /// riders' signed-in accounts from the snapshots, and the riders the
+    /// server keeps apart from this one (`VoiceApart`).
+    server_scope: String,
+    accounts: BTreeMap<RiderId, String>,
+    voice_apart: std::collections::BTreeSet<RiderId>,
 }
 
 /// Steering mode before the menu opened (spec §3.2.1), restored on closing.
@@ -279,6 +286,9 @@ impl ClientCore {
             carried: None,
             access_token: None,
             photos: Default::default(),
+            server_scope: ocw_voice::riders::LOCAL_SCOPE.into(),
+            accounts: BTreeMap::new(),
+            voice_apart: Default::default(),
             route,
         }
     }
@@ -627,6 +637,9 @@ impl ClientCore {
                 let id = RiderId(w.rider_id);
                 self.rider_id = Some(id);
                 self.voice_offered = w.voice;
+                // A new session: its server says again whom to keep apart.
+                self.voice_apart.clear();
+                self.accounts.clear();
                 self.echo_bot = w.echo_bot;
                 self.world_access = Some(ocw_protocol::access_from_wire(w.world_access));
                 self.god_access = Some(ocw_protocol::access_from_wire(w.god_access));
@@ -661,6 +674,10 @@ impl ClientCore {
                 None
             }
             S::Voice(g) => Some(Notice::Voice(g)),
+            S::VoiceApart(a) => {
+                self.voice_apart = a.riders.into_iter().map(RiderId).collect();
+                None
+            }
             S::God(r) => Some(Notice::God {
                 event: self.god.on_result(&r, now_s),
                 message: if r.ok {
@@ -890,6 +907,10 @@ impl ClientCore {
             }
             self.names
                 .insert(id, (u.display_name.clone(), f64::from(u.power_w)));
+            // Accounts come once a second (spec §7.1.7 Q9): kept between.
+            if !u.account_id.is_empty() {
+                self.accounts.insert(id, u.account_id.clone());
+            }
             self.looks.insert(id, ocw_protocol::rider_look(u));
             match &u.status {
                 Some(st) => {
@@ -957,6 +978,8 @@ impl ClientCore {
                 }
             }
         }
+        self.accounts
+            .retain(|id, _| s.riders.iter().any(|u| u.rider_id == id.0));
         self.others_now = others.clone();
         self.others.push(now_s, others);
         self.god_others.on_snapshot(&gods, now_s);
@@ -2200,6 +2223,43 @@ impl ClientCore {
     /// A voice token request for the server.
     pub fn voice_request_message(req: v1::VoiceTokenRequest) -> Vec<u8> {
         encode(&client_message(C::Voice(req)))
+    }
+
+    /// The own voice blocks for the server (spec §7.1.7 Q9): every
+    /// blocked account and the names blocked on this server.
+    pub fn voice_blocks_message(account_ids: Vec<String>, names: Vec<String>) -> Vec<u8> {
+        encode(&client_message(C::VoiceBlocks(v1::VoiceBlocks {
+            account_ids,
+            names,
+        })))
+    }
+
+    /// The server this client rides on, for the voice choices remembered
+    /// by name (`ocw_voice::riders::server_scope` of the address joined;
+    /// `local` for the app's own servers).
+    pub fn set_server_scope(&mut self, spec: &str) {
+        self.server_scope = ocw_voice::riders::server_scope(spec);
+    }
+
+    pub fn server_scope(&self) -> &str {
+        &self.server_scope
+    }
+
+    /// The other riders' names and signed-in accounts (from the
+    /// snapshots): the keys of the voice choices.
+    pub fn rider_identities(&self) -> (BTreeMap<RiderId, String>, BTreeMap<RiderId, String>) {
+        let names = self
+            .names
+            .iter()
+            .map(|(id, (n, _))| (*id, n.clone()))
+            .collect();
+        (names, self.accounts.clone())
+    }
+
+    /// The riders the server keeps apart from this one in voice (a block
+    /// in either direction, spec §7.1.7 Q9).
+    pub fn voice_apart(&self) -> &std::collections::BTreeSet<RiderId> {
+        &self.voice_apart
     }
 
     /// The echo test's request (spec §7 *Echo bot*).

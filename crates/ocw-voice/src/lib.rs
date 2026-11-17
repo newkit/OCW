@@ -18,6 +18,8 @@
 //!   confirmation sounds,
 //! - [`echo`]: the echo test (an Echo rider plays the own microphone
 //!   back, delayed, from its place on the road),
+//! - [`riders`]: the rider's volume and Block for single other riders,
+//!   remembered by account or by name per server (spec §7.1.7 Q9),
 //! - [`controller`]: ties them together and drives a [`backend::VoiceBackend`];
 //! - [`web`]: the browser's backend (spec §14 Phase 10 B5): the same
 //!   controller over the page's livekit-client (JS) shim.
@@ -45,6 +47,7 @@ pub mod join;
 pub mod livekit;
 pub mod mix;
 pub mod mute;
+pub mod riders;
 pub mod spatial;
 pub mod web;
 

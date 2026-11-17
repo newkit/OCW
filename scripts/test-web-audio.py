@@ -35,9 +35,12 @@ DevTools protocol (scripts/test-web.py's Cdp).
 
 --part livekit (`make test-web-livekit`, when a `livekit-server` binary is
   there): a real `livekit-server --dev` on localhost, the real
-  livekit-client in two pages (two browser riders): both connect with the
-  game server's tokens, see each other, hear the other's fake microphone
-  (active speakers), and a mute in one page shows in the other.
+  livekit-client in three pages (three browser riders): all connect with
+  the game server's tokens, see each other, hear the others' fake
+  microphones (active speakers), a mute in one page shows in the other;
+  then Ada blocks Bea (spec §7.1.7 Q9): the game server tells both, neither
+  plays the other's track (Bea's own request for Ada's is refused by the
+  voice server), Cleo plays both; unblocked, all as before.
 
 Not testable headlessly: what the sound sounds like on speakers (the
 mixer's output is checked as numbers: chunks, level), a real microphone
@@ -507,7 +510,7 @@ def part_livekit(r, port, a, procs):
     work = tempfile.mkdtemp(prefix="ocw-web-lk-")
     server, quic, info = start_server(a, work, f"ws://127.0.0.1:{lk_port}", "devkey", "secret", echo=False)
     procs.append(server)
-    names = ["Ada", "Bea"]
+    names = ["Ada", "Bea", "Cleo"]
     for i, name in enumerate(names):
         if i:
             r.new_page(name)
@@ -524,26 +527,27 @@ def part_livekit(r, port, a, procs):
     for name in names:
         r.use(name)
         visible[name] = r.js("document.visibilityState")
-    r.check("livekit: both pages are visible (their game loops run)",
+    r.check("livekit: all pages are visible (their game loops run)",
             all(v == "visible" for v in visible.values()), visible)
     joined = {}
     for name in names:
         r.use(name)
         joined[name] = r.wait(f"{name} joined the game server",
                               lambda: (r.json("window.ocw && window.ocw.netStats()") or {}).get("rider_id"), 30)
-    r.check("livekit: both riders joined the game session", all(joined.values()), joined)
+    r.check("livekit: all riders joined the game session", all(joined.values()), joined)
     ok = {}
     for name in names:
         r.use(name)
         r.click()
         ok[name] = r.wait(f"{name} in the call", lambda: (r.voice() or {}).get("status") == "connected", 40)
-    r.check("livekit: both pages joined the real LiveKit room", all(ok.values()), ok)
+    r.check("livekit: all pages joined the real LiveKit room", all(ok.values()), ok)
     seen = {}
-    for name, other in zip(names, reversed(names)):
+    for name in names:
+        others = [o for o in names if o != name]
         r.use(name)
-        seen[name] = r.wait(f"{name} sees {other}", lambda: any(
-            p["name"] == other for p in (r.voice() or {}).get("participants", [])), 20)
-    r.check("livekit: each sees the other participant", all(seen.values()), seen)
+        seen[name] = r.wait(f"{name} sees {others}", lambda: all(any(
+            p["name"] == o for p in (r.voice() or {}).get("participants", [])) for o in others), 20)
+    r.check("livekit: each sees the other participants", all(seen.values()), seen)
     r.use("Ada")
     talk = r.wait("Ada hears Bea talking", lambda: "Bea" in ((r.voice() or {}).get("speaking") or []), 20)
     r.check("livekit: the other's (fake) microphone is heard (active speaker)", talk)
@@ -560,6 +564,63 @@ def part_livekit(r, port, a, procs):
     r.shot("livekit-bea")
     r.console("voice.mute-mic off")
     r.pump(0.5)
+    livekit_block(r, names, joined)
+
+
+def livekit_block(r, names, joined):
+    """Voice block (spec §7.1.7 Q9) in the browser: Ada blocks Bea; the
+    game server tells both, neither plays the other's track (Bea's own
+    request for Ada's is refused by the voice server), Cleo plays both."""
+    ident = {n: f"rider-{joined[n]}" for n in names}
+
+    def tracks(name):
+        r.use(name)
+        return set((r.json("window.ocwVoice.state()") or {}).get("tracks") or [])
+
+    # Before: everybody plays everybody's track.
+    before = {}
+    for name in names:
+        want = {ident[o] for o in names if o != name}
+        before[name] = bool(r.wait(f"{name} plays the others' tracks", lambda: want <= tracks(name), 30))
+    r.check("livekit: before a block every page plays both other riders", all(before.values()), before)
+    r.use("Ada")
+    r.console("voice.block Bea on")
+    r.use("Bea")
+    told = r.wait("Bea is told she is apart from Ada",
+                  lambda: joined["Ada"] in ((r.voice() or {}).get("apart") or []), 15)
+    r.check("livekit: the game server tells the blocked rider (apart, not who blocked)", told,
+            (r.voice() or {}).get("apart"))
+    bea_list = {p["name"]: p for p in (r.voice() or {}).get("participants", [])}
+    r.check("livekit: the blocked rider's list does not say she was blocked",
+            not bea_list.get("Ada", {}).get("blocked") and not (r.voice() or {}).get("blocked"),
+            bea_list.get("Ada"))
+    gone_a = r.wait("Ada stops playing Bea", lambda: ident["Bea"] not in tracks("Ada"), 15)
+    gone_b = r.wait("Bea stops playing Ada", lambda: ident["Ada"] not in tracks("Bea"), 15)
+    r.check("livekit: after Ada blocks Bea neither plays the other's track", gone_a and gone_b,
+            {"Ada": sorted(tracks("Ada")), "Bea": sorted(tracks("Bea"))})
+    r.use("Ada")
+    st = r.json("window.ocwVoice.state()") or {}
+    r.check("livekit: Ada's microphone is allowed to everybody but Bea",
+            st.get("subscribers") is not None and ident["Bea"] not in st["subscribers"]
+            and ident["Cleo"] in st["subscribers"], st.get("subscribers"))
+    r.use("Cleo")
+    r.pump(2.0)
+    r.check("livekit: Cleo still plays both", {ident["Ada"], ident["Bea"]} <= tracks("Cleo"),
+            sorted(tracks("Cleo")))
+    # Bea as a modified client: asks for Ada's track itself.
+    r.use("Bea")
+    r.js("window.ocwVoice.command(%s)" % json.dumps(json.dumps(
+        {"op": "subscribe", "identity": ident["Ada"], "on": True})))
+    r.pump(5.0)
+    r.check("livekit: Bea asking for Ada's track herself is refused by the voice server",
+            ident["Ada"] not in tracks("Bea"), sorted(tracks("Bea")))
+    r.use("Ada")
+    r.shot("livekit-blocked")
+    r.console("voice.block Bea off")
+    back_a = r.wait("Ada plays Bea again", lambda: ident["Bea"] in tracks("Ada"), 20)
+    back_b = r.wait("Bea plays Ada again", lambda: ident["Ada"] in tracks("Bea"), 20)
+    r.check("livekit: unblocked, both play each other again", back_a and back_b,
+            {"Ada": sorted(tracks("Ada")), "Bea": sorted(tracks("Bea"))})
 
 
 def main():
