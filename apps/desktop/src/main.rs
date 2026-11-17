@@ -499,6 +499,7 @@ fn main() -> AppExit {
         // capture runs: reproducible pictures (spec §14 Phase 10, 10G).
         .insert_resource(ocw_ui::view_distance::ViewDistanceContext {
             frozen: args.screenshot.is_some() || args.capture.is_some(),
+            headset_hz: vr_start.headset_hz(),
         })
         .add_systems(Startup, || info!("Open Cycling World {}", build_id()))
         .add_plugins(OcwRenderPlugins)

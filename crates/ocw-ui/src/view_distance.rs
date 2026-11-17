@@ -28,6 +28,9 @@ pub struct ViewDistanceContext {
     /// picture (the desktop's `--screenshot` and `--capture` runs, whose
     /// frame rate is the software renderer's or the capture's).
     pub frozen: bool,
+    /// A VR headset paces the frames (spec §14 Phase 11): its refresh
+    /// (Hz) is the target instead of the monitor's.
+    pub headset_hz: Option<f64>,
 }
 
 /// The tile ring changes at most this often (s): no streaming thrash.
@@ -181,8 +184,15 @@ fn read_at_start(world: &mut World) {
 /// browser and on headless outputs: the target falls back to 60).
 fn read_refresh(
     monitors: Query<(&Monitor, Has<PrimaryMonitor>)>,
+    ctx: Option<Res<ViewDistanceContext>>,
     mut state: ResMut<ViewDistanceState>,
 ) {
+    if let Some(hz) = ctx.and_then(|c| c.headset_hz) {
+        if state.refresh_hz != Some(hz) {
+            state.refresh_hz = Some(hz);
+        }
+        return;
+    }
     let mut best: Option<(bool, f64)> = None;
     for (m, primary) in &monitors {
         if let Some(mhz) = m.refresh_rate_millihertz {
@@ -567,11 +577,34 @@ mod tests {
         assert_eq!(next_ring(Some((1, 10.0)), 1, 50.0), (1, 10.0));
     }
 
+    /// In a headset session the headset's refresh is the target, not
+    /// the monitor's (the VR kiosk on Weela aimed at the monitor's 165 Hz).
+    #[test]
+    fn a_headset_sets_the_target() {
+        let mut a = app(GpuApi::Native);
+        a.insert_resource(ViewDistanceContext {
+            headset_hz: Some(72.0),
+            ..default()
+        });
+        a.update();
+        a.update();
+        assert_eq!(
+            a.world().resource::<ViewDistanceState>().refresh_hz,
+            Some(72.0)
+        );
+        let out = run(&mut a, "view auto on");
+        assert!(out.contains("72 fps"), "{out}");
+        assert_eq!(a.world().resource::<ViewDistanceState>().target_fps, 72.0);
+    }
+
     /// A screenshot run holds the distance at the slider.
     #[test]
     fn frozen_runs_hold_the_slider() {
         let mut a = app(GpuApi::Native);
-        a.insert_resource(ViewDistanceContext { frozen: true });
+        a.insert_resource(ViewDistanceContext {
+            frozen: true,
+            ..default()
+        });
         let out = run(&mut a, "view 20");
         assert!(out.contains("held for this screenshot"), "{out}");
         assert_eq!(preset(&a).view_m, Some(20_000.0));

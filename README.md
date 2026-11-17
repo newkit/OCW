@@ -3681,6 +3681,46 @@ after three quick crashes); logs in `~/.local/state/ocw/` (`kiosk.log`,
 `app.log`). The dashboard's machine card shows whether it runs and which
 build it has. More: [config/README.md](config/README.md#test-app-on-a-machines-screen-kiosk).
 
+**The Windows VR kiosk (Weela, spec §14 Phase 11, 11I):** the same show
+ride in a VR headset – Weela with a Meta Quest over Meta Quest Link. The
+kiosk runs `ocw-desktop.exe --vr --fullscreen` in show mode on its world
+(default Tenerife, Puerto de la Cruz – Teide): the headset shows the ride,
+the monitor mirrors the left eye.
+
+```bash
+scripts/deploy-test.sh Weela                       # VR release build there, installed to %LOCALAPPDATA%\OCW\kiosk
+OCW_KIOSK_WORLD=blackforest scripts/deploy-test.sh Weela   # another world (kept across deploys)
+```
+
+For a Windows machine `deploy-test.sh` runs `scripts/deploy-test-windows.sh`:
+it builds with `--features vr` there, fetches the Material library there,
+fetches the pinned Khronos `openxr_loader.dll` (with its licence) here, and
+copies the kiosk's world files (package, manifest, route files) from marge's
+kiosk (`/var/tmp/ocw`; `OCW_WORLD_SOURCE`, `OCW_WORLD_SOURCE_DIR`), only those
+whose SHA-256 differs, checked again on the machine. Each deploy is a new
+folder `builds\<time>\` beside the previous one (a running `.exe` cannot be
+replaced); `current.txt` switches to it last and the kiosk restarts the app.
+`OCW_KIOSK_ROUTE`, `OCW_KIOSK_ARGS` and `kiosk-local.args` (in the kiosk
+folder) work as on Linux. Once, as the build user (over SSH is fine – the
+task starts the kiosk in the desktop session, where the user must be logged
+in):
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+& "$env:LOCALAPPDATA\OCW\kiosk\ocw-kiosk.ps1" install     # task "OCW Kiosk" at logon, started now
+& "$env:LOCALAPPDATA\OCW\kiosk\ocw-kiosk.ps1" status      # build, task, app, the VR line and session, log
+& "$env:LOCALAPPDATA\OCW\kiosk\ocw-kiosk.ps1" restart     # or stop / start; uninstall removes the task
+& "$env:LOCALAPPDATA\OCW\kiosk\ocw-kiosk.ps1" screenshot -Out shot.png   # the monitor (the left eye)
+```
+
+Logs: `%LOCALAPPDATA%\OCW\kiosk-state\` (`kiosk.log`: starts, the VR line
+`VR: <runtime> on <headset>`, the session's changes; `app.log` the app's log).
+The session starts showing once the runtime sends it *ready*: the headset
+awake (worn – the proximity sensor) and Link on. Without a headset or runtime
+the app rides on the monitor ("VR is off: …") and the kiosk restarts it every
+5 minutes to try again (`OCW_KIOSK_VR_RETRY_S`, 0 = never). `make
+test-kiosk-windows` checks the script (PowerShell parse, its selftest).
+
 **World packages on leela:** they are built on marge (leela does not build)
 and copied over unchanged; there is no script for it. From the **main
 checkout** (`put` writes into the checkout of the current branch):

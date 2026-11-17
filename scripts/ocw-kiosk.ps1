@@ -181,6 +181,13 @@ function Get-VrState([string]$LogText) {
     return @{ State = "unknown"; Line = "" }
 }
 
+# The app's session changes ("VR session: idle", "... focused", "lost, ..."),
+# without the log's time stamps and colours, in order.
+function Get-VrSessionLines([string]$LogText) {
+    $clean = $LogText -replace "\x1b\[[0-9;]*m", ""
+    return @([regex]::Matches($clean, "VR session: [^\r\n]*") | ForEach-Object { $_.Value })
+}
+
 # Crash pacing as on Linux: an exit within $QuickS seconds counts; three
 # in a row wait 30 s, else 3 s. Returns @{ Fails; WaitS }.
 function Get-RestartDelay([int]$Fails, [double]$RanS, [int]$QuickS) {
@@ -210,7 +217,11 @@ function Write-KioskLog([string]$Msg) {
 
 function Read-Text([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return "" }
-    try { return [IO.File]::ReadAllText($Path) } catch { return "" }
+    # FileShare.ReadWrite: the app's log is open for writing.
+    try {
+        $fs = New-Object IO.FileStream($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try { return (New-Object IO.StreamReader($fs)).ReadToEnd() } finally { $fs.Dispose() }
+    } catch { return "" }
 }
 
 # Writes a file atomically (temp file, then replace).
@@ -270,6 +281,7 @@ function Invoke-Supervisor {
         $reason = "exited"
         $vrSeen = $false
         $retryAt = $null
+        $sessionSeen = 0
         while (-not $proc.HasExited) {
             Start-Sleep -Seconds $poll
             if (Test-Path -LiteralPath $stopFile) { $reason = "stop"; break }
@@ -287,6 +299,9 @@ function Invoke-Supervisor {
                     } else { Write-KioskLog ($vr.Line + " - the app rides on the monitor") }
                 }
             }
+            $sessions = @(Get-VrSessionLines (Read-Text $applog))
+            for ($i = $sessionSeen; $i -lt $sessions.Count; $i++) { Write-KioskLog $sessions[$i] }
+            $sessionSeen = $sessions.Count
             if ($null -ne $retryAt -and (Get-Date) -ge $retryAt) { $reason = "vr-retry"; Write-KioskLog "restarting the app to try VR again"; break }
         }
         Stop-App $proc
@@ -455,6 +470,9 @@ function Invoke-Status {
     Write-Host ("app: " + $(if ($p) { "running (pid $app, since $($p.StartTime))" } else { "not running" }))
     $vr = Get-VrState (Read-Text (Join-Path $state "app.log"))
     Write-Host ("vr: " + $(if ($vr.Line) { $vr.Line } else { "no VR line in app.log yet" }))
+    $sess = @(Get-VrSessionLines (Read-Text (Join-Path $state "app.log")))
+    $sessText = if ($sess.Count -gt 0) { $sess[$sess.Count - 1] } elseif ($vr.State -eq "on") { "VR session: idle (no state change yet: the runtime waits for the headset - worn, awake, Link on)" } else { "" }
+    if ($sessText) { Write-Host ("session: " + $sessText) }
     $log = Join-Path $state "kiosk.log"
     if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 12 }
 }
@@ -626,6 +644,8 @@ function Invoke-SelfTest {
     Check "vr on" (Get-VrState "x`n`e[32mINFO`e[0m`nVR: Oculus 1.2 on Oculus Quest (khr), Rgba8UnormSrgb, 72 Hz`n").State "on"
     Check "vr on line" (Get-VrState "VR: Oculus on Quest (x)`r`nmore").Line "VR: Oculus on Quest (x)"
     Check "vr off" (Get-VrState "`e[33mWARN`e[0m ocw_desktop::vr: VR is off: no OpenXR runtime`n").Line "VR is off: no OpenXR runtime"
+    Check "session lines" ((Get-VrSessionLines "a`n2026 INFO x: VR session: ready`r`nb`nVR session: focused`n") -join "|") "VR session: ready|VR session: focused"
+    Check "no session lines" (@(Get-VrSessionLines "nothing")).Count 0
     Check "vr unknown" (Get-VrState "starting").State "unknown"
     $d = Get-RestartDelay 0 100 15; Check "slow exit" "$($d.Fails) $($d.WaitS)" "0 3"
     $d = Get-RestartDelay 1 2 15; Check "second quick exit" "$($d.Fails) $($d.WaitS)" "2 3"

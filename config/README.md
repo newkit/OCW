@@ -119,6 +119,22 @@ packages) or `rebuild` (build the Liechtenstein package again),
 `OCW_WORLD_DATA` (another `data/` folder on the machine), `OCW_DEPLOY_DIR`
 (install directory, for testing the script).
 
+### Windows VR kiosk (Weela)
+
+`scripts/deploy-test.sh Weela` (any machine with `os = "windows"`) installs a
+`--features vr` build with `openxr_loader.dll`, the material library and the
+kiosk's world (copied from marge's kiosk, SHA-256 checked) into
+`%LOCALAPPDATA%\OCW\kiosk` (`builds\<time>\`, `worlds\`, `current.txt`).
+Once, as the build user: `& "$env:LOCALAPPDATA\OCW\kiosk\ocw-kiosk.ps1"
+install` (after `Set-ExecutionPolicy -Scope Process Bypass -Force`) – a
+per-user scheduled task "OCW Kiosk" (logon trigger, no time limit; the
+Startup folder starts it where the logon trigger is refused) runs the
+supervisor in the desktop session. `status`, `start`, `stop`, `restart`,
+`uninstall`, `screenshot -Out FILE`; logs in `%LOCALAPPDATA%\OCW\kiosk-state`.
+The user must stay logged in on the desktop (the screen may be locked) with
+Meta Quest Link running; the VR session shows once the headset is awake. More:
+README, *Kiosks and deploys*.
+
 ## Per-OS prerequisites on the machines
 
 - **Linux:** run `make deps-linux` in a checkout (detects Debian/Ubuntu, Fedora or Arch; packages via

@@ -73,6 +73,16 @@ impl Start {
         None
     }
 
+    /// The headset's refresh (Hz): the render distance's frame-rate
+    /// target in a headset session (spec §14 Phase 10, 10G).
+    pub fn headset_hz(&self) -> Option<f64> {
+        #[cfg(feature = "vr")]
+        if let Start::Headset(b) = self {
+            return b.info.refresh_hz.map(f64::from);
+        }
+        None
+    }
+
     /// A headset paces the frames (`xrWaitFrame`), not the monitor.
     pub fn paced_by_headset(&self) -> bool {
         #[cfg(feature = "vr")]
