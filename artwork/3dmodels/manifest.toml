@@ -1143,6 +1143,14 @@ source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
 author = "Open Cycling World contributors"
 
 [[asset]]
+file = "parts/computer/computer-head-unit-wedge.glb"
+kind = "part"
+generator = "ocw_assets::computer::build()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
 file = "props/phone-slab.glb"
 kind = "prop"
 license = "MIT OR Apache-2.0"

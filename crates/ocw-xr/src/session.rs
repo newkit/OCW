@@ -115,6 +115,11 @@ pub trait XrRuntime {
     /// After a loss: destroy the old session and create a new one on the
     /// same instance and device (`NoHeadset` while none is there).
     fn recreate_session(&mut self) -> Result<(), XrError>;
+    /// The app quits: wait for the GPU, then destroy the swapchain, the
+    /// frame stream and the session – before the GPU device and the
+    /// instance go (v4.38: the exit crash on the Quest 1 over Link came
+    /// from the other order). Nothing works on the session after it.
+    fn shutdown(&mut self) {}
 }
 
 /// Our phase.
@@ -315,6 +320,24 @@ impl SessionMachine {
         self.since_retry_s = 0.0;
         self.last_error = Some(why);
         self.phase = Phase::Lost { restart };
+    }
+
+    /// The app quits now (the last frame): asks the runtime to stop and
+    /// tears the session down at once ([`XrRuntime::shutdown`]); the
+    /// phase is `Exited` after it.
+    pub fn shutdown(&mut self, rt: &mut dyn XrRuntime) {
+        if matches!(self.phase, Phase::Unavailable(_)) {
+            return;
+        }
+        if self.running
+            && let Err(e) = rt.request_exit()
+        {
+            self.last_error = Some(e);
+        }
+        self.exit_requested = true;
+        self.running = false;
+        rt.shutdown();
+        self.phase = Phase::Exited;
     }
 
     /// The app quits or VR is switched off: ask the runtime to stop.

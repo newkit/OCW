@@ -10,6 +10,10 @@
 //! - Render world, after the render graph ran: `xrBeginFrame`, the eye
 //!   images copied into the swapchain's two layers, `xrEndFrame` with the
 //!   projection layer (`ocw_xr::frame::submit`).
+//! - The controllers: `xrSyncActions` after the wait, every frame of the
+//!   loop → [`VrState::controllers`] (the gamepad of `super::controllers`).
+//! - The app's exit ([`AppExit`], in [`Last`]): the session is torn down
+//!   before Bevy drops the GPU device (`XrRuntime::shutdown`, v4.38).
 
 use std::sync::{Arc, Mutex};
 
@@ -23,6 +27,7 @@ use bevy::render::renderer::{
 use bevy::render::settings::RenderCreation;
 use bevy::render::texture::GpuImage;
 use bevy::render::{Render, RenderApp, RenderSystems};
+use ocw_xr::controllers::ControllerSource;
 use ocw_xr::frame::{FrameSource, FrameTiming, pose_time, submit};
 use ocw_xr::session::{SessionMachine, XrError};
 use ocw_xr::view::StereoViews;
@@ -127,7 +132,8 @@ impl Plugin for OpenXrPlugin {
             })
             .init_resource::<XrFrame>()
             .add_plugins(ExtractResourcePlugin::<XrFrame>::default())
-            .add_systems(First, frame_start);
+            .add_systems(First, frame_start)
+            .add_systems(Last, shutdown_on_exit);
         let handle = self.render.clone();
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
@@ -159,6 +165,7 @@ fn frame_start(
     mut state: ResMut<VrState>,
     mut frame: ResMut<XrFrame>,
     mut last: Local<Option<Instant>>,
+    mut polls: Local<u64>,
 ) {
     let mut rt = lock(&main.0);
     let now = Instant::now();
@@ -167,7 +174,11 @@ fn frame_start(
     for e in lock(&errors.0).drain(..) {
         machine.frame_error(e);
     }
+    let before = machine.phase().clone();
     machine.update(&mut *rt, dt);
+    if *machine.phase() != before {
+        info!("VR session: {}", machine.summary());
+    }
     if std::mem::take(&mut machine.recentre_wanted) {
         state.recentre_now = true;
     }
@@ -195,6 +206,15 @@ fn frame_start(
                 state.should_render = t.should_render;
                 next.timing = Some(t);
                 next.views = state.views;
+                match rt.sync_controllers() {
+                    Ok(c) => state.controllers = c,
+                    Err(e) => machine.frame_error(e),
+                }
+                *polls += 1;
+                if *polls % 72 == 1 {
+                    let [l, r] = rt.controller_profiles();
+                    state.controller_profiles = [l, r];
+                }
             }
             Err(e) => {
                 machine.frame_error(e);
@@ -204,11 +224,32 @@ fn frame_start(
         *last = Some(Instant::now());
     } else {
         state.should_render = false;
+        // No frame loop (headset off, runtime menu): the pad rests.
+        state.controllers = None;
         *last = Some(now);
     }
     state.session = Some(machine);
     // Written every frame: the render world submits exactly this frame.
     *frame = next;
+}
+
+/// The app quits: the session goes now, while the GPU device lives (Bevy
+/// drops the render world, and with it the device, after the last frame;
+/// destroyed after the device, the session crashed the runtime: 0xC0000005
+/// on Windows, 2026-11-17).
+fn shutdown_on_exit(
+    mut exits: MessageReader<AppExit>,
+    main: Res<XrMain>,
+    mut state: ResMut<VrState>,
+) {
+    if exits.read().last().is_none() {
+        return;
+    }
+    let mut rt = lock(&main.0);
+    if let Some(machine) = state.session.as_mut() {
+        machine.shutdown(&mut *rt);
+        info!("VR: session ended for the exit");
+    }
 }
 
 /// `xrBeginFrame`, the copy into the swapchain, `xrEndFrame`.
@@ -222,6 +263,9 @@ fn submit_frame(
     let Some(timing) = frame.timing else {
         return;
     };
+    // The whole submission under the frame lock: the teardown waits.
+    let held = xr.handle.clone();
+    let _frame = held.frame_guard();
     let (generation, images) = xr.handle.images();
     if generation != xr.generation {
         xr.generation = generation;

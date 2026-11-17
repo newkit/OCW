@@ -183,6 +183,19 @@ pub fn models() -> Vec<(Entry, Model)> {
         );
         out.push((e, m));
     }
+    // The VR bike computer (spec §14 Phase 11, v4.38).
+    let mut m = crate::computer::build();
+    let e = entry(
+        crate::computer::FILE,
+        Kind::Part,
+        "ocw_assets::computer::build()",
+    );
+    stamp(
+        &mut m,
+        &e,
+        json!({ "slot": "computer", "anchor": crate::computer::MOUNT_ANCHOR, "screen": crate::computer::SCREEN_ANCHOR }),
+    );
+    out.push((e, m));
     out
 }
 
@@ -260,7 +273,7 @@ pub fn write_manifest(old: &str, prefixes: &[&str], new: &[Entry]) -> Result<Str
 }
 
 /// The folders this crate's exporter owns in the manifest.
-pub const OWN_PREFIXES: [&str; 3] = ["bikes/", "riders/", "wear/"];
+pub const OWN_PREFIXES: [&str; 4] = ["bikes/", "riders/", "wear/", "parts/computer/"];
 
 #[cfg(test)]
 mod tests {
@@ -270,7 +283,7 @@ mod tests {
     fn the_export_is_deterministic_and_named_by_the_contract() {
         let a = files();
         let b = files();
-        assert_eq!(a.len(), 6 + 2 + 4);
+        assert_eq!(a.len(), 6 + 2 + 4 + 1);
         for ((ea, ba), (eb, bb)) in a.iter().zip(&b) {
             assert_eq!(ea, eb);
             assert_eq!(ba, bb, "{}", ea.file);
@@ -279,7 +292,7 @@ mod tests {
         let text = manifest_text(&a.iter().map(|(e, _)| e.clone()).collect::<Vec<_>>());
         let files: Vec<(String, Vec<u8>)> = a.into_iter().map(|(e, b)| (e.file, b)).collect();
         let checked = crate::manifest::validate(&text, &files).unwrap_or_else(|e| panic!("{e:#?}"));
-        assert_eq!(checked.len(), 12);
+        assert_eq!(checked.len(), 13);
     }
 
     #[test]

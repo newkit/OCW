@@ -336,9 +336,14 @@ pub struct Args {
     #[arg(long, conflicts_with = "vr_sim")]
     pub vr: bool,
     /// VR without a headset: both eye views from a simulated head, side by
-    /// side on the monitor, with the HUD panel (tests, screenshots).
+    /// side on the monitor, with the bike computer (tests, screenshots).
     #[arg(long)]
     pub vr_sim: bool,
+    /// VR: turn the view down by DEG degrees (the bike computer in a
+    /// screenshot; `vr look-down`). Only for screenshots: in a worn headset
+    /// it tilts the world.
+    #[arg(long, value_name = "DEG", default_value_t = 0.0)]
+    pub vr_look_down: f32,
 }
 
 impl Args {
@@ -539,7 +544,7 @@ fn main() -> AppExit {
         ))
         .add_systems(Startup, startup_commands)
         .add_systems(Update, timed_commands);
-    vr::add(&mut app, vr_start);
+    vr::add(&mut app, vr_start, args.vr_look_down);
     if let Some(request) = consent {
         let line = ride::choice::RideChoice::from_args(&args).to_line();
         let msg = ocw_ui::trust::ask(app.world_mut(), request, Some(line), None, false);

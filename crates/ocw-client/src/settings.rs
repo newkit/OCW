@@ -356,6 +356,33 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::Command("vr mirror {}"),
     },
+    // The bike computer on the bar (spec §14 Phase 11, v4.38): its size
+    // (times the real one, %; readable on the Quest 1 from 275 %) and the
+    // tilt added to its aim at the eyes.
+    SettingDef {
+        key: "vr.computer_size",
+        kind: Kind::Int {
+            min: 100,
+            max: 400,
+            step: 25,
+        },
+        default: "275",
+        description: "VR: the bike computer's size on the bar, % of a real one (larger reads better in the headset)",
+        scope: Scope::Live,
+        apply: Apply::Command("vr computer size {}"),
+    },
+    SettingDef {
+        key: "vr.computer_tilt",
+        kind: Kind::Int {
+            min: -30,
+            max: 30,
+            step: 5,
+        },
+        default: "0",
+        description: "VR: the bike computer's screen tilted toward you (+) or flatter (−), degrees from facing your eyes",
+        scope: Scope::Live,
+        apply: Apply::Command("vr computer tilt {}"),
+    },
     // The ride photographer (spec §2.11).
     SettingDef {
         key: "photographer.enabled",

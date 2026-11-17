@@ -59,16 +59,22 @@ sleep 3600 | XRT_COMPOSITOR_NULL=1 SIMULATED_ENABLE=1 XRT_COMPOSITOR_LOG=debug "
 svc=$!
 trap 'kill $svc 2>/dev/null || true; pkill -P $$ sleep 2>/dev/null || true' EXIT
 sleep 2
+code=0
 XR_RUNTIME_JSON=$runtime_json xvfb-run -a -s "-screen 0 1280x720x24" \
   target/debug/ocw-desktop --vr --virtual --no-audio --random-start false --record false \
   --screenshot "$out/mirror.jpg" --screenshot-delay "$seconds" \
-  --at "$((seconds > 3 ? seconds - 2 : 1))=vr status" > "$app_log" 2>&1 || true
+  --at "$((seconds > 3 ? seconds - 2 : 1))=vr status" > "$app_log" 2>&1 || code=$?
 
 fail=0
+# Regression (v4.38, the exit crash on Windows): the app ends the session
+# itself in its last frame and exits cleanly.
+[ "$code" = 0 ] || { echo "ocw-desktop exited with $code (see $app_log)"; fail=1; }
+grep -q "VR: session ended for the exit" "$app_log" || { echo "the session was not torn down at the exit"; fail=1; }
 grep -q "VR: .*Monado" "$app_log" || { echo "no OpenXR session with Monado (see $app_log)"; fail=1; }
 grep -q "VR is off" "$app_log" && { grep "VR is off" "$app_log"; fail=1; }
 grep -qE "frame [0-9.]+ ms" "$app_log" || { echo "no frame statistics from vr status"; fail=1; }
 [ -f "$out/mirror.jpg" ] || { echo "no mirror screenshot"; fail=1; }
+grep -q "screenshot of the left eye" "$app_log" || { echo "the screenshot was not the left eye"; fail=1; }
 if [ "$fail" = 0 ]; then
   echo "test-vr-monado: ok ($(grep -oE 'frame [0-9.]+ ms[^,]*' "$app_log" | tail -1))"
 fi

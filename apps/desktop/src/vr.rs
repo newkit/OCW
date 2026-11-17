@@ -6,14 +6,19 @@
 //! and says why. `--vr-sim` renders both eyes from a simulated head on the
 //! monitor (no headset, any build: screenshots, tests).
 //!
-//! Riding stays on the trainer, the keyboard and the gamepad. The console's
-//! `vr status | recentre | mirror [eye|both|chase] | reconnect`; `C`
-//! recentres.
+//! Riding stays on the trainer, the keyboard and the gamepad – the Touch
+//! controllers are one more gamepad (v4.38). All ride information is on
+//! the bike computer on the bar (no floating panel). The console's `vr
+//! status | recentre | mirror [eye|both|chase] | reconnect | computer size
+//! PERCENT | computer tilt DEG | look-down DEG`; `C` or both grips held
+//! recentre.
 
 use bevy::prelude::*;
 use clap::{Arg, Command};
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
+use ocw_render::vr::computer::ComputerSettings;
 use ocw_render::vr::{VrConfig, VrMirror, VrPlugin, VrState};
+use ocw_xr::computer::ComputerSetup;
 
 use crate::Args;
 
@@ -82,9 +87,11 @@ impl Start {
 #[derive(Resource, Debug, Clone)]
 pub struct VrUnavailable(pub String);
 
-/// After the app's plugins: the VR plugins and the console command.
-pub fn add(app: &mut App, start: Start) {
+/// After the app's plugins: the VR plugins and the console command;
+/// `look_down_deg`: `--vr-look-down`.
+pub fn add(app: &mut App, start: Start, look_down_deg: f32) {
     register_console(app);
+    let running = !matches!(start, Start::Off | Start::Unavailable(_));
     match start {
         Start::Off => {}
         Start::Sim => {
@@ -113,6 +120,9 @@ pub fn add(app: &mut App, start: Start) {
                 .add_systems(Update, fade_unavailable);
         }
     }
+    if running && look_down_deg != 0.0 {
+        app.world_mut().resource_mut::<VrState>().look_down_deg = look_down_deg.clamp(-90.0, 90.0);
+    }
 }
 
 /// `display.quality auto` is the `vr` preset while VR runs.
@@ -127,18 +137,76 @@ pub(crate) fn register_console(app: &mut App) {
     app.console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("vr")
-            .about("VR (spec §14 Phase 11): status, recentre (key C), mirror [eye|both|chase] (what the monitor shows), reconnect")
+            .about("VR (spec §14 Phase 11): status, recentre (key C, both grips), mirror [eye|both|chase] (what the monitor shows), reconnect, computer size PERCENT | tilt DEG (the bike computer), look-down DEG (screenshots)")
             .arg(
                 Arg::new("action")
-                    .value_parser(["status", "recentre", "mirror", "reconnect"])
+                    .value_parser(["status", "recentre", "mirror", "reconnect", "computer", "look-down"])
                     .default_value("status"),
             )
-            .arg(Arg::new("value").value_parser(VrMirror::CHOICES.to_vec())),
+            .arg(Arg::new("value"))
+            .arg(Arg::new("amount").allow_hyphen_values(true)),
         |world, m| {
             let action = m.get_one::<String>("action").map_or("status", String::as_str);
-            vr_command(world, action, m.get_one::<String>("value").map(String::as_str))
+            let value = m.get_one::<String>("value").map(String::as_str);
+            let amount = m.get_one::<String>("amount").map(String::as_str);
+            match action {
+                "computer" => computer_command(world, value, amount),
+                "look-down" => look_down_command(world, value),
+                _ => vr_command(world, action, value),
+            }
         },
     ));
+}
+
+/// `vr computer size PERCENT | tilt DEG` (the settings `vr.computer_size`,
+/// `vr.computer_tilt`): kept when VR is off, applied when it runs.
+fn computer_command(
+    world: &mut World,
+    what: Option<&str>,
+    amount: Option<&str>,
+) -> Result<String, String> {
+    let mut s = world
+        .get_resource::<ComputerSettings>()
+        .copied()
+        .unwrap_or_default();
+    let show = |s: &ComputerSettings| {
+        format!(
+            "bike computer: size {:.0} %, tilt {:+.0}° (toward the rider)",
+            s.setup.size * 100.0,
+            s.setup.tilt_deg
+        )
+    };
+    let Some(what) = what else {
+        return Ok(show(&s));
+    };
+    let n: f32 = amount
+        .ok_or("a number: vr computer size 275 | vr computer tilt -10")?
+        .trim_end_matches(['%', '°'])
+        .parse()
+        .map_err(|_| "a number")?;
+    s.setup = match what {
+        "size" => ComputerSetup::new(n, s.setup.tilt_deg),
+        "tilt" => ComputerSetup::new(s.setup.size * 100.0, n),
+        _ => return Err("size or tilt".into()),
+    };
+    world.insert_resource(s);
+    Ok(show(&s))
+}
+
+/// `vr look-down DEG`: the view turned down (screenshots of the bike
+/// computer).
+fn look_down_command(world: &mut World, value: Option<&str>) -> Result<String, String> {
+    let Some(mut state) = world.get_resource_mut::<VrState>() else {
+        return Ok("VR is off".into());
+    };
+    if let Some(v) = value {
+        let deg: f32 = v.trim_end_matches('°').parse().map_err(|_| "degrees")?;
+        state.look_down_deg = deg.clamp(-90.0, 90.0);
+    }
+    Ok(format!(
+        "looking down {:.0}° (0: the head as tracked)",
+        state.look_down_deg
+    ))
 }
 
 fn vr_command(world: &mut World, action: &str, value: Option<&str>) -> Result<String, String> {
@@ -156,10 +224,11 @@ fn vr_command(world: &mut World, action: &str, value: Option<&str>) -> Result<St
                 Ok("restarting to connect the headset".into())
             }
             // The setting is saved; it applies when VR runs.
-            "mirror" if value.is_some() => Ok(format!(
-                "mirror: {} (when VR runs)",
-                value.unwrap_or_default()
-            )),
+            "mirror" if value.is_some() => {
+                let v = value.unwrap_or_default();
+                VrMirror::parse(v).ok_or("eye, both or chase")?;
+                Ok(format!("mirror: {v} (when VR runs)"))
+            }
             _ => Ok(why),
         };
     }
@@ -254,7 +323,7 @@ mod tests {
     fn app(start: Start) -> App {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, ConsoleCorePlugin));
-        add(&mut app, start);
+        add(&mut app, start, 0.0);
         app
     }
 
@@ -330,5 +399,30 @@ mod tests {
         assert!(app.world().resource::<VrState>().recentre_now);
         let s = run(&mut app, "vr reconnect");
         assert!(s.contains("reconnects by itself"), "{s}");
+        let s = run(&mut app, "vr look-down 40");
+        assert!(s.contains("40°"), "{s}");
+        assert_eq!(app.world().resource::<VrState>().look_down_deg, 40.0);
+        let s = run(&mut app, "vr look-down 0");
+        assert!(s.contains(" 0°"), "{s}");
+    }
+
+    /// `vr computer size | tilt` (the settings) set the bike computer, in
+    /// their ranges.
+    #[test]
+    fn the_bike_computer_is_sized_and_tilted() {
+        let mut app = app(Start::Off);
+        let s = run(&mut app, "vr computer");
+        assert!(s.contains("size 275 %, tilt +0°"), "{s}");
+        let s = run(&mut app, "vr computer size 350");
+        assert!(s.contains("size 350 %"), "{s}");
+        let s = run(&mut app, "vr computer tilt -10");
+        assert!(s.contains("size 350 %, tilt -10°"), "{s}");
+        let s = run(&mut app, "vr computer size 900");
+        assert!(s.contains("size 400 %"), "{s}");
+        let c = app.world().resource::<ComputerSettings>();
+        assert_eq!(c.setup.size, 4.0);
+        assert_eq!(c.setup.tilt_deg, -10.0);
+        let s = run(&mut app, "vr computer size big");
+        assert!(!s.contains("size 400"), "{s}");
     }
 }

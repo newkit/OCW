@@ -20,12 +20,26 @@
 //! session is recreated on the same instance and device
 //! ([`XrRuntime::recreate_session`]); the swapchain's generation changes,
 //! so the renderer re-reads the images.
+//!
+//! **Controllers** ([`controls`], v4.38): one action set with an action per
+//! input of `ocw_xr::controllers` and its suggested bindings (Oculus
+//! Touch, the Khronos simple controller), attached to every session;
+//! [`MainHandle`] syncs it each frame ([`ControllerSource`]).
+//!
+//! **Teardown** (v4.38, the exit crash on the Quest 1 over Link): the app's
+//! last frame calls [`XrRuntime::shutdown`]: wait for the GPU, then drop the
+//! swapchain (the wrapped textures never own its images), the frame
+//! stream and the session – while the Vulkan device still lives. The
+//! render thread submits under [`Shared::frame`], so it never copies into
+//! a swapchain being destroyed.
 
+pub mod controls;
 pub mod vulkan;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use ocw_xr::controllers::{ControllerSource, ControllerState};
 use ocw_xr::frame::{FrameSink, FrameSource, FrameTiming};
 use ocw_xr::headset::{self, HeadsetProfile};
 use ocw_xr::projection::Fov;
@@ -117,20 +131,26 @@ struct Live {
 }
 
 struct Shared {
-    instance: xr::Instance,
     system: xr::SystemId,
     session_info: xr::vulkan::SessionCreateInfo,
-    device: wgpu::Device,
     format: ColorFormat,
     wgpu_format: wgpu::TextureFormat,
     extent: (u32, u32),
+    /// Held by the render thread for a whole frame submission (begin,
+    /// copy into the swapchain, end) and by the teardown.
+    frame: Mutex<()>,
     // Drop order (fields drop top to bottom): the stream and the waiter
-    // before the session.
+    // before the session, the session before the action set, all of them
+    // before the instance and the GPU device (the runtime's session uses
+    // the device until it is destroyed).
     stream: Mutex<Option<Stream>>,
     waiter: Mutex<Option<xr::FrameWaiter>>,
     live: Mutex<Option<Live>>,
+    controls: Option<controls::Controls>,
     /// Bumped by every new session (new swapchain images).
     generation: AtomicU64,
+    instance: xr::Instance,
+    device: wgpu::Device,
 }
 
 // SAFETY-free note: the raw Vulkan handles in `session_info` are plain
@@ -225,6 +245,16 @@ pub fn boot(opts: &BootOptions) -> Result<Booted, XrError> {
     );
     let max = (v.max_image_rect_width, v.max_image_rect_height);
     let extent = eye_extent(recommended, max, opts.render_scale);
+    // The action set and its bindings come before the session (they are
+    // the instance's; each session attaches them). Without them the
+    // controllers do nothing – the first headset run (2026-11-17) had none.
+    let controls = match controls::Controls::new(&instance) {
+        Ok(c) => Some(c),
+        Err(e) => {
+            tracing::warn!("VR: no controller actions: {e}");
+            None
+        }
+    };
     let dev = vulkan::create_device(&instance, system, &opts.app_name)?;
     let (session, waiter, stream) = vulkan::create_session(&instance, system, &dev.session_info)?;
     let formats = session.enumerate_swapchain_formats().map_err(xr_error)?;
@@ -234,17 +264,19 @@ pub fn boot(opts: &BootOptions) -> Result<Booted, XrError> {
     })?;
     let wgpu_format = vulkan::wgpu_format(format);
     let shared = Arc::new(Shared {
-        instance,
         system,
         session_info: dev.session_info,
-        device: dev.device.clone(),
         format,
         wgpu_format,
         extent,
+        frame: Mutex::new(()),
         stream: Mutex::new(None),
         waiter: Mutex::new(None),
         live: Mutex::new(None),
+        controls,
         generation: AtomicU64::new(0),
+        instance,
+        device: dev.device.clone(),
     });
     let refresh_hz = shared.install(session, waiter, stream)?;
     Ok(Booted {
@@ -296,6 +328,11 @@ impl Shared {
                 mip_count: 1,
             })
             .map_err(xr_error)?;
+        if let Some(c) = &self.controls
+            && let Err(e) = c.attach(&session)
+        {
+            tracing::warn!("VR: the controllers' actions cannot be attached: {e}");
+        }
         let images = swapchain.enumerate_images().map_err(xr_error)?;
         let textures = vulkan::wrap_images(&self.device, &images, self.wgpu_format, self.extent)?;
         let refresh = if self.instance.exts().fb_display_refresh_rate.is_some() {
@@ -322,10 +359,28 @@ impl Shared {
         Ok(refresh)
     }
 
+    /// Destroys the session and what hangs on it, in order: no frame is in
+    /// flight on the render thread (`frame`), the GPU has finished with the
+    /// swapchain images, then the swapchain and the frame stream, the
+    /// frame waiter, the space and the session. The device and the
+    /// instance stay (a new session may follow).
     fn drop_session(&self) {
+        let _frame = lock(&self.frame);
+        if lock(&self.stream).is_some()
+            && let Err(e) = self.device.poll(wgpu::PollType::wait_indefinitely())
+        {
+            tracing::warn!("VR: waiting for the GPU before the teardown: {e}");
+        }
         *lock(&self.stream) = None;
         *lock(&self.waiter) = None;
         *lock(&self.live) = None;
+    }
+}
+
+impl Drop for Shared {
+    fn drop(&mut self) {
+        // Whatever drops the last handle: the session goes first.
+        self.drop_session();
     }
 }
 
@@ -390,6 +445,11 @@ impl XrRuntime for MainHandle {
 
     fn request_exit(&mut self) -> Result<(), XrError> {
         self.with_session(|l| l.session.request_exit().map_err(xr_error))
+    }
+
+    fn shutdown(&mut self) {
+        self.shared.drop_session();
+        tracing::info!("VR: session torn down (swapchain, frame stream, session) before the GPU device");
     }
 
     fn recreate_session(&mut self) -> Result<(), XrError> {
@@ -498,6 +558,29 @@ impl FrameSource for MainHandle {
     }
 }
 
+impl ControllerSource for MainHandle {
+    fn sync_controllers(&mut self) -> Result<Option<ControllerState>, XrError> {
+        let Some(c) = &self.shared.controls else {
+            return Ok(None);
+        };
+        self.with_session(|l| c.sync(&l.session).map(Some))
+    }
+}
+
+impl MainHandle {
+    /// The interaction profile the runtime chose for each hand (`vr
+    /// status`; empty strings before the first focus).
+    pub fn controller_profiles(&self) -> [String; 2] {
+        let Some(c) = &self.shared.controls else {
+            return Default::default();
+        };
+        lock(&self.shared.live)
+            .as_ref()
+            .map(|l| c.profiles(&self.shared.instance, &l.session))
+            .unwrap_or_default()
+    }
+}
+
 /// The render thread's handle.
 #[derive(Clone)]
 pub struct RenderHandle {
@@ -514,6 +597,11 @@ impl RenderHandle {
             .map(|s| s.textures.clone())
             .unwrap_or_default();
         (g, images)
+    }
+
+    /// Held for a whole frame submission: the teardown waits for it.
+    pub fn frame_guard(&self) -> MutexGuard<'_, ()> {
+        lock(&self.shared.frame)
     }
 
     pub fn format(&self) -> wgpu::TextureFormat {

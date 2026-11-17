@@ -591,6 +591,7 @@ fn rig_of(d: &Design, f: &Frame) -> BikeRig {
         tyre_crown: tyre_crown(d),
         wheelbase: f.rear_hub.z - f.front_hub.z,
         aero_bars: d.bars == Bars::Aero,
+        bar_clamp: f.bar_clamp,
     }
 }
 

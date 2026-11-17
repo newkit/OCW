@@ -1,6 +1,6 @@
 [package]
 name = "ocw-xr"
-description = "VR logic for Open Cycling World (spec §14 Phase 11): poses, projections, recentre, the first-person anchor, the HUD panel, the session state machine, swapchain formats, headset profiles"
+description = "VR logic for Open Cycling World (spec §14 Phase 11): poses, projections, recentre, the first-person anchor, the bike computer, the controllers' bindings, the session state machine, swapchain formats, headset profiles"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

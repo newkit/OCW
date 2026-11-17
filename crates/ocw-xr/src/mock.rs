@@ -4,6 +4,7 @@
 
 use std::collections::VecDeque;
 
+use crate::controllers::{ControllerSource, ControllerState};
 use crate::frame::{FrameSink, FrameSource, FrameTiming};
 use crate::projection::Fov;
 use crate::session::{RuntimeEvent, XrError, XrRuntime};
@@ -23,6 +24,9 @@ pub enum Call {
     WaitImage,
     ReleaseImage,
     EndFrame { layer: bool },
+    SyncActions,
+    /// The session's teardown (`XrRuntime::shutdown`).
+    Shutdown,
 }
 
 #[derive(Debug, Clone)]
@@ -52,6 +56,10 @@ pub struct MockRuntime {
     pub fov: Fov,
     /// The display time `end_frame` was last called with.
     pub ended_at: Option<i64>,
+    /// What `sync_controllers` reports (`None`: no controllers).
+    pub controllers: Option<ControllerState>,
+    /// After `shutdown` every call fails (`SessionLost`).
+    pub shut_down: bool,
 }
 
 impl Default for MockRuntime {
@@ -71,12 +79,17 @@ impl Default for MockRuntime {
             ipd_m: DEFAULT_IPD_M,
             fov: QUEST1_LEFT_FOV,
             ended_at: None,
+            controllers: None,
+            shut_down: false,
         }
     }
 }
 
 impl MockRuntime {
     fn frame_call(&mut self, c: Call) -> Result<(), XrError> {
+        if self.shut_down {
+            return Err(XrError::SessionLost);
+        }
         if let Some(e) = self.frame_error.take() {
             return Err(e);
         }
@@ -114,6 +127,21 @@ impl XrRuntime for MockRuntime {
     fn recreate_session(&mut self) -> Result<(), XrError> {
         self.calls.push(Call::RecreateSession);
         self.recreate_results.pop_front().unwrap_or(Ok(()))
+    }
+
+    fn shutdown(&mut self) {
+        self.calls.push(Call::Shutdown);
+        self.shut_down = true;
+    }
+}
+
+impl ControllerSource for MockRuntime {
+    fn sync_controllers(&mut self) -> Result<Option<ControllerState>, XrError> {
+        if self.shut_down {
+            return Err(XrError::SessionLost);
+        }
+        self.calls.push(Call::SyncActions);
+        Ok(self.controllers)
     }
 }
 
@@ -226,5 +254,46 @@ mod tests {
         m.update(&mut rt, 0.0);
         assert_eq!(*m.phase(), Phase::Exited);
         assert!(!m.frame_loop());
+    }
+
+    /// Regression (2026-11-17, Weela: 0xC0000005 after "rider left"): the
+    /// app's exit tears the session down itself, in its last frame, and
+    /// nothing touches the session afterwards.
+    #[test]
+    fn the_exit_tears_the_session_down_once() {
+        let mut rt = MockRuntime::default();
+        let mut m = SessionMachine::new();
+        rt.events
+            .push_back(RuntimeEvent::State(RuntimeState::Ready));
+        rt.events
+            .push_back(RuntimeEvent::State(RuntimeState::Focused));
+        m.update(&mut rt, 0.0);
+        assert!(m.frame_loop());
+        m.shutdown(&mut rt);
+        assert_eq!(*m.phase(), Phase::Exited);
+        assert!(!m.frame_loop(), "no frames after the teardown");
+        let tail: Vec<Call> = rt.calls.iter().rev().take(2).rev().copied().collect();
+        assert_eq!(tail, [Call::RequestExit, Call::Shutdown]);
+        assert_eq!(rt.wait_frame(), Err(XrError::SessionLost));
+        assert_eq!(rt.sync_controllers(), Err(XrError::SessionLost));
+        // A second exit does nothing more; reconnects stop.
+        m.shutdown(&mut rt);
+        m.update(&mut rt, 10.0);
+        assert!(!rt.calls.contains(&Call::RecreateSession));
+        // Without VR there is nothing to tear down.
+        let mut rt = MockRuntime::default();
+        let mut m = SessionMachine::unavailable(XrError::NoHeadset);
+        m.shutdown(&mut rt);
+        assert!(rt.calls.is_empty());
+    }
+
+    #[test]
+    fn the_mock_reports_its_controllers() {
+        let mut rt = MockRuntime::default();
+        assert_eq!(rt.sync_controllers(), Ok(None));
+        let s = ControllerState::at_rest(true);
+        rt.controllers = Some(s);
+        assert_eq!(rt.sync_controllers(), Ok(Some(s)));
+        assert_eq!(rt.calls.last(), Some(&Call::SyncActions));
     }
 }

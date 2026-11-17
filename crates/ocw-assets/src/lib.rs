@@ -25,6 +25,7 @@
 pub mod anim;
 pub mod bikes;
 pub mod clothing;
+pub mod computer;
 #[cfg(feature = "tools")]
 pub mod convert;
 pub mod export;

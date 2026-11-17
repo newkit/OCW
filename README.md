@@ -1228,8 +1228,9 @@ Then start the app: the left stick steers, the triggers ride and stop (see
 
 The first VR step (spec §14 Phase 11, X1): the headset is a **viewing device
 of the desktop app** – you see the ride in stereo from the saddle, with head
-tracking; you still ride with the trainer, the keyboard and the gamepad (no VR
-controllers or VR menus yet). The monitor keeps a mirror. VR needs the app
+tracking; you still ride with the trainer, the keyboard and the gamepad – the
+Touch controllers work as one more gamepad (no VR menus yet). All ride
+information is on a bike computer on the handlebar. The monitor keeps a mirror. VR needs the app
 **built with VR** (`--features vr`) and an **OpenXR runtime** with a headset;
 without them the app runs as always and says why at the top of the screen.
 
@@ -1245,11 +1246,13 @@ headset is a Quest 1):
    ```powershell
    cargo build --release -p ocw-desktop --features vr
    ```
-4. Put `openxr_loader.dll` (Khronos OpenXR loader, Apache-2.0: the `x64/bin`
-   folder of `openxr_loader_windows-*.zip` from the
-   [OpenXR-SDK-Source releases](https://github.com/KhronosGroup/OpenXR-SDK-Source/releases))
-   next to `ocw-desktop.exe` – the Link app has the runtime, apps bring the
-   loader.
+4. Put `openxr_loader.dll` (the official Khronos OpenXR loader 1.1.65,
+   Apache-2.0) next to `ocw-desktop.exe` – the Link app has the runtime, apps
+   bring the loader. The Windows release zip carries it (with
+   `openxr_loader.LICENSE.txt`); for your own build,
+   `scripts/fetch-openxr-loader.sh target/release` fetches it from the
+   [OpenXR-SDK-Source release](https://github.com/KhronosGroup/OpenXR-SDK-Source/releases/tag/release-1.1.65)
+   and checks its SHA-256.
 5. Start the ride with the headset:
    ```powershell
    target\release\ocw-desktop.exe --vr
@@ -1262,10 +1265,17 @@ and a runtime – SteamVR with ALVR for a Quest, or Monado – and set it active
 (`~/.config/openxr/1/active_runtime.json`, or `XR_RUNTIME_JSON=…`), then
 `ocw-desktop --vr` from a `--features vr` build.
 
-**In VR:** `C` recentres (look straight ahead, press `C`: that is now the
-rider's eye on the bike; it also recentres by itself after the head stayed
-half a metre away for 5 s). A panel below the road ahead shows power, speed,
-cadence, heart rate, gradient, distance and time. The view keeps the horizon
+**In VR:** `C` – or both grips of the Touch controllers held for a moment –
+recentres (look straight ahead: that is now the rider's eye on the bike; it
+also recentres by itself after the head stayed half a metre away for 5 s).
+Look down at the **bike computer** on the out-front mount ahead of the bar:
+the clock and the weather, power, speed, cadence, heart rate, gradient,
+distance and time, the next turn, the elevation profile ahead and the
+messages; *Settings → Display → Graphics → VR bike computer size / tilt*
+(`vr computer size 275`, `vr computer tilt -10`). The **Touch controllers**
+are a gamepad: ☰ opens the menu, the left stick steers and moves through the
+menu, A confirms (autodrive), B goes back (U-turn), the right trigger is
+faster, the left trigger stop. The view keeps the horizon
 level in corners and on climbs. The console's `vr status` shows the session,
 the headset, the IPD and the frame times (time per frame against the
 headset's 13.9 ms at 72 Hz, the latency, missed frames); `vr mirror eye|both|chase`
@@ -1275,8 +1285,10 @@ away. The quality preset `vr` (`quality vr`, picked by `auto` in VR) trims
 shadows, view distance and trees for the headset's frame rate.
 
 **Without a headset:** `ocw-desktop --vr-sim` renders both eyes from a
-simulated head that looks around, side by side on the monitor, with the HUD
-panel – every build, no OpenXR needed (screenshots, tests).
+simulated head that looks around, side by side on the monitor, with the bike
+computer – every build, no OpenXR needed (screenshots, tests). A screenshot in
+a headset session (`--screenshot`) is the left eye; `--vr-look-down 45` (or
+`vr look-down 45`) turns the view down to the bike computer for it.
 
 ## Riding modes
 
@@ -1895,7 +1907,8 @@ event status | event cancel | event dismiss
 | `--no-audio` | No sound: open no audio output (frame capture opens none anyway; videos still get the mixer's sound) |
 | `--echo-bot` | The voice echo test: an Echo rider on the road plays your microphone back, delayed, when you are near it (`voice.echo`, see *Voice chat*) |
 | `--vr` | Ride in a VR headset over OpenXR (the `vr` build; see *Riding in VR*); without a runtime or headset the app runs as before and says why (`vr.enabled`) |
-| `--vr-sim` | VR without a headset: both eye views from a simulated head side by side, with the HUD panel (any build) |
+| `--vr-sim` | VR without a headset: both eye views from a simulated head side by side, with the bike computer (any build) |
+| `--vr-look-down DEG` | VR: turn the view down (the bike computer in a screenshot; in a worn headset it tilts the world) |
 | `--no-vsync` | Draw as fast as possible instead of waiting for the display's refresh (benchmarks) |
 | `--max-fps N` | Draw at most N frames per second (with `--no-vsync`: a steady rate even where the display gives no refresh, e.g. on a locked screen) |
 | `--log-fps S` | Log the real render rate every S seconds (`render rate fps=… worst_ms=…`; wall clock, also during `--capture`) |
@@ -3926,6 +3939,10 @@ Third-party assets keep their own licences, listed next to them:
   [Poly Haven](https://polyhaven.com) (Rob Tuytel, Amal Kumar, Dimitrios
   Savva, Dario Barresi, Charlotte Baglioni); every material with its author and page in the manifest and in
   `CREDITS.md`.
+- The Khronos OpenXR loader `openxr_loader.dll` 1.1.65 in the Windows zip
+  (beside `ocw-desktop.exe`, for VR): Apache-2.0, © The Khronos Group Inc.;
+  its licence is `openxr_loader.LICENSE.txt` next to it
+  (`scripts/fetch-openxr-loader.sh`, pinned by version and SHA-256).
 - UI font Fira Mono (© The Mozilla Foundation and Telefonica S.A.), compiled
   into `ocw-desktop`: SIL Open Font License 1.1, see
   [`crates/ocw-render/assets/fonts/`](crates/ocw-render/assets/fonts/README.md).

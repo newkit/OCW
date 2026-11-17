@@ -14,7 +14,10 @@
 //!   head offset.
 //! - [`anchor`]: the rider's first-person anchor on the bike (horizon
 //!   lock) and how the tracked views become world cameras.
-//! - [`hud`]: the fixed HUD panel in front of the rider.
+//! - [`computer`]: the bike computer on the out-front mount: where it
+//!   sits on every bar, its size and tilt, and whether it is readable.
+//! - [`controllers`]: the Touch controllers' bindings and their map onto
+//!   a gamepad (and the recentre gesture).
 //! - [`session`]: the session state machine (idle → ready → focused →
 //!   stopping → lost, reconnect) over a mockable [`session::XrRuntime`].
 //! - [`frame`]: the frame loop's order of calls and its timing statistics
@@ -25,9 +28,10 @@
 //! - [`mock`]: an in-memory runtime for tests (no headset, no OpenXR).
 
 pub mod anchor;
+pub mod computer;
+pub mod controllers;
 pub mod frame;
 pub mod headset;
-pub mod hud;
 pub mod mock;
 pub mod projection;
 pub mod recentre;

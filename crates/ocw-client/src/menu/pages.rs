@@ -1245,6 +1245,8 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             // VR (spec §14 Phase 11, X1): the headset switch and the mirror.
             setting_row(settings, "vr.enabled", "VR headset (next start)"),
             setting_row(settings, "vr.mirror", "VR mirror"),
+            setting_row(settings, "vr.computer_size", "VR bike computer size"),
+            setting_row(settings, "vr.computer_tilt", "VR bike computer tilt"),
             // The ride photographer (spec §2.11): photos of the ride.
             setting_row(settings, "photographer.enabled", "Ride photographer"),
         ],

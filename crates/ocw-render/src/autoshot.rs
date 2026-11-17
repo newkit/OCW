@@ -44,13 +44,34 @@ type ShownWindow = (
 );
 
 /// What a screenshot needs: its time stamp and build label, and where to
-/// take it from (the window, or the VR eyes when the window has no surface).
+/// take it from: the left eye in a headset session (v4.38: the first run on
+/// the Quest 1 saved the window, the monitor's chase mirror), or when the
+/// window has no surface; the window otherwise (`--vr-sim` shows both
+/// eyes there).
 #[derive(bevy::ecs::system::SystemParam)]
 struct ShotSource<'w, 's> {
     now: Res<'w, MediaNow>,
     label: Option<Res<'w, VersionLabel>>,
     eyes: Option<Res<'w, crate::vr::EyeImages>>,
+    vr: Option<Res<'w, crate::vr::VrConfig>>,
     shown: Query<'w, 's, (), ShownWindow>,
+}
+
+/// Where the screenshot comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShotFrom {
+    Window,
+    LeftEye,
+}
+
+/// The rule: a headset's session shoots the left eye; so does VR on a
+/// window without a surface (else the capture never comes).
+pub fn shot_from(eyes: bool, headset: bool, window_shown: bool) -> ShotFrom {
+    if eyes && (headset || !window_shown) {
+        ShotFrom::LeftEye
+    } else {
+        ShotFrom::Window
+    }
 }
 
 fn take_screenshot_and_exit(
@@ -68,6 +89,7 @@ fn take_screenshot_and_exit(
         now,
         label,
         eyes,
+        vr,
         shown,
     } = src;
     if !run.requested && time.elapsed_secs_f64() >= shot.delay_s {
@@ -77,8 +99,12 @@ fn take_screenshot_and_exit(
         // surface guard, `Verdict::Headless`): the window has no surface, so
         // the left eye is the picture (else the capture never comes and the
         // app waits).
-        let source = match (&eyes, shown.is_empty()) {
-            (Some(eyes), true) => Screenshot::image(eyes.eyes[0].clone()),
+        let headset = vr.is_some_and(|c| c.mode == crate::vr::VrMode::Headset);
+        let source = match (&eyes, shot_from(eyes.is_some(), headset, !shown.is_empty())) {
+            (Some(eyes), ShotFrom::LeftEye) => {
+                info!("screenshot of the left eye");
+                Screenshot::image(eyes.eyes[0].clone())
+            }
             _ => Screenshot::primary_window(),
         };
         commands
@@ -100,5 +126,24 @@ fn take_screenshot_and_exit(
             info!("screenshot saved, exiting");
             exit.write(AppExit::Success);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression (2026-11-17, Weela): a headset session's screenshot is
+    /// the left eye, not the window's mirror.
+    #[test]
+    fn a_headset_session_shoots_the_left_eye() {
+        assert_eq!(shot_from(true, true, true), ShotFrom::LeftEye);
+        assert_eq!(shot_from(true, true, false), ShotFrom::LeftEye);
+        // `--vr-sim`: the window (both eyes), unless it has no surface.
+        assert_eq!(shot_from(true, false, true), ShotFrom::Window);
+        assert_eq!(shot_from(true, false, false), ShotFrom::LeftEye);
+        // No VR: the window.
+        assert_eq!(shot_from(false, false, true), ShotFrom::Window);
+        assert_eq!(shot_from(false, true, false), ShotFrom::Window);
     }
 }

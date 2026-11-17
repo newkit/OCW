@@ -247,7 +247,8 @@ pub fn create_session(
 > {
     // SAFETY: the handles are the live instance / device made for this
     // system by `create_device`; they outlive the session (the session is
-    // dropped before the wgpu device, see `Shared`).
+    // destroyed before the wgpu device: `Shared::teardown` and the field
+    // order of `Shared`).
     unsafe { instance.create_session::<xr::Vulkan>(system, info) }.map_err(crate::xr_error)
 }
 
@@ -261,6 +262,12 @@ pub fn wgpu_format(f: ocw_xr::swapchain::ColorFormat) -> wgpu::TextureFormat {
         C::Rgba8Unorm => wgpu::TextureFormat::Rgba8Unorm,
         C::Bgra8Unorm => wgpu::TextureFormat::Bgra8Unorm,
     }
+}
+
+/// The drop callback of a swapchain image: the runtime owns it, so
+/// wgpu-hal must not destroy it (see [`wrap_images`]).
+pub fn runtime_owned() -> wgpu_hal::DropCallback {
+    Box::new(|| {})
 }
 
 /// Wraps the swapchain's images (two array layers, one per eye) as wgpu
@@ -285,9 +292,13 @@ pub fn wrap_images(
         .map(|&image| {
             // SAFETY: a VkImage of the runtime's swapchain, created with
             // this size, format, 2 layers and colour / transfer usage; it
-            // stays valid until the swapchain is destroyed, which happens
-            // only after these textures are dropped (`Stream`). The memory
-            // is the runtime's (`External`, no drop callback).
+            // stays valid until the swapchain is destroyed, and nothing
+            // renders into it after that (`Shared::frame` and
+            // `Shared::teardown`). The image and its memory stay the
+            // runtime's: the drop callback tells wgpu-hal it does not own
+            // them (without one it calls `vkDestroyImage` on the runtime's
+            // image – a double free when the swapchain goes, the exit crash
+            // of 2026-11-17).
             let raw = unsafe {
                 hal.texture_from_raw(
                     vk::Image::from_raw(image),
@@ -302,7 +313,7 @@ pub fn wrap_images(
                         memory_flags: wgpu_hal::MemoryFlags::empty(),
                         view_formats: vec![],
                     },
-                    None,
+                    Some(runtime_owned()),
                     wgpu_hal::vulkan::TextureMemory::External,
                 )
             };
