@@ -8,8 +8,9 @@
 //! wherever it comes above the hem, and inside the hem's outline just
 //! under it – the bib's torso part (on the pelvis) in every pose of the
 //! pose system ([`poses`]), the legs' tops standing ([`Reach`]) – for
-//! every body build; the back pockets lie on the shell, outside it,
-//! above the hem.
+//! every body: the seven shapes on each base body A / B / C and the
+//! oldest age's fuller middle ([`bodies`], spec §14 Phase 4, 4N); the
+//! back pockets lie on the shell, outside it, above the hem.
 //!
 //! The jersey's shell is the loft of [`crate::rider::JERSEY_SHELL`] with
 //! the far or near model's number of sides ([`crate::rider::jersey_sides`]):
@@ -17,7 +18,7 @@
 //! six-sided bib inside an eight-sided jersey is measured as drawn.
 
 use glam::{Affine3A, Vec2, Vec3};
-use ocw_core::{BodyBuild, ProfileId};
+use ocw_core::{Character, ProfileId};
 
 use crate::anim::{self, Riding};
 use crate::model::Model;
@@ -63,6 +64,32 @@ pub fn inside_distance(poly: &[Vec2], p: Vec2) -> f32 {
         d = d.min(n.dot(p - a));
     }
     d
+}
+
+/// The bodies the fit is checked for (spec §14 Phase 4, 4N): every shape
+/// (Q6) on every base body (Q6b) in the 30s, and each base body's
+/// normal and obese shapes at 70+ (Q12: the fuller middle).
+pub fn bodies() -> Vec<Character> {
+    use ocw_core::{Age, BaseBody, BodyShape};
+    let mut out = Vec::new();
+    for base in BaseBody::ALL {
+        for shape in BodyShape::ALL {
+            out.push(Character {
+                base,
+                shape,
+                ..Character::default()
+            });
+        }
+        for shape in [BodyShape::Normal, BodyShape::Obese] {
+            out.push(Character {
+                base,
+                shape,
+                age: Age::Seventies,
+                ..Character::default()
+            });
+        }
+    }
+    out
 }
 
 /// One pose to check, with its name for messages.
@@ -148,6 +175,14 @@ pub fn poses(rider_rig: &RiderRig) -> Vec<NamedPose> {
             pose: pose::idle(rider_rig, t),
         });
     }
+    // The oldest age's rounder shoulders (spec §14 Phase 4, 4N N3).
+    for i in 0..30 {
+        let t = i as f32;
+        out.push(NamedPose {
+            name: format!("idle 70+ t {t}"),
+            pose: pose::idle_aged(rider_rig, t, ocw_core::Age::Seventies.idle_hunch()),
+        });
+    }
     for crouch in [false, true] {
         for holding in [Holding::Camera, Holding::Remote] {
             for pitch in [-0.9, 0.0, 1.1] {
@@ -225,24 +260,26 @@ fn layer_nodes(m: &Model, slot: &str, reach: Reach) -> Vec<(usize, usize)> {
 
 /// The posed model's points of `parts`, in the torso's rest frame with
 /// the torso's girth taken out (so they compare with the unscaled shell).
+/// Each part is scaled as drawn: its girth about its centre
+/// ([`rider::girth_transform`]).
 fn in_torso_frame(
     rest: &Model,
     worlds: &[Affine3A],
     torso: usize,
-    build: BodyBuild,
+    body: &Character,
     parts: &[(usize, usize)],
 ) -> Vec<(usize, Vec3)> {
-    let g = build.girth();
+    let g = rider::girth(rest, torso, body);
     let to_torso = worlds[torso].inverse();
     let torso_rest = rest.world(torso);
     let mut out = Vec::new();
     for &(i, k) in parts {
         let w = worlds[i];
-        let s = rider::girth(rest, i, build);
+        let (s, t) = rider::girth_transform(rest, i, body);
         for v in &rest.nodes[i].primitives[k].positions {
-            let world = w.transform_point3(Vec3::from(*v) * s);
+            let world = w.transform_point3(Vec3::from(*v) * s + t);
             let local = to_torso.transform_point3(world);
-            let local = Vec3::new(local.x / g, local.y, local.z / g);
+            let local = Vec3::new(local.x / g.x, local.y, local.z / g.z);
             out.push((i, torso_rest.transform_point3(local)));
         }
     }
@@ -250,19 +287,19 @@ fn in_torso_frame(
 }
 
 /// How far the bib stays inside the jersey (the smallest clearance of
-/// any bib point above the jersey's hem) in `pose` for `build`; `None`
+/// any bib point above the jersey's hem) in `pose` for `body`; `None`
 /// when no bib point comes above the hem.
 pub fn bib_under_jersey(
     m: &Model,
     detail: Detail,
-    build: BodyBuild,
+    body: &Character,
     reach: Reach,
     pose: &NamedPose,
 ) -> Option<Worst> {
     bib_under_jersey_at(
         m,
         detail,
-        build,
+        body,
         reach,
         &posed_worlds(m, &pose.pose),
         &pose.name,
@@ -292,7 +329,7 @@ pub fn posed_worlds(m: &Model, pose: &Pose) -> Vec<Affine3A> {
 pub fn bib_under_jersey_at(
     m: &Model,
     detail: Detail,
-    build: BodyBuild,
+    body: &Character,
     reach: Reach,
     worlds: &[Affine3A],
     pose: &str,
@@ -300,8 +337,8 @@ pub fn bib_under_jersey_at(
     let torso = m.node(nodes::TORSO)?;
     let bib = layer_nodes(m, "shorts", reach);
     let rest_worlds: Vec<Affine3A> = (0..m.nodes.len()).map(|i| m.world(i)).collect();
-    let rest = in_torso_frame(m, &rest_worlds, torso, build, &bib);
-    let posed = in_torso_frame(m, worlds, torso, build, &bib);
+    let rest = in_torso_frame(m, &rest_worlds, torso, body, &bib);
+    let posed = in_torso_frame(m, worlds, torso, body, &bib);
     let mut worst: Option<Worst> = None;
     for ((_, r), (i, p)) in rest.into_iter().zip(posed) {
         // The bib the jersey covers at rest (and the band just under the
@@ -361,16 +398,33 @@ mod tests {
     use super::*;
 
     /// The worst of `check` over both levels of detail and every body
-    /// build, as failure messages (empty: all clear by `min`).
+    /// ([`bodies`]: each shape on each base body, the 70+), as failure
+    /// messages (empty: all clear by `min`). The bodies run in parallel.
     fn failures(
-        check: impl Fn(&Model, Detail, BodyBuild) -> Option<Worst>,
+        check: impl Fn(&Model, Detail, &Character) -> Option<Worst> + Sync,
         min: f32,
     ) -> Vec<String> {
         let mut out = Vec::new();
         for detail in [Detail::High, Detail::Low] {
             let m = rider::build(detail);
-            for build in BodyBuild::ALL {
-                let w = check(&m, detail, build).expect("the bib comes up under the jersey");
+            let found: Vec<(Character, Worst)> = std::thread::scope(|s| {
+                let jobs: Vec<_> = bodies()
+                    .into_iter()
+                    .map(|b| {
+                        let (m, check) = (&m, &check);
+                        s.spawn(move || {
+                            let w =
+                                check(m, detail, &b).expect("the bib comes up under the jersey");
+                            (b, w)
+                        })
+                    })
+                    .collect();
+                jobs.into_iter()
+                    .map(|j| j.join().expect("checked"))
+                    .collect()
+            });
+            for (body, w) in found {
+                let build = (body.base, body.shape, body.age);
                 if w.clearance < min {
                     out.push(format!(
                         "{detail:?} {build:?}: the bib is {:.1} mm from the jersey's surface \
@@ -407,11 +461,11 @@ mod tests {
     #[test]
     fn the_bib_stays_under_the_jersey_in_every_pose() {
         let f = failures(
-            |m, detail, build| {
+            |m, detail, body| {
                 let rig = RiderRig::from_model(m).unwrap();
                 let mut worst = None;
                 for p in poses(&rig) {
-                    let w = bib_under_jersey(m, detail, build, Reach::Torso, &p);
+                    let w = bib_under_jersey(m, detail, body, Reach::Torso, &p);
                     worst = worse(worst, w);
                 }
                 worst
@@ -442,11 +496,11 @@ mod tests {
             );
         }
         let f = failures(
-            |m, detail, build| {
+            |m, detail, body| {
                 let rig = RiderRig::from_model(m).unwrap();
                 let rest: Vec<Affine3A> = (0..m.nodes.len()).map(|i| m.world(i)).collect();
                 let mut worst =
-                    bib_under_jersey_at(m, detail, build, Reach::WithLegs, &rest, "rest");
+                    bib_under_jersey_at(m, detail, body, Reach::WithLegs, &rest, "rest");
                 for i in 0..120 {
                     let p = NamedPose {
                         name: format!("idle t {}", i as f32 * 0.25),
@@ -454,7 +508,7 @@ mod tests {
                     };
                     worst = worse(
                         worst,
-                        bib_under_jersey(m, detail, build, Reach::WithLegs, &p),
+                        bib_under_jersey(m, detail, body, Reach::WithLegs, &p),
                     );
                 }
                 worst
@@ -496,7 +550,7 @@ mod tests {
         let w = bib_under_jersey_at(
             &m,
             Detail::High,
-            BodyBuild::Medium,
+            &Character::default(),
             Reach::Torso,
             &rest,
             "rest",

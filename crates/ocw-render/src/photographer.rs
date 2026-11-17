@@ -135,14 +135,18 @@ pub fn look_of(seed: u64) -> (RiderLook, Vec<String>) {
     };
     let c = &mut look.character;
     c.height_cm = 158 + pick(3, 32) as u16;
-    c.build = match pick(4, 3) {
-        0 => ocw_core::BodyBuild::Slim,
-        1 => ocw_core::BodyBuild::Medium,
-        _ => ocw_core::BodyBuild::Strong,
-    };
+    c.shape = ocw_core::BodyShape::ALL[1 + pick(4, 5) as usize];
+    c.base = ocw_core::BaseBody::ALL[pick(11, 3) as usize];
+    c.age = ocw_core::Age::ALL[pick(12, 6) as usize];
+    // (`pick` shifts the seed by 5 bits per step: 12 is the last.)
     c.skin = pick(5, ocw_core::character::SKIN_TONES.len() as u64) as u8;
     c.hair = pick(6, ocw_core::character::HAIR_STYLES.len() as u64) as u8;
-    c.face = pick(7, ocw_core::character::FACES.len() as u64) as u8;
+    // Facial hair (4N N6): a moustache or a beard now and then.
+    match pick(7, 6) {
+        0 => c.moustache = 1 + pick(0, 5) as u8,
+        1 => c.beard = 1 + pick(0, 7) as u8,
+        _ => {}
+    }
     c.glasses = (pick(8, 3) == 0) as u8;
     c.hair_colour = ocw_core::character::HAIR_COLOURS
         [pick(9, ocw_core::character::HAIR_COLOURS.len() as u64) as usize];
@@ -285,7 +289,7 @@ fn spawn_person(
         let e = commands
             .spawn((
                 Transform {
-                    translation: node.translation,
+                    translation: ocw_assets::rider::node_translation(model, i, &c),
                     rotation: node.rotation,
                     scale: node.scale,
                 },
@@ -293,7 +297,7 @@ fn spawn_person(
                 ChildOf(parent),
             ))
             .id();
-        let girth = ocw_assets::rider::girth(model, i, c.build);
+        let (girth, shift) = ocw_assets::rider::girth_transform(model, i, &c);
         for p in &node.primitives {
             let m = &model.materials[p.material];
             let colour = crate::riders::tint_color(&m.name, m.color, &colours);
@@ -304,7 +308,7 @@ fn spawn_person(
                     perceptual_roughness: 0.8,
                     ..default()
                 })),
-                Transform::from_scale(girth),
+                Transform::from_translation(shift).with_scale(girth),
                 ChildOf(e),
             ));
         }

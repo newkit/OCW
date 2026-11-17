@@ -166,11 +166,13 @@ fn frame(
     }
     for notice in notices {
         match notice {
-            Notice::Joined { rider_id, route_id } if remote => {
-                info!(rider = %rider_id, route = %route_id, "joined the remote server");
-            }
             Notice::Joined { rider_id, route_id } => {
-                info!(rider = %rider_id, route = %route_id, "joined the local server");
+                let at = if remote { "remote" } else { "local" };
+                info!(rider = %rider_id, route = %route_id, "joined the {at} server");
+                // The server replaced the name (spec §14 Phase 4, 4N N1).
+                if let Some(note) = session.0.client.name_note() {
+                    console.print(note.to_string());
+                }
             }
             Notice::Rejected(reason) => {
                 error!(%reason, "server rejected us");
@@ -559,9 +561,10 @@ fn register_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
-        Command::new("character")
-            .about("The rider's character (locked for anonymous riders)")
-            .arg(Arg::new("args").num_args(0..).allow_hyphen_values(true)),
+        // The same command as the desktop's (spec §14 Phase 4, 4N; B6):
+        // the anonymous rider's mirror is locked (Phase 10 Q5).
+        ocw_ui::character::command()
+            .about("The rider's character (locked for anonymous riders)"),
         |_, _| locked(),
     ))
     .console_command(ConsoleCommand::new(

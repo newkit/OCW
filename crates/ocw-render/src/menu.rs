@@ -94,6 +94,11 @@ pub struct MenuView {
     /// Draw the items as a month calendar (spec §14 Phase 9 S9a): items
     /// 0–41 the days, then the buttons ([`MenuCalendar`]).
     pub calendar: Option<MenuCalendar>,
+    /// Dock the panel at the window's left edge, narrower and without the
+    /// dark veil, so the scene beside it stays visible (the character
+    /// editor: the rider framed in the free space, spec §14 Phase 4, 4N
+    /// *Visual editor*).
+    pub side: bool,
 }
 
 /// A month view (World → Time → Calendar): the buttons over the grid (items
@@ -183,6 +188,8 @@ pub struct MenuGrid {
 pub struct GridCell {
     pub label: String,
     pub icon: Option<ocw_weather::icon::Icon>,
+    /// A colour swatch instead of an icon (sRGB; skin, hair, facial hair).
+    pub swatch: Option<[u8; 3]>,
     /// The current choice (a thin frame).
     pub marked: bool,
 }
@@ -382,16 +389,24 @@ fn panel_content_vh(panel_vh: f32, aspect: f32) -> f32 {
     panel_vh.min(PANEL_MAX_VW * aspect) - 2.0 * (PANEL_PAD_X_VH + PANEL_BORDER_VH)
 }
 
+/// The width of the side panel (vh): about a third of a 16:9 window.
+pub const SIDE_PANEL_WIDTH_VH: f32 = 72.0;
+
+/// The width of `view`'s panel (vh): a grid's is wider, the side panel
+/// narrower.
+fn view_panel_vh(view: &MenuView) -> f32 {
+    if view.side {
+        SIDE_PANEL_WIDTH_VH
+    } else if view.grid.is_some() || view.calendar.is_some() || view.wide {
+        GRID_PANEL_WIDTH_VH
+    } else {
+        PANEL_WIDTH_VH
+    }
+}
+
 /// The content width of `view`'s panel (a grid's is wider).
 fn view_content_vh(view: &MenuView, aspect: f32) -> f32 {
-    panel_content_vh(
-        if view.grid.is_some() || view.calendar.is_some() || view.wide {
-            GRID_PANEL_WIDTH_VH
-        } else {
-            PANEL_WIDTH_VH
-        },
-        aspect,
-    )
+    panel_content_vh(view_panel_vh(view), aspect)
 }
 
 /// Width of a grid cell (% of the grid's width, its border included).
@@ -405,8 +420,21 @@ fn grid_cell_vh(columns: usize, w: f32) -> f32 {
     w * grid_cell_pct(columns) / 100.0
 }
 
+/// Whether a grid's cells have pictures (icons or swatches); named
+/// tiles without any are drawn without the picture's room.
+fn grid_pictures(grid: &MenuGrid) -> bool {
+    grid.cells
+        .iter()
+        .any(|c| c.icon.is_some() || c.swatch.is_some())
+}
+
 /// Height of a grid (vh) in content `w` wide.
 fn grid_height_vh(grid: &MenuGrid, w: f32) -> f32 {
+    let picture = if grid_pictures(grid) {
+        GRID_ICON_VH
+    } else {
+        0.0
+    };
     let cols = grid.columns.max(1);
     let cell = grid_cell_vh(cols, w);
     let label_w = cell - 2.0 * (GRID_PAD_VH + ROW_BORDER_VH);
@@ -418,7 +446,7 @@ fn grid_height_vh(grid: &MenuGrid, w: f32) -> f32 {
                 .map(|c| wrapped_lines(&c.label, label_w, GRID_LABEL_VH))
                 .max()
                 .unwrap_or(1) as f32;
-            GRID_ICON_VH + lines * GRID_LABEL_VH * LINE_HEIGHT + 2.0 * (GRID_PAD_VH + ROW_BORDER_VH)
+            picture + lines * GRID_LABEL_VH * LINE_HEIGHT + 2.0 * (GRID_PAD_VH + ROW_BORDER_VH)
         })
         .sum::<f32>()
         + GRID_GAP_VH * (grid.cells.len().div_ceil(cols).saturating_sub(1)) as f32
@@ -813,6 +841,7 @@ fn spawn_grid(
     images: &mut Assets<Image>,
 ) {
     let cell_pct = grid_cell_pct(grid.columns);
+    let pictures = grid_pictures(grid);
     commands.entity(list).despawn_children();
     commands.entity(list).with_children(|l| {
         for (i, cell) in grid.cells.iter().enumerate() {
@@ -835,6 +864,15 @@ fn spawn_grid(
                 Marked(cell.marked),
             ));
             node.with_children(|c| {
+                if !pictures {
+                    c.spawn((
+                        Text::new(cell.label.clone()),
+                        font(GRID_LABEL_VH),
+                        color,
+                        TextLayout::justify(Justify::Center),
+                    ));
+                    return;
+                }
                 let mut icon = c.spawn(Node {
                     width: vh(GRID_ICON_VH),
                     height: vh(GRID_ICON_VH),
@@ -846,6 +884,15 @@ fn spawn_grid(
                         img.color = Color::srgba(1.0, 1.0, 1.0, 0.45);
                     }
                     icon.insert(img);
+                } else if let Some([r, g, b]) = cell.swatch {
+                    icon.insert((
+                        BackgroundColor(Color::srgb_u8(r, g, b)),
+                        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.6)),
+                    ));
+                    icon.entry::<Node>().and_modify(|mut n| {
+                        n.border = UiRect::all(vh(0.3));
+                        n.border_radius = BorderRadius::all(vh(GRID_ICON_VH / 2.0));
+                    });
                 }
                 c.spawn((
                     Text::new(cell.label.clone()),
@@ -1116,15 +1163,18 @@ fn draw_menu(
     mut commands: Commands,
     view: Res<MenuView>,
     mut page: Local<Option<PageKey>>,
-    mut root: Query<&mut Node, With<MenuRoot>>,
+    mut root: Query<(&mut Node, &mut BackgroundColor), With<MenuRoot>>,
     mut list: Query<(Entity, &mut Node), ListFilter>,
     mut panel: Query<&mut Node, PanelFilter>,
-    mut rows: Query<(
-        Ref<MenuRow>,
-        &mut BackgroundColor,
-        &mut BorderColor,
-        Option<&Marked>,
-    )>,
+    mut rows: Query<
+        (
+            Ref<MenuRow>,
+            &mut BackgroundColor,
+            &mut BorderColor,
+            Option<&Marked>,
+        ),
+        Without<MenuRoot>,
+    >,
     (mut images, mut icons, mut unicorn): (
         ResMut<Assets<Image>>,
         Local<std::collections::HashMap<ocw_weather::icon::Icon, Handle<Image>>>,
@@ -1150,7 +1200,7 @@ fn draw_menu(
     if !view.is_changed() && !resized && !rows.iter().any(|(r, ..)| r.is_added()) {
         return;
     }
-    let Ok(mut node) = root.single_mut() else {
+    let Ok((mut node, mut veil)) = root.single_mut() else {
         return;
     };
     let display = if view.open {
@@ -1160,6 +1210,25 @@ fn draw_menu(
     };
     if node.display != display {
         node.display = display;
+    }
+    // The side panel (the character editor): docked left, the scene
+    // beside it free.
+    let justify = if view.side {
+        JustifyContent::FlexStart
+    } else {
+        JustifyContent::Center
+    };
+    let veil_colour = Color::srgba(0.0, 0.0, 0.0, if view.side { 0.0 } else { 0.45 });
+    if veil.0 != veil_colour {
+        veil.0 = veil_colour;
+    }
+    if node.justify_content != justify {
+        node.justify_content = justify;
+        node.padding = if view.side {
+            UiRect::left(vh(2.0))
+        } else {
+            UiRect::ZERO
+        };
     }
     if !view.open {
         *page = None;
@@ -1203,13 +1272,7 @@ fn draw_menu(
             }
         }
         if let Ok(mut p) = panel.single_mut() {
-            p.width = vh(
-                if view.grid.is_some() || view.calendar.is_some() || view.wide {
-                    GRID_PANEL_WIDTH_VH
-                } else {
-                    PANEL_WIDTH_VH
-                },
-            );
+            p.width = vh(view_panel_vh(&view));
         }
         *page = Some(key);
     }
@@ -1528,6 +1591,7 @@ mod tests {
             .map(|p| GridCell {
                 label: ocw_weather::presets::title(p.0),
                 icon: ocw_weather::presets::preset(p.0).map(|w| ocw_weather::icon::Icon::of(&w)),
+                swatch: None,
                 marked: false,
             })
             .chain([GridCell {
@@ -1751,6 +1815,7 @@ mod tests {
             .map(|p| GridCell {
                 label: ocw_weather::presets::title(p.0),
                 icon: ocw_weather::presets::preset(p.0).map(|w| ocw_weather::icon::Icon::of(&w)),
+                swatch: None,
                 marked: p.0 == "rain",
             })
             .chain([GridCell {

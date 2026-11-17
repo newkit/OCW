@@ -523,6 +523,7 @@ mod tests {
         let reject = encode(&ocw_protocol::server_message(S::Reject(v1::Reject {
             reason: "sign in first".into(),
             auth: true,
+            name_taken: false,
         })));
         assert!(f.on_message(&reject).is_none());
         assert!(f.status_line(0.0).unwrap().contains("Settings -> Account"));

@@ -338,45 +338,13 @@ fn register_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
-        Command::new("character")
-            .about("The rider's character: free choices, never physics (no options: the current one)")
-            .arg(
-                Arg::new("build")
-                    .long("build")
-                    .value_parser(ocw_core::BodyBuild::ALL.map(|b| b.id())),
-            )
-            .arg(index_arg("skin", ocw_core::character::SKIN_TONES.len()))
-            .arg(index_arg("face", ocw_core::character::FACES.len()))
-            .arg(index_arg("hair", ocw_core::character::HAIR_STYLES.len()))
-            .arg(
-                Arg::new("hair_colour")
-                    .long("hair-colour")
-                    .value_name("#RRGGBB")
-                    .value_parser(|s: &str| Rgb::parse(s).ok_or_else(|| format!("{s:?} is not a colour #RRGGBB"))),
-            )
-            .arg(index_arg("glasses", ocw_core::character::GLASSES.len())),
+        // One definition for both apps (spec §14 Phase 4, 4N; B6).
+        ocw_ui::character::command(),
         |world, m| {
-            let mut c = crate::settings::local_rider(world).character();
+            let rider = crate::settings::local_rider(world);
+            let mut c = rider.character();
             let before = c;
-            if let Some(b) = m.get_one::<String>("build").and_then(|b| ocw_core::BodyBuild::parse(b)) {
-                c.build = b;
-            }
-            let idx = |k: &str| m.get_one::<u8>(k).map(|v| v - 1);
-            if let Some(v) = idx("skin") {
-                c.skin = v;
-            }
-            if let Some(v) = idx("face") {
-                c.face = v;
-            }
-            if let Some(v) = idx("hair") {
-                c.hair = v;
-            }
-            if let Some(v) = m.get_one::<Rgb>("hair_colour") {
-                c.hair_colour = *v;
-            }
-            if let Some(v) = idx("glasses") {
-                c.glasses = v;
-            }
+            ocw_ui::character::apply(&mut c, m, rider.weight_kg, rider.height_cm)?;
             if c == before {
                 return Ok(c.summary());
             }
@@ -971,15 +939,6 @@ fn set_look(world: &mut World, l: RiderLook) -> Result<(), String> {
         s.save()?;
     }
     Ok(())
-}
-
-/// `--NAME N`: a 1-based index into a palette of `n`.
-fn index_arg(name: &'static str, n: usize) -> Arg {
-    Arg::new(name)
-        .long(name)
-        .value_name("N")
-        .value_parser(clap::value_parser!(u8).range(1..=n as i64))
-        .help(format!("1 … {n}"))
 }
 
 /// Sets the riding rider's character (and the saved profile's of the same
@@ -1586,7 +1545,7 @@ fn write_view(
     };
     let picker = scene.picker.as_ref().map(|p| {
         let server = client.as_ref().and_then(|c| c.0.own_effect());
-        picker_view(p, g, balance, scene, server, &character)
+        picker_view(p, g, balance, scene, server, &character, rider.weight_kg)
     });
     // The rider in the changing corner (W4): standing at the mirror, or on
     // the stand bike; with the live preview of the picker.
@@ -1723,6 +1682,7 @@ fn picker_view(
     scene: &Workshop,
     server: Option<&ocw_protocol::BuildInfo>,
     character: &ocw_core::Character,
+    weight_kg: f64,
 ) -> PickerView {
     let bike = g.bike(&scene.bikes[scene.stand]);
     let mut last_group = "";
@@ -1785,13 +1745,26 @@ fn picker_view(
                 f.map_or_else(String::new, |f| f.name()),
                 "Free – who you are never costs hearts, and never changes the physics.".into(),
             ];
-            if p.character == Some(picker::CharSlot::Body) {
+            if matches!(
+                p.character,
+                Some(picker::CharSlot::Body | picker::CharSlot::Shape)
+            ) {
                 d.push(format!(
                     "Height {:.2} m: from the rider profile (Settings → Riders, riders.edit --height)",
                     f32::from(character.validated().height_cm) / 100.0
                 ));
+                if p.character == Some(picker::CharSlot::Shape) {
+                    let proposal = ocw_core::character::weight_shape(
+                        weight_kg,
+                        Some(f64::from(character.validated().height_cm)),
+                    );
+                    d.push(format!(
+                        "Match my weight: {} (what your weight and height propose; any shape is free)",
+                        proposal.name()
+                    ));
+                }
             }
-            if f.is_some_and(|f| picker::CharSlot::Glasses.choices().contains(&f))
+            if f.is_some_and(|f| matches!(f, picker::Free::Glasses(_)))
                 && g.kit_on(cat(), Slot::Helmet)
                     .is_some_and(|h| h.model == "helmet-tt")
             {

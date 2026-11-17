@@ -27,9 +27,11 @@
 use ocw_assets::parts::{Catalogue, Part, Slot};
 use ocw_core::Rgb;
 use ocw_core::bike::PALETTE;
-use ocw_core::character::{FACES, GLASSES, HAIR_COLOURS, HAIR_STYLES, SKIN_TONES};
+use ocw_core::character::{
+    self as ch, Age, BEARDS, GLASSES, HAIR_COLOURS, HAIR_STYLES, MOUSTACHES, SKIN_TONES,
+};
 use ocw_core::hearts::format as hearts;
-use ocw_core::{BodyBuild, Character};
+use ocw_core::{BaseBody, BodyShape, Character};
 use ocw_sim::build::{self as bike_build, Benefit, Build, PartTable};
 
 use super::designer::{DesignPage, Field};
@@ -139,26 +141,32 @@ pub enum Kind {
     SellBike(String),
 }
 
-/// A free choice of the character.
+/// A free choice of the character (spec 4C, 4N).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Free {
-    Build(BodyBuild),
+    Base(BaseBody),
+    Shape(BodyShape),
+    Age(Age),
     Skin(u8),
-    Face(u8),
     Hair(u8),
     HairColour(Rgb),
+    Moustache(u8),
+    Beard(u8),
     Glasses(u8),
 }
 
 impl Free {
-    /// The console line that makes the choice.
+    /// The console line that makes the choice (`ocw_ui::character`).
     pub fn line(self) -> String {
         match self {
-            Self::Build(b) => format!("character --build {}", b.id()),
+            Self::Base(b) => format!("character --body {}", b.id()),
+            Self::Shape(s) => format!("character --shape {}", s.id()),
+            Self::Age(a) => format!("character --age {}", a.id()),
             Self::Skin(i) => format!("character --skin {}", i + 1),
-            Self::Face(i) => format!("character --face {}", i + 1),
-            Self::Hair(i) => format!("character --hair {}", i + 1),
+            Self::Hair(i) => format!("character --hair {}", ch::hair_id(i)),
             Self::HairColour(c) => format!("character --hair-colour {c}"),
+            Self::Moustache(i) => format!("character --moustache {}", ch::list_id(&MOUSTACHES, i)),
+            Self::Beard(i) => format!("character --beard {}", ch::list_id(&BEARDS, i)),
             Self::Glasses(i) => format!("character --glasses {}", i + 1),
         }
     }
@@ -166,14 +174,17 @@ impl Free {
     /// `c` with this choice.
     pub fn apply(self, c: Character) -> Character {
         match self {
-            Self::Build(b) => Character { build: b, ..c },
+            Self::Base(base) => Character { base, ..c },
+            Self::Shape(shape) => Character { shape, ..c },
+            Self::Age(age) => Character { age, ..c },
             Self::Skin(i) => Character { skin: i, ..c },
-            Self::Face(i) => Character { face: i, ..c },
             Self::Hair(i) => Character { hair: i, ..c },
             Self::HairColour(h) => Character {
                 hair_colour: h,
                 ..c
             },
+            Self::Moustache(i) => Character { moustache: i, ..c },
+            Self::Beard(i) => Character { beard: i, ..c },
             Self::Glasses(i) => Character { glasses: i, ..c },
         }
     }
@@ -181,48 +192,68 @@ impl Free {
     /// The row's name.
     pub fn name(self) -> String {
         match self {
-            Self::Build(b) => format!("{} build", b.name()),
+            Self::Base(b) => format!("{} – {}", b.name(), b.about()),
+            Self::Shape(s) => s.name().to_string(),
+            Self::Age(a) => format!("Age: {}", a.id()),
             Self::Skin(i) => format!("Skin tone {} of {}", i + 1, SKIN_TONES.len()),
-            Self::Face(i) => FACES[i as usize].to_string(),
             Self::Hair(i) => HAIR_STYLES[i as usize].to_string(),
-            Self::HairColour(c) => format!("Hair {c}"),
+            Self::HairColour(c) => format!(
+                "Hair: {}",
+                ch::hair_colour_name(c).map_or_else(|| c.to_string(), str::to_string)
+            ),
+            Self::Moustache(i) => format!("Moustache: {}", MOUSTACHES[i as usize]),
+            Self::Beard(i) => format!("Beard: {}", BEARDS[i as usize]),
             Self::Glasses(i) => GLASSES[i as usize].to_string(),
         }
     }
 }
 
-/// The free slots of the character (spec 4C).
+/// The free slots of the character (spec 4C, 4N).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CharSlot {
+    /// The base body A / B / C (4N Q6b).
     Body,
+    /// The seven shapes, within the band of the weight (Q6, Q13).
+    Shape,
+    /// The appearance age (N3).
+    Age,
     Skin,
-    Face,
     Hair,
     HairColour,
+    /// Moustache and beard (N6).
+    Moustache,
+    Beard,
     Glasses,
 }
 
 impl CharSlot {
     pub fn name(self) -> &'static str {
         match self {
-            Self::Body => "Body",
+            Self::Body => "Base body",
+            Self::Shape => "Body shape",
+            Self::Age => "Age",
             Self::Skin => "Skin tone",
-            Self::Face => "Face",
             Self::Hair => "Hair",
             Self::HairColour => "Hair colour",
+            Self::Moustache => "Moustache",
+            Self::Beard => "Beard",
             Self::Glasses => "Glasses",
         }
     }
 
-    /// The choices, in palette order.
+    /// The choices, in palette order (every shape for every rider, 4N
+    /// Q23).
     pub fn choices(self) -> Vec<Free> {
         let n = |len: usize| 0..len as u8;
         match self {
-            Self::Body => BodyBuild::ALL.into_iter().map(Free::Build).collect(),
+            Self::Body => BaseBody::ALL.into_iter().map(Free::Base).collect(),
+            Self::Shape => BodyShape::ALL.into_iter().map(Free::Shape).collect(),
+            Self::Age => Age::ALL.into_iter().map(Free::Age).collect(),
             Self::Skin => n(SKIN_TONES.len()).map(Free::Skin).collect(),
-            Self::Face => n(FACES.len()).map(Free::Face).collect(),
             Self::Hair => n(HAIR_STYLES.len()).map(Free::Hair).collect(),
             Self::HairColour => HAIR_COLOURS.into_iter().map(Free::HairColour).collect(),
+            Self::Moustache => n(MOUSTACHES.len()).map(Free::Moustache).collect(),
+            Self::Beard => n(BEARDS.len()).map(Free::Beard).collect(),
             Self::Glasses => n(GLASSES.len()).map(Free::Glasses).collect(),
         }
     }
@@ -231,11 +262,14 @@ impl CharSlot {
     pub fn current(self, c: &Character) -> Free {
         let c = c.validated();
         match self {
-            Self::Body => Free::Build(c.build),
+            Self::Body => Free::Base(c.base),
+            Self::Shape => Free::Shape(c.shape),
+            Self::Age => Free::Age(c.age),
             Self::Skin => Free::Skin(c.skin),
-            Self::Face => Free::Face(c.face),
             Self::Hair => Free::Hair(c.hair),
             Self::HairColour => Free::HairColour(c.hair_colour),
+            Self::Moustache => Free::Moustache(c.moustache),
+            Self::Beard => Free::Beard(c.beard),
             Self::Glasses => Free::Glasses(c.glasses),
         }
     }
@@ -253,16 +287,19 @@ pub enum MirrorSlot {
 }
 
 impl MirrorSlot {
-    pub const ALL: [MirrorSlot; 16] = [
+    pub const ALL: [MirrorSlot; 19] = [
         MirrorSlot::Kit(Slot::Helmet),
         MirrorSlot::Kit(Slot::Cap),
         MirrorSlot::Char(CharSlot::Glasses),
         MirrorSlot::Char(CharSlot::Hair),
         MirrorSlot::Char(CharSlot::HairColour),
-        MirrorSlot::Char(CharSlot::Face),
+        MirrorSlot::Char(CharSlot::Moustache),
+        MirrorSlot::Char(CharSlot::Beard),
+        MirrorSlot::Char(CharSlot::Age),
         MirrorSlot::Kit(Slot::Jersey),
         MirrorSlot::Design(DesignPage::Jersey),
         MirrorSlot::Char(CharSlot::Body),
+        MirrorSlot::Char(CharSlot::Shape),
         MirrorSlot::Char(CharSlot::Skin),
         MirrorSlot::Kit(Slot::Gloves),
         MirrorSlot::Kit(Slot::Shorts),
@@ -287,11 +324,16 @@ impl MirrorSlot {
         Some(match self {
             Self::Kit(Slot::Helmet | Slot::Cap)
             | Self::Char(
-                CharSlot::Glasses | CharSlot::Hair | CharSlot::HairColour | CharSlot::Face,
+                CharSlot::Glasses
+                | CharSlot::Hair
+                | CharSlot::HairColour
+                | CharSlot::Moustache
+                | CharSlot::Beard
+                | CharSlot::Age,
             ) => Region::Head,
             Self::Kit(Slot::Jersey)
             | Self::Design(DesignPage::Jersey)
-            | Self::Char(CharSlot::Body | CharSlot::Skin) => Region::Torso,
+            | Self::Char(CharSlot::Body | CharSlot::Shape | CharSlot::Skin) => Region::Torso,
             Self::Kit(Slot::Gloves) => Region::Hands,
             Self::Kit(Slot::Shorts | Slot::Socks) | Self::Design(DesignPage::Kit) => Region::Legs,
             Self::Kit(Slot::Shoes) => Region::Feet,

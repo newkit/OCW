@@ -184,7 +184,15 @@ mod tests {
             Calendar(ocw_client::menu::calendar::Cal::at((2026, 11, 16))),
             CalendarDates(ocw_client::menu::calendar::Cal::at((2026, 11, 16))),
             Season,
-        ];
+            Character,
+            CharacterBody,
+            CharacterFace,
+            CharacterHair,
+            CharacterFacialHair,
+        ]
+        .into_iter()
+        .chain(ocw_client::menu::character::Attr::ALL.map(CharacterPick))
+        .collect::<Vec<_>>();
         for p in &all {
             match p {
                 Controls | Trainer | Strava | Display | Audio | Riders | Rider(_) | Workshop
@@ -198,7 +206,8 @@ mod tests {
                 | HistoryMonths | HistoryBests | EventRules | Account | TrustedKeys
                 | TrustedKey(_) | Join | HostWorld | HostRoute | HostTime | HostWeather
                 | HostOptions | HostSummary | HostLink | Devices | Device(_) | Calendar(_)
-                | CalendarDates(_) | Season => {}
+                | CalendarDates(_) | Season | Character | CharacterBody | CharacterFace
+                | CharacterHair | CharacterFacialHair | CharacterPick(_) => {}
             }
         }
         all
@@ -249,6 +258,10 @@ mod tests {
                 Page::Sub(settings_pages::Page::WeatherPresets) => {
                     Some(crate::weather::grid(&weather))
                 }
+                // The character editor's tiles (spec §14 Phase 4, 4N).
+                Page::Sub(settings_pages::Page::CharacterPick(a)) => Some(
+                    ocw_client::menu::character::grid(a, &ocw_client::riders::Rider::default()),
+                ),
                 _ => None,
             };
             // The calendar (spec §14 Phase 9 S9a): its days and buttons, the
@@ -285,6 +298,15 @@ mod tests {
                 Page::Sub(settings_pages::Page::HistoryBests) => (0..5)
                     .map(|i| format!("Setting {i}:  < some value >"))
                     .collect(),
+                // The character editor's pages (side panel): their own
+                // rows, as the menu labels them (spec §14 Phase 4, 4N).
+                Page::Sub(p) if ocw_client::menu::character::is_editor_page(p) => {
+                    ocw_client::menu::character::rows(p, &ocw_client::riders::Rider::default())
+                        .iter()
+                        .map(model::row_label)
+                        .chain(["Back".to_string()])
+                        .collect()
+                }
                 // A full page of a paged list: rows, Previous, Next, Back.
                 Page::Sub(_) => (0..model::MAX_ITEMS)
                     .map(|i| format!("Setting {i}:  < some value >"))
@@ -365,6 +387,7 @@ mod tests {
                 emphasis: Vec::new(),
                 wide: false,
                 calendar: calendar.map(|c| c.0),
+                side: matches!(page, Page::Sub(p) if ocw_client::menu::character::is_editor_page(p)),
             });
         }
     }

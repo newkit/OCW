@@ -499,11 +499,16 @@ fn the_character_command_and_the_front_view() {
     let mut app = app();
     run(
         &mut app,
-        "character --build strong --skin 9 --hair 4 --hair-colour #B3482A --face 2",
+        "character --shape ample --skin 9 --hair 4 --hair-colour #B3482A --beard full \
+         --body c --age 50s",
     );
     let c = app.world().resource::<RiderProfiles>().riding.character();
-    assert_eq!(c.build, ocw_core::BodyBuild::Strong);
-    assert_eq!((c.skin, c.hair, c.face), (8, 3, 1));
+    assert_eq!(c.shape, ocw_core::BodyShape::Ample);
+    assert_eq!((c.skin, c.hair, c.beard), (8, 3, 4));
+    assert_eq!(
+        (c.base, c.age),
+        (ocw_core::BaseBody::C, ocw_core::Age::Fifties)
+    );
     assert_eq!(c.hair_colour, Rgb(0xB3482A));
     // Outside the workshop it applies at once: the hello's look.
     let look = app.world().resource::<ClientState>().0.view(0.0, 1.0)[0]

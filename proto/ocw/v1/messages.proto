@@ -457,6 +457,33 @@ message RiderLook {
   // 0 gloss, 1 matte.
   optional uint32 helmet_finish = 20;
   optional uint32 shoe_finish = 21;
+  // The refined character (spec §14 Phase 4, 4N N12; free looks, never
+  // physics; sent like the character above, not in the snapshots).
+  // Older apps ignore them and draw from body_build / face / hair: the
+  // new apps still send body_build as the nearest of the three builds,
+  // face as the W4 face of the facial hair (1 beard, 2 moustache, 3
+  // stubble) and hair as the style (styles after the old six: an older
+  // app draws its default). Absent: the defaults (body A, normal shape,
+  // the 30s, no facial hair, the face's facial hair from `face` of an
+  // older app, greying on).
+  // 0 body A, 1 body B, 2 body C (Q6b).
+  optional uint32 body_type = 22;
+  // 0 20s, 1 30s, 2 40s, 3 50s, 4 60s, 5 70+ (N3).
+  optional uint32 appearance_age = 23;
+  // Index of the moustache (0 none, 1 classic, 2 chevron, 3 handlebar,
+  // 4 horseshoe, 5 pencil) and of the beard (0 none, 1 stubble, 2 short
+  // stubble beard, 3 short boxed, 4 full, 5 goatee, 6 chin strap, 7 long).
+  optional uint32 moustache = 24;
+  optional uint32 beard = 25;
+  // The facial hair's own colour (absent: the hair's, greying included).
+  optional fixed32 facial_hair_rgb = 26;
+  // 27 is kept for the hair's roots colour (N5).
+  // Greying with the age (false: Keep my hair colour).
+  optional bool greying = 28;
+  // The body shape (Q6, Q7): 0 anorexia, 1 skinny, 2 slim, 3 normal,
+  // 4 ample, 5 fat, 6 obese (N12 planned a 0-100 build slider here;
+  // the decided seven steps take its number).
+  optional uint32 body_shape = 32;
 }
 
 // Identifies a world package's road graph: its name and a fingerprint of
@@ -826,6 +853,11 @@ message Welcome {
   // The account the server accepted from Hello.access_token (spec §9.1);
   // absent: the rider rides anonymously.
   Account account = 19;
+  // The name the server shows for this rider (spec §14 Phase 4, 4N N1):
+  // the hello's name normalized, or `Rider NNNN` when the server refused
+  // it (then name_note says why). Older servers leave it empty.
+  string display_name = 20;
+  optional string name_note = 21;
 }
 
 enum ClockMode {
@@ -867,6 +899,9 @@ message Reject {
   // The access token was refused (expired, bad signature, another
   // issuer): refresh it or sign in again, then reconnect (spec §9.1).
   bool auth = 2;
+  // The hello's name is held by another rider on this server (4N Q8 /
+  // Q22: names are unique, no suffixes): choose another and join again.
+  bool name_taken = 3;
 }
 
 message DevCommandResult {

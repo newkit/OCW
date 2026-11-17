@@ -34,6 +34,7 @@
 pub mod access;
 pub mod bindings;
 pub mod calendar;
+pub mod character;
 pub mod collisions;
 pub mod controls;
 pub mod events;

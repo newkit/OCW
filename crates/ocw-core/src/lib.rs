@@ -7,10 +7,11 @@ pub mod bike;
 pub mod character;
 pub mod hearts;
 pub mod kit;
+pub mod name;
 pub mod timestamp;
 
 pub use bike::{BikeType, KitPattern, PhysicsProfile, ProfileId, Rgb, RiderLook};
-pub use character::{BodyBuild, Character};
+pub use character::{Age, BaseBody, BodyBuild, BodyShape, Character};
 pub use kit::{Finish, KitDesign};
 
 /// Physics tick rate on client and server (spec §5.2).

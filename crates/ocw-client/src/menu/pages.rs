@@ -31,6 +31,22 @@ pub enum Page {
     Workshop,
     /// A rider's bike and look (index into the profiles; Workshop → Bike).
     Bike(usize),
+    /// Workshop → Character (spec §14 Phase 4, 4N N10; rows from
+    /// `menu::character`, for the active rider): its categories.
+    Character,
+    /// … the body: base body, shape (any; weight and height propose one,
+    /// *Match my weight*).
+    CharacterBody,
+    /// … face and age: the appearance age, skin, *Keep my hair colour*,
+    /// glasses.
+    CharacterFace,
+    /// … hair: style and colour.
+    CharacterHair,
+    /// … facial hair: moustache, beard, their colour.
+    CharacterFacialHair,
+    /// One attribute's choices as tiles (4N *Visual editor*): a grid, the
+    /// focused tile shown on the rider at once, Confirm applies it.
+    CharacterPick(super::character::Attr),
     /// World (top level, spec §3.2.1): change world, about this world,
     /// routes, time, weather (rows from `ride::world`, like the World
     /// pages below).
@@ -195,6 +211,12 @@ impl Page {
             Self::Rider(_) => "Rider",
             Self::Workshop => "Workshop",
             Self::Bike(_) => "Bike",
+            Self::Character => "Character",
+            Self::CharacterBody => "Character: body",
+            Self::CharacterFace => "Character: face and age",
+            Self::CharacterHair => "Character: hair",
+            Self::CharacterFacialHair => "Character: facial hair",
+            Self::CharacterPick(a) => a.title(),
             Self::WorldHome => "World",
             Self::Worlds => "Change world",
             Self::World(_) => "World",
@@ -306,6 +328,8 @@ impl Page {
             Self::WeatherPresets => Some(super::weather::GRID_COLUMNS),
             // The month grid moves by its own rules (`calendar::navigate`).
             Self::Calendar(_) => Some(super::calendar::COLUMNS),
+            // The character editor's tiles (spec §14 Phase 4, 4N).
+            Self::CharacterPick(_) => Some(super::character::TILE_COLUMNS),
             _ => None,
         }
     }
@@ -347,7 +371,12 @@ impl Page {
     pub fn parent(self) -> Option<Self> {
         match self {
             Self::Rider(_) => Some(Self::Riders),
-            Self::Bike(_) => Some(Self::Workshop),
+            Self::Bike(_) | Self::Character => Some(Self::Workshop),
+            Self::CharacterBody
+            | Self::CharacterFace
+            | Self::CharacterHair
+            | Self::CharacterFacialHair => Some(Self::Character),
+            Self::CharacterPick(a) => Some(a.page()),
             Self::World(_) => Some(Self::Worlds),
             Self::WorldRoutes(i) | Self::WorldParts(i) => Some(Self::World(i)),
             Self::WorldSource(_) => Some(Self::WorldSources),
@@ -379,7 +408,23 @@ impl Page {
                 "Bike type and setup choose the physics profile (differences capped); colours are only for the looks. From the next start.",
             ],
             Self::Riders => &["Rider profiles: weight, height, FTP. Choose one in the Workshop."],
+            Self::Character => &[
+                "Who you are on the road: free, for everyone, and never physics (the weight stays the profile's).",
+            ],
+            Self::CharacterBody => {
+                &["Any shape; Match my weight takes the one your weight and height propose."]
+            }
             Self::Rider(_) => &["Changes apply from the next start (Restart)."],
+            Self::CharacterFace => &[
+                "The age shows on the face, the body, the skin and the hair (greying unless you keep your hair colour).",
+            ],
+            Self::CharacterHair => &[
+                "Every style fits under every helmet. Any colour: character --hair-colour #RRGGBB.",
+            ],
+            Self::CharacterFacialHair => {
+                &["The colour follows your hair (greying too) or is its own."]
+            }
+            Self::CharacterPick(_) => &["The rider shows the focused choice; Confirm keeps it."],
             Self::Trainer => &["Devices, SIM difficulty and the virtual trainer."],
             Self::Strava => &[
                 "Uploads saved rides to Strava when an account is linked (API credentials: see README); the sync state is in Navi -> Rides.",
@@ -1291,12 +1336,23 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             let (hmin, hmax) = crate::riders::HEIGHT_RANGE_CM;
             let (fmin, fmax) = crate::riders::FTP_RANGE_W;
             vec![
+                // The name (spec §14 Phase 4, 4N N1): typed with
+                // `riders.edit NAME --rename NEW`; Confirm rolls the dice
+                // for a made-up one. A name from before the 4N rules is
+                // marked: servers show such a rider as "Rider NNNN".
                 Row {
                     label: "Name".into(),
-                    value: Some(n.clone()),
+                    value: Some(if ocw_core::name::check(n).is_ok() {
+                        n.clone()
+                    } else {
+                        format!("{n} (rename before a shared ride)")
+                    }),
                     left: None,
                     right: None,
-                    confirm: None,
+                    confirm: Some(Activate::Command(edit(
+                        n,
+                        &format!("--rename \"{}\"", riders.dice_name(i)),
+                    ))),
                 },
                 number_row(
                     "Weight",
@@ -1396,6 +1452,15 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
                     .filter(|_| !riders.riders.is_empty())
                     .map(|i| Activate::Open(Page::Bike(i))),
             });
+            // The character of the rider who rides next (spec §14 Phase 4,
+            // 4N N10): body, face and age, hair, facial hair.
+            out.push(Row {
+                label: "Character".into(),
+                value: Some(active.character().summary()),
+                left: None,
+                right: None,
+                confirm: Some(Activate::Open(Page::Character)),
+            });
             out.push(Row {
                 label: "Edit riders".into(),
                 value: None,
@@ -1405,6 +1470,12 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             });
             out
         }
+        Page::Character
+        | Page::CharacterBody
+        | Page::CharacterFace
+        | Page::CharacterHair
+        | Page::CharacterFacialHair
+        | Page::CharacterPick(_) => super::character::rows(page, &riders.active()),
     }
 }
 
@@ -1502,7 +1573,7 @@ mod tests {
         let s = Settings::default();
         let r = riders();
         let w = rows(Page::Workshop, &s, &r);
-        assert_eq!(w.len(), 4);
+        assert_eq!(w.len(), 5);
         assert_eq!(w[0].value.as_deref(), Some("78 kg, FTP 250 W - riding"));
         assert_eq!(w[1].value.as_deref(), Some("61.5 kg"));
         assert_eq!(w[1].confirm, cmd("riders.select \"Anna\""));
@@ -1513,13 +1584,25 @@ mod tests {
             Some("Road - standard, frame #1E1E22, jersey #FF1472")
         );
         assert_eq!(w[2].confirm, Some(Activate::Open(Page::Bike(0))));
-        assert_eq!(w[3].confirm, Some(Activate::Open(Page::Riders)));
+        // The character (spec §14 Phase 4, 4N N10).
+        assert_eq!(w[3].label, "Character");
+        assert_eq!(w[3].confirm, Some(Activate::Open(Page::Character)));
+        assert!(w[3].value.as_deref().unwrap().contains("body a, normal"));
+        assert_eq!(w[4].confirm, Some(Activate::Open(Page::Riders)));
         // Without profiles: the default rider, and the way to the editor.
         let w = rows(Page::Workshop, &s, &Riders::default());
         assert_eq!(w[0].value.as_deref(), Some("75 kg - riding (default)"));
         assert_eq!(w[0].confirm, None);
         assert_eq!(w[1].confirm, None, "no profile to give a bike");
-        assert_eq!(w[2].confirm, Some(Activate::Open(Page::Riders)));
+        assert_eq!(w[2].confirm, Some(Activate::Open(Page::Character)));
+        assert_eq!(w[3].confirm, Some(Activate::Open(Page::Riders)));
+        // The character's pages come from `menu::character`, for the
+        // active rider; they go back to the Workshop.
+        for p in super::super::character::PAGES {
+            assert!(!rows(p, &s, &r).is_empty(), "{p:?}");
+            assert_eq!(p.parent(), Some(Page::Character));
+        }
+        assert_eq!(Page::Character.parent(), Some(Page::Workshop));
     }
 
     #[test]
@@ -1528,7 +1611,8 @@ mod tests {
         let r = riders();
         let list = rows(Page::Riders, &s, &r);
         assert_eq!(list[1].confirm, Some(Activate::Open(Page::Rider(1))));
-        assert_eq!(list.last().unwrap().confirm, cmd("riders.add \"Rider\""));
+        let add = format!("riders.add \"{}\"", r.new_name());
+        assert_eq!(list.last().unwrap().confirm, cmd(&add));
         let alex = rows(Page::Rider(0), &s, &r);
         let weight = row(&alex, "Weight");
         assert_eq!(weight.value.as_deref(), Some("78 kg"));

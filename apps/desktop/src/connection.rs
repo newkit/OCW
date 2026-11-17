@@ -492,6 +492,10 @@ fn poll_server(
         match client.0.on_server_message(&bytes, now) {
             Some(Notice::Joined { rider_id, route_id }) => {
                 info!(rider = %rider_id, route = %route_id, "joined session");
+                // The server replaced the name (spec §14 Phase 4, 4N N1).
+                if let Some(note) = client.0.name_note() {
+                    console.print(note.to_string());
+                }
             }
             Some(Notice::Rejected(reason)) => {
                 error!(%reason, "server rejected us");
