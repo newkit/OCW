@@ -14,6 +14,7 @@ pub mod completion;
 pub mod console;
 pub mod damage_hud;
 pub mod damage_look;
+pub mod drone_camera;
 pub mod event_hud;
 pub mod far_terrain;
 pub mod flight_world;
