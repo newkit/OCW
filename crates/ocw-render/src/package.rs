@@ -572,6 +572,21 @@ impl<'a> TileGround<'a> {
             h11 + (1.0 - tx) * (h01 - h11) + (1.0 - tz) * (h10 - h11)
         })
     }
+
+    /// The lowest drawn ground under a foot of radius `r` at local (x, z)
+    /// (its centre and eight points round its rim): a trunk or a pole
+    /// standing there with its base this low reaches the ground all round,
+    /// also on a slope or a terrace edge.
+    pub fn foot(&self, x: f64, z: f64, r: f64) -> Option<f64> {
+        let mut low = self.height(x, z)?;
+        for k in 0..8 {
+            let a = f64::from(k) * std::f64::consts::FRAC_PI_4;
+            if let Some(h) = self.height(x + r * a.cos(), z + r * a.sin()) {
+                low = low.min(h);
+            }
+        }
+        Some(low)
+    }
 }
 
 /// Flat colour of a road (linear): by category where the surface is the
@@ -1319,11 +1334,14 @@ pub fn build_tile_meshes_with(
         };
         crate::junction_mesh::lower_terrain(&mut terrain, g, &patches, grid);
     }
-    // The fields' stands lie on the ground as drawn (spec §4.6.1).
+    // The plants, the fields' stands, the lamps and the obstacles stand
+    // on the ground as drawn (spec §4.6.1).
     let ground = TileGround::new(pkg, key, Some(&terrain));
     let mut plants =
         crate::vegetation::tile_plants(pkg, key, &classed, keep, look.season.as_deref(), &ground);
     plants.crowns.shrink_to_fit();
+    let lamps = crate::street_lamps::tile_lamps(pkg, key, keep, &ground);
+    let obstacles = crate::obstacles::tile_obstacle_meshes(pkg, key, keep, &ground);
     Some(TileMeshes {
         key,
         terrain,
@@ -1357,8 +1375,8 @@ pub fn build_tile_meshes_with(
         bridges: crate::bridges::bridge_arrays(&own),
         solid,
         near_tint: look.near_tint,
-        lamps: crate::street_lamps::tile_lamps(pkg, key, keep),
-        obstacles: crate::obstacles::tile_obstacle_meshes(pkg, key, keep),
+        lamps,
+        obstacles,
     })
 }
 

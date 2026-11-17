@@ -4201,3 +4201,41 @@ riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 7
 at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2.2=workshop open", "2.8=workshop mirror", "4=workshop zoom 2"]
 shot = 12
 pick = false
+
+# Fixes of 2026-11-17 (spec §4.6.1, 4G): trees, bushes, posts and lamps on
+# the ground as drawn; the bike stand's part thumbnails framed on the part.
+
+[[scene]]
+name = "ground-bf-schauinsland-slope"
+description = "Black Forest (unicorn, low): the forest on the slope beside the Schauinsland road at km 14.5, the trunks standing on the drawn ground"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-5942,568", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose -5925 585 6 225 -12"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "ground-bf-schauinsland-slope-2"
+description = "Black Forest (unicorn, low): the slope across the Schauinsland road at km 14.5 from the other side, the trunks standing on the drawn ground"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-5942,568", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose -5960 550 6 45 -12"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "ground-masca-km108-low"
+description = "Masca road at km 10.85 (unicorn, low): the terrace edge below the road, trees, bushes and posts on the drawn ground"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-32240,-3630", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose -32225 -3620 8 235 -14"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "thumbs-dump"
+description = "Bike stand thumbnails (4G): every slot's part thumbnail of the road bike (stock and each fitting variant) saved as PNG into test-output/thumbs/dump/ (thumbs.dump, after the groupset tiles warmed the pipelines), the framing checked per slot"
+args = ["--route", "hills", "--bots", "0", "--power", "0"]
+at = ["2=hearts.grant 5000", "2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-next", "4.2=workshop slot-next", "4.6=workshop slot-next", "5=workshop select", "10=thumbs.dump test-output/thumbs/dump", "10=thumbs.dump test-output/thumbs/dump --profile mtb", "10=thumbs.dump test-output/thumbs/dump --profile tt"]
+shot = 60
+pick = false

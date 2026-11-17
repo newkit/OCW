@@ -62,6 +62,14 @@ pub const MAX_LAZY_TASKS: usize = 4;
 pub const TAPER_BELOW_M: f32 = 1.0;
 /// … to this height above the ground (m), clear of the terrain's surface.
 pub const EDGE_LIFT_M: f32 = 0.04;
+/// Every plant (trees, bushes, palms, the plantations' plants) stands on
+/// the ground as the tile draws it (spec §4.6.1): its base this far (m)
+/// below the lowest drawn ground under a foot of [`PLANT_FOOT_M`] radius,
+/// so the trunk sinks a little into a slope or a terrace edge rather than
+/// floating over it.
+pub const PLANT_SINK_M: f32 = 0.15;
+/// The foot's radius (m) under a plant's trunk.
+pub const PLANT_FOOT_M: f64 = 0.35;
 
 /// A plant's near model ([`crate::flora::plant`]'s arguments).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -461,8 +469,8 @@ pub fn stand(crop: FieldCrop, day: Option<&SeasonDay>, alt_m: f64) -> (f32, [f32
 
 /// Builds a tile's plants: the grid's `classed` trees (already filtered by
 /// `keep`), the mapped trees, the plantations' rows and the fields'
-/// stands, on the `season` day; the vine rows and the stands on the
-/// `ground` as the tile draws it.
+/// stands, on the `season` day; every plant, the vine rows and the stands
+/// on the `ground` as the tile draws it (plants: [`PLANT_SINK_M`] into it).
 pub fn tile_plants(
     pkg: &WorldPackage,
     key: TileKey,
@@ -532,6 +540,13 @@ pub fn tile_plants(
                scale: f32,
                bits: (i64, i64),
                near_only: bool| {
+        // On the ground as drawn (the terrain mesh after the junctions
+        // lowered it), not on the package's smoothed height: on terrace
+        // edges the two differ by metres (spec §4.6.1).
+        let base = match ground.foot(f64::from(base.x), f64::from(base.z), PLANT_FOOT_M) {
+            Some(g) => Vec3::new(base.x, g as f32 - PLANT_SINK_M, base.z),
+            None => base,
+        };
         // Plants drawn only up close go to the detail chunks.
         let ch = if near_only {
             &mut chunks[detail_of(base.x, base.z)]
@@ -1160,6 +1175,118 @@ mod tests {
             "{full} of {} at full height",
             shares.len()
         );
+    }
+
+    // --- Trees on the drawn ground (the floating trunks of 2026-11-17) -----
+
+    /// A forest tile in the Black Forest on a 10 m terrain grid, the ground
+    /// `height(i, k)` at the grid's vertices.
+    fn forest_tile(height: impl Fn(u32, u32) -> f32) -> WorldPackage {
+        let mut pkg = worst_tile(47.9, 7.9, LandClass::Forest, None);
+        let n = 101u32;
+        pkg.samples = n;
+        let t = pkg.tiles.get_mut(&TileKey { x: 0, z: 0 }).unwrap();
+        t.heights = (0..n * n).map(|v| height(v % n, v / n)).collect();
+        pkg
+    }
+
+    /// Every plant of the tile (package metres: its base, and where the
+    /// package's smoothed ground would have put it) checked against the
+    /// drawn ground (the terrain mesh after the junction lowering): the
+    /// base never above the ground anywhere under its trunk (a 0.3 m foot,
+    /// 16 points round it; 5 cm tolerance), below the ground at its centre
+    /// (sunk a little), and never buried deeper than 1 m. Returns the
+    /// number of plants and how far the old placement (the bilinear
+    /// [`WorldPackage::height`] − 0.3 m) floated at most.
+    fn plants_on_the_drawn_ground(pkg: &WorldPackage) -> (usize, f64) {
+        let key = TileKey { x: 0, z: 0 };
+        let m = crate::package::build_tile_meshes(pkg, key).unwrap();
+        let ground = TileGround::new(pkg, key, Some(&m.terrain));
+        let mut count = 0;
+        let mut old_float = 0.0f64;
+        for ch in m.plants.chunks.iter().chain(&m.plants.details) {
+            let o = Vec3::from(ch.origin);
+            for p in &ch.near.plants {
+                count += 1;
+                let b = p.at.base + o;
+                let (x, z) = (f64::from(b.x), f64::from(b.z));
+                let y = f64::from(b.y);
+                let centre = ground.height(x, z).unwrap();
+                assert!(
+                    y <= centre - 0.1 && y >= centre - 1.0,
+                    "{:?} at ({x:.1}, {z:.1}): base {y:.2}, ground {centre:.2}",
+                    p.sp
+                );
+                // Round the foot (inside the package: the tile has no
+                // neighbours here).
+                let rim: Vec<f64> = (0..16)
+                    .filter_map(|k| {
+                        let a = f64::from(k) * std::f64::consts::TAU / 16.0;
+                        ground.height(x + 0.3 * a.cos(), z + 0.3 * a.sin())
+                    })
+                    .collect();
+                for &g in &rim {
+                    assert!(
+                        y <= g + 0.05,
+                        "{:?} at ({x:.1}, {z:.1}) floats {:.2} m over the ground",
+                        p.sp,
+                        y - g
+                    );
+                }
+                let old = pkg.height(x, z).unwrap() - 0.3;
+                let low = rim.iter().copied().fold(centre, f64::min);
+                old_float = old_float.max(old - low);
+            }
+        }
+        (count, old_float)
+    }
+
+    /// Regression (2026-11-17, Tenerife terraces and Black Forest slopes:
+    /// trunks standing up to a few metres off the drawn terrain): every
+    /// tree and bush stands on the ground as the tile draws it, also where
+    /// the grid's cells are twisted (terrace edges). Before, a tree's base
+    /// was the package's bilinear height − 0.3 m, metres above the drawn
+    /// terrain's diagonal on a terrace edge.
+    #[test]
+    fn trees_stand_on_the_drawn_ground_on_terrace_edges() {
+        // Terraces 1.5 m high (steeper ground has no trees: rock faces),
+        // most cells twisted.
+        let terraces = |i: u32, k: u32| 600.0 + 1.5 * ((i * 7 + k * 13) % 5) as f32;
+        let pkg = forest_tile(terraces);
+        let (count, old_float) = plants_on_the_drawn_ground(&pkg);
+        assert!(count > 1_000, "{count} trees");
+        // The old placement floated by metres here.
+        assert!(
+            old_float > 0.5,
+            "the old placement floated {old_float:.2} m at most"
+        );
+    }
+
+    /// The same next to a junction, where the renderer lowers the terrain
+    /// under the side road's blend (`junction_mesh::lower_terrain`): the
+    /// trees there stand on the lowered ground, not on the package's.
+    #[test]
+    fn trees_follow_the_ground_lowered_at_a_junction() {
+        use ocw_world::graph::RoadClass;
+        use ocw_world::junction::fixtures::t_junction;
+        let mut pkg = forest_tile(|_, k| {
+            let z = k as f32 * 10.0;
+            if z > 3.75 { 0.2 * z - 0.05 } else { -0.05 }
+        });
+        pkg.graph = Some(t_junction(RoadClass::Secondary, 0.0, 0.2));
+        let key = TileKey { x: 0, z: 0 };
+        let m = crate::package::build_tile_meshes(&pkg, key).unwrap();
+        let tile = pkg.tiles.get(&key).unwrap();
+        let lowered = m
+            .terrain
+            .positions
+            .iter()
+            .zip(&tile.heights)
+            .map(|(p, h)| h - p[1])
+            .fold(0.0, f32::max);
+        assert!(lowered > 0.3, "lowered by {lowered} m");
+        let (count, _) = plants_on_the_drawn_ground(&pkg);
+        assert!(count > 1_000, "{count} trees");
     }
 
     /// A flat field of `crop` with a road across it along x = 500 (the

@@ -17,6 +17,7 @@
 //! [`ThumbnailPlugin`] spawns the cameras.
 
 use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{ClearColorConfig, RenderTarget};
@@ -261,25 +262,27 @@ impl<H: Clone> ThumbCache<H> {
     }
 }
 
-/// How far a slot's thumbnail looks around its anchor (m; frames and
-/// paints show the whole bike).
+/// How far a slot's thumbnail looks around its anchor at least (m;
+/// frames and paints show the whole bike): the part's box
+/// ([`part_box`]) is filled out to this radius, so a small part keeps
+/// a little of the bike around it.
 pub fn slot_radius(slot: &str) -> f32 {
     match slot {
         "wheels" => 0.38,
-        "tyres" => 0.17,
-        "groupset" => 0.16,
-        "crankset" => 0.2,
-        "cassette" => 0.12,
-        "chain" => 0.26,
-        "cockpit" => 0.24,
-        "bar_tape" => 0.15,
-        "saddle" => 0.17,
-        "seatpost" => 0.2,
-        "pedals" => 0.13,
-        "bottle_cages" => 0.17,
-        "lights" => 0.17,
-        "computer" => 0.11,
-        "bag" => 0.17,
+        "tyres" => 0.2,
+        "groupset" => 0.2,
+        "crankset" => 0.14,
+        "cassette" => 0.1,
+        "chain" => 0.2,
+        "cockpit" => 0.16,
+        "bar_tape" => 0.13,
+        "saddle" => 0.13,
+        "seatpost" => 0.1,
+        "pedals" => 0.055,
+        "bottle_cages" => 0.15,
+        "lights" => 0.12,
+        "computer" => 0.08,
+        "bag" => 0.12,
         _ => 0.0,
     }
 }
@@ -289,9 +292,131 @@ pub fn whole_bike(slot: &str) -> bool {
     slot_radius(slot) == 0.0
 }
 
+/// The box (bike coordinates: min, max) of the vertices of node `name`
+/// (with `deep`, also of the nodes below it) that `keep` accepts.
+fn node_box(
+    bike: &BuiltBike,
+    name: &str,
+    deep: bool,
+    keep: impl Fn(Vec3) -> bool,
+) -> Option<(Vec3, Vec3)> {
+    let m = &bike.model;
+    let at = m.node(name)?;
+    let mut b: Option<(Vec3, Vec3)> = None;
+    for (i, n) in m.nodes.iter().enumerate() {
+        if !(i == at || (deep && m.is_below(i, at))) {
+            continue;
+        }
+        let w = m.world(i);
+        for p in &n.primitives {
+            for v in &p.positions {
+                let v = w.transform_point3(Vec3::from(*v));
+                if keep(v) {
+                    b = Some(b.map_or((v, v), |(lo, hi)| (lo.min(v), hi.max(v))));
+                }
+            }
+        }
+    }
+    b
+}
+
+fn union(a: (Vec3, Vec3), b: (Vec3, Vec3)) -> (Vec3, Vec3) {
+    (a.0.min(b.0), a.1.max(b.1))
+}
+
+fn around(at: Vec3, half: Vec3) -> (Vec3, Vec3) {
+    (at - half, at + half)
+}
+
+/// Where the part of `slot` is on `bike` (bike coordinates: min, max):
+/// its own geometry where it has its own node (the front wheel, the
+/// chainrings and arms, the bar, the saddle, the drive-side pedal), else
+/// a box around the slot's anchor; the groupset and the chain are the
+/// whole drivetrain from the chainrings to the rear derailleur.
+pub fn part_box(bike: &BuiltBike, slot: &str) -> (Vec3, Vec3) {
+    let m = &bike.model;
+    let anchor = |s: &str| {
+        bike.anchors
+            .iter()
+            .find(|(a, _)| a == s)
+            .map(|(_, p)| *p)
+            .unwrap_or((bike.bounds.0 + bike.bounds.1) * 0.5)
+    };
+    let rear = m
+        .position(bike_nodes::WHEEL_REAR)
+        .unwrap_or_else(|| anchor("cassette"));
+    let r = slot_radius(slot);
+    let at_anchor = around(anchor(slot), Vec3::splat(r * 0.6));
+    // The chainrings and the arms (the crank node, without the pedals).
+    let rings = node_box(bike, bike_nodes::CRANK, false, |_| true);
+    // The cassette on the drive side of the rear hub, the rear derailleur
+    // below it.
+    let cassette = around(rear + Vec3::X * 0.04, Vec3::new(0.03, 0.07, 0.07));
+    let derailleur = around(anchor("groupset"), Vec3::splat(0.04));
+    let drivetrain = || {
+        let back = union(cassette, derailleur);
+        rings.map_or(back, |r| union(r, back))
+    };
+    let saddle_y = m.position(bike_nodes::SADDLE).map_or(0.0, |p| p.y);
+    // The bar, its drops and the stem's clamp (not the cables running
+    // down from the levers).
+    let clamp = m
+        .position(bike_nodes::HANDLEBAR)
+        .unwrap_or_else(|| anchor("cockpit"));
+    let near_bar = |v: Vec3| v.distance(clamp) < 0.32;
+    let b = match slot {
+        "wheels" => node_box(bike, bike_nodes::WHEEL_FRONT, true, |_| true),
+        "tyres" => Some(around(anchor(slot), Vec3::new(0.04, 0.14, 0.14))),
+        "groupset" | "chain" => Some(drivetrain()),
+        "crankset" => rings,
+        "cassette" => Some(union(cassette, derailleur)),
+        "cockpit" => node_box(bike, bike_nodes::HANDLEBAR, false, near_bar)
+            .map(|b| union(b, around(anchor(slot), Vec3::splat(0.03)))),
+        "bar_tape" => node_box(bike, bike_nodes::HANDLEBAR, false, |v| {
+            v.x > 0.0 && near_bar(v)
+        }),
+        "saddle" => node_box(bike, bike_nodes::SADDLE, false, |v| v.y > saddle_y - 0.07),
+        "seatpost" => node_box(bike, bike_nodes::SADDLE, false, |v| {
+            v.y <= saddle_y - 0.03 && v.y > anchor("seatpost").y - 0.12
+        }),
+        "pedals" => node_box(bike, bike_nodes::PEDAL[1], true, |_| true),
+        _ if whole_bike(slot) => Some(bike.bounds),
+        _ => None,
+    };
+    b.unwrap_or(at_anchor)
+}
+
+/// Where the thumbnail of `slot` looks from (unit vector from the part
+/// to the camera, bike coordinates; `front`: the bike's forward): always
+/// from the drive side (+X); the drivetrain from ahead of it (the
+/// cassette from behind), the cockpit
+/// and bar tape mostly from ahead (the bar's width across the picture),
+/// the lights and computer from ahead and above, the rest a little from
+/// ahead and above.
+fn view_dir(slot: &str, front: Vec3) -> Vec3 {
+    let (ahead, up) = match slot {
+        "wheels" => (0.0, 0.12),
+        _ if whole_bike(slot) => (0.06, 0.12),
+        // The drivetrain from ahead of the drive side: the chainrings near
+        // and big, the chain running back to the derailleur, the rear wheel
+        // further off (square on, it filled the picture); the cassette
+        // from behind.
+        "groupset" | "chain" => (0.8, 0.35),
+        "cassette" => (-0.6, 0.3),
+        "crankset" => (0.12, 0.22),
+        // Mostly from ahead: the bar's width across the wide picture.
+        "cockpit" | "bar_tape" => (1.6, 0.7),
+        "lights" | "computer" => (0.7, 0.55),
+        "saddle" | "seatpost" | "bag" => (0.3, 0.45),
+        _ => (0.35, 0.3),
+    };
+    (Vec3::X + front * ahead + Vec3::Y * up).normalize()
+}
+
 /// The thumbnail camera for `slot` on `bike` (bike coordinates): (eye,
-/// target). From the drive side (+X), a little ahead and above; the part
-/// (its anchor and [`slot_radius`]) – or the whole bike – fills the view.
+/// target). From the drive side ([`view_dir`]), on the middle of the
+/// part's box ([`part_box`], at least [`slot_radius`] around it), as close
+/// as the whole box fits the view with a margin.
 pub fn framing(bike: &BuiltBike, slot: &str) -> (Vec3, Vec3) {
     let m = &bike.model;
     let front = match (
@@ -301,39 +426,42 @@ pub fn framing(bike: &BuiltBike, slot: &str) -> (Vec3, Vec3) {
         (Some(f), Some(r)) if (f - r).length() > 0.1 => (f - r).normalize(),
         _ => Vec3::NEG_Z,
     };
-    let aspect = THUMB_SIZE.x as f32 / THUMB_SIZE.y as f32;
-    let half = (FOV_Y * 0.5).tan();
-    if whole_bike(slot) {
-        let (lo, hi) = bike.bounds;
-        let centre = (lo + hi) * 0.5;
-        let size = hi - lo;
-        let along = size.dot(front).abs().max(size.z.abs());
-        let need = (size.y * 0.5).max(along * 0.5 / aspect) * 1.08;
-        let dir = (Vec3::X + Vec3::Y * 0.12 + front * 0.06).normalize();
-        return (centre + dir * (need / half), centre);
+    let (lo, hi) = part_box(bike, slot);
+    let dir = view_dir(slot, front);
+    let centre = (lo + hi) * 0.5;
+    (
+        centre + dir * fit_distance(lo, hi, dir, slot_radius(slot)),
+        centre,
+    )
+}
+
+/// The part fills this share of the view at most (a margin all round).
+const FILL: f32 = 0.88;
+
+/// The distance from the box's centre along `dir` at which the box
+/// (`lo`, `hi`) fits a thumbnail's view (and a sphere of `min_r` round its
+/// centre does).
+fn fit_distance(lo: Vec3, hi: Vec3, dir: Vec3, min_r: f32) -> f32 {
+    let half_y = (FOV_Y * 0.5).tan() * FILL;
+    let half_x = half_y * THUMB_SIZE.x as f32 / THUMB_SIZE.y as f32;
+    let fwd = -dir;
+    let right = fwd.cross(Vec3::Y).normalize();
+    let up = right.cross(fwd);
+    let centre = (lo + hi) * 0.5;
+    let mut d = min_r / (FOV_Y * 0.5).tan();
+    for k in 0..8 {
+        let c = Vec3::new(
+            if k & 1 == 0 { lo.x } else { hi.x },
+            if k & 2 == 0 { lo.y } else { hi.y },
+            if k & 4 == 0 { lo.z } else { hi.z },
+        );
+        let v = c - centre;
+        let depth = v.dot(fwd);
+        d = d
+            .max(v.dot(up).abs() / half_y - depth)
+            .max(v.dot(right).abs() / half_x - depth);
     }
-    // The wheels: the front wheel whole; the other parts at their anchor.
-    let at = if slot == "wheels" {
-        m.position(bike_nodes::WHEEL_FRONT)
-    } else {
-        None
-    }
-    .or_else(|| {
-        bike.anchors
-            .iter()
-            .find(|(s, _)| s == slot)
-            .map(|(_, p)| *p)
-    })
-    .unwrap_or((bike.bounds.0 + bike.bounds.1) * 0.5);
-    let r = slot_radius(slot);
-    // The wheels straight from the side (the rim depth shows), the other
-    // parts a little from ahead and above.
-    let dir = if slot == "wheels" {
-        (Vec3::X + Vec3::Y * 0.12).normalize()
-    } else {
-        (Vec3::X + front * 0.35 + Vec3::Y * 0.3).normalize()
-    };
-    (at + dir * (r / half), at)
+    d.max(0.1)
 }
 
 /// The character thumbnail camera for `shot` of a rider `scale` times
@@ -389,9 +517,99 @@ pub struct ThumbnailPlugin;
 
 impl Plugin for ThumbnailPlugin {
     fn build(&self, app: &mut App) {
+        use crate::console::{ConsoleAppExt, ConsoleCommand, Permission};
+        use clap::{Arg, Command};
         app.init_resource::<Thumbnails>()
-            .add_systems(PostUpdate, render_thumbs);
+            .init_resource::<ThumbDump>()
+            .add_systems(PostUpdate, (render_thumbs, save_dumped).chain())
+            .console_command(ConsoleCommand::new(
+                Permission::Dev,
+                Command::new("thumbs.dump")
+                    .about("Render the bike stand's part thumbnails of every slot (the stock parts and every variant that fits) and save them as PNG files into DIR (checks of the framing)")
+                    .arg(Arg::new("dir").required(true))
+                    .arg(
+                        Arg::new("profile")
+                            .long("profile")
+                            .value_parser(ProfileId::ALL.map(ProfileId::id))
+                            .default_value("road"),
+                    ),
+                |world, m| {
+                    let dir = PathBuf::from(m.get_one::<String>("dir").expect("required"));
+                    let profile = m
+                        .get_one::<String>("profile")
+                        .and_then(|p| ProfileId::parse(p))
+                        .unwrap_or_default();
+                    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+                    let keys = dump_keys(profile);
+                    let n = keys.len();
+                    world.resource_mut::<ThumbDump>().0.extend(
+                        keys.into_iter()
+                            .map(|(name, key)| (dir.join(format!("{name}.png")), key)),
+                    );
+                    Ok(format!("rendering {n} thumbnails into {}", dir.display()))
+                },
+            ));
     }
+}
+
+/// The part thumbnails [`dump_keys`] still to save (path, key).
+#[derive(Resource, Default)]
+struct ThumbDump(Vec<(PathBuf, ThumbKey)>);
+
+/// The thumbnails of the `thumbs.dump` command: the stock parts of every
+/// slot and every variant that fits the profile's bike, named
+/// `<profile>-<slot>-<model>`.
+fn dump_keys(profile: ProfileId) -> Vec<(String, ThumbKey)> {
+    let bike = profile.bike();
+    let mut out = Vec::new();
+    for slot in ocw_assets::bikes::HOTSPOT_SLOTS {
+        let variants = ocw_assets::bikes::VARIANTS
+            .iter()
+            .filter(|v| v.slot == slot && v.fits.contains(&bike))
+            .map(|v| v.id);
+        for model in std::iter::once("stock").chain(variants) {
+            out.push((
+                format!("{}-{slot}-{model}", profile.id()),
+                ThumbKey::Part(PartThumb {
+                    profile,
+                    slot: slot.to_string(),
+                    model: model.to_string(),
+                    paint: Rgb(0x2a6fb0),
+                }),
+            ));
+        }
+    }
+    out
+}
+
+/// Saves the dumped thumbnails as they are rendered (one screenshot of
+/// each image in its camera's last frames).
+fn save_dumped(world: &mut World) {
+    let pending = std::mem::take(&mut world.resource_mut::<ThumbDump>().0);
+    if pending.is_empty() {
+        return;
+    }
+    let meta = crate::stamp::ShotMeta::of(world);
+    let mut left = Vec::new();
+    for (path, key) in pending {
+        let handle = world.resource_scope(|world, mut thumbs: Mut<Thumbnails>| {
+            let mut images = world.resource_mut::<Assets<Image>>();
+            let h = thumbs.image(&key, &mut images);
+            // While its camera still draws into it (its last frames): a
+            // screenshot of the image after the camera is gone reads black.
+            matches!(thumbs.cache.state(&key), Some(ThumbState::Rendering(n)) if n <= 3)
+                .then_some(h)
+        });
+        match handle {
+            Some(h) => {
+                world
+                    .spawn(bevy::render::view::screenshot::Screenshot::image(h))
+                    .observe(crate::stamp::save_shot(path, meta.clone()));
+            }
+            None => left.push((path, key)),
+        }
+    }
+    world.resource_mut::<ThumbDump>().0 = left;
 }
 
 /// Where render spot `k` puts its bike (far from the workshop and from
@@ -813,31 +1031,170 @@ mod tests {
         assert_eq!(c.state(&key("b", 1)), Some(ThumbState::Queued));
     }
 
-    /// The framing: the part's anchor in the middle of the view, its
-    /// radius inside it, from the drive side; frames and paints show the
-    /// whole bike.
+    /// Where `p` lands in the thumbnail of the camera (eye, target):
+    /// (x, y) in −1 … 1 inside the picture, and its depth.
+    fn project(eye: Vec3, target: Vec3, p: Vec3) -> (f32, f32, f32) {
+        let fwd = (target - eye).normalize();
+        let right = fwd.cross(Vec3::Y).normalize();
+        let up = right.cross(fwd);
+        let v = p - eye;
+        let z = v.dot(fwd);
+        let t = (FOV_Y * 0.5).tan();
+        let aspect = THUMB_SIZE.x as f32 / THUMB_SIZE.y as f32;
+        (v.dot(right) / (z * t * aspect), v.dot(up) / (z * t), z)
+    }
+
+    fn corners((lo, hi): (Vec3, Vec3)) -> [Vec3; 8] {
+        std::array::from_fn(|k| {
+            Vec3::new(
+                if k & 1 == 0 { lo.x } else { hi.x },
+                if k & 2 == 0 { lo.y } else { hi.y },
+                if k & 4 == 0 { lo.z } else { hi.z },
+            )
+        })
+    }
+
+    /// The part's box in the view of its thumbnail: every corner inside
+    /// the picture, in front of the camera, the box filling a good share of
+    /// it (the part is the subject, not a speck on the bike).
+    fn assert_framed(bike: &BuiltBike, slot: &str, what: &str) {
+        let (eye, target) = framing(bike, slot);
+        assert!(eye.x - target.x > 0.0, "{what}: from the drive side");
+        let b = part_box(bike, slot);
+        let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+        for c in corners(b) {
+            let (x, y, z) = project(eye, target, c);
+            assert!(z > 0.05, "{what}: corner {c} behind the camera");
+            assert!(
+                x.abs() <= 1.0 && y.abs() <= 1.0,
+                "{what}: corner {c} outside the picture at ({x:.2}, {y:.2})"
+            );
+            lo = lo.min(Vec2::new(x, y));
+            hi = hi.max(Vec2::new(x, y));
+        }
+        let fill = ((hi - lo) / 2.0).max_element();
+        assert!(
+            fill > 0.4,
+            "{what}: the part fills only {fill:.2} of the picture"
+        );
+    }
+
+    /// Every slot of every bike framed on its part (spec §14 Phase 4, 4G
+    /// tiles): the part's bounds inside the thumbnail's view and filling
+    /// it, from the drive side; frames and paints the whole bike.
     #[test]
     fn each_slot_is_framed_on_its_part() {
         let models = BikeModels::default();
-        let bike = models.get(ProfileId::Road, &[]);
-        for slot in ocw_assets::bikes::HOTSPOT_SLOTS {
-            let (eye, target) = framing(&bike, slot);
-            let d = eye - target;
-            assert!(d.x > 0.0, "{slot}: from the drive side");
-            if whole_bike(slot) {
-                // The whole box within the view.
-                let (lo, hi) = bike.bounds;
-                let half = (FOV_Y * 0.5).tan() * d.length();
-                assert!((hi.y - lo.y) * 0.5 <= half, "{slot}");
-            } else {
-                let half = (FOV_Y * 0.5).tan() * d.length();
-                assert!((half - slot_radius(slot)).abs() < 1e-4, "{slot}");
-                if slot != "wheels" {
-                    let anchor = bike.anchors.iter().find(|(s, _)| s == slot).unwrap().1;
-                    assert!(target.distance(anchor) < 1e-5, "{slot}");
-                }
+        for profile in ProfileId::ALL {
+            let bike = models.get(profile, &[]);
+            for slot in ocw_assets::bikes::HOTSPOT_SLOTS {
+                assert_framed(&bike, slot, &format!("{} {slot}", profile.id()));
             }
         }
         assert!(whole_bike("frame") && whole_bike("paint") && !whole_bike("saddle"));
+    }
+
+    /// The same with every part variant fitted in its slot (the picker's
+    /// tiles show them).
+    #[test]
+    fn each_variant_is_framed_on_its_part() {
+        let models = BikeModels::default();
+        for profile in ProfileId::ALL {
+            for v in ocw_assets::bikes::VARIANTS
+                .iter()
+                .filter(|v| v.fits.contains(&profile.bike()))
+            {
+                let bike = models.get(profile, &[v.id.to_string()]);
+                assert_framed(&bike, v.slot, &format!("{} {}", profile.id(), v.id));
+            }
+        }
+    }
+
+    /// The parts' boxes are where the parts are: each slot's box lies
+    /// within the bike's box, around its own geometry where it has a node
+    /// (the bar, the saddle, the chainrings, the pedal, the front wheel).
+    #[test]
+    fn part_boxes_sit_on_their_parts() {
+        let models = BikeModels::default();
+        let bike = models.get(ProfileId::Road, &[]);
+        let m = &bike.model;
+        let (blo, bhi) = bike.bounds;
+        for slot in ocw_assets::bikes::HOTSPOT_SLOTS {
+            let (lo, hi) = part_box(&bike, slot);
+            assert!(lo.cmple(hi).all(), "{slot}");
+            let slack = Vec3::splat(0.1);
+            assert!(
+                lo.cmpge(blo - slack).all() && hi.cmple(bhi + slack).all(),
+                "{slot}: {lo} … {hi} outside the bike {blo} … {bhi}"
+            );
+        }
+        let inside = |slot: &str, p: Vec3| {
+            let (lo, hi) = part_box(&bike, slot);
+            lo.cmple(p).all() && p.cmple(hi).all()
+        };
+        let pos = |n: &str| m.position(n).unwrap();
+        assert!(inside("cockpit", pos(bike_nodes::HANDLEBAR)));
+        assert!(inside("crankset", pos(bike_nodes::CRANK)));
+        assert!(inside("wheels", pos(bike_nodes::WHEEL_FRONT)));
+        assert!(inside("pedals", pos(bike_nodes::PEDAL[1])));
+        assert!(inside("saddle", pos(bike_nodes::SADDLE)));
+    }
+
+    /// Regression (2026-11-17, the bike stand's groupset tiles showed a
+    /// rear wheel): the groupset is framed on the drivetrain – the
+    /// chainrings and the rear derailleur both in the picture, the view's
+    /// middle between the bottom bracket and the rear hub, the chainrings
+    /// over 30 % of its height. Before, the camera looked
+    /// at the derailleur from 0.16 m around: the picture was the rear hub,
+    /// spokes and rim.
+    #[test]
+    fn the_groupset_shows_the_drivetrain_not_the_rear_wheel() {
+        let models = BikeModels::default();
+        for profile in ProfileId::ALL {
+            let bike = models.get(profile, &[]);
+            let m = &bike.model;
+            let (bb, hub) = (
+                m.position(bike_nodes::CRANK).unwrap(),
+                m.position(bike_nodes::WHEEL_REAR).unwrap(),
+            );
+            for slot in ["groupset", "chain"] {
+                let what = format!("{} {slot}", profile.id());
+                let (eye, target) = framing(&bike, slot);
+                let along = (target - hub).dot(bb - hub) / (bb - hub).length_squared();
+                assert!(
+                    (0.25..=0.75).contains(&along),
+                    "{what}: the middle at {along:.2} from the rear hub to the bottom bracket"
+                );
+                let seen = |p: Vec3| {
+                    let (x, y, z) = project(eye, target, p);
+                    z > 0.0 && x.abs() <= 1.0 && y.abs() <= 1.0
+                };
+                let rings = node_box(&bike, bike_nodes::CRANK, false, |_| true).unwrap();
+                assert!(
+                    corners(rings).iter().all(|c| seen(*c)),
+                    "{what}: chainrings"
+                );
+                let derailleur = bike
+                    .anchors
+                    .iter()
+                    .find(|(s, _)| s == "groupset")
+                    .unwrap()
+                    .1;
+                assert!(seen(derailleur), "{what}: rear derailleur");
+                assert!(seen(bb) && seen(hub), "{what}: bottom bracket and rear hub");
+                // The chainrings big in the picture (the subject, not the
+                // rear wheel's spokes).
+                let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+                for c in corners(rings) {
+                    let (_, y, _) = project(eye, target, c);
+                    (lo, hi) = (lo.min(y), hi.max(y));
+                }
+                assert!(
+                    hi - lo > 0.6,
+                    "{what}: the chainrings {:.2} of the picture high",
+                    (hi - lo) / 2.0
+                );
+            }
+        }
     }
 }
