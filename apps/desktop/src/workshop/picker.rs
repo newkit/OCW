@@ -659,6 +659,34 @@ impl CardPhysics {
     }
 }
 
+/// The slot's base part on `bike` (frames: the profile's base frameset).
+pub fn base_part<'c>(cat: &'c Catalogue, bike: &Bike, slot: Slot) -> Option<&'c Part> {
+    match slot {
+        Slot::Frame => cat.base_frame(bike.profile()),
+        _ => cat.base(slot, bike.profile().bike()),
+    }
+}
+
+/// A tile's gain (spec 4G *Tiles*): `part` in its slot against the slot's
+/// base part, on `bike` as it is (its other parts), within the caps, at
+/// the reference ride on the flat and at 6 % – the server's build code
+/// (cached builds, [`build_with`]).
+pub fn tile_gain(
+    cat: &Catalogue,
+    garage: &Garage,
+    bike: &Bike,
+    part: &Part,
+) -> Option<bike_build::PartGain> {
+    let base = base_part(cat, bike, part.slot)?;
+    let mass = bike_build::grams_over_base(PartTable::shipped(), bike.profile(), &part.id)
+        .unwrap_or(i64::from(part.weight_g) - i64::from(base.weight_g));
+    Some(bike_build::PartGain::between(
+        &build_with(cat, garage, bike, Some(base)),
+        &build_with(cat, garage, bike, Some(part)),
+        mass,
+    ))
+}
+
 /// Where parts and kit count (the last line of a card).
 pub const WHERE_PARTS_COUNT: &str =
     "Counts in free ride and Open races; cosmetic in Profile / Equal races (the default)";
@@ -1153,6 +1181,25 @@ impl Picker {
             })
             .unwrap_or(0)
             .min(self.rows.len().saturating_sub(1));
+    }
+
+    /// The rows are tiles (spec 4B *Tiles*): the bike's part slots and its
+    /// paint – not the kit, the bench, the character or the designer.
+    pub fn tiles(&self) -> bool {
+        self.bench.is_none()
+            && self.character.is_none()
+            && self.design.is_none()
+            && !self.slot.is_kit()
+    }
+
+    /// ← / → / ↑ / ↓ on the tiles ([`ocw_client::part_tiles::step`]).
+    pub fn step_tiles(&mut self, dir: ocw_client::part_tiles::Dir) {
+        self.focus = ocw_client::part_tiles::step(
+            self.focus,
+            self.rows.len(),
+            ocw_client::part_tiles::COLUMNS,
+            dir,
+        );
     }
 
     pub fn step(&mut self, d: isize) {

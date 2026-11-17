@@ -1952,6 +1952,34 @@ at = ["2=hearts.grant 3000", "2.2=workshop open", "2.8=workshop select", "3.8=wo
 shot = 22
 
 [[scene]]
+name = "bike-stand-tiles-wheels"
+description = "Bike stand tiles (spec §14 Phase 4, 4G Built v4.45): the road bike's wheels as tiles – a small rendering of each wheelset, its speed gain against the base wheels at 250 W / 75 kg on the flat and the 6 % climb, the weight difference and the price; the top carbon wheels focused and previewed on the stand bike; the bike's line against stock under the title"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 5000", "2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-next", "4.2=workshop select", "5=workshop down", "5.4=workshop right"]
+shot = 24
+
+[[scene]]
+name = "bike-stand-tiles-capped"
+description = "Bike stand tiles on an upgraded aero road bike (spec §14 Phase 4, 4G Built v4.45): the top frame, carbon wheels, race tyres, top groupset and integrated cockpit fitted – the bike sits on the +1.5 % flat cap, so the tyre tiles show what the rider really gets within the cap and say 'capped'"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["1.5=hearts.grant 20000", "1.6=workshop.buy frame.road-aero.top --bike road-aero", "1.7=workshop.buy wheels.road-carbon.top --bike road-aero", "1.8=workshop.buy tyres.road.race --bike road-aero", "1.9=workshop.buy groupset.road-electronic.top --bike road-aero", "2=workshop.buy cockpit.road.integrated --bike road-aero", "2.1=bikes.select road-aero", "2.4=workshop open", "3=workshop select", "4=workshop slot-next", "4.4=workshop slot-next", "4.8=workshop select", "5.6=workshop right", "6=workshop right"]
+shot = 24
+
+[[scene]]
+name = "bike-stand-tiles-paint"
+description = "Bike stand tiles (spec §14 Phase 4, 4G Built v4.45): the paint as tiles – the whole bike rendered in each colour, 'looks only'; the third colour focused and previewed on the frame"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-prev", "4.2=workshop select", "5=workshop right", "5.4=workshop right"]
+shot = 24
+
+[[scene]]
+name = "bike-stand-tiles-profile-race"
+description = "Bike stand tiles during a Profile race (spec §14 Phase 4, 4G Built v4.45): parts are cosmetic there, so the tyre tiles say 'no effect in this Profile race' instead of a gain"
+args = ["--route", "loop", "--bots", "2", "--power", "250"]
+at = ["1.5=event race --km 3 --physics profile", "2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-next", "4.2=workshop slot-next", "4.6=workshop select", "5.4=workshop right"]
+shot = 24
+
+[[scene]]
 name = "sprint-open-video"
 description = "Video (spec §14 Phase 4, W3): a race in Open mode on the Loop test route between two bots at a steady 300 W on the road bike – 'Stock' in the left lane and 'Upgraded' in the right lane (the capped best build: carbon wheels, race tyres, top groupset, integrated cockpit …, +1.4 % on the flat) – out of each other's draft; you ride between them at 300 W on the stock bike, and the upgraded bot pulls away"
 args = ["--route", "loop", "--bots", "2", "--power", "300"]
