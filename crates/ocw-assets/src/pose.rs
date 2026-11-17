@@ -1179,6 +1179,7 @@ pub fn idle_aged(rider: &RiderRig, t: f32, hunch: f32) -> Pose {
     // forward, the elbows soft; they sway with the breath.
     let mut upper_arms = [Quat::IDENTITY; 2];
     let mut forearms = [Quat::IDENTITY; 2];
+    let mut hands = [Quat::IDENTITY; 2];
     for s in 0..2 {
         let side = if s == 0 { -1.0 } else { 1.0 };
         let sway = wave(6.1, 1.3 + s as f32 * 2.1);
@@ -1186,6 +1187,9 @@ pub fn idle_aged(rider: &RiderRig, t: f32, hunch: f32) -> Pose {
         let forward = 0.07 + 0.025 * sway;
         upper_arms[s] = Quat::from_rotation_z(side * abduct) * Quat::from_rotation_x(forward);
         forearms[s] = Quat::from_rotation_x(0.26 + 0.03 * sway);
+        // The relaxed hands (bug 2026-11-17: loose hands standing): the
+        // wrist a little flexed towards the palm, swinging with the arm.
+        hands[s] = idle_wrist(s, sway);
     }
     // The head: looking about (two slow turns) and a little down.
     let yaw = 0.2 * wave(11.0, 0.4) + 0.07 * wave(3.7, 1.0);
@@ -1203,10 +1207,21 @@ pub fn idle_aged(rider: &RiderRig, t: f32, hunch: f32) -> Pose {
         upper_arms,
         forearms,
         phone: None,
-        hands: [Quat::IDENTITY; 2],
+        hands,
         hand_shapes: [HandShape::Relaxed; 2],
     }
 }
+
+/// The idle wrist of hand `side` at the arm's sway `sway` (−1 … 1): flexed
+/// towards the palm by [`IDLE_WRIST_FLEX`] ± a little, so the relaxed hand
+/// follows the arm's swing (about the knuckles' axis, z of the hand's
+/// frame; the palm faces +x on the left hand).
+pub fn idle_wrist(side: usize, sway: f32) -> Quat {
+    Quat::from_rotation_z(hand::palm_sign(side) * (IDLE_WRIST_FLEX + 0.04 * sway))
+}
+
+/// The idle wrist's flex towards the palm (rad).
+pub const IDLE_WRIST_FLEX: f32 = 0.1;
 
 /// How far the hips drop when the photographer crouches (m), and how far
 /// back they go.
@@ -2124,6 +2139,52 @@ mod hand_tests {
                     }
                 }
             }
+        }
+    }
+
+    /// Regression (2026-11-17, the workshop's standing rider showed loose
+    /// hands): standing, both hands are relaxed – every finger bent a
+    /// little at each joint towards the palm, the little finger most, the
+    /// thumb along the index finger – and the wrist, a little flexed,
+    /// moves with the idle animation's arm swing.
+    #[test]
+    fn standing_hands_are_relaxed_and_follow_the_idle_animation() {
+        let near = build(Detail::High);
+        let rig = RiderRig::from_model(&near).unwrap();
+        let frames: Vec<Pose> = (0..40).map(|i| idle(&rig, i as f32 * 0.25)).collect();
+        for side in 0..2 {
+            let n = hand::palm_sign(side);
+            let fingers = hand::fingers(HandShape::Relaxed, side);
+            let curl = |d: &hand::Digit| {
+                let p = &d.points;
+                let a = p[1] - p[0];
+                let b = p[p.len() - 1] - p[p.len() - 2];
+                a.angle_between(b)
+            };
+            for (k, f) in fingers.iter().enumerate() {
+                let tip = *f.points.last().unwrap();
+                assert!(n * tip.x > 0.025, "finger {k} curls to the palm: {tip}");
+                assert!(tip.y < hand::PALM_END_Y, "finger {k} below the palm");
+                assert!((0.5..2.0).contains(&curl(f)), "finger {k}: {}", curl(f));
+            }
+            assert!(curl(&fingers[3]) > curl(&fingers[0]) + 0.15);
+            let thumb = hand::thumb(HandShape::Relaxed, side);
+            let index_mid = fingers[0].points[fingers[0].base_end];
+            assert!(thumb.points.last().unwrap().distance(index_mid) < 0.04);
+            // The wrist over the animation: flexed towards the palm, and
+            // moving.
+            let fingertip = |q: Quat| q * Vec3::new(0.0, -0.15, 0.0);
+            let mut seen = Vec::new();
+            for p in &frames {
+                assert_eq!(p.hand_shapes, [HandShape::Relaxed; 2]);
+                let flex = n * fingertip(p.hands[side]).x;
+                assert!(flex > 0.005 && flex < 0.05, "side {side}: {flex}");
+                seen.push(flex);
+            }
+            let (lo, hi) = seen
+                .iter()
+                .fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
+            assert!(hi - lo > 0.005, "the wrist follows the sway: {lo} … {hi}");
         }
     }
 

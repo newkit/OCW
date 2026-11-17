@@ -1078,6 +1078,7 @@ fn draw_ui(
     markers: Query<Entity, With<Markers>>,
     mut last: Local<Option<WorkshopView>>,
     mut last_ui: Local<Option<Entity>>,
+    mut last_aspect: Local<f32>,
     mut thumbs: ResMut<crate::thumbs::Thumbnails>,
     mut images: ResMut<Assets<Image>>,
 ) {
@@ -1315,8 +1316,14 @@ fn draw_ui(
             });
         }
     }
-    // The picker and the dialog: rebuilt when they change.
-    let changed = last.as_ref().is_none_or(|l| l.picker != view.picker);
+    // The picker and the dialog: rebuilt when they change (or the window's
+    // shape: the card is fitted to the panel).
+    let aspect = cam
+        .and_then(|(c, _)| c.logical_viewport_size())
+        .map_or(16.0 / 9.0, |s| s.x / s.y.max(1.0));
+    let resized = (aspect - *last_aspect).abs() > 0.01;
+    *last_aspect = aspect;
+    let changed = resized || last.as_ref().is_none_or(|l| l.picker != view.picker);
     if changed {
         if let Ok((panel, mut n)) = nodes.p0().single_mut() {
             n.display = if view.picker.is_some() {
@@ -1326,7 +1333,7 @@ fn draw_ui(
             };
             commands.entity(panel).despawn_children();
             if let Some(p) = &view.picker {
-                spawn_picker(&mut commands, panel, p, &mut thumbs, &mut images);
+                spawn_picker(&mut commands, panel, p, aspect, &mut thumbs, &mut images);
             }
         }
         if let Ok((dialog, mut n)) = nodes.p1().single_mut() {
@@ -1709,6 +1716,14 @@ fn sync_rider(
                 t.rotation = q;
             }
         }
+        // The idle pose's relaxed hands (bug 2026-11-17: after *Try on the
+        // bike* the grip shapes stayed on the standing rider).
+        let hands: Vec<_> = ocw_assets::rider::hand::HandShape::ALL
+            .into_iter()
+            .flat_map(|s| [(s, 0), (s, 1)])
+            .filter_map(|(s, side)| Some((s, side, node(ocw_assets::rider::hand::node(s, side))?)))
+            .collect();
+        crate::riders::show_hands(&hands, p.hand_shapes, &mut visibility);
         return;
     }
     // On the stand bike: in its frame, pedalling slowly (spec 4C).
@@ -1842,21 +1857,33 @@ fn sync_helmet_hook(
         .entry(ptr)
         .or_insert_with(|| upload(model, &mut meshes, true))
         .clone();
-    // The helmet in the head's frame: its skull centre under the peg, the
-    // front towards the room (−X), tipped a little.
-    let head = model.node(ocw_assets::pose::nodes::HEAD).expect("a head");
-    let skull = ocw_assets::rider::skull_centre() - Vec3::from(model.world(head).translation);
-    let rot = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(0.35);
-    let at = hook - Vec3::Y * 0.1 - rot * skull;
     let e = commands
         .spawn((
-            Transform::from_translation(at).with_rotation(rot),
+            hook_helmet_transform(model, i, hook, layout.bounds.1.x),
             Visibility::Inherited,
             ChildOf(root),
             layer(),
             HelmetOnHook,
         ))
         .id();
+    // The shell's inside (bug 2026-11-17: hanging in front of the room the
+    // helmet showed the wall through its face opening – the shell is drawn
+    // from outside only, a head fills it on the rider): the dark liner.
+    let liner = std_materials.add(StandardMaterial {
+        base_color: Color::srgb(0.1, 0.1, 0.11),
+        perceptual_roughness: 0.9,
+        ..default()
+    });
+    for p in &node.primitives {
+        if model.materials[p.material].name == "helmet" {
+            commands.spawn((
+                Mesh3d(meshes.add(plain_mesh(&inner_lining(p)))),
+                MeshMaterial3d(liner.clone()),
+                ChildOf(e),
+                layer(),
+            ));
+        }
+    }
     for (mesh, mat) in &handles[i] {
         let m = &model.materials[*mat];
         let material = part_material(
@@ -1875,6 +1902,69 @@ fn sync_helmet_hook(
         ));
     }
     state.1 = Some((kit, e));
+}
+
+/// How helmet node `helmet` of the rider model hangs on its hook at
+/// `hook` on the wall at x = `wall` (spec §14 Phase 4, 4N Q28; bug
+/// 2026-11-17: it hung half in the wall): upright – the crown up, tipped
+/// back towards the wall a little –, its front towards the room (−X), the
+/// skull's centre 7 cm under the peg (the peg hidden in the shell), the
+/// back of the shell (a TT helmet's tail too) against the wall.
+pub fn hook_helmet_transform(model: &Model, helmet: usize, hook: Vec3, wall: f32) -> Transform {
+    let head = model.node(ocw_assets::pose::nodes::HEAD).expect("a head");
+    let skull = ocw_assets::rider::skull_centre() - Vec3::from(model.world(head).translation);
+    let rot = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(0.35);
+    // The shell's farthest point towards the wall, from the skull's centre.
+    let back = model.nodes[helmet]
+        .primitives
+        .iter()
+        .flat_map(|p| &p.positions)
+        .map(|q| (rot * (Vec3::from(*q) - skull)).x)
+        .fold(0.0f32, f32::max);
+    let centre = Vec3::new(wall - 0.008 - back, hook.y - 0.07, hook.z);
+    Transform::from_translation(centre - rot * skull).with_rotation(rot)
+}
+
+/// The inside of a single-sided shell: the same triangles turned (their
+/// front faces and normals inwards), a hair inside it.
+pub fn inner_lining(p: &Primitive) -> Primitive {
+    let normals: Vec<[f32; 3]> = p.normals.iter().map(|n| [-n[0], -n[1], -n[2]]).collect();
+    let positions = p
+        .positions
+        .iter()
+        .zip(&normals)
+        .map(|(q, n)| {
+            [
+                q[0] + n[0] * 0.001,
+                q[1] + n[1] * 0.001,
+                q[2] + n[2] * 0.001,
+            ]
+        })
+        .collect();
+    let indices = p
+        .indices
+        .chunks(3)
+        .flat_map(|t| [t[0], t[2], t[1]])
+        .collect();
+    Primitive {
+        material: p.material,
+        positions,
+        normals,
+        indices,
+        ..Default::default()
+    }
+}
+
+/// A mesh of `p` with positions and normals only.
+fn plain_mesh(p: &Primitive) -> Mesh {
+    let mut m = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    m.insert_attribute(Mesh::ATTRIBUTE_POSITION, p.positions.clone());
+    m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, p.normals.clone());
+    m.insert_indices(Indices::U32(p.indices.clone()));
+    m
 }
 
 /// The hook's peg and the helmet on it (with the kit it shows).
@@ -1916,6 +2006,7 @@ fn spawn_picker(
     commands: &mut Commands,
     panel: Entity,
     p: &PickerView,
+    aspect: f32,
     thumbs: &mut crate::thumbs::Thumbnails,
     images: &mut Assets<Image>,
 ) {
@@ -2021,39 +2112,190 @@ fn spawn_picker(
                 },
             );
         }
-        let cards: Vec<&Vec<String>> = match &p.compare {
-            Some(c) => vec![c],
-            None => vec![&p.detail],
-        };
-        for card in cards {
-            c.spawn((
-                Node {
-                    margin: UiRect::top(vh(1.0)),
-                    padding: UiRect::all(vh(1.2)),
-                    flex_direction: FlexDirection::Column,
-                    row_gap: vh(0.4),
-                    border_radius: BorderRadius::all(vh(0.8)),
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.08)),
-            ))
-            .with_children(|d| {
-                for (k, l) in card.iter().enumerate() {
-                    d.spawn((
-                        Text::new(l.clone()),
-                        font(if k == 0 { 2.6 } else { 2.2 }),
-                        TextColor(if l.ends_with("better") {
-                            Color::srgb(0.55, 0.9, 0.6)
-                        } else if l.ends_with("worse") {
-                            Color::srgb(0.95, 0.6, 0.55)
-                        } else {
-                            Color::srgb(0.88, 0.9, 0.93)
-                        }),
-                    ));
-                }
-            });
-        }
+        // Under the tiles the card is fitted to the room left in the panel
+        // (bug 2026-11-17: the stand's card ran out at the panel's bottom).
+        use panel_layout::*;
+        let fitted = fitted_card(p, aspect);
+        c.spawn((
+            Node {
+                margin: UiRect::top(vh(CARD_MARGIN)),
+                padding: UiRect::all(vh(CARD_PAD)),
+                flex_direction: FlexDirection::Column,
+                row_gap: vh(CARD_GAP),
+                border_radius: BorderRadius::all(vh(0.8)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.08)),
+        ))
+        .with_children(|d| {
+            for (k, l) in fitted.iter().enumerate() {
+                d.spawn((
+                    Text::new(l.clone()),
+                    font(if k == 0 && p.tiles.is_none() {
+                        CARD_HEAD
+                    } else {
+                        CARD_TEXT
+                    }),
+                    TextColor(if l.ends_with("better") {
+                        Color::srgb(0.55, 0.9, 0.6)
+                    } else if l.ends_with("worse") {
+                        Color::srgb(0.95, 0.6, 0.55)
+                    } else {
+                        Color::srgb(0.88, 0.9, 0.93)
+                    }),
+                ));
+            }
+        });
     });
+}
+
+/// The picker panel's layout (vh): its top and bottom margins, padding,
+/// border, width (vw) and the gap between its children; the fonts and
+/// spacing of the tiles and of the card. [`fitted_card`] estimates the
+/// panel's content with them.
+mod panel_layout {
+    pub const TOP: f32 = 8.5;
+    pub const BOTTOM: f32 = 8.0;
+    pub const PAD_X: f32 = 2.0;
+    pub const PAD_Y: f32 = 1.6;
+    pub const BORDER: f32 = 0.3;
+    pub const WIDTH_VW: f32 = 40.0;
+    pub const GAP: f32 = 0.6;
+    pub const TITLE: f32 = 4.2;
+    pub const SUBTITLE: f32 = 2.0;
+    pub const MORE: f32 = 1.8;
+    pub const GRID_GAP: f32 = 0.8;
+    pub const TILE_PAD: f32 = 0.5;
+    pub const TILE_BORDER: f32 = 0.35;
+    pub const TILE_GAP: f32 = 0.2;
+    pub const TILE_NAME: f32 = 1.75;
+    pub const TILE_GAIN: f32 = 1.5;
+    pub const TILE_FOOT: f32 = 1.6;
+    pub const CARD_MARGIN: f32 = 1.0;
+    pub const CARD_PAD: f32 = 1.2;
+    pub const CARD_GAP: f32 = 0.4;
+    pub const CARD_HEAD: f32 = 2.6;
+    pub const CARD_TEXT: f32 = 2.2;
+    /// Bevy's line height (of the font size) and the UI font's advance.
+    pub const LINE: f32 = 1.2;
+    pub const ADVANCE: f32 = 0.6;
+}
+
+/// Lines `text` takes in `width` (vh) at font `font` (vh): words wrapped
+/// greedily (the UI font is monospaced), a too long word on its own.
+pub fn wrapped_lines(text: &str, width: f32, font: f32) -> usize {
+    let chars = ((width / (font * panel_layout::ADVANCE)).floor() as usize).max(1);
+    let mut lines = 1;
+    let mut used = 0;
+    for word in text.split_whitespace() {
+        let n = word.chars().count();
+        if used > 0 && used + 1 + n > chars {
+            lines += 1;
+            used = 0;
+        }
+        used += if used > 0 { 1 + n } else { n };
+        while used > chars {
+            lines += 1;
+            used -= chars;
+        }
+    }
+    lines
+}
+
+/// The height (vh) of `lines` lines at `font`.
+fn text_vh(lines: usize, font: f32) -> f32 {
+    lines as f32 * font * panel_layout::LINE
+}
+
+/// The picker panel's height above the card (vh) in a window of `aspect`:
+/// the title, the line under it and, with tiles, the grid with its "More"
+/// lines – as the panel lays them out – and the panel's inner height and
+/// width.
+pub fn panel_room(p: &PickerView, aspect: f32) -> (f32, f32, f32) {
+    use panel_layout::*;
+    let inner_h = 100.0 - TOP - BOTTOM - 2.0 * (PAD_Y + BORDER);
+    let inner_w = WIDTH_VW * aspect - 2.0 * (PAD_X + BORDER);
+    let mut used = text_vh(wrapped_lines(&p.title, inner_w, TITLE), TITLE);
+    if let Some(sub) = &p.subtitle {
+        used += GAP + text_vh(wrapped_lines(sub, inner_w, SUBTITLE), SUBTITLE);
+    }
+    if let Some(t) = p.tiles {
+        if t.first > 0 {
+            used += GAP + text_vh(1, MORE);
+        }
+        let cols = t.cols.max(1) as f32;
+        let tile_w = inner_w * (100.0 - 2.5 * (cols - 1.0)) / cols / 100.0;
+        let text_w = tile_w - 2.0 * (TILE_PAD + TILE_BORDER);
+        let tile_h = |r: &PickerRowView| {
+            let pic = match (&r.thumb, r.swatch) {
+                (Some(k), _) => text_w / k.aspect(),
+                (None, Some(_)) => text_w,
+                (None, None) => {
+                    text_w * crate::thumbs::THUMB_SIZE.y as f32 / crate::thumbs::THUMB_SIZE.x as f32
+                }
+            };
+            let foot = [r.weight.as_str(), r.right.as_str()]
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(" · ");
+            let mut h = 2.0 * (TILE_PAD + TILE_BORDER)
+                + pic
+                + TILE_GAP
+                + text_vh(wrapped_lines(&r.left, text_w, TILE_NAME), TILE_NAME)
+                + TILE_GAP
+                + text_vh(wrapped_lines(&foot, text_w, TILE_FOOT), TILE_FOOT);
+            if !r.gain.is_empty() {
+                h += TILE_GAP + text_vh(wrapped_lines(&r.gain, text_w, TILE_GAIN), TILE_GAIN);
+            }
+            h
+        };
+        let shown: Vec<&PickerRowView> = p.rows.iter().skip(t.first).take(t.shown).collect();
+        let rows: Vec<f32> = shown
+            .chunks(t.cols.max(1))
+            .map(|row| row.iter().map(|r| tile_h(r)).fold(0.0, f32::max))
+            .collect();
+        if !rows.is_empty() {
+            used += GAP + rows.iter().sum::<f32>() + GRID_GAP * (rows.len() - 1) as f32;
+        }
+        if t.first + t.shown < p.rows.len() {
+            used += GAP + text_vh(1, MORE);
+        }
+    }
+    (used, inner_h, inner_w)
+}
+
+/// The card as shown (the compare card while a part is pinned; bug
+/// 2026-11-17: under the tiles the card ran out at the panel's bottom):
+/// with tiles, the card's lines – in their order of importance, the app
+/// puts the benefit and the bike first – that fit the room left under the
+/// grid, all in the card's text size; a line that does not fit is left
+/// out (a shorter one after it may still fit). Under a list the card is
+/// shown whole.
+pub fn fitted_card(p: &PickerView, aspect: f32) -> Vec<String> {
+    use panel_layout::*;
+    let card = p.compare.as_ref().unwrap_or(&p.detail);
+    if p.tiles.is_none() {
+        return card.clone();
+    }
+    let (used, inner_h, inner_w) = panel_room(p, aspect);
+    let text_w = inner_w - 2.0 * CARD_PAD;
+    // Half a line to spare: the estimate never cuts the card.
+    let mut room =
+        inner_h - used - GAP - CARD_MARGIN - 2.0 * CARD_PAD - text_vh(1, CARD_TEXT) * 0.5;
+    let mut out = Vec::new();
+    for line in card {
+        // Under the tiles every line in the card's text size (the name is
+        // on the focused tile).
+        let font = CARD_TEXT;
+        let gap = if out.is_empty() { 0.0 } else { CARD_GAP };
+        let h = gap + text_vh(wrapped_lines(line, text_w, font), font);
+        if h <= room {
+            room -= h;
+            out.push(line.clone());
+        }
+    }
+    out
 }
 
 /// The picker's tiles (spec 4B *Tiles*): the shown rows of the grid, each
@@ -2245,6 +2487,179 @@ fn spawn_dialog(commands: &mut Commands, root: Entity, d: &DialogView) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression (2026-11-17, the helmet on the hook read faintly, "inside
+    /// out"): every helmet hangs upright, its front towards the room, the
+    /// peg inside the shell, the shell against the wall and not in it; the
+    /// shell's liner faces inwards, so the open face shows the inside, not
+    /// the wall through it.
+    #[test]
+    fn the_helmet_hangs_on_its_hook_upright_facing_the_room() {
+        let model = ocw_assets::shipped::rider_model();
+        let skull = ocw_assets::rider::skull_centre();
+        for bikes in [1, 6, 24] {
+            let layout = ocw_assets::workshop::layout(bikes);
+            let hook = layout.helmet_hook();
+            let wall = layout.bounds.1.x;
+            for h in ocw_assets::helmet::Helmet::ALL {
+                let i = model.node(h.node()).expect("helmet node");
+                let t = hook_helmet_transform(model, i, hook, wall);
+                let up = t.rotation * Vec3::Y;
+                let front = t.rotation * Vec3::NEG_Z;
+                assert!(up.y > 0.9, "{h:?} upright: {up}");
+                assert!(front.x < -0.9, "{h:?} facing the room: {front}");
+                let pts: Vec<Vec3> = model.nodes[i]
+                    .primitives
+                    .iter()
+                    .flat_map(|p| &p.positions)
+                    .map(|q| t.transform_point(Vec3::from(*q)))
+                    .collect();
+                let max = pts.iter().fold(Vec3::MIN, |a, b| a.max(*b));
+                let min = pts.iter().fold(Vec3::MAX, |a, b| a.min(*b));
+                assert!(
+                    max.x < wall && max.x > wall - 0.03,
+                    "{h:?} against the wall: {max}"
+                );
+                assert!(min.x > wall - 0.6, "{h:?}");
+                // The peg (from the wall to the hook) inside the shell's
+                // height and width.
+                assert!(min.y < hook.y && hook.y < max.y, "{h:?} on the peg");
+                assert!(min.z < hook.z && hook.z < max.z, "{h:?}");
+                // The skull's centre (where a head would be) under the peg.
+                let head = model.node(ocw_assets::pose::nodes::HEAD).unwrap();
+                let c = t.transform_point(skull - Vec3::from(model.world(head).translation));
+                assert!((hook.y - c.y - 0.07).abs() < 1e-4);
+            }
+        }
+        // The liner: the shell's triangles turned to face its middle.
+        let i = model.node(ocw_assets::helmet::Helmet::Road.node()).unwrap();
+        let head = model.node(ocw_assets::pose::nodes::HEAD).unwrap();
+        let centre = skull - Vec3::from(model.world(head).translation);
+        for p in &model.nodes[i].primitives {
+            if model.materials[p.material].name != "helmet" {
+                continue;
+            }
+            let facing = |q: &Primitive| {
+                q.indices
+                    .chunks(3)
+                    .filter(|t| {
+                        let [a, b, c] = [0, 1, 2].map(|k| Vec3::from(q.positions[t[k] as usize]));
+                        (b - a).cross(c - a).dot((a + b + c) / 3.0 - centre) > 0.0
+                    })
+                    .count() as f32
+                    / (q.indices.len() / 3) as f32
+            };
+            let liner = inner_lining(p);
+            assert!(facing(p) > 0.7, "the shell faces out");
+            assert!(facing(&liner) < 0.3, "the liner faces in");
+            assert_eq!(liner.indices.len(), p.indices.len());
+        }
+    }
+
+    /// Six groupset tiles and a long card, as in the picture of the bug.
+    fn groupset_tiles(detail: Vec<String>, shown: usize) -> PickerView {
+        let names = [
+            "Stock road groupset",
+            "Endurance 11-speed mechanical groupset",
+            "Endurance 12-speed mechanical groupset",
+            "Endurance 12-speed electronic groupset",
+            "Race 12-speed electronic groupset, upper tier",
+            "Race 12-speed electronic groupset",
+        ];
+        PickerView {
+            title: "Groupset – Road - standard".into(),
+            subtitle: Some(
+                "This bike: ±0.0 % flat · ±0.0 % climb vs stock · 8.00 kg (stock weight)".into(),
+            ),
+            rows: names
+                .iter()
+                .map(|n| PickerRowView {
+                    left: n.to_string(),
+                    right: "Upper · 2,549 ♥".into(),
+                    thumb: Some(crate::thumbs::ThumbKey::Part(crate::thumbs::PartThumb {
+                        profile: ProfileId::Road,
+                        slot: "groupset".into(),
+                        model: "stock".into(),
+                        paint: Rgb(0x808080),
+                    })),
+                    gain: "+0.1 % flat · +0.8 % climb".into(),
+                    weight: "−1,500 g".into(),
+                    ..Default::default()
+                })
+                .collect(),
+            focus: 4,
+            detail,
+            tiles: Some(TilesView {
+                cols: 3,
+                first: 0,
+                shown,
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// Regression (2026-11-17, the bike stand's card ran out at the
+    /// panel's bottom under two rows of tiles): the panel's estimate
+    /// matches the picture of the bug (2560 × 1440: the grid ends about
+    /// 65 vh into the panel), and in 16:9, 16:10, 4:3 and 21:9 windows the
+    /// card shows only what fits – a part of its lines, in order, never
+    /// nothing; a short card and a card under a list are shown whole.
+    #[test]
+    fn the_stand_card_fits_under_the_tiles() {
+        use panel_layout::*;
+        let long: Vec<String> = [
+            "Benefit: −500 g: +0.8 % at 6 %, +0.1 % flat",
+            "Bike: 7.50 kg · +0.1 % flat, +0.8 % at 6 % vs stock",
+            "Upper tier · 2,600 g · 2,549 ♥",
+            "Against the base part: +0.1 % flat · +0.8 % climb · −500 g",
+            "Effect: −500 g · drivetrain +0.6 %",
+            "Fitted with: Race crankset · Race 12-speed cassette · Race chain (in the price and weight; the parts they replace go to your spare parts)",
+            "Counts in free ride and Open races; cosmetic in Profile / Equal races (the default)",
+        ]
+        .map(String::from)
+        .to_vec();
+        let v = groupset_tiles(long.clone(), 6);
+        let (used, inner_h, _) = panel_room(&v, 16.0 / 9.0);
+        assert!((60.0..72.0).contains(&used), "{used} vh above the card");
+        assert!(
+            used + 2.0 * CARD_PAD + text_vh(long.len(), CARD_TEXT) > inner_h,
+            "it ran out"
+        );
+        for aspect in [16.0 / 9.0, 16.0 / 10.0, 4.0 / 3.0, 21.0 / 9.0] {
+            let shown = fitted_card(&v, aspect);
+            assert!(!shown.is_empty(), "{aspect}");
+            let mut rest = long.iter();
+            assert!(
+                shown.iter().all(|l| rest.any(|d| d == l)),
+                "{aspect}: {shown:?}"
+            );
+            let (used, inner_h, inner_w) = panel_room(&v, aspect);
+            let w = inner_w - 2.0 * CARD_PAD;
+            let card: f32 = shown
+                .iter()
+                .map(|l| text_vh(wrapped_lines(l, w, CARD_TEXT), CARD_TEXT))
+                .sum::<f32>()
+                + CARD_GAP * (shown.len() - 1) as f32;
+            let total = used + GAP + CARD_MARGIN + 2.0 * CARD_PAD + card;
+            assert!(total <= inner_h, "{aspect}: {total} of {inner_h} vh");
+        }
+        // The benefit comes first and is kept at 16:9.
+        assert_eq!(fitted_card(&v, 16.0 / 9.0)[0], long[0]);
+        // One row of tiles and a short card: whole.
+        let short = vec!["Benefit: +0.1 % flat".to_string(), "Bike: 8.00 kg".into()];
+        assert_eq!(
+            fitted_card(&groupset_tiles(short.clone(), 3), 16.0 / 9.0),
+            short
+        );
+        // Under a list the card is whole.
+        let mut list = groupset_tiles(long.clone(), 6);
+        list.tiles = None;
+        assert_eq!(fitted_card(&list, 4.0 / 3.0), long);
+        // The word wrap of the estimate.
+        assert_eq!(wrapped_lines("aaa bbb ccc", 7.0 * 2.0 * 0.6 + 0.01, 2.0), 2);
+        assert_eq!(wrapped_lines("", 10.0, 2.0), 1);
+        assert_eq!(wrapped_lines("abcdefghij", 4.0 * 0.6 + 0.01, 1.0), 3);
+    }
 
     #[test]
     fn bikes_move_between_hook_and_stand_in_an_arc() {

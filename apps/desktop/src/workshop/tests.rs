@@ -690,6 +690,29 @@ fn the_bike_stand_tiles_with_every_device() {
             .iter()
             .any(|l| l.starts_with("Against the base part: "))
     );
+    // Regression (2026-11-17, the card ran out at the panel's bottom):
+    // under the tiles the card starts with the benefit and the bike (the
+    // name is on the focused tile), where parts count comes last, and what
+    // the renderer shows of it is a part of it, in order, at 16:9 and 4:3.
+    assert!(
+        p.detail[0].starts_with("Benefit:") || p.detail[0].starts_with("On the bike now"),
+        "{:?}",
+        p.detail
+    );
+    assert!(p.detail.iter().all(|l| *l != p.rows[p.focus].left));
+    assert_eq!(
+        p.detail.last().map(String::as_str),
+        Some(picker::WHERE_PARTS_COUNT)
+    );
+    for aspect in [16.0 / 9.0, 4.0 / 3.0] {
+        let shown = ocw_render::workshop::fitted_card(&p, aspect);
+        assert!(!shown.is_empty(), "{aspect}");
+        let mut rest = p.detail.iter();
+        assert!(
+            shown.iter().all(|l| rest.any(|d| d == l)),
+            "{aspect}: {shown:?}"
+        );
+    }
     // Keyboard: → previews the next tile on the stand bike.
     tap(&mut app, KeyCode::ArrowRight);
     assert_eq!(view(&app).picker.unwrap().focus, 1);

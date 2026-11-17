@@ -4085,6 +4085,60 @@ at = ["0.5=time pause", "0.5=time 2026-07-15 20:30", "0.5=hud off", "0.5=hud.pro
 shot = 12
 pick = false
 
+# Fixes of 2026-11-17 (spec §14 Phase 4 4N / 4G, HUD §3.2): the palm, the
+# helmet on its hook, the standing rider's hands, the HUD panel on narrow
+# windows, the bike stand's card. Made-up rider name only.
+
+[[scene]]
+name = "fix-hud-1280x720"
+description = "HUD fit (§3.2): the top panel at 1280×720 with the wind and the clock in the main line – every wrapped line inside the panel"
+args = ["--route", "hills", "--bots", "3", "--power", "200", "--window", "1280x720"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 09:44", "1=weather windy"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-hud-1024x768"
+description = "HUD fit (§3.2): the top panel in a 4:3 window (1024×768), the lines wrapped at the separators, the panel grown with them"
+args = ["--route", "hills", "--bots", "3", "--power", "200", "--window", "1024x768"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 09:44", "1=weather windy"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-hud-1280x720-150"
+description = "HUD fit (§3.2): 1280×720 with the HUD at 150 % – the panel narrower than the window, every line inside it"
+args = ["--route", "hills", "--bots", "3", "--power", "200", "--window", "1280x720"]
+cmds = ["set display.ui_scale 150"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 09:44", "1=weather windy"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "fix-stand-tiles-frame"
+description = "Bike stand tiles (4G): the frames as tiles, weights over 1,000 g with a thousands separator, the detail card inside the panel"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 5000", "2.2=workshop open", "2.8=workshop select", "4.2=workshop select", "5=workshop right"]
+shot = 24
+pick = false
+
+[[scene]]
+name = "fix-stand-tiles-groupset"
+description = "Bike stand tiles (4G): the groupsets as tiles, a top groupset focused – its detail card (with the parts it is fitted with) fits the panel"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 5000", "2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-next", "4.2=workshop slot-next", "4.6=workshop slot-next", "5=workshop select", "5.8=workshop down", "6.2=workshop right"]
+shot = 24
+pick = false
+
+[[scene]]
+name = "fix-helmet-hook"
+description = "Helmet off (4N Q28): the hair slot at the mirror, the rider's helmet hanging upright on the peg between the window and the mirror, its shell facing the room"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --hair long --hair-colour blond", "2.2=workshop open", "2.8=workshop mirror", "4=workshop slot-next", "4.4=workshop slot-next", "4.8=workshop slot-next", "6=workshop orbit 35"]
+shot = 12
+pick = false
+
 [[scene]]
 name = "stands-masca-km79"
 description = "Masca road at km 7.9 from above (unicorn): potato terraces on a steep slope beside the road, the stands following the ground of every terrace"
@@ -4137,4 +4191,13 @@ world = true
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-1500,2260", "--bots", "0", "--power", "0"]
 at = ["0.5=time pause", "0.5=time 2026-06-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose -1495 2255 22 225 -30"]
 shot = 10
+pick = false
+
+[[scene]]
+name = "fix-standing-hands"
+description = "The standing rider at the mirror (4N): the idle pose with relaxed, curled hands following the arms"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2.2=workshop open", "2.8=workshop mirror", "4=workshop zoom 2"]
+shot = 12
 pick = false

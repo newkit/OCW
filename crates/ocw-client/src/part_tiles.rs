@@ -123,10 +123,9 @@ pub fn tile_text(
 pub fn bike_gain_line(build: &Build) -> String {
     let stock = Build::stock(build.profile);
     let g = ((build.params.bike_mass_kg - stock.params.bike_mass_kg) * 1000.0).round() as i64;
-    let grams = match g.cmp(&0) {
-        std::cmp::Ordering::Less => format!("−{} g", -g),
-        std::cmp::Ordering::Equal => "stock weight".into(),
-        std::cmp::Ordering::Greater => format!("+{g} g"),
+    let grams = match g {
+        0 => "stock weight".into(),
+        g => ocw_sim::build::signed_grams(g),
     };
     let mut s = format!(
         "This bike: {} vs stock · {:.2} kg ({grams})",
