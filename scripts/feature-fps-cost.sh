@@ -105,10 +105,11 @@ for size in $sizes; do
                 --cmd "ground_detail $gd" --cmd "road.damage $rd" --cmd "hud.map $map")
           IFS=';' read -ra more <<<"$start"
           for m in "${more[@]}"; do [ -n "$m" ] && cmds+=(--cmd "$m"); done
-          # Again once the settings' start values are applied, and the state at the end.
+          # Again once the settings' start values are applied, and the state at the end
+          # (not `hud.map`: without an argument it toggles the map).
           cmds+=(--at "2=quality $preset" --at "2.5=view auto off" --at "3=ground_detail $gd" --at "3=road.damage $rd" --at "3=hud.map $map")
           cmds+=(--at "$((seconds - 2))=quality" --at "$((seconds - 2))=view" --at "$((seconds - 2))=ground_detail"
-                 --at "$((seconds - 2))=road.damage" --at "$((seconds - 2))=hud.map")
+                 --at "$((seconds - 2))=road.damage")
           label="$size $preset $name $cname r$r"
           log="$logs/${size}-${preset}-${name}-${cname}-r$r.log"
           line=$(OCW_CONFIG_DIR=$work/cfg OCW_DATA_DIR=$work/data \
