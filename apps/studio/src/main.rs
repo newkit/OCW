@@ -20,6 +20,9 @@
 //! - [`routes`]: the Routes workspace (16D, E1; external planners E2):
 //!   the route document, imports with map matching, the built-in planner
 //!   and BRouter, exports, *Test ride*;
+//! - [`models`], [`models_view`], [`models_ui`]: the Models workspace (16B,
+//!   stage E3, view only): the model browser, the viewer, the stats and
+//!   the validator's findings, the try-on;
 //! - [`ui`]: the egui panels.
 
 mod build;
@@ -27,6 +30,9 @@ mod edit;
 mod flight;
 mod info;
 mod map;
+mod models;
+mod models_ui;
+mod models_view;
 mod overlay;
 mod patch;
 mod pick;
@@ -100,6 +106,15 @@ pub struct Args {
     /// Where autosaves go (default `<data dir>/ocw/studio/autosave`).
     #[arg(long, value_name = "DIR")]
     pub autosave_dir: Option<PathBuf>,
+    /// The model folder of the Models workspace (default `OCW_MODELS`, or
+    /// `artwork/3dmodels` in the working directory, else the embedded
+    /// models).
+    #[arg(long, value_name = "DIR")]
+    pub models: Option<PathBuf>,
+    /// A model to open at start (an id of the folder, or a .glb / .gltf
+    /// file); starts in the Models workspace.
+    #[arg(long, value_name = "ID|FILE")]
+    pub model: Option<String>,
 }
 
 fn parse_size(s: &str) -> Result<(u32, u32), String> {
@@ -126,6 +141,16 @@ fn main() -> AppExit {
             std::process::exit(1);
         })
     });
+    let (library, library_label) = models_view::ModelView::library(args.models.as_deref());
+    let mut model_view = models_view::ModelView::new(library, library_label);
+    let mut workspace = args.workspace;
+    if let Some(m) = &args.model {
+        if let Err(e) = model_view.open(m) {
+            eprintln!("{m}: {e}");
+            std::process::exit(1);
+        }
+        workspace = ui::Workspace::Models;
+    }
     let store_dir = args.autosave_dir.clone().or_else(edit::autosave_dir);
     let store = store_dir
         .clone()
@@ -162,8 +187,9 @@ fn main() -> AppExit {
     ))
     .insert_resource(settings)
     .insert_resource(edit::Studio::new(store, store_dir))
+    .insert_resource(model_view)
     .insert_resource(ui::UiState {
-        workspace: args.workspace,
+        workspace,
         show_map: !args.no_map,
         ..Default::default()
     })
@@ -175,6 +201,7 @@ fn main() -> AppExit {
         edit::EditPlugin,
         overlay::OverlayPlugin,
         ui::UiPlugin,
+        models_view::ModelsPlugin,
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, routes::update_routes);
@@ -240,5 +267,14 @@ mod tests {
         assert!(a.no_map);
         assert_eq!(a.commands, vec!["studio view add Pass"]);
         assert!(Args::try_parse_from(["ocw-studio", "--window", "big"]).is_err());
+        let a = Args::parse_from([
+            "ocw-studio",
+            "--model",
+            "bikes/bike-tt",
+            "--models",
+            "artwork/3dmodels",
+        ]);
+        assert_eq!(a.model.as_deref(), Some("bikes/bike-tt"));
+        assert_eq!(a.models, Some(PathBuf::from("artwork/3dmodels")));
     }
 }

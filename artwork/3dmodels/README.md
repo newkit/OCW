@@ -96,8 +96,12 @@ It is sorted by `file`; the exporters keep it so.
 ## Tools
 
 ```bash
-cargo run -p ocw-assets -- validate artwork/3dmodels      # the contract, licences, budgets
+cargo run -p ocw-assets -- validate artwork/3dmodels [--json]   # the contract, licences, budgets (findings with fixes)
 cargo run -p ocw-assets -- info artwork/3dmodels/bikes/bike-tt.glb
+cargo run -p ocw-assets -- model diff A B [--json]      # structural diff of two files or ids (exit 1: they differ)
+cargo run -p ocw-assets -- model export bikes/bike-tt [--gltf] --out DIR   # an editable copy for Blender
+cargo run -p ocw-assets -- model import FILE.glb --kind prop --id post-square [--license … --source … --author …] [--dry-run]
+cargo run -p ocw-studio -- --model bikes/bike-tt          # the Models workspace: view, stats, findings, try-on
 cargo run -p ocw-assets -- model export-all [--check]    # bikes, riders, helmets from the generators
 cargo run -p ocw-render --example export-flora [-- --check]   # the plants
 ocw-desktop --models artwork/3dmodels                     # read the files from disk (also $OCW_MODELS)
@@ -115,3 +119,11 @@ on, *Transform → +Y Up* on, *Mesh → Apply Modifiers* on, *Materials →
 Export*, no Draco compression. Keep material names as paint-slot names and
 node names as they are (Blender adds `.001` to duplicate names: rename them
 back). Then validate the folder before committing.
+
+`model import` does the clean-up for you (spec §14 Phase 15, 15D): it strips
+Blender's `.001` suffixes where the plain name is free, renames materials
+that are close to a paint slot (`Frame.001`, `Bar Tape`), merges a node's
+primitives per material, drops unused materials, computes missing normals,
+stamps `extras.ocw` and writes the canonical file with its manifest entry. A
+model lying on its back (exported without *+Y Up*) or with any contract error
+is refused with the findings and their fixes.
