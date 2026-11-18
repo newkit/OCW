@@ -16,7 +16,12 @@
 //! stay crisp near and turn into their mean grey far away instead of
 //! shimmering. **Wear:** tyre tracks, repaired patches and transverse
 //! cracks on asphalt, grass between the wheel ruts of tracks, all
-//! deterministic per position. Without a material library the same shader
+//! deterministic per position. **Damage** (`ocw_world::road_wear`): by the
+//! strip's wear grade (class, surface, OSM `smoothness`) longitudinal and
+//! transverse cracks, sealed cracks, alligator areas, patches, worn paint
+//! and potholes – recessed by parallax and normals only, water-filled when
+//! the road is wet; the quality preset sets their share and reach
+//! ([`sync_damage`]). Without a material library the same shader
 //! draws the flat colours with the markings.
 
 use bevy::asset::{AssetPath, embedded_asset, embedded_path};
@@ -24,7 +29,10 @@ use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin};
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
+use ocw_world::road_condition::Smoothness;
 use ocw_world::road_dress::{CycleLane, LineSpec, MarkingStyle};
+
+use crate::console::{ConsoleAppExt, ConsoleCommand, Permission};
 
 use crate::materials::MaterialLibrary;
 
@@ -60,9 +68,20 @@ pub struct RoadLook {
     pub cycle_colour: Vec4,
     /// Zebra paint; w: width of the kerb stones' top (m).
     pub crossing_colour: Vec4,
-    /// x: patch chance on asphalt, y: on worn asphalt, z: crack chance on
-    /// worn asphalt, w: on asphalt.
-    pub wear: Vec4,
+    /// The damage per wear grade ([`damage_tables`],
+    /// `ocw_world::road_wear::wear_density`): x transverse, y longitudinal
+    /// crack chance, z alligator area, w pothole chance.
+    pub damage: [Vec4; 8],
+    /// Per wear grade: x patch chance, y sealed share of the cracks, z the
+    /// pothole zone from the edge (m), w wheel track strength.
+    pub repair: [Vec4; 8],
+    /// Per wear grade: x loose stone chance per 10 cm cell, y rut depth of
+    /// unpaved roads.
+    pub loose: [Vec4; 8],
+    /// The quality preset's damage ([`damage_detail`]): x 1 = alligator
+    /// crack pattern, y damage drawn up to (m), z the `road.damage` override
+    /// ([`RoadDamageOverride::code`]).
+    pub detail: Vec4,
     /// The weather (spec §14 Phase 9, S4; [`crate::weather::surface_uniform`]):
     /// x wetness, y puddles, z snow cover, w wind sway.
     pub weather: Vec4,
@@ -70,6 +89,144 @@ pub struct RoadLook {
     /// x, y the climatological snow ramp over the altitude
     /// (`clamp(x + y · alt)`), z on.
     pub season: Vec4,
+}
+
+/// The damage tables of `road.wesl` for the quality preset's share of the
+/// features: per wear grade (index) the chances and the repair look of
+/// `ocw_world::road_wear::wear_density`.
+pub fn damage_tables(share: f32) -> DamageTables {
+    let mut t = DamageTables {
+        damage: [Vec4::ZERO; 8],
+        repair: [Vec4::ZERO; 8],
+        loose: [Vec4::ZERO; 8],
+    };
+    for g in 0..=ocw_world::road_wear::MAX_GRADE {
+        let d = ocw_world::road_wear::wear_density(g, share);
+        let i = usize::from(g);
+        t.damage[i] = Vec4::new(d.transverse, d.longitudinal, d.alligator, d.pothole);
+        t.repair[i] = Vec4::new(d.patch, d.sealed, d.pothole_zone_m, d.tracks);
+        if g > 0 {
+            t.loose[i] = Vec4::new(d.stones, d.ruts, 0.0, 0.0);
+        }
+    }
+    t
+}
+
+/// The three per-grade tables of [`RoadLook`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DamageTables {
+    pub damage: [Vec4; 8],
+    pub repair: [Vec4; 8],
+    pub loose: [Vec4; 8],
+}
+
+impl DamageTables {
+    fn of(l: &RoadLook) -> Self {
+        Self {
+            damage: l.damage,
+            repair: l.repair,
+            loose: l.loose,
+        }
+    }
+}
+
+/// The `detail` vector of `road.wesl` for a quality preset: x 1 when the
+/// alligator crack pattern is drawn (not on Low), y how far the damage is
+/// drawn (m).
+pub fn damage_detail(q: &crate::quality::QualityPreset) -> Vec4 {
+    Vec4::new(
+        f32::from(u8::from(q.road_damage_share > 0.6)),
+        q.road_damage_m,
+        0.0,
+        0.0,
+    )
+}
+
+/// The `road.damage` console command's override (for looking at and
+/// screenshotting each condition on the same road): every road drawn as
+/// if OSM tagged it with this smoothness, or without damage. Visual only.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RoadDamageOverride {
+    /// Each road its own condition (OSM `smoothness` or the estimate).
+    #[default]
+    Auto,
+    /// No damage on any road.
+    Off,
+    /// Every road as if tagged with this smoothness.
+    Smoothness(Smoothness),
+}
+
+impl RoadDamageOverride {
+    /// The names `road.damage` takes.
+    pub const NAMES: [&'static str; 10] = [
+        "auto",
+        "off",
+        "excellent",
+        "good",
+        "intermediate",
+        "bad",
+        "very_bad",
+        "horrible",
+        "very_horrible",
+        "impassable",
+    ];
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "auto" => Some(Self::Auto),
+            "off" => Some(Self::Off),
+            v => match Smoothness::from_osm(Some(v)) {
+                Smoothness::Unknown => None,
+                sm => Some(Self::Smoothness(sm)),
+            },
+        }
+    }
+
+    /// `detail.z` of `road.wesl`: 0 each road its own grade, 1 … 7 every
+    /// road this grade, 8 none.
+    pub fn code(self) -> f32 {
+        match self {
+            Self::Auto => 0.0,
+            Self::Off => 8.0,
+            Self::Smoothness(s) => {
+                f32::from(ocw_world::road_wear::smoothness_grade(s).unwrap_or(0))
+            }
+        }
+    }
+}
+
+/// Hands the quality preset's road damage to every road material (also to
+/// ones created later): the share of the features and how far they are
+/// drawn, and the `road.damage` override.
+pub fn sync_damage(
+    quality: Option<Res<crate::quality::RenderQuality>>,
+    forced: Option<Res<RoadDamageOverride>>,
+    roads: Option<ResMut<Assets<RoadMaterial>>>,
+) {
+    let Some(mut roads) = roads else {
+        return;
+    };
+    let q = quality.map(|q| q.0).unwrap_or_default();
+    let t = damage_tables(q.road_damage_share);
+    let mut detail = damage_detail(&q);
+    detail.z = forced.map_or(0.0, |f| f.code());
+    let stale: Vec<_> = roads
+        .iter()
+        .filter(|(_, m)| {
+            let l = &m.extension.look;
+            l.detail != detail || DamageTables::of(l) != t
+        })
+        .map(|(id, _)| id)
+        .collect();
+    for id in stale {
+        if let Some(mut m) = roads.get_mut(id) {
+            let l = &mut m.extension.look;
+            l.damage = t.damage;
+            l.repair = t.repair;
+            l.loose = t.loose;
+            l.detail = detail;
+        }
+    }
 }
 
 fn spec(l: LineSpec, w: f32) -> Vec4 {
@@ -102,7 +259,10 @@ impl RoadLook {
                 f32::from(u8::from(style.cycle_default == CycleLane::Exclusive)),
             ),
             crossing_colour: c(style.crossing_colour, 0.15),
-            wear: Vec4::new(0.06, 0.22, 0.45, 0.08),
+            damage: damage_tables(1.0).damage,
+            repair: damage_tables(1.0).repair,
+            loose: damage_tables(1.0).loose,
+            detail: damage_detail(&crate::quality::QualityPreset::default()),
             weather: Vec4::ZERO,
             season: Vec4::ZERO,
         }
@@ -204,7 +364,22 @@ pub struct RoadMaterialPlugin;
 impl Plugin for RoadMaterialPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "road.wesl");
-        app.add_plugins(MaterialPlugin::<RoadMaterial>::default());
+        app.add_plugins(MaterialPlugin::<RoadMaterial>::default())
+            .init_resource::<RoadDamageOverride>()
+            .add_systems(Update, sync_damage);
+        app.console_command(ConsoleCommand::new(
+            Permission::User,
+            clap::Command::new("road.damage")
+                .about("Draw every road in one condition (OSM smoothness), none, or each its own (auto): road.damage [auto|off|excellent|good|intermediate|bad|very_bad|horrible|very_horrible|impassable]")
+                .arg(clap::Arg::new("condition").value_parser(RoadDamageOverride::NAMES)),
+            |world, m| {
+                if let Some(v) = m.get_one::<String>("condition") {
+                    let o = RoadDamageOverride::parse(v).ok_or_else(|| format!("unknown condition {v}"))?;
+                    *world.resource_mut::<RoadDamageOverride>() = o;
+                }
+                Ok(format!("road damage: {:?}", world.resource::<RoadDamageOverride>()))
+            },
+        ));
     }
 }
 
@@ -227,6 +402,93 @@ mod tests {
             ocw_assets::materials::ROAD_IDS[usize::from(ocw_world::road_dress::SIDEWALK_LAYER)],
             "sidewalk"
         );
+    }
+
+    #[test]
+    fn damage_tables_follow_the_grades_and_the_preset() {
+        use crate::quality::{QualityLevel, QualityPreset};
+        let l = RoadLook::default();
+        assert_eq!(l.damage[0], Vec4::ZERO, "grade 0 draws nothing");
+        assert_eq!(l.repair[0], Vec4::ZERO);
+        assert_eq!(l.loose[0], Vec4::ZERO);
+        // Excellent roads (grade 1): no potholes, no loose stones; bad (5)
+        // and worse: the most.
+        assert_eq!(l.loose[1].x, 0.0);
+        assert!(l.loose[7].x > l.loose[5].x && l.loose[5].x > 0.0);
+        assert_eq!(l.damage[1].w, 0.0);
+        assert!(l.damage[7].w > l.damage[5].w && l.damage[5].w > l.damage[2].w);
+        let d = ocw_world::road_wear::wear_density(4, 1.0);
+        assert_eq!(
+            l.damage[4],
+            Vec4::new(d.transverse, d.longitudinal, d.alligator, d.pothole)
+        );
+        // Fewer features on Low, nearer, without the alligator pattern.
+        let high = QualityPreset::of(QualityLevel::High);
+        let low = QualityPreset::of(QualityLevel::Low);
+        let medium = QualityPreset::of(QualityLevel::Medium);
+        assert!(low.road_damage_share < medium.road_damage_share);
+        assert!(medium.road_damage_share < high.road_damage_share);
+        assert!(low.road_damage_m < high.road_damage_m);
+        assert_eq!(damage_detail(&high).x, 1.0);
+        assert_eq!(damage_detail(&low).x, 0.0);
+        let lo = damage_tables(low.road_damage_share);
+        assert!(lo.damage[6].w < l.damage[6].w && lo.damage[6].x < l.damage[6].x);
+        assert!(lo.loose[6].x < l.loose[6].x);
+    }
+
+    #[test]
+    fn the_quality_preset_reaches_the_road_materials() {
+        use crate::quality::{QualityLevel, QualityPreset, RenderQuality};
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Assets<RoadMaterial>>()
+            .insert_resource(RenderQuality(QualityPreset::of(QualityLevel::Low)))
+            .add_systems(Update, sync_damage);
+        let h = app
+            .world_mut()
+            .resource_mut::<Assets<RoadMaterial>>()
+            .add(RoadMaterial {
+                base: StandardMaterial::default(),
+                extension: RoadExtension::new(None, &MarkingStyle::default()),
+            });
+        app.update();
+        let low = QualityPreset::of(QualityLevel::Low);
+        let mats = app.world().resource::<Assets<RoadMaterial>>();
+        let look = mats.get(&h).expect("material").extension.look;
+        assert_eq!(look.detail, damage_detail(&low));
+        assert_eq!(look.damage, damage_tables(low.road_damage_share).damage);
+        assert_eq!(look.loose, damage_tables(low.road_damage_share).loose);
+    }
+
+    #[test]
+    fn the_override_draws_every_road_in_one_condition() {
+        assert_eq!(RoadDamageOverride::default().code(), 0.0);
+        assert_eq!(RoadDamageOverride::parse("off").unwrap().code(), 8.0);
+        assert_eq!(RoadDamageOverride::parse("excellent").unwrap().code(), 1.0);
+        assert_eq!(RoadDamageOverride::parse("bad").unwrap().code(), 5.0);
+        assert_eq!(
+            RoadDamageOverride::parse("very_horrible").unwrap().code(),
+            7.0
+        );
+        assert!(RoadDamageOverride::parse("so-so").is_none());
+        for n in RoadDamageOverride::NAMES {
+            assert!(RoadDamageOverride::parse(n).is_some(), "{n}");
+        }
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Assets<RoadMaterial>>()
+            .insert_resource(RoadDamageOverride::parse("horrible").unwrap())
+            .add_systems(Update, sync_damage);
+        let h = app
+            .world_mut()
+            .resource_mut::<Assets<RoadMaterial>>()
+            .add(RoadMaterial {
+                base: StandardMaterial::default(),
+                extension: RoadExtension::new(None, &MarkingStyle::default()),
+            });
+        app.update();
+        let mats = app.world().resource::<Assets<RoadMaterial>>();
+        assert_eq!(mats.get(&h).expect("material").extension.look.detail.z, 7.0);
     }
 
     #[test]

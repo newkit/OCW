@@ -545,6 +545,7 @@ mod tests {
             surface: RoadSurface::of_class(RoadClass::Residential),
             dress: RoadDress::of_class(RoadClass::Residential, 6.0),
             lit: RoadLit::Unknown,
+            condition: Default::default(),
         };
         WorldPackage {
             name: "T".into(),

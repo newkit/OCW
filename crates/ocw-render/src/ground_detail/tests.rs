@@ -69,6 +69,7 @@ fn package(at: (f64, f64), class: LandClass, height: impl Fn(u32, u32) -> f32) -
         surface: RoadSurface::Asphalt,
         dress: RoadDress::of_class(RoadClass::Tertiary, 6.0),
         lit: RoadLit::Unknown,
+        condition: Default::default(),
     };
     let a = road((0..=100).map(|i| [i as f32 * 10.0, 500.0]).collect(), &pkg);
     let b = road(

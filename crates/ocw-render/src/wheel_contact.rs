@@ -218,6 +218,7 @@ fn strips_of(route: &Route, width: f32) -> Vec<RoadStrip> {
         surface: ocw_world::RoadSurface::Asphalt,
         dress: ocw_world::RoadDress::of_class(RoadClass::Secondary, width),
         lit: ocw_world::RoadLit::Unknown,
+        condition: Default::default(),
     }]
 }
 

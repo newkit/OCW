@@ -1272,6 +1272,7 @@ mod tests {
                             4.0,
                         ),
                         lit: crate::RoadLit::Unknown,
+                        condition: Default::default(),
                     }],
                 },
             );

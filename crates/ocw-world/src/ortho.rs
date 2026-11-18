@@ -542,6 +542,7 @@ pub(crate) mod tests {
             surface: RoadSurface::of_class(RoadClass::Residential),
             dress: RoadDress::of_class(RoadClass::Residential, width),
             lit: Default::default(),
+            condition: Default::default(),
         }
     }
 

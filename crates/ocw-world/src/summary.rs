@@ -218,6 +218,7 @@ mod tests {
                         surface: crate::RoadSurface::Asphalt,
                         dress: crate::RoadDress::of_class(RoadClass::Secondary, 6.5),
                         lit: crate::RoadLit::Unknown,
+                        condition: Default::default(),
                     }],
                 },
             );

@@ -409,6 +409,7 @@ mod tests {
                 surface: crate::RoadSurface::of_class(class),
                 dress: crate::RoadDress::of_class(class, 4.0),
                 lit: Default::default(),
+                condition: Default::default(),
             }]
         } else {
             Vec::new()

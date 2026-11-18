@@ -263,7 +263,8 @@ fn analyse(path: &str) {
                             continue;
                         };
                         let _ = d;
-                        let code = MarkCode::of(&s.dress, s.class, s.surface).lines_code();
+                        let code =
+                            MarkCode::of(&s.dress, s.class, s.surface, &s.condition).lines_code();
                         let painted = (code >> 6) & 7 != 0 || (code >> 9) & 1 == 1;
                         let mesh = road_meshes(std::slice::from_ref(s), &ctx).roads;
                         parts.push((ei, Some(ei), s.points.clone(), painted, mesh));
@@ -277,7 +278,8 @@ fn analyse(path: &str) {
                             unmatched += 1;
                             continue;
                         };
-                        let code = MarkCode::of(&s.dress, s.class, s.surface).lines_code();
+                        let code =
+                            MarkCode::of(&s.dress, s.class, s.surface, &s.condition).lines_code();
                         let painted = (code >> 6) & 7 != 0 || (code >> 9) & 1 == 1;
                         let rows = [t.rows[i].as_deref()];
                         let mesh = road_meshes_rows(std::slice::from_ref(s), &rows, &ctx).roads;

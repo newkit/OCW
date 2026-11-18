@@ -1304,6 +1304,7 @@ mod tests {
             surface: ocw_world::RoadSurface::Asphalt,
             dress: ocw_world::RoadDress::of_class(ocw_world::graph::RoadClass::Secondary, 6.0),
             lit: ocw_world::RoadLit::Unknown,
+            condition: Default::default(),
         });
         let m = crate::package::build_tile_meshes(&pkg, TileKey { x: 0, z: 0 }).unwrap();
         let mut cells = Vec::new();

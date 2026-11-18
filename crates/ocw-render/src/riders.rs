@@ -2327,6 +2327,7 @@ mod tests {
             surface: ocw_world::RoadSurface::Asphalt,
             dress,
             lit: ocw_world::RoadLit::Unknown,
+            condition: Default::default(),
         };
         let pavement = Pavement(std::sync::Arc::new(
             ocw_world::world_set::WorldPavement::from_index(PavementIndex::from_strips([&strip])),

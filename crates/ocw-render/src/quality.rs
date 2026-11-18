@@ -2,7 +2,8 @@
 //! one set of numbers per level for what costs the GPU most – the sun's
 //! shadow maps and cascades, MSAA, the view distance, how far trees are
 //! drawn, the houses' levels of detail, the weather's particles and (in
-//! the browser) the pixel ratio of the canvas.
+//! the browser) the pixel ratio of the canvas, and how much road damage
+//! is drawn (`crate::road_material::sync_damage`).
 //!
 //! **High is what the renderer always drew** (the desktop's look, the
 //! WebGPU build's): with High nothing changes. Medium and Low are cheaper
@@ -86,6 +87,12 @@ pub struct QualityPreset {
     /// device's own). A phone at 3 device pixels per CSS pixel draws a
     /// ninth of the pixels at 1.
     pub max_pixel_ratio: Option<f32>,
+    /// The share of the road damage drawn (cracks, patches, potholes;
+    /// `ocw_world::road_wear::wear_density`); above 0.6 with the alligator
+    /// crack pattern.
+    pub road_damage_share: f32,
+    /// How far the road damage is drawn (m).
+    pub road_damage_m: f32,
     /// The share of the near-field ground detail drawn (spec §4.6.2,
     /// `ground_detail`: stones, dirt, tufts, leaves beside the roads; 0
     /// none, 1 all).
@@ -111,6 +118,8 @@ impl QualityPreset {
                 house_lod_scale: 1.0,
                 particle_share: 1.0,
                 max_pixel_ratio: None,
+                road_damage_share: 1.0,
+                road_damage_m: 160.0,
                 ground_detail: 1.0,
                 ground_detail_m: 80.0,
             },
@@ -126,6 +135,8 @@ impl QualityPreset {
                 house_lod_scale: 0.75,
                 particle_share: 0.5,
                 max_pixel_ratio: Some(2.0),
+                road_damage_share: 0.8,
+                road_damage_m: 110.0,
                 ground_detail: 0.6,
                 ground_detail_m: 55.0,
             },
@@ -143,6 +154,8 @@ impl QualityPreset {
                 house_lod_scale: 0.5,
                 particle_share: 0.25,
                 max_pixel_ratio: Some(1.0),
+                road_damage_share: 0.55,
+                road_damage_m: 60.0,
                 ground_detail: 0.25,
                 ground_detail_m: 35.0,
             },

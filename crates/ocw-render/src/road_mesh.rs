@@ -286,7 +286,7 @@ fn strip_mesh(
     }
     let half = s.width_m / 2.0;
     let layer = s.surface.code();
-    let code = MarkCode::of(&s.dress, s.class, s.surface);
+    let code = MarkCode::of(&s.dress, s.class, s.surface, &s.condition);
     let lines = code.lines_code() as f32;
     let extra = code.extra_code();
     let far = ctx.colour(layer, {
@@ -739,6 +739,7 @@ mod tests {
             surface: RoadSurface::Asphalt,
             dress,
             lit: ocw_world::RoadLit::Unknown,
+            condition: Default::default(),
         }
     }
 
@@ -893,7 +894,12 @@ mod tests {
             &flat(-1.0),
         )
         .roads;
-        let code = MarkCode::of(&dress, RoadClass::Primary, RoadSurface::Asphalt);
+        let code = MarkCode::of(
+            &dress,
+            RoadClass::Primary,
+            RoadSurface::Asphalt,
+            &Default::default(),
+        );
         assert_eq!(code.centre, CentreLine::Dashed);
         let surf: Vec<usize> = (0..m.positions.len())
             .filter(|&i| decode_b(m.uvs_b[i][0]).1 == Kind::Surface as u8)
@@ -908,6 +914,36 @@ mod tests {
         // Codes survive the float round trip.
         let (layer, kind, extra) = decode_b(code_b(6, Kind::Crossing, 21));
         assert_eq!((layer, kind, extra), (6, Kind::Crossing as u8, 21));
+        let (_, _, extra) = decode_b(code_b(1, Kind::Surface, 255));
+        assert_eq!(extra, 255, "the wear grade's bits survive too");
+        // The wear grade rides along in the extra bits.
+        let (_, _, extra) = decode_b(m.uvs_b[surf[0]][0]);
+        assert_eq!(MarkCode::decode(0, extra).wear, code.wear);
+        assert!(code.wear > 0);
+    }
+
+    /// Road damage is drawn only (spec §4.6, *Road look*): a worn minor
+    /// road and a kept-up main road on the same line have the same
+    /// geometry – the ridden surface does not change with the wear grade.
+    #[test]
+    fn the_wear_grade_changes_no_geometry() {
+        let dress = RoadDress::of_class(RoadClass::Primary, 6.0);
+        let main = strip(RoadClass::Primary, 6.0, 0.0, dress.clone());
+        let mut worn = strip(RoadClass::Primary, 6.0, 0.0, dress.clone());
+        worn.class = RoadClass::Unclassified;
+        worn.surface = RoadSurface::WornAsphalt;
+        worn.condition.smoothness = ocw_world::road_condition::Smoothness::VeryBad;
+        let (a, b) = (
+            meshes(std::slice::from_ref(&main), &flat(-0.1)).roads,
+            meshes(std::slice::from_ref(&worn), &flat(-0.1)).roads,
+        );
+        let ga = MarkCode::of(&main.dress, main.class, main.surface, &main.condition).wear;
+        let gb = MarkCode::of(&worn.dress, worn.class, worn.surface, &worn.condition).wear;
+        assert!(gb > ga + 2, "{ga} {gb}");
+        assert_eq!(a.positions, b.positions);
+        assert_eq!(a.normals, b.normals);
+        assert_eq!(a.indices, b.indices);
+        assert_eq!(a.uvs, b.uvs);
     }
 
     #[test]

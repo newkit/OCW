@@ -1024,6 +1024,7 @@ mod tests {
                     points: vec![[0.0, 0.0, 20.0], [100.0, 0.0, 20.0]],
                     dress: ocw_world::RoadDress::of_class(RoadClass::Residential, 5.0),
                     lit: ocw_world::RoadLit::Unknown,
+                    condition: Default::default(),
                 }],
             },
         );

@@ -16,6 +16,7 @@
 //! world-builder sign --key KEY PKG | verify PKG | publish PKG --out DIR | diff OLD NEW
 //! world-builder package … --patch FILE.ocwpatch      (world patches, spec §14 Phase 16 16C)
 //! world-builder patch check --world PKG FILE [--pbf PBF]
+//! world-builder condition --world PKG [--pbf PBF…]   (road condition RCND, smoothness report)
 //! ```
 
 mod dist;
@@ -296,6 +297,26 @@ enum Cmd {
         /// plantations OSM does not map.
         #[arg(long)]
         crops: Option<PathBuf>,
+        /// Write the package here instead.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Sign the renewed manifest with this signing key.
+        #[arg(long, value_name = "KEY")]
+        sign_key: Option<PathBuf>,
+    },
+    /// The road condition (spec §4.6 *Road damage*): OSM `smoothness`,
+    /// `tracktype` and the `surface` value of every road into the section
+    /// RCND of an existing package (the manifest is renewed); prints the
+    /// road length per smoothness value (tagged vs estimated). `package`
+    /// writes it too.
+    Condition {
+        /// The package (rewritten in place unless --out is given).
+        #[arg(long)]
+        world: PathBuf,
+        /// OSM extracts the package was built from (without: only the
+        /// report of what the package holds).
+        #[arg(long)]
+        pbf: Vec<PathBuf>,
         /// Write the package here instead.
         #[arg(long)]
         out: Option<PathBuf>,
@@ -1515,6 +1536,13 @@ fn package(args: PackageArgs) {
     let lit = ocw_worldgen::package::apply_road_lit(&mut pkg, graph, |e| {
         way_lit.get(&e.osm_way).copied().unwrap_or_default()
     });
+    // The road condition from OSM `smoothness`, `tracktype` and the
+    // `surface` value (section RCND, spec §4.6 *Road damage*): the
+    // renderer's cracks, potholes and loose stones.
+    let way_conditions = ocw_worldgen::filter::way_conditions(&osm);
+    let (conditioned, _) = ocw_worldgen::package::apply_road_condition(&mut pkg, graph, |e| {
+        way_conditions.get(&e.osm_way).copied().unwrap_or_default()
+    });
     let zone = package_time_zone(time_zone, region.origin()).unwrap_or_else(|e| {
         eprintln!("--time-zone: {e}");
         std::process::exit(2);
@@ -1528,6 +1556,10 @@ fn package(args: PackageArgs) {
     area_report.push(format!(
         "lit roads (LITR): {lit} strips with an OSM `lit` tag"
     ));
+    area_report.push(format!(
+        "road condition (RCND): {conditioned} strips with OSM smoothness / tracktype / surface"
+    ));
+    area_report.extend(smoothness_report(&pkg));
     // Lanes, markings, kerbs, sidewalks and crossings (section RDRS, Phase
     // 8 T5), on the strips as built.
     let dress = stage("road dress", || {
@@ -2111,6 +2143,107 @@ fn package_box(pkg: &ocw_world::WorldPackage, margin_m: f64) -> (f64, f64, f64, 
 
 /// The OSM barriers of the extracts near the package.
 /// `world-builder vegetation`: the section VEGE (spec §14 Phase 8 T8).
+/// The road length per OSM smoothness value of a package (km and share):
+/// how much is tagged and how much the renderer estimates.
+fn smoothness_report(pkg: &ocw_world::WorldPackage) -> Vec<String> {
+    let lengths = ocw_world::road_condition::smoothness_lengths(
+        pkg.tiles.values().map(|t| t.roads.as_slice()),
+    );
+    let total: f64 = lengths.iter().map(|l| l.1).sum::<f64>().max(1e-9);
+    let tagged = total - lengths[0].1;
+    let mut out = vec![format!(
+        "road condition: {:.1} km of road, smoothness tagged on {:.1} km ({:.1} %), estimated on {:.1} km ({:.1} %)",
+        total / 1000.0,
+        tagged / 1000.0,
+        100.0 * tagged / total,
+        lengths[0].1 / 1000.0,
+        100.0 * lengths[0].1 / total
+    )];
+    for (s, m) in lengths {
+        out.push(format!(
+            "  smoothness {:<14} {:>9.1} km {:>6.2} %",
+            s.name(),
+            m / 1000.0,
+            100.0 * m / total
+        ));
+    }
+    out
+}
+
+fn condition(
+    world: &std::path::Path,
+    pbf: &[PathBuf],
+    out: Option<PathBuf>,
+    key: Option<&ocw_world::manifest::SigningKeyPair>,
+) {
+    let t = Instant::now();
+    let mut pkg = stage("read package", || read_package(world));
+    if pbf.is_empty() {
+        for l in smoothness_report(&pkg) {
+            println!("{l}");
+        }
+        return;
+    }
+    let before = std::fs::metadata(world).map_or(0, |m| m.len());
+    let Some(graph) = pkg.graph.clone() else {
+        eprintln!("{}: no road graph", world.display());
+        std::process::exit(1);
+    };
+    let osm = stage("read PBF highways", || {
+        OsmData::read_pbfs(pbf).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1);
+        })
+    });
+    let ways = ocw_worldgen::filter::way_conditions(&osm);
+    let (known, unmatched) = stage("road condition (RCND)", || {
+        ocw_worldgen::package::apply_road_condition(&mut pkg, &graph, |e| {
+            ways.get(&e.osm_way).copied().unwrap_or_default()
+        })
+    });
+    println!(
+        "road condition (RCND): {known} strips with OSM smoothness / tracktype / surface, {unmatched} strips not matched to an edge"
+    );
+    for l in smoothness_report(&pkg) {
+        println!("{l}");
+    }
+    let path = out.unwrap_or_else(|| world.to_path_buf());
+    let bytes = stage("serialise", || pkg.to_bytes());
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    stage("write", || {
+        std::fs::write(&path, &bytes).unwrap_or_else(|e| {
+            eprintln!("{}: {e}", path.display());
+            std::process::exit(1);
+        })
+    });
+    print_sections(&bytes);
+    println!(
+        "{}: {:.1} MB -> {:.1} MB ({:+.3} MB), {:.1} s",
+        path.display(),
+        before as f64 / 1e6,
+        bytes.len() as f64 / 1e6,
+        (bytes.len() as f64 - before as f64) / 1e6,
+        t.elapsed().as_secs_f64()
+    );
+    if path != world {
+        let _ = std::fs::copy(dist::sidecar(world), dist::sidecar(&path));
+    }
+    stage("manifest + hash", || {
+        dist::write_manifest(
+            &path,
+            &dist::ManifestArgs {
+                id: None,
+                name: None,
+                version: None,
+                dem_attribution: Vec::new(),
+            },
+            key,
+        )
+    });
+}
+
 fn vegetation(
     world: &std::path::Path,
     pbf: &[PathBuf],
@@ -2738,6 +2871,21 @@ fn main() {
                 })
             });
             forest(&world, &dir, cells, out, key.as_ref());
+            print_stage_profile(None);
+        }
+        Cmd::Condition {
+            world,
+            pbf,
+            out,
+            sign_key,
+        } => {
+            let key = sign_key.map(|k| {
+                ocw_worldstore::keys::read_signing_key(&k).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                })
+            });
+            condition(&world, &pbf, out, key.as_ref());
             print_stage_profile(None);
         }
         Cmd::Vegetation {

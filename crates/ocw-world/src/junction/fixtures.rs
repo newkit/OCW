@@ -115,6 +115,7 @@ pub fn strips(g: &RoadGraph) -> Vec<(usize, RoadStrip)> {
                     surface: RoadSurface::of_class(e.class),
                     dress,
                     lit: RoadLit::Unknown,
+                    condition: Default::default(),
                 },
             )
         })

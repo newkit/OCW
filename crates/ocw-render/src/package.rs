@@ -187,7 +187,9 @@ pub struct MeshArrays {
 impl MeshArrays {
     /// The material layer of the first vertex (roads; tests).
     pub fn roads_layer(&self) -> Option<f32> {
-        self.uvs_b.first().map(|u| u[0])
+        self.uvs_b
+            .first()
+            .map(|u| f32::from(crate::road_mesh::decode_b(u[0]).0))
     }
 
     /// The bytes of the arrays' data.
@@ -2298,6 +2300,7 @@ mod tests {
                 surface: ocw_world::RoadSurface::Asphalt,
                 dress: ocw_world::RoadDress::of_class(RoadClass::Secondary, 6.0),
                 lit: ocw_world::RoadLit::Unknown,
+                condition: Default::default(),
             }],
         };
         WorldPackage {
@@ -2954,7 +2957,7 @@ mod tests {
                 .uvs_b
                 .iter()
                 .filter(|u| surface(u))
-                .all(|u| u[0] == 0.0),
+                .all(|u| crate::road_mesh::decode_b(u[0]).0 == 0),
             "asphalt layer"
         );
         let along = m.roads.uvs.iter().map(|u| u[1]).fold(0.0f32, f32::max);
@@ -2982,6 +2985,7 @@ mod tests {
             surface: RoadSurface::Dirt,
             dress: ocw_world::RoadDress::of_class(RoadClass::Residential, 4.0),
             lit: ocw_world::RoadLit::Unknown,
+            condition: Default::default(),
         };
         let m = road_arrays(&[strip]);
         assert_eq!(m.roads_layer(), Some(4.0));

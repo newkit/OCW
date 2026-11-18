@@ -144,6 +144,8 @@ pub struct ArmLook {
     pub class: ocw_world::graph::RoadClass,
     pub surface: RoadSurface,
     pub dress: RoadDress,
+    /// OSM smoothness, tracktype and surface value (the wear).
+    pub condition: ocw_world::RoadCondition,
 }
 
 /// The edge of each strip of `tile` (`None`: unmatched).
@@ -261,6 +263,7 @@ pub fn shape_tile<'a>(
             class: s.class,
             surface: s.surface,
             dress: s.dress.clone(),
+            condition: s.condition,
         });
         match pj.set.shape_strip(g, ei, &s.points, s.width_m / 2.0) {
             None => {
@@ -302,6 +305,7 @@ pub fn shape_tile<'a>(
                             class: a.class,
                             surface: RoadSurface::of_class(a.class),
                             dress: RoadDress::of_class(a.class, (2.0 * a.half) as f32),
+                            condition: ocw_world::RoadCondition::UNKNOWN,
                         })
                     })
                     .collect();
@@ -349,10 +353,10 @@ pub fn patch_mesh(m: &mut MeshArrays, p: &Patch, looks: &[ArmLook], ctx: &RoadCo
         let c = crate::package::road_colour(look.class, look.surface);
         [c[0], c[1], c[2]]
     });
-    let code = MarkCode::of(&look.dress, look.class, look.surface);
+    let code = MarkCode::of(&look.dress, look.class, look.surface, &look.condition);
     // With lines: a through road's (its centre line runs on); without: the
     // side where other roads leave (no edge line, no cycle lane line).
-    let track = u32::from(code.track) << 4;
+    let plain = code.plain_extra_code();
     let (on, off) = if p.through.is_some() {
         let mut open = code;
         open.edge_lines = false;
@@ -362,7 +366,7 @@ pub fn patch_mesh(m: &mut MeshArrays, p: &Patch, looks: &[ArmLook], ctx: &RoadCo
             (open.lines_code(), open.extra_code()),
         )
     } else {
-        ((0, track), (0, track))
+        ((0, plain), (0, plain))
     };
     let base = m.positions.len() as u32;
     let uvs: Vec<[f64; 2]> = p.vertices.iter().map(|q| p.uv([q[0], q[2]])).collect();
@@ -449,6 +453,7 @@ pub fn patch_mesh(m: &mut MeshArrays, p: &Patch, looks: &[ArmLook], ctx: &RoadCo
                 ..li.dress.clone()
             },
             lit: ocw_world::RoadLit::Unknown,
+            condition: li.condition,
         };
         let dress_look = DressLook::of(&strip, ctx);
         let flags = vec![false; n];

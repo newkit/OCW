@@ -609,6 +609,7 @@ pub(crate) mod tests {
                 surface: RoadSurface::Paving,
                 dress: crate::RoadDress::of_class(RoadClass::Secondary, 6.0),
                 lit: crate::RoadLit::Unknown,
+                condition: Default::default(),
             }],
         };
         let graph = RoadGraph {
