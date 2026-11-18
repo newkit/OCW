@@ -13,8 +13,10 @@
 //! file at its stop; the stop notice names it. Without the
 //! API set-up (`strava.toml`) S records the same and its stop points to
 //! the simple upload in the browser (`ocw_client::strava::NOT_SET_UP`,
-//! spec §2.8.1 *Simple upload*); `--strava-dry-run` (test runs) opens no
-//! file manager or browser for that upload.
+//! spec §2.8.1 *Simple upload*) and the recording **waits** in the sync
+//! state until Strava is set up (*Recording without Strava set up,
+//! uploaded later*: [`super::sync::RideSync::Waiting`]); `--strava-dry-run`
+//! (test runs) opens no file manager or browser for that upload.
 
 use std::path::PathBuf;
 
@@ -46,7 +48,10 @@ pub(super) fn build(app: &mut App, api: bool) {
         .get_resource::<ClientState>()
         .map(|c| c.0.course_name().to_string())
         .unwrap_or_default();
-    app.insert_resource(StravaRec(StravaRecording::new(api, route), None))
+    let mut rec = StravaRecording::new(api, route);
+    // Without the set-up a recording waits for it (spec §2.8.1).
+    rec.waits = true;
+    app.insert_resource(StravaRec(rec, None))
         .add_systems(Update, (strava_key, show_in_hud))
         .add_systems(Last, stop_on_exit);
     app.console_command(ConsoleCommand::new(
@@ -156,6 +161,21 @@ pub fn handle(world: &mut World, out: Outcome, now: f64) -> Result<String, Strin
             let api = world
                 .get_resource::<super::Strava>()
                 .is_some_and(|s| s.api());
+            if !api {
+                // Not set up: it waits for the credentials (spec §2.8.1
+                // *Recording without Strava set up, uploaded later*).
+                let name = path
+                    .file_name()
+                    .map(|n| format!("strava/{}", n.to_string_lossy()))
+                    .unwrap_or_default();
+                if let Err(e) = super::sync::mark_waiting(
+                    &super::state_file(&dir),
+                    &[name],
+                    crate::recording::unix_now(),
+                ) {
+                    warn!("Strava recording's waiting mark: {e}");
+                }
+            }
             if let Some(s) = world.get_resource::<super::Strava>() {
                 s.ride_saved();
             }
@@ -164,7 +184,11 @@ pub fn handle(world: &mut World, out: Outcome, now: f64) -> Result<String, Strin
                 copy.as_deref().unwrap_or(&path).display()
             );
             if !api {
-                out.push_str(&format!(". {}", ocw_client::strava::NOT_SET_UP));
+                out.push_str(&format!(
+                    ". {}. {}",
+                    ocw_client::strava::WAITS_FOR_SET_UP,
+                    ocw_client::strava::NOT_SET_UP
+                ));
             }
             Ok(out)
         }

@@ -159,8 +159,15 @@ impl Plugin for MenuPlugin {
                                 "tab-next",
                                 "tab-prev",
                                 "workshop-page",
+                                "ride",
+                                "strava-waiting",
                             ])
                             .default_value("toggle"),
+                    )
+                    .arg(
+                        Arg::new("n")
+                            .value_parser(clap::value_parser!(usize))
+                            .help("ride: the training history's ride (1 = the newest)"),
                     ),
                 |world, m| {
                     let mut state = world.resource_mut::<MenuState>();
@@ -177,6 +184,12 @@ impl Plugin for MenuPlugin {
                         Some("select") => Action::Confirm,
                         Some("back") => Action::Back,
                         Some("workshop-page") => Action::RiderPage,
+                        // A ride's page of the training history.
+                        Some("ride") => Action::OpenSub(sub::Page::HistoryRide(
+                            m.get_one::<usize>("n").copied().unwrap_or(1).max(1) - 1,
+                        )),
+                        // The question about Strava's waiting recordings.
+                        Some("strava-waiting") => Action::OpenSub(sub::Page::StravaWaiting),
                         _ if open => Action::Close,
                         _ => Action::Open,
                     };

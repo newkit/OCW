@@ -23,6 +23,10 @@ pub const UPLOAD_PAGE: &str = "https://www.strava.com/upload/select";
 /// stop and the end of a ride say it).
 pub const NOT_SET_UP: &str =
     "Upload it to Strava in your browser: Navi > Training history > the ride";
+/// What the desktop's stop notice adds without the set-up: the recording
+/// waits and goes to Strava once Strava is set up (spec §2.8.1
+/// *Recording without Strava set up, uploaded later*).
+pub const WAITS_FOR_SET_UP: &str = "It will be uploaded once Strava is set up";
 /// How long a notice stays (s).
 pub const NOTICE_S: f64 = 4.0;
 /// How long a notice that points to the upload stays (s).
@@ -134,6 +138,10 @@ pub struct StravaRecording {
     /// The automatic API upload is set up (`strava.toml` or the
     /// environment); without it the recording is uploaded in the browser.
     pub api: bool,
+    /// Without the API set-up the app keeps the recording waiting and
+    /// uploads it once the credentials are there (the desktop; the
+    /// browser has no API upload): the stop notice says so.
+    pub waits: bool,
     route: String,
     recorder: Option<RideRecorder>,
     /// Game time it started.
@@ -150,6 +158,7 @@ impl StravaRecording {
     pub fn new(api: bool, route: impl Into<String>) -> Self {
         Self {
             api,
+            waits: false,
             route: route.into(),
             recorder: None,
             since: None,
@@ -245,8 +254,18 @@ impl StravaRecording {
                 if self.api {
                     self.say(text, game_s);
                 } else {
-                    // No API: the rider uploads it in the browser.
-                    self.say_for(format!("{text}. {NOT_SET_UP}"), game_s, UPLOAD_NOTICE_S);
+                    // No API: the rider uploads it in the browser – or
+                    // the desktop uploads it once Strava is set up.
+                    let waits = if self.waits {
+                        format!(" {WAITS_FOR_SET_UP}.")
+                    } else {
+                        String::new()
+                    };
+                    self.say_for(
+                        format!("{text}.{waits} {NOT_SET_UP}"),
+                        game_s,
+                        UPLOAD_NOTICE_S,
+                    );
                 }
             }
             None => self.say("Strava recording too short, not saved", game_s),
@@ -336,6 +355,24 @@ mod tests {
         a.stop(2.0);
         assert!(!a.notice(2.0).unwrap().contains("browser"));
         assert_eq!(a.notice(2.0 + NOTICE_S), None);
+        // The desktop keeps it waiting for the set-up (spec §2.8.1
+        // *Recording without Strava set up*): the notice says it is saved
+        // and will be uploaded, beside the browser's way.
+        let mut d = StravaRecording::new(false, "Loop");
+        d.waits = true;
+        d.start(0.0);
+        d.observe(&route, None, sample(0.0, 0.0), 1);
+        d.observe(&route, None, sample(1.0, 8.0), 2);
+        d.stop(2.0);
+        let n = d.notice(2.0).unwrap();
+        assert!(
+            n.contains(". It will be uploaded once Strava is set up. ") && n.ends_with(NOT_SET_UP),
+            "{n}"
+        );
+        assert!(
+            !s.notice(11.0).unwrap().contains(WAITS_FOR_SET_UP),
+            "the browser"
+        );
     }
 
     /// The stop notice names the recording's folder (spec §2.8.1 *Where

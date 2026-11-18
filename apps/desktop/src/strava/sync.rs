@@ -1,7 +1,10 @@
 //! Strava sync: every saved ride that is not on Strava yet gets uploaded.
 //! The state (`<rides dir>/strava-sync.toml`) remembers what is uploaded,
 //! what failed (and when to retry, with exponential backoff) and what
-//! Strava rejected for good.
+//! Strava rejected for good, and which Strava recordings wait for the
+//! Strava set-up (spec §2.8.1 *Recording without Strava set up, uploaded
+//! later*: [`RideSync::Waiting`], uploaded by [`Scope::Waiting`] once the
+//! credentials are there).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -25,6 +28,11 @@ pub const MAX_POLLS: u32 = 30;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum RideSync {
+    /// A Strava recording made while Strava was not set up (no API
+    /// credentials): kept locally, uploaded once they are provided – not
+    /// failed, not uploaded. Only [`Scope::Waiting`] and [`Scope::Files`]
+    /// upload it.
+    Waiting { since: i64 },
     /// Sent; Strava is still processing it.
     Processing { upload_id: u64 },
     Uploaded {
@@ -53,6 +61,8 @@ pub struct SyncState {
 pub struct SyncCounts {
     pub uploaded: usize,
     pub pending: usize,
+    /// Strava recordings waiting for the set-up ([`RideSync::Waiting`]).
+    pub waiting: usize,
     pub failed: usize,
     pub rejected: usize,
     /// Earliest retry time of a failed ride.
@@ -81,16 +91,51 @@ impl SyncState {
     }
 
     /// The rides of `files` to work on now, in order: new ones, unfinished
-    /// uploads and failed ones whose retry time has come.
+    /// uploads and failed ones whose retry time has come (not the waiting
+    /// recordings: [`Self::due_in`]).
+    #[cfg(test)]
     pub fn due<'a>(&self, files: &'a [String], now: i64) -> Vec<&'a String> {
-        files
+        self.due_in(files, now, &Scope::Rides)
+    }
+
+    /// The rides of `files` to work on now within `scope`, oldest first
+    /// (by the file name without its `strava/` folder: names start with
+    /// the date and time).
+    pub fn due_in<'a>(&self, files: &'a [String], now: i64, scope: &Scope) -> Vec<&'a String> {
+        let mut out: Vec<&String> = files
             .iter()
-            .filter(|f| match self.rides.get(*f) {
-                None | Some(RideSync::Processing { .. }) => true,
-                Some(RideSync::Failed { retry_at, .. }) => *retry_at <= now,
-                Some(RideSync::Uploaded { .. } | RideSync::Rejected { .. }) => false,
+            .filter(|f| match (scope, self.rides.get(*f)) {
+                (Scope::Files(only), state) => {
+                    only.contains(f)
+                        && !matches!(
+                            state,
+                            Some(RideSync::Uploaded { .. } | RideSync::Rejected { .. })
+                        )
+                }
+                (Scope::Waiting, state) => matches!(state, Some(RideSync::Waiting { .. })),
+                (Scope::Rides, None | Some(RideSync::Processing { .. })) => true,
+                (Scope::Rides, Some(RideSync::Failed { retry_at, .. })) => *retry_at <= now,
+                (Scope::Rides, _) => false,
             })
-            .collect()
+            .collect();
+        out.sort_by_key(|f| (base_name(f), f.as_str()));
+        out
+    }
+
+    /// The waiting recordings among `files`, oldest first.
+    pub fn waiting<'a>(&self, files: &'a [String]) -> Vec<&'a String> {
+        self.due_in(files, 0, &Scope::Waiting)
+    }
+
+    /// Marks `file` as waiting for the Strava set-up (unless the sync
+    /// knows it already); whether it was marked.
+    pub fn mark_waiting(&mut self, file: &str, now: i64) -> bool {
+        if self.rides.contains_key(file) {
+            return false;
+        }
+        self.rides
+            .insert(file.to_string(), RideSync::Waiting { since: now });
+        true
     }
 
     pub fn counts(&self, files: &[String]) -> SyncCounts {
@@ -98,6 +143,7 @@ impl SyncState {
         for f in files {
             match self.rides.get(f) {
                 None | Some(RideSync::Processing { .. }) => c.pending += 1,
+                Some(RideSync::Waiting { .. }) => c.waiting += 1,
                 Some(RideSync::Uploaded { .. }) => c.uploaded += 1,
                 Some(RideSync::Failed { retry_at, .. }) => {
                     c.failed += 1;
@@ -132,6 +178,42 @@ impl SyncState {
         self.rides
             .retain(|_, s| !matches!(s, RideSync::Failed { .. } | RideSync::Rejected { .. }));
     }
+}
+
+/// Which rides a sync run works on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Scope {
+    /// The usual sync: every due ride, without the waiting recordings.
+    Rides,
+    /// Only the recordings waiting for the Strava set-up (the catch-up
+    /// upload once the credentials are there).
+    Waiting,
+    /// These files (picked by the rider), whatever their state – except
+    /// uploaded or rejected ones.
+    Files(Vec<String>),
+}
+
+/// A sync file's name without its folder (`strava/a.fit` → `a.fit`).
+fn base_name(file: &str) -> &str {
+    file.rsplit('/').next().unwrap_or(file)
+}
+
+/// Marks the Strava recordings (`strava/…`) among `files` (as
+/// [`sync_files`] gives them) that the sync does not know yet as waiting
+/// for the Strava set-up (spec §2.8.1 *Recording without Strava set up*).
+/// Writes the state file only when something changed; returns how many
+/// were marked.
+pub fn mark_waiting(state_file: &Path, files: &[String], now: i64) -> Result<usize, String> {
+    let mut state = SyncState::load(state_file)?;
+    let n = files
+        .iter()
+        .filter(|f| f.starts_with("strava/"))
+        .filter(|f| state.mark_waiting(f, now))
+        .count();
+    if n > 0 {
+        state.save(state_file)?;
+    }
+    Ok(n)
 }
 
 /// The `.fit` files in `dir` and the Strava recordings in `dir/strava/`
@@ -293,23 +375,32 @@ pub struct SyncReport {
     pub needs_connect: bool,
 }
 
-/// Uploads all due rides. `sleep` waits between status polls (no-op in
-/// tests). Saves the state after every ride.
+/// Uploads all due rides of `scope`, oldest first. `sleep` waits between
+/// status polls (no-op in tests); `started` hears of each file before its
+/// upload (the ride page's *uploading*). Saves the state after every
+/// ride.
 pub fn sync_once(
     http: &dyn Http,
     creds: &Credentials,
     paths: &SyncPaths,
+    scope: &Scope,
     now: &dyn Fn() -> i64,
     sleep: &dyn Fn(Duration),
+    started: &dyn Fn(&str),
 ) -> Result<SyncReport, String> {
     let mut report = SyncReport::default();
     let mut state = SyncState::load(&paths.state_file)?;
     let files = sync_files(&paths.rides_dir);
-    let due: Vec<String> = state.due(&files, now()).into_iter().cloned().collect();
+    let due: Vec<String> = state
+        .due_in(&files, now(), scope)
+        .into_iter()
+        .cloned()
+        .collect();
     if due.is_empty() {
         return Ok(report);
     }
     for file in due {
+        started(&file);
         let token = match valid_token(http, creds, &paths.token, now()) {
             Ok(Some(t)) => t,
             Ok(None) | Err(ApiError::Unauthorized) => {
@@ -337,7 +428,7 @@ pub fn sync_once(
                         report.rejected.push((file.clone(), error.clone()));
                     }
                     RideSync::Processing { .. } => report.processing += 1,
-                    RideSync::Failed { .. } => {}
+                    RideSync::Failed { .. } | RideSync::Waiting { .. } => {}
                 }
                 state.rides.insert(file, done);
             }
@@ -474,6 +565,7 @@ mod tests {
             SyncCounts {
                 uploaded: 1,
                 pending: 2,
+                waiting: 0,
                 failed: 1,
                 rejected: 1,
                 next_retry: Some(1180)
@@ -568,7 +660,24 @@ mod tests {
                 client_id: "1".into(),
                 client_secret: "s".into(),
             };
-            sync_once(http, &creds, &self.paths, &|| now, &|_| {}).unwrap()
+            sync_once(
+                http,
+                &creds,
+                &self.paths,
+                &Scope::Rides,
+                &|| now,
+                &|_| {},
+                &|_| {},
+            )
+            .unwrap()
+        }
+
+        fn sync_in(&self, http: &MockHttp, now: i64, scope: &Scope) -> SyncReport {
+            let creds = Credentials {
+                client_id: "1".into(),
+                client_secret: "s".into(),
+            };
+            sync_once(http, &creds, &self.paths, scope, &|| now, &|_| {}, &|_| {}).unwrap()
         }
     }
 
@@ -782,5 +891,112 @@ mod tests {
         fx.paths.token.delete().unwrap();
         assert!(fx.sync(&http, 0).needs_connect);
         assert_eq!(http.urls().len(), 1);
+    }
+
+    /// Strava recordings made while Strava was not set up (spec §2.8.1
+    /// *Recording without Strava set up, uploaded later*) wait: the usual
+    /// sync leaves them (whole rides go as before), the catch-up uploads
+    /// them oldest first, skipping the ones marked as uploaded by hand; a
+    /// picked one goes alone; a failed one is retried like any ride.
+    #[test]
+    fn waiting_recordings_wait_for_the_catch_up() {
+        let fx = Fixture::new("waiting", &["2026-01-01_09-00-00.fit"]);
+        let rides = fx.paths.rides_dir.clone();
+        std::fs::create_dir_all(rides.join("strava")).unwrap();
+        for n in [
+            "2026-01-03_10-00-00.fit",
+            "2026-01-01_10-00-00.fit",
+            "2026-01-02_10-00-00.fit",
+            "2026-01-04_10-00-00.fit",
+        ] {
+            std::fs::write(rides.join("strava").join(n), b"FITDATA").unwrap();
+        }
+        let marks = ManualMarks {
+            files: ["strava/2026-01-02_10-00-00.fit".to_string()]
+                .into_iter()
+                .collect(),
+        };
+        marks.save(&rides).unwrap();
+        // Recorded without the set-up: waiting (the marked one is skipped,
+        // the whole ride is not a recording).
+        assert_eq!(
+            mark_waiting(&fx.paths.state_file, &sync_files(&rides), 500).unwrap(),
+            3
+        );
+        assert_eq!(
+            mark_waiting(&fx.paths.state_file, &sync_files(&rides), 600).unwrap(),
+            0,
+            "known already"
+        );
+        assert_eq!(
+            fx.state().rides["strava/2026-01-01_10-00-00.fit"],
+            RideSync::Waiting { since: 500 }
+        );
+        let c = fx.state().counts(&sync_files(&rides));
+        assert_eq!((c.waiting, c.pending, c.failed), (3, 1, 0));
+        // The usual sync: the whole ride only.
+        let http = MockHttp::default();
+        http.reply(201, r#"{"id":1,"error":null,"activity_id":7}"#);
+        let r = fx.sync(&http, 1000);
+        assert_eq!(
+            r.uploaded,
+            vec![("2026-01-01_09-00-00.fit".into(), Some(7))]
+        );
+        assert_eq!(fx.sync(&http, 1001), SyncReport::default());
+        // A picked one goes alone.
+        http.reply(201, r#"{"id":2,"error":null,"activity_id":8}"#);
+        let r = fx.sync_in(
+            &http,
+            1002,
+            &Scope::Files(vec!["strava/2026-01-04_10-00-00.fit".into()]),
+        );
+        assert_eq!(
+            r.uploaded,
+            vec![("strava/2026-01-04_10-00-00.fit".into(), Some(8))]
+        );
+        // The catch-up: oldest first; the first fails (offline), the rest
+        // wait with it, the failed one is retried by the usual sync.
+        http.fail("offline");
+        let r = fx.sync_in(&http, 1003, &Scope::Waiting);
+        assert_eq!(r.failed.len(), 1);
+        assert_eq!(r.failed[0].0, "strava/2026-01-01_10-00-00.fit");
+        assert!(matches!(
+            fx.state().rides["strava/2026-01-01_10-00-00.fit"],
+            RideSync::Failed { attempts: 1, .. }
+        ));
+        assert_eq!(fx.state().counts(&sync_files(&rides)).waiting, 1);
+        http.reply(201, r#"{"id":3,"error":null,"activity_id":9}"#)
+            .reply(201, r#"{"id":4,"error":null,"activity_id":10}"#);
+        let r = fx.sync_in(&http, 1004, &Scope::Waiting);
+        assert_eq!(
+            r.uploaded,
+            vec![("strava/2026-01-03_10-00-00.fit".into(), Some(9))]
+        );
+        let r = fx.sync(&http, 1003 + BASE_BACKOFF_S);
+        assert_eq!(
+            r.uploaded,
+            vec![("strava/2026-01-01_10-00-00.fit".into(), Some(10))]
+        );
+        let c = fx.state().counts(&sync_files(&rides));
+        assert_eq!((c.waiting, c.pending, c.uploaded), (0, 0, 4));
+        // The marked one was never sent.
+        assert!(
+            !http
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|r| String::from_utf8_lossy(&r.body).contains("2026-01-02_10-00-00"))
+        );
+        // The oldest-first order over both folders.
+        let files = vec![
+            "strava/2026-01-02_10-00-00.fit".to_string(),
+            "2026-01-03_10-00-00.fit".to_string(),
+            "strava/2026-01-01_10-00-00.fit".to_string(),
+        ];
+        assert_eq!(
+            SyncState::default().due(&files, 0),
+            vec![&files[2], &files[0], &files[1]]
+        );
     }
 }

@@ -174,6 +174,8 @@ mod tests {
             HistoryWeeks,
             HistoryMonths,
             HistoryBests,
+            HistoryWaiting,
+            StravaWaiting,
             EventRules,
             TrustedKeys,
             TrustedKey(0),
@@ -210,11 +212,12 @@ mod tests {
                 | RidingAids | Folders | Graphics | ViewDistance | RiderList | UnicornControls
                 | Bindings | BindGroup(_) | BindReset | Accessibility | Hud | History
                 | HistoryRides | HistoryRide(_) | HistoryClimbs(_) | HistoryWeeks
-                | HistoryMonths | HistoryBests | EventRules | Account | TrustedKeys
-                | TrustedKey(_) | Join | HostWorld | HostRoute | HostTime | HostWeather
-                | HostOptions | HostSummary | HostLink | Devices | Device(_) | Calendar(_)
-                | CalendarDates(_) | Season | Character | CharacterBody | CharacterFace
-                | CharacterHair | CharacterFacialHair | CharacterPick(_) => {}
+                | HistoryMonths | HistoryBests | HistoryWaiting | StravaWaiting | EventRules
+                | Account | TrustedKeys | TrustedKey(_) | Join | HostWorld | HostRoute
+                | HostTime | HostWeather | HostOptions | HostSummary | HostLink | Devices
+                | Device(_) | Calendar(_) | CalendarDates(_) | Season | Character
+                | CharacterBody | CharacterFace | CharacterHair | CharacterFacialHair
+                | CharacterPick(_) => {}
             }
         }
         all

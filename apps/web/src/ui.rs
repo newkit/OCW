@@ -1357,6 +1357,15 @@ mod tests {
                 "strava.upload-manual 1".into()
             ))
         );
+        // No API upload in the browser (spec §2.8.1): its state says so.
+        let state = rows
+            .iter()
+            .find(|r| r.label == ocw_client::menu::history::STRAVA_ROW)
+            .expect("the state row");
+        assert_eq!(
+            state.value.as_deref(),
+            Some(ocw_client::menu::history::IN_BROWSER_LABEL)
+        );
         let out = console(&mut app, "strava.upload-manual 1");
         assert!(out.contains("Strava opens in a new tab"), "{out}");
         assert_eq!(

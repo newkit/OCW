@@ -112,6 +112,10 @@ pub struct TrainingHistory {
     pub recordings: BTreeMap<String, usize>,
     /// The last simple upload: the ride's id and its steps.
     pub upload: Option<(String, String)>,
+    /// Each ride's Strava state (the desktop's API sync; spec §2.8.1).
+    pub strava: BTreeMap<String, ocw_client::menu::history::StravaState>,
+    /// The open question: upload this many waiting recordings?
+    pub strava_question: Option<usize>,
 }
 
 impl TrainingHistory {
@@ -184,6 +188,8 @@ pub fn info(world: &World) -> HistoryInfo {
             strava_api: h.strava_api,
             recordings: h.recordings.clone(),
             upload: h.upload.clone(),
+            strava: h.strava.clone(),
+            strava_question: h.strava_question,
         },
         None => HistoryInfo {
             now_unix: now,
@@ -278,8 +284,8 @@ fn ride_line(n: usize, r: &RideEntry, offset_s: i32) -> String {
     )
 }
 
-/// The `n`-th newest ride (1-based, as `history` numbers them).
-fn nth(world: &World, n: usize) -> Result<RideEntry, String> {
+/// Ride `n` of the history (1 = the newest).
+pub fn nth(world: &World, n: usize) -> Result<RideEntry, String> {
     let h = world
         .get_resource::<TrainingHistory>()
         .ok_or("no training history")?;

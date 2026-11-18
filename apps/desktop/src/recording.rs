@@ -461,10 +461,15 @@ fn refresh_history(world: &mut World) {
         .get_resource::<crate::strava::Strava>()
         .is_some_and(|s| s.api());
     let recordings = strava_recordings_by_ride(world);
+    // Each ride's Strava state and the open question (spec §2.8.1
+    // *Recording without Strava set up, uploaded later*).
+    let (strava, question) = crate::strava::history_states(world);
     if let Some(mut h) = world.get_resource_mut::<ocw_ui::history::TrainingHistory>() {
         h.photos = photos;
         h.strava_api = strava_api;
         h.recordings = recordings;
+        h.strava = strava;
+        h.strava_question = question;
         h.importable = Some(importable);
         h.exportable = h
             .history

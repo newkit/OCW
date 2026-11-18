@@ -62,6 +62,9 @@ pub enum Action {
     /// §4.7 *User keys*): a world signed by a key nobody here trusts was
     /// chosen, or the host of a shared ride switched to one.
     TrustDialog,
+    /// Open the menu at this page (over the top page): an app's question
+    /// (Strava's waiting recordings, spec §2.8.1) or a test run's view.
+    OpenSub(sub::Page),
 }
 
 /// What the app does after an action.
@@ -1238,6 +1241,15 @@ impl Menu {
         if action == Action::TrustDialog {
             return self.open_trust();
         }
+        if let Action::OpenSub(p) = action {
+            let opened = !self.is_open();
+            self.stack.clear();
+            self.rows.clear();
+            self.pending = None;
+            self.push(Page::Top);
+            self.push(Page::Sub(p));
+            return if opened { Effect::Opened } else { Effect::None };
+        }
         if !self.is_open() {
             return match action {
                 Action::Open => {
@@ -1248,7 +1260,9 @@ impl Menu {
             };
         }
         match action {
-            Action::Open | Action::RiderPage | Action::TrustDialog => Effect::None,
+            Action::Open | Action::RiderPage | Action::TrustDialog | Action::OpenSub(_) => {
+                Effect::None
+            }
             Action::Fine(d) => self.apply_generic(if d < 0 { Action::Left } else { Action::Right }),
             // A grid: the arrows move the focus in two directions.
             Action::Left | Action::Right if self.grid_columns().is_some() => {
@@ -1711,6 +1725,27 @@ mod tests {
         assert_eq!(m.page(), Some(Page::Sub(sub::Page::Workshop)));
         assert_eq!(m.depth(), 2);
         assert_eq!(m.apply(Action::RiderPage), Effect::None, "already open");
+    }
+
+    /// An app's question opens the menu at its page (Strava's waiting
+    /// recordings, spec §2.8.1); Back leads to the top page.
+    #[test]
+    fn the_menu_opens_at_a_question() {
+        let mut m = Menu::default();
+        assert_eq!(
+            m.apply(Action::OpenSub(sub::Page::StravaWaiting)),
+            Effect::Opened
+        );
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::StravaWaiting)));
+        assert_eq!(m.depth(), 2);
+        assert_eq!(
+            m.apply(Action::OpenSub(sub::Page::HistoryRide(1))),
+            Effect::None,
+            "already open"
+        );
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::HistoryRide(1))));
+        m.apply(Action::Back);
+        assert_eq!(m.page(), Some(Page::Top));
     }
 
     #[test]

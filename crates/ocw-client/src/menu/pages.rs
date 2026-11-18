@@ -177,6 +177,13 @@ pub enum Page {
     HistoryMonths,
     /// Personal bests: the power curve and the climbs.
     HistoryBests,
+    /// The rides with Strava recordings waiting for the upload (spec
+    /// §2.8.1 *Recording without Strava set up, uploaded later*: *Pick*);
+    /// each opens its page, which uploads it.
+    HistoryWaiting,
+    /// "Upload N waiting recordings to Strava?" – Yes / Pick / No (asked
+    /// once when more than three wait as the credentials come).
+    StravaWaiting,
     /// "Start the event?" → Organiser rules (spec §14 Phase 12 K6): the
     /// rules of the events this rider starts (the `event.*` settings).
     EventRules,
@@ -290,6 +297,8 @@ impl Page {
             Self::HistoryWeeks => "Weekly totals",
             Self::HistoryMonths => "Monthly totals",
             Self::HistoryBests => "Personal bests",
+            Self::HistoryWaiting => "Waiting recordings",
+            Self::StravaWaiting => "Upload to Strava?",
             Self::EventRules => "Organiser rules",
             Self::TrustedKeys => "Trusted world keys",
             Self::TrustedKey(_) => "Trusted key",
@@ -373,6 +382,8 @@ impl Page {
                 | Self::HistoryWeeks
                 | Self::HistoryMonths
                 | Self::HistoryBests
+                | Self::HistoryWaiting
+                | Self::StravaWaiting
         )
     }
 
@@ -578,6 +589,10 @@ impl Page {
             Self::HistoryRide(_) | Self::HistoryClimbs(_) => &[],
             Self::HistoryWeeks | Self::HistoryMonths => &[],
             Self::HistoryBests => &[],
+            Self::HistoryWaiting => &[
+                "Recorded before Strava was set up, newest first. Choose one, then Strava upload on its page.",
+            ],
+            Self::StravaWaiting => &[],
             Self::TrustedKeys => &[super::trust::KEYS_NOTE],
             Self::TrustedKey(_) => &[super::trust::KEY_NOTE],
             Self::Devices => &[super::devices::NOTE],
@@ -1321,7 +1336,9 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         | Page::HistoryClimbs(_)
         | Page::HistoryWeeks
         | Page::HistoryMonths
-        | Page::HistoryBests => Vec::new(),
+        | Page::HistoryBests
+        | Page::HistoryWaiting
+        | Page::StravaWaiting => Vec::new(),
         // From the trusted world keys (`menu::trust`).
         Page::TrustedKeys | Page::TrustedKey(_) => Vec::new(),
         // From the app's devices (`menu::devices`).
