@@ -347,6 +347,152 @@ impl OsmData {
     }
 }
 
+/// A relation of an OSM XML file: members as (element type, id, role).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RawRelation {
+    pub id: i64,
+    pub tags: Tags,
+    pub members: Vec<(String, i64, String)>,
+}
+
+/// Everything of a small OSM XML file: every node with its tags, every
+/// way, every relation (for fixtures of the readers that need more than
+/// the roads, e.g. the places, [`crate::places`]).
+#[derive(Debug, Clone, Default)]
+pub struct RawOsm {
+    pub nodes: HashMap<i64, (f64, f64)>,
+    pub node_tags: HashMap<i64, Tags>,
+    pub ways: Vec<Way>,
+    pub relations: Vec<RawRelation>,
+}
+
+/// Reads OSM XML like [`OsmData::parse_osm_xml`] but keeps everything.
+pub fn parse_osm_xml_raw(text: &str) -> Result<RawOsm, String> {
+    let mut out = RawOsm::default();
+    // The element whose children are being read.
+    enum Open {
+        None,
+        Node(i64),
+        Way(Way),
+        Relation(RawRelation),
+    }
+    let mut open = Open::None;
+    let mut rest = text;
+    while let Some(start) = rest.find('<') {
+        rest = &rest[start + 1..];
+        if let Some(after) = rest.strip_prefix("!--") {
+            let end = after.find("-->").ok_or("unterminated comment")?;
+            rest = &after[end + 3..];
+            continue;
+        }
+        let end = rest.find('>').ok_or("unterminated tag")?;
+        let tag = &rest[..end];
+        rest = &rest[end + 1..];
+        if tag.starts_with('?') || tag.starts_with('!') {
+            continue;
+        }
+        if let Some(name) = tag.strip_prefix('/') {
+            match (name.trim(), std::mem::replace(&mut open, Open::None)) {
+                ("node", Open::Node(_)) => {}
+                ("way", Open::Way(w)) => out.ways.push(w),
+                ("relation", Open::Relation(r)) => out.relations.push(r),
+                ("osm", Open::None) => {}
+                (n, _) => return Err(format!("</{n}> does not close an open element")),
+            }
+            continue;
+        }
+        let self_closing = tag.ends_with('/');
+        let tag = tag.trim_end_matches('/');
+        let (name, attrs) = tag.split_once(char::is_whitespace).unwrap_or((tag, ""));
+        let attrs = xml_attributes(attrs)?;
+        let get = |k: &str| {
+            attrs
+                .iter()
+                .find(|(a, _)| a == k)
+                .map(|(_, v)| v.as_str())
+                .ok_or_else(|| format!("<{name}> without {k}"))
+        };
+        let num = |k: &str| -> Result<f64, String> {
+            get(k)?
+                .parse::<f64>()
+                .map_err(|e| format!("<{name} {k}>: {e}"))
+        };
+        let int = |k: &str| -> Result<i64, String> {
+            get(k)?
+                .parse::<i64>()
+                .map_err(|e| format!("<{name} {k}>: {e}"))
+        };
+        let nested = || Err(format!("<{name}> inside another element"));
+        match name {
+            "node" | "way" | "relation" if !matches!(open, Open::None) => return nested(),
+            "node" => {
+                let id = int("id")?;
+                out.nodes.insert(id, (num("lat")?, num("lon")?));
+                if !self_closing {
+                    open = Open::Node(id);
+                }
+            }
+            "way" => {
+                let w = Way {
+                    id: int("id")?,
+                    nodes: Vec::new(),
+                    tags: Tags::new(),
+                };
+                if self_closing {
+                    out.ways.push(w);
+                } else {
+                    open = Open::Way(w);
+                }
+            }
+            "relation" => {
+                let r = RawRelation {
+                    id: int("id")?,
+                    ..Default::default()
+                };
+                if self_closing {
+                    out.relations.push(r);
+                } else {
+                    open = Open::Relation(r);
+                }
+            }
+            "nd" => {
+                if let Open::Way(w) = &mut open {
+                    w.nodes.push(int("ref")?);
+                }
+            }
+            "member" => {
+                if let Open::Relation(r) = &mut open {
+                    r.members.push((
+                        get("type")?.to_string(),
+                        int("ref")?,
+                        get("role").unwrap_or("").to_string(),
+                    ));
+                }
+            }
+            "tag" => {
+                let (k, v) = (get("k")?.to_string(), get("v")?.to_string());
+                match &mut open {
+                    Open::Node(id) => {
+                        out.node_tags.entry(*id).or_default().insert(k, v);
+                    }
+                    Open::Way(w) => {
+                        w.tags.insert(k, v);
+                    }
+                    Open::Relation(r) => {
+                        r.tags.insert(k, v);
+                    }
+                    Open::None => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    if !matches!(open, Open::None) {
+        return Err("unterminated element".into());
+    }
+    Ok(out)
+}
+
 /// `k="v" k2='v2'` → pairs, with the five predefined XML entities and
 /// numeric character references decoded.
 fn xml_attributes(s: &str) -> Result<Vec<(String, String)>, String> {

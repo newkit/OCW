@@ -824,6 +824,7 @@ mod tests {
             region: None,
             look: Default::default(),
             obstacles: None,
+            places: None,
         };
         let stats = make_bridges(&mut pkg, &all_spans(&g, &[]), &|_| None);
         assert_eq!(stats.by_source[0], 1);

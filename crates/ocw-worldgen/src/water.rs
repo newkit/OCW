@@ -712,6 +712,7 @@ mod tests {
             region: None,
             look: Default::default(),
             obstacles: None,
+            places: None,
         }
     }
 

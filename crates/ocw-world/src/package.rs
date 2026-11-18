@@ -45,7 +45,10 @@
 //! the measured forest, leaf type and tree cover density per cell (spec
 //! §14 Phase 8 T3, optional), see [`crate::forest`]; `OBST` –
 //! static obstacles near the roads (barriers, posts, the tree cells; spec
-//! §14 Phase 12 K3, optional), see [`crate::obstacles`]. A package
+//! §14 Phase 12 K3, optional), see [`crate::obstacles`]; `PLCE` – the
+//! place names (OSM `place=*`: cities, towns, villages … with their rank,
+//! for the map labels; spec §4.7, §14 Phase 16 16A, optional), see
+//! [`crate::places`]. A package
 //! without sections is written as version 1, byte for byte as before.
 //!
 //! Tile `(x, z)` covers local metres `[x·size, (x+1)·size] × [z·size, (z+1)·size]`;
@@ -72,6 +75,7 @@ use crate::look::{
 };
 use crate::obstacles::{OBSTACLES_TAG, Obstacles, read_obstacles, write_obstacles};
 use crate::ortho::{ORTHO_TAG, read_ortho, write_ortho};
+use crate::places::{PLACES_TAG, Places, read_places, write_places};
 use crate::region::{PackageRegion, REGION_TAG, read_region, write_region};
 use crate::road_dress::{ROAD_DRESS_TAG, RoadDress, read_road_dress, write_road_dress};
 use crate::road_surface::{ROAD_SURFACE_TAG, RoadSurface, read_road_surfaces, write_road_surfaces};
@@ -178,6 +182,10 @@ pub struct WorldPackage {
     /// Static obstacles near the roads (section `OBST`, spec §14 Phase 12
     /// K3: barriers, posts, the tree cells); `None` in older packages.
     pub obstacles: Option<Obstacles>,
+    /// The place names (section `PLCE`, spec §4.7, §14 Phase 16 16A: OSM
+    /// `place=*` with their rank, for the map labels); `None` in older
+    /// packages, which then have no place names.
+    pub places: Option<Places>,
 }
 
 impl WorldPackage {
@@ -416,6 +424,11 @@ impl WorldPackage {
             let mut payload = Vec::new();
             write_obstacles(o, &mut payload);
             sections.push((OBSTACLES_TAG, payload));
+        }
+        if let Some(p) = &self.places {
+            let mut payload = Vec::new();
+            write_places(p, &mut payload);
+            sections.push((PLACES_TAG, payload));
         }
         let mut payload = Vec::new();
         if write_road_surfaces(
@@ -696,6 +709,7 @@ struct Sections {
     time_zone: Option<String>,
     look: RegionLook,
     obstacles: Option<Obstacles>,
+    places: Option<Places>,
     surfaces: Vec<(TileKey, Vec<RoadSurface>)>,
     dress: Vec<(TileKey, Vec<RoadDress>)>,
     lit: Vec<(TileKey, Vec<RoadLit>)>,
@@ -718,6 +732,7 @@ impl Sections {
             time_zone: self.time_zone,
             look: self.look,
             obstacles: self.obstacles,
+            places: self.places,
         }
     }
 }
@@ -814,6 +829,15 @@ fn read_sections(
             // tunnel walls). Small, so also in skeletons and streamed bases.
             match read_obstacles(payload) {
                 Ok(o) => s.obstacles = Some(o),
+                Err(e) if e.contains("not supported") => {}
+                Err(e) => return Err(e),
+            }
+        } else if &tag == PLACES_TAG {
+            // Optional (spec §4.7, §14 Phase 16 16A): a newer layout is
+            // skipped (no place names). Small, so also in skeletons and
+            // streamed bases.
+            match read_places(payload) {
+                Ok(p) => s.places = Some(p),
                 Err(e) if e.contains("not supported") => {}
                 Err(e) => return Err(e),
             }
@@ -1444,6 +1468,7 @@ mod tests {
             time_zone: None,
             look: Default::default(),
             obstacles: None,
+            places: None,
         }
     }
 
@@ -1804,6 +1829,52 @@ mod tests {
         let mut newer = b.clone();
         newer[at + 12] = 99;
         assert_eq!(WorldPackage::from_bytes(&newer).unwrap().obstacles, None);
+    }
+
+    #[test]
+    fn places_round_trip_are_in_skeletons_and_old_packages_load_without_them() {
+        use crate::places::{OsmElement, Place, PlaceKind, Places};
+        let places = Places::new(vec![Place {
+            kind: PlaceKind::Village,
+            rank: 2,
+            pos: [12.0, -8.5],
+            name: "Ada Dorf".into(),
+            names: vec![("en".into(), "Ada Village".into())],
+            population: Some(640),
+            capital: None,
+            area: false,
+            element: OsmElement::Node,
+            osm_id: 42,
+        }]);
+        // A package without the section (as every package before v4.66)
+        // loads with no places, and gains none by a round trip.
+        let old = package().to_bytes();
+        let loaded = WorldPackage::from_bytes(&old).unwrap();
+        assert_eq!(loaded.places, None);
+        assert_eq!(loaded.to_bytes(), old);
+        let p = WorldPackage {
+            places: Some(places),
+            ..package()
+        };
+        let b = p.to_bytes();
+        assert_eq!(WorldPackage::from_bytes(&b).unwrap(), p);
+        let skeleton = WorldPackage::skeleton_from_bytes(&b).unwrap();
+        assert_eq!(skeleton.places, p.places);
+        // Readers that do not know the tag skip it.
+        let mut older = b.clone();
+        let at = older.windows(4).rposition(|w| w == PLACES_TAG).unwrap();
+        older[at..at + 4].copy_from_slice(b"XXXX");
+        assert_eq!(WorldPackage::from_bytes(&older).unwrap().places, None);
+        // A newer layout is skipped, not fatal.
+        let mut newer = b.clone();
+        newer[at + 12] = 99;
+        assert_eq!(WorldPackage::from_bytes(&newer).unwrap().places, None);
+        // The other sections are untouched by adding it.
+        let sizes: Vec<_> = section_sizes(&b)
+            .into_iter()
+            .filter(|(t, _)| t != PLACES_TAG)
+            .collect();
+        assert_eq!(sizes, section_sizes(&old));
     }
 
     #[test]

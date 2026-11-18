@@ -270,6 +270,7 @@ mod tests {
             bridges: None,
             look: Default::default(),
             obstacles: None,
+            places: None,
         }
     }
 

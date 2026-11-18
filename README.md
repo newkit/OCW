@@ -1141,6 +1141,12 @@ Both list every operation as `ok`, `MISSING` (its target is gone – reported,
 never silently dropped; `patch check` exits 1) or unchecked. Sign the result
 with your own key as above.
 
+**Place names on the studio's 2D map:** packages with the section `PLCE`
+(`world-builder places` adds it to an older package) show their cities,
+towns, villages and smaller places, larger and bolder by rank; when the map
+gets crowded the smaller places are hidden first and come back as you zoom
+in (`studio map X Z M_PER_PX` sets the map's centre and zoom).
+
 **In OCW Studio** (`ocw-studio --world my.ocwpkg`, World workspace) the patch
 is the document you edit, with undo / redo (Ctrl + Z / Ctrl + Shift + Z) and
 autosave:
@@ -3816,6 +3822,7 @@ described in [Build infrastructure](#build-infrastructure). The other tools:
 | `world-builder package … --profile FILE` | Every package build ends with a stage table (time, CPU, cores in use, peak memory per stage); `--profile` also writes it as JSON |
 | `world-builder calibrate` / `imagery-cells` | Measure a package's palette, roof colours and seasonal tint maps in the region's imagery and cut the orthophoto corridor along its roads (sections `PALT`, `ROOF`, `SEAS`, `ORTC`; manifest credits renewed); list the imagery cells a package covers |
 | `world-builder obstacles --world PKG --pbf PBF... [--out NEW]` | Static obstacles near the roads into a built package (section `OBST`, spec §14 Phase 12 K3): OSM barriers and posts with the 2 m corridor rule, the tree cells; prints rows of road bollards and the longest bridges; manifest renewed |
+| `world-builder places --world PKG --pbf PBF... [--out NEW]` | Place names into a built package (section `PLCE`, spec §4.7): OSM `place=city … isolated_dwelling` nodes and areas on the tiles with rank, population, capital and `name:*`; every other section stays byte for byte; prints the most important places; manifest renewed (`package` writes the section too) |
 | `world-builder dem-import` / `dem-tiles` / `dem-diff` | High-resolution DTMs: import XYZ / GeoTIFF tiles as 2 m GeoTIFFs, list the tiles of a box, compare with SRTM |
 | `cargo run -p ocw-assets -- model export-all [--check]` | Export the bikes, the rider and the helmets from their generators into `artwork/3dmodels/` (glTF, own work, Git LFS; spec §14 Phase 15) with the manifest; `--check` only compares (`generate` is the old name) |
 | `cargo run -p ocw-render --example export-flora [-- --check]` | Export the plants (every species, at least three shape variants, each with `lod1`) into `artwork/3dmodels/flora/` |

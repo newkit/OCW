@@ -1457,6 +1457,7 @@ mod tests {
             bridges: None,
             look: Default::default(),
             obstacles: None,
+            places: None,
         }
         .to_bytes();
         std::fs::create_dir_all(dir).unwrap();

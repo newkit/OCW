@@ -20,6 +20,7 @@
 //! - [`profile`]: road elevation profiles (sampling, smoothing, limits)
 //! - [`package`]: road-conformed terrain and 1 km tiles → world package
 //! - [`par`]: parallel map with dynamic scheduling, results in order
+//! - [`places`]: place names (OSM `place=*`) for the map labels (section `PLCE`)
 //! - [`patch`]: world patches on the OSM sources (spec §14 Phase 16 16C; the format is `ocw_world::patch`)
 //! - [`route`]: routes through the graph with their elevation
 //! - [`svg`]: map of a road graph for visual checks
@@ -53,6 +54,7 @@ pub mod osm;
 pub mod package;
 pub mod par;
 pub mod patch;
+pub mod places;
 pub mod profile;
 pub mod projection;
 pub mod route;

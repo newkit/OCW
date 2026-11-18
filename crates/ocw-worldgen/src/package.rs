@@ -646,6 +646,7 @@ pub fn build_package_on<F: Fn(f64, f64) -> f64 + Sync>(
         time_zone: None,
         look: Default::default(),
         obstacles: None,
+        places: None,
     }
 }
 

@@ -549,6 +549,7 @@ mod tests {
             time_zone: None,
             look: Default::default(),
             obstacles: Some(o),
+            places: None,
         }
     }
 

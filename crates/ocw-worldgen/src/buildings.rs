@@ -1311,6 +1311,7 @@ mod tests {
             time_zone: None,
             look: Default::default(),
             obstacles: None,
+            places: None,
         };
         let stats = add_buildings(
             &mut p,
@@ -1475,6 +1476,7 @@ mod tests {
             time_zone: None,
             look: Default::default(),
             obstacles: None,
+            places: None,
         };
         let (church, mut parts) = church_parts();
         // A stray part far from any building.

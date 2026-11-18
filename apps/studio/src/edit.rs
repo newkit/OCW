@@ -274,6 +274,9 @@ pub enum StudioCommand {
     /// Flies the camera above a package point (x, z), at its height above
     /// the ground or this one.
     FlyTo([f64; 2], Option<f64>),
+    /// Centre the 2D map on a package point at a zoom (metres per point;
+    /// screenshots of the map labels).
+    MapView([f64; 2], f64),
     FlightModel(FlightModel),
     /// Selects what is at a package point (x, z): a height point of the
     /// patch, else the nearest road within the tolerance (m); nothing
@@ -388,6 +391,17 @@ pub fn apply(world: &mut World, cmd: StudioCommand) -> Result<String, String> {
             let (yaw, pitch) = (f.flight.view_yaw(), f.flight.view_pitch());
             f.jump([p[0], ground + above, p[1]], yaw, pitch);
             Ok(format!("flying at {:.0}, {:.0}", p[0], p[1]))
+        }
+        StudioCommand::MapView(p, m_per_px) => {
+            let mut w = world
+                .get_resource_mut::<crate::world::OpenWorld>()
+                .ok_or("no world open")?;
+            let m = m_per_px.clamp(crate::map::MIN_M_PER_PX, crate::map::MAX_M_PER_PX);
+            w.map_view = Some(crate::map::MapView {
+                centre: p,
+                m_per_px: m,
+            });
+            Ok(format!("map at {:.0}, {:.0}, {m} m per point", p[0], p[1]))
         }
         StudioCommand::FlightModel(m) => {
             let mut f = world.resource_mut::<StudioFlight>();
@@ -586,6 +600,7 @@ pub fn edit(
         }
         StudioCommand::Open(_)
         | StudioCommand::FlyTo(..)
+        | StudioCommand::MapView(..)
         | StudioCommand::FlightModel(_)
         | StudioCommand::GoToView(_)
         | StudioCommand::Focus
@@ -1173,6 +1188,27 @@ impl Plugin for EditPlugin {
                         .arg(Arg::new("path").required(true)),
                 )
                 .subcommand(
+                    Command::new("map")
+                        .about("Centre the 2D map on a package point at a zoom (m per point)")
+                        .arg(
+                            Arg::new("x")
+                                .required(true)
+                                .allow_hyphen_values(true)
+                                .value_parser(value_parser!(f64)),
+                        )
+                        .arg(
+                            Arg::new("z")
+                                .required(true)
+                                .allow_hyphen_values(true)
+                                .value_parser(value_parser!(f64)),
+                        )
+                        .arg(
+                            Arg::new("m_per_px")
+                                .required(true)
+                                .value_parser(value_parser!(f64)),
+                        ),
+                )
+                .subcommand(
                     Command::new("fly")
                         .about("Fly the camera above a package point")
                         .arg(
@@ -1493,6 +1529,13 @@ fn studio_command(world: &mut World, m: &clap::ArgMatches) -> Result<String, Str
         Some(("open", a)) => {
             StudioCommand::Open(a.get_one::<String>("path").cloned().unwrap_or_default())
         }
+        Some(("map", a)) => StudioCommand::MapView(
+            [
+                *a.get_one::<f64>("x").expect("required"),
+                *a.get_one::<f64>("z").expect("required"),
+            ],
+            *a.get_one::<f64>("m_per_px").expect("required"),
+        ),
         Some(("fly", a)) => StudioCommand::FlyTo(
             [
                 *a.get_one::<f64>("x").expect("required"),

@@ -519,6 +519,7 @@ mod tests {
             time_zone: None,
             look: Default::default(),
             obstacles: Some(o),
+            places: None,
         };
         let world =
             ocw_world::obstacles::WorldObstacles::from_package(&pkg).map(std::sync::Arc::new);
