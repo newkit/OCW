@@ -1002,7 +1002,7 @@ fn register_builtin_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         User,
         Command::new("screenshot")
-            .about("Save a screenshot of the window: JPEG with its time in EXIF (a .png path: PNG), by default OCW-<time>.jpg in the photos folder (Pictures/OCW, setting photos.folder); in the browser into the chosen photos folder or a download; previewed in the HUD")
+            .about("Save a screenshot of the window: JPEG with its time in EXIF (a .png path: PNG), by default OCW-<time>.jpg in the day's folder of the activities folder (Activities/OCW/YYYY-MM-DD, setting activities.folder); in the browser into the chosen activities folder or a download; previewed in the HUD")
             .arg(Arg::new("path")),
         |world, m| {
             use crate::photo_preview::{Caption, PhotoShot};

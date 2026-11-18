@@ -36,6 +36,7 @@
 //! `wasm32-unknown-unknown` (spec §3.5). The apps add the Bevy glue.
 
 pub mod account;
+pub mod activities;
 pub mod aids;
 pub mod audio;
 pub mod bindings;

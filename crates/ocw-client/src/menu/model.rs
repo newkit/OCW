@@ -85,9 +85,6 @@ pub enum Page {
     Events,
     /// Ride → Host a ride in the browser: why it needs the desktop app.
     HostBrowser,
-    /// Ride → Strava recording in the browser: why it needs the desktop
-    /// app (spec §2.8.1).
-    StravaBrowser,
     Navi,
     Settings,
     /// A Settings sub page, the Workshop or a list of the Ride / Navi
@@ -294,26 +291,18 @@ const RIDE_ITEMS: &[Item] = &[
         "Host a ride",
         ItemKind::Dimmed(Page::HostBrowser),
     ),
-    // The Strava recording (spec §2.8.1 ST1, the same as S); the browser
-    // shows it dimmed with the reason. Not while hosting: that page has
-    // its seven items (S and the pad button work there too).
+    // The Strava recording (spec §2.8.1 ST1, the same as S; in both apps
+    // since v4.81: its files go to the activities folder). Not while
+    // hosting: that page has its seven items (S and the pad button work
+    // there too).
     when(
         When::NotHosting,
-        only(
-            Platform::Desktop,
+        item(
             "Strava recording",
             ItemKind::Command {
                 line: "strava.record",
                 close: true,
             },
-        ),
-    ),
-    when(
-        When::NotHosting,
-        only(
-            Platform::Browser,
-            "Strava recording",
-            ItemKind::Dimmed(Page::StravaBrowser),
         ),
     ),
     when(When::Hosting, item("Hosting", ItemKind::Hosting)),
@@ -437,12 +426,14 @@ const CAPTURE_ITEMS: &[Item] = &[
             close: false,
         },
     ),
-    // Where photos go (spec §2.11 Q3): the File System Access API's
-    // picker (a key press is the gesture it needs), else downloads.
+    // The one folder for everything (spec §2.8.1, v4.82): the File
+    // System Access API's picker (a key press is the gesture it needs);
+    // the Strava recordings in their own folders, screenshots and photos
+    // by day – else downloads.
     item(
-        "Photos folder: choose",
+        "Activities folder: choose",
         ItemKind::Command {
-            line: "photos.folder choose",
+            line: "activities.folder choose",
             close: false,
         },
     ),
@@ -545,14 +536,6 @@ impl Page {
                 title: "Host a ride",
                 text: &[
                     "Hosting needs the desktop app (browsers can't open a server port). Join a shared ride here with its https:// link.",
-                ],
-                items: HOST_BROWSER_ITEMS,
-                initial_focus: 0,
-            },
-            Page::StravaBrowser => PageDef {
-                title: "Strava recording",
-                text: &[
-                    "The Strava recording (S) needs the desktop app. Upload a ride in your browser, no API app needed: Navi > Training history > the ride > Upload to Strava.",
                 ],
                 items: HOST_BROWSER_ITEMS,
                 initial_focus: 0,
@@ -1835,7 +1818,6 @@ mod tests {
                 Page::Ride,
                 Page::Events,
                 Page::HostBrowser,
-                Page::StravaBrowser,
                 Page::Navi,
                 Page::Settings,
                 Page::ConfirmRestart,
@@ -1922,12 +1904,15 @@ mod tests {
             ],
             "no Restart (a reload)"
         );
-        // Hosting and Strava are dimmed: the pages say why.
-        assert_eq!(m.dimmed(), [false, false, false, true, true, false]);
-        m.apply(Action::Click(4));
-        assert_eq!(m.page(), Some(Page::StravaBrowser));
-        assert!(m.page().unwrap().def().text[0].contains("desktop app"));
-        m.apply(Action::Back);
+        // Hosting is dimmed: its page says why.
+        assert_eq!(m.dimmed(), [false, false, false, true, false, false]);
+        // The Strava recording works in the browser too (spec §2.8.1).
+        assert_eq!(
+            m.apply(Action::Click(4)),
+            Effect::Command("strava.record".into())
+        );
+        m.apply(Action::Open);
+        m.apply(Action::Click(1));
         m.apply(Action::Click(3));
         assert_eq!(m.page(), Some(Page::HostBrowser));
         assert!(m.page().unwrap().def().text[0].contains("desktop app"));

@@ -72,7 +72,7 @@ rider() {
   local who=$1 mode=$2; shift 2
   local dir=$work/$who
   mkdir -p "$dir/data" "$dir/config"
-  OCW_DATA_DIR=$dir/data OCW_CONFIG_DIR=$dir/config OCW_PHOTOS_DIR=$dir/Pictures/OCW OCW_TEST_OUTPUT=off \
+  OCW_DATA_DIR=$dir/data OCW_CONFIG_DIR=$dir/config OCW_ACTIVITIES_DIR=$dir/Activities/OCW OCW_TEST_OUTPUT=off \
     OCW_PROFILE=release OCW_SHOT_TIMEOUT=$((seconds + 240)) OCW_SIZE=${OCW_SIZE:-1920x1080} \
     .claude/skills/run-ocw/drive.sh "$mode" "$out/$who/end.jpg" "$seconds" -- \
     --server "127.0.0.1:$port" --server-cert "$fp" --world "$pkg" --route "$route" \
@@ -101,7 +101,7 @@ wait "$b_pid" || status=$?
 
 rm -rf "$out/a/photos"
 mkdir -p "$out/a/photos"
-find "$work/a" \( -path '*/photos/*' -o -path '*/Pictures/OCW/*' \) -type f -exec cp {} "$out/a/photos/" \;
+find "$work/a" \( -path '*/photos/*' -o -path '*/Activities/OCW/*' \) -type f -exec cp {} "$out/a/photos/" \;
 # No home paths in what is kept.
 for f in "$out"/*.log "$out"/*/*.log; do
   [ -f "$f" ] && sed -i "s|$HOME|~|g; s|$work|WORK|g" "$f"

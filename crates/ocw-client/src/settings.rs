@@ -412,15 +412,19 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::Command("photographer {}"),
     },
-    // Where photos go (spec §2.11 Q3): the Pictures folder's OCW; the
-    // browser asks for its folder instead (`photos.folder choose`).
+    // The one folder for everything OCW saves for the user (spec §2.8.1
+    // *Where an S recording is written*, v4.80 / v4.82): each Strava
+    // (S … S) recording in its own subfolder (ISO date and place) with its
+    // FIT file and photos, screenshots and other photos in a folder per
+    // day; the browser chooses a folder instead (`activities.folder
+    // choose`). It replaces `photos.folder` (v4.74 – v4.82).
     SettingDef {
-        key: "photos.folder",
+        key: "activities.folder",
         kind: Kind::Text,
         default: "default",
-        description: "Folder for photos and screenshots: default = the Pictures folder's OCW (~/Pictures/OCW), or a path (~/ for the home folder)",
+        description: "The folder for everything OCW saves for you: default = ~/Activities/OCW, or a path (~/ for the home folder); each Strava recording (S) gets a subfolder with its FIT file and photos, screenshots and other photos a folder per day",
         scope: Scope::Live,
-        apply: Apply::Command("photos.folder \"{}\""),
+        apply: Apply::Command("activities.folder \"{}\""),
     },
     // Ride → Host a ride (spec §7.1.7 Q4): the router's ports opened by
     // UPnP while hosting; read at *Start hosting*, switched on the wizard's
@@ -1064,9 +1068,9 @@ const NOT_IN_BROWSER: &[&str] = &[
     "pad.fullscreen",
     "keys.restart",
     "pad.restart",
-    // The browser chooses its photos folder through the File System
-    // Access API (spec §2.11 Q3: `photos.folder choose`), not by path.
-    "photos.folder",
+    // The browser chooses its activities folder through the File System
+    // Access API (`activities.folder choose`), not by path.
+    "activities.folder",
     // Hosting needs the desktop app (browsers cannot open a port).
     "host.upnp",
 ];

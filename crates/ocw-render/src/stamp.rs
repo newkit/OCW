@@ -183,20 +183,22 @@ pub fn write_shot(image: &Image, path: &Path, meta: &ShotMeta) -> Result<(), Str
 }
 
 /// Where screenshots go when the app has no files (the browser app, spec
-/// §14 Phase 10 B6, §2.11 Q3): the photos folder the rider chose, else a
+/// §14 Phase 10 B6, §2.8.1 v4.82): the activities folder the rider chose
+/// (the day's folder there), else a
 /// download, under a timestamped name. Without it `screenshot` writes a
 /// file.
 #[derive(Resource, Clone)]
 pub struct ShotSink(pub std::sync::Arc<ShotFn>);
 
 /// What a [`ShotSink`] calls: (file name, encoded bytes) → where it went,
-/// for the photo preview ("Saved to OCW", "Downloaded OCW-….jpg").
+/// for the photo preview ("Saved to OCW/2026-11-18", "Downloaded OCW-….jpg").
 pub type ShotFn = dyn Fn(&str, Vec<u8>) -> String + Send + Sync;
 
-/// The desktop's photos folder (spec §2.11 Q3: the Pictures folder's
-/// `OCW`, setting `photos.folder`): `screenshot` without a path saves
-/// there, the ride photographer too; `label` names it in the preview's
-/// caption ("Pictures/OCW").
+/// The desktop's folder for screenshots and loose photos (spec §2.8.1,
+/// v4.82: the day's folder of the activities folder, setting
+/// `activities.folder`): `screenshot` without a path saves there, the
+/// ride photographer too (outside a Strava recording); `label` names it in
+/// the preview's caption ("Activities/OCW/2026-11-18").
 #[derive(Resource, Debug, Clone, PartialEq, Eq)]
 pub struct PhotoFolder {
     pub dir: PathBuf,

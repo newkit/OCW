@@ -170,6 +170,15 @@ pub fn rows(info: &AccountInfo, desktop: bool) -> Vec<Row> {
             right: None,
             confirm: Some(Activate::Open(Page::Riders)),
         });
+        // The activities folder: everything OCW saves (spec §2.8.1; the
+        // Settings page is full).
+        out.push(Row {
+            label: "Folders".into(),
+            value: Some("~/Activities/OCW".into()),
+            left: None,
+            right: None,
+            confirm: Some(Activate::Open(Page::Folders)),
+        });
     }
     out
 }
@@ -206,7 +215,8 @@ mod tests {
                 "account signin google",
                 "account signin strava",
                 "account signin --code",
-                "open Riders"
+                "open Riders",
+                "open Folders"
             ]
         );
         assert_eq!(
@@ -255,7 +265,7 @@ mod tests {
         });
         assert_eq!(
             lines(&rows(&d, true)),
-            ["(Status)", "account cancel", "open Riders"]
+            ["(Status)", "account cancel", "open Riders", "open Folders"]
         );
         assert_eq!(
             d.text(),

@@ -153,6 +153,7 @@ mod tests {
             WeatherAir,
             WeatherReal,
             RidingAids,
+            Folders,
             Graphics,
             ViewDistance,
             RiderList,
@@ -206,14 +207,14 @@ mod tests {
                 | Rides | GpxImport | Workouts | Voice | VoiceDevices | VoiceParticipants
                 | VoiceRider(_) | VoiceBlocked | VoiceRoom | VoiceSelect | AudioVoice
                 | TimeMachine | WeatherPresets | WeatherCustom | WeatherAir | WeatherReal
-                | RidingAids | Graphics | ViewDistance | RiderList | UnicornControls | Bindings
-                | BindGroup(_) | BindReset | Accessibility | Hud | History | HistoryRides
-                | HistoryRide(_) | HistoryClimbs(_) | HistoryWeeks | HistoryMonths
-                | HistoryBests | EventRules | Account | TrustedKeys | TrustedKey(_) | Join
-                | HostWorld | HostRoute | HostTime | HostWeather | HostOptions | HostSummary
-                | HostLink | Devices | Device(_) | Calendar(_) | CalendarDates(_) | Season
-                | Character | CharacterBody | CharacterFace | CharacterHair
-                | CharacterFacialHair | CharacterPick(_) => {}
+                | RidingAids | Folders | Graphics | ViewDistance | RiderList | UnicornControls
+                | Bindings | BindGroup(_) | BindReset | Accessibility | Hud | History
+                | HistoryRides | HistoryRide(_) | HistoryClimbs(_) | HistoryWeeks
+                | HistoryMonths | HistoryBests | EventRules | Account | TrustedKeys
+                | TrustedKey(_) | Join | HostWorld | HostRoute | HostTime | HostWeather
+                | HostOptions | HostSummary | HostLink | Devices | Device(_) | Calendar(_)
+                | CalendarDates(_) | Season | Character | CharacterBody | CharacterFace
+                | CharacterHair | CharacterFacialHair | CharacterPick(_) => {}
             }
         }
         all
@@ -241,7 +242,6 @@ mod tests {
             Page::Ride,
             Page::Events,
             Page::HostBrowser,
-            Page::StravaBrowser,
             Page::Navi,
             Page::Settings,
             Page::ConfirmRestart,

@@ -47,6 +47,11 @@ pub struct RideMeta {
     pub name: String,
     pub description: String,
     pub route: String,
+    /// A Strava recording's own copy in the activities folder (spec
+    /// §2.8.1 *Where an S recording is written*): the FIT file's path
+    /// there, which the simple upload opens. Not in older sidecars.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
 }
 
 pub struct RideRecorder {
@@ -215,6 +220,7 @@ impl RideRecorder {
                     self.route_name
                 ),
                 route: self.route_name.clone(),
+                folder: None,
             },
         })
     }

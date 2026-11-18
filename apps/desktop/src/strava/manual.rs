@@ -4,10 +4,15 @@
 //! of the training history (its page's row *Upload to Strava (in your
 //! browser)*, `strava.upload-manual N`) the app
 //!
-//! 1. copies the ride's FIT file – or its Strava recordings (S … S), if it
-//!    has any – and its photos into `<rides>/strava-upload/` under names a
-//!    rider recognises in a file picker
-//!    ([`ocw_client::strava::upload_name`]); the folder holds only this
+//! 1. takes the ride's Strava recordings (S … S), if it has any, from
+//!    their own folders in the activities folder (`~/Activities/OCW/<date>
+//!    <place>/`, spec §2.8.1 *Where an S recording is written*: each
+//!    recording's FIT file and photos are written there always, so
+//!    nothing is copied) – or, for the whole ride and for recordings from
+//!    before v4.81 without such a folder (the fallback), copies the FIT
+//!    file(s) and the ride's photos into `<rides>/strava-upload/` under
+//!    names a rider recognises in a file picker
+//!    ([`ocw_client::strava::upload_name`]); that folder holds only this
 //!    upload (older copies are removed), the saved rides keep their names,
 //! 2. opens that folder in the file manager with the file selected
 //!    (`xdg-open` on the folder, `explorer /select,` on Windows, `open -R`
@@ -157,7 +162,7 @@ pub fn recordings_within(rides: &Path, ride: &RideEntry) -> Vec<(String, i64)> {
     out
 }
 
-/// What [`prepare`] put into the upload folder.
+/// What [`prepare`] found or put into the upload folder.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Prepared {
     pub dir: PathBuf,
@@ -165,6 +170,46 @@ pub struct Prepared {
     pub files: Vec<String>,
     /// The photos' names.
     pub photos: Vec<String>,
+    /// The recording's own folder as the HUD names it
+    /// (`Activities/OCW/2026-11-18 Puerto de la Cruz`); `None`: the copy
+    /// in `strava-upload/` (the whole ride, older recordings).
+    pub folder: Option<String>,
+}
+
+/// A folder's name for the steps: below the activities folder from its
+/// label on ("Activities/OCW/2026-11-18 Puerto de la Cruz"), else its path.
+pub fn folder_name(dir: &Path, root: Option<&crate::activities::ActivitiesFolder>) -> String {
+    if let Some(r) = root
+        && let Ok(rest) = dir.strip_prefix(&r.dir)
+    {
+        let parts: Vec<String> = rest
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        if parts.is_empty() {
+            return r.label.clone();
+        }
+        return format!("{}/{}", r.label, parts.join("/"));
+    }
+    dir.display().to_string()
+}
+
+/// The ride's Strava recordings in their own folders (spec §2.8.1 *Where
+/// an S recording is written*): each recording's FIT file there, if every
+/// recording of the ride has one (`None`: none, or an older one without).
+pub fn recording_folders(rides: &Path, ride: &RideEntry) -> Option<Vec<PathBuf>> {
+    let recs = recordings_within(rides, ride);
+    if recs.is_empty() {
+        return None;
+    }
+    recs.iter()
+        .map(|(name, _)| {
+            crate::recording::load_meta(&rides.join(name))?
+                .folder
+                .map(PathBuf::from)
+                .filter(|p| p.is_file())
+        })
+        .collect()
 }
 
 impl Prepared {
@@ -182,8 +227,31 @@ pub fn prepare(
     ride: &RideEntry,
     offset_s: i32,
     whole: bool,
+    root: Option<&crate::activities::ActivitiesFolder>,
 ) -> Result<Prepared, String> {
     use ocw_client::strava::upload_name;
+    // The recordings' own folders: nothing to copy, the first one opens
+    // with its FIT file selected; its photos are beside it.
+    if !whole && let Some(fits) = recording_folders(rides, ride) {
+        let dir = fits[0].parent().unwrap_or(Path::new(".")).to_path_buf();
+        let name = |p: &Path| p.file_name().map(|n| n.to_string_lossy().into_owned());
+        let files: Vec<String> = fits.iter().map(PathBuf::as_path).filter_map(name).collect();
+        let mut photos: Vec<String> = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "jpg" || x == "jpeg"))
+            .filter_map(|p| name(&p))
+            .collect();
+        photos.sort_by_key(|n| photo_number(n));
+        return Ok(Prepared {
+            folder: Some(folder_name(&dir, root)),
+            dir,
+            files,
+            photos,
+        });
+    }
     let mut sources: Vec<(PathBuf, String)> = Vec::new();
     if !whole {
         for (name, start) in recordings_within(rides, ride) {
@@ -245,7 +313,8 @@ pub fn prepare(
     }
     // The ride's photos (spec §2.11), to add on the activity page.
     let stem = files[0].trim_end_matches(".fit").to_string();
-    // They live in the photos folder (Pictures/OCW), found through their
+    // They live in the activities folder (or an older ~/Pictures/OCW),
+    // found through their
     // sidecars in `rides/<ride>/photos/` (older rides: beside them).
     let mut photos = Vec::new();
     for (k, (_, from)) in crate::photos::ride_photo_files(rides, &ride.id)
@@ -257,7 +326,21 @@ pub fn prepare(
             photos.push(name);
         }
     }
-    Ok(Prepared { dir, files, photos })
+    Ok(Prepared {
+        dir,
+        files,
+        photos,
+        folder: None,
+    })
+}
+
+/// The number in `… photo N.jpg` (for the order; others last).
+fn photo_number(name: &str) -> (usize, String) {
+    let n = name
+        .rsplit_once(" photo ")
+        .and_then(|(_, r)| r.split('.').next()?.parse().ok())
+        .unwrap_or(usize::MAX);
+    (n, name.to_string())
 }
 
 fn rides_dir(world: &World) -> Result<PathBuf, String> {
@@ -273,11 +356,15 @@ fn rides_dir(world: &World) -> Result<PathBuf, String> {
 /// ride's page).
 pub fn upload(world: &mut World, ride: &RideEntry, whole: bool) -> Result<String, String> {
     let rides = rides_dir(world)?;
+    let root = world
+        .get_resource::<crate::activities::ActivitiesFolder>()
+        .cloned();
     let p = prepare(
         &rides,
         ride,
         ocw_ui::history::offset(ride.start_unix_s),
         whole,
+        root.as_ref(),
     )?;
     info!(folder = %p.dir.display(), files = ?p.files, "Strava upload in the browser");
     if world.get_resource::<ManualOpen>().is_some_and(|o| o.0) {
@@ -285,7 +372,8 @@ pub fn upload(world: &mut World, ride: &RideEntry, whole: bool) -> Result<String
         spawn(&reveal_command(os, &p.first()))?;
         spawn(&browser_command(os, ocw_client::strava::UPLOAD_PAGE))?;
     }
-    let steps = ocw_client::strava::upload_steps(&p.files, true, !p.photos.is_empty());
+    let steps =
+        ocw_client::strava::upload_steps(&p.files, true, !p.photos.is_empty(), p.folder.as_deref());
     let now = crate::recording::game_now(world);
     if let Some(mut s) = world.get_resource_mut::<super::recording::StravaRec>() {
         s.0.say_for(steps.clone(), now, ocw_client::strava::UPLOAD_NOTICE_S);
@@ -412,7 +500,7 @@ mod tests {
         std::fs::create_dir_all(dir.join(UPLOAD_DIR)).unwrap();
         std::fs::write(dir.join(UPLOAD_DIR).join("old.fit"), b"x").unwrap();
         std::fs::write(dir.join(UPLOAD_DIR).join("keep.txt"), b"x").unwrap();
-        let p = prepare(&dir, &e, 3600, false).unwrap();
+        let p = prepare(&dir, &e, 3600, false, None).unwrap();
         assert_eq!(
             p.files,
             vec!["OCW 2026-11-18 10-05 Tenerife – Puerto de la Cruz–Teide.fit".to_string()]
@@ -429,20 +517,21 @@ mod tests {
         let mut gone = e.clone();
         gone.fit = Some("nope.fit".into());
         assert!(
-            prepare(&dir, &gone, 0, false)
+            prepare(&dir, &gone, 0, false, None)
                 .unwrap_err()
                 .contains("missing")
         );
         gone.fit = None;
         assert!(
-            prepare(&dir, &gone, 0, false)
+            prepare(&dir, &gone, 0, false, None)
                 .unwrap_err()
                 .contains("not kept")
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The ride's photos live in the photos folder (Pictures/OCW, spec
+    /// The ride's photos live where their sidecars say (here an older
+    /// ~/Pictures/OCW, spec
     /// §2.11 Q3), referenced by their sidecars in `rides/<ride>/photos/`:
     /// the upload folder gets them under the FIT file's name.
     #[test]
@@ -474,7 +563,7 @@ mod tests {
             "OCW",
         )
         .unwrap();
-        let p = prepare(&dir, &e, 0, false).unwrap();
+        let p = prepare(&dir, &e, 0, false, None).unwrap();
         assert_eq!(
             p.photos,
             vec!["OCW 2026-11-18 09-05 Tenerife – Puerto de la Cruz–Teide photo 1.jpg".to_string()]
@@ -483,7 +572,7 @@ mod tests {
             std::fs::read(p.dir.join(&p.photos[0])).unwrap(),
             std::fs::read(&photo).unwrap()
         );
-        let steps = ocw_client::strava::upload_steps(&p.files, true, !p.photos.is_empty());
+        let steps = ocw_client::strava::upload_steps(&p.files, true, !p.photos.is_empty(), None);
         assert!(steps.contains("in the same folder"), "{steps}");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -507,7 +596,7 @@ mod tests {
             within[0].0,
             format!("strava/{}", a.file_name().unwrap().to_string_lossy())
         );
-        let p = prepare(&dir, &e, 0, false).unwrap();
+        let p = prepare(&dir, &e, 0, false, None).unwrap();
         assert_eq!(
             p.files,
             vec![
@@ -521,7 +610,7 @@ mod tests {
             std::fs::read(p.first()).unwrap(),
             std::fs::read(&a).unwrap()
         );
-        let w = prepare(&dir, &e, 0, true).unwrap();
+        let w = prepare(&dir, &e, 0, true, None).unwrap();
         assert_eq!(w.files.len(), 1);
         assert!(!w.files[0].contains("Strava recording"));
         assert_eq!(std::fs::read_dir(&w.dir).unwrap().count(), 1);
@@ -532,6 +621,111 @@ mod tests {
             "strava/{}",
             b.file_name().unwrap().to_string_lossy()
         )));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A ride whose Strava recording was written to its own folder in
+    /// the activities folder (spec §2.8.1 *Where an S recording is
+    /// written*): the upload opens that folder with the FIT file selected
+    /// and copies nothing; its photos are there once. An older recording
+    /// without such a folder falls back to the copy in `strava-upload/`.
+    #[test]
+    fn the_upload_opens_the_recordings_own_folder() {
+        let dir = temp_dir("folder");
+        let (path, f) = ride(&dir, 1_794_992_700, 600);
+        let e = entry(&path, &f);
+        let root = crate::activities::ActivitiesFolder {
+            dir: dir.join("home/Activities/OCW"),
+            label: "Activities/OCW".into(),
+        };
+        // The recording as `handle` writes it: its folder's FIT, the
+        // sidecar pointing there, a photo in the folder.
+        let mut rec = crate::activities::RecordingDir::create(
+            &root,
+            1_794_992_760,
+            3600,
+            "Puerto de la Cruz",
+        )
+        .unwrap();
+        let route = Route::test_loop();
+        let mut r = RideRecorder::new("Loop");
+        for i in 0..30 {
+            r.observe(
+                &route,
+                None,
+                Sample {
+                    game_s: i as f64,
+                    distance: i as f64 * 8.0,
+                    speed: 8.0,
+                    power_w: 200.0,
+                    ..Sample::default()
+                },
+                1_794_992_760 + i,
+            );
+        }
+        let mut seg = r.finish().unwrap();
+        let fit = rec.write_fit(&ocw_fit::encode(&seg.activity)).unwrap();
+        seg.meta.folder = Some(fit.to_string_lossy().into_owned());
+        let internal =
+            crate::recording::save_ride(&super::super::recording::strava_dir(&dir), &seg).unwrap();
+        std::fs::write(rec.next_photo(), b"jpg").unwrap();
+        std::fs::write(rec.next_photo(), b"jpg").unwrap();
+        let p = prepare(&dir, &e, 3600, false, Some(&root)).unwrap();
+        assert_eq!(p.dir, root.dir.join("2026-11-18 Puerto de la Cruz"));
+        assert_eq!(
+            p.files,
+            vec!["OCW 2026-11-18 10-06 Puerto de la Cruz.fit".to_string()]
+        );
+        assert_eq!(p.first(), fit);
+        assert_eq!(
+            p.photos,
+            vec![
+                "OCW 2026-11-18 10-06 Puerto de la Cruz photo 1.jpg".to_string(),
+                "OCW 2026-11-18 10-06 Puerto de la Cruz photo 2.jpg".to_string(),
+            ]
+        );
+        assert_eq!(
+            p.folder.as_deref(),
+            Some("Activities/OCW/2026-11-18 Puerto de la Cruz")
+        );
+        assert!(!dir.join(UPLOAD_DIR).exists(), "nothing copied");
+        // The file manager opens that folder (Linux) / selects the file.
+        assert_eq!(
+            reveal_command(Os::Linux, &p.first()).args,
+            vec![p.dir.to_string_lossy().into_owned()]
+        );
+        assert_eq!(
+            reveal_command(Os::Mac, &p.first()).args[1],
+            fit.to_string_lossy()
+        );
+        let steps = ocw_client::strava::upload_steps(&p.files, true, true, p.folder.as_deref());
+        assert!(
+            steps.contains("its folder Activities/OCW/2026-11-18 Puerto de la Cruz is open"),
+            "{steps}"
+        );
+        // The API sync still knows the internal record.
+        assert!(sync_names(&dir, &e).contains(&format!(
+            "strava/{}",
+            internal.file_name().unwrap().to_string_lossy()
+        )));
+        // The whole ride: the copy as before.
+        let w = prepare(&dir, &e, 3600, true, Some(&root)).unwrap();
+        assert_eq!(w.folder, None);
+        assert_eq!(w.dir, dir.join(UPLOAD_DIR));
+        // An older recording (no folder in its sidecar): the copy too.
+        let side = internal.with_extension("toml");
+        let mut meta = crate::recording::load_meta(&internal).unwrap();
+        meta.folder = None;
+        std::fs::write(&side, toml::to_string_pretty(&meta).unwrap()).unwrap();
+        assert!(!std::fs::read_to_string(&side).unwrap().contains("folder"));
+        let old = prepare(&dir, &e, 3600, false, Some(&root)).unwrap();
+        assert_eq!(old.folder, None);
+        assert_eq!(old.dir, dir.join(UPLOAD_DIR));
+        assert!(
+            old.files[0].ends_with("(Strava recording).fit"),
+            "{:?}",
+            old.files
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -632,7 +632,7 @@ fn register_commands(app: &mut App) {
                 .get_resource::<Recording>()
                 .and_then(|r| r.dir.clone())
                 .ok_or("no rides folder")?;
-            // The photos folder (Pictures/OCW), or the ride's own folder
+            // The activities folder (or an older Pictures/OCW), or the ride's own folder
             // for rides before v4.73 (spec §2.11 Q3).
             let folder = crate::photos::ride_photo_folder(&dir, &id)
                 .ok_or("this ride has no photos")?;

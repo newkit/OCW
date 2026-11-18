@@ -31,8 +31,9 @@ pub const UPLOAD_NOTICE_S: f64 = 12.0;
 /// The steps of the simple upload. `files`: the file names to choose (the
 /// first named, the others counted); `desktop`: the folder is open (else
 /// the file was downloaded); `photos`: the ride's photos lie in the same
-/// folder (desktop).
-pub fn upload_steps(files: &[String], desktop: bool, photos: bool) -> String {
+/// folder (desktop); `folder`: the open folder as the HUD names it (the
+/// recording's own folder, `Activities/OCW/2026-11-18 Puerto de la Cruz`).
+pub fn upload_steps(files: &[String], desktop: bool, photos: bool, folder: Option<&str>) -> String {
     let first = files.first().map_or("", String::as_str);
     let which = match files.len() {
         0 | 1 => format!("the file {first}"),
@@ -42,10 +43,17 @@ pub fn upload_steps(files: &[String], desktop: bool, photos: bool) -> String {
             if n == 2 { "" } else { "s" }
         ),
     };
-    let (opens, at_hand) = if desktop {
-        ("Strava opens in your browser", "its folder is open")
-    } else {
-        ("Strava opens in a new tab", "just downloaded")
+    let (opens, at_hand) = match (desktop, folder) {
+        (true, Some(f)) => (
+            "Strava opens in your browser",
+            format!("its folder {f} is open"),
+        ),
+        (true, None) => (
+            "Strava opens in your browser",
+            "its folder is open".to_string(),
+        ),
+        (false, Some(f)) => ("Strava opens in a new tab", format!("in {f}")),
+        (false, None) => ("Strava opens in a new tab", "just downloaded".to_string()),
     };
     let mut s = format!("{opens}: sign in, choose {which} ({at_hand}), then Upload.");
     if photos {
@@ -132,6 +140,10 @@ pub struct StravaRecording {
     since: Option<f64>,
     /// The notice, when it was shown and for how long.
     notice: Option<(String, f64, f64)>,
+    /// Where the running recording is written, as the HUD names it
+    /// (`Activities/OCW/2026-11-18 Puerto de la Cruz`, spec §2.8.1 *Where
+    /// an S recording is written*); its stop notice says it.
+    folder: Option<String>,
 }
 
 impl StravaRecording {
@@ -142,7 +154,19 @@ impl StravaRecording {
             recorder: None,
             since: None,
             notice: None,
+            folder: None,
         }
+    }
+
+    /// Where the running recording goes (the app sets it at the start;
+    /// the stop notice names it).
+    pub fn set_folder(&mut self, label: Option<String>) {
+        self.folder = label;
+    }
+
+    /// Where the running recording goes, as the HUD names it.
+    pub fn folder(&self) -> Option<&str> {
+        self.folder.as_deref()
     }
 
     /// Another route or world: later recordings carry its name.
@@ -201,6 +225,7 @@ impl StravaRecording {
             return Outcome::Unchanged;
         };
         let since = self.since.take().unwrap_or(game_s);
+        let folder = self.folder.take();
         let ride = r.finish().map(|mut f| {
             f.meta.name = format!("Open Cycling World: {}", self.route);
             f.meta.description = format!(
@@ -211,8 +236,9 @@ impl StravaRecording {
         });
         match &ride {
             Some(f) => {
+                let saved = folder.map_or_else(|| "saved".to_string(), |f| format!("saved to {f}"));
                 let text = format!(
-                    "Strava recording saved: {}, {:.1} km",
+                    "Strava recording {saved}: {}, {:.1} km",
                     crate::history::hms(game_s - since),
                     f.activity.records.last().map_or(0.0, |r| r.distance_m) / 1000.0
                 );
@@ -312,6 +338,31 @@ mod tests {
         assert_eq!(a.notice(2.0 + NOTICE_S), None);
     }
 
+    /// The stop notice names the recording's folder (spec §2.8.1 *Where
+    /// an S recording is written*); the next recording starts without it.
+    #[test]
+    fn the_stop_notice_names_the_folder() {
+        let route = Route::test_loop();
+        let mut s = StravaRecording::new(false, "Loop");
+        s.start(0.0);
+        s.set_folder(Some("Activities/OCW/2026-11-18 Puerto de la Cruz".into()));
+        assert_eq!(
+            s.folder(),
+            Some("Activities/OCW/2026-11-18 Puerto de la Cruz")
+        );
+        s.observe(&route, None, sample(0.0, 0.0), 1);
+        s.observe(&route, None, sample(1.0, 8.0), 2);
+        s.stop(2.0);
+        let n = s.notice(2.0).unwrap();
+        assert!(
+            n.starts_with(
+                "Strava recording saved to Activities/OCW/2026-11-18 Puerto de la Cruz: 0:02"
+            ),
+            "{n}"
+        );
+        assert_eq!(s.folder(), None);
+    }
+
     #[test]
     fn the_upload_page_is_stravas_own() {
         assert_eq!(UPLOAD_PAGE, "https://www.strava.com/upload/select");
@@ -356,18 +407,30 @@ mod tests {
     fn the_steps_name_the_file_and_the_photos() {
         let one = vec!["OCW 2026-11-18 10-05 Loop.fit".to_string()];
         assert_eq!(
-            upload_steps(&one, true, false),
+            upload_steps(&one, true, false, None),
             "Strava opens in your browser: sign in, choose the file OCW 2026-11-18 10-05 Loop.fit (its folder is open), then Upload. Photos: add them on the activity page."
         );
-        let web = upload_steps(&one, false, false);
+        let web = upload_steps(&one, false, false, None);
         assert!(
             web.starts_with("Strava opens in a new tab") && web.contains("just downloaded"),
             "{web}"
         );
         let two = vec!["a.fit".to_string(), "b.fit".to_string()];
-        let s = upload_steps(&two, true, true);
+        let s = upload_steps(&two, true, true, None);
         assert!(s.contains("the files a.fit and the 1 other ("), "{s}");
         assert!(s.contains("in the same folder"), "{s}");
+        // The recording's own folder (spec §2.8.1 *Where an S recording
+        // is written*) is named.
+        let f = upload_steps(
+            &one,
+            true,
+            true,
+            Some("Activities/OCW/2026-11-18 Puerto de la Cruz"),
+        );
+        assert!(
+            f.contains("(its folder Activities/OCW/2026-11-18 Puerto de la Cruz is open)"),
+            "{f}"
+        );
     }
 
     /// S starts, S stops; stopping twice or leaving the ride after a stop

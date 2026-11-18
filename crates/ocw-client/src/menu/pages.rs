@@ -127,6 +127,11 @@ pub enum Page {
     /// Controls → Riding aids (spec §14 Phase 12C / 12D): the proximity
     /// cue and arrow, the "last moment" warning, the camera shake.
     RidingAids,
+    /// Settings → Account → Folders (desktop; spec §2.8.1 *Where an S
+    /// recording is written*, v4.80 / v4.82): the activities folder – the
+    /// one folder for everything OCW saves – with *Change* (a folder
+    /// picker) and *Default*.
+    Folders,
     /// Display → Graphics (spec §14 Phase 10 B7): the quality preset, the
     /// sky, fullscreen (the Display page is full).
     Graphics,
@@ -265,6 +270,7 @@ impl Page {
             Self::CalendarDates(_) => "Calendar: dates",
             Self::Season => "Season",
             Self::RidingAids => "Riding aids",
+            Self::Folders => "Folders",
             Self::Graphics => "Graphics",
             Self::ViewDistance => "Render distance",
             Self::RiderList => "Riders in this ride",
@@ -533,6 +539,9 @@ impl Page {
             Self::Graphics => &[
                 "Quality: Low and Medium draw fewer shadows, trees and houses for weaker GPUs, WebGL 2 and phones; auto chooses by GPU and device.",
             ],
+            Self::Folders => &[
+                "Everything OCW saves: Strava recordings (S) in their own folders, photos by day.",
+            ],
             Self::RidingAids => &[
                 "Aids that never steer: an arrow to a rider close by, a warning before a hit or a slide. Shake: off for comfort.",
             ],
@@ -631,6 +640,42 @@ pub fn open_row(label: &str, value: Option<String>, page: Page) -> Row {
         right: None,
         confirm: Some(Activate::Open(page)),
     }
+}
+
+/// A folder setting's value as the page shows it: the default's place
+/// (`~/Activities/OCW`), else the path set.
+pub fn folder_value(settings: &Settings, key: &str, default: &str) -> String {
+    let v = settings.get(key).map(|v| v.to_string()).unwrap_or_default();
+    let v = v.trim().trim_matches('"');
+    if v.is_empty() || v == "default" {
+        format!("{default} (default)")
+    } else {
+        v.to_string()
+    }
+}
+
+/// The Folders page (desktop): the activities folder (spec §2.8.1, the
+/// one folder for everything since v4.82); Confirm opens the folder
+/// picker (`activities.folder choose`), *Default* resets it.
+fn folder_rows(settings: &Settings) -> Vec<Row> {
+    let folder = |label: &str, key: &str, default: &str| Row {
+        label: label.into(),
+        value: Some(folder_value(settings, key, default)),
+        left: None,
+        right: None,
+        confirm: Some(Activate::Command(format!("{key} choose"))),
+    };
+    vec![
+        folder(
+            "Activities folder: change",
+            "activities.folder",
+            "~/Activities/OCW",
+        ),
+        Row::action(
+            "Activities folder: default",
+            "set activities.folder default",
+        ),
+    ]
 }
 
 /// A workout of the Workouts list.
@@ -1299,6 +1344,7 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             setting_row(settings, "event.neutral_service", "Neutral service"),
             setting_row(settings, "event.dnf_injured", "DNF when badly injured"),
         ],
+        Page::Folders => folder_rows(settings),
         Page::RidingAids => vec![
             setting_row(settings, "ride.proximity_cue", "Proximity arrow and bell"),
             setting_row(settings, "ride.hit_warning", "Last-moment warning"),
