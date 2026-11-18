@@ -548,7 +548,55 @@ impl Frame {
         f.saddle = bb + seat_dir * h;
         f
     }
+
+    /// Forward and up, at right angles to the steering axis: the side the
+    /// fork offset (rake) puts the front axle on.
+    pub fn rake_dir(&self) -> Vec3 {
+        Vec3::new(0.0, -self.steer_dir.z, self.steer_dir.y).normalize()
+    }
+
+    /// The point of the steering axis nearest the front axle.
+    pub fn steer_foot(&self) -> Vec3 {
+        self.head_bottom + self.steer_dir * (self.front_hub - self.head_bottom).dot(self.steer_dir)
+    }
+
+    /// The fork offset: how far the front axle is ahead of the steering
+    /// axis (signed: negative would be behind it).
+    pub fn fork_offset(&self) -> f32 {
+        (self.front_hub - self.steer_foot()).dot(self.rake_dir())
+    }
+
+    /// The trail: how far behind the tyre's contact patch the steering
+    /// axis meets the ground (signed: positive when the patch trails it).
+    pub fn trail(&self) -> f32 {
+        let s = -self.head_bottom.y / self.steer_dir.y;
+        let ground = self.head_bottom + self.steer_dir * s;
+        // −Z is forward: the axis meets the ground ahead of the patch.
+        self.front_hub.z - ground.z
+    }
+
+    /// The centre line of a rigid fork blade in the side view, from the
+    /// crown (on the steering axis) to the dropout (the front axle): it
+    /// runs down along the axis and bends forward towards the bottom, the
+    /// way a raked fork does – never ahead of the straight line from the
+    /// crown to the axle (that would bend it backwards at the dropout).
+    pub fn fork_blade(&self) -> [Vec3; FORK_BLADE_POINTS] {
+        let foot = self.steer_foot();
+        let offset = self.fork_offset();
+        let n = self.rake_dir();
+        std::array::from_fn(|i| {
+            let s = i as f32 / (FORK_BLADE_POINTS - 1) as f32;
+            self.head_bottom.lerp(foot, s) + n * (offset * s.powf(FORK_BEND))
+        })
+    }
 }
+
+/// Points along a rigid fork blade ([`Frame::fork_blade`]).
+pub const FORK_BLADE_POINTS: usize = 6;
+/// How the rake is spread down the blade: offset × s^FORK_BEND (s from the
+/// crown, 0, to the axle, 1) – above 1 the blade bends forward near the
+/// dropout, as a real fork does.
+pub const FORK_BEND: f32 = 1.6;
 
 fn grips(d: &Design) -> ([Vec3; 2], [Vec3; 2], [Vec3; 2]) {
     let pair = |v: Vec3| [Vec3::new(-v.x, v.y, v.z), v];
@@ -1145,17 +1193,20 @@ pub fn build_with(
                 );
             }
         }
-        // Fork.
+        // Fork: the front axle ahead of the steering axis by the offset.
+        let rake = f.rake_dir() * f.fork_offset();
         if d.suspension {
+            // The offset is in the crown: stanchions and lowers run
+            // parallel to the steering axis, ahead of it by the offset.
             p.slot("component").cuboid(
-                f.head_bottom + f.steer_dir * 0.03,
-                Vec3::new(0.075, 0.018, 0.03),
+                f.head_bottom + f.steer_dir * 0.03 + rake * 0.5,
+                Vec3::new(0.075, 0.018, 0.03 + f.fork_offset() * 0.5),
                 Quat::from_rotation_arc(Vec3::NEG_Y, f.steer_dir),
             );
             for side in [-1.0f32, 1.0] {
-                let top = f.head_bottom + f.steer_dir * 0.03 + Vec3::X * side * 0.058;
+                let top = f.head_bottom + f.steer_dir * 0.03 + rake + Vec3::X * side * 0.058;
                 let mid = top + f.steer_dir * 0.2;
-                let hub = f.front_hub + Vec3::X * side * 0.058 - f.steer_dir * 0.0;
+                let hub = f.front_hub + Vec3::X * side * 0.058;
                 p.slot("metal").tube(top, mid, 0.017, 0.017, sides, false);
                 p.slot("component").tube(
                     mid - f.steer_dir * 0.04,
@@ -1167,7 +1218,7 @@ pub fn build_with(
                 );
             }
             if hi {
-                let arch = f.head_bottom + f.steer_dir * 0.2;
+                let arch = f.head_bottom + f.steer_dir * 0.2 + rake;
                 p.slot("component").sweep(
                     &[
                         arch + Vec3::new(-0.058, 0.0, -0.01),
@@ -1180,14 +1231,22 @@ pub fn build_with(
                 );
             }
         } else {
-            // Forward and up, at right angles to the steering axis (the rake).
-            let normal = Vec3::new(0.0, -f.steer_dir.z, f.steer_dir.y).normalize();
+            // The blades from the crown down the steering axis, bending
+            // forward to the axle (spec §14 Phase 15: they bent backwards
+            // before, the rake taken out high up and the dropouts behind
+            // the blade's line).
+            let blade = f.fork_blade();
+            let last = (FORK_BLADE_POINTS - 1) as f32;
+            let radii: Vec<f32> = (0..FORK_BLADE_POINTS)
+                .map(|i| t * (0.95 - 0.45 * i as f32 / last))
+                .collect();
             for side in [-1.0f32, 1.0] {
-                let top = f.head_bottom + Vec3::X * side * 0.04;
-                let hub = f.front_hub + Vec3::X * side * 0.052;
-                let mid = top.lerp(hub, 0.55) + normal * (d.rake * 0.3);
-                p.slot("frame")
-                    .sweep(&[top, mid, hub], &[t * 0.95, t * 0.7, t * 0.5], sides, true);
+                let path: Vec<Vec3> = blade
+                    .iter()
+                    .enumerate()
+                    .map(|(i, b)| *b + Vec3::X * side * (0.04 + 0.012 * i as f32 / last))
+                    .collect();
+                p.slot("frame").sweep(&path, &radii, sides, true);
             }
             p.slot("frame").cuboid(
                 f.head_bottom + f.steer_dir * 0.012,
@@ -1800,6 +1859,145 @@ mod tests {
             // Saddle 0.65–0.8 m above the bottom bracket.
             let h = f.saddle.distance(f.bb);
             assert!((0.62..0.82).contains(&h), "{p:?} saddle height {h}");
+        }
+    }
+
+    /// Regression (the user, 2026-11-18: "turn around the bike fork … it
+    /// should point forward"): the front axle is ahead of the steering
+    /// axis by the design's offset, the trail is a bike's, the crown sits
+    /// on the axis and the blades bend forward, not backwards.
+    #[test]
+    fn forks_are_raked_forward() {
+        let rig = RiderRig::from_model(&rider::build(rider::Detail::High)).unwrap();
+        for p in ProfileId::ALL {
+            let d = design(p);
+            let f = Frame::new(&d, &rig);
+            // The steering axis runs down and forward (−Z), its bottom
+            // ahead of the top: the head tube leans back.
+            assert!(f.steer_dir.y < 0.0 && f.steer_dir.z < 0.0, "{p:?}");
+            assert!(f.head_bottom.z < f.head_top.z, "{p:?}");
+            let rake = f.rake_dir();
+            assert!(rake.z < 0.0 && rake.y > 0.0, "{p:?}: forward and up");
+            assert!(rake.dot(f.steer_dir).abs() < 1e-6);
+            // The axle ahead of the axis by the offset (the sign is the bug).
+            let off = f.fork_offset();
+            assert!(
+                (off - d.rake).abs() < 1e-5,
+                "{p:?}: offset {off} ≠ {}",
+                d.rake
+            );
+            assert!(
+                f.front_hub.z < f.steer_foot().z,
+                "{p:?}: axle ahead of the axis"
+            );
+            // Trail: road 55–65 mm, gravel a little more, MTB 90–125 mm.
+            let trail = f.trail();
+            let range = match p {
+                ProfileId::Mountain => 0.09..0.125,
+                ProfileId::Gravel => 0.055..0.075,
+                _ => 0.05..0.066,
+            };
+            assert!(range.contains(&trail), "{p:?}: trail {trail}");
+            // The crown on the axis, the blade ends at the axle.
+            let blade = f.fork_blade();
+            assert!(blade[0].distance(f.head_bottom) < 1e-6, "{p:?}");
+            assert!(
+                blade[FORK_BLADE_POINTS - 1].distance(f.front_hub) < 1e-5,
+                "{p:?}"
+            );
+            // The blade's offset from the axis only grows downwards and
+            // stays behind the straight crown–axle line (bent forward).
+            let mut last = -1e-6;
+            for (i, b) in blade.iter().enumerate() {
+                let o = (*b - f.head_bottom).dot(rake);
+                assert!(
+                    o >= last - 1e-6,
+                    "{p:?}: point {i} bends back ({o} < {last})"
+                );
+                let s = i as f32 / (FORK_BLADE_POINTS - 1) as f32;
+                assert!(o <= off * s + 1e-6, "{p:?}: point {i} ahead of the chord");
+                last = o;
+            }
+        }
+    }
+
+    /// The exported files agree: in every shipped bike the front wheel is
+    /// ahead of the head tube's axis by the offset, and the fork's mesh
+    /// reaches the axle ahead of the axis (read back into the app's −Z
+    /// forward; the file itself faces +Z).
+    #[test]
+    fn exported_bikes_have_forward_raked_forks() {
+        let r = rider::build(rider::Detail::High);
+        let rig = RiderRig::from_model(&r).unwrap();
+        for p in ProfileId::ALL {
+            let d = design(p);
+            let f = Frame::new(&d, &rig);
+            let file = format!(
+                "{}/../../artwork/3dmodels/{}",
+                env!("CARGO_MANIFEST_DIR"),
+                crate::export::bike_file(p)
+            );
+            let bytes = std::fs::read(&file).unwrap();
+            assert_eq!(&bytes[..4], b"glTF", "{file}: run git lfs pull");
+            let m = crate::glb::read(&bytes).unwrap();
+            let hub = m.position(WHEEL_FRONT).unwrap();
+            assert!(
+                hub.distance(f.front_hub) < 1e-4,
+                "{p:?}: {hub} vs {}",
+                f.front_hub
+            );
+            // The frame's geometry in the file: the axis from its head
+            // tube, the offset measured from it.
+            let ha = d.head_angle.to_radians();
+            let steer = Vec3::new(0.0, -ha.sin(), -ha.cos());
+            let foot = f.head_bottom + steer * (hub - f.head_bottom).dot(steer);
+            let off = (hub - foot).dot(Vec3::new(0.0, ha.cos(), -ha.sin()));
+            assert!(
+                (off - d.rake).abs() < 1e-4,
+                "{p:?}: offset in the file {off}"
+            );
+            // The fork's vertices near the axle height lie ahead of the
+            // axis there (a fork mirrored or raked back would not).
+            let bike = m.node(ROOT).unwrap();
+            // The near model's triangle edges.
+            let edges: Vec<(Vec3, Vec3)> = m.nodes[bike]
+                .primitives
+                .iter()
+                .flat_map(|pr| {
+                    pr.indices.chunks(3).flat_map(move |t| {
+                        let v = |i: u32| Vec3::from(pr.positions[i as usize]);
+                        [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])].map(|(a, b)| (v(a), v(b)))
+                    })
+                })
+                .collect();
+            // Mean offset ahead of the axis where the mesh cuts the level
+            // y beside the wheel near the axis (the blades / legs): the
+            // edges crossing it, a ring's centre on average.
+            let offset_at = |y: f32| {
+                let axis = f.head_bottom + steer * ((y - f.head_bottom.y) / steer.y);
+                let near: Vec<f32> = edges
+                    .iter()
+                    .filter(|(a, b)| (a.y - y) * (b.y - y) < 0.0)
+                    .map(|(a, b)| a.lerp(*b, (y - a.y) / (b.y - a.y)))
+                    .filter(|v| (v.z - axis.z).abs() < 0.07)
+                    .filter(|v| v.x.abs() > 0.025 && v.x.abs() < 0.085)
+                    .map(|v| (axis.z - v.z) * ha.sin())
+                    .collect();
+                assert!(!near.is_empty(), "{p:?}: no fork at height {y}");
+                near.iter().sum::<f32>() / near.len() as f32
+            };
+            let at_axle = offset_at(hub.y + 0.02);
+            assert!(
+                at_axle > 0.6 * d.rake,
+                "{p:?}: dropouts {at_axle} not ahead"
+            );
+            // Halfway down a rigid fork is still close to the axis (it
+            // bends forward at the bottom); the regression had 0.85 × the
+            // offset there (bent backwards at the dropouts).
+            if !d.suspension {
+                let mid = offset_at(0.5 * (f.head_bottom.y + hub.y));
+                assert!(mid < 0.5 * d.rake, "{p:?}: halfway {mid} of {}", d.rake);
+            }
         }
     }
 
