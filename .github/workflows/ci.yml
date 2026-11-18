@@ -32,12 +32,17 @@ jobs:
       # failing (exit 100): short apt timeouts, three attempts, and a step
       # timeout make it fail (or recover) within minutes.
       - name: Install system dependencies
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: |
+          # --no-install-recommends: weston's recommends pull in ~120 extra
+          # packages (ffmpeg, gstreamer, speech libraries; 126 MB) – a slow
+          # mirror then trickled for the whole step timeout (2026-11-18).
+          # Each attempt gets its own time limit, so a stalled download is
+          # retried instead of using up the step.
           apt_opts="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
           for attempt in 1 2 3; do
-            sudo apt-get $apt_opts update &&
-            sudo apt-get $apt_opts install -y libasound2-dev libudev-dev libwayland-dev \
+            sudo timeout 300 apt-get $apt_opts update &&
+            sudo timeout 300 apt-get $apt_opts install -y --no-install-recommends libasound2-dev libudev-dev libwayland-dev \
               libxkbcommon-dev libxkbcommon-x11-0 libdbus-1-dev \
               libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
               xvfb xauth weston mesa-vulkan-drivers && exit 0
