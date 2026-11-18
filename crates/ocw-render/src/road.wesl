@@ -64,7 +64,8 @@ struct RoadLook {
     // x loose stone chance per 10 cm cell, y rut depth of unpaved roads.
     loose: array<vec4<f32>, 8>,
     // The quality preset (crate::road_material::damage_detail): x 1 = the
-    // alligator crack pattern is drawn; y damage drawn up to (m).
+    // alligator crack pattern is drawn; y damage drawn up to (m); z the
+    // road.damage override (0 auto, 1 … 7 a grade, 8 none).
     detail: vec4<f32>,
     // The weather: x wetness, y puddles, z snow cover, w wind sway.
     weather: vec4<f32>,
@@ -581,7 +582,13 @@ fn fragment(
     // tracks, repaired patches, cracks and their sealing, alligator areas,
     // a little variation in tone (deterministic per position). The cracks
     // are applied after the markings (the paint cracks with the road).
-    let grade = (extra >> 5u) & 7u;
+    // The `road.damage` override (detail.z: 1 … 7 every road that grade,
+    // 8 none); parts without a strip frame (grade 0) stay without.
+    var grade = (extra >> 5u) & 7u;
+    let forced = u32(round(look.detail.z));
+    if forced > 0u && grade > 0u {
+        grade = select(forced, 0u, forced >= 8u);
+    }
     let track = ((extra >> 4u) & 1u) == 1u;
     let dmg = look.damage[grade];
     let rep = look.repair[grade];
