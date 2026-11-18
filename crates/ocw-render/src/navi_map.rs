@@ -46,7 +46,7 @@ use bevy::render::render_resource::{
 };
 use bevy::shader::ShaderRef;
 use ocw_map::labels::{
-    PlaceLabel, labels_of, navi_label_font, navi_labels, navi_marks, text_width,
+    PlaceLabel, labels_of, navi_label_font, navi_labels, navi_marks,
 };
 use ocw_map::navi::{
     AutoZoom, Banner, Daylight, RouteLines, ZOOM_LEVELS, ZoomMode, banner, ease_zoom, track_line,
@@ -1202,11 +1202,12 @@ fn update_map(
         match shown.get(*i) {
             Some(l) => {
                 let name = &labels.0[l.index].name;
-                let (size, bold) = navi_label_font(labels.0[l.index].rank);
-                let w = text_width(name, size, bold);
+                let (size, _) = navi_label_font(labels.0[l.index].rank);
+                // The box the layout placed (moved into the map when the
+                // name is near its edge), not one centred on the place.
                 node.display = Display::Flex;
-                node.left = px(l.at[0] - w * 0.5);
-                node.width = px(w);
+                node.left = px(l.min[0]);
+                node.width = px(l.max[0] - l.min[0]);
                 node.top = px(l.min[1]);
                 // The size follows the name's rank: set with the name.
                 if text.0 != *name {

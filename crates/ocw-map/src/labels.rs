@@ -183,29 +183,38 @@ pub fn navi_labels(
         let (size, bold) = navi_label_font(l.rank);
         let w = text_width(&l.name, size, bold);
         let h = size * 1.25;
-        // Above the place; else below it; else (the place the rider is
-        // in, under the arrow) just above the rider's arrow.
-        let arrow_top = view.anchor()[1] - RIDER_MARK_PX;
+        // Above the place; else below it; else, for a place by the rider
+        // whose name would cover the arrow (the town the rider is in), just
+        // above the arrow. A box is moved sideways into the map as long as
+        // it stays over its place.
+        let anchor = view.anchor();
+        let arrow_top = anchor[1] - RIDER_MARK_PX;
         let tries = [
             (at[1] - h - 2.0, at[1] + 2.0),
             (at[1] + 3.0, at[1] + h + 5.0),
             (arrow_top - h - 2.0, arrow_top - 1.0),
         ];
-        let inside = |min: [f32; 2], max: [f32; 2]| {
-            min[0] >= inset
+        let by_rider = (at[0] - anchor[0]).abs() <= RIDER_MARK_PX + w * 0.5 + 4.0
+            && (at[1] - anchor[1]).abs() <= RIDER_MARK_PX + h + 4.0;
+        let tries = if by_rider { &tries[..] } else { &tries[..2] };
+        let (left, right) = (inset, view.size[0] - inset);
+        let place = |top: f32, bottom: f32| -> Option<([f32; 2], [f32; 2])> {
+            let mut x0 = at[0] - w * 0.5;
+            if x0 < left {
+                x0 = left;
+            }
+            if x0 + w > right {
+                x0 = right - w;
+            }
+            let (min, max) = ([x0, top], [x0 + w, bottom]);
+            let over_place = at[0] >= min[0] + 2.0 && at[0] <= max[0] - 2.0;
+            let inside = min[0] >= left
+                && max[0] <= right
                 && min[1] >= inset
-                && max[0] <= view.size[0] - inset
-                && max[1] <= view.size[1] - inset
+                && max[1] <= view.size[1] - inset;
+            (over_place && inside && !hits(min, max)).then_some((min, max))
         };
-        let anchor = view.anchor();
-        let under_arrow = (at[0] - anchor[0]).abs() <= RIDER_MARK_PX + 4.0
-            && (at[1] - anchor[1]).abs() <= RIDER_MARK_PX + 4.0;
-        let tries = if under_arrow { &tries[..] } else { &tries[..2] };
-        let Some((min, max)) = tries
-            .iter()
-            .map(|&(top, bottom)| ([at[0] - w * 0.5, top], [at[0] + w * 0.5, bottom]))
-            .find(|&(min, max)| inside(min, max) && !hits(min, max))
-        else {
+        let Some((min, max)) = tries.iter().find_map(|&(top, bottom)| place(top, bottom)) else {
             continue;
         };
         cands.push(LabelCandidate {
@@ -353,8 +362,8 @@ mod tests {
                         || a.max[1] <= lo[1];
                     assert!(clear, "heading {heading}: {:?} on a mark", ls[a.index].name);
                 }
-                // Upright: the box is level, centred over the place.
-                assert!((a.min[0] + a.max[0] - 2.0 * a.at[0]).abs() < 1e-3);
+                // Upright: the box is level and over its place.
+                assert!(a.at[0] >= a.min[0] && a.at[0] <= a.max[0]);
                 assert!(a.min[0] >= 6.0 && a.max[0] <= v.size[0] - 6.0);
             }
             // The town comes before the villages when it is named.
@@ -404,6 +413,36 @@ mod tests {
         let per = t.elapsed().as_secs_f64() / f64::from(n) * 1e6;
         println!("navi_labels: {per:.1} µs per frame for {} places", ls.len());
         assert!(per < 5_000.0, "{per} µs");
+    }
+
+    /// Regression (Puerto de la Cruz, 2026-11-18): a long name whose place
+    /// lies beside the rider, a little left and behind, covered the arrow
+    /// above and below its place and was dropped; it goes above the arrow.
+    #[test]
+    fn a_long_name_beside_the_rider_is_named_above_the_arrow() {
+        // 70 m left and 20 m behind at 2.5 m per point (zoom 4), heading
+        // north; then the same at other headings and offsets around.
+        for (dx, dz, heading) in [
+            (-70.0, 20.0, 0.0),
+            (60.0, -10.0, 0.0),
+            (-30.0, 30.0, 1.2),
+            (20.0, 5.0, -2.0),
+        ] {
+            let ls = vec![label(dx, dz, "Puerto de la Cruz", 1)];
+            let v = view(2.5, heading);
+            let marks = navi_marks(v.size, v.anchor());
+            let shown = navi_labels(&ls, &v, &marks, 6.0, &BTreeSet::new(), 8);
+            assert_eq!(shown.len(), 1, "{dx} {dz} {heading}");
+            let l = shown[0];
+            assert!(l.min[0] >= 6.0 && l.max[0] <= v.size[0] - 6.0, "{l:?}");
+            assert!(l.at[0] >= l.min[0] && l.at[0] <= l.max[0], "{l:?}");
+            for (lo, hi) in &marks {
+                assert!(
+                    l.min[0] >= hi[0] || l.max[0] <= lo[0] || l.min[1] >= hi[1] || l.max[1] <= lo[1],
+                    "{dx} {dz} {heading}: {l:?}"
+                );
+            }
+        }
     }
 
     #[test]
