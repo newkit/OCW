@@ -915,6 +915,7 @@ mod tests {
             time_zone: None,
             look: Default::default(),
             obstacles: None,
+            places: None,
         };
         let cells = 100usize;
         pkg.landuse = Some(LandUse {

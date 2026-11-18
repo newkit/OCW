@@ -281,6 +281,25 @@ enum Cmd {
         #[arg(long, value_name = "KEY")]
         sign_key: Option<PathBuf>,
     },
+    /// Place names (spec §4.7, §14 Phase 16 16A): the OSM place=* nodes
+    /// and areas (cities, towns, villages, hamlets, suburbs,
+    /// neighbourhoods, localities, isolated dwellings) on the tiles into
+    /// the section PLCE of an existing package (the manifest is renewed);
+    /// `package` writes it too.
+    Places {
+        /// The package (rewritten in place unless --out is given).
+        #[arg(long)]
+        world: PathBuf,
+        /// OSM extracts the package was built from.
+        #[arg(long, required = true)]
+        pbf: Vec<PathBuf>,
+        /// Write the package here instead.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Sign the renewed manifest with this signing key.
+        #[arg(long, value_name = "KEY")]
+        sign_key: Option<PathBuf>,
+    },
     /// Fields, plantations and mapped trees (spec §14 Phase 8 T8): the OSM
     /// crops, vineyards, orchards, banana plantations, single trees and
     /// tree rows into the section VEGE of an existing package; the trees of
@@ -1735,6 +1754,15 @@ fn package(args: PackageArgs) {
         });
         area_report.push(format!("obstacles (OBST): {}", st.summary()));
     }
+    {
+        // Place names for the map labels (section PLCE, spec §4.7, §14
+        // Phase 16 16A): OSM place=* nodes and areas on the tiles.
+        let data = read_places(&src.pbf, &pkg);
+        let st = stage("places (PLCE)", || {
+            ocw_worldgen::places::add_places(&mut pkg, &data, &proj)
+        });
+        area_report.push(format!("places (PLCE): {}", st.summary));
+    }
     let bytes = stage("serialise", || pkg.to_bytes());
     if let Some(dir) = out.parent() {
         let _ = std::fs::create_dir_all(dir);
@@ -2349,6 +2377,86 @@ fn read_barriers(
     d
 }
 
+fn read_places(pbf: &[PathBuf], pkg: &ocw_world::WorldPackage) -> ocw_worldgen::places::PlaceData {
+    let mut d = stage("read PBF places", || {
+        ocw_worldgen::places::PlaceData::read_pbfs(pbf).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1);
+        })
+    });
+    stage("retain near", || d.retain_near(package_box(pkg, 100.0)));
+    d
+}
+
+/// `world-builder places` (spec §4.7, §14 Phase 16 16A): the section
+/// PLCE into a built package; every other section stays as it is.
+fn places(
+    world: &std::path::Path,
+    pbf: &[PathBuf],
+    out: Option<PathBuf>,
+    key: Option<&ocw_world::manifest::SigningKeyPair>,
+) {
+    let t = Instant::now();
+    let mut pkg = stage("read package", || read_package(world));
+    let before = std::fs::metadata(world).map_or(0, |m| m.len());
+    let data = read_places(pbf, &pkg);
+    let proj = ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1);
+    let st = stage("places (PLCE)", || {
+        ocw_worldgen::places::add_places(&mut pkg, &data, &proj)
+    });
+    println!("places (PLCE): {}", st.summary);
+    if let Some(p) = &pkg.places {
+        for place in p.places.iter().take(12) {
+            println!(
+                "  {} ({}, rank {}{}) at {:.0},{:.0}",
+                place.name,
+                place.kind.osm(),
+                place.rank,
+                place
+                    .population
+                    .map_or(String::new(), |n| format!(", {n} inhabitants")),
+                place.pos[0],
+                place.pos[1]
+            );
+        }
+    }
+    let path = out.unwrap_or_else(|| world.to_path_buf());
+    let bytes = stage("serialise", || pkg.to_bytes());
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    stage("write", || {
+        std::fs::write(&path, &bytes).unwrap_or_else(|e| {
+            eprintln!("{}: {e}", path.display());
+            std::process::exit(1);
+        })
+    });
+    print_sections(&bytes);
+    println!(
+        "{}: {:.1} MB -> {:.1} MB ({:+.3} MB), {:.1} s",
+        path.display(),
+        before as f64 / 1e6,
+        bytes.len() as f64 / 1e6,
+        (bytes.len() as f64 - before as f64) / 1e6,
+        t.elapsed().as_secs_f64()
+    );
+    if path != world {
+        let _ = std::fs::copy(dist::sidecar(world), dist::sidecar(&path));
+    }
+    stage("manifest + hash", || {
+        dist::write_manifest(
+            &path,
+            &dist::ManifestArgs {
+                id: None,
+                name: None,
+                version: None,
+                dem_attribution: Vec::new(),
+            },
+            key,
+        )
+    });
+}
+
 /// Where to look at the obstacles (scenes, checks): rows of road bollards
 /// (three or more within 8 m) and the longest bridges, in package metres.
 fn print_obstacle_examples(pkg: &ocw_world::WorldPackage) {
@@ -2902,6 +3010,21 @@ fn main() {
                 })
             });
             vegetation(&world, &pbf, crops.as_deref(), out, key.as_ref());
+            print_stage_profile(None);
+        }
+        Cmd::Places {
+            world,
+            pbf,
+            out,
+            sign_key,
+        } => {
+            let key = sign_key.map(|k| {
+                ocw_worldstore::keys::read_signing_key(&k).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                })
+            });
+            places(&world, &pbf, out, key.as_ref());
             print_stage_profile(None);
         }
         Cmd::Obstacles {

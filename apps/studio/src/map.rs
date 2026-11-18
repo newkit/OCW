@@ -7,7 +7,13 @@
 //! a colour raster (one texel per land-use cell, coarser for large
 //! packages), the buildings as triangles, the roads of the road graph as
 //! polylines, each with its bounding box for culling. [`MapView`] is the
-//! map's pan and zoom (pure, tested). [`paint`] draws them with egui.
+//! map's pan and zoom (pure, tested). [`paint`] draws them with egui; the
+//! place names of section `PLCE` go through the decluttering pass
+//! [`ocw_world::places::layout_labels`] every frame ([`label_candidates`],
+//! pure and tested): the most important places stay when it is crowded,
+//! smaller ones appear as the map zooms in.
+
+use std::collections::BTreeSet;
 
 use bevy_egui::egui;
 use ocw_world::landuse::LandClass;
@@ -73,6 +79,114 @@ pub enum DragPhase {
     Start,
     Move,
     End,
+}
+
+/// The place labels that could be drawn in a map of `size` points at
+/// `view`: each with its style and its box (the text centred above the
+/// place's dot), `measure` giving a text's width at a font size. Places
+/// whose rank is not drawn at this zoom, or that lie far out of view, are
+/// left out; the ids are the places' indices.
+pub fn label_candidates(
+    places: &[ocw_world::places::Place],
+    view: &MapView,
+    size: [f32; 2],
+    measure: &mut dyn FnMut(&str, f32, bool) -> f32,
+) -> Vec<(
+    ocw_world::places::LabelCandidate,
+    ocw_world::places::LabelStyle,
+)> {
+    let mid = [size[0] * 0.5, size[1] * 0.5];
+    let (lo, hi) = view.visible(size);
+    let margin = 50.0 * view.m_per_px;
+    places
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| {
+            let (x, z) = (f64::from(p.pos[0]), f64::from(p.pos[1]));
+            x >= lo[0] - margin && x <= hi[0] + margin && z >= lo[1] - margin && z <= hi[1] + margin
+        })
+        .filter_map(|(i, p)| {
+            let style = ocw_world::places::label_style(p.rank, view.m_per_px)?;
+            let anchor = view.to_screen([f64::from(p.pos[0]), f64::from(p.pos[1])], mid);
+            let w = measure(&p.name, style.size, style.strong);
+            let h = style.size * 1.2;
+            Some((
+                ocw_world::places::LabelCandidate {
+                    id: i as u32,
+                    rank: p.rank,
+                    population: p.population.unwrap_or(0),
+                    anchor,
+                    min: [anchor[0] - w * 0.5 - 1.0, anchor[1] - h - 3.0],
+                    max: [anchor[0] + w * 0.5 + 1.0, anchor[1] + 3.0],
+                },
+                style,
+            ))
+        })
+        .collect()
+}
+
+/// Draws the place labels that [`ocw_world::places::layout_labels`] keeps;
+/// what was shown is remembered under `id` for the next frame's
+/// hysteresis.
+fn paint_places(
+    ui: &egui::Ui,
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    view: &MapView,
+    places: &[ocw_world::places::Place],
+    id: egui::Id,
+) {
+    if places.is_empty() {
+        return;
+    }
+    let font = |size: f32| egui::FontId::proportional(size);
+    let mut measure = |text: &str, size: f32, strong: bool| {
+        let g = painter.layout_no_wrap(text.to_owned(), font(size), egui::Color32::WHITE);
+        g.size().x + if strong { 1.0 } else { 0.0 }
+    };
+    let size = [rect.width(), rect.height()];
+    let cands = label_candidates(places, view, size, &mut measure);
+    let mut previous: BTreeSet<u32> = ui
+        .memory(|m| m.data.get_temp::<BTreeSet<u32>>(id))
+        .unwrap_or_default();
+    // A different package: nothing to keep.
+    previous.retain(|i| (*i as usize) < places.len());
+    let local: Vec<_> = cands.iter().map(|c| c.0).collect();
+    let shown = ocw_world::places::layout_labels(
+        &local,
+        [size[0] * 0.5, size[1] * 0.5],
+        [0.0, 0.0],
+        // Not under the scale bar and the credit line at the bottom.
+        [size[0], size[1] - 24.0],
+        &previous,
+    );
+    let offset = rect.min.to_vec2();
+    let shadow = egui::Color32::from_black_alpha(200);
+    // Draw the least important first, so the important ones lie on top.
+    for &i in shown.iter().rev() {
+        let Some((c, style)) = cands.iter().find(|c| c.0.id == i) else {
+            continue;
+        };
+        let place = &places[i as usize];
+        let at = egui::pos2(c.anchor[0], c.anchor[1]) + offset;
+        let colour = egui::Color32::from_gray(style.grey);
+        let dot = if place.rank == 0 { 3.0 } else { 2.0 };
+        painter.circle(at, dot, colour, egui::Stroke::new(1.0, shadow));
+        let text_at = at - egui::vec2(0.0, 3.0);
+        let galley = painter.layout_no_wrap(place.name.clone(), font(style.size), colour);
+        let pos = text_at - egui::vec2(galley.size().x * 0.5, galley.size().y);
+        // A dark halo for legibility on every land colour.
+        let halo = painter.layout_no_wrap(place.name.clone(), font(style.size), shadow);
+        for d in [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]] {
+            painter.galley(pos + egui::vec2(d[0], d[1]), halo.clone(), shadow);
+        }
+        painter.galley(pos, galley.clone(), colour);
+        if style.strong {
+            painter.galley(pos + egui::vec2(0.6, 0.0), galley, colour);
+        }
+    }
+    let kept: BTreeSet<u32> = shown.into_iter().collect();
+    ui.memory_mut(|m| m.data.insert_temp(id, kept));
 }
 
 fn rgb(c: [u8; 3]) -> egui::Color32 {
@@ -226,6 +340,14 @@ pub fn paint(
     if let Some(r) = overlay.route {
         paint_route(&painter, view, mid, r);
     }
+    paint_places(
+        ui,
+        &painter,
+        rect,
+        view,
+        &data.places,
+        response.id.with("places"),
+    );
     for (p, name) in &overlay.views {
         let c = pos(*p);
         painter.circle_filled(c, 4.0, egui::Color32::from_rgb(255, 200, 40));
@@ -499,7 +621,72 @@ pub mod tests {
             time_zone: None,
             look: Default::default(),
             obstacles: None,
+            places: None,
         }
+    }
+
+    #[test]
+    fn place_labels_declutter_by_rank_and_zoom() {
+        use ocw_world::places::{OsmElement, Place, PlaceKind, Places, layout_labels, place_rank};
+        let place = |name: &str, kind, pos| Place {
+            kind,
+            rank: place_rank(kind, None, None),
+            pos,
+            name: String::from(name),
+            names: Vec::new(),
+            population: None,
+            capital: None,
+            area: false,
+            element: OsmElement::Node,
+            osm_id: 0,
+        };
+        // A town with five villages 300 m around it, a hamlet 120 m off.
+        let mut v = vec![place("Ada Town", PlaceKind::Town, [0.0, 0.0])];
+        for i in 0..5 {
+            let a = i as f32 * 1.2566;
+            v.push(place(
+                &format!("Bea Village {i}"),
+                PlaceKind::Village,
+                [300.0 * a.cos(), 300.0 * a.sin()],
+            ));
+        }
+        v.push(place("Cora Hamlet", PlaceKind::Hamlet, [120.0, 0.0]));
+        let pkg = WorldPackage {
+            places: Some(Places::new(v)),
+            ..package()
+        };
+        let data = map_data(&pkg);
+        assert_eq!(data.places[0].name, "Ada Town");
+        let shown = |m_per_px: f64| -> Vec<String> {
+            let view = MapView {
+                centre: [0.0, 0.0],
+                m_per_px,
+            };
+            let mut measure = |t: &str, size: f32, _| t.chars().count() as f32 * size * 0.55;
+            let c = label_candidates(&data.places, &view, [800.0, 600.0], &mut measure);
+            let cands: Vec<_> = c.iter().map(|c| c.0).collect();
+            layout_labels(
+                &cands,
+                [400.0, 300.0],
+                [0.0; 2],
+                [800.0, 600.0],
+                &BTreeSet::new(),
+            )
+            .into_iter()
+            .map(|i| data.places[i as usize].name.clone())
+            .collect()
+        };
+        // Far out: the town only (villages crowd it or are not drawn).
+        let far = shown(30.0);
+        assert_eq!(far[0], "Ada Town");
+        assert!(far.len() < 4, "{far:?}");
+        // Zoomed in: the villages and the hamlet appear.
+        let near = shown(1.0);
+        assert_eq!(near[0], "Ada Town");
+        assert!(near.len() > far.len(), "{near:?}");
+        assert!(near.iter().any(|n| n == "Cora Hamlet"), "{near:?}");
+        // Packages without places: no labels.
+        assert!(map_data(&package()).places.is_empty());
     }
 
     #[test]

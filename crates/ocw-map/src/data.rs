@@ -52,6 +52,9 @@ pub struct MapData {
     pub land: Option<LandRaster>,
     pub roads: Vec<MapRoad>,
     pub buildings: Vec<MapBuilding>,
+    /// The package's places, most important first (section `PLCE`; empty
+    /// for packages without it).
+    pub places: Vec<ocw_world::places::Place>,
 }
 
 /// The box of `points`: (min, max).
@@ -157,6 +160,11 @@ impl MapData {
             land,
             roads,
             buildings,
+            places: pkg
+                .places
+                .as_ref()
+                .map(|p| p.places.clone())
+                .unwrap_or_default(),
         }
     }
 }

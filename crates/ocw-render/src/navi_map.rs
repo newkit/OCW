@@ -25,8 +25,15 @@
 //!   `display.map_zoom`. On / off: key N (`keys.map`), `hud.map`, setting
 //!   `display.map` (on); hidden with `hud off`, in unicorn flight and when
 //!   the window has no room ([`fit_map`]).
-//! - **Place names:** [`NaviMapLabels`] is the hook for the world
-//!   packages' place data (drawn when it has labels).
+//! - **Place names:** the world packages' places (section `PLCE`) fill
+//!   [`NaviMapLabels`] whenever the loaded packages change
+//!   (`ocw_map::labels::labels_of`); `ocw_map::labels::navi_labels` picks
+//!   the names for the zoom (cities and towns always, villages and hamlets
+//!   closer in), decluttered with the studio map's pass and its hysteresis,
+//!   clear of the compass, scale, zoom and the rider's arrow. They are UI
+//!   text over the map (a few nodes moved per frame, no tile is redrawn),
+//!   so they stay upright as the map turns, with a halo in the day or
+//!   night colours.
 
 use std::sync::Arc;
 
@@ -38,7 +45,7 @@ use bevy::render::render_resource::{
     AsBindGroup, Extent3d, ShaderType, TextureDimension, TextureFormat,
 };
 use bevy::shader::ShaderRef;
-use ocw_map::labels::{PlaceLabel, visible_labels};
+use ocw_map::labels::{PlaceLabel, labels_of, navi_label_font, navi_labels, navi_marks};
 use ocw_map::navi::{
     AutoZoom, Banner, Daylight, RouteLines, ZOOM_LEVELS, ZoomMode, banner, ease_zoom, track_line,
 };
@@ -93,8 +100,8 @@ impl Default for ShowMap {
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct MapZoom(pub ZoomMode);
 
-/// The place names the map draws (the hook for the world packages' place
-/// data; empty until it comes).
+/// The place names the map draws: the loaded packages' places (section
+/// `PLCE`), refreshed when they change; empty for packages without it.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct NaviMapLabels(pub Vec<PlaceLabel>);
 
@@ -335,8 +342,24 @@ struct ScaleText;
 #[derive(Component)]
 struct ZoomText;
 
+/// The stacking of the map screen's children (`ZIndex` among siblings):
+/// the other riders' dots, over them the place names, over those the
+/// rider's arrow and the marks (compass, scale, zoom).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MapLayers {
+    pub dots: i32,
+    pub labels: i32,
+    pub marks: i32,
+}
+
+pub const MAP_LAYERS: MapLayers = MapLayers {
+    dots: 1,
+    labels: 2,
+    marks: 3,
+};
+
 const DOTS: usize = 16;
-const LABELS: usize = 6;
+const LABELS: usize = 8;
 const ARROW_PX: f32 = 30.0;
 const ICON_PX: u32 = 64;
 const COMPASS_PX: f32 = 24.0;
@@ -448,17 +471,6 @@ fn spawn_device(
                 Pickable::IGNORE,
             ))
             .with_children(|m| {
-                for i in 0..LABELS {
-                    m.spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            display: Display::None,
-                            ..default()
-                        },
-                        text(11.0, Color::srgb(0.15, 0.15, 0.18)),
-                        Label(i),
-                    ));
-                }
                 for i in 0..DOTS {
                     m.spawn((
                         Node {
@@ -472,7 +484,28 @@ fn spawn_device(
                         },
                         BackgroundColor(Color::srgb(0.12, 0.55, 0.9)),
                         BorderColor::all(Color::WHITE),
+                        ZIndex(MAP_LAYERS.dots),
                         Dot(i),
+                    ));
+                }
+                // Over the other riders' dots, under the rider's arrow and
+                // the map's marks (`MAP_LAYERS`).
+                for i in 0..LABELS {
+                    m.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            display: Display::None,
+                            padding: UiRect::axes(px(ocw_map::labels::PILL_PAD_PX), px(0)),
+                            border_radius: BorderRadius::all(px(5)),
+                            ..default()
+                        },
+                        text(11.0, Color::srgb(0.15, 0.15, 0.18)),
+                        TextLayout::new(Justify::Center, LineBreak::NoWrap),
+                        // A translucent pill in the map's ground colour: a
+                        // road or the route under the name does not cut it.
+                        BackgroundColor(Color::srgba(0.93, 0.93, 0.89, 0.8)),
+                        ZIndex(MAP_LAYERS.labels),
+                        Label(i),
                     ));
                 }
                 m.spawn((
@@ -483,6 +516,7 @@ fn spawn_device(
                         ..default()
                     },
                     ImageNode::new(arrow),
+                    ZIndex(MAP_LAYERS.marks),
                     RiderArrow,
                 ));
                 m.spawn((
@@ -495,16 +529,20 @@ fn spawn_device(
                         ..default()
                     },
                     ImageNode::new(needle),
+                    ZIndex(MAP_LAYERS.marks),
                     Compass,
                 ));
-                m.spawn(Node {
-                    position_type: PositionType::Absolute,
-                    left: px(8),
-                    bottom: px(6),
-                    flex_direction: FlexDirection::Column,
-                    row_gap: px(1),
-                    ..default()
-                })
+                m.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: px(8),
+                        bottom: px(6),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: px(1),
+                        ..default()
+                    },
+                    ZIndex(MAP_LAYERS.marks),
+                ))
                 .with_children(|s| {
                     s.spawn((text(10.5, Color::srgb(0.1, 0.1, 0.12)), ScaleText));
                     s.spawn((
@@ -528,6 +566,7 @@ fn spawn_device(
                         border_radius: BorderRadius::all(px(4)),
                         ..default()
                     },
+                    ZIndex(MAP_LAYERS.marks),
                     BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
                 ))
                 .with_child((text(10.5, Color::WHITE), ZoomText));
@@ -709,6 +748,9 @@ struct Cache {
     mpp: f64,
     turn_key: Option<i32>,
     arrow_shade: Option<Shade>,
+    /// The place names shown last frame (indices into the labels): the
+    /// hysteresis of their layout.
+    labels_shown: std::collections::BTreeSet<u32>,
 }
 
 /// The map tiles' time budget per frame (s); at least one tile is drawn
@@ -815,11 +857,11 @@ fn density4(window: Option<&Window>, ui_scale: f32) -> u32 {
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)] // a Bevy system: disjoint UI queries
 fn update_map(
-    (time, units, zoom_mode, labels, ui_scale): (
+    (time, units, zoom_mode, mut labels, ui_scale): (
         Res<Time>,
         Option<Res<Units>>,
         Res<MapZoom>,
-        Res<NaviMapLabels>,
+        ResMut<NaviMapLabels>,
         Option<Res<UiScale>>,
     ),
     view: Option<Res<RideView>>,
@@ -834,7 +876,14 @@ fn update_map(
     mut parts: ParamSet<(
         Query<(&mut Node, &mut UiTransform), With<RiderArrow>>,
         Query<(&Dot, &mut Node, &mut BackgroundColor)>,
-        Query<(&Label, &mut Node, &mut Text)>,
+        Query<(
+            &Label,
+            &mut Node,
+            &mut Text,
+            &mut TextFont,
+            &mut TextColor,
+            &mut BackgroundColor,
+        )>,
         Query<&mut UiTransform, With<Compass>>,
         Query<&mut Node, With<ScaleBar>>,
     )>,
@@ -845,10 +894,10 @@ fn update_map(
         Query<&mut Text, (With<ZoomText>, Without<Label>)>,
     )>,
     (mut banner_bg, banner_icon, arrow_image, mut scale_ink): (
-        Query<&mut BackgroundColor, (With<BannerBox>, Without<Dot>)>,
+        Query<&mut BackgroundColor, (With<BannerBox>, Without<Dot>, Without<Label>)>,
         Query<(&ImageNode, &ChildOf), With<BannerIcon>>,
         Query<&ImageNode, With<RiderArrow>>,
-        Query<&mut TextColor, With<ScaleText>>,
+        Query<&mut TextColor, (With<ScaleText>, Without<Label>)>,
     ),
 ) {
     let Some(view) = view else { return };
@@ -875,6 +924,16 @@ fn update_map(
     if cache.source.is_none() || key != now_key {
         cache.source = Some(source_of(world.as_deref()));
         cache.generation += 1;
+        // The place names of the loaded packages.
+        let names = cache
+            .source
+            .as_ref()
+            .map(|s| labels_of(&s.1))
+            .unwrap_or_default();
+        if labels.0 != names {
+            labels.0 = names;
+        }
+        cache.labels_shown.clear();
     }
     let src = cache
         .source
@@ -1149,16 +1208,39 @@ fn update_map(
             }
         }
     }
-    // Place names (the hook).
-    let shown = visible_labels(&labels.0, &nview, 14.0, LABELS);
-    for (Label(i), mut node, mut text) in &mut parts.p2() {
+    // Place names: by zoom, decluttered, clear of the map's marks.
+    let marks = navi_marks(nview.size, nview.anchor());
+    let shown = navi_labels(&labels.0, &nview, &marks, 6.0, &cache.labels_shown, LABELS);
+    cache.labels_shown = shown.iter().map(|l| l.index as u32).collect();
+    let ink = if shade == Shade::Night {
+        Color::srgb(0.93, 0.94, 0.97)
+    } else {
+        Color::srgb(0.12, 0.12, 0.15)
+    };
+    // The pill behind a name: the map's ground colour, translucent.
+    let g = pal.ground;
+    let pill = Color::srgba_u8(g[0], g[1], g[2], 205);
+    for (Label(i), mut node, mut text, mut font, mut colour, mut bg) in &mut parts.p2() {
         match shown.get(*i) {
-            Some((s, l)) => {
+            Some(l) => {
+                let name = &labels.0[l.index].name;
+                let (size, _) = navi_label_font(labels.0[l.index].rank);
+                // The box the layout placed (moved into the map when the
+                // name is near its edge), not one centred on the place.
                 node.display = Display::Flex;
-                node.left = px(s[0] + 4.0);
-                node.top = px(s[1] - 7.0);
-                if text.0 != l.name {
-                    text.0.clone_from(&l.name);
+                node.left = px(l.min[0]);
+                node.width = px(l.max[0] - l.min[0]);
+                node.top = px(l.min[1]);
+                // The size follows the name's rank: set with the name.
+                if text.0 != *name {
+                    text.0.clone_from(name);
+                    font.font_size = size.into();
+                }
+                if colour.0 != ink {
+                    colour.0 = ink;
+                }
+                if bg.0 != pill {
+                    bg.0 = pill;
                 }
             }
             None => {
@@ -1307,6 +1389,45 @@ mod tests {
         // The top-right column: stamp, REC, FPS (about 110 px).
         let column = Rect::new(w - 12.0 - 230.0, 12.0, w - 12.0, 12.0 + 110.0);
         (profile, voice, vec![top, column])
+    }
+
+    /// Regression (2026-11-18): the place names were drawn under the other
+    /// riders' dots ("Vadu" covered). The map screen's children stack
+    /// dots < names < the rider's arrow and the marks, and every name has
+    /// its backing pill.
+    #[test]
+    fn names_lie_over_the_dots_and_under_the_arrow() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()))
+            .init_asset::<Image>()
+            .init_asset::<NaviMapMaterial>()
+            .add_systems(Startup, spawn_device);
+        app.update();
+        let world = app.world_mut();
+        let z = |world: &mut World, f: &dyn Fn(&EntityRef) -> bool| -> Vec<i32> {
+            let mut q = world.query::<(EntityRef, &ZIndex)>();
+            q.iter(world)
+                .filter(|(e, _)| f(e))
+                .map(|(_, z)| z.0)
+                .collect()
+        };
+        let dots = z(world, &|e| e.contains::<Dot>());
+        let names = z(world, &|e| e.contains::<Label>());
+        let arrow = z(world, &|e| e.contains::<RiderArrow>());
+        let compass = z(world, &|e| e.contains::<Compass>());
+        assert_eq!((dots.len(), names.len(), arrow.len()), (DOTS, LABELS, 1));
+        let top_dot = dots.iter().max().unwrap();
+        assert!(names.iter().all(|n| n > top_dot && *n < arrow[0]));
+        assert!(compass.iter().all(|c| *c > names[0]));
+        // The names sit in the same parent as the dots (ZIndex compares
+        // siblings) and have a backing.
+        let mut q = world.query_filtered::<(&ChildOf, &BackgroundColor), With<Label>>();
+        let parents: Vec<Entity> = q.iter(world).map(|(p, _)| p.parent()).collect();
+        let mut d = world.query_filtered::<&ChildOf, With<Dot>>();
+        let dot_parent = d.iter(world).next().unwrap().parent();
+        assert!(parents.iter().all(|p| *p == dot_parent));
+        let mut b = world.query_filtered::<&BackgroundColor, With<Label>>();
+        assert!(b.iter(world).all(|c| c.0.alpha() > 0.5));
     }
 
     /// The map never overlaps the elevation profile, the junction fan, the

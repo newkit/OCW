@@ -152,6 +152,7 @@ pub mod fixture {
             time_zone: None,
             look: Default::default(),
             obstacles: None,
+            places: None,
         }
     }
 }
