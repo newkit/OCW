@@ -31,21 +31,26 @@ trap 'rm -rf "$work"' EXIT
 export OCW_DATA_DIR=$work/data OCW_CONFIG_DIR=$work/config
 export OCW_ACTIVITIES_DIR=$work/Activities/OCW
 export OCW_TEST_OUTPUT=off OCW_SIZE=${OCW_SIZE:-1920x1080}
-export OCW_SHOT_TIMEOUT=${OCW_SHOT_TIMEOUT:-600}
 mkdir -p "$OCW_DATA_DIR" "$OCW_CONFIG_DIR"
 common=(--world "$pkg" --route "$route" --name "Ada Rider" --virtual --power 350
   --bots 0 --no-hearts --record true --photo-time-scale 10 --strava-dry-run
   --cmd "time golden-hour" --cmd "weather clear" --cmd "photographer on"
   --at "5=strava.record start" --at "8=photographer now")
-# 1. The stop notice: S again at 70 s, the shot 3 s later.
-.claude/skills/run-ocw/drive.sh "$mode" "$out/stop-$ws.jpg" 73 -- "${common[@]}" \
-  --at "70=strava.record stop"
-# 2. The simple upload of that ride: its steps name the recording's folder.
+# The pictures are taken at game times (`screenshot PATH`): software
+# rendering on X11 runs at a few frames a second, so game time lags the
+# wall clock there; the run's own end shot is a spare (-end.jpg).
+wall=${OCW_ACTIVITIES_WALL_S:-$([ "$ws" = x11 ] && echo 420 || echo 110)}
+export OCW_SHOT_TIMEOUT=$((wall + 300))
+# 1. The stop notice: S again at 70 s, the picture 3 s later.
+.claude/skills/run-ocw/drive.sh "$mode" "$out/stop-$ws-end.jpg" "$wall" -- "${common[@]}" \
+  --at "70=strava.record stop" --at "73=screenshot $out/stop-$ws.jpg"
+# 2. The simple upload of that ride: its steps name the recording's folder;
+# a screenshot outside the recording goes to the day's folder.
 rm -rf "$OCW_DATA_DIR" "$OCW_ACTIVITIES_DIR"
 mkdir -p "$OCW_DATA_DIR"
-.claude/skills/run-ocw/drive.sh "$mode" "$out/upload-$ws.jpg" 78 -- "${common[@]}" \
+.claude/skills/run-ocw/drive.sh "$mode" "$out/upload-$ws-end.jpg" "$wall" -- "${common[@]}" \
   --at "70=strava.record stop" --at "72=ride.save" --at "74=strava.upload-manual 1" \
-  --at "76=screenshot"
+  --at "76=screenshot" --at "78=screenshot $out/upload-$ws.jpg"
 {
   echo "# The test folder after the run ($ws; made-up rider Ada Rider)"
   for d in Activities data/rides/strava data/rides/strava-upload; do
@@ -57,6 +62,6 @@ mkdir -p "$OCW_DATA_DIR"
   echo "## internal record's folder link"
   (cd "$work" && grep -H '^folder' data/rides/strava/*.toml | sed "s|$work/||") || true
 } > "$out/listing-$ws.txt"
-grep -E 'Strava recording|ride photo|Strava upload' "$out/stop-$ws.log" "$out/upload-$ws.log" \
+grep -E 'Strava recording|ride photo|Strava upload' "$out/stop-$ws-end.log" "$out/upload-$ws-end.log" \
   | sed "s|$work/||g" | tail -20 || true
 cat "$out/listing-$ws.txt"
