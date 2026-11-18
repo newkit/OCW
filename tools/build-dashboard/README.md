@@ -39,6 +39,7 @@ button, or `systemctl --user restart ocw-build-dashboard.service`).
 
 | Version | Date | Change | Unit changed |
 |---|---|---|---|
+| 1.8.0 | 2026-11-18 | **Battery guard** (`battery_guard.py`): per machine a stop and a start threshold (`battery_stop` / `battery_start` in `config/build-machines.toml`, `build_machines.py set NAME --battery-guard 20:80\|off`, *Battery guard…* on the card, `battery_guard` in `POST /api/machines`); below the stop value (two readings in a row) the machine is disabled with "battery guard: N % (below S %) – building again above R %" and `disabled_by = "battery-guard"`, above the start value it is enabled again – only when the guard disabled it; unreachable or missing readings change nothing; "battery guard 20 % / 80 %" and its last action on the card; actions in `machines.jsonl` (`kind` `battery-guard`) and the dashboard's log. leela: 20 % / 80 % | no |
 | 1.7.0 | 2026-11-17 | **Battery on the machine cards** (`battery.py`): laptops (Windows `GetSystemPowerStatus` + `CallNtPowerInformation`, Linux `/sys/class/power_supply`, macOS `pmset -g batt`) with percent, charging / on mains but discharging / on battery, rate and time left, red below 20 %, amber below 40 % or when draining on mains (with a warning), a 4 h sparkline; the **Meta Quest** on a Windows machine with the Meta runtime (level, charging / discharging, USB / Link, Touch controllers from the runtime's `DeviceCache.json` and service log); every 2 min per machine with a 25 s timeout, unreachable machines keep the last value with its age; `--no-battery` | no |
 | 1.6.0 | 2026-11-17 | **Open questions kept current**: "Q30 (open) – …" bullets are read (a status in brackets before the dash), `spec_questions.py refresh` fast-forwards the main checkout (only on `main` without tracked changes) and lints the questions (bullets the dashboard cannot read, answers written outside the bold label), every 15 minutes by the new `ocw-spec-questions.timer` (report `test-output/answers/questions-refresh.json`); `spec_questions.py lint SPEC` | yes (new timer; `make dashboard-install`) |
 | 1.5.0 | 2026-11-16 | **Agents on the coordinator selectable**: `[coordinator] max_agents` in `config/build-machines.toml` (default 5, 1–16; − N + on the Coordinator card with the token, `POST /api/coordinator`, `build_machines.py agents N`), `agents` in `/api/status`, "agents N of M" on the card and in the Claude tasks header (amber at the limit, red above it) with deb's available memory, `scripts/agent-slots.sh` for the sessions | no |
@@ -158,6 +159,43 @@ timeout, so a slow or unreachable machine never holds up the page. Also in
   file has a proximity state, and reading it would need the headset (adb in
   developer mode) or an OpenXR session. Only derived values leave the
   parser, never raw log lines (they can hold device serials).
+
+### Battery guard
+
+`battery_guard.py` (1.8.0; user, 2026-11-18: "stop building on leela when
+battery <20% and only start when >80%"): a laptop build machine stops taking
+builds when its battery runs low and takes them again once it has
+recharged. Per machine a **stop** and a **start** threshold (hysteresis):
+
+- **Set:** `battery_stop` / `battery_start` in `config/build-machines.toml`;
+  `python3 tools/build-dashboard/build_machines.py set leela
+  --battery-guard 20:80` (`off` removes it); the card's *Battery guard…*
+  button (with the token; `POST /api/machines {"machine", "battery_guard":
+  "20:80" | "off"}`). 1 ≤ stop < start ≤ 99.
+- **Below stop** in **two battery readings in a row** (about 4 min), and
+  the machine is enabled: it is disabled for building with the reason
+  "battery guard: 18 % (below 20 %) – building again above 80 %" and
+  `disabled_by = "battery-guard"`. Running jobs finish (remote.sh refuses
+  only new `run` / `sync`, as with any disable).
+- **Above start** in two readings in a row: enabled again – **only when the
+  guard disabled it**. Any other disable, or a new reason on a
+  guard-disabled machine (the page, the CLI, the coordinator), sets
+  `disabled_by` to who did it, and the guard never enables that machine;
+  enabling by hand clears it. Between the thresholds nothing changes.
+- **No flapping:** an unreachable probe or a reading without a percent
+  changes nothing and breaks the streak; the same reading seen twice
+  counts once; after an action the next one needs two fresh readings.
+  The streaks live in memory (a restart starts them afresh); with
+  `--no-battery` or `--no-machine-settings` the guard does nothing.
+- **Shown:** "battery guard 20 % / 80 % · last: disabled building at
+  18 %, 2026-11-18 21:04" on the card (amber edge while the guard holds the
+  machine off, "1 of 2 readings below 20 %" while a streak runs), the
+  thresholds in `--once` and `build_machines.py list`, `battery_guard` and
+  `disabled_by` per machine in `/api/status`.
+- **Logged:** each action is a line in `build-log/DAY/machines.jsonl`
+  (`source` and `kind` `battery-guard`, `guard: {action, percent}`; the
+  art project reads the build log) and in the dashboard's own log (stderr,
+  the unit's journal).
 
 ## Coordinator (deb)
 
@@ -406,8 +444,8 @@ browser); without it they ask for it, and a POST without it gets 403.
   disabled machines (read-only probes, and the janitor's cleanup of
   `target/` when their disk fills up); only builds are refused.
 - **CLI:** `python3 tools/build-dashboard/build_machines.py list`, `set
-  MACHINE [--enable|--disable] [--slots N] [--reason R] [--note N] [--by
-  WHO]` (logged with source `cli`). `--no-machine-settings` turns the page's
+  MACHINE [--enable|--disable] [--slots N] [--reason R] [--note N]
+  [--battery-guard STOP:START|off] [--by WHO]` (logged with source `cli`). `--no-machine-settings` turns the page's
   controls off (read-only).
 
 ## Janitor (disk cleanup)

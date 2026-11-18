@@ -520,6 +520,7 @@ class BatteryMonitor:
         self.lock = threading.Lock()
         self.stop = threading.Event()
         self.st = {m.name: _State() for m in machines}
+        self.on_poll = None  # fn(machine, reading|None, ok, now) after each probe (the battery guard)
 
     # -- recording (pure, tested) --
     def record(self, name: str, parsed: dict, now: float | None = None):
@@ -551,11 +552,19 @@ class BatteryMonitor:
             s.error = error or "unreachable"
 
     def poll(self, m):
+        now = self.clock()
         try:
             out = self.run(m, script_for(m.os), self.timeout)
-            self.record(m.name, parse_output(m.os, out))
+            parsed = parse_output(m.os, out)
+            now = self.clock()
+            self.record(m.name, parsed, now)
+            reading, ok = parsed.get("battery"), True
         except Exception as e:  # never let a probe kill the thread
             self.fail(m.name, str(e) or type(e).__name__)
+            reading, ok = None, False
+        hook = getattr(self, "on_poll", None)  # the battery guard (battery_guard.py)
+        if hook is not None:
+            hook(m, reading, ok, now)
 
     def wait_s(self, name: str) -> float:
         s = self.st.get(name)

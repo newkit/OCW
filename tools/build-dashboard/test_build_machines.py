@@ -200,6 +200,17 @@ class HttpTest(unittest.TestCase):
         self.assertEqual((code, res["settings"]["slots"]), (200, 8))
         self.assertEqual(bm.parse(self.dash.build_machines.path.read_text())["marge"]["note"], EVIL.replace("\n", " "))
 
+    def test_battery_guard(self):
+        t = self.dash.token
+        code, res = self.post({"machine": "leela", "battery_guard": "20:80"}, t)
+        self.assertEqual((code, res["settings"]["battery_guard"]), (200, {"stop": 20, "start": 80}))
+        for bad in ("80:20", "20:80; rm -rf /", 5, ["20", "80"]):
+            self.assertEqual(self.post({"machine": "leela", "battery_guard": bad}, t)[0], 400, bad)
+        leela = next(m for m in self.dash.snapshot()["machines"] if m["name"] == "leela")
+        self.assertEqual(leela["battery_guard"]["text"], "battery guard 20 % / 80 %")
+        code, res = self.post({"machine": "leela", "battery_guard": "off"}, t)
+        self.assertEqual((code, res["settings"]["battery_guard"]), (200, None))
+
     def test_read_only(self):
         self.dash.build_machines.read_only = True
         self.assertEqual(self.post({"machine": "marge", "slots": 2}, self.dash.token)[0], 404)

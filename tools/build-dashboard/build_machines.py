@@ -23,6 +23,14 @@ reads it with its `field` lookup:
   OS default; OCW_REMOTE_SLOTS still wins for a single call. A new count
   applies to runs started after the change.
 - `note`: a short free-text note shown on the dashboard card (any state).
+- `battery_stop`, `battery_start` (dashboard 1.8.0): the battery guard of a
+  laptop (battery_guard.py). Below `battery_stop` % (two readings in a row)
+  the dashboard disables the machine with `disabled_by = "battery-guard"`;
+  above `battery_start` % it enables it again – only when the guard was what
+  disabled it. `guard_action`, `guard_at`, `guard_percent`: its last action.
+  Any other change of `enabled` or `reason` sets `disabled_by` to who did it
+  (or clears it), so the guard never re-enables a machine someone else
+  disabled. Flat keys, so remote.sh's line lookup is not disturbed.
 
 The same file holds the coordinator's setting (dashboard 1.5.0): how many
 agents (Claude Code subagents in worktrees) may run on the coordinator (deb)
@@ -44,6 +52,7 @@ project. From a shell:
     python3 tools/build-dashboard/build_machines.py list
     python3 tools/build-dashboard/build_machines.py set leela --disable --reason "kiosk only"
     python3 tools/build-dashboard/build_machines.py set marge --enable --slots 3
+    python3 tools/build-dashboard/build_machines.py set leela --battery-guard 20:80   # or off
     python3 tools/build-dashboard/build_machines.py agents 4
 """
 
@@ -69,6 +78,9 @@ MAX_FILE_AGENTS = 64                 # what a hand-edited file may hold
 COORDINATOR = "coordinator"          # the table's name, and the `machine` of its log lines
 MAX_REASON = 200
 MAX_BY = 40
+GUARD = "battery-guard"              # disabled_by / changed_by / source of the battery guard's changes
+GUARD_ACTIONS = ("disabled", "enabled")
+_UNSET = object()
 _CTRL = re.compile(r"[\x00-\x1f\x7f]")
 
 HEADER = """\
@@ -99,6 +111,33 @@ def toml_str(s: str) -> str:
     return '"%s"' % s
 
 
+def parse_guard(text) -> dict | None:
+    """"20:80" (or {"stop": 20, "start": 80}) → {"stop": 20, "start": 80};
+    "off" / "" / None → None. Raises ValueError unless 1 <= stop < start <= 99."""
+    if text is None:
+        return None
+    if isinstance(text, dict):
+        return check_guard(text.get("stop"), text.get("start"))
+    if not isinstance(text, str):
+        raise ValueError("battery guard: STOP:START (e.g. 20:80) or off")
+    t = text.strip().lower()
+    if t in ("", "off", "none", "no"):
+        return None
+    m = re.fullmatch(r"(\d{1,3})\s*[:/]\s*(\d{1,3})", t)
+    if not m:
+        raise ValueError("battery guard: STOP:START (e.g. 20:80) or off")
+    return check_guard(int(m.group(1)), int(m.group(2)))
+
+
+def check_guard(stop, start) -> dict:
+    for v in (stop, start):
+        if isinstance(v, bool) or not isinstance(v, int):
+            raise ValueError("battery guard: whole percent values")
+    if not 1 <= stop < start <= 99:
+        raise ValueError("battery guard: 1 <= stop < start <= 99 (e.g. 20:80)")
+    return {"stop": stop, "start": start}
+
+
 def iso(t: float) -> str:
     lt = time.localtime(t)
     off = time.strftime("%z", lt)
@@ -120,9 +159,18 @@ def parse(text: str) -> dict:
         if isinstance(slots, bool) or not isinstance(slots, int) or not 0 <= slots <= MAX_FILE_SLOTS:
             slots = None
         e = {"enabled": it.get("enabled") is not False, "slots": slots}
-        for k, n in (("reason", MAX_REASON), ("note", MAX_REASON), ("changed_by", MAX_BY), ("changed_at", 40)):
+        for k, n in (("reason", MAX_REASON), ("note", MAX_REASON), ("changed_by", MAX_BY), ("changed_at", 40),
+                     ("disabled_by", MAX_BY), ("guard_action", 20), ("guard_at", 40)):
             v = it.get(k)
             e[k] = clean_text(v, n) if isinstance(v, str) else ""
+        try:
+            e["battery_guard"] = check_guard(it.get("battery_stop"), it.get("battery_start"))
+        except ValueError:
+            e["battery_guard"] = None
+        if e["guard_action"] not in GUARD_ACTIONS:
+            e["guard_action"], e["guard_at"] = "", ""
+        gp = it.get("guard_percent")
+        e["guard_percent"] = gp if isinstance(gp, int) and not isinstance(gp, bool) and 0 <= gp <= 100 else None
         out[name] = e
     return out
 
@@ -192,6 +240,18 @@ def render(entries: dict, order=(), coordinator: dict | None = None) -> str:
         for k in ("reason", "note", "changed_by", "changed_at"):
             if e.get(k):
                 out.append("%s = %s" % (k, toml_str(e[k])))
+        g = e.get("battery_guard")
+        if g:
+            out.append("battery_stop = %d" % g["stop"])
+            out.append("battery_start = %d" % g["start"])
+        if e.get("disabled_by"):
+            out.append("disabled_by = %s" % toml_str(e["disabled_by"]))
+        if e.get("guard_action"):
+            out.append("guard_action = %s" % toml_str(e["guard_action"]))
+            if e.get("guard_at"):
+                out.append("guard_at = %s" % toml_str(e["guard_at"]))
+            if e.get("guard_percent") is not None:
+                out.append("guard_percent = %d" % e["guard_percent"])
         out.append("")
     return "\n".join(out)
 
@@ -268,20 +328,33 @@ class BuildMachines:
             slots, src = m.slots, ("machines.toml" if getattr(m, "slots_configured", False) else "default")
         return {"enabled": e.get("enabled", True), "reason": e.get("reason") or "", "note": e.get("note") or "", "slots": slots,
                 "slots_source": src, "slots_config": m.slots, "changed_by": e.get("changed_by") or "",
-                "changed_at": e.get("changed_at") or ""}
+                "changed_at": e.get("changed_at") or "", "battery_guard": e.get("battery_guard"),
+                "disabled_by": (e.get("disabled_by") or "") if not e.get("enabled", True) else "",
+                "guard_last": {"action": e["guard_action"], "at": e.get("guard_at") or "",
+                               "percent": e.get("guard_percent")} if e.get("guard_action") else None}
 
     def update(self, m, enabled=None, slots=None, reason=None, note=None, by: str = "dashboard", source: str = "dashboard",
-               order=()) -> dict:
+               order=(), battery_guard=_UNSET, guard_event=None) -> dict:
         """Changes Machine m's entry (validated), writes the file atomically
         and logs the change; returns the new effective settings. A new entry
-        starts with the machine's current slot count."""
+        starts with the machine's current slot count.
+
+        battery_guard: {"stop", "start"} / "20:80" sets the guard, None or
+        "off" removes it (left out: unchanged). guard_event ("disabled" or
+        "enabled", percent): only the battery guard passes it; its disable is
+        marked disabled_by = "battery-guard". Every other change of enabled
+        or reason marks the machine as disabled by `by` (or clears it)."""
+        if battery_guard is not _UNSET:
+            battery_guard = parse_guard(battery_guard)
+        if guard_event is not None and (not isinstance(guard_event, tuple) or guard_event[0] not in GUARD_ACTIONS):
+            raise ValueError("guard_event: (disabled|enabled, percent)")
         if enabled is not None and not isinstance(enabled, bool):
             raise ValueError("enabled must be true or false")
         if slots is not None and (isinstance(slots, bool) or not isinstance(slots, int)
                                   or not MIN_SLOTS <= slots <= MAX_SLOTS):
             raise ValueError("slots must be a whole number from %d to %d" % (MIN_SLOTS, MAX_SLOTS))
-        if enabled is None and slots is None and note is None and reason is None:
-            raise ValueError("nothing to change (enabled, slots, reason or note)")
+        if enabled is None and slots is None and note is None and reason is None and battery_guard is _UNSET:
+            raise ValueError("nothing to change (enabled, slots, reason, note or battery guard)")
         reason = clean_text(reason, MAX_REASON) if reason is not None else None
         note = clean_text(note, MAX_REASON) if note is not None else None
         by = clean_text(by, MAX_BY) or source
@@ -301,12 +374,27 @@ class BuildMachines:
                 e["slots"] = slots
             if note is not None:  # "" clears it
                 e["note"] = note
+            if battery_guard is not _UNSET:
+                e["battery_guard"] = battery_guard
             now = self.clock()
+            if enabled is not None or reason is not None:
+                if e.get("enabled", True):
+                    e["disabled_by"] = ""
+                elif guard_event is not None:
+                    e["disabled_by"] = GUARD
+                elif enabled is not None or e.get("disabled_by") == GUARD:
+                    # Disabled (or the guard's reason replaced) by someone else:
+                    # the guard never enables it again.
+                    e["disabled_by"] = by
+            if guard_event is not None:
+                pct = guard_event[1]
+                e["guard_action"], e["guard_at"] = guard_event[0], iso(now)
+                e["guard_percent"] = int(round(pct)) if isinstance(pct, (int, float)) else None
             e["changed_by"], e["changed_at"] = by, iso(now)
             entries[m.name] = e
             self._write(render(entries, order, self._coord))
             after = self.effective(m)
-            self._log(now, m.name, source, by, before, after)
+            self._log(now, m.name, source, by, before, after, guard_event)
             return after
 
     def _write(self, text: str):
@@ -329,11 +417,16 @@ class BuildMachines:
                 pass
             raise
 
-    def _log(self, now, name, source, by, before, after):
-        changes = {k: [before[k], after[k]] for k in ("enabled", "slots", "reason", "note") if before[k] != after[k]}
-        self._log_line(now, {"time": iso(now), "machine": name, "source": source, "by": by, "changes": changes,
-                             "enabled": after["enabled"], "slots": after["slots"], "reason": after["reason"],
-                             "note": after["note"]})
+    def _log(self, now, name, source, by, before, after, guard_event=None):
+        changes = {k: [before[k], after[k]] for k in ("enabled", "slots", "reason", "note", "battery_guard")
+                   if before[k] != after[k]}
+        line = {"time": iso(now), "machine": name, "source": source, "by": by, "changes": changes,
+                "enabled": after["enabled"], "slots": after["slots"], "reason": after["reason"],
+                "note": after["note"], "battery_guard": after["battery_guard"], "disabled_by": after["disabled_by"]}
+        if guard_event is not None:  # an event for the art project's incident log
+            line["kind"] = GUARD
+            line["guard"] = {"action": guard_event[0], "percent": guard_event[1]}
+        self._log_line(now, line)
 
     def _log_line(self, now, line: dict):
         if self.log_root is None:
@@ -345,6 +438,20 @@ class BuildMachines:
                 f.write(json.dumps(line, ensure_ascii=False, sort_keys=True) + "\n")
         except OSError as e:  # the log must never block a change
             print("build log: %s" % e, file=sys.stderr)
+
+
+def guard_text(e: dict) -> str:
+    """The battery guard of effective settings `e` for the card and the
+    text output: "battery guard 20 % / 80 %" and its last action, or ""."""
+    g = e.get("battery_guard")
+    if not g:
+        return ""
+    t = "battery guard %d %% / %d %%" % (g["stop"], g["start"])
+    last = e.get("guard_last")
+    if last:
+        pct = " at %d %%" % last["percent"] if last.get("percent") is not None else ""
+        t += " (last: %s building%s, %s)" % (last["action"], pct, (last.get("at") or "").replace("T", " ")[:16])
+    return t
 
 
 def main(argv=None) -> int:
@@ -363,6 +470,8 @@ def main(argv=None) -> int:
     s.add_argument("--slots", type=int)
     s.add_argument("--reason")
     s.add_argument("--note", help="free-text note shown on the card (\"\" clears it)")
+    s.add_argument("--battery-guard", metavar="STOP:START|off",
+                   help="disable below STOP %% battery, enable again above START %% (e.g. 20:80), or off")
     s.add_argument("--by", default="cli")
     ag = sub.add_parser("agents", help="show or set how many agents may run on the coordinator (deb)")
     ag.add_argument("max_agents", nargs="?", type=int, help="the new limit (%d-%d)" % (MIN_AGENTS, MAX_AGENTS))
@@ -378,7 +487,8 @@ def main(argv=None) -> int:
             print("no machine %r in machines.toml" % a.machine, file=sys.stderr)
             return 2
         try:
-            bm.update(m, a.enabled, a.slots, a.reason, a.note, a.by, "cli", [x.name for x in machines])
+            bm.update(m, a.enabled, a.slots, a.reason, a.note, a.by, "cli", [x.name for x in machines],
+                      **({} if a.battery_guard is None else {"battery_guard": a.battery_guard}))
         except ValueError as e:
             print(e, file=sys.stderr)
             return 2
@@ -396,7 +506,8 @@ def main(argv=None) -> int:
     for m in machines:
         e = bm.effective(m)
         print("%-14s %-8s slots %d (%s)%s" % (m.name, "enabled" if e["enabled"] else "DISABLED", e["slots"],
-                                             e["slots_source"], "".join(" – " + x for x in (e["reason"], e["note"]) if x)))
+                                             e["slots_source"], "".join(" – " + x for x in (e["reason"], e["note"],
+                                                                                            guard_text(e)) if x)))
     c = bm.coordinator()
     print("%-14s at most %d agents (%s)" % ("coordinator", c["max_agents"], c["source"]))
     return 0
