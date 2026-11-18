@@ -4,7 +4,9 @@
   local build user (not an administrator) that logs in with an SSH key, and
   the build tools: Git (with Git LFS) and the Visual Studio Build Tools (C++
   workload) via winget, and rustup for the build user. With -VR it also checks
-  the OpenXR runtime for a headset (Meta Quest Link, not on winget).
+  the OpenXR runtime for a headset (Meta Quest Link, not on winget) and
+  installs ffmpeg (winget Gyan.FFmpeg): VR test runs record the mirror window
+  as a video (scripts/vr-soak.ps1, the app's `video` recorder).
 
 .DESCRIPTION
   Works on any Windows language (German, English, ...): built-in groups are
@@ -49,8 +51,9 @@
   Only SSH and the user: do not install Git, the Build Tools and rustup.
 
 .PARAMETER VR
-  Also check the VR side: the active OpenXR runtime (Meta Quest Link or
-  SteamVR) and print what is missing.
+  Also the VR side: check the active OpenXR runtime (Meta Quest Link or
+  SteamVR) and print what is missing; install ffmpeg (Gyan.FFmpeg) for the
+  videos of VR test runs.
 #>
 [CmdletBinding()]
 param(
@@ -225,6 +228,18 @@ if ($VR) {
     } else {
         $vrMissing += "Install the Meta Quest Link app (https://www.meta.com/help/quest/pcvr/), log in, connect the headset by USB once and set Link as the active OpenXR runtime (Settings > General > OpenXR Runtime). SteamVR is the alternative."
         Write-Warning "No active OpenXR runtime."
+    }
+    # Every test run records pictures and, where it moves, a video
+    # (CLAUDE.md): the VR runs film the mirror window with the app's own
+    # recorder, which streams into ffmpeg. Installed for all users here (an
+    # elevated script cannot run winget in the build user's context); on
+    # Weela it was installed in the build user's scope (winget install
+    # Gyan.FFmpeg as that user) - vr-soak.ps1 finds either.
+    Step "VR: ffmpeg (videos of the VR test runs)"
+    if ($SkipTools) {
+        $vrMissing += "Install ffmpeg (winget install --id Gyan.FFmpeg -e) for the videos of VR test runs."
+    } else {
+        Install-Winget "Gyan.FFmpeg" @("--scope", "machine")
     }
 }
 

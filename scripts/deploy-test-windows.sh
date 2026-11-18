@@ -28,6 +28,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 machine=${1:?usage: deploy-test-windows.sh MACHINE}
+# Deploy only committed code (CLAUDE.md: "deploy only pushed, checked
+# code"): the kiosk ran a "-dirty" build on 2026-11-17 because scripts being
+# edited were synced with it. OCW_DEPLOY_DIRTY=1 deploys anyway.
+if [ "${OCW_DEPLOY_DIRTY:-0}" != 1 ] && [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+    echo "deploy-test-windows.sh: uncommitted changes in tracked files – commit (and push) first, or OCW_DEPLOY_DIRTY=1:" >&2
+    git status --short --untracked-files=no >&2
+    exit 2
+fi
 version="$(scripts/build-id.sh) $(date '+%F %T')"
 kiosk_world=${OCW_KIOSK_WORLD:-keep}
 case "$kiosk_world" in liechtenstein|blackforest|tenerife|keep) ;; *) echo "OCW_KIOSK_WORLD: liechtenstein, blackforest or tenerife" >&2; exit 2 ;; esac

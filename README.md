@@ -3733,7 +3733,7 @@ in):
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass -Force
-& "$env:LOCALAPPDATA\OCW\kiosk\ocw-kiosk.ps1" install     # task "OCW Kiosk" at logon, started now
+& "$env:LOCALAPPDATA\OCW\kiosk\ocw-kiosk.ps1" install     # task "OCW Kiosk", started now; no autostart (-Autostart: at logon)
 & "$env:LOCALAPPDATA\OCW\kiosk\ocw-kiosk.ps1" status      # build, task, app, the VR line and session, log
 & "$env:LOCALAPPDATA\OCW\kiosk\ocw-kiosk.ps1" restart     # or stop / start; uninstall removes the task
 & "$env:LOCALAPPDATA\OCW\kiosk\ocw-kiosk.ps1" screenshot -Out shot.png   # the monitor (the left eye)

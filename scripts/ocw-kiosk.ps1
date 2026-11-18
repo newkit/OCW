@@ -7,10 +7,16 @@
 .DESCRIPTION
   Run it as the build user (no admin needed):
 
-    ocw-kiosk.ps1 install     start the kiosk when the build user logs in (a
-                              per-user scheduled task "OCW Kiosk", or the
-                              Startup folder when the logon trigger is
-                              refused) and start it now
+    ocw-kiosk.ps1 install     register the per-user scheduled task "OCW Kiosk"
+                              (started by hand: `start`, the desktop shortcuts
+                              "OCW VR Kiosk - Start / Stop") and start it now
+                              (-NoStart: not now). **No autostart by default**
+                              (the user, 2026-11-18: "stop and disable the
+                              kiosk app, don't make it start up by default");
+                              -Autostart adds the logon trigger (or the
+                              Startup folder entry when the trigger is
+                              refused). Installing again without -Autostart
+                              removes an earlier autostart.
     ocw-kiosk.ps1 uninstall   stop it and remove the task / Startup entry
     ocw-kiosk.ps1 start | stop | restart
     ocw-kiosk.ps1 status      the deployed build, the kiosk, the VR line, log
@@ -31,7 +37,7 @@
   there, see scripts/win-gui-run.ps1): a 960 x 540 window on the monitor (the left
   eye mirrored), VR in the headset. Without a headset (Link off, runtime
   missing) the app runs as before with the message "VR is off: ..."; the
-  kiosk logs it and restarts the app every OCW_KIOSK_VR_RETRY_S seconds
+  kiosk logs it and restarts the app every OCW_KIOSK_VR_RETRY_S seconds (60)
   (default 300, 0 = never) to try again. A session lost later reconnects in
   the app by itself.
 
@@ -61,7 +67,9 @@ param(
     [string]$Route = "",
     [string]$ArgsText = $null,
     [string]$Out = "",
-    [switch]$NoStart
+    [switch]$NoStart,
+    # install: start the kiosk at the build user's logon (off by default).
+    [switch]$Autostart
 )
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version 2
@@ -162,6 +170,11 @@ function New-KioskArgs {
     # the full-screen 2560 x 1600 mirror on the other GPU halved the headset's
     # rate to 36 fps; a small window keeps the 72 Hz; Q16 / Q17).
     $lines.Add("--window 960x540")
+    # Never more frames than the headset shows - also while the app rides on
+    # the monitor without a headset (v4.71: the fallback ran the laptop's GPU
+    # at 100+ fps for the 165 Hz panel and drained its battery). In a headset
+    # session xrWaitFrame paces instead.
+    $lines.Add("--max-fps 72")
     foreach ($l in ($LocalText -split "`r?`n")) {
         if ($l.Trim() -and -not $l.StartsWith("#")) { $lines.Add($l) }
     }
@@ -264,7 +277,10 @@ function Invoke-Supervisor {
     New-Item -ItemType Directory -Force $state | Out-Null
     $poll = Get-EnvInt "OCW_KIOSK_POLL_S" 2
     $quick = Get-EnvInt "OCW_KIOSK_QUICK_S" 15
-    $vrRetry = Get-EnvInt "OCW_KIOSK_VR_RETRY_S" 300
+    # 60 s (v4.71; 300 before): a headset put on while the app rides on the
+    # monitor showed Link's home - "the desktop mirror in full screen" - for
+    # up to five minutes before the kiosk tried VR again.
+    $vrRetry = Get-EnvInt "OCW_KIOSK_VR_RETRY_S" 60
     $stopFile = Join-Path $state "stop"
     $script = Join-Path $dir "ocw-kiosk.ps1"
     $me = Get-FileSha $script
@@ -373,6 +389,14 @@ function Test-TaskExists {
     return $ok
 }
 
+# Whether the task starts at logon (its XML has a logon trigger).
+function Test-TaskLogonTrigger {
+    $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    $xml = (schtasks /query /tn $TaskName /xml 2>$null) -join "`n"
+    $ErrorActionPreference = $prev
+    return ($xml -match "<LogonTrigger>")
+}
+
 function Get-SupervisorAlive {
     $f = Join-Path (Get-StateDir) "supervisor.pid"
     $id = (Read-Text $f).Trim()
@@ -418,7 +442,10 @@ function Invoke-Install {
     $xml = Join-Path $env:TEMP "ocw-kiosk-task.xml"
     $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
     $how = ""
-    foreach ($logon in @($true, $false)) {
+    # With -Autostart: a logon trigger, else (refused) a task without one
+    # plus the Startup folder entry; without: a task without a trigger.
+    $tries = if ($Autostart) { @($true, $false) } else { @($false) }
+    foreach ($logon in $tries) {
         [IO.File]::WriteAllText($xml, (New-TaskXml $script $logon), [Text.Encoding]::Unicode)
         schtasks /create /tn $TaskName /xml $xml /f 2>&1 | Out-Null
         if ($LASTEXITCODE -eq 0) { $how = if ($logon) { "logon" } else { "startup" }; break }
@@ -427,7 +454,10 @@ function Invoke-Install {
     Remove-Item -LiteralPath $xml -ErrorAction SilentlyContinue
     if (-not $how) { throw "schtasks /create failed: cannot register the task '$TaskName'" }
     $startup = Get-StartupEntry
-    if ($how -eq "startup") {
+    if (-not $Autostart) {
+        Remove-Item -LiteralPath $startup -ErrorAction SilentlyContinue
+        Write-KioskLog "installed: task '$TaskName' without autostart (start it by hand: ocw-kiosk.ps1 start, or the desktop shortcut)"
+    } elseif ($how -eq "startup") {
         # The logon trigger was refused: the Startup folder starts the task.
         Set-Content -Encoding ascii -Path $startup -Value "@schtasks /run /tn `"$TaskName`" >nul"
         Write-KioskLog "autostart installed: Startup folder entry, task '$TaskName' (no logon trigger allowed)"
@@ -478,7 +508,7 @@ function Invoke-Status {
     $ver = if ($cur) { (Read-Text (Join-Path (Join-Path $dir $cur) "VERSION")).Trim() } else { "" }
     Write-Host ("kiosk folder: " + $dir)
     Write-Host ("build: " + $(if ($ver) { "$ver ($cur)" } else { "none deployed" }))
-    $auto = if (Test-TaskExists) { "task '$TaskName'" + $(if (Test-Path -LiteralPath (Get-StartupEntry)) { " (started from the Startup folder)" } else { " (at logon)" }) } else { "not installed" }
+    $auto = if (Test-TaskExists) { "task '$TaskName'" + $(if (Test-Path -LiteralPath (Get-StartupEntry)) { " (started from the Startup folder)" } elseif (Test-TaskLogonTrigger) { " (at logon)" } else { ", no autostart (started by hand)" }) } else { "not installed" }
     Write-Host ("autostart: " + $auto)
     Write-Host ("kiosk: " + $(if (Get-SupervisorAlive) { "running" } else { "not running" }))
     $app = (Read-Text (Join-Path $state "app.pid")).Trim()
@@ -598,8 +628,9 @@ function Invoke-Deploy {
         Remove-Item -Recurse -Force -LiteralPath (Join-Path $builds $old) -ErrorAction SilentlyContinue
     }
     if ((Test-TaskExists) -and -not (Get-SupervisorAlive)) {
-        Write-Host "the kiosk is installed but not running: starting it"
-        try { Invoke-Start } catch { Write-Warning $_ }
+        # A stopped kiosk stays stopped (2026-11-18: a deploy started it on
+        # its own); a running one restarts the app on the new build.
+        Write-Host "the kiosk is installed but not running: left stopped (start it: $dir\ocw-kiosk.ps1 start, or the desktop shortcut)"
     } elseif (-not (Test-TaskExists)) {
         Write-Host "the kiosk is not installed: $dir\ocw-kiosk.ps1 install (as the build user)"
     }
@@ -646,12 +677,12 @@ function Invoke-SelfTest {
     Check "show lines" ((Get-ShowLines $show "") -join "|") '--virtual|--power 500|--cmd "ride.collisions off"|--no-hearts'
     Check "show lines, real trainer" ((Get-ShowLines $show "--devices-file x") -join "|") '--cmd "ride.collisions off"|--no-hearts'
     $a = New-KioskArgs -WorldsDir 'C:\k\worlds' -Choice (Get-WorldChoice "tenerife" @("tenerife.ocwpkg")) -Route "" -ShowText $show -LocalText "# local`n--monitor 1`n"
-    $want = "# Written by ocw-kiosk.ps1 deploy (the Windows VR kiosk)`n# Tenerife (OCW_KIOSK_WORLD)`n--world 'C:\k\worlds\tenerife.ocwpkg'`n--route 'Puerto de la Cruz - Teide'`n--virtual`n--power 500`n--cmd `"ride.collisions off`"`n--no-hearts`n--vr`n--window 960x540`n--monitor 1`n"
+    $want = "# Written by ocw-kiosk.ps1 deploy (the Windows VR kiosk)`n# Tenerife (OCW_KIOSK_WORLD)`n--world 'C:\k\worlds\tenerife.ocwpkg'`n--route 'Puerto de la Cruz - Teide'`n--virtual`n--power 500`n--cmd `"ride.collisions off`"`n--no-hearts`n--vr`n--window 960x540`n--max-fps 72`n--monitor 1`n"
     Check "kiosk args" $a $want
     $a = New-KioskArgs -WorldsDir 'C:\k' -Choice (Get-WorldChoice "tenerife" @("tenerife.ocwpkg")) -Route "Los Cristianos - Teide" -ShowText "" -LocalText ""
     Check "kiosk args, route" (($a -split "`n") -match '^--route') "--route 'Los Cristianos - Teide'"
     $a = New-KioskArgs -WorldsDir 'C:\k' -Choice $null -Route "" -ShowText $show -LocalText "" -Override "--test-route hills"
-    Check "kiosk args, override" (($a -split "`n" | Where-Object { $_ -and -not $_.StartsWith("#") }) -join "|") "--test-route hills|--vr|--window 960x540"
+    Check "kiosk args, override" (($a -split "`n" | Where-Object { $_ -and -not $_.StartsWith("#") }) -join "|") "--test-route hills|--vr|--window 960x540|--max-fps 72"
     $a = New-KioskArgs -WorldsDir 'C:\k' -Choice $null -Route "" -ShowText $show -LocalText ""
     Check "kiosk args, no world" (($a -split "`n") -match '^--world').Count 0
     Check "deployment same" (Test-NewDeployment "builds\1" "builds\1`r`n") $false
@@ -660,6 +691,10 @@ function Invoke-SelfTest {
     Check "vr on" (Get-VrState "x`n`e[32mINFO`e[0m`nVR: Oculus 1.2 on Oculus Quest (khr), Rgba8UnormSrgb, 72 Hz`n").State "on"
     Check "vr on line" (Get-VrState "VR: Oculus on Quest (x)`r`nmore").Line "VR: Oculus on Quest (x)"
     Check "vr off" (Get-VrState "`e[33mWARN`e[0m ocw_desktop::vr: VR is off: no OpenXR runtime`n").Line "VR is off: no OpenXR runtime"
+    # No autostart by default (2026-11-18): a task without a trigger; the
+    # logon trigger only with -Autostart.
+    Check "task without autostart" ((New-TaskXml "C:\k\ocw-kiosk.ps1" $false) -match "<LogonTrigger>") $false
+    Check "task with -Autostart" ((New-TaskXml "C:\k\ocw-kiosk.ps1" $true) -match "<LogonTrigger>") $true
     Check "session lines" ((Get-VrSessionLines "a`n2026 INFO x: VR session: ready`r`nb`nVR session: focused`n") -join "|") "VR session: ready|VR session: focused"
     Check "loss lines" ((Get-VrSessionLines "x VR session lost: the VR session was lost`nVR loop 10 s: 72.0 waits/s`nVR frame: xrEndFrame failed after 1.0 ms: lost`nVR loop: xrWaitFrame took 300 ms`nVR loop: no frame reached the runtime for 600 ms`n") -join "|") "VR session lost: the VR session was lost|VR frame: xrEndFrame failed after 1.0 ms: lost|VR loop: no frame reached the runtime for 600 ms"
     Check "no session lines" (@(Get-VrSessionLines "nothing")).Count 0
