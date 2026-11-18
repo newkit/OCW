@@ -194,6 +194,88 @@
       window.ocwDownloads.push({name, mime, size: bytes.length});
       console.log(`ocw-web: download ${name} (${bytes.length} bytes, ${mime})`);
     };
+    // The photos folder (spec §2.11 Q3): screenshots and the ride
+    // photographer's photos go into a folder the rider chose once with the
+    // File System Access API (Chromium; the picker starts in Pictures and
+    // an "OCW" folder is made in the chosen one), its handle kept in
+    // IndexedDB; after a reload the permission is asked again with the next
+    // key press or click. Without the API (Firefox, Safari), or before a
+    // folder is chosen, each photo is a download (named OCW-…).
+    window.ocwPhotosSaved = [];
+    window.ocwPhotos = (() => {
+      let dir = null, granted = false;
+      const supported = !!(window.showDirectoryPicker && window.indexedDB);
+      const store = (mode, f) => new Promise((resolve, reject) => {
+        const open = indexedDB.open("ocw-photos", 1);
+        open.onupgradeneeded = () => open.result.createObjectStore("handles");
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const tx = open.result.transaction("handles", mode);
+          const req = f(tx.objectStore("handles"));
+          tx.oncomplete = () => resolve(req && req.result);
+          tx.onerror = () => reject(tx.error);
+        };
+      });
+      const check = async (ask) => {
+        if (!dir) return false;
+        const opts = {mode: "readwrite"};
+        let state = await dir.queryPermission(opts);
+        if (state !== "granted" && ask) state = await dir.requestPermission(opts);
+        granted = state === "granted";
+        return granted;
+      };
+      if (supported) {
+        store("readonly", (s) => s.get("folder"))
+          .then((h) => { if (h) { dir = h; return check(false); } })
+          .catch((e) => console.warn("ocw-web: photos folder:", e));
+        const again = () => { if (dir && !granted) check(true).catch(() => {}); };
+        addEventListener("keydown", again);
+        addEventListener("pointerdown", again);
+      }
+      const write = async (d, name, mime, bytes) => {
+        const f = await d.getFileHandle(name, {create: true});
+        const w = await f.createWritable();
+        await w.write(new Blob([bytes], {type: mime}));
+        await w.close();
+      };
+      return {
+        supported() { return supported; },
+        // The folder's name while it may be written, else null.
+        folder() { return dir && granted ? dir.name : null; },
+        async choose() {
+          if (!supported) throw new Error("this browser cannot keep a folder (photos are downloads)");
+          let d = await window.showDirectoryPicker({id: "ocw-photos", mode: "readwrite", startIn: "pictures"});
+          if (d.name !== "OCW") d = await d.getDirectoryHandle("OCW", {create: true});
+          dir = d;
+          granted = true;
+          await store("readwrite", (s) => s.put(d, "folder"));
+          console.log(`ocw-web: photos go to the folder ${d.name}`);
+          return d.name;
+        },
+        forget() {
+          dir = null;
+          granted = false;
+          if (supported) store("readwrite", (s) => s.delete("folder")).catch(() => {});
+          return true;
+        },
+        // Saves into the folder ("folder:NAME") or downloads ("download").
+        save(name, mime, bytes) {
+          if (dir && granted) {
+            const d = dir;
+            write(d, name, mime, bytes).then(() => {
+              window.ocwPhotosSaved.push({name, size: bytes.length});
+              console.log(`ocw-web: photo ${name} saved to ${d.name}`);
+            }).catch((e) => {
+              console.warn(`ocw-web: photo ${name}: ${e}; downloading it`);
+              window.ocwDownload(name, mime, bytes);
+            });
+            return `folder:${d.name}`;
+          }
+          window.ocwDownload(name, mime, bytes);
+          return "download";
+        },
+      };
+    })();
     // Videos (B6): MediaRecorder on the canvas at 30 fps, with the game
     // sound (window.ocwAudioStream, from the app's Web Audio); downloaded
     // when it stops.

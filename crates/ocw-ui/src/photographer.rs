@@ -35,6 +35,7 @@ use ocw_render::RideView;
 use ocw_render::camera::CameraObstacles;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, Permission};
 use ocw_render::package::PackageWorld;
+use ocw_render::photo_preview::{Caption, PhotoPreview};
 use ocw_render::photographer::{PhotoCaptures, PhotoRequest, PhotoRequests, ViewFrustum};
 use ocw_world::landuse::LandClass;
 use ocw_world::package::WorldPackage;
@@ -45,8 +46,9 @@ use ocw_world::photo_share::SharedShot;
 #[derive(Resource, Clone, Copy)]
 pub struct PhotographerHooks {
     /// A photo was rendered: save it (the image and what the sidecar
-    /// needs).
-    pub save: fn(&mut World, &Taken, Image),
+    /// needs); returns where it went for the HUD's photo preview ("Saved
+    /// to Pictures/OCW, added to your ride"), `None` when it was not kept.
+    pub save: fn(&mut World, &Taken, Image) -> Option<String>,
     /// Play a mixer message (the shutter, the drone's buzz).
     pub sound: fn(&mut World, MixerMsg),
 }
@@ -469,7 +471,19 @@ fn receive(world: &mut World) {
             .get_resource_mut::<RidePhotographer>()
             .and_then(|mut r| r.pending.remove(&id));
         if let Some(t) = taken {
-            (hooks.save)(world, &t, image);
+            // The HUD's preview (spec §3.2): the thumbnail from the image
+            // in memory, before it goes to be saved.
+            let thumb = world
+                .get_resource::<PhotoPreview>()
+                .is_some_and(|p| p.enabled)
+                .then(|| ocw_render::photo_preview::thumbnail(&image))
+                .flatten();
+            let went = (hooks.save)(world, &t, image);
+            if let (Some(thumb), Some(went)) = (thumb, went)
+                && let Some(mut p) = world.get_resource_mut::<PhotoPreview>()
+            {
+                p.show_thumb(thumb, Caption::ride_photo(t.pose.is_drone(), went));
+            }
         }
     }
 }

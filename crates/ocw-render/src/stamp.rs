@@ -183,19 +183,71 @@ pub fn write_shot(image: &Image, path: &Path, meta: &ShotMeta) -> Result<(), Str
 }
 
 /// Where screenshots go when the app has no files (the browser app, spec
-/// §14 Phase 10 B6): a download of the encoded bytes under a timestamped
-/// name. Without it `screenshot` writes a file.
+/// §14 Phase 10 B6, §2.11 Q3): the photos folder the rider chose, else a
+/// download, under a timestamped name. Without it `screenshot` writes a
+/// file.
 #[derive(Resource, Clone)]
 pub struct ShotSink(pub std::sync::Arc<ShotFn>);
 
-/// What a [`ShotSink`] calls: (file name, encoded bytes).
-pub type ShotFn = dyn Fn(&str, Vec<u8>) + Send + Sync;
+/// What a [`ShotSink`] calls: (file name, encoded bytes) → where it went,
+/// for the photo preview ("Saved to OCW", "Downloaded OCW-….jpg").
+pub type ShotFn = dyn Fn(&str, Vec<u8>) -> String + Send + Sync;
+
+/// The desktop's photos folder (spec §2.11 Q3: the Pictures folder's
+/// `OCW`, setting `photos.folder`): `screenshot` without a path saves
+/// there, the ride photographer too; `label` names it in the preview's
+/// caption ("Pictures/OCW").
+#[derive(Resource, Debug, Clone, PartialEq, Eq)]
+pub struct PhotoFolder {
+    pub dir: PathBuf,
+    pub label: String,
+}
+
+impl PhotoFolder {
+    /// A new file `name` in the folder (created), with `-2`, `-3`, … before
+    /// the extension when that name is taken.
+    pub fn new_file(&self, name: &str) -> Result<PathBuf, String> {
+        std::fs::create_dir_all(&self.dir).map_err(|e| format!("{}: {e}", self.dir.display()))?;
+        Ok(free_name(&self.dir, name))
+    }
+}
+
+/// `dir/name`, or `dir/stem-N.ext` with the first N from 2 that is free.
+pub fn free_name(dir: &Path, name: &str) -> PathBuf {
+    let first = dir.join(name);
+    if !first.exists() {
+        return first;
+    }
+    let p = Path::new(name);
+    let stem = p
+        .file_stem()
+        .map_or(name.into(), |s| s.to_string_lossy().into_owned());
+    let ext = p.extension().map(|e| e.to_string_lossy().into_owned());
+    (2..)
+        .map(|n| match &ext {
+            Some(e) => dir.join(format!("{stem}-{n}.{e}")),
+            None => dir.join(format!("{stem}-{n}")),
+        })
+        .find(|p| !p.exists())
+        .expect("a free name")
+}
 
 /// The name of a capture taken at `time`: `ocw-2026-11-12_22-14-05.jpg`
 /// (the local time, as the HUD's stamp; file-name safe).
 pub fn capture_name(time: &MediaTime, ext: &str) -> String {
-    let iso = time.iso_local();
-    let stamp: String = iso
+    format!("ocw-{}.{ext}", stamp_of(time))
+}
+
+/// The name of a photo (a screenshot) taken at `time`:
+/// `OCW-2026-11-12_22-14-05.jpg` (spec §2.11 Q3: the `OCW-` prefix of the
+/// photos in a shared Pictures or downloads folder).
+pub fn photo_name(time: &MediaTime, ext: &str) -> String {
+    format!("OCW-{}.{ext}", stamp_of(time))
+}
+
+/// `2026-11-12_22-14-05` (the local time, file-name safe).
+pub fn stamp_of(time: &MediaTime) -> String {
+    time.iso_local()
         .chars()
         .take(19)
         .map(|c| match c {
@@ -203,18 +255,20 @@ pub fn capture_name(time: &MediaTime, ext: &str) -> String {
             ':' => '-',
             c => c,
         })
-        .collect();
-    format!("ocw-{stamp}.{ext}")
+        .collect()
 }
 
+type PreviewParam<'w> = Option<ResMut<'w, crate::photo_preview::PhotoPreview>>;
+
 /// The observer that hands a screenshot to the [`ShotSink`] as `name`
-/// (JPEG with EXIF, or PNG for a `.png` name).
+/// (JPEG with EXIF, or PNG for a `.png` name) and previews it in the HUD
+/// with where it went.
 pub fn sink_shot(
     name: String,
     meta: ShotMeta,
     sink: ShotSink,
-) -> impl FnMut(On<ScreenshotCaptured>) {
-    move |ev: On<ScreenshotCaptured>| {
+) -> impl FnMut(On<ScreenshotCaptured>, PreviewParam) {
+    move |ev: On<ScreenshotCaptured>, preview: PreviewParam| {
         let bytes = ev
             .image
             .clone()
@@ -233,10 +287,35 @@ pub fn sink_shot(
         match bytes {
             Ok(b) => {
                 info!("Screenshot {name}: {} bytes", b.len());
-                (sink.0)(&name, b);
+                let went = (sink.0)(&name, b);
+                if let Some(mut p) = preview {
+                    p.show(&ev.image, crate::photo_preview::Caption::screenshot(went));
+                }
             }
             Err(e) => error!("Cannot save screenshot: {e}"),
         }
+    }
+}
+
+/// The observer that saves a photo (the `screenshot` command) like
+/// [`save_shot`] and, once it is written, previews it in the HUD with
+/// `caption`.
+pub fn save_photo_shot(
+    path: impl Into<PathBuf>,
+    meta: ShotMeta,
+    caption: crate::photo_preview::Caption,
+) -> impl FnMut(On<ScreenshotCaptured>, PreviewParam) {
+    let path = path.into();
+    move |ev: On<ScreenshotCaptured>, preview: PreviewParam| match write_shot(
+        &ev.image, &path, &meta,
+    ) {
+        Ok(()) => {
+            info!("Screenshot saved to {}", path.display());
+            if let Some(mut p) = preview {
+                p.show(&ev.image, caption.clone());
+            }
+        }
+        Err(e) => error!("Cannot save screenshot: {e}"),
     }
 }
 
@@ -270,6 +349,29 @@ mod tests {
         };
         assert_eq!(capture_name(&t, "jpg"), "ocw-2025-11-12_23-14-05.jpg");
         assert_eq!(capture_name(&t, "webm"), "ocw-2025-11-12_23-14-05.webm");
+        assert_eq!(photo_name(&t, "jpg"), "OCW-2025-11-12_23-14-05.jpg");
+    }
+
+    /// A photo never overwrites another taken in the same second.
+    #[test]
+    fn photos_get_a_free_name() {
+        let dir = std::env::temp_dir().join(format!("ocw-free-name-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let folder = PhotoFolder {
+            dir: dir.join("OCW"),
+            label: "Pictures/OCW".into(),
+        };
+        let a = folder.new_file("OCW-x.jpg").unwrap();
+        assert_eq!(a, dir.join("OCW/OCW-x.jpg"));
+        std::fs::write(&a, b"1").unwrap();
+        let b = folder.new_file("OCW-x.jpg").unwrap();
+        assert_eq!(b, dir.join("OCW/OCW-x-2.jpg"));
+        std::fs::write(&b, b"2").unwrap();
+        assert_eq!(
+            free_name(&folder.dir, "OCW-x.jpg"),
+            dir.join("OCW/OCW-x-3.jpg")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
