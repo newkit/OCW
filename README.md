@@ -1879,10 +1879,46 @@ event status | event cancel | event dismiss
 | `--video-dir DIR` | Where videos (key V, console `video`) are saved (default `~/Videos/OCW/`) |
 | `--version` | Print the build id, e.g. `0.1.0-7d538c0-dirty (debug)`: version, commit, `-dirty` for uncommitted changes, `(debug)` for debug builds. It is also shown small in the HUD's lower right corner and logged at startup |
 
+## Where OCW keeps its files
+
+The desktop app keeps three folders. Windows has no `~/.config`: there the
+settings live in your roaming AppData folder.
+
+| | Linux | Windows | macOS |
+|---|---|---|---|
+| **Config** (settings, devices, riders, Strava, sign-in) | `~/.config/ocw/` (`$XDG_CONFIG_HOME/ocw`) | `%APPDATA%\ocw\` = `C:\Users\<you>\AppData\Roaming\ocw\` | `~/Library/Application Support/ocw/` |
+| **Data** (rides, ghosts, videos, routes, workouts, studio autosave) | `~/.local/share/ocw/` (`$XDG_DATA_HOME/ocw`) | `%APPDATA%\ocw\` (the same folder as the config) | `~/Library/Application Support/ocw/` (the same folder as the config) |
+| **Activities** (your recordings, photos, screenshots) | `~/Activities/OCW/` | `C:\Users\<you>\Activities\OCW\` | `~/Activities/OCW/` |
+
+Open the Windows folder by typing `%APPDATA%\ocw` into the Explorer's address
+bar or the Run dialog (Win + R).
+
+- **In the config folder:** `settings.toml` (all settings, below), `devices.toml`
+  (remembered trainers and sensors), `riders.toml` (rider profiles),
+  `strava.toml` and `strava-token.toml` (Strava upload with your own API
+  app, §2.8.1; an example is in `packaging/strava.example.toml`), `account.json`
+  (the sign-in session when the system keyring is not available),
+  `trusted-roots/` and `keys/` (world package signing).
+- **In the data folder:** `rides/` (every ride and its FIT file, the training
+  history), `ghosts/`, `videos/`, `routes/`, `gpx/`, `workouts/`,
+  `camera-paths/`, `host-tls/` (the certificate when you host a ride), and the
+  studio's `studio/autosave/`.
+- **In the activities folder** (setting `activities.folder`, Menu → Settings →
+  Account → Folders): each Strava (S … S) recording in its own subfolder
+  `YYYY-MM-DD <place>` with its FIT file and photos, and screenshots and other
+  photos in a folder per day `YYYY-MM-DD`.
+- **Other places:** `OCW_CONFIG_DIR`, `OCW_DATA_DIR` and `OCW_ACTIVITIES_DIR`
+  move the three folders (e.g. for tests or a portable setup);
+  `--settings-file FILE` uses another settings file. The **browser app** keeps
+  its settings in the browser's storage for the page (`localStorage` /
+  IndexedDB), and saves recordings and photos into a folder you choose
+  (Chrome, Edge) or as downloads.
+
 ## Settings and rider profiles
 
-Settings live in `~/.config/ocw/settings.toml` (macOS: `~/Library/Application
-Support/ocw/`, Windows: `%APPDATA%\ocw\`; `OCW_CONFIG_DIR` or
+Settings live in `settings.toml` in the config folder (see *Where OCW keeps
+its files* above: `~/.config/ocw/` on Linux, `%APPDATA%\ocw\` on Windows,
+`~/Library/Application Support/ocw/` on macOS; `OCW_CONFIG_DIR` or
 `--settings-file` choose another place). Change them with `set KEY VALUE` in the
 console (saved at once), or by editing the file; `get` lists them all:
 
