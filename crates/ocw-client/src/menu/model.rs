@@ -437,6 +437,15 @@ const CAPTURE_ITEMS: &[Item] = &[
             close: false,
         },
     ),
+    // Where photos go (spec §2.11 Q3): the File System Access API's
+    // picker (a key press is the gesture it needs), else downloads.
+    item(
+        "Photos folder: choose",
+        ItemKind::Command {
+            line: "photos.folder choose",
+            close: false,
+        },
+    ),
     BACK,
 ];
 const LOCKED_ITEMS: &[Item] = &[BACK];

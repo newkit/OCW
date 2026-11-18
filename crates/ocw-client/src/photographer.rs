@@ -967,8 +967,14 @@ pub fn loudest_drone(
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PhotoMeta {
     pub n: usize,
-    /// The photo file (`photo-1.jpg`).
+    /// The photo file's name (`OCW-2026-11-16_09-04-05-photo-1.jpg` in the
+    /// photos folder; `photo-1.jpg` beside the sidecar in older rides).
     pub file: String,
+    /// Where the photo is (spec §2.11 Q3: the photos folder,
+    /// `~/Pictures/OCW`); `None` in rides before v4.73: `file` beside this
+    /// sidecar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
     /// UTC Unix seconds and the local time with offset (ISO 8601).
     pub time_unix_s: i64,
     pub time: String,
@@ -1078,6 +1084,12 @@ pub fn view(scene: &Scene) -> ocw_render::photographer::PhotographerView {
 /// `photo-3.jpg`.
 pub fn photo_name(n: usize) -> String {
     format!("photo-{n}.jpg")
+}
+
+/// The name of photo `n` of ride `ride` in a shared photos folder (spec
+/// §2.11 Q3): `OCW-2026-11-16_09-04-05-photo-1.jpg`.
+pub fn ride_photo_name(ride: &str, n: usize) -> String {
+    format!("OCW-{ride}-photo-{n}.jpg")
 }
 
 #[cfg(test)]
@@ -1291,7 +1303,8 @@ mod tests {
         };
         let m = PhotoMeta {
             n: 1,
-            file: photo_name(1),
+            file: ride_photo_name("2026-11-16_09-04-05", 1),
+            path: Some("/home/ada/Pictures/OCW/OCW-2026-11-16_09-04-05-photo-1.jpg".into()),
             time_unix_s: 1_794_518_045,
             time: "2026-11-16T10:14:05+01:00".into(),
             ride_s: 600.0,
@@ -1310,6 +1323,17 @@ mod tests {
         assert!(text.contains("person, standing"));
         assert_eq!(toml::from_str::<PhotoMeta>(&text).unwrap(), m);
         assert_eq!(photo_name(3), "photo-3.jpg");
+        assert_eq!(
+            ride_photo_name("2026-11-16_09-04-05", 3),
+            "OCW-2026-11-16_09-04-05-photo-3.jpg"
+        );
+        // An older ride's sidecar (no path) still reads.
+        let old = text
+            .lines()
+            .filter(|l| !l.starts_with("path"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(toml::from_str::<PhotoMeta>(&old).unwrap().path, None);
     }
 
     fn remote(rider: u32, shot: u32, taken: Option<f64>) -> SharedShot {

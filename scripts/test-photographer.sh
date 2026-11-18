@@ -14,7 +14,7 @@
 # photographer or the drone is in the rider's view the window is saved
 # (--photo-chase-shots). Writes to OUT_DIR:
 #
-#   photos/photo-N.jpg, photo-N.toml   the ride photos and their sidecars
+#   photos/OCW-…-photo-N.jpg, photo-N.toml  the ride photos and their sidecars
 #   chase/chase-NN-photographer|drone.jpg  the rider's view with them in it
 #   strava/*.fit                        the Strava recording's activity
 #   end.jpg, end.log                    the last frame and the app's log
@@ -38,6 +38,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 export OCW_DATA_DIR=$work/data
 export OCW_CONFIG_DIR=$work/config
+export OCW_PHOTOS_DIR=$work/Pictures/OCW
 export OCW_TEST_OUTPUT=off
 mkdir -p "$OCW_DATA_DIR" "$OCW_CONFIG_DIR"
 export OCW_SHOT_TIMEOUT=$((seconds + 240))
@@ -51,7 +52,7 @@ export OCW_SIZE=${OCW_SIZE:-1920x1080}
   --cmd "strava.record start" --cmd "photographer on" "${extra[@]}"
 rm -rf "$out/photos" "$out/strava"
 mkdir -p "$out/photos" "$out/strava"
-find "$OCW_DATA_DIR" -path '*/photos/*' -type f -exec cp {} "$out/photos/" \;
+find "$work" \( -path '*/photos/*' -o -path '*/Pictures/OCW/*' \) -type f -exec cp {} "$out/photos/" \;
 find "$OCW_DATA_DIR" -path '*/rides/strava/*' -type f -exec cp {} "$out/strava/" \;
 echo "photos: $(find "$out/photos" -name '*.jpg' | wc -l), chase views: $(find "$out/chase" -name '*.jpg' 2>/dev/null | wc -l), Strava activities: $(find "$out/strava" -name '*.fit' | wc -l)"
 grep -E 'ride photo|chase view|Strava recording' "$out/end.log" | sed 's|/[^ ]*/data/|DATA/|g' | tail -40 || true

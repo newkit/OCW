@@ -26,6 +26,9 @@ impl Plugin for HudPlugin {
         if !app.is_plugin_added::<crate::stamp::StampPlugin>() {
             app.add_plugins(crate::stamp::StampPlugin);
         }
+        if !app.is_plugin_added::<crate::photo_preview::PhotoPreviewPlugin>() {
+            app.add_plugins(crate::photo_preview::PhotoPreviewPlugin);
+        }
         app.init_resource::<ShowFps>()
             .init_resource::<ShowHud>()
             .init_resource::<Units>()
@@ -172,7 +175,7 @@ impl Units {
 pub struct HudTopPanel;
 
 /// The column at the top right: the timestamp, REC, the app message, the
-/// FPS counter.
+/// FPS counter, the photo preview.
 #[derive(Component)]
 pub struct HudTopRight;
 
@@ -781,6 +784,8 @@ fn spawn_recording(mut commands: Commands) {
                 StravaNotice,
             ));
             top.spawn(crate::frame_rate::badge_bundle());
+            // The preview of a photo just saved, under the FPS counter.
+            crate::photo_preview::spawn_card(top);
         });
 }
 

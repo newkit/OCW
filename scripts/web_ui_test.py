@@ -716,11 +716,15 @@ class UiTest:
         self.key("Enter")
         d, path = self.wait_download(".jpg")
         data = open(path, "rb").read() if path else b""
-        self.check("captures: the screenshot is a download named with the time",
-                   d is not None and d["name"].startswith("ocw-20"), d)
+        self.check("captures: the screenshot is a download named OCW-<time> (no photos folder chosen)",
+                   d is not None and d["name"].startswith("OCW-20"), d)
         self.check("captures: a JPEG with its time in EXIF",
                    data[:2] == b"\xff\xd8" and b"Exif" in data[:64] and b"Open Cycling World" in data[:4096],
                    f"{len(data)} bytes at {path}")
+        # The HUD's photo preview (spec §3.2, v4.73): 3 s at the top right.
+        self.shot("photo-preview")
+        self.check("photos: the page offers a photos folder or downloads",
+                   cdp.eval("typeof window.ocwPhotos.save === 'function'"), None)
 
         # Captures → Download this ride (FIT).
         self.key("Escape")

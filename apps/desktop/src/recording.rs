@@ -349,7 +349,7 @@ pub fn strava_recordings(rides: &Path) -> Vec<(i64, i64)> {
 fn rides_photos(
     world: &World,
 ) -> std::collections::BTreeMap<String, ocw_client::menu::history::RidePhotos> {
-    let mut out = std::collections::BTreeMap::new();
+    let out = std::collections::BTreeMap::new();
     let Some(dir) = world
         .get_resource::<Recording>()
         .and_then(|r| r.dir.clone())
@@ -359,9 +359,31 @@ fn rides_photos(
     let Some(h) = world.get_resource::<ocw_ui::history::TrainingHistory>() else {
         return out;
     };
-    let recordings = strava_recordings(&dir);
-    for r in &h.history.rides {
-        let files = crate::photos::ride_photos(&dir, &r.id);
+    let rides: Vec<(String, i64, f64)> = h
+        .history
+        .rides
+        .iter()
+        .map(|r| (r.id.clone(), r.start_unix_s, r.elapsed_s))
+        .collect();
+    photos_of_rides(&dir, &rides)
+}
+
+/// The photos of the rides (id, start, elapsed s) kept in `dir` – in the
+/// photos folder or, for rides before v4.73, beside their sidecars – and
+/// how many of them lie in a Strava recording (§2.8.1 ST3).
+pub fn photos_of_rides(
+    dir: &Path,
+    rides: &[(String, i64, f64)],
+) -> std::collections::BTreeMap<String, ocw_client::menu::history::RidePhotos> {
+    let mut out = std::collections::BTreeMap::new();
+    let recordings = strava_recordings(dir);
+    for (id, start, elapsed) in rides {
+        let r = HistoryRide {
+            id,
+            start_unix_s: *start,
+            elapsed_s: *elapsed,
+        };
+        let files = crate::photos::ride_photos(dir, r.id);
         if files.is_empty() {
             continue;
         }
@@ -384,6 +406,12 @@ fn rides_photos(
         );
     }
     out
+}
+
+struct HistoryRide<'a> {
+    id: &'a String,
+    start_unix_s: i64,
+    elapsed_s: f64,
 }
 
 /// What can be imported and exported now.
@@ -562,10 +590,10 @@ fn register_commands(app: &mut App) {
                 .get_resource::<Recording>()
                 .and_then(|r| r.dir.clone())
                 .ok_or("no rides folder")?;
-            let folder = crate::photos::photos_dir(&dir, &id);
-            if !folder.is_dir() {
-                return Err("this ride has no photos".into());
-            }
+            // The photos folder (Pictures/OCW), or the ride's own folder
+            // for rides before v4.73 (spec §2.11 Q3).
+            let folder = crate::photos::ride_photo_folder(&dir, &id)
+                .ok_or("this ride has no photos")?;
             crate::strava::auth::open_browser(&folder.to_string_lossy())?;
             Ok(format!("opened {}", folder.display()))
         },
@@ -643,6 +671,89 @@ mod tests {
         assert_eq!(ocw_fit::crc16(0, &bytes), 0);
         assert_eq!(load_meta(&a), Some(ride.meta));
         assert!(!dir.join("1970-01-01_00-00-00.fit.part").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The Strava recordings find the ride's photos (spec §2.8.1 ST3,
+    /// §2.11 Q3): those in the photos folder through the ride's sidecars
+    /// and an older ride's beside them; only the ones taken within a
+    /// Strava recording count for it.
+    #[test]
+    fn strava_recordings_find_the_photos_in_the_photos_folder() {
+        use ocw_render::media::MediaTime;
+        let dir = temp_dir("photos");
+        let route = Route::test_loop();
+        // A Strava recording from 0 to 2 s (Unix time; test samples).
+        let mut r = RideRecorder::new("Loop");
+        for i in 0..3 {
+            r.observe(
+                &route,
+                route.geo_origin(),
+                sample(f64::from(i), f64::from(i) * 8.0),
+                0,
+            );
+        }
+        let strava = crate::strava::recording::strava_dir(&dir);
+        save_ride(&strava, &r.finish().unwrap()).unwrap();
+        // (FIT counts from 1989-12-31: the test samples start there.)
+        let recs = strava_recordings(&dir);
+        assert_eq!(recs.len(), 1);
+        let (t0, t1) = recs[0];
+        assert_eq!(t1 - t0, 2);
+        let at = |s: i64| MediaTime {
+            unix_s: t0 + s,
+            offset_s: 0,
+        };
+        let rgb = vec![50u8; 16 * 9 * 3];
+        // The new ride: one photo in the recording, one after it, both in
+        // the photos folder.
+        let side = crate::photos::photos_dir(&dir, "new");
+        for (n, t) in [(1usize, 1i64), (2, 60)] {
+            let p = dir.join(format!("Pictures/OCW/OCW-new-photo-{n}.jpg"));
+            let m = crate::photos::tests::meta(
+                n,
+                format!("OCW-new-photo-{n}.jpg"),
+                Some(p.to_string_lossy().into_owned()),
+                &at(t),
+            );
+            crate::photos::write_photo(&p, Some(&side), &rgb, 16, 9, &m, &at(t), "OCW").unwrap();
+        }
+        // An older ride: its photo beside the sidecar.
+        let old = crate::photos::photos_dir(&dir, "old");
+        let m = crate::photos::tests::meta(1, "photo-1.jpg".into(), None, &at(2));
+        crate::photos::write_photo(
+            &old.join("photo-1.jpg"),
+            Some(&old),
+            &rgb,
+            16,
+            9,
+            &m,
+            &at(2),
+            "OCW",
+        )
+        .unwrap();
+        let rides = [
+            ("new".to_string(), t0, 100.0),
+            ("old".to_string(), t0, 10.0),
+            ("none".to_string(), t0, 10.0),
+        ];
+        let photos = photos_of_rides(&dir, &rides);
+        let new = &photos["new"];
+        assert_eq!(
+            new.files,
+            vec![
+                ("OCW-new-photo-1.jpg".to_string(), 1501.0),
+                ("OCW-new-photo-2.jpg".to_string(), 1502.0)
+            ]
+        );
+        assert_eq!((new.in_strava, new.recordings), (1, 1));
+        assert_eq!(new.summary(), "2 photos, 1 in 1 Strava recording");
+        assert_eq!(
+            photos["old"].files,
+            vec![("photo-1.jpg".to_string(), 1501.0)]
+        );
+        assert_eq!(photos["old"].in_strava, 1);
+        assert!(!photos.contains_key("none"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

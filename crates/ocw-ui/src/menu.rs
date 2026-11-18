@@ -910,7 +910,7 @@ mod tests {
         tap(&mut app, KeyCode::Enter);
         let v = view(&app);
         assert_eq!(v.title, "Captures");
-        assert_eq!(v.items.len(), 4);
+        assert_eq!(v.items.len(), 5);
         assert!(v.items[2].contains("FIT"));
         // Back; the workshop is locked (Q5).
         tap(&mut app, KeyCode::Escape);

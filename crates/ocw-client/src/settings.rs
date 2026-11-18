@@ -271,6 +271,14 @@ pub const SETTINGS: &[SettingDef] = &[
         apply: Apply::Command("hud.gps {}"),
     },
     SettingDef {
+        key: "display.photo_preview",
+        kind: Kind::Bool,
+        default: "on",
+        description: "Show a photo just saved (screenshot, ride photographer) for 3 seconds in the HUD (top right)",
+        scope: Scope::Live,
+        apply: Apply::Command("hud.photo_preview {}"),
+    },
+    SettingDef {
         key: "display.fps",
         kind: Kind::Bool,
         default: "off",
@@ -387,6 +395,16 @@ pub const SETTINGS: &[SettingDef] = &[
         description: "The ride photographer: a person or a drone takes up to 5 photos of nice views per ride",
         scope: Scope::Live,
         apply: Apply::Command("photographer {}"),
+    },
+    // Where photos go (spec §2.11 Q3): the Pictures folder's OCW; the
+    // browser asks for its folder instead (`photos.folder choose`).
+    SettingDef {
+        key: "photos.folder",
+        kind: Kind::Text,
+        default: "default",
+        description: "Folder for photos and screenshots: default = the Pictures folder's OCW (~/Pictures/OCW), or a path (~/ for the home folder)",
+        scope: Scope::Live,
+        apply: Apply::Command("photos.folder \"{}\""),
     },
     // Ride → Host a ride (spec §7.1.7 Q4): the router's ports opened by
     // UPnP while hosting; read at *Start hosting*, switched on the wizard's
@@ -1011,9 +1029,9 @@ const NOT_IN_BROWSER: &[&str] = &[
     "pad.fullscreen",
     "keys.restart",
     "pad.restart",
-    // The photos are files of the desktop app (spec §2.11; the browser's
-    // downloads are open).
-    "photographer.enabled",
+    // The browser chooses its photos folder through the File System
+    // Access API (spec §2.11 Q3: `photos.folder choose`), not by path.
+    "photos.folder",
     // Hosting needs the desktop app (browsers cannot open a port).
     "host.upnp",
 ];

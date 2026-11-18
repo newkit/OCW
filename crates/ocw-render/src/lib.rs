@@ -38,6 +38,7 @@ pub mod night_sky;
 pub mod obstacles;
 pub mod ortho;
 pub mod package;
+pub mod photo_preview;
 pub mod photographer;
 pub mod platform;
 pub mod quality;
