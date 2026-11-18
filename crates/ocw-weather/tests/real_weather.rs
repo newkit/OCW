@@ -50,7 +50,8 @@ fn open_meteo_forecast_parses() {
     let o = s.at(parse_iso("2026-11-14T11:00:00Z").unwrap()).unwrap();
     assert_eq!(o.temperature_c, Some(5.8));
     assert_eq!(o.cloud_cover, Some(0.0));
-    assert_eq!(o.visibility_m, Some(34_420.0));
+    // f32 maths: MSVC gives 34419.996 here, so compare within 0.1 m.
+    assert!((o.visibility_m.unwrap() - 34_420.0).abs() < 0.1);
     assert_eq!(o.pressure_hpa, Some(971.8));
     assert!(o.wind_mps.unwrap() < 1.0);
     let w = to_state(&normalize(&o, s.elevation_m, 455.0));

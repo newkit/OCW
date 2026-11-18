@@ -143,6 +143,7 @@ impl Plugin for PackagePlugin {
                     crate::far_terrain::update_far_terrain,
                     crate::far_terrain::hide_far_under_near,
                     crate::vegetation::lazy_plants,
+                    crate::ground_detail::lazy_ground,
                 )
                     .chain()
                     .run_if(resource_exists::<PackageWorld>),
@@ -150,6 +151,7 @@ impl Plugin for PackagePlugin {
             .add_systems(Update, crate::far_terrain::package_view)
             .add_systems(Update, crate::flight_world::show_details);
         crate::far_terrain::register_commands(app);
+        crate::ground_detail::register(app);
     }
 }
 
@@ -258,6 +260,9 @@ pub struct TileMeshes {
     /// Fences, walls, posts and road barriers (section `OBST`, spec §14
     /// Phase 12 K3).
     pub obstacles: crate::obstacles::TileObstacleMeshes,
+    /// What the tile keeps to place its near-field ground detail when a
+    /// camera comes close (spec §4.6.2, `ground_detail`).
+    pub ground_detail: crate::ground_detail::TileGroundDetail,
 }
 
 /// What the tile meshes are built for: with a material library, the far
@@ -1344,6 +1349,8 @@ pub fn build_tile_meshes_with(
     plants.crowns.shrink_to_fit();
     let lamps = crate::street_lamps::tile_lamps(pkg, key, keep, &ground);
     let obstacles = crate::obstacles::tile_obstacle_meshes(pkg, key, keep, &ground);
+    let ground_detail =
+        crate::ground_detail::tile_detail(pkg, key, keep, &terrain, &solid, look.season.clone());
     Some(TileMeshes {
         key,
         terrain,
@@ -1379,6 +1386,7 @@ pub fn build_tile_meshes_with(
         near_tint: look.near_tint,
         lamps,
         obstacles,
+        ground_detail,
     })
 }
 
@@ -2098,6 +2106,8 @@ fn upload_tile(
     streamer.terrain.insert(id, terrain_mat.clone());
     let lamps = std::mem::take(&mut t.lamps);
     let obstacles = std::mem::take(&mut t.obstacles);
+    let ground_detail = std::mem::take(&mut t.ground_detail);
+    let detail_pkg = member.package().cloned();
     let parent = commands
         .spawn((
             frame_transform(&frame),
@@ -2242,6 +2252,12 @@ fn upload_tile(
             // World objects (spec §14 Phase 12 K3): per chunk, up to
             // `obstacles::DRAW_M`; the road barriers only with
             // `display.road_barriers` (Q7).
+            // Near-field ground detail (spec §4.6.2): chunks near the
+            // roads, their meshes built near a camera
+            // (`ground_detail::lazy_ground`).
+            if let Some(pkg) = detail_pkg {
+                crate::ground_detail::spawn_chunks(c, pkg, ground_detail);
+            }
             for chunk in obstacles.chunks {
                 let mut e = c.spawn((
                     Mesh3d(meshes.add(chunk.mesh.mesh())),

@@ -93,6 +93,12 @@ pub struct QualityPreset {
     pub road_damage_share: f32,
     /// How far the road damage is drawn (m).
     pub road_damage_m: f32,
+    /// The share of the near-field ground detail drawn (spec §4.6.2,
+    /// `ground_detail`: stones, dirt, tufts, leaves beside the roads; 0
+    /// none, 1 all).
+    pub ground_detail: f32,
+    /// … up to this distance from the camera (m), faded out before it.
+    pub ground_detail_m: f32,
 }
 
 impl QualityPreset {
@@ -114,6 +120,8 @@ impl QualityPreset {
                 max_pixel_ratio: None,
                 road_damage_share: 1.0,
                 road_damage_m: 160.0,
+                ground_detail: 1.0,
+                ground_detail_m: 80.0,
             },
             QualityLevel::Medium => Self {
                 level,
@@ -129,6 +137,8 @@ impl QualityPreset {
                 max_pixel_ratio: Some(2.0),
                 road_damage_share: 0.8,
                 road_damage_m: 110.0,
+                ground_detail: 0.6,
+                ground_detail_m: 55.0,
             },
             // WebGL 2 and phones: one cascade (WebGL 2 has no more) over
             // the rider's surroundings, no MSAA.
@@ -146,6 +156,8 @@ impl QualityPreset {
                 max_pixel_ratio: Some(1.0),
                 road_damage_share: 0.55,
                 road_damage_m: 60.0,
+                ground_detail: 0.25,
+                ground_detail_m: 35.0,
             },
         }
     }
@@ -235,7 +247,7 @@ impl QualityPreset {
             None => "full".into(),
         };
         format!(
-            "shadows {px}² × {n} over {distance:.0} m, MSAA {msaa}, view {view}, trees {trees}, house LOD × {lod:.2}, particles {p}, pixel ratio {ratio}",
+            "shadows {px}² × {n} over {distance:.0} m, MSAA {msaa}, view {view}, trees {trees}, house LOD × {lod:.2}, particles {p}, pixel ratio {ratio}, ground detail × {gd:.2} to {gdm:.0} m",
             px = self.shadow_map_px,
             msaa = match self.msaa_samples {
                 0 | 1 => "off".to_string(),
@@ -249,6 +261,8 @@ impl QualityPreset {
                 Some(r) => format!("≤ {r}"),
                 None => "native".into(),
             },
+            gd = self.ground_detail,
+            gdm = self.ground_detail_m,
         )
     }
 }
