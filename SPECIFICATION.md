@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 4.78 – November 2026
+Version 4.79 – November 2026
 
 | Version | Change |
 |---|---|
+| 4.79 | **Plan for ANT+ heart-rate straps: a second device backend over an ANT USB stick, desktop first; planning only, not built, with open questions** (asked by the user 2026-11-18: "plan for ANT+ heart rate sensor support"; new §3.4.1, new §14 Phase 17; §1.3, §3.4 and §16 point to it; numbered after the highest, may be renumbered at merge): the sticks (ANT USB-m `0fcf:1009` first, ANT USB2 `0fcf:1008`, clones; Linux `usb_serial_simple` and a udev rule, Windows WinUSB, macOS without a driver), the ANT messages and the heart-rate channel setup (device type 120, period 8070, 2457 MHz, wildcard pairing, extended data), the heart-rate profile (pages 0 – 7, toggle bit, legacy straps, RR intervals, staleness), several straps on one stick, search and reconnect; the ANT+ network key facts with sources (Garmin shows it subject to the ANT+ Adopter Agreement and says not to publish it; openant and GoldenCheetah ship it, ant-rs leaves it to the user) as options without a decision; an own pure codec / channel / profile in `ocw-devices::ant` with a stick service and `nusb` (ant-rs as a reference), `AntDevice: DeviceBackend`, `devices.toml` `transport = "ant"`, one heart-rate source when BLE and ANT+ straps are both there, the browser later via WebUSB or the sensor bridge; FE-C, power and speed / cadence named for later; milestones A1 – A6 (about 2.5 – 3.5 agent days for the desktop), tests; open Q1 (the network key), Q2 (which stick – we have none), Q3 (browser), Q4 (priority), Q5 (heart rate only or FE-C too), Q6 (two straps), Q7 (Windows driver), Q8 (udev rule). |
 | 4.78 | **Standalone VR starts with WebXR on the Quest 1: V8 WebXR basic first, measure the frame rate in the headset, then decide between V3 and the native app** (the user, 2026-11-18; Phase 14 Q5 decided): new 14I – W0 check the Quest 1 browser, W1 the XR session in the browser app (spike: Bevy stepped from the XR frame callback, the eyes into the session's framebuffer, proved in the Immersive Web Emulator), W2 the desktop VR work reused (bike computer, head, controllers), W3 a `quest1` quality level, frame-time readout and stats beacon, W4 the first headset run (5 min, virtual power), the decision gate at 65 / 36 fps; open Q6 (where the headset loads the app from), Q7 (trainer in the first runs), Q8 (seated or standing). |
 | 4.77 | **Place names in the world packages, on the studio's 2D map and on the HUD's navigation map: cities, towns, villages and smaller places from OSM, the smaller ones hidden when the map gets crowded** (asked by the user 2026-11-17: "add names of cities. hide names of smaller places when it gets too crowded in the 2d map"; §4.7 *Places section*, §3.2 *Navigation map*, §14 Phase 16 16A *Map labels*; numbered after 4.73, may be renumbered at merge). New optional package section `PLCE` (`ocw_world::places`, pure and wasm-safe): OSM `place=city … isolated_dwelling` with `name`, the `name:*` of six languages, `population`, `capital` / `admin_level`, the position in package metres and a rank (city 0 … locality 5; capitals of countries and states one higher), from nodes and, where a place is only an area, the area's centroid; older readers skip it, packages without it load with no places, skeletons keep it. `world-builder package` writes it; `world-builder places --world PKG --pbf …` adds it to a built package with every other section unchanged. The studio's 2D map draws the names sized and weighted by rank and zoom through a greedy decluttering pass every frame (`layout_labels`: rank, population, last frame's labels, distance to the view's centre; a label only where its box overlaps none placed before it; a 4-point hysteresis so panning does not flicker); `studio map X Z M_PER_PX` sets the map's view. The **HUD navigation map** (both apps) fills its labels hook from the loaded packages' places and draws up to 8 names chosen by `ocw_map::labels::navi_labels`: cities and towns at every zoom level, villages from 6.5 m per point, hamlets and suburbs from 4, neighbourhoods from 2.5, localities from 1.6, decluttered by the same pass with its hysteresis and kept off the compass, scale, zoom and rider arrow; UI text over the turning map, so upright, with a day or night halo, and no tile redraws (§3.2 Q8 stays open; this is the default meanwhile). Marge's packages rebuilt with the section into `data/places-build/` (not deployed): Liechtenstein 107 places (+4 KB), Black Forest north 1,418 / middle 1,994 / south 2,209 (+56 / +80 / +89 KB), Tenerife 1,823 (+76 KB); only `PLCE` differs. Tests: the section's round trip, newer layouts and fields, old packages, the builder on a made-up OSM XML fixture, the label layout (a crowded set keeps the cities, zooming in reveals villages, deterministic, no flicker while panning), the studio's candidates, the navigation map's label choice at its zoom levels, no overlap with its marks at four headings, steady while riding. Open: the name language |
 | 4.76 | **Simple Strava upload for every rider, no API app: a ride's page in the training history has *Upload to Strava (in your browser)* – the ride's FIT file (or its Strava recordings) at hand under a recognisable name, Strava's own upload page opened, the steps shown – and a *Marked as uploaded* toggle the API sync respects; the own-API-app upload stays as the advanced way** (asked by the user 2026-11-18: "can you implement the simple strava upload for users without subscription?"; §2.8.1 *Simple upload*; numbered after the highest, may be renumbered at merge). Desktop: the files are copied to `<data dir>/ocw/rides/strava-upload/` (only this upload in it, with the ride's photos) as `OCW 2026-11-18 10-05 Tenerife – Puerto de la Cruz–Teide.fit`, the folder opens in the file manager with the file selected (`xdg-open` on the folder / `explorer /select,` / `open -R`) and https://www.strava.com/upload/select in the default browser; browser app: the FIT download under that name and the upload page in a new tab. `strava.upload-manual [N] [--whole]`, `strava.mark-uploaded N [on\|off\|toggle]` (both apps); the mark is kept in the training history (`strava_marked`) and, on the desktop, in `rides/strava-manual.toml`, which the API sync skips. S records without `strava.toml` too; its stop and the end of a ride point to the upload ("Upload it to Strava in your browser: Navi > Training history > the ride" instead of "Strava is not set up"). New open question §2.8.1 Q7 (a "copy to Downloads" button) |
@@ -334,7 +335,7 @@ Functionally, the simulation is modeled on Zwift and MyWhoosh, but it shall have
 
 ### 1.3 Deferred and Future Items
 
-- **ANT+** support is deferred. The device abstraction (§3.4) allows adding an ANT+ backend later without changes to other crates.
+- **ANT+** support is not built yet. It is **planned** (2026-11-18, v4.79): heart rate first, as a second backend behind the device abstraction (§3.4) without changes to the other crates – §3.4.1 and §14 Phase 17, with open questions (the network key first).
 - **Full web client** and **native mobile apps** are future development. The architecture must not block them (§3.5).
 
 ---
@@ -1510,7 +1511,7 @@ Bluetooth Low Energy profiles:
 Library: **btleplug**.
 
 - The device layer (`ocw-devices`) has **no dependency on the 3D engine**. It runs on its own Tokio runtime/thread and talks to the app over channels.
-- It defines a `DeviceBackend` trait. BLE is the first implementation. **ANT+ is deferred** and will be a second backend later.
+- It defines a `DeviceBackend` trait. BLE is the first implementation. **ANT+ is planned, not built** (v4.79): a second backend, heart rate first – §3.4.1, milestones and open questions in §14 Phase 17.
 - Paired devices are remembered and reconnected automatically (desktop: `devices.toml` in the config directory, written once a device connected; browser: `localStorage`; the menu's *Devices* page, §3.2.1).
 - Hardware is always connected to the **client** only; the server never talks to hardware (§6.1).
 - Per-platform requirements, implemented in the rollout order (§11.1):
@@ -1525,6 +1526,122 @@ Trainer control is described in §5.3.
 - Commands: unlock (`0x20`), ERG target (`0x42`), SIM mode with rider + bike mass, Crr and wind coefficient (`0x43`), gradient (`0x46`), wind speed (`0x47`). Answers are indications `[0x01, op code, result, …]` with result `0x01` = success.
 - The layout is not officially documented; it was verified against the real KICKR with the hardware-in-the-loop tool (`cargo run -p ocw-devices --example ble -- ride <id>`), and the recorded answers are unit-test fixtures.
 - **One control procedure at a time** (FTMS and Wahoo): a second write before the answer is rejected (observed: ATT error `0x80`). The client queues control writes, sends the next after the answer or a 1.5 s timeout, and replaces a queued gradient or target with the newest one.
+
+#### 3.4.1 ANT+ heart rate (planning, 2026-11-18; not built)
+
+Asked by the user (2026-11-18): *"plan for ANT+ heart rate sensor support"*. Until now ANT+ was deferred (§1.3). This section is the technical plan; the milestones, tests and open questions are **§14 Phase 17**. **Nothing of it is built**, and the network key question (Phase 17 Q1) has to be decided first. Facts as found on 2026-11-18 from the sources named below – re-check before building; what is uncertain says so.
+
+**Goal and scope.** Heart rate from ANT+ heart-rate straps (chest straps, arm bands, watches that broadcast) through an ANT USB stick, in the desktop app on Linux, then Windows and macOS (§11.1), as a **second backend behind `DeviceBackend`** next to BLE. The rest of the client sees the same `DeviceEvent::HeartRate { bpm, timestamp }` as from a BLE strap: no change to `ocw-sim`, `ocw-protocol`, the server, the HUD or the FIT writer. Power meters, speed / cadence and FE-C trainers come later on the same base (*Later scope* below).
+
+**Hardware: ANT USB sticks**
+
+| Stick | USB id | Linux | Windows | macOS |
+|---|---|---|---|---|
+| **Garmin / Dynastream ANT USB-m** (the current stick, small) | `0fcf:1009` | claimed by the kernel's `usb_serial_simple` (Suunto id list, since about Linux 3.12; older kernels need `modprobe usbserial vendor=0x0fcf product=0x1009`) → `/dev/ttyUSBn`; or opened as raw USB after detaching that driver | Garmin's *ANT USB* driver (installed with Garmin Express / ANT Agent, also from Garmin's ANT downloads); raw USB from our code needs **WinUSB** on the device (Zadig) | no kernel driver claims it: raw USB works without a driver (openant: "macOS should work with just libusb installed"; ant-rs has `mac_usb` examples) |
+| **Garmin / Dynastream ANT USB2** (older, larger) | `0fcf:1008` | the same `usb_serial_simple` driver (in the old `suunto` driver before) → `/dev/ttyUSBn`; or raw USB | Silicon Labs CP210x inside; Garmin's driver; raw USB needs WinUSB (Zadig); whether it also shows as a COM port with SiLabs' VCP driver is **uncertain** | as the USB-m |
+| **Clones** ("ANT+ USB stick" from CooSpo, CYCPLUS, Anself, …) and older OEM sticks (Suunto Movestick mini) | mostly report `0fcf:1008` or `0fcf:1009` and speak the same serial ANT protocol | as the original | as the original | as the original |
+
+- **Same protocol on every stick:** the host sends and receives ANT serial messages (below) as bytes – over the USB bulk endpoints, or over the tty / COM port when a serial driver owns the stick. One `AntLink` trait (write bytes, read bytes) hides which.
+- **Linux access:** the tty route needs the user in the `dialout` group (Debian, Ubuntu) or a udev rule; the raw USB route needs a udev rule for the device node, e.g. `SUBSYSTEM=="usb", ATTRS{idVendor}=="0fcf", ATTRS{idProduct}=="1008|1009", MODE="0660", TAG+="uaccess"`, and must detach `usb_serial_simple` (`nusb` and libusb can). An AppImage cannot install a udev rule; packages can (Phase 17 Q8). Without access the app says so in the Devices page (*no permission for the ANT stick – see …*) instead of failing silently.
+- **Windows:** the raw USB route through `nusb` / libusb needs WinUSB bound to the stick (Zadig, or an installer step with libwdi). Replacing Garmin's driver may stop Garmin's own tools from seeing that stick (**uncertain**; it is undone in the Device Manager). Alternatives: a COM port (only if a VCP driver gives one – uncertain for both sticks) or Garmin's closed `ANT_DLL` through FFI (not preferred: a binary we cannot build or test on Linux). Phase 17 Q7.
+- **One app at a time:** a stick is opened by one program; Garmin Express / ANT Agent, Zwift or a second OCW grab it. The Devices page names the case (*the ANT stick is busy with another app*).
+- **Which first (proposal):** the **ANT USB-m (or a clone with `0fcf:1009`) on Linux over raw USB (`nusb`)**, because it is the stick on sale today and the one most clones copy; the ANT USB2 over the same code (same endpoints and messages, to be checked with hardware), the tty route only if raw USB fails somewhere.
+
+**Protocol: ANT messages, channels and the heart-rate profile**
+
+*ANT serial messages* (ANT Message Protocol and Usage, Garmin/Dynastream; the same on USB and serial): `0xA4` (sync), length (of the data), message id, data, checksum (XOR of all bytes before it, sync included). The receiver hunts for the sync byte and drops a message whose checksum fails, so a garbled byte costs one message, not the stream.
+
+*Setup of one receiving channel for a heart-rate strap* (message ids as in the protocol document; each command is answered by a *Channel Response* `0x40` with the command's id and `RESPONSE_NO_ERROR`, which the state machine waits for before the next):
+
+| Step | Message | Value for ANT+ heart rate |
+|---|---|---|
+| 1 | Reset system `0x4A`; the stick answers with a start-up message `0x6F` | wait up to 1 s (some sticks send nothing; then go on after 500 ms) |
+| 2 | Request capabilities (`0x4D` → `0x54`) | number of channels (8 on these sticks), extended messages supported |
+| 3 | Set network key `0x46` (network 0) | the **ANT+ network key** (8 bytes; see *network key and licensing* – it is not in this specification) |
+| 4 | Assign channel `0x42` | channel n, type `0x00` (bidirectional receive / slave), network 0 |
+| 5 | Channel ID `0x51` | device number (u16; **0 = any**, wildcard pairing), device type **120** (`0x78`, heart rate; bit 7 is the pairing bit), transmission type (**0 = any**) |
+| 6 | Channel period `0x43` | **8070** (32768 / 8070 ≈ 4.06 messages/s; the profile also allows 16140 and 32280, at half and quarter rate) |
+| 7 | RF frequency `0x45` | **57** (2457 MHz, the ANT+ frequency) |
+| 8 | Search timeout `0x44` (and low priority search timeout `0x63`) | proposal: low priority 10 × 2.5 s, high priority 0 (does not block the other channels) |
+| 9 | Lib config `0x6E` (once, for the stick) | `0x80`: every received message carries the sender's channel ID (extended data), so a wildcard channel learns the strap's device number from its first message; on sticks without it, *Request* `0x4D` of `0x51` after the first message |
+| 10 | Open channel `0x4B` | the channel searches, then receives broadcast data `0x4E` (8 bytes of payload) about 4 times a second |
+
+- *Channel events* (`0x40` with message id 1): `EVENT_RX_FAIL` (one missed message: keep the last value), `EVENT_RX_FAIL_GO_TO_SEARCH` (the strap is gone: *reconnecting*), `EVENT_RX_SEARCH_TIMEOUT` and `EVENT_CHANNEL_CLOSED` (the channel stopped searching: reopen it after `RECONNECT_DELAY`, the same 5 s as BLE).
+- *The device number* (16 bits; with the upper nibble of the transmission type 20 bits) identifies a strap. It is printed in no UI; the Devices page shows "ANT+ heart rate 12345", the manufacturer (page 2) and model (page 3) once they arrived.
+
+*The ANT+ Heart Rate device profile* (ANT+ Device Profile *Heart Rate Monitor*, document D00000693; 8-byte pages):
+
+- **Byte 0:** bits 0–6 the page number, bit 7 the **page toggle bit** – it flips every 4 messages on straps that send the newer pages. **Legacy straps** never toggle and send only the common bytes 4–7: if the bit has not changed within the first ~10 messages, bytes 0–3 are ignored.
+- **Bytes 4–7 in every page:** bytes 4–5 the **heart beat event time** (u16, 1/1024 s, rolls over every 64 s), byte 6 the **heart beat count** (u8, rolls over), byte 7 the **computed heart rate** (bpm; 0 = invalid → no sample). OCW uses byte 7 as the heart rate (what the strap computes, as with BLE).
+- **Pages:** 0 default (no extra data), 1 cumulative operating time, **2 manufacturer information** (manufacturer id, upper serial bits), **3 product information** (hardware, software version, model), **4 previous heart beat event time** (bytes 2–3: the time of the beat before, for **RR intervals**), 5 swim interval summary, 6 capabilities, **7 battery status** (level %, voltage, status new / good / ok / low / critical). Pages 1–3, 6, 7 are background pages sent now and then (about every 65th message) between the main page (0 or 4).
+- **RR intervals** (for later HRV, not shown yet – BLE parses them too but `DeviceEvent` does not carry them): when the beat count went up by exactly 1, RR = (event time − previous event time) mod 65536 / 1024 s (page 4 gives the previous time directly; else the previous message's time). A gap of more than one beat gives no RR.
+- **Staleness:** a strap without a new beat for 5 s (event time unchanged) reports no heart rate (the profile asks receivers to show it invalid), so a strap lying on the table is not a frozen 72 bpm in the FIT file.
+
+*Several sensors:* one channel per strap (or later per power meter, …), all on one stick (8 channels): the stick is opened once by an **`AntStick` service** (its own thread, below) that hands out channels; each ANT device is its own `DeviceHandle`, as each BLE device is.
+
+*Search and pairing in the Devices page* (§3.2.1 *Devices*, the same page): *Scan for devices* also scans ANT+ when a stick is plugged in – a wildcard heart-rate channel (device number 0) with the device numbers already found or connected excluded (*inclusion / exclusion list*, `0x59` / `0x5A`) so each scan round finds the next strap; the found straps join the list live, as BLE devices do (`merge_found`), shown "ANT+ heart rate 12345" with the signal where the stick reports RSSI (extended data). Choosing one connects by its device number (and transmission type), so a neighbour's strap in a group ride is never taken by accident. *Proximity search* (`0x71`, nearest strap only) is an option for the first pairing if wildcard search picks up several (a detail for A3). A stick with **continuous scanning mode** (`0x5B`, one channel listening to all) could list every strap at once, but it takes the whole radio; not used while channels ride.
+
+*Reconnection:* a lost strap goes back to search by itself (`EVENT_RX_FAIL_GO_TO_SEARCH` → *reconnecting*, `Disconnected`); a closed channel is reopened by the same supervise loop as BLE (`runner::supervise` pattern, `RECONNECT_DELAY`); an unplugged stick ends all its channels with `Failed { reason }` (a new reason *no ANT stick*), and the service reopens the stick every 5 s, then all its channels.
+
+**The ANT+ network key and licensing (open: Phase 17 Q1)**
+
+An ANT+ device only hears an ANT+ strap when its channel uses the **ANT+ network key**, an 8-byte value Garmin publishes for ANT+ adopters. What the sources say (2026-11-18; we are not lawyers – this is a summary, not legal advice):
+
+- **Garmin's network keys page** (the former thisisant.com pages now redirect to developer.garmin.com) shows the ANT+ key in the page without a log-in or click-through, under the line *"All materials accessible below are subject to the ANT+ Adopter Agreement"*, and says *"The ANT+ network key and RF frequency 2457MHz may only be used by ANT+ devices"* – devices that *"strictly adhere to the ANT+ Device Profiles"*; the recipient *"must be an ANT+ Adopter pursuant to the ANT+ Adopter's Agreement"*. ([developer.garmin.com/ant-program/ant-ant-plus/network-keys](https://developer.garmin.com/ant-program/ant-ant-plus/network-keys/))
+- **Garmin's licensing / downloads pages:** *"use of the ANT+ network key is subject to the ANT+ Adopter Agreement"*; non-ANT+ products *"may not use the ANT+ network key or the ANT+ frequency (2457MHz)"*; and, for ANT+ shared-source software, *"do not publish the ANT+ Network Key"*. ([licensing](https://developer.garmin.com/ant-program/licensing/), [downloads](https://developer.garmin.com/ant-program/downloads/))
+- **The ANT+ Shared Source License** (Garmin's reference code marked with the ANT+ icon) lists as prohibited *"Redistribution of source code containing the ANT+ Network Key"* and adds *"The ANT+ Network Key is available to ANT+ Adopters."* Whether this binds code that does not use Garmin's reference code (ours would not) is **unclear**. ([shared source license](https://developer.garmin.com/ant-program/licensing/shared-source-license/))
+- **The ANT+ Adopter Agreement:** becoming an adopter is free (an account on Garmin's developer site and accepting the agreement). Its web summary says adopters do *"not reference or include the ANT+ trademarks or logos"* unless the product *"complies with the minimum requirements for interoperability as defined in the ANT+ Documents or granted a written exception from Garmin"*; *ANT+ Certification* is a resource for adopters. The full current text (the old PDF link of 2011 redirects) was **not readable** for this plan – to be read before Q1 is decided. ([adopter agreement](https://developer.garmin.com/ant-program/licensing/adopter-agreement/))
+- **What other open-source projects do:** [openant](https://github.com/Tigge/openant) (Python, MIT, maintained in 2026) and [GoldenCheetah](https://github.com/GoldenCheetah/GoldenCheetah) (C++, GPL, `src/ANT/ANT.cpp`) **ship the key in their source**; the Rust crate [ant-rs](https://github.com/cujomalainey/ant-rs) (MIT / Apache-2.0) **leaves it to the user** (its examples have a placeholder: "Get this from thisisant.com"); [ant-sum-dashboard](https://github.com/ZetaTwo/ant-sum-dashboard) notes that the key is gated behind the adopter registration. No public enforcement case against an open-source project was found (which proves nothing either way).
+
+**Options (no decision; the user decides, Phase 17 Q1):**
+- **(a) Ship the key in the source** (MIT / Apache, like openant and GoldenCheetah): it works out of the box; it goes against *"do not publish the ANT+ Network Key"* and the shared-source rule if those apply to us, with the risk of a takedown request.
+- **(b) The user provides the key:** a setting (in `secrets.toml` of §3.2.4 Q2, or `ocw.toml`), entered once in the Devices page with a short hint where Garmin publishes it; the source and the releases carry no key (as ant-rs does). Compliant with the published guidance as far as we can tell; one extra step for every rider.
+- **(c) The project becomes an ANT+ adopter** (free; the user's account – a decision of the user) **and only release builds carry the key** (from a CI secret, never in the repository); source builds behave as (b). Whether binaries "publish" the key in the agreement's sense is **uncertain**; it can be asked of Garmin.
+- **(d) Ask Garmin** (through the adopter program) whether an MIT / Apache project may ship the key, and decide after the answer – (b) in the meantime.
+
+**Naming and certification (with Q1):** the app may say what it does in plain words ("ANT+ heart-rate straps through an ANT USB stick") – whether that already counts as *referencing the ANT+ trademark* under the agreement is **uncertain**; the **ANT+ logo is not used** without certification. ANT+ certification (interoperability tests, Garmin's process and any costs: not found) is a later choice.
+
+**Rust implementation (proposal)**
+
+| Option | What | Assessment |
+|---|---|---|
+| **`ant` crate (ant-rs)** | ANT messages, USB and serial drivers, ANT+ profiles incl. a heart-rate *display* (receiver) | MIT OR Apache-2.0, `no_std` capable, `rusb` optional; **no release**, the current code on its `development` branch (last commit 2025-04-13; `main` pushed 2025-11-01), 22 stars; the crates.io versions are reported stale (ant-sum-dashboard; not checked further). A git dependency, libusb (C) through `rusb`, its own runtime model – useful as a **reference and cross-check**, not as our dependency |
+| **Own pure state machine in `ocw-devices::ant`** (preferred) | like `gatt` + `ble::protocol` + `ble::runner` | small (the codec, one channel's setup, one profile), wasm-safe, unit-tested with byte sequences, the same runner on the desktop and in the browser; we own the error handling and the Devices page's reasons |
+
+*Layers (as `ble`):*
+- `ant::codec` (pure): encode / decode ANT messages (sync, length, id, checksum), a resyncing stream decoder, the message ids and response / event codes we use.
+- `ant::channel` (pure): one channel's state machine – setup steps → searching → tracking ↔ lost → closed – emitting the bytes to send and the `DeviceEvent`s, driven by received messages and `on_tick(now)` like `TrainerProtocol`.
+- `ant::hr` (pure): the heart-rate page decoder (toggle bit, legacy straps, computed heart rate, beat time / count with rollovers, RR intervals, staleness, manufacturer / product / battery pages).
+- `ant::stick` (pure core + native thread): the stick service – reset, capabilities, network key, lib config once; channel numbers handed out and returned; incoming messages routed to their channel by channel number.
+- `ant::runner`: the async loop between an **`AntLink`** (bytes in / out) and the stick service, on any executor (`runner::Timer`), with a supervise loop for a lost stick – the same shape as `ble::runner`.
+- *Links:* `ant::usb` (native): `AntLink` over **`nusb`** (pure Rust, no libusb; Linux usbfs with driver detach, Windows WinUSB, macOS IOKit; MIT / Apache-2.0) – one thread with the bulk IN / OUT transfers, like `BleDevice`'s own Tokio thread; later, if needed, a serial link (`serialport` crate – its licence is MPL-2.0, to be checked against §13 before use) for tty / COM sticks; in the browser a WebUSB link (below).
+- *Backend:* **`AntDevice: DeviceBackend`** (name "ANT+ heart rate 12345", start → a `DeviceHandle` with `HeartRate` / `Connected { kind: "heart-rate sensor (ANT+)" }` / `Disconnected` / `Failed`), sharing one `AntStick` handle (started on first use, stopped with the last channel). `FailReason` gets *no ANT stick* and *no permission for the ANT stick* (additive; the texts in the Devices page). `ant::scan_live` reports found straps as `FoundDevice` (id `ant:120:<device number>:<transmission type>`, `Profile::HeartRate`).
+- *Tool:* `cargo run -p ocw-devices --example ant -- sticks | scan | monitor <device number>` for the hardware step, like the `ble` example.
+
+**Integration**
+
+- **Desktop devices plugin** (`apps/desktop/src/devices.rs`): `DeviceIo` gets the ANT connector and scanner next to Bluetooth (one scan runs both; an `ant:` id connects through ANT); the rest of the flow – live list, connect, remember once connected, forget, reconnect at start – stays as it is. The trainer control loop does not involve ANT heart rate.
+- **`devices.toml`:** `kind` already means the role (`trainer`, `power`, `cadence`, `hr`, v3.74), so the transport is a **new optional field**: `transport = "ant"` (missing = `"ble"`, old files unchanged), the id `ant:120:12345:1` (device type, device number, transmission type), `kind = "hr"`. With `ocw.toml` (§3.2.4) the same fields move into its `[devices]` section.
+  ```toml
+  [[device]]
+  id = "ant:120:12345:1"
+  name = "ANT+ heart rate 12345"
+  kind = "hr"
+  transport = "ant"
+  ```
+- **Device menu** (§3.2.1 *Devices*, `ocw_client::menu::devices`): an entry's value says the transport ("heart rate, ANT+, connected, remembered"); with no stick plugged in, a row *ANT+: no stick* (dimmed) so riders know why no ANT+ strap appears; a missing key (option (b) of Q1) shows *ANT+: network key needed* with the row to enter it.
+- **A BLE and an ANT+ strap at once:** today every heart-rate event reaches `ClientCore`, so two straps would interleave. Many straps (Garmin HRM-Dual / Pro, Wahoo TICKR, Polar H9 / H10, …) broadcast both at once and would show twice; the two cannot be matched reliably (the BLE name sometimes carries digits of the ANT id – not reliable). Proposal: **one heart-rate source at a time** – the first connected remembered strap; the other is kept as a fallback when the first sends nothing for 5 s; the device page has *Use for heart rate*. Phase 17 Q6.
+- **FIT recording:** the same `heart_rate` field from the same samples; optional (milestone A6): a FIT `device_info` record for the strap (`source_type = antplus`, `ant_device_number`, `ant_transmission_type`, manufacturer, product, battery status), as head units write.
+- **HUD:** unchanged – the heart rate shows as from BLE; the device status marks a strap that is *reconnecting* or *not connected*, as today.
+- **Browser app:** the pure layers build for wasm; only a link is new. **WebUSB** (Chromium only, HTTPS, the browser's chooser; the device filter `0fcf:1008/1009`) can drive the stick directly – projects do it ([WebANT](https://github.com/dvmarinoff/WebANT): Chrome on macOS, Linux and Android; [ant-plus-next](https://github.com/Benjamin-Stefan/ant-plus-next): Node and WebUSB). Limits: on **Windows** WebUSB needs WinUSB on the stick (Zadig), on **Linux** a udev rule and the kernel's serial driver out of the way, no Safari / Firefox; **Web Serial** (Chromium desktop) could use the tty / COM route instead (**untested**). Proposal: **not in the browser at first**; browsers get ANT+ heart rate through the **sensor bridge** (Phase 10, 10D.2) from a desktop app, and a WebUSB link later if wanted (Phase 17 Q3).
+- **Android** (Phase 14, 14B): Android has its own ANT stack on some phones and USB-OTG sticks; not planned here.
+
+**Later scope (named, not planned in detail)**
+
+The HR work builds the parts the other ANT+ profiles reuse: the codec, the stick service with several channels, search / pairing / reconnect, the Devices page and `devices.toml` entries. Each later profile is a decoder (and a control queue) on top:
+- **Bike power** (device type 11, period 8182): power-only page `0x10`, torque pages `0x11` / `0x12`, calibration `0x01`; → `DeviceEvent::Power` like a BLE power meter.
+- **Speed and cadence** (types 121 combined / 122 cadence / 123 speed): event time and revolution counts, as the BLE CSC code (`gatt::cadence`).
+- **FE-C trainers** (type 17, period 8192): data from pages 16 / 25; **control** by *acknowledged* messages (`0x4F`, answered by transfer events) – page 48 basic resistance, 49 target power (ERG), 50 wind resistance, 51 track resistance (gradient, Crr; SIM) – the `SimulationParameters` of §5.3 map onto pages 50 / 51. One control message at a time with retries, as `ble::protocol` queues FTMS / Wahoo writes. This is the step that makes ANT-only trainers usable (Phase 17 Q5).
 
 ### 3.5 Keeping Future Clients Possible
 
@@ -6042,6 +6159,42 @@ The studio makes them interactive:
 - **Q23 – Via-points of an imported track (Routes, E1):** an imported track gets a via-point every kilometre, so dragging changes only the kilometre around the drag. Proposal: **keep 1 km**. Alternatives: fewer (every 5 km, or only start and end – a drag then re-plans the whole track) or at every turn of the track.
 - **Q24 (open) – The level-of-detail distance of props, creatures and workshop pieces (Models, E3):** the studio's *auto* level shows the game's switch for bikes, riders, wear (40 m) and plants (270 m); props, the unicorn and the workshop have no switch in the game yet, so their `lod1` is only shown when chosen. Proposal: **props switch at 60 m, the unicorn at 40 m like the riders, workshop pieces never** (seen only up close), set in `ocw_render` when the props and the unicorn are drawn from their files (MX, M4). Alternatives: other distances, or a screen-size rule for all kinds.
 
+### Phase 17 – ANT+ sensors: heart rate first (planning, 2026-11-18; not built, open questions Q1 – Q8)
+
+**Goal:** heart rate from ANT+ straps through an ANT USB stick in the desktop app, as a second `DeviceBackend` next to BLE (§3.4.1 has the hardware, the protocol, the licensing facts, the Rust design and the integration). Asked by the user (2026-11-18): *"plan for ANT+ heart rate sensor support"*. The base it lays (codec, stick service, channels, search, reconnect) carries power meters, speed / cadence and FE-C trainers later (§3.4.1 *Later scope*). **Blocked by Q1** (the network key) for anything that talks to a real strap; A1 – A2 can start without it (tests use a dummy key).
+
+#### 17A – Milestones (proposal; effort in agent time)
+
+- **A1 – Codec, channel and heart-rate decoder (pure):** `ocw-devices::ant::{codec, channel, hr}` with their unit tests; builds for wasm. About **0.5 day**.
+- **A2 – Stick service, runner and USB link:** `ant::stick`, `ant::runner` with the supervise loop, the mock stick, `AntLink` over `nusb` (native), `AntDevice: DeviceBackend`, `ant::scan_live`, the `ant` example (`sticks | scan | monitor`). About **0.5 – 1 day**.
+- **A3 – Desktop integration:** `DeviceIo` with ANT, the Devices page (transport in the value, *ANT+: no stick*, *network key needed* if Q1 says so), `devices.toml` `transport = "ant"`, reconnect at start, the heart-rate source rule (Q6), the new `FailReason`s; the desktop flow test with a mock ANT stack. About **0.5 – 1 day**.
+- **A4 – Hardware step (needs a stick and an ANT+ strap, Q2):** on marge (Linux, X11 and Wayland): plug in, scan, connect, ride 10 min, take the strap off and on (reconnect), unplug the stick (reconnect), a second strap if there is one; the captured messages become test fixtures; then Win11Builder (WinUSB, Q7) and the Mac. About **0.5 day on Linux + 0.5 day Windows / macOS**, once the hardware is there. **We have no ANT stick today** – the user has to say which one to buy or lend (Q2).
+- **A5 – Browser (only if Q3 says so):** an `AntLink` over WebUSB in `ocw-devices::ant::web` (as `ble::web`), *Add an ANT+ stick* in the browser's Devices page. About **1 day** plus a Chromium hardware run.
+- **A6 – FIT `device_info` for ANT sensors (optional):** source type, device number, manufacturer, product, battery. About **0.25 day**.
+
+Total for heart rate on the desktop (A1 – A4): about **2.5 – 3.5 agent days**; with A5 / A6 about 4 – 5. Each milestone with tests, full checks on the build machines, merge and deploy as usual (§11.4).
+
+#### 17B – Tests (§11.4: no step without tests)
+
+- **Codec:** encode → decode round trips for every message we send; checksum and length errors dropped; the stream decoder resyncs after garbage, split reads and two messages in one read; byte-exact setup messages against the values of the protocol document (channel ID with device type 120, period 8070, frequency 57, the search timeouts, lib config `0x80`).
+- **Channel state machine:** the setup sequence waits for each response; a failed response (e.g. `CHANNEL_IN_WRONG_STATE`) ends with `Failed`; search → tracking → `EVENT_RX_FAIL` (value kept) → `EVENT_RX_FAIL_GO_TO_SEARCH` (`Disconnected`) → tracking again (`Connected`); search timeout and channel closed → reopened after `RECONNECT_DELAY`; the device number learned from extended data on a wildcard channel, and from a requested channel ID on a stick without extended messages.
+- **Heart-rate decoder:** pages 0 – 7 with the toggle bit; a legacy strap (no toggling; only bytes 4 – 7 used); computed heart rate 0 → no sample; beat time and beat count rollovers; RR intervals from page 4 and from consecutive messages, none across a missed beat; staleness after 5 s without a new beat; manufacturer / product / battery pages. **Fixtures:** the examples of the ANT+ heart-rate profile document and published captures where their licence allows (to be found in A1), replaced or joined by our own captures from A4; until then hand-made sequences that follow the profile.
+- **Mock stick runner:** a scripted stick (answers, broadcasts, events) in-process – two straps on two channels, a strap lost and found, the stick unplugged and back (all channels reopened), the stick busy (*busy with another app*), no permission; scan with exclusion lists finding three straps one after the other.
+- **Desktop flow:** as the BLE flow test (`devices::DeviceIo` mock): scan lists BLE and ANT+ devices together → connect an ANT+ strap → remembered with `transport = "ant"` in a temp `devices.toml` → next start reconnects; old files without `transport` read as BLE; a BLE and an ANT+ strap together give one heart-rate source (Q6 rule).
+- **Wasm:** `ant::{codec, channel, hr, stick}` in the `cargo check --target wasm32-unknown-unknown` of `ocw-devices`.
+- **Hardware (A4):** `cargo run -p ocw-devices --example ant -- scan` / `monitor` on the build machine with the stick, and the Devices page driven headless as `scripts/test-devices-menu.sh` does for BLE (screenshots per step, sent to the user and kept for the art project).
+
+#### 17C – Open questions (for the user)
+
+- **Q1 (open) – The ANT+ network key:** an ANT+ stick hears ANT+ straps only with the ANT+ network key. Garmin shows the key on its developer site, *"subject to the ANT+ Adopter Agreement"*, for ANT+ devices only, and its shared-source terms say not to publish it or redistribute source code containing it; openant (MIT) and GoldenCheetah (GPL) ship it in their source anyway, ant-rs (MIT / Apache) leaves it to the user (§3.4.1, with sources). The options, side by side (the choice is yours): **(a)** ship the key in our source; **(b)** the user enters the key once (kept in `secrets.toml`), source and releases without it; **(c)** the project becomes an ANT+ adopter (free, your account) and only release builds carry the key from a CI secret, source builds as (b); **(d)** ask Garmin first, (b) until the answer. Which one – and may the app name "ANT+" in its texts (no logo without certification)?
+- **Q2 (open) – Which ANT stick and strap for the tests:** we have no ANT stick on any build machine. Which stick do you have or will you buy – an ANT USB-m (`0fcf:1009`, the current Garmin stick; proposal), an ANT USB2 (`0fcf:1008`) or a clone – and is there an ANT+ heart-rate strap (a dual ANT+ / BLE strap tests Q6 too)? Proposal: the stick on marge (Linux first), later moved to Win11Builder and the Mac for their checks.
+- **Q3 (open) – Desktop only, or the browser too:** proposal: the desktop app first (Linux, then Windows, macOS); the browser gets ANT+ heart rate through the sensor bridge (Phase 10, 10D.2), and a WebUSB link (A5, Chromium only, on Windows only with the WinUSB driver) later if wanted. Or WebUSB in the browser right away, or never in the browser?
+- **Q4 (open) – Priority:** proposal: after the open work of the phases in progress, A1 – A3 whenever an agent slot is free (they need no hardware), A4 when the stick is there. Or sooner (before which phase), or later?
+- **Q5 (open) – Heart rate only, or further:** proposal: heart rate first (this plan), then decide about power meters, speed / cadence and **FE-C trainer control** (for trainers without BLE). Or plan FE-C (and power) straight away as part of this phase?
+- **Q6 (open) – A BLE and an ANT+ heart-rate strap at once:** many straps send both, and two straps would mix their values. Proposal: **one heart-rate source** – the first remembered strap that connects; the other is a fallback after 5 s without data; *Use for heart rate* on a device's page. Or prefer one transport always (BLE or ANT+), or let the rider choose only by hand?
+- **Q7 (open) – The driver route on Windows:** our raw USB route needs the WinUSB driver bound to the stick (Zadig, or an installer step), which may take the stick away from Garmin's own tools. Proposal: **document Zadig (WinUSB) for now**, an installer step later. Or look for a COM-port route (if a serial driver gives one), or use Garmin's closed `ANT_DLL`?
+- **Q8 (open) – The udev rule on Linux:** an AppImage cannot install one; without it the stick needs the `dialout` group (tty) or a rule (raw USB). Proposal: the Devices page shows the one-line rule and the command to install it; the `.deb` / package installs it itself. Or an `ocw-desktop --install-udev-rule` helper (asks for the password with `pkexec`)?
+
 ---
 
 ## 15. Quality Goals
@@ -6076,7 +6229,7 @@ These values are development targets, not guaranteed performance figures.
 | Game audio | Bevy Audio |
 | Voice chat | WebRTC / LiveKit (Rust SDK, self-hosted server) |
 | Bluetooth | btleplug |
-| ANT+ | Deferred |
+| ANT+ | Planned, not built (§3.4.1, Phase 17): own codec and heart-rate profile in `ocw-devices::ant`, ANT USB sticks over `nusb` |
 | Async | Tokio |
 | Networking | QUIC / Quinn |
 | API | Axum |
