@@ -120,6 +120,8 @@ details.qg summary .muted { font-weight: 400; }
   font-size: 13px; overflow-wrap: anywhere; }
 .mnote { margin: 0 0 10px; font-size: 13px; overflow-wrap: anywhere; }
 .mnote .k, .agents .k { color: var(--muted); margin-right: 6px; }
+.mnote.guard { padding: 4px 8px; border-left: 3px solid var(--ok); background: var(--chip); border-radius: 4px; }
+.mnote.guard.on { border-left-color: var(--warn); }
 .agents .k { flex-basis: 100%; }
 .chip.off { opacity: .7; border: 1px dashed var(--bad); }
 /* Coordinator (deb) card and Claude tasks, side by side above the machines. */
@@ -246,7 +248,8 @@ function machineControls(m) {
       `<button type="button" data-act="slots-" aria-label="Fewer build slots"${busy || (n !== 0 && n <= SLOTS_MIN) ? " disabled" : ""}>−</button>` +
       `<b aria-live="polite">${slotsTxt}</b>` +
       `<button type="button" data-act="slots+" aria-label="More build slots"${busy || n === 0 || n >= SLOTS_MAX ? " disabled" : ""}>+</button></span>` +
-      `<button type="button" data-act="note" aria-label="Edit the note of ${esc(m.name)}"${busy}>Note…</button>`;
+      `<button type="button" data-act="note" aria-label="Edit the note of ${esc(m.name)}"${busy}>Note…</button>` +
+      (m.battery_guard || (m.battery && m.battery.battery) ? `<button type="button" data-act="guard" aria-label="Set the battery guard of ${esc(m.name)}"${busy}>Battery guard…</button>` : "");
   } else {
     html += `<span class="badge ${on ? "ok" : "bad"}">${on ? "enabled" : "disabled"} for building</span> <span>${slotsTxt}</span>`;
   }
@@ -255,6 +258,10 @@ function machineControls(m) {
   if (machineMsg[m.name]) html += `<span class="mmsg">${esc(machineMsg[m.name])}</span>`;
   html += `</div>`;
   if (m.note) html += `<div class="mnote"><span class="k">Note</span>${esc(m.note)}</div>`;
+  // Battery guard (battery_guard.py): disabled below `stop` %, enabled again above `start` %.
+  const g = m.battery_guard;
+  if (g) html += `<div class="mnote guard${g.active ? " on" : ""}" title="Stops building below ${esc(g.stop)} % and builds again above ${esc(g.start)} % (two readings in a row; only re-enables what the guard disabled)">` +
+    `${esc(g.text)}${g.last_text ? ` · last: ${esc(g.last_text)}` : ""}${g.pending_text ? ` · <span class="warnt">${esc(g.pending_text)}</span>` : ""}</div>`;
   if (!on) html += `<div class="offnote"><b>Disabled for building</b>${m.disabled_reason ? ` – ${esc(m.disabled_reason)}` : ""}` +
     `<div class="muted">remote.sh refuses runs here (deploys, ssh and the read-only probes go on)${m.changed_at ? ` · since ${esc(m.changed_at)}${m.changed_by ? " by " + esc(m.changed_by) : ""}` : ""}</div></div>`;
   return html;
@@ -297,6 +304,10 @@ $("cards").addEventListener("click", (e) => {
   else if (act === "note") {
     const note = window.prompt(`Note for ${name} (shown on its card; empty clears it):`, m.note || "");
     if (note !== null) changeMachine(name, { note });
+  } else if (act === "guard") {
+    const g = m.battery_guard, cur = g ? `${g.stop}:${g.start}` : "20:80";
+    const v = window.prompt(`Battery guard of ${name}: stop building below STOP %, build again above START % (STOP:START, e.g. 20:80), or "off":`, cur);
+    if (v !== null) changeMachine(name, { battery_guard: v.trim() || "off" });
   }
 });
 

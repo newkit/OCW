@@ -40,6 +40,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import answers
 import battery
+import battery_guard
 import build_machines
 import claude_tasks
 import coordinator
@@ -52,7 +53,7 @@ HERE = Path(__file__).resolve().parent
 # page knows the version it was served with and reloads itself when the
 # server runs another one (after a pull and a restart), so an open tab never
 # keeps an old page.
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 POLL_INTERVAL_S = 5.0
 # Build slots per machine, as in scripts/remote.sh: the machine's `slots`
 # (or [defaults] slots) in machines.toml, else these per-OS defaults.
@@ -1416,7 +1417,7 @@ class Dashboard:
     def snapshot(self) -> dict:
         with self.lock:
             machines = [dict(self.state[m.name]) for m in self.machines]
-        apply_settings(machines, self.machines, getattr(self, "build_machines", None))
+        apply_settings(machines, self.machines, getattr(self, "build_machines", None), getattr(self, "guard", None))
         add_battery(machines, getattr(self, "battery", None))
         status = summarize(machines, getattr(self, "questions", None), getattr(self, "janitor", None),
                            getattr(self, "answers", None))
@@ -1494,10 +1495,12 @@ def agents_text(a: dict) -> str:
         "; " + ", ".join(extra) if extra else "")
 
 
-def apply_settings(states: list, machines: list, bm) -> list:
+def apply_settings(states: list, machines: list, bm, guard=None) -> list:
     """Adds to each machine state what build-machines.toml says: `enabled`,
-    `disabled_reason`, the effective `slots` (and `slots_source`,
-    `slots_config` = machines.toml / OS default), `changed_by`/`changed_at`."""
+    `disabled_reason`, `disabled_by`, the effective `slots` (and
+    `slots_source`, `slots_config` = machines.toml / OS default),
+    `changed_by`/`changed_at`, and `battery_guard` (battery_guard.card_info,
+    with the guard's running streak) when the machine has one."""
     by_name = {m.name: m for m in machines}
     for st in states:
         m = by_name.get(st.get("name"))
@@ -1509,7 +1512,11 @@ def apply_settings(states: list, machines: list, bm) -> list:
             "changed_by": "", "changed_at": ""}
         st.update(enabled=e["enabled"], disabled_reason=e["reason"] if not e["enabled"] else "",
                   slots=e["slots"], slots_source=e["slots_source"], slots_config=e["slots_config"],
-                  note=e["note"], changed_by=e["changed_by"], changed_at=e["changed_at"])
+                  note=e["note"], changed_by=e["changed_by"], changed_at=e["changed_at"],
+                  disabled_by=e.get("disabled_by") or "")
+        g = battery_guard.card_info(e, guard.pending(m.name) if guard is not None else None)
+        if g:
+            st["battery_guard"] = g
     return states
 
 
@@ -1735,6 +1742,9 @@ def machine_setting_text(m: dict) -> str:
     when = (", changed %s by %s" % (m["changed_at"], m.get("changed_by") or "?")) if m.get("changed_at") else ""
     if m.get("note"):
         when = " - note: %s%s" % (m["note"], when)
+    g = m.get("battery_guard")
+    if g:
+        when += " - %s" % g["text"] + (" (last: %s)" % g["last_text"] if g.get("last_text") else "")
     if m["enabled"]:
         return "build: enabled, %s (%s)%s" % (slots, src, when)
     reason = (" (%s)" % m["disabled_reason"]) if m.get("disabled_reason") else ""
@@ -2035,7 +2045,8 @@ def make_handler(dash: Dashboard):
                 return self._json(400, {"error": "no such machine in machines.toml"})
             try:
                 e = bm.update(m, body.get("enabled"), body.get("slots"), body.get("reason"), body.get("note"),
-                              body.get("by") or "dashboard", "dashboard", [x.name for x in dash.machines])
+                              body.get("by") or "dashboard", "dashboard", [x.name for x in dash.machines],
+                              **({"battery_guard": body["battery_guard"]} if "battery_guard" in body else {}))
             except ValueError as ex:
                 return self._json(400, {"error": str(ex)[:200]})
             self._json(200, {"ok": True, "machine": m.name, "settings": e})
@@ -3231,6 +3242,10 @@ def main(argv=None) -> int:
     dash.config_watcher.start()
     dash.start()
     if dash.battery is not None:
+        # The battery guard (leela: stop below 20 %, start above 80 %) acts on
+        # every probe; its changes go to build-machines.toml like a page's.
+        dash.guard = battery_guard.BatteryGuard(dash.build_machines, machines)
+        dash.battery.on_poll = dash.guard.safe_observe
         dash.battery.start()
     if dash.coordinator is not None:
         dash.coordinator.start()
