@@ -5,9 +5,10 @@
 //! (`strava-sync.toml`, the same thread as the rides). Start and stop each
 //! set a lap mark in the ride and show a notice; the HUD shows the badge.
 //! Leaving the ride, saving it or quitting stops and saves it. Without the
-//! Strava set-up S records nothing and says "Strava is not set up
-//! (strava.toml)"; `--strava-dry-run` (test runs) records and saves
-//! without the set-up and without uploading.
+//! API set-up (`strava.toml`) S records the same and its stop points to
+//! the simple upload in the browser (`ocw_client::strava::NOT_SET_UP`,
+//! spec §2.8.1 *Simple upload*); `--strava-dry-run` (test runs) opens no
+//! file manager or browser for that upload.
 
 use std::path::PathBuf;
 
@@ -29,13 +30,13 @@ pub fn strava_dir(rides: &std::path::Path) -> PathBuf {
     rides.join("strava")
 }
 
-pub(super) fn build(app: &mut App, configured: bool) {
+pub(super) fn build(app: &mut App, api: bool) {
     let route = app
         .world()
         .get_resource::<ClientState>()
         .map(|c| c.0.course_name().to_string())
         .unwrap_or_default();
-    app.insert_resource(StravaRec(StravaRecording::new(configured, route)))
+    app.insert_resource(StravaRec(StravaRecording::new(api, route)))
         .add_systems(Update, (strava_key, show_in_hud))
         .add_systems(Last, stop_on_exit);
     app.console_command(ConsoleCommand::new(
@@ -51,8 +52,11 @@ pub(super) fn build(app: &mut App, configured: bool) {
                     let s = &world.resource::<StravaRec>().0;
                     return Ok(match s.elapsed_s(now) {
                         Some(e) => format!("Strava recording: {}", ocw_client::history::hms(e)),
-                        None if s.configured => "Strava recording: off (S starts it)".into(),
-                        None => ocw_client::strava::NOT_SET_UP.into(),
+                        None if s.api => "Strava recording: off (S starts it; uploaded by your API app)".into(),
+                        None => format!(
+                            "Strava recording: off (S starts it). {}",
+                            ocw_client::strava::NOT_SET_UP
+                        ),
                     });
                 }
                 "start" | "stop" | "toggle" => {}
@@ -94,12 +98,18 @@ pub fn handle(world: &mut World, out: Outcome, now: f64) -> Result<String, Strin
                 .ok_or("no data directory for rides")?;
             let path = crate::recording::save_ride(&strava_dir(&dir), &ride)?;
             info!(path = %path.display(), "Strava recording saved");
+            let api = world
+                .get_resource::<super::Strava>()
+                .is_some_and(|s| s.api());
             if let Some(s) = world.get_resource::<super::Strava>() {
                 s.ride_saved();
             }
-            Ok(format!("Strava recording saved to {}", path.display()))
+            let mut out = format!("Strava recording saved to {}", path.display());
+            if !api {
+                out.push_str(&format!(". {}", ocw_client::strava::NOT_SET_UP));
+            }
+            Ok(out)
         }
-        Outcome::NotSetUp => Err(ocw_client::strava::NOT_SET_UP.into()),
         Outcome::Unchanged => Ok("unchanged".into()),
     }
 }

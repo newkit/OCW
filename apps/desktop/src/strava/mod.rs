@@ -1,16 +1,23 @@
 //! Strava upload and sync of saved rides (spec §2.8).
 //!
-//! Interim desktop path until the backend exists (spec §2.8, §14 Phase 5):
-//! the user registers their own Strava API application and configures its
-//! client id and secret (`OCW_STRAVA_CLIENT_ID` / `OCW_STRAVA_CLIENT_SECRET`
-//! or `<config dir>/ocw/strava.toml`); nothing is built in. Without them
-//! the feature is off.
+//! **The simple way, for every rider** ([`manual`], spec §2.8.1 *Simple
+//! upload*): no API application – the ride's FIT file at hand, Strava's
+//! own upload page in the browser (`strava.upload-manual`, the ride's
+//! page in the training history).
+//!
+//! **The advanced way** (the interim path until the backend exists, spec
+//! §2.8, §14 Phase 5): the user registers their own Strava API
+//! application and configures its client id and secret
+//! (`OCW_STRAVA_CLIENT_ID` / `OCW_STRAVA_CLIENT_SECRET` or `<config
+//! dir>/ocw/strava.toml`); nothing is built in. With them every saved ride
+//! is uploaded automatically (except those marked as uploaded by hand).
 //!
 //! Everything that touches the network runs on the `ocw-strava` thread
 //! ([`worker`]); the Bevy side only sends commands and prints messages.
 
 pub mod api;
 pub mod auth;
+pub mod manual;
 pub mod recording;
 pub mod sync;
 pub mod worker;
@@ -51,6 +58,11 @@ pub struct Strava {
 }
 
 impl Strava {
+    /// The automatic API upload is set up (the advanced way).
+    pub fn api(&self) -> bool {
+        self.worker.is_some()
+    }
+
     /// Tells the sync about a newly saved ride.
     pub fn ride_saved(&self) {
         if let Some(w) = &self.worker {
@@ -111,16 +123,19 @@ impl Plugin for StravaPlugin {
         if strava.worker.is_none() {
             info!("{}", strava.off_reason.lines().next().unwrap_or_default());
         }
-        // The S recording (spec §2.8.1): with the set-up, or in test runs
-        // without it (nothing uploaded).
+        // The S recording (spec §2.8.1) records with or without the API
+        // set-up; without it the rider uploads in the browser. Test runs
+        // (`--strava-dry-run`) open neither the file manager nor the
+        // browser.
         let dry_run = app
             .world()
             .get_resource::<crate::Args>()
             .is_some_and(|a| a.strava_dry_run);
-        let configured = strava.worker.is_some() || dry_run;
+        let api = strava.worker.is_some();
         app.insert_resource(strava)
+            .insert_resource(manual::ManualOpen(!dry_run))
             .add_systems(Update, print_messages);
-        recording::build(app, configured);
+        recording::build(app, api);
         register_commands(app);
     }
 }
@@ -147,7 +162,9 @@ fn start(config_dir: &std::path::Path, rides_dir: PathBuf, ignore_env: bool) -> 
         return Strava {
             worker: None,
             off_reason: format!(
-                "Strava: not configured. Register an API application at https://www.strava.com/settings/api \
+                "Strava: no API application set up (the advanced way). Upload rides in your browser instead: \
+                 Navi > Training history > the ride > Upload to Strava, or strava.upload-manual N. \
+                 For automatic uploads register an API application at https://www.strava.com/settings/api \
                  (authorization callback domain: localhost), then set {ENV_CLIENT_ID} and {ENV_CLIENT_SECRET} \
                  or put client_id and client_secret into {}",
                 config_file.display()
@@ -255,30 +272,26 @@ mod tests {
             app.world_mut().resource_mut::<ConsoleState>().queue(cmd);
             app.update();
             let log = app.world().resource::<ConsoleState>().log().to_vec();
+            let last = log.last().unwrap();
             assert!(
-                log.last().unwrap().contains("not configured"),
+                last.contains("no API application set up") && last.contains("strava.upload-manual"),
                 "{cmd}: {log:?}"
             );
         }
-        assert!(app.world().resource::<Strava>().worker.is_none());
-        // S (`strava.record`) records nothing and says why (spec §2.8.1).
+        assert!(!app.world().resource::<Strava>().api());
+        // S (`strava.record`) records without the API too (spec §2.8.1
+        // *Simple upload*); the rider uploads it in the browser.
         app.world_mut()
             .resource_mut::<ConsoleState>()
             .queue("strava.record");
         app.update();
         let log = app.world().resource::<ConsoleState>().log().to_vec();
         assert!(
-            log.last()
-                .unwrap()
-                .contains("Strava is not set up (strava.toml)"),
+            log.last().unwrap().contains("Strava recording started"),
             "{log:?}"
         );
-        assert!(
-            !app.world()
-                .resource::<recording::StravaRec>()
-                .0
-                .is_recording()
-        );
+        let rec = &app.world().resource::<recording::StravaRec>().0;
+        assert!(rec.is_recording() && !rec.api);
         // Nothing was written.
         assert!(!dir.exists());
     }

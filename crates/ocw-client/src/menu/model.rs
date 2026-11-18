@@ -552,7 +552,7 @@ impl Page {
             Page::StravaBrowser => PageDef {
                 title: "Strava recording",
                 text: &[
-                    "Strava needs the desktop app (S records, strava.toml links the account). Here the ride's FIT file is a download (Captures).",
+                    "The Strava recording (S) needs the desktop app. Upload a ride in your browser, no API app needed: Navi > Training history > the ride > Upload to Strava.",
                 ],
                 items: HOST_BROWSER_ITEMS,
                 initial_focus: 0,

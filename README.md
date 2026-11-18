@@ -1781,19 +1781,31 @@ event status | event cancel | event dismiss
   downloaded again only while the page is open. The FIT file has a lap at each workout
   step (start, step change, end, stop) and at an event's start, each event
   lap and your finish, so Strava and analysis tools show them as laps.
-- Strava (optional; interim direct upload until the backend exists): create a
-  Strava API app at <https://www.strava.com/settings/api> with the callback
-  domain `localhost`, set `OCW_STRAVA_CLIENT_ID` / `OCW_STRAVA_CLIENT_SECRET`
-  (or `client_id` / `client_secret` in `~/.config/ocw/strava.toml`), then
-  `strava.connect` once. Saved rides upload in the background; failed uploads
-  are retried.
+- **Strava, the simple way** (spec §2.8.1 *Simple upload*; every Strava
+  account, no API app): *Navi → Training history →* a ride → *Upload to
+  Strava (in your browser)* (`strava.upload-manual N`). The desktop copies
+  the ride's FIT file (or its Strava recordings) and photos to
+  `~/.local/share/ocw/rides/strava-upload/` as e.g. `OCW 2026-11-18 10-05
+  Tenerife – Puerto de la Cruz–Teide.fit`, opens that folder and
+  <https://www.strava.com/upload/select>; choose the file there (or drag it
+  onto the page) and press Upload. The browser app downloads the file and
+  opens the page in a new tab. Then set *Marked as uploaded*
+  (`strava.mark-uploaded N on`) to keep track; the API upload skips marked
+  rides.
+- Strava, the advanced way (optional; interim direct upload until the
+  backend exists): create a Strava API app at
+  <https://www.strava.com/settings/api> with the callback domain
+  `localhost`, set `OCW_STRAVA_CLIENT_ID` / `OCW_STRAVA_CLIENT_SECRET` (or
+  `client_id` / `client_secret` in `~/.config/ocw/strava.toml`), then
+  `strava.connect` once. Saved rides upload in the background; failed
+  uploads are retried.
 - **Strava recording with S** (spec §2.8.1): S (pad L3, *Ride → Strava
   recording*, `strava.record`) starts and stops it; the HUD shows
   "● Strava m:ss". The part between S and S is saved as its own activity in
   `~/.local/share/ocw/rides/strava/` and uploaded like the rides; leaving or
-  saving the ride or quitting stops it. Without `strava.toml` S only says
-  "Strava is not set up (strava.toml)". The browser app shows the entry but
-  needs the desktop app for Strava.
+  saving the ride or quitting stops it. Without `strava.toml` it is
+  uploaded the simple way (its stop says where). The browser app shows the
+  entry but needs the desktop app for the recording.
 - **The ride photographer** (spec §2.11; setting `photographer.enabled`,
   Settings → Display → Graphics, console `photographer on|off|status`):
   up to 5 photos per ride, at least 20 minutes apart, of the nicest views
@@ -2386,6 +2398,8 @@ you can run are offered (no *Dev* commands on a remote server).
 | `strava.sync [--retry]` | Upload every saved ride not on Strava yet (`--retry`: also failed ones) |
 | `strava.disconnect` | Unlink Strava (deletes the stored tokens) |
 | `strava.record [start\|stop\|toggle\|status]` | The Strava recording (key S): the part between start and stop is its own Strava activity |
+| `strava.upload-manual [N] [--whole]` | Upload ride N (1 = the newest) in your browser, no API app: the file at hand, Strava's upload page open (`--whole`: the ride, not its Strava recordings) |
+| `strava.mark-uploaded N [on\|off\|toggle]` | Mark ride N as uploaded to Strava by hand (the API sync skips it) |
 | `photographer [on\|off\|status\|now\|drone]` | The ride photographer (spec §2.11); `now` plans the next photo at once, `drone` the next by the drone (tests) |
 | `history.photos N` | Open the folder with ride N's photos (1 = the newest) |
 

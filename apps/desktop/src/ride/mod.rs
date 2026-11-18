@@ -682,12 +682,28 @@ fn save_ride(world: &mut World) {
     match crate::recording::save_now(world, MIN_AUTO_SAVE_S) {
         Ok(Some(path)) => {
             info!(path = %path.display(), "ride saved");
+            let api = world
+                .get_resource::<crate::strava::Strava>()
+                .is_some_and(|s| s.api());
             if let Some(s) = world.get_resource::<crate::strava::Strava>() {
                 s.ride_saved();
             }
             world
                 .resource_mut::<ConsoleState>()
                 .print(format!("ride saved to {}", path.display()));
+            // Without the API set-up the end of the ride points to the
+            // simple upload in the browser (spec §2.8.1 *Simple upload*).
+            if !api {
+                let now = crate::recording::game_now(world);
+                if let Some(mut s) = world.get_resource_mut::<crate::strava::recording::StravaRec>()
+                {
+                    s.0.say_for(
+                        format!("Ride saved. {}", ocw_client::strava::NOT_SET_UP),
+                        now,
+                        ocw_client::strava::UPLOAD_NOTICE_S,
+                    );
+                }
+            }
         }
         Ok(None) => info!("ride too short, not saved"),
         Err(e) => error!("cannot save ride: {e}"),

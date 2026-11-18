@@ -148,6 +148,11 @@ pub struct RideEntry {
     /// damage, world or workout.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub imported: bool,
+    /// The rider marked it as uploaded to Strava (by hand, in the
+    /// browser: the app cannot know; spec §2.8.1 *Simple upload*). The
+    /// API sync skips it, so a later API set-up uploads no duplicate.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub strava_marked: bool,
 }
 
 /// What the app knows of a ride beyond its FIT records.
@@ -326,6 +331,7 @@ impl RideEntry {
             climbs: climbs(&a.records),
             fit: ctx.fit,
             imported: ctx.imported,
+            strava_marked: false,
         }
     }
 
@@ -519,7 +525,12 @@ impl History {
     }
 
     /// Adds a ride (replacing one with the same id), keeping the order.
-    pub fn add(&mut self, ride: RideEntry) {
+    pub fn add(&mut self, mut ride: RideEntry) {
+        // A ride added again keeps its Strava mark.
+        ride.strava_marked |= self
+            .rides
+            .iter()
+            .any(|r| r.id == ride.id && r.strava_marked);
         self.rides.retain(|r| r.id != ride.id);
         let at = self
             .rides
@@ -539,6 +550,11 @@ impl History {
     /// The `n`-th newest ride (0 = the newest).
     pub fn nth_newest(&self, n: usize) -> Option<&RideEntry> {
         self.rides.len().checked_sub(n + 1).map(|i| &self.rides[i])
+    }
+
+    /// The ride with id `id`, to change it (the Strava mark).
+    pub fn ride_mut(&mut self, id: &str) -> Option<&mut RideEntry> {
+        self.rides.iter_mut().find(|r| r.id == id)
     }
 
     /// Weekly (Monday to Sunday) or monthly totals, newest first; only
@@ -1015,6 +1031,22 @@ mod tests {
         let m = History::parse(minimal).unwrap();
         assert_eq!(m.rides[0].hearts, None);
         assert!(m.rides[0].power_curve.is_empty());
+        assert!(!m.rides[0].strava_marked);
+        // The Strava mark (spec §2.8.1 *Simple upload*) is written only
+        // when set, read back, and kept when the ride is added again.
+        assert!(!text.contains("strava_marked"));
+        let mut marked = h.clone();
+        let id = marked.rides[1].id.clone();
+        marked.ride_mut(&id).unwrap().strava_marked = true;
+        let t2 = marked.to_json();
+        assert_eq!(t2.matches("\"strava_marked\": true").count(), 1);
+        let back = History::parse(&t2).unwrap();
+        assert!(back.rides[1].strava_marked && !back.rides[0].strava_marked);
+        let mut again = back.clone();
+        let mut same = back.rides[1].clone();
+        same.strava_marked = false;
+        again.add(same);
+        assert!(again.ride_mut(&id).unwrap().strava_marked);
         // A newer version is read-only.
         let newer = text.replace("\"version\": 1", "\"version\": 2");
         match History::parse(&newer) {

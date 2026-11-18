@@ -1324,6 +1324,14 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             setting_row(settings, "display.damage", "Damage indicator"),
         ],
         Page::Strava => vec![
+            // The simple way, for every rider (spec §2.8.1 *Simple
+            // upload*): a ride's page has the upload in the browser. The
+            // rows below are the advanced way (an own API app).
+            open_row(
+                "Upload in your browser",
+                Some("no API app needed".into()),
+                Page::HistoryRides,
+            ),
             Row::action("Status", "strava.status"),
             Row::action("Link account", "strava.connect"),
             Row::action("Sync now", "strava.sync"),
@@ -1630,6 +1638,11 @@ mod tests {
         let controls = rows(Page::Controls, &s, &Riders::default());
         assert_eq!(controls[0].confirm, cmd("set controls.autodrive off"));
         let strava = rows(Page::Strava, &s, &Riders::default());
+        assert!(strava.len() <= 6, "the ten-foot rule");
+        assert_eq!(
+            row(&strava, "Upload in your browser").confirm,
+            Some(Activate::Open(Page::HistoryRides))
+        );
         assert_eq!(
             row(&strava, "Retry failed uploads").confirm,
             cmd("strava.sync --retry")
