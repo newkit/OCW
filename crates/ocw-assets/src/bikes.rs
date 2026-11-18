@@ -1881,8 +1881,15 @@ mod tests {
             assert!(rake.dot(f.steer_dir).abs() < 1e-6);
             // The axle ahead of the axis by the offset (the sign is the bug).
             let off = f.fork_offset();
-            assert!((off - d.rake).abs() < 1e-5, "{p:?}: offset {off} ≠ {}", d.rake);
-            assert!(f.front_hub.z < f.steer_foot().z, "{p:?}: axle ahead of the axis");
+            assert!(
+                (off - d.rake).abs() < 1e-5,
+                "{p:?}: offset {off} ≠ {}",
+                d.rake
+            );
+            assert!(
+                f.front_hub.z < f.steer_foot().z,
+                "{p:?}: axle ahead of the axis"
+            );
             // Trail: road 55–65 mm, gravel a little more, MTB 90–125 mm.
             let trail = f.trail();
             let range = match p {
@@ -1894,13 +1901,19 @@ mod tests {
             // The crown on the axis, the blade ends at the axle.
             let blade = f.fork_blade();
             assert!(blade[0].distance(f.head_bottom) < 1e-6, "{p:?}");
-            assert!(blade[FORK_BLADE_POINTS - 1].distance(f.front_hub) < 1e-5, "{p:?}");
+            assert!(
+                blade[FORK_BLADE_POINTS - 1].distance(f.front_hub) < 1e-5,
+                "{p:?}"
+            );
             // The blade's offset from the axis only grows downwards and
             // stays behind the straight crown–axle line (bent forward).
             let mut last = -1e-6;
             for (i, b) in blade.iter().enumerate() {
                 let o = (*b - f.head_bottom).dot(rake);
-                assert!(o >= last - 1e-6, "{p:?}: point {i} bends back ({o} < {last})");
+                assert!(
+                    o >= last - 1e-6,
+                    "{p:?}: point {i} bends back ({o} < {last})"
+                );
                 let s = i as f32 / (FORK_BLADE_POINTS - 1) as f32;
                 assert!(o <= off * s + 1e-6, "{p:?}: point {i} ahead of the chord");
                 last = o;
@@ -1928,14 +1941,21 @@ mod tests {
             assert_eq!(&bytes[..4], b"glTF", "{file}: run git lfs pull");
             let m = crate::glb::read(&bytes).unwrap();
             let hub = m.position(WHEEL_FRONT).unwrap();
-            assert!(hub.distance(f.front_hub) < 1e-4, "{p:?}: {hub} vs {}", f.front_hub);
+            assert!(
+                hub.distance(f.front_hub) < 1e-4,
+                "{p:?}: {hub} vs {}",
+                f.front_hub
+            );
             // The frame's geometry in the file: the axis from its head
             // tube, the offset measured from it.
             let ha = d.head_angle.to_radians();
             let steer = Vec3::new(0.0, -ha.sin(), -ha.cos());
             let foot = f.head_bottom + steer * (hub - f.head_bottom).dot(steer);
             let off = (hub - foot).dot(Vec3::new(0.0, ha.cos(), -ha.sin()));
-            assert!((off - d.rake).abs() < 1e-4, "{p:?}: offset in the file {off}");
+            assert!(
+                (off - d.rake).abs() < 1e-4,
+                "{p:?}: offset in the file {off}"
+            );
             // The fork's vertices near the axle height lie ahead of the
             // axis there (a fork mirrored or raked back would not).
             let bike = m.node(ROOT).unwrap();
@@ -1967,7 +1987,10 @@ mod tests {
                 near.iter().sum::<f32>() / near.len() as f32
             };
             let at_axle = offset_at(hub.y + 0.02);
-            assert!(at_axle > 0.6 * d.rake, "{p:?}: dropouts {at_axle} not ahead");
+            assert!(
+                at_axle > 0.6 * d.rake,
+                "{p:?}: dropouts {at_axle} not ahead"
+            );
             // Halfway down a rigid fork is still close to the axis (it
             // bends forward at the bottom); the regression had 0.85 × the
             // offset there (bent backwards at the dropouts).
