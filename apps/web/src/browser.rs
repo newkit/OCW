@@ -96,46 +96,91 @@ pub fn open_tab(url: &str) -> Result<(), String> {
     }
 }
 
-/// Saves a photo (spec §2.11 Q3) through the page's `ocwPhotos.save`:
-/// into the photos folder the rider chose (File System Access API), else
-/// as a download. Returns where it went (`"folder:OCW"`, `"download"`).
-pub fn photo_save(name: &str, mime: &str, bytes: &[u8]) -> String {
+/// The page's folders (File System Access API, `window.ocwPhotos` /
+/// `window.ocwActivities`): the photos folder (spec §2.11 Q3) and the
+/// activities folder of the Strava recordings (spec §2.8.1 *Where an S
+/// recording is written*).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageFolder {
+    Photos,
+    Activities,
+}
+
+impl PageFolder {
+    fn object(self) -> &'static str {
+        match self {
+            Self::Photos => "ocwPhotos",
+            Self::Activities => "ocwActivities",
+        }
+    }
+}
+
+/// Saves a file into the folder the rider chose (a `/` in `path` makes
+/// subfolders), else as a download (named by the file). Returns where it
+/// went (`"folder:OCW"`, `"download"`).
+pub fn folder_save(f: PageFolder, path: &str, mime: &str, bytes: &[u8]) -> String {
     let data: JsValue = Uint8Array::from(bytes).into();
-    match call_page("ocwPhotos", "save", &[name.into(), mime.into(), data]) {
+    match call_page(f.object(), "save", &[path.into(), mime.into(), data]) {
         Ok(v) => v.as_string().unwrap_or_else(|| "download".into()),
         Err(e) => {
-            warn!("photo {name}: {e}; downloading it");
-            download(name, mime, bytes);
+            warn!("{path}: {e}; downloading it");
+            download(path.rsplit('/').next().unwrap_or(path), mime, bytes);
             "download".into()
         }
     }
 }
 
-/// The photos folder's name while it may be written (`None`: no folder
-/// chosen, or its permission is to be asked again).
-pub fn photo_folder() -> Option<String> {
-    call_page("ocwPhotos", "folder", &[])
+/// The folder's name while it may be written (`None`: no folder chosen,
+/// or its permission is to be asked again).
+pub fn folder_name(f: PageFolder) -> Option<String> {
+    call_page(f.object(), "folder", &[])
         .ok()
         .and_then(|v| v.as_string())
 }
 
-/// Whether the browser can keep a photos folder (File System Access API).
-pub fn photo_folder_supported() -> bool {
-    call_page("ocwPhotos", "supported", &[])
+/// Whether the browser can keep a folder (File System Access API).
+pub fn folder_supported(f: PageFolder) -> bool {
+    call_page(f.object(), "supported", &[])
         .ok()
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
 }
 
-/// Asks for the photos folder (the picker starts in Pictures; needs the
-/// user's gesture: a key or click a moment ago).
+/// Asks for the folder (needs the user's gesture: a key or click a
+/// moment ago).
+pub fn folder_choose(f: PageFolder) -> Result<(), String> {
+    call_page(f.object(), "choose", &[]).map(|_| ())
+}
+
+/// Forgets the folder (downloads again).
+pub fn folder_forget(f: PageFolder) -> Result<(), String> {
+    call_page(f.object(), "forget", &[]).map(|_| ())
+}
+
+/// Saves a photo (spec §2.11 Q3) into the photos folder, else as a
+/// download.
+pub fn photo_save(name: &str, mime: &str, bytes: &[u8]) -> String {
+    folder_save(PageFolder::Photos, name, mime, bytes)
+}
+
+/// The photos folder's name while it may be written.
+pub fn photo_folder() -> Option<String> {
+    folder_name(PageFolder::Photos)
+}
+
+/// Whether the browser can keep a photos folder.
+pub fn photo_folder_supported() -> bool {
+    folder_supported(PageFolder::Photos)
+}
+
+/// Asks for the photos folder (the picker starts in Pictures).
 pub fn photo_folder_choose() -> Result<(), String> {
-    call_page("ocwPhotos", "choose", &[]).map(|_| ())
+    folder_choose(PageFolder::Photos)
 }
 
 /// Forgets the photos folder (photos are downloads again).
 pub fn photo_folder_forget() -> Result<(), String> {
-    call_page("ocwPhotos", "forget", &[]).map(|_| ())
+    folder_forget(PageFolder::Photos)
 }
 
 /// Tells the page that the renderer stopped (spec §14 Phase 10 B7,

@@ -10,7 +10,11 @@
 //! the sidecar `<data dir>/ocw/rides/<ride>/photos/photo-N.toml` (time,
 //! position, view, the score and its parts, the camera pose, the photo's
 //! `path`), so the training history and the Strava recordings find the
-//! photos. Rides before v4.73 have `photo-N.jpg` beside the sidecar and
+//! photos. Photos taken while a Strava recording runs go into that
+//! recording's own folder in the activities folder instead
+//! (`~/Activities/OCW/<date> <place>/OCW <date> <time> <place> photo N.jpg`,
+//! spec §2.8.1 *Where an S recording is written*), once, with the same
+//! sidecar pointing there. Rides before v4.73 have `photo-N.jpg` beside the sidecar and
 //! keep working. The photographer itself is `ocw_ui::photographer`; this
 //! module gives it the files and the sound, and keeps it off in scripted
 //! screenshot and capture runs (like the ride recording).
@@ -112,10 +116,13 @@ impl Plugin for PhotosPlugin {
         app.console_command(ConsoleCommand::new(
             Permission::User,
             Command::new("photos.folder")
-                .about("The folder for photos and screenshots: default (Pictures/OCW), a path (~/ for the home folder), or nothing to show it (setting photos.folder)")
+                .about("The folder for photos and screenshots: default (Pictures/OCW), a path (~/ for the home folder), choose (a folder picker), or nothing to show it (setting photos.folder)")
                 .arg(Arg::new("folder")),
             |world, m| {
                 if let Some(s) = m.get_one::<String>("folder") {
+                    if s == "choose" {
+                        return crate::activities::choose(world, "photos.folder", "Photos folder");
+                    }
                     let f = photo_folder(s).ok_or("no home folder to put the photos in")?;
                     world.insert_resource(f);
                 }
@@ -335,6 +342,15 @@ pub fn photo_target(
     ))
 }
 
+/// Where the next photo goes while a Strava recording runs: into the
+/// recording's own folder (counted), with the caption ("Saved to
+/// Activities/OCW/2026-11-18 Puerto de la Cruz").
+pub fn recording_target(world: &mut World) -> Option<(PathBuf, String)> {
+    let mut s = world.get_resource_mut::<crate::strava::recording::StravaRec>()?;
+    let d = s.1.as_mut()?;
+    Some((d.next_photo(), format!("Saved to {}", d.label)))
+}
+
 /// The photographer's hook: encodes and writes the photo off the main
 /// thread; returns where it goes.
 fn save_photo(world: &mut World, t: &Taken, image: Image) -> Option<String> {
@@ -343,7 +359,13 @@ fn save_photo(world: &mut World, t: &Taken, image: Image) -> Option<String> {
         .and_then(|r| r.dir.clone());
     let ride = ride_id(world);
     let folder = world.get_resource::<PhotoFolder>().cloned();
-    let Some((path, mut went)) = photo_target(folder.as_ref(), rides.as_deref(), &ride, t.n) else {
+    // While a Strava recording runs its photos go into its own folder in
+    // the activities folder (spec §2.8.1 *Where an S recording is
+    // written*) – only there; else into the photos folder.
+    let recording = recording_target(world);
+    let Some((path, mut went)) =
+        recording.or_else(|| photo_target(folder.as_ref(), rides.as_deref(), &ride, t.n))
+    else {
         warn!("ride photo: no photos or rides folder");
         return None;
     };

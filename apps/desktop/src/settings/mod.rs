@@ -605,6 +605,8 @@ mod tests {
             ocw_render::obstacles::ObstaclesPlugin,
             // `quality` (display.quality).
             ocw_ui::quality::QualityPlugin,
+            // `activities.folder` (the Strava recordings' folder).
+            crate::activities::ActivitiesPlugin,
         ))
         .insert_resource(file_settings(Settings::default(), path.clone()))
         .insert_resource(RiderProfiles {
@@ -789,6 +791,7 @@ mod tests {
             pages::Page::Rider(0),
             pages::Page::Bike(0),
             pages::Page::RidingAids,
+            pages::Page::Folders,
             pages::Page::Hud,
             pages::Page::Graphics,
             pages::Page::ViewDistance,
@@ -831,6 +834,7 @@ mod tests {
                 || line.contains("display.camera_shake")
                 // The ride photographer's plugin is not in this test app.
                 || line.contains("photographer.enabled")
+                || line.contains("photos.folder")
             {
                 continue;
             }

@@ -767,6 +767,52 @@ class UiTest:
         self.shot("strava-steps")
         self.close_menu()
 
+        # The Strava recording in the browser (spec §2.8.1 *Where an S
+        # recording is written*): S records; without an activities folder
+        # its FIT file is a download named OCW <date> <time> <place>.fit;
+        # with one (stubbed: the headless browser cannot pick a folder) it
+        # goes into its own subfolder there, and the notice says where.
+        self.key("Escape")
+        self.wait_menu(lambda m: m.get("open"))
+        self.open_item("Captures", "Captures")
+        items = self.menu().get("items") or []
+        self.check("activities: Captures offers the activities folder",
+                   "Activities folder: choose" in items, items)
+        self.close_menu()
+        before = {d["name"] for d in json.loads(self.page_downloads() or "[]")}
+        self.console("strava.record start")
+        self.pump(3.0)
+        self.shot("strava-recording")
+        self.console("strava.record stop")
+        hit = None
+        for _ in range(50):
+            listed = json.loads(self.page_downloads() or "[]")
+            new = [d for d in listed if d["name"].endswith(".fit") and d["name"] not in before]
+            if new:
+                hit = new[-1]
+                break
+            self.pump(0.2)
+        self.check("activities: without a folder the recording is a download named OCW <date> <time> <place>.fit",
+                   hit is not None and hit["name"].startswith("OCW 20") and "/" not in hit["name"]
+                   and "Strava recording" not in hit["name"], hit)
+        self.shot("strava-recording-downloaded")
+        cdp.eval("""window.ocwActivitiesStub = [];
+            window.ocwActivities.folder = () => 'OCW';
+            window.ocwActivities.save = (p, m, b) => { window.ocwActivitiesStub.push({name: p, size: b.length}); return 'folder:OCW'; };""")
+        self.console("strava.record start")
+        self.pump(3.0)
+        self.console("strava.record stop")
+        self.pump(0.5)
+        saved = json.loads(cdp.eval("JSON.stringify(window.ocwActivitiesStub)") or "[]")
+        self.check("activities: with a folder the FIT file goes to its own subfolder <date> <place>/",
+                   len(saved) == 1 and saved[0]["name"].count("/") == 1
+                   and saved[0]["name"].split("/")[0][:2] == "20"
+                   and saved[0]["name"].split("/")[1].startswith("OCW 20")
+                   and saved[0]["size"] > 100, saved)
+        self.shot("strava-recording-saved-to-folder")
+        self.check("activities: the folder writer makes subfolders",
+                   cdp.eval("typeof window.ocwActivities.choose === 'function'"), None)
+
         # A short video (MediaRecorder on the canvas, with the game sound).
         self.console("video start")
         self.pump(3.0)

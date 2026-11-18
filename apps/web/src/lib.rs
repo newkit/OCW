@@ -72,6 +72,7 @@ pub mod page_config;
 pub mod plugin;
 pub mod session;
 pub mod settings;
+pub mod strava;
 pub mod ui;
 pub mod voice;
 #[cfg(target_arch = "wasm32")]

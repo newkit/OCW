@@ -8,6 +8,7 @@
 //! - the Bevy renderer from `ocw-render`.
 
 mod account;
+mod activities;
 mod argsfile;
 mod audio;
 mod automation;
@@ -495,6 +496,8 @@ fn main() -> AppExit {
     .add_plugins((
         recording::RecordingPlugin::default(),
         strava::StravaPlugin::default(),
+        // Where the Strava recordings go (spec §2.8.1).
+        activities::ActivitiesPlugin,
         // The ride photographer's photos (spec §2.11).
         photos::PhotosPlugin,
         restart::RestartPlugin,

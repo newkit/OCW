@@ -422,6 +422,18 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::Command("photos.folder \"{}\""),
     },
+    // Where the Strava (S … S) recordings go (spec §2.8.1 *Where an S
+    // recording is written*, v4.80): each its own subfolder (ISO date and
+    // place) with its FIT file and photos; the browser chooses a folder
+    // instead (`activities.folder choose`).
+    SettingDef {
+        key: "activities.folder",
+        kind: Kind::Text,
+        default: "default",
+        description: "Folder for the Strava recordings (S): default = ~/Activities/OCW, or a path (~/ for the home folder); each recording gets a subfolder with its FIT file and photos",
+        scope: Scope::Live,
+        apply: Apply::Command("activities.folder \"{}\""),
+    },
     // Ride → Host a ride (spec §7.1.7 Q4): the router's ports opened by
     // UPnP while hosting; read at *Start hosting*, switched on the wizard's
     // Options page (`host.plan upnp`). The headless server has `--upnp`
@@ -1067,6 +1079,7 @@ const NOT_IN_BROWSER: &[&str] = &[
     // The browser chooses its photos folder through the File System
     // Access API (spec §2.11 Q3: `photos.folder choose`), not by path.
     "photos.folder",
+    "activities.folder",
     // Hosting needs the desktop app (browsers cannot open a port).
     "host.upnp",
 ];

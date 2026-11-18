@@ -123,6 +123,14 @@ fn save_ride_photo(
     )
     .map_err(|e| error!("ride photo: {e}"))
     .ok()?;
+    // While a Strava recording runs: into its own folder (spec §2.8.1
+    // *Where an S recording is written*), once.
+    if let Some(path) = crate::strava::photo_path(world) {
+        let a = world.resource::<crate::strava::ActivitySaver>().clone();
+        info!(file = %path, bytes = jpg.len(), "ride photo of the Strava recording");
+        let answer = (a.save)(&path, "image/jpeg", jpg);
+        return Some(crate::strava::went(&answer, &path));
+    }
     let name = format!(
         "OCW-{}-photo-{}.jpg",
         ocw_render::stamp::stamp_of(&now),
@@ -219,7 +227,8 @@ fn web_upload(
     let downloads = world.resource::<Downloads>().clone();
     (downloads.0)(&name, "application/vnd.ant.fit", bytes);
     let tabs = world.resource::<Tabs>().clone();
-    let mut steps = ocw_client::strava::upload_steps(std::slice::from_ref(&name), false, false);
+    let mut steps =
+        ocw_client::strava::upload_steps(std::slice::from_ref(&name), false, false, None);
     if let Err(e) = (tabs.0)(ocw_client::strava::UPLOAD_PAGE) {
         warn!("Strava's upload page: {e}");
         steps = format!(
@@ -323,6 +332,9 @@ impl Plugin for WebUiPlugin {
             app.insert_resource(Tabs::page());
         }
         app.init_resource::<StravaNotice>();
+        // The Strava recording (S, spec §2.8.1): its FIT file and photos
+        // in its own folder of the activities folder, or downloads.
+        crate::strava::build(app);
         if !app.world().contains_resource::<PhotoSaver>() {
             #[cfg(target_arch = "wasm32")]
             app.insert_resource(PhotoSaver::page());
@@ -348,7 +360,7 @@ impl Plugin for WebUiPlugin {
         .init_resource::<Video>()
         .add_systems(
             Update,
-            (record, show_video, audio_devices, strava_key).after(ocw_ui::RideViewSet),
+            (record, show_video, audio_devices).after(ocw_ui::RideViewSet),
         )
         .add_systems(Last, (publish, publish_console, publish_steer, publish_map));
         // The trusted world keys in the page's localStorage (spec §4.7
@@ -702,45 +714,10 @@ fn show_video(time: Res<Time>, video: Res<Video>, mut view: ResMut<RideView>) {
     }
 }
 
-/// What the Strava key (S, spec §2.8.1) says in the browser.
-pub const STRAVA_DESKTOP_ONLY: &str = "The Strava recording (S) needs the desktop app. Upload a ride: Navi > Training history > the ride";
-
-/// S (or its pad button) in the browser: the notice that the Strava
-/// recording needs the desktop app, for a few seconds; the HUD shows the
-/// notice (that one or the upload's steps) while it lasts.
-fn strava_key(
-    time: Res<Time>,
-    keys: Option<Res<ButtonInput<KeyCode>>>,
-    pads: Query<&Gamepad>,
-    bindings: Option<Res<ocw_ui::bindings::ActiveBindings>>,
-    context: Option<Res<ocw_render::menu::InputContext>>,
-    mut notice: ResMut<StravaNotice>,
-    mut view: ResMut<RideView>,
-) {
-    use ocw_client::bindings::Action;
-    let now = time.elapsed_secs_f64();
-    if let Some(keys) = keys
-        && ocw_render::menu::ride_input(context)
-        && (ocw_ui::bindings::key_just_pressed(bindings.as_deref(), Action::Strava, &keys)
-            || ocw_ui::bindings::pad_just_pressed(bindings.as_deref(), Action::Strava, pads.iter()))
-    {
-        notice.0 = Some((
-            STRAVA_DESKTOP_ONLY.to_string(),
-            now + ocw_client::strava::NOTICE_S,
-        ));
-    }
-    let msg = notice
-        .0
-        .as_ref()
-        .filter(|(_, until)| now < *until)
-        .map(|(m, _)| m.clone());
-    if view.strava_message != msg {
-        view.strava_message = msg;
-    }
-}
-
 /// `ride.save`: the ride so far as a FIT download; a new recording starts.
 fn save_ride(world: &mut World) -> Result<String, String> {
+    // The ride ends: a Strava recording in it is written too.
+    crate::strava::stop(world);
     let ride = world
         .resource_mut::<WebRecording>()
         .recorder
@@ -1029,26 +1006,138 @@ mod tests {
         app.world().resource::<ConsoleState>().log().join("\n")
     }
 
-    /// S in the browser (spec §2.8.1): the notice that Strava needs the
-    /// desktop app.
+    /// S in the browser (spec §2.8.1 *Where an S recording is written*):
+    /// it records; its stop writes the FIT file – into its own folder of
+    /// the activities folder the rider chose, or as a download named
+    /// `OCW <date> <time> <place>.fit` – and the notice says where; a
+    /// second recording on this page that day gets ` 2`; a photo while it
+    /// runs goes into its folder; `ride.save` stops a running one.
     #[test]
-    fn the_strava_key_says_it_needs_the_desktop_app() {
-        let mut app = app(DownloadLog::default());
+    fn the_strava_key_records_into_the_activities_folder() {
+        // Without a folder: downloads.
+        let log = DownloadLog::default();
+        let mut app = app(log.clone());
         run_for(&mut app, 200);
         assert_eq!(app.world().resource::<RideView>().strava_message, None);
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .press(KeyCode::KeyS);
+        tap(&mut app, KeyCode::KeyS);
+        assert!(
+            app.world().resource::<RideView>().strava_s.is_some(),
+            "recording"
+        );
+        let start = app
+            .world()
+            .resource::<RideView>()
+            .strava_message
+            .clone()
+            .unwrap();
+        assert!(start.contains("started"), "{start}");
+        run_for(&mut app, 2300);
+        tap(&mut app, KeyCode::KeyS);
+        assert_eq!(app.world().resource::<RideView>().strava_s, None);
+        let notice = app
+            .world()
+            .resource::<RideView>()
+            .strava_message
+            .clone()
+            .unwrap();
+        assert!(
+            notice.starts_with("Strava recording saved to your downloads as OCW 20"),
+            "{notice}"
+        );
+        let downloads = log.lock().unwrap().clone();
+        let fit = downloads
+            .iter()
+            .find(|d| d.0.ends_with(".fit"))
+            .expect("the FIT download");
+        // `OCW YYYY-MM-DD HH-MM <place>.fit`, the place from the route.
+        let route = ocw_ui::client(app.world())
+            .unwrap()
+            .course_name()
+            .to_string();
+        assert!(
+            fit.0.starts_with("OCW 20") && fit.0.ends_with(&format!(" {route}.fit")),
+            "{}",
+            fit.0
+        );
+        assert!(!fit.0.contains('/'));
+        assert_eq!(fit.1, "application/vnd.ant.fit");
+        assert_eq!(ocw_fit::crc16(0, &fit.2), 0, "a valid FIT file");
+
+        // With the activities folder chosen: its own folder in it.
+        let written = DownloadLog::default();
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, ConsoleCorePlugin))
+            .init_resource::<ButtonInput<KeyCode>>()
+            .insert_resource(Time::<Fixed>::from_hz(f64::from(ocw_core::SIM_TICK_HZ)))
+            .insert_resource(RideView::new(ocw_world::Route::test_hills()))
+            .insert_resource(Downloads::logged(DownloadLog::default()))
+            .insert_resource(crate::strava::ActivitySaver::folder_log(
+                "OCW",
+                written.clone(),
+            ))
+            .add_plugins(crate::plugin::WebSessionPlugin {
+                config: SessionConfig::default(),
+            })
+            .add_plugins((crate::settings::WebSettingsPlugin, WebUiPlugin::default()));
         app.update();
-        assert_eq!(
-            app.world().resource::<RideView>().strava_message.as_deref(),
-            Some(STRAVA_DESKTOP_ONLY)
+        run_for(&mut app, 200);
+        let out = console(&mut app, "strava.record start");
+        assert!(out.contains("it goes to OCW/20"), "{out}");
+        // A photo while it runs: into the recording's folder.
+        let photo = crate::strava::photo_path(app.world_mut()).unwrap();
+        let folder = app
+            .world()
+            .resource::<crate::strava::WebStrava>()
+            .target
+            .clone()
+            .unwrap();
+        assert_eq!(photo, folder.rel(&folder.photo_name(1)));
+        assert!(photo.ends_with(" photo 1.jpg"));
+        run_for(&mut app, 2300);
+        let out = console(&mut app, "strava.record stop");
+        assert!(
+            out.contains(&format!("Strava recording: Saved to OCW/{}", folder.folder)),
+            "{out}"
         );
-        assert_eq!(
-            app.world().resource::<RideView>().strava_s,
-            None,
-            "no recording"
+        let notice = app
+            .world()
+            .resource::<RideView>()
+            .strava_message
+            .clone()
+            .unwrap();
+        assert!(
+            notice.starts_with(&format!("Strava recording saved to OCW/{}:", folder.folder)),
+            "{notice}"
         );
+        let w = written.lock().unwrap().clone();
+        assert_eq!(w.len(), 1);
+        assert_eq!(w[0].0, folder.rel(&folder.fit_name()));
+        // A second recording that day: ` 2`; the ride's end writes it.
+        console(&mut app, "strava.record start");
+        let second = app
+            .world()
+            .resource::<crate::strava::WebStrava>()
+            .target
+            .clone()
+            .unwrap();
+        assert_eq!(second.folder, format!("{} 2", folder.folder));
+        run_for(&mut app, 2300);
+        console(&mut app, "ride.save");
+        assert!(
+            !app.world()
+                .resource::<crate::strava::WebStrava>()
+                .rec
+                .is_recording()
+        );
+        let w = written.lock().unwrap().clone();
+        assert_eq!(
+            w.len(),
+            2,
+            "{:?}",
+            w.iter().map(|x| &x.0).collect::<Vec<_>>()
+        );
+        assert!(w[1].0.starts_with(&format!("{}/OCW ", second.folder)));
+        assert!(console(&mut app, "activities.folder").contains("go to the folder OCW"));
     }
 
     #[test]
