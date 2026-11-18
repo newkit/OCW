@@ -1,20 +1,18 @@
-//! The desktop's photos (spec §2.11, Q3): the ride photographer's photos
-//! and the screenshots go to the **photos folder**, the platform's
-//! Pictures folder's `OCW` (`dirs::picture_dir()`, else `~/Pictures`;
-//! Linux: the XDG Pictures directory, Windows `Pictures\OCW`, macOS
-//! `~/Pictures/OCW`; setting `photos.folder`, console `photos.folder`;
-//! test runs set `OCW_PHOTOS_DIR` for the default).
-//! A ride photo is `OCW-<ride>-photo-N.jpg` there (`<ride>`: the ride's
-//! FIT file stem, its UTC start) with EXIF time and GPS position – no time
-//! stamp drawn in the picture (§2.8.1 Q4); the ride keeps its reference:
-//! the sidecar `<data dir>/ocw/rides/<ride>/photos/photo-N.toml` (time,
-//! position, view, the score and its parts, the camera pose, the photo's
-//! `path`), so the training history and the Strava recordings find the
-//! photos. Photos taken while a Strava recording runs go into that
-//! recording's own folder in the activities folder instead
-//! (`~/Activities/OCW/<date> <place>/OCW <date> <time> <place> photo N.jpg`,
-//! spec §2.8.1 *Where an S recording is written*), once, with the same
-//! sidecar pointing there. Rides before v4.73 have `photo-N.jpg` beside the sidecar and
+//! The desktop's photos (spec §2.11; §2.8.1 *Where an S recording is
+//! written*, v4.82: one folder for everything): the ride photographer's
+//! photos and the screenshots go to the **activities folder**
+//! `~/Activities/OCW` (setting `activities.folder`, [`crate::activities`]):
+//! while a Strava recording runs into that recording's own folder
+//! (`<date> <place>/OCW <date> <time> <place> photo N.jpg`), else into the
+//! day's folder (`YYYY-MM-DD/`, the [`PhotoFolder`] resource) as
+//! `OCW-<ride>-photo-N.jpg` (`<ride>`: the ride's FIT file stem, its UTC
+//! start) – with EXIF time and GPS position, no time stamp drawn in the
+//! picture (§2.8.1 Q4). The ride keeps its reference: the sidecar
+//! `<data dir>/ocw/rides/<ride>/photos/photo-N.toml` (time, position,
+//! view, the score and its parts, the camera pose, the photo's `path`), so
+//! the training history and the Strava recordings find the photos – also
+//! those saved before v4.83 in `~/Pictures/OCW` (never moved) and, for
+//! rides before v4.73, `photo-N.jpg` beside the sidecar; they all
 //! keep working. The photographer itself is `ocw_ui::photographer`; this
 //! module gives it the files and the sound, and keeps it off in scripted
 //! screenshot and capture runs (like the ride recording).
@@ -22,64 +20,11 @@
 use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
-use clap::{Arg, Command};
 use ocw_audio::mixer::MixerMsg;
 use ocw_client::photographer::{CameraMeta, PhotoMeta, Taken, ride_photo_name};
-use ocw_render::console::{ConsoleAppExt, ConsoleCommand, Permission};
 use ocw_render::media::{GpsPosition, MediaTime, encode_jpeg, exif_tiff_gps};
 use ocw_render::stamp::PhotoFolder;
 use ocw_ui::photographer::{PhotographerHooks, PhotographerPlugin, RidePhotographer};
-
-/// The photos folder's name in the Pictures folder.
-pub const PHOTOS_SUBFOLDER: &str = "OCW";
-
-/// The default photos folder: `pictures/OCW`, or `home/Pictures/OCW`
-/// where the platform names no Pictures folder (a Linux box without XDG
-/// user dirs).
-pub fn default_folder(pictures: Option<PathBuf>, home: Option<PathBuf>) -> Option<PathBuf> {
-    pictures
-        .or_else(|| home.map(|h| h.join("Pictures")))
-        .map(|p| p.join(PHOTOS_SUBFOLDER))
-}
-
-/// The photos folder for the setting `photos.folder`: `default` (or
-/// empty) the [`default_folder`], `~/…` below `home`, else the path.
-pub fn resolve_folder(
-    setting: &str,
-    pictures: Option<PathBuf>,
-    home: Option<PathBuf>,
-) -> Option<PathBuf> {
-    let s = setting.trim();
-    if s.is_empty() || s == "default" {
-        return default_folder(pictures, home);
-    }
-    if let Some(rest) = s.strip_prefix("~/").or_else(|| s.strip_prefix("~\\")) {
-        return home.map(|h| h.join(rest));
-    }
-    if s == "~" {
-        return home;
-    }
-    Some(PathBuf::from(s))
-}
-
-/// The photos folder for `setting` on this machine, with its caption name
-/// ("Pictures/OCW").
-pub fn photo_folder(setting: &str) -> Option<PhotoFolder> {
-    // Test runs keep their photos in their throwaway folder.
-    let setting = match std::env::var("OCW_PHOTOS_DIR") {
-        Ok(dir) if !dir.is_empty() && matches!(setting.trim(), "" | "default") => dir,
-        _ => setting.to_string(),
-    };
-    let setting = setting.as_str();
-    let (pictures, home) = (dirs::picture_dir(), dirs::home_dir());
-    let pics_or_default = pictures
-        .clone()
-        .or_else(|| home.as_ref().map(|h| h.join("Pictures")));
-    let dir = resolve_folder(setting, pictures, home.clone())?;
-    let label =
-        ocw_render::photo_preview::folder_label(&dir, pics_or_default.as_deref(), home.as_deref());
-    Some(PhotoFolder { dir, label })
-}
 
 use crate::Args;
 use crate::connection::ClientState;
@@ -108,34 +53,6 @@ impl Plugin for PhotosPlugin {
             .get_resource::<Recording>()
             .is_none_or(|r| r.enabled);
         app.world_mut().resource_mut::<RidePhotographer>().allowed = recording;
-        // The photos folder (the setting applies `photos.folder` at the
-        // start; this is the default until then).
-        if let Some(f) = photo_folder("default") {
-            app.insert_resource(f);
-        }
-        app.console_command(ConsoleCommand::new(
-            Permission::User,
-            Command::new("photos.folder")
-                .about("The folder for photos and screenshots: default (Pictures/OCW), a path (~/ for the home folder), choose (a folder picker), or nothing to show it (setting photos.folder)")
-                .arg(Arg::new("folder")),
-            |world, m| {
-                if let Some(s) = m.get_one::<String>("folder") {
-                    if s == "choose" {
-                        return crate::activities::choose(world, "photos.folder", "Photos folder");
-                    }
-                    let f = photo_folder(s).ok_or("no home folder to put the photos in")?;
-                    world.insert_resource(f);
-                }
-                let f = world
-                    .get_resource::<PhotoFolder>()
-                    .ok_or("no photos folder")?;
-                Ok(format!(
-                    "photos go to {} ({})",
-                    f.dir.display(),
-                    f.label
-                ))
-            },
-        ));
         if let Some(dir) = args.photo_chase_shots {
             app.insert_resource(ChaseShots {
                 dir,
@@ -320,8 +237,8 @@ fn ride_id(world: &World) -> String {
     crate::recording::file_stem(start)
 }
 
-/// Where photo `n` of `ride` goes: in the photos folder
-/// (`OCW-<ride>-photo-N.jpg`, a free name), else (no home folder) beside
+/// Where photo `n` of `ride` goes: in the day's folder of the activities
+/// folder (`OCW-<ride>-photo-N.jpg`, a free name), else (no home folder) beside
 /// its sidecar in the rides folder as before (`photo-N.jpg`); the caption
 /// says where.
 pub fn photo_target(
@@ -361,7 +278,7 @@ fn save_photo(world: &mut World, t: &Taken, image: Image) -> Option<String> {
     let folder = world.get_resource::<PhotoFolder>().cloned();
     // While a Strava recording runs its photos go into its own folder in
     // the activities folder (spec §2.8.1 *Where an S recording is
-    // written*) – only there; else into the photos folder.
+    // written*) – only there; else into the day's folder there.
     let recording = recording_target(world);
     let Some((path, mut went)) =
         recording.or_else(|| photo_target(folder.as_ref(), rides.as_deref(), &ride, t.n))
@@ -416,7 +333,7 @@ fn save_photo(world: &mut World, t: &Taken, image: Image) -> Option<String> {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default(),
-        // The ride's reference to the photo in the photos folder.
+        // The ride's reference to the photo in the activities folder.
         path: (!beside).then(|| path.to_string_lossy().into_owned()),
         time_unix_s: now.unix_s,
         time: now.iso_local(),
@@ -466,7 +383,7 @@ fn save_photo(world: &mut World, t: &Taken, image: Image) -> Option<String> {
 }
 
 /// The photos of the ride `id` in `rides` that still exist: each sidecar
-/// with the photo's path (the photos folder's, or beside the sidecar for
+/// with the photo's path (in the activities folder or an older ~/Pictures/OCW, or beside the sidecar for
 /// rides before v4.73), in ride order.
 pub fn ride_photo_files(rides: &Path, id: &str) -> Vec<(PhotoMeta, PathBuf)> {
     let dir = photos_dir(rides, id);
@@ -499,7 +416,7 @@ pub fn ride_photos(rides: &Path, id: &str) -> Vec<(String, f64, i64)> {
 }
 
 /// The folder to open for the ride's photos: where its first photo is
-/// (the photos folder, or the ride's own folder for older rides).
+/// (in the activities folder, or the ride's own folder for older rides).
 pub fn ride_photo_folder(rides: &Path, id: &str) -> Option<PathBuf> {
     ride_photo_files(rides, id)
         .into_iter()
@@ -553,26 +470,27 @@ pub(crate) mod tests {
         offset_s: 3600,
     };
 
-    /// A photo in the photos folder (spec §2.11 Q3): the JPEG with EXIF
+    /// A photo in the day folder of the activities folder (spec §2.8.1,
+    /// v4.82: one folder for everything): the JPEG with EXIF
     /// time and GPS there, the ride's sidecar with the time, position,
     /// score, pose and the photo's path; the history and the Strava
     /// recordings find it through the sidecar (made-up place).
     #[test]
-    fn a_photo_goes_to_the_photos_folder_and_the_ride_keeps_its_reference() {
+    fn a_photo_goes_to_the_day_folder_and_the_ride_keeps_its_reference() {
         let base = std::env::temp_dir().join(format!("ocw-photo-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let rides = base.join("rides");
         let folder = PhotoFolder {
-            dir: base.join("Pictures/OCW"),
-            label: "Pictures/OCW".into(),
+            dir: base.join("Activities/OCW/2026-11-16"),
+            label: "Activities/OCW/2026-11-16".into(),
         };
         let ride = "2026-11-16_09-00-00";
         let (path, went) = photo_target(Some(&folder), Some(&rides), ride, 2).unwrap();
         assert_eq!(
             path,
-            base.join("Pictures/OCW/OCW-2026-11-16_09-00-00-photo-2.jpg")
+            base.join("Activities/OCW/2026-11-16/OCW-2026-11-16_09-00-00-photo-2.jpg")
         );
-        assert_eq!(went, "Saved to Pictures/OCW");
+        assert_eq!(went, "Saved to Activities/OCW/2026-11-16");
         let m = meta(
             2,
             "OCW-2026-11-16_09-00-00-photo-2.jpg".into(),
@@ -598,7 +516,7 @@ pub(crate) mod tests {
         // EXIF with the GPS block (the "N" / "E" refs and the date stamp).
         assert!(jpg.windows(4).any(|w| w == b"Exif"));
         assert!(jpg.windows(10).any(|w| w == b"2026:11:16"));
-        // Only the photo in the Pictures folder, no sidecar there.
+        // Only the photo in the day folder, no sidecar there.
         let in_folder: Vec<_> = std::fs::read_dir(&folder.dir).unwrap().flatten().collect();
         assert_eq!(in_folder.len(), 1);
         let side: PhotoMeta =
@@ -619,9 +537,9 @@ pub(crate) mod tests {
         let (next, _) = photo_target(Some(&folder), Some(&rides), ride, 2).unwrap();
         assert_eq!(
             next,
-            base.join("Pictures/OCW/OCW-2026-11-16_09-00-00-photo-2-2.jpg")
+            base.join("Activities/OCW/2026-11-16/OCW-2026-11-16_09-00-00-photo-2-2.jpg")
         );
-        // A photo deleted from the Pictures folder is not listed.
+        // A photo deleted from the activities folder is not listed.
         std::fs::remove_file(&path).unwrap();
         assert!(ride_photos(&rides, ride).is_empty());
         let _ = std::fs::remove_dir_all(&base);
@@ -658,7 +576,7 @@ pub(crate) mod tests {
             vec![("photo-1.jpg".to_string(), 1501.0, TIME.unix_s)]
         );
         assert_eq!(ride_photo_folder(&rides, ride), Some(dir.clone()));
-        // A newer photo of that ride in the photos folder.
+        // A photo of v4.74 – v4.82 in ~/Pictures/OCW (never moved).
         let pics = base.join("Pictures/OCW/OCW-x-photo-2.jpg");
         let new = meta(
             2,
@@ -669,65 +587,11 @@ pub(crate) mod tests {
         write_photo(&pics, Some(&dir), &rgb, 32, 18, &new, &TIME, "OCW").unwrap();
         let files: Vec<String> = ride_photos(&rides, ride).into_iter().map(|f| f.0).collect();
         assert_eq!(files, ["photo-1.jpg", "OCW-x-photo-2.jpg"]);
-        // No photos folder (no home folder): beside the sidecar, as before.
+        // No activities folder (no home folder): beside the sidecar, as before.
         let (p, went) = photo_target(None, Some(&rides), ride, 3).unwrap();
         assert_eq!(p, dir.join("photo-3.jpg"));
         assert_eq!(went, "Saved to the ride's folder");
         assert_eq!(photo_target(None, None, ride, 3), None);
         let _ = std::fs::remove_dir_all(&base);
-    }
-
-    /// The photos folder per platform (spec §2.11 Q3): the Pictures
-    /// folder's OCW – the XDG Pictures directory on Linux, `Pictures` in
-    /// the profile on Windows and macOS – or `~/Pictures/OCW` without
-    /// one; `photos.folder` takes a path or `~/…`.
-    #[test]
-    fn the_photos_folder_per_platform() {
-        let home = PathBuf::from("/home/ada");
-        assert_eq!(
-            default_folder(Some(home.join("Bilder")), Some(home.clone())),
-            Some(home.join("Bilder/OCW"))
-        );
-        assert_eq!(
-            default_folder(None, Some(home.clone())),
-            Some(home.join("Pictures/OCW"))
-        );
-        assert_eq!(default_folder(None, None), None);
-        assert_eq!(
-            resolve_folder("default", None, Some(home.clone())),
-            Some(home.join("Pictures/OCW"))
-        );
-        assert_eq!(
-            resolve_folder("", Some(home.join("Pics")), Some(home.clone())),
-            Some(home.join("Pics/OCW"))
-        );
-        assert_eq!(
-            resolve_folder("~/shots", None, Some(home.clone())),
-            Some(home.join("shots"))
-        );
-        assert_eq!(
-            resolve_folder("/srv/photos", None, Some(home.clone())),
-            Some(PathBuf::from("/srv/photos"))
-        );
-        // This machine: always a folder named OCW under the Pictures
-        // folder or the home folder.
-        let f = photo_folder("default").expect("a home folder");
-        assert!(f.dir.ends_with(PHOTOS_SUBFOLDER), "{}", f.dir.display());
-        let home = dirs::home_dir().unwrap();
-        // (Windows: the known folder Pictures, which may be moved, e.g.
-        // into OneDrive; macOS: ~/Pictures; Linux: XDG_PICTURES_DIR.)
-        #[cfg(target_os = "macos")]
-        assert_eq!(f.dir, home.join("Pictures").join("OCW"));
-        assert_eq!(
-            f.dir,
-            dirs::picture_dir()
-                .unwrap_or_else(|| home.join("Pictures"))
-                .join("OCW")
-        );
-        assert!(f.label.ends_with("/OCW"), "{}", f.label);
-        assert!(!f.label.contains('\\'), "{}", f.label);
-        let custom = photo_folder("~/ocw-test-shots").unwrap();
-        assert_eq!(custom.dir, home.join("ocw-test-shots"));
-        assert_eq!(custom.label, "~/ocw-test-shots");
     }
 }

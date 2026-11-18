@@ -128,8 +128,8 @@ pub enum Page {
     /// cue and arrow, the "last moment" warning, the camera shake.
     RidingAids,
     /// Settings → Account → Folders (desktop; spec §2.8.1 *Where an S
-    /// recording is written*, v4.80): the activities folder of the Strava
-    /// recordings and the photos folder, each with *Change* (a folder
+    /// recording is written*, v4.80 / v4.82): the activities folder – the
+    /// one folder for everything OCW saves – with *Change* (a folder
     /// picker) and *Default*.
     Folders,
     /// Display → Graphics (spec §14 Phase 10 B7): the quality preset, the
@@ -539,9 +539,9 @@ impl Page {
             Self::Graphics => &[
                 "Quality: Low and Medium draw fewer shadows, trees and houses for weaker GPUs, WebGL 2 and phones; auto chooses by GPU and device.",
             ],
-            Self::Folders => {
-                &["Each Strava recording (S): its own folder with its FIT file and photos."]
-            }
+            Self::Folders => &[
+                "Everything OCW saves: Strava recordings (S) in their own folders, photos by day.",
+            ],
             Self::RidingAids => &[
                 "Aids that never steer: an arrow to a rider close by, a warning before a hit or a slide. Shake: off for comfort.",
             ],
@@ -654,9 +654,9 @@ pub fn folder_value(settings: &Settings, key: &str, default: &str) -> String {
     }
 }
 
-/// The Folders page (desktop): the activities folder (the Strava
-/// recordings, spec §2.8.1) and the photos folder (§2.11 Q3); Confirm on
-/// a folder opens the folder picker (`… choose`), *Default* resets it.
+/// The Folders page (desktop): the activities folder (spec §2.8.1, the
+/// one folder for everything since v4.82); Confirm opens the folder
+/// picker (`activities.folder choose`), *Default* resets it.
 fn folder_rows(settings: &Settings) -> Vec<Row> {
     let folder = |label: &str, key: &str, default: &str| Row {
         label: label.into(),
@@ -675,8 +675,6 @@ fn folder_rows(settings: &Settings) -> Vec<Row> {
             "Activities folder: default",
             "set activities.folder default",
         ),
-        folder("Photos folder: change", "photos.folder", "~/Pictures/OCW"),
-        Row::action("Photos folder: default", "set photos.folder default"),
     ]
 }
 

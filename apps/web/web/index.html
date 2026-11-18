@@ -194,19 +194,17 @@
       window.ocwDownloads.push({name, mime, size: bytes.length});
       console.log(`ocw-web: download ${name} (${bytes.length} bytes, ${mime})`);
     };
-    // The photos folder (spec §2.11 Q3): screenshots and the ride
-    // photographer's photos go into a folder the rider chose once with the
-    // File System Access API (Chromium; the picker starts in Pictures and
-    // an "OCW" folder is made in the chosen one), its handle kept in
-    // IndexedDB; after a reload the permission is asked again with the next
-    // key press or click. Without the API (Firefox, Safari), or before a
-    // folder is chosen, each photo is a download (named OCW-…).
-    // The activities folder (spec §2.8.1 *Where an S recording is
-    // written*): the same for the Strava recordings – each recording's FIT
-    // file and photos in its own subfolder ("2026-11-18 Puerto de la
-    // Cruz/OCW … .fit": a name with "/" makes the subfolders), else
-    // downloads named by the file ("OCW 2026-11-18 10-05 … .fit").
-    window.ocwPhotosSaved = [];
+    // The activities folder, the one folder for everything (spec §2.8.1
+    // *Where an S recording is written*, v4.82): the Strava recordings –
+    // each recording's FIT file and photos in its own subfolder
+    // ("2026-11-18 Puerto de la Cruz/OCW … .fit": a name with "/" makes the
+    // subfolders) – and the screenshots and other photos in a folder per
+    // day ("2026-11-18/OCW-….jpg") go into a folder the rider chose once
+    // with the File System Access API (Chromium; an "OCW" folder is made in
+    // the chosen one), its handle kept in IndexedDB; after a reload the
+    // permission is asked again with the next key press or click. Without
+    // the API (Firefox, Safari), or before a folder is chosen, each file is
+    // a download named by the file.
     window.ocwActivitiesSaved = [];
     const ocwFolderStore = (key, startIn, saved, what) => {
       let dir = null, granted = false;
@@ -254,7 +252,7 @@
         folder() { return dir && granted ? dir.name : null; },
         async choose() {
           if (!supported) throw new Error(`this browser cannot keep a folder (${what} are downloads)`);
-          let d = await window.showDirectoryPicker({id: key === "folder" ? "ocw-photos" : `ocw-${key}`, mode: "readwrite", startIn});
+          let d = await window.showDirectoryPicker({id: `ocw-${key}`, mode: "readwrite", startIn});
           if (d.name !== "OCW") d = await d.getDirectoryHandle("OCW", {create: true});
           dir = d;
           granted = true;
@@ -286,7 +284,6 @@
         },
       };
     };
-    window.ocwPhotos = ocwFolderStore("folder", "pictures", window.ocwPhotosSaved, "photos");
     window.ocwActivities = ocwFolderStore("activities", "documents", window.ocwActivitiesSaved, "activities");
     // Videos (B6): MediaRecorder on the canvas at 30 fps, with the game
     // sound (window.ocwAudioStream, from the app's Web Audio); downloaded

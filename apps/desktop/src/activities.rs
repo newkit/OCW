@@ -1,5 +1,9 @@
 //! The activities folder (spec §2.8.1 *Where an S recording is written*,
-//! v4.79 / v4.80): every Strava (S … S) recording is written **always**
+//! v4.79 / v4.80 / v4.82): the **one folder for everything** OCW saves
+//! for the user. Screenshots and the photos taken outside a Strava
+//! recording go into the day's subfolder (`~/Activities/OCW/2026-11-18/`,
+//! the [`PhotoFolder`] resource, kept up to date by [`day_folder`]); every
+//! Strava (S … S) recording is written **always**
 //! into its own subfolder of `~/Activities/OCW` (the home folder +
 //! `Activities/OCW` on every platform; setting `activities.folder`,
 //! console `activities.folder [PATH|default|choose]`, Settings → Account
@@ -17,8 +21,11 @@
 //! opens that folder. Photos are written once, into the recording's
 //! folder; their sidecars in `rides/<ride>/photos/` point there.
 //!
-//! *Change* (`activities.folder choose`, also `photos.folder choose`)
-//! opens the system's folder picker – `zenity` or `kdialog` on Linux,
+//! The photos folder of v4.74 – v4.82 (`~/Pictures/OCW`, setting
+//! `photos.folder`) is gone; the photos saved there stay where they are
+//! and are found through their sidecars.
+//!
+//! *Change* (`activities.folder choose`) opens the system's folder picker – `zenity` or `kdialog` on Linux,
 //! PowerShell's folder dialog on Windows, `osascript` on macOS – on a
 //! thread; without one (or in test runs) the console opens with
 //! `set activities.folder ` to type the path.
@@ -30,6 +37,7 @@ use bevy::prelude::*;
 use clap::{Arg, Command};
 use ocw_client::activities::{self, DEFAULT_SUBFOLDER, Target};
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
+use ocw_render::stamp::PhotoFolder;
 
 use crate::strava::manual::{OpenCmd, Os};
 
@@ -112,6 +120,29 @@ pub fn activities_folder(setting: &str) -> Option<ActivitiesFolder> {
         }
     };
     Some(ActivitiesFolder { dir, label })
+}
+
+/// The day's folder for screenshots and loose photos: `root/YYYY-MM-DD`
+/// (the local date at `unix_s` + `offset_s`), named `Activities/OCW/2026-11-18`.
+pub fn day_folder_of(root: &ActivitiesFolder, unix_s: i64, offset_s: i32) -> PhotoFolder {
+    let (date, _) = activities::local_date_time(unix_s, offset_s);
+    PhotoFolder {
+        dir: root.dir.join(&date),
+        label: format!("{}/{date}", root.label),
+    }
+}
+
+/// Keeps the [`PhotoFolder`] on the activities folder's day folder (a new
+/// day, another activities folder).
+pub fn day_folder(world: &mut World) {
+    let Some(root) = world.get_resource::<ActivitiesFolder>().cloned() else {
+        return;
+    };
+    let unix_s = crate::recording::unix_now();
+    let f = day_folder_of(&root, unix_s, ocw_render::media::local_offset_s(unix_s));
+    if world.get_resource::<PhotoFolder>() != Some(&f) {
+        world.insert_resource(f);
+    }
 }
 
 /// A running recording's folder: where it is and its files' names.
@@ -337,12 +368,13 @@ impl Plugin for ActivitiesPlugin {
         if let Some(f) = activities_folder("default") {
             app.insert_resource(f);
         }
+        day_folder(app.world_mut());
         app.init_resource::<Picked>()
-            .add_systems(Update, apply_picked);
+            .add_systems(Update, (apply_picked, day_folder));
         app.console_command(ConsoleCommand::new(
             Permission::User,
             Command::new("activities.folder")
-                .about("The folder for the Strava recordings (S), each in its own subfolder with its FIT file and photos: default (~/Activities/OCW), a path (~/ for the home folder), choose (a folder picker), or nothing to show it (setting activities.folder)")
+                .about("The one folder for everything OCW saves for you: the Strava recordings (S), each in its own subfolder with its FIT file and photos, and the screenshots and other photos in a folder per day. default (~/Activities/OCW), a path (~/ for the home folder), choose (a folder picker), or nothing to show it (setting activities.folder)")
                 .arg(Arg::new("folder")),
             |world, m| {
                 match m.get_one::<String>("folder").map(String::as_str) {
@@ -359,7 +391,7 @@ impl Plugin for ActivitiesPlugin {
                     .get_resource::<ActivitiesFolder>()
                     .ok_or("no activities folder")?;
                 Ok(format!(
-                    "Strava recordings go to {} ({}), each in its own folder",
+                    "everything goes to {} ({}): each Strava recording in its own folder, screenshots and photos in a folder per day",
                     f.dir.display(),
                     f.label
                 ))
@@ -444,6 +476,34 @@ mod tests {
         a.discard();
         assert!(a.dir.exists(), "a folder with files stays");
         let _ = std::fs::remove_dir_all(root.dir.parent().unwrap().parent().unwrap());
+    }
+
+    /// Screenshots and loose photos: the day's folder of the activities
+    /// folder (v4.82: one folder for everything), the local date.
+    #[test]
+    fn the_day_folder() {
+        let root = root("day");
+        // 2026-11-18 23:30 UTC: the 18th at UTC+0, the 19th at UTC+1.
+        let f = day_folder_of(&root, 1_795_044_600, 0);
+        assert_eq!(f.dir, root.dir.join("2026-11-18"));
+        assert_eq!(f.label, "Activities/OCW/2026-11-18");
+        assert_eq!(
+            day_folder_of(&root, 1_795_044_600, 3600).label,
+            "Activities/OCW/2026-11-19"
+        );
+        // In an app: set from the activities folder, changed with it.
+        let mut w = World::new();
+        w.insert_resource(root.clone());
+        day_folder(&mut w);
+        let p = w.resource::<PhotoFolder>().clone();
+        assert!(p.dir.starts_with(&root.dir) && p.label.starts_with("Activities/OCW/20"));
+        let other = ActivitiesFolder {
+            dir: root.dir.join("x"),
+            label: "~/x".into(),
+        };
+        w.insert_resource(other.clone());
+        day_folder(&mut w);
+        assert!(w.resource::<PhotoFolder>().dir.starts_with(&other.dir));
     }
 
     #[test]

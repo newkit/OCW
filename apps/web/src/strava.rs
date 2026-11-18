@@ -297,7 +297,7 @@ fn folder(world: &mut World, action: &str) -> Result<String, String> {
     {
         use crate::browser::{PageFolder, folder_choose, folder_forget, folder_supported};
         if !folder_supported(PageFolder::Activities) {
-            return Ok("Strava recordings are downloads named OCW <date> <time> <place> (this browser cannot keep a folder)".into());
+            return Ok("recordings, photos and screenshots are downloads named OCW … (this browser cannot keep a folder)".into());
         }
         match action {
             "choose" => {
@@ -309,7 +309,7 @@ fn folder(world: &mut World, action: &str) -> Result<String, String> {
             }
             "forget" => {
                 folder_forget(PageFolder::Activities)?;
-                return Ok("Strava recordings are downloads again".into());
+                return Ok("recordings, photos and screenshots are downloads again".into());
             }
             _ => {}
         }
@@ -317,8 +317,8 @@ fn folder(world: &mut World, action: &str) -> Result<String, String> {
     let _ = action;
     let saver = world.resource::<ActivitySaver>().clone();
     Ok(match (saver.folder)() {
-        Some(f) => format!("Strava recordings go to the folder {f}, each in its own folder"),
-        None => "Strava recordings are downloads named OCW <date> <time> <place> (Captures -> Activities folder chooses a folder)".into(),
+        Some(f) => format!("everything goes to the folder {f}: each Strava recording in its own folder, photos and screenshots in a folder per day"),
+        None => "recordings, photos and screenshots are downloads named OCW … (Captures -> Activities folder chooses the one folder for everything)".into(),
     })
 }
 
@@ -356,7 +356,7 @@ pub fn build(app: &mut App) {
     app.console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("activities.folder")
-            .about("Where the Strava recordings go: choose (a folder; an OCW folder is made in it), forget (downloads), or nothing to show it")
+            .about("The one folder for everything: the Strava recordings (each its own folder), photos and screenshots (a folder per day). choose (a folder; an OCW folder is made in it), forget (downloads), or nothing to show it")
             .arg(Arg::new("action").value_parser(["choose", "forget", "status"])),
         |world, m| folder(world, m.get_one::<String>("action").map_or("status", String::as_str)),
     ));

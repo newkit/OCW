@@ -38,7 +38,6 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 export OCW_DATA_DIR=$work/data
 export OCW_CONFIG_DIR=$work/config
-export OCW_PHOTOS_DIR=$work/Pictures/OCW
 export OCW_ACTIVITIES_DIR=$work/Activities/OCW
 export OCW_TEST_OUTPUT=off
 mkdir -p "$OCW_DATA_DIR" "$OCW_CONFIG_DIR"
@@ -53,7 +52,7 @@ export OCW_SIZE=${OCW_SIZE:-1920x1080}
   --cmd "strava.record start" --cmd "photographer on" "${extra[@]}"
 rm -rf "$out/photos" "$out/strava"
 mkdir -p "$out/photos" "$out/strava"
-find "$work" \( -path '*/photos/*' -o -path '*/Pictures/OCW/*' -o -path '*/Activities/OCW/*' \) -type f -exec cp {} "$out/photos/" \;
+find "$work" \( -path '*/photos/*' -o -path '*/Activities/OCW/*' \) -type f -exec cp {} "$out/photos/" \;
 (cd "$work" && find Activities -type f | sort) > "$out/activities-folder.txt" 2>/dev/null || true
 find "$OCW_DATA_DIR" -path '*/rides/strava/*' -type f -exec cp {} "$out/strava/" \;
 echo "photos: $(find "$out/photos" -name '*.jpg' | wc -l), chase views: $(find "$out/chase" -name '*.jpg' 2>/dev/null | wc -l), Strava activities: $(find "$out/strava" -name '*.fit' | wc -l)"

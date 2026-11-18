@@ -9,8 +9,10 @@
 //!   Screenshot: the renderer's JPEG with the time in EXIF,
 //!   `ocw_render::stamp`, named `OCW-2026-11-14_19-20-05.jpg`) and the ride
 //!   photographer's photos (`OCW-<time>-photo-N.jpg`, EXIF time and GPS)
-//!   go through [`PhotoSaver`]: into the photos folder the rider chose
-//!   (Captures → Photos folder, `photos.folder choose`: the File System
+//!   go through [`PhotoSaver`]: into the day's folder (`YYYY-MM-DD/`) of
+//!   the activities folder the rider chose – the one folder for
+//!   everything (spec §2.8.1, v4.82; Captures → Activities folder,
+//!   `activities.folder choose`: the File System
 //!   Access API's picker starting in Pictures, an `OCW` folder made in
 //!   the chosen one, the handle kept in IndexedDB, the permission asked
 //!   again with the next key or click after a reload), else as downloads;
@@ -42,38 +44,31 @@ use ocw_ui::menu::MenuHooks;
 
 use crate::plugin::Session;
 
-/// Where the browser's photos go (spec §2.11 Q3): (file name, MIME type,
-/// bytes) → where they went, for the HUD's preview ("Saved to OCW",
-/// "Downloaded OCW-….jpg").
+/// Where the browser's photos and screenshots go (spec §2.8.1, v4.82: one
+/// folder for everything): (file name, MIME type, bytes) → where they
+/// went, for the HUD's preview ("Saved to OCW/2026-11-18", "Downloaded
+/// OCW-….jpg").
 #[derive(Resource, Clone)]
 pub struct PhotoSaver(pub Arc<PhotoSaveFn>);
 
 /// What [`PhotoSaver`] calls.
 pub type PhotoSaveFn = dyn Fn(&str, &str, Vec<u8>) -> String + Send + Sync;
 
-/// The preview's caption for a photo that went to `went` (the page's
-/// answer: `folder:NAME` or `download`).
-pub fn photo_went(went: &str, name: &str) -> String {
-    match went.strip_prefix("folder:") {
-        Some(folder) => format!("Saved to {folder}"),
-        None => format!("Downloaded {name}"),
-    }
+/// `YYYY-MM-DD/name`: a loose photo's or screenshot's path in the
+/// activities folder (the day's folder, local date).
+pub fn day_path(unix_s: i64, offset_s: i32, name: &str) -> String {
+    let (date, _) = ocw_client::activities::local_date_time(unix_s, offset_s);
+    format!("{date}/{name}")
 }
 
 impl PhotoSaver {
-    /// Downloads only (the tests, a page without the folder API).
-    pub fn downloads(d: Downloads) -> Self {
+    /// Through the activities folder (`a`): into the day's folder there,
+    /// else a download named `name`.
+    pub fn over(a: crate::strava::ActivitySaver) -> Self {
         Self(Arc::new(move |name, mime, bytes| {
-            (d.0)(name, mime, bytes);
-            photo_went("download", name)
-        }))
-    }
-
-    /// The page's photos folder, else a download.
-    #[cfg(target_arch = "wasm32")]
-    fn page() -> Self {
-        Self(Arc::new(|name, mime, bytes| {
-            photo_went(&crate::browser::photo_save(name, mime, &bytes), name)
+            let unix_s = unix_now();
+            let path = day_path(unix_s, ocw_render::media::local_offset_s(unix_s), name);
+            crate::strava::went(&(a.save)(&path, mime, bytes), &path)
         }))
     }
 }
@@ -336,12 +331,11 @@ impl Plugin for WebUiPlugin {
         // in its own folder of the activities folder, or downloads.
         crate::strava::build(app);
         if !app.world().contains_resource::<PhotoSaver>() {
-            #[cfg(target_arch = "wasm32")]
-            app.insert_resource(PhotoSaver::page());
-            #[cfg(not(target_arch = "wasm32"))]
-            app.insert_resource(PhotoSaver::downloads(
-                app.world().resource::<Downloads>().clone(),
-            ));
+            let a = app
+                .world()
+                .resource::<crate::strava::ActivitySaver>()
+                .clone();
+            app.insert_resource(PhotoSaver::over(a));
         }
         let saver = app.world().resource::<PhotoSaver>().clone();
         app.insert_resource(ShotSink(Arc::new(move |name, bytes| {
@@ -814,41 +808,6 @@ fn stop_video() -> Result<(), String> {
     Err("no video recorder outside the browser".into())
 }
 
-/// `photos.folder choose|forget|status`.
-fn photos_folder(action: &str) -> Result<String, String> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        if !crate::browser::photo_folder_supported() {
-            return Ok(
-                "photos are downloads named OCW-… (this browser cannot keep a folder)".into(),
-            );
-        }
-        match action {
-            "choose" => {
-                crate::browser::photo_folder_choose()?;
-                return Ok(
-                    "choose the photos folder (Pictures; an OCW folder is made in it)".into(),
-                );
-            }
-            "forget" => {
-                crate::browser::photo_folder_forget()?;
-                return Ok("photos are downloads again".into());
-            }
-            _ => {}
-        }
-        Ok(match crate::browser::photo_folder() {
-            Some(f) => format!("photos go to the folder {f}"),
-            None => "photos are downloads named OCW-… (Captures -> Photos folder chooses a folder)"
-                .into(),
-        })
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let _ = action;
-        Ok("photos are downloads named OCW-… (no page)".into())
-    }
-}
-
 fn register_commands(app: &mut App) {
     // `world trust …` (spec §4.7 *User keys*) and the trust dialog's lines
     // for the streamed world.
@@ -874,14 +833,6 @@ fn register_commands(app: &mut App) {
             Some(("stop", _)) => crate::world::answer_trust(world, false),
             _ => Err("world trust list | add KEY | remove FINGERPRINT".into()),
         },
-    ));
-    // The photos folder (spec §2.11 Q3): the File System Access API.
-    app.console_command(ConsoleCommand::new(
-        Permission::User,
-        Command::new("photos.folder")
-            .about("Where photos go: choose (a folder, the picker starts in Pictures; an OCW folder is made in it), forget (downloads), or nothing to show it")
-            .arg(Arg::new("action").value_parser(["choose", "forget", "status"])),
-        |_world, m| photos_folder(m.get_one::<String>("action").map_or("status", String::as_str)),
     ));
     app.console_command(ConsoleCommand::new(
         Permission::User,
@@ -1137,7 +1088,7 @@ mod tests {
             w.iter().map(|x| &x.0).collect::<Vec<_>>()
         );
         assert!(w[1].0.starts_with(&format!("{}/OCW ", second.folder)));
-        assert!(console(&mut app, "activities.folder").contains("go to the folder OCW"));
+        assert!(console(&mut app, "activities.folder").contains("goes to the folder OCW"));
     }
 
     #[test]
@@ -1289,8 +1240,24 @@ mod tests {
     /// caption says which.
     #[test]
     fn photos_are_saved_with_their_caption() {
-        assert_eq!(photo_went("folder:OCW", "OCW-a.jpg"), "Saved to OCW");
-        assert_eq!(photo_went("download", "OCW-a.jpg"), "Downloaded OCW-a.jpg");
+        assert_eq!(
+            day_path(1_795_044_600, 0, "OCW-a.jpg"),
+            "2026-11-18/OCW-a.jpg"
+        );
+        assert_eq!(day_path(1_795_044_600, 3600, "x.jpg"), "2026-11-19/x.jpg");
+        // With the activities folder: into the day's folder there.
+        let written = DownloadLog::default();
+        let p = PhotoSaver::over(crate::strava::ActivitySaver::folder_log(
+            "OCW",
+            written.clone(),
+        ));
+        let went = (p.0)("OCW-a.jpg", "image/jpeg", vec![1]);
+        let path = written.lock().unwrap()[0].0.clone();
+        assert!(
+            path.starts_with("20") && path.ends_with("/OCW-a.jpg"),
+            "{path}"
+        );
+        assert_eq!(went, format!("Saved to OCW/{}", &path[..10]));
         let log = DownloadLog::default();
         let mut app = app(log.clone());
         app.update();
@@ -1309,7 +1276,7 @@ mod tests {
                 .resource::<ocw_ui::photographer::RidePhotographer>()
                 .allowed
         );
-        assert!(console(&mut app, "photos.folder").contains("downloads named OCW-"));
+        assert!(console(&mut app, "activities.folder").contains("are downloads"));
     }
 
     #[test]

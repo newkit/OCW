@@ -170,11 +170,11 @@ pub fn rows(info: &AccountInfo, desktop: bool) -> Vec<Row> {
             right: None,
             confirm: Some(Activate::Open(Page::Riders)),
         });
-        // Where the Strava recordings and the photos go (spec §2.8.1,
-        // §2.11 Q3; the Settings page is full).
+        // The activities folder: everything OCW saves (spec §2.8.1; the
+        // Settings page is full).
         out.push(Row {
             label: "Folders".into(),
-            value: Some("activities, photos".into()),
+            value: Some("~/Activities/OCW".into()),
             left: None,
             right: None,
             confirm: Some(Activate::Open(Page::Folders)),

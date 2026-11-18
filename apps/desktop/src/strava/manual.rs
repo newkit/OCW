@@ -313,7 +313,8 @@ pub fn prepare(
     }
     // The ride's photos (spec §2.11), to add on the activity page.
     let stem = files[0].trim_end_matches(".fit").to_string();
-    // They live in the photos folder (Pictures/OCW), found through their
+    // They live in the activities folder (or an older ~/Pictures/OCW),
+    // found through their
     // sidecars in `rides/<ride>/photos/` (older rides: beside them).
     let mut photos = Vec::new();
     for (k, (_, from)) in crate::photos::ride_photo_files(rides, &ride.id)
@@ -529,7 +530,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The ride's photos live in the photos folder (Pictures/OCW, spec
+    /// The ride's photos live where their sidecars say (here an older
+    /// ~/Pictures/OCW, spec
     /// §2.11 Q3), referenced by their sidecars in `rides/<ride>/photos/`:
     /// the upload folder gets them under the FIT file's name.
     #[test]

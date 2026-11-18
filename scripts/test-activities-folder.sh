@@ -4,14 +4,14 @@
 # ride photographer while it runs, S again – the stop notice names the
 # recording's folder in Activities/OCW – then the ride saved and the simple
 # upload, whose steps name that folder. Everything goes to a throwaway
-# folder (OCW_DATA_DIR, OCW_CONFIG_DIR, OCW_PHOTOS_DIR, OCW_ACTIVITIES_DIR):
-# nothing lands in a real Pictures or Activities folder. Made-up rider.
+# folder (OCW_DATA_DIR, OCW_CONFIG_DIR, OCW_ACTIVITIES_DIR):
+# nothing lands in a real Activities folder. Made-up rider.
 #
 #   scripts/test-activities-folder.sh OUT_DIR [x11|wayland]
 #
 # Writes OUT_DIR/stop-<ws>.jpg (the stop notice), OUT_DIR/upload-<ws>.jpg
 # (the upload's steps in the HUD), their logs, and OUT_DIR/listing-<ws>.txt:
-# the test folder's Activities/OCW, Pictures/OCW and rides/strava contents.
+# the test folder's Activities/OCW and rides/strava contents.
 set -euo pipefail
 out=${1:?OUT_DIR}
 ws=${2:-x11}
@@ -29,7 +29,7 @@ out=$(cd "$out" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 export OCW_DATA_DIR=$work/data OCW_CONFIG_DIR=$work/config
-export OCW_PHOTOS_DIR=$work/Pictures/OCW OCW_ACTIVITIES_DIR=$work/Activities/OCW
+export OCW_ACTIVITIES_DIR=$work/Activities/OCW
 export OCW_TEST_OUTPUT=off OCW_SIZE=${OCW_SIZE:-1920x1080}
 export OCW_SHOT_TIMEOUT=${OCW_SHOT_TIMEOUT:-600}
 mkdir -p "$OCW_DATA_DIR" "$OCW_CONFIG_DIR"
@@ -41,13 +41,14 @@ common=(--world "$pkg" --route "$route" --name "Ada Rider" --virtual --power 350
 .claude/skills/run-ocw/drive.sh "$mode" "$out/stop-$ws.jpg" 73 -- "${common[@]}" \
   --at "70=strava.record stop"
 # 2. The simple upload of that ride: its steps name the recording's folder.
-rm -rf "$OCW_DATA_DIR" "$OCW_ACTIVITIES_DIR" "$OCW_PHOTOS_DIR"
+rm -rf "$OCW_DATA_DIR" "$OCW_ACTIVITIES_DIR"
 mkdir -p "$OCW_DATA_DIR"
 .claude/skills/run-ocw/drive.sh "$mode" "$out/upload-$ws.jpg" 78 -- "${common[@]}" \
-  --at "70=strava.record stop" --at "72=ride.save" --at "74=strava.upload-manual 1"
+  --at "70=strava.record stop" --at "72=ride.save" --at "74=strava.upload-manual 1" \
+  --at "76=screenshot"
 {
   echo "# The test folder after the run ($ws; made-up rider Ada Rider)"
-  for d in Activities Pictures data/rides/strava data/rides/strava-upload; do
+  for d in Activities data/rides/strava data/rides/strava-upload; do
     echo "## $d"
     (cd "$work" && [ -d "$d" ] && find "$d" -type f | sort) || echo "(none)"
   done

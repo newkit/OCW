@@ -834,7 +834,6 @@ mod tests {
                 || line.contains("display.camera_shake")
                 // The ride photographer's plugin is not in this test app.
                 || line.contains("photographer.enabled")
-                || line.contains("photos.folder")
             {
                 continue;
             }

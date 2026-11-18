@@ -426,17 +426,10 @@ const CAPTURE_ITEMS: &[Item] = &[
             close: false,
         },
     ),
-    // Where photos go (spec §2.11 Q3): the File System Access API's
-    // picker (a key press is the gesture it needs), else downloads.
-    item(
-        "Photos folder: choose",
-        ItemKind::Command {
-            line: "photos.folder choose",
-            close: false,
-        },
-    ),
-    // Where the Strava recordings go (spec §2.8.1 *Where an S recording
-    // is written*): each in its own folder there, else downloads.
+    // The one folder for everything (spec §2.8.1, v4.82): the File
+    // System Access API's picker (a key press is the gesture it needs);
+    // the Strava recordings in their own folders, screenshots and photos
+    // by day – else downloads.
     item(
         "Activities folder: choose",
         ItemKind::Command {

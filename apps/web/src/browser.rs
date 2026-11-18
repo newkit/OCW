@@ -96,20 +96,17 @@ pub fn open_tab(url: &str) -> Result<(), String> {
     }
 }
 
-/// The page's folders (File System Access API, `window.ocwPhotos` /
-/// `window.ocwActivities`): the photos folder (spec §2.11 Q3) and the
-/// activities folder of the Strava recordings (spec §2.8.1 *Where an S
-/// recording is written*).
+/// The page's folder (File System Access API, `window.ocwActivities`):
+/// the activities folder, the one folder for everything (spec §2.8.1
+/// *Where an S recording is written*, v4.82).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PageFolder {
-    Photos,
     Activities,
 }
 
 impl PageFolder {
     fn object(self) -> &'static str {
         match self {
-            Self::Photos => "ocwPhotos",
             Self::Activities => "ocwActivities",
         }
     }
@@ -155,32 +152,6 @@ pub fn folder_choose(f: PageFolder) -> Result<(), String> {
 /// Forgets the folder (downloads again).
 pub fn folder_forget(f: PageFolder) -> Result<(), String> {
     call_page(f.object(), "forget", &[]).map(|_| ())
-}
-
-/// Saves a photo (spec §2.11 Q3) into the photos folder, else as a
-/// download.
-pub fn photo_save(name: &str, mime: &str, bytes: &[u8]) -> String {
-    folder_save(PageFolder::Photos, name, mime, bytes)
-}
-
-/// The photos folder's name while it may be written.
-pub fn photo_folder() -> Option<String> {
-    folder_name(PageFolder::Photos)
-}
-
-/// Whether the browser can keep a photos folder.
-pub fn photo_folder_supported() -> bool {
-    folder_supported(PageFolder::Photos)
-}
-
-/// Asks for the photos folder (the picker starts in Pictures).
-pub fn photo_folder_choose() -> Result<(), String> {
-    folder_choose(PageFolder::Photos)
-}
-
-/// Forgets the photos folder (photos are downloads again).
-pub fn photo_folder_forget() -> Result<(), String> {
-    folder_forget(PageFolder::Photos)
 }
 
 /// Tells the page that the renderer stopped (spec §14 Phase 10 B7,
