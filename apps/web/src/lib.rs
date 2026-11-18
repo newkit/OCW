@@ -76,7 +76,10 @@ pub mod ui;
 pub mod voice;
 #[cfg(target_arch = "wasm32")]
 mod webtransport;
+#[cfg(feature = "webxr")]
+pub mod webxr;
 pub mod world;
+pub mod xr;
 
 #[path = "../../desktop/src/build_id.rs"]
 mod build_id;
@@ -586,6 +589,9 @@ pub fn app_with_settings(
     // The desktop's menus and machines over this session, the downloads
     // (B6).
     app.add_plugins(ui::WebUiPlugin { record });
+    // WebXR (spec §14 Phase 14, 14I W1): the immersive session's eyes.
+    #[cfg(feature = "webxr")]
+    app.add_plugins(webxr::WebXrPlugin);
     app
 }
 
@@ -834,6 +840,29 @@ pub fn page_steer() -> String {
 #[wasm_bindgen::prelude::wasm_bindgen(js_name = setting)]
 pub fn page_setting(key: &str) -> String {
     ui::setting_text(key)
+}
+
+/// `window.ocw.xrFrame(data)`: the XR frame's poses and projections
+/// (`web/ocw-xr.js`, before it steps the app; 14I W1).
+#[cfg(all(target_arch = "wasm32", feature = "webxr"))]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = xrFrame)]
+pub fn page_xr_frame(data: &[f32]) {
+    webxr::page_frame(data);
+}
+
+/// `window.ocw.xrEvent(name, detail)`: the immersive session's events
+/// (supported, enter, started, failed, visibility, ended).
+#[cfg(all(target_arch = "wasm32", feature = "webxr"))]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = xrEvent)]
+pub fn page_xr_event(name: &str, detail: &str) {
+    webxr::page_event(name, detail);
+}
+
+/// `window.ocw.xr()`: the session, the eyes and the frame timing as JSON.
+#[cfg(all(target_arch = "wasm32", feature = "webxr"))]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = xr)]
+pub fn page_xr() -> String {
+    webxr::page_json()
 }
 
 /// `window.ocw.wasmMemory()`: the wasm memory in bytes.

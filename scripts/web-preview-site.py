@@ -50,7 +50,7 @@ TEST_RIDES = [
 ]
 
 BUILD_FILES = ("index.html", "ocw_web.js", "ocw_web_bg.wasm", "ocw_web_webgl2.js",
-               "ocw_web_webgl2_bg.wasm", "ocw-voice.js", "ocw-gpu.js", "ocw.svg", "sizes.txt")
+               "ocw_web_webgl2_bg.wasm", "ocw-voice.js", "ocw-gpu.js", "ocw-xr.js", "ocw.svg", "sizes.txt")
 
 
 def sha256(path):
