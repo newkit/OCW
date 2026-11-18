@@ -9,10 +9,9 @@ use std::collections::BTreeSet;
 
 use serde::Deserialize;
 
+use crate::check::{self, Finding, Severity, Target};
 use crate::glb;
 use crate::model::Model;
-use crate::pose::{BikeRig, RiderRig, bike_nodes, nodes};
-use crate::slots;
 
 /// Keys that would make a cosmetic asset change physics (spec §2.5: only
 /// a reference to a curated profile is allowed).
@@ -140,210 +139,114 @@ pub struct Checked {
     pub triangles: usize,
     /// The file's size.
     pub bytes: usize,
+    /// The extended validator's findings for this file and its entry
+    /// (spec §14 Phase 15, M2; [`crate::check`]).
+    pub findings: Vec<Finding>,
 }
 
 impl Checked {
-    /// Warnings that do not fail the check (15C: files above 2 MB).
+    /// Warnings that do not fail the check (files above 2 MB, unused
+    /// materials, Blender suffixes, bounds, …).
     pub fn warnings(&self) -> Vec<String> {
-        let mut w = Vec::new();
-        if self.bytes > crate::kinds::WARN_FILE_BYTES {
-            w.push(format!(
-                "{}: {:.1} MB (models should stay below 2 MB)",
-                self.entry.file,
-                self.bytes as f64 / 1e6
-            ));
-        }
-        w
+        self.findings
+            .iter()
+            .filter(|f| !f.is_error())
+            .map(Finding::line)
+            .collect()
     }
 }
 
-fn check_entry(e: &Entry) -> Vec<String> {
-    let mut errors = Vec::new();
-    let f = &e.file;
-    for (key, value) in [
-        ("license", &e.license),
-        ("source", &e.source),
-        ("author", &e.author),
-    ] {
-        if value.trim().is_empty() {
-            errors.push(format!(
-                "{f}: no `{key}` – every asset needs a licence entry (spec §13)"
-            ));
-        }
-    }
-    if !e.license.trim().is_empty()
-        && let Err(why) = crate::licence::check(&e.license)
-    {
-        errors.push(format!("{f}: licence `{}`: {why}", e.license));
-    }
-    if let Err(why) = crate::kinds::check_name(f, e.kind) {
-        errors.push(format!("{f}: {why}"));
-    }
-    match (e.kind, &e.profile) {
-        (Kind::Bike, None) => errors.push(format!("{f}: a bike needs its `profile`")),
-        (Kind::Bike, Some(p)) if ocw_core::ProfileId::parse(p).is_none() => {
-            errors.push(format!("{f}: unknown physics profile `{p}`"));
-        }
-        (Kind::Bike, Some(_)) | (_, None) => {}
-        (k, Some(_)) => errors.push(format!("{f}: a {} has no `profile`", k.name())),
-    }
-    if e.kind == Kind::Plant && e.species.is_none() {
-        errors.push(format!("{f}: a plant needs its `species`"));
-    }
-    if e.kind == Kind::Wearable && e.anchor.is_none() {
-        errors.push(format!("{f}: a wearable needs its `anchor`"));
-    }
-    errors
+/// Everything the validator found in a model folder.
+#[derive(Debug, Clone, Default)]
+pub struct Report {
+    /// Every listed model that could be read.
+    pub checked: Vec<Checked>,
+    /// All findings, errors and warnings, in manifest order (the files
+    /// missing from the manifest last).
+    pub findings: Vec<Finding>,
 }
 
-fn check_model(e: &Entry, m: &Model) -> Vec<String> {
-    let f = &e.file;
-    let mut errors = Vec::new();
-    if m.copyright.trim().is_empty() {
-        errors.push(format!(
-            "{f}: no asset.copyright (the licence inside the file)"
-        ));
+impl Report {
+    pub fn errors(&self) -> impl Iterator<Item = &Finding> {
+        self.findings.iter().filter(|f| f.is_error())
     }
-    for mat in &m.materials {
-        if slots::get(&mat.name).is_none() {
-            errors.push(format!("{f}: material `{}` is no paint slot", mat.name));
-        }
+
+    pub fn warnings(&self) -> impl Iterator<Item = &Finding> {
+        self.findings.iter().filter(|f| !f.is_error())
     }
-    let mut names = BTreeSet::new();
-    for n in &m.nodes {
-        if !n.name.is_empty() && !names.insert(n.name.as_str()) {
-            errors.push(format!("{f}: node name `{}` twice", n.name));
-        }
-    }
-    // The asset's own metadata (15B): `extras.ocw = { schema, kind, id }`.
-    match m.ocw() {
-        None => errors.push(format!("{f}: no asset.extras.ocw (schema, kind, id)")),
-        Some(o) => {
-            if o.get("schema").and_then(serde_json::Value::as_u64) != Some(crate::kinds::SCHEMA) {
-                errors.push(format!(
-                    "{f}: extras.ocw.schema is not {}",
-                    crate::kinds::SCHEMA
-                ));
-            }
-            if o.get("kind").and_then(serde_json::Value::as_str) != Some(e.kind.name()) {
-                errors.push(format!("{f}: extras.ocw.kind is not `{}`", e.kind.name()));
-            }
-            if o.get("id").and_then(serde_json::Value::as_str) != Some(e.id()) {
-                errors.push(format!("{f}: extras.ocw.id is not `{}`", e.id()));
-            }
-            for k in o.keys() {
-                if PHYSICS_KEYS.contains(&k.as_str()) {
-                    errors.push(format!(
-                        "{f}: extras.ocw.{k} – cosmetic assets carry no physics (spec §2.5)"
-                    ));
-                }
-            }
-        }
-    }
-    let tris = m.triangles();
-    let (near, far) = e.kind.budget();
-    let lod1 = m.node(bike_nodes::LOD1);
-    if e.kind.needs_lod1() && lod1.is_none() {
-        errors.push(format!("{f}: missing node `lod1`"));
-    }
-    if let (Some(l), Some(far)) = (lod1, far)
-        && e.kind != Kind::Bike
-    {
-        let n = m.triangles_below(Some(l));
-        if n == 0 || n > far {
-            errors.push(format!("{f}: lod1 has {n} triangles (1…{far})"));
-        }
-    }
-    match e.kind {
-        Kind::Bike => {
-            for n in bike_nodes::REQUIRED.iter().chain(&bike_nodes::HOTSPOTS) {
-                if m.node(n).is_none() {
-                    errors.push(format!("{f}: missing node `{n}`"));
-                }
-            }
-            if let Err(err) = BikeRig::from_model(m) {
-                errors.push(format!("{f}: {err}"));
-            }
-            if tris > MAX_TRIANGLES_BIKE {
-                errors.push(format!(
-                    "{f}: {tris} triangles (budget {MAX_TRIANGLES_BIKE})"
-                ));
-            }
-            if let Some(l) = m.node(bike_nodes::LOD1) {
-                let far = m.triangles_below(Some(l));
-                if far == 0 || far > MAX_TRIANGLES_LOD1 {
-                    errors.push(format!(
-                        "{f}: lod1 has {far} triangles (1…{MAX_TRIANGLES_LOD1})"
-                    ));
-                }
-            }
-        }
-        Kind::Rider => {
-            for n in nodes::REQUIRED {
-                if m.node(n).is_none() {
-                    errors.push(format!("{f}: missing node `{n}`"));
-                }
-            }
-            if let Err(err) = RiderRig::from_model(m) {
-                errors.push(format!("{f}: {err}"));
-            }
-            if tris > MAX_TRIANGLES_RIDER {
-                errors.push(format!(
-                    "{f}: {tris} triangles (budget {MAX_TRIANGLES_RIDER})"
-                ));
-            }
-        }
-        _ => {
-            let own = tris - lod1.map_or(0, |l| m.triangles_below(Some(l)));
-            if own == 0 || own > near {
-                errors.push(format!("{f}: {own} triangles (1…{near})"));
-            }
-        }
-    }
-    errors
 }
 
-/// Validates a manifest against the asset files (name, bytes) next to it.
-pub fn validate(manifest: &str, files: &[(String, Vec<u8>)]) -> Result<Vec<Checked>, Vec<String>> {
+fn file_error(file: &str, code: &'static str, message: String) -> Finding {
+    Finding {
+        severity: Severity::Error,
+        code,
+        file: file.to_owned(),
+        target: Target::File,
+        message,
+        fix: None,
+    }
+}
+
+/// Validates a manifest against the asset files (name, bytes) next to it
+/// and returns every finding; `Err` only when the manifest cannot be
+/// read.
+pub fn report(manifest: &str, files: &[(String, Vec<u8>)]) -> Result<Report, Vec<String>> {
     let manifest = Manifest::parse(manifest)?;
-    let mut errors = Vec::new();
-    let mut checked = Vec::new();
+    let mut out = Report::default();
     let mut listed = BTreeSet::new();
     for e in &manifest.assets {
         if !listed.insert(e.file.as_str()) {
-            errors.push(format!("{}: listed twice", e.file));
+            out.findings.push(file_error(
+                &e.file,
+                "entry.duplicate",
+                "listed twice".into(),
+            ));
         }
-        errors.extend(check_entry(e));
         let Some((_, bytes)) = files.iter().find(|(n, _)| *n == e.file) else {
-            errors.push(format!("{}: file missing", e.file));
+            out.findings.extend(check::check_entry(e));
+            out.findings
+                .push(file_error(&e.file, "file.missing", "file missing".into()));
             continue;
         };
         match glb::read(bytes) {
             Ok(m) => {
-                let errs = check_model(e, &m);
-                if errs.is_empty() {
-                    checked.push(Checked {
-                        entry: e.clone(),
-                        triangles: m.triangles(),
-                        model: m,
-                        bytes: bytes.len(),
-                    });
-                }
-                errors.extend(errs);
+                let findings = check::check(e, &m, bytes.len());
+                out.findings.extend(findings.iter().cloned());
+                out.checked.push(Checked {
+                    entry: e.clone(),
+                    triangles: m.triangles(),
+                    model: m,
+                    bytes: bytes.len(),
+                    findings,
+                });
             }
-            Err(err) => errors.push(format!("{}: {err}", e.file)),
+            Err(err) => {
+                out.findings.extend(check::check_entry(e));
+                out.findings
+                    .push(file_error(&e.file, "file.unreadable", err.to_string()));
+            }
         }
     }
     for (name, _) in files {
         let is_model = name.ends_with(".glb") || name.ends_with(".gltf");
         if is_model && !listed.contains(name.as_str()) {
-            errors.push(format!(
-                "{name}: not in the manifest – an asset without a licence entry (spec §13)"
+            out.findings.push(file_error(
+                name,
+                "entry.unlisted",
+                "not in the manifest – an asset without a licence entry (spec §13)".into(),
             ));
         }
     }
+    Ok(out)
+}
+
+/// Validates a manifest against the asset files (name, bytes) next to it:
+/// the checked assets, or every error (`FILE: message`).
+pub fn validate(manifest: &str, files: &[(String, Vec<u8>)]) -> Result<Vec<Checked>, Vec<String>> {
+    let r = report(manifest, files)?;
+    let errors: Vec<String> = r.errors().map(Finding::line).collect();
     if errors.is_empty() {
-        Ok(checked)
+        Ok(r.checked)
     } else {
         Err(errors)
     }
@@ -393,6 +296,14 @@ pub fn validate_dir(dir: &std::path::Path) -> Result<Vec<Checked>, Vec<String>> 
         .map_err(|e| vec![format!("{}: {e}", dir.join(MANIFEST).display())])?;
     let files = read_dir_models(dir)?;
     validate(&text, &files)
+}
+
+/// [`report`] for the folder `dir` (its manifest and models).
+pub fn report_dir(dir: &std::path::Path) -> Result<Report, Vec<String>> {
+    let text = std::fs::read_to_string(dir.join(MANIFEST))
+        .map_err(|e| vec![format!("{}: {e}", dir.join(MANIFEST).display())])?;
+    let files = read_dir_models(dir)?;
+    report(&text, &files)
 }
 
 /// File name of the manifest in an asset directory.

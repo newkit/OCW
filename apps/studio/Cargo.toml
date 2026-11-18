@@ -14,6 +14,12 @@ path = "src/main.rs"
 [dependencies]
 # The document core: documents, commands, undo / redo, autosave (16A).
 ocw-edit.workspace = true
+# The Models workspace (16B, E3): the model files, their validator and
+# diff (Phase 15), the rider's body and poses, the light model.
+ocw-assets.workspace = true
+ocw-core.workspace = true
+ocw-sky.workspace = true
+ocw-weather.workspace = true
 ocw-sim.workspace = true
 ocw-world.workspace = true
 ocw-worldstore.workspace = true
