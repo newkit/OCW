@@ -6931,6 +6931,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ocw-map"
+version = "0.2.2"
+dependencies = [
+ "ocw-world",
+ "tiny-skia",
+]
+
+[[package]]
 name = "ocw-protocol"
 version = "0.2.3"
 dependencies = [
@@ -6957,6 +6965,7 @@ dependencies = [
  "image",
  "ocw-assets",
  "ocw-core",
+ "ocw-map",
  "ocw-sim",
  "ocw-sky",
  "ocw-weather",
@@ -7049,6 +7058,7 @@ dependencies = [
  "ocw-assets",
  "ocw-core",
  "ocw-edit",
+ "ocw-map",
  "ocw-render",
  "ocw-sim",
  "ocw-sky",

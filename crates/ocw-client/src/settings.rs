@@ -263,6 +263,22 @@ pub const SETTINGS: &[SettingDef] = &[
         apply: Apply::Command("hud.damage {}"),
     },
     SettingDef {
+        key: "display.map",
+        kind: Kind::Bool,
+        default: "on",
+        description: "Show the navigation map in the HUD (bottom right: the map around you heading-up, the route, the next turn)",
+        scope: Scope::Live,
+        apply: Apply::Command("hud.map {}"),
+    },
+    SettingDef {
+        key: "display.map_zoom",
+        kind: Kind::Choice(&["auto", "1", "2", "3", "4", "5", "6", "7"]),
+        default: "auto",
+        description: "The navigation map's zoom: auto (by speed, closer at junctions) or 1 (closest) - 7",
+        scope: Scope::Live,
+        apply: Apply::Command("hud.map.zoom {}"),
+    },
+    SettingDef {
         key: "display.gps",
         kind: Kind::Bool,
         default: "on",
@@ -993,6 +1009,25 @@ pub const SETTINGS: &[SettingDef] = &[
         "R3",
         PAD_CHOICES,
         "Gamepad button: Mute the voices"
+    ),
+    binding!("keys.map", "N", KEY_CHOICES, "Key: Navigation map on / off"),
+    binding!(
+        "pad.map",
+        "none",
+        PAD_CHOICES,
+        "Gamepad button: Navigation map on / off"
+    ),
+    binding!(
+        "keys.map_zoom",
+        "Z",
+        KEY_CHOICES,
+        "Key: Navigation map zoom (auto, 1 - 7)"
+    ),
+    binding!(
+        "pad.map_zoom",
+        "none",
+        PAD_CHOICES,
+        "Gamepad button: Navigation map zoom (auto, 1 - 7)"
     ),
 ];
 

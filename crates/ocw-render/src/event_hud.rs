@@ -140,6 +140,7 @@ fn spawn_event_hud(mut commands: Commands) {
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
             EventPanel,
+            crate::navi_map::MapAvoid,
         ))
         .with_children(|p| {
             p.spawn((Text::new(""), font(3.2), TextColor(GOLD), EventTitle));

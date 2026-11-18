@@ -1662,12 +1662,17 @@ mod tests {
         // Display: value rows.
         act(&mut m, Action::Click(4), &s, &r);
         assert_eq!(m.page(), Some(Page::Sub(sub::Page::Display)));
-        assert_eq!(m.labels()[0], "HUD:  < on >");
         assert_eq!(m.labels().last().unwrap(), "Back");
+        // HUD: its own page, the HUD switch first.
+        act(&mut m, Action::Confirm, &s, &r);
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::Hud)));
+        assert_eq!(m.labels()[0], "HUD:  < on >");
         assert_eq!(
             act(&mut m, Action::Right, &s, &r),
             Effect::Command("set display.hud off".into())
         );
+        act(&mut m, Action::Back, &s, &r);
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::Display)));
         act(&mut m, Action::Down, &s, &r);
         assert_eq!(
             act(&mut m, Action::Left, &s, &r),

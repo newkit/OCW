@@ -141,25 +141,26 @@ fn spawn(mut commands: Commands) {
                 } else {
                     n.left = px(36);
                 }
-                r.spawn((n, Chevron, Pickable::IGNORE)).with_children(|c| {
-                    for (x, y, len, deg) in chevron_bars(right) {
-                        c.spawn((
-                            Node {
-                                position_type: PositionType::Absolute,
-                                left: px(x - len / 2.0),
-                                top: px(y - BAR / 2.0),
-                                width: px(len),
-                                height: px(BAR),
-                                border_radius: BorderRadius::all(px(BAR / 2.0)),
-                                ..default()
-                            },
-                            UiTransform::from_rotation(Rot2::degrees(deg)),
-                            BackgroundColor(Color::WHITE.with_alpha(CHEVRON_ALPHA)),
-                            ChevronBar(right),
-                            Pickable::IGNORE,
-                        ));
-                    }
-                });
+                r.spawn((n, Chevron, crate::navi_map::MapAvoid, Pickable::IGNORE))
+                    .with_children(|c| {
+                        for (x, y, len, deg) in chevron_bars(right) {
+                            c.spawn((
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: px(x - len / 2.0),
+                                    top: px(y - BAR / 2.0),
+                                    width: px(len),
+                                    height: px(BAR),
+                                    border_radius: BorderRadius::all(px(BAR / 2.0)),
+                                    ..default()
+                                },
+                                UiTransform::from_rotation(Rot2::degrees(deg)),
+                                BackgroundColor(Color::WHITE.with_alpha(CHEVRON_ALPHA)),
+                                ChevronBar(right),
+                                Pickable::IGNORE,
+                            ));
+                        }
+                    });
             }
             // The tip, centred in the upper part of the zones.
             r.spawn((

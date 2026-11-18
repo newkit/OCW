@@ -22,6 +22,8 @@ ocw-sky.workspace = true
 ocw-weather.workspace = true
 ocw-sim.workspace = true
 ocw-world.workspace = true
+# The 2D map shared with the HUD's navigation map (spec §3.2).
+ocw-map.workspace = true
 ocw-worldstore.workspace = true
 # The game's renderer: the world exactly as in a ride (16A).
 ocw-render.workspace = true

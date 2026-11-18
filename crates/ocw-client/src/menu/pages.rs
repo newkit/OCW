@@ -154,6 +154,9 @@ pub enum Page {
     /// Display → Accessibility (M9): HUD size, status colours, contrast,
     /// reduced motion, camera shake.
     Accessibility,
+    /// Display → HUD (spec §3.2 *Navigation map*): the HUD, the
+    /// navigation map and its zoom, the GPS line.
+    Hud,
     /// Navi → Training history (spec §14 Phase 7; rows from
     /// `menu::history`): rides, totals, personal bests.
     History,
@@ -273,6 +276,7 @@ impl Page {
                 .map_or("Keys", |g| g.label()),
             Self::BindReset => "Reset keys and buttons?",
             Self::Accessibility => "Accessibility",
+            Self::Hud => "HUD",
             Self::History => "Training history",
             Self::HistoryRides => "Rides",
             Self::HistoryRide(_) => "Ride",
@@ -411,7 +415,7 @@ impl Page {
             Self::AudioVoice => Some(Self::Audio),
             Self::RidingAids | Self::UnicornControls | Self::Bindings => Some(Self::Controls),
             Self::BindGroup(_) | Self::BindReset => Some(Self::Bindings),
-            Self::Graphics | Self::Accessibility => Some(Self::Display),
+            Self::Graphics | Self::Accessibility | Self::Hud => Some(Self::Display),
             Self::ViewDistance => Some(Self::Graphics),
             Self::TrustedKey(_) => Some(Self::TrustedKeys),
             Self::Devices => Some(Self::Trainer),
@@ -552,6 +556,9 @@ impl Page {
                 "Enter: press the new key or button (Esc / Start: cancel). Left / Right: step through the keys.",
             ],
             Self::BindReset => &["Every key and button back to its default. Back keeps them."],
+            Self::Hud => &[
+                "The navigation map (bottom right): the map turns with you, the route in magenta, the next turn on top. N: on / off, Z: zoom.",
+            ],
             Self::Accessibility => &[
                 "Status colours always come with an icon and a word. Reduced motion: no camera shake, no flashing warnings.",
             ],
@@ -861,6 +868,16 @@ fn aids_summary(settings: &Settings) -> String {
 }
 
 /// The Accessibility row's value: what is on ("125 %, colour-safe").
+/// The HUD row's value: "on", "on, no map", "off".
+fn hud_summary(settings: &Settings) -> String {
+    let on = |k: &str| settings.get(k).is_ok_and(|v| v.to_string() == "on");
+    match (on("display.hud"), on("display.map")) {
+        (false, _) => "off".into(),
+        (true, true) => "on".into(),
+        (true, false) => "on, no map".into(),
+    }
+}
+
 fn access_summary(settings: &Settings) -> String {
     let get = |k: &str| settings.get(k).map(|v| v.to_string()).unwrap_or_default();
     let mut out = Vec::new();
@@ -1236,6 +1253,12 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             setting_row(settings, "controls.god_flight", "Unicorn: flight"),
         ],
         Page::Bindings | Page::BindGroup(_) | Page::BindReset => binding_rows(page, settings, true),
+        Page::Hud => vec![
+            setting_row(settings, "display.hud", "HUD"),
+            setting_row(settings, "display.map", "Navigation map"),
+            setting_row(settings, "display.map_zoom", "Map zoom"),
+            setting_row(settings, "display.gps", "GPS line"),
+        ],
         Page::Accessibility => vec![
             setting_row(settings, "display.ui_scale", "HUD size (%)"),
             setting_row(settings, "display.palette", "Status colours"),
@@ -1305,7 +1328,9 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             Row::action("Unlink", "strava.disconnect"),
         ],
         Page::Display => vec![
-            setting_row(settings, "display.hud", "HUD"),
+            // The HUD, the navigation map, the GPS line (the ten-foot
+            // rule: six rows).
+            open_row("HUD", Some(hud_summary(settings)), Page::Hud),
             setting_row(settings, "display.units", "Units"),
             setting_row(settings, "display.camera", "Camera"),
             setting_row(settings, "display.night_brightness", "Night brightness (%)"),
@@ -1557,10 +1582,30 @@ mod tests {
     fn setting_rows_run_set_commands() {
         let (s, _) = Settings::parse("[display]\ncamera = \"side\"\n").unwrap();
         let display = rows(Page::Display, &s, &Riders::default());
-        let hud = row(&display, "HUD");
+        // HUD: its own page (the HUD, the navigation map, the GPS line).
+        assert_eq!(row(&display, "HUD").value.as_deref(), Some("on"));
+        assert_eq!(
+            row(&display, "HUD").confirm,
+            Some(Activate::Open(Page::Hud))
+        );
+        let hud_page = rows(Page::Hud, &s, &Riders::default());
+        let hud = row(&hud_page, "HUD");
         assert_eq!(hud.value.as_deref(), Some("on"));
         assert_eq!(hud.confirm, cmd("set display.hud off"));
         assert_eq!(hud.left.as_deref(), Some("set display.hud off"));
+        let map = row(&hud_page, "Navigation map");
+        assert_eq!(map.value.as_deref(), Some("on"));
+        assert_eq!(map.confirm, cmd("set display.map off"));
+        let zoom = row(&hud_page, "Map zoom");
+        assert_eq!(zoom.value.as_deref(), Some("auto"));
+        assert_eq!(zoom.right.as_deref(), Some("set display.map_zoom 1"));
+        let (off, _) = Settings::parse("[display]\nmap = false\n").unwrap();
+        assert_eq!(
+            row(&rows(Page::Display, &off, &Riders::default()), "HUD")
+                .value
+                .as_deref(),
+            Some("on, no map")
+        );
         let cam = row(&display, "Camera");
         assert_eq!(cam.value.as_deref(), Some("side"));
         assert_eq!(cam.right.as_deref(), Some("set display.camera top"));

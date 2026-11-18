@@ -801,6 +801,15 @@ pub fn page_console_state() -> String {
     ui::console_json()
 }
 
+/// `window.ocw.hudMap()`: the HUD's navigation map as JSON (shown, its
+/// box in CSS px, the banner, the zoom, night; spec §3.2) – the page moves
+/// the Devices panel above it.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = hudMap)]
+pub fn page_hud_map() -> String {
+    ui::map_json()
+}
+
 /// `window.ocw.god()`: unicorn mode as JSON (phase, pointer, position,
 /// height, the inspection's panel and crosshair, pins; Phase 13 G5 – the
 /// browser test flies with it).
