@@ -113,7 +113,7 @@ impl QualityPreset {
                 particle_share: 1.0,
                 max_pixel_ratio: None,
                 road_damage_share: 1.0,
-                road_damage_m: 250.0,
+                road_damage_m: 160.0,
             },
             QualityLevel::Medium => Self {
                 level,
@@ -128,7 +128,7 @@ impl QualityPreset {
                 particle_share: 0.5,
                 max_pixel_ratio: Some(2.0),
                 road_damage_share: 0.8,
-                road_damage_m: 150.0,
+                road_damage_m: 110.0,
             },
             // WebGL 2 and phones: one cascade (WebGL 2 has no more) over
             // the rider's surroundings, no MSAA.
@@ -145,7 +145,7 @@ impl QualityPreset {
                 particle_share: 0.25,
                 max_pixel_ratio: Some(1.0),
                 road_damage_share: 0.55,
-                road_damage_m: 70.0,
+                road_damage_m: 60.0,
             },
         }
     }

@@ -600,15 +600,26 @@ fn fragment(
     var crack = 0.0;
     var seal = 0.0;
     var pc = 0.0;
+    // The pixel's footprint: fine features it would fade away are skipped.
+    let fpx = max(du, dv);
+    // The wheel tracks (wear, loose stones, puddles), once.
+    var tr = 0.0;
+    if kind == 0u {
+        tr = tracks(u, half, lines & 7u, (lines >> 3u) & 7u);
+    }
     if kind == 0u && layer <= 1u && look.line_colour.w > 0.0 {
-        let tr = tracks(u, half, lines & 7u, (lines >> 3u) & 7u);
         let ts = select(0.1, rep.w, grade > 0u);
         albedo = albedo * (1.0 - ts * tr);
         rough = rough - 0.08 * tr;
         pc = patch_cov(half, u, du, v, dv, rep.x);
         albedo = mix(albedo, albedo * 0.8, pc);
         if damaged {
-            var tc = transverse(u, du, v, dv, half, dmg.x, rep.y);
+            var tc = vec2<f32>(0.0);
+            var lc = vec2<f32>(0.0);
+            if fpx < 0.3 {
+                tc = transverse(u, du, v, dv, half, dmg.x, rep.y);
+                lc = longitudinal(u, du, v, dv, half, dmg.y, rep.y);
+            }
             if concrete {
                 // Slabs: a sealed joint every 5 m and along the middle,
                 // fewer random cracks (broken slabs).
@@ -616,8 +627,7 @@ fn fragment(
                 let joints = max(band_cov(jv, max(dv, 1e-3), -0.007, 0.007), band_cov(u, max(du, 1e-3), -0.007, 0.007));
                 tc = vec2<f32>(tc.x * 0.5, max(tc.y, joints));
             }
-            let lc = longitudinal(u, du, v, dv, half, dmg.y, rep.y);
-            let al = alligator(u, du, v, dv, half, dmg.z, track, look.detail.x > 0.5);
+            let al = alligator(u, du, v, dv, half, dmg.z, track, look.detail.x > 0.5 && fpx < 0.12);
             // A patch is newer than the cracks around it.
             crack = max(max(tc.x, lc.x), al.y) * (1.0 - pc);
             seal = max(tc.y, lc.y) * (1.0 - pc);
@@ -666,7 +676,7 @@ fn fragment(
     // flecks and missing on the repaired patches.
     if kind == 0u {
         var m = markings(u, du, v, dv, half, lines, extra) * 0.92;
-        if grade > 0u {
+        if grade > 0u && max(m.x, m.y) > 0.0 {
             let tw = f32(grade - 1u) / 6.0;
             let fleck = smoothstep(0.55, 0.85, vnoise(vec2<f32>(u * 6.0, v * 1.5)));
             m = m * (1.0 - (0.1 + 0.45 * tw) * fleck) * (1.0 - smoothstep(0.4, 0.9, tw) * 0.7 * pc);
@@ -727,8 +737,7 @@ fn fragment(
         // the tracks themselves.
         let unpaved = layer == 2u || layer == 4u;
         var chance = loose.x + select(0.0, 0.06, unpaved);
-        if chance > 0.0 {
-            let tr = tracks(u, half, lines & 7u, (lines >> 3u) & 7u);
+        if chance > 0.0 && fpx < 0.05 {
             chance = chance * (1.3 - 0.9 * tr) * (0.6 + 0.8 * smoothstep(0.5 * half, half, abs(u)));
             let st = stone(u, v, max(du, dv), chance);
             if st.x > 0.0 {
@@ -765,7 +774,7 @@ fn fragment(
         if pud > 0.0 && (kind == 0u || kind == 4u) {
             var hollow = vnoise(wp.xz / 3.1) * 0.65 + vnoise(wp.xz / 0.9 + vec2<f32>(7.3, 1.9)) * 0.35;
             if kind == 0u {
-                hollow = hollow + 0.18 * tracks(u, half, lines & 7u, (lines >> 3u) & 7u)
+                hollow = hollow + 0.18 * tr
                     + 0.12 * smoothstep(half * 0.7, half, abs(u));
             }
             let level = 1.0 - 0.5 * pud;
