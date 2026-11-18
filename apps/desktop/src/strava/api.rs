@@ -104,6 +104,41 @@ impl Http for UreqHttp {
     }
 }
 
+/// A stand-in for Strava in test runs of the app (`OCW_STRAVA_FAKE=1`,
+/// the screenshots of the catch-up upload): no network – every upload is
+/// accepted at once with a made-up activity id, a token refresh answers
+/// a made-up token. Never used unless that variable is set.
+#[derive(Default)]
+pub struct FakeStrava {
+    next: std::sync::atomic::AtomicU64,
+}
+
+/// The environment variable that turns [`FakeStrava`] on.
+pub const ENV_FAKE: &str = "OCW_STRAVA_FAKE";
+
+impl Http for FakeStrava {
+    fn send(&self, req: &HttpRequest) -> Result<HttpResponse, String> {
+        let n = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        let body = if req.url == TOKEN_URL {
+            r#"{"access_token":"fake","refresh_token":"fake","expires_at":4102444800,"athlete":{"firstname":"Ada","lastname":"Rider"}}"#.to_string()
+        } else if req.method == Method::Post && req.url == UPLOADS_URL {
+            format!(r#"{{"id":{n},"error":null,"activity_id":{}}}"#, 1000 + n)
+        } else {
+            let id = req.url.rsplit('/').next().unwrap_or("0");
+            format!(r#"{{"id":{id},"error":null,"activity_id":{}}}"#, 1000 + n)
+        };
+        tracing::info!("fake Strava (OCW_STRAVA_FAKE): {req:?}");
+        Ok(HttpResponse {
+            status: if req.method == Method::Post && req.url == UPLOADS_URL {
+                201
+            } else {
+                200
+            },
+            body: body.into_bytes(),
+        })
+    }
+}
+
 /// How a request failed, which decides what happens next.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiError {

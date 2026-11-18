@@ -120,6 +120,7 @@ pub fn recent_rides(dir: &Path, sync: &SyncState, limit: usize) -> Vec<RideEntry
             };
             let strava = match sync.rides.get(&file) {
                 None => "not uploaded",
+                Some(RideSync::Waiting { .. }) => "waiting for set-up",
                 Some(RideSync::Processing { .. }) => "processing",
                 Some(RideSync::Uploaded { .. }) => "uploaded",
                 Some(RideSync::Failed { .. }) => "failed",

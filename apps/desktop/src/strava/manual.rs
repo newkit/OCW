@@ -139,10 +139,9 @@ pub fn spawn(cmd: &OpenCmd) -> Result<(), String> {
         .map_err(|e| format!("cannot start {}: {e}", cmd.program))
 }
 
-/// The Strava recordings (`strava/<name>.fit`) that lie within `ride`:
-/// (the name as the sync knows it, its start in UTC Unix s), oldest first.
-pub fn recordings_within(rides: &Path, ride: &RideEntry) -> Vec<(String, i64)> {
-    let end = ride.start_unix_s + ride.elapsed_s.ceil() as i64;
+/// Every Strava recording (`strava/<name>.fit`, its start in UTC Unix
+/// s), by name.
+pub fn recordings(rides: &Path) -> Vec<(String, i64)> {
     let mut out: Vec<(String, i64)> = std::fs::read_dir(super::recording::strava_dir(rides))
         .into_iter()
         .flatten()
@@ -152,14 +151,28 @@ pub fn recordings_within(rides: &Path, ride: &RideEntry) -> Vec<(String, i64)> {
         .filter_map(|p| {
             let a = ocw_fit::decode(&std::fs::read(&p).ok()?).ok()?;
             let name = p.file_name()?.to_string_lossy().into_owned();
-            // A recording starts at or after the ride's first record
-            // (a second of slack) and before its end.
-            (a.start_unix_s + 1 >= ride.start_unix_s && a.start_unix_s <= end)
-                .then(|| (format!("strava/{name}"), a.start_unix_s))
+            Some((format!("strava/{name}"), a.start_unix_s))
         })
         .collect();
     out.sort();
     out
+}
+
+/// Those of `all` ([`recordings`]) that lie within `ride`: a recording
+/// starts at or after the ride's first record (a second of slack) and
+/// before its end.
+pub fn within(all: &[(String, i64)], ride: &RideEntry) -> Vec<(String, i64)> {
+    let end = ride.start_unix_s + ride.elapsed_s.ceil() as i64;
+    all.iter()
+        .filter(|(_, a)| a + 1 >= ride.start_unix_s && *a <= end)
+        .cloned()
+        .collect()
+}
+
+/// The Strava recordings (`strava/<name>.fit`) that lie within `ride`:
+/// (the name as the sync knows it, its start in UTC Unix s), oldest first.
+pub fn recordings_within(rides: &Path, ride: &RideEntry) -> Vec<(String, i64)> {
+    within(&recordings(rides), ride)
 }
 
 /// What [`prepare`] found or put into the upload folder.

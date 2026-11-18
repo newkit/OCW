@@ -42,6 +42,73 @@ pub struct HistoryInfo {
     /// The last simple upload: the ride's id and its steps (shown on the
     /// ride's page).
     pub upload: Option<(String, String)>,
+    /// Each ride's Strava state as the API sync knows it (by ride id;
+    /// the desktop: its Strava recordings', else its own file's; spec
+    /// §2.8.1 *Recording without Strava set up, uploaded later*). A ride
+    /// without one: automatic with the API, else in the browser.
+    pub strava: std::collections::BTreeMap<String, StravaState>,
+    /// The open question: upload this many waiting recordings?
+    pub strava_question: Option<usize>,
+}
+
+/// A ride's Strava state on its page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StravaState {
+    /// Recorded while Strava was not set up: uploaded once it is.
+    Waiting,
+    Uploading,
+    /// On Strava (the activity, if Strava said which).
+    OnStrava {
+        activity_id: Option<u64>,
+    },
+    /// Failed or rejected: retried later, or now from the page.
+    Failed {
+        error: String,
+    },
+}
+
+impl StravaState {
+    /// The ride's state from its files' states: a failure first, then an
+    /// upload running, a waiting one, all on Strava (the activity when
+    /// there is one); `None` when no file has a state.
+    pub fn of_files(states: &[Option<StravaState>]) -> Option<StravaState> {
+        let known: Vec<&StravaState> = states.iter().flatten().collect();
+        if known.is_empty() {
+            return None;
+        }
+        let find = |f: fn(&StravaState) -> bool| known.iter().find(|s| f(s)).copied().cloned();
+        find(|s| matches!(s, StravaState::Failed { .. }))
+            .or_else(|| find(|s| matches!(s, StravaState::Uploading)))
+            .or_else(|| find(|s| matches!(s, StravaState::Waiting)))
+            .or_else(|| {
+                // On Strava only when every file is.
+                (known.len() == states.len()).then(|| {
+                    let ids: Vec<u64> = known
+                        .iter()
+                        .filter_map(|s| match s {
+                            StravaState::OnStrava { activity_id } => *activity_id,
+                            _ => None,
+                        })
+                        .collect();
+                    StravaState::OnStrava {
+                        activity_id: ids.first().copied().filter(|_| ids.len() == 1),
+                    }
+                })
+            })
+    }
+}
+
+/// The ride page's Strava line without the API set-up for a waiting
+/// recording.
+pub const WAITING_LABEL: &str = "waiting for Strava set-up";
+/// … in the browser (no API upload there) and for whole rides without it.
+pub const IN_BROWSER_LABEL: &str = "upload in your browser";
+/// The label of a ride page's Strava state row.
+pub const STRAVA_ROW: &str = "Strava upload";
+
+/// A Strava activity's page.
+pub fn activity_url(id: u64) -> String {
+    format!("https://www.strava.com/activities/{id}")
 }
 
 /// The label of the simple upload's row (spec §2.8.1 *Simple upload*).
@@ -263,29 +330,127 @@ pub fn rows(page: Page, info: &HistoryInfo) -> Vec<Row> {
             }
         }
         Page::HistoryBests => bests_rows(&h.bests(), info),
+        Page::HistoryWaiting => {
+            let rows: Vec<Row> = h
+                .rides
+                .iter()
+                .rev()
+                .enumerate()
+                .filter(|(_, r)| {
+                    !r.strava_marked && info.strava.get(&r.id) == Some(&StravaState::Waiting)
+                })
+                .map(|(k, r)| {
+                    let m = info.recordings.get(&r.id).copied().unwrap_or(1);
+                    open_row(
+                        &start_label(r.start_unix_s, info.offset_s),
+                        Some(format!(
+                            "{m} recording{}, {}",
+                            if m == 1 { "" } else { "s" },
+                            short_label(
+                                if r.world.is_empty() {
+                                    &r.route
+                                } else {
+                                    &r.world
+                                },
+                                16
+                            )
+                        )),
+                        Page::HistoryRide(k),
+                    )
+                })
+                .collect();
+            if rows.is_empty() {
+                vec![info_row("No recording is waiting", None)]
+            } else {
+                rows
+            }
+        }
+        Page::StravaWaiting => match info.strava_question {
+            Some(n) => vec![
+                Row {
+                    label: format!("Yes, upload all {n}"),
+                    value: None,
+                    left: None,
+                    right: None,
+                    confirm: Some(Activate::Run("strava.waiting yes".into())),
+                },
+                Row {
+                    label: "Pick which".into(),
+                    value: None,
+                    left: None,
+                    right: None,
+                    confirm: Some(Activate::RunOpen(
+                        "strava.waiting pick".into(),
+                        Page::HistoryWaiting,
+                    )),
+                },
+                Row {
+                    label: "No, leave them waiting".into(),
+                    value: None,
+                    left: None,
+                    right: None,
+                    confirm: Some(Activate::Run("strava.waiting no".into())),
+                },
+            ],
+            None => vec![info_row("Nothing to decide", None)],
+        },
         _ => Vec::new(),
     }
 }
 
-/// A ride's Strava rows (spec §2.8.1 *Simple upload*): with the API set
-/// up, the automatic upload's line; without it, the upload in the browser
-/// (the ride's Strava recordings if it has any, else the whole ride).
-/// Both have the mark, which the rider sets after uploading by hand (the
-/// app cannot know) and the API sync respects.
+/// A ride's Strava rows (spec §2.8.1 *Simple upload*, *Recording
+/// without Strava set up, uploaded later*): its state – *waiting for
+/// Strava set-up* / *uploading* / *on Strava* (opens the activity) /
+/// *failed – retry*, or the automatic upload's line, or *upload in your
+/// browser* – then without the API the upload in the browser (the
+/// ride's Strava recordings if it has any, else the whole ride). Both
+/// have the mark, which the rider sets after uploading by hand (the app
+/// cannot know) and the API sync respects.
 fn strava_rows(k: usize, r: &crate::history::RideEntry, info: &HistoryInfo) -> Vec<Row> {
     let n = k + 1;
     let kept = info.exportable.contains(&r.id);
     let mut out = Vec::new();
-    if info.strava_api {
-        out.push(info_row(
-            "Strava upload",
-            Some(if r.strava_marked {
-                "skipped (marked as uploaded)".into()
+    let api = info.strava_api;
+    let (value, confirm) = match (r.strava_marked, info.strava.get(&r.id)) {
+        (true, _) => ("skipped (marked as uploaded)".to_string(), None),
+        (false, Some(StravaState::Waiting)) if api => (
+            "waiting – upload now".to_string(),
+            Some(Activate::Command(format!(
+                "strava.sync --waiting --ride {n}"
+            ))),
+        ),
+        // The Strava settings page says how to set it up.
+        (false, Some(StravaState::Waiting)) => (
+            WAITING_LABEL.to_string(),
+            Some(Activate::Open(Page::Strava)),
+        ),
+        (false, Some(StravaState::Uploading)) => ("uploading".to_string(), None),
+        (false, Some(StravaState::OnStrava { activity_id })) => match activity_id {
+            Some(id) => (
+                format!("on Strava: strava.com/activities/{id}"),
+                Some(Activate::Command(format!("strava.open {n}"))),
+            ),
+            None => ("on Strava".to_string(), None),
+        },
+        (false, Some(StravaState::Failed { .. })) => (
+            "failed – retry".to_string(),
+            Some(if api {
+                Activate::Command("strava.sync --retry".into())
             } else {
-                "automatic (your API app)".into()
+                Activate::Disabled
             }),
-        ));
-    } else {
+        ),
+        (false, None) if api => ("automatic (your API app)".to_string(), None),
+        (false, None) => (IN_BROWSER_LABEL.to_string(), None),
+    };
+    out.push(Row {
+        label: STRAVA_ROW.into(),
+        value: Some(value),
+        left: None,
+        right: None,
+        confirm,
+    });
+    if !api {
         let recordings = info.recordings.get(&r.id).copied().unwrap_or(0);
         out.push(Row {
             label: UPLOAD_LABEL.into(),
@@ -361,6 +526,10 @@ pub fn status(page: Page, info: &HistoryInfo) -> String {
     let h = &info.history;
     match page {
         Page::History => info.read_only.clone().unwrap_or_default(),
+        Page::StravaWaiting => info
+            .strava_question
+            .map(|n| format!("Upload {n} waiting recordings to Strava?"))
+            .unwrap_or_default(),
         Page::HistoryRide(k) | Page::HistoryClimbs(k) => {
             h.nth_newest(k).map_or(String::new(), |r| {
                 let place = match (r.world.is_empty(), r.route.is_empty()) {
@@ -389,6 +558,14 @@ pub fn status(page: Page, info: &HistoryInfo) -> String {
 
 /// The description of a ride's page: its numbers.
 pub fn text(page: Page, info: &HistoryInfo) -> Vec<String> {
+    if page == Page::StravaWaiting {
+        return match info.strava_question {
+            Some(n) => vec![format!(
+                "{n} Strava recordings made before Strava was set up are waiting in your activities folder. Yes uploads them now, oldest first; Pick shows them to choose; No leaves them waiting (later: strava.sync --waiting)."
+            )],
+            None => Vec::new(),
+        };
+    }
     let Page::HistoryRide(k) = page else {
         return Vec::new();
     };
@@ -436,6 +613,11 @@ pub fn text(page: Page, info: &HistoryInfo) -> Vec<String> {
     }
     if let Some(w) = &r.workout {
         second.push(format!("workout: {}", short_label(w, 28)));
+    }
+    // Why the Strava upload failed (spec §2.8.1).
+    if let (false, Some(StravaState::Failed { error })) = (r.strava_marked, info.strava.get(&r.id))
+    {
+        second.push(format!("Strava upload failed: {}", short_label(error, 40)));
     }
     // The simple upload's steps first, after it ran for this ride (a page
     // too tall drops its text from the end: the numbers go first).
@@ -781,5 +963,174 @@ mod tests {
         assert!(all.bars.iter().all(|b| b.mark.is_none()));
         assert_eq!(chart(Page::HistoryBests, &info(0)), None);
         assert_eq!(chart(Page::History, &i), None);
+    }
+
+    fn strava_value(page: Page, i: &HistoryInfo) -> (Option<String>, Option<Activate>) {
+        let r = rows(page, i);
+        let row = r.iter().find(|r| r.label == STRAVA_ROW).expect("the row");
+        (row.value.clone(), row.confirm.clone())
+    }
+
+    /// A ride's Strava state (spec §2.8.1 *Recording without Strava set
+    /// up, uploaded later*): waiting for the set-up (opens the Strava
+    /// page), uploading, on Strava with the activity's link, failed –
+    /// retry; with the API a waiting one uploads from its page; the
+    /// browser (no state, no API) uploads in the browser; a marked ride
+    /// is skipped whatever its state.
+    #[test]
+    fn a_rides_strava_state_on_its_page() {
+        let mut i = info(2);
+        let page = Page::HistoryRide(0);
+        let id = i.history.nth_newest(0).unwrap().id.clone();
+        // The browser, or a whole ride on the desktop without the API.
+        assert_eq!(
+            strava_value(page, &i),
+            (Some(IN_BROWSER_LABEL.into()), None)
+        );
+        i.strava.insert(id.clone(), StravaState::Waiting);
+        assert_eq!(
+            strava_value(page, &i),
+            (
+                Some("waiting for Strava set-up".into()),
+                Some(Activate::Open(Page::Strava))
+            )
+        );
+        // The browser's upload stays beside it.
+        assert!(rows(page, &i).iter().any(|r| r.label == UPLOAD_LABEL));
+        i.strava_api = true;
+        assert_eq!(
+            strava_value(page, &i),
+            (
+                Some("waiting – upload now".into()),
+                Some(Activate::Command("strava.sync --waiting --ride 1".into()))
+            )
+        );
+        assert!(!rows(page, &i).iter().any(|r| r.label == UPLOAD_LABEL));
+        i.strava.insert(id.clone(), StravaState::Uploading);
+        assert_eq!(strava_value(page, &i), (Some("uploading".into()), None));
+        i.strava.insert(
+            id.clone(),
+            StravaState::OnStrava {
+                activity_id: Some(1001),
+            },
+        );
+        assert_eq!(
+            strava_value(page, &i),
+            (
+                Some("on Strava: strava.com/activities/1001".into()),
+                Some(Activate::Command("strava.open 1".into()))
+            )
+        );
+        assert_eq!(activity_url(1001), "https://www.strava.com/activities/1001");
+        i.strava
+            .insert(id.clone(), StravaState::OnStrava { activity_id: None });
+        assert_eq!(strava_value(page, &i), (Some("on Strava".into()), None));
+        i.strava.insert(
+            id.clone(),
+            StravaState::Failed {
+                error: "Strava rate limit reached".into(),
+            },
+        );
+        assert_eq!(
+            strava_value(page, &i),
+            (
+                Some("failed – retry".into()),
+                Some(Activate::Command("strava.sync --retry".into()))
+            )
+        );
+        assert!(
+            text(page, &i)
+                .last()
+                .unwrap()
+                .contains("Strava upload failed: Strava rate limit reached"),
+            "{:?}",
+            text(page, &i)
+        );
+        i.history.ride_mut(&id).unwrap().strava_marked = true;
+        assert_eq!(
+            strava_value(page, &i).0.as_deref(),
+            Some("skipped (marked as uploaded)")
+        );
+        assert!(rows(page, &i).len() < MAX_ITEMS);
+    }
+
+    #[test]
+    fn a_rides_state_from_its_recordings() {
+        use StravaState::*;
+        let on = |id| OnStrava {
+            activity_id: Some(id),
+        };
+        assert_eq!(StravaState::of_files(&[None, None]), None);
+        assert_eq!(StravaState::of_files(&[Some(on(1))]), Some(on(1)));
+        assert_eq!(
+            StravaState::of_files(&[Some(on(1)), Some(on(2))]),
+            Some(OnStrava { activity_id: None }),
+            "two activities: no single link"
+        );
+        assert_eq!(StravaState::of_files(&[Some(on(1)), None]), None);
+        assert_eq!(
+            StravaState::of_files(&[Some(on(1)), Some(Waiting)]),
+            Some(Waiting)
+        );
+        assert_eq!(
+            StravaState::of_files(&[Some(Waiting), Some(Uploading)]),
+            Some(Uploading)
+        );
+        let failed = Failed { error: "x".into() };
+        assert_eq!(
+            StravaState::of_files(&[Some(Uploading), Some(failed.clone())]),
+            Some(failed)
+        );
+    }
+
+    /// The question before uploading many waiting recordings: Yes / Pick
+    /// / No with its text; Pick lists the rides with waiting recordings,
+    /// each opening its page.
+    #[test]
+    fn the_question_and_the_waiting_list() {
+        let mut i = info(3);
+        let q = Page::StravaWaiting;
+        assert_eq!(rows(q, &i)[0].label, "Nothing to decide");
+        i.strava_question = Some(12);
+        let r = rows(q, &i);
+        assert_eq!(r.len(), 3);
+        assert_eq!(r[0].label, "Yes, upload all 12");
+        assert_eq!(
+            r[0].confirm,
+            Some(Activate::Run("strava.waiting yes".into()))
+        );
+        assert_eq!(
+            r[1].confirm,
+            Some(Activate::RunOpen(
+                "strava.waiting pick".into(),
+                Page::HistoryWaiting
+            ))
+        );
+        assert_eq!(
+            r[2].confirm,
+            Some(Activate::Run("strava.waiting no".into()))
+        );
+        assert_eq!(status(q, &i), "Upload 12 waiting recordings to Strava?");
+        assert!(text(q, &i)[0].starts_with("12 Strava recordings made before Strava was set up"));
+        // Pick: the waiting rides only, newest first, each opens its page.
+        assert_eq!(
+            rows(Page::HistoryWaiting, &i)[0].label,
+            "No recording is waiting"
+        );
+        let newest = i.history.nth_newest(0).unwrap().id.clone();
+        let oldest = i.history.nth_newest(2).unwrap().id.clone();
+        i.strava.insert(newest.clone(), StravaState::Waiting);
+        i.strava.insert(oldest.clone(), StravaState::Waiting);
+        i.strava.insert(
+            i.history.nth_newest(1).unwrap().id.clone(),
+            StravaState::OnStrava { activity_id: None },
+        );
+        i.recordings.insert(newest, 2);
+        let w = rows(Page::HistoryWaiting, &i);
+        assert_eq!(w.len(), 2);
+        assert_eq!(w[0].confirm, Some(Activate::Open(Page::HistoryRide(0))));
+        assert_eq!(w[0].value.as_deref(), Some("2 recordings, Black Forest"));
+        assert_eq!(w[1].confirm, Some(Activate::Open(Page::HistoryRide(2))));
+        assert!(Page::HistoryWaiting.is_history_page() && q.is_history_page());
     }
 }

@@ -774,6 +774,10 @@ fn spawn_recording(mut commands: Commands) {
                     display: Display::None,
                     padding: UiRect::axes(px(8), px(4)),
                     border_radius: BorderRadius::all(px(6)),
+                    // A long notice (the stop without the Strava set-up,
+                    // the upload's steps) wraps instead of squeezing the
+                    // ride panel at the left into a narrow column.
+                    max_width: STRAVA_NOTICE_MAX,
                     ..default()
                 },
                 BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.75)),
@@ -800,6 +804,8 @@ struct StravaBadge;
 struct StravaNotice;
 
 const STRAVA_ORANGE: Color = Color::srgb(0.99, 0.32, 0.0);
+/// The Strava notice's widest: longer ones wrap.
+const STRAVA_NOTICE_MAX: Val = Val::Vw(40.0);
 
 /// The badge's text: "● Strava 12:34".
 pub fn strava_label(seconds: f64) -> String {
@@ -1395,6 +1401,17 @@ mod tests {
         };
         app.update();
         assert_eq!(state(&mut app).0.0, Display::None);
+        // Regression (2026-11-18): the long stop notice without the
+        // Strava set-up squeezed the ride panel into a narrow column; it
+        // wraps at its widest instead.
+        {
+            let w = app.world_mut();
+            let n = w
+                .query_filtered::<&Node, With<StravaNotice>>()
+                .single(w)
+                .unwrap();
+            assert_eq!(n.max_width, STRAVA_NOTICE_MAX);
+        }
         {
             let mut v = app.world_mut().resource_mut::<RideView>();
             v.strava_s = Some(754.0);
