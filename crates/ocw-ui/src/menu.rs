@@ -1028,6 +1028,9 @@ mod tests {
         }
         tap(&mut app, KeyCode::Enter);
         assert_eq!(view(&app).title, "Display");
+        // HUD: its own page (the HUD switch, the navigation map, …).
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(view(&app).title, "HUD");
         assert_eq!(view(&app).items[0], "HUD:  < on >");
         tap(&mut app, KeyCode::ArrowRight);
         app.update();

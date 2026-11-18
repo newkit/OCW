@@ -569,6 +569,101 @@ args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "2433
 at = ["0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 165 10 14"]
 shot = 12
 
+# --- README pictures of 2026-11-17 (readme-2026-11-17-*.jpg) -----------------
+# In-game screenshots for the README's top and its Worlds gallery: the HUD on
+# in some (power / speed panel, elevation profile, junction arrow), the
+# character editor's riders, the workshop and the bike stand tiles. Made-up
+# rider name only (Ada Rider; the bots are "Bot N"). Render with
+# OCW_PROFILE=release OCW_FPS=0; the files are assets of the GitHub release
+# `build-history`.
+
+[[scene]]
+name = "readme-hero"
+description = "README hero: a group on the TF-21 through Las Cañadas, the Teide ahead, late-afternoon light, with the HUD (power / speed panel, elevation profile)"
+world = "tenerife"
+args = ["--world", "{world}", "--route-file", "{world_dir}/canadas-teide.route", "--bots", "7", "--power", "240"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 66.0\nheight_cm = 172.0\n"
+at = ["0.5=time pause", "0.5=time 2026-11-13 16:00", "0.6=character --hair-colour #B3482A", "1=camera.orbit 12 10 20"]
+shot = 10
+
+[[scene]]
+name = "readme-malbun"
+description = "README: riders climbing the Malbun road at km 11 (Liechtenstein, 1390 m) on a July evening, the valley and the mountains around"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "2433,5295", "--bots", "8", "--power", "260"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 66.0\nheight_cm = 172.0\n"
+at = ["0.5=time pause", "0.5=time 2026-07-15 17:30", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 12 16"]
+shot = 12
+
+[[scene]]
+name = "readme-vaduz-junction"
+description = "README: free ride in Vaduz with the HUD – the junction arrow with the street names, the elevation profile, the power / speed panel; riders on the junction's road surfaces"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "4", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 66.0\nheight_cm = 172.0\n"
+at = ["0.5=time pause", "0.5=time 2026-07-15 10:30", "1=camera.orbit 10 16 20", "3=ride.turn left"]
+shot = 7
+
+[[scene]]
+name = "readme-schauinsland"
+description = "README: a group climbing the Schauinsland road at km 14.5 (Black Forest, 940 m) through the spruce and beech forest, summer morning, with the HUD"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-5942,568", "--bots", "8", "--power", "260"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 66.0\nheight_cm = 172.0\n"
+at = ["0.5=time pause", "0.5=time 2026-07-15 10:00", "1=camera.orbit 160 10 14"]
+shot = 14
+
+[[scene]]
+name = "readme-teide"
+description = "README: riders on the TF-21 through Las Cañadas, the cone of the Teide (3,715 m) beside the road, late morning"
+world = "tenerife"
+args = ["--world", "{world}", "--route-file", "{world_dir}/canadas-teide.route", "--bots", "7", "--power", "230"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 66.0\nheight_cm = 172.0\n"
+at = ["0.5=time pause", "0.5=time 2026-11-13 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 35 6 16"]
+shot = 10
+
+[[scene]]
+name = "readme-sunset"
+description = "README: sunset over Las Cañadas below the Teide, red light on the riders"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-7500,5260", "--bots", "5", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 66.0\nheight_cm = 172.0\n"
+at = ["0.5=time pause", "0.5=time 2026-11-13 12:00", "0.6=time sunset", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 8 18"]
+shot = 14
+
+[[scene]]
+name = "readme-rain"
+description = "README: light rain on the Schauinsland climb (Black Forest, km 14.5): a grey cloud deck, flat light, rain streaks and the wet, glossy road"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-5942,568", "--bots", "6", "--power", "260"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 66.0\nheight_cm = 172.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1=weather light-rain", "1=camera.orbit 20 12 16"]
+shot = 12
+
+[[scene]]
+name = "readme-mirror"
+description = "README: the workshop mirror with the character editor – the body shapes as tiles of the whole rider (face, hands, kit), the rider in the mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 66.0\nheight_cm = 172.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "1.5=character --hair long --hair-colour auburn --glasses 1", "2=workshop open", "2.6=workshop mirror", "4=workshop slot-prev", "4.3=workshop slot-prev", "4.6=workshop slot-prev", "4.9=workshop slot-prev", "5.2=workshop slot-prev", "5.5=workshop slot-prev", "5.8=workshop slot-prev", "6.1=workshop slot-prev", "6.6=workshop select", "7.2=workshop right"]
+shot = 35
+
+[[scene]]
+name = "readme-rider-close"
+description = "README: a rider close up on the road – face with round glasses, hair under the helmet, hands on the hoods, the kit"
+args = ["--route", "hills", "--bots", "3", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 66.0\nheight_cm = 172.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 17:00", "0.5=hud off", "0.5=hud.profile off", "2=character --glasses 1 --hair long --hair-colour auburn", "2.5=teleport 0.81", "2.5=camera.orbit 140 6 3.5"]
+shot = 9
+
+[[scene]]
+name = "readme-bike-stand"
+description = "README: the bike stand in the workshop – the paint as tiles, the whole bike rendered in each colour, the focused colour previewed on the frame"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 66.0\nheight_cm = 172.0\n"
+at = ["2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-prev", "4.2=workshop select", "5=workshop right", "5.4=workshop right"]
+shot = 24
+
 # --- Black Forest world package (world = "blackforest") ---------------------
 # scripts/fetch-pilot.sh blackforest && scripts/build-blackforest.sh
 # (data/blackforest/blackforest.ocwpkg, the southern Black Forest, spec §4.7).
@@ -4479,4 +4574,79 @@ args = ["--route", "loop", "--bots", "0", "--power", "200"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
 at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3=status.sign menu on", "4.5=camera.closeup right-hand 160 72 0.75"]
 shot = 8
+
+# --- Navigation map (HUD, bottom right; spec §3.2 *Navigation map*) ---------
+
+[[scene]]
+name = "navi-li-free-day"
+description = "Navigation map in Vaduz, free ride by day: heading-up map with buildings, roads by class, the chosen path in magenta and the next junction's other exits, the turn banner, other riders as dots"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "3", "--window", "1920x1080"]
+at = ["1=time 14:00"]
+shot = 12
+
+[[scene]]
+name = "navi-li-route-night"
+description = "Navigation map on the Vaduz – Malbun route at night: the dark palette, the route ahead bold, the path behind dimmer"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "4", "--power", "260", "--window", "1920x1080"]
+at = ["1=time 22:30", "2=teleport 2.4"]
+shot = 12
+
+[[scene]]
+name = "navi-li-route-day-720p"
+description = "Navigation map on the Vaduz – Malbun route by day in a 1280 × 720 window with the HUD at 150 %: smaller, clear of the junction fan and the top panel"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "4", "--window", "1280x720"]
+at = ["1=time 14:00", "1=ui.scale 150", "2=teleport 1.1"]
+shot = 12
+
+[[scene]]
+name = "navi-bf-free-day"
+description = "Navigation map in the Black Forest, free ride by day: forest fills, villages, the path through the junctions"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-8018,-8406", "--bots", "2", "--window", "1920x1080"]
+at = ["1=time 13:00"]
+shot = 12
+
+[[scene]]
+name = "navi-bf-route-night"
+description = "Navigation map on the Freiburg – Schauinsland route at night (dark palette, route in magenta)"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/freiburg-schauinsland.route", "--no-neighbours", "--bots", "3", "--power", "250", "--window", "1920x1080"]
+at = ["1=time 23:00", "2=teleport 3"]
+shot = 12
+
+[[scene]]
+name = "navi-tf-free-day"
+description = "Navigation map on Tenerife, free ride by day in Las Cañadas: rock and scrub fills, the TF-21"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-7500,5260", "--bots", "2", "--window", "1920x1080"]
+at = ["0.5=time 2026-07-15 12:00"]
+shot = 12
+
+[[scene]]
+name = "navi-tf-route-night"
+description = "Navigation map on the Los Cristianos – Teide route at night, zoom level 5"
+world = "tenerife"
+args = ["--world", "{world}", "--route-file", "{world_dir}/loscristianos-teide.route", "--bots", "2", "--power", "250", "--window", "1920x1080"]
+at = ["0.5=time 2026-07-15 23:00", "2=teleport 6", "3=hud.map.zoom 5"]
+shot = 12
+
+[[scene]]
+name = "navi-fps-on"
+description = "Navigation map cost, with the map: free ride through Vaduz for 40 s at 1920 × 1080 (compare the render rate with navi-fps-off)"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "3", "--power", "300", "--window", "1920x1080"]
+at = ["1=time 14:00"]
+shot = 40
+pick = false
+
+[[scene]]
+name = "navi-fps-off"
+description = "Navigation map cost, without the map (hud.map off): the same ride as navi-fps-on"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "3", "--power", "300", "--window", "1920x1080"]
+at = ["0.5=hud.map off", "1=time 14:00"]
+shot = 40
 pick = false

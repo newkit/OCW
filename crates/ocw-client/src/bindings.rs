@@ -52,6 +52,9 @@ pub enum Action {
     Strava,
     MuteMic,
     MuteVoices,
+    /// The HUD's navigation map on / off and its zoom (spec §3.2).
+    Map,
+    MapZoom,
 }
 
 /// The groups of the Keys and buttons page (one sub page each, at most
@@ -66,10 +69,18 @@ pub enum Group {
     App,
     /// Voice chat.
     Voice,
+    /// The navigation map.
+    Map,
 }
 
 impl Group {
-    pub const ALL: [Group; 4] = [Group::Riding, Group::Modes, Group::App, Group::Voice];
+    pub const ALL: [Group; 5] = [
+        Group::Riding,
+        Group::Modes,
+        Group::App,
+        Group::Voice,
+        Group::Map,
+    ];
 
     pub fn index(self) -> usize {
         Self::ALL.iter().position(|g| *g == self).expect("listed")
@@ -81,6 +92,7 @@ impl Group {
             Group::Modes => "Autodrive and junctions",
             Group::App => "Camera, video, app",
             Group::Voice => "Voice chat",
+            Group::Map => "Navigation map",
         }
     }
 }
@@ -135,7 +147,7 @@ const fn desktop(mut d: ActionDef) -> ActionDef {
 
 /// All actions with today's keys and buttons as defaults (spec §3.2.1,
 /// §3.2.2, the README's key table).
-pub const ACTIONS: [ActionDef; 20] = [
+pub const ACTIONS: [ActionDef; 22] = [
     def(
         Action::Faster,
         "faster",
@@ -284,6 +296,23 @@ pub const ACTIONS: [ActionDef; 20] = [
         "Shift+M",
         "R3",
     )),
+    // The HUD's navigation map (spec §3.2 *Navigation map*).
+    def(
+        Action::Map,
+        "map",
+        "Navigation map on / off",
+        Group::Map,
+        "N",
+        "none",
+    ),
+    def(
+        Action::MapZoom,
+        "map_zoom",
+        "Navigation map zoom",
+        Group::Map,
+        "Z",
+        "none",
+    ),
 ];
 
 impl Action {

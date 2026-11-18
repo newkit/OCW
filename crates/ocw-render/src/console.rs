@@ -116,6 +116,9 @@ impl Plugin for ConsoleCorePlugin {
             .init_resource::<ShowFps>()
             .init_resource::<ShowProfile>()
             .init_resource::<ShowGps>()
+            .init_resource::<crate::navi_map::ShowMap>()
+            .init_resource::<crate::navi_map::MapZoom>()
+            .init_resource::<crate::navi_map::NaviMapInfo>()
             .init_resource::<ShowHud>()
             .init_resource::<Units>()
             .init_resource::<CameraMode>()
@@ -763,6 +766,51 @@ fn register_builtin_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         User,
+        Command::new("hud.map")
+            .about("Show or hide the navigation map (bottom right; setting display.map)")
+            .arg(Arg::new("on").value_parser(["on", "off"])),
+        |world, m| {
+            let mut show = world.resource_mut::<crate::navi_map::ShowMap>();
+            show.0 = match m.get_one::<String>("on").map(String::as_str) {
+                Some("on") => true,
+                Some(_) => false,
+                None => !show.0,
+            };
+            Ok(format!(
+                "navigation map {}",
+                if show.0 { "on" } else { "off" }
+            ))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        User,
+        Command::new("hud.map.zoom")
+            .about("The navigation map's zoom: auto, 1 (closest) - 7, in, out or next (the zoom key; setting display.map_zoom)")
+            .arg(Arg::new("zoom")),
+        |world, m| {
+            use ocw_map::navi::ZoomMode;
+            let now = world.resource::<crate::navi_map::MapZoom>().0;
+            let shown = world
+                .resource::<crate::navi_map::NaviMapInfo>()
+                .level
+                .saturating_sub(1);
+            let mode = match m.get_one::<String>("zoom").map(String::as_str) {
+                None => {
+                    let i = world.resource::<crate::navi_map::NaviMapInfo>().level;
+                    return Ok(format!("map zoom {} (showing {i})", now.label()));
+                }
+                Some("next") => now.cycle(),
+                Some("in") => now.step(true, shown),
+                Some("out") => now.step(false, shown),
+                Some(v) => ZoomMode::parse(v)
+                    .ok_or_else(|| format!("map zoom: auto, 1-7, in, out or next, not {v}"))?,
+            };
+            world.resource_mut::<crate::navi_map::MapZoom>().0 = mode;
+            Ok(format!("map zoom {}", mode.label()))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        User,
         Command::new("rider.gps")
             .about("Show the rider's GPS position (lat, lon, altitude; the HUD's GPS line)"),
         |world, _| match world
@@ -1147,6 +1195,20 @@ mod tests {
         assert!(run(&mut app, "hud.profile on")[1].ends_with("on"));
         assert!(app.world().resource::<ShowProfile>().0);
         assert!(run(&mut app, "hud.profile maybe")[1].starts_with("error:"));
+        // hud.map toggles or sets the navigation map; hud.map.zoom.
+        use crate::navi_map::{MapZoom, ShowMap};
+        use ocw_map::navi::ZoomMode;
+        assert!(app.world().resource::<ShowMap>().0, "on by default");
+        assert_eq!(run(&mut app, "hud.map")[1], "navigation map off");
+        assert!(!app.world().resource::<ShowMap>().0);
+        assert_eq!(run(&mut app, "hud.map on")[1], "navigation map on");
+        assert_eq!(app.world().resource::<MapZoom>().0, ZoomMode::Auto);
+        assert_eq!(run(&mut app, "hud.map.zoom 3")[1], "map zoom 3");
+        assert_eq!(app.world().resource::<MapZoom>().0, ZoomMode::Fixed(2));
+        assert_eq!(run(&mut app, "hud.map.zoom in")[1], "map zoom 2");
+        assert_eq!(run(&mut app, "hud.map.zoom next")[1], "map zoom 3");
+        assert_eq!(run(&mut app, "hud.map.zoom auto")[1], "map zoom auto");
+        assert!(run(&mut app, "hud.map.zoom 9")[1].starts_with("error:"));
         // camera.tilt: on/off, or the fraction of the slope angle.
         assert!(app.world().resource::<CameraTilt>().enabled);
         assert_eq!(run(&mut app, "camera.tilt off")[1], "camera tilt off");
@@ -1237,7 +1299,14 @@ mod tests {
         assert_eq!(s.input(), "hud");
         assert_eq!(
             s.candidates().0,
-            ["hud", "hud.gps", "hud.profile", "hud.units"]
+            [
+                "hud",
+                "hud.gps",
+                "hud.map",
+                "hud.map.zoom",
+                "hud.profile",
+                "hud.units"
+            ]
         );
     }
 

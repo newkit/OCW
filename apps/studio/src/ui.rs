@@ -30,6 +30,8 @@ use crate::edit::{
 };
 use crate::flight::{StudioFlight, UiFocus};
 use crate::map::{MapView, Overlay};
+use crate::models_ui::ModelsForm;
+use crate::models_view::{ModelCamera, ModelView, ModelsActive, ViewportRect};
 use crate::patch::{OpStatus, PatchPreview};
 use crate::routes::RouteCommand;
 use crate::routes_ui::RouteForm;
@@ -197,6 +199,7 @@ pub struct UiPlugin;
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<UiState>()
+            .init_resource::<ModelsForm>()
             .add_systems(Startup, spawn_ui_camera)
             .add_systems(Update, (ui_camera_for_hud, window_title))
             .add_systems(EguiPrimaryContextPass, panels);
@@ -296,6 +299,21 @@ fn path_dialog(
 type ViewCameras<'w, 's> =
     Query<'w, 's, (&'static mut Camera, &'static GlobalTransform), With<FollowCamera>>;
 
+type ModelCameras<'w, 's> = Query<
+    'w,
+    's,
+    (&'static Camera, &'static GlobalTransform),
+    (With<ModelCamera>, Without<FollowCamera>),
+>;
+
+/// The Models workspace's resources the panels use.
+type ModelsUi<'w> = (
+    ResMut<'w, ModelView>,
+    ResMut<'w, ModelsForm>,
+    ResMut<'w, ViewportRect>,
+    ResMut<'w, ModelsActive>,
+);
+
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn panels(
     mut contexts: EguiContexts,
@@ -309,7 +327,13 @@ fn panels(
     mut cameras: ViewCameras,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut exit: MessageWriter<AppExit>,
+    (mut mview, mut mform, mut vrect, mut mactive): ModelsUi,
+    model_cams: ModelCameras,
 ) -> Result {
+    let models_ws = state.workspace == Workspace::Models;
+    if mactive.0 != models_ws {
+        mactive.0 = models_ws;
+    }
     let ctx = contexts.ctx_mut()?.clone();
     let mut root = egui::Ui::new(
         ctx.clone(),
@@ -474,7 +498,11 @@ fn panels(
     }
     egui::Panel::bottom("studio-status").show(&mut root, |ui| {
         ui.horizontal(|ui| {
-            ui.label(status_text(&studio));
+            if models_ws {
+                ui.label(crate::models_ui::status(&mview));
+            } else {
+                ui.label(status_text(&studio));
+            }
         });
     });
     egui::Panel::left("studio-workspace")
@@ -490,11 +518,7 @@ fn panels(
                     &mut state.tool,
                     &mut pending,
                 ),
-                Workspace::Models => placeholder(
-                    ui,
-                    "Models",
-                    "The Models workspace comes with stage E3 (view, stats, validator, try-on) and E4 (edit); it needs the model files of Phase 15 (M1, M2).",
-                ),
+                Workspace::Models => crate::models_ui::models_panel(ui, &mut mview, &mut mform),
                 Workspace::Routes => {
                     let st = &mut *state;
                     crate::routes_ui::routes_panel(
@@ -508,7 +532,7 @@ fn panels(
                 }
             });
         });
-    if state.show_map {
+    if state.show_map && !models_ws {
         let width = (ctx.viewport_rect().width() * 0.36).max(240.0);
         egui::Panel::right("studio-map")
             .resizable(true)
@@ -540,9 +564,17 @@ fn panels(
     // The 3D view: the rest.
     let central = root.available_rect_before_wrap();
     let view = root.allocate_rect(central, egui::Sense::click_and_drag());
-    focus.over_view = view.hovered() || view.dragged();
+    focus.over_view = (view.hovered() || view.dragged()) && !models_ws;
+    if models_ws {
+        crate::models_ui::view_input(&ctx, &view, &mut mview);
+        if let Ok((cam, t)) = model_cams.single() {
+            let labels = crate::models_view::gizmo_labels(&mview, cam, t);
+            crate::models_ui::paint_labels(&root, central, &labels);
+        }
+    }
     // A click (not a drag) in the 3D view picks what is under it.
-    if view.clicked()
+    if !models_ws
+        && view.clicked()
         && let Some(p) = view.interact_pointer_pos()
         && let Ok((cam, transform)) = cameras.single()
         && let Ok(ray) = cam.viewport_to_world(transform, Vec2::new(p.x, p.y))
@@ -617,6 +649,9 @@ fn panels(
         )
         .min(max - pos)
         .max(UVec2::ONE);
+        if vrect.0 != Some((pos, size)) {
+            vrect.0 = Some((pos, size));
+        }
         let vp = Viewport {
             physical_position: pos,
             physical_size: size,
@@ -687,12 +722,6 @@ pub fn status_text(studio: &Studio) -> String {
         None => "autosave off".into(),
     });
     parts.join("   |   ")
-}
-
-fn placeholder(ui: &mut egui::Ui, name: &str, text: &str) {
-    ui.heading(name);
-    ui.add_space(6.0);
-    ui.label(text);
 }
 
 /// The colour of an operation's status in the list.

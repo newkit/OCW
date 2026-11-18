@@ -85,6 +85,12 @@ impl Node {
     }
 }
 
+/// Whether a node of this name holds a far level of detail (15B: `lod1`,
+/// and for plants `lod2` and `billboard`).
+pub fn is_far_level(name: &str) -> bool {
+    matches!(name, "lod1" | "lod2" | "billboard")
+}
+
 /// A whole asset.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Model {
@@ -156,6 +162,64 @@ impl Model {
 
     pub fn triangles(&self) -> usize {
         self.triangles_below(None)
+    }
+
+    /// Vertices of the nodes below `root` (all nodes for `None`).
+    pub fn vertices_below(&self, root: Option<usize>) -> usize {
+        self.nodes
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| root.is_none_or(|r| self.is_below(*i, r)))
+            .map(|(_, n)| {
+                n.primitives
+                    .iter()
+                    .map(|p| p.positions.len())
+                    .sum::<usize>()
+            })
+            .sum()
+    }
+
+    pub fn vertices(&self) -> usize {
+        self.vertices_below(None)
+    }
+
+    /// The model-space bounds (min, max) of the meshes of the nodes `keep`
+    /// accepts; `None` without a vertex.
+    pub fn bounds_where(&self, keep: impl Fn(usize) -> bool) -> Option<(Vec3, Vec3)> {
+        let mut lo = Vec3::splat(f32::INFINITY);
+        let mut hi = Vec3::splat(f32::NEG_INFINITY);
+        for (i, n) in self.nodes.iter().enumerate() {
+            if n.primitives.is_empty() || !keep(i) {
+                continue;
+            }
+            let w = self.world(i);
+            for p in &n.primitives {
+                for v in &p.positions {
+                    let q = w.transform_point3(Vec3::from(*v));
+                    lo = lo.min(q);
+                    hi = hi.max(q);
+                }
+            }
+        }
+        lo.x.is_finite().then_some((lo, hi))
+    }
+
+    /// The node `i` or one of its ancestors is called like `pred` accepts.
+    pub fn under_named(&self, i: usize, pred: impl Fn(&str) -> bool) -> bool {
+        let mut at = Some(i);
+        while let Some(n) = at {
+            if pred(&self.nodes[n].name) {
+                return true;
+            }
+            at = self.nodes[n].parent;
+        }
+        false
+    }
+
+    /// The bounds of the near model: every mesh except the far levels
+    /// (`lod1`, `lod2`, `billboard`) and the collision proxies (`col_*`).
+    pub fn near_bounds(&self) -> Option<(Vec3, Vec3)> {
+        self.bounds_where(|i| !self.under_named(i, |n| is_far_level(n) || n.starts_with("col_")))
     }
 
     /// Adds a node and returns its index.

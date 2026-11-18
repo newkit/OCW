@@ -14,8 +14,16 @@ path = "src/main.rs"
 [dependencies]
 # The document core: documents, commands, undo / redo, autosave (16A).
 ocw-edit.workspace = true
+# The Models workspace (16B, E3): the model files, their validator and
+# diff (Phase 15), the rider's body and poses, the light model.
+ocw-assets.workspace = true
+ocw-core.workspace = true
+ocw-sky.workspace = true
+ocw-weather.workspace = true
 ocw-sim.workspace = true
 ocw-world.workspace = true
+# The 2D map shared with the HUD's navigation map (spec §3.2).
+ocw-map.workspace = true
 ocw-worldstore.workspace = true
 # The game's renderer: the world exactly as in a ride (16A).
 ocw-render.workspace = true

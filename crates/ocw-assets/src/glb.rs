@@ -248,12 +248,25 @@ pub fn read(bytes: &[u8]) -> Result<Model, GlbError> {
 /// "glTF Separate" export, spec §14 Phase 15, 15D), or a `.glb`.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn read_file(path: &std::path::Path) -> Result<Model, GlbError> {
+    read_file_opts(path, false).map(|(m, _)| m)
+}
+
+/// [`read_file`] for the importer (spec §14 Phase 15, 15D): missing
+/// normals are computed (smooth, area-weighted) instead of refused, with
+/// a note per node.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn read_file_lenient(path: &std::path::Path) -> Result<(Model, Vec<String>), GlbError> {
+    read_file_opts(path, true)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_file_opts(path: &std::path::Path, lenient: bool) -> Result<(Model, Vec<String>), GlbError> {
     let bytes = std::fs::read(path).map_err(|e| err(format!("{}: {e}", path.display())))?;
     let dir = path
         .parent()
         .map(std::path::Path::to_path_buf)
         .unwrap_or_default();
-    read_with(&bytes, &|uri| {
+    read_opts(&bytes, lenient, &|uri| {
         // Only plain relative names: never leave the model's folder.
         let uri = uri.replace("%20", " ");
         let rel = std::path::Path::new(&uri);
@@ -294,6 +307,39 @@ pub fn read_with(
     bytes: &[u8],
     resolve: &dyn Fn(&str) -> Option<Vec<u8>>,
 ) -> Result<Model, GlbError> {
+    read_opts(bytes, false, resolve).map(|(m, _)| m)
+}
+
+/// Smooth, area-weighted vertex normals of a triangle list.
+pub fn compute_normals(positions: &[[f32; 3]], indices: &[u32]) -> Vec<[f32; 3]> {
+    let mut acc = vec![Vec3::ZERO; positions.len()];
+    for t in indices.as_chunks::<3>().0 {
+        let [a, b, c] = [t[0], t[1], t[2]].map(|i| i as usize);
+        if a.max(b).max(c) >= positions.len() {
+            continue;
+        }
+        let (pa, pb, pc) = (
+            Vec3::from(positions[a]),
+            Vec3::from(positions[b]),
+            Vec3::from(positions[c]),
+        );
+        let n = (pb - pa).cross(pc - pa);
+        for i in [a, b, c] {
+            acc[i] += n;
+        }
+    }
+    acc.into_iter()
+        .map(|n| n.try_normalize().unwrap_or(Vec3::Y).to_array())
+        .collect()
+}
+
+/// [`read_with`]; `lenient` computes missing normals (with a note).
+pub fn read_opts(
+    bytes: &[u8],
+    lenient: bool,
+    resolve: &dyn Fn(&str) -> Option<Vec<u8>>,
+) -> Result<(Model, Vec<String>), GlbError> {
+    let mut notes = Vec::new();
     let json = json_of(bytes).unwrap_or(Value::Null);
     if let Some(list) = json["extensionsRequired"].as_array() {
         for ext in list.iter().filter_map(Value::as_str) {
@@ -383,14 +429,17 @@ pub fn read_with(
                     .ok_or_else(|| err(format!("node {}: no POSITION", node.name)))?
                     .map(flip)
                     .collect();
-                let normals: Vec<[f32; 3]> = reader
-                    .read_normals()
-                    .ok_or_else(|| err(format!("node {}: no NORMAL", node.name)))?
-                    .map(flip)
-                    .collect();
                 let indices: Vec<u32> = match reader.read_indices() {
                     Some(i) => i.into_u32().collect(),
                     None => (0..positions.len() as u32).collect(),
+                };
+                let normals: Vec<[f32; 3]> = match reader.read_normals() {
+                    Some(n) => n.map(flip).collect(),
+                    None if lenient => {
+                        notes.push(format!("node {}: normals computed", node.name));
+                        compute_normals(&positions, &indices)
+                    }
+                    None => return Err(err(format!("node {}: no NORMAL", node.name))),
                 };
                 if normals.len() != positions.len()
                     || !indices.len().is_multiple_of(3)
@@ -429,7 +478,23 @@ pub fn read_with(
             stack.push((c, Some(i)));
         }
     }
-    Ok(model)
+    Ok((model, notes))
+}
+
+/// `model` as a `.gltf` (readable, pretty-printed JSON) and its buffer
+/// (`bin_name`, written next to it): the editable copy of `model export
+/// --gltf` (spec §14 Phase 15, 15D). The same content as [`write`].
+pub fn write_gltf(model: &Model, bin_name: &str) -> (String, Vec<u8>) {
+    let glb = write(model);
+    let json_len = u32::from_le_bytes(glb[12..16].try_into().expect("chunk")) as usize;
+    let mut doc: Value = serde_json::from_slice(&glb[20..20 + json_len]).expect("JSON");
+    let bin_at = 20 + json_len;
+    let bin_len = u32::from_le_bytes(glb[bin_at..bin_at + 4].try_into().expect("chunk")) as usize;
+    let bin = glb[bin_at + 8..bin_at + 8 + bin_len].to_vec();
+    doc["buffers"][0]["uri"] = Value::String(bin_name.replace(' ', "%20"));
+    let mut text = serde_json::to_string_pretty(&doc).expect("JSON");
+    text.push('\n');
+    (text, bin)
 }
 
 #[cfg(test)]
