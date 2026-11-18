@@ -45,9 +45,7 @@ use bevy::render::render_resource::{
     AsBindGroup, Extent3d, ShaderType, TextureDimension, TextureFormat,
 };
 use bevy::shader::ShaderRef;
-use ocw_map::labels::{
-    PlaceLabel, labels_of, navi_label_font, navi_labels, navi_marks,
-};
+use ocw_map::labels::{PlaceLabel, labels_of, navi_label_font, navi_labels, navi_marks};
 use ocw_map::navi::{
     AutoZoom, Banner, Daylight, RouteLines, ZOOM_LEVELS, ZoomMode, banner, ease_zoom, track_line,
 };

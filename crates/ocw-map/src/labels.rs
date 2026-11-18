@@ -438,7 +438,10 @@ mod tests {
             assert!(l.at[0] >= l.min[0] && l.at[0] <= l.max[0], "{l:?}");
             for (lo, hi) in &marks {
                 assert!(
-                    l.min[0] >= hi[0] || l.max[0] <= lo[0] || l.min[1] >= hi[1] || l.max[1] <= lo[1],
+                    l.min[0] >= hi[0]
+                        || l.max[0] <= lo[0]
+                        || l.min[1] >= hi[1]
+                        || l.max[1] <= lo[1],
                     "{dx} {dz} {heading}: {l:?}"
                 );
             }
