@@ -119,6 +119,7 @@ impl Plugin for ConsoleCorePlugin {
             .init_resource::<crate::navi_map::ShowMap>()
             .init_resource::<crate::navi_map::MapZoom>()
             .init_resource::<crate::navi_map::NaviMapInfo>()
+            .init_resource::<crate::photo_preview::PhotoPreview>()
             .init_resource::<ShowHud>()
             .init_resource::<Units>()
             .init_resource::<CameraMode>()
@@ -811,6 +812,24 @@ fn register_builtin_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         User,
+        Command::new("hud.photo_preview")
+            .about("Show or hide the 3-second preview of a photo just saved (screenshot, ride photographer)")
+            .arg(Arg::new("on").value_parser(["on", "off"])),
+        |world, m| {
+            let mut p = world.resource_mut::<crate::photo_preview::PhotoPreview>();
+            p.enabled = match m.get_one::<String>("on").map(String::as_str) {
+                Some("on") => true,
+                Some(_) => false,
+                None => !p.enabled,
+            };
+            Ok(format!(
+                "photo preview {}",
+                if p.enabled { "on" } else { "off" }
+            ))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        User,
         Command::new("rider.gps")
             .about("Show the rider's GPS position (lat, lon, altitude; the HUD's GPS line)"),
         |world, _| match world
@@ -983,30 +1002,46 @@ fn register_builtin_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         User,
         Command::new("screenshot")
-            .about("Save a screenshot of the window: JPEG with its time in EXIF (a .png path: PNG); in the browser a download named with the time")
+            .about("Save a screenshot of the window: JPEG with its time in EXIF (a .png path: PNG), by default OCW-<time>.jpg in the photos folder (Pictures/OCW, setting photos.folder); in the browser into the chosen photos folder or a download; previewed in the HUD")
             .arg(Arg::new("path")),
         |world, m| {
+            use crate::photo_preview::{Caption, PhotoShot};
             let meta = crate::stamp::ShotMeta::of(world);
-            // The browser app (spec §14 Phase 10 B6): a download.
+            // The browser app (spec §14 Phase 10 B6, §2.11 Q3): the photos
+            // folder or a download.
             if let Some(sink) = world.get_resource::<crate::stamp::ShotSink>().cloned() {
-                let name = m.get_one::<String>("path").cloned().unwrap_or_else(|| {
-                    crate::stamp::capture_name(&meta.time, "jpg")
-                });
+                let name = m
+                    .get_one::<String>("path")
+                    .cloned()
+                    .unwrap_or_else(|| crate::stamp::photo_name(&meta.time, "jpg"));
                 world
                     .commands()
-                    .spawn(Screenshot::primary_window())
+                    .spawn((Screenshot::primary_window(), PhotoShot))
                     .observe(crate::stamp::sink_shot(name.clone(), meta, sink));
-                return Ok(format!("screenshot: downloading {name}"));
+                return Ok(format!("screenshot: saving {name}"));
             }
-            let path = m
-                .get_one::<String>("path")
-                .cloned()
-                .unwrap_or_else(|| "screenshot.jpg".into());
+            let folder = world.get_resource::<crate::stamp::PhotoFolder>().cloned();
+            let (path, caption) = match (m.get_one::<String>("path"), folder) {
+                (Some(p), _) => {
+                    let name = std::path::Path::new(p)
+                        .file_name()
+                        .map_or(p.clone(), |n| n.to_string_lossy().into_owned());
+                    (p.into(), Caption::screenshot(format!("Saved as {name}")))
+                }
+                (None, Some(f)) => (
+                    f.new_file(&crate::stamp::photo_name(&meta.time, "jpg"))?,
+                    Caption::screenshot(format!("Saved to {}", f.label)),
+                ),
+                (None, None) => (
+                    std::path::PathBuf::from("screenshot.jpg"),
+                    Caption::screenshot("Saved as screenshot.jpg"),
+                ),
+            };
             world
                 .commands()
-                .spawn(Screenshot::primary_window())
-                .observe(crate::stamp::save_shot(path.clone(), meta));
-            Ok(format!("saving screenshot to {path}"))
+                .spawn((Screenshot::primary_window(), PhotoShot))
+                .observe(crate::stamp::save_photo_shot(path.clone(), meta, caption));
+            Ok(format!("saving screenshot to {}", path.display()))
         },
     ))
     .console_command(ConsoleCommand::new(
@@ -1283,7 +1318,7 @@ mod tests {
         );
         // The overlay's Tab is run the next frame; `console input` / `tab`
         // do the same from scripts.
-        run(&mut app, "console input \"hud.p\"");
+        run(&mut app, "console input \"hud.pr\"");
         app.world_mut()
             .resource_mut::<ConsoleState>()
             .request_tab(None, false);
@@ -1304,6 +1339,7 @@ mod tests {
                 "hud.gps",
                 "hud.map",
                 "hud.map.zoom",
+                "hud.photo_preview",
                 "hud.profile",
                 "hud.units"
             ]
@@ -1320,6 +1356,23 @@ mod tests {
         assert!(!app.world().resource::<ShowGps>().0);
         assert_eq!(run(&mut app, "hud.gps")[1], "GPS line on");
         assert!(run(&mut app, "rider.gps")[1].starts_with("error: no GPS position"));
+        // The photo preview's switch (setting display.photo_preview).
+        assert!(
+            app.world()
+                .resource::<crate::photo_preview::PhotoPreview>()
+                .enabled,
+            "on by default"
+        );
+        assert_eq!(
+            run(&mut app, "hud.photo_preview off")[1],
+            "photo preview off"
+        );
+        assert!(
+            !app.world()
+                .resource::<crate::photo_preview::PhotoPreview>()
+                .enabled
+        );
+        assert_eq!(run(&mut app, "hud.photo_preview")[1], "photo preview on");
         let mut view = crate::RideView::new(ocw_world::Route::test_loop());
         view.position = Some((47.139961, 9.521512, 455.2));
         app.insert_resource(view);

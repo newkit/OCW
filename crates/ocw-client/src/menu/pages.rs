@@ -1265,6 +1265,9 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             setting_row(settings, "display.high_contrast", "High-contrast HUD"),
             setting_row(settings, "display.reduced_motion", "Reduced motion"),
             setting_row(settings, "display.camera_shake", "Camera shake"),
+            // The 3-second preview of a photo just saved (the Display
+            // page is full; a HUD option like the others here).
+            setting_row(settings, "display.photo_preview", "Photo preview"),
         ],
         // From the training history (`menu::history`).
         Page::History

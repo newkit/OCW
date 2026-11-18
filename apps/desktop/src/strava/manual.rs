@@ -245,14 +245,15 @@ pub fn prepare(
     }
     // The ride's photos (spec §2.11), to add on the activity page.
     let stem = files[0].trim_end_matches(".fit").to_string();
+    // They live in the photos folder (Pictures/OCW), found through their
+    // sidecars in `rides/<ride>/photos/` (older rides: beside them).
     let mut photos = Vec::new();
-    let photo_dir = crate::photos::photos_dir(rides, &ride.id);
-    for (k, (file, _, _)) in crate::photos::ride_photos(rides, &ride.id)
+    for (k, (_, from)) in crate::photos::ride_photo_files(rides, &ride.id)
         .iter()
         .enumerate()
     {
         let name = format!("{stem} photo {}.jpg", k + 1);
-        if std::fs::copy(photo_dir.join(file), dir.join(&name)).is_ok() {
+        if std::fs::copy(from, dir.join(&name)).is_ok() {
             photos.push(name);
         }
     }
@@ -438,6 +439,52 @@ mod tests {
                 .unwrap_err()
                 .contains("not kept")
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The ride's photos live in the photos folder (Pictures/OCW, spec
+    /// §2.11 Q3), referenced by their sidecars in `rides/<ride>/photos/`:
+    /// the upload folder gets them under the FIT file's name.
+    #[test]
+    fn the_photos_from_the_photos_folder_go_with_the_upload() {
+        let dir = temp_dir("photos");
+        let (path, f) = ride(&dir, 1_794_992_700, 30);
+        let e = entry(&path, &f);
+        let pictures = dir.join("Pictures").join("OCW");
+        let time = ocw_render::media::MediaTime {
+            unix_s: 1_794_992_710,
+            offset_s: 0,
+        };
+        let rgb = vec![90u8; 32 * 18 * 3];
+        let photo = pictures.join("OCW 2026-11-18 photo.jpg");
+        let m = crate::photos::tests::meta(
+            1,
+            "OCW 2026-11-18 photo.jpg".into(),
+            Some(photo.to_string_lossy().into_owned()),
+            &time,
+        );
+        crate::photos::write_photo(
+            &photo,
+            Some(&crate::photos::photos_dir(&dir, &e.id)),
+            &rgb,
+            32,
+            18,
+            &m,
+            &time,
+            "OCW",
+        )
+        .unwrap();
+        let p = prepare(&dir, &e, 0, false).unwrap();
+        assert_eq!(
+            p.photos,
+            vec!["OCW 2026-11-18 09-05 Tenerife – Puerto de la Cruz–Teide photo 1.jpg".to_string()]
+        );
+        assert_eq!(
+            std::fs::read(p.dir.join(&p.photos[0])).unwrap(),
+            std::fs::read(&photo).unwrap()
+        );
+        let steps = ocw_client::strava::upload_steps(&p.files, true, !p.photos.is_empty());
+        assert!(steps.contains("in the same folder"), "{steps}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

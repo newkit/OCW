@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use bevy::prelude::*;
-use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
+use bevy::render::view::screenshot::{Capturing, Screenshot, ScreenshotCaptured};
 use bevy::time::TimeUpdateStrategy;
 use ocw_render::hud::VersionLabel;
 use ocw_render::media;
@@ -55,7 +55,9 @@ impl Plugin for AutomationPlugin {
                     audio: None,
                     audio_tried: false,
                 })
-                .add_systems(Update, capture_frames);
+                // After Update: a screenshot asked for there (the console's
+                // `screenshot`, `--at`) is seen and shares its frame.
+                .add_systems(PostUpdate, capture_frames);
         }
     }
 }
@@ -115,8 +117,13 @@ struct CaptureRun {
     audio_tried: bool,
 }
 
+/// Another screenshot of the window waiting for this frame.
+type OtherShot = (With<Screenshot>, Without<Capturing>);
+
+#[allow(clippy::too_many_arguments)] // a Bevy system
 fn capture_frames(
     mut commands: Commands,
+    others: Query<(Entity, &Screenshot), OtherShot>,
     mut run: ResMut<CaptureRun>,
     now: Res<MediaNow>,
     label: Option<Res<VersionLabel>>,
@@ -152,7 +159,17 @@ fn capture_frames(
                 }
             }
             let path = run.dir.join(format!("frame_{n:05}.png"));
-            let mut shot = commands.spawn(Screenshot::primary_window());
+            // Bevy takes one screenshot per window and frame and drops the
+            // others: a photo asked for this frame (`screenshot`) is this
+            // frame of the video too (the run waited for a dropped one).
+            let other = others
+                .iter()
+                .find(|(_, s)| !matches!(s.0, bevy::camera::RenderTarget::Image(_)))
+                .map(|(e, _)| e);
+            let mut shot = match other {
+                Some(e) => commands.entity(e),
+                None => commands.spawn(Screenshot::primary_window()),
+            };
             if run.plan.is_last(n) {
                 shot.observe(save_shot(run.dir.join("still.jpg"), meta.clone()));
             }
@@ -197,6 +214,45 @@ mod tests {
         assert_eq!(plan.action(149), CaptureAction::Capture(99));
         assert_eq!(plan.action(150), CaptureAction::Finish);
         assert!(plan.is_last(99) && !plan.is_last(98));
+    }
+
+    /// Regression (photo preview, v4.73): a `screenshot` during frame
+    /// capture asked for the same window and frame – Bevy dropped one of
+    /// the two (a lost video frame kept the run waiting, or the photo was
+    /// lost). The capture now takes that frame from the photo's
+    /// screenshot.
+    #[test]
+    fn a_photo_during_capture_shares_its_frame() {
+        let dir = std::env::temp_dir().join(format!("ocw-capture-share-{}", std::process::id()));
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<MediaNow>()
+            .insert_resource(CaptureRun {
+                plan: CapturePlan::new(25, 0.0, 1.0),
+                fps: 25,
+                dir: dir.clone(),
+                frame: 0,
+                captured: 0,
+                frames_after_done: 0,
+                audio: None,
+                audio_tried: true,
+            })
+            .add_systems(PostUpdate, capture_frames);
+        let shots = |app: &mut App| {
+            let w = app.world_mut();
+            w.query_filtered::<Entity, With<Screenshot>>()
+                .iter(w)
+                .count()
+        };
+        let photo = app.world_mut().spawn(Screenshot::primary_window()).id();
+        app.update();
+        assert_eq!(shots(&mut app), 1, "the photo's screenshot is the frame");
+        assert!(app.world().entity(photo).contains::<Screenshot>());
+        // The next frame (the photo is being captured): its own.
+        app.world_mut().entity_mut(photo).insert(Capturing);
+        app.update();
+        assert_eq!(shots(&mut app), 2);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

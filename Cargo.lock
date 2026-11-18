@@ -6932,7 +6932,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-map"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "ocw-world",
  "tiny-skia",

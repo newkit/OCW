@@ -5,9 +5,16 @@
 //! [`ocw_ui::menu::MenuHooks`] – the world of the page and the bundled
 //! workouts – and its captures as downloads instead of files:
 //!
-//! - **screenshots** (`screenshot`, Captures → Screenshot): the renderer's
-//!   JPEG with the time in EXIF (`ocw_render::stamp`), named with the
-//!   local time (`ocw-2026-11-14_19-20-05.jpg`),
+//! - **photos** (spec §2.11 Q3): screenshots (`screenshot`, Captures →
+//!   Screenshot: the renderer's JPEG with the time in EXIF,
+//!   `ocw_render::stamp`, named `OCW-2026-11-14_19-20-05.jpg`) and the ride
+//!   photographer's photos (`OCW-<time>-photo-N.jpg`, EXIF time and GPS)
+//!   go through [`PhotoSaver`]: into the photos folder the rider chose
+//!   (Captures → Photos folder, `photos.folder choose`: the File System
+//!   Access API's picker starting in Pictures, an `OCW` folder made in
+//!   the chosen one, the handle kept in IndexedDB, the permission asked
+//!   again with the next key or click after a reload), else as downloads;
+//!   the HUD previews each for 3 s with where it went,
 //! - **video** (`video start|stop|toggle`, Captures → Video): the page's
 //!   `MediaRecorder` on the canvas (WebM, with the game sound when it
 //!   plays), named the same way; the HUD shows REC as on the desktop,
@@ -34,6 +41,96 @@ use ocw_render::stamp::{MediaNow, ShotSink, capture_name};
 use ocw_ui::menu::MenuHooks;
 
 use crate::plugin::Session;
+
+/// Where the browser's photos go (spec §2.11 Q3): (file name, MIME type,
+/// bytes) → where they went, for the HUD's preview ("Saved to OCW",
+/// "Downloaded OCW-….jpg").
+#[derive(Resource, Clone)]
+pub struct PhotoSaver(pub Arc<PhotoSaveFn>);
+
+/// What [`PhotoSaver`] calls.
+pub type PhotoSaveFn = dyn Fn(&str, &str, Vec<u8>) -> String + Send + Sync;
+
+/// The preview's caption for a photo that went to `went` (the page's
+/// answer: `folder:NAME` or `download`).
+pub fn photo_went(went: &str, name: &str) -> String {
+    match went.strip_prefix("folder:") {
+        Some(folder) => format!("Saved to {folder}"),
+        None => format!("Downloaded {name}"),
+    }
+}
+
+impl PhotoSaver {
+    /// Downloads only (the tests, a page without the folder API).
+    pub fn downloads(d: Downloads) -> Self {
+        Self(Arc::new(move |name, mime, bytes| {
+            (d.0)(name, mime, bytes);
+            photo_went("download", name)
+        }))
+    }
+
+    /// The page's photos folder, else a download.
+    #[cfg(target_arch = "wasm32")]
+    fn page() -> Self {
+        Self(Arc::new(|name, mime, bytes| {
+            photo_went(&crate::browser::photo_save(name, mime, &bytes), name)
+        }))
+    }
+}
+
+/// The ride photographer's photo in the browser (spec §2.11 Q3): a JPEG
+/// with EXIF time and GPS, `OCW-<time>-photo-N.jpg`, through the
+/// [`PhotoSaver`] (encoded here on the page's thread).
+fn save_ride_photo(
+    world: &mut World,
+    t: &ocw_client::photographer::Taken,
+    image: Image,
+) -> Option<String> {
+    let saver = world.get_resource::<PhotoSaver>()?.clone();
+    let now = world
+        .get_resource::<MediaNow>()
+        .map(|m| m.0)
+        .unwrap_or_default();
+    let software = ocw_render::media::software(
+        world
+            .get_resource::<ocw_render::hud::VersionLabel>()
+            .map_or("", |l| l.0.as_str()),
+    );
+    let gps = ocw_ui::client(world)
+        .and_then(|c| c.geo_origin())
+        .map(|(lat0, lon0)| {
+            let (lat, lon) = ocw_world::geo::LocalProjection::new(lat0, lon0)
+                .unproject([t.pose.eye[0], t.pose.eye[2]]);
+            ocw_render::media::GpsPosition {
+                lat,
+                lon,
+                height_m: t.pose.eye[1],
+            }
+        });
+    let rgb = match image.try_into_dynamic() {
+        Ok(i) => i.to_rgb8(),
+        Err(e) => {
+            error!("ride photo: cannot convert the image: {e}");
+            return None;
+        }
+    };
+    let jpg = ocw_render::media::encode_jpeg(
+        rgb.as_raw(),
+        rgb.width(),
+        rgb.height(),
+        92,
+        ocw_render::media::exif_tiff_gps(&now, &software, gps),
+    )
+    .map_err(|e| error!("ride photo: {e}"))
+    .ok()?;
+    let name = format!(
+        "OCW-{}-photo-{}.jpg",
+        ocw_render::stamp::stamp_of(&now),
+        t.n
+    );
+    info!(file = %name, bytes = jpg.len(), "ride photo");
+    Some((saver.0)(&name, "image/jpeg", jpg))
+}
 
 /// Where downloads go: (file name, MIME type, bytes).
 #[derive(Resource, Clone)]
@@ -206,22 +303,19 @@ impl Plugin for WebUiPlugin {
             // Touch steering (spec §3.2.3), as on the desktop.
             ocw_ui::touch::TouchSteerPlugin,
         ));
-        // The ride photographer (spec §2.11): the other riders'
-        // photographers, drones and flashes are drawn and heard as on the
-        // desktop (Q2, v4.38); the browser takes no photos of its own
-        // (no files, Q3 open).
+        // The ride photographer (spec §2.11): as on the desktop – its own
+        // photos go to the photos folder or downloads (Q3, v4.73); the
+        // other riders' photographers, drones and flashes are drawn and
+        // heard (Q2, v4.38).
         app.add_plugins(ocw_ui::photographer::PhotographerPlugin { scale: 1.0 })
             .insert_resource(ocw_ui::photographer::PhotographerHooks {
-                save: |_, _, _| {},
+                save: save_ride_photo,
                 sound: |world, msg| {
                     if let Some(mut a) = world.get_resource_mut::<crate::audio::WebAudio>() {
                         a.apply(vec![msg]);
                     }
                 },
             });
-        app.world_mut()
-            .resource_mut::<ocw_ui::photographer::RidePhotographer>()
-            .allowed = false;
         if !app.world().contains_resource::<Downloads>() {
             app.insert_resource(Downloads::page());
         }
@@ -229,14 +323,22 @@ impl Plugin for WebUiPlugin {
             app.insert_resource(Tabs::page());
         }
         app.init_resource::<StravaNotice>();
-        let downloads = app.world().resource::<Downloads>().clone();
+        if !app.world().contains_resource::<PhotoSaver>() {
+            #[cfg(target_arch = "wasm32")]
+            app.insert_resource(PhotoSaver::page());
+            #[cfg(not(target_arch = "wasm32"))]
+            app.insert_resource(PhotoSaver::downloads(
+                app.world().resource::<Downloads>().clone(),
+            ));
+        }
+        let saver = app.world().resource::<PhotoSaver>().clone();
         app.insert_resource(ShotSink(Arc::new(move |name, bytes| {
             let mime = if name.ends_with(".png") {
                 "image/png"
             } else {
                 "image/jpeg"
             };
-            (downloads.0)(name, mime, bytes);
+            (saver.0)(name, mime, bytes)
         })))
         .insert_resource(WebRecording {
             recorder: RideRecorder::new("Open Cycling World"),
@@ -735,6 +837,41 @@ fn stop_video() -> Result<(), String> {
     Err("no video recorder outside the browser".into())
 }
 
+/// `photos.folder choose|forget|status`.
+fn photos_folder(action: &str) -> Result<String, String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if !crate::browser::photo_folder_supported() {
+            return Ok(
+                "photos are downloads named OCW-… (this browser cannot keep a folder)".into(),
+            );
+        }
+        match action {
+            "choose" => {
+                crate::browser::photo_folder_choose()?;
+                return Ok(
+                    "choose the photos folder (Pictures; an OCW folder is made in it)".into(),
+                );
+            }
+            "forget" => {
+                crate::browser::photo_folder_forget()?;
+                return Ok("photos are downloads again".into());
+            }
+            _ => {}
+        }
+        Ok(match crate::browser::photo_folder() {
+            Some(f) => format!("photos go to the folder {f}"),
+            None => "photos are downloads named OCW-… (Captures -> Photos folder chooses a folder)"
+                .into(),
+        })
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = action;
+        Ok("photos are downloads named OCW-… (no page)".into())
+    }
+}
+
 fn register_commands(app: &mut App) {
     // `world trust …` (spec §4.7 *User keys*) and the trust dialog's lines
     // for the streamed world.
@@ -760,6 +897,14 @@ fn register_commands(app: &mut App) {
             Some(("stop", _)) => crate::world::answer_trust(world, false),
             _ => Err("world trust list | add KEY | remove FINGERPRINT".into()),
         },
+    ));
+    // The photos folder (spec §2.11 Q3): the File System Access API.
+    app.console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("photos.folder")
+            .about("Where photos go: choose (a folder, the picker starts in Pictures; an OCW folder is made in it), forget (downloads), or nothing to show it")
+            .arg(Arg::new("action").value_parser(["choose", "forget", "status"])),
+        |_world, m| photos_folder(m.get_one::<String>("action").map_or("status", String::as_str)),
     ));
     app.console_command(ConsoleCommand::new(
         Permission::User,
@@ -1048,6 +1193,34 @@ mod tests {
         }
         assert!(!app.world().resource::<ocw_ui::god::GodStatus>().active);
         assert!(app.world().resource::<RideView>().flight.is_none());
+    }
+
+    /// Spec §2.11 Q3: the browser's photos go through the photo saver –
+    /// the chosen folder (the page) or a download – and the preview's
+    /// caption says which.
+    #[test]
+    fn photos_are_saved_with_their_caption() {
+        assert_eq!(photo_went("folder:OCW", "OCW-a.jpg"), "Saved to OCW");
+        assert_eq!(photo_went("download", "OCW-a.jpg"), "Downloaded OCW-a.jpg");
+        let log = DownloadLog::default();
+        let mut app = app(log.clone());
+        app.update();
+        let sink = app.world().resource::<ShotSink>().clone();
+        let went = (sink.0)("OCW-2026-11-17_10-00-00.jpg", vec![0xff, 0xd8]);
+        assert_eq!(went, "Downloaded OCW-2026-11-17_10-00-00.jpg");
+        let downloads = log.lock().unwrap().clone();
+        assert_eq!(downloads.len(), 1);
+        assert_eq!(
+            (downloads[0].0.as_str(), downloads[0].1.as_str()),
+            ("OCW-2026-11-17_10-00-00.jpg", "image/jpeg")
+        );
+        // The ride photographer is allowed in the browser now.
+        assert!(
+            app.world()
+                .resource::<ocw_ui::photographer::RidePhotographer>()
+                .allowed
+        );
+        assert!(console(&mut app, "photos.folder").contains("downloads named OCW-"));
     }
 
     #[test]
