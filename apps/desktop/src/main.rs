@@ -316,7 +316,8 @@ pub struct Args {
     #[arg(long, value_name = "DIR")]
     pub video_dir: Option<PathBuf>,
     /// Log the real render rate (wall-clock frames per second, also during
-    /// --capture) every SECONDS: `render rate fps=… worst_ms=…`.
+    /// --capture) every SECONDS: `render rate fps=… worst_ms=… p50_ms=…
+    /// p95_ms=…` (mean, longest frame, median and 95th percentile frame).
     #[arg(long, value_name = "SECONDS")]
     pub log_fps: Option<f64>,
     /// No sound: do not open an audio output (also off during --capture,

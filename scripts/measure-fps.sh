@@ -3,7 +3,7 @@
 # the GPU renderer (a machine with a GPU, e.g. marge; spec §15, §11.4):
 # no vsync, the app's own `render rate fps=…` log every 5 s, the first
 # WARMUP seconds left out. Prints one line: label, mean and min fps, the
-# frame time and the samples. Use it to compare two builds on the same
+# frame time, the frame time percentiles p50 / p95 and the samples. Use it to compare two builds on the same
 # scene, interleaved (A B A B) because the machine is shared.
 #
 #   scripts/measure-fps.sh [--app BIN] [--seconds N] [--warmup N]
@@ -16,6 +16,8 @@
 # or pass a saved binary, e.g. the previous commit's).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Numbers with a decimal point whatever the locale (awk reads and prints them).
+export LC_ALL=C
 app=target/release/ocw-desktop seconds=40 warmup=12 size=1280x720 label="" keep_log=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -45,14 +47,25 @@ timeout $((seconds + 60)) env -u DISPLAY XDG_RUNTIME_DIR="$runtime" WAYLAND_DISP
   "$app" --virtual --window "$size" --no-vsync --log-fps 5 --record false \
   --at "$seconds=quit" "$@" >"$log" 2>&1 || status=$?
 # Lines like "... render rate fps=87.3 ..." with the app's uptime in seconds.
-sed 's/\x1b\[[0-9;]*m//g' "$log" | grep -oE 'render rate fps="?[0-9.]+' | grep -oE '[0-9.]+$' >"$log.fps" || true
+# Also p50_ms= / p95_ms= (the sample's frame time percentiles; builds from
+# spec v4.79 on, 0 for older builds).
+sed 's/\x1b\[[0-9;]*m//g' "$log" | grep -E 'render rate' | awk '
+  { fps = 0; p50 = 0; p95 = 0
+    for (i = 1; i <= NF; i++) {
+      f = $i; gsub(/"/, "", f)
+      if (f ~ /^fps=/) fps = substr(f, 5)
+      if (f ~ /^p50_ms=/) p50 = substr(f, 8)
+      if (f ~ /^p95_ms=/) p95 = substr(f, 8)
+    }
+    if (fps > 0) print fps, p50, p95 }' >"$log.fps" || true
 n=$(wc -l <"$log.fps")
 skip=$((warmup / 5))
+# p50 / p95: the means of the samples' own percentiles.
 tail -n +$((skip + 1)) "$log.fps" | awk -v label="$label" -v n="$n" -v st="$status" '
-  { s += $1; c += 1; if (min == "" || $1 < min) min = $1; v = v sprintf("%.0f ", $1) }
+  { s += $1; c += 1; if (min == "" || $1 < min) min = $1; v = v sprintf("%.0f ", $1); q50 += $2; q95 += $3 }
   END {
     if (c == 0) { printf "%s: no samples (%d lines, exit %d)\n", label, n, st; exit 1 }
-    printf "%s: %.1f fps mean (%.2f ms), min %.1f, %d samples: %s\n", label, s / c, 1000 * c / s, min, c, v
+    printf "%s: %.1f fps mean (%.2f ms), min %.1f, p50 %.2f ms, p95 %.2f ms, %d samples: %s\n", label, s / c, 1000 * c / s, min, q50 / c, q95 / c, c, v
   }'
 rm -f "$log.fps"
 if [ -n "$keep_log" ]; then sed 's/\x1b\[[0-9;]*m//g' "$log" >"$keep_log"; fi
