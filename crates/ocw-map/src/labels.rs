@@ -109,11 +109,14 @@ pub fn navi_label_font(rank: u8) -> (f32, bool) {
     }
 }
 
-/// The width of a name at a font size (points), an estimate for the
-/// layout (the UI font's average advance; bold a little wider).
-pub fn text_width(name: &str, size: f32, bold: bool) -> f32 {
-    name.chars().count() as f32 * size * if bold { 0.6 } else { 0.55 }
+/// The width of a name at a font size (points), for the layout: the HUD
+/// font is monospaced (Fira Mono, 0.6 em per character).
+pub fn text_width(name: &str, size: f32, _bold: bool) -> f32 {
+    name.chars().count() as f32 * size * 0.6
 }
+
+/// The space beside a name inside its pill (points, each side).
+pub const PILL_PAD_PX: f32 = 3.0;
 
 /// A name the navigation map draws.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -181,7 +184,8 @@ pub fn navi_labels(
         }
         let at = view.to_screen(l.pos);
         let (size, bold) = navi_label_font(l.rank);
-        let w = text_width(&l.name, size, bold);
+        // The pill: the text and its padding.
+        let w = text_width(&l.name, size, bold) + 2.0 * PILL_PAD_PX;
         let h = size * 1.25;
         // Above the place; else below it; else, for a place by the rider
         // whose name would cover the arrow (the town the rider is in), just
