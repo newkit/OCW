@@ -158,6 +158,62 @@ pub fn ride_files(dir: &Path) -> Vec<String> {
     files
 }
 
+/// The ride files the rider marked as uploaded to Strava by hand (spec
+/// §2.8.1 *Simple upload*: the app cannot know, the rider marks the ride
+/// in the training history); `<rides dir>/strava-manual.toml`, written by
+/// the app's main thread, only read by the sync, which skips them – so a
+/// later API set-up uploads no duplicate.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManualMarks {
+    /// File names as [`ride_files`] gives them (`strava/<name>.fit` for a
+    /// Strava recording).
+    #[serde(default)]
+    pub files: std::collections::BTreeSet<String>,
+}
+
+impl ManualMarks {
+    pub fn path(rides_dir: &Path) -> PathBuf {
+        rides_dir.join("strava-manual.toml")
+    }
+
+    /// The marks (none if there is no file or it is broken).
+    pub fn load(rides_dir: &Path) -> Self {
+        std::fs::read_to_string(Self::path(rides_dir))
+            .ok()
+            .and_then(|s| toml::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn save(&self, rides_dir: &Path) -> Result<(), String> {
+        let path = Self::path(rides_dir);
+        let text = toml::to_string_pretty(self).map_err(|e| e.to_string())?;
+        let tmp = path.with_extension("toml.part");
+        std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
+        std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    /// Marks (`on`) or unmarks `files`.
+    pub fn set(&mut self, files: &[String], on: bool) {
+        for f in files {
+            if on {
+                self.files.insert(f.clone());
+            } else {
+                self.files.remove(f);
+            }
+        }
+    }
+}
+
+/// The ride files the API sync works on: [`ride_files`] without the ones
+/// marked as uploaded by hand ([`ManualMarks`]).
+pub fn sync_files(dir: &Path) -> Vec<String> {
+    let marks = ManualMarks::load(dir);
+    ride_files(dir)
+        .into_iter()
+        .filter(|f| !marks.files.contains(f))
+        .collect()
+}
+
 /// Strava's `external_id` of a ride file (no path separators).
 pub fn external_id(file: &str) -> String {
     file.replace('/', "-")
@@ -248,7 +304,7 @@ pub fn sync_once(
 ) -> Result<SyncReport, String> {
     let mut report = SyncReport::default();
     let mut state = SyncState::load(&paths.state_file)?;
-    let files = ride_files(&paths.rides_dir);
+    let files = sync_files(&paths.rides_dir);
     let due: Vec<String> = state.due(&files, now()).into_iter().cloned().collect();
     if due.is_empty() {
         return Ok(report);
@@ -523,6 +579,58 @@ mod tests {
     }
 
     const PROCESSING: &str = r#"{"id":11,"error":null,"activity_id":null}"#;
+
+    /// Rides marked as uploaded by hand (spec §2.8.1 *Simple upload*) are
+    /// skipped: no request, not counted as pending; unmarked they are due
+    /// again.
+    #[test]
+    fn rides_marked_as_uploaded_by_hand_are_skipped() {
+        let fx = Fixture::new(
+            "manual",
+            &["2026-01-01_10-00-00.fit", "2026-01-02_10-00-00.fit"],
+        );
+        let rides = &fx.paths.rides_dir;
+        std::fs::create_dir_all(rides.join("strava")).unwrap();
+        std::fs::write(rides.join("strava/2026-01-02_10-10-00.fit"), b"FITDATA").unwrap();
+        let mut marks = ManualMarks::load(rides);
+        assert!(marks.files.is_empty(), "no file: no marks");
+        marks.set(
+            &[
+                "2026-01-01_10-00-00.fit".into(),
+                "strava/2026-01-02_10-10-00.fit".into(),
+            ],
+            true,
+        );
+        marks.save(rides).unwrap();
+        assert_eq!(ManualMarks::load(rides), marks);
+        assert_eq!(
+            sync_files(rides),
+            vec!["2026-01-02_10-00-00.fit".to_string()]
+        );
+        assert_eq!(fx.state().counts(&sync_files(rides)).pending, 1);
+        let http = MockHttp::default();
+        http.reply(201, r#"{"id":12,"error":null,"activity_id":null}"#)
+            .reply(200, r#"{"id":12,"error":null,"activity_id":101}"#);
+        let report = fx.sync(&http, 1000);
+        assert_eq!(
+            report.uploaded,
+            vec![("2026-01-02_10-00-00.fit".into(), Some(101))]
+        );
+        assert_eq!(
+            http.urls(),
+            vec![
+                api::UPLOADS_URL.to_string(),
+                format!("{}/12", api::UPLOADS_URL)
+            ]
+        );
+        // Unmarked: due again.
+        marks.set(&["2026-01-01_10-00-00.fit".into()], false);
+        marks.save(rides).unwrap();
+        assert_eq!(sync_files(rides).len(), 2);
+        // A broken file marks nothing.
+        std::fs::write(ManualMarks::path(rides), "files = 3").unwrap();
+        assert!(ManualMarks::load(rides).files.is_empty());
+    }
 
     #[test]
     fn uploads_new_rides_and_polls_until_ready() {

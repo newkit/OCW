@@ -1,18 +1,115 @@
 //! The Strava recording (spec §2.8.1, ST1), Bevy-free: S starts and
 //! stops it; the part of the ride between S and S is its own FIT
 //! activity (each S … S its own, Q1) with its own totals and laps, while
-//! the ride's own recording goes on for the training history. Without
-//! the Strava set-up (`strava.toml`) S records nothing and says so. The
-//! app saves the activity (`<data dir>/ocw/rides/strava/`) and queues it
-//! with the upload; the photos the ride photographer (spec §2.11) took
-//! within it belong to it.
+//! the ride's own recording goes on for the training history. The app
+//! saves the activity (`<data dir>/ocw/rides/strava/`); with the API
+//! set-up (`strava.toml`, the advanced way) it is queued with the
+//! automatic upload, without it the notice points to the simple upload
+//! in the browser ([`NOT_SET_UP`]). The photos the ride photographer
+//! (spec §2.11) took within it belong to it.
+//!
+//! **The simple upload (no API app, spec §2.8.1 *Simple upload*):**
+//! Strava's own upload page ([`UPLOAD_PAGE`]) takes our FIT files; the
+//! apps open it with the file at hand (desktop: its folder open; browser:
+//! downloaded) and show [`upload_steps`]. The file gets a name a rider
+//! recognises in a file picker ([`upload_name`]).
 
 use crate::recording::{FinishedRide, RideRecorder, Sample};
 
-/// What S does when Strava is not set up.
-pub const NOT_SET_UP: &str = "Strava is not set up (strava.toml)";
+/// Strava's web upload page (accepts FIT files; free for every account).
+pub const UPLOAD_PAGE: &str = "https://www.strava.com/upload/select";
+
+/// Where a ride goes to Strava without the API set-up (the S recording's
+/// stop and the end of a ride say it).
+pub const NOT_SET_UP: &str =
+    "Upload it to Strava in your browser: Navi > Training history > the ride";
 /// How long a notice stays (s).
 pub const NOTICE_S: f64 = 4.0;
+/// How long a notice that points to the upload stays (s).
+pub const UPLOAD_NOTICE_S: f64 = 12.0;
+
+/// The steps of the simple upload. `files`: the file names to choose (the
+/// first named, the others counted); `desktop`: the folder is open (else
+/// the file was downloaded); `photos`: the ride's photos lie in the same
+/// folder (desktop).
+pub fn upload_steps(files: &[String], desktop: bool, photos: bool) -> String {
+    let first = files.first().map_or("", String::as_str);
+    let which = match files.len() {
+        0 | 1 => format!("the file {first}"),
+        n => format!(
+            "the files {first} and the {} other{}",
+            n - 1,
+            if n == 2 { "" } else { "s" }
+        ),
+    };
+    let (opens, at_hand) = if desktop {
+        ("Strava opens in your browser", "its folder is open")
+    } else {
+        ("Strava opens in a new tab", "just downloaded")
+    };
+    let mut s = format!("{opens}: sign in, choose {which} ({at_hand}), then Upload.");
+    if photos {
+        s.push_str(" Photos: add them on the activity page (they are in the same folder).");
+    } else {
+        s.push_str(" Photos: add them on the activity page.");
+    }
+    s
+}
+
+/// A text as part of a file name every system takes: letters (any
+/// script), digits, spaces and `-_.,()'&+–`; anything else (`/ \ : * ? "
+/// < > |`, control characters) becomes `-`, white space a space; runs of
+/// spaces become one, no leading or trailing dots or spaces; at most
+/// `max` characters.
+pub fn safe_file_part(text: &str, max: usize) -> String {
+    let mut out = String::new();
+    for c in text.chars() {
+        let c = if c.is_alphanumeric() || " -_.,()'&+–".contains(c) {
+            c
+        } else if c.is_whitespace() {
+            ' '
+        } else {
+            '-'
+        };
+        if c == ' ' && (out.is_empty() || out.ends_with(' ')) {
+            continue;
+        }
+        out.push(c);
+    }
+    let out: String = out.chars().take(max).collect();
+    out.trim_matches(|c| c == ' ' || c == '.').to_string()
+}
+
+/// The FIT file's name for the upload, recognisable in a file picker:
+/// `OCW 2026-11-18 10-05 Tenerife – Puerto de la Cruz–Teide.fit` (the
+/// local start time, the world and the route; `tag` in brackets after
+/// them, e.g. "Strava recording"). Only the copy for the upload (and the
+/// browser's download) carries it; the saved rides keep their names, so
+/// the history, the photos and the API sync stay as they are.
+pub fn upload_name(
+    start_unix_s: i64,
+    offset_s: i32,
+    world: &str,
+    route: &str,
+    tag: Option<&str>,
+) -> String {
+    let (y, mo, d, h, mi, _) = ocw_core::timestamp::civil(start_unix_s + i64::from(offset_s));
+    let place = match (world.trim(), route.trim()) {
+        ("", r) => r.to_string(),
+        (w, r) if r.is_empty() || w == r => w.to_string(),
+        (w, r) => format!("{w} – {r}"),
+    };
+    let mut name = format!("OCW {y:04}-{mo:02}-{d:02} {h:02}-{mi:02}");
+    let place = safe_file_part(&place, 80);
+    if !place.is_empty() {
+        name.push(' ');
+        name.push_str(&place);
+    }
+    if let Some(t) = tag {
+        name.push_str(&format!(" ({})", safe_file_part(t, 40)));
+    }
+    format!("{name}.fit")
+}
 
 /// What a start or stop did.
 #[derive(Debug, Clone, PartialEq)]
@@ -20,26 +117,27 @@ pub enum Outcome {
     Started,
     /// Stopped; the activity (`None`: too short – fewer than two records).
     Stopped(Option<Box<FinishedRide>>),
-    NotSetUp,
     /// Start while recording / stop while not.
     Unchanged,
 }
 
 /// The Strava recording of a ride.
 pub struct StravaRecording {
-    /// Strava is set up (`strava.toml` or the environment).
-    pub configured: bool,
+    /// The automatic API upload is set up (`strava.toml` or the
+    /// environment); without it the recording is uploaded in the browser.
+    pub api: bool,
     route: String,
     recorder: Option<RideRecorder>,
     /// Game time it started.
     since: Option<f64>,
-    notice: Option<(String, f64)>,
+    /// The notice, when it was shown and for how long.
+    notice: Option<(String, f64, f64)>,
 }
 
 impl StravaRecording {
-    pub fn new(configured: bool, route: impl Into<String>) -> Self {
+    pub fn new(api: bool, route: impl Into<String>) -> Self {
         Self {
-            configured,
+            api,
             route: route.into(),
             recorder: None,
             since: None,
@@ -61,16 +159,21 @@ impl StravaRecording {
         self.since.map(|s| (game_s - s).max(0.0))
     }
 
-    /// The notice to show at `game_s` (start, stop, not set up).
+    /// The notice to show at `game_s` (start, stop, the upload's steps).
     pub fn notice(&self, game_s: f64) -> Option<&str> {
         self.notice
             .as_ref()
-            .filter(|(_, at)| game_s - at < NOTICE_S)
-            .map(|(m, _)| m.as_str())
+            .filter(|(_, at, for_s)| game_s - at < *for_s)
+            .map(|(m, ..)| m.as_str())
     }
 
     pub fn say(&mut self, text: impl Into<String>, game_s: f64) {
-        self.notice = Some((text.into(), game_s));
+        self.say_for(text, game_s, NOTICE_S);
+    }
+
+    /// A notice that stays `for_s` seconds (the upload's steps).
+    pub fn say_for(&mut self, text: impl Into<String>, game_s: f64, for_s: f64) {
+        self.notice = Some((text.into(), game_s, for_s));
     }
 
     /// S: starts or stops.
@@ -83,10 +186,6 @@ impl StravaRecording {
     }
 
     pub fn start(&mut self, game_s: f64) -> Outcome {
-        if !self.configured {
-            self.say(NOT_SET_UP, game_s);
-            return Outcome::NotSetUp;
-        }
         if self.is_recording() {
             return Outcome::Unchanged;
         }
@@ -110,15 +209,22 @@ impl StravaRecording {
             );
             Box::new(f)
         });
-        let text = match &ride {
-            Some(f) => format!(
-                "Strava recording saved: {}, {:.1} km",
-                crate::history::hms(game_s - since),
-                f.activity.records.last().map_or(0.0, |r| r.distance_m) / 1000.0
-            ),
-            None => "Strava recording too short, not saved".into(),
-        };
-        self.say(text, game_s);
+        match &ride {
+            Some(f) => {
+                let text = format!(
+                    "Strava recording saved: {}, {:.1} km",
+                    crate::history::hms(game_s - since),
+                    f.activity.records.last().map_or(0.0, |r| r.distance_m) / 1000.0
+                );
+                if self.api {
+                    self.say(text, game_s);
+                } else {
+                    // No API: the rider uploads it in the browser.
+                    self.say_for(format!("{text}. {NOT_SET_UP}"), game_s, UPLOAD_NOTICE_S);
+                }
+            }
+            None => self.say("Strava recording too short, not saved", game_s),
+        }
         Outcome::Stopped(ride)
     }
 
@@ -171,14 +277,97 @@ mod tests {
         }
     }
 
+    /// Without the API set-up S records too (spec §2.8.1 *Simple
+    /// upload*); its stop points to the upload in the browser, longer.
     #[test]
-    fn without_strava_set_up_s_records_nothing() {
+    fn without_the_api_s_records_and_points_to_the_browser_upload() {
+        let route = Route::test_loop();
         let mut s = StravaRecording::new(false, "Loop");
-        assert_eq!(s.toggle(1.0), Outcome::NotSetUp);
-        assert!(!s.is_recording());
-        assert_eq!(s.notice(2.0), Some(NOT_SET_UP));
-        assert_eq!(s.notice(1.0 + NOTICE_S), None);
-        assert_eq!(s.elapsed_s(3.0), None);
+        assert_eq!(s.toggle(1.0), Outcome::Started);
+        assert!(s.is_recording());
+        for i in 0..10 {
+            s.observe(
+                &route,
+                None,
+                sample(1.0 + f64::from(i), f64::from(i) * 8.0),
+                100 + i64::from(i),
+            );
+        }
+        assert!(matches!(s.toggle(11.0), Outcome::Stopped(Some(_))));
+        let n = s.notice(11.0).unwrap();
+        assert!(
+            n.starts_with("Strava recording saved") && n.ends_with(NOT_SET_UP),
+            "{n}"
+        );
+        assert!(!n.contains("strava.toml"));
+        assert!(s.notice(11.0 + NOTICE_S + 1.0).is_some(), "stays longer");
+        assert_eq!(s.notice(11.0 + UPLOAD_NOTICE_S), None);
+        // With the API: the short notice, no pointer.
+        let mut a = StravaRecording::new(true, "Loop");
+        a.start(0.0);
+        a.observe(&route, None, sample(0.0, 0.0), 1);
+        a.observe(&route, None, sample(1.0, 8.0), 2);
+        a.stop(2.0);
+        assert!(!a.notice(2.0).unwrap().contains("browser"));
+        assert_eq!(a.notice(2.0 + NOTICE_S), None);
+    }
+
+    #[test]
+    fn the_upload_page_is_stravas_own() {
+        assert_eq!(UPLOAD_PAGE, "https://www.strava.com/upload/select");
+        assert!(!NOT_SET_UP.contains("strava.toml"));
+    }
+
+    /// The upload's file name: recognisable (date, time, world, route),
+    /// safe on every system.
+    #[test]
+    fn upload_names_are_recognisable_and_safe() {
+        // 2026-11-18 09:05 UTC, shown at UTC+1 (the rider's own zone).
+        let t = 1_794_992_700;
+        assert_eq!(
+            upload_name(t, 3600, "Tenerife", "Puerto de la Cruz–Teide", None),
+            "OCW 2026-11-18 10-05 Tenerife – Puerto de la Cruz–Teide.fit"
+        );
+        assert_eq!(
+            upload_name(t, 0, "", "Free ride", Some("Strava recording")),
+            "OCW 2026-11-18 09-05 Free ride (Strava recording).fit"
+        );
+        assert_eq!(
+            upload_name(t, 0, "Loop", "Loop", None),
+            "OCW 2026-11-18 09-05 Loop.fit"
+        );
+        assert_eq!(upload_name(t, 0, "", "", None), "OCW 2026-11-18 09-05.fit");
+        // Forbidden and control characters, runs of spaces, trailing dots.
+        let n = upload_name(t, 0, "A/B\\C: *?\"<>|", "x\ty   z...", None);
+        assert!(
+            !n.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\t']),
+            "{n}"
+        );
+        assert_eq!(n, "OCW 2026-11-18 09-05 A-B-C- ------ – x y z.fit");
+        assert_eq!(
+            safe_file_part("  Black Forest - north  ", 80),
+            "Black Forest - north"
+        );
+        assert_eq!(safe_file_part("Ünterwäld ...", 80), "Ünterwäld");
+        assert_eq!(safe_file_part(&"x".repeat(200), 80).len(), 80);
+    }
+
+    #[test]
+    fn the_steps_name_the_file_and_the_photos() {
+        let one = vec!["OCW 2026-11-18 10-05 Loop.fit".to_string()];
+        assert_eq!(
+            upload_steps(&one, true, false),
+            "Strava opens in your browser: sign in, choose the file OCW 2026-11-18 10-05 Loop.fit (its folder is open), then Upload. Photos: add them on the activity page."
+        );
+        let web = upload_steps(&one, false, false);
+        assert!(
+            web.starts_with("Strava opens in a new tab") && web.contains("just downloaded"),
+            "{web}"
+        );
+        let two = vec!["a.fit".to_string(), "b.fit".to_string()];
+        let s = upload_steps(&two, true, true);
+        assert!(s.contains("the files a.fit and the 1 other ("), "{s}");
+        assert!(s.contains("in the same folder"), "{s}");
     }
 
     /// S starts, S stops; stopping twice or leaving the ride after a stop

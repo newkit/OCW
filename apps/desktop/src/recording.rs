@@ -141,6 +141,9 @@ impl Plugin for RecordingPlugin {
             export: export_fit,
             import: Some(import_rides),
             refresh: refresh_history,
+            // The simple Strava upload (spec §2.8.1 *Simple upload*).
+            upload: Some(crate::strava::manual::upload),
+            marked: Some(crate::strava::manual::marked),
         })
         .add_systems(Update, (mark_laps, record).chain())
         .add_systems(Last, save_on_exit);
@@ -386,6 +389,34 @@ fn rides_photos(
     out
 }
 
+/// How many Strava recordings lie within each ride of the history.
+fn strava_recordings_by_ride(world: &World) -> std::collections::BTreeMap<String, usize> {
+    let mut out = std::collections::BTreeMap::new();
+    let Some(dir) = world
+        .get_resource::<Recording>()
+        .and_then(|r| r.dir.clone())
+    else {
+        return out;
+    };
+    let recordings = strava_recordings(&dir);
+    if recordings.is_empty() {
+        return out;
+    }
+    if let Some(h) = world.get_resource::<ocw_ui::history::TrainingHistory>() {
+        for r in &h.history.rides {
+            let end = r.start_unix_s + r.elapsed_s.ceil() as i64;
+            let n = recordings
+                .iter()
+                .filter(|(a, _)| *a + 1 >= r.start_unix_s && *a <= end)
+                .count();
+            if n > 0 {
+                out.insert(r.id.clone(), n);
+            }
+        }
+    }
+    out
+}
+
 /// What can be imported and exported now.
 fn refresh_history(world: &mut World) {
     let files = fit_files(world);
@@ -396,8 +427,16 @@ fn refresh_history(world: &mut World) {
         .filter_map(|(_, p)| p.file_name().map(|n| n.to_string_lossy().into_owned()))
         .collect();
     let photos = rides_photos(world);
+    // The Strava upload's way (API or browser) and each ride's Strava
+    // recordings (spec §2.8.1 *Simple upload*).
+    let strava_api = world
+        .get_resource::<crate::strava::Strava>()
+        .is_some_and(|s| s.api());
+    let recordings = strava_recordings_by_ride(world);
     if let Some(mut h) = world.get_resource_mut::<ocw_ui::history::TrainingHistory>() {
         h.photos = photos;
+        h.strava_api = strava_api;
+        h.recordings = recordings;
         h.importable = Some(importable);
         h.exportable = h
             .history
@@ -534,10 +573,13 @@ fn register_commands(app: &mut App) {
             match saved {
                 Some(path) => {
                     info!(path = %path.display(), "ride saved");
-                    if let Some(s) = world.get_resource::<crate::strava::Strava>() {
-                        s.ride_saved();
+                    let mut out = format!("ride saved to {}", path.display());
+                    match world.get_resource::<crate::strava::Strava>() {
+                        Some(s) if s.api() => s.ride_saved(),
+                        // The simple upload (spec §2.8.1).
+                        _ => out.push_str(&format!(". {}", ocw_client::strava::NOT_SET_UP)),
                     }
-                    Ok(format!("ride saved to {}", path.display()))
+                    Ok(out)
                 }
                 None => Err("nothing recorded yet".into()),
             }

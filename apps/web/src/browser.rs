@@ -83,6 +83,19 @@ pub fn download(name: &str, mime: &str, bytes: &[u8]) {
     }
 }
 
+/// Opens `url` in a new tab (the simple Strava upload, spec §2.8.1). The
+/// key or click that chose the menu row a frame before still counts as
+/// the user's gesture (browsers allow a few seconds); `Err` when the
+/// browser blocked it anyway.
+pub fn open_tab(url: &str) -> Result<(), String> {
+    let window = web_sys::window().ok_or("no window")?;
+    match window.open_with_url_and_target(url, "_blank") {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err("the browser blocked the new tab".into()),
+        Err(e) => Err(js(e)),
+    }
+}
+
 /// Tells the page that the renderer stopped (spec §14 Phase 10 B7,
 /// `window.ocwRenderFailed(kind, description)`): on WebGPU the page falls
 /// back to the WebGL 2 build, else it shows the error.

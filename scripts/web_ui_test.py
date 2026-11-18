@@ -734,6 +734,35 @@ class UiTest:
         self.check("fit: a FIT file", data[8:12] == b".FIT" and len(data) > 100, f"{len(data)} bytes at {path}")
         self.close_menu()
 
+        # The simple Strava upload (spec §2.8.1): the saved ride's page →
+        # Upload to Strava (in your browser): the FIT download under its
+        # recognisable name, Strava's upload page in a new tab (stubbed: no
+        # network), the steps on the page.
+        cdp.eval("window.ocwOpened = []; window.open = (u, t) => { window.ocwOpened.push(u); return {}; }")
+        self.key("Escape")
+        self.wait_menu(lambda m: m.get("open"))
+        ok = (self.open_item("Navi", "Navi")
+              and self.open_item("Training history", "Training history")
+              and self.open_item("Rides", "Rides"))
+        if ok:
+            self.key("Enter")
+            ok = self.wait_menu(lambda m: m.get("title") == "Ride").get("title") == "Ride"
+        self.check("strava: the saved ride's page", ok, self.menu().get("title"))
+        self.focus_item("Upload to Strava")
+        self.shot("strava-row")
+        self.key("Enter")
+        d, path = self.wait_download(".fit")
+        self.check("strava: the FIT file is a download named for the file picker",
+                   d is not None and d["name"].startswith("OCW 20"), d)
+        opened = json.loads(cdp.eval("JSON.stringify(window.ocwOpened || [])") or "[]")
+        self.check("strava: the upload page in a new tab",
+                   opened == ["https://www.strava.com/upload/select"], opened)
+        m = self.wait_menu(lambda m: any("Strava opens in a new tab" in t for t in m.get("text", [])))
+        self.check("strava: the steps on the ride's page",
+                   any("Strava opens in a new tab" in t for t in m.get("text", [])), m.get("text"))
+        self.shot("strava-steps")
+        self.close_menu()
+
         # A short video (MediaRecorder on the canvas, with the game sound).
         self.console("video start")
         self.pump(3.0)

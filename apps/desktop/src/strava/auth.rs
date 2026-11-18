@@ -368,33 +368,11 @@ pub fn wait_for_callback(
     Err("timed out waiting for the browser".into())
 }
 
-/// Opens `url` in the default browser.
+/// Opens `url` in the default browser (also a folder in the file
+/// manager: `xdg-open` / `start` / `open` take both).
 pub fn open_browser(url: &str) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    let mut cmd = {
-        // `start` treats the first quoted argument as the window title.
-        let mut c = std::process::Command::new("cmd");
-        c.args(["/C", "start", ""]).arg(url);
-        c
-    };
-    #[cfg(target_os = "macos")]
-    let mut cmd = {
-        let mut c = std::process::Command::new("open");
-        c.arg(url);
-        c
-    };
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    let mut cmd = {
-        let mut c = std::process::Command::new("xdg-open");
-        c.arg(url);
-        c
-    };
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("cannot open a browser: {e}"))
+    use super::manual::{Os, browser_command, spawn};
+    spawn(&browser_command(Os::current(), url)).map_err(|e| format!("cannot open a browser: {e}"))
 }
 
 #[cfg(test)]

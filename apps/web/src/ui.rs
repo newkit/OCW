@@ -12,7 +12,12 @@
 //!   `MediaRecorder` on the canvas (WebM, with the game sound when it
 //!   plays), named the same way; the HUD shows REC as on the desktop,
 //! - **the ride's FIT file** (`ride.save`, Captures → Download this ride):
-//!   the shared recording (`ocw_client::recording`), `ocw-ride-<start>.fit`.
+//!   the shared recording (`ocw_client::recording`), `ocw-ride-<start>.fit`,
+//! - **the simple Strava upload** (spec §2.8.1 *Simple upload*; a ride's
+//!   page in the training history, `strava.upload-manual N`): the ride's
+//!   FIT file as a download under its recognisable name
+//!   (`ocw_client::strava::upload_name`) and Strava's upload page in a new
+//!   tab ([`Tabs`]), with the steps on the ride's page and in the HUD.
 //!
 //! The downloads go through [`Downloads`]: the page's `window.ocwDownload`
 //! in the browser, a list in the tests.
@@ -62,6 +67,77 @@ impl Downloads {
     }
 }
 
+/// Opens a page in a new tab (the page's `window.open`; a list in the
+/// tests). `Err`: the browser blocked it.
+#[derive(Resource, Clone)]
+pub struct Tabs(pub Arc<TabFn>);
+
+/// What [`Tabs`] calls with the URL.
+pub type TabFn = dyn Fn(&str) -> Result<(), String> + Send + Sync;
+
+impl Tabs {
+    /// Tabs that are kept in `log` (the tests).
+    pub fn logged(log: Arc<Mutex<Vec<String>>>) -> Self {
+        Self(Arc::new(move |url| {
+            log.lock().expect("not poisoned").push(url.into());
+            Ok(())
+        }))
+    }
+
+    fn page() -> Self {
+        #[cfg(target_arch = "wasm32")]
+        return Self(Arc::new(crate::browser::open_tab));
+        #[cfg(not(target_arch = "wasm32"))]
+        Self(Arc::new(|url| {
+            info!("open {url} (no page)");
+            Ok(())
+        }))
+    }
+}
+
+/// The HUD's Strava notice in the browser (S: the desktop app; the
+/// upload's steps) and until when it shows (game time).
+#[derive(Resource, Default)]
+pub struct StravaNotice(pub Option<(String, f64)>);
+
+/// The simple Strava upload of a history ride in the browser: the FIT
+/// download under its recognisable name, Strava's upload page in a new
+/// tab, the steps (the menu shows them on the ride's page, the HUD too).
+fn web_upload(
+    world: &mut World,
+    ride: &ocw_client::history::RideEntry,
+    _whole: bool,
+) -> Result<String, String> {
+    let bytes = world
+        .get_resource::<ocw_ui::history::TrainingHistory>()
+        .and_then(|h| h.fits.get(&ride.id).cloned())
+        .ok_or("this ride's FIT file is not kept (only the rides of this page)")?;
+    let name = ocw_client::strava::upload_name(
+        ride.start_unix_s,
+        ocw_ui::history::offset(ride.start_unix_s),
+        &ride.world,
+        &ride.route,
+        None,
+    );
+    let downloads = world.resource::<Downloads>().clone();
+    (downloads.0)(&name, "application/vnd.ant.fit", bytes);
+    let tabs = world.resource::<Tabs>().clone();
+    let mut steps = ocw_client::strava::upload_steps(std::slice::from_ref(&name), false, false);
+    if let Err(e) = (tabs.0)(ocw_client::strava::UPLOAD_PAGE) {
+        warn!("Strava's upload page: {e}");
+        steps = format!(
+            "Open {} in a new tab (the browser blocked it): sign in, choose the file {name} (just downloaded), then Upload.",
+            ocw_client::strava::UPLOAD_PAGE
+        );
+    }
+    let now = world
+        .get_resource::<Time>()
+        .map_or(0.0, |t| t.elapsed_secs_f64());
+    world.resource_mut::<StravaNotice>().0 =
+        Some((steps.clone(), now + ocw_client::strava::UPLOAD_NOTICE_S));
+    Ok(steps)
+}
+
 /// The ride's recording for the FIT download (setting `ride.record`).
 #[derive(Resource)]
 pub struct WebRecording {
@@ -108,6 +184,10 @@ impl Plugin for WebUiPlugin {
             },
             import: None,
             refresh: ocw_ui::history::refresh_from_memory,
+            // The simple Strava upload (spec §2.8.1); the mark is kept in
+            // the history only (no API sync in the browser).
+            upload: Some(web_upload),
+            marked: None,
         })
         .add_plugins((
             ocw_ui::menu::MenuPlugin,
@@ -145,6 +225,10 @@ impl Plugin for WebUiPlugin {
         if !app.world().contains_resource::<Downloads>() {
             app.insert_resource(Downloads::page());
         }
+        if !app.world().contains_resource::<Tabs>() {
+            app.insert_resource(Tabs::page());
+        }
+        app.init_resource::<StravaNotice>();
         let downloads = app.world().resource::<Downloads>().clone();
         app.insert_resource(ShotSink(Arc::new(move |name, bytes| {
             let mime = if name.ends_with(".png") {
@@ -487,17 +571,18 @@ fn show_video(time: Res<Time>, video: Res<Video>, mut view: ResMut<RideView>) {
 }
 
 /// What the Strava key (S, spec §2.8.1) says in the browser.
-pub const STRAVA_DESKTOP_ONLY: &str = "Strava needs the desktop app (Ride -> Strava recording)";
+pub const STRAVA_DESKTOP_ONLY: &str = "The Strava recording (S) needs the desktop app. Upload a ride: Navi > Training history > the ride";
 
-/// S (or its pad button) in the browser: the notice that Strava needs the
-/// desktop app, for a few seconds.
+/// S (or its pad button) in the browser: the notice that the Strava
+/// recording needs the desktop app, for a few seconds; the HUD shows the
+/// notice (that one or the upload's steps) while it lasts.
 fn strava_key(
     time: Res<Time>,
     keys: Option<Res<ButtonInput<KeyCode>>>,
     pads: Query<&Gamepad>,
     bindings: Option<Res<ocw_ui::bindings::ActiveBindings>>,
     context: Option<Res<ocw_render::menu::InputContext>>,
-    mut until: Local<f64>,
+    mut notice: ResMut<StravaNotice>,
     mut view: ResMut<RideView>,
 ) {
     use ocw_client::bindings::Action;
@@ -507,9 +592,16 @@ fn strava_key(
         && (ocw_ui::bindings::key_just_pressed(bindings.as_deref(), Action::Strava, &keys)
             || ocw_ui::bindings::pad_just_pressed(bindings.as_deref(), Action::Strava, pads.iter()))
     {
-        *until = now + ocw_client::strava::NOTICE_S;
+        notice.0 = Some((
+            STRAVA_DESKTOP_ONLY.to_string(),
+            now + ocw_client::strava::NOTICE_S,
+        ));
     }
-    let msg = (now < *until).then(|| STRAVA_DESKTOP_ONLY.to_string());
+    let msg = notice
+        .0
+        .as_ref()
+        .filter(|(_, until)| now < *until)
+        .map(|(m, _)| m.clone());
     if view.strava_message != msg {
         view.strava_message = msg;
     }
@@ -964,6 +1056,91 @@ mod tests {
         assert!(
             out.contains("no video recorder outside the browser"),
             "{out}"
+        );
+    }
+
+    /// The simple Strava upload in the browser (spec §2.8.1 *Simple
+    /// upload*): a saved ride's page has the row; it downloads the FIT
+    /// file under its recognisable name, opens Strava's upload page in a
+    /// new tab and shows the steps on the page and in the HUD; the mark
+    /// stays in the history.
+    #[test]
+    fn a_ride_is_uploaded_to_strava_in_a_new_tab() {
+        let log = DownloadLog::default();
+        let tabs = Arc::new(Mutex::new(Vec::<String>::new()));
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, ConsoleCorePlugin))
+            .init_resource::<ButtonInput<KeyCode>>()
+            .insert_resource(Time::<Fixed>::from_hz(f64::from(ocw_core::SIM_TICK_HZ)))
+            .insert_resource(RideView::new(ocw_world::Route::test_hills()))
+            .insert_resource(Downloads::logged(log.clone()))
+            .insert_resource(Tabs::logged(tabs.clone()))
+            .add_plugins(crate::plugin::WebSessionPlugin {
+                config: SessionConfig::default(),
+            })
+            .add_plugins((crate::settings::WebSettingsPlugin, WebUiPlugin::default()));
+        app.update();
+        run_for(&mut app, 2300);
+        let out = console(&mut app, "ride.save");
+        assert!(out.contains("ride saved"), "{out}");
+        // The ride's page: the upload row and the mark (no API here).
+        let info = ocw_ui::history::info(app.world());
+        assert!(!info.strava_api);
+        let page = ocw_client::menu::pages::Page::HistoryRide(0);
+        let rows = ocw_client::menu::history::rows(page, &info);
+        let up = rows
+            .iter()
+            .find(|r| r.label == ocw_client::menu::history::UPLOAD_LABEL)
+            .expect("the upload row");
+        assert_eq!(
+            up.confirm,
+            Some(ocw_client::menu::pages::Activate::Command(
+                "strava.upload-manual 1".into()
+            ))
+        );
+        let out = console(&mut app, "strava.upload-manual 1");
+        assert!(out.contains("Strava opens in a new tab"), "{out}");
+        assert_eq!(
+            *tabs.lock().unwrap(),
+            vec![ocw_client::strava::UPLOAD_PAGE.to_string()]
+        );
+        let downloads = log.lock().unwrap().clone();
+        assert_eq!(downloads.len(), 2, "the ride, then the upload's copy");
+        let (name, mime, bytes) = &downloads[1];
+        assert!(
+            name.starts_with("OCW 20") && name.ends_with(".fit"),
+            "{name}"
+        );
+        assert!(
+            out.contains(name.as_str()),
+            "the steps name the file: {out}"
+        );
+        assert_eq!(mime, "application/vnd.ant.fit");
+        assert_eq!(bytes, &downloads[0].2);
+        app.update();
+        assert!(
+            app.world()
+                .resource::<RideView>()
+                .strava_message
+                .as_deref()
+                .is_some_and(|m| m.starts_with("Strava opens in a new tab")),
+            "the HUD shows the steps"
+        );
+        let info = ocw_ui::history::info(app.world());
+        let text = ocw_client::menu::history::text(page, &info);
+        assert!(text.iter().any(|l| l.contains("Strava opens in a new tab")));
+        // The mark.
+        console(&mut app, "strava.mark-uploaded 1 on");
+        let info = ocw_ui::history::info(app.world());
+        assert!(info.history.nth_newest(0).unwrap().strava_marked);
+        let rows = ocw_client::menu::history::rows(page, &info);
+        assert_eq!(
+            rows.iter()
+                .find(|r| r.label == ocw_client::menu::history::MARK_LABEL)
+                .unwrap()
+                .value
+                .as_deref(),
+            Some("yes")
         );
     }
 

@@ -32,7 +32,24 @@ pub struct HistoryInfo {
     /// The ride photographer's photos of each ride (spec §2.11; by ride
     /// id), and how many of them lie in a Strava recording (§2.8.1 ST3).
     pub photos: std::collections::BTreeMap<String, RidePhotos>,
+    /// The automatic Strava upload through the rider's own API app is set
+    /// up (`strava.toml`, the advanced way, spec §2.8.1); without it a
+    /// ride goes to Strava by the simple upload in the browser.
+    pub strava_api: bool,
+    /// The Strava recordings (S … S) within each ride (by ride id; the
+    /// desktop): the simple upload sends those instead of the whole ride.
+    pub recordings: std::collections::BTreeMap<String, usize>,
+    /// The last simple upload: the ride's id and its steps (shown on the
+    /// ride's page).
+    pub upload: Option<(String, String)>,
 }
+
+/// The label of the simple upload's row (spec §2.8.1 *Simple upload*).
+pub const UPLOAD_LABEL: &str = "Upload to Strava (in your browser)";
+/// The label of the mark's row.
+pub const MARK_LABEL: &str = "Marked as uploaded";
+/// The hint under the steps.
+pub const MARK_HINT: &str = "If you uploaded it, mark it as uploaded (below).";
 
 /// A ride's photos (spec §2.11, §2.8.1 ST3).
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -198,6 +215,7 @@ pub fn rows(page: Page, info: &HistoryInfo) -> Vec<Row> {
                     confirm: Some(Activate::Command(format!("history.photos {}", k + 1))),
                 });
             }
+            out.extend(strava_rows(k, r, info));
             out
         }
         Page::HistoryClimbs(k) => {
@@ -247,6 +265,58 @@ pub fn rows(page: Page, info: &HistoryInfo) -> Vec<Row> {
         Page::HistoryBests => bests_rows(&h.bests(), info),
         _ => Vec::new(),
     }
+}
+
+/// A ride's Strava rows (spec §2.8.1 *Simple upload*): with the API set
+/// up, the automatic upload's line; without it, the upload in the browser
+/// (the ride's Strava recordings if it has any, else the whole ride).
+/// Both have the mark, which the rider sets after uploading by hand (the
+/// app cannot know) and the API sync respects.
+fn strava_rows(k: usize, r: &crate::history::RideEntry, info: &HistoryInfo) -> Vec<Row> {
+    let n = k + 1;
+    let kept = info.exportable.contains(&r.id);
+    let mut out = Vec::new();
+    if info.strava_api {
+        out.push(info_row(
+            "Strava upload",
+            Some(if r.strava_marked {
+                "skipped (marked as uploaded)".into()
+            } else {
+                "automatic (your API app)".into()
+            }),
+        ));
+    } else {
+        let recordings = info.recordings.get(&r.id).copied().unwrap_or(0);
+        out.push(Row {
+            label: UPLOAD_LABEL.into(),
+            value: if !kept {
+                Some("FIT file not kept".into())
+            } else {
+                match recordings {
+                    0 => None,
+                    1 => Some("your Strava recording".into()),
+                    m => Some(format!("your {m} Strava recordings")),
+                }
+            },
+            left: None,
+            right: None,
+            confirm: Some(if kept {
+                Activate::Command(format!("strava.upload-manual {n}"))
+            } else {
+                Activate::Disabled
+            }),
+        });
+    }
+    out.push(Row {
+        label: MARK_LABEL.into(),
+        value: Some(if r.strava_marked { "yes" } else { "no" }.into()),
+        left: Some(format!("strava.mark-uploaded {n} off")),
+        right: Some(format!("strava.mark-uploaded {n} on")),
+        confirm: Some(Activate::Command(format!(
+            "strava.mark-uploaded {n} toggle"
+        ))),
+    });
+    out
 }
 
 fn bests_rows(b: &Bests, info: &HistoryInfo) -> Vec<Row> {
@@ -367,11 +437,28 @@ pub fn text(page: Page, info: &HistoryInfo) -> Vec<String> {
     if let Some(w) = &r.workout {
         second.push(format!("workout: {}", short_label(w, 28)));
     }
-    let mut out = vec![first];
+    // The simple upload's steps first, after it ran for this ride (a page
+    // too tall drops its text from the end: the numbers go first).
+    let mut out = Vec::new();
+    if let Some(steps) = upload_steps_for(info, &r.id) {
+        out.push(steps.to_string());
+        if !r.strava_marked {
+            out.push(MARK_HINT.into());
+        }
+    }
+    out.push(first);
     if !second.is_empty() {
         out.push(format!("{}.", second.join("; ")));
     }
     out
+}
+
+/// The simple upload's steps, if it ran for ride `id`.
+fn upload_steps_for<'a>(info: &'a HistoryInfo, id: &str) -> Option<&'a str> {
+    info.upload
+        .as_ref()
+        .filter(|(i, _)| i == id)
+        .map(|(_, s)| s.as_str())
 }
 
 /// "5s", "1m", "20m".
@@ -390,7 +477,8 @@ pub fn chart(page: Page, info: &HistoryInfo) -> Option<MenuChart> {
     let (ride, caption) = match page {
         Page::HistoryRide(k) => {
             let r = info.history.nth_newest(k)?;
-            if r.power_curve.is_empty() {
+            // The upload's steps take the chart's room.
+            if r.power_curve.is_empty() || upload_steps_for(info, &r.id).is_some() {
                 return None;
             }
             (
@@ -512,6 +600,86 @@ mod tests {
             Some(Activate::Command("history.photos 1".into()))
         );
         assert!(rows.len() < MAX_ITEMS);
+    }
+
+    /// The simple Strava upload (spec §2.8.1): without the API a ride's
+    /// page has the upload in the browser and the mark; with the API the
+    /// automatic upload's line and the mark; the steps show after the
+    /// upload, with the hint until the ride is marked.
+    #[test]
+    fn a_rides_strava_rows_with_and_without_the_api() {
+        let mut i = info(2);
+        let page = Page::HistoryRide(1);
+        let id = i.history.nth_newest(1).unwrap().id.clone();
+        let r = rows(page, &i);
+        let up = r.iter().find(|r| r.label == UPLOAD_LABEL).unwrap();
+        assert_eq!(
+            up.confirm,
+            Some(Activate::Command("strava.upload-manual 2".into()))
+        );
+        assert_eq!(up.value, None);
+        let mark = r.iter().find(|r| r.label == MARK_LABEL).unwrap();
+        assert_eq!(mark.value.as_deref(), Some("no"));
+        assert_eq!(
+            mark.confirm,
+            Some(Activate::Command("strava.mark-uploaded 2 toggle".into()))
+        );
+        assert_eq!(mark.left.as_deref(), Some("strava.mark-uploaded 2 off"));
+        assert_eq!(mark.right.as_deref(), Some("strava.mark-uploaded 2 on"));
+        assert!(r.len() < MAX_ITEMS);
+        // A ride with Strava recordings uploads those.
+        i.recordings.insert(id.clone(), 2);
+        let r = rows(page, &i);
+        assert_eq!(
+            r.iter()
+                .find(|r| r.label == UPLOAD_LABEL)
+                .unwrap()
+                .value
+                .as_deref(),
+            Some("your 2 Strava recordings")
+        );
+        // The FIT file not kept: dimmed.
+        i.exportable.remove(&id);
+        let r = rows(page, &i);
+        let up = r.iter().find(|r| r.label == UPLOAD_LABEL).unwrap();
+        assert_eq!(up.confirm, Some(Activate::Disabled));
+        assert_eq!(up.value.as_deref(), Some("FIT file not kept"));
+        // The steps after the upload, the hint until it is marked.
+        assert_eq!(text(page, &i).len(), 2);
+        i.upload = Some((id.clone(), "Strava opens in your browser: …".into()));
+        let t = text(page, &i);
+        assert_eq!(t[0], "Strava opens in your browser: …");
+        assert_eq!(t[1], MARK_HINT);
+        assert_eq!(t.len(), 4);
+        assert_eq!(chart(page, &i), None, "the steps take the chart's room");
+        assert!(chart(Page::HistoryRide(0), &i).is_some());
+        assert_eq!(text(Page::HistoryRide(0), &i).len(), 2, "another ride");
+        i.history.ride_mut(&id).unwrap().strava_marked = true;
+        assert_eq!(text(page, &i).len(), 3);
+        // With the API (the advanced way): no browser row.
+        i.strava_api = true;
+        let r = rows(page, &i);
+        assert!(!r.iter().any(|r| r.label == UPLOAD_LABEL));
+        let line = r.iter().find(|r| r.label == "Strava upload").unwrap();
+        assert_eq!(line.value.as_deref(), Some("skipped (marked as uploaded)"));
+        assert_eq!(
+            r.iter()
+                .find(|r| r.label == MARK_LABEL)
+                .unwrap()
+                .value
+                .as_deref(),
+            Some("yes")
+        );
+        let other = rows(Page::HistoryRide(0), &i);
+        assert_eq!(
+            other
+                .iter()
+                .find(|r| r.label == "Strava upload")
+                .unwrap()
+                .value
+                .as_deref(),
+            Some("automatic (your API app)")
+        );
     }
 
     #[test]

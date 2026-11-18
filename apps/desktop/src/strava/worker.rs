@@ -176,7 +176,7 @@ impl Thread {
     fn refresh_status(&self) {
         let token = self.cfg.paths.token.load().ok().flatten();
         let state = SyncState::load(&self.cfg.paths.state_file).unwrap_or_default();
-        let counts = state.counts(&sync::ride_files(&self.cfg.paths.rides_dir));
+        let counts = state.counts(&sync::sync_files(&self.cfg.paths.rides_dir));
         let mut s = self.status.lock().expect("not poisoned");
         s.connected = token.is_some();
         s.athlete = token.and_then(|t| t.athlete);
