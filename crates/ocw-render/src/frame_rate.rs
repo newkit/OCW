@@ -83,6 +83,9 @@ pub struct RateTotals {
     pub frames: u32,
     pub seconds: f64,
     pub worst_s: f64,
+    /// Every frame time of the period (seconds), for the percentiles of
+    /// the log line (benchmarks: `scripts/measure-fps.sh`).
+    pub times: Vec<f32>,
 }
 
 impl RateTotals {
@@ -90,6 +93,19 @@ impl RateTotals {
         self.frames += 1;
         self.seconds += dt_s;
         self.worst_s = self.worst_s.max(dt_s);
+        self.times.push(dt_s as f32);
+    }
+
+    /// The frame time below which a share `q` (0 … 1) of the period's
+    /// frames lie, in milliseconds (nearest rank; 0 without frames).
+    pub fn percentile_ms(&self, q: f64) -> f64 {
+        if self.times.is_empty() {
+            return 0.0;
+        }
+        let mut t = self.times.clone();
+        t.sort_by(f32::total_cmp);
+        let rank = (q.clamp(0.0, 1.0) * t.len() as f64).ceil() as usize;
+        f64::from(t[rank.clamp(1, t.len()) - 1]) * 1000.0
     }
 
     pub fn fps(&self) -> f64 {
@@ -179,6 +195,8 @@ fn measure(mut rate: ResMut<RenderRate>, log: Res<LogRenderRate>) {
             info!(
                 fps = format!("{:.1}", t.fps()),
                 worst_ms = format!("{:.0}", t.worst_s * 1000.0),
+                p50_ms = format!("{:.2}", t.percentile_ms(0.50)),
+                p95_ms = format!("{:.2}", t.percentile_ms(0.95)),
                 frames = t.frames,
                 seconds = format!("{:.1}", t.seconds),
                 "render rate"
@@ -317,6 +335,17 @@ mod tests {
         assert_eq!(t.frames, 3);
         assert!((t.fps() - 30.0).abs() < 1e-9);
         assert!((t.worst_s - 0.06).abs() < 1e-12);
+        assert!((t.percentile_ms(0.5) - 20.0).abs() < 1e-3);
+        assert!((t.percentile_ms(0.95) - 60.0).abs() < 1e-3);
+        assert_eq!(RateTotals::default().percentile_ms(0.5), 0.0);
+        // Nearest rank over 100 frames of 1 … 100 ms: p50 50 ms, p95 95 ms.
+        let mut t = RateTotals::default();
+        for ms in (1..=100).rev() {
+            t.record(f64::from(ms) / 1000.0);
+        }
+        assert!((t.percentile_ms(0.5) - 50.0).abs() < 1e-3);
+        assert!((t.percentile_ms(0.95) - 95.0).abs() < 1e-3);
+        assert!((t.percentile_ms(1.0) - 100.0).abs() < 1e-3);
     }
 
     /// The badge follows `fps on|off` (it shows the wall-clock rate, so its
