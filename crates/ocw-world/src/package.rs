@@ -1928,7 +1928,7 @@ mod tests {
             element: OsmElement::Node,
             osm_id: 42,
         }]);
-        // A package without the section (as every package before v4.74)
+        // A package without the section (as every package before v4.77)
         // loads with no places, and gains none by a round trip.
         let old = package().to_bytes();
         let loaded = WorldPackage::from_bytes(&old).unwrap();
