@@ -9,6 +9,13 @@ A cross-platform indoor cycling simulation in Rust: real bicycle hardware, real
 routes from OpenStreetMap, rendered locally with Bevy, with server-authoritative
 multiplayer.
 
+**📽 How it is built: the [OCW Build Diary](https://github.com/newkit/OCW-ART)** – OCW is
+built by a human and a crowd of AI agents, and its art project keeps every screenshot,
+video, log and commit of the way. Each build day becomes a short video:
+[▶ watch the whole diary](https://github.com/newkit/OCW-ART/releases/download/build-history/ocw-build-diary.mp4) ·
+[day galleries](https://newkit.github.io/OCW-ART/) ·
+[repository](https://github.com/newkit/OCW-ART).
+
 <p align="center">
   <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-2026-11-17-hero.jpg" alt="In-game view with the HUD: a group of riders on the TF-21 through Las Cañadas on Tenerife, the Teide ahead; power, speed and gradient at the top, the elevation profile bottom left" width="49%">
   <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-2026-11-17-rider-close.jpg" alt="A rider close up on the road: face, hair under the helmet, gloved hands on the hoods, pink jersey and black shorts" width="49%">
