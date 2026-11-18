@@ -6,158 +6,26 @@
 //! [`MapData`] is built once per package (pure, tested): the land use as
 //! a colour raster (one texel per land-use cell, coarser for large
 //! packages), the buildings as triangles, the roads of the road graph as
-//! polylines, each with its bounding box for culling, and the place names
-//! of section `PLCE`. [`MapView`] is the map's pan and zoom (pure,
-//! tested). [`paint`] draws them with egui; the place labels go through
-//! the decluttering pass [`ocw_world::places::layout_labels`] every frame
-//! ([`label_candidates`], pure and tested): the most important places stay
-//! when it is crowded, smaller ones appear as the map zooms in.
+//! polylines, each with its bounding box for culling. [`MapView`] is the
+//! map's pan and zoom (pure, tested). [`paint`] draws them with egui; the
+//! place names of section `PLCE` go through the decluttering pass
+//! [`ocw_world::places::layout_labels`] every frame ([`label_candidates`],
+//! pure and tested): the most important places stay when it is crowded,
+//! smaller ones appear as the map zooms in.
 
 use std::collections::BTreeSet;
 
 use bevy_egui::egui;
-use ocw_world::graph::RoadClass;
 use ocw_world::landuse::LandClass;
-use ocw_world::package::{TileKey, WorldPackage};
+use ocw_world::package::WorldPackage;
 
-/// The land-use raster is at most this many texels per side (egui's
-/// largest texture side).
-pub const MAX_RASTER: usize = 2048;
-/// Zoom limits (metres per screen point).
-pub const MIN_M_PER_PX: f64 = 0.05;
-pub const MAX_M_PER_PX: f64 = 500.0;
+// The map's geometry, projection and styles are shared with the game's
+// HUD navigation map (crate `ocw-map`, spec §3.2 *Navigation map*).
+use ocw_map::overlaps;
+pub use ocw_map::{MapData, MapView, format_length, nice_length, road_style};
+
 /// Buildings are drawn from this zoom in (metres per point).
 pub const BUILDINGS_BELOW_M_PER_PX: f64 = 6.0;
-
-/// The map's pan and zoom.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MapView {
-    /// The package point at the centre of the map (x, z).
-    pub centre: [f64; 2],
-    /// Metres per screen point.
-    pub m_per_px: f64,
-}
-
-impl Default for MapView {
-    fn default() -> Self {
-        Self {
-            centre: [0.0; 2],
-            m_per_px: 10.0,
-        }
-    }
-}
-
-impl MapView {
-    /// The view that shows `min`…`max` whole in a map of `size` points.
-    pub fn fit(min: [f64; 2], max: [f64; 2], size: [f32; 2]) -> Self {
-        let w = (max[0] - min[0]).max(1.0);
-        let h = (max[1] - min[1]).max(1.0);
-        let m = (w / f64::from(size[0].max(1.0))).max(h / f64::from(size[1].max(1.0))) * 1.05;
-        Self {
-            centre: [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5],
-            m_per_px: m.clamp(MIN_M_PER_PX, MAX_M_PER_PX),
-        }
-    }
-
-    /// A package point on the screen (`mid`: the map's centre on screen).
-    pub fn to_screen(self, p: [f64; 2], mid: [f32; 2]) -> [f32; 2] {
-        [
-            mid[0] + ((p[0] - self.centre[0]) / self.m_per_px) as f32,
-            mid[1] + ((p[1] - self.centre[1]) / self.m_per_px) as f32,
-        ]
-    }
-
-    /// The package point under a screen point.
-    pub fn to_world(self, s: [f32; 2], mid: [f32; 2]) -> [f64; 2] {
-        [
-            self.centre[0] + f64::from(s[0] - mid[0]) * self.m_per_px,
-            self.centre[1] + f64::from(s[1] - mid[1]) * self.m_per_px,
-        ]
-    }
-
-    /// Zooms by `factor` (> 1: closer) keeping the point under `s` still.
-    pub fn zoom_at(&mut self, factor: f64, s: [f32; 2], mid: [f32; 2]) {
-        let before = self.to_world(s, mid);
-        self.m_per_px = (self.m_per_px / factor).clamp(MIN_M_PER_PX, MAX_M_PER_PX);
-        let after = self.to_world(s, mid);
-        self.centre[0] += before[0] - after[0];
-        self.centre[1] += before[1] - after[1];
-    }
-
-    /// Moves the map with a drag of `d` points (the ground follows the
-    /// pointer).
-    pub fn pan(&mut self, d: [f32; 2]) {
-        self.centre[0] -= f64::from(d[0]) * self.m_per_px;
-        self.centre[1] -= f64::from(d[1]) * self.m_per_px;
-    }
-
-    /// The package area a map of `size` points shows: (min, max).
-    pub fn visible(&self, size: [f32; 2]) -> ([f64; 2], [f64; 2]) {
-        let hx = f64::from(size[0]) * 0.5 * self.m_per_px;
-        let hz = f64::from(size[1]) * 0.5 * self.m_per_px;
-        (
-            [self.centre[0] - hx, self.centre[1] - hz],
-            [self.centre[0] + hx, self.centre[1] + hz],
-        )
-    }
-}
-
-/// The land use as colours, row-major along +z.
-#[derive(Debug, Clone, PartialEq)]
-pub struct LandRaster {
-    /// The package point of texel (0, 0)'s corner.
-    pub origin: [f64; 2],
-    pub m_per_texel: f64,
-    pub width: usize,
-    pub height: usize,
-    /// RGBA, unmultiplied; transparent outside the package's tiles.
-    pub rgba: Vec<u8>,
-}
-
-/// A road of the map.
-#[derive(Debug, Clone, PartialEq)]
-pub struct MapRoad {
-    pub class: RoadClass,
-    pub width_m: f32,
-    pub points: Vec<[f32; 2]>,
-    pub min: [f32; 2],
-    pub max: [f32; 2],
-}
-
-/// A building of the map: its footprint as triangles.
-#[derive(Debug, Clone, PartialEq)]
-pub struct MapBuilding {
-    pub points: Vec<[f32; 2]>,
-    pub triangles: Vec<[u32; 3]>,
-    pub min: [f32; 2],
-    pub max: [f32; 2],
-}
-
-/// What the map draws of a package.
-#[derive(Debug, Clone, PartialEq)]
-pub struct MapData {
-    /// The tiles' extent (x, z).
-    pub min: [f64; 2],
-    pub max: [f64; 2],
-    pub land: Option<LandRaster>,
-    pub roads: Vec<MapRoad>,
-    pub buildings: Vec<MapBuilding>,
-    /// The package's places, most important first (section `PLCE`; empty
-    /// for packages without it).
-    pub places: Vec<ocw_world::places::Place>,
-}
-
-fn bbox(points: impl Iterator<Item = [f32; 2]>) -> ([f32; 2], [f32; 2]) {
-    points.fold(
-        ([f32::INFINITY; 2], [f32::NEG_INFINITY; 2]),
-        |(lo, hi), p| {
-            (
-                [lo[0].min(p[0]), lo[1].min(p[1])],
-                [hi[0].max(p[0]), hi[1].max(p[1])],
-            )
-        },
-    )
-}
 
 /// The colour of a land-use class on the map (the renderer's ground
 /// colours, a little lighter).
@@ -166,166 +34,9 @@ pub fn land_rgb(class: LandClass) -> [u8; 3] {
     c.map(|v| ((v * 1.15).clamp(0.0, 1.0) * 255.0).round() as u8)
 }
 
-impl MapData {
-    /// The map of `pkg` (its own tiles; neighbours are not drawn yet).
-    pub fn of(pkg: &WorldPackage) -> Self {
-        let size = f64::from(pkg.tile_size_m);
-        let keys: Vec<TileKey> = pkg.tiles.keys().copied().collect();
-        let (min, max) = if keys.is_empty() {
-            ([0.0; 2], [0.0; 2])
-        } else {
-            let kx0 = keys.iter().map(|k| k.x).min().unwrap_or(0);
-            let kx1 = keys.iter().map(|k| k.x).max().unwrap_or(0);
-            let kz0 = keys.iter().map(|k| k.z).min().unwrap_or(0);
-            let kz1 = keys.iter().map(|k| k.z).max().unwrap_or(0);
-            (
-                [f64::from(kx0) * size, f64::from(kz0) * size],
-                [f64::from(kx1 + 1) * size, f64::from(kz1 + 1) * size],
-            )
-        };
-        let land = (!keys.is_empty()).then(|| land_raster(pkg, min, max));
-        let roads = match &pkg.graph {
-            Some(g) => g
-                .edges
-                .iter()
-                .filter(|e| e.points.len() >= 2)
-                .map(|e| {
-                    let points: Vec<[f32; 2]> = e
-                        .points
-                        .iter()
-                        .map(|p| [p[0] as f32, p[1] as f32])
-                        .collect();
-                    let (min, max) = bbox(points.iter().copied());
-                    MapRoad {
-                        class: e.class,
-                        width_m: e.width_m as f32,
-                        points,
-                        min,
-                        max,
-                    }
-                })
-                .collect(),
-            // Version 1 packages: the tiles' road strips.
-            None => pkg
-                .tiles
-                .values()
-                .flat_map(|t| &t.roads)
-                .filter(|s| s.points.len() >= 2)
-                .map(|s| {
-                    let points: Vec<[f32; 2]> = s.points.iter().map(|p| [p[0], p[2]]).collect();
-                    let (min, max) = bbox(points.iter().copied());
-                    MapRoad {
-                        class: s.class,
-                        width_m: s.width_m,
-                        points,
-                        min,
-                        max,
-                    }
-                })
-                .collect(),
-        };
-        let buildings = pkg
-            .buildings
-            .iter()
-            .flat_map(|b| b.values())
-            .flatten()
-            .filter(|b| b.outline.len() >= 3)
-            .map(|b| {
-                let mut points = b.outline.clone();
-                for h in &b.holes {
-                    points.extend_from_slice(h);
-                }
-                let triangles = ocw_world::buildings::triangulate(&b.outline, &b.holes);
-                let (min, max) = bbox(b.outline.iter().copied());
-                MapBuilding {
-                    points,
-                    triangles,
-                    min,
-                    max,
-                }
-            })
-            .collect();
-        Self {
-            min,
-            max,
-            land,
-            roads,
-            buildings,
-            places: pkg
-                .places
-                .as_ref()
-                .map(|p| p.places.clone())
-                .unwrap_or_default(),
-        }
-    }
-}
-
-/// The land-use raster over the tile range `min`…`max`: one texel per
-/// land-use cell (every `stride`-th for large packages), tiles without
-/// land use in the default ground colour, no tile transparent.
-fn land_raster(pkg: &WorldPackage, min: [f64; 2], max: [f64; 2]) -> LandRaster {
-    let size = f64::from(pkg.tile_size_m);
-    let cells = pkg.landuse.as_ref().map_or(1, |l| l.cells.max(1)) as usize;
-    let tiles_x = ((max[0] - min[0]) / size).round() as usize;
-    let tiles_z = ((max[1] - min[1]) / size).round() as usize;
-    let total = tiles_x.max(tiles_z) * cells;
-    let stride = total.div_ceil(MAX_RASTER).max(1);
-    let width = (tiles_x * cells).div_ceil(stride).max(1);
-    let height = (tiles_z * cells).div_ceil(stride).max(1);
-    let k0 = TileKey::containing([min[0] + 0.5, min[1] + 0.5], size);
-    let mut rgba = vec![0u8; width * height * 4];
-    let default = land_rgb(LandClass::Default);
-    for v in 0..height {
-        for u in 0..width {
-            let (gx, gz) = (u * stride, v * stride);
-            let key = TileKey {
-                x: k0.x + (gx / cells) as i32,
-                z: k0.z + (gz / cells) as i32,
-            };
-            if !pkg.tiles.contains_key(&key) {
-                continue;
-            }
-            let class = pkg
-                .landuse
-                .as_ref()
-                .and_then(|l| l.tiles.get(&key))
-                .and_then(|t| t.classes.get((gz % cells) * cells + gx % cells))
-                .copied();
-            let rgb = class.map_or(default, land_rgb);
-            let i = (v * width + u) * 4;
-            rgba[i..i + 4].copy_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
-        }
-    }
-    LandRaster {
-        origin: min,
-        m_per_texel: size / cells as f64 * stride as f64,
-        width,
-        height,
-        rgba,
-    }
-}
-
-/// How a road class is drawn: the narrowest stroke (points), its colour,
-/// and from which zoom on (metres per point) it is drawn at all.
-pub fn road_style(class: RoadClass) -> (f32, [u8; 3], f64) {
-    match class {
-        RoadClass::Trunk => (3.0, [232, 146, 162], f64::INFINITY),
-        RoadClass::Primary => (2.6, [252, 214, 164], f64::INFINITY),
-        RoadClass::Secondary => (2.2, [246, 250, 190], f64::INFINITY),
-        RoadClass::Tertiary => (1.8, [255, 255, 255], 40.0),
-        RoadClass::Unclassified | RoadClass::Residential => (1.3, [250, 250, 250], 15.0),
-        RoadClass::Service => (1.0, [235, 235, 235], 6.0),
-        RoadClass::Track => (1.0, [172, 131, 62], 10.0),
-        RoadClass::Cycleway => (1.0, [80, 80, 250], 10.0),
-        RoadClass::Path => (0.8, [250, 128, 114], 6.0),
-    }
-}
-
-fn overlaps(min: [f32; 2], max: [f32; 2], vis: &([f64; 2], [f64; 2])) -> bool {
-    f64::from(max[0]) >= vis.0[0]
-        && f64::from(min[0]) <= vis.1[0]
-        && f64::from(max[1]) >= vis.0[1]
-        && f64::from(min[1]) <= vis.1[1]
+/// The map of `pkg` with the studio's land colours.
+pub fn map_data(pkg: &WorldPackage) -> MapData {
+    MapData::of(pkg, land_rgb)
 }
 
 /// Marks drawn over the map.
@@ -833,35 +544,15 @@ fn paint_route(
     }
 }
 
-/// The largest 1, 2 or 5 × 10ⁿ metres not above `m`.
-pub fn nice_length(m: f64) -> f64 {
-    if m.is_nan() || m <= 0.0 {
-        return 1.0;
-    }
-    let p = 10f64.powf(m.log10().floor());
-    [5.0, 2.0, 1.0]
-        .into_iter()
-        .map(|k| k * p)
-        .find(|v| *v <= m)
-        .unwrap_or(p)
-}
-
-/// "500 m", "2 km".
-pub fn format_length(m: f64) -> String {
-    if m >= 1000.0 {
-        format!("{} km", m / 1000.0)
-    } else {
-        format!("{m} m")
-    }
-}
-
 #[cfg(test)]
 pub mod tests {
     use std::collections::BTreeMap;
 
+    use ocw_map::data::MAX_RASTER;
     use ocw_world::buildings::{Building, BuildingKind, Roof};
+    use ocw_world::graph::RoadClass;
     use ocw_world::landuse::{LandUse, LandUseTile};
-    use ocw_world::package::Tile;
+    use ocw_world::package::{Tile, TileKey};
 
     use super::*;
 
@@ -934,45 +625,6 @@ pub mod tests {
     }
 
     #[test]
-    fn the_map_holds_land_use_buildings_and_roads_of_the_package() {
-        let m = MapData::of(&package());
-        assert_eq!((m.min, m.max), ([0.0, 0.0], [200.0, 100.0]));
-        let r = m.land.as_ref().unwrap();
-        assert_eq!((r.width, r.height, r.m_per_texel), (4, 2, 50.0));
-        let px = |u: usize, v: usize| &r.rgba[(v * r.width + u) * 4..(v * r.width + u) * 4 + 4];
-        assert_eq!(px(0, 0)[..3], land_rgb(LandClass::Forest));
-        assert_eq!(px(1, 1)[..3], land_rgb(LandClass::Water));
-        // The second tile has no land use: the default ground, opaque.
-        assert_eq!(
-            px(3, 0),
-            [land_rgb(LandClass::Default).as_slice(), &[255]].concat()
-        );
-        assert_eq!(m.roads.len(), 2, "the tiles' strips without a graph");
-        assert_eq!(m.roads[1].min, [100.0, 50.0]);
-        assert_eq!(m.buildings.len(), 1);
-        assert_eq!(m.buildings[0].triangles.len(), 2);
-    }
-
-    #[test]
-    fn a_large_package_gets_a_coarser_raster() {
-        let mut p = package();
-        p.landuse.as_mut().unwrap().cells = 3000;
-        let t = p
-            .landuse
-            .as_mut()
-            .unwrap()
-            .tiles
-            .values_mut()
-            .next()
-            .unwrap();
-        t.classes = vec![LandClass::Meadow; 3000 * 3000];
-        let r = MapData::of(&p).land.unwrap();
-        assert!(r.width <= MAX_RASTER && r.height <= MAX_RASTER);
-        assert_eq!(r.width, 2000, "6000 cells at stride 3");
-        assert!((r.width as f64 * r.m_per_texel - 200.0).abs() < 1e-9);
-    }
-
-    #[test]
     fn place_labels_declutter_by_rank_and_zoom() {
         use ocw_world::places::{OsmElement, Place, PlaceKind, Places, layout_labels, place_rank};
         let place = |name: &str, kind, pos| Place {
@@ -1002,7 +654,7 @@ pub mod tests {
             places: Some(Places::new(v)),
             ..package()
         };
-        let data = MapData::of(&pkg);
+        let data = map_data(&pkg);
         assert_eq!(data.places[0].name, "Ada Town");
         let shown = |m_per_px: f64| -> Vec<String> {
             let view = MapView {
@@ -1033,38 +685,45 @@ pub mod tests {
         assert!(near.len() > far.len(), "{near:?}");
         assert!(near.iter().any(|n| n == "Cora Hamlet"), "{near:?}");
         // Packages without places: no labels.
-        assert!(MapData::of(&package()).places.is_empty());
+        assert!(map_data(&package()).places.is_empty());
     }
 
     #[test]
-    fn zoom_keeps_the_point_under_the_pointer_and_pan_follows_it() {
-        let mut v = MapView::fit([0.0, 0.0], [2000.0, 1000.0], [400.0, 400.0]);
-        assert_eq!(v.centre, [1000.0, 500.0]);
-        assert!((v.m_per_px - 2000.0 / 400.0 * 1.05).abs() < 1e-9);
-        let mid = [200.0, 200.0];
-        let s = [300.0, 120.0];
-        let under = v.to_world(s, mid);
-        v.zoom_at(2.0, s, mid);
-        let again = v.to_world(s, mid);
-        assert!((under[0] - again[0]).abs() < 1e-6 && (under[1] - again[1]).abs() < 1e-6);
-        let p = v.to_world([250.0, 250.0], mid);
-        v.pan([10.0, -5.0]);
-        let moved = v.to_screen(p, mid);
-        assert!((moved[0] - 260.0).abs() < 1e-3 && (moved[1] - 245.0).abs() < 1e-3);
-        v.zoom_at(1e9, s, mid);
-        assert_eq!(v.m_per_px, MIN_M_PER_PX);
-        let (lo, hi) = v.visible([100.0, 50.0]);
-        assert!((hi[0] - lo[0] - 100.0 * MIN_M_PER_PX).abs() < 1e-9);
+    fn the_map_holds_land_use_buildings_and_roads_of_the_package() {
+        let m = map_data(&package());
+        assert_eq!((m.min, m.max), ([0.0, 0.0], [200.0, 100.0]));
+        let r = m.land.as_ref().unwrap();
+        assert_eq!((r.width, r.height, r.m_per_texel), (4, 2, 50.0));
+        let px = |u: usize, v: usize| &r.rgba[(v * r.width + u) * 4..(v * r.width + u) * 4 + 4];
+        assert_eq!(px(0, 0)[..3], land_rgb(LandClass::Forest));
+        assert_eq!(px(1, 1)[..3], land_rgb(LandClass::Water));
+        // The second tile has no land use: the default ground, opaque.
+        assert_eq!(
+            px(3, 0),
+            [land_rgb(LandClass::Default).as_slice(), &[255]].concat()
+        );
+        assert_eq!(m.roads.len(), 2, "the tiles' strips without a graph");
+        assert_eq!(m.roads[1].min, [100.0, 50.0]);
+        assert_eq!(m.buildings.len(), 1);
+        assert_eq!(m.buildings[0].triangles.len(), 2);
     }
 
     #[test]
-    fn scale_bar_lengths_are_round() {
-        assert_eq!(nice_length(730.0), 500.0);
-        assert_eq!(nice_length(2100.0), 2000.0);
-        assert_eq!(nice_length(1.0), 1.0);
-        assert_eq!(nice_length(0.0), 1.0);
-        assert_eq!(format_length(500.0), "500 m");
-        assert_eq!(format_length(2000.0), "2 km");
-        assert!(road_style(RoadClass::Primary).2.is_infinite());
+    fn a_large_package_gets_a_coarser_raster() {
+        let mut p = package();
+        p.landuse.as_mut().unwrap().cells = 3000;
+        let t = p
+            .landuse
+            .as_mut()
+            .unwrap()
+            .tiles
+            .values_mut()
+            .next()
+            .unwrap();
+        t.classes = vec![LandClass::Meadow; 3000 * 3000];
+        let r = map_data(&p).land.unwrap();
+        assert!(r.width <= MAX_RASTER && r.height <= MAX_RASTER);
+        assert_eq!(r.width, 2000, "6000 cells at stride 3");
+        assert!((r.width as f64 * r.m_per_texel - 200.0).abs() < 1e-9);
     }
 }

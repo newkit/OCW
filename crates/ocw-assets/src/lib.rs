@@ -7,6 +7,10 @@
 //!   M1), [`kinds`] the model contract per kind (15B), [`library`] the
 //!   run-time loader of those files (embedded or a dev folder, 15D);
 //! - [`glb`]: writing and reading `.glb` / `.gltf` files ([`model::Model`]);
+//! - [`check`]: the extended validator's findings (codes, targets, fixes;
+//!   spec §14 Phase 15, M2), [`diff`] the structural diff of two models,
+//!   [`import`] a glTF from Blender or any tool into the canonical file and
+//!   the editable export;
 //! - [`manifest`]: the model manifest and the validator (licence entries,
 //!   no physics in cosmetic assets, required nodes, names, budgets);
 //! - [`pose`]: rider on bike – anchors, inverse kinematics, the fit to the
@@ -24,14 +28,17 @@
 
 pub mod anim;
 pub mod bikes;
+pub mod check;
 pub mod clothing;
 #[cfg(feature = "tools")]
 pub mod convert;
+pub mod diff;
 pub mod export;
 #[cfg(feature = "tools")]
 pub mod fetch;
 pub mod glb;
 pub mod helmet;
+pub mod import;
 pub mod kinds;
 pub mod ktx2;
 pub mod library;

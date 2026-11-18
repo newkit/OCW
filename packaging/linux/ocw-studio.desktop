@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=OCW Studio
+GenericName=World and route editor
+Comment=Edit the models, worlds and routes of Open Cycling World
+Exec=ocw-studio
+Icon=ocw-studio
+Terminal=false
+Categories=Graphics;3DGraphics;Development;
+Keywords=cycling;editor;world;route;gpx;map;
+StartupWMClass=ocw-studio

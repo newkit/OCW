@@ -502,7 +502,7 @@ mod tests {
         }));
         let peer = Peer {
             rider: RiderId(2),
-            gap_m: 10.0,
+            gap_m: 3.0,
             lateral_m: 1.0,
         };
         c.update(0.2, &[peer]);

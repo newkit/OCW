@@ -8,13 +8,34 @@ entry (CLAUDE.md, spec §4.6).
 
 - `ocw.svg` – the app logo: a unicorn riding a bike over a rainbow (the
   source; edit this one).
-- `ocw-<size>.png` – renders of it for icons (16 … 512 px), made with
-  `for s in 16 32 48 64 128 256 512; do rsvg-convert -w $s -h $s ocw.svg -o ocw-$s.png; done`.
+- `ocw-<size>.png` – renders of it for icons (16 … 512 px).
+- `ocw-studio.svg` – OCW Studio's logo (the editor, `ocw-studio`): a
+  horn-gold pencil drawing the rainbow on drafting paper, the rest of the
+  rainbow still a dashed construction line. Same tile, sky, rainbow and
+  clouds as `ocw.svg`, so the two read as siblings. Original artwork, MIT OR
+  Apache-2.0 (stated in the file).
+- `ocw-studio-small.svg` – the studio logo simplified for 16 and 32 px
+  (four wider bands, a thicker pencil, no grid or sparkles).
+- `ocw-studio-<size>.png` – renders for icons (16 … 512 px; 16 and 32 from
+  the small variant).
 
-Used as the window icon (`apps/desktop/src/icon.rs`, X11 and Windows), the
-desktop entry icon (`packaging/linux/ocw-desktop.desktop`, installed by
-`scripts/deploy-test.sh`; Wayland compositors take the icon from it via the
-app id `ocw-desktop`) and the AppImage icon (`scripts/build-appimage.sh`).
+The PNGs are made with `scripts/render-logos.sh [LOGO…]` (rsvg-convert; on
+marge: `scripts/remote.sh marge run 'scripts/render-logos.sh ocw-studio'`):
+`LOGO-<size>.png` from `LOGO.svg`, 16 and 32 px from `LOGO-small.svg` when
+there is one. The game's PNGs were made the same way before the script
+(`rsvg-convert -w $s -h $s ocw.svg -o ocw-$s.png`); the script reproduces them
+byte for byte (rsvg-convert 2.60 on marge, 2026-11-17).
+
+The game's logo is the window icon of `ocw-desktop`, the studio's that of
+`ocw-studio` (shared code: `ocw_ui::app_icon`; X11, Windows title bar and
+taskbar), the icon of each Windows exe (`crates/ocw-winres`:
+`OCW` for `ocw-desktop` and `ocw-server`, `OCW_STUDIO` for `ocw-studio`),
+the desktop entry icon (`packaging/linux/ocw-desktop.desktop`,
+`ocw-studio.desktop`, installed by each app at start; Wayland compositors
+take the icon from it via the app ids `ocw-desktop` / `ocw-studio`), the
+AppImage icon (`scripts/build-appimage.sh`, the game) and the `.icns` of the
+macOS bundles (`scripts/build-macos-app.sh`; `OCW_APP=studio` for
+`OCW Studio.app`).
 
 ## 3dmodels/
 

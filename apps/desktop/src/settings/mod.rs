@@ -789,6 +789,7 @@ mod tests {
             pages::Page::Rider(0),
             pages::Page::Bike(0),
             pages::Page::RidingAids,
+            pages::Page::Hud,
             pages::Page::Graphics,
             pages::Page::ViewDistance,
             pages::Page::EventRules,

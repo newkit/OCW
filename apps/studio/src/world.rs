@@ -68,7 +68,7 @@ pub fn load(spec: &str, settings: &LoadSettings) -> Result<Loaded, String> {
         .unwrap_or_default();
     let pkg = &world.package;
     let rows = crate::info::package_rows(&details, pkg, &sections);
-    let map = MapData::of(pkg);
+    let map = crate::map::map_data(pkg);
     let mid = [
         (map.min[0] + map.max[0]) * 0.5,
         (map.min[1] + map.max[1]) * 0.5,

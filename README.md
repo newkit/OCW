@@ -10,10 +10,10 @@ routes from OpenStreetMap, rendered locally with Bevy, with server-authoritative
 multiplayer.
 
 <p align="center">
-  <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-climb-behind.png" alt="A group of riders climbing the Malbun road in Liechtenstein, mountains ahead" width="49%">
-  <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-climb-front.png" alt="The group coming up the Malbun road, seen from the front, with the valley and mountains behind" width="49%">
+  <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-2026-11-17-hero.jpg" alt="In-game view with the HUD: a group of riders on the TF-21 through Las Cañadas on Tenerife, the Teide ahead; power, speed and gradient at the top, the elevation profile bottom left" width="49%">
+  <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-2026-11-17-rider-close.jpg" alt="A rider close up on the road: face, hair under the helmet, gloved hands on the hoods, pink jersey and black shorts" width="49%">
 </p>
-<p align="center"><sub>Free ride with bots on the Vaduz–Malbun road (Liechtenstein, 1390 m), rendered by the app (scenes <code>readme-climb-behind</code> / <code>readme-climb-front</code> in <code>scripts/scenes.toml</code>). Map data © OpenStreetMap contributors (ODbL), elevation SRTM (NASA / USGS).</sub></p>
+<p align="center"><sub>Screenshots of the desktop app (main, 17 November 2026): riders on Tenerife with the HUD, and a rider made in the character editor (scenes <code>readme-hero</code> / <code>readme-rider-close</code> in <code>scripts/scenes.toml</code>). Map data © OpenStreetMap contributors (ODbL), elevation MDT05 © Instituto Geográfico Nacional (CC BY 4.0).</sub></p>
 
 **Status:** worlds, multiplayer, voice, the sky, the time machine, the weather and the
 weather machine work; textures, real weather and the browser / VR versions are in progress. Phases and decisions are
@@ -31,20 +31,24 @@ plantations and the Teide's broom on Tenerife. Download them from the
 (menu → **World**). To serve worlds to other riders, see
 [Hosting your own world server](#hosting-your-own-world-server).
 
-<img src="https://github.com/newkit/OCW/releases/download/build-history/world-tenerife-teide-iconic.jpg?v=2" alt="Riders on the TF-21 through Las Cañadas, the Teide (3,715 m) straight ahead" width="100%">
-
-<sub>Tenerife: riders on the TF-21 through the caldera of Las Cañadas, the Teide (3,715 m) straight ahead, 6 km away.</sub>
-
 | | |
 |---|---|
 | **Liechtenstein** – Vaduz to Malbun (13.3 km, 1,148 m up), the Rhine valley, the Stegertunnel | |
-| <img src="https://github.com/newkit/OCW/releases/download/build-history/world-liechtenstein-malbun.jpg" alt="A group of riders on the Malbun road, mountains ahead" width="100%"> | <img src="https://github.com/newkit/OCW/releases/download/build-history/world-liechtenstein-golden-hour.jpg" alt="Golden hour above Vaduz" width="100%"> |
+| <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-2026-11-17-malbun.jpg" alt="A group of riders coming up the Malbun road at km 11 between spruce trees, seen from the front" width="100%"> | <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-2026-11-17-vaduz-junction.jpg" alt="Free ride through Vaduz with the HUD: riders on the Äulestrasse, the junction arrow with the next street bottom centre, the elevation profile bottom left" width="100%"> |
 | **Black Forest** – three connected packages: Freiburg – Schauinsland, Titisee – Feldberg, Triberg, Baden-Baden – Mummelsee over the Schwarzwaldhochstraße | |
-| <img src="https://github.com/newkit/OCW/releases/download/build-history/world-blackforest-schauinsland.jpg" alt="A group climbing the Schauinsland road" width="100%"> | <img src="https://github.com/newkit/OCW/releases/download/build-history/world-blackforest-hochstrasse.jpg" alt="The Schwarzwaldhochstraße (B500)" width="100%"> |
+| <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-2026-11-17-schauinsland.jpg" alt="A group climbing the Schauinsland road through spruce and beech forest, with the HUD and the junction arrow" width="100%"> | <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-2026-11-17-rain.jpg" alt="Light rain on the Schauinsland climb: grey sky, wet road, riders and a Black Forest farmhouse" width="100%"> |
 | **Tenerife** – the whole island: the Teide from the coast (42 km, 2,350 m up), the Masca hairpins, Anaga, the sea | |
-| <img src="https://github.com/newkit/OCW/releases/download/build-history/world-tenerife-teide-sunset.jpg" alt="Sunset over Las Cañadas below the Teide" width="100%"> | <img src="https://github.com/newkit/OCW/releases/download/build-history/world-tenerife-gigantes.jpg" alt="Los Gigantes on the west coast with the sea" width="100%"> |
+| <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-2026-11-17-teide.jpg" alt="Two riders on the TF-21 through Las Cañadas, the cone of the Teide beside the road" width="100%"> | <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-2026-11-17-sunset.jpg" alt="Sunset over Las Cañadas on Tenerife: red light on the lava slopes and on a group of riders" width="100%"> |
 
-<sub>Rendered by the app (scene harness, `scripts/scenes.toml`), with the ISO
+### In the game
+
+| | | |
+|---|---|---|
+| <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-2026-11-17-mirror.jpg" alt="The workshop mirror with the character editor: the body shapes as picture tiles of the whole rider, the rider in front of the mirror" width="100%"> | <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-2026-11-17-bike-stand.jpg" alt="The bike stand in the workshop: the paint as picture tiles of the whole bike, the chosen colour on the frame" width="100%"> | <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-2026-11-17-browser.jpg" alt="The browser app riding the Vaduz–Malbun route in Triesenberg, with the HUD, the junction arrow and the devices panel" width="100%"> |
+| The workshop mirror: the character editor (body, face, hair, kit) | The bike stand: frames, wheels, parts and paint as tiles | The browser app (WebGPU) on the Malbun road |
+
+<sub>Rendered by the app (scene harness, `scripts/scenes.toml`, scenes `readme-*`; the browser picture by
+`scripts/test-web.py`), with the ISO
 timestamp every capture carries. Map data © OpenStreetMap contributors (ODbL).
 Elevation: swissALTI3D © swisstopo; DGM1 © LGL, www.lgl-bw.de (dl-de/by-2.0);
 MDT05 © Instituto Geográfico Nacional (CC BY 4.0); SRTM (NASA / USGS).</sub>
@@ -766,6 +770,8 @@ keys new-signing`.
 | Strava recording (start / stop): the part between two presses is its own Strava activity | S | left-stick click (L3) |
 | Voice: mute / unmute your microphone | M | Select (Back / View / Share) |
 | Voice: mute / unmute the speaker (all voices; game sounds stay) | Shift+M | right-stick click (R3) |
+| Navigation map (bottom right) on / off | N | |
+| Navigation map zoom: auto (by speed, closer at junctions), then 1 (closest) … 7, then auto | Z | |
 | Next screen | F11 | |
 | Console (`help` lists the commands) | `` ` `` or F12 | |
 | Unicorn mode: fly as a unicorn / land on the road below | G | Select + North (Y / △) |

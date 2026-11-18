@@ -22,7 +22,7 @@ const PROFILE_W: f32 = 300.0;
 const PROFILE_H: f32 = 56.0;
 
 #[derive(Component)]
-struct Panel;
+pub(crate) struct Panel;
 
 #[derive(Component)]
 struct Title;

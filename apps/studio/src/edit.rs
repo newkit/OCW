@@ -396,7 +396,7 @@ pub fn apply(world: &mut World, cmd: StudioCommand) -> Result<String, String> {
             let mut w = world
                 .get_resource_mut::<crate::world::OpenWorld>()
                 .ok_or("no world open")?;
-            let m = m_per_px.clamp(crate::map::MIN_M_PER_PX, crate::map::MAX_M_PER_PX);
+            let m = m_per_px.clamp(ocw_map::view::MIN_M_PER_PX, ocw_map::view::MAX_M_PER_PX);
             w.map_view = Some(crate::map::MapView {
                 centre: p,
                 m_per_px: m,

@@ -25,13 +25,14 @@ members = [
     "crates/ocw-ui",
     "crates/ocw-auth",
     "crates/ocw-edit",
+    "crates/ocw-map",
     "crates/ocw-winres",
     "apps/studio",
     "services/accounts",
 ]
 
 [workspace.package]
-version = "0.2.2"
+version = "0.2.3"
 edition = "2024"
 rust-version = "1.99"
 license = "MIT OR Apache-2.0"
@@ -62,6 +63,7 @@ ocw-auth = { path = "crates/ocw-auth" }
 # Build-script helper: the logo icon and version info in the Windows .exe files.
 ocw-winres = { path = "crates/ocw-winres" }
 ocw-edit = { path = "crates/ocw-edit" }
+ocw-map = { path = "crates/ocw-map" }
 ocw-accounts = { path = "services/accounts" }
 
 # Bevy is pinned to an exact version (spec §3.1). Only ocw-render and apps/desktop may use it.

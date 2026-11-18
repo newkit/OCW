@@ -12,8 +12,9 @@
 //! - [`hotkeys`]: M / Shift+M, gamepad Select / R3 → the switches,
 //! - [`join`]: when to join and leave the voice room (shared vs. solo
 //!   rides, retries),
-//! - [`spatial`]: attenuation by distance on the road (to zero at 300 m)
-//!   and the cap with talking riders first,
+//! - [`spatial`]: attenuation by distance on the road (full to 5 m, zero
+//!   at 10 m; selected riders at any distance) and the cap with talking
+//!   riders first,
 //! - [`device`]: microphone / speaker selection with fallback,
 //! - [`mix`]: the voice mixer (per-voice gain and pan), resampling and the
 //!   confirmation sounds,

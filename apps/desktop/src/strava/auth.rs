@@ -408,6 +408,23 @@ mod tests {
         dir
     }
 
+    /// The example installed into the config folder (packaging/strava.example.toml)
+    /// parses and, with its values commented out, leaves Strava off; with the
+    /// two lines uncommented it gives the credentials.
+    #[test]
+    fn the_example_config_parses_and_keeps_strava_off_until_filled_in() {
+        let text = include_str!("../../../../packaging/strava.example.toml");
+        let cfg: StravaConfig = toml::from_str(text).unwrap();
+        assert_eq!(cfg, StravaConfig::default());
+        assert!(cfg.credentials(|_| None).is_none());
+        let filled = text
+            .replace("# client_id = ", "client_id = ")
+            .replace("# client_secret = ", "client_secret = ");
+        let cfg: StravaConfig = toml::from_str(&filled).unwrap();
+        let c = cfg.credentials(|_| None).unwrap();
+        assert_eq!(c.client_id, "12345");
+    }
+
     fn creds() -> Credentials {
         Credentials {
             client_id: "123".into(),

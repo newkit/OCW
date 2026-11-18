@@ -67,10 +67,10 @@ impl HeardBy {
 /// *Voice room*: whom the rider listens to (spec §7.1.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Listen {
-    /// Everybody within hearing range (the default).
+    /// Everybody within hearing range (10 m, the default).
     #[default]
     Everybody,
-    /// Only the selected riders (within hearing range).
+    /// Only the selected riders, at any distance (spec §7.1.7 Q20).
     Selected,
 }
 

@@ -43,10 +43,11 @@ DevTools protocol (scripts/test-web.py's Cdp).
   plays the other's track (Bea's own request for Ada's is refused by the
   voice server), Cleo plays both; unblocked, all as before. Every page
   joins muted and heard by no one (§7.1.7 Q7, Q8), then lets all nearby
-  hear it. Range and audience (§7.1.7 Q6, Q8, Q10; the server with
-  --dev-commands, the pages teleport): a rider 1.5 km away is not played
-  and plays nobody, the game server sends her no voice and hers to nobody,
-  her own request for Ada's track is refused; back near, all play again;
+  hear it. Range and audience (§7.1.7 Q6, Q8, Q10, Q20; the server with
+  --dev-commands, the pages stop and teleport): a rider 20 m away is not
+  played and plays nobody, the game server sends her no voice and hers to
+  nobody, her own request for Ada's track is refused; 1.1 km away with
+  Voice room = Selected riders (Ada) she plays Ada; back near, all play again;
   Ada's *Who hears me: Selected riders* (Bea) and Cleo's *Voice room:
   Selected riders* hold.
 
@@ -574,6 +575,13 @@ def part_livekit(r, port, a, procs):
         r.use(name)
         r.console("set voice.heard_by nearby")
         r.console("voice.mute-mic off")
+    # Voices are heard only within 10 m (spec §7.1.7 Q20): the pages stop
+    # pedalling and stand together at 2.0 km (8 % up: at 0 W nobody rolls).
+    for name in names:
+        r.use(name)
+        r.console("sim.power 0")
+        r.console("teleport 2.0")
+    r.pump(2.0)
     seen = {}
     for name in names:
         others = [o for o in names if o != name]
@@ -678,9 +686,11 @@ def livekit_range(r, names, joined):
         r.use(name)
         return (r.voice() or {}).get("hearing") or {}
 
-    # All three together at 2 km, then Cleo 1.5 km further on.
+    # All three together at 2 km, then Cleo 20 m further on (out of the
+    # 10 m range, spec §7.1.7 Q20).
     for name in names:
         r.use(name)
+        r.console("sim.power 0")
         r.console("teleport 2.0")
     r.pump(2.0)
     together = {}
@@ -689,10 +699,10 @@ def livekit_range(r, names, joined):
         together[name] = bool(r.wait(f"{name} plays both others", lambda: want <= tracks(name), 30))
     r.check("livekit range: together every page plays both others", all(together.values()), together)
     r.use("Cleo")
-    r.console("teleport 3.5")
+    r.console("teleport 2.02")
     gone = r.wait("Ada stops playing the far Cleo", lambda: ident["Cleo"] not in tracks("Ada"), 20)
     alone = r.wait("Cleo plays nobody", lambda: not tracks("Cleo"), 20)
-    r.check("livekit range: a rider 1.5 km away is not played, and plays nobody", gone and alone,
+    r.check("livekit range: a rider 20 m away is not played, and plays nobody", gone and alone,
             {n: sorted(tracks(n)) for n in names})
     h = hearing("Cleo")
     r.check("livekit range: the game server sends the far rider nobody's voice and hers to nobody",
@@ -709,6 +719,23 @@ def livekit_range(r, names, joined):
     r.check("livekit range: the far rider asking for Ada's track herself is refused by the voice server",
             ident["Ada"] not in tracks("Cleo"), sorted(tracks("Cleo")))
     r.shot("livekit-range-far")
+    # Selected riders are always audible (Q20): Cleo 1.1 km away listens
+    # to Voice room = Selected riders with Ada.
+    r.use("Cleo")
+    r.console("teleport 0.9")
+    r.console("set voice.room selected")
+    r.console("voice.select Ada on")
+    far_ada = r.wait("Cleo plays the selected Ada 1.1 km away", lambda: tracks("Cleo") == {ident["Ada"]}, 30)
+    h = hearing("Cleo")
+    r.check("livekit range: a selected rider 1.1 km away is sent and played (Voice room = Selected riders)",
+            far_ada and h.get("may_hear") == [joined["Ada"]], {"tracks": sorted(tracks("Cleo")), "hearing": h})
+    r.check("livekit range: the others do not play Cleo 1.1 km away",
+            ident["Cleo"] not in tracks("Ada") and ident["Cleo"] not in tracks("Bea"),
+            {n: sorted(tracks(n)) for n in names})
+    r.use("Cleo")
+    r.shot("livekit-range-selected-far")
+    r.console("voice.select Ada off")
+    r.console("set voice.room everybody")
     # Back together.
     r.use("Cleo")
     r.console("teleport 2.0")

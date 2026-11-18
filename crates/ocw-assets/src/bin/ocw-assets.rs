@@ -4,6 +4,11 @@
 //!
 //! ```text
 //! ocw-assets model export-all [--out artwork/3dmodels] [--check]
+//! ocw-assets model import SRC.glb|SRC.gltf --kind K --id ID [--license L --source S --author A]
+//!                         [--profile P --species S --variant V --anchor A] [--out artwork/3dmodels] [--dry-run]
+//! ocw-assets model export ID|FILE [--gltf] --out DIR [--models artwork/3dmodels]
+//! ocw-assets model diff A B [--json]                       (files or ids of the model folder)
+//! ocw-assets model validate [DIR] [--json]                 (findings with codes and fixes)
 //! ocw-assets generate [--out artwork/3dmodels] [--check]   (the same)
 //! ocw-assets validate [DIR]
 //! ocw-assets info FILE.glb|FILE.gltf
@@ -43,6 +48,9 @@ enum Cmd {
     Validate {
         #[arg(default_value = "artwork/3dmodels")]
         dir: PathBuf,
+        /// Every finding as one JSON object per line.
+        #[arg(long)]
+        json: bool,
     },
     /// Print a model's nodes, materials and triangle counts.
     Info { file: PathBuf },
@@ -67,6 +75,315 @@ enum ModelCmd {
         #[arg(long)]
         check: bool,
     },
+    /// Import a glTF from Blender or any tool: normalise it, check it
+    /// against the contract, write the canonical `.glb` into the model
+    /// folder and add or update its manifest entry (15D).
+    Import {
+        src: PathBuf,
+        #[arg(long)]
+        kind: String,
+        /// `bike-road-test` or `bikes/bike-road-test`.
+        #[arg(long)]
+        id: String,
+        #[arg(long, default_value = ocw_assets::export::LICENSE)]
+        license: String,
+        #[arg(
+            long,
+            default_value = "own work, imported with `ocw-assets model import` (spec §14 Phase 15, 15D)"
+        )]
+        source: String,
+        #[arg(long, default_value = ocw_assets::export::AUTHOR)]
+        author: String,
+        #[arg(long)]
+        profile: Option<String>,
+        #[arg(long)]
+        species: Option<String>,
+        #[arg(long)]
+        variant: Option<String>,
+        #[arg(long)]
+        anchor: Option<String>,
+        #[arg(long, default_value = "artwork/3dmodels")]
+        out: PathBuf,
+        /// Check and report only; write nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Write an editable copy of a model (a `.glb`, or `.gltf` + `.bin`
+    /// with readable JSON) for Blender, extras kept as custom properties.
+    Export {
+        /// A model id of the folder (`bikes/bike-tt`) or a file.
+        model: String,
+        #[arg(long)]
+        gltf: bool,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long, default_value = "artwork/3dmodels")]
+        models: PathBuf,
+    },
+    /// The structural diff of two models (nodes, meshes, materials,
+    /// extras, manifest entries); exit 1 when they differ.
+    Diff {
+        a: String,
+        b: String,
+        #[arg(long, default_value = "artwork/3dmodels")]
+        models: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// The extended validator (the same as `validate`).
+    Validate {
+        #[arg(default_value = "artwork/3dmodels")]
+        dir: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+/// A model argument: a file, or an id of the model folder `models`; with
+/// its manifest entry when there is one.
+fn resolve_model(
+    arg: &str,
+    models: &std::path::Path,
+) -> Result<(PathBuf, Option<ocw_assets::manifest::Entry>), String> {
+    let as_file = PathBuf::from(arg);
+    let path = if as_file.is_file() {
+        as_file
+    } else {
+        let id = ocw_assets::kinds::id_of(arg);
+        let p = models.join(format!("{id}.glb"));
+        if !p.is_file() {
+            return Err(format!(
+                "{arg}: no such file, and no model `{id}` in {}",
+                models.display()
+            ));
+        }
+        p
+    };
+    // The manifest of the folder the file is in (walking up).
+    let abs = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+    let mut dir = abs.parent();
+    while let Some(d) = dir {
+        let man = d.join(ocw_assets::manifest::MANIFEST);
+        if man.is_file() {
+            let rel = abs
+                .strip_prefix(d)
+                .map(|r| {
+                    r.components()
+                        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                        .collect::<Vec<_>>()
+                        .join("/")
+                })
+                .unwrap_or_default();
+            let entry = std::fs::read_to_string(&man)
+                .ok()
+                .and_then(|t| ocw_assets::manifest::Manifest::parse(&t).ok())
+                .and_then(|m| m.assets.into_iter().find(|e| e.file == rel));
+            return Ok((path, entry));
+        }
+        dir = d.parent();
+    }
+    Ok((path, None))
+}
+
+fn print_report(dir: &std::path::Path, json: bool) -> ExitCode {
+    let report = match ocw_assets::manifest::report_dir(dir) {
+        Ok(r) => r,
+        Err(errors) => return report(&errors),
+    };
+    if json {
+        for f in &report.findings {
+            println!("{}", f.json());
+        }
+    } else {
+        for c in &report.checked {
+            let mark = if c.findings.iter().any(|f| f.is_error()) {
+                "ERR"
+            } else {
+                "ok "
+            };
+            println!(
+                "{mark} {:44} {:9} {:6} triangles {:7} B, {} ({})",
+                c.entry.file,
+                c.entry.kind.name(),
+                c.triangles,
+                c.bytes,
+                c.entry.license,
+                c.entry.author
+            );
+        }
+        for f in &report.findings {
+            eprintln!("{f}");
+        }
+        let (e, w) = (report.errors().count(), report.warnings().count());
+        println!("{} models, {e} errors, {w} warnings", report.checked.len());
+    }
+    if report.errors().next().is_some() {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+fn import(
+    src: &std::path::Path,
+    opts: ocw_assets::import::ImportOptions,
+    out: &std::path::Path,
+    dry_run: bool,
+) -> ExitCode {
+    let (model, notes) = match ocw_assets::glb::read_file_lenient(src) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("{}: {e}", src.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    let imported = match ocw_assets::import::import(model, notes, &opts) {
+        Ok(i) => i,
+        Err(errors) => return report(&errors),
+    };
+    for n in &imported.notes {
+        println!("normalised: {n}");
+    }
+    for w in &imported.warnings {
+        eprintln!("{w}");
+    }
+    let path = out.join(&imported.entry.file);
+    let manifest = out.join(ocw_assets::manifest::MANIFEST);
+    let old = std::fs::read_to_string(&manifest).unwrap_or_default();
+    let text = match ocw_assets::import::upsert_manifest(&old, &imported.entry) {
+        Ok(t) => t,
+        Err(errors) => return report(&errors),
+    };
+    if let Ok(before) = std::fs::read(&path)
+        && let Ok(a) = ocw_assets::glb::read(&before)
+    {
+        let d = ocw_assets::diff::diff(&a, &imported.model);
+        for l in d.lines() {
+            println!("diff: {l}");
+        }
+    }
+    if dry_run {
+        println!(
+            "would write {} ({} KiB) and its manifest entry",
+            path.display(),
+            imported.bytes.len() / 1024
+        );
+        return ExitCode::SUCCESS;
+    }
+    if let Some(dir) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(dir)
+    {
+        eprintln!("{}: {e}", dir.display());
+        return ExitCode::FAILURE;
+    }
+    if let Err(e) = std::fs::write(&path, &imported.bytes) {
+        eprintln!("{}: {e}", path.display());
+        return ExitCode::FAILURE;
+    }
+    if let Err(e) = std::fs::write(&manifest, text) {
+        eprintln!("{}: {e}", manifest.display());
+        return ExitCode::FAILURE;
+    }
+    println!(
+        "{} ({} KiB), manifest entry in {}",
+        path.display(),
+        imported.bytes.len() / 1024,
+        manifest.display()
+    );
+    ExitCode::SUCCESS
+}
+
+fn model_export(
+    model: &str,
+    gltf: bool,
+    out: &std::path::Path,
+    models: &std::path::Path,
+) -> ExitCode {
+    let (path, entry) = match resolve_model(model, models) {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let m = match ocw_assets::glb::read_file(&path) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("{}: {e}", path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    let id = entry
+        .as_ref()
+        .map(|e| e.id().to_owned())
+        .unwrap_or_else(|| {
+            path.file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned()
+        });
+    if let Err(e) = std::fs::create_dir_all(out) {
+        eprintln!("{}: {e}", out.display());
+        return ExitCode::FAILURE;
+    }
+    for (name, bytes) in ocw_assets::import::export_files(&id, &m, gltf) {
+        let p = out.join(&name);
+        if let Err(e) = std::fs::write(&p, &bytes) {
+            eprintln!("{}: {e}", p.display());
+            return ExitCode::FAILURE;
+        }
+        println!("{} ({} KiB)", p.display(), bytes.len() / 1024);
+    }
+    ExitCode::SUCCESS
+}
+
+fn model_diff(a: &str, b: &str, models: &std::path::Path, json: bool) -> ExitCode {
+    let mut read = Vec::new();
+    for arg in [a, b] {
+        let (path, entry) = match resolve_model(arg, models) {
+            Ok(x) => x,
+            Err(e) => {
+                eprintln!("{e}");
+                return ExitCode::from(2);
+            }
+        };
+        match ocw_assets::glb::read_file(&path) {
+            Ok(m) => read.push((m, entry)),
+            Err(e) => {
+                eprintln!("{}: {e}", path.display());
+                return ExitCode::from(2);
+            }
+        }
+    }
+    let (mb, eb) = read.pop().expect("b");
+    let (ma, ea) = read.pop().expect("a");
+    let mut d = ocw_assets::diff::diff(&ma, &mb);
+    // The manifest entries, without the file name (the point of a diff).
+    let strip = |e: Option<ocw_assets::manifest::Entry>| {
+        e.map(|mut e| {
+            e.file.clear();
+            e
+        })
+    };
+    d.changes.extend(ocw_assets::diff::diff_entries(
+        strip(ea).as_ref(),
+        strip(eb).as_ref(),
+    ));
+    if json {
+        println!("{}", serde_json::to_string(&d).expect("JSON"));
+    } else {
+        for l in d.lines() {
+            println!("{l}");
+        }
+        if d.is_empty() {
+            println!("no structural change");
+        }
+    }
+    if d.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 /// Writes (or with `check` compares) the exported files and the manifest.
@@ -341,31 +658,51 @@ fn main() -> ExitCode {
         Cmd::Generate { out, check } | Cmd::Model(ModelCmd::ExportAll { out, check }) => {
             export_all(&out, check)
         }
-        Cmd::Validate { dir } => match ocw_assets::manifest::validate_dir(&dir) {
-            Ok(checked) => {
-                for c in &checked {
-                    println!(
-                        "ok  {:44} {:9} {:6} triangles {:7} B, {} ({})",
-                        c.entry.file,
-                        c.entry.kind.name(),
-                        c.triangles,
-                        c.bytes,
-                        c.entry.license,
-                        c.entry.author
-                    );
-                    for w in c.warnings() {
-                        eprintln!("warning: {w}");
-                    }
-                }
-                ExitCode::SUCCESS
-            }
-            Err(errors) => {
-                for e in &errors {
-                    eprintln!("error: {e}");
-                }
-                ExitCode::FAILURE
-            }
-        },
+        Cmd::Validate { dir, json } | Cmd::Model(ModelCmd::Validate { dir, json }) => {
+            print_report(&dir, json)
+        }
+        Cmd::Model(ModelCmd::Import {
+            src,
+            kind,
+            id,
+            license,
+            source,
+            author,
+            profile,
+            species,
+            variant,
+            anchor,
+            out,
+            dry_run,
+        }) => {
+            let Some(kind) = ocw_assets::kinds::Kind::parse(&kind) else {
+                let all: Vec<&str> = ocw_assets::kinds::Kind::ALL
+                    .iter()
+                    .map(|k| k.name())
+                    .collect();
+                eprintln!("unknown kind `{kind}` (one of {})", all.join(", "));
+                return ExitCode::FAILURE;
+            };
+            let opts = ocw_assets::import::ImportOptions {
+                kind,
+                id,
+                license,
+                source,
+                author,
+                profile,
+                species,
+                variant,
+                anchor,
+            };
+            import(&src, opts, &out, dry_run)
+        }
+        Cmd::Model(ModelCmd::Export {
+            model,
+            gltf,
+            out,
+            models,
+        }) => model_export(&model, gltf, &out, &models),
+        Cmd::Model(ModelCmd::Diff { a, b, models, json }) => model_diff(&a, &b, &models, json),
         Cmd::Info { file } => match ocw_assets::glb::read_file(&file) {
             Ok(m) => {
                 println!("copyright: {}", m.copyright);

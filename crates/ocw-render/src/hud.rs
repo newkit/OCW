@@ -346,7 +346,7 @@ struct HudGps;
 
 /// The elevation profile box (bottom left, above the GPS line).
 #[derive(Component)]
-struct ProfilePanel;
+pub(crate) struct ProfilePanel;
 
 #[derive(Component)]
 struct ProfileCaption;
@@ -425,6 +425,7 @@ fn spawn_hud(mut commands: Commands) {
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
             HudPanel,
             HudTopPanel,
+            crate::navi_map::MapAvoid,
         ))
         .with_children(|hud| {
             hud.spawn((
@@ -694,6 +695,7 @@ fn spawn_recording(mut commands: Commands) {
                 ..default()
             },
             HudTopRight,
+            crate::navi_map::MapAvoid,
         ))
         .with_children(|top| {
             top.spawn(crate::stamp::stamp_bundle());
@@ -1250,6 +1252,37 @@ fn panel_text(width: Result<f32, f32>, big: &str, small: &str) -> (String, Strin
             big.to_string(),
             wrap_hud_lines(small, small_chars_for(window)),
         ),
+    }
+}
+
+/// Test helpers for the other HUD modules (the navigation map's fit).
+#[cfg(test)]
+pub(crate) mod tests_support {
+    use super::*;
+
+    /// The top panel's width and its bottom edge (UI px) in a window `w`
+    /// UI px wide, with the longest lines of the top panel's fit test
+    /// (the long weather line, the route ride's keys, a long status).
+    pub(crate) fn tall_top_panel(w: f32) -> (f32, f32) {
+        let stamp = 25.0 * 14.0 * 0.6 + 16.0;
+        let panel = top_panel_max_px(w, stamp, 1.0).min(w * 0.94);
+        let big = format!(
+            "{}   clear 18 °C   ↗ crosswind from the left 7 km/h   ☼ 09:44",
+            main_line(
+                200.0,
+                20.8,
+                Some(80.0),
+                7.7,
+                Some(8.3),
+                Some(142.0),
+                Units::Metric
+            )
+        );
+        let small = format!(
+            "Test Hills | 2.01 km | 0:00:24 | riders: 3\nup: faster, down: stop, left/right: steer or choose the exit (another than the route's leaves it), Q/E: exit, J: rejoin the route, U: U-turn, A: autodrive | {DESKTOP_KEYS}\nVirtual trainer 200 W (no Web Bluetooth here) | trainer SIM +1.9 % (difficulty 50 %) | autodrive | gravel"
+        );
+        let (b, sm) = top_panel_text(panel, &big, &small);
+        (panel, TOP_MARGIN_PX + top_panel_height(&b, &sm))
     }
 }
 

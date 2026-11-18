@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- OCW Studio logo, simplified for small icons (16 and 32 px): the pencil
+     drawing the rainbow of ocw-studio.svg with fewer, wider bands, a thicker
+     pencil and no grid.
+     Original artwork for this project, licensed like the code (MIT OR Apache-2.0). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7fc8ff"/>
+      <stop offset="1" stop-color="#d9c8ff"/>
+    </linearGradient>
+    <linearGradient id="horn" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff1a8"/>
+      <stop offset="1" stop-color="#f7b500"/>
+    </linearGradient>
+    <clipPath id="tile">
+      <rect x="16" y="16" width="480" height="480" rx="96"/>
+    </clipPath>
+  </defs>
+
+  <rect x="16" y="16" width="480" height="480" rx="96" fill="url(#sky)"/>
+
+  <g clip-path="url(#tile)">
+    <!-- Rainbow, drawn up to 66 degrees -->
+    <g fill="none" stroke-width="37">
+      <path d="M 42 500 A 214 214 0 0 1 343.0 304.5" stroke="#ff3b4e"/>
+      <path d="M 78 500 A 178 178 0 0 1 328.4 337.4" stroke="#ffe11f"/>
+      <path d="M 114 500 A 142 142 0 0 1 313.8 370.3" stroke="#3fd16b"/>
+      <path d="M 150 500 A 106 106 0 0 1 299.1 403.2" stroke="#2f8cff"/>
+    </g>
+    <!-- Construction line of the rest -->
+    <path d="M 353.6 280.7 A 240 240 0 0 1 496 500" fill="none" stroke="#3a2f55"
+          stroke-width="14" stroke-dasharray="34 26" opacity="0.75"/>
+    <!-- Clouds -->
+    <g fill="#ffffff">
+      <circle cx="56" cy="500" r="44"/>
+      <circle cx="456" cy="500" r="44"/>
+    </g>
+  </g>
+
+  <!-- Pencil: tip at the rainbow's drawing end, turned up to the top right -->
+  <g transform="translate(318 355) rotate(-57)" stroke="#3a2f55" stroke-width="12"
+     stroke-linejoin="round" stroke-linecap="round">
+    <path d="M 80 -44 L 184 -44 L 184 44 L 80 44 Z" fill="url(#horn)"/>
+    <path d="M 184 -44 L 200 -44 C 224 -44 230 -26 230 0 C 230 26 224 44 200 44 L 184 44 Z"
+          fill="#ff7ab8"/>
+    <path d="M 0 0 L 80 -44 L 80 44 Z" fill="#f6d7a7"/>
+    <path d="M 0 0 L 30 -16 L 30 16 Z" fill="#3a2f55"/>
+  </g>
+</svg>
