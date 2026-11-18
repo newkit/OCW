@@ -310,7 +310,7 @@ fn transverse(u: f32, du: f32, v: f32, dv: f32, half: f32, chance: f32, sealed: 
         return vec2<f32>(0.0, band_cov(v, fp, v0 - 0.022, v0 + 0.022) * across);
     }
     let fade = 1.0 - smoothstep(0.03, 0.12, dv);
-    return vec2<f32>(band_cov(v, fp, v0 - 0.006, v0 + 0.006) * across * fade, 0.0);
+    return vec2<f32>(band_cov(v, fp, v0 - 0.008, v0 + 0.008) * across * fade, 0.0);
 }
 
 // The longitudinal cracks (ocw_world::road_wear::longitudinal_in_cell):
@@ -342,7 +342,7 @@ fn longitudinal(u: f32, du: f32, v: f32, dv: f32, half: f32, chance: f32, sealed
             out.y = max(out.y, band_cov(u, fp, uc - 0.022, uc + 0.022) * along);
         } else {
             let fade = 1.0 - smoothstep(0.03, 0.12, du);
-            out.x = max(out.x, band_cov(u, fp, uc - 0.006, uc + 0.006) * along * fade);
+            out.x = max(out.x, band_cov(u, fp, uc - 0.008, uc + 0.008) * along * fade);
         }
     }
     return out;
@@ -396,7 +396,7 @@ fn alligator(u: f32, du: f32, v: f32, dv: f32, half: f32, chance: f32, track: bo
     let edge = 0.5 * (f2 - f1) * 0.22;
     let fpm = max(max(du, dv), 1e-3);
     let fade = 1.0 - smoothstep(0.04, 0.12, fpm);
-    return vec2<f32>(area, band_cov(edge, fpm, -0.007, 0.007) * fade * area);
+    return vec2<f32>(area, band_cov(edge, fpm, -0.009, 0.009) * fade * area);
 }
 
 // A loose stone (ocw_world::road_wear::stone_in_cell) in its 10 cm cell:
@@ -449,9 +449,9 @@ fn pothole(u: f32, du: f32, v: f32, dv: f32, half: f32, chance: f32, zone: f32, 
             continue;
         }
         let a = unit(hash2(k, 223 + side));
-        var r = 0.12 + 0.33 * a * a;
+        var r = 0.15 + 0.45 * a * sqrt(a);
         let vc = (f32(k) + 0.2 + 0.6 * unit(hash2(k, 227 + side))) * 7.0;
-        if abs(v - vc) > 0.6 {
+        if abs(v - vc) > 1.6 * r {
             continue;
         }
         let sgn = select(-1.0, 1.0, side == 1);
@@ -631,7 +631,7 @@ fn fragment(
             // A patch is newer than the cracks around it.
             crack = max(max(tc.x, lc.x), al.y) * (1.0 - pc);
             seal = max(tc.y, lc.y) * (1.0 - pc);
-            albedo = albedo * (1.0 - 0.12 * al.x * (1.0 - pc));
+            albedo = albedo * (1.0 - 0.22 * al.x * (1.0 - pc));
             rough = rough + 0.05 * al.x;
         }
         albedo = albedo * (0.94 + 0.12 * vnoise(wp.xz / 9.0));
@@ -741,9 +741,9 @@ fn fragment(
             chance = chance * (1.3 - 0.9 * tr) * (0.6 + 0.8 * smoothstep(0.5 * half, half, abs(u)));
             let st = stone(u, v, max(du, dv), chance);
             if st.x > 0.0 {
-                var c = mix(vec3<f32>(0.10, 0.098, 0.095), vec3<f32>(0.42, 0.40, 0.37), st.y);
+                var c = albedo * mix(0.55, 1.25, st.y);
                 if unpaved {
-                    c = albedo * mix(0.6, 1.6, st.y);
+                    c = albedo * mix(0.6, 1.5, st.y);
                 }
                 albedo = mix(albedo, c, st.x);
                 rough = mix(rough, 0.75, st.x);

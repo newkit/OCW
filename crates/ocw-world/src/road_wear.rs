@@ -44,7 +44,7 @@ pub const ALLIGATOR_CELL_M: f32 = 20.0;
 /// Cell length (m) of the potholes (one chance per side).
 pub const POTHOLE_CELL_M: f32 = 7.0;
 /// Largest pothole radius (m).
-pub const MAX_POTHOLE_R: f32 = 0.45;
+pub const MAX_POTHOLE_R: f32 = 0.6;
 /// Half the distance between the wheel ruts of a track (m; the shader's
 /// track look).
 pub const RUT_M: f32 = 0.8;
@@ -170,7 +170,7 @@ pub fn wear_density(grade: u8, share: f32) -> WearDensity {
         transverse: (0.012 + 0.5 * t) * s,
         longitudinal: (0.008 + 0.45 * t) * s,
         alligator: 0.4 * t.powf(1.5) * s,
-        pothole: 0.25 * t * t * s,
+        pothole: 0.5 * t.powf(2.5) * s,
         patch: (0.01 + 0.3 * t) * s,
         sealed: 0.75 - 0.6 * t,
         pothole_zone_m: if t <= 1.0 / 3.0 {
@@ -223,7 +223,7 @@ pub fn pothole_in_cell(
         return None;
     }
     let a = unit(hash2(k, 223 + side));
-    let r = 0.12 + (MAX_POTHOLE_R - 0.12) * a * a;
+    let r = 0.15 + (MAX_POTHOLE_R - 0.15) * a * a.sqrt();
     let v = (k as f32 + 0.2 + 0.6 * unit(hash2(k, 227 + side))) * POTHOLE_CELL_M;
     let sgn = if side == 0 { -1.0 } else { 1.0 };
     let e = unit(hash2(k, 233 + side));
