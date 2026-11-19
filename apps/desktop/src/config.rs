@@ -213,21 +213,6 @@ impl Slot {
     }
 }
 
-/// A [`Slot`] as the settings' text store (`ocw_ui::settings::TextStore`).
-pub struct SlotStore(pub Slot);
-
-impl ocw_ui::settings::TextStore for SlotStore {
-    fn load(&self) -> Result<Option<String>, String> {
-        self.0.read()
-    }
-    fn save(&mut self, text: &str) -> Result<(), String> {
-        self.0.write(text)
-    }
-    fn describe(&self) -> String {
-        format!("file: {}", self.0.describe())
-    }
-}
-
 /// Settings registry keys kept in another section of `ocw.toml` than
 /// `[settings]`: (registry group, key, section). `strava.auto_upload` is
 /// the one `[strava] auto_upload` (spec 2.8.1 Q6, 3.2.4).
