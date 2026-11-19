@@ -332,6 +332,44 @@ pub fn pothole_zone(zone_m: f32, main: bool) -> f32 {
     }
 }
 
+/// Lanes drawn across a carriageway of half width `half` with `lanes`
+/// [forward, backward] (each at most 7; none tagged: one lane, two from
+/// 5 m width) – the shader's `tracks`.
+pub fn lane_count(half: f32, lanes: [u8; 2]) -> u32 {
+    let n = u32::from(lanes[0].min(7)) + u32::from(lanes[1].min(7));
+    if n == 0 {
+        if half >= 2.5 { 2 } else { 1 }
+    } else {
+        n
+    }
+}
+
+/// The middles of the lanes, across (m from the centre line, -half …
+/// half).
+pub fn lane_middles(half: f32, lanes: [u8; 2]) -> Vec<f32> {
+    let n = lane_count(half, lanes);
+    let lane = 2.0 * half / n as f32;
+    (0..n).map(|i| -half + (i as f32 + 0.5) * lane).collect()
+}
+
+/// The tyre tracks either side of a lane's middle (m).
+pub const TRACK_OFFSET_M: f32 = 0.8;
+
+/// How much a point `u` m across lies in a wheel track (0 … 1; two per
+/// lane, [`TRACK_OFFSET_M`] either side of its middle, 0.3 m wide): the
+/// shader's `tracks`, where the worn tracks darken and the loose stones
+/// are swept out.
+pub fn wheel_tracks(u: f32, half: f32, lanes: [u8; 2]) -> f32 {
+    lane_middles(half, lanes)
+        .into_iter()
+        .map(|c| {
+            let d1 = (u - (c - TRACK_OFFSET_M)) / 0.3;
+            let d2 = (u - (c + TRACK_OFFSET_M)) / 0.3;
+            (-d1 * d1).exp().max((-d2 * d2).exp())
+        })
+        .fold(0.0, f32::max)
+}
+
 /// A loose stone (grit, a broken-off piece of the surface) in the strip
 /// frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -626,5 +664,21 @@ mod tests {
         assert!(!cracks && holes < 1.0);
         assert!(surface_factors(RoadSurface::Gravel).1 > 1.0);
         assert!(!surface_factors(RoadSurface::Dirt).0);
+    }
+
+    #[test]
+    fn the_wheel_tracks_lie_either_side_of_each_lane_middle() {
+        // A 6 m road without lane tags: two lanes, middles at ±1.5 m.
+        assert_eq!(lane_count(3.0, [0, 0]), 2);
+        assert_eq!(lane_middles(3.0, [0, 0]), [-1.5, 1.5]);
+        assert!(wheel_tracks(-2.3, 3.0, [0, 0]) > 0.99);
+        assert!(wheel_tracks(0.7, 3.0, [0, 0]) > 0.99);
+        assert!(wheel_tracks(-1.5, 3.0, [0, 0]) < 0.01);
+        assert!(wheel_tracks(-2.95, 3.0, [0, 0]) < 0.05);
+        // A narrow lane: one, its tracks either side of the centre line.
+        assert_eq!(lane_middles(2.0, [0, 0]), [0.0]);
+        assert!(wheel_tracks(0.8, 2.0, [0, 0]) > 0.99);
+        // Tagged lanes win.
+        assert_eq!(lane_count(5.0, [2, 2]), 4);
     }
 }

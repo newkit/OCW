@@ -371,6 +371,15 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::Command("ortho {}"),
     },
+    // Spec 4.6.2 Q1: the ground detail beside and on the roads.
+    SettingDef {
+        key: "display.ground_detail",
+        kind: Kind::Choice(&["auto", "off", "low", "full"]),
+        default: "auto",
+        description: "World: stones, dirt, tufts, leaves and plant bits beside and on the roads; auto = by the quality preset (High all to 80 m, Medium 60 % to 55 m, Low 25 % to 35 m), low = 25 % to 35 m, full = all to 80 m (spec 4.6.2)",
+        scope: Scope::Live,
+        apply: Apply::Command("ground_detail {}"),
+    },
     SettingDef {
         key: "display.road_barriers",
         kind: Kind::Bool,
@@ -1458,6 +1467,27 @@ fn unknown(key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_ground_detail_setting_defaults_to_the_preset() {
+        // Spec 4.6.2 Q1: off / low / full override the quality preset,
+        // auto (the default) follows it.
+        let d = def("display.ground_detail").unwrap();
+        assert_eq!(d.default, "auto");
+        assert_eq!(d.kind, Kind::Choice(&["auto", "off", "low", "full"]));
+        assert!(matches!(d.apply, Apply::Command("ground_detail {}")));
+        let mut s = Settings::default();
+        assert_eq!(
+            s.get("display.ground_detail"),
+            Ok(Value::Text("auto".into()))
+        );
+        s.set("display.ground_detail", "full").unwrap();
+        assert_eq!(
+            s.get("display.ground_detail"),
+            Ok(Value::Text("full".into()))
+        );
+        assert!(s.set("display.ground_detail", "lots").is_err());
+    }
 
     /// The per-rider voice choices (spec §7.1.7 Q9) survive a save and a
     /// load, are no unknown keys, and broken entries do no harm.

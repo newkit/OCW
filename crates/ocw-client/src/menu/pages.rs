@@ -139,6 +139,9 @@ pub enum Page {
     /// Graphics → Render distance (spec §14 Phase 10, 10G; rows from
     /// `view_distance::rows`): the slider, the dynamic mode, the target.
     ViewDistance,
+    /// Graphics → World detail (spec 4.6.2 Q1; the Graphics page is full):
+    /// the sky and the ground detail beside and on the roads.
+    WorldDetail,
     /// Graphics → Ride photographer (spec 2.11 Q5): the own photographer
     /// and whether the other riders' photographers are shown.
     Photographer,
@@ -287,6 +290,7 @@ impl Page {
             Self::Folders => "Folders",
             Self::Graphics => "Graphics",
             Self::ViewDistance => "Render distance",
+            Self::WorldDetail => "World detail",
             Self::Photographer => "Ride photographer",
             Self::RiderList => "Riders in this ride",
             Self::Account => "Account",
@@ -443,7 +447,7 @@ impl Page {
             Self::RidingAids | Self::UnicornControls | Self::Bindings => Some(Self::Controls),
             Self::BindGroup(_) | Self::BindReset => Some(Self::Bindings),
             Self::Graphics | Self::Accessibility | Self::Hud => Some(Self::Display),
-            Self::ViewDistance | Self::Photographer => Some(Self::Graphics),
+            Self::ViewDistance | Self::WorldDetail | Self::Photographer => Some(Self::Graphics),
             Self::TrustedKey(_) => Some(Self::TrustedKeys),
             Self::Devices => Some(Self::Trainer),
             Self::Device(_) => Some(Self::Devices),
@@ -565,6 +569,9 @@ impl Page {
             Self::Graphics => &[
                 "Quality: Low and Medium draw fewer shadows, trees and houses for weaker GPUs, WebGL 2 and phones; auto chooses by GPU and device.",
             ],
+            Self::WorldDetail => &[
+                "Ground detail: stones, dirt, tufts and leaves beside and on the roads. Auto follows the quality; low and full override it.",
+            ],
             Self::Folders => &[
                 "Everything OCW saves: Strava recordings (S) in their own folders, photos by day.",
             ],
@@ -663,6 +670,16 @@ pub fn info_row(label: &str, value: Option<String>) -> Row {
 }
 
 /// A row that opens `page`.
+/// Graphics → World detail's value: the sky and the ground detail.
+pub fn world_detail_summary(settings: &Settings) -> String {
+    let v = |k| settings.get(k).map(|v| v.to_string()).unwrap_or_default();
+    format!(
+        "sky {}, ground {}",
+        v("display.sky"),
+        v("display.ground_detail")
+    )
+}
+
 pub fn open_row(label: &str, value: Option<String>, page: Page) -> Row {
     Row {
         label: label.into(),
@@ -1472,7 +1489,13 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
                 Some(crate::view_distance::summary(settings)),
                 Page::ViewDistance,
             ),
-            setting_row(settings, "display.sky", "Sky"),
+            // The sky and the ground detail (spec 4.6.2 Q1): their own
+            // page, the ten-foot rule: six rows.
+            open_row(
+                "World detail",
+                Some(world_detail_summary(settings)),
+                Page::WorldDetail,
+            ),
             setting_row(settings, "display.fps", "FPS counter"),
             setting_row(settings, "display.fullscreen", "Fullscreen (next start)"),
             // The ride photographer (spec 2.11): its own page with the
@@ -1496,6 +1519,10 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         Page::ViewDistance => {
             crate::view_distance::rows(settings, &crate::view_distance::ViewInfo::default())
         }
+        Page::WorldDetail => vec![
+            setting_row(settings, "display.sky", "Sky"),
+            setting_row(settings, "display.ground_detail", "Ground detail"),
+        ],
         Page::Riders => {
             let mut out: Vec<Row> = riders
                 .riders
@@ -1747,6 +1774,28 @@ mod tests {
                 .as_deref(),
             Some("off, others hidden")
         );
+    }
+
+    #[test]
+    fn graphics_opens_the_world_detail_with_the_ground_detail() {
+        // Spec 4.6.2 Q1: Display → Graphics → World detail (Graphics is
+        // full: six rows) holds the sky and `display.ground_detail`.
+        let s = Settings::default();
+        let graphics = rows(Page::Graphics, &s, &Riders::default());
+        assert!(graphics.len() <= 6);
+        let wd = row(&graphics, "World detail");
+        assert_eq!(wd.confirm, Some(Activate::Open(Page::WorldDetail)));
+        assert_eq!(wd.value.as_deref(), Some("sky atmosphere, ground auto"));
+        let page = rows(Page::WorldDetail, &s, &Riders::default());
+        assert!(page.len() <= 6);
+        let gd = row(&page, "Ground detail");
+        assert_eq!(gd.value.as_deref(), Some("auto"));
+        assert_eq!(gd.right, Some("set display.ground_detail off".into()));
+        assert_eq!(gd.left, Some("set display.ground_detail full".into()));
+        assert!(page.iter().any(|r| r.label == "Sky"));
+        assert_eq!(Page::WorldDetail.parent(), Some(Page::Graphics));
+        assert!(Page::WorldDetail.title().is_ascii());
+        assert!(Page::WorldDetail.notes().iter().all(|t| t.is_ascii()));
     }
 
     #[test]

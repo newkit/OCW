@@ -1998,6 +1998,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `display.quality` | auto / low / medium / high (auto): the graphics preset – shadows, MSAA, view distance, tree draw distance, house detail, weather particles (and the browser's pixel ratio); auto = High on the desktop and WebGPU, Medium on small devices, Low on WebGL 2 and phones; Settings → Display → Graphics (console `quality`) | at once |
 | `display.bike_lights` | auto / on / off (auto): the front and rear lights of bikes with lights fitted (Workshop, slot lights) from dusk to dawn and in tunnels | at once |
 | `display.orthophoto` | on / off (on): the real place's orthophoto on the ground near the roads, where the package has it (spec §14 Phase 8 T7) | at once |
+| `display.ground_detail` | auto / off / low / full (auto): stones, dirt, tufts, leaves and plant bits beside the roads (to 14 m from the edge) and a very few on them; auto follows the quality preset (High all to 80 m, Medium 60 % to 55 m, Low 25 % to 35 m), low = 25 % to 35 m, full = all to 80 m (spec 4.6.2); Settings → Display → Graphics → World detail (console `ground_detail`) | at once |
 | `display.road_barriers` | on / off (off): gates, bollards and barriers on the roads (section `OBST`; never solid on the road, spec §14 Phase 12 Q7) | at once |
 | `display.unicorn_trail` | on / off (on): the rainbow trail behind the unicorns of god mode (console `god.trail`; not on the full Display page) | at once |
 | `display.fullscreen` | on / off (off): borderless fullscreen (`--fullscreen`) | next start |
@@ -2392,6 +2393,7 @@ you can run are offered (no *Dev* commands on a remote server).
 | **Rider** | |
 | `rider.autodrive on\|off` | Autodrive (key A) |
 | `rider.wild on\|off` | Wild mode (key W; on also switches autodrive off) |
+| `ground_detail [auto\|off\|low\|full]` | The ground detail beside and on the roads (`display.ground_detail`; `on` = auto); without an argument: share, distance, chunks and bits drawn |
 | `road_barriers on\|off` | Draw the gates, bollards and barriers on the roads (`display.road_barriers`; they are never solid there) |
 | `rider.lean DEGREES` | Lean into a curve (positive = right, 0 = upright; manual steering) |
 | `rider.steer METRES` | Autodrive line: lateral position on the road (positive = right) |

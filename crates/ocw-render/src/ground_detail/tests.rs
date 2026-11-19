@@ -199,8 +199,9 @@ fn check_on_ground(pkg: &WorldPackage, mesh: &MeshArrays, all: &[Bit]) {
         } else {
             ((z - 500.0).abs(), pkg.road_heights(x.min(999.0), 500.0))
         };
-        // Edge gravel on the road surface lies on the road.
-        if b.kind == Kind::Gravel && centre < 3.0 + 1e-3 {
+        // Edge gravel on the road surface lies on the road, and so do the
+        // road's own bits.
+        if b.road || (b.kind == Kind::Gravel && centre < 3.0 + 1e-3) {
             continue;
         }
         let top = road.iter().copied().fold(f64::MIN, f64::max) as f32 + crate::ROAD_SURFACE_LIFT_M;
@@ -311,7 +312,7 @@ fn bits_follow_the_ground_lowered_at_junctions() {
 }
 
 #[test]
-fn nothing_on_the_road_but_edge_gravel_and_nothing_in_buildings() {
+fn nothing_on_the_road_but_edge_gravel_and_its_own_bits_and_nothing_in_buildings() {
     let pkg = package(BLACK_FOREST, LandClass::Meadow, flat);
     // A house 2 m beside the road.
     let house = vec![
@@ -326,6 +327,11 @@ fn nothing_on_the_road_but_edge_gravel_and_nothing_in_buildings() {
     for b in &all {
         let (x, z) = (f64::from(b.pos.x), f64::from(b.pos.z));
         let on = !pkg.road_heights(x, z).is_empty();
+        if on && b.road {
+            assert!(Kind::ON_ROAD.contains(&b.kind), "{b:?} on the road");
+            continue;
+        }
+        assert!(!b.road || on, "{b:?}: a road bit off the road");
         if on {
             assert_eq!(b.kind, Kind::Gravel, "{b:?} on the road");
             // Within the edge band: 3 m from a centre line.
@@ -550,12 +556,236 @@ fn the_presets_draw_a_share_up_to_their_distance() {
         )
         .is_empty()
     );
-    let off = GroundDetailSettings { on: false };
+    let off = GroundDetailSettings {
+        mode: GroundDetailMode::Off,
+    };
     assert_eq!(level(&QualityPreset::default(), &off), (0.0, 0.0));
     assert_eq!(
         level(&QualityPreset::default(), &GroundDetailSettings::default()),
         (1.0, 80.0)
     );
+}
+
+#[test]
+fn the_setting_follows_the_preset_or_overrides_it() {
+    // Spec 4.6.2 Q1: `display.ground_detail` auto (the default) follows
+    // the preset, low ≈ the Low preset's, full ≈ the High preset's
+    // whatever the preset, off draws nothing.
+    assert_eq!(GroundDetailSettings::default().mode, GroundDetailMode::Auto);
+    assert_eq!(GroundDetailSettings::default().mode.name(), "auto");
+    let s = |mode| GroundDetailSettings { mode };
+    for l in [QualityLevel::Low, QualityLevel::Medium, QualityLevel::High] {
+        let q = QualityPreset::of(l);
+        assert_eq!(
+            level(&q, &s(GroundDetailMode::Auto)),
+            (q.ground_detail, q.ground_detail_m),
+            "{l:?}"
+        );
+        assert_eq!(level(&q, &s(GroundDetailMode::Off)), (0.0, 0.0));
+        assert_eq!(level(&q, &s(GroundDetailMode::Low)), LOW_LEVEL);
+        assert_eq!(level(&q, &s(GroundDetailMode::Full)), FULL_LEVEL);
+    }
+    let (low, high) = (
+        QualityPreset::of(QualityLevel::Low),
+        QualityPreset::of(QualityLevel::High),
+    );
+    assert_eq!(LOW_LEVEL, (low.ground_detail, low.ground_detail_m));
+    assert_eq!(FULL_LEVEL, (high.ground_detail, high.ground_detail_m));
+    // The words: the setting's choices, and the console's old `on`.
+    for c in GroundDetailMode::CHOICES {
+        assert_eq!(GroundDetailMode::parse(c).unwrap().name(), c);
+    }
+    assert_eq!(GroundDetailMode::parse("on"), Some(GroundDetailMode::Auto));
+    assert_eq!(GroundDetailMode::parse("lots"), None);
+    // VR (Q2, decided): 50 % up to 50 m, between Medium and Low.
+    assert_eq!(VR_LEVEL, (0.5, 50.0));
+    let medium = QualityPreset::of(QualityLevel::Medium);
+    assert!(VR_LEVEL.0 > low.ground_detail && VR_LEVEL.0 < medium.ground_detail);
+}
+
+#[test]
+fn the_spread_keeps_the_count_and_thins_out_to_the_band_end() {
+    // The trapezoid: even to 7 m, thinning out linearly to 14 m.
+    assert_eq!(spread(1.0, 7.0, 14.0, 0.0), 1.0);
+    assert!((spread(1.0, 7.0, 14.0, 1.0) - 14.0).abs() < 1e-4);
+    let total = 6.0 + 3.5;
+    assert!((spread(1.0, 7.0, 14.0, 6.0 / total) - 7.0).abs() < 1e-4);
+    // Half the tail's bits lie in its first 29 % (1 - 1/√2).
+    let mid = spread(1.0, 7.0, 14.0, (6.0 + 3.5 / 2.0) / total);
+    assert!((mid - (7.0 + 7.0 * (1.0 - std::f32::consts::FRAC_1_SQRT_2))).abs() < 1e-3);
+    // No tail: even.
+    assert_eq!(spread(-0.25, 0.5, 0.5, 0.5), 0.125);
+    // Monotone.
+    let mut last = f32::MIN;
+    for i in 0..=100 {
+        let d = spread(0.3, 7.0, 14.0, i as f32 / 100.0);
+        assert!(d >= last);
+        last = d;
+    }
+    // On a meadow road (x 600 – 900 m, only the road along x): the tufts
+    // are as many as the mix says (the same total as the 7 m band had),
+    // a third of them now beyond 7 m, none beyond 14 m.
+    let pkg = package(LIECHTENSTEIN, LandClass::Meadow, flat);
+    let all = bits(&pkg, None, &Params::FULL);
+    let tufts: Vec<f32> = all
+        .iter()
+        .filter(|b| b.kind == Kind::Tuft && (600.0..900.0).contains(&b.pos.x))
+        .map(|b| (b.pos.z - 500.0).abs() - 3.0)
+        .collect();
+    let place = Place {
+        region: FloraRegion::AlpineRhine,
+        class: LandClass::Meadow,
+        alt_m: 300.0,
+        broadleaf: region_broadleaf(FloraRegion::AlpineRhine, 300.0),
+        surface: RoadSurface::Asphalt,
+        sidewalk: false,
+    };
+    let expected = mix(&place, &SeasonFx::SUMMER).get(Kind::Tuft) * 300.0 * 2.0;
+    let n = tufts.len() as f32;
+    assert!(
+        (n / expected - 1.0).abs() < 0.06,
+        "{n} tufts, {expected} expected"
+    );
+    let far = tufts.iter().filter(|d| **d > NEAR_BAND_M).count() as f32 / n;
+    let (b0, f, b1, _) = Kind::Tuft.band();
+    let tail = (b1 - f) / 2.0 / (f - b0 + (b1 - f) / 2.0);
+    assert!(
+        (far - tail).abs() < 0.06,
+        "{far} beyond 7 m, {tail} expected"
+    );
+    assert!(far > 0.25);
+    assert!(tufts.iter().all(|d| *d <= BAND_M + 0.01));
+    // Wider than the first band, thinner at its end than at its start.
+    let between = |a: f32, b: f32| tufts.iter().filter(|d| (a..b).contains(*d)).count();
+    assert!(between(2.0, 4.0) > between(11.0, 13.0) * 2);
+    assert!(between(11.0, 13.0) > 0);
+}
+
+#[test]
+fn very_few_bits_on_the_road_and_none_where_the_wheels_run() {
+    let pkg = package(BLACK_FOREST, LandClass::Meadow, flat);
+    let all = bits(&pkg, Some(&day(BLACK_FOREST, 300.0)), &Params::FULL);
+    let road: Vec<&Bit> = all
+        .iter()
+        .filter(|b| b.road && (b.pos.z - 500.0).abs() < 3.0 && b.pos.x < 290.0)
+        .collect();
+    // The 6 m road along x (tertiary, two lanes; 290 m of it): a few dozen,
+    // well under one per metre.
+    assert!(road.len() > 8, "{} on the road", road.len());
+    assert!(
+        (road.len() as f32) < 0.25 * 290.0,
+        "{} on the road",
+        road.len()
+    );
+    // Never in a wheel track or a lane's middle (± 1.5 m), on the road's
+    // surface.
+    for b in &road {
+        let u = b.pos.z - 500.0;
+        assert!(
+            ocw_world::road_wear::wheel_tracks(u, 3.0, [0, 0]) < TRACK_CLEAR,
+            "{b:?} in a wheel track"
+        );
+        assert!(
+            (u.abs() - 1.5).abs() > LANE_MIDDLE_CLEAR_M,
+            "{b:?}: lane middle"
+        );
+        assert!(Kind::ON_ROAD.contains(&b.kind));
+        let top = pkg.road_heights(f64::from(b.pos.x), 500.0)[0] as f32;
+        assert!((b.pos.y - top - crate::ROAD_SURFACE_LIFT_M).abs() < 0.01);
+        assert_eq!(b.normal, Vec3::Y);
+    }
+    // Most of them grit and small stones; small ones only.
+    let stones = road
+        .iter()
+        .filter(|b| matches!(b.kind, Kind::Gravel | Kind::Pebble))
+        .count();
+    assert!(stones * 2 > road.len());
+    assert!(
+        road.iter()
+            .filter(|b| b.kind == Kind::Pebble)
+            .all(|b| b.size <= 0.055)
+    );
+    assert!(road_spot_free(-2.9, 3.0, [0, 0]) && !road_spot_free(-1.5, 3.0, [0, 0]));
+    assert!(!road_spot_free(-2.3, 3.0, [0, 0]) && road_spot_free(0.0, 3.0, [0, 0]));
+    // A worn road has more, like the road damage's loose stones.
+    let place = Place {
+        region: FloraRegion::BlackForest,
+        class: LandClass::Meadow,
+        alt_m: 300.0,
+        broadleaf: 0.3,
+        surface: RoadSurface::Asphalt,
+        sidewalk: false,
+    };
+    let g = |grade| road_mix(&place, &SeasonFx::SUMMER, grade).get(Kind::Gravel);
+    assert!(g(7) > g(4) && g(4) > g(1) && g(1) > 0.0);
+    // Snow: nothing small on the road; water: nothing.
+    let mut horrible = pkg.clone();
+    for r in &mut horrible.tiles.get_mut(&KEY).unwrap().roads {
+        r.condition.smoothness = ocw_world::road_condition::Smoothness::Horrible;
+    }
+    let worn = bits(&horrible, Some(&day(BLACK_FOREST, 300.0)), &Params::FULL)
+        .iter()
+        .filter(|b| b.road)
+        .count();
+    let fine = all.iter().filter(|b| b.road).count();
+    assert!(worn > fine, "{worn} on a horrible road, {fine}");
+    let lying = Params {
+        density: 1.0,
+        snow: true,
+    };
+    assert!(!bits(&pkg, None, &lying).iter().any(|b| b.road));
+}
+
+#[test]
+fn wet_ground_detail_darkens_and_shines() {
+    assert_eq!(wet_look(0.0), (1.0, 1.0));
+    let (k, r) = wet_look(1.0);
+    assert!((k - (1.0 - WET_DARKEN)).abs() < 1e-6 && (r - WET_ROUGHNESS).abs() < 1e-6);
+    // Between the wet road's asphalt (0.55) and unpaved (0.72) darkening.
+    assert!((0.55..=0.72).contains(&k), "{k}");
+    // Monotone, and clamped.
+    let (k5, r5) = wet_look(0.5);
+    assert!(k5 < 1.0 && k5 > k && r5 < 1.0 && r5 > r);
+    assert_eq!(wet_look(2.0), wet_look(1.0));
+    assert_eq!(wet_look(-1.0), wet_look(0.0));
+}
+
+#[test]
+fn autumn_lays_leaf_patches_and_leaves_on_the_road() {
+    let at = BLACK_FOREST;
+    let mut pkg = package(at, LandClass::Forest, |_, _| 400.0);
+    pkg.origin = at;
+    let summer = bits(&pkg, Some(&day(at, 200.0)), &Params::FULL);
+    let autumn = bits(&pkg, Some(&day(at, 300.0)), &Params::FULL);
+    let winter = bits(&pkg, Some(&day(at, 15.0)), &Params::FULL);
+    let patches = |v: &[Bit]| count(v, Kind::LeafLitter);
+    let road_leaves = |v: &[Bit]| v.iter().filter(|b| b.road && b.kind == Kind::Leaf).count();
+    // Summer: none of either; autumn: both; winter: still some (brown).
+    assert_eq!(patches(&summer), 0);
+    assert_eq!(road_leaves(&summer), 0);
+    assert!(patches(&autumn) > 50, "{} leaf patches", patches(&autumn));
+    assert!(
+        road_leaves(&autumn) > 30,
+        "{} leaves on the road",
+        road_leaves(&autumn)
+    );
+    assert!(patches(&winter) > 0 && road_leaves(&winter) > 0);
+    // The patches are blended and leaf-coloured (warmer than the soil).
+    let p = autumn.iter().find(|b| b.kind == Kind::LeafLitter).unwrap();
+    assert!(p.kind.patch() && p.colour[0] > p.colour[2] * 2.0, "{p:?}");
+    // A few more single leaves beside the road than before (6 → 7.5).
+    let place = Place {
+        region: FloraRegion::BlackForest,
+        class: LandClass::Forest,
+        alt_m: 400.0,
+        broadleaf: 0.3,
+        surface: RoadSurface::Asphalt,
+        sidewalk: false,
+    };
+    let fx = SeasonFx::of(Some(&day(at, 300.0)), 400.0);
+    assert!((mix(&place, &fx).get(Kind::Leaf) - 7.5 * 0.3 * fx.litter).abs() < 1e-5);
+    // Determinism: the same again.
+    assert_eq!(autumn, bits(&pkg, Some(&day(at, 300.0)), &Params::FULL));
 }
 
 #[test]
@@ -626,7 +856,7 @@ fn the_tile_build_keeps_the_chunks_near_the_roads() {
     // Only chunks near the two roads (z = 500, x = 300).
     for c in &d.chunks {
         let [x, _, z] = c.centre;
-        let near = (z - 500.0).abs() < 30.0 || ((x - 300.0).abs() < 30.0 && z > 570.0);
+        let near = (z - 500.0).abs() < 40.0 || ((x - 300.0).abs() < 40.0 && z > 560.0);
         assert!(near, "{c:?}");
     }
     assert!(d.bytes() < 400_000, "{}", d.bytes());
