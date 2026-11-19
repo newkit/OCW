@@ -421,7 +421,9 @@ fn bucket(t: &[Corner; 3]) -> [[i64; 3]; 3] {
 /// The triangles of a primitive; `None` for an index out of range.
 fn triangles(p: &Primitive) -> Option<Vec<[Corner; 3]>> {
     p.indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|t| Some([corner(p, t[0])?, corner(p, t[1])?, corner(p, t[2])?]))
         .collect()
 }
@@ -778,7 +780,7 @@ mod tests {
             material: p.material,
             ..Default::default()
         };
-        let tris: Vec<&[u32]> = p.indices.chunks_exact(3).rev().collect();
+        let tris: Vec<&[u32; 3]> = p.indices.as_chunks::<3>().0.iter().rev().collect();
         for (k, t) in tris.iter().enumerate() {
             // Every triangle gets its own three vertices (split), turned.
             let turn = k % 3;
@@ -816,7 +818,9 @@ mod tests {
         // degenerate one changes nothing).
         let k = q
             .indices
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .position(|t| {
                 let [x, y, z] = [0, 1, 2].map(|i| Vec3::from(q.positions[t[i] as usize]));
                 (y - x).cross(z - x).length() > 1e-6
