@@ -38,6 +38,7 @@ pub mod export;
 pub mod fetch;
 pub mod glb;
 pub mod helmet;
+pub mod hips;
 pub mod import;
 pub mod kinds;
 pub mod ktx2;

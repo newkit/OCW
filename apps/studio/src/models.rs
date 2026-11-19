@@ -645,7 +645,7 @@ impl RidePose {
 
 /// The rider fitted to a bike for a character (the bike file's sizing).
 pub fn ride_fit(rider: &Model, bike: &Model, c: &Character) -> Result<BodyFit, String> {
-    let r = RiderRig::from_model(rider)?;
+    let r = RiderRig::from_model(rider)?.for_body(c);
     let b = BikeRig::from_model(bike)?;
     Ok(BodyFit::sized(
         &r,

@@ -1639,7 +1639,7 @@ fn sync_rider(
             .as_ref()
             .and_then(|b| ocw_assets::pose::BikeRig::from_model(&b.model).ok())
             .unwrap_or_else(|| ocw_assets::shipped::bike_rig(ProfileId::Road));
-        let body = ocw_assets::pose::BodyFit::new(&rig, &bike_rig, c.scale());
+        let body = ocw_assets::pose::BodyFit::new(&rig.for_body(&c), &bike_rig, c.scale());
         let Scene {
             meshes: mesh_cache,
             materials: mat_cache,
