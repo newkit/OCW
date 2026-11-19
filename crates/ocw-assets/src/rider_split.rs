@@ -507,11 +507,7 @@ mod tests {
             assert_eq!(got.triangles(), want.triangles());
             for (i, n) in want.nodes.iter().enumerate() {
                 let k = got.node(&n.name).unwrap_or_else(|| panic!("{}", n.name));
-                assert!(
-                    world(got, k).abs_diff_eq(world(want, i), eps),
-                    "{}",
-                    n.name
-                );
+                assert!(world(got, k).abs_diff_eq(world(want, i), eps), "{}", n.name);
                 assert_eq!(
                     got.triangles_below(Some(k)),
                     want.triangles_below(Some(i)),
