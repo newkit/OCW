@@ -82,7 +82,7 @@
       env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
     /* The screen tips (spec 3.2.3): full screen or Add to Home Screen with
        the first-ride tip, "turn your phone" once in portrait. */
-    #ocw-screen-tip { position: fixed; top: calc(var(--safe-top) + 76px); left: 50%;
+    #ocw-screen-tip { position: fixed; top: calc(50% + 8px); left: 50%;
       transform: translateX(-50%); max-width: calc(100% - 32px - var(--safe-left) - var(--safe-right));
       box-sizing: border-box; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
       justify-content: center; color: #e5e9f0; background: rgba(10, 13, 18, 0.72);
@@ -519,7 +519,7 @@
           if (tipKind !== "fullscreen") {
             showTip("fullscreen", fsSupported
               ? `<button class="fs">⛶ Full screen</button><button class="close" aria-label="Close">×</button>`
-              : `<span>${HOME_SCREEN}</span><button class="close" aria-label="Close">×</button>`);
+              : `<span>⛶ Full screen: Share → Add to Home Screen</span><button class="close" aria-label="Close">×</button>`);
           } else if (tip.hidden) tip.hidden = false;
           return;
         }

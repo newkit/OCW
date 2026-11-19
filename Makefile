@@ -350,7 +350,7 @@ test-web-webgl2: web ## Headless Chromium without WebGPU: the page falls back to
 test-web-gpu: web ## Headless Chromium: the page's GPU choice (ocw-gpu.js rules), injected WebGPU failures fall back to WebGL 2 and draw, the remembered failure, gpu=webgpu, Safari on an iPhone takes WebGL 2 (B7, the iOS 26 report); into test-output/web/
 	scripts/test-web-gpu.py --out test-output/web
 
-test-web-webkit: web ## WebKit (Safari's engine, Playwright; make deps-webkit): Safari 26 with WebGPU takes the WebGL 2 build – an iPhone 15's start page and ride, Safari on macOS; rides and draws (B7); into test-output/web/
+test-web-webkit: web ## WebKit (Safari's engine, Playwright; make deps-webkit): Safari 26 with WebGPU takes the WebGL 2 build – an iPhone 15's start page and ride (portrait and landscape: the safe areas, touch taps and a held side, the manifest, the wake lock; spec 3.2.3 TS4), Safari on macOS; rides and draws (B7); into test-output/web/
 	scripts/test-web-webkit.py --out test-output/web
 
 PREVIEW_WORLDS ?= target/web-preview-worlds/release
