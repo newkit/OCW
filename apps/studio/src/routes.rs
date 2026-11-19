@@ -196,7 +196,9 @@ impl LocalRider {
                     name: r.name.clone(),
                     weight_kg: r.weight_kg,
                     physics: r.physics(),
-                    from: from.file_name().map(|f| format!("from {}", f.to_string_lossy())),
+                    from: from
+                        .file_name()
+                        .map(|f| format!("from {}", f.to_string_lossy())),
                 }
             }
             _ => Self::default(),
