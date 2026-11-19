@@ -4832,3 +4832,125 @@ world = true
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "3", "--window", "1920x1080"]
 at = ["1=time 14:00", "3=god on", "4=god.pose -2650 2330 120 80 -10", "4.3=god.cruise 0.6 0.1 4"]
 shot = 11
+
+# --- The helmets from their files (spec 14 Phase 15 M3) ----------------------
+# Each helmet worn from `wear/helmet-*.glb` at the head: in the workshop
+# mirror, riding (a close-up from the side and from the front) and in a group;
+# before / after the switch the pictures must match. Made-up rider name only.
+
+[[scene]]
+name = "m3-helmet-road-mirror"
+description = "Helmets from their files (Phase 15 M3): the vented road helmet (base kit) on the rider in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2.2=workshop open", "2.8=workshop mirror"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "m3-helmet-light-mirror"
+description = "Helmets from their files (Phase 15 M3): the lightweight road helmet on the rider in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "1.5=hearts.grant 2000", "1.6=workshop.buy helmet.light.top", "2.2=workshop open", "2.8=workshop mirror"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "m3-helmet-aero-road-mirror"
+description = "Helmets from their files (Phase 15 M3): the aero road helmet on the rider in the workshop mirror"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "1.5=hearts.grant 2000", "1.6=workshop.buy helmet.aero-road.top", "2.2=workshop open", "2.8=workshop mirror"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "m3-helmet-tt-mirror"
+description = "Helmets from their files (Phase 15 M3): the time-trial helmet with its visor on the rider in the workshop mirror, long hair out under its tail"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "1.4=character --hair long --hair-colour auburn", "1.5=hearts.grant 2000", "1.6=workshop.buy helmet.tt.top", "2.2=workshop open", "2.8=workshop mirror"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "m3-helmet-road-side"
+description = "Helmets from their files (Phase 15 M3): riding, the vented road helmet close up from the side"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup face 90 5 1.1"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "m3-helmet-road-front"
+description = "Helmets from their files (Phase 15 M3): riding, the vented road helmet close up from the front"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup face 180 10 1.1"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "m3-helmet-light-side"
+description = "Helmets from their files (Phase 15 M3): riding, the lightweight road helmet close up from the side"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=hearts.grant 2000", "0.7=workshop.buy helmet.light.top", "3.5=camera.closeup face 90 5 1.1"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "m3-helmet-light-front"
+description = "Helmets from their files (Phase 15 M3): riding, the lightweight road helmet close up from the front"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=hearts.grant 2000", "0.7=workshop.buy helmet.light.top", "3.5=camera.closeup face 180 10 1.1"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "m3-helmet-aero-road-side"
+description = "Helmets from their files (Phase 15 M3): riding, the aero road helmet close up from the side"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=hearts.grant 2000", "0.7=workshop.buy helmet.aero-road.top", "3.5=camera.closeup face 90 5 1.1"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "m3-helmet-aero-road-front"
+description = "Helmets from their files (Phase 15 M3): riding, the aero road helmet close up from the front"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=hearts.grant 2000", "0.7=workshop.buy helmet.aero-road.top", "3.5=camera.closeup face 180 10 1.1"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "m3-helmet-tt-side"
+description = "Helmets from their files (Phase 15 M3): riding, the time-trial helmet close up from the side, its tail along the back"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=hearts.grant 2000", "0.7=workshop.buy helmet.tt.top", "3.5=camera.closeup face 90 5 1.1"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "m3-helmet-tt-front"
+description = "Helmets from their files (Phase 15 M3): riding, the time-trial helmet close up from the front, the visor"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=hearts.grant 2000", "0.7=workshop.buy helmet.tt.top", "3.5=camera.closeup face 180 10 1.1"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "m3-helmet-group"
+description = "Helmets from their files (Phase 15 M3): a group of riders on the Hills test route, near and far riders with their helmets, seen from the side"
+args = ["--route", "hills", "--bots", "10", "--power", "260"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "1=camera.mode side"]
+shot = 14
+pick = false

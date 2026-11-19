@@ -9,7 +9,10 @@
 //!   pieces, [`crate::rider::hair_nodes`]), at the head;
 //! - `wear/<moustache|beard>-<id>.glb`: the facial hair, at the head;
 //! - `wear/body-<shoulders|chest>-<a|b|c>.glb`: the base bodies' parts,
-//!   at the torso / the jersey.
+//!   at the torso / the jersey;
+//! - `wear/helmet-<style>.glb`: the four helmets, at the head, near and
+//!   far (spec 14 Phase 15 M3: the rider files hold no helmet; the shells
+//!   come from these files only, [`helmet_part`]).
 //!
 //! (N8 named them `hair/<id>.glb`, `face/…`, `rider-a|b|c.glb`; the file
 //! contract of Phase 15, 15H, puts every wearable in `wear/<name>.glb`.)
@@ -20,8 +23,9 @@
 //! ([`merge`]): the renderer, the pose and the clothing checks keep the
 //! one rig and the optional nodes' names as before.
 
+use crate::helmet::Helmet;
 use crate::model::{Model, Node};
-use crate::rider::opt;
+use crate::rider::{Detail, opt};
 
 /// One part file: its path in `artwork/3dmodels/` and the generator's
 /// node it holds.
@@ -162,13 +166,60 @@ pub fn anchor(part: &Model) -> Option<&str> {
         .map(|n| n.name.as_str())
 }
 
-/// `full` without the part files' nodes (and what is below them): the
-/// near rider file.
+/// The rider node the helmet files are worn at (their manifest `anchor`).
+pub const HELMET_ANCHOR: &str = crate::pose::nodes::HEAD;
+
+/// The rider nodes of the helmets: not in the rider files (near and
+/// far), drawn from the helmet files ([`helmet_part`]).
+pub fn helmet_nodes() -> [&'static str; 4] {
+    Helmet::ALL.map(|h| h.node())
+}
+
+/// The helmet of style `h` from its file (`wear/helmet-*.glb`, spec 14
+/// Phase 15 M3): a part with the root [`HELMET_ANCHOR`] and below it the
+/// rider node `h.node()` holding the near shell (the file's root) or, for
+/// [`Detail::Low`], the far one (its `lod1`) – both in the head's frame,
+/// so the shell is worn at the anchor as it is. `None` when the file has
+/// no such shell.
+pub fn helmet_part(file: &Model, h: Helmet, detail: Detail) -> Option<Model> {
+    let src = match detail {
+        Detail::High => file.nodes.iter().position(|n| n.parent.is_none())?,
+        Detail::Low => file.node(crate::pose::bike_nodes::LOD1)?,
+    };
+    if file.nodes[src].primitives.is_empty() {
+        return None;
+    }
+    let mut m = Model::default();
+    let root = m.add(Node::new(HELMET_ANCHOR, None, glam::Vec3::ZERO));
+    let shell = m.add(Node::new(h.node(), Some(root), glam::Vec3::ZERO));
+    for p in &file.nodes[src].primitives {
+        let mut q = p.clone();
+        q.material = m.material_or_add(file.materials[p.material].clone());
+        m.nodes[shell].primitives.push(q);
+    }
+    Some(m)
+}
+
+/// `full` without the part files' nodes and the helmets (and what is
+/// below them): the near rider file.
 pub fn strip(full: &Model) -> Model {
-    let parts: Vec<usize> = part_files()
+    let drop: Vec<&str> = part_files()
         .iter()
-        .filter_map(|p| full.node(p.node))
+        .map(|p| p.node)
+        .chain(helmet_nodes())
         .collect();
+    without(full, &drop)
+}
+
+/// The far rider without its helmets: the far rider file (its hair and
+/// face stay in it).
+pub fn strip_low(low: &Model) -> Model {
+    without(low, &helmet_nodes())
+}
+
+/// `full` without the nodes `drop` (and what is below them).
+fn without(full: &Model, drop: &[&str]) -> Model {
+    let parts: Vec<usize> = drop.iter().filter_map(|n| full.node(n)).collect();
     let mut m = Model {
         materials: Vec::new(),
         nodes: Vec::new(),
@@ -219,9 +270,28 @@ pub fn assembled(full: &Model) -> Model {
     let parts: Vec<Model> = part_files()
         .iter()
         .filter_map(|p| extract(full, p.node))
+        .chain(Helmet::ALL.iter().filter_map(|h| {
+            helmet_part(
+                &crate::export::helmet_model(*h, full, full),
+                *h,
+                Detail::High,
+            )
+        }))
         .collect();
     let refs: Vec<&Model> = parts.iter().collect();
     merge(&strip(full), &refs).expect("the generator's anchors")
+}
+
+/// The far rider of the generator as exported and loaded again (what
+/// [`crate::shipped::rider_low_model`] loads): the far file with the
+/// helmet files' far shells attached at the head.
+pub fn assembled_low(near: &Model, low: &Model) -> Model {
+    let parts: Vec<Model> = Helmet::ALL
+        .iter()
+        .filter_map(|h| helmet_part(&crate::export::helmet_model(*h, near, low), *h, Detail::Low))
+        .collect();
+    let refs: Vec<&Model> = parts.iter().collect();
+    merge(&strip_low(low), &refs).expect("the generator's anchors")
 }
 
 #[cfg(test)]
@@ -369,13 +439,176 @@ mod tests {
             })
             .sum();
         assert!(hands > 0);
-        let heaviest =
-            base.triangles() + hair + most(&opt::MOUSTACHE) + most(&opt::BEARD) + body + hands;
+        // One helmet is worn at a time (Phase 15 M3: from its file).
+        let helmet = most(&helmet_nodes());
+        assert!(helmet > 0);
+        let heaviest = base.triangles()
+            + hair
+            + most(&opt::MOUSTACHE)
+            + most(&opt::BEARD)
+            + body
+            + hands
+            + helmet;
         assert!(
             heaviest <= crate::manifest::MAX_TRIANGLES_RIDER,
-            "{heaviest} (file {}, hair {hair}, body {body})",
+            "{heaviest} (file {}, hair {hair}, body {body}, helmet {helmet})",
             base.triangles()
         );
         assert!(base.triangles() < full.triangles());
+    }
+
+    /// The vertices of node `name` in model coordinates, girth applied
+    /// for `c` and the whole rider scaled by `s` (the height).
+    fn shell(m: &Model, name: &str, c: &ocw_core::Character, s: f32) -> Vec<glam::Vec3> {
+        let i = m.node(name).unwrap_or_else(|| panic!("{name}"));
+        let (g, t) = crate::rider::girth_transform(m, i, c);
+        let w = m.world(i);
+        m.nodes[i]
+            .primitives
+            .iter()
+            .flat_map(|p| p.positions.iter())
+            .map(|v| s * w.transform_point3(g * glam::Vec3::from(*v) + t))
+            .collect()
+    }
+
+    /// The helmets come from their files only (Phase 15 M3): neither
+    /// rider file holds a helmet node, the shipped riders (near and far)
+    /// hold each helmet once, below `head`, and the far rider loads like
+    /// the generator's.
+    #[test]
+    fn the_helmets_are_worn_from_their_files_only() {
+        let near_file = crate::shipped::model(crate::RIDER_ID);
+        let far_file = crate::shipped::model(crate::RIDER_LOW_ID);
+        let near = crate::shipped::rider_model();
+        let far = crate::shipped::rider_low_model();
+        for n in helmet_nodes() {
+            assert!(near_file.node(n).is_none(), "{n} in the near rider file");
+            assert!(far_file.node(n).is_none(), "{n} in the far rider file");
+            for m in [near, far] {
+                let at: Vec<usize> = (0..m.nodes.len())
+                    .filter(|i| m.nodes[*i].name == n)
+                    .collect();
+                assert_eq!(at.len(), 1, "{n} drawn once");
+                let parent = m.nodes[at[0]].parent.expect("attached");
+                assert_eq!(m.nodes[parent].name, HELMET_ANCHOR, "{n}");
+                assert!(!m.nodes[at[0]].primitives.is_empty(), "{n}");
+                // Nothing else hangs from a helmet.
+                assert!(m.nodes.iter().all(|k| k.parent != Some(at[0])), "{n}");
+            }
+        }
+        // The far rider: the generator's, node for node (names, places,
+        // triangles), with the helmets from the files.
+        let gen_low = build(Detail::Low);
+        let back = assembled_low(&build(Detail::High), &gen_low);
+        for (want, got) in [(&gen_low, &back), (&gen_low, far)] {
+            assert_eq!(got.nodes.len(), want.nodes.len());
+            assert_eq!(got.triangles(), want.triangles());
+            for (i, n) in want.nodes.iter().enumerate() {
+                let k = got.node(&n.name).unwrap_or_else(|| panic!("{}", n.name));
+                assert!(
+                    world(got, k).abs_diff_eq(world(want, i), 1e-6),
+                    "{}",
+                    n.name
+                );
+                assert_eq!(
+                    got.triangles_below(Some(k)),
+                    want.triangles_below(Some(i)),
+                    "{}",
+                    n.name
+                );
+            }
+        }
+        // A helmet file without the far shell is no far helmet.
+        let mut bare = crate::shipped::model("wear/helmet-road-vented")
+            .as_ref()
+            .clone();
+        let lod = bare.node(crate::pose::bike_nodes::LOD1).unwrap();
+        bare.nodes[lod].primitives.clear();
+        assert!(helmet_part(&bare, Helmet::Road, Detail::Low).is_none());
+        assert!(helmet_part(&bare, Helmet::Road, Detail::High).is_some());
+    }
+
+    /// Each helmet from its file sits at the head as the generator's
+    /// helmet did, for every base body, body shape and height (1.50 –
+    /// 2.05 m), near and far, standing at ease: the same vertices within
+    /// 0.1 mm (15F), the shell unscaled by the build (the head keeps its size).
+    #[test]
+    fn each_helmet_sits_at_the_head_for_every_body_and_height() {
+        use ocw_core::{BaseBody, BodyShape, Character};
+        let gen_near = build(Detail::High);
+        let gen_far = build(Detail::Low);
+        let rig = crate::pose::RiderRig::from_model(&gen_near).unwrap();
+        let sizing = crate::shipped::bike_sizing(ocw_core::ProfileId::Road);
+        let pose = crate::pose::idle(&rig, 1.3);
+        let posed = |m: &Model| {
+            let mut m = m.clone();
+            pose.apply(&mut m);
+            m
+        };
+        let pairs = [
+            (posed(&gen_near), posed(crate::shipped::rider_model())),
+            (posed(&gen_far), posed(crate::shipped::rider_low_model())),
+        ];
+        for base in BaseBody::ALL {
+            for shape in BodyShape::ALL {
+                let c = Character {
+                    base,
+                    shape,
+                    ..Character::default()
+                };
+                for cm in [150.0f32, 160.0, 170.0, 178.0, 190.0, 205.0] {
+                    let s = sizing.scale(cm / 100.0);
+                    for (want, got) in &pairs {
+                        for n in helmet_nodes() {
+                            let i = got.node(n).unwrap();
+                            assert_eq!(crate::rider::girth(got, i, &c), glam::Vec3::ONE);
+                            let a = shell(want, n, &c, s);
+                            let b = shell(got, n, &c, s);
+                            assert_eq!(a.len(), b.len(), "{n}");
+                            assert!(!a.is_empty());
+                            for (p, q) in a.iter().zip(&b) {
+                                assert!(p.distance(*q) < 1e-4, "{n} {c:?} {cm}: {p} {q}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The helmet choice and the helmet off (spec §14 Phase 4, 4N Q28)
+    /// with the helmets from their files: each kit shows exactly its
+    /// helmet, present once in the near and the far rider; off shows none.
+    #[test]
+    fn each_helmet_choice_and_helmet_off_show_one_helmet_or_none() {
+        use crate::rider::{HELMET_OFF, visible};
+        let c = ocw_core::Character::default();
+        let near = crate::shipped::rider_model();
+        let far = crate::shipped::rider_low_model();
+        for (kit, h) in [
+            (None, Helmet::Road),
+            (Some("helmet-light"), Helmet::Light),
+            (Some("helmet-aero-road"), Helmet::AeroRoad),
+            (Some("helmet-tt"), Helmet::TimeTrial),
+        ] {
+            let kits: Vec<&str> = kit.into_iter().collect();
+            let shown = visible(&c, &kits);
+            let helmets: Vec<&str> = shown
+                .iter()
+                .copied()
+                .filter(|n| helmet_nodes().contains(n))
+                .collect();
+            assert_eq!(helmets, [h.node()], "{kit:?}");
+            for m in [near, far] {
+                assert!(m.node(h.node()).is_some());
+            }
+            let mut off = kits.clone();
+            off.push(HELMET_OFF);
+            let bare = visible(&c, &off);
+            assert!(
+                bare.iter().all(|n| !helmet_nodes().contains(n)),
+                "{kit:?} off: {bare:?}"
+            );
+        }
     }
 }
