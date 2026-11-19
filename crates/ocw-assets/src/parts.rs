@@ -223,9 +223,11 @@ pub struct Standard {
     pub family: Option<String>,
 }
 
-/// What a light set gives (spec §14 Phase 9 Q3: the ride's bike lights
-/// come from the fitted part): the front lamp's luminous flux and colour,
-/// the rear lamp's. Looks only – a light never changes the physics.
+/// What a bike's lamps give (spec §14 Phase 9 Q3: the ride's bike lights
+/// come from the part of the slot `lights` – the base part's small default
+/// lamps every bike has, or a fitted light set, the upgrade): the front
+/// lamp's luminous flux and colour, the rear lamp's. Looks only – a light
+/// never changes the physics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LightSpec {
@@ -980,13 +982,15 @@ pub fn validate(cat: &Catalogue, sources: &Sources, today: (i32, u32, u32)) -> V
         if p.slot == Slot::Paint {
             err(format!("{at}: paint colours are not catalogue parts"));
         }
-        // Lights (Phase 9 Q3): a light set says what its lamps give the
-        // ride; nothing else has lamps, "no lights" has none.
-        match (p.slot == Slot::Lights && !p.is_base(), p.light) {
+        // Lights (Phase 9 Q3, changed 2026-11-19): every part of the slot
+        // says what its lamps give the ride – the base part the small
+        // default lamps every bike carries, a light set its upgrade;
+        // nothing else has lamps.
+        match (p.slot == Slot::Lights, p.light) {
             (true, None) => err(format!(
-                "{at}: a light set needs `light` (front_lm, rear_lm, front_colour, rear_colour)"
+                "{at}: a lights part needs `light` (front_lm, rear_lm, front_colour, rear_colour)"
             )),
-            (false, Some(_)) => err(format!("{at}: only light sets have `light`")),
+            (false, Some(_)) => err(format!("{at}: only lights parts have `light`")),
             (true, Some(l)) => {
                 if l.front_lm == 0 && l.rear_lm == 0 {
                     err(format!("{at}: a light set with dark lamps"));
@@ -1633,14 +1637,32 @@ mod tests {
         errors.iter().any(|e| e.contains(needle))
     }
 
-    /// Phase 9 Q3: a light set says what its lamps give the ride; nothing
-    /// else has lamps; a dark or impossible lamp is refused.
+    /// Phase 9 Q3 (changed 2026-11-19): every bike's base lights part has
+    /// small default lamps, the light set is the upgrade (brighter front
+    /// and rear); nothing else has lamps; a dark or impossible lamp is
+    /// refused.
     #[test]
     fn light_sets_have_lamps_and_nothing_else_does() {
         let (c, _) = shipped();
         let set = c.get("lights.set").unwrap().light.expect("lamps");
         assert_eq!((set.front_lm, set.rear_lm), (300, 15));
         assert_eq!((set.front_colour, set.rear_colour), (0xFFF6E8, 0xFF2614));
+        for bike in [
+            BikeType::Road,
+            BikeType::TimeTrial,
+            BikeType::Gravel,
+            BikeType::Mountain,
+        ] {
+            let base = c
+                .base(Slot::Lights, bike)
+                .and_then(|p| p.light)
+                .unwrap_or_else(|| panic!("{bike:?}: default lamps"));
+            assert!(base.front_lm > 0 && base.rear_lm > 0, "{bike:?}");
+            assert!(
+                set.front_lm >= 4 * base.front_lm && set.rear_lm > 2 * base.rear_lm,
+                "the set is the upgrade"
+            );
+        }
         assert!(
             c.parts
                 .iter()
@@ -1651,7 +1673,15 @@ mod tests {
             c.parts.iter_mut().find(|p| p.id == "lights.set").unwrap()
         }
         let e = broken(|c| lights(c).light = None);
-        assert!(has(&e, "a light set needs `light`"), "{e:?}");
+        assert!(has(&e, "a lights part needs `light`"), "{e:?}");
+        let e = broken(|c| {
+            c.parts
+                .iter_mut()
+                .find(|p| p.id == "lights.none.base")
+                .unwrap()
+                .light = None
+        });
+        assert!(has(&e, "lights.none.base: a lights part needs"), "{e:?}");
         let e = broken(|c| {
             c.parts
                 .iter_mut()
@@ -1659,7 +1689,7 @@ mod tests {
                 .unwrap()
                 .light = Some(set)
         });
-        assert!(has(&e, "only light sets have `light`"), "{e:?}");
+        assert!(has(&e, "only lights parts have `light`"), "{e:?}");
         let e = broken(|c| {
             lights(c).light = Some(LightSpec {
                 front_lm: 0,

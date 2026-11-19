@@ -193,6 +193,20 @@ enum Cockpit {
     Extensions,
 }
 
+/// The bike's lamps (spec 14 Phase 9 Q3, changed 2026-11-19): every bike
+/// carries a small white front lamp and a small red rear lamp; the light
+/// set of the workshop (`lights-set`) replaces them with bigger ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum Lamps {
+    /// The default: a small commuter lamp under the stem, a small red LED
+    /// high on the seat post below the saddle.
+    #[default]
+    Basic,
+    /// The light set: a bigger front lamp beside the stem on the bar, a
+    /// bigger rear lamp on the seat post.
+    Set,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum Pedals {
     #[default]
@@ -218,7 +232,7 @@ struct Kit {
     carbon_post: bool,
     pedals: Pedals,
     carbon_cages: bool,
-    lights: bool,
+    lights: Lamps,
     computer: bool,
     /// A stripe on the tyre walls (time-trial tyres).
     tyre_stripe: bool,
@@ -239,7 +253,7 @@ impl Default for Kit {
             carbon_post: false,
             pedals: Pedals::Stock,
             carbon_cages: false,
-            lights: false,
+            lights: Lamps::Basic,
             computer: false,
             tyre_stripe: false,
             bag: false,
@@ -313,7 +327,7 @@ fn configure(profile: ProfileId, variants: &[&str]) -> (Design, Kit) {
                 k.carbon_cages = true;
                 d.bottles = d.bottles.max(1);
             }
-            "lights-set" => k.lights = true,
+            "lights-set" => k.lights = Lamps::Set,
             "computer-large" => k.computer = true,
             "bag-top-tube" => k.bag = true,
             other => unreachable!("variant {other} has no look"),
@@ -1446,16 +1460,29 @@ pub fn build_with(
                 p.slot("component")
                     .cuboid(c, Vec3::new(0.028, 0.035, 0.07), along);
             }
-            if kit.lights {
-                // Rear lamp on the seat post, facing back.
-                let at = cluster.lerp(post_top, 0.45) + Vec3::Z * 0.03;
-                p.slot("component")
-                    .cuboid(at, Vec3::new(0.016, 0.03, 0.012), Quat::IDENTITY);
-                p.slot("light_rear").cuboid(
-                    at + Vec3::Z * 0.0125,
-                    Vec3::new(0.012, 0.025, 0.002),
-                    Quat::IDENTITY,
-                );
+            match kit.lights {
+                Lamps::Set => {
+                    // The set's rear lamp on the seat post, facing back.
+                    let at = cluster.lerp(post_top, 0.45) + Vec3::Z * 0.03;
+                    p.slot("component")
+                        .cuboid(at, Vec3::new(0.016, 0.03, 0.012), Quat::IDENTITY);
+                    p.slot("light_rear").cuboid(
+                        at + Vec3::Z * 0.0125,
+                        Vec3::new(0.012, 0.025, 0.002),
+                        Quat::IDENTITY,
+                    );
+                }
+                Lamps::Basic => {
+                    // A small red LED high on the seat post, facing back.
+                    let at = cluster.lerp(post_top, 0.62) + Vec3::Z * 0.024;
+                    p.slot("component")
+                        .cuboid(at, Vec3::new(0.011, 0.018, 0.009), Quat::IDENTITY);
+                    p.slot("light_rear").cuboid(
+                        at + Vec3::Z * 0.0095,
+                        Vec3::new(0.008, 0.014, 0.0015),
+                        Quat::IDENTITY,
+                    );
+                }
             }
         }
         if hi {
@@ -1656,21 +1683,47 @@ pub fn build_with(
         true,
     );
     let c = f.bar_clamp;
-    if kit.lights {
-        // Front lamp under the bar, beam forward.
-        let at = c + Vec3::new(0.06, -0.035, -0.02);
-        p.slot("component").tube(
-            at + Vec3::Z * 0.03,
-            at - Vec3::Z * 0.02,
-            0.016,
-            0.016,
-            10,
-            true,
-        );
-        p.slot("light_front")
-            .annulus(at - Vec3::Z * 0.021, Vec3::Z, 0.0, 0.013, 0.002, 10);
-        p.slot("component")
-            .tube(c + Vec3::X * 0.06, at, 0.004, 0.004, 4, false);
+    match kit.lights {
+        Lamps::Set => {
+            // The set's front lamp under the bar, beam forward.
+            let at = c + Vec3::new(0.06, -0.035, -0.02);
+            p.slot("component").tube(
+                at + Vec3::Z * 0.03,
+                at - Vec3::Z * 0.02,
+                0.016,
+                0.016,
+                10,
+                true,
+            );
+            p.slot("light_front")
+                .annulus(at - Vec3::Z * 0.021, Vec3::Z, 0.0, 0.013, 0.002, 10);
+            p.slot("component")
+                .tube(c + Vec3::X * 0.06, at, 0.004, 0.004, 4, false);
+        }
+        Lamps::Basic => {
+            // A small commuter lamp hanging under the stem's face, beam
+            // forward (clear of the bars, the computer and the TT's base
+            // bar on every bike).
+            let at = c + Vec3::new(0.0, -0.03, -0.022);
+            p.slot("component").tube(
+                at + Vec3::Z * 0.016,
+                at - Vec3::Z * 0.012,
+                0.0095,
+                0.0095,
+                8,
+                true,
+            );
+            p.slot("light_front")
+                .annulus(at - Vec3::Z * 0.0125, Vec3::Z, 0.0, 0.0078, 0.0015, 8);
+            p.slot("component").tube(
+                c + Vec3::new(0.0, -0.008, -0.014),
+                at,
+                0.003,
+                0.003,
+                4,
+                false,
+            );
+        }
     }
     if kit.computer {
         // Head unit on an out-front mount.
