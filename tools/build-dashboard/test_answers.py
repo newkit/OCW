@@ -139,6 +139,11 @@ class HttpTest(unittest.TestCase):
         self.assertEqual(calls, [])
         code, res = self.req("/api/restart", {}, token=self.dash.token)
         self.assertEqual((code, res.get("restarting")), (200, True))
+        # The restart runs just after the reply is sent (its own thread): wait for it.
+        for _ in range(100):
+            if calls:
+                break
+            time.sleep(0.02)
         self.assertEqual(calls, ["the Restart button"])
         self.assertTrue(self.dash.snapshot()["restart"], "the page shows the button")
 

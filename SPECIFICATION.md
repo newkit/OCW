@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 4.87 – November 2026
+Version 4.88 – November 2026
 
 | Version | Change |
 |---|---|
+| 4.88 | **Appendix C – an overview of all open questions** (asked by the user 2026-11-19: "update the open question section"): generated from the question bullets by `tools/build-dashboard/spec_questions.py overview --write SPECIFICATION.md` (78 open of 216, grouped by phase / section, with the proposals); the photo preview's two questions are now readable bullets (§3.2 Q10, Q11), Phase 11 Q8 (the Windows PC for Link) is marked decided (Weela), §2.8.1 Q7 superseded in the readable form. |
 | 4.87 | **Ground detail, road damage and the HUD navigation map cost under 0.2 ms a frame each at 1080p High on marge's GPU – measured on a quiet machine, nothing to cut** (re-measurement of v4.72, v4.73 and v4.75, whose numbers were taken while marge was busy): four scenes (Black Forest Baden-Baden – Mummelsee km 7, Tenerife Masca km 9, a Vaduz street in free ride, Tenerife Puerto de la Cruz – Teide km 4 with `road.damage horrible`), High and Medium, 1280 × 720 and 1920 × 1080, all off / each alone / all on in three alternating rounds; at 1080p High ground detail −0.00 … +0.09 ms, road damage +0.03 … +0.18 ms (the most on the `horrible` road), map +0.02 … +0.06 ms, all three +0.08 … +0.25 ms (§4.6.2 *Frame-rate cost*, §4.6 *Road damage*, §3.2 *Navigation map*). The render-rate log line (`--log-fps`) and `scripts/measure-fps.sh` give the frame time's p50 / p95 now, and `scripts/feature-fps-cost.sh` repeats the measurement, waiting for a quiet machine before each run |
 | 4.86 | **Strava recordings made without Strava set up wait and are uploaded once the credentials come, built – the proposal (ask before more than three) as proposed** (§2.8.1 *Recording without Strava set up, uploaded later*, decided in 4.84; numbered after the highest, may be renumbered at merge): every S recording made without API credentials is *waiting* in the sync state (`strava-sync.toml`, `state = "waiting"`; older recordings from before are marked at the next start without the set-up) – not failed, not uploaded, skipped by the usual sync; the stop notice says it is saved and will be uploaded once Strava is set up, beside the browser upload's hint; the desktop looks at `strava.toml` every 3 s while the credentials are missing (the environment at the start only; `strava.connect` / `strava.status` / `strava.sync` look at once) and starts the Strava thread when they come; once the account is linked (at once, or when `strava.connect` completes) the waiting recordings go up oldest first through the existing upload and status polling, skipping those marked as uploaded by hand; more than three: asked once – the menu opens at *Upload N waiting recordings to Strava? Yes, upload all N / Pick which (the training history's waiting rides, each uploads from its page) / No, leave them waiting* (`strava.waiting yes|pick|no`, `strava.sync --waiting [--ride N]`); the HUD then says "3 recordings uploaded to Strava" (and how many failed, retried with the usual backoff); the ride page's *Strava upload* row shows *waiting for Strava set-up* (opens the Strava settings) / *waiting – upload now* / *uploading* / *on Strava: strava.com/activities/N* (`strava.open N`) / *failed – retry* (`strava.sync --retry`), in the browser *upload in your browser*; whole rides keep the `auto_upload` rule (Q6 open); `menu ride N` / `menu strava-waiting` open those pages; `OCW_STRAVA_FAKE=1` gives test runs a stand-in Strava (no network); tests (mock Strava) and X11 / Wayland screenshots |
 | 4.85 | **One folder for everything, built: `~/Activities/OCW` – every S recording in its own folder (FIT and photos, `YYYY-MM-DD <place>`), screenshots and other photos in a folder per day (`YYYY-MM-DD`), in both apps; the simple upload opens the recording's folder; the photos folder `~/Pictures/OCW` and `photos.folder` are gone** (built, §2.8.1 *Where an S recording is written*, decisions 4.79 / 4.80 / 4.82; numbered after the highest, may be renumbered at merge). Built as proposed: the place is the nearest town or village (rank ≤ village, within 5 km) of the package's places to where the recording started, else the route, else the world; the world's local date; ` 2`, ` 3` for more recordings there that day; files `OCW YYYY-MM-DD HH-MM <place>.fit` / `… photo N.jpg` (`ocw_client::activities`); loose photos and screenshots in a per-day subfolder; files already in `~/Pictures/OCW` stay there and are still found through their sidecars (an old `photos.folder` line in the settings file is kept and reported as an unknown setting). Desktop: setting `activities.folder` (default `~/Activities/OCW`, `~` allowed, `OCW_ACTIVITIES_DIR` in test runs – `OCW_PHOTOS_DIR` is gone), console `activities.folder [PATH|default|choose]`, *Settings → Account → Folders* (*change* opens the system's folder picker – zenity / kdialog, PowerShell, osascript – else the console to type the path; *default*); the recording's folder is made at S, the photographer's photos go only there while it runs (sidecars point there), the FIT at its stop or the ride's end; the internal `rides/strava/` record stays and keeps the path; the stop notice and the photo preview name the folder ("Saved to Activities/OCW/2026-11-18 Puerto de la Cruz", a screenshot "Saved to Activities/OCW/2026-11-18"); the simple upload opens that folder with the FIT selected (the `strava-upload/` copy only as the fallback for the whole ride and older recordings). Browser: S records now too (Ride → Strava recording no longer dimmed); Captures → *Activities folder: choose* replaces *Photos folder: choose* (File System Access API, subfolders made), else downloads named `OCW YYYY-MM-DD HH-MM <place>…` / `OCW-<time>….jpg`. |
@@ -864,7 +865,7 @@ GPX upload is also available in the web companion, where map matching runs on th
 - **The mark:** the app cannot know whether the rider uploaded the file. The rider marks the ride; the mark is kept in the training history (`strava_marked`, added only when set, kept when a ride is added again) and on the desktop also in `rides/strava-manual.toml` (the ride's FIT file and its Strava recordings), which the API sync reads and skips – so setting up the API later uploads no duplicate (`strava::sync::sync_files`; `strava.status` counts without them).
 - **Notices without the API:** the S recording records as with it; its stop says "Strava recording saved: 12:34, 5.2 km. Upload it to Strava in your browser: Navi > Training history > the ride" (12 s, `UPLOAD_NOTICE_S`), the end of a ride (a ride switch, `ride.save`) "Ride saved. Upload it …"; `strava.connect` / `sync` / `status` explain the simple way first and the API app as the advanced option. The browser's S notice and its *Ride → Strava recording* page point to the training history.
 - **Tests:** the URL; the commands that open the folder with the file selected and the browser per system (pure); the file names (time zone, world / route, forbidden characters, length); the steps; the copy into the upload folder (the whole ride, the recordings within the ride, `--whole`, a missing file, only this upload in the folder); the menu rows with and without the API, dimmed without the file, the steps and the hint on the ride's page; `strava.upload-manual` / `strava.mark-uploaded` with the mark persisting in the history and told to the app; the API sync skipping marked rides (mock Strava, no network) and the marks file; S without the API records and points to the upload; the browser's row, download name, new tab and HUD notice. Screenshots of the ride page with the row and the steps (X11, Wayland, browser): `test-output/strava-manual/`.
-- **Q7 – Also a "Copy to Downloads" button?** Superseded (2026-11-18, v4.79): every S recording is now written to its own folder under `~/Pictures/OCW` (see *Where an S recording is written* above), and the upload points there. Was open (v4.76): The desktop opens the upload folder under the app's data folder (`rides/strava-upload/`); the browser's file picker starts elsewhere (often Downloads), so a rider who does not drag the file from the file manager must browse there. Proposal: keep the open folder (drag and drop) for now; a row *Copy the file to Downloads* (`history.export N` does this today, under the old `ocw-ride-<start>.fit` name) could follow – or the upload copies straight to Downloads.
+- **Q7 – Also a "Copy to Downloads" button: superseded (2026-11-18, v4.79):** every S recording is now written to its own folder under `~/Pictures/OCW` (see *Where an S recording is written* above), and the upload points there. Was open (v4.76): The desktop opens the upload folder under the app's data folder (`rides/strava-upload/`); the browser's file picker starts elsewhere (often Downloads), so a rider who does not drag the file from the file manager must browse there. Proposal: keep the open folder (drag and drop) for now; a row *Copy the file to Downloads* (`history.export N` does this today, under the old `ocw-ride-<start>.fit` name) could follow – or the upload copies straight to Downloads.
 
 ### 2.9 In-Game Console
 
@@ -1021,7 +1022,11 @@ Tile builds take up to 23 ms on worker threads; uploads cost at most 4.6 ms on t
 
 **Timestamp on every capture (decided 2026-11-12, v2.30):** the top-right column starts with a small ISO 8601 local time with UTC offset and seconds, e.g. `2026-11-12T22:14:05+01:00` (Fira Mono 14 px on a dark pill, above REC, the app message and the FPS counter; the event panel starts at 21 % of the height, below them), so every screenshot and every video frame shows when it was taken (the build diary, `ART-PROJECT.md` of [OCW-ART](https://github.com/newkit/OCW-ART)). It is **part of the capture, not of the optional HUD**: `hud off` and `display.hud` do not hide it, and it is drawn above every other UI (menus). Options considered: only while a screenshot or video is being taken (cleaner screen, but a screenshot captures the frame it is requested in, so the stamp would have to appear one frame early, and pictures the app does not take itself – OS screenshots, screen recorders, the kiosk photographed – would carry none), a setting (one more thing a test could leave off), **always visible (chosen):** a clock in the corner is common in games and costs a line of pixels. Clock: the wall clock in normal play, for screenshots and for live recordings (V); during frame capture (`--capture`) the wall clock at the start of the run plus the stepped game time (`Time<Real>`, advanced exactly 1/fps per frame), so the seconds advance once per 25 frames however slowly the frames render (`ocw-core::timestamp::MediaClock`). Formatting, the clock and the UTC offset (chrono's local zone, looked up once a second, daylight saving included) are pure functions with unit tests; the file metadata is described in §11.4.
 
-**Photo preview (asked by the user 2026-11-17: "when a photo was taken, show it for 3 seconds in HUD"; built v4.74):** whenever a photo is saved – a screenshot (`screenshot`, its key and menu row; in the browser into the photos folder or as a download) or a ride photographer's photo (a person's or the drone's, §2.11) – a small framed thumbnail of it shows in the HUD for **3 s**, like a camera's review: a white polaroid-like frame with a soft drop shadow, the caption under the picture (*Photo saved* / *Photographer* / *Drone*, and where it went: "Saved to Pictures/OCW", "…, added to your ride", "Downloaded OCW-….jpg"), sliding in from the right and fading in and out over 0.2 s (`ocw_render::photo_preview`, both apps, WebGPU and WebGL 2). *Where:* the last item of the top-right column, under the time stamp, the app message, the Strava badge and the FPS counter – it moves with them, scales with the HUD size, and the bike computer's panel stays clear of it as of the rest of the column; its picture (192 px wide) narrows (down to 96 px) so the card ends above the lowest 40 % of the window (with the smallest picture under a full column on a small window with a large HUD: above the lowest quarter) – the lower right (the navigation map, the workout bar), the elevation profile, the voice HUD and the junction arrow stay free (test `the_card_fits_every_window`: every 16:9 and 4:3 size from 1280 × 720 to 3840 × 2160, HUD 100 – 200 % (over 150 % from 900 px high), a full column). *Several photos in a row:* the newest replaces the one shown at full opacity and shows its own 3 s; never a pile. *The picture:* the captured image already in memory, downscaled to a 384 px texture (3 × 3 samples per pixel), nothing read from disk. *Never in a photo or a video:* the preview is made after the capture (the screenshot's observer); the frame of the next photo has none (hidden while a `PhotoShot` screenshot of the window waits for its frame); the photographer's photos are rendered off-screen without UI. **While a video is recorded (desktop V, the browser's MediaRecorder) no preview shows at all** – videos take the HUD as seen (REC and the app message are in them), so a preview would be burned in; test captures (`--screenshot`, `--capture`) show the HUD as it is, the preview included. Setting `display.photo_preview` (default on; Settings → Display → Accessibility → *Photo preview*; console `hud.photo_preview on|off`); hidden with `hud off`. **VR:** to be off – the `vr` feature lives on the VR branch, which sets `PhotoPreview::enabled` false at start; the preview belongs on the VR bike computer later (§14 Phase 11 X3). Tests: the lifetime (3 s, the fades and the slide), the newest wins (also during a fade-in), the thumbnail (averaged, BGRA → RGBA, the aspect kept), the switch, the HUD fit, and the preview never in the photo (none before the capture, hidden in the next photo's frame, none while recording). Open questions: **Q-PP1** – should a click (or a key) on the preview open the photo (the desktop's file viewer, the browser's photos folder)? Nothing built. **Q-PP2** – during an event the event panel (top right at 21 %) can lie under the card for its 3 s – move the card left of the panel, skip it during events, or keep it?
+**Photo preview (asked by the user 2026-11-17: "when a photo was taken, show it for 3 seconds in HUD"; built v4.74):** whenever a photo is saved – a screenshot (`screenshot`, its key and menu row; in the browser into the photos folder or as a download) or a ride photographer's photo (a person's or the drone's, §2.11) – a small framed thumbnail of it shows in the HUD for **3 s**, like a camera's review: a white polaroid-like frame with a soft drop shadow, the caption under the picture (*Photo saved* / *Photographer* / *Drone*, and where it went: "Saved to Pictures/OCW", "…, added to your ride", "Downloaded OCW-….jpg"), sliding in from the right and fading in and out over 0.2 s (`ocw_render::photo_preview`, both apps, WebGPU and WebGL 2). *Where:* the last item of the top-right column, under the time stamp, the app message, the Strava badge and the FPS counter – it moves with them, scales with the HUD size, and the bike computer's panel stays clear of it as of the rest of the column; its picture (192 px wide) narrows (down to 96 px) so the card ends above the lowest 40 % of the window (with the smallest picture under a full column on a small window with a large HUD: above the lowest quarter) – the lower right (the navigation map, the workout bar), the elevation profile, the voice HUD and the junction arrow stay free (test `the_card_fits_every_window`: every 16:9 and 4:3 size from 1280 × 720 to 3840 × 2160, HUD 100 – 200 % (over 150 % from 900 px high), a full column). *Several photos in a row:* the newest replaces the one shown at full opacity and shows its own 3 s; never a pile. *The picture:* the captured image already in memory, downscaled to a 384 px texture (3 × 3 samples per pixel), nothing read from disk. *Never in a photo or a video:* the preview is made after the capture (the screenshot's observer); the frame of the next photo has none (hidden while a `PhotoShot` screenshot of the window waits for its frame); the photographer's photos are rendered off-screen without UI. **While a video is recorded (desktop V, the browser's MediaRecorder) no preview shows at all** – videos take the HUD as seen (REC and the app message are in them), so a preview would be burned in; test captures (`--screenshot`, `--capture`) show the HUD as it is, the preview included. Setting `display.photo_preview` (default on; Settings → Display → Accessibility → *Photo preview*; console `hud.photo_preview on|off`); hidden with `hud off`. **VR:** to be off – the `vr` feature lives on the VR branch, which sets `PhotoPreview::enabled` false at start; the preview belongs on the VR bike computer later (§14 Phase 11 X3). Tests: the lifetime (3 s, the fades and the slide), the newest wins (also during a fade-in), the thumbnail (averaged, BGRA → RGBA, the aspect kept), the switch, the HUD fit, and the preview never in the photo (none before the capture, hidden in the next photo's frame, none while recording). Open questions: Q10 and Q11 below.
+
+- **Q10 (open) – Open the photo from the preview:** should a click (or a key) on the preview open the photo (the desktop's file viewer, the browser's chosen folder)? Nothing built.
+- **Q11 (open) – The preview during events:** the event panel (top right at 21 %) can lie under the card for its 3 s – move the card left of the panel, skip it during events, or keep it as built?
+
 
 **GPS position:** bottom-left, the HUD shows the local rider's position as latitude / longitude (5 decimals, N/S, E/W) and altitude in metres, unprojected from the predicted position with the route's or world package's geographic origin (the same as the FIT track); hidden on routes without one (built-in test routes), and with `hud.gps off` / setting `display.gps` (on by default). Console: `rider.gps` (both apps; the browser's `?origin=LAT,LON` gives its test route a geographic origin). Its place: the bottom-left column, under the elevation profile (the damage widget is in the top-left panel, the junction overlay at the bottom centre). **Restored in v3.43:** route rides on world packages had lost it since fae1547 (the route ride's placeholder route dropped the package's geographic origin); regression tests check the view fill and the HUD. The HUD panel never extends past the window: long lines break at their " | " separators (then at commas) to fit the window width.
 
@@ -5032,7 +5037,7 @@ Both builds run at the headless page's 60 Hz cap on this GPU, so the presets' sa
 - **Q5 – Native standalone (Quest / Pico store) and WebXR: decided (2026-11-14, dashboard):** **yes** – planned as its own phase (§14 Phase 14 – Standalone VR), not only as the future item X8.
 - **Q6 – Priority: decided (2026-11-14, dashboard):** **at the end** – VR (Phase 11, and the standalone Phase 14) comes after the other phases. **Changed by the user (2026-11-14, late, v3.34): start VR now** – the X1 step (OpenXR session in the desktop app, the headset as a viewing device over the Meta PC runtime – Oculus Link / the Rift software) begins in parallel with the other work.
 - **Q7 – How the Quest 1 is connected first: decided by the user (2026-11-14, v3.31): Oculus Link** – the first VR step uses the Quest 1 **through Quest (Oculus) Link only as a viewing device of the desktop app**: the desktop app on a Windows PC renders the stereo view to the headset with head tracking; riding input stays the trainer, keyboard and gamepad (no VR controllers, no VR menus yet). ALVR + SteamVR on Linux (marge) comes later as the second runtime. *Still to say:* which Windows PC with a VR-capable GPU the Quest 1 is plugged into (Win11Builder is reserved for Windows builds and has no known VR GPU).
-- **Q8 – The Windows PC for Oculus Link:** X1 needs a Windows PC with a Link-capable GPU, the Meta Quest Link app and a USB 3 cable (or Air Link over 5 GHz Wi-Fi) for the Quest 1 (Q7). Which PC is it – Win11Builder (6 cores, 8 GB, no suitable GPU known: probably too weak), or another PC of the user's? Until then X1 is tested only with simulated runtimes (Q9).
+- **Q8 – The Windows PC for Oculus Link: decided (2026-11-16, the user): Weela** – the user added Weela, a Windows laptop with an RX 7700S, as the Windows VR machine with the Quest on USB (Link); VR runs there since. (Was:) X1 needs a Windows PC with a Link-capable GPU, the Meta Quest Link app and a USB 3 cable (or Air Link over 5 GHz Wi-Fi) for the Quest 1 (Q7). Which PC is it – Win11Builder (6 cores, 8 GB, no suitable GPU known: probably too weak), or another PC of the user's? Until then X1 is tested only with simulated runtimes (Q9).
 - **Q9 – Monado on marge: decided (2026-11-15, the user installed it):** Monado 25.0.0 (`monado-service`, `libopenxr1-monado`) and the Khronos OpenXR loader 1.1.47 (`libopenxr-loader1`) are installed on marge; Monado's runtime manifest `/usr/share/openxr/1/openxr_monado.json` is the active OpenXR runtime there, so the VR tests can run against its simulated headset (11D *Integration tests*). New Makefile targets `make deps-vr` (per platform) and `make deps-vr-linux` (Debian `libopenxr-loader1 libopenxr1-monado monado-service`, Fedora `openxr-libs monado`, Arch `openxr monado`; checks `monado-service` and the runtime manifest); `deps-vr-windows` prints the Meta Quest Link app, `deps-vr-macos` that there is no OpenXR runtime for macOS. Not part of `make deps`. Licence: Monado is BSL-1.0 and only runs on the test machine; nothing of it is linked or shipped.
 
 ### Phase 12 – Collisions, crashes and damage (planning, 2026-11-13; K1, K2 done, v2.98; K3 done, v3.14; K4, K5 done, v3.17; wet roads, the camera's shake and the aids as graphics, v3.22; K6 done, v3.47 – see 12I)
@@ -6588,3 +6593,132 @@ Final runs on commit `8613029` (all features of the night plus this appendix):
 
 leela (Fedora) was unreachable from about 01:00 and is not part of the final runs. The marge
 kiosk runs `2dc1892` (the same code without this appendix).
+
+## Appendix C – Open questions (overview)
+
+<!-- open-questions:begin (generated by tools/build-dashboard/spec_questions.py overview; do not edit by hand) -->
+
+78 open questions (of 216); each is answered in the build dashboard or in the conversation, and decided where it stands. Refresh with `python3 tools/build-dashboard/spec_questions.py overview --write SPECIFICATION.md`.
+
+
+**2.8.1 Strava recording with S and ride photos (planning, 2026-11-16, v4.11)**
+
+- **§2.8.1 Q6** – The whole ride and the S … S part both on Strava – *proposal:* while auto_upload is on, upload only the S … S activities of a ride that has any; the whole ride otherwise. Built: both are queued (nothing decided)
+
+**2.11 The ride photographer (planned and built 2026-11-16, v4.21)**
+
+- **§2.11 Q5** – May a rider hide the other riders' photographers
+- **§2.11 Q4** – Named peaks and viewpoints
+
+**3.2 User Interface**
+
+- **§3.2 Q10** – Open the photo from the preview
+- **§3.2 Q11** – The preview during events
+- **§3.2 Q1** – Size and place
+- **§3.2 Q2** – The browser's Devices panel
+- **§3.2 Q3** – The look
+- **§3.2 Q4** – Auto zoom
+- **§3.2 Q5** – Route rides
+- **§3.2 Q6** – Gamepad
+- **§3.2 Q7** – Unicorn flight
+- **§3.2 Q8** – Place names
+- **§3.2 Q9** – The studio map
+
+**3.2.4 One local config file, and the start choice: a server or local (planning, 2026-11-17)**
+
+- **§3.2.4 Q1** – The file's name and place – *proposal:* ocw.toml in the platform's config folder (above)
+- **§3.2.4 Q3** – Ask at every start, or remember – *proposal:* ask at every start with the last choice preselected (Enter takes it)
+- **§3.2.4 Q4** – The local rider in local play – *proposal:* Ride locally uses a local rider kept in ocw.toml (name, weight, height, FTP, looks; no hearts, no shop – the starter equipment of Phase 4 Q16, or everything unlocked)
+
+**4.6.2 Near-field ground detail (planned and built 2026-11-17, v4.72)**
+
+- **§4.6.2 Q1** – A setting for it
+- **§4.6.2 Q2** – The VR amount – *proposal:* the VR preset of Phase 11
+- **§4.6.2 Q3** – Shadows and rain
+- **§4.6.2 Q4** – Beyond the 7 m band
+- **§4.6.2 Q5** – Stronger autumn leaves
+
+**7.1.7 Open questions (for the user)**
+
+- **§7.1.7 Q13** – NAT-PMP / PCP besides UPnP – *proposal:* add it only if riders report routers without UPnP (Apple AirPort, some OpenWrt set-ups)
+- **§7.1.7 Q15** – A Voice switch in Host a ride – *proposal:* no switch (as built; the headless server keeps --voice off)
+- **§7.1.7 Q17** – Who has muted whom, per viewer from the server – *proposal:* the server sends each viewer only whether each rider cannot hear that viewer (one flag per rider, computed per recipient)
+- **§7.1.7 Q19** – One list of Selected riders or two (follow-up of Q8)
+- **§7.1.7 Q21** – voice.spatial off with the hearing range
+- **§7.1.7 Q22** – Unmuting while nobody hears you – *proposal:* when M unmutes while Who hears me is No one, the HUD shows "nobody hears you – Settings > Voice > Voice room" for a few seconds. Alternative: as built
+- **§7.1.7 Q18** – Block, a rider's volume and the headphones (follow-up of Q9, with Q12 / Q17)
+
+**Phase 4 – Avatar and Bicycle Editor**
+
+- **Phase 4 Q26** – How the tiles show a part's gain (open; the built proposal above) – *proposal:* the same for every rider, matches the caps
+- **Phase 4 Q27** – A better part can show a loss on a capped bike (found with the tiles; open) – *proposal:* no change, fair and simple
+- **Phase 4 Q24** – The mouth while speaking (follow-up of the face, open) – *proposal:* the lips open a little (a short scale pulse)
+- **Phase 4 Q30** – kit pickers with a colour row as tiles – *proposal:* the colour as a row of swatch tiles above the item tiles
+- **Phase 4 Q31** – the hands on the road hoods – *proposal:* keep the draped grip; it is how riders hold the hoods most of the time
+- **Phase 4 Q18** – Base parts – *proposal:* base parts included, so 5,000 ♥ buys a complete bike
+- **Phase 4 Q19** – Which game servers credit hearts – *proposal:* only servers whose key is signed by our root credit directly; rides on other servers – your own, a friend's, Ride → Host a ride – count through the uploaded ride summary and its checks
+- **Phase 4 Q20** – Offline riding – *proposal:* a signed-in rider can ride offline with the last synced bikes and kit, read-only; the ride summary is queued and uploaded later, then credited after the checks
+- **Phase 4 Q21** – Existing riders – *proposal:* start fresh with 5,000 ♥
+
+**Phase 8 – Textures and Regional Look**
+
+- **Phase 8 Q12** – potholes in the ride feel
+- **Phase 8 Q13** – damage density
+- **Phase 8 Q14** – untagged main roads
+
+**Phase 9 – Sky, Time, Seasons and Weather**
+
+- **Phase 9 Q13** – The seasons' representative days (open, built as proposed, v4.28)
+- **Phase 9 Q14** – Calendar: does choosing a day set it or only select it? (open, v4.46)
+
+**Phase 13 – God mode: flying through the world as a unicorn**
+
+- **Phase 13 Q7** – Steep terrain off the road – *proposal:* the gradient is ridden as on a road up to 25 %; steeper uphill the rider stops (a "too steep" notice, as at a wall)
+- **Phase 13 Q8** – Where landing is allowed – *proposal:* anywhere on land inside the world's tiles (not on water, buildings or obstacles; the ring shows red there)
+- **Phase 13 Q9** – Riding off the road and the record – *proposal:* off-road riding counts like any riding – distance, elevation and time in the FIT file (the GPS track follows the real off-road position)
+
+**Phase 14 – Standalone VR: Quest, Pico and WebXR**
+
+- **Phase 14 Q6** – Where the headset loads the app from – *proposal:* the GitHub Pages preview for W4, a separate path (/xr/)
+- **Phase 14 Q7** – The trainer in the first runs – *proposal:* virtual power and autodrive only
+- **Phase 14 Q8** – Seated or standing reference – *proposal:* local-floor with the saddle height from the rider profile
+
+**Phase 15 – Model files: 3D objects in a standard open format**
+
+- **Phase 15 Q9** – The shape of a collision proxy col_* (15B, Phase 12) – *proposal:* keep both (a mesh for artists who model the proxy, an empty for quick ones)
+- **Phase 15 Q10** – Plants and props off their origin (15B) – *proposal:* re-export the four species with their lowest point at the stem base (when the generators are touched next, or by hand in Blender)
+
+**16H – Open questions (to the user)**
+
+- **§16H Q6** – A road closed for bikes (world patches, E5) – *proposal:* a closed road stays drawn, with a barrier sign at its ends, and offers no exit onto it (a new flag in the road graph and RoadNetwork)
+- **§16H Q7** – A patch target that is gone in a build (world patches, E5) – *proposal:* our official builds fail (a --strict-patch flag in our build scripts)
+- **§16H Q8** – Height points and the gradient limits (world patches, E5) – *proposal:* keep it so (the user's height wins)
+- **§16H Q9** – Shipping the patch with the package (world patches, E5; the ODbL offer of 16C Licences) – *proposal:* the patch ships as <package>.ocwpatch next to the package, its SHA-256 in the manifest, copied by world-builder publish and into the release zips. Alternative: inside the package as a section
+- **§16H Q10** – Where our official patches live (world patches, E5) – *proposal:* a tracked folder worlds/<region>/patches/, reviewed like code. Alternative: keep them in data/ and copy them by hand
+- **§16H Q11** – Defaults for height points (world patches, E5) – *proposal:* keep these defaults (both editable per point)
+- **§16H Q12** – The studio camera's default (E1) – *proposal:* hover by default (the camera stays put without input – suited to editing)
+- **§16H Q13** – Saved camera views in the studio (E1) – *proposal:* keep them per user in the studio session. Alternatives: store them in the world patch file (shared with the patch)
+- **§16H Q14** – Opening a package signed by an unknown user key in the studio (E1) – *proposal:* the studio asks with the game's trust dialog (Trust this key / Load once / Cancel, §4.7 User keys)
+- **§16H Q15** – More on the studio's 2D map (E1) – *proposal:* also draw the joined neighbouring packages (dimmed)
+- **§16H Q16** – Loading the patch next to a package (studio, E5) – *proposal:* keep it, with a notice "patch loaded: N operations" and Undo to unload. Alternative: ask first
+- **§16H Q17** – Where Build package writes and what it runs (studio, E5) – *proposal:* keep patched/ next to the package, and ship a small build recipe with each official package (the steps and their arguments, sources named)
+- **§16H Q18** – What a road edit acts on by default (studio, E5) – *proposal:* the whole OSM way by default (way targets follow OSM's tags, so rideability and the road dress follow, and they survive newer extracts better than edge ids)
+- **§16H Q19** – Where the studio's routes go so the game lists them (Routes, E1) – *proposal:* the game's Ride → Change ride lists the package's own routes plus every routes/*.ocwroute next to the package (and <data dir>/ocw/routes/ for routes without a package folder)
+- **§16H Q20** – The planner settings in the game's settings (Routes, E2) – *proposal:* when the game gets Navi → Plan route (Q3)
+- **§16H Q21** – Asking before via-points go to a BRouter server (Routes, E2, §12) – *proposal:* remember the answer per server (in the planner settings)
+- **§16H Q22** – The self-hosted BRouter on marge for tests (E2, 16G) – *proposal:* build the segments ourselves from our own OSM extracts and DEM with BRouter's map creator on marge (no download from brouter.de)
+- **§16H Q23** – Via-points of an imported track (Routes, E1) – *proposal:* keep 1 km. Alternatives: fewer (every 5 km, or only start and end – a drag then re-plans the whole track)
+- **§16H Q24** – The level-of-detail distance of props, creatures and workshop pieces (Models, E3) – *proposal:* props switch at 60 m, the unicorn at 40 m like the riders, workshop pieces never (seen only up close)
+
+**Phase 17 – ANT+ sensors: heart rate first**
+
+- **Phase 17 Q1** – The ANT+ network key
+- **Phase 17 Q2** – Which ANT stick and strap for the tests – *proposal:* the stick on marge (Linux first)
+- **Phase 17 Q3** – Desktop only, or the browser too – *proposal:* the desktop app first (Linux, then Windows, macOS)
+- **Phase 17 Q4** – Priority – *proposal:* after the open work of the phases in progress, A1 – A3 whenever an agent slot is free (they need no hardware)
+- **Phase 17 Q5** – Heart rate only, or further – *proposal:* heart rate first (this plan)
+- **Phase 17 Q6** – A BLE and an ANT+ heart-rate strap at once – *proposal:* one heart-rate source – the first remembered strap that connects; the other is a fallback after 5 s without data; Use for heart rate on a device's page. Or prefer one transport always (BLE or ANT+)
+- **Phase 17 Q7** – The driver route on Windows – *proposal:* document Zadig (WinUSB)
+- **Phase 17 Q8** – The udev rule on Linux – *proposal:* the Devices page shows the one-line rule and the command to install it; the .deb / package installs it itself. Or an ocw-desktop --install-udev-rule helper (asks for the password with pkexec)
+
+<!-- open-questions:end -->
