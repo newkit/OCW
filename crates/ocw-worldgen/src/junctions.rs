@@ -41,7 +41,7 @@ use crate::profile::limits;
 pub const THROUGH_WINDOW_M: f64 = 40.0;
 /// Reconciliation rounds (the patches are made again on the reconciled
 /// profiles; the second round mostly moves nothing).
-pub const ROUNDS: usize = 3;
+pub const ROUNDS: usize = 4;
 
 fn cumulative(points: &[[f64; 2]]) -> Vec<f64> {
     let mut out = Vec::with_capacity(points.len());
@@ -202,59 +202,96 @@ pub struct ReconcileStats {
     /// and the drawn surface there, on the patches made from the final
     /// profiles (m).
     pub residual_m: f64,
+    /// Samples whose drawn surface still differs by more than 1 cm, of
+    /// those set.
+    pub residual_over_1cm: usize,
+    pub residual_samples: usize,
+    /// Samples set on the longer blends of side roads whose blend the
+    /// edge's length cut short (first round).
+    pub longer_blend_samples: usize,
     /// Profile intervals near a junction steeper than their class limit
     /// + 1 % after the blend (the side roads' missed height).
     pub steep_intervals: usize,
 }
 
+/// The profile samples a junction surface is made from, which the
+/// reconciliation keeps (else the patches made again from the new
+/// profiles would differ – no fixed point): the two samples round each
+/// main arm's mouth (its height and grade there shape the patch: a through
+/// road's arms, every arm of a blended patch) and round the end of each
+/// side arm's blend (where the blend meets the road's own profile). A side
+/// arm's mouth row lies on the main road; its own height there only sets
+/// the blend's length.
+fn pinned_samples(g: &RoadGraph, js: &JunctionSet) -> std::collections::HashSet<(usize, usize)> {
+    let mut out = std::collections::HashSet::new();
+    for v in 0..g.vertices.len() {
+        let Some(p) = js.patch(g, v) else {
+            continue;
+        };
+        for (ai, a) in p.arms.iter().enumerate() {
+            let side = p.through.is_some_and(|t| !t.contains(&ai));
+            let anchor = match (side, a.blend_m > 0.0) {
+                (false, _) => a.mouth_m,
+                (true, true) => a.mouth_m + a.blend_m,
+                (true, false) => continue,
+            };
+            let e = &g.edges[a.edge];
+            let n = e.profile.len();
+            if n < 2 {
+                continue;
+            }
+            let s = a.s_edge(anchor).clamp(0.0, a.len);
+            let i0 = ((s / PROFILE_STEP_M).floor() as usize).min(n - 2);
+            out.insert((a.edge, i0));
+            out.insert((a.edge, i0 + 1));
+            // On a sample: its neighbours on both sides too.
+            for k in [i0, i0 + 1] {
+                if (sample_m(k, a.len) - s).abs() < 1e-6 {
+                    if k > 0 {
+                        out.insert((a.edge, k - 1));
+                    }
+                    if k + 1 < n {
+                        out.insert((a.edge, k + 1));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The drawn surface at every profile sample within reach of a junction
-/// surface: (edge, sample, height).
+/// surface that may change (not [`pinned_samples`], not where `keep` says
+/// no): (edge, sample, height). The vertex samples of a patch's arms only
+/// all together (one height at the vertex).
 fn drawn_samples(
     g: &RoadGraph,
     js: &JunctionSet,
     keep: &(dyn Fn(usize, f64) -> bool + Sync),
 ) -> Vec<(usize, usize, f64)> {
+    let pinned = pinned_samples(g, js);
     let verts: Vec<usize> = (0..g.vertices.len()).collect();
     let per = crate::par::map(&verts, crate::par::threads(), |&v| {
         let mut out = Vec::new();
         let Some(p) = js.patch(g, v) else {
             return out;
         };
-        // The vertex samples of all arms, set only together (one height).
         let mut at_vertex = Vec::new();
         let mut vertex_ok = true;
-        for (ai, a) in p.arms.iter().enumerate() {
+        for a in &p.arms {
             let e = &g.edges[a.edge];
             let len = e.length_m();
             let n = e.profile.len();
             let reach = a.mouth_m + a.blend_m + 1e-6;
             let cum = cumulative(&e.points);
-            // A main arm (a through road's, or any of a blended patch)
-            // shapes the patch with its height and grade at the mouth:
-            // the sample whose interval holds the mouth stays as it is, or
-            // the patch made again would differ (no fixed point). A side
-            // arm's mouth row lies on the main road; only its blend length
-            // follows its height.
-            let side = p.through.is_some_and(|t| !t.contains(&ai));
-            let dist = |i: usize| {
-                let s = sample_m(i, len);
-                if a.at_from { s } else { len - s }
-            };
-            let outward = |i: usize| -> Option<usize> {
-                if a.at_from {
-                    (i + 1 < n).then_some(i + 1)
-                } else {
-                    i.checked_sub(1)
-                }
-            };
             for i in 0..n {
                 let s = sample_m(i, len);
-                let m = dist(i);
+                let m = if a.at_from { s } else { len - s };
                 let vertex = if a.at_from { i == 0 } else { i == n - 1 };
-                let allowed = m <= reach
-                    && keep(a.edge, s)
-                    && (side || outward(i).is_some_and(|o| dist(o) <= a.mouth_m + 1e-6));
-                if !allowed {
+                if m > reach {
+                    continue;
+                }
+                if !keep(a.edge, s) || pinned.contains(&(a.edge, i)) {
                     if vertex {
                         vertex_ok = false;
                     }
@@ -275,6 +312,96 @@ fn drawn_samples(
         out
     });
     per.into_iter().flatten().collect()
+}
+
+/// The blends a side road needs but its edge's length cut short (J1 blends
+/// over at most half the edge): `L = clamp(|Δh| / 0.01, 5 m, 30 m)` from
+/// the main road's surface at the mouth (its height and slope) into the
+/// road's own profile (its height and grade there), baked into the
+/// profile up to one sample before the other end's junction (spec §4.8.8
+/// J2: the side arms' profiles follow the patch). Per side road the
+/// samples beyond its mouth on that curve: (edge, sample, height). The
+/// junction surface made again then blends over its short stretch between
+/// heights that already agree.
+fn longer_blends(
+    g: &RoadGraph,
+    js: &JunctionSet,
+    keep: &(dyn Fn(usize, f64) -> bool + Sync),
+) -> Vec<Vec<(usize, usize, f64)>> {
+    use ocw_world::junction::{BLEND_MAX_M, BLEND_MIN_M, BLEND_RATE};
+    let verts: Vec<usize> = (0..g.vertices.len()).collect();
+    crate::par::map(&verts, crate::par::threads(), |&v| {
+        let mut out = Vec::new();
+        let Some(p) = js.patch(g, v) else {
+            return out;
+        };
+        let Some(through) = p.through else {
+            return out;
+        };
+        for (ai, a) in p.arms.iter().enumerate() {
+            if through.contains(&ai) {
+                continue;
+            }
+            let e = &g.edges[a.edge];
+            let n = e.profile.len();
+            if n < 3 {
+                continue;
+            }
+            let mid = [
+                0.5 * (a.row[0][0] + a.row[1][0]),
+                0.5 * (a.row[0][1] + a.row[1][1]),
+                0.5 * (a.row[0][2] + a.row[1][2]),
+            ];
+            let dh = (mid[1] - a.h).abs();
+            let want = (dh / BLEND_RATE).clamp(BLEND_MIN_M, BLEND_MAX_M);
+            if a.blend_m + 0.5 >= want {
+                continue;
+            }
+            // Up to one sample before the other end's junction.
+            let k = usize::from(a.at_from);
+            let other = js.reach(g, a.edge)[k];
+            let room = a.len - a.mouth_m - other - PROFILE_STEP_M;
+            let l = want.min(room);
+            if l <= a.blend_m + 1.0 {
+                continue;
+            }
+            let d = 0.05;
+            let q = [mid[0], mid[2]];
+            let f = |x: [f64; 2]| p.main_surface(x);
+            let g0 = (f([q[0] + a.t[0] * d, q[1] + a.t[1] * d])
+                - f([q[0] - a.t[0] * d, q[1] - a.t[1] * d]))
+                / (2.0 * d);
+            let end = a.s_edge(a.mouth_m + l);
+            let p1 = e.height_at(end).unwrap_or(a.h);
+            // The own grade (outward) at the end.
+            let dir = if a.at_from { 1.0 } else { -1.0 };
+            let e2 = (end + dir * 0.05).clamp(0.0, a.len);
+            let m1 = if (e2 - end).abs() > 1e-9 {
+                (e.height_at(e2).unwrap_or(p1) - p1) / (e2 - end).abs()
+            } else {
+                a.grade
+            };
+            for i in 0..n {
+                let s = sample_m(i, a.len);
+                let m = if a.at_from { s } else { a.len - s };
+                if m <= a.mouth_m + 1e-6 || m >= a.mouth_m + l - 1e-6 || !keep(a.edge, s) {
+                    continue;
+                }
+                let t = (m - a.mouth_m) / l;
+                out.push((a.edge, i, hermite(t, mid[1], g0 * l, p1, m1 * l)));
+            }
+        }
+        out
+    })
+}
+
+/// Cubic Hermite on [0, 1].
+fn hermite(t: f64, p0: f64, m0: f64, p1: f64, m1: f64) -> f64 {
+    let (t2, t3) = (t * t, t * t * t);
+    (2.0 * t3 - 3.0 * t2 + 1.0) * p0
+        + (t3 - 2.0 * t2 + t) * m0
+        + (-2.0 * t3 + 3.0 * t2) * p1
+        + (t3 - t2) * m1
 }
 
 /// The drawn height on edge `ei` at `s` (point `c`) from the patch `p`'s
@@ -316,13 +443,26 @@ pub fn reconcile_profiles(
                 .count();
         }
         let drawn = drawn_samples(graph, &js, keep);
+        // First round: the side roads whose blend the edge's length cut
+        // short get the blend they need in their profile.
+        let longer = if round == 0 {
+            longer_blends(graph, &js, keep)
+        } else {
+            Vec::new()
+        };
         drop(js);
+        if round == 0 {
+            st.longer_blend_samples = longer.iter().map(Vec::len).sum();
+        }
         // A sample both ends reach (the middle of a short edge): the mean.
         let mut by: BTreeMap<(usize, usize), (f64, u32)> = BTreeMap::new();
         for (e, i, h) in drawn {
             let x = by.entry((e, i)).or_insert((0.0, 0));
             x.0 += h;
             x.1 += 1;
+        }
+        for (e, i, h) in longer.into_iter().flatten() {
+            by.insert((e, i), (h, 1));
         }
         let mut worst = 0.0f64;
         let mut changed = 0;
@@ -349,7 +489,12 @@ pub fn reconcile_profiles(
     // How far the final profiles are from the final patches' surface.
     let js = JunctionSet::new(graph);
     for (e, i, h) in drawn_samples(graph, &js, keep) {
-        st.residual_m = st.residual_m.max((h - graph.edges[e].profile[i]).abs());
+        let d = (h - graph.edges[e].profile[i]).abs();
+        st.residual_m = st.residual_m.max(d);
+        st.residual_samples += 1;
+        if d > 0.01 {
+            st.residual_over_1cm += 1;
+        }
     }
     // Steep intervals within the junctions' reach.
     for (ei, e) in graph.edges.iter().enumerate() {
@@ -536,6 +681,17 @@ pub struct Seam {
     pub seam_m: f64,
     /// Area where carriageways of two roads lie within 1 cm (m²).
     pub zfight_m2: f64,
+    /// A patch (else a mitre) and the number of roads meeting.
+    pub patch: bool,
+    pub degree: usize,
+    /// Where the largest seam lies and between which (edge index;
+    /// `usize::MAX` the patch).
+    pub seam_at: [f64; 2],
+    pub seam_owners: [usize; 2],
+    /// The seam lies at a side road too short for its blend (a through
+    /// road's side arm without one: its strip climbs or falls from the
+    /// main road's surface at once).
+    pub short_side: bool,
 }
 
 /// Seams above this (m) are findings (spec §4.8.8: no step above 2 cm).
@@ -641,7 +797,17 @@ pub fn seams(
                 }
             }
         }
-        Ok(measure(c, r, &tris, v))
+        let mut m = measure(c, r, &tris, v);
+        m.patch = matches!(rule, VertexRule::Patch(_));
+        m.degree = adj[v].len();
+        if let VertexRule::Patch(p) = rule {
+            m.short_side = p.arms.iter().enumerate().any(|(ai, a)| {
+                m.seam_owners.contains(&a.edge)
+                    && a.blend_m <= 0.0
+                    && p.through.is_some_and(|t| !t.contains(&ai))
+            });
+        }
+        Ok(m)
     });
     let mut out = Vec::new();
     let mut without = Vec::new();
@@ -768,7 +934,15 @@ fn measure(c: [f64; 2], r: f64, tris: &[([[f64; 3]; 3], usize)], v: usize) -> Se
                     .filter(|q| q.0 == e1)
                     .map(|q| q.1 - h1);
                 if let Some(slope) = before.or(after) {
-                    out.seam_m = out.seam_m.max((h1 - h0 - slope).abs());
+                    let s = (h1 - h0 - slope).abs();
+                    if s > out.seam_m {
+                        out.seam_m = s;
+                        out.seam_at = [
+                            c[0] - r + ix as f64 * SAMPLE_M,
+                            c[1] - r + iz as f64 * SAMPLE_M,
+                        ];
+                        out.seam_owners = [e0, e1];
+                    }
                 }
             }
         }

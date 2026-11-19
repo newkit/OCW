@@ -316,20 +316,49 @@ pub fn lint(pkg: &WorldPackage, water: Option<&WaterBodies>) -> LintReport {
 fn lint_junctions(pkg: &WorldPackage, g: &ocw_world::graph::RoadGraph, r: &mut LintReport) {
     use crate::junctions::{SEAM_M, ZFIGHT_M2, seams};
     let (found, without) = seams(pkg, g);
+    let note = |s: &crate::junctions::Seam| {
+        let owners: Vec<String> = s
+            .seam_owners
+            .iter()
+            .map(|&o| match g.edges.get(o) {
+                Some(e) => format!("edge {o} (w{})", e.osm_way),
+                None => "the patch".to_string(),
+            })
+            .collect();
+        format!(
+            "vertex {}, {} roads, {}; worst at {:.1},{:.1} between {}",
+            s.vertex,
+            s.degree,
+            if s.patch { "patch" } else { "mitre" },
+            s.seam_at[0],
+            s.seam_at[1],
+            owners.join(" and ")
+        )
+    };
     for s in &found {
         let at = g.vertices[s.vertex];
         if s.seam_m > SEAM_M {
+            r.add("junction.seam", 1.0, case(at, s.seam_m, 0, note(s)));
+            // By cause: a side road too short for its blend, a mitre, the
+            // rest.
+            let cause = if s.short_side {
+                "short_side_road"
+            } else if !s.patch {
+                "mitre"
+            } else {
+                "patch"
+            };
             r.add(
-                "junction.seam",
+                &format!("junction.seam.{cause}"),
                 1.0,
-                case(at, s.seam_m, 0, format!("vertex {}", s.vertex)),
+                case(at, s.seam_m, 0, note(s)),
             );
         }
         if s.zfight_m2 > ZFIGHT_M2 {
             r.add(
                 "junction.overlap",
                 s.zfight_m2,
-                case(at, s.zfight_m2, 0, format!("vertex {}", s.vertex)),
+                case(at, s.zfight_m2, 0, note(s)),
             );
         }
     }

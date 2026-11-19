@@ -1492,12 +1492,15 @@ fn package_time_zone(given: Option<String>, origin: (f64, f64)) -> Result<String
 /// The build log line of the junction passes (spec §4.8.8 J2).
 fn print_reconcile(kinks: usize, rs: &ocw_worldgen::junctions::ReconcileStats) {
     println!(
-        "junctions: {kinks} profile samples rounded across through junctions; {} junction surfaces, {} profile samples set to the drawn surface (up to {:.2} m), {} rounds (last {:.4} m), residual {:.4} m, {} intervals steeper than their class limit + 1 % near a junction",
+        "junctions: {kinks} profile samples rounded across through junctions; {} junction surfaces, {} profile samples set to the drawn surface (up to {:.2} m; {} of them on longer side-road blends), {} rounds (last {:.4} m), afterwards {} of {} samples more than 1 cm off the drawn surface (at most {:.3} m), {} intervals steeper than their class limit + 1 % near a junction",
         rs.patches,
         rs.samples,
         rs.max_change_m,
+        rs.longer_blend_samples,
         rs.rounds,
         rs.last_round_m,
+        rs.residual_over_1cm,
+        rs.residual_samples,
         rs.residual_m,
         rs.steep_intervals
     );

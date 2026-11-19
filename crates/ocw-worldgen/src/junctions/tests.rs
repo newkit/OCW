@@ -379,3 +379,106 @@ fn the_junction_data_describe_the_final_graph() {
         assert_eq!(set.rule(&g, v), computed.rule(&g, v));
     }
 }
+
+/// One junction of a real package in detail (`OCW_J2_WORLD=pkg
+/// OCW_J2_VERTEX=v`, skipped without): its arms, the strips of its edges
+/// as shaped, and its seam.
+#[test]
+fn junction_detail_of_a_real_package() {
+    let (Some(path), Some(v)) = (
+        std::env::var_os("OCW_J2_WORLD"),
+        std::env::var("OCW_J2_VERTEX").ok(),
+    ) else {
+        eprintln!("OCW_J2_WORLD / OCW_J2_VERTEX not set: skipped");
+        return;
+    };
+    let v: usize = v.parse().unwrap();
+    let pkg = WorldPackage::from_bytes(&std::fs::read(path).unwrap()).unwrap();
+    let g = pkg.graph.clone().unwrap();
+    let js = JunctionSet::new(&g);
+    let p = js.patch(&g, v).expect("a patch");
+    println!("vertex {v} at {:?}, through {:?}", g.vertices[v], p.through);
+    for (i, a) in p.arms.iter().enumerate() {
+        let e = &g.edges[a.edge];
+        println!(
+            "arm {i}: edge {} w{} {:?} {:.1} m wide, len {:.1}, from {} mouth {:.2} blend {:.2} h {:.3} grade {:.3} row {:?}",
+            a.edge,
+            e.osm_way,
+            e.class,
+            e.width_m,
+            a.len,
+            a.at_from,
+            a.mouth_m,
+            a.blend_m,
+            a.h,
+            a.grade,
+            a.row
+        );
+        println!("   profile {:?}", &e.profile[..e.profile.len().min(8)]);
+    }
+    let edges = strip_edges_of(&pkg, &g);
+    let c = g.vertices[v];
+    for (key, t) in &pkg.tiles {
+        let Some(ix) = edges.tile(*key, t.roads.len()) else {
+            continue;
+        };
+        for (s, &ei) in t.roads.iter().zip(ix) {
+            if !p.arms.iter().any(|a| a.edge as u32 == ei) {
+                continue;
+            }
+            let near = s
+                .points
+                .iter()
+                .any(|q| (f64::from(q[0]) - c[0]).hypot(f64::from(q[2]) - c[1]) < 40.0);
+            if !near {
+                continue;
+            }
+            println!(
+                "strip of edge {ei} in {key:?}: {} points, first {:?} last {:?}",
+                s.points.len(),
+                s.points[0],
+                s.points[s.points.len() - 1]
+            );
+            if let Some(sh) = js.shape_strip(&g, ei as usize, &s.points, s.width_m / 2.0) {
+                for (q, r) in sh.points.iter().zip(&sh.rows).take(6) {
+                    println!("   point {q:?} row {r:?}");
+                }
+            }
+        }
+    }
+    let (seams, _) = seams(&pkg, &g);
+    println!("{:?}", seams.iter().find(|s| s.vertex == v));
+}
+
+/// A steep side road too short for the blend it needs (J1 blends over at
+/// most half its edge): the reconciliation bakes the longer blend into its
+/// profile, so the drawn surface no longer climbs from the main road at
+/// once – the seam at the mouth shrinks.
+#[test]
+fn short_steep_side_roads_get_their_blend_in_the_profile() {
+    let v = [[0.0, 0.0], [-120.0, 0.0], [120.0, 0.0], [0.0, 26.0]];
+    let g0 = fixtures::graph(
+        &v,
+        vec![
+            Road::straight(&v, 1, 0, RoadClass::Secondary, 7.5, |s| {
+                (s - 120.0) * 0.06
+            }),
+            Road::straight(&v, 0, 2, RoadClass::Secondary, 7.5, |s| s * 0.06),
+            Road::straight(&v, 0, 3, RoadClass::Residential, 5.0, |s| s * 0.20),
+        ],
+    );
+    let p = JunctionSet::new(&g0).patch(&g0, 0).cloned().unwrap();
+    let side = p.arms.iter().find(|a| a.edge == 2).unwrap().clone();
+    assert!(side.blend_m < 5.0, "cut short: {side:?}");
+    let mut g = g0.clone();
+    let st = reconcile_profiles(&mut g, &|_, _| true);
+    assert!(st.longer_blend_samples >= 2, "{st:?}");
+    let seam = |g: &RoadGraph| {
+        let (s, _) = seams(&package(g), g);
+        s.iter().find(|s| s.vertex == 0).unwrap().seam_m
+    };
+    let (before, after) = (seam(&g0), seam(&g));
+    assert!(after < 0.5 * before, "seam {before:.3} -> {after:.3}");
+    // The far end keeps its height.
+    assert_eq!(g.edges[2].profile.last(), g0.edges[2].profile.last());
+}

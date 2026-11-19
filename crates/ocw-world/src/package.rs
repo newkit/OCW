@@ -962,8 +962,10 @@ fn read_sections(
 /// Sections a streaming client does not fetch with the base (spec §14
 /// Phase 8 T7, Phase 10 B2): the orthophoto corridor (`ORTC`) is tens to
 /// hundreds of MB in one chunk, more than the browser should load before
-/// the first tile; streamed packages are drawn without it.
-pub const STREAM_SKIPPED_SECTIONS: &[&[u8; 4]] = &[ORTHO_TAG];
+/// the first tile; streamed packages are drawn without it. The stored
+/// junctions (`JNCT`, spec §4.8.8 J2: 1 – 20 MB) are left out too: a
+/// streaming client computes the same junctions from the graph.
+pub const STREAM_SKIPPED_SECTIONS: &[&[u8; 4]] = &[ORTHO_TAG, JUNCTIONS_TAG];
 
 /// A package streamed in chunks (spec §4.5, §4.7; the browser app, spec
 /// §14 Phase 10 B2): the `header` chunk and the sections are decoded once,
