@@ -153,9 +153,12 @@ pub fn models() -> Vec<(Entry, Model)> {
         stamp(&mut m, &e, bike_extras(p, &rig));
         out.push((e, m));
     }
-    // The near rider without its part files (spec §14 Phase 4, 4N N8).
+    // The near rider without its part files (spec §14 Phase 4, 4N N8) and
+    // both riders without the helmets: those are worn from their own
+    // files (Phase 15 M3).
     let near_file = crate::rider_split::strip(&near);
-    for (file, detail, src) in [(RIDER, "High", &near_file), (RIDER_LOW, "Low", &low)] {
+    let low_file = crate::rider_split::strip_low(&low);
+    for (file, detail, src) in [(RIDER, "High", &near_file), (RIDER_LOW, "Low", &low_file)] {
         let mut m = src.clone();
         let e = entry(
             file,
