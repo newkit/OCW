@@ -125,12 +125,15 @@ impl DamageClient {
     }
 
     /// The HUD widget of the own rider at client time `now_s` (12F);
-    /// `None` with damage off.
+    /// `None` with damage off or without an own rider. Always there while
+    /// damage is on (the user, 2026-11-19): at 100 % before the server's
+    /// first damage of the rider arrives (2 Hz).
     pub fn widget(&self, own: Option<RiderId>, now_s: f64) -> Option<DamageWidgetView> {
         if !self.on {
             return None;
         }
-        let d = self.riders.get(&own?)?;
+        let fresh = Damage::fresh();
+        let d = self.riders.get(&own?).unwrap_or(&fresh);
         Some(widget(
             d,
             self.hit.map(|h| (now_s - h.at_s, h.rider, h.bike)),
@@ -415,6 +418,39 @@ mod tests {
         assert!(c.widget(Some(me), 14.2).is_none());
         assert!(c.effects(Some(me)).is_none());
         assert_eq!(c.dot(me), None);
+    }
+
+    /// The user (2026-11-19): with damage on the widget is always shown,
+    /// at 100 % before any hit – also before the server's first damage of
+    /// the rider (it comes at 2 Hz); never with damage off or without an
+    /// own rider.
+    #[test]
+    fn the_widget_shows_at_100_percent_before_any_hit() {
+        let me = RiderId(1);
+        let mut c = DamageClient::default();
+        assert!(c.widget(Some(me), 0.0).is_none(), "damage off");
+        c.on_snapshot(&snapshot(3, true, vec![(1, None)]), 0.1, Some(me));
+        let w = c.widget(Some(me), 0.1).expect("shown at once");
+        assert_eq!((w.rider.pct, w.bike.pct), (100, 100));
+        assert_eq!(
+            (w.rider.word.as_str(), w.bike.word.as_str()),
+            ("fine", "fine")
+        );
+        assert_eq!(
+            (w.rider.status, w.bike.status),
+            (Status::Good, Status::Good)
+        );
+        assert!(w.parts.iter().all(|p| p.is_none()) && w.labels.is_empty());
+        assert!(w.loss.is_none() && w.stop.is_none());
+        assert!(c.widget(None, 0.1).is_none(), "no own rider");
+        c.on_snapshot(
+            &snapshot(25, true, vec![(1, Some(&Damage::fresh()))]),
+            0.5,
+            Some(me),
+        );
+        assert_eq!(c.widget(Some(me), 0.5).unwrap().bike.pct, 100);
+        c.on_snapshot(&snapshot(30, false, vec![(1, None)]), 0.6, Some(me));
+        assert!(c.widget(Some(me), 0.6).is_none(), "damage off again");
     }
 
     #[test]

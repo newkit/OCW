@@ -14,7 +14,7 @@ pub struct JunctionPlugin;
 impl Plugin for JunctionPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_overlay)
-            .add_systems(Update, (update_overlay, update_notice));
+            .add_systems(Update, (update_overlay, update_notice, place_notice));
     }
 }
 
@@ -66,6 +66,22 @@ struct NoticeText;
 /// The notice's box (hidden while there is no notice).
 #[derive(Component)]
 struct NoticeBox;
+
+/// The notice's row (placed under the bike computer's panel).
+#[derive(Component)]
+struct NoticeRow;
+
+/// The gap between the bike computer's panel and the notice (px).
+const NOTICE_GAP_PX: f32 = 8.0;
+
+/// Where the notice starts (UI px from the top): under the bike computer's
+/// panel (`panel_bottom`, UI px; `None` while the HUD is hidden or not laid
+/// out yet), never higher than [`NOTICE_TOP_PX`]. The panel grows with the
+/// damage widget, always shown while damage is on (spec 14 Phase 12F): a
+/// fixed place ran over its meters and labels.
+pub fn notice_top(panel_bottom: Option<f32>) -> f32 {
+    panel_bottom.map_or(NOTICE_TOP_PX, |b| (b + NOTICE_GAP_PX).max(NOTICE_TOP_PX))
+}
 
 /// Where the notice box starts (px from the top): below the bike
 /// computer's panel with the damage widget (about 220 px), never over it.
@@ -127,14 +143,17 @@ fn spawn_overlay(mut commands: Commands) {
     // Notices ("Dead end in 800 m", "U-turn", "Crash! …") below the HUD
     // panel, on a dark box so they read over any sky.
     commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            top: px(NOTICE_TOP_PX),
-            left: px(0),
-            right: px(0),
-            justify_content: JustifyContent::Center,
-            ..default()
-        })
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: px(NOTICE_TOP_PX),
+                left: px(0),
+                right: px(0),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            NoticeRow,
+        ))
         .with_children(|row| {
             row.spawn((
                 Node {
@@ -233,6 +252,26 @@ fn fan_key(j: &JunctionView) -> Vec<FanArrow> {
             )
         })
         .collect()
+}
+
+/// Moves the notice under the bike computer's panel ([`notice_top`]).
+fn place_notice(
+    show: Option<Res<crate::hud::ShowHud>>,
+    panel: Query<(&ComputedNode, &UiGlobalTransform), With<crate::hud::HudTopPanel>>,
+    mut row: Query<&mut Node, With<NoticeRow>>,
+) {
+    let bottom = panel
+        .single()
+        .ok()
+        .filter(|_| show.is_none_or(|s| s.0))
+        .filter(|(c, _)| c.size().y > 0.0)
+        .map(|(c, t)| (t.translation.y + c.size().y * 0.5) * c.inverse_scale_factor());
+    let want = px(notice_top(bottom));
+    for mut n in &mut row {
+        if n.top != want {
+            n.top = want;
+        }
+    }
 }
 
 /// The notice line and its box (hidden without a notice).
@@ -397,6 +436,48 @@ mod tests {
         app.world_mut().resource_mut::<RideView>().notice = None;
         app.update();
         assert_eq!(state(&mut app).0, Display::None);
+    }
+
+    /// Regression (spec 14 Phase 12F, 2026-11-19 screenshots): with the
+    /// damage widget always shown the bike computer's panel reaches below
+    /// 240 px, and the puncture notice ran over the widget's words. The
+    /// notice now starts under the panel (never higher than before).
+    #[test]
+    fn the_notice_moves_under_a_taller_hud_panel() {
+        assert_eq!(notice_top(None), NOTICE_TOP_PX);
+        assert_eq!(notice_top(Some(150.0)), NOTICE_TOP_PX, "a short panel");
+        assert_eq!(notice_top(Some(296.0)), 296.0 + NOTICE_GAP_PX);
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(RideView::new(ocw_world::Route::test_loop()))
+            .insert_resource(crate::hud::ShowHud(true))
+            .add_plugins(JunctionPlugin);
+        app.update();
+        // A laid-out panel 284 px high whose centre is at 154 px (from 12
+        // to 296 px), at a scale factor of 1.
+        let computed = ComputedNode {
+            size: Vec2::new(820.0, 284.0),
+            inverse_scale_factor: 1.0,
+            ..default()
+        };
+        app.world_mut().spawn((
+            crate::hud::HudTopPanel,
+            computed,
+            UiGlobalTransform::from_translation(Vec2::new(422.0, 154.0)),
+        ));
+        app.update();
+        let top = |app: &mut App| {
+            let w = app.world_mut();
+            w.query_filtered::<&Node, With<NoticeRow>>()
+                .single(w)
+                .unwrap()
+                .top
+        };
+        assert_eq!(top(&mut app), px(296.0 + NOTICE_GAP_PX));
+        // With the HUD off the notice goes back to its place.
+        app.world_mut().resource_mut::<crate::hud::ShowHud>().0 = false;
+        app.update();
+        assert_eq!(top(&mut app), px(NOTICE_TOP_PX));
     }
 
     /// Regression (drone videos, 2026-11-17): the fan stayed on screen

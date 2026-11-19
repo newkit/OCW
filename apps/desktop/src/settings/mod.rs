@@ -828,7 +828,6 @@ mod tests {
                 || line.contains("ride.collisions")
                 || line.contains("ride.chaotic_bots")
                 || line.contains("ride.damage")
-                || line.contains("display.damage")
                 || line.contains("ride.proximity_cue")
                 || line.contains("ride.hit_warning")
                 || line.contains("display.camera_shake")
