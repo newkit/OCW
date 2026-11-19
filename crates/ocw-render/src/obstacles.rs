@@ -72,19 +72,19 @@ fn lin(r: f32, g: f32, b: f32) -> [f32; 4] {
 }
 
 /// Colours of the parts.
-struct Palette {
-    concrete: [f32; 4],
-    steel: [f32; 4],
-    wood: [f32; 4],
-    stone: [f32; 4],
-    hedge: [f32; 4],
-    red: [f32; 4],
-    white: [f32; 4],
-    dark: [f32; 4],
+pub(crate) struct Palette {
+    pub(crate) concrete: [f32; 4],
+    pub(crate) steel: [f32; 4],
+    pub(crate) wood: [f32; 4],
+    pub(crate) stone: [f32; 4],
+    pub(crate) hedge: [f32; 4],
+    pub(crate) red: [f32; 4],
+    pub(crate) white: [f32; 4],
+    pub(crate) dark: [f32; 4],
 }
 
 impl Palette {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             concrete: lin(0.62, 0.61, 0.58),
             steel: lin(0.66, 0.68, 0.70),
@@ -100,7 +100,7 @@ impl Palette {
 
 /// Adds a box along `a` → `b` (feet on the ground at both ends): `half`
 /// its half thickness, from `lo` to `hi` above the feet.
-fn beam(
+pub(crate) fn beam(
     m: &mut MeshArrays,
     a: [f32; 3],
     b: [f32; 3],
@@ -158,7 +158,7 @@ fn beam(
 /// Adds an upright prism of `sides` sides around `c` (radius `r` at the
 /// foot, `top` at the top) from `lo` to `hi` above it.
 #[allow(clippy::too_many_arguments)]
-fn prism(
+pub(crate) fn prism(
     m: &mut MeshArrays,
     c: [f32; 3],
     r: f32,
@@ -218,22 +218,20 @@ fn foot(pkg: &WorldPackage, ground: &TileGround, x: f32, z: f32, on_road: bool) 
 }
 
 /// A point obstacle's mesh.
-fn point_mesh(
+pub(crate) fn point_mesh(
     m: &mut MeshArrays,
-    pkg: &WorldPackage,
-    ground: &TileGround,
     p: &PointObstacle,
     c: &Palette,
+    ground: &dyn Fn(f32, f32) -> f32,
 ) {
-    let on_road = p.road_barrier();
-    let y = foot(pkg, ground, p.pos[0], p.pos[1], on_road);
+    let y = ground(p.pos[0], p.pos[1]);
     let at = [p.pos[0], y, p.pos[1]];
     let h = p.height_m.max(0.2);
     // Across the way the barrier stands on.
     let (ax, az) = (-p.angle.sin(), p.angle.cos());
     let across = |w: f32| {
         let q = [at[0] + ax * w, at[2] + az * w];
-        [q[0], foot(pkg, ground, q[0], q[1], on_road), q[1]]
+        [q[0], ground(q[0], q[1]), q[1]]
     };
     let span = if p.width_m > 0.5 { p.width_m } else { 3.0 };
     match p.kind {
@@ -276,7 +274,7 @@ fn point_mesh(
                 let base = [at[0] + ux * off, at[2] + uz * off];
                 let q = |w: f32| {
                     let q = [base[0] + ax * w, base[1] + az * w];
-                    [q[0], foot(pkg, ground, q[0], q[1], on_road), q[1]]
+                    [q[0], ground(q[0], q[1]), q[1]]
                 };
                 let (a, b) = (q(from), q(to));
                 beam(m, a, b, 0.03, h - 0.06, h, c.steel);
@@ -285,6 +283,21 @@ fn point_mesh(
             }
         }
         _ => prism(m, at, 0.25, 0.2, -0.1, h, 6, c.dark),
+    }
+}
+
+/// The model file of a point obstacle kind (spec §14 Phase 15, 15H names;
+/// kinds without their own file use the generic barrier post).
+pub fn model_id_of(kind: ObstacleKind) -> &'static str {
+    match kind {
+        ObstacleKind::Bollard => "props/bollard-round",
+        ObstacleKind::Post => "props/post-hexagonal",
+        ObstacleKind::Pylon => "props/pylon-pyramid",
+        ObstacleKind::Block => "props/block-concrete-box",
+        ObstacleKind::Gate => "props/gate-swing",
+        ObstacleKind::LiftGate => "props/barrier-lift-arm",
+        ObstacleKind::CycleBarrier => "props/barrier-cycle-staggered",
+        _ => "props/barrier-post-hexagonal",
     }
 }
 
@@ -372,7 +385,9 @@ pub fn tile_obstacle_meshes(
         } else {
             &mut rest
         };
-        point_mesh(&mut target[chunk_of(p.pos)], pkg, ground, p, &colours);
+        let on_road = p.road_barrier();
+        let at = |x: f32, z: f32| foot(pkg, ground, x, z, on_road);
+        point_mesh(&mut target[chunk_of(p.pos)], p, &colours, &at);
     }
     for l in t
         .lines

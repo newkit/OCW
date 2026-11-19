@@ -43,6 +43,7 @@ pub mod package;
 pub mod photo_preview;
 pub mod photographer;
 pub mod platform;
+pub mod prop_export;
 pub mod quality;
 pub mod ragdoll;
 pub mod region_look;

@@ -1143,10 +1143,87 @@ source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
 author = "Open Cycling World contributors"
 
 [[asset]]
+file = "props/barrier-cycle-staggered.glb"
+kind = "prop"
+license = "MIT OR Apache-2.0"
+source = "own work, exported once from the OCW generators (ocw-render obstacles / street_lamps, spec §14 Phase 15 MX); the file is the source (Q6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "props/barrier-lift-arm.glb"
+kind = "prop"
+license = "MIT OR Apache-2.0"
+source = "own work, exported once from the OCW generators (ocw-render obstacles / street_lamps, spec §14 Phase 15 MX); the file is the source (Q6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "props/barrier-post-hexagonal.glb"
+kind = "prop"
+license = "MIT OR Apache-2.0"
+source = "own work, exported once from the OCW generators (ocw-render obstacles / street_lamps, spec §14 Phase 15 MX); the file is the source (Q6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "props/block-concrete-box.glb"
+kind = "prop"
+license = "MIT OR Apache-2.0"
+source = "own work, exported once from the OCW generators (ocw-render obstacles / street_lamps, spec §14 Phase 15 MX); the file is the source (Q6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "props/bollard-round.glb"
+kind = "prop"
+license = "MIT OR Apache-2.0"
+source = "own work, exported once from the OCW generators (ocw-render obstacles / street_lamps, spec §14 Phase 15 MX); the file is the source (Q6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "props/gate-swing.glb"
+kind = "prop"
+license = "MIT OR Apache-2.0"
+source = "own work, exported once from the OCW generators (ocw-render obstacles / street_lamps, spec §14 Phase 15 MX); the file is the source (Q6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "props/lamp-street-arm-main.glb"
+kind = "prop"
+license = "MIT OR Apache-2.0"
+source = "own work, exported once from the OCW generators (ocw-render obstacles / street_lamps, spec §14 Phase 15 MX); the file is the source (Q6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "props/lamp-street-arm-path.glb"
+kind = "prop"
+license = "MIT OR Apache-2.0"
+source = "own work, exported once from the OCW generators (ocw-render obstacles / street_lamps, spec §14 Phase 15 MX); the file is the source (Q6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "props/lamp-street-arm-road.glb"
+kind = "prop"
+license = "MIT OR Apache-2.0"
+source = "own work, exported once from the OCW generators (ocw-render obstacles / street_lamps, spec §14 Phase 15 MX); the file is the source (Q6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
 file = "props/phone-slab.glb"
 kind = "prop"
 license = "MIT OR Apache-2.0"
 source = "own work, modelled for OCW (spec §2.6 rider status signs); the file is the source (spec §14 Phase 15 Q6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "props/post-hexagonal.glb"
+kind = "prop"
+license = "MIT OR Apache-2.0"
+source = "own work, exported once from the OCW generators (ocw-render obstacles / street_lamps, spec §14 Phase 15 MX); the file is the source (Q6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "props/pylon-pyramid.glb"
+kind = "prop"
+license = "MIT OR Apache-2.0"
+source = "own work, exported once from the OCW generators (ocw-render obstacles / street_lamps, spec §14 Phase 15 MX); the file is the source (Q6)"
 author = "Open Cycling World contributors"
 
 [[asset]]

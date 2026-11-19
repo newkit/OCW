@@ -28,6 +28,15 @@ pub const LAMP_RGB: [f32; 3] = [1.0, 0.80, 0.55];
 /// Emissive of a glowing lamp head (physical units, scaled by exposure).
 const HEAD_GLOW: f32 = 90.0;
 
+/// The street lamp files by the head's height (spec §14 Phase 15, 15H:
+/// `props/lamp-street-<shape>-<road>`): main roads 8 m, other roads 6 m,
+/// paths and tracks 4.5 m ([`ocw_world::lamps::lamp_height_m`]).
+pub const LAMP_FILES: [(&str, f32); 3] = [
+    ("props/lamp-street-arm-main", 8.0),
+    ("props/lamp-street-arm-road", 6.0),
+    ("props/lamp-street-arm-path", 4.5),
+];
+
 /// The lamps of a tile, ready to upload.
 #[derive(Default)]
 pub struct TileLamps {
@@ -56,7 +65,7 @@ pub struct LampMaterials {
     night: f32,
 }
 
-fn push_box(m: &mut MeshArrays, centre: Vec3, half: Vec3, rot: Quat, colour: [f32; 4]) {
+pub(crate) fn push_box(m: &mut MeshArrays, centre: Vec3, half: Vec3, rot: Quat, colour: [f32; 4]) {
     // Six faces, four vertices each, outward normals.
     let faces = [
         (Vec3::X, Vec3::Y, Vec3::Z),
