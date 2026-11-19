@@ -241,6 +241,19 @@ impl RiderRig {
         }
     }
 
+    /// The rig of the model drawn for the character `c` (spec §14 Phase
+    /// 4, 4N): the hip joints as wide as its seat
+    /// ([`crate::rider::node_translation`]; bug 2026-11-19), so the legs
+    /// reach the pedals from where they are drawn. The shoulders keep the
+    /// rest rig's (the hands find the bar from either).
+    pub fn for_body(&self, c: &ocw_core::Character) -> Self {
+        let g = crate::rider::girth_of(nodes::TORSO, c);
+        Self {
+            hips: self.hips.map(|h| Vec3::new(h.x * g.x, h.y, h.z)),
+            ..*self
+        }
+    }
+
     pub fn arm(&self) -> f32 {
         self.upper_arm + self.forearm
     }

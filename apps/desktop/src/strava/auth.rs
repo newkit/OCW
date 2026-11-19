@@ -46,7 +46,7 @@ pub struct StravaConfig {
     pub client_id: Option<String>,
     #[serde(default)]
     pub client_secret: Option<String>,
-    /// The old switch of the automatic upload (before v5.00): read once
+    /// The old switch of the automatic upload (before v5.02): read once
     /// into the setting `strava.auto_upload` when that is not set yet
     /// (spec 2.8.1 Q6), then ignored.
     #[serde(default)]

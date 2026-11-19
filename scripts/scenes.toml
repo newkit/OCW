@@ -3022,56 +3022,56 @@ shot = 10
 # styles and the facial hair. Made-up rider name only (Ada Rider).
 
 [[scene]]
-name = "char-shape-anorexia-a-mirror"
-description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body A, shape anorexia (rider Ada Rider at 45 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+name = "char-shape-super-skinny-a-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body A, shape super skinny (rider Ada Rider at 45 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 45.0\nheight_cm = 178.0\n"
-at = ["2=character --body a --shape anorexia", "2.6=workshop open", "3.2=workshop mirror"]
+at = ["2=character --body a --shape super-skinny", "2.6=workshop open", "3.2=workshop mirror"]
 shot = 11
 pick = false
 
 [[scene]]
-name = "char-shape-anorexia-a-ride"
-description = "Character editor (4N): body A, shape anorexia riding seated on the Hills route, close orbit from the left (2.4 m)"
+name = "char-shape-super-skinny-a-ride"
+description = "Character editor (4N): body A, shape super skinny riding seated on the Hills route, close orbit from the left (2.4 m)"
 args = ["--route", "hills", "--bots", "0", "--power", "220"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 45.0\nheight_cm = 178.0\n"
-at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body a --shape anorexia", "2.5=camera.orbit 90 4 2.4"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body a --shape super-skinny", "2.5=camera.orbit 90 4 2.4"]
 shot = 9
 pick = false
 
 [[scene]]
-name = "char-shape-anorexia-b-mirror"
-description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body B, shape anorexia (rider Ada Rider at 45 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+name = "char-shape-super-skinny-b-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body B, shape super skinny (rider Ada Rider at 45 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 45.0\nheight_cm = 178.0\n"
-at = ["2=character --body b --shape anorexia", "2.6=workshop open", "3.2=workshop mirror"]
+at = ["2=character --body b --shape super-skinny", "2.6=workshop open", "3.2=workshop mirror"]
 shot = 11
 pick = false
 
 [[scene]]
-name = "char-shape-anorexia-b-ride"
-description = "Character editor (4N): body B, shape anorexia riding seated on the Hills route, close orbit from the left (2.4 m)"
+name = "char-shape-super-skinny-b-ride"
+description = "Character editor (4N): body B, shape super skinny riding seated on the Hills route, close orbit from the left (2.4 m)"
 args = ["--route", "hills", "--bots", "0", "--power", "220"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 45.0\nheight_cm = 178.0\n"
-at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body b --shape anorexia", "2.5=camera.orbit 90 4 2.4"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body b --shape super-skinny", "2.5=camera.orbit 90 4 2.4"]
 shot = 9
 pick = false
 
 [[scene]]
-name = "char-shape-anorexia-c-mirror"
-description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body C, shape anorexia (rider Ada Rider at 45 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
+name = "char-shape-super-skinny-c-mirror"
+description = "Character editor (spec §14 Phase 4, 4N Q6 / Q6b): body C, shape super skinny (rider Ada Rider at 45 kg and 1.78 m: inside the band of the weight) in the workshop mirror"
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 45.0\nheight_cm = 178.0\n"
-at = ["2=character --body c --shape anorexia", "2.6=workshop open", "3.2=workshop mirror"]
+at = ["2=character --body c --shape super-skinny", "2.6=workshop open", "3.2=workshop mirror"]
 shot = 11
 pick = false
 
 [[scene]]
-name = "char-shape-anorexia-c-ride"
-description = "Character editor (4N): body C, shape anorexia riding seated on the Hills route, close orbit from the left (2.4 m)"
+name = "char-shape-super-skinny-c-ride"
+description = "Character editor (4N): body C, shape super skinny riding seated on the Hills route, close orbit from the left (2.4 m)"
 args = ["--route", "hills", "--bots", "0", "--power", "220"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 45.0\nheight_cm = 178.0\n"
-at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body c --shape anorexia", "2.5=camera.orbit 90 4 2.4"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.81", "2=character --body c --shape super-skinny", "2.5=camera.orbit 90 4 2.4"]
 shot = 9
 pick = false
 
@@ -4650,3 +4650,132 @@ args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-243
 at = ["0.5=hud.map off", "1=time 14:00"]
 shot = 40
 pick = false
+
+# --- Rider hips: legs joined to the body (bug 2026-11-19) -----------------------
+# Close views of the hips for the body shapes before / after the fix (spec 4N).
+
+[[scene]]
+name = "hips-anorexia-a-side-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape anorexia, base body A, close orbit from the left side (1.3 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape anorexia --body a", "2.5=teleport 0.81", "2.5=camera.orbit 90 2 1.3"]
+shot = 9
+
+[[scene]]
+name = "hips-anorexia-a-front-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape anorexia, base body A, close orbit from the front left (1.4 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape anorexia --body a", "2.5=teleport 0.81", "2.5=camera.orbit 150 6 1.4"]
+shot = 9
+
+[[scene]]
+name = "hips-anorexia-a-back-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape anorexia, base body A, close orbit from behind (1.4 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape anorexia --body a", "2.5=teleport 0.81", "2.5=camera.orbit 15 12 1.4"]
+shot = 9
+
+[[scene]]
+name = "hips-anorexia-b-side-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape anorexia, base body B, close orbit from the left side (1.3 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape anorexia --body b", "2.5=teleport 0.81", "2.5=camera.orbit 90 2 1.3"]
+shot = 9
+
+[[scene]]
+name = "hips-normal-a-side-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape normal, base body A, close orbit from the left side (1.3 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape normal --body a", "2.5=teleport 0.81", "2.5=camera.orbit 90 2 1.3"]
+shot = 9
+
+[[scene]]
+name = "hips-normal-a-front-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape normal, base body A, close orbit from the front left (1.4 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape normal --body a", "2.5=teleport 0.81", "2.5=camera.orbit 150 6 1.4"]
+shot = 9
+
+[[scene]]
+name = "hips-normal-a-back-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape normal, base body A, close orbit from behind (1.4 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape normal --body a", "2.5=teleport 0.81", "2.5=camera.orbit 15 12 1.4"]
+shot = 9
+
+[[scene]]
+name = "hips-normal-b-side-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape normal, base body B, close orbit from the left side (1.3 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape normal --body b", "2.5=teleport 0.81", "2.5=camera.orbit 90 2 1.3"]
+shot = 9
+
+[[scene]]
+name = "hips-obese-a-side-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape obese, base body A, close orbit from the left side (1.3 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape obese --body a", "2.5=teleport 0.81", "2.5=camera.orbit 90 2 1.3"]
+shot = 9
+
+[[scene]]
+name = "hips-obese-a-front-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape obese, base body A, close orbit from the front left (1.4 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape obese --body a", "2.5=teleport 0.81", "2.5=camera.orbit 150 6 1.4"]
+shot = 9
+
+[[scene]]
+name = "hips-obese-a-back-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape obese, base body A, close orbit from behind (1.4 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape obese --body a", "2.5=teleport 0.81", "2.5=camera.orbit 15 12 1.4"]
+shot = 9
+
+[[scene]]
+name = "hips-obese-b-side-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape obese, base body B, close orbit from the left side (1.3 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape obese --body b", "2.5=teleport 0.81", "2.5=camera.orbit 90 2 1.3"]
+shot = 9
+
+[[scene]]
+name = "hips-anorexia-a-side-standing"
+description = "Legs joined to the body: shape anorexia, close orbit from the left side, standing on the pedals on the 11.5 % ramp"
+args = ["--route", "hills", "--bots", "0", "--power", "420"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape anorexia --body a", "2.5=teleport 3.82", "2.5=camera.orbit 90 2 1.4"]
+shot = 9
+
+[[scene]]
+name = "hips-anorexia-a-side-sprint"
+description = "Legs joined to the body: shape anorexia, close orbit from the left side, sprinting at 1100 W"
+args = ["--route", "hills", "--bots", "0", "--power", "1100"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape anorexia --body a", "2.5=teleport 0.81", "2.5=camera.orbit 90 2 1.4"]
+shot = 9
+
+[[scene]]
+name = "hips-obese-a-side-standing"
+description = "Legs joined to the body: shape obese, close orbit from the left side, standing on the pedals on the 11.5 % ramp"
+args = ["--route", "hills", "--bots", "0", "--power", "420"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape obese --body a", "2.5=teleport 3.82", "2.5=camera.orbit 90 2 1.4"]
+shot = 9
+
+[[scene]]
+name = "hips-obese-a-side-sprint"
+description = "Legs joined to the body: shape obese, close orbit from the left side, sprinting at 1100 W"
+args = ["--route", "hills", "--bots", "0", "--power", "1100"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape obese --body a", "2.5=teleport 0.81", "2.5=camera.orbit 90 2 1.4"]
+shot = 9
+
+[[scene]]
+name = "hips-anorexia-mirror"
+description = "Legs joined to the body: shape anorexia at the workshop mirror (changing corner)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["1.5=character --shape anorexia --body a", "2=workshop open", "2.6=workshop mirror"]
+shot = 20
+
+[[scene]]
+name = "hips-obese-mirror"
+description = "Legs joined to the body: shape obese at the workshop mirror (changing corner)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["1.5=character --shape obese --body a", "2=workshop open", "2.6=workshop mirror"]
+shot = 20
