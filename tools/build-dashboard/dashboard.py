@@ -53,7 +53,7 @@ HERE = Path(__file__).resolve().parent
 # page knows the version it was served with and reloads itself when the
 # server runs another one (after a pull and a restart), so an open tab never
 # keeps an old page.
-VERSION = "1.9.0"
+VERSION = "1.9.1"
 POLL_INTERVAL_S = 5.0
 # Build slots per machine, as in scripts/remote.sh: the machine's `slots`
 # (or [defaults] slots) in machines.toml, else these per-OS defaults.

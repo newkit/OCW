@@ -162,7 +162,7 @@ def parse_questions(text: str) -> list:
         if not title:  # "**Q1 – decided (v2.48):** an Oculus Rift CV1 …"
             title = re.split(r"[:(;,.]", body, maxsplit=1)[0].strip()[:60]
         decided = bool(_DECIDED.search(note))
-        where = ("Phase %d" % phase) if phase is not None else (("§" + section) if section else (heading or "Spec"))
+        where = ("Phase %d" % phase) if phase is not None else (section if section else (heading or "Spec"))
         out.append({
             "phase": phase, "phase_title": phase_title, "section": section, "heading": heading,
             "id": "%s Q%d" % (where, n), "n": n, "title": title, "text": body,

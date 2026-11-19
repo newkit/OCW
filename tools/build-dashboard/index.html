@@ -482,7 +482,7 @@ function renderQuestions(q, force) {
     if (!items.length) continue;
     const isOpen = openGroups ? openGroups.has(g.group) : g.open > 0;
     html += `<details class="qg" data-g="${esc(g.group)}"${isOpen ? " open" : ""}><summary>${esc(g.group)} – ${esc(g.title)} ` +
-      `<span class="muted">· ${g.open} open${g.decided ? `, ${g.decided} decided` : ""}${g.section ? ` · §14 ${esc(g.section)}` : ""}</span></summary>`;
+      `<span class="muted">· ${g.open} open${g.decided ? `, ${g.decided} decided` : ""}${g.section ? ` · 14 ${esc(g.section)}` : ""}</span></summary>`;
     for (const it of items) {
       const note = it.status_note ? ` <span class="badge ${it.status === "open" ? "warn" : "ok"}">${esc(it.status_note)}</span>` : "";
       html += `<div class="q ${it.status}"><span class="qid">Q${esc(it.n)}</span><span class="qt">${esc(it.title)}</span>${note}` +

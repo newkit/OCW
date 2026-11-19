@@ -76,7 +76,7 @@ class ParseTest(unittest.TestCase):
     def test_finds_every_question_with_phase_and_section(self):
         self.assertEqual([q["id"] for q in self.qs], [
             "Phase 4 Q1", "Phase 4 Q4", "Phase 4 Q5", "Phase 9 Q1", "Phase 9 Q2", "Phase 9 Q6", "Phase 9 Q8",
-            "Phase 9 Q10", "Phase 11 Q1", "Phase 11 Q7", "Phase 12 Q6", "§15 Q1"])
+            "Phase 9 Q10", "Phase 11 Q1", "Phase 11 Q7", "Phase 12 Q6", "15 Q1"])
         q = self.by["Phase 4 Q1"]
         self.assertEqual((q["phase"], q["phase_title"], q["section"]), (4, "Avatar and Bicycle Editor", "4L"))
         self.assertEqual(self.by["Phase 9 Q2"]["phase_title"], "Sky, Time, Seasons and Weather")

@@ -85,7 +85,7 @@ The Mac's login shell is **zsh**: commands sent with `remote.sh MACHINE ssh` mus
 
 - **The art project** (the **OCW Build Diary**: a video per build day plus a growing diary video, made from *every* screenshot, video, sound, log, commit, merge and test of the day) lives in its own repository, **[newkit/OCW-ART](https://github.com/newkit/OCW-ART)**, with a checkout next to this one (`../OCW-ART`; spec v3.50). Everything art-related goes there: `ART-PROJECT.md` (its spec), the tool (`diary.py`), the day scripts (`days/`), renders, publishing (its release `build-history`), the archive (`build-history/`, media git-ignored, masked text tracked) and the hourly collector (systemd user timer on deb, `make install-timer` / `timer-status` there). It reads this checkout from outside (git log, this spec, `test-output/`, `config/machines.toml` via `scripts/remote.sh`) and writes its status to `test-output/build-log/DAY/art.json`, which the build dashboard shows. `make art-*` here only point there. Keep all media of test runs in `test-output/`; never delete build-history material. At the end of a build day, in OCW-ART: write the day script, render, publish, commit the day's tracked text files. The regional reference boards for the world look stay here, in `docs/reference/`.
 
-Reference the spec by section (e.g. "spec §6.1") in discussions and commits. New decisions go directly into the spec (bump the version table at the top) rather than into a separate document.
+Reference the spec by section number (e.g. "spec 6.1") in discussions and commits – **no paragraph sign (§) in the spec** (user, 2026-11-19). New decisions go directly into the spec (bump the version table at the top) rather than into a separate document.
 
 ## Architecture essentials
 
