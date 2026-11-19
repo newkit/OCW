@@ -39,6 +39,7 @@ button, or `systemctl --user restart ocw-build-dashboard.service`).
 
 | Version | Date | Change | Unit changed |
 |---|---|---|---|
+| 1.9.2 | 2026-11-19 | Appendix C lists each open question with its full text (what it is about, the options, the proposal), not just its title | no |
 | 1.9.1 | 2026-11-19 | Question ids without the paragraph sign ("2.8.1 Q6"), as the spec no longer uses it | no |
 | 1.9.0 | 2026-11-19 | **Open questions overview**: `spec_questions.py overview SPEC [--write]` prints or writes Appendix C of the spec (all open questions grouped by phase / section, with their proposals, between generated markers); "superseded" counts as closed like decided / postponed | no |
 | 1.8.0 | 2026-11-18 | **Battery guard** (`battery_guard.py`): per machine a stop and a start threshold (`battery_stop` / `battery_start` in `config/build-machines.toml`, `build_machines.py set NAME --battery-guard 20:80\|off`, *Battery guard…* on the card, `battery_guard` in `POST /api/machines`); below the stop value (two readings in a row) the machine is disabled with "battery guard: N % (below S %) – building again above R %" and `disabled_by = "battery-guard"`, above the start value it is enabled again – only when the guard disabled it; unreachable or missing readings change nothing; "battery guard 20 % / 80 %" and its last action on the card; actions in `machines.jsonl` (`kind` `battery-guard`) and the dashboard's log. leela: 20 % / 80 % | no |

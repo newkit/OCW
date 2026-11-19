@@ -209,7 +209,7 @@ class OverviewTest(unittest.TestCase):
         import spec_questions as sq
         once = sq.write_overview(self.SPEC)
         self.assertIn("## Appendix C – Open questions (overview)", once)
-        self.assertIn("**Phase 4 Q2** – Wheels", once)
+        self.assertIn("**Phase 4 Q2 – Wheels:** proposal: deep rims (aero). Or shallow?", once)
         self.assertNotIn("Phase 4 Q1**", once)
         self.assertNotIn("Phase 4 Q3**", once)  # superseded counts as closed
         self.assertIn("1 open questions (of 3)", once)

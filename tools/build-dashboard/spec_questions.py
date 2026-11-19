@@ -283,8 +283,8 @@ def overview(questions: list) -> str:
     where the question stands (its heading)."""
     open_q = [q for q in questions if q["status"] == "open"]
     lines = [OVERVIEW_BEGIN, "",
-             "%d open questions (of %d); each is answered in the build dashboard or in the conversation, and "
-             "decided where it stands. Refresh with `python3 tools/build-dashboard/spec_questions.py overview "
+             "%d open questions (of %d), each with what it is about, the options and the proposal; answered in the build dashboard "
+             "or in the conversation, and decided where it stands. Refresh with `python3 tools/build-dashboard/spec_questions.py overview "
              "--write SPECIFICATION.md`." % (len(open_q), len(questions)), ""]
     group = None
     for q in open_q:
@@ -293,12 +293,12 @@ def overview(questions: list) -> str:
             group = g
             lines += ["", "**%s**" % g, ""]
         title = q["title"].rstrip("?").strip() or "(untitled)"
-        prop = ""
-        if q.get("proposal"):
+        body = q["text"].strip()
+        if q.get("proposal") and not re.search(r"\b(proposal|proposed|recommended)\b", body, re.I):
             p = q["proposal"].strip().rstrip(".;:, ")
             p += ")" * max(0, p.count("(") - p.count(")"))
-            prop = " – *proposal:* %s" % p
-        lines.append("- **%s** – %s%s" % (q["id"], title, prop))
+            body += " Proposal: %s." % p
+        lines.append("- **%s – %s:** %s" % (q["id"], title, body))
     lines += ["", OVERVIEW_END]
     return "\n".join(lines)
 
