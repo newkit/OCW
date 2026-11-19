@@ -15,7 +15,7 @@
 
 use ocw_assets::parts::{Catalogue, Part, Slot, Tier};
 use ocw_core::BikeType;
-use ocw_core::hearts::format as hearts;
+use super::wallet::shown as hearts;
 use ocw_sim::build::{self as bike_build, Build, PartTable};
 
 use super::picker::{Button, Dialog, Kind, Picker, Row, WHERE_PARTS_COUNT, detail, included_line};
@@ -174,6 +174,9 @@ fn grams(g: u32) -> String {
 /// The price on the right of a row, with the lock when the balance is too
 /// low.
 fn priced(price: i64, balance: i64) -> (String, bool) {
+    if balance >= super::wallet::UNLIMITED / 2 {
+        return ("free".into(), false);
+    }
     if balance < price {
         (
             format!(

@@ -39,7 +39,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use clap::{Arg, ArgAction, Command};
 use ocw_assets::parts::{Catalogue, Slot};
-use ocw_core::hearts::format as hearts;
+use wallet::shown as hearts;
 use ocw_core::{ProfileId, Rgb, RiderLook};
 use ocw_render::RideView;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
@@ -160,6 +160,18 @@ pub fn riding_damage(world: &World, rider: &str) -> Option<ocw_protocol::v1::Dam
     ocw_client::damage::Carried::hello(carried.as_ref(), false, s.wallet.clock())
 }
 
+/// How the garage works in this session (spec 3.2.4 Q4).
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PlayMode {
+    /// The wallet's rules: hearts, prices, locks (Phase 4, 4E; the tests,
+    /// and the base of Campaign mode, postponed: one old rusty city bike at
+    /// the start, the rest earned).
+    #[default]
+    Hearts,
+    /// *Ride locally*: every bike and all gear free, no hearts.
+    Training,
+}
+
 /// Whether the server's damage goes into the garage (spec §14 Phase 12
 /// Q6): never in captures (scripted runs) or with `--no-hearts` (the
 /// kiosk / show mode); from local and remote servers alike.
@@ -172,10 +184,16 @@ impl Plugin for WorkshopPlugin {
         if !app.is_plugin_added::<WorkshopCorePlugin>() {
             app.add_plugins(WorkshopCorePlugin);
         }
-        let (wallet, warnings) = match wallet::default_dir() {
+        // Ride locally rides in Training mode (spec 3.2.4 Q4): its own
+        // garage, everything free. Campaign mode (postponed) will use the
+        // wallet with its hearts.
+        let training = app.world().get_resource::<PlayMode>() == Some(&PlayMode::Training);
+        let (mut wallet, warnings) = match wallet::default_dir() {
+            Some(dir) if !cfg!(test) && training => Wallet::load(&dir.join(wallet::TRAINING_DIR)),
             Some(dir) if !cfg!(test) => Wallet::load(&dir),
             _ => (Wallet::in_memory(), Vec::new()),
         };
+        wallet.training = training;
         for w in warnings {
             warn!("workshop: {w}");
         }

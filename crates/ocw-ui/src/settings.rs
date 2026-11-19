@@ -1,6 +1,6 @@
 //! The settings of both apps (spec §3.2.1; §14 Phase 10, B5 / B6): the
 //! registry's values (`ocw_client::settings`) and where their text is
-//! kept – `settings.toml` on the desktop ([`FileStore`]), the page's
+//! kept – `ocw.toml [settings]` on the desktop (its `SlotStore`), the page's
 //! `localStorage` in the browser (the same TOML) – and the console
 //! commands `set KEY VALUE [--temp]` and `get [KEY]`. A live setting
 //! applies at once through its console line; the browser keeps the
@@ -186,7 +186,7 @@ fn register_commands(app: &mut App) {
     app.console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("set")
-            .about("Change a setting and save it (settings.toml; in the browser: this browser) (--temp: this session only)")
+            .about("Change a setting and save it (ocw.toml; in the browser: this browser) (--temp: this session only)")
             .arg(
                 Arg::new("temp")
                     .long("temp")

@@ -141,7 +141,7 @@ impl std::fmt::Display for Source {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Default => "default",
-            Self::File => "settings.toml",
+            Self::File => "saved",
             Self::Temp => "temporary",
             Self::CommandLine => "command line",
         })
@@ -1653,7 +1653,7 @@ master = 80
         let (mut s, _) = Settings::parse("[ride]\nbots = 2\n").unwrap();
         assert_eq!(
             s.line("ride.bots").unwrap(),
-            "ride.bots = 2 (settings.toml)"
+            "ride.bots = 2 (saved)"
         );
         s.set_temp("ride.bots", "7").unwrap();
         assert_eq!(

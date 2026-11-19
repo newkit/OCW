@@ -1,7 +1,7 @@
 //! Settings and rider profiles of the desktop app (spec §3.2.1, M2).
 //!
-//! - [`registry`]: typed settings in `settings.toml` (Bevy-free),
-//! - [`riders`]: rider profiles in `riders.toml` (Bevy-free),
+//! - [`registry`]: typed settings in `ocw.toml [settings]` (Bevy-free),
+//! - [`riders`]: the local riders in `ocw.toml [riders]` (Bevy-free),
 //! - [`pages`]: the Settings / Workshop menu pages as rows of command lines
 //!   (Bevy-free; the menu shell renders them),
 //! - this module: loading at the start (before the other plugins read
@@ -9,15 +9,14 @@
 //!   settings resource are shared with the browser app (`ocw_ui::settings`,
 //!   spec §14 Phase 10, B6).
 //!
-//! Both files live in the user config directory (`~/.config/ocw/` on
-//! Linux, `OCW_CONFIG_DIR` overrides it); `--settings-file` names another
-//! settings file, and `riders.toml` is then read next to it.
+//! Both are sections of the local config file (spec 3.2.4, `crate::config`):
+//! `ocw.toml` in the user config directory (`~/.config/ocw/` on Linux,
+//! `OCW_CONFIG_DIR` overrides it), or the file `--settings-file` names.
+//! The old `settings.toml` and `riders.toml` are migrated into it once.
 
 pub mod pages;
 pub mod registry;
 pub mod riders;
-
-use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
 use clap::parser::ValueSource;
@@ -25,17 +24,18 @@ use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
 
 use crate::Args;
+use crate::config::{ConfigFiles, Slot, SlotStore};
 use registry::{Apply, SETTINGS, Settings, Value};
 use riders::{Rider, RiderEdit, Riders};
 
 /// The settings and where they are saved (shared with the browser app).
-pub use ocw_ui::settings::{FileStore, UserSettings};
+pub use ocw_ui::settings::UserSettings;
 
-/// The settings saved in the file at `path`.
-pub fn file_settings(settings: Settings, path: PathBuf) -> UserSettings {
+/// The settings saved in `slot` (`ocw.toml [settings]`).
+pub fn slot_settings(settings: Settings, slot: Slot) -> UserSettings {
     UserSettings {
         settings,
-        store: Some(Box::new(FileStore(path))),
+        store: Some(Box::new(SlotStore(slot))),
     }
 }
 
@@ -43,7 +43,8 @@ pub fn file_settings(settings: Settings, path: PathBuf) -> UserSettings {
 #[derive(Resource, Default)]
 pub struct RiderProfiles {
     pub riders: Riders,
-    pub path: Option<PathBuf>,
+    /// Where they are kept (`ocw.toml [riders]`).
+    pub path: Option<Slot>,
     /// Who rides now: the active profile at the start, or `--rider`.
     /// Changes to the profiles apply from the next start.
     pub riding: Rider,
@@ -52,7 +53,7 @@ pub struct RiderProfiles {
 impl RiderProfiles {
     pub(crate) fn save(&self) -> Result<(), String> {
         match &self.path {
-            Some(p) => self.riders.save(p),
+            Some(p) => p.write(&self.riders.to_toml()),
             None => Err("no configuration directory".into()),
         }
     }
@@ -83,24 +84,30 @@ pub fn autodrive_at_start(world: &World) -> bool {
         .is_none_or(|s| s.value("controls.autodrive").as_bool().expect("a switch"))
 }
 
-/// `settings.toml`: `--settings-file`, else in the config directory.
-pub fn settings_path(given: Option<&Path>) -> Option<PathBuf> {
-    given
-        .map(Path::to_path_buf)
-        .or_else(|| crate::known_devices::config_dir().map(|d| d.join("settings.toml")))
-}
-
-/// `riders.toml`, next to the settings file.
-pub fn riders_path(settings: &Path) -> PathBuf {
-    settings.with_file_name("riders.toml")
-}
-
 /// What [`load`] found, for the app's resources.
 pub struct Loaded {
     pub settings: UserSettings,
     pub riders: RiderProfiles,
     /// Problems to report (also printed to the console at the start).
     pub warnings: Vec<String>,
+    /// Where the local config is (`None`: no config directory).
+    pub files: Option<ConfigFiles>,
+    /// The old files moved into `ocw.toml` / `secrets.toml` at this start
+    /// (logged once: they are `*.bak` afterwards).
+    pub migrated: Vec<String>,
+}
+
+/// The settings section's text: `None` nothing saved yet.
+fn read_section<T>(
+    slot: Option<&Slot>,
+    parse: fn(&str) -> Result<(T, Vec<String>), String>,
+) -> Option<Result<(T, Vec<String>), String>> {
+    let slot = slot?;
+    Some(match slot.read() {
+        Ok(Some(text)) => parse(&text).map_err(|e| format!("{}: {e}", slot.describe())),
+        Ok(None) => parse(""),
+        Err(e) => Err(e),
+    })
 }
 
 /// Loads settings and riders and applies them to the command-line
@@ -110,11 +117,18 @@ pub struct Loaded {
 /// the riding profile's unless `--name` was given.
 pub fn load(args: &mut Args, matches: &ArgMatches) -> Loaded {
     let mut warnings = Vec::new();
-    let path = settings_path(args.settings_file.as_deref());
-    let settings = match path.as_deref().map(Settings::load) {
+    let files = ConfigFiles::from_args(args.settings_file.as_deref());
+    let mut migrated = Vec::new();
+    if let Some(f) = &files {
+        let (notes, problems) = crate::config::migrate(f);
+        migrated = notes;
+        warnings.extend(problems);
+    }
+    let slot = files.as_ref().map(|f| f.section("settings"));
+    let settings = match read_section(slot.as_ref(), Settings::parse) {
         Some(Ok((s, w))) => {
             warnings.extend(w);
-            file_settings(s, path.clone().expect("a path"))
+            slot_settings(s, slot.clone().expect("a slot"))
         }
         Some(Err(e)) => {
             // Keep the broken file: use the defaults and do not save.
@@ -123,8 +137,8 @@ pub fn load(args: &mut Args, matches: &ArgMatches) -> Loaded {
         }
         None => UserSettings::default(),
     };
-    let rpath = path.as_deref().map(riders_path);
-    let riders = match rpath.as_deref().map(Riders::load) {
+    let rpath = files.as_ref().map(|f| f.section("riders"));
+    let riders = match read_section(rpath.as_ref(), Riders::parse) {
         Some(Ok((r, w))) => {
             warnings.extend(w);
             r
@@ -153,6 +167,8 @@ pub fn load(args: &mut Args, matches: &ArgMatches) -> Loaded {
             riding,
         },
         warnings,
+        files,
+        migrated,
     };
     apply_to_args(args, matches, &mut out.settings.settings);
     if !from_command_line(matches, "name") {
@@ -201,6 +217,11 @@ pub fn apply_to_args(args: &mut Args, matches: &ArgMatches, settings: &mut Setti
 #[derive(Resource, Default)]
 pub struct LoadWarnings(pub Vec<String>);
 
+/// The old files moved into `ocw.toml` at this start (spec 3.2.4), logged
+/// once.
+#[derive(Resource, Default)]
+pub struct Migrated(pub Vec<String>);
+
 /// Registers the commands; the app inserts [`UserSettings`] and
 /// [`RiderProfiles`] from [`load`] (defaults that are not saved otherwise).
 pub struct SettingsPlugin;
@@ -210,12 +231,21 @@ impl Plugin for SettingsPlugin {
         app.add_plugins(ocw_ui::settings::SettingsPlugin)
             .init_resource::<RiderProfiles>()
             .init_resource::<LoadWarnings>()
+            .init_resource::<Migrated>()
             .add_systems(Startup, print_warnings);
         register_commands(app);
     }
 }
 
-fn print_warnings(warnings: Res<LoadWarnings>, mut console: ResMut<ConsoleState>) {
+fn print_warnings(
+    warnings: Res<LoadWarnings>,
+    migrated: Res<Migrated>,
+    mut console: ResMut<ConsoleState>,
+) {
+    for m in &migrated.0 {
+        info!("config: moved {m}");
+        console.print(format!("config: moved {m}"));
+    }
     for w in &warnings.0 {
         warn!("{w}");
         console.print(format!("settings: {w}"));
@@ -335,7 +365,7 @@ fn register_commands(app: &mut App) {
                 p.riding.summary()
             ));
             if let Some(path) = &p.path {
-                out.push(format!("file: {}", path.display()));
+                out.push(format!("file: {}", path.describe()));
             }
             Ok(out.join("\n"))
         },
@@ -488,6 +518,7 @@ mod tests {
     use ocw_render::console::ConsoleCorePlugin;
 
     use super::*;
+    use std::path::{Path, PathBuf};
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("ocw-settings-{name}-{}", std::process::id()));
@@ -522,6 +553,11 @@ mod tests {
         .unwrap();
         let f = file.to_str().unwrap();
         let (args, loaded) = startup(&["ocw-desktop", "--settings-file", f]);
+        // The old files became sections of the given file (spec 3.2.4).
+        assert_eq!(loaded.migrated.len(), 2, "{:?}", loaded.migrated);
+        assert!(dir.join("settings.toml.bak").exists() && dir.join("riders.toml.bak").exists());
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.contains("[settings.ride]") && text.contains("[[riders.rider]]"), "{text}");
         assert_eq!(
             (args.bots, args.power, args.record),
             (2, 150.0, Some(false))
@@ -571,7 +607,7 @@ mod tests {
         assert_eq!(loaded.riders.riding, Rider::default());
         assert_eq!(
             loaded.settings.location(),
-            Some(format!("file: {}", file.display()))
+            Some(format!("file: {} [settings]", file.display()))
         );
         // The registry defaults are the options' defaults.
         for (key, value) in [
@@ -588,7 +624,7 @@ mod tests {
     }
 
     fn app(dir: &Path) -> App {
-        let path = dir.join("settings.toml");
+        let files = ConfigFiles::in_dir(dir);
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
@@ -608,10 +644,10 @@ mod tests {
             // `activities.folder` (the Strava recordings' folder).
             crate::activities::ActivitiesPlugin,
         ))
-        .insert_resource(file_settings(Settings::default(), path.clone()))
+        .insert_resource(slot_settings(Settings::default(), files.section("settings")))
         .insert_resource(RiderProfiles {
             riders: Riders::default(),
-            path: Some(riders_path(&path)),
+            path: Some(files.section("riders")),
             riding: Rider::default(),
         })
         // Registered by the devices plugin in the app.
@@ -625,6 +661,25 @@ mod tests {
             |_, _| Ok(String::new()),
         ));
         app
+    }
+
+    /// `ocw.toml [settings]` as saved.
+    fn saved_settings(dir: &Path) -> String {
+        ConfigFiles::in_dir(dir)
+            .section("settings")
+            .read()
+            .unwrap()
+            .unwrap_or_default()
+    }
+
+    /// The local riders of `ocw.toml [riders]` as saved.
+    fn saved_riders(dir: &Path) -> (Riders, Vec<String>) {
+        let text = ConfigFiles::in_dir(dir)
+            .section("riders")
+            .read()
+            .unwrap()
+            .unwrap();
+        Riders::parse(&text).unwrap()
     }
 
     fn run(app: &mut App, line: &str) -> Vec<String> {
@@ -672,7 +727,7 @@ mod tests {
                 .resource::<ocw_render::obstacles::ObstacleSettings>()
                 .road_barriers
         );
-        let saved = std::fs::read_to_string(dir.join("settings.toml")).unwrap();
+        let saved = saved_settings(dir.as_path());
         assert!(saved.contains("[display]\nfps = true"), "{saved}");
         assert_eq!(
             run(&mut app, "set ride.bots 2")[0],
@@ -691,14 +746,14 @@ mod tests {
             *app.world().resource::<ocw_render::camera::CameraMode>(),
             ocw_render::camera::CameraMode::Top
         );
-        let saved = std::fs::read_to_string(dir.join("settings.toml")).unwrap();
+        let saved = saved_settings(dir.as_path());
         assert!(!saved.contains("camera"), "{saved}");
         let get = run(&mut app, "get display.camera");
         assert_eq!(get[0], "display.camera = top (temporary)");
         assert!(get[1].contains("chase, side, top"));
         let all = run(&mut app, "get");
         assert_eq!(all.len(), SETTINGS.len() + 1);
-        assert!(all.iter().any(|l| l == "ride.bots = 2 (settings.toml)"));
+        assert!(all.iter().any(|l| l == "ride.bots = 2 (saved)"));
         assert!(all.last().unwrap().starts_with("file: "));
         // `set` is a user command: it works without dev permission.
         assert_eq!(
@@ -732,7 +787,7 @@ mod tests {
         assert_eq!(list[1], "* Anna B: 61.5 kg, 168 cm");
         assert_eq!(list[2], "riding now: Rider (75 kg)");
         // Saved: the next start rides Anna B with 61.5 kg.
-        let (r, _) = Riders::load(&dir.join("riders.toml")).unwrap();
+        let (r, _) = saved_riders(&dir);
         assert_eq!(r.active().physics().rider_mass_kg, 61.5);
         assert!(run(&mut app, "riders.remove Nobody")[0].starts_with("error: no rider"));
         run(&mut app, "riders.remove \"Anna B\"");
@@ -740,6 +795,31 @@ mod tests {
             app.world().resource::<RiderProfiles>().riders.active().name,
             "Alex"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The local rider of *Ride locally* (spec 3.2.4 Q4) is kept in
+    /// `ocw.toml [riders]`: name, weight, height, FTP come back at the next
+    /// start.
+    #[test]
+    fn the_local_rider_round_trips_through_ocw_toml() {
+        let dir = temp_dir("local-rider");
+        let mut app = app(&dir);
+        run(
+            &mut app,
+            "riders.add \"Ada Rider\" --weight 61 --height 168 --ftp 230",
+        );
+        let text = std::fs::read_to_string(dir.join("ocw.toml")).unwrap();
+        assert!(text.contains("[[riders.rider]]"), "{text}");
+        let f = dir.join("ocw.toml");
+        let (args, loaded) = startup(&["ocw-desktop", "--settings-file", f.to_str().unwrap()]);
+        assert!(loaded.migrated.is_empty());
+        let r = &loaded.riders.riding;
+        assert_eq!(
+            (r.name.as_str(), r.weight_kg, r.height_cm, r.ftp_w),
+            ("Ada Rider", 61.0, Some(168.0), Some(230))
+        );
+        assert_eq!(args.name, "Ada Rider");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -767,7 +847,7 @@ mod tests {
         ] {
             assert!(run(&mut app, bad)[0].starts_with("error"), "{bad}");
         }
-        let (r, _) = Riders::load(&dir.join("riders.toml")).unwrap();
+        let (r, _) = saved_riders(&dir);
         let alex = r.active();
         assert_eq!(
             alex.physics(),

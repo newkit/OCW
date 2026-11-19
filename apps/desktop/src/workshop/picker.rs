@@ -30,7 +30,7 @@ use ocw_core::bike::PALETTE;
 use ocw_core::character::{
     self as ch, Age, BEARDS, GLASSES, HAIR_COLOURS, HAIR_STYLES, MOUSTACHES, SKIN_TONES,
 };
-use ocw_core::hearts::format as hearts;
+use super::wallet::shown as hearts;
 use ocw_core::{BaseBody, BodyShape, Character};
 use ocw_sim::build::{self as bike_build, Benefit, Build, PartTable};
 
@@ -597,7 +597,9 @@ pub fn row_text(cat: &Catalogue, row: &Row, balance: i64) -> (String, String, bo
         Kind::Owned { .. } => (left, format!("owned{with}"), false),
         Kind::Shop => {
             let price = i64::from(p.hearts);
-            if balance < price {
+            if balance >= super::wallet::UNLIMITED / 2 {
+                (left, "free".into(), false)
+            } else if balance < price {
                 (
                     left,
                     format!(
@@ -997,12 +999,16 @@ pub fn dialog(
             if balance < price {
                 return None;
             }
-            let mut text = format!(
-                "For {}. Balance {} → {}",
-                hearts(price),
-                hearts(balance),
-                hearts(balance - price)
-            );
+            let mut text = if balance >= super::wallet::UNLIMITED / 2 {
+                "Free in Training mode.".to_string()
+            } else {
+                format!(
+                    "For {}. Balance {} → {}",
+                    hearts(price),
+                    hearts(balance),
+                    hearts(balance - price)
+                )
+            };
             let inc = cat.included(p);
             if !inc.is_empty() {
                 let names: Vec<&str> = inc.iter().map(|p| p.name.as_str()).collect();

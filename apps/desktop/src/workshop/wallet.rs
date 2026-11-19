@@ -595,6 +595,9 @@ pub struct BikeReceipt {
 /// The wallet: every rider's garage and the ledger.
 #[derive(Debug, Default)]
 pub struct Wallet {
+    /// Training mode (spec 3.2.4 Q4, *Ride locally*): every bike and all
+    /// gear are free, no hearts are booked or earned ([`UNLIMITED`]).
+    pub training: bool,
     garages: BTreeMap<String, Garage>,
     ledger: Vec<Entry>,
     /// Ledger lines not yet appended to the file.
@@ -605,6 +608,24 @@ pub struct Wallet {
 }
 
 pub const WORKSHOP_FILE: &str = "workshop.toml";
+
+/// The balance in Training mode: everything is affordable (far from
+/// overflowing when prices are added or taken off).
+pub const UNLIMITED: i64 = i64::MAX / 4;
+
+/// Training mode's own garage, beside the wallet (`<data dir>/ocw/training/`):
+/// what is tried there never mixes with a wallet of earned hearts (Campaign
+/// mode, postponed, will ride the wallet itself).
+pub const TRAINING_DIR: &str = "training";
+
+/// A balance or price for the rider: hearts, or "free" in Training mode.
+pub fn shown(hearts: i64) -> String {
+    if hearts >= UNLIMITED / 2 {
+        "free (Training mode)".into()
+    } else {
+        ocw_core::hearts::format(hearts)
+    }
+}
 pub const LEDGER_FILE: &str = "hearts-ledger.jsonl";
 
 /// `<data dir>/ocw` (`OCW_DATA_DIR` overrides it), where the wallet lives.
@@ -678,6 +699,10 @@ impl Wallet {
     }
 
     fn book(&mut self, rider: &str, delta: i64, reason: &str, reference: String) {
+        // Training mode: nothing costs or earns hearts.
+        if self.training {
+            return;
+        }
         let t = self.stamp();
         self.ledger.push(Entry {
             t,
@@ -707,8 +732,12 @@ impl Wallet {
         self.garages.get(rider)
     }
 
-    /// The rider's balance: the sum of the ledger.
+    /// The rider's balance: the sum of the ledger ([`UNLIMITED`] in
+    /// Training mode).
     pub fn balance(&self, rider: &str) -> i64 {
+        if self.training {
+            return UNLIMITED;
+        }
         self.ledger
             .iter()
             .filter(|e| e.rider == rider)
@@ -1323,6 +1352,62 @@ mod tests {
             .filter(|p| fits(p, road.bike("road").unwrap()))
             .min_by_key(|p| p.hearts)
             .expect("a priced part")
+    }
+
+    /// Training mode (spec 3.2.4 Q4, *Ride locally*): every bike and all
+    /// gear are available – the dearest part and the dearest frameset of
+    /// every type are bought with no hearts, nothing is booked or earned.
+    #[test]
+    fn training_mode_unlocks_everything() {
+        let mut w = Wallet::in_memory();
+        w.training = true;
+        w.garage("Ada Rider", ProfileId::Road);
+        assert_eq!(w.balance("Ada Rider"), UNLIMITED);
+        assert_eq!(shown(w.balance("Ada Rider")), "free (Training mode)");
+        let dear = cat()
+            .parts
+            .iter()
+            .filter(|p| p.slot == Slot::Wheels)
+            .max_by_key(|p| p.hearts)
+            .unwrap();
+        let road = Garage::starter("x", ProfileId::Road);
+        let fitting = |p: &&Part| fits(p, road.bike("road").unwrap());
+        let dear_road = cat()
+            .parts
+            .iter()
+            .filter(|p| p.slot == Slot::Wheels && p.hearts > 0)
+            .filter(fitting)
+            .max_by_key(|p| p.hearts)
+            .unwrap();
+        assert!(dear.hearts > 500, "a part beyond the start hearts");
+        w.buy(cat(), "Ada Rider", "road", &dear_road.id).unwrap();
+        // Every frameset (every bike) can be bought, up to the wall's hooks.
+        let frames: Vec<&Part> = cat()
+            .parts
+            .iter()
+            .filter(|p| p.slot == Slot::Frame && p.hearts > 0)
+            .collect();
+        assert!(!frames.is_empty());
+        for f in frames.iter().take(MAX_BIKES - 6) {
+            w.buy_bike(cat(), "Ada Rider", &f.id, &[])
+                .unwrap_or_else(|e| panic!("{}: {e}", f.id));
+        }
+        // Kit too.
+        let kit = cat()
+            .parts
+            .iter()
+            .filter(|p| p.slot.is_kit() && p.hearts > 0)
+            .max_by_key(|p| p.hearts)
+            .unwrap();
+        w.buy(cat(), "Ada Rider", "road", &kit.id).unwrap();
+        // No hearts move: nothing booked, riding earns none.
+        w.credit("Ada Rider", 40, "ride");
+        assert!(w.history("Ada Rider", 10).is_empty());
+        assert_eq!(w.balance("Ada Rider"), UNLIMITED);
+        // The same wallet outside Training mode keeps its rules.
+        let mut h = Wallet::in_memory();
+        h.garage("Ada Rider", ProfileId::Road);
+        assert!(h.buy(cat(), "Ada Rider", "tt", &dear.id).is_err());
     }
 
     #[test]
