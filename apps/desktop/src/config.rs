@@ -390,14 +390,21 @@ pub fn set_section(doc: &mut DocumentMut, key: &str, text: &str) -> Result<(), S
         t.decor_mut().set_prefix("\n");
     }
     // Tables after the first get a blank line before them.
+    let bare = |d: &toml_edit::Decor| {
+        d.prefix()
+            .is_none_or(|p| p.as_str().is_none_or(str::is_empty))
+    };
     for (_, v) in t.iter_mut() {
-        if let Item::Table(sub) = v
-            && sub
-                .decor()
-                .prefix()
-                .is_none_or(|p| p.as_str().is_none_or(str::is_empty))
-        {
-            sub.decor_mut().set_prefix("\n");
+        match v {
+            Item::Table(sub) if bare(sub.decor()) => sub.decor_mut().set_prefix("\n"),
+            Item::ArrayOfTables(a) => {
+                if let Some(first) = a.iter_mut().next()
+                    && bare(first.decor())
+                {
+                    first.decor_mut().set_prefix("\n");
+                }
+            }
+            _ => {}
         }
     }
     doc.insert(key, Item::Table(t));
@@ -911,7 +918,7 @@ mod tests {
         assert!(text.starts_with("# my notes\n[settings.audio]"), "{text}");
         assert!(text.contains("master = 50"), "{text}");
         assert!(text.contains("[start]\nchoice = \"local\""), "{text}");
-        assert!(text.contains("[[devices.device]]"), "{text}");
+        assert!(text.contains("\n\n[[devices.device]]"), "{text}");
         // The order of the sections stays: settings, start, devices.
         let (a, b, c) = (
             text.find("[settings.audio]").unwrap(),
