@@ -31,7 +31,10 @@
 # OCW_WORLD_DATA: the folder with tenerife/ (default ~/src/OCW/data).
 # OCW_B_HIDE=FROM-TO (seconds of Bea's app, e.g. 100-125): Bea hides the
 # other riders' photographers from FROM to TO (`set photographer.others
-# off|on`, spec 2.11 Q5) and saves her view every 3 s in between.
+# off|on`, spec 2.11 Q5) and saves her view every 3 s in between
+# (OCW_B_HIDE_STEP: another step). The times are the app's game-loop
+# time, which lags the clock while the world loads (X11 on the CPU: up
+# to ~100 s at the start).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 out=${1:-test-output/photographer-shared}
@@ -101,8 +104,10 @@ b_hide=()
 if [ -n "${OCW_B_HIDE:-}" ]; then
   hide_from=${OCW_B_HIDE%-*}
   hide_to=${OCW_B_HIDE#*-}
-  b_hide=(--at "$hide_from=set photographer.others off" --at "$hide_to=set photographer.others on")
-  for ((s = hide_from + 2; s < hide_to; s += 3)); do
+  # (no HUD preview of these screenshots: it would be in the next ones)
+  b_hide=(--cmd "set display.photo_preview off"
+    --at "$hide_from=set photographer.others off" --at "$hide_to=set photographer.others on")
+  for ((s = hide_from + 2; s < hide_to; s += ${OCW_B_HIDE_STEP:-3})); do
     b_hide+=(--at "$s=screenshot $out/b/hidden-$(printf %03d "$s").jpg")
   done
 fi
