@@ -6,13 +6,24 @@
 
 use std::collections::BTreeSet;
 
-use ocw_render::menu::{ChartBar, MenuChart};
+use ocw_render::menu::{ChartBar, MenuChart, MenuMap};
 
 use super::pages::{Activate, Page, Row, info_row, open_row, short_label};
 use crate::history::{
-    Bests, CURVE_S, History, Period, distance_label, duration_label, height_label, hms,
-    start_label, total_summary,
+    Bests, CURVE_S, History, Period, RideEntry, distance_label, duration_label, height_label, hms,
+    speed_label, start_label, total_summary,
 };
+
+/// Rows of a page besides Back (the ten-foot rule: seven items).
+const MAX_ROWS: usize = super::model::MAX_ITEMS - 1;
+/// The ride page's row of the export and the delete where the page has
+/// no room for both (spec 14 Phase 7, 7A), and its value.
+pub const FILE_LABEL: &str = "Export or delete";
+const FILE_VALUE: &str = "the FIT file, the ride";
+/// The ride page's delete row.
+pub const DELETE_LABEL: &str = "Delete this ride";
+/// The map's caption over the picture.
+pub const MAP_CAPTION: &str = "Track (north up)";
 
 /// What the pages show.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -29,6 +40,9 @@ pub struct HistoryInfo {
     pub exportable: BTreeSet<String>,
     /// Why the history is not saved (a newer or broken file).
     pub read_only: Option<String>,
+    /// Where the FIT files are kept, if that needs saying (the browser
+    /// without OPFS: only while the page is open; spec 14 Phase 7, 7A).
+    pub kept_note: Option<String>,
     /// The ride photographer's photos of each ride (spec §2.11; by ride
     /// id), and how many of them lie in a Strava recording (§2.8.1 ST3).
     pub photos: std::collections::BTreeMap<String, RidePhotos>,
@@ -253,32 +267,7 @@ pub fn rows(page: Page, info: &HistoryInfo) -> Vec<Row> {
             let Some(r) = h.nth_newest(k) else {
                 return Vec::new();
             };
-            let mut out = vec![if r.climbs.is_empty() {
-                info_row("Climbs", Some("none".into()))
-            } else {
-                open_row(
-                    "Climbs",
-                    Some(r.climbs.len().to_string()),
-                    Page::HistoryClimbs(k),
-                )
-            }];
-            out.push(if info.exportable.contains(&r.id) {
-                Row {
-                    label: "Export the FIT file".into(),
-                    value: None,
-                    left: None,
-                    right: None,
-                    confirm: Some(Activate::Command(format!("history.export {}", k + 1))),
-                }
-            } else {
-                Row {
-                    label: "Export the FIT file".into(),
-                    value: Some("not kept".into()),
-                    left: None,
-                    right: None,
-                    confirm: Some(Activate::Disabled),
-                }
-            });
+            let mut out = vec![laps_and_climbs_row(k, r)];
             // The ride photographer's photos (spec §2.11): the row opens
             // their folder, to add them in Strava by hand (§2.8.1 Q2).
             if let Some(p) = info.photos.get(&r.id).filter(|p| !p.files.is_empty()) {
@@ -291,16 +280,50 @@ pub fn rows(page: Page, info: &HistoryInfo) -> Vec<Row> {
                 });
             }
             out.extend(strava_rows(k, r, info));
+            // Export and delete (spec 14 Phase 7, 7A): their own rows, or
+            // one row to their page where the page would pass six rows
+            // (photos and the Strava rows of a recording in the browser).
+            if out.len() + 2 <= MAX_ROWS {
+                out.insert(1, export_row(k, r, info));
+                out.push(delete_row(k));
+            } else {
+                out.insert(
+                    1,
+                    open_row(
+                        FILE_LABEL,
+                        Some(FILE_VALUE.into()),
+                        Page::HistoryRideFile(k),
+                    ),
+                );
+            }
             out
         }
+        Page::HistoryRideFile(k) => match h.nth_newest(k) {
+            Some(r) => vec![export_row(k, r, info), delete_row(k)],
+            None => Vec::new(),
+        },
         Page::HistoryClimbs(k) => {
             let Some(r) = h.nth_newest(k) else {
                 return Vec::new();
             };
-            let rows: Vec<Row> = r
-                .climbs
-                .iter()
-                .map(|c| {
+            // The laps first (spec 14 Phase 7, 7A), then the climbs.
+            let laps = r.laps.iter().enumerate().map(|(n, l)| {
+                let mut v = format!(
+                    "{}, {}, {}",
+                    distance_label(l.distance_m, imp),
+                    hms(l.elapsed_s),
+                    speed_label(l.speed_mps(), imp)
+                );
+                if let Some(p) = l.avg_power_w {
+                    v.push_str(&format!(", {p:.0} W"));
+                }
+                if let Some(b) = l.avg_hr_bpm {
+                    v.push_str(&format!(", {b:.0} bpm"));
+                }
+                info_row(&format!("Lap {}", n + 1), Some(v))
+            });
+            let rows: Vec<Row> = laps
+                .chain(r.climbs.iter().map(|c| {
                     info_row(
                         &format!("At {}", distance_label(c.start_m, imp)),
                         Some(format!(
@@ -312,10 +335,10 @@ pub fn rows(page: Page, info: &HistoryInfo) -> Vec<Row> {
                             c.vam()
                         )),
                     )
-                })
+                }))
                 .collect();
             if rows.is_empty() {
-                vec![info_row("No climbs in this ride", None)]
+                vec![info_row("No laps or climbs in this ride", None)]
             } else {
                 rows
             }
@@ -404,6 +427,157 @@ pub fn rows(page: Page, info: &HistoryInfo) -> Vec<Row> {
         },
         _ => Vec::new(),
     }
+}
+
+/// The ride page's first row: its climbs, with its laps when it has some
+/// (spec 14 Phase 7, 7A); both on one page.
+fn laps_and_climbs_row(k: usize, r: &RideEntry) -> Row {
+    let plural = |n: usize, one: &str| format!("{n} {one}{}", if n == 1 { "" } else { "s" });
+    match (r.laps.len(), r.climbs.len()) {
+        (0, 0) => info_row("Climbs", Some("none".into())),
+        (0, c) => open_row("Climbs", Some(c.to_string()), Page::HistoryClimbs(k)),
+        (l, 0) => open_row(
+            "Laps and climbs",
+            Some(format!("{}, no climbs", plural(l, "lap"))),
+            Page::HistoryClimbs(k),
+        ),
+        (l, c) => open_row(
+            "Laps and climbs",
+            Some(format!("{}, {}", plural(l, "lap"), plural(c, "climb"))),
+            Page::HistoryClimbs(k),
+        ),
+    }
+}
+
+/// The export of the ride's FIT file (dimmed: not kept).
+fn export_row(k: usize, r: &RideEntry, info: &HistoryInfo) -> Row {
+    if info.exportable.contains(&r.id) {
+        Row {
+            label: "Export the FIT file".into(),
+            value: None,
+            left: None,
+            right: None,
+            confirm: Some(Activate::Command(format!("history.export {}", k + 1))),
+        }
+    } else {
+        Row {
+            label: "Export the FIT file".into(),
+            value: Some("not kept".into()),
+            left: None,
+            right: None,
+            confirm: Some(Activate::Disabled),
+        }
+    }
+}
+
+/// Deleting the ride (spec 14 Phase 7, 7A): asks first.
+fn delete_row(k: usize) -> Row {
+    Row {
+        label: DELETE_LABEL.into(),
+        value: None,
+        left: None,
+        right: None,
+        confirm: Some(Activate::AskDelete(format!("history.delete {}", k + 1))),
+    }
+}
+
+/// The ride a `history.delete N` line asks about (0 = the newest).
+pub fn delete_index(line: &str) -> Option<usize> {
+    line.strip_prefix("history.delete ")?
+        .split_whitespace()
+        .next()?
+        .parse::<usize>()
+        .ok()?
+        .checked_sub(1)
+}
+
+/// The confirm page's text for ride `k` (spec 14 Phase 7, 7A): which
+/// ride; what goes – its entry and its FIT file –, and what stays: its
+/// Strava recordings (S … S) and photos in the activities folder, a
+/// recording waiting for Strava still uploaded (nothing is lost without
+/// a word).
+pub fn delete_text(k: usize, info: &HistoryInfo) -> Vec<String> {
+    let Some(r) = info.history.nth_newest(k) else {
+        return Vec::new();
+    };
+    let place = if r.world.is_empty() {
+        &r.route
+    } else {
+        &r.world
+    };
+    let mut out = vec![format!(
+        "{}, {}{}: the ride leaves the training history and its FIT file is deleted. This cannot be undone.",
+        start_label(r.start_unix_s, info.offset_s),
+        distance_label(r.distance_m, info.imperial),
+        if place.is_empty() {
+            String::new()
+        } else {
+            format!(" in {}", short_label(place, 30))
+        }
+    )];
+    let recordings = info.recordings.get(&r.id).copied().unwrap_or(0);
+    let photos = info.photos.get(&r.id).map_or(0, |p| p.files.len());
+    let mut kept = Vec::new();
+    if recordings > 0 {
+        kept.push(match recordings {
+            1 => "its Strava recording".to_string(),
+            n => format!("its {n} Strava recordings"),
+        });
+    }
+    if photos > 0 {
+        kept.push(match photos {
+            1 => "its photo".to_string(),
+            n => format!("its {n} photos"),
+        });
+    }
+    if !kept.is_empty() {
+        let mut s = format!("Kept: {} in your activities folder.", kept.join(" and "));
+        let waiting = !r.strava_marked
+            && matches!(
+                info.strava.get(&r.id),
+                Some(StravaState::Waiting | StravaState::Failed { .. })
+            );
+        let (it, verb) = if recordings == 1 {
+            ("it", "is")
+        } else {
+            ("they", "are")
+        };
+        if recordings > 0 && waiting {
+            s.push_str(&if info.strava_api {
+                format!(" Not on Strava yet: {it} {verb} still uploaded.")
+            } else {
+                format!(
+                    " Not on Strava yet: {it} still wait{} there and {verb} uploaded once Strava is set up.",
+                    if recordings == 1 { "s" } else { "" }
+                )
+            });
+        } else if recordings > 0 && !r.strava_marked && !info.strava.contains_key(&r.id) {
+            s.push_str(&format!(
+                " Upload {} from there if you have not yet.",
+                if recordings == 1 { "it" } else { "them" }
+            ));
+        }
+        out.push(s);
+    }
+    out
+}
+
+/// The ride's track as a small map beside the power curve (spec 14
+/// Phase 7, 7A; drawn with `ocw_map::ride`); none without a track, or
+/// while the upload's steps take the chart's room.
+pub fn map(page: Page, info: &HistoryInfo) -> Option<MenuMap> {
+    let Page::HistoryRide(k) = page else {
+        return None;
+    };
+    let r = info.history.nth_newest(k)?;
+    if r.track.len() < 2 || upload_steps_for(info, &r.id).is_some() {
+        return None;
+    }
+    Some(MenuMap {
+        caption: MAP_CAPTION.into(),
+        track: r.track.clone(),
+        imperial: info.imperial,
+    })
 }
 
 /// A ride's Strava rows (spec 2.8.1 *Simple upload*, *Recording
@@ -556,12 +730,16 @@ fn bests_rows(b: &Bests, info: &HistoryInfo) -> Vec<Row> {
 pub fn status(page: Page, info: &HistoryInfo) -> String {
     let h = &info.history;
     match page {
-        Page::History => info.read_only.clone().unwrap_or_default(),
+        Page::History => info
+            .read_only
+            .clone()
+            .or_else(|| info.kept_note.clone())
+            .unwrap_or_default(),
         Page::StravaWaiting => info
             .strava_question
             .map(|n| format!("Upload {n} waiting recordings to Strava?"))
             .unwrap_or_default(),
-        Page::HistoryRide(k) | Page::HistoryClimbs(k) => {
+        Page::HistoryRide(k) | Page::HistoryClimbs(k) | Page::HistoryRideFile(k) => {
             h.nth_newest(k).map_or(String::new(), |r| {
                 let place = match (r.world.is_empty(), r.route.is_empty()) {
                     (false, false) if r.world != r.route => format!("{} - {}", r.world, r.route),
@@ -1213,5 +1391,214 @@ mod tests {
         assert_eq!(w[0].value.as_deref(), Some("2 recordings, Black Forest"));
         assert_eq!(w[1].confirm, Some(Activate::Open(Page::HistoryRide(2))));
         assert!(Page::HistoryWaiting.is_history_page() && q.is_history_page());
+    }
+
+    /// Laps (spec 14 Phase 7, 7A): the ride's first row names them with
+    /// its climbs; their page lists the laps, then the climbs.
+    #[test]
+    fn a_rides_laps_and_climbs() {
+        let mut i = info(2);
+        let laps = vec![
+            crate::history::Lap {
+                start_s: 0.0,
+                start_m: 0.0,
+                elapsed_s: 600.0,
+                distance_m: 4800.0,
+                ascent_m: 240.0,
+                avg_power_w: Some(231.0),
+                avg_hr_bpm: Some(141.0),
+            },
+            crate::history::Lap {
+                start_s: 600.0,
+                start_m: 4800.0,
+                elapsed_s: 600.0,
+                distance_m: 4800.0,
+                ascent_m: 240.0,
+                avg_power_w: None,
+                avg_hr_bpm: None,
+            },
+        ];
+        let id = i.history.nth_newest(0).unwrap().id.clone();
+        i.history.ride_mut(&id).unwrap().laps = laps;
+        let r = rows(Page::HistoryRide(0), &i);
+        assert_eq!(r[0].label, "Laps and climbs");
+        assert_eq!(r[0].value.as_deref(), Some("2 laps, 1 climb"));
+        assert_eq!(r[0].confirm, Some(Activate::Open(Page::HistoryClimbs(0))));
+        let page = rows(Page::HistoryClimbs(0), &i);
+        assert_eq!(page.len(), 3);
+        assert_eq!(page[0].label, "Lap 1");
+        assert_eq!(
+            page[0].value.as_deref(),
+            Some("4.8 km, 10:00, 28.8 km/h, 231 W, 141 bpm")
+        );
+        assert_eq!(page[1].value.as_deref(), Some("4.8 km, 10:00, 28.8 km/h"));
+        assert!(page[2].label.starts_with("At "));
+        i.imperial = true;
+        assert!(
+            rows(Page::HistoryClimbs(0), &i)[0]
+                .value
+                .as_ref()
+                .unwrap()
+                .contains("mph")
+        );
+        // Laps without climbs; neither.
+        i.history.ride_mut(&id).unwrap().climbs.clear();
+        assert_eq!(
+            rows(Page::HistoryRide(0), &i)[0].value.as_deref(),
+            Some("2 laps, no climbs")
+        );
+        i.history.ride_mut(&id).unwrap().laps.clear();
+        assert_eq!(rows(Page::HistoryRide(0), &i)[0].confirm, None);
+        assert_eq!(
+            rows(Page::HistoryClimbs(0), &i)[0].label,
+            "No laps or climbs in this ride"
+        );
+    }
+
+    /// Deleting (7A): the last row asks first; where photos and the
+    /// browser's Strava rows fill the page, export and delete share a row
+    /// to their own page – no page passes six rows.
+    #[test]
+    fn a_ride_can_be_deleted_from_its_page() {
+        let mut i = info(2);
+        let r = rows(Page::HistoryRide(1), &i);
+        let last = r.last().unwrap();
+        assert_eq!(last.label, DELETE_LABEL);
+        assert_eq!(
+            last.confirm,
+            Some(Activate::AskDelete("history.delete 2".into()))
+        );
+        assert_eq!(r[1].label, "Export the FIT file");
+        assert_eq!(delete_index("history.delete 2"), Some(1));
+        assert_eq!(delete_index("history.delete 0"), None);
+        assert_eq!(delete_index("history.export 2"), None);
+        // Photos and a recording without the API: one row more than fits.
+        let id = i.history.nth_newest(1).unwrap().id.clone();
+        i.recordings.insert(id.clone(), 1);
+        i.photos.insert(
+            id.clone(),
+            RidePhotos {
+                files: vec![("photo-1.jpg".into(), 30.0)],
+                in_strava: 1,
+                recordings: 1,
+            },
+        );
+        let r = rows(Page::HistoryRide(1), &i);
+        assert!(r.len() < MAX_ITEMS, "{}", r.len());
+        assert_eq!(r[1].label, FILE_LABEL);
+        assert_eq!(r[1].confirm, Some(Activate::Open(Page::HistoryRideFile(1))));
+        assert!(!r.iter().any(|r| r.label == DELETE_LABEL));
+        assert!(r.iter().any(|r| r.label == UPLOAD_LABEL));
+        let file = rows(Page::HistoryRideFile(1), &i);
+        assert_eq!(file.len(), 2);
+        assert_eq!(
+            file[0].confirm,
+            Some(Activate::Command("history.export 2".into()))
+        );
+        assert_eq!(
+            file[1].confirm,
+            Some(Activate::AskDelete("history.delete 2".into()))
+        );
+        assert!(rows(Page::HistoryRideFile(5), &i).is_empty());
+        assert!(status(Page::HistoryRideFile(1), &i).contains("Black Forest"));
+        // Every combination stays within the limit.
+        for api in [false, true] {
+            i.strava_api = api;
+            for k in 0..2 {
+                assert!(rows(Page::HistoryRide(k), &i).len() < MAX_ITEMS);
+            }
+        }
+    }
+
+    /// The confirm page says which ride, that it cannot be undone, and
+    /// what stays: the Strava recordings and photos in the activities
+    /// folder, a recording waiting for Strava still uploaded.
+    #[test]
+    fn the_delete_question_says_what_goes_and_what_stays() {
+        let mut i = info(2);
+        let t = delete_text(0, &i);
+        assert_eq!(t.len(), 1);
+        assert!(
+            t[0].starts_with("Tue 10 Nov 2026 08:00, 9.6 km in Black Forest:")
+                && t[0].contains("cannot be undone"),
+            "{}",
+            t[0]
+        );
+        assert!(delete_text(9, &i).is_empty());
+        let id = i.history.nth_newest(0).unwrap().id.clone();
+        i.recordings.insert(id.clone(), 2);
+        i.photos.insert(
+            id.clone(),
+            RidePhotos {
+                files: vec![("a.jpg".into(), 1.0), ("b.jpg".into(), 2.0)],
+                in_strava: 2,
+                recordings: 2,
+            },
+        );
+        let t = delete_text(0, &i);
+        assert_eq!(
+            t[1],
+            "Kept: its 2 Strava recordings and its 2 photos in your activities folder. Upload them from there if you have not yet."
+        );
+        i.strava.insert(id.clone(), StravaState::Waiting);
+        assert!(delete_text(0, &i)[1].ends_with(
+            "Not on Strava yet: they still wait there and are uploaded once Strava is set up."
+        ));
+        i.strava_api = true;
+        assert!(delete_text(0, &i)[1].ends_with("Not on Strava yet: they are still uploaded."));
+        i.strava
+            .insert(id.clone(), StravaState::OnStrava { activity_id: None });
+        assert!(delete_text(0, &i)[1].ends_with("activities folder."));
+        i.recordings.clear();
+        assert_eq!(
+            delete_text(0, &i)[1],
+            "Kept: its 2 photos in your activities folder."
+        );
+    }
+
+    /// The map (7A): the ride's track beside the chart; none without a
+    /// track or while the upload's steps take the room.
+    #[test]
+    fn a_rides_map_comes_from_its_track() {
+        let mut i = info(2);
+        assert_eq!(map(Page::HistoryRide(0), &i), None);
+        let id = i.history.nth_newest(0).unwrap().id.clone();
+        let track = vec![[47.1, 9.5], [47.11, 9.51], [47.12, 9.5]];
+        i.history.ride_mut(&id).unwrap().track = track.clone();
+        let m = map(Page::HistoryRide(0), &i).expect("a map");
+        assert_eq!(m.track, track);
+        assert_eq!(m.caption, MAP_CAPTION);
+        assert!(!m.imperial);
+        assert_eq!(map(Page::HistoryClimbs(0), &i), None);
+        assert_eq!(map(Page::HistoryRide(1), &i), None);
+        i.upload = Some((id, "steps".into()));
+        assert_eq!(map(Page::HistoryRide(0), &i), None);
+    }
+
+    /// The menu's flow (7A): Delete asks with Cancel focused; Cancel goes
+    /// back to the ride; Delete runs the line and goes back past the
+    /// ride's pages to the list.
+    #[test]
+    fn deleting_asks_first_and_returns_to_the_list() {
+        use crate::menu::model::{Action, Effect, Menu, Page as MenuPage};
+        let i = info(2);
+        let rows_of = |p| rows(p, &i);
+        let mut m = Menu::default();
+        m.apply_with(Action::OpenSub(Page::HistoryRides), rows_of);
+        m.apply_with(Action::Click(1), rows_of);
+        assert_eq!(m.page(), Some(MenuPage::Sub(Page::HistoryRide(1))));
+        let at = m.labels().iter().position(|l| l == DELETE_LABEL).unwrap();
+        assert_eq!(m.apply_with(Action::Click(at), rows_of), Effect::None);
+        assert_eq!(m.page(), Some(MenuPage::ConfirmDelete));
+        assert_eq!(m.focus(), 1, "Cancel is focused");
+        assert_eq!(m.pending(), Some("history.delete 2"));
+        // Cancel: back on the ride's page, nothing run.
+        assert_eq!(m.apply_with(Action::Confirm, rows_of), Effect::None);
+        assert_eq!(m.page(), Some(MenuPage::Sub(Page::HistoryRide(1))));
+        assert_eq!(m.pending(), None);
+        m.apply_with(Action::Click(at), rows_of);
+        let e = m.apply_with(Action::Click(0), rows_of);
+        assert_eq!(e, Effect::Command("history.delete 2".into()));
+        assert_eq!(m.page(), Some(MenuPage::Sub(Page::HistoryRides)));
     }
 }

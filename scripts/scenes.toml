@@ -189,6 +189,30 @@ at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=men
 shot = 7.5
 
 [[scene]]
+name = "menu-history-ride-map"
+description = "Training history (spec 14 Phase 7, 7A): a ride's page with its power curve and the map of its track (made-up track), Laps and climbs, Delete this ride"
+args = ["--route", "hills", "--bots", "2"]
+history = "scripts/fixtures/history-laps-map.json"
+at = ["2=menu ride 1"]
+shot = 5
+
+[[scene]]
+name = "menu-history-laps"
+description = "Training history (7A): Laps and climbs of a ride - its three laps, then its climbs"
+args = ["--route", "hills", "--bots", "2"]
+history = "scripts/fixtures/history-laps-map.json"
+at = ["2=menu ride 1", "2.6=menu select"]
+shot = 5
+
+[[scene]]
+name = "menu-history-delete"
+description = "Training history (7A): Delete this ride? - what goes, what stays, Cancel focused"
+args = ["--route", "hills", "--bots", "2"]
+history = "scripts/fixtures/history-laps-map.json"
+at = ["2=menu ride 1", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu select"]
+shot = 5.5
+
+[[scene]]
 name = "menu-bindings-conflict"
 description = "Settings -> Controls -> Keys and buttons -> Camera, video, app: the camera on V, a conflict with the video key"
 args = ["--route", "hills", "--bots", "2"]

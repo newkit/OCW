@@ -1817,13 +1817,20 @@ event status | event cancel | event dismiss
   time, climbing, average and normalized power, heart rate, kJ, hearts,
   crashes and damage, the workout, the power curve (5 s – 60 min) and the
   climbs. The pages show the rides (newest first; a ride's page has its
-  power curve as a chart against your bests, its climbs and *Export the FIT
-  file*, to the downloads folder), the weekly and monthly totals and your
-  personal bests. *Import saved rides* (`history.import`) adds older FIT
-  files of the rides folder. Console: `history`, `history.show N`,
-  `history.bests`, `history.export N [--to DIR]`. The browser keeps its
-  history in `localStorage` (`ocw-history`); its FIT files can be
-  downloaded again only while the page is open. The FIT file has a lap at each workout
+  power curve as a chart against your bests, a small map of its track
+  (north up, start and finish, a scale bar), its laps and climbs, *Export
+  the FIT file*, to the downloads folder, and *Delete this ride*, which
+  asks first and deletes the ride's entry and its FIT file – its Strava
+  recordings and photos stay in your activities folder, a recording
+  waiting for Strava is still uploaded), the weekly and monthly totals and
+  your personal bests. *Import saved rides* (`history.import`) adds older
+  FIT files of the rides folder. Console: `history`, `history.show N`,
+  `history.bests`, `history.export N [--to DIR]`, `history.delete N`. The
+  browser keeps its history in `localStorage` (`ocw-history`) and each
+  ride's FIT file in its private file storage (OPFS, folder `ocw-rides`),
+  so the export works after a reload too; a browser without it (an older
+  one, some private windows) keeps them only while the page is open and
+  the history's page says so. The FIT file has a lap at each workout
   step (start, step change, end, stop) and at an event's start, each event
   lap and your finish, so Strava and analysis tools show them as laps.
 - **Only your Strava recordings go to Strava, never whole rides** (spec
@@ -2493,7 +2500,8 @@ you can run are offered (no *Dev* commands on a remote server).
 | `history` | The training history: this week, this month, the rides (numbered, newest first) |
 | `history.show N` | A ride in full (power curve, climbs) |
 | `history.bests` | Personal bests: the power curve 5 s – 60 min, the climbs |
-| `history.export N [--to DIR]` | Copy a ride's FIT file to the downloads folder (browser: download it again) |
+| `history.export N [--to DIR]` | Copy a ride's FIT file to the downloads folder (browser: download it again, from its file storage) |
+| `history.delete N` | Delete a ride and its FIT file from the training history (its Strava recordings and photos stay; the menu asks first) |
 | `history.import` | Add the saved FIT files that are in no history yet to the riding rider's |
 | `bind [ACTION [KEY \| BUTTON --pad]] [--capture] [--reset]` | Show or change the key and button bindings |
 | `ui.scale P`, `ui.palette standard\|colour-safe`, `ui.contrast on\|off`, `ui.motion on\|off` | The accessibility options (the settings `display.*` run them) |

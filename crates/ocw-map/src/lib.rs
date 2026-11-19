@@ -5,13 +5,15 @@
 //! navigation map's source with its road index ([`source`]), its tile
 //! cache ([`ring`]), the CPU rasteriser of its tiles and icons
 //! ([`raster`]), its zoom, banner and route rules ([`navi`]) and the place
-//! names' hook ([`labels`]). Only data from the package itself – never
+//! names' hook ([`labels`]) and the training history's ride map
+//! ([`ride`]). Only data from the package itself – never
 //! online map tiles (spec §4).
 
 pub mod data;
 pub mod labels;
 pub mod navi;
 pub mod raster;
+pub mod ride;
 pub mod ring;
 pub mod source;
 pub mod style;

@@ -5,6 +5,8 @@
 //! - [`BrowserFetch`]: `fetch()` with a `Range` header;
 //! - [`OpfsStore`]: the chunk cache's files in the Origin Private File
 //!   System (`navigator.storage.getDirectory()`, folder `ocw-worlds`);
+//! - [`OpfsFits`]: the training history's FIT files there (folder
+//!   `ocw-rides`, spec 14 Phase 7, 7A; the logic in `crate::fitstore`);
 //! - the storage estimate and persistence request (`navigator.storage`);
 //! - the driver task: [`StreamDriver::step`] in a `spawn_local` loop,
 //!   sleeping while idle;
@@ -231,6 +233,15 @@ pub struct OpfsStore {
 
 impl OpfsStore {
     pub async fn open() -> Result<Self, String> {
+        Self::open_dir(OPFS_DIR).await
+    }
+
+    /// The folder `name` of the Origin Private File System (made if
+    /// needed).
+    pub async fn open_dir(name: &str) -> Result<Self, String> {
+        if !opfs_supported() {
+            return Err("this browser has no Origin Private File System".into());
+        }
         let window = web_sys::window().ok_or("no window")?;
         let root: FileSystemDirectoryHandle =
             JsFuture::from(window.navigator().storage().get_directory())
@@ -240,7 +251,7 @@ impl OpfsStore {
                 .map_err(js)?;
         let opts = FileSystemGetDirectoryOptions::new();
         opts.set_create(true);
-        let dir = JsFuture::from(root.get_directory_handle_with_options(OPFS_DIR, &opts))
+        let dir = JsFuture::from(root.get_directory_handle_with_options(name, &opts))
             .await
             .map_err(js)?
             .dyn_into()
@@ -295,6 +306,102 @@ impl ChunkStore for OpfsStore {
             Err(e) if not_found(&e) => Ok(()),
             Err(e) => Err(js(e)),
         }
+    }
+}
+
+/// Whether the page has `navigator.storage.getDirectory` (OPFS; not in
+/// older browsers or pages that are not a secure context).
+pub fn opfs_supported() -> bool {
+    let Some(window) = web_sys::window() else {
+        return false;
+    };
+    let nav: JsValue = window.navigator().into();
+    Reflect::get(&nav, &"storage".into())
+        .ok()
+        .filter(|s| !s.is_undefined() && !s.is_null())
+        .and_then(|s| Reflect::get(&s, &"getDirectory".into()).ok())
+        .is_some_and(|f| f.is_function())
+}
+
+/// The training history's FIT files in OPFS (spec 14 Phase 7, 7A): each
+/// operation opens the folder and runs on its own task; what finished
+/// waits in `done` for `crate::fitstore::apply_fits`.
+pub struct OpfsFits {
+    done: Arc<Mutex<Vec<crate::fitstore::FitDone>>>,
+}
+
+impl OpfsFits {
+    /// `None` where the browser has no OPFS (the fallback).
+    pub fn new() -> Option<Self> {
+        opfs_supported().then(|| Self {
+            done: Arc::default(),
+        })
+    }
+
+    fn run(&self, op: impl std::future::Future<Output = crate::fitstore::FitDone> + 'static) {
+        let done = self.done.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let d = op.await;
+            done.lock().expect("not poisoned").push(d);
+        });
+    }
+}
+
+impl crate::fitstore::FitBackend for OpfsFits {
+    fn probe(&self) {
+        self.run(async {
+            // A write and a remove: a private window may refuse them.
+            let r = async {
+                let s = OpfsStore::open_dir(crate::fitstore::FITS_DIR).await?;
+                s.write(".probe", b"ok").await?;
+                s.remove(".probe").await
+            }
+            .await;
+            crate::fitstore::FitDone::Probed(r)
+        });
+    }
+
+    fn save(&self, id: &str, bytes: Vec<u8>) {
+        let id = id.to_string();
+        self.run(async move {
+            let name = crate::fitstore::file_name(&id);
+            let result = async {
+                let s = OpfsStore::open_dir(crate::fitstore::FITS_DIR).await?;
+                s.write(&name, &bytes).await
+            }
+            .await;
+            crate::fitstore::FitDone::Saved { id, result }
+        });
+    }
+
+    fn read(&self, id: &str) {
+        let id = id.to_string();
+        self.run(async move {
+            let name = crate::fitstore::file_name(&id);
+            let result = async {
+                let s = OpfsStore::open_dir(crate::fitstore::FITS_DIR).await?;
+                s.read(&name).await
+            }
+            .await;
+            crate::fitstore::FitDone::Read { id, result }
+        });
+    }
+
+    fn remove(&self, id: &str) {
+        let id = id.to_string();
+        self.run(async move {
+            let name = crate::fitstore::file_name(&id);
+            let result = async {
+                let s = OpfsStore::open_dir(crate::fitstore::FITS_DIR).await?;
+                s.remove(&name).await
+            }
+            .await;
+            crate::fitstore::FitDone::Removed { id, result }
+        });
+    }
+
+    fn take_done(&self) -> Vec<crate::fitstore::FitDone> {
+        std::mem::take(&mut self.done.lock().expect("not poisoned"))
     }
 }
 

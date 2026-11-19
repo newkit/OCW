@@ -522,10 +522,21 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
     let rider_list = world.get_resource::<RiderList>();
     let history = match page {
         Page::Sub(p) if p.is_history_page() => Some(crate::history::info(world)),
+        Page::ConfirmDelete => Some(crate::history::info(world)),
         _ => None,
     };
+    // The ride a delete asks about (spec 14 Phase 7, 7A).
+    let deleting = (page == Page::ConfirmDelete)
+        .then(|| {
+            menu.pending()
+                .and_then(ocw_client::menu::history::delete_index)
+        })
+        .flatten();
     let history_text = match (page, &history) {
         (Page::Sub(p), Some(h)) => ocw_client::menu::history::text(p, h),
+        (Page::ConfirmDelete, Some(h)) => deleting
+            .map(|k| ocw_client::menu::history::delete_text(k, h))
+            .unwrap_or_default(),
         _ => Vec::new(),
     };
     let (trust_status, trust_text, emphasis) = trust_view(world, menu, page);
@@ -549,6 +560,12 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
                 .get_resource::<AccountMenu>()
                 .map(|a| a.status())
                 .unwrap_or_default(),
+            (Page::ConfirmDelete, _, _) => match (deleting, &history) {
+                (Some(k), Some(h)) => {
+                    ocw_client::menu::history::status(sub::Page::HistoryRide(k), h)
+                }
+                _ => String::new(),
+            },
             (Page::Sub(p), _, _) if history.is_some() => {
                 ocw_client::menu::history::status(p, history.as_ref().expect("some"))
             }
@@ -656,6 +673,11 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
         // The power curve (spec §14 Phase 7).
         chart: match (page, &history) {
             (Page::Sub(p), Some(h)) => ocw_client::menu::history::chart(p, h),
+            _ => None,
+        },
+        // The ride's track beside it (spec 14 Phase 7, 7A).
+        map: match (page, &history) {
+            (Page::Sub(p), Some(h)) => ocw_client::menu::history::map(p, h),
             _ => None,
         },
         // The month grid (spec §14 Phase 9 S9a).
