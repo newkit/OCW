@@ -473,7 +473,7 @@ impl Page {
             Self::CharacterPick(_) => &["Confirm keeps the focused one."],
             Self::Trainer => &["Devices, SIM difficulty and the virtual trainer."],
             Self::Strava => &[
-                "Uploads saved rides to Strava when an account is linked (API credentials: see README); the sync state is in Navi -> Rides.",
+                "Only your Strava recordings (S ... S) go to Strava, never whole rides: automatically with Automatic upload on and an account linked (API credentials: see README), else by hand from the ride's page.",
             ],
             Self::Audio => &[
                 "Sounds are made by OCW itself; Enter on a volume plays a test sound. Output: the device (default = the system's).",
@@ -1395,10 +1395,14 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
                 Some("no API app needed".into()),
                 Page::HistoryRides,
             ),
+            // Only the Strava recordings (S ... S) go to Strava, never
+            // whole rides (spec 2.8.1 Q6): automatically, or by hand.
+            setting_row(settings, "strava.auto_upload", "Automatic upload"),
             Row::action("Status", "strava.status"),
             Row::action("Link account", "strava.connect"),
-            Row::action("Sync now", "strava.sync"),
-            Row::action("Retry failed uploads", "strava.sync --retry"),
+            // Uploads the recordings not on Strava yet and retries the
+            // failed ones (a ride's page retries its own too).
+            Row::action("Upload now", "strava.sync --retry"),
             Row::action("Unlink", "strava.disconnect"),
         ],
         Page::Display => vec![
@@ -1707,9 +1711,16 @@ mod tests {
             Some(Activate::Open(Page::HistoryRides))
         );
         assert_eq!(
-            row(&strava, "Retry failed uploads").confirm,
+            row(&strava, "Upload now").confirm,
             cmd("strava.sync --retry")
         );
+        // The automatic upload of the S recordings (spec 2.8.1 Q6).
+        let auto = row(&strava, "Automatic upload");
+        assert_eq!(auto.value.as_deref(), Some("on"));
+        assert_eq!(auto.confirm, cmd("set strava.auto_upload off"));
+        let (off, _) = Settings::parse("[strava]\nauto_upload = false\n").unwrap();
+        let strava = rows(Page::Strava, &off, &Riders::default());
+        assert_eq!(row(&strava, "Automatic upload").value.as_deref(), Some("off"));
     }
 
     /// K6 (spec §14 Phase 12): the Organiser rules page, six rows of

@@ -460,6 +460,10 @@ fn refresh_history(world: &mut World) {
     let strava_api = world
         .get_resource::<crate::strava::Strava>()
         .is_some_and(|s| s.api());
+    // The automatic upload of the Strava recordings (spec 2.8.1 Q6).
+    let strava_auto_off = world
+        .get_resource::<crate::strava::Strava>()
+        .is_some_and(|s| !s.auto());
     let recordings = strava_recordings_by_ride(world);
     // Each ride's Strava state and the open question (spec §2.8.1
     // *Recording without Strava set up, uploaded later*).
@@ -467,6 +471,7 @@ fn refresh_history(world: &mut World) {
     if let Some(mut h) = world.get_resource_mut::<ocw_ui::history::TrainingHistory>() {
         h.photos = photos;
         h.strava_api = strava_api;
+        h.strava_auto_off = strava_auto_off;
         h.recordings = recordings;
         h.strava = strava;
         h.strava_question = question;
@@ -600,19 +605,18 @@ fn register_commands(app: &mut App) {
     app.console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("ride.save")
-            .about("End the ride, save it as a FIT file (and upload it to Strava if connected); a new recording starts"),
+            .about("End the ride, save it as a FIT file for the training history (a running Strava recording stops and is saved; whole rides never go to Strava); a new recording starts"),
         |world, _| {
             let saved = save_now(world, 0.0)?;
             match saved {
                 Some(path) => {
                     info!(path = %path.display(), "ride saved");
-                    let mut out = format!("ride saved to {}", path.display());
-                    match world.get_resource::<crate::strava::Strava>() {
-                        Some(s) if s.api() => s.ride_saved(),
-                        // The simple upload (spec §2.8.1).
-                        _ => out.push_str(&format!(". {}", ocw_client::strava::NOT_SET_UP)),
+                    // Whole rides never go to Strava (spec 2.8.1 Q6): the
+                    // Strava recording's stop has said where it goes.
+                    if let Some(s) = world.get_resource::<crate::strava::Strava>() {
+                        s.ride_saved();
                     }
-                    Ok(out)
+                    Ok(format!("ride saved to {}", path.display()))
                 }
                 None => Err("nothing recorded yet".into()),
             }

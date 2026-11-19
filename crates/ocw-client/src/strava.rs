@@ -5,7 +5,9 @@
 //! saves the activity (`<data dir>/ocw/rides/strava/`); with the API
 //! set-up (`strava.toml`, the advanced way) it is queued with the
 //! automatic upload, without it the notice points to the simple upload
-//! in the browser ([`NOT_SET_UP`]). The photos the ride photographer
+//! in the browser ([`NOT_SET_UP`]). Only these recordings go to Strava,
+//! never whole rides (spec 2.8.1 Q6): automatically when the setting
+//! `strava.auto_upload` is on, else by hand. The photos the ride photographer
 //! (spec §2.11) took within it belong to it.
 //!
 //! **The simple upload (no API app, spec §2.8.1 *Simple upload*):**
@@ -27,6 +29,25 @@ pub const NOT_SET_UP: &str =
 /// waits and goes to Strava once Strava is set up (spec §2.8.1
 /// *Recording without Strava set up, uploaded later*).
 pub const WAITS_FOR_SET_UP: &str = "It will be uploaded once Strava is set up";
+/// What the stop notice adds with the API set-up and the automatic
+/// upload on (setting `strava.auto_upload`, spec 2.8.1 Q6).
+pub const UPLOADS_AUTOMATICALLY: &str = "It goes to Strava automatically";
+/// … with the automatic upload off: it waits for the rider's upload.
+pub const WAITS_FOR_UPLOAD: &str =
+    "Automatic upload is off: upload it from Navi > Training history > the ride";
+/// Whole rides never go to Strava (spec 2.8.1 Q6): a ride page without a
+/// Strava recording says how to make one.
+pub const NO_RECORDING: &str = "no Strava recording – press S while riding";
+
+/// Whether a recording that starts at `rec_start_unix_s` lies within a
+/// ride from `ride_start_unix_s` lasting `ride_elapsed_s`: it starts at
+/// or after the ride's first record (a second of slack) and before its
+/// end. Both apps find a ride's Strava recordings with it.
+pub fn within_ride(rec_start_unix_s: i64, ride_start_unix_s: i64, ride_elapsed_s: f64) -> bool {
+    let end = ride_start_unix_s + ride_elapsed_s.ceil() as i64;
+    rec_start_unix_s + 1 >= ride_start_unix_s && rec_start_unix_s <= end
+}
+
 /// How long a notice stays (s).
 pub const NOTICE_S: f64 = 4.0;
 /// How long a notice that points to the upload stays (s).
@@ -142,6 +163,10 @@ pub struct StravaRecording {
     /// uploads it once the credentials are there (the desktop; the
     /// browser has no API upload): the stop notice says so.
     pub waits: bool,
+    /// The automatic upload of the Strava recordings (setting
+    /// `strava.auto_upload`, spec 2.8.1 Q6; default on): off, a recording
+    /// waits for the rider's upload by hand; the stop notice says which.
+    pub auto: bool,
     route: String,
     recorder: Option<RideRecorder>,
     /// Game time it started.
@@ -159,6 +184,7 @@ impl StravaRecording {
         Self {
             api,
             waits: false,
+            auto: true,
             route: route.into(),
             recorder: None,
             since: None,
@@ -251,12 +277,16 @@ impl StravaRecording {
                     crate::history::hms(game_s - since),
                     f.activity.records.last().map_or(0.0, |r| r.distance_m) / 1000.0
                 );
-                if self.api {
-                    self.say(text, game_s);
+                if self.api && self.auto {
+                    self.say(format!("{text}. {UPLOADS_AUTOMATICALLY}."), game_s);
+                } else if self.api {
+                    // Automatic upload off: the rider uploads it.
+                    self.say_for(format!("{text}. {WAITS_FOR_UPLOAD}."), game_s, UPLOAD_NOTICE_S);
                 } else {
                     // No API: the rider uploads it in the browser – or
-                    // the desktop uploads it once Strava is set up.
-                    let waits = if self.waits {
+                    // the desktop uploads it once Strava is set up (with
+                    // the automatic upload on).
+                    let waits = if self.waits && self.auto {
                         format!(" {WAITS_FOR_SET_UP}.")
                     } else {
                         String::new()
@@ -354,7 +384,34 @@ mod tests {
         a.observe(&route, None, sample(1.0, 8.0), 2);
         a.stop(2.0);
         assert!(!a.notice(2.0).unwrap().contains("browser"));
+        assert!(
+            a.notice(2.0).unwrap().ends_with(". It goes to Strava automatically."),
+            "{:?}",
+            a.notice(2.0)
+        );
         assert_eq!(a.notice(2.0 + NOTICE_S), None);
+        // The automatic upload off (spec 2.8.1 Q6): it waits for the
+        // rider's upload, the notice says where, longer.
+        let mut off = StravaRecording::new(true, "Loop");
+        off.auto = false;
+        off.start(0.0);
+        off.observe(&route, None, sample(0.0, 0.0), 1);
+        off.observe(&route, None, sample(1.0, 8.0), 2);
+        off.stop(2.0);
+        let n = off.notice(2.0).unwrap();
+        assert!(n.ends_with(&format!(". {WAITS_FOR_UPLOAD}.")), "{n}");
+        assert!(!n.contains(UPLOADS_AUTOMATICALLY), "{n}");
+        assert!(off.notice(2.0 + NOTICE_S + 1.0).is_some());
+        // Without the API and with it off: no promise of an upload.
+        let mut w = StravaRecording::new(false, "Loop");
+        w.waits = true;
+        w.auto = false;
+        w.start(0.0);
+        w.observe(&route, None, sample(0.0, 0.0), 1);
+        w.observe(&route, None, sample(1.0, 8.0), 2);
+        w.stop(2.0);
+        let n = w.notice(2.0).unwrap();
+        assert!(!n.contains(WAITS_FOR_SET_UP) && n.ends_with(NOT_SET_UP), "{n}");
         // The desktop keeps it waiting for the set-up (spec §2.8.1
         // *Recording without Strava set up*): the notice says it is saved
         // and will be uploaded, beside the browser's way.
@@ -398,6 +455,16 @@ mod tests {
             "{n}"
         );
         assert_eq!(s.folder(), None);
+    }
+
+    /// A ride's Strava recordings: those that start within it.
+    #[test]
+    fn recordings_within_a_ride() {
+        assert!(within_ride(1000, 1000, 600.0));
+        assert!(within_ride(999, 1000, 600.0), "a second of slack");
+        assert!(within_ride(1600, 1000, 599.5));
+        assert!(!within_ride(998, 1000, 600.0));
+        assert!(!within_ride(1601, 1000, 600.0));
     }
 
     #[test]

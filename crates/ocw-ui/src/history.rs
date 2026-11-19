@@ -5,7 +5,8 @@
 //! – the Navi → Training history pages (`ocw_client::menu::history`) and
 //! the console commands `history`, `history.show N`, `history.bests`,
 //! `history.export N [--to DIR]`, `history.import`, and the simple Strava
-//! upload's `strava.upload-manual [N] [--whole]` and `strava.mark-uploaded
+//! upload's `strava.upload-manual [N]` (the ride's Strava recordings only,
+//! never the whole ride: spec 2.8.1 Q6) and `strava.mark-uploaded
 //! N [on|off|toggle]` (spec §2.8.1 *Simple upload*).
 //!
 //! The app adds each saved ride ([`add_ride`]) and says through
@@ -32,10 +33,10 @@ pub type ExportFn = fn(&mut World, &RideEntry, Option<&str>) -> Result<String, S
 pub type StoreFn = fn(&World, &str) -> Option<Box<dyn TextStore>>;
 /// Imports older rides.
 pub type ImportFn = fn(&mut World) -> Result<String, String>;
-/// The simple Strava upload of a ride (`whole`: the whole ride, not its
-/// Strava recordings): the file at hand, Strava's upload page open; the
-/// steps to show.
-pub type UploadFn = fn(&mut World, &RideEntry, bool) -> Result<String, String>;
+/// The simple Strava upload of a ride's Strava recordings (S … S; whole
+/// rides never go to Strava, spec 2.8.1 Q6): the files at hand, Strava's
+/// upload page open; the steps to show.
+pub type UploadFn = fn(&mut World, &RideEntry) -> Result<String, String>;
 /// A ride was marked as uploaded to Strava or unmarked (the desktop tells
 /// its API sync).
 pub type MarkFn = fn(&mut World, &RideEntry);
@@ -108,7 +109,10 @@ pub struct TrainingHistory {
     pub photos: BTreeMap<String, ocw_client::menu::history::RidePhotos>,
     /// The automatic API upload is set up (the desktop's `strava.toml`).
     pub strava_api: bool,
-    /// The Strava recordings within each ride (by ride id; the desktop).
+    /// The automatic upload of the Strava recordings is off (setting
+    /// `strava.auto_upload`, the desktop).
+    pub strava_auto_off: bool,
+    /// The Strava recordings within each ride (by ride id).
     pub recordings: BTreeMap<String, usize>,
     /// The last simple upload: the ride's id and its steps.
     pub upload: Option<(String, String)>,
@@ -186,6 +190,7 @@ pub fn info(world: &World) -> HistoryInfo {
             read_only: h.read_only.clone(),
             photos: h.photos.clone(),
             strava_api: h.strava_api,
+            strava_auto_off: h.strava_auto_off,
             recordings: h.recordings.clone(),
             upload: h.upload.clone(),
             strava: h.strava.clone(),
@@ -422,20 +427,14 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("strava.upload-manual")
-            .about("Upload a ride to Strava in your browser, no API app needed (N: its number in `history`, 1 = the newest): the FIT file at hand, Strava's upload page open")
-            .arg(Arg::new("n").default_value("1"))
-            .arg(
-                Arg::new("whole")
-                    .long("whole")
-                    .action(clap::ArgAction::SetTrue)
-                    .help("The whole ride, not its Strava recordings (S … S)"),
-            ),
+            .about("Upload a ride's Strava recordings (S … S) to Strava in your browser, no API app needed (N: its number in `history`, 1 = the newest): the FIT files at hand, Strava's upload page open. Whole rides never go to Strava")
+            .arg(Arg::new("n").default_value("1")),
         |world, m| {
             let ride = nth(world, number(m)?)?;
             let upload = hooks(world)
                 .upload
                 .ok_or("this app has no Strava upload")?;
-            let steps = upload(world, &ride, m.get_flag("whole"))?;
+            let steps = upload(world, &ride)?;
             if let Some(mut h) = world.get_resource_mut::<TrainingHistory>() {
                 h.upload = Some((ride.id.clone(), steps.clone()));
             }
@@ -592,8 +591,8 @@ pub mod tests {
         );
     }
 
-    fn uploaded(_: &mut World, ride: &RideEntry, whole: bool) -> Result<String, String> {
-        Ok(format!("steps for {} (whole: {whole})", ride.id))
+    fn uploaded(_: &mut World, ride: &RideEntry) -> Result<String, String> {
+        Ok(format!("steps for {}", ride.id))
     }
 
     fn told(world: &mut World, ride: &RideEntry) {
@@ -634,20 +633,17 @@ pub mod tests {
             ..HistoryHooks::default()
         });
         let out = run(&mut app, "strava.upload-manual");
-        assert!(out.contains("steps for new (whole: false)"), "{out}");
-        assert!(
-            run(&mut app, "strava.upload-manual 2 --whole").contains("steps for old (whole: true)")
-        );
+        assert!(out.contains("steps for new"), "{out}");
+        // Whole rides never go to Strava (spec 2.8.1 Q6): no --whole.
+        assert!(run(&mut app, "strava.upload-manual 2 --whole").contains("error"));
+        assert!(run(&mut app, "strava.upload-manual 2").contains("steps for old"));
         let i = info(app.world());
-        assert_eq!(
-            i.upload,
-            Some(("old".into(), "steps for old (whole: true)".into()))
-        );
+        assert_eq!(i.upload, Some(("old".into(), "steps for old".into())));
         let page = ocw_client::menu::pages::Page::HistoryRide(1);
         assert!(
             ocw_client::menu::history::text(page, &i)
                 .iter()
-                .any(|l| l == "steps for old (whole: true)")
+                .any(|l| l == "steps for old")
         );
         // The mark: on, toggled, persisted, told.
         let out = run(&mut app, "strava.mark-uploaded 2 on");

@@ -42,7 +42,7 @@ pub fn strava_dir(rides: &std::path::Path) -> PathBuf {
     rides.join("strava")
 }
 
-pub(super) fn build(app: &mut App, api: bool) {
+pub(super) fn build(app: &mut App, api: bool, auto: bool) {
     let route = app
         .world()
         .get_resource::<ClientState>()
@@ -51,6 +51,9 @@ pub(super) fn build(app: &mut App, api: bool) {
     let mut rec = StravaRecording::new(api, route);
     // Without the set-up a recording waits for it (spec §2.8.1).
     rec.waits = true;
+    // The automatic upload (setting `strava.auto_upload`, spec 2.8.1 Q6):
+    // the stop notice says whether it goes by itself.
+    rec.auto = auto;
     app.insert_resource(StravaRec(rec, None))
         .add_systems(Update, (strava_key, show_in_hud))
         .add_systems(Last, stop_on_exit);
@@ -67,7 +70,8 @@ pub(super) fn build(app: &mut App, api: bool) {
                     let s = &world.resource::<StravaRec>().0;
                     return Ok(match s.elapsed_s(now) {
                         Some(e) => format!("Strava recording: {}", ocw_client::history::hms(e)),
-                        None if s.api => "Strava recording: off (S starts it; uploaded by your API app)".into(),
+                        None if s.api && s.auto => "Strava recording: off (S starts it; uploaded by your API app)".into(),
+                        None if s.api => "Strava recording: off (S starts it; automatic upload off: upload it from the ride's page)".into(),
                         None => format!(
                             "Strava recording: off (S starts it). {}",
                             ocw_client::strava::NOT_SET_UP
@@ -183,12 +187,24 @@ pub fn handle(world: &mut World, out: Outcome, now: f64) -> Result<String, Strin
                 "Strava recording saved to {}",
                 copy.as_deref().unwrap_or(&path).display()
             );
-            if !api {
-                out.push_str(&format!(
+            let auto = world
+                .get_resource::<super::Strava>()
+                .is_none_or(|s| s.auto());
+            match (api, auto) {
+                (true, true) => {
+                    out.push_str(&format!(". {}", ocw_client::strava::UPLOADS_AUTOMATICALLY));
+                }
+                (true, false) => {
+                    out.push_str(&format!(". {}", ocw_client::strava::WAITS_FOR_UPLOAD));
+                }
+                (false, true) => out.push_str(&format!(
                     ". {}. {}",
                     ocw_client::strava::WAITS_FOR_SET_UP,
                     ocw_client::strava::NOT_SET_UP
-                ));
+                )),
+                (false, false) => {
+                    out.push_str(&format!(". {}", ocw_client::strava::NOT_SET_UP));
+                }
             }
             Ok(out)
         }

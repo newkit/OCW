@@ -426,6 +426,19 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::Command("activities.folder \"{}\""),
     },
+    // Strava (spec 2.8.1 Q6, v4.97): only the Strava recordings (S … S)
+    // go to Strava, never whole rides; on: they are uploaded automatically
+    // once the API app is set up and the account linked, off: they wait
+    // for the upload by hand (the ride page's *Upload now*, or in the
+    // browser). Replaces `auto_upload` in `strava.toml` (read once).
+    SettingDef {
+        key: "strava.auto_upload",
+        kind: Kind::Bool,
+        default: "on",
+        description: "Upload the Strava recordings (S … S) to Strava automatically (your API app, account linked); off: they wait for you to upload them from the ride's page. Whole rides never go to Strava",
+        scope: Scope::Live,
+        apply: Apply::Command("strava.auto_upload {}"),
+    },
     // Ride → Host a ride (spec §7.1.7 Q4): the router's ports opened by
     // UPnP while hosting; read at *Start hosting*, switched on the wizard's
     // Options page (`host.plan upnp`). The headless server has `--upnp`
@@ -1073,6 +1086,8 @@ const NOT_IN_BROWSER: &[&str] = &[
     "activities.folder",
     // Hosting needs the desktop app (browsers cannot open a port).
     "host.upnp",
+    // The browser has no API upload (spec 2.8.1: the simple upload only).
+    "strava.auto_upload",
 ];
 
 /// Whether `key` takes effect on `platform` (the menu hides the others,

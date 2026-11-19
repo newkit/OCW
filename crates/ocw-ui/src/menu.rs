@@ -161,6 +161,7 @@ impl Plugin for MenuPlugin {
                                 "workshop-page",
                                 "ride",
                                 "strava-waiting",
+                                "strava",
                             ])
                             .default_value("toggle"),
                     )
@@ -190,6 +191,8 @@ impl Plugin for MenuPlugin {
                         )),
                         // The question about Strava's waiting recordings.
                         Some("strava-waiting") => Action::OpenSub(sub::Page::StravaWaiting),
+                        // The Strava page (Navi → Strava; spec 2.8.1).
+                        Some("strava") => Action::OpenSub(sub::Page::Strava),
                         _ if open => Action::Close,
                         _ => Action::Open,
                     };

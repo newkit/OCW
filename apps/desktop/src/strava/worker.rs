@@ -9,6 +9,14 @@
 //! not set up are uploaded, oldest first ([`Scope::Waiting`]) – after
 //! asking once ([`Event::Ask`]) when there are more than [`ASK_ABOVE`];
 //! [`Event::CaughtUp`] says how many went up.
+//!
+//! **Only Strava recordings, automatically or by hand** (spec 2.8.1 Q6):
+//! the sync works on the S recordings only, never on whole rides
+//! ([`sync::sync_files`]). With the automatic upload on (setting
+//! `strava.auto_upload`, [`Command::SetAuto`]) new recordings go up as
+//! they are saved and the waiting ones once the account is linked; off,
+//! nothing goes up by itself – the rider uploads (`strava.sync`, a ride
+//! page's *Upload now*: [`Command::SyncWaiting`] with its files).
 
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -29,15 +37,20 @@ pub const ASK_ABOVE: usize = 3;
 pub enum Command {
     /// Link the Strava account (browser login).
     Connect,
-    /// Upload all rides not on Strava yet; `retry` also retries failed and
-    /// rejected ones now.
+    /// Upload all Strava recordings not on Strava yet; `retry` also
+    /// retries failed and rejected ones now.
     Sync { retry: bool },
-    /// A ride was saved (synced if automatic upload is on).
+    /// A ride or a Strava recording was saved (synced if the automatic
+    /// upload is on).
     RideSaved,
+    /// The automatic upload switched on or off (setting
+    /// `strava.auto_upload`); on: what waits goes up now.
+    SetAuto(bool),
     /// Forget the tokens.
     Disconnect,
     /// Upload the waiting recordings now (`files`: only these, picked by
-    /// the rider; `None`: all) – the answer *Yes*, `strava.sync --waiting`.
+    /// the rider – waiting or not yet uploaded; `None`: all waiting) – the
+    /// answer *Yes*, `strava.sync --waiting`, a ride page's *Upload now*.
     SyncWaiting { files: Option<Vec<String>> },
     /// The answer *No* (or *Pick*): the waiting recordings stay waiting.
     KeepWaiting,
@@ -113,6 +126,7 @@ impl Worker {
         let (tx, rx) = mpsc::channel();
         let (msg_tx, msg_rx) = mpsc::channel();
         let (ev_tx, ev_rx) = mpsc::channel();
+        let auto = cfg.auto_upload;
         let status = Arc::new(Mutex::new(Status {
             auto_upload: cfg.auto_upload,
             ..Status::default()
@@ -127,6 +141,7 @@ impl Worker {
                     messages: msg_tx,
                     events: ev_tx,
                     asked: std::cell::Cell::new(false),
+                    auto: std::cell::Cell::new(auto),
                 }
                 .run(rx)
             })?;
@@ -146,6 +161,8 @@ struct Thread {
     events: Sender<Event>,
     /// The question was asked (once per run of the app).
     asked: std::cell::Cell<bool>,
+    /// The automatic upload (setting `strava.auto_upload`).
+    auto: std::cell::Cell<bool>,
 }
 
 fn unix_now() -> i64 {
@@ -157,16 +174,15 @@ fn unix_now() -> i64 {
 impl Thread {
     fn run(self, rx: Receiver<Command>) {
         self.refresh_status();
-        // The recordings waiting for the set-up first (the credentials
-        // just came, or the app starts with them).
-        let mut next_sync = if self.connected() {
-            self.catch_up()
+        // With the automatic upload: the recordings waiting for the
+        // set-up first (the credentials just came, or the app starts with
+        // them), then the others. Off: nothing goes by itself.
+        let mut next_sync = if self.auto.get() && self.connected() {
+            self.catch_up();
+            Some(Instant::now())
         } else {
             None
         };
-        if self.cfg.auto_upload && self.connected() {
-            next_sync = Some(Instant::now());
-        }
         loop {
             let timeout = next_sync.map_or(Duration::from_secs(3600), |t| {
                 t.saturating_duration_since(Instant::now())
@@ -183,13 +199,9 @@ impl Thread {
             };
             match cmd {
                 Command::Connect => {
-                    if self.connect() {
-                        let caught = self.catch_up();
-                        next_sync = if self.cfg.auto_upload {
-                            self.sync(false, &Scope::Rides)
-                        } else {
-                            caught
-                        };
+                    if self.connect() && self.auto.get() {
+                        self.catch_up();
+                        next_sync = self.sync(false, &Scope::Rides);
                     }
                 }
                 Command::Sync { retry } => {
@@ -198,8 +210,19 @@ impl Thread {
                     }
                     next_sync = self.sync(true, &Scope::Rides);
                 }
+                Command::SetAuto(on) => {
+                    let was = self.auto.replace(on);
+                    self.status.lock().expect("not poisoned").auto_upload = on;
+                    if on && !was && self.connected() {
+                        self.catch_up();
+                        next_sync = self.sync(false, &Scope::Rides);
+                    } else if !on {
+                        next_sync = None;
+                        self.refresh_status();
+                    }
+                }
                 Command::RideSaved => {
-                    if self.cfg.auto_upload {
+                    if self.auto.get() {
                         next_sync = self.sync(false, &Scope::Rides);
                     } else {
                         self.refresh_status();
@@ -398,7 +421,7 @@ impl Thread {
                 }
                 if manual && r == sync::SyncReport::default() {
                     self.say(if *scope == Scope::Rides {
-                        "Strava: nothing to upload"
+                        "Strava: no Strava recording to upload"
                     } else {
                         "Strava: no recording is waiting"
                     });
@@ -406,7 +429,7 @@ impl Thread {
             }
             Err(e) => self.say(format!("Strava sync failed: {e}")),
         }
-        if !self.cfg.auto_upload && !manual {
+        if !self.auto.get() && !manual {
             return None;
         }
         let retry = counts
@@ -445,11 +468,11 @@ mod tests {
     }
 
     #[test]
-    fn saved_rides_are_uploaded_in_the_background() {
+    fn saved_recordings_are_uploaded_in_the_background() {
         let dir: PathBuf = std::env::temp_dir().join(format!("ocw-worker-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let rides_dir = dir.join("rides");
-        std::fs::create_dir_all(&rides_dir).unwrap();
+        std::fs::create_dir_all(rides_dir.join("strava")).unwrap();
         let paths = SyncPaths {
             state_file: rides_dir.join("strava-sync.toml"),
             rides_dir: rides_dir.clone(),
@@ -484,9 +507,14 @@ mod tests {
         assert_eq!(s.counts, SyncCounts::default());
 
         http.reply(201, r#"{"id":1,"error":null,"activity_id":77}"#);
+        // A whole ride is never uploaded (spec 2.8.1 Q6), its Strava
+        // recording is.
         std::fs::write(rides_dir.join("r1.fit"), b"FIT").unwrap();
+        std::fs::write(rides_dir.join("strava/r1.fit"), b"FIT").unwrap();
         w.send(Command::RideSaved);
         let s = wait_for(&w, |s| s.counts.uploaded == 1);
+        assert_eq!(s.counts.pending, 0);
+        assert_eq!(http.urls().len(), 1);
         assert!(s.busy.is_none());
         let msg = w
             .messages
@@ -495,7 +523,7 @@ mod tests {
             .recv_timeout(Duration::from_secs(1));
         assert_eq!(
             msg.unwrap(),
-            "uploaded r1.fit to Strava: https://www.strava.com/activities/77"
+            "uploaded strava/r1.fit to Strava: https://www.strava.com/activities/77"
         );
 
         w.send(Command::Disconnect);
@@ -573,9 +601,9 @@ mod tests {
     }
 
     /// The credentials came (the thread starts) with up to three
-    /// recordings waiting: they go at once, oldest first, and the
-    /// notice counts them; whole rides keep the `auto_upload` rule (off
-    /// here: not uploaded).
+    /// recordings waiting and the automatic upload on: they go at once,
+    /// oldest first, and the notice counts them; the whole ride beside
+    /// them is never queued (spec 2.8.1 Q6).
     #[test]
     fn a_few_waiting_recordings_go_up_at_once_oldest_first() {
         let (dir, paths) = linked_paths("few");
@@ -588,7 +616,7 @@ mod tests {
                 &format!(r#"{{"id":{id},"error":null,"activity_id":{id}}}"#),
             );
         }
-        let w = spawn(paths, http.clone(), false);
+        let w = spawn(paths, http.clone(), true);
         let s = wait_for(&w, |s| s.counts.uploaded == 3);
         assert_eq!((s.counts.waiting, s.question), (0, None));
         let mut oldest_first = names.clone();
@@ -606,7 +634,8 @@ mod tests {
                 failed: 0
             }
         );
-        assert_eq!(s.counts.pending, 1, "the whole ride: auto_upload off");
+        assert_eq!(s.counts.pending, 0, "the whole ride is never queued");
+        assert_eq!(uploaded_names(&http).len(), 3);
         drop(w);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -637,7 +666,7 @@ mod tests {
         wait_for(&w, |s| {
             s.last
                 .as_deref()
-                .is_some_and(|l| l.contains("nothing to upload"))
+                .is_some_and(|l| l.contains("no Strava recording to upload"))
         });
         assert!(http.urls().is_empty(), "the usual sync leaves them");
         // Picked: one.
@@ -691,6 +720,48 @@ mod tests {
                 names[1].clone()
             ]
         );
+        drop(w);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The automatic upload off (setting `strava.auto_upload`, spec 2.8.1
+    /// Q6): nothing goes up by itself – not the waiting recordings when
+    /// the account is linked, not a new one when it is saved; the rider's
+    /// upload of one ride's recordings sends those (waiting or new);
+    /// switched on, the rest go up at once.
+    #[test]
+    fn with_the_automatic_upload_off_recordings_wait_for_the_rider() {
+        let (dir, paths) = linked_paths("off");
+        let names = waiting(&paths, 2);
+        let fresh = "strava/2026-11-20_10-00-00.fit".to_string();
+        std::fs::write(paths.rides_dir.join(&fresh), b"FIT").unwrap();
+        let http = Arc::new(MockHttp::default());
+        let w = spawn(paths, http.clone(), false);
+        let s = wait_for(&w, |s| s.connected && s.counts.waiting == 2);
+        assert!(!s.auto_upload);
+        assert_eq!((s.counts.pending, s.question), (1, None));
+        w.send(Command::RideSaved);
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(http.urls().is_empty(), "nothing by itself");
+        // The ride page's Upload now: the oldest waiting one and the new one.
+        for id in 1..=2 {
+            http.reply(
+                201,
+                &format!(r#"{{"id":{id},"error":null,"activity_id":{id}}}"#),
+            );
+        }
+        w.send(Command::SyncWaiting {
+            files: Some(vec![names[1].clone(), fresh.clone()]),
+        });
+        let s = wait_for(&w, |s| s.counts.uploaded == 2);
+        assert_eq!((s.counts.waiting, s.counts.pending), (1, 0));
+        assert_eq!(uploaded_names(&http), vec![names[1].clone(), fresh]);
+        // Switched on: the last waiting one goes at once.
+        http.reply(201, r#"{"id":3,"error":null,"activity_id":3}"#);
+        w.send(Command::SetAuto(true));
+        let s = wait_for(&w, |s| s.counts.uploaded == 3);
+        assert!(s.auto_upload);
+        assert_eq!(s.counts.waiting, 0);
         drop(w);
         let _ = std::fs::remove_dir_all(&dir);
     }

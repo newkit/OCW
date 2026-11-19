@@ -36,8 +36,13 @@ pub struct HistoryInfo {
     /// up (`strava.toml`, the advanced way, spec §2.8.1); without it a
     /// ride goes to Strava by the simple upload in the browser.
     pub strava_api: bool,
-    /// The Strava recordings (S … S) within each ride (by ride id; the
-    /// desktop): the simple upload sends those instead of the whole ride.
+    /// The automatic upload of the Strava recordings is off (setting
+    /// `strava.auto_upload`, spec 2.8.1 Q6): they wait for the rider's
+    /// *Upload now* on the ride's page.
+    pub strava_auto_off: bool,
+    /// The Strava recordings (S … S) within each ride (by ride id): only
+    /// those go to Strava, never the whole ride (spec 2.8.1 Q6); a ride
+    /// without one has no upload.
     pub recordings: std::collections::BTreeMap<String, usize>,
     /// The last simple upload: the ride's id and its steps (shown on the
     /// ride's page).
@@ -101,8 +106,11 @@ impl StravaState {
 /// The ride page's Strava line without the API set-up for a waiting
 /// recording.
 pub const WAITING_LABEL: &str = "waiting for Strava set-up";
-/// … in the browser (no API upload there) and for whole rides without it.
+/// … in the browser (no API upload there) and on the desktop without it.
 pub const IN_BROWSER_LABEL: &str = "upload in your browser";
+/// … with the API and the automatic upload off (spec 2.8.1 Q6): the
+/// row uploads the ride's recordings now.
+pub const UPLOAD_NOW_LABEL: &str = "not uploaded – upload now";
 /// The label of a ride page's Strava state row.
 pub const STRAVA_ROW: &str = "Strava upload";
 
@@ -398,20 +406,44 @@ pub fn rows(page: Page, info: &HistoryInfo) -> Vec<Row> {
     }
 }
 
-/// A ride's Strava rows (spec §2.8.1 *Simple upload*, *Recording
-/// without Strava set up, uploaded later*): its state – *waiting for
-/// Strava set-up* / *uploading* / *on Strava* (opens the activity) /
-/// *failed – retry*, or the automatic upload's line, or *upload in your
-/// browser* – then without the API the upload in the browser (the
-/// ride's Strava recordings if it has any, else the whole ride). Both
-/// have the mark, which the rider sets after uploading by hand (the app
-/// cannot know) and the API sync respects.
+/// A ride's Strava rows (spec 2.8.1 *Simple upload*, *Recording
+/// without Strava set up, uploaded later*, Q6). Only the ride's Strava
+/// recordings (S … S) go to Strava, never the whole ride: a ride without
+/// one has the single line *no Strava recording – press S while riding*
+/// (or, for a whole ride uploaded before v4.97, *on Strava*). A ride with
+/// recordings shows their state – *waiting for Strava set-up* /
+/// *uploading* / *on Strava* (opens the activity) / *failed – retry*, or
+/// the automatic upload's line, or *upload now* with the automatic upload
+/// off – then without the API the upload in the browser, and the mark,
+/// which the rider sets after uploading by hand (the app cannot know) and
+/// the API sync respects.
 fn strava_rows(k: usize, r: &crate::history::RideEntry, info: &HistoryInfo) -> Vec<Row> {
     let n = k + 1;
-    let kept = info.exportable.contains(&r.id);
+    let recordings = info.recordings.get(&r.id).copied().unwrap_or(0);
+    let state = info.strava.get(&r.id);
+    if recordings == 0 {
+        // Whole rides never go to Strava (Q6); one uploaded earlier
+        // keeps its line.
+        return vec![match state {
+            Some(StravaState::OnStrava {
+                activity_id: Some(id),
+            }) => Row {
+                label: STRAVA_ROW.into(),
+                value: Some(format!("on Strava: strava.com/activities/{id}")),
+                left: None,
+                right: None,
+                confirm: Some(Activate::Command(format!("strava.open {n}"))),
+            },
+            Some(StravaState::OnStrava { activity_id: None }) => {
+                info_row(STRAVA_ROW, Some("on Strava".into()))
+            }
+            _ => info_row(STRAVA_ROW, Some(crate::strava::NO_RECORDING.into())),
+        }];
+    }
     let mut out = Vec::new();
     let api = info.strava_api;
-    let (value, confirm) = match (r.strava_marked, info.strava.get(&r.id)) {
+    let auto = !info.strava_auto_off;
+    let (value, confirm) = match (r.strava_marked, state) {
         (true, _) => ("skipped (marked as uploaded)".to_string(), None),
         (false, Some(StravaState::Waiting)) if api => (
             "waiting – upload now".to_string(),
@@ -421,7 +453,11 @@ fn strava_rows(k: usize, r: &crate::history::RideEntry, info: &HistoryInfo) -> V
         ),
         // The Strava settings page says how to set it up.
         (false, Some(StravaState::Waiting)) => (
-            WAITING_LABEL.to_string(),
+            if auto {
+                WAITING_LABEL.to_string()
+            } else {
+                IN_BROWSER_LABEL.to_string()
+            },
             Some(Activate::Open(Page::Strava)),
         ),
         (false, Some(StravaState::Uploading)) => ("uploading".to_string(), None),
@@ -440,7 +476,12 @@ fn strava_rows(k: usize, r: &crate::history::RideEntry, info: &HistoryInfo) -> V
                 Activate::Disabled
             }),
         ),
-        (false, None) if api => ("automatic (your API app)".to_string(), None),
+        (false, None) if api && auto => ("automatic (your API app)".to_string(), None),
+        // The automatic upload is off: the rider uploads it (Q6).
+        (false, None) if api => (
+            UPLOAD_NOW_LABEL.to_string(),
+            Some(Activate::Command(format!("strava.sync --ride {n}"))),
+        ),
         (false, None) => (IN_BROWSER_LABEL.to_string(), None),
     };
     out.push(Row {
@@ -451,25 +492,15 @@ fn strava_rows(k: usize, r: &crate::history::RideEntry, info: &HistoryInfo) -> V
         confirm,
     });
     if !api {
-        let recordings = info.recordings.get(&r.id).copied().unwrap_or(0);
         out.push(Row {
             label: UPLOAD_LABEL.into(),
-            value: if !kept {
-                Some("FIT file not kept".into())
-            } else {
-                match recordings {
-                    0 => None,
-                    1 => Some("your Strava recording".into()),
-                    m => Some(format!("your {m} Strava recordings")),
-                }
-            },
+            value: Some(match recordings {
+                1 => "your Strava recording".into(),
+                m => format!("your {m} Strava recordings"),
+            }),
             left: None,
             right: None,
-            confirm: Some(if kept {
-                Activate::Command(format!("strava.upload-manual {n}"))
-            } else {
-                Activate::Disabled
-            }),
+            confirm: Some(Activate::Command(format!("strava.upload-manual {n}"))),
         });
     }
     out.push(Row {
@@ -784,22 +815,52 @@ mod tests {
         assert!(rows.len() < MAX_ITEMS);
     }
 
-    /// The simple Strava upload (spec §2.8.1): without the API a ride's
-    /// page has the upload in the browser and the mark; with the API the
-    /// automatic upload's line and the mark; the steps show after the
-    /// upload, with the hint until the ride is marked.
+    /// The simple Strava upload (spec 2.8.1, Q6): a ride without Strava
+    /// recordings has no upload, only the line saying how to make one
+    /// (an older whole ride on Strava keeps its line); with recordings,
+    /// without the API its page has the upload in the browser (the
+    /// recordings, never the whole ride) and the mark; with the API the
+    /// automatic upload's line – or *upload now* with it off – and the
+    /// mark; the steps show after the upload, with the hint until the
+    /// ride is marked.
     #[test]
     fn a_rides_strava_rows_with_and_without_the_api() {
         let mut i = info(2);
         let page = Page::HistoryRide(1);
         let id = i.history.nth_newest(1).unwrap().id.clone();
+        // No Strava recording: one line, no upload, no mark.
+        for api in [false, true] {
+            i.strava_api = api;
+            let r = rows(page, &i);
+            assert!(!r.iter().any(|r| r.label == UPLOAD_LABEL || r.label == MARK_LABEL));
+            let line = r.iter().find(|r| r.label == STRAVA_ROW).unwrap();
+            assert_eq!(
+                line.value.as_deref(),
+                Some("no Strava recording – press S while riding")
+            );
+            assert_eq!(line.confirm, None);
+        }
+        // A whole ride uploaded before (v4.97) stays on Strava.
+        i.strava
+            .insert(id.clone(), StravaState::OnStrava { activity_id: Some(5) });
+        assert_eq!(
+            strava_value(page, &i),
+            (
+                Some("on Strava: strava.com/activities/5".into()),
+                Some(Activate::Command("strava.open 2".into()))
+            )
+        );
+        i.strava.clear();
+        i.strava_api = false;
+        // One Strava recording: the browser's upload sends it.
+        i.recordings.insert(id.clone(), 1);
         let r = rows(page, &i);
         let up = r.iter().find(|r| r.label == UPLOAD_LABEL).unwrap();
         assert_eq!(
             up.confirm,
             Some(Activate::Command("strava.upload-manual 2".into()))
         );
-        assert_eq!(up.value, None);
+        assert_eq!(up.value.as_deref(), Some("your Strava recording"));
         let mark = r.iter().find(|r| r.label == MARK_LABEL).unwrap();
         assert_eq!(mark.value.as_deref(), Some("no"));
         assert_eq!(
@@ -809,7 +870,6 @@ mod tests {
         assert_eq!(mark.left.as_deref(), Some("strava.mark-uploaded 2 off"));
         assert_eq!(mark.right.as_deref(), Some("strava.mark-uploaded 2 on"));
         assert!(r.len() < MAX_ITEMS);
-        // A ride with Strava recordings uploads those.
         i.recordings.insert(id.clone(), 2);
         let r = rows(page, &i);
         assert_eq!(
@@ -820,12 +880,16 @@ mod tests {
                 .as_deref(),
             Some("your 2 Strava recordings")
         );
-        // The FIT file not kept: dimmed.
+        // The ride's own FIT file does not matter: the recordings go.
         i.exportable.remove(&id);
-        let r = rows(page, &i);
-        let up = r.iter().find(|r| r.label == UPLOAD_LABEL).unwrap();
-        assert_eq!(up.confirm, Some(Activate::Disabled));
-        assert_eq!(up.value.as_deref(), Some("FIT file not kept"));
+        let up = rows(page, &i)
+            .into_iter()
+            .find(|r| r.label == UPLOAD_LABEL)
+            .unwrap();
+        assert_eq!(
+            up.confirm,
+            Some(Activate::Command("strava.upload-manual 2".into()))
+        );
         // The steps after the upload, the hint until it is marked.
         assert_eq!(text(page, &i).len(), 2);
         i.upload = Some((id.clone(), "Strava opens in your browser: …".into()));
@@ -852,15 +916,20 @@ mod tests {
                 .as_deref(),
             Some("yes")
         );
-        let other = rows(Page::HistoryRide(0), &i);
+        let newest = i.history.nth_newest(0).unwrap().id.clone();
+        i.recordings.insert(newest, 1);
         assert_eq!(
-            other
-                .iter()
-                .find(|r| r.label == "Strava upload")
-                .unwrap()
-                .value
-                .as_deref(),
-            Some("automatic (your API app)")
+            strava_value(Page::HistoryRide(0), &i),
+            (Some("automatic (your API app)".into()), None)
+        );
+        // The automatic upload off (setting strava.auto_upload): upload now.
+        i.strava_auto_off = true;
+        assert_eq!(
+            strava_value(Page::HistoryRide(0), &i),
+            (
+                Some(UPLOAD_NOW_LABEL.into()),
+                Some(Activate::Command("strava.sync --ride 1".into()))
+            )
         );
     }
 
@@ -982,7 +1051,8 @@ mod tests {
         let mut i = info(2);
         let page = Page::HistoryRide(0);
         let id = i.history.nth_newest(0).unwrap().id.clone();
-        // The browser, or a whole ride on the desktop without the API.
+        i.recordings.insert(id.clone(), 1);
+        // The browser, or the desktop without the API.
         assert_eq!(
             strava_value(page, &i),
             (Some(IN_BROWSER_LABEL.into()), None)
@@ -997,6 +1067,10 @@ mod tests {
         );
         // The browser's upload stays beside it.
         assert!(rows(page, &i).iter().any(|r| r.label == UPLOAD_LABEL));
+        // The automatic upload off: it waits for the rider, not the set-up.
+        i.strava_auto_off = true;
+        assert_eq!(strava_value(page, &i).0.as_deref(), Some(IN_BROWSER_LABEL));
+        i.strava_auto_off = false;
         i.strava_api = true;
         assert_eq!(
             strava_value(page, &i),

@@ -200,35 +200,32 @@ impl Tabs {
 #[derive(Resource, Default)]
 pub struct StravaNotice(pub Option<(String, f64)>);
 
-/// The simple Strava upload of a history ride in the browser: the FIT
-/// download under its recognisable name, Strava's upload page in a new
-/// tab, the steps (the menu shows them on the ride's page, the HUD too).
-fn web_upload(
-    world: &mut World,
-    ride: &ocw_client::history::RideEntry,
-    _whole: bool,
-) -> Result<String, String> {
-    let bytes = world
-        .get_resource::<ocw_ui::history::TrainingHistory>()
-        .and_then(|h| h.fits.get(&ride.id).cloned())
-        .ok_or("this ride's FIT file is not kept (only the rides of this page)")?;
-    let name = ocw_client::strava::upload_name(
-        ride.start_unix_s,
-        ocw_ui::history::offset(ride.start_unix_s),
-        &ride.world,
-        &ride.route,
-        None,
-    );
+/// The simple Strava upload of a history ride in the browser: its
+/// Strava recordings (S … S, kept for this page's rides; whole rides
+/// never go to Strava, spec 2.8.1 Q6) downloaded under their names,
+/// Strava's upload page in a new tab, the steps (the menu shows them on
+/// the ride's page, the HUD too).
+fn web_upload(world: &mut World, ride: &ocw_client::history::RideEntry) -> Result<String, String> {
+    let recs = crate::strava::recordings_of(world, ride);
+    if recs.is_empty() {
+        return Err(
+            "this ride has no Strava recording on this page – whole rides never go to Strava; press S while riding to record one (older recordings are in your activities folder or downloads)"
+                .into(),
+        );
+    }
     let downloads = world.resource::<Downloads>().clone();
-    (downloads.0)(&name, "application/vnd.ant.fit", bytes);
+    let names: Vec<String> = recs.iter().map(|r| r.name.clone()).collect();
+    for r in recs {
+        (downloads.0)(&r.name, "application/vnd.ant.fit", r.fit);
+    }
     let tabs = world.resource::<Tabs>().clone();
-    let mut steps =
-        ocw_client::strava::upload_steps(std::slice::from_ref(&name), false, false, None);
+    let mut steps = ocw_client::strava::upload_steps(&names, false, false, None);
     if let Err(e) = (tabs.0)(ocw_client::strava::UPLOAD_PAGE) {
         warn!("Strava's upload page: {e}");
         steps = format!(
-            "Open {} in a new tab (the browser blocked it): sign in, choose the file {name} (just downloaded), then Upload.",
-            ocw_client::strava::UPLOAD_PAGE
+            "Open {} in a new tab (the browser blocked it): sign in, choose the file {} (just downloaded), then Upload.",
+            ocw_client::strava::UPLOAD_PAGE,
+            names[0]
         );
     }
     let now = world
@@ -237,6 +234,16 @@ fn web_upload(
     world.resource_mut::<StravaNotice>().0 =
         Some((steps.clone(), now + ocw_client::strava::UPLOAD_NOTICE_S));
     Ok(steps)
+}
+
+/// The history's refresh in the browser: the FIT files kept in memory
+/// can be exported; the Strava recordings of each ride (spec 2.8.1 Q6).
+fn web_refresh(world: &mut World) {
+    ocw_ui::history::refresh_from_memory(world);
+    let recordings = crate::strava::recordings_by_ride(world);
+    if let Some(mut h) = world.get_resource_mut::<ocw_ui::history::TrainingHistory>() {
+        h.recordings = recordings;
+    }
 }
 
 /// The ride's recording for the FIT download (setting `ride.record`).
@@ -284,7 +291,7 @@ impl Plugin for WebUiPlugin {
                 Ok(format!("downloading {name}"))
             },
             import: None,
-            refresh: ocw_ui::history::refresh_from_memory,
+            refresh: web_refresh,
             // The simple Strava upload (spec §2.8.1); the mark is kept in
             // the history only (no API sync in the browser).
             upload: Some(web_upload),
@@ -1318,13 +1325,15 @@ mod tests {
         );
     }
 
-    /// The simple Strava upload in the browser (spec §2.8.1 *Simple
-    /// upload*): a saved ride's page has the row; it downloads the FIT
-    /// file under its recognisable name, opens Strava's upload page in a
-    /// new tab and shows the steps on the page and in the HUD; the mark
-    /// stays in the history.
+    /// The simple Strava upload in the browser (spec 2.8.1 *Simple
+    /// upload*, Q6): only a ride's Strava recordings (S … S) go to
+    /// Strava, never the whole ride. A saved ride with one has the row; it
+    /// downloads the recording's FIT file under its name, opens Strava's
+    /// upload page in a new tab and shows the steps on the page and in the
+    /// HUD; the mark stays in the history. A ride without one has no
+    /// upload, only the line to press S.
     #[test]
-    fn a_ride_is_uploaded_to_strava_in_a_new_tab() {
+    fn a_rides_strava_recording_is_uploaded_in_a_new_tab() {
         let log = DownloadLog::default();
         let tabs = Arc::new(Mutex::new(Vec::<String>::new()));
         let mut app = App::new();
@@ -1339,10 +1348,16 @@ mod tests {
             })
             .add_plugins((crate::settings::WebSettingsPlugin, WebUiPlugin::default()));
         app.update();
+        run_for(&mut app, 1200);
+        assert!(console(&mut app, "strava.record start").contains("started"));
         run_for(&mut app, 2300);
+        assert!(console(&mut app, "strava.record stop").contains("Strava recording"));
+        let recording = log.lock().unwrap()[0].clone();
+        assert!(recording.0.starts_with("OCW 20") && recording.0.ends_with(".fit"));
+        run_for(&mut app, 300);
         let out = console(&mut app, "ride.save");
         assert!(out.contains("ride saved"), "{out}");
-        // The ride's page: the upload row and the mark (no API here).
+        // The ride's page: the upload row (its recording) and the mark.
         let info = ocw_ui::history::info(app.world());
         assert!(!info.strava_api);
         let page = ocw_client::menu::pages::Page::HistoryRide(0);
@@ -1351,13 +1366,14 @@ mod tests {
             .iter()
             .find(|r| r.label == ocw_client::menu::history::UPLOAD_LABEL)
             .expect("the upload row");
+        assert_eq!(up.value.as_deref(), Some("your Strava recording"));
         assert_eq!(
             up.confirm,
             Some(ocw_client::menu::pages::Activate::Command(
                 "strava.upload-manual 1".into()
             ))
         );
-        // No API upload in the browser (spec §2.8.1): its state says so.
+        // No API upload in the browser (spec 2.8.1): its state says so.
         let state = rows
             .iter()
             .find(|r| r.label == ocw_client::menu::history::STRAVA_ROW)
@@ -1366,6 +1382,7 @@ mod tests {
             state.value.as_deref(),
             Some(ocw_client::menu::history::IN_BROWSER_LABEL)
         );
+        let before = log.lock().unwrap().len();
         let out = console(&mut app, "strava.upload-manual 1");
         assert!(out.contains("Strava opens in a new tab"), "{out}");
         assert_eq!(
@@ -1373,18 +1390,15 @@ mod tests {
             vec![ocw_client::strava::UPLOAD_PAGE.to_string()]
         );
         let downloads = log.lock().unwrap().clone();
-        assert_eq!(downloads.len(), 2, "the ride, then the upload's copy");
-        let (name, mime, bytes) = &downloads[1];
-        assert!(
-            name.starts_with("OCW 20") && name.ends_with(".fit"),
-            "{name}"
-        );
+        assert_eq!(downloads.len(), before + 1, "the recording only");
+        let (name, mime, bytes) = &downloads[before];
+        assert_eq!(name, &recording.0, "the recording, not the whole ride");
         assert!(
             out.contains(name.as_str()),
             "the steps name the file: {out}"
         );
         assert_eq!(mime, "application/vnd.ant.fit");
-        assert_eq!(bytes, &downloads[0].2);
+        assert_eq!(bytes, &recording.2);
         app.update();
         assert!(
             app.world()
@@ -1410,6 +1424,29 @@ mod tests {
                 .as_deref(),
             Some("yes")
         );
+        // The next ride, without S: no upload, the line to press S.
+        run_for(&mut app, 2300);
+        assert!(console(&mut app, "ride.save").contains("ride saved"));
+        let info = ocw_ui::history::info(app.world());
+        let rows = ocw_client::menu::history::rows(page, &info);
+        assert!(
+            !rows
+                .iter()
+                .any(|r| r.label == ocw_client::menu::history::UPLOAD_LABEL)
+        );
+        assert_eq!(
+            rows.iter()
+                .find(|r| r.label == ocw_client::menu::history::STRAVA_ROW)
+                .unwrap()
+                .value
+                .as_deref(),
+            Some(ocw_client::strava::NO_RECORDING)
+        );
+        let n = log.lock().unwrap().len();
+        let out = console(&mut app, "strava.upload-manual 1");
+        assert!(out.contains("no Strava recording"), "{out}");
+        assert_eq!(log.lock().unwrap().len(), n, "nothing downloaded");
+        assert_eq!(tabs.lock().unwrap().len(), 1, "no tab");
     }
 
     #[test]
