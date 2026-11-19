@@ -1,10 +1,13 @@
 //! Remembered Bluetooth devices (spec §3.4: "paired devices are remembered
-//! and reconnected automatically"), stored as TOML in the user's config
-//! directory (`~/.config/ocw/devices.toml` on Linux).
+//! and reconnected automatically"), kept in the local config file
+//! (`ocw.toml [devices]`, spec 3.2.4; the old `devices.toml` is migrated
+//! into it), or in the file `--devices-file` names.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+
+use crate::config::Slot;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KnownDevice {
@@ -24,30 +27,16 @@ pub struct KnownDevices {
     pub devices: Vec<KnownDevice>,
 }
 
-/// The app's config directory (`~/.config/ocw` on Linux);
-/// `OCW_CONFIG_DIR` overrides it. Settings and rider profiles live here too.
-pub fn config_dir() -> Option<PathBuf> {
-    match std::env::var_os("OCW_CONFIG_DIR") {
-        Some(d) => Some(PathBuf::from(d)),
-        None => Some(dirs::config_dir()?.join("ocw")),
-    }
-}
-
-/// Default location of the devices file.
-pub fn default_path() -> Option<PathBuf> {
-    Some(config_dir()?.join("devices.toml"))
-}
-
-/// The devices file to use: `--devices-file` if it exists, else the default.
-/// Regression: the test machine's kiosk passed a file under /tmp, which a
-/// reboot deleted; the app then silently rode the virtual trainer and the
-/// trainer on the bike had no effect.
-pub fn choose_path(given: Option<PathBuf>, default: Option<PathBuf>) -> Option<PathBuf> {
+/// Where the devices are kept: `--devices-file` if it exists, else the
+/// default (`ocw.toml [devices]`). Regression: the test machine's kiosk
+/// passed a file under /tmp, which a reboot deleted; the app then silently
+/// rode the virtual trainer and the trainer on the bike had no effect.
+pub fn choose_slot(given: Option<PathBuf>, default: Option<Slot>) -> Option<Slot> {
     match given {
-        Some(p) if p.exists() => Some(p),
+        Some(p) if p.exists() => Some(Slot::File(p)),
         Some(p) => {
-            tracing::warn!(missing = %p.display(), fallback = ?default, "--devices-file not found, using the default devices file");
-            default.or(Some(p))
+            tracing::warn!(missing = %p.display(), fallback = ?default, "--devices-file not found, using the default (ocw.toml [devices])");
+            default.or(Some(Slot::File(p)))
         }
         None => default,
     }
@@ -55,20 +44,27 @@ pub fn choose_path(given: Option<PathBuf>, default: Option<PathBuf>) -> Option<P
 
 impl KnownDevices {
     /// Loads the file; a missing file means no devices.
-    pub fn load(path: &Path) -> Result<Self, String> {
-        match std::fs::read_to_string(path) {
-            Ok(s) => toml::from_str(&s).map_err(|e| format!("{}: {e}", path.display())),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(e) => Err(format!("{}: {e}", path.display())),
+    #[cfg(test)]
+    pub fn load(path: &std::path::Path) -> Result<Self, String> {
+        Self::load_slot(&Slot::File(path.to_path_buf()))
+    }
+
+    #[cfg(test)]
+    pub fn save(&self, path: &std::path::Path) -> Result<(), String> {
+        self.save_slot(&Slot::File(path.to_path_buf()))
+    }
+
+    /// Loads the devices of `slot`; nothing saved means no devices.
+    pub fn load_slot(slot: &Slot) -> Result<Self, String> {
+        match slot.read()? {
+            Some(s) => toml::from_str(&s).map_err(|e| format!("{}: {e}", slot.describe())),
+            None => Ok(Self::default()),
         }
     }
 
-    pub fn save(&self, path: &Path) -> Result<(), String> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        }
+    pub fn save_slot(&self, slot: &Slot) -> Result<(), String> {
         let text = toml::to_string_pretty(self).map_err(|e| e.to_string())?;
-        std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
+        slot.write(&text)
     }
 
     /// Adds a device or updates its name.
@@ -96,19 +92,22 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("ocw-known-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let given = dir.join("devices.toml");
-        let default = Some(dir.join("default.toml"));
+        let default = Some(crate::config::ConfigFiles::in_dir(&dir).section("devices"));
         // Missing: the default.
-        assert_eq!(choose_path(Some(given.clone()), default.clone()), default);
+        assert_eq!(choose_slot(Some(given.clone()), default.clone()), default);
         // Present: the given file.
         std::fs::write(&given, "").unwrap();
         assert_eq!(
-            choose_path(Some(given.clone()), default.clone()),
-            Some(given.clone())
+            choose_slot(Some(given.clone()), default.clone()),
+            Some(Slot::File(given.clone()))
         );
         // Nothing given: the default; no default at all: the given path.
-        assert_eq!(choose_path(None, default.clone()), default);
+        assert_eq!(choose_slot(None, default.clone()), default);
         std::fs::remove_file(&given).unwrap();
-        assert_eq!(choose_path(Some(given.clone()), None), Some(given));
+        assert_eq!(
+            choose_slot(Some(given.clone()), None),
+            Some(Slot::File(given))
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

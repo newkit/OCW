@@ -59,6 +59,10 @@ impl Plugin for MenuPlugin {
 /// The rows of the desktop's own pages: the World and the Ride / Navi
 /// lists (from the ride catalog).
 fn desktop_rows(world: &World, page: settings_pages::Page) -> Option<Vec<settings_pages::Row>> {
+    // The start choice (spec 3.2.4).
+    if page == settings_pages::Page::Start {
+        return Some(crate::start::rows(world));
+    }
     // Ride → Host a ride and the hosting's join link.
     if let Some(rows) = crate::ride::host::rows(world, page) {
         return Some(rows);
@@ -190,6 +194,7 @@ mod tests {
             HostOptions,
             HostSummary,
             HostLink,
+            Start,
             Calendar(ocw_client::menu::calendar::Cal::at((2026, 11, 16))),
             CalendarDates(ocw_client::menu::calendar::Cal::at((2026, 11, 16))),
             Season,
@@ -215,8 +220,8 @@ mod tests {
                 | History | HistoryRides | HistoryRide(_) | HistoryClimbs(_) | HistoryWeeks
                 | HistoryMonths | HistoryBests | HistoryWaiting | StravaWaiting | EventRules
                 | Account | TrustedKeys | TrustedKey(_) | Join | HostWorld | HostRoute
-                | HostTime | HostWeather | HostOptions | HostSummary | HostLink | Devices
-                | Device(_) | Calendar(_) | CalendarDates(_) | Season | Character
+                | HostTime | HostWeather | HostOptions | HostSummary | HostLink | Start
+                | Devices | Device(_) | Calendar(_) | CalendarDates(_) | Season | Character
                 | CharacterBody | CharacterFace | CharacterHair | CharacterFacialHair
                 | CharacterPick(_) => {}
             }
@@ -1148,5 +1153,69 @@ mod tests {
             server_weather(&app),
             ocw_weather::presets::preset("clear").unwrap()
         );
+    }
+
+    /// The start choice (spec 3.2.4 Q3, Q5): the page opens with the last
+    /// choice focused, Enter takes it and it is kept in `ocw.toml`.
+    #[test]
+    fn the_start_choice_preselects_the_last_choice_and_enter_takes_it() {
+        use crate::config::{ConfigFiles, load_start_choice, save_start_choice};
+        use crate::start::{StartMode, StartPlugin};
+        use ocw_client::menu::start::Choice;
+        let dir = std::env::temp_dir().join(format!("ocw-start-choice-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let files = ConfigFiles::in_dir(&dir);
+        let start = |files: &ConfigFiles| {
+            let f = files.clone();
+            let mut app = app_with(move |a| {
+                a.insert_resource(f).add_plugins(StartPlugin {
+                    mode: Some(StartMode::Ask),
+                });
+            });
+            app.update();
+            app
+        };
+        // Last time: locally.
+        save_start_choice(&files, Choice::Local).unwrap();
+        let mut app = start(&files);
+        let v = view(&app);
+        assert_eq!(v.title, "Open Cycling World");
+        assert_eq!(v.items[0], "Connect to a server");
+        assert!(v.items[1].starts_with("Ride locally as"), "{:?}", v.items);
+        assert!(v.items[1].ends_with("last choice"), "{:?}", v.items);
+        assert_eq!(v.focused, 1, "the last choice is preselected");
+        tap(&mut app, KeyCode::Enter);
+        assert!(!app.world().resource::<MenuState>().menu.is_open());
+        let log = app.world().resource::<ConsoleState>().log().join("\n");
+        assert!(log.contains("riding locally as"), "{log}");
+        assert!(log.contains("Training mode"), "{log}");
+        assert_eq!(load_start_choice(&files), Some(Choice::Local));
+        // Last time: a server – Enter opens Connect to a server (Ride →
+        // Join: the address field and the recent servers).
+        save_start_choice(&files, Choice::Server).unwrap();
+        let mut app = start(&files);
+        assert_eq!(view(&app).focused, 0);
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(view(&app).title, "Join a ride");
+        assert_eq!(load_start_choice(&files), Some(Choice::Server));
+        // Down + Enter: the other one, kept for the next start.
+        let mut app = start(&files);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::Enter);
+        assert!(!app.world().resource::<MenuState>().menu.is_open());
+        assert_eq!(load_start_choice(&files), Some(Choice::Local));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Kiosks, screenshots, captures and scripted runs never stop at the
+    /// question: the app the tests build (a capture run) has no page open.
+    #[test]
+    fn a_deciding_option_skips_the_start_choice() {
+        let mut app = app_with(|a| {
+            a.add_plugins(crate::start::StartPlugin::default());
+        });
+        app.update();
+        assert!(!app.world().resource::<MenuState>().menu.is_open());
     }
 }

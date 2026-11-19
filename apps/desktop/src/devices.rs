@@ -22,7 +22,6 @@
 //! The Bluetooth stack is behind [`DeviceIo`] (connect, scan), so the
 //! tests run the whole flow with a mock.
 
-use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
@@ -78,11 +77,14 @@ impl Plugin for DevicesPlugin {
         if !app.world().contains_resource::<DeviceIo>() {
             app.insert_resource(DeviceIo::bluetooth());
         }
-        let known_path =
-            known_devices::choose_path(args.devices_file.clone(), known_devices::default_path());
-        info!(path = ?known_path, "remembered devices file");
+        let default = app
+            .world()
+            .get_resource::<crate::config::ConfigFiles>()
+            .map(|f| f.section("devices"));
+        let known_path = known_devices::choose_slot(args.devices_file.clone(), default);
+        info!(path = ?known_path, "remembered devices");
         let known = match &known_path {
-            Some(p) => KnownDevices::load(p).unwrap_or_else(|e| {
+            Some(p) => KnownDevices::load_slot(p).unwrap_or_else(|e| {
                 warn!("cannot read remembered devices: {e}");
                 KnownDevices::default()
             }),
@@ -165,7 +167,7 @@ struct Listed {
 pub struct Devices {
     running: Mutex<Vec<Running>>,
     known: KnownDevices,
-    known_path: Option<PathBuf>,
+    known_path: Option<crate::config::Slot>,
     scan: Option<ScanJob>,
     /// The devices of the last scan, in the order found (for
     /// `devices.connect <n>`).
@@ -178,7 +180,7 @@ pub struct Devices {
 }
 
 impl Devices {
-    fn new(known: KnownDevices, known_path: Option<PathBuf>, virtual_w: f64) -> Self {
+    fn new(known: KnownDevices, known_path: Option<crate::config::Slot>, virtual_w: f64) -> Self {
         let listed = known
             .devices
             .iter()
@@ -309,14 +311,14 @@ impl Devices {
 
     fn save_known(&self) -> Result<(), String> {
         match &self.known_path {
-            Some(p) => self.known.save(p),
+            Some(p) => self.known.save_slot(p),
             None => Err("no configuration directory".into()),
         }
     }
 
-    /// The remembered file for messages ("~/.config/ocw/devices.toml").
+    /// The remembered file for messages ("~/.config/ocw/ocw.toml [devices]").
     fn file_text(&self) -> Option<String> {
-        self.known_path.as_deref().map(home_relative)
+        self.known_path.as_ref().map(crate::config::Slot::describe)
     }
 
     /// Remembers a device that connected; the message says where, or why
@@ -431,14 +433,6 @@ impl Devices {
             file: self.file_text(),
             virtual_trainer: running.iter().any(|r| r.id.is_none()),
         }
-    }
-}
-
-/// "~/.config/ocw/devices.toml" for a path under the home directory.
-fn home_relative(p: &Path) -> String {
-    match dirs::home_dir().and_then(|h| p.strip_prefix(h).ok().map(Path::to_path_buf)) {
-        Some(rest) => format!("~/{}", rest.display()),
-        None => p.display().to_string(),
     }
 }
 
@@ -741,7 +735,7 @@ fn register_commands(app: &mut App) {
                 }
             }
             if let Some(p) = &devices.known_path {
-                out.push_str(&format!("\nfile: {}", p.display()));
+                out.push_str(&format!("\nfile: {}", p.describe()));
             }
             Ok(out)
         },
@@ -859,6 +853,8 @@ fn register_commands(app: &mut App) {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use clap::Parser;
     use ocw_client::menu::pages::Page;
     use ocw_devices::FailReason;

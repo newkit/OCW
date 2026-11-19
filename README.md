@@ -1247,6 +1247,24 @@ Then start the app: the left stick steers, the triggers ride and stop (see
 
 ## Riding modes
 
+**At the start: a server or local** (spec 3.2.4). When the desktop app starts
+without an option that already decides (`--server`, `--world`, a screenshot,
+the kiosk, …), the menu asks **Connect to a server** or **Ride locally**, every
+start, with your last choice marked and focused – Enter takes it.
+
+- *Connect to a server* opens Ride → Join: type or paste the server's address
+  (`ocw://HOST:PORT?cert=…`, or `HOST` on this machine) or pick one of the
+  recent servers (kept in `ocw.toml [servers]`).
+- *Ride locally* rides on this computer with your local rider (Settings →
+  Riders; name, weight, height, FTP in `ocw.toml [riders]`) in **Training
+  mode**: every bike and all gear in the Workshop are free to ride, no hearts
+  are earned or spent (Training mode keeps its own garage). A **Campaign
+  mode** – one old rusty city bike at the start, the rest earned – is planned
+  for later.
+- The browser app has its own start page instead. `--start-choice
+  ask|local|server` decides on the command line; the console has
+  `start.choose server|local` and `start.ask`.
+
 **Steering** (spec §5.2.1; HUD shows the mode and the surface)
 
 - **Autodrive** (default, key A): the rider keeps to the middle of the road by
@@ -1838,7 +1856,8 @@ event status | event cancel | event dismiss
 |---|---|
 | `--name NAME` | Display name of your rider for this session (default: the rider profile's name) |
 | `--rider NAME` | Ride as this rider profile for this session (default: the one chosen in the Workshop) |
-| `--settings-file PATH` | Settings file (default `~/.config/ocw/settings.toml`; `riders.toml` is read next to it) |
+| `--settings-file PATH` | The local config file (default `ocw.toml` in the config folder, e.g. `~/.config/ocw/ocw.toml`; `secrets.toml` next to it; an old `settings.toml` given here is converted in place, kept as `.bak`) |
+| `--start-choice ask\|local\|server` | The start choice (spec 3.2.4): `ask` shows *Connect to a server* / *Ride locally* with the last choice preselected (Enter takes it), `local` rides locally, `server` opens *Connect to a server*. Default: ask, unless an option already decides (`--server`, `--join`, `--world`, `--route*`, `--free-ride`, `--workout`, `--screenshot`, `--capture`, `--cmd`, `--exec`, `--at`, the kiosk's `--no-hearts`) |
 | `--power W` | Initial power of the virtual trainer (default 200) |
 | `--no-hearts` | Earn no hearts in this session (the kiosk's show mode) |
 | `--bots N` | Number of test riders (default 10; they start in rows of up to three behind you) |
@@ -1861,7 +1880,7 @@ event status | event cancel | event dismiss
 | `--workout FILE` | Load and start a structured workout (`.toml`, `.erg`, `.mrc`; see [Workouts](#workouts)) |
 | `--ftp W` | Your FTP in watts for % FTP workout targets (default: the rider profile's FTP, else 200) |
 | `--virtual` | Use the virtual trainer even if Bluetooth devices are remembered |
-| `--devices-file PATH` | Remembered devices (default `~/.config/ocw/devices.toml`) |
+| `--devices-file PATH` | Remembered devices in a file of their own (default: the `[devices]` section of `ocw.toml`) |
 | `--record BOOL` | Record the ride as a FIT file (default on, off for screenshot/capture runs) |
 | `--window WxH` | Window size (default 1280x720) |
 | `--fullscreen` | Borderless fullscreen on the current monitor |
@@ -1886,19 +1905,38 @@ settings live in your roaming AppData folder.
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| **Config** (settings, devices, riders, Strava, sign-in) | `~/.config/ocw/` (`$XDG_CONFIG_HOME/ocw`) | `%APPDATA%\ocw\` = `C:\Users\<you>\AppData\Roaming\ocw\` | `~/Library/Application Support/ocw/` |
+| **Config** (`ocw.toml`: settings, devices, local riders, servers; `secrets.toml`: Strava, sign-in) | `~/.config/ocw/` (`$XDG_CONFIG_HOME/ocw`) | `%APPDATA%\ocw\` = `C:\Users\<you>\AppData\Roaming\ocw\` | `~/Library/Application Support/ocw/` |
 | **Data** (rides, ghosts, videos, routes, workouts, studio autosave) | `~/.local/share/ocw/` (`$XDG_DATA_HOME/ocw`) | `%APPDATA%\ocw\` (the same folder as the config) | `~/Library/Application Support/ocw/` (the same folder as the config) |
 | **Activities** (your recordings, photos, screenshots) | `~/Activities/OCW/` | `C:\Users\<you>\Activities\OCW\` | `~/Activities/OCW/` |
 
 Open the Windows folder by typing `%APPDATA%\ocw` into the Explorer's address
 bar or the Run dialog (Win + R).
 
-- **In the config folder:** `settings.toml` (all settings, below), `devices.toml`
-  (remembered trainers and sensors), `riders.toml` (rider profiles),
-  `strava.toml` and `strava-token.toml` (Strava upload with your own API
-  app, §2.8.1; an example is in `packaging/strava.example.toml`), `account.json`
-  (the sign-in session when the system keyring is not available),
-  `trusted-roots/` and `keys/` (world package signing).
+- **In the config folder** (spec 3.2.4): **`ocw.toml`**, one file with every
+  local setting of this computer in sections – `[settings]` (all settings,
+  below, as `[settings.audio]`, `[settings.display]`, …), `[riders]` (the local
+  riders: name, weight, height, FTP; *Ride locally* rides the chosen one),
+  `[devices]` (remembered trainers and sensors), `[servers]` (the recent
+  servers of *Connect to a server*), `[start]` (the last start choice) and
+  `[strava]` (`auto_upload`). Edit it by hand while the app is closed; the app
+  changes only the section it saves, your comments elsewhere stay.
+  **`secrets.toml`** next to it, readable only by you (mode 0600 on Linux and
+  macOS; on Windows your profile folder is private): `[strava]` (the
+  `client_id` / `client_secret` of your own Strava API app, §2.8.1; an example
+  is in `packaging/secrets.example.toml`; `OCW_STRAVA_CLIENT_ID` /
+  `OCW_STRAVA_CLIENT_SECRET` win over it), `[strava_token]` (its tokens) and
+  `[account]` (the sign-in session when the system keyring is not available).
+  `ocw.toml` never holds a secret, so you can share it. Also there:
+  `trusted-keys.json`, `trusted-roots/` and `keys/` (world package signing).
+- **Moving from older versions:** at the first start of a version with
+  `ocw.toml`, the old files of the config folder – `settings.toml`,
+  `riders.toml`, `devices.toml`, `joins.txt`, `strava.toml`,
+  `strava-token.toml`, `account.json` – are read into their sections once and
+  **kept as `*.bak`** (`settings.toml.bak`, …; nothing is deleted); the log
+  says once what moved (`config: moved …`). An old file that appears again
+  later (written by hand or an older script) replaces its section, the
+  `ocw.toml` before that kept as `ocw.toml.bak`. A `--settings-file` in the old
+  format is converted in place the same way.
 - **In the data folder:** `rides/` (every ride and its FIT file, the training
   history), `ghosts/`, `videos/`, `routes/`, `gpx/`, `workouts/`,
   `camera-paths/`, `host-tls/` (the certificate when you host a ride), and the
@@ -1909,17 +1947,20 @@ bar or the Run dialog (Win + R).
   photos in a folder per day `YYYY-MM-DD`.
 - **Other places:** `OCW_CONFIG_DIR`, `OCW_DATA_DIR` and `OCW_ACTIVITIES_DIR`
   move the three folders (e.g. for tests or a portable setup);
-  `--settings-file FILE` uses another settings file. The **browser app** keeps
+  `--settings-file FILE` uses another config file (`secrets.toml` next to it).
+  The workshop's garage and hearts (`workshop.toml`, `hearts-ledger.jsonl`;
+  Training mode's own garage in `training/`) are game data in the data
+  folder. The **browser app** keeps
   its settings in the browser's storage for the page (`localStorage` /
   IndexedDB), and saves recordings and photos into a folder you choose
   (Chrome, Edge) or as downloads.
 
 ## Settings and rider profiles
 
-Settings live in `settings.toml` in the config folder (see *Where OCW keeps
-its files* above: `~/.config/ocw/` on Linux, `%APPDATA%\ocw\` on Windows,
-`~/Library/Application Support/ocw/` on macOS; `OCW_CONFIG_DIR` or
-`--settings-file` choose another place). Change them with `set KEY VALUE` in the
+Settings live in the `[settings]` section of `ocw.toml` in the config folder
+(see *Where OCW keeps its files* above: `~/.config/ocw/` on Linux,
+`%APPDATA%\ocw\` on Windows, `~/Library/Application Support/ocw/` on macOS;
+`OCW_CONFIG_DIR` or `--settings-file` choose another place). Change them with `set KEY VALUE` in the
 console (saved at once), or by editing the file; `get` lists them all:
 
 | Key | Values (default) | Applies |

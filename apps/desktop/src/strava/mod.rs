@@ -8,8 +8,10 @@
 //! **The advanced way** (the interim path until the backend exists, spec
 //! §2.8, §14 Phase 5): the user registers their own Strava API
 //! application and configures its client id and secret
-//! (`OCW_STRAVA_CLIENT_ID` / `OCW_STRAVA_CLIENT_SECRET` or `<config
-//! dir>/ocw/strava.toml`); nothing is built in. With them every saved ride
+//! (`OCW_STRAVA_CLIENT_ID` / `OCW_STRAVA_CLIENT_SECRET`, which win, or
+//! `[strava]` of `secrets.toml` in the config folder, spec 3.2.4; an old
+//! `strava.toml` / `strava-token.toml` there is migrated into it, also
+//! while the app runs); nothing is built in. With them every saved ride
 //! is uploaded automatically (except those marked as uploaded by hand).
 //!
 //! **Recording without Strava set up, uploaded later** (spec §2.8.1):
@@ -93,13 +95,15 @@ pub struct Strava {
 
 /// Looking for the credentials while the app runs.
 struct Watch {
-    config_dir: PathBuf,
+    /// `ocw.toml` and `secrets.toml` (the old `strava.toml` beside them).
+    files: crate::config::ConfigFiles,
     rides_dir: PathBuf,
     /// The environment's credentials as they were at the start (it is not
     /// read again).
     env: Vec<(String, String)>,
-    /// The config file's modification time when last looked at.
-    seen: Option<SystemTime>,
+    /// The modification times of `secrets.toml` and an old `strava.toml`
+    /// when last looked at.
+    seen: (Option<SystemTime>, Option<SystemTime>),
     /// The stand-in Strava instead of Strava.
     fake: bool,
     /// Seconds to the next look.
@@ -108,6 +112,15 @@ struct Watch {
 
 fn modified(path: &Path) -> Option<SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+/// What the watch looks at: `secrets.toml`, and an old `strava.toml`
+/// written by hand (it is migrated when it comes).
+fn watched(files: &crate::config::ConfigFiles) -> (Option<SystemTime>, Option<SystemTime>) {
+    (
+        modified(&files.secrets),
+        modified(&files.dir().join("strava.toml")),
+    )
 }
 
 impl Strava {
@@ -132,10 +145,19 @@ impl Strava {
         let Some(w) = &mut self.watch else {
             return false;
         };
-        w.seen = modified(&w.config_dir.join("strava.toml"));
+        // An old strava.toml / strava-token.toml: into secrets.toml first.
+        let (notes, problems) =
+            crate::config::migrate_only(&w.files, Some(crate::config::STRAVA_FILES));
+        for n in notes {
+            info!("config: moved {n}");
+        }
+        for p in problems {
+            warn!("config: {p}");
+        }
+        w.seen = watched(&w.files);
         let env = w.env.clone();
         let lookup = move |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
-        match start(&w.config_dir, w.rides_dir.clone(), &lookup, w.fake) {
+        match start(&w.files, w.rides_dir.clone(), &lookup, w.fake) {
             Ok(worker) => {
                 self.worker = Some(worker);
                 self.off_reason.clear();
@@ -196,7 +218,17 @@ impl Plugin for StravaPlugin {
             .get_resource::<crate::recording::Recording>()
             .and_then(|r| r.dir.clone())
             .or_else(crate::recording::default_rides_dir);
-        let config_dir = self.config_dir.clone().or_else(default_config_dir);
+        // The app's config files (spec 3.2.4), else those of `config_dir`.
+        let files = self
+            .config_dir
+            .as_deref()
+            .map(crate::config::ConfigFiles::in_dir)
+            .or_else(|| {
+                app.world()
+                    .get_resource::<crate::config::ConfigFiles>()
+                    .cloned()
+            })
+            .or_else(|| default_config_dir().map(|d| crate::config::ConfigFiles::in_dir(&d)));
         // The environment is read here only.
         let env: Vec<(String, String)> = if self.ignore_env {
             Vec::new()
@@ -206,16 +238,16 @@ impl Plugin for StravaPlugin {
                 .filter_map(|k| Some((k.to_string(), std::env::var(k).ok()?)))
                 .collect()
         };
-        let strava = match (config_dir, rides_dir) {
-            (Some(config_dir), Some(rides_dir)) => {
+        let strava = match (files, rides_dir) {
+            (Some(files), Some(rides_dir)) => {
                 let mut s = Strava {
                     worker: None,
                     off_reason: String::new(),
                     watch: Some(Watch {
-                        config_dir,
+                        files,
                         rides_dir: rides_dir.clone(),
                         env,
-                        seen: None,
+                        seen: (None, None),
                         fake: self.fake_strava || std::env::var_os(api::ENV_FAKE).is_some(),
                         next_s: WATCH_S,
                     }),
@@ -261,16 +293,16 @@ impl Plugin for StravaPlugin {
     }
 }
 
-/// Starts the worker with the credentials from `strava.toml` or `env`;
+/// Starts the worker with the credentials from `env` or `secrets.toml`;
 /// `Err`: why Strava stays off.
 fn start(
-    config_dir: &Path,
+    files: &crate::config::ConfigFiles,
     rides_dir: PathBuf,
     env: &dyn Fn(&str) -> Option<String>,
     fake: bool,
 ) -> Result<Worker, String> {
-    let config_file = config_dir.join("strava.toml");
-    let config = StravaConfig::load(&config_file).map_err(|e| format!("Strava: off, {e}"))?;
+    let config_file = files.secret("strava").describe();
+    let config = StravaConfig::load_files(files).map_err(|e| format!("Strava: off, {e}"))?;
     let Some(creds) = config.credentials(env) else {
         return Err(format!(
             "Strava: no API application set up (the advanced way). Upload rides in your browser instead: \
@@ -278,8 +310,7 @@ fn start(
              Strava recordings (S) wait and are uploaded once it is set up. \
              For automatic uploads register an API application at https://www.strava.com/settings/api \
              (authorization callback domain: localhost), then set {ENV_CLIENT_ID} and {ENV_CLIENT_SECRET} \
-             or put client_id and client_secret into {}",
-            config_file.display()
+             or put client_id and client_secret into {config_file}"
         ));
     };
     let http: Arc<dyn api::Http> = if fake {
@@ -297,7 +328,7 @@ fn start(
             state_file: state_file(&rides_dir),
             rides_dir,
             token: TokenStore {
-                path: config_dir.join("strava-token.toml"),
+                path: files.secrets.clone(),
             },
         },
         auto_upload: config.auto_upload.unwrap_or(true),
@@ -323,8 +354,8 @@ fn watch_credentials(world: &mut World) {
         return;
     }
     w.next_s = WATCH_S;
-    let now = modified(&w.config_dir.join("strava.toml"));
-    if now.is_none() || now == w.seen {
+    let now = watched(&w.files);
+    if now == (None, None) || now == w.seen {
         return;
     }
     if s.try_start() {

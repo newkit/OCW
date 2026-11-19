@@ -92,16 +92,17 @@ OCW_REMOTE_DEPLOY=1 scripts/remote.sh "$machine" run "
   put 755 scripts/ocw-kiosk.sh ocw-kiosk.sh
   [ -f \"\$D/devices.toml\" ] || { [ -f /tmp/ocw/kickr/devices.toml ] && install -m 644 /tmp/ocw/kickr/devices.toml \"\$D/devices.toml\"; } || true
   # The local config folder (~/.config/ocw, user 2026-11-17): the remembered
-  # devices live there (not under /tmp, which a reboot empties), and an
-  # example strava.toml is put there once (values commented out = Strava off).
+  # devices live there (not under /tmp, which a reboot empties; the app moves
+  # devices.toml into ocw.toml [devices], spec 3.2.4), and an example
+  # secrets.toml is put there once (values commented out = Strava off).
   C=\${XDG_CONFIG_HOME:-\$HOME/.config}/ocw
   mkdir -p \"\$C\"
-  if [ ! -f \"\$C/devices.toml\" ]; then
+  if [ ! -f \"\$C/devices.toml\" ] && ! grep -qs '^\\[\\[devices\\.device\\]\\]' \"\$C/ocw.toml\"; then
     for f in /tmp/ocw/kickr/devices.toml \"\$D/devices.toml\"; do
       [ -f \"\$f\" ] && install -m 600 \"\$f\" \"\$C/devices.toml\" && echo \"devices: \$C/devices.toml\" && break
     done || true
   fi
-  [ -f \"\$C/strava.toml\" ] || { install -m 600 packaging/strava.example.toml \"\$C/strava.toml\" && echo \"example Strava config: \$C/strava.toml\"; }
+  [ -f \"\$C/secrets.toml\" ] || [ -f \"\$C/strava.toml\" ] || { install -m 600 packaging/secrets.example.toml \"\$C/secrets.toml\" && echo \"example secrets (Strava): \$C/secrets.toml\"; }
   [ -f \"\$D/kiosk-local.args\" ] && [ -f \"\$C/devices.toml\" ] && \\
     sed -i \"s#^--devices-file /tmp/ocw/kickr/devices.toml\\\$#--devices-file \$C/devices.toml#\" \"\$D/kiosk-local.args\" || true
   echo '$version' > \"\$D/VERSION.new\" && chmod 644 \"\$D/VERSION.new\" && mv -f \"\$D/VERSION.new\" \"\$D/VERSION\"
