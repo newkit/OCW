@@ -933,6 +933,8 @@ pub fn command(studio: &mut Studio, cmd: RouteCommand, now_s: f64) -> Result<Str
                 ));
             }
             studio.routes.settings.power_w = w.round();
+            // At once, so `studio route info` right after has the new time.
+            studio.routes.update_estimate();
             save_settings(studio)?;
             Ok(format!("expected time at {:.0} W", w.round()))
         }
@@ -1907,8 +1909,9 @@ mod tests {
         assert!(e.time_s > 1200.0 / steady && e.time_s < 1200.0 / steady + 15.0);
         assert!(route_lines(&s).iter().any(|l| l.starts_with("expected")));
         // More power: faster; the setting is kept.
+        // (Regression: `route info` right after the power said the old time.)
         run(&mut s, RouteCommand::Power(400.0), 2.0);
-        refresh_view(&mut s);
+        assert!(route_lines(&s).iter().any(|l| l.contains("at 400 W")));
         let fast = s.routes.estimate.unwrap();
         assert!(fast.time_s < e.time_s * 0.85);
         assert_eq!(s.routes.settings.power_w, 400.0);
