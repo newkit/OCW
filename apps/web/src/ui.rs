@@ -337,6 +337,8 @@ impl Plugin for WebUiPlugin {
         // The Strava recording (S, spec §2.8.1): its FIT file and photos
         // in its own folder of the activities folder, or downloads.
         crate::strava::build(app);
+        // The safe-area insets and full screen (spec §3.2.3 TS4).
+        crate::screen::build(app);
         if !app.world().contains_resource::<PhotoSaver>() {
             let a = app
                 .world()

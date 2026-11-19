@@ -197,6 +197,7 @@ pub fn top_panel_max_px(window_px: f32, right_px: f32, inverse_scale: f32) -> f3
 /// at 150 % HUD size the bike computer ran into the FPS counter).
 fn fit_top_panel(
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    safe: Option<Res<crate::safe_area::SafeArea>>,
     right: Query<&ComputedNode, With<HudTopRight>>,
     mut panel: Query<&mut Node, With<HudTopPanel>>,
     mut width: ResMut<TopPanelWidth>,
@@ -204,13 +205,11 @@ fn fit_top_panel(
     let (Ok(w), Ok(r)) = (windows.single(), right.single()) else {
         return;
     };
-    let max = top_panel_max_px(
-        w.resolution.physical_width() as f32,
-        r.size().x,
-        r.inverse_scale_factor(),
-    );
+    // The UI's width in physical px (inside the safe area, spec §3.2.3).
+    let ui_w = crate::safe_area::ui_area(w, safe.as_deref()).1.x * w.scale_factor();
+    let max = top_panel_max_px(ui_w, r.size().x, r.inverse_scale_factor());
     // Not wider than the window either (the panel's 94 vw).
-    let max = max.min(w.resolution.physical_width() as f32 * r.inverse_scale_factor() * 0.94);
+    let max = max.min(ui_w * r.inverse_scale_factor() * 0.94);
     width.set_if_neq(TopPanelWidth(max.floor()));
     for mut n in &mut panel {
         let want = Val::Px(max.floor());

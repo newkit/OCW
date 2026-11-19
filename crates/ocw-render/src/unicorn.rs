@@ -1613,7 +1613,11 @@ fn name_tags(
     mut u: ResMut<Unicorns>,
     cameras: Query<(&Camera, &GlobalTransform), With<FollowCamera>>,
     mut tags: Query<(&mut Node, &mut Visibility, &mut Text), With<NameTag>>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    safe: Option<Res<crate::safe_area::SafeArea>>,
 ) {
+    // The UI's top left on the window (spec §3.2.3 *Safe areas*).
+    let off = crate::safe_area::ui_offset(windows.single().ok(), safe.as_deref());
     let others: Vec<&UnicornView> = view.unicorns.iter().filter(|v| !v.is_local).collect();
     for v in &others {
         if u.tags.contains_key(&v.id) {
@@ -1662,8 +1666,8 @@ fn name_tags(
         });
         match shown {
             Some(p) => {
-                node.left = px(p.x - 30.0);
-                node.top = px(p.y - 24.0);
+                node.left = px(p.x - off.x - 30.0);
+                node.top = px(p.y - off.y - 24.0);
                 *vis = Visibility::Visible;
             }
             None => *vis = Visibility::Hidden,

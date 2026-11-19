@@ -71,7 +71,9 @@ pub fn console_host(cams: impl IntoIterator<Item = (Entity, isize, bool, bool)>)
 #[allow(clippy::type_complexity)] // a Bevy system query
 fn console_on_top(
     mut commands: Commands,
-    cams: Query<(Entity, &Camera, Option<&RenderTarget>)>,
+    // Not the safe area's UI camera (spec §3.2.3): the console stays on
+    // the world's (or the workshop's) camera.
+    cams: Query<(Entity, &Camera, Option<&RenderTarget>), Without<crate::safe_area::SafeUiCamera>>,
     hosts: Query<Entity, With<PrimaryEguiContext>>,
     primary: Query<Entity, With<PrimaryWindow>>,
 ) {

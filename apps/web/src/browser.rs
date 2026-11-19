@@ -58,7 +58,7 @@ pub fn memory_bytes() -> u64 {
 
 /// Calls the page's `window.<object>.<method>(args…)` (`object` empty: a
 /// function on `window`).
-fn call_page(object: &str, method: &str, args: &[JsValue]) -> Result<JsValue, String> {
+pub(crate) fn call_page(object: &str, method: &str, args: &[JsValue]) -> Result<JsValue, String> {
     let window: JsValue = web_sys::window().ok_or("no window")?.into();
     let this = if object.is_empty() {
         window

@@ -2,10 +2,25 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- viewport-fit=cover (spec 3.2.3 *Safe areas*): the canvas fills the
+       whole screen behind a phone's notch; the HUD, the touch zones and the
+       page's panels keep clear of env(safe-area-inset-*). -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Open Cycling World</title>
-  <!-- The logo (artwork/logos/ocw.svg, copied by scripts/build-web.sh). -->
+  <!-- The logo (artwork/logos/ocw.svg and its PNGs, copied by
+       scripts/build-web.sh). -->
   <link rel="icon" href="ocw.svg" type="image/svg+xml">
+  <!-- Add to Home Screen (spec 3.2.3 *Full screen*): the iPhone's Safari
+       has no element full screen, a page started from the home screen
+       has no browser bars. The manifest (display: fullscreen) for every
+       browser, the Apple touch icon and the meta tags for iOS. -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="ocw-256.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="OCW">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#10141a">
   <!--
     The browser app (spec §14 Phase 10, B1 – B5). Served from target/web/ by
     `make web-serve` (worlds from target/web/worlds/, `world-builder
@@ -53,8 +68,34 @@
          press, no pull-to-refresh or rubber band. */
       -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
     html, body { overscroll-behavior: none; }
+    /* In a ride the page itself never moves (spec 3.2.3 TS4): no pan or
+       pinch on html and body either (not on the preview's start page,
+       which scrolls). */
+    html.ocw-riding, html.ocw-riding body { touch-action: none; }
+    /* The safe-area insets (spec 3.2.3), measured by window.ocwScreen
+       (env(safe-area-inset-*), or ?safe-insets=T,R,B,L for tests) and
+       set as --safe-top … --safe-left: the page's panels keep clear of
+       the notch and the home bar like the HUD. */
+    :root { --safe-top: 0px; --safe-right: 0px; --safe-bottom: 0px; --safe-left: 0px; }
+    #ocw-safe-probe { position: fixed; top: 0; left: 0; width: 0; height: 0; visibility: hidden;
+      pointer-events: none; padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+      env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
+    /* The screen tips (spec 3.2.3): full screen or Add to Home Screen with
+       the first-ride tip, "turn your phone" once in portrait. */
+    #ocw-screen-tip { position: fixed; top: calc(var(--safe-top) + 76px); left: 50%;
+      transform: translateX(-50%); max-width: calc(100% - 32px - var(--safe-left) - var(--safe-right));
+      box-sizing: border-box; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+      justify-content: center; color: #e5e9f0; background: rgba(10, 13, 18, 0.72);
+      border: 1px solid rgba(136, 192, 208, 0.5); border-radius: 6px; padding: 6px 10px;
+      font: 14px system-ui, sans-serif; text-align: center; }
+    #ocw-screen-tip[hidden] { display: none; }
+    #ocw-screen-tip button { font: inherit; color: #10141a; background: #88c0d0; border: 0;
+      border-radius: 4px; padding: 8px 12px; min-height: 44px; cursor: pointer; }
+    #ocw-screen-tip button.close { background: transparent; color: #d8dee9; padding: 8px; min-width: 44px; }
     #ocw-status { position: fixed; inset: 0; display: flex; align-items: center;
-      justify-content: center; text-align: left; padding: 16px; pointer-events: none;
+      justify-content: center; text-align: left; pointer-events: none;
+      padding: calc(16px + var(--safe-top)) calc(16px + var(--safe-right))
+        calc(16px + var(--safe-bottom)) calc(16px + var(--safe-left));
       white-space: pre-line; line-height: 1.5; }
     #ocw-status.loading { background: rgba(16, 20, 26, 0.92);
       font: 15px ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -65,7 +106,8 @@
        and a text shadow, the 3D view shows through it and clicks beside
        its buttons reach the ride; collapsed to a small button once a
        device is connected (a click opens it again). */
-    #ocw-devices { position: fixed; bottom: 28px; right: 12px; width: 340px;
+    #ocw-devices { position: fixed; bottom: calc(28px + var(--safe-bottom)); right: calc(12px + var(--safe-right));
+      width: 340px; max-width: calc(100% - 24px - var(--safe-left) - var(--safe-right)); box-sizing: border-box;
       padding: 10px 12px; border-radius: 6px; background: rgba(10, 13, 18, 0.32);
       border: 1px solid rgba(216, 222, 233, 0.18); pointer-events: none;
       text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9), 0 0 4px rgba(0, 0, 0, 0.6);
@@ -86,16 +128,17 @@
     #ocw-devices .on { color: #a3d9a5; } #ocw-devices .wait { color: #ebcb8b; }
     #ocw-devices .note { color: #aab4c3; white-space: normal; margin-top: 4px; }
     #ocw-devices .err { color: #ffb4a8; white-space: normal; margin-top: 4px; }
-    #ocw-devices-show { position: fixed; bottom: 28px; right: 12px; max-width: 260px;
+    #ocw-devices-show { position: fixed; bottom: calc(28px + var(--safe-bottom));
+      right: calc(12px + var(--safe-right)); max-width: 260px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     /* The sound's hint (B5): until the first click or key. The volumes and
        the voice switches are the menu's Audio and Voice pages (B6). */
-    #ocw-sound-hint { position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+    #ocw-sound-hint { position: fixed; top: calc(12px + var(--safe-top)); left: 50%; transform: translateX(-50%);
       color: #10141a; background: #ebcb8b; border-radius: 4px; padding: 4px 10px;
       font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; pointer-events: none; }
     #ocw-sound-hint[hidden] { display: none; }
     /* The GPU note (B7): WebGPU failed here, the ride runs on WebGL 2. */
-    #ocw-gpu-note { position: fixed; top: 44px; left: 50%; transform: translateX(-50%);
+    #ocw-gpu-note { position: fixed; top: calc(44px + var(--safe-top)); left: 50%; transform: translateX(-50%);
       max-width: calc(100% - 32px); box-sizing: border-box; color: #10141a; background: #88c0d0;
       border-radius: 4px; padding: 4px 10px; font: 13px system-ui, sans-serif; pointer-events: none; }
     #ocw-gpu-note[hidden] { display: none; }
@@ -110,7 +153,9 @@
     /* The public preview's start page and its line in the ride (B8a). */
     #ocw-start { position: fixed; inset: 0; overflow-y: auto; background: #10141a; }
     #ocw-start[hidden] { display: none; }
-    #ocw-start main { max-width: 860px; margin: 0 auto; padding: 32px 16px 48px; line-height: 1.5; }
+    #ocw-start main { max-width: 860px; margin: 0 auto; line-height: 1.5;
+      padding: calc(32px + var(--safe-top)) calc(16px + var(--safe-right)) calc(48px + var(--safe-bottom))
+        calc(16px + var(--safe-left)); }
     #ocw-start h1 { font-size: 28px; margin: 0 0 4px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
     #ocw-start h1 img { height: 40px; }
     #ocw-start h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.06em;
@@ -136,7 +181,7 @@
     #ocw-start a { color: #88c0d0; }
     /* Above the HUD's height profile (bottom left), clear of the route
        label (bottom centre) and the devices panel (bottom right). */
-    #ocw-preview-bar { position: fixed; left: 12px; bottom: 98px;
+    #ocw-preview-bar { position: fixed; left: calc(12px + var(--safe-left)); bottom: calc(98px + var(--safe-bottom));
       font: 12px system-ui, sans-serif; color: #c3cbd8; background: rgba(10, 13, 18, 0.6);
       border-radius: 4px; padding: 2px 8px; white-space: nowrap; max-width: calc(100% - 16px);
       overflow: hidden; text-overflow: ellipsis; }
@@ -161,6 +206,8 @@
   <div id="ocw-sound-hint" hidden></div>
   <div id="ocw-gpu-note" hidden></div>
   <div id="ocw-preview-bar" hidden></div>
+  <div id="ocw-screen-tip" hidden role="status"></div>
+  <div id="ocw-safe-probe"></div>
   <section id="ocw-start" hidden aria-label="Start">
     <main>
       <h1><img src="ocw.svg" alt="" onerror="this.remove()">Open Cycling World <span class="badge">browser preview</span></h1>
@@ -331,6 +378,183 @@
         state() { return rec ? rec.state : "inactive"; },
       };
     })();
+    // The phone's screen (spec 3.2.3 TS4): the safe-area insets, the page
+    // gestures blocked while riding, the screen kept awake, full screen,
+    // the orientation and the screen tips. window.ocwScreen.state() is for
+    // the tests.
+    window.ocwScreen = (() => {
+      const root = document.documentElement;
+      const canvas = document.getElementById("ocw-canvas");
+      const probe = document.getElementById("ocw-safe-probe");
+      const tip = document.getElementById("ocw-screen-tip");
+      const query = new URLSearchParams(location.search);
+      const store = (() => { try { return window.localStorage; } catch (e) { return null; } })();
+      const seen = (k) => { try { return !!(store && store.getItem(k)); } catch (e) { return false; } };
+      const mark = (k) => { try { if (store) store.setItem(k, "1"); } catch (e) { /* private mode */ } };
+      // The insets: env(safe-area-inset-*) through the probe, or the
+      // page option ?safe-insets=TOP,RIGHT,BOTTOM,LEFT (CSS px; tests and
+      // screenshots – desktop engines have no notch).
+      const forced = (query.get("safe-insets") || "").split(",").map(Number);
+      let insets = {top: 0, right: 0, bottom: 0, left: 0}, insetsText = "";
+      const measure = () => {
+        let i;
+        if (forced.length === 4 && forced.every((v) => isFinite(v) && v >= 0)) {
+          i = {top: forced[0], right: forced[1], bottom: forced[2], left: forced[3]};
+        } else {
+          const cs = getComputedStyle(probe);
+          i = {top: parseFloat(cs.paddingTop) || 0, right: parseFloat(cs.paddingRight) || 0,
+            bottom: parseFloat(cs.paddingBottom) || 0, left: parseFloat(cs.paddingLeft) || 0};
+        }
+        const text = JSON.stringify(i);
+        if (text === insetsText) return;
+        insets = i;
+        insetsText = text;
+        for (const k of ["top", "right", "bottom", "left"]) root.style.setProperty(`--safe-${k}`, `${i[k]}px`);
+        console.log(`ocw-web: safe area ${text}`);
+      };
+      measure();
+      addEventListener("resize", measure);
+      // iOS updates the insets a little after a turn.
+      addEventListener("orientationchange", () => { measure(); setTimeout(measure, 300); });
+
+      // Full screen (Android's Chrome, iPad's Safari; not the iPhone).
+      const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement || null;
+      const fsSupported = !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+      const standalone = () => !!(navigator.standalone
+        || (window.matchMedia && (matchMedia("(display-mode: fullscreen)").matches
+          || matchMedia("(display-mode: standalone)").matches)));
+      const iosLike = /iPhone|iPod/.test(navigator.userAgent)
+        || (/iPad/.test(navigator.userAgent)) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+      const HOME_SCREEN = "For full screen on the iPhone: Share → Add to Home Screen, then start OCW from its icon";
+      const lockLandscape = () => {
+        try {
+          const p = screen.orientation && screen.orientation.lock && screen.orientation.lock("landscape");
+          if (p && p.catch) p.catch(() => {});
+        } catch (e) { /* no lock (iOS) */ }
+      };
+      const enter = () => {
+        const el = root;
+        const req = el.requestFullscreen ? el.requestFullscreen({navigationUI: "hide"})
+          : el.webkitRequestFullscreen ? el.webkitRequestFullscreen() : null;
+        if (req && req.then) req.then(lockLandscape).catch((e) => console.warn(`ocw-web: full screen: ${e}`));
+        else lockLandscape();
+      };
+      const leave = () => {
+        const p = document.exitFullscreen ? document.exitFullscreen()
+          : document.webkitExitFullscreen ? document.webkitExitFullscreen() : null;
+        if (p && p.catch) p.catch(() => {});
+      };
+      // `fullscreen toggle|on|off|status` (the menu's Captures → Full
+      // screen): what happened, as a line for the console and the notice.
+      const fullscreen = (what) => {
+        what = what || "toggle";
+        if (!fsSupported) {
+          if (standalone()) return "full screen: started from the home screen (no browser bars)";
+          return iosLike ? HOME_SCREEN : "this browser has no full screen for pages";
+        }
+        const on = !!fsElement();
+        if (what === "status") return on ? "full screen: on" : "full screen: off";
+        if (what === "off" || (what === "toggle" && on)) { if (on) leave(); return "full screen: off"; }
+        if (!on) enter();
+        return "full screen: on (Esc or the menu leaves it)";
+      };
+
+      // The screen stays on while riding (Chrome, Safari 16.4+), asked
+      // again whenever the page is shown again; nothing where it is missing.
+      let riding = false, lock = null, lockState = navigator.wakeLock ? "off" : "unsupported", lockError = "";
+      const wake = async () => {
+        if (!riding || !navigator.wakeLock || lock || document.visibilityState !== "visible") return;
+        try {
+          lock = await navigator.wakeLock.request("screen");
+          lockState = "held";
+          lockError = "";
+          lock.addEventListener("release", () => { lock = null; lockState = "released"; });
+        } catch (e) {
+          lock = null;
+          lockState = "failed";
+          lockError = String(e && e.name || e);
+        }
+      };
+      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") wake(); });
+      // Safari may want a gesture: the next touch or key tries again.
+      const retry = () => { if (riding && !lock) wake(); };
+      addEventListener("pointerdown", retry);
+      addEventListener("keydown", retry);
+
+      // The page never moves under a finger while riding: Safari's pinch
+      // (gesturestart / gesturechange; iOS ignores user-scalable=no), the
+      // long press's callout (contextmenu) and, for older Safari, the
+      // touch moves on the canvas (a listener that is not passive).
+      const stop = (e) => { if (riding) e.preventDefault(); };
+      for (const t of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(t, stop, {passive: false});
+      canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+      canvas.addEventListener("touchmove", stop, {passive: false});
+
+      // The screen tips: with the app's first-ride tip (window.ocw.steer())
+      // full screen (a button: the tap is its gesture) or Add to Home
+      // Screen; once in portrait on a touch-first phone "turn your phone".
+      let tipKind = "";
+      const showTip = (kind, html) => {
+        tipKind = kind;
+        tip.innerHTML = html;
+        tip.hidden = false;
+        const fs = tip.querySelector("button.fs");
+        if (fs) fs.onclick = () => { enter(); hideTip(); canvas.focus(); };
+        const x = tip.querySelector("button.close");
+        if (x) x.onclick = () => { if (kind === "fullscreen") mark("ocw.tip.fullscreen"); hideTip(); canvas.focus(); };
+      };
+      const hideTip = () => { if (!tip.hidden && tipKind === "turn") mark("ocw.tip.turn"); tip.hidden = true; tipKind = ""; };
+      const touchFirst = () => !!(window.matchMedia && matchMedia("(pointer: coarse)").matches) && navigator.maxTouchPoints > 0;
+      const portrait = () => innerHeight > innerWidth;
+      let turnUntil = 0;
+      const tips = () => {
+        if (!riding) return;
+        let steer = {};
+        try { steer = JSON.parse((window.ocw && window.ocw.steer && window.ocw.steer()) || "{}"); } catch (e) { steer = {}; }
+        let menu = {};
+        try { menu = JSON.parse((window.ocw && window.ocw.menu && window.ocw.menu()) || "{}"); } catch (e) { menu = {}; }
+        if (menu.open) { if (!tip.hidden) tip.hidden = true; return; }
+        const wantFs = steer.tip && !fsElement() && !standalone() && !seen("ocw.tip.fullscreen");
+        if (wantFs && (fsSupported || iosLike)) {
+          if (tipKind !== "fullscreen") {
+            showTip("fullscreen", fsSupported
+              ? `<button class="fs">⛶ Full screen</button><button class="close" aria-label="Close">×</button>`
+              : `<span>${HOME_SCREEN}</span><button class="close" aria-label="Close">×</button>`);
+          } else if (tip.hidden) tip.hidden = false;
+          return;
+        }
+        if (tipKind === "fullscreen") hideTip();
+        // Turn the phone (once): in portrait, for 8 s or until turned.
+        if (touchFirst() && portrait() && !seen("ocw.tip.turn") && (!turnUntil || performance.now() < turnUntil)) {
+          if (!turnUntil) turnUntil = performance.now() + 8000;
+          if (tipKind !== "turn") showTip("turn", `<span>↻ Turn your phone for a wider view</span>`);
+          return;
+        }
+        if (tipKind === "turn") hideTip();
+      };
+      document.addEventListener("fullscreenchange", () => { if (fsElement()) lockLandscape(); });
+
+      return {
+        // The insets as JSON (the app follows them every frame).
+        safeArea() { return insetsText; },
+        insets() { return {...insets}; },
+        fullscreen,
+        // The ride started: the page stops moving, the screen stays on.
+        ride() {
+          if (riding) return;
+          riding = true;
+          root.classList.add("ocw-riding");
+          wake();
+          setInterval(tips, 500);
+        },
+        state() {
+          return JSON.stringify({riding, insets, fullscreen: !!fsElement(), fullscreen_api: fsSupported,
+            standalone: standalone(), wake_lock: lockState, wake_lock_error: lockError,
+            tip: tip.hidden ? "" : tipKind, tip_text: tip.hidden ? "" : tip.textContent,
+            touch_action: getComputedStyle(document.body).touchAction});
+        },
+      };
+    })();
   </script>
   <script type="module">
     const status = document.getElementById("ocw-status");
@@ -355,6 +579,9 @@
       memory_gb: navigator.deviceMemory || 0,
       screen_px: [screen.width * (devicePixelRatio || 1), screen.height * (devicePixelRatio || 1)],
       pixel_ratio: devicePixelRatio || 1,
+      // The safe-area insets at the start (spec 3.2.3; the app follows
+      // window.ocwScreen.safeArea() after a resize or a turn).
+      safe_insets: window.ocwScreen.insets(),
     });
     // The GPU API (B7): Bevy is compiled for WebGPU or WebGL 2, so there
     // are two builds; ocw-gpu.js decides (`?gpu=webgl2` / `webgpu` choose,
@@ -474,6 +701,8 @@
       console.log(`ocw-web: module started in ${(performance.now() - t0).toFixed(0)} ms`);
       // The app hides the status (or shows a world's loading screen in it).
       document.getElementById("ocw-canvas").focus();
+      // Riding (spec 3.2.3 TS4): gestures blocked, the screen kept on.
+      window.ocwScreen.ride();
       devicesPanel();
       soundHint();
     }
