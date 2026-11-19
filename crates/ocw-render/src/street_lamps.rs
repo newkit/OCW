@@ -1,6 +1,8 @@
 //! Street lamps (spec §14 Phase 9, S2): poles with lamp heads along lit
 //! roads (OSM `lit`, else roads in towns; placement in
-//! [`ocw_world::lamps`]), built with the package tiles; the heads glow
+//! [`ocw_world::lamps`]), drawn from their model files
+//! (`artwork/3dmodels/props/lamp-street-*`, spec §14 Phase 15, 15H MX) and
+//! merged with the package tiles; the heads glow
 //! from dusk to dawn, and a small pool of point lights follows the camera
 //! to the nearest lamps – the warm light pools on the road, cheap enough
 //! for any GPU (no shadows, a dozen lights). Also the light pollution at
@@ -11,9 +13,12 @@ use bevy::prelude::*;
 use ocw_world::lamps::Lamp;
 use ocw_world::package::{TileKey, WorldPackage};
 
+use ocw_assets::props::{Instance, place};
+
 use crate::RideView;
 use crate::building_material::night_factor;
 use crate::camera::FollowCamera;
+use crate::obstacles::append;
 use crate::package::{Keep, MeshArrays, TileGround};
 
 /// Point lights in the pool around the camera.
@@ -27,6 +32,20 @@ const LAMP_REACH_M: f32 = 26.0;
 pub const LAMP_RGB: [f32; 3] = [1.0, 0.80, 0.55];
 /// Emissive of a glowing lamp head (physical units, scaled by exposure).
 const HEAD_GLOW: f32 = 90.0;
+
+/// The street lamp files by the head's height (spec §14 Phase 15, 15H:
+/// `props/lamp-street-<shape>-<road>`): main roads 8 m, other roads 6 m,
+/// paths and tracks 4.5 m ([`ocw_world::lamps::lamp_height_m`]).
+pub const LAMP_FILES: [(&str, f32); 3] = [
+    ("props/lamp-street-arm-main", 8.0),
+    ("props/lamp-street-arm-road", 6.0),
+    ("props/lamp-street-arm-path", 4.5),
+];
+
+/// The slot of the glowing lamp heads.
+pub const BULB: &str = "bulb";
+/// The anchor the light comes from (just under the head).
+pub const LIGHT_ANCHOR: &str = "anchor_light";
 
 /// The lamps of a tile, ready to upload.
 #[derive(Default)]
@@ -56,59 +75,39 @@ pub struct LampMaterials {
     night: f32,
 }
 
-fn push_box(m: &mut MeshArrays, centre: Vec3, half: Vec3, rot: Quat, colour: [f32; 4]) {
-    // Six faces, four vertices each, outward normals.
-    let faces = [
-        (Vec3::X, Vec3::Y, Vec3::Z),
-        (-Vec3::X, Vec3::Y, -Vec3::Z),
-        (Vec3::Y, Vec3::Z, Vec3::X),
-        (-Vec3::Y, Vec3::Z, -Vec3::X),
-        (Vec3::Z, Vec3::X, Vec3::Y),
-        (-Vec3::Z, Vec3::X, -Vec3::Y),
-    ];
-    for (n, u, v) in faces {
-        let b = m.positions.len() as u32;
-        let c = n * half;
-        let (du, dv) = (u * half, v * half);
-        for (su, sv) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
-            let p = centre + rot * (c + du * su + dv * sv);
-            m.positions.push(p.to_array());
-            m.normals.push((rot * n).to_array());
-            m.colors.push(colour);
-        }
-        // Counter-clockwise seen from outside: u × v = n.
-        m.indices.extend([b, b + 1, b + 2, b, b + 2, b + 3]);
-    }
-}
-
-/// Meshes of lamps standing at `feet` heights (package metres).
+/// Meshes of lamps standing at `feet` heights (package metres): each
+/// lamp the file of its height ([`LAMP_FILES`]) with its arm fitted
+/// (`ocw_assets::props`: the arm stretched, the head and its light moved),
+/// turned towards the road; the `bulb` parts are the heads.
 pub fn lamp_arrays(lamps: &[(Lamp, f32)]) -> TileLamps {
     let mut out = TileLamps::default();
-    let grey = [0.16, 0.17, 0.18, 1.0];
-    let head = [0.75, 0.74, 0.70, 1.0];
+    let files: Vec<(std::sync::Arc<ocw_assets::model::Model>, f32)> = LAMP_FILES
+        .iter()
+        .map(|(id, h)| (ocw_assets::shipped::model(id), *h))
+        .collect();
     for (l, foot_y) in lamps {
+        let Some((model, _)) = files.iter().min_by(|a, b| {
+            (a.1 - l.height_m)
+                .abs()
+                .total_cmp(&(b.1 - l.height_m).abs())
+        }) else {
+            continue;
+        };
         let foot = Vec3::new(l.foot[0], *foot_y, l.foot[2]);
-        let toward = Vec3::new(l.toward[0], 0.0, l.toward[1]);
-        let yaw = Quat::from_rotation_y((-toward.z).atan2(toward.x));
-        let h = l.height_m;
-        // The pole, the arm over the road, the head at its end.
-        push_box(
-            &mut out.poles,
-            foot + Vec3::Y * (h / 2.0),
-            Vec3::new(0.07, h / 2.0 + 0.1, 0.07),
-            Quat::IDENTITY,
-            grey,
-        );
-        push_box(
-            &mut out.poles,
-            foot + Vec3::Y * (h + 0.05) + toward * (l.arm_m / 2.0),
-            Vec3::new(l.arm_m / 2.0 + 0.05, 0.04, 0.04),
-            yaw,
-            grey,
-        );
-        let at = foot + Vec3::Y * (h - 0.02) + toward * l.arm_m;
-        push_box(&mut out.heads, at, Vec3::new(0.28, 0.06, 0.14), yaw, head);
-        out.spots.push((at - Vec3::Y * 0.3).to_array());
+        let yaw = (-l.toward[1]).atan2(l.toward[0]);
+        let inst = Instance {
+            height_m: Some(l.height_m),
+            span_m: None,
+            reach_m: Some(l.arm_m),
+        };
+        let y = *foot_y;
+        let p = place(model, &inst, foot, yaw, &|_, _| y);
+        append(&mut out.poles, &p, |s| s != BULB);
+        append(&mut out.heads, &p, |s| s == BULB);
+        let light = p
+            .anchor(LIGHT_ANCHOR)
+            .unwrap_or(foot + Vec3::Y * (l.height_m - 0.32));
+        out.spots.push(light.to_array());
     }
     out
 }
@@ -296,6 +295,60 @@ mod tests {
             let p = Vec3::from(t.heads.positions[k]);
             let c = Vec3::new(8.5, 499.5 + 5.98, 20.0);
             assert!((p - c).dot(Vec3::from(*n)) > 0.0);
+        }
+    }
+
+    /// Every lamp file is there with its proxy, its light anchor, its fit
+    /// and the old generator's sizes: the pole 0.14 m square from 0.1 m
+    /// below the foot, the arm to 0.05 m past the head's centre, the head
+    /// 0.56 × 0.12 × 0.28 m, the light 0.3 m under it – for every arm.
+    #[test]
+    fn lamps_are_drawn_from_their_files_at_the_old_sizes() {
+        for (id, h) in LAMP_FILES {
+            let m = ocw_assets::shipped::model(id);
+            assert!(m.node(LIGHT_ANCHOR).is_some(), "{id}");
+            assert!(!ocw_assets::props::proxies(&m).is_empty(), "{id}");
+            let fit = ocw_assets::props::FileFit::of(&m).unwrap();
+            assert_eq!(fit.height_m, h, "{id}");
+            assert_eq!(
+                h,
+                ocw_world::lamps::lamp_height_m(match h {
+                    8.0 => ocw_world::graph::RoadClass::Primary,
+                    6.0 => ocw_world::graph::RoadClass::Residential,
+                    _ => ocw_world::graph::RoadClass::Path,
+                })
+            );
+            for arm in [0.6f32, 1.25, 2.0] {
+                let lamp = Lamp {
+                    foot: [0.0, 0.0, 0.0],
+                    toward: [1.0, 0.0],
+                    height_m: h,
+                    arm_m: arm,
+                };
+                let t = lamp_arrays(&[(lamp, 0.0)]);
+                let b = |a: &MeshArrays| {
+                    a.positions
+                        .iter()
+                        .fold((Vec3::MAX, Vec3::MIN), |(lo, hi), v| {
+                            (lo.min(Vec3::from(*v)), hi.max(Vec3::from(*v)))
+                        })
+                };
+                let (lo, hi) = b(&t.poles);
+                let want_lo = Vec3::new(-0.07, -0.1, -0.07);
+                let want_hi = Vec3::new(arm + 0.05, h + 0.1, 0.07);
+                assert!(
+                    lo.distance(want_lo) < 1e-3 && hi.distance(want_hi) < 1e-3,
+                    "{id} {arm}: {lo} {hi}"
+                );
+                let (lo, hi) = b(&t.heads);
+                let want_lo = Vec3::new(arm - 0.28, h - 0.08, -0.14);
+                let want_hi = Vec3::new(arm + 0.28, h + 0.04, 0.14);
+                assert!(
+                    lo.distance(want_lo) < 1e-3 && hi.distance(want_hi) < 1e-3,
+                    "{id} {arm}: {lo} {hi}"
+                );
+                assert!(Vec3::from(t.spots[0]).distance(Vec3::new(arm, h - 0.32, 0.0)) < 1e-3);
+            }
         }
     }
 

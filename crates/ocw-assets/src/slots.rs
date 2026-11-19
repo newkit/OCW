@@ -63,7 +63,7 @@ const fn slot(name: &'static str, tint: Tint, color: u32, metallic: f32, roughne
 }
 
 /// All slots.
-pub const ALL: [Slot; 77] = [
+pub const ALL: [Slot; 84] = [
     slot("frame", Tint::Frame, 0x1E1E22, 0.1, 0.32),
     slot("tyre", Tint::Fixed, 0x1A1A1A, 0.0, 0.85),
     slot("tyre_wall", Tint::Fixed, 0x8A6A45, 0.0, 0.8),
@@ -115,6 +115,16 @@ pub const ALL: [Slot; 77] = [
     // and the phone's screen (the renderer makes it glow).
     slot("status_mark", Tint::Fixed, 0xD8261E, 0.0, 0.6),
     slot("phone_screen", Tint::Fixed, 0x9EC4F0, 0.0, 0.15),
+    // Props in the world (spec §14 Phase 15, 15B / 15H MX): the point
+    // obstacles and the street lamps; `bulb` glows from dusk to dawn
+    // (`ocw-render::street_lamps`). The files carry their own colours.
+    slot("concrete", Tint::Fixed, 0x9E9C94, 0.0, 0.9),
+    slot("steel", Tint::Fixed, 0xA8ADB3, 0.6, 0.45),
+    slot("wood", Tint::Fixed, 0x735438, 0.0, 0.85),
+    slot("paint_red", Tint::Fixed, 0xC71F1A, 0.0, 0.6),
+    slot("paint_white", Tint::Fixed, 0xEBEBE6, 0.0, 0.6),
+    slot("paint_dark", Tint::Fixed, 0x383B3D, 0.1, 0.6),
+    slot("bulb", Tint::Fixed, 0xE1DFDA, 0.0, 0.4),
     // The unicorn (spec §14 Phase 15 M4, `creatures/unicorn-winged.glb`):
     // the renderer draws its own materials per slot (`ocw-render`'s
     // `unicorn::paint_material`); `mane_rider` is the mane's first band in
@@ -134,18 +144,18 @@ pub const ALL: [Slot; 77] = [
     slot("rainbow_7", Tint::Fixed, 0xD81B60, 0.0, 0.5),
     // The workshop pieces (spec §14 Phase 15 M3, `workshop/*.glb`): never
     // recoloured; the renderer makes `lamp` and `window_glass` glow.
-    slot("concrete", Tint::Fixed, 0x8E8B85, 0.0, 0.92),
+    slot("floor_concrete", Tint::Fixed, 0x8E8B85, 0.0, 0.92),
     slot("concrete_dark", Tint::Fixed, 0x77746F, 0.0, 0.95),
     slot("wall", Tint::Fixed, 0xEAE3D6, 0.0, 0.88),
     slot("wall_accent", Tint::Fixed, 0x5E7A6E, 0.0, 0.85),
     slot("skirting", Tint::Fixed, 0x6B5645, 0.0, 0.7),
     slot("ceiling", Tint::Fixed, 0xF1EEE8, 0.0, 0.9),
     slot("lamp", Tint::Fixed, 0xFFF4DC, 0.0, 0.4),
-    slot("wood", Tint::Fixed, 0xB57E48, 0.0, 0.62),
+    slot("workshop_wood", Tint::Fixed, 0xB57E48, 0.0, 0.62),
     slot("wood_dark", Tint::Fixed, 0x5C4030, 0.0, 0.7),
     slot("pegboard", Tint::Fixed, 0xC9A27A, 0.0, 0.8),
     slot("peg_hole", Tint::Fixed, 0x3A2E24, 0.0, 0.9),
-    slot("steel", Tint::Fixed, 0xA2A7AC, 0.85, 0.32),
+    slot("workshop_steel", Tint::Fixed, 0xA2A7AC, 0.85, 0.32),
     slot("steel_dark", Tint::Fixed, 0x2C2E33, 0.4, 0.45),
     slot("rubber", Tint::Fixed, 0x262626, 0.0, 0.9),
     slot("tool_red", Tint::Fixed, 0xC0392B, 0.0, 0.45),

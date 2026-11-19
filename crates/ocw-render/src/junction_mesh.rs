@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use bevy::prelude::*;
 use ocw_world::graph::RoadGraph;
+use ocw_world::junction::section::{NO_EDGE, StripEdges};
 use ocw_world::junction::{JunctionSet, Patch};
 use ocw_world::package::RoadStrip;
 use ocw_world::road_dress::{CycleLane, MarkCode};
@@ -34,54 +35,41 @@ use crate::road_mesh::{
 
 /// The terrain is kept this far under a patch's drawn surface (m).
 pub const TERRAIN_UNDER_M: f32 = 0.05;
-/// Strips are matched to an edge whose polyline passes this close (m).
-const MATCH_M: f64 = 0.2;
-/// Grid cell for the matching (m).
-const CELL_M: f64 = 20.0;
-/// A tile's strips reach this far into the next tile (one point, ≤ 5 m).
-const TILE_REACH_M: f64 = 6.0;
 
 /// The junctions of a package and which edges reach into each tile.
 pub struct PackageJunctions {
     pub set: JunctionSet,
     tile_edges: HashMap<TileKey, Vec<u32>>,
+    /// The edge of every strip (section `RDGE`), if the package has it for
+    /// its graph: no geometric matching then.
+    strip_edges: Option<StripEdges>,
+    /// The package's profiles are reconciled with the junction surfaces
+    /// and its terrain is settled under them (section `JNCT`, J2): the
+    /// renderer leaves the terrain as it is.
+    pub settled: bool,
 }
 
 impl PackageJunctions {
     /// `None` for a package without a road graph.
     pub fn new(pkg: &WorldPackage) -> Option<Self> {
-        Some(Self::of_graph(
-            pkg.graph.as_ref()?,
-            f64::from(pkg.tile_size_m),
-        ))
+        let g = pkg.graph.as_ref()?;
+        let mut pj = Self::of_graph(g, f64::from(pkg.tile_size_m));
+        if let Some(j) = &pkg.junctions {
+            let index = j.index_for(g);
+            pj.settled = index.as_ref().is_some_and(|i| i.settled());
+            pj.set = JunctionSet::with_index(g, index);
+            pj.strip_edges = j.strip_edges_for(g).cloned();
+        }
+        Some(pj)
     }
 
     /// The junctions of a road graph in tiles of `size` metres.
     pub fn of_graph(g: &RoadGraph, size: f64) -> Self {
-        let mut tile_edges: HashMap<TileKey, Vec<u32>> = HashMap::new();
-        for (ei, e) in g.edges.iter().enumerate() {
-            if e.tunnel || e.points.is_empty() {
-                continue;
-            }
-            let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
-            for p in &e.points {
-                lo = [lo[0].min(p[0]), lo[1].min(p[1])];
-                hi = [hi[0].max(p[0]), hi[1].max(p[1])];
-            }
-            let a = TileKey::containing([lo[0] - TILE_REACH_M, lo[1] - TILE_REACH_M], size);
-            let b = TileKey::containing([hi[0] + TILE_REACH_M, hi[1] + TILE_REACH_M], size);
-            for x in a.x..=b.x {
-                for z in a.z..=b.z {
-                    tile_edges
-                        .entry(TileKey { x, z })
-                        .or_default()
-                        .push(ei as u32);
-                }
-            }
-        }
         Self {
             set: JunctionSet::new(g),
-            tile_edges,
+            tile_edges: ocw_world::junction::section::tile_edges(g, size),
+            strip_edges: None,
+            settled: false,
         }
     }
 
@@ -89,8 +77,28 @@ impl PackageJunctions {
     pub fn tile_edges(&self, key: TileKey) -> &[u32] {
         self.tile_edges.get(&key).map_or(&[], Vec::as_slice)
     }
-}
 
+    /// The edge of each of the `count` strips of tile `key`: stored
+    /// (section `RDGE`), else matched by geometry.
+    pub fn strip_edges(
+        &self,
+        g: &RoadGraph,
+        key: TileKey,
+        strips: &[RoadStrip],
+    ) -> Vec<Option<usize>> {
+        match self
+            .strip_edges
+            .as_ref()
+            .and_then(|s| s.tile(key, strips.len()))
+        {
+            Some(stored) => stored
+                .iter()
+                .map(|&e| (e != NO_EDGE && (e as usize) < g.edges.len()).then_some(e as usize))
+                .collect(),
+            None => match_strips(g, self.tile_edges(key), strips),
+        }
+    }
+}
 type CacheEntry = (Weak<WorldPackage>, Option<Arc<PackageJunctions>>);
 static CACHE: Mutex<Vec<CacheEntry>> = Mutex::new(Vec::new());
 
@@ -148,58 +156,9 @@ pub struct ArmLook {
     pub condition: ocw_world::RoadCondition,
 }
 
-/// The edge of each strip of `tile` (`None`: unmatched).
-pub fn match_strips(g: &RoadGraph, edges: &[u32], strips: &[RoadStrip]) -> Vec<Option<usize>> {
-    let k = |x: f64| (x / CELL_M).floor() as i32;
-    let mut grid: HashMap<(i32, i32), Vec<(u32, u32)>> = HashMap::new();
-    for &ei in edges {
-        let e = &g.edges[ei as usize];
-        for (si, w) in e.points.windows(2).enumerate() {
-            let (lo, hi) = (
-                [w[0][0].min(w[1][0]), w[0][1].min(w[1][1])],
-                [w[0][0].max(w[1][0]), w[0][1].max(w[1][1])],
-            );
-            for x in k(lo[0])..=k(hi[0]) {
-                for z in k(lo[1])..=k(hi[1]) {
-                    grid.entry((x, z)).or_default().push((ei, si as u32));
-                }
-            }
-        }
-    }
-    let dist = |p: [f64; 2], a: [f64; 2], b: [f64; 2]| {
-        let ab = [b[0] - a[0], b[1] - a[1]];
-        let l2 = ab[0] * ab[0] + ab[1] * ab[1];
-        let t = if l2 > 0.0 {
-            (((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / l2).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        (a[0] + ab[0] * t - p[0]).hypot(a[1] + ab[1] * t - p[1])
-    };
-    strips
-        .iter()
-        .map(|s| {
-            let n = s.points.len();
-            if n < 2 {
-                return None;
-            }
-            let m = (n - 1) / 2;
-            let mid = [
-                f64::from(s.points[m][0] + s.points[m + 1][0]) / 2.0,
-                f64::from(s.points[m][2] + s.points[m + 1][2]) / 2.0,
-            ];
-            let mut best: Option<(usize, f64)> = None;
-            for &(ei, si) in grid.get(&(k(mid[0]), k(mid[1]))).into_iter().flatten() {
-                let w = &g.edges[ei as usize].points[si as usize..si as usize + 2];
-                let d = dist(mid, w[0], w[1]);
-                if best.is_none_or(|b| d < b.1) {
-                    best = Some((ei as usize, d));
-                }
-            }
-            best.filter(|b| b.1 < MATCH_M).map(|b| b.0)
-        })
-        .collect()
-}
+/// The edge of each strip of `tile` (`None`: unmatched), by geometry
+/// (`ocw_world::junction::section::match_strips`).
+pub use ocw_world::junction::section::match_strips;
 
 /// Moves the strip's crossings with its cut start, and those that now lie
 /// in a junction surface to its mouth (§4.8.8: stop and give-way lines at
@@ -242,7 +201,7 @@ pub fn shape_tile<'a>(
     style: &ocw_world::road_dress::MarkingStyle,
 ) -> ShapedTile<'a> {
     let edges = pj.tile_edges(key);
-    let matched = match_strips(g, edges, strips);
+    let matched = pj.strip_edges(g, key, strips);
     let mut out = ShapedTile {
         strips: Vec::with_capacity(strips.len()),
         rows: Vec::with_capacity(strips.len()),

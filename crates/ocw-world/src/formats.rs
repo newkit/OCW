@@ -7,7 +7,7 @@
 //!
 //! Hand-written like [`crate::gpx`]: pure, no XML library, wasm-safe.
 
-use crate::gpx::{Gpx, GpxPoint, haversine_m};
+use crate::gpx::{Gpx, GpxPoint, GpxSegment, haversine_m};
 
 /// The track file formats of the Routes workspace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -171,7 +171,10 @@ pub fn read_tcx(text: &str) -> Result<Gpx, String> {
                 if n == "Trackpoint" {
                     (lat, lon, ele) = (None, None, None);
                 } else if n == "Track" {
-                    gpx.parts += 1;
+                    gpx.segments.push(GpxSegment {
+                        first: gpx.points.len(),
+                        name: None,
+                    });
                 }
                 path.push(n);
             }
@@ -224,6 +227,10 @@ pub fn read_geojson(text: &str) -> Result<Gpx, String> {
     let mut gpx = Gpx::default();
     fn line(gpx: &mut Gpx, coords: &serde_json::Value) -> Result<(), String> {
         let list = coords.as_array().ok_or("coordinates are not a list")?;
+        gpx.segments.push(GpxSegment {
+            first: gpx.points.len(),
+            name: None,
+        });
         for c in list {
             let c = c.as_array().ok_or("a position is not a list")?;
             let n = |i: usize| c.get(i).and_then(serde_json::Value::as_f64);
@@ -239,7 +246,6 @@ pub fn read_geojson(text: &str) -> Result<Gpx, String> {
                 ele: n(2),
             });
         }
-        gpx.parts += 1;
         Ok(())
     }
     fn geometry(gpx: &mut Gpx, g: &serde_json::Value) -> Result<(), String> {
@@ -269,17 +275,24 @@ pub fn read_geojson(text: &str) -> Result<Gpx, String> {
         }
     }
     fn feature(gpx: &mut Gpx, f: &serde_json::Value) -> Result<(), String> {
+        let name = f
+            .get("properties")
+            .and_then(|p| p.get("name"))
+            .and_then(|n| n.as_str())
+            .map(String::from);
         if gpx.name.is_none() {
-            gpx.name = f
-                .get("properties")
-                .and_then(|p| p.get("name"))
-                .and_then(|n| n.as_str())
-                .map(String::from);
+            gpx.name = name.clone();
         }
+        let before = gpx.segments.len();
         match f.get("geometry") {
-            Some(g) if !g.is_null() => geometry(gpx, g),
-            _ => Ok(()),
+            Some(g) if !g.is_null() => geometry(gpx, g)?,
+            _ => {}
         }
+        // The feature's lines carry its name.
+        for s in &mut gpx.segments[before..] {
+            s.name = name.clone();
+        }
+        Ok(())
     }
     match v.get("type").and_then(|t| t.as_str()) {
         Some("FeatureCollection") => {
@@ -564,7 +577,7 @@ mod tests {
         let text = write_geojson(&export(&pts, &wp));
         let back = read_geojson(&text).unwrap();
         same(&pts, &back.points, 0.05);
-        assert_eq!(back.parts, 1);
+        assert_eq!(back.parts(), 1);
         assert_eq!(
             TrackFormat::sniff(text.as_bytes()),
             Some(TrackFormat::GeoJson)
@@ -595,12 +608,19 @@ mod tests {
     fn geojson_variants() {
         let multi = r#"{"type":"MultiLineString","coordinates":[[[9.5,47.1],[9.51,47.1]],[[9.52,47.1,460],[9.53,47.1]]]}"#;
         let g = read_geojson(multi).unwrap();
-        assert_eq!((g.points.len(), g.parts), (4, 2));
+        assert_eq!((g.points.len(), g.parts()), (4, 2));
         assert_eq!(g.points[2].ele, Some(460.0));
         let fc = r#"{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"name":"Cy"},"geometry":{"type":"Point","coordinates":[9.5,47.1]}},{"type":"Feature","properties":{},"geometry":{"type":"LineString","coordinates":[[9.5,47.1],[9.51,47.1]]}}]}"#;
         let g = read_geojson(fc).unwrap();
         assert_eq!(g.points.len(), 2);
         assert_eq!(g.name.as_deref(), Some("Cy"));
+        // Each feature's lines are parts with its name.
+        let two = r#"{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"name":"Up"},"geometry":{"type":"LineString","coordinates":[[9.5,47.1],[9.51,47.1]]}},{"type":"Feature","properties":{"name":"Down"},"geometry":{"type":"LineString","coordinates":[[9.52,47.1],[9.53,47.1],[9.54,47.1]]}}]}"#;
+        let g = read_geojson(two).unwrap();
+        assert_eq!(
+            g.part_ranges(),
+            vec![(0..2, Some("Up".into())), (2..5, Some("Down".into()))]
+        );
         for bad in [
             "[]",
             "{}",

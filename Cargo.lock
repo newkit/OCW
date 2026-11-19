@@ -6832,6 +6832,7 @@ dependencies = [
  "ocw-core",
  "ocw-devices",
  "ocw-fit",
+ "ocw-map",
  "ocw-protocol",
  "ocw-render",
  "ocw-server",
@@ -7057,6 +7058,7 @@ dependencies = [
  "clap",
  "dirs",
  "ocw-assets",
+ "ocw-client",
  "ocw-core",
  "ocw-edit",
  "ocw-map",
@@ -7070,6 +7072,7 @@ dependencies = [
  "ocw-worldstore",
  "serde",
  "serde_json",
+ "toml",
  "ureq",
 ]
 

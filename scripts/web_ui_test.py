@@ -984,7 +984,71 @@ class UiTest:
         self.pump(1.0)
         again = self.setting("display.units")
         self.check("settings: display.units survived the reload", again == units and again, f"{units} → {again}")
+
+        # The training history after the reload (spec 14 Phase 7, 7A).
+        self.history_part()
         return all(c["ok"] for c in self.checks)
+
+    def history_part(self):
+        """The saved rides after a reload: the newest ride's page has the
+        map of its track (the test route has a geographic origin) and its
+        FIT file is still exported – kept in OPFS; Delete asks first
+        (Cancel focused) and deletes the ride."""
+        self.console("menu ride 1")
+        m = self.wait_menu(lambda m: m.get("open") and m.get("title") == "Ride", timeout=5.0)
+        items = m.get("items") or []
+        self.check("history: the newest ride's page after the reload", m.get("title") == "Ride", items)
+        self.check("history: its FIT file is kept in OPFS (not 'FIT file not kept')",
+                   any(i.startswith("Export or delete") and "not kept" not in i for i in items), items)
+        self.shot("history-ride-map")
+        rides_before = self.rides_count()
+        self.console("menu ride 1")
+        self.wait_menu(lambda m: m.get("title") == "Ride")
+        if not self.open_item("Export or delete", "The ride's file"):
+            self.close_menu()
+            return
+        self.shot("history-ride-file")
+        if self.focus_item("Export the FIT file") is not None:
+            self.key("Enter")
+            d, path = self.wait_download(".fit")
+            data = open(path, "rb").read() if path else b""
+            self.check("history: the FIT file read back from OPFS is a download",
+                       d is not None and d["name"].startswith("ocw-ride-") and data[8:12] == b".FIT",
+                       (d, len(data)))
+        if self.focus_item("Delete this ride") is None:
+            self.check("history: a Delete row", False, self.menu().get("items"))
+            self.close_menu()
+            return
+        self.key("Enter")
+        m = self.wait_menu(lambda m: m.get("title") == "Delete this ride?")
+        items = m.get("items") or []
+        self.check("history: Delete asks first, Cancel focused",
+                   m.get("title") == "Delete this ride?" and len(items) > m.get("focused", 0)
+                   and items[m.get("focused", 0)] == "Cancel",
+                   (m.get("title"), items, m.get("focused")))
+        self.check("history: the question says it cannot be undone",
+                   any("cannot be undone" in t for t in m.get("text", [])), m.get("text"))
+        self.shot("history-delete")
+        self.focus_item("Delete the ride")
+        self.key("Enter")
+        self.pump(0.6)
+        after = self.rides_count()
+        self.check("history: the ride is deleted", rides_before is not None and after == rides_before - 1,
+                   (rides_before, after))
+        self.close_menu()
+
+    def rides_count(self):
+        """The number of rides the console's `history` lists."""
+        self.console("history")
+        st = self.wait_console(lambda s: any("training history of" in l for l in s.get("log", [])))
+        lines = [l for entry in st.get("log", []) for l in entry.split("\n")]
+        for line in reversed(lines):
+            if line.startswith("training history of") and line.endswith(" rides"):
+                try:
+                    return int(line.rsplit(":", 1)[1].split()[0])
+                except (ValueError, IndexError):
+                    return None
+        return None
 
 
 def run(cdp, base, lines, out_dir, reload_and_wait):

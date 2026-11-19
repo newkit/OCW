@@ -1,0 +1,15 @@
+{
+  "name": "Open Cycling World",
+  "short_name": "OCW",
+  "description": "An open-source indoor cycling simulation in the browser.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "background_color": "#10141a",
+  "theme_color": "#10141a",
+  "icons": [
+    {"src": "ocw-256.png", "sizes": "256x256", "type": "image/png"},
+    {"src": "ocw-512.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "ocw.svg", "sizes": "any", "type": "image/svg+xml"}
+  ]
+}

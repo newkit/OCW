@@ -236,13 +236,39 @@ fn web_upload(world: &mut World, ride: &ocw_client::history::RideEntry) -> Resul
     Ok(steps)
 }
 
-/// The history's refresh in the browser: the FIT files kept in memory
-/// can be exported; the Strava recordings of each ride (spec 2.8.1 Q6).
-fn web_refresh(world: &mut World) {
-    ocw_ui::history::refresh_from_memory(world);
+/// The history's refresh in the browser: the FIT files of this page and
+/// those kept in OPFS can be exported (spec 14 Phase 7, 7A;
+/// `crate::fitstore`), the note where they are kept only for the page;
+/// the Strava recordings of each ride (spec 2.8.1 Q6).
+pub(crate) fn web_refresh(world: &mut World) {
+    let exportable = crate::fitstore::exportable(world);
+    let note = world
+        .get_resource::<crate::fitstore::FitKeeper>()
+        .and_then(|k| crate::fitstore::note(&k.keeping));
     let recordings = crate::strava::recordings_by_ride(world);
     if let Some(mut h) = world.get_resource_mut::<ocw_ui::history::TrainingHistory>() {
+        h.exportable = exportable;
+        h.kept_note = note;
         h.recordings = recordings;
+    }
+}
+
+/// The training history's hooks in the browser: the history in the page's
+/// localStorage (spec 14 Phase 7); a ride's FIT file kept in OPFS, else
+/// for this page's session (`crate::fitstore`, 7A).
+pub(crate) fn history_hooks() -> ocw_ui::history::HistoryHooks {
+    ocw_ui::history::HistoryHooks {
+        store: |_, _| crate::settings::history_store(),
+        rider: |_| ocw_client::riders::Rider::default().name,
+        export: |world, ride, _| crate::fitstore::export(world, ride),
+        import: None,
+        refresh: web_refresh,
+        // The simple Strava upload (spec §2.8.1); the mark is kept in
+        // the history only (no API sync in the browser).
+        upload: Some(web_upload),
+        marked: None,
+        // Deleting a ride: its FIT file in OPFS too.
+        delete: Some(crate::fitstore::delete),
     }
 }
 
@@ -276,27 +302,8 @@ impl Plugin for WebUiPlugin {
             ..MenuHooks::default()
         })
         // The training history in the page's localStorage (spec §14
-        // Phase 7); a ride's FIT file is kept for this page's session.
-        .insert_resource(ocw_ui::history::HistoryHooks {
-            store: |_, _| crate::settings::history_store(),
-            rider: |_| ocw_client::riders::Rider::default().name,
-            export: |world, ride, _| {
-                let bytes = world
-                    .get_resource::<ocw_ui::history::TrainingHistory>()
-                    .and_then(|h| h.fits.get(&ride.id).cloned())
-                    .ok_or("this ride's FIT file is not kept (only the rides of this page)")?;
-                let name = download_name(ride.start_unix_s);
-                let downloads = world.resource::<Downloads>().clone();
-                (downloads.0)(&name, "application/vnd.ant.fit", bytes);
-                Ok(format!("downloading {name}"))
-            },
-            import: None,
-            refresh: web_refresh,
-            // The simple Strava upload (spec §2.8.1); the mark is kept in
-            // the history only (no API sync in the browser).
-            upload: Some(web_upload),
-            marked: None,
-        })
+        // Phase 7); a ride's FIT file in OPFS (7A).
+        .insert_resource(history_hooks())
         .add_plugins((
             ocw_ui::menu::MenuPlugin,
             ocw_ui::weather::WeatherPlugin,
@@ -334,9 +341,19 @@ impl Plugin for WebUiPlugin {
             app.insert_resource(Tabs::page());
         }
         app.init_resource::<StravaNotice>();
+        // The rides' FIT files in OPFS, else in the page's memory (7A).
+        if !app
+            .world()
+            .contains_resource::<crate::fitstore::FitKeeper>()
+        {
+            app.insert_resource(crate::fitstore::FitKeeper::new(fit_backend()));
+        }
+        app.add_systems(Update, crate::fitstore::apply_fits);
         // The Strava recording (S, spec §2.8.1): its FIT file and photos
         // in its own folder of the activities folder, or downloads.
         crate::strava::build(app);
+        // The safe-area insets and full screen (spec §3.2.3 TS4).
+        crate::screen::build(app);
         if !app.world().contains_resource::<PhotoSaver>() {
             let a = app
                 .world()
@@ -392,6 +409,16 @@ impl Plugin for WebUiPlugin {
             .add_systems(Update, ride_mode);
         register_commands(app);
     }
+}
+
+/// The page's FIT store: OPFS where the browser has it (spec 14 Phase 7,
+/// 7A), else none (the fallback; natively too).
+fn fit_backend() -> Option<Box<dyn crate::fitstore::FitBackend>> {
+    #[cfg(target_arch = "wasm32")]
+    return crate::browser::OpfsFits::new()
+        .map(|b| Box::new(b) as Box<dyn crate::fitstore::FitBackend>);
+    #[cfg(not(target_arch = "wasm32"))]
+    None
 }
 
 /// The page's query now (empty natively).
@@ -764,10 +791,15 @@ fn save_ride(world: &mut World) -> Result<String, String> {
             ..Default::default()
         },
     );
-    let kept = match ocw_ui::history::add_ride(world, entry, Some(bytes)) {
+    let id = entry.id.clone();
+    let kept = match ocw_ui::history::add_ride(world, entry, Some(bytes.clone())) {
         Ok(()) => "",
         Err(_) => " (the training history is not saved on this page)",
     };
+    // Its FIT file in OPFS: the export works after a reload (7A).
+    if let Some(k) = world.get_resource::<crate::fitstore::FitKeeper>() {
+        k.keep(&id, bytes);
+    }
     Ok(format!(
         "ride saved: {name} ({n} records, {km:.2} km); a new recording starts{kept}"
     ))

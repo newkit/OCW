@@ -7,7 +7,7 @@
 //! ocw-assets model import SRC.glb|SRC.gltf --kind K --id ID [--license L --source S --author A]
 //!                         [--profile P --species S --variant V --anchor A] [--out artwork/3dmodels] [--dry-run]
 //! ocw-assets model export ID|FILE [--gltf] --out DIR [--models artwork/3dmodels]
-//! ocw-assets model diff A B [--json]                       (files or ids of the model folder)
+//! ocw-assets model diff A B [--json] [--ignore-manifest]    (files or ids of the model folder)
 //! ocw-assets model validate [DIR] [--json]                 (findings with codes and fixes)
 //! ocw-assets generate [--out artwork/3dmodels] [--check]   (the same)
 //! ocw-assets validate [DIR]
@@ -129,6 +129,10 @@ enum ModelCmd {
         models: PathBuf,
         #[arg(long)]
         json: bool,
+        /// Compare only the two models, not their manifest entries (the
+        /// Blender round trip passes the entry itself).
+        #[arg(long)]
+        ignore_manifest: bool,
     },
     /// The extended validator (the same as `validate`).
     Validate {
@@ -230,13 +234,20 @@ fn import(
     out: &std::path::Path,
     dry_run: bool,
 ) -> ExitCode {
-    let (model, notes) = match ocw_assets::glb::read_file_lenient(src) {
+    let (mut model, mut notes) = match ocw_assets::glb::read_file_lenient(src) {
         Ok(m) => m,
         Err(e) => {
             eprintln!("{}: {e}", src.display());
             return ExitCode::FAILURE;
         }
     };
+    // What Blender drops (asset extras, copyright) from the file replaced.
+    let previous = std::fs::read(out.join(opts.entry().file))
+        .ok()
+        .and_then(|b| ocw_assets::glb::read(&b).ok());
+    if let Some(prev) = &previous {
+        notes.extend(ocw_assets::import::keep_from_previous(&mut model, prev));
+    }
     let imported = match ocw_assets::import::import(model, notes, &opts) {
         Ok(i) => i,
         Err(errors) => return report(&errors),
@@ -337,7 +348,13 @@ fn model_export(
     ExitCode::SUCCESS
 }
 
-fn model_diff(a: &str, b: &str, models: &std::path::Path, json: bool) -> ExitCode {
+fn model_diff(
+    a: &str,
+    b: &str,
+    models: &std::path::Path,
+    json: bool,
+    ignore_manifest: bool,
+) -> ExitCode {
     let mut read = Vec::new();
     for arg in [a, b] {
         let (path, entry) = match resolve_model(arg, models) {
@@ -365,10 +382,12 @@ fn model_diff(a: &str, b: &str, models: &std::path::Path, json: bool) -> ExitCod
             e
         })
     };
-    d.changes.extend(ocw_assets::diff::diff_entries(
-        strip(ea).as_ref(),
-        strip(eb).as_ref(),
-    ));
+    if !ignore_manifest {
+        d.changes.extend(ocw_assets::diff::diff_entries(
+            strip(ea).as_ref(),
+            strip(eb).as_ref(),
+        ));
+    }
     if json {
         println!("{}", serde_json::to_string(&d).expect("JSON"));
     } else {
@@ -702,7 +721,13 @@ fn main() -> ExitCode {
             out,
             models,
         }) => model_export(&model, gltf, &out, &models),
-        Cmd::Model(ModelCmd::Diff { a, b, models, json }) => model_diff(&a, &b, &models, json),
+        Cmd::Model(ModelCmd::Diff {
+            a,
+            b,
+            models,
+            json,
+            ignore_manifest,
+        }) => model_diff(&a, &b, &models, json, ignore_manifest),
         Cmd::Info { file } => match ocw_assets::glb::read_file(&file) {
             Ok(m) => {
                 println!("copyright: {}", m.copyright);

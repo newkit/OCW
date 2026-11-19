@@ -238,6 +238,8 @@ mod tests {
         );
         assert!(skipped_section("section ORTC") && skipped_section("section ORTC#2"));
         assert!(!skipped_section("section SEAS") && !skipped_section("tile 0,0"));
+        // The stored junctions (spec 4.8.8 J2): computed by a streaming client.
+        assert!(skipped_section("section JNCT") && !skipped_section("section RDGE"));
     }
 
     /// Which chunks for a position: the 3 × 3 tiles around it (fewer at

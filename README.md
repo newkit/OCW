@@ -174,7 +174,8 @@ then you build the app and serve it yourself, as below.
   build: Safari 26 has WebGPU on by default, but the WebGPU build gave an
   iPhone 15 on iOS 26 sound and no image, so the page does not use Safari's
   WebGPU yet (`?gpu=webgpu` tries it). Phones ride with virtual power (no
-  Web Bluetooth on iOS, no touch controls for riding yet). On Linux, WebGPU and Web Bluetooth are still behind flags
+  Web Bluetooth on iOS) and steer by touch (see
+  [touch steering](#touch-steering-in-the-browser)). On Linux, WebGPU and Web Bluetooth are still behind flags
   in Chromium. Start it like this (the browser tests use the same flags):
   ```bash
   chromium --enable-unsafe-webgpu --enable-features=Vulkan --enable-experimental-web-platform-features
@@ -584,6 +585,19 @@ option `?touch=on|off` for one visit.
 The desktop app steers the same way on Windows and Linux touch screens
 (touch laptops, tablets, touch monitors); macOS has no touch screens.
 
+**On a phone** (spec 3.2.3 TS4) the page fills the whole screen, also
+behind the notch, while the HUD, the steering zones and the page's panels
+keep clear of the notch and the home bar (the browser's safe areas). While
+you ride the page does not scroll, zoom or open a long-press menu, and the
+screen stays on (Screen Wake Lock: Chrome, Safari 16.4+; elsewhere it may
+dim as usual). **Full screen:** *Menu → Captures → Full screen*, or the
+button beside the first-ride tip, where the browser has it (Android's
+Chrome, the iPad's Safari); the phone then also tries to stay in
+landscape. **iPhone:** Safari has no full screen for pages – use *Share →
+Add to Home Screen* and start OCW from its icon: it opens without the
+browser's bars. Landscape gives the wider view; in portrait a tip says so
+once, and the ride works either way.
+
 #### Graphics: WebGPU, WebGL 2 and the quality presets
 
 The WebGL 2 build draws the same world with what WebGL 2 lacks degraded:
@@ -629,7 +643,7 @@ or the server and bot builds, where it needs them). Screenshots, logs and JSON s
 | `make test-web` | WebGPU: load, ride, the menus by keyboard and a fake gamepad, settings over a reload, the screenshot / video / FIT downloads, Unicorn mode (G, + climbs, the inspection, a pin, the menu row, landing), fps |
 | `make test-web-webgl2` | Chromium without WebGPU: the page falls back to the WebGL 2 build and rides. Then WebGPU High against WebGL 2 Low in the same view, and the Graphics page. Then `test-web-gpu` |
 | `make test-web-gpu` | The page's GPU choice (`ocw-gpu.js`'s rules, pure), then WebGPU failures injected into the real app (a validation error, a refused device, no frame): each ride comes back on WebGL 2 with the note and draws; the remembered failure; `?gpu=webgpu`; a healthy WebGPU ride raises no alarm; Safari on an iPhone 15 takes WebGL 2 |
-| `make test-web-webkit` | WebKit, Safari's engine (Playwright's build, `make deps-webkit`: a venv in `~/.cache/ocw/playwright-venv`, no sudo): an iPhone 15 and Safari on macOS, with Safari 26's `navigator.gpu` faked in – the start page's WebGL 2 box ticked, the ride on WebGL 2 rides and draws |
+| `make test-web-webkit` | WebKit, Safari's engine (Playwright's build, `make deps-webkit`: a venv in `~/.cache/ocw/playwright-venv`, no sudo): an iPhone 15 (portrait and landscape) and Safari on macOS, with Safari 26's `navigator.gpu` faked in – the start page's WebGL 2 box ticked, the ride on WebGL 2 rides and draws; on the iPhone the manifest and its icons, the safe-area insets passed in (`?safe-insets=`), taps on each half steer and taps behind the notch or on the home bar do not, a held side, no full screen (the Add to Home Screen tip), the wake lock missing (tolerated) and present (asked again), no page errors |
 | `scripts/test-web-safari.py` | The real Safari on a Mac over `safaridriver` (`--gpu webgpu` tries Safari's WebGPU): the GPU the page chose, the watchdog's state, a screenshot. It needs the Mac's desktop logged in and `sudo safaridriver --enable` once |
 | `make test-web-world` | Liechtenstein streamed from the dev server, a teleport, then a reload from the browser cache |
 | `make test-web-unicorn` | Unicorn mode over Vaduz (Liechtenstein streamed): fly up, the inspection, a pin, the menu row, landing (`--god`) |
@@ -741,7 +755,9 @@ keys new-signing`.
 - Trainers and sensors only in Chromium-based browsers (Chrome, Edge;
   on Linux with the flag). Elsewhere: virtual power.
 - Safari and Firefox are untested, and so are real phones and tablets
-  (the browser matrix comes with hosting, B8).
+  (the browser matrix comes with hosting, B8): touch steering, the safe
+  areas, the wake lock and Add to Home Screen are tested in WebKit's
+  iPhone 15 emulation only.
 - No hosting or domain yet (B8): the public preview on GitHub Pages is
   solo only; for anything else you serve the page yourself. Multiplayer
   takes the server's self-signed certificate by hash, renewed every 11
@@ -1209,6 +1225,19 @@ The same from the console: `studio select X Z | latlon LAT LON`, `studio road
 surface gravel | width 4 | name Alter Weg | remove | focus`, `studio point add
 | raise 3 | radius 60 | move X Z | remove`, `studio patch list | save [PATH] |
 open PATH | build [OUT]`.
+
+**Routes in OCW Studio** (`ocw-studio --world my.ocwpkg --workspace routes`):
+click the map to add via-points, drag the route onto other roads, or
+*Import* a GPX, TCX, GeoJSON or FIT file (matched onto the package's roads).
+A file with several track segments lists them first – number and colour on
+the map, length, start and end with the nearest place – and you import one
+of them or *All joined*. The built-in planner uses the package's measured
+road surfaces, so the road bike profile rides round a gravel or dirt
+stretch where there is another way. Under the figures, *Expected time at
+200 W* gives the riding time at the power you set, with the game's physics
+for your active rider (weight and bike from the game's `ocw.toml`). The same
+from the console: `studio route import PATH`, `studio route import part
+N|all|cancel`, `studio route power W`, `studio route info`.
 
 ## Connecting a gamepad
 
@@ -1817,13 +1846,20 @@ event status | event cancel | event dismiss
   time, climbing, average and normalized power, heart rate, kJ, hearts,
   crashes and damage, the workout, the power curve (5 s – 60 min) and the
   climbs. The pages show the rides (newest first; a ride's page has its
-  power curve as a chart against your bests, its climbs and *Export the FIT
-  file*, to the downloads folder), the weekly and monthly totals and your
-  personal bests. *Import saved rides* (`history.import`) adds older FIT
-  files of the rides folder. Console: `history`, `history.show N`,
-  `history.bests`, `history.export N [--to DIR]`. The browser keeps its
-  history in `localStorage` (`ocw-history`); its FIT files can be
-  downloaded again only while the page is open. The FIT file has a lap at each workout
+  power curve as a chart against your bests, a small map of its track
+  (north up, start and finish, a scale bar), its laps and climbs and
+  *Export or delete*: *Export the FIT file*, to the downloads folder, and
+  *Delete this ride*, which asks first and deletes the ride's entry and its FIT file – its Strava
+  recordings and photos stay in your activities folder, a recording
+  waiting for Strava is still uploaded), the weekly and monthly totals and
+  your personal bests. *Import saved rides* (`history.import`) adds older
+  FIT files of the rides folder. Console: `history`, `history.show N`,
+  `history.bests`, `history.export N [--to DIR]`, `history.delete N`. The
+  browser keeps its history in `localStorage` (`ocw-history`) and each
+  ride's FIT file in its private file storage (OPFS, folder `ocw-rides`),
+  so the export works after a reload too; a browser without it (an older
+  one, some private windows) keeps them only while the page is open and
+  the history's page says so. The FIT file has a lap at each workout
   step (start, step change, end, stop) and at an event's start, each event
   lap and your finish, so Strava and analysis tools show them as laps.
 - **Only your Strava recordings go to Strava, never whole rides** (spec
@@ -2493,7 +2529,8 @@ you can run are offered (no *Dev* commands on a remote server).
 | `history` | The training history: this week, this month, the rides (numbered, newest first) |
 | `history.show N` | A ride in full (power curve, climbs) |
 | `history.bests` | Personal bests: the power curve 5 s – 60 min, the climbs |
-| `history.export N [--to DIR]` | Copy a ride's FIT file to the downloads folder (browser: download it again) |
+| `history.export N [--to DIR]` | Copy a ride's FIT file to the downloads folder (browser: download it again, from its file storage) |
+| `history.delete N` | Delete a ride and its FIT file from the training history (its Strava recordings and photos stay; the menu asks first) |
 | `history.import` | Add the saved FIT files that are in no history yet to the riding rider's |
 | `bind [ACTION [KEY \| BUTTON --pad]] [--capture] [--reset]` | Show or change the key and button bindings |
 | `ui.scale P`, `ui.palette standard\|colour-safe`, `ui.contrast on\|off`, `ui.motion on\|off` | The accessibility options (the settings `display.*` run them) |
@@ -3951,10 +3988,13 @@ described in [Build infrastructure](#build-infrastructure). The other tools:
 | `world-builder calibrate` / `imagery-cells` | Measure a package's palette, roof colours and seasonal tint maps in the region's imagery and cut the orthophoto corridor along its roads (sections `PALT`, `ROOF`, `SEAS`, `ORTC`; manifest credits renewed); list the imagery cells a package covers |
 | `world-builder obstacles --world PKG --pbf PBF... [--out NEW]` | Static obstacles near the roads into a built package (section `OBST`, spec §14 Phase 12 K3): OSM barriers and posts with the 2 m corridor rule, the tree cells; prints rows of road bollards and the longest bridges; manifest renewed |
 | `world-builder places --world PKG --pbf PBF... [--out NEW]` | Place names into a built package (section `PLCE`, spec §4.7): OSM `place=city … isolated_dwelling` nodes and areas on the tiles with rank, population, capital and `name:*`; every other section stays byte for byte; prints the most important places; manifest renewed (`package` writes the section too) |
+| `world-builder junctions --world PKG [--out NEW]` | Smooth junctions baked into a built package (spec §4.8.8 J2): through roads without a kink at a junction, the road profiles and strips set to the drawn junction surfaces (a side road starts on the main road and blends into its own grade), the terrain settled under the junction surfaces, sections `JNCT` (the junction rules and outlines) and `RDGE` (the edge of every road strip); every other section as it was; manifest renewed (`package` does the same). `world-builder lint` reports `junction.seam` (a step of the drawn carriageways above 2 cm), `junction.overlap` (z-fighting) and `junction.no_surface.*` |
 | `world-builder dem-import` / `dem-tiles` / `dem-diff` | High-resolution DTMs: import XYZ / GeoTIFF tiles as 2 m GeoTIFFs, list the tiles of a box, compare with SRTM |
 | `cargo run -p ocw-assets -- model export-all [--check]` | Export the bikes, the rider and the helmets from their generators into `artwork/3dmodels/` (glTF, own work, Git LFS; spec §14 Phase 15) with the manifest; `--check` only compares (`generate` is the old name) |
 | `cargo run -p ocw-render --example export-flora [-- --check]` | Export the plants (every species, at least three shape variants, each with `lod1`) into `artwork/3dmodels/flora/` |
 | `cargo run -p ocw-assets -- validate [DIR]` | Model validator (default `artwork/3dmodels`): licence entry (`license`, `source`, `author`) in `manifest.toml` for every model, the model contract (names, `extras.ocw`, folders per kind), no physics values, required nodes and paint slots, triangle budgets |
+| `make models-diff [BASE=main] [MACHINE=marge]` | The structural diff (`ocw-assets model diff`: nodes, meshes, materials, extras, manifest entry) of every model file changed against `main` – committed, uncommitted or new – plus removed files and the manifest lines changed; `MACHINE`: git here, the diff on the build machine |
+| `make deps-blender` / `make test-blender` | Blender (the pinned LTS, SHA-256 checked, into `~/.local/opt/blender-X.Y.Z` with `~/.local/bin/blender`, no sudo; marge) and the Blender round trip of every model file: import and export with the preset of `artwork/3dmodels/README.md`, `model import`, `model diff` must be empty (spec §14 Phase 15, 15F; skipped without Blender; `MODELS="bikes/*"` limits it) |
 | `cargo run -p ocw-assets -- info FILE.glb` | A model's nodes, positions, triangles, materials and `extras` (also `.gltf`) |
 | `scripts/fetch-materials.sh` (`make materials`) | Material library: download the pinned sources of `assets/materials.toml` (cache `~/.cache/ocw/material-sources`), check their SHA-256, convert to KTX2 into `assets/materials/` |
 | `cargo run -p ocw-assets -- materials validate [DIR]` | Material validator: `license`, `source`, `author` and a SHA-256 pin for every material, no share-alike / non-commercial / no-derivatives / unknown licence; with DIR the converted library too |

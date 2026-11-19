@@ -4,7 +4,8 @@
 //! (`<data dir>/ocw/history/<rider>.json`), `localStorage` in the browser
 //! – the Navi → Training history pages (`ocw_client::menu::history`) and
 //! the console commands `history`, `history.show N`, `history.bests`,
-//! `history.export N [--to DIR]`, `history.import`, and the simple Strava
+//! `history.export N [--to DIR]`, `history.import`, `history.delete N`
+//! (the ride's entry and its FIT file; spec 14 Phase 7, 7A), and the simple Strava
 //! upload's `strava.upload-manual [N]` (the ride's Strava recordings only,
 //! never the whole ride: spec 2.8.1 Q6) and `strava.mark-uploaded
 //! N [on|off|toggle]` (spec §2.8.1 *Simple upload*).
@@ -40,6 +41,11 @@ pub type UploadFn = fn(&mut World, &RideEntry) -> Result<String, String>;
 /// A ride was marked as uploaded to Strava or unmarked (the desktop tells
 /// its API sync).
 pub type MarkFn = fn(&mut World, &RideEntry);
+/// Deletes a ride's own files (its FIT file: the desktop's rides folder,
+/// the browser's OPFS) before its entry leaves the history; what it did
+/// ("FIT file deleted"). An error keeps the ride (spec 14 Phase 7, 7A).
+/// The Strava recordings and photos in the activities folder stay.
+pub type DeleteFn = fn(&mut World, &RideEntry) -> Result<String, String>;
 
 /// What the app provides.
 #[derive(Resource, Clone, Copy)]
@@ -60,6 +66,8 @@ pub struct HistoryHooks {
     pub upload: Option<UploadFn>,
     /// Told when a ride's Strava mark changes.
     pub marked: Option<MarkFn>,
+    /// Deletes a ride's files (`None`: only the FIT kept in memory).
+    pub delete: Option<DeleteFn>,
 }
 
 impl Default for HistoryHooks {
@@ -78,6 +86,7 @@ impl Default for HistoryHooks {
             refresh: refresh_from_memory,
             upload: None,
             marked: None,
+            delete: None,
         }
     }
 }
@@ -98,6 +107,9 @@ pub struct TrainingHistory {
     store: Option<Box<dyn TextStore>>,
     /// Why it is not saved (a newer or broken file).
     pub read_only: Option<String>,
+    /// Where the FIT files are kept, if that needs saying (the browser
+    /// without its file storage: only while the page is open).
+    pub kept_note: Option<String>,
     /// FIT files kept in memory (the browser: this page's rides).
     pub fits: BTreeMap<String, Vec<u8>>,
     /// Saved rides not in the history yet (`None`: no import).
@@ -188,6 +200,7 @@ pub fn info(world: &World) -> HistoryInfo {
             importable: h.importable,
             exportable: h.exportable.clone(),
             read_only: h.read_only.clone(),
+            kept_note: h.kept_note.clone(),
             photos: h.photos.clone(),
             strava_api: h.strava_api,
             strava_auto_off: h.strava_auto_off,
@@ -215,6 +228,49 @@ fn hooks(world: &World) -> HistoryHooks {
         .get_resource::<HistoryHooks>()
         .copied()
         .unwrap_or_default()
+}
+
+/// Deletes ride `n` (1 = the newest; spec 14 Phase 7, 7A): the app's
+/// hook deletes its files first (an error keeps the ride), then the entry
+/// leaves the history, which is saved. The ride's Strava recordings and
+/// photos stay where they are (the activities folder; a recording waiting
+/// for Strava is still uploaded).
+pub fn delete_ride(world: &mut World, n: usize) -> Result<String, String> {
+    let ride = nth(world, n)?;
+    if let Some(why) = world
+        .get_resource::<TrainingHistory>()
+        .and_then(|h| h.read_only.clone())
+    {
+        return Err(format!("not deleted: {why}"));
+    }
+    let hooks = hooks(world);
+    let files = match hooks.delete {
+        Some(f) => f(world, &ride)?,
+        None => String::new(),
+    };
+    let saved = {
+        let mut h = world.resource_mut::<TrainingHistory>();
+        h.history.remove(&ride.id);
+        h.fits.remove(&ride.id);
+        h.exportable.remove(&ride.id);
+        if h.upload.as_ref().is_some_and(|(id, _)| *id == ride.id) {
+            h.upload = None;
+        }
+        h.save()
+    };
+    (hooks.refresh)(world);
+    let mut out = format!(
+        "ride of {} ({}) deleted from the training history",
+        start_label(ride.start_unix_s, offset(ride.start_unix_s)),
+        distance_label(ride.distance_m, false)
+    );
+    if !files.is_empty() {
+        out.push_str(&format!("; {files}"));
+    }
+    if let Err(e) = saved {
+        out.push_str(&format!(" (not saved: {e})"));
+    }
+    Ok(out)
 }
 
 /// Adds a ride and saves the history.
@@ -485,6 +541,13 @@ fn register_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
+        Command::new("history.delete")
+            .about("Delete ride N from the training history (N: its number in `history`, 1 = the newest) with its FIT file; its Strava recordings and photos stay in the activities folder. The menu asks first")
+            .arg(Arg::new("n").required(true)),
+        |world, m| delete_ride(world, number(m)?),
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
         Command::new("history.import")
             .about("Add the saved rides (FIT files) that are not in the training history yet to this rider's"),
         |world, _| match hooks(world).import {
@@ -588,6 +651,84 @@ pub mod tests {
         assert_eq!(
             app.world().resource::<TrainingHistory>().exportable,
             ["new".to_string()].into()
+        );
+    }
+
+    fn deleted(world: &mut World, ride: &RideEntry) -> Result<String, String> {
+        if ride.id == "stuck" {
+            return Err("cannot delete stuck.fit: busy".into());
+        }
+        world.insert_resource(Told(ride.id.clone(), true));
+        Ok("FIT file deleted".into())
+    }
+
+    /// Deleting a ride (spec 14 Phase 7, 7A): the app's files first, then
+    /// the entry, saved; an error of the files keeps the ride; a
+    /// read-only history deletes nothing.
+    #[test]
+    fn a_ride_is_deleted_with_its_files() {
+        let mem = MemoryStore::default();
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, ConsoleCorePlugin))
+            .add_plugins((crate::settings::SettingsPlugin, HistoryPlugin));
+        app.update();
+        let run = |app: &mut App, line: &str| {
+            let n = app.world().resource::<ConsoleState>().log().len();
+            app.world_mut().resource_mut::<ConsoleState>().queue(line);
+            app.update();
+            app.world().resource::<ConsoleState>().log()[n..].join("\n")
+        };
+        {
+            let mut h = TrainingHistory::load("Rider", Some(Box::new(mem.clone())));
+            h.history.add(entry("stuck", 1_794_211_200, 200.0));
+            h.history.add(entry("old", 1_794_211_200 + 3_600, 210.0));
+            h.history.add(entry("new", 1_794_211_200 + 86_400, 260.0));
+            h.fits.insert("new".into(), vec![1, 2, 3]);
+            h.upload = Some(("new".into(), "steps".into()));
+            app.insert_resource(h);
+        }
+        app.insert_resource(HistoryHooks {
+            delete: Some(deleted),
+            ..HistoryHooks::default()
+        });
+        let out = run(&mut app, "history.delete 1");
+        assert!(
+            out.contains("deleted from the training history; FIT file deleted"),
+            "{out}"
+        );
+        assert_eq!(
+            app.world().get_resource::<Told>(),
+            Some(&Told("new".into(), true))
+        );
+        {
+            let h = app.world().resource::<TrainingHistory>();
+            assert!(!h.history.contains("new") && h.fits.is_empty() && h.upload.is_none());
+        }
+        let again = TrainingHistory::load("Rider", Some(Box::new(mem.clone())));
+        let ids: Vec<&str> = again.history.rides.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, ["stuck", "old"]);
+        // The files cannot go: the ride stays.
+        let out = run(&mut app, "history.delete 2");
+        assert!(out.contains("busy"), "{out}");
+        assert_eq!(
+            app.world()
+                .resource::<TrainingHistory>()
+                .history
+                .rides
+                .len(),
+            2
+        );
+        assert!(run(&mut app, "history.delete 3").contains("no ride 3"));
+        // A history of a newer version is read-only: nothing is deleted.
+        app.world_mut().resource_mut::<TrainingHistory>().read_only = Some("version 7".into());
+        assert!(run(&mut app, "history.delete 1").contains("not deleted"));
+        assert_eq!(
+            app.world()
+                .resource::<TrainingHistory>()
+                .history
+                .rides
+                .len(),
+            2
         );
     }
 

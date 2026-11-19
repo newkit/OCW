@@ -91,6 +91,10 @@ pub struct MenuView {
     /// A bar chart between the text and the items (the training history's
     /// power curve, spec §14 Phase 7).
     pub chart: Option<MenuChart>,
+    /// A small map beside the chart (a ride's track in the training
+    /// history, spec 14 Phase 7, 7A), at the chart's height; alone where
+    /// there is no chart.
+    pub map: Option<MenuMap>,
     /// Draw the items as a month calendar (spec §14 Phase 9 S9a): items
     /// 0–41 the days, then the buttons ([`MenuCalendar`]).
     pub calendar: Option<MenuCalendar>,
@@ -152,6 +156,23 @@ pub struct MenuChart {
     pub caption: String,
     pub bars: Vec<ChartBar>,
 }
+
+/// A ride's track drawn as a small north-up map ([`ocw_map::ride`]).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct MenuMap {
+    /// The line over the picture ("Track (north up)").
+    pub caption: String,
+    /// Latitude, longitude (degrees).
+    pub track: Vec<[f64; 2]>,
+    /// The scale bar in miles / feet.
+    pub imperial: bool,
+}
+
+/// The map picture's pixels (square) and its side (vh; the chart's
+/// height without its caption).
+const MAP_PX: u32 = 320;
+/// The scale bar's label (vh).
+const MAP_SCALE_VH: f32 = 1.8;
 
 /// One bar of a [`MenuChart`].
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -326,6 +347,21 @@ pub fn chart_height_vh(chart: &MenuChart) -> f32 {
         TEXT_VH * LINE_HEIGHT + CHART_GAP_VH
     };
     caption + 2.0 * (CHART_TEXT_VH * LINE_HEIGHT + CHART_GAP_VH) + CHART_BAR_VH
+}
+
+/// The map's side (vh): as tall as a chart's bars with their texts.
+fn map_side_vh() -> f32 {
+    2.0 * (CHART_TEXT_VH * LINE_HEIGHT + CHART_GAP_VH) + CHART_BAR_VH
+}
+
+/// Height of a map beside (or without) a chart: its caption and picture.
+pub fn map_height_vh(map: &MenuMap) -> f32 {
+    let caption = if map.caption.is_empty() {
+        0.0
+    } else {
+        TEXT_VH * LINE_HEIGHT + CHART_GAP_VH
+    };
+    caption + map_side_vh()
 }
 
 /// Panel layout in % of the window height (vh). [`page_height_vh`] adds
@@ -587,10 +623,15 @@ pub fn page_height_vh(view: &MenuView, aspect: f32, paragraphs: usize) -> f32 {
             rows + LIST_GAP_VH * view.items.len().saturating_sub(1) as f32 + 2.0 * LIST_MARGIN_VH
         }
     };
-    let chart = view
-        .chart
-        .as_ref()
-        .map_or(0.0, |c| chart_height_vh(c) + PANEL_GAP_VH);
+    let chart = match (&view.chart, &view.map) {
+        (None, None) => 0.0,
+        (c, m) => {
+            c.as_ref()
+                .map_or(0.0, chart_height_vh)
+                .max(m.as_ref().map_or(0.0, map_height_vh))
+                + PANEL_GAP_VH
+        }
+    };
     2.0 * (PANEL_PAD_Y_VH + PANEL_BORDER_VH)
         + chart
         + 4.0 * PANEL_GAP_VH
@@ -653,6 +694,9 @@ struct MenuChartNode;
 /// A bar of the chart (tests).
 #[derive(Component)]
 pub struct MenuChartBar;
+/// The ride map's picture (tests).
+#[derive(Component)]
+pub struct MenuMapImage;
 
 fn font(vh: f32) -> TextFont {
     TextFont {
@@ -739,8 +783,9 @@ fn spawn_menu(mut commands: Commands) {
                 panel.spawn((
                     Node {
                         display: Display::None,
-                        flex_direction: FlexDirection::Column,
-                        row_gap: vh(CHART_GAP_VH),
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::FlexStart,
+                        column_gap: vh(2.0 * PANEL_GAP_VH),
                         ..default()
                     },
                     MenuChartNode,
@@ -1399,97 +1444,186 @@ fn draw_menu(
     set_text_or_hide(&mut texts.p4(), &view.emphasis.join("\n"));
 }
 
-/// The chart's bars (spawned again when the chart changes).
+/// The ride map's picture (straight RGBA, [`MAP_PX`]²).
+fn map_image(map: &MenuMap, images: &mut Assets<Image>) -> Option<(Handle<Image>, String, f32)> {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    let img = ocw_map::ride::render(
+        &map.track,
+        MAP_PX,
+        MAP_PX,
+        map.imperial,
+        ocw_map::style::Shade::Day,
+    )?;
+    let handle = images.add(Image::new(
+        Extent3d {
+            width: img.width,
+            height: img.height,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        img.rgba,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
+    ));
+    Some((handle, img.scale, img.scale_px / MAP_PX as f32))
+}
+
+/// The chart's bars and the map beside them (spawned again when either
+/// changes).
 fn draw_chart(
     mut commands: Commands,
     view: Res<MenuView>,
+    mut images: ResMut<Assets<Image>>,
     mut node: Query<(Entity, &mut Node), With<MenuChartNode>>,
-    mut last: Local<Option<MenuChart>>,
+    mut last: Local<Option<(Option<MenuChart>, Option<MenuMap>)>>,
 ) {
-    let chart = view.chart.as_ref().filter(|_| view.open);
-    if chart == last.as_ref() {
+    let now = (
+        view.chart.clone().filter(|_| view.open),
+        view.map.clone().filter(|_| view.open),
+    );
+    if last.as_ref() == Some(&now) {
         return;
     }
-    *last = chart.cloned();
+    *last = Some(now.clone());
     let Ok((e, mut n)) = node.single_mut() else {
         return;
     };
     commands.entity(e).despawn_children();
-    let Some(chart) = chart else {
+    let (chart, map) = now;
+    let picture = map.as_ref().and_then(|m| map_image(m, &mut images));
+    if chart.is_none() && picture.is_none() {
         n.display = Display::None;
         return;
-    };
+    }
     n.display = Display::Flex;
-    let width = 100.0 / chart.bars.len().max(1) as f32;
     commands.entity(e).with_children(|c| {
-        if !chart.caption.is_empty() {
-            c.spawn((
-                Text::new(chart.caption.clone()),
-                font(TEXT_VH),
-                TextColor(DIM),
-            ));
+        if let Some(chart) = &chart {
+            c.spawn(Node {
+                flex_direction: FlexDirection::Column,
+                flex_grow: 1.0,
+                row_gap: vh(CHART_GAP_VH),
+                ..default()
+            })
+            .with_children(|c| draw_bars(c, chart));
         }
-        c.spawn(Node {
-            flex_direction: FlexDirection::Row,
-            align_items: AlignItems::FlexEnd,
-            ..default()
-        })
-        .with_children(|row| {
-            for bar in &chart.bars {
-                let colour = if bar.best { FOCUS } else { CHART_BAR };
-                row.spawn(Node {
-                    width: Val::Percent(width),
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    row_gap: vh(CHART_GAP_VH),
-                    ..default()
-                })
-                .with_children(|col| {
+        if let (Some(map), Some((handle, scale, _bar))) = (&map, picture) {
+            let side = map_side_vh();
+            c.spawn(Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: vh(CHART_GAP_VH),
+                ..default()
+            })
+            .with_children(|col| {
+                if !map.caption.is_empty() {
                     col.spawn((
-                        Text::new(bar.text.clone()),
-                        font(CHART_TEXT_VH),
-                        TextColor(TEXT),
-                    ));
-                    col.spawn(Node {
-                        width: Val::Percent(64.0),
-                        height: vh(CHART_BAR_VH),
-                        flex_direction: FlexDirection::Column,
-                        justify_content: JustifyContent::FlexEnd,
-                        ..default()
-                    })
-                    .with_children(|area| {
-                        area.spawn((
-                            Node {
-                                width: Val::Percent(100.0),
-                                height: vh(bar.value.clamp(0.0, 1.0) * CHART_BAR_VH),
-                                border_radius: BorderRadius::top(vh(0.5)),
-                                ..default()
-                            },
-                            BackgroundColor(colour),
-                            MenuChartBar,
-                        ));
-                        if let Some(m) = bar.mark {
-                            area.spawn((
-                                Node {
-                                    position_type: PositionType::Absolute,
-                                    left: Val::Percent(-12.0),
-                                    width: Val::Percent(124.0),
-                                    bottom: vh(m.clamp(0.0, 1.0) * CHART_BAR_VH),
-                                    height: vh(0.5),
-                                    ..default()
-                                },
-                                BackgroundColor(TEXT),
-                            ));
-                        }
-                    });
-                    col.spawn((
-                        Text::new(bar.label.clone()),
-                        font(CHART_TEXT_VH),
+                        Text::new(map.caption.clone()),
+                        font(TEXT_VH),
                         TextColor(DIM),
                     ));
+                }
+                col.spawn((
+                    Node {
+                        width: vh(side),
+                        height: vh(side),
+                        border_radius: BorderRadius::all(vh(0.8)),
+                        ..default()
+                    },
+                    ImageNode::new(handle),
+                    MenuMapImage,
+                ))
+                .with_children(|pic| {
+                    // The scale bar's label over its bar (lower left).
+                    pic.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: vh(side * (ocw_map::ride::SCALE_INSET_PX / MAP_PX as f32)),
+                            bottom: vh(
+                                side * (2.0 * ocw_map::ride::SCALE_INSET_PX + 2.0) / MAP_PX as f32
+                            ),
+                            ..default()
+                        },
+                        Text::new(scale),
+                        TextLayout::no_wrap(),
+                        font(MAP_SCALE_VH),
+                        TextColor(Color::srgb(0.15, 0.15, 0.17)),
+                    ));
                 });
-            }
-        });
+            });
+        }
+    });
+}
+
+/// A chart's caption and bars.
+fn draw_bars(c: &mut ChildSpawnerCommands, chart: &MenuChart) {
+    let width = 100.0 / chart.bars.len().max(1) as f32;
+    if !chart.caption.is_empty() {
+        c.spawn((
+            Text::new(chart.caption.clone()),
+            font(TEXT_VH),
+            TextColor(DIM),
+        ));
+    }
+    c.spawn(Node {
+        flex_direction: FlexDirection::Row,
+        align_items: AlignItems::FlexEnd,
+        ..default()
+    })
+    .with_children(|row| {
+        for bar in &chart.bars {
+            let colour = if bar.best { FOCUS } else { CHART_BAR };
+            row.spawn(Node {
+                width: Val::Percent(width),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: vh(CHART_GAP_VH),
+                ..default()
+            })
+            .with_children(|col| {
+                col.spawn((
+                    Text::new(bar.text.clone()),
+                    font(CHART_TEXT_VH),
+                    TextColor(TEXT),
+                ));
+                col.spawn(Node {
+                    width: Val::Percent(64.0),
+                    height: vh(CHART_BAR_VH),
+                    flex_direction: FlexDirection::Column,
+                    justify_content: JustifyContent::FlexEnd,
+                    ..default()
+                })
+                .with_children(|area| {
+                    area.spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: vh(bar.value.clamp(0.0, 1.0) * CHART_BAR_VH),
+                            border_radius: BorderRadius::top(vh(0.5)),
+                            ..default()
+                        },
+                        BackgroundColor(colour),
+                        MenuChartBar,
+                    ));
+                    if let Some(m) = bar.mark {
+                        area.spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Percent(-12.0),
+                                width: Val::Percent(124.0),
+                                bottom: vh(m.clamp(0.0, 1.0) * CHART_BAR_VH),
+                                height: vh(0.5),
+                                ..default()
+                            },
+                            BackgroundColor(TEXT),
+                        ));
+                    }
+                });
+                col.spawn((
+                    Text::new(bar.label.clone()),
+                    font(CHART_TEXT_VH),
+                    TextColor(DIM),
+                ));
+            });
+        }
     });
 }
 
@@ -1867,6 +2001,81 @@ mod tests {
             .iter(app.world())
             .count();
         assert_eq!(bars, 0);
+    }
+
+    /// A ride's map (spec 14 Phase 7, 7A): beside the chart it takes no
+    /// more height; alone it takes the chart's; its picture is drawn and
+    /// goes with the map.
+    #[test]
+    fn a_map_is_counted_and_drawn_beside_the_chart() {
+        let chart = MenuChart {
+            caption: "Power curve".into(),
+            bars: (0..8)
+                .map(|i| ChartBar {
+                    label: format!("{i}m"),
+                    value: 0.5,
+                    text: "300".into(),
+                    mark: None,
+                    best: false,
+                })
+                .collect(),
+        };
+        let map = MenuMap {
+            caption: "Track (north up)".into(),
+            track: (0..40)
+                .map(|i| {
+                    let a = i as f64 / 40.0 * std::f64::consts::TAU;
+                    [47.1 + 0.004 * a.sin(), 9.5 + 0.006 * a.cos()]
+                })
+                .collect(),
+            imperial: false,
+        };
+        let mut v = page(&["Short."], 6);
+        v.chart = Some(chart.clone());
+        let with_chart = page_height_vh(&v, 16.0 / 9.0, 1);
+        v.map = Some(map.clone());
+        assert!((page_height_vh(&v, 16.0 / 9.0, 1) - with_chart).abs() < 1e-4);
+        assert!((map_height_vh(&map) - chart_height_vh(&chart)).abs() < 1e-4);
+        v.chart = None;
+        assert!((page_height_vh(&v, 16.0 / 9.0, 1) - with_chart).abs() < 1e-4);
+        assert!(with_chart <= PANEL_MAX_VH);
+        v.chart = Some(chart);
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            bevy::asset::AssetPlugin::default(),
+            MenuPlugin,
+        ));
+        app.init_asset::<Image>();
+        app.update();
+        *app.world_mut().resource_mut::<MenuView>() = MenuView { open: true, ..v };
+        app.update();
+        app.update();
+        let count = |app: &mut App| {
+            app.world_mut()
+                .query::<&MenuMapImage>()
+                .iter(app.world())
+                .count()
+        };
+        assert_eq!(count(&mut app), 1);
+        let bars = app
+            .world_mut()
+            .query::<&MenuChartBar>()
+            .iter(app.world())
+            .count();
+        assert_eq!(bars, 8);
+        // A track of one point draws no map.
+        app.world_mut().resource_mut::<MenuView>().map = Some(MenuMap {
+            track: vec![[47.1, 9.5]],
+            ..map
+        });
+        app.update();
+        app.update();
+        assert_eq!(count(&mut app), 0);
+        app.world_mut().resource_mut::<MenuView>().map = None;
+        app.update();
+        app.update();
+        assert_eq!(count(&mut app), 0);
     }
 
     #[test]

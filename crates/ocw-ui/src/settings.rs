@@ -310,7 +310,8 @@ fn setting_keys(world: &mut World, _: &ocw_render::completion::ValueQuery) -> Ve
         .collect()
 }
 
-#[cfg(test)]
+/// A store in memory (the tests' `localStorage` or file; the browser
+/// app's tests use it too).
 pub mod memory {
     use std::sync::{Arc, Mutex};
 

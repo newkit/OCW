@@ -11,7 +11,12 @@
 //! - the primitives of a node are merged per material, unused materials
 //!   dropped, missing normals computed;
 //! - `asset.extras.ocw` is stamped from the entry (other keys kept),
-//!   the copyright and generator set.
+//!   the copyright and generator set;
+//! - what Blender does not carry is kept from the file the import
+//!   replaces ([`keep_from_previous`]): Blender's glTF importer drops
+//!   `asset.extras` and the copyright (only node extras survive, as custom
+//!   properties), so a bike's `extras.ocw.frame` / `sizing`, a plant's
+//!   `height_m` or a wearable's `rider_node` would be lost on every edit.
 //!
 //! Then the contract is checked ([`crate::check`]): a model lying on its
 //! back (exported without "+Y up") or with any other error is refused
@@ -231,6 +236,44 @@ fn merge_by_material(prims: Vec<Primitive>) -> Vec<Primitive> {
     out
 }
 
+/// Keeps the asset's `extras` keys and the copyright of `previous` (the
+/// file the import replaces) that `m` lacks – nested one level into
+/// `extras.ocw`, never overwriting a value `m` has. The notes name what
+/// was kept.
+pub fn keep_from_previous(m: &mut Model, previous: &Model) -> Vec<String> {
+    let mut notes = Vec::new();
+    if let Some(prev) = previous.extras.as_object() {
+        if !m.extras.is_object() {
+            m.extras = serde_json::json!({});
+        }
+        let ours = m.extras.as_object_mut().expect("an object");
+        for (k, v) in prev {
+            match (ours.get_mut(k), v) {
+                (None, _) => {
+                    ours.insert(k.clone(), v.clone());
+                    notes.push(format!("extras.{k} kept from the replaced file"));
+                }
+                (Some(serde_json::Value::Object(o)), serde_json::Value::Object(p))
+                    if k == "ocw" =>
+                {
+                    for (kk, vv) in p {
+                        if !o.contains_key(kk) && !matches!(kk.as_str(), "schema" | "kind" | "id") {
+                            o.insert(kk.clone(), vv.clone());
+                            notes.push(format!("extras.ocw.{kk} kept from the replaced file"));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if m.copyright.trim().is_empty() && !previous.copyright.trim().is_empty() {
+        m.copyright.clone_from(&previous.copyright);
+        notes.push("copyright kept from the replaced file".into());
+    }
+    notes
+}
+
 /// Imports a read model (see the module): the canonical file, or the
 /// errors (each with its fix where clear).
 pub fn import(
@@ -377,6 +420,36 @@ mod tests {
         let again = import(glb::read(&out.bytes).unwrap(), vec![], &opts).unwrap();
         assert_eq!(again.bytes, out.bytes);
         assert!(again.notes.is_empty(), "{:?}", again.notes);
+    }
+
+    /// Blender drops `asset.extras` and the copyright: the import keeps
+    /// them from the file it replaces, without overwriting new values.
+    #[test]
+    fn extras_blender_drops_are_kept_from_the_replaced_file() {
+        let opts = ImportOptions::own(Kind::Prop, "post-square-test");
+        let mut old = import(blender_post(), vec![], &opts).unwrap().model;
+        old.extras["ocw"]["height_m"] = serde_json::json!(1.1);
+        old.extras["ocw"]["note"] = serde_json::json!("old");
+        old.extras["other"] = serde_json::json!({"a": 1});
+        old.copyright = "Bea Climber; licence CC-BY-4.0".into();
+        let mut new = blender_post();
+        new.extras = serde_json::json!({"ocw": {"note": "new"}});
+        let notes = keep_from_previous(&mut new, &old);
+        assert_eq!(new.extras["ocw"]["height_m"], 1.1);
+        assert_eq!(new.extras["ocw"]["note"], "new", "never overwritten");
+        assert_eq!(new.extras["other"]["a"], 1);
+        assert!(
+            new.extras["ocw"].get("id").is_none(),
+            "the id comes from the entry"
+        );
+        assert_eq!(new.copyright, "Bea Climber; licence CC-BY-4.0");
+        assert_eq!(notes.len(), 3, "{notes:?}");
+        let out = import(new, notes, &opts).unwrap();
+        assert_eq!(out.model.ocw().unwrap()["height_m"], 1.1);
+        assert_eq!(out.model.ocw().unwrap()["id"], "props/post-square-test");
+        // Nothing to keep from a file without extras.
+        let mut plain = blender_post();
+        assert!(keep_from_previous(&mut plain, &blender_post()).is_empty());
     }
 
     #[test]

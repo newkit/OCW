@@ -177,6 +177,7 @@ mod tests {
             HistoryRides,
             HistoryRide(0),
             HistoryClimbs(0),
+            HistoryRideFile(0),
             HistoryWeeks,
             HistoryMonths,
             HistoryBests,
@@ -219,12 +220,13 @@ mod tests {
                 | RidingAids | Folders | Graphics | ViewDistance | WorldDetail | Photographer
                 | RiderList | UnicornControls | Bindings | BindGroup(_) | BindReset
                 | Accessibility | Hud | History | HistoryRides | HistoryRide(_)
-                | HistoryClimbs(_) | HistoryWeeks | HistoryMonths | HistoryBests
-                | HistoryWaiting | StravaWaiting | EventRules | Account | TrustedKeys
-                | TrustedKey(_) | Join | HostWorld | HostRoute | HostTime | HostWeather
-                | HostOptions | HostSummary | HostLink | Start | Devices | Device(_)
-                | Calendar(_) | CalendarDates(_) | Season | Character | CharacterBody
-                | CharacterFace | CharacterHair | CharacterFacialHair | CharacterPick(_) => {}
+                | HistoryClimbs(_) | HistoryRideFile(_) | HistoryWeeks | HistoryMonths
+                | HistoryBests | HistoryWaiting | StravaWaiting | EventRules | Account
+                | TrustedKeys | TrustedKey(_) | Join | HostWorld | HostRoute | HostTime
+                | HostWeather | HostOptions | HostSummary | HostLink | Start | Devices
+                | Device(_) | Calendar(_) | CalendarDates(_) | Season | Character
+                | CharacterBody | CharacterFace | CharacterHair | CharacterFacialHair
+                | CharacterPick(_) => {}
             }
         }
         all
@@ -258,6 +260,7 @@ mod tests {
             Page::ConfirmQuit,
             Page::ConfirmSwitch,
             Page::ConfirmEvent,
+            Page::ConfirmDelete,
         ];
         let sub = all_sub_pages().into_iter().map(Page::Sub);
         for page in pages.into_iter().chain(sub) {
@@ -309,8 +312,11 @@ mod tests {
                     .iter()
                     .map(|c| c.label.clone())
                     .collect(),
-                // The pages with a chart have fixed rows: a ride's (climbs,
-                // export, Back) and the bests (four and Back).
+                // The pages with a chart have fixed rows: a ride's (laps
+                // and climbs, export or delete, Back; spec 14 Phase 7, 7A –
+                // the Strava line of v5.07 is one more: with it the
+                // longest numbers lose their last paragraph) and the bests
+                // (four and Back).
                 Page::Sub(settings_pages::Page::HistoryRide(_)) => (0..3)
                     .map(|i| format!("Setting {i}:  < some value >"))
                     .collect(),
@@ -349,6 +355,11 @@ mod tests {
                 Page::Sub(settings_pages::Page::HistoryRide(_)) => vec![
                     "142.3 km in 10:22:05 (moving 10:20:11), 2512 m up, 4060 kJ, 1328 hearts.".to_string(),
                     "Power 215 W, NP 231 W, max 1640 W; heart rate 142 / 171 bpm; 12 crashes; rider 92 %, bike 88 %; workout: Over-unders with a long n...".to_string(),
+                ],
+                // The delete question with everything it can say (7A).
+                Page::ConfirmDelete => vec![
+                    "The ride (142.3 km in Black Forest - north - Route t...) leaves the training history and its FIT file is deleted. This cannot be undone.".to_string(),
+                    "Kept: its 12 Strava recordings and its 48 photos in your activities folder. Not on Strava yet: they still wait there and are uploaded once Strava is set up.".to_string(),
                 ],
                 _ => Vec::new(),
             };
@@ -411,6 +422,14 @@ mod tests {
                 dimmed: Vec::new(),
                 grid,
                 marks: Vec::new(),
+                // The ride's map beside the chart (7A).
+                map: matches!(page, Page::Sub(settings_pages::Page::HistoryRide(_))).then(|| {
+                    ocw_render::menu::MenuMap {
+                        caption: ocw_client::menu::history::MAP_CAPTION.into(),
+                        track: vec![[47.1, 9.5], [47.12, 9.52]],
+                        imperial: false,
+                    }
+                }),
                 chart,
                 emphasis: Vec::new(),
                 wide: false,

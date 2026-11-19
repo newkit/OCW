@@ -65,6 +65,7 @@ use ocw_map::view::{NaviView, bearing, smooth_heading};
 
 use crate::RideView;
 use crate::hud::{HudPanel, LookAhead, ShowHud, Units};
+use crate::safe_area::SafeArea;
 
 pub struct NaviMapPlugin;
 
@@ -586,15 +587,17 @@ fn spawn_device(
         });
 }
 
-/// The window in UI px (logical size over the HUD scale).
-fn window_ui_px(window: &Window, ui_scale: f32) -> Vec2 {
-    Vec2::new(window.width(), window.height()) / ui_scale.max(0.1)
+/// The UI's area in UI px (logical size over the HUD scale; inside the
+/// safe area, spec §3.2.3).
+fn window_ui_px(window: &Window, ui_scale: f32, safe: Option<&SafeArea>) -> Vec2 {
+    crate::safe_area::ui_area(window, safe).1 / ui_scale.max(0.1)
 }
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)] // a Bevy system
 fn fit_device(
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     ui_scale: Option<Res<UiScale>>,
+    safe: Option<Res<SafeArea>>,
     avoid: Query<
         (
             &ComputedNode,
@@ -633,7 +636,9 @@ fn fit_device(
         return;
     };
     let scale = ui_scale.map_or(1.0, |s| s.0);
-    let win = window_ui_px(window, scale);
+    let win = window_ui_px(window, scale, safe.as_deref());
+    // The UI's top left on the window (the safe area's insets).
+    let off = crate::safe_area::ui_area(window, safe.as_deref()).0;
     let ui_rect = |c: &ComputedNode, t: &UiGlobalTransform| {
         let k = c.inverse_scale_factor();
         let centre = t.translation * k;
@@ -677,8 +682,8 @@ fn fit_device(
                 }
             }
             let r = [
-                f.rect.min.x * scale,
-                f.rect.min.y * scale,
+                f.rect.min.x * scale + off.x,
+                f.rect.min.y * scale + off.y,
                 f.rect.width() * scale,
                 f.rect.height() * scale,
             ];

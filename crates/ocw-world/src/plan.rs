@@ -787,6 +787,76 @@ mod tests {
     }
 
     #[test]
+    fn the_package_surfaces_change_the_chosen_way() {
+        let net = grid();
+        // Row 1 (z = 200) from x = 0 to x = 600: 600 m of residential road.
+        let via = [[0.0, 200.0], [600.0, 200.0]];
+        let plain = plan_route(
+            &net,
+            &EdgeCosts::new(&net, Profile::RoadBike, None),
+            &via,
+            "a",
+        )
+        .unwrap();
+        assert!((plain.length_m() - 600.0).abs() < 1e-6);
+        // The package says its middle (vertex 5 → 6) is dirt: the road
+        // bike rides round it over row 2 (1000 m), the MTB does not.
+        let dirt = net
+            .graph()
+            .edges
+            .iter()
+            .position(|e| (e.from, e.to) == (VertexId(5), VertexId(6)))
+            .unwrap();
+        let surface = |e: usize| {
+            if e == dirt {
+                RoadSurface::Dirt
+            } else {
+                RoadSurface::of_class(net.edge(e).class)
+            }
+        };
+        let road = plan_route(
+            &net,
+            &EdgeCosts::new(&net, Profile::RoadBike, Some(&surface)),
+            &via,
+            "b",
+        )
+        .unwrap();
+        assert!(
+            (road.length_m() - 1000.0).abs() < 1e-6,
+            "{}",
+            road.length_m()
+        );
+        assert!(
+            !road
+                .steps
+                .iter()
+                .any(|s| matches!(s, Segment::Edge { edge, .. } if *edge == dirt))
+        );
+        assert_eq!(vertices_of(&net, &road.steps), vec![5, 9, 10, 6, 7]);
+        let mtb = plan_route(
+            &net,
+            &EdgeCosts::new(&net, Profile::Mtb, Some(&surface)),
+            &via,
+            "c",
+        )
+        .unwrap();
+        assert!((mtb.length_m() - 600.0).abs() < 1e-6);
+        // Rougher costs more for the road bike: asphalt < worn < paving <
+        // gravel < dirt.
+        let f: Vec<f64> = [
+            RoadSurface::Asphalt,
+            RoadSurface::WornAsphalt,
+            RoadSurface::Paving,
+            RoadSurface::Gravel,
+            RoadSurface::Dirt,
+        ]
+        .into_iter()
+        .map(|s| Profile::RoadBike.surface_factor(s))
+        .collect();
+        assert!(f.windows(2).all(|w| w[0] < w[1]), "{f:?}");
+    }
+
+    #[test]
     fn one_way_roads_are_ridden_only_their_way() {
         let mut net = grid();
         let mut g = net.graph().clone();

@@ -6,14 +6,21 @@
 //! `ROAD_BARRIER`) only with the setting `display.road_barriers` (console
 //! `road_barriers on|off`, default off): they never block the routed road.
 //!
-//! Simple generated meshes in the vertex colours, per 125 m chunk of a
-//! tile, drawn up to [`DRAW_M`] from the camera (`VisibilityRange`, the
-//! cheap level of detail). Tunnel walls and bridge railings have their
+//! The point obstacles are model files (`artwork/3dmodels/props/`, spec
+//! §14 Phase 15, 15H MX: [`model_id_of`]), fitted to each one's height and
+//! width and set on the ground ([`ocw_assets::props::place`]); the line
+//! obstacles stay generated from the world data (15E). Both are merged in
+//! the vertex colours per 125 m chunk of a tile, drawn up to [`DRAW_M`]
+//! from the camera (`VisibilityRange`, the cheap level of detail). Tunnel walls and bridge railings have their
 //! own meshes (`tunnel`, `bridges`); kerbs are part of the road dress.
+
+use std::sync::Arc;
 
 use bevy::camera::visibility::VisibilityRange;
 use bevy::prelude::*;
 use clap::{Arg, Command};
+use ocw_assets::model::Model;
+use ocw_assets::props::{Instance, Placed, place};
 use ocw_world::obstacles::{LineObstacle, ObstacleKind, PointObstacle};
 use ocw_world::{TileKey, WorldPackage};
 
@@ -71,29 +78,21 @@ fn lin(r: f32, g: f32, b: f32) -> [f32; 4] {
     [c.red, c.green, c.blue, 1.0]
 }
 
-/// Colours of the parts.
+/// Colours of the line obstacles (the point obstacles are model files).
 struct Palette {
-    concrete: [f32; 4],
     steel: [f32; 4],
     wood: [f32; 4],
     stone: [f32; 4],
     hedge: [f32; 4],
-    red: [f32; 4],
-    white: [f32; 4],
-    dark: [f32; 4],
 }
 
 impl Palette {
     fn new() -> Self {
         Self {
-            concrete: lin(0.62, 0.61, 0.58),
             steel: lin(0.66, 0.68, 0.70),
             wood: lin(0.45, 0.33, 0.22),
             stone: lin(0.55, 0.52, 0.47),
             hedge: lin(0.17, 0.32, 0.13),
-            red: lin(0.78, 0.12, 0.10),
-            white: lin(0.92, 0.92, 0.90),
-            dark: lin(0.22, 0.23, 0.24),
         }
     }
 }
@@ -217,74 +216,65 @@ fn foot(pkg: &WorldPackage, ground: &TileGround, x: f32, z: f32, on_road: bool) 
     }
 }
 
-/// A point obstacle's mesh.
-fn point_mesh(
+/// The width a gate spans without one in the package (m).
+pub const DEFAULT_SPAN_M: f32 = 3.0;
+
+/// The turn (`Quat::from_rotation_y`) of a point obstacle's model: model
+/// X across the way, model −Z along it (`angle`: the way's direction).
+pub fn yaw_of(angle: f32) -> f32 {
+    -(angle + std::f32::consts::FRAC_PI_2)
+}
+
+/// Appends a placed model's parts whose slot `keep` accepts.
+pub(crate) fn append(m: &mut MeshArrays, placed: &Placed, keep: impl Fn(&str) -> bool) {
+    for part in placed.parts.iter().filter(|p| keep(&p.slot)) {
+        let base = m.positions.len() as u32;
+        m.positions.extend(&part.positions);
+        m.normals.extend(&part.normals);
+        m.colors.extend(&part.colors);
+        m.indices.extend(part.indices.iter().map(|i| i + base));
+    }
+}
+
+/// A point obstacle's mesh: its kind's model file ([`model_id_of`])
+/// fitted to its height and the width it spans, turned with its way and
+/// set on `ground` (spec §14 Phase 15, 15H MX; `ocw_assets::props`).
+pub fn point_mesh(
     m: &mut MeshArrays,
-    pkg: &WorldPackage,
-    ground: &TileGround,
     p: &PointObstacle,
-    c: &Palette,
+    model: &Model,
+    ground: &dyn Fn(f32, f32) -> f32,
 ) {
-    let on_road = p.road_barrier();
-    let y = foot(pkg, ground, p.pos[0], p.pos[1], on_road);
-    let at = [p.pos[0], y, p.pos[1]];
-    let h = p.height_m.max(0.2);
-    // Across the way the barrier stands on.
-    let (ax, az) = (-p.angle.sin(), p.angle.cos());
-    let across = |w: f32| {
-        let q = [at[0] + ax * w, at[2] + az * w];
-        [q[0], foot(pkg, ground, q[0], q[1], on_road), q[1]]
+    let span = if p.width_m > 0.5 {
+        p.width_m
+    } else {
+        DEFAULT_SPAN_M
     };
-    let span = if p.width_m > 0.5 { p.width_m } else { 3.0 };
-    match p.kind {
-        ObstacleKind::Bollard => {
-            prism(m, at, 0.1, 0.09, -0.1, h, 8, c.dark);
-            prism(m, at, 0.101, 0.101, h - 0.25, h - 0.15, 8, c.white);
-        }
-        ObstacleKind::Post => prism(m, at, 0.13, 0.1, -0.2, h, 6, c.wood),
-        ObstacleKind::Pylon => prism(m, at, 2.5, 0.4, -0.2, h, 4, c.steel),
-        ObstacleKind::Block => {
-            let (a, b) = (across(-0.6), across(0.6));
-            beam(m, a, b, 0.3, -0.1, h, c.concrete);
-        }
-        ObstacleKind::Gate => {
-            let (a, b) = (across(-span / 2.0), across(span / 2.0));
-            prism(m, a, 0.08, 0.08, -0.2, h + 0.1, 6, c.steel);
-            prism(m, b, 0.08, 0.08, -0.2, h + 0.1, 6, c.steel);
-            for k in [0.35, 0.65, 0.95] {
-                beam(m, a, b, 0.03, h * k - 0.03, h * k + 0.03, c.steel);
-            }
-        }
-        ObstacleKind::LiftGate => {
-            let (a, b) = (across(-span / 2.0), across(span / 2.0));
-            prism(m, a, 0.15, 0.15, -0.2, h + 0.15, 6, c.white);
-            let bar = h - 0.05;
-            // Red and white stripes of 0.5 m.
-            let n = (span / 0.5).ceil().max(1.0) as usize;
-            for k in 0..n {
-                let (t0, t1) = (k as f32 / n as f32, (k + 1) as f32 / n as f32);
-                let p0 = [a[0] + (b[0] - a[0]) * t0, a[1], a[2] + (b[2] - a[2]) * t0];
-                let p1 = [a[0] + (b[0] - a[0]) * t1, a[1], a[2] + (b[2] - a[2]) * t1];
-                let col = if k % 2 == 0 { c.red } else { c.white };
-                beam(m, p0, p1, 0.04, bar - 0.05, bar + 0.05, col);
-            }
-        }
-        ObstacleKind::CycleBarrier => {
-            // Two staggered rails, each across most of the way.
-            let (ux, uz) = (p.angle.cos(), p.angle.sin());
-            for (off, from, to) in [(-0.6f32, -1.0f32, 0.4f32), (0.6, -0.4, 1.0)] {
-                let base = [at[0] + ux * off, at[2] + uz * off];
-                let q = |w: f32| {
-                    let q = [base[0] + ax * w, base[1] + az * w];
-                    [q[0], foot(pkg, ground, q[0], q[1], on_road), q[1]]
-                };
-                let (a, b) = (q(from), q(to));
-                beam(m, a, b, 0.03, h - 0.06, h, c.steel);
-                prism(m, a, 0.03, 0.03, -0.1, h, 6, c.steel);
-                prism(m, b, 0.03, 0.03, -0.1, h, 6, c.steel);
-            }
-        }
-        _ => prism(m, at, 0.25, 0.2, -0.1, h, 6, c.dark),
+    let inst = Instance {
+        height_m: Some(p.height_m.max(0.2)),
+        span_m: Some(span),
+        reach_m: None,
+    };
+    let foot = Vec3::new(p.pos[0], ground(p.pos[0], p.pos[1]), p.pos[1]);
+    append(
+        m,
+        &place(model, &inst, foot, yaw_of(p.angle), ground),
+        |_| true,
+    );
+}
+
+/// The model file of a point obstacle kind (spec §14 Phase 15, 15H names;
+/// kinds without their own file use the generic barrier post).
+pub fn model_id_of(kind: ObstacleKind) -> &'static str {
+    match kind {
+        ObstacleKind::Bollard => "props/bollard-round",
+        ObstacleKind::Post => "props/post-hexagonal",
+        ObstacleKind::Pylon => "props/pylon-pyramid",
+        ObstacleKind::Block => "props/block-concrete-box",
+        ObstacleKind::Gate => "props/gate-swing",
+        ObstacleKind::LiftGate => "props/barrier-lift-arm",
+        ObstacleKind::CycleBarrier => "props/barrier-cycle-staggered",
+        _ => "props/barrier-post-hexagonal",
     }
 }
 
@@ -357,6 +347,8 @@ pub fn tile_obstacle_meshes(
     };
     let kept = |p: [f32; 2]| keep.is_none_or(|f| f([f64::from(p[0]), f64::from(p[1])]));
     let colours = Palette::new();
+    // The kinds' files, read once per tile.
+    let mut models: Vec<(ObstacleKind, Arc<Model>)> = Vec::new();
     let n = (CHUNKS * CHUNKS) as usize;
     let (mut road, mut rest): (Vec<MeshArrays>, Vec<MeshArrays>) = (
         (0..n).map(|_| MeshArrays::default()).collect(),
@@ -372,7 +364,17 @@ pub fn tile_obstacle_meshes(
         } else {
             &mut rest
         };
-        point_mesh(&mut target[chunk_of(p.pos)], pkg, ground, p, &colours);
+        let on_road = p.road_barrier();
+        let at = |x: f32, z: f32| foot(pkg, ground, x, z, on_road);
+        let model = match models.iter().find(|(k, _)| *k == p.kind) {
+            Some((_, m)) => m.clone(),
+            None => {
+                let m = ocw_assets::shipped::model(model_id_of(p.kind));
+                models.push((p.kind, m.clone()));
+                m
+            }
+        };
+        point_mesh(&mut target[chunk_of(p.pos)], p, &model, &at);
     }
     for l in t
         .lines
@@ -550,6 +552,7 @@ mod tests {
             look: Default::default(),
             obstacles: Some(o),
             places: None,
+            junctions: None,
         }
     }
 
@@ -713,6 +716,156 @@ mod tests {
             .fold(0.0, f64::max);
         assert!(lowest > 0.3, "lowered by {lowest:.2} m under the posts");
         assert!(post_feet_on_the_drawn_ground(&pkg) > 100);
+    }
+
+    /// The sizes of the meshes the generator drew before the switch to the
+    /// files (v5.08; at the kind's default height, a 3 m span, angle 0:
+    /// model x across = world z): (kind, x, z half extents about the foot,
+    /// bottom and top above the ground).
+    type Size = (ObstacleKind, [f32; 2], [f32; 2], [f32; 2]);
+    const OLD_SIZES: [Size; 8] = [
+        (
+            ObstacleKind::Bollard,
+            [-0.101, 0.101],
+            [-0.101, 0.101],
+            [-0.1, 0.9],
+        ),
+        (
+            ObstacleKind::Post,
+            [-0.13, 0.13],
+            [-0.1126, 0.1126],
+            [-0.2, 7.0],
+        ),
+        (ObstacleKind::Pylon, [-2.5, 2.5], [-2.5, 2.5], [-0.2, 30.0]),
+        (ObstacleKind::Block, [-0.3, 0.3], [-0.6, 0.6], [-0.1, 0.8]),
+        (
+            ObstacleKind::Gate,
+            [-0.08, 0.08],
+            [-1.5693, 1.5693],
+            [-0.2, 1.3],
+        ),
+        (
+            ObstacleKind::LiftGate,
+            [-0.15, 0.15],
+            [-1.6299, 1.5],
+            [-0.2, 1.15],
+        ),
+        (
+            ObstacleKind::CycleBarrier,
+            [-0.63, 0.63],
+            [-1.026, 1.026],
+            [-0.1, 1.0],
+        ),
+        (
+            ObstacleKind::Barrier,
+            [-0.25, 0.25],
+            [-0.2165, 0.2165],
+            [-0.1, 1.0],
+        ),
+    ];
+
+    /// Every point obstacle is drawn from its model file (spec §14 Phase
+    /// 15, 15H MX), at the size the generator drew it, with the file's
+    /// triangles; each file has its collision proxies and its fit.
+    #[test]
+    fn point_obstacles_are_drawn_from_their_files_at_the_old_sizes() {
+        let flat = |_: f32, _: f32| 3.0;
+        for (kind, x, z, y) in OLD_SIZES {
+            let id = model_id_of(kind);
+            let model = ocw_assets::shipped::model(id);
+            let e = ocw_assets::library::library()
+                .entry(id)
+                .expect("in the manifest");
+            assert_eq!(e.kind, ocw_assets::kinds::Kind::Prop, "{id}");
+            let fit = ocw_assets::props::FileFit::of(&model).expect("a fit");
+            assert_eq!(fit.height_m, kind.default_height_m() as f32, "{id}");
+            assert!(
+                !ocw_assets::props::proxies(&model).is_empty(),
+                "{id}: col_*"
+            );
+            let p = PointObstacle {
+                kind,
+                flags: 0,
+                pos: [50.0, 60.0],
+                angle: 0.0,
+                width_m: 0.0,
+                height_m: kind.default_height_m() as f32,
+            };
+            let mut m = MeshArrays::default();
+            point_mesh(&mut m, &p, &model, &flat);
+            let drawn: usize = model
+                .nodes
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !model.under_named(*i, |n| n.starts_with("col_")))
+                .flat_map(|(_, n)| &n.primitives)
+                .map(|p| p.triangles())
+                .sum();
+            assert_eq!(m.indices.len() / 3, drawn, "{id}");
+            let lo = m.positions.iter().fold([f32::MAX; 3], |a, v| {
+                std::array::from_fn(|k| a[k].min(v[k]))
+            });
+            let hi = m.positions.iter().fold([f32::MIN; 3], |a, v| {
+                std::array::from_fn(|k| a[k].max(v[k]))
+            });
+            let near = |a: f32, b: f32| (a - b).abs() < 2e-3;
+            assert!(
+                near(lo[0] - 50.0, x[0])
+                    && near(hi[0] - 50.0, x[1])
+                    && near(lo[2] - 60.0, z[0])
+                    && near(hi[2] - 60.0, z[1])
+                    && near(lo[1] - 3.0, y[0])
+                    && near(hi[1] - 3.0, y[1]),
+                "{id}: {lo:?} {hi:?}"
+            );
+        }
+        // Kinds without a file of their own use the generic barrier post.
+        assert_eq!(
+            model_id_of(ObstacleKind::Kerb),
+            "props/barrier-post-hexagonal"
+        );
+    }
+
+    /// A gate across a 6 m road: posts 3 m either side, the bars between
+    /// them; a taller bollard is scaled with its foot as deep.
+    #[test]
+    fn spans_and_heights_fit_the_files() {
+        let flat = |_: f32, _: f32| 0.0;
+        let gate = ocw_assets::shipped::model(model_id_of(ObstacleKind::Gate));
+        let p = PointObstacle {
+            kind: ObstacleKind::Gate,
+            flags: 0,
+            pos: [0.0, 0.0],
+            angle: 0.0,
+            width_m: 6.0,
+            height_m: 1.2,
+        };
+        let mut m = MeshArrays::default();
+        point_mesh(&mut m, &p, &gate, &flat);
+        let zs = m
+            .positions
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(v[2]), b.max(v[2])));
+        assert!(
+            (zs.0 + 3.0693).abs() < 2e-3 && (zs.1 - 3.0693).abs() < 2e-3,
+            "{zs:?}"
+        );
+        let bollard = ocw_assets::shipped::model(model_id_of(ObstacleKind::Bollard));
+        let p = PointObstacle {
+            kind: ObstacleKind::Bollard,
+            height_m: 1.4,
+            ..p
+        };
+        let mut m = MeshArrays::default();
+        point_mesh(&mut m, &p, &bollard, &flat);
+        let ys = m
+            .positions
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(v[1]), b.max(v[1])));
+        assert!(
+            (ys.0 + 0.1).abs() < 1e-4 && (ys.1 - 1.4).abs() < 1e-4,
+            "{ys:?}"
+        );
     }
 
     #[test]

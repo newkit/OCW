@@ -189,6 +189,30 @@ at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=men
 shot = 7.5
 
 [[scene]]
+name = "menu-history-ride-map"
+description = "Training history (spec 14 Phase 7, 7A): a ride's page with its power curve and the map of its track (made-up track), Laps and climbs, Export or delete"
+args = ["--route", "hills", "--bots", "2"]
+history = "scripts/fixtures/history-laps-map.json"
+at = ["2=menu ride 1"]
+shot = 5
+
+[[scene]]
+name = "menu-history-laps"
+description = "Training history (7A): Laps and climbs of a ride - its three laps, then its climbs"
+args = ["--route", "hills", "--bots", "2"]
+history = "scripts/fixtures/history-laps-map.json"
+at = ["2=menu ride 1", "2.6=menu select"]
+shot = 5
+
+[[scene]]
+name = "menu-history-delete"
+description = "Training history (7A): Delete this ride? - what goes, what stays, Cancel focused"
+args = ["--route", "hills", "--bots", "2"]
+history = "scripts/fixtures/history-laps-map.json"
+at = ["2=menu ride 1", "2.4=menu down", "2.8=menu select", "3.2=menu down", "3.6=menu select"]
+shot = 5.5
+
+[[scene]]
 name = "menu-bindings-conflict"
 description = "Settings -> Controls -> Keys and buttons -> Camera, video, app: the camera on V, a conflict with the video key"
 args = ["--route", "hills", "--bots", "2"]
@@ -2910,6 +2934,65 @@ name = "junction-spoerryweg-drone"
 description = "Junction seams (low drone angle): Typical T (median step 0.14 m): Schalunstrasse (residential) with Spoerryweg, Vaduz"
 world = true
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-3116.9,488.5", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 200 38 24"]
+shot = 9
+
+# J2 (spec §4.8.8, v5.09): the worst through-road kink and the worst steps of
+# the Black Forest and Tenerife, before (J1 packages) and after (J2 packages).
+
+[[scene]]
+name = "junction-valuena-rider"
+description = "Junction seams (near rider height): Valüna, Valünastrasse (track, -3 % / -25 %, a kink of the through road at the junction) with a track at +25 %: the worst step of Liechtenstein (1.84 m before J1)"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "1904.9,6340.9", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 6 9"]
+shot = 9
+
+[[scene]]
+name = "junction-valuena-drone"
+description = "Junction seams (low drone angle): Valüna, Valünastrasse (track, -3 % / -25 %, a kink of the through road at the junction) with a track at +25 %"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "1904.9,6340.9", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 200 38 24"]
+shot = 9
+
+[[scene]]
+name = "junction-kaltenbronner-rider"
+description = "Junction seams (near rider height): Black Forest north, Kaltenbronner Straße (secondary, -6 % / +10 %) with a track: 1.55 m step, verge 1.40 m above the road before J1"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "33155.7,-90857.1", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 6 9"]
+shot = 9
+
+[[scene]]
+name = "junction-kaltenbronner-drone"
+description = "Junction seams (low drone angle): Black Forest north, Kaltenbronner Straße (secondary, -6 % / +10 %) with a track"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "33155.7,-90857.1", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 200 38 24"]
+shot = 9
+
+[[scene]]
+name = "junction-medianias-rider"
+description = "Junction seams (near rider height): Tenerife, Carretera de las Medianías (tertiary, +2 % / +21 %) with a track at -11 %: the worst step of Tenerife (2.28 m before J1)"
+world = "tenerife"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-1949.7,-8912.5", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 6 9"]
+shot = 9
+
+[[scene]]
+name = "junction-medianias-drone"
+description = "Junction seams (low drone angle): Tenerife, Carretera de las Medianías (tertiary, +2 % / +21 %) with a track at -11 %"
+world = "tenerife"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-1949.7,-8912.5", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 200 38 24"]
+shot = 9
+
+[[scene]]
+name = "junction-traviesa-drone"
+description = "Junction seams (low drone angle): Tenerife, Camino la Traviesa (-2 % / -21 %) with Camino de los Barriales (track, +26 %): 2.14 m step, verge 2.06 m before J1"
+world = "tenerife"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "3139.2,-13502.1", "--bots", "0", "--power", "0"]
 at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 200 38 24"]
 shot = 9
 

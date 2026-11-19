@@ -579,42 +579,155 @@ fn build_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Option<Patch> {
     try_patch(g, adj, v).ok()
 }
 
+/// An arm before its mouth is known.
+struct Raw {
+    edge: usize,
+    at_from: bool,
+    dir: P2,
+    half: f64,
+    len: f64,
+    class: RoadClass,
+    cum: Vec<f64>,
+}
+
+/// The arm of edge `ei` at vertex `v` (at `c`).
+fn raw_arm(g: &RoadGraph, c: P2, v: usize, ei: usize) -> Result<Raw, &'static str> {
+    let e = &g.edges[ei];
+    let len = e.length_m();
+    if len < 1.0 || e.profile.is_empty() {
+        return Err("a short edge or no profile");
+    }
+    let at_from = e.from.0 as usize == v;
+    let cum = cumulative(&e.points);
+    let d = 8.0f64.min(MOUTH_SHARE * len);
+    let s = if at_from { d } else { len - d };
+    let (p, _) = frame_at(&e.points, &cum, s);
+    Ok(Raw {
+        edge: ei,
+        at_from,
+        dir: unit(sub(p, c)),
+        half: e.width_m / 2.0,
+        len,
+        class: e.class,
+        cum,
+    })
+}
+
+/// The arm with its mouth `m` metres from the vertex; `along` (the
+/// strip's along coordinate there) when it is known (a stored outline,
+/// section `JNCT`), else computed.
+fn make_arm(g: &RoadGraph, r: &Raw, m: f64, along: Option<f64>) -> Arm {
+    let e = &g.edges[r.edge];
+    let s = if r.at_from { m } else { r.len - m };
+    let (cp, fwd) = frame_at(&e.points, &r.cum, s);
+    let t = if r.at_from { fwd } else { mul(fwd, -1.0) };
+    let h = height(e, s);
+    let right = side_pos(fwd);
+    let row = [
+        at_y(sub(cp, mul(right, r.half)), h),
+        at_y(add(cp, mul(right, r.half)), h),
+    ];
+    Arm {
+        edge: r.edge,
+        at_from: r.at_from,
+        class: r.class,
+        half: r.half,
+        len: r.len,
+        dir: r.dir,
+        mouth_m: m,
+        centre: cp,
+        t,
+        row,
+        h,
+        grade: grade(e, s, if r.at_from { 1.0 } else { -1.0 }),
+        blend_m: 0.0,
+        along: along.unwrap_or_else(|| along_at(e, s)),
+    }
+}
+
+/// The patch of `arms` (by polar angle) at vertex `v`: the through road
+/// (§4.8.8 Q1) and its side arms' mouth rows on the main surface with
+/// their blends; no outline yet.
+fn assemble(g: &RoadGraph, v: usize, arms: Vec<Arm>) -> Result<Patch, &'static str> {
+    let c = g.vertices[v];
+    let n = arms.len();
+    // Through road: two arms of the highest class, nearly straight; only
+    // one such pair.
+    let best = arms.iter().map(|a| a.class).min().ok_or("no arms")?;
+    let mut pairs = Vec::new();
+    for i in 0..n {
+        for j in i + 1..n {
+            if arms[i].class != best || arms[j].class != best {
+                continue;
+            }
+            let dev = std::f64::consts::PI - dot(arms[i].dir, arms[j].dir).clamp(-1.0, 1.0).acos();
+            if dev < THROUGH_DEV_DEG.to_radians() {
+                pairs.push([i, j]);
+            }
+        }
+    }
+    let through = (pairs.len() == 1).then(|| pairs[0]);
+    let vh = {
+        let e = &g.edges[arms[0].edge];
+        height(e, if arms[0].at_from { 0.0 } else { arms[0].len })
+    };
+    let mut patch = Patch {
+        vertex: v as u32,
+        centre: at_y(c, vh),
+        arms,
+        through,
+        outline: Vec::new(),
+        angles: Vec::new(),
+        chains: Vec::new(),
+        rings: Vec::new(),
+        vertices: Vec::new(),
+        triangles: Vec::new(),
+        min: c,
+        max: c,
+    };
+    // Side arms of a through road: their mouth rows on the main surface,
+    // and the blend beyond.
+    if let Some([a, b]) = through {
+        for i in 0..n {
+            if i == a || i == b {
+                continue;
+            }
+            let row = patch.arms[i].row.map(|q| at_y(xz(q), patch.field(xz(q))));
+            let mid = lerp3(row[0], row[1], 0.5);
+            let dh = (mid[1] - patch.arms[i].h).abs();
+            let arm = &patch.arms[i];
+            let room = 0.5 * arm.len - arm.mouth_m;
+            let mut l = (dh / BLEND_RATE).clamp(BLEND_MIN_M, BLEND_MAX_M).min(room);
+            if l < 1.0 {
+                l = 0.0;
+            }
+            let arm = &mut patch.arms[i];
+            arm.row = row;
+            arm.blend_m = l;
+        }
+    }
+    Ok(patch)
+}
+
+/// An outline point as the package stores it (section `JNCT`): its offset
+/// from the vertex in `f32`. The computed outline is rounded the same way,
+/// so a stored patch and a computed one are the same to the bit.
+fn quantised(c: P2, p: P2) -> P2 {
+    [
+        c[0] + f64::from((p[0] - c[0]) as f32),
+        c[1] + f64::from((p[1] - c[1]) as f32),
+    ]
+}
+
 /// [`build_patch`] with the reason when a vertex keeps its overlapping
 /// strips (diagnostics, the analysis test).
 fn try_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Result<Patch, &'static str> {
     let c = g.vertices[v];
     // Arms.
-    struct Raw {
-        edge: usize,
-        at_from: bool,
-        dir: P2,
-        half: f64,
-        len: f64,
-        class: RoadClass,
-        cum: Vec<f64>,
-    }
-    let mut raws: Vec<Raw> = Vec::new();
-    for &ei in adj {
-        let e = &g.edges[ei];
-        let len = e.length_m();
-        if len < 1.0 || e.profile.is_empty() {
-            return Err("a short edge or no profile");
-        }
-        let at_from = e.from.0 as usize == v;
-        let cum = cumulative(&e.points);
-        let d = 8.0f64.min(MOUTH_SHARE * len);
-        let s = if at_from { d } else { len - d };
-        let (p, _) = frame_at(&e.points, &cum, s);
-        raws.push(Raw {
-            edge: ei,
-            at_from,
-            dir: unit(sub(p, c)),
-            half: e.width_m / 2.0,
-            len,
-            class: e.class,
-            cum,
-        });
-    }
+    let mut raws: Vec<Raw> = adj
+        .iter()
+        .map(|&ei| raw_arm(g, c, v, ei))
+        .collect::<Result<_, _>>()?;
     raws.sort_by(|a, b| {
         a.dir[1]
             .atan2(a.dir[0])
@@ -693,104 +806,21 @@ fn try_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Result<Patch, &'static s
         }));
     }
     // Mouths.
-    let mut arms: Vec<Arm> = Vec::with_capacity(n);
-    for (i, r) in raws.iter().enumerate() {
-        let m = need[i].min(caps[i]);
-        let e = &g.edges[r.edge];
-        let s = if r.at_from { m } else { r.len - m };
-        let (cp, fwd) = frame_at(&e.points, &r.cum, s);
-        let t = if r.at_from { fwd } else { mul(fwd, -1.0) };
-        let h = height(e, s);
-        let right = side_pos(fwd);
-        let row = [
-            at_y(sub(cp, mul(right, r.half)), h),
-            at_y(add(cp, mul(right, r.half)), h),
-        ];
-        arms.push(Arm {
-            edge: r.edge,
-            at_from: r.at_from,
-            class: r.class,
-            half: r.half,
-            len: r.len,
-            dir: r.dir,
-            mouth_m: m,
-            centre: cp,
-            t,
-            row,
-            h,
-            grade: grade(e, s, if r.at_from { 1.0 } else { -1.0 }),
-            blend_m: 0.0,
-            along: along_at(e, s),
-        });
-    }
-    // Through road: two arms of the highest class, nearly straight; only
-    // one such pair.
-    let best = arms.iter().map(|a| a.class).min().ok_or("no arms")?;
-    let mut pairs = Vec::new();
-    for i in 0..n {
-        for j in i + 1..n {
-            if arms[i].class != best || arms[j].class != best {
-                continue;
-            }
-            let dev = std::f64::consts::PI - dot(arms[i].dir, arms[j].dir).clamp(-1.0, 1.0).acos();
-            if dev < THROUGH_DEV_DEG.to_radians() {
-                pairs.push([i, j]);
-            }
-        }
-    }
-    let through = (pairs.len() == 1).then(|| pairs[0]);
-    let vh = {
-        let e = &g.edges[arms[0].edge];
-        height(e, if arms[0].at_from { 0.0 } else { arms[0].len })
-    };
-    let mut patch = Patch {
-        vertex: v as u32,
-        centre: at_y(c, vh),
-        arms,
-        through,
-        outline: Vec::new(),
-        angles: Vec::new(),
-        chains: Vec::new(),
-        rings: Vec::new(),
-        vertices: Vec::new(),
-        triangles: Vec::new(),
-        min: c,
-        max: c,
-    };
-    // Side arms of a through road: their mouth rows on the main surface,
-    // and the blend beyond.
-    if let Some([a, b]) = through {
-        for i in 0..n {
-            if i == a || i == b {
-                continue;
-            }
-            let row = patch.arms[i].row.map(|q| at_y(xz(q), patch.field(xz(q))));
-            let mid = lerp3(row[0], row[1], 0.5);
-            let dh = (mid[1] - patch.arms[i].h).abs();
-            let arm = &patch.arms[i];
-            let room = 0.5 * arm.len - arm.mouth_m;
-            let mut l = (dh / BLEND_RATE).clamp(BLEND_MIN_M, BLEND_MAX_M).min(room);
-            if l < 1.0 {
-                l = 0.0;
-            }
-            let arm = &mut patch.arms[i];
-            arm.row = row;
-            arm.blend_m = l;
-        }
-    }
+    let arms: Vec<Arm> = raws
+        .iter()
+        .enumerate()
+        .map(|(i, r)| make_arm(g, r, need[i].min(caps[i]), None))
+        .collect();
+    let patch = assemble(g, v, arms)?;
     // The outline: per arm its mouth (P to Q), then the chain to the next.
-    let mut outline: Vec<OutlinePoint> = Vec::new();
-    let mut chains = Vec::with_capacity(n);
+    let mut outline: Vec<(P2, Option<usize>)> = Vec::new();
     for (i, corner) in corners.iter().enumerate() {
         let j = (i + 1) % n;
         let arm = &patch.arms[i];
         let (p, q) = (arm.p(), arm.q());
         let pieces = (norm(sub(xz(q), xz(p))) / MOUTH_STEP_M).ceil().max(1.0) as usize;
         for k in 0..=pieces {
-            outline.push(OutlinePoint {
-                p: lerp3(p, q, k as f64 / pieces as f64),
-                mouth: Some(i),
-            });
+            outline.push((xz(lerp3(p, q, k as f64 / pieces as f64)), Some(i)));
         }
         // The chain from Q_i to P_j.
         let next = &patch.arms[j];
@@ -854,26 +884,77 @@ fn try_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Result<Patch, &'static s
             }
         }
         let last = dense.len() - 1;
-        let pts3: Vec<[f64; 3]> = dense
-            .iter()
-            .enumerate()
-            .map(|(k, &p2)| {
-                if k == 0 {
-                    q
-                } else if k == last {
-                    next.p()
-                } else {
-                    at_y(p2, patch.field(p2))
-                }
-            })
-            .collect();
-        for &p3 in &pts3[1..last] {
-            outline.push(OutlinePoint { p: p3, mouth: None });
+        for &p2 in &dense[1..last] {
+            outline.push((p2, None));
         }
+    }
+    let outline = outline
+        .into_iter()
+        .map(|(p, m)| (quantised(c, p), m))
+        .collect();
+    finish(patch, outline)
+}
+
+/// The rest of a patch from its (rounded) outline: the heights of the
+/// outline points (on a mouth the arm's row, elsewhere the field), the
+/// chains between the mouths, the star check and the mesh.
+fn finish(mut patch: Patch, outline2: Vec<(P2, Option<usize>)>) -> Result<Patch, &'static str> {
+    let c = xz(patch.centre);
+    let tau = std::f64::consts::TAU;
+    let n = outline2.len();
+    if n < 3 || patch.arms.is_empty() {
+        return Err("the outline is not star-shaped");
+    }
+    let mut outline: Vec<OutlinePoint> = Vec::with_capacity(n);
+    for &(p2, mouth) in &outline2 {
+        let y = match mouth {
+            Some(i) => {
+                let a = patch.arms.get(i).ok_or("the outline is not star-shaped")?;
+                let (r0, r1) = (a.row[0], a.row[1]);
+                let d = sub(xz(r1), xz(r0));
+                let l2 = dot(d, d);
+                let t = if l2 > 0.0 {
+                    (dot(sub(p2, xz(r0)), d) / l2).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                r0[1] + (r1[1] - r0[1]) * t
+            }
+            None => patch.field(p2),
+        };
+        outline.push(OutlinePoint {
+            p: at_y(p2, y),
+            mouth,
+        });
+    }
+    // The chains: from the last mouth point of each arm round to the first
+    // of the next.
+    let na = patch.arms.len();
+    let mut chains = Vec::with_capacity(na);
+    for i in 0..na {
+        let j = (i + 1) % na;
+        let Some(last) = (0..n).rev().find(|&k| outline[k].mouth == Some(i)) else {
+            return Err("the outline is not star-shaped");
+        };
+        let mut points = vec![outline[last].p];
+        let mut k = (last + 1) % n;
+        let mut guard = 0;
+        while outline[k].mouth.is_none() {
+            points.push(outline[k].p);
+            k = (k + 1) % n;
+            guard += 1;
+            if guard > n {
+                return Err("the outline is not star-shaped");
+            }
+        }
+        if outline[k].mouth != Some(j) {
+            return Err("the outline is not star-shaped");
+        }
+        points.push(outline[k].p);
         chains.push(Chain {
             from_arm: i,
             to_arm: j,
-            points: pts3,
+            points,
         });
     }
     // Star-shaped from the centre: polar angles strictly growing, once round.
@@ -906,6 +987,34 @@ fn try_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Result<Patch, &'static s
     patch.chains = chains;
     mesh(&mut patch);
     Ok(patch)
+}
+
+/// A patch from its stored outline (section `JNCT`): the arms (edge, end,
+/// mouth, along) and the outline points; the same as [`try_patch`] gives.
+fn stored_patch(g: &RoadGraph, v: usize, rec: &section::StoredPatch) -> Option<Patch> {
+    let c = *g.vertices.get(v)?;
+    let mut arms = Vec::with_capacity(rec.arms.len());
+    for a in &rec.arms {
+        let e = g.edges.get(a.edge as usize)?;
+        let at = if a.at_from { e.from } else { e.to };
+        if at.0 as usize != v || e.from == e.to {
+            return None;
+        }
+        let r = raw_arm(g, c, v, a.edge as usize).ok()?;
+        arms.push(make_arm(g, &r, a.mouth_m, Some(a.along)));
+    }
+    let patch = assemble(g, v, arms).ok()?;
+    let outline = rec
+        .outline
+        .iter()
+        .map(|o| {
+            (
+                [c[0] + f64::from(o.d[0]), c[1] + f64::from(o.d[1])],
+                o.mouth.map(usize::from),
+            )
+        })
+        .collect();
+    finish(patch, outline).ok()
 }
 
 /// The star mesh: rings of the outline scaled towards the centre.
@@ -1066,6 +1175,10 @@ pub enum EndRule<'a> {
 pub struct JunctionSet {
     adjacency: Vec<Vec<usize>>,
     rules: Vec<OnceLock<Option<Arc<VertexRule>>>>,
+    /// The package's stored junctions (section `JNCT`, spec §4.8.8 J2):
+    /// which vertices have a rule and the patches' outlines, so nothing is
+    /// searched at load. The result is the same as computed.
+    stored: Option<Arc<section::JunctionIndex>>,
 }
 
 impl Clone for JunctionSet {
@@ -1073,6 +1186,7 @@ impl Clone for JunctionSet {
         Self {
             adjacency: self.adjacency.clone(),
             rules: self.rules.clone(),
+            stored: self.stored.clone(),
         }
     }
 }
@@ -1082,13 +1196,41 @@ impl JunctionSet {
         Self {
             adjacency: g.adjacency(),
             rules: (0..g.vertices.len()).map(|_| OnceLock::new()).collect(),
+            stored: None,
         }
+    }
+
+    /// The junctions of `g` from its package's stored index (section
+    /// `JNCT`) when that was made for this graph (same fingerprint and
+    /// vertex count), else computed as [`JunctionSet::new`].
+    pub fn with_index(g: &RoadGraph, index: Option<Arc<section::JunctionIndex>>) -> Self {
+        let mut set = Self::new(g);
+        set.stored = index.filter(|i| i.fits(g));
+        set
+    }
+
+    /// Whether the rules come from a stored index.
+    pub fn is_stored(&self) -> bool {
+        self.stored.is_some()
     }
 
     /// The rule at vertex `v` of `g` (the graph this set was made for).
     pub fn rule(&self, g: &RoadGraph, v: usize) -> Option<&VertexRule> {
         let slot = self.rules.get(v)?;
         slot.get_or_init(|| {
+            if let Some(index) = &self.stored {
+                let rule = match index.get(v as u32)? {
+                    section::StoredRule::Mitre => {
+                        let adj = &self.adjacency[v];
+                        (adj.len() == 2)
+                            .then(|| build_mitre(g, adj, v))
+                            .flatten()
+                            .filter(|r| matches!(r, VertexRule::Mitre(_)))
+                    }
+                    section::StoredRule::Patch(p) => stored_patch(g, v, p).map(VertexRule::Patch),
+                };
+                return rule.map(Arc::new);
+            }
             let adj = &self.adjacency[v];
             if adj.len() < 2
                 || adj.len() > MAX_ARMS
@@ -1218,9 +1360,36 @@ impl JunctionSet {
     /// `from` vertex: inside a patch its mesh, along a blended side arm its
     /// rows; `None` elsewhere (the road's own profile applies).
     pub fn drawn_height(&self, g: &RoadGraph, ei: usize, s: f64, p: P2) -> Option<f64> {
+        self.drawn_height_from(g, ei, s, p, [true, true])
+    }
+
+    /// [`Self::drawn_height`] from the junction at end `k` of edge `ei` only
+    /// (0 its `from` end, 1 its `to` end).
+    pub fn drawn_height_at_end(
+        &self,
+        g: &RoadGraph,
+        ei: usize,
+        k: usize,
+        s: f64,
+        p: P2,
+    ) -> Option<f64> {
+        self.drawn_height_from(g, ei, s, p, [k == 0, k == 1])
+    }
+
+    fn drawn_height_from(
+        &self,
+        g: &RoadGraph,
+        ei: usize,
+        s: f64,
+        p: P2,
+        which: [bool; 2],
+    ) -> Option<f64> {
         let ends = self.ends(g, ei);
         let len = g.edges[ei].length_m();
         for (k, end) in ends.iter().enumerate() {
+            if !which[k] {
+                continue;
+            }
             let Some(EndRule::Patch(patch, ai)) = end else {
                 continue;
             };
@@ -1596,6 +1765,7 @@ impl JunctionSet {
 }
 
 pub mod fixtures;
+pub mod section;
 
 #[cfg(test)]
 mod tests;

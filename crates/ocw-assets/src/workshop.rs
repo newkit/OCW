@@ -65,18 +65,18 @@ const RIM_INSET: f32 = 0.03;
 
 /// A material of the room: name, sRGB colour, metallic, roughness.
 pub const MATERIALS: [(&str, u32, f32, f32); 26] = [
-    ("concrete", 0x8E8B85, 0.0, 0.92),
+    ("floor_concrete", 0x8E8B85, 0.0, 0.92),
     ("concrete_dark", 0x77746F, 0.0, 0.95),
     ("wall", 0xEAE3D6, 0.0, 0.88),
     ("wall_accent", 0x5E7A6E, 0.0, 0.85),
     ("skirting", 0x6B5645, 0.0, 0.7),
     ("ceiling", 0xF1EEE8, 0.0, 0.9),
     ("lamp", 0xFFF4DC, 0.0, 0.4),
-    ("wood", 0xB57E48, 0.0, 0.62),
+    ("workshop_wood", 0xB57E48, 0.0, 0.62),
     ("wood_dark", 0x5C4030, 0.0, 0.7),
     ("pegboard", 0xC9A27A, 0.0, 0.8),
     ("peg_hole", 0x3A2E24, 0.0, 0.9),
-    ("steel", 0xA2A7AC, 0.85, 0.32),
+    ("workshop_steel", 0xA2A7AC, 0.85, 0.32),
     ("steel_dark", 0x2C2E33, 0.4, 0.45),
     ("rubber", 0x262626, 0.0, 0.9),
     ("tool_red", 0xC0392B, 0.0, 0.45),
@@ -546,7 +546,7 @@ impl Piece {
             Piece::FloorSegment => {
                 let mut p = Mats::default();
                 p.box_(
-                    "concrete",
+                    "floor_concrete",
                     Vec3::new(0.0, -0.05, 0.0),
                     Vec3::new(0.5, 0.05, 0.5),
                 );
@@ -629,7 +629,7 @@ impl Piece {
             Piece::HookRail => {
                 let mut p = Mats::default();
                 p.box_(
-                    "wood",
+                    "workshop_wood",
                     Vec3::new(0.0, HOOK_Y + 0.04, 0.02),
                     Vec3::new(0.5, 0.07, 0.02),
                 );
@@ -1010,7 +1010,7 @@ fn floor_pump() -> Mats {
         12,
         true,
     );
-    p.s("steel").tube(
+    p.s("workshop_steel").tube(
         pump + Vec3::Y * 0.6,
         pump + Vec3::Y * 0.68,
         0.006,
@@ -1081,7 +1081,7 @@ fn stand(clamp: Vec3) -> Mats {
         12,
         true,
     );
-    p.s("steel")
+    p.s("workshop_steel")
         .tube(hub + Vec3::Y * 0.3, top, 0.019, 0.019, 12, true);
     // Clamp arm forward to the seat post, the jaws and the knob.
     p.s("stand").tube(
@@ -1157,7 +1157,7 @@ fn hook_piece() -> (Mats, Mats) {
     // Plate, arm out to the rim, the coated curl that holds it.
     p.s("steel_dark")
         .cuboid(wall, Vec3::new(0.035, 0.05, 0.008), Quat::IDENTITY);
-    p.s("steel").sweep(
+    p.s("workshop_steel").sweep(
         &[
             wall,
             hook + Vec3::new(0.0, 0.03, -0.08),
@@ -1208,7 +1208,11 @@ fn workbench() -> Mats {
     let c = Vec3::new(0.0, BENCH_Y, 0.0);
     let (hx, hz) = (0.35, 1.0);
     // Worktop, legs, lower shelf, drawers.
-    p.box_("wood", c - Vec3::Y * 0.025, Vec3::new(hx, 0.025, hz));
+    p.box_(
+        "workshop_wood",
+        c - Vec3::Y * 0.025,
+        Vec3::new(hx, 0.025, hz),
+    );
     for (sx, sz) in [(-1.0f32, -1.0f32), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)] {
         p.box_(
             "steel_dark",
@@ -1233,7 +1237,7 @@ fn workbench() -> Mats {
             Vec3::new(hx - 0.1, 0.1, 0.27),
         );
         p.box_(
-            "steel",
+            "workshop_steel",
             Vec3::new(c.x + hx - 0.015, c.y - 0.16, z),
             Vec3::new(0.012, 0.012, 0.08),
         );
@@ -1255,7 +1259,7 @@ fn workbench() -> Mats {
         vise + Vec3::new(0.0, 0.1, 0.04),
         Vec3::new(0.08, 0.03, 0.015),
     );
-    p.s("steel").tube(
+    p.s("workshop_steel").tube(
         vise + Vec3::new(0.0, 0.06, 0.1),
         vise + Vec3::new(0.0, 0.06, 0.2),
         0.008,
@@ -1308,7 +1312,11 @@ fn parts_shelf() -> Mats {
         );
     }
     for (k, y) in [0.08f32, 0.55, 1.05, 1.55].into_iter().enumerate() {
-        p.box_("wood", left(0.2, y, z0), Vec3::new(0.2, 0.015, 0.6));
+        p.box_(
+            "workshop_wood",
+            left(0.2, y, z0),
+            Vec3::new(0.2, 0.015, 0.6),
+        );
         let mut z = z0 - 0.55;
         let mut j = 0usize;
         while z < z0 + 0.45 {
@@ -1367,7 +1375,7 @@ fn pegboard() -> Mats {
     }
     let x = face + 0.012;
     let peg = |p: &mut Mats, y: f32, z: f32| {
-        p.s("steel").tube(
+        p.s("workshop_steel").tube(
             left(face, y, z),
             left(face + 0.05, y + 0.01, z),
             0.003,
@@ -1382,15 +1390,15 @@ fn pegboard() -> Mats {
         let len = 0.13 + 0.025 * k as f32;
         let top = y1 - 0.12;
         let r = 0.016 + 0.002 * k as f32;
-        p.s("steel").cuboid(
+        p.s("workshop_steel").cuboid(
             left(x, top - len * 0.5, z),
             Vec3::new(0.003, len * 0.5, 0.006 + 0.0006 * k as f32),
             Quat::IDENTITY,
         );
-        p.s("steel")
+        p.s("workshop_steel")
             .annulus(left(x, top + r * 0.5, z), Vec3::X, r * 0.5, r, 0.006, 12);
         for dz in [-1.0f32, 1.0] {
-            p.s("steel").cuboid(
+            p.s("workshop_steel").cuboid(
                 left(x, top - len - r * 0.4, z + dz * r * 0.6),
                 Vec3::new(0.003, r * 0.6, r * 0.25),
                 Quat::IDENTITY,
@@ -1419,7 +1427,7 @@ fn pegboard() -> Mats {
             8,
             true,
         );
-        p.s("steel").tube(
+        p.s("workshop_steel").tube(
             left(x + 0.01, top - 0.1, z),
             left(x + 0.01, top - 0.22 - 0.02 * (k % 2) as f32, z),
             0.003,
@@ -1430,7 +1438,7 @@ fn pegboard() -> Mats {
     }
     // Hammer, pliers, hex keys, tyre levers, a chain tool.
     let hz = z0 + 1.05;
-    p.s("wood").tube(
+    p.s("workshop_wood").tube(
         left(x + 0.01, y1 - 0.1, hz),
         left(x + 0.01, y1 - 0.42, hz),
         0.012,
@@ -1438,7 +1446,7 @@ fn pegboard() -> Mats {
         8,
         true,
     );
-    p.s("steel").cuboid(
+    p.s("workshop_steel").cuboid(
         left(x + 0.01, y1 - 0.09, hz),
         Vec3::new(0.015, 0.018, 0.06),
         Quat::IDENTITY,
@@ -1456,7 +1464,7 @@ fn pegboard() -> Mats {
             true,
         );
     }
-    p.s("steel").cuboid(
+    p.s("workshop_steel").cuboid(
         left(x, y1 - 0.1, pz),
         Vec3::new(0.005, 0.03, 0.012),
         Quat::IDENTITY,
@@ -1506,7 +1514,7 @@ fn pegboard() -> Mats {
         6,
         true,
     );
-    p.s("steel").annulus(
+    p.s("workshop_steel").annulus(
         left(x, y0 + 0.47, z0 + 1.45),
         Vec3::X,
         0.008,
@@ -1543,7 +1551,11 @@ const MIRROR_Y: f32 = 1.25;
 fn changing_bench() -> Mats {
     let mut p = Mats::default();
     let b = Vec3::ZERO;
-    p.box_("wood", b + Vec3::Y * 0.44, Vec3::new(0.2, 0.025, 0.55));
+    p.box_(
+        "workshop_wood",
+        b + Vec3::Y * 0.44,
+        Vec3::new(0.2, 0.025, 0.55),
+    );
     for dz in [-0.48f32, 0.48] {
         for dx in [-0.15f32, 0.15] {
             p.box_(
@@ -1582,7 +1594,7 @@ fn locker() -> Mats {
             Vec3::new(0.002, 0.95, 0.004),
         );
         p.box_(
-            "steel",
+            "workshop_steel",
             lk + Vec3::new(-0.3, 0.1, dz - dz.signum() * 0.15),
             Vec3::new(0.012, 0.06, 0.01),
         );
@@ -1612,7 +1624,7 @@ fn locker() -> Mats {
 fn kit_rail() -> Mats {
     let mut p = Mats::default();
     let rail = Vec3::new(0.0, 1.95, 0.0);
-    p.s("steel").tube(
+    p.s("workshop_steel").tube(
         rail - Vec3::Z * 0.15,
         rail + Vec3::Z * 0.15,
         0.008,
