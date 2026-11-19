@@ -608,10 +608,11 @@ mod tests {
             (10, 200.0, "Rider")
         );
         assert_eq!(loaded.riders.riding, Rider::default());
-        assert_eq!(
-            loaded.settings.location(),
-            Some(format!("file: {} [settings]", file.display()))
-        );
+        // The place as shown: `~/…` when the temp folder is in the home
+        // folder (Windows: AppData\Local\Temp).
+        let at = loaded.settings.location().expect("a store");
+        assert!(at.starts_with("file: "), "{at}");
+        assert!(at.ends_with("settings.toml [settings]"), "{at}");
         // The registry defaults are the options' defaults.
         for (key, value) in [
             ("ride.bots", args.bots.to_string()),
