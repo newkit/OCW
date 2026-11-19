@@ -5,7 +5,13 @@
 //! materials, `extras` (flattened to paths), the asset's copyright and
 //! generator, and the manifest entries. Two identical models have an
 //! empty diff; a canonical re-export of a Blender round trip should too
-//! (15F).
+//! (15F, `make test-blender`).
+//!
+//! The geometry is compared as what is drawn: the triangles with their
+//! corners (position, normal, colour, UV), in any order, from any corner,
+//! with the same winding. A mesh whose vertices were only re-indexed,
+//! split or merged (Blender's exporter does both) is the same mesh; its
+//! vertex count shows in the totals line but is no change.
 
 use std::collections::BTreeMap;
 
@@ -14,11 +20,30 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::manifest::Entry;
-use crate::model::{Model, Node};
+use crate::model::{Model, Node, Primitive};
 
-/// Positions, normals, colours and transforms closer than this count as
-/// the same (the writer rounds to 1/65536).
+/// Positions, colours, UVs and transforms closer than this count as the
+/// same (the writer rounds to 1/65536).
 pub const TOLERANCE: f32 = 1e-4;
+
+/// Normal components closer than this (about 0.1°) count as the same:
+/// Blender keeps custom normals at a lower precision (a round trip moves
+/// them by up to 7e-4, measured on the committed models, 2026-11-19).
+pub const NORMAL_TOLERANCE: f32 = 2e-3;
+
+/// Vertex colour components closer than this count as the same: Blender
+/// keeps vertex colours as 8-bit sRGB (`BYTE_COLOR`), so a round trip moves
+/// them by up to half a step (0.003 measured, 2026-11-19).
+pub const COLOR_TOLERANCE: f32 = 5e-3;
+
+/// The tolerance of a [`Corner`] component.
+fn corner_tolerance(i: usize) -> f32 {
+    match i {
+        3..6 => NORMAL_TOLERANCE,
+        6..10 => COLOR_TOLERANCE,
+        _ => TOLERANCE,
+    }
+}
 
 /// A mesh's counts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -58,6 +83,11 @@ pub enum Change {
         /// The geometry (positions, normals, indices, colours, UVs) moved
         /// although the counts may be the same.
         geometry: bool,
+        /// What alone explains the move, when the triangles are the same
+        /// otherwise: `normals`, `colours` (both); `positions` when the
+        /// shape itself (positions, winding or UVs) moved.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        what: Vec<&'static str>,
     },
     NodeExtras {
         name: String,
@@ -134,6 +164,7 @@ impl std::fmt::Display for Change {
                 before,
                 after,
                 geometry,
+                what,
             } => {
                 write!(f, "~ mesh {node}:")?;
                 let mut any = false;
@@ -163,6 +194,12 @@ impl std::fmt::Display for Change {
                 }
                 if !any && *geometry {
                     write!(f, " geometry changed (same counts)")?;
+                } else if *geometry && before.triangles == after.triangles {
+                    // Only the vertex count shows: say that the triangles moved.
+                    write!(f, ", geometry changed")?;
+                }
+                if *geometry && !what.is_empty() {
+                    write!(f, ": {}", what.join(", "))?;
                 }
                 Ok(())
             }
@@ -311,15 +348,155 @@ fn close(a: &[f32], b: &[f32]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() <= TOLERANCE)
 }
 
-fn same_geometry(a: &Node, b: &Node) -> bool {
+/// Attributes left out of a comparison (to say what moved).
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Skip {
+    normals: bool,
+    colours: bool,
+}
+
+const ALL: Skip = Skip {
+    normals: false,
+    colours: false,
+};
+
+fn same_geometry(a: &Node, b: &Node, skip: Skip) -> bool {
     a.primitives.len() == b.primitives.len()
-        && a.primitives.iter().zip(&b.primitives).all(|(p, q)| {
-            p.indices == q.indices
-                && close(p.positions.as_flattened(), q.positions.as_flattened())
-                && close(p.normals.as_flattened(), q.normals.as_flattened())
-                && close(p.colors.as_flattened(), q.colors.as_flattened())
-                && close(p.uvs.as_flattened(), q.uvs.as_flattened())
-        })
+        && a.primitives
+            .iter()
+            .zip(&b.primitives)
+            .all(|(p, q)| same_primitive(p, q, skip))
+}
+
+/// `None` when the meshes draw the same; else what alone explains the
+/// change (see [`Change::Mesh`]; empty when the primitives differ).
+fn geometry_change(a: &Node, b: &Node) -> Option<Vec<&'static str>> {
+    if same_geometry(a, b, ALL) {
+        return None;
+    }
+    if a.primitives.len() != b.primitives.len()
+        || a.primitives
+            .iter()
+            .zip(&b.primitives)
+            .any(|(p, q)| p.indices.len() != q.indices.len())
+    {
+        return Some(Vec::new());
+    }
+    let only = |normals, colours| same_geometry(a, b, Skip { normals, colours });
+    Some(if only(true, false) {
+        vec!["normals"]
+    } else if only(false, true) {
+        vec!["colours"]
+    } else if only(true, true) {
+        vec!["normals", "colours"]
+    } else {
+        vec!["positions"]
+    })
+}
+
+/// One triangle corner: position, normal, colour, UV (missing ones zero).
+type Corner = [f32; 12];
+
+fn corner(p: &Primitive, i: u32) -> Option<Corner> {
+    let i = i as usize;
+    let pos = p.positions.get(i)?;
+    let n = p.normals.get(i).copied().unwrap_or_default();
+    let c = p.colors.get(i).copied().unwrap_or_default();
+    let uv = p.uvs.get(i).copied().unwrap_or_default();
+    Some([
+        pos[0], pos[1], pos[2], n[0], n[1], n[2], c[0], c[1], c[2], c[3], uv[0], uv[1],
+    ])
+}
+
+/// A triangle's bucket: its three corner positions on a 1 mm grid, in
+/// any order (the attributes and the winding are compared after).
+fn bucket(t: &[Corner; 3]) -> [[i64; 3]; 3] {
+    let mut k = t
+        .each_ref()
+        .map(|c| [0, 1, 2].map(|i| (c[i] / 1e-3).round() as i64));
+    k.sort_unstable();
+    k
+}
+
+/// The triangles of a primitive; `None` for an index out of range.
+fn triangles(p: &Primitive) -> Option<Vec<[Corner; 3]>> {
+    p.indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|t| Some([corner(p, t[0])?, corner(p, t[1])?, corner(p, t[2])?]))
+        .collect()
+}
+
+/// The same triangle: every corner within the tolerances, starting from
+/// any corner, with the same winding.
+fn same_triangle(a: &[Corner; 3], b: &[Corner; 3], skip: Skip) -> bool {
+    (0..3).any(|r| (0..3).all(|i| same_corner(&a[i], &b[(i + r) % 3], skip)))
+}
+
+/// Every triangle of `a` matches its own triangle of `b` (positions on a
+/// grid line can fall into neighbouring buckets: then it reports a change,
+/// never hides one).
+fn same_triangles(a: &[[Corner; 3]], b: &[[Corner; 3]], skip: Skip) -> bool {
+    let mut left: BTreeMap<[[i64; 3]; 3], Vec<&[Corner; 3]>> = BTreeMap::new();
+    for t in b {
+        left.entry(bucket(t)).or_default().push(t);
+    }
+    a.iter().all(|t| {
+        let Some(cands) = left.get_mut(&bucket(t)) else {
+            return false;
+        };
+        match cands.iter().position(|c| same_triangle(t, c, skip)) {
+            Some(i) => {
+                cands.swap_remove(i);
+                true
+            }
+            None => false,
+        }
+    })
+}
+
+fn same_corner(a: &Corner, b: &Corner, skip: Skip) -> bool {
+    a.iter().zip(b).enumerate().all(|(i, (x, y))| {
+        (skip.normals && (3..6).contains(&i))
+            || (skip.colours && (6..10).contains(&i))
+            || (x - y).abs() <= corner_tolerance(i)
+    })
+}
+
+fn same_primitive(p: &Primitive, q: &Primitive, skip: Skip) -> bool {
+    if p.indices.len() != q.indices.len()
+        || p.normals.is_empty() != q.normals.is_empty()
+        || p.colors.is_empty() != q.colors.is_empty()
+        || p.uvs.is_empty() != q.uvs.is_empty()
+    {
+        return false;
+    }
+    // The canonical files of one writer: the same arrays.
+    if skip == ALL
+        && p.indices == q.indices
+        && close(p.positions.as_flattened(), q.positions.as_flattened())
+        && p.colors.len() == q.colors.len()
+        && p.colors
+            .as_flattened()
+            .iter()
+            .zip(q.colors.as_flattened())
+            .all(|(x, y)| (x - y).abs() <= COLOR_TOLERANCE)
+        && close(p.uvs.as_flattened(), q.uvs.as_flattened())
+        && p.normals.len() == q.normals.len()
+        && p.normals
+            .as_flattened()
+            .iter()
+            .zip(q.normals.as_flattened())
+            .all(|(x, y)| (x - y).abs() <= NORMAL_TOLERANCE)
+    {
+        return true;
+    }
+    // Re-indexed, split or merged vertices: the drawn triangles.
+    match (triangles(p), triangles(q)) {
+        (Some(a), Some(b)) => same_triangles(&a, &b, skip),
+        _ => false,
+    }
 }
 
 /// Flattens JSON into `path → leaf` (`ocw.frame.stack_m`).
@@ -394,13 +571,16 @@ pub fn diff(a: &Model, b: &Model) -> ModelDiff {
             });
         }
         let (sa, sb) = (mesh_stats(a, na), mesh_stats(b, nb));
-        let geometry = !same_geometry(na, nb);
-        if sa != sb || geometry {
+        let change = geometry_change(na, nb);
+        let geometry = change.is_some();
+        // The vertex count alone is no change (same triangles, see the module).
+        if geometry || sa.triangles != sb.triangles || sa.materials != sb.materials {
             changes.push(Change::Mesh {
                 node: name.clone(),
                 before: sa,
                 after: sb,
                 geometry,
+                what: change.unwrap_or_default(),
             });
         }
         if na.extras != nb.extras {
@@ -580,12 +760,98 @@ mod tests {
         assert_eq!(d.changes.len(), 1);
         assert_eq!(
             d.changes[0].to_string(),
-            "~ mesh wheel_rear: geometry changed (same counts)"
+            "~ mesh wheel_rear: geometry changed (same counts): positions"
         );
         // Machine-readable.
         let j = serde_json::to_value(&d).unwrap();
         assert_eq!(j["changes"][0]["change"], "mesh");
         assert_eq!(j["changes"][0]["geometry"], true);
+    }
+
+    /// What Blender's exporter does to a mesh: the triangles in another
+    /// order, each from another corner, the vertices re-indexed and some
+    /// split (duplicated), normals a little off – the same mesh.
+    #[test]
+    fn reindexed_and_split_vertices_are_the_same_mesh() {
+        let a = bike();
+        let w = a.node("wheel_front").unwrap();
+        let p = &a.nodes[w].primitives[0];
+        let mut q = Primitive {
+            material: p.material,
+            ..Default::default()
+        };
+        let tris: Vec<&[u32; 3]> = p.indices.as_chunks::<3>().0.iter().rev().collect();
+        for (k, t) in tris.iter().enumerate() {
+            // Every triangle gets its own three vertices (split), turned.
+            let turn = k % 3;
+            for c in 0..3 {
+                let i = t[(c + turn) % 3] as usize;
+                q.indices.push(q.positions.len() as u32);
+                q.positions.push(p.positions[i]);
+                let mut n = p.normals[i];
+                n[0] += 5e-4;
+                q.normals.push(n);
+                if !p.colors.is_empty() {
+                    q.colors.push(p.colors[i]);
+                }
+                if !p.uvs.is_empty() {
+                    q.uvs.push(p.uvs[i]);
+                }
+            }
+        }
+        // And a vertex no triangle uses (Blender leaves some, too).
+        q.positions.push([9.0; 3]);
+        q.normals.push([0.0, 1.0, 0.0]);
+        if !q.colors.is_empty() {
+            q.colors.push([1.0; 4]);
+        }
+        if !q.uvs.is_empty() {
+            q.uvs.push([0.0; 2]);
+        }
+        let mut b = a.clone();
+        b.nodes[w].primitives[0] = q.clone();
+        let d = diff(&a, &b);
+        assert!(d.is_empty(), "{:#?}", d.changes);
+        assert_ne!(d.before.vertices, d.after.vertices, "split vertices");
+        // A vertex moved by 1 mm, a flipped triangle, a normal 1° off:
+        // changes (on a triangle with three distinct corners: flipping a
+        // degenerate one changes nothing).
+        let k = q
+            .indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .position(|t| {
+                let [x, y, z] = [0, 1, 2].map(|i| Vec3::from(q.positions[t[i] as usize]));
+                (y - x).cross(z - x).length() > 1e-6
+            })
+            .expect("a triangle with an area")
+            * 3;
+        for broken in 0..3 {
+            let mut r = q.clone();
+            match broken {
+                0 => r.positions[r.indices[k + 1] as usize][1] += 1e-3,
+                1 => r.indices.swap(k, k + 1),
+                _ => r.normals[r.indices[k + 2] as usize][2] += 0.02,
+            }
+            let mut c = a.clone();
+            c.nodes[w].primitives[0] = r;
+            let d = diff(&a, &c);
+            assert_eq!(d.changes.len(), 1, "case {broken}: {:#?}", d.changes);
+            let want = ["positions", "positions", "normals"][broken];
+            assert!(
+                matches!(&d.changes[0], Change::Mesh { node, geometry: true, what, .. }
+                    if node == "wheel_front" && what == &[want]),
+                "case {broken}: {:#?}",
+                d.changes
+            );
+        }
+        // An index out of range is a change, not a panic.
+        let mut r = q;
+        r.indices[0] = 1_000_000;
+        let mut c = a.clone();
+        c.nodes[w].primitives[0] = r;
+        assert!(!diff(&a, &c).is_empty());
     }
 
     #[test]

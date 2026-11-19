@@ -91,7 +91,7 @@ VIDEO ?= /tmp/ocw.mp4
 VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
-.PHONY: help test-web-account test-web-trust version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
+.PHONY: help test-web-account test-web-trust version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-blender test-blender models-diff deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
 	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-gpu test-web-webkit deps-webkit test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-voice-livekit test-voice-bundled test-host-voice test-voice-live test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser deps-vr deps-vr-linux deps-vr-linux-debian deps-vr-linux-fedora deps-vr-linux-arch deps-vr-linux-unknown deps-vr-windows deps-vr-macos test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
@@ -157,6 +157,13 @@ deps-linux-unknown:
 	@echo "or install the equivalents of these Debian packages by hand:" >&2
 	@echo "  $(APT_PACKAGES)" >&2
 	@exit 1
+
+# Blender (spec 14 Phase 15, 15G Q4): the official release tarball, pinned by
+# version and SHA-256 in scripts/deps-blender.sh (the one place), into
+# ~/.local/opt/blender-X.Y.Z with ~/.local/bin/blender; for test-blender and
+# the .blend sources on marge. A tool only: nothing of it is linked or shipped.
+deps-blender: ## Linux x64: the pinned Blender LTS to ~/.local/opt/blender-X.Y.Z + ~/.local/bin/blender (SHA-256 checked, no sudo, idempotent; prints the version; spec 15G Q4)
+	scripts/deps-blender.sh
 
 deps-appimage: ## Linux: appimagetool to ~/.local/bin (no sudo; used by scripts/build-appimage.sh)
 	@if [ -x "$(APPIMAGETOOL)" ]; then echo "appimagetool already installed: $(APPIMAGETOOL)"; exit 0; fi; \
@@ -410,6 +417,24 @@ test-web-readme: deps-browser ## The README's browser walkthrough in a fresh clo
 
 test-kiosk: ## Test the kiosk script with a fake app (no display or build needed)
 	scripts/test-kiosk.sh
+
+# The model files' tools (spec 14 Phase 15, 15D / 15F). MODELS limits the
+# round trip to manifest patterns (MODELS="bikes/* wear/helmet-*").
+MODELS ?=
+test-blender: ## Blender round trip of every model file (spec 15F): Blender imports and re-exports it with the README's preset, `model import` takes it back, `model diff` must be empty; summary into test-output/blender-roundtrip/ (skipped without Blender: make deps-blender, on marge); also the deps-blender and models-diff script tests
+	scripts/test-deps-blender.sh
+	CARGO="$(CARGO)" scripts/test-models-diff.sh
+	CARGO="$(CARGO)" scripts/blender-roundtrip.py $(if $(MODELS),--only $(MODELS))
+
+BASE ?= main
+models-diff: ## The structural diff (`ocw-assets model diff`) of the model files changed against BASE (default main; committed, uncommitted and new files, the manifest); MACHINE=marge: git here, the diff there (spec 15D)
+	@if [ -n "$(MACHINE)" ]; then \
+		set -e; d=target/models-diff; rm -rf $$d; \
+		scripts/models-diff.sh --base $(BASE) --stage $$d/stage >/dev/null; \
+		tar -cf $$d/stage.tar -C $$d/stage .; \
+		scripts/remote.sh $(MACHINE) put $$d/stage.tar target/models-diff; \
+		scripts/remote.sh $(MACHINE) run 'scripts/models-diff.sh --staged target/models-diff/stage.tar'; \
+	else CARGO="$(CARGO)" scripts/models-diff.sh --base $(BASE); fi
 
 remote-gc: ## Build machines: list the target/ of merged or gone agent checkouts and their size (GC=1 deletes them; MACHINES="a b" limits)
 	GC=$(GC) scripts/remote-gc.sh $(MACHINES)
