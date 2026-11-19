@@ -381,3 +381,79 @@ fn the_terrain_is_lowered_under_a_patch_and_a_lowered_side_road() {
     assert_eq!(at(-45.0, -45.0).0, at(-45.0, -45.0).1);
     assert_eq!(at(45.0, 45.0).0, at(45.0, 45.0).1);
 }
+
+/// A J2 package's stored junctions (`JNCT`) and strip edges (`RDGE`)
+/// shape every tile exactly as the computed junctions and the geometric
+/// matching do, and mark the terrain as settled (no lowering at load).
+#[test]
+fn stored_junctions_and_strip_edges_shape_the_same_tiles() {
+    use ocw_world::junction::section::{FLAG_SETTLED, JunctionData, JunctionIndex, strip_edges_of};
+    for g in [
+        t_junction(RoadClass::Secondary, 0.08, 0.20),
+        crossing([0.05, -0.04, 0.10, 0.0]),
+    ] {
+        let mut pkg = WorldPackage {
+            name: "Fixture".into(),
+            origin: (47.0, 9.0),
+            tile_size_m: SIZE as f32,
+            samples: 2,
+            tiles: tiles(&g)
+                .into_iter()
+                .map(|(key, roads)| {
+                    (
+                        key,
+                        ocw_world::package::Tile {
+                            key,
+                            heights: vec![0.0; 4],
+                            roads,
+                        },
+                    )
+                })
+                .collect(),
+            graph: Some(g.clone()),
+            landuse: None,
+            buildings: None,
+            bridges: None,
+            routes: vec![],
+            region: None,
+            time_zone: None,
+            look: Default::default(),
+            obstacles: None,
+            places: None,
+            junctions: None,
+        };
+        let plain = PackageJunctions::new(&pkg).unwrap();
+        assert!(!plain.settled && !plain.set.is_stored());
+        let index = JunctionIndex::of_set(&g, &JunctionSet::new(&g), FLAG_SETTLED);
+        pkg.junctions = Some(Arc::new(JunctionData {
+            index: Some(Arc::new(index)),
+            strip_edges: Some(strip_edges_of(&pkg, &g)),
+        }));
+        let stored = PackageJunctions::new(&pkg).unwrap();
+        assert!(stored.settled && stored.set.is_stored());
+        let style = MarkingStyle::default();
+        for (key, t) in &pkg.tiles {
+            assert_eq!(
+                stored.strip_edges(&g, *key, &t.roads),
+                plain.strip_edges(&g, *key, &t.roads)
+            );
+            let a = shape_tile(&g, &plain, *key, SIZE, &t.roads, &style);
+            let b = shape_tile(&g, &stored, *key, SIZE, &t.roads, &style);
+            assert_eq!(a.strips, b.strips);
+            assert_eq!(a.rows, b.rows);
+            assert_eq!(a.owners, b.owners);
+            let pa: Vec<&Patch> = a.patches.iter().map(|p| p.0).collect();
+            let pb: Vec<&Patch> = b.patches.iter().map(|p| p.0).collect();
+            assert_eq!(pa, pb);
+        }
+        // A tile whose strips changed since (another count): matched by
+        // geometry again.
+        let key = *pkg.tiles.keys().next().unwrap();
+        let mut fewer = pkg.tiles[&key].roads.clone();
+        fewer.pop();
+        assert_eq!(
+            stored.strip_edges(&g, key, &fewer),
+            plain.strip_edges(&g, key, &fewer)
+        );
+    }
+}

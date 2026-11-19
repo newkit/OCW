@@ -26,6 +26,7 @@
 //! - [`svg`]: map of a road graph for visual checks
 //! - [`bridges`]: bridge detection, planned decks and structures (spec §4.8.6)
 //! - [`clean`]: world cleaning passes – polylines, near misses, junction mouths, vertical curves, terrain settling (spec §4.8)
+//! - [`junctions`]: smooth junctions baked into the package – profiles reconciled with the junction surfaces, kinks across junctions, terrain samples, sections `JNCT` / `RDGE`, the `junction.seam` lint (spec §4.8.8 J2)
 //! - [`lint`]: world lint – what looks physically wrong in a package (spec §4.8)
 //! - [`spatial`]: bucket index over road segments
 //! - [`stages`]: stage profile of a world build (time, CPU, peak memory)
@@ -47,6 +48,7 @@ pub mod dtm;
 pub mod filter;
 pub mod forest;
 pub mod imagery;
+pub mod junctions;
 pub mod landuse;
 pub mod lint;
 pub mod obstacles;

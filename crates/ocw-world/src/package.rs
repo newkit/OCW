@@ -67,6 +67,10 @@ use crate::buildings::{
 use crate::forest::{FOREST_TAG, read_forest, write_forest};
 use crate::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
 use crate::graph_route::{GraphRoute, RouteStep};
+use crate::junction::section::{
+    JUNCTIONS_TAG, JunctionData, STRIP_EDGES_TAG, read_junctions, read_strip_edges,
+    write_junctions, write_strip_edges,
+};
 use crate::lamps::{ROAD_LIT_TAG, RoadLit, read_road_lit, write_road_lit};
 use crate::landmarks::{LANDMARKS_TAG, read_landmarks, write_landmarks};
 use crate::landuse::{LANDUSE_TAG, LandUse, read_landuse, write_landuse};
@@ -194,6 +198,11 @@ pub struct WorldPackage {
     /// `place=*` with their rank, for the map labels); `None` in older
     /// packages, which then have no place names.
     pub places: Option<Places>,
+    /// The stored junctions (sections `JNCT` and `RDGE`, spec §4.7, §4.8.8
+    /// J2: the junction rules and patch outlines, the edge of every road
+    /// strip); `None` in older packages, whose junctions are computed from
+    /// the graph with the same result.
+    pub junctions: Option<std::sync::Arc<JunctionData>>,
 }
 
 impl WorldPackage {
@@ -441,6 +450,18 @@ impl WorldPackage {
                 let mut payload = Vec::new();
                 write_landmarks(&p.landmarks, &mut payload);
                 sections.push((LANDMARKS_TAG, payload));
+            }
+        }
+        if let Some(j) = &self.junctions {
+            if let Some(i) = &j.index {
+                let mut payload = Vec::new();
+                write_junctions(i, &mut payload);
+                sections.push((JUNCTIONS_TAG, payload));
+            }
+            if let Some(s) = &j.strip_edges {
+                let mut payload = Vec::new();
+                write_strip_edges(s, &mut payload);
+                sections.push((STRIP_EDGES_TAG, payload));
             }
         }
         let mut payload = Vec::new();
@@ -751,11 +772,15 @@ struct Sections {
     dress: Vec<(TileKey, Vec<RoadDress>)>,
     lit: Vec<(TileKey, Vec<RoadLit>)>,
     condition: Vec<(TileKey, Vec<RoadCondition>)>,
+    junctions: JunctionData,
 }
 
 impl Sections {
     fn into_package(self, head: PackageHead, tiles: BTreeMap<TileKey, Tile>) -> WorldPackage {
+        let junctions = (self.junctions.index.is_some() || self.junctions.strip_edges.is_some())
+            .then(|| std::sync::Arc::new(self.junctions));
         WorldPackage {
+            junctions,
             name: head.name,
             origin: head.origin,
             tile_size_m: head.tile_size_m,
@@ -894,6 +919,22 @@ fn read_sections(
                 Err(e) if e.contains("not supported") => {}
                 Err(e) => return Err(e),
             }
+        } else if &tag == JUNCTIONS_TAG && full {
+            // Optional (spec §4.7, §4.8.8 J2): a newer layout is skipped
+            // (the junctions are computed from the graph, the same).
+            match read_junctions(payload) {
+                Ok(i) => s.junctions.index = Some(std::sync::Arc::new(i)),
+                Err(e) if e.contains("not supported") => {}
+                Err(e) => return Err(e),
+            }
+        } else if &tag == STRIP_EDGES_TAG && full {
+            // Optional (spec §4.7, §4.8.8 J2): a newer layout is skipped
+            // (the strips are matched to their edges by geometry).
+            match read_strip_edges(payload) {
+                Ok(e) => s.junctions.strip_edges = Some(e),
+                Err(e) if e.contains("not supported") => {}
+                Err(e) => return Err(e),
+            }
         } else if &tag == ROAD_SURFACE_TAG && full {
             s.surfaces.extend(read_road_surfaces(payload)?);
         } else if &tag == ROAD_LIT_TAG && full {
@@ -921,8 +962,10 @@ fn read_sections(
 /// Sections a streaming client does not fetch with the base (spec §14
 /// Phase 8 T7, Phase 10 B2): the orthophoto corridor (`ORTC`) is tens to
 /// hundreds of MB in one chunk, more than the browser should load before
-/// the first tile; streamed packages are drawn without it.
-pub const STREAM_SKIPPED_SECTIONS: &[&[u8; 4]] = &[ORTHO_TAG];
+/// the first tile; streamed packages are drawn without it. The stored
+/// junctions (`JNCT`, spec §4.8.8 J2: 1 – 20 MB) are left out too: a
+/// streaming client computes the same junctions from the graph.
+pub const STREAM_SKIPPED_SECTIONS: &[&[u8; 4]] = &[ORTHO_TAG, JUNCTIONS_TAG];
 
 /// A package streamed in chunks (spec §4.5, §4.7; the browser app, spec
 /// §14 Phase 10 B2): the `header` chunk and the sections are decoded once,
@@ -1531,6 +1574,7 @@ mod tests {
             look: Default::default(),
             obstacles: None,
             places: None,
+            junctions: None,
         }
     }
 
@@ -1917,6 +1961,7 @@ mod tests {
         let p = WorldPackage {
             obstacles: Some(o),
             places: None,
+            junctions: None,
             ..package()
         };
         let b = p.to_bytes();

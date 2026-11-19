@@ -702,6 +702,7 @@ pub fn build_package_on<F: Fn(f64, f64) -> f64 + Sync>(
         look: Default::default(),
         obstacles: None,
         places: None,
+        junctions: None,
     }
 }
 

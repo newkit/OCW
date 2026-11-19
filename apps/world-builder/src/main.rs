@@ -301,6 +301,23 @@ enum Cmd {
         #[arg(long, value_name = "KEY")]
         sign_key: Option<PathBuf>,
     },
+    /// Smooth junctions (spec §4.8.8 J2) for an existing package: no
+    /// kinks across junctions for the through roads, the road profiles
+    /// and strips reconciled with the junction surfaces, the terrain
+    /// settled under them, and the sections JNCT (the junction rules and
+    /// outlines) and RDGE (the edge of every strip); every other section
+    /// as it was (the manifest is renewed); `package` does the same.
+    Junctions {
+        /// The package (rewritten in place unless --out is given).
+        #[arg(long)]
+        world: PathBuf,
+        /// Write the package here instead.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Sign the renewed manifest with this signing key.
+        #[arg(long, value_name = "KEY")]
+        sign_key: Option<PathBuf>,
+    },
     /// Fields, plantations and mapped trees (spec §14 Phase 8 T8): the OSM
     /// crops, vineyards, orchards, banana plantations, single trees and
     /// tree rows into the section VEGE of an existing package; the trees of
@@ -1163,9 +1180,13 @@ fn prepared_graph(
     let mut spans = Vec::new();
     if let Some(water) = clean {
         let (tied, mouths, curves) = stage("tie ends, junction mouths, vertical curves", || {
+            let tied = clean::tie_snapped_heights(&mut graph, &snaps);
+            // The junction surfaces' blends replace the easing where there
+            // is a patch (spec §4.8.8 J2).
+            let patched = ocw_worldgen::junctions::patched_vertices(&graph);
             (
-                clean::tie_snapped_heights(&mut graph, &snaps),
-                clean::ease_junction_mouths(&mut graph),
+                tied,
+                clean::ease_junction_mouths_except(&mut graph, &patched),
                 clean::limit_vertical_curvature(&mut graph),
             )
         });
@@ -1188,6 +1209,24 @@ fn prepared_graph(
                 count(BridgeSource::Gap),
                 count(BridgeSource::Outline)
             );
+        }
+        // Smooth junctions (spec §4.8.8 J2): no kinks across junctions for
+        // the through roads, the profiles reconciled with the junction
+        // surfaces (the planned bridge decks kept).
+        let (kinks, rs) = stage("junction surfaces", || {
+            let kinks = ocw_worldgen::junctions::smooth_through_kinks(&mut graph);
+            let keep = |e: usize, s: f64| {
+                !spans
+                    .iter()
+                    .any(|sp| sp.edge == e && s >= sp.from_m - 1.0 && s <= sp.to_m + 1.0)
+            };
+            (
+                kinks,
+                ocw_worldgen::junctions::reconcile_profiles(&mut graph, &keep),
+            )
+        });
+        if log {
+            print_reconcile(kinks, &rs);
         }
     }
     // Height points last: the patch has the final say on the road heights,
@@ -1450,6 +1489,62 @@ fn package_time_zone(given: Option<String>, origin: (f64, f64)) -> Result<String
     ocw_sky::Zone::get(&zone).map(|z| z.id().to_owned())
 }
 
+/// The build log line of the junction passes (spec §4.8.8 J2).
+fn print_reconcile(kinks: usize, rs: &ocw_worldgen::junctions::ReconcileStats) {
+    println!(
+        "junctions: {kinks} profile samples rounded across through junctions; {} junction surfaces, {} profile samples set to the drawn surface (up to {:.2} m; {} of them on longer side-road blends), {} rounds (last {:.4} m), afterwards {} of {} samples more than 1 cm off the drawn surface (at most {:.3} m), {} intervals steeper than their class limit + 1 % near a junction",
+        rs.patches,
+        rs.samples,
+        rs.max_change_m,
+        rs.longer_blend_samples,
+        rs.rounds,
+        rs.last_round_m,
+        rs.residual_over_1cm,
+        rs.residual_samples,
+        rs.residual_m,
+        rs.steep_intervals
+    );
+}
+
+/// What the junction sections hold, for the build log.
+fn junction_summary(j: &ocw_world::junction::section::JunctionData) -> String {
+    let (patches, rules, settled) = j
+        .index
+        .as_ref()
+        .map_or((0, 0, false), |i| (i.patches(), i.rules.len(), i.settled()));
+    let (strips, unmatched) = j.strip_edges.as_ref().map_or((0, 0), |s| {
+        let all: Vec<u32> = s.tiles.values().flatten().copied().collect();
+        (
+            all.len(),
+            all.iter()
+                .filter(|&&e| e == ocw_world::junction::section::NO_EDGE)
+                .count(),
+        )
+    });
+    format!(
+        "junctions (JNCT, RDGE): {patches} junction surfaces, {} mitres{}; {strips} strips with their edge ({unmatched} unmatched)",
+        rules - patches,
+        if settled {
+            ", profiles reconciled and terrain settled"
+        } else {
+            ""
+        }
+    )
+}
+
+/// The junction sections and the terrain settled under the junction
+/// surfaces of `pkg`'s graph (spec §4.8.8 J2). Returns the settle stats.
+fn settle_junctions(pkg: &mut ocw_world::WorldPackage) -> ocw_worldgen::clean::SettleStats {
+    let samples = match pkg.graph.as_ref() {
+        Some(g) => {
+            let js = ocw_world::junction::JunctionSet::new(g);
+            ocw_worldgen::junctions::surface_samples(g, &js, 0.5)
+        }
+        None => Vec::new(),
+    };
+    ocw_worldgen::clean::settle_terrain_under_surfaces(pkg, 0.05, &samples)
+}
+
 fn package(args: PackageArgs) {
     let PackageArgs {
         src,
@@ -1690,9 +1785,8 @@ fn package(args: PackageArgs) {
             ));
         }
         let ts = Instant::now();
-        let ss = stage("settle terrain under roads", || {
-            ocw_worldgen::clean::settle_terrain_under_roads(&mut pkg, 0.05)
-        });
+        // Under the strips and the junction surfaces (spec §4.8.8 J2).
+        let ss = stage("settle terrain under roads", || settle_junctions(&mut pkg));
         area_report.push(format!(
             "clean: terrain settled under roads: {} samples poked through, {} vertices lowered (up to {:.2} m); {:.1} s",
             ss.violations,
@@ -1764,6 +1858,14 @@ fn package(args: PackageArgs) {
         });
         area_report.push(format!("places (PLCE): {}", st.summary));
         area_report.push(format!("landmarks (LMRK): {}", st.landmark_summary));
+    }
+    // The junction rules and outlines and the strips' edges (sections
+    // JNCT, RDGE, spec §4.8.8 J2), settled when cleaned.
+    if let Some(j) = stage("junction sections (JNCT, RDGE)", || {
+        ocw_worldgen::junctions::junction_data(&pkg, clean)
+    }) {
+        area_report.push(junction_summary(&j));
+        pkg.junctions = Some(std::sync::Arc::new(j));
     }
     let bytes = stage("serialise", || pkg.to_bytes());
     if let Some(dir) = out.parent() {
@@ -2479,6 +2581,102 @@ fn places(
     });
 }
 
+/// `world-builder junctions` (spec §4.8.8 J2): an existing package's
+/// junctions baked in – kinks across junctions rounded, profiles and strips
+/// reconciled with the junction surfaces, the terrain settled under them,
+/// sections JNCT and RDGE; everything else as it was.
+fn junctions(
+    world: &std::path::Path,
+    out: Option<PathBuf>,
+    key: Option<&ocw_world::manifest::SigningKeyPair>,
+) {
+    use ocw_worldgen::junctions as j;
+    let t = Instant::now();
+    let mut pkg = stage("read package", || read_package(world));
+    let before = std::fs::metadata(world).map_or(0, |m| m.len());
+    let Some(g0) = pkg.graph.clone() else {
+        eprintln!("{}: no road graph", world.display());
+        std::process::exit(1);
+    };
+    // The bridge decks stay as planned (their spans along their edges).
+    let decks = stage("bridge decks", || j::bridge_spans(&pkg, &g0));
+    let mut g = g0.clone();
+    let (kinks, rs) = stage("junction surfaces", || {
+        let kinks = j::smooth_through_kinks(&mut g);
+        let keep = |e: usize, s: f64| {
+            !decks
+                .iter()
+                .any(|d| d.0 == e && s >= d.1 - 1.0 && s <= d.2 + 1.0)
+        };
+        (kinks, j::reconcile_profiles(&mut g, &keep))
+    });
+    print_reconcile(kinks, &rs);
+    let edges = stage("strip edges", || {
+        ocw_world::junction::section::strip_edges_of(&pkg, &g0)
+    });
+    let moved = stage("strip heights", || {
+        j::reheight_strips(&mut pkg, &g0, &g, &edges)
+    });
+    let changed = g0
+        .edges
+        .iter()
+        .zip(&g.edges)
+        .filter(|(a, b)| a.profile != b.profile)
+        .count();
+    println!("junctions: {changed} road profiles changed, {moved} strip points moved");
+    pkg.graph = Some(g);
+    let ts = Instant::now();
+    let ss = stage("settle terrain under roads", || settle_junctions(&mut pkg));
+    println!(
+        "clean: terrain settled under roads and junction surfaces: {} samples poked through, {} vertices lowered (up to {:.2} m); {:.1} s",
+        ss.violations,
+        ss.vertices_lowered,
+        ss.max_lowered_m,
+        ts.elapsed().as_secs_f64()
+    );
+    if let Some(data) = stage("junction sections (JNCT, RDGE)", || {
+        j::junction_data(&pkg, true)
+    }) {
+        println!("{}", junction_summary(&data));
+        pkg.junctions = Some(std::sync::Arc::new(data));
+    }
+    let path = out.unwrap_or_else(|| world.to_path_buf());
+    let bytes = stage("serialise", || pkg.to_bytes());
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    stage("write", || {
+        std::fs::write(&path, &bytes).unwrap_or_else(|e| {
+            eprintln!("{}: {e}", path.display());
+            std::process::exit(1);
+        })
+    });
+    print_sections(&bytes);
+    println!(
+        "{}: {:.1} MB -> {:.1} MB ({:+.3} MB), {:.1} s",
+        path.display(),
+        before as f64 / 1e6,
+        bytes.len() as f64 / 1e6,
+        (bytes.len() as f64 - before as f64) / 1e6,
+        t.elapsed().as_secs_f64()
+    );
+    if path != world {
+        let _ = std::fs::copy(dist::sidecar(world), dist::sidecar(&path));
+    }
+    stage("manifest + hash", || {
+        dist::write_manifest(
+            &path,
+            &dist::ManifestArgs {
+                id: None,
+                name: None,
+                version: None,
+                dem_attribution: Vec::new(),
+            },
+            key,
+        )
+    });
+}
+
 /// Where to look at the obstacles (scenes, checks): rows of road bollards
 /// (three or more within 8 m) and the longest bridges, in package metres.
 fn print_obstacle_examples(pkg: &ocw_world::WorldPackage) {
@@ -3047,6 +3245,20 @@ fn main() {
                 })
             });
             places(&world, &pbf, out, key.as_ref());
+            print_stage_profile(None);
+        }
+        Cmd::Junctions {
+            world,
+            out,
+            sign_key,
+        } => {
+            let key = sign_key.map(|k| {
+                ocw_worldstore::keys::read_signing_key(&k).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                })
+            });
+            junctions(&world, out, key.as_ref());
             print_stage_profile(None);
         }
         Cmd::Obstacles {

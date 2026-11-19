@@ -30,9 +30,10 @@ fn check_outline(p: &Patch) {
     for (i, a) in p.arms.iter().enumerate() {
         let on: Vec<&OutlinePoint> = p.outline.iter().filter(|o| o.mouth == Some(i)).collect();
         assert!(on.len() >= 2);
-        // The mouth points lie on the mouth row.
+        // The mouth points lie on the mouth row (their offsets from the
+        // vertex rounded to `f32`, as section `JNCT` stores them: µm).
         for o in on {
-            assert!(seg_dist(xz(o.p), xz(a.row[0]), xz(a.row[1])) < 1e-9);
+            assert!(seg_dist(xz(o.p), xz(a.row[0]), xz(a.row[1])) < 1e-5);
         }
     }
 }

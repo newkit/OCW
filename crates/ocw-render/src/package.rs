@@ -1332,7 +1332,9 @@ pub fn build_tile_meshes_with(
         .map_or_else(SolidFootprints::default, |b| building_footprints(b, &specs));
     let roads = tile_road_meshes(pkg, tile, &near, look.road_colours.as_deref(), junctions);
     let mut terrain = terrain_arrays_kept(pkg, tile, keep);
-    if let (Some(pj), Some(g)) = (junctions, pkg.graph.as_ref()) {
+    // J1 packages: the terrain lowered under the junction surfaces at load;
+    // a J2 package has it settled (section `JNCT`, spec §4.8.8).
+    if let (Some(pj), Some(g)) = (junctions.filter(|pj| !pj.settled), pkg.graph.as_ref()) {
         let patches = crate::junction_mesh::patches_near(g, pj, key);
         let grid = crate::junction_mesh::TerrainGrid {
             origin: key.origin(f64::from(pkg.tile_size_m)),
@@ -2319,6 +2321,7 @@ mod tests {
             look: Default::default(),
             obstacles: None,
             places: None,
+            junctions: None,
         }
     }
 

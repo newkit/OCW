@@ -552,6 +552,7 @@ mod tests {
             look: Default::default(),
             obstacles: Some(o),
             places: None,
+            junctions: None,
         }
     }
 
