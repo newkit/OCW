@@ -52,6 +52,8 @@ pub struct Overlay<'a> {
     pub marks: crate::overlay::Marks,
     /// The route of the Routes workspace (16D).
     pub route: Option<&'a crate::routes::RouteView>,
+    /// The parts of a track file waiting for the choice of one (16D).
+    pub import: Option<&'a crate::routes::PendingImport>,
 }
 
 /// What the pointer did on the map this frame (package points).
@@ -487,6 +489,9 @@ pub fn paint(
     if let Some(r) = overlay.route {
         paint_route(&painter, view, mid, r);
     }
+    if let Some(p) = overlay.import {
+        paint_import_parts(&painter, view, mid, p);
+    }
     paint_places(
         ui,
         &painter,
@@ -615,6 +620,42 @@ fn paint_marks(
             egui::FontId::proportional(12.0),
             egui::Color32::WHITE,
         );
+    }
+}
+
+/// The parts of a track file waiting for the choice (16D): each in its
+/// colour of the picker, numbered at its start, its end a ring.
+fn paint_import_parts(
+    painter: &egui::Painter,
+    view: &MapView,
+    mid: [f32; 2],
+    p: &crate::routes::PendingImport,
+) {
+    let pos = |p: [f64; 2]| {
+        let s = view.to_screen(p, mid);
+        egui::pos2(s[0], s[1])
+    };
+    for (i, part) in p.parts.iter().enumerate() {
+        let c = rgb(crate::routes::part_rgb(i));
+        let pts: Vec<egui::Pos2> = part.line.iter().map(|q| pos(*q)).collect();
+        if pts.len() >= 2 {
+            painter.add(egui::Shape::line(
+                pts.clone(),
+                egui::Stroke::new(6.0, egui::Color32::from_black_alpha(160)),
+            ));
+            painter.add(egui::Shape::line(pts.clone(), egui::Stroke::new(3.0, c)));
+        }
+        if let (Some(a), Some(b)) = (pts.first(), pts.last()) {
+            painter.circle_stroke(*b, 6.0, egui::Stroke::new(2.0, c));
+            painter.circle_filled(*a, 8.0, c);
+            painter.text(
+                *a,
+                egui::Align2::CENTER_CENTER,
+                format!("{}", i + 1),
+                egui::FontId::proportional(11.0),
+                egui::Color32::BLACK,
+            );
+        }
     }
 }
 

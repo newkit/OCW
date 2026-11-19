@@ -30,6 +30,9 @@ ocw-render.workspace = true
 # The unicorn flight input of Phase 13 (`ocw_ui::god::input`) and the
 # shared world loading.
 ocw-ui.workspace = true
+# The game's local riders (`ocw_client::riders`, in ocw.toml): the rider
+# the Routes workspace's expected time is for (16D).
+ocw-client.workspace = true
 bevy.workspace = true
 bevy_egui.workspace = true
 clap.workspace = true
@@ -39,6 +42,8 @@ dirs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 ureq.workspace = true
+# Reads the riders' section of the game's ocw.toml.
+toml.workspace = true
 
 [build-dependencies]
 # The logo icon and version info of the Windows .exe (spec §11.3).

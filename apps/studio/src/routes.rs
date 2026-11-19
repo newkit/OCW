@@ -11,17 +11,21 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bevy::prelude::*;
+use ocw_core::RiderProfile;
 use ocw_edit::route::{
-    Editor, Imported, ProblemKind, RouteDoc, RouteOp, RoutePackage, RouteProfile, RouteSet, Track,
-    TrackPoint, formats, geometry_of_graph_route, import_planned, import_track, route_profile,
-    route_validators,
+    Editor, Imported, PartChoice, ProblemKind, RouteDoc, RouteOp, RoutePackage, RouteProfile,
+    RouteSet, Track, TrackPart, TrackPoint, chosen_track, formats, geometry_of_graph_route,
+    import_planned, import_track, route_profile, route_validators, track_parts,
 };
 use ocw_edit::{DocId, Document, Severity};
+use ocw_sim::estimate::{ProfilePoint, RideEstimate, ride_time};
 use ocw_world::formats::TrackFormat;
+use ocw_world::gpx::Gpx;
 use ocw_world::matching::MatchParams;
 use ocw_world::network::RoadNetwork;
 use ocw_world::plan::brouter::{BRouterClient, BRouterServer, HttpAnswer, HttpGet};
 use ocw_world::plan::{EdgeCosts, PlanError, PlannedTrack, Profile, RoutePlanner, steps_points};
+use ocw_world::road_surface::RoadSurface;
 use serde::{Deserialize, Serialize};
 
 use crate::edit::{Studio, shown_path};
@@ -41,7 +45,7 @@ pub enum PlannerKind {
 /// The planner settings (`route.planner`, `route.planner.brouter_url`,
 /// `route.planner.brouter_profile`; 16H Q3: the server has no default),
 /// kept in `<config dir>/ocw/studio/planner.json`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlannerSettings {
     #[serde(rename = "route.planner", default)]
     pub planner: PlannerKind,
@@ -49,10 +53,22 @@ pub struct PlannerSettings {
     pub brouter_url: String,
     #[serde(rename = "route.planner.brouter_profile", default = "trekking")]
     pub brouter_profile: String,
+    /// The power the expected riding time is for (W; 16D *Views*).
+    #[serde(rename = "route.estimate.power_w", default = "default_power")]
+    pub power_w: f64,
 }
 
 fn trekking() -> String {
     "trekking".into()
+}
+
+/// The expected time's power until the user sets one (W).
+pub const DEFAULT_POWER_W: f64 = 200.0;
+/// The powers the field allows (W).
+pub const POWER_RANGE_W: (f64, f64) = (50.0, 1000.0);
+
+fn default_power() -> f64 {
+    DEFAULT_POWER_W
 }
 
 impl Default for PlannerSettings {
@@ -61,6 +77,7 @@ impl Default for PlannerSettings {
             planner: PlannerKind::Builtin,
             brouter_url: String::new(),
             brouter_profile: trekking(),
+            power_w: DEFAULT_POWER_W,
         }
     }
 }
@@ -122,6 +139,140 @@ pub struct RouteView {
     pub error: Option<String>,
 }
 
+/// The rider the expected time is for: the active local rider of the
+/// game (`<config dir>/ocw/ocw.toml`, section `[riders]`; else the old
+/// `riders.toml`), else the default rider (75 kg, road bike).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocalRider {
+    pub name: String,
+    pub weight_kg: f64,
+    /// The curated profile of the rider's bike with their weight (2.5).
+    pub physics: RiderProfile,
+    /// Where it was read from (shown), `None` for the default rider.
+    pub from: Option<String>,
+}
+
+impl Default for LocalRider {
+    fn default() -> Self {
+        let r = ocw_client::riders::Rider::default();
+        Self {
+            name: r.name.clone(),
+            weight_kg: r.weight_kg,
+            physics: r.physics(),
+            from: None,
+        }
+    }
+}
+
+impl LocalRider {
+    /// The active rider of the game's config in `dir` (`ocw.toml`, else
+    /// `riders.toml`); the default rider when there is none.
+    pub fn load(dir: Option<&Path>) -> Self {
+        let Some(dir) = dir else {
+            return Self::default();
+        };
+        let config = dir.join("ocw.toml");
+        let section = std::fs::read_to_string(&config)
+            .ok()
+            .and_then(|t| t.parse::<toml::Table>().ok())
+            .and_then(|mut t| match t.remove("riders") {
+                Some(toml::Value::Table(r)) => toml::to_string(&r).ok(),
+                _ => None,
+            });
+        let (text, from) = match section {
+            Some(t) => (t, config),
+            None => {
+                let old = dir.join("riders.toml");
+                match std::fs::read_to_string(&old) {
+                    Ok(t) => (t, old),
+                    Err(_) => return Self::default(),
+                }
+            }
+        };
+        match ocw_client::riders::Riders::parse(&text) {
+            Ok((riders, _)) if !riders.riders.is_empty() => {
+                let r = riders.active();
+                Self {
+                    name: r.name.clone(),
+                    weight_kg: r.weight_kg,
+                    physics: r.physics(),
+                    from: from.file_name().map(|f| format!("from {}", f.to_string_lossy())),
+                }
+            }
+            _ => Self::default(),
+        }
+    }
+
+    /// "Ada Rider, 68 kg, Road".
+    pub fn summary(&self) -> String {
+        format!(
+            "{}, {:.0} kg, {}",
+            self.name,
+            self.weight_kg,
+            self.physics.bike.profile().name
+        )
+    }
+}
+
+/// The game's config folder (`OCW_CONFIG_DIR`, else the platform's config
+/// folder + `ocw`), where its riders are.
+pub fn game_config_dir() -> Option<PathBuf> {
+    match std::env::var_os("OCW_CONFIG_DIR") {
+        Some(d) => Some(PathBuf::from(d)),
+        None => Some(dirs::config_dir()?.join("ocw")),
+    }
+}
+
+/// The expected riding time of the route's profile at `power_w` for
+/// `rider` (`ocw_sim::estimate`, the game's physics).
+pub fn estimate(
+    profile: &RouteProfile,
+    rider: &RiderProfile,
+    power_w: f64,
+) -> Option<RideEstimate> {
+    let points: Vec<ProfilePoint> = profile
+        .samples
+        .iter()
+        .enumerate()
+        .map(|(i, s)| ProfilePoint {
+            distance_m: s[0],
+            height_m: s[1],
+            surface: profile
+                .sample_surfaces
+                .get(i)
+                .copied()
+                .unwrap_or_default()
+                .physics(),
+        })
+        .collect();
+    ride_time(rider, power_w, &points)
+}
+
+/// A track file with several parts, waiting for the user to choose one
+/// (or all joined) before it is imported (16D).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingImport {
+    /// The file, as shown, and its stem (the route's name without one).
+    pub shown: String,
+    pub stem: String,
+    pub format: TrackFormat,
+    pub gpx: Gpx,
+    pub parts: Vec<TrackPart>,
+}
+
+/// The colour of part `i` of a pending import (list and map).
+pub fn part_rgb(i: usize) -> [u8; 3] {
+    const C: [[u8; 3]; 6] = [
+        [80, 200, 255],
+        [255, 150, 60],
+        [190, 120, 255],
+        [120, 230, 110],
+        [255, 100, 160],
+        [240, 220, 80],
+    ];
+    C[i % C.len()]
+}
+
 /// The Routes workspace's state in the studio.
 pub struct RouteTools {
     pub doc: Option<DocId>,
@@ -140,6 +291,16 @@ pub struct RouteTools {
     /// Where the route was saved / exported last.
     pub file: Option<PathBuf>,
     pub test_ride: Option<std::process::Child>,
+    /// The package's road surface of every edge (by index; empty: the
+    /// classes' usual ones): the planner's costs and the figures.
+    pub surfaces: Arc<Vec<RoadSurface>>,
+    /// The rider and the expected time of the route at the settings' power.
+    pub rider: LocalRider,
+    pub estimate: Option<RideEstimate>,
+    /// What the estimate was made for: the view's key and the power.
+    estimate_for: Option<(Option<(DocId, u64)>, u64)>,
+    /// A track file with several parts, waiting for the choice.
+    pub pending: Option<PendingImport>,
 }
 
 impl Default for RouteTools {
@@ -158,6 +319,11 @@ impl Default for RouteTools {
             view: RouteView::default(),
             file: None,
             test_ride: None,
+            surfaces: Arc::new(Vec::new()),
+            rider: LocalRider::load(game_config_dir().as_deref()),
+            estimate: None,
+            estimate_for: None,
+            pending: None,
         }
     }
 }
@@ -169,6 +335,7 @@ impl RouteTools {
         Self {
             settings: PlannerSettings::default(),
             settings_path: None,
+            rider: LocalRider::default(),
             ..Self::default()
         }
     }
@@ -188,6 +355,34 @@ impl RouteTools {
         self.costs = None;
         self.view = RouteView::default();
         self.dragging = None;
+        self.pending = None;
+        self.estimate = None;
+        self.estimate_for = None;
+        // The package's measured surfaces, for the costs (16D).
+        self.surfaces = Arc::new(package.edge_surfaces());
+    }
+
+    /// The package's surface of edge `e` (else its class's usual one).
+    pub fn surface(&self, net: &RoadNetwork, e: usize) -> RoadSurface {
+        self.surfaces
+            .get(e)
+            .copied()
+            .unwrap_or_else(|| RoadSurface::of_class(net.edge(e).class))
+    }
+
+    /// Re-makes the expected time when the route's view or the power
+    /// changed.
+    pub fn update_estimate(&mut self) {
+        let key = (self.view.key, self.settings.power_w.to_bits());
+        if self.estimate_for == Some(key) {
+            return;
+        }
+        self.estimate = self
+            .view
+            .profile
+            .as_ref()
+            .and_then(|p| estimate(p, &self.rider.physics, self.settings.power_w));
+        self.estimate_for = Some(key);
     }
 
     fn net(&self) -> Result<Arc<RoadNetwork>, String> {
@@ -200,7 +395,14 @@ impl RouteTools {
     fn costs_for(&mut self, profile: Profile) -> Result<&EdgeCosts, String> {
         let net = self.net()?;
         if self.costs.as_ref().is_none_or(|c| c.profile != profile) {
-            self.costs = Some(EdgeCosts::new(&net, profile, None));
+            let surfaces = self.surfaces.clone();
+            let surface = |e: usize| {
+                surfaces
+                    .get(e)
+                    .copied()
+                    .unwrap_or_else(|| RoadSurface::of_class(net.edge(e).class))
+            };
+            self.costs = Some(EdgeCosts::new(&net, profile, Some(&surface)));
         }
         Ok(self.costs.as_ref().expect("set"))
     }
@@ -211,8 +413,15 @@ impl RouteTools {
 pub enum RouteCommand {
     New(Option<String>),
     /// Imports a GPX / TCX / GeoJSON / FIT file (matched onto the graph)
-    /// or opens a graph route file.
+    /// or opens a graph route file; a file of several parts waits for
+    /// [`RouteCommand::ImportPart`].
     Import(String),
+    /// Imports one part of the waiting file (or all joined).
+    ImportPart(PartChoice),
+    /// Forgets the waiting file.
+    CancelImport,
+    /// The power of the expected time (W).
+    Power(f64),
     /// Opens the package's route `i`.
     PackageRoute(usize),
     /// A click: selects the via-point there, else adds one at the end.
@@ -358,15 +567,49 @@ fn import_file(studio: &mut Studio, path: &str, now_s: f64) -> Result<String, St
         studio.routes.file = Some(p);
         return Ok(format!("opened the graph route '{}' ({shown})", gr.name));
     }
-    let (track, format) =
-        formats::read_track(&file_name, &bytes).map_err(|e| format!("{shown}: {e}"))?;
+    let (gpx, format) =
+        formats::read_parts(&file_name, &bytes).map_err(|e| format!("{shown}: {e}"))?;
+    let parts = track_parts(&gpx, &net, &studio.routes.package, &MatchParams::default());
+    let pending = PendingImport {
+        shown: shown.clone(),
+        stem,
+        format,
+        gpx,
+        parts,
+    };
+    if pending.parts.len() > 1 {
+        // Several segments: the user chooses one, or all joined (16D).
+        let n = pending.parts.len();
+        studio.routes.pending = Some(pending);
+        return Ok(format!(
+            "{shown} has {n} parts: choose one, or all joined in the Routes panel"
+        ));
+    }
+    import_part(studio, &pending, PartChoice::All, now_s)
+}
+
+/// Imports `choice` of a read track file into a new route document.
+fn import_part(
+    studio: &mut Studio,
+    p: &PendingImport,
+    choice: PartChoice,
+    now_s: f64,
+) -> Result<String, String> {
+    let net = studio.routes.net()?;
+    let track = chosen_track(&p.gpx, choice, p.format.name())
+        .ok_or_else(|| format!("{} has no part {}", p.shown, part_number(choice)))?;
     let r = import_track(
         &net,
         &studio.routes.package,
         &track,
         &MatchParams::default(),
     )?;
-    let name = track.name.clone().unwrap_or(stem);
+    let mut name = track.name.clone().unwrap_or_else(|| p.stem.clone());
+    if let PartChoice::One(i) = choice
+        && p.parts.len() > 1
+    {
+        name = format!("{name} ({}/{})", i + 1, p.parts.len());
+    }
     open_route(
         studio,
         RouteDoc::new(studio.routes.package.clone(), name),
@@ -388,9 +631,15 @@ fn import_file(studio: &mut Studio, path: &str, now_s: f64) -> Result<String, St
         now_s,
         true,
     )?;
+    let what = match choice {
+        PartChoice::One(i) if p.parts.len() > 1 => format!(", part {} of {}", i + 1, p.parts.len()),
+        PartChoice::All if p.parts.len() > 1 => format!(", {} parts joined", p.parts.len()),
+        _ => String::new(),
+    };
     Ok(format!(
-        "imported {shown} ({}): {}{}",
-        format.name(),
+        "imported {} ({}{what}): {}{}",
+        p.shown,
+        p.format.name(),
         r.summary.lines().next().unwrap_or(""),
         if problems > 0 {
             format!("; {problems} problem sections")
@@ -398,6 +647,13 @@ fn import_file(studio: &mut Studio, path: &str, now_s: f64) -> Result<String, St
             String::new()
         }
     ))
+}
+
+fn part_number(c: PartChoice) -> String {
+    match c {
+        PartChoice::All => "all".into(),
+        PartChoice::One(i) => n(i).to_string(),
+    }
 }
 
 /// The default file of a saved route: `<package dir>/routes/<name>.ocwroute`.
@@ -649,7 +905,35 @@ pub fn command(studio: &mut Studio, cmd: RouteCommand, now_s: f64) -> Result<Str
                 "new route '{name}': click the map to add via-points"
             ))
         }
-        C::Import(path) => import_file(studio, &path, now_s),
+        C::Import(path) => {
+            studio.routes.pending = None;
+            import_file(studio, &path, now_s)
+        }
+        C::ImportPart(choice) => {
+            let p = studio
+                .routes
+                .pending
+                .clone()
+                .ok_or("no file is waiting for a choice (import a file first)")?;
+            let msg = import_part(studio, &p, choice, now_s)?;
+            studio.routes.pending = None;
+            Ok(msg)
+        }
+        C::CancelImport => {
+            studio.routes.pending = None;
+            Ok(String::new())
+        }
+        C::Power(w) => {
+            if !w.is_finite() || w < POWER_RANGE_W.0 || w > POWER_RANGE_W.1 {
+                return Err(format!(
+                    "the power is {:.0} – {:.0} W",
+                    POWER_RANGE_W.0, POWER_RANGE_W.1
+                ));
+            }
+            studio.routes.settings.power_w = w.round();
+            save_settings(studio)?;
+            Ok(format!("expected time at {:.0} W", w.round()))
+        }
         C::PackageRoute(i) => {
             let net = studio.routes.net()?;
             let gr = studio
@@ -1005,13 +1289,11 @@ pub fn refresh_view(studio: &mut Studio) {
     let (Some(doc), Some(net)) = (studio.route(), studio.routes.net.clone()) else {
         return;
     };
-    let package = studio.package.as_ref();
-    let surface = |e: usize| match package {
-        Some(p) => p.edge_surface(net.edge(e)).0,
-        None => ocw_world::RoadSurface::of_class(net.edge(e).class),
-    };
+    let routes = &studio.routes;
+    let surface = |e: usize| routes.surface(&net, e);
     let view = route_view(doc, &net, &surface);
     studio.routes.view = view;
+    studio.routes.update_estimate();
 }
 
 /// Keeps [`RouteTools::view`] up to date; takes BRouter's answers; reaps a
@@ -1052,22 +1334,21 @@ pub fn update_routes(mut studio: ResMut<Studio>, time: Res<Time<Real>>) {
         if studio.routes.view != RouteView::default() {
             studio.routes.view = RouteView::default();
         }
+        studio.routes.update_estimate();
         return;
     };
     let selected = doc.selection.single().copied();
     if studio.routes.view.key == Some((doc.id, doc.state()))
         && selected == studio.routes.view.selected
     {
+        studio.routes.update_estimate();
         return;
     }
     let Some(net) = studio.routes.net.clone() else {
         return;
     };
-    let package = studio.package.as_ref();
-    let surface = |e: usize| match package {
-        Some(p) => p.edge_surface(net.edge(e)).0,
-        None => ocw_world::RoadSurface::of_class(net.edge(e).class),
-    };
+    let routes = &studio.routes;
+    let surface = |e: usize| routes.surface(&net, e);
     let view = route_view(doc, &net, &surface);
     debug!(
         "route view: {} points, {} via-points, error {:?}",
@@ -1076,6 +1357,7 @@ pub fn update_routes(mut studio: ResMut<Studio>, time: Res<Time<Real>>) {
         view.error
     );
     studio.routes.view = view;
+    studio.routes.update_estimate();
 }
 
 /// The route words of `studio route …` (pure: the words to a command).
@@ -1096,10 +1378,16 @@ pub fn console_route(words: &[String]) -> Result<RouteCommand, String> {
             .ok_or_else(|| "via-points count from 1".into())
     };
     let rest = |i: usize| words.get(i..).map(|r| r.join(" ")).unwrap_or_default();
-    let usage = "studio route new [NAME] | import PATH | package N | fit | plan X Z X Z … | via add X Z | via insert N X Z | via move N X Z | via remove N | drag GX GZ X Z | reverse | loop on|off | outback | cut start|end N | split N | profile road|gravel|mtb|quiet | name TEXT | planner builtin|brouter | brouter url URL | brouter profile P | brouter ok | brouter plan | export PATH | save [PATH] | testride";
+    let usage = "studio route new [NAME] | import PATH | import part N|all | import cancel | power W | package N | fit | plan X Z X Z … | via add X Z | via insert N X Z | via move N X Z | via remove N | drag GX GZ X Z | reverse | loop on|off | outback | cut start|end N | split N | profile road|gravel|mtb|quiet | name TEXT | planner builtin|brouter | brouter url URL | brouter profile P | brouter ok | brouter plan | export PATH | save [PATH] | testride";
     Ok(match (w(0), w(1)) {
         (Some("new"), _) => C::New((words.len() > 1).then(|| rest(1))),
+        (Some("import"), Some("part")) => match w(2) {
+            Some("all") => C::ImportPart(PartChoice::All),
+            _ => C::ImportPart(PartChoice::One(index(2)?)),
+        },
+        (Some("import"), Some("cancel")) => C::CancelImport,
         (Some("import"), Some(_)) => C::Import(rest(1)),
+        (Some("power"), Some(_)) => C::Power(num(1, "the power (W)")?),
         (Some("package"), _) => C::PackageRoute(index(1).unwrap_or(0)),
         (Some("plan"), _) => {
             let nums = words[1..]
@@ -1144,6 +1432,65 @@ pub fn console_route(words: &[String]) -> Result<RouteCommand, String> {
     })
 }
 
+/// "expected 1 h 05 min at 200 W (24.3 km/h), Ada Rider, 68 kg, Road".
+pub fn estimate_line(e: &RideEstimate, rider: &LocalRider) -> String {
+    format!(
+        "expected {} at {:.0} W ({:.1} km/h), {}",
+        ocw_sim::estimate::duration_text(e.time_s),
+        e.power_w,
+        e.average_mps * 3.6,
+        rider.summary()
+    )
+}
+
+/// What the map fits: the parts of a waiting import, else the route.
+pub fn fit_extent(routes: &RouteTools) -> Option<([f64; 2], [f64; 2])> {
+    if let Some(p) = &routes.pending {
+        let v = RouteView {
+            track: p
+                .parts
+                .iter()
+                .flat_map(|t| t.line.iter().copied())
+                .collect(),
+            ..Default::default()
+        };
+        return route_extent(&v);
+    }
+    route_extent(&routes.view)
+}
+
+/// "47.1412° N 9.5213° E".
+pub fn lat_lon_text((lat, lon): (f64, f64)) -> String {
+    format!(
+        "{:.4}° {} {:.4}° {}",
+        lat.abs(),
+        if lat >= 0.0 { "N" } else { "S" },
+        lon.abs(),
+        if lon >= 0.0 { "E" } else { "W" }
+    )
+}
+
+/// The package place nearest to `p` (x, z) within 5 km: "near Vaduz".
+pub fn near_place(studio: &Studio, p: [f64; 2]) -> Option<String> {
+    let places = studio.package.as_ref()?.pkg.places.as_ref()?;
+    places
+        .places
+        .iter()
+        .map(|pl| {
+            let d = (f64::from(pl.pos[0]) - p[0]).hypot(f64::from(pl.pos[1]) - p[1]);
+            (d, pl)
+        })
+        .filter(|(d, _)| *d < 5000.0)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(d, pl)| {
+            if d < 300.0 {
+                format!("in {}", pl.name)
+            } else {
+                format!("near {}", pl.name)
+            }
+        })
+}
+
 /// `studio route info`: the route in a few lines.
 pub fn route_lines(studio: &Studio) -> Vec<String> {
     let Some(d) = studio.route() else {
@@ -1165,6 +1512,9 @@ pub fn route_lines(studio: &Studio) -> Vec<String> {
             p.loss_m,
             p.max_grade * 100.0
         ));
+    }
+    if let Some(e) = &studio.routes.estimate {
+        out.push(estimate_line(e, &studio.routes.rider));
     }
     for f in d.findings() {
         let tag = match f.severity {
@@ -1480,12 +1830,222 @@ mod tests {
             planner: PlannerKind::Brouter,
             brouter_url: "http://localhost:17777".into(),
             brouter_profile: "fastbike".into(),
+            power_w: 250.0,
         };
         s.save(Some(&p)).unwrap();
         let text = std::fs::read_to_string(&p).unwrap();
         assert!(text.contains("\"route.planner.brouter_url\""));
         assert_eq!(PlannerSettings::load(Some(&p)), s);
         assert_eq!(PlannerSettings::load(Some(&dir.join("none.json"))), d);
+        // An older file without the power gets the default.
+        std::fs::write(&p, r#"{"route.planner": "builtin"}"#).unwrap();
+        assert_eq!(PlannerSettings::load(Some(&p)).power_w, DEFAULT_POWER_W);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_package_surfaces_steer_the_planner() {
+        let mut s = studio();
+        run(&mut s, RouteCommand::New(None), 0.0);
+        let via = vec![[0.0, 200.0], [600.0, 200.0]];
+        run(&mut s, RouteCommand::Plan(via.clone()), 1.0);
+        assert!((length(&s) - 600.0).abs() < 1e-6);
+        // The package's strips say row 1's middle (vertex 5 → 6) is dirt:
+        // the road bike goes round it.
+        let net = s.routes.net.clone().unwrap();
+        let dirt = net
+            .graph()
+            .edges
+            .iter()
+            .position(|e| (e.from.0, e.to.0) == (5, 6))
+            .unwrap();
+        s.routes.surfaces = Arc::new(
+            (0..net.graph().edges.len())
+                .map(|e| {
+                    if e == dirt {
+                        RoadSurface::Dirt
+                    } else {
+                        RoadSurface::of_class(net.edge(e).class)
+                    }
+                })
+                .collect(),
+        );
+        s.routes.costs = None;
+        run(&mut s, RouteCommand::New(None), 2.0);
+        run(&mut s, RouteCommand::Plan(via), 3.0);
+        assert!((length(&s) - 1000.0).abs() < 1e-6, "{}", length(&s));
+        // The figures show the package's surfaces too.
+        refresh_view(&mut s);
+        let p = s.routes.view.profile.as_ref().unwrap();
+        assert!(p.surfaces.iter().all(|(sf, _)| *sf != RoadSurface::Dirt));
+        assert_eq!(s.routes.surface(&net, dirt), RoadSurface::Dirt);
+    }
+
+    #[test]
+    fn the_expected_time_follows_the_route_and_the_power() {
+        let mut s = studio();
+        run(&mut s, RouteCommand::New(None), 0.0);
+        run(
+            &mut s,
+            RouteCommand::Plan(vec![[0.0, 0.0], [600.0, 600.0]]),
+            1.0,
+        );
+        refresh_view(&mut s);
+        // 1.2 km on the flat at 200 W (75 kg, road bike): about 33 km/h.
+        let e = s.routes.estimate.unwrap();
+        assert_eq!(e.power_w, DEFAULT_POWER_W);
+        assert!((e.length_m - 1200.0).abs() < 1e-6);
+        let kmh = e.average_mps * 3.6;
+        assert!((29.0..34.0).contains(&kmh), "{kmh}");
+        let steady = ocw_sim::physics::steady_speed(
+            &s.routes.rider.physics,
+            &ocw_sim::Environment::with_grade(0.0),
+            200.0,
+        );
+        assert!(e.time_s > 1200.0 / steady && e.time_s < 1200.0 / steady + 15.0);
+        assert!(route_lines(&s).iter().any(|l| l.starts_with("expected")));
+        // More power: faster; the setting is kept.
+        run(&mut s, RouteCommand::Power(400.0), 2.0);
+        refresh_view(&mut s);
+        let fast = s.routes.estimate.unwrap();
+        assert!(fast.time_s < e.time_s * 0.85);
+        assert_eq!(s.routes.settings.power_w, 400.0);
+        assert!(command(&mut s, RouteCommand::Power(5.0), 3.0).is_err());
+        assert!(command(&mut s, RouteCommand::Power(f64::NAN), 3.0).is_err());
+        // A heavier rider climbs slower: edge 0 climbs 30 m.
+        let mut g = s.routes.net.as_ref().unwrap().graph().clone();
+        g.edges[0].profile = (0..=20).map(|k| f64::from(k) * 1.5).collect();
+        let net = RoadNetwork::new(g);
+        let mut d = RouteDoc::new(s.routes.package.clone(), "climb");
+        let costs = EdgeCosts::new(&net, Profile::RoadBike, None);
+        let ed = Editor {
+            net: &net,
+            costs: &costs,
+        };
+        let RouteOp::Set(set) = ed.plan_through(&[[0.0, 0.0], [200.0, 0.0]]).unwrap() else {
+            panic!()
+        };
+        d.geometry = set.geometry;
+        let profile = route_profile(&net, &d.plan(&net).unwrap(), &|_| RoadSurface::Asphalt);
+        let light = estimate(&profile, &RiderProfile::for_rider_weight(60.0), 250.0).unwrap();
+        let heavy = estimate(&profile, &RiderProfile::for_rider_weight(95.0), 250.0).unwrap();
+        assert!(
+            heavy.time_s > light.time_s * 1.1,
+            "{} {}",
+            heavy.time_s,
+            light.time_s
+        );
+        // No route, no estimate.
+        run(&mut s, RouteCommand::New(None), 4.0);
+        refresh_view(&mut s);
+        s.routes.view = RouteView::default();
+        s.routes.update_estimate();
+        assert!(s.routes.estimate.is_none());
+        assert!(estimate_line(&fast, &s.routes.rider).contains("at 400 W"));
+    }
+
+    #[test]
+    fn the_rider_comes_from_the_games_config() {
+        let dir = tmp_dir("rider");
+        assert_eq!(LocalRider::load(Some(&dir)), LocalRider::default());
+        assert_eq!(LocalRider::default().weight_kg, 75.0);
+        // The old riders file …
+        std::fs::write(
+            dir.join("riders.toml"),
+            "[[rider]]\nname = \"Bea Climber\"\nweight_kg = 58.0\n",
+        )
+        .unwrap();
+        let r = LocalRider::load(Some(&dir));
+        assert_eq!((r.name.as_str(), r.weight_kg), ("Bea Climber", 58.0));
+        assert_eq!(r.physics.rider_mass_kg, 58.0);
+        // … and ocw.toml's section first, its active rider.
+        std::fs::write(
+            dir.join("ocw.toml"),
+            "[settings]\n\n[riders]\nactive = \"Cy Sprinter\"\n\n[[riders.rider]]\nname = \"Ada Rider\"\nweight_kg = 64.0\n\n[[riders.rider]]\nname = \"Cy Sprinter\"\nweight_kg = 88.0\nbike = \"gravel\"\n",
+        )
+        .unwrap();
+        let r = LocalRider::load(Some(&dir));
+        assert_eq!((r.name.as_str(), r.weight_kg), ("Cy Sprinter", 88.0));
+        assert_eq!(r.physics.bike, ocw_core::ProfileId::Gravel);
+        assert!(r.from.as_deref().unwrap().ends_with("ocw.toml"));
+        assert!(
+            r.summary().starts_with("Cy Sprinter, 88 kg"),
+            "{}",
+            r.summary()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A GPX file of two segments on the grid: row 1 east (600 m), then
+    /// 200 m down column 0 from z = 400.
+    fn two_segments() -> String {
+        let proj = ocw_world::geo::LocalProjection::new(47.14, 9.52);
+        let seg = |pts: Vec<[f64; 2]>| -> String {
+            let mut s = String::from("<trkseg>");
+            for p in pts {
+                let (lat, lon) = proj.unproject(p);
+                s.push_str(&format!(r#"<trkpt lat="{lat:.7}" lon="{lon:.7}"/>"#));
+            }
+            s + "</trkseg>"
+        };
+        format!(
+            "<gpx><trk><name>Ada's two rides</name>{}{}</trk></gpx>",
+            seg((0..=30).map(|k| [f64::from(k) * 20.0, 200.0]).collect()),
+            seg((0..=20)
+                .map(|k| [0.0, 400.0 + f64::from(k) * 10.0])
+                .collect())
+        )
+    }
+
+    #[test]
+    fn a_file_of_several_parts_waits_for_the_choice_of_one() {
+        let mut s = studio();
+        let dir = tmp_dir("parts");
+        let gpx = dir.join("two.gpx");
+        std::fs::write(&gpx, two_segments()).unwrap();
+        let path = gpx.display().to_string();
+        let msg = run(&mut s, RouteCommand::Import(path.clone()), 0.0);
+        assert!(msg.contains("has 2 parts"), "{msg}");
+        // Nothing imported yet; the parts are listed.
+        assert!(s.route().is_none());
+        let p = s.routes.pending.as_ref().unwrap();
+        assert_eq!(p.parts.len(), 2);
+        assert!((p.parts[0].length_m - 600.0).abs() < 3.0);
+        assert!(lat_lon_text(p.parts[0].start).starts_with("47.1"));
+        let ext = fit_extent(&s.routes).unwrap();
+        assert!(ext.0[0] < 1.0 && ext.1[0] > 599.0 && ext.1[1] > 599.0);
+        // The second part alone.
+        let msg = run(&mut s, RouteCommand::ImportPart(PartChoice::One(1)), 1.0);
+        assert!(msg.contains("part 2 of 2"), "{msg}");
+        assert!(s.routes.pending.is_none());
+        assert!((length(&s) - 200.0).abs() < 2.0, "{}", length(&s));
+        assert_eq!(s.route().unwrap().content().name, "Ada's two rides (2/2)");
+        // Again, all joined: both parts and the jump between them.
+        run(&mut s, RouteCommand::Import(path.clone()), 2.0);
+        let msg = run(&mut s, RouteCommand::ImportPart(PartChoice::All), 3.0);
+        assert!(msg.contains("2 parts joined"), "{msg}");
+        assert!(
+            s.route()
+                .unwrap()
+                .content()
+                .problems
+                .iter()
+                .any(|p| p.kind == ProblemKind::Gap)
+        );
+        // A part that is not there keeps the file waiting; cancel forgets it.
+        run(&mut s, RouteCommand::Import(path), 4.0);
+        assert!(command(&mut s, RouteCommand::ImportPart(PartChoice::One(5)), 5.0).is_err());
+        assert!(s.routes.pending.is_some());
+        run(&mut s, RouteCommand::CancelImport, 6.0);
+        assert!(s.routes.pending.is_none());
+        assert!(command(&mut s, RouteCommand::ImportPart(PartChoice::All), 7.0).is_err());
+        // A file of one part is imported at once, as before.
+        let one = dir.join("one.gpx");
+        let text = two_segments().replacen("</trkseg><trkseg>", "", 1);
+        std::fs::write(&one, text).unwrap();
+        let msg = run(&mut s, RouteCommand::Import(one.display().to_string()), 8.0);
+        assert!(msg.starts_with("imported"), "{msg}");
+        assert!(s.routes.pending.is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1517,6 +2077,27 @@ mod tests {
             RouteCommand::Loop(true)
         );
         assert_eq!(console_route(&w("fit")).unwrap(), RouteCommand::Fit);
+        assert_eq!(
+            console_route(&w("import part 2")).unwrap(),
+            RouteCommand::ImportPart(PartChoice::One(1))
+        );
+        assert_eq!(
+            console_route(&w("import part all")).unwrap(),
+            RouteCommand::ImportPart(PartChoice::All)
+        );
+        assert_eq!(
+            console_route(&w("import cancel")).unwrap(),
+            RouteCommand::CancelImport
+        );
+        assert_eq!(
+            console_route(&w("import ~/two rides.gpx")).unwrap(),
+            RouteCommand::Import("~/two rides.gpx".into())
+        );
+        assert_eq!(
+            console_route(&w("power 250")).unwrap(),
+            RouteCommand::Power(250.0)
+        );
+        assert!(console_route(&w("power lots")).is_err());
         let v = RouteView {
             line: vec![[0.0, 5.0, 10.0], [30.0, 5.0, -20.0]],
             ..Default::default()

@@ -427,6 +427,7 @@ pub fn apply(world: &mut World, cmd: StudioCommand) -> Result<String, String> {
             let fit = matches!(
                 c,
                 crate::routes::RouteCommand::Import(_)
+                    | crate::routes::RouteCommand::ImportPart(_)
                     | crate::routes::RouteCommand::PackageRoute(_)
                     | crate::routes::RouteCommand::Fit
             );
@@ -434,7 +435,8 @@ pub fn apply(world: &mut World, cmd: StudioCommand) -> Result<String, String> {
             if fit {
                 // The map shows the whole route (its view is made now).
                 crate::routes::refresh_view(&mut world.resource_mut::<Studio>());
-                let ext = crate::routes::route_extent(&world.resource::<Studio>().routes.view);
+                // (A file waiting for the choice of a part: all its parts.)
+                let ext = crate::routes::fit_extent(&world.resource::<Studio>().routes);
                 if let (Some((min, max)), Some(mut w)) =
                     (ext, world.get_resource_mut::<crate::world::OpenWorld>())
                 {

@@ -22,6 +22,14 @@ pub const COURSE_SPEED_MPS: f64 = 25.0 / 3.6;
 /// the content does). Graph routes are not tracks: see
 /// [`ocw_world::GraphRoute::parse`].
 pub fn read_track(name: &str, bytes: &[u8]) -> Result<(Track, TrackFormat), String> {
+    let (gpx, format) = read_parts(name, bytes)?;
+    Ok((Track::of_gpx(&gpx, format.name()), format))
+}
+
+/// Reads a track file with its parts (GPX track segments and routes, TCX
+/// tracks, GeoJSON lines; [`Gpx::part_ranges`]), for choosing one of
+/// them ([`super::track_parts`]).
+pub fn read_parts(name: &str, bytes: &[u8]) -> Result<(Gpx, TrackFormat), String> {
     let format = TrackFormat::of_name(name)
         .or_else(|| TrackFormat::sniff(bytes))
         .ok_or_else(|| format!("{name}: not a GPX, TCX, GeoJSON or FIT file"))?;
@@ -54,7 +62,7 @@ pub fn read_track(name: &str, bytes: &[u8]) -> Result<(Track, TrackFormat), Stri
             Gpx {
                 name: None,
                 points,
-                parts: 1,
+                segments: Vec::new(),
             }
         }
         TrackFormat::GraphRoute => {
@@ -63,7 +71,7 @@ pub fn read_track(name: &str, bytes: &[u8]) -> Result<(Track, TrackFormat), Stri
             ));
         }
     };
-    Ok((Track::of_gpx(&gpx, format.name()), format))
+    Ok((gpx, format))
 }
 
 /// The route's points with heights from the road profile (lat, lon, ele),
