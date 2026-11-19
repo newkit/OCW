@@ -55,10 +55,10 @@ pub enum LightsMode {
     Off,
 }
 
-/// Whether a bike with these parts (catalogue ids) has lights: a part of
-/// the slot `lights` with lamps, not the base "no lights" (spec §14
-/// Phase 4, `lights.set`).
-pub fn has_lights(parts: &[String]) -> bool {
+/// Whether a bike with these parts (catalogue ids) has a light set fitted
+/// (spec §14 Phase 4, `lights.set`): the upgrade of the small default
+/// lamps every bike carries (Phase 9 Q3, changed 2026-11-19).
+pub fn has_light_set(parts: &[String]) -> bool {
     fitted_lights(parts).is_some()
 }
 
@@ -150,8 +150,8 @@ struct SkyAtmosphere;
 #[derive(Component)]
 struct BikeLamps;
 
-/// One lamp of an avatar's fitted light set: shown while the lights are
-/// on.
+/// One lamp of an avatar's bike (its default lamps or the fitted light
+/// set): shown while the lights are on.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct BikeLamp {
     /// The avatar whose bike it is on.
@@ -577,17 +577,27 @@ pub const REF_REAR_LM: f32 = 15.0;
 /// exposure and floor (`display.night_brightness`), not photometric.
 pub const BEAM_LM_PER_LM: f32 = 40.0;
 
-/// What a fitted light set looks like in the ride (spec §14 Phase 9 Q3:
-/// brightness and colour from the part).
+/// What a bike's lamps look like in the ride (spec §14 Phase 9 Q3:
+/// brightness and colour from the part – the default lamps or the fitted
+/// light set).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LampLook {
     /// The lenses' glow (linear, above 1: they glow).
     pub front: LinearRgba,
     pub rear: LinearRgba,
-    /// The local rider's beam on the road: power, reach, colour.
+    /// The far glows' size (1: the light set's lamp).
+    pub front_size: f32,
+    pub rear_size: f32,
+    /// The local rider's beam on the road: power, reach, colour and its
+    /// cone (outer and inner half angles, rad).
     pub beam_lm: f32,
     pub beam_range_m: f32,
     pub beam_colour: Color,
+    pub beam_outer: f32,
+    pub beam_inner: f32,
+    /// How steeply the beam points down (drop per metre ahead): a small
+    /// lamp lights the road just ahead, a strong one farther on.
+    pub beam_drop: f32,
 }
 
 fn hex_linear(c: u32) -> LinearRgba {
@@ -597,29 +607,63 @@ fn hex_linear(c: u32) -> LinearRgba {
 
 /// The lamps of light set `spec` (pure): the glow grows with the square
 /// root of the flux (as the eye sees it), the beam with the flux, its reach
-/// with its square root (the inverse-square law); a dark lamp (0 lm) does
-/// not glow.
+/// with its square root (the inverse-square law), its cone a little wider
+/// for a stronger lamp (a small commuter lamp lights a short, narrower
+/// cone); a dark lamp (0 lm) does not glow.
 pub fn lamp_look(spec: &ocw_assets::parts::LightSpec) -> LampLook {
     let glow = |c: u32, lm: u32, reference: f32, k: f32| {
         hex_linear(c) * (k * (lm as f32 / reference).sqrt())
     };
     let front = spec.front_lm as f32 / REF_FRONT_LM;
+    let rear = spec.rear_lm as f32 / REF_REAR_LM;
+    // Far away a lamp reads as a point of light: the small default lamps
+    // stay at least 0.8 of the set's glow box (else under a pixel).
+    let size = |share: f32| share.sqrt().clamp(0.8, 1.5);
+    let cone = front.sqrt().min(1.5);
     LampLook {
         front: glow(spec.front_colour, spec.front_lm, REF_FRONT_LM, 6.0),
         rear: glow(spec.rear_colour, spec.rear_lm, REF_REAR_LM, 5.0),
+        front_size: size(front),
+        rear_size: size(rear),
         beam_lm: spec.front_lm as f32 * BEAM_LM_PER_LM,
         beam_range_m: (45.0 * front.sqrt()).clamp(15.0, 90.0),
         beam_colour: Color::from(hex_linear(spec.front_colour)),
+        beam_outer: 0.3 + 0.12 * cone,
+        beam_inner: 0.14 + 0.08 * cone,
+        beam_drop: 0.2 - 0.08 * cone,
     }
 }
 
+/// The small default lamps every bike carries (Phase 9 Q3, changed
+/// 2026-11-19): the base part of the slot `lights` for the bike's type
+/// (`lights.none.base`, "Basic lights": a ~60 lm commuter lamp, a small
+/// red LED).
+pub fn default_lights(bike: ocw_core::ProfileId) -> ocw_assets::parts::LightSpec {
+    ocw_assets::shipped::catalogue()
+        .base(ocw_assets::parts::Slot::Lights, bike.bike())
+        .and_then(|p| p.light)
+        .unwrap_or(ocw_assets::parts::LightSpec {
+            front_lm: 60,
+            rear_lm: 4,
+            front_colour: 0xFFF4E6,
+            rear_colour: 0xFF2614,
+        })
+}
+
+/// The lamps of a bike with these parts: the fitted light set (the
+/// upgrade) or else the bike's default lamps – every bike has lights.
+pub fn bike_lights(bike: ocw_core::ProfileId, parts: &[String]) -> ocw_assets::parts::LightSpec {
+    fitted_lights(parts).unwrap_or_else(|| default_lights(bike))
+}
+
 /// The light set fitted to a bike with these parts (catalogue ids), if
-/// any: the first part of the slot `lights` that has lamps.
+/// any: the first part of the slot `lights` that is not the base (whose
+/// default lamps every bike has, [`default_lights`]).
 pub fn fitted_lights(parts: &[String]) -> Option<ocw_assets::parts::LightSpec> {
     let cat = ocw_assets::shipped::catalogue();
     parts.iter().find_map(|id| {
         cat.get(id)
-            .filter(|p| p.slot == ocw_assets::parts::Slot::Lights)
+            .filter(|p| p.slot == ocw_assets::parts::Slot::Lights && !p.is_base())
             .and_then(|p| p.light)
     })
 }
@@ -646,11 +690,13 @@ fn lamp_material(c: LinearRgba) -> StandardMaterial {
     }
 }
 
-/// Gives every rider with a light set fitted (the avatar's
-/// [`crate::riders::LampAnchors`], from the lenses of its bike model; not
-/// the ghost) the far glow of its front and rear lamp; the local rider's
-/// front lamp also lights the road (a spot light). The near lenses glow
-/// themselves ([`crate::riders::BikeLens`]). Bikes without lights get none.
+/// Gives every rider (the avatar's [`crate::riders::LampAnchors`], from
+/// the lenses of its bike model – every exported bike has its default
+/// lamps, Phase 9 Q3; not the ghost) the far glow of its front and rear
+/// lamp; the local rider's front lamp also lights the road (a spot light).
+/// The others' front lamps are glowing lenses only (no light per rider:
+/// cheap with many riders). The near lenses glow themselves
+/// ([`crate::riders::BikeLens`]). A model without lenses gets none.
 fn add_bike_lamps(
     mut commands: Commands,
     avatars: Query<(Entity, &Avatar, Option<&crate::riders::LampAnchors>), Without<BikeLamps>>,
@@ -704,20 +750,26 @@ fn add_bike_lamps(
                 },
                 SpotLight {
                     color: Color::srgb(1.0, 0.96, 0.9),
-                    intensity: REF_FRONT_LM * BEAM_LM_PER_LM,
-                    range: 45.0,
-                    outer_angle: 0.42,
-                    inner_angle: 0.22,
+                    intensity: 60.0 * BEAM_LM_PER_LM,
+                    range: 20.0,
+                    outer_angle: 0.35,
+                    inner_angle: 0.18,
                     shadow_maps_enabled: false,
                     ..default()
                 },
                 // Ahead and a little down onto the road.
-                Transform::from_translation(at).looking_to(Vec3::new(0.0, -0.16, -1.0), Vec3::Y),
+                Transform::from_translation(at).looking_to(beam_dir(0.16), Vec3::Y),
                 Visibility::Hidden,
                 ChildOf(node),
             ));
         }
     }
+}
+
+/// The beam's direction in the lamp node's frame: ahead (-Z), dropping
+/// `drop` per metre.
+fn beam_dir(drop: f32) -> Vec3 {
+    Vec3::new(0.0, -drop, -1.0)
 }
 
 /// Whether the bike lights are on.
@@ -765,6 +817,7 @@ fn bike_lamps(
     mut lamps: Query<(
         &BikeLamp,
         &mut Visibility,
+        &mut Transform,
         Option<&mut SpotLight>,
         Option<&mut MeshMaterial3d<StandardMaterial>>,
     )>,
@@ -787,19 +840,26 @@ fn bike_lamps(
         && settings.lights == LightsMode::Auto
         && daylight_at_rider(view.as_deref(), tunnels.as_deref()) < 1.0;
     let on = in_tunnel || lamps_on(settings.lights, light.as_ref());
-    // Only the bikes with lights fitted (Q3), as bright as their set.
-    let fitted: std::collections::HashMap<ocw_core::RiderId, LampLook> = view
+    // Every bike has lamps (Q3, changed 2026-11-19): the fitted light set
+    // (the upgrade) or its default ones, as bright as the part says.
+    let looks: std::collections::HashMap<ocw_core::RiderId, LampLook> = view
         .as_ref()
         .map(|v| {
             v.riders
                 .iter()
-                .filter_map(|r| fitted_lights(&r.parts).map(|s| (r.id, lamp_look(&s))))
+                .map(|r| (r.id, lamp_look(&bike_lights(r.bike, &r.parts))))
                 .collect()
         })
         .unwrap_or_default();
-    let look_of = |avatar: Entity| avatars.get(avatar).ok().and_then(|a| fitted.get(&a.id));
+    let fallback = lamp_look(&default_lights(ocw_core::ProfileId::Road));
+    let look_of = |avatar: Entity| {
+        avatars
+            .get(avatar)
+            .ok()
+            .map(|a| looks.get(&a.id).copied().unwrap_or(fallback))
+    };
     let mut materials = materials;
-    for (lamp, mut v, spot, material) in &mut lamps {
+    for (lamp, mut v, mut t, spot, material) in &mut lamps {
         let look = look_of(lamp.avatar);
         let want = if on && look.is_some() {
             Visibility::Inherited
@@ -810,12 +870,27 @@ fn bike_lamps(
             *v = want;
         }
         let Some(look) = look else { continue };
-        if let Some(mut s) = spot
-            && (s.intensity != look.beam_lm || s.range != look.beam_range_m)
-        {
-            s.intensity = look.beam_lm;
-            s.range = look.beam_range_m;
-            s.color = look.beam_colour;
+        if let Some(mut s) = spot {
+            if s.intensity != look.beam_lm
+                || s.range != look.beam_range_m
+                || s.outer_angle != look.beam_outer
+            {
+                s.intensity = look.beam_lm;
+                s.range = look.beam_range_m;
+                s.color = look.beam_colour;
+                s.outer_angle = look.beam_outer;
+                s.inner_angle = look.beam_inner;
+                t.look_to(beam_dir(look.beam_drop), Vec3::Y);
+            }
+            continue;
+        }
+        let size = if lamp.kind == LampKind::RearGlow {
+            look.rear_size
+        } else {
+            look.front_size
+        };
+        if t.scale.x != size {
+            t.scale = Vec3::splat(size);
         }
         if let (Some(mut m), Some(assets)) = (material, materials.as_deref_mut()) {
             let c = if lamp.kind == LampKind::RearGlow {
@@ -831,7 +906,8 @@ fn bike_lamps(
     }
     // The near lenses glow while the lights are on.
     for (lens, mut m) in &mut lenses {
-        let h = match (on, look_of(lens.avatar), materials.as_deref_mut()) {
+        let look = look_of(lens.avatar);
+        let h = match (on, look.as_ref(), materials.as_deref_mut()) {
             (true, Some(look), Some(assets)) => {
                 glows.get(assets, if lens.rear { look.rear } else { look.front })
             }
@@ -1056,7 +1132,8 @@ mod tests {
     /// Phase 9 Q3: the lamps are the fitted set's – its brightness and
     /// colour: the catalogue's StVZO set gives the tuned reference glow
     /// and beam; a brighter set glows brighter and reaches farther; the
-    /// rear lamp is red; no set, no lamps.
+    /// rear lamp is red; the base part is no light set (its default lamps
+    /// come from [`default_lights`]).
     #[test]
     fn the_lamps_are_as_bright_and_coloured_as_the_fitted_set() {
         let set = fitted_lights(&["tyres.road.race".into(), "lights.set".into()]).unwrap();
@@ -1091,16 +1168,76 @@ mod tests {
         assert!(fitted_lights(&[]).is_none());
     }
 
-    /// Q3: only bikes with lights fitted in the workshop have them.
+    /// Q3 (changed 2026-11-19): every bike has a white front and a red
+    /// rear lamp – the default ones, or the fitted light set as the
+    /// upgrade: a stronger, longer and wider beam and a bigger, brighter
+    /// rear lamp.
     #[test]
-    fn lights_come_with_the_fitted_part() {
-        assert!(has_lights(&["lights.set".into()]));
-        assert!(!has_lights(&[]));
-        assert!(!has_lights(&["lights.none.base".into()]));
+    fn the_light_set_is_an_upgrade_of_the_default_lamps() {
+        assert!(has_light_set(&["lights.set".into()]));
+        assert!(!has_light_set(&[]));
+        assert!(!has_light_set(&["lights.none.base".into()]));
+        for p in ocw_core::ProfileId::ALL {
+            let d = bike_lights(p, &[]);
+            assert_eq!(d, default_lights(p), "{p:?}");
+            assert_eq!(bike_lights(p, &["lights.none.base".into()]), d);
+            let (dl, sl) = (
+                lamp_look(&d),
+                lamp_look(&bike_lights(p, &["lights.set".into()])),
+            );
+            assert!(dl.front.red > 1.0 && dl.rear.red > 1.0, "{p:?}: they glow");
+            assert!(
+                dl.rear.red > 5.0 * dl.rear.green && dl.front.blue > 0.5 * dl.front.red,
+                "{p:?}: white front, red rear"
+            );
+            assert!(sl.beam_lm > 4.0 * dl.beam_lm, "{p:?}: stronger beam");
+            assert!(sl.beam_range_m > 1.8 * dl.beam_range_m, "{p:?}: longer");
+            assert!(sl.beam_outer > dl.beam_outer && sl.beam_inner > dl.beam_inner);
+            assert!(
+                sl.beam_drop < dl.beam_drop,
+                "{p:?}: the set reaches farther"
+            );
+            assert!(sl.rear.red > dl.rear.red && sl.rear_size > dl.rear_size);
+            // The default: a commuter lamp's short cone of road.
+            assert!(
+                (15.0..=25.0).contains(&dl.beam_range_m) && dl.beam_outer < 0.4,
+                "{p:?}: {dl:?}"
+            );
+        }
+    }
+
+    fn avatar(app: &mut App, id: u32, local: bool) -> Entity {
+        app.world_mut()
+            .spawn((
+                Avatar {
+                    id: ocw_core::RiderId(id),
+                    is_local: local,
+                },
+                Transform::default(),
+                Visibility::default(),
+            ))
+            .id()
+    }
+
+    fn glow_of(app: &App, lens: Entity) -> Handle<StandardMaterial> {
+        app.world()
+            .get::<MeshMaterial3d<StandardMaterial>>(lens)
+            .unwrap()
+            .0
+            .clone()
+    }
+
+    /// Q3 (changed 2026-11-19): at night every rider's bike – the own and
+    /// the others', with or without a light set – shows its lamps; the
+    /// others' as glowing lenses and far glows only (one spot light: the
+    /// own beam); by day and with `sky.lights off` none.
+    #[test]
+    fn every_bike_shows_its_lamps_at_night() {
         let mut view = RideView::new(ocw_world::Route::test_loop());
         view.sky = Some(sky_at("night"));
         view.riders.push(rider_view(1, &[]));
         view.riders.push(rider_view(2, &["lights.set"]));
+        view.riders.push(rider_view(3, &[]));
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Mesh>()
@@ -1110,98 +1247,105 @@ mod tests {
             .insert_resource(ClearColor::default())
             .add_plugins(crate::console::ConsoleCorePlugin)
             .add_plugins(SkyPlugin);
-        let bare = app
-            .world_mut()
-            .spawn((
-                Avatar {
-                    id: ocw_core::RiderId(1),
-                    is_local: true,
-                },
-                Transform::default(),
-                Visibility::default(),
-            ))
-            .id();
-        let fitted = app
-            .world_mut()
-            .spawn((
-                Avatar {
-                    id: ocw_core::RiderId(2),
-                    is_local: false,
-                },
-                Transform::default(),
-                Visibility::default(),
-            ))
-            .id();
-        anchor(&mut app, bare);
-        anchor(&mut app, fitted);
-        // A rider whose bike model has no lenses gets no lamps at all.
-        let dark = app
-            .world_mut()
-            .spawn((
-                Avatar {
-                    id: ocw_core::RiderId(3),
-                    is_local: false,
-                },
-                Transform::default(),
-                Visibility::default(),
-            ))
-            .id();
-        // The fitted bike's front lens, with its own material when off.
+        let own = avatar(&mut app, 1, true);
+        let set = avatar(&mut app, 2, false);
+        let other = avatar(&mut app, 3, false);
+        for a in [own, set, other] {
+            anchor(&mut app, a);
+        }
+        // A model without lenses gets no lamps at all.
+        let dark = avatar(&mut app, 4, false);
+        // The front lenses of the set's bike and of a bike without a set,
+        // with their own material when off.
         let off = app
             .world_mut()
             .resource_mut::<Assets<StandardMaterial>>()
             .add(StandardMaterial::default());
-        let lens = app
-            .world_mut()
-            .spawn((
-                crate::riders::BikeLens {
-                    avatar: fitted,
-                    rear: false,
-                    off: off.clone(),
-                },
-                MeshMaterial3d(off.clone()),
-                ChildOf(fitted),
-            ))
-            .id();
+        let lens = |app: &mut App, avatar: Entity, rear: bool| {
+            app.world_mut()
+                .spawn((
+                    crate::riders::BikeLens {
+                        avatar,
+                        rear,
+                        off: off.clone(),
+                    },
+                    MeshMaterial3d(off.clone()),
+                    ChildOf(avatar),
+                ))
+                .id()
+        };
+        let set_front = lens(&mut app, set, false);
+        let other_front = lens(&mut app, other, false);
+        let other_rear = lens(&mut app, other, true);
         app.update();
         app.update();
-        let w = app.world_mut();
-        let lamps: Vec<(Visibility, Entity)> = w
-            .query_filtered::<(&Visibility, &ChildOf), With<BikeLamp>>()
-            .iter(w)
-            .map(|(v, c)| (*v, c.parent()))
-            .collect();
-        assert!(lamps.iter().any(|(_, p)| *p == bare), "spawned, hidden");
-        assert!(
-            !lamps.iter().any(|(_, p)| *p == dark),
-            "no lenses, no lamps"
-        );
-        // The lens glows in the set's front colour at night …
-        let glow = app
-            .world()
-            .get::<MeshMaterial3d<StandardMaterial>>(lens)
-            .unwrap()
-            .0
-            .clone();
-        assert_ne!(glow, off);
-        let m = app
-            .world()
-            .resource::<Assets<StandardMaterial>>()
-            .get(&glow)
-            .unwrap();
-        let spec = fitted_lights(&["lights.set".into()]).unwrap();
-        assert_eq!(m.base_color.to_linear(), lamp_look(&spec).front);
-        // … and is its own material again by day.
+        let lamps = |app: &mut App| {
+            let w = app.world_mut();
+            w.query::<(&BikeLamp, &Visibility, &ChildOf, Has<SpotLight>)>()
+                .iter(w)
+                .map(|(l, v, c, spot)| (l.kind, *v, c.parent(), spot))
+                .collect::<Vec<_>>()
+        };
+        let l = lamps(&mut app);
+        assert!(!l.iter().any(|x| x.2 == dark), "no lenses, no lamps");
+        for a in [own, set, other] {
+            for kind in [LampKind::FrontGlow, LampKind::RearGlow] {
+                assert!(l.iter().any(|x| x.2 == a && x.0 == kind), "{a:?} {kind:?}");
+            }
+        }
+        // One light only: the own beam (others' lamps are lenses).
+        let spots: Vec<_> = l.iter().filter(|x| x.3).collect();
+        assert_eq!(spots.len(), 1);
+        assert_eq!((spots[0].0, spots[0].2), (LampKind::Beam, own));
+        assert!(l.iter().all(|x| x.1 == Visibility::Inherited), "night: on");
+        // The own beam: the default commuter lamp's.
+        let beam = {
+            let w = app.world_mut();
+            *w.query::<&SpotLight>().single(w).unwrap()
+        };
+        let d = lamp_look(&default_lights(ocw_core::ProfileId::Road));
+        assert_eq!((beam.intensity, beam.range), (d.beam_lm, d.beam_range_m));
+        // The lenses glow: the set's front, the default front and rear.
+        let mats = |app: &App, h: &Handle<StandardMaterial>| {
+            app.world()
+                .resource::<Assets<StandardMaterial>>()
+                .get(h)
+                .unwrap()
+                .base_color
+                .to_linear()
+        };
+        let s = lamp_look(&fitted_lights(&["lights.set".into()]).unwrap());
+        assert_eq!(mats(&app, &glow_of(&app, set_front)), s.front);
+        assert_eq!(mats(&app, &glow_of(&app, other_front)), d.front);
+        assert_eq!(mats(&app, &glow_of(&app, other_rear)), d.rear);
+        // The set's far glows are bigger than the default's.
+        let size = |app: &mut App, a: Entity| {
+            let w = app.world_mut();
+            w.query::<(&BikeLamp, &Transform, &ChildOf)>()
+                .iter(w)
+                .find(|(b, _, c)| c.parent() == a && b.kind == LampKind::RearGlow)
+                .map(|(_, t, _)| t.scale.x)
+                .unwrap()
+        };
+        assert!(size(&mut app, set) > size(&mut app, other));
+        // By day: all off, the lenses their own material again.
         app.world_mut().resource_mut::<RideView>().sky = Some(sky_at("noon"));
         app.update();
-        let now = &app
-            .world()
-            .get::<MeshMaterial3d<StandardMaterial>>(lens)
-            .unwrap()
-            .0;
-        assert_eq!(*now, off);
+        assert!(lamps(&mut app).iter().all(|x| x.1 == Visibility::Hidden));
+        for e in [set_front, other_front, other_rear] {
+            assert_eq!(glow_of(&app, e), off);
+        }
+        // At night again, but `sky.lights off` (display.bike_lights off).
         app.world_mut().resource_mut::<RideView>().sky = Some(sky_at("night"));
         app.update();
+        assert!(lamps(&mut app).iter().all(|x| x.1 == Visibility::Inherited));
+        app.world_mut()
+            .resource_mut::<crate::console::ConsoleState>()
+            .queue("sky.lights off");
+        app.update();
+        app.update();
+        assert!(lamps(&mut app).iter().all(|x| x.1 == Visibility::Hidden));
+        assert_eq!(glow_of(&app, other_front), off);
         // Regression: the unlit lamps show their base colour, so it must
         // be the lamp's (it was black).
         let w = app.world_mut();
@@ -1219,14 +1363,6 @@ mod tests {
                 "{:?}",
                 m.base_color
             );
-        }
-        for (v, p) in lamps {
-            let want = if p == fitted {
-                Visibility::Inherited
-            } else {
-                Visibility::Hidden
-            };
-            assert_eq!(v, want);
         }
     }
 

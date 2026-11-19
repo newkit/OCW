@@ -877,7 +877,7 @@ shot = 9
 
 [[scene]]
 name = "sky-night-lights"
-description = "Night (23:40 CEST) on the Vaduz-Malbun road: dark scene at the default night brightness, the setting crescent moon as the key light, front and rear lights on the bots that have lights fitted (Phase 9 Q3: a workshop part; the own stock bike has none)"
+description = "Night (23:40 CEST) on the Vaduz-Malbun road: dark scene at the default night brightness, the setting crescent moon as the key light, every bike with its white front and red rear lamp (Phase 9 Q3, v4.94: the default lamps; bots 1-3 with the light set, the upgrade)"
 world = true
 args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "5", "--power", "220"]
 at = ["2=time pause", "2=time 2026-06-21 23:40", "2=dev.bot_bike 1 --parts lights.set", "2=dev.bot_bike 2 --parts lights.set", "2=dev.bot_bike 3 --parts lights.set", "2.5=teleport 1.6", "2.5=camera.orbit 25 12 9"]
