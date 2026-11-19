@@ -26,6 +26,9 @@ impl Plugin for HudPlugin {
         if !app.is_plugin_added::<crate::stamp::StampPlugin>() {
             app.add_plugins(crate::stamp::StampPlugin);
         }
+        if !app.is_plugin_added::<crate::hud_fit::HudFitPlugin>() {
+            app.add_plugins(crate::hud_fit::HudFitPlugin);
+        }
         if !app.is_plugin_added::<crate::photo_preview::PhotoPreviewPlugin>() {
             app.add_plugins(crate::photo_preview::PhotoPreviewPlugin);
         }
@@ -38,6 +41,7 @@ impl Plugin for HudPlugin {
             .init_resource::<LookAhead>()
             .init_resource::<AppKeys>()
             .init_resource::<TopPanelWidth>()
+            .init_resource::<HudBoxes>()
             .add_systems(Startup, (spawn_hud, spawn_recording))
             .add_systems(
                 Update,
@@ -50,7 +54,8 @@ impl Plugin for HudPlugin {
                 )
                     .chain(),
             )
-            .add_systems(PostUpdate, fit_top_panel);
+            .add_systems(PostUpdate, fit_top_panel)
+            .add_systems(Last, measure_hud);
         add_version_label(app);
     }
 }
@@ -194,20 +199,31 @@ pub fn top_panel_max_px(window_px: f32, right_px: f32, inverse_scale: f32) -> f3
 }
 
 /// Keeps the top-left panel clear of the top-right column (regression:
-/// at 150 % HUD size the bike computer ran into the FPS counter).
+/// at 150 % HUD size the bike computer ran into the FPS counter). On a
+/// narrow compact HUD (a phone in portrait, [`crate::hud_fit`]) the panel
+/// takes the whole width and the column moves below it, on the right.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)] // a Bevy system: disjoint UI queries
 fn fit_top_panel(
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     safe: Option<Res<crate::safe_area::SafeArea>>,
+    layout: Option<Res<crate::hud_fit::HudLayout>>,
     right: Query<&ComputedNode, With<HudTopRight>>,
-    mut panel: Query<&mut Node, With<HudTopPanel>>,
+    panel_size: Query<&ComputedNode, With<HudTopPanel>>,
+    mut panel: Query<&mut Node, (With<HudTopPanel>, Without<HudTopRight>)>,
+    mut column: Query<&mut Node, (With<HudTopRight>, Without<HudTopPanel>)>,
     mut width: ResMut<TopPanelWidth>,
 ) {
     let (Ok(w), Ok(r)) = (windows.single(), right.single()) else {
         return;
     };
+    let narrow = layout.is_some_and(|l| l.narrow);
     // The UI's width in physical px (inside the safe area, spec §3.2.3).
     let ui_w = crate::safe_area::ui_area(w, safe.as_deref()).1.x * w.scale_factor();
-    let max = top_panel_max_px(ui_w, r.size().x, r.inverse_scale_factor());
+    let max = if narrow {
+        ui_w * r.inverse_scale_factor() - 2.0 * TOP_MARGIN_PX
+    } else {
+        top_panel_max_px(ui_w, r.size().x, r.inverse_scale_factor())
+    };
     // Not wider than the window either (the panel's 94 vw).
     let max = max.min(ui_w * r.inverse_scale_factor() * 0.94);
     width.set_if_neq(TopPanelWidth(max.floor()));
@@ -217,6 +233,84 @@ fn fit_top_panel(
             n.max_width = want;
         }
     }
+    let top = match (narrow, panel_size.single()) {
+        (true, Ok(p)) => column_top_below(p.size().y * p.inverse_scale_factor()),
+        _ => TOP_MARGIN_PX,
+    };
+    for mut n in &mut column {
+        let want = px(top.round());
+        if n.top != want {
+            n.top = want;
+        }
+    }
+}
+
+/// Where the top-right column starts (UI px) below a top panel `panel_h`
+/// UI px high (the narrow compact HUD).
+pub fn column_top_below(panel_h: f32) -> f32 {
+    TOP_MARGIN_PX + panel_h + 6.0
+}
+
+/// Where the HUD's main boxes are on the window (logical px – CSS px in
+/// the browser: `[left, top, width, height]`, `None` while hidden) and how
+/// many lines the top panel has: for the browser's layout checks
+/// (`window.ocw.hudLayout()`, spec 3.2 *Phone layout*).
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
+pub struct HudBoxes {
+    pub top_panel: Option<[f32; 4]>,
+    pub top_right: Option<[f32; 4]>,
+    pub profile: Option<[f32; 4]>,
+    /// The big line's and the small lines' count.
+    pub big_lines: usize,
+    pub small_lines: usize,
+    /// The top panel's text (big, then small).
+    pub text: String,
+}
+
+#[allow(clippy::type_complexity)] // a Bevy system: disjoint UI queries
+fn measure_hud(
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    safe: Option<Res<crate::safe_area::SafeArea>>,
+    scale: Option<Res<UiScale>>,
+    nodes: Query<(
+        &ComputedNode,
+        &UiGlobalTransform,
+        &InheritedVisibility,
+        Has<HudTopPanel>,
+        Has<HudTopRight>,
+        Has<ProfilePanel>,
+    )>,
+    big: Query<&Text, (With<HudText>, Without<HudSmallText>)>,
+    small: Query<&Text, (With<HudSmallText>, Without<HudText>)>,
+    mut boxes: ResMut<HudBoxes>,
+) {
+    let off = crate::safe_area::ui_offset(windows.single().ok(), safe.as_deref());
+    let k = scale.map_or(1.0, |s| s.0);
+    let mut out = HudBoxes::default();
+    for (c, t, v, top, right, profile) in &nodes {
+        if !(top || right || profile) || !v.get() || c.size().x <= 0.0 {
+            continue;
+        }
+        let inv = c.inverse_scale_factor();
+        let size = c.size() * inv * k;
+        let min = t.translation * inv * k - size * 0.5 + off;
+        let r = Some([min.x, min.y, size.x, size.y]);
+        if top {
+            out.top_panel = r;
+        } else if right {
+            out.top_right = r;
+        } else {
+            out.profile = r;
+        }
+    }
+    let (b, s) = (
+        big.single().map(|t| t.0.clone()).unwrap_or_default(),
+        small.single().map(|t| t.0.clone()).unwrap_or_default(),
+    );
+    out.big_lines = b.lines().count();
+    out.small_lines = s.lines().count();
+    out.text = format!("{b}\n{s}");
+    boxes.set_if_neq(out);
 }
 
 /// The HUD's panels (hidden with `hud off`).
@@ -361,8 +455,30 @@ struct ProfileBar(usize);
 #[derive(Component)]
 struct ProfileRider;
 
+/// The profile's chart (its width follows the compact HUD).
+#[derive(Component)]
+struct ProfileChart;
+
 /// Size of the profile chart (logical px).
 const PROFILE_W: f32 = 300.0;
+
+/// The profile chart's size (UI px) in a HUD `ui` UI px large: 300 × 56,
+/// and on a compact HUD (a phone) at most 40 % of the width and half the
+/// height wide and 44 high, so it stays off the road in the middle and
+/// the navigation map finds room beside it.
+pub fn profile_size(ui: Vec2, compact: bool) -> Vec2 {
+    if compact {
+        Vec2::new(
+            PROFILE_W.min((ui.x * 0.4).min(ui.y * 0.5).floor()),
+            PROFILE_H_COMPACT,
+        )
+    } else {
+        Vec2::new(PROFILE_W, PROFILE_H)
+    }
+}
+
+/// The compact profile's height (UI px).
+const PROFILE_H_COMPACT: f32 = 44.0;
 const PROFILE_H: f32 = 56.0;
 /// The lowest point of the profile keeps this much of the height.
 const PROFILE_BASE: f64 = 0.08;
@@ -559,14 +675,17 @@ fn spawn_profile(parent: &mut ChildSpawnerCommands) {
                 ProfileCaption,
             ));
             panel
-                .spawn(Node {
-                    width: px(PROFILE_W),
-                    max_width: Val::Vw(60.0),
-                    height: px(PROFILE_H),
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::FlexEnd,
-                    ..default()
-                })
+                .spawn((
+                    Node {
+                        width: px(PROFILE_W),
+                        max_width: Val::Vw(60.0),
+                        height: px(PROFILE_H),
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::FlexEnd,
+                        ..default()
+                    },
+                    ProfileChart,
+                ))
                 .with_children(|chart| {
                     for i in 0..bars {
                         chart.spawn((
@@ -601,11 +720,21 @@ type BarParts = (
     &'static mut BackgroundColor,
 );
 
-#[allow(clippy::type_complexity)] // a Bevy system: disjoint UI queries
+#[allow(clippy::type_complexity, clippy::too_many_arguments)] // a Bevy system: disjoint UI queries
 fn update_profile(
     view: Res<RideView>,
     show: Res<ShowProfile>,
     ahead: Res<LookAhead>,
+    layout: Option<Res<crate::hud_fit::HudLayout>>,
+    mut chart: Query<
+        &mut Node,
+        (
+            With<ProfileChart>,
+            Without<ProfilePanel>,
+            Without<ProfileBar>,
+            Without<ProfileRider>,
+        ),
+    >,
     mut panel: Query<
         &mut Node,
         (
@@ -640,6 +769,14 @@ fn update_profile(
     let Some(local) = local else {
         return;
     };
+    if let (Ok(mut c), Some(l)) = (chart.single_mut(), layout.as_deref()) {
+        let size = profile_size(l.ui_px, l.compact);
+        let (w, h) = (px(size.x), px(size.y));
+        if c.width != w || c.height != h {
+            c.width = w;
+            c.height = h;
+        }
+    }
     let spec = ProfileSpec::default();
     let track = ahead.track(&view, local.id);
     let profile = ElevationProfile::sample(track, local.state.distance, &spec);
@@ -1116,6 +1253,22 @@ pub fn weather_hud(line: &str, w: &crate::weather::WeatherView) -> String {
     }
 }
 
+/// The compact HUD's line of conditions (a phone, spec 3.2 *Phone
+/// layout*): the weather's summary, the wind's arrow and speed, the clock
+/// of the place – "clear 18 °C   ↙ 6 km/h   ◐ 16:45" ("" without them).
+pub fn compact_conditions(view: &RideView) -> String {
+    let mut parts = Vec::new();
+    if let Some(w) = &view.weather {
+        parts.push(w.summary.clone());
+        parts.extend(w.wind_short());
+    }
+    if let Some(s) = &view.sky {
+        parts.push(s.hud.clone());
+    }
+    parts.retain(|p| !p.is_empty());
+    parts.join("   ")
+}
+
 /// " | Weather: MET Norway, CC BY 4.0" while the weather is real (spec
 /// §14 Phase 9, S7: the provider's credit stays on screen), else "".
 pub fn attribution_suffix(view: &RideView) -> String {
@@ -1138,10 +1291,16 @@ fn update_hud(
     units: Res<Units>,
     app_keys: Res<AppKeys>,
     panel: Res<TopPanelWidth>,
+    layout: Option<Res<crate::hud_fit::HudLayout>>,
+    touch: Option<Res<crate::touch_hud::TouchHud>>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut big: Query<&mut Text, (With<HudText>, Without<HudSmallText>)>,
     mut small: Query<&mut Text, (With<HudSmallText>, Without<HudText>)>,
 ) {
+    let compact = layout.is_some_and(|l| l.compact);
+    // The keys are left out while the touch hints show: the rider steers
+    // by touch (a phone has no keys; a key brings them back).
+    let touching = touch.is_some_and(|t| t.shown);
     let (Ok(mut big), Ok(mut small)) = (big.single_mut(), small.single_mut()) else {
         return;
     };
@@ -1198,14 +1357,20 @@ fn update_hud(
     );
     // The weather (spec §14 Phase 9, S4) and the world clock of the
     // rider's place (spec §14 Phase 9; the ISO timestamp of captures is
-    // separate, top right).
-    let line = match &view.weather {
-        Some(w) => weather_hud(&line, w),
-        None => line,
-    };
-    let line = match &view.sky {
-        Some(s) => format!("{line}   {}", s.hud),
-        None => line,
+    // separate, top right). Compact (a phone): shortened, in the small
+    // lines, so the big line keeps only the ride's numbers.
+    let conditions = compact_conditions(&view);
+    let line = if compact {
+        line
+    } else {
+        let line = match &view.weather {
+            Some(w) => weather_hud(&line, w),
+            None => line,
+        };
+        match &view.sky {
+            Some(s) => format!("{line}   {}", s.hud),
+            None => line,
+        }
     };
     let (place, keys) = if let Some(route) = &view.route_status {
         (
@@ -1225,15 +1390,32 @@ fn update_hud(
     };
     let (distance, distance_unit) = units.distance(local.state.distance);
     let mut lines = format!(
-        "{place} | {distance:.2} {distance_unit} | {} | {}{}\n{keys} | {}",
+        "{place} | {distance:.2} {distance_unit} | {} | {}{}",
         format_time(view.elapsed_s),
         riders_count(&view),
         attribution_suffix(&view),
-        app_keys.0
     );
-    if !view.status.is_empty() {
+    let status = match (&view.status_compact, compact) {
+        (Some(s), true) => s.as_str(),
+        _ => view.status.as_str(),
+    };
+    if compact {
+        // The place line carries the short status; the conditions first.
+        if !status.is_empty() {
+            lines.push_str(" | ");
+            lines.push_str(status);
+        }
+        if !conditions.is_empty() {
+            lines = format!("{conditions}\n{lines}");
+        }
+    }
+    if !touching {
         lines.push('\n');
-        lines.push_str(&view.status);
+        lines.push_str(&format!("{keys} | {}", app_keys.0));
+    }
+    if !compact && !status.is_empty() {
+        lines.push('\n');
+        lines.push_str(status);
     }
     let (line, lines) = panel_text(panel_px(&panel, &windows), &line, &lines);
     if big.0 != line {
@@ -1832,6 +2014,221 @@ mod tests {
             "{b}\n{sm}"
         );
         assert!(top_panel_height(&b, &sm) > 2.0 * PANEL_PAD + 6.0 * 18.0);
+    }
+
+    /// Spec 3.2 *Phone layout*: on an iPhone 15 (portrait and landscape,
+    /// inside its safe areas) the compact top panel – the ride's numbers,
+    /// then the conditions and the place with the short status, no keys
+    /// while the touch hints show – has at most two big lines and four in
+    /// all, every line inside the panel, and stays in the top fifth
+    /// (portrait) or the top third (landscape) of the screen.
+    #[test]
+    fn the_compact_top_panel_fits_a_phone() {
+        use crate::hud_fit::{
+            HudLayout,
+            tests::{PHONE_LANDSCAPE, PHONE_PORTRAIT},
+        };
+        let big = main_line(
+            200.0,
+            15.6,
+            Some(80.0),
+            2.6,
+            Some(-1.4),
+            None,
+            Units::Metric,
+        );
+        let big_hr = main_line(
+            312.0,
+            38.4,
+            Some(102.0),
+            -12.5,
+            Some(-11.8),
+            Some(178.0),
+            Units::Metric,
+        );
+        let small = "clear 18 °C   ↙ 6 km/h   ◐ 16:45\nTest Hills | 0.05 km | 0:00:14 | riders: 2 | autodrive";
+        let free = "heavy rain 4 °C   ↓ 24 km/h   ◑ 21:05\nFree ride: Landstrasse | 12.34 km | 1:02:03 | riders: 12 | autodrive | gravel";
+        for (ui, css_h) in [(PHONE_PORTRAIT, 852.0f32), (PHONE_LANDSCAPE, 393.0)] {
+            let l = HudLayout::of(ui, 1.0);
+            assert!(l.compact);
+            let scale = l.ui_scale(1.0);
+            let stamp = 25.0 * 14.0 * 0.6 + 16.0;
+            let panel = if l.narrow {
+                l.ui_px.x - 2.0 * TOP_MARGIN_PX
+            } else {
+                top_panel_max_px(l.ui_px.x, stamp, 1.0)
+            }
+            .min(l.ui_px.x * 0.94);
+            for (b, sm) in [(&big, small), (&big_hr, free)] {
+                let (bt, st) = top_panel_text(panel, b, sm);
+                let what = format!("{ui}: {bt}\n{st}");
+                // Heart rate (a phone with a Bluetooth strap: Android)
+                // may take a third big line in portrait.
+                let hr = b.contains("HR");
+                assert!(
+                    bt.lines().count() <= if hr && l.narrow { 3 } else { 2 },
+                    "{what}"
+                );
+                assert!(
+                    bt.lines().count() + st.lines().count() <= 5 + usize::from(hr),
+                    "{what}"
+                );
+                let fits = |t: &str, font: f32| {
+                    t.lines()
+                        .all(|x| x.chars().count() as f32 * font * 0.6 <= panel - 2.0 * PANEL_PAD)
+                };
+                assert!(fits(&bt, BIG_FONT) && fits(&st, SMALL_FONT), "{what}");
+                let h = (TOP_MARGIN_PX + top_panel_height(&bt, &st)) * scale;
+                let room = if l.narrow { 0.2 } else { 1.0 / 3.0 };
+                assert!(h < css_h * room, "{what}: {h} CSS px of {css_h}");
+            }
+            // The typical ride: the numbers on two lines (landscape: left
+            // of the timestamp's column).
+            let (bt, st) = top_panel_text(panel, &big, small);
+            assert_eq!(bt.lines().count(), 2, "{bt}");
+            // Portrait breaks the place line before its status.
+            assert_eq!(st.lines().count(), if l.narrow { 3 } else { 2 }, "{st}");
+            // The column (timestamp, REC, FPS) below the narrow panel.
+            if l.narrow {
+                let h = top_panel_height(&bt, &st);
+                assert!(column_top_below(h) > TOP_MARGIN_PX + h);
+            }
+        }
+    }
+
+    fn me() -> crate::RiderView {
+        crate::RiderView {
+            id: RiderId(1),
+            name: "Ada Rider".into(),
+            state: ocw_sim::RiderState {
+                distance: 400.0,
+                ..default()
+            },
+            power_w: 200.0,
+            cadence_rpm: Some(80.0),
+            heart_rate_bpm: None,
+            is_local: true,
+            bike: Default::default(),
+            look: None,
+            parts: Vec::new(),
+            crash: None,
+            wobble: 0.0,
+            damage: None,
+            cue: Default::default(),
+            signs: Default::default(),
+        }
+    }
+
+    /// The top panel's text: on a desktop window the big line keeps the
+    /// weather and the clock and the keys and the full status follow
+    /// (unchanged); compact (a phone) the big line has only the numbers,
+    /// the short status joins the place line, and the keys go while the
+    /// touch hints show (they come back with a key).
+    #[test]
+    fn the_compact_hud_text_on_a_phone() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(RideView::new(ramp()))
+            .init_resource::<LookAhead>()
+            .init_resource::<Units>()
+            .init_resource::<AppKeys>()
+            .init_resource::<TopPanelWidth>()
+            .init_resource::<crate::hud_fit::HudLayout>()
+            .init_resource::<crate::touch_hud::TouchHud>()
+            .add_systems(Startup, spawn_hud)
+            .add_systems(Update, (update_look_ahead, update_hud).chain());
+        {
+            let mut v = app.world_mut().resource_mut::<RideView>();
+            v.riders.push(me());
+            v.status =
+                "Virtual trainer 200 W (no Web Bluetooth here) | trainer SIM +1.2 % | autodrive"
+                    .into();
+            v.status_compact = Some("autodrive".into());
+        }
+        let text = |app: &mut App| {
+            let w = app.world_mut();
+            let b = w
+                .query_filtered::<&Text, With<HudText>>()
+                .single(w)
+                .unwrap()
+                .0
+                .clone();
+            let s = w
+                .query_filtered::<&Text, With<HudSmallText>>()
+                .single(w)
+                .unwrap()
+                .0
+                .clone();
+            (b, s)
+        };
+        app.update();
+        let (b, s) = text(&mut app);
+        assert!(b.trim_start().starts_with("200 W"), "{b}");
+        assert!(
+            s.contains("up: faster") && s.contains(DESKTOP_KEYS.split(',').next().unwrap()),
+            "{s}"
+        );
+        assert!(
+            s.contains("Virtual trainer 200 W"),
+            "the desktop's full status: {s}"
+        );
+        // A phone: compact, touch first.
+        let ui = crate::hud_fit::tests::PHONE_PORTRAIT;
+        app.insert_resource(crate::hud_fit::HudLayout::of(ui, 1.0));
+        app.world_mut()
+            .resource_mut::<crate::touch_hud::TouchHud>()
+            .shown = true;
+        app.update();
+        let (_, s) = text(&mut app);
+        assert!(
+            !s.contains("up: faster") && !s.contains("F12"),
+            "no keys: {s}"
+        );
+        assert!(
+            !s.contains("Virtual trainer"),
+            "the Devices panel has it: {s}"
+        );
+        assert!(
+            s.lines()
+                .any(|l| l.contains("km |") && l.ends_with("autodrive")),
+            "{s}"
+        );
+        // A key: the hints go, the keys come back.
+        app.world_mut()
+            .resource_mut::<crate::touch_hud::TouchHud>()
+            .shown = false;
+        app.update();
+        let (_, s) = text(&mut app);
+        assert!(s.contains("up: faster"), "{s}");
+    }
+
+    /// The profile keeps its size on desktops and narrows and flattens on
+    /// a phone, off the road's middle.
+    #[test]
+    fn the_compact_profile_is_smaller() {
+        use crate::hud_fit::{
+            HudLayout,
+            tests::{PHONE_LANDSCAPE, PHONE_PORTRAIT},
+        };
+        assert_eq!(
+            profile_size(Vec2::new(1280.0, 720.0), false),
+            Vec2::new(300.0, 56.0)
+        );
+        for ui in [PHONE_PORTRAIT, PHONE_LANDSCAPE] {
+            let l = HudLayout::of(ui, 1.0);
+            let s = profile_size(l.ui_px, l.compact);
+            assert!(
+                s.x <= l.ui_px.x * 0.4 && s.x <= l.ui_px.y * 0.5 && s.x >= 150.0,
+                "{ui}: {s}"
+            );
+            assert_eq!(s.y, PROFILE_H_COMPACT);
+            // Its right edge (12 px margin, 8 px padding each side) left of
+            // 35 % of the width in landscape.
+            assert!(
+                12.0 + s.x + 16.0 < l.ui_px.x * 0.35 || l.narrow,
+                "{ui}: {s}"
+            );
+        }
     }
 
     /// The damage widget (spec 14 Phase 12F; the user, 2026-11-19: always

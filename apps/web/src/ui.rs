@@ -365,7 +365,16 @@ impl Plugin for WebUiPlugin {
             Update,
             (record, show_video, audio_devices).after(ocw_ui::RideViewSet),
         )
-        .add_systems(Last, (publish, publish_console, publish_steer, publish_map));
+        .add_systems(
+            Last,
+            (
+                publish,
+                publish_console,
+                publish_steer,
+                publish_map,
+                publish_hud_layout,
+            ),
+        );
         // The trusted world keys in the page's localStorage (spec §4.7
         // *User keys*); the built-in roots cannot be added.
         // (Always: the menu plugin above put an empty default there.)
@@ -606,6 +615,52 @@ fn publish_map(
     let changed = info.is_changed() || workout.as_ref().is_some_and(|w| w.is_changed());
     if changed || MAP_JSON.lock().expect("not poisoned").is_empty() {
         *MAP_JSON.lock().expect("not poisoned") = map_view_json(&info, workout.as_deref());
+    }
+}
+
+/// The HUD's layout as JSON for the page (`window.ocw.hudLayout()`, spec
+/// 3.2 *Phone layout*: the WebKit iPhone checks).
+static HUD_LAYOUT_JSON: Mutex<String> = Mutex::new(String::new());
+
+pub fn hud_layout_json() -> String {
+    HUD_LAYOUT_JSON.lock().expect("not poisoned").clone()
+}
+
+/// The layout's JSON: compact / narrow, the screen's fit and the applied
+/// HUD scale, the boxes (CSS px: left, top, width, height) of the top
+/// panel, the top-right column and the profile, the top panel's lines.
+pub fn hud_layout_view_json(
+    layout: &ocw_render::hud_fit::HudLayout,
+    ui_scale: f32,
+    boxes: &ocw_render::hud::HudBoxes,
+) -> String {
+    serde_json::json!({
+        "compact": layout.compact,
+        "narrow": layout.narrow,
+        "fit": layout.fit,
+        "ui_scale": ui_scale,
+        "top_panel": boxes.top_panel,
+        "top_right": boxes.top_right,
+        "profile": boxes.profile,
+        "big_lines": boxes.big_lines,
+        "small_lines": boxes.small_lines,
+        "text": boxes.text,
+    })
+    .to_string()
+}
+
+fn publish_hud_layout(
+    layout: Option<Res<ocw_render::hud_fit::HudLayout>>,
+    scale: Option<Res<UiScale>>,
+    boxes: Option<Res<ocw_render::hud::HudBoxes>>,
+) {
+    let (Some(layout), Some(boxes)) = (layout, boxes) else {
+        return;
+    };
+    let changed = layout.is_changed() || boxes.is_changed();
+    if changed || HUD_LAYOUT_JSON.lock().expect("not poisoned").is_empty() {
+        *HUD_LAYOUT_JSON.lock().expect("not poisoned") =
+            hud_layout_view_json(&layout, scale.map_or(1.0, |s| s.0), &boxes);
     }
 }
 

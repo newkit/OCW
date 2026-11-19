@@ -812,6 +812,15 @@ pub fn page_hud_map() -> String {
     ui::map_json()
 }
 
+/// `window.ocw.hudLayout()`: the HUD's layout as JSON (compact on a
+/// phone, the scale, the boxes of the top panel, the top-right column and
+/// the profile in CSS px, the top panel's lines; spec 3.2 *Phone layout*).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = hudLayout)]
+pub fn page_hud_layout() -> String {
+    ui::hud_layout_json()
+}
+
 /// `window.ocw.god()`: unicorn mode as JSON (phase, pointer, position,
 /// height, the inspection's panel and crosshair, pins; Phase 13 G5 – the
 /// browser test flies with it).
