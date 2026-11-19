@@ -285,11 +285,11 @@ def main():
             where = "behind the notch"
         l1 = line(pg)
         check(f"{label}: taps {where} do not steer", abs(l1 - l0) < 1e-3, f"{l0:.3f} → {l1:.3f}")
-        tap(pg, w * 0.75, h * 0.6)
+        tap(pg, w * 0.75, h * 0.75)
         l2 = line(pg)
         check(f"{label}: a tap on the right half moves the line +0.5 m", abs(l2 - l1 - 0.5) < 0.02,
               f"{l1:.3f} → {l2:.3f}")
-        tap(pg, w * 0.25, h * 0.6)
+        tap(pg, w * 0.25, h * 0.75)
         l3 = line(pg)
         check(f"{label}: a tap on the left half moves it back", abs(l3 - l2 + 0.5) < 0.02, f"{l2:.3f} → {l3:.3f}")
         sc = screen(pg)
