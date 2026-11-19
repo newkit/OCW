@@ -54,7 +54,7 @@ pub fn command() -> Command {
                 .value_name("SHAPE")
                 .value_parser(|s: &str| {
                     BodyShape::parse(s).ok_or_else(|| {
-                        format!("{s:?}: anorexia, skinny, slim, normal, ample, fat or obese")
+                        format!("{s:?}: super-skinny, skinny, slim, normal, ample, fat or obese")
                     })
                 })
                 .help("Body shape (any; --match-weight: the one your weight and height propose)"),
@@ -460,7 +460,7 @@ mod tests {
         run(&mut c, "--match-weight", 120.0).unwrap();
         assert_eq!(c.shape, BodyShape::Obese);
         run(&mut c, "--match-weight", 45.0).unwrap();
-        assert_eq!(c.shape, BodyShape::Anorexia);
+        assert_eq!(c.shape, BodyShape::SuperSkinny);
         // An older line (W4 builds) still works.
         run(&mut c, "--build strong", 50.0).unwrap();
         assert_eq!(c.shape, BodyShape::Ample);

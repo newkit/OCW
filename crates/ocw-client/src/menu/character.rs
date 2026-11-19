@@ -43,7 +43,7 @@ fn stepper(label: &str, value: String, at: usize, n: usize, arg: impl Fn(usize) 
 }
 
 /// The shape row: ← / → through all seven (4N Q23: no limit; no wrap
-/// from obese to anorexia), the value with the *Match my weight* marker
+/// from obese to super skinny), the value with the *Match my weight* marker
 /// (the shape weight and height propose, Q13).
 fn shape_row(now: BodyShape, marker: BodyShape) -> Row {
     let step = |d: isize| {
@@ -866,10 +866,10 @@ mod tests {
         assert!(shape.value.unwrap().contains("(weight: Obese)"));
         let tall = rider(75.0, Some(200.0));
         assert_eq!(tall.weight_shape(), BodyShape::Slim);
-        // Walking the row from anorexia reaches obese at 75 kg.
+        // Walking the row from super skinny reaches obese at 75 kg.
         let mut walk = r.clone();
         walk.set_character(ocw_core::Character {
-            shape: BodyShape::Anorexia,
+            shape: BodyShape::SuperSkinny,
             ..r.character()
         });
         assert_eq!(row(&rows(Page::CharacterBody, &walk), "Shape").left, None);
