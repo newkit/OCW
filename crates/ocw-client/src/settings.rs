@@ -412,6 +412,17 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::Command("photographer {}"),
     },
+    // The other riders' photographers (spec 2.11 Q5, decided 2026-11-19):
+    // shown or hidden here only – the own photographer, the server and the
+    // other riders are not affected.
+    SettingDef {
+        key: "photographer.others",
+        kind: Kind::Bool,
+        default: "on",
+        description: "The other riders' photographers: their person, drone and flash and the shutter and drone sounds (off: hidden for you only)",
+        scope: Scope::Live,
+        apply: Apply::Command("photographer others {}"),
+    },
     // The one folder for everything OCW saves for the user (spec §2.8.1
     // *Where an S recording is written*, v4.80 / v4.82): each Strava
     // (S … S) recording in its own subfolder (ISO date and place) with its
@@ -1510,6 +1521,30 @@ mod tests {
         let (s, w) = Settings::parse("[host]\nupnp = false\n").unwrap();
         assert!(w.is_empty(), "{w:?}");
         assert_eq!(s.get("host.upnp").unwrap(), Value::Bool(false));
+    }
+
+    /// The other riders' photographers are shown by default, in both apps
+    /// (spec 2.11 Q5); the setting runs `photographer others on|off`.
+    #[test]
+    fn others_photographers_are_shown_by_default_in_both_apps() {
+        let s = Settings::default();
+        assert_eq!(s.get("photographer.others").unwrap(), Value::Bool(true));
+        for p in [
+            crate::menu::model::Platform::Desktop,
+            crate::menu::model::Platform::Browser,
+        ] {
+            assert!(applies("photographer.others", p));
+        }
+        let d = def("photographer.others").unwrap();
+        assert_eq!(d.scope, Scope::Live);
+        assert_eq!(
+            d.apply_command(&Value::Bool(false)).as_deref(),
+            Some("photographer others off")
+        );
+        let (s, w) = Settings::parse("[photographer]\nothers = false\n").unwrap();
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!(s.get("photographer.others").unwrap(), Value::Bool(false));
+        assert_eq!(s.get("photographer.enabled").unwrap(), Value::Bool(true));
     }
 
     #[test]
