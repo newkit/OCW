@@ -213,18 +213,91 @@ impl Slot {
     }
 }
 
-/// A [`Slot`] as the settings' text store (`ocw_ui::settings::TextStore`).
-pub struct SlotStore(pub Slot);
+/// Settings registry keys kept in another section of `ocw.toml` than
+/// `[settings]`: (registry group, key, section). `strava.auto_upload` is
+/// the one `[strava] auto_upload` (spec 2.8.1 Q6, 3.2.4).
+pub const SETTINGS_ELSEWHERE: &[(&str, &str, &str)] = &[("strava", "auto_upload", "strava")];
 
-impl ocw_ui::settings::TextStore for SlotStore {
+/// The settings' text store: `ocw.toml [settings]`, with the keys of
+/// [`SETTINGS_ELSEWHERE`] read from and written to their own sections
+/// (`[strava] auto_upload`), so each switch lives in one place.
+pub struct SettingsStore {
+    pub files: ConfigFiles,
+}
+
+impl SettingsStore {
+    fn table(slot: &Slot) -> Result<toml::Table, String> {
+        match slot.read()? {
+            Some(t) => toml::from_str(&t).map_err(|e| format!("{}: {e}", slot.describe())),
+            None => Ok(toml::Table::new()),
+        }
+    }
+}
+
+impl ocw_ui::settings::TextStore for SettingsStore {
     fn load(&self) -> Result<Option<String>, String> {
-        self.0.read()
+        let settings = self.files.section("settings");
+        let text = settings.read()?;
+        let mut moved = Vec::new();
+        for &(group, key, section) in SETTINGS_ELSEWHERE {
+            if let Some(v) = Self::table(&self.files.section(section))?.get(key) {
+                moved.push((group, key, v.clone()));
+            }
+        }
+        if moved.is_empty() {
+            return Ok(text);
+        }
+        let mut t: toml::Table = match &text {
+            Some(t) => toml::from_str(t).map_err(|e| format!("{}: {e}", settings.describe()))?,
+            None => toml::Table::new(),
+        };
+        for (group, key, v) in moved {
+            let g = t
+                .entry(group)
+                .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+            if let Some(g) = g.as_table_mut() {
+                g.insert(key.into(), v);
+            }
+        }
+        toml::to_string(&t).map(Some).map_err(|e| e.to_string())
     }
+
     fn save(&mut self, text: &str) -> Result<(), String> {
-        self.0.write(text)
+        let mut t: toml::Table = toml::from_str(text).map_err(|e| e.to_string())?;
+        let mut any = false;
+        for &(group, key, section) in SETTINGS_ELSEWHERE {
+            let v = t
+                .get_mut(group)
+                .and_then(toml::Value::as_table_mut)
+                .and_then(|g| g.remove(key));
+            any |= v.is_some();
+            if t.get(group)
+                .and_then(toml::Value::as_table)
+                .is_some_and(toml::Table::is_empty)
+            {
+                t.remove(group);
+            }
+            let slot = self.files.section(section);
+            let mut own = Self::table(&slot)?;
+            let changed = match v {
+                Some(v) => own.insert(key.into(), v.clone()) != Some(v),
+                None => own.remove(key).is_some(),
+            };
+            if changed {
+                slot.write(&toml::to_string(&own).map_err(|e| e.to_string())?)?;
+            }
+        }
+        if !any {
+            // Nothing kept elsewhere: the text as it is.
+            return self.files.section("settings").write(text);
+        }
+        self.files
+            .section("settings")
+            .write(&toml::to_string(&t).map_err(|e| e.to_string())?)
     }
+
     fn describe(&self) -> String {
-        format!("file: {}", self.0.describe())
+        format!("file: {}", self.files.section("settings").describe())
     }
 }
 
@@ -730,6 +803,55 @@ mod tests {
             .collect();
         v.sort();
         v
+    }
+
+    /// The setting `strava.auto_upload` (spec 2.8.1 Q6) is the one
+    /// `[strava] auto_upload` of `ocw.toml`: read from there into the
+    /// settings, saved there – never a second key in `[settings]`; the
+    /// other keys of `[strava]` stay; other settings as they are.
+    #[test]
+    fn the_strava_switch_is_the_one_strava_auto_upload() {
+        use ocw_ui::settings::TextStore;
+        let dir = temp_dir("auto-upload");
+        let files = ConfigFiles::in_dir(&dir);
+        files
+            .section("strava")
+            .write("auto_upload = false\nnote = \"kept\"\n")
+            .unwrap();
+        files.section("settings").write(SETTINGS).unwrap();
+        let mut store = SettingsStore {
+            files: files.clone(),
+        };
+        let text = store.load().unwrap().unwrap();
+        let (s, _) = ocw_client::settings::Settings::parse(&text).unwrap();
+        assert_eq!(
+            s.get("strava.auto_upload").unwrap(),
+            ocw_client::settings::Value::Bool(false)
+        );
+        assert_eq!(
+            s.get("ride.bots").unwrap(),
+            ocw_client::settings::Value::Int(3)
+        );
+        // Switched on and saved: [strava] changes, [settings] has no copy.
+        let mut s = s;
+        s.set("strava.auto_upload", "on").unwrap();
+        store.save(&s.to_toml()).unwrap();
+        let strava: toml::Table =
+            toml::from_str(&files.section("strava").read().unwrap().unwrap()).unwrap();
+        assert_eq!(strava["auto_upload"].as_bool(), Some(true));
+        assert_eq!(strava["note"].as_str(), Some("kept"));
+        let settings = files.section("settings").read().unwrap().unwrap();
+        assert!(!settings.contains("auto_upload"), "{settings}");
+        assert!(settings.contains("bots = 3"), "{settings}");
+        let whole = std::fs::read_to_string(&files.config).unwrap();
+        assert_eq!(whole.matches("auto_upload").count(), 1, "{whole}");
+        // Nothing in [strava]: the settings text as it is.
+        let other = ConfigFiles::in_dir(&temp_dir("auto-upload-none"));
+        other.section("settings").write(SETTINGS).unwrap();
+        let st = SettingsStore { files: other };
+        let t = st.load().unwrap().unwrap();
+        assert!(t.contains("bots = 3") && !t.contains("auto_upload"), "{t}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     const SETTINGS: &str = "[audio]\nmaster = 40\n\n[ride]\nbots = 3\n";

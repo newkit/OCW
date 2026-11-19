@@ -1826,15 +1826,17 @@ event status | event cancel | event dismiss
   downloaded again only while the page is open. The FIT file has a lap at each workout
   step (start, step change, end, stop) and at an event's start, each event
   lap and your finish, so Strava and analysis tools show them as laps.
-- **Strava, the simple way** (spec §2.8.1 *Simple upload*; every Strava
+- **Only your Strava recordings go to Strava, never whole rides** (spec
+  2.8.1 Q6): press S while riding to start and stop one; a ride without
+  one says *no Strava recording – press S while riding* on its page.
+- **Strava, the simple way** (spec 2.8.1 *Simple upload*; every Strava
   account, no API app): *Navi → Training history →* a ride → *Upload to
-  Strava (in your browser)* (`strava.upload-manual N`). The desktop copies
-  the ride's FIT file (or its Strava recordings) and photos to
-  `~/.local/share/ocw/rides/strava-upload/` as e.g. `OCW 2026-11-18 10-05
-  Tenerife – Puerto de la Cruz–Teide.fit`, opens that folder and
+  Strava (in your browser)* (`strava.upload-manual N`). The desktop opens
+  the recording's folder in `~/Activities/OCW` (older recordings are
+  copied to `~/.local/share/ocw/rides/strava-upload/`) and
   <https://www.strava.com/upload/select>; choose the file there (or drag it
-  onto the page) and press Upload. The browser app downloads the file and
-  opens the page in a new tab. Then set *Marked as uploaded*
+  onto the page) and press Upload. The browser app downloads the
+  recording and opens the page in a new tab. Then set *Marked as uploaded*
   (`strava.mark-uploaded N on`) to keep track; the API upload skips marked
   rides.
 - Strava, the advanced way (optional; interim direct upload until the
@@ -1842,12 +1844,15 @@ event status | event cancel | event dismiss
   <https://www.strava.com/settings/api> with the callback domain
   `localhost`, set `OCW_STRAVA_CLIENT_ID` / `OCW_STRAVA_CLIENT_SECRET` (or
   `client_id` / `client_secret` in `~/.config/ocw/strava.toml`), then
-  `strava.connect` once. Saved rides upload in the background; failed
-  uploads are retried.
+  `strava.connect` once. Your Strava recordings upload in the background
+  while *Navi → Strava → Automatic upload* is on (setting
+  `strava.auto_upload`, default on; `set strava.auto_upload off` or
+  `strava.auto_upload off`; kept as `[strava] auto_upload` in `ocw.toml`);
+  off, a ride's page has *Upload now*. Failed uploads are retried.
 - **Strava recording with S** (spec §2.8.1): S (pad L3, *Ride → Strava
   recording*, `strava.record`) starts and stops it; the HUD shows
   "● Strava m:ss". The part between S and S is saved as its own activity in
-  `~/.local/share/ocw/rides/strava/` and uploaded like the rides; leaving or
+  `~/.local/share/ocw/rides/strava/` and uploaded (automatically or by hand, above); leaving or
   saving the ride or quitting stops it. Without `strava.toml` it is
   uploaded the simple way (its stop says where). The browser app shows the
   entry but needs the desktop app for the recording.
@@ -2490,17 +2495,18 @@ you can run are offered (no *Dev* commands on a remote server).
 | `history.import` | Add the saved FIT files that are in no history yet to the riding rider's |
 | `bind [ACTION [KEY \| BUTTON --pad]] [--capture] [--reset]` | Show or change the key and button bindings |
 | `ui.scale P`, `ui.palette standard\|colour-safe`, `ui.contrast on\|off`, `ui.motion on\|off` | The accessibility options (the settings `display.*` run them) |
-| `ride.save` | End the ride, save it as FIT (and upload if Strava is linked); a new recording starts |
+| `ride.save` | End the ride, save it as FIT for the training history (a running Strava recording stops and is saved; whole rides never go to Strava); a new recording starts |
 | `ride.switch --route NAME \| --route-file FILE \| --world PKG [--free-ride] [--start X,Z] [--route NAME\|FILE] [--route-gpx FILE]` | Ride something else without restarting (the ride so far is saved, devices stay connected) |
 | `ride.restart` | Start the current ride again in the app (R after a switch) |
 | `ride.current` | What is ridden now, as a `ride.switch` line |
 | `ride.import-gpx FILE [--ride]` | Match a GPX file onto the loaded package and save it as your route (Navi → Routes); `--ride` rides it |
 | `strava.connect` | Link your Strava account (opens the browser) |
 | `strava.status` | Strava link and upload state |
-| `strava.sync [--retry]` | Upload every saved ride not on Strava yet (`--retry`: also failed ones) |
+| `strava.sync [--retry] [--waiting] [--ride N]` | Upload every Strava recording not on Strava yet (`--retry`: also failed ones; `--waiting`: the ones made before Strava was set up; `--ride N`: only ride N's – its page's *Upload now*) |
+| `strava.auto_upload [on\|off]` | Upload the Strava recordings automatically (on, the default) or wait for you (off); the setting `strava.auto_upload` |
 | `strava.disconnect` | Unlink Strava (deletes the stored tokens) |
 | `strava.record [start\|stop\|toggle\|status]` | The Strava recording (key S): the part between start and stop is its own Strava activity |
-| `strava.upload-manual [N] [--whole]` | Upload ride N (1 = the newest) in your browser, no API app: the file at hand, Strava's upload page open (`--whole`: the ride, not its Strava recordings) |
+| `strava.upload-manual [N]` | Upload ride N's Strava recordings (1 = the newest) in your browser, no API app: the files at hand, Strava's upload page open (whole rides never go to Strava) |
 | `strava.mark-uploaded N [on\|off\|toggle]` | Mark ride N as uploaded to Strava by hand (the API sync skips it) |
 | `photographer [on\|off\|status\|now\|drone]` | The ride photographer (spec §2.11); `now` plans the next photo at once, `drone` the next by the drone (tests) |
 | `history.photos N` | Open the folder with ride N's photos (1 = the newest) |

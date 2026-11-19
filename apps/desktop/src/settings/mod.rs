@@ -24,18 +24,19 @@ use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
 
 use crate::Args;
-use crate::config::{ConfigFiles, Slot, SlotStore};
+use crate::config::{ConfigFiles, SettingsStore, Slot};
 use registry::{Apply, SETTINGS, Settings, Value};
 use riders::{Rider, RiderEdit, Riders};
 
 /// The settings and where they are saved (shared with the browser app).
 pub use ocw_ui::settings::UserSettings;
 
-/// The settings saved in `slot` (`ocw.toml [settings]`).
-pub fn slot_settings(settings: Settings, slot: Slot) -> UserSettings {
+/// The settings saved in `ocw.toml [settings]` (with `[strava]
+/// auto_upload`, spec 2.8.1 Q6: [`SettingsStore`]).
+pub fn file_settings(settings: Settings, files: ConfigFiles) -> UserSettings {
     UserSettings {
         settings,
-        store: Some(Box::new(SlotStore(slot))),
+        store: Some(Box::new(SettingsStore { files })),
     }
 }
 
@@ -124,11 +125,21 @@ pub fn load(args: &mut Args, matches: &ArgMatches) -> Loaded {
         migrated = notes;
         warnings.extend(problems);
     }
-    let slot = files.as_ref().map(|f| f.section("settings"));
-    let settings = match read_section(slot.as_ref(), Settings::parse) {
+    // `[settings]`, with `[strava] auto_upload` (spec 2.8.1 Q6) read in.
+    let store = files.as_ref().map(|f| SettingsStore { files: f.clone() });
+    let parsed = store.as_ref().map(|st| {
+        use ocw_ui::settings::TextStore;
+        match st.load() {
+            Ok(Some(text)) => Settings::parse(&text)
+                .map_err(|e| format!("{}: {e}", st.files.section("settings").describe())),
+            Ok(None) => Settings::parse(""),
+            Err(e) => Err(e),
+        }
+    });
+    let settings = match parsed {
         Some(Ok((s, w))) => {
             warnings.extend(w);
-            slot_settings(s, slot.clone().expect("a slot"))
+            file_settings(s, store.expect("a store").files)
         }
         Some(Err(e)) => {
             // Keep the broken file: use the defaults and do not save.
@@ -650,10 +661,7 @@ mod tests {
             // `activities.folder` (the Strava recordings' folder).
             crate::activities::ActivitiesPlugin,
         ))
-        .insert_resource(slot_settings(
-            Settings::default(),
-            files.section("settings"),
-        ))
+        .insert_resource(file_settings(Settings::default(), files.clone()))
         .insert_resource(RiderProfiles {
             riders: Riders::default(),
             path: Some(files.section("riders")),
@@ -924,6 +932,8 @@ mod tests {
                 // The ride photographer's plugin is not in this test app.
                 || line.contains("photographer.enabled")
                 || line.contains("photographer.others")
+                // The Strava plugin (`strava.auto_upload`) is not either.
+                || line.contains("strava.auto_upload")
             {
                 continue;
             }

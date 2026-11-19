@@ -13,7 +13,8 @@
 #   3. start OCW, open the console (` or F12) and run `strava.connect`:
 #      a browser opens, you sign in to Strava and allow access; the token is
 #      kept in strava-token.toml next to this file and refreshed by the app.
-#   4. rides recorded with S are uploaded as Virtual Ride.
+#   4. your Strava recordings (S ... S while riding) are uploaded as Virtual
+#      Ride – whole rides never go to Strava.
 #      Console: strava.status, strava.sync, strava.disconnect
 #
 # The environment variables OCW_STRAVA_CLIENT_ID / OCW_STRAVA_CLIENT_SECRET
@@ -23,5 +24,7 @@
 # client_id = "12345"
 # client_secret = "your-client-secret"
 
-# Upload every saved ride automatically (default true).
-# auto_upload = true
+# Whether the Strava recordings are uploaded automatically is a setting now:
+# [strava] auto_upload in ocw.toml, Menu > Navi > Strava > Automatic upload,
+# or `set strava.auto_upload off` in the console (default on). An older
+# `auto_upload = …` line here is moved there once.

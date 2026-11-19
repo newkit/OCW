@@ -46,7 +46,9 @@ pub struct StravaConfig {
     pub client_id: Option<String>,
     #[serde(default)]
     pub client_secret: Option<String>,
-    /// Upload every saved ride automatically (default true).
+    /// The old switch of the automatic upload (before v5.05): read once
+    /// into the setting `strava.auto_upload` when that is not set yet
+    /// (spec 2.8.1 Q6), then ignored.
     #[serde(default)]
     pub auto_upload: Option<bool>,
 }
