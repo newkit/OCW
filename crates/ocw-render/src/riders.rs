@@ -1131,7 +1131,7 @@ fn spawn_avatar(
     // legs fit – the bike file's sizing data (spec §14 Phase 15, Q7: the
     // frames are made for the 1.78 m rider and fitted to every size).
     let body = pose::BodyFit::sized(
-        &lib.rider_rig,
+        &lib.rider_rig.for_body(&character),
         &lib.bike_rigs[b],
         character.scale(),
         &ocw_assets::shipped::bike_sizing(built.bike),

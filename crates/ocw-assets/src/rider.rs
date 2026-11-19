@@ -590,6 +590,40 @@ pub mod face {
     pub const MOUTH_RADII: [f32; 3] = [0.019, 0.0048, 0.0055];
 }
 
+/// The bib's seat on the pelvis (spec 2.6): rings from the hips up to
+/// just over the hip joints as (y, half width, half depth, z), m, closed
+/// at the bottom in a point [`SEAT_BOTTOM`] and flat at the top (the
+/// jersey over it). The hip joints lie inside it and the thighs' domes
+/// meet it (bug 2026-11-19: its top was level with the joints and
+/// narrower than the bent thighs' tops; `crate::hips` checks it).
+pub const SEAT: [[f32; 4]; 3] = [
+    [-0.07, 0.15, 0.1, 0.01],
+    [-0.03, 0.142, 0.095, 0.016],
+    [0.014, 0.134, 0.082, 0.028],
+];
+
+/// The seat's lowest point (m, under the hips' centre).
+pub const SEAT_BOTTOM: f32 = -0.11;
+
+/// How much the skinsuit's seat stands out of the bib's (m).
+pub const SUIT_SEAT: f32 = 0.005;
+
+/// The sides of the seat's loft.
+pub fn seat_sides(detail: Detail) -> u32 {
+    detail.sides() + 2
+}
+
+/// The thigh's closed top (spec 2.6, 4N; bug 2026-11-19 "the legs of the
+/// rider are not connected to the body"): the leg's first rings as
+/// (height above the hip joint, radius), m, closed by a dome to
+/// [`THIGH_DOME`] above the joint, widening to the thigh. The thigh
+/// turns about the joint, so the dome stays in the seat and under the
+/// jersey in every pose: no open tube end beside the seat.
+pub const THIGH_TOP: [[f32; 2]; 2] = [[0.01, 0.038], [-0.02, 0.052]];
+
+/// The top of the thigh's dome above the hip joint (m).
+pub const THIGH_DOME: f32 = 0.032;
+
 /// The hip plates (spec §14 Phase 8 T6): (|x| of the outer face, its
 /// half thickness, centre (y, z), half size (y, z)). Outside the widest
 /// thigh (a skinsuit's) by a few millimetres: the thighs turn about the x
@@ -1047,9 +1081,16 @@ pub fn girth_centre(m: &Model, i: usize) -> Vec3 {
 /// which the torso's girth moves in or out (spec §14 Phase 4, 4N: no
 /// arms standing off a thin body or sunk into a heavy one). The poses
 /// only turn the joints, so the arms keep it.
+///
+/// The same for the thighs: the hip joints sit in the seat, which the
+/// pelvis's girth widens or narrows (bug 2026-11-19: on a thin body the
+/// thighs' tops stood half outside the narrow seat, on a heavy one deep
+/// inside it). The pose's rig follows ([`crate::pose::RiderRig::for_body`]),
+/// so the feet stay on the pedals.
 pub fn node_translation(m: &Model, i: usize, c: &ocw_core::Character) -> Vec3 {
     let node = &m.nodes[i];
-    if !UPPER_ARM.contains(&node.name.as_str()) {
+    let name = node.name.as_str();
+    if !UPPER_ARM.contains(&name) && !THIGH.contains(&name) {
         return node.translation;
     }
     let g = girth_of(TORSO, c);
@@ -1753,15 +1794,15 @@ pub fn build(detail: Detail) -> Model {
     // above its hem, showing through it; `crate::clothing` checks the
     // layers).
     let seat = |p: &mut Parts, slot: &'static str, k: f32| {
+        let rings: Vec<Ring> = SEAT
+            .iter()
+            .map(|[y, hw, hd, z]| ring(*y, hw + k, hd + k, *z))
+            .collect();
         p.slot(slot).loft(
-            &[
-                ring(-0.07, 0.15 + k, 0.1 + k, 0.01),
-                ring(-0.03, 0.138 + k, 0.094 + k, 0.016),
-                ring(0.0, 0.122 + k, 0.08 + k, 0.025),
-            ],
-            n + 2,
+            &rings,
+            seat_sides(detail),
             false,
-            Cap::Point(Vec3::new(0.0, -0.11 - k, 0.0)),
+            Cap::Point(Vec3::new(0.0, SEAT_BOTTOM - k, 0.0)),
             Cap::Flat,
         );
     };
@@ -1782,7 +1823,7 @@ pub fn build(detail: Detail) -> Model {
     }
     // The skinsuit over the shorts.
     opt_node(&mut m, opt::SUIT_PELVIS, pelvis, |p| {
-        seat(p, "jersey", 0.005)
+        seat(p, "jersey", SUIT_SEAT)
     });
     // Legs.
     for s in 0..2 {
@@ -1797,13 +1838,25 @@ pub fn build(detail: Detail) -> Model {
         let knee = hip - Vec3::Y * body::THIGH;
         let shorts_end = hip - Vec3::Y * 0.3;
         let short_leg = |p: &mut Parts, slot: &'static str, k: f32| {
-            p.slot(slot).sweep(
-                // From 6 cm under the hip joint, inside the seat (the old
-                // leg began 3 cm above it, out through the jersey's sides).
-                &[hip - Vec3::Y * 0.06, hip - Vec3::Y * 0.14, shorts_end],
-                &[0.069 + k, 0.07 + k, 0.06 + k],
+            // The thigh's top is closed and rounded about the hip joint
+            // ([`THIGH_TOP`]; bug 2026-11-19: the leg began as an open
+            // tube 6 cm under the joint, which a bent hip swung out of
+            // the seat – a cut-off thigh beside the seat seen from
+            // behind). Narrow over the joint, so it stays inside the
+            // jersey standing (the old leg began 3 cm above the joint
+            // at full width, out through the jersey's sides).
+            let rings: Vec<Ring> = THIGH_TOP
+                .iter()
+                .map(|[y, r]| (*y, *r))
+                .chain([(-0.14, 0.07), (shorts_end.y - hip.y, 0.06)])
+                .map(|(y, r)| Ring::circle(hip + Vec3::Y * y, Vec3::NEG_Y, r + k))
+                .collect();
+            p.slot(slot).loft(
+                &rings,
                 n,
                 false,
+                Cap::Point(hip + Vec3::Y * (THIGH_DOME + k)),
+                Cap::Open,
             );
         };
         short_leg(&mut p, "shorts", 0.0);

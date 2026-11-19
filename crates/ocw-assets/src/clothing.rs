@@ -301,25 +301,31 @@ pub fn bib_under_jersey(
         detail,
         body,
         reach,
-        &posed_worlds(m, &pose.pose),
+        &posed_worlds(m, Some(&pose.pose), body),
         &pose.name,
     )
 }
 
-/// The model-space transforms of every node of `m` in `pose`.
-pub fn posed_worlds(m: &Model, pose: &Pose) -> Vec<Affine3A> {
+/// The model-space transforms of every node of `m` in `pose` (`None`:
+/// at rest), drawn for `body`: the shoulders and hips as wide as its
+/// girth makes them ([`rider::node_translation`]).
+pub fn posed_worlds(m: &Model, pose: Option<&Pose>, body: &Character) -> Vec<Affine3A> {
     let mut skeleton = Model {
         nodes: m
             .nodes
             .iter()
-            .map(|n| crate::model::Node {
+            .enumerate()
+            .map(|(i, n)| crate::model::Node {
                 primitives: Vec::new(),
+                translation: rider::node_translation(m, i, body),
                 ..n.clone()
             })
             .collect(),
         ..Default::default()
     };
-    pose.apply(&mut skeleton);
+    if let Some(pose) = pose {
+        pose.apply(&mut skeleton);
+    }
     (0..skeleton.nodes.len())
         .map(|i| skeleton.world(i))
         .collect()
@@ -336,7 +342,7 @@ pub fn bib_under_jersey_at(
 ) -> Option<Worst> {
     let torso = m.node(nodes::TORSO)?;
     let bib = layer_nodes(m, "shorts", reach);
-    let rest_worlds: Vec<Affine3A> = (0..m.nodes.len()).map(|i| m.world(i)).collect();
+    let rest_worlds = posed_worlds(m, None, body);
     let rest = in_torso_frame(m, &rest_worlds, torso, body, &bib);
     let posed = in_torso_frame(m, worlds, torso, body, &bib);
     let mut worst: Option<Worst> = None;
@@ -462,7 +468,7 @@ mod tests {
     fn the_bib_stays_under_the_jersey_in_every_pose() {
         let f = failures(
             |m, detail, body| {
-                let rig = RiderRig::from_model(m).unwrap();
+                let rig = RiderRig::from_model(m).unwrap().for_body(body);
                 let mut worst = None;
                 for p in poses(&rig) {
                     let w = bib_under_jersey(m, detail, body, Reach::Torso, &p);
@@ -497,8 +503,8 @@ mod tests {
         }
         let f = failures(
             |m, detail, body| {
-                let rig = RiderRig::from_model(m).unwrap();
-                let rest: Vec<Affine3A> = (0..m.nodes.len()).map(|i| m.world(i)).collect();
+                let rig = RiderRig::from_model(m).unwrap().for_body(body);
+                let rest = posed_worlds(m, None, body);
                 let mut worst =
                     bib_under_jersey_at(m, detail, body, Reach::WithLegs, &rest, "rest");
                 for i in 0..120 {
