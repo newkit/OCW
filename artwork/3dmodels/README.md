@@ -21,7 +21,7 @@ share-alike, non-commercial or no-derivatives licences, never brands.
 | `riders/` | `rider` | the rider (`rider-body`) and its far model (`rider-body-low`) |
 | `wear/` | `wearable` | helmets, the status signs of spec §2.6 (headphones, VR headset, the X over a muted mouth), later glasses and caps, worn at an anchor |
 | `parts/<slot>/` | `part` | catalogue parts by workshop slot (later, M3) |
-| `props/` | `prop` | the phone of the status signs (held in the hand: its origin is its centre); bollards, gates, lamps, benches (later, M2) |
+| `props/` | `prop` | the point obstacles (`bollard-round`, `post-hexagonal`, `pylon-pyramid`, `block-concrete-box`, `gate-swing`, `barrier-lift-arm`, `barrier-cycle-staggered`, `barrier-post-hexagonal` for any other barrier), the street lamps (`lamp-street-arm-main` 8 m, `-road` 6 m, `-path` 4.5 m) – drawn by the game from these files (spec 15H MX); the phone of the status signs (held in the hand: its origin is its centre) |
 | `flora/` | `plant` | at least three shape variants per plant species, each with `lod1` |
 | `creatures/` | `creature` | the unicorn (later, M4) |
 | `workshop/` | `workshop` | the workshop's pieces (later, M3) |
@@ -59,8 +59,23 @@ share-alike, non-commercial or no-derivatives licences, never brands.
   `profile`, its `frame` geometry numbers and `sizing` (the reference rider
   height and the saddle travel: the loader fits the frame to every rider
   height, so a new size needs no new file – spec Q7); a plant's `species`,
-  `variant`, `height_m`; a wearable's `anchor`. Physics keys (`mass`, `cda`,
-  `crr`, …) are rejected.
+  `variant`, `height_m`; a wearable's `anchor`; a prop's `osm` tag and its
+  `fit` (below). Physics keys (`mass`, `cda`, `crr`, …) are rejected.
+- **How a prop is fitted to its place** (`ocw_assets::props`): `extras.ocw.fit
+  = { height_m, sink_m, span_m?, reach_m? }` – the file's height above the
+  ground, how deep it is set into the ground (the mesh starts at the origin;
+  the game lowers it by `sink_m`), the width a gate spans across (model X),
+  the reach of a lamp's arm (model +X). A bollard of another height is
+  scaled vertically by `(h + sink) / (height + sink)`. Node extras
+  `ocw.span` = `stretch` (default: bars, arms) / `move` (posts keep their
+  thickness), `ocw.reach` = `stretch` (the arm, from its node's origin) /
+  `move` (the head and its `anchor_light`), `ocw.ground` = `model` (default:
+  on the ground under the origin) / `node` (a post on the ground under its
+  own origin) / `drape` (bars and rails following the slope); children
+  inherit them. Collision proxies `col_box*` / `col_cylinder*` /
+  `col_capsule*` are either a modelled mesh (its bounds) or an empty (the
+  unit shape, half extents 1, scaled by the node) – both are read
+  (`props::proxies`; spec 15H Q9 is open); the exported props use empties.
 - **Budgets** (triangles; the validator checks them):
 
   | Object | Near | Far (`lod1`) |
@@ -106,6 +121,7 @@ cargo run -p ocw-assets -- model import FILE.glb --kind prop --id post-square [-
 cargo run -p ocw-studio -- --model bikes/bike-tt          # the Models workspace: view, stats, findings, try-on
 cargo run -p ocw-assets -- model export-all [--check]    # bikes, riders, helmets from the generators
 cargo run -p ocw-render --example export-flora [-- --check]   # the plants
+# props/: the obstacle and lamp files are the source (exported once, spec 15H MX; Q6)
 ocw-desktop --models artwork/3dmodels                     # read the files from disk (also $OCW_MODELS)
 OCW_FLORA=files ocw-desktop …                             # draw the plants from their files
 ```

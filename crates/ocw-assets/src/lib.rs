@@ -50,6 +50,7 @@ pub mod mesh;
 pub mod model;
 pub mod parts;
 pub mod pose;
+pub mod props;
 pub mod rider;
 pub mod rider_split;
 pub mod slots;

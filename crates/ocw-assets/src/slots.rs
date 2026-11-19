@@ -63,7 +63,7 @@ const fn slot(name: &'static str, tint: Tint, color: u32, metallic: f32, roughne
 }
 
 /// All slots.
-pub const ALL: [Slot; 38] = [
+pub const ALL: [Slot; 45] = [
     slot("frame", Tint::Frame, 0x1E1E22, 0.1, 0.32),
     slot("tyre", Tint::Fixed, 0x1A1A1A, 0.0, 0.85),
     slot("tyre_wall", Tint::Fixed, 0x8A6A45, 0.0, 0.8),
@@ -115,6 +115,16 @@ pub const ALL: [Slot; 38] = [
     // and the phone's screen (the renderer makes it glow).
     slot("status_mark", Tint::Fixed, 0xD8261E, 0.0, 0.6),
     slot("phone_screen", Tint::Fixed, 0x9EC4F0, 0.0, 0.15),
+    // Props in the world (spec §14 Phase 15, 15B / 15H MX): the point
+    // obstacles and the street lamps; `bulb` glows from dusk to dawn
+    // (`ocw-render::street_lamps`). The files carry their own colours.
+    slot("concrete", Tint::Fixed, 0x9E9C94, 0.0, 0.9),
+    slot("steel", Tint::Fixed, 0xA8ADB3, 0.6, 0.45),
+    slot("wood", Tint::Fixed, 0x735438, 0.0, 0.85),
+    slot("paint_red", Tint::Fixed, 0xC71F1A, 0.0, 0.6),
+    slot("paint_white", Tint::Fixed, 0xEBEBE6, 0.0, 0.6),
+    slot("paint_dark", Tint::Fixed, 0x383B3D, 0.1, 0.6),
+    slot("bulb", Tint::Fixed, 0xE1DFDA, 0.0, 0.4),
 ];
 
 /// The slot called `name`.
