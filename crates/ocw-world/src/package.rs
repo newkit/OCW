@@ -68,6 +68,7 @@ use crate::forest::{FOREST_TAG, read_forest, write_forest};
 use crate::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
 use crate::graph_route::{GraphRoute, RouteStep};
 use crate::lamps::{ROAD_LIT_TAG, RoadLit, read_road_lit, write_road_lit};
+use crate::landmarks::{LANDMARKS_TAG, read_landmarks, write_landmarks};
 use crate::landuse::{LANDUSE_TAG, LandUse, read_landuse, write_landuse};
 use crate::look::{
     PALETTE_TAG, ROOFS_TAG, RegionLook, SEASONS_TAG, read_palette, read_roofs, read_seasons,
@@ -436,6 +437,11 @@ impl WorldPackage {
             let mut payload = Vec::new();
             write_places(p, &mut payload);
             sections.push((PLACES_TAG, payload));
+            if !p.landmarks.is_empty() {
+                let mut payload = Vec::new();
+                write_landmarks(&p.landmarks, &mut payload);
+                sections.push((LANDMARKS_TAG, payload));
+            }
         }
         let mut payload = Vec::new();
         if write_road_surfaces(
@@ -869,7 +875,22 @@ fn read_sections(
             // skipped (no place names). Small, so also in skeletons and
             // streamed bases.
             match read_places(payload) {
-                Ok(p) => s.places = Some(p),
+                Ok(mut p) => {
+                    // Landmarks read before keep their place.
+                    if let Some(old) = s.places.take() {
+                        p.landmarks = old.landmarks;
+                    }
+                    s.places = Some(p);
+                }
+                Err(e) if e.contains("not supported") => {}
+                Err(e) => return Err(e),
+            }
+        } else if &tag == LANDMARKS_TAG {
+            // Optional (spec 4.7, 2.11 Q4): peaks, passes, viewpoints; a
+            // newer layout is skipped. Small, so also in skeletons and
+            // streamed bases.
+            match read_landmarks(payload) {
+                Ok(l) => s.places.get_or_insert_with(Places::default).landmarks = l,
                 Err(e) if e.contains("not supported") => {}
                 Err(e) => return Err(e),
             }
@@ -1957,6 +1978,77 @@ mod tests {
             .filter(|(t, _)| t != PLACES_TAG)
             .collect();
         assert_eq!(sizes, section_sizes(&old));
+    }
+
+    #[test]
+    fn landmarks_round_trip_and_readers_without_them_keep_the_places() {
+        use crate::landmarks::{Landmark, LandmarkKind, parse_direction};
+        use crate::places::{OsmElement, Place, PlaceKind, Places};
+        let town = Place {
+            kind: PlaceKind::Town,
+            rank: 1,
+            pos: [0.0, 0.0],
+            name: "Ada Town".into(),
+            names: Vec::new(),
+            population: None,
+            capital: None,
+            area: false,
+            element: OsmElement::Node,
+            osm_id: 7,
+        };
+        let peak = Landmark {
+            kind: LandmarkKind::Peak,
+            pos: [300.0, -900.0],
+            ele: Some(2450.0),
+            ele_from_terrain: false,
+            direction: None,
+            name: "Pico Bea".into(),
+            names: Vec::new(),
+            element: OsmElement::Node,
+            osm_id: 8,
+        };
+        let view = Landmark {
+            kind: LandmarkKind::Viewpoint,
+            name: String::new(),
+            direction: parse_direction("W"),
+            osm_id: 9,
+            ..peak.clone()
+        };
+        let only_places = WorldPackage {
+            places: Some(Places::new(vec![town.clone()])),
+            ..package()
+        };
+        let p = WorldPackage {
+            places: Some(Places::new(vec![town]).with_landmarks(vec![view, peak])),
+            ..package()
+        };
+        let b = p.to_bytes();
+        let back = WorldPackage::from_bytes(&b).unwrap();
+        assert_eq!(back, p);
+        assert_eq!(back.places.as_ref().unwrap().landmarks[0].name, "Pico Bea");
+        let skeleton = WorldPackage::skeleton_from_bytes(&b).unwrap();
+        assert_eq!(skeleton.places, p.places);
+        // An older reader (the tag unknown) keeps the places as they were.
+        let mut older = b.clone();
+        let at = older.windows(4).rposition(|w| w == LANDMARKS_TAG).unwrap();
+        older[at..at + 4].copy_from_slice(b"XXXX");
+        assert_eq!(
+            WorldPackage::from_bytes(&older).unwrap().places,
+            only_places.places
+        );
+        // A newer layout is skipped, not fatal.
+        let mut newer = b.clone();
+        newer[at + 12] = 99;
+        assert_eq!(
+            WorldPackage::from_bytes(&newer).unwrap().places,
+            only_places.places
+        );
+        // Adding them leaves every other section as it was.
+        let sizes: Vec<_> = section_sizes(&b)
+            .into_iter()
+            .filter(|(t, _)| t != LANDMARKS_TAG)
+            .collect();
+        assert_eq!(sizes, section_sizes(&only_places.to_bytes()));
     }
 
     #[test]

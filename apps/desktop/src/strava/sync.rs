@@ -1,4 +1,7 @@
-//! Strava sync: every saved ride that is not on Strava yet gets uploaded.
+//! Strava sync: every Strava recording (S … S, `rides/strava/`) that is
+//! not on Strava yet gets uploaded – never a whole ride (spec 2.8.1 Q6,
+//! v5.05: [`sync_files`] lists the recordings only; whole rides uploaded
+//! before keep their state here).
 //! The state (`<rides dir>/strava-sync.toml`) remembers what is uploaded,
 //! what failed (and when to retry, with exponential backoff) and what
 //! Strava rejected for good, and which Strava recordings wait for the
@@ -286,12 +289,15 @@ impl ManualMarks {
     }
 }
 
-/// The ride files the API sync works on: [`ride_files`] without the ones
-/// marked as uploaded by hand ([`ManualMarks`]).
+/// The files the API sync works on: the Strava recordings of
+/// [`ride_files`] (`strava/<name>.fit`) – whole rides never go to Strava
+/// (spec 2.8.1 Q6) – without the ones marked as uploaded by hand
+/// ([`ManualMarks`]).
 pub fn sync_files(dir: &Path) -> Vec<String> {
     let marks = ManualMarks::load(dir);
     ride_files(dir)
         .into_iter()
+        .filter(|f| f.starts_with("strava/"))
         .filter(|f| !marks.files.contains(f))
         .collect()
 }
@@ -627,7 +633,7 @@ mod tests {
             let dir = std::env::temp_dir().join(format!("ocw-sync-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             let rides_dir = dir.join("rides");
-            std::fs::create_dir_all(&rides_dir).unwrap();
+            std::fs::create_dir_all(rides_dir.join("strava")).unwrap();
             for r in rides {
                 std::fs::write(rides_dir.join(r), b"FITDATA").unwrap();
             }
@@ -696,16 +702,18 @@ mod tests {
     fn rides_marked_as_uploaded_by_hand_are_skipped() {
         let fx = Fixture::new(
             "manual",
-            &["2026-01-01_10-00-00.fit", "2026-01-02_10-00-00.fit"],
+            &[
+                "strava/2026-01-01_10-00-00.fit",
+                "strava/2026-01-02_10-00-00.fit",
+            ],
         );
         let rides = &fx.paths.rides_dir;
-        std::fs::create_dir_all(rides.join("strava")).unwrap();
         std::fs::write(rides.join("strava/2026-01-02_10-10-00.fit"), b"FITDATA").unwrap();
         let mut marks = ManualMarks::load(rides);
         assert!(marks.files.is_empty(), "no file: no marks");
         marks.set(
             &[
-                "2026-01-01_10-00-00.fit".into(),
+                "strava/2026-01-01_10-00-00.fit".into(),
                 "strava/2026-01-02_10-10-00.fit".into(),
             ],
             true,
@@ -714,7 +722,7 @@ mod tests {
         assert_eq!(ManualMarks::load(rides), marks);
         assert_eq!(
             sync_files(rides),
-            vec!["2026-01-02_10-00-00.fit".to_string()]
+            vec!["strava/2026-01-02_10-00-00.fit".to_string()]
         );
         assert_eq!(fx.state().counts(&sync_files(rides)).pending, 1);
         let http = MockHttp::default();
@@ -723,7 +731,7 @@ mod tests {
         let report = fx.sync(&http, 1000);
         assert_eq!(
             report.uploaded,
-            vec![("2026-01-02_10-00-00.fit".into(), Some(101))]
+            vec![("strava/2026-01-02_10-00-00.fit".into(), Some(101))]
         );
         assert_eq!(
             http.urls(),
@@ -733,7 +741,7 @@ mod tests {
             ]
         );
         // Unmarked: due again.
-        marks.set(&["2026-01-01_10-00-00.fit".into()], false);
+        marks.set(&["strava/2026-01-01_10-00-00.fit".into()], false);
         marks.save(rides).unwrap();
         assert_eq!(sync_files(rides).len(), 2);
         // A broken file marks nothing.
@@ -742,10 +750,13 @@ mod tests {
     }
 
     #[test]
-    fn uploads_new_rides_and_polls_until_ready() {
+    fn uploads_new_recordings_and_polls_until_ready() {
         let fx = Fixture::new(
             "upload",
-            &["2026-01-01_10-00-00.fit", "2026-01-02_10-00-00.fit"],
+            &[
+                "strava/2026-01-01_10-00-00.fit",
+                "strava/2026-01-02_10-00-00.fit",
+            ],
         );
         let http = MockHttp::default();
         http.reply(201, PROCESSING)
@@ -757,8 +768,8 @@ mod tests {
         assert_eq!(
             report.uploaded,
             vec![
-                ("2026-01-01_10-00-00.fit".into(), Some(100)),
-                ("2026-01-02_10-00-00.fit".into(), Some(101))
+                ("strava/2026-01-01_10-00-00.fit".into(), Some(100)),
+                ("strava/2026-01-02_10-00-00.fit".into(), Some(101))
             ]
         );
         assert_eq!(
@@ -780,46 +791,79 @@ mod tests {
         assert_eq!(http.urls().len(), 5);
     }
 
-    /// The Strava recordings (spec §2.8.1, ST1) are queued with the rides:
-    /// `rides/strava/<name>.fit`, uploaded like a ride (mock Strava).
+    /// Only the Strava recordings (spec 2.8.1 ST1, Q6) go to Strava:
+    /// `rides/strava/<name>.fit` is uploaded, the whole ride beside it
+    /// never – not queued, not counted, not sent (mock Strava); a whole
+    /// ride uploaded before keeps its state in the file.
     #[test]
-    fn strava_recordings_are_uploaded_too() {
-        let fx = Fixture::new("recordings", &["2026-01-01_10-00-00.fit"]);
+    fn only_strava_recordings_are_uploaded_never_whole_rides() {
+        let fx = Fixture::new(
+            "recordings",
+            &["2026-01-01_10-00-00.fit", "2025-12-31_10-00-00.fit"],
+        );
         let sdir = fx.paths.rides_dir.join("strava");
-        std::fs::create_dir_all(&sdir).unwrap();
         std::fs::write(sdir.join("2026-01-01_10-20-00.fit"), b"FITDATA").unwrap();
         std::fs::create_dir_all(fx.paths.rides_dir.join("2026-01-01_10-00-00/photos")).unwrap();
         assert_eq!(
             ride_files(&fx.paths.rides_dir),
             vec![
+                "2025-12-31_10-00-00.fit".to_string(),
                 "2026-01-01_10-00-00.fit".to_string(),
                 "strava/2026-01-01_10-20-00.fit".to_string()
             ]
         );
+        assert_eq!(
+            sync_files(&fx.paths.rides_dir),
+            vec!["strava/2026-01-01_10-20-00.fit".to_string()]
+        );
+        // An older whole ride on Strava (before v5.05) stays as it is.
+        let mut st = SyncState::default();
+        st.rides.insert(
+            "2025-12-31_10-00-00.fit".into(),
+            RideSync::Uploaded {
+                activity_id: Some(3),
+                at: 1,
+            },
+        );
+        st.save(&fx.paths.state_file).unwrap();
+        let c = fx.state().counts(&sync_files(&fx.paths.rides_dir));
+        assert_eq!((c.pending, c.uploaded), (1, 0), "the recording only");
         let http = MockHttp::default();
-        http.reply(201, r#"{"id":1,"error":null,"activity_id":7}"#)
-            .reply(201, r#"{"id":2,"error":null,"activity_id":8}"#);
+        http.reply(201, r#"{"id":2,"error":null,"activity_id":8}"#);
         let report = fx.sync(&http, 1000);
         assert_eq!(
             report.uploaded,
-            vec![
-                ("2026-01-01_10-00-00.fit".into(), Some(7)),
-                ("strava/2026-01-01_10-20-00.fit".into(), Some(8))
-            ]
+            vec![("strava/2026-01-01_10-20-00.fit".into(), Some(8))]
         );
+        assert_eq!(http.urls(), vec![api::UPLOADS_URL.to_string()]);
+        // Nothing more: the whole ride is never sent, by any scope.
+        assert_eq!(fx.sync(&http, 2000), SyncReport::default());
+        let r = fx.sync_in(
+            &http,
+            2001,
+            &Scope::Files(vec!["2026-01-01_10-00-00.fit".into()]),
+        );
+        assert_eq!(r, SyncReport::default());
+        assert_eq!(http.urls().len(), 1);
+        let st = fx.state();
+        assert!(!st.rides.contains_key("2026-01-01_10-00-00.fit"));
+        assert!(matches!(
+            st.rides["2025-12-31_10-00-00.fit"],
+            RideSync::Uploaded { .. }
+        ));
         assert_eq!(external_id("strava/a.fit"), "strava-a.fit");
     }
 
     #[test]
     fn network_failure_backs_off_and_retries() {
-        let fx = Fixture::new("retry", &["a.fit", "b.fit"]);
+        let fx = Fixture::new("retry", &["strava/a.fit", "strava/b.fit"]);
         let http = MockHttp::default();
         http.fail("connection refused");
         let report = fx.sync(&http, 1000);
         assert_eq!(report.failed.len(), 1);
         assert_eq!(http.urls().len(), 1, "b waits too while offline");
         assert!(matches!(
-            fx.state().rides["a.fit"],
+            fx.state().rides["strava/a.fit"],
             RideSync::Failed {
                 attempts: 1,
                 retry_at: 1060,
@@ -839,13 +883,16 @@ mod tests {
         let report = fx.sync(&http, 1100);
         assert_eq!(
             report.uploaded,
-            vec![("a.fit".into(), Some(7)), ("b.fit".into(), Some(8))]
+            vec![
+                ("strava/a.fit".into(), Some(7)),
+                ("strava/b.fit".into(), Some(8))
+            ]
         );
     }
 
     #[test]
     fn rejected_rides_are_not_retried() {
-        let fx = Fixture::new("rejected", &["a.fit"]);
+        let fx = Fixture::new("rejected", &["strava/a.fit"]);
         let http = MockHttp::default();
         http.reply(201, PROCESSING).reply(
             200,
@@ -858,7 +905,7 @@ mod tests {
 
     #[test]
     fn unfinished_uploads_resume_polling() {
-        let fx = Fixture::new("resume", &["a.fit"]);
+        let fx = Fixture::new("resume", &["strava/a.fit"]);
         let http = MockHttp::default();
         http.reply(201, PROCESSING);
         for _ in 0..MAX_POLLS {
@@ -867,26 +914,29 @@ mod tests {
         let report = fx.sync(&http, 0);
         assert_eq!(report.processing, 1);
         assert_eq!(
-            fx.state().rides["a.fit"],
+            fx.state().rides["strava/a.fit"],
             RideSync::Processing { upload_id: 11 }
         );
         // Next sync: no new upload, just the status.
         http.reply(200, r#"{"id":11,"error":null,"activity_id":5}"#);
         let n = http.urls().len();
         let report = fx.sync(&http, 10);
-        assert_eq!(report.uploaded, vec![("a.fit".into(), Some(5))]);
+        assert_eq!(report.uploaded, vec![("strava/a.fit".into(), Some(5))]);
         assert_eq!(http.urls()[n..], [format!("{}/11", api::UPLOADS_URL)]);
     }
 
     #[test]
     fn revoked_access_needs_a_new_connect() {
-        let fx = Fixture::new("revoked", &["a.fit"]);
+        let fx = Fixture::new("revoked", &["strava/a.fit"]);
         let http = MockHttp::default();
         http.reply(401, "{}");
         let report = fx.sync(&http, 0);
         assert!(report.needs_connect);
         // The ride stays pending, not failed.
-        assert_eq!(fx.state().due(&files(&["a.fit"]), 0), vec!["a.fit"]);
+        assert_eq!(
+            fx.state().due(&files(&["strava/a.fit"]), 0),
+            vec!["strava/a.fit"]
+        );
         // Without a token, nothing is sent.
         fx.paths.token.delete().unwrap();
         assert!(fx.sync(&http, 0).needs_connect);
@@ -895,14 +945,13 @@ mod tests {
 
     /// Strava recordings made while Strava was not set up (spec §2.8.1
     /// *Recording without Strava set up, uploaded later*) wait: the usual
-    /// sync leaves them (whole rides go as before), the catch-up uploads
+    /// sync leaves them (and never sends a whole ride), the catch-up uploads
     /// them oldest first, skipping the ones marked as uploaded by hand; a
     /// picked one goes alone; a failed one is retried like any ride.
     #[test]
     fn waiting_recordings_wait_for_the_catch_up() {
         let fx = Fixture::new("waiting", &["2026-01-01_09-00-00.fit"]);
         let rides = fx.paths.rides_dir.clone();
-        std::fs::create_dir_all(rides.join("strava")).unwrap();
         for n in [
             "2026-01-03_10-00-00.fit",
             "2026-01-01_10-00-00.fit",
@@ -933,16 +982,11 @@ mod tests {
             RideSync::Waiting { since: 500 }
         );
         let c = fx.state().counts(&sync_files(&rides));
-        assert_eq!((c.waiting, c.pending, c.failed), (3, 1, 0));
-        // The usual sync: the whole ride only.
+        assert_eq!((c.waiting, c.pending, c.failed), (3, 0, 0));
+        // The usual sync: nothing (the whole ride never goes).
         let http = MockHttp::default();
-        http.reply(201, r#"{"id":1,"error":null,"activity_id":7}"#);
-        let r = fx.sync(&http, 1000);
-        assert_eq!(
-            r.uploaded,
-            vec![("2026-01-01_09-00-00.fit".into(), Some(7))]
-        );
-        assert_eq!(fx.sync(&http, 1001), SyncReport::default());
+        assert_eq!(fx.sync(&http, 1000), SyncReport::default());
+        assert!(http.urls().is_empty());
         // A picked one goes alone.
         http.reply(201, r#"{"id":2,"error":null,"activity_id":8}"#);
         let r = fx.sync_in(
@@ -978,7 +1022,7 @@ mod tests {
             vec![("strava/2026-01-01_10-00-00.fit".into(), Some(10))]
         );
         let c = fx.state().counts(&sync_files(&rides));
-        assert_eq!((c.waiting, c.pending, c.uploaded), (0, 0, 4));
+        assert_eq!((c.waiting, c.pending, c.uploaded), (0, 0, 3));
         // The marked one was never sent.
         assert!(
             !http

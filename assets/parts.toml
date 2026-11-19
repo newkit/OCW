@@ -373,11 +373,15 @@ model = "stock"
 id = "lights.none.base"
 slot = "lights"
 tier = "base"
-name = "No lights"
+name = "Basic lights"
 hearts = 0
 weight_g = 0
 fits = ["road", "tt", "gravel", "mtb"]
 model = "stock"
+# Every bike's own small lamps (Phase 9 Q3, changed 2026-11-19; the id stays
+# for saved garages): a commuter lamp of about 60 lm front, a small 4 lm red
+# LED under the saddle; the light set is the upgrade.
+light = { front_lm = 60, rear_lm = 4, front_colour = "#FFF4E6", rear_colour = "#FF2614" }
 
 [[part]]
 id = "computer.none.base"

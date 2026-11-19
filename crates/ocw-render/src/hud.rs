@@ -386,6 +386,9 @@ fn spawn_hud(mut commands: Commands) {
                 ..default()
             },
             HudPanel,
+            // The workout panel stays above it, or replaces it where it
+            // has no other room (spec 3.2 Q1).
+            crate::workout::YieldsToWorkout,
         ))
         .with_children(|col| {
             spawn_profile(col);
@@ -1036,7 +1039,7 @@ fn small_chars_for(width: f32) -> usize {
 /// Font size of the big HUD line.
 const BIG_FONT: f32 = 26.0;
 /// The top panel's padding (px).
-const PANEL_PAD: f32 = 10.0;
+pub(crate) const PANEL_PAD: f32 = 10.0;
 /// Bevy's line height (of the font size).
 const LINE_HEIGHT: f32 = 1.2;
 
@@ -1291,6 +1294,30 @@ pub(crate) mod tests_support {
         );
         let small = format!(
             "Test Hills | 2.01 km | 0:00:24 | riders: 3\nup: faster, down: stop, left/right: steer or choose the exit (another than the route's leaves it), Q/E: exit, J: rejoin the route, U: U-turn, A: autodrive | {DESKTOP_KEYS}\nVirtual trainer 200 W (no Web Bluetooth here) | trainer SIM +1.9 % (difficulty 50 %) | autodrive | gravel"
+        );
+        let (b, sm) = top_panel_text(panel, &big, &small);
+        (panel, TOP_MARGIN_PX + top_panel_height(&b, &sm))
+    }
+
+    /// The same for an everyday ride: the main line with the weather, the
+    /// riding keys without the route's exit keys, a short device status.
+    pub(crate) fn typical_top_panel(w: f32) -> (f32, f32) {
+        let stamp = 25.0 * 14.0 * 0.6 + 16.0;
+        let panel = top_panel_max_px(w, stamp, 1.0).min(w * 0.94);
+        let big = format!(
+            "{}   clear 18 °C   ↗ crosswind 7 km/h",
+            main_line(
+                200.0,
+                20.8,
+                Some(80.0),
+                7.7,
+                Some(8.3),
+                Some(142.0),
+                Units::Metric
+            )
+        );
+        let small = format!(
+            "Vaduz - Malbun | 2.01 km | 0:00:24 | riders: 3\nup: faster, down: stop, left/right: steer, A: autodrive, W: wild | {DESKTOP_KEYS}\nVirtual trainer 200 W | trainer ERG 250 W"
         );
         let (b, sm) = top_panel_text(panel, &big, &small);
         (panel, TOP_MARGIN_PX + top_panel_height(&b, &sm))
@@ -1806,6 +1833,131 @@ mod tests {
             "{b}\n{sm}"
         );
         assert!(top_panel_height(&b, &sm) > 2.0 * PANEL_PAD + 6.0 * 18.0);
+    }
+
+    /// The damage widget (spec 14 Phase 12F; the user, 2026-11-19: always
+    /// shown while damage is on) fits under the bike computer at every
+    /// supported window size and HUD size: never wider than the panel (its
+    /// blocks wrap on a narrow one), and the panel with it stays in the
+    /// upper part of the window at 100 % – fresh at 100 %, and after a
+    /// bad crash with long words, labels and the loss.
+    #[test]
+    fn the_damage_widget_fits_every_window() {
+        use crate::damage_hud::{tests::fresh, widget_size};
+        use ocw_sim::damage::Status;
+        let mut hurt = fresh();
+        hurt.rider.word = "badly injured".into();
+        hurt.rider.status = Status::Critical;
+        hurt.bike.word = "badly damaged".into();
+        hurt.bike.status = Status::Serious;
+        hurt.labels = vec![
+            "front puncture: stop to repair".into(),
+            "rear wheel buckled".into(),
+            "chain broken".into(),
+        ];
+        hurt.loss = Some("−8 % rider, −12 % bike".into());
+        let big = super::main_line(
+            200.0,
+            20.8,
+            Some(80.0),
+            7.7,
+            Some(8.3),
+            Some(142.0),
+            Units::Metric,
+        );
+        let small = format!(
+            "Test Hills | 2.01 km | 0:00:24 | riders: 3\nup: faster, down: stop, left/right: steer, A: autodrive, W: wild | {DESKTOP_KEYS}\nVirtual trainer 200 W | trainer SIM +1.9 % (difficulty 50 %)"
+        );
+        let stamp = 25.0 * 14.0 * 0.6 + 16.0;
+        for (w, h) in [
+            (1280.0f32, 720.0f32),
+            (1366.0, 768.0),
+            (1600.0, 900.0),
+            (1920.0, 1080.0),
+            (2560.0, 1440.0),
+            (3840.0, 2160.0),
+            (1024.0, 768.0),
+            (1280.0, 960.0),
+            (1600.0, 1200.0),
+        ] {
+            for scale in [1.0f32, 1.25, 1.5] {
+                let panel = top_panel_max_px(w, stamp * scale, 1.0 / scale).min(w / scale * 0.94);
+                let inner = panel - 2.0 * PANEL_PAD;
+                let (b, sm) = top_panel_text(panel, &big, &small);
+                for (name, v) in [("fresh", fresh()), ("hurt", hurt.clone())] {
+                    let what = format!("{w}×{h} at {scale}, {name}");
+                    let size = widget_size(&v, inner);
+                    assert!(size.x <= inner + 0.5, "{what}: {size} in {inner}");
+                    let height = (TOP_MARGIN_PX + top_panel_height(&b, &sm) + 4.0 + size.y) * scale;
+                    let room = if scale < 1.1 {
+                        Some(0.6)
+                    } else if scale < 1.3 {
+                        Some(0.85)
+                    } else {
+                        (w >= 1280.0).then_some(1.0)
+                    };
+                    if let Some(room) = room {
+                        assert!(height < h * room, "{what}: {height} px of {h}");
+                    }
+                }
+            }
+        }
+        // 720p and 1080p at 100 %: the fresh widget is one row, the
+        // icons and the meters side by side.
+        for w in [1280.0f32, 1920.0] {
+            let panel = top_panel_max_px(w, stamp, 1.0);
+            let one = widget_size(&fresh(), panel - 2.0 * PANEL_PAD);
+            assert!(one.y < 100.0, "{w}: {one}");
+        }
+    }
+
+    /// With damage on the widget shows under the bike computer; `hud off`
+    /// hides it with the panel, damage off hides it on its own.
+    #[test]
+    fn the_damage_widget_hides_with_the_hud() {
+        use crate::damage_hud::{DamageHudPlugin, DamageWidget, tests::fresh};
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(RideView::new(Route::test_loop()))
+            .init_resource::<ShowHud>()
+            .init_resource::<ShowProfile>()
+            .init_resource::<ShowGps>()
+            .init_resource::<HudGpsLine>()
+            .add_plugins(DamageHudPlugin)
+            .add_systems(Startup, spawn_hud)
+            .add_systems(Update, show_hud);
+        app.world_mut().resource_mut::<RideView>().damage = Some(fresh());
+        app.update();
+        app.update();
+        let state = |app: &mut App| {
+            let w = app.world_mut();
+            let (e, node) = w
+                .query_filtered::<(Entity, &Node), With<DamageWidget>>()
+                .single(w)
+                .unwrap();
+            let panel = w.get::<ChildOf>(e).unwrap().parent();
+            assert!(
+                w.get::<HudTopPanel>(panel).is_some(),
+                "in the bike computer's panel"
+            );
+            (node.display, *w.get::<Visibility>(panel).unwrap())
+        };
+        assert_eq!(state(&mut app), (Display::Flex, Visibility::Inherited));
+        app.world_mut().resource_mut::<ShowHud>().0 = false;
+        app.update();
+        assert_eq!(
+            state(&mut app),
+            (Display::Flex, Visibility::Hidden),
+            "hud off"
+        );
+        app.world_mut().resource_mut::<ShowHud>().0 = true;
+        app.world_mut().resource_mut::<RideView>().damage = None;
+        app.update();
+        assert_eq!(
+            state(&mut app),
+            (Display::None, Visibility::Inherited),
+            "damage off"
+        );
     }
 
     #[test]

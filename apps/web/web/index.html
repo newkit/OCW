@@ -16,7 +16,9 @@
     Options in the query string: ?route=loop&bots=3&power=250&start=1.5&name=Ada&ftp=250
     Devices (B4): the panel bottom right opens the browser's Web Bluetooth
     chooser (Chrome / Edge); without Web Bluetooth it says so and the ride
-    uses virtual power.
+    uses virtual power. A transparent overlay (the ride shows through it);
+    once a device connects it collapses to a small button, a click opens it
+    again (spec 3.2 Q2, 2026-11-19).
     A world package: ?world=liechtenstein&route=vaduz-malbun (dev pages on
     localhost also: allow-unsigned=1, trust=dev, trust-root=HEX).
     The GPU (B7, ocw-gpu.js): ?gpu=webgl2 or ?gpu=webgpu choose the build;
@@ -58,23 +60,34 @@
       font: 15px ui-monospace, SFMono-Regular, Menlo, monospace; }
     #ocw-status.error { color: #ffb4a8; background: rgba(16, 20, 26, 0.92); }
     #ocw-status[hidden] { display: none; }
-    /* The devices panel (B4; a page overlay until the menus come, B6). */
+    /* The devices panel (B4): a transparent overlay over the ride (spec
+       3.2 Q2, 2026-11-19: "make it a transparent overlay") – a light veil
+       and a text shadow, the 3D view shows through it and clicks beside
+       its buttons reach the ride; collapsed to a small button once a
+       device is connected (a click opens it again). */
     #ocw-devices { position: fixed; bottom: 28px; right: 12px; width: 340px;
-      padding: 10px 12px; border-radius: 6px; background: rgba(10, 13, 18, 0.78);
+      padding: 10px 12px; border-radius: 6px; background: rgba(10, 13, 18, 0.32);
+      border: 1px solid rgba(216, 222, 233, 0.18); pointer-events: none;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9), 0 0 4px rgba(0, 0, 0, 0.6);
       font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; line-height: 1.45; }
+    #ocw-devices button, #ocw-devices a { pointer-events: auto; }
     #ocw-devices[hidden], #ocw-devices-show[hidden] { display: none; }
     #ocw-devices header { display: flex; justify-content: space-between; align-items: center;
       font-weight: 600; margin-bottom: 6px; }
     #ocw-devices button, #ocw-devices-show { font: inherit; color: #d8dee9; cursor: pointer;
-      background: #222a35; border: 1px solid #3b4656; border-radius: 4px; padding: 3px 7px; }
-    #ocw-devices button:hover:not(:disabled) { background: #2c3644; }
+      background: rgba(34, 42, 53, 0.55); border: 1px solid rgba(98, 112, 132, 0.7);
+      border-radius: 4px; padding: 3px 7px; text-shadow: inherit; }
+    #ocw-devices-show { text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9); }
+    #ocw-devices-show .on { color: #a3d9a5; }
+    #ocw-devices button:hover:not(:disabled), #ocw-devices-show:hover { background: rgba(44, 54, 68, 0.8); }
     #ocw-devices button:disabled { opacity: 0.45; cursor: not-allowed; }
     #ocw-devices .add { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
     #ocw-devices .dev { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #ocw-devices .on { color: #a3d9a5; } #ocw-devices .wait { color: #ebcb8b; }
     #ocw-devices .note { color: #aab4c3; white-space: normal; margin-top: 4px; }
     #ocw-devices .err { color: #ffb4a8; white-space: normal; margin-top: 4px; }
-    #ocw-devices-show { position: fixed; bottom: 28px; right: 12px; }
+    #ocw-devices-show { position: fixed; bottom: 28px; right: 12px; max-width: 260px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     /* The sound's hint (B5): until the first click or key. The volumes and
        the voice switches are the menu's Audio and Voice pages (B6). */
     #ocw-sound-hint { position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
@@ -527,6 +540,17 @@
       const toggle = (on) => { panel.hidden = !on; show.hidden = on; canvas.focus(); };
       document.getElementById("ocw-devices-hide").onclick = () => toggle(false);
       show.onclick = () => toggle(true);
+      // Collapsed to the button once a device is connected (spec 3.2 Q2):
+      // 2 s after the number of connected devices grows, so the row with
+      // the device is seen first; opening it again stays open until the
+      // next device connects.
+      let connected = 0;
+      let collapseAt = null;
+      window.ocwDevicesPanel = () => JSON.stringify({
+        expanded: !panel.hidden, collapsed: panel.hidden && !show.hidden,
+        background: getComputedStyle(panel).backgroundColor,
+        button: show.textContent, connected,
+      });
       const hasBt = !!navigator.bluetooth;
       for (const b of panel.querySelectorAll("button[data-kind]")) {
         b.disabled = !hasBt;
@@ -561,6 +585,20 @@
         let j;
         try { j = JSON.parse(window.ocw.devices() || "null"); } catch (e) { j = null; }
         if (!j) return;
+        const on = j.devices.filter((d) => d.state === "connected");
+        if (on.length > connected) collapseAt = performance.now() + 2000;
+        connected = on.length;
+        if (collapseAt !== null && performance.now() >= collapseAt) {
+          collapseAt = null;
+          if (!panel.hidden && connected) toggle(false);
+        }
+        // The button says what is connected: "Devices ● KICKR 250 W".
+        const first = on[0];
+        const label = !first ? "Devices"
+          : `Devices ● ${first.name}${first.power_w != null ? ` ${Math.round(first.power_w)} W`
+            : first.heart_rate_bpm != null ? ` ${Math.round(first.heart_rate_bpm)} bpm` : ""}`
+            + (on.length > 1 ? ` +${on.length - 1}` : "");
+        if (show.textContent !== label) show.textContent = label;
         const rows = [];
         if (j.virtual) rows.push(`<div class="dev">○ Virtual power ${Math.round(j.virtual_w)} W</div>`);
         for (const d of j.devices) {

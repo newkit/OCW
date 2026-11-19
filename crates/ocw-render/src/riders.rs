@@ -977,9 +977,10 @@ impl AvatarRig {
     }
 }
 
-/// A lamp's lens on a bike with lights fitted (the near model's
-/// `light_front` / `light_rear` parts, spec §14 Phase 9 Q3): it glows
-/// while the lights are on ([`crate::sky`]), else keeps `off`.
+/// A lamp's lens on a bike (the near model's `light_front` /
+/// `light_rear` parts: every bike's default lamps or the fitted light
+/// set's, spec §14 Phase 9 Q3): it glows while the lights are on
+/// ([`crate::sky`]), else keeps `off`.
 #[derive(Component, Debug, Clone)]
 pub struct BikeLens {
     /// The avatar it belongs to.
@@ -989,9 +990,10 @@ pub struct BikeLens {
     pub off: Handle<StandardMaterial>,
 }
 
-/// Where a fitted light set's lamps are on an avatar's bike (spec §14
-/// Phase 9 Q3): the node entity that carries each lens and the lens's
-/// centre in that node's frame. Only bikes with lights fitted have it.
+/// Where the lamps are on an avatar's bike (spec §14 Phase 9 Q3): the
+/// node entity that carries each lens and the lens's centre in that
+/// node's frame. Every bike model has lamps (its default ones or the
+/// light set); a model without lenses (and the ghost) has none.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct LampAnchors {
     pub front: Option<(Entity, Vec3)>,
@@ -999,8 +1001,7 @@ pub struct LampAnchors {
 }
 
 /// The lenses of a bike model's near parts: (node index, centre in the
-/// node's frame, rear) for every `light_front` / `light_rear` part (none:
-/// no lights fitted).
+/// node's frame, rear) for every `light_front` / `light_rear` part.
 pub fn lamp_lenses(model: &Model) -> Vec<(usize, Vec3, bool)> {
     let far = model.node(bike_nodes::LOD1);
     let mut out = Vec::new();
@@ -1131,7 +1132,7 @@ fn spawn_avatar(
     // legs fit – the bike file's sizing data (spec §14 Phase 15, Q7: the
     // frames are made for the 1.78 m rider and fitted to every size).
     let body = pose::BodyFit::sized(
-        &lib.rider_rig,
+        &lib.rider_rig.for_body(&character),
         &lib.bike_rigs[b],
         character.scale(),
         &ocw_assets::shipped::bike_sizing(built.bike),
@@ -1169,8 +1170,9 @@ fn spawn_avatar(
         (!ghost).then_some(root),
         |slot, node, c, is_far| lib.material(materials, slot, node, c, &colours, ghost, is_far),
     );
-    // A fitted light set's lamps (spec §14 Phase 9 Q3): where the lenses
-    // are, for the glow far away and the local rider's beam.
+    // The bike's lamps (spec §14 Phase 9 Q3: the default ones or the light
+    // set): where the lenses are, for the glow far away and the local
+    // rider's beam.
     let lenses = lamp_lenses(bike_model);
     if !ghost && !lenses.is_empty() {
         let at = |rear: bool| {
@@ -1654,15 +1656,45 @@ mod tests {
         );
     }
 
-    /// Spec §14 Phase 9 Q3: only a bike with the light set fitted has
-    /// lenses – the front one at the bar, ahead of and above the rear one
-    /// on the seat post – for every bike type that takes lights.
+    /// The lamps' lenses of a model: the front and the rear one in
+    /// model space, each lens's size (largest extent).
+    fn lens_places(m: &Model) -> [(Vec3, f32); 2] {
+        let lenses = lamp_lenses(m);
+        assert_eq!(lenses.len(), 2, "one front, one rear lens");
+        [false, true].map(|rear| {
+            let (i, c, _) = *lenses.iter().find(|l| l.2 == rear).expect("a lens");
+            let node = &m.nodes[i];
+            let size = node
+                .primitives
+                .iter()
+                .filter(|p| {
+                    m.materials[p.material].name == if rear { "light_rear" } else { "light_front" }
+                })
+                .flat_map(|p| p.positions.iter().map(|v| Vec3::from(*v)))
+                .fold((Vec3::MAX, Vec3::MIN), |(lo, hi), v| (lo.min(v), hi.max(v)));
+            (
+                m.world(i).transform_point3(c),
+                (size.1 - size.0).max_element(),
+            )
+        })
+    }
+
+    /// Spec §14 Phase 9 Q3 (changed 2026-11-19): every exported bike model
+    /// – all six bike types – has its lamp anchors: a small front lens at
+    /// the bars, ahead of and above a small rear one on the seat post; the
+    /// light set (where it fits) puts bigger lenses there.
     #[test]
-    fn fitted_lights_have_a_front_and_a_rear_lens() {
+    fn every_bike_model_has_a_front_and_a_rear_lamp() {
         let low = ocw_assets::shipped::rider_low_model();
         for p in ProfileId::ALL {
             let stock = ocw_assets::shipped::bike_model(p);
-            assert!(lamp_lenses(stock).is_empty(), "{p:?}: no lights");
+            let [(front, fs), (rear, rs)] = lens_places(stock);
+            assert!(
+                front.z < rear.z - 0.5,
+                "{p:?}: front {front} ahead of rear {rear}"
+            );
+            assert!(front.y > 0.6 && rear.y > 0.5, "{p:?}: {front} {rear}");
+            assert!(fs < 0.03 && rs < 0.03, "{p:?}: small lamps {fs} {rs}");
             if p.bike() == ocw_core::BikeType::TimeTrial {
                 continue; // the light set does not fit a TT bike
             }
@@ -1672,17 +1704,9 @@ mod tests {
                 low,
                 &["lights-set"],
             );
-            let lenses = lamp_lenses(&m);
-            let world = |rear: bool| {
-                let (i, c, _) = *lenses.iter().find(|l| l.2 == rear).expect("a lens");
-                m.world(i).transform_point3(c)
-            };
-            let (front, rear) = (world(false), world(true));
-            assert!(
-                front.z < rear.z - 0.5,
-                "{p:?}: front {front} ahead of rear {rear}"
-            );
-            assert!(front.y > 0.6 && rear.y > 0.5, "{p:?}: {front} {rear}");
+            let [(front, fs2), (rear, rs2)] = lens_places(&m);
+            assert!(front.z < rear.z - 0.5 && front.y > 0.6 && rear.y > 0.5);
+            assert!(fs2 > fs && rs2 > rs, "{p:?}: the set's lamps are bigger");
         }
     }
 
@@ -1737,6 +1761,9 @@ mod tests {
             "wheels.mtb.base".into(),
             "tyres.mtb.xc".into(),
             "lights.set".into(),
+            // Every bike has lamps now (Phase 9 Q3): the computer adds
+            // its screen's mesh.
+            "computer.top".into(),
             "nonsense".into(),
         ];
         app.update();

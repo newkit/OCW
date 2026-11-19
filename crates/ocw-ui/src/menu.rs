@@ -161,6 +161,7 @@ impl Plugin for MenuPlugin {
                                 "workshop-page",
                                 "ride",
                                 "strava-waiting",
+                                "strava",
                             ])
                             .default_value("toggle"),
                     )
@@ -190,6 +191,8 @@ impl Plugin for MenuPlugin {
                         )),
                         // The question about Strava's waiting recordings.
                         Some("strava-waiting") => Action::OpenSub(sub::Page::StravaWaiting),
+                        // The Strava page (Navi → Strava; spec 2.8.1).
+                        Some("strava") => Action::OpenSub(sub::Page::Strava),
                         _ if open => Action::Close,
                         _ => Action::Open,
                     };
@@ -1024,6 +1027,50 @@ mod tests {
                 .iter()
                 .any(|r| row_setting(r) == Some("display.fullscreen"))
         );
+    }
+
+    /// The user (2026-11-19): damage has its row in the Settings section
+    /// of both apps – Settings → Controls, beside Collisions – and the
+    /// separate damage-indicator switch is gone from every page.
+    #[test]
+    fn damage_is_reachable_from_settings_in_both_apps() {
+        for platform in [Platform::Desktop, Platform::Browser] {
+            let mut app = app(platform);
+            tap(&mut app, KeyCode::Escape);
+            for _ in 0..5 {
+                tap(&mut app, KeyCode::ArrowDown);
+            }
+            tap(&mut app, KeyCode::Enter);
+            let v = view(&app);
+            assert_eq!(v.title, "Settings", "{platform:?}");
+            assert!(v.items.iter().any(|i| i == "Controls"), "{platform:?}");
+            let controls = sub_rows(app.world(), sub::Page::Controls);
+            assert!(controls.len() <= 6, "the ten-foot rule: {controls:?}");
+            let i = controls
+                .iter()
+                .position(|r| row_setting(r) == Some("ride.damage"))
+                .unwrap_or_else(|| panic!("{platform:?}: no Damage row"));
+            assert_eq!(controls[i].label, "Damage");
+            assert_eq!(row_setting(&controls[i - 1]), Some("ride.collisions"));
+            // Chaotic bots moved to the bots and aids page.
+            let aids = sub_rows(app.world(), sub::Page::RidingAids);
+            assert!(
+                aids.iter()
+                    .any(|r| row_setting(r) == Some("ride.chaotic_bots"))
+            );
+            for p in sub::Page::TABS.into_iter().chain([
+                sub::Page::RidingAids,
+                sub::Page::Hud,
+                sub::Page::Accessibility,
+            ]) {
+                assert!(
+                    sub_rows(app.world(), p)
+                        .iter()
+                        .all(|r| row_setting(r) != Some("display.damage")),
+                    "{p:?}"
+                );
+            }
+        }
     }
 
     #[test]

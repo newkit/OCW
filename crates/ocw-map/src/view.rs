@@ -87,6 +87,10 @@ impl MapView {
 /// the height from the top (the lower third, as on a bike computer).
 pub const RIDER_ANCHOR: [f32; 2] = [0.5, 0.7];
 
+/// Where the unicorn sits on the map in Unicorn mode (spec 3.2 Q7): in
+/// the middle – it flies any way, so the map shows all round it.
+pub const FLIGHT_ANCHOR: [f32; 2] = [0.5, 0.5];
+
 /// The compass bearing (rad, clockwise from north) of a direction (x, z).
 pub fn bearing(dir: [f64; 2]) -> f64 {
     dir[0].atan2(-dir[1])
@@ -108,14 +112,17 @@ pub struct NaviView {
     pub m_per_px: f64,
     /// The map's size (points).
     pub size: [f32; 2],
+    /// The rider's place as a share of the size ([`RIDER_ANCHOR`];
+    /// [`FLIGHT_ANCHOR`] in Unicorn mode).
+    pub anchor_uv: [f32; 2],
 }
 
 impl NaviView {
     /// The rider's place on the map (points from the top left).
     pub fn anchor(&self) -> [f32; 2] {
         [
-            self.size[0] * RIDER_ANCHOR[0],
-            self.size[1] * RIDER_ANCHOR[1],
+            self.size[0] * self.anchor_uv[0],
+            self.size[1] * self.anchor_uv[1],
         ]
     }
 
@@ -259,11 +266,34 @@ mod tests {
             heading: heading_deg.to_radians(),
             m_per_px: 2.0,
             size: [200.0, 300.0],
+            anchor_uv: RIDER_ANCHOR,
         }
     }
 
     fn close(a: [f32; 2], b: [f32; 2]) -> bool {
         (a[0] - b[0]).abs() < 1e-3 && (a[1] - b[1]).abs() < 1e-3
+    }
+
+    /// Spec 3.2 Q7: in Unicorn flight the map is north-up with the unicorn
+    /// in the middle; the projection still inverts.
+    #[test]
+    fn the_flight_map_is_north_up_round_the_unicorn() {
+        let v = NaviView {
+            anchor_uv: FLIGHT_ANCHOR,
+            ..navi(0.0)
+        };
+        assert_eq!(v.anchor(), [100.0, 150.0]);
+        assert!(close(v.to_screen(v.rider), [100.0, 150.0]));
+        // 100 m north: 50 points up; 100 m east: 50 points right.
+        assert!(close(v.to_screen([1000.0, -600.0]), [100.0, 100.0]));
+        assert!(close(v.to_screen([1100.0, -500.0]), [150.0, 150.0]));
+        let n = v.north();
+        assert!(n[0].abs() < 1e-6 && (n[1] + 1.0).abs() < 1e-6);
+        for s in [[0.0f32, 0.0], [200.0, 300.0], [13.0, 250.0]] {
+            assert!(close(v.to_screen(v.to_world(s)), s));
+        }
+        // All round it: the reach is the same up and down.
+        assert!((v.reach_px() - (100.0f32.powi(2) + 150.0f32.powi(2)).sqrt()).abs() < 1e-3);
     }
 
     /// Heading-up: the rider is fixed in the lower third, the road ahead

@@ -190,6 +190,35 @@ class UiTest:
         st = self.wait_console(lambda s: not s.get("open"))
         self.check("console: Esc closes it", not st.get("open"), st.get("open"))
 
+    def damage_part(self):
+        """The damage widget (spec 14 Phase 12F; the user, 2026-11-19): with
+        ride.damage on the HUD always shows the rider's health and the
+        bike's condition, at 100 % before any hit; staged damage (a buckled
+        rear wheel, a rear puncture, a bent bar) lights those parts on the
+        bike icon with their labels."""
+        def log():
+            return json.dumps(self.console_state().get("log") or [])
+        # Earlier parts of this test may have left damage: start fresh.
+        self.console("ride.damage on")
+        self.console("dev.damage reset")
+        self.pump(1.5)
+        self.console("ride.damage")
+        self.pump(0.5)
+        self.check("damage: on, rider and bike at 100 % before any hit",
+                   "rider 100 %" in log() and "bike 100 %" in log(), log()[-300:])
+        self.shot("damage-fresh")
+        for line in ("dev.damage rear_wheel 22", "dev.damage puncture_rear", "dev.damage cockpit 60"):
+            self.console(line)
+        self.pump(1.5)
+        self.console("ride.damage")
+        self.pump(0.5)
+        self.check("damage: the staged parts are listed (buckled rear wheel, puncture)",
+                   "rear wheel buckled" in log() and "puncture" in log(), log()[-400:])
+        self.shot("damage-crash")
+        self.console("dev.damage reset")
+        self.console("ride.damage off")
+        self.pump(0.5)
+
     def gps_line(self):
         """The HUD's GPS line on a route with a geographic origin (spec 3.40)."""
         st = self.wait_console(lambda s: s.get("gps"))
@@ -318,6 +347,90 @@ class UiTest:
     def setting(self, key):
         return self.cdp.eval(f"window.ocw.setting({json.dumps(key)})")
 
+    def hud_map(self):
+        raw = self.cdp.eval("window.ocw && window.ocw.hudMap ? window.ocw.hudMap() : ''")
+        try:
+            return json.loads(raw) if raw else {}
+        except ValueError:
+            return {}
+
+    def wait_map(self, pred, timeout=5.0):
+        end = time.time() + timeout
+        m = self.hud_map()
+        while time.time() < end and not pred(m):
+            self.pump(0.1)
+            m = self.hud_map()
+        return m
+
+    def devices_js(self):
+        raw = self.cdp.eval("window.ocwDevicesPanel ? window.ocwDevicesPanel() : ''")
+        return json.loads(raw) if raw else {}
+
+    def click(self, selector):
+        """A real mouse click on the element's centre."""
+        box = self.cdp.eval(f"""(() => {{
+            const r = document.querySelector({json.dumps(selector)}).getBoundingClientRect();
+            return [r.x + r.width / 2, r.y + r.height / 2];
+        }})()""")
+        for t in ("mousePressed", "mouseReleased"):
+            self.cdp.call("Input.dispatchMouseEvent", {
+                "type": t, "x": box[0], "y": box[1], "button": "left", "clickCount": 1})
+        self.pump(0.7)
+
+    def devices_part(self):
+        """The Devices panel (spec 3.2 Q2, 2026-11-19: "b and make it a
+        transparent overlay"): a semi-transparent overlay above the map
+        (window.ocw.hudMap()), × collapses it to the button, the button
+        opens it again. Screenshots -devices-expanded, -devices-collapsed.
+        The collapse once a device connects: test-web-ble.py."""
+        self.pump(0.7)
+        st, js, m = self.devices_panel_state(), self.devices_js(), self.hud_map()
+        self.check("devices: expanded at the start (no device yet)",
+                   st.get("visible") and not st.get("show_button") and js.get("expanded"), (st, js))
+        alpha = 1.0
+        bg = js.get("background", "")
+        if bg.startswith("rgba("):
+            alpha = float(bg[5:-1].split(",")[3])
+        self.check("devices: a transparent overlay (the ride shows through)", 0.0 < alpha <= 0.4, bg)
+        through = self.cdp.eval("getComputedStyle(document.getElementById('ocw-devices')).pointerEvents")
+        self.check("devices: clicks beside its buttons reach the ride", through == "none", through)
+        if m.get("shown") and m.get("rect"):
+            self.check("devices: above the navigation map", st["box"][3] <= m["rect"][1] + 0.5,
+                       (st["box"], m["rect"]))
+        self.shot("devices-expanded")
+        self.click("#ocw-devices-hide")
+        st, js = self.devices_panel_state(), self.devices_js()
+        self.check("devices: × collapses it to the button", not st.get("visible") and st.get("show_button")
+                   and js.get("collapsed"), (st, js))
+        self.shot("devices-collapsed")
+        self.click("#ocw-devices-show")
+        st = self.devices_panel_state()
+        self.check("devices: the button opens it again", st.get("visible") and not st.get("show_button"), st)
+        self.cdp.eval("document.getElementById('ocw-canvas').focus()")
+
+    def workout_map_part(self):
+        """Spec 3.2 Q1: a workout beside the navigation map – the workout
+        panel in the left column, the map keeps its place in the lower
+        right, neither over the other. Screenshot -workout-map."""
+        before = self.hud_map()
+        self.console("workout start --example sweet-spot")
+        m = self.wait_map(lambda m: m.get("workout"), timeout=5.0)
+        w, r = m.get("workout"), m.get("rect")
+        self.check("workout: the panel is shown (window.ocw.hudMap().workout)", bool(w), m)
+        if w:
+            self.check("workout: in the left column, under the top panel",
+                       abs(w[0] - 12.0) < 1.0 and w[1] > 40.0, w)
+        if w and r:
+            apart = w[0] + w[2] <= r[0] or r[0] + r[2] <= w[0] or w[1] + w[3] <= r[1] or r[1] + r[3] <= w[1]
+            self.check("workout: the map and the workout panel do not overlap", apart, (w, r))
+        self.check("workout: the map keeps its place and size",
+                   m.get("shown") and m.get("rect") == before.get("rect"), (before.get("rect"), m.get("rect")))
+        self.pump(1.5)
+        self.shot("workout-map")
+        self.console("workout stop")
+        m = self.wait_map(lambda m: not m.get("workout"), timeout=5.0)
+        self.check("workout: the panel goes with the workout", not m.get("workout"), m.get("workout"))
+
     def page_downloads(self):
         return self.cdp.eval("JSON.stringify(window.ocwDownloads || [])")
 
@@ -377,6 +490,16 @@ class UiTest:
         self.key("i")
         hidden = self.wait_god(lambda g: not g.get("panel"), timeout=3.0)
         self.check("unicorn: I hides the inspection", not hidden.get("panel"), hidden.get("panel"))
+        # Spec 3.2 Q7: the navigation map shows in flight, north-up and
+        # centred on the unicorn.
+        m = self.wait_map(lambda m: m.get("shown") and m.get("flight"), timeout=3.0)
+        pos = self.god().get("pos") or [0, 0, 0]
+        c = m.get("centre") or [1e9, 1e9]
+        self.check("unicorn: the map shows in flight, centred on the unicorn",
+                   m.get("shown") and m.get("flight") and abs(c[0] - pos[0]) < 30 and abs(c[1] - pos[2]) < 30,
+                   (m.get("shown"), m.get("flight"), c, pos, m.get("banner")))
+        self.check("unicorn: the map's banner gives the height and the speed",
+                   " up " in (m.get("banner") or "") and "heading" in (m.get("banner") or ""), m.get("banner"))
         self.shot("unicorn-flight")
         self.key("i")
         g = self.wait_god(lambda g: g.get("panel") and g.get("crosshair"), timeout=3.0)
@@ -511,6 +634,9 @@ class UiTest:
         self.close_menu()
         # Touch steering (spec §3.2.3) on the fresh ride.
         self.touch_part()
+        # The Devices panel (spec 3.2 Q2) and a workout beside the map (Q1).
+        self.devices_part()
+        self.workout_map_part()
 
         # The top page by keyboard.
         self.key("Escape")
@@ -702,6 +828,18 @@ class UiTest:
         m = self.wait_menu(lambda m: m.get("title") == "Open Cycling World")
         self.check("gamepad: B goes back", m.get("title") == "Open Cycling World", m.get("title"))
         self.close_menu()
+        # Spec 3.2 Q6: D-pad down in the ride steps the navigation map's
+        # zoom (auto → 1 → 2 …), as Z does.
+        self.pump(0.3)
+        z0 = self.hud_map()
+        press("dpad_down")
+        z1 = self.wait_map(lambda m: not m.get("auto"), timeout=3.0)
+        press("dpad_down")
+        z2 = self.wait_map(lambda m: m.get("level") == 2 and not m.get("auto"), timeout=3.0)
+        self.check("gamepad: D-pad down steps the map zoom (auto → 1 → 2)",
+                   z0.get("auto") and not z1.get("auto") and z1.get("level") == 1 and z2.get("level") == 2,
+                   (z0.get("auto"), z0.get("level"), z1.get("auto"), z1.get("level"), z2.get("level")))
+        self.console("set display.map_zoom auto")
         self.pump(0.7)
         st = self.devices_panel_state()
         self.check("page: the Devices panel is back (its buttons open the chooser) once the menu closes",
@@ -738,11 +876,19 @@ class UiTest:
         self.check("fit: a FIT file", data[8:12] == b".FIT" and len(data) > 100, f"{len(data)} bytes at {path}")
         self.close_menu()
 
-        # The simple Strava upload (spec §2.8.1): the saved ride's page →
-        # Upload to Strava (in your browser): the FIT download under its
-        # recognisable name, Strava's upload page in a new tab (stubbed: no
-        # network), the steps on the page.
+        # The simple Strava upload (spec 2.8.1, Q6): only a ride's Strava
+        # recordings go to Strava – a recording (S … S), the ride saved,
+        # its page → Upload to Strava (in your browser): the recording's
+        # FIT download under its recognisable name, Strava's upload page
+        # in a new tab (stubbed: no network), the steps on the page.
         cdp.eval("window.ocwOpened = []; window.open = (u, t) => { window.ocwOpened.push(u); return {}; }")
+        self.console("strava.record start")
+        self.pump(3.0)
+        self.console("strava.record stop")
+        self.pump(1.0)
+        self.console("ride.save")
+        self.pump(1.0)
+        recorded = {d["name"] for d in json.loads(self.page_downloads() or "[]")}
         self.key("Escape")
         self.wait_menu(lambda m: m.get("open"))
         ok = (self.open_item("Navi", "Navi")
@@ -756,8 +902,8 @@ class UiTest:
         self.shot("strava-row")
         self.key("Enter")
         d, path = self.wait_download(".fit")
-        self.check("strava: the FIT file is a download named for the file picker",
-                   d is not None and d["name"].startswith("OCW 20"), d)
+        self.check("strava: the recording (not the ride) is a download named for the file picker",
+                   d is not None and d["name"].startswith("OCW 20") and d["name"] in recorded, d)
         opened = json.loads(cdp.eval("JSON.stringify(window.ocwOpened || [])") or "[]")
         self.check("strava: the upload page in a new tab",
                    opened == ["https://www.strava.com/upload/select"], opened)
@@ -779,7 +925,8 @@ class UiTest:
         self.check("activities: Captures offers the activities folder",
                    "Activities folder: choose" in items, items)
         self.close_menu()
-        before = {d["name"] for d in json.loads(self.page_downloads() or "[]")}
+        # By count: an earlier recording of the same minute has the same name.
+        before = len(json.loads(self.page_downloads() or "[]"))
         self.console("strava.record start")
         self.pump(3.0)
         self.shot("strava-recording")
@@ -787,7 +934,7 @@ class UiTest:
         hit = None
         for _ in range(50):
             listed = json.loads(self.page_downloads() or "[]")
-            new = [d for d in listed if d["name"].endswith(".fit") and d["name"] not in before]
+            new = [d for d in listed[before:] if d["name"].endswith(".fit")]
             if new:
                 hit = new[-1]
                 break
@@ -823,6 +970,9 @@ class UiTest:
         self.check("video: a WebM download named with the time",
                    d is not None and d["name"].startswith("ocw-20") and size > 1000,
                    (rec_s, d, size))
+
+        # The damage widget (spec 14 Phase 12F).
+        self.damage_part()
 
         # Unicorn mode (Phase 13 G5).
         self.god_part()

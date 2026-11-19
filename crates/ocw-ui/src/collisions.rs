@@ -6,8 +6,9 @@
 //! commands, the staged contacts `dev.bump` /
 //! `dev.crash` (local server only) and `ride.crashes`, the crash state;
 //! damage (spec §14 Phase 12E): `ride.damage` (off by default, Q1),
-//! `ride.repair` (mend a puncture now), `hud.damage` (the widget) and
-//! `dev.damage` (staged damage, local server only).
+//! `ride.repair` (mend a puncture now) and `dev.damage` (staged damage,
+//! local server only); the HUD's damage widget shows while damage is on
+//! (no switch of its own since 2026-11-19).
 
 use bevy::prelude::*;
 use clap::{Arg, Command};
@@ -115,17 +116,6 @@ pub fn register_commands(app: &mut App) {
                 .about("Stop and mend a puncture now (30 s) instead of riding on slowly"),
             |world, _| {
                 send_or_err(world, ClientCore::repair_message())
-            },
-        ))
-        .console_command(ConsoleCommand::new(
-            Permission::User,
-            Command::new("hud.damage")
-                .about("Show the damage indicator in the HUD (the effects stay when hidden)")
-                .arg(on_off_arg()),
-            |world, m| {
-                let on = on_off(m);
-                world.resource_mut::<ocw_render::damage_hud::ShowDamage>().0 = on;
-                Ok(format!("damage indicator {}", if on { "shown" } else { "hidden" }))
             },
         ))
         .console_command(ConsoleCommand::new(

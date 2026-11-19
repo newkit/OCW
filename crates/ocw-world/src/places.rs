@@ -236,17 +236,31 @@ pub fn parse_population(v: &str) -> Option<u32> {
     digits.parse().ok()
 }
 
-/// The places of a package (section `PLCE`).
+/// The places of a package (section `PLCE`) and its peaks, passes and
+/// viewpoints (section `LMRK`, [`crate::landmarks`]).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Places {
     /// Most important first ([`Places::normalise`]).
     pub places: Vec<Place>,
+    /// Peaks, passes and viewpoints (section `LMRK`; empty in packages
+    /// without it), [`crate::landmarks::normalise`]d.
+    pub landmarks: Vec<crate::landmarks::Landmark>,
 }
 
 impl Places {
     pub fn new(mut places: Vec<Place>) -> Self {
         Self::normalise(&mut places);
-        Self { places }
+        Self {
+            places,
+            landmarks: Vec::new(),
+        }
+    }
+
+    /// These places with `landmarks` (sorted).
+    pub fn with_landmarks(mut self, mut landmarks: Vec<crate::landmarks::Landmark>) -> Self {
+        crate::landmarks::normalise(&mut landmarks);
+        self.landmarks = landmarks;
+        self
     }
 
     /// Sorts most important first: rank, population (larger first), name,
@@ -400,7 +414,10 @@ pub fn read_places(payload: &[u8]) -> Result<Places, String> {
         });
     }
     r.finish("places section")?;
-    Ok(Places { places })
+    Ok(Places {
+        places,
+        landmarks: Vec::new(),
+    })
 }
 
 // ---------------------------------------------------------------------

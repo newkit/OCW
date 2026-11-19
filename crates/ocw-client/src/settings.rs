@@ -141,7 +141,7 @@ impl std::fmt::Display for Source {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Default => "default",
-            Self::File => "settings.toml",
+            Self::File => "saved",
             Self::Temp => "temporary",
             Self::CommandLine => "command line",
         })
@@ -253,14 +253,6 @@ pub const SETTINGS: &[SettingDef] = &[
         description: "Units of speed and distance in the HUD (km/h and km, or mph and mi)",
         scope: Scope::Live,
         apply: Apply::Command("hud.units {}"),
-    },
-    SettingDef {
-        key: "display.damage",
-        kind: Kind::Bool,
-        default: "on",
-        description: "Show the damage indicator in the HUD (with ride.damage on; the effects stay when hidden)",
-        scope: Scope::Live,
-        apply: Apply::Command("hud.damage {}"),
     },
     SettingDef {
         key: "display.map",
@@ -446,6 +438,20 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::Command("activities.folder \"{}\""),
     },
+    // Strava (spec 2.8.1 Q6, v5.05): only the Strava recordings (S … S)
+    // go to Strava, never whole rides; on: they are uploaded automatically
+    // once the API app is set up and the account linked, off: they wait
+    // for the upload by hand (the ride page's *Upload now*, or in the
+    // browser). The desktop keeps it as the one `[strava] auto_upload` of
+    // `ocw.toml` (spec 3.2.4; `config::SettingsStore`).
+    SettingDef {
+        key: "strava.auto_upload",
+        kind: Kind::Bool,
+        default: "on",
+        description: "Upload the Strava recordings (S … S) to Strava automatically (your API app, account linked); off: they wait for you to upload them from the ride's page. Whole rides never go to Strava",
+        scope: Scope::Live,
+        apply: Apply::Command("strava.auto_upload {}"),
+    },
     // Ride → Host a ride (spec §7.1.7 Q4): the router's ports opened by
     // UPnP while hosting; read at *Start hosting*, switched on the wizard's
     // Options page (`host.plan upnp`). The headless server has `--upnp`
@@ -502,7 +508,7 @@ pub const SETTINGS: &[SettingDef] = &[
         key: "ride.damage",
         kind: Kind::Bool,
         default: "off",
-        description: "Damage: hits hurt the rider and damage the bike (only with collisions on; it carries over to the next ride, repairs in the workshop)",
+        description: "Damage: hits hurt the rider and damage the bike (only with collisions on; it carries over to the next ride, repairs in the workshop); while on, the HUD always shows the rider's health and the bike's condition",
         scope: Scope::Live,
         apply: Apply::Command("ride.damage {}"),
     },
@@ -877,7 +883,7 @@ pub const SETTINGS: &[SettingDef] = &[
     ),
     binding!(
         "pad.stop",
-        "DPadDown",
+        "none",
         PAD_CHOICES,
         "Gamepad button: Stop (power 0, brake)"
     ),
@@ -1067,7 +1073,7 @@ pub const SETTINGS: &[SettingDef] = &[
     ),
     binding!(
         "pad.map_zoom",
-        "none",
+        "DPadDown",
         PAD_CHOICES,
         "Gamepad button: Navigation map zoom (auto, 1 - 7)"
     ),
@@ -1093,6 +1099,8 @@ const NOT_IN_BROWSER: &[&str] = &[
     "activities.folder",
     // Hosting needs the desktop app (browsers cannot open a port).
     "host.upnp",
+    // The browser has no API upload (spec 2.8.1: the simple upload only).
+    "strava.auto_upload",
 ];
 
 /// Whether `key` takes effect on `platform` (the menu hides the others,
@@ -1716,10 +1724,7 @@ master = 80
     #[test]
     fn precedence_default_file_temp_command_line() {
         let (mut s, _) = Settings::parse("[ride]\nbots = 2\n").unwrap();
-        assert_eq!(
-            s.line("ride.bots").unwrap(),
-            "ride.bots = 2 (settings.toml)"
-        );
+        assert_eq!(s.line("ride.bots").unwrap(), "ride.bots = 2 (saved)");
         s.set_temp("ride.bots", "7").unwrap();
         assert_eq!(
             s.get_with_source("ride.bots"),
@@ -1746,6 +1751,34 @@ master = 80
                 .contains("unknown setting")
         );
         assert!(s.get("no.such").is_err());
+    }
+
+    /// `display.damage` is gone (the user, 2026-11-19: the damage widget
+    /// always shows while damage is on): an old value in the file is an
+    /// unknown setting, noted and kept, and runs nothing.
+    #[test]
+    fn the_damage_indicator_switch_is_gone() {
+        assert!(def("display.damage").is_none());
+        assert!(
+            SETTINGS
+                .iter()
+                .all(|d| !matches!(d.apply, Apply::Command(c) if c.starts_with("hud.damage")))
+        );
+        let (mut s, warnings) =
+            Settings::parse("[display]\ndamage = false\n[ride]\ndamage = true\n").unwrap();
+        assert_eq!(
+            warnings,
+            ["unknown setting display.damage (kept in the file)"]
+        );
+        assert!(s.get("display.damage").is_err());
+        assert!(s.set("display.damage", "on").is_err());
+        assert!(
+            s.startup_commands()
+                .iter()
+                .all(|c| !c.contains("hud.damage"))
+        );
+        assert!(s.to_toml().contains("damage = false"), "kept in the file");
+        assert_eq!(s.get("ride.damage"), Ok(Value::Bool(true)));
     }
 
     #[test]

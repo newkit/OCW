@@ -80,9 +80,17 @@ impl Plugin for AccountPlugin {
                 .file
                 .clone()
                 .or_else(|| std::env::var_os("OCW_ACCOUNT_FILE").map(PathBuf::from));
-            let store = match (file, crate::strava::default_config_dir()) {
+            // The keyring, else `secrets.toml [account]` (spec 3.2.4).
+            let secrets = app
+                .world()
+                .get_resource::<crate::config::ConfigFiles>()
+                .map(|f| f.secrets.clone())
+                .or_else(|| {
+                    crate::strava::default_config_dir().map(|d| d.join(crate::config::SECRETS_FILE))
+                });
+            let store = match (file, secrets) {
                 (Some(f), _) => store::TokenStore::File(f),
-                (None, Some(dir)) => store::TokenStore::keyring(&issuer, dir.join("account.json")),
+                (None, Some(s)) => store::TokenStore::keyring(&issuer, s),
                 (None, None) => store::TokenStore::None,
             };
             info!(%issuer, "sign-in: accounts server");

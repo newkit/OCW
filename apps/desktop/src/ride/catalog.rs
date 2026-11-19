@@ -100,7 +100,8 @@ pub struct RideEntry {
     pub date: String,
     /// The route or world, from the sidecar.
     pub route: String,
-    /// "uploaded", "processing", "failed", "rejected" or "not uploaded".
+    /// "uploaded", "processing", "failed", "rejected", "not uploaded" or
+    /// (a whole ride: never uploaded, spec 2.8.1 Q6) "not for Strava".
     pub strava: &'static str,
 }
 
@@ -119,6 +120,8 @@ pub fn recent_rides(dir: &Path, sync: &SyncState, limit: usize) -> Vec<RideEntry
                 None => stem.to_string(),
             };
             let strava = match sync.rides.get(&file) {
+                // Whole rides never go to Strava (spec 2.8.1 Q6).
+                None if !file.starts_with("strava/") => "not for Strava",
                 None => "not uploaded",
                 Some(RideSync::Waiting { .. }) => "waiting for set-up",
                 Some(RideSync::Processing { .. }) => "processing",
@@ -225,7 +228,7 @@ mod tests {
                     file: "2026-11-11_17-30-05.fit".into(),
                     date: "2026-11-11 17:30".into(),
                     route: "Hills".into(),
-                    strava: "not uploaded",
+                    strava: "not for Strava",
                 },
                 RideEntry {
                     file: "2026-11-10_08-00-00.fit".into(),

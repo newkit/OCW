@@ -36,6 +36,21 @@ pub fn level_for(need_m: f64, ahead_px: f64) -> usize {
         .unwrap_or(ZOOM_LEVELS.len() - 1)
 }
 
+/// In Unicorn mode (spec 3.2 Q7) the map shows round the unicorn at
+/// least this many times its height above the ground (m) …
+pub const FLIGHT_HEIGHT_K: f64 = 3.0;
+
+/// The level in Unicorn flight: the ground of the next [`AHEAD_S`] at
+/// the flight's speed, at least [`FLIGHT_HEIGHT_K`] × the height above
+/// the ground (higher up, more of the land below) and [`MIN_AHEAD_M`],
+/// over `ahead_px` (the room from the unicorn to the map's top edge).
+pub fn flight_level(speed_mps: f64, height_m: f64, ahead_px: f64) -> usize {
+    let need = MIN_AHEAD_M
+        .max(speed_mps.max(0.0) * AHEAD_S)
+        .max(height_m.max(0.0) * FLIGHT_HEIGHT_K);
+    level_for(need, ahead_px)
+}
+
 /// The level by speed alone.
 pub fn speed_level(speed_mps: f64, ahead_px: f64) -> usize {
     level_for(MIN_AHEAD_M.max(speed_mps.max(0.0) * AHEAD_S), ahead_px)
@@ -125,6 +140,23 @@ impl AutoZoom {
         let target = junction_m
             .and_then(|d| junction_level(d, ahead_px))
             .map_or(by_speed, |j| j.min(by_speed));
+        self.toward(target, dt)
+    }
+
+    /// The level after `dt` s in Unicorn flight ([`flight_level`]), with
+    /// the same hold before zooming out.
+    pub fn update_flight(
+        &mut self,
+        speed_mps: f64,
+        height_m: f64,
+        ahead_px: f64,
+        dt: f64,
+    ) -> usize {
+        self.toward(flight_level(speed_mps, height_m, ahead_px), dt)
+    }
+
+    /// Goes to `target`: in at once, out after [`ZOOM_OUT_HOLD_S`].
+    fn toward(&mut self, target: usize, dt: f64) -> usize {
         if !self.started {
             self.started = true;
             self.level = target;
@@ -414,6 +446,30 @@ mod tests {
             t += 0.1;
         }
         assert_eq!(z.update(12.0, None, ahead, 0.2), fast);
+    }
+
+    /// Spec 3.2 Q7: in Unicorn flight the auto zoom follows the flight's
+    /// speed and its height above the ground (the unicorn in the middle:
+    /// half the map's height ahead); landing low and slow zooms in at
+    /// once, climbing zooms out after the hold.
+    #[test]
+    fn flight_zoom_follows_speed_and_height() {
+        let ahead = 132.0; // a 264-point map, the unicorn at 50 %
+        // Hovering low: the closest level that shows 120 m.
+        assert_eq!(flight_level(0.0, 5.0, ahead), level_for(MIN_AHEAD_M, ahead));
+        // Higher shows more land; faster too.
+        assert!(flight_level(0.0, 200.0, ahead) > flight_level(0.0, 20.0, ahead));
+        assert_eq!(flight_level(0.0, 200.0, ahead), level_for(600.0, ahead));
+        assert!(flight_level(30.0, 20.0, ahead) > flight_level(5.0, 20.0, ahead));
+        assert_eq!(flight_level(30.0, 20.0, ahead), level_for(750.0, ahead));
+        // Very high: the farthest level, never beyond.
+        assert_eq!(flight_level(0.0, 5000.0, ahead), ZOOM_LEVELS.len() - 1);
+        let mut z = AutoZoom::default();
+        let high = z.update_flight(10.0, 300.0, ahead, 0.0);
+        let low = z.update_flight(5.0, 10.0, ahead, 0.016);
+        assert!(low < high, "down low: closer at once");
+        assert_eq!(z.update_flight(10.0, 300.0, ahead, 1.0), low, "held");
+        assert_eq!(z.update_flight(10.0, 300.0, ahead, 2.0), high);
     }
 
     #[test]

@@ -164,7 +164,8 @@ run() {
     exit 1
   fi
   local cfg=${XDG_CONFIG_HOME:-$HOME/.config}/ocw/devices.toml
-  if [ -f "$dir/devices.toml" ] && [ ! -f "$cfg" ]; then
+  # The app keeps them in ocw.toml [devices] (spec 3.2.4): seed only once.
+  if [ -f "$dir/devices.toml" ] && [ ! -f "$cfg" ] && ! grep -qs '^\[\[devices\.device\]\]' "$(dirname "$cfg")/ocw.toml"; then
     mkdir -p "$(dirname "$cfg")" && cp "$dir/devices.toml" "$cfg" && say "seeded $cfg"
   fi
   local child="" fails=0

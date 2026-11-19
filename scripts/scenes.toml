@@ -877,7 +877,7 @@ shot = 9
 
 [[scene]]
 name = "sky-night-lights"
-description = "Night (23:40 CEST) on the Vaduz-Malbun road: dark scene at the default night brightness, the setting crescent moon as the key light, front and rear lights on the bots that have lights fitted (Phase 9 Q3: a workshop part; the own stock bike has none)"
+description = "Night (23:40 CEST) on the Vaduz-Malbun road: dark scene at the default night brightness, the setting crescent moon as the key light, every bike with its white front and red rear lamp (Phase 9 Q3, v4.94: the default lamps; bots 1-3 with the light set, the upgrade)"
 world = true
 args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "5", "--power", "220"]
 at = ["2=time pause", "2=time 2026-06-21 23:40", "2=dev.bot_bike 1 --parts lights.set", "2=dev.bot_bike 2 --parts lights.set", "2=dev.bot_bike 3 --parts lights.set", "2.5=teleport 1.6", "2.5=camera.orbit 25 12 9"]
@@ -1847,6 +1847,34 @@ description = "Visible damage (spec §14 Phase 12 K5): a hurt rider (dust on the
 args = ["--route", "loop", "--bots", "0", "--power", "200"]
 at = ["1=ride.damage on", "1.5=dev.damage rider 48", "1.6=dev.damage front_wheel 30", "1.7=dev.damage frame 40", "1.8=dev.damage cockpit 35", "4=dev.damage chain", "4.2=camera.orbit 80 12 2.6"]
 shot = 9
+
+[[scene]]
+name = "k5-damage-widget-fresh"
+description = "The damage widget always on while damage is on (spec 14 Phase 12F, the user 2026-11-19): ride.damage on, no hit yet – rider and bike at 100 % \"fine\", the small side-view bicycle all grey, at 1280×720 and HUD 100 %"
+args = ["--route", "loop", "--bots", "0", "--power", "200", "--window", "1280x720"]
+at = ["1=ride.damage on"]
+shot = 6
+
+[[scene]]
+name = "k5-damage-widget-fresh-1080"
+description = "The damage widget at 100 % (spec 14 Phase 12F) at 1920×1080: rider and bike \"fine\", the bicycle icon grey"
+args = ["--route", "loop", "--bots", "0", "--power", "200", "--window", "1920x1080"]
+at = ["1=ride.damage on"]
+shot = 6
+
+[[scene]]
+name = "k5-damage-widget-crash"
+description = "The damage widget after a crash (spec 14 Phase 12F): a buckled rear wheel (its rim lit), a rear puncture (its tyre lit red), a bent bar and a hurt rider – each part lit on the bicycle icon, with the labels, at 1280×720"
+args = ["--route", "loop", "--bots", "0", "--power", "200", "--window", "1280x720"]
+at = ["1=ride.damage on", "1.5=dev.damage rider 55", "1.6=dev.damage rear_wheel 22", "1.7=dev.damage puncture_rear", "1.8=dev.damage cockpit 60"]
+shot = 6
+
+[[scene]]
+name = "k5-damage-widget-crash-1080"
+description = "The damage widget after a crash (spec 14 Phase 12F) at 1920×1080: buckled rear wheel, rear puncture, bent bar, a hurt rider"
+args = ["--route", "loop", "--bots", "0", "--power", "200", "--window", "1920x1080"]
+at = ["1=ride.damage on", "1.5=dev.damage rider 55", "1.6=dev.damage rear_wheel 22", "1.7=dev.damage puncture_rear", "1.8=dev.damage cockpit 60"]
+shot = 6
 
 [[scene]]
 name = "k4-workshop-repair"
@@ -4650,3 +4678,157 @@ args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-243
 at = ["0.5=hud.map off", "1=time 14:00"]
 shot = 40
 pick = false
+
+# --- Rider hips: legs joined to the body (bug 2026-11-19) -----------------------
+# Close views of the hips for the body shapes before / after the fix (spec 4N).
+
+[[scene]]
+name = "hips-anorexia-a-side-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape anorexia, base body A, close orbit from the left side (1.3 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape anorexia --body a", "2.5=teleport 0.81", "2.5=camera.orbit 90 2 1.3"]
+shot = 9
+
+[[scene]]
+name = "hips-anorexia-a-front-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape anorexia, base body A, close orbit from the front left (1.4 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape anorexia --body a", "2.5=teleport 0.81", "2.5=camera.orbit 150 6 1.4"]
+shot = 9
+
+[[scene]]
+name = "hips-anorexia-a-back-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape anorexia, base body A, close orbit from behind (1.4 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape anorexia --body a", "2.5=teleport 0.81", "2.5=camera.orbit 15 12 1.4"]
+shot = 9
+
+[[scene]]
+name = "hips-anorexia-b-side-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape anorexia, base body B, close orbit from the left side (1.3 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape anorexia --body b", "2.5=teleport 0.81", "2.5=camera.orbit 90 2 1.3"]
+shot = 9
+
+[[scene]]
+name = "hips-normal-a-side-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape normal, base body A, close orbit from the left side (1.3 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape normal --body a", "2.5=teleport 0.81", "2.5=camera.orbit 90 2 1.3"]
+shot = 9
+
+[[scene]]
+name = "hips-normal-a-front-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape normal, base body A, close orbit from the front left (1.4 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape normal --body a", "2.5=teleport 0.81", "2.5=camera.orbit 150 6 1.4"]
+shot = 9
+
+[[scene]]
+name = "hips-normal-a-back-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape normal, base body A, close orbit from behind (1.4 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape normal --body a", "2.5=teleport 0.81", "2.5=camera.orbit 15 12 1.4"]
+shot = 9
+
+[[scene]]
+name = "hips-normal-b-side-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape normal, base body B, close orbit from the left side (1.3 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape normal --body b", "2.5=teleport 0.81", "2.5=camera.orbit 90 2 1.3"]
+shot = 9
+
+[[scene]]
+name = "hips-obese-a-side-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape obese, base body A, close orbit from the left side (1.3 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape obese --body a", "2.5=teleport 0.81", "2.5=camera.orbit 90 2 1.3"]
+shot = 9
+
+[[scene]]
+name = "hips-obese-a-front-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape obese, base body A, close orbit from the front left (1.4 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape obese --body a", "2.5=teleport 0.81", "2.5=camera.orbit 150 6 1.4"]
+shot = 9
+
+[[scene]]
+name = "hips-obese-a-back-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape obese, base body A, close orbit from behind (1.4 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape obese --body a", "2.5=teleport 0.81", "2.5=camera.orbit 15 12 1.4"]
+shot = 9
+
+[[scene]]
+name = "hips-obese-b-side-riding"
+description = "Legs joined to the body (bug 2026-11-19): shape obese, base body B, close orbit from the left side (1.3 m), riding seated on the hoods"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape obese --body b", "2.5=teleport 0.81", "2.5=camera.orbit 90 2 1.3"]
+shot = 9
+
+[[scene]]
+name = "hips-anorexia-a-side-standing"
+description = "Legs joined to the body: shape anorexia, close orbit from the left side, standing on the pedals on the 11.5 % ramp"
+args = ["--route", "hills", "--bots", "0", "--power", "420"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape anorexia --body a", "2.5=teleport 3.82", "2.5=camera.orbit 90 2 1.4"]
+shot = 9
+
+[[scene]]
+name = "hips-anorexia-a-side-sprint"
+description = "Legs joined to the body: shape anorexia, close orbit from the left side, sprinting at 1100 W"
+args = ["--route", "hills", "--bots", "0", "--power", "1100"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape anorexia --body a", "2.5=teleport 0.81", "2.5=camera.orbit 90 2 1.4"]
+shot = 9
+
+[[scene]]
+name = "hips-obese-a-side-standing"
+description = "Legs joined to the body: shape obese, close orbit from the left side, standing on the pedals on the 11.5 % ramp"
+args = ["--route", "hills", "--bots", "0", "--power", "420"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape obese --body a", "2.5=teleport 3.82", "2.5=camera.orbit 90 2 1.4"]
+shot = 9
+
+[[scene]]
+name = "hips-obese-a-side-sprint"
+description = "Legs joined to the body: shape obese, close orbit from the left side, sprinting at 1100 W"
+args = ["--route", "hills", "--bots", "0", "--power", "1100"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --shape obese --body a", "2.5=teleport 0.81", "2.5=camera.orbit 90 2 1.4"]
+shot = 9
+
+[[scene]]
+name = "hips-anorexia-mirror"
+description = "Legs joined to the body: shape anorexia at the workshop mirror (changing corner)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["1.5=character --shape anorexia --body a", "2=workshop open", "2.6=workshop mirror"]
+shot = 20
+
+[[scene]]
+name = "hips-obese-mirror"
+description = "Legs joined to the body: shape obese at the workshop mirror (changing corner)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["1.5=character --shape obese --body a", "2=workshop open", "2.6=workshop mirror"]
+shot = 20
+# Spec 3.2 Q1 / Q7 (2026-11-19): the workout panel beside the navigation map,
+# the map in unicorn flight.
+[[scene]]
+name = "navi-workout-1080p"
+description = "A sweet-spot workout on the Vaduz – Malbun route at 1920 × 1080: the workout panel in its place on the left under the bike computer, the navigation map at full size in the lower right"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "3", "--window", "1920x1080"]
+at = ["1=time 14:00", "2=teleport 1.1", "2.5=workout start --example sweet-spot"]
+shot = 12
+
+[[scene]]
+name = "navi-workout-720p-150"
+description = "The same workout in a 1280 × 720 window with the HUD at 150 %: workout panel and navigation map side by side, neither over the other HUD boxes"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "3", "--window", "1280x720"]
+at = ["1=time 14:00", "1=ui.scale 150", "1=fps off", "2=teleport 1.1", "2.5=workout start --example sweet-spot"]
+shot = 12
+
+[[scene]]
+name = "navi-unicorn-flight"
+description = "Unicorn mode over Vaduz with the navigation map: centred on the unicorn, north-up, auto zoom from the flight speed and height"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "3", "--window", "1920x1080"]
+at = ["1=time 14:00", "3=god on", "4=god.pose -2650 2330 120 80 -10", "4.3=god.cruise 0.6 0.1 4"]
+shot = 11

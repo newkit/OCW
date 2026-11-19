@@ -439,9 +439,12 @@ above.
 
 #### Devices in the browser
 
-The **Devices** panel (bottom right) has **+ Trainer**, **+ Power meter** and
-**+ Heart rate**. Each one opens the browser's Bluetooth chooser (Web
-Bluetooth needs the click). It steps aside while the menu is open. The
+The **Devices** panel (bottom right, above the navigation map) has **+ Trainer**,
+**+ Power meter** and **+ Heart rate**. Each one opens the browser's Bluetooth
+chooser (Web Bluetooth needs the click). It is a transparent overlay (the
+ride shows through it), collapses to a small **Devices** button naming the
+device two seconds after one connects (click it to open the panel again; ×
+collapses it by hand) and steps aside while the menu is open. The
 device runs the same protocol code as on the desktop (`ocw-devices`: FTMS,
 Cycling Power, CSC, Heart Rate, Wahoo KICKRs). Power, cadence and heart rate
 go to the server. The trainer gets **SIM** (the road's gradient with the
@@ -761,7 +764,7 @@ keys new-signing`.
 |---|---|---|
 | Menu (Resume, Ride, World, Workshop, Navi, Settings, Quit) | Esc | Start / Menu (☰, Options) |
 | Faster: +25 W per press, more while held | ↑ | D-pad up, left stick up or right trigger (RT / R2) |
-| Stop: no power, brake | ↓ | D-pad down, left stick down or left trigger (LT / L2) |
+| Stop: no power, brake | ↓ | left stick down or left trigger (LT / L2) |
 | Steer (autodrive: move the line; manual: lean into a curve) | ← / → | left stick (left/right) |
 | Autodrive on/off (on at the start) | A | South button (A / ✕) |
 | Wild mode on/off (leave the road; on also switches autodrive off) | W | West button (X / □) |
@@ -778,7 +781,7 @@ keys new-signing`.
 | Voice: mute / unmute your microphone | M | Select (Back / View / Share) |
 | Voice: mute / unmute the speaker (all voices; game sounds stay) | Shift+M | right-stick click (R3) |
 | Navigation map (bottom right) on / off | N | |
-| Navigation map zoom: auto (by speed, closer at junctions), then 1 (closest) … 7, then auto | Z | |
+| Navigation map zoom: auto (by speed, closer at junctions), then 1 (closest) … 7, then auto | Z | D-pad down |
 | Next screen | F11 | |
 | Console (`help` lists the commands) | `` ` `` or F12 | |
 | Unicorn mode: fly as a unicorn / land on the road below | G | Select + North (Y / △) |
@@ -827,6 +830,11 @@ flies forward along its heading. While flying:
 | First-person view from the unicorn's head | C | |
 | Inspection panel and crosshair on / off | I | |
 | Put a pin where the crosshair points (kept for the ride; `god.pins` lists them) | P | |
+| Navigation map on / off; its zoom | N; Z | ; D-pad down |
+
+The **navigation map** stays on in flight: north-up, centred on the unicorn
+(its arrow points where it flies), zoomed out by the flight's speed and its
+height above the ground; the banner shows the height and the speed.
 
 Touch (spec §3.2.2): a finger dragged on the left half of the view is the
 stick (push it up to fly faster, down to fly slower, sideways to bank and
@@ -1159,6 +1167,10 @@ with your own key as above.
 towns, villages and smaller places, larger and bolder by rank; when the map
 gets crowded the smaller places are hidden first and come back as you zoom
 in (`studio map X Z M_PER_PX` sets the map's centre and zoom).
+Packages with the section `LMRK` (also added by `world-builder places`)
+name the peaks and mountain passes too, on the studio's map and on the
+game's navigation map ("▲ Teide 3715 m", ")( Col del Teide 2294 m"), and
+the ride photographer prefers views with a peak or from a viewpoint.
 
 **In OCW Studio** (`ocw-studio --world my.ocwpkg`, World workspace) the patch
 is the document you edit, with undo / redo (Ctrl + Z / Ctrl + Shift + Z) and
@@ -1247,6 +1259,24 @@ Then start the app: the left stick steers, the triggers ride and stop (see
 
 ## Riding modes
 
+**At the start: a server or local** (spec 3.2.4). When the desktop app starts
+without an option that already decides (`--server`, `--world`, a screenshot,
+the kiosk, …), the menu asks **Connect to a server** or **Ride locally**, every
+start, with your last choice marked and focused – Enter takes it.
+
+- *Connect to a server* opens Ride → Join: type or paste the server's address
+  (`ocw://HOST:PORT?cert=…`, or `HOST` on this machine) or pick one of the
+  recent servers (kept in `ocw.toml [servers]`).
+- *Ride locally* rides on this computer with your local rider (Settings →
+  Riders; name, weight, height, FTP in `ocw.toml [riders]`) in **Training
+  mode**: every bike and all gear in the Workshop are free to ride, no hearts
+  are earned or spent (Training mode keeps its own garage). A **Campaign
+  mode** – one old rusty city bike at the start, the rest earned – is planned
+  for later.
+- The browser app has its own start page instead. `--start-choice
+  ask|local|server` decides on the command line; the console has
+  `start.choose server|local` and `start.ask`.
+
 **Steering** (spec §5.2.1; HUD shows the mode and the surface)
 
 - **Autodrive** (default, key A): the rider keeps to the middle of the road by
@@ -1284,7 +1314,7 @@ client's first 2 s after joining. `ride.chaotic_bots on` lets bots make
 mistakes. `dev.bump` / `dev.crash` stage one on the local server.
 
 **Riding aids and the camera** (spec §14 Phase 12C / 12D; *Settings →
-Controls → Riding aids*). None of these aids ever steers for you:
+Controls → Bots and riding aids*). None of these aids ever steers for you:
 - **The "last moment" warning** (`ride.hit_warning`, on): a flashing amber
   triangle with an arrow towards the hit, about a second before a
   predicted collision, and when the tyres start to slide on a wet road.
@@ -1339,9 +1369,11 @@ without neutral service a DNF). Injury levels: *bruised* (no effect), *hurt*
 injured* (a 60 s medical stop, then at most 50 % power; DNF with the
 organiser's rule). Only the **virtual** rider is affected – the trainer and
 the hearts see your real power. Easy riding (below half of 2.5 W/kg) heals
-1 % a minute. The HUD's **damage widget** (beside the bike computer;
-`hud.damage off` / Settings → Display hides it) shows a rider and a bike
-silhouette with bars, the level words with an icon (● ▲ ◆ ■, never colour
+1 % a minute. While damage is on, the HUD's **damage widget** (under the
+bike computer) is **always shown** – also at 100 % before any hit; it hides
+only with damage off (*Settings → Controls → Damage*) or the whole HUD off.
+It shows a small rider and a side-view bicycle (wheels, tyres, frame, chain,
+bar, saddle) with bars, the level words with an icon (● ▲ ◆ ■, never colour
 alone), the damaged parts lit on the bike, labels ("rear wheel buckled",
 "puncture: stop to repair") and after a hit the loss for 2 s ("−12 %
 bike"); the results show a damage dot and the crashes per rider. The
@@ -1794,15 +1826,17 @@ event status | event cancel | event dismiss
   downloaded again only while the page is open. The FIT file has a lap at each workout
   step (start, step change, end, stop) and at an event's start, each event
   lap and your finish, so Strava and analysis tools show them as laps.
-- **Strava, the simple way** (spec §2.8.1 *Simple upload*; every Strava
+- **Only your Strava recordings go to Strava, never whole rides** (spec
+  2.8.1 Q6): press S while riding to start and stop one; a ride without
+  one says *no Strava recording – press S while riding* on its page.
+- **Strava, the simple way** (spec 2.8.1 *Simple upload*; every Strava
   account, no API app): *Navi → Training history →* a ride → *Upload to
-  Strava (in your browser)* (`strava.upload-manual N`). The desktop copies
-  the ride's FIT file (or its Strava recordings) and photos to
-  `~/.local/share/ocw/rides/strava-upload/` as e.g. `OCW 2026-11-18 10-05
-  Tenerife – Puerto de la Cruz–Teide.fit`, opens that folder and
+  Strava (in your browser)* (`strava.upload-manual N`). The desktop opens
+  the recording's folder in `~/Activities/OCW` (older recordings are
+  copied to `~/.local/share/ocw/rides/strava-upload/`) and
   <https://www.strava.com/upload/select>; choose the file there (or drag it
-  onto the page) and press Upload. The browser app downloads the file and
-  opens the page in a new tab. Then set *Marked as uploaded*
+  onto the page) and press Upload. The browser app downloads the
+  recording and opens the page in a new tab. Then set *Marked as uploaded*
   (`strava.mark-uploaded N on`) to keep track; the API upload skips marked
   rides.
 - Strava, the advanced way (optional; interim direct upload until the
@@ -1810,12 +1844,15 @@ event status | event cancel | event dismiss
   <https://www.strava.com/settings/api> with the callback domain
   `localhost`, set `OCW_STRAVA_CLIENT_ID` / `OCW_STRAVA_CLIENT_SECRET` (or
   `client_id` / `client_secret` in `~/.config/ocw/strava.toml`), then
-  `strava.connect` once. Saved rides upload in the background; failed
-  uploads are retried.
+  `strava.connect` once. Your Strava recordings upload in the background
+  while *Navi → Strava → Automatic upload* is on (setting
+  `strava.auto_upload`, default on; `set strava.auto_upload off` or
+  `strava.auto_upload off`; kept as `[strava] auto_upload` in `ocw.toml`);
+  off, a ride's page has *Upload now*. Failed uploads are retried.
 - **Strava recording with S** (spec §2.8.1): S (pad L3, *Ride → Strava
   recording*, `strava.record`) starts and stops it; the HUD shows
   "● Strava m:ss". The part between S and S is saved as its own activity in
-  `~/.local/share/ocw/rides/strava/` and uploaded like the rides; leaving or
+  `~/.local/share/ocw/rides/strava/` and uploaded (automatically or by hand, above); leaving or
   saving the ride or quitting stops it. Without `strava.toml` it is
   uploaded the simple way (its stop says where). The browser app shows the
   entry but needs the desktop app for the recording.
@@ -1838,7 +1875,8 @@ event status | event cancel | event dismiss
 |---|---|
 | `--name NAME` | Display name of your rider for this session (default: the rider profile's name) |
 | `--rider NAME` | Ride as this rider profile for this session (default: the one chosen in the Workshop) |
-| `--settings-file PATH` | Settings file (default `~/.config/ocw/settings.toml`; `riders.toml` is read next to it) |
+| `--settings-file PATH` | The local config file (default `ocw.toml` in the config folder, e.g. `~/.config/ocw/ocw.toml`; `secrets.toml` next to it; an old `settings.toml` given here is converted in place, kept as `.bak`) |
+| `--start-choice ask\|local\|server` | The start choice (spec 3.2.4): `ask` shows *Connect to a server* / *Ride locally* with the last choice preselected (Enter takes it), `local` rides locally, `server` opens *Connect to a server*. Default: ask, unless an option already decides (`--server`, `--join`, `--world`, `--route*`, `--free-ride`, `--workout`, `--screenshot`, `--capture`, `--cmd`, `--exec`, `--at`, the kiosk's `--no-hearts`) |
 | `--power W` | Initial power of the virtual trainer (default 200) |
 | `--no-hearts` | Earn no hearts in this session (the kiosk's show mode) |
 | `--bots N` | Number of test riders (default 10; they start in rows of up to three behind you) |
@@ -1861,7 +1899,7 @@ event status | event cancel | event dismiss
 | `--workout FILE` | Load and start a structured workout (`.toml`, `.erg`, `.mrc`; see [Workouts](#workouts)) |
 | `--ftp W` | Your FTP in watts for % FTP workout targets (default: the rider profile's FTP, else 200) |
 | `--virtual` | Use the virtual trainer even if Bluetooth devices are remembered |
-| `--devices-file PATH` | Remembered devices (default `~/.config/ocw/devices.toml`) |
+| `--devices-file PATH` | Remembered devices in a file of their own (default: the `[devices]` section of `ocw.toml`) |
 | `--record BOOL` | Record the ride as a FIT file (default on, off for screenshot/capture runs) |
 | `--window WxH` | Window size (default 1280x720) |
 | `--fullscreen` | Borderless fullscreen on the current monitor |
@@ -1886,19 +1924,38 @@ settings live in your roaming AppData folder.
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| **Config** (settings, devices, riders, Strava, sign-in) | `~/.config/ocw/` (`$XDG_CONFIG_HOME/ocw`) | `%APPDATA%\ocw\` = `C:\Users\<you>\AppData\Roaming\ocw\` | `~/Library/Application Support/ocw/` |
+| **Config** (`ocw.toml`: settings, devices, local riders, servers; `secrets.toml`: Strava, sign-in) | `~/.config/ocw/` (`$XDG_CONFIG_HOME/ocw`) | `%APPDATA%\ocw\` = `C:\Users\<you>\AppData\Roaming\ocw\` | `~/Library/Application Support/ocw/` |
 | **Data** (rides, ghosts, videos, routes, workouts, studio autosave) | `~/.local/share/ocw/` (`$XDG_DATA_HOME/ocw`) | `%APPDATA%\ocw\` (the same folder as the config) | `~/Library/Application Support/ocw/` (the same folder as the config) |
 | **Activities** (your recordings, photos, screenshots) | `~/Activities/OCW/` | `C:\Users\<you>\Activities\OCW\` | `~/Activities/OCW/` |
 
 Open the Windows folder by typing `%APPDATA%\ocw` into the Explorer's address
 bar or the Run dialog (Win + R).
 
-- **In the config folder:** `settings.toml` (all settings, below), `devices.toml`
-  (remembered trainers and sensors), `riders.toml` (rider profiles),
-  `strava.toml` and `strava-token.toml` (Strava upload with your own API
-  app, §2.8.1; an example is in `packaging/strava.example.toml`), `account.json`
-  (the sign-in session when the system keyring is not available),
-  `trusted-roots/` and `keys/` (world package signing).
+- **In the config folder** (spec 3.2.4): **`ocw.toml`**, one file with every
+  local setting of this computer in sections – `[settings]` (all settings,
+  below, as `[settings.audio]`, `[settings.display]`, …), `[riders]` (the local
+  riders: name, weight, height, FTP; *Ride locally* rides the chosen one),
+  `[devices]` (remembered trainers and sensors), `[servers]` (the recent
+  servers of *Connect to a server*), `[start]` (the last start choice) and
+  `[strava]` (`auto_upload`). Edit it by hand while the app is closed; the app
+  changes only the section it saves, your comments elsewhere stay.
+  **`secrets.toml`** next to it, readable only by you (mode 0600 on Linux and
+  macOS; on Windows your profile folder is private): `[strava]` (the
+  `client_id` / `client_secret` of your own Strava API app, §2.8.1; an example
+  is in `packaging/secrets.example.toml`; `OCW_STRAVA_CLIENT_ID` /
+  `OCW_STRAVA_CLIENT_SECRET` win over it), `[strava_token]` (its tokens) and
+  `[account]` (the sign-in session when the system keyring is not available).
+  `ocw.toml` never holds a secret, so you can share it. Also there:
+  `trusted-keys.json`, `trusted-roots/` and `keys/` (world package signing).
+- **Moving from older versions:** at the first start of a version with
+  `ocw.toml`, the old files of the config folder – `settings.toml`,
+  `riders.toml`, `devices.toml`, `joins.txt`, `strava.toml`,
+  `strava-token.toml`, `account.json` – are read into their sections once and
+  **kept as `*.bak`** (`settings.toml.bak`, …; nothing is deleted); the log
+  says once what moved (`config: moved …`). An old file that appears again
+  later (written by hand or an older script) replaces its section, the
+  `ocw.toml` before that kept as `ocw.toml.bak`. A `--settings-file` in the old
+  format is converted in place the same way.
 - **In the data folder:** `rides/` (every ride and its FIT file, the training
   history), `ghosts/`, `videos/`, `routes/`, `gpx/`, `workouts/`,
   `camera-paths/`, `host-tls/` (the certificate when you host a ride), and the
@@ -1909,17 +1966,20 @@ bar or the Run dialog (Win + R).
   photos in a folder per day `YYYY-MM-DD`.
 - **Other places:** `OCW_CONFIG_DIR`, `OCW_DATA_DIR` and `OCW_ACTIVITIES_DIR`
   move the three folders (e.g. for tests or a portable setup);
-  `--settings-file FILE` uses another settings file. The **browser app** keeps
+  `--settings-file FILE` uses another config file (`secrets.toml` next to it).
+  The workshop's garage and hearts (`workshop.toml`, `hearts-ledger.jsonl`;
+  Training mode's own garage in `training/`) are game data in the data
+  folder. The **browser app** keeps
   its settings in the browser's storage for the page (`localStorage` /
   IndexedDB), and saves recordings and photos into a folder you choose
   (Chrome, Edge) or as downloads.
 
 ## Settings and rider profiles
 
-Settings live in `settings.toml` in the config folder (see *Where OCW keeps
-its files* above: `~/.config/ocw/` on Linux, `%APPDATA%\ocw\` on Windows,
-`~/Library/Application Support/ocw/` on macOS; `OCW_CONFIG_DIR` or
-`--settings-file` choose another place). Change them with `set KEY VALUE` in the
+Settings live in the `[settings]` section of `ocw.toml` in the config folder
+(see *Where OCW keeps its files* above: `~/.config/ocw/` on Linux,
+`%APPDATA%\ocw\` on Windows, `~/Library/Application Support/ocw/` on macOS;
+`OCW_CONFIG_DIR` or `--settings-file` choose another place). Change them with `set KEY VALUE` in the
 console (saved at once), or by editing the file; `get` lists them all:
 
 | Key | Values (default) | Applies |
@@ -1947,9 +2007,9 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `ride.random_start` | on / off (on): random start point (`--random-start`) | next start |
 | `ride.record` | on / off (on): save rides as FIT (`--record`) | next start |
 | `ride.collisions` | on / off (on): rider collisions – soft bumps and crashes (group rides soft bumps only; in a shared ride the host decides, `ocw-server --collisions`); Settings → Controls | at once |
-| `ride.chaotic_bots` | on / off (off): bots that sometimes make mistakes (late reactions, wheel touches) that can cause crashes | at once |
-| `ride.proximity_cue` | on / off (off): a soft bell and a HUD arrow pointing at someone within 1 m beside or 2 m in front or behind (an aid; it never steers); Settings → Controls → Riding aids | at once |
-| `ride.hit_warning` | on / off (on): the "last moment" warning – an amber triangle about a second before a predicted hit and when the tyres slide on a wet road (it never steers); Settings → Controls → Riding aids | at once |
+| `ride.chaotic_bots` | on / off (off): bots that sometimes make mistakes (late reactions, wheel touches) that can cause crashes; Settings → Controls → Bots and riding aids | at once |
+| `ride.proximity_cue` | on / off (off): a soft bell and a HUD arrow pointing at someone within 1 m beside or 2 m in front or behind (an aid; it never steers); Settings → Controls → Bots and riding aids | at once |
+| `ride.hit_warning` | on / off (on): the "last moment" warning – an amber triangle about a second before a predicted hit and when the tyres slide on a wet road (it never steers); Settings → Controls → Bots and riding aids | at once |
 | `display.camera_shake` | on / off (on): the chase camera shakes briefly after a crash or a hard bump (off for motion comfort; console `camera.shake`) | at once |
 | `display.ui_scale` | 100 to 200 (100): the HUD's size in % (console `ui.scale`); Settings → Display → Accessibility | at once |
 | `display.palette` | standard / colour-safe (standard): status colours for red-green colour blindness (console `ui.palette`) | at once |
@@ -1957,8 +2017,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `display.reduced_motion` | on / off (off): no camera shake, no flashing warnings (console `ui.motion`) | at once |
 | `controls.pad_confirm` | south / east (south): the gamepad's Confirm button in the menu; Back is the other | at once |
 | `keys.<action>`, `pad.<action>` | a key name (`A`, `Up`, `PageUp`, `F5`, `Num+`, `Shift+M`, `none`) / a pad button (`South`, `East`, `North`, `West`, `LB`, `RB`, `Select`, `L3`, `R3`, `DPadUp` …, `none`): the bindings (`bind` lists the actions) | at once |
-| `ride.damage` | on / off (off): damage – hits hurt the rider and damage the bike (only with collisions on; carried over to the next ride, repairs in the workshop; in a shared ride the host decides, `ocw-server --damage`); Settings → Controls | at once |
-| `display.damage` | on / off (on): the damage indicator in the HUD (console `hud.damage`; the effects stay when hidden) | at once |
+| `ride.damage` | on / off (off): damage – hits hurt the rider and damage the bike (only with collisions on; carried over to the next ride, repairs in the workshop; in a shared ride the host decides, `ocw-server --damage`); while on, the HUD always shows the rider's health and the bike's condition; Settings → Controls → Damage (the old `display.damage` switch is gone: a value left in `settings.toml` is reported as unknown and ignored) | at once |
 | `display.gps` | on / off (on): the GPS line in the HUD, bottom left (console `hud.gps`; world packages and route files only) | at once |
 | `weather.physics` | on / off (on): the weather changes the physics – wind, air density, wet and icy roads; the trainer gets the wind (in shared rides the host decides, in events the organiser); World → Weather → Custom | at once |
 | `audio.master` | 0 to 100 (80): master volume in %, scales every bus | at once |
@@ -2377,7 +2436,6 @@ you can run are offered (no *Dev* commands on a remote server).
 | `ride.crashes` | The collision rules in force, your crash state and the last crashes |
 | `ride.damage [on\|off]` | Damage on or off (spec §14 Phase 12E; the host decides in shared rides); without an argument: your rider's and bike's condition, the damaged parts |
 | `ride.repair` | Stop and mend a puncture now (30 s) instead of riding on slowly |
-| `hud.damage on\|off` | Show or hide the damage indicator |
 | `dev.damage rider\|PART PCT \| puncture_front \| puncture_rear \| chain \| reset` | *Dev:* stage damage for your rider (local server, `ride.damage on`) |
 | `dev.bump` | *Dev:* the nearest other rider bumps into you from the side (a soft bump) |
 | `dev.crash` | *Dev:* the nearest other rider cuts in front of you: a wheel touch, you fall (ragdoll, remount) |
@@ -2439,17 +2497,18 @@ you can run are offered (no *Dev* commands on a remote server).
 | `history.import` | Add the saved FIT files that are in no history yet to the riding rider's |
 | `bind [ACTION [KEY \| BUTTON --pad]] [--capture] [--reset]` | Show or change the key and button bindings |
 | `ui.scale P`, `ui.palette standard\|colour-safe`, `ui.contrast on\|off`, `ui.motion on\|off` | The accessibility options (the settings `display.*` run them) |
-| `ride.save` | End the ride, save it as FIT (and upload if Strava is linked); a new recording starts |
+| `ride.save` | End the ride, save it as FIT for the training history (a running Strava recording stops and is saved; whole rides never go to Strava); a new recording starts |
 | `ride.switch --route NAME \| --route-file FILE \| --world PKG [--free-ride] [--start X,Z] [--route NAME\|FILE] [--route-gpx FILE]` | Ride something else without restarting (the ride so far is saved, devices stay connected) |
 | `ride.restart` | Start the current ride again in the app (R after a switch) |
 | `ride.current` | What is ridden now, as a `ride.switch` line |
 | `ride.import-gpx FILE [--ride]` | Match a GPX file onto the loaded package and save it as your route (Navi → Routes); `--ride` rides it |
 | `strava.connect` | Link your Strava account (opens the browser) |
 | `strava.status` | Strava link and upload state |
-| `strava.sync [--retry]` | Upload every saved ride not on Strava yet (`--retry`: also failed ones) |
+| `strava.sync [--retry] [--waiting] [--ride N]` | Upload every Strava recording not on Strava yet (`--retry`: also failed ones; `--waiting`: the ones made before Strava was set up; `--ride N`: only ride N's – its page's *Upload now*) |
+| `strava.auto_upload [on\|off]` | Upload the Strava recordings automatically (on, the default) or wait for you (off); the setting `strava.auto_upload` |
 | `strava.disconnect` | Unlink Strava (deletes the stored tokens) |
 | `strava.record [start\|stop\|toggle\|status]` | The Strava recording (key S): the part between start and stop is its own Strava activity |
-| `strava.upload-manual [N] [--whole]` | Upload ride N (1 = the newest) in your browser, no API app: the file at hand, Strava's upload page open (`--whole`: the ride, not its Strava recordings) |
+| `strava.upload-manual [N]` | Upload ride N's Strava recordings (1 = the newest) in your browser, no API app: the files at hand, Strava's upload page open (whole rides never go to Strava) |
 | `strava.mark-uploaded N [on\|off\|toggle]` | Mark ride N as uploaded to Strava by hand (the API sync skips it) |
 | `photographer [on\|off\|status\|now\|drone]` | The ride photographer (spec §2.11); `now` plans the next photo at once, `drone` the next by the drone (tests) |
 | `history.photos N` | Open the folder with ride N's photos (1 = the newest) |
@@ -2464,10 +2523,14 @@ and closes the menu. While one runs, the page shows its step, *Skip step*
 and *Stop workout*. Or use `--workout FILE`, or the console: `workout start
 FILE`, `workout start --example short-demo` (examples: `short-demo`,
 `sweet-spot`, `two-by-five`, `over-unders`), `workout load FILE` then
-`workout start`, `workout list`. The HUD shows a panel in the lower
-right corner: the current target, the step and time left, the next step,
-text cues, and the whole workout's profile (coloured by training zone) with
-your progress.
+`workout start`, `workout list`. The HUD shows a panel on the left, under
+the bike computer's panel (the lower right corner is the navigation map's):
+the current target, the step and time left, the next step, text cues, and
+the whole workout's profile (coloured by training zone) with your progress.
+Where a small window with a large HUD leaves too little room it is shown
+compact (the target and the lines, without the title and the profile), and
+if even that does not fit, the elevation profile makes room for it while the
+workout runs.
 
 - **Clock:** the workout time is your pedalling time. It starts when you
   first pedal, keeps running through up to 3 s without power (shifting, a

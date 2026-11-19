@@ -124,8 +124,9 @@ pub enum Page {
     /// World → Time → Season (S9b, decision Q11): the seasons of the
     /// place as date jumps.
     Season,
-    /// Controls → Riding aids (spec §14 Phase 12C / 12D): the proximity
-    /// cue and arrow, the "last moment" warning, the camera shake.
+    /// Controls → Bots and riding aids (spec §14 Phase 12C / 12D, 12G):
+    /// chaotic bots, the proximity cue and arrow, the "last moment"
+    /// warning, the camera shake.
     RidingAids,
     /// Settings → Account → Folders (desktop; spec §2.8.1 *Where an S
     /// recording is written*, v4.80 / v4.82): the activities folder – the
@@ -221,6 +222,9 @@ pub enum Page {
     HostSummary,
     /// While hosting: the join link (Copy link, Stop hosting).
     HostLink,
+    /// The desktop's start choice (spec 3.2.4; rows from `menu::start`):
+    /// Connect to a server, or Ride locally.
+    Start,
 }
 
 impl Page {
@@ -282,7 +286,7 @@ impl Page {
             Self::Calendar(_) => "Calendar",
             Self::CalendarDates(_) => "Calendar: dates",
             Self::Season => "Season",
-            Self::RidingAids => "Riding aids",
+            Self::RidingAids => "Bots and riding aids",
             Self::Folders => "Folders",
             Self::Graphics => "Graphics",
             Self::ViewDistance => "Render distance",
@@ -320,6 +324,7 @@ impl Page {
             Self::HostOptions => "Host a ride: options",
             Self::HostSummary => "Host a ride",
             Self::HostLink => "Hosting: join link",
+            Self::Start => "Open Cycling World",
         }
     }
 
@@ -402,8 +407,9 @@ impl Page {
 
     /// Whether `platform` has this page (both have every page since the
     /// browser flies too, Phase 13 G5; kept for pages one app lacks).
-    pub fn on(self, _platform: super::model::Platform) -> bool {
-        true
+    pub fn on(self, platform: super::model::Platform) -> bool {
+        // The browser keeps its own start page (spec 3.2.4 Q6).
+        !(self == Self::Start && platform == super::model::Platform::Browser)
     }
 
     /// The voice pages (rows from `voice::page`).
@@ -463,7 +469,9 @@ impl Page {
             Self::Bike(_) => &[
                 "Bike type and setup choose the physics profile (differences capped); colours are only for the looks. From the next start.",
             ],
-            Self::Riders => &["Rider profiles: weight, height, FTP. Choose one in the Workshop."],
+            Self::Riders => &[
+                "Your local riders (kept in ocw.toml): weight, height, FTP. Ride locally rides the one chosen in the Workshop.",
+            ],
             Self::Character => &[
                 "Who you are on the road: free, for everyone, and never physics (the weight stays the profile's).",
             ],
@@ -481,7 +489,7 @@ impl Page {
             Self::CharacterPick(_) => &["Confirm keeps the focused one."],
             Self::Trainer => &["Devices, SIM difficulty and the virtual trainer."],
             Self::Strava => &[
-                "Uploads saved rides to Strava when an account is linked (API credentials: see README); the sync state is in Navi -> Rides.",
+                "Only Strava recordings (S ... S) go to Strava, never whole rides; Automatic upload off: by hand on the ride's page.",
             ],
             Self::Audio => &[
                 "Sounds are made by OCW itself; Enter on a volume plays a test sound. Output: the device (default = the system's).",
@@ -568,7 +576,7 @@ impl Page {
                 "Everything OCW saves: Strava recordings (S) in their own folders, photos by day.",
             ],
             Self::RidingAids => &[
-                "Aids that never steer: an arrow to a rider close by, a warning before a hit or a slide. Shake: off for comfort.",
+                "Chaotic bots make mistakes that can cause crashes. The aids never steer: an arrow to a rider close by, a warning before a hit or a slide.",
             ],
             Self::RiderList => {
                 &["The unicorn: flying in unicorn mode. The dot: hurt, or the bike damaged."]
@@ -631,6 +639,7 @@ impl Page {
                 "The server and its voice server run in this app on all addresses; you ride on it as the host.",
             ],
             Self::HostLink => &[],
+            Self::Start => &[super::start::NOTE],
         }
     }
 }
@@ -932,10 +941,12 @@ pub fn setting_row(settings: &Settings, key: &str, label: &str) -> Row {
     }
 }
 
-/// The Riding aids row's value: which aids are on ("warning, shake").
+/// The Bots and riding aids row's value: what is on ("chaotic bots,
+/// warning, shake").
 fn aids_summary(settings: &Settings) -> String {
     let on = |k: &str| settings.get(k).ok().and_then(|v| v.as_bool()) == Some(true);
     let names: Vec<&str> = [
+        ("ride.chaotic_bots", "chaotic bots"),
         ("ride.proximity_cue", "arrow"),
         ("ride.hit_warning", "warning"),
         ("display.camera_shake", "shake"),
@@ -1334,12 +1345,15 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
                 )),
                 Page::UnicornControls,
             ),
-            // Collisions (spec §14 Phase 12A, 12D).
+            // Collisions and damage (spec §14 Phase 12A, 12E; the user,
+            // 2026-11-19: damage in the Settings section, beside
+            // collisions, which it needs).
             setting_row(settings, "ride.collisions", "Collisions"),
-            setting_row(settings, "ride.chaotic_bots", "Chaotic bots"),
-            // The aids have their own page (the ten-foot rule: six rows).
+            setting_row(settings, "ride.damage", "Damage"),
+            // The bots and the aids have their own page (the ten-foot
+            // rule: six rows).
             Row {
-                label: "Riding aids".into(),
+                label: "Bots and riding aids".into(),
                 value: Some(aids_summary(settings)),
                 left: None,
                 right: None,
@@ -1391,7 +1405,9 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         | Page::HostWeather
         | Page::HostOptions
         | Page::HostSummary
-        | Page::HostLink => Vec::new(),
+        | Page::HostLink
+        // The start choice (`menu::start`).
+        | Page::Start => Vec::new(),
         // The organiser's rules (spec §14 Phase 12 K6): six rows.
         Page::EventRules => vec![
             setting_row(settings, "event.collisions", "Collisions"),
@@ -1403,6 +1419,7 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         ],
         Page::Folders => folder_rows(settings),
         Page::RidingAids => vec![
+            setting_row(settings, "ride.chaotic_bots", "Chaotic bots"),
             setting_row(settings, "ride.proximity_cue", "Proximity arrow and bell"),
             setting_row(settings, "ride.hit_warning", "Last-moment warning"),
             setting_row(settings, "display.camera_shake", "Camera shake"),
@@ -1421,10 +1438,6 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             // Scan, connect, forget (spec §3.2.1 *Devices*; the value
             // comes from the app's devices, `ocw_ui::menu`).
             open_row("Devices", None, Page::Devices),
-            // Damage (spec §14 Phase 12E; the Controls and Display pages
-            // are full).
-            setting_row(settings, "ride.damage", "Damage"),
-            setting_row(settings, "display.damage", "Damage indicator"),
         ],
         Page::Strava => vec![
             // The simple way, for every rider (spec §2.8.1 *Simple
@@ -1435,10 +1448,14 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
                 Some("no API app needed".into()),
                 Page::HistoryRides,
             ),
+            // Only the Strava recordings (S ... S) go to Strava, never
+            // whole rides (spec 2.8.1 Q6): automatically, or by hand.
+            setting_row(settings, "strava.auto_upload", "Automatic upload"),
             Row::action("Status", "strava.status"),
             Row::action("Link account", "strava.connect"),
-            Row::action("Sync now", "strava.sync"),
-            Row::action("Retry failed uploads", "strava.sync --retry"),
+            // Uploads the recordings not on Strava yet and retries the
+            // failed ones (a ride's page retries its own too).
+            Row::action("Upload now", "strava.sync --retry"),
             Row::action("Unlink", "strava.disconnect"),
         ],
         Page::Display => vec![
@@ -1836,8 +1853,18 @@ mod tests {
             Some(Activate::Open(Page::HistoryRides))
         );
         assert_eq!(
-            row(&strava, "Retry failed uploads").confirm,
+            row(&strava, "Upload now").confirm,
             cmd("strava.sync --retry")
+        );
+        // The automatic upload of the S recordings (spec 2.8.1 Q6).
+        let auto = row(&strava, "Automatic upload");
+        assert_eq!(auto.value.as_deref(), Some("on"));
+        assert_eq!(auto.confirm, cmd("set strava.auto_upload off"));
+        let (off, _) = Settings::parse("[strava]\nauto_upload = false\n").unwrap();
+        let strava = rows(Page::Strava, &off, &Riders::default());
+        assert_eq!(
+            row(&strava, "Automatic upload").value.as_deref(),
+            Some("off")
         );
     }
 

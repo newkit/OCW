@@ -11,7 +11,9 @@
 //! their files (`OCW 2026-11-18 10-05 Puerto de la Cruz.fit`, `… photo
 //! 1.jpg`). The stop notice and the photo preview say where they went.
 //! A page cannot list its folder before it writes, so the ` 2` suffix
-//! counts the recordings of this page.
+//! counts the recordings of this page. The page keeps its recordings'
+//! FIT files ([`WebStrava::kept`]) for the simple upload: only they go
+//! to Strava, never a whole ride (spec 2.8.1 Q6; [`recordings_by_ride`]).
 
 use std::sync::Arc;
 
@@ -93,6 +95,16 @@ pub fn went(answer: &str, path: &str) -> String {
     }
 }
 
+/// A Strava recording of this page, kept for the simple upload.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KeptRecording {
+    /// Its start (UTC Unix s).
+    pub start_unix_s: i64,
+    /// Its file's name (`OCW 2026-11-18 10-05 Puerto de la Cruz.fit`).
+    pub name: String,
+    pub fit: Vec<u8>,
+}
+
 /// The browser's Strava recording and, while it runs, where it goes.
 #[derive(Resource)]
 pub struct WebStrava {
@@ -100,6 +112,44 @@ pub struct WebStrava {
     pub target: Option<Target>,
     /// The folders this page's recordings used (for ` 2`, ` 3`).
     used: Vec<String>,
+    /// This page's recordings (the simple upload sends them).
+    pub kept: Vec<KeptRecording>,
+}
+
+/// The kept recordings within `ride`, oldest first.
+pub fn recordings_of(world: &World, ride: &ocw_client::history::RideEntry) -> Vec<KeptRecording> {
+    world
+        .get_resource::<WebStrava>()
+        .map(|s| {
+            s.kept
+                .iter()
+                .filter(|k| {
+                    ocw_client::strava::within_ride(
+                        k.start_unix_s,
+                        ride.start_unix_s,
+                        ride.elapsed_s,
+                    )
+                })
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// How many kept recordings each ride of the history has (by ride id;
+/// the ride page's rows, spec 2.8.1 Q6).
+pub fn recordings_by_ride(world: &World) -> std::collections::BTreeMap<String, usize> {
+    let Some(h) = world.get_resource::<ocw_ui::history::TrainingHistory>() else {
+        return Default::default();
+    };
+    h.history
+        .rides
+        .iter()
+        .filter_map(|r| {
+            let n = recordings_of(world, r).len();
+            (n > 0).then(|| (r.id.clone(), n))
+        })
+        .collect()
 }
 
 impl Default for WebStrava {
@@ -109,6 +159,7 @@ impl Default for WebStrava {
             rec: StravaRecording::new(false, ""),
             target: None,
             used: Vec::new(),
+            kept: Vec::new(),
         }
     }
 }
@@ -202,11 +253,13 @@ pub fn record(world: &mut World, what: &str) -> Result<String, String> {
                 return Ok("Strava recording too short, not saved".into());
             };
             let path = t.rel(&t.fit_name());
-            let answer = (saver.save)(
-                &path,
-                "application/vnd.ant.fit",
-                ocw_fit::encode(&ride.activity),
-            );
+            let fit = ocw_fit::encode(&ride.activity);
+            world.resource_mut::<WebStrava>().kept.push(KeptRecording {
+                start_unix_s: ride.activity.start_unix_s,
+                name: t.fit_name(),
+                fit: fit.clone(),
+            });
+            let answer = (saver.save)(&path, "application/vnd.ant.fit", fit);
             let w = went(&answer, &path);
             info!(file = %path, went = %w, "Strava recording");
             Ok(format!("Strava recording: {w}"))

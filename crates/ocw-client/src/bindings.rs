@@ -162,7 +162,9 @@ pub const ACTIONS: [ActionDef; 22] = [
         "Stop (power 0, brake)",
         Group::Riding,
         "Down",
-        "DPadDown",
+        // D-pad down zooms the navigation map (spec 3.2 Q6, 2026-11-19);
+        // the left stick down and the left trigger still stop.
+        "none",
     ),
     def(
         Action::SteerLeft,
@@ -297,22 +299,26 @@ pub const ACTIONS: [ActionDef; 22] = [
         "R3",
     )),
     // The HUD's navigation map (spec §3.2 *Navigation map*).
-    def(
+    // Both also in unicorn flight, where the map shows centred on the
+    // unicorn (spec 3.2 Q7).
+    flying(def(
         Action::Map,
         "map",
         "Navigation map on / off",
         Group::Map,
         "N",
         "none",
-    ),
-    def(
+    )),
+    // The zoom on the d-pad (spec 3.2 Q6, decided 2026-11-19: "yes, the
+    // zoom on a d-pad direction"): D-pad down, which "stop" gave up.
+    flying(def(
         Action::MapZoom,
         "map_zoom",
         "Navigation map zoom",
         Group::Map,
         "Z",
-        "none",
-    ),
+        "DPadDown",
+    )),
 ];
 
 impl Action {
@@ -728,6 +734,11 @@ mod tests {
         assert_eq!(b.pad(Action::Autodrive), "South");
         assert_eq!(b.key(Action::MuteVoices), "Shift+M");
         assert_eq!(b.key(Action::Faster), "Up");
+        // Spec 3.2 Q6: the map's zoom on D-pad down; "stop" keeps the
+        // left stick and the left trigger.
+        assert_eq!(b.pad(Action::MapZoom), "DPadDown");
+        assert_eq!(b.pad(Action::Stop), "none");
+        assert_eq!(b.pad(Action::Faster), "DPadUp");
         assert!(b.is_default());
         assert_eq!(b.conflicts(true), []);
         assert_eq!(b.conflicts(false), []);
