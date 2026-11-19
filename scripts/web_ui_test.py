@@ -738,11 +738,19 @@ class UiTest:
         self.check("fit: a FIT file", data[8:12] == b".FIT" and len(data) > 100, f"{len(data)} bytes at {path}")
         self.close_menu()
 
-        # The simple Strava upload (spec §2.8.1): the saved ride's page →
-        # Upload to Strava (in your browser): the FIT download under its
-        # recognisable name, Strava's upload page in a new tab (stubbed: no
-        # network), the steps on the page.
+        # The simple Strava upload (spec 2.8.1, Q6): only a ride's Strava
+        # recordings go to Strava – a recording (S … S), the ride saved,
+        # its page → Upload to Strava (in your browser): the recording's
+        # FIT download under its recognisable name, Strava's upload page
+        # in a new tab (stubbed: no network), the steps on the page.
         cdp.eval("window.ocwOpened = []; window.open = (u, t) => { window.ocwOpened.push(u); return {}; }")
+        self.console("strava.record start")
+        self.pump(3.0)
+        self.console("strava.record stop")
+        self.pump(1.0)
+        self.console("ride.save")
+        self.pump(1.0)
+        recorded = {d["name"] for d in json.loads(self.page_downloads() or "[]")}
         self.key("Escape")
         self.wait_menu(lambda m: m.get("open"))
         ok = (self.open_item("Navi", "Navi")
@@ -756,8 +764,8 @@ class UiTest:
         self.shot("strava-row")
         self.key("Enter")
         d, path = self.wait_download(".fit")
-        self.check("strava: the FIT file is a download named for the file picker",
-                   d is not None and d["name"].startswith("OCW 20"), d)
+        self.check("strava: the recording (not the ride) is a download named for the file picker",
+                   d is not None and d["name"].startswith("OCW 20") and d["name"] in recorded, d)
         opened = json.loads(cdp.eval("JSON.stringify(window.ocwOpened || [])") or "[]")
         self.check("strava: the upload page in a new tab",
                    opened == ["https://www.strava.com/upload/select"], opened)
@@ -779,7 +787,8 @@ class UiTest:
         self.check("activities: Captures offers the activities folder",
                    "Activities folder: choose" in items, items)
         self.close_menu()
-        before = {d["name"] for d in json.loads(self.page_downloads() or "[]")}
+        # By count: an earlier recording of the same minute has the same name.
+        before = len(json.loads(self.page_downloads() or "[]"))
         self.console("strava.record start")
         self.pump(3.0)
         self.shot("strava-recording")
@@ -787,7 +796,7 @@ class UiTest:
         hit = None
         for _ in range(50):
             listed = json.loads(self.page_downloads() or "[]")
-            new = [d for d in listed if d["name"].endswith(".fit") and d["name"] not in before]
+            new = [d for d in listed[before:] if d["name"].endswith(".fit")]
             if new:
                 hit = new[-1]
                 break

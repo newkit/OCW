@@ -49,8 +49,11 @@ common=(--world "$pkg" --route "$route" --name "Ada Rider" --virtual --power 300
 # Game times: software rendering on X11 runs slower than the wall clock.
 wall=${OCW_STRAVA_WALL_S:-$([ "$ws" = x11 ] && echo 300 || echo 90)}
 export OCW_SHOT_TIMEOUT=$((wall + 300))
+# S right at the start: a recording belongs to a ride when it starts (wall
+# clock) before the ride's end – its start plus its recorded (game) time –
+# and on X11's few frames a second game time lags the wall clock.
 .claude/skills/run-ocw/drive.sh "$mode" "$out/q6-$ws-end.jpg" "$wall" -- "${common[@]}" \
-  --at "4=strava.record start" --at "12=strava.record stop" --at "14=ride.save" \
+  --at "1=strava.record start" --at "12=strava.record stop" --at "14=ride.save" \
   --at "22=ride.save" \
   --at "24=menu strava" --at "27=screenshot $out/settings-$ws.jpg" \
   --at "29=menu ride 2" --at "32=screenshot $out/ride-with-s-$ws.jpg" \
