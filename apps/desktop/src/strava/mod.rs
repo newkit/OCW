@@ -8,14 +8,16 @@
 //! **The advanced way** (the interim path until the backend exists, spec
 //! §2.8, §14 Phase 5): the user registers their own Strava API
 //! application and configures its client id and secret
-//! (`OCW_STRAVA_CLIENT_ID` / `OCW_STRAVA_CLIENT_SECRET` or `<config
-//! dir>/ocw/strava.toml`); nothing is built in. With them the Strava
+//! (`OCW_STRAVA_CLIENT_ID` / `OCW_STRAVA_CLIENT_SECRET`, which win, or
+//! `[strava]` of `secrets.toml` in the config folder, spec 3.2.4; an old
+//! `strava.toml` / `strava-token.toml` there is migrated into it, also
+//! while the app runs); nothing is built in. With them the Strava
 //! recordings (S … S) are uploaded – automatically while the setting
-//! `strava.auto_upload` is on (default; it replaces `auto_upload` in
-//! `strava.toml`, read once: [`AUTO_SETTING`]), by hand otherwise (the
+//! `strava.auto_upload` is on (default; kept as `[strava] auto_upload` of
+//! `ocw.toml`, the one switch: [`AUTO_SETTING`]), by hand otherwise (the
 //! ride page's *Upload now*, `strava.sync`) – except those marked as
 //! uploaded by hand. **Whole rides never go to Strava** (spec 2.8.1 Q6,
-//! v5.02); whole rides uploaded before keep their state.
+//! v5.05); whole rides uploaded before keep their state.
 //!
 //! **Recording without Strava set up, uploaded later** (spec §2.8.1):
 //! every S recording made without the credentials is kept as *waiting*
@@ -98,23 +100,25 @@ pub struct Strava {
     watch: Option<Watch>,
     /// The automatic upload of the Strava recordings ([`AUTO_SETTING`]).
     auto: bool,
-    /// The setting has a value of its own (in `settings.toml`, the
-    /// command line or `set --temp`); else an old `auto_upload` in
-    /// `strava.toml` is read once into it.
+    /// The setting has a value of its own (`ocw.toml [strava]
+    /// auto_upload`, the command line or `set --temp`); else one found in
+    /// the Strava files is read once into it.
     auto_set: bool,
-    /// The old `strava.toml` key read now: to be saved as the setting.
+    /// The value read from the Strava files now: to be saved as the setting.
     migrated: Option<bool>,
 }
 
 /// Looking for the credentials while the app runs.
 struct Watch {
-    config_dir: PathBuf,
+    /// `ocw.toml` and `secrets.toml` (the old `strava.toml` beside them).
+    files: crate::config::ConfigFiles,
     rides_dir: PathBuf,
     /// The environment's credentials as they were at the start (it is not
     /// read again).
     env: Vec<(String, String)>,
-    /// The config file's modification time when last looked at.
-    seen: Option<SystemTime>,
+    /// The modification times of `secrets.toml` and an old `strava.toml`
+    /// when last looked at.
+    seen: (Option<SystemTime>, Option<SystemTime>),
     /// The stand-in Strava instead of Strava.
     fake: bool,
     /// Seconds to the next look.
@@ -123,6 +127,15 @@ struct Watch {
 
 fn modified(path: &Path) -> Option<SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+/// What the watch looks at: `secrets.toml`, and an old `strava.toml`
+/// written by hand (it is migrated when it comes).
+fn watched(files: &crate::config::ConfigFiles) -> (Option<SystemTime>, Option<SystemTime>) {
+    (
+        modified(&files.secrets),
+        modified(&files.dir().join("strava.toml")),
+    )
 }
 
 impl Strava {
@@ -143,16 +156,17 @@ impl Strava {
         self.auto
     }
 
-    /// Reads an old `auto_upload` of `strava.toml` once, while the
-    /// setting has no value of its own (spec 2.8.1 Q6).
-    fn read_old_key(&mut self, config_file: &Path) {
+    /// Takes an `auto_upload` of the Strava files (`ocw.toml [strava]`,
+    /// migrated from an old `strava.toml`) once, while the setting has no
+    /// value of its own (spec 2.8.1 Q6).
+    fn read_old_key(&mut self, files: &crate::config::ConfigFiles) {
         if self.auto_set {
             return;
         }
         if let Ok(StravaConfig {
             auto_upload: Some(v),
             ..
-        }) = StravaConfig::load(config_file)
+        }) = StravaConfig::load_files(files)
         {
             self.auto = v;
             self.auto_set = true;
@@ -166,22 +180,29 @@ impl Strava {
         if self.worker.is_some() {
             return false;
         }
-        let Some(file) = self
-            .watch
-            .as_ref()
-            .map(|w| w.config_dir.join("strava.toml"))
-        else {
+        let Some(w) = &mut self.watch else {
             return false;
         };
-        self.read_old_key(&file);
+        // An old strava.toml / strava-token.toml: into secrets.toml (its
+        // auto_upload into ocw.toml [strava]) first.
+        let (notes, problems) =
+            crate::config::migrate_only(&w.files, Some(crate::config::STRAVA_FILES));
+        for n in notes {
+            info!("config: moved {n}");
+        }
+        for p in problems {
+            warn!("config: {p}");
+        }
+        w.seen = watched(&w.files);
+        let files = w.files.clone();
+        self.read_old_key(&files);
         let auto = self.auto;
         let Some(w) = &mut self.watch else {
             return false;
         };
-        w.seen = modified(&file);
         let env = w.env.clone();
         let lookup = move |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
-        match start(&w.config_dir, w.rides_dir.clone(), &lookup, w.fake, auto) {
+        match start(&w.files, w.rides_dir.clone(), &lookup, w.fake, auto) {
             Ok(worker) => {
                 self.worker = Some(worker);
                 self.off_reason.clear();
@@ -252,7 +273,17 @@ impl Plugin for StravaPlugin {
             .get_resource::<crate::recording::Recording>()
             .and_then(|r| r.dir.clone())
             .or_else(crate::recording::default_rides_dir);
-        let config_dir = self.config_dir.clone().or_else(default_config_dir);
+        // The app's config files (spec 3.2.4), else those of `config_dir`.
+        let files = self
+            .config_dir
+            .as_deref()
+            .map(crate::config::ConfigFiles::in_dir)
+            .or_else(|| {
+                app.world()
+                    .get_resource::<crate::config::ConfigFiles>()
+                    .cloned()
+            })
+            .or_else(|| default_config_dir().map(|d| crate::config::ConfigFiles::in_dir(&d)));
         // The environment is read here only.
         let env: Vec<(String, String)> = if self.ignore_env {
             Vec::new()
@@ -262,8 +293,8 @@ impl Plugin for StravaPlugin {
                 .filter_map(|k| Some((k.to_string(), std::env::var(k).ok()?)))
                 .collect()
         };
-        // The automatic upload (spec 2.8.1 Q6): the setting, else (once)
-        // an old `auto_upload` in `strava.toml`.
+        // The automatic upload (spec 2.8.1 Q6): the setting (`ocw.toml
+        // [strava] auto_upload`), else a value found in the Strava files.
         let (auto, auto_set) = app
             .world()
             .get_resource::<ocw_ui::settings::UserSettings>()
@@ -274,8 +305,8 @@ impl Plugin for StravaPlugin {
                     source != ocw_client::settings::Source::Default,
                 )
             });
-        let strava = match (config_dir, rides_dir) {
-            (Some(config_dir), Some(rides_dir)) => {
+        let strava = match (files, rides_dir) {
+            (Some(files), Some(rides_dir)) => {
                 let mut s = Strava {
                     worker: None,
                     off_reason: String::new(),
@@ -283,10 +314,10 @@ impl Plugin for StravaPlugin {
                     auto_set,
                     migrated: None,
                     watch: Some(Watch {
-                        config_dir,
+                        files,
                         rides_dir: rides_dir.clone(),
                         env,
-                        seen: None,
+                        seen: (None, None),
                         fake: self.fake_strava || std::env::var_os(api::ENV_FAKE).is_some(),
                         next_s: WATCH_S,
                     }),
@@ -337,8 +368,10 @@ impl Plugin for StravaPlugin {
     }
 }
 
-/// An old `auto_upload` of `strava.toml` was read: it becomes the setting
-/// `strava.auto_upload` (saved, so it is read only once; spec 2.8.1 Q6).
+/// An `auto_upload` found in the Strava files while the setting had no
+/// value (an old `strava.toml` migrated by hand, or one written into
+/// `secrets.toml`): it becomes the setting `strava.auto_upload`, saved as
+/// `ocw.toml [strava] auto_upload` (spec 2.8.1 Q6).
 fn save_migrated(world: &mut World) {
     let Some(v) = world.resource_mut::<Strava>().migrated.take() else {
         return;
@@ -349,7 +382,7 @@ fn save_migrated(world: &mut World) {
         r.0.auto = v;
     }
     let msg = format!(
-        "Strava: auto_upload = {v} of strava.toml is now the setting {AUTO_SETTING} = {value} (Navi > Strava > Automatic upload); the line in strava.toml is no longer read"
+        "Strava: auto_upload = {v} (from the old strava.toml) is now the setting {AUTO_SETTING} = {value}, kept in ocw.toml [strava] (Navi > Strava > Automatic upload)"
     );
     info!("{msg}");
     if let Some(mut c) = world.get_resource_mut::<ConsoleState>() {
@@ -381,17 +414,17 @@ fn set_auto(world: &mut World, on: bool) {
     refresh_history(world);
 }
 
-/// Starts the worker with the credentials from `strava.toml` or `env`;
+/// Starts the worker with the credentials from `env` or `secrets.toml`;
 /// `Err`: why Strava stays off.
 fn start(
-    config_dir: &Path,
+    files: &crate::config::ConfigFiles,
     rides_dir: PathBuf,
     env: &dyn Fn(&str) -> Option<String>,
     fake: bool,
     auto_upload: bool,
 ) -> Result<Worker, String> {
-    let config_file = config_dir.join("strava.toml");
-    let config = StravaConfig::load(&config_file).map_err(|e| format!("Strava: off, {e}"))?;
+    let config_file = files.secret("strava").describe();
+    let config = StravaConfig::load_files(files).map_err(|e| format!("Strava: off, {e}"))?;
     let Some(creds) = config.credentials(env) else {
         return Err(format!(
             "Strava: no API application set up (the advanced way). Upload your Strava recordings (S … S) in your browser instead: \
@@ -399,8 +432,7 @@ fn start(
              With the automatic upload on they wait and are uploaded once it is set up. \
              For automatic uploads register an API application at https://www.strava.com/settings/api \
              (authorization callback domain: localhost), then set {ENV_CLIENT_ID} and {ENV_CLIENT_SECRET} \
-             or put client_id and client_secret into {}",
-            config_file.display()
+             or put client_id and client_secret into {config_file}"
         ));
     };
     let http: Arc<dyn api::Http> = if fake {
@@ -418,7 +450,7 @@ fn start(
             state_file: state_file(&rides_dir),
             rides_dir,
             token: TokenStore {
-                path: config_dir.join("strava-token.toml"),
+                path: files.secrets.clone(),
             },
         },
         auto_upload,
@@ -444,8 +476,8 @@ fn watch_credentials(world: &mut World) {
         return;
     }
     w.next_s = WATCH_S;
-    let now = modified(&w.config_dir.join("strava.toml"));
-    if now.is_none() || now == w.seen {
+    let now = watched(&w.files);
+    if now == (None, None) || now == w.seen {
         return;
     }
     let ok = s.try_start();
@@ -558,7 +590,7 @@ fn file_state(state: &SyncState, file: &str, uploading: Option<&str>) -> Option<
 }
 
 /// Each ride's Strava state (its Strava recordings'; a ride without one
-/// only when its whole file was uploaded before v5.02 – whole rides never
+/// only when its whole file was uploaded before v5.05 – whole rides never
 /// go to Strava now, spec 2.8.1 Q6) and the open question, for the
 /// training history's pages.
 pub fn history_states(world: &World) -> (BTreeMap<String, StravaState>, Option<usize>) {

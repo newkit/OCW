@@ -25,6 +25,6 @@
 # client_secret = "your-client-secret"
 
 # Whether the Strava recordings are uploaded automatically is a setting now:
-# strava.auto_upload in settings.toml, Menu > Navi > Strava > Automatic upload,
+# [strava] auto_upload in ocw.toml, Menu > Navi > Strava > Automatic upload,
 # or `set strava.auto_upload off` in the console (default on). An older
-# `auto_upload = …` line here is read once into that setting.
+# `auto_upload = …` line here is moved there once.

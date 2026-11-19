@@ -218,6 +218,9 @@ pub enum Page {
     HostSummary,
     /// While hosting: the join link (Copy link, Stop hosting).
     HostLink,
+    /// The desktop's start choice (spec 3.2.4; rows from `menu::start`):
+    /// Connect to a server, or Ride locally.
+    Start,
 }
 
 impl Page {
@@ -316,6 +319,7 @@ impl Page {
             Self::HostOptions => "Host a ride: options",
             Self::HostSummary => "Host a ride",
             Self::HostLink => "Hosting: join link",
+            Self::Start => "Open Cycling World",
         }
     }
 
@@ -398,8 +402,9 @@ impl Page {
 
     /// Whether `platform` has this page (both have every page since the
     /// browser flies too, Phase 13 G5; kept for pages one app lacks).
-    pub fn on(self, _platform: super::model::Platform) -> bool {
-        true
+    pub fn on(self, platform: super::model::Platform) -> bool {
+        // The browser keeps its own start page (spec 3.2.4 Q6).
+        !(self == Self::Start && platform == super::model::Platform::Browser)
     }
 
     /// The voice pages (rows from `voice::page`).
@@ -459,7 +464,9 @@ impl Page {
             Self::Bike(_) => &[
                 "Bike type and setup choose the physics profile (differences capped); colours are only for the looks. From the next start.",
             ],
-            Self::Riders => &["Rider profiles: weight, height, FTP. Choose one in the Workshop."],
+            Self::Riders => &[
+                "Your local riders (kept in ocw.toml): weight, height, FTP. Ride locally rides the one chosen in the Workshop.",
+            ],
             Self::Character => &[
                 "Who you are on the road: free, for everyone, and never physics (the weight stays the profile's).",
             ],
@@ -624,6 +631,7 @@ impl Page {
                 "The server and its voice server run in this app on all addresses; you ride on it as the host.",
             ],
             Self::HostLink => &[],
+            Self::Start => &[super::start::NOTE],
         }
     }
 }
@@ -1374,7 +1382,9 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         | Page::HostWeather
         | Page::HostOptions
         | Page::HostSummary
-        | Page::HostLink => Vec::new(),
+        | Page::HostLink
+        // The start choice (`menu::start`).
+        | Page::Start => Vec::new(),
         // The organiser's rules (spec §14 Phase 12 K6): six rows.
         Page::EventRules => vec![
             setting_row(settings, "event.collisions", "Collisions"),

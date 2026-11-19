@@ -141,7 +141,7 @@ impl std::fmt::Display for Source {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Default => "default",
-            Self::File => "settings.toml",
+            Self::File => "saved",
             Self::Temp => "temporary",
             Self::CommandLine => "command line",
         })
@@ -437,11 +437,12 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::Command("activities.folder \"{}\""),
     },
-    // Strava (spec 2.8.1 Q6, v5.02): only the Strava recordings (S … S)
+    // Strava (spec 2.8.1 Q6, v5.05): only the Strava recordings (S … S)
     // go to Strava, never whole rides; on: they are uploaded automatically
     // once the API app is set up and the account linked, off: they wait
     // for the upload by hand (the ride page's *Upload now*, or in the
-    // browser). Replaces `auto_upload` in `strava.toml` (read once).
+    // browser). The desktop keeps it as the one `[strava] auto_upload` of
+    // `ocw.toml` (spec 3.2.4; `config::SettingsStore`).
     SettingDef {
         key: "strava.auto_upload",
         kind: Kind::Bool,
@@ -1701,10 +1702,7 @@ master = 80
     #[test]
     fn precedence_default_file_temp_command_line() {
         let (mut s, _) = Settings::parse("[ride]\nbots = 2\n").unwrap();
-        assert_eq!(
-            s.line("ride.bots").unwrap(),
-            "ride.bots = 2 (settings.toml)"
-        );
+        assert_eq!(s.line("ride.bots").unwrap(), "ride.bots = 2 (saved)");
         s.set_temp("ride.bots", "7").unwrap();
         assert_eq!(
             s.get_with_source("ride.bots"),

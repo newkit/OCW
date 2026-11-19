@@ -410,7 +410,7 @@ pub fn rows(page: Page, info: &HistoryInfo) -> Vec<Row> {
 /// without Strava set up, uploaded later*, Q6). Only the ride's Strava
 /// recordings (S … S) go to Strava, never the whole ride: a ride without
 /// one has the single line *no Strava recording – press S while riding*
-/// (or, for a whole ride uploaded before v5.02, *on Strava*). A ride with
+/// (or, for a whole ride uploaded before v5.05, *on Strava*). A ride with
 /// recordings shows their state – *waiting for Strava set-up* /
 /// *uploading* / *on Strava* (opens the activity) / *failed – retry*, or
 /// the automatic upload's line, or *upload now* with the automatic upload
@@ -843,7 +843,7 @@ mod tests {
             );
             assert_eq!(line.confirm, None);
         }
-        // A whole ride uploaded before (v5.02) stays on Strava.
+        // A whole ride uploaded before (v5.05) stays on Strava.
         i.strava.insert(
             id.clone(),
             StravaState::OnStrava {

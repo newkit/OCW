@@ -125,6 +125,92 @@ pub fn label_candidates(
         .collect()
 }
 
+/// The coarsest studio map zoom (metres per point) peaks and passes are
+/// named at (with the villages).
+pub const PEAK_MAX_M_PER_PX: f64 = 40.0;
+/// The rank peaks and passes are laid out with: after the towns and
+/// villages, with the hamlets (the higher first).
+pub const PEAK_RANK: u8 = 3;
+/// The height of a peak's triangle on its summit (points); the name
+/// stands above it.
+pub const PEAK_SIGN_PX: f32 = 9.0;
+
+/// The text of a peak or pass on the studio map: "Name 3715 m" (above
+/// the peak's triangle), a pass ")( Name 2055 m".
+pub fn landmark_text(l: &ocw_world::landmarks::Landmark) -> String {
+    let mut t = String::new();
+    if l.kind == ocw_world::landmarks::LandmarkKind::Pass {
+        t.push_str(")(");
+    }
+    if !l.name.is_empty() {
+        if !t.is_empty() {
+            t.push(' ');
+        }
+        t.push_str(&l.name);
+    }
+    if let Some(e) = l.ele_text() {
+        if !t.is_empty() {
+            t.push(' ');
+        }
+        t.push_str(&e);
+    }
+    t
+}
+
+/// The peak and pass labels that could be drawn (as
+/// [`label_candidates`]): from [`PEAK_MAX_M_PER_PX`] in, laid out with
+/// [`PEAK_RANK`] and their elevation as the priority after it; ids from
+/// `first_id` on (after the places' indices).
+pub fn landmark_candidates(
+    marks: &[ocw_world::landmarks::Landmark],
+    first_id: u32,
+    view: &MapView,
+    size: [f32; 2],
+    measure: &mut dyn FnMut(&str, f32, bool) -> f32,
+) -> Vec<(
+    ocw_world::places::LabelCandidate,
+    ocw_world::places::LabelStyle,
+)> {
+    if view.m_per_px > PEAK_MAX_M_PER_PX {
+        return Vec::new();
+    }
+    let mid = [size[0] * 0.5, size[1] * 0.5];
+    let (lo, hi) = view.visible(size);
+    let margin = 50.0 * view.m_per_px;
+    marks
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| {
+            let (x, z) = (f64::from(p.pos[0]), f64::from(p.pos[1]));
+            x >= lo[0] - margin && x <= hi[0] + margin && z >= lo[1] - margin && z <= hi[1] + margin
+        })
+        .filter_map(|(i, l)| {
+            let mut style = ocw_world::places::label_style(2, view.m_per_px)?;
+            style.strong = false;
+            style.grey = 235;
+            let anchor = view.to_screen([f64::from(l.pos[0]), f64::from(l.pos[1])], mid);
+            let sign = if l.kind == ocw_world::landmarks::LandmarkKind::Peak {
+                PEAK_SIGN_PX * 0.6
+            } else {
+                0.0
+            };
+            let w = measure(&landmark_text(l), style.size, false);
+            let h = style.size * 1.2 + sign;
+            Some((
+                ocw_world::places::LabelCandidate {
+                    id: first_id + i as u32,
+                    rank: PEAK_RANK,
+                    population: l.ele.map_or(0, |e| e.max(0.0) as u32),
+                    anchor,
+                    min: [anchor[0] - w * 0.5 - 1.0, anchor[1] - h - 3.0],
+                    max: [anchor[0] + w * 0.5 + 1.0, anchor[1] + 3.0],
+                },
+                style,
+            ))
+        })
+        .collect()
+}
+
 /// Draws the place labels that [`ocw_world::places::layout_labels`] keeps;
 /// what was shown is remembered under `id` for the next frame's
 /// hysteresis.
@@ -134,9 +220,10 @@ fn paint_places(
     rect: egui::Rect,
     view: &MapView,
     places: &[ocw_world::places::Place],
+    marks: &[ocw_world::landmarks::Landmark],
     id: egui::Id,
 ) {
-    if places.is_empty() {
+    if places.is_empty() && marks.is_empty() {
         return;
     }
     let font = |size: f32| egui::FontId::proportional(size);
@@ -145,12 +232,19 @@ fn paint_places(
         g.size().x + if strong { 1.0 } else { 0.0 }
     };
     let size = [rect.width(), rect.height()];
-    let cands = label_candidates(places, view, size, &mut measure);
+    let mut cands = label_candidates(places, view, size, &mut measure);
+    cands.extend(landmark_candidates(
+        marks,
+        places.len() as u32,
+        view,
+        size,
+        &mut measure,
+    ));
     let mut previous: BTreeSet<u32> = ui
         .memory(|m| m.data.get_temp::<BTreeSet<u32>>(id))
         .unwrap_or_default();
     // A different package: nothing to keep.
-    previous.retain(|i| (*i as usize) < places.len());
+    previous.retain(|i| (*i as usize) < places.len() + marks.len());
     let local: Vec<_> = cands.iter().map(|c| c.0).collect();
     let shown = ocw_world::places::layout_labels(
         &local,
@@ -167,6 +261,13 @@ fn paint_places(
         let Some((c, style)) = cands.iter().find(|c| c.0.id == i) else {
             continue;
         };
+        if let Some(l) = (i as usize)
+            .checked_sub(places.len())
+            .and_then(|k| marks.get(k))
+        {
+            paint_landmark(painter, c, style, l, rect.min.to_vec2(), shadow);
+            continue;
+        }
         let place = &places[i as usize];
         let at = egui::pos2(c.anchor[0], c.anchor[1]) + offset;
         let colour = egui::Color32::from_gray(style.grey);
@@ -187,6 +288,52 @@ fn paint_places(
     }
     let kept: BTreeSet<u32> = shown.into_iter().collect();
     ui.memory_mut(|m| m.data.insert_temp(id, kept));
+}
+
+/// A peak (a brown triangle on its summit, the name and elevation above)
+/// or a pass (a dot, ")( name elevation").
+fn paint_landmark(
+    painter: &egui::Painter,
+    c: &ocw_world::places::LabelCandidate,
+    style: &ocw_world::places::LabelStyle,
+    l: &ocw_world::landmarks::Landmark,
+    offset: egui::Vec2,
+    shadow: egui::Color32,
+) {
+    let at = egui::pos2(c.anchor[0], c.anchor[1]) + offset;
+    let colour = egui::Color32::from_gray(style.grey);
+    let font = egui::FontId::proportional(style.size);
+    let text = landmark_text(l);
+    let galley = painter.layout_no_wrap(text.clone(), font.clone(), colour);
+    let peak = l.kind == ocw_world::landmarks::LandmarkKind::Peak;
+    let brown = egui::Color32::from_rgb(214, 140, 76);
+    let lift = if peak {
+        // The triangle on the summit's point (its centre there).
+        let (h, half) = (PEAK_SIGN_PX, PEAK_SIGN_PX * 0.6);
+        painter.add(egui::Shape::convex_polygon(
+            vec![
+                egui::pos2(at.x, at.y - h * 0.6),
+                egui::pos2(at.x + half, at.y + h * 0.4),
+                egui::pos2(at.x - half, at.y + h * 0.4),
+            ],
+            brown,
+            egui::Stroke::new(1.0, shadow),
+        ));
+        h * 0.6
+    } else {
+        painter.circle(at, 2.5, brown, egui::Stroke::new(1.0, shadow));
+        0.0
+    };
+    // The name centred above the sign.
+    let pos = egui::pos2(
+        at.x - galley.size().x * 0.5,
+        at.y - 3.0 - lift - galley.size().y,
+    );
+    let halo = painter.layout_no_wrap(text, font, shadow);
+    for d in [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]] {
+        painter.galley(pos + egui::vec2(d[0], d[1]), halo.clone(), shadow);
+    }
+    painter.galley(pos, galley, colour);
 }
 
 fn rgb(c: [u8; 3]) -> egui::Color32 {
@@ -346,6 +493,7 @@ pub fn paint(
         rect,
         view,
         &data.places,
+        &data.landmarks,
         response.id.with("places"),
     );
     for (p, name) in &overlay.views {
@@ -687,6 +835,112 @@ pub mod tests {
         assert!(near.iter().any(|n| n == "Cora Hamlet"), "{near:?}");
         // Packages without places: no labels.
         assert!(map_data(&package()).places.is_empty());
+    }
+
+    #[test]
+    fn peaks_and_passes_are_labelled_from_the_village_zoom_without_overlap() {
+        use ocw_world::landmarks::{Landmark, LandmarkKind};
+        use ocw_world::places::{OsmElement, Place, PlaceKind, Places, layout_labels, place_rank};
+        let mark = |name: &str, kind, pos: [f32; 2], ele: f32| Landmark {
+            kind,
+            pos,
+            ele: Some(ele),
+            ele_from_terrain: false,
+            direction: None,
+            name: name.into(),
+            names: Vec::new(),
+            element: OsmElement::Node,
+            osm_id: name.len() as i64,
+        };
+        let town = Place {
+            kind: PlaceKind::Town,
+            rank: place_rank(PlaceKind::Town, None, None),
+            pos: [0.0, 0.0],
+            name: "Ada Town".into(),
+            names: Vec::new(),
+            population: None,
+            capital: None,
+            area: false,
+            element: OsmElement::Node,
+            osm_id: 1,
+        };
+        let mut marks = vec![
+            mark("Pico Bea", LandmarkKind::Peak, [400.0, 10.0], 2400.0),
+            mark("Cora Pass", LandmarkKind::Pass, [-300.0, 200.0], 1800.0),
+            mark(
+                "Mirador Dora",
+                LandmarkKind::Viewpoint,
+                [100.0, 100.0],
+                900.0,
+            ),
+        ];
+        for i in 0..20 {
+            marks.push(mark(
+                &format!("Kopf {i}"),
+                LandmarkKind::Peak,
+                [-200.0 + 20.0 * i as f32, -150.0],
+                1000.0 + i as f32,
+            ));
+        }
+        let pkg = WorldPackage {
+            places: Some(Places::new(vec![town]).with_landmarks(marks)),
+            ..package()
+        };
+        let data = map_data(&pkg);
+        // No viewpoints on the map.
+        assert_eq!(data.landmarks.len(), 22);
+        assert_eq!(landmark_text(&data.landmarks[0]), "Pico Bea 2400 m");
+        let pass = data
+            .landmarks
+            .iter()
+            .find(|l| l.kind == LandmarkKind::Pass)
+            .unwrap();
+        assert_eq!(landmark_text(pass), ")( Cora Pass 1800 m");
+        let shown = |m_per_px: f64| {
+            let view = MapView {
+                centre: [0.0, 0.0],
+                m_per_px,
+            };
+            let mut measure = |t: &str, size: f32, _| t.chars().count() as f32 * size * 0.55;
+            let mut c = label_candidates(&data.places, &view, [800.0, 600.0], &mut measure);
+            c.extend(landmark_candidates(
+                &data.landmarks,
+                data.places.len() as u32,
+                &view,
+                [800.0, 600.0],
+                &mut measure,
+            ));
+            let cands: Vec<_> = c.iter().map(|c| c.0).collect();
+            let ids = layout_labels(
+                &cands,
+                [400.0, 300.0],
+                [0.0; 2],
+                [800.0, 600.0],
+                &BTreeSet::new(),
+            );
+            (ids, cands)
+        };
+        // Far out: no peaks.
+        assert!(shown(60.0).0.iter().all(|i| *i == 0));
+        // Closer: the town first, the highest peak, the pass; no overlap.
+        let (ids, cands) = shown(2.0);
+        assert_eq!(ids[0], 0);
+        assert!(ids.contains(&1) && ids.contains(&22), "{ids:?}");
+        assert!(ids.len() < 23, "crowded peaks are dropped: {ids:?}");
+        let boxes: Vec<_> = ids
+            .iter()
+            .map(|i| cands.iter().find(|c| c.id == *i).unwrap())
+            .collect();
+        for (i, a) in boxes.iter().enumerate() {
+            for b in &boxes[i + 1..] {
+                assert!(
+                    a.min[0] >= b.max[0]
+                        || a.max[0] <= b.min[0]
+                        || a.min[1] >= b.max[1]
+                        || a.max[1] <= b.min[1]
+                );
+            }
+        }
     }
 
     #[test]

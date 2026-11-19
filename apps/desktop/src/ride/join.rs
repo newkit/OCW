@@ -49,12 +49,15 @@ pub struct Probe {
 }
 
 pub fn build(app: &mut App) {
-    // Tests keep no list (no files outside their directories).
-    let store = (!cfg!(test))
-        .then(crate::known_devices::config_dir)
-        .flatten()
-        .map(|d| {
-            Box::new(ocw_ui::settings::FileStore(d.join("joins.txt")))
+    // The recent servers: `ocw.toml [servers]` (spec 3.2.4 Q5; the old
+    // `joins.txt` is migrated into it). Tests keep no list (no files
+    // outside their directories).
+    let store = app
+        .world()
+        .get_resource::<crate::config::ConfigFiles>()
+        .filter(|_| !cfg!(test))
+        .map(|f| {
+            Box::new(crate::config::ServersStore(f.section("servers")))
                 as Box<dyn ocw_ui::settings::TextStore>
         });
     app.insert_resource(JoinUi::load(store))

@@ -4,7 +4,7 @@
 use std::fmt;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -46,7 +46,7 @@ pub struct StravaConfig {
     pub client_id: Option<String>,
     #[serde(default)]
     pub client_secret: Option<String>,
-    /// The old switch of the automatic upload (before v5.02): read once
+    /// The old switch of the automatic upload (before v5.05): read once
     /// into the setting `strava.auto_upload` when that is not set yet
     /// (spec 2.8.1 Q6), then ignored.
     #[serde(default)]
@@ -54,13 +54,23 @@ pub struct StravaConfig {
 }
 
 impl StravaConfig {
-    /// Reads the file; a missing file is an empty configuration.
-    pub fn load(path: &Path) -> Result<Self, String> {
-        match std::fs::read_to_string(path) {
-            Ok(s) => toml::from_str(&s).map_err(|e| format!("{}: {e}", path.display())),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(e) => Err(format!("{}: {e}", path.display())),
-        }
+    /// The credentials from `secrets.toml [strava]`, the options from
+    /// `ocw.toml [strava]` (spec 3.2.4; the secret file's options count
+    /// too, for a file written by hand).
+    pub fn load_files(files: &crate::config::ConfigFiles) -> Result<Self, String> {
+        let read = |slot: crate::config::Slot| -> Result<Self, String> {
+            match slot.read()? {
+                Some(t) => toml::from_str(&t).map_err(|e| format!("{}: {e}", slot.describe())),
+                None => Ok(Self::default()),
+            }
+        };
+        let secret = read(files.secret("strava"))?;
+        let plain = read(files.section("strava"))?;
+        Ok(Self {
+            client_id: secret.client_id,
+            client_secret: secret.client_secret,
+            auto_upload: plain.auto_upload.or(secret.auto_upload),
+        })
     }
 
     /// Credentials: the environment variables win over the file. `None`
@@ -126,14 +136,35 @@ impl Token {
     }
 }
 
-/// The token file (`<config dir>/ocw/strava-token.toml`, mode 0600).
+/// Where the tokens are kept (mode 0600): `path` is `secrets.toml` (its
+/// `[strava_token]` section, spec 3.2.4) or a token file of its own
+/// (tests).
 #[derive(Debug, Clone)]
 pub struct TokenStore {
     pub path: PathBuf,
 }
 
 impl TokenStore {
+    /// `[strava_token]` of `secrets.toml`, or `None` for a file of its own.
+    fn section(&self) -> Option<crate::config::Slot> {
+        (self.path.file_name().and_then(|n| n.to_str()) == Some(crate::config::SECRETS_FILE)).then(
+            || crate::config::Slot::Section {
+                file: self.path.clone(),
+                key: "strava_token".into(),
+                private: true,
+            },
+        )
+    }
+
     pub fn load(&self) -> Result<Option<Token>, String> {
+        if let Some(slot) = self.section() {
+            return match slot.read()? {
+                Some(t) => toml::from_str(&t)
+                    .map(Some)
+                    .map_err(|e| format!("{}: {e}", slot.describe())),
+                None => Ok(None),
+            };
+        }
         match std::fs::read_to_string(&self.path) {
             Ok(s) => toml::from_str(&s)
                 .map(Some)
@@ -146,6 +177,10 @@ impl TokenStore {
     /// Writes the tokens readable only by the user (through a temporary
     /// file, so a crash never leaves a broken token file).
     pub fn save(&self, token: &Token) -> Result<(), String> {
+        if let Some(slot) = self.section() {
+            let text = toml::to_string_pretty(token).map_err(|e| e.to_string())?;
+            return slot.write(&text);
+        }
         let err = |e: std::io::Error| format!("{}: {e}", self.path.display());
         if let Some(dir) = self.path.parent() {
             std::fs::create_dir_all(dir).map_err(err)?;
@@ -174,6 +209,9 @@ impl TokenStore {
     }
 
     pub fn delete(&self) -> Result<(), String> {
+        if let Some(slot) = self.section() {
+            return slot.remove();
+        }
         match std::fs::remove_file(&self.path) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
                 Err(format!("{}: {e}", self.path.display()))
