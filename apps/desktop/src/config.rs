@@ -271,8 +271,7 @@ impl ocw_ui::settings::TextStore for SettingsStore {
                 .and_then(toml::Value::as_table_mut)
                 .and_then(|g| g.remove(key));
             any |= v.is_some();
-            if t
-                .get(group)
+            if t.get(group)
                 .and_then(toml::Value::as_table)
                 .is_some_and(toml::Table::is_empty)
             {
@@ -829,7 +828,10 @@ mod tests {
             s.get("strava.auto_upload").unwrap(),
             ocw_client::settings::Value::Bool(false)
         );
-        assert_eq!(s.get("ride.bots").unwrap(), ocw_client::settings::Value::Int(3));
+        assert_eq!(
+            s.get("ride.bots").unwrap(),
+            ocw_client::settings::Value::Int(3)
+        );
         // Switched on and saved: [strava] changes, [settings] has no copy.
         let mut s = s;
         s.set("strava.auto_upload", "on").unwrap();
