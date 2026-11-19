@@ -814,6 +814,7 @@ mod tests {
             pages::Page::Graphics,
             pages::Page::ViewDistance,
             pages::Page::WorldDetail,
+            pages::Page::Photographer,
             pages::Page::EventRules,
         ]) {
             let rows = {
@@ -853,6 +854,7 @@ mod tests {
                 || line.contains("display.camera_shake")
                 // The ride photographer's plugin is not in this test app.
                 || line.contains("photographer.enabled")
+                || line.contains("photographer.others")
             {
                 continue;
             }

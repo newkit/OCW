@@ -21,6 +21,13 @@
 //! at their camera, the loudest drone) here, in both apps. The setting
 //! only stops the own photographer: the others' are drawn even when it is
 //! off, while flying as the unicorn and in scripted runs.
+//!
+//! A rider may hide the others' photographers (spec 2.11 Q5, decided
+//! 2026-11-19): setting `photographer.others` (default on = shown),
+//! console `photographer others on|off`. Off, their person, drone and
+//! flash are not drawn and their shutter and drone are not heard – for
+//! this rider only: the own photographer still runs and is shared, the
+//! server and the other riders see nothing change.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -58,6 +65,9 @@ pub struct PhotographerHooks {
 pub struct RidePhotographer {
     pub photographer: Photographer,
     pub enabled: bool,
+    /// The other riders' photographers are drawn and heard (setting
+    /// `photographer.others`, spec 2.11 Q5; purely local).
+    pub others: bool,
     /// The app lets it work (off in scripted screenshot and capture runs).
     pub allowed: bool,
     /// Time runs this many times faster for the limits (test runs).
@@ -85,6 +95,7 @@ impl RidePhotographer {
         Self {
             photographer: Photographer::new(Limits::scaled(scale), seed),
             enabled: true,
+            others: true,
             allowed: true,
             scale,
             pending: BTreeMap::new(),
@@ -212,6 +223,9 @@ fn run(world: &mut World) {
     let enabled = world
         .get_resource::<RidePhotographer>()
         .is_some_and(|p| p.enabled && p.allowed);
+    let show_others = world
+        .get_resource::<RidePhotographer>()
+        .is_none_or(|p| p.others);
     let now = crate::now(world);
     let frustum = world
         .get_resource::<ViewFrustum>()
@@ -233,8 +247,13 @@ fn run(world: &mut World) {
             let head = client.track().sample(d).offset_position(lateral);
             let forward = client.track().sample(d).direction;
             // The other riders' photographers, at the time the other
-            // riders are drawn at (spec §2.11, v4.38).
-            let remote = client.remote_shots().scenes(remote_t, &scene, head);
+            // riders are drawn at (spec 2.11, v4.38) – unless this rider
+            // hides them (Q5).
+            let remote = if show_others {
+                client.remote_shots().scenes(remote_t, &scene, head)
+            } else {
+                Vec::new()
+            };
             Some(Frame {
                 d,
                 lateral,
@@ -492,13 +511,35 @@ fn register_commands(app: &mut App) {
     app.console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("photographer")
-            .about("The ride photographer: on, off, status, now (plan the next photo at once) or drone (the next by a drone)")
-            .arg(Arg::new("what").default_value("status")),
+            .about("The ride photographer: on, off, status, now (plan the next photo at once), drone (the next by a drone) or others on|off (show or hide the other riders' photographers, for you only)")
+            .arg(Arg::new("what").default_value("status"))
+            .arg(Arg::new("value")),
         |world, m| {
             let what = m.get_one::<String>("what").map_or("status", String::as_str);
+            let value = m.get_one::<String>("value").map(String::as_str);
             let mut r = world
                 .get_resource_mut::<RidePhotographer>()
                 .ok_or("no photographer")?;
+            if what == "others" {
+                // Spec 2.11 Q5: purely local – nothing goes to the server.
+                match value.unwrap_or("status") {
+                    "on" | "true" | "1" => r.others = true,
+                    "off" | "false" | "0" => r.others = false,
+                    "status" => {}
+                    other => return Err(format!("expected on or off, not {other:?}")),
+                }
+                return Ok(format!(
+                    "other riders' photographers {}",
+                    if r.others {
+                        "shown"
+                    } else {
+                        "hidden (for you only)"
+                    }
+                ));
+            }
+            if let Some(v) = value {
+                return Err(format!("unexpected {v:?} after {what:?}"));
+            }
             match what {
                 "on" | "true" | "1" => r.enabled = true,
                 "off" | "false" | "0" => r.enabled = false,
@@ -515,7 +556,7 @@ fn register_commands(app: &mut App) {
                 "status" => {}
                 other => {
                     return Err(format!(
-                        "expected on, off, status, now or drone, not {other:?}"
+                        "expected on, off, status, now, drone or others, not {other:?}"
                     ));
                 }
             }
@@ -530,12 +571,288 @@ fn register_commands(app: &mut App) {
                 )
             });
             Ok(format!(
-                "ride photographer {}: {} of {} photos in this ride, at least {:.0} min apart; {plan}",
+                "ride photographer {}: {} of {} photos in this ride, at least {:.0} min apart; {plan}; other riders' photographers {}",
                 if r.enabled { "on" } else { "off" },
                 p.photos(),
                 p.limits.max_photos,
-                p.limits.gap_s / 60.0
+                p.limits.gap_s / 60.0,
+                if r.others { "shown" } else { "hidden" }
             ))
         },
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use bevy::time::TimeUpdateStrategy;
+    use ocw_client::client::ClientCore;
+    use ocw_render::console::{ConsoleCorePlugin, ConsoleState};
+    use ocw_server::local::FrameServer;
+    use ocw_world::Route;
+    use ocw_world::photo::{CameraPose, Carrier, PoseKind};
+
+    use super::*;
+
+    /// A ride on the in-memory local server, reached through
+    /// [`crate::RideAccess`] as the apps do; the trainer at 300 W.
+    #[derive(Resource)]
+    struct Ride {
+        client: ClientCore,
+        server: FrameServer,
+        next_sample: f64,
+    }
+
+    /// What the photographer sent to the app's audio.
+    #[derive(Resource, Default)]
+    struct Heard(Vec<MixerMsg>);
+
+    fn step_ride(time: Res<Time>, mut ride: ResMut<Ride>) {
+        let now = time.elapsed_secs_f64();
+        let Ride {
+            client,
+            server,
+            next_sample,
+        } = &mut *ride;
+        if now >= *next_sample {
+            *next_sample = now + 0.25;
+            let ev = ocw_devices::DeviceEvent::Power {
+                watts: 300.0,
+                cadence_rpm: Some(90.0),
+                timestamp: Duration::from_secs_f64(now),
+            };
+            if let Some(bytes) = client.on_device_event(ev) {
+                server.send(&bytes);
+            }
+        }
+        server.advance(time.delta_secs_f64());
+        for m in server.drain() {
+            let _ = client.on_server_message(&m, now);
+        }
+        client.predict_step();
+    }
+
+    fn app() -> App {
+        let route = Route::test_loop();
+        let client = ClientCore::new(route.clone(), "Ada Rider", Default::default());
+        let mut server = FrameServer::new(route.clone(), 0, 0.0);
+        server.send(&client.hello());
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, ConsoleCorePlugin))
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                20,
+            )))
+            .insert_resource(RideView::new(route))
+            .insert_resource(ocw_render::Ground(Arc::new(|_, _| Some(0.0))))
+            .insert_resource(Ride {
+                client,
+                server,
+                next_sample: 0.0,
+            })
+            .init_resource::<Heard>()
+            .init_resource::<PhotoRequests>()
+            .insert_resource(crate::RideAccess {
+                client: |w| w.get_resource::<Ride>().map(|r| &r.client),
+                client_mut: |w| {
+                    w.get_resource_mut::<Ride>()
+                        .map(|r| r.map_unchanged(|r| &mut r.client))
+                },
+                send: |w, bytes| {
+                    if let Some(mut r) = w.get_resource_mut::<Ride>() {
+                        r.server.send(&bytes);
+                    }
+                },
+            })
+            .insert_resource(PhotographerHooks {
+                save: |_, _, _| None,
+                sound: |w, m| w.resource_mut::<Heard>().0.push(m),
+            })
+            .add_systems(Update, step_ride.in_set(crate::RideViewSet))
+            .add_plugins(PhotographerPlugin { scale: 1.0 });
+        app
+    }
+
+    fn run(app: &mut App, line: &str) -> String {
+        app.world_mut().resource_mut::<ConsoleState>().queue(line);
+        app.update();
+        app.world()
+            .resource::<ConsoleState>()
+            .log()
+            .last()
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn client(app: &App) -> &ClientCore {
+        &app.world().resource::<Ride>().client
+    }
+
+    fn now(app: &App) -> f64 {
+        app.world().resource::<Time>().elapsed_secs_f64()
+    }
+
+    /// Rides until the client has the game time; returns the time the
+    /// other riders are drawn at.
+    fn joined(app: &mut App) -> f64 {
+        for _ in 0..500 {
+            app.update();
+            if let Some(t) = client(app).photo_time_s(now(app)) {
+                return t;
+            }
+        }
+        panic!("no game time");
+    }
+
+    /// Another rider's (id 9999) person standing 10 m from the own rider,
+    /// showing now, the photo 1 s later – as the server relays it.
+    fn others_shot(app: &mut App, t: f64) {
+        let c = client(app);
+        let s = c.state();
+        let head = c
+            .track()
+            .sample(s.distance)
+            .offset_position(s.lateral_offset);
+        let feet = [head[0] + 10.0, 0.0, head[2]];
+        let shot = SharedShot {
+            rider: 9999,
+            shot: 1,
+            pose: CameraPose {
+                kind: PoseKind::Side,
+                carrier: Carrier::Person { crouch: false },
+                feet,
+                eye: [feet[0], 1.6, feet[2]],
+                look: [-1.0, 0.0, 0.0],
+            },
+            seed: 7,
+            appear_at: t,
+            planned_at: t + 1.0,
+            taken_at: Some(t + 1.0),
+            gone_at: None,
+            aborted_at: None,
+            flight: None,
+        };
+        let wire = ocw_protocol::v1::PhotoShot {
+            rider_id: 9999,
+            ..ocw_protocol::photo_to_wire(&shot)
+        };
+        let bytes = ocw_protocol::encode(&ocw_protocol::server_message(
+            ocw_protocol::v1::server_message::Msg::Photo(wire),
+        ));
+        let at = now(app);
+        let mut ride = app.world_mut().resource_mut::<Ride>();
+        let _ = ride.client.on_server_message(&bytes, at);
+        assert_eq!(ride.client.remote_shots().len(), 1);
+    }
+
+    fn shutters(app: &App) -> usize {
+        app.world()
+            .resource::<Heard>()
+            .0
+            .iter()
+            .filter(|m| matches!(m, MixerMsg::PlacedCue(Cue::Shutter, _, _)))
+            .count()
+    }
+
+    /// Runs 3 s; returns the most other riders' photographers drawn in a
+    /// frame and whether a flash was drawn.
+    fn watch(app: &mut App) -> (usize, bool) {
+        let (mut most, mut flash) = (0, false);
+        for _ in 0..150 {
+            app.update();
+            let v = app.world().resource::<RideView>();
+            most = most.max(v.photographers.len());
+            flash |= v.photographers.iter().any(|p| p.flash.is_some());
+        }
+        (most, flash)
+    }
+
+    /// Shown by default (spec 2.11 Q2): another rider's photographer is
+    /// drawn, flashes and its shutter is heard.
+    #[test]
+    fn others_photographers_are_drawn_and_heard_by_default() {
+        let mut app = app();
+        assert!(app.world().resource::<RidePhotographer>().others);
+        run(&mut app, "photographer off");
+        let t = joined(&mut app);
+        others_shot(&mut app, t);
+        let (drawn, flash) = watch(&mut app);
+        assert_eq!(drawn, 1);
+        assert!(flash, "the flash drawn");
+        assert_eq!(shutters(&app), 1, "the shutter heard once");
+    }
+
+    /// Hidden (spec 2.11 Q5): `photographer others off` – the other
+    /// rider's person and flash are not drawn and the shutter is not
+    /// heard; shown again, the person is back (its shutter, long past, is
+    /// not played late). Only this client: nothing goes to the server.
+    #[test]
+    fn others_photographers_can_be_hidden_for_this_rider_only() {
+        let mut app = app();
+        run(&mut app, "photographer off");
+        let out = run(&mut app, "photographer others off");
+        assert!(
+            out.ends_with("other riders' photographers hidden (for you only)"),
+            "{out}"
+        );
+        assert!(!app.world().resource::<RidePhotographer>().others);
+        let status = run(&mut app, "photographer");
+        assert!(
+            status.ends_with("other riders' photographers hidden"),
+            "{status}"
+        );
+        let bad = run(&mut app, "photographer others maybe");
+        assert!(bad.contains("expected on or off"), "{bad}");
+        let t = joined(&mut app);
+        let sent_before = app.world().resource::<RidePhotographer>().sent().cloned();
+        others_shot(&mut app, t);
+        let (drawn, flash) = watch(&mut app);
+        assert_eq!((drawn, flash), (0, false), "nothing drawn");
+        assert_eq!(shutters(&app), 0, "nothing heard");
+        assert!(
+            !app.world()
+                .resource::<Heard>()
+                .0
+                .iter()
+                .any(|m| matches!(m, MixerMsg::Drone(Some(_)))),
+            "no drone heard"
+        );
+        // Still known to the client (only the drawing is hidden), nothing
+        // sent for it.
+        assert_eq!(client(&app).remote_shots().len(), 1);
+        assert_eq!(
+            app.world().resource::<RidePhotographer>().sent().cloned(),
+            sent_before
+        );
+        let shown = run(&mut app, "photographer others on");
+        assert!(
+            shown.ends_with("other riders' photographers shown"),
+            "{shown}"
+        );
+        let (drawn, _) = watch(&mut app);
+        assert_eq!(drawn, 1, "shown again");
+        assert_eq!(shutters(&app), 0, "the old shutter is not played late");
+    }
+
+    /// The own photographer is not affected (spec 2.11 Q5): with the
+    /// others hidden it still comes, is drawn and is shared.
+    #[test]
+    fn the_own_photographer_is_drawn_with_the_others_hidden() {
+        let mut app = app();
+        run(&mut app, "photographer others off");
+        joined(&mut app);
+        run(&mut app, "photographer now");
+        let mut drawn = false;
+        for _ in 0..9000 {
+            app.update();
+            if app.world().resource::<RideView>().photographer.is_some() {
+                drawn = true;
+                break;
+            }
+        }
+        assert!(drawn, "the own photographer drawn");
+        let r = app.world().resource::<RidePhotographer>();
+        assert!(r.enabled && !r.others);
+        assert!(r.sent().is_some(), "the own shot shared with the others");
+    }
 }

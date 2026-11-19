@@ -141,6 +141,9 @@ pub enum Page {
     /// Graphics → World detail (spec 4.6.2 Q1; the Graphics page is full):
     /// the sky and the ground detail beside and on the roads.
     WorldDetail,
+    /// Graphics → Ride photographer (spec 2.11 Q5): the own photographer
+    /// and whether the other riders' photographers are shown.
+    Photographer,
     /// Navi → Riders in this ride (spec §14 Phase 13E, 12F; rows from
     /// `rider_list`): who rides, where, who flies, who is hurt.
     RiderList,
@@ -284,6 +287,7 @@ impl Page {
             Self::Graphics => "Graphics",
             Self::ViewDistance => "Render distance",
             Self::WorldDetail => "World detail",
+            Self::Photographer => "Ride photographer",
             Self::RiderList => "Riders in this ride",
             Self::Account => "Account",
             Self::UnicornControls => "Touch and unicorn mode",
@@ -437,7 +441,7 @@ impl Page {
             Self::RidingAids | Self::UnicornControls | Self::Bindings => Some(Self::Controls),
             Self::BindGroup(_) | Self::BindReset => Some(Self::Bindings),
             Self::Graphics | Self::Accessibility | Self::Hud => Some(Self::Display),
-            Self::ViewDistance | Self::WorldDetail => Some(Self::Graphics),
+            Self::ViewDistance | Self::WorldDetail | Self::Photographer => Some(Self::Graphics),
             Self::TrustedKey(_) => Some(Self::TrustedKeys),
             Self::Devices => Some(Self::Trainer),
             Self::Device(_) => Some(Self::Devices),
@@ -550,6 +554,9 @@ impl Page {
             ],
             Self::ViewDistance => &[
                 "How far the world is drawn. Adjusted: shorter below the target, longer with room, up to the slider (Confirm: the preset's).",
+            ],
+            Self::Photographer => &[
+                "Yours: a person or a drone takes up to 5 photos of your ride. Others: hide their photographers, drones and flashes, for you only.",
             ],
             Self::Graphics => &[
                 "Quality: Low and Medium draw fewer shadows, trees and houses for weaker GPUs, WebGL 2 and phones; auto chooses by GPU and device.",
@@ -941,6 +948,22 @@ fn aids_summary(settings: &Settings) -> String {
         "none".into()
     } else {
         names.join(", ")
+    }
+}
+
+/// The Ride photographer row's value (spec 2.11 Q5): "on", "on, others
+/// hidden", "off", "off, others hidden".
+fn photographer_summary(settings: &Settings) -> String {
+    let on = |k: &str| settings.get(k).ok().and_then(|v| v.as_bool()) != Some(false);
+    let own = if on("photographer.enabled") {
+        "on"
+    } else {
+        "off"
+    };
+    if on("photographer.others") {
+        own.into()
+    } else {
+        format!("{own}, others hidden")
     }
 }
 
@@ -1458,8 +1481,21 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             ),
             setting_row(settings, "display.fps", "FPS counter"),
             setting_row(settings, "display.fullscreen", "Fullscreen (next start)"),
-            // The ride photographer (spec §2.11): photos of the ride.
-            setting_row(settings, "photographer.enabled", "Ride photographer"),
+            // The ride photographer (spec 2.11): its own page with the
+            // other riders' photographers (Q5; the ten-foot rule: six rows).
+            open_row(
+                "Ride photographer",
+                Some(photographer_summary(settings)),
+                Page::Photographer,
+            ),
+        ],
+        Page::Photographer => vec![
+            setting_row(settings, "photographer.enabled", "My photographer"),
+            setting_row(
+                settings,
+                "photographer.others",
+                "Other riders' photographers",
+            ),
         ],
         // The app's shared UI fills in the preset and what runs now
         // (`ocw_ui::view_distance`).
@@ -1677,6 +1713,50 @@ mod tests {
 
     fn cmd(line: &str) -> Option<Activate> {
         Some(Activate::Command(line.into()))
+    }
+
+    /// Graphics → Ride photographer (spec 2.11 Q5): the own photographer
+    /// and the other riders' photographers on their own page (Graphics
+    /// keeps six rows), the row's value saying what is hidden.
+    #[test]
+    fn the_photographer_page_has_the_others_switch() {
+        let none = Riders::default();
+        let s = Settings::default();
+        let graphics = rows(Page::Graphics, &s, &none);
+        assert!(graphics.len() <= 6);
+        let r = row(&graphics, "Ride photographer");
+        assert_eq!(r.confirm, Some(Activate::Open(Page::Photographer)));
+        assert_eq!(r.value.as_deref(), Some("on"));
+        assert_eq!(Page::Photographer.parent(), Some(Page::Graphics));
+        let page = rows(Page::Photographer, &s, &none);
+        assert_eq!(page.len(), 2);
+        let mine = row(&page, "My photographer");
+        assert_eq!(mine.confirm, cmd("set photographer.enabled off"));
+        let others = row(&page, "Other riders' photographers");
+        assert_eq!(others.value.as_deref(), Some("on"), "shown by default");
+        assert_eq!(others.confirm, cmd("set photographer.others off"));
+        for r in &page {
+            assert!(r.label.chars().count() <= MAX_ROW_CHARS);
+        }
+        let (hidden, _) = Settings::parse("[photographer]\nothers = false\n").unwrap();
+        let g = rows(Page::Graphics, &hidden, &none);
+        assert_eq!(
+            row(&g, "Ride photographer").value.as_deref(),
+            Some("on, others hidden")
+        );
+        let p = rows(Page::Photographer, &hidden, &none);
+        assert_eq!(
+            row(&p, "Other riders' photographers").confirm,
+            cmd("set photographer.others on")
+        );
+        let (both, _) =
+            Settings::parse("[photographer]\nenabled = false\nothers = false\n").unwrap();
+        assert_eq!(
+            row(&rows(Page::Graphics, &both, &none), "Ride photographer")
+                .value
+                .as_deref(),
+            Some("off, others hidden")
+        );
     }
 
     #[test]

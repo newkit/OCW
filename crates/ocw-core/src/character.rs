@@ -10,7 +10,7 @@
 //! **The body (4N Q6, Q6b, Q7):** two independent dimensions – the
 //! **base body** A / B / C (shoulders, hips, chest; a shape choice, not a
 //! sex or gender field) and the **shape**, seven named steps from
-//! *anorexia* to *obese*. **Every shape can be chosen whatever weight
+//! *super skinny* to *obese*. **Every shape can be chosen whatever weight
 //! and height say (Q23, replacing Q13's band):** the shape the profile's
 //! weight and height give ([`weight_shape`]) is only a proposal – the
 //! preselected shape of a new rider and the *Match my weight* marker,
@@ -134,7 +134,7 @@ impl BaseBody {
 /// proposes one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
 pub enum BodyShape {
-    Anorexia,
+    SuperSkinny,
     Skinny,
     Slim,
     #[default]
@@ -146,7 +146,7 @@ pub enum BodyShape {
 
 impl BodyShape {
     pub const ALL: [BodyShape; 7] = [
-        Self::Anorexia,
+        Self::SuperSkinny,
         Self::Skinny,
         Self::Slim,
         Self::Normal,
@@ -157,7 +157,7 @@ impl BodyShape {
 
     pub fn id(self) -> &'static str {
         match self {
-            Self::Anorexia => "anorexia",
+            Self::SuperSkinny => "super-skinny",
             Self::Skinny => "skinny",
             Self::Slim => "slim",
             Self::Normal => "normal",
@@ -170,7 +170,7 @@ impl BodyShape {
     /// The label (Q7: the seven words).
     pub fn name(self) -> &'static str {
         match self {
-            Self::Anorexia => "Anorexia",
+            Self::SuperSkinny => "Super skinny",
             Self::Skinny => "Skinny",
             Self::Slim => "Slim",
             Self::Normal => "Normal",
@@ -195,6 +195,14 @@ impl BodyShape {
         Self::ALL
             .into_iter()
             .find(|b| b.id().eq_ignore_ascii_case(s))
+            .or_else(|| {
+                // The old name of the thinnest shape (renamed 2026-11-19), so
+                // saved riders and old commands keep working.
+                ["anorexia", "super slim", "super-slim", "superskinny"]
+                    .iter()
+                    .any(|o| o.eq_ignore_ascii_case(s))
+                    .then_some(Self::SuperSkinny)
+            })
             .or_else(|| BodyBuild::parse(s).map(Self::from_build))
     }
 
@@ -219,7 +227,7 @@ impl BodyShape {
     /// The nearest W4 build (sent for older apps).
     pub fn nearest_build(self) -> BodyBuild {
         match self {
-            Self::Anorexia | Self::Skinny | Self::Slim => BodyBuild::Slim,
+            Self::SuperSkinny | Self::Skinny | Self::Slim => BodyBuild::Slim,
             Self::Normal => BodyBuild::Medium,
             Self::Ample | Self::Fat | Self::Obese => BodyBuild::Strong,
         }
@@ -230,7 +238,7 @@ impl BodyShape {
     /// the heavier shapes grow more than the limbs).
     pub fn girth(self) -> (f32, f32) {
         match self {
-            Self::Anorexia => (0.76, 0.72),
+            Self::SuperSkinny => (0.76, 0.72),
             Self::Skinny => (0.85, 0.83),
             Self::Slim => (0.92, 0.91),
             Self::Normal => (1.0, 1.0),
@@ -942,7 +950,13 @@ mod tests {
         assert_eq!(
             names,
             [
-                "Anorexia", "Skinny", "Slim", "Normal", "Ample", "Fat", "Obese"
+                "Super skinny",
+                "Skinny",
+                "Slim",
+                "Normal",
+                "Ample",
+                "Fat",
+                "Obese"
             ]
         );
         for w in BodyShape::ALL.windows(2) {
@@ -970,7 +984,14 @@ mod tests {
     #[test]
     fn weight_and_height_propose_a_shape() {
         // BMI steps: 16, 18.5, 21, 25, 28, 32.
-        assert_eq!(BodyShape::from_bmi(14.0), BodyShape::Anorexia);
+        assert_eq!(BodyShape::from_bmi(14.0), BodyShape::SuperSkinny);
+        // Renamed 2026-11-19: the old name still parses (saved riders, old commands).
+        assert_eq!(BodyShape::parse("anorexia"), Some(BodyShape::SuperSkinny));
+        assert_eq!(
+            BodyShape::parse("super-skinny"),
+            Some(BodyShape::SuperSkinny)
+        );
+        assert_eq!(BodyShape::SuperSkinny.name(), "Super skinny");
         assert_eq!(BodyShape::from_bmi(17.0), BodyShape::Skinny);
         assert_eq!(BodyShape::from_bmi(20.0), BodyShape::Slim);
         assert_eq!(BodyShape::from_bmi(22.0), BodyShape::Normal);
@@ -983,7 +1004,7 @@ mod tests {
         assert_eq!(weight_shape(75.0, Some(160.0)), BodyShape::Fat);
         assert_eq!(weight_shape(75.0, Some(200.0)), BodyShape::Slim);
         assert_eq!(weight_shape(75.0, None), BodyShape::Normal);
-        assert_eq!(weight_shape(45.0, Some(178.0)), BodyShape::Anorexia);
+        assert_eq!(weight_shape(45.0, Some(178.0)), BodyShape::SuperSkinny);
         assert_eq!(weight_shape(120.0, Some(178.0)), BodyShape::Obese);
     }
 

@@ -157,6 +157,7 @@ mod tests {
             Graphics,
             ViewDistance,
             WorldDetail,
+            Photographer,
             RiderList,
             Account,
             UnicornControls,
@@ -210,15 +211,15 @@ mod tests {
                 | Rides | GpxImport | Workouts | Voice | VoiceDevices | VoiceParticipants
                 | VoiceRider(_) | VoiceBlocked | VoiceRoom | VoiceSelect | AudioVoice
                 | TimeMachine | WeatherPresets | WeatherCustom | WeatherAir | WeatherReal
-                | RidingAids | Folders | Graphics | ViewDistance | WorldDetail | RiderList
-                | UnicornControls | Bindings | BindGroup(_) | BindReset | Accessibility | Hud
-                | History | HistoryRides | HistoryRide(_) | HistoryClimbs(_) | HistoryWeeks
-                | HistoryMonths | HistoryBests | HistoryWaiting | StravaWaiting | EventRules
-                | Account | TrustedKeys | TrustedKey(_) | Join | HostWorld | HostRoute
-                | HostTime | HostWeather | HostOptions | HostSummary | HostLink | Devices
-                | Device(_) | Calendar(_) | CalendarDates(_) | Season | Character
-                | CharacterBody | CharacterFace | CharacterHair | CharacterFacialHair
-                | CharacterPick(_) => {}
+                | RidingAids | Folders | Graphics | ViewDistance | WorldDetail | Photographer
+                | RiderList | UnicornControls | Bindings | BindGroup(_) | BindReset
+                | Accessibility | Hud | History | HistoryRides | HistoryRide(_)
+                | HistoryClimbs(_) | HistoryWeeks | HistoryMonths | HistoryBests
+                | HistoryWaiting | StravaWaiting | EventRules | Account | TrustedKeys
+                | TrustedKey(_) | Join | HostWorld | HostRoute | HostTime | HostWeather
+                | HostOptions | HostSummary | HostLink | Devices | Device(_) | Calendar(_)
+                | CalendarDates(_) | Season | Character | CharacterBody | CharacterFace
+                | CharacterHair | CharacterFacialHair | CharacterPick(_) => {}
             }
         }
         all
