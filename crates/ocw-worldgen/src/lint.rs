@@ -294,6 +294,7 @@ pub fn lint(pkg: &WorldPackage, water: Option<&WaterBodies>) -> LintReport {
     let mut r = LintReport::default();
     if let Some(g) = &pkg.graph {
         lint_roads(pkg, g, &mut r);
+        lint_junctions(pkg, g, &mut r);
     }
     lint_water_grid(pkg, &mut r);
     if let Some(w) = water {
@@ -303,6 +304,55 @@ pub fn lint(pkg: &WorldPackage, water: Option<&WaterBodies>) -> LintReport {
     lint_landuse(pkg, &mut r);
     lint_obstacles(pkg, &mut r);
     r
+}
+
+/// The drawn junction surfaces (spec §4.8.8 J2, [`crate::junctions::seams`]):
+/// `junction.seam` – a junction with a surface (patch or mitre) whose
+/// carriageways step by more than 2 cm (less the slope) where one road's
+/// surface meets another's; `junction.overlap` – carriageways of two roads
+/// lying on each other within 1 cm over more than 0.5 m² (z-fighting);
+/// `junction.no_surface.REASON` – where two or more roads meet on the
+/// ground without one (the overlapping strips of before: J3's work).
+fn lint_junctions(pkg: &WorldPackage, g: &ocw_world::graph::RoadGraph, r: &mut LintReport) {
+    use crate::junctions::{SEAM_M, ZFIGHT_M2, seams};
+    let (found, without) = seams(pkg, g);
+    for s in &found {
+        let at = g.vertices[s.vertex];
+        if s.seam_m > SEAM_M {
+            r.add(
+                "junction.seam",
+                1.0,
+                case(at, s.seam_m, 0, format!("vertex {}", s.vertex)),
+            );
+        }
+        if s.zfight_m2 > ZFIGHT_M2 {
+            r.add(
+                "junction.overlap",
+                s.zfight_m2,
+                case(at, s.zfight_m2, 0, format!("vertex {}", s.vertex)),
+            );
+        }
+    }
+    // How many were measured (a count only: no cases).
+    r.tallies
+        .entry("junction.measured".to_string())
+        .or_default()
+        .count = found.len();
+    for (v, why) in without {
+        let key: String = why
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect::<String>()
+            .split('_')
+            .filter(|w| !w.is_empty())
+            .collect::<Vec<_>>()
+            .join("_");
+        r.add(
+            &format!("junction.no_surface.{key}"),
+            1.0,
+            case(g.vertices[v], 0.0, 0, format!("vertex {v}")),
+        );
+    }
 }
 
 /// Barriers on a carriageway (section `OBST`, spec §14 Phase 12 12H, Q7):
@@ -567,13 +617,10 @@ fn lint_roads(pkg: &WorldPackage, g: &RoadGraph, r: &mut LintReport) {
                     continue;
                 }
                 let shares = [e.from, e.to].iter().any(|v| *v == o.from || *v == o.to);
-                if shares {
-                    r.add(
-                        "junction.surface_step",
-                        ROAD_STEP_M,
-                        case(c, dh, e.osm_way, format!("on way {}", o.osm_way)),
-                    );
-                } else if !(e.bridge || o.bridge) {
+                // Two roads sharing a junction: the drawn junction surface
+                // is measured by `junction.seam` (`lint_junctions`, spec
+                // §4.8.8 J2; it replaced `junction.surface_step`).
+                if !shares && !(e.bridge || o.bridge) {
                     r.add(
                         "road.crossing_step_untagged",
                         ROAD_STEP_M,
@@ -1178,6 +1225,7 @@ mod tests {
             look: Default::default(),
             obstacles: None,
             places: None,
+            junctions: None,
         }
     }
 
@@ -1201,8 +1249,13 @@ mod tests {
         let nm = r.get("road.near_miss_end");
         assert_eq!(nm.count, 1);
         assert!((nm.worst[0].value - 2.0).abs() < 1e-6);
-        // The side road stands above the primary's surface near the junction.
-        assert!(r.count("junction.surface_step") >= 1);
+        // The side road's profile stands above the primary's near the
+        // junction, but the drawn junction surface (J1 / J2) has no seam:
+        // `junction.seam` measures what is drawn and replaced
+        // `junction.surface_step`.
+        assert_eq!(r.count("junction.surface_step"), 0);
+        assert_eq!(r.count("junction.seam"), 0, "{:?}", r.get("junction.seam"));
+        assert!(r.count("junction.measured") + r.amount_with_prefix("junction.no_surface") as usize >= 1);
         // The house floats 1 m over the ground; the meadow cell is a sliver.
         assert_eq!(r.count("building.floating"), 1);
         assert_eq!(r.count("landuse.sliver"), 1);

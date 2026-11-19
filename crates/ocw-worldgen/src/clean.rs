@@ -271,10 +271,17 @@ pub const MOUTH_STEP_M: f64 = 0.15;
 /// the side road is re-limited to its class gradient from there. Bridges and tunnels are
 /// left alone. Returns the number of road ends changed.
 pub fn ease_junction_mouths(graph: &mut RoadGraph) -> usize {
+    ease_junction_mouths_except(graph, &[])
+}
+
+/// [`ease_junction_mouths`] except at the vertices `skip` marks: where a
+/// junction surface's side-road blend replaces the easing (spec §4.8.8
+/// J2, [`crate::junctions`]).
+pub fn ease_junction_mouths_except(graph: &mut RoadGraph, skip: &[bool]) -> usize {
     let adj = graph.adjacency();
     let mut changed = 0;
     for (v, edges) in adj.iter().enumerate() {
-        if edges.len() < 2 {
+        if edges.len() < 2 || skip.get(v).copied().unwrap_or(false) {
             continue;
         }
         let major = edges
@@ -363,10 +370,28 @@ pub fn round_kinks(p: &mut [f64], len: f64, max_change_per_m: f64) -> usize {
     let d: Vec<f64> = (0..n)
         .map(|i| (i as f64 * PROFILE_STEP_M).min(len))
         .collect();
+    round_kinks_at(p, &d, max_change_per_m, &|_| true)
+}
+
+/// [`round_kinks`] on samples at distances `d` (growing), moving only the
+/// samples `movable` allows (the ends never move).
+pub fn round_kinks_at(
+    p: &mut [f64],
+    d: &[f64],
+    max_change_per_m: f64,
+    movable: &dyn Fn(usize) -> bool,
+) -> usize {
+    let n = p.len();
+    if n < 3 {
+        return 0;
+    }
     let mut touched = vec![false; n];
     for _ in 0..400 {
         let mut worst = 0.0f64;
         for i in 1..n - 1 {
+            if !movable(i) {
+                continue;
+            }
             let (d1, d2) = (d[i] - d[i - 1], d[i + 1] - d[i]);
             if d1 < 0.5 || d2 < 0.5 {
                 continue;
@@ -408,6 +433,18 @@ pub struct SettleStats {
 /// the violated samples converges. Border vertices shared by neighbouring
 /// tiles are lowered in every copy.
 pub fn settle_terrain_under_roads(pkg: &mut WorldPackage, clearance: f64) -> SettleStats {
+    settle_terrain_under_surfaces(pkg, clearance, &[])
+}
+
+/// [`settle_terrain_under_roads`] with more road surface points (x, the
+/// drawn surface's height less the road lift, z): the junction surfaces
+/// and the side roads' blends (spec §4.8.8 J2, [`crate::junctions`]),
+/// which reach beyond the strips or are not flat across.
+pub fn settle_terrain_under_surfaces(
+    pkg: &mut WorldPackage,
+    clearance: f64,
+    extra: &[[f64; 3]],
+) -> SettleStats {
     let n = pkg.samples as usize;
     let step = (n - 1) as i64;
     let sp = pkg.spacing_m();
@@ -427,6 +464,27 @@ pub fn settle_terrain_under_roads(pkg: &mut WorldPackage, clearance: f64) -> Set
         w: [f64; 3],
         max: f64,
     }
+    // The constraint of a surface point (x, z) at most `max` high, if the
+    // terrain rises above it there (the grid split like the client mesh).
+    let constraint = |pkg: &WorldPackage, x: f64, z: f64, max: f64| -> Option<C> {
+        let (fx, fz) = (x / sp, z / sp);
+        let (gi, gk) = (fx.floor() as i64, fz.floor() as i64);
+        let (tx, tz) = (fx - gi as f64, fz - gk as f64);
+        let (v, wt) = if tx + tz <= 1.0 {
+            (
+                [(gi, gk), (gi + 1, gk), (gi, gk + 1)],
+                [1.0 - tx - tz, tx, tz],
+            )
+        } else {
+            (
+                [(gi + 1, gk + 1), (gi, gk + 1), (gi + 1, gk)],
+                [tx + tz - 1.0, 1.0 - tx, 1.0 - tz],
+            )
+        };
+        let hs: Option<Vec<f64>> = v.iter().map(|&(i, k)| height(pkg, i, k)).collect();
+        let surf: f64 = hs?.iter().zip(&wt).map(|(h, w)| h * w).sum();
+        (surf > max + 1e-4).then_some(C { v, w: wt, max })
+    };
     // Collected per tile on all cores (crate::par), in tile order.
     let tiles: Vec<&ocw_world::package::Tile> = pkg.tiles.values().collect();
     let shared: &WorldPackage = pkg;
@@ -453,29 +511,7 @@ pub fn settle_terrain_under_roads(pkg: &mut WorldPackage, clearance: f64) -> Set
                     let mut off = -half;
                     while off <= half + 1e-9 {
                         let (x, z) = (c[0] - dz * off, c[2] + dx * off);
-                        let (fx, fz) = (x / sp, z / sp);
-                        let (gi, gk) = (fx.floor() as i64, fz.floor() as i64);
-                        let (tx, tz) = (fx - gi as f64, fz - gk as f64);
-                        let (v, wt) = if tx + tz <= 1.0 {
-                            (
-                                [(gi, gk), (gi + 1, gk), (gi, gk + 1)],
-                                [1.0 - tx - tz, tx, tz],
-                            )
-                        } else {
-                            (
-                                [(gi + 1, gk + 1), (gi, gk + 1), (gi + 1, gk)],
-                                [tx + tz - 1.0, 1.0 - tx, 1.0 - tz],
-                            )
-                        };
-                        let hs: Option<Vec<f64>> =
-                            v.iter().map(|&(i, k)| height(pkg, i, k)).collect();
-                        if let Some(hs) = hs {
-                            let surf: f64 = hs.iter().zip(&wt).map(|(h, w)| h * w).sum();
-                            let max = c[1] - clearance;
-                            if surf > max + 1e-4 {
-                                cons.push(C { v, w: wt, max });
-                            }
-                        }
+                        cons.extend(constraint(pkg, x, z, c[1] - clearance));
                         off += 0.5;
                     }
                 }
@@ -483,7 +519,10 @@ pub fn settle_terrain_under_roads(pkg: &mut WorldPackage, clearance: f64) -> Set
         }
         cons
     });
-    let cons: Vec<C> = per_tile.into_iter().flatten().collect();
+    let mut cons: Vec<C> = per_tile.into_iter().flatten().collect();
+    for q in extra {
+        cons.extend(constraint(pkg, q[0], q[2], q[1] - clearance));
+    }
     let mut stats = SettleStats {
         violations: cons.len(),
         ..Default::default()
@@ -948,6 +987,7 @@ mod tests {
             look: Default::default(),
             obstacles: None,
             places: None,
+            junctions: None,
         }
     }
 

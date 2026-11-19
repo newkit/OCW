@@ -43,6 +43,7 @@ fn package(at: (f64, f64), class: LandClass, height: impl Fn(u32, u32) -> f32) -
         look: Default::default(),
         obstacles: None,
         places: None,
+        junctions: None,
     };
     let cells = 200usize;
     pkg.landuse = Some(LandUse {
