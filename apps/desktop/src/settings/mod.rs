@@ -795,6 +795,7 @@ mod tests {
             pages::Page::Hud,
             pages::Page::Graphics,
             pages::Page::ViewDistance,
+            pages::Page::Photographer,
             pages::Page::EventRules,
         ]) {
             let rows = {
@@ -834,6 +835,7 @@ mod tests {
                 || line.contains("display.camera_shake")
                 // The ride photographer's plugin is not in this test app.
                 || line.contains("photographer.enabled")
+                || line.contains("photographer.others")
                 // The Strava plugin (`strava.auto_upload`) is not either.
                 || line.contains("strava.auto_upload")
             {
