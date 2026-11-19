@@ -154,6 +154,7 @@ fn spawn_panel(mut commands: Commands) {
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
             Panel,
+            crate::workout::WorkoutAvoid,
         ))
         .with_children(|p| {
             p.spawn((

@@ -857,7 +857,7 @@ pub const SETTINGS: &[SettingDef] = &[
     ),
     binding!(
         "pad.stop",
-        "DPadDown",
+        "none",
         PAD_CHOICES,
         "Gamepad button: Stop (power 0, brake)"
     ),
@@ -1047,7 +1047,7 @@ pub const SETTINGS: &[SettingDef] = &[
     ),
     binding!(
         "pad.map_zoom",
-        "none",
+        "DPadDown",
         PAD_CHOICES,
         "Gamepad button: Navigation map zoom (auto, 1 - 7)"
     ),

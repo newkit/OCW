@@ -193,9 +193,31 @@ mod tests {
         let r = pads.read([(e, &pad)]);
         assert!(r.up && !r.up_pressed, "held");
         pad.digital_mut().release(GamepadButton::DPadUp);
+        // D-pad down zooms the navigation map now (spec 3.2 Q6), it no
+        // longer stops; the left stick down does.
         pad.digital_mut().press(GamepadButton::DPadDown);
         let r = pads.read([(e, &pad)]);
-        assert!(!r.up && r.down_pressed);
+        assert!(!r.up && !r.down_pressed, "D-pad down is the map's zoom");
+        pad.digital_mut().release(GamepadButton::DPadDown);
+        pad.analog_mut().set(GamepadAxis::LeftStickY, -0.9);
+        let r = pads.read([(e, &pad)]);
+        assert!(!r.up && r.down_pressed, "the stick stops");
+    }
+
+    /// Spec 3.2 Q6 (2026-11-19: "yes, the zoom on a d-pad direction"):
+    /// D-pad down steps the navigation map's zoom (auto → 1 … 7 → auto),
+    /// in a ride and in unicorn flight; the bindings say so.
+    #[test]
+    fn d_pad_down_steps_the_map_zoom() {
+        use crate::bindings::{ActiveBindings, pad_just_pressed};
+        use ocw_client::bindings::Action as Bind;
+        let b = ActiveBindings::default();
+        let mut pad = Gamepad::default();
+        assert!(!pad_just_pressed(Some(&b), Bind::MapZoom, [&pad]));
+        pad.digital_mut().press(GamepadButton::DPadDown);
+        assert!(pad_just_pressed(Some(&b), Bind::MapZoom, [&pad]));
+        assert!(!pad_just_pressed(Some(&b), Bind::Stop, [&pad]));
+        assert!(Bind::MapZoom.def().in_flight && Bind::Map.def().in_flight);
     }
 
     fn keys(pressed: &[KeyCode]) -> ButtonInput<KeyCode> {

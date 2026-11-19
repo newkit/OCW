@@ -203,6 +203,24 @@ def fake_mode(r, url):
     act = r.cdp.eval("window.__ocwFakeBle.log.filter(l => l.includes('requestDevice')).join('; ')")
     r.check("the chooser opened in a user gesture", "user activation: true" in (act or ""), act)
 
+    # Spec 3.2 Q2 (2026-11-19): once a device is connected the panel
+    # collapses to its button (after 2 s), which names the device; a click
+    # opens it again.
+    panel = lambda: json.loads(r.cdp.eval("window.ocwDevicesPanel ? window.ocwDevicesPanel() : '{}'") or "{}")
+    end = time.time() + 6
+    while time.time() < end and not panel().get("collapsed"):
+        r.pump(0.25)
+    p = panel()
+    r.check("the panel collapses to its button once the trainer is connected",
+            p.get("collapsed") and "Devices" in p.get("button", "") and "●" in p.get("button", ""), json.dumps(p))
+    r.shot("devices-collapsed")
+    r.click("#ocw-devices-show")
+    r.pump(0.6)
+    p = panel()
+    r.check("a click on the button opens the panel again", p.get("expanded") and not p.get("collapsed"),
+            json.dumps(p))
+    r.shot("devices-expanded")
+
     r.click('button[data-kind="hr"]')
     j = r.wait("heart rate", lambda j: any(d["heart_rate_bpm"] == 142 for d in j["devices"]), 15)
     r.check("heart-rate strap connected", j is not None, json.dumps(j and j["devices"]))

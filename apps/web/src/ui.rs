@@ -565,8 +565,14 @@ pub fn map_json() -> String {
 }
 
 /// The map's JSON: shown, its box (CSS px: left, top, width, height),
-/// the banner, the zoom, day or night, the tiles drawn so far.
-pub fn map_view_json(info: &ocw_render::navi_map::NaviMapInfo) -> String {
+/// the banner, the zoom, day or night, the tiles drawn so far, Unicorn
+/// flight (north-up round the unicorn, spec 3.2 Q7) and the point it is
+/// centred on; the workout panel's box beside it (CSS px, spec 3.2 Q1;
+/// `null` without a workout).
+pub fn map_view_json(
+    info: &ocw_render::navi_map::NaviMapInfo,
+    workout: Option<&ocw_render::workout::WorkoutPanelInfo>,
+) -> String {
     serde_json::json!({
         "shown": info.rect.is_some(),
         "rect": info.rect,
@@ -575,14 +581,22 @@ pub fn map_view_json(info: &ocw_render::navi_map::NaviMapInfo) -> String {
         "auto": info.auto,
         "night": info.shade == ocw_render::navi_map::Shade::Night,
         "tiles": info.tiles_drawn,
+        "flight": info.flight,
+        "centre": info.centre,
+        "workout": workout.and_then(|w| w.screen),
+        "workout_compact": workout.is_some_and(|w| w.compact),
     })
     .to_string()
 }
 
-fn publish_map(info: Option<Res<ocw_render::navi_map::NaviMapInfo>>) {
+fn publish_map(
+    info: Option<Res<ocw_render::navi_map::NaviMapInfo>>,
+    workout: Option<Res<ocw_render::workout::WorkoutPanelInfo>>,
+) {
     let Some(info) = info else { return };
-    if info.is_changed() || MAP_JSON.lock().expect("not poisoned").is_empty() {
-        *MAP_JSON.lock().expect("not poisoned") = map_view_json(&info);
+    let changed = info.is_changed() || workout.as_ref().is_some_and(|w| w.is_changed());
+    if changed || MAP_JSON.lock().expect("not poisoned").is_empty() {
+        *MAP_JSON.lock().expect("not poisoned") = map_view_json(&info, workout.as_deref());
     }
 }
 
@@ -865,6 +879,30 @@ mod tests {
     use crate::session::SessionConfig;
     use ocw_render::console::{ConsoleCorePlugin, ConsoleState};
     use ocw_render::menu::MenuView;
+
+    /// `window.ocw.hudMap()` (spec 3.2 Q1, Q7): the map's box, whether it
+    /// flies with the unicorn and its centre, the workout panel's box.
+    #[test]
+    fn the_map_json_has_the_flight_and_the_workout_panel() {
+        let info = ocw_render::navi_map::NaviMapInfo {
+            rect: Some([1000.0, 400.0, 254.0, 330.0]),
+            flight: true,
+            centre: [12.5, -40.0],
+            ..Default::default()
+        };
+        let none: serde_json::Value = serde_json::from_str(&map_view_json(&info, None)).unwrap();
+        assert_eq!(none["shown"], true);
+        assert_eq!(none["flight"], true);
+        assert_eq!(none["centre"], serde_json::json!([12.5, -40.0]));
+        assert!(none["workout"].is_null());
+        let w = ocw_render::workout::WorkoutPanelInfo {
+            screen: Some([12.0, 200.0, 320.0, 190.0]),
+            ..Default::default()
+        };
+        let v: serde_json::Value = serde_json::from_str(&map_view_json(&info, Some(&w))).unwrap();
+        assert_eq!(v["workout"], serde_json::json!([12.0, 200.0, 320.0, 190.0]));
+        assert_eq!(v["workout_compact"], false);
+    }
 
     /// The browser's session and UI without a window: the menu by keys,
     /// the downloads into a list.

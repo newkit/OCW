@@ -2,6 +2,19 @@
 //! next step, and the whole workout's profile with the progress. All
 //! content comes from [`RideView::workout`] (computed in
 //! `ocw_sim::workout::WorkoutPanel`); this only draws it.
+//!
+//! **Its place (spec 3.2 Q1, 2026-11-19):** the left column, under the
+//! bike computer's panel (top left, with the damage widget in it) and
+//! above the voice panel and the elevation profile – no longer in the
+//! lower right, which is the navigation map's. [`fit_workout`] drops it
+//! from the top of the left column to the first place clear of every HUD
+//! box (the top panel, the top-right column, the event panel, the touch
+//! chevrons, the voice panel, the elevation profile, the junction fan and
+//! the map); where the full panel finds no room it is shown **compact**
+//! (the target and the lines, without the title and the profile chart),
+//! then the same in the middle column; with no room at all (only with the
+//! longest top-panel lines, voice and a HUD of 150 % on a small window) it
+//! is hidden for that frame rather than drawn over another box.
 
 use bevy::prelude::*;
 use ocw_sim::workout::{ProfileBlock, Zone};
@@ -12,8 +25,115 @@ pub struct WorkoutPanelPlugin;
 
 impl Plugin for WorkoutPanelPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_panel)
-            .add_systems(Update, update_panel);
+        app.init_resource::<WorkoutPanelInfo>()
+            .add_systems(Startup, spawn_panel)
+            .add_systems(
+                Update,
+                (update_panel, place_panel)
+                    .chain()
+                    .after(crate::navi_map::MapFitSet),
+            );
+    }
+}
+
+/// Marks a HUD node the workout panel keeps clear of besides the map's
+/// [`crate::navi_map::MapAvoid`] boxes: the voice panel and the elevation
+/// profile's column (bottom left).
+#[derive(Component, Debug, Clone, Copy, Default)]
+pub struct WorkoutAvoid;
+
+/// Where the workout panel is now (UI px), for the tests and the console;
+/// `rect: None` while no workout runs or there is no room.
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
+pub struct WorkoutPanelInfo {
+    pub rect: Option<Rect>,
+    pub compact: bool,
+    /// The box on the window (logical px: left, top, width, height), for
+    /// the browser page (`window.ocw.hudMap().workout`).
+    pub screen: Option<[f32; 4]>,
+}
+
+/// The panel's margin from the window's edges and its gap to the other
+/// HUD boxes (UI px).
+pub const MARGIN_PX: f32 = 12.0;
+pub const GAP_PX: f32 = 8.0;
+/// The panel's padding (UI px) and the gap between its rows.
+const PAD_PX: f32 = 10.0;
+const ROW_GAP_PX: f32 = 3.0;
+/// The title line's height (14 px font).
+const TITLE_PX: f32 = 14.0 * 1.2;
+/// The compact panel's padding (UI px).
+const COMPACT_PAD_PX: f32 = 6.0;
+/// What the compact panel leaves out: the title and the profile chart,
+/// each with its row gap (the chart also its top margin), and some of
+/// its padding.
+pub const COMPACT_DROP_PX: f32 =
+    TITLE_PX + ROW_GAP_PX + PROFILE_H + 4.0 + ROW_GAP_PX + 2.0 * (PAD_PX - COMPACT_PAD_PX);
+/// The full panel's size before its first layout (UI px): the chart and
+/// the padding wide, the title, the target (30 px), three lines (14 px)
+/// and the chart high.
+pub const FULL_SIZE: Vec2 = Vec2::new(
+    PROFILE_W + 2.0 * PAD_PX,
+    2.0 * PAD_PX + TITLE_PX + 30.0 * 1.2 + 3.0 * 14.0 * 1.2 + PROFILE_H + 4.0 + 3.0 * ROW_GAP_PX,
+);
+
+/// Where the panel goes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WorkoutFit {
+    pub rect: Rect,
+    /// Without the title and the profile chart.
+    pub compact: bool,
+}
+
+/// Places the workout panel of `full` size (UI px) in a window of
+/// `window` UI px clear of every box of `avoid` (by [`GAP_PX`]): in the
+/// left column, dropped from the top to the first free place (so under
+/// the top panel), else compact there, else the same in the middle
+/// column. `None`: no room (hidden).
+pub fn fit_workout(window: Vec2, full: Vec2, avoid: &[Rect]) -> Option<WorkoutFit> {
+    let compact = Vec2::new(full.x, (full.y - COMPACT_DROP_PX).max(1.0));
+    let columns = [MARGIN_PX, ((window.x - full.x) / 2.0).floor()];
+    for x in columns {
+        for (size, is_compact) in [(full, false), (compact, true)] {
+            if let Some(rect) = drop_down(window, x, size, avoid) {
+                return Some(WorkoutFit {
+                    rect,
+                    compact: is_compact,
+                });
+            }
+        }
+    }
+    None
+}
+
+/// The highest place of a `size` box at `x` clear of `avoid`, from the
+/// top margin down.
+fn drop_down(window: Vec2, x: f32, size: Vec2, avoid: &[Rect]) -> Option<Rect> {
+    if x < 0.0 || x + size.x > window.x - MARGIN_PX + 0.5 {
+        return None;
+    }
+    let mut y = MARGIN_PX;
+    loop {
+        let r = Rect::new(x, y, x + size.x, y + size.y);
+        if r.max.y > window.y - MARGIN_PX {
+            return None;
+        }
+        let near = |b: &Rect| {
+            b.min.x < r.max.x + GAP_PX
+                && b.max.x + GAP_PX > r.min.x
+                && b.min.y < r.max.y + GAP_PX
+                && b.max.y + GAP_PX > r.min.y
+        };
+        match avoid
+            .iter()
+            .filter(|b| near(b))
+            .map(|b| b.max.y + GAP_PX)
+            .reduce(f32::max)
+        {
+            None => return Some(r),
+            // Below the lowest box in the way (it always moves down).
+            Some(next) => y = next.max(y + 1.0),
+        }
     }
 }
 
@@ -73,17 +193,21 @@ fn spawn_panel(mut commands: Commands) {
     commands
         .spawn((
             Node {
+                // Placed by `place_panel` (left column, under the top panel).
                 position_type: PositionType::Absolute,
-                bottom: px(24),
-                right: px(12),
-                padding: UiRect::all(px(10)),
+                top: px(MARGIN_PX),
+                left: px(MARGIN_PX),
+                padding: UiRect::all(px(PAD_PX)),
                 flex_direction: FlexDirection::Column,
-                row_gap: px(3),
+                row_gap: px(ROW_GAP_PX),
                 border_radius: BorderRadius::all(px(6)),
                 display: Display::None,
                 ..default()
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+            // Hidden until placed; with no room hidden, but still laid out
+            // so its size stays known.
+            Visibility::Hidden,
             Panel,
         ))
         .with_children(|p| {
@@ -228,6 +352,130 @@ fn update_panel(
     }
 }
 
+/// Puts the panel at its place ([`fit_workout`]) every frame, after the
+/// navigation map took the lower right corner.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)] // a Bevy system
+fn place_panel(
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    ui_scale: Option<Res<UiScale>>,
+    view: Res<RideView>,
+    map: Option<Res<crate::navi_map::NaviMapInfo>>,
+    map_avoid: Option<Res<crate::navi_map::MapAvoidRects>>,
+    avoid: Query<
+        (
+            &ComputedNode,
+            &UiGlobalTransform,
+            &InheritedVisibility,
+            &Node,
+        ),
+        (With<WorkoutAvoid>, Without<Panel>),
+    >,
+    mut panel: Query<(&mut Node, &mut Visibility, &ComputedNode), With<Panel>>,
+    mut parts: Query<
+        &mut Node,
+        (
+            Or<(With<Title>, With<Profile>)>,
+            Without<Panel>,
+            Without<WorkoutAvoid>,
+        ),
+    >,
+    mut info: ResMut<WorkoutPanelInfo>,
+    mut full: Local<Option<Vec2>>,
+) {
+    let Ok((mut node, mut vis, computed)) = panel.single_mut() else {
+        return;
+    };
+    if view.workout.is_none() {
+        if *info != WorkoutPanelInfo::default() {
+            *info = WorkoutPanelInfo::default();
+        }
+        if *vis != Visibility::Hidden {
+            *vis = Visibility::Hidden;
+        }
+        return;
+    }
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let scale = ui_scale.map_or(1.0, |s| s.0).max(0.1);
+    let win = Vec2::new(window.width(), window.height()) / scale;
+    // The full panel's size: measured while shown full, else the last.
+    let measured = computed.size() * computed.inverse_scale_factor();
+    if measured.x > 0.0 && node.display != Display::None && !info.compact {
+        *full = Some(measured);
+    }
+    let size = full.unwrap_or(FULL_SIZE);
+    let ui_rect = |c: &ComputedNode, t: &UiGlobalTransform| {
+        let k = c.inverse_scale_factor();
+        let centre = t.translation * k;
+        let half = c.size() * k * 0.5;
+        Rect::from_corners(centre - half, centre + half)
+    };
+    let mut boxes: Vec<Rect> = map_avoid.map(|m| m.0.clone()).unwrap_or_default();
+    boxes.extend(
+        avoid
+            .iter()
+            .filter(|(c, _, v, n)| v.get() && n.display != Display::None && c.size().x > 0.0)
+            .map(|(c, t, _, _)| ui_rect(c, t)),
+    );
+    // The junction fan only while it is shown (a junction ahead): on a
+    // small window with a large HUD its corner is the only room left.
+    if view.junction.is_some() {
+        boxes.push(crate::navi_map::fan_rect(win));
+    }
+    if let Some(r) = map.and_then(|m| m.rect) {
+        let [x, y, w, h] = r.map(|v| v / scale);
+        boxes.push(Rect::new(x, y, x + w, y + h));
+    }
+    let fit = fit_workout(win, size, &boxes);
+    let want = if fit.is_some() {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
+    if *vis != want {
+        *vis = want;
+    }
+    if let Some(f) = fit {
+        let (l, t) = (px(f.rect.min.x), px(f.rect.min.y));
+        if node.left != l || node.top != t {
+            node.left = l;
+            node.top = t;
+        }
+    }
+    let compact = fit.is_some_and(|f| f.compact);
+    let pad = UiRect::all(px(if compact { COMPACT_PAD_PX } else { PAD_PX }));
+    if node.padding != pad {
+        node.padding = pad;
+    }
+    let shown = if compact {
+        Display::None
+    } else {
+        Display::Flex
+    };
+    for mut n in &mut parts {
+        if n.display != shown {
+            n.display = shown;
+        }
+    }
+    let new = WorkoutPanelInfo {
+        rect: fit.map(|f| f.rect),
+        compact,
+        screen: fit.map(|f| {
+            let r = f.rect;
+            [
+                r.min.x * scale,
+                r.min.y * scale,
+                r.width() * scale,
+                r.height() * scale,
+            ]
+        }),
+    };
+    if *info != new {
+        *info = new;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -291,6 +539,224 @@ mod tests {
         app.world_mut().resource_mut::<RideView>().workout = None;
         app.update();
         assert_eq!(display(&mut app), Display::None);
+    }
+
+    /// The other HUD boxes (UI px) of a window `w` × `h` UI px: the top
+    /// panel (`top`: its width and bottom edge), the top-right column
+    /// (time stamp, REC, FPS), the voice panel (if `voice`), the elevation
+    /// profile with the GPS line, the junction fan (if `fan`: a junction
+    /// ahead) and the navigation map where `fit_map` puts it (it keeps the
+    /// fan's place free always).
+    fn hud_boxes(
+        w: f32,
+        h: f32,
+        top: (f32, f32),
+        voice: bool,
+        fan: bool,
+    ) -> Vec<(&'static str, Rect)> {
+        use crate::navi_map::{fan_rect, fit_map};
+        let win = Vec2::new(w, h);
+        let pw = (300.0f32 + 16.0).min(0.6 * w);
+        let profile = Rect::new(12.0, h - 12.0 - 56.0 - 30.0 - 24.0, 12.0 + pw, h - 12.0);
+        let top_panel = Rect::new(12.0, 12.0, 12.0 + top.0, top.1);
+        let column = Rect::new(w - 12.0 - 230.0, 12.0, w - 12.0, 12.0 + 110.0);
+        let mut boxes = vec![
+            ("top panel", top_panel),
+            ("top-right column", column),
+            ("profile", profile),
+        ];
+        if fan {
+            boxes.push(("fan", fan_rect(win)));
+        }
+        if voice {
+            let v = Rect::new(
+                12.0,
+                h - 120.0 - 140.0,
+                12.0 + 420.0f32.min(w - 24.0),
+                h - 120.0,
+            );
+            boxes.push(("voice", v));
+        }
+        if let Some(m) = fit_map(win, fan_rect(win), Some(profile), &[top_panel, column]) {
+            boxes.push(("map", m.rect));
+        }
+        boxes
+    }
+
+    /// Spec 3.2 Q1 (2026-11-19: "find a better location for the workout
+    /// panel"): at every supported window (16:9 from 1280 × 720 to
+    /// 3840 × 2160, 4:3) and HUD size (100 – 150 %) the panel never
+    /// overlaps another HUD box and the map keeps its place and size. On
+    /// an everyday ride without voice it sits right under the top panel in
+    /// the left column and is shown in full up to 125 % (at 150 % on the
+    /// small windows compact or beside the profile); with the longest
+    /// top-panel lines it is still shown at 100 %; hidden only where no
+    /// place is free (a junction fan or the longest lines on a small
+    /// window with a large HUD).
+    #[test]
+    fn the_workout_panel_fits_every_window_beside_the_map() {
+        use crate::hud::tests_support::{tall_top_panel, typical_top_panel};
+        let sizes = [
+            (1280.0f32, 720.0f32),
+            (1366.0, 768.0),
+            (1600.0, 900.0),
+            (1920.0, 1080.0),
+            (2560.0, 1440.0),
+            (3840.0, 2160.0),
+            (1024.0, 768.0),
+            (1280.0, 960.0),
+            (1600.0, 1200.0),
+        ];
+        let mut table = Vec::new();
+        let mut bad = Vec::new();
+        for (pw, ph) in sizes {
+            for scale in [1.0f32, 1.25, 1.5] {
+                let (w, h) = (pw / scale, ph / scale);
+                for (case, top) in [
+                    ("typical", typical_top_panel(w)),
+                    ("tall", tall_top_panel(w)),
+                ] {
+                    for voice in [false, true] {
+                        for fan in [false, true] {
+                            let boxes = hud_boxes(w, h, top, voice, fan);
+                            let what = format!(
+                                "{pw}x{ph} at {scale}, {case} top panel (to {:.0}), voice {voice}, fan {fan}",
+                                top.1
+                            );
+                            let only: Vec<Rect> = boxes.iter().map(|b| b.1).collect();
+                            let fit = fit_workout(Vec2::new(w, h), FULL_SIZE, &only);
+                            table.push(format!(
+                                "{what}: {}",
+                                match fit {
+                                    None => "hidden".to_string(),
+                                    Some(f) => format!(
+                                        "{} at {:.0},{:.0}",
+                                        if f.compact { "compact" } else { "full" },
+                                        f.rect.min.x,
+                                        f.rect.min.y
+                                    ),
+                                }
+                            ));
+                            if !boxes.iter().any(|b| b.0 == "map") {
+                                bad.push(format!("{what}: no map"));
+                            }
+                            let everyday = case == "typical" && !voice && !fan;
+                            let Some(f) = fit else {
+                                // Only 1024 × 768 at 150 % has no room on
+                                // an everyday ride (the top panel takes
+                                // two thirds of its height).
+                                let tiny = scale > 1.4 && pw < 1280.0;
+                                if (everyday && !tiny) || (scale < 1.1 && !fan && !voice) {
+                                    bad.push(format!("{what}: hidden"));
+                                }
+                                continue;
+                            };
+                            let r = f.rect;
+                            if !(r.min.x >= 0.0 && r.min.y >= 0.0 && r.max.x <= w && r.max.y <= h) {
+                                bad.push(format!("{what}: off screen {r:?}"));
+                            }
+                            for (name, b) in &boxes {
+                                if !r.intersect(*b).is_empty() {
+                                    bad.push(format!("{what}: over the {name}"));
+                                }
+                            }
+                            if everyday && scale < 1.4 {
+                                if f.compact {
+                                    bad.push(format!("{what}: compact"));
+                                }
+                                if r.min.x != MARGIN_PX || (r.min.y - (top.1 + GAP_PX)).abs() > 0.5
+                                {
+                                    bad.push(format!(
+                                        "{what}: not right under the top panel {r:?}"
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("{}", table.join("\n"));
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
+
+    /// The panel goes compact, then to the middle column, then hides – it
+    /// never covers a box.
+    #[test]
+    fn the_workout_panel_steps_aside() {
+        let win = Vec2::new(1280.0, 720.0);
+        let full = FULL_SIZE;
+        // Nothing in the way: top left.
+        let f = fit_workout(win, full, &[]).unwrap();
+        assert_eq!(f.rect.min, Vec2::splat(MARGIN_PX));
+        assert!(!f.compact);
+        // Under a top panel 300 px high.
+        let top = Rect::new(12.0, 12.0, 900.0, 300.0);
+        let f = fit_workout(win, full, &[top]).unwrap();
+        assert_eq!(f.rect.min, Vec2::new(MARGIN_PX, 308.0));
+        // A box below leaves room only for the compact panel.
+        let low = Rect::new(12.0, 308.0 + full.y - 40.0, 400.0, 720.0);
+        let f = fit_workout(win, full, &[top, low]).unwrap();
+        assert!(f.compact && f.rect.min.x == MARGIN_PX, "{f:?}");
+        assert!(f.rect.max.y + GAP_PX <= low.min.y + 0.01);
+        // The left column full: the middle one.
+        let left = Rect::new(12.0, 300.0, 400.0, 720.0);
+        let f = fit_workout(win, full, &[top, left]).unwrap();
+        assert!(
+            f.rect.min.x > 400.0 && f.rect.intersect(left).is_empty(),
+            "{f:?}"
+        );
+        // No room at all: hidden.
+        let all = Rect::new(0.0, 0.0, 1280.0, 720.0);
+        assert!(fit_workout(win, full, &[all]).is_none());
+    }
+
+    /// The panel moves to its place and hides with no room or without a
+    /// workout; compact leaves out the title and the chart.
+    #[test]
+    fn the_panel_is_placed_on_screen() {
+        let mut app = app();
+        app.world_mut().spawn((
+            Window {
+                resolution: bevy::window::WindowResolution::new(1280, 720),
+                ..default()
+            },
+            bevy::window::PrimaryWindow,
+        ));
+        app.update();
+        assert_eq!(app.world().resource::<WorkoutPanelInfo>().rect, None);
+        app.world_mut().resource_mut::<RideView>().workout = Some(panel());
+        app.update();
+        let info = app.world().resource::<WorkoutPanelInfo>().clone();
+        let r = info.rect.expect("placed");
+        assert_eq!(r.min, Vec2::splat(MARGIN_PX), "nothing else on screen");
+        let mut q = app
+            .world_mut()
+            .query_filtered::<(&Node, &Visibility), With<Panel>>();
+        let (n, v) = q.single(app.world()).unwrap();
+        assert_eq!((n.left, n.top, *v), (px(12), px(12), Visibility::Inherited));
+        // A top panel and a map box below with room for the compact
+        // panel only between them.
+        app.insert_resource(crate::navi_map::MapAvoidRects(vec![Rect::new(
+            12.0, 12.0, 1000.0, 400.0,
+        )]));
+        let compact_h = FULL_SIZE.y - COMPACT_DROP_PX;
+        app.insert_resource(crate::navi_map::NaviMapInfo {
+            rect: Some([12.0, 400.0 + 2.0 * GAP_PX + compact_h + 4.0, 300.0, 100.0]),
+            ..default()
+        });
+        app.update();
+        let info = app.world().resource::<WorkoutPanelInfo>().clone();
+        assert!(info.compact, "{info:?}");
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&Node, (With<Profile>, Without<Panel>)>();
+        assert_eq!(q.single(app.world()).unwrap().display, Display::None);
+        // No workout: hidden again.
+        app.world_mut().resource_mut::<RideView>().workout = None;
+        app.update();
+        let mut q = app.world_mut().query_filtered::<&Visibility, With<Panel>>();
+        assert_eq!(*q.single(app.world()).unwrap(), Visibility::Hidden);
     }
 
     #[test]

@@ -612,6 +612,27 @@ mod tests {
         assert!(app.world().resource::<ActiveBindings>().is_default());
     }
 
+    /// Spec 3.2 Q6: a press of D-pad down steps the navigation map's zoom
+    /// (auto → 1 → 2 …) through the setting, as Z does.
+    #[test]
+    fn d_pad_down_steps_the_map_zoom_setting() {
+        let mut app = app();
+        app.init_resource::<ocw_render::navi_map::MapZoom>();
+        let mut pad = Gamepad::default();
+        pad.digital_mut().press(GamepadButton::DPadDown);
+        let e = app.world_mut().spawn(pad).id();
+        app.update();
+        app.world_mut()
+            .get_mut::<Gamepad>(e)
+            .unwrap()
+            .digital_mut()
+            .clear();
+        app.update();
+        app.update();
+        let s = app.world().resource::<crate::settings::UserSettings>();
+        assert_eq!(s.value("display.map_zoom").to_string(), "1");
+    }
+
     #[test]
     fn the_capture_takes_the_next_key_or_button() {
         let mut app = app();

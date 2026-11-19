@@ -271,6 +271,7 @@ mod tests {
             heading,
             m_per_px,
             size: [240.0, 264.0],
+            anchor_uv: crate::view::RIDER_ANCHOR,
         }
     }
 
@@ -281,6 +282,7 @@ mod tests {
             heading: 0.0,
             m_per_px: 1.0,
             size: [200.0, 200.0],
+            anchor_uv: crate::view::RIDER_ANCHOR,
         };
         let labels = [
             label(0.0, -50.0, "Hamlet", 3),
