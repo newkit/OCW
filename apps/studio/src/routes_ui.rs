@@ -2,18 +2,23 @@
 //! the package's routes; the via-points; the planner (built-in profiles,
 //! BRouter with its server and the privacy note); the edits; the
 //! elevation profile with the gradient colours and the imported track's
-//! elevation as a grey line; the figures, problems and findings; export,
-//! save and *Test ride*. It only shows the route and sends commands.
+//! elevation as a grey line; the figures, the expected time at a chosen
+//! power, problems and findings; export, save and *Test ride*; the choice
+//! of one part of a track file with several. It only shows the route and
+//! sends commands.
 
 use bevy_egui::egui;
 use ocw_edit::Severity;
-use ocw_edit::route::ProblemKind;
+use ocw_edit::route::{PartChoice, ProblemKind};
 use ocw_world::formats::TrackFormat;
 use ocw_world::plan::Profile;
 use ocw_world::plan::brouter::STOCK_PROFILES;
 
 use crate::edit::{Pending, Studio, StudioCommand};
-use crate::routes::{PlannerKind, RouteCommand, RouteView, grade_rgb};
+use crate::routes::{
+    POWER_RANGE_W, PendingImport, PlannerKind, RouteCommand, RouteView, grade_rgb, lat_lon_text,
+    near_place, part_rgb,
+};
 use crate::ui::Tool;
 use crate::world::OpenWorld;
 
@@ -87,6 +92,9 @@ pub fn routes_panel(
             );
         }
     });
+    if let Some(p) = &studio.routes.pending {
+        import_picker(ui, studio, p, pending);
+    }
     if let Some(pkg) = studio.package.as_ref()
         && !pkg.pkg.routes.is_empty()
     {
@@ -163,6 +171,7 @@ pub fn routes_panel(
                 .collect();
             ui.label(parts.join(", "));
         }
+        estimate_row(ui, studio, pending);
         profile_widget(ui, view, 150.0);
     } else if let Some(e) = &view.error {
         ui.colored_label(egui::Color32::from_rgb(255, 90, 80), e);
@@ -353,6 +362,141 @@ pub fn routes_panel(
         egui::RichText::new("Exported tracks follow OSM roads: © OpenStreetMap contributors")
             .weak(),
     );
+}
+
+/// The expected riding time at the chosen power (16D *Views*): the power
+/// field, the time, the average speed, and whom it is for.
+fn estimate_row(ui: &mut egui::Ui, studio: &Studio, pending: &mut Pending) {
+    let routes = &studio.routes;
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Expected time at");
+        let mut w = routes.settings.power_w;
+        let r = ui.add(
+            egui::DragValue::new(&mut w)
+                .range(POWER_RANGE_W.0..=POWER_RANGE_W.1)
+                .speed(2.0)
+                .fixed_decimals(0)
+                .suffix(" W"),
+        );
+        if r.changed() && w.round() != routes.settings.power_w {
+            send(pending, RouteCommand::Power(w.round()));
+        }
+        match &routes.estimate {
+            Some(e) => {
+                ui.label(
+                    egui::RichText::new(ocw_sim::estimate::duration_text(e.time_s))
+                        .strong()
+                        .color(egui::Color32::from_rgb(130, 210, 255)),
+                );
+                let mut more = format!("{:.1} km/h on average", e.average_mps * 3.6);
+                if e.climbing_s >= 60.0 {
+                    more.push_str(&format!(
+                        ", {} climbing",
+                        ocw_sim::estimate::duration_text(e.climbing_s)
+                    ));
+                }
+                ui.label(more);
+            }
+            None => {
+                ui.label("-");
+            }
+        }
+    });
+    let from = routes
+        .rider
+        .from
+        .as_deref()
+        .map_or_else(|| " (the default rider)".to_string(), |f| format!(" ({f})"));
+    ui.label(
+        egui::RichText::new(format!(
+            "For {}{from}: the game's physics on the road heights and surfaces, the same power all the way, still air, no braking.",
+            routes.rider.summary()
+        ))
+        .weak(),
+    );
+}
+
+/// The choice of one part of a track file with several (16D): each part
+/// with its colour on the map, name, length, start and end; one imported,
+/// or all joined, or none.
+fn import_picker(ui: &mut egui::Ui, studio: &Studio, p: &PendingImport, pending: &mut Pending) {
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.label(
+            egui::RichText::new(format!(
+                "{} has {} parts: import one, or all joined",
+                p.shown.rsplit(['/', '\\']).next().unwrap_or(&p.shown),
+                p.parts.len()
+            ))
+            .strong(),
+        );
+        egui::ScrollArea::vertical()
+            .id_salt("route-import-parts")
+            .max_height(260.0)
+            .show(ui, |ui| {
+                for (i, part) in p.parts.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        let (r, _) =
+                            ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+                        ui.painter().rect_filled(r, 3.0, rgb(part_rgb(i)));
+                        ui.label(egui::RichText::new(format!("{}", i + 1)).strong());
+                        if let Some(n) = &part.name {
+                            ui.label(n);
+                        }
+                        ui.label(
+                            egui::RichText::new(distance(part.length_m))
+                                .strong()
+                                .color(egui::Color32::from_rgb(130, 210, 255)),
+                        );
+                        ui.label(egui::RichText::new(format!("{} points", part.points)).weak());
+                        if ui
+                            .small_button("Import")
+                            .on_hover_text("Import this part alone")
+                            .clicked()
+                        {
+                            send(pending, RouteCommand::ImportPart(PartChoice::One(i)));
+                        }
+                    });
+                    let end = |ll: (f64, f64), at: Option<&[f64; 2]>| {
+                        let near = at.and_then(|q| near_place(studio, *q));
+                        match near {
+                            Some(n) => format!("{} ({n})", lat_lon_text(ll)),
+                            None => lat_lon_text(ll),
+                        }
+                    };
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "    from {}  to {}",
+                            end(part.start, part.line.first()),
+                            end(part.end, part.line.last())
+                        ))
+                        .weak(),
+                    );
+                    if part.inside < 0.999 {
+                        ui.colored_label(
+                            rgb(problem_rgb(ProblemKind::MissingPackage)),
+                            if part.inside <= 0.0 {
+                                "    outside this package".to_string()
+                            } else {
+                                format!("    {:.0} % in this package", part.inside * 100.0)
+                            },
+                        );
+                    }
+                }
+            });
+        ui.horizontal(|ui| {
+            let total: f64 = p.parts.iter().map(|t| t.length_m).sum();
+            if ui
+                .button(format!("All joined ({})", distance(total)))
+                .on_hover_text("The parts one after the other, as in the file")
+                .clicked()
+            {
+                send(pending, RouteCommand::ImportPart(PartChoice::All));
+            }
+            if ui.button("Cancel").clicked() {
+                send(pending, RouteCommand::CancelImport);
+            }
+        });
+    });
 }
 
 /// A route distance: "13.29 km", "850 m".

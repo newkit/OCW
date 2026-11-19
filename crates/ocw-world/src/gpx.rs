@@ -1,6 +1,8 @@
 //! GPX 1.0 / 1.1 reading (spec §2.7, step 1): the points of all tracks
 //! (`trk/trkseg/trkpt`, segments joined) and routes (`rte/rtept`), with
-//! latitude, longitude and the optional elevation.
+//! latitude, longitude and the optional elevation; where each segment
+//! starts is kept ([`Gpx::segments`]), so one of them can be chosen
+//! ([`Gpx::part`], spec 14 Phase 16, 16D).
 //!
 //! A small hand-written scanner instead of an XML library: GPX is simple,
 //! and `ocw-world` stays dependency-free and builds for wasm (spec §3.5),
@@ -26,8 +28,19 @@ pub struct Gpx {
     /// Track points of all tracks and segments in file order, then route
     /// points (a file usually has one or the other).
     pub points: Vec<GpxPoint>,
-    /// Number of track segments and routes that were joined.
-    pub parts: usize,
+    /// The track segments and routes that were joined, in file order
+    /// (empty: the points are one part).
+    pub segments: Vec<GpxSegment>,
+}
+
+/// Where a track segment (`trkseg`) or route (`rte`) starts in
+/// [`Gpx::points`] (TCX: a `Track`, GeoJSON: a line).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct GpxSegment {
+    /// Index of its first point.
+    pub first: usize,
+    /// `<name>` of its track or route.
+    pub name: Option<String>,
 }
 
 impl Gpx {
@@ -35,6 +48,11 @@ impl Gpx {
     /// without coordinates, coordinates out of range, no points).
     pub fn parse(text: &str) -> Result<Self, String> {
         let mut gpx = Gpx::default();
+        // The current track's (or route's) first segment and its name.
+        let mut track_first = 0;
+        let mut track_name: Option<String> = None;
+        // Whose <name> is being read ("trk", "rte", "metadata", "gpx").
+        let mut name_of = String::new();
         let mut seen_root = false;
         // Point being read: (lat, lon, ele).
         let mut point: Option<GpxPoint> = None;
@@ -92,6 +110,12 @@ impl Gpx {
                         if gpx.name.is_none() && !n.is_empty() {
                             gpx.name = Some(n.to_string());
                         }
+                        if matches!(name_of.as_str(), "trk" | "rte") && !n.is_empty() {
+                            track_name = Some(n.to_string());
+                            for s in &mut gpx.segments[track_first..] {
+                                s.name = track_name.clone();
+                            }
+                        }
                         text_target = None;
                     }
                     _ => {}
@@ -112,7 +136,20 @@ impl Gpx {
                 seen_root = true;
             }
             match name {
-                "trkseg" | "rte" => gpx.parts += 1,
+                "trk" | "rte" => {
+                    track_first = gpx.segments.len();
+                    track_name = None;
+                    if name == "rte" {
+                        gpx.segments.push(GpxSegment {
+                            first: gpx.points.len(),
+                            name: None,
+                        });
+                    }
+                }
+                "trkseg" => gpx.segments.push(GpxSegment {
+                    first: gpx.points.len(),
+                    name: track_name.clone(),
+                }),
                 "trkpt" | "rtept" => {
                     let get = |key: &str| -> Result<f64, String> {
                         let v = attribute(attrs, key)
@@ -149,6 +186,7 @@ impl Gpx {
                         ) =>
                 {
                     text_target = Some("name");
+                    name_of = depth_names.last().cloned().unwrap_or_default();
                     buf.clear();
                 }
                 _ => {}
@@ -164,6 +202,43 @@ impl Gpx {
             return Err("the GPX file has no track or route points".into());
         }
         Ok(gpx)
+    }
+
+    /// Number of joined parts (segments and routes with points).
+    pub fn parts(&self) -> usize {
+        self.part_ranges().len()
+    }
+
+    /// The parts with points: their point ranges and names, in file order
+    /// (points before the first segment are a part of their own).
+    pub fn part_ranges(&self) -> Vec<(std::ops::Range<usize>, Option<String>)> {
+        let mut starts: Vec<(usize, Option<String>)> = Vec::new();
+        if self.segments.first().is_none_or(|s| s.first > 0) {
+            starts.push((0, None));
+        }
+        starts.extend(self.segments.iter().map(|s| (s.first, s.name.clone())));
+        let mut out = Vec::new();
+        for (k, (first, name)) in starts.iter().enumerate() {
+            let end = starts
+                .get(k + 1)
+                .map_or(self.points.len(), |n| n.0)
+                .min(self.points.len());
+            if end > *first {
+                out.push((*first..end, name.clone()));
+            }
+        }
+        out
+    }
+
+    /// Part `i` of [`Gpx::part_ranges`] alone (its own name, else the
+    /// file's), or `None`.
+    pub fn part(&self, i: usize) -> Option<Gpx> {
+        let (range, name) = self.part_ranges().into_iter().nth(i)?;
+        Some(Gpx {
+            name: name.or_else(|| self.name.clone()),
+            points: self.points[range].to_vec(),
+            segments: Vec::new(),
+        })
     }
 
     /// Total horizontal length (great-circle approximation), in metres.
@@ -292,7 +367,15 @@ mod tests {
     fn tracks_with_segments_are_joined() {
         let g = Gpx::parse(TRACK).unwrap();
         assert_eq!(g.name.as_deref(), Some("Morning ride & coffee"));
-        assert_eq!(g.parts, 2);
+        assert_eq!(g.parts(), 2);
+        // Each segment on its own, named after its track.
+        let r = g.part_ranges();
+        assert_eq!((r[0].0.clone(), r[1].0.clone()), (0..3, 3..5));
+        let second = g.part(1).unwrap();
+        assert_eq!(second.points, g.points[3..]);
+        assert_eq!(second.name.as_deref(), Some("Morning ride & coffee"));
+        assert_eq!(second.parts(), 1);
+        assert!(g.part(2).is_none());
         assert_eq!(g.points.len(), 5);
         assert_eq!(
             g.points[0],
@@ -323,13 +406,45 @@ mod tests {
         assert_eq!(g.name.as_deref(), Some("Planned <loop>"));
         assert_eq!(g.points.len(), 2);
         assert_eq!(g.points[0].ele, Some(500.0));
-        assert_eq!(g.parts, 1);
+        assert_eq!(g.parts(), 1);
     }
 
     #[test]
     fn point_names_do_not_name_the_track() {
         let text = r#"<gpx><trk><trkseg><trkpt lat="1" lon="2"><name>wp</name></trkpt></trkseg><name>T</name></trk></gpx>"#;
         assert_eq!(Gpx::parse(text).unwrap().name.as_deref(), Some("T"));
+    }
+
+    #[test]
+    fn every_track_and_route_is_a_part_with_its_own_name() {
+        let text = r#"<gpx>
+  <trk><name>Out</name><trkseg><trkpt lat="1" lon="2"/><trkpt lat="1.1" lon="2"/></trkseg></trk>
+  <trk><trkseg><trkpt lat="2" lon="2"/><trkpt lat="2.1" lon="2"/></trkseg><trkseg></trkseg><name>Back</name></trk>
+  <rte><rtept lat="3" lon="2"/><rtept lat="3.1" lon="2"/><rtept lat="3.2" lon="2"/></rte>
+</gpx>"#;
+        let g = Gpx::parse(text).unwrap();
+        assert_eq!(g.name.as_deref(), Some("Out"));
+        assert_eq!(g.points.len(), 7);
+        // The empty segment is no part.
+        let r = g.part_ranges();
+        assert_eq!(
+            r,
+            vec![
+                (0..2, Some("Out".to_string())),
+                (2..4, Some("Back".to_string())),
+                (4..7, None)
+            ]
+        );
+        // A part without a name gets the file's.
+        assert_eq!(g.part(2).unwrap().name.as_deref(), Some("Out"));
+        assert_eq!(g.part(1).unwrap().points[0].lat, 2.0);
+        // Points without segments are one part.
+        let one = Gpx {
+            name: None,
+            points: g.points.clone(),
+            segments: Vec::new(),
+        };
+        assert_eq!(one.part_ranges(), vec![(0..7, None)]);
     }
 
     #[test]

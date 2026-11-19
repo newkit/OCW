@@ -1530,6 +1530,11 @@ fn map_panel(
             crate::overlay::marks(studio)
         },
         route: studio.route().map(|_| &studio.routes.view),
+        import: if routes {
+            studio.routes.pending.as_ref()
+        } else {
+            None
+        },
     };
     let tol = crate::pick::map_tolerance_m(view.m_per_px);
     let route_view = &studio.routes.view;

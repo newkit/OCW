@@ -178,7 +178,7 @@ impl Track {
                     ele: p.ele,
                 })
                 .collect(),
-            parts: 1,
+            segments: Vec::new(),
         }
     }
 
@@ -961,6 +961,93 @@ fn runs(n: usize, pred: impl Fn(usize) -> bool) -> Vec<(usize, usize)> {
     out
 }
 
+/// The road graph's bounding box (x, z).
+fn graph_bounds(net: &RoadNetwork) -> ([f64; 2], [f64; 2]) {
+    let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for v in &net.graph().vertices {
+        for k in 0..2 {
+            lo[k] = lo[k].min(v[k]);
+            hi[k] = hi[k].max(v[k]);
+        }
+    }
+    (lo, hi)
+}
+
+/// One part of a track file – a GPX track segment or route, a TCX track,
+/// a GeoJSON line – as the import's picker lists it (16D: choosing one of
+/// several segments instead of joining them).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrackPart {
+    /// Its track's or route's name.
+    pub name: Option<String>,
+    pub points: usize,
+    /// Its length (great circle, m).
+    pub length_m: f64,
+    /// Its first and last point (lat, lon).
+    pub start: (f64, f64),
+    pub end: (f64, f64),
+    /// Its points in package metres (x, z), for the map.
+    pub line: Vec<[f64; 2]>,
+    /// Share of its points within the package's roads (0 – 1: the graph's
+    /// bounds plus the matcher's search radius).
+    pub inside: f64,
+}
+
+/// The parts of `gpx` (in file order) on `net` of `package`.
+pub fn track_parts(
+    gpx: &ocw_world::gpx::Gpx,
+    net: &RoadNetwork,
+    package: &RoutePackage,
+    params: &MatchParams,
+) -> Vec<TrackPart> {
+    let proj = LocalProjection::new(package.origin.0, package.origin.1);
+    let (lo, hi) = graph_bounds(net);
+    let m = params.search_radius_m;
+    gpx.part_ranges()
+        .into_iter()
+        .map(|(range, name)| {
+            let pts = &gpx.points[range];
+            let line: Vec<[f64; 2]> = pts.iter().map(|p| proj.project(p.lat, p.lon)).collect();
+            let inside = line
+                .iter()
+                .filter(|p| (0..2).all(|k| p[k] >= lo[k] - m && p[k] <= hi[k] + m))
+                .count();
+            let (a, b) = (pts[0], pts[pts.len() - 1]);
+            TrackPart {
+                name,
+                points: pts.len(),
+                length_m: pts
+                    .windows(2)
+                    .map(|w| ocw_world::gpx::haversine_m(w[0].lat, w[0].lon, w[1].lat, w[1].lon))
+                    .sum(),
+                start: (a.lat, a.lon),
+                end: (b.lat, b.lon),
+                inside: inside as f64 / line.len() as f64,
+                line,
+            }
+        })
+        .collect()
+}
+
+/// Which part of a track file is imported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartChoice {
+    /// All parts joined in file order (what an import did before the
+    /// picker).
+    All,
+    /// Part `i` of [`track_parts`] alone.
+    One(usize),
+}
+
+/// The track to import from `gpx` (its `format` name): all parts joined,
+/// or one of them; `None` for a part that does not exist.
+pub fn chosen_track(gpx: &ocw_world::gpx::Gpx, choice: PartChoice, format: &str) -> Option<Track> {
+    match choice {
+        PartChoice::All => Some(Track::of_gpx(gpx, format)),
+        PartChoice::One(i) => gpx.part(i).map(|g| Track::of_gpx(&g, format)),
+    }
+}
+
 /// Matches `track` onto `net` (spec §2.7 matching, 16D): the matched route
 /// with via-points every [`IMPORT_VIA_SPACING_M`], and the problem
 /// sections – outside the package, recording gaps, off the graph, no road
@@ -981,14 +1068,7 @@ pub fn import_track(
     if pts.len() < 2 {
         return Err("the track needs at least two points".into());
     }
-    let g = net.graph();
-    let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
-    for v in &g.vertices {
-        for k in 0..2 {
-            lo[k] = lo[k].min(v[k]);
-            hi[k] = hi[k].max(v[k]);
-        }
-    }
+    let (lo, hi) = graph_bounds(net);
     let margin = params.search_radius_m;
     let outside = |i: usize| {
         let p = pts[i];
@@ -1169,6 +1249,9 @@ pub struct RouteProfile {
     pub min_grade: f64,
     /// Metres on each surface, largest first.
     pub surfaces: Vec<(RoadSurface, f64)>,
+    /// The surface from each sample to the next (as long as `samples`;
+    /// the riding time's rolling resistance).
+    pub sample_surfaces: Vec<RoadSurface>,
 }
 
 /// The profile of `plan` from the road heights; `surface` is the package's
@@ -1181,6 +1264,7 @@ pub fn route_profile(
     let mut samples: Vec<[f64; 2]> = Vec::new();
     let mut d0 = 0.0;
     let mut by_surface: Vec<(RoadSurface, f64)> = Vec::new();
+    let mut sample_surfaces: Vec<RoadSurface> = Vec::new();
     for s in &plan.steps {
         let Segment::Edge { edge, from_m, to_m } = *s else {
             continue;
@@ -1188,15 +1272,21 @@ pub fn route_profile(
         let g = net.geometry(edge);
         let len = (to_m - from_m).abs();
         let n = (len / 10.0).ceil().max(1.0) as usize;
+        let sf = surface(edge);
         for k in 0..=n {
             let t = k as f64 / n as f64;
             let p = g.point_at(from_m + (to_m - from_m) * t);
             let d = d0 + len * t;
             if samples.last().is_none_or(|l| d - l[0] > 0.01) {
                 samples.push([d, p[1]]);
+                sample_surfaces.push(sf);
+            } else if k == 0
+                && let Some(last) = sample_surfaces.last_mut()
+            {
+                // The previous edge's end: this edge's surface from here.
+                *last = sf;
             }
         }
-        let sf = surface(edge);
         match by_surface.iter_mut().find(|(x, _)| *x == sf) {
             Some(e) => e.1 += len,
             None => by_surface.push((sf, len)),
@@ -1234,6 +1324,7 @@ pub fn route_profile(
         max_grade,
         min_grade,
         surfaces: by_surface,
+        sample_surfaces,
     }
 }
 
@@ -1900,6 +1991,109 @@ mod tests {
         assert!(p.max_grade > 0.0);
         assert_eq!(p.surfaces.len(), 1);
         assert!(p.samples.len() > 30);
+        // Per sample: the first 200 m (edge 0) on gravel, the rest asphalt;
+        // the corner at 200 m starts the second edge's surface.
+        let p = route_profile(&net, &plan, &|e| {
+            if e == 0 {
+                RoadSurface::Gravel
+            } else {
+                RoadSurface::Asphalt
+            }
+        });
+        assert_eq!(p.sample_surfaces.len(), p.samples.len());
+        for (s, sf) in p.samples.iter().zip(&p.sample_surfaces) {
+            let want = if s[0] < 200.0 - 1e-6 {
+                RoadSurface::Gravel
+            } else {
+                RoadSurface::Asphalt
+            };
+            assert_eq!(*sf, want, "at {} m", s[0]);
+        }
+    }
+
+    #[test]
+    fn one_part_of_a_track_file_is_chosen_or_all_are_joined() {
+        let (net, _) = setup();
+        let proj = LocalProjection::new(ORIGIN.0, ORIGIN.1);
+        // Two segments on the grid: row 1 east (600 m), then column 0 of
+        // rows 2 – 3 far from where the first ends.
+        let seg = |pts: &[[f64; 2]]| -> String {
+            let mut s = String::from("<trkseg>");
+            for p in pts {
+                let (lat, lon) = proj.unproject(*p);
+                s.push_str(&format!(r#"<trkpt lat="{lat:.7}" lon="{lon:.7}"/>"#));
+            }
+            s + "</trkseg>"
+        };
+        let row: Vec<[f64; 2]> = (0..=30).map(|k| [f64::from(k) * 20.0, 200.0]).collect();
+        let col: Vec<[f64; 2]> = (0..=20)
+            .map(|k| [0.0, 400.0 + f64::from(k) * 10.0])
+            .collect();
+        let text = format!(
+            "<gpx><trk><name>Ada's two rides</name>{}{}</trk></gpx>",
+            seg(&row),
+            seg(&col)
+        );
+        let (gpx, format) = formats::read_parts("two.gpx", text.as_bytes()).unwrap();
+        let parts = track_parts(&gpx, &net, &package(&net), &MatchParams::default());
+        assert_eq!(parts.len(), 2);
+        assert_eq!((parts[0].points, parts[1].points), (31, 21));
+        assert!(
+            (parts[0].length_m - 600.0).abs() < 3.0,
+            "{}",
+            parts[0].length_m
+        );
+        assert!(
+            (parts[1].length_m - 200.0).abs() < 2.0,
+            "{}",
+            parts[1].length_m
+        );
+        let start = proj.project(parts[1].start.0, parts[1].start.1);
+        assert!((start[0] - 0.0).abs() < 0.5 && (start[1] - 400.0).abs() < 0.5);
+        assert_eq!(parts[0].inside, 1.0);
+        assert_eq!(parts[1].name.as_deref(), Some("Ada's two rides"));
+        assert_eq!(parts[1].line.len(), 21);
+        // The second part alone: only its 200 m are matched.
+        let one = chosen_track(&gpx, PartChoice::One(1), format.name()).unwrap();
+        assert_eq!(one.points.len(), 21);
+        let r = import_track(&net, &package(&net), &one, &MatchParams::default()).unwrap();
+        let mut d = doc(&net);
+        d.execute(
+            RouteOp::Set(Box::new(RouteSet {
+                geometry: r.geometry,
+                profile: None,
+                imported: Some(Imported {
+                    track: Some(one),
+                    problems: r.problems,
+                }),
+                edit: Edit::Import,
+            })),
+            0.0,
+        )
+        .unwrap();
+        assert!(
+            (length(&d, &net) - 200.0).abs() < 2.0,
+            "{}",
+            length(&d, &net)
+        );
+        // All joined: both segments and the jump between them (a gap).
+        let all = chosen_track(&gpx, PartChoice::All, format.name()).unwrap();
+        assert_eq!(all.points.len(), 52);
+        let r = import_track(&net, &package(&net), &all, &MatchParams::default()).unwrap();
+        assert!(
+            r.problems.iter().any(|p| p.kind == ProblemKind::Gap),
+            "{:?}",
+            r.problems
+        );
+        assert!(chosen_track(&gpx, PartChoice::One(2), "GPX").is_none());
+        // A part outside the package says so.
+        let far: Vec<[f64; 2]> = (0..5)
+            .map(|k| [5000.0 + f64::from(k) * 20.0, 0.0])
+            .collect();
+        let text = format!("<gpx><trk>{}{}</trk></gpx>", seg(&row), seg(&far));
+        let (gpx, _) = formats::read_parts("far.gpx", text.as_bytes()).unwrap();
+        let parts = track_parts(&gpx, &net, &package(&net), &MatchParams::default());
+        assert_eq!(parts[1].inside, 0.0);
     }
 
     #[test]

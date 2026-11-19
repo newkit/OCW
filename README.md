@@ -1210,6 +1210,19 @@ surface gravel | width 4 | name Alter Weg | remove | focus`, `studio point add
 | raise 3 | radius 60 | move X Z | remove`, `studio patch list | save [PATH] |
 open PATH | build [OUT]`.
 
+**Routes in OCW Studio** (`ocw-studio --world my.ocwpkg --workspace routes`):
+click the map to add via-points, drag the route onto other roads, or
+*Import* a GPX, TCX, GeoJSON or FIT file (matched onto the package's roads).
+A file with several track segments lists them first – number and colour on
+the map, length, start and end with the nearest place – and you import one
+of them or *All joined*. The built-in planner uses the package's measured
+road surfaces, so the road bike profile rides round a gravel or dirt
+stretch where there is another way. Under the figures, *Expected time at
+200 W* gives the riding time at the power you set, with the game's physics
+for your active rider (weight and bike from the game's `ocw.toml`). The same
+from the console: `studio route import PATH`, `studio route import part
+N|all|cancel`, `studio route power W`, `studio route info`.
+
 ## Connecting a gamepad
 
 Any controller that the operating system sees as a gamepad works (Xbox,

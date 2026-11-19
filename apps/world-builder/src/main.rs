@@ -549,7 +549,7 @@ fn gpx(
         "{}: {} points in {} part(s), {:.2} km, {s:.4},{w:.4} - {n:.4},{e:.4}",
         gpx.display(),
         track.points.len(),
-        track.parts.max(1),
+        track.parts().max(1),
         track.length_m() / 1000.0
     );
     let t = Instant::now();

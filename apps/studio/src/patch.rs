@@ -103,6 +103,49 @@ impl StudioPackage {
             None => (RoadSurface::of_class(edge.class), false),
         }
     }
+
+    /// [`StudioPackage::edge_surface`] of every edge of the graph (by
+    /// index; empty without a graph), with each tile's strips read once –
+    /// the route planner's costs and the route's figures (16D).
+    pub fn edge_surfaces(&self) -> Vec<RoadSurface> {
+        type Strips = Vec<(ocw_world::graph::RoadClass, Vec<[f64; 2]>, RoadSurface)>;
+        let Some(g) = self.graph() else {
+            return Vec::new();
+        };
+        let size = f64::from(self.pkg.tile_size_m);
+        let mut tiles: HashMap<ocw_world::package::TileKey, Strips> = HashMap::new();
+        g.edges
+            .iter()
+            .map(|edge| {
+                let Some(mid) = crate::pick::point_at(&edge.points, edge.length_m() * 0.5) else {
+                    return RoadSurface::of_class(edge.class);
+                };
+                let key = ocw_world::package::TileKey::containing(mid, size);
+                let strips = tiles.entry(key).or_insert_with(|| {
+                    self.pkg.tiles.get(&key).map_or_else(Vec::new, |t| {
+                        t.roads
+                            .iter()
+                            .map(|s| {
+                                let pts = s
+                                    .points
+                                    .iter()
+                                    .map(|p| [f64::from(p[0]), f64::from(p[2])])
+                                    .collect();
+                                (s.class, pts, s.surface)
+                            })
+                            .collect()
+                    })
+                });
+                strips
+                    .iter()
+                    .filter(|(c, _, _)| *c == edge.class)
+                    .map(|(_, pts, s)| (crate::pick::nearest_on_polyline(pts, mid).0, *s))
+                    .filter(|(d, _)| *d < 3.0)
+                    .min_by(|a, b| a.0.total_cmp(&b.0))
+                    .map_or(RoadSurface::of_class(edge.class), |(_, s)| s)
+            })
+            .collect()
+    }
 }
 
 /// `<package>.ocwpatch` next to `package`.
@@ -330,6 +373,13 @@ pub mod tests {
         e.class = ocw_world::graph::RoadClass::Secondary;
         e.points = vec![[0.0, 50.0], [90.0, 50.0]];
         assert_eq!(p.edge_surface(&e), (RoadSurface::Asphalt, true));
+        // All edges at once: the same answers.
+        let all = p.edge_surfaces();
+        let g = p.graph().unwrap();
+        assert_eq!(all.len(), g.edges.len());
+        for (i, e) in g.edges.iter().enumerate() {
+            assert_eq!(all[i], p.edge_surface(e).0);
+        }
     }
 
     fn dir() -> PathBuf {
