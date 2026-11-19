@@ -244,6 +244,11 @@ def main() -> int:
             results.append(r)
             print(f"  {'ok  ' if r.ok else 'FAIL'} {a['file']}" + ("" if r.ok else f" ({r.stage})"))
 
+    # The log goes to test-output/ (the art project archives it): paths
+    # relative to the checkout, the home as ~.
+    text = (out / "roundtrip.log").read_text(encoding="utf-8")
+    text = text.replace(str(ROOT) + "/", "").replace(str(Path.home()) + "/", "~/")
+    (out / "roundtrip.log").write_text(text, encoding="utf-8")
     summary = summarize(results, version, time.monotonic() - t0)
     (out / "summary.md").write_text(summary)
     (out / "results.json").write_text(json.dumps([asdict(r) for r in results], indent=1))
