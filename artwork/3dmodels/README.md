@@ -99,6 +99,8 @@ It is sorted by `file`; the exporters keep it so.
 cargo run -p ocw-assets -- validate artwork/3dmodels [--json]   # the contract, licences, budgets (findings with fixes)
 cargo run -p ocw-assets -- info artwork/3dmodels/bikes/bike-tt.glb
 cargo run -p ocw-assets -- model diff A B [--json]      # structural diff of two files or ids (exit 1: they differ)
+make models-diff [BASE=main] [MACHINE=marge]             # model diff of every model file changed against main (also uncommitted ones)
+make deps-blender && make test-blender                   # Blender (pinned LTS, no sudo) and the round trip of every file (on marge)
 cargo run -p ocw-assets -- model export bikes/bike-tt [--gltf] --out DIR   # an editable copy for Blender
 cargo run -p ocw-assets -- model import FILE.glb --kind prop --id post-square [--license … --source … --author …] [--dry-run]
 cargo run -p ocw-studio -- --model bikes/bike-tt          # the Models workspace: view, stats, findings, try-on
@@ -127,3 +129,34 @@ primitives per material, drops unused materials, computes missing normals,
 stamps `extras.ocw` and writes the canonical file with its manifest entry. A
 model lying on its back (exported without *+Y Up*) or with any contract error
 is refused with the findings and their fixes.
+
+Blender's glTF importer drops the asset's `extras` and the copyright (only
+node extras survive, as custom properties). So that an edit in Blender does
+not lose a bike's `extras.ocw.frame` / `sizing`, a plant's `height_m` or a
+wearable's `rider_node`, `model import` keeps the asset's extras keys and
+the copyright of the file it replaces wherever the import has none (it never
+overwrites a value the import brings); the notes name what it kept.
+
+### The round trip (`make test-blender`, spec 15F)
+
+`make deps-blender` installs the pinned Blender LTS (version and SHA-256 in
+`scripts/deps-blender.sh`, the one place; the official tarball from
+download.blender.org into `~/.local/opt/blender-X.Y.Z`, linked as
+`~/.local/bin/blender`; no sudo, Linux x64; marge has it). `make
+test-blender` takes every file of the manifest (`MODELS="bikes/*"` limits
+it) through Blender – import, export with the preset above
+(`tools/blender/roundtrip.py`, `blender -b`) – back through `model import`
+under its own manifest entry, replacing a copy of the committed file, and
+`model diff` must report no structural change. The geometry is compared as
+drawn: triangles in any order and from any corner, vertices re-indexed,
+split or merged (Blender does all of these) and normals within 0.1° are the
+same mesh. Without Blender it is skipped with a notice. The summary
+(`summary.md`, every command in `roundtrip.log`) goes to
+`test-output/blender-roundtrip/`.
+
+`make models-diff` shows the same diff for a review: every model file that
+differs between the merge base with `main` (`BASE=…`) and the working tree –
+committed, uncommitted or new – with its structural changes, the removed
+files and the manifest lines changed. With `MACHINE=marge` git runs here
+and the diff there (the old files sent as a tar), for a machine that does
+not build.

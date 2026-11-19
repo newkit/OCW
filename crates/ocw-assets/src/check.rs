@@ -19,6 +19,8 @@
 //!   empty, collision proxies `col_box*` / `col_cylinder*` /
 //!   `col_capsule*`, a prop's proxy, `lod1` where the kind needs it;
 //! - the budgets per kind (near and `lod1`), the file size;
+//! - vertex colours above 1 (warning: Blender keeps them as 8 bits and
+//!   clamps them, so the Blender round trip of 15F changes them);
 //! - the bounds: the origin of the kind (on the ground for bikes, props,
 //!   plants, creatures and workshop pieces), a model lying on its back
 //!   (exported without "+Y up"), a model in centimetres.
@@ -719,6 +721,27 @@ pub fn check_model(e: &Entry, m: &Model, bytes: usize) -> Vec<Finding> {
             );
         }
     }
+    // What Blender cannot keep (the round trip of 15F, `make test-blender`):
+    // it stores vertex colours as 8-bit sRGB (`BYTE_COLOR`), clamped to 1.
+    for n in &m.nodes {
+        let (mut bright, mut max) = (0, 0.0f32);
+        for c in n.primitives.iter().flat_map(|p| &p.colors) {
+            let top = c[0].max(c[1]).max(c[2]).max(c[3]);
+            if top > 1.0 + 1e-4 {
+                bright += 1;
+                max = max.max(top);
+            }
+        }
+        if bright > 0 {
+            out.warn(
+                "mesh.color-above-one",
+                Target::Node(n.name.clone()),
+                format!(
+                    "{bright} vertex colours above 1 (up to {max:.3}): Blender keeps vertex colours as 8 bits and clamps them to 1"
+                ),
+            );
+        }
+    }
     if bytes > kinds::WARN_FILE_BYTES {
         out.warn(
             "file.size",
@@ -816,6 +839,20 @@ mod tests {
         let (e, m) = post("props/post-square-test.glb");
         let f = check(&e, &m, 1000);
         assert!(f.is_empty(), "{f:#?}");
+    }
+
+    /// What Blender cannot keep is a warning: vertex colours above 1.
+    #[test]
+    fn colours_above_one_are_warned() {
+        let (e, mut m) = post("props/post-square-test.glb");
+        let p = &mut m.nodes[0].primitives[0];
+        p.colors = vec![[1.0; 4]; p.positions.len()];
+        assert!(check(&e, &m, 1000).is_empty());
+        m.nodes[0].primitives[0].colors[0] = [1.08, 1.0, 1.0, 1.0];
+        let f = check(&e, &m, 1000);
+        assert_eq!(codes(&f), ["mesh.color-above-one"], "{f:#?}");
+        assert!(f[0].message.contains("up to 1.080"), "{}", f[0].message);
+        assert_eq!(f[0].severity, Severity::Warning);
     }
 
     #[test]
