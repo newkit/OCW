@@ -281,7 +281,11 @@ impl StravaRecording {
                     self.say(format!("{text}. {UPLOADS_AUTOMATICALLY}."), game_s);
                 } else if self.api {
                     // Automatic upload off: the rider uploads it.
-                    self.say_for(format!("{text}. {WAITS_FOR_UPLOAD}."), game_s, UPLOAD_NOTICE_S);
+                    self.say_for(
+                        format!("{text}. {WAITS_FOR_UPLOAD}."),
+                        game_s,
+                        UPLOAD_NOTICE_S,
+                    );
                 } else {
                     // No API: the rider uploads it in the browser – or
                     // the desktop uploads it once Strava is set up (with
@@ -385,7 +389,9 @@ mod tests {
         a.stop(2.0);
         assert!(!a.notice(2.0).unwrap().contains("browser"));
         assert!(
-            a.notice(2.0).unwrap().ends_with(". It goes to Strava automatically."),
+            a.notice(2.0)
+                .unwrap()
+                .ends_with(". It goes to Strava automatically."),
             "{:?}",
             a.notice(2.0)
         );
@@ -411,7 +417,10 @@ mod tests {
         w.observe(&route, None, sample(1.0, 8.0), 2);
         w.stop(2.0);
         let n = w.notice(2.0).unwrap();
-        assert!(!n.contains(WAITS_FOR_SET_UP) && n.ends_with(NOT_SET_UP), "{n}");
+        assert!(
+            !n.contains(WAITS_FOR_SET_UP) && n.ends_with(NOT_SET_UP),
+            "{n}"
+        );
         // The desktop keeps it waiting for the set-up (spec §2.8.1
         // *Recording without Strava set up*): the notice says it is saved
         // and will be uploaded, beside the browser's way.

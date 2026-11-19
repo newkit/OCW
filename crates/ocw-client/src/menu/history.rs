@@ -832,7 +832,10 @@ mod tests {
         for api in [false, true] {
             i.strava_api = api;
             let r = rows(page, &i);
-            assert!(!r.iter().any(|r| r.label == UPLOAD_LABEL || r.label == MARK_LABEL));
+            assert!(
+                !r.iter()
+                    .any(|r| r.label == UPLOAD_LABEL || r.label == MARK_LABEL)
+            );
             let line = r.iter().find(|r| r.label == STRAVA_ROW).unwrap();
             assert_eq!(
                 line.value.as_deref(),
@@ -841,8 +844,12 @@ mod tests {
             assert_eq!(line.confirm, None);
         }
         // A whole ride uploaded before (v5.00) stays on Strava.
-        i.strava
-            .insert(id.clone(), StravaState::OnStrava { activity_id: Some(5) });
+        i.strava.insert(
+            id.clone(),
+            StravaState::OnStrava {
+                activity_id: Some(5),
+            },
+        );
         assert_eq!(
             strava_value(page, &i),
             (

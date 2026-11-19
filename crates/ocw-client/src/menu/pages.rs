@@ -1800,7 +1800,10 @@ mod tests {
         assert_eq!(auto.confirm, cmd("set strava.auto_upload off"));
         let (off, _) = Settings::parse("[strava]\nauto_upload = false\n").unwrap();
         let strava = rows(Page::Strava, &off, &Riders::default());
-        assert_eq!(row(&strava, "Automatic upload").value.as_deref(), Some("off"));
+        assert_eq!(
+            row(&strava, "Automatic upload").value.as_deref(),
+            Some("off")
+        );
     }
 
     /// K6 (spec §14 Phase 12): the Organiser rules page, six rows of

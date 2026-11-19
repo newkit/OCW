@@ -166,7 +166,11 @@ impl Strava {
         if self.worker.is_some() {
             return false;
         }
-        let Some(file) = self.watch.as_ref().map(|w| w.config_dir.join("strava.toml")) else {
+        let Some(file) = self
+            .watch
+            .as_ref()
+            .map(|w| w.config_dir.join("strava.toml"))
+        else {
             return false;
         };
         self.read_old_key(&file);
@@ -634,7 +638,9 @@ fn recordings_of_ride(world: &World, n: usize, waiting: bool) -> Result<Vec<Stri
         return Err(if waiting {
             format!("ride {n} has no waiting Strava recording")
         } else {
-            format!("ride {n} has no Strava recording to upload (on Strava already, or marked as uploaded)")
+            format!(
+                "ride {n} has no Strava recording to upload (on Strava already, or marked as uploaded)"
+            )
         });
     }
     Ok(files)
@@ -1152,7 +1158,10 @@ mod tests {
         assert!(!worker_status(&app).auto_upload);
         // A recording with the automatic upload off: it waits for the rider.
         let said = record(&mut app, 1_794_000_000);
-        assert!(said.contains(ocw_client::strava::WAITS_FOR_UPLOAD), "{said}");
+        assert!(
+            said.contains(ocw_client::strava::WAITS_FOR_UPLOAD),
+            "{said}"
+        );
         for _ in 0..10 {
             app.update();
             std::thread::sleep(std::time::Duration::from_millis(20));
@@ -1180,7 +1189,11 @@ mod tests {
             .resource::<ocw_ui::settings::UserSettings>()
             .settings
             .to_toml();
-        assert!(app.world().resource::<ocw_ui::settings::UserSettings>().on(AUTO_SETTING));
+        assert!(
+            app.world()
+                .resource::<ocw_ui::settings::UserSettings>()
+                .on(AUTO_SETTING)
+        );
         drop(app);
         // A restart: the setting rules, the old key is not read again.
         set_up(&dir, "auto_upload = false\n");
@@ -1206,7 +1219,7 @@ mod tests {
     /// recording has no state, `strava.sync --ride` refuses it.
     #[test]
     fn with_the_setting_off_a_ride_page_uploads_its_recording() {
-        let dir = temp("off");
+        let dir = temp("setting-off");
         let settings = "[strava]\nauto_upload = false\n";
         let mut app = app_with(&dir, Some(settings));
         app.init_resource::<ocw_ui::history::TrainingHistory>();
@@ -1222,11 +1235,14 @@ mod tests {
             let mut h = app
                 .world_mut()
                 .resource_mut::<ocw_ui::history::TrainingHistory>();
-            for (id, act) in [("old", {
-                let mut o = a.clone();
-                o.start_unix_s -= 86_400;
-                o
-            }), ("ride", ride)] {
+            for (id, act) in [
+                ("old", {
+                    let mut o = a.clone();
+                    o.start_unix_s -= 86_400;
+                    o
+                }),
+                ("ride", ride),
+            ] {
                 h.history.add(ocw_client::history::RideEntry::from_activity(
                     &act,
                     ocw_client::history::RideContext {
@@ -1237,7 +1253,10 @@ mod tests {
                 ));
             }
         }
-        assert_eq!(history_states(app.world()).0.get("ride"), Some(&StravaState::Waiting));
+        assert_eq!(
+            history_states(app.world()).0.get("ride"),
+            Some(&StravaState::Waiting)
+        );
         assert_eq!(history_states(app.world()).0.get("old"), None);
         set_up(&dir, "");
         wait_until(&mut app, "the worker starts", |a| {
@@ -1249,7 +1268,10 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         assert_eq!(worker_status(&app).question, None);
-        assert!(matches!(state(&dir).rides[&rec_name], RideSync::Waiting { .. }));
+        assert!(matches!(
+            state(&dir).rides[&rec_name],
+            RideSync::Waiting { .. }
+        ));
         let err = run(&mut app, "strava.sync --ride 2");
         assert!(err.contains("no Strava recording"), "{err}");
         let out = run(&mut app, "strava.sync --waiting --ride 1");

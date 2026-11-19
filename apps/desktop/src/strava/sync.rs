@@ -883,7 +883,10 @@ mod tests {
         let report = fx.sync(&http, 1100);
         assert_eq!(
             report.uploaded,
-            vec![("strava/a.fit".into(), Some(7)), ("strava/b.fit".into(), Some(8))]
+            vec![
+                ("strava/a.fit".into(), Some(7)),
+                ("strava/b.fit".into(), Some(8))
+            ]
         );
     }
 
@@ -930,7 +933,10 @@ mod tests {
         let report = fx.sync(&http, 0);
         assert!(report.needs_connect);
         // The ride stays pending, not failed.
-        assert_eq!(fx.state().due(&files(&["strava/a.fit"]), 0), vec!["strava/a.fit"]);
+        assert_eq!(
+            fx.state().due(&files(&["strava/a.fit"]), 0),
+            vec!["strava/a.fit"]
+        );
         // Without a token, nothing is sent.
         fx.paths.token.delete().unwrap();
         assert!(fx.sync(&http, 0).needs_connect);

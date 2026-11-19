@@ -1399,14 +1399,15 @@ mod tests {
         );
         assert_eq!(mime, "application/vnd.ant.fit");
         assert_eq!(bytes, &recording.2);
-        app.update();
+        // The HUD shows the steps (once the recording's own stop notice
+        // is over: it comes first).
         assert!(
             app.world()
-                .resource::<RideView>()
-                .strava_message
-                .as_deref()
-                .is_some_and(|m| m.starts_with("Strava opens in a new tab")),
-            "the HUD shows the steps"
+                .resource::<StravaNotice>()
+                .0
+                .as_ref()
+                .is_some_and(|(m, _)| m.starts_with("Strava opens in a new tab")),
+            "the HUD's upload notice"
         );
         let info = ocw_ui::history::info(app.world());
         let text = ocw_client::menu::history::text(page, &info);

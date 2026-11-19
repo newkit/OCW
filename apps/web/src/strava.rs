@@ -124,7 +124,11 @@ pub fn recordings_of(world: &World, ride: &ocw_client::history::RideEntry) -> Ve
             s.kept
                 .iter()
                 .filter(|k| {
-                    ocw_client::strava::within_ride(k.start_unix_s, ride.start_unix_s, ride.elapsed_s)
+                    ocw_client::strava::within_ride(
+                        k.start_unix_s,
+                        ride.start_unix_s,
+                        ride.elapsed_s,
+                    )
                 })
                 .cloned()
                 .collect()

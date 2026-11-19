@@ -520,7 +520,11 @@ mod tests {
         let (path, f) = ride(&dir, 1_794_992_700, 30);
         let e = entry(&path, &f);
         // Its Strava recording (from before v4.85: no folder of its own).
-        ride(&super::super::recording::strava_dir(&dir), 1_794_992_700, 30);
+        ride(
+            &super::super::recording::strava_dir(&dir),
+            1_794_992_700,
+            30,
+        );
         let pictures = dir.join("Pictures").join("OCW");
         let time = ocw_render::media::MediaTime {
             unix_s: 1_794_992_710,
@@ -596,7 +600,11 @@ mod tests {
             std::fs::read(&a).unwrap()
         );
         assert!(p.files.iter().all(|f| f.contains("Strava recording")));
-        assert_eq!(std::fs::read_dir(&p.dir).unwrap().count(), 2, "no whole ride");
+        assert_eq!(
+            std::fs::read_dir(&p.dir).unwrap().count(),
+            2,
+            "no whole ride"
+        );
         let names = sync_names(&dir, &e);
         assert_eq!(names.len(), 3);
         assert_eq!(names[0], path.file_name().unwrap().to_string_lossy());
