@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 4.90 – November 2026
+Version 4.91 – November 2026
 
 | Version | Change |
 |---|---|
+| 4.91 | **The navi map names peaks and passes too** (the user, 2026-11-19; 3.2 Q8 decided in part): from the same package data as the photographer's named peaks and viewpoints (2.11 Q4); the settlement defaults of v4.77 stay. Not built yet. |
 | 4.90 | **A rider may hide the other riders' photographers; named peaks and viewpoints go into the world packages for the photographer** (the user, 2026-11-19; 2.11 Q5, Q4): a setting to hide others' photographers, drones and flashes (proposal `photographer.others`, default shown); OSM `natural=peak` with a name and `tourism=viewpoint` in a package section, used by the landmark part of the view score. Not built yet. |
 | 4.89 | **No paragraph sign in the spec** (the user, 2026-11-19: "remove the paragraph sign from the spec"): sections are referenced by their number alone ("spec 6.1", "(2.8.1 Q6)"); 1534 signs removed; the build dashboard's question ids follow ("2.8.1 Q6"). |
 | 4.88 | **Appendix C – an overview of all open questions** (asked by the user 2026-11-19: "update the open question section"): generated from the question bullets by `tools/build-dashboard/spec_questions.py overview --write SPECIFICATION.md` (78 open of 216, grouped by phase / section, with the proposals); the photo preview's two questions are now readable bullets (3.2 Q10, Q11), Phase 11 Q8 (the Windows PC for Link) is marked decided (Weela), 2.8.1 Q7 superseded in the readable form. |
@@ -1051,7 +1052,7 @@ Tile builds take up to 23 ms on worker threads; uploads cost at most 4.6 ms on t
   - **Q5 (open) – Route rides:** the banner shows the junction view's turn (as in free ride) and else the street ridden; should it also announce turns of the route between junction views (from the route's geometry), or the distance to the finish?
   - **Q6 (open) – Gamepad:** no default button for the map (N) and its zoom (Z); give them buttons?
   - **Q7 (open) – Unicorn flight:** the map is hidden; show it (north-up, around the unicorn) instead?
-  - **Q8 (open) – Place names:** when the place data lands, which places (towns only, villages, peaks, passes) and from which zoom? *Built in v4.77 as the default until answered:* settlements only (no peaks or passes – the package has no such data yet), cities and towns at every zoom, villages and smaller places closer in (thresholds above).
+  - **Q8 – Place names: decided in part (2026-11-19, the user: "yes" to adding peaks and passes):** the navi map also names **mountain peaks and passes** once the packages carry them (2.11 Q4); the settlement defaults below stay. Was: when the place data lands, which places (towns only, villages, peaks, passes) and from which zoom? *Built in v4.77 as the default until answered:* settlements only (no peaks or passes – the package has no such data yet), cities and towns at every zoom, villages and smaller places closer in (thresholds above).
   - **Q9 (open) – The studio map:** it keeps its egui vector painting and shares geometry, projection and styles; should it also offer the navi look (the same rasteriser) as a preview?
 
 **Camera and avatar (v1.9):** the chase camera follows the avatar itself (on the terrain when off the road) along the rider's own heading; it can be orbited with the mouse. It stays above everything camera-solid and lifts until the line of sight to the rider clears it; its look-at point is smoothed. **Tunnels:** where the road runs under the terrain (the terrain more than 0.5 m above the road centre over at least 10 m, gaps under 20 m merged; found by the client from its track and the ground, so route files, package routes and free ride all work without extra package data), the client draws a simple tube (floor, walls, arch, 1 m beside the road edge, 6 m high, unlit and dark with a strip of lamps along the crown, since sunlight and tree shadows would reach through the hill) reaching 4 m out of the hill at each end as the portal. From 15 m before it until 12 m after it the camera (any mode) blends over 0.4 s into a tunnel camera on the road 4.5 m behind and 2.2 m above the rider, looking 10 m ahead; terrain and buildings above do not lift it, the mouse orbit is ignored there. **Portals cut into the terrain (decided, replaces the eye under the hillside):** at a portal the hillside slopes through the tube (the 10 m terrain grid cannot form a vertical face), so riding in, the camera saw a dark-green wall of hillside inside the tube for a second or more (scene `tunnel-video`, Steg tunnel at km 8.77). The terrain is now drawn with its own material (`ocw-render::tunnel_cut`, a `StandardMaterial` extension) whose fragment shader discards terrain fragments inside the tube – walls up to 4 m, then the arch up to the 6 m crown, from the road surface up, following the gradient – given as up to 64 straight 2 m pieces along the track where the terrain beside or over the road is less than 1.5 m above the crown (the portals; the nearest to the rider, updated with the tunnel scan). The cut is exact to the pixel along the tube, which is drawn double-sided, so the portal shows the tube's mouth in the hillside and the eye stays at its place behind the rider (before, it dived close behind the rider and under the terrain once the wheels were covered, which still showed the hillside for a few frames and then jumped). Regression test: `the_terrain_inside_the_tube_is_cut_at_the_portal` (`ocw-render`). Considered and not chosen: tunnel stretches written into the route file / taken from the graph's `tunnel` flag (route files have no flags; tunnels the terrain does not cover need no special camera), removing whole terrain cells around the tube (10 m holes larger than the tube show the inside of the hill), and lowering the camera only (rider still hidden by the hill in curves without a tube). The avatar stands on the surface under both wheel contacts (front wheel first over a bump), leans by atan(v² κ / g) for the curve it rides, and is blended from road height onto the ground over 2 m beside the road.
@@ -6600,7 +6601,7 @@ kiosk runs `2dc1892` (the same code without this appendix).
 
 <!-- open-questions:begin (generated by tools/build-dashboard/spec_questions.py overview; do not edit by hand) -->
 
-76 open questions (of 216); each is answered in the build dashboard or in the conversation, and decided where it stands. Refresh with `python3 tools/build-dashboard/spec_questions.py overview --write SPECIFICATION.md`.
+75 open questions (of 216); each is answered in the build dashboard or in the conversation, and decided where it stands. Refresh with `python3 tools/build-dashboard/spec_questions.py overview --write SPECIFICATION.md`.
 
 
 **2.8.1 Strava recording with S and ride photos (planning, 2026-11-16, v4.11)**
@@ -6618,7 +6619,6 @@ kiosk runs `2dc1892` (the same code without this appendix).
 - **3.2 Q5** – Route rides
 - **3.2 Q6** – Gamepad
 - **3.2 Q7** – Unicorn flight
-- **3.2 Q8** – Place names
 - **3.2 Q9** – The studio map
 
 **3.2.4 One local config file, and the start choice: a server or local (planning, 2026-11-17)**
