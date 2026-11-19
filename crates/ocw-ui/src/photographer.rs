@@ -46,7 +46,7 @@ use ocw_render::photo_preview::{Caption, PhotoPreview};
 use ocw_render::photographer::{PhotoCaptures, PhotoRequest, PhotoRequests, ViewFrustum};
 use ocw_world::landuse::LandClass;
 use ocw_world::package::WorldPackage;
-use ocw_world::photo::{Conditions, PhotoScene};
+use ocw_world::photo::{Conditions, Landmark, PhotoScene};
 use ocw_world::photo_share::SharedShot;
 
 /// What the app does with the photographer's output.
@@ -88,6 +88,11 @@ pub struct RidePhotographer {
     /// The own drone's phase last frame (each change is logged: scripted
     /// drone videos, `camera.drone`).
     drone_phase: Option<ocw_world::photo_drone::DronePhase>,
+    /// The loaded packages' peaks and viewpoints (section `LMRK`, spec
+    /// 2.11 Q4) and the world set they were taken from (pointer,
+    /// generation, tiles version).
+    landmarks: Arc<Vec<Landmark>>,
+    landmarks_key: Option<(usize, u64, u64)>,
 }
 
 impl RidePhotographer {
@@ -106,7 +111,14 @@ impl RidePhotographer {
             shutters_heard: BTreeSet::new(),
             seen: BTreeSet::new(),
             drone_phase: None,
+            landmarks: Arc::new(Vec::new()),
+            landmarks_key: None,
         }
+    }
+
+    /// The peaks and viewpoints the view score counts (spec 2.11 Q4).
+    pub fn landmarks(&self) -> &[Landmark] {
+        &self.landmarks
     }
 
     /// A new ride: the count starts again.
@@ -142,6 +154,29 @@ pub struct WorldScene {
     ground: Option<ocw_render::Ground>,
     solids: CameraObstacles,
     pkg: Option<Arc<WorldPackage>>,
+    landmarks: Arc<Vec<Landmark>>,
+}
+
+/// Takes the loaded packages' peaks and viewpoints into the photographer
+/// whenever the world set changes.
+fn refresh_landmarks(world: &mut World) {
+    let key = world.get_resource::<PackageWorld>().map(|w| {
+        let s = &w.set;
+        (Arc::as_ptr(s) as usize, s.generation(), s.tiles_version())
+    });
+    let Some(p) = world.get_resource::<RidePhotographer>() else {
+        return;
+    };
+    if p.landmarks_key == key {
+        return;
+    }
+    let list = world
+        .get_resource::<PackageWorld>()
+        .map(|w| Landmark::of_set(&w.set))
+        .unwrap_or_default();
+    let mut p = world.resource_mut::<RidePhotographer>();
+    p.landmarks_key = key;
+    p.landmarks = Arc::new(list);
 }
 
 impl WorldScene {
@@ -155,6 +190,10 @@ impl WorldScene {
             pkg: world
                 .get_resource::<PackageWorld>()
                 .map(|p| p.home().clone()),
+            landmarks: world
+                .get_resource::<RidePhotographer>()
+                .map(|p| p.landmarks.clone())
+                .unwrap_or_default(),
         }
     }
 
@@ -200,6 +239,9 @@ impl PhotoScene for WorldScene {
     fn solid_top(&self, x: f64, z: f64) -> Option<f64> {
         self.solids.top_at(x, z)
     }
+    fn landmarks(&self) -> &[Landmark] {
+        &self.landmarks
+    }
 }
 
 /// The light and weather at the rider from the frame's view.
@@ -227,6 +269,7 @@ fn run(world: &mut World) {
         .get_resource::<RidePhotographer>()
         .is_none_or(|p| p.others);
     let now = crate::now(world);
+    refresh_landmarks(world);
     let frustum = world
         .get_resource::<ViewFrustum>()
         .copied()

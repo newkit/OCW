@@ -19,15 +19,20 @@
 #   strava/*.fit                        the Strava recording's activity
 #   end.jpg, end.log                    the last frame and the app's log
 #
-# OCW_WORLD_DATA: the folder with tenerife/ (default ~/src/OCW/data).
+# OCW_WORLD_DATA: the folder with tenerife/ (default ~/src/OCW/data);
+# OCW_PHOTO_ROUTE: another of the package's routes (default Buenavista -
+# Masca - Santiago del Teide); OCW_PHOTO_TIME: the time of day (default
+# golden-hour); OCW_PHOTO_ARGS: more app arguments (split at spaces,
+# e.g. "--at 3=teleport_25" with _ for a space inside one).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 out=${1:-test-output/photographer}
 seconds=${2:-480}
 mode=${3:-}
 extra=()
+for a in ${OCW_PHOTO_ARGS:-}; do extra+=("${a//_/ }"); done
 if [ "$mode" = drone ]; then
-  extra=(--at "25=photographer drone" --at "170=photographer drone")
+  extra+=(--at "25=photographer drone" --at "170=photographer drone")
 fi
 data=${OCW_WORLD_DATA:-$HOME/src/OCW/data}
 pkg=$data/tenerife/tenerife.ocwpkg
@@ -44,11 +49,11 @@ mkdir -p "$OCW_DATA_DIR" "$OCW_CONFIG_DIR"
 export OCW_SHOT_TIMEOUT=$((seconds + 240))
 export OCW_SIZE=${OCW_SIZE:-1920x1080}
 .claude/skills/run-ocw/drive.sh shot-wayland "$out/end.jpg" "$seconds" -- \
-  --world "$pkg" --route "Buenavista - Masca - Santiago del Teide" \
+  --world "$pkg" --route "${OCW_PHOTO_ROUTE:-Buenavista - Masca - Santiago del Teide}" \
   --name "Ada Rider" --virtual --power 350 --bots 0 --no-hearts \
   --record true --photo-time-scale 10 --strava-dry-run \
   --photo-chase-shots "$out/chase" \
-  --cmd "time golden-hour" --cmd "weather clear" \
+  --cmd "time ${OCW_PHOTO_TIME:-golden-hour}" --cmd "weather clear" \
   --cmd "strava.record start" --cmd "photographer on" "${extra[@]}"
 rm -rf "$out/photos" "$out/strava"
 mkdir -p "$out/photos" "$out/strava"

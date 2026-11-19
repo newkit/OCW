@@ -284,8 +284,9 @@ enum Cmd {
     /// Place names (spec §4.7, §14 Phase 16 16A): the OSM place=* nodes
     /// and areas (cities, towns, villages, hamlets, suburbs,
     /// neighbourhoods, localities, isolated dwellings) on the tiles into
-    /// the section PLCE of an existing package (the manifest is renewed);
-    /// `package` writes it too.
+    /// the section PLCE, and the peaks, mountain passes and viewpoints
+    /// into LMRK, of an existing package (the manifest is renewed);
+    /// `package` writes them too.
     Places {
         /// The package (rewritten in place unless --out is given).
         #[arg(long)]
@@ -1762,6 +1763,7 @@ fn package(args: PackageArgs) {
             ocw_worldgen::places::add_places(&mut pkg, &data, &proj)
         });
         area_report.push(format!("places (PLCE): {}", st.summary));
+        area_report.push(format!("landmarks (LMRK): {}", st.landmark_summary));
     }
     let bytes = stage("serialise", || pkg.to_bytes());
     if let Some(dir) = out.parent() {
@@ -2388,8 +2390,8 @@ fn read_places(pbf: &[PathBuf], pkg: &ocw_world::WorldPackage) -> ocw_worldgen::
     d
 }
 
-/// `world-builder places` (spec §4.7, §14 Phase 16 16A): the section
-/// PLCE into a built package; every other section stays as it is.
+/// `world-builder places` (spec 4.7, 14 Phase 16 16A): the sections
+/// PLCE and LMRK into a built package; every other section stays as it is.
 fn places(
     world: &std::path::Path,
     pbf: &[PathBuf],
@@ -2405,6 +2407,26 @@ fn places(
         ocw_worldgen::places::add_places(&mut pkg, &data, &proj)
     });
     println!("places (PLCE): {}", st.summary);
+    println!("landmarks (LMRK): {}", st.landmark_summary);
+    if let Some(p) = &pkg.places {
+        for kind in ocw_world::landmarks::LandmarkKind::ALL {
+            for l in p.landmarks.iter().filter(|l| l.kind == kind).take(6) {
+                println!(
+                    "  {} {} ({}) at {:.0},{:.0}",
+                    kind.word(),
+                    if l.name.is_empty() {
+                        "(no name)"
+                    } else {
+                        &l.name
+                    },
+                    l.ele_text().unwrap_or_else(|| "no ele".into())
+                        + if l.ele_from_terrain { ", terrain" } else { "" },
+                    l.pos[0],
+                    l.pos[1]
+                );
+            }
+        }
+    }
     if let Some(p) = &pkg.places {
         for place in p.places.iter().take(12) {
             println!(
