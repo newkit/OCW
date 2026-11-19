@@ -97,11 +97,11 @@ pub struct Loaded {
     pub migrated: Vec<String>,
 }
 
+/// What a section parses into, with its warnings.
+type Parsed<T> = Result<(T, Vec<String>), String>;
+
 /// The settings section's text: `None` nothing saved yet.
-fn read_section<T>(
-    slot: Option<&Slot>,
-    parse: fn(&str) -> Result<(T, Vec<String>), String>,
-) -> Option<Result<(T, Vec<String>), String>> {
+fn read_section<T>(slot: Option<&Slot>, parse: fn(&str) -> Parsed<T>) -> Option<Parsed<T>> {
     let slot = slot?;
     Some(match slot.read() {
         Ok(Some(text)) => parse(&text).map_err(|e| format!("{}: {e}", slot.describe())),

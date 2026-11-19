@@ -3,7 +3,7 @@
 //! (`ocw.toml [devices]`, spec 3.2.4; the old `devices.toml` is migrated
 //! into it), or in the file `--devices-file` names.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -44,11 +44,13 @@ pub fn choose_slot(given: Option<PathBuf>, default: Option<Slot>) -> Option<Slot
 
 impl KnownDevices {
     /// Loads the file; a missing file means no devices.
-    pub fn load(path: &Path) -> Result<Self, String> {
+    #[cfg(test)]
+    pub fn load(path: &std::path::Path) -> Result<Self, String> {
         Self::load_slot(&Slot::File(path.to_path_buf()))
     }
 
-    pub fn save(&self, path: &Path) -> Result<(), String> {
+    #[cfg(test)]
+    pub fn save(&self, path: &std::path::Path) -> Result<(), String> {
         self.save_slot(&Slot::File(path.to_path_buf()))
     }
 

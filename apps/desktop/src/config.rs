@@ -416,6 +416,7 @@ fn clear_positions(t: &mut Table) {
 
 /// The keys of a TOML text, dotted ("strava.client_id"), for the secret
 /// check.
+#[cfg(test)]
 pub fn keys(text: &str) -> Vec<String> {
     fn walk(prefix: &str, v: &toml::Value, out: &mut Vec<String>) {
         match v {
@@ -446,6 +447,7 @@ pub fn keys(text: &str) -> Vec<String> {
 }
 
 /// The secret keys found in a TOML text (none for a good `ocw.toml`).
+#[cfg(test)]
 pub fn secrets_in(text: &str) -> Vec<String> {
     keys(text)
         .into_iter()

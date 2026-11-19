@@ -73,10 +73,10 @@ impl TokenStore {
 }
 
 /// `secrets.toml [account]` when `path` is the secrets file.
-fn section(path: &PathBuf) -> Option<crate::config::Slot> {
+fn section(path: &std::path::Path) -> Option<crate::config::Slot> {
     (path.file_name().and_then(|n| n.to_str()) == Some(crate::config::SECRETS_FILE)).then(|| {
         crate::config::Slot::Section {
-            file: path.clone(),
+            file: path.to_path_buf(),
             key: "account".into(),
             private: true,
         }
