@@ -4807,3 +4807,28 @@ description = "Legs joined to the body: shape obese at the workshop mirror (chan
 args = ["--route", "hills", "--bots", "0", "--power", "200"]
 at = ["1.5=character --shape obese --body a", "2=workshop open", "2.6=workshop mirror"]
 shot = 20
+# Spec 3.2 Q1 / Q7 (2026-11-19): the workout panel beside the navigation map,
+# the map in unicorn flight.
+[[scene]]
+name = "navi-workout-1080p"
+description = "A sweet-spot workout on the Vaduz – Malbun route at 1920 × 1080: the workout panel in its place on the left under the bike computer, the navigation map at full size in the lower right"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "3", "--window", "1920x1080"]
+at = ["1=time 14:00", "2=teleport 1.1", "2.5=workout start --example sweet-spot"]
+shot = 12
+
+[[scene]]
+name = "navi-workout-720p-150"
+description = "The same workout in a 1280 × 720 window with the HUD at 150 %: workout panel and navigation map side by side, neither over the other HUD boxes"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "3", "--window", "1280x720"]
+at = ["1=time 14:00", "1=ui.scale 150", "1=fps off", "2=teleport 1.1", "2.5=workout start --example sweet-spot"]
+shot = 12
+
+[[scene]]
+name = "navi-unicorn-flight"
+description = "Unicorn mode over Vaduz with the navigation map: centred on the unicorn, north-up, auto zoom from the flight speed and height"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "3", "--window", "1920x1080"]
+at = ["1=time 14:00", "3=god on", "4=god.pose -2650 2330 120 80 -10", "4.3=god.cruise 0.6 0.1 4"]
+shot = 11

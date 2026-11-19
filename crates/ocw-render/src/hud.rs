@@ -386,6 +386,9 @@ fn spawn_hud(mut commands: Commands) {
                 ..default()
             },
             HudPanel,
+            // The workout panel stays above it, or replaces it where it
+            // has no other room (spec 3.2 Q1).
+            crate::workout::YieldsToWorkout,
         ))
         .with_children(|col| {
             spawn_profile(col);
@@ -1291,6 +1294,30 @@ pub(crate) mod tests_support {
         );
         let small = format!(
             "Test Hills | 2.01 km | 0:00:24 | riders: 3\nup: faster, down: stop, left/right: steer or choose the exit (another than the route's leaves it), Q/E: exit, J: rejoin the route, U: U-turn, A: autodrive | {DESKTOP_KEYS}\nVirtual trainer 200 W (no Web Bluetooth here) | trainer SIM +1.9 % (difficulty 50 %) | autodrive | gravel"
+        );
+        let (b, sm) = top_panel_text(panel, &big, &small);
+        (panel, TOP_MARGIN_PX + top_panel_height(&b, &sm))
+    }
+
+    /// The same for an everyday ride: the main line with the weather, the
+    /// riding keys without the route's exit keys, a short device status.
+    pub(crate) fn typical_top_panel(w: f32) -> (f32, f32) {
+        let stamp = 25.0 * 14.0 * 0.6 + 16.0;
+        let panel = top_panel_max_px(w, stamp, 1.0).min(w * 0.94);
+        let big = format!(
+            "{}   clear 18 °C   ↗ crosswind 7 km/h",
+            main_line(
+                200.0,
+                20.8,
+                Some(80.0),
+                7.7,
+                Some(8.3),
+                Some(142.0),
+                Units::Metric
+            )
+        );
+        let small = format!(
+            "Vaduz - Malbun | 2.01 km | 0:00:24 | riders: 3\nup: faster, down: stop, left/right: steer, A: autodrive, W: wild | {DESKTOP_KEYS}\nVirtual trainer 200 W | trainer ERG 250 W"
         );
         let (b, sm) = top_panel_text(panel, &big, &small);
         (panel, TOP_MARGIN_PX + top_panel_height(&b, &sm))

@@ -439,9 +439,12 @@ above.
 
 #### Devices in the browser
 
-The **Devices** panel (bottom right) has **+ Trainer**, **+ Power meter** and
-**+ Heart rate**. Each one opens the browser's Bluetooth chooser (Web
-Bluetooth needs the click). It steps aside while the menu is open. The
+The **Devices** panel (bottom right, above the navigation map) has **+ Trainer**,
+**+ Power meter** and **+ Heart rate**. Each one opens the browser's Bluetooth
+chooser (Web Bluetooth needs the click). It is a transparent overlay (the
+ride shows through it), collapses to a small **Devices** button naming the
+device two seconds after one connects (click it to open the panel again; ×
+collapses it by hand) and steps aside while the menu is open. The
 device runs the same protocol code as on the desktop (`ocw-devices`: FTMS,
 Cycling Power, CSC, Heart Rate, Wahoo KICKRs). Power, cadence and heart rate
 go to the server. The trainer gets **SIM** (the road's gradient with the
@@ -761,7 +764,7 @@ keys new-signing`.
 |---|---|---|
 | Menu (Resume, Ride, World, Workshop, Navi, Settings, Quit) | Esc | Start / Menu (☰, Options) |
 | Faster: +25 W per press, more while held | ↑ | D-pad up, left stick up or right trigger (RT / R2) |
-| Stop: no power, brake | ↓ | D-pad down, left stick down or left trigger (LT / L2) |
+| Stop: no power, brake | ↓ | left stick down or left trigger (LT / L2) |
 | Steer (autodrive: move the line; manual: lean into a curve) | ← / → | left stick (left/right) |
 | Autodrive on/off (on at the start) | A | South button (A / ✕) |
 | Wild mode on/off (leave the road; on also switches autodrive off) | W | West button (X / □) |
@@ -778,7 +781,7 @@ keys new-signing`.
 | Voice: mute / unmute your microphone | M | Select (Back / View / Share) |
 | Voice: mute / unmute the speaker (all voices; game sounds stay) | Shift+M | right-stick click (R3) |
 | Navigation map (bottom right) on / off | N | |
-| Navigation map zoom: auto (by speed, closer at junctions), then 1 (closest) … 7, then auto | Z | |
+| Navigation map zoom: auto (by speed, closer at junctions), then 1 (closest) … 7, then auto | Z | D-pad down |
 | Next screen | F11 | |
 | Console (`help` lists the commands) | `` ` `` or F12 | |
 | Unicorn mode: fly as a unicorn / land on the road below | G | Select + North (Y / △) |
@@ -827,6 +830,11 @@ flies forward along its heading. While flying:
 | First-person view from the unicorn's head | C | |
 | Inspection panel and crosshair on / off | I | |
 | Put a pin where the crosshair points (kept for the ride; `god.pins` lists them) | P | |
+| Navigation map on / off; its zoom | N; Z | ; D-pad down |
+
+The **navigation map** stays on in flight: north-up, centred on the unicorn
+(its arrow points where it flies), zoomed out by the flight's speed and its
+height above the ground; the banner shows the height and the speed.
 
 Touch (spec §3.2.2): a finger dragged on the left half of the view is the
 stick (push it up to fly faster, down to fly slower, sideways to bank and
@@ -2462,10 +2470,14 @@ and closes the menu. While one runs, the page shows its step, *Skip step*
 and *Stop workout*. Or use `--workout FILE`, or the console: `workout start
 FILE`, `workout start --example short-demo` (examples: `short-demo`,
 `sweet-spot`, `two-by-five`, `over-unders`), `workout load FILE` then
-`workout start`, `workout list`. The HUD shows a panel in the lower
-right corner: the current target, the step and time left, the next step,
-text cues, and the whole workout's profile (coloured by training zone) with
-your progress.
+`workout start`, `workout list`. The HUD shows a panel on the left, under
+the bike computer's panel (the lower right corner is the navigation map's):
+the current target, the step and time left, the next step, text cues, and
+the whole workout's profile (coloured by training zone) with your progress.
+Where a small window with a large HUD leaves too little room it is shown
+compact (the target and the lines, without the title and the profile), and
+if even that does not fit, the elevation profile makes room for it while the
+workout runs.
 
 - **Clock:** the workout time is your pedalling time. It starts when you
   first pedal, keeps running through up to 3 s without power (shifting, a

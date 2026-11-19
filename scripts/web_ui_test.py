@@ -347,6 +347,90 @@ class UiTest:
     def setting(self, key):
         return self.cdp.eval(f"window.ocw.setting({json.dumps(key)})")
 
+    def hud_map(self):
+        raw = self.cdp.eval("window.ocw && window.ocw.hudMap ? window.ocw.hudMap() : ''")
+        try:
+            return json.loads(raw) if raw else {}
+        except ValueError:
+            return {}
+
+    def wait_map(self, pred, timeout=5.0):
+        end = time.time() + timeout
+        m = self.hud_map()
+        while time.time() < end and not pred(m):
+            self.pump(0.1)
+            m = self.hud_map()
+        return m
+
+    def devices_js(self):
+        raw = self.cdp.eval("window.ocwDevicesPanel ? window.ocwDevicesPanel() : ''")
+        return json.loads(raw) if raw else {}
+
+    def click(self, selector):
+        """A real mouse click on the element's centre."""
+        box = self.cdp.eval(f"""(() => {{
+            const r = document.querySelector({json.dumps(selector)}).getBoundingClientRect();
+            return [r.x + r.width / 2, r.y + r.height / 2];
+        }})()""")
+        for t in ("mousePressed", "mouseReleased"):
+            self.cdp.call("Input.dispatchMouseEvent", {
+                "type": t, "x": box[0], "y": box[1], "button": "left", "clickCount": 1})
+        self.pump(0.7)
+
+    def devices_part(self):
+        """The Devices panel (spec 3.2 Q2, 2026-11-19: "b and make it a
+        transparent overlay"): a semi-transparent overlay above the map
+        (window.ocw.hudMap()), × collapses it to the button, the button
+        opens it again. Screenshots -devices-expanded, -devices-collapsed.
+        The collapse once a device connects: test-web-ble.py."""
+        self.pump(0.7)
+        st, js, m = self.devices_panel_state(), self.devices_js(), self.hud_map()
+        self.check("devices: expanded at the start (no device yet)",
+                   st.get("visible") and not st.get("show_button") and js.get("expanded"), (st, js))
+        alpha = 1.0
+        bg = js.get("background", "")
+        if bg.startswith("rgba("):
+            alpha = float(bg[5:-1].split(",")[3])
+        self.check("devices: a transparent overlay (the ride shows through)", 0.0 < alpha <= 0.4, bg)
+        through = self.cdp.eval("getComputedStyle(document.getElementById('ocw-devices')).pointerEvents")
+        self.check("devices: clicks beside its buttons reach the ride", through == "none", through)
+        if m.get("shown") and m.get("rect"):
+            self.check("devices: above the navigation map", st["box"][3] <= m["rect"][1] + 0.5,
+                       (st["box"], m["rect"]))
+        self.shot("devices-expanded")
+        self.click("#ocw-devices-hide")
+        st, js = self.devices_panel_state(), self.devices_js()
+        self.check("devices: × collapses it to the button", not st.get("visible") and st.get("show_button")
+                   and js.get("collapsed"), (st, js))
+        self.shot("devices-collapsed")
+        self.click("#ocw-devices-show")
+        st = self.devices_panel_state()
+        self.check("devices: the button opens it again", st.get("visible") and not st.get("show_button"), st)
+        self.cdp.eval("document.getElementById('ocw-canvas').focus()")
+
+    def workout_map_part(self):
+        """Spec 3.2 Q1: a workout beside the navigation map – the workout
+        panel in the left column, the map keeps its place in the lower
+        right, neither over the other. Screenshot -workout-map."""
+        before = self.hud_map()
+        self.console("workout start --example sweet-spot")
+        m = self.wait_map(lambda m: m.get("workout"), timeout=5.0)
+        w, r = m.get("workout"), m.get("rect")
+        self.check("workout: the panel is shown (window.ocw.hudMap().workout)", bool(w), m)
+        if w:
+            self.check("workout: in the left column, under the top panel",
+                       abs(w[0] - 12.0) < 1.0 and w[1] > 40.0, w)
+        if w and r:
+            apart = w[0] + w[2] <= r[0] or r[0] + r[2] <= w[0] or w[1] + w[3] <= r[1] or r[1] + r[3] <= w[1]
+            self.check("workout: the map and the workout panel do not overlap", apart, (w, r))
+        self.check("workout: the map keeps its place and size",
+                   m.get("shown") and m.get("rect") == before.get("rect"), (before.get("rect"), m.get("rect")))
+        self.pump(1.5)
+        self.shot("workout-map")
+        self.console("workout stop")
+        m = self.wait_map(lambda m: not m.get("workout"), timeout=5.0)
+        self.check("workout: the panel goes with the workout", not m.get("workout"), m.get("workout"))
+
     def page_downloads(self):
         return self.cdp.eval("JSON.stringify(window.ocwDownloads || [])")
 
@@ -406,6 +490,16 @@ class UiTest:
         self.key("i")
         hidden = self.wait_god(lambda g: not g.get("panel"), timeout=3.0)
         self.check("unicorn: I hides the inspection", not hidden.get("panel"), hidden.get("panel"))
+        # Spec 3.2 Q7: the navigation map shows in flight, north-up and
+        # centred on the unicorn.
+        m = self.wait_map(lambda m: m.get("shown") and m.get("flight"), timeout=3.0)
+        pos = self.god().get("pos") or [0, 0, 0]
+        c = m.get("centre") or [1e9, 1e9]
+        self.check("unicorn: the map shows in flight, centred on the unicorn",
+                   m.get("shown") and m.get("flight") and abs(c[0] - pos[0]) < 30 and abs(c[1] - pos[2]) < 30,
+                   (m.get("shown"), m.get("flight"), c, pos, m.get("banner")))
+        self.check("unicorn: the map's banner gives the height and the speed",
+                   " up " in (m.get("banner") or "") and "heading" in (m.get("banner") or ""), m.get("banner"))
         self.shot("unicorn-flight")
         self.key("i")
         g = self.wait_god(lambda g: g.get("panel") and g.get("crosshair"), timeout=3.0)
@@ -540,6 +634,9 @@ class UiTest:
         self.close_menu()
         # Touch steering (spec §3.2.3) on the fresh ride.
         self.touch_part()
+        # The Devices panel (spec 3.2 Q2) and a workout beside the map (Q1).
+        self.devices_part()
+        self.workout_map_part()
 
         # The top page by keyboard.
         self.key("Escape")
@@ -731,6 +828,18 @@ class UiTest:
         m = self.wait_menu(lambda m: m.get("title") == "Open Cycling World")
         self.check("gamepad: B goes back", m.get("title") == "Open Cycling World", m.get("title"))
         self.close_menu()
+        # Spec 3.2 Q6: D-pad down in the ride steps the navigation map's
+        # zoom (auto → 1 → 2 …), as Z does.
+        self.pump(0.3)
+        z0 = self.hud_map()
+        press("dpad_down")
+        z1 = self.wait_map(lambda m: not m.get("auto"), timeout=3.0)
+        press("dpad_down")
+        z2 = self.wait_map(lambda m: m.get("level") == 2 and not m.get("auto"), timeout=3.0)
+        self.check("gamepad: D-pad down steps the map zoom (auto → 1 → 2)",
+                   z0.get("auto") and not z1.get("auto") and z1.get("level") == 1 and z2.get("level") == 2,
+                   (z0.get("auto"), z0.get("level"), z1.get("auto"), z1.get("level"), z2.get("level")))
+        self.console("set display.map_zoom auto")
         self.pump(0.7)
         st = self.devices_panel_state()
         self.check("page: the Devices panel is back (its buttons open the chooser) once the menu closes",

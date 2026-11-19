@@ -70,9 +70,14 @@ impl Plugin for NaviMapPlugin {
         app.add_plugins(UiMaterialPlugin::<NaviMapMaterial>::default());
         add_logic(app);
         app.add_systems(Startup, spawn_device)
-            .add_systems(Update, (fit_device, update_map).chain());
+            .add_systems(Update, (fit_device.in_set(MapFitSet), update_map).chain());
     }
 }
+
+/// The map's layout this frame (`fit_device`): the workout panel is
+/// placed after it, clear of the map (spec 3.2 Q1).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MapFitSet;
 
 /// The resources and the settings' side, without the drawing (headless
 /// tests with `MinimalPlugins`).
@@ -122,10 +127,16 @@ pub struct NaviMapInfo {
     pub tiles_drawn: u64,
     /// The map screen's size (UI px).
     pub map: [f32; 2],
+    /// Unicorn flight: north-up, centred on the unicorn (spec 3.2 Q7).
+    pub flight: bool,
+    /// The point the map is drawn round (package metres, x z): the rider
+    /// or the unicorn.
+    pub centre: [f64; 2],
 }
 
 /// Marks a HUD node the map keeps clear of (the top panel, the top-right
-/// column, the event panel, the workout panel, the touch chevrons).
+/// column, the event panel, the touch chevrons). The workout panel is not
+/// one: it keeps clear of the map instead (spec 3.2 Q1).
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct MapAvoid;
 
@@ -173,15 +184,15 @@ pub fn bezel_extra() -> Vec2 {
 /// Fits the device into the lower right corner of a window of `window`
 /// UI px (the window's logical size over the HUD scale): right of the
 /// junction fan (`fan`, always kept free) and of the elevation profile
-/// (`left_column`: its box), above `below` (the workout panel, when
-/// shown: the map stacks on it) and below every box of `above` that
-/// shares its column (top panel, top-right column, event panel, touch
-/// chevrons). `None`: no room for the least map (hidden).
+/// (`left_column`: its box) and below every box of `above` that shares
+/// its column (top panel, top-right column, event panel, touch chevrons).
+/// The workout panel no longer shares the corner (spec 3.2 Q1: it moved
+/// to the left column, [`crate::workout::fit_workout`]). `None`: no room
+/// for the least map (hidden).
 pub fn fit_map(
     window: Vec2,
     fan: Rect,
     left_column: Option<Rect>,
-    below: Option<Rect>,
     above: &[Rect],
 ) -> Option<MapFit> {
     let extra = bezel_extra();
@@ -190,10 +201,7 @@ pub fn fit_map(
     if let Some(l) = left_column {
         left_limit = left_limit.max(l.max.x + GAP_PX);
     }
-    let bottom = match below {
-        Some(b) => b.min.y - GAP_PX,
-        None => window.y - BOTTOM_PX,
-    };
+    let bottom = window.y - BOTTOM_PX;
     // The widest map whose column is clear of the boxes above (a box
     // that no longer shares a narrower column stops counting).
     let mut w = (right - left_limit - extra.x).min(MAP_W).floor();
@@ -593,7 +601,6 @@ fn fit_device(
         With<MapAvoid>,
     >,
     profile: Query<(&ComputedNode, &UiGlobalTransform, &Node), With<crate::hud::ProfilePanel>>,
-    workout: Query<(&ComputedNode, &UiGlobalTransform, &Node), With<crate::workout::Panel>>,
     mut device: Query<
         &mut Node,
         (
@@ -601,7 +608,6 @@ fn fit_device(
             Without<Screen>,
             Without<MapAvoid>,
             Without<crate::hud::ProfilePanel>,
-            Without<crate::workout::Panel>,
         ),
     >,
     mut screen: Query<
@@ -611,7 +617,6 @@ fn fit_device(
             Without<Device>,
             Without<MapAvoid>,
             Without<crate::hud::ProfilePanel>,
-            Without<crate::workout::Panel>,
         ),
     >,
     show: Res<ShowMap>,
@@ -632,8 +637,8 @@ fn fit_device(
         Rect::from_corners(centre - half, centre + half)
     };
     let shown = |n: &Node, c: &ComputedNode| n.display != Display::None && c.size().x > 0.0;
-    // The profile and workout queries read Node too: disjoint from the
-    // device's by their markers.
+    // The profile query reads Node too: disjoint from the device's by
+    // its marker.
     let above: Vec<Rect> = avoid
         .iter()
         .filter(|(c, _, v, n)| v.get() && shown(n, c))
@@ -644,16 +649,9 @@ fn fit_device(
         .iter()
         .find(|(c, _, n)| shown(n, c))
         .map(|(c, t, _)| ui_rect(c, t));
-    let below = workout
-        .iter()
-        .find(|(c, _, n)| shown(n, c))
-        .map(|(c, t, _)| ui_rect(c, t));
-    let riding = view
-        .as_ref()
-        .is_some_and(|v| v.local().is_some() && v.flight.is_none());
-    let want = show.0 && hud.is_none_or(|h| h.0) && riding;
+    let want = show.0 && hud.is_none_or(|h| h.0) && view.as_deref().is_some_and(map_wanted);
     let fit = want
-        .then(|| fit_map(win, fan_rect(win), left, below, &above))
+        .then(|| fit_map(win, fan_rect(win), left, &above))
         .flatten();
     let Ok(mut d) = device.single_mut() else {
         return;
@@ -745,6 +743,9 @@ struct Cache {
     zoom: AutoZoom,
     daylight: Daylight,
     heading: Option<f64>,
+    /// The arrow's place (share of the map's height), eased between
+    /// riding (0.7) and flight (0.5).
+    anchor_v: Option<f32>,
     mpp: f64,
     turn_key: Option<i32>,
     arrow_shade: Option<Shade>,
@@ -782,14 +783,57 @@ fn source_of(world: Option<&crate::package::PackageWorld>) -> (Option<SourceKey>
     }
 }
 
-/// The local rider: position (x, z), the road's bearing and the rider's.
-fn rider_pose(view: &RideView) -> Option<([f64; 2], f64, f64)> {
+/// Whether the map is shown for this view: with a local rider – riding,
+/// and in Unicorn mode's flight too (spec 3.2 Q7, decided 2026-11-19:
+/// "show the map centred on the unicorn"); not in the studio (no rider).
+pub fn map_wanted(view: &RideView) -> bool {
+    view.local().is_some()
+}
+
+/// Where the map is and which way it looks.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MapPose {
+    /// The map's centre point: the rider or the unicorn (x, z).
+    pub at: [f64; 2],
+    /// The map's up (compass bearing, rad) it turns to: the road's
+    /// direction while riding, north (0) in flight.
+    pub up: f64,
+    /// The arrow's bearing (rad): the rider's or the unicorn's heading.
+    pub arrow: f64,
+    /// Where the arrow sits (share of the map's size).
+    pub anchor: [f32; 2],
+    pub flight: bool,
+}
+
+/// The map's pose: heading-up on the local rider (lower third), or in
+/// Unicorn flight north-up, centred on the unicorn (spec 3.2 Q7: the
+/// unicorn banks, circles and looks around freely, so a heading-up map
+/// would spin with every turn; north-up reads like a map of the land
+/// below, and the arrow shows where it flies).
+pub fn map_pose(view: &RideView) -> Option<MapPose> {
+    if let Some(f) = &view.flight {
+        // The flight's yaw is counter-clockwise from north, a bearing
+        // clockwise (`ocw_sim::god`: forward = (−sin yaw, −cos yaw)).
+        return Some(MapPose {
+            at: [f.pos[0], f.pos[2]],
+            up: 0.0,
+            arrow: -f.yaw,
+            anchor: ocw_map::view::FLIGHT_ANCHOR,
+            flight: true,
+        });
+    }
     let local = view.local()?;
     let track = view.track(local.id);
     let s = track.sample(local.state.distance);
     let p = s.offset_position(local.state.lateral_offset);
     let road = bearing(s.direction);
-    Some(([p[0], p[2]], road, road + local.state.heading))
+    Some(MapPose {
+        at: [p[0], p[2]],
+        up: road,
+        arrow: road + local.state.heading,
+        anchor: ocw_map::view::RIDER_ANCHOR,
+        flight: false,
+    })
 }
 
 /// The route layer's lines now and their key (rebuilt when it changes).
@@ -908,9 +952,10 @@ fn update_map(
         return;
     };
     let cache = &mut *cache;
-    let Some((rider, road_bearing, rider_bearing)) = rider_pose(&view) else {
+    let Some(pose) = map_pose(&view) else {
         return;
     };
+    let (rider, rider_bearing) = (pose.at, pose.arrow);
     let Some(local) = view.local() else { return };
     let dt = time.delta_secs_f64();
     let size = Vec2::new(info.map[0].max(1.0), info.map[1].max(1.0));
@@ -942,15 +987,34 @@ fn update_map(
         .expect("set above");
     // Heading, zoom, look.
     let heading = match cache.heading {
-        Some(h) => smooth_heading(h, road_bearing, dt, 0.45),
-        None => road_bearing,
+        Some(h) => smooth_heading(h, pose.up, dt, 0.45),
+        None => pose.up,
     };
     cache.heading = Some(heading);
-    let ahead_px = f64::from(size.y) * f64::from(ocw_map::view::RIDER_ANCHOR[1]);
+    let anchor_v = match cache.anchor_v {
+        Some(a) => {
+            let k = 1.0 - (-(dt as f32) / 0.35).exp();
+            let v = a + (pose.anchor[1] - a) * k;
+            if (v - pose.anchor[1]).abs() < 1e-3 {
+                pose.anchor[1]
+            } else {
+                v
+            }
+        }
+        None => pose.anchor[1],
+    };
+    cache.anchor_v = Some(anchor_v);
+    let anchor_uv = [pose.anchor[0], anchor_v];
+    let ahead_px = f64::from(size.y) * f64::from(anchor_v);
     let junction_m = view.junction.as_ref().map(|j| j.distance_m);
-    let auto_level = cache
-        .zoom
-        .update(local.state.speed, junction_m, ahead_px, dt);
+    let auto_level = match &view.flight {
+        Some(f) => cache
+            .zoom
+            .update_flight(f.speed_mps, f.height_m, ahead_px, dt),
+        None => cache
+            .zoom
+            .update(local.state.speed, junction_m, ahead_px, dt),
+    };
     let level = match zoom_mode.0 {
         ZoomMode::Auto => auto_level,
         ZoomMode::Fixed(i) => i.min(ZOOM_LEVELS.len() - 1),
@@ -970,6 +1034,7 @@ fn update_map(
         heading,
         m_per_px: cache.mpp,
         size: [size.x, size.y],
+        anchor_uv,
     };
     let d4 = density4(
         windows.single().ok(),
@@ -1136,8 +1201,8 @@ fn update_map(
         ),
         axes: Vec4::new(ax[0] as f32, ax[1] as f32, ay[0] as f32, ay[1] as f32),
         anchor: Vec4::new(
-            ocw_map::view::RIDER_ANCHOR[0],
-            ocw_map::view::RIDER_ANCHOR[1],
+            anchor_uv[0],
+            anchor_uv[1],
             (lo[0] - rt[0]) as f32,
             (lo[1] - rt[1]) as f32,
         ),
@@ -1292,8 +1357,11 @@ fn update_map(
     if let Ok(mut t) = texts.p3().single_mut() {
         set(&mut t, &zoom_label);
     }
-    // The banner: the next turn.
-    let b = make_banner(&view, imperial);
+    // The banner: the next turn; in flight the height and the speed.
+    let b = match &view.flight {
+        Some(f) => flight_banner(f, imperial),
+        None => make_banner(&view, imperial),
+    };
     if let Ok(mut t) = texts.p0().single_mut() {
         set(&mut t, b.distance.as_deref().unwrap_or(""));
     }
@@ -1321,11 +1389,46 @@ fn update_map(
     }
     let text = b.text();
     let auto = zoom_mode.0 == ZoomMode::Auto;
-    if info.banner != text || info.level != level + 1 || info.auto != auto || info.shade != shade {
+    let flight = pose.flight;
+    if info.banner != text
+        || info.level != level + 1
+        || info.auto != auto
+        || info.shade != shade
+        || info.flight != flight
+        || info.centre != rider
+    {
         info.banner = text;
         info.level = level + 1;
         info.auto = auto;
         info.shade = shade;
+        info.flight = flight;
+        info.centre = rider;
+    }
+}
+
+/// The banner in Unicorn flight: the height above the ground and the
+/// speed with the compass heading ("120 m up", "54 km/h, heading 080 E").
+pub fn flight_banner(f: &crate::FlightView, imperial: bool) -> Banner {
+    let units = if imperial {
+        Units::Imperial
+    } else {
+        Units::Metric
+    };
+    let h = f.height_m.max(0.0);
+    let height = if imperial {
+        format!("{:.0} ft up", h / ocw_map::style::METRES_PER_FOOT)
+    } else {
+        format!("{h:.0} m up")
+    };
+    let (speed, unit) = units.speed(f.speed_mps * 3.6);
+    let deg = ocw_sim::god::heading_deg(f.yaw);
+    Banner {
+        angle_deg: None,
+        distance: Some(height),
+        street: format!(
+            "{speed:.0} {unit}, heading {deg:03.0} {}",
+            crate::hud::compass(deg)
+        ),
     }
 }
 
@@ -1442,7 +1545,7 @@ mod tests {
                 let fan = fan_rect(win);
                 let (profile, voice, above) = hud_boxes(win.x, win.y);
                 let what = format!("{pw}×{ph} at {scale}");
-                let fit = fit_map(win, fan, Some(profile), None, &above)
+                let fit = fit_map(win, fan, Some(profile), &above)
                     .unwrap_or_else(|| panic!("{what}: room for the map"));
                 let r = fit.rect;
                 for (name, o) in [("fan", fan), ("profile", profile), ("voice", voice)]
@@ -1465,22 +1568,11 @@ mod tests {
                 if pw >= 1920.0 && scale <= 1.25 {
                     assert_eq!(fit.map.x, MAP_W, "{what}: full size");
                 }
-                // With a workout running the map stacks on its panel.
-                let workout = Rect::new(
-                    win.x - 12.0 - 320.0,
-                    win.y - 24.0 - 150.0,
-                    win.x - 12.0,
-                    win.y - 24.0,
-                );
-                if let Some(f) = fit_map(win, fan, Some(profile), Some(workout), &above) {
-                    assert!(f.rect.intersect(workout).is_empty(), "{what}: workout");
-                    assert!(above.iter().all(|a| f.rect.intersect(*a).is_empty()));
-                }
             }
         }
         // No room: hidden rather than overlapping.
         let win = Vec2::new(400.0, 300.0);
-        assert!(fit_map(win, fan_rect(win), None, None, &[]).is_none());
+        assert!(fit_map(win, fan_rect(win), None, &[]).is_none());
     }
 
     fn local_rider(distance: f64) -> crate::RiderView {
@@ -1544,6 +1636,61 @@ mod tests {
         assert_eq!(make_banner(&view, false).distance, None);
         view.junction = None;
         assert_eq!(make_banner(&view, false).angle_deg, None);
+    }
+
+    /// Spec 3.2 Q7 (2026-11-19: "show the map centred on the unicorn"):
+    /// in Unicorn flight the map is shown, north-up, centred on the
+    /// unicorn with its arrow turned to where it flies; riding, it is
+    /// heading-up on the rider in the lower third. Without a local rider
+    /// (the studio) it stays hidden.
+    #[test]
+    fn the_map_shows_in_flight_centred_on_the_unicorn() {
+        let mut view = RideView::new(Route::test_loop());
+        assert!(!map_wanted(&view), "no rider");
+        view.riders.push(local_rider(300.0));
+        assert!(map_wanted(&view));
+        let ride = map_pose(&view).unwrap();
+        assert!(!ride.flight);
+        assert_eq!(ride.anchor, ocw_map::view::RIDER_ANCHOR);
+        let road = bearing(view.route.sample(300.0).direction);
+        assert!((ride.up - road).abs() < 1e-9);
+        view.flight = Some(crate::FlightView {
+            pos: [120.0, 640.0, -45.0],
+            yaw: std::f64::consts::FRAC_PI_2, // facing west
+            speed_mps: 15.0,
+            height_m: 90.0,
+            ..default()
+        });
+        assert!(map_wanted(&view), "shown in flight");
+        let fly = map_pose(&view).unwrap();
+        assert!(fly.flight);
+        assert_eq!(fly.at, [120.0, -45.0], "centred on the unicorn");
+        assert_eq!(fly.anchor, ocw_map::view::FLIGHT_ANCHOR);
+        assert_eq!(fly.up, 0.0, "north-up");
+        // West is a bearing of 270°: the arrow points left on the map.
+        let west = ocw_map::view::direction(fly.arrow);
+        assert!(
+            (west[0] + 1.0).abs() < 1e-9 && west[1].abs() < 1e-9,
+            "{west:?}"
+        );
+        // The projection: the unicorn in the middle of a 240 × 264 map.
+        let v = NaviView {
+            rider: fly.at,
+            heading: fly.up,
+            m_per_px: 2.0,
+            size: [240.0, 264.0],
+            anchor_uv: fly.anchor,
+        };
+        assert_eq!(v.to_screen(fly.at), [120.0, 132.0]);
+        let b = flight_banner(view.flight.as_ref().unwrap(), false);
+        assert_eq!(b.distance.as_deref(), Some("90 m up"));
+        assert_eq!(b.street, "54 km/h, heading 270 W");
+        assert_eq!(
+            flight_banner(view.flight.as_ref().unwrap(), true)
+                .distance
+                .as_deref(),
+            Some("295 ft up")
+        );
     }
 
     /// The route layer: the route around the rider ahead and behind; free
