@@ -255,14 +255,6 @@ pub const SETTINGS: &[SettingDef] = &[
         apply: Apply::Command("hud.units {}"),
     },
     SettingDef {
-        key: "display.damage",
-        kind: Kind::Bool,
-        default: "on",
-        description: "Show the damage indicator in the HUD (with ride.damage on; the effects stay when hidden)",
-        scope: Scope::Live,
-        apply: Apply::Command("hud.damage {}"),
-    },
-    SettingDef {
         key: "display.map",
         kind: Kind::Bool,
         default: "on",
@@ -493,7 +485,7 @@ pub const SETTINGS: &[SettingDef] = &[
         key: "ride.damage",
         kind: Kind::Bool,
         default: "off",
-        description: "Damage: hits hurt the rider and damage the bike (only with collisions on; it carries over to the next ride, repairs in the workshop)",
+        description: "Damage: hits hurt the rider and damage the bike (only with collisions on; it carries over to the next ride, repairs in the workshop); while on, the HUD always shows the rider's health and the bike's condition",
         scope: Scope::Live,
         apply: Apply::Command("ride.damage {}"),
     },
@@ -1716,6 +1708,34 @@ master = 80
                 .contains("unknown setting")
         );
         assert!(s.get("no.such").is_err());
+    }
+
+    /// `display.damage` is gone (the user, 2026-11-19: the damage widget
+    /// always shows while damage is on): an old value in the file is an
+    /// unknown setting, noted and kept, and runs nothing.
+    #[test]
+    fn the_damage_indicator_switch_is_gone() {
+        assert!(def("display.damage").is_none());
+        assert!(
+            SETTINGS
+                .iter()
+                .all(|d| !matches!(d.apply, Apply::Command(c) if c.starts_with("hud.damage")))
+        );
+        let (mut s, warnings) =
+            Settings::parse("[display]\ndamage = false\n[ride]\ndamage = true\n").unwrap();
+        assert_eq!(
+            warnings,
+            ["unknown setting display.damage (kept in the file)"]
+        );
+        assert!(s.get("display.damage").is_err());
+        assert!(s.set("display.damage", "on").is_err());
+        assert!(
+            s.startup_commands()
+                .iter()
+                .all(|c| !c.contains("hud.damage"))
+        );
+        assert!(s.to_toml().contains("damage = false"), "kept in the file");
+        assert_eq!(s.get("ride.damage"), Ok(Value::Bool(true)));
     }
 
     #[test]

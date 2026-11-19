@@ -124,8 +124,9 @@ pub enum Page {
     /// World → Time → Season (S9b, decision Q11): the seasons of the
     /// place as date jumps.
     Season,
-    /// Controls → Riding aids (spec §14 Phase 12C / 12D): the proximity
-    /// cue and arrow, the "last moment" warning, the camera shake.
+    /// Controls → Bots and riding aids (spec §14 Phase 12C / 12D, 12G):
+    /// chaotic bots, the proximity cue and arrow, the "last moment"
+    /// warning, the camera shake.
     RidingAids,
     /// Settings → Account → Folders (desktop; spec §2.8.1 *Where an S
     /// recording is written*, v4.80 / v4.82): the activities folder – the
@@ -279,7 +280,7 @@ impl Page {
             Self::Calendar(_) => "Calendar",
             Self::CalendarDates(_) => "Calendar: dates",
             Self::Season => "Season",
-            Self::RidingAids => "Riding aids",
+            Self::RidingAids => "Bots and riding aids",
             Self::Folders => "Folders",
             Self::Graphics => "Graphics",
             Self::ViewDistance => "Render distance",
@@ -561,7 +562,7 @@ impl Page {
                 "Everything OCW saves: Strava recordings (S) in their own folders, photos by day.",
             ],
             Self::RidingAids => &[
-                "Aids that never steer: an arrow to a rider close by, a warning before a hit or a slide. Shake: off for comfort.",
+                "Chaotic bots make mistakes that can cause crashes. The aids never steer: an arrow to a rider close by, a warning before a hit or a slide.",
             ],
             Self::RiderList => {
                 &["The unicorn: flying in unicorn mode. The dot: hurt, or the bike damaged."]
@@ -915,10 +916,12 @@ pub fn setting_row(settings: &Settings, key: &str, label: &str) -> Row {
     }
 }
 
-/// The Riding aids row's value: which aids are on ("warning, shake").
+/// The Bots and riding aids row's value: what is on ("chaotic bots,
+/// warning, shake").
 fn aids_summary(settings: &Settings) -> String {
     let on = |k: &str| settings.get(k).ok().and_then(|v| v.as_bool()) == Some(true);
     let names: Vec<&str> = [
+        ("ride.chaotic_bots", "chaotic bots"),
         ("ride.proximity_cue", "arrow"),
         ("ride.hit_warning", "warning"),
         ("display.camera_shake", "shake"),
@@ -1317,12 +1320,15 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
                 )),
                 Page::UnicornControls,
             ),
-            // Collisions (spec §14 Phase 12A, 12D).
+            // Collisions and damage (spec §14 Phase 12A, 12E; the user,
+            // 2026-11-19: damage in the Settings section, beside
+            // collisions, which it needs).
             setting_row(settings, "ride.collisions", "Collisions"),
-            setting_row(settings, "ride.chaotic_bots", "Chaotic bots"),
-            // The aids have their own page (the ten-foot rule: six rows).
+            setting_row(settings, "ride.damage", "Damage"),
+            // The bots and the aids have their own page (the ten-foot
+            // rule: six rows).
             Row {
-                label: "Riding aids".into(),
+                label: "Bots and riding aids".into(),
                 value: Some(aids_summary(settings)),
                 left: None,
                 right: None,
@@ -1386,6 +1392,7 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         ],
         Page::Folders => folder_rows(settings),
         Page::RidingAids => vec![
+            setting_row(settings, "ride.chaotic_bots", "Chaotic bots"),
             setting_row(settings, "ride.proximity_cue", "Proximity arrow and bell"),
             setting_row(settings, "ride.hit_warning", "Last-moment warning"),
             setting_row(settings, "display.camera_shake", "Camera shake"),
@@ -1404,10 +1411,6 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             // Scan, connect, forget (spec §3.2.1 *Devices*; the value
             // comes from the app's devices, `ocw_ui::menu`).
             open_row("Devices", None, Page::Devices),
-            // Damage (spec §14 Phase 12E; the Controls and Display pages
-            // are full).
-            setting_row(settings, "ride.damage", "Damage"),
-            setting_row(settings, "display.damage", "Damage indicator"),
         ],
         Page::Strava => vec![
             // The simple way, for every rider (spec §2.8.1 *Simple

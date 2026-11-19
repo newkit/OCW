@@ -190,6 +190,35 @@ class UiTest:
         st = self.wait_console(lambda s: not s.get("open"))
         self.check("console: Esc closes it", not st.get("open"), st.get("open"))
 
+    def damage_part(self):
+        """The damage widget (spec 14 Phase 12F; the user, 2026-11-19): with
+        ride.damage on the HUD always shows the rider's health and the
+        bike's condition, at 100 % before any hit; staged damage (a buckled
+        rear wheel, a rear puncture, a bent bar) lights those parts on the
+        bike icon with their labels."""
+        def log():
+            return json.dumps(self.console_state().get("log") or [])
+        # Earlier parts of this test may have left damage: start fresh.
+        self.console("ride.damage on")
+        self.console("dev.damage reset")
+        self.pump(1.5)
+        self.console("ride.damage")
+        self.pump(0.5)
+        self.check("damage: on, rider and bike at 100 % before any hit",
+                   "rider 100 %" in log() and "bike 100 %" in log(), log()[-300:])
+        self.shot("damage-fresh")
+        for line in ("dev.damage rear_wheel 22", "dev.damage puncture_rear", "dev.damage cockpit 60"):
+            self.console(line)
+        self.pump(1.5)
+        self.console("ride.damage")
+        self.pump(0.5)
+        self.check("damage: the staged parts are listed (buckled rear wheel, puncture)",
+                   "rear wheel buckled" in log() and "puncture" in log(), log()[-400:])
+        self.shot("damage-crash")
+        self.console("dev.damage reset")
+        self.console("ride.damage off")
+        self.pump(0.5)
+
     def gps_line(self):
         """The HUD's GPS line on a route with a geographic origin (spec 3.40)."""
         st = self.wait_console(lambda s: s.get("gps"))
@@ -823,6 +852,9 @@ class UiTest:
         self.check("video: a WebM download named with the time",
                    d is not None and d["name"].startswith("ocw-20") and size > 1000,
                    (rec_s, d, size))
+
+        # The damage widget (spec 14 Phase 12F).
+        self.damage_part()
 
         # Unicorn mode (Phase 13 G5).
         self.god_part()

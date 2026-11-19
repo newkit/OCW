@@ -1284,7 +1284,7 @@ client's first 2 s after joining. `ride.chaotic_bots on` lets bots make
 mistakes. `dev.bump` / `dev.crash` stage one on the local server.
 
 **Riding aids and the camera** (spec §14 Phase 12C / 12D; *Settings →
-Controls → Riding aids*). None of these aids ever steers for you:
+Controls → Bots and riding aids*). None of these aids ever steers for you:
 - **The "last moment" warning** (`ride.hit_warning`, on): a flashing amber
   triangle with an arrow towards the hit, about a second before a
   predicted collision, and when the tyres start to slide on a wet road.
@@ -1339,9 +1339,11 @@ without neutral service a DNF). Injury levels: *bruised* (no effect), *hurt*
 injured* (a 60 s medical stop, then at most 50 % power; DNF with the
 organiser's rule). Only the **virtual** rider is affected – the trainer and
 the hearts see your real power. Easy riding (below half of 2.5 W/kg) heals
-1 % a minute. The HUD's **damage widget** (beside the bike computer;
-`hud.damage off` / Settings → Display hides it) shows a rider and a bike
-silhouette with bars, the level words with an icon (● ▲ ◆ ■, never colour
+1 % a minute. While damage is on, the HUD's **damage widget** (under the
+bike computer) is **always shown** – also at 100 % before any hit; it hides
+only with damage off (*Settings → Controls → Damage*) or the whole HUD off.
+It shows a small rider and a side-view bicycle (wheels, tyres, frame, chain,
+bar, saddle) with bars, the level words with an icon (● ▲ ◆ ■, never colour
 alone), the damaged parts lit on the bike, labels ("rear wheel buckled",
 "puncture: stop to repair") and after a hit the loss for 2 s ("−12 %
 bike"); the results show a damage dot and the crashes per rider. The
@@ -1946,9 +1948,9 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `ride.random_start` | on / off (on): random start point (`--random-start`) | next start |
 | `ride.record` | on / off (on): save rides as FIT (`--record`) | next start |
 | `ride.collisions` | on / off (on): rider collisions – soft bumps and crashes (group rides soft bumps only; in a shared ride the host decides, `ocw-server --collisions`); Settings → Controls | at once |
-| `ride.chaotic_bots` | on / off (off): bots that sometimes make mistakes (late reactions, wheel touches) that can cause crashes | at once |
-| `ride.proximity_cue` | on / off (off): a soft bell and a HUD arrow pointing at someone within 1 m beside or 2 m in front or behind (an aid; it never steers); Settings → Controls → Riding aids | at once |
-| `ride.hit_warning` | on / off (on): the "last moment" warning – an amber triangle about a second before a predicted hit and when the tyres slide on a wet road (it never steers); Settings → Controls → Riding aids | at once |
+| `ride.chaotic_bots` | on / off (off): bots that sometimes make mistakes (late reactions, wheel touches) that can cause crashes; Settings → Controls → Bots and riding aids | at once |
+| `ride.proximity_cue` | on / off (off): a soft bell and a HUD arrow pointing at someone within 1 m beside or 2 m in front or behind (an aid; it never steers); Settings → Controls → Bots and riding aids | at once |
+| `ride.hit_warning` | on / off (on): the "last moment" warning – an amber triangle about a second before a predicted hit and when the tyres slide on a wet road (it never steers); Settings → Controls → Bots and riding aids | at once |
 | `display.camera_shake` | on / off (on): the chase camera shakes briefly after a crash or a hard bump (off for motion comfort; console `camera.shake`) | at once |
 | `display.ui_scale` | 100 to 200 (100): the HUD's size in % (console `ui.scale`); Settings → Display → Accessibility | at once |
 | `display.palette` | standard / colour-safe (standard): status colours for red-green colour blindness (console `ui.palette`) | at once |
@@ -1956,8 +1958,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `display.reduced_motion` | on / off (off): no camera shake, no flashing warnings (console `ui.motion`) | at once |
 | `controls.pad_confirm` | south / east (south): the gamepad's Confirm button in the menu; Back is the other | at once |
 | `keys.<action>`, `pad.<action>` | a key name (`A`, `Up`, `PageUp`, `F5`, `Num+`, `Shift+M`, `none`) / a pad button (`South`, `East`, `North`, `West`, `LB`, `RB`, `Select`, `L3`, `R3`, `DPadUp` …, `none`): the bindings (`bind` lists the actions) | at once |
-| `ride.damage` | on / off (off): damage – hits hurt the rider and damage the bike (only with collisions on; carried over to the next ride, repairs in the workshop; in a shared ride the host decides, `ocw-server --damage`); Settings → Controls | at once |
-| `display.damage` | on / off (on): the damage indicator in the HUD (console `hud.damage`; the effects stay when hidden) | at once |
+| `ride.damage` | on / off (off): damage – hits hurt the rider and damage the bike (only with collisions on; carried over to the next ride, repairs in the workshop; in a shared ride the host decides, `ocw-server --damage`); while on, the HUD always shows the rider's health and the bike's condition; Settings → Controls → Damage (the old `display.damage` switch is gone: a value left in `settings.toml` is reported as unknown and ignored) | at once |
 | `display.gps` | on / off (on): the GPS line in the HUD, bottom left (console `hud.gps`; world packages and route files only) | at once |
 | `weather.physics` | on / off (on): the weather changes the physics – wind, air density, wet and icy roads; the trainer gets the wind (in shared rides the host decides, in events the organiser); World → Weather → Custom | at once |
 | `audio.master` | 0 to 100 (80): master volume in %, scales every bus | at once |
@@ -2375,7 +2376,6 @@ you can run are offered (no *Dev* commands on a remote server).
 | `ride.crashes` | The collision rules in force, your crash state and the last crashes |
 | `ride.damage [on\|off]` | Damage on or off (spec §14 Phase 12E; the host decides in shared rides); without an argument: your rider's and bike's condition, the damaged parts |
 | `ride.repair` | Stop and mend a puncture now (30 s) instead of riding on slowly |
-| `hud.damage on\|off` | Show or hide the damage indicator |
 | `dev.damage rider\|PART PCT \| puncture_front \| puncture_rear \| chain \| reset` | *Dev:* stage damage for your rider (local server, `ride.damage on`) |
 | `dev.bump` | *Dev:* the nearest other rider bumps into you from the side (a soft bump) |
 | `dev.crash` | *Dev:* the nearest other rider cuts in front of you: a wheel touch, you fall (ragdoll, remount) |

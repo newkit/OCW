@@ -1849,6 +1849,34 @@ at = ["1=ride.damage on", "1.5=dev.damage rider 48", "1.6=dev.damage front_wheel
 shot = 9
 
 [[scene]]
+name = "k5-damage-widget-fresh"
+description = "The damage widget always on while damage is on (spec 14 Phase 12F, the user 2026-11-19): ride.damage on, no hit yet – rider and bike at 100 % \"fine\", the small side-view bicycle all grey, at 1280×720 and HUD 100 %"
+args = ["--route", "loop", "--bots", "0", "--power", "200", "--window", "1280x720"]
+at = ["1=ride.damage on"]
+shot = 6
+
+[[scene]]
+name = "k5-damage-widget-fresh-1080"
+description = "The damage widget at 100 % (spec 14 Phase 12F) at 1920×1080: rider and bike \"fine\", the bicycle icon grey"
+args = ["--route", "loop", "--bots", "0", "--power", "200", "--window", "1920x1080"]
+at = ["1=ride.damage on"]
+shot = 6
+
+[[scene]]
+name = "k5-damage-widget-crash"
+description = "The damage widget after a crash (spec 14 Phase 12F): a buckled rear wheel (its rim lit), a rear puncture (its tyre lit red), a bent bar and a hurt rider – each part lit on the bicycle icon, with the labels, at 1280×720"
+args = ["--route", "loop", "--bots", "0", "--power", "200", "--window", "1280x720"]
+at = ["1=ride.damage on", "1.5=dev.damage rider 55", "1.6=dev.damage rear_wheel 22", "1.7=dev.damage puncture_rear", "1.8=dev.damage cockpit 60"]
+shot = 6
+
+[[scene]]
+name = "k5-damage-widget-crash-1080"
+description = "The damage widget after a crash (spec 14 Phase 12F) at 1920×1080: buckled rear wheel, rear puncture, bent bar, a hurt rider"
+args = ["--route", "loop", "--bots", "0", "--power", "200", "--window", "1920x1080"]
+at = ["1=ride.damage on", "1.5=dev.damage rider 55", "1.6=dev.damage rear_wheel 22", "1.7=dev.damage puncture_rear", "1.8=dev.damage cockpit 60"]
+shot = 6
+
+[[scene]]
 name = "k4-workshop-repair"
 description = "Workshop repairs (spec §14 Phase 4 W6, Phase 12 Q6): the damaged stand bike's hotspots in their status colours, the condition card with each part's condition and repair price (ceil(price x (1 - condition) x 0.3) hearts) and Repair all; the wheels' dialog with Repair and Repair all"
 args = ["--route", "hills", "--bots", "3", "--power", "250"]
