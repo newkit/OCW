@@ -63,6 +63,14 @@ source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
 author = "Open Cycling World contributors"
 
 [[asset]]
+file = "creatures/unicorn-winged.glb"
+kind = "creature"
+generator = "ocw_assets::unicorn::model()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
 file = "flora/cactus-pear-paddle-a.glb"
 kind = "plant"
 species = "PricklyPear"
@@ -1806,6 +1814,166 @@ file = "wear/moustache-pencil.glb"
 kind = "wearable"
 anchor = "head"
 generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "moustache_pencil")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "workshop/bench-changing-wood.glb"
+kind = "workshop"
+generator = "ocw_assets::workshop::Piece::ChangingBench.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "workshop/bench-work-wood.glb"
+kind = "workshop"
+generator = "ocw_assets::workshop::Piece::Workbench.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "workshop/ceiling-segment.glb"
+kind = "workshop"
+generator = "ocw_assets::workshop::Piece::CeilingSegment.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "workshop/floor-joint-strip.glb"
+kind = "workshop"
+generator = "ocw_assets::workshop::Piece::FloorJoint.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "workshop/floor-segment.glb"
+kind = "workshop"
+generator = "ocw_assets::workshop::Piece::FloorSegment.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "workshop/hook-wall-bike.glb"
+kind = "workshop"
+generator = "ocw_assets::workshop::Piece::Hook.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "workshop/lamp-panel-ceiling.glb"
+kind = "workshop"
+generator = "ocw_assets::workshop::Piece::CeilingLamp.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "workshop/locker-double-steel.glb"
+kind = "workshop"
+generator = "ocw_assets::workshop::Piece::Locker.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "workshop/mat-rubber-work.glb"
+kind = "workshop"
+generator = "ocw_assets::workshop::Piece::WorkMat.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "workshop/mirror-wall-framed.glb"
+kind = "workshop"
+generator = "ocw_assets::workshop::Piece::Mirror.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "workshop/pump-floor-track.glb"
+kind = "workshop"
+generator = "ocw_assets::workshop::Piece::FloorPump.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "workshop/rail-hook-wood.glb"
+kind = "workshop"
+generator = "ocw_assets::workshop::Piece::HookRail.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "workshop/rail-kit-jersey.glb"
+kind = "workshop"
+generator = "ocw_assets::workshop::Piece::KitRail.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "workshop/shelf-parts-boxes.glb"
+kind = "workshop"
+generator = "ocw_assets::workshop::Piece::PartsShelf.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "workshop/skirting-board.glb"
+kind = "workshop"
+generator = "ocw_assets::workshop::Piece::Skirting.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "workshop/stand-repair-clamp.glb"
+kind = "workshop"
+generator = "ocw_assets::workshop::Piece::Stand.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "workshop/wall-dado-panel.glb"
+kind = "workshop"
+generator = "ocw_assets::workshop::Piece::WallDado.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "workshop/wall-segment.glb"
+kind = "workshop"
+generator = "ocw_assets::workshop::Piece::WallSegment.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "workshop/wall-tool-pegboard.glb"
+kind = "workshop"
+generator = "ocw_assets::workshop::Piece::Pegboard.model()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "workshop/window-sill-plant.glb"
+kind = "workshop"
+generator = "ocw_assets::workshop::Piece::Window.model()"
 license = "MIT OR Apache-2.0"
 source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
 author = "Open Cycling World contributors"

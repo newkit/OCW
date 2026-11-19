@@ -1,13 +1,16 @@
-//! The unicorn of god mode (spec §14 Phase 13C): our own low-poly model,
-//! made here in code (licensed like the code; no third-party asset, no
-//! brand character). A white body, a spiral golden horn, a rainbow mane
-//! and tail, large feathered wings like a pegasus, golden hooves; the
-//! rider's colour in the mane's first band (no saddle cloth).
+//! The unicorn of god mode (spec §14 Phase 13C): our own low-poly model
+//! (licensed like the code; no third-party asset, no brand character). A
+//! white body, a spiral golden horn, a rainbow mane and tail, large
+//! feathered wings like a pegasus, golden hooves; the rider's colour in the
+//! mane's first band (no saddle cloth).
 //!
-//! - The **model** ([`model`]) is a list of flat-shaded parts on a small
-//!   skeleton ([`skeleton`]): body, neck, head, four legs (hip and knee),
-//!   two wings (shoulder, wrist and three groups of primaries), eight mane
-//!   bands, eight tail strands – about 3k triangles.
+//! - The **model** is a file since spec §14 Phase 15 M4:
+//!   `creatures/unicorn-winged.glb` ([`file_model`], [`UnicornModel`]),
+//!   flat-shaded meshes on a small skeleton ([`skeleton`]) whose joints are
+//!   the file's nodes: body, neck, head, four legs (hip and knee), two wings
+//!   (shoulder, wrist and three groups of primaries), eight mane bands,
+//!   eight tail strands – about 3k triangles near, the far model under
+//!   `lod1` on the same joints.
 //! - The **animation** ([`AnimState::advance`], [`pose`]) is pure: a gallop
 //!   in the air whose rate follows the speed (legs tucked in when fast, a
 //!   gentle paddle and bob while hovering); a bird's wingbeat (spec §14
@@ -71,271 +74,16 @@ impl Default for UnicornTrail {
     }
 }
 
-/// The eight colours of the mane, the tail and the trail (sRGB).
-pub const RAINBOW: [u32; 8] = [
-    0xE53935, 0xFB8C00, 0xFDD835, 0x43A047, 0x00ACC1, 0x1E88E5, 0x5E35B1, 0xD81B60,
-];
+// The model's skeleton, paints and shapes live with its file
+// (`creatures/unicorn-winged.glb`, spec §14 Phase 15 M4): the renderer
+// reads the file and turns its joint nodes.
+pub use ocw_assets::unicorn::{
+    Joint, JointDef, PRIMARIES, PRIMARY_ROOT_Z, Paint, RAINBOW, STRANDS, Shape, WRIST_M, ellipsoid,
+    skeleton,
+};
 
 fn srgb(c: u32) -> Color {
     Color::srgb_u8((c >> 16) as u8, (c >> 8) as u8, c as u8)
-}
-
-/// A joint of the unicorn's skeleton.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Joint {
-    Body,
-    Neck,
-    Head,
-    /// Legs: 0 front left, 1 front right, 2 hind left, 3 hind right.
-    Hip(u8),
-    Knee(u8),
-    /// 0 left, 1 right: the shoulder (the arm) …
-    Wing(u8),
-    /// … the wrist (the hand, the outer wing) …
-    WingTip(u8),
-    /// … and the primaries on the hand, in [`PRIMARIES`] groups (side,
-    /// group from the wrist out), fanning open and closed.
-    Primary(u8, u8),
-    /// From the head down the neck.
-    Mane(u8),
-    Tail(u8),
-}
-
-/// A joint, its parent and where it sits in the parent's frame (m).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct JointDef {
-    pub joint: Joint,
-    pub parent: Option<Joint>,
-    pub pivot: Vec3,
-}
-
-/// Mane bands and tail strands.
-pub const STRANDS: u8 = 8;
-/// Groups of primaries on each hand.
-pub const PRIMARIES: u8 = 3;
-/// Where the wrist sits along the arm (m from the shoulder) …
-pub const WRIST_M: f32 = 0.78;
-/// … and the primaries' root behind it (m).
-pub const PRIMARY_ROOT_Z: f32 = 0.06;
-
-/// The skeleton, parents before children. The model looks along −z, +y
-/// up, +x to its right (Bevy's forward).
-pub fn skeleton() -> Vec<JointDef> {
-    let j = |joint, parent, pivot| JointDef {
-        joint,
-        parent,
-        pivot,
-    };
-    let mut out = vec![
-        j(Joint::Body, None, Vec3::ZERO),
-        j(Joint::Neck, Some(Joint::Body), Vec3::new(0.0, 0.2, -0.85)),
-        j(Joint::Head, Some(Joint::Neck), Vec3::new(0.0, 0.85, 0.0)),
-    ];
-    for leg in 0..4u8 {
-        let x = if leg % 2 == 0 { -0.24 } else { 0.24 };
-        let z = if leg < 2 { -0.66 } else { 0.62 };
-        out.push(j(Joint::Hip(leg), Some(Joint::Body), Vec3::new(x, -0.2, z)));
-        out.push(j(
-            Joint::Knee(leg),
-            Some(Joint::Hip(leg)),
-            Vec3::new(0.0, -0.55, 0.0),
-        ));
-    }
-    for side in 0..2u8 {
-        let x = if side == 0 { -0.3 } else { 0.3 };
-        out.push(j(
-            Joint::Wing(side),
-            Some(Joint::Body),
-            Vec3::new(x, 0.36, -0.42),
-        ));
-        let sx = if side == 0 { -1.0 } else { 1.0 };
-        out.push(j(
-            Joint::WingTip(side),
-            Some(Joint::Wing(side)),
-            Vec3::new(sx * WRIST_M, 0.0, 0.0),
-        ));
-        for k in 0..PRIMARIES {
-            out.push(j(
-                Joint::Primary(side, k),
-                Some(Joint::WingTip(side)),
-                Vec3::new(0.0, 0.0, PRIMARY_ROOT_Z),
-            ));
-        }
-    }
-    for i in 0..STRANDS {
-        let y = 0.78 - f32::from(i) * 0.095;
-        out.push(j(
-            Joint::Mane(i),
-            Some(Joint::Neck),
-            Vec3::new(0.0, y, 0.16),
-        ));
-        let x = (f32::from(i) - 3.5) * 0.025;
-        out.push(j(
-            Joint::Tail(i),
-            Some(Joint::Body),
-            Vec3::new(x, 0.22, 0.98),
-        ));
-    }
-    out
-}
-
-/// How a part is painted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Paint {
-    /// The white coat.
-    Coat,
-    /// Horn and hooves.
-    Gold,
-    Eye,
-    Muzzle,
-    /// The rider's colour: the mane's first band.
-    Rider,
-    /// A rainbow colour ([`RAINBOW`]).
-    Band(u8),
-    /// The wing feathers (pearly white).
-    Feather,
-}
-
-/// A triangle mesh (indexed), in the frame of its joint.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Shape {
-    pub positions: Vec<Vec3>,
-    pub indices: Vec<u32>,
-}
-
-impl Shape {
-    pub fn triangles(&self) -> usize {
-        self.indices.len() / 3
-    }
-
-    /// The shape moved by `t`.
-    pub fn transformed(mut self, t: Transform) -> Self {
-        for p in &mut self.positions {
-            *p = t.transform_point(*p);
-        }
-        self
-    }
-
-    /// Flat-shaded vertices: positions and face normals, three per
-    /// triangle (the low-poly look).
-    pub fn flat(&self) -> (Vec<[f32; 3]>, Vec<[f32; 3]>) {
-        let mut pos = Vec::with_capacity(self.indices.len());
-        let mut nor = Vec::with_capacity(self.indices.len());
-        for t in self.indices.as_chunks::<3>().0 {
-            let [a, b, c] = [0, 1, 2].map(|k| self.positions[t[k] as usize]);
-            let n = (b - a).cross(c - a).normalize_or_zero();
-            for p in [a, b, c] {
-                pos.push(p.to_array());
-                nor.push(n.to_array());
-            }
-        }
-        (pos, nor)
-    }
-}
-
-/// An ellipsoid with radii `r` around the origin: `seg` sides, `rings`
-/// rings (pole to pole), outward-facing triangles.
-pub fn ellipsoid(r: Vec3, seg: u32, rings: u32) -> Shape {
-    let (seg, rings) = (seg.max(3), rings.max(2));
-    let mut positions = vec![Vec3::new(0.0, r.y, 0.0)];
-    for k in 1..rings {
-        let v = PI * k as f32 / rings as f32;
-        for s in 0..seg {
-            let u = TAU * s as f32 / seg as f32;
-            positions.push(Vec3::new(
-                r.x * v.sin() * u.cos(),
-                r.y * v.cos(),
-                r.z * v.sin() * u.sin(),
-            ));
-        }
-    }
-    positions.push(Vec3::new(0.0, -r.y, 0.0));
-    let bottom = positions.len() as u32 - 1;
-    let ring = |k: u32, s: u32| 1 + (k - 1) * seg + s % seg;
-    let mut indices = Vec::new();
-    for s in 0..seg {
-        indices.extend([0, ring(1, s + 1), ring(1, s)]);
-        indices.extend([bottom, ring(rings - 1, s), ring(rings - 1, s + 1)]);
-    }
-    for k in 1..rings - 1 {
-        for s in 0..seg {
-            let (a, b, c, d) = (
-                ring(k, s),
-                ring(k, s + 1),
-                ring(k + 1, s),
-                ring(k + 1, s + 1),
-            );
-            indices.extend([a, b, d, a, d, c]);
-        }
-    }
-    Shape { positions, indices }
-}
-
-/// A capped frustum along +y from 0 (radius `r0`) to `len` (radius `r1`).
-pub fn tube(r0: f32, r1: f32, len: f32, sides: u32) -> Shape {
-    let sides = sides.max(3);
-    let mut positions = Vec::new();
-    for (y, r) in [(0.0, r0), (len, r1)] {
-        for s in 0..sides {
-            let u = TAU * s as f32 / sides as f32;
-            positions.push(Vec3::new(r * u.cos(), y, r * u.sin()));
-        }
-    }
-    positions.push(Vec3::ZERO);
-    positions.push(Vec3::new(0.0, len, 0.0));
-    let (bottom, top) = (2 * sides, 2 * sides + 1);
-    let mut indices = Vec::new();
-    for s in 0..sides {
-        let (a, b) = (s, (s + 1) % sides);
-        let (c, d) = (a + sides, b + sides);
-        indices.extend([a, d, b, a, c, d]);
-        indices.extend([bottom, a, b]);
-        indices.extend([top, d, c]);
-    }
-    Shape { positions, indices }
-}
-
-/// The spiral horn: a cone along +y with a ridge winding `turns` times
-/// round it.
-pub fn horn(len: f32, r0: f32, turns: f32) -> Shape {
-    const SIDES: u32 = 10;
-    const STEPS: u32 = 14;
-    let mut positions = Vec::new();
-    for k in 0..STEPS {
-        let t = k as f32 / STEPS as f32;
-        for s in 0..SIDES {
-            let u = TAU * s as f32 / SIDES as f32;
-            let ridge = 0.82 + 0.18 * (2.0 * u - TAU * turns * t).cos();
-            let r = r0 * (1.0 - t) * ridge;
-            positions.push(Vec3::new(r * u.cos(), len * t, r * u.sin()));
-        }
-    }
-    positions.push(Vec3::ZERO);
-    positions.push(Vec3::new(0.0, len, 0.0));
-    let (bottom, tip) = (STEPS * SIDES, STEPS * SIDES + 1);
-    let at = |k: u32, s: u32| k * SIDES + s % SIDES;
-    let mut indices = Vec::new();
-    for s in 0..SIDES {
-        indices.extend([bottom, at(0, s), at(0, s + 1)]);
-        indices.extend([tip, at(STEPS - 1, s + 1), at(STEPS - 1, s)]);
-        for k in 0..STEPS - 1 {
-            let (a, b, c, d) = (at(k, s), at(k, s + 1), at(k + 1, s), at(k + 1, s + 1));
-            indices.extend([a, d, b, a, c, d]);
-        }
-    }
-    Shape { positions, indices }
-}
-
-/// A part of the model.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Part {
-    pub joint: Joint,
-    pub paint: Paint,
-    pub shape: Shape,
-}
-
-fn at(t: Vec3) -> Transform {
-    Transform::from_translation(t)
 }
 
 /// The unicorn's level of detail (spec §14 Phase 13C: about 3k triangles
@@ -386,193 +134,6 @@ impl Lod {
             Lod::Impostor => VisibilityRange::abrupt(FAR_END_M, f32::MAX),
         }
     }
-}
-
-/// The unicorn's parts (the near model).
-pub fn model() -> Vec<Part> {
-    model_lod(Lod::Near)
-}
-
-/// The unicorn's parts at a level of detail: the far model has the same
-/// parts on the same joints with fewer sides, four feathers per wing and
-/// no eyes; the impostor has none (it is a card).
-pub fn model_lod(lod: Lod) -> Vec<Part> {
-    let mut parts = Vec::new();
-    let near = match lod {
-        Lod::Near => true,
-        Lod::Far => false,
-        Lod::Impostor => return parts,
-    };
-    // Sides of a shape: the near count, or the far one.
-    let n = |near_count: u32, far_count: u32| if near { near_count } else { far_count };
-    let mut add = |joint, paint, shape: Shape| {
-        parts.push(Part {
-            joint,
-            paint,
-            shape,
-        })
-    };
-    use Joint::*;
-    // Body: barrel, chest and rump.
-    add(
-        Body,
-        Paint::Coat,
-        ellipsoid(Vec3::new(0.42, 0.46, 0.9), n(12, 6), n(8, 4)),
-    );
-    add(
-        Body,
-        Paint::Coat,
-        ellipsoid(Vec3::new(0.4, 0.45, 0.45), n(10, 5), n(7, 4))
-            .transformed(at(Vec3::new(0.0, 0.05, -0.62))),
-    );
-    add(
-        Body,
-        Paint::Coat,
-        ellipsoid(Vec3::new(0.42, 0.44, 0.46), n(10, 5), n(7, 4))
-            .transformed(at(Vec3::new(0.0, 0.04, 0.6))),
-    );
-    // No saddle cloth on the back (removed, decided by the user
-    // 2026-11-13): the rider's colour is only the mane's first band.
-    // Neck: tilted forward (rest pose in [`pose`]).
-    add(Neck, Paint::Coat, tube(0.23, 0.16, 0.9, n(9, 5)));
-    // Head: skull, muzzle, eyes, ears, the horn.
-    add(
-        Head,
-        Paint::Coat,
-        ellipsoid(Vec3::new(0.17, 0.2, 0.27), n(10, 5), n(7, 4))
-            .transformed(at(Vec3::new(0.0, 0.05, -0.12))),
-    );
-    add(
-        Head,
-        Paint::Muzzle,
-        ellipsoid(Vec3::new(0.13, 0.14, 0.2), n(9, 4), n(6, 3))
-            .transformed(at(Vec3::new(0.0, -0.03, -0.42))),
-    );
-    for x in [-0.135, 0.135] {
-        if near {
-            add(
-                Head,
-                Paint::Eye,
-                ellipsoid(Vec3::splat(0.035), 6, 4).transformed(at(Vec3::new(x, 0.11, -0.24))),
-            );
-        }
-        add(
-            Head,
-            Paint::Coat,
-            tube(0.05, 0.0, 0.17, n(5, 3)).transformed(Transform {
-                translation: Vec3::new(x * 0.6, 0.21, -0.02),
-                rotation: Quat::from_rotation_z(-x * 2.0),
-                ..default()
-            }),
-        );
-    }
-    let horn_shape = if near {
-        horn(0.48, 0.055, 3.0)
-    } else {
-        tube(0.055, 0.0, 0.48, 4)
-    };
-    add(
-        Head,
-        Paint::Gold,
-        horn_shape.transformed(Transform {
-            translation: Vec3::new(0.0, 0.2, -0.24),
-            rotation: Quat::from_rotation_x(-0.85),
-            ..default()
-        }),
-    );
-    // Legs: upper and lower leg, golden hooves.
-    for leg in 0..4u8 {
-        add(
-            Hip(leg),
-            Paint::Coat,
-            tube(0.11, 0.075, 0.55, n(7, 4)).transformed(flip()),
-        );
-        add(
-            Knee(leg),
-            Paint::Coat,
-            tube(0.07, 0.06, 0.48, n(7, 4)).transformed(flip()),
-        );
-        add(
-            Knee(leg),
-            Paint::Gold,
-            tube(0.085, 0.075, 0.12, n(7, 4)).transformed(Transform {
-                translation: Vec3::new(0.0, -0.48, 0.0),
-                rotation: Quat::from_rotation_x(PI),
-                ..default()
-            }),
-        );
-    }
-    // Wings: a covert along the arm and one along the hand (the wrist
-    // between them bends), and twelve flight feathers fanning from them
-    // (the right wing along +x, the left mirrored) – the inner ones on the
-    // arm, the primaries on the hand in [`PRIMARIES`] groups; five broader
-    // ones far away.
-    let feathers: u32 = n(12, 5);
-    for side in 0..2u8 {
-        let sx = if side == 0 { -1.0 } else { 1.0 };
-        add(
-            Wing(side),
-            Paint::Feather,
-            ellipsoid(Vec3::new(0.42, 0.06, 0.17), n(8, 4), n(6, 3)).transformed(at(Vec3::new(
-                sx * 0.4,
-                0.0,
-                0.0,
-            ))),
-        );
-        add(
-            WingTip(side),
-            Paint::Feather,
-            ellipsoid(Vec3::new(0.42, 0.05, 0.15), n(8, 4), n(6, 3)).transformed(at(Vec3::new(
-                sx * 0.38,
-                0.0,
-                0.0,
-            ))),
-        );
-        let base_x = |t: f32| 0.12 + 1.42 * t;
-        let outer: Vec<u32> = (0..feathers)
-            .filter(|&k| base_x(k as f32 / (feathers - 1) as f32) >= WRIST_M)
-            .collect();
-        for k in 0..feathers {
-            let t = k as f32 / (feathers - 1) as f32;
-            let a = t.powf(1.5) * 1.15 * sx;
-            let len = 0.5 + 0.55 * t.powf(0.8);
-            let width = if near { 0.075 } else { 0.2 };
-            let dir = Vec3::new(a.sin(), 0.0, a.cos());
-            let mut base = Vec3::new(sx * base_x(t), -0.01 * k as f32 * 0.2, 0.06);
-            // A primary: on its group's joint at the wrist.
-            let joint = match outer.iter().position(|&o| o == k) {
-                Some(i) => {
-                    base -= Vec3::new(sx * WRIST_M, 0.0, PRIMARY_ROOT_Z);
-                    Primary(side, (i * PRIMARIES as usize / outer.len()) as u8)
-                }
-                None => Wing(side),
-            };
-            add(
-                joint,
-                Paint::Feather,
-                ellipsoid(Vec3::new(width, 0.016, len / 2.0), n(6, 4), n(4, 2)).transformed(
-                    Transform {
-                        translation: base + dir * (len / 2.0),
-                        rotation: Quat::from_rotation_y(a),
-                        ..default()
-                    },
-                ),
-            );
-        }
-    }
-    // Mane: eight bands down the back of the neck; the first in the
-    // rider's colour. Tail: eight strands.
-    for i in 0..STRANDS {
-        let paint = if i == 0 { Paint::Rider } else { Paint::Band(i) };
-        add(
-            Mane(i),
-            paint,
-            ellipsoid(Vec3::new(0.03, 0.11, 0.15), n(6, 3), n(4, 2))
-                .transformed(at(Vec3::new(0.0, 0.0, 0.11))),
-        );
-        add(Tail(i), Paint::Band(i), tube(0.055, 0.012, 1.1, n(5, 3)));
-    }
-    parts
 }
 
 /// Size of the impostor's picture (px).
@@ -630,11 +191,6 @@ pub fn impostor_image() -> Vec<[u8; 4]> {
         }
     }
     px
-}
-
-/// Turns a +y shape to point down (legs hang from their joints).
-fn flip() -> Transform {
-    Transform::from_rotation(Quat::from_rotation_x(PI))
 }
 
 /// The share of a wing beat that is the downstroke: faster (and
@@ -1084,6 +640,63 @@ struct Unicorns {
     seed: u32,
 }
 
+/// The unicorn as the renderer draws it, read from its file
+/// (`creatures/unicorn-winged.glb`, spec §14 Phase 15 M4): the joints
+/// (parents and pivots; the body itself is placed by [`root_transform`])
+/// and every mesh on its joint with its paint and level of detail.
+#[derive(Debug, Clone)]
+pub struct UnicornModel {
+    pub joints: Vec<JointDef>,
+    pub parts: Vec<(Joint, Paint, Lod, ocw_assets::model::Primitive)>,
+}
+
+impl UnicornModel {
+    /// The unicorn of a model file (see [`ocw_assets::unicorn::read`]).
+    pub fn from_file(m: &ocw_assets::model::Model) -> Result<Self, String> {
+        let (mut joints, prims) = ocw_assets::unicorn::read(m)?;
+        for d in &mut joints {
+            if d.parent.is_none() {
+                d.pivot = Vec3::ZERO;
+            }
+        }
+        let parts = prims
+            .into_iter()
+            .map(|(j, far, paint, p)| (j, paint, if far { Lod::Far } else { Lod::Near }, p))
+            .collect();
+        Ok(Self { joints, parts })
+    }
+
+    /// Triangles drawn at a level of detail.
+    pub fn triangles(&self, lod: Lod) -> usize {
+        self.parts
+            .iter()
+            .filter(|p| p.2 == lod)
+            .map(|p| p.3.triangles())
+            .sum()
+    }
+}
+
+/// The shipped unicorn (read once from the model library).
+pub fn file_model() -> &'static UnicornModel {
+    static M: std::sync::OnceLock<UnicornModel> = std::sync::OnceLock::new();
+    M.get_or_init(|| {
+        let id = ocw_assets::kinds::id_of(ocw_assets::unicorn::FILE);
+        UnicornModel::from_file(&ocw_assets::shipped::model(id))
+            .unwrap_or_else(|e| panic!("shipped unicorn {id}: {e}"))
+    })
+}
+
+fn prim_mesh(p: &ocw_assets::model::Primitive) -> Mesh {
+    let mut m = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    m.insert_attribute(Mesh::ATTRIBUTE_POSITION, p.positions.clone());
+    m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, p.normals.clone());
+    m.insert_indices(Indices::U32(p.indices.clone()));
+    m
+}
+
 fn to_mesh(shape: &Shape) -> Mesh {
     let (pos, nor) = shape.flat();
     let mut m = Mesh::new(
@@ -1225,15 +838,12 @@ fn sync_unicorns(
     roots: Query<(), With<UnicornRoot>>,
 ) {
     let u = &mut *u;
+    let file = file_model();
     if u.meshes.is_empty() {
-        u.meshes = [Lod::Near, Lod::Far]
-            .into_iter()
-            .flat_map(|lod| {
-                model_lod(lod)
-                    .into_iter()
-                    .map(move |p| (p.joint, p.paint, lod, p.shape))
-            })
-            .map(|(j, p, lod, shape)| (j, p, lod, meshes.add(to_mesh(&shape))))
+        u.meshes = file
+            .parts
+            .iter()
+            .map(|(j, p, lod, prim)| (*j, *p, *lod, meshes.add(prim_mesh(prim))))
             .collect();
     }
     if u.impostor.is_none()
@@ -1267,7 +877,6 @@ fn sync_unicorns(
             continue;
         }
         let rider = v.colour.0 & 0xFF_FFFF;
-        let skel = skeleton();
         let root = commands
             .spawn((
                 Transform::from_translation(to_vec3(v.pos)).with_scale(Vec3::splat(0.01)),
@@ -1277,7 +886,7 @@ fn sync_unicorns(
             .id();
         let mut joints = BTreeMap::new();
         joints.insert(Joint::Body, root);
-        for d in &skel {
+        for d in &file.joints {
             let Some(parent) = d.parent else { continue };
             let p = joints[&parent];
             let e = commands
@@ -1704,77 +1313,74 @@ mod tests {
         a
     }
 
+    /// The renderer draws the unicorn from its file: every joint of the
+    /// skeleton at its pivot (the body at the root), the near and far
+    /// meshes on the same joints, every paint a unicorn paint – and every
+    /// joint the animation turns is a node of the file, near and far.
     #[test]
-    fn the_model_is_low_poly_and_complete() {
-        let parts = model();
-        let tris: usize = parts.iter().map(|p| p.shape.triangles()).sum();
-        assert!((1_500..=3_500).contains(&tris), "{tris} triangles");
+    fn the_unicorn_is_drawn_from_its_file_and_the_animation_drives_its_nodes() {
+        let m = file_model();
         let skel = skeleton();
-        // Every part hangs on a joint of the skeleton; parents come first.
-        for p in &parts {
-            assert!(skel.iter().any(|d| d.joint == p.joint), "{:?}", p.joint);
+        assert_eq!(m.joints.len(), skel.len());
+        for (d, e) in m.joints.iter().zip(&skel) {
+            assert_eq!(d.joint, e.joint);
+            assert_eq!(d.parent, e.parent);
+            assert!(d.pivot.distance(e.pivot) < 1e-4, "{:?}", d.joint);
         }
-        for (i, d) in skel.iter().enumerate() {
-            if let Some(parent) = d.parent {
-                assert!(skel[..i].iter().any(|e| e.joint == parent));
-            }
-        }
-        // A golden horn, the rider's colour once (the first mane band; no
-        // saddle cloth on the back since 2026-11-13, in no LOD), the
-        // rainbow in mane and tail, two wings of feathers.
-        assert!(
-            parts
-                .iter()
-                .any(|p| p.joint == Joint::Head && p.paint == Paint::Gold)
-        );
-        for lod in [Lod::Near, Lod::Far] {
-            let parts = model_lod(lod);
-            let rider: Vec<_> = parts.iter().filter(|p| p.paint == Paint::Rider).collect();
-            assert_eq!(rider.len(), 1, "{lod:?}");
-            assert_eq!(rider[0].joint, Joint::Mane(0), "{lod:?}");
-            // Nothing but the coat on the back (the saddle cloth's slabs).
-            assert!(
-                parts
-                    .iter()
-                    .all(|p| p.joint != Joint::Body || p.paint == Paint::Coat),
-                "{lod:?}"
-            );
-        }
-        assert_eq!(
-            parts
-                .iter()
-                .filter(|p| matches!(p.joint, Joint::Tail(_)) && matches!(p.paint, Paint::Band(_)))
-                .count(),
-            8
-        );
-        // A wing: the arm (covert and inner feathers), the hand's covert,
-        // the primaries in their groups – on both LODs.
-        let left = |p: &&Part| {
-            matches!(
-                p.joint,
-                Joint::Wing(0) | Joint::WingTip(0) | Joint::Primary(0, _)
-            )
+        let joints = |lod| {
+            let mut j: Vec<Joint> = m.parts.iter().filter(|p| p.2 == lod).map(|p| p.0).collect();
+            j.sort();
+            j.dedup();
+            j
         };
-        assert!(parts.iter().filter(left).count() >= 14);
+        assert_eq!(joints(Lod::Near), joints(Lod::Far));
+        // A golden horn, the rider's colour once (the first mane band),
+        // nothing but the coat on the body.
+        assert!(
+            m.parts
+                .iter()
+                .any(|p| p.0 == Joint::Head && p.1 == Paint::Gold)
+        );
         for lod in [Lod::Near, Lod::Far] {
-            let m = model_lod(lod);
-            assert!(m.iter().any(|p| p.joint == Joint::WingTip(1)), "{lod:?}");
-            for k in 0..PRIMARIES {
+            let rider: Vec<_> = m
+                .parts
+                .iter()
+                .filter(|p| p.2 == lod && p.1 == Paint::Rider)
+                .collect();
+            assert_eq!(rider.len(), 1, "{lod:?}");
+            assert_eq!(rider[0].0, Joint::Mane(0));
+        }
+        assert!(
+            m.parts
+                .iter()
+                .all(|p| p.0 != Joint::Body || p.1 == Paint::Coat)
+        );
+        // The pose of a hover, a slow and a fast flight: every joint it
+        // turns has its node in the file.
+        let file = ocw_assets::shipped::model(ocw_assets::kinds::id_of(ocw_assets::unicorn::FILE));
+        for speed in [0.0, 12.0, 80.0] {
+            let v = view(speed);
+            let p = pose(&run(&v, 2.0), &v);
+            assert_eq!(p.joints.len(), skel.len() - 1, "every joint but the body");
+            for j in p.joints.keys() {
+                assert!(file.node(&j.node()).is_some(), "{j:?}");
                 assert!(
-                    m.iter().any(|p| p.joint == Joint::Primary(1, k)),
-                    "{lod:?} {k}"
+                    file.node(&ocw_assets::unicorn::far_node(*j)).is_some(),
+                    "{j:?}"
                 );
+                assert!(m.joints.iter().any(|d| d.joint == *j));
             }
         }
-        // Flat normals point outwards on a closed shape.
-        let (pos, nor) = ellipsoid(Vec3::new(1.0, 2.0, 3.0), 8, 6).flat();
-        for (p, n) in pos.iter().zip(&nor) {
-            assert!(Vec3::from(*p).dot(Vec3::from(*n)) > 0.0);
-        }
-        let (pos, nor) = tube(0.2, 0.1, 1.0, 6).flat();
-        for (p, n) in pos.iter().zip(&nor) {
-            let c = Vec3::new(0.0, 0.5, 0.0);
-            assert!((Vec3::from(*p) - c).dot(Vec3::from(*n)) > -1e-6);
+        // Flat shading: three vertices per triangle, the face's normal.
+        for (_, _, _, prim) in &m.parts {
+            assert_eq!(prim.positions.len(), prim.indices.len());
+            for t in prim.indices.chunks(3) {
+                let [a, b, c] = [0, 1, 2].map(|k| Vec3::from(prim.positions[t[k] as usize]));
+                let n = (b - a).cross(c - a).normalize_or_zero();
+                if n != Vec3::ZERO {
+                    assert!(Vec3::from(prim.normals[t[0] as usize]).dot(n) > 0.999);
+                }
+            }
         }
     }
 
@@ -1782,19 +1388,11 @@ mod tests {
     /// impostor card beyond 500 m.
     #[test]
     fn the_levels_of_detail_and_the_impostor() {
-        let tris = |lod| -> usize { model_lod(lod).iter().map(|p| p.shape.triangles()).sum() };
-        let (near, far) = (tris(Lod::Near), tris(Lod::Far));
+        let m = file_model();
+        let (near, far) = (m.triangles(Lod::Near), m.triangles(Lod::Far));
         assert!((2_500..=3_500).contains(&near), "near {near}");
         assert!((450..=800).contains(&far), "far {far}");
-        assert_eq!(tris(Lod::Impostor), 0);
-        // The far model keeps every joint moving (wings, mane, tail, legs).
-        let joints = |lod| {
-            let mut j: Vec<Joint> = model_lod(lod).iter().map(|p| p.joint).collect();
-            j.sort();
-            j.dedup();
-            j
-        };
-        assert_eq!(joints(Lod::Near), joints(Lod::Far));
+        assert_eq!(m.triangles(Lod::Impostor), 0);
         assert_eq!(Lod::at(8.0), Lod::Near);
         assert_eq!(Lod::at(79.0), Lod::Near);
         assert_eq!(Lod::at(120.0), Lod::Far);
