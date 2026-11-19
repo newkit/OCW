@@ -426,7 +426,7 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::Command("activities.folder \"{}\""),
     },
-    // Strava (spec 2.8.1 Q6, v4.97): only the Strava recordings (S … S)
+    // Strava (spec 2.8.1 Q6, v5.00): only the Strava recordings (S … S)
     // go to Strava, never whole rides; on: they are uploaded automatically
     // once the API app is set up and the account linked, off: they wait
     // for the upload by hand (the ride page's *Upload now*, or in the

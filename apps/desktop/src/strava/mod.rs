@@ -15,7 +15,7 @@
 //! `strava.toml`, read once: [`AUTO_SETTING`]), by hand otherwise (the
 //! ride page's *Upload now*, `strava.sync`) – except those marked as
 //! uploaded by hand. **Whole rides never go to Strava** (spec 2.8.1 Q6,
-//! v4.97); whole rides uploaded before keep their state.
+//! v5.00); whole rides uploaded before keep their state.
 //!
 //! **Recording without Strava set up, uploaded later** (spec §2.8.1):
 //! every S recording made without the credentials is kept as *waiting*
@@ -554,7 +554,7 @@ fn file_state(state: &SyncState, file: &str, uploading: Option<&str>) -> Option<
 }
 
 /// Each ride's Strava state (its Strava recordings'; a ride without one
-/// only when its whole file was uploaded before v4.97 – whole rides never
+/// only when its whole file was uploaded before v5.00 – whole rides never
 /// go to Strava now, spec 2.8.1 Q6) and the open question, for the
 /// training history's pages.
 pub fn history_states(world: &World) -> (BTreeMap<String, StravaState>, Option<usize>) {

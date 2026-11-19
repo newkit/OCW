@@ -1,6 +1,6 @@
 //! Strava sync: every Strava recording (S … S, `rides/strava/`) that is
 //! not on Strava yet gets uploaded – never a whole ride (spec 2.8.1 Q6,
-//! v4.97: [`sync_files`] lists the recordings only; whole rides uploaded
+//! v5.00: [`sync_files`] lists the recordings only; whole rides uploaded
 //! before keep their state here).
 //! The state (`<rides dir>/strava-sync.toml`) remembers what is uploaded,
 //! what failed (and when to retry, with exponential backoff) and what
@@ -816,7 +816,7 @@ mod tests {
             sync_files(&fx.paths.rides_dir),
             vec!["strava/2026-01-01_10-20-00.fit".to_string()]
         );
-        // An older whole ride on Strava (before v4.97) stays as it is.
+        // An older whole ride on Strava (before v5.00) stays as it is.
         let mut st = SyncState::default();
         st.rides.insert(
             "2025-12-31_10-00-00.fit".into(),
