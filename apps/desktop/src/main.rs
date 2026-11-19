@@ -15,6 +15,7 @@ mod automation;
 mod build_id;
 mod camera_path;
 mod collisions;
+mod config;
 mod connection;
 mod devices;
 mod ghost;
@@ -31,6 +32,7 @@ mod restart;
 mod ride;
 mod riders_page;
 mod settings;
+mod start;
 mod strava;
 mod surface;
 mod timemachine;
@@ -222,16 +224,24 @@ pub struct Args {
     /// 4, 4E); the workshop still works.
     #[arg(long)]
     pub no_hearts: bool,
-    /// File with remembered devices (default: ~/.config/ocw/devices.toml).
+    /// File with remembered devices of its own (default: the [devices]
+    /// section of ocw.toml).
     #[arg(long, value_name = "PATH")]
     pub devices_file: Option<PathBuf>,
-    /// Settings file (default: ~/.config/ocw/settings.toml); the rider
-    /// profiles are read from riders.toml next to it. Command-line options
-    /// override its values for the session.
+    /// The local config file (default: ocw.toml in the config folder,
+    /// ~/.config/ocw/ on Linux; secrets.toml is read next to it). An old
+    /// settings.toml given here is converted in place (kept as .bak).
+    /// Command-line options override its values for the session.
     #[arg(long, value_name = "PATH")]
     pub settings_file: Option<PathBuf>,
-    /// Ride as this rider profile (riders.toml) for this session, instead
-    /// of the one chosen in the Workshop.
+    /// The start choice (spec 3.2.4): ask (Connect to a server / Ride
+    /// locally, the last choice preselected), local, or server (Ride ->
+    /// Join). Default: ask, unless an option decides (--server, --world,
+    /// --route, --screenshot, --capture, --cmd, the kiosk's --no-hearts …).
+    #[arg(long, value_name = "CHOICE", value_parser = ["ask", "local", "server"])]
+    pub start_choice: Option<String>,
+    /// Ride as this rider profile (the local riders of ocw.toml) for this
+    /// session, instead of the one chosen in the Workshop.
     #[arg(long, value_name = "NAME")]
     pub rider: Option<String>,
     /// Console commands to run at startup (in addition to autoexec.cfg).
@@ -384,9 +394,13 @@ fn main() -> AppExit {
     }
     let matches = Args::command().get_matches_from(argv);
     let mut args = Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
-    // settings.toml and riders.toml (spec §3.2.1): before anything reads
+    // ocw.toml (spec 3.2.4; the old files migrated into it once) with the
+    // settings and the local riders (spec 3.2.1): before anything reads
     // the options they fill in.
     let loaded = settings::load(&mut args, &matches);
+    for n in &loaded.migrated {
+        eprintln!("config: moved {n}");
+    }
     for w in &loaded.warnings {
         eprintln!("settings: {w}");
     }
@@ -425,7 +439,14 @@ fn main() -> AppExit {
     let mut app = App::new();
     app.insert_resource(loaded.settings)
         .insert_resource(loaded.riders)
-        .insert_resource(settings::LoadWarnings(loaded.warnings));
+        .insert_resource(settings::LoadWarnings(loaded.warnings))
+        .insert_resource(settings::Migrated(loaded.migrated));
+    if let Some(files) = loaded.files {
+        app.insert_resource(files);
+    }
+    // Ride locally is Training mode (spec 3.2.4 Q4): every bike and all
+    // gear, no hearts. Campaign mode is postponed.
+    app.insert_resource(workshop::PlayMode::Training);
     let (route, terrain_base) = (setup.route.clone(), setup.terrain_base.clone());
     ride::insert_setup(app.world_mut(), setup);
     let free_ride = app.world().contains_resource::<connection::FreeRideSetup>();
@@ -526,6 +547,8 @@ fn main() -> AppExit {
         // Touch steering on Windows / Linux touch screens (spec §3.2.3
         // Q6), shared with the browser app.
         ocw_ui::touch::TouchSteerPlugin,
+        // Connect to a server or ride locally (spec 3.2.4).
+        start::StartPlugin::default(),
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, timed_commands);

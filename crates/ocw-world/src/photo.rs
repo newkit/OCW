@@ -7,8 +7,9 @@
 //!   over the ground in the camera's direction (how far the eye reaches,
 //!   tree crowns raising the ground they stand on), the *relief* in view
 //!   (mountains, a valley below), *water* in view (lakes, rivers, the
-//!   sea), *landmarks* (named peaks, viewpoints – only where the scene has
-//!   them), times *the light* (golden hour best, night worst) and *the
+//!   sea), *landmarks* (a named peak or a viewpoint in the frame and in
+//!   sight, or the camera at a viewpoint looking its way – from the
+//!   package's section `LMRK`), times *the light* (golden hour best, night worst) and *the
 //!   weather* (fog cuts the reach, rain dulls). A covered road (a tunnel)
 //!   scores zero.
 //! - **The camera poses** ([`candidates`], [`choose`]): a photographer is
@@ -54,12 +55,79 @@ pub const MIN_SCORE: f64 = 0.35;
 /// A road this far (m) below the ground above it is covered (a tunnel).
 pub const COVERED_M: f64 = 2.5;
 
-/// A named place worth having in the picture (a peak, a viewpoint).
+/// A peak in the frame counts this far (m).
+pub const PEAK_REACH_M: f64 = 15_000.0;
+/// A viewpoint in the frame counts this far (m).
+pub const VIEWPOINT_REACH_M: f64 = 3_000.0;
+/// A camera this close to a viewpoint (m) stands at it: the view counts
+/// as a landmark when it looks the viewpoint's way (spec 2.11 Q4).
+pub const VIEWPOINT_NEAR_M: f64 = 120.0;
+/// The landmark part of a viewpoint seen in the frame (a peak's is 1).
+pub const VIEWPOINT_IN_FRAME: f64 = 0.6;
+
+pub use crate::landmarks::{LandmarkKind, ViewDirection};
+
+/// A place worth having in the picture (a named peak, a viewpoint), from
+/// the package's section `LMRK`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Landmark {
     pub name: String,
-    /// Local metres (x, y up, z).
+    /// Local metres (x, y up, z); y the elevation (OSM `ele` or the
+    /// terrain's).
     pub pos: [f64; 3],
+    pub kind: LandmarkKind,
+    /// A viewpoint's direction of view.
+    pub direction: Option<ViewDirection>,
+}
+
+impl Landmark {
+    /// A named peak at `pos`.
+    pub fn peak(name: &str, pos: [f64; 3]) -> Self {
+        Self {
+            name: name.into(),
+            pos,
+            kind: LandmarkKind::Peak,
+            direction: None,
+        }
+    }
+
+    /// The peaks and viewpoints of the loaded packages of `set` (section
+    /// `LMRK`) in the home package's metres, each once; y their elevation
+    /// (a landmark without one is left out). Passes are not landmarks of
+    /// the view score and are left out too.
+    pub fn of_set(set: &crate::WorldSet) -> Vec<Self> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for m in set.members() {
+            let Some(places) = m.package().and_then(|p| p.places.as_ref()) else {
+                continue;
+            };
+            for l in &places.landmarks {
+                if l.kind == LandmarkKind::Pass || !seen.insert((l.element, l.osm_id)) {
+                    continue;
+                }
+                let Some(ele) = l.ele else { continue };
+                let p = m.frame.apply([f64::from(l.pos[0]), f64::from(l.pos[1])]);
+                out.push(Self {
+                    name: l.name.clone(),
+                    pos: [p[0], f64::from(ele), p[1]],
+                    kind: l.kind,
+                    direction: l.direction,
+                });
+            }
+        }
+        out
+    }
+
+    /// A viewpoint at `pos` looking `direction` (all round: `None`).
+    pub fn viewpoint(name: &str, pos: [f64; 3], direction: Option<ViewDirection>) -> Self {
+        Self {
+            name: name.into(),
+            pos,
+            kind: LandmarkKind::Viewpoint,
+            direction,
+        }
+    }
 }
 
 /// What the photographer sees of the world.
@@ -302,12 +370,32 @@ pub fn view_score(
     }
 }
 
-/// 1 when a landmark within 15 km is in the frame and not hidden.
+/// The landmark part of the view score (spec 2.11 Q4): 1 when a named
+/// peak within [`PEAK_REACH_M`] is in the frame and in sight, or when the
+/// camera stands at a viewpoint (within [`VIEWPOINT_NEAR_M`]) looking its
+/// way (its `direction`, 30° more each side; any way when it has none);
+/// [`VIEWPOINT_IN_FRAME`] when a viewpoint within [`VIEWPOINT_REACH_M`]
+/// is in the frame and in sight; else 0. Passes do not count.
 fn landmark_in_view(scene: &dyn PhotoScene, eye: [f64; 3], az: f64, hfov: f64) -> f64 {
+    let mut best: f64 = 0.0;
     for l in scene.landmarks() {
         let d = [l.pos[0] - eye[0], l.pos[2] - eye[2]];
         let dist = len2(d);
-        if !(50.0..15_000.0).contains(&dist) {
+        let (reach, part) = match l.kind {
+            LandmarkKind::Peak => (PEAK_REACH_M, 1.0),
+            LandmarkKind::Viewpoint => (VIEWPOINT_REACH_M, VIEWPOINT_IN_FRAME),
+            LandmarkKind::Pass => continue,
+        };
+        if l.kind == LandmarkKind::Viewpoint && dist < VIEWPOINT_NEAR_M {
+            let looks = l
+                .direction
+                .is_none_or(|v| v.contains(az.to_degrees().rem_euclid(360.0), 30.0));
+            if looks {
+                return 1.0;
+            }
+            continue;
+        }
+        if part <= best || !(50.0..reach).contains(&dist) {
             continue;
         }
         let off = (azimuth_of(d) - az + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU)
@@ -315,11 +403,22 @@ fn landmark_in_view(scene: &dyn PhotoScene, eye: [f64; 3], az: f64, hfov: f64) -
         if off.abs() > hfov / 2.0 {
             continue;
         }
-        if !line_blocked(scene, eye, l.pos, 0.9) {
-            return 1.0;
+        // Aimed a little above the summit (or the platform), the last
+        // stretch not tested: the drawn ground there may lie a few metres
+        // above the tagged elevation.
+        let (lift, skip) = match l.kind {
+            LandmarkKind::Peak => (5.0, 60.0_f64.min(dist * 0.1)),
+            _ => (2.0, 20.0),
+        };
+        let target = [l.pos[0], l.pos[1] + lift, l.pos[2]];
+        if !line_blocked(scene, eye, target, skip) {
+            best = best.max(part);
+            if best >= 1.0 {
+                return 1.0;
+            }
         }
     }
-    0.0
+    best
 }
 
 /// The kinds of poses (spec §2.8.1).
@@ -1135,10 +1234,7 @@ mod tests {
             solids: Vec::new(),
             landmarks: marks,
         };
-        let peak = Landmark {
-            name: "Pico Uno".into(),
-            pos: [0.0, 900.0, -5000.0],
-        };
+        let peak = Landmark::peak("Pico Uno", [0.0, 900.0, -5000.0]);
         let eye = [0.0, 101.6, 0.0];
         let a = view_score(
             &flat(vec![]),
@@ -1164,5 +1260,110 @@ mod tests {
         assert_eq!(b.landmark, 1.0);
         assert_eq!(behind.landmark, 0.0);
         assert!(b.total > a.total);
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn plain(
+        marks: Vec<Landmark>,
+        ground: fn(f64, f64) -> Option<f64>,
+    ) -> FnScene<
+        impl Fn(f64, f64) -> Option<f64>,
+        impl Fn(f64, f64) -> bool,
+        impl Fn(f64, f64) -> f64,
+    > {
+        FnScene {
+            ground,
+            water: |_, _| false,
+            canopy: |_, _| 0.0,
+            solids: Vec::new(),
+            landmarks: marks,
+        }
+    }
+
+    #[test]
+    fn a_peak_behind_a_ridge_or_too_far_and_a_pass_do_not_count() {
+        let eye = [0.0, 101.6, 0.0];
+        let north = [0.0, 0.0, -1.0];
+        let cond = Conditions::default();
+        // A ridge 300 m high 1 km north hides a peak of 250 m 5 km out.
+        let ridge = |_x: f64, z: f64| {
+            Some(if (-1100.0..-900.0).contains(&z) {
+                400.0
+            } else {
+                100.0
+            })
+        };
+        let hidden = Landmark::peak("Pico Dos", [0.0, 250.0, -5000.0]);
+        let s = view_score(&plain(vec![hidden.clone()], ridge), eye, north, &cond, 1.0);
+        assert_eq!(s.landmark, 0.0);
+        let flat = |_: f64, _: f64| Some(100.0);
+        assert_eq!(
+            view_score(&plain(vec![hidden], flat), eye, north, &cond, 1.0).landmark,
+            1.0
+        );
+        let far = Landmark::peak("Pico Tres", [0.0, 3000.0, -20_000.0]);
+        assert_eq!(
+            view_score(&plain(vec![far], flat), eye, north, &cond, 1.0).landmark,
+            0.0
+        );
+        let pass = Landmark {
+            kind: LandmarkKind::Pass,
+            ..Landmark::peak("Paso Uno", [0.0, 300.0, -3000.0])
+        };
+        assert_eq!(
+            view_score(&plain(vec![pass], flat), eye, north, &cond, 1.0).landmark,
+            0.0
+        );
+    }
+
+    #[test]
+    fn a_viewpoint_counts_at_it_looking_its_way_or_in_the_frame() {
+        let eye = [0.0, 101.6, 0.0];
+        let cond = Conditions::default();
+        let flat = |_: f64, _: f64| Some(100.0);
+        let west = crate::landmarks::parse_direction("W");
+        // The camera 40 m from a viewpoint that looks west.
+        let at = Landmark::viewpoint("", [30.0, 100.0, 25.0], west);
+        let score = |m: &Landmark, look: [f64; 3]| {
+            view_score(&plain(vec![m.clone()], flat), eye, look, &cond, 1.0)
+        };
+        assert_eq!(score(&at, [-1.0, 0.0, 0.0]).landmark, 1.0);
+        assert_eq!(score(&at, [1.0, 0.0, 0.0]).landmark, 0.0, "looking east");
+        // Without a direction: any way.
+        let round = Landmark::viewpoint("Mirador Uno", [30.0, 100.0, 25.0], None);
+        assert_eq!(score(&round, [1.0, 0.0, 0.0]).landmark, 1.0);
+        // A viewpoint 1 km ahead in the frame: part of a peak's.
+        let ahead = Landmark::viewpoint("Mirador Dos", [0.0, 100.0, -1000.0], None);
+        let s = score(&ahead, [0.0, 0.0, -1.0]);
+        assert_eq!(s.landmark, VIEWPOINT_IN_FRAME);
+        assert_eq!(score(&ahead, [0.0, 0.0, 1.0]).landmark, 0.0);
+        let none = view_score(&plain(vec![], flat), eye, [0.0, 0.0, -1.0], &cond, 1.0);
+        assert!(s.total > none.total);
+        // A peak beside it wins (1).
+        let both = view_score(
+            &plain(
+                vec![ahead, Landmark::peak("Pico Uno", [200.0, 900.0, -6000.0])],
+                flat,
+            ),
+            eye,
+            [0.0, 0.0, -1.0],
+            &cond,
+            1.0,
+        );
+        assert_eq!(both.landmark, 1.0);
+    }
+
+    #[test]
+    fn the_photographer_frames_a_peak_when_there_is_one() {
+        // A flat plain, the road north; a peak 6 km east. Without it the
+        // poses score alike; with it the chosen pose looks towards it.
+        let cond = Conditions::default();
+        let flat = |_: f64, _: f64| Some(100.0);
+        let peak = Landmark::peak("Pico Cuatro", [6000.0, 1400.0, 0.0]);
+        let with = choose(&plain(vec![peak], flat), &spot(100.0), &cond).unwrap();
+        let without = choose(&plain(vec![], flat), &spot(100.0), &cond).unwrap();
+        assert_eq!(with.score.landmark, 1.0, "{with:?}");
+        assert!(with.score.total > without.score.total);
+        assert!(with.pose.look[0] > 0.3, "looks east: {:?}", with.pose.look);
     }
 }

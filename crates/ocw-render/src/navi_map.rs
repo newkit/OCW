@@ -29,7 +29,9 @@
 //!   [`NaviMapLabels`] whenever the loaded packages change
 //!   (`ocw_map::labels::labels_of`); `ocw_map::labels::navi_labels` picks
 //!   the names for the zoom (cities and towns always, villages and hamlets
-//!   closer in), decluttered with the studio map's pass and its hysteresis,
+//!   closer in; peaks "▲ name 3715 m" and passes ")( name 2055 m" of
+//!   section `LMRK` from 6.5 m per point, a pass the route crosses at
+//!   every zoom), decluttered with the studio map's pass and its hysteresis,
 //!   clear of the compass, scale, zoom and the rider's arrow. They are UI
 //!   text over the map (a few nodes moved per frame, no tile is redrawn),
 //!   so they stay upright as the map turns, with a halo in the day or
@@ -45,7 +47,9 @@ use bevy::render::render_resource::{
     AsBindGroup, Extent3d, ShaderType, TextureDimension, TextureFormat,
 };
 use bevy::shader::ShaderRef;
-use ocw_map::labels::{PlaceLabel, labels_of, navi_label_font, navi_labels, navi_marks};
+use ocw_map::labels::{
+    PlaceLabel, labels_of, navi_label_font, navi_labels_with, navi_marks, route_crosses,
+};
 use ocw_map::navi::{
     AutoZoom, Banner, Daylight, RouteLines, ZOOM_LEVELS, ZoomMode, banner, ease_zoom, track_line,
 };
@@ -752,6 +756,10 @@ struct Cache {
     /// The place names shown last frame (indices into the labels): the
     /// hysteresis of their layout.
     labels_shown: std::collections::BTreeSet<u32>,
+    /// The route's path (ahead and behind, home metres) and the passes it
+    /// crosses (indices into the labels; spec 3.2 Q8).
+    route_path: [Vec<[f64; 2]>; 2],
+    route_passes: std::collections::BTreeSet<usize>,
 }
 
 /// The map tiles' time budget per frame (s); at least one tile is drawn
@@ -979,6 +987,8 @@ fn update_map(
             labels.0 = names;
         }
         cache.labels_shown.clear();
+        cache.route_passes =
+            route_crosses(&labels.0, &[&cache.route_path[0], &cache.route_path[1]]);
     }
     let src = cache
         .source
@@ -1135,6 +1145,8 @@ fn update_map(
         cache.route_key = rkey;
         cache.route_lines = lines.lines(&Palette::of(flook.shade));
         cache.route_dirty = true;
+        cache.route_passes = route_crosses(&labels.0, &[&lines.ahead, &lines.behind]);
+        cache.route_path = [lines.ahead, lines.behind];
     }
     let route_side = fring.size_texels();
     let route_ok = cache
@@ -1275,7 +1287,15 @@ fn update_map(
     }
     // Place names: by zoom, decluttered, clear of the map's marks.
     let marks = navi_marks(nview.size, nview.anchor());
-    let shown = navi_labels(&labels.0, &nview, &marks, 6.0, &cache.labels_shown, LABELS);
+    let shown = navi_labels_with(
+        &labels.0,
+        &nview,
+        &marks,
+        6.0,
+        &cache.labels_shown,
+        &cache.route_passes,
+        LABELS,
+    );
     cache.labels_shown = shown.iter().map(|l| l.index as u32).collect();
     let ink = if shade == Shade::Night {
         Color::srgb(0.93, 0.94, 0.97)
@@ -1288,7 +1308,7 @@ fn update_map(
     for (Label(i), mut node, mut text, mut font, mut colour, mut bg) in &mut parts.p2() {
         match shown.get(*i) {
             Some(l) => {
-                let name = &labels.0[l.index].name;
+                let name = labels.0[l.index].text();
                 let (size, _) = navi_label_font(labels.0[l.index].rank);
                 // The box the layout placed (moved into the map when the
                 // name is near its edge), not one centred on the place.
@@ -1297,8 +1317,8 @@ fn update_map(
                 node.width = px(l.max[0] - l.min[0]);
                 node.top = px(l.min[1]);
                 // The size follows the name's rank: set with the name.
-                if text.0 != *name {
-                    text.0.clone_from(name);
+                if text.0 != name {
+                    text.0 = name;
                     font.font_size = size.into();
                 }
                 if colour.0 != ink {

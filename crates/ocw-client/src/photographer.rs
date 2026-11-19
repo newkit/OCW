@@ -149,6 +149,53 @@ pub fn flash(since_s: f64) -> f64 {
     }
 }
 
+/// A viewpoint this close to the road (m) makes its nearest road point a
+/// spot the photographer scores (spec 2.11 Q4).
+pub const VIEWPOINT_ROAD_M: f64 = 60.0;
+
+/// The distances ahead (m, from `d`, within `from` … `to`) where the road
+/// on `track` passes a viewpoint within [`VIEWPOINT_ROAD_M`]: its nearest
+/// road point, sampled every 10 m.
+pub fn viewpoint_spots(
+    track: &dyn Track,
+    d: f64,
+    from: f64,
+    to: f64,
+    marks: &[ocw_world::photo::Landmark],
+) -> Vec<f64> {
+    use ocw_world::photo::LandmarkKind;
+    let views: Vec<[f64; 2]> = marks
+        .iter()
+        .filter(|l| l.kind == LandmarkKind::Viewpoint)
+        .map(|l| [l.pos[0], l.pos[2]])
+        .collect();
+    if views.is_empty() || to <= from {
+        return Vec::new();
+    }
+    let here = track.sample(d + from).position;
+    let reach = to - from + VIEWPOINT_ROAD_M;
+    let near: Vec<[f64; 2]> = views
+        .into_iter()
+        .filter(|v| (v[0] - here[0]).hypot(v[1] - here[2]) <= reach)
+        .collect();
+    if near.is_empty() {
+        return Vec::new();
+    }
+    let mut best: Vec<Option<(f64, f64)>> = vec![None; near.len()];
+    let mut a = from;
+    while a <= to {
+        let p = track.sample(d + a).position;
+        for (i, v) in near.iter().enumerate() {
+            let dist = (v[0] - p[0]).hypot(v[1] - p[2]);
+            if dist <= VIEWPOINT_ROAD_M && best[i].is_none_or(|b| dist < b.0) {
+                best[i] = Some((dist, a));
+            }
+        }
+        a += 10.0;
+    }
+    best.into_iter().flatten().map(|b| b.1).collect()
+}
+
 /// The rider's spot at distance `d` on `track` (lateral offset `lateral`).
 pub fn spot_at(track: &dyn Track, d: f64, lateral: f64) -> ShotSpot {
     let p = track.sample(d);
@@ -511,13 +558,21 @@ impl Photographer {
             return;
         }
         let step = ((horizon - lead) / 12.0).max(40.0);
-        let mut ahead = lead;
+        // The spots on a step, and those by a viewpoint along the road
+        // (spec 2.11 Q4: good photo spots, which the steps may miss).
+        let mut aheads = Vec::new();
+        let mut a = lead;
+        while a <= horizon {
+            aheads.push(a);
+            a += step;
+        }
+        aheads.extend(viewpoint_spots(track, d, lead, horizon, scene.landmarks()));
         // Forced (tests): a fresh plan, whatever was planned.
         let mut best = if self.forced { None } else { self.plan.clone() };
         let mut best_v = best
             .as_ref()
             .map_or(0.0, |p| self.varied(&p.shot) * REPLAN_GAIN);
-        while ahead <= horizon {
+        for ahead in aheads {
             let at = d + ahead;
             let eta = ahead / speed;
             let when = ride + eta;
@@ -551,7 +606,6 @@ impl Photographer {
                     }
                 }
             }
-            ahead += step;
         }
         if best.is_some() {
             // `drone_only` stays until that visit ends: the replans
@@ -1172,6 +1226,45 @@ mod tests {
         );
         assert_eq!(person_phase(Shot, None, 30.0, false, Some(5.0)), Gone);
         assert_eq!(person_phase(Shot, None, 5.0, true, Some(LEAVE_MAX_S)), Gone);
+    }
+
+    /// A viewpoint by the road makes its nearest road point a spot; one
+    /// far off the road or behind the rider does not.
+    #[test]
+    fn viewpoints_along_the_road_are_photo_spots() {
+        use ocw_world::photo::Landmark;
+        let route = Route::test_loop();
+        let at = |m: f64| {
+            let s = route.sample(m);
+            // 30 m to the right of the road.
+            let right = [-s.direction[1], s.direction[0]];
+            [
+                s.position[0] + right[0] * 30.0,
+                s.position[1],
+                s.position[2] + right[1] * 30.0,
+            ]
+        };
+        let marks = vec![
+            Landmark::viewpoint("", at(900.0), None),
+            Landmark::viewpoint("Mirador Uno", at(2300.0), None),
+            Landmark::peak("Pico Uno", at(1200.0)),
+        ];
+        let spots = viewpoint_spots(&route, 500.0, 150.0, 1500.0, &marks);
+        assert_eq!(spots.len(), 1, "{spots:?}");
+        assert!((spots[0] - 400.0).abs() <= 10.0, "{spots:?}");
+        // Off the road (200 m) – none.
+        let s = route.sample(900.0);
+        let far = Landmark::viewpoint(
+            "",
+            [
+                s.position[0] - s.direction[1] * 200.0,
+                0.0,
+                s.position[2] + s.direction[0] * 200.0,
+            ],
+            None,
+        );
+        assert!(viewpoint_spots(&route, 500.0, 150.0, 1500.0, &[far]).is_empty());
+        assert!(viewpoint_spots(&route, 500.0, 150.0, 1500.0, &[]).is_empty());
     }
 
     /// A ride on the test loop at 8 m/s with time 10× faster: photos come

@@ -1,9 +1,10 @@
 //! Where the desktop keeps its sign-in (spec §9.1): the OS keyring
 //! (Secret Service on Linux, the Keychain on macOS, the Credential Manager
-//! on Windows; the `keyring` crate), else a private file
-//! (`<config dir>/ocw/account.json`, mode 0600) when no keyring answers
-//! (a headless kiosk without a Secret Service). The file is also what the
-//! tests use.
+//! on Windows; the `keyring` crate), else the private `secrets.toml` of the
+//! config folder (`[account] session`, mode 0600, spec 3.2.4; the old
+//! `account.json` is migrated into it) when no keyring answers (a headless
+//! kiosk without a Secret Service). A file of its own (`OCW_ACCOUNT_FILE`,
+//! the tests) holds the session's JSON.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -48,7 +49,7 @@ impl TokenStore {
             Self::Keyring { user, file } => {
                 if keyring_set(user, &json) {
                     // Not also in a file.
-                    let _ = std::fs::remove_file(file);
+                    remove_file(file);
                     Ok("the system keyring")
                 } else {
                     save_file(file, &json).map(|()| "a private file")
@@ -63,22 +64,53 @@ impl TokenStore {
         match self {
             Self::Keyring { user, file } => {
                 keyring_delete(user);
-                let _ = std::fs::remove_file(file);
+                remove_file(file);
             }
-            Self::File(f) => {
-                let _ = std::fs::remove_file(f);
-            }
+            Self::File(f) => remove_file(f),
             Self::None => {}
         }
     }
 }
 
+/// `secrets.toml [account]` when `path` is the secrets file.
+fn section(path: &std::path::Path) -> Option<crate::config::Slot> {
+    (path.file_name().and_then(|n| n.to_str()) == Some(crate::config::SECRETS_FILE)).then(|| {
+        crate::config::Slot::Section {
+            file: path.to_path_buf(),
+            key: "account".into(),
+            private: true,
+        }
+    })
+}
+
+fn remove_file(path: &PathBuf) {
+    match section(path) {
+        Some(slot) => {
+            let _ = slot.remove();
+        }
+        None => {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
 fn load_file(path: &PathBuf) -> Option<Session> {
-    let text = std::fs::read_to_string(path).ok()?;
+    let text = match section(path) {
+        Some(slot) => {
+            let t: toml::Table = toml::from_str(&slot.read().ok()??).ok()?;
+            t.get("session")?.as_str()?.to_owned()
+        }
+        None => std::fs::read_to_string(path).ok()?,
+    };
     serde_json::from_str(&text).ok()
 }
 
 fn save_file(path: &PathBuf, json: &str) -> Result<(), String> {
+    if let Some(slot) = section(path) {
+        let mut t = toml::Table::new();
+        t.insert("session".into(), toml::Value::String(json.into()));
+        return slot.write(&toml::to_string(&t).map_err(|e| e.to_string())?);
+    }
     let err = |e: std::io::Error| format!("{}: {e}", path.display());
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(err)?;
@@ -173,6 +205,49 @@ mod tests {
         }
         store.delete();
         assert!(store.load().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Without a keyring the session goes into `secrets.toml [account]`
+    /// (spec 3.2.4 Q2), private; the rest of the file stays.
+    #[test]
+    fn the_session_is_kept_in_secrets_toml() {
+        let dir = std::env::temp_dir().join(format!("ocw-account-secrets-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let secrets = dir.join("secrets.toml");
+        let files = crate::config::ConfigFiles::in_dir(&dir);
+        files
+            .secret("strava")
+            .write("client_id = \"12345\"\nclient_secret = \"made-up\"\n")
+            .unwrap();
+        let store = TokenStore::File(secrets.clone());
+        let s = Session {
+            issuer: "https://accounts.example.org".into(),
+            client_id: "ocw-desktop".into(),
+            access_token: "at".into(),
+            access_expires_at: 10,
+            refresh_token: Some("rt".into()),
+            account_id: "acc_2".into(),
+            name: "Bea Climber".into(),
+            providers: vec!["google".into()],
+        };
+        store.save(&s).unwrap();
+        assert_eq!(store.load(), Some(s));
+        let text = std::fs::read_to_string(&secrets).unwrap();
+        assert!(
+            text.contains("[account]") && text.contains("[strava]"),
+            "{text}"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&secrets).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        store.delete();
+        assert!(store.load().is_none());
+        // Only the session went.
+        assert!(files.secret("strava").read().unwrap().is_some());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

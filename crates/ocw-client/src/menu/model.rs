@@ -554,7 +554,7 @@ impl Page {
             Page::Settings => PageDef {
                 title: "Settings",
                 text: &[
-                    "Saved in settings.toml and riders.toml (console: set, get, riders.*, audio.*).",
+                    "Saved in ocw.toml (in the browser: this browser; console: set, get, riders.*, audio.*).",
                 ],
                 items: SETTINGS_ITEMS,
                 initial_focus: 0,
