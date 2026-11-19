@@ -7083,6 +7083,7 @@ dependencies = [
  "ocw-audio",
  "ocw-client",
  "ocw-core",
+ "ocw-devices",
  "ocw-fit",
  "ocw-protocol",
  "ocw-render",

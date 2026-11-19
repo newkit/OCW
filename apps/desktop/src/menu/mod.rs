@@ -160,6 +160,7 @@ mod tests {
             Folders,
             Graphics,
             ViewDistance,
+            Photographer,
             RiderList,
             Account,
             UnicornControls,
@@ -214,9 +215,9 @@ mod tests {
                 | Rides | GpxImport | Workouts | Voice | VoiceDevices | VoiceParticipants
                 | VoiceRider(_) | VoiceBlocked | VoiceRoom | VoiceSelect | AudioVoice
                 | TimeMachine | WeatherPresets | WeatherCustom | WeatherAir | WeatherReal
-                | RidingAids | Folders | Graphics | ViewDistance | RiderList | UnicornControls
-                | Bindings | BindGroup(_) | BindReset | Accessibility | Hud | History
-                | HistoryRides | HistoryRide(_) | HistoryClimbs(_) | HistoryWeeks
+                | RidingAids | Folders | Graphics | ViewDistance | Photographer | RiderList
+                | UnicornControls | Bindings | BindGroup(_) | BindReset | Accessibility | Hud
+                | History | HistoryRides | HistoryRide(_) | HistoryClimbs(_) | HistoryWeeks
                 | HistoryMonths | HistoryBests | HistoryWaiting | StravaWaiting | EventRules
                 | Account | TrustedKeys | TrustedKey(_) | Join | HostWorld | HostRoute
                 | HostTime | HostWeather | HostOptions | HostSummary | HostLink | Start | Devices

@@ -25,8 +25,16 @@
 #                                     with Ada's photographer: chase-NN-
 #                                     other-photographer|other-drone|other-flash.jpg
 #   server.log, index.md              the server's log, what is where
+#   b/hidden-NNN.jpg                  with OCW_B_HIDE: Bea's view at NNN s
+#                                     while Ada's photographer is hidden
 #
 # OCW_WORLD_DATA: the folder with tenerife/ (default ~/src/OCW/data).
+# OCW_B_HIDE=FROM-TO (seconds of Bea's app, e.g. 100-125): Bea hides the
+# other riders' photographers from FROM to TO (`set photographer.others
+# off|on`, spec 2.11 Q5) and saves her view every 3 s in between
+# (OCW_B_HIDE_STEP: another step). The times are the app's game-loop
+# time, which lags the clock while the world loads (X11 on the CPU: up
+# to ~100 s at the start).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 out=${1:-test-output/photographer-shared}
@@ -92,8 +100,19 @@ if [ "$second_ws" = wayland ]; then
   b_mode=shot-wayland
   b_low=()
 fi
+b_hide=()
+if [ -n "${OCW_B_HIDE:-}" ]; then
+  hide_from=${OCW_B_HIDE%-*}
+  hide_to=${OCW_B_HIDE#*-}
+  # (no HUD preview of these screenshots: it would be in the next ones)
+  b_hide=(--cmd "set display.photo_preview off"
+    --at "$hide_from=set photographer.others off" --at "$hide_to=set photographer.others on")
+  for ((s = hide_from + 2; s < hide_to; s += ${OCW_B_HIDE_STEP:-3})); do
+    b_hide+=(--at "$s=screenshot $out/b/hidden-$(printf %03d "$s").jpg")
+  done
+fi
 rider b "$b_mode" "${b_low[@]}" --name "Bea Climber" --record false --cmd "photographer off" \
-  --photo-chase-shots "$out/b/chase" &
+  --photo-chase-shots "$out/b/chase" "${b_hide[@]}" &
 b_pid=$!
 status=0
 wait "$a_pid" || status=$?
@@ -123,6 +142,10 @@ flash=$(find "$out/b/chase" -name '*other-flash*.jpg' 2>/dev/null | wc -l)
   for f in "$out"/b/chase/*.jpg; do
     [ -f "$f" ] || continue
     echo "| b/chase/$(basename "$f") | Bea's view: $(basename "$f" .jpg | sed 's/chase-[0-9]*-//; s/-/ /g') |"
+  done
+  for f in "$out"/b/hidden-*.jpg; do
+    [ -f "$f" ] || continue
+    echo "| b/$(basename "$f") | Bea's view at $(basename "$f" .jpg | sed 's/hidden-0*//') s, the other riders' photographers hidden (OCW_B_HIDE=$OCW_B_HIDE) |"
   done
   for f in "$out"/a/photos/*.jpg; do
     [ -f "$f" ] || continue

@@ -40,6 +40,8 @@ dirs.workspace = true
 [dev-dependencies]
 ocw-fit.workspace = true
 ocw-server.workspace = true
+# The virtual trainer's power in the photographer's ride tests.
+ocw-devices.workspace = true
 
 [lints]
 workspace = true
