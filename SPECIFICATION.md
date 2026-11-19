@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 4.94 – November 2026
+Version 4.95 – November 2026
 
 | Version | Change |
 |---|---|
+| 4.95 | **Health and bike condition always in the HUD while damage is on; a smaller bike icon that looks like a bike** (the user, 2026-11-19; 12F): shown also at 100 %; `ride.damage` in Settings; proposal: the `display.damage` hide switch goes away. Not built yet. |
 | 4.94 | **Open questions rewritten in plain words** (the user, 2026-11-19: "yes, rewrite them as well"): the 64 open questions not yet elaborated – 3.2.4 Q1, Q3, Q4; 4.6.2 Q1–Q5; 7.1.7 Q13, Q15, Q17–Q19, Q21, Q22; Phase 4 Q18–Q21, Q24, Q26, Q27, Q30, Q31; Phase 8 Q12–Q14; Phase 9 Q13, Q14; Phase 13 Q7–Q9; Phase 14 Q6–Q8; Phase 15 Q9, Q10; 16H Q6–Q24; Phase 17 Q1–Q8 – now each say what they are about (the situation in the app or the studio, with numbers), what is built, the options (a), (b), … and the proposal at the end (marked as a suggestion where the spec made none); nothing decided, no question dropped; Phase 4 Q18, Q21, 3.2.4 Q4 and Phase 13 Q8 point to the text that may already answer them; Appendix C regenerated. Numbered after 4.92, may be renumbered at merge. |
 | 4.93 | **Every rider has a white front light and a small red rear light at night** (the user, 2026-11-19; changes Phase 9 Q3): on for every bike from dusk to dawn, fitted light set or not; proposal: the bought light set stays an upgrade (stronger beam). Not built yet. |
 | 4.92 | **Appendix C lists every open question elaborated** (the user, 2026-11-19: "update appendix c with the elaborated questions … in the future, do put all open questions (elaborated) in appendix c"): each entry carries the question's full text – what it is about, the options, the proposal; 2.8.1 Q6 and 3.2 Q1–Q7, Q9–Q11 rewritten in plain words (the situation in the app, the options, the proposal); every new open question is written this way and the appendix is regenerated with it. |
@@ -5109,6 +5110,8 @@ Both builds run at the headless page's 60 Hz cap on this GPU, so the presets' sa
 - **Server and protocol:** damage is part of the server's rider state (`RiderUpdate.damage`: rider %, bike %, parts as a bit field, injury level), sent at 2 Hz and on every change; the event results show crashes and the final condition. FIT files get a lap / event marker per crash (developer field for the condition).
 
 #### 12F – Damage indicator (HUD)
+
+- **Always shown while damage is on (the user, 2026-11-19):** "when damage is on (make sure there is the according setting in the settings section) always show the health and bike condition in HUD. rework the bike logo for the bike condition (smaller, and make it look like a bike)." – with `ride.damage` on, the HUD **always** shows the rider's health and the bike's condition (also at 100 %, not only after a hit); `ride.damage` is a row in the Settings menu (Settings → Ride, both apps). The bike-condition icon is reworked: **smaller, and recognisably a bicycle** (two wheels, frame triangle, bars, saddle – a clean side-view silhouette), the damaged parts still lighting up on it. *Not decided (proposal):* the separate `display.damage` switch to hide the widget goes away, since the user asked for it always to be shown while damage is on.
 
 - A compact widget beside the bike computer: **two icons with bars** – a rider silhouette (condition %) and a bike silhouette (condition %) – each with its level word ("bruised", "hurt", "injured"; "scratched", "damaged", "broken"). Colours from the status palette (good / warning / serious / critical: green, amber, orange, red) and always an icon + word, never colour alone (accessibility). Parts with damage light up on the bike icon (wheel, tyre, chain, bars, frame), with a short label ("rear wheel buckled", "puncture: stop to repair").
 - **On a hit:** the affected icon flashes and the bar drops with an animation, the loss is shown for 2 s ("−12 % bike").
