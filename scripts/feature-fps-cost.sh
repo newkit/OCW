@@ -15,7 +15,10 @@
 # frame ms, p50 ms, p95 ms, load at the start. Needs the release build and
 # the world packages (OCW_WORLD_DATA, default ~/src/OCW/data).
 # OCW_FC_SIZES ("1280x720 1920x1080"), OCW_FC_PRESETS ("high medium"),
-# OCW_FC_SECONDS (46) and OCW_FC_WARMUP (15) change the matrix.
+# OCW_FC_SECONDS (46) and OCW_FC_WARMUP (15) change the matrix;
+# OCW_FC_CONFIGS ("off gd rd map all") picks configs, OCW_FC_APP a saved
+# binary (e.g. the build before a change) and OCW_FC_TAG a prefix for the
+# config column (to compare two builds, alternating calls with ROUNDS 1).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # Numbers with a decimal point whatever the locale (awk reads and prints them).
@@ -45,7 +48,13 @@ scenes=(
   "tenerife-puerto-teide-km4-horrible|$tf|--route-file;$data/tenerife/puerto-teide.route|teleport 4|horrible"
 )
 # config | ground detail | road damage (on: the scene's) | map
-configs=("off|off|off|off" "gd|on|off|off" "rd|off|on|off" "map|off|off|on" "all|on|on|on")
+all_configs=("off|off|off|off" "gd|on|off|off" "rd|off|on|off" "map|off|off|on" "all|on|on|on")
+configs=()
+for c in "${all_configs[@]}"; do
+  for want in ${OCW_FC_CONFIGS:-off gd rd map all}; do [ "${c%%|*}" = "$want" ] && configs+=("$c"); done
+done
+app=${OCW_FC_APP:-target/release/ocw-desktop}
+tag=${OCW_FC_TAG:-}
 
 # Cores busy over 5 s (all processes; nothing of ours runs between runs).
 busy_cores() {
@@ -111,16 +120,16 @@ for size in $sizes; do
           cmds+=(--at "$((seconds - 2))=quality" --at "$((seconds - 2))=view" --at "$((seconds - 2))=ground_detail"
                  --at "$((seconds - 2))=road.damage")
           label="$size $preset $name $cname r$r"
-          log="$logs/${size}-${preset}-${name}-${cname}-r$r.log"
+          log="$logs/${size}-${preset}-${name}-${tag}${cname}-r$r.log"
           line=$(OCW_CONFIG_DIR=$work/cfg OCW_DATA_DIR=$work/data \
-            scripts/measure-fps.sh --seconds "$seconds" --warmup "$warmup" --size "$size" --label "$label" --log "$log" -- \
+            scripts/measure-fps.sh --app "$app" --seconds "$seconds" --warmup "$warmup" --size "$size" --label "$label" --log "$log" -- \
             --world "$pkg" "${ride_args[@]}" --no-neighbours --no-args-file --bots 0 --power 250 --name "Ada Rider" \
             --real-weather false --random-start false "${cmds[@]}" 2>&1) || true
           echo "$line" >&2
           # "LABEL: 87.3 fps mean (11.45 ms), min 80.1, p50 11.20 ms, p95 13.40 ms, 6 samples: …"
           v=$(sed -nE 's/.*: ([0-9.]+) fps mean \(([0-9.]+) ms\), min [0-9.]+, p50 ([0-9.]+) ms, p95 ([0-9.]+) ms,.*/\1\t\2\t\3\t\4/p' <<<"$line")
           [ -n "$v" ] || v=$'NA\tNA\tNA\tNA'
-          printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$size" "$preset" "$name" "$cname" "$r" "$v" "$load" >>"$out"
+          printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$size" "$preset" "$name" "$tag$cname" "$r" "$v" "$load" >>"$out"
         done
       done
     done

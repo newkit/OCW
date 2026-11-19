@@ -603,6 +603,8 @@ mod tests {
             ocw_render::ortho::OrthoPlugin,
             // `road_barriers` (display.road_barriers).
             ocw_render::obstacles::ObstaclesPlugin,
+            // `ground_detail` (display.ground_detail).
+            ocw_render::ground_detail::GroundDetailCommandPlugin,
             // `quality` (display.quality).
             ocw_ui::quality::QualityPlugin,
             // `activities.folder` (the Strava recordings' folder).
@@ -672,6 +674,22 @@ mod tests {
                 .resource::<ocw_render::obstacles::ObstacleSettings>()
                 .road_barriers
         );
+        // The ground detail (spec 4.6.2 Q1): auto by default, low and full
+        // override the preset.
+        let gd = |app: &App| {
+            app.world()
+                .resource::<ocw_render::ground_detail::GroundDetailSettings>()
+                .mode
+        };
+        use ocw_render::ground_detail::GroundDetailMode;
+        assert_eq!(gd(&app), GroundDetailMode::Auto);
+        assert_eq!(
+            run(&mut app, "set display.ground_detail low")[0],
+            "display.ground_detail = low"
+        );
+        assert_eq!(gd(&app), GroundDetailMode::Low);
+        run(&mut app, "set display.ground_detail auto");
+        assert_eq!(gd(&app), GroundDetailMode::Auto);
         let saved = std::fs::read_to_string(dir.join("settings.toml")).unwrap();
         assert!(saved.contains("[display]\nfps = true"), "{saved}");
         assert_eq!(
@@ -795,6 +813,7 @@ mod tests {
             pages::Page::Hud,
             pages::Page::Graphics,
             pages::Page::ViewDistance,
+            pages::Page::WorldDetail,
             pages::Page::EventRules,
         ]) {
             let rows = {

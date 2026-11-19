@@ -30,8 +30,17 @@
 //! only when a camera comes near ([`lazy_ground`]) and dropped again
 //! behind it, drawn up to the quality preset's distance and faded out
 //! (dithered) before it, with the preset's share of the bits
-//! ([`crate::quality::QualityPreset::ground_detail`]). Lying snow (the
-//! weather's cover from half on) hides all but the rocks and shrubs.
+//! ([`crate::quality::QualityPreset::ground_detail`]) or the setting's
+//! (`display.ground_detail` auto / off / low / full, [`level`]). Lying snow
+//! (the weather's cover from half on) hides all but the rocks and shrubs.
+//!
+//! **The answers of spec 4.6.2 (2026-11-19):** the bits of the first 7 m
+//! band are spread over [`BAND_M`] (even to [`NEAR_BAND_M`], thinning out
+//! beyond: the same count); very few lie on the road itself
+//! ([`road_mix`]: grit, small stones, the odd twig, leaves in autumn),
+//! never in the wheel tracks or a lane's middle ([`road_spot_free`]);
+//! autumn adds leaf patches under the broadleaves and a few more leaves;
+//! a wet road darkens the bits and makes them shine ([`wet_look`]).
 
 use std::sync::Arc;
 
@@ -52,8 +61,12 @@ use crate::package::{Keep, MeshArrays, TileGround};
 
 /// Chunks per tile side (25 m chunks for 1 km tiles).
 pub const CHUNKS: u32 = 40;
-/// The bits lie up to this far beyond the road's edge (m).
-pub const BAND_M: f32 = 7.0;
+/// The bits lie up to this far beyond the road's edge (m; spec 4.6.2 Q4:
+/// the same number of bits as in the first 7 m band, spread wider) …
+pub const BAND_M: f32 = 14.0;
+/// … evenly up to here (the first band of v4.72), thinning out linearly
+/// beyond ([`spread`]).
+pub const NEAR_BAND_M: f32 = 7.0;
 /// Steps along the road edges (m).
 pub const STEP_M: f32 = 1.0;
 /// Road-edge gravel reaches this far onto the road surface (m).
@@ -78,9 +91,27 @@ pub const INNER: f32 = 0.55;
 pub const PATCH_LIFT_M: f32 = 0.04;
 /// The weather's snow cover from which only rocks and shrubs show.
 pub const SNOW_HIDES_SMALL: f32 = 0.5;
-/// A proposal for the VR preset of Phase 11 (share, distance m; spec
-/// §4.6.2, open question): a modest share, as for Medium.
+/// The VR preset of Phase 11 (share, distance m; spec 4.6.2 Q2, decided
+/// 2026-11-19: "modest 50 % up to 50 m"), between Medium and Low.
 pub const VR_LEVEL: (f32, f32) = (0.5, 50.0);
+/// `display.ground_detail low` (share, distance m): the Low preset's.
+pub const LOW_LEVEL: (f32, f32) = (0.25, 35.0);
+/// `display.ground_detail full`: the High preset's.
+pub const FULL_LEVEL: (f32, f32) = (1.0, 80.0);
+/// Bits on the road surface keep this far (m) from a lane's middle …
+pub const LANE_MIDDLE_CLEAR_M: f32 = 0.45;
+/// … and lie only where the wheel tracks
+/// ([`ocw_world::road_wear::wheel_tracks`]) are below this.
+pub const TRACK_CLEAR: f32 = 0.35;
+/// A wet ground detail is this much darker at full wetness (the road's
+/// asphalt 0.55, unpaved 0.72: stone, soil and plants in between) …
+pub const WET_DARKEN: f32 = 0.38;
+/// … and this rough (dry: 1): it shines like the wet road.
+pub const WET_ROUGHNESS: f32 = 0.6;
+/// The broadleaf share the autumn leaves count with at least in a wood
+/// (mixed woods measured as mostly conifers still have beeches and maples
+/// by the roads; spec 4.6.2 Q5).
+pub const LEAF_WOOD_MIN: f32 = 0.2;
 
 /// What lies by the road.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -104,10 +135,13 @@ pub enum Kind {
     Stalks,
     Fern,
     Shrub,
+    /// A patch of fallen leaves under broadleaves (blended; spec 4.6.2
+    /// Q5), autumn and winter. Last, so the other kinds keep their seeds.
+    LeafLitter,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 13] = [
+    pub const ALL: [Kind; 14] = [
         Kind::Gravel,
         Kind::Pebble,
         Kind::Rock,
@@ -121,7 +155,12 @@ impl Kind {
         Kind::Stalks,
         Kind::Fern,
         Kind::Shrub,
+        Kind::LeafLitter,
     ];
+
+    /// What may lie on the road surface itself (spec 4.6.2 Q4, Q5): grit,
+    /// small stones, the odd twig, leaves in autumn.
+    pub const ON_ROAD: [Kind; 4] = [Kind::Gravel, Kind::Pebble, Kind::Twig, Kind::Leaf];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -138,6 +177,7 @@ impl Kind {
             Kind::Stalks => "stalks",
             Kind::Fern => "fern",
             Kind::Shrub => "shrub",
+            Kind::LeafLitter => "leaf litter",
         }
     }
 
@@ -148,23 +188,28 @@ impl Kind {
 
     /// A soft-edged patch in the blended mesh.
     pub fn patch(self) -> bool {
-        matches!(self, Kind::Dirt | Kind::Moss | Kind::Needles)
+        matches!(
+            self,
+            Kind::Dirt | Kind::Moss | Kind::Needles | Kind::LeafLitter
+        )
     }
 
-    /// Where across the verge (m from the road edge, the share's skew:
-    /// above 1 most lie near the start).
-    fn band(self) -> (f32, f32, f32) {
+    /// Where across the verge (m from the road edge): from, evenly to,
+    /// thinning out to, and the share's skew (above 1 most lie near the
+    /// start; [`spread`]). The ends of the even part are the first band's
+    /// (v4.72, up to 7 m); the thinning tail doubles it (spec 4.6.2 Q4).
+    pub fn band(self) -> (f32, f32, f32, f32) {
         match self {
-            Kind::Gravel => (-EDGE_IN_M, 0.5, 1.6),
-            Kind::Pebble => (0.0, 3.5, 1.8),
-            Kind::Rock => (1.2, BAND_M, 1.0),
-            Kind::Dirt => (0.6, 5.0, 1.3),
-            Kind::Twig | Kind::Cone | Kind::Leaf => (0.1, 5.5, 1.2),
-            Kind::Needles | Kind::Moss => (0.8, BAND_M, 1.0),
-            Kind::Tuft => (0.3, BAND_M, 0.9),
-            Kind::Stalks => (0.3, 5.0, 1.0),
-            Kind::Fern => (1.0, BAND_M, 0.8),
-            Kind::Shrub => (1.2, BAND_M, 0.8),
+            Kind::Gravel => (-EDGE_IN_M, 0.5, 0.5, 1.6),
+            Kind::Pebble => (0.0, 3.5, 6.0, 1.8),
+            Kind::Rock => (1.2, NEAR_BAND_M, BAND_M, 1.0),
+            Kind::Dirt => (0.6, 5.0, 10.0, 1.3),
+            Kind::Twig | Kind::Cone | Kind::Leaf => (0.1, 5.5, 11.0, 1.2),
+            Kind::Needles | Kind::Moss | Kind::LeafLitter => (0.8, NEAR_BAND_M, BAND_M, 1.0),
+            Kind::Tuft => (0.3, NEAR_BAND_M, BAND_M, 0.9),
+            Kind::Stalks => (0.3, 5.0, 10.0, 1.0),
+            Kind::Fern => (1.0, NEAR_BAND_M, BAND_M, 0.8),
+            Kind::Shrub => (1.2, NEAR_BAND_M, BAND_M, 0.8),
         }
     }
 
@@ -178,15 +223,36 @@ impl Kind {
             Kind::Dirt => (0.4, 1.3),
             Kind::Moss => (0.25, 0.7),
             Kind::Needles => (0.5, 1.4),
-            Kind::Leaf => (0.06, 0.12),
+            // 8 – 15 cm since spec 4.6.2 Q5 (6 – 12 cm before).
+            Kind::Leaf => (0.08, 0.15),
             Kind::Twig => (0.18, 0.6),
             Kind::Cone => (0.05, 0.1),
             Kind::Tuft => (0.15, 0.4),
             Kind::Stalks => (0.3, 0.7),
             Kind::Fern => (0.3, 0.65),
             Kind::Shrub => (0.25, 0.6),
+            Kind::LeafLitter => (0.45, 1.2),
         }
     }
+}
+
+/// The distance from the road edge of a bit drawn with `u` (0 … 1) for a
+/// band from `b0`, even to `f` and thinning out linearly to `b1` (the
+/// inverse of the trapezoid's distribution; `f >= b1`: even to `b1`).
+pub fn spread(b0: f32, f: f32, b1: f32, u: f32) -> f32 {
+    let u = u.clamp(0.0, 1.0);
+    let flat = (f - b0).max(0.0);
+    let tail = (b1 - f).max(0.0);
+    let total = flat + tail / 2.0;
+    if total <= 0.0 {
+        return b0;
+    }
+    let t = u * total;
+    if t <= flat || tail <= 0.0 {
+        return b0 + t.min(flat);
+    }
+    let r = ((t - flat) / (tail / 2.0)).clamp(0.0, 1.0);
+    f + tail * (1.0 - (1.0 - r).sqrt())
 }
 
 /// One bit of ground detail (package metres).
@@ -201,6 +267,8 @@ pub struct Bit {
     pub normal: Vec3,
     /// Linear RGB.
     pub colour: [f32; 3],
+    /// On the road surface (spec 4.6.2 Q4; not the edge gravel).
+    pub road: bool,
     /// Patches: the rim's points (radius share, height over `pos`, and the
     /// height over `pos` of the inner ring at [`INNER`] of the way).
     pub ring: [[f32; 3]; RING],
@@ -216,6 +284,9 @@ pub struct SeasonFx {
     pub litter: f32,
     /// Freshly fallen, still coloured (autumn).
     pub autumn: f32,
+    /// The leaf fall's own share of [`Self::litter`] (0 in summer, 1 when
+    /// the leaves are down): the leaf patches and the leaves on the road.
+    pub fall: f32,
     /// Climatological snow cover (0 – 1).
     pub snow: f32,
 }
@@ -227,6 +298,7 @@ impl SeasonFx {
         dry: 0.0,
         litter: 0.2,
         autumn: 0.0,
+        fall: 0.0,
         snow: 0.0,
     };
 
@@ -245,6 +317,7 @@ impl SeasonFx {
             dry: g.dry,
             litter: litter.clamp(0.0, 1.0),
             autumn: (f.autumn * (0.4 + fallen)).clamp(0.0, 1.0),
+            fall: ((0.5 * f.autumn + fallen) * (1.0 - 0.6 * f.fresh)).clamp(0.0, 1.0),
             snow: d.snow(alt_m),
         }
     }
@@ -266,7 +339,7 @@ pub struct Place {
 
 /// Bits of each kind expected per metre of one road side (High).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct Mix(pub [f32; 13]);
+pub struct Mix(pub [f32; 14]);
 
 impl Mix {
     pub fn get(&self, k: Kind) -> f32 {
@@ -342,7 +415,10 @@ pub fn mix(p: &Place, s: &SeasonFx) -> Mix {
         m.set(Tuft, 0.5);
         m.set(Twig, 0.45);
         m.set(Rock, 0.06);
-        m.set(Leaf, 6.0 * p.broadleaf * s.litter);
+        // A bit stronger since spec 4.6.2 Q5 (6 → 7.5), and patches of
+        // fallen leaves under the broadleaves.
+        m.set(Leaf, 7.5 * p.broadleaf * s.litter);
+        m.set(LeafLitter, 0.5 * p.broadleaf.max(LEAF_WOOD_MIN) * s.fall);
         m.set(Needles, 0.45 * conifer);
         m.set(Cone, 0.35 * conifer);
         m.set(Fern, 0.25);
@@ -350,7 +426,8 @@ pub fn mix(p: &Place, s: &SeasonFx) -> Mix {
         m.set(Dirt, 0.2);
     } else if open {
         // Leaves blown out of the hedges and roadside trees.
-        m.set(Leaf, 0.5 * s.litter);
+        m.set(Leaf, 0.65 * s.litter);
+        m.set(LeafLitter, 0.02 * s.fall);
     }
     match p.region {
         FloraRegion::Tenerife => {
@@ -392,7 +469,9 @@ pub fn mix(p: &Place, s: &SeasonFx) -> Mix {
         FloraRegion::Other => {}
     }
     if urban {
-        for k in [Tuft, Stalks, Shrub, Fern, Moss, Needles, Cone, Leaf, Twig] {
+        for k in [
+            Tuft, Stalks, Shrub, Fern, Moss, Needles, Cone, Leaf, Twig, LeafLitter,
+        ] {
             m.scale(k, 0.35);
         }
         m.scale(Pebble, 0.6);
@@ -431,6 +510,78 @@ pub fn mix(p: &Place, s: &SeasonFx) -> Mix {
         }
     }
     m
+}
+
+/// What lies on the road surface itself (spec 4.6.2 Q4, Q5), bits per
+/// metre of one side's half of the carriageway (High): very few – grit and
+/// small stones (more on worn and unpaved roads, like the road damage's
+/// loose stones of [`ocw_world::road_wear`]), the odd twig, leaves in
+/// autumn and winter. `grade`: the road's wear grade (1 … 7).
+pub fn road_mix(p: &Place, s: &SeasonFx, grade: u8) -> Mix {
+    use Kind::*;
+    let mut m = Mix::default();
+    let forest = matches!(p.class, LandClass::Forest);
+    let urban = matches!(
+        p.class,
+        LandClass::Residential | LandClass::Commercial | LandClass::Industrial
+    );
+    if matches!(
+        p.class,
+        LandClass::Water | LandClass::Wetland | LandClass::Glacier
+    ) {
+        return m;
+    }
+    let worn = 0.6 + 0.25 * f32::from(grade.clamp(1, 7) - 1);
+    m.set(Gravel, 0.035 * worn);
+    m.set(Pebble, 0.012 * worn);
+    m.set(Twig, if forest { 0.012 } else { 0.003 });
+    m.set(
+        Leaf,
+        if forest {
+            0.8 * p.broadleaf.max(LEAF_WOOD_MIN) * s.fall
+        } else {
+            0.06 * s.fall
+        },
+    );
+    match p.surface {
+        RoadSurface::Gravel | RoadSurface::Dirt => {
+            m.scale(Gravel, 2.0);
+            m.scale(Pebble, 2.0);
+        }
+        RoadSurface::Paving => m.scale(Gravel, 0.5),
+        _ => {}
+    }
+    if urban || p.sidewalk {
+        // Swept streets.
+        for k in Kind::ON_ROAD {
+            m.scale(k, 0.5);
+        }
+    }
+    let cover = (1.0 - s.snow.clamp(0.0, 1.0)).powi(2);
+    for k in Kind::ON_ROAD {
+        m.scale(k, cover);
+    }
+    m
+}
+
+/// Whether a bit may lie `u` m across a carriageway of half width `half`
+/// (lanes as the road's dress): off the wheel tracks and off the lanes'
+/// middles, where the wheels run (spec 4.6.2 Q4; the road damage sweeps
+/// its loose stones out of the tracks the same way).
+pub fn road_spot_free(u: f32, half: f32, lanes: [u8; 2]) -> bool {
+    use ocw_world::road_wear::{lane_middles, wheel_tracks};
+    wheel_tracks(u, half, lanes) < TRACK_CLEAR
+        && lane_middles(half, lanes)
+            .iter()
+            .all(|c| (u - c).abs() > LANE_MIDDLE_CLEAR_M)
+}
+
+/// The look of the ground detail at road wetness `wet` (0 … 1; spec 4.6.2
+/// Q3): the colour factor and the roughness – darker and shining like the
+/// wet road (Phase 9), no shadows of its own.
+pub fn wet_look(wet: f32) -> (f32, f32) {
+    let w = wet.clamp(0.0, 1.0);
+    (1.0 - WET_DARKEN * w, 1.0 + (WET_ROUGHNESS - 1.0) * w)
 }
 
 fn lin3(c: [f32; 3]) -> [f32; 3] {
@@ -487,11 +638,17 @@ pub fn colour(k: Kind, p: &Place, s: &SeasonFx, h: f32) -> [f32; 3] {
             FloraRegion::Tenerife => [0.52, 0.38, 0.24],
             _ => [0.40, 0.25, 0.14],
         },
-        Kind::Leaf => {
+        Kind::Leaf | Kind::LeafLitter => {
             let fresh = [[0.80, 0.42, 0.10], [0.86, 0.68, 0.16], [0.62, 0.22, 0.08]];
             let old = [[0.42, 0.30, 0.18], [0.36, 0.27, 0.17], [0.48, 0.36, 0.22]];
             let i = ((h * 3.0) as usize).min(2);
-            mix3(old[i], fresh[i], s.autumn)
+            let c = mix3(old[i], fresh[i], s.autumn);
+            if k == Kind::LeafLitter {
+                // The patch: the leaves with the soil between them.
+                mix3(c, soil_srgb(p.region, h), 0.3)
+            } else {
+                c
+            }
         }
         Kind::Twig => mix3([0.36, 0.28, 0.21], [0.46, 0.43, 0.39], h),
         Kind::Cone => [0.44, 0.29, 0.17],
@@ -646,6 +803,7 @@ pub fn bits_in(ctx: &Ctx, rect: [f64; 4], p: &Params) -> Vec<Bit> {
         }
         let half = s.width_m / 2.0;
         let walk_max = s.dress.sidewalk_m[0].max(s.dress.sidewalk_m[1]);
+        let grade = ocw_world::road_wear::wear_grade(s.class, s.surface, &s.condition);
         let reach = f64::from(half + walk_max + BAND_M + STEP_M + 1.0);
         let mut local = 0.0f32;
         for w in s.points.windows(2) {
@@ -734,11 +892,11 @@ pub fn bits_in(ctx: &Ctx, rect: [f64; 4], p: &Params) -> Vec<Bit> {
                         let n = (e.floor() as u32
                             + u32::from(h01(qx, qz, seed(0, 15)) < e.fract()))
                         .min(MAX_PER_STEP);
-                        let (b0, b1, skew) = kind.band();
+                        let (b0, f, b1, skew) = kind.band();
                         let (s0, s1) = kind.size();
                         for slot in 0..n {
                             let u = h01(qx, qz, seed(slot, 1)).powf(skew);
-                            let mut dist = b0 + (b1 - b0) * u;
+                            let mut dist = spread(b0, f, b1, u);
                             if walk > 0.0 {
                                 dist = dist.max(0.0) + walk + 0.3;
                             }
@@ -853,6 +1011,76 @@ pub fn bits_in(ctx: &Ctx, rect: [f64; 4], p: &Params) -> Vec<Bit> {
                                 normal,
                                 colour: colour(kind, &place, &fx, shade),
                                 ring,
+                                road: false,
+                            });
+                        }
+                    }
+                    // Very few bits on the road itself (spec 4.6.2 Q4,
+                    // Q5): across this side's half of the carriageway,
+                    // mostly near the edge, never in the wheel tracks or
+                    // a lane's middle; not in junctions.
+                    if narrow {
+                        continue;
+                    }
+                    let rm = road_mix(&place, &fx, grade);
+                    for kind in Kind::ON_ROAD {
+                        if p.snow && kind.small() {
+                            continue;
+                        }
+                        let e = rm.get(kind) * STEP_M * p.density;
+                        if e <= 0.0 {
+                            continue;
+                        }
+                        let seed = |slot: u32, field: u64| {
+                            ((si as u64) << 60)
+                                ^ ((kind as u64) << 52)
+                                ^ (u64::from(slot) << 40)
+                                ^ (field << 32)
+                                ^ 0x726f_6164 // "road"
+                        };
+                        let n = (e.floor() as u32
+                            + u32::from(h01(qx, qz, seed(0, 15)) < e.fract()))
+                        .min(MAX_PER_STEP);
+                        for slot in 0..n {
+                            // A few tries for a free spot.
+                            let Some(inward) = (0..3u64)
+                                .map(|t| {
+                                    EDGE_IN_M
+                                        + (half - EDGE_IN_M).max(0.0)
+                                            * h01(qx, qz, seed(slot, 1 + 8 * t)).powf(2.0)
+                                })
+                                .find(|d| road_spot_free(half - d, half, s.dress.lanes))
+                            else {
+                                continue;
+                            };
+                            let v = h01(qx, qz, seed(slot, 2)) * STEP_M;
+                            let at = edge - out_dir * inward + dir * v;
+                            let (x, z) = (f64::from(at.x), f64::from(at.z));
+                            if !inside(x, z) || !(ctx.keep)(x, z) {
+                                continue;
+                            }
+                            if crate::bridges::on_deck(&decks, [at.x, q.y, at.z]) {
+                                continue;
+                            }
+                            let Some(ry) = road_y(&segs, x, z) else {
+                                continue;
+                            };
+                            // Only the smaller half of each kind's sizes
+                            // (leaves: all).
+                            let (s0, s1) = kind.size();
+                            let part = if kind == Kind::Leaf { 1.0 } else { 0.5 };
+                            let size = s0 + (s1 - s0) * part * h01(qx, qz, seed(slot, 3)).powf(1.6);
+                            let yaw = h01(qx, qz, seed(slot, 4)) * std::f32::consts::TAU;
+                            let shade = h01(qx, qz, seed(slot, 5));
+                            out.push(Bit {
+                                kind,
+                                pos: Vec3::new(at.x, (ry + f64::from(lift)) as f32, at.z),
+                                size,
+                                yaw,
+                                normal: Vec3::Y,
+                                colour: colour(kind, &place, &fx, shade),
+                                ring: [[0.0; 3]; RING],
+                                road: true,
                             });
                         }
                     }
@@ -1003,10 +1231,10 @@ pub fn add_bit(solid: &mut MeshArrays, patches: &mut MeshArrays, b: &Bit, origin
                 *p = q.to_array();
             }
         }
-        Kind::Dirt | Kind::Moss | Kind::Needles => {
+        Kind::Dirt | Kind::Moss | Kind::Needles | Kind::LeafLitter => {
             let alpha = match b.kind {
                 Kind::Moss => 0.85,
-                Kind::Needles => 0.8,
+                Kind::Needles | Kind::LeafLitter => 0.8,
                 _ => 0.7,
             };
             let n = b.normal.to_array();
@@ -1350,16 +1578,50 @@ impl DetailSource {
 
 // --- Drawing --------------------------------------------------------------------
 
-/// `ground_detail on|off` (console; on by default).
-#[derive(Resource, Debug, Clone, Copy, PartialEq)]
-pub struct GroundDetailSettings {
-    pub on: bool,
+/// How much ground detail is drawn (setting `display.ground_detail`,
+/// console `ground_detail`; spec 4.6.2 Q1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GroundDetailMode {
+    /// As the quality preset says (High all of it to 80 m, Medium 60 % to
+    /// 55 m, Low 25 % to 35 m) – the default.
+    #[default]
+    Auto,
+    Off,
+    /// [`LOW_LEVEL`] whatever the preset.
+    Low,
+    /// [`FULL_LEVEL`] whatever the preset.
+    Full,
 }
 
-impl Default for GroundDetailSettings {
-    fn default() -> Self {
-        Self { on: true }
+impl GroundDetailMode {
+    /// The setting's choices (`on`: the console's old word for `auto`).
+    pub const CHOICES: [&'static str; 4] = ["auto", "off", "low", "full"];
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "auto" | "on" => Self::Auto,
+            "off" => Self::Off,
+            "low" => Self::Low,
+            "full" => Self::Full,
+            _ => return None,
+        })
     }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Off => "off",
+            Self::Low => "low",
+            Self::Full => "full",
+        }
+    }
+}
+
+/// The ground detail's setting (console `ground_detail
+/// auto|off|low|full`; `display.ground_detail`, default auto).
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Default)]
+pub struct GroundDetailSettings {
+    pub mode: GroundDetailMode,
 }
 
 /// The materials: the trees' (swaying, snow on top) and a blended one for
@@ -1369,6 +1631,10 @@ pub struct GroundDetailMaterials {
     pub solid: Handle<crate::see_through::SeeThroughMaterial>,
     pub patches: Handle<StandardMaterial>,
 }
+
+/// The wetness the materials were last set for (spec 4.6.2 Q3).
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Default)]
+pub struct GroundDetailWet(pub f32);
 
 /// What a chunk was built for.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1447,15 +1713,50 @@ pub fn detail_range(draw_m: f32) -> VisibilityRange {
     }
 }
 
-/// The share and distance of the preset with the setting.
+/// The share and distance of the preset with the setting (spec 4.6.2 Q1:
+/// `low` and `full` override the preset, `auto` follows it).
 pub fn level(
     quality: &crate::quality::QualityPreset,
     settings: &GroundDetailSettings,
 ) -> (f32, f32) {
-    if !settings.on || quality.ground_detail <= 0.0 {
-        return (0.0, 0.0);
+    match settings.mode {
+        GroundDetailMode::Off => (0.0, 0.0),
+        GroundDetailMode::Low => LOW_LEVEL,
+        GroundDetailMode::Full => FULL_LEVEL,
+        GroundDetailMode::Auto if quality.ground_detail <= 0.0 => (0.0, 0.0),
+        GroundDetailMode::Auto => (quality.ground_detail, quality.ground_detail_m),
     }
-    (quality.ground_detail, quality.ground_detail_m)
+}
+
+/// Darkens the ground detail and makes it shine while the road is wet
+/// (spec 4.6.2 Q3; [`wet_look`]), like the wet road of Phase 9: the two
+/// materials' colour factor and roughness, changed only when the
+/// (quantized) wetness changes.
+pub fn wet_ground_detail(
+    view: Option<Res<crate::RideView>>,
+    materials: Option<Res<GroundDetailMaterials>>,
+    mut last: ResMut<GroundDetailWet>,
+    mut solid: ResMut<Assets<crate::see_through::SeeThroughMaterial>>,
+    mut blended: ResMut<Assets<StandardMaterial>>,
+) {
+    let Some(materials) = materials else {
+        return;
+    };
+    let wet = crate::weather::surface_uniform(view.as_ref().and_then(|v| v.weather.as_ref())).x;
+    if wet == last.0 {
+        return;
+    }
+    last.0 = wet;
+    let (k, rough) = wet_look(wet);
+    let c = Color::linear_rgb(k, k, k);
+    if let Some(mut m) = solid.get_mut(&materials.solid) {
+        m.base.base_color = c;
+        m.base.perceptual_roughness = rough;
+    }
+    if let Some(mut m) = blended.get_mut(&materials.patches) {
+        m.base_color = c;
+        m.perceptual_roughness = rough;
+    }
 }
 
 fn setup_materials(
@@ -1638,18 +1939,37 @@ pub fn spawn_chunks(
     }
 }
 
+/// The setting and its console command alone (`ground_detail`; the
+/// settings' tests add it without the renderer).
+pub struct GroundDetailCommandPlugin;
+
+impl Plugin for GroundDetailCommandPlugin {
+    fn build(&self, app: &mut App) {
+        register_command(app);
+    }
+}
+
 /// The systems and the console command (added by the package plugin).
 pub fn register(app: &mut App) {
-    app.init_resource::<GroundDetailSettings>()
+    if !app.is_plugin_added::<GroundDetailCommandPlugin>() {
+        app.add_plugins(GroundDetailCommandPlugin);
+    }
+    app.init_resource::<GroundDetailWet>()
         .add_systems(Startup, setup_materials)
+        .add_systems(Update, wet_ground_detail);
+}
+
+fn register_command(app: &mut App) {
+    app.init_resource::<GroundDetailSettings>()
         .console_command(ConsoleCommand::new(
             Permission::User,
             Command::new("ground_detail")
-                .about("Stones, dirt, tufts, leaves and plant bits beside the roads: on or off (spec §4.6.2)")
-                .arg(Arg::new("mode").value_parser(["on", "off"])),
+                .about("Stones, dirt, tufts, leaves and plant bits beside and on the roads: auto (the quality preset's), off, low or full (setting display.ground_detail; on = auto; spec 4.6.2)")
+                .arg(Arg::new("mode").value_parser(["auto", "on", "off", "low", "full"])),
             |world, m| {
                 if let Some(v) = m.get_one::<String>("mode") {
-                    world.resource_mut::<GroundDetailSettings>().on = v == "on";
+                    world.resource_mut::<GroundDetailSettings>().mode =
+                        GroundDetailMode::parse(v).ok_or_else(|| format!("auto, off, low or full, not {v}"))?;
                 }
                 let settings = *world.resource::<GroundDetailSettings>();
                 let preset = world
@@ -1668,7 +1988,7 @@ pub fn register(app: &mut App) {
                 }
                 Ok(format!(
                     "ground detail {}: share {share:.2} up to {draw:.0} m; {built} of {chunks} chunks built, {bits} bits",
-                    if settings.on { "on" } else { "off" }
+                    settings.mode.name()
                 ))
             },
         ));
