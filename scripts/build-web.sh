@@ -117,6 +117,9 @@ for gpu in $gpus; do
   names+=("$name")
 done
 cp apps/web/web/index.html apps/web/web/ocw-voice.js apps/web/web/ocw-gpu.js artwork/logos/ocw.svg "$out/"
+# Add to Home Screen (spec 3.2.3): the web app manifest and its icons (the
+# Apple touch icon is ocw-256.png).
+cp apps/web/web/manifest.webmanifest artwork/logos/ocw-256.png artwork/logos/ocw-512.png "$out/"
 # The page configuration (B8a): the dev server's page keeps every option
 # (no server / voice / sign-in keys); the preview's site assembly
 # (scripts/web-preview-site.py) writes its own with the worlds and rides.

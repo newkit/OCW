@@ -406,6 +406,7 @@ fn show_column(
 fn place_panel(
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     ui_scale: Option<Res<UiScale>>,
+    safe: Option<Res<crate::safe_area::SafeArea>>,
     view: Res<RideView>,
     map: Option<Res<crate::navi_map::NaviMapInfo>>,
     map_avoid: Option<Res<crate::navi_map::MapAvoidRects>>,
@@ -455,7 +456,8 @@ fn place_panel(
         return;
     };
     let scale = ui_scale.map_or(1.0, |s| s.0).max(0.1);
-    let win = Vec2::new(window.width(), window.height()) / scale;
+    // The UI's area (inside the safe area, spec §3.2.3).
+    let win = crate::safe_area::ui_area(window, safe.as_deref()).1 / scale;
     // The full panel's size: measured while shown full, else the last.
     let measured = computed.size() * computed.inverse_scale_factor();
     if measured.x > 0.0 && node.display != Display::None && !info.compact {

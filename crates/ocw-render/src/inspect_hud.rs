@@ -321,7 +321,11 @@ fn pins(
     cameras: Query<(&Camera, &GlobalTransform), With<FollowCamera>>,
     mut beams: Query<&mut Transform, With<PinBeam>>,
     mut tags: Query<(&mut Node, &mut Visibility), With<PinTag>>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    safe: Option<Res<crate::safe_area::SafeArea>>,
 ) {
+    // The UI's top left on the window (spec §3.2.3 *Safe areas*).
+    let off = crate::safe_area::ui_offset(windows.single().ok(), safe.as_deref());
     let (Some(mut meshes), Some(mut materials)) = (meshes, materials) else {
         return;
     };
@@ -398,8 +402,8 @@ fn pins(
             });
             match shown {
                 Some(s) => {
-                    node.left = px(s.x - 22.0);
-                    node.top = px(s.y - 24.0);
+                    node.left = px(s.x - off.x - 22.0);
+                    node.top = px(s.y - off.y - 24.0);
                     *vis = Visibility::Visible;
                 }
                 None => *vis = Visibility::Hidden,

@@ -440,6 +440,16 @@ const CAPTURE_ITEMS: &[Item] = &[
             close: false,
         },
     ),
+    // Full screen (spec §3.2.3): the Fullscreen API where the browser has
+    // it (the tap is the gesture it needs); on the iPhone, which has none,
+    // the command says how to add the page to the home screen.
+    item(
+        "Full screen",
+        ItemKind::Command {
+            line: "fullscreen toggle",
+            close: true,
+        },
+    ),
     BACK,
 ];
 const LOCKED_ITEMS: &[Item] = &[BACK];

@@ -174,7 +174,8 @@ then you build the app and serve it yourself, as below.
   build: Safari 26 has WebGPU on by default, but the WebGPU build gave an
   iPhone 15 on iOS 26 sound and no image, so the page does not use Safari's
   WebGPU yet (`?gpu=webgpu` tries it). Phones ride with virtual power (no
-  Web Bluetooth on iOS, no touch controls for riding yet). On Linux, WebGPU and Web Bluetooth are still behind flags
+  Web Bluetooth on iOS) and steer by touch (see
+  [touch steering](#touch-steering-in-the-browser)). On Linux, WebGPU and Web Bluetooth are still behind flags
   in Chromium. Start it like this (the browser tests use the same flags):
   ```bash
   chromium --enable-unsafe-webgpu --enable-features=Vulkan --enable-experimental-web-platform-features
@@ -584,6 +585,19 @@ option `?touch=on|off` for one visit.
 The desktop app steers the same way on Windows and Linux touch screens
 (touch laptops, tablets, touch monitors); macOS has no touch screens.
 
+**On a phone** (spec 3.2.3 TS4) the page fills the whole screen, also
+behind the notch, while the HUD, the steering zones and the page's panels
+keep clear of the notch and the home bar (the browser's safe areas). While
+you ride the page does not scroll, zoom or open a long-press menu, and the
+screen stays on (Screen Wake Lock: Chrome, Safari 16.4+; elsewhere it may
+dim as usual). **Full screen:** *Menu → Captures → Full screen*, or the
+button beside the first-ride tip, where the browser has it (Android's
+Chrome, the iPad's Safari); the phone then also tries to stay in
+landscape. **iPhone:** Safari has no full screen for pages – use *Share →
+Add to Home Screen* and start OCW from its icon: it opens without the
+browser's bars. Landscape gives the wider view; in portrait a tip says so
+once, and the ride works either way.
+
 #### Graphics: WebGPU, WebGL 2 and the quality presets
 
 The WebGL 2 build draws the same world with what WebGL 2 lacks degraded:
@@ -629,7 +643,7 @@ or the server and bot builds, where it needs them). Screenshots, logs and JSON s
 | `make test-web` | WebGPU: load, ride, the menus by keyboard and a fake gamepad, settings over a reload, the screenshot / video / FIT downloads, Unicorn mode (G, + climbs, the inspection, a pin, the menu row, landing), fps |
 | `make test-web-webgl2` | Chromium without WebGPU: the page falls back to the WebGL 2 build and rides. Then WebGPU High against WebGL 2 Low in the same view, and the Graphics page. Then `test-web-gpu` |
 | `make test-web-gpu` | The page's GPU choice (`ocw-gpu.js`'s rules, pure), then WebGPU failures injected into the real app (a validation error, a refused device, no frame): each ride comes back on WebGL 2 with the note and draws; the remembered failure; `?gpu=webgpu`; a healthy WebGPU ride raises no alarm; Safari on an iPhone 15 takes WebGL 2 |
-| `make test-web-webkit` | WebKit, Safari's engine (Playwright's build, `make deps-webkit`: a venv in `~/.cache/ocw/playwright-venv`, no sudo): an iPhone 15 and Safari on macOS, with Safari 26's `navigator.gpu` faked in – the start page's WebGL 2 box ticked, the ride on WebGL 2 rides and draws |
+| `make test-web-webkit` | WebKit, Safari's engine (Playwright's build, `make deps-webkit`: a venv in `~/.cache/ocw/playwright-venv`, no sudo): an iPhone 15 (portrait and landscape) and Safari on macOS, with Safari 26's `navigator.gpu` faked in – the start page's WebGL 2 box ticked, the ride on WebGL 2 rides and draws; on the iPhone the manifest and its icons, the safe-area insets passed in (`?safe-insets=`), taps on each half steer and taps behind the notch or on the home bar do not, a held side, no full screen (the Add to Home Screen tip), the wake lock missing (tolerated) and present (asked again), no page errors |
 | `scripts/test-web-safari.py` | The real Safari on a Mac over `safaridriver` (`--gpu webgpu` tries Safari's WebGPU): the GPU the page chose, the watchdog's state, a screenshot. It needs the Mac's desktop logged in and `sudo safaridriver --enable` once |
 | `make test-web-world` | Liechtenstein streamed from the dev server, a teleport, then a reload from the browser cache |
 | `make test-web-unicorn` | Unicorn mode over Vaduz (Liechtenstein streamed): fly up, the inspection, a pin, the menu row, landing (`--god`) |
@@ -741,7 +755,9 @@ keys new-signing`.
 - Trainers and sensors only in Chromium-based browsers (Chrome, Edge;
   on Linux with the flag). Elsewhere: virtual power.
 - Safari and Firefox are untested, and so are real phones and tablets
-  (the browser matrix comes with hosting, B8).
+  (the browser matrix comes with hosting, B8): touch steering, the safe
+  areas, the wake lock and Add to Home Screen are tested in WebKit's
+  iPhone 15 emulation only.
 - No hosting or domain yet (B8): the public preview on GitHub Pages is
   solo only; for anything else you serve the page yourself. Multiplayer
   takes the server's self-signed certificate by hash, renewed every 11
