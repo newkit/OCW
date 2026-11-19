@@ -55,6 +55,9 @@ pub struct MapData {
     /// The package's places, most important first (section `PLCE`; empty
     /// for packages without it).
     pub places: Vec<ocw_world::places::Place>,
+    /// The package's peaks and passes (section `LMRK`, spec 3.2 Q8; no
+    /// viewpoints), peaks first, higher first.
+    pub landmarks: Vec<ocw_world::landmarks::Landmark>,
 }
 
 /// The box of `points`: (min, max).
@@ -164,6 +167,20 @@ impl MapData {
                 .places
                 .as_ref()
                 .map(|p| p.places.clone())
+                .unwrap_or_default(),
+            landmarks: pkg
+                .places
+                .as_ref()
+                .map(|p| {
+                    p.landmarks
+                        .iter()
+                        .filter(|l| {
+                            l.kind != ocw_world::landmarks::LandmarkKind::Viewpoint
+                                && (!l.name.is_empty() || l.ele.is_some())
+                        })
+                        .cloned()
+                        .collect()
+                })
                 .unwrap_or_default(),
         }
     }

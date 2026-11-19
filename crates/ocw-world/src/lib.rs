@@ -20,6 +20,7 @@ pub mod graph_route;
 pub mod inspect;
 pub mod junction;
 pub mod lamps;
+pub mod landmarks;
 pub mod landuse;
 pub mod look;
 pub mod manifest;

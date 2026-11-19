@@ -1159,6 +1159,10 @@ with your own key as above.
 towns, villages and smaller places, larger and bolder by rank; when the map
 gets crowded the smaller places are hidden first and come back as you zoom
 in (`studio map X Z M_PER_PX` sets the map's centre and zoom).
+Packages with the section `LMRK` (also added by `world-builder places`)
+name the peaks and mountain passes too, on the studio's map and on the
+game's navigation map ("▲ Teide 3715 m", ")( Col del Teide 2294 m"), and
+the ride photographer prefers views with a peak or from a viewpoint.
 
 **In OCW Studio** (`ocw-studio --world my.ocwpkg`, World workspace) the patch
 is the document you edit, with undo / redo (Ctrl + Z / Ctrl + Shift + Z) and
