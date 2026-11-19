@@ -9,12 +9,14 @@
 //! lower right, which is the navigation map's. [`fit_workout`] drops it
 //! from the top of the left column to the first place clear of every HUD
 //! box (the top panel, the top-right column, the event panel, the touch
-//! chevrons, the voice panel, the elevation profile, the junction fan and
-//! the map); where the full panel finds no room it is shown **compact**
-//! (the target and the lines, without the title and the profile chart),
-//! then the same in the middle column; with no room at all (only with the
-//! longest top-panel lines, voice and a HUD of 150 % on a small window) it
-//! is hidden for that frame rather than drawn over another box.
+//! chevrons, the voice panel, the elevation profile, the junction fan while
+//! it shows and the map); where the full panel finds no room it is shown
+//! **compact** (the target and the lines, without the title and the
+//! profile chart), then the same in the middle column; where even that
+//! finds no room the **elevation profile yields** (with the GPS line: the
+//! workout's own profile replaces it while the workout runs, as on a small
+//! window with a large HUD); with no room at all it is hidden rather than
+//! drawn over another box.
 
 use bevy::prelude::*;
 use ocw_sim::workout::{ProfileBlock, Zone};
@@ -37,10 +39,14 @@ impl Plugin for WorkoutPanelPlugin {
 }
 
 /// Marks a HUD node the workout panel keeps clear of besides the map's
-/// [`crate::navi_map::MapAvoid`] boxes: the voice panel and the elevation
-/// profile's column (bottom left).
+/// [`crate::navi_map::MapAvoid`] boxes: the voice panel.
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct WorkoutAvoid;
+
+/// The elevation profile's column (bottom left, with the GPS line): kept
+/// clear of too, but hidden while the workout panel has no other room.
+#[derive(Component, Debug, Clone, Copy, Default)]
+pub struct YieldsToWorkout;
 
 /// Where the workout panel is now (UI px), for the tests and the console;
 /// `rect: None` while no workout runs or there is no room.
@@ -48,6 +54,8 @@ pub struct WorkoutAvoid;
 pub struct WorkoutPanelInfo {
     pub rect: Option<Rect>,
     pub compact: bool,
+    /// The elevation profile is hidden to make room.
+    pub profile_yields: bool,
     /// The box on the window (logical px: left, top, width, height), for
     /// the browser page (`window.ocw.hudMap().workout`).
     pub screen: Option<[f32; 4]>,
@@ -83,6 +91,28 @@ pub struct WorkoutFit {
     pub rect: Rect,
     /// Without the title and the profile chart.
     pub compact: bool,
+    /// The elevation profile (`yielding` of [`place_workout`]) is hidden.
+    pub profile_yields: bool,
+}
+
+/// [`fit_workout`] clear of `avoid` and of the elevation profile's column
+/// `yielding`; with no such place, clear of `avoid` alone with the
+/// elevation profile hidden (`profile_yields`).
+pub fn place_workout(
+    window: Vec2,
+    full: Vec2,
+    avoid: &[Rect],
+    yielding: Option<Rect>,
+) -> Option<WorkoutFit> {
+    let mut all = avoid.to_vec();
+    all.extend(yielding);
+    fit_workout(window, full, &all).or_else(|| {
+        yielding?;
+        fit_workout(window, full, avoid).map(|f| WorkoutFit {
+            profile_yields: true,
+            ..f
+        })
+    })
 }
 
 /// Places the workout panel of `full` size (UI px) in a window of
@@ -99,6 +129,7 @@ pub fn fit_workout(window: Vec2, full: Vec2, avoid: &[Rect]) -> Option<WorkoutFi
                 return Some(WorkoutFit {
                     rect,
                     compact: is_compact,
+                    profile_yields: false,
                 });
             }
         }
@@ -352,7 +383,24 @@ fn update_panel(
     }
 }
 
-/// Puts the panel at its place ([`fit_workout`]) every frame, after the
+/// Shows or hides the elevation profile's column.
+#[allow(clippy::type_complexity)]
+fn show_column(
+    column: &mut Query<
+        (&mut Node, &ComputedNode, &UiGlobalTransform),
+        (With<YieldsToWorkout>, Without<Panel>, Without<WorkoutAvoid>),
+    >,
+    show: bool,
+) {
+    let want = if show { Display::Flex } else { Display::None };
+    for (mut n, _, _) in column {
+        if n.display != want {
+            n.display = want;
+        }
+    }
+}
+
+/// Puts the panel at its place ([`place_workout`]) every frame, after the
 /// navigation map took the lower right corner.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)] // a Bevy system
 fn place_panel(
@@ -368,19 +416,27 @@ fn place_panel(
             &InheritedVisibility,
             &Node,
         ),
-        (With<WorkoutAvoid>, Without<Panel>),
+        (With<WorkoutAvoid>, Without<Panel>, Without<YieldsToWorkout>),
     >,
-    mut panel: Query<(&mut Node, &mut Visibility, &ComputedNode), With<Panel>>,
+    mut column: Query<
+        (&mut Node, &ComputedNode, &UiGlobalTransform),
+        (With<YieldsToWorkout>, Without<Panel>, Without<WorkoutAvoid>),
+    >,
+    mut panel: Query<
+        (&mut Node, &mut Visibility, &ComputedNode),
+        (With<Panel>, Without<YieldsToWorkout>),
+    >,
     mut parts: Query<
         &mut Node,
         (
             Or<(With<Title>, With<Profile>)>,
             Without<Panel>,
             Without<WorkoutAvoid>,
+            Without<YieldsToWorkout>,
         ),
     >,
     mut info: ResMut<WorkoutPanelInfo>,
-    mut full: Local<Option<Vec2>>,
+    (mut full, mut column_rect): (Local<Option<Vec2>>, Local<Option<Rect>>),
 ) {
     let Ok((mut node, mut vis, computed)) = panel.single_mut() else {
         return;
@@ -388,6 +444,7 @@ fn place_panel(
     if view.workout.is_none() {
         if *info != WorkoutPanelInfo::default() {
             *info = WorkoutPanelInfo::default();
+            show_column(&mut column, true);
         }
         if *vis != Visibility::Hidden {
             *vis = Visibility::Hidden;
@@ -427,7 +484,15 @@ fn place_panel(
         let [x, y, w, h] = r.map(|v| v / scale);
         boxes.push(Rect::new(x, y, x + w, y + h));
     }
-    let fit = fit_workout(win, size, &boxes);
+    // The elevation profile's box: measured while shown, else the last
+    // one (so hiding it does not make room that brings it back).
+    for (n, c, t) in &column {
+        if n.display != Display::None && c.size().x > 0.0 {
+            *column_rect = Some(ui_rect(c, t));
+        }
+    }
+    let fit = place_workout(win, size, &boxes, *column_rect);
+    show_column(&mut column, !fit.is_some_and(|f| f.profile_yields));
     let want = if fit.is_some() {
         Visibility::Inherited
     } else {
@@ -461,6 +526,7 @@ fn place_panel(
     let new = WorkoutPanelInfo {
         rect: fit.map(|f| f.rect),
         compact,
+        profile_yields: fit.is_some_and(|f| f.profile_yields),
         screen: fit.map(|f| {
             let r = f.rect;
             [
@@ -587,12 +653,11 @@ mod tests {
     /// panel"): at every supported window (16:9 from 1280 × 720 to
     /// 3840 × 2160, 4:3) and HUD size (100 – 150 %) the panel never
     /// overlaps another HUD box and the map keeps its place and size. On
-    /// an everyday ride without voice it sits right under the top panel in
-    /// the left column and is shown in full up to 125 % (at 150 % on the
-    /// small windows compact or beside the profile); with the longest
-    /// top-panel lines it is still shown at 100 %; hidden only where no
-    /// place is free (a junction fan or the longest lines on a small
-    /// window with a large HUD).
+    /// an everyday ride it sits in full right under the top panel in the
+    /// left column up to 125 %; without voice and junction fan it is
+    /// always shown (compact, or with the elevation profile yielding on
+    /// small windows with a large HUD); hidden only where nothing is free
+    /// (voice or a junction fan on those).
     #[test]
     fn the_workout_panel_fits_every_window_beside_the_map() {
         use crate::hud::tests_support::{tall_top_panel, typical_top_panel};
@@ -623,17 +688,27 @@ mod tests {
                                 "{pw}x{ph} at {scale}, {case} top panel (to {:.0}), voice {voice}, fan {fan}",
                                 top.1
                             );
-                            let only: Vec<Rect> = boxes.iter().map(|b| b.1).collect();
-                            let fit = fit_workout(Vec2::new(w, h), FULL_SIZE, &only);
+                            let profile = boxes.iter().find(|b| b.0 == "profile").map(|b| b.1);
+                            let others: Vec<Rect> = boxes
+                                .iter()
+                                .filter(|b| b.0 != "profile")
+                                .map(|b| b.1)
+                                .collect();
+                            let fit = place_workout(Vec2::new(w, h), FULL_SIZE, &others, profile);
                             table.push(format!(
                                 "{what}: {}",
                                 match fit {
                                     None => "hidden".to_string(),
                                     Some(f) => format!(
-                                        "{} at {:.0},{:.0}",
+                                        "{} at {:.0},{:.0}{}",
                                         if f.compact { "compact" } else { "full" },
                                         f.rect.min.x,
-                                        f.rect.min.y
+                                        f.rect.min.y,
+                                        if f.profile_yields {
+                                            ", the elevation profile yields"
+                                        } else {
+                                            ""
+                                        }
                                     ),
                                 }
                             ));
@@ -642,11 +717,14 @@ mod tests {
                             }
                             let everyday = case == "typical" && !voice && !fan;
                             let Some(f) = fit else {
-                                // Only 1024 × 768 at 150 % has no room on
-                                // an everyday ride (the top panel takes
-                                // two thirds of its height).
-                                let tiny = scale > 1.4 && pw < 1280.0;
-                                if (everyday && !tiny) || (scale < 1.1 && !fan && !voice) {
+                                // Without voice and a junction fan it is
+                                // always shown (the elevation profile
+                                // yields where needed).
+                                // (1024 × 768 at 150 % with the longest
+                                // lines: the top panel ends 24 px above
+                                // the window's bottom.)
+                                let full_top = case == "tall" && pw < 1280.0 && scale > 1.4;
+                                if !fan && !voice && !full_top {
                                     bad.push(format!("{what}: hidden"));
                                 }
                                 continue;
@@ -656,12 +734,15 @@ mod tests {
                                 bad.push(format!("{what}: off screen {r:?}"));
                             }
                             for (name, b) in &boxes {
+                                if *name == "profile" && f.profile_yields {
+                                    continue;
+                                }
                                 if !r.intersect(*b).is_empty() {
                                     bad.push(format!("{what}: over the {name}"));
                                 }
                             }
                             if everyday && scale < 1.4 {
-                                if f.compact {
+                                if f.compact || f.profile_yields {
                                     bad.push(format!("{what}: compact"));
                                 }
                                 if r.min.x != MARGIN_PX || (r.min.y - (top.1 + GAP_PX)).abs() > 0.5
@@ -709,6 +790,16 @@ mod tests {
         // No room at all: hidden.
         let all = Rect::new(0.0, 0.0, 1280.0, 720.0);
         assert!(fit_workout(win, full, &[all]).is_none());
+        // The elevation profile yields only where nothing else is free.
+        let profile = Rect::new(12.0, 600.0, 330.0, 708.0);
+        let f = place_workout(win, full, &[top], Some(profile)).unwrap();
+        assert!(!f.profile_yields && f.rect.min.x == MARGIN_PX);
+        let right = Rect::new(400.0, 300.0, 1280.0, 720.0);
+        let low = Rect::new(12.0, 380.0, 330.0, 708.0);
+        let f = place_workout(win, full, &[top, right], Some(low)).unwrap();
+        assert!(f.profile_yields, "{f:?}");
+        assert!(f.rect.intersect(right).is_empty() && f.rect.intersect(top).is_empty());
+        assert!(place_workout(win, full, &[all], Some(profile)).is_none());
     }
 
     /// The panel moves to its place and hides with no room or without a

@@ -386,8 +386,9 @@ fn spawn_hud(mut commands: Commands) {
                 ..default()
             },
             HudPanel,
-            // The workout panel stays above it (spec 3.2 Q1).
-            crate::workout::WorkoutAvoid,
+            // The workout panel stays above it, or replaces it where it
+            // has no other room (spec 3.2 Q1).
+            crate::workout::YieldsToWorkout,
         ))
         .with_children(|col| {
             spawn_profile(col);

@@ -2475,7 +2475,9 @@ the bike computer's panel (the lower right corner is the navigation map's):
 the current target, the step and time left, the next step, text cues, and
 the whole workout's profile (coloured by training zone) with your progress.
 Where a small window with a large HUD leaves too little room it is shown
-compact (the target and the lines, without the title and the profile).
+compact (the target and the lines, without the title and the profile), and
+if even that does not fit, the elevation profile makes room for it while the
+workout runs.
 
 - **Clock:** the workout time is your pedalling time. It starts when you
   first pedal, keeps running through up to 3 s without power (shifting, a
