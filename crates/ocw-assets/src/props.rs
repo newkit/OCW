@@ -172,7 +172,10 @@ pub struct Placed {
 
 impl Placed {
     pub fn anchor(&self, name: &str) -> Option<Vec3> {
-        self.anchors.iter().find(|(n, _)| n == name).map(|(_, p)| *p)
+        self.anchors
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, p)| *p)
     }
 }
 
@@ -273,7 +276,8 @@ pub fn place(
         if n.name.starts_with("anchor_") && drawn_parent(m, i) {
             let f = node_fit(i);
             let p = fitted(&f, f.origin);
-            out.anchors.push((n.name.clone(), p + Vec3::Y * base(&f, p)));
+            out.anchors
+                .push((n.name.clone(), p + Vec3::Y * base(&f, p)));
             continue;
         }
         if n.primitives.is_empty() || !drawn(m, i) {
@@ -408,8 +412,10 @@ mod tests {
         for (name, x) in [("post_l", -1.5), ("post_r", 1.5)] {
             let mut n = Node::new(name, Some(root), Vec3::new(x, 0.0, 0.0));
             n.extras = node_extras(&[(SPAN, "move"), (GROUND, "node")]);
-            n.primitives
-                .push(quad_box(Vec3::new(-0.1, 0.0, -0.1), Vec3::new(0.1, 1.3, 0.1)));
+            n.primitives.push(quad_box(
+                Vec3::new(-0.1, 0.0, -0.1),
+                Vec3::new(0.1, 1.3, 0.1),
+            ));
             let i = m.add(n);
             let mut c = Node::new("col_cylinder", Some(i), Vec3::new(0.0, 0.65, 0.0));
             c.scale = Vec3::new(0.1, 0.65, 0.1);
@@ -417,8 +423,10 @@ mod tests {
         }
         let mut bar = Node::new("bar", Some(root), Vec3::ZERO);
         bar.extras = node_extras(&[(GROUND, "drape")]);
-        bar.primitives
-            .push(quad_box(Vec3::new(-1.5, 1.0, -0.03), Vec3::new(1.5, 1.1, 0.03)));
+        bar.primitives.push(quad_box(
+            Vec3::new(-1.5, 1.0, -0.03),
+            Vec3::new(1.5, 1.1, 0.03),
+        ));
         m.add(bar);
         m.extras = serde_json::json!({ "ocw": { "fit": FileFit {
             height_m: 1.2, sink_m: 0.1, span_m: Some(3.0), reach_m: None }.to_json() } });
@@ -436,12 +444,22 @@ mod tests {
     fn the_span_moves_the_posts_and_stretches_the_bar() {
         let m = gate();
         let flat = |_: f32, _: f32| 5.0;
-        let p = place(&m, &Instance::default(), Vec3::new(0.0, 5.0, 0.0), 0.0, &flat);
+        let p = place(
+            &m,
+            &Instance::default(),
+            Vec3::new(0.0, 5.0, 0.0),
+            0.0,
+            &flat,
+        );
         assert_eq!(p.parts.len(), 3, "proxies are not drawn");
         let (a, b) = xs(&p, 0);
         assert!((a + 1.6).abs() < 1e-5 && (b + 1.4).abs() < 1e-5, "{a} {b}");
         // The sink: the posts start 0.1 m below the ground.
-        let low = p.parts[0].positions.iter().map(|v| v[1]).fold(f32::MAX, f32::min);
+        let low = p.parts[0]
+            .positions
+            .iter()
+            .map(|v| v[1])
+            .fold(f32::MAX, f32::min);
         assert!((low - 4.9).abs() < 1e-5, "{low}");
         let wide = Instance {
             span_m: Some(6.0),
@@ -449,9 +467,15 @@ mod tests {
         };
         let p = place(&m, &wide, Vec3::new(0.0, 5.0, 0.0), 0.0, &flat);
         let (a, b) = xs(&p, 0);
-        assert!((a + 3.1).abs() < 1e-5 && (b + 2.9).abs() < 1e-5, "post keeps 0.2 m: {a} {b}");
+        assert!(
+            (a + 3.1).abs() < 1e-5 && (b + 2.9).abs() < 1e-5,
+            "post keeps 0.2 m: {a} {b}"
+        );
         let (a, b) = xs(&p, 2);
-        assert!((a + 3.0).abs() < 1e-5 && (b - 3.0).abs() < 1e-5, "bar across 6 m: {a} {b}");
+        assert!(
+            (a + 3.0).abs() < 1e-5 && (b - 3.0).abs() < 1e-5,
+            "bar across 6 m: {a} {b}"
+        );
     }
 
     #[test]
@@ -459,14 +483,32 @@ mod tests {
         let m = gate();
         // A slope across: 0.1 m per metre in x.
         let slope = |x: f32, _: f32| 10.0 + 0.1 * x;
-        let p = place(&m, &Instance::default(), Vec3::new(0.0, 10.0, 0.0), 0.0, &slope);
-        let low = |k: usize| p.parts[k].positions.iter().map(|v| v[1]).fold(f32::MAX, f32::min);
+        let p = place(
+            &m,
+            &Instance::default(),
+            Vec3::new(0.0, 10.0, 0.0),
+            0.0,
+            &slope,
+        );
+        let low = |k: usize| {
+            p.parts[k]
+                .positions
+                .iter()
+                .map(|v| v[1])
+                .fold(f32::MAX, f32::min)
+        };
         // Posts on the ground under their own origins (±1.5 m).
         assert!((low(0) - (10.0 - 0.15 - 0.1)).abs() < 1e-4, "{}", low(0));
         assert!((low(1) - (10.0 + 0.15 - 0.1)).abs() < 1e-4, "{}", low(1));
         // The bar's ends follow the slope.
         for v in &p.parts[2].positions {
-            let want = 10.0 + 0.1 * v[0] + if v[1] - 10.0 - 0.1 * v[0] > 0.95 { 1.0 } else { 0.9 };
+            let want = 10.0
+                + 0.1 * v[0]
+                + if v[1] - 10.0 - 0.1 * v[0] > 0.95 {
+                    1.0
+                } else {
+                    0.9
+                };
             assert!((v[1] - want).abs() < 1e-4, "{v:?} {want}");
         }
         // Height 2.5 m: (2.5 + 0.1) / (1.2 + 0.1) vertically, the foot as deep.
@@ -476,8 +518,16 @@ mod tests {
         };
         let flat = |_: f32, _: f32| 0.0;
         let p = place(&m, &tall, Vec3::ZERO, 0.0, &flat);
-        let top = p.parts[0].positions.iter().map(|v| v[1]).fold(f32::MIN, f32::max);
-        let bottom = p.parts[0].positions.iter().map(|v| v[1]).fold(f32::MAX, f32::min);
+        let top = p.parts[0]
+            .positions
+            .iter()
+            .map(|v| v[1])
+            .fold(f32::MIN, f32::max);
+        let bottom = p.parts[0]
+            .positions
+            .iter()
+            .map(|v| v[1])
+            .fold(f32::MAX, f32::min);
         assert!((top - (1.3 * 2.6 / 1.3 - 0.1)).abs() < 1e-4, "{top}");
         assert!((bottom + 0.1).abs() < 1e-5, "{bottom}");
     }
@@ -494,15 +544,23 @@ mod tests {
         let root = m.add(Node::new("lamp", None, Vec3::ZERO));
         let mut arm = Node::new("arm", Some(root), Vec3::new(-0.05, 0.0, 0.0));
         arm.extras = node_extras(&[(REACH, "stretch")]);
-        arm.primitives
-            .push(quad_box(Vec3::new(0.0, 6.0, -0.04), Vec3::new(1.6, 6.1, 0.04)));
+        arm.primitives.push(quad_box(
+            Vec3::new(0.0, 6.0, -0.04),
+            Vec3::new(1.6, 6.1, 0.04),
+        ));
         m.add(arm);
         let mut head = Node::new("head", Some(root), Vec3::new(1.5, 6.0, 0.0));
         head.extras = node_extras(&[(REACH, "move")]);
-        head.primitives
-            .push(quad_box(Vec3::new(-0.28, -0.06, -0.14), Vec3::new(0.28, 0.06, 0.14)));
+        head.primitives.push(quad_box(
+            Vec3::new(-0.28, -0.06, -0.14),
+            Vec3::new(0.28, 0.06, 0.14),
+        ));
         let h = m.add(head);
-        m.add(Node::new("anchor_light", Some(h), Vec3::new(0.0, -0.3, 0.0)));
+        m.add(Node::new(
+            "anchor_light",
+            Some(h),
+            Vec3::new(0.0, -0.3, 0.0),
+        ));
         m.extras = serde_json::json!({ "ocw": { "fit": FileFit {
             height_m: 6.0, sink_m: 0.0, span_m: None, reach_m: Some(1.5) }.to_json() } });
         let flat = |_: f32, _: f32| 0.0;
@@ -516,7 +574,10 @@ mod tests {
             .positions
             .iter()
             .fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(v[2]), b.max(v[2])));
-        assert!((zs.0 + 0.65).abs() < 1e-4 && (zs.1 - 0.05).abs() < 1e-4, "{zs:?}");
+        assert!(
+            (zs.0 + 0.65).abs() < 1e-4 && (zs.1 - 0.05).abs() < 1e-4,
+            "{zs:?}"
+        );
         let light = p.anchor("anchor_light").unwrap();
         assert!(light.distance(Vec3::new(0.0, 5.7, -0.6)) < 1e-4, "{light}");
     }
@@ -533,9 +594,10 @@ mod tests {
         let mut m = m;
         let i = m.node("col_cylinder").unwrap();
         m.nodes[i].scale = Vec3::ONE;
-        m.nodes[i]
-            .primitives
-            .push(quad_box(Vec3::new(-0.1, -0.65, -0.1), Vec3::new(0.1, 0.65, 0.1)));
+        m.nodes[i].primitives.push(quad_box(
+            Vec3::new(-0.1, -0.65, -0.1),
+            Vec3::new(0.1, 0.65, 0.1),
+        ));
         let q = proxies(&m);
         assert!(q[0].centre.distance(p[0].centre) < 1e-5 && q[0].half.distance(p[0].half) < 1e-5);
         // Both survive the file.
