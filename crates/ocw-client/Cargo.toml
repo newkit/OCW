@@ -40,6 +40,8 @@ web-time.workspace = true
 serde.workspace = true
 # The ride's FIT file (pure; a download in the browser, B6).
 ocw-fit.workspace = true
+# The ride map of the training history (pure: the track, its picture).
+ocw-map.workspace = true
 # Sign-in (spec §9.1): the Account page, the token set, the flows' forms.
 ocw-auth.workspace = true
 

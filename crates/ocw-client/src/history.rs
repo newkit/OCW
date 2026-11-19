@@ -80,6 +80,73 @@ impl Climb {
     }
 }
 
+/// One lap of a ride (spec 14 Phase 7, 7A): the FIT recording's laps –
+/// a workout step, an event's start, lap or finish –, only for a ride of
+/// more than one lap.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Lap {
+    /// Where it starts: seconds and metres into the ride.
+    pub start_s: f64,
+    pub start_m: f64,
+    pub elapsed_s: f64,
+    pub distance_m: f64,
+    #[serde(default)]
+    pub ascent_m: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avg_power_w: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avg_hr_bpm: Option<f64>,
+}
+
+impl Lap {
+    /// Average speed (m/s).
+    pub fn speed_mps(&self) -> f64 {
+        if self.elapsed_s > 0.0 {
+            self.distance_m / self.elapsed_s
+        } else {
+            0.0
+        }
+    }
+}
+
+/// The laps of a recorded ride ([`Activity::lap_records`]); none for a
+/// ride of one lap.
+pub fn laps(a: &Activity) -> Vec<Lap> {
+    let parts = a.lap_records();
+    if parts.len() < 2 {
+        return Vec::new();
+    }
+    parts
+        .iter()
+        .filter_map(|r| {
+            let first = r.first()?;
+            let s = ocw_fit::Summary::of(r);
+            Some(Lap {
+                start_s: round1(first.elapsed_s),
+                start_m: round1(first.distance_m),
+                elapsed_s: round1(s.elapsed_s),
+                distance_m: round1(s.distance_m),
+                ascent_m: round1(s.ascent_m),
+                avg_power_w: round_opt(s.avg_power_w),
+                avg_hr_bpm: round_opt(s.avg_heart_rate_bpm),
+            })
+        })
+        .collect()
+}
+
+/// The ride's track for its map: the records' virtual GPS positions
+/// (latitude, longitude), thinned to at most
+/// [`ocw_map::ride::TRACK_MAX_POINTS`]; empty without positions (a route
+/// off real roads).
+pub fn track(a: &Activity) -> Vec<[f64; 2]> {
+    let pts: Vec<[f64; 2]> = a
+        .records
+        .iter()
+        .filter_map(|r| r.position.map(|(lat, lon)| [lat, lon]))
+        .collect();
+    ocw_map::ride::simplify(&pts, ocw_map::ride::TRACK_MAX_POINTS)
+}
+
 /// The rider's and the bike's condition when the ride ended (0–1, spec
 /// §14 Phase 12E), with damage on.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -141,6 +208,13 @@ pub struct RideEntry {
     pub power_curve: Vec<CurvePoint>,
     #[serde(default)]
     pub climbs: Vec<Climb>,
+    /// Its laps (a ride of more than one lap; [`laps`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub laps: Vec<Lap>,
+    /// Its track for the ride's map: latitude, longitude (degrees, to
+    /// about a metre), thinned ([`track`]); empty off real roads.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub track: Vec<[f64; 2]>,
     /// The FIT file's name in the rides folder (desktop), if kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fit: Option<String>,
@@ -329,6 +403,8 @@ impl RideEntry {
                 Vec::new()
             },
             climbs: climbs(&a.records),
+            laps: laps(a),
+            track: track(a),
             fit: ctx.fit,
             imported: ctx.imported,
             strava_marked: false,
@@ -550,6 +626,13 @@ impl History {
     /// The `n`-th newest ride (0 = the newest).
     pub fn nth_newest(&self, n: usize) -> Option<&RideEntry> {
         self.rides.len().checked_sub(n + 1).map(|i| &self.rides[i])
+    }
+
+    /// Removes the ride with id `id` (spec 14 Phase 7, 7A: deleting a
+    /// ride); the ride removed, if there was one.
+    pub fn remove(&mut self, id: &str) -> Option<RideEntry> {
+        let i = self.rides.iter().position(|r| r.id == id)?;
+        Some(self.rides.remove(i))
     }
 
     /// The ride with id `id`, to change it (the Strava mark).
@@ -959,6 +1042,79 @@ mod tests {
         assert_eq!(h.rides.len(), 3);
         assert_eq!(h.rides[0].distance_m, 1.0);
         assert!(h.contains("ride-1") && !h.contains("nope"));
+    }
+
+    /// A ride's laps (spec 14 Phase 7, 7A): from the recording's lap
+    /// marks, adding up to the ride; none for a ride of one lap.
+    #[test]
+    fn an_entry_keeps_its_laps() {
+        let mut a = activity(
+            1_794_211_200,
+            1201,
+            |i| if i < 600 { 200.0 } else { 300.0 },
+            |i| 100.0 + if i < 600 { 0.0 } else { (i - 600) as f64 * 0.1 },
+        );
+        assert!(RideEntry::from_activity(&a, ctx("one")).laps.is_empty());
+        a.laps = vec![600.0, 900.0];
+        let e = RideEntry::from_activity(&a, ctx("three"));
+        assert_eq!(e.laps.len(), 3);
+        assert_eq!((e.laps[0].start_s, e.laps[0].start_m), (0.0, 0.0));
+        assert_eq!((e.laps[1].start_s, e.laps[1].start_m), (600.0, 4800.0));
+        assert_eq!(e.laps[0].elapsed_s, 600.0);
+        assert_eq!(e.laps[1].distance_m, 2400.0);
+        let total: f64 = e.laps.iter().map(|l| l.distance_m).sum();
+        assert_eq!(total, e.distance_m);
+        assert!((e.laps[0].avg_power_w.unwrap() - 200.0).abs() < 0.5);
+        assert!(e.laps[2].avg_power_w.unwrap() > 299.0);
+        assert!(e.laps[0].ascent_m < 0.1 && e.laps[2].ascent_m > 29.0);
+        assert_eq!(e.laps[1].speed_mps(), 8.0);
+        // Kept in the file; a ride without laps writes none.
+        let mut h = History::new("Ada Rider");
+        h.add(e.clone());
+        let back = History::parse(&h.to_json()).unwrap();
+        assert_eq!(back.rides[0].laps, e.laps);
+        let mut one = History::new("Ada Rider");
+        a.laps.clear();
+        one.add(RideEntry::from_activity(&a, ctx("one")));
+        assert!(!one.to_json().contains("\"laps\""));
+    }
+
+    /// The ride's track for its map: the virtual GPS positions, thinned
+    /// and rounded; none off real roads.
+    #[test]
+    fn an_entry_keeps_its_thinned_track() {
+        let mut a = activity(1_794_211_200, 1201, |_| 200.0, |_| 100.0);
+        assert!(RideEntry::from_activity(&a, ctx("x")).track.is_empty());
+        for (i, r) in a.records.iter_mut().enumerate() {
+            let t = i as f64 / 1200.0 * std::f64::consts::TAU;
+            r.position = Some((47.2 + 0.01 * t.sin(), 9.5 + 0.015 * t.cos()));
+        }
+        let e = RideEntry::from_activity(&a, ctx("x"));
+        assert!(
+            e.track.len() >= 10 && e.track.len() <= ocw_map::ride::TRACK_MAX_POINTS,
+            "{}",
+            e.track.len()
+        );
+        assert!((e.track[0][0] - 47.2).abs() < 1e-5 && (e.track[0][1] - 9.515).abs() < 1e-5);
+        let mut h = History::new("Ada Rider");
+        h.add(e.clone());
+        assert_eq!(
+            History::parse(&h.to_json()).unwrap().rides[0].track,
+            e.track
+        );
+    }
+
+    /// Deleting a ride (spec 14 Phase 7, 7A): by id, the others stay in
+    /// order.
+    #[test]
+    fn a_ride_is_removed_by_id() {
+        let mut h = history();
+        let gone = h.remove("ride-0").expect("there");
+        assert_eq!(gone.id, "ride-0");
+        let ids: Vec<&str> = h.rides.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, ["ride-2", "ride-1"]);
+        assert!(h.remove("ride-0").is_none());
+        assert_eq!(h.rides.len(), 2);
     }
 
     #[test]

@@ -11,7 +11,9 @@
 //! with the world, the hearts it earned, the damage at the end and the
 //! workout ([`save_now`]); `history.import` adds older FIT files of the
 //! rides folder, `history.export N` copies a ride's FIT file to the
-//! downloads folder ([`HistoryHooks`]).
+//! downloads folder, `history.delete N` deletes its FIT file and sidecar
+//! (its Strava recordings and photos stay; spec 14 Phase 7, 7A)
+//! ([`HistoryHooks`]).
 
 use std::path::{Path, PathBuf};
 
@@ -144,6 +146,7 @@ impl Plugin for RecordingPlugin {
             // The simple Strava upload (spec §2.8.1 *Simple upload*).
             upload: Some(crate::strava::manual::upload),
             marked: Some(crate::strava::manual::marked),
+            delete: Some(delete_files),
         })
         .add_systems(Update, (mark_laps, record).chain())
         .add_systems(Last, save_on_exit);
@@ -445,8 +448,76 @@ struct HistoryRide<'a> {
     elapsed_s: f64,
 }
 
+/// The rides whose laps and track were looked for in their FIT files.
+#[derive(Resource, Default)]
+struct Backfilled(std::collections::BTreeSet<String>);
+
+/// Rides of the history from before the laps and the map (spec 14
+/// Phase 7, 7A) get them from their FIT files, once each, and the
+/// history is saved when one changed.
+fn backfill_laps_and_tracks(world: &mut World) {
+    let Some(dir) = world
+        .get_resource::<Recording>()
+        .and_then(|r| r.dir.clone())
+    else {
+        return;
+    };
+    let tried = world
+        .get_resource_or_insert_with(Backfilled::default)
+        .0
+        .clone();
+    let todo: Vec<(String, String)> = world
+        .get_resource::<ocw_ui::history::TrainingHistory>()
+        .map(|h| {
+            h.history
+                .rides
+                .iter()
+                .filter(|r| r.laps.is_empty() && r.track.is_empty() && !tried.contains(&r.id))
+                .filter_map(|r| Some((r.id.clone(), r.fit.clone()?)))
+                .collect()
+        })
+        .unwrap_or_default();
+    if todo.is_empty() {
+        return;
+    }
+    let mut found = Vec::new();
+    for (id, name) in &todo {
+        if let Some(a) = std::fs::read(dir.join(name))
+            .ok()
+            .and_then(|b| ocw_fit::decode(&b).ok())
+        {
+            let (laps, track) = (
+                ocw_client::history::laps(&a),
+                ocw_client::history::track(&a),
+            );
+            if !laps.is_empty() || !track.is_empty() {
+                found.push((id.clone(), laps, track));
+            }
+        }
+    }
+    world
+        .resource_mut::<Backfilled>()
+        .0
+        .extend(todo.into_iter().map(|(id, _)| id));
+    if found.is_empty() {
+        return;
+    }
+    if let Some(mut h) = world.get_resource_mut::<ocw_ui::history::TrainingHistory>() {
+        for (id, laps, track) in found {
+            if let Some(r) = h.history.ride_mut(&id) {
+                r.laps = laps;
+                r.track = track;
+            }
+        }
+        if let Err(e) = h.save() {
+            warn!("training history: {e}");
+        }
+    }
+}
+
 /// What can be imported and exported now.
 fn refresh_history(world: &mut World) {
+    backfill_laps_and_tracks(world);
     let files = fit_files(world);
     let ids = ids_in_histories(world);
     let importable = files.iter().filter(|(s, _)| !ids.contains(s)).count();
@@ -559,6 +630,44 @@ fn export_fit(world: &mut World, ride: &RideEntry, to: Option<&str>) -> Result<S
     let out = target.join(download_name(ride.start_unix_s));
     std::fs::copy(&from, &out).map_err(|e| format!("{}: {e}", from.display()))?;
     Ok(format!("exported to {}", out.display()))
+}
+
+/// `history.delete N`: the ride's FIT file and its sidecar in the rides
+/// folder (spec 14 Phase 7, 7A). Its Strava recordings (`rides/strava/`,
+/// the activities folder) and photos stay: a recording waiting for
+/// Strava is still uploaded by the sync, which reads the folder.
+fn delete_files(world: &mut World, ride: &RideEntry) -> Result<String, String> {
+    let dir = world
+        .get_resource::<Recording>()
+        .and_then(|r| r.dir.clone())
+        .ok_or("no rides folder")?;
+    delete_ride_files(&dir, ride)
+}
+
+/// Deletes `ride`'s FIT file and sidecar in `dir` (one already gone is
+/// fine); what was done.
+pub fn delete_ride_files(dir: &Path, ride: &RideEntry) -> Result<String, String> {
+    let Some(name) = ride.fit.as_deref() else {
+        return Ok("it kept no FIT file".into());
+    };
+    // Only a file of the rides folder itself (the name comes from a file).
+    if Path::new(name).file_name().and_then(|n| n.to_str()) != Some(name) {
+        return Err(format!("not a ride file: {name}"));
+    }
+    let fit = dir.join(name);
+    let gone = |r: std::io::Result<()>, p: &Path| match r {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(format!("{}: {e}", p.display())),
+    };
+    let deleted = gone(std::fs::remove_file(&fit), &fit)?;
+    let meta = fit.with_extension("toml");
+    gone(std::fs::remove_file(&meta), &meta)?;
+    Ok(if deleted {
+        format!("{name} deleted")
+    } else {
+        format!("{name} was gone already")
+    })
 }
 
 /// Marks FIT laps at workout steps and event starts, laps and finishes.
@@ -806,6 +915,57 @@ mod tests {
         assert_eq!(photos["old"].in_strava, 1);
         assert!(!photos.contains_key("none"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Deleting a ride (spec 14 Phase 7, 7A): its FIT file and sidecar
+    /// go, the Strava recordings and other rides stay; a file already
+    /// gone is fine; a name outside the folder is refused.
+    #[test]
+    fn deleting_a_ride_removes_its_fit_file_only() {
+        let dir = temp_dir("delete");
+        let route = Route::test_loop();
+        let mut rec = RideRecorder::new("Loop");
+        for i in 0..5 {
+            rec.observe(
+                &route,
+                route.geo_origin(),
+                sample(f64::from(i), f64::from(i) * 8.0),
+                0,
+            );
+        }
+        let ride = rec.finish().unwrap();
+        let path = save_ride(&dir, &ride).unwrap();
+        let other = save_ride(&dir, &ride).unwrap();
+        let strava = dir.join("strava");
+        std::fs::create_dir_all(&strava).unwrap();
+        std::fs::write(strava.join("rec.fit"), b"waiting").unwrap();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let entry = RideEntry {
+            id: path.file_stem().unwrap().to_string_lossy().into_owned(),
+            fit: Some(name.clone()),
+            ..RideEntry::default()
+        };
+        let out = delete_ride_files(&dir, &entry).unwrap();
+        assert!(out.contains("deleted"), "{out}");
+        assert!(!path.exists() && !path.with_extension("toml").exists());
+        assert!(other.exists() && strava.join("rec.fit").exists());
+        assert!(
+            delete_ride_files(&dir, &entry)
+                .unwrap()
+                .contains("gone already")
+        );
+        let none = RideEntry::default();
+        assert!(
+            delete_ride_files(&dir, &none)
+                .unwrap()
+                .contains("no FIT file")
+        );
+        let outside = RideEntry {
+            fit: Some("../history/Ada Rider.json".into()),
+            ..RideEntry::default()
+        };
+        assert!(delete_ride_files(&dir, &outside).is_err());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

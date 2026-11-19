@@ -6832,6 +6832,7 @@ dependencies = [
  "ocw-core",
  "ocw-devices",
  "ocw-fit",
+ "ocw-map",
  "ocw-protocol",
  "ocw-render",
  "ocw-server",

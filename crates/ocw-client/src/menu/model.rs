@@ -110,6 +110,10 @@ pub enum Page {
     /// "Remove this key?" before a `world trust remove …` line
     /// ([`Menu::pending`]); Cancel is focused.
     ConfirmForget,
+    /// "Delete this ride?" before a `history.delete N` line ([`Menu::pending`];
+    /// spec 14 Phase 7, 7A): what goes and what stays comes from the app
+    /// (`menu::history::delete_text`); Cancel is focused.
+    ConfirmDelete,
 }
 
 /// What an item does when selected.
@@ -129,6 +133,9 @@ pub enum ItemKind {
     RunPending,
     /// Run the asked line and go back one page (the list stays open).
     RunPendingBack,
+    /// Run the asked line and go back to the list the ride's pages came
+    /// from (deleting a ride: its pages are gone).
+    RunPendingLeaveRide,
     /// While hosting: "Hosting – N riders", opens the rider list.
     Hosting,
     /// Shown dimmed; opens a page that says why.
@@ -493,6 +500,10 @@ const FORGET_ITEMS: &[Item] = &[
     item("Remove the key", ItemKind::RunPendingBack),
     item("Cancel", ItemKind::Back),
 ];
+const DELETE_ITEMS: &[Item] = &[
+    item("Delete the ride", ItemKind::RunPendingLeaveRide),
+    item("Cancel", ItemKind::Back),
+];
 const EVENT_ITEMS: &[Item] = &[
     item("Start now", ItemKind::RunPending),
     // The organiser's rules of the event (spec §14 Phase 12 K6).
@@ -615,6 +626,13 @@ impl Page {
                     "Worlds signed with it are asked about again before they load. Official worlds are not affected.",
                 ],
                 items: FORGET_ITEMS,
+                initial_focus: 1,
+            },
+            Page::ConfirmDelete => PageDef {
+                title: "Delete this ride?",
+                // Which ride, what goes and what stays: from the app.
+                text: &[],
+                items: DELETE_ITEMS,
                 initial_focus: 1,
             },
             Page::ConfirmEvent => PageDef {
@@ -1090,6 +1108,24 @@ impl Menu {
                 self.back();
                 line.map_or(Effect::None, Effect::Command)
             }
+            ItemKind::RunPendingLeaveRide => {
+                let line = self.pending.take();
+                self.back();
+                // The ride's own pages (its page, its file page) go too.
+                while matches!(
+                    self.page(),
+                    Some(Page::Sub(
+                        sub::Page::HistoryRide(_)
+                            | sub::Page::HistoryRideFile(_)
+                            | sub::Page::HistoryClimbs(_)
+                    ))
+                ) && self.stack.len() > 1
+                {
+                    self.stack.pop();
+                }
+                self.rows.clear();
+                line.map_or(Effect::None, Effect::Command)
+            }
         }
     }
 
@@ -1114,6 +1150,7 @@ impl Menu {
             Some(Activate::Command(line)) => Effect::Command(line),
             Some(Activate::Ask(line)) => self.ask(line),
             Some(Activate::AskForget(line)) => self.ask_on(Page::ConfirmForget, line),
+            Some(Activate::AskDelete(line)) => self.ask_on(Page::ConfirmDelete, line),
             Some(Activate::Run(line)) => self.run_and_close(line),
             Some(Activate::CommandBack(line)) => {
                 self.stack.pop();
@@ -1177,6 +1214,7 @@ impl Menu {
                         | sub::Page::WorldSource(_)
                         | sub::Page::HistoryRide(_)
                         | sub::Page::HistoryClimbs(_)
+                        | sub::Page::HistoryRideFile(_)
                         | sub::Page::BindGroup(_)
                         | sub::Page::TrustedKey(_)
                         | sub::Page::Device(_)
@@ -1203,7 +1241,12 @@ impl Menu {
         if self.stack.len() > 1 {
             if matches!(
                 self.page(),
-                Some(Page::ConfirmSwitch | Page::ConfirmEvent | Page::ConfirmForget)
+                Some(
+                    Page::ConfirmSwitch
+                        | Page::ConfirmEvent
+                        | Page::ConfirmForget
+                        | Page::ConfirmDelete
+                )
             ) {
                 self.pending = None;
             }

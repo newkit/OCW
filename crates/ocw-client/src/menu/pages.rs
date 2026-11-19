@@ -176,8 +176,11 @@ pub enum Page {
     HistoryRides,
     /// One ride (index: 0 = the newest) with its power curve.
     HistoryRide(usize),
-    /// The climbs of a ride.
+    /// The laps and climbs of a ride (spec 14 Phase 7, 7A).
     HistoryClimbs(usize),
+    /// A ride's *Export or delete* page, where its page has no room for
+    /// both rows (7A).
+    HistoryRideFile(usize),
     /// Weekly totals.
     HistoryWeeks,
     /// Monthly totals.
@@ -305,7 +308,8 @@ impl Page {
             Self::History => "Training history",
             Self::HistoryRides => "Rides",
             Self::HistoryRide(_) => "Ride",
-            Self::HistoryClimbs(_) => "Climbs of the ride",
+            Self::HistoryClimbs(_) => "Laps and climbs",
+            Self::HistoryRideFile(_) => "The ride's file",
             Self::HistoryWeeks => "Weekly totals",
             Self::HistoryMonths => "Monthly totals",
             Self::HistoryBests => "Personal bests",
@@ -392,6 +396,7 @@ impl Page {
                 | Self::HistoryRides
                 | Self::HistoryRide(_)
                 | Self::HistoryClimbs(_)
+                | Self::HistoryRideFile(_)
                 | Self::HistoryWeeks
                 | Self::HistoryMonths
                 | Self::HistoryBests
@@ -608,7 +613,7 @@ impl Page {
                 "Your rides (this rider profile), the totals by week and month and your personal bests. Kept on this device.",
             ],
             Self::HistoryRides => &["Newest first. Choose one for its details and power curve."],
-            Self::HistoryRide(_) | Self::HistoryClimbs(_) => &[],
+            Self::HistoryRide(_) | Self::HistoryClimbs(_) | Self::HistoryRideFile(_) => &[],
             Self::HistoryWeeks | Self::HistoryMonths => &[],
             Self::HistoryBests => &[],
             Self::HistoryWaiting => &[
@@ -889,6 +894,10 @@ pub enum Activate {
     /// Ask "Remove this key?" first, then run the line and go back
     /// (Settings → Account → Trusted world keys).
     AskForget(String),
+    /// Ask "Delete this ride?" first (Cancel focused), then run the line
+    /// and go back to the list of rides (the training history, spec 14
+    /// Phase 7, 7A).
+    AskDelete(String),
     /// Run a console line and go back one page (Devices → a device →
     /// Disconnect and forget: the device may leave the list).
     CommandBack(String),
@@ -1388,6 +1397,7 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         | Page::HistoryRides
         | Page::HistoryRide(_)
         | Page::HistoryClimbs(_)
+        | Page::HistoryRideFile(_)
         | Page::HistoryWeeks
         | Page::HistoryMonths
         | Page::HistoryBests

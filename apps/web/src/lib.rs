@@ -67,6 +67,7 @@ mod browser_devices;
 #[cfg(target_arch = "wasm32")]
 mod browser_voice;
 pub mod devices;
+pub mod fitstore;
 pub mod god;
 pub mod page_config;
 pub mod plugin;
