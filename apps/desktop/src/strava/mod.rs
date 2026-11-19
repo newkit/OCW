@@ -881,7 +881,8 @@ mod tests {
         let start = std::time::Instant::now();
         while !done(app) {
             assert!(
-                start.elapsed() < std::time::Duration::from_secs(10),
+                // Generous: the workspace's tests run in parallel.
+                start.elapsed() < std::time::Duration::from_secs(30),
                 "timed out: {what}"
             );
             app.update();

@@ -473,7 +473,7 @@ impl Page {
             Self::CharacterPick(_) => &["Confirm keeps the focused one."],
             Self::Trainer => &["Devices, SIM difficulty and the virtual trainer."],
             Self::Strava => &[
-                "Only your Strava recordings (S ... S) go to Strava, never whole rides: automatically with Automatic upload on and an account linked (API credentials: see README), else by hand from the ride's page.",
+                "Only Strava recordings (S ... S) go to Strava, never whole rides; Automatic upload off: by hand on the ride's page.",
             ],
             Self::Audio => &[
                 "Sounds are made by OCW itself; Enter on a volume plays a test sound. Output: the device (default = the system's).",
