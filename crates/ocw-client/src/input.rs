@@ -159,6 +159,19 @@ pub struct ThrottleKeys {
     pub page_down: bool,
 }
 
+impl ThrottleKeys {
+    /// Both inputs together (the keys and the touch power buttons).
+    pub fn or(self, o: Self) -> Self {
+        Self {
+            up_pressed: self.up_pressed || o.up_pressed,
+            up_held: self.up_held || o.up_held,
+            down_pressed: self.down_pressed || o.down_pressed,
+            page_up: self.page_up || o.page_up,
+            page_down: self.page_down || o.page_down,
+        }
+    }
+}
+
 /// Keyboard power (↑ / ↓, PageUp / PageDown): added to the rider's device
 /// power (virtual or real trainer), so the keys work with any device. The
 /// same rules in the desktop and the browser app.

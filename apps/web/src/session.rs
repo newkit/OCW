@@ -402,6 +402,18 @@ impl WebSession {
         )
     }
 
+    /// The status in the compact HUD (a phone, spec 3.2 *Phone layout*):
+    /// the steering and the brake – the devices and the trainer are in the
+    /// Devices panel.
+    pub fn status_compact(&self) -> String {
+        let brake = if self.client.braking() {
+            " | BRAKE (+ or up: ride on)"
+        } else {
+            ""
+        };
+        format!("{}{brake}", self.client.steering_status())
+    }
+
     /// `net.stats`: the connection and what it measured.
     pub fn stats_text(&self) -> String {
         let st = self.client.stats();

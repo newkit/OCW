@@ -268,6 +268,7 @@ fn keys(
     mut ride_pads: Local<ocw_ui::controls::RidePads>,
     mut stick_was_used: Local<bool>,
     bindings: Option<Res<ocw_ui::bindings::ActiveBindings>>,
+    touch_power: Option<ResMut<ocw_ui::touch::TouchPower>>,
 ) {
     use ocw_client::bindings::Action;
     let default = ocw_ui::bindings::ActiveBindings::default();
@@ -277,7 +278,11 @@ fn keys(
     let now = time.elapsed_secs_f64();
     let pad = ride_pads.read_bound(pads.iter(), b);
     let pressed = |a| b.just_pressed(a, &keys, pads.iter().map(|(_, p)| p));
-    let power_keys: ThrottleKeys = ocw_ui::controls::throttle_keys(b, &keys, &pad);
+    let mut power_keys: ThrottleKeys = ocw_ui::controls::throttle_keys(b, &keys, &pad);
+    // The touch power buttons (spec 3.2.3, TS5): a phone has no ↑ / ↓.
+    if let Some(mut t) = touch_power {
+        power_keys = power_keys.or(t.take());
+    }
     s.throttle(&mut throttle, power_keys, dt, now);
     // An event's results panel takes A / South first (spec §2.3), as on
     // the desktop.
@@ -367,6 +372,7 @@ fn update_view(
         shake.is_none_or(|s| s.0) && !access.is_some_and(|a| a.reduced_motion),
     );
     view.status = s.status_line();
+    view.status_compact = Some(s.status_compact());
 }
 
 /// The devices (B4): the ones the page connected start in the session;

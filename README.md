@@ -598,6 +598,17 @@ Add to Home Screen* and start OCW from its icon: it opens without the
 browser's bars. Landscape gives the wider view; in portrait a tip says so
 once, and the ride works either way.
 
+The HUD fits the phone (spec 3.2 *Phone layout*): it is drawn smaller on
+a phone-sized screen – the bike computer shows power, speed, cadence and
+gradient in two lines at the top, with the weather,
+wind, clock, place and time in a few short lines below; the key help is
+left out while you steer by touch, and the Devices panel starts as a
+small button where nothing can connect (iOS has no Web Bluetooth).
+Without a trainer, the **stop / − / +** buttons on the right
+change the virtual power, as ↓ / Page Down / ↑ do: + adds 25 W (hold it
+to keep adding), − takes 10 W away, stop brakes, + rides on again. A
+larger HUD: *Settings → Display → Accessibility → HUD size*.
+
 #### Graphics: WebGPU, WebGL 2 and the quality presets
 
 The WebGL 2 build draws the same world with what WebGL 2 lacks degraded:

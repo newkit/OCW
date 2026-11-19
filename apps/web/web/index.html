@@ -779,7 +779,7 @@
       window.ocwDevicesPanel = () => JSON.stringify({
         expanded: !panel.hidden, collapsed: panel.hidden && !show.hidden,
         background: getComputedStyle(panel).backgroundColor,
-        button: show.textContent, connected,
+        button: show.textContent, connected, touch_first: touchFirst, bluetooth: hasBt,
       });
       const hasBt = !!navigator.bluetooth;
       for (const b of panel.querySelectorAll("button[data-kind]")) {
@@ -797,10 +797,23 @@
           canvas.focus();
         };
       }
+      // Touch first: a coarse primary pointer, or a phone's / tablet's
+      // user agent (an iPad that reports a Mac has more than one touch
+      // point), with a touch screen.
+      const touchFirst = (navigator.maxTouchPoints > 0 || "ontouchstart" in window)
+        && ((window.matchMedia && matchMedia("(pointer: coarse)").matches)
+          || /iPhone|iPad|iPod|Android|Mobile/.test(navigator.userAgent)
+          || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
       if (!hasBt) {
-        msg.textContent = "This browser has no Web Bluetooth (Firefox, Safari, iOS): riding with virtual power (↑ / ↓, Page Up / Down). Trainers connect in Chrome or Edge.";
+        msg.textContent = "This browser has no Web Bluetooth (Firefox, Safari, iOS): riding with virtual power ("
+          + (touchFirst ? "the stop / − / + buttons on the right" : "↑ / ↓, Page Up / Down")
+          + "). Trainers connect in Chrome or Edge.";
       }
-      panel.hidden = false;
+      // A touch-first phone or tablet without Web Bluetooth (iOS: Safari
+      // and every browser there) can connect nothing: the panel starts
+      // collapsed to its button, so it does not cover the ride (spec 3.2
+      // *Phone layout*); a tap opens it.
+      if (!hasBt && touchFirst) toggle(false); else panel.hidden = false;
       const render = () => {
         // The in-game menu (B6) has the screen: the panel steps aside.
         let menu;

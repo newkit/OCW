@@ -64,7 +64,15 @@ fn register_commands(app: &mut App) {
             if !(50.0..=300.0).contains(&p) {
                 return Err("expected 50 to 300 %".into());
             }
-            world.resource_mut::<UiScale>().0 = p / 100.0;
+            // The setting; the applied `UiScale` is it times the screen's
+            // fit (`ocw_render::hud_fit`: 1 on desktops, less on phones).
+            let fit = world
+                .get_resource::<ocw_render::hud_fit::HudLayout>()
+                .map_or(1.0, |l| l.fit);
+            if let Some(mut s) = world.get_resource_mut::<ocw_render::hud_fit::HudSize>() {
+                s.0 = p / 100.0;
+            }
+            world.resource_mut::<UiScale>().0 = p / 100.0 * fit;
             Ok(format!("HUD size {p:.0} %"))
         },
     ))
