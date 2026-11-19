@@ -83,8 +83,10 @@ pub mod nodes {
     pub const KIT_BAND: &str = "kit_band";
     pub const KIT_SASH: &str = "kit_sash";
 
-    /// Every node a rider model must have.
-    pub const REQUIRED: [&str; 25] = [
+    /// Every node a rider file must have (the helmets are not among them:
+    /// they are worn from their own files, `wear/helmet-*.glb`, spec 14
+    /// Phase 15 M3).
+    pub const REQUIRED: [&str; 23] = [
         PELVIS,
         TORSO,
         HEAD,
@@ -104,8 +106,6 @@ pub mod nodes {
         HAND[1],
         GRIP[0],
         GRIP[1],
-        HELMET_ROAD,
-        HELMET_AERO,
         CAP,
         KIT_BAND,
         KIT_SASH,

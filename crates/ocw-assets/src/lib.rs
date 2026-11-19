@@ -121,9 +121,23 @@ pub mod shipped {
             .unwrap_or_else(|e| panic!("shipped model: {e}"))
     }
 
+    /// The helmets as parts at the head (spec §14 Phase 15 M3): each
+    /// style's file `wear/helmet-*.glb`, its near or far shell.
+    fn helmet_parts(detail: crate::rider::Detail) -> Vec<Model> {
+        crate::helmet::Helmet::ALL
+            .iter()
+            .map(|h| {
+                let file = model(crate::kinds::id_of(crate::export::helmet_file(*h)));
+                crate::rider_split::helmet_part(&file, *h, detail)
+                    .unwrap_or_else(|| panic!("shipped helmet {h:?}: no {detail:?} shell"))
+            })
+            .collect()
+    }
+
     /// The rider model: the near rider file with every part file (hair,
-    /// facial hair, the base bodies' parts; spec §14 Phase 4, 4N N8)
-    /// attached under its anchor ([`crate::rider_split::merge`]).
+    /// facial hair, the base bodies' parts; spec §14 Phase 4, 4N N8) and
+    /// the helmet files (Phase 15 M3) attached under their anchors
+    /// ([`crate::rider_split::merge`]).
     pub fn rider_model() -> &'static Model {
         static M: OnceLock<Model> = OnceLock::new();
         M.get_or_init(|| {
@@ -132,16 +146,28 @@ pub mod shipped {
                 .iter()
                 .map(|p| model(crate::kinds::id_of(&p.file)))
                 .collect();
-            let refs: Vec<&Model> = parts.iter().map(|m| m.as_ref()).collect();
+            let helmets = helmet_parts(crate::rider::Detail::High);
+            let refs: Vec<&Model> = parts
+                .iter()
+                .map(|m| m.as_ref())
+                .chain(helmets.iter())
+                .collect();
             crate::rider_split::merge(&base, &refs)
                 .unwrap_or_else(|e| panic!("shipped rider parts: {e}"))
         })
     }
 
-    /// The rider's far model (the bikes' `lod1` riders are built from it).
+    /// The rider's far model (the bikes' `lod1` riders are built from it):
+    /// the far rider file with the helmet files' far shells at the head.
     pub fn rider_low_model() -> &'static Model {
-        static M: OnceLock<Arc<Model>> = OnceLock::new();
-        M.get_or_init(|| model(crate::RIDER_LOW_ID))
+        static M: OnceLock<Model> = OnceLock::new();
+        M.get_or_init(|| {
+            let base = model(crate::RIDER_LOW_ID);
+            let helmets = helmet_parts(crate::rider::Detail::Low);
+            let refs: Vec<&Model> = helmets.iter().collect();
+            crate::rider_split::merge(&base, &refs)
+                .unwrap_or_else(|e| panic!("shipped far rider helmets: {e}"))
+        })
     }
 
     /// The bike model of `p`.
