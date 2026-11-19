@@ -81,7 +81,9 @@ impl Kind {
             Kind::Prop => "the foot centre, on the ground",
             Kind::Plant => "the stem base",
             Kind::Creature => "under the body's centre",
-            Kind::Workshop => "the piece's floor point",
+            Kind::Workshop => {
+                "the point where `workshop::room` places it: on the floor, its wall or the ceiling"
+            }
         }
     }
 
@@ -91,7 +93,8 @@ impl Kind {
         match self {
             Kind::Bike => (15_000, Some(4_000)),
             Kind::Rider => (8_000, Some(4_000)),
-            Kind::Creature => (3_000, Some(600)),
+            // The unicorn (Phase 13C: "about 3k near, 600 far") is 3,014 / 682.
+            Kind::Creature => (3_500, Some(800)),
             Kind::Wearable => (1_500, None),
             Kind::Part => (1_500, None),
             Kind::Prop => (1_500, Some(300)),

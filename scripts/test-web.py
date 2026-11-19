@@ -405,6 +405,9 @@ def main():
                    help="with --god: put the unicorn this high above the ground first (m)")
     p.add_argument("--no-ui", action="store_true",
                    help="no UI part (menus, settings, downloads; B6)")
+    p.add_argument("--scene", action="append", metavar="NAME:SECONDS:CMD|CMD",
+                   help="after the ride: run these console commands, wait, screenshot "
+                        "BASE-NAME.jpg (repeatable; e.g. 'workshop:6:workshop open')")
     p.add_argument("--max-wasm-mb", type=float, default=None,
                    help=f"fail when the wasm memory goes above this (MB; default {WORLD_WASM_LIMIT_MB:.0f} "
                         "for world rides, none otherwise; 0: no check)")
@@ -494,6 +497,20 @@ def main():
         summary["gpu_ok"] = bool(summary["gpu"] and summary["gpu"].get("api") == a.gpu
                                  and any(want_api in t for t in gpu_lines))
         first["ok"] = first["ok"] and summary["gpu_ok"] and summary["view_ok"]
+        # Console scenes (--scene NAME:SECONDS:CMD|CMD…): the commands, the
+        # wait, a screenshot BASE-NAME.jpg (e.g. the workshop, unicorn mode).
+        summary["scenes"] = []
+        for spec in a.scene or []:
+            name, seconds, cmds = spec.split(":", 2)
+            for c in filter(None, cmds.split("|")):
+                cdp.eval(f"window.ocw && window.ocw.console({json.dumps(c)})")
+                end = time.time() + 0.3
+                while time.time() < end:
+                    cdp.pump(0.1)
+            end = time.time() + float(seconds)
+            while time.time() < end:
+                cdp.pump(0.2)
+            summary["scenes"].append({"name": name, "screenshot": cdp.screenshot(f"{base}-{name}.jpg")})
         if not a.world and not a.no_ui and first["ok"]:
             sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
             import web_ui_test
