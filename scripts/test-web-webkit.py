@@ -17,7 +17,22 @@ gives the page a `navigator.gpu` with an adapter, as Safari 26 has:
            on WebGL 2 – it rides and draws, the canvas fills the viewport,
            no pixel-ratio cap (WebKit sizes the canvas without
            devicePixelContentBoxSize: the cap would only shrink the HUD);
+           the phone page of spec 3.2.3 TS4: the web app manifest (display
+           fullscreen, its icons served), the Apple touch icon and meta
+           tags, viewport-fit=cover; the ride with the touch hints and a
+           notch's insets (?safe-insets=59,0,34,0 stands in for Safari's
+           env(safe-area-inset-*): WebKit on Linux has no notch): the
+           insets reach the app, a tap on each half steers, a tap on the
+           home bar does not, html / body have touch-action none, no
+           element full screen (as on the iPhone: the first-ride tip says
+           Add to Home Screen), no wake lock (removed: tolerated);
+  iphone-landscape  the phone turned (852 × 393, insets 0,59,21,59): taps
+           behind the notch do not steer, each half does, a held right side
+           (touch pointers) steers and shows its glow; a wake lock that is
+           there is held and asked again when the page is shown again;
   mac      Safari on macOS (1280 × 720): the Hills ride on WebGL 2, draws.
+
+  No check may see a page error (an uncaught exception) in any case.
 
   OUT/web-webkit-<time>-<case>.png   screenshots
   OUT/web-webkit-<time>.json / .log  checks and the console
@@ -48,6 +63,49 @@ if (!navigator.gpu) {
   })});
 }
 """
+# The iPhone's Safari: no element full screen (WebKit on Linux has it).
+NO_FULLSCREEN = """
+for (const k of ["fullscreenEnabled", "webkitFullscreenEnabled"]) {
+  Object.defineProperty(Document.prototype, k, {get: () => false, configurable: true});
+}
+"""
+# No Screen Wake Lock API (Safari before 16.4): the page must not throw.
+NO_WAKE_LOCK = """
+Object.defineProperty(Navigator.prototype, "wakeLock", {get: () => undefined, configurable: true});
+"""
+# A wake lock that counts its requests (Chrome, Safari 16.4+).
+FAKE_WAKE_LOCK = """
+window.__wakeRequests = 0;
+window.__wakeSentinels = [];
+const __wakeLock = {
+  request: async (type) => {
+    window.__wakeRequests++;
+    const s = new EventTarget();
+    s.type = type;
+    s.released = false;
+    s.release = async () => { s.released = true; s.dispatchEvent(new Event("release")); };
+    window.__wakeSentinels.push(s);
+    return s;
+  },
+};
+Object.defineProperty(Navigator.prototype, "wakeLock", {get: () => __wakeLock, configurable: true});
+"""
+# The phone cases: the device, the insets (top, right, bottom, left) and
+# the page's APIs.
+PHONES = {
+    "iphone": ("iPhone 15", (59, 0, 34, 0), NO_FULLSCREEN + NO_WAKE_LOCK),
+    "iphone-landscape": ("iPhone 15 landscape", (0, 59, 21, 59), NO_FULLSCREEN + FAKE_WAKE_LOCK),
+}
+# A touch pointer on the canvas (winit reads pointer events; Playwright's
+# WebKit can only tap, not hold).
+POINTER_JS = """([type, x, y]) => {
+  const c = document.getElementById('ocw-canvas');
+  const up = type === 'pointerup';
+  c.dispatchEvent(new PointerEvent(type, {pointerId: 41, pointerType: 'touch', isPrimary: true,
+    clientX: x, clientY: y, screenX: x, screenY: y, bubbles: true, cancelable: true, composed: true,
+    pressure: up ? 0 : 0.5, buttons: up ? 0 : 1, button: up || type === 'pointerdown' ? 0 : -1,
+    width: 20, height: 20}));
+}"""
 PREVIEW_CONFIG = json.dumps({
     "channel": "preview", "worlds": "worlds/", "server": "", "voice": "", "signin": "",
     "build": "test-web-webkit",
@@ -121,7 +179,10 @@ def main():
         ua: navigator.userAgent, vendor: navigator.vendor})"""
 
     def ride(pg, label):
-        pg.goto(root + "?route=hills&bots=1")
+        extra = ""
+        if label in PHONES:
+            extra = "&touch=on&safe-insets=" + ",".join(str(v) for v in PHONES[label][1])
+        pg.goto(root + "?route=hills&bots=1" + extra)
         try:
             pg.wait_for_function("() => window.ocwGpu && document.getElementById('ocw-status').hidden"
                                  " && window.ocwFrames > 20", timeout=120000)
@@ -133,21 +194,155 @@ def main():
         pg.screenshot(path=shot)
         return st, shot
 
+    def steer(pg):
+        return json.loads(pg.evaluate("window.ocw.steer()") or "{}")
+
+    def screen(pg):
+        return json.loads(pg.evaluate("window.ocwScreen.state()") or "{}")
+
+    def line(pg):
+        v = steer(pg).get("line_m")
+        return float(v) if v is not None else float("nan")
+
+    def tap(pg, x, y):
+        pg.touchscreen.tap(x, y)
+        pg.wait_for_timeout(400)
+
+    def page_files(pg):
+        """The phone page's head and the files Add to Home Screen needs."""
+        return pg.evaluate("""async () => {
+          const q = (s) => document.querySelector(s);
+          const attr = (s, a) => (q(s) && q(s).getAttribute(a)) || null;
+          const out = {viewport: attr('meta[name=viewport]', 'content'),
+            manifest_link: attr('link[rel=manifest]', 'href'),
+            touch_icon: attr('link[rel=apple-touch-icon]', 'href'),
+            capable: attr('meta[name=apple-mobile-web-app-capable]', 'content'),
+            theme: attr('meta[name=theme-color]', 'content'),
+            device_info: JSON.parse(window.ocwDeviceInfo || '{}').safe_insets || null};
+          const get = async (u) => { try { const r = await fetch(u, {cache: 'no-cache'});
+            return {status: r.status, type: r.headers.get('content-type'), bytes: (await r.arrayBuffer()).byteLength};
+          } catch (e) { return {status: 0, error: String(e)}; } };
+          try {
+            const r = await fetch(out.manifest_link || 'manifest.webmanifest', {cache: 'no-cache'});
+            out.manifest_status = r.status;
+            out.manifest_type = r.headers.get('content-type');
+            out.manifest = await r.json();
+          } catch (e) { out.manifest_error = String(e); }
+          out.icons = [];
+          for (const i of ((out.manifest && out.manifest.icons) || [])) out.icons.push({src: i.src, ...(await get(i.src))});
+          out.touch_icon_file = out.touch_icon ? await get(out.touch_icon) : null;
+          return out;
+        }""")
+
+    def phone(pg, label, errors):
+        """The phone page of spec 3.2.3 TS4 (after the ride shows)."""
+        _, insets, _ = PHONES[label]
+        files = page_files(pg)
+        man = files.get("manifest") or {}
+        icons_ok = bool(files["icons"]) and all(i.get("status") == 200 and i.get("bytes", 0) > 100
+                                                for i in files["icons"])
+        if label == "iphone":
+            check("iphone: viewport-fit=cover", "viewport-fit=cover" in (files.get("viewport") or ""), files.get("viewport"))
+            check("iphone: the web app manifest is served and valid (display fullscreen, name, start_url, theme)",
+                  files.get("manifest_status") == 200 and man.get("display") == "fullscreen"
+                  and man.get("name") == "Open Cycling World" and man.get("start_url")
+                  and man.get("theme_color") == files.get("theme"),
+                  {k: files.get(k) for k in ("manifest_status", "manifest_type", "manifest", "theme")})
+            check("iphone: the manifest's icons are served (PNG 256 and 512, the SVG)", icons_ok
+                  and {"256x256", "512x512"} <= {i.get("sizes") for i in man.get("icons", [])}, files["icons"])
+            tf = files.get("touch_icon_file") or {}
+            check("iphone: an Apple touch icon and apple-mobile-web-app-capable",
+                  tf.get("status") == 200 and "png" in (tf.get("type") or "") and files.get("capable") == "yes",
+                  {"touch_icon": files.get("touch_icon"), "file": tf, "capable": files.get("capable")})
+        want = list(insets)
+        st, sc = steer(pg), screen(pg)
+        check(f"{label}: the page passes the safe-area insets to the app",
+              [float(v) for v in st.get("insets", [])] == [float(v) for v in want]
+              and [sc.get("insets", {}).get(k) for k in ("top", "right", "bottom", "left")] == want,
+              {"app": st.get("insets"), "page": sc.get("insets"), "device_info": files.get("device_info")})
+        check(f"{label}: html and body take no pan or pinch while riding (touch-action none)",
+              sc.get("riding") and sc.get("touch_action") == "none", sc)
+        # The hints and the first-ride tip with Add to Home Screen.
+        pg.wait_for_timeout(700)
+        sc = screen(pg)
+        check(f"{label}: the hints and the first-ride tip show (touch=on)", st.get("shown") and st.get("tip"), st)
+        check(f"{label}: no element full screen: the tip says Add to Home Screen",
+              sc.get("tip") == "fullscreen" and "Add to Home Screen" in sc.get("tip_text", "")
+              and not sc.get("fullscreen_api"), sc)
+        said = pg.evaluate("window.ocwScreen.fullscreen('toggle')")
+        check(f"{label}: Full screen (the menu's command) says how to add to the home screen",
+              "Add to Home Screen" in said, said)
+        pg.screenshot(path=f"{base}-{label}-hints.png")
+        w, h = pg.evaluate("[innerWidth, innerHeight]")
+        # Taps outside the safe area (notch / home bar) do not steer.
+        l0 = line(pg)
+        if label == "iphone":
+            tap(pg, w * 0.25, h - 12)
+            where = "on the home bar"
+        else:
+            tap(pg, 30, h * 0.6)
+            tap(pg, w - 30, h * 0.6)
+            where = "behind the notch"
+        l1 = line(pg)
+        check(f"{label}: taps {where} do not steer", abs(l1 - l0) < 1e-3, f"{l0:.3f} → {l1:.3f}")
+        tap(pg, w * 0.75, h * 0.75)
+        l2 = line(pg)
+        check(f"{label}: a tap on the right half moves the line +0.5 m", abs(l2 - l1 - 0.5) < 0.02,
+              f"{l1:.3f} → {l2:.3f}")
+        tap(pg, w * 0.25, h * 0.75)
+        l3 = line(pg)
+        check(f"{label}: a tap on the left half moves it back", abs(l3 - l2 + 0.5) < 0.02, f"{l2:.3f} → {l3:.3f}")
+        sc = screen(pg)
+        if label == "iphone":
+            check("iphone: no wake lock API: tolerated (no error)", sc.get("wake_lock") == "unsupported"
+                  and not errors, sc)
+        else:
+            # A held right side (touch pointers on the canvas).
+            x, y = w * 0.8, h * 0.6
+            pg.evaluate(POINTER_JS, ["pointerdown", x, y])
+            for _ in range(6):
+                pg.wait_for_timeout(150)
+                pg.evaluate(POINTER_JS, ["pointermove", x, y])
+            held = steer(pg)
+            pg.screenshot(path=f"{base}-{label}-hold.png")
+            pg.evaluate(POINTER_JS, ["pointerup", x, y])
+            pg.wait_for_timeout(300)
+            l4 = line(pg)
+            check(f"{label}: a held right side steers right while held (glow)", held.get("right_held"), held)
+            check(f"{label}: … about 2 m/s", 0.8 < l4 - l3 < 3.6, f"{l3:.3f} → {l4:.3f}")
+            n0 = pg.evaluate("window.__wakeRequests")
+            check(f"{label}: the wake lock is held while riding", sc.get("wake_lock") == "held" and n0 >= 1,
+                  {"state": sc.get("wake_lock"), "requests": n0})
+            # The system lets it go (the page hidden); shown again: asked again.
+            pg.evaluate("window.__wakeSentinels[window.__wakeSentinels.length - 1].release()")
+            pg.wait_for_timeout(100)
+            released = screen(pg).get("wake_lock")
+            pg.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+            pg.wait_for_timeout(300)
+            n1 = pg.evaluate("window.__wakeRequests")
+            check(f"{label}: the wake lock is asked again after visibilitychange",
+                  released == "released" and n1 == n0 + 1 and screen(pg).get("wake_lock") == "held",
+                  {"released": released, "requests": [n0, n1]})
+        check(f"{label}: no page errors", not errors, errors[:5])
+
     summary = {"ok": False}
     with sync_playwright() as pw:
         browser = pw.webkit.launch()
         summary["webkit"] = browser.version
         try:
-            for label in ("iphone", "mac"):
-                if label == "iphone":
-                    ctx = browser.new_context(**pw.devices["iPhone 15"])
+            for label in ("iphone", "iphone-landscape", "mac"):
+                if label in PHONES:
+                    ctx = browser.new_context(**pw.devices[PHONES[label][0]])
+                    ctx.add_init_script(PHONES[label][2])
                 else:
                     ctx = browser.new_context(viewport={"width": 1280, "height": 720})
                 ctx.add_init_script(FAKE_GPU)
                 pg = ctx.new_page()
+                errors = []
                 pg.on("console", lambda m, label=label: lines.append(
                     f"[{label}] {time.time() - t0:7.2f} s  {m.type}: {m.text[:600]}"))
-                pg.on("pageerror", lambda e, label=label: lines.append(f"[{label}] PAGEERROR {e}"))
+                pg.on("pageerror", lambda e, label=label, errors=errors: (
+                    lines.append(f"[{label}] PAGEERROR {e}"), errors.append(str(e)[:300])))
                 if label == "iphone":
                     # The preview's start page with its checkbox.
                     pg.route("**/config.json", lambda route: route.fulfill(
@@ -173,6 +368,8 @@ def main():
                 cw, vp = st["canvas"], st["viewport"]
                 check(f"{label}: the canvas fills the viewport", abs(cw[2] - vp[0]) <= 1 and abs(cw[3] - vp[1]) <= 1,
                       {"canvas": cw, "viewport": vp})
+                if label in PHONES:
+                    phone(pg, label, errors)
                 if label == "iphone":
                     # WebKit has no devicePixelContentBoxSize: winit keeps the
                     # drawing buffer at the device's pixels, and Low's pixel-

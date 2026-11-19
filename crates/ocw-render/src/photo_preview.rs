@@ -450,6 +450,7 @@ fn update_card(
     view: Option<Res<RideView>>,
     shots: Query<&Screenshot, PendingPhoto>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    safe: Option<Res<crate::safe_area::SafeArea>>,
     column: Query<&ComputedNode, With<crate::hud::HudTopRight>>,
     images: Option<ResMut<Assets<Image>>>,
     mut card: Query<
@@ -506,7 +507,8 @@ fn update_card(
             let own = computed.map_or(0.0, |c| c.size().y) * inv;
             let above = 12.0 + (col.size().y * inv - own).max(0.0);
             thumb_size(
-                w.resolution.physical_height() as f32 * inv,
+                // The UI's height (inside the safe area, spec §3.2.3).
+                crate::safe_area::ui_area(w, safe.as_deref()).1.y * w.scale_factor() * inv,
                 above,
                 shown.aspect,
             )

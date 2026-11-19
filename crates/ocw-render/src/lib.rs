@@ -51,6 +51,7 @@ pub mod road_corners;
 pub mod road_material;
 pub mod road_mesh;
 pub mod road_style;
+pub mod safe_area;
 pub mod season;
 pub mod see_through;
 pub mod sky;
@@ -500,6 +501,8 @@ impl Plugin for OcwRenderPlugins {
             photographer::PhotographerPlugin,
             // The HUD's navigation map, bottom right (spec §3.2).
             navi_map::NaviMapPlugin,
+            // The HUD keeps clear of a phone's notch (spec §3.2.3).
+            safe_area::SafeAreaPlugin,
         ));
     }
 }

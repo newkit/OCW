@@ -943,13 +943,14 @@ mod tests {
                 "Resume", "Ride", "World", "Workshop", "Navi", "Settings", "Captures"
             ]
         );
-        // Captures: screenshot, video, FIT.
+        // Captures: screenshot, video, FIT, the folder, full screen.
         tap(&mut app, KeyCode::ArrowUp);
         tap(&mut app, KeyCode::Enter);
         let v = view(&app);
         assert_eq!(v.title, "Captures");
-        assert_eq!(v.items.len(), 5);
+        assert_eq!(v.items.len(), 6);
         assert!(v.items[2].contains("FIT"));
+        assert_eq!(v.items[4], "Full screen");
         // Back; the workshop is locked (Q5).
         tap(&mut app, KeyCode::Escape);
         for _ in 0..3 {

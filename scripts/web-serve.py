@@ -40,6 +40,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         ".wasm": "application/wasm",
         ".js": "text/javascript",
         ".json": "application/json",
+        ".webmanifest": "application/manifest+json",
         ".ocwpkg": "application/octet-stream",
         "": "text/plain",
     }

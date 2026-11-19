@@ -71,6 +71,7 @@ pub mod fitstore;
 pub mod god;
 pub mod page_config;
 pub mod plugin;
+pub mod screen;
 pub mod session;
 pub mod settings;
 pub mod strava;

@@ -18,12 +18,13 @@ use bevy::input::touch::Touches;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use ocw_client::input::touch::{
-    Fan, Pos, Rect, Side, TouchEvent, TouchFrame, TouchPresence, TouchSetting, TouchSteer,
+    Fan, Insets, Pos, Rect, Side, TouchEvent, TouchFrame, TouchPresence, TouchSetting, TouchSteer,
     TouchZones, ZoneHeight,
 };
 use ocw_render::RideView;
 use ocw_render::camera::CameraOrbit;
 use ocw_render::menu::InputContext;
+use ocw_render::safe_area::SafeArea;
 use ocw_render::touch_hud::TouchHud;
 
 use crate::settings::UserSettings;
@@ -164,17 +165,33 @@ fn touch_steer(world: &mut World) {
         && ride_input
         && crate::god::not_flying(world)
         && setting != TouchSetting::Off;
+    // The safe area (spec §3.2.3: notch, home bar; the page's
+    // `env(safe-area-inset-*)`): the zones keep out of it, and the HUD –
+    // the fan too – is laid out inside it.
+    let safe = world
+        .get_resource::<SafeArea>()
+        .copied()
+        .unwrap_or_default()
+        .usable(size);
+    let (ui_off, ui_size) = safe.inner(size);
     // The zones, without the junction fan (its arrows are tap targets).
     let mut zones = TouchZones::new(size.x, size.y);
     zones.zone_height = zone_height;
+    zones.insets = Insets {
+        top: safe.top,
+        right: safe.right,
+        bottom: safe.bottom,
+        left: safe.left,
+    };
     let junction = world
         .get_resource::<RideView>()
         .and_then(|v| v.junction.clone());
     let fan = junction.as_ref().map(|_| {
-        let g = ocw_render::junction::fan_geometry(size, ui_scale);
+        let g = ocw_render::junction::fan_geometry(ui_size, ui_scale);
+        let (min, max) = (g.min + ui_off, g.max + ui_off);
         Fan {
-            rect: Rect::new(g.min.x, g.min.y, g.max.x, g.max.y),
-            pivot: pos(g.pivot),
+            rect: Rect::new(min.x, min.y, max.x, max.y),
+            pivot: pos(g.pivot + ui_off),
             arrow_len: g.arrow_len,
         }
     });
@@ -254,7 +271,8 @@ fn touch_steer(world: &mut World) {
         flash_left: flash == Some(Side::Left),
         flash_right: flash == Some(Side::Right),
         tip: (shown && !tip_seen && !steered).then(|| TIP.to_string()),
-        zone_top: zones.top() / size.y.max(1.0),
+        // A share of the HUD's (the safe area's) height.
+        zone_top: (zones.top() - ui_off.y).max(0.0) / ui_size.y.max(1.0),
     };
     {
         let mut h = world.resource_mut::<TouchHud>();
@@ -329,6 +347,15 @@ pub fn state_json(world: &World) -> String {
                 }
             ),
         ),
+        // The safe-area insets the zones and the HUD keep clear of
+        // (top, right, bottom, left; logical px).
+        ("insets", {
+            let i = world
+                .get_resource::<SafeArea>()
+                .copied()
+                .unwrap_or_default();
+            format!("[{}, {}, {}, {}]", i.top, i.right, i.bottom, i.left)
+        }),
     ])
 }
 
@@ -470,6 +497,32 @@ mod tests {
         let json = state_json(app.world());
         assert!(json.contains("\"autodrive\": true"), "{json}");
         assert!(json.contains("\"tip_seen\": true"), "{json}");
+    }
+
+    #[test]
+    fn the_safe_area_keeps_the_zones_off_the_notch() {
+        let mut app = app();
+        // A notch on the left and a home bar (logical px), as the page
+        // passes them.
+        app.insert_resource(SafeArea {
+            top: 0.0,
+            right: 59.0,
+            bottom: 21.0,
+            left: 59.0,
+        });
+        let l0 = line(&app);
+        // Behind the notch and on the home bar: nothing.
+        hold(&mut app, 1, 40.0, 500.0, 1);
+        hold(&mut app, 2, 1240.0, 500.0, 1);
+        hold(&mut app, 3, 200.0, 710.0, 1);
+        assert_eq!(line(&app), l0);
+        // Inside the safe area each half steers.
+        hold(&mut app, 4, 1000.0, 500.0, 1);
+        assert!((line(&app) - l0 - TAP_LINE_STEP_M).abs() < 1e-6);
+        hold(&mut app, 5, 200.0, 500.0, 1);
+        assert!((line(&app) - l0).abs() < 1e-6);
+        let json = state_json(app.world());
+        assert!(json.contains("\"insets\": [0, 59, 21, 59]"), "{json}");
     }
 
     #[test]

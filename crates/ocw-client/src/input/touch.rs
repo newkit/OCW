@@ -143,6 +143,35 @@ pub struct Insets {
     pub left: f32,
 }
 
+/// Insets above this are not believed (px; a broken page value).
+pub const MAX_INSET_PX: f32 = 400.0;
+
+impl Insets {
+    /// From the page's JSON (`{"top": 59, "right": 0, "bottom": 34,
+    /// "left": 0}`, CSS px = logical px: `env(safe-area-inset-*)`, spec
+    /// §3.2.3 *Safe areas*); missing, negative or broken values are 0,
+    /// values above [`MAX_INSET_PX`] are capped.
+    pub fn from_json(text: &str) -> Self {
+        let v: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
+        let px = |k: &str| {
+            v[k].as_f64()
+                .filter(|x| x.is_finite())
+                .map_or(0.0, |x| (x as f32).clamp(0.0, MAX_INSET_PX))
+        };
+        Self {
+            top: px("top"),
+            right: px("right"),
+            bottom: px("bottom"),
+            left: px("left"),
+        }
+    }
+
+    /// No inset on any side (desktops, phones without a notch).
+    pub fn is_zero(&self) -> bool {
+        self.top <= 0.0 && self.right <= 0.0 && self.bottom <= 0.0 && self.left <= 0.0
+    }
+}
+
 /// The two steering zones of a view.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TouchZones {
@@ -798,6 +827,51 @@ mod tests {
         z.excluded.push(Rect::new(500.0, 560.0, 800.0, 714.0));
         assert_eq!(z.zone_at(Pos::new(510.0, 600.0)), None);
         assert!(z.on_target(Pos::new(510.0, 600.0)));
+    }
+
+    #[test]
+    fn the_page_s_safe_insets_are_read_and_checked() {
+        // An iPhone 15 in landscape: the notch side and the home bar.
+        let i = Insets::from_json(r#"{"top": 0, "right": 59, "bottom": 21, "left": 59}"#);
+        assert_eq!(
+            i,
+            Insets {
+                top: 0.0,
+                right: 59.0,
+                bottom: 21.0,
+                left: 59.0
+            }
+        );
+        assert!(!i.is_zero());
+        // Missing, broken, negative, too large.
+        assert!(Insets::from_json("").is_zero());
+        assert!(Insets::from_json("nonsense").is_zero());
+        assert!(Insets::from_json(r#"{"top": "x", "left": -5}"#).is_zero());
+        assert_eq!(
+            Insets::from_json(r#"{"top": 1e9}"#).top,
+            MAX_INSET_PX,
+            "capped"
+        );
+        assert_eq!(Insets::from_json(r#"{"bottom": 34.5}"#).bottom, 34.5);
+    }
+
+    #[test]
+    fn the_page_s_insets_keep_the_zones_off_the_notch_and_the_home_bar() {
+        // iPhone 15 landscape (852 × 393): the insets as the page passes them.
+        let mut z = TouchZones::new(852.0, 393.0);
+        z.insets = Insets::from_json(r#"{"top": 0, "right": 59, "bottom": 21, "left": 59}"#);
+        assert_eq!(z.zone_at(Pos::new(40.0, 250.0)), None, "behind the notch");
+        assert_eq!(z.zone_at(Pos::new(812.0, 250.0)), None, "the other side");
+        assert_eq!(z.zone_at(Pos::new(200.0, 380.0)), None, "on the home bar");
+        assert_eq!(z.zone_at(Pos::new(200.0, 250.0)), Some(Side::Left));
+        assert_eq!(z.zone_at(Pos::new(650.0, 250.0)), Some(Side::Right));
+        // Portrait (393 × 852): the notch pushes the top band down.
+        let mut p = TouchZones::new(393.0, 852.0);
+        p.insets = Insets::from_json(r#"{"top": 59, "bottom": 34}"#);
+        assert_eq!(p.top(), (852.0 * TOP_BAND_FRAC).max(59.0 + EDGE_PX));
+        assert_eq!(p.zone_at(Pos::new(80.0, 830.0)), None, "on the home bar");
+        assert_eq!(p.zone_at(Pos::new(80.0, 600.0)), Some(Side::Left));
+        assert_eq!(p.zone_at(Pos::new(320.0, 600.0)), Some(Side::Right));
     }
 
     #[test]
