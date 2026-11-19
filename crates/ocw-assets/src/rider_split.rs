@@ -500,13 +500,15 @@ mod tests {
         // triangles), with the helmets from the files.
         let gen_low = build(Detail::Low);
         let back = assembled_low(&build(Detail::High), &gen_low);
-        for (want, got) in [(&gen_low, &back), (&gen_low, far)] {
+        // In memory exact; read back from the file within 15F's 0.1 mm
+        // (the node transforms go through the file's f32 numbers).
+        for (want, got, eps) in [(&gen_low, &back, 1e-6), (&gen_low, far, 1e-4)] {
             assert_eq!(got.nodes.len(), want.nodes.len());
             assert_eq!(got.triangles(), want.triangles());
             for (i, n) in want.nodes.iter().enumerate() {
                 let k = got.node(&n.name).unwrap_or_else(|| panic!("{}", n.name));
                 assert!(
-                    world(got, k).abs_diff_eq(world(want, i), 1e-6),
+                    world(got, k).abs_diff_eq(world(want, i), eps),
                     "{}",
                     n.name
                 );
