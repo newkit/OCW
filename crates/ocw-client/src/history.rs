@@ -802,15 +802,6 @@ pub fn distance_label(m: f64, imperial: bool) -> String {
     }
 }
 
-/// Speed as "32.4 km/h" (or "20.1 mph").
-pub fn speed_label(mps: f64, imperial: bool) -> String {
-    if imperial {
-        format!("{:.1} mph", mps * 3600.0 / 1609.344)
-    } else {
-        format!("{:.1} km/h", mps * 3.6)
-    }
-}
-
 /// Height as "512 m" (or "1680 ft").
 pub fn height_label(m: f64, imperial: bool) -> String {
     if imperial {

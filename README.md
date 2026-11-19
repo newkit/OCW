@@ -1818,9 +1818,9 @@ event status | event cancel | event dismiss
   crashes and damage, the workout, the power curve (5 s – 60 min) and the
   climbs. The pages show the rides (newest first; a ride's page has its
   power curve as a chart against your bests, a small map of its track
-  (north up, start and finish, a scale bar), its laps and climbs, *Export
-  the FIT file*, to the downloads folder, and *Delete this ride*, which
-  asks first and deletes the ride's entry and its FIT file – its Strava
+  (north up, start and finish, a scale bar), its laps and climbs and
+  *Export or delete*: *Export the FIT file*, to the downloads folder, and
+  *Delete this ride*, which asks first and deletes the ride's entry and its FIT file – its Strava
   recordings and photos stay in your activities folder, a recording
   waiting for Strava is still uploaded), the weekly and monthly totals and
   your personal bests. *Import saved rides* (`history.import`) adds older

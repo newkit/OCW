@@ -11,19 +11,17 @@ use ocw_render::menu::{ChartBar, MenuChart, MenuMap};
 use super::pages::{Activate, Page, Row, info_row, open_row, short_label};
 use crate::history::{
     Bests, CURVE_S, History, Period, RideEntry, distance_label, duration_label, height_label, hms,
-    speed_label, start_label, total_summary,
+    start_label, total_summary,
 };
 
-/// Rows of a page besides Back (the ten-foot rule: seven items).
-const MAX_ROWS: usize = super::model::MAX_ITEMS - 1;
-/// The ride page's row of the export and the delete where the page has
-/// no room for both (spec 14 Phase 7, 7A), and its value.
+/// The ride page's row of the export and the delete (spec 14 Phase 7,
+/// 7A), and its value.
 pub const FILE_LABEL: &str = "Export or delete";
 const FILE_VALUE: &str = "the FIT file, the ride";
 /// The ride page's delete row.
 pub const DELETE_LABEL: &str = "Delete this ride";
 /// The map's caption over the picture.
-pub const MAP_CAPTION: &str = "Track (north up)";
+pub const MAP_CAPTION: &str = "Track";
 
 /// What the pages show.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -280,22 +278,21 @@ pub fn rows(page: Page, info: &HistoryInfo) -> Vec<Row> {
                 });
             }
             out.extend(strava_rows(k, r, info));
-            // Export and delete (spec 14 Phase 7, 7A): their own rows, or
-            // one row to their page where the page would pass six rows
-            // (photos and the Strava rows of a recording in the browser).
-            if out.len() + 2 <= MAX_ROWS {
-                out.insert(1, export_row(k, r, info));
-                out.push(delete_row(k));
-            } else {
-                out.insert(
-                    1,
-                    open_row(
-                        FILE_LABEL,
-                        Some(FILE_VALUE.into()),
-                        Page::HistoryRideFile(k),
-                    ),
-                );
-            }
+            // Export and delete (spec 14 Phase 7, 7A): one row to their
+            // page, so the ride page keeps its rows (and its numbers, chart
+            // and map fit 16:9).
+            out.insert(
+                1,
+                open_row(
+                    FILE_LABEL,
+                    Some(if info.exportable.contains(&r.id) {
+                        FILE_VALUE.into()
+                    } else {
+                        "FIT file not kept".into()
+                    }),
+                    Page::HistoryRideFile(k),
+                ),
+            );
             out
         }
         Page::HistoryRideFile(k) => match h.nth_newest(k) {
@@ -308,11 +305,11 @@ pub fn rows(page: Page, info: &HistoryInfo) -> Vec<Row> {
             };
             // The laps first (spec 14 Phase 7, 7A), then the climbs.
             let laps = r.laps.iter().enumerate().map(|(n, l)| {
+                // One line at 16:9 (no speed: distance and time say it).
                 let mut v = format!(
-                    "{}, {}, {}",
+                    "{}, {}",
                     distance_label(l.distance_m, imp),
-                    hms(l.elapsed_s),
-                    speed_label(l.speed_mps(), imp)
+                    hms(l.elapsed_s)
                 );
                 if let Some(p) = l.avg_power_w {
                     v.push_str(&format!(", {p:.0} W"));
@@ -505,9 +502,9 @@ pub fn delete_text(k: usize, info: &HistoryInfo) -> Vec<String> {
     } else {
         &r.world
     };
+    // The date and place are the page's status line.
     let mut out = vec![format!(
-        "{}, {}{}: the ride leaves the training history and its FIT file is deleted. This cannot be undone.",
-        start_label(r.start_unix_s, info.offset_s),
+        "The ride ({}{}) leaves the training history and its FIT file is deleted. This cannot be undone.",
         distance_label(r.distance_m, info.imperial),
         if place.is_empty() {
             String::new()
@@ -872,9 +869,14 @@ pub fn chart(page: Page, info: &HistoryInfo) -> Option<MenuChart> {
             if r.power_curve.is_empty() || upload_steps_for(info, &r.id).is_some() {
                 return None;
             }
+            // Beside the map (7A) the caption is shorter: one line.
             (
                 Some(r),
-                "Power curve (W): bars this ride, lines your best".to_string(),
+                if r.track.len() >= 2 {
+                    "Power curve (W), lines: your best".to_string()
+                } else {
+                    "Power curve (W): bars this ride, lines your best".to_string()
+                },
             )
         }
         Page::HistoryBests if !bests.curve.is_empty() => {
@@ -1158,6 +1160,10 @@ mod tests {
         );
         assert_eq!(
             ride[1].confirm,
+            Some(Activate::Open(Page::HistoryRideFile(0)))
+        );
+        assert_eq!(
+            rows(Page::HistoryRideFile(0), &i)[0].confirm,
             Some(Activate::Command("history.export 1".into()))
         );
         assert!(
@@ -1168,7 +1174,11 @@ mod tests {
         let mut j = info(1);
         j.exportable.clear();
         assert_eq!(
-            rows(Page::HistoryRide(0), &j)[1].confirm,
+            rows(Page::HistoryRide(0), &j)[1].value.as_deref(),
+            Some("FIT file not kept")
+        );
+        assert_eq!(
+            rows(Page::HistoryRideFile(0), &j)[0].confirm,
             Some(Activate::Disabled)
         );
         assert!(status(Page::HistoryRide(0), &i).ends_with("Black Forest - Free ride"));
@@ -1429,9 +1439,9 @@ mod tests {
         assert_eq!(page[0].label, "Lap 1");
         assert_eq!(
             page[0].value.as_deref(),
-            Some("4.8 km, 10:00, 28.8 km/h, 231 W, 141 bpm")
+            Some("4.8 km, 10:00, 231 W, 141 bpm")
         );
-        assert_eq!(page[1].value.as_deref(), Some("4.8 km, 10:00, 28.8 km/h"));
+        assert_eq!(page[1].value.as_deref(), Some("4.8 km, 10:00"));
         assert!(page[2].label.starts_with("At "));
         i.imperial = true;
         assert!(
@@ -1439,7 +1449,7 @@ mod tests {
                 .value
                 .as_ref()
                 .unwrap()
-                .contains("mph")
+                .contains(" mi,")
         );
         // Laps without climbs; neither.
         i.history.ride_mut(&id).unwrap().climbs.clear();
@@ -1455,59 +1465,54 @@ mod tests {
         );
     }
 
-    /// Deleting (7A): the last row asks first; where photos and the
-    /// browser's Strava rows fill the page, export and delete share a row
-    /// to their own page – no page passes six rows.
+    /// Deleting (7A): the ride page's *Export or delete* opens the
+    /// ride's file page with both rows; Delete asks first. The ride page
+    /// keeps its rows (within six with photos and the Strava rows).
     #[test]
     fn a_ride_can_be_deleted_from_its_page() {
         let mut i = info(2);
         let r = rows(Page::HistoryRide(1), &i);
-        let last = r.last().unwrap();
-        assert_eq!(last.label, DELETE_LABEL);
-        assert_eq!(
-            last.confirm,
-            Some(Activate::AskDelete("history.delete 2".into()))
-        );
-        assert_eq!(r[1].label, "Export the FIT file");
-        assert_eq!(delete_index("history.delete 2"), Some(1));
-        assert_eq!(delete_index("history.delete 0"), None);
-        assert_eq!(delete_index("history.export 2"), None);
-        // Photos and a recording without the API: one row more than fits.
-        let id = i.history.nth_newest(1).unwrap().id.clone();
-        i.recordings.insert(id.clone(), 1);
-        i.photos.insert(
-            id.clone(),
-            RidePhotos {
-                files: vec![("photo-1.jpg".into(), 30.0)],
-                in_strava: 1,
-                recordings: 1,
-            },
-        );
-        let r = rows(Page::HistoryRide(1), &i);
-        assert!(r.len() < MAX_ITEMS, "{}", r.len());
         assert_eq!(r[1].label, FILE_LABEL);
-        assert_eq!(r[1].confirm, Some(Activate::Open(Page::HistoryRideFile(1))));
+        assert_eq!(r[1].value.as_deref(), Some(FILE_VALUE));
         assert!(!r.iter().any(|r| r.label == DELETE_LABEL));
-        assert!(r.iter().any(|r| r.label == UPLOAD_LABEL));
         let file = rows(Page::HistoryRideFile(1), &i);
         assert_eq!(file.len(), 2);
         assert_eq!(
             file[0].confirm,
             Some(Activate::Command("history.export 2".into()))
         );
+        assert_eq!(file[1].label, DELETE_LABEL);
         assert_eq!(
             file[1].confirm,
             Some(Activate::AskDelete("history.delete 2".into()))
         );
         assert!(rows(Page::HistoryRideFile(5), &i).is_empty());
         assert!(status(Page::HistoryRideFile(1), &i).contains("Black Forest"));
-        // Every combination stays within the limit.
+        assert_eq!(delete_index("history.delete 2"), Some(1));
+        assert_eq!(delete_index("history.delete 0"), None);
+        assert_eq!(delete_index("history.export 2"), None);
+        // Photos and a recording without the API: still six rows at most.
+        let id = i.history.nth_newest(1).unwrap().id.clone();
+        i.recordings.insert(id.clone(), 1);
+        i.photos.insert(
+            id,
+            RidePhotos {
+                files: vec![("photo-1.jpg".into(), 30.0)],
+                in_strava: 1,
+                recordings: 1,
+            },
+        );
         for api in [false, true] {
             i.strava_api = api;
             for k in 0..2 {
                 assert!(rows(Page::HistoryRide(k), &i).len() < MAX_ITEMS);
             }
         }
+        assert!(
+            rows(Page::HistoryRide(1), &i)
+                .iter()
+                .any(|r| r.label == FILE_LABEL)
+        );
     }
 
     /// The confirm page says which ride, that it cannot be undone, and
@@ -1519,7 +1524,7 @@ mod tests {
         let t = delete_text(0, &i);
         assert_eq!(t.len(), 1);
         assert!(
-            t[0].starts_with("Tue 10 Nov 2026 08:00, 9.6 km in Black Forest:")
+            t[0].starts_with("The ride (9.6 km in Black Forest) leaves")
                 && t[0].contains("cannot be undone"),
             "{}",
             t[0]
@@ -1587,14 +1592,16 @@ mod tests {
         m.apply_with(Action::OpenSub(Page::HistoryRides), rows_of);
         m.apply_with(Action::Click(1), rows_of);
         assert_eq!(m.page(), Some(MenuPage::Sub(Page::HistoryRide(1))));
+        m.apply_with(Action::Click(1), rows_of);
+        assert_eq!(m.page(), Some(MenuPage::Sub(Page::HistoryRideFile(1))));
         let at = m.labels().iter().position(|l| l == DELETE_LABEL).unwrap();
         assert_eq!(m.apply_with(Action::Click(at), rows_of), Effect::None);
         assert_eq!(m.page(), Some(MenuPage::ConfirmDelete));
         assert_eq!(m.focus(), 1, "Cancel is focused");
         assert_eq!(m.pending(), Some("history.delete 2"));
-        // Cancel: back on the ride's page, nothing run.
+        // Cancel: back on the ride's file page, nothing run.
         assert_eq!(m.apply_with(Action::Confirm, rows_of), Effect::None);
-        assert_eq!(m.page(), Some(MenuPage::Sub(Page::HistoryRide(1))));
+        assert_eq!(m.page(), Some(MenuPage::Sub(Page::HistoryRideFile(1))));
         assert_eq!(m.pending(), None);
         m.apply_with(Action::Click(at), rows_of);
         let e = m.apply_with(Action::Click(0), rows_of);

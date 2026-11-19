@@ -171,6 +171,8 @@ pub struct MenuMap {
 /// The map picture's pixels (square) and its side (vh; the chart's
 /// height without its caption).
 const MAP_PX: u32 = 320;
+/// The scale bar's label (vh).
+const MAP_SCALE_VH: f32 = 1.8;
 
 /// One bar of a [`MenuChart`].
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -1505,7 +1507,7 @@ fn draw_chart(
             })
             .with_children(|c| draw_bars(c, chart));
         }
-        if let (Some(map), Some((handle, scale, bar))) = (&map, picture) {
+        if let (Some(map), Some((handle, scale, _bar))) = (&map, picture) {
             let side = map_side_vh();
             c.spawn(Node {
                 flex_direction: FlexDirection::Column,
@@ -1539,11 +1541,11 @@ fn draw_chart(
                             bottom: vh(
                                 side * (2.0 * ocw_map::ride::SCALE_INSET_PX + 2.0) / MAP_PX as f32
                             ),
-                            min_width: vh(side * bar),
                             ..default()
                         },
                         Text::new(scale),
-                        font(CHART_TEXT_VH),
+                        TextLayout::no_wrap(),
+                        font(MAP_SCALE_VH),
                         TextColor(Color::srgb(0.15, 0.15, 0.17)),
                     ));
                 });

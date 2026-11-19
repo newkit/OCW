@@ -312,11 +312,12 @@ mod tests {
                     .iter()
                     .map(|c| c.label.clone())
                     .collect(),
-                // The pages with a chart have fixed rows: a ride's (up to
-                // six and Back: laps and climbs, export, photos, the
-                // Strava rows, delete; spec 14 Phase 7, 7A) and the bests
+                // The pages with a chart have fixed rows: a ride's (laps
+                // and climbs, export or delete, Back; spec 14 Phase 7, 7A –
+                // the Strava line of v5.07 is one more: with it the
+                // longest numbers lose their last paragraph) and the bests
                 // (four and Back).
-                Page::Sub(settings_pages::Page::HistoryRide(_)) => (0..model::MAX_ITEMS)
+                Page::Sub(settings_pages::Page::HistoryRide(_)) => (0..3)
                     .map(|i| format!("Setting {i}:  < some value >"))
                     .collect(),
                 Page::Sub(settings_pages::Page::HistoryBests) => (0..5)
@@ -357,7 +358,7 @@ mod tests {
                 ],
                 // The delete question with everything it can say (7A).
                 Page::ConfirmDelete => vec![
-                    "Sat 14 Nov 2026 10:05, 142.3 km in Black Forest - north - Route t...: the ride leaves the training history and its FIT file is deleted. This cannot be undone.".to_string(),
+                    "The ride (142.3 km in Black Forest - north - Route t...) leaves the training history and its FIT file is deleted. This cannot be undone.".to_string(),
                     "Kept: its 12 Strava recordings and its 48 photos in your activities folder. Not on Strava yet: they still wait there and are uploaded once Strava is set up.".to_string(),
                 ],
                 _ => Vec::new(),

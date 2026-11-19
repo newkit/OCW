@@ -998,12 +998,16 @@ class UiTest:
         m = self.wait_menu(lambda m: m.get("open") and m.get("title") == "Ride", timeout=5.0)
         items = m.get("items") or []
         self.check("history: the newest ride's page after the reload", m.get("title") == "Ride", items)
-        self.check("history: its FIT file is kept in OPFS (Export, not 'not kept')",
-                   "Export the FIT file" in items, items)
-        self.check("history: the ride page has Delete this ride",
-                   any(i.startswith("Delete this ride") or i.startswith("Export or delete") for i in items),
-                   items)
+        self.check("history: its FIT file is kept in OPFS (not 'FIT file not kept')",
+                   any(i.startswith("Export or delete") and "not kept" not in i for i in items), items)
         self.shot("history-ride-map")
+        rides_before = self.rides_count()
+        self.console("menu ride 1")
+        self.wait_menu(lambda m: m.get("title") == "Ride")
+        if not self.open_item("Export or delete", "The ride's file"):
+            self.close_menu()
+            return
+        self.shot("history-ride-file")
         if self.focus_item("Export the FIT file") is not None:
             self.key("Enter")
             d, path = self.wait_download(".fit")
@@ -1011,10 +1015,6 @@ class UiTest:
             self.check("history: the FIT file read back from OPFS is a download",
                        d is not None and d["name"].startswith("ocw-ride-") and data[8:12] == b".FIT",
                        (d, len(data)))
-        rides_before = self.rides_count()
-        if self.focus_item("Export or delete") is not None:
-            self.key("Enter")
-            self.wait_menu(lambda m: m.get("title") == "The ride's file")
         if self.focus_item("Delete this ride") is None:
             self.check("history: a Delete row", False, self.menu().get("items"))
             self.close_menu()
@@ -1023,7 +1023,8 @@ class UiTest:
         m = self.wait_menu(lambda m: m.get("title") == "Delete this ride?")
         items = m.get("items") or []
         self.check("history: Delete asks first, Cancel focused",
-                   m.get("title") == "Delete this ride?" and items[m.get("focused", 0)] == "Cancel",
+                   m.get("title") == "Delete this ride?" and len(items) > m.get("focused", 0)
+                   and items[m.get("focused", 0)] == "Cancel",
                    (m.get("title"), items, m.get("focused")))
         self.check("history: the question says it cannot be undone",
                    any("cannot be undone" in t for t in m.get("text", [])), m.get("text"))
