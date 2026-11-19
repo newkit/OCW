@@ -39,7 +39,6 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use clap::{Arg, ArgAction, Command};
 use ocw_assets::parts::{Catalogue, Slot};
-use wallet::shown as hearts;
 use ocw_core::{ProfileId, Rgb, RiderLook};
 use ocw_render::RideView;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
@@ -50,6 +49,7 @@ use ocw_render::workshop::{
     WorkshopCorePlugin, WorkshopPointer, WorkshopPointerEvent, WorkshopView, bike_corners,
     bike_pose,
 };
+use wallet::shown as hearts;
 
 use crate::Args;
 use crate::connection::{ClientState, Link};

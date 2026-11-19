@@ -57,12 +57,15 @@ pub const SECRET_KEYS: &[&str] = &[
 ];
 
 /// The sections of `ocw.toml`.
-pub const SECTIONS: &[&str] = &["settings", "riders", "devices", "servers", "start", "strava"];
+pub const SECTIONS: &[&str] = &[
+    "settings", "riders", "devices", "servers", "start", "strava",
+];
 
 /// The first lines of a new `ocw.toml`.
 const CONFIG_HEADER: &str = "# Open Cycling World: the local settings of this computer (spec 3.2.4).\n# Edit by hand while the app is closed; secrets are in secrets.toml.\n";
 /// The first lines of a new `secrets.toml`.
-const SECRETS_HEADER: &str = "# Open Cycling World: secrets (readable only by you). Do not share this file.\n";
+const SECRETS_HEADER: &str =
+    "# Open Cycling World: secrets (readable only by you). Do not share this file.\n";
 
 /// One read-modify-write of a file at a time (the Strava thread saves its
 /// tokens while the game saves settings).
@@ -379,7 +382,11 @@ pub fn set_section(doc: &mut DocumentMut, key: &str, text: &str) -> Result<(), S
                 *new.decor_mut() = o.decor().clone();
             }
         }
-    } else if t.decor().prefix().is_none_or(|p| p.as_str().is_none_or(str::is_empty)) {
+    } else if t
+        .decor()
+        .prefix()
+        .is_none_or(|p| p.as_str().is_none_or(str::is_empty))
+    {
         t.decor_mut().set_prefix("\n");
     }
     // Tables after the first get a blank line before them.
@@ -559,10 +566,7 @@ pub fn migrate_only(files: &ConfigFiles, only: Option<&[&str]>) -> (Vec<String>,
         }
         match migrate_file(files, &old, *how) {
             Ok(note) => notes.push(note),
-            Err(e) => problems.push(format!(
-                "{}: {e}; left where it is",
-                home_relative(&old)
-            )),
+            Err(e) => problems.push(format!("{}: {e}; left where it is", home_relative(&old))),
         }
     }
     (notes, problems)
@@ -613,19 +617,28 @@ fn migrate_file(files: &ConfigFiles, old: &Path, how: Old) -> Result<String, Str
             if !secret.is_empty() {
                 let mut s = section_table(files.secret("strava"))?;
                 s.extend(secret);
-                writes.push((files.secret("strava"), toml::to_string(&s).expect("a table")));
+                writes.push((
+                    files.secret("strava"),
+                    toml::to_string(&s).expect("a table"),
+                ));
             }
             if !rest.is_empty() {
                 let mut s = section_table(files.section("strava"))?;
                 s.extend(rest);
-                writes.push((files.section("strava"), toml::to_string(&s).expect("a table")));
+                writes.push((
+                    files.section("strava"),
+                    toml::to_string(&s).expect("a table"),
+                ));
             }
         }
         Old::Account => {
             serde_json::from_str::<serde_json::Value>(&text).map_err(|e| e.to_string())?;
             let mut t = toml::Table::new();
             t.insert("session".into(), toml::Value::String(text.trim().into()));
-            writes.push((files.secret("account"), toml::to_string(&t).expect("a table")));
+            writes.push((
+                files.secret("account"),
+                toml::to_string(&t).expect("a table"),
+            ));
         }
     }
     // A section that is there already is replaced (the old file came
@@ -714,16 +727,24 @@ mod tests {
 
     const SETTINGS: &str = "[audio]\nmaster = 40\n\n[ride]\nbots = 3\n";
     const RIDERS: &str = "active = \"Ada Rider\"\n\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 61.0\nheight_cm = 168.0\nftp_w = 230\n\n[[rider]]\nname = \"Bea Climber\"\nweight_kg = 55.0\n";
-    const DEVICES: &str = "[[device]]\nid = \"hci0/AA:BB\"\nname = \"Made-up KICKR\"\nkind = \"trainer\"\n";
-    const STRAVA: &str = "client_id = \"12345\"\nclient_secret = \"made-up-secret\"\nauto_upload = false\n";
-    const TOKEN: &str = "access_token = \"a-made-up\"\nrefresh_token = \"r-made-up\"\nexpires_at = 1800000000\n";
-    const ACCOUNT: &str = "{\"issuer\":\"https://accounts.example.org\",\"access_token\":\"made-up\"}";
+    const DEVICES: &str =
+        "[[device]]\nid = \"hci0/AA:BB\"\nname = \"Made-up KICKR\"\nkind = \"trainer\"\n";
+    const STRAVA: &str =
+        "client_id = \"12345\"\nclient_secret = \"made-up-secret\"\nauto_upload = false\n";
+    const TOKEN: &str =
+        "access_token = \"a-made-up\"\nrefresh_token = \"r-made-up\"\nexpires_at = 1800000000\n";
+    const ACCOUNT: &str =
+        "{\"issuer\":\"https://accounts.example.org\",\"access_token\":\"made-up\"}";
 
     fn old_files(dir: &Path) {
         std::fs::write(dir.join("settings.toml"), SETTINGS).unwrap();
         std::fs::write(dir.join("riders.toml"), RIDERS).unwrap();
         std::fs::write(dir.join("devices.toml"), DEVICES).unwrap();
-        std::fs::write(dir.join("joins.txt"), "ocw://127.0.0.1:47800\troute hills\n").unwrap();
+        std::fs::write(
+            dir.join("joins.txt"),
+            "ocw://127.0.0.1:47800\troute hills\n",
+        )
+        .unwrap();
         std::fs::write(dir.join("strava.toml"), STRAVA).unwrap();
         std::fs::write(dir.join("strava-token.toml"), TOKEN).unwrap();
         std::fs::write(dir.join("account.json"), ACCOUNT).unwrap();
@@ -798,7 +819,10 @@ mod tests {
         let secrets = std::fs::read_to_string(&files.secrets).unwrap();
         let before = listing(&dir);
         let (notes, problems) = migrate(&files);
-        assert!(notes.is_empty() && problems.is_empty(), "{notes:?} {problems:?}");
+        assert!(
+            notes.is_empty() && problems.is_empty(),
+            "{notes:?} {problems:?}"
+        );
         assert_eq!(listing(&dir), before);
         assert_eq!(std::fs::read_to_string(&files.config).unwrap(), config);
         assert_eq!(std::fs::read_to_string(&files.secrets).unwrap(), secrets);
@@ -823,7 +847,10 @@ mod tests {
         assert!(dir.join("devices.toml.bak.2").exists());
         assert!(dir.join("ocw.toml.bak").exists());
         let d = files.section("devices").read().unwrap().unwrap();
-        assert!(d.contains("Second made-up trainer") && !d.contains("KICKR"), "{d}");
+        assert!(
+            d.contains("Second made-up trainer") && !d.contains("KICKR"),
+            "{d}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -876,7 +903,10 @@ mod tests {
             .section("devices")
             .write("[[device]]\nid = \"a\"\nname = \"Made-up power meter\"\n")
             .unwrap();
-        files.section("settings").write("[audio]\nmaster = 50\n").unwrap();
+        files
+            .section("settings")
+            .write("[audio]\nmaster = 50\n")
+            .unwrap();
         let text = std::fs::read_to_string(&files.config).unwrap();
         assert!(text.starts_with("# my notes\n[settings.audio]"), "{text}");
         assert!(text.contains("master = 50"), "{text}");
@@ -922,11 +952,17 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&files.secrets).unwrap().permissions().mode();
+            let mode = std::fs::metadata(&files.secrets)
+                .unwrap()
+                .permissions()
+                .mode();
             assert_eq!(mode & 0o777, 0o600);
             // Also after a later save.
             files.secret("strava_token").write(TOKEN).unwrap();
-            let mode = std::fs::metadata(&files.secrets).unwrap().permissions().mode();
+            let mode = std::fs::metadata(&files.secrets)
+                .unwrap()
+                .permissions()
+                .mode();
             assert_eq!(mode & 0o777, 0o600);
         }
         let _ = std::fs::remove_dir_all(&dir);

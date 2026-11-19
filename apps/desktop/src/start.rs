@@ -206,7 +206,13 @@ mod tests {
         assert_eq!(start_mode(&args(&[])), StartMode::Ask);
         // Settings that do not decide where to ride still ask.
         assert_eq!(
-            start_mode(&args(&["--fullscreen", "--name", "Ada Rider", "--bots", "3"])),
+            start_mode(&args(&[
+                "--fullscreen",
+                "--name",
+                "Ada Rider",
+                "--bots",
+                "3"
+            ])),
             StartMode::Ask
         );
         for deciding in [

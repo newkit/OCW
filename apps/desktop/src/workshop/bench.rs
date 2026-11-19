@@ -13,9 +13,9 @@
 //! lists the inventory; every action is a console line (`bikes.buy`,
 //! `bikes.sell`, `bikes.hang`, `workshop.equip`, `workshop.sell`).
 
+use super::wallet::shown as hearts;
 use ocw_assets::parts::{Catalogue, Part, Slot, Tier};
 use ocw_core::BikeType;
-use super::wallet::shown as hearts;
 use ocw_sim::build::{self as bike_build, Build, PartTable};
 
 use super::picker::{Button, Dialog, Kind, Picker, Row, WHERE_PARTS_COUNT, detail, included_line};

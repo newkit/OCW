@@ -220,8 +220,8 @@ mod tests {
                 | History | HistoryRides | HistoryRide(_) | HistoryClimbs(_) | HistoryWeeks
                 | HistoryMonths | HistoryBests | HistoryWaiting | StravaWaiting | EventRules
                 | Account | TrustedKeys | TrustedKey(_) | Join | HostWorld | HostRoute
-                | HostTime | HostWeather | HostOptions | HostSummary | HostLink | Start | Devices
-                | Device(_) | Calendar(_) | CalendarDates(_) | Season | Character
+                | HostTime | HostWeather | HostOptions | HostSummary | HostLink | Start
+                | Devices | Device(_) | Calendar(_) | CalendarDates(_) | Season | Character
                 | CharacterBody | CharacterFace | CharacterHair | CharacterFacialHair
                 | CharacterPick(_) => {}
             }

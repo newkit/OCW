@@ -145,12 +145,13 @@ pub struct TokenStore {
 impl TokenStore {
     /// `[strava_token]` of `secrets.toml`, or `None` for a file of its own.
     fn section(&self) -> Option<crate::config::Slot> {
-        (self.path.file_name().and_then(|n| n.to_str()) == Some(crate::config::SECRETS_FILE))
-            .then(|| crate::config::Slot::Section {
+        (self.path.file_name().and_then(|n| n.to_str()) == Some(crate::config::SECRETS_FILE)).then(
+            || crate::config::Slot::Section {
                 file: self.path.clone(),
                 key: "strava_token".into(),
                 private: true,
-            })
+            },
+        )
     }
 
     pub fn load(&self) -> Result<Option<Token>, String> {

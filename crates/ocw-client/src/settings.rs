@@ -1686,10 +1686,7 @@ master = 80
     #[test]
     fn precedence_default_file_temp_command_line() {
         let (mut s, _) = Settings::parse("[ride]\nbots = 2\n").unwrap();
-        assert_eq!(
-            s.line("ride.bots").unwrap(),
-            "ride.bots = 2 (saved)"
-        );
+        assert_eq!(s.line("ride.bots").unwrap(), "ride.bots = 2 (saved)");
         s.set_temp("ride.bots", "7").unwrap();
         assert_eq!(
             s.get_with_source("ride.bots"),

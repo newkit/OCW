@@ -24,13 +24,13 @@
 //! picker too: one row per field ([`Kind::Design`]), ← / → change the
 //! focused field of a draft look (shown live), Confirm applies it.
 
+use super::wallet::shown as hearts;
 use ocw_assets::parts::{Catalogue, Part, Slot};
 use ocw_core::Rgb;
 use ocw_core::bike::PALETTE;
 use ocw_core::character::{
     self as ch, Age, BEARDS, GLASSES, HAIR_COLOURS, HAIR_STYLES, MOUSTACHES, SKIN_TONES,
 };
-use super::wallet::shown as hearts;
 use ocw_core::{BaseBody, BodyShape, Character};
 use ocw_sim::build::{self as bike_build, Benefit, Build, PartTable};
 

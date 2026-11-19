@@ -557,7 +557,10 @@ mod tests {
         assert_eq!(loaded.migrated.len(), 2, "{:?}", loaded.migrated);
         assert!(dir.join("settings.toml.bak").exists() && dir.join("riders.toml.bak").exists());
         let text = std::fs::read_to_string(&file).unwrap();
-        assert!(text.contains("[settings.ride]") && text.contains("[[riders.rider]]"), "{text}");
+        assert!(
+            text.contains("[settings.ride]") && text.contains("[[riders.rider]]"),
+            "{text}"
+        );
         assert_eq!(
             (args.bots, args.power, args.record),
             (2, 150.0, Some(false))
@@ -618,7 +621,9 @@ mod tests {
         }
         std::fs::write(&file, "[display\n").unwrap();
         let (_, loaded) = startup(&["ocw-desktop", "--settings-file", f]);
-        assert_eq!(loaded.warnings.len(), 1);
+        // The settings and the local riders are both in the broken file.
+        assert_eq!(loaded.warnings.len(), 2, "{:?}", loaded.warnings);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "[display\n");
         assert_eq!(loaded.settings.location(), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -644,7 +649,10 @@ mod tests {
             // `activities.folder` (the Strava recordings' folder).
             crate::activities::ActivitiesPlugin,
         ))
-        .insert_resource(slot_settings(Settings::default(), files.section("settings")))
+        .insert_resource(slot_settings(
+            Settings::default(),
+            files.section("settings"),
+        ))
         .insert_resource(RiderProfiles {
             riders: Riders::default(),
             path: Some(files.section("riders")),

@@ -436,7 +436,6 @@ impl Devices {
     }
 }
 
-
 /// Reads all device events: power samples go to the server; connections,
 /// failures and drops update the Devices page; a device that connected is
 /// remembered; a trainer or power meter replaces the virtual trainer.

@@ -79,10 +79,7 @@ pub fn rows(last: Choice, rider: &str) -> Vec<Row> {
             value: mark(Choice::Server),
             left: None,
             right: None,
-            confirm: Some(Activate::RunOpen(
-                "start.choose server".into(),
-                Page::Join,
-            )),
+            confirm: Some(Activate::RunOpen("start.choose server".into(), Page::Join)),
         },
         Row {
             label: format!("Ride locally as {rider} ({})", LocalMode::Training.name()),

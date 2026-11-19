@@ -234,7 +234,10 @@ mod tests {
         store.save(&s).unwrap();
         assert_eq!(store.load(), Some(s));
         let text = std::fs::read_to_string(&secrets).unwrap();
-        assert!(text.contains("[account]") && text.contains("[strava]"), "{text}");
+        assert!(
+            text.contains("[account]") && text.contains("[strava]"),
+            "{text}"
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
