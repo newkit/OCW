@@ -72,8 +72,10 @@ fn reconciled_profiles_are_the_drawn_surface() {
         t_junction(RoadClass::Residential, -0.05, 0.15),
         crossing([0.05, -0.04, 0.10, 0.0]),
     ] {
-        let before: BTreeMap<(usize, usize), f64> =
-            drawn(&g0).into_iter().map(|(e, i, h)| ((e, i), h)).collect();
+        let before: BTreeMap<(usize, usize), f64> = drawn(&g0)
+            .into_iter()
+            .map(|(e, i, h)| ((e, i), h))
+            .collect();
         let mut g = g0.clone();
         let st = reconcile_profiles(&mut g, &|_, _| true);
         assert_eq!(st.patches, 1);
@@ -85,7 +87,10 @@ fn reconciled_profiles_are_the_drawn_surface() {
         assert!(st.residual_m < 0.005, "{st:?}");
         assert!(st.last_round_m < 0.01, "{st:?}");
         for (e, i, h) in drawn(&g) {
-            assert!((g.edges[e].profile[i] - h).abs() < 0.005, "edge {e} sample {i}");
+            assert!(
+                (g.edges[e].profile[i] - h).abs() < 0.005,
+                "edge {e} sample {i}"
+            );
             // The drawn surface moved little (the side road's blend now
             // starts at the main road's height and is shorter).
             if let Some(b) = before.get(&(e, i)) {
@@ -460,9 +465,7 @@ fn short_steep_side_roads_get_their_blend_in_the_profile() {
     let g0 = fixtures::graph(
         &v,
         vec![
-            Road::straight(&v, 1, 0, RoadClass::Secondary, 7.5, |s| {
-                (s - 120.0) * 0.06
-            }),
+            Road::straight(&v, 1, 0, RoadClass::Secondary, 7.5, |s| (s - 120.0) * 0.06),
             Road::straight(&v, 0, 2, RoadClass::Secondary, 7.5, |s| s * 0.06),
             Road::straight(&v, 0, 3, RoadClass::Residential, 5.0, |s| s * 0.20),
         ],

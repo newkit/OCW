@@ -1284,7 +1284,10 @@ mod tests {
         // `junction.surface_step`.
         assert_eq!(r.count("junction.surface_step"), 0);
         assert_eq!(r.count("junction.seam"), 0, "{:?}", r.get("junction.seam"));
-        assert!(r.count("junction.measured") + r.amount_with_prefix("junction.no_surface") as usize >= 1);
+        assert!(
+            r.count("junction.measured") + r.amount_with_prefix("junction.no_surface") as usize
+                >= 1
+        );
         // The house floats 1 m over the ground; the meadow cell is a sliver.
         assert_eq!(r.count("building.floating"), 1);
         assert_eq!(r.count("landuse.sliver"), 1);

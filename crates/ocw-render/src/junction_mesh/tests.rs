@@ -387,9 +387,7 @@ fn the_terrain_is_lowered_under_a_patch_and_a_lowered_side_road() {
 /// matching do, and mark the terrain as settled (no lowering at load).
 #[test]
 fn stored_junctions_and_strip_edges_shape_the_same_tiles() {
-    use ocw_world::junction::section::{
-        FLAG_SETTLED, JunctionData, JunctionIndex, strip_edges_of,
-    };
+    use ocw_world::junction::section::{FLAG_SETTLED, JunctionData, JunctionIndex, strip_edges_of};
     for g in [
         t_junction(RoadClass::Secondary, 0.08, 0.20),
         crossing([0.05, -0.04, 0.10, 0.0]),

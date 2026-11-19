@@ -70,7 +70,11 @@ fn newer_layouts_kinds_and_fields_are_skipped() {
     write_junctions(&index, &mut bytes);
     let mut newer = bytes.clone();
     newer[0] = 2;
-    assert!(read_junctions(&newer).unwrap_err().contains("not supported"));
+    assert!(
+        read_junctions(&newer)
+            .unwrap_err()
+            .contains("not supported")
+    );
     // The patch record with two extra bytes, then a record of kind 7 (from
     // a newer builder) at a later vertex.
     let mut b = bytes[..14].to_vec();

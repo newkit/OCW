@@ -72,7 +72,12 @@ pub fn patched_vertices(graph: &RoadGraph) -> Vec<bool> {
 /// The through pair at vertex `v`: the two edges of a way split (on the
 /// ground, not at the region border, not a loop), or the through road's
 /// two arms of a patch.
-fn through_pair(g: &RoadGraph, js: &JunctionSet, adj: &[Vec<usize>], v: usize) -> Option<[usize; 2]> {
+fn through_pair(
+    g: &RoadGraph,
+    js: &JunctionSet,
+    adj: &[Vec<usize>],
+    v: usize,
+) -> Option<[usize; 2]> {
     let edges = &adj[v];
     let usable = |e: usize| {
         let e = &g.edges[e];
@@ -418,7 +423,9 @@ fn drawn_on(
     let ends = js.ends(g, ei);
     let k = usize::from(!at_from);
     match ends[k] {
-        Some(EndRule::Patch(q, _)) if q.vertex == p.vertex => js.drawn_height_at_end(g, ei, k, s, c),
+        Some(EndRule::Patch(q, _)) if q.vertex == p.vertex => {
+            js.drawn_height_at_end(g, ei, k, s, c)
+        }
         _ => None,
     }
 }
@@ -707,10 +714,7 @@ const PATCH_OWNER: usize = usize::MAX;
 /// the patch's triangles), sampled from above every 0.2 m over the disc
 /// of the widest half width + 2.5 m. Also the vertices where two or more
 /// roads meet on the ground without one, with the reason (J3's work).
-pub fn seams(
-    pkg: &WorldPackage,
-    g: &RoadGraph,
-) -> (Vec<Seam>, Vec<(usize, &'static str)>) {
+pub fn seams(pkg: &WorldPackage, g: &RoadGraph) -> (Vec<Seam>, Vec<(usize, &'static str)>) {
     let js = match pkg.junctions.as_ref() {
         Some(j) => JunctionSet::with_index(g, j.index_for(g)),
         None => JunctionSet::new(g),
@@ -773,9 +777,11 @@ pub fn seams(
         for &ei in &adj[v] {
             for &(key, si) in by_edge.get(&(ei as u32)).into_iter().flatten() {
                 let s = &pkg.tiles[&key].roads[si];
-                if !s.points.iter().any(|q| {
-                    (f64::from(q[0]) - c[0]).hypot(f64::from(q[2]) - c[1]) < r + 8.0
-                }) {
+                if !s
+                    .points
+                    .iter()
+                    .any(|q| (f64::from(q[0]) - c[0]).hypot(f64::from(q[2]) - c[1]) < r + 8.0)
+                {
                     continue;
                 }
                 let half = s.width_m / 2.0;

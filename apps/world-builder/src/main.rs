@@ -1508,9 +1508,10 @@ fn print_reconcile(kinks: usize, rs: &ocw_worldgen::junctions::ReconcileStats) {
 
 /// What the junction sections hold, for the build log.
 fn junction_summary(j: &ocw_world::junction::section::JunctionData) -> String {
-    let (patches, rules, settled) = j.index.as_ref().map_or((0, 0, false), |i| {
-        (i.patches(), i.rules.len(), i.settled())
-    });
+    let (patches, rules, settled) = j
+        .index
+        .as_ref()
+        .map_or((0, 0, false), |i| (i.patches(), i.rules.len(), i.settled()));
     let (strips, unmatched) = j.strip_edges.as_ref().map_or((0, 0), |s| {
         let all: Vec<u32> = s.tiles.values().flatten().copied().collect();
         (
@@ -1533,9 +1534,7 @@ fn junction_summary(j: &ocw_world::junction::section::JunctionData) -> String {
 
 /// The junction sections and the terrain settled under the junction
 /// surfaces of `pkg`'s graph (spec §4.8.8 J2). Returns the settle stats.
-fn settle_junctions(
-    pkg: &mut ocw_world::WorldPackage,
-) -> ocw_worldgen::clean::SettleStats {
+fn settle_junctions(pkg: &mut ocw_world::WorldPackage) -> ocw_worldgen::clean::SettleStats {
     let samples = match pkg.graph.as_ref() {
         Some(g) => {
             let js = ocw_world::junction::JunctionSet::new(g);

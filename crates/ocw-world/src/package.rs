@@ -67,6 +67,10 @@ use crate::buildings::{
 use crate::forest::{FOREST_TAG, read_forest, write_forest};
 use crate::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
 use crate::graph_route::{GraphRoute, RouteStep};
+use crate::junction::section::{
+    JUNCTIONS_TAG, JunctionData, STRIP_EDGES_TAG, read_junctions, read_strip_edges,
+    write_junctions, write_strip_edges,
+};
 use crate::lamps::{ROAD_LIT_TAG, RoadLit, read_road_lit, write_road_lit};
 use crate::landmarks::{LANDMARKS_TAG, read_landmarks, write_landmarks};
 use crate::landuse::{LANDUSE_TAG, LandUse, read_landuse, write_landuse};
@@ -76,10 +80,6 @@ use crate::look::{
 };
 use crate::obstacles::{OBSTACLES_TAG, Obstacles, read_obstacles, write_obstacles};
 use crate::ortho::{ORTHO_TAG, read_ortho, write_ortho};
-use crate::junction::section::{
-    JUNCTIONS_TAG, JunctionData, STRIP_EDGES_TAG, read_junctions, read_strip_edges,
-    write_junctions, write_strip_edges,
-};
 use crate::places::{PLACES_TAG, Places, read_places, write_places};
 use crate::region::{PackageRegion, REGION_TAG, read_region, write_region};
 use crate::road_condition::{
