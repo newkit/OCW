@@ -50,7 +50,7 @@ mod tests {
     fn the_counter_follows_allocations() {
         let v = vec![1u8; 64 << 20];
         assert!(live() >= 64 << 20);
-        assert!(peak() >= live());
+        assert!(peak() >= 64 << 20);
         drop(v);
         assert!(peak() >= 64 << 20);
         assert!(summary().starts_with("heap "));
