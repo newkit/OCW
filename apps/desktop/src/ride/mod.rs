@@ -1384,6 +1384,91 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// *Voice* off on the Options page (spec §7.1.7 Q15): the hosting
+    /// starts no voice server (the fake one never runs) and opens no
+    /// voice ports, the hosted server offers no voice, the pages say so;
+    /// the switch is remembered (setting `host.voice`).
+    #[cfg(unix)]
+    #[test]
+    fn hosting_with_voice_off_starts_no_voice_server() {
+        use ocw_server::hosting::VoicePlan;
+        use ocw_server::voice::launcher::LaunchOptions;
+        use std::os::unix::fs::PermissionsExt;
+        let (mut app, _) = app("host-novoice");
+        if !app
+            .world()
+            .contains_resource::<ocw_ui::settings::UserSettings>()
+        {
+            app.world_mut()
+                .insert_resource(ocw_ui::settings::UserSettings::default());
+        }
+        assert!(update_until(&mut app, |w| client(w).rider_id().is_some()));
+        let dir = std::env::temp_dir().join(format!("ocw-host-novoice-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join("livekit-server");
+        std::fs::write(
+            &bin,
+            format!(
+                "#!/bin/sh\ntouch '{}/ran'\nexec sleep 1000\n",
+                dir.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let router = ocw_server::portmap::MemoryRouter {
+            external: Some("81.2.69.160".parse().unwrap()),
+            ..Default::default()
+        };
+        let table = router.table.clone();
+        app.world_mut().insert_resource(host::HostServicesFor {
+            voice: Mutex::new(Some(VoicePlan {
+                launch: LaunchOptions::new(bin, dir.join("state")),
+                public_host: None,
+            })),
+            router: Mutex::new(Some(router.discover())),
+        });
+        let port = std::net::UdpSocket::bind("0.0.0.0:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        run(&mut app, "host.plan world 0");
+        run(&mut app, "host.plan route loop");
+        run(&mut app, "host.plan bots 0");
+        let log = run(&mut app, "host.plan voice off");
+        assert!(log.contains("no voice chat on this ride"), "{log}");
+        assert!(!ocw_ui::settings::setting_on(app.world(), "host.voice"));
+        let options = host::rows(app.world(), ocw_client::menu::pages::Page::HostOptions).unwrap();
+        let row = options
+            .iter()
+            .find(|r| r.label == "Voice")
+            .expect("Voice row");
+        assert_eq!(row.value.as_deref(), Some("off"));
+        let summary =
+            host::text(app.world(), ocw_client::menu::pages::Page::HostSummary).join("\n");
+        assert!(summary.contains("No voice on this ride"), "{summary}");
+        let log = run(&mut app, &format!("host start --port {port}"));
+        assert!(log.contains("hosting: loading"), "{log}");
+        assert!(update_until(&mut app, |w| w
+            .contains_resource::<host::Hosting>()
+            && client(w).rider_id().is_some()));
+        assert!(
+            !client(app.world()).voice_offered(),
+            "no voice on the hosted ride"
+        );
+        // Only the game's port on the router, no voice server ran.
+        let mapped: Vec<(String, u16)> = table.lock().unwrap().keys().cloned().collect();
+        assert_eq!(mapped, [("UDP".to_owned(), port)], "{mapped:?}");
+        assert!(!dir.join("ran").exists(), "the voice server never started");
+        let status = run(&mut app, "host status");
+        assert!(status.contains("no voice"), "{status}");
+        assert!(!status.contains("voice signalling"), "{status}");
+        assert!(run(&mut app, "host stop").contains("hosting stopped"));
+        assert!(update_until(&mut app, |_| table.lock().unwrap().is_empty()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn a_bad_switch_keeps_the_ride() {
         let (mut app, _) = app("bad");

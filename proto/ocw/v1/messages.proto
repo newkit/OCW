@@ -316,6 +316,18 @@ message VoiceHearing {
   repeated uint32 heard_by = 2;
 }
 
+// The headphones this rider sees (spec §2.6, §7.1.7 Q11, Q12, Q17): the
+// riders who cannot hear this rider – they hear nobody (hears_nobody) or
+// chose not to hear this rider (muted them, Voice room without them).
+// Worked out by the server per viewer from the riders' statuses: one yes
+// / no per rider (yes = listed), the riders' own lists never leave the
+// server. Empty while this rider is not in the voice call. Sent to this
+// rider only, at the join if not empty and on every change (the whole
+// set; reliable).
+message NotHearingYou {
+  repeated uint32 riders = 1;
+}
+
 enum VoiceChannel {
   // Everyone in the session (spatial: the client attenuates by distance).
   VOICE_CHANNEL_UNSPECIFIED = 0;
@@ -612,9 +624,13 @@ message RiderStatus {
   // The rider hears nobody by own choice (speaker muted, voice turned
   // off): every viewer in the call sees headphones on this rider.
   bool hears_nobody = 5;
-  // Riders this rider chose not to hear (muted for themselves): each of
-  // them sees headphones on this rider ("cannot hear you", per viewer,
-  // §7.1.7 Q11; which reasons count is Q12).
+  // Riders this rider chose not to hear (muted for themselves, not in
+  // its Voice room: §7.1.7 Q11, Q12). Client → server only (in
+  // SensorSample.status): the server works out from it per viewer who
+  // sees headphones (NotHearingYou, §7.1.7 Q17) and never relays it.
+  // DEPRECATED in snapshots: servers since spec v5.19 leave it empty in
+  // RiderUpdate.status, so a list of whom a rider muted reaches nobody
+  // (older clients then show headphones only for hears_nobody).
   repeated uint32 not_hearing = 6;
 }
 
@@ -691,6 +707,8 @@ message ServerMessage {
     VoiceApart voice_apart = 12;
     // Voice by range and audience (spec §7.1.7 Q6, Q8): to this rider only.
     VoiceHearing voice_hearing = 13;
+    // The headphones per viewer (spec §7.1.7 Q17): to this rider only.
+    NotHearingYou not_hearing_you = 14;
   }
 }
 

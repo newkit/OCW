@@ -28,7 +28,11 @@
 //! default; *Open the router's ports* on the Options page) and the
 //! bundled `livekit-server` (next to the app, else on `PATH`) with fresh
 //! keys, its media address the router's public address when there is one,
-//! else STUN. The session starts when both are done (the voice server's
+//! else STUN – unless the setting `host.voice` is off (*Voice* on the
+//! Options page, spec §7.1.7 Q15): then no voice server starts, its
+//! ports are not opened and the hosted server offers no voice (like
+//! `ocw-server --voice off`; the riders' apps say "no voice on this
+//! server" and show no voice signs). The session starts when both are done (the voice server's
 //! keys go into the hosted server's config); neither ever stops the
 //! hosting – the pages say what happened. *Stop hosting*, a failed load
 //! and quitting stop the voice server and remove the mappings. The join
@@ -98,7 +102,7 @@ pub fn build(app: &mut App) {
     app.console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("host.plan")
-            .about("Change the plan of Ride -> Host a ride (world N, route NAME|free, time, day, weather, bots, open, port)")
+            .about("Change the plan of Ride -> Host a ride (world N, route NAME|free, time, day, weather, bots, open, port, upnp, voice)")
             .arg(Arg::new("words").num_args(1..).required(true).allow_hyphen_values(true)),
         |world, m| {
             let words: Vec<String> = m
@@ -107,12 +111,18 @@ pub fn build(app: &mut App) {
                 .unwrap_or_default();
             let words: Vec<&str> = words.iter().map(String::as_str).collect();
             let worlds = host_worlds(world);
-            sync_upnp(world);
+            sync_settings(world);
             let out = world.resource_mut::<HostPlanState>().0.apply(&words, &worlds)?;
-            // *Open the router's ports* is remembered (setting host.upnp).
-            if words.first() == Some(&"upnp") {
-                let on = world.resource::<HostPlanState>().0.upnp;
-                ocw_ui::settings::save_setting(world, "host.upnp", if on { "on" } else { "off" });
+            // *Open the router's ports* and *Voice* are remembered
+            // (settings host.upnp, host.voice).
+            let plan = &world.resource::<HostPlanState>().0;
+            let saved = match words.first() {
+                Some(&"upnp") => Some(("host.upnp", plan.upnp)),
+                Some(&"voice") => Some(("host.voice", plan.voice)),
+                _ => None,
+            };
+            if let Some((key, on)) = saved {
+                ocw_ui::settings::save_setting(world, key, if on { "on" } else { "off" });
             }
             Ok(out)
         },
@@ -135,6 +145,12 @@ pub fn build(app: &mut App) {
                             .long("upnp")
                             .value_name("on|off")
                             .help("Open the router's ports automatically (setting host.upnp)"),
+                    )
+                    .arg(
+                        Arg::new("voice")
+                            .long("voice")
+                            .value_name("on|off")
+                            .help("Voice chat on the hosted ride (setting host.voice)"),
                     ),
             )
             .subcommand(Command::new("status").about("Hosting? The riders and the join links"))
@@ -165,7 +181,7 @@ pub fn build(app: &mut App) {
                     lines.push(format!("port {p}"));
                 }
                 let worlds = host_worlds(world);
-                sync_upnp(world);
+                sync_settings(world);
                 for l in lines {
                     let words: Vec<&str> = l.split_whitespace().collect();
                     world.resource_mut::<HostPlanState>().0.apply(&words, &worlds)?;
@@ -173,6 +189,9 @@ pub fn build(app: &mut App) {
                 // This start only (the setting stays).
                 if let Some(u) = get("upnp") {
                     world.resource_mut::<HostPlanState>().0.apply(&["upnp", u.as_str()], &worlds)?;
+                }
+                if let Some(v) = get("voice") {
+                    world.resource_mut::<HostPlanState>().0.apply(&["voice", v.as_str()], &worlds)?;
                 }
                 start(world)
             }
@@ -299,10 +318,11 @@ pub fn start(world: &mut World) -> Result<String, String> {
     info!(
         port = plan.port,
         upnp = plan.upnp,
+        voice = plan.voice,
         "hosting: the port is open, loading the course; starting the voice server"
     );
     // The router's ports and the voice server, while the course loads.
-    let services = HostServices::spawn(services_options(world, addr, plan.upnp))
+    let services = HostServices::spawn(services_options(world, addr, plan.upnp, plan.voice))
         .map_err(|e| format!("cannot start the hosting's voice server: {e}"))?;
     world.insert_resource(Starting {
         net: Mutex::new(Some(net)),
@@ -501,23 +521,49 @@ fn stop_on_exit(
     }
 }
 
-/// The plan's router switch follows the setting `host.upnp` (spec §7.1.7
-/// Q4: on by default).
-fn sync_upnp(world: &mut World) {
-    let on = ocw_ui::settings::setting_on(world, "host.upnp");
-    world.resource_mut::<HostPlanState>().0.upnp = on;
+/// The plan's router and voice switches follow the settings `host.upnp`
+/// and `host.voice` (spec §7.1.7 Q4, Q15: both on by default).
+fn sync_settings(world: &mut World) {
+    let upnp = ocw_ui::settings::setting_on(world, "host.upnp");
+    let voice = ocw_ui::settings::setting_on(world, "host.voice");
+    let plan = &mut world.resource_mut::<HostPlanState>().0;
+    plan.upnp = upnp;
+    plan.voice = voice;
+}
+
+/// The plan as the pages show it: the wizard's choices with the saved
+/// switches.
+fn shown_plan(world: &World) -> HostPlan {
+    let mut plan = world
+        .get_resource::<HostPlanState>()
+        .map(|p| p.0.clone())
+        .unwrap_or_default();
+    plan.upnp = ocw_ui::settings::setting_on(world, "host.upnp");
+    plan.voice = ocw_ui::settings::setting_on(world, "host.voice");
+    plan
 }
 
 /// What runs beside the hosted server (see the module docs): the voice
-/// server found next to the app or on `PATH`, the router by UPnP when
-/// `upnp` – or what a test put into [`HostServicesFor`]. Unit tests never
-/// start a real voice server or ask the network's router.
-fn services_options(world: &World, listen: std::net::SocketAddr, upnp: bool) -> HostingOptions {
+/// server found next to the app or on `PATH` when `voice`, the router by
+/// UPnP when `upnp` – or what a test put into [`HostServicesFor`]. Unit
+/// tests never start a real voice server or ask the network's router.
+fn services_options(
+    world: &World,
+    listen: std::net::SocketAddr,
+    upnp: bool,
+    voice: bool,
+) -> HostingOptions {
     use ocw_server::voice::launcher::{self, LaunchOptions};
     let mut opts = HostingOptions::new(listen);
     if let Some(f) = world.get_resource::<HostServicesFor>() {
-        opts.voice = f.voice.lock().expect("not poisoned").take();
-        opts.voice_off = "no voice server in this test".into();
+        let plan = f.voice.lock().expect("not poisoned").take();
+        opts.voice = plan.filter(|_| voice);
+        opts.voice_off = if voice {
+            "no voice server in this test"
+        } else {
+            ocw_client::host::VOICE_TURNED_OFF
+        }
+        .into();
         opts.upnp = f
             .router
             .lock()
@@ -531,11 +577,17 @@ fn services_options(world: &World, listen: std::net::SocketAddr, upnp: bool) -> 
         return opts;
     }
     let exe = std::env::current_exe().ok();
-    match launcher::find_binary(
-        None,
-        exe.as_deref().and_then(std::path::Path::parent),
-        std::env::var_os("PATH").as_deref(),
-    ) {
+    // *Voice* off (spec §7.1.7 Q15): no voice server, as `--voice off`.
+    let found = if voice {
+        launcher::find_binary(
+            None,
+            exe.as_deref().and_then(std::path::Path::parent),
+            std::env::var_os("PATH").as_deref(),
+        )
+    } else {
+        Err(ocw_client::host::VOICE_TURNED_OFF.to_owned())
+    };
+    match found {
         Ok(binary) => {
             // OCW_HOST_VOICE_PORTS=SIGNAL,TCP,UDP: other ports than 7880,
             // 7881, 7882 (another voice server on this machine, tests).
@@ -553,6 +605,10 @@ fn services_options(world: &World, listen: std::net::SocketAddr, upnp: bool) -> 
                 },
                 public_host: None,
             });
+        }
+        Err(e) if !voice => {
+            info!("hosting without voice: {e}");
+            opts.voice_off = e;
         }
         Err(e) => {
             warn!("hosting without voice: {e}");
@@ -690,11 +746,7 @@ fn ride_mode(
 
 /// The rows of the wizard and of the join link page.
 pub fn rows(world: &World, page: Page) -> Option<Vec<Row>> {
-    let mut plan = world
-        .get_resource::<HostPlanState>()
-        .map(|p| p.0.clone())
-        .unwrap_or_default();
-    plan.upnp = ocw_ui::settings::setting_on(world, "host.upnp");
+    let plan = shown_plan(world);
     match page {
         Page::HostLink => {
             let h = world.get_resource::<Hosting>()?;
@@ -738,14 +790,7 @@ pub fn rows(world: &World, page: Page) -> Option<Vec<Row>> {
 /// the firewall hint; the summary's: the ports it will open.
 pub fn text(world: &World, page: Page) -> Vec<String> {
     match (page, world.get_resource::<Hosting>()) {
-        (Page::HostSummary, _) => {
-            let mut plan = world
-                .get_resource::<HostPlanState>()
-                .map(|p| p.0.clone())
-                .unwrap_or_default();
-            plan.upnp = ocw_ui::settings::setting_on(world, "host.upnp");
-            ocw_client::host::summary_lines(&plan)
-        }
+        (Page::HostSummary, _) => ocw_client::host::summary_lines(&shown_plan(world)),
         (Page::HostLink, Some(h)) => {
             let mut out = vec![format!(
                 "{} rider(s) on UDP {}. Others join with Ride -> Join and this link (Copy link):",

@@ -97,18 +97,22 @@ pub fn not_hearing_reasons(
 
 /// The status signs `viewer` sees on rider `of` (spec §2.6, §7.1.7 Q11):
 /// the X mouth, the phone and the VR headset as `theirs` says; the
-/// headphones only when `of` does not hear the viewer (hears nobody, or
-/// has the viewer in `not_hearing`) while the viewer is in the call – and
-/// never on the own rider.
+/// headphones only when `of` does not hear the viewer while the viewer is
+/// in the call – and never on the own rider. Whether `of` hears the
+/// viewer comes from the server (`told`: `of` is in this viewer's
+/// `NotHearingYou`, spec §7.1.7 Q17) or from `theirs.hears_nobody`;
+/// `theirs.not_hearing` is read only for a server older than Q17, which
+/// still relayed the lists (new servers leave it empty).
 pub fn signs_seen(
     viewer: Option<RiderId>,
     mine: &v1::RiderStatus,
     of: RiderId,
     theirs: &v1::RiderStatus,
+    told: bool,
 ) -> Signs {
     let me = viewer.filter(|v| *v != of);
     let cannot_hear_you = me.is_some_and(|v| {
-        mine.in_voice && (theirs.hears_nobody || theirs.not_hearing.contains(&v.0))
+        mine.in_voice && (told || theirs.hears_nobody || theirs.not_hearing.contains(&v.0))
     });
     Signs {
         voice_muted: theirs.voice_muted,
@@ -1523,6 +1527,38 @@ mod tests {
             }
         }
 
+        /// Every client sends its status signs as the apps do (spec
+        /// §2.6: `ocw_ui::status` from the voice HUD), then runs.
+        fn run_with_status(&mut self, steps: usize) {
+            for _ in 0..steps {
+                for s in self.sides.iter_mut() {
+                    let st = status_message(&voice_signs(&s.c, true), false, false);
+                    if let Some(msg) = s.client.set_status(st) {
+                        self.server.handle(s.conn, &msg);
+                    }
+                }
+                self.step();
+            }
+        }
+
+        /// Whether rider `viewer` sees headphones on rider `of`.
+        fn headphones(&self, viewer: usize, of: usize) -> bool {
+            self.sides[viewer]
+                .client
+                .view(self.t, 1.0)
+                .into_iter()
+                .find(|r| r.id == self.ids[of])
+                .is_some_and(|r| r.signs.cannot_hear_you)
+        }
+
+        /// Who sees headphones on whom, as (viewer, rider) pairs.
+        fn all_headphones(&self) -> Vec<(usize, usize)> {
+            (0..3)
+                .flat_map(|v| (0..3).map(move |o| (v, o)))
+                .filter(|(v, o)| self.headphones(*v, *o))
+                .collect()
+        }
+
         fn set(&self, idx: &[usize]) -> std::collections::BTreeSet<String> {
             idx.iter().map(|i| self.identity(*i)).collect()
         }
@@ -1587,6 +1623,60 @@ mod tests {
             let others: Vec<usize> = (0..3).filter(|j| *j != i).collect();
             assert_eq!(w.allowed(i), Some(w.set(&others)));
             assert!(w.sides[i].client.voice_apart().is_empty());
+        }
+    }
+
+    /// The headphones per viewer end to end (spec §7.1.7 Q12, Q17 (b)):
+    /// three riders with the shared driver on one in-memory game server;
+    /// each client's reasons go to the server, the server tells each
+    /// viewer whom it sees headphones on, and no client holds another's
+    /// list. *Voice room: Selected riders* and *Mute for me* show them;
+    /// *Who hears me* and the hearing range do not.
+    #[test]
+    fn three_riders_see_headphones_from_the_server() {
+        let mut w = Trio::new();
+        w.run_with_status(40);
+        assert!(w.all_headphones().is_empty(), "everybody hears everybody");
+        // Cleo: *Voice room: Selected riders*, nobody selected – Ada and
+        // Bea see headphones on her, she sees none.
+        let mut s = w.sides[2].c.settings().clone();
+        s.listen = Listen::Selected;
+        w.sides[2].c.set_settings(s);
+        w.run_with_status(20);
+        assert_eq!(w.all_headphones(), [(0, 2), (1, 2)]);
+        assert_eq!(
+            w.server.not_hearing_you(w.sides[0].conn),
+            [w.ids[2]].into(),
+            "the server's answer for Ada"
+        );
+        // Cleo selects Bea: now only Ada sees the headphones.
+        select_command(&mut w.sides[2].c, None, "Bea Climber", Some("on")).unwrap();
+        w.run_with_status(20);
+        assert_eq!(w.all_headphones(), [(0, 2)]);
+        // Back to everybody; Ada lets nobody hear her (*Who hears me: No
+        // one*) – that is not "cannot hear you".
+        let mut s = w.sides[2].c.settings().clone();
+        s.listen = Listen::Everybody;
+        w.sides[2].c.set_settings(s);
+        let mut s = w.sides[0].c.settings().clone();
+        s.heard_by = HeardBy::NoOne;
+        w.sides[0].c.set_settings(s);
+        w.run_with_status(20);
+        assert!(w.all_headphones().is_empty(), "{:?}", w.all_headphones());
+        // Range: Cleo rides 20 m ahead (out of hearing) – no headphones.
+        w.place(2, 0.02);
+        w.run_with_status(20);
+        assert!(w.server.voice_hearing(w.sides[2].conn).may_hear.is_empty());
+        assert!(w.all_headphones().is_empty(), "distance is no reason");
+        // Bea mutes Ada for herself: only Ada sees headphones on Bea.
+        mute_who_command(&mut w.sides[1].c, "Ada Rider", Some("on")).unwrap();
+        w.run_with_status(20);
+        assert_eq!(w.all_headphones(), [(0, 1)]);
+        // No client ever holds a list of whom another rider does not hear.
+        for s in &w.sides {
+            for (_, st) in s.client.statuses_for_test() {
+                assert!(st.not_hearing.is_empty(), "{st:?}");
+            }
         }
     }
 

@@ -5,8 +5,9 @@
 //! The steps: World (the worlds the World menu finds, and the test
 //! routes) → Route (the package's routes or free ride) → Date and time
 //! (real time, or a time machine preset and a day offset) → Weather
-//! (simulated, real, or a preset of the weather machine) → Options (bots,
-//! who may change time and weather, the port, sign-in) → Summary with
+//! (simulated, real, or a preset of the weather machine, and who may
+//! change time and weather) → Options (bots, voice, the port, the
+//! router, sign-in) → Summary with
 //! *Start hosting*. Each row is a console line (`host.plan …`), so the
 //! menu, the console and scripts share one path; [`HostPlan::apply`]
 //! runs those lines on the plan.
@@ -86,6 +87,10 @@ pub struct HostPlan {
     /// Open the router's ports automatically (UPnP; setting `host.upnp`,
     /// spec §7.1.7 Q4: on by default for Host a ride).
     pub upnp: bool,
+    /// Voice chat on the hosted ride: the bundled voice server starts
+    /// with it (setting `host.voice`, spec §7.1.7 Q15: on by default);
+    /// off, the ride has no voice, like `ocw-server --voice off`.
+    pub voice: bool,
 }
 
 impl Default for HostPlan {
@@ -101,6 +106,7 @@ impl Default for HostPlan {
             port: ocw_protocol::join::DEFAULT_PORT,
             sign_in: false,
             upnp: true,
+            voice: true,
         }
     }
 }
@@ -160,10 +166,11 @@ impl HostPlan {
 
     /// Applies one `host.plan` line's words (`world N`, `route NAME|free`,
     /// `time real|PRESET|next|prev`, `day +1|-1|0`, `weather …`, `bots N`,
-    /// `open on|off`, `port N`, `sign-in on|off`, `upnp on|off`).
+    /// `open on|off`, `port N`, `sign-in on|off`, `upnp on|off`,
+    /// `voice on|off`).
     pub fn apply(&mut self, words: &[&str], worlds: &[HostWorld]) -> Result<String, String> {
         let usage = || {
-            "host.plan world N | route NAME|free | time real|PRESET|next|prev | day +1|-1|0 | weather simulated|real|PRESET|next|prev | bots N|+1|-1 | open on|off | port N|+1|-1 | sign-in on|off | upnp on|off".to_string()
+            "host.plan world N | route NAME|free | time real|PRESET|next|prev | day +1|-1|0 | weather simulated|real|PRESET|next|prev | bots N|+1|-1 | open on|off | port N|+1|-1 | sign-in on|off | upnp on|off | voice on|off".to_string()
         };
         let (key, rest) = words.split_first().ok_or_else(usage)?;
         let value = rest.join(" ");
@@ -253,6 +260,10 @@ impl HostPlan {
                 self.upnp = parse_on(&value).ok_or_else(usage)?;
                 Ok(format!("host: {}", self.upnp_label()))
             }
+            "voice" => {
+                self.voice = parse_on(&value).ok_or_else(usage)?;
+                Ok(format!("host: {}", self.voice_label()))
+            }
             "sign-in" => {
                 self.sign_in = parse_on(&value).ok_or_else(usage)?;
                 Ok(format!("host sign-in required: {}", on_off(self.sign_in)))
@@ -279,6 +290,15 @@ impl HostPlan {
             "the router's ports are opened automatically (UPnP)"
         } else {
             "the router's ports are opened by hand"
+        }
+    }
+
+    /// Voice chat, for people.
+    pub fn voice_label(&self) -> &'static str {
+        if self.voice {
+            "voice chat on (the voice server starts with the ride)"
+        } else {
+            "no voice chat on this ride"
         }
     }
 
@@ -319,6 +339,25 @@ fn toggle_row(label: &str, on: bool, line: &str) -> Row {
     Row {
         label: label.into(),
         value: Some(on_off(on).into()),
+        left: Some(toggle.clone()),
+        right: Some(toggle.clone()),
+        confirm: Some(Activate::Command(toggle)),
+    }
+}
+
+/// *Time and weather*: host only / everyone (`host.plan open on|off`).
+fn access_row(plan: &HostPlan) -> Row {
+    let toggle = format!("host.plan open {}", on_off(!plan.open_conditions));
+    Row {
+        label: "Time and weather".into(),
+        value: Some(
+            if plan.open_conditions {
+                "everyone"
+            } else {
+                "host only"
+            }
+            .into(),
+        ),
         left: Some(toggle.clone()),
         right: Some(toggle.clone()),
         confirm: Some(Activate::Command(toggle)),
@@ -422,6 +461,9 @@ pub fn rows(page: Page, plan: &HostPlan, worlds: &[HostWorld], sign_in: bool) ->
                 "host.plan weather next".into(),
             ),
             Row::action("Simulated weather", "host.plan weather simulated"),
+            // Who may change them (moved from the Options page for its
+            // Voice row, spec §7.1.7 Q15: six rows).
+            access_row(plan),
             next_row("Next: options", Page::HostOptions),
         ],
         Page::HostOptions => {
@@ -432,23 +474,7 @@ pub fn rows(page: Page, plan: &HostPlan, worlds: &[HostWorld], sign_in: bool) ->
                     "host.plan bots -1".into(),
                     "host.plan bots +1".into(),
                 ),
-                Row {
-                    label: "Time and weather".into(),
-                    value: Some(
-                        if plan.open_conditions {
-                            "everyone"
-                        } else {
-                            "host only"
-                        }
-                        .into(),
-                    ),
-                    left: Some(format!("host.plan open {}", on_off(!plan.open_conditions))),
-                    right: Some(format!("host.plan open {}", on_off(!plan.open_conditions))),
-                    confirm: Some(Activate::Command(format!(
-                        "host.plan open {}",
-                        on_off(!plan.open_conditions)
-                    ))),
-                },
+                toggle_row("Voice", plan.voice, "host.plan voice"),
                 value_row(
                     "UDP port",
                     plan.port.to_string(),
@@ -478,10 +504,11 @@ pub fn rows(page: Page, plan: &HostPlan, worlds: &[HostWorld], sign_in: bool) ->
             info_row(
                 "Bots, port",
                 format!(
-                    "{}, UDP {}{}",
+                    "{}, UDP {}{}{}",
                     plan.bots,
                     plan.port,
-                    if plan.sign_in { ", sign-in" } else { "" }
+                    if plan.sign_in { ", sign-in" } else { "" },
+                    if plan.voice { "" } else { ", no voice" }
                 ),
             ),
             Row {
@@ -503,7 +530,8 @@ pub enum HostVoice {
     Starting,
     /// Running on TCP `signal`, TCP `tcp` and UDP `udp`.
     On { signal: u16, tcp: u16, udp: u16 },
-    /// No voice server of its own: why (it did not start, no binary).
+    /// No voice server of its own: why (turned off in the plan, it did
+    /// not start, no binary).
     Off(String),
 }
 
@@ -541,19 +569,28 @@ pub struct HostNet {
     pub router: HostRouter,
 }
 
+/// Why a hosting has no voice when its plan turned it off (spec §7.1.7
+/// Q15).
+pub const VOICE_TURNED_OFF: &str = "turned off on the Options page of Host a ride";
+
 /// The voice server's default ports (spec §7.1.1: TCP 7880, TCP 7881,
 /// UDP 7882).
 pub const VOICE_PORTS: (u16, u16, u16) = (7880, 7881, 7882);
 
 impl HostNet {
     /// Before the start (the summary): the plan's port, the bundled voice
-    /// server's default ports, the router as planned.
+    /// server's default ports (none with voice off), the router as
+    /// planned.
     pub fn planned(plan: &HostPlan) -> Self {
         let (signal, tcp, udp) = VOICE_PORTS;
         Self {
             game_udp: plan.port,
             web_udp: None,
-            voice: HostVoice::On { signal, tcp, udp },
+            voice: if plan.voice {
+                HostVoice::On { signal, tcp, udp }
+            } else {
+                HostVoice::Off(VOICE_TURNED_OFF.into())
+            },
             router: if plan.upnp {
                 HostRouter::Searching
             } else {
@@ -647,10 +684,12 @@ impl HostNet {
 /// The summary page's text: where the server runs, the ports, the router
 /// and the hint (spec §7.1.1 *Network*).
 pub fn summary_lines(plan: &HostPlan) -> Vec<String> {
-    let mut out = vec![
+    let mut out = vec![if plan.voice {
         "The server and its voice server run in this app on all addresses; you ride on it as the host."
-            .to_owned(),
-    ];
+    } else {
+        "The server runs in this app on all addresses; you ride on it as the host."
+    }
+    .to_owned()];
     out.extend(HostNet::planned(plan).lines());
     out
 }
@@ -807,6 +846,62 @@ mod tests {
             .unwrap();
         assert_eq!(row.value.as_deref(), Some("off"));
         assert!(run(&mut p, "upnp maybe").is_err());
+    }
+
+    /// *Voice* (spec §7.1.7 Q15): on by default, a row of the options,
+    /// `host.plan voice on|off`; off, the summary and its ports have no
+    /// voice server and say why.
+    #[test]
+    fn the_voice_switch_is_on_by_default_and_switchable() {
+        let mut p = HostPlan::default();
+        assert!(p.voice);
+        let w = worlds();
+        let voice_row = |p: &HostPlan| {
+            rows(Page::HostOptions, p, &w, true)
+                .into_iter()
+                .find(|r| r.label == "Voice")
+                .expect("an options row")
+        };
+        let row = voice_row(&p);
+        assert_eq!(row.value.as_deref(), Some("on"));
+        assert_eq!(
+            row.confirm,
+            Some(Activate::Command("host.plan voice off".into()))
+        );
+        assert_eq!(row.right.as_deref(), Some("host.plan voice off"));
+        assert_eq!(
+            run(&mut p, "voice off").unwrap(),
+            "host: no voice chat on this ride"
+        );
+        assert!(!p.voice);
+        assert_eq!(voice_row(&p).value.as_deref(), Some("off"));
+        assert!(run(&mut p, "voice maybe").is_err());
+        // The summary: no voice server, no voice ports, why.
+        let net = HostNet::planned(&p);
+        assert_eq!(net.voice, HostVoice::Off(VOICE_TURNED_OFF.into()));
+        assert_eq!(net.port_list(), ["UDP 47800 (game)"]);
+        let text = summary_lines(&p).join("\n");
+        assert!(text.starts_with("The server runs in this app"), "{text}");
+        assert!(!text.contains("7880"), "{text}");
+        assert!(
+            text.contains("No voice on this ride: turned off on the Options page"),
+            "{text}"
+        );
+        let s = rows(Page::HostSummary, &p, &w, false);
+        assert_eq!(s[4].value.as_deref(), Some("5, UDP 47800, no voice"));
+        run(&mut p, "voice on").unwrap();
+        assert!(summary_lines(&p).join("\n").contains("TCP 7880"));
+        // Who changes time and weather moved to the weather page.
+        assert!(
+            rows(Page::HostWeather, &p, &w, true)
+                .iter()
+                .any(|r| r.label == "Time and weather")
+        );
+        assert!(
+            rows(Page::HostOptions, &p, &w, true)
+                .iter()
+                .all(|r| r.label != "Time and weather")
+        );
     }
 
     /// The summary's text lists the game and voice ports with the hint,

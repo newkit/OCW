@@ -634,11 +634,11 @@ impl Page {
             Self::HostTime => {
                 &["Real time, or a moment of the time machine (Left/Right step), a few days on."]
             }
-            Self::HostWeather => {
-                &["Simulated, real weather at the place, or a preset of the weather machine."]
-            }
+            Self::HostWeather => &[
+                "Simulated, real weather at the place, or a preset of the weather machine; and who may change time and weather.",
+            ],
             Self::HostOptions => &[
-                "Others may need UDP open in the firewall and a port forwarding on the router (README).",
+                "Voice: voice chat on this ride (off: no voice server). Others may need UDP open in the firewall and a port forwarding on the router (README).",
             ],
             Self::HostSummary => &[
                 "The server and its voice server run in this app on all addresses; you ride on it as the host.",
