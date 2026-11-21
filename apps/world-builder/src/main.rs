@@ -2611,7 +2611,7 @@ fn junctions(
     };
     // The bridge decks stay as planned (their spans along their edges).
     let decks = stage("bridge decks", || j::bridge_spans(&pkg, &g0));
-    let mut g = g0.clone();
+    let mut g = (*g0).clone();
     let (kinks, rs) = stage("junction surfaces", || {
         let kinks = j::smooth_through_kinks(&mut g);
         let keep = |e: usize, s: f64| {
@@ -2635,7 +2635,7 @@ fn junctions(
         .filter(|(a, b)| a.profile != b.profile)
         .count();
     println!("junctions: {changed} road profiles changed, {moved} strip points moved");
-    pkg.graph = Some(g);
+    pkg.graph = Some(g.into());
     let ts = Instant::now();
     let ss = stage("settle terrain under roads", || settle_junctions(&mut pkg));
     println!(

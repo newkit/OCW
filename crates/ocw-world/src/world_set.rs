@@ -240,7 +240,7 @@ impl WorldPavement {
 #[derive(Debug, Clone)]
 pub struct WorldSet {
     members: Vec<Member>,
-    graph: Option<RoadGraph>,
+    graph: Option<Arc<RoadGraph>>,
     /// Counts changes of residency (renderers re-mesh seam tiles on it).
     generation: u64,
     /// Counts tiles streamed in or dropped ([`WorldSet::update_tiles`]).
@@ -372,7 +372,7 @@ impl WorldSet {
             .map(|l| joined.vertices[l.here.0 as usize])
             .collect();
         let graph = join_graphs(a, b, &links);
-        self.graph = Some(graph);
+        self.graph = Some(Arc::new(graph));
         let mut m = member(id, &pkg, home_origin, links.len());
         m.crossings = crossings;
         self.members.push(m);
@@ -412,7 +412,7 @@ impl WorldSet {
 
     /// The joined road graph (home metres).
     pub fn graph(&self) -> Option<&RoadGraph> {
-        self.graph.as_ref()
+        self.graph.as_deref()
     }
 
     /// Name for the network and the session (`Home + Neighbour`).
@@ -599,7 +599,7 @@ mod tests {
             tile_size_m: 1000.0,
             samples: 3,
             tiles,
-            graph: Some(graph),
+            graph: Some(graph.into()),
             landuse: None,
             buildings: None,
             bridges: None,
@@ -735,7 +735,7 @@ mod tests {
         let (west, east) = west_east(HOME);
         let mut set = WorldSet::new("w", west);
         let mut no_road = (*east).clone();
-        for e in &mut no_road.graph.as_mut().unwrap().edges {
+        for e in &mut Arc::make_mut(no_road.graph.as_mut().unwrap()).edges {
             e.osm_way = 999;
             e.id = EdgeId(999_000 + e.id.0);
         }

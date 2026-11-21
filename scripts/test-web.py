@@ -157,6 +157,31 @@ def mb(value, unit):
     return float(value) * (1.0 if unit == "MB" else 0.001)
 
 
+def streaming_line(text):
+    """The numbers of the app's "world streaming: …" status line (None for
+    other lines): tiles, the wasm memory and – since the memory work of
+    B2 – the live heap and the GPU memory (apps/web/src/heap.rs,
+    gpu_memory.rs)."""
+    m = re.search(r"world streaming: (\d+) of (\d+) tiles resident \(" + MB + r", peak " + MB
+                  + r"\), (\d+) loaded, (\d+) dropped", text)
+    if not m:
+        return None
+    s = {"resident": int(m.group(1)), "tiles": int(m.group(2)),
+         "resident_mb": mb(m.group(3), m.group(4)), "peak_mb": mb(m.group(5), m.group(6)),
+         "loaded": int(m.group(7)), "dropped": int(m.group(8))}
+    w = re.search(r"wasm memory " + MB, text)
+    if w:
+        s["wasm_mb"] = mb(w.group(1), w.group(2))
+    h = re.search(r"heap ([\d.]+) MB \(peak ([\d.]+) MB\)", text)
+    if h:
+        s["heap_mb"], s["heap_peak_mb"] = float(h.group(1)), float(h.group(2))
+    g = re.search(r"gpu meshes ([\d.]+) MB in (\d+) \(buffers ([\d.]+) MB\), textures ([\d.]+) MB", text)
+    if g:
+        s.update({"gpu_meshes_mb": float(g.group(1)), "meshes": int(g.group(2)),
+                  "gpu_buffers_mb": float(g.group(3)), "gpu_textures_mb": float(g.group(4))})
+    return s
+
+
 def visit(cdp, url, a, base, lines, label, world, stats):
     """Loads `url`, rides, takes the screenshots; returns the visit's summary."""
     for k in list(stats):
@@ -201,15 +226,9 @@ def visit(cdp, url, a, base, lines, label, world, stats):
                         "network_mb": mb(m.group(6), m.group(7)), "network_chunks": int(m.group(8)),
                         "requests": int(m.group(9)),
                     })
-                m = re.search(r"world streaming: (\d+) of (\d+) tiles resident \(" + MB + r", peak " + MB
-                              + r"\), (\d+) loaded, (\d+) dropped", text)
-                if m:
-                    s = {"resident": int(m.group(1)), "tiles": int(m.group(2)),
-                         "resident_mb": mb(m.group(3), m.group(4)), "peak_mb": mb(m.group(5), m.group(6)),
-                         "loaded": int(m.group(7)), "dropped": int(m.group(8))}
-                    w = re.search(r"wasm memory " + MB, text)
-                    if w:
-                        s["wasm_mb"] = mb(w.group(1), w.group(2))
+                s = streaming_line(text)
+                if s:
+                    s["t"] = round(now, 2)
                     streaming.append(s)
                 if e["params"].get("type") == "error" and re.search(r"world|server rejected", text):
                     errors.append(text)
@@ -267,6 +286,9 @@ def visit(cdp, url, a, base, lines, label, world, stats):
     mem = cdp.eval("JSON.stringify({wasm: window.ocw && window.ocw.wasmMemory ? window.ocw.wasmMemory() : null,"
                    " js_heap: performance.memory ? performance.memory.usedJSHeapSize : null})")
     r["memory"] = json.loads(mem) if mem else None
+    heap = cdp.eval("window.ocw && window.ocw.heap ? window.ocw.heap() : null")
+    if r["memory"] is not None and heap:
+        r["memory"]["heap"] = json.loads(heap)
     r["opfs"] = cdp.eval("""(async () => {
         try {
             const root = await navigator.storage.getDirectory();
@@ -293,6 +315,13 @@ def visit(cdp, url, a, base, lines, label, world, stats):
         "peak_resident_mb": max((s["peak_mb"] for s in streaming), default=None),
         "peak_wasm_mb": max((s.get("wasm_mb", 0) for s in streaming), default=None),
         "dropped": max((s["dropped"] for s in streaming), default=0),
+        "peak_heap_mb": max((s.get("heap_peak_mb", 0) for s in streaming), default=None),
+        "peak_gpu_mb": max((s.get("gpu_buffers_mb", 0) + s.get("gpu_textures_mb", 0)
+                            for s in streaming), default=None),
+        "memory_timeline": [{k: v for k, v in s.items()
+                             if k in ("t", "resident", "wasm_mb", "heap_mb", "heap_peak_mb",
+                                      "gpu_meshes_mb", "gpu_buffers_mb", "gpu_textures_mb", "meshes")}
+                            for s in streaming],
         "server": dict(stats),
     })
     rode = float(last.get("distance_m", 0)) > 5.0
@@ -603,7 +632,7 @@ def main():
     for v in summary.get("visits", []):
         print(json.dumps({k: v.get(k) for k in (
             "label", "ok", "ready_s", "ready_app_s", "cache_mb", "network_mb", "requests",
-            "peak_resident_mb", "peak_wasm_mb", "wasm_limit_mb", "dropped", "memory", "opfs", "server",
+            "peak_resident_mb", "peak_wasm_mb", "peak_heap_mb", "peak_gpu_mb", "wasm_limit_mb", "dropped", "memory", "opfs", "server",
             "screenshot", "screenshot_teleport", "loading_screenshot", "errors")}, indent=2))
     print(f"log: {base}.log  screenshot: {base}.jpg")
     sys.exit(0 if summary["ok"] else 1)

@@ -260,26 +260,29 @@ mod tests {
     fn a_road_graph_is_counted_in_edges_and_kilometres() {
         use ocw_world::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
         let mut pkg = crate::map::tests::package();
-        pkg.graph = Some(RoadGraph {
-            vertices: vec![[0.0, 0.0], [3000.0, 4000.0]],
-            edges: vec![Edge {
-                id: EdgeId(1),
-                from: VertexId(0),
-                to: VertexId(1),
-                points: vec![[0.0, 0.0], [3000.0, 4000.0]],
-                class: RoadClass::Primary,
-                name: None,
-                width_m: 7.0,
-                bridge: false,
-                tunnel: false,
-                dead_end_m: None,
-                boundary: false,
-                oneway: Oneway::No,
-                osm_way: 1,
-                profile: Vec::new(),
-            }],
-            boundary_vertices: Default::default(),
-        });
+        pkg.graph = Some(
+            RoadGraph {
+                vertices: vec![[0.0, 0.0], [3000.0, 4000.0]],
+                edges: vec![Edge {
+                    id: EdgeId(1),
+                    from: VertexId(0),
+                    to: VertexId(1),
+                    points: vec![[0.0, 0.0], [3000.0, 4000.0]],
+                    class: RoadClass::Primary,
+                    name: None,
+                    width_m: 7.0,
+                    bridge: false,
+                    tunnel: false,
+                    dead_end_m: None,
+                    boundary: false,
+                    oneway: Oneway::No,
+                    osm_way: 1,
+                    profile: Vec::new(),
+                }],
+                boundary_vertices: Default::default(),
+            }
+            .into(),
+        );
         assert_eq!(roads_text(&pkg), "1 edges, 5.0 km, 2 vertices (road graph)");
     }
 }

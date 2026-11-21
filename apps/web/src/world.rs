@@ -345,7 +345,12 @@ impl WorldStream {
             r.pending(),
             mb(t.network_bytes),
             mb(t.cache_bytes),
-            wasm_memory.map_or(String::new(), |m| format!(", wasm memory {}", mb(m)))
+            wasm_memory.map_or(String::new(), |m| format!(
+                ", wasm memory {}, {}, {}",
+                mb(m),
+                crate::heap::summary(),
+                crate::gpu_memory::GpuMemory::now().summary()
+            ))
         )
     }
 
@@ -714,7 +719,7 @@ pub(crate) mod tests {
             tile_size_m: 1000.0,
             samples: 3,
             tiles,
-            graph: Some(graph),
+            graph: Some(graph.into()),
             landuse: None,
             buildings: None,
             bridges: None,

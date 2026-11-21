@@ -130,7 +130,7 @@ impl MapSource {
                 pkg,
                 frame: Frame::IDENTITY,
             }],
-            graph.as_ref(),
+            graph.as_deref(),
         )
     }
 

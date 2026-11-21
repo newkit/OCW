@@ -311,7 +311,7 @@ mod tests {
                 },
             )]
             .into(),
-            graph: Some(g),
+            graph: Some(g.into()),
             landuse: None,
             buildings: None,
             bridges: None,
@@ -428,7 +428,7 @@ mod tests {
             tile_size_m: 1000.0,
             samples: 2,
             tiles,
-            graph: Some(g),
+            graph: Some(g.into()),
             landuse: None,
             buildings: None,
             bridges: None,

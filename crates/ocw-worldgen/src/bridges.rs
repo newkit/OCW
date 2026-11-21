@@ -815,7 +815,7 @@ mod tests {
             tile_size_m: 1000.0,
             samples: n as u32,
             tiles,
-            graph: Some(g.clone()),
+            graph: Some(g.clone().into()),
             landuse: None,
             buildings: None,
             bridges: None,

@@ -699,7 +699,7 @@ mod tests {
             },
             [1.0, 1.0, 40.0, 130.0],
         );
-        pkg.graph = Some(t_junction(RoadClass::Secondary, 0.0, 0.2));
+        pkg.graph = Some(t_junction(RoadClass::Secondary, 0.0, 0.2).into());
         let key = TileKey { x: 0, z: 0 };
         let m = crate::package::build_tile_meshes(&pkg, key).unwrap();
         // The renderer lowered the ground under some of the posts.

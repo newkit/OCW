@@ -132,7 +132,8 @@ pub fn check_package(
 ) -> Result<Report, String> {
     let mut graph = pkg
         .graph
-        .clone()
+        .as_deref()
+        .cloned()
         .ok_or("the package has no road graph (rebuild it with this world-builder)")?;
     let mut patching = Patching::new(stack);
     let targets = match osm {

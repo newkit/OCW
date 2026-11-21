@@ -200,44 +200,133 @@ pub fn read_landuse(bytes: &[u8], samples: u32) -> Result<LandUse, String> {
     if cells == 0 || cells > 4096 {
         return Err(format!("land-use grid of {cells} cells is not supported"));
     }
-    let total = cells as usize * cells as usize;
-    let vertices = samples as usize * samples as usize;
     let mut tiles = BTreeMap::new();
     for _ in 0..r.u32()? {
-        let key = TileKey {
-            x: r.i32()?,
-            z: r.i32()?,
-        };
-        let mut classes = Vec::with_capacity(total);
-        for _ in 0..r.u32()? {
-            let n = r.u32()? as usize;
-            let code = r.u8()?;
-            let c = LandClass::from_code(code).ok_or(format!("unknown land class {code}"))?;
-            if classes.len() + n > total {
-                return Err("land-use runs overflow the tile".into());
-            }
-            classes.extend(std::iter::repeat_n(c, n));
-        }
-        if classes.len() != total {
-            return Err("land-use runs do not fill the tile".into());
-        }
-        let nw = r.u32()? as usize;
-        let mut water = Vec::with_capacity(nw.min(vertices));
-        for _ in 0..nw {
-            let (i, h) = (r.u32()?, r.f32()?);
-            if i as usize >= vertices || water.last().is_some_and(|w: &(u32, f32)| w.0 >= i) {
-                return Err(format!("water vertex {i} out of range or order"));
-            }
-            water.push((i, h));
-        }
-        tiles.insert(key, LandUseTile { classes, water });
+        let (key, t) = read_tile(&mut r, cells, samples)?;
+        tiles.insert(key, t);
     }
     r.finish("land-use section")?;
     Ok(LandUse { cells, tiles })
 }
 
+/// One tile's land use (after the section's header).
+fn read_tile(r: &mut Bytes, cells: u32, samples: u32) -> Result<(TileKey, LandUseTile), String> {
+    let total = cells as usize * cells as usize;
+    let vertices = samples as usize * samples as usize;
+    let key = TileKey {
+        x: r.i32()?,
+        z: r.i32()?,
+    };
+    let mut classes = Vec::with_capacity(total);
+    for _ in 0..r.u32()? {
+        let n = r.u32()? as usize;
+        let code = r.u8()?;
+        let c = LandClass::from_code(code).ok_or(format!("unknown land class {code}"))?;
+        if classes.len() + n > total {
+            return Err("land-use runs overflow the tile".into());
+        }
+        classes.extend(std::iter::repeat_n(c, n));
+    }
+    if classes.len() != total {
+        return Err("land-use runs do not fill the tile".into());
+    }
+    let nw = r.u32()? as usize;
+    let mut water = Vec::with_capacity(nw.min(vertices));
+    for _ in 0..nw {
+        let (i, h) = (r.u32()?, r.f32()?);
+        if i as usize >= vertices || water.last().is_some_and(|w: &(u32, f32)| w.0 >= i) {
+            return Err(format!("water vertex {i} out of range or order"));
+        }
+        water.push((i, h));
+    }
+    Ok((key, LandUseTile { classes, water }))
+}
+
+/// A land-use section kept encoded, its tiles decoded one by one when
+/// asked for (spec §14 Phase 10 B2, the memory per resident tile): a
+/// streamed package needs the land use of the few tiles around the rider,
+/// and the decoded section of Tenerife takes 169 MB against its 75 MB of
+/// runs. Every tile is checked when indexed, as [`read_landuse`] does.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LandUseIndex {
+    pub cells: u32,
+    samples: u32,
+    bytes: Vec<u8>,
+    /// Where each tile's record starts in `bytes`.
+    tiles: BTreeMap<TileKey, usize>,
+    /// A tile whose water has sea (level 0 m), if any.
+    pub sea_tile: Option<TileKey>,
+}
+
+impl LandUseIndex {
+    /// Indexes a section payload (copied) written by [`write_landuse`].
+    pub fn new(bytes: &[u8], samples: u32) -> Result<Self, String> {
+        let mut r = Bytes::new(bytes);
+        let version = r.u32()?;
+        if version != LANDUSE_VERSION {
+            return Err(format!("land-use layout {version} is not supported"));
+        }
+        let cells = r.u32()?;
+        if cells == 0 || cells > 4096 {
+            return Err(format!("land-use grid of {cells} cells is not supported"));
+        }
+        let mut tiles = BTreeMap::new();
+        let mut sea_tile = None;
+        for _ in 0..r.u32()? {
+            let at = r.position();
+            let (key, t) = read_tile(&mut r, cells, samples)?;
+            if sea_tile.is_none() && t.water.iter().any(|&(_, level)| level == 0.0) {
+                sea_tile = Some(key);
+            }
+            tiles.insert(key, at);
+        }
+        r.finish("land-use section")?;
+        Ok(Self {
+            cells,
+            samples,
+            bytes: bytes.to_vec(),
+            tiles,
+            sea_tile,
+        })
+    }
+
+    /// The tile's land use, decoded.
+    pub fn tile(&self, key: TileKey) -> Option<LandUseTile> {
+        let at = *self.tiles.get(&key)?;
+        let mut r = Bytes::new(&self.bytes[at..]);
+        // Checked when indexed.
+        read_tile(&mut r, self.cells, self.samples)
+            .ok()
+            .map(|(_, t)| t)
+    }
+
+    /// The land use of the tiles in `keys` that have any.
+    pub fn land_use(&self, keys: impl IntoIterator<Item = TileKey>) -> LandUse {
+        LandUse {
+            cells: self.cells,
+            tiles: keys
+                .into_iter()
+                .filter_map(|k| self.tile(k).map(|t| (k, t)))
+                .collect(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.tiles.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tiles.is_empty()
+    }
+
+    /// The bytes it keeps.
+    pub fn bytes(&self) -> usize {
+        self.bytes.len() + self.tiles.len() * 24
+    }
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     pub(crate) fn landuse() -> LandUse {
@@ -300,5 +389,37 @@ mod tests {
         let mut bad = b.clone();
         bad[0] = 9;
         assert!(read_landuse(&bad, 3).is_err());
+    }
+
+    /// The memory per resident tile (spec §14 Phase 10 B2): the encoded
+    /// section gives each tile as the whole decode does, only the asked
+    /// ones; it is checked like the decode; it finds a tile with sea.
+    #[test]
+    fn the_index_decodes_tiles_when_asked_for() {
+        let mut l = landuse();
+        let mut b = Vec::new();
+        write_landuse(&l, &mut b);
+        let ix = LandUseIndex::new(&b, 3).unwrap();
+        assert_eq!((ix.len(), ix.cells, ix.sea_tile), (2, 4, None));
+        let k = TileKey { x: 0, z: 0 };
+        assert_eq!(ix.tile(k).as_ref(), l.tiles.get(&k));
+        assert_eq!(ix.tile(TileKey { x: 5, z: 5 }), None);
+        assert_eq!(ix.land_use(l.tiles.keys().copied()), l);
+        let one = ix.land_use([k, TileKey { x: 9, z: 9 }]);
+        assert_eq!(one.tiles.keys().copied().collect::<Vec<_>>(), vec![k]);
+        assert!(ix.bytes() < 200);
+        // Damaged payloads fail as in read_landuse.
+        assert!(LandUseIndex::new(&b[..b.len() - 1], 3).is_err());
+        assert!(
+            LandUseIndex::new(&b, 2)
+                .unwrap_err()
+                .contains("water vertex")
+        );
+        // The sea: water at 0 m.
+        let far = TileKey { x: -1, z: 2 };
+        l.tiles.get_mut(&far).unwrap().water = vec![(0, 0.0)];
+        let mut b = Vec::new();
+        write_landuse(&l, &mut b);
+        assert_eq!(LandUseIndex::new(&b, 3).unwrap().sea_tile, Some(far));
     }
 }

@@ -23,6 +23,28 @@ pub const SAME_ROAD_DEG: f64 = 60.0;
 /// Steep-climb icon: steeper than this over 100 m in the first 500 m.
 pub const STEEP_GRADE: f64 = 0.08;
 
+/// The squared horizontal distance from `p` to a polyline (x, z).
+fn polyline_d2(points: &[[f64; 2]], p: [f64; 2]) -> f64 {
+    let d2 = |a: [f64; 2]| (a[0] - p[0]).powi(2) + (a[1] - p[1]).powi(2);
+    if points.len() == 1 {
+        return d2(points[0]);
+    }
+    points
+        .windows(2)
+        .map(|w| {
+            let (a, b) = (w[0], w[1]);
+            let ab = [b[0] - a[0], b[1] - a[1]];
+            let len2 = ab[0] * ab[0] + ab[1] * ab[1];
+            let t = if len2 > 0.0 {
+                (((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / len2).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            d2([a[0] + ab[0] * t, a[1] + ab[1] * t])
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
 /// Dense centreline of an edge with heights, from `from` to `to`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EdgeGeometry {
@@ -171,9 +193,13 @@ pub struct Junction {
 /// riders and by the client's paths.
 #[derive(Debug, Clone)]
 pub struct RoadNetwork {
-    graph: RoadGraph,
+    /// Shared with the package it comes from (spec §14 Phase 10 B2).
+    graph: std::sync::Arc<RoadGraph>,
     adjacency: Vec<Vec<usize>>,
-    geometry: Vec<EdgeGeometry>,
+    /// Each edge's dense geometry, made when first asked for (spec §14
+    /// Phase 10 B2: made for every edge at once it took ~100 MB on
+    /// Tenerife's 9,000 km of roads; a ride needs a few hundred edges).
+    geometry: Vec<std::sync::OnceLock<EdgeGeometry>>,
     by_id: HashMap<EdgeId, usize>,
     /// Default rule 4 on equal roads: right (right-hand traffic) or left.
     pub keep_left: bool,
@@ -191,9 +217,13 @@ pub struct RoadNetwork {
 }
 
 impl RoadNetwork {
-    pub fn new(graph: RoadGraph) -> Self {
+    /// On a graph, owned or shared (a package's: no copy).
+    pub fn new(graph: impl Into<std::sync::Arc<RoadGraph>>) -> Self {
+        let graph = graph.into();
         let adjacency = graph.adjacency();
-        let geometry = graph.edges.iter().map(EdgeGeometry::new).collect();
+        let geometry = (0..graph.edges.len())
+            .map(|_| std::sync::OnceLock::new())
+            .collect();
         let by_id = graph
             .edges
             .iter()
@@ -255,7 +285,12 @@ impl RoadNetwork {
     }
 
     pub fn geometry(&self, i: usize) -> &EdgeGeometry {
-        &self.geometry[i]
+        self.geometry[i].get_or_init(|| EdgeGeometry::new(&self.graph.edges[i]))
+    }
+
+    /// How many edges' dense geometry was made so far.
+    pub fn geometry_made(&self) -> usize {
+        self.geometry.iter().filter(|g| g.get().is_some()).count()
     }
 
     /// Edge index of a stable edge ID.
@@ -281,7 +316,7 @@ impl RoadNetwork {
     /// Horizontal direction leaving along `edge` (in the riding direction),
     /// measured over its first `over_m` metres.
     pub fn leaving_direction(&self, edge: usize, forward: bool, over_m: f64) -> [f64; 2] {
-        let g = &self.geometry[edge];
+        let g = self.geometry(edge);
         let len = g.length();
         let d = over_m.min(len);
         let (a, b) = if forward {
@@ -436,7 +471,7 @@ impl RoadNetwork {
     /// Whether riding `edge` this way climbs more than [`STEEP_GRADE`] over
     /// any 100 m of its first 500 m.
     fn climbs_steeply(&self, edge: usize, forward: bool) -> bool {
-        let g = &self.geometry[edge];
+        let g = self.geometry(edge);
         let len = g.length();
         let h = |s: f64| {
             let s = if forward { s } else { len - s };
@@ -459,8 +494,23 @@ impl RoadNetwork {
     /// The point of the road graph nearest to `p` (x, z): (edge, metres
     /// from its `from` vertex).
     pub fn nearest(&self, p: [f64; 2]) -> Option<(usize, f64)> {
+        // The dense geometry subdivides the edge's own polyline, so the
+        // polyline's distance picks the candidates (equal within rounding)
+        // without making every edge's geometry.
+        let coarse: Vec<f64> = self
+            .graph
+            .edges
+            .iter()
+            .map(|e| polyline_d2(&e.points, p))
+            .collect();
+        let least = coarse.iter().copied().fold(f64::INFINITY, f64::min);
+        if !least.is_finite() {
+            return None;
+        }
+        let near = least + 1e-6 * (1.0 + least);
         let mut best: Option<(f64, usize, f64)> = None;
-        for (i, g) in self.geometry.iter().enumerate() {
+        for i in (0..coarse.len()).filter(|&i| coarse[i] <= near) {
+            let g = self.geometry(i);
             for (k, w) in g.points.windows(2).enumerate() {
                 let (a, b) = ([w[0][0], w[0][2]], [w[1][0], w[1][2]]);
                 let ab = [b[0] - a[0], b[1] - a[1]];
@@ -501,7 +551,7 @@ impl RoadNetwork {
         let r = splitmix(seed);
         let edge = pool[(r % pool.len() as u64) as usize];
         let e = &self.graph.edges[edge];
-        let len = self.geometry[edge].length();
+        let len = self.geometry(edge).length();
         let frac = (splitmix(r) >> 11) as f64 / (1u64 << 53) as f64;
         let offset = len * (0.1 + 0.4 * frac);
         let forward = match e.oneway {
@@ -791,5 +841,40 @@ pub(crate) mod tests {
         let starts: std::collections::BTreeSet<usize> =
             (0..50).map(|s| n.random_start(s).unwrap().0).collect();
         assert!(starts.len() > 2, "{starts:?}");
+    }
+
+    /// The memory per resident tile (spec §14 Phase 10 B2): the dense
+    /// geometry is made per edge when first asked for, the same as made
+    /// at once; the nearest point is found without making every edge's
+    /// and is the one the dense points give.
+    #[test]
+    fn edge_geometry_is_made_when_asked_for() {
+        let g = crossroads();
+        let n = RoadNetwork::new(g.clone());
+        assert_eq!(n.geometry_made(), 0);
+        let (e, s) = n.nearest([50.0, 3.0]).unwrap();
+        assert!(n.geometry_made() < g.edges.len(), "{}", n.geometry_made());
+        assert_eq!(*n.geometry(2), EdgeGeometry::new(&g.edges[2]));
+        // Brute force over every edge's dense points.
+        let mut best = (f64::INFINITY, 0, 0.0);
+        for (i, edge) in g.edges.iter().enumerate() {
+            let geo = EdgeGeometry::new(edge);
+            for (k, w) in geo.points.windows(2).enumerate() {
+                let (a, b) = ([w[0][0], w[0][2]], [w[1][0], w[1][2]]);
+                let ab = [b[0] - a[0], b[1] - a[1]];
+                let len2 = ab[0] * ab[0] + ab[1] * ab[1];
+                let t = (((50.0 - a[0]) * ab[0] + (3.0 - a[1]) * ab[1]) / len2).clamp(0.0, 1.0);
+                let d2 = (a[0] + ab[0] * t - 50.0).powi(2) + (a[1] + ab[1] * t - 3.0).powi(2);
+                if d2 < best.0 {
+                    let s = geo.cumulative[k] + (geo.cumulative[k + 1] - geo.cumulative[k]) * t;
+                    best = (d2, i, s);
+                }
+            }
+        }
+        assert_eq!((e, s), (best.1, best.2));
+        // The graph is shared with whoever passed it in.
+        let shared = std::sync::Arc::new(g);
+        let n = RoadNetwork::new(shared.clone());
+        assert!(std::ptr::eq(n.graph(), &*shared));
     }
 }

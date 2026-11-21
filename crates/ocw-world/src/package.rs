@@ -56,7 +56,8 @@
 //! samples (no cracks). The manifest with hashes and signatures (§4.7)
 //! travels next to the package: see [`crate::manifest`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use crate::bridges::{BRIDGES_TAG, Bridges, read_bridges, write_bridges};
 use crate::buildings::{
@@ -169,8 +170,11 @@ pub struct WorldPackage {
     /// Grid samples per tile side (including both borders).
     pub samples: u32,
     pub tiles: BTreeMap<TileKey, Tile>,
-    /// The road graph (version 2 packages; `None` in version 1).
-    pub graph: Option<RoadGraph>,
+    /// The road graph (version 2 packages; `None` in version 1). Shared:
+    /// the copies of a package (a streamed one's resident versions, the
+    /// world set, the ride's network) hold one graph (spec §14 Phase 10 B2,
+    /// the memory per resident tile).
+    pub graph: Option<Arc<RoadGraph>>,
     /// Land use and water levels per tile (section `LUSE`; `None` in older
     /// packages, the renderer then falls back to plain grass).
     pub landuse: Option<LandUse>,
@@ -760,6 +764,8 @@ fn apply_dress(tile: &mut Tile, dress: &[RoadDress]) -> Result<(), String> {
 struct Sections {
     graph: Option<RoadGraph>,
     landuse: Option<LandUse>,
+    /// A streamed package's land use, kept encoded.
+    landuse_index: Option<crate::landuse::LandUseIndex>,
     buildings: Option<Buildings>,
     bridges: Option<Bridges>,
     routes: Vec<GraphRoute>,
@@ -786,7 +792,7 @@ impl Sections {
             tile_size_m: head.tile_size_m,
             samples: head.samples,
             tiles,
-            graph: self.graph,
+            graph: self.graph.map(Arc::new),
             landuse: self.landuse,
             buildings: self.buildings,
             bridges: self.bridges,
@@ -825,6 +831,10 @@ fn read_sections(
         let payload = r.take(len)?;
         if &tag == GRAPH_TAG {
             s.graph = Some(read_graph(payload)?);
+        } else if &tag == LANDUSE_TAG && full && streamed {
+            // Decoded per tile when its tiles are there (spec §14 Phase
+            // 10 B2).
+            s.landuse_index = Some(crate::landuse::LandUseIndex::new(payload, samples)?);
         } else if &tag == LANDUSE_TAG && full {
             s.landuse = Some(read_landuse(payload, samples)?);
         } else if &tag == BUILDINGS_TAG && full {
@@ -972,7 +982,8 @@ pub const STREAM_SKIPPED_SECTIONS: &[&[u8; 4]] = &[ORTHO_TAG, JUNCTIONS_TAG];
 /// the tiles one by one as they arrive (each chunk verified by the caller
 /// against the manifest first). [`StreamedPackage::package`] puts the
 /// tiles that are there into a [`WorldPackage`] equal to the one
-/// [`WorldPackage::from_bytes`] gives with those tiles.
+/// [`WorldPackage::from_bytes`] gives with those tiles, [`WorldPackage::cut`]
+/// to them and their neighbours.
 #[derive(Debug, Clone)]
 pub struct StreamedPackage {
     pub head: PackageHead,
@@ -982,6 +993,9 @@ pub struct StreamedPackage {
     dress: BTreeMap<TileKey, Vec<RoadDress>>,
     lit: BTreeMap<TileKey, Vec<RoadLit>>,
     condition: BTreeMap<TileKey, Vec<RoadCondition>>,
+    /// The land use, decoded per tile for [`StreamedPackage::package`]
+    /// (the base has none).
+    landuse: Option<crate::landuse::LandUseIndex>,
 }
 
 impl StreamedPackage {
@@ -993,7 +1007,7 @@ impl StreamedPackage {
         let mut r = Bytes::new(header);
         let head = read_head(&mut r)?;
         r.finish("package header")?;
-        let s = if head.version >= 2 {
+        let mut s = if head.version >= 2 {
             let mut r = Bytes::new(sections);
             let s = read_sections(&mut r, head.samples, true, true)?;
             r.finish("package sections")?;
@@ -1008,19 +1022,28 @@ impl StreamedPackage {
         let dress = s.dress.iter().cloned().collect();
         let lit = s.lit.iter().cloned().collect();
         let condition = s.condition.iter().cloned().collect();
+        let landuse = s.landuse_index.take();
+        let base = s.into_package(head.clone(), BTreeMap::new());
         Ok(Self {
-            base: s.into_package(head.clone(), BTreeMap::new()),
+            base,
             head,
             surfaces,
             dress,
             lit,
             condition,
+            landuse,
         })
     }
 
-    /// The package without its tiles.
+    /// The package without its tiles (and without its land use: that is
+    /// kept encoded, [`StreamedPackage::land_use`]).
     pub fn base(&self) -> &WorldPackage {
         &self.base
+    }
+
+    /// The encoded land use (section `LUSE`), if the package has one.
+    pub fn land_use(&self) -> Option<&crate::landuse::LandUseIndex> {
+        self.landuse.as_ref()
     }
 
     /// Decodes one `tile X,Z` chunk, with its road surfaces and dress.
@@ -1043,11 +1066,119 @@ impl StreamedPackage {
         Ok(tile)
     }
 
-    /// The package with these tiles.
+    /// The package with these tiles (spec §14 Phase 10 B2, the memory per
+    /// resident tile): what is kept per tile – land use, buildings,
+    /// bridges, obstacles, roof colours, seasonal maps, forest, vegetation
+    /// – only for the tiles and the ring around them ([`resident_cut`]),
+    /// everything else of the base as it is (the road graph shared). A
+    /// tile's meshes read only their tile and its neighbours, so they come
+    /// out as from the whole file; a version of streamed Tenerife takes a
+    /// few MB instead of a copy of the base's 320 MB.
     pub fn package(&self, tiles: impl IntoIterator<Item = Tile>) -> WorldPackage {
-        let mut p = self.base.clone();
-        p.tiles = tiles.into_iter().map(|t| (t.key, t)).collect();
+        let tiles: BTreeMap<TileKey, Tile> = tiles.into_iter().map(|t| (t.key, t)).collect();
+        let keep = resident_cut(tiles.keys().copied());
+        let mut p = self.base.cut(&keep);
+        // The land use of those tiles, decoded. The sea (the far
+        // terrain's, spec §4.6) is known from all tiles' water: one tile of
+        // the package with sea keeps it known.
+        if let Some(index) = &self.landuse {
+            let sea = index.sea_tile.filter(|k| !keep.contains(k));
+            p.landuse = Some(index.land_use(keep.iter().copied().chain(sea)));
+        }
+        p.tiles = tiles;
         p
+    }
+}
+
+/// The tiles whose per-tile parts a streamed package's version keeps
+/// ([`StreamedPackage::package`]): the given ones and the ring of 8
+/// around each (a tile's meshes look at its neighbours' buildings,
+/// bridges and land use near the border).
+pub fn resident_cut(tiles: impl IntoIterator<Item = TileKey>) -> BTreeSet<TileKey> {
+    let mut keep = BTreeSet::new();
+    for k in tiles {
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                keep.insert(TileKey {
+                    x: k.x + dx,
+                    z: k.z + dz,
+                });
+            }
+        }
+    }
+    keep
+}
+
+/// The entries of a per-tile map for `keep`.
+fn cut_map<T: Clone>(m: &BTreeMap<TileKey, T>, keep: &BTreeSet<TileKey>) -> BTreeMap<TileKey, T> {
+    if m.len() <= keep.len() {
+        return m
+            .iter()
+            .filter(|(k, _)| keep.contains(k))
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
+    }
+    keep.iter()
+        .filter_map(|k| m.get(k).map(|v| (*k, v.clone())))
+        .collect()
+}
+
+impl WorldPackage {
+    /// This package with its tiles and per-tile parts only for `keep`, the
+    /// package-wide parts as they are and the road graph shared (see
+    /// [`StreamedPackage::package`]). Every field is named, so a new part
+    /// has to say whether it is kept per tile.
+    pub fn cut(&self, keep: &BTreeSet<TileKey>) -> WorldPackage {
+        let look = &self.look;
+        WorldPackage {
+            name: self.name.clone(),
+            origin: self.origin,
+            tile_size_m: self.tile_size_m,
+            samples: self.samples,
+            tiles: cut_map(&self.tiles, keep),
+            graph: self.graph.clone(),
+            landuse: self.landuse.as_ref().map(|l| LandUse {
+                cells: l.cells,
+                tiles: cut_map(&l.tiles, keep),
+            }),
+            buildings: self.buildings.as_ref().map(|b| cut_map(b, keep)),
+            bridges: self.bridges.as_ref().map(|b| cut_map(b, keep)),
+            routes: self.routes.clone(),
+            region: self.region.clone(),
+            time_zone: self.time_zone.clone(),
+            look: RegionLook {
+                palette: look.palette.clone(),
+                roofs: look.roofs.as_ref().map(|r| cut_map(r, keep)),
+                seasons: look.seasons.as_ref().map(|s| crate::look::SeasonalTints {
+                    cells: s.cells,
+                    source: s.source,
+                    seasons: s.seasons.clone(),
+                    class_means: s.class_means.clone(),
+                    tiles: cut_map(&s.tiles, keep),
+                }),
+                // Not streamed (`STREAM_SKIPPED_SECTIONS`): kept whole.
+                ortho: look.ortho.clone(),
+                forest: look.forest.as_ref().map(|f| crate::forest::ForestCover {
+                    cells: f.cells,
+                    sources: f.sources.clone(),
+                    tiles: cut_map(&f.tiles, keep),
+                }),
+                vegetation: look
+                    .vegetation
+                    .as_ref()
+                    .map(|v| crate::vegetation::Vegetation {
+                        cells: v.cells,
+                        sources: v.sources.clone(),
+                        tiles: cut_map(&v.tiles, keep),
+                    }),
+            },
+            obstacles: self.obstacles.as_ref().map(|o| Obstacles {
+                tree_side: o.tree_side,
+                tiles: cut_map(&o.tiles, keep),
+            }),
+            places: self.places.clone(),
+            junctions: self.junctions.clone(),
+        }
     }
 }
 
@@ -1365,6 +1496,11 @@ impl<'a> Bytes<'a> {
     pub(crate) fn new(b: &'a [u8]) -> Self {
         Self { b, pos: 0 }
     }
+    /// Bytes read so far.
+    pub(crate) fn position(&self) -> usize {
+        self.pos
+    }
+
     /// Fails unless everything was read.
     pub(crate) fn finish(&self, what: &str) -> Result<(), String> {
         if self.pos == self.b.len() {
@@ -1688,7 +1824,7 @@ mod tests {
             is_loop: true,
         };
         let mut p = WorldPackage {
-            graph: Some(graph()),
+            graph: Some(graph().into()),
             ..package()
         };
         p.put_route(route.clone());
@@ -1766,7 +1902,7 @@ mod tests {
     #[test]
     fn version_2_carries_the_road_graph() {
         let p = WorldPackage {
-            graph: Some(graph()),
+            graph: Some(graph().into()),
             ..package()
         };
         let bytes = p.to_bytes();
@@ -2099,7 +2235,7 @@ mod tests {
     #[test]
     fn unknown_sections_are_skipped() {
         let p = WorldPackage {
-            graph: Some(graph()),
+            graph: Some(graph().into()),
             ..package()
         };
         let mut b = p.to_bytes();
@@ -2154,7 +2290,7 @@ mod tests {
         assert_eq!(&b[..8], MAGIC_V2);
         assert_eq!(WorldPackage::from_bytes(&b).unwrap(), only);
         let full = WorldPackage {
-            graph: Some(graph()),
+            graph: Some(graph().into()),
             landuse: Some(landuse),
             buildings: Some(buildings),
             ..package()
@@ -2312,7 +2448,7 @@ mod tests {
         use crate::look::{PALETTE_TAG, ROOFS_TAG, SEASONS_TAG};
         let look = crate::look::tests::sample_look();
         let full = WorldPackage {
-            graph: Some(graph()),
+            graph: Some(graph().into()),
             look: look.clone(),
             ..package()
         };
@@ -2345,7 +2481,7 @@ mod tests {
         );
         // Without a look a package is written exactly as before.
         let plain = WorldPackage {
-            graph: Some(graph()),
+            graph: Some(graph().into()),
             ..package()
         };
         assert_eq!(section_sizes(&plain.to_bytes()).len(), 1);
@@ -2360,7 +2496,7 @@ mod tests {
         let mut look = crate::look::tests::sample_look();
         look.ortho = Some(crate::ortho::tests::sample_corridor());
         let full = WorldPackage {
-            graph: Some(graph()),
+            graph: Some(graph().into()),
             look,
             ..package()
         };
@@ -2396,7 +2532,7 @@ mod tests {
         let mut look = crate::look::tests::sample_look();
         look.forest = Some(crate::forest::tests::sample_forest());
         let full = WorldPackage {
-            graph: Some(graph()),
+            graph: Some(graph().into()),
             look,
             ..package()
         };
@@ -2437,7 +2573,7 @@ mod tests {
             .outer
             .push(vec![(47.0, 9.4), (47.2, 9.4), (47.1, 9.6)]);
         let p = WorldPackage {
-            graph: Some(graph()),
+            graph: Some(graph().into()),
             region: Some(region.clone()),
             ..package()
         };
@@ -2466,7 +2602,7 @@ mod tests {
             )],
         );
         let p = WorldPackage {
-            graph: Some(graph()),
+            graph: Some(graph().into()),
             bridges: Some(bridges.clone()),
             ..package()
         };
@@ -2635,5 +2771,96 @@ mod tests {
             .clone();
         let all = StreamedPackage::from_parts(&bytes[header], &bytes[start..]).unwrap();
         assert_eq!(all.base().look.ortho, p.look.ortho);
+    }
+
+    /// The streamed base and a version with `tiles` (spec §14 Phase 10 B2).
+    fn streamed_version(p: &WorldPackage, tiles: &[&str]) -> (StreamedPackage, WorldPackage) {
+        let bytes = p.to_bytes();
+        let chunks = crate::manifest::package_chunks(&bytes).unwrap();
+        let part = |name: &str| {
+            let (_, r) = chunks.iter().find(|(n, _)| n == name).unwrap();
+            &bytes[r.clone()]
+        };
+        let start = chunks
+            .iter()
+            .find(|(n, _)| n == "sections")
+            .unwrap()
+            .1
+            .start;
+        let s = StreamedPackage::from_parts(part("header"), &bytes[start..]).unwrap();
+        let v = s.package(tiles.iter().map(|t| s.read_tile(part(t)).unwrap()));
+        (s, v)
+    }
+
+    /// The memory per resident tile (spec §14 Phase 10 B2): a version of a
+    /// streamed package keeps the per-tile parts of its tiles and their
+    /// neighbours – equal to the whole file's – and not those of tiles
+    /// farther away; the road graph is shared, not copied; the sea stays
+    /// known when no kept tile has any.
+    #[test]
+    fn a_streamed_version_keeps_only_the_parts_near_its_tiles() {
+        let (k00, k10, far) = (
+            TileKey { x: 0, z: 0 },
+            TileKey { x: 1, z: 0 },
+            TileKey { x: -1, z: 2 },
+        );
+        let mut p = WorldPackage {
+            graph: Some(graph().into()),
+            landuse: Some(crate::landuse::tests::landuse()),
+            ..package()
+        };
+        p.look.forest = Some(crate::forest::tests::sample_forest());
+        let whole = WorldPackage::from_bytes(&p.to_bytes()).unwrap();
+        let (s, v) = streamed_version(&p, &["tile 1,0"]);
+        // The base keeps the land use encoded, not decoded.
+        assert!(s.base().landuse.is_none());
+        assert_eq!(s.land_use().unwrap().len(), 2);
+        assert_eq!(v.tiles.keys().copied().collect::<Vec<_>>(), vec![k10]);
+        let lu = v.landuse.as_ref().unwrap();
+        // The neighbour's land use, as in the file; the far tile's not.
+        assert_eq!(
+            lu.tiles.get(&k00),
+            whole.landuse.as_ref().unwrap().tiles.get(&k00)
+        );
+        assert!(!lu.tiles.contains_key(&far));
+        assert!(
+            v.look
+                .forest
+                .as_ref()
+                .unwrap()
+                .tiles
+                .keys()
+                .all(|k| k.ring(k10) <= 1)
+        );
+        assert_eq!(
+            v.look.forest.as_ref().unwrap().sources,
+            whole.look.forest.as_ref().unwrap().sources
+        );
+        // Package-wide parts as they are; one graph for base and version.
+        assert_eq!((&v.name, &v.routes), (&whole.name, &whole.routes));
+        assert!(Arc::ptr_eq(
+            v.graph.as_ref().unwrap(),
+            s.base().graph.as_ref().unwrap()
+        ));
+        // With all tiles the version is the whole file.
+        let (_, all) = streamed_version(&p, &["tile 0,0", "tile 1,0", "tile -1,2"]);
+        assert_eq!(all, whole);
+        // Sea only in the far tile: that tile's land use stays, so the
+        // far terrain still draws the sea.
+        p.landuse
+            .as_mut()
+            .unwrap()
+            .tiles
+            .get_mut(&far)
+            .unwrap()
+            .water = vec![(0, 0.0)];
+        let (_, v) = streamed_version(&p, &["tile 1,0"]);
+        let lu = v.landuse.as_ref().unwrap();
+        assert!(lu.tiles.contains_key(&far));
+        assert!(
+            lu.tiles
+                .values()
+                .any(|t| t.water.iter().any(|w| w.1 == 0.0))
+        );
     }
 }

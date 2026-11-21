@@ -1147,7 +1147,7 @@ mod tests {
             let z = k as f32 * 10.0;
             if z > 3.75 { 0.2 * z - 0.05 } else { -0.05 }
         });
-        pkg.graph = Some(t_junction(RoadClass::Secondary, 0.0, 0.2));
+        pkg.graph = Some(t_junction(RoadClass::Secondary, 0.0, 0.2).into());
         let key = TileKey { x: 0, z: 0 };
         let m = crate::package::build_tile_meshes(&pkg, key).unwrap();
         // The renderer lowered the ground beside the side road.
@@ -1275,7 +1275,7 @@ mod tests {
             let z = k as f32 * 10.0;
             if z > 3.75 { 0.2 * z - 0.05 } else { -0.05 }
         });
-        pkg.graph = Some(t_junction(RoadClass::Secondary, 0.0, 0.2));
+        pkg.graph = Some(t_junction(RoadClass::Secondary, 0.0, 0.2).into());
         let key = TileKey { x: 0, z: 0 };
         let m = crate::package::build_tile_meshes(&pkg, key).unwrap();
         let tile = pkg.tiles.get(&key).unwrap();

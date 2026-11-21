@@ -682,7 +682,7 @@ pub(crate) mod tests {
             tile_size_m: 100.0,
             samples: n as u32,
             tiles: BTreeMap::from([(key, tile)]),
-            graph: Some(graph),
+            graph: Some(graph.into()),
             landuse: Some(landuse),
             buildings: Some(buildings),
             bridges: None,

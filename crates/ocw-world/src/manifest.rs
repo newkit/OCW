@@ -1283,7 +1283,9 @@ mod tests {
             tile_size_m: 1000.0,
             samples: 3,
             tiles,
-            graph: graph.then(crate::graph::RoadGraph::default),
+            graph: graph
+                .then(crate::graph::RoadGraph::default)
+                .map(std::sync::Arc::new),
             routes: Vec::new(),
             region: None,
             time_zone: None,

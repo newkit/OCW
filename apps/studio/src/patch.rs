@@ -48,7 +48,7 @@ impl StudioPackage {
     }
 
     pub fn graph(&self) -> Option<&RoadGraph> {
-        self.pkg.graph.as_ref()
+        self.pkg.graph.as_deref()
     }
 
     /// The edge with this stable id.
@@ -351,7 +351,7 @@ pub mod tests {
     /// The map test package with the picking test graph.
     pub fn package() -> StudioPackage {
         let mut p = crate::map::tests::package();
-        p.graph = Some(crate::pick::tests::graph());
+        p.graph = Some(crate::pick::tests::graph().into());
         StudioPackage::new(Arc::new(p), PathBuf::from("/data/testland.ocwpkg"), None)
     }
 

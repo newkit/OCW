@@ -225,8 +225,19 @@ impl MeshArrays {
         if !self.uvs_b.is_empty() {
             m.insert_attribute(Mesh::ATTRIBUTE_UV_1, self.uvs_b);
         }
-        m.insert_indices(Indices::U32(self.indices));
+        m.insert_indices(indices(self.indices, m.count_vertices()));
         m
+    }
+}
+
+/// 16-bit indices where the vertices allow (spec §14 Phase 10 B2: half
+/// the GPU memory of a tile's index buffers; almost every chunk mesh has
+/// fewer than 65,536 vertices).
+pub fn indices(i: Vec<u32>, vertices: usize) -> Indices {
+    if vertices <= usize::from(u16::MAX) + 1 {
+        Indices::U16(i.into_iter().map(|v| v as u16).collect())
+    } else {
+        Indices::U32(i)
     }
 }
 
@@ -2257,8 +2268,8 @@ fn upload_tile(
             // Near-field ground detail (spec §4.6.2): chunks near the
             // roads, their meshes built near a camera
             // (`ground_detail::lazy_ground`).
-            if let Some(pkg) = detail_pkg {
-                crate::ground_detail::spawn_chunks(c, pkg, ground_detail);
+            if let Some(pkg) = &detail_pkg {
+                crate::ground_detail::spawn_chunks(c, pkg, id.0, ground_detail);
             }
             for chunk in obstacles.chunks {
                 let mut e = c.spawn((
@@ -2323,6 +2334,26 @@ mod tests {
             places: None,
             junctions: None,
         }
+    }
+
+    /// The memory per resident tile (spec §14 Phase 10 B2): meshes up to
+    /// 65,536 vertices get 16-bit indices with the same values, larger
+    /// ones keep 32 bits.
+    #[test]
+    fn small_meshes_get_16_bit_indices() {
+        let small = indices(vec![0, 1, 65_535], 65_536);
+        assert!(matches!(&small, Indices::U16(v) if v == &[0, 1, 65_535]));
+        let large = indices(vec![0, 65_536], 65_537);
+        assert!(matches!(&large, Indices::U32(v) if v == &[0, 65_536]));
+        let m = MeshArrays {
+            positions: vec![[0.0; 3]; 3],
+            normals: vec![[0.0, 1.0, 0.0]; 3],
+            colors: vec![[1.0; 4]; 3],
+            indices: vec![0, 1, 2],
+            ..Default::default()
+        }
+        .mesh();
+        assert!(matches!(m.indices(), Some(Indices::U16(v)) if v == &[0, 1, 2]));
     }
 
     #[test]
@@ -2634,7 +2665,7 @@ mod tests {
                 )
             })
             .collect();
-        a.graph = Some(graph.clone());
+        a.graph = Some(graph.clone().into());
         a.region = Some(region(-300.0, 0.0));
         let mut b = a.clone();
         b.name = "b".into();
@@ -2655,7 +2686,7 @@ mod tests {
         let mut g = graph;
         g.vertices = vec![[150.0 + shift, 50.0], [shift, 50.0]];
         g.edges = vec![edge(2, vec![[150.0 + shift, 50.0], [shift, 50.0]])];
-        b.graph = Some(g);
+        b.graph = Some(g.into());
         b.region = Some(region(0.0, 300.0));
         let mut set = WorldSet::new("a", Arc::new(a));
         set.add_neighbour("b", Arc::new(b)).unwrap();

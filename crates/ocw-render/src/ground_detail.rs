@@ -42,7 +42,7 @@
 //! autumn adds leaf patches under the broadleaves and a few more leaves;
 //! a wet road darkens the bits and makes them shine ([`wet_look`]).
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use bevy::camera::visibility::VisibilityRange;
 use bevy::light::NotShadowCaster;
@@ -1536,17 +1536,37 @@ pub fn tile_detail(
     }
 }
 
-/// A tile's ground detail with its package, shared by its chunks.
+/// A tile's ground detail, shared by its chunks, with the package it was
+/// built from – not kept alive by them (spec §14 Phase 10 B2: a streamed
+/// package gets a new version whenever tiles come or go, and each tile
+/// holding the version it was uploaded with kept up to 25 of them). When
+/// that version is gone, the chunks take the current package of their
+/// member of the world set ([`DetailSource::package`]).
 pub struct DetailSource {
-    pub pkg: Arc<WorldPackage>,
+    pub pkg: Weak<WorldPackage>,
+    /// The member of the world set the tile belongs to.
+    pub member: usize,
     pub tile: TileGroundDetail,
 }
 
 impl DetailSource {
+    /// The package to build from: the tile's own if it is still there,
+    /// else the current one of its member that has the tile (`None`: the
+    /// tile is no longer resident – nothing to build).
+    pub fn package(
+        &self,
+        world: Option<&crate::package::PackageWorld>,
+    ) -> Option<Arc<WorldPackage>> {
+        self.pkg
+            .upgrade()
+            .or_else(|| world?.set.members().get(self.member)?.package().cloned())
+            .filter(|p| p.tiles.contains_key(&self.tile.key))
+    }
+
     /// The bits of a chunk.
-    pub fn bits(&self, chunk: &DetailChunk, p: &Params) -> Vec<Bit> {
-        let ground = TileGround::new(&self.pkg, self.tile.key, Some(&self.tile.terrain));
-        let rect = chunk_rect(&self.pkg, self.tile.key, chunk.cell);
+    pub fn bits(&self, pkg: &WorldPackage, chunk: &DetailChunk, p: &Params) -> Vec<Bit> {
+        let ground = TileGround::new(pkg, self.tile.key, Some(&self.tile.terrain));
+        let rect = chunk_rect(pkg, self.tile.key, chunk.cell);
         let keep = |x: f64, z: f64| {
             let Some(m) = chunk.keep else {
                 return true;
@@ -1558,7 +1578,7 @@ impl DetailSource {
             m[b / 64] >> (b % 64) & 1 == 1
         };
         let ctx = Ctx {
-            pkg: &self.pkg,
+            pkg,
             key: self.tile.key,
             ground: &ground,
             solid: &self.tile.solid,
@@ -1569,8 +1589,13 @@ impl DetailSource {
     }
 
     /// A chunk's meshes (relative to its centre) and its bit count.
-    pub fn build(&self, chunk: &DetailChunk, p: &Params) -> (MeshArrays, MeshArrays, usize) {
-        let bits = self.bits(chunk, p);
+    pub fn build(
+        &self,
+        pkg: &WorldPackage,
+        chunk: &DetailChunk,
+        p: &Params,
+    ) -> (MeshArrays, MeshArrays, usize) {
+        let bits = self.bits(pkg, chunk, p);
         let (a, b) = meshes(&bits, Vec3::from(chunk.centre));
         (a, b, bits.len())
     }
@@ -1793,6 +1818,7 @@ pub fn lazy_ground(
     settings: Res<GroundDetailSettings>,
     quality: Option<Res<crate::quality::RenderQuality>>,
     view: Option<Res<crate::RideView>>,
+    world: Option<Res<crate::package::PackageWorld>>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     building: Query<(), With<GroundBuild>>,
     mut last: Local<(u32, Option<BuildKey>)>,
@@ -1906,9 +1932,14 @@ pub fn lazy_ground(
     for &(_, e) in todo.iter().take(MAX_TASKS.saturating_sub(busy)) {
         if let Ok((_, _, lazy, _, _)) = chunks.get(e) {
             let src = lazy.src.clone();
+            // The tile is no longer resident: nothing to build.
+            let Some(pkg) = src.package(world.as_deref()) else {
+                continue;
+            };
             let chunk = lazy.chunk.clone();
             let p = Params { density, snow };
-            let task = AsyncComputeTaskPool::get().spawn(async move { src.build(&chunk, &p) });
+            let task =
+                AsyncComputeTaskPool::get().spawn(async move { src.build(&pkg, &chunk, &p) });
             commands.entity(e).insert(GroundBuild(task, want));
         }
     }
@@ -1917,14 +1948,19 @@ pub fn lazy_ground(
 /// Spawns a tile's ground detail chunks as children of its entity.
 pub fn spawn_chunks(
     c: &mut bevy::ecs::relationship::RelatedSpawnerCommands<ChildOf>,
-    pkg: Arc<WorldPackage>,
+    pkg: &Arc<WorldPackage>,
+    member: usize,
     mut tile: TileGroundDetail,
 ) {
     let chunks = std::mem::take(&mut tile.chunks);
     if chunks.is_empty() {
         return;
     }
-    let src = Arc::new(DetailSource { pkg, tile });
+    let src = Arc::new(DetailSource {
+        pkg: Arc::downgrade(pkg),
+        member,
+        tile,
+    });
     for chunk in chunks {
         let at = Transform::from_translation(Vec3::from(chunk.centre));
         c.spawn((

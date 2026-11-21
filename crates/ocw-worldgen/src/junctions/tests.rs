@@ -47,7 +47,7 @@ fn package(g: &RoadGraph) -> WorldPackage {
         tile_size_m: 1000.0,
         samples: n,
         tiles,
-        graph: Some(g.clone()),
+        graph: Some(g.clone().into()),
         landuse: None,
         buildings: None,
         bridges: None,

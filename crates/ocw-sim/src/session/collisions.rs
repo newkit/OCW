@@ -1469,7 +1469,7 @@ mod world_tests {
         let at = |y: f32, ty: f64| {
             world(TileObstacles::default(), |p| {
                 p.bridges = Some(BTreeMap::from([(TileKey { x: 0, z: 0 }, vec![deck(y)])]));
-                p.graph = Some(tunnel(ty));
+                p.graph = Some(tunnel(ty).into());
             })
         };
         // On the bridge (its deck at the road's height): wild mode cannot

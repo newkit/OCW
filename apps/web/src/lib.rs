@@ -69,6 +69,10 @@ mod browser_voice;
 pub mod devices;
 pub mod fitstore;
 pub mod god;
+pub mod gpu_memory;
+pub mod heap;
+#[cfg(test)]
+mod memory_report;
 pub mod page_config;
 pub mod plugin;
 pub mod screen;
@@ -561,7 +565,9 @@ pub fn app_with_settings(
     .add_systems(Startup, || {
         info!("Open Cycling World {} starting", build_id())
     })
-    .add_plugins(OcwRenderPlugins);
+    .add_plugins(OcwRenderPlugins)
+    // The GPU memory for the status line and the browser test (B2).
+    .add_plugins(gpu_memory::GpuMemoryPlugin);
     // The browser's WebTransport for a remote server (B3).
     #[cfg(target_arch = "wasm32")]
     app.insert_resource(plugin::MakeTransport(Box::new(|r| {
@@ -853,6 +859,26 @@ pub fn page_setting(key: &str) -> String {
 #[wasm_bindgen::prelude::wasm_bindgen(js_name = wasmMemory)]
 pub fn page_memory() -> f64 {
     browser::memory_bytes() as f64
+}
+
+/// `window.ocw.heap()`: the live heap and its peak, the GPU memory
+/// (JSON: `{"live":…,"peak":…,"wasm":…,"gpu_meshes":…,"gpu_buffers":…,
+/// "gpu_textures":…}`, bytes; spec §14 Phase 10 B2).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = heap)]
+pub fn page_heap() -> String {
+    let g = gpu_memory::GpuMemory::now();
+    serde_json::json!({
+        "live": heap::live(),
+        "peak": heap::peak(),
+        "wasm": browser::memory_bytes(),
+        "gpu_meshes": g.mesh_bytes,
+        "gpu_buffers": g.slab_bytes,
+        "gpu_textures": g.image_bytes,
+        "meshes": g.meshes,
+        "textures": g.images,
+    })
+    .to_string()
 }
 
 /// The entry point the wasm-bindgen glue calls when the module is loaded.

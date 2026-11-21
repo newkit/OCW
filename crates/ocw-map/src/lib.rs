@@ -124,7 +124,7 @@ pub mod fixture {
                 (TileKey { x: 0, z: 0 }, tile(0)),
                 (TileKey { x: 1, z: 0 }, tile(1)),
             ]),
-            graph: Some(graph),
+            graph: Some(graph.into()),
             landuse: Some(LandUse {
                 cells: 2,
                 tiles: BTreeMap::from([(

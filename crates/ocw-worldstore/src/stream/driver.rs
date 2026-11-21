@@ -347,19 +347,29 @@ impl<F: RangeFetch, S: ChunkStore> StreamDriver<F, S> {
             },
         )
         .await?;
-        let header = chunks
-            .iter()
-            .find(|c| file.chunks[c.index].name == "header")
-            .ok_or_else(|| StreamError::Decode("the package has no header chunk".into()))?;
-        let mut sections = Vec::new();
-        for c in chunks
+        // The sections in one buffer of the right size, each chunk freed
+        // once copied (spec §14 Phase 10 B2: the wasm memory keeps its
+        // peak, and Tenerife's base is 146 MB – the chunks, a growing copy
+        // and the decoded base at once took three times that).
+        let total: usize = chunks
             .iter()
             .filter(|c| file.chunks[c.index].name != "header")
-        {
-            sections.extend_from_slice(&c.bytes);
+            .map(|c| c.bytes.len())
+            .sum();
+        let mut header = None;
+        let mut sections = Vec::with_capacity(total);
+        for c in chunks {
+            if file.chunks[c.index].name == "header" {
+                header = Some(c.bytes);
+            } else {
+                sections.extend_from_slice(&c.bytes);
+            }
         }
+        let header =
+            header.ok_or_else(|| StreamError::Decode("the package has no header chunk".into()))?;
         let package =
-            StreamedPackage::from_parts(&header.bytes, &sections).map_err(StreamError::Decode)?;
+            StreamedPackage::from_parts(&header, &sections).map_err(StreamError::Decode)?;
+        drop(sections);
         let elapsed = self.elapsed();
         let mut s = shared.lock().expect("not poisoned");
         let st = self.storage(&s);

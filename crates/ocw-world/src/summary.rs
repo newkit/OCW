@@ -258,7 +258,7 @@ mod tests {
             tile_size_m: 1000.0,
             samples: 4,
             tiles,
-            graph: sections.then_some(graph),
+            graph: sections.then_some(graph.into()),
             landuse: None,
             buildings: None,
             routes: if sections {

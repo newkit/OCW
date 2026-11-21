@@ -48,6 +48,9 @@ serde_json.workspace = true
 # Sign-in (spec §9.1): the flows' forms, the kept session.
 ocw-auth.workspace = true
 serde.workspace = true
+# The live heap for the memory work of B2 (`heap`: a counting wrapper
+# around the system allocator; MIT OR Apache-2.0).
+cap = { version = "0.1.2", features = ["stats"] }
 
 # The browser's GPU API (spec §14 Phase 10 B7): Bevy chooses WebGPU or
 # WebGL 2 when it is compiled (its shaders and limits differ), so the page

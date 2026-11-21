@@ -42,9 +42,16 @@ pub(super) fn route_area(route: &Route) -> Option<Bounds> {
 }
 
 pub(super) fn network_area(net: &RoadNetwork) -> Option<Bounds> {
-    let n = net.graph().edges.len();
-    Bounds::around((0..n).flat_map(|i| net.geometry(i).points.iter().copied()))
-        .map(|b| b.grown(AREA_GROWTH_M))
+    // The edges' own polylines: the dense geometry lies on them (and is
+    // made per edge only when ridden, spec §14 Phase 10 B2).
+    Bounds::around(
+        net.graph()
+            .edges
+            .iter()
+            .filter(|e| e.points.len() >= 2)
+            .flat_map(|e| e.points.iter().map(|p| [p[0], 0.0, p[1]])),
+    )
+    .map(|b| b.grown(AREA_GROWTH_M))
 }
 
 impl Session {

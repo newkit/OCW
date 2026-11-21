@@ -99,27 +99,58 @@ impl PackageJunctions {
         }
     }
 }
-type CacheEntry = (Weak<WorldPackage>, Option<Arc<PackageJunctions>>);
+/// What a package's junctions are made of: its road graph, its stored
+/// junctions (sections `JNCT` / `RDGE`) and its tile size. The versions of
+/// a streamed package share the graph (spec §14 Phase 10 B2), so they
+/// share their junctions too.
+struct CacheEntry {
+    graph: Weak<RoadGraph>,
+    stored: Option<Weak<ocw_world::junction::section::JunctionData>>,
+    tile_size_m: f32,
+    junctions: Option<Arc<PackageJunctions>>,
+}
+
+impl CacheEntry {
+    fn live(&self) -> bool {
+        self.graph.strong_count() > 0 && self.stored.as_ref().is_none_or(|s| s.strong_count() > 0)
+    }
+
+    fn is_for(&self, graph: &Arc<RoadGraph>, pkg: &WorldPackage) -> bool {
+        let stored = match (&self.stored, &pkg.junctions) {
+            (None, None) => true,
+            (Some(w), Some(j)) => std::ptr::eq(w.as_ptr(), Arc::as_ptr(j)),
+            _ => false,
+        };
+        std::ptr::eq(self.graph.as_ptr(), Arc::as_ptr(graph))
+            && stored
+            && self.tile_size_m == pkg.tile_size_m
+    }
+}
+
 static CACHE: Mutex<Vec<CacheEntry>> = Mutex::new(Vec::new());
 
-/// The junctions of a resident package, made once per package (the tiles
-/// of one package are built in parallel tasks).
+/// The junctions of a resident package, made once per road graph (the
+/// tiles of one package are built in parallel tasks; the versions of a
+/// streamed package share theirs).
 pub fn package_junctions(pkg: &Arc<WorldPackage>) -> Option<Arc<PackageJunctions>> {
     // `OCW_JUNCTIONS=off`: the strips as the package has them (before /
     // after comparisons, frame-rate A/B on one binary).
     if std::env::var("OCW_JUNCTIONS").is_ok_and(|v| v == "off") {
         return None;
     }
+    let graph = pkg.graph.as_ref()?;
     let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
-    cache.retain(|(w, _)| w.strong_count() > 0);
-    if let Some((_, j)) = cache
-        .iter()
-        .find(|(w, _)| std::ptr::eq(w.as_ptr(), Arc::as_ptr(pkg)))
-    {
-        return j.clone();
+    cache.retain(CacheEntry::live);
+    if let Some(e) = cache.iter().find(|e| e.is_for(graph, pkg)) {
+        return e.junctions.clone();
     }
     let j = PackageJunctions::new(pkg).map(Arc::new);
-    cache.push((Arc::downgrade(pkg), j.clone()));
+    cache.push(CacheEntry {
+        graph: Arc::downgrade(graph),
+        stored: pkg.junctions.as_ref().map(Arc::downgrade),
+        tile_size_m: pkg.tile_size_m,
+        junctions: j.clone(),
+    });
     j
 }
 

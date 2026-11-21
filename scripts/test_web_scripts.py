@@ -58,6 +58,24 @@ class WasmLimit(unittest.TestCase):
         self.assertIsNone(tw.wasm_error(None, 1500.0))
         self.assertIsNone(tw.wasm_error(2705.0, 0.0))
 
+    def test_the_status_line_gives_heap_and_gpu(self):
+        # spec §14 Phase 10 B2: the memory per resident tile.
+        s = tw.streaming_line(
+            "world streaming: 49 of 2265 tiles resident (3.1 MB, peak 4.2 MB), 52 loaded, "
+            "3 dropped, 0 pending; tiles from network 14.2 MB, from cache 0 B, wasm memory 1377.0 MB, "
+            "heap 612 MB (peak 840 MB), gpu meshes 120 MB in 2345 (buffers 160 MB), textures 300 MB in 410")
+        self.assertEqual((s["resident"], s["tiles"], s["dropped"]), (49, 2265, 3))
+        self.assertEqual(s["wasm_mb"], 1377.0)
+        self.assertEqual((s["heap_mb"], s["heap_peak_mb"]), (612.0, 840.0))
+        self.assertEqual((s["gpu_meshes_mb"], s["meshes"], s["gpu_buffers_mb"], s["gpu_textures_mb"]),
+                         (120.0, 2345, 160.0, 300.0))
+        # An older app's line (no heap, no GPU) and other lines.
+        old = tw.streaming_line("world streaming: 9 of 510 tiles resident (1.0 MB, peak 1.2 MB), "
+                                "9 loaded, 0 dropped, 0 pending; wasm memory 430.0 MB")
+        self.assertEqual(old["wasm_mb"], 430.0)
+        self.assertNotIn("heap_mb", old)
+        self.assertIsNone(tw.streaming_line("world ready"))
+
 
 class WebServe(unittest.TestCase):
     def test_missing_dir(self):

@@ -187,7 +187,7 @@ fn ride_across(origin_east: Option<(f64, f64)>) {
             }
         };
         let (a, b) = (near(w.graph.as_ref().unwrap()), {
-            let mut g = e.graph.clone().unwrap();
+            let mut g = e.graph.as_deref().cloned().unwrap();
             for v in &mut g.vertices {
                 *v = f.apply(*v);
             }

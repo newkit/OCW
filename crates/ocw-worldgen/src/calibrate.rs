@@ -1061,7 +1061,7 @@ mod tests {
             tile_size_m: 100.0,
             samples: 2,
             tiles,
-            graph: Some(graph),
+            graph: Some(graph.into()),
             landuse: Some(LandUse {
                 cells: 20,
                 tiles: BTreeMap::from([(

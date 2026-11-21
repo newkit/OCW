@@ -410,7 +410,7 @@ fn stored_junctions_and_strip_edges_shape_the_same_tiles() {
                     )
                 })
                 .collect(),
-            graph: Some(g.clone()),
+            graph: Some(g.clone().into()),
             landuse: None,
             buildings: None,
             bridges: None,

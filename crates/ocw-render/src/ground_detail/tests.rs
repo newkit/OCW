@@ -138,14 +138,16 @@ fn the_same_package_gives_the_same_bits_and_chunks_add_up() {
     let detail = tile_detail(&pkg, KEY, None, &mesh, &SolidFootprints::default(), None);
     assert!(!detail.chunks.is_empty() && detail.chunks.len() < 400);
     let chunks = detail.chunks.clone();
+    let pkg = Arc::new(pkg);
     let src = DetailSource {
-        pkg: Arc::new(pkg),
+        pkg: Arc::downgrade(&pkg),
+        member: 0,
         tile: detail,
     };
     let mut joined: Vec<Bit> = chunks
         .iter()
         .rev()
-        .flat_map(|c| src.bits(c, &Params::FULL))
+        .flat_map(|c| src.bits(&pkg, c, &Params::FULL))
         .collect();
     let key = |b: &Bit| {
         (
@@ -861,4 +863,36 @@ fn the_tile_build_keeps_the_chunks_near_the_roads() {
         assert!(near, "{c:?}");
     }
     assert!(d.bytes() < 400_000, "{}", d.bytes());
+}
+
+/// The memory per resident tile (spec §14 Phase 10 B2): a tile's chunks
+/// do not keep the package version they were built with alive (a streamed
+/// package's versions come and go); once it is gone they build from their
+/// member's current package, and not at all once the tile has left it.
+#[test]
+fn detail_chunks_do_not_keep_their_package() {
+    let pkg = Arc::new(package(LIECHTENSTEIN, LandClass::Meadow, flat));
+    let mesh = terrain(&pkg);
+    let detail = tile_detail(&pkg, KEY, None, &mesh, &SolidFootprints::default(), None);
+    let chunk = detail.chunks[0].clone();
+    let src = DetailSource {
+        pkg: Arc::downgrade(&pkg),
+        member: 0,
+        tile: detail,
+    };
+    assert!(Arc::ptr_eq(&src.package(None).unwrap(), &pkg));
+    let built = src.build(&pkg, &chunk, &Params::FULL);
+    let current = Arc::new((*pkg).clone());
+    let world = crate::package::PackageWorld::single(current.clone());
+    drop(pkg);
+    assert!(src.package(None).is_none(), "the old version was kept");
+    let now = src.package(Some(&world)).unwrap();
+    assert!(Arc::ptr_eq(&now, &current));
+    // The same chunk from the current version.
+    let again = src.build(&now, &chunk, &Params::FULL);
+    assert_eq!((built.0.positions, built.2), (again.0.positions, again.2));
+    let mut gone = (*current).clone();
+    gone.tiles.remove(&KEY);
+    let without = crate::package::PackageWorld::single(Arc::new(gone));
+    assert!(src.package(Some(&without)).is_none());
 }

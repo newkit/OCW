@@ -1243,7 +1243,7 @@ mod tests {
             tile_size_m: 1000.0,
             samples: n as u32,
             tiles,
-            graph: Some(g),
+            graph: Some(g.into()),
             landuse: Some(LandUse {
                 cells: 200,
                 tiles: [(
