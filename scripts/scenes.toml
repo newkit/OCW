@@ -225,7 +225,7 @@ name = "menu-input-mapping"
 description = "Settings -> Controls, input mapping -> Input mapping (spec 3.2.5): the groups of ride actions, Pad Confirm button, Reset to defaults"
 args = ["--route", "hills", "--bots", "2"]
 at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu down", "4=menu down", "4.4=menu select", "4.8=menu down", "5.2=menu select", "5.6=menu down", "6=menu select"]
-shot = 7.5
+shot = 35
 
 [[scene]]
 name = "menu-input-mapping-junctions"
@@ -233,14 +233,14 @@ description = "Input mapping -> Autodrive and junctions: each action with its ke
 args = ["--route", "hills", "--bots", "2"]
 cmds = ["bind autodrive W"]
 at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu down", "4=menu down", "4.4=menu select", "4.8=menu down", "5.2=menu select", "5.6=menu down", "6=menu select", "6.4=menu down", "6.8=menu select"]
-shot = 8
+shot = 38
 
 [[scene]]
 name = "menu-input-mapping-capture"
 description = "Input mapping -> Autodrive and junctions -> Junction: exit left selected: the capture prompt (Press a key or gamepad button ... Esc / Start cancels)"
 args = ["--route", "hills", "--bots", "2"]
 at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu down", "4=menu down", "4.4=menu select", "4.8=menu down", "5.2=menu select", "5.6=menu down", "6=menu select", "6.4=menu down", "6.8=menu select", "7.2=menu down", "7.4=menu down", "7.6=menu down", "7.8=menu down", "8.2=menu select"]
-shot = 9
+shot = 42
 
 [[scene]]
 name = "menu-accessibility"
