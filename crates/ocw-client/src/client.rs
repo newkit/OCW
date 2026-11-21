@@ -220,6 +220,9 @@ pub struct ClientCore {
     server_scope: String,
     accounts: BTreeMap<RiderId, String>,
     voice_apart: std::collections::BTreeSet<RiderId>,
+    /// The riders who cannot hear this one (`NotHearingYou`, spec §7.1.7
+    /// Q17: worked out by the server per viewer): the headphones it sees.
+    not_hearing_you: std::collections::BTreeSet<RiderId>,
     /// Whose voice this rider may receive and who may receive its own
     /// (`VoiceHearing`, spec §7.1.7 Q6); `None` until the server said.
     voice_hearing: Option<ocw_voice::audience::Hearing>,
@@ -301,6 +304,7 @@ impl ClientCore {
             server_scope: ocw_voice::riders::LOCAL_SCOPE.into(),
             accounts: BTreeMap::new(),
             voice_apart: Default::default(),
+            not_hearing_you: Default::default(),
             voice_hearing: None,
             route,
         }
@@ -654,6 +658,7 @@ impl ClientCore {
                 self.voice_offered = w.voice;
                 // A new session: its server says again whom to keep apart.
                 self.voice_apart.clear();
+                self.not_hearing_you.clear();
                 self.voice_hearing = None;
                 self.accounts.clear();
                 self.echo_bot = w.echo_bot;
@@ -693,6 +698,10 @@ impl ClientCore {
             S::Voice(g) => Some(Notice::Voice(g)),
             S::VoiceApart(a) => {
                 self.voice_apart = a.riders.into_iter().map(RiderId).collect();
+                None
+            }
+            S::NotHearingYou(n) => {
+                self.not_hearing_you = n.riders.into_iter().map(RiderId).collect();
                 None
             }
             S::VoiceHearing(h) => {
@@ -1613,7 +1622,7 @@ impl ClientCore {
             damage: self.damage.visible(own),
             cue: self.anim_cue(own, true, &own_state, own_path, tick_now),
             // The own rider never sees headphones on itself.
-            signs: crate::voice::signs_seen(Some(own), &self.status, own, &self.status),
+            signs: crate::voice::signs_seen(Some(own), &self.status, own, &self.status, false),
         }];
         for (id, state) in self.others.sample(now_s - INTERPOLATION_DELAY_S) {
             // Free ride: only riders whose path is known can be placed.
@@ -1649,7 +1658,8 @@ impl ClientCore {
                 wobble: self.collisions.wobble(id, others_tick),
                 cue,
                 signs: self.statuses.get(&id).map_or_else(Default::default, |st| {
-                    crate::voice::signs_seen(Some(own), &self.status, id, st)
+                    let told = self.not_hearing_you.contains(&id);
+                    crate::voice::signs_seen(Some(own), &self.status, id, st, told)
                 }),
             });
         }
@@ -2296,6 +2306,21 @@ impl ClientCore {
     /// in either direction, spec §7.1.7 Q9).
     pub fn voice_apart(&self) -> &std::collections::BTreeSet<RiderId> {
         &self.voice_apart
+    }
+
+    /// The other riders' status signs as received (tests: no list of whom
+    /// a rider does not hear arrives, spec §7.1.7 Q17).
+    #[cfg(test)]
+    pub(crate) fn statuses_for_test(
+        &self,
+    ) -> impl Iterator<Item = (&RiderId, &v1::RiderStatus)> + '_ {
+        self.statuses.iter()
+    }
+
+    /// The riders the server says cannot hear this one (spec §7.1.7 Q17):
+    /// the headphones this rider sees.
+    pub fn not_hearing_you(&self) -> &std::collections::BTreeSet<RiderId> {
+        &self.not_hearing_you
     }
 
     /// The server's last `VoiceHearing` of this session (spec §7.1.7 Q6).
@@ -5327,6 +5352,8 @@ mod tests {
     /// The rider status signs end to end (spec §2.6, §7.1.7 Q11): rider A
     /// muted → everybody sees the X mouth; B does not hear A → only A
     /// sees headphones on B; C in the menu → everybody sees the phone.
+    /// The headphones come from the server per viewer (spec §7.1.7 Q17):
+    /// no client ever gets B's list of whom B does not hear.
     #[test]
     fn status_signs_reach_the_others_per_viewer() {
         let mut server = GameServer::new(route(), ServerConfig::default());
@@ -5344,14 +5371,23 @@ mod tests {
             conns.push(conn);
         }
         let mut t = 0.0;
+        let conns_run = conns.clone();
         let mut run = |server: &mut GameServer, clients: &mut Vec<ClientCore>, ticks: usize| {
             for _ in 0..ticks {
                 t += ocw_core::SIM_DT;
                 let out = server.tick();
-                for c in clients.iter_mut() {
-                    for b in &out {
+                let directed = server.take_directed();
+                for (c, conn) in clients.iter_mut().zip(&conns_run) {
+                    let mine = directed.iter().filter(|(to, _)| to == conn).map(|(_, m)| m);
+                    for b in out.iter().chain(mine) {
                         c.on_server_message(b, t);
                     }
+                }
+                for c in clients.iter() {
+                    assert!(
+                        c.statuses.values().all(|st| st.not_hearing.is_empty()),
+                        "no list reaches a client"
+                    );
                 }
             }
             t

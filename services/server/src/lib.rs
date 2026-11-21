@@ -7,6 +7,8 @@
 //!   QUIC with [`net`] (`--listen`, spec §6.2), and from the browser
 //!   over WebTransport (`--webtransport`, spec §14 Phase 10 B3).
 
+// The headphones per viewer (spec §7.1.7 Q17).
+pub mod headphones;
 // What a hosting runs beside its game server: the router's port mappings
 // and the bundled voice server (spec §7.1.6 V2; native only).
 #[cfg(not(target_arch = "wasm32"))]
@@ -242,8 +244,12 @@ pub struct GameServer {
     /// The accounts of signed-in riders (spec §9.1), by connection.
     accounts: BTreeMap<ConnectionId, v1::Account>,
     /// The riders' status signs (spec §2.6), from their samples (and
-    /// `dev.bot_status` for bots); relayed in the snapshots, looks only.
+    /// `dev.bot_status` for bots); relayed in the snapshots without the
+    /// `not_hearing` lists, looks only.
     statuses: BTreeMap<RiderId, v1::RiderStatus>,
+    /// The headphones each connection's rider was last told it sees
+    /// (spec §7.1.7 Q17: `NotHearingYou`, worked out per viewer).
+    not_hearing_you: BTreeMap<ConnectionId, std::collections::BTreeSet<RiderId>>,
     /// The ride photographer's shots (spec §2.11, v4.38): each rider's
     /// checked shots, and those to relay to everyone with the next tick.
     photos: BTreeMap<RiderId, ocw_world::photo_share::ShotLog>,
@@ -445,6 +451,7 @@ impl GameServer {
             voice_apart: BTreeMap::new(),
             voice_audience: BTreeMap::new(),
             voice_hearing: BTreeMap::new(),
+            not_hearing_you: BTreeMap::new(),
             directed: Vec::new(),
         }
     }
@@ -930,6 +937,7 @@ impl GameServer {
         self.voice_apart.remove(&conn);
         self.voice_audience.remove(&conn);
         self.voice_hearing.remove(&conn);
+        self.not_hearing_you.remove(&conn);
         self.directed.retain(|(c, _)| *c != conn);
         if let Some(rider) = self.riders.remove(&conn) {
             self.statuses.remove(&rider);
@@ -1783,6 +1791,35 @@ impl GameServer {
         }
     }
 
+    /// The riders `conn`'s rider sees headphones on (spec §7.1.7 Q17), as
+    /// last told.
+    pub fn not_hearing_you(&self, conn: ConnectionId) -> std::collections::BTreeSet<RiderId> {
+        self.not_hearing_you.get(&conn).cloned().unwrap_or_default()
+    }
+
+    /// Works out for every viewer which riders cannot hear it (spec §7.1.7
+    /// Q17, [`headphones::cannot_hear`]) and tells each viewer whose set
+    /// changed (a [`v1::NotHearingYou`] to that rider alone). The riders'
+    /// lists stay here.
+    fn refresh_not_hearing_you(&mut self) {
+        let conns: Vec<(ConnectionId, RiderId)> =
+            self.riders.iter().map(|(c, r)| (*c, *r)).collect();
+        for (conn, rider) in conns {
+            let in_voice = self.statuses.get(&rider).is_some_and(|st| st.in_voice);
+            let set = headphones::cannot_hear(rider, in_voice, &self.statuses);
+            let before = self.not_hearing_you.get(&conn);
+            if before.map_or(set.is_empty(), |b| *b == set) {
+                continue;
+            }
+            let msg = v1::NotHearingYou {
+                riders: set.iter().map(|r| r.0).collect(),
+            };
+            self.directed
+                .push((conn, encode(&server_message(S::NotHearingYou(msg)))));
+            self.not_hearing_you.insert(conn, set);
+        }
+    }
+
     /// Takes the messages for single connections (a voice block's
     /// [`v1::VoiceApart`]): the embedding sends each only to its
     /// connection, after the tick's broadcast.
@@ -1998,6 +2035,8 @@ impl GameServer {
         // Voice by range (spec §7.1.7 Q6): with every snapshot, sent only
         // when it changes.
         self.refresh_voice_hearing();
+        // The headphones per viewer (spec §7.1.7 Q17).
+        self.refresh_not_hearing_you();
         let echo = self.session.echo_rider();
         // The signed-in riders' accounts (spec §9.1), once a second: the
         // stable key of a voice block or volume (§7.1.7 Q9).
@@ -2025,7 +2064,9 @@ impl GameServer {
                     damage: (all || changed.contains(&r.id))
                         .then(|| self.session.damage(r.id).map(ocw_protocol::damage_to_wire))
                         .flatten(),
-                    status: self.statuses.get(&r.id).cloned(),
+                    // Without the lists of whom a rider does not hear
+                    // (spec §7.1.7 Q17).
+                    status: self.statuses.get(&r.id).map(headphones::relayed),
                     account_id: accounts
                         .get(&r.id)
                         .map(|a| (*a).to_owned())
@@ -2919,6 +2960,153 @@ mod tests {
         }
     }
 
+    /// The headphones per viewer (spec §7.1.7 Q17 (b)): the server works
+    /// out for each rider which riders cannot hear it and tells only that
+    /// rider (`NotHearingYou`); no snapshot to any client carries a list
+    /// of whom a rider does not hear. Mutes and *Voice room* (the
+    /// clients' `not_hearing`) and *hears nobody* count; *Who hears me*
+    /// and the hearing range do not (Q12); a viewer outside the call sees
+    /// none; a rider who leaves takes them along.
+    #[test]
+    fn headphones_are_worked_out_per_viewer_and_no_list_leaves_the_server() {
+        let mut server = GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                allow_dev_commands: true,
+                voice: Some(voice::VoiceConfig::new(
+                    "ws://127.0.0.1:7880",
+                    "devkey",
+                    "devsecret",
+                )),
+                ..Default::default()
+            },
+        );
+        let (a, ra) = join_named(&mut server, "Ada Rider");
+        let (b, rb) = join_named(&mut server, "Bea Climber");
+        let (c, rc) = join_named(&mut server, "Cleo Sprinter");
+        let send = |server: &mut GameServer, conn, st: v1::RiderStatus| {
+            server.handle(
+                conn,
+                &encode(&client_message(C::Sample(v1::SensorSample {
+                    seq: 1,
+                    power_w: Some(0.0),
+                    status: Some(st),
+                    ..Default::default()
+                }))),
+            );
+        };
+        let st = |not_hearing: &[RiderId]| v1::RiderStatus {
+            in_voice: true,
+            not_hearing: not_hearing.iter().map(|r| r.0).collect(),
+            ..Default::default()
+        };
+        // Ticks; every message any client gets is checked: no snapshot
+        // carries a list; each NotHearingYou goes to its rider only.
+        let run = |server: &mut GameServer| -> BTreeMap<ConnectionId, Vec<u32>> {
+            let mut told = BTreeMap::new();
+            for _ in 0..TICKS_PER_BROADCAST * 2 {
+                let out = server.tick();
+                let directed = server.take_directed();
+                let all = out
+                    .iter()
+                    .map(|m| (None, m))
+                    .chain(directed.iter().map(|(c, m)| (Some(*c), m)));
+                for (to, m) in all {
+                    match decode_server(m) {
+                        Ok(S::Snapshot(s)) => {
+                            for r in &s.riders {
+                                let list = r.status.as_ref().map_or(0, |st| st.not_hearing.len());
+                                assert_eq!(list, 0, "a list in a snapshot: {r:?}");
+                            }
+                        }
+                        Ok(S::NotHearingYou(n)) => {
+                            let to = to.expect("never broadcast");
+                            told.insert(to, n.riders);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            told
+        };
+        let seen = |server: &GameServer, conn| -> Vec<u32> {
+            server.not_hearing_you(conn).iter().map(|r| r.0).collect()
+        };
+        for conn in [a, b, c] {
+            send(&mut server, conn, st(&[]));
+        }
+        assert!(
+            run(&mut server).is_empty(),
+            "nobody sees headphones: nothing said"
+        );
+        // Mutes: Bea muted Ada for herself – Ada alone sees headphones on Bea.
+        send(&mut server, b, st(&[ra]));
+        let told = run(&mut server);
+        assert_eq!(told.get(&a), Some(&vec![rb.0]));
+        assert_eq!(told.len(), 1, "only Ada is told: {told:?}");
+        assert!(seen(&server, b).is_empty() && seen(&server, c).is_empty());
+        // Voice room: Cleo listens to *Selected riders* (Bea only), so her
+        // client does not hear Ada – Ada sees headphones on Bea and Cleo.
+        send(&mut server, c, st(&[ra]));
+        let told = run(&mut server);
+        assert_eq!(told.get(&a), Some(&vec![rb.0, rc.0]));
+        assert_eq!(seen(&server, b), Vec::<u32>::new());
+        // *Who hears me: No one* (Ada): nobody may hear Ada, but that is not
+        // "cannot hear you" – nothing changes.
+        server.handle(
+            a,
+            &encode(&client_message(C::VoiceAudience(v1::VoiceAudience {
+                heard_by: v1::VoiceHeardBy::NoOne as i32,
+                ..Default::default()
+            }))),
+        );
+        assert!(run(&mut server).is_empty());
+        assert!(server.voice_hearing(a).heard_by.is_empty());
+        assert_eq!(seen(&server, a), [rb.0, rc.0]);
+        // Range (Q20): Cleo rides 1 km ahead – out of hearing for all, yet
+        // the headphones still say only what the riders chose.
+        server.handle(
+            c,
+            &encode(&client_message(C::Dev(v1::DevCommand {
+                cmd: Some(v1::dev_command::Cmd::TeleportDistanceM(1000.0)),
+            }))),
+        );
+        send(&mut server, c, st(&[]));
+        run(&mut server);
+        assert!(server.voice_hearing(c).may_hear.is_empty(), "out of range");
+        assert_eq!(seen(&server, a), [rb.0], "distance is no reason");
+        assert!(seen(&server, c).is_empty());
+        // Hears nobody (Cleo's speaker muted): every viewer in the call
+        // sees it, at any distance; a viewer outside the call sees none.
+        send(
+            &mut server,
+            c,
+            v1::RiderStatus {
+                hears_nobody: true,
+                ..st(&[])
+            },
+        );
+        send(
+            &mut server,
+            b,
+            v1::RiderStatus {
+                in_voice: false,
+                ..Default::default()
+            },
+        );
+        let told = run(&mut server);
+        assert_eq!(seen(&server, a), [rc.0], "Bea left the call: no reason now");
+        assert_eq!(told.get(&b), None, "Bea saw none and sees none");
+        assert!(seen(&server, b).is_empty());
+        // A rider who leaves takes the headphones along.
+        send(&mut server, b, st(&[ra]));
+        run(&mut server);
+        assert_eq!(seen(&server, a), [rb.0, rc.0]);
+        server.disconnect(b);
+        let told = run(&mut server);
+        assert_eq!(told.get(&a), Some(&vec![rc.0]));
+    }
+
     /// The status signs (spec §2.6): relayed from the samples into the
     /// snapshots, `dev.bot_status` for bots, gone with the rider.
     #[test]
@@ -2953,7 +3141,10 @@ mod tests {
         let mine = s.riders.iter().find(|r| r.rider_id == me).unwrap();
         let st = mine.status.as_ref().expect("relayed");
         assert!(st.voice_muted && st.in_menu && !st.in_vr);
-        assert_eq!(st.not_hearing, vec![3, 9], "sorted, once each");
+        // The list of whom the rider does not hear stays here (spec
+        // §7.1.7 Q17), kept sorted, once each.
+        assert!(st.not_hearing.is_empty(), "never relayed: {st:?}");
+        assert_eq!(server.statuses[&RiderId(me)].not_hearing, vec![3, 9]);
         assert!(
             s.riders
                 .iter()

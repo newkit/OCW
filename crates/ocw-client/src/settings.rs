@@ -464,6 +464,18 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::App,
     },
+    // Ride → Host a ride (spec §7.1.7 Q15): voice chat on the hosted
+    // ride – the bundled voice server starts with it; read at *Start
+    // hosting*, switched on the wizard's Options page (`host.plan voice`).
+    // The headless server has `--voice off`.
+    SettingDef {
+        key: "host.voice",
+        kind: Kind::Bool,
+        default: "on",
+        description: "Host a ride: voice chat on the hosted ride (off: no voice server, the riders have no voice on it)",
+        scope: Scope::Live,
+        apply: Apply::App,
+    },
     SettingDef {
         key: "ride.bots",
         kind: Kind::Int {
@@ -1099,6 +1111,7 @@ const NOT_IN_BROWSER: &[&str] = &[
     "activities.folder",
     // Hosting needs the desktop app (browsers cannot open a port).
     "host.upnp",
+    "host.voice",
     // The browser has no API upload (spec 2.8.1: the simple upload only).
     "strava.auto_upload",
 ];
@@ -1559,6 +1572,28 @@ mod tests {
         let (s, w) = Settings::parse("[host]\nupnp = false\n").unwrap();
         assert!(w.is_empty(), "{w:?}");
         assert_eq!(s.get("host.upnp").unwrap(), Value::Bool(false));
+    }
+
+    /// Host a ride has voice chat by default (spec §7.1.7 Q15), saved in
+    /// `[host]` like the router switch; desktop only.
+    #[test]
+    fn host_voice_is_on_by_default_and_desktop_only() {
+        let s = Settings::default();
+        assert_eq!(s.get("host.voice").unwrap(), Value::Bool(true));
+        assert!(applies("host.voice", crate::menu::model::Platform::Desktop));
+        assert!(!applies(
+            "host.voice",
+            crate::menu::model::Platform::Browser
+        ));
+        let (mut s, w) = Settings::parse("[host]\nvoice = false\n").unwrap();
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!(s.get("host.voice").unwrap(), Value::Bool(false));
+        s.set("host.voice", "on").unwrap();
+        let text = s.to_toml();
+        assert!(
+            text.contains("[host]") && text.contains("voice = true"),
+            "{text}"
+        );
     }
 
     /// The other riders' photographers are shown by default, in both apps
