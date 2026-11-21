@@ -153,7 +153,11 @@ impl WebAudio {
     pub fn apply(&mut self, msgs: Vec<MixerMsg>) {
         let plays = self.plays();
         for m in msgs {
-            if matches!(m, MixerMsg::Cue(..)) && !plays {
+            if matches!(
+                m,
+                MixerMsg::Cue(..) | MixerMsg::PlacedCue(..) | MixerMsg::SpatialCue(..)
+            ) && !plays
+            {
                 continue;
             }
             self.mixer().apply(m);

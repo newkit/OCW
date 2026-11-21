@@ -18,6 +18,7 @@ use ocw_audio::mix::Mix;
 use ocw_audio::mixer::MixerMsg;
 use ocw_audio::others;
 use ocw_audio::ride::{self, RideInput, RideParams, ride_params};
+use ocw_audio::spatial::{self, Placement};
 use ocw_audio::weather::{self, ThunderSound, WeatherParams};
 use ocw_core::RiderId;
 use ocw_render::RideView;
@@ -157,7 +158,10 @@ impl AudioFeed {
         }
         self.weather(f, &mut out);
         let now = Instant::now();
-        out.extend(self.cues(f).into_iter().map(|c| MixerMsg::Cue(c, now)));
+        out.extend(self.cues(f).into_iter().map(|(c, at)| match at {
+            Some(p) => MixerMsg::SpatialCue(c, p, now),
+            None => MixerMsg::Cue(c, now),
+        }));
         out
     }
 
@@ -241,10 +245,13 @@ impl AudioFeed {
 
     /// UI sounds from the menu's changes, the countdown beeps and the
     /// finish chime from the event view, the step cue from the workout,
-    /// the contact sounds, the rub, the unicorn's sounds.
-    fn cues(&mut self, f: &FeedFrame) -> Vec<Cue> {
+    /// the contact sounds, the rub, the unicorn's sounds. Another rider's
+    /// bump or crash comes with where it is heard (spec §14 Phase 12C:
+    /// placed like the others' bikes); every other cue plays in the centre.
+    fn cues(&mut self, f: &FeedFrame) -> Vec<(Cue, Option<Placement>)> {
         let watch = &mut self.watch;
         let mut cues = Vec::new();
+        let mut placed = Vec::new();
         if let Some(m) = f.menu {
             let now = MenuSnapshot {
                 open: m.open,
@@ -270,7 +277,9 @@ impl AudioFeed {
                         .map(|c| c.phase == ocw_sim::collide::CrashPhase::Remount),
                 })
                 .collect();
-            cues.extend(contact_cues(&mut watch.contacts, &riders, r.proximity));
+            for c in contact_cues(&mut watch.contacts, &riders, r.proximity) {
+                placed.push((c.cue, c.from.and_then(|id| contact_place(r, RiderId(id)))));
+            }
             let event = r.event.as_ref();
             let countdown = event.and_then(|e| e.countdown.clone());
             cues.extend(countdown_cue(
@@ -315,9 +324,29 @@ impl AudioFeed {
             }
             watch.workout = Some(n);
         }
-        cues
+        // The contact cues where they were (the others' placed), then the
+        // rest.
+        placed.extend(cues.into_iter().map(|c| (c, None)));
+        placed
     }
 }
+
+/// Where another rider's bump or crash is heard by the own rider (spec
+/// §14 Phase 12C): at that rider's bike on the road, low (the fall is on
+/// the ground), heard at the own head like the others' bikes
+/// ([`spatial::place`]: distance, direction, air). `None` without the own
+/// rider (played in the centre then).
+fn contact_place(view: &RideView, id: RiderId) -> Option<Placement> {
+    let me = view.local()?;
+    let other = view.riders.iter().find(|r| r.id == id)?;
+    let listener = others::listener(view.track(me.id), &me.state);
+    let (pos, velocity) = others::on_track(view.track(id), &other.state, CONTACT_HEIGHT_M);
+    Some(spatial::place(&listener, pos, velocity))
+}
+
+/// Height of a contact's sound above the road (m): the bikes' wheels and
+/// a fall on the ground.
+pub const CONTACT_HEIGHT_M: f64 = 0.4;
 
 /// Advances a rhythm's phase by `hz × dt`: whether it crossed a whole
 /// beat (nothing while the rate is 0).
@@ -446,7 +475,7 @@ mod tests {
         let cues = |msgs: Vec<MixerMsg>| -> Vec<Cue> {
             msgs.into_iter()
                 .filter_map(|m| match m {
-                    MixerMsg::Cue(c, _) => Some(c),
+                    MixerMsg::Cue(c, _) | MixerMsg::SpatialCue(c, _, _) => Some(c),
                     _ => None,
                 })
                 .collect()
@@ -501,5 +530,68 @@ mod tests {
             })
             .sum();
         assert!((4..=5).contains(&rubs), "{rubs} rubs in 1 s at 9 m/s");
+    }
+
+    /// Spec §14 Phase 12C: another rider's crash and bump are heard where
+    /// they happen (left or right, nearer or farther), the own crash in
+    /// the centre.
+    #[test]
+    fn the_others_crashes_and_bumps_are_placed_the_own_is_not() {
+        let crash = Some(ocw_sim::collide::CrashView {
+            phase: ocw_sim::collide::CrashPhase::Falling,
+            elapsed_s: 0.1,
+            down_s: 3.0,
+            kind: ocw_sim::collide::ContactKind::Side,
+            by: None,
+            impulse: [0.0, 0.0],
+            speed: 8.0,
+        });
+        let heard = |feed: &mut AudioFeed, view: &RideView| -> Vec<(Cue, Option<Placement>)> {
+            feed.frame(&FeedFrame {
+                view: Some(view),
+                ..Default::default()
+            })
+            .into_iter()
+            .filter_map(|m| match m {
+                MixerMsg::Cue(c, _) => Some((c, None)),
+                MixerMsg::SpatialCue(c, p, _) => Some((c, Some(p))),
+                _ => None,
+            })
+            .collect()
+        };
+        let mut view = RideView::new(Route::test_loop());
+        let mut left = rider(2, 106.0, 9.0, false);
+        left.state.lateral_offset = -2.5;
+        let mut right = rider(3, 112.0, 9.0, false);
+        right.state.lateral_offset = 2.5;
+        let far = rider(4, 135.0, 9.0, false);
+        view.riders = vec![rider(1, 100.0, 9.0, true), left, right, far];
+        let mut feed = AudioFeed::default();
+        heard(&mut feed, &view);
+        view.riders[1].crash = crash;
+        view.riders[2].wobble = 0.08;
+        view.riders[3].crash = crash;
+        let got = heard(&mut feed, &view);
+        assert_eq!(got.len(), 3, "{got:?}");
+        let (c, p) = got[0];
+        let p = p.expect("placed");
+        assert_eq!(c, Cue::Crash);
+        assert!(p.pan < -0.2 && p.left > p.right, "on the left: {p:?}");
+        let (c, p) = got[1];
+        let near = p.expect("placed");
+        assert_eq!(c, Cue::Bump);
+        assert!(
+            near.pan > 0.1 && near.right > near.left,
+            "on the right: {near:?}"
+        );
+        let (c, p) = got[2];
+        let far = p.expect("placed");
+        assert_eq!(c, Cue::Crash);
+        assert!(far.gain < 0.5 * near.gain, "farther, quieter: {far:?}");
+        assert!(far.air_cutoff_hz < near.air_cutoff_hz);
+        // The own crash: in the centre (not placed).
+        view.riders[0].crash = crash;
+        let got = heard(&mut feed, &view);
+        assert_eq!(got, [(Cue::Crash, None)]);
     }
 }

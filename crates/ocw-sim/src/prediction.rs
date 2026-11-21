@@ -3,7 +3,9 @@
 use ocw_core::{RiderProfile, SIM_DT};
 use ocw_world::Track;
 
-use crate::collide::{Body, Mode, Skid, WorldCache};
+use ocw_core::RiderId;
+
+use crate::collide::{self, Body, Frame, Mode, Response, Skid, WorldCache};
 use crate::physics::{self, RiderState, Steering};
 use crate::ride::{self, Controls};
 
@@ -11,6 +13,16 @@ use crate::ride::{self, Controls};
 pub const SNAP_THRESHOLD_M: f64 = 5.0;
 /// Time over which smaller errors are blended away, in seconds.
 pub const CORRECTION_TIME_S: f64 = 0.5;
+/// A predicted contact with another rider pushes the own rider at most
+/// this far in one tick (m; spec 14 Phase 12, 12B): a natural contact
+/// overlaps by a centimetre or two a tick and is resolved at once, as on
+/// the server; a large overlap only comes from news (a rider first seen
+/// in a snapshot, a teleport) and is pushed out over a few ticks – the
+/// sideways step stays under the 6 cm of the client's test.
+pub const PREDICTED_PUSH_MAX_M: f64 = 0.025;
+/// Other riders farther than this from the own rider (m, in the plane)
+/// are left out of the predicted contacts.
+pub const OTHERS_NEAR_M: f64 = 8.0;
 
 /// Predicts the local rider so the bike reacts to pedaling immediately, and
 /// converges smoothly to the authoritative server state.
@@ -52,6 +64,22 @@ pub struct Predictor {
     /// The skid of a lean beyond the wet road's grip (S6 → Phase 12: the
     /// speed it costs, as on the server; the fall is only the server's).
     skid: Skid,
+    /// The other riders as last known (spec 14 Phase 12, 6.1): their
+    /// bodies in the collision frame, moved on with their speed each tick;
+    /// the own rider's contacts with them are predicted with the server's
+    /// code (`collide::resolve`).
+    others: Vec<Body>,
+    frame: Frame,
+    /// What the last step's predicted contacts did to the others (the
+    /// client moves its copies of them alike).
+    other_responses: Vec<(RiderId, Response)>,
+    /// A ghost to other riders, as on the server after a join (12A,
+    /// `session::JOIN_GHOST_S`): for these ticks, then until clear.
+    ghost_ticks: u32,
+    solid: bool,
+    /// Ticks of the rider contacts (the tie's coin; crashes are the
+    /// server's anyway).
+    rider_ticks: u64,
 }
 
 impl Predictor {
@@ -74,7 +102,174 @@ impl Predictor {
             weather: None,
             damage: crate::damage::Effects::NONE,
             skid: Skid::default(),
+            others: Vec::new(),
+            frame: Frame::Path { loop_m: None },
+            other_responses: Vec::new(),
+            ghost_ticks: Self::GHOST_TICKS,
+            solid: false,
+            rider_ticks: 0,
         }
+    }
+
+    const GHOST_TICKS: u32 = (crate::session::JOIN_GHOST_S / SIM_DT + 0.5) as u32;
+
+    /// The other riders for the next steps (spec 14 Phase 12, 6.1): their
+    /// last known bodies in `frame` (a route's path frame, or the world in
+    /// free ride; fallen riders as obstacles). The own rider's contacts
+    /// with them are predicted; crashes, wobbles and damage stay the
+    /// server's.
+    pub fn set_others(&mut self, frame: Frame, others: Vec<Body>) {
+        self.frame = frame;
+        self.others = others;
+    }
+
+    /// What the last step's predicted contacts did to each other rider
+    /// touched (their push along and beside their road, speed, heading).
+    pub fn other_responses(&self) -> &[(RiderId, Response)] {
+        &self.other_responses
+    }
+
+    /// Joined (again): a ghost to the other riders for
+    /// `session::JOIN_GHOST_S` and then until clear of them, as the server
+    /// keeps a new client rider.
+    pub fn rejoin(&mut self) {
+        self.ghost_ticks = Self::GHOST_TICKS;
+        self.solid = false;
+    }
+
+    /// Takes part in the predicted rider contacts (no longer a ghost).
+    pub fn solid(&self) -> bool {
+        self.solid
+    }
+
+    /// The own rider's body in the collision frame.
+    fn own_body(&self, state: &RiderState, route: &dyn Track, controls: Controls) -> Body {
+        let (pos, road) = match self.frame {
+            Frame::Path { .. } => ([state.distance, state.lateral_offset], [1.0, 0.0]),
+            Frame::World => {
+                let p = route.sample(state.distance);
+                let at = p.offset_position(state.lateral_offset);
+                ([at[0], at[2]], p.direction)
+            }
+        };
+        Body {
+            id: RiderId(u32::MAX),
+            pos,
+            road,
+            heading: state.heading,
+            speed: state.speed,
+            lean: collide::lean_of(state.speed, state.turn_curvature),
+            mass: self.profile.rider_mass_kg + self.profile.bike_mass_kg,
+            fallen: false,
+            manual: matches!(controls.steering, Steering::Lean(_)) || controls.wild,
+            grip: crate::weather::grip(self.weather.as_ref(), route, state),
+        }
+    }
+
+    /// One tick of the contacts with the other riders (after the physics
+    /// step, before the world's, as on the server): the others moved on a
+    /// tick, then `collide::resolve` over the own body and the near ones.
+    /// The own push (at most [`PREDICTED_PUSH_MAX_M`]), speed and heading
+    /// are applied to `state`, the others' responses to their bodies and
+    /// returned.
+    fn rider_tick(
+        &self,
+        state: &mut RiderState,
+        route: &dyn Track,
+        controls: Controls,
+        others: &mut [Body],
+        solid: bool,
+        tick: u64,
+    ) -> Vec<(RiderId, Response)> {
+        for b in others.iter_mut() {
+            let v = b.velocity();
+            b.pos[0] += v[0] * SIM_DT;
+            b.pos[1] += v[1] * SIM_DT;
+        }
+        if !solid || !self.mode.on() || others.is_empty() {
+            return Vec::new();
+        }
+        let own = self.own_body(state, route, controls);
+        let near: Vec<usize> = (0..others.len())
+            .filter(|&i| self.plane_distance(&own, &others[i]) < OTHERS_NEAR_M)
+            .collect();
+        if near.is_empty() {
+            return Vec::new();
+        }
+        let mut bodies = Vec::with_capacity(near.len() + 1);
+        bodies.push(own);
+        bodies.extend(near.iter().map(|&i| others[i]));
+        let out = collide::resolve(&bodies, self.frame, self.mode, tick);
+        let mine = out[0];
+        if mine.touched() {
+            let push = mine.ds.hypot(mine.dd);
+            let k = if push > PREDICTED_PUSH_MAX_M {
+                PREDICTED_PUSH_MAX_M / push
+            } else {
+                1.0
+            };
+            let limit = if controls.wild {
+                physics::WILD_LIMIT_M
+            } else {
+                physics::lateral_limit(route.road_width_at(state.distance))
+            };
+            state.distance += mine.ds * k;
+            state.lateral_offset = (state.lateral_offset + mine.dd * k).clamp(-limit, limit);
+            if let Some(v) = mine.speed {
+                state.speed = v;
+            }
+            if let Some(h) = mine.heading {
+                state.heading = h;
+            }
+        }
+        let mut touched = Vec::new();
+        for (j, &i) in near.iter().enumerate() {
+            let r = out[j + 1];
+            if !r.touched() {
+                continue;
+            }
+            let b = &mut others[i];
+            let right = b.road_right();
+            b.pos[0] += b.road[0] * r.ds + right[0] * r.dd;
+            b.pos[1] += b.road[1] * r.ds + right[1] * r.dd;
+            if let Some(v) = r.speed {
+                b.speed = v;
+            }
+            if let Some(h) = r.heading {
+                b.heading = h;
+            }
+            touched.push((b.id, r));
+        }
+        touched
+    }
+
+    /// Distance of two bodies in the plane (a loop's path frame wraps).
+    fn plane_distance(&self, a: &Body, b: &Body) -> f64 {
+        let mut dx = b.pos[0] - a.pos[0];
+        if let Frame::Path { loop_m: Some(l) } = self.frame
+            && l > 0.0
+        {
+            dx -= l * (dx / l).round();
+        }
+        dx.hypot(b.pos[1] - a.pos[1])
+    }
+
+    /// The ghost after a join counts down; then solid once the own body
+    /// overlaps nobody (as the server's `joining` rule).
+    fn ghost_tick(&mut self, route: &dyn Track) {
+        if self.solid {
+            return;
+        }
+        if self.ghost_ticks > 0 {
+            self.ghost_ticks -= 1;
+            return;
+        }
+        let own = self.own_body(&self.state, route, self.controls);
+        let mut bodies = vec![own];
+        bodies.extend(self.others.iter().copied());
+        self.solid = !collide::detect(&bodies, self.frame)
+            .iter()
+            .any(|c| c.a == 0 || c.b == 0);
     }
 
     /// One tick of the skid after the physics step (as the server's step).
@@ -280,6 +475,20 @@ impl Predictor {
         let mut capped = self.state;
         self.damage_cap(&mut capped);
         self.state = capped;
+        self.rider_ticks += 1;
+        let mut state = self.state;
+        let mut others = std::mem::take(&mut self.others);
+        self.other_responses = self.rider_tick(
+            &mut state,
+            route,
+            controls,
+            &mut others,
+            self.solid,
+            self.rider_ticks,
+        );
+        self.others = others;
+        self.state = state;
+        self.ghost_tick(route);
         let mut state = self.state;
         self.world_tick(&mut state, route);
         self.state = state;
@@ -314,6 +523,9 @@ impl Predictor {
         let mut scraping = self.scraping;
         let mut skid = self.skid;
         let (profile, power_w, controls) = self.damaged(power_w);
+        // The others as the same snapshot shows them, moved on with the
+        // extrapolation (their contacts with the own rider included).
+        let mut others = self.others.clone();
         for _ in 0..steps {
             ride::tick_in(
                 &mut extrapolated,
@@ -328,6 +540,14 @@ impl Predictor {
             );
             self.skid_tick(&mut skid, &mut extrapolated, route, controls);
             self.damage_cap(&mut extrapolated);
+            self.rider_tick(
+                &mut extrapolated,
+                route,
+                controls,
+                &mut others,
+                self.solid,
+                self.rider_ticks,
+            );
             self.world_tick(&mut extrapolated, route);
         }
         let error = extrapolated.distance - self.state.distance;
@@ -598,5 +818,145 @@ mod tests {
         let server = s.rider_state(id).unwrap();
         assert_eq!(p.state(), server);
         assert!(server.speed < free.state().speed - 0.3, "{server:?}");
+    }
+
+    /// The bodies of the session's riders but `me`, as the client sees
+    /// them in a snapshot (the path frame of a route).
+    fn others_of(s: &crate::session::Session, me: RiderId, ids: &[RiderId]) -> Vec<Body> {
+        let mass = RiderProfile::default().rider_mass_kg + RiderProfile::default().bike_mass_kg;
+        ids.iter()
+            .filter(|id| **id != me)
+            .map(|id| {
+                let st = s.rider_state(*id).unwrap();
+                let mut b = Body::on_path(
+                    *id,
+                    st.distance,
+                    st.lateral_offset,
+                    st.heading,
+                    st.speed,
+                    mass,
+                );
+                b.lean = collide::lean_of(st.speed, st.turn_curvature);
+                b
+            })
+            .collect()
+    }
+
+    /// Spec 14 Phase 12 (6.1): the own rider leaning into a rider beside
+    /// is pushed off by the prediction as the server pushes it – the same
+    /// code (`collide::resolve`) – where a prediction without the others
+    /// rides into the other rider and is corrected only by the server.
+    #[test]
+    fn a_bump_with_another_rider_is_predicted_as_the_server_resolves_it() {
+        let route = flat();
+        let mut s = crate::session::Session::new(route.clone());
+        s.set_collisions(true);
+        let me = s.add_rider("Ada Rider", RiderProfile::default());
+        let other = s.add_rider("Bea Climber", RiderProfile::default());
+        for _ in 0..=110 {
+            s.step();
+        }
+        let start = RiderState {
+            distance: 100.0,
+            speed: 8.0,
+            ..Default::default()
+        };
+        s.set_rider_state(me, start);
+        s.set_rider_state(
+            other,
+            RiderState {
+                distance: 100.3,
+                lateral_offset: 0.75,
+                speed: 8.0,
+                ..Default::default()
+            },
+        );
+        s.set_lean(me, 1, 0.06);
+        let ids = [me, other];
+        let mut p = Predictor::new(RiderProfile::default(), start);
+        p.set_collision_mode(Mode::Full);
+        p.set_lean(0.06);
+        p.solid = true;
+        let mut blind = p.clone();
+        let (mut err, mut blind_err, mut pushed) = (0.0f64, 0.0f64, false);
+        for _ in 0..60 {
+            p.set_others(Frame::Path { loop_m: None }, others_of(&s, me, &ids));
+            s.step();
+            p.step(&route, 0.0);
+            blind.step(&route, 0.0);
+            pushed |= !p.other_responses().is_empty();
+            let server = s.rider_state(me).unwrap();
+            err = err.max((p.state().lateral_offset - server.lateral_offset).abs());
+            blind_err = blind_err.max((blind.state().lateral_offset - server.lateral_offset).abs());
+        }
+        let stats = s.collision_stats();
+        assert!(stats.bumps > 0 && stats.crashes == 0, "{stats:?}");
+        assert!(pushed, "the other rider was pushed in the prediction too");
+        eprintln!("lateral error: predicted {err} m, without the others {blind_err} m");
+        assert!(err < 0.01, "predicted like the server: {err}");
+        assert!(blind_err > 0.05, "without the others: {blind_err}");
+    }
+
+    /// The prediction's contacts are the server's only where the server
+    /// would see them: none while a ghost after the join (2 s, then until
+    /// clear), none with collisions off; a large overlap (a rider first
+    /// seen in a snapshot) is pushed out a little per tick, never at once.
+    #[test]
+    fn predicted_rider_contacts_wait_for_the_ghost_and_never_jump() {
+        let route = flat();
+        let start = RiderState {
+            distance: 100.0,
+            speed: 8.0,
+            ..Default::default()
+        };
+        let mass = RiderProfile::default().rider_mass_kg + RiderProfile::default().bike_mass_kg;
+        let path = Frame::Path { loop_m: None };
+        // Half a body width into the own rider, on its right.
+        let beside = |s: f64, d: f64| vec![Body::on_path(RiderId(7), s, d, 0.0, 8.0, mass)];
+        let mut p = Predictor::new(RiderProfile::default(), start);
+        p.set_collision_mode(Mode::Full);
+        p.set_lateral_target(0.0);
+        for _ in 0..90 {
+            p.set_others(path, beside(p.state().distance, 0.25));
+            p.step(&route, 200.0);
+            assert!(p.other_responses().is_empty() && !p.solid(), "a ghost");
+        }
+        assert!(p.state().lateral_offset.abs() < 1e-9);
+        // Past the 2 s, but still overlapping: a ghost until clear.
+        for _ in 0..30 {
+            p.set_others(path, beside(p.state().distance, 0.25));
+            p.step(&route, 200.0);
+        }
+        assert!(!p.solid());
+        p.set_others(path, Vec::new());
+        p.step(&route, 200.0);
+        assert!(p.solid(), "clear: solid");
+        // Now the overlap is pushed out, at most 2.5 cm a tick.
+        let mut last = p.state().lateral_offset;
+        let mut moved = 0.0;
+        for _ in 0..20 {
+            p.set_others(path, beside(p.state().distance, 0.25));
+            p.step(&route, 200.0);
+            let d = p.state().lateral_offset;
+            assert!(
+                (d - last).abs() <= PREDICTED_PUSH_MAX_M + 1e-9,
+                "{}",
+                d - last
+            );
+            moved += last - d;
+            last = d;
+        }
+        assert!(moved > 0.1, "pushed to the left: {moved}");
+        // Collisions off: nothing.
+        let mut off = p.clone();
+        off.set_collision_mode(Mode::Off);
+        let before = off.state().lateral_offset;
+        off.set_others(path, beside(off.state().distance, before + 0.2));
+        off.step(&route, 200.0);
+        assert!(off.other_responses().is_empty());
+        assert!((off.state().lateral_offset - before).abs() < 0.03);
+        // A rejoin makes it a ghost again.
+        p.rejoin();
+        assert!(!p.solid());
     }
 }

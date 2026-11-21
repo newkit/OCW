@@ -138,6 +138,12 @@ pub struct ClientCore {
     /// Latest known state of the other riders, advanced every physics tick
     /// (for predicting the local rider's drafting).
     others_now: Vec<(RiderId, RiderState)>,
+    /// Others flying in god mode in the last snapshot (out of the
+    /// collisions, spec §14 Phase 13).
+    flying_others: Vec<RiderId>,
+    /// The own rider's contacts with the others are predicted (spec §14
+    /// Phase 12, 6.1; on – off only for measurements).
+    predict_rider_contacts: bool,
     names: BTreeMap<RiderId, (String, f64)>,
     /// Every rider's bike and look from the snapshots (no look: an old
     /// server; the renderer picks colours).
@@ -261,6 +267,8 @@ impl ClientCore {
             steer_sent: None,
             others: SnapshotBuffer::default(),
             others_now: Vec::new(),
+            flying_others: Vec::new(),
+            predict_rider_contacts: true,
             names: BTreeMap::new(),
             looks: BTreeMap::new(),
             status: v1::RiderStatus::default(),
@@ -667,6 +675,9 @@ impl ClientCore {
                 self.god_access = Some(ocw_protocol::access_from_wire(w.god_access));
                 self.collisions.on_welcome(&w);
                 self.damage.on_welcome(&w);
+                // A ghost to the others again for the first seconds, as
+                // the server keeps a joining rider (spec §14 Phase 12A).
+                self.predictor.rejoin();
                 if let Some(c) = &w.clock {
                     self.on_clock(c, now_s);
                 }
@@ -925,6 +936,8 @@ impl ClientCore {
             .set_damage(self.damage.effects(self.rider_id));
         let mut others = Vec::new();
         let mut gods = Vec::new();
+        let mut reconcile_with = None;
+        let mut own_seen = false;
         for u in &s.riders {
             let (id, state) = dequantize(u);
             let god = ocw_protocol::rider_god(u);
@@ -952,6 +965,7 @@ impl ClientCore {
             }
             self.build_hashes.insert(id, u.build_hash);
             if Some(id) == self.rider_id {
+                own_seen = true;
                 self.hearts = self.hearts.max(u.hearts);
                 self.event.on_own_snapshot(s.server_tick, state.distance);
                 if self.lateral_target.is_none() {
@@ -959,11 +973,6 @@ impl ClientCore {
                     self.lateral_target = Some(state.lateral_offset);
                     self.predictor.set_lateral_target(state.lateral_offset);
                 }
-                let power = self.power_w();
-                let track: &dyn Track = match self.free.as_ref().and_then(|f| f.own.as_deref()) {
-                    Some(p) => p,
-                    None => &self.route,
-                };
                 // Down after a crash (spec §14 Phase 12C): the server's state
                 // (a crash is only shown when the server says so).
                 // Stopped by the road (a repair, a medical stop, spec §14
@@ -985,12 +994,8 @@ impl ClientCore {
                     self.predictor.set_state(state);
                     self.prev_state = state;
                 } else {
-                    self.predictor
-                        .reconcile(track, state, self.snapshot_age_s, power);
-                }
-                // A snap (teleport, large error) must not be interpolated.
-                if self.predictor.last_error().abs() > ocw_sim::prediction::SNAP_THRESHOLD_M {
-                    self.prev_state = self.predictor.state();
+                    // After the loop: with the others of this snapshot.
+                    reconcile_with = Some(state);
                 }
             } else {
                 others.push((id, state));
@@ -1010,7 +1015,40 @@ impl ClientCore {
         }
         self.accounts
             .retain(|id, _| s.riders.iter().any(|u| u.rider_id == id.0));
-        self.others_now = others.clone();
+        let flying: Vec<RiderId> = gods.iter().map(|(id, _)| *id).collect();
+        if let Some(state) = reconcile_with {
+            // The own rider's contacts with the others are predicted from
+            // where this snapshot shows them (spec §14 Phase 12, 6.1).
+            let (frame, bodies) = self.other_bodies(&others, &flying);
+            self.predictor.set_others(frame, bodies);
+            let power = self.power_w();
+            let track: &dyn Track = match self.free.as_ref().and_then(|f| f.own.as_deref()) {
+                Some(p) => p,
+                None => &self.route,
+            };
+            self.predictor
+                .reconcile(track, state, self.snapshot_age_s, power);
+        }
+        if own_seen {
+            // A snap (teleport, large error) must not be interpolated.
+            if self.predictor.last_error().abs() > ocw_sim::prediction::SNAP_THRESHOLD_M {
+                self.prev_state = self.predictor.state();
+            }
+        }
+        // The others' last known places now: the snapshot's, moved on by
+        // its age (half the round trip).
+        let age = self.snapshot_age_s;
+        self.others_now = others
+            .iter()
+            .map(|(id, st)| {
+                let mut st = *st;
+                if !self.collisions.crashed(*id) {
+                    st.distance += st.speed * age;
+                }
+                (*id, st)
+            })
+            .collect();
+        self.flying_others = flying;
         self.others.push(now_s, others);
         self.god_others.on_snapshot(&gods, now_s);
     }
@@ -1554,15 +1592,93 @@ impl ClientCore {
         self.predictor.set_drag_factor(drag);
         self.prev_state = self.predictor.state();
         let power = self.power_w();
+        self.predictor.set_collision_mode(self.collisions.mode());
+        let (frame, bodies) = self.other_bodies(&self.others_now, &self.flying_others);
+        self.predictor.set_others(frame, bodies);
         let track: &dyn Track = match self.free.as_ref().and_then(|f| f.own.as_deref()) {
             Some(p) => p,
             None => &self.route,
         };
-        self.predictor.set_collision_mode(self.collisions.mode());
         self.predictor.step(track, power);
+        // The predicted contacts moved the others too (until the next
+        // snapshot says where they are).
+        for (id, r) in self.predictor.other_responses() {
+            if let Some((_, o)) = self.others_now.iter_mut().find(|(o, _)| o == id) {
+                o.distance += r.ds;
+                o.lateral_offset += r.dd;
+                if let Some(v) = r.speed {
+                    o.speed = v;
+                }
+                if let Some(h) = r.heading {
+                    o.heading = h;
+                }
+            }
+        }
         for (_, o) in &mut self.others_now {
             o.distance += o.speed * ocw_core::SIM_DT;
         }
+    }
+
+    /// The other riders as the prediction's collision bodies (spec §14
+    /// Phase 12, 6.1): from their last known road states, in a route's
+    /// path frame or – in free ride, on their own paths – the world's
+    /// plane. Riders flying in god mode and the Echo rider are not solid
+    /// (as on the server), fallen riders are obstacles. Their masses are
+    /// not sent: the default profile's (the server's response corrects
+    /// the difference).
+    fn other_bodies(
+        &self,
+        states: &[(RiderId, RiderState)],
+        flying: &[RiderId],
+    ) -> (ocw_sim::collide::Frame, Vec<ocw_sim::collide::Body>) {
+        use ocw_sim::collide::{Body, Frame};
+        let frame = if self.free.is_some() {
+            Frame::World
+        } else {
+            Frame::Path {
+                loop_m: self.route.is_loop().then(|| self.route.length()),
+            }
+        };
+        let own_path = self.free.as_ref().is_none_or(|f| f.own.is_some());
+        if !self.predict_rider_contacts || !own_path {
+            return (frame, Vec::new());
+        }
+        let profile = RiderProfile::default();
+        let mass = profile.rider_mass_kg + profile.bike_mass_kg;
+        let bodies = states
+            .iter()
+            .filter(|(id, _)| !flying.contains(id) && Some(*id) != self.echo_rider)
+            .filter_map(|(id, st)| {
+                let (pos, road) = match &self.free {
+                    Some(fr) => {
+                        let p = fr.others.get(id)?.sample(st.distance);
+                        let at = p.offset_position(st.lateral_offset);
+                        ([at[0], at[2]], p.direction)
+                    }
+                    None => ([st.distance, st.lateral_offset], [1.0, 0.0]),
+                };
+                Some(Body {
+                    id: *id,
+                    pos,
+                    road,
+                    heading: st.heading,
+                    speed: st.speed,
+                    lean: ocw_sim::collide::lean_of(st.speed, st.turn_curvature),
+                    mass,
+                    fallen: self.collisions.crashed(*id),
+                    manual: false,
+                    grip: 1.0,
+                })
+            })
+            .collect();
+        (frame, bodies)
+    }
+
+    /// Whether the own rider's contacts with the others are predicted
+    /// (on; off only to measure what the prediction gains, spec §14
+    /// Phase 12).
+    pub fn set_predict_rider_contacts(&mut self, on: bool) {
+        self.predict_rider_contacts = on;
     }
 
     /// The wind relative to the own rider at client time `now_s` (spec §14
@@ -4743,6 +4859,107 @@ mod tests {
         h.ride(250.0, 12.0);
         assert!(h.client.own_crash(h.time_s).is_none());
         assert!(h.client.state().speed > 3.0);
+    }
+
+    /// A group bump with 60 ms from the server to the client: the own
+    /// rider leans into a bot riding beside (steady 250 W, its lane 0.6 m
+    /// to the right). The prediction's lateral error against the server
+    /// (the best of a few ticks' offsets, the two clocks count from
+    /// different ticks), the largest sideways and along steps, the bumps.
+    fn group_bump_lateral_error(predict: bool) -> (f64, f64, f64, u64) {
+        let server = GameServer::new(route(), ocw_server::local::local_config(1, 0.0));
+        let client = ClientCore::new(route(), "Ada Rider", RiderProfile::default());
+        let mut h = Harness::with(server, client);
+        h.client.set_predict_rider_contacts(predict);
+        h.ride(250.0, 20.0);
+        let me = h.client.rider_id().unwrap();
+        let bot = h.client.others_now[0].0;
+        h.send(&ClientCore::bot_bike_message(v1::BotBike {
+            rider_id: bot.0,
+            power_w: Some(250.0),
+            lane_m: Some(0.6),
+            ..Default::default()
+        }));
+        h.send(&ClientCore::stage_message(false));
+        h.ride(250.0, 1.0);
+        assert!(h.client.own_crash(h.time_s).is_none());
+        let bumps_before = h.server.session().collision_stats().bumps;
+        // From here the snapshots take 3 ticks to arrive.
+        const DELAY: usize = 3;
+        h.client.set_snapshot_age(DELAY as f64 * ocw_core::SIM_DT);
+        let mut queue: std::collections::VecDeque<(usize, Vec<u8>)> = Default::default();
+        let (mut server_d, mut client_d) = (Vec::new(), Vec::new());
+        let mut last = h.client.state();
+        let (mut step, mut along) = (0.0f64, 0.0f64);
+        for tick in 0..150 {
+            if tick == 5 {
+                h.client.set_lean(0.08);
+            }
+            if tick == 30 {
+                h.client.set_lean(0.0);
+            }
+            if let Some(m) = h.client.steer_message(h.time_s) {
+                h.send(&m);
+            }
+            if (h.time_s * 4.0).fract() < 1e-9
+                && let Some(sample) = h.client.on_device_event(power(250.0, h.time_s))
+            {
+                h.send(&sample);
+            }
+            for msg in h.server.tick() {
+                queue.push_back((tick, msg));
+            }
+            while queue.front().is_some_and(|(t, _)| t + DELAY <= tick) {
+                let (_, msg) = queue.pop_front().unwrap();
+                h.receive(&msg);
+            }
+            h.client.predict_step();
+            h.time_s = ((h.time_s + ocw_core::SIM_DT) * 1000.0).round() / 1000.0;
+            server_d.push(h.server.session().rider_state(me).unwrap().lateral_offset);
+            let st = h.client.state();
+            client_d.push(st.lateral_offset);
+            step = step.max((st.lateral_offset - last.lateral_offset).abs());
+            along = along.max((st.distance - last.distance - last.speed * ocw_core::SIM_DT).abs());
+            last = st;
+        }
+        let bumps = h.server.session().collision_stats().bumps - bumps_before;
+        let err = (-2i32..=2)
+            .map(|off| {
+                (0..server_d.len())
+                    .filter_map(|i| {
+                        let j = usize::try_from(i as i32 + off).ok()?;
+                        Some((client_d.get(j)? - server_d[i]).abs())
+                    })
+                    .fold(0.0f64, f64::max)
+            })
+            .fold(f64::INFINITY, f64::min);
+        assert!(h.client.own_crash(h.time_s).is_none(), "a bump, no crash");
+        (err, step, along, bumps)
+    }
+
+    /// Spec §14 Phase 12 (6.1): the client predicts its own bumps with
+    /// other riders with the server's code; the server stays the truth
+    /// (its answer is blended in: no sideways step over 6 cm, no snap),
+    /// and the lateral error against it is smaller than when only the
+    /// server's bumps are blended in.
+    #[test]
+    fn bumps_with_other_riders_are_predicted_and_reconciled() {
+        let (err, step, along, bumps) = group_bump_lateral_error(true);
+        let (blind_err, blind_step, blind_along, blind_bumps) = group_bump_lateral_error(false);
+        eprintln!(
+            "group bump, 60 ms: lateral error {:.1} cm predicted ({bumps} bumps, step {:.1} cm, along {:.1} cm), {:.1} cm server only ({blind_bumps} bumps, step {:.1} cm, along {:.1} cm)",
+            err * 100.0,
+            step * 100.0,
+            along * 100.0,
+            blind_err * 100.0,
+            blind_step * 100.0,
+            blind_along * 100.0
+        );
+
+        assert!(bumps > 0 && blind_bumps > 0);
+        assert!(step < 0.06, "no sideways snap: {step}");
+        assert!(along < 0.1, "no snap along: {along}");
+        assert!(err < blind_err * 0.7, "{err} vs {blind_err}");
     }
 
     /// What the trainer was sent on a steady climb: the SIM commands of
