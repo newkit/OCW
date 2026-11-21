@@ -7,12 +7,11 @@
 //!   upright for `LEAN_UPRIGHT_PAUSE_S` (so riding straight is easy to
 //!   hit) and, still held, leans on to the other side. The road's own
 //!   bends have to be steered,
-//! - free ride (spec §2.2.1): while a junction is ahead (within the
-//!   look-ahead, before the lock point) and autodrive is on, ← / → choose
-//!   the exit instead (one exit per press; the line stays). Q / E (and the
-//!   gamepad's D-pad left / right) choose the exit at any time, also for
-//!   manual steering, where the arrows keep leaning. U (gamepad East:
-//!   B / ○) turns round (↓ stays the brake),
+//! - free ride (spec 2.2.1, 3.2.5): Delete / Q choose the junction's exit
+//!   one step to the left, Page Down / E one step to the right (the
+//!   gamepad: D-pad left / right), at any time and in every steering
+//!   mode; ← / → only steer, never choose the exit. U (gamepad East:
+//!   B / ○) turns round (↓ stays the brake), J back to the route,
 //! - W toggles wild mode: not bound to the road; switching it on also
 //!   switches autodrive off (upright, lean steering),
 //! - gamepad: left stick left / right steers (leans, or moves the autodrive
@@ -22,12 +21,12 @@
 //! - ↑ accelerates: each press adds `POWER_STEP_W` to the rider's power,
 //!   holding adds `POWER_RAMP_W_PER_S` (up to `MAX_KEY_POWER_W`), on top of
 //!   the device's power (virtual or real trainer); it also releases the brake,
-//! - ↓ stops: keyboard and virtual-trainer power to 0, and the brake,
-//! - PageUp / PageDown change the keyboard power by 10 W.
+//! - ↓ stops: keyboard and virtual-trainer power to 0, and the brake
+//!   (Page Up / Page Down no longer change the power, spec 3.2.5).
 //!
 //! These are the defaults: every key and button here is rebindable
-//! (spec §3.2.1 M9, `ocw_client::bindings`, Settings → Controls → Keys and
-//! buttons); the systems read them through `ocw_ui::bindings::ActiveBindings`.
+//! (spec 3.2.5, `ocw_client::bindings`, Settings → Controls → Input
+//! mapping); the systems read them through `ocw_ui::bindings::ActiveBindings`.
 //! The sticks and triggers stay fixed.
 
 use bevy::prelude::*;
@@ -42,7 +41,7 @@ use crate::devices::Devices;
 // The pure key logic (shared with the browser app, spec §14 Phase 10).
 pub use ocw_client::input::*;
 
-/// Keyboard power (↑ / ↓, PageUp / PageDown; [`KeyThrottle`], shared with
+/// Keyboard power (↑ / ↓, the touch buttons; [`KeyThrottle`], shared with
 /// the browser app).
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
 pub struct KeyPower(pub KeyThrottle);
@@ -53,7 +52,8 @@ impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<KeyPower>()
             // God mode (spec §14 Phase 13B): the riding keys (A, W, U, J,
-            // Q / E, the arrows' steering and power) do nothing in flight.
+            // the exit keys, the arrows' steering and power) do nothing in
+            // flight.
             .add_systems(
                 Update,
                 (steer, throttle_and_brake)
@@ -83,39 +83,14 @@ fn steer(
     let results = client.0.results_input(now);
     // Select + North / West are god mode's chords, not these.
     let select = pads.iter().any(|p| p.pressed(GamepadButton::Select));
-    if client.0.is_free_ride() {
-        if (key(Action::UTurn) || (pad(Action::UTurn) && !results))
-            && let Some(msg) = client.0.u_turn(time.elapsed_secs_f64())
-        {
-            info!("U-turn");
-            link.send_bytes(msg);
-        }
-        // Route ride: back to the route after leaving it.
-        if key(Action::Rejoin) || (pad(Action::Rejoin) && !select) {
-            match client.0.rejoin_route() {
-                Ok(msg) => {
-                    info!("rejoining the route");
-                    link.send_bytes(msg);
-                }
-                Err(e) => info!("no rejoin: {e}"),
-            }
-        }
-        let (jkey, arrows_taken) = junction_key(
-            key(Action::ExitLeft) || pad(Action::ExitLeft),
-            key(Action::ExitRight) || pad(Action::ExitRight),
-            key(Action::SteerLeft) || pad(Action::SteerLeft),
-            key(Action::SteerRight) || pad(Action::SteerRight),
-            client.0.autodrive(),
-            client.0.junction_active(),
-        );
-        if let JunctionKey::Select(steps) = jkey
-            && let Some(said) = client.0.turn(steps)
-        {
-            info!("{said}");
-        }
-        if arrows_taken {
-            return;
-        }
+    // Free ride: U-turn, rejoin, the junction exits (shared with the
+    // browser app; ← / → never choose the exit, spec 3.2.5).
+    let (msgs, said) = ocw_ui::controls::free_ride_keys(b, &keys, pads.iter(), &mut client.0, now);
+    for line in said {
+        info!("{line}");
+    }
+    for msg in msgs {
+        link.send_bytes(msg);
     }
     let autodrive = key(Action::Autodrive) || pad(Action::Autodrive);
     if autodrive && results {

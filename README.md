@@ -297,8 +297,10 @@ Without options the page rides the built-in **Hills** test route on the
 in-page local server, with 5 bots and the virtual trainer at 200 W, as
 *Rider*. The keys are the desktop's:
 
-- ↑ ramps the power up on top of the virtual trainer, ↓ stops (brake), Page
-  Up / Page Down change it by ±10 W.
+- ↑ ramps the power up on top of the virtual trainer, ↓ stops (brake).
+- Free ride: Delete / Q choose the junction's exit one step to the left,
+  Page Down / E one step to the right (D-pad left / right); U turns round,
+  J rides back to the route.
 - A switches autodrive, W wild mode, ← / → move the line (autodrive) or
   lean (manual).
 - Mouse: the camera. C resets it.
@@ -338,7 +340,7 @@ console:
 | `gpu=webgpu\|webgl2` | Force the WebGPU or the WebGL 2 build (`webgpu-failed=1` marks the page's own fallback reload) |
 | `origin=LAT,LON` | Give the test route a place on the globe (the GPS line in the HUD, the sun, the FIT track), e.g. `origin=47.13996,9.52151` |
 | `world=ID\|ID@VERSION\|URL` | Stream a world package (below) |
-| `free=1` | With `world=`: a free ride on its road network instead of a route (the junctions take their default exit; there are no junction keys in the browser yet) |
+| `free=1` | With `world=`: a free ride on its road network instead of a route (Delete / Q and Page Down / E, the D-pad or a tap on the fan choose the exit; otherwise the junctions take their default exit) |
 | `tiles=1–8`, `keep=2–12` | With `world=`: fetch radius and keep radius in tiles around the rider |
 | `memory-mb=N`, `cache-mb=N`, `cache=0` | With `world=`: memory for loaded tiles, the browser cache's budget, no cache |
 | `trust-root=HEX`, `trust=dev`, `allow-unsigned=1` | With `world=`, on localhost pages only: trust a development root key, the dev keys, or unsigned packages (chunks are still checked) |
@@ -464,7 +466,7 @@ the chooser. Console: `devices.list`, `devices.connect trainer|power|hr`,
 
 **Browsers without Web Bluetooth** (Firefox, Safari, every browser on iOS,
 Chromium on Linux without the flag above): the panel says so and the ride
-uses **virtual power** (↑ / ↓, Page Up / Down, `sim.power`). A bridge that
+uses **virtual power** (↑ / ↓, `sim.power`). A bridge that
 relays a trainer through another device comes with accounts (spec §14
 Phase 10 B7, Phase 5).
 
@@ -605,8 +607,8 @@ wind, clock, place and time in a few short lines below; the key help is
 left out while you steer by touch, and the Devices panel starts as a
 small button where nothing can connect (iOS has no Web Bluetooth).
 Without a trainer, the **stop / − / +** buttons on the right
-change the virtual power, as ↓ / Page Down / ↑ do: + adds 25 W (hold it
-to keep adding), − takes 10 W away, stop brakes, + rides on again. A
+change the virtual power: + adds 25 W (hold it to keep adding, as ↑ does),
+− takes 10 W away, stop brakes (as ↓ does), + rides on again. A
 larger HUD: *Settings → Display → Accessibility → HUD size*.
 
 #### Graphics: WebGPU, WebGL 2 and the quality presets
@@ -779,8 +781,7 @@ keys new-signing`.
   anonymous ("log in to customize") and ride the plain grey bike and kit
   until accounts come (Phase 5). Their damage is not kept.
 - No route or world switch inside a ride: another world or route is
-  another page (`?world=…&route=…`). Free ride takes the default exit at
-  every junction.
+  another page (`?world=…&route=…`).
 - Real weather only on a remote server (`ocw-server --weather real`): the
   in-page server cannot fetch the providers yet.
 - After a dropped connection to a server, reload the page.
@@ -795,10 +796,9 @@ keys new-signing`.
 | Steer (autodrive: move the line; manual: lean into a curve) | ← / → | left stick (left/right) |
 | Autodrive on/off (on at the start) | A | South button (A / ✕) |
 | Wild mode on/off (leave the road; on also switches autodrive off) | W | West button (X / □) |
-| Free ride: choose the exit at the next junction | ← / → (autodrive, junction ahead) or Q / E | D-pad left / right |
+| Free ride: the next junction's exit one step to the left / right | Delete or Q / Page Down or E | D-pad left / right |
 | Free ride: U-turn | U | East button (B / ○) |
 | Route ride: back to the route after leaving it | J | North button (Y / △) |
-| Power ±10 W | PgUp / PgDn | |
 | Camera: orbit / zoom | mouse drag / wheel | |
 | Touch screen: steer (hold a side), one step (tap a side), camera (two fingers: drag, pinch), junction exit (tap its fan arrow); see [touch steering](#touch-steering-in-the-browser) | left / right side of the screen | |
 | Camera reset | C | |
@@ -814,13 +814,25 @@ keys new-signing`.
 | Unicorn mode: fly as a unicorn / land on the road below | G | Select + North (Y / △) |
 | Unicorn mode: fly back to where you took off | Shift+G | Select + West (X / □) |
 
-**Rebinding keys and buttons** (spec §3.2.1 M9): every key and gamepad
-button of the table above except the menu (Esc / Start), the console (`` ` ``
-/ F12), the sticks and the triggers can be changed in *Settings → Controls →
-Keys and buttons*. Choose a group, then an action: Enter waits for the new
-key or pad button (Esc / Start cancel), ← / → step the key through the list.
-Two actions on one key are allowed but marked with "(!)" and a warning dot,
-and the page lists the conflicts; *Reset to defaults* puts everything back.
+← / → only steer; Page Up and Page Down no longer change the power (spec
+3.2.5): the keyboard's power is ↑ / ↓.
+
+**Input mapping** (spec 3.2.5): every key and gamepad button of the table
+above except the menu (Esc, Enter, the arrows in the menu; Start, A / B in
+the menu), the console (`` ` `` / F12), the sticks and the triggers can be
+changed in *Settings → Controls, input mapping → Input mapping*. Each row
+shows an action with its key(s) and its gamepad button ("Delete / Q |
+D-pad left"). Choose a group, then an action: Enter (A) waits for the new key
+or pad button ("Press a key or gamepad button … Esc / Start cancels"); it
+becomes the action's only key (or button). A key another action has
+**moves**: that action keeps its second key if it has one, or gets the old
+key of the row you changed (a swap; unbound if there was none) – the status
+line says what moved. ← / → step the key through the list; a double binding
+made that way is marked with "(!)" and a warning dot, and the page lists it.
+*Reset to defaults* puts everything back. Only the bindings that differ from
+the defaults are saved (`[settings.keys]` and `[settings.pad]` of `ocw.toml`;
+the browser keeps them with its other settings), and every change applies at
+once. The menu reads its own keys, so no mapping can lock you out of it.
 Unicorn mode's flight keys (cursor keys, + / −, L) stay fixed – W A S D
 never fly. *Pad Confirm button* swaps the menu's Confirm and Back on a pad
 (east: the Nintendo layout). From the console:
@@ -831,7 +843,8 @@ bind autodrive Z          # the key of an action (ids: bind lists them)
 bind u_turn LB --pad      # its gamepad button
 bind --capture camera     # the next key or button pressed
 bind --reset              # all defaults
-set keys.mute_voices Shift+N   # the same as settings ([keys], [pad] in settings.toml)
+set keys.mute_voices Shift+N   # the same as settings ([settings.keys], [settings.pad] in ocw.toml)
+set keys.exit_left Delete,Q    # two keys
 ```
 
 **Accessibility** (*Settings → Display → Accessibility*): *HUD size* (100 –
@@ -889,7 +902,7 @@ hover`). The unicorn keeps 2 m
 above terrain, water, buildings and tree crowns and stays below 8,000 m; it is stopped
 softly 200 m outside the world. A glowing ring marks where G will land: the
 nearest road (free ride) or the nearest point of the route. The riding keys
-(A, W, U, J, Q / E) do nothing while flying; the trainer simulates a flat
+(A, W, U, J, the exit keys) do nothing while flying; the trainer simulates a flat
 road in SIM mode (ERG keeps its target), and no distance is counted.
 On a shared server only the host may fly (`ocw-server --god-control
 anyone|host|nobody`), never during a running event. The HUD's rider count
@@ -1440,7 +1453,8 @@ ocw-desktop --world data/pilot/liechtenstein.ocwpkg --free-ride [--start X,Z]
 The package must contain the road graph (format 2, from `world-builder
 package`). Before each junction an overlay shows the exits (arrows at their
 real angles, street name, distance; dead end / unpaved / steep markers). Pick
-one with ← / → (with autodrive, while a junction is ahead) or Q / E; the choice
+one with Delete / Q (one exit to the left) or Page Down / E (one to the
+right) – ← / → only steer –; the choice
 turns green when it locks (20 m before the junction, earlier at speed).
 Without a choice the rider takes the default exit (straightest, same road,
 bigger road). At dead ends and the region border the rider turns round; U
@@ -1482,7 +1496,7 @@ ocw-desktop --world data/pilot/liechtenstein.ocwpkg --route-gpx ride.gpx
 ```
 
 The junction overlay shows the route's exit in blue (it is the default).
-Choosing another exit (← / →, Q / E) shows "[leaves the route]"; once it locks
+Choosing another exit (Delete / Q, Page Down / E) shows "[leaves the route]"; once it locks
 you are off the route and ride free. J (or `ride.rejoin`) adds the shortest
 way back to the route; riding onto a later part of the route in its direction
 rejoins it too. Bots stay on the route. The HUD shows the route's progress
@@ -1704,7 +1718,7 @@ package is installed only when all its files match the manifest.
 **Trainer and sensors**
 
 - Without a remembered device the app rides with a **virtual trainer**
-  (`--power`, PgUp/PgDn, `sim.power`). Bluetooth trainers and sensors (FTMS,
+  (`--power`, ↑ / ↓, `sim.power`). Bluetooth trainers and sensors (FTMS,
   Cycling Power, Cadence, Heart Rate, Wahoo trainers) are paired in the menu
   (below) or with `devices.scan`, `devices.connect N`; connected devices are
   remembered (`~/.config/ocw/devices.toml`) and reconnected at the next start
@@ -2063,7 +2077,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `display.high_contrast` | on / off (off): opaque HUD panels with white text (console `ui.contrast`) | at once |
 | `display.reduced_motion` | on / off (off): no camera shake, no flashing warnings (console `ui.motion`) | at once |
 | `controls.pad_confirm` | south / east (south): the gamepad's Confirm button in the menu; Back is the other | at once |
-| `keys.<action>`, `pad.<action>` | a key name (`A`, `Up`, `PageUp`, `F5`, `Num+`, `Shift+M`, `none`) / a pad button (`South`, `East`, `North`, `West`, `LB`, `RB`, `Select`, `L3`, `R3`, `DPadUp` …, `none`): the bindings (`bind` lists the actions) | at once |
+| `keys.<action>`, `pad.<action>` | a key name or two with a comma (`A`, `Up`, `PageUp`, `F5`, `Num+`, `Shift+M`, `Delete,Q`, `none`) / a pad button (`South`, `East`, `North`, `West`, `LB`, `RB`, `Select`, `L3`, `R3`, `DPadUp` …, `none`): the input mapping (`bind` lists the actions; only the changed ones are saved, in `[settings.keys]` / `[settings.pad]` of `ocw.toml`) | at once |
 | `ride.damage` | on / off (off): damage – hits hurt the rider and damage the bike (only with collisions on; carried over to the next ride, repairs in the workshop; in a shared ride the host decides, `ocw-server --damage`); while on, the HUD always shows the rider's health and the bike's condition; Settings → Controls → Damage (the old `display.damage` switch is gone: a value left in `settings.toml` is reported as unknown and ignored) | at once |
 | `display.gps` | on / off (on): the GPS line in the HUD, bottom left (console `hud.gps`; world packages and route files only) | at once |
 | `weather.physics` | on / off (on): the weather changes the physics – wind, air density, wet and icy roads; the trainer gets the wind (in shared rides the host decides, in events the organiser); World → Weather → Custom | at once |

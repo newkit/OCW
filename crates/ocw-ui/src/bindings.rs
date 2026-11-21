@@ -8,7 +8,7 @@
 use bevy::prelude::*;
 use clap::{Arg, ArgAction, Command};
 use ocw_client::bindings::{
-    ACTIONS, Action, Bindings, Device, KEY_CHOICES, key_label, key_name, pad_label, pad_name,
+    ACTIONS, Action, Bindings, Device, KEY_CHOICES, key_label, pad_label, pad_name, parse_keys,
 };
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, Permission};
 
@@ -259,9 +259,11 @@ pub fn voice_toggles<'a>(
     out
 }
 
-/// The action waiting for its new key or button (the menu's binding rows).
-#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct BindCapture(pub Option<Action>);
+/// The action waiting for its new key or button (the Input mapping
+/// page's rows) and what the last capture or reset did (the page's
+/// status line until the next one).
+#[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
+pub struct BindCapture(pub Option<Action>, pub Option<String>);
 
 pub struct BindingsPlugin;
 
@@ -270,6 +272,7 @@ impl Plugin for BindingsPlugin {
         app.init_resource::<ActiveBindings>()
             .init_resource::<BindCapture>()
             .init_resource::<ocw_render::camera::CameraKey>()
+            .init_resource::<ocw_render::hud::RideKeys>()
             .add_systems(PreUpdate, refresh)
             .add_systems(Update, map_keys);
         register_commands(app);
@@ -311,14 +314,24 @@ fn refresh(
     settings: Option<Res<UserSettings>>,
     mut active: ResMut<ActiveBindings>,
     mut camera: ResMut<ocw_render::camera::CameraKey>,
+    mut hud: ResMut<ocw_render::hud::RideKeys>,
 ) {
     let Some(s) = settings else { return };
     if !s.is_changed() && !active.is_added() {
         return;
     }
     let b = Bindings::from_settings(&s.settings);
-    if active.0 != b {
-        camera.0 = key_code(b.key(Action::Camera));
+    if active.0 != b || hud.is_added() {
+        camera.0 = key_code(b.first_key(Action::Camera));
+        // The HUD's key lines and the junction fan's hint say the keys
+        // in effect (spec 3.2.5).
+        let h = b.hud_lines();
+        *hud = ocw_render::hud::RideKeys {
+            route: h.route,
+            free: h.free,
+            plain: h.plain,
+            junction: h.junction,
+        };
         active.0 = b;
     }
 }
@@ -356,8 +369,7 @@ pub fn capture(world: &mut World) -> bool {
         .as_ref()
         .is_some_and(|k| k.just_pressed(KeyCode::Escape))
         || pads.contains(&GamepadButton::Start);
-    let id = action.def().id;
-    let mut done: Option<(String, String)> = None;
+    let mut done: Option<(Device, String)> = None;
     if !cancel {
         if let Some(k) = &keys
             && let Some(name) = k.get_just_pressed().find_map(|c| key_name_of(*c))
@@ -368,32 +380,75 @@ pub fn capture(world: &mut World) -> bool {
             } else {
                 name.to_string()
             };
-            done = Some((format!("keys.{id}"), name));
+            done = Some((Device::Key, name));
         } else if let Some(name) = pads.iter().find_map(|b| pad_name_of(*b)) {
-            done = Some((format!("pad.{id}"), name.to_string()));
+            done = Some((Device::Pad, name.to_string()));
         }
     }
     if cancel || done.is_some() {
         world.resource_mut::<BindCapture>().0 = None;
-        if let Some((key, value)) = done {
-            match set(world, &key, &value) {
-                Ok(()) => info!("{key} = {value}"),
-                Err(e) => warn!("{e}"),
-            }
-        }
+        let note = match done {
+            Some((device, value)) => assign(world, action, device, &value),
+            None => format!("{}: unchanged (cancelled)", action.def().label),
+        };
+        info!("{note}");
+        world.resource_mut::<BindCapture>().1 = Some(note);
     }
     true
+}
+
+/// Binds the captured `value` to `action` with the swap rule of
+/// [`Bindings::assign`], saves only what differs from the defaults and
+/// returns the page's note.
+pub fn assign(world: &mut World, action: Action, device: Device, value: &str) -> String {
+    let desktop = desktop(world);
+    let b = Bindings::from_settings(&world.resource::<UserSettings>().settings);
+    let r = b.assign(action, device, value, desktop);
+    if r.changes.is_empty() {
+        return r.note;
+    }
+    let mut us = world.resource_mut::<UserSettings>();
+    for (key, v) in &r.changes {
+        let done = match v {
+            Some(v) => us.settings.set(key, v).map(|_| ()),
+            None => us.settings.unset(key),
+        };
+        if let Err(e) = done {
+            warn!("{e}");
+        }
+    }
+    if let Err(e) = us.save() {
+        debug!("bindings not saved: {e}");
+    }
+    if let Some(mut c) = world.get_resource_mut::<BindCapture>() {
+        c.1 = Some(r.note.clone());
+    }
+    r.note
+}
+
+/// Every key and button back to its default: out of the file.
+pub fn reset(world: &mut World) -> Result<(), String> {
+    let mut us = world.resource_mut::<UserSettings>();
+    for key in Bindings::setting_keys() {
+        us.settings.unset(&key)?;
+    }
+    if let Err(e) = us.save() {
+        debug!("bindings not saved: {e}");
+    }
+    if let Some(mut c) = world.get_resource_mut::<BindCapture>() {
+        c.1 = Some("All keys and buttons are back to their defaults".into());
+    }
+    Ok(())
 }
 
 /// The status line of a binding page: the capture's prompt, else the
 /// conflicts.
 pub fn status(world: &World, group: Option<usize>) -> String {
-    if let Some(a) = world.get_resource::<BindCapture>().and_then(|c| c.0) {
-        return format!(
-            "Press the new key or gamepad button for {} (Esc / Start: cancel)",
-            a.def().label
-        );
+    let capture = world.get_resource::<BindCapture>();
+    if let Some(a) = capture.and_then(|c| c.0) {
+        return capture_prompt(a);
     }
+    let note = capture.and_then(|c| c.1.clone());
     let Some(b) = world.get_resource::<ActiveBindings>() else {
         return String::new();
     };
@@ -404,10 +459,23 @@ pub fn status(world: &World, group: Option<usize>) -> String {
         .filter(|c| c.with.is_none_or(|w| c.action < w))
         .map(|c| c.describe())
         .collect();
-    match c.len() {
+    let conflicts = match c.len() {
         0 => String::new(),
         _ => format!("Conflict: {}", c.join("; ")),
+    };
+    match note {
+        Some(n) if conflicts.is_empty() => n,
+        Some(n) => format!("{n}. {conflicts}"),
+        None => conflicts,
     }
+}
+
+/// The capture's prompt (spec 3.2.5).
+pub fn capture_prompt(a: Action) -> String {
+    format!(
+        "Press a key or gamepad button for {}... Esc / Start cancels",
+        a.def().label
+    )
 }
 
 /// The actions of a binding group's rows on this platform.
@@ -482,14 +550,7 @@ fn register_commands(app: &mut App) {
             ),
         |world, m| {
             if m.get_flag("reset") {
-                for line in Bindings::reset_lines() {
-                    let mut w = line.split_whitespace().skip(1);
-                    let (k, v) = (w.next().expect("key"), w.next().expect("value"));
-                    world.resource_mut::<UserSettings>().settings.set(k, v)?;
-                }
-                if let Err(e) = world.resource_mut::<UserSettings>().save() {
-                    debug!("bindings not saved: {e}");
-                }
+                reset(world)?;
                 return Ok("all keys and buttons are back to their defaults".into());
             }
             let Some(id) = m.get_one::<String>("action") else {
@@ -502,11 +563,8 @@ fn register_commands(app: &mut App) {
                 )
             })?;
             if m.get_flag("capture") {
-                world.resource_mut::<BindCapture>().0 = Some(action);
-                return Ok(format!(
-                    "press the new key or button for {} (Esc / Start: cancel)",
-                    action.def().label
-                ));
+                *world.resource_mut::<BindCapture>() = BindCapture(Some(action), None);
+                return Ok(capture_prompt(action));
             }
             let Some(input) = m.get_one::<String>("input") else {
                 let b = world.resource::<ActiveBindings>();
@@ -520,19 +578,26 @@ fn register_commands(app: &mut App) {
             let (key, value) = if m.get_flag("pad") {
                 (
                     action.pad_setting(),
-                    pad_name(input).ok_or_else(|| format!("unknown gamepad button {input:?}"))?,
+                    pad_name(input)
+                        .ok_or_else(|| format!("unknown gamepad button {input:?}"))?
+                        .to_string(),
                 )
             } else {
                 (
                     action.key_setting(),
-                    key_name(input).ok_or_else(|| {
+                    parse_keys(input).map_err(|_| {
                         format!("{input:?} cannot be bound (Esc, ` and F12 are the menu's and the console's)")
                     })?,
                 )
             };
-            set(world, &key, value)?;
-            let b = Bindings::from_settings(&world.resource::<UserSettings>().settings);
             let dev = if m.get_flag("pad") { Device::Pad } else { Device::Key };
+            // One key or button: as the capture (it moves from another
+            // action, spec 3.2.5); two keys or none: as set.
+            if value != "none" && !value.contains(',') {
+                return Ok(assign(world, action, dev, &value));
+            }
+            set(world, &key, &value)?;
+            let b = Bindings::from_settings(&world.resource::<UserSettings>().settings);
             let mut out = format!("{key} = {value}");
             if let Some(c) = b.conflict_of(action, dev, desktop(world)) {
                 out.push_str(&format!(" (conflict: {})", c.describe()));
@@ -588,16 +653,17 @@ mod tests {
         let b = app.world().resource::<ActiveBindings>().clone();
         assert!(b.key_just_pressed(Action::Autodrive, &keys));
         let out = run(&mut app, "bind autodrive Y");
-        assert!(out.contains("keys.autodrive = Y"), "{out}");
+        assert!(out.ends_with("Autodrive: Y"), "{out}");
         app.update();
         let b = app.world().resource::<ActiveBindings>().clone();
         assert!(!b.key_just_pressed(Action::Autodrive, &keys));
         keys.press(KeyCode::KeyY);
         assert!(b.key_just_pressed(Action::Autodrive, &keys));
-        // A conflict is said; the camera key follows its binding.
+        // A key another action has moves (spec 3.2.5): the video gets C;
+        // the camera key follows its binding.
         let out = run(&mut app, "bind camera V");
         assert!(
-            out.contains("conflict: V: Camera and Video recording"),
+            out.ends_with("Camera: V (V was taken: Video recording now has C)"),
             "{out}"
         );
         app.update();
@@ -605,11 +671,44 @@ mod tests {
             app.world().resource::<ocw_render::camera::CameraKey>().0,
             Some(KeyCode::KeyV)
         );
+        let b = app.world().resource::<ActiveBindings>().clone();
+        assert_eq!(b.key(Action::Video), "C");
+        assert_eq!(b.conflicts(true), []);
+        // set makes a double binding: marked and listed.
+        run(&mut app, "set keys.video V");
+        app.update();
         assert!(run(&mut app, "bind").contains("Conflict: V: Camera and Video recording"));
         assert!(run(&mut app, "bind camera Escape").contains("cannot be bound"));
+        // Two keys.
+        assert!(run(&mut app, "bind u_turn U,F6").contains("keys.u_turn = U,F6"));
         run(&mut app, "bind --reset");
         app.update();
         assert!(app.world().resource::<ActiveBindings>().is_default());
+        // Nothing of the mapping is left in the settings.
+        let s = app.world().resource::<crate::settings::UserSettings>();
+        assert!(
+            !s.settings.to_toml().contains("keys"),
+            "{}",
+            s.settings.to_toml()
+        );
+    }
+
+    /// Spec 3.2.5: the HUD's key lines and the junction fan's hint follow
+    /// the mapping; the defaults are the HUD's own.
+    #[test]
+    fn the_hud_key_lines_follow_the_mapping() {
+        let h = Bindings::default().hud_lines();
+        let d = ocw_render::hud::RideKeys::default();
+        assert_eq!(
+            (h.route, h.free, h.plain, h.junction),
+            (d.route, d.free, d.plain, d.junction)
+        );
+        let mut app = app();
+        run(&mut app, "bind exit_left F5");
+        app.update();
+        let k = app.world().resource::<ocw_render::hud::RideKeys>();
+        assert!(k.free.contains("F5 PgDn/E: exit"), "{}", k.free);
+        assert_eq!(k.junction, "F5  < exit >  PgDn/E");
     }
 
     /// Spec 3.2 Q6: a press of D-pad down steps the navigation map's zoom
@@ -676,5 +775,54 @@ mod tests {
             "Shift+N"
         );
         assert!(!capture(app.world_mut()), "nothing waits");
+    }
+
+    /// Spec 3.2.5: the capture's prompt, a captured key that another
+    /// action has (it moves, the other action gets the old key: no
+    /// conflict), a captured pad button, the status line saying so.
+    #[test]
+    fn a_captured_key_of_another_action_swaps_and_the_page_says_so() {
+        let mut app = app();
+        run(&mut app, "bind --capture exit_left");
+        assert_eq!(
+            status(app.world(), None),
+            "Press a key or gamepad button for Junction: exit left... Esc / Start cancels"
+        );
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyU);
+        assert!(capture(app.world_mut()));
+        app.update();
+        let b = app.world().resource::<ActiveBindings>().clone();
+        assert_eq!(b.key(Action::ExitLeft), "U");
+        assert_eq!(b.key(Action::UTurn), "Delete,Q", "the swap");
+        assert_eq!(b.conflicts(true), []);
+        assert_eq!(
+            status(app.world(), None),
+            "Junction: exit left: U (U was taken: U-turn now has Delete / Q)"
+        );
+        // Saved: only the two changed keys.
+        let toml = app
+            .world()
+            .resource::<crate::settings::UserSettings>()
+            .settings
+            .to_toml();
+        assert!(toml.contains("exit_left = \"U\""), "{toml}");
+        assert!(toml.contains("u_turn = \"Delete,Q\""), "{toml}");
+        assert!(!toml.contains("autodrive"), "{toml}");
+        // A pad button.
+        run(&mut app, "bind --capture u_turn");
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        let mut pad = Gamepad::default();
+        pad.digital_mut().press(GamepadButton::LeftTrigger);
+        app.world_mut().spawn(pad);
+        assert!(capture(app.world_mut()));
+        app.update();
+        assert_eq!(
+            app.world().resource::<ActiveBindings>().pad(Action::UTurn),
+            "LB"
+        );
     }
 }

@@ -1,26 +1,32 @@
-//! Rebindable keys and gamepad buttons of the ride (spec §3.2.1 M9, §14
-//! Phase 7), shared by the desktop and the browser app.
+//! The input mapping: rebindable keys and gamepad buttons of the ride
+//! (spec 3.2.5, 3.2.1 M9), shared by the desktop and the browser app.
 //!
-//! Every ride action ([`Action`]) has one keyboard key and one gamepad
-//! button, each a setting of the registry (`keys.<id>` and `pad.<id>`,
-//! sections `[keys]` and `[pad]` of `settings.toml` – the browser's
-//! `localStorage` keeps the same text), so `set keys.autodrive Z`, the
-//! menu (Settings → Controls → Keys and buttons) and `autoexec.cfg` share
-//! one path, and the defaults are the registry's.
+//! Every ride action ([`Action`]) has one or two keyboard keys
+//! ([`MAX_KEYS`]; the junction exits have Delete / Q and Page Down / E)
+//! and one gamepad button, each a setting of the registry (`keys.<id>`
+//! and `pad.<id>`: `[settings.keys]` and `[settings.pad]` of `ocw.toml`
+//! – only the changed ones; the browser's `localStorage` keeps the same
+//! text), so `set keys.autodrive Z`, `bind`, the menu (Settings →
+//! Controls → Input mapping) and `autoexec.cfg` share one path, and the
+//! defaults are the registry's.
 //!
 //! **Fixed (not rebindable):** the menu and console keys (Esc, Enter,
-//! the arrows in the menu, \` and F12; the pad's Start), the gamepad's
-//! analog stick and triggers (steering, throttle, brake), the gamepad's
-//! god mode chords (Select + North / West) and **unicorn mode's flight
-//! keys** ([`GOD_KEYS`]: the cursor keys, + / − and L) – W, A, S and D never
-//! fly (spec §14 Phase 13 Q3, decided: `WASD_FLIES = false`), whatever is
+//! the arrows in the menu, \` and F12; the pad's Start, A / B in the
+//! menu) – the menu reads its own keys, whatever the ride's are, so the
+//! mapping can never lock the user out –, the gamepad's analog stick and
+//! triggers (steering, throttle, brake), the gamepad's god mode chords
+//! (Select + North / West) and **unicorn mode's flight keys**
+//! ([`GOD_KEYS`]: the cursor keys, + / − and L) – W, A, S and D never fly
+//! (spec §14 Phase 13 Q3, decided: `WASD_FLIES = false`), whatever is
 //! bound to them.
 //!
 //! **Conflicts** ([`Bindings::conflicts`]): two actions on one key or
 //! button, or an action that also works in unicorn mode on one of its
-//! flight keys. They are allowed (the user may be half-way through
-//! swapping two keys) but marked on the page and listed by `bind`; both
-//! actions then fire.
+//! flight keys. A key or button **captured** on the Input mapping page
+//! moves from the action that had it ([`Bindings::assign`]: a swap), so
+//! the capture never makes a double binding; stepping with ← / → or
+//! `set` may, and those are marked on the page and listed by `bind`
+//! (both actions then fire).
 //!
 //! Key names are layout-independent positions (Bevy's `KeyCode` by its
 //! US-layout name: "A" is the key right of Caps Lock); `Shift+X` needs
@@ -36,8 +42,6 @@ pub enum Action {
     Stop,
     SteerLeft,
     SteerRight,
-    PowerUp,
-    PowerDown,
     Autodrive,
     Wild,
     UTurn,
@@ -57,30 +61,23 @@ pub enum Action {
     MapZoom,
 }
 
-/// The groups of the Keys and buttons page (one sub page each, at most
-/// six rows: the ten-foot rule).
+/// The groups of the Input mapping page (one sub page each, at most
+/// six rows: the ten-foot rule; four groups, so the page with the pad's
+/// Confirm button and the reset fits six rows).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Group {
     /// Power and steering.
     Riding,
     /// Autodrive, wild mode, junctions, U-turn, rejoin.
     Modes,
-    /// Camera, video, fullscreen, restart, unicorn mode.
+    /// Camera, video, fullscreen, restart, unicorn mode, Strava.
     App,
-    /// Voice chat.
+    /// Voice chat and the navigation map.
     Voice,
-    /// The navigation map.
-    Map,
 }
 
 impl Group {
-    pub const ALL: [Group; 5] = [
-        Group::Riding,
-        Group::Modes,
-        Group::App,
-        Group::Voice,
-        Group::Map,
-    ];
+    pub const ALL: [Group; 4] = [Group::Riding, Group::Modes, Group::App, Group::Voice];
 
     pub fn index(self) -> usize {
         Self::ALL.iter().position(|g| *g == self).expect("listed")
@@ -91,8 +88,7 @@ impl Group {
             Group::Riding => "Power and steering",
             Group::Modes => "Autodrive and junctions",
             Group::App => "Camera, video, app",
-            Group::Voice => "Voice chat",
-            Group::Map => "Navigation map",
+            Group::Voice => "Voice chat and map",
         }
     }
 }
@@ -147,7 +143,7 @@ const fn desktop(mut d: ActionDef) -> ActionDef {
 
 /// All actions with today's keys and buttons as defaults (spec §3.2.1,
 /// §3.2.2, the README's key table).
-pub const ACTIONS: [ActionDef; 22] = [
+pub const ACTIONS: [ActionDef; 20] = [
     def(
         Action::Faster,
         "faster",
@@ -183,22 +179,6 @@ pub const ACTIONS: [ActionDef; 22] = [
         "none",
     ),
     def(
-        Action::PowerUp,
-        "power_up",
-        "Power +10 W",
-        Group::Riding,
-        "PageUp",
-        "none",
-    ),
-    def(
-        Action::PowerDown,
-        "power_down",
-        "Power -10 W",
-        Group::Riding,
-        "PageDown",
-        "none",
-    ),
-    def(
         Action::Autodrive,
         "autodrive",
         "Autodrive",
@@ -221,7 +201,9 @@ pub const ACTIONS: [ActionDef; 22] = [
         "exit_left",
         "Junction: exit left",
         Group::Modes,
-        "Q",
+        // Spec 3.2.5 (2026-11-21): Delete and Page Down choose the exits,
+        // Q / E stay as second keys; ← / → only steer.
+        "Delete,Q",
         "DPadLeft",
     ),
     def(
@@ -229,7 +211,7 @@ pub const ACTIONS: [ActionDef; 22] = [
         "exit_right",
         "Junction: exit right",
         Group::Modes,
-        "E",
+        "PageDown,E",
         "DPadRight",
     ),
     flying(def(
@@ -305,7 +287,7 @@ pub const ACTIONS: [ActionDef; 22] = [
         Action::Map,
         "map",
         "Navigation map on / off",
-        Group::Map,
+        Group::Voice,
         "N",
         "none",
     )),
@@ -315,7 +297,7 @@ pub const ACTIONS: [ActionDef; 22] = [
         Action::MapZoom,
         "map_zoom",
         "Navigation map zoom",
-        Group::Map,
+        Group::Voice,
         "Z",
         "DPadDown",
     )),
@@ -524,9 +506,66 @@ pub fn pad_label(name: &str) -> &str {
     }
 }
 
-/// A key as shown ("-" for none).
-pub fn key_label(name: &str) -> &str {
-    if name == "none" { "-" } else { name }
+/// The keys of a key binding's value: "Delete,Q" → Delete, Q; "none" →
+/// nothing.
+pub fn key_list(value: &str) -> impl Iterator<Item = &str> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|k| !k.is_empty() && *k != "none")
+}
+
+/// At most this many keys per action (spec 3.2.5): a main key and a
+/// second one (the junction exits: Delete / Q, Page Down / E).
+pub const MAX_KEYS: usize = 2;
+
+/// A typed key binding in its saved form: one or two key names (any
+/// case, comma separated: "delete, q" → "Delete,Q"), or "none".
+pub fn parse_keys(text: &str) -> Result<String, String> {
+    let text = text.trim();
+    if text.eq_ignore_ascii_case("none") {
+        return Ok("none".into());
+    }
+    let mut out: Vec<&str> = Vec::new();
+    for part in text.split(',') {
+        let k = key_name(part).filter(|k| *k != "none").ok_or_else(|| {
+            format!(
+                "{:?} is not a key that can be bound (Esc, ` and F12 are the menu's and the console's)",
+                part.trim()
+            )
+        })?;
+        if !out.contains(&k) {
+            out.push(k);
+        }
+    }
+    if out.len() > MAX_KEYS {
+        return Err(format!("at most {MAX_KEYS} keys per action"));
+    }
+    Ok(out.join(","))
+}
+
+/// A key binding as shown: "Delete / Q", "-" for none.
+pub fn key_label(value: &str) -> String {
+    let keys: Vec<&str> = key_list(value).collect();
+    if keys.is_empty() {
+        "-".into()
+    } else {
+        keys.join(" / ")
+    }
+}
+
+/// A key as the HUD's key line says it: "Del", "PgDn", "up".
+pub fn hud_key(name: &str) -> String {
+    match name {
+        "Delete" => "Del".into(),
+        "PageDown" => "PgDn".into(),
+        "PageUp" => "PgUp".into(),
+        "Up" => "up".into(),
+        "Down" => "down".into(),
+        "Left" => "left".into(),
+        "Right" => "right".into(),
+        other => other.into(),
+    }
 }
 
 /// A conflict of one binding.
@@ -555,6 +594,15 @@ impl Conflict {
             ),
         }
     }
+}
+
+/// What a captured key or button did ([`Bindings::assign`]): the
+/// settings to change (`None`: back to the default, out of the file) and
+/// the line for the page's status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Assigned {
+    pub changes: Vec<(String, Option<String>)>,
+    pub note: String,
 }
 
 /// The keys and buttons of all actions.
@@ -592,9 +640,19 @@ impl Bindings {
         b
     }
 
-    /// The key of `a` ("none": unbound).
+    /// The key binding of `a` as saved ("Delete,Q"; "none": unbound).
     pub fn key(&self, a: Action) -> &str {
         &self.keys[index(a)]
+    }
+
+    /// The keys of `a` (none, one or two).
+    pub fn keys_of(&self, a: Action) -> impl Iterator<Item = &str> {
+        key_list(self.key(a))
+    }
+
+    /// The first key of `a` ("none" when unbound).
+    pub fn first_key(&self, a: Action) -> &str {
+        self.keys_of(a).next().unwrap_or("none")
     }
 
     pub fn pad(&self, a: Action) -> &str {
@@ -605,6 +663,18 @@ impl Bindings {
         match d {
             Device::Key => self.key(a),
             Device::Pad => self.pad(a),
+        }
+    }
+
+    /// The inputs of `a` on `d` (keys: none, one or two; a button: none
+    /// or one).
+    fn inputs(&self, a: Action, d: Device) -> Vec<&str> {
+        match d {
+            Device::Key => self.keys_of(a).collect(),
+            Device::Pad => Some(self.pad(a))
+                .filter(|p| *p != "none")
+                .into_iter()
+                .collect(),
         }
     }
 
@@ -622,6 +692,17 @@ impl Bindings {
         *self == Self::default()
     }
 
+    /// The actions whose binding differs from its default (keyboard or
+    /// gamepad).
+    pub fn changed(&self) -> Vec<Action> {
+        let d = Self::default();
+        ACTIONS
+            .iter()
+            .map(|a| a.action)
+            .filter(|a| self.key(*a) != d.key(*a) || self.pad(*a) != d.pad(*a))
+            .collect()
+    }
+
     /// The conflicts among the actions of `platform` (both ends of a
     /// shared key are listed, each with the other).
     pub fn conflicts(&self, desktop: bool) -> Vec<Conflict> {
@@ -629,27 +710,25 @@ impl Bindings {
         let on = |d: &ActionDef| desktop || !d.desktop_only;
         for device in [Device::Key, Device::Pad] {
             for a in ACTIONS.iter().filter(|d| on(d)) {
-                let input = self.get(a.action, device);
-                if input == "none" {
-                    continue;
-                }
-                for b in ACTIONS.iter().filter(|d| on(d) && d.action != a.action) {
-                    if self.get(b.action, device) == input {
+                for input in self.inputs(a.action, device) {
+                    for b in ACTIONS.iter().filter(|d| on(d) && d.action != a.action) {
+                        if self.inputs(b.action, device).contains(&input) {
+                            out.push(Conflict {
+                                action: a.action,
+                                device,
+                                input: input.into(),
+                                with: Some(b.action),
+                            });
+                        }
+                    }
+                    if device == Device::Key && a.in_flight && GOD_KEYS.contains(&input) {
                         out.push(Conflict {
                             action: a.action,
                             device,
                             input: input.into(),
-                            with: Some(b.action),
+                            with: None,
                         });
                     }
-                }
-                if device == Device::Key && a.in_flight && GOD_KEYS.contains(&input) {
-                    out.push(Conflict {
-                        action: a.action,
-                        device,
-                        input: input.into(),
-                        with: None,
-                    });
                 }
             }
         }
@@ -663,16 +742,95 @@ impl Bindings {
             .find(|c| c.action == a && c.device == device)
     }
 
+    /// A captured key or button for `a` (spec 3.2.5): it becomes `a`'s
+    /// only input on that device. **Taken by another action** (on this
+    /// platform), it is moved, never doubled: an action that had it as
+    /// its second key just loses it; an action left without any input
+    /// gets `a`'s old one (a swap; unbound if `a` had none). A flight key
+    /// of unicorn mode stays a marked conflict (the riding keys are off
+    /// in flight). Values back at their default leave the file.
+    pub fn assign(&self, a: Action, device: Device, input: &str, desktop: bool) -> Assigned {
+        let shown = |v: &str| match device {
+            Device::Key => key_label(v),
+            Device::Pad => pad_label(v).to_string(),
+        };
+        if self.inputs(a, device) == [input] {
+            return Assigned {
+                changes: Vec::new(),
+                note: format!("{}: {} (unchanged)", a.def().label, shown(input)),
+            };
+        }
+        let mut next = self.clone();
+        let old: Vec<&str> = self
+            .inputs(a, device)
+            .into_iter()
+            .filter(|k| *k != input)
+            .collect();
+        let mut notes = Vec::new();
+        let mut touched = vec![a];
+        next.set(a, device, input);
+        for o in ACTIONS
+            .iter()
+            .filter(|d| (desktop || !d.desktop_only) && d.action != a)
+        {
+            let theirs = self.inputs(o.action, device);
+            if !theirs.contains(&input) {
+                continue;
+            }
+            let rest: Vec<&str> = theirs.into_iter().filter(|k| *k != input).collect();
+            let value = if !rest.is_empty() {
+                let v = rest.join(",");
+                notes.push(format!("{} keeps {}", o.label, shown(&v)));
+                v
+            } else if !old.is_empty() {
+                let v = old.join(",");
+                notes.push(format!("{} now has {}", o.label, shown(&v)));
+                v
+            } else {
+                notes.push(format!("{} is now unbound", o.label));
+                "none".into()
+            };
+            next.set(o.action, device, &value);
+            touched.push(o.action);
+        }
+        let default = Self::default();
+        let changes = touched
+            .iter()
+            .map(|x| {
+                let setting = match device {
+                    Device::Key => x.key_setting(),
+                    Device::Pad => x.pad_setting(),
+                };
+                let v = next.get(*x, device);
+                (
+                    setting,
+                    (v != default.get(*x, device)).then(|| v.to_string()),
+                )
+            })
+            .collect();
+        let mut note = format!("{}: {}", a.def().label, shown(input));
+        if !notes.is_empty() {
+            note.push_str(&format!(
+                " ({} was taken: {})",
+                shown(input),
+                notes.join(", ")
+            ));
+        }
+        if let Some(c) = next
+            .conflict_of(a, device, desktop)
+            .filter(|c| c.with.is_none())
+        {
+            note.push_str(&format!(" - conflict: {}", c.describe()));
+        }
+        Assigned { changes, note }
+    }
+
     /// Whether `a`'s key fires: `down(name)` says whether the key `name`
     /// (without Shift) is down / went down this frame, `shift` whether
     /// Shift is held. `Shift+X` needs Shift; a plain `X` does not fire
     /// with Shift when another action is on `Shift+X`.
     pub fn key_fires(&self, a: Action, down: impl Fn(&str) -> bool, shift: bool) -> bool {
-        let k = self.key(a);
-        if k == "none" {
-            return false;
-        }
-        match k.strip_prefix("Shift+") {
+        self.keys_of(a).any(|k| match k.strip_prefix("Shift+") {
             Some(base) => shift && down(base),
             None => {
                 down(k)
@@ -680,23 +838,74 @@ impl Bindings {
                         && self
                             .keys
                             .iter()
+                            .flat_map(|o| key_list(o))
                             .any(|o| o.strip_prefix("Shift+") == Some(k)))
             }
-        }
+        })
     }
 
-    /// The console lines that set every binding back to its default.
-    pub fn reset_lines() -> Vec<String> {
+    /// Every binding setting (`keys.*` and `pad.*` of every action).
+    pub fn setting_keys() -> Vec<String> {
         ACTIONS
             .iter()
-            .flat_map(|d| {
-                [
-                    format!("set keys.{} {}", d.id, d.key),
-                    format!("set pad.{} {}", d.id, d.pad),
-                ]
-            })
+            .flat_map(|d| [d.action.key_setting(), d.action.pad_setting()])
             .collect()
     }
+
+    /// The HUD's ride key lines with these keys (spec 3.2): a route ride,
+    /// a free ride, a plain ride and the junction fan's hint.
+    pub fn hud_lines(&self) -> HudKeys {
+        let k = |a: Action| {
+            let keys: Vec<String> = self.keys_of(a).map(hud_key).collect();
+            if keys.is_empty() {
+                "-".into()
+            } else {
+                keys.join("/")
+            }
+        };
+        let base = format!(
+            "{}: faster, {}: stop, {}/{}: steer",
+            k(Action::Faster),
+            k(Action::Stop),
+            k(Action::SteerLeft),
+            k(Action::SteerRight)
+        );
+        let exits = format!("{} {}: exit", k(Action::ExitLeft), k(Action::ExitRight));
+        HudKeys {
+            route: format!(
+                "{base}, {exits} (another than the route's leaves it), {}: rejoin the route, {}: U-turn, {}: autodrive",
+                k(Action::Rejoin),
+                k(Action::UTurn),
+                k(Action::Autodrive)
+            ),
+            free: format!(
+                "{base}, {exits}, {}: U-turn, {}: autodrive, {}: wild",
+                k(Action::UTurn),
+                k(Action::Autodrive),
+                k(Action::Wild)
+            ),
+            plain: format!(
+                "{base}, {}: autodrive, {}: wild",
+                k(Action::Autodrive),
+                k(Action::Wild)
+            ),
+            junction: format!(
+                "{}  < exit >  {}",
+                k(Action::ExitLeft),
+                k(Action::ExitRight)
+            ),
+        }
+    }
+}
+
+/// The HUD's key lines ([`Bindings::hud_lines`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HudKeys {
+    pub route: String,
+    pub free: String,
+    pub plain: String,
+    /// Under the junction fan: "Del/Q  < exit >  PgDn/E".
+    pub junction: String,
 }
 
 /// The step from `current` through `choices` (wrapping), skipping
@@ -744,7 +953,7 @@ mod tests {
         assert_eq!(b.conflicts(false), []);
         // Every default is a choice the settings accept.
         for d in &ACTIONS {
-            assert!(KEY_CHOICES.contains(&d.key), "{}", d.key);
+            assert_eq!(parse_keys(d.key).as_deref(), Ok(d.key), "{}", d.key);
             assert!(PAD_CHOICES.contains(&d.pad), "{}", d.pad);
             assert_eq!(Action::by_id(d.id), Some(d.action));
             // The registry has both settings with the same defaults.
@@ -869,13 +1078,166 @@ mod tests {
         let (s3, warnings) = Settings::parse("[keys]\ncamera = \"Escape\"\n").unwrap();
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert_eq!(Bindings::from_settings(&s3).key(Action::Camera), "C");
-        // Reset: every binding back.
-        for line in Bindings::reset_lines() {
-            let mut w = line.split_whitespace().skip(1);
-            let (k, v) = (w.next().unwrap(), w.next().unwrap());
-            s.set(k, v).unwrap();
+        // Reset: every binding back, and out of the file.
+        for k in Bindings::setting_keys() {
+            s.unset(&k).unwrap();
         }
         assert!(Bindings::from_settings(&s).is_default());
+        assert_eq!(s.to_toml().trim(), "", "nothing saved: {}", s.to_toml());
+    }
+
+    /// Spec 3.2.5 (2026-11-21): Delete / Page Down choose the junction's
+    /// exit to the left / right, Q / E stay as second keys; ← / → only
+    /// steer; Page Up / Page Down no longer change the power.
+    #[test]
+    fn the_exits_are_on_delete_and_page_down_with_q_and_e() {
+        let b = Bindings::default();
+        assert_eq!(b.key(Action::ExitLeft), "Delete,Q");
+        assert_eq!(b.key(Action::ExitRight), "PageDown,E");
+        assert_eq!(key_label(b.key(Action::ExitLeft)), "Delete / Q");
+        for (k, a) in [
+            ("Delete", Action::ExitLeft),
+            ("Q", Action::ExitLeft),
+            ("PageDown", Action::ExitRight),
+            ("E", Action::ExitRight),
+        ] {
+            assert!(b.key_fires(a, |n| n == k, false), "{k}");
+        }
+        for k in ["Left", "Right", "PageUp"] {
+            assert!(!b.key_fires(Action::ExitLeft, |n| n == k, false), "{k}");
+            assert!(!b.key_fires(Action::ExitRight, |n| n == k, false), "{k}");
+        }
+        assert!(b.key_fires(Action::SteerLeft, |n| n == "Left", false));
+        // No action is on Page Up; Page Down is only the exit.
+        for d in &ACTIONS {
+            assert!(!b.key_fires(d.action, |n| n == "PageUp", false), "{}", d.id);
+            assert_eq!(
+                b.key_fires(d.action, |n| n == "PageDown", false),
+                d.action == Action::ExitRight,
+                "{}",
+                d.id
+            );
+        }
+        // The gamepad keeps its D-pad for the exits; the stick steers.
+        assert_eq!(b.pad(Action::ExitLeft), "DPadLeft");
+        assert_eq!(b.pad(Action::SteerLeft), "none");
+        let h = b.hud_lines();
+        assert!(h.free.contains("Del/Q PgDn/E: exit"), "{}", h.free);
+        assert!(h.free.contains("left/right: steer"), "{}", h.free);
+        assert_eq!(h.junction, "Del/Q  < exit >  PgDn/E");
+    }
+
+    #[test]
+    fn key_lists_parse_and_show() {
+        assert_eq!(parse_keys("delete, q").as_deref(), Ok("Delete,Q"));
+        assert_eq!(parse_keys("Q,Q").as_deref(), Ok("Q"));
+        assert_eq!(parse_keys("NONE").as_deref(), Ok("none"));
+        assert!(parse_keys("A,B,C").is_err(), "at most two");
+        assert!(parse_keys("Escape").is_err());
+        assert!(parse_keys("A,").is_err());
+        assert_eq!(key_label("none"), "-");
+        // A file of an older version: the retired power keys and the old
+        // exit defaults are read as not set.
+        let (s, warnings) = Settings::parse(
+            "[keys]\npower_up = \"PageUp\"\nexit_left = \"Q\"\nexit_right = \"X\"\n[pad]\npower_down = \"none\"\n",
+        )
+        .unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let b = Bindings::from_settings(&s);
+        assert_eq!(b.key(Action::ExitLeft), "Delete,Q");
+        assert_eq!(b.key(Action::ExitRight), "X", "a choice of its own stays");
+        assert!(!s.to_toml().contains("power"), "{}", s.to_toml());
+    }
+
+    fn change(key: &str, value: Option<&str>) -> (String, Option<String>) {
+        (key.to_string(), value.map(str::to_string))
+    }
+
+    /// The capture's conflict rule (spec 3.2.5): a key taken by another
+    /// action moves; an action left without input gets the old one.
+    #[test]
+    fn a_captured_key_moves_from_another_action_by_a_swap() {
+        let b = Bindings::default();
+        // W is wild mode's only key: autodrive takes it, wild gets A.
+        let r = b.assign(Action::Autodrive, Device::Key, "W", true);
+        assert_eq!(
+            r.changes,
+            vec![
+                change("keys.autodrive", Some("W")),
+                change("keys.wild", Some("A"))
+            ]
+        );
+        assert_eq!(r.note, "Autodrive: W (W was taken: Wild mode now has A)");
+        // Q is the exit's second key: the exit keeps Delete, the camera
+        // takes Q.
+        let r = b.assign(Action::Camera, Device::Key, "Q", true);
+        assert_eq!(
+            r.changes,
+            vec![
+                change("keys.camera", Some("Q")),
+                change("keys.exit_left", Some("Delete"))
+            ]
+        );
+        assert!(
+            r.note.contains("Junction: exit left keeps Delete"),
+            "{}",
+            r.note
+        );
+        // A key nobody has: only the action; back to its default it
+        // leaves the file.
+        let r = b.assign(Action::UTurn, Device::Key, "F5", true);
+        assert_eq!(r.changes, vec![change("keys.u_turn", Some("F5"))]);
+        let mut moved = b.clone();
+        moved.set(Action::UTurn, Device::Key, "F5");
+        let r = moved.assign(Action::UTurn, Device::Key, "U", true);
+        assert_eq!(r.changes, vec![change("keys.u_turn", None)]);
+        // Unchanged.
+        assert!(
+            b.assign(Action::Wild, Device::Key, "W", true)
+                .changes
+                .is_empty()
+        );
+        // A pad button: South is autodrive's; wild mode takes it and
+        // autodrive gets West.
+        let r = b.assign(Action::Wild, Device::Pad, "South", true);
+        assert_eq!(
+            r.changes,
+            vec![
+                change("pad.wild", Some("South")),
+                change("pad.autodrive", Some("West"))
+            ]
+        );
+        // Stop has no button: autodrive's South moves and autodrive is
+        // unbound.
+        let r = b.assign(Action::Stop, Device::Pad, "South", true);
+        assert_eq!(
+            r.changes,
+            vec![
+                change("pad.stop", Some("South")),
+                change("pad.autodrive", Some("none"))
+            ]
+        );
+        assert!(r.note.contains("Autodrive is now unbound"), "{}", r.note);
+        // Applied, no conflict is left.
+        let mut s = Settings::default();
+        for (k, v) in b.assign(Action::Autodrive, Device::Key, "W", true).changes {
+            match v {
+                Some(v) => s.set(&k, &v).map(|_| ()),
+                None => s.unset(&k),
+            }
+            .unwrap();
+        }
+        assert_eq!(Bindings::from_settings(&s).conflicts(true), []);
+        // A desktop-only key in the browser is not taken from it.
+        let r = b.assign(Action::Camera, Device::Key, "V", false);
+        assert_eq!(r.changes.len(), 1, "{r:?}");
+        // A flight key of unicorn mode stays a marked conflict.
+        let r = b.assign(Action::Camera, Device::Key, "L", true);
+        assert!(
+            r.note.contains("conflict: L: Camera and unicorn"),
+            "{}",
+            r.note
+        );
     }
 
     #[test]

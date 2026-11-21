@@ -195,7 +195,8 @@ pub struct Args {
     #[arg(long)]
     pub list_worlds: bool,
     /// Free ride on the world package's road graph (spec §2.2.1): choose
-    /// the exit at junctions (← / → or Q / E), U-turn with U. Needs
+    /// the exit at junctions (Delete / Q left, Page Down / E right), U-turn
+    /// with U. Needs
     /// --world with a version 2 package (it has the road graph).
     #[arg(long, requires = "world")]
     pub free_ride: bool,

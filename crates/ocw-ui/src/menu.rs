@@ -1008,7 +1008,13 @@ mod tests {
         assert_eq!(
             v.items,
             [
-                "Account", "Controls", "Trainer", "Audio", "Display", "Voice", "Back"
+                "Account",
+                "Controls, input mapping",
+                "Trainer",
+                "Audio",
+                "Display",
+                "Voice",
+                "Back"
             ]
         );
         // Display → Graphics without fullscreen (B7: fullscreen moved
@@ -1066,7 +1072,10 @@ mod tests {
             tap(&mut app, KeyCode::Enter);
             let v = view(&app);
             assert_eq!(v.title, "Settings", "{platform:?}");
-            assert!(v.items.iter().any(|i| i == "Controls"), "{platform:?}");
+            assert!(
+                v.items.iter().any(|i| i == "Controls, input mapping"),
+                "{platform:?}"
+            );
             let controls = sub_rows(app.world(), sub::Page::Controls);
             assert!(controls.len() <= 6, "the ten-foot rule: {controls:?}");
             let i = controls

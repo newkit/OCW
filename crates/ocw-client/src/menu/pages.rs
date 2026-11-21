@@ -156,12 +156,12 @@ pub enum Page {
     /// on / off, the zones' height), the unicorn's mouse and flight (the
     /// Controls page is full).
     UnicornControls,
-    /// Controls → Keys and buttons (spec §3.2.1 M9): the groups, the pad's
-    /// Confirm button, reset.
+    /// Controls → Input mapping (spec 3.2.5, 3.2.1 M9): the groups of
+    /// ride actions, the pad's Confirm button, reset.
     Bindings,
     /// One group of bindings (index into `bindings::Group::ALL`).
     BindGroup(usize),
-    /// Keys and buttons → Reset to defaults (asks first).
+    /// Input mapping → Reset to defaults (asks first).
     BindReset,
     /// Display → Accessibility (M9): HUD size, status colours, contrast,
     /// reduced motion, camera shake.
@@ -298,11 +298,11 @@ impl Page {
             Self::RiderList => "Riders in this ride",
             Self::Account => "Account",
             Self::UnicornControls => "Touch and unicorn mode",
-            Self::Bindings => "Keys and buttons",
+            Self::Bindings => "Input mapping",
             Self::BindGroup(g) => crate::bindings::Group::ALL
                 .get(g)
                 .map_or("Keys", |g| g.label()),
-            Self::BindReset => "Reset keys and buttons?",
+            Self::BindReset => "Reset the input mapping?",
             Self::Accessibility => "Accessibility",
             Self::Hud => "HUD",
             Self::History => "Training history",
@@ -405,7 +405,7 @@ impl Page {
         )
     }
 
-    /// The Keys and buttons pages (rows from [`binding_rows`]).
+    /// The Input mapping pages (rows from [`binding_rows`]).
     pub fn is_binding_page(self) -> bool {
         matches!(self, Self::Bindings | Self::BindGroup(_) | Self::BindReset)
     }
@@ -597,10 +597,10 @@ impl Page {
                 "Touch: tap or hold a side to steer. Unicorn: cursor keys and + / -, or the gamepad.",
             ],
             Self::Bindings => &[
-                "One key and one gamepad button per action. The menu keys, the sticks, the triggers and unicorn mode's flight keys stay fixed.",
+                "One or two keys and a gamepad button per ride action. The menu's keys, the sticks, the triggers and the unicorn's flight keys stay fixed.",
             ],
             Self::BindGroup(_) => &[
-                "Enter: press the new key or button (Esc / Start: cancel). Left / Right: step through the keys.",
+                "Keys | pad button. Enter: new key or button (a taken one swaps). Left / Right: step.",
             ],
             Self::BindReset => &["Every key and button back to its default. Back keeps them."],
             Self::Hud => &[
@@ -939,7 +939,7 @@ pub fn setting_row(settings: &Settings, key: &str, label: &str) -> Row {
     let set = |dir| format!("set {key} {}", d.step(&v, dir));
     let confirm = match d.kind {
         Kind::Bool | Kind::Choice(_) => Some(Activate::Command(set(1))),
-        Kind::Int { .. } | Kind::Text => None,
+        Kind::Int { .. } | Kind::Text | Kind::Keys => None,
     };
     Row {
         label: label.into(),
@@ -1020,23 +1020,24 @@ fn access_summary(settings: &Settings) -> String {
     }
 }
 
-/// The Keys and buttons row's value: "defaults", "changed", "2 conflicts".
+/// The Input mapping row's value: "defaults", "3 changed", "2 conflicts".
 pub fn bindings_summary(settings: &Settings, desktop: bool) -> String {
     let b = crate::bindings::Bindings::from_settings(settings);
     let n = b.conflicts(desktop).len();
     match n {
         0 if b.is_default() => "defaults".into(),
-        0 => "changed".into(),
+        0 => format!("{} changed", b.changed().len()),
         1 => "1 conflict".into(),
         n => format!("{n} conflicts"),
     }
 }
 
-/// The rows of the Keys and buttons pages (spec §3.2.1 M9): the groups,
-/// the pad's Confirm button and reset; a group's actions, each "key |
-/// button" – ← / → step the key, Confirm waits for the new key or button
-/// (`bind --capture ID`); `desktop`: the platform has the desktop's
-/// actions (the browser leaves those out).
+/// The rows of the Input mapping pages (spec 3.2.5, 3.2.1 M9): the
+/// groups, the pad's Confirm button and reset; a group's actions, each
+/// "keys | button" – ← / → step the (first) key, Confirm waits for the
+/// new key or button (`bind --capture ID`, the swap rule of
+/// `Bindings::assign`); `desktop`: the platform has the desktop's actions
+/// (the browser leaves those out).
 pub fn binding_rows(page: Page, settings: &Settings, desktop: bool) -> Vec<Row> {
     use crate::bindings::{
         ACTIONS, Bindings, Device, Group, KEY_CHOICES, key_label, pad_label, step_choice,
@@ -1093,6 +1094,7 @@ pub fn binding_rows(page: Page, settings: &Settings, desktop: bool) -> Vec<Row> 
                 .filter(|d| d.group == *group && (desktop || !d.desktop_only))
                 .map(|d| {
                     let key = b.key(d.action);
+                    let first = b.first_key(d.action);
                     let pad = b.pad(d.action);
                     let marked = |dev| {
                         if conflicts
@@ -1105,7 +1107,7 @@ pub fn binding_rows(page: Page, settings: &Settings, desktop: bool) -> Vec<Row> 
                         }
                     };
                     let set =
-                        |dir| format!("set keys.{} {}", d.id, step_choice(KEY_CHOICES, key, dir));
+                        |dir| format!("set keys.{} {}", d.id, step_choice(KEY_CHOICES, first, dir));
                     Row {
                         label: d.label.into(),
                         value: Some(format!(
@@ -1334,10 +1336,10 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         Page::Audio => audio_rows(settings, &AudioDevices::default()),
         Page::Controls => vec![
             setting_row(settings, "controls.autodrive", "Autodrive at the start"),
-            // Rebinding (M9) and the unicorn's controls have their own
-            // pages (the ten-foot rule: six rows).
+            // The input mapping (spec 3.2.5) and the unicorn's controls
+            // have their own pages (the ten-foot rule: six rows).
             open_row(
-                "Keys and buttons",
+                "Input mapping",
                 Some(bindings_summary(settings, true)),
                 Page::Bindings,
             ),

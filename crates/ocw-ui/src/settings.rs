@@ -294,6 +294,10 @@ fn register_commands(app: &mut App) {
                         .collect()
                 }
                 Kind::Text => Vec::new(),
+                Kind::Keys => ocw_client::bindings::KEY_CHOICES
+                    .iter()
+                    .map(|s| (*s).to_owned())
+                    .collect(),
             },
             None => Vec::new(),
         }

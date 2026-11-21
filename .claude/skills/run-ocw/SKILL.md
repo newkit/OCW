@@ -101,7 +101,7 @@ the kiosk's screenshots and video in `test-output/`.
 
 ## Run (human path)
 
-`cargo run -p ocw-desktop` opens a window. PgUp/PgDn change the virtual power,
+`cargo run -p ocw-desktop` opens a window. ↑ / ↓ change the virtual power,
 `` ` `` or F12 opens the console. Useless headless.
 
 ## Gotchas

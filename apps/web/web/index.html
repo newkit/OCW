@@ -222,7 +222,7 @@
       </div>
       <h2>Riding</h2>
       <ul>
-        <li><b>Virtual power:</b> ↑ more power, ↓ brake, Page Up / Down ±10 W; A autodrive, ← / → your line or lean.</li>
+        <li><b>Virtual power:</b> ↑ more power, ↓ brake; A autodrive, ← / → your line or lean. Free ride: Delete / Page Down (or Q / E) the junction's exit to the left / right.</li>
         <li><b>Smart trainer, power meter, heart rate:</b> the Devices panel, bottom right (Web Bluetooth:
           Chrome or Edge on Windows, macOS, ChromeOS and Android; on Linux behind a flag).</li>
         <li><b>Menu:</b> Esc (or the gamepad's Start) – events, workouts, the time and weather machines,
@@ -806,7 +806,7 @@
           || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
       if (!hasBt) {
         msg.textContent = "This browser has no Web Bluetooth (Firefox, Safari, iOS): riding with virtual power ("
-          + (touchFirst ? "the stop / − / + buttons on the right" : "↑ / ↓, Page Up / Down")
+          + (touchFirst ? "the stop / − / + buttons on the right" : "↑ / ↓")
           + "). Trainers connect in Chrome or Edge.";
       }
       // A touch-first phone or tablet without Web Bluetooth (iOS: Safari

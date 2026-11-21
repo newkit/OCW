@@ -450,11 +450,7 @@ pub fn set_section(doc: &mut DocumentMut, key: &str, text: &str) -> Result<(), S
     t.set_implicit(!has_values && !t.is_empty());
     if let Some(old) = doc.get(key).and_then(Item::as_table) {
         *t.decor_mut() = old.decor().clone();
-        for (k, v) in t.iter_mut() {
-            if let (Item::Table(new), Some(Item::Table(o))) = (v, old.get(k.get())) {
-                *new.decor_mut() = o.decor().clone();
-            }
-        }
+        keep_decor(&mut t, old);
     } else if t
         .decor()
         .prefix()
@@ -482,6 +478,30 @@ pub fn set_section(doc: &mut DocumentMut, key: &str, text: &str) -> Result<(), S
     }
     doc.insert(key, Item::Table(t));
     Ok(())
+}
+
+/// The comments of `old` kept in `new`: the decor of every table, key and
+/// value that is in both (a comment above `master = 30` in
+/// `[settings.audio]` stays when the app saves the settings, spec 3.2.4,
+/// 3.2.5).
+fn keep_decor(new: &mut Table, old: &Table) {
+    let keys: Vec<String> = new.iter().map(|(k, _)| k.to_string()).collect();
+    for k in keys {
+        let Some(o) = old.get(&k) else {
+            continue;
+        };
+        if let (Some(mut nk), Some(ok)) = (new.key_mut(&k), old.key(&k)) {
+            *nk.leaf_decor_mut() = ok.leaf_decor().clone();
+        }
+        match (new.get_mut(&k), o) {
+            (Some(Item::Table(n)), Item::Table(o)) => {
+                *n.decor_mut() = o.decor().clone();
+                keep_decor(n, o);
+            }
+            (Some(Item::Value(n)), Item::Value(o)) => *n.decor_mut() = o.decor().clone(),
+            _ => {}
+        }
+    }
 }
 
 /// Tables without a position are written after the table before them:
@@ -1055,6 +1075,77 @@ mod tests {
         );
         files.section("devices").remove().unwrap();
         assert_eq!(files.section("devices").read().unwrap(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Spec 3.2.5: the input mapping is saved in `ocw.toml`
+    /// (`[settings.keys]`, `[settings.pad]`) with only the changed
+    /// bindings; the other sections and the comments stay; a reset takes
+    /// the tables out again.
+    #[test]
+    fn the_input_mapping_is_saved_in_ocw_toml_with_only_the_changes() {
+        use ocw_client::bindings::{Action, Bindings, Device};
+        use ocw_client::settings::Settings;
+        use ocw_ui::settings::TextStore;
+        let dir = temp_dir("input-mapping");
+        let files = ConfigFiles::in_dir(&dir);
+        std::fs::write(
+            &files.config,
+            "# my notes\n[settings.audio]\n# quieter at night\nmaster = 30\n\n[start]\n# the last choice\nchoice = \"local\"\n",
+        )
+        .unwrap();
+        let mut store = SettingsStore {
+            files: files.clone(),
+        };
+        let load = |store: &SettingsStore| {
+            Settings::parse(&store.load().unwrap().unwrap_or_default())
+                .unwrap()
+                .0
+        };
+        let mut s = load(&store);
+        // A capture of W for autodrive: wild mode gets A (the swap).
+        let r = Bindings::default().assign(Action::Autodrive, Device::Key, "W", true);
+        let r2 = Bindings::default().assign(Action::UTurn, Device::Pad, "LB", true);
+        for (k, v) in r.changes.into_iter().chain(r2.changes) {
+            match v {
+                Some(v) => s.set(&k, &v).map(|_| ()),
+                None => s.unset(&k),
+            }
+            .unwrap();
+        }
+        store.save(&s.to_toml()).unwrap();
+        let text = std::fs::read_to_string(&files.config).unwrap();
+        assert!(text.starts_with("# my notes\n[settings.audio]"), "{text}");
+        assert!(text.contains("# quieter at night\nmaster = 30"), "{text}");
+        assert!(
+            text.contains("[start]\n# the last choice\nchoice = \"local\""),
+            "{text}"
+        );
+        assert!(text.contains("[settings.keys]"), "{text}");
+        assert!(text.contains("autodrive = \"W\""), "{text}");
+        assert!(text.contains("wild = \"A\""), "{text}");
+        assert!(text.contains("[settings.pad]\nu_turn = \"LB\""), "{text}");
+        // Only the three changed bindings, none of the defaults.
+        for id in ["faster", "exit_left", "camera", "map"] {
+            assert!(!text.contains(&format!("{id} =")), "{id}: {text}");
+        }
+        // Read again: the same bindings.
+        let back = Bindings::from_settings(&load(&store));
+        assert_eq!(back, Bindings::from_settings(&s));
+        assert_eq!(back.key(Action::Wild), "A");
+        assert_eq!(back.conflicts(true), []);
+        // Reset: the tables go, the rest stays.
+        let mut s = load(&store);
+        for k in Bindings::setting_keys() {
+            s.unset(&k).unwrap();
+        }
+        store.save(&s.to_toml()).unwrap();
+        let text = std::fs::read_to_string(&files.config).unwrap();
+        assert!(!text.contains("[settings.keys]"), "{text}");
+        assert!(!text.contains("[settings.pad]"), "{text}");
+        assert!(text.contains("# quieter at night\nmaster = 30"), "{text}");
+        assert!(text.contains("# the last choice"), "{text}");
+        assert!(Bindings::from_settings(&load(&store)).is_default());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -60,6 +60,10 @@ struct Fan;
 #[derive(Component)]
 struct Label;
 
+/// The exit keys above the fan (spec 3.2.5: "Del/Q  < exit >  PgDn/E").
+#[derive(Component)]
+struct KeyHint;
+
 #[derive(Component)]
 struct NoticeText;
 
@@ -137,6 +141,28 @@ fn spawn_overlay(mut commands: Commands) {
                     TextColor(Color::WHITE),
                     TextLayout::justify(Justify::Center),
                     Label,
+                )],
+            ));
+            // The exit keys just above the fan, while the choice is open.
+            o.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(0),
+                    width: px(WIDTH),
+                    bottom: px(HEIGHT + 2.0),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                children![(
+                    Text::new(""),
+                    TextFont {
+                        font_size: 14.0.into(),
+                        ..default()
+                    },
+                    TextColor(Color::srgba(0.95, 0.95, 0.95, 0.85)),
+                    TextShadow::default(),
+                    TextLayout::justify(Justify::Center),
+                    KeyHint,
                 )],
             ));
         });
@@ -298,14 +324,24 @@ fn update_notice(
     }
 }
 
+/// The fan's street line and its key hint (two texts of one overlay).
+type LabelText<'w, 's> =
+    Query<'w, 's, &'static mut Text, (With<Label>, Without<NoticeText>, Without<KeyHint>)>;
+type HintText<'w, 's> =
+    Query<'w, 's, &'static mut Text, (With<KeyHint>, Without<NoticeText>, Without<Label>)>;
+
+#[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn update_overlay(
     mut commands: Commands,
     view: Res<RideView>,
     mut overlay: Query<&mut Visibility, With<Overlay>>,
     fan: Query<Entity, With<Fan>>,
-    mut label_text: Query<&mut Text, (With<Label>, Without<NoticeText>)>,
+    mut label_text: LabelText,
+    mut hint_text: HintText,
     mut shown: Local<Option<Vec<FanArrow>>>,
     hud: Option<Res<crate::hud::ShowHud>>,
+    keys: Option<Res<crate::hud::RideKeys>>,
+    touch: Option<Res<crate::touch_hud::TouchHud>>,
 ) {
     let (Ok(mut vis), Ok(fan)) = (overlay.single_mut(), fan.single()) else {
         return;
@@ -320,6 +356,19 @@ fn update_overlay(
     *vis = Visibility::Inherited;
     if let Ok(mut t) = label_text.single_mut() {
         t.0 = label(j);
+    }
+    if let Ok(mut t) = hint_text.single_mut() {
+        // Not once locked (nothing to choose), nor while the touch hints
+        // show (a tap on an arrow chooses it).
+        let touching = touch.is_some_and(|t| t.shown);
+        let hint = match (&keys, j.locked || touching) {
+            (_, true) => String::new(),
+            (Some(k), false) => k.junction.clone(),
+            (None, false) => crate::hud::JUNCTION_KEYS.to_string(),
+        };
+        if t.0 != hint {
+            t.0 = hint;
+        }
     }
     let key = fan_key(j);
     if shown.as_ref() == Some(&key) {
