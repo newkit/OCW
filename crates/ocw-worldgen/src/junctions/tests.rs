@@ -120,14 +120,30 @@ fn reconciled_profiles_are_the_drawn_surface() {
             ends.iter().copied().fold(f64::NEG_INFINITY, f64::max),
         );
         assert!(hi - lo < 1e-9, "{ends:?}");
-        // Far from the junction nothing changed.
-        for (a, b) in g.edges.iter().zip(&g0.edges) {
+        // Far from the junction nothing changed. A side road climbing
+        // from the junction (J2b) regains the height its level start did
+        // not climb over a longer stretch (at the class grade, its grade
+        // changing by at most 1 % per metre: 65 m for 15 %); one already
+        // at its class limit (20 % residential) spreads it over the whole
+        // road (the least grade possible).
+        for (k, (a, b)) in g.edges.iter().zip(&g0.edges).enumerate() {
+            let at_limit = (b.profile[b.profile.len() - 1] - b.profile[0]).abs() / b.length_m()
+                >= crate::profile::limits(b.class).0 - 1e-9;
+            if at_limit {
+                assert!(k == 2 && g0.edges.len() == 3, "edge {k}");
+                continue;
+            }
             let len = a.length_m();
             for i in 0..a.profile.len() {
                 let s = sample_m(i, len);
                 let m = if a.from.0 == 0 { s } else { len - s };
-                if m > 60.0 {
-                    assert_eq!(a.profile[i], b.profile[i]);
+                let far = if k == 2 && g0.edges.len() == 3 {
+                    100.0
+                } else {
+                    60.0
+                };
+                if m > far {
+                    assert_eq!(a.profile[i], b.profile[i], "edge {k} at {m:.0} m");
                 }
             }
         }
@@ -484,4 +500,184 @@ fn short_steep_side_roads_get_their_blend_in_the_profile() {
     assert!(after < 0.5 * before, "seam {before:.3} -> {after:.3}");
     // The far end keeps its height.
     assert_eq!(g.edges[2].profile.last(), g0.edges[2].profile.last());
+}
+
+/// The grade of every interval of a profile at distances `d`.
+fn grades(p: &[f64], d: &[f64]) -> Vec<f64> {
+    (0..p.len() - 1)
+        .map(|i| (p[i + 1] - p[i]) / (d[i + 1] - d[i]))
+        .collect()
+}
+
+/// J2b: a profile with a 2 m step just past a fixed (junction) stretch:
+/// the fixed samples keep their heights, every interval comes within the
+/// class grade, the step is spread over a longer stretch (pulled towards
+/// the junction, climbing at the limit until it meets the road's own
+/// profile), the road far away keeps its profile, and the kink at the
+/// mouth is rounded by the free samples.
+#[test]
+fn relimiting_keeps_the_junction_and_lengthens_the_blend() {
+    let d: Vec<f64> = (0..41).map(|i| f64::from(i) * 5.0).collect();
+    let mut p: Vec<f64> = d
+        .iter()
+        .map(|&x| {
+            if x <= 5.0 {
+                0.0
+            } else {
+                2.0 + 0.12 * (x - 5.0)
+            }
+        })
+        .collect();
+    let fixed: Vec<bool> = (0..41).map(|i| i <= 1 || i == 40).collect();
+    let before = p.clone();
+    assert!(grades(&p, &d)[1] > 0.4);
+    let moved = relimit_profile(&mut p, &d, &fixed, 0.20, 0.01);
+    assert!(moved >= 3, "{moved}");
+    for i in [0, 1, 40] {
+        assert_eq!(p[i], before[i], "fixed sample {i}");
+    }
+    let g = grades(&p, &d);
+    assert!(g.iter().all(|g| g.abs() <= 0.20 + 1e-6), "{g:?}");
+    // The far half of the road is its own profile.
+    for i in 25..41 {
+        assert!(
+            (p[i] - before[i]).abs() < 1e-6,
+            "sample {i}: {} vs {}",
+            p[i],
+            before[i]
+        );
+    }
+    // The step's height is reached further on (the blend lengthened).
+    let meets = (2..41).find(|&i| (p[i] - before[i]).abs() < 1e-3).unwrap();
+    assert!(meets >= 4, "meets the own profile at sample {meets}");
+    // The kink at the mouth (the fixed stretch is level) is rounded: the
+    // gradient changes by at most 8 points between intervals.
+    for w in g.windows(2) {
+        assert!((w[1] - w[0]).abs() <= 0.08 + 1e-6, "{g:?}");
+    }
+}
+
+/// J2b: fixed heights farther apart than the class grade allows (the
+/// source data steeper): the stretch between them climbs at the least
+/// grade possible, and the steep intervals are `source_steep`.
+#[test]
+fn relimiting_spreads_what_the_source_makes_too_steep() {
+    let d: Vec<f64> = (0..9).map(|i| f64::from(i) * 5.0).collect();
+    // 40 m between fixed ends 12 m apart (30 % for a 20 % road), with a
+    // wall in the middle.
+    let mut p = vec![0.0, 0.0, 0.0, 0.0, 9.0, 12.0, 12.0, 12.0, 12.0];
+    let fixed: Vec<bool> = (0..9).map(|i| i == 0 || i == 8).collect();
+    relimit_profile(&mut p, &d, &fixed, 0.20, 0.01);
+    let g = grades(&p, &d);
+    let worst = g.iter().fold(0.0f64, |a, b| a.max(b.abs()));
+    assert!(worst <= 0.30 + 1e-6, "{g:?}");
+    assert_eq!((p[0], p[8]), (0.0, 12.0));
+    // In a graph: a 40 m residential road between two dead ends 12 m
+    // apart.
+    let v = [[0.0, 0.0], [40.0, 0.0]];
+    let g = fixtures::graph(
+        &v,
+        vec![Road::straight(&v, 0, 1, RoadClass::Residential, 5.0, |s| {
+            if s < 18.0 { 0.0 } else { 12.0 }
+        })],
+    );
+    let js = JunctionSet::new(&g);
+    let steep = steep_intervals(&g, &js, &|_, _| true);
+    assert!(!steep.is_empty());
+    assert!(
+        steep.iter().all(|s| s.cause == SteepCause::SourceSteep),
+        "{steep:?}"
+    );
+}
+
+/// J2b on a T junction whose side road climbs at 18 % (residential,
+/// limit 20 %): the J2 blend alone leaves it steeper than the limit +
+/// 1 % beyond the main road's edge; re-limiting with the junction
+/// surface fixed brings every interval within the limit, the junction
+/// stays level with the main road (the side road's vertex sample and the
+/// samples inside the patch on the main road's surface), the profiles
+/// are still the drawn surface, and the lint finds no steep interval.
+#[test]
+fn side_roads_keep_their_class_grade_after_the_blend() {
+    let g0 = t_junction(RoadClass::Secondary, 0.06, 0.18);
+    // The blend alone (J2): steeper than the limit near the junction.
+    let mut blended = g0.clone();
+    reconcile_rounds(
+        &mut blended,
+        &|_, _| true,
+        true,
+        &mut ReconcileStats::default(),
+    );
+    let r0 = crate::lint::lint(&package(&blended), None);
+    assert!(r0.count("road.vertical.grade_over_limit.junction") > 0);
+    let mut g = g0.clone();
+    let st = reconcile_profiles(&mut g, &|_, _| true);
+    assert!(st.steep_before > 0, "{st:?}");
+    assert!(st.relimit.samples > 0, "{st:?}");
+    assert_eq!(
+        (
+            st.steep_intervals,
+            st.steep_other,
+            st.steep_source,
+            st.steep_room
+        ),
+        (0, 0, 0, 0),
+        "{st:?}"
+    );
+    let side = &g.edges[2];
+    let len = side.length_m();
+    let d: Vec<f64> = (0..side.profile.len()).map(|i| sample_m(i, len)).collect();
+    let gr = grades(&side.profile, &d);
+    assert!(gr.iter().all(|x| x.abs() <= 0.20 + 0.01), "{gr:?}");
+    // The junction stays on the main road: the vertex at its height, the
+    // side road's first sample (inside the patch) on its surface.
+    assert_eq!(side.profile[0], g.edges[1].profile[0]);
+    assert!(side.profile[1].abs() < 0.02, "{:?}", &side.profile[..4]);
+    // The main road is a plane along its grade: unchanged.
+    for e in [0, 1] {
+        for (a, b) in g.edges[e].profile.iter().zip(&g0.edges[e].profile) {
+            assert!((a - b).abs() < 0.005);
+        }
+    }
+    // Still the drawn surface (the fixed point of the reconciliation).
+    assert!(st.residual_m < 0.02, "{st:?}");
+    // The far end keeps its height.
+    assert_eq!(side.profile.last(), g0.edges[2].profile.last());
+    // The lint agrees.
+    let r = crate::lint::lint(&package(&g), None);
+    assert_eq!(r.count("road.vertical.grade_over_limit"), 0);
+}
+
+/// J2b: a 25 m residential road at 20 % between two level main roads –
+/// its source heights hold the limit, but with both junction surfaces
+/// level with their main roads the rest has too little room:
+/// `junction_room`, not a fault of the re-limiting (J3's clusters).
+#[test]
+fn short_roads_between_junctions_have_too_little_room() {
+    let v = [
+        [0.0, 0.0],
+        [-100.0, 0.0],
+        [100.0, 0.0],
+        [0.0, 25.0],
+        [-100.0, 25.0],
+        [100.0, 25.0],
+    ];
+    let mut g = fixtures::graph(
+        &v,
+        vec![
+            Road::straight(&v, 1, 0, RoadClass::Secondary, 7.5, |_| 0.0),
+            Road::straight(&v, 0, 2, RoadClass::Secondary, 7.5, |_| 0.0),
+            Road::straight(&v, 4, 3, RoadClass::Secondary, 7.5, |_| 5.0),
+            Road::straight(&v, 3, 5, RoadClass::Secondary, 7.5, |_| 5.0),
+            Road::straight(&v, 0, 3, RoadClass::Residential, 5.0, |s| s * 0.20),
+        ],
+    );
+    let st = reconcile_profiles(&mut g, &|_, _| true);
+    assert_eq!(st.patches, 2, "{st:?}");
+    assert_eq!(
+        (st.steep_source, st.steep_intervals, st.steep_other),
+        (0, 0, 0),
+        "{st:?}"
+    );
+    assert!(st.steep_room > 0, "{st:?}");
 }

@@ -442,6 +442,30 @@ fn case(at: [f64; 2], value: f64, osm: i64, note: String) -> Case {
     }
 }
 
+/// The cause of every interval steeper than its class limit + 1 %
+/// ([`crate::junctions::steep_intervals`], with the package's junction
+/// surfaces and its bridge decks kept), by (edge, interval).
+fn steep_causes(
+    pkg: &WorldPackage,
+    g: &RoadGraph,
+) -> std::collections::HashMap<(usize, usize), crate::junctions::SteepCause> {
+    use ocw_world::junction::JunctionSet;
+    let js = match pkg.junctions.as_ref() {
+        Some(j) => JunctionSet::with_index(g, j.index_for(g)),
+        None => JunctionSet::new(g),
+    };
+    let decks = crate::junctions::bridge_spans(pkg, g);
+    let keep = |e: usize, s: f64| {
+        !decks
+            .iter()
+            .any(|d| d.0 == e && s >= d.1 - 1.0 && s <= d.2 + 1.0)
+    };
+    crate::junctions::steep_intervals(g, &js, &keep)
+        .into_iter()
+        .map(|s| ((s.edge, s.interval), s.cause))
+        .collect()
+}
+
 fn lint_roads(pkg: &WorldPackage, g: &RoadGraph, r: &mut LintReport) {
     let index = SegmentIndex::new(g, 20.0, |e| !g.edges[e].tunnel);
     let adj = g.adjacency();
@@ -466,6 +490,7 @@ fn lint_roads(pkg: &WorldPackage, g: &RoadGraph, r: &mut LintReport) {
         );
     }
     let max_half = g.edges.iter().map(|e| e.width_m / 2.0).fold(0.0, f64::max);
+    let steep_cause = steep_causes(pkg, g);
     for (ei, e) in g.edges.iter().enumerate() {
         let len = lens[ei];
         if e.bridge {
@@ -516,16 +541,20 @@ fn lint_roads(pkg: &WorldPackage, g: &RoadGraph, r: &mut LintReport) {
                 let grade = (p[i + 1] - p[i]) / ds;
                 let at = point_at(&e.points, d[i]);
                 if grade.abs() > max_grade + 0.01 && !e.bridge && !e.tunnel {
-                    r.add(
-                        "road.vertical.grade_over_limit",
-                        ds,
+                    let c = || {
                         case(
                             at,
                             grade.abs() * 100.0,
                             e.osm_way,
                             format!("{:?}, limit {:.0} %", e.class, max_grade * 100.0),
-                        ),
-                    );
+                        )
+                    };
+                    r.add("road.vertical.grade_over_limit", ds, c());
+                    // By cause (spec §4.8.8 J2b): the source data steeper
+                    // than the limit between fixed heights, near a junction
+                    // surface, elsewhere.
+                    let cause = steep_cause.get(&(ei, i)).map_or("other", |c| c.key());
+                    r.add(&format!("road.vertical.grade_over_limit.{cause}"), ds, c());
                 }
                 if (p[i + 1] - p[i]).abs() > 1.0 && grade.abs() > max_grade + 0.05 {
                     r.add(
