@@ -20,9 +20,12 @@
 //!    every junction with a surface, sampled from above as the renderer's
 //!    analysis test does.
 //!
-//! All pure; the profiles' grade limits are not re-applied after the blend
-//! (a side road climbing 20 % may climb more steeply just beyond the main
-//! road's edge: the height it did not climb inside the junction).
+//! 6. [`relimit_grades`]: the class grade and vertical-curvature limits
+//!    applied again after the blend with the junction surfaces fixed (a
+//!    side road's missed height spread over a longer stretch), counted by
+//!    cause in [`steep_intervals`] (J2b).
+//!
+//! All pure.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -214,9 +217,20 @@ pub struct ReconcileStats {
     /// Samples set on the longer blends of side roads whose blend the
     /// edge's length cut short (first round).
     pub longer_blend_samples: usize,
-    /// Profile intervals near a junction steeper than their class limit
-    /// + 1 % after the blend (the side roads' missed height).
+    /// Profile intervals steeper than their class limit + 1 % after the
+    /// blend, before re-limiting (all causes).
+    pub steep_before: usize,
+    /// What the re-limiting changed ([`relimit_grades`], all cycles) and
+    /// how many cycles ran.
+    pub relimit: RelimitStats,
+    pub relimit_cycles: usize,
+    /// Afterwards, by cause ([`steep_intervals`]): near a junction, where
+    /// the source data is steeper, where the junction surfaces leave too
+    /// little room, elsewhere.
     pub steep_intervals: usize,
+    pub steep_source: usize,
+    pub steep_room: usize,
+    pub steep_other: usize,
 }
 
 /// The profile samples a junction surface is made from, which the
@@ -434,6 +448,10 @@ fn drawn_on(
 /// surface (spec §4.8.8 J2) – inside the patch its height along the
 /// centre line, along a side road's blend the blended rows – then makes
 /// the patches again on the new profiles and repeats ([`ROUNDS`]).
+/// Afterwards the class grade and vertical-curvature limits of 4.8.3 are
+/// applied again with the junction surfaces fixed ([`relimit_grades`]: a
+/// side road's missed height spread over a longer stretch) and the
+/// profiles reconciled once more, up to [`RELIMIT_CYCLES`] times.
 /// `keep(edge, s)`: whether the sample `s` metres along `edge` may change
 /// (not on a planned bridge deck). Mitres are not touched (their corners
 /// follow the grades). Bridges and tunnels have no patch.
@@ -442,9 +460,59 @@ pub fn reconcile_profiles(
     keep: &(dyn Fn(usize, f64) -> bool + Sync),
 ) -> ReconcileStats {
     let mut st = ReconcileStats::default();
+    reconcile_rounds(graph, keep, true, &mut st);
+    // The intervals over the limit after the blend (before re-limiting).
+    let js = JunctionSet::new(graph);
+    st.steep_before = steep_intervals(graph, &js, keep).len();
+    drop(js);
+    for cycle in 0..RELIMIT_CYCLES {
+        let rl = relimit_grades(graph, keep);
+        st.relimit.edges += rl.edges;
+        st.relimit.samples += rl.samples;
+        st.relimit.max_change_m = st.relimit.max_change_m.max(rl.max_change_m);
+        st.relimit_cycles = cycle + 1;
+        if rl.samples == 0 {
+            break;
+        }
+        let mut again = ReconcileStats::default();
+        reconcile_rounds(graph, keep, false, &mut again);
+        st.rounds += again.rounds;
+        st.last_round_m = again.last_round_m;
+    }
+    // How far the final profiles are from the final patches' surface.
+    let js = JunctionSet::new(graph);
+    for (e, i, h) in drawn_samples(graph, &js, keep) {
+        let d = (h - graph.edges[e].profile[i]).abs();
+        st.residual_m = st.residual_m.max(d);
+        st.residual_samples += 1;
+        if d > 0.01 {
+            st.residual_over_1cm += 1;
+        }
+    }
+    for s in steep_intervals(graph, &js, keep) {
+        match s.cause {
+            SteepCause::SourceSteep => st.steep_source += 1,
+            SteepCause::JunctionRoom => st.steep_room += 1,
+            SteepCause::Junction => st.steep_intervals += 1,
+            SteepCause::Other => st.steep_other += 1,
+        }
+    }
+    st
+}
+
+/// The reconciliation rounds of [`reconcile_profiles`]; `longer`: the
+/// first round also bakes the longer blends ([`longer_blends`]) and counts
+/// the patches.
+fn reconcile_rounds(
+    graph: &mut RoadGraph,
+    keep: &(dyn Fn(usize, f64) -> bool + Sync),
+    longer: bool,
+    st: &mut ReconcileStats,
+) {
     for round in 0..ROUNDS {
         let js = JunctionSet::new(graph);
-        if round == 0 {
+        let first = round == 0 && longer;
+        if first {
             st.patches = (0..graph.vertices.len())
                 .filter(|&v| js.patch(graph, v).is_some())
                 .count();
@@ -452,14 +520,14 @@ pub fn reconcile_profiles(
         let drawn = drawn_samples(graph, &js, keep);
         // First round: the side roads whose blend the edge's length cut
         // short get the blend they need in their profile.
-        let longer = if round == 0 {
+        let blends = if first {
             longer_blends(graph, &js, keep)
         } else {
             Vec::new()
         };
         drop(js);
-        if round == 0 {
-            st.longer_blend_samples = longer.iter().map(Vec::len).sum();
+        if first {
+            st.longer_blend_samples = blends.iter().map(Vec::len).sum();
         }
         // A sample both ends reach (the middle of a short edge): the mean.
         let mut by: BTreeMap<(usize, usize), (f64, u32)> = BTreeMap::new();
@@ -468,7 +536,7 @@ pub fn reconcile_profiles(
             x.0 += h;
             x.1 += 1;
         }
-        for (e, i, h) in longer.into_iter().flatten() {
+        for (e, i, h) in blends.into_iter().flatten() {
             by.insert((e, i), (h, 1));
         }
         let mut worst = 0.0f64;
@@ -493,36 +561,540 @@ pub fn reconcile_profiles(
             break;
         }
     }
-    // How far the final profiles are from the final patches' surface.
-    let js = JunctionSet::new(graph);
-    for (e, i, h) in drawn_samples(graph, &js, keep) {
-        let d = (h - graph.edges[e].profile[i]).abs();
-        st.residual_m = st.residual_m.max(d);
-        st.residual_samples += 1;
-        if d > 0.01 {
-            st.residual_over_1cm += 1;
+}
+
+// --- grade limits after the blend (J2b) ------------------------------------
+
+/// Re-limiting and reconciling alternate at most this often.
+pub const RELIMIT_CYCLES: usize = 3;
+/// Grades above the class limit by more than this are findings (4.8.1).
+pub const GRADE_TOLERANCE: f64 = 0.01;
+/// An interval within this distance beyond a junction surface's reach
+/// counts as the junction's (`grade_over_limit.junction`).
+pub const JUNCTION_NEAR_M: f64 = 30.0;
+
+/// What the re-limiting keeps on an edge ([`fixed_samples`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Fixed {
+    /// Per profile sample: kept.
+    pub samples: Vec<bool>,
+    /// The mouths of side arms (metres from the edge's `from` vertex and
+    /// the drawn height there, the main road's surface): kept too, as
+    /// points between the samples.
+    pub mouths: Vec<(f64, f64)>,
+    /// The samples inside a side arm's patch (not the vertex) with the
+    /// drawn height there (the patch's mesh): kept at that height. The
+    /// reconciliation may have left them off it (the samples it pins
+    /// round the end of a short blend can lie inside the patch).
+    pub drawn: Vec<(usize, f64)>,
+}
+
+/// What the re-limiting keeps on edge `ei`: both vertex samples (the
+/// junction heights, shared by every road there); at a junction surface
+/// the samples up to its mouth (the patch's mesh: the junction stays level
+/// with the main road), for a side arm its mouth on the main road's
+/// surface, for a main arm the sample past its mouth (its height and
+/// grade there shape the patch); the samples `keep` forbids (bridge
+/// decks). Bridges and tunnels: everything.
+pub fn fixed_samples(
+    g: &RoadGraph,
+    js: &JunctionSet,
+    ei: usize,
+    keep: &(dyn Fn(usize, f64) -> bool + Sync),
+) -> Fixed {
+    let e = &g.edges[ei];
+    let n = e.profile.len();
+    if e.bridge || e.tunnel || n < 3 {
+        return Fixed {
+            samples: vec![true; n],
+            mouths: Vec::new(),
+            drawn: Vec::new(),
+        };
+    }
+    let len = e.length_m();
+    let mut reach = [0.0f64; 2];
+    let mut mouths = Vec::new();
+    let mut drawn = Vec::new();
+    let mut cum = None;
+    for (k, end) in js.ends(g, ei).iter().enumerate() {
+        if let Some(EndRule::Patch(p, ai)) = end {
+            let a = &p.arms[*ai];
+            let main = p.through.is_none_or(|t| t.contains(ai));
+            reach[k] = a.mouth_m + if main { PROFILE_STEP_M } else { 0.0 };
+            if !main {
+                let s = a.s_edge(a.mouth_m);
+                if s > 1e-3 && s < len - 1e-3 && keep(ei, s) {
+                    mouths.push((s, 0.5 * (a.row[0][1] + a.row[1][1])));
+                }
+                let cum = cum.get_or_insert_with(|| cumulative(&e.points));
+                for i in 1..n - 1 {
+                    let si = sample_m(i, len);
+                    let m = if k == 0 { si } else { len - si };
+                    if m <= a.mouth_m - 1e-6 && keep(ei, si) {
+                        let c = frame_at(&e.points, cum, si).0;
+                        if let Some(h) = drawn_on(g, js, p, ei, k == 0, si, c) {
+                            drawn.push((i, h));
+                        }
+                    }
+                }
+            }
         }
     }
-    // Steep intervals within the junctions' reach.
-    for (ei, e) in graph.edges.iter().enumerate() {
-        let [r0, r1] = js.reach(graph, ei);
-        if (r0 <= 0.0 && r1 <= 0.0) || e.profile.len() < 2 {
+    let samples = (0..n)
+        .map(|i| {
+            let s = sample_m(i, len);
+            i == 0
+                || i == n - 1
+                || s <= reach[0] + 1e-6
+                || len - s <= reach[1] + 1e-6
+                || !keep(ei, s)
+        })
+        .collect();
+    Fixed {
+        samples,
+        mouths,
+        drawn,
+    }
+}
+
+/// A profile with the mouths of [`Fixed`] inserted as fixed points and
+/// its samples inside side arms' patches at the drawn height: (heights,
+/// distances, fixed, the original sample of each point).
+fn with_mouths(
+    p: &[f64],
+    d: &[f64],
+    f: &Fixed,
+) -> (Vec<f64>, Vec<f64>, Vec<bool>, Vec<Option<usize>>) {
+    let mut pts: Vec<(f64, f64, bool, Option<usize>)> = (0..p.len())
+        .map(|i| (d[i], p[i], f.samples[i], Some(i)))
+        .collect();
+    for &(i, h) in &f.drawn {
+        pts[i].1 = h;
+    }
+    for &(s, h) in &f.mouths {
+        // On a sample: that sample is the mouth (inside the patch, kept).
+        if let Some(q) = pts.iter_mut().find(|q| (q.0 - s).abs() < 0.05) {
+            q.2 = true;
             continue;
         }
-        let len = e.length_m();
-        let limit = limits(e.class).0 + 0.01;
-        for i in 1..e.profile.len() {
-            let (s0, s1) = (sample_m(i - 1, len), sample_m(i, len));
-            if s1 - s0 < 0.5 {
-                continue;
+        pts.push((s, h, true, None));
+    }
+    pts.sort_by(|a, b| a.0.total_cmp(&b.0));
+    (
+        pts.iter().map(|q| q.1).collect(),
+        pts.iter().map(|q| q.0).collect(),
+        pts.iter().map(|q| q.2).collect(),
+        pts.iter().map(|q| q.3).collect(),
+    )
+}
+
+/// What [`relimit_grades`] changed.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RelimitStats {
+    /// Edges re-limited and samples moved.
+    pub edges: usize,
+    pub samples: usize,
+    /// Largest change of a sample (m).
+    pub max_change_m: f64,
+}
+
+/// The class limits of 4.8.3 on one profile (samples at distances `d`)
+/// with the samples `fixed` kept (spec §4.8.8 J2b).
+///
+/// 1. The grade: between two fixed samples every free sample is clamped
+///    to its neighbour's cone of the class grade, forward and back until
+///    it holds; where the fixed heights themselves lie farther apart than
+///    the limit allows (the source data is steeper), the stretch between
+///    them climbs at the least grade possible.
+/// 2. Leaving a fixed stretch (a junction's surface): the profile stays
+///    between the highest and the lowest a road can climb or fall from
+///    there, starting at the fixed stretch's grade and changing it by at
+///    most the curvature limit up to the class grade – a stretch too steep
+///    beside a junction is pulled towards the junction's height and bends
+///    into the climb until it meets the road's own profile (the blend
+///    lengthened as far as it needs). The same from the far side.
+/// 3. The kinks left at free samples are rounded towards their
+///    neighbours' chord within the grade limit (a kink at a fixed sample
+///    by its free neighbour); then the grade clamp once more (where both
+///    cannot hold, the grade wins).
+///
+/// Returns the samples moved.
+pub fn relimit_profile(
+    p: &mut [f64],
+    d: &[f64],
+    fixed: &[bool],
+    max_grade: f64,
+    max_change_per_m: f64,
+) -> usize {
+    let n = p.len();
+    if n < 3 {
+        return 0;
+    }
+    let before = p.to_vec();
+    let lim = clamp_grades(p, d, fixed, max_grade);
+    clamp_to_envelopes(p, d, fixed, &lim, max_change_per_m);
+    round_kinks_fixed(p, d, fixed, &lim, max_change_per_m);
+    clamp_grades(p, d, fixed, max_grade);
+    p.iter()
+        .zip(&before)
+        .filter(|(a, b)| (**a - **b).abs() > 1e-6)
+        .count()
+}
+
+/// Step 1 of [`relimit_profile`]; returns the grade each interval may
+/// have (the class limit, or the least possible between fixed heights
+/// farther apart).
+fn clamp_grades(p: &mut [f64], d: &[f64], fixed: &[bool], max_grade: f64) -> Vec<f64> {
+    let n = p.len();
+    let mut out = vec![max_grade; n - 1];
+    let anchors: Vec<usize> = (0..n).filter(|&i| fixed[i]).collect();
+    for w in anchors.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let run = (d[b] - d[a]).max(1e-9);
+        let mean = (p[b] - p[a]).abs() / run;
+        let lim = max_grade.max(mean * (1.0 + 1e-9) + 1e-9);
+        out[a..b].fill(lim);
+        if b <= a + 1 {
+            continue;
+        }
+        for _ in 0..64 {
+            let mut moved = false;
+            for i in a + 1..b {
+                let ds = d[i] - d[i - 1];
+                let c = p[i].clamp(p[i - 1] - lim * ds, p[i - 1] + lim * ds);
+                if (c - p[i]).abs() > 1e-9 {
+                    p[i] = c;
+                    moved = true;
+                }
             }
-            let near = s0 <= r0 || len - s1 <= r1;
-            if near && ((e.profile[i] - e.profile[i - 1]) / (s1 - s0)).abs() > limit {
-                st.steep_intervals += 1;
+            for i in (a + 1..b).rev() {
+                let ds = d[i + 1] - d[i];
+                let c = p[i].clamp(p[i + 1] - lim * ds, p[i + 1] + lim * ds);
+                if (c - p[i]).abs() > 1e-9 {
+                    p[i] = c;
+                    moved = true;
+                }
+            }
+            if !moved {
+                break;
             }
         }
     }
+    out
+}
+
+/// Step 2 of [`relimit_profile`]: from each fixed stretch of at least two
+/// samples (its grade known), the highest and lowest reachable heights
+/// with the grade changing by at most `max_change` per metre up to the
+/// interval's limit `lim`; the profile is clamped between them where they
+/// do not cross.
+fn clamp_to_envelopes(p: &mut [f64], d: &[f64], fixed: &[bool], lim: &[f64], max_change: f64) {
+    let n = p.len();
+    let mut lo = vec![f64::NEG_INFINITY; n];
+    let mut hi = vec![f64::INFINITY; n];
+    // Forward from every fixed sample whose interval before is fixed too.
+    for a in 1..n {
+        if !(fixed[a] && fixed[a - 1]) || a + 1 >= n || fixed[a + 1] {
+            continue;
+        }
+        let g0 = (p[a] - p[a - 1]) / (d[a] - d[a - 1]).max(1e-9);
+        let (mut gu, mut gl, mut u, mut l) = (g0, g0, p[a], p[a]);
+        let mut i = a + 1;
+        while i < n && !fixed[i] {
+            let ds = d[i] - d[i - 1];
+            let lm = lim[i - 1];
+            gu = (gu + max_change * ds).min(lm);
+            gl = (gl - max_change * ds).max(-lm);
+            u += gu * ds;
+            l += gl * ds;
+            hi[i] = hi[i].min(u);
+            lo[i] = lo[i].max(l);
+            i += 1;
+        }
+    }
+    // Backward from every fixed sample whose interval after is fixed too.
+    for b in (0..n - 1).rev() {
+        if !(fixed[b] && fixed[b + 1]) || b == 0 || fixed[b - 1] {
+            continue;
+        }
+        let g0 = (p[b + 1] - p[b]) / (d[b + 1] - d[b]).max(1e-9);
+        // Walking backwards a climb is a fall: the same envelopes.
+        let (mut gu, mut gl, mut u, mut l) = (g0, g0, p[b], p[b]);
+        let mut i = b;
+        while i > 0 && !fixed[i - 1] {
+            let ds = d[i] - d[i - 1];
+            let lm = lim[i - 1];
+            // Going back by ds: the height before is h - g·ds.
+            gu = (gu - max_change * ds).max(-lm);
+            gl = (gl + max_change * ds).min(lm);
+            u -= gu * ds;
+            l -= gl * ds;
+            hi[i - 1] = hi[i - 1].min(u);
+            lo[i - 1] = lo[i - 1].max(l);
+            i -= 1;
+        }
+    }
+    for i in 0..n {
+        if !fixed[i] && lo[i] <= hi[i] {
+            p[i] = p[i].clamp(lo[i], hi[i]);
+        }
+    }
+}
+
+/// Step 3 of [`relimit_profile`]: like [`round_kinks_at`] for the free
+/// samples, and a kink at a fixed sample is taken out by its free
+/// neighbour (moved halfway towards the grade the curvature limit allows
+/// there); every move stays within the grades `lim` of the sample's two
+/// intervals, so the grade limit keeps holding.
+fn round_kinks_fixed(p: &mut [f64], d: &[f64], fixed: &[bool], lim: &[f64], max_change: f64) {
+    let n = p.len();
+    // Moves sample k halfway to `to`, within its intervals' grades.
+    let place = |p: &mut [f64], k: usize, to: f64| {
+        let mut lo = f64::NEG_INFINITY;
+        let mut hi = f64::INFINITY;
+        if k > 0 {
+            let ds = d[k] - d[k - 1];
+            lo = lo.max(p[k - 1] - lim[k - 1] * ds);
+            hi = hi.min(p[k - 1] + lim[k - 1] * ds);
+        }
+        if k + 1 < n {
+            let ds = d[k + 1] - d[k];
+            lo = lo.max(p[k + 1] - lim[k] * ds);
+            hi = hi.min(p[k + 1] + lim[k] * ds);
+        }
+        let x = p[k] + (to - p[k]) * 0.5;
+        if lo <= hi {
+            p[k] = x.clamp(lo, hi);
+        }
+    };
+    for _ in 0..2000 {
+        let mut worst = 0.0f64;
+        for i in 1..n - 1 {
+            let (d1, d2) = (d[i] - d[i - 1], d[i + 1] - d[i]);
+            if d1 < 0.5 || d2 < 0.5 {
+                continue;
+            }
+            let (g1, g2) = ((p[i] - p[i - 1]) / d1, (p[i + 1] - p[i]) / d2);
+            let allowed = max_change * (d1 + d2) / 2.0;
+            let excess = (g2 - g1).abs() - allowed;
+            if excess <= 1e-6 {
+                continue;
+            }
+            let old = (p[i - 1], p[i], p[i + 1]);
+            if !fixed[i] {
+                let chord = p[i - 1] + (p[i + 1] - p[i - 1]) * d1 / (d1 + d2);
+                let frac = (excess / (g2 - g1).abs()).min(1.0);
+                place(p, i, p[i] + (chord - p[i]) * frac);
+            } else if !fixed[i + 1] {
+                let g = g1 + (g2 - g1).signum() * allowed;
+                place(p, i + 1, p[i] + g * d2);
+            } else if !fixed[i - 1] {
+                let g = g2 - (g2 - g1).signum() * allowed;
+                place(p, i - 1, p[i] - g * d1);
+            }
+            let shift = (p[i - 1] - old.0).abs() + (p[i] - old.1).abs() + (p[i + 1] - old.2).abs();
+            worst = worst.max(shift);
+        }
+        if worst < 1e-5 {
+            break;
+        }
+    }
+}
+
+/// Whether a profile needs re-limiting: an interval steeper than its
+/// class limit, or a kink above the lint's 8 points at a free sample.
+fn needs_relimit(p: &[f64], d: &[f64], fixed: Option<&[bool]>, max_grade: f64) -> bool {
+    let n = p.len();
+    let grade = |i: usize| (p[i + 1] - p[i]) / (d[i + 1] - d[i]).max(1e-9);
+    let free = |i: usize| fixed.is_none_or(|f| !f[i]);
+    (0..n - 1).any(|i| d[i + 1] - d[i] >= 0.5 && grade(i).abs() > max_grade + 1e-3)
+        || (1..n - 1).any(|i| {
+            free(i)
+                && d[i] - d[i - 1] >= 0.5
+                && d[i + 1] - d[i] >= 0.5
+                && (grade(i) - grade(i - 1)).abs() > 0.08
+        })
+}
+
+/// The class grade and vertical-curvature limits (4.8.3) applied again
+/// after the junction blend (spec §4.8.8 J2b) to every road profile that
+/// breaks them ([`relimit_profile`] with [`fixed_samples`]): the
+/// junctions stay level with the main road, a side road's missed height
+/// is spread over as long a stretch as it needs.
+pub fn relimit_grades(
+    graph: &mut RoadGraph,
+    keep: &(dyn Fn(usize, f64) -> bool + Sync),
+) -> RelimitStats {
+    let js = JunctionSet::new(graph);
+    let ids: Vec<usize> = (0..graph.edges.len()).collect();
+    let g: &RoadGraph = graph;
+    let new = crate::par::map(&ids, crate::par::threads(), |&ei| {
+        let e = &g.edges[ei];
+        let n = e.profile.len();
+        if e.bridge || e.tunnel || n < 3 {
+            return None;
+        }
+        let len = e.length_m();
+        let d: Vec<f64> = (0..n).map(|i| sample_m(i, len)).collect();
+        let (max_grade, max_change) = limits(e.class);
+        // The cheap test first (no junction lookups for the good roads).
+        if !needs_relimit(&e.profile, &d, None, max_grade) {
+            return None;
+        }
+        let f = fixed_samples(g, &js, ei, keep);
+        let (mut p, d2, fx, orig) = with_mouths(&e.profile, &d, &f);
+        let off = f
+            .drawn
+            .iter()
+            .any(|&(i, h)| (e.profile[i] - h).abs() > 1e-3);
+        if !off && !needs_relimit(&p, &d2, Some(&fx), max_grade) {
+            return None;
+        }
+        relimit_profile(&mut p, &d2, &fx, max_grade, max_change);
+        let mut out = e.profile.clone();
+        for (h, o) in p.iter().zip(&orig) {
+            if let Some(i) = o {
+                out[*i] = *h;
+            }
+        }
+        (out != e.profile).then_some((ei, out))
+    });
+    drop(js);
+    let mut st = RelimitStats::default();
+    for (ei, p) in new.into_iter().flatten() {
+        let old = &mut graph.edges[ei].profile;
+        for (a, b) in old.iter().zip(&p) {
+            let c = (a - b).abs();
+            if c > 1e-6 {
+                st.samples += 1;
+                st.max_change_m = st.max_change_m.max(c);
+            }
+        }
+        st.edges += 1;
+        *old = p;
+    }
     st
+}
+
+/// Why a profile interval is steeper than its class limit + 1 % (the
+/// lint's `road.vertical.grade_over_limit.CAUSE`, spec §4.8.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SteepCause {
+    /// The road's own fixed heights round it (its two junction heights,
+    /// bridge decks) lie farther apart than the limit + 1 % allows: the
+    /// source data is steeper.
+    SourceSteep,
+    /// The source heights would allow the limit, but not with the
+    /// junction surfaces level with their main roads ([`fixed_samples`]):
+    /// too little room between a side road's mouth (on the main road's
+    /// surface across, which can lie metres above or below the side road
+    /// where it leaves a steep main road at a narrow angle) and the next
+    /// fixed height – another junction surface a few metres on (J3's
+    /// clusters), a bridge deck.
+    JunctionRoom,
+    /// Within [`JUNCTION_NEAR_M`] beyond a junction surface's reach.
+    Junction,
+    /// Elsewhere.
+    Other,
+}
+
+impl SteepCause {
+    pub fn key(self) -> &'static str {
+        match self {
+            SteepCause::SourceSteep => "source_steep",
+            SteepCause::JunctionRoom => "junction_room",
+            SteepCause::Junction => "junction",
+            SteepCause::Other => "other",
+        }
+    }
+}
+
+/// An interval steeper than its class limit + [`GRADE_TOLERANCE`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Steep {
+    pub edge: usize,
+    /// The interval between samples `interval` and `interval + 1`.
+    pub interval: usize,
+    pub grade: f64,
+    pub cause: SteepCause,
+}
+
+/// Every profile interval (at least 1 m long, not on a bridge or in a
+/// tunnel) steeper than its class limit + 1 %, with its cause.
+pub fn steep_intervals(
+    g: &RoadGraph,
+    js: &JunctionSet,
+    keep: &(dyn Fn(usize, f64) -> bool + Sync),
+) -> Vec<Steep> {
+    let ids: Vec<usize> = (0..g.edges.len()).collect();
+    let per = crate::par::map(&ids, crate::par::threads(), |&ei| {
+        let e = &g.edges[ei];
+        let n = e.profile.len();
+        let mut out = Vec::new();
+        if e.bridge || e.tunnel || n < 2 {
+            return out;
+        }
+        let len = e.length_m();
+        let d: Vec<f64> = (0..n).map(|i| sample_m(i, len)).collect();
+        let max_grade = limits(e.class).0;
+        let steep: Vec<(usize, f64)> = (0..n - 1)
+            .filter(|&i| d[i + 1] - d[i] >= 1.0)
+            .map(|i| (i, (e.profile[i + 1] - e.profile[i]) / (d[i + 1] - d[i])))
+            .filter(|(_, gr)| gr.abs() > max_grade + GRADE_TOLERANCE)
+            .collect();
+        if steep.is_empty() {
+            return out;
+        }
+        let f = fixed_samples(g, js, ei, keep);
+        let (p, d2, fx, _) = with_mouths(&e.profile, &d, &f);
+        let reach = js.reach(g, ei);
+        // The road's own fixed heights: its ends and the bridge decks.
+        let own: Vec<bool> = (0..n)
+            .map(|k| k == 0 || k == n - 1 || !keep(ei, d[k]))
+            .collect();
+        for (i, grade) in steep {
+            let a0 = (0..=i).rev().find(|&k| own[k]).unwrap_or(0);
+            let b0 = (i + 1..n).find(|&k| own[k]).unwrap_or(n - 1);
+            let source = (e.profile[b0] - e.profile[a0]).abs() / (d[b0] - d[a0]).max(1e-9);
+            // The fixed points round the interval (a junction's mouth may
+            // lie inside it): the steepest grade any two neighbouring ones
+            // at least 1 m apart need.
+            let lo = d2.partition_point(|&x| x <= d[i] + 1e-9);
+            let hi = d2.partition_point(|&x| x < d[i + 1] - 1e-9);
+            let a = (0..lo).rev().find(|&k| fx[k]).unwrap_or(0);
+            let b = (hi..d2.len()).find(|&k| fx[k]).unwrap_or(d2.len() - 1);
+            let anchors: Vec<usize> = (a..=b).filter(|&k| fx[k]).collect();
+            let mut mean = 0.0f64;
+            for (j, &k) in anchors.iter().enumerate() {
+                if let Some(&l) = anchors[j + 1..].iter().find(|&&l| d2[l] - d2[k] >= 1.0) {
+                    mean = mean.max((p[l] - p[k]).abs() / (d2[l] - d2[k]));
+                }
+            }
+            // Nothing free round it: nothing the re-limiting could move.
+            if (a..=b).all(|k| fx[k]) {
+                mean = f64::INFINITY;
+            }
+            let near = (reach[0] > 0.0 && d[i] <= reach[0] + JUNCTION_NEAR_M)
+                || (reach[1] > 0.0 && len - d[i + 1] <= reach[1] + JUNCTION_NEAR_M);
+            let cause = if source > max_grade + GRADE_TOLERANCE {
+                SteepCause::SourceSteep
+            } else if mean > max_grade + GRADE_TOLERANCE {
+                SteepCause::JunctionRoom
+            } else if near {
+                SteepCause::Junction
+            } else {
+                SteepCause::Other
+            };
+            out.push(Steep {
+                edge: ei,
+                interval: i,
+                grade,
+                cause,
+            });
+        }
+        out
+    });
+    per.into_iter().flatten().collect()
 }
 
 /// The drawn junction surfaces as points (x, surface height, z) for the
