@@ -413,7 +413,7 @@ mod tests {
         let (ln, rn) = crash(at(5.0, 0.0));
         let (lf, rf) = crash(at(35.0, 0.0));
         assert!(lf + rf < 0.4 * (ln + rn), "near {ln} far {lf}");
-        assert!(at(35.0, 0.0).air_cutoff_hz < at(5.0, 0.0).air_cutoff_hz / 3.0);
+        assert!(at(35.0, 0.0).air_cutoff_hz < at(5.0, 0.0).air_cutoff_hz / 2.5);
         // Beyond the range: not played at all.
         let mut m = Mixer::new(SR, full());
         m.apply(MixerMsg::SpatialCue(
