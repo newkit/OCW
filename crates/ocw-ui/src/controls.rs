@@ -154,8 +154,10 @@ impl RidePads {
     }
 }
 
-/// The keyboard power's keys of this frame (bound: Faster, Stop,
-/// Power ±10 W) with the pads' throttle.
+/// The keyboard power's keys of this frame (bound: Faster, Stop) with the
+/// pads' throttle. No key changes the power by 10 W (spec 3.2.5: Page Up
+/// / Page Down no longer do; the touch buttons' ±10 W are added by the
+/// apps).
 pub fn throttle_keys(
     b: &crate::bindings::ActiveBindings,
     keys: &ButtonInput<KeyCode>,
@@ -166,9 +168,59 @@ pub fn throttle_keys(
         up_pressed: b.key_just_pressed(Action::Faster, keys) || pad.up_pressed,
         up_held: b.key_pressed(Action::Faster, keys) || pad.up,
         down_pressed: b.key_just_pressed(Action::Stop, keys) || pad.down_pressed,
-        page_up: b.key_just_pressed(Action::PowerUp, keys),
-        page_down: b.key_just_pressed(Action::PowerDown, keys),
+        plus_10: false,
+        minus_10: false,
     }
+}
+
+/// The free ride's keys of one frame, the same in both apps (spec 2.2.1,
+/// 3.2.5): U-turn (U, East unless an event's results panel takes it),
+/// back to the route (J, North unless Select is held: the unicorn's
+/// chord) and the junction exits (Delete / Q and Page Down / E, the
+/// D-pad left / right). ← / → never choose an exit: they steer. Returns
+/// the messages for the server and the log lines; the exit choice goes
+/// out with the client's `turn_message`.
+pub fn free_ride_keys<'a>(
+    b: &crate::bindings::ActiveBindings,
+    keys: &ButtonInput<KeyCode>,
+    pads: impl IntoIterator<Item = &'a Gamepad>,
+    client: &mut ocw_client::client::ClientCore,
+    now: f64,
+) -> (Vec<Vec<u8>>, Vec<String>) {
+    use ocw_client::bindings::Action;
+    use ocw_client::input::{JunctionKey, junction_key};
+    let (mut msgs, mut said) = (Vec::new(), Vec::new());
+    if !client.is_free_ride() {
+        return (msgs, said);
+    }
+    let pads: Vec<&Gamepad> = pads.into_iter().collect();
+    let key = |a| b.key_just_pressed(a, keys);
+    let pad = |a| b.pad_just_pressed(a, pads.iter().copied());
+    let results = client.results_input(now);
+    let select = pads.iter().any(|p| p.pressed(GamepadButton::Select));
+    if (key(Action::UTurn) || (pad(Action::UTurn) && !results))
+        && let Some(msg) = client.u_turn(now)
+    {
+        said.push("U-turn".into());
+        msgs.push(msg);
+    }
+    if key(Action::Rejoin) || (pad(Action::Rejoin) && !select) {
+        match client.rejoin_route() {
+            Ok(msg) => {
+                said.push("rejoining the route".into());
+                msgs.push(msg);
+            }
+            Err(e) => said.push(format!("no rejoin: {e}")),
+        }
+    }
+    if let JunctionKey::Select(steps) = junction_key(
+        key(Action::ExitLeft) || pad(Action::ExitLeft),
+        key(Action::ExitRight) || pad(Action::ExitRight),
+    ) && let Some(s) = client.turn(steps)
+    {
+        said.push(s);
+    }
+    (msgs, said)
 }
 
 /// Whether any pad pressed `b` this frame.

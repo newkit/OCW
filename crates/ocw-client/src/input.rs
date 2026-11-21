@@ -9,7 +9,7 @@ use crate::client::ClientCore;
 
 pub mod touch;
 
-/// Free ride: what the junction keys do this frame (spec §2.2.1).
+/// Free ride: what the junction keys do this frame (spec 2.2.1, 3.2.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JunctionKey {
     /// Not a junction key: steer as usual.
@@ -18,29 +18,18 @@ pub enum JunctionKey {
     Select(i32),
 }
 
-/// Maps the keys to a junction action: Q / E always; the arrows only in
-/// autodrive while a junction is active (then they do not move the line).
-/// Returns the action and whether the arrows are taken by the junction.
-pub fn junction_key(
-    q: bool,
-    e: bool,
-    left: bool,
-    right: bool,
-    autodrive: bool,
-    junction_active: bool,
-) -> (JunctionKey, bool) {
-    let arrows = autodrive && junction_active;
-    let mut steps = i32::from(e) - i32::from(q);
-    if arrows {
-        steps += i32::from(right) - i32::from(left);
+/// The junction keys of one frame: the exit to the left (default Delete
+/// or Q, the D-pad left) and to the right (Page Down or E, the D-pad
+/// right), at any time and in every steering mode. ← / → are never
+/// junction keys: they only steer (spec 3.2.5, 2026-11-21: "the cursor
+/// keys are double used").
+pub fn junction_key(left: bool, right: bool) -> JunctionKey {
+    match i32::from(right) - i32::from(left) {
+        0 => JunctionKey::None,
+        steps => JunctionKey::Select(steps),
     }
-    let key = if steps == 0 {
-        JunctionKey::None
-    } else {
-        JunctionKey::Select(steps)
-    };
-    (key, arrows)
 }
+
 /// Power added by each press of ↑.
 pub const POWER_STEP_W: f64 = 25.0;
 /// Power rise per second while ↑ is held.
@@ -155,8 +144,11 @@ pub struct ThrottleKeys {
     pub up_held: bool,
     /// ↓ went down this frame: stop.
     pub down_pressed: bool,
-    pub page_up: bool,
-    pub page_down: bool,
+    /// +10 W / −10 W: the touch power buttons only (spec 3.2.3 TS5); no
+    /// key changes the power by 10 W since v5.18 (Page Up / Page Down
+    /// were, spec 3.2.5).
+    pub plus_10: bool,
+    pub minus_10: bool,
 }
 
 impl ThrottleKeys {
@@ -166,13 +158,13 @@ impl ThrottleKeys {
             up_pressed: self.up_pressed || o.up_pressed,
             up_held: self.up_held || o.up_held,
             down_pressed: self.down_pressed || o.down_pressed,
-            page_up: self.page_up || o.page_up,
-            page_down: self.page_down || o.page_down,
+            plus_10: self.plus_10 || o.plus_10,
+            minus_10: self.minus_10 || o.minus_10,
         }
     }
 }
 
-/// Keyboard power (↑ / ↓, PageUp / PageDown): added to the rider's device
+/// Keyboard power (↑ / ↓; the touch buttons' ±10 W): added to the rider's device
 /// power (virtual or real trainer), so the keys work with any device. The
 /// same rules in the desktop and the browser app.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -203,7 +195,7 @@ impl KeyThrottle {
             out.extend(client.set_brake(false));
         }
         self.watts = ramp(self.watts, keys.up_pressed, keys.up_held, dt);
-        self.watts = (self.watts + power_delta(keys.page_up, keys.page_down)).clamp(0.0, 2500.0);
+        self.watts = (self.watts + power_delta(keys.plus_10, keys.minus_10)).clamp(0.0, 2500.0);
         // Send the rider's new power at most every KEY_SEND_INTERVAL_S
         // while it changes, and at once when it reached 0.
         let changed = (self.watts - client.key_power_w()).abs() > 1e-9;
@@ -262,36 +254,12 @@ mod tests {
     }
 
     #[test]
-    fn junction_keys_take_the_arrows_only_in_autodrive_near_a_junction() {
+    fn junction_keys_choose_the_exit_and_never_take_the_arrows() {
         use JunctionKey::*;
-        // Q / E always.
-        assert_eq!(
-            junction_key(true, false, false, false, false, false),
-            (Select(-1), false)
-        );
-        assert_eq!(
-            junction_key(false, true, false, false, true, false),
-            (Select(1), false)
-        );
-        // Arrows: only with autodrive and an active junction.
-        assert_eq!(
-            junction_key(false, false, true, false, true, true),
-            (Select(-1), true)
-        );
-        assert_eq!(
-            junction_key(false, false, false, true, true, false),
-            (None, false)
-        );
-        // Manual steering keeps the arrows for leaning.
-        assert_eq!(
-            junction_key(false, false, false, true, false, true),
-            (None, false)
-        );
-        // Taken even when nothing is pressed (the line does not move).
-        assert_eq!(
-            junction_key(false, false, false, false, true, true),
-            (None, true)
-        );
+        assert_eq!(junction_key(true, false), Select(-1));
+        assert_eq!(junction_key(false, true), Select(1));
+        assert_eq!(junction_key(true, true), None, "both: no change");
+        assert_eq!(junction_key(false, false), None);
     }
 
     #[test]
@@ -412,9 +380,9 @@ mod tests {
         assert!(stop && client.braking());
         assert_eq!(client.key_power_w(), 0.0);
         assert_eq!(msgs.len(), 2);
-        // Page Up adds 10 W and up releases the brake.
+        // The touch +10 W adds 10 W and up releases the brake.
         let page = ThrottleKeys {
-            page_up: true,
+            plus_10: true,
             ..ThrottleKeys::default()
         };
         t.update(&mut client, page, 0.01, 2.0);

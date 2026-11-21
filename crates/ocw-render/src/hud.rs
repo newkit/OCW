@@ -40,6 +40,7 @@ impl Plugin for HudPlugin {
             .init_resource::<HudGpsLine>()
             .init_resource::<LookAhead>()
             .init_resource::<AppKeys>()
+            .init_resource::<RideKeys>()
             .init_resource::<TopPanelWidth>()
             .init_resource::<HudBoxes>()
             .add_systems(Startup, (spawn_hud, spawn_recording))
@@ -65,6 +66,42 @@ impl Plugin for HudPlugin {
 /// video or screen keys (spec §14 Phase 10).
 #[derive(Resource, Clone, Debug, PartialEq, Eq)]
 pub struct AppKeys(pub String);
+
+/// The ride's key lines of the HUD and the junction fan's hint, with the
+/// keys of the input mapping (spec 3.2.5; `ocw_ui::bindings` writes them
+/// from `ocw_client::bindings::Bindings::hud_lines`). The defaults are the
+/// default bindings' (a test in `ocw_ui::bindings` checks they match).
+#[derive(Resource, Clone, Debug, PartialEq, Eq)]
+pub struct RideKeys {
+    /// A route ride.
+    pub route: String,
+    /// A free ride.
+    pub free: String,
+    /// A ride without junction choices.
+    pub plain: String,
+    /// Under the junction fan.
+    pub junction: String,
+}
+
+/// The route ride's keys by default.
+pub const ROUTE_KEYS: &str = "up: faster, down: stop, left/right: steer, Del/Q PgDn/E: exit (another than the route's leaves it), J: rejoin the route, U: U-turn, A: autodrive";
+/// The free ride's keys by default.
+pub const FREE_KEYS: &str = "up: faster, down: stop, left/right: steer, Del/Q PgDn/E: exit, U: U-turn, A: autodrive, W: wild";
+/// A plain ride's keys by default.
+pub const PLAIN_KEYS: &str = "up: faster, down: stop, left/right: steer, A: autodrive, W: wild";
+/// The junction fan's key hint by default.
+pub const JUNCTION_KEYS: &str = "Del/Q  < exit >  PgDn/E";
+
+impl Default for RideKeys {
+    fn default() -> Self {
+        Self {
+            route: ROUTE_KEYS.into(),
+            free: FREE_KEYS.into(),
+            plain: PLAIN_KEYS.into(),
+            junction: JUNCTION_KEYS.into(),
+        }
+    }
+}
 
 /// The desktop app's keys in the HUD.
 pub const DESKTOP_KEYS: &str =
@@ -1290,6 +1327,7 @@ fn update_hud(
     ahead: Res<LookAhead>,
     units: Res<Units>,
     app_keys: Res<AppKeys>,
+    ride_keys: Option<Res<RideKeys>>,
     panel: Res<TopPanelWidth>,
     layout: Option<Res<crate::hud_fit::HudLayout>>,
     touch: Option<Res<crate::touch_hud::TouchHud>>,
@@ -1372,21 +1410,20 @@ fn update_hud(
             None => line,
         }
     };
+    let default_keys = RideKeys::default();
+    let rk = ride_keys.as_deref().unwrap_or(&default_keys);
     let (place, keys) = if let Some(route) = &view.route_status {
         (
             format!("{route}: {}", track.name_at(local.state.distance)),
-            "up: faster, down: stop, left/right: steer or choose the exit (another than the route's leaves it), Q/E: exit, J: rejoin the route, U: U-turn, A: autodrive",
+            rk.route.as_str(),
         )
     } else if view.free_ride {
         (
             format!("Free ride: {}", track.name_at(local.state.distance)),
-            "up: faster, down: stop, left/right: steer or choose the exit at junctions, Q/E: exit, U: U-turn, A: autodrive, W: wild",
+            rk.free.as_str(),
         )
     } else {
-        (
-            view.route.name().to_string(),
-            "up: faster, down: stop, left/right: steer, A: autodrive, W: wild",
-        )
+        (view.route.name().to_string(), rk.plain.as_str())
     };
     let (distance, distance_unit) = units.distance(local.state.distance);
     let mut lines = format!(
@@ -1474,7 +1511,7 @@ pub(crate) mod tests_support {
             )
         );
         let small = format!(
-            "Test Hills | 2.01 km | 0:00:24 | riders: 3\nup: faster, down: stop, left/right: steer or choose the exit (another than the route's leaves it), Q/E: exit, J: rejoin the route, U: U-turn, A: autodrive | {DESKTOP_KEYS}\nVirtual trainer 200 W (no Web Bluetooth here) | trainer SIM +1.9 % (difficulty 50 %) | autodrive | gravel"
+            "Test Hills | 2.01 km | 0:00:24 | riders: 3\n{ROUTE_KEYS} | {DESKTOP_KEYS}\nVirtual trainer 200 W (no Web Bluetooth here) | trainer SIM +1.9 % (difficulty 50 %) | autodrive | gravel"
         );
         let (b, sm) = top_panel_text(panel, &big, &small);
         (panel, TOP_MARGIN_PX + top_panel_height(&b, &sm))
@@ -1498,7 +1535,7 @@ pub(crate) mod tests_support {
             )
         );
         let small = format!(
-            "Vaduz - Malbun | 2.01 km | 0:00:24 | riders: 3\nup: faster, down: stop, left/right: steer, A: autodrive, W: wild | {DESKTOP_KEYS}\nVirtual trainer 200 W | trainer ERG 250 W"
+            "Vaduz - Malbun | 2.01 km | 0:00:24 | riders: 3\n{PLAIN_KEYS} | {DESKTOP_KEYS}\nVirtual trainer 200 W | trainer ERG 250 W"
         );
         let (b, sm) = top_panel_text(panel, &big, &small);
         (panel, TOP_MARGIN_PX + top_panel_height(&b, &sm))
@@ -1945,7 +1982,7 @@ mod tests {
             DESKTOP_KEYS,
             "mouse: camera, C: camera reset | ` or F12: console",
         ];
-        let route_keys = "up: faster, down: stop, left/right: steer or choose the exit (another than the route's leaves it), Q/E: exit, J: rejoin the route, U: U-turn, A: autodrive";
+        let route_keys = ROUTE_KEYS;
         let sizes = [
             (1280.0f32, 720.0f32),
             (1366.0, 768.0),

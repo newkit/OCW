@@ -21,7 +21,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::bindings::{KEY_CHOICES, PAD_CHOICES};
+use crate::bindings::PAD_CHOICES;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 
@@ -36,6 +36,10 @@ pub enum Kind {
     Choice(&'static [&'static str]),
     /// Free text (a device name), at most [`MAX_TEXT_LEN`] characters.
     Text,
+    /// A key binding (spec 3.2.5): one or two names of
+    /// `bindings::KEY_CHOICES` separated by a comma ("Delete,Q"), or
+    /// "none".
+    Keys,
 }
 
 /// Longest [`Kind::Text`] value.
@@ -148,13 +152,28 @@ impl std::fmt::Display for Source {
     }
 }
 
-/// A key or button binding (spec §3.2.1 M9): one of the names of
-/// `bindings::KEY_CHOICES` / `PAD_CHOICES`.
+/// A gamepad button binding (spec 3.2.1 M9, 3.2.5): one of the names of
+/// `bindings::PAD_CHOICES`.
 macro_rules! binding {
     ($key:literal, $default:literal, $choices:expr, $desc:literal) => {
         SettingDef {
             key: $key,
             kind: Kind::Choice($choices),
+            default: $default,
+            description: $desc,
+            scope: Scope::Live,
+            apply: Apply::App,
+        }
+    };
+}
+
+/// A key binding (spec 3.2.5): one or two key names of
+/// `bindings::KEY_CHOICES`, comma separated ([`Kind::Keys`]).
+macro_rules! keys_binding {
+    ($key:literal, $default:literal, $desc:literal) => {
+        SettingDef {
+            key: $key,
+            kind: Kind::Keys,
             default: $default,
             description: $desc,
             scope: Scope::Live,
@@ -880,95 +899,65 @@ pub const SETTINGS: &[SettingDef] = &[
     },
     // Key and button bindings (spec §3.2.1 M9, `bindings`): one key and
     // one gamepad button per ride action; read by the apps' input.
-    binding!("keys.faster", "Up", KEY_CHOICES, "Key: Faster (power +)"),
+    keys_binding!("keys.faster", "Up", "Key: Faster (power +)"),
     binding!(
         "pad.faster",
         "DPadUp",
         PAD_CHOICES,
         "Gamepad button: Faster (power +)"
     ),
-    binding!(
-        "keys.stop",
-        "Down",
-        KEY_CHOICES,
-        "Key: Stop (power 0, brake)"
-    ),
+    keys_binding!("keys.stop", "Down", "Key: Stop (power 0, brake)"),
     binding!(
         "pad.stop",
         "none",
         PAD_CHOICES,
         "Gamepad button: Stop (power 0, brake)"
     ),
-    binding!("keys.steer_left", "Left", KEY_CHOICES, "Key: Steer left"),
+    keys_binding!("keys.steer_left", "Left", "Key: Steer left"),
     binding!(
         "pad.steer_left",
         "none",
         PAD_CHOICES,
         "Gamepad button: Steer left"
     ),
-    binding!("keys.steer_right", "Right", KEY_CHOICES, "Key: Steer right"),
+    keys_binding!("keys.steer_right", "Right", "Key: Steer right"),
     binding!(
         "pad.steer_right",
         "none",
         PAD_CHOICES,
         "Gamepad button: Steer right"
     ),
-    binding!("keys.power_up", "PageUp", KEY_CHOICES, "Key: Power +10 W"),
-    binding!(
-        "pad.power_up",
-        "none",
-        PAD_CHOICES,
-        "Gamepad button: Power +10 W"
-    ),
-    binding!(
-        "keys.power_down",
-        "PageDown",
-        KEY_CHOICES,
-        "Key: Power -10 W"
-    ),
-    binding!(
-        "pad.power_down",
-        "none",
-        PAD_CHOICES,
-        "Gamepad button: Power -10 W"
-    ),
-    binding!(
-        "keys.autodrive",
-        "A",
-        KEY_CHOICES,
-        "Key: Autodrive on / off"
-    ),
+    keys_binding!("keys.autodrive", "A", "Key: Autodrive on / off"),
     binding!(
         "pad.autodrive",
         "South",
         PAD_CHOICES,
         "Gamepad button: Autodrive on / off"
     ),
-    binding!("keys.wild", "W", KEY_CHOICES, "Key: Wild mode on / off"),
+    keys_binding!("keys.wild", "W", "Key: Wild mode on / off"),
     binding!(
         "pad.wild",
         "West",
         PAD_CHOICES,
         "Gamepad button: Wild mode on / off"
     ),
-    binding!("keys.u_turn", "U", KEY_CHOICES, "Key: U-turn (free ride)"),
+    keys_binding!("keys.u_turn", "U", "Key: U-turn (free ride)"),
     binding!(
         "pad.u_turn",
         "East",
         PAD_CHOICES,
         "Gamepad button: U-turn (free ride)"
     ),
-    binding!("keys.rejoin", "J", KEY_CHOICES, "Key: Back to the route"),
+    keys_binding!("keys.rejoin", "J", "Key: Back to the route"),
     binding!(
         "pad.rejoin",
         "North",
         PAD_CHOICES,
         "Gamepad button: Back to the route"
     ),
-    binding!(
+    keys_binding!(
         "keys.exit_left",
-        "Q",
-        KEY_CHOICES,
+        "Delete,Q",
         "Key: Junction: the exit to the left"
     ),
     binding!(
@@ -977,10 +966,9 @@ pub const SETTINGS: &[SettingDef] = &[
         PAD_CHOICES,
         "Gamepad button: Junction: the exit to the left"
     ),
-    binding!(
+    keys_binding!(
         "keys.exit_right",
-        "E",
-        KEY_CHOICES,
+        "PageDown,E",
         "Key: Junction: the exit to the right"
     ),
     binding!(
@@ -989,98 +977,72 @@ pub const SETTINGS: &[SettingDef] = &[
         PAD_CHOICES,
         "Gamepad button: Junction: the exit to the right"
     ),
-    binding!("keys.camera", "C", KEY_CHOICES, "Key: Camera mode"),
+    keys_binding!("keys.camera", "C", "Key: Camera mode"),
     binding!(
         "pad.camera",
         "none",
         PAD_CHOICES,
         "Gamepad button: Camera mode"
     ),
-    binding!(
-        "keys.video",
-        "V",
-        KEY_CHOICES,
-        "Key: Video recording start / stop"
-    ),
+    keys_binding!("keys.video", "V", "Key: Video recording start / stop"),
     binding!(
         "pad.video",
         "none",
         PAD_CHOICES,
         "Gamepad button: Video recording start / stop"
     ),
-    binding!(
-        "keys.fullscreen",
-        "F11",
-        KEY_CHOICES,
-        "Key: Fullscreen on / off"
-    ),
+    keys_binding!("keys.fullscreen", "F11", "Key: Fullscreen on / off"),
     binding!(
         "pad.fullscreen",
         "none",
         PAD_CHOICES,
         "Gamepad button: Fullscreen on / off"
     ),
-    binding!("keys.restart", "R", KEY_CHOICES, "Key: Restart"),
+    keys_binding!("keys.restart", "R", "Key: Restart"),
     binding!(
         "pad.restart",
         "none",
         PAD_CHOICES,
         "Gamepad button: Restart"
     ),
-    binding!(
-        "keys.strava",
-        "S",
-        KEY_CHOICES,
-        "Key: Strava recording start / stop"
-    ),
+    keys_binding!("keys.strava", "S", "Key: Strava recording start / stop"),
     binding!(
         "pad.strava",
         "L3",
         PAD_CHOICES,
         "Gamepad button: Strava recording start / stop"
     ),
-    binding!("keys.god", "G", KEY_CHOICES, "Key: Unicorn mode on / off"),
+    keys_binding!("keys.god", "G", "Key: Unicorn mode on / off"),
     binding!(
         "pad.god",
         "none",
         PAD_CHOICES,
         "Gamepad button: Unicorn mode on / off"
     ),
-    binding!(
-        "keys.mute_mic",
-        "M",
-        KEY_CHOICES,
-        "Key: Mute the microphone"
-    ),
+    keys_binding!("keys.mute_mic", "M", "Key: Mute the microphone"),
     binding!(
         "pad.mute_mic",
         "Select",
         PAD_CHOICES,
         "Gamepad button: Mute the microphone"
     ),
-    binding!(
-        "keys.mute_voices",
-        "Shift+M",
-        KEY_CHOICES,
-        "Key: Mute the voices"
-    ),
+    keys_binding!("keys.mute_voices", "Shift+M", "Key: Mute the voices"),
     binding!(
         "pad.mute_voices",
         "R3",
         PAD_CHOICES,
         "Gamepad button: Mute the voices"
     ),
-    binding!("keys.map", "N", KEY_CHOICES, "Key: Navigation map on / off"),
+    keys_binding!("keys.map", "N", "Key: Navigation map on / off"),
     binding!(
         "pad.map",
         "none",
         PAD_CHOICES,
         "Gamepad button: Navigation map on / off"
     ),
-    binding!(
+    keys_binding!(
         "keys.map_zoom",
         "Z",
-        KEY_CHOICES,
         "Key: Navigation map zoom (auto, 1 - 7)"
     ),
     binding!(
@@ -1169,6 +1131,9 @@ impl SettingDef {
                     Ok(Value::Text(text.to_string()))
                 }
             }
+            Kind::Keys => crate::bindings::parse_keys(text)
+                .map(Value::Text)
+                .map_err(|e| format!("{}: {e}", self.key)),
         }
     }
 
@@ -1177,7 +1142,7 @@ impl SettingDef {
         match (self.kind, v) {
             (Kind::Bool, toml::Value::Boolean(b)) => Ok(Value::Bool(*b)),
             (Kind::Int { .. }, toml::Value::Integer(i)) => self.check(Value::Int(*i)),
-            (Kind::Choice(_) | Kind::Text, toml::Value::String(s)) => self.parse(s),
+            (Kind::Choice(_) | Kind::Text | Kind::Keys, toml::Value::String(s)) => self.parse(s),
             (_, other) => Err(format!(
                 "{}: expected {}, not {other}",
                 self.key,
@@ -1217,6 +1182,7 @@ impl SettingDef {
             ),
             Kind::Choice(c) => c.join(", "),
             Kind::Text => "a name".into(),
+            Kind::Keys => "a key, or two with a comma (A, Up, Delete,Q, F5, Shift+M, none)".into(),
         }
     }
 
@@ -1235,6 +1201,13 @@ impl SettingDef {
                 Value::Text(c[(at + dir.signum()).rem_euclid(n) as usize].to_string())
             }
             (Kind::Text, Value::Text(_)) => v.clone(),
+            // From the first key on, one key (a list becomes one key).
+            (Kind::Keys, Value::Text(s)) => {
+                let first = crate::bindings::key_list(s).next().unwrap_or("none");
+                Value::Text(
+                    crate::bindings::step_choice(crate::bindings::KEY_CHOICES, first, dir).into(),
+                )
+            }
             _ => self.default_value(),
         }
     }
@@ -1253,6 +1226,24 @@ impl SettingDef {
     }
 }
 
+/// Settings that no longer exist; a file that still has them is read
+/// without them (no warning) and saved without them: the keyboard's
+/// power ±10 W on Page Up / Page Down (removed in v5.18, spec 3.2.2: the
+/// keyboard's power is on ↑ / ↓ only, Page Down chooses the junction's
+/// exit to the right).
+pub const RETIRED: &[&str] = &[
+    "keys.power_up",
+    "keys.power_down",
+    "pad.power_up",
+    "pad.power_down",
+];
+
+/// Saved values that were the default before it changed: read as not set,
+/// so the new default applies (`bind --reset` before v5.18 wrote every
+/// default into the file). The junction exits' keys Q / E became
+/// Delete / Page Down with Q / E kept as second keys (v5.18).
+pub const OLD_DEFAULTS: &[(&str, &str)] = &[("keys.exit_left", "Q"), ("keys.exit_right", "E")];
+
 /// The settings of this app: the file's content and the session values.
 #[derive(Debug, Clone, Default)]
 pub struct Settings {
@@ -1267,10 +1258,11 @@ impl Settings {
     /// (unknown keys, invalid values); a syntax error is an error.
     pub fn parse(text: &str) -> Result<(Self, Vec<String>), String> {
         let doc: toml::Table = toml::from_str(text).map_err(|e| e.to_string())?;
-        let s = Self {
+        let mut s = Self {
             doc,
             session: BTreeMap::new(),
         };
+        s.forget_retired();
         let mut warnings = Vec::new();
         for key in s.unknown_keys() {
             warnings.push(format!("unknown setting {key} (kept in the file)"));
@@ -1433,6 +1425,44 @@ impl Settings {
             .insert(name.to_string(), v.to_toml());
         self.session.remove(d.key);
         Ok(v)
+    }
+
+    /// Back to the default: the key leaves the file (an emptied section
+    /// too) and the session; the next save writes the file without it.
+    pub fn unset(&mut self, key: &str) -> Result<(), String> {
+        let d = def(key).ok_or_else(|| unknown(key))?;
+        let (section, name) = d.file_key();
+        self.remove_entry(section, name);
+        self.session.remove(d.key);
+        Ok(())
+    }
+
+    fn remove_entry(&mut self, section: &str, name: &str) {
+        if let Some(t) = self.doc.get_mut(section).and_then(|v| v.as_table_mut()) {
+            t.remove(name);
+            if t.is_empty() {
+                self.doc.remove(section);
+            }
+        }
+    }
+
+    /// Drops the [`RETIRED`] settings and the saved [`OLD_DEFAULTS`].
+    fn forget_retired(&mut self) {
+        for key in RETIRED {
+            let (section, name) = key.split_once('.').expect("section.name");
+            self.remove_entry(section, name);
+        }
+        for (key, old) in OLD_DEFAULTS {
+            let (section, name) = key.split_once('.').expect("section.name");
+            let saved = self
+                .doc
+                .get(section)
+                .and_then(|t| t.get(name))
+                .and_then(|v| v.as_str());
+            if saved.is_some_and(|v| v.eq_ignore_ascii_case(old)) {
+                self.remove_entry(section, name);
+            }
+        }
     }
 
     /// Sets a value for this session only (`set --temp`).

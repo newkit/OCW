@@ -250,11 +250,13 @@ fn predict(mut session: ResMut<Session>) {
     session.0.client.predict_step();
 }
 
-/// The desktop's ride keys and gamepad (spec §3.2.2; the pads through the
+/// The desktop's ride keys and gamepad (spec 3.2.2; the pads through the
 /// browser's Gamepad API, B6): ↑ / D-pad up / the right trigger add
-/// power, ↓ / D-pad down / the left trigger stop, Page Up / Down ±10 W,
-/// A / South autodrive (South closes an event's results first), W / West
-/// wild mode, ← / → and the left stick the line (autodrive) or the lean.
+/// power, ↓ / the left stick down / the left trigger stop, A / South
+/// autodrive (South closes an event's results first), W / West wild mode,
+/// ← / → and the left stick the line (autodrive) or the lean; in a free
+/// ride Delete / Q and Page Down / E (D-pad left / right) the junction's
+/// exit, U the U-turn, J back to the route (spec 3.2.5).
 /// The keys and buttons are the bindings' (spec §3.2.1 M9, shared with the
 /// desktop: `ocw_ui::bindings`).
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
@@ -293,6 +295,16 @@ fn keys(
         let on = !s.client.autodrive();
         s.client.set_autodrive(on);
         info!("autodrive {}", if on { "on" } else { "off" });
+    }
+    // Free ride: U-turn, rejoin, the junction exits (shared with the
+    // desktop; ← / → never choose the exit, spec 3.2.5).
+    let (msgs, said) =
+        ocw_ui::controls::free_ride_keys(b, &keys, pads.iter().map(|(_, p)| p), &mut s.client, now);
+    for line in said {
+        info!("{line}");
+    }
+    for msg in msgs {
+        s.send(&msg);
     }
     if pressed(Action::Wild) {
         let wild = !s.client.wild();

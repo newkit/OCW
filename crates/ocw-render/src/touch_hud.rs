@@ -46,7 +46,7 @@ pub struct TouchHud {
 }
 
 /// A touch power button (spec 3.2.3 *Power without a trainer*, TS5): the
-/// keyboard's ↓ (stop: brake, power 0), Page Down (−10 W) and ↑ (a tap a
+/// keyboard's ↓ (stop: brake, power 0), −10 W (no key since v5.18) and ↑ (a tap a
 /// step, a hold ramps), fed into the shared `KeyThrottle`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PowerButton {

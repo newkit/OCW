@@ -405,7 +405,12 @@ const SETTINGS_ITEMS: &[Item] = &[
     // (riders.toml) moved onto the Account page (and stay in the
     // Workshop): the page has seven items, the ten-foot maximum.
     item("Account", ItemKind::Open(Page::Sub(sub::Page::Account))),
-    item("Controls", ItemKind::Open(Page::Sub(sub::Page::Controls))),
+    // The input mapping (spec 3.2.5) is the second row of Controls; the
+    // label says so (Settings has seven items, the ten-foot maximum).
+    item(
+        "Controls, input mapping",
+        ItemKind::Open(Page::Sub(sub::Page::Controls)),
+    ),
     item("Trainer", ItemKind::Open(Page::Sub(sub::Page::Trainer))),
     item("Audio", ItemKind::Open(Page::Sub(sub::Page::Audio))),
     item("Display", ItemKind::Open(Page::Sub(sub::Page::Display))),
@@ -2016,7 +2021,13 @@ mod tests {
         assert_eq!(
             labels(&m),
             [
-                "Account", "Controls", "Trainer", "Audio", "Display", "Voice", "Back"
+                "Account",
+                "Controls, input mapping",
+                "Trainer",
+                "Audio",
+                "Display",
+                "Voice",
+                "Back"
             ]
         );
         // The desktop's are unchanged.

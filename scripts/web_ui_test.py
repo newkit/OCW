@@ -51,6 +51,8 @@ KEYS = {
     "Shift": ("ShiftLeft", 16, ""),
     "PageUp": ("PageUp", 33, ""),
     "PageDown": ("PageDown", 34, ""),
+    "Delete": ("Delete", 46, ""),
+    "u": ("KeyU", 85, "u"),
     # Unicorn mode (spec §14 Phase 13 G5): G, I, P by position, + by what
     # it types (the US `=` key typing "+": `KeyboardEvent.key`).
     "g": ("KeyG", 71, "g"),
@@ -623,6 +625,51 @@ class UiTest:
 
     # ------------------------------------------------------------ the part
 
+    def input_mapping_part(self):
+        """Settings → Controls, input mapping → Input mapping (spec 3.2.5):
+        the rows with keys and buttons, the capture prompt, a captured key
+        another action has (the swap), saved in localStorage; back to the
+        defaults. Ends on the top page."""
+        m = self.wait_menu(lambda m: m.get("title") == "Open Cycling World")
+        ok = (self.open_item("Settings", "Settings")
+              and self.open_item("Controls, input mapping", "Controls")
+              and self.open_item("Input mapping", "Input mapping"))
+        items = self.menu().get("items", [])
+        self.check("input mapping: the page with its groups and reset",
+                   ok and any(i.startswith("Autodrive and junctions") for i in items)
+                   and any(i.startswith("Reset to defaults") for i in items), items)
+        self.shot("input-mapping")
+        ok = self.open_item("Autodrive and junctions", "Autodrive and junctions")
+        items = self.menu().get("items", [])
+        exit_left = next((i for i in items if i.startswith("Junction: exit left")), "")
+        self.check("input mapping: exit left on Delete / Q and the D-pad",
+                   ok and "Delete / Q" in exit_left and "D-pad left" in exit_left, items)
+        self.shot("input-mapping-junctions")
+        self.focus_item("Junction: exit left")
+        self.key("Enter")
+        self.pump(0.4)
+        status = str(self.menu().get("status", ""))
+        self.check("input mapping: Enter waits for a key", status.startswith("Press a key or gamepad button"),
+                   status)
+        self.shot("input-mapping-capture")
+        self.key("u")
+        self.pump(0.5)
+        m = self.menu()
+        status = str(m.get("status", ""))
+        items = m.get("items", [])
+        self.check("input mapping: U moved from the U-turn, which got Delete / Q",
+                   "U-turn now has Delete / Q" in status
+                   and any(i.startswith("U-turn") and "Delete / Q" in i for i in items), (status, items))
+        self.shot("input-mapping-swapped")
+        stored = self.cdp.eval("localStorage.getItem('ocw-settings') || ''") or ""
+        self.check("input mapping: saved in localStorage, only the changes",
+                   "exit_left" in stored and "u_turn" in stored and "autodrive" not in stored, stored[:300])
+        self.console("bind --reset")
+        stored = self.cdp.eval("localStorage.getItem('ocw-settings') || ''") or ""
+        self.check("input mapping: reset leaves nothing of it", "exit_left" not in stored, stored[:300])
+        self.close_menu()
+        self.key("Escape")
+
     def run(self, reload_and_wait):
         cdp = self.cdp
         cdp.call("Browser.setDownloadBehavior",
@@ -668,6 +715,9 @@ class UiTest:
         stored = cdp.eval("localStorage.getItem('ocw-settings') || ''") or ""
         self.check("settings: saved in localStorage", "units" in stored, stored[:200])
         self.key("Escape", 2)
+
+        # The input mapping (spec 3.2.5).
+        self.input_mapping_part()
 
         # Ride → Join a ride (spec 3.73): a pasted link in the field; Host
         # a ride dimmed (browsers cannot open a server port).

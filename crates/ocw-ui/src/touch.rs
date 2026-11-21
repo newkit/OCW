@@ -74,7 +74,8 @@ pub struct RideTouch {
     pub power_at: Vec<(PowerButton, Rect)>,
 }
 
-/// The touch power buttons' keys (TS5): what ↑ / ↓ / Page Down would be,
+/// The touch power buttons' keys (TS5): ↑, ↓ and −10 W (Page Down until
+/// v5.18, spec 3.2.5),
 /// taken by the app's power keys each frame ([`TouchPower::take`]) and fed
 /// with the keyboard's into the shared `KeyThrottle`.
 #[derive(Resource, Debug, Default)]
@@ -90,7 +91,7 @@ impl TouchPower {
     pub fn press(&mut self, b: PowerButton) {
         match b {
             PowerButton::Up => self.pending.up_pressed = true,
-            PowerButton::Down => self.pending.page_down = true,
+            PowerButton::Down => self.pending.minus_10 = true,
             PowerButton::Stop => self.pending.down_pressed = true,
         }
     }
@@ -702,7 +703,7 @@ mod tests {
         let (x, y) = at(PowerButton::Down);
         hold(&mut app, 2, x, y, 2);
         let k = take(&mut app);
-        assert!(k.page_down && !k.up_held && !k.down_pressed, "{k:?}");
+        assert!(k.minus_10 && !k.up_held && !k.down_pressed, "{k:?}");
         let (x, y) = at(PowerButton::Stop);
         hold(&mut app, 3, x, y, 2);
         assert!(take(&mut app).down_pressed);

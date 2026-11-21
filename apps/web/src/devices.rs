@@ -46,7 +46,7 @@ pub enum Bluetooth {
 
 /// The message for browsers without Web Bluetooth (the page overlay and
 /// the console show it).
-pub const NO_WEB_BLUETOOTH: &str = "This browser has no Web Bluetooth (Firefox, Safari and every browser on iOS): riding with virtual power (↑ / ↓, Page Up / Down). Trainers, power meters and heart-rate straps connect in Chrome or Edge on Windows, macOS, Linux, ChromeOS and Android.";
+pub const NO_WEB_BLUETOOTH: &str = "This browser has no Web Bluetooth (Firefox, Safari and every browser on iOS): riding with virtual power (↑ / ↓). Trainers, power meters and heart-rate straps connect in Chrome or Edge on Windows, macOS, Linux, ChromeOS and Android.";
 /// The message when the browser has Web Bluetooth but no adapter.
 pub const NO_ADAPTER: &str =
     "No Bluetooth adapter found (or Bluetooth is off): riding with virtual power.";
