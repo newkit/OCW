@@ -641,7 +641,7 @@ impl Page {
                 "Voice: voice chat on this ride (off: no voice server). Others may need UDP open in the firewall and a port forwarding on the router (README).",
             ],
             Self::HostSummary => &[
-                "The server and its voice server run in this app on all addresses; you ride on it as the host.",
+                "The server (and its voice server, if Voice is on) runs in this app on all addresses; you ride on it as the host.",
             ],
             Self::HostLink => &[],
             Self::Start => &[super::start::NOTE],

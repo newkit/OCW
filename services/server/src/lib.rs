@@ -7,10 +7,11 @@
 //!   QUIC with [`net`] (`--listen`, spec §6.2), and from the browser
 //!   over WebTransport (`--webtransport`, spec §14 Phase 10 B3).
 
+// The headphones per viewer (spec §7.1.7 Q17).
+pub mod headphones;
 // What a hosting runs beside its game server: the router's port mappings
 // and the bundled voice server (spec §7.1.6 V2; native only).
 #[cfg(not(target_arch = "wasm32"))]
-pub mod headphones;
 pub mod hosting;
 pub mod local;
 // Real weather (spec §14 Phase 9, S7): the session's feed (pure) and the
