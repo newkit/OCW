@@ -361,7 +361,7 @@ fn tryon_section(ui: &mut egui::Ui, view: &mut ModelView) {
         .show(ui, |ui| {
             let Some(default) = TryOn::default_for(kind, &o.id) else {
                 ui.weak(match kind {
-                    Kind::Creature => "The unicorn's wing and gallop cycles come with its file (Phase 15 M4).",
+                    Kind::Creature => "The unicorn is shown in its rest pose; the game turns its joint nodes in flight (the wing and gallop cycles here are open, 16 E3).",
                     _ => "No try-on for this kind yet.",
                 });
                 return;

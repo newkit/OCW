@@ -173,6 +173,7 @@ fn throttle_and_brake(
     mut key: ResMut<KeyPower>,
     mut ride_pads: Local<ocw_ui::controls::RidePads>,
     bindings: Option<Res<ActiveBindings>>,
+    touch_power: Option<ResMut<ocw_ui::touch::TouchPower>>,
 ) {
     let now = time.elapsed_secs_f64();
     let default = ActiveBindings::default();
@@ -182,7 +183,11 @@ fn throttle_and_brake(
     if pad.down_pressed {
         info!("gamepad: stop (power 0, brake)");
     }
-    let throttle = ocw_ui::controls::throttle_keys(b, &keys, &pad);
+    // With the touch power buttons (spec 3.2.3, TS5).
+    let mut throttle = ocw_ui::controls::throttle_keys(b, &keys, &pad);
+    if let Some(mut t) = touch_power {
+        throttle = throttle.or(t.take());
+    }
     let (msgs, stop) = key
         .0
         .update(&mut client.0, throttle, time.delta_secs_f64(), now);

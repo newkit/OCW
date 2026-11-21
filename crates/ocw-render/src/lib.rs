@@ -29,6 +29,7 @@ pub mod ground_detail;
 pub mod house_style;
 pub mod houses;
 pub mod hud;
+pub mod hud_fit;
 pub mod inspect_hud;
 pub mod junction;
 pub mod junction_mesh;
@@ -105,6 +106,10 @@ pub struct RideView {
     pub elapsed_s: f64,
     /// Device and trainer status for the HUD.
     pub status: String,
+    /// The status in the compact HUD (a phone, spec 3.2 *Phone layout*):
+    /// without the devices' and the trainer's part, which the browser's
+    /// Devices panel shows (`None`: [`Self::status`]).
+    pub status_compact: Option<String>,
     /// Real terrain around the route (from a route file); `None` = terrain
     /// generated from the route's own elevation (test routes).
     pub terrain_base: Option<ocw_world::ElevationGrid>,
@@ -268,6 +273,7 @@ impl RideView {
             riders: Vec::new(),
             elapsed_s: 0.0,
             status: String::new(),
+            status_compact: None,
             terrain_base: None,
             paths: BTreeMap::new(),
             free_ride: false,

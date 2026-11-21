@@ -2354,6 +2354,12 @@ impl ClientCore {
         self.virtual_device = on;
     }
 
+    /// Whether the power device is the virtual trainer (no trainer or
+    /// power meter connected; the touch power buttons show, spec 3.2.3).
+    pub fn virtual_device(&self) -> bool {
+        self.virtual_device
+    }
+
     /// Whether the power sent is virtual: the virtual trainer, or keyboard
     /// power on top of a real device.
     pub fn virtual_power(&self) -> bool {

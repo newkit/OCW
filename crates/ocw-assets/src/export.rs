@@ -209,6 +209,34 @@ pub fn models() -> Vec<(Entry, Model)> {
         );
         out.push((e, m));
     }
+    // The unicorn (Phase 15 M4): its joints are the nodes the flight
+    // animation turns.
+    {
+        let mut m = crate::unicorn::model();
+        let e = entry(
+            crate::unicorn::FILE,
+            Kind::Creature,
+            "ocw_assets::unicorn::model()",
+        );
+        stamp(
+            &mut m,
+            &e,
+            json!({ "standing_height_m": crate::unicorn::STANDING_HEIGHT_M }),
+        );
+        out.push((e, m));
+    }
+    // The workshop's pieces (Phase 15 M3): `workshop::room` places them
+    // for the number of bikes.
+    for p in crate::workshop::Piece::ALL {
+        let mut m = p.model();
+        let e = entry(
+            p.file(),
+            Kind::Workshop,
+            &format!("ocw_assets::workshop::Piece::{p:?}.model()"),
+        );
+        stamp(&mut m, &e, json!({}));
+        out.push((e, m));
+    }
     out
 }
 
@@ -286,7 +314,7 @@ pub fn write_manifest(old: &str, prefixes: &[&str], new: &[Entry]) -> Result<Str
 }
 
 /// The folders this crate's exporter owns in the manifest.
-pub const OWN_PREFIXES: [&str; 3] = ["bikes/", "riders/", "wear/"];
+pub const OWN_PREFIXES: [&str; 5] = ["bikes/", "creatures/", "riders/", "wear/", "workshop/"];
 
 #[cfg(test)]
 mod tests {
@@ -297,7 +325,12 @@ mod tests {
         let a = files();
         let b = files();
         // Bikes, the riders, the rider's part files (4N N8), helmets.
-        assert_eq!(a.len(), 6 + 2 + crate::rider_split::part_files().len() + 4);
+        // … the unicorn and the workshop pieces.
+        let more = 1 + crate::workshop::Piece::ALL.len();
+        assert_eq!(
+            a.len(),
+            6 + 2 + crate::rider_split::part_files().len() + 4 + more
+        );
         for ((ea, ba), (eb, bb)) in a.iter().zip(&b) {
             assert_eq!(ea, eb);
             assert_eq!(ba, bb, "{}", ea.file);
@@ -306,7 +339,10 @@ mod tests {
         let text = manifest_text(&a.iter().map(|(e, _)| e.clone()).collect::<Vec<_>>());
         let files: Vec<(String, Vec<u8>)> = a.into_iter().map(|(e, b)| (e.file, b)).collect();
         let checked = crate::manifest::validate(&text, &files).unwrap_or_else(|e| panic!("{e:#?}"));
-        assert_eq!(checked.len(), 12 + crate::rider_split::part_files().len());
+        assert_eq!(
+            checked.len(),
+            12 + crate::rider_split::part_files().len() + more
+        );
     }
 
     #[test]

@@ -30,7 +30,16 @@ gives the page a `navigator.gpu` with an adapter, as Safari 26 has:
            behind the notch do not steer, each half does, a held right side
            (touch pointers) steers and shows its glow; a wake lock that is
            there is held and asked again when the page is shown again;
-  mac      Safari on macOS (1280 × 720): the Hills ride on WebGL 2, draws.
+  both phone cases also check the phone layout (spec 3.2 *Phone layout*,
+           3.2.3 TS5): the compact HUD (scale < 1, at most 2 big and 5
+           lines, in the top quarter / third, no key line), nothing over
+           the road in the middle, the HUD's boxes apart and on screen, the
+           Devices panel collapsed, the power buttons (+ adds power and
+           does not steer, − takes some away, stop brakes, + rides on), a
+           held right side in portrait too;
+  mac      Safari on macOS (1280 × 720): the Hills ride on WebGL 2, draws;
+           the desktop HUD unchanged (not compact, scale 1, keys), the
+           Devices panel open, no power buttons.
 
   No check may see a page error (an uncaught exception) in any case.
 
@@ -234,6 +243,85 @@ def main():
           return out;
         }""")
 
+    def hud_layout(pg):
+        return json.loads(pg.evaluate("window.ocw.hudLayout ? window.ocw.hudLayout() : '{}'") or "{}")
+
+    def dom_box(pg, sel):
+        return pg.evaluate(f"""(() => {{ const e = document.querySelector('{sel}');
+          if (!e || e.hidden || getComputedStyle(e).display === 'none') return null;
+          const r = e.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; }})()""")
+
+    def overlap(a, b):
+        return (a[0] < b[0] + b[2] - 0.5 and b[0] < a[0] + a[2] - 0.5
+                and a[1] < b[1] + b[3] - 0.5 and b[1] < a[1] + a[3] - 0.5)
+
+    def phone_layout(pg, label, w, h):
+        """The phone layout (spec 3.2 *Phone layout*, 3.2.3 TS5): a compact
+        HUD, the road's centre clear, nothing on top of another, the Devices
+        panel collapsed, the power buttons change the power."""
+        hud = hud_layout(pg)
+        st = steer(pg)
+        portrait = label == "iphone"
+        check(f"{label}: the compact HUD (scale follows the CSS size: {hud.get('ui_scale')})",
+              hud.get("compact") and hud.get("narrow") == portrait and 0.7 <= hud.get("ui_scale", 0) < 1.0, hud)
+        lines = hud.get("big_lines", 99) + hud.get("small_lines", 99)
+        check(f"{label}: the top panel has at most 2 big lines and 5 in all", hud.get("big_lines", 99) <= 2
+              and lines <= 5, hud.get("text"))
+        tp = hud.get("top_panel") or [0, 0, 0, h]
+        check(f"{label}: the top panel stays in the top {'quarter' if portrait else 'third'}",
+              tp[1] + tp[3] <= h * (0.25 if portrait else 0.36) + (59 if portrait else 0), tp)
+        check(f"{label}: no key line while the touch hints show", "up: faster" not in hud.get("text", "")
+              and "F12" not in hud.get("text", ""), hud.get("text"))
+        dev = json.loads(pg.evaluate("window.ocwDevicesPanel()") or "{}")
+        check(f"{label}: the Devices panel starts collapsed (no Web Bluetooth on a touch phone)",
+              dev.get("collapsed") and not dev.get("expanded"), dev)
+        mp = json.loads(pg.evaluate("window.ocw.hudMap()") or "{}")
+        boxes = {"top panel": hud.get("top_panel"), "top-right column": hud.get("top_right"),
+                 "profile": hud.get("profile"), "map": mp.get("rect") if mp.get("shown") else None,
+                 "Devices button": dom_box(pg, "#ocw-devices-show")}
+        for i, b in enumerate(st.get("power_buttons") or []):
+            boxes[f"power button {i}"] = [b[0], b[1], b[2] - b[0], b[3] - b[1]]
+        boxes = {k: v for k, v in boxes.items() if v}
+        centre = [w * 0.35, h * 0.4, w * 0.3, h * 0.35]
+        on_road = [k for k, v in boxes.items() if overlap(v, centre)]
+        check(f"{label}: nothing covers the road in the middle of the screen", not on_road,
+              {"centre": centre, "on it": on_road, "boxes": boxes})
+        names = list(boxes)
+        clashes = [(a, b) for i, a in enumerate(names) for b in names[i + 1:]
+                   if not (a.startswith("power") and b.startswith("power")) and overlap(boxes[a], boxes[b])]
+        check(f"{label}: the HUD's boxes do not overlap", not clashes, {"clashes": clashes, "boxes": boxes})
+        off = [k for k, v in boxes.items() if v[0] < -0.5 or v[1] < -0.5 or v[0] + v[2] > w + 0.5
+               or v[1] + v[3] > h + 0.5]
+        check(f"{label}: every box is on the screen", not off, {"off": off, "boxes": boxes})
+        # TS5: the power buttons (stop, −, +) while riding on virtual power.
+        pb = st.get("power_buttons") or []
+        check(f"{label}: the touch power buttons show (virtual power)", st.get("power") and len(pb) == 3, st)
+        if len(pb) == 3:
+            def mid(b):
+                return ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
+
+            def watts():
+                return float(steer(pg).get("key_power_w") or 0)
+
+            l0, p0 = line(pg), watts()
+            tap(pg, *mid(pb[2]))
+            p1, l1 = watts(), line(pg)
+            check(f"{label}: a tap on + adds power and does not steer", p1 > p0 and abs(l1 - l0) < 1e-3,
+                  f"{p0} → {p1} W, line {l0:.3f} → {l1:.3f}")
+            tap(pg, *mid(pb[1]))
+            p2 = watts()
+            check(f"{label}: a tap on − takes some away", p2 < p1, f"{p1} → {p2} W")
+            tap(pg, *mid(pb[0]))
+            pg.wait_for_timeout(300)
+            p3 = watts()
+            check(f"{label}: stop: no extra power, the brake on", p3 == 0.0, f"{p2} → {p3} W")
+            pg.screenshot(path=f"{base}-{label}-stopped.png")
+            tap(pg, *mid(pb[2]))
+            pg.wait_for_timeout(300)
+            check(f"{label}: + rides on after stop", watts() > 0, steer(pg))
+            pg.wait_for_timeout(3000)
+            pg.screenshot(path=f"{base}-{label}-riding.png")
+
     def phone(pg, label, errors):
         """The phone page of spec 3.2.3 TS4 (after the ride shows)."""
         _, insets, _ = PHONES[label]
@@ -293,23 +381,25 @@ def main():
         l3 = line(pg)
         check(f"{label}: a tap on the left half moves it back", abs(l3 - l2 + 0.5) < 0.02, f"{l2:.3f} → {l3:.3f}")
         sc = screen(pg)
+        # A held right side (touch pointers on the canvas), clear of the
+        # power buttons.
+        x, y = w * 0.7, h * 0.72
+        pg.evaluate(POINTER_JS, ["pointerdown", x, y])
+        for _ in range(6):
+            pg.wait_for_timeout(150)
+            pg.evaluate(POINTER_JS, ["pointermove", x, y])
+        held = steer(pg)
+        pg.screenshot(path=f"{base}-{label}-hold.png")
+        pg.evaluate(POINTER_JS, ["pointerup", x, y])
+        pg.wait_for_timeout(300)
+        l4 = line(pg)
+        check(f"{label}: a held right side steers right while held (glow)", held.get("right_held"), held)
+        check(f"{label}: … about 2 m/s", 0.8 < l4 - l3 < 3.6, f"{l3:.3f} → {l4:.3f}")
+        phone_layout(pg, label, w, h)
         if label == "iphone":
             check("iphone: no wake lock API: tolerated (no error)", sc.get("wake_lock") == "unsupported"
                   and not errors, sc)
         else:
-            # A held right side (touch pointers on the canvas).
-            x, y = w * 0.8, h * 0.6
-            pg.evaluate(POINTER_JS, ["pointerdown", x, y])
-            for _ in range(6):
-                pg.wait_for_timeout(150)
-                pg.evaluate(POINTER_JS, ["pointermove", x, y])
-            held = steer(pg)
-            pg.screenshot(path=f"{base}-{label}-hold.png")
-            pg.evaluate(POINTER_JS, ["pointerup", x, y])
-            pg.wait_for_timeout(300)
-            l4 = line(pg)
-            check(f"{label}: a held right side steers right while held (glow)", held.get("right_held"), held)
-            check(f"{label}: … about 2 m/s", 0.8 < l4 - l3 < 3.6, f"{l3:.3f} → {l4:.3f}")
             n0 = pg.evaluate("window.__wakeRequests")
             check(f"{label}: the wake lock is held while riding", sc.get("wake_lock") == "held" and n0 >= 1,
                   {"state": sc.get("wake_lock"), "requests": n0})
@@ -370,6 +460,16 @@ def main():
                       {"canvas": cw, "viewport": vp})
                 if label in PHONES:
                     phone(pg, label, errors)
+                else:
+                    # A desktop browser keeps its HUD (spec 3.2 *Phone layout*).
+                    hud = hud_layout(pg)
+                    dev = json.loads(pg.evaluate("window.ocwDevicesPanel()") or "{}")
+                    check(f"{label}: the desktop HUD is unchanged (not compact, scale 1, the keys shown)",
+                          hud.get("compact") is False and hud.get("ui_scale") == 1.0
+                          and "up: faster" in hud.get("text", ""), hud)
+                    check(f"{label}: the Devices panel starts open on a desktop", dev.get("expanded"), dev)
+                    check(f"{label}: no touch power buttons without touch", not steer(pg).get("power"), steer(pg))
+                    check(f"{label}: no page errors", not errors, errors[:5])
                 if label == "iphone":
                     # WebKit has no devicePixelContentBoxSize: winit keeps the
                     # drawing buffer at the device's pixels, and Low's pixel-

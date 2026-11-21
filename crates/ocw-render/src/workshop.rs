@@ -599,7 +599,11 @@ fn open_close(
         scene.mirror_quad = Some((meshes.add(mirror_mesh(glass, half)), quad));
     }
     // The room.
-    let room = ocw_assets::workshop::room(&layout);
+    // The room from its piece files (spec 15M), merged per group and
+    // material: drawn as one mesh per material and group, as before the
+    // pieces were files (as separate pieces the mirror camera's
+    // reflection lost the far wall).
+    let room = ocw_assets::workshop::room_merged(&layout);
     let root = commands
         .spawn((Transform::default(), Visibility::default(), layer()))
         .id();

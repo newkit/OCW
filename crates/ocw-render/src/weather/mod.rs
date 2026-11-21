@@ -78,6 +78,15 @@ impl WeatherView {
         let label = w.label();
         (label != "calm").then(|| format!("{} {label}", w.arrow()))
     }
+
+    /// The wind in the compact HUD (a phone, spec 3.2 *Phone layout*):
+    /// the arrow and the speed, "↓ 18 km/h" (`None`: no own rider, or
+    /// calm).
+    pub fn wind_short(&self) -> Option<String> {
+        let w = self.rider_wind?;
+        let kmh = w.speed() * 3.6;
+        (kmh >= 1.0).then(|| format!("{} {kmh:.0} km/h", w.arrow()))
+    }
 }
 
 /// A lightning strike with its flash in the app's time

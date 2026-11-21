@@ -3,7 +3,10 @@
 //! screens on Windows / Linux) → the pure state machine
 //! `ocw_client::input::touch::TouchSteer` → the ride's client (line or
 //! lean), the junction fan's exit (a tap on its arrow), the chase camera
-//! (two fingers: drag orbits, pinch sets the distance). The hints' presence
+//! (two fingers: drag orbits, pinch sets the distance), the touch power
+//! buttons (TS5: stop, −, + while the hints show and the power is the
+//! virtual trainer's; [`TouchPower`], read by both apps' power keys). The
+//! hints' presence
 //! (`TouchPresence`) follows the last input device; the hints are drawn by
 //! `ocw_render::touch_hud` from [`TouchHud`].
 //!
@@ -17,6 +20,7 @@ use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::input::touch::Touches;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use ocw_client::input::ThrottleKeys;
 use ocw_client::input::touch::{
     Fan, Insets, Pos, Rect, Side, TouchEvent, TouchFrame, TouchPresence, TouchSetting, TouchSteer,
     TouchZones, ZoneHeight,
@@ -25,7 +29,7 @@ use ocw_render::RideView;
 use ocw_render::camera::CameraOrbit;
 use ocw_render::menu::InputContext;
 use ocw_render::safe_area::SafeArea;
-use ocw_render::touch_hud::TouchHud;
+use ocw_render::touch_hud::{PowerButton, TouchHud, power_buttons};
 
 use crate::settings::UserSettings;
 
@@ -36,6 +40,7 @@ impl Plugin for TouchSteerPlugin {
         crate::configure_sets(app);
         app.init_resource::<RideTouch>()
             .init_resource::<TouchHud>()
+            .init_resource::<TouchPower>()
             .init_resource::<CameraOrbit>()
             .add_systems(Update, touch_steer.after(crate::RideViewSet));
     }
@@ -61,6 +66,63 @@ pub struct RideTouch {
     pub last_exit: Option<usize>,
     /// … and the last exit arrow tapped.
     pub tapped_exit: Option<usize>,
+    /// The power buttons showed in the last frame (their taps count).
+    pub power: bool,
+    /// The fingers that went down on a power button.
+    power_fingers: Vec<(u64, PowerButton)>,
+    /// Where the power buttons are (window px, logical), while shown.
+    pub power_at: Vec<(PowerButton, Rect)>,
+}
+
+/// The touch power buttons' keys (TS5): what ↑ / ↓ / Page Down would be,
+/// taken by the app's power keys each frame ([`TouchPower::take`]) and fed
+/// with the keyboard's into the shared `KeyThrottle`.
+#[derive(Resource, Debug, Default)]
+pub struct TouchPower {
+    /// Presses since the app last took them.
+    pending: ThrottleKeys,
+    /// The button held now.
+    pub held: Option<PowerButton>,
+}
+
+impl TouchPower {
+    /// A finger went down on `b`.
+    pub fn press(&mut self, b: PowerButton) {
+        match b {
+            PowerButton::Up => self.pending.up_pressed = true,
+            PowerButton::Down => self.pending.page_down = true,
+            PowerButton::Stop => self.pending.down_pressed = true,
+        }
+    }
+
+    /// The keys of this frame: the presses since the last call, ↑ held
+    /// while a finger stays on + (the ramp).
+    pub fn take(&mut self) -> ThrottleKeys {
+        let mut k = std::mem::take(&mut self.pending);
+        k.up_held |= self.held == Some(PowerButton::Up);
+        k
+    }
+}
+
+/// The power buttons' rectangles in window px (logical), from the shared
+/// layout in UI px.
+fn power_rects(
+    ui_off: Vec2,
+    ui_size: Vec2,
+    ui_scale: f32,
+    boxes: Option<&ocw_render::hud::HudBoxes>,
+) -> Vec<(PowerButton, Rect)> {
+    let k = ui_scale.max(0.1);
+    let avoid = boxes
+        .map(|b| ocw_render::touch_hud::power_avoid(b, ui_off, k))
+        .unwrap_or_default();
+    power_buttons(ui_size / k, k, &avoid)
+        .into_iter()
+        .map(|(b, r)| {
+            let (min, max) = (r.min * k + ui_off, r.max * k + ui_off);
+            (b, Rect::new(min.x, min.y, max.x, max.y))
+        })
+        .collect()
 }
 
 /// The setting `controls.touch_steer` and the zones' height.
@@ -198,6 +260,16 @@ fn touch_steer(world: &mut World) {
     if let Some(f) = &fan {
         zones.excluded.push(f.rect);
     }
+    // The power buttons (TS5) are tap targets, not steering.
+    let power_on = world.resource::<RideTouch>().power;
+    let boxes = world.get_resource::<ocw_render::hud::HudBoxes>().cloned();
+    let power_at = if power_on {
+        power_rects(ui_off, ui_size, ui_scale, boxes.as_ref())
+    } else {
+        Vec::new()
+    };
+    zones.excluded.extend(power_at.iter().map(|(_, r)| *r));
+    let virtual_power = crate::client(world).is_some_and(|c| c.virtual_device());
     let angles: Vec<f64> = junction
         .as_ref()
         .map(|j| j.exits.iter().map(|e| e.angle_deg).collect())
@@ -211,6 +283,25 @@ fn touch_steer(world: &mut World) {
             .unwrap_or_default();
         TouchPresence::new(facts)
     });
+    let mut power = std::mem::take(&mut *world.resource_mut::<TouchPower>());
+    for e in &events {
+        match *e {
+            TouchEvent::Start { id, pos } if active => {
+                if let Some((b, _)) = power_at.iter().find(|(_, r)| r.contains(pos)) {
+                    touch.power_fingers.push((id, *b));
+                    power.press(*b);
+                }
+            }
+            TouchEvent::End { id, .. } | TouchEvent::Cancel { id } => {
+                touch.power_fingers.retain(|(f, _)| *f != id);
+            }
+            _ => {}
+        }
+    }
+    if !active {
+        touch.power_fingers.clear();
+    }
+    power.held = touch.power_fingers.last().map(|(_, b)| *b);
     for e in events {
         touch.steer.event(e, now);
     }
@@ -273,7 +364,16 @@ fn touch_steer(world: &mut World) {
         tip: (shown && !tip_seen && !steered).then(|| TIP.to_string()),
         // A share of the HUD's (the safe area's) height.
         zone_top: (zones.top() - ui_off.y).max(0.0) / ui_size.y.max(1.0),
+        power: shown && virtual_power,
+        power_held: power.held,
     };
+    touch.power = hud.power;
+    touch.power_at = if hud.power {
+        power_rects(ui_off, ui_size, ui_scale, boxes.as_ref())
+    } else {
+        Vec::new()
+    };
+    *world.resource_mut::<TouchPower>() = power;
     {
         let mut h = world.resource_mut::<TouchHud>();
         if *h != hud {
@@ -346,6 +446,37 @@ pub fn state_json(world: &World) -> String {
                     ZoneHeight::Lower => "lower",
                 }
             ),
+        ),
+        // The touch power buttons (TS5): shown, held, where (logical px:
+        // [x0, y0, x1, y1] for stop, −, +).
+        ("power", t.is_some_and(|t| t.power).to_string()),
+        (
+            "power_held",
+            hud.and_then(|h| h.power_held)
+                .map_or("null".into(), |b| format!("\"{b:?}\"").to_lowercase()),
+        ),
+        (
+            "power_buttons",
+            format!(
+                "[{}]",
+                t.map(|t| {
+                    t.power_at
+                        .iter()
+                        .map(|(_, r)| {
+                            format!(
+                                "[{:.1}, {:.1}, {:.1}, {:.1}]",
+                                r.min.x, r.min.y, r.max.x, r.max.y
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default()
+            ),
+        ),
+        (
+            "key_power_w",
+            c.map_or("null".into(), |c| format!("{:.1}", c.key_power_w())),
         ),
         // The safe-area insets the zones and the HUD keep clear of
         // (top, right, bottom, left; logical px).
@@ -523,6 +654,69 @@ mod tests {
         assert!((line(&app) - l0).abs() < 1e-6);
         let json = state_json(app.world());
         assert!(json.contains("\"insets\": [0, 59, 21, 59]"), "{json}");
+    }
+
+    /// TS5: the power buttons show with the hints while the power is the
+    /// virtual trainer's; a finger on + is ↑ pressed and held, − is Page
+    /// Down, stop is ↓ – and none of them steers.
+    #[test]
+    fn the_power_buttons_feed_the_power_keys_and_never_steer() {
+        let mut app = app();
+        crate::settings::save_setting(app.world_mut(), "controls.touch_steer", "on");
+        app.update();
+        assert!(app.world().resource::<TouchHud>().shown);
+        assert!(
+            !app.world().resource::<TouchHud>().power,
+            "not with a power device"
+        );
+        app.world_mut()
+            .resource_mut::<Ride>()
+            .client
+            .set_virtual_device(true);
+        app.update();
+        assert!(app.world().resource::<TouchHud>().power);
+        let rects = power_rects(Vec2::ZERO, Vec2::new(1280.0, 720.0), 1.0, None);
+        let at = |b: PowerButton| {
+            let (_, r) = rects.iter().find(|(x, _)| *x == b).unwrap();
+            ((r.min.x + r.max.x) / 2.0, (r.min.y + r.max.y) / 2.0)
+        };
+        let l0 = line(&app);
+        let take = |app: &mut App| app.world_mut().resource_mut::<TouchPower>().take();
+        take(&mut app);
+        let (x, y) = at(PowerButton::Up);
+        touch(&mut app, 1, TouchPhase::Started, x, y);
+        app.update();
+        app.update();
+        let k = take(&mut app);
+        assert!(k.up_pressed && k.up_held, "{k:?}");
+        assert_eq!(
+            app.world().resource::<TouchHud>().power_held,
+            Some(PowerButton::Up)
+        );
+        app.update();
+        let k = take(&mut app);
+        assert!(!k.up_pressed && k.up_held, "held: the ramp, {k:?}");
+        touch(&mut app, 1, TouchPhase::Ended, x, y);
+        app.update();
+        assert_eq!(take(&mut app), ThrottleKeys::default());
+        let (x, y) = at(PowerButton::Down);
+        hold(&mut app, 2, x, y, 2);
+        let k = take(&mut app);
+        assert!(k.page_down && !k.up_held && !k.down_pressed, "{k:?}");
+        let (x, y) = at(PowerButton::Stop);
+        hold(&mut app, 3, x, y, 2);
+        assert!(take(&mut app).down_pressed);
+        assert_eq!(line(&app), l0, "no button steered");
+        // Beside the buttons the right half still steers.
+        hold(&mut app, 4, 1000.0, 500.0, 1);
+        assert!((line(&app) - l0 - TAP_LINE_STEP_M).abs() < 1e-6);
+        // With the hints off (setting off) no buttons and no presses.
+        crate::settings::save_setting(app.world_mut(), "controls.touch_steer", "off");
+        app.update();
+        assert!(!app.world().resource::<TouchHud>().power);
+        let (x, y) = at(PowerButton::Up);
+        hold(&mut app, 5, x, y, 2);
+        assert_eq!(take(&mut app), ThrottleKeys::default());
     }
 
     #[test]

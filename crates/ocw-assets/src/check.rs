@@ -22,7 +22,7 @@
 //! - vertex colours above 1 (warning: Blender keeps them as 8 bits and
 //!   clamps them, so the Blender round trip of 15F changes them);
 //! - the bounds: the origin of the kind (on the ground for bikes, props,
-//!   plants, creatures and workshop pieces), a model lying on its back
+//!   plants and creatures), a model lying on its back
 //!   (exported without "+Y up"), a model in centimetres.
 
 use std::collections::BTreeSet;
@@ -298,10 +298,7 @@ pub fn collision_shape(name: &str) -> Option<&'static str> {
 
 /// Kinds whose origin is on the ground (15B).
 fn stands_on_ground(k: Kind) -> bool {
-    matches!(
-        k,
-        Kind::Bike | Kind::Prop | Kind::Plant | Kind::Creature | Kind::Workshop
-    )
+    matches!(k, Kind::Bike | Kind::Prop | Kind::Plant | Kind::Creature)
 }
 
 /// How far a grounded model may reach below or float above its origin

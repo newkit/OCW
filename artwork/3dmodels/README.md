@@ -23,8 +23,8 @@ share-alike, non-commercial or no-derivatives licences, never brands.
 | `parts/<slot>/` | `part` | catalogue parts by workshop slot (later, M3) |
 | `props/` | `prop` | the point obstacles (`bollard-round`, `post-hexagonal`, `pylon-pyramid`, `block-concrete-box`, `gate-swing`, `barrier-lift-arm`, `barrier-cycle-staggered`, `barrier-post-hexagonal` for any other barrier), the street lamps (`lamp-street-arm-main` 8 m, `-road` 6 m, `-path` 4.5 m) – drawn by the game from these files (spec 15H MX); the phone of the status signs (held in the hand: its origin is its centre) |
 | `flora/` | `plant` | at least three shape variants per plant species, each with `lod1` |
-| `creatures/` | `creature` | the unicorn (later, M4) |
-| `workshop/` | `workshop` | the workshop's pieces (later, M3) |
+| `creatures/` | `creature` | the unicorn (`unicorn-winged`): a node per joint (`body`, `neck`, `head`, `hip_fl` … `knee_hr`, `wing_l`, `wrist_l`, `primaries_l_0` … `_2`, `mane_0` … `_7`, `tail_0` … `_7`) that the game's flight animation turns; the far model under `lod1` on the same joints named `<joint>_lod1` |
+| `workshop/` | `workshop` | the workshop's pieces – stand, workbench, hooks and rail, pegboard, parts shelf, mirror, changing bench, locker, kit rail, window, lamps – and the room's slabs 1 m long (floor, walls, ceiling, skirting) that the game scales to the room; anchors `anchor_clamp`, `anchor_glass`, `anchor_hook`, `anchor_card` |
 | `sources/` | – | Blender sources (`.blend`), never loaded |
 
 ## The contract (spec §14 Phase 15, 15B)
@@ -43,7 +43,7 @@ share-alike, non-commercial or no-derivatives licences, never brands.
   | prop | the foot centre, on the ground |
   | plant | the stem base |
   | creature | under the body's centre |
-  | workshop | the piece's floor point |
+  | workshop | the point where `workshop::room` places it: on the floor, its wall or the ceiling (wall and ceiling pieces hang above it; not checked) |
 
 - **Node names are the interface:** anchors `anchor_<name>`, workshop
   hotspots `hs_<slot>`, moving parts by role (`wheel_front`, `crank`,
@@ -51,7 +51,9 @@ share-alike, non-commercial or no-derivatives licences, never brands.
   `billboard` later), collision proxies `col_<shape>` (never drawn).
 - **Materials are paint slots** (`ocw_assets::slots`): `frame`, `jersey`,
   `helmet`, … for bikes and riders; `leaf`, `needle`, `bark`, `dry` for
-  plants. The app tints the slots (the rider's look; a plant's own shade and
+  plants; `coat`, `horn`, `feather`, `mane_rider`, `rainbow_0` … `rainbow_7`
+  for the unicorn; `floor_concrete`, `wall`, `workshop_wood`, `workshop_steel`, `mirror`, … for the
+  workshop pieces. The app tints the slots (the rider's look; a plant's own shade and
   the season); colours in the file are the defaults. Vertex colours
   (`COLOR_0`) multiply the slot's colour, as in glTF (the plants' shading).
 - **Metadata in `extras`, never physics:** the asset carries
@@ -82,7 +84,7 @@ share-alike, non-commercial or no-derivatives licences, never brands.
   |---|---|---|
   | bike | 15 000 | 4 000 |
   | rider | 8 000 | 4 000 |
-  | creature | 3 000 | 600 |
+  | creature | 3 500 | 800 |
   | wearable | 1 500 | – |
   | part | 1 500 | – |
   | prop | 1 500 | 300 |
