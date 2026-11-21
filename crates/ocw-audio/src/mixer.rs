@@ -14,10 +14,11 @@ use web_time::Instant;
 
 use super::cues::{Cue, CueVoice};
 use super::drone::{DroneSound, DroneSynth};
-use super::dsp::smoothing;
+use super::dsp::{Svf, smoothing};
 use super::mix::{Bus, BusGains};
 use super::others::{OthersFrame, OthersSynth};
 use super::ride::{RideParams, RideSynth};
+use super::spatial::Placement;
 use super::weather::{ThunderSound, WeatherParams, WeatherSynth};
 
 /// Samples between parameter and filter updates.
@@ -52,6 +53,10 @@ pub enum MixerMsg {
     PlacedCue(Cue, [f32; 2], Instant),
     /// The photographer's drone (every frame while it flies; `None`: gone).
     Drone(Option<DroneSound>),
+    /// Play a cue where it happens (spec §14 Phase 12C: another rider's
+    /// bump or crash): its place's left and right gains (distance and
+    /// direction) and the air's low-pass.
+    SpatialCue(Cue, Placement, Instant),
 }
 
 /// See the module docs.
@@ -67,8 +72,9 @@ pub struct Mixer {
     gains_target: BusGains,
     gains_now: BusGains,
     voices: Vec<CueVoice>,
-    /// Cues placed in the world, with their left and right gains.
-    placed: Vec<(CueVoice, [f32; 2])>,
+    /// Cues placed in the world, with their left and right gains and the
+    /// air absorption's low-pass (`None`: none).
+    placed: Vec<(CueVoice, [f32; 2], Option<Svf>)>,
     drone: DroneSynth,
     drone_sound: Option<DroneSound>,
     /// Coefficient of the per-block smoothing.
@@ -149,6 +155,11 @@ impl Mixer {
                     self.play_placed(cue, gains);
                 }
             }
+            MixerMsg::SpatialCue(cue, place, at) => {
+                if at.elapsed() <= CUE_MAX_AGE && place.audible() {
+                    self.play_spatial(cue, &place);
+                }
+            }
             MixerMsg::Drone(d) => self.drone_sound = d,
         }
     }
@@ -166,7 +177,21 @@ impl Mixer {
         if self.placed.len() >= MAX_VOICES {
             self.placed.remove(0);
         }
-        self.placed.push((CueVoice::new(cue, self.sr), gains));
+        self.placed.push((CueVoice::new(cue, self.sr), gains, None));
+    }
+
+    /// Starts a cue where it happens: placed by `place` (gains by distance
+    /// and direction), its highs taken by the air as far away.
+    pub fn play_spatial(&mut self, cue: Cue, place: &Placement) {
+        if self.placed.len() >= MAX_VOICES {
+            self.placed.remove(0);
+        }
+        let air = Svf::new(place.air_cutoff_hz, 0.707, self.sr);
+        self.placed.push((
+            CueVoice::new(cue, self.sr),
+            [place.left, place.right],
+            Some(air),
+        ));
     }
 
     /// Cues playing now.
@@ -269,12 +294,15 @@ impl Mixer {
         let fx = RIDE_LEVEL * g.get(Bus::Effects);
         // The photographer's shutter and drone, placed, on the effects bus.
         let (mut pl, mut pr) = self.drone.sample(self.drone_sound.as_ref());
-        for (v, [l, r]) in &mut self.placed {
-            let s = v.sample(sr);
+        for (v, [l, r], air) in &mut self.placed {
+            let mut s = v.sample(sr);
+            if let Some(f) = air {
+                s = f.process(s).low;
+            }
             pl += s * *l;
             pr += s * *r;
         }
-        self.placed.retain(|(v, _)| !v.done(sr));
+        self.placed.retain(|(v, _, _)| !v.done(sr));
         let pfx = g.get(Bus::Effects);
         (
             soft_limit(centre + RIDE_LEVEL * others * ol + fx * wl + pfx * pl),
@@ -355,6 +383,56 @@ mod tests {
         m.apply(MixerMsg::Drone(None));
         render(&mut m, 0.5, 2);
         assert!(rms(&render(&mut m, 0.2, 2)) <= quiet + 1e-4);
+    }
+
+    /// Spec §14 Phase 12C: another rider's crash is heard where it
+    /// happens – on the side it is, quieter and duller far away, not at all
+    /// beyond the range – while the own crash plays in the centre.
+    #[test]
+    fn crashes_of_others_are_placed_the_own_in_the_centre() {
+        use super::super::spatial::{Listener, place};
+        let l = Listener {
+            pos: [0.0, 1.5, 0.0],
+            forward: [1.0, 0.0],
+            velocity: [8.0, 0.0, 0.0],
+        };
+        let at = |x: f64, z: f64| place(&l, [x, 0.5, z], [0.0; 3]);
+        let crash = |p: Placement| {
+            let mut m = Mixer::new(SR, full());
+            m.apply(MixerMsg::SpatialCue(Cue::Crash, p, Instant::now()));
+            let out = render(&mut m, 0.6, 2);
+            (channel_rms(&out, 0), channel_rms(&out, 1))
+        };
+        // 6 m ahead, 4 m to the left (−z is left when facing +x).
+        let (l1, r1) = crash(at(6.0, -4.0));
+        assert!(l1 > 2.0 * r1, "left: {l1} {r1}");
+        // To the right.
+        let (l2, r2) = crash(at(6.0, 4.0));
+        assert!(r2 > 2.0 * l2, "right: {l2} {r2}");
+        // Farther away: quieter, and the highs absorbed.
+        let (ln, rn) = crash(at(5.0, 0.0));
+        let (lf, rf) = crash(at(35.0, 0.0));
+        assert!(lf + rf < 0.4 * (ln + rn), "near {ln} far {lf}");
+        assert!(at(35.0, 0.0).air_cutoff_hz < at(5.0, 0.0).air_cutoff_hz / 3.0);
+        // Beyond the range: not played at all.
+        let mut m = Mixer::new(SR, full());
+        m.apply(MixerMsg::SpatialCue(
+            Cue::Crash,
+            at(90.0, 0.0),
+            Instant::now(),
+        ));
+        assert_eq!(m.playing(), 0);
+        // The own crash: alike on both channels.
+        let mut m = Mixer::new(SR, full());
+        m.apply(MixerMsg::Cue(Cue::Crash, Instant::now()));
+        let out = render(&mut m, 0.6, 2);
+        assert!(rms(&out) > 0.02);
+        assert!(out.chunks(2).all(|f| f[0] == f[1]), "centred");
+        // A stale one is dropped like the other cues.
+        let mut m = Mixer::new(SR, full());
+        let old = Instant::now() - Duration::from_secs(5);
+        m.apply(MixerMsg::SpatialCue(Cue::Bump, at(3.0, 1.0), old));
+        assert_eq!(m.playing(), 0);
     }
 
     fn rms(x: &[f32]) -> f32 {

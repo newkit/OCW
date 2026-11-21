@@ -388,46 +388,74 @@ pub const BUMP_HEARD_M: f64 = 15.0;
 /// … and crashes within this one.
 pub const CRASH_HEARD_M: f64 = 40.0;
 
+/// A contact cue and where it is heard (spec §14 Phase 12C): `from` is
+/// the other rider whose bump or crash it is – placed in space where that
+/// rider is ([`super::spatial`]) –, `None` the own rider's sounds and the
+/// proximity bell (in the centre, not placed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContactCue {
+    pub cue: Cue,
+    pub from: Option<u32>,
+}
+
 /// The contact cues for this frame (spec §14 Phase 12C): a bump when a
 /// rider starts to wobble, a crash when one goes down (the own rider, or
 /// others close by), the cleats when the own rider remounts, the bell
-/// when someone comes close (the proximity cue, 12D).
+/// when someone comes close (the proximity cue, 12D). The others' bumps
+/// and crashes carry their rider (placed in space); one the own rider
+/// has in the same frame stands for the others' of that kind (the same
+/// contact: the other rider is at the own shoulder).
 pub fn contact_cues(
     watch: &mut ContactWatch,
     riders: &[ContactRider],
     proximity: Option<i32>,
-) -> Vec<Cue> {
-    let mut out = Vec::new();
+) -> Vec<ContactCue> {
+    let mut own = Vec::new();
+    let mut others = Vec::new();
     let mut wobbling = std::collections::BTreeSet::new();
     let mut down = std::collections::BTreeMap::new();
     for r in riders {
         let heard = |m: f64| r.is_local || r.distance_m.abs() < m;
+        let mut push = |cue: Cue| {
+            if r.is_local {
+                own.push(cue);
+            } else {
+                others.push(ContactCue {
+                    cue,
+                    from: Some(r.id),
+                });
+            }
+        };
         if r.wobble != 0.0 {
             wobbling.insert(r.id);
             if !watch.wobbling.contains(&r.id) && heard(BUMP_HEARD_M) {
-                out.push(Cue::Bump);
+                push(Cue::Bump);
             }
         }
         if let Some(remounting) = r.crash {
             down.insert(r.id, remounting);
             match watch.down.get(&r.id) {
-                None if !remounting && heard(CRASH_HEARD_M) => out.push(Cue::Crash),
-                Some(false) if remounting && r.is_local => out.push(Cue::Remount),
+                None if !remounting && heard(CRASH_HEARD_M) => push(Cue::Crash),
+                Some(false) if remounting && r.is_local => push(Cue::Remount),
                 _ => {}
             }
         }
     }
     let near = proximity.is_some();
     if near && !watch.near {
-        out.push(Cue::Proximity);
+        own.push(Cue::Proximity);
     }
-    out.dedup();
+    own.dedup();
+    others.retain(|c| !own.contains(&c.cue));
     *watch = ContactWatch {
         wobbling,
         down,
         near,
     };
-    out
+    own.into_iter()
+        .map(|cue| ContactCue { cue, from: None })
+        .chain(others)
+        .collect()
 }
 
 /// The wheel's circumference the rub ticks once per turn of (m).
@@ -466,6 +494,11 @@ mod tests {
             wobble,
             crash,
         };
+        let own = |cue| ContactCue { cue, from: None };
+        let of = |cue, id| ContactCue {
+            cue,
+            from: Some(id),
+        };
         assert!(contact_cues(&mut w, &[r(1, true, 0.0, 0.0, None)], None).is_empty());
         // A bump of the own rider; a far one is not heard.
         assert_eq!(
@@ -474,13 +507,14 @@ mod tests {
                 &[r(1, true, 0.0, 0.05, None), r(2, false, 90.0, 0.05, None)],
                 None
             ),
-            vec![Cue::Bump]
+            vec![own(Cue::Bump)]
         );
         assert!(
             contact_cues(&mut w, &[r(1, true, 0.0, 0.03, None)], None).is_empty(),
             "once"
         );
-        // A crash close by, then the own rider remounting.
+        // A crash close by (placed where rider 3 is), then the own rider
+        // remounting (in the centre).
         assert_eq!(
             contact_cues(
                 &mut w,
@@ -490,14 +524,36 @@ mod tests {
                 ],
                 None
             ),
-            vec![Cue::Crash]
+            vec![own(Cue::Crash)],
+            "the own crash stands for the other's in the same frame"
         );
         assert_eq!(
             contact_cues(&mut w, &[r(1, true, 0.0, 0.0, Some(true))], None),
-            vec![Cue::Remount]
+            vec![own(Cue::Remount)]
         );
-        assert_eq!(contact_cues(&mut w, &[], Some(1)), vec![Cue::Proximity]);
+        assert_eq!(
+            contact_cues(&mut w, &[], Some(1)),
+            vec![own(Cue::Proximity)]
+        );
         assert!(contact_cues(&mut w, &[], Some(-1)).is_empty());
+        // Others' bumps and crashes alone: each placed at its rider.
+        let mut w = ContactWatch::default();
+        assert_eq!(
+            contact_cues(
+                &mut w,
+                &[
+                    r(1, true, 0.0, 0.0, None),
+                    r(4, false, 6.0, 0.08, None),
+                    r(5, false, -12.0, 0.08, None),
+                    r(6, false, 30.0, 0.0, Some(false)),
+                    r(7, false, 45.0, 0.0, Some(false)),
+                ],
+                None
+            ),
+            vec![of(Cue::Bump, 4), of(Cue::Bump, 5), of(Cue::Crash, 6)]
+        );
+        // Their remount is not heard.
+        assert!(contact_cues(&mut w, &[r(6, false, 30.0, 0.0, Some(true))], None).is_empty());
     }
 
     fn snap(open: bool, title: &str, focused: usize, label: &str) -> MenuSnapshot {
