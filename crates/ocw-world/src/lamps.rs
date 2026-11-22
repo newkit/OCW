@@ -13,11 +13,18 @@
 //! The lamps are placed by the client from the strips (no positions in
 //! the package): every [`spacing_m`] along the road, at a fixed phase of
 //! the edge's length so they continue across tiles, on the right-hand side
-//! (both sides, staggered, on wide roads).
+//! (both sides, staggered, on wide roads) – and never in a road: a foot
+//! that would stand on a carriageway or a junction surface is moved along
+//! the road or left out ([`place_lamp`], [`LampSpace`]).
 
 use crate::graph::RoadClass;
 use crate::landuse::LandClass;
 use crate::package::{Bytes, RoadStrip, TileKey, WorldPackage};
+
+#[cfg(test)]
+mod rule_tests;
+mod space;
+pub use space::{Blocked, FOOT_CLEAR_M, LEVEL_M, LampSpace, POLE_R_M, ring, ring_edges};
 
 /// Section tag of the roads' lit state.
 pub const ROAD_LIT_TAG: &[u8; 4] = b"LITR";
@@ -174,9 +181,80 @@ pub fn is_town(class: LandClass) -> bool {
     )
 }
 
-/// The lamps along one road strip. `town(x, z)` tells whether a place is
-/// in a town (for roads without a `lit` tag).
-pub fn strip_lamps(strip: &RoadStrip, town: impl Fn(f32, f32) -> bool) -> Vec<Lamp> {
+/// A lamp of the regular row along a strip before the placement rule
+/// ([`nominal_lamps`]): where along the strip it belongs and on which side.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Nominal {
+    /// Metres along the strip's drawn points.
+    pub at: f32,
+    /// 1: right of the drawing direction, -1: left.
+    pub sign: f32,
+    /// The lamp at its regular place (the placement before the rule).
+    pub lamp: Lamp,
+}
+
+/// The point of a strip `at` metres along its drawn points and the unit
+/// direction there (the first segment that reaches `at`).
+fn strip_frame(points: &[[f32; 3]], at: f32) -> Option<([f32; 3], [f32; 2])> {
+    let mut s0 = 0.0f32;
+    for w in points.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let (dx, dz) = (b[0] - a[0], b[2] - a[2]);
+        let len = (dx * dx + dz * dz).sqrt();
+        if len < 1e-4 {
+            continue;
+        }
+        if at <= s0 + len {
+            let t = ((at - s0) / len).max(0.0);
+            let p = [a[0] + dx * t, a[1] + (b[1] - a[1]) * t, a[2] + dz * t];
+            return Some((p, [dx / len, dz / len]));
+        }
+        s0 += len;
+    }
+    None
+}
+
+/// Drawn length of a strip (m).
+fn strip_length(points: &[[f32; 3]]) -> f32 {
+    points
+        .windows(2)
+        .map(|w| {
+            let (dx, dz) = (w[1][0] - w[0][0], w[1][2] - w[0][2]);
+            let len = (dx * dx + dz * dz).sqrt();
+            if len < 1e-4 { 0.0 } else { len }
+        })
+        .sum()
+}
+
+/// How far from the centre line a lamp of this strip stands normally:
+/// beyond the sidewalk (m).
+fn side_offset(strip: &RoadStrip) -> f32 {
+    let side_m = strip.dress.sidewalk_m[0].max(strip.dress.sidewalk_m[1]);
+    strip.width_m / 2.0 + side_m + 0.6
+}
+
+/// The lamp standing at `p` on the strip's side `sign`, `offset` metres
+/// from its centre line, the arm over the road.
+fn lamp_at(strip: &RoadStrip, p: [f32; 3], dir: [f32; 2], sign: f32, offset: f32) -> Lamp {
+    let right = [-dir[1], dir[0]];
+    Lamp {
+        foot: [
+            p[0] + right[0] * offset * sign,
+            p[1],
+            p[2] + right[1] * offset * sign,
+        ],
+        toward: [-right[0] * sign, -right[1] * sign],
+        height_m: lamp_height_m(strip.class),
+        arm_m: (strip.width_m * 0.25).clamp(0.6, 2.0),
+    }
+}
+
+/// The regular row of lamps along one road strip, before the rule that
+/// keeps them out of the roads ([`strip_lamps`]): every [`spacing_m`] at a
+/// fixed phase of the edge's length, right of the road beyond the
+/// sidewalk (staggered on both sides of a road from 9 m width). `town(x,
+/// z)` tells whether a place is in a town (for roads without a `lit` tag).
+pub fn nominal_lamps(strip: &RoadStrip, town: impl Fn(f32, f32) -> bool) -> Vec<Nominal> {
     if strip.lit == RoadLit::No || strip.points.len() < 2 {
         return Vec::new();
     }
@@ -184,75 +262,117 @@ pub fn strip_lamps(strip: &RoadStrip, town: impl Fn(f32, f32) -> bool) -> Vec<La
         return Vec::new();
     }
     let spacing = spacing_m(strip.class);
-    let height = lamp_height_m(strip.class);
     let wide = strip.width_m >= 9.0;
-    let side_m = strip.dress.sidewalk_m[0].max(strip.dress.sidewalk_m[1]);
-    let offset = strip.width_m / 2.0 + side_m + 0.6;
-    let arm = (strip.width_m * 0.25).clamp(0.6, 2.0);
+    let offset = side_offset(strip);
+    let total = strip_length(&strip.points);
     let mut out = Vec::new();
     // Lamp k stands at edge distance (k + 0.5) · spacing.
     let start = strip.dress.start_m;
     let mut k = ((start / spacing) - 0.5).ceil().max(0.0);
-    let mut s0 = 0.0f32;
-    for w in strip.points.windows(2) {
-        let (a, b) = (w[0], w[1]);
-        let (dx, dz) = (b[0] - a[0], b[2] - a[2]);
-        let len = (dx * dx + dz * dz).sqrt();
-        if len < 1e-4 {
-            continue;
+    loop {
+        let at = (k + 0.5) * spacing - start;
+        if at > total {
+            break;
         }
-        loop {
-            let at = (k + 0.5) * spacing - start;
-            if at > s0 + len {
-                break;
+        if at >= 0.0
+            && let Some((p, dir)) = strip_frame(&strip.points, at)
+        {
+            // Right of the drawing direction (x east, z south), or
+            // staggered on both sides of a wide road.
+            let sign = if wide && (k as i64) % 2 == 1 {
+                -1.0
+            } else {
+                1.0
+            };
+            let lamp = lamp_at(strip, p, dir, sign, offset);
+            if strip.lit == RoadLit::Yes || town(lamp.foot[0], lamp.foot[2]) {
+                out.push(Nominal { at, sign, lamp });
             }
-            if at >= s0 {
-                let t = (at - s0) / len;
-                let p = [a[0] + dx * t, a[1] + (b[1] - a[1]) * t, a[2] + dz * t];
-                // Right of the drawing direction (x east, z south), or
-                // staggered on both sides of a wide road.
-                let right = [-dz / len, dx / len];
-                let sign = if wide && (k as i64) % 2 == 1 {
-                    -1.0
-                } else {
-                    1.0
-                };
-                let foot = [
-                    p[0] + right[0] * offset * sign,
-                    p[1],
-                    p[2] + right[1] * offset * sign,
-                ];
-                if strip.lit == RoadLit::Yes || town(foot[0], foot[2]) {
-                    out.push(Lamp {
-                        foot,
-                        toward: [-right[0] * sign, -right[1] * sign],
-                        height_m: height,
-                        arm_m: arm,
-                    });
-                }
-            }
-            k += 1.0;
         }
-        s0 += len;
+        k += 1.0;
     }
     out
 }
 
-/// All lamps of a package tile.
-pub fn tile_lamps(pkg: &WorldPackage, key: TileKey) -> Vec<Lamp> {
-    let Some(tile) = pkg.tiles.get(&key) else {
-        return Vec::new();
-    };
+/// Steps (m) a lamp is moved along its road to find a free spot …
+pub const MOVE_STEP_M: f32 = 1.5;
+/// … at most this share of the spacing either way (its neighbours stay
+/// apart).
+pub const MOVE_SHARE: f32 = 0.4;
+
+/// Where a regular lamp ends up under the rule (spec: world look, *Street
+/// lamps*, the rule of 2026-11-22): its foot outside every carriageway and
+/// junction surface ([`LampSpace::blocked`]). Tried in this order at its
+/// place and then [`MOVE_STEP_M`] further and back along the strip, up to
+/// [`MOVE_SHARE`] of the spacing, never past the strip's ends: beyond the
+/// sidewalk, then at the kerb (0.45 m outside the carriageway); on a bridge
+/// deck on its parapet or rail (a bridge of the graph without a deck has
+/// no room). `None`: no free spot, the lamp is left out.
+pub fn place_lamp(strip: &RoadStrip, n: &Nominal, space: &LampSpace) -> Option<(Lamp, bool)> {
+    let total = strip_length(&strip.points);
+    let max = (MOVE_SHARE * spacing_m(strip.class) / MOVE_STEP_M).floor() as i32;
+    let far = side_offset(strip);
+    let near = strip.width_m / 2.0 + 0.45;
+    for i in 0..=2 * max {
+        // 0, +1, -1, +2, -2, … steps.
+        let step = if i % 2 == 1 { (i + 1) / 2 } else { -(i / 2) };
+        let at = n.at + step as f32 * MOVE_STEP_M;
+        if !(0.0..=total).contains(&at) {
+            continue;
+        }
+        let Some((p, dir)) = strip_frame(&strip.points, at) else {
+            continue;
+        };
+        let centre = [f64::from(p[0]), f64::from(p[2])];
+        let offsets: Vec<f32> = match space.deck_foot(centre, f64::from(p[1])) {
+            Some(d) => vec![d as f32],
+            None if space.on_bridge(centre) => continue,
+            None if near + 0.1 < far => vec![far, near],
+            None => vec![far],
+        };
+        for off in offsets {
+            let lamp = lamp_at(strip, p, dir, n.sign, off);
+            if space.blocked(lamp.foot.map(f64::from)).is_none() {
+                return Some((lamp, step != 0 || off != far));
+            }
+        }
+    }
+    None
+}
+
+/// The lamps along one road strip, kept out of the roads ([`place_lamp`]).
+pub fn strip_lamps(
+    strip: &RoadStrip,
+    town: impl Fn(f32, f32) -> bool,
+    space: &LampSpace,
+) -> Vec<Lamp> {
+    nominal_lamps(strip, town)
+        .iter()
+        .filter_map(|n| place_lamp(strip, n, space).map(|(l, _)| l))
+        .collect()
+}
+
+/// Whether a place is in a town by the package's land use.
+pub fn town_at(pkg: &WorldPackage) -> impl Fn(f32, f32) -> bool + '_ {
     let size = f64::from(pkg.tile_size_m);
-    let town = |x: f32, z: f32| {
+    move |x: f32, z: f32| {
         pkg.landuse
             .as_ref()
             .and_then(|l| l.class_at(size, f64::from(x), f64::from(z)))
             .is_some_and(is_town)
+    }
+}
+
+/// All lamps of a package tile, kept out of the roads in `space` (the
+/// space of this tile, [`LampSpace::new`]).
+pub fn tile_lamps(pkg: &WorldPackage, key: TileKey, space: &LampSpace) -> Vec<Lamp> {
+    let Some(tile) = pkg.tiles.get(&key) else {
+        return Vec::new();
     };
+    let town = town_at(pkg);
     tile.roads
         .iter()
-        .flat_map(|s| strip_lamps(s, town))
+        .flat_map(|s| strip_lamps(s, &town, space))
         .collect()
 }
 
@@ -306,6 +426,11 @@ mod tests {
         }
     }
 
+    /// The regular row (before the rule) of a strip.
+    fn row(s: &RoadStrip, town: impl Fn(f32, f32) -> bool) -> Vec<Lamp> {
+        nominal_lamps(s, town).iter().map(|n| n.lamp).collect()
+    }
+
     #[test]
     fn osm_lit_tags() {
         assert_eq!(RoadLit::from_osm(Some("yes")), RoadLit::Yes);
@@ -325,7 +450,7 @@ mod tests {
     #[test]
     fn lamps_stand_along_lit_roads() {
         let s = strip(RoadClass::Residential, RoadLit::Yes, 320.0);
-        let lamps = strip_lamps(&s, |_, _| false);
+        let lamps = row(&s, |_, _| false);
         assert_eq!(lamps.len(), 10, "{lamps:?}");
         for (i, l) in lamps.iter().enumerate() {
             // Northwards: right is east (+x), beyond the 3 m half width.
@@ -337,27 +462,25 @@ mod tests {
         }
         // lit=no: none, even in a town; untagged: only in town.
         assert!(
-            strip_lamps(
+            row(
                 &strip(RoadClass::Residential, RoadLit::No, 320.0),
                 |_, _| true
             )
             .is_empty()
         );
         let untagged = strip(RoadClass::Residential, RoadLit::Unknown, 320.0);
-        assert!(strip_lamps(&untagged, |_, _| false).is_empty());
+        assert!(row(&untagged, |_, _| false).is_empty());
         // Town on the first 100 m only.
-        let town = strip_lamps(&untagged, |_, z| z > -100.0);
+        let town = row(&untagged, |_, z| z > -100.0);
         assert_eq!(town.len(), 3);
         // Tracks are not lit in towns without a tag, but with one.
         assert!(
-            strip_lamps(&strip(RoadClass::Track, RoadLit::Unknown, 300.0), |_, _| {
+            row(&strip(RoadClass::Track, RoadLit::Unknown, 300.0), |_, _| {
                 true
             })
             .is_empty()
         );
-        assert!(
-            !strip_lamps(&strip(RoadClass::Track, RoadLit::Yes, 300.0), |_, _| false).is_empty()
-        );
+        assert!(!row(&strip(RoadClass::Track, RoadLit::Yes, 300.0), |_, _| false).is_empty());
     }
 
     /// The spacing continues across tiles: a strip starting 100 m into
@@ -366,12 +489,12 @@ mod tests {
     fn lamps_continue_across_tiles() {
         let mut s = strip(RoadClass::Residential, RoadLit::Yes, 200.0);
         s.dress.start_m = 100.0;
-        let lamps = strip_lamps(&s, |_, _| false);
+        let lamps = row(&s, |_, _| false);
         assert!((lamps[0].foot[2] + 12.0).abs() < 1e-3, "{:?}", lamps[0]);
         // Wide roads: staggered on both sides.
         let mut w = strip(RoadClass::Primary, RoadLit::Yes, 200.0);
         w.width_m = 12.0;
-        let lamps = strip_lamps(&w, |_, _| false);
+        let lamps = row(&w, |_, _| false);
         assert!(lamps.iter().any(|l| l.foot[0] > 0.0) && lamps.iter().any(|l| l.foot[0] < 0.0));
     }
 
