@@ -37,6 +37,45 @@ pub struct VoiceHud {
     pub notice: Option<String>,
 }
 
+/// Riders shown speaking without a voice call (spec 14 Phase 4 Q24: the
+/// `dev.speaking` command, for scenes and tests): their lips move as if
+/// the call said they speak.
+#[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
+pub struct FakeSpeaking {
+    pub riders: Vec<RiderId>,
+    /// The own rider.
+    pub own: bool,
+}
+
+/// Whether rider `id` is heard speaking now (spec 14 Phase 4 Q24, the
+/// speaking cue of 7.1.11): another rider while the call lists them as
+/// talking, the own rider while the own voice is on and the call hears it
+/// ([`VoiceHud::self_speaking`] is false while muted), or faked by
+/// [`FakeSpeaking`]. The X mouth (the muted sign) is checked by the caller.
+pub fn heard_speaking(
+    hud: Option<&VoiceHud>,
+    fake: Option<&FakeSpeaking>,
+    id: RiderId,
+    is_local: bool,
+) -> bool {
+    let call = hud.is_some_and(|h| {
+        h.visible
+            && if is_local {
+                h.self_speaking && !h.mic_muted
+            } else {
+                h.speaking.contains(&id)
+            }
+    });
+    let faked = fake.is_some_and(|f| {
+        if is_local {
+            f.own
+        } else {
+            f.riders.contains(&id)
+        }
+    });
+    call || faked
+}
+
 /// The voice part of the own rider's status signs (spec §2.6, §7.1.7 Q11,
 /// Q12): computed by `ocw_client::voice` from the call, sent in
 /// `RiderStatus`.
@@ -105,6 +144,7 @@ pub struct VoiceHudPlugin;
 impl Plugin for VoiceHudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<VoiceHud>()
+            .init_resource::<FakeSpeaking>()
             .add_systems(Startup, spawn_panel)
             .add_systems(Update, (update_panel, speaking_markers));
     }
@@ -362,6 +402,36 @@ mod tests {
         assert!((meter_fraction(0.001) - 0.0).abs() < 1e-6, "-60 dB");
         assert!((meter_fraction(0.0316) - 0.5).abs() < 0.01, "-30 dB");
         assert!(meter_fraction(0.1) > meter_fraction(0.01));
+    }
+
+    /// The lips' speaking state (Phase 4 Q24): from the call's speaking
+    /// cue per rider, the own rider only while the own voice is on and
+    /// heard, nothing outside a call, or faked for scenes.
+    #[test]
+    fn riders_heard_speaking() {
+        let (a, b, me) = (RiderId(2), RiderId(3), RiderId(1));
+        let mut hud = VoiceHud {
+            visible: true,
+            speaking: vec![a],
+            ..Default::default()
+        };
+        assert!(heard_speaking(Some(&hud), None, a, false));
+        assert!(!heard_speaking(Some(&hud), None, b, false));
+        assert!(!heard_speaking(Some(&hud), None, me, true));
+        hud.self_speaking = true;
+        assert!(heard_speaking(Some(&hud), None, me, true));
+        hud.mic_muted = true;
+        assert!(!heard_speaking(Some(&hud), None, me, true), "muted");
+        hud.visible = false;
+        assert!(!heard_speaking(Some(&hud), None, a, false), "not in a call");
+        assert!(!heard_speaking(None, None, a, false));
+        let fake = FakeSpeaking {
+            riders: vec![b],
+            own: true,
+        };
+        assert!(heard_speaking(None, Some(&fake), b, false));
+        assert!(heard_speaking(None, Some(&fake), me, true));
+        assert!(!heard_speaking(None, Some(&fake), a, false));
     }
 
     #[test]

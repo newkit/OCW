@@ -926,9 +926,16 @@ fn register_builtin_commands(app: &mut App) {
             .arg(Arg::new("on").required(true).value_parser(["face", "left-hand", "right-hand", "off"]))
             .arg(Arg::new("yaw").allow_negative_numbers(true).value_parser(value_parser!(f32)))
             .arg(Arg::new("pitch").allow_negative_numbers(true).value_parser(value_parser!(f32)))
-            .arg(Arg::new("distance").value_parser(value_parser!(f32))),
+            .arg(Arg::new("distance").value_parser(value_parser!(f32)))
+            .arg(
+                Arg::new("rider")
+                    .long("rider")
+                    .value_parser(value_parser!(u32))
+                    .help("Another rider's face (a rider id; scenes, Phase 4 Q24)"),
+            ),
         |world, m| {
             use crate::camera::{CloseUp, CloseUpOn, CloseUpShot};
+            let rider = m.get_one::<u32>("rider").map(|r| ocw_core::RiderId(*r));
             let on = m.get_one::<String>("on").expect("required").clone();
             let yaw = m.get_one::<f32>("yaw").copied().unwrap_or(150.0).to_radians();
             let pitch = m.get_one::<f32>("pitch").copied().unwrap_or(15.0).to_radians();
@@ -940,6 +947,7 @@ fn register_builtin_commands(app: &mut App) {
                     distance,
                     screen_x: 0.0,
                     on: CloseUpOn::Face,
+                    rider,
                 }),
                 "left-hand" => Some(CloseUpShot::hand(0, yaw, pitch, distance)),
                 "right-hand" => Some(CloseUpShot::hand(1, yaw, pitch, distance)),
