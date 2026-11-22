@@ -319,6 +319,11 @@ impl LandUseIndex {
         self.tiles.is_empty()
     }
 
+    /// The tiles that have land use.
+    pub fn keys(&self) -> impl Iterator<Item = TileKey> + '_ {
+        self.tiles.keys().copied()
+    }
+
     /// The bytes it keeps.
     pub fn bytes(&self) -> usize {
         self.bytes.len() + self.tiles.len() * 24

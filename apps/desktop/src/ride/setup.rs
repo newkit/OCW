@@ -93,7 +93,11 @@ pub fn build(args: &Args) -> Result<RideSetup, String> {
         Arc::new(
             RoadNetwork::new(graph)
                 .with_package_name(hood.set.name())
-                .with_obstacles(obstacles),
+                .with_obstacles(obstacles)
+                // Wet leaves in the ride (spec 4.6.2 Q6).
+                .with_leaves(Some(Arc::new(ocw_world::leaves::LeafMap::from_package(
+                    pkg,
+                )))),
         )
     });
     // `--world` alone: the package's first route, else a free ride.

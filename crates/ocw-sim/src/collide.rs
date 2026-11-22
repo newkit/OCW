@@ -132,6 +132,9 @@ pub enum ContactKind {
     /// The tyres let go on a slippery road (spec §14 Phase 9 S6 → 12B):
     /// leaning further than the grip holds for too long ([`skid`]).
     Slide,
+    /// Slipped on wet leaves in a corner (spec 4.6.2 Q6, `crate::leaves`;
+    /// only with damage on and never in group rides).
+    Leaves,
 }
 
 impl ContactKind {
@@ -146,6 +149,7 @@ impl ContactKind {
             ContactKind::World(k) => k.label(),
             ContactKind::RoadEdge => "road edge",
             ContactKind::Slide => "slid out",
+            ContactKind::Leaves => "wet leaves",
         }
     }
 }
@@ -611,7 +615,8 @@ pub fn fallers(c: &Contact, bodies: &[Body], mode: Mode, tick: u64) -> (bool, bo
         ContactKind::Object
         | ContactKind::World(_)
         | ContactKind::RoadEdge
-        | ContactKind::Slide => (
+        | ContactKind::Slide
+        | ContactKind::Leaves => (
             !a.fallen && v >= CRASH_OBJECT_MPS * crash_scale(a.grip),
             !b.fallen && v >= CRASH_OBJECT_MPS * crash_scale(b.grip),
         ),

@@ -80,6 +80,11 @@ pub struct Predictor {
     /// Ticks of the rider contacts (the tie's coin; crashes are the
     /// server's anyway).
     rider_ticks: u64,
+    /// Wet leaves on the road (spec 4.6.2 Q6): the map and the season as
+    /// the server has them, and the sway now in the lateral offset (the
+    /// cost and the wobble are predicted; a slide is the server's).
+    leaves: Option<crate::leaves::LeafGround>,
+    leaf_wobble: f64,
 }
 
 impl Predictor {
@@ -108,7 +113,55 @@ impl Predictor {
             ghost_ticks: Self::GHOST_TICKS,
             solid: false,
             rider_ticks: 0,
+            leaves: None,
+            leaf_wobble: 0.0,
         }
+    }
+
+    /// Where leaves lie and the season (spec 4.6.2 Q6), as the server.
+    pub fn set_leaves(&mut self, leaves: Option<crate::leaves::LeafGround>) {
+        self.leaves = leaves;
+    }
+
+    pub fn leaves(&self) -> Option<&crate::leaves::LeafGround> {
+        self.leaves.as_ref()
+    }
+
+    /// The physics tick on wet leaves (spec 4.6.2 Q6) as the server's:
+    /// the rolling resistance on the leaves, then their sway.
+    #[allow(clippy::too_many_arguments)]
+    fn leaf_tick(
+        &self,
+        state: &mut RiderState,
+        wobble: &mut f64,
+        profile: &RiderProfile,
+        power_w: f64,
+        controls: Controls,
+        scraping: &mut bool,
+        route: &dyn Track,
+    ) {
+        let slick = crate::leaves::slick(self.leaves.as_ref(), self.weather.as_ref(), route, state);
+        let weather = self
+            .weather
+            .as_ref()
+            .map(|w| crate::leaves::on_leaves(w, slick));
+        ride::tick_in(
+            state,
+            profile,
+            power_w,
+            controls,
+            scraping,
+            route,
+            self.drag_factor,
+            weather.as_ref(),
+            SIM_DT,
+        );
+        let limit = if controls.wild {
+            physics::WILD_LIMIT_M
+        } else {
+            physics::lateral_limit(route.road_width_at(state.distance))
+        };
+        crate::leaves::apply_wobble(state, slick, wobble, limit);
     }
 
     const GHOST_TICKS: u32 = (crate::session::JOIN_GHOST_S / SIM_DT + 0.5) as u32;
@@ -457,17 +510,17 @@ impl Predictor {
     /// Advances the prediction by one physics tick with the current power.
     pub fn step(&mut self, route: &dyn Track, power_w: f64) {
         let (profile, power_w, controls) = self.damaged(power_w);
-        ride::tick_in(
-            &mut self.state,
+        let (mut state, mut wobble, mut scraping) = (self.state, self.leaf_wobble, self.scraping);
+        self.leaf_tick(
+            &mut state,
+            &mut wobble,
             &profile,
             power_w,
             controls,
-            &mut self.scraping,
+            &mut scraping,
             route,
-            self.drag_factor,
-            self.weather.as_ref(),
-            SIM_DT,
         );
+        (self.state, self.leaf_wobble, self.scraping) = (state, wobble, scraping);
         let (mut skid, mut state) = (self.skid, self.state);
         self.skid_tick(&mut skid, &mut state, route, controls);
         self.skid = skid;
@@ -526,17 +579,19 @@ impl Predictor {
         // The others as the same snapshot shows them, moved on with the
         // extrapolation (their contacts with the own rider included).
         let mut others = self.others.clone();
+        // The server's state carries the leaves' sway of its place.
+        let slick =
+            crate::leaves::slick(self.leaves.as_ref(), self.weather.as_ref(), route, &server);
+        let mut wobble = crate::leaves::wobble_offset(slick, server.speed, server.distance);
         for _ in 0..steps {
-            ride::tick_in(
+            self.leaf_tick(
                 &mut extrapolated,
+                &mut wobble,
                 &profile,
                 power_w,
                 controls,
                 &mut scraping,
                 route,
-                self.drag_factor,
-                self.weather.as_ref(),
-                SIM_DT,
             );
             self.skid_tick(&mut skid, &mut extrapolated, route, controls);
             self.damage_cap(&mut extrapolated);
@@ -783,6 +838,8 @@ mod tests {
             humidity: 0.8,
             rolling_factor: 1.0,
             grip: 0.75,
+            wetness: 1.0,
+            snow_cover: 0.0,
         };
         let route = flat();
         let mut s = crate::session::Session::new(route.clone());

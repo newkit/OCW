@@ -1600,6 +1600,8 @@ mod grip_tests {
             humidity: 0.8,
             rolling_factor: 1.0,
             grip,
+            wetness: 1.0,
+            snow_cover: 0.0,
         }
     }
 

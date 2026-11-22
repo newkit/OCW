@@ -211,6 +211,9 @@ pub struct RoadNetwork {
     /// Phase 12 K3: trees, buildings, walls, barriers, railings, tunnel
     /// walls), if its package has any.
     obstacles: Option<std::sync::Arc<crate::obstacles::WorldObstacles>>,
+    /// Where leaves lie on the roads (spec 4.6.2 Q6: wet leaves in the
+    /// ride), if the world has land use.
+    leaves: Option<std::sync::Arc<crate::leaves::LeafMap>>,
     /// The junction surfaces (spec §4.8.8, J1): riders ride the heights
     /// the renderer draws there.
     junctions: std::sync::Arc<crate::junction::JunctionSet>,
@@ -242,7 +245,19 @@ impl RoadNetwork {
             package: String::new(),
             fingerprint,
             obstacles: None,
+            leaves: None,
         }
+    }
+
+    /// The same network with the leaf map of its world (spec 4.6.2 Q6).
+    pub fn with_leaves(mut self, leaves: Option<std::sync::Arc<crate::leaves::LeafMap>>) -> Self {
+        self.leaves = leaves;
+        self
+    }
+
+    /// Where leaves lie on the roads (spec 4.6.2 Q6).
+    pub fn leaves(&self) -> Option<&std::sync::Arc<crate::leaves::LeafMap>> {
+        self.leaves.as_ref()
     }
 
     /// The same network with the static obstacles of its world.

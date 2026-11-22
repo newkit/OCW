@@ -110,8 +110,10 @@ pub const WET_DARKEN: f32 = 0.38;
 pub const WET_ROUGHNESS: f32 = 0.6;
 /// The broadleaf share the autumn leaves count with at least in a wood
 /// (mixed woods measured as mostly conifers still have beeches and maples
-/// by the roads; spec 4.6.2 Q5).
-pub const LEAF_WOOD_MIN: f32 = 0.2;
+/// by the roads; spec 4.6.2 Q5) and the region's share where the package
+/// has no forest type – shared with the physics of wet leaves
+/// (`ocw_world::leaves`, spec 4.6.2 Q6).
+pub use ocw_world::leaves::{LEAF_WOOD_MIN, region_broadleaf};
 
 /// What lies by the road.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -317,7 +319,8 @@ impl SeasonFx {
             dry: g.dry,
             litter: litter.clamp(0.0, 1.0),
             autumn: (f.autumn * (0.4 + fallen)).clamp(0.0, 1.0),
-            fall: ((0.5 * f.autumn + fallen) * (1.0 - 0.6 * f.fresh)).clamp(0.0, 1.0),
+            // The same leaf fall as the physics of wet leaves (4.6.2 Q6).
+            fall: d.leaf_fall(alt_m),
             snow: d.snow(alt_m),
         }
     }
@@ -356,19 +359,6 @@ impl Mix {
 
     pub fn total(&self) -> f32 {
         self.0.iter().sum()
-    }
-}
-
-/// The region's broadleaf share where the package has no forest type.
-pub fn region_broadleaf(region: FloraRegion, alt_m: f64) -> f32 {
-    match region {
-        FloraRegion::BlackForest => 0.3,
-        FloraRegion::AlpineRhine if alt_m > 1200.0 => 0.15,
-        FloraRegion::AlpineRhine => 0.4,
-        // Laurel forest in the cloud belt, Canary pine above.
-        FloraRegion::Tenerife if alt_m < 1100.0 => 0.7,
-        FloraRegion::Tenerife => 0.0,
-        FloraRegion::Other => 0.5,
     }
 }
 
@@ -516,8 +506,10 @@ pub fn mix(p: &Place, s: &SeasonFx) -> Mix {
 /// metre of one side's half of the carriageway (High): very few – grit and
 /// small stones (more on worn and unpaved roads, like the road damage's
 /// loose stones of [`ocw_world::road_wear`]), the odd twig, leaves in
-/// autumn and winter. `grade`: the road's wear grade (1 … 7).
-pub fn road_mix(p: &Place, s: &SeasonFx, grade: u8) -> Mix {
+/// autumn and winter. `grade`: the road's wear grade (1 … 7); `leaves`:
+/// the leaves per metre there ([`road_leaves`]: the same amount the
+/// physics of wet leaves rides over, spec 4.6.2 Q6).
+pub fn road_mix(p: &Place, s: &SeasonFx, grade: u8, leaves: f32) -> Mix {
     use Kind::*;
     let mut m = Mix::default();
     let forest = matches!(p.class, LandClass::Forest);
@@ -535,14 +527,6 @@ pub fn road_mix(p: &Place, s: &SeasonFx, grade: u8) -> Mix {
     m.set(Gravel, 0.035 * worn);
     m.set(Pebble, 0.012 * worn);
     m.set(Twig, if forest { 0.012 } else { 0.003 });
-    m.set(
-        Leaf,
-        if forest {
-            0.8 * p.broadleaf.max(LEAF_WOOD_MIN) * s.fall
-        } else {
-            0.06 * s.fall
-        },
-    );
     match p.surface {
         RoadSurface::Gravel | RoadSurface::Dirt => {
             m.scale(Gravel, 2.0);
@@ -561,7 +545,24 @@ pub fn road_mix(p: &Place, s: &SeasonFx, grade: u8) -> Mix {
     for k in Kind::ON_ROAD {
         m.scale(k, cover);
     }
+    // Already for the town, the season and the snow.
+    m.set(Leaf, leaves);
     m
+}
+
+/// The leaves per metre on one side's half of the road at (x, z) – the
+/// verge's point the place is taken at – in the season `s` at `alt_m`:
+/// [`ocw_world::leaves`]'s cell code read straight from the package and
+/// its amount, the same function the server's physics of wet leaves uses
+/// (spec 4.6.2 Q6).
+pub fn road_leaves(pkg: &WorldPackage, x: f64, z: f64, alt_m: f64, s: &SeasonFx) -> f32 {
+    ocw_world::leaves::per_metre(
+        ocw_world::leaves::code_at(pkg, x, z),
+        FloraRegion::at(pkg.origin.0, pkg.origin.1),
+        alt_m,
+        s.fall,
+        s.snow,
+    )
 }
 
 /// Whether a bit may lie `u` m across a carriageway of half width `half`
@@ -1022,7 +1023,8 @@ pub fn bits_in(ctx: &Ctx, rect: [f64; 4], p: &Params) -> Vec<Bit> {
                     if narrow {
                         continue;
                     }
-                    let rm = road_mix(&place, &fx, grade);
+                    let leaves = road_leaves(pkg, mx, mz, alt, &fx);
+                    let rm = road_mix(&place, &fx, grade, leaves);
                     for kind in Kind::ON_ROAD {
                         if p.snow && kind.small() {
                             continue;
