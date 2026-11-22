@@ -238,6 +238,9 @@ pub struct GameServer {
     fetcher: Option<std::sync::Mutex<Box<dyn realweather::WeatherFetcher>>>,
     /// (lat, lon) of the course's local metres.
     geo_origin: Option<(f64, f64)>,
+    /// The season the leaves on the road lie in (spec 4.6.2 Q6), from the
+    /// world clock at the course's place.
+    leaf_season: ocw_sim::leaves::LeafSeason,
     /// The scene height (m) of the place real weather was last applied
     /// for: its pressure holds there (spec §14 Phase 9, S6).
     real_pressure_y_m: Option<f64>,
@@ -443,6 +446,7 @@ impl GameServer {
             real,
             fetcher: None,
             geo_origin,
+            leaf_season: Default::default(),
             real_pressure_y_m: None,
             accounts: BTreeMap::new(),
             photos: BTreeMap::new(),
@@ -1680,8 +1684,26 @@ impl GameServer {
         if self.voice_blocks.is_empty() {
             return BTreeMap::new();
         }
-        let riders: BTreeMap<ConnectionId, voice_block::Who> = self
-            .riders
+        voice_block::apart(&self.voice_block_riders(), &self.voice_blocks)
+    }
+
+    /// Who blocked whom among the riders here (spec §7.1.7 Q18, for the
+    /// headphones): the blocker's rider → the riders it blocked. Never
+    /// sent anywhere.
+    fn compute_voice_blocked(&self) -> BTreeMap<RiderId, std::collections::BTreeSet<RiderId>> {
+        if self.voice_blocks.is_empty() {
+            return BTreeMap::new();
+        }
+        let riders = self.voice_block_riders();
+        voice_block::blocked(&riders, &self.voice_blocks)
+            .into_iter()
+            .filter_map(|(c, set)| riders.get(&c).map(|w| (w.rider, set)))
+            .collect()
+    }
+
+    /// The riders here as the block rules see them.
+    fn voice_block_riders(&self) -> BTreeMap<ConnectionId, voice_block::Who> {
+        self.riders
             .iter()
             .map(|(c, r)| {
                 (
@@ -1693,8 +1715,7 @@ impl GameServer {
                     },
                 )
             })
-            .collect();
-        voice_block::apart(&riders, &self.voice_blocks)
+            .collect()
     }
 
     /// Tells every rider whose set of riders apart changed (spec §7.1.7
@@ -1810,9 +1831,13 @@ impl GameServer {
             .filter(|(c, _)| self.voice_audience.get(c).is_some_and(|a| a.hears_nobody()))
             .map(|(_, r)| *r)
             .collect();
+        // Blocks (spec §7.1.7 Q18): the blocker shows headphones to the
+        // riders it blocked – only to them, who blocked whom stays here.
+        let blocked = self.compute_voice_blocked();
         for (conn, rider) in conns {
             let in_voice = self.statuses.get(&rider).is_some_and(|st| st.in_voice);
-            let set = headphones::cannot_hear(rider, in_voice, &self.statuses, &hear_nobody);
+            let set =
+                headphones::cannot_hear(rider, in_voice, &self.statuses, &hear_nobody, &blocked);
             let before = self.not_hearing_you.get(&conn);
             if before.map_or(set.is_empty(), |b| *b == set) {
                 continue;
@@ -1993,6 +2018,13 @@ impl GameServer {
         let t0 = self.session_time_s();
         let physics = self.weather_physics_at(t0);
         self.session.set_weather(Some(physics));
+        // The season of the wet leaves on the road (spec 4.6.2 Q6): only
+        // where the world has a leaf map.
+        if self.session.has_leaf_map() {
+            let place = self.geo_origin.unwrap_or(ocw_sky::zone::DEFAULT_PLACE);
+            let day = self.leaf_season.day_at(self.clock.now(t0), place);
+            self.session.set_leaf_season(Some(day));
+        }
         self.session.step();
         let t = self.session_time_s();
         self.weather.tick(t);
@@ -2165,12 +2197,15 @@ impl GameServer {
     }
 }
 
-/// A rider's status as relayed (spec §2.6): at most
-/// [`MAX_NOT_HEARING`] riders in `not_hearing` (a snapshot stays small).
+/// A rider's status as kept (spec §2.6): at most [`MAX_NOT_HEARING`]
+/// riders in `not_hearing` and in `silenced` (0 % volume, §7.1.7 Q18),
+/// sorted, once each.
 pub fn sanitize_status(mut st: v1::RiderStatus) -> v1::RiderStatus {
-    st.not_hearing.sort_unstable();
-    st.not_hearing.dedup();
-    st.not_hearing.truncate(MAX_NOT_HEARING);
+    for list in [&mut st.not_hearing, &mut st.silenced] {
+        list.sort_unstable();
+        list.dedup();
+        list.truncate(MAX_NOT_HEARING);
+    }
     st
 }
 
@@ -3021,7 +3056,10 @@ mod tests {
                     match decode_server(m) {
                         Ok(S::Snapshot(s)) => {
                             for r in &s.riders {
-                                let list = r.status.as_ref().map_or(0, |st| st.not_hearing.len());
+                                let list = r
+                                    .status
+                                    .as_ref()
+                                    .map_or(0, |st| st.not_hearing.len() + st.silenced.len());
                                 assert_eq!(list, 0, "a list in a snapshot: {r:?}");
                             }
                         }
@@ -3135,6 +3173,53 @@ mod tests {
             server.voice_hearing(a).may_hear.is_empty(),
             "Ada hears nobody"
         );
+        // Spec §7.1.7 Q18: 0 % volume and a block count too, each for that
+        // viewer only. Ada hears everybody again; Dan joins.
+        server.handle(
+            a,
+            &encode(&client_message(C::VoiceAudience(v1::VoiceAudience {
+                heard_by: v1::VoiceHeardBy::Nearby as i32,
+                ..Default::default()
+            }))),
+        );
+        let (d, rd) = join_named(&mut server, "Dan Tempo");
+        send(&mut server, d, st(&[]));
+        run(&mut server);
+        assert!(seen(&server, c).is_empty() && seen(&server, d).is_empty());
+        // Ada sets Cleo to 0 %: Cleo alone sees headphones on Ada.
+        send(
+            &mut server,
+            a,
+            v1::RiderStatus {
+                silenced: vec![rc.0],
+                ..st(&[])
+            },
+        );
+        let told = run(&mut server);
+        assert_eq!(told.get(&c), Some(&vec![ra.0]), "0 % volume");
+        assert_eq!(told.len(), 1, "only Cleo is told: {told:?}");
+        // Dan blocks Cleo by name: Cleo sees headphones on Dan (and still
+        // on Ada); Dan sees none on Cleo; Ada none.
+        server.handle(
+            d,
+            &encode(&client_message(C::VoiceBlocks(v1::VoiceBlocks {
+                names: vec!["Cleo Sprinter".into()],
+                ..Default::default()
+            }))),
+        );
+        let told = run(&mut server);
+        assert_eq!(told.get(&c), Some(&vec![ra.0, rd.0]), "blocked by Dan");
+        assert!(seen(&server, d).is_empty(), "the blocker sees none");
+        assert!(seen(&server, a).is_empty());
+        // Unblock and back to 100 %: gone.
+        server.handle(
+            d,
+            &encode(&client_message(C::VoiceBlocks(Default::default()))),
+        );
+        send(&mut server, a, st(&[]));
+        let told = run(&mut server);
+        assert_eq!(told.get(&c), Some(&vec![]));
+        assert!(seen(&server, c).is_empty());
     }
 
     /// The status signs (spec §2.6): relayed from the samples into the

@@ -40,6 +40,12 @@ pub trait Track {
         let _ = lateral;
         self.sample(distance).position[1]
     }
+    /// The damaged roads under the wheels (spec Phase 8 Q12,
+    /// [`crate::road_feel`]): a free-ride or route path's network's;
+    /// `None` for a plain route (no package).
+    fn road_feel(&self) -> Option<&crate::road_feel::RoadFeelMap> {
+        None
+    }
     /// Display name (route name, or the street the rider is on).
     fn name_at(&self, _distance: f64) -> String {
         String::new()

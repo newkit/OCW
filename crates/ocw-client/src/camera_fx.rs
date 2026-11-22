@@ -72,6 +72,16 @@ pub fn shake(age_s: f64, strength: f64) -> ([f32; 3], f32) {
     )
 }
 
+/// Adds the shake `age_s` after an event of `strength` to `fx` (a bump
+/// over road damage, spec Phase 8 Q12).
+pub fn add_shake(fx: &mut CameraFx, age_s: f64, strength: f64) {
+    let (o, r) = shake(age_s, strength);
+    for (a, b) in fx.shake.iter_mut().zip(o) {
+        *a += b;
+    }
+    fx.roll += r;
+}
+
 /// How far the orbit is widened while down (0–1): eased in over the fall,
 /// held while lying, eased out over the remount.
 pub fn down_orbit(crash: &CrashView) -> f64 {

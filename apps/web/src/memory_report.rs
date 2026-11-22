@@ -140,11 +140,11 @@ fn report(path: &str, route: Option<&str>) {
     let mut opts = WorldOptions::new("memory-report");
     opts.route = route.map(str::to_string);
     let (ride, _) = step("ride prepared (network, route, client)", || {
-        world_ride(base, &opts, "Ada Rider")
+        world_ride(base, s.land_use(), &opts, "Ada Rider")
             .or_else(|e| {
                 println!("  ({e}; the first route instead)");
                 opts.route = None;
-                world_ride(base, &opts, "Ada Rider")
+                world_ride(base, s.land_use(), &opts, "Ada Rider")
             })
             .expect("ride")
     });

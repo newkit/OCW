@@ -1290,6 +1290,10 @@ impl Track for RidePath {
         self.route.sample(distance - self.begin_m())
     }
 
+    fn road_feel(&self) -> Option<&crate::road_feel::RoadFeelMap> {
+        self.net.road_feel()
+    }
+
     fn curvature(&self, distance: f64) -> f64 {
         self.route.curvature(distance - self.begin_m())
     }

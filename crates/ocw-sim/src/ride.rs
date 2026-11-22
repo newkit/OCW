@@ -119,6 +119,14 @@ pub fn tick_in(
     if let Some(h) = &here {
         env = env.in_weather(h.wind.head_mps, h.density, h.weather.rolling_factor);
     }
+    // Road damage (spec Phase 8 Q12): a bad surface rolls harder, and the
+    // wheel's way over it may hit a pothole or a crack (below).
+    let wheel_before = track
+        .road_feel()
+        .map(|_| crate::road_feel::wheel(track, state));
+    if wheel_before.is_some() {
+        env = env.with_rolling_extra(crate::road_feel::rolling_extra_at(track, state));
+    }
     physics::step(state, profile, power_w, &env, dt);
     let limit = if controls.wild {
         physics::WILD_LIMIT_M
@@ -148,6 +156,13 @@ pub fn tick_in(
         controls.wild,
         dt,
     );
+    // A bump costs a little speed (never a sideways step).
+    if let Some(from) = wheel_before
+        && let Some(b) =
+            crate::road_feel::crossed_between(track, from, crate::road_feel::wheel(track, state))
+    {
+        state.speed = (state.speed - crate::road_feel::speed_loss(&b, state.speed)).max(0.0);
+    }
     stop_at_finish(state, track);
 }
 

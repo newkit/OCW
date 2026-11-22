@@ -111,10 +111,29 @@ pub fn load_course_at(
             "world obstacles (spec §14 Phase 12 K3)"
         );
     }
+    // The damaged roads under the wheels (spec Phase 8 Q12).
+    let road_feel = Arc::new(ocw_world::road_feel::RoadFeelMap::from_package(
+        &world.package,
+    ));
+    tracing::info!(
+        strips = road_feel.strip_count(),
+        "damaged road strips felt in the ride (spec Phase 8 Q12)"
+    );
+    let road_feel = Some(road_feel);
+    // Where leaves lie on the roads (spec 4.6.2 Q6: wet leaves in the
+    // ride), from the home package's land use.
+    let leaves = ocw_world::leaves::LeafMap::from_package(&world.package);
+    tracing::info!(
+        tiles = leaves.len(),
+        mb = leaves.approx_bytes() as f64 / 1e6,
+        "leaves on the roads (spec 4.6.2 Q6)"
+    );
     let net = Arc::new(
         RoadNetwork::new(graph)
             .with_package_name(hood.set.name())
-            .with_obstacles(obstacles),
+            .with_obstacles(obstacles)
+            .with_road_feel(road_feel)
+            .with_leaves(Some(Arc::new(leaves))),
     );
     let change = v1::WorldChange {
         package_id: world.identity.id.clone(),

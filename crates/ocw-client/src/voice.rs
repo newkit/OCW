@@ -40,62 +40,82 @@ use crate::settings::{Settings, Value};
 pub fn voice_signs(c: &VoiceController, voice_offered: bool) -> VoiceSigns {
     let status = c.status();
     let in_voice = matches!(status, Status::Connected | Status::Reconnecting);
-    let (hears_nobody, not_hearing) = not_hearing_reasons(c, &status, voice_offered);
+    let r = not_hearing_reasons(c, &status, voice_offered);
     VoiceSigns {
         in_voice,
         mic_muted: in_voice && c.mute().mic_muted,
-        hears_nobody,
-        not_hearing,
+        hears_nobody: r.hears_nobody,
+        not_hearing: r.not_hearing,
+        silenced: r.silenced,
     }
 }
 
-/// **Why a rider shows headphones ("cannot hear you") – spec §7.1.7 Q12,
-/// still OPEN.** Q11 decided the meaning (headphones = this rider does
-/// not receive the viewer's voice, seen per viewer); Q12 asks which
-/// reasons count. Built here from the proposal, with only what the voice
-/// state carries today:
+/// Why the own rider shows headphones ("cannot hear you"), as the client
+/// tells the server (spec §7.1.7 Q11, Q12, Q17, Q18).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NotHearing {
+    /// Every viewer in the call sees the headphones.
+    pub hears_nobody: bool,
+    /// Muted for me, not among *I hear: selected* (`RiderStatus.not_hearing`).
+    pub not_hearing: Vec<RiderId>,
+    /// Set to 0 % volume (`RiderStatus.silenced`, Q18).
+    pub silenced: Vec<RiderId>,
+}
+
+/// **Why a rider shows headphones ("cannot hear you") – spec §7.1.7 Q11,
+/// Q12, Q18 (decided).** Headphones = this rider does not receive the
+/// viewer's voice by own choice, seen per viewer (the server works out
+/// the yes / no per viewer, Q17). The client's reasons:
 ///
 /// - **hears nobody** (every viewer in the call sees the headphones): the
 ///   speaker is muted (Shift+M, `voice.speaker_muted`), *I hear: nobody*
 ///   (`voice.i_hear`, spec §7.1.7 Q16), or voice is off in the controller
 ///   while the server offers it;
 /// - **does not hear these riders** (only they see the headphones): the
-///   participants the rider muted for themselves (`voice.mute WHO`).
+///   participants the rider muted for themselves (`voice.mute WHO`), and
+///   with *I hear: selected* the riders in the call who are not selected;
+/// - **0 % volume** (Q18, `voice.volume WHO 0`): only that rider sees
+///   them (`silenced`).
 ///
-/// - **listens to *Selected riders* without them** (spec §7.1.3, the
-///   proposal's "they listen to Selected riders without you"): the riders
-///   in the call who are not selected.
-///
-/// Not counted (the proposal: not merely distance): riders out of hearing
-/// range or beyond the subscription cap (`heard: None` without a mute),
-/// and *My voice* (Q8, Q16, the other direction: the viewer is not heard;
-/// its off is the X mouth).
-/// **Block (Q9, built) does not count here** and neither does
-/// a rider's volume at 0 %: whether the headphones show for them is the
-/// open question §7.1.7 Q18 (a blocked rider would learn of the block
-/// from the sign; Q12 / Q17 are open too), so today's signs stay as they
-/// were.
+/// **Blocks** (Q18) count too, but the server knows them from
+/// `VoiceBlocks` and adds them itself (the blocker shows headphones to
+/// the blocked rider). Not counted: riders out of hearing range or beyond
+/// the subscription cap (`heard: None` without a mute), and *My voice*
+/// (Q8, Q16, the other direction: its off is the X mouth).
 pub fn not_hearing_reasons(
     c: &VoiceController,
     status: &Status,
     voice_offered: bool,
-) -> (bool, Vec<RiderId>) {
+) -> NotHearing {
     let in_voice = matches!(status, Status::Connected | Status::Reconnecting);
     let speaker_off = in_voice && c.mute().speaker_muted;
     let voice_off = matches!(status, Status::Off) && voice_offered;
     let nobody = in_voice && c.settings().listen == Listen::Nobody;
     let selective = c.settings().listen == Listen::Selected && c.group().is_none();
-    let mut muted: Vec<RiderId> = if in_voice && !nobody {
-        c.participants()
-            .filter(|p| p.muted_by_me || (selective && !p.selected && !p.blocked_by_me))
+    let listed = |pick: &dyn Fn(&ocw_voice::Participant) -> bool| -> Vec<RiderId> {
+        if !in_voice || nobody {
+            return Vec::new();
+        }
+        let mut v: Vec<RiderId> = c
+            .participants()
+            .filter(|p| pick(p))
             .filter_map(|p| p.rider)
-            .collect()
-    } else {
-        Vec::new()
+            .collect();
+        v.sort_unstable();
+        v.dedup();
+        v
     };
-    muted.sort_unstable();
-    muted.dedup();
-    (speaker_off || voice_off || nobody, muted)
+    let not_hearing = listed(&|p| p.muted_by_me || (selective && !p.selected && !p.blocked_by_me));
+    // A rider already in `not_hearing` need not be said twice.
+    let silenced: Vec<RiderId> = listed(&|p| p.volume_pct == 0)
+        .into_iter()
+        .filter(|r| !not_hearing.contains(r))
+        .collect();
+    NotHearing {
+        hears_nobody: speaker_off || voice_off || nobody,
+        not_hearing,
+        silenced,
+    }
 }
 
 /// The status signs `viewer` sees on rider `of` (spec §2.6, §7.1.7 Q11):
@@ -135,6 +155,7 @@ pub fn status_message(voice: &VoiceSigns, in_menu: bool, in_vr: bool) -> v1::Rid
         in_voice: voice.in_voice,
         hears_nobody: voice.hears_nobody,
         not_hearing: voice.not_hearing.iter().map(|r| r.0).collect(),
+        silenced: voice.silenced.iter().map(|r| r.0).collect(),
     }
 }
 
@@ -443,6 +464,16 @@ pub struct VoiceDriver {
     notice_until: Option<f64>,
     notice_done: bool,
     was_connected: bool,
+    /// The microphone as seen last frame (muted = My voice off), for the
+    /// "nobody hears you" notice (spec §7.1.7 Q22).
+    mic_was_muted: Option<bool>,
+    /// The "nobody hears you" notice: shown until then (s).
+    nobody_until: Option<f64>,
+    /// My voice was turned on and is still to be checked (once the call
+    /// has been up for [`CALL_SETTLE_S`]).
+    nobody_pending: bool,
+    /// Since when the call is up (s).
+    call_since: Option<f64>,
 }
 
 /// The blocks as told to the game server: (account ids, names).
@@ -572,10 +603,47 @@ impl VoiceDriver {
             out.run.push("set voice.first_call_notice off".into());
         }
         self.was_connected = connected;
-        let notice = self
-            .notice_until
-            .filter(|until| now_s < *until)
-            .map(|_| first_call_notice(c.settings().my_voice, c.settings().listen));
+        // Spec §7.1.7 Q22 (b): My voice turned on (M, the menu, the
+        // console) while nobody can hear it – a few seconds on the HUD,
+        // once per turn-on.
+        // A turn-on before the call is up (or right at its start, while
+        // the participants arrive) is checked once the call has settled.
+        let mic_muted = c.mute().mic_muted;
+        // Every ride starts with My voice off (spec §7.1.7 Q7).
+        if self.mic_was_muted != Some(false) && !mic_muted {
+            self.nobody_pending = true;
+        }
+        self.mic_was_muted = Some(mic_muted);
+        if status.in_call() {
+            self.call_since.get_or_insert(now_s);
+        } else {
+            self.call_since = None;
+        }
+        if mic_muted || self.call_since.is_none() {
+            self.nobody_until = None;
+        }
+        if mic_muted {
+            self.nobody_pending = false;
+        }
+        if self.nobody_pending
+            && self
+                .call_since
+                .is_some_and(|since| now_s >= since + CALL_SETTLE_S)
+        {
+            self.nobody_pending = false;
+            let own = client.and_then(ClientCore::rider_id);
+            let others = client.is_some_and(|cl| cl.human_riders() > 1);
+            if nobody_hears_you(c, own, others) {
+                self.nobody_until = Some(now_s + NOBODY_NOTICE_S);
+            }
+        }
+        let notice = match self.nobody_until.filter(|until| now_s < *until) {
+            Some(_) => Some(NOBODY_NOTICE.to_owned()),
+            None => self
+                .notice_until
+                .filter(|until| now_s < *until)
+                .map(|_| first_call_notice(c.settings().my_voice, c.settings().listen)),
+        };
         let text = status_text(&status, participants.len());
         let inputs = c.input_devices();
         let outputs = c.output_devices();
@@ -800,6 +868,40 @@ pub fn voice_off_command(c: &mut VoiceController, store: Option<&mut dyn Setting
 
 /// How long the first call's notice stays (s).
 pub const NOTICE_S: f64 = 8.0;
+
+/// The HUD notice when My voice is turned on while nobody can hear it
+/// (spec §7.1.7 Q22 (b)).
+pub const NOBODY_NOTICE: &str = "Voice: nobody hears you - Settings > Voice";
+
+/// How long the "nobody hears you" notice stays (s).
+pub const NOBODY_NOTICE_S: f64 = 5.0;
+
+/// How long a call must be up before a turn-on is checked (s): the
+/// participants arrive just after the connect.
+pub const CALL_SETTLE_S: f64 = 1.0;
+
+/// Whether nobody can hear the own voice by the rider's own settings
+/// (spec §7.1.7 Q22 (b), the case of v5.26): a possible hearer is another
+/// rider in the call (`own` left out) whom the rider did not block and is
+/// not kept apart from – with *My voice: on · Selected* only a selected
+/// one. Nobody selected, every selected rider blocked or out of the call,
+/// or every rider in the call blocked: nobody hears you. With *My voice:
+/// Everybody* and no other rider in the session at all (`others`: false)
+/// there is nobody to ask for, and no notice. Distance is no reason (a
+/// rider out of range may come near; spec §7.1.7 Q12).
+pub fn nobody_hears_you(c: &VoiceController, own: Option<RiderId>, others: bool) -> bool {
+    let selected_only = c.settings().my_voice == MyVoice::Selected;
+    if !selected_only && !others {
+        return false;
+    }
+    !c.participants().any(|p| {
+        p.rider.is_some()
+            && p.rider != own
+            && !p.blocked_by_me
+            && !p.apart
+            && (!selected_only || p.selected)
+    })
+}
 
 /// What `voice.echo here` sends: the Echo rider 20 m ahead.
 pub fn echo_here_message() -> Vec<u8> {
@@ -1779,6 +1881,158 @@ mod tests {
                 assert!(st.not_hearing.is_empty(), "{st:?}");
             }
         }
+    }
+
+    /// Spec §7.1.7 Q18: *Mute for me*, 0 % volume and a block each show
+    /// headphones to that rider – per viewer, from the server; the blocked
+    /// rider sees them on the blocker, the blocker none on the blocked;
+    /// no client ever holds another's list.
+    #[test]
+    fn mute_zero_volume_and_block_show_headphones_to_that_rider() {
+        let mut w = Trio::new();
+        w.run_with_status(40);
+        assert!(w.all_headphones().is_empty());
+        // Bea sets Ada to 0 %: only Ada sees headphones on Bea.
+        volume_command(&mut w.sides[1].c, None, "Ada Rider", 0).unwrap();
+        w.run_with_status(20);
+        assert_eq!(w.all_headphones(), [(0, 1)], "0 % volume");
+        assert_eq!(voice_signs(&w.sides[1].c, true).silenced, vec![w.ids[0]]);
+        // Back to 50 %: gone.
+        volume_command(&mut w.sides[1].c, None, "Ada Rider", 50).unwrap();
+        w.run_with_status(20);
+        assert!(w.all_headphones().is_empty(), "{:?}", w.all_headphones());
+        // Cleo mutes Bea for herself: Bea sees them on Cleo.
+        mute_who_command(&mut w.sides[2].c, "Bea Climber", Some("on")).unwrap();
+        w.run_with_status(20);
+        assert_eq!(w.all_headphones(), [(1, 2)], "muted for me");
+        mute_who_command(&mut w.sides[2].c, "Bea Climber", Some("off")).unwrap();
+        // Cleo blocks Ada: Ada sees headphones on Cleo; Cleo sees none on
+        // Ada (Ada did not block her); Bea none.
+        block_command(&mut w.sides[2].c, None, "Ada Rider", Some("on")).unwrap();
+        w.run_with_status(20);
+        assert_eq!(w.all_headphones(), [(0, 2)], "blocked");
+        // Unblocked: gone.
+        block_command(&mut w.sides[2].c, None, "name:local/Ada Rider", Some("off")).unwrap();
+        w.run_with_status(20);
+        assert!(w.all_headphones().is_empty(), "{:?}", w.all_headphones());
+        for s in &w.sides {
+            for (_, st) in s.client.statuses_for_test() {
+                assert!(
+                    st.not_hearing.is_empty() && st.silenced.is_empty(),
+                    "{st:?}"
+                );
+            }
+        }
+    }
+
+    /// Spec §7.1.7 Q22 (b): turning My voice on while nobody can hear it
+    /// shows "nobody hears you – Settings > Voice" for a few seconds, once
+    /// per turn-on; *Selected* with nobody selected, every rider blocked;
+    /// none in the normal case.
+    #[test]
+    fn turning_my_voice_on_while_nobody_hears_shows_a_notice() {
+        let mut w = Trio::new();
+        // Joined with My voice off (spec §7.1.7 Q7); the call settles
+        // (CALL_SETTLE_S) before a turn-on is checked.
+        w.sides[0].c.set_mic(Switch::On);
+        w.sides[1].c.set_mic(Switch::On);
+        w.run(80);
+        let frame = |w: &mut Trio, i: usize, dt: f64| {
+            let t = w.t + dt;
+            let s = &mut w.sides[i];
+            s.d.frame(&mut s.c, Some(&s.client), 1, Vec::new(), None, t)
+                .hud
+                .notice
+        };
+        let nobody = Some(NOBODY_NOTICE.to_owned());
+        // The normal case (My voice: Everybody, two riders in the call).
+        w.sides[0].c.set_mic(Switch::Off);
+        assert_ne!(frame(&mut w, 0, 0.0), nobody, "heard: no notice");
+        w.sides[0].c.set_mic(Switch::On);
+        frame(&mut w, 0, 0.0);
+        // *My voice: on · Selected* with nobody selected.
+        let mut s = w.sides[0].c.settings().clone();
+        s.my_voice = MyVoice::Selected;
+        w.sides[0].c.set_settings(s);
+        w.run(5);
+        w.sides[0].c.set_mic(Switch::Off);
+        assert_eq!(frame(&mut w, 0, 0.0), nobody, "nobody selected");
+        assert_eq!(frame(&mut w, 0, 4.0), nobody, "a few seconds");
+        assert_ne!(frame(&mut w, 0, 6.0), nobody, "then gone");
+        assert_ne!(frame(&mut w, 0, 6.1), nobody, "once per turn-on");
+        // Bea selected: heard, no notice.
+        select_command(&mut w.sides[0].c, None, "Bea Climber", Some("on")).unwrap();
+        w.sides[0].c.set_mic(Switch::On);
+        w.run(5);
+        w.sides[0].c.set_mic(Switch::Off);
+        assert_ne!(frame(&mut w, 0, 0.0), nobody, "Bea hears");
+        // Bea, the only selected one, blocked: nobody again.
+        w.sides[0].c.set_mic(Switch::On);
+        block_command(&mut w.sides[0].c, None, "Bea Climber", Some("on")).unwrap();
+        w.run(10);
+        w.sides[0].c.set_mic(Switch::Off);
+        assert_eq!(frame(&mut w, 0, 0.0), nobody, "the selected one blocked");
+        // My voice: Everybody, Cleo blocked too: every hearer blocked.
+        w.sides[0].c.set_mic(Switch::On);
+        let mut s = w.sides[0].c.settings().clone();
+        s.my_voice = MyVoice::Everybody;
+        w.sides[0].c.set_settings(s);
+        block_command(&mut w.sides[0].c, None, "Cleo Sprinter", Some("on")).unwrap();
+        w.run(10);
+        w.sides[0].c.set_mic(Switch::Off);
+        assert_eq!(frame(&mut w, 0, 0.0), nobody, "everybody blocked");
+        // Muting again takes it away at once.
+        w.sides[0].c.set_mic(Switch::On);
+        assert_ne!(frame(&mut w, 0, 0.1), nobody);
+        // Cleo unblocked: heard by her, no notice.
+        block_command(
+            &mut w.sides[0].c,
+            None,
+            "name:local/Cleo Sprinter",
+            Some("off"),
+        )
+        .unwrap();
+        w.run(10);
+        w.sides[0].c.set_mic(Switch::Off);
+        assert_ne!(frame(&mut w, 0, 0.0), nobody, "Cleo hears");
+        // Bea, blocked by Ada, is still heard by Cleo (Everybody): no
+        // notice for her either.
+        w.sides[1].c.set_mic(Switch::Off);
+        assert_ne!(frame(&mut w, 1, 0.0), nobody);
+    }
+
+    /// Spec §7.1.7 Q22: My voice turned on before the call is up (a
+    /// `--cmd` at the start) is checked once the call has settled; with
+    /// *Everybody* and nobody else in the session there is no notice.
+    #[test]
+    fn a_turn_on_before_the_call_is_checked_when_it_is_up() {
+        let mut w = Trio::new();
+        w.sides[0].c.set_mic(Switch::On);
+        let mut s = w.sides[0].c.settings().clone();
+        s.my_voice = MyVoice::Selected;
+        w.sides[0].c.set_settings(s);
+        w.sides[0].c.set_mic(Switch::Off);
+        w.run(30);
+        assert!(w.sides[0].c.status().in_call());
+        let t = w.t;
+        let a = &mut w.sides[0];
+        let f =
+            a.d.frame(&mut a.c, Some(&a.client), 1, Vec::new(), None, t + 1.5);
+        assert_eq!(f.hud.notice.as_deref(), Some(NOBODY_NOTICE));
+        // Everybody, no other rider in the session: nothing to change.
+        let mut c = VoiceController::new(
+            Box::new(ocw_voice::NullBackend),
+            VoiceSettings::default(),
+            MuteState::default(),
+        );
+        assert!(!nobody_hears_you(&c, Some(RiderId(1)), false));
+        let mut s = c.settings().clone();
+        s.my_voice = MyVoice::Selected;
+        c.set_settings(s);
+        assert!(
+            nobody_hears_you(&c, Some(RiderId(1)), false),
+            "selected: none"
+        );
     }
 
     /// Voice by range and audience end to end without a network (spec

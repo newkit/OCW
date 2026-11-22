@@ -53,13 +53,19 @@ pub enum Cue {
     /// pop, the shutter's two clicks (open, close) and the flash
     /// recharging with a faint rising whine.
     Shutter,
+    /// Over a pothole or an edge break (spec Phase 8 Q12): the tyre's
+    /// hollow thump on the hole's far edge and a short rattle of the bike.
+    Pothole,
+    /// Over an open crack or into an alligator area (Phase 8 Q12): a dull
+    /// tick of the tyre and a faint rattle.
+    Crack,
     /// A test tone on a bus (`audio.play test-music` …).
     Test(Bus),
 }
 
 impl Cue {
     /// The names `audio.play` takes.
-    pub const NAMES: [(&'static str, Cue); 23] = [
+    pub const NAMES: [(&'static str, Cue); 25] = [
         ("move", Cue::UiMove),
         ("value", Cue::UiValue),
         ("confirm", Cue::UiConfirm),
@@ -78,6 +84,8 @@ impl Cue {
         ("proximity", Cue::Proximity),
         ("rub", Cue::Rub),
         ("shutter", Cue::Shutter),
+        ("pothole", Cue::Pothole),
+        ("crack", Cue::Crack),
         ("test-music", Cue::Test(Bus::Music)),
         ("test-effects", Cue::Test(Bus::Effects)),
         ("test-voice", Cue::Test(Bus::Voice)),
@@ -117,6 +125,8 @@ impl Cue {
             Cue::Remount => 0.3,
             Cue::Proximity => 0.5,
             Cue::Rub => 0.06,
+            Cue::Pothole => 0.3,
+            Cue::Crack => 0.09,
             Cue::Shutter => 0.45,
             Cue::Test(_) => 0.8,
         }
@@ -159,7 +169,8 @@ impl CueVoice {
             noise: Noise::new(0xC0E5 + cue.duration_s().to_bits()),
             filter: match cue {
                 Cue::WingBeat => Svf::new(380.0, 0.8, sample_rate),
-                Cue::Hoof | Cue::Bump => Svf::new(240.0, 0.9, sample_rate),
+                Cue::Hoof | Cue::Bump | Cue::Pothole => Svf::new(240.0, 0.9, sample_rate),
+                Cue::Crack => Svf::new(900.0, 1.2, sample_rate),
                 Cue::Crash => Svf::new(3200.0, 1.5, sample_rate),
                 _ => Svf::new(2600.0, 2.0, sample_rate),
             },
@@ -272,6 +283,37 @@ impl CueVoice {
                 band * 1.1 * (click(0.0) + click(0.16)) + tone(t, 0.0, 0.04, 1800.0, 0.06)
             }
             Cue::Proximity => bell(t, 0.0, 0.5, 1318.5, 0.12),
+            // The tyre hits the hole's far edge: a low hollow thump (two
+            // knocks: front and rear wheel), then the bike rattling.
+            Cue::Pothole => {
+                let n = self.noise.white();
+                let low = self.filter.process(n).low;
+                let knock = |at: f32, tau: f32| {
+                    let x = t - at;
+                    if x >= 0.0 {
+                        (x / 0.003).min(1.0) * (-x / tau).exp()
+                    } else {
+                        0.0
+                    }
+                };
+                let rattle = if t > 0.03 {
+                    let x = t - 0.03;
+                    n * 0.05 * (-x / 0.05).exp() * (0.6 + 0.4 * (2.0 * PI * 31.0 * t).sin())
+                } else {
+                    0.0
+                };
+                tone(t, 0.0, 0.22, 70.0, 0.42)
+                    + tone(t, 0.11, 0.16, 82.0, 0.22)
+                    + low * 0.8 * (knock(0.0, 0.04) + 0.5 * knock(0.11, 0.03))
+                    + rattle
+            }
+            // A dull tick of the tyre over the crack and a faint rattle.
+            Cue::Crack => {
+                let n = self.noise.white();
+                let band = self.filter.process(n).band;
+                band * 0.7 * (t / 0.002).min(1.0) * (-t / 0.015).exp()
+                    + tone(t, 0.0, 0.06, 140.0, 0.12)
+            }
             // A short scratchy tick: the rim brushing the brake pad.
             Cue::Rub => {
                 let n = self.noise.white();

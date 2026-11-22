@@ -719,7 +719,7 @@ fn very_few_bits_on_the_road_and_none_where_the_wheels_run() {
         surface: RoadSurface::Asphalt,
         sidewalk: false,
     };
-    let g = |grade| road_mix(&place, &SeasonFx::SUMMER, grade).get(Kind::Gravel);
+    let g = |grade| road_mix(&place, &SeasonFx::SUMMER, grade, 0.0).get(Kind::Gravel);
     assert!(g(7) > g(4) && g(4) > g(1) && g(1) > 0.0);
     // Snow: nothing small on the road; water: nothing.
     let mut horrible = pkg.clone();
@@ -895,4 +895,41 @@ fn detail_chunks_do_not_keep_their_package() {
     gone.tiles.remove(&KEY);
     let without = crate::package::PackageWorld::single(Arc::new(gone));
     assert!(src.package(Some(&without)).is_none());
+}
+
+/// The leaves drawn on the road are the ones the server's physics rides
+/// over (spec 4.6.2 Q6): the renderer's amount at a verge point is the
+/// leaf map's (`ocw_world::leaves`, `ocw_sim::leaves`), in any season.
+#[test]
+fn road_leaves_are_the_physics_leaves() {
+    let at = BLACK_FOREST;
+    for class in [LandClass::Forest, LandClass::Meadow, LandClass::Residential] {
+        let mut pkg = package(at, class, |_, _| 400.0);
+        pkg.origin = at;
+        let map = ocw_world::leaves::LeafMap::from_package(&pkg);
+        for d in [15.0, 200.0, 300.0, 320.0] {
+            let season = day(at, d);
+            for i in 0..50 {
+                let (x, z) = (
+                    f64::from(i) * 19.7 + 3.0,
+                    f64::from(i * 7 % 50) * 19.3 + 1.0,
+                );
+                let alt = 400.0 + f64::from(i);
+                let fx = SeasonFx::of(Some(&season), alt);
+                let drawn = road_leaves(&pkg, x, z, alt, &fx);
+                let ridden = map.per_metre_at(x, z, alt, season.leaf_fall(alt), season.snow(alt));
+                assert_eq!(drawn, ridden, "{class:?} day {d} at {x}, {z}");
+                // And road_mix draws exactly that many.
+                let place = Place {
+                    region: FloraRegion::BlackForest,
+                    class,
+                    alt_m: alt,
+                    broadleaf: 0.3,
+                    surface: RoadSurface::Asphalt,
+                    sidewalk: false,
+                };
+                assert_eq!(road_mix(&place, &fx, 3, drawn).get(Kind::Leaf), drawn);
+            }
+        }
+    }
 }

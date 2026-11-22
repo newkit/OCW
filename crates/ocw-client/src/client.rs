@@ -122,6 +122,9 @@ pub struct ClientCore {
     /// Predicted state before the last physics step: rendering interpolates
     /// between it and the current one, so motion is smooth at any frame rate.
     prev_state: RiderState,
+    /// The own rider's bumps over road damage (spec Phase 8 Q12), from
+    /// the prediction.
+    road_bumps: crate::road_bumps::RoadBumps,
     /// Steering target (lateral offset); set from the first own snapshot.
     lateral_target: Option<f64>,
     /// Lean steering (rad, positive = right), the arrow keys; replaces the
@@ -232,6 +235,11 @@ pub struct ClientCore {
     /// Whose voice this rider may receive and who may receive its own
     /// (`VoiceHearing`, spec §7.1.7 Q6); `None` until the server said.
     voice_hearing: Option<ocw_voice::audience::Hearing>,
+    /// Where leaves lie on the roads and their season (spec 4.6.2 Q6:
+    /// wet leaves cost a little speed and wobble the bike, predicted as
+    /// the server rides them).
+    leaf_map: Option<Arc<ocw_world::leaves::LeafMap>>,
+    leaf_season: ocw_sim::leaves::LeafSeason,
 }
 
 /// Steering mode before the menu opened (spec §3.2.1), restored on closing.
@@ -259,6 +267,7 @@ impl ClientCore {
             rider_id: None,
             predictor: Predictor::new(profile, RiderState::default()),
             prev_state: RiderState::default(),
+            road_bumps: Default::default(),
             lateral_target: None,
             lean: None,
             wild: false,
@@ -314,6 +323,8 @@ impl ClientCore {
             voice_apart: Default::default(),
             not_hearing_you: Default::default(),
             voice_hearing: None,
+            leaf_map: None,
+            leaf_season: Default::default(),
             route,
         }
     }
@@ -337,6 +348,7 @@ impl ClientCore {
         // The own rider's contacts with the world are predicted (spec §14
         // Phase 12D, K3).
         core.predictor.set_world(net.obstacles().cloned());
+        core.leaf_map = net.leaves().cloned();
         Self {
             free: Some(FreeRide {
                 net,
@@ -788,6 +800,56 @@ impl ClientCore {
         self.clock.now(now_s)
     }
 
+    /// The season of the leaves on the road at client time `now_s` (spec
+    /// 4.6.2 Q6), as the server takes it: the world clock's day at the
+    /// ride's place. Without a leaf map or a clock: none.
+    fn refresh_leaves(&mut self, now_s: f64) {
+        let Some(map) = self.leaf_map.clone() else {
+            return;
+        };
+        let Some(ms) = self.world_ms(now_s) else {
+            return;
+        };
+        let place = self.geo_origin().unwrap_or(ocw_sky::zone::DEFAULT_PLACE);
+        let day = self.leaf_season.day_at(ms, place);
+        self.predictor
+            .set_leaves(Some(ocw_sim::leaves::LeafGround { map, day }));
+    }
+
+    /// The wet leaves' wobble on the lean of a rider in `state` on `track`
+    /// at client time `now_s` (spec 4.6.2 Q6; rad).
+    fn leaf_lean(&self, now_s: f64, track: &dyn Track, state: &RiderState) -> f64 {
+        let Some(ground) = self.predictor.leaves() else {
+            return 0.0;
+        };
+        let Some(w) = self.weather.physics_now(now_s) else {
+            return 0.0;
+        };
+        if !self.weather.physics_on() {
+            return 0.0;
+        }
+        let s = ocw_sim::leaves::slick(Some(ground), Some(&w), track, state);
+        ocw_sim::leaves::wobble_lean(s, state.speed, state.distance)
+    }
+
+    /// The slickness of the wet leaves under the own rider now (0 – 1,
+    /// spec 4.6.2 Q6; for tests and the console).
+    pub fn leaf_slick(&self, now_s: f64) -> f64 {
+        let (Some(ground), Some(w)) = (self.predictor.leaves(), self.weather.physics_now(now_s))
+        else {
+            return 0.0;
+        };
+        if !self.weather.physics_on() {
+            return 0.0;
+        }
+        ocw_sim::leaves::slick(
+            Some(ground),
+            Some(&w),
+            self.track(),
+            &self.predictor.state(),
+        )
+    }
+
     /// The server's clock as last received (mode, speed, who may change it).
     pub fn clock_info(&self) -> Option<&ocw_protocol::ClockInfo> {
         self.clock_info.as_ref()
@@ -921,6 +983,7 @@ impl ClientCore {
         self.stats.snapshots += 1;
         self.stats.last_snapshot_tick = s.server_tick;
         self.last_snapshot_at = Some((s.server_tick, now_s));
+        self.refresh_leaves(now_s);
         self.human_riders = s.human_riders;
         self.echo_rider = ocw_protocol::echo_rider(s);
         if let Some(c) = &s.clock {
@@ -1600,6 +1663,10 @@ impl ClientCore {
             None => &self.route,
         };
         self.predictor.step(track, power);
+        // Road damage under the wheel (spec Phase 8 Q12): the kick, the
+        // shake and the sound of a bump.
+        self.road_bumps
+            .observe(track, &self.prev_state, &self.predictor.state());
         // The predicted contacts moved the others too (until the next
         // snapshot says where they are).
         for (id, r) in self.predictor.other_responses() {
@@ -1734,7 +1801,8 @@ impl ClientCore {
             look: Some(self.look),
             parts: self.rider_parts(own),
             crash: self.collisions.crash(own, now_s),
-            wobble: self.collisions.wobble(own, tick_now),
+            wobble: self.collisions.wobble(own, tick_now)
+                + self.leaf_lean(now_s, self.track(), &own_state),
             damage: self.damage.visible(own),
             cue: self.anim_cue(own, true, &own_state, own_path, tick_now),
             // The own rider never sees headphones on itself.
@@ -1771,7 +1839,12 @@ impl ClientCore {
                 crash: self.collisions.crash(id, now_s),
                 damage: self.damage.visible(id),
                 // Others are drawn slightly in the past.
-                wobble: self.collisions.wobble(id, others_tick),
+                wobble: self.collisions.wobble(id, others_tick)
+                    + match path {
+                        Some(p) => self.leaf_lean(now_s, p, &state),
+                        None if self.free.is_none() => self.leaf_lean(now_s, &self.route, &state),
+                        None => 0.0,
+                    },
                 cue,
                 signs: self.statuses.get(&id).map_or_else(Default::default, |st| {
                     let told = self.not_hearing_you.contains(&id);
@@ -2115,12 +2188,25 @@ impl ClientCore {
         let crash = self.collisions.crash(id, now_s);
         let tick = self.server_tick_now(now_s);
         let bump = self.collisions.bump(id);
-        crate::camera_fx::camera_fx(
+        let mut fx = crate::camera_fx::camera_fx(
             crash.as_ref(),
             bump.as_ref()
                 .map(|b| (b, (tick - b.tick as f64) * ocw_core::SIM_DT)),
             shake,
-        )
+        );
+        // A bump over road damage (spec Phase 8 Q12): a small shake.
+        if let Some(seen) = self.road_bumps.last()
+            && shake
+            && crash.is_none()
+        {
+            crate::camera_fx::add_shake(&mut fx, seen.age_s(now_s), seen.shake_strength());
+        }
+        fx
+    }
+
+    /// The own rider's bumps over road damage (spec Phase 8 Q12).
+    pub fn road_bumps(&self) -> &crate::road_bumps::RoadBumps {
+        &self.road_bumps
     }
 
     /// The game time now (s): the server's tick time (tick / 50), estimated
@@ -5681,5 +5767,123 @@ mod tests {
         server.disconnect(conns[0]);
         let now = run(&mut server, &mut clients, 40);
         assert!(clients[1].view(now, 1.0).iter().all(|r| r.id != a));
+    }
+
+    /// Spec Phase 8 Q12: the server and the prediction feel the same road
+    /// damage – the prediction stays smooth (no snap, no sideways step
+    /// over 6 cm) while the bumps cost speed on the server, and the client
+    /// presents each bump once: the shake (unless off) and the sound cue.
+    #[test]
+    fn road_damage_is_ridden_alike_by_server_and_prediction() {
+        use ocw_world::graph::RoadClass;
+        use ocw_world::road_condition::Smoothness;
+        use ocw_world::road_feel::fixture;
+        let ride = |sm: Option<Smoothness>| {
+            let net = fixture::network(RoadClass::Residential, sm, 6.0, 980.0);
+            let server = GameServer::new(
+                ocw_server::Course::FreeRide {
+                    net: net.clone(),
+                    start: ocw_sim::FreeRideStart {
+                        edge: 0,
+                        offset_m: 20.0,
+                        forward: true,
+                    },
+                },
+                ServerConfig {
+                    bots: 0,
+                    start_m: 0.0,
+                    ..Default::default()
+                },
+            );
+            let mut h = Harness::with(
+                server,
+                ClientCore::free_ride(net, "Ada Rider", RiderProfile::default()),
+            );
+            h.ride(250.0, 2.0);
+            let mut last = h.client.state();
+            let mut shaken = false;
+            for _ in 0..(40 * 50) {
+                h.ride(250.0, ocw_core::SIM_DT);
+                let s = h.client.state();
+                assert!(
+                    (s.lateral_offset - last.lateral_offset).abs() <= 0.06,
+                    "{last:?} → {s:?}"
+                );
+                assert!(
+                    h.client.prediction_error().abs() < ocw_sim::prediction::SNAP_THRESHOLD_M,
+                    "{}",
+                    h.client.prediction_error()
+                );
+                shaken |= h.client.camera_fx(h.time_s, true).shake != [0.0; 3];
+                assert_eq!(h.client.camera_fx(h.time_s, false).shake, [0.0; 3]);
+                last = s;
+            }
+            let (c, s) = h.positions();
+            assert!(close(c.position, s.position, 0.5), "{c:?} vs {s:?}");
+            let own = h.client.rider_id().unwrap();
+            let server = h.server.session().rider_state(own).unwrap();
+            (server.distance, h.client.road_bumps().count(), shaken)
+        };
+        let (clean, none, still) = ride(None);
+        assert_eq!((none, still), (0, false));
+        let (good, good_bumps, _) = ride(Some(Smoothness::Good));
+        assert_eq!(good_bumps, 0);
+        assert!((good - clean).abs() < 1e-6, "{good} vs {clean}");
+        let (bad, bumps, shaken) = ride(Some(Smoothness::VeryBad));
+        assert!(bumps > 3 && shaken, "{bumps}");
+        assert!(bad < clean - 2.0, "{bad} vs {clean}");
+    }
+
+    /// Spec Phase 8 Q12: each bump over road damage plays its sound once.
+    #[test]
+    fn a_road_bump_plays_its_cue_once() {
+        use ocw_world::graph::RoadClass;
+        use ocw_world::road_condition::Smoothness;
+        use ocw_world::road_feel::fixture;
+        let net = fixture::network(
+            RoadClass::Residential,
+            Some(Smoothness::Horrible),
+            6.0,
+            980.0,
+        );
+        let path = ocw_world::RidePath::start(net, 0, 0.0, true, 0.0, 0);
+        let mut bumps = crate::road_bumps::RoadBumps::default();
+        let mut s = RiderState {
+            lateral_offset: -1.5,
+            distance: 10.0,
+            ..Default::default()
+        };
+        let mut seen = Vec::new();
+        while s.distance < 900.0 {
+            let before = s;
+            s.distance += 0.2;
+            if let Some(b) = bumps.observe(&path, &before, &s) {
+                seen.push(b.id);
+            }
+        }
+        assert!(!seen.is_empty());
+        let n = bumps.count();
+        // Back over the last metre (a reconciliation): nothing new.
+        let back = RiderState {
+            distance: s.distance - 1.0,
+            ..s
+        };
+        for _ in 0..5 {
+            let mut a = back;
+            while a.distance < s.distance {
+                let b = a;
+                a.distance += 0.2;
+                bumps.observe(&path, &b, &a);
+            }
+        }
+        assert_eq!(bumps.count(), n);
+        let mut dedup = seen.clone();
+        dedup.dedup();
+        assert_eq!(dedup, seen, "each feature once");
+        let cue = bumps.last().unwrap().cue();
+        assert!(matches!(
+            cue,
+            ocw_audio::cues::Cue::Pothole | ocw_audio::cues::Cue::Crack
+        ));
     }
 }

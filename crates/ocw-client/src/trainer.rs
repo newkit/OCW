@@ -51,6 +51,11 @@ pub struct TrainerControl {
     pulse: Option<(f64, f64)>,
     /// The tick of the last bump turned into a pulse ([`Self::follow`]).
     last_bump: Option<u64>,
+    /// A bump over road damage (spec Phase 8 Q12): the rolling resistance
+    /// × the factor until then.
+    road_kick: Option<(f64, f64)>,
+    /// The last road bump turned into a kick (its `seq`).
+    last_road_bump: u64,
     /// The weather's wind on the trainer (spec §14 Phase 9, S6, Q5).
     wind: Option<TrainerWind>,
     /// The headwind last sent in SIM mode (for the HUD).
@@ -87,6 +92,8 @@ impl TrainerControl {
             down: false,
             pulse: None,
             last_bump: None,
+            road_kick: None,
+            last_road_bump: 0,
             wind: None,
             last_wind: 0.0,
         }
@@ -114,6 +121,13 @@ impl TrainerControl {
             self.bump(now_s, b.strength);
             self.last_bump = Some(b.tick);
         }
+        // Over a pothole or a crack (spec Phase 8 Q12): a short kick.
+        if let Some(seen) = c.road_bumps().last()
+            && seen.seq != self.last_road_bump
+        {
+            self.road_bump(now_s, seen.bump.strength);
+            self.last_road_bump = seen.seq;
+        }
         self.update(now_s, c.track(), c.state(), c.cadence_rpm())
     }
 
@@ -139,6 +153,17 @@ impl TrainerControl {
     /// resistance pulse in SIM mode.
     pub fn bump(&mut self, now_s: f64, strength: f64) {
         self.pulse = Some((now_s + BUMP_PULSE_S, strength * BUMP_GRADE_PER_RAD));
+    }
+
+    /// A bump over road damage at `now_s` of `strength` (0 … 1, spec Phase
+    /// 8 Q12): in SIM mode the rolling resistance ×
+    /// [`crate::road_bumps::kick_factor`] for [`crate::road_bumps::KICK_S`]
+    /// (ERG unchanged).
+    pub fn road_bump(&mut self, now_s: f64, strength: f64) {
+        self.road_kick = Some((
+            now_s + crate::road_bumps::KICK_S,
+            crate::road_bumps::kick_factor(strength),
+        ));
     }
 
     /// Unicorn mode: flying (SIM: a flat road while [`FLAT_WHILE_FLYING`]).
@@ -201,17 +226,25 @@ impl TrainerControl {
             TrainerMode::Off => None,
             TrainerMode::Sim => {
                 let ahead_m = (rider.speed * LOOK_AHEAD_S).max(MIN_LOOK_AHEAD_M);
-                let (here, ahead, surface) = if self.flat || self.down {
-                    (0.0, 0.0, ocw_world::Surface::Asphalt)
+                let (here, ahead, surface, extra_rolling) = if self.flat || self.down {
+                    (0.0, 0.0, ocw_world::Surface::Asphalt, 0.0)
                 } else {
                     (
                         route.sample(rider.distance).grade,
                         route.sample(rider.distance + ahead_m).grade,
                         ocw_sim::ride::surface(route, &rider),
+                        // A damaged road rolls harder (spec Phase 8 Q12).
+                        ocw_sim::road_feel::rolling_extra_at(route, &rider),
                     )
                 };
+                let kick = match self.road_kick {
+                    Some((until, f)) if now_s < until && !self.flat && !self.down => f,
+                    _ => 1.0,
+                };
                 // This bike's share of the surface's rolling resistance (§2.5).
-                let rolling = self.profile.surface_factor(surface.rolling_factor());
+                let rolling = self
+                    .profile
+                    .surface_factor(surface.rolling_factor() * (1.0 + extra_rolling) * kick);
                 let extra = match self.pulse {
                     Some((until, g)) if now_s < until && !self.down => g,
                     _ => 0.0,
@@ -400,6 +433,62 @@ mod tests {
         assert!((road - 0.004 * 2.5).abs() < 1e-9, "{road}");
         let mtb = crr(RiderProfile::curated(ocw_core::ProfileId::Mountain, 75.0));
         assert!(mtb < road, "{mtb} vs {road}");
+    }
+
+    /// Spec Phase 8 Q12: a damaged road rolls harder on the trainer too,
+    /// and a bump over a pothole is a short kick (SIM only; nothing on a
+    /// good road).
+    #[test]
+    fn bad_roads_roll_harder_and_potholes_kick() {
+        use ocw_world::graph::RoadClass;
+        use ocw_world::road_condition::Smoothness;
+        use ocw_world::road_feel::fixture;
+        let crr = |t: &mut TrainerControl, now: f64, track: &dyn Track| match t.update(
+            now,
+            track,
+            RiderState {
+                distance: 300.0,
+                speed: 8.0,
+                lateral_offset: -1.0,
+                ..Default::default()
+            },
+            None,
+        ) {
+            Some(DeviceCommand::SetSimulation(p)) => Some(p.crr),
+            None => None,
+            other => panic!("expected a SIM command, got {other:?}"),
+        };
+        let path = |sm| {
+            let net = fixture::network(RoadClass::Residential, sm, 6.0, 980.0);
+            ocw_world::RidePath::start(net, 0, 0.0, true, 0.0, 0)
+        };
+        let base = RiderProfile::default().crr;
+        for (sm, extra) in [
+            (None, 0.0),
+            (Some(Smoothness::Good), 0.0),
+            (Some(Smoothness::Bad), 0.15),
+            (Some(Smoothness::Horrible), 0.5),
+        ] {
+            let mut t = TrainerControl::new(RiderProfile::default());
+            let c = crr(&mut t, 0.0, &path(sm)).unwrap();
+            assert!((c - base * (1.0 + extra)).abs() < 1e-9, "{sm:?}: {c}");
+        }
+        // The kick: × (1 + 4 · strength) for 0.6 s, sent at the next
+        // update; then back.
+        let good = path(Some(Smoothness::Good));
+        let mut t = TrainerControl::new(RiderProfile::default());
+        assert_eq!(crr(&mut t, 0.0, &good), Some(base));
+        t.road_bump(1.0, 0.8);
+        let kicked = crr(&mut t, 1.0, &good).unwrap();
+        assert!((kicked - base * 4.2).abs() < 1e-9, "{kicked}");
+        assert_eq!(crr(&mut t, 1.7, &good), Some(base));
+        // ERG holds its power.
+        t.set_mode(TrainerMode::Erg { target_w: 200.0 });
+        t.road_bump(3.0, 0.8);
+        assert!(!matches!(
+            t.update(3.0, &good, at(300.0, 8.0), Some(90.0)),
+            Some(DeviceCommand::SetSimulation(_))
+        ));
     }
 
     #[test]

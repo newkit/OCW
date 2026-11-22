@@ -61,6 +61,8 @@ struct CueWatch {
     hoof: f64,
     /// Bumps, crashes, remounts, the proximity cue (spec §14 Phase 12C).
     contacts: ContactWatch,
+    /// The last road bump played (its `seq`, spec Phase 8 Q12).
+    road_bump: u64,
     /// A buckled wheel's rub phase (spec §14 Phase 12E).
     rub: f64,
 }
@@ -317,6 +319,14 @@ impl AudioFeed {
             if tick(&mut watch.hoof, hooves, f.dt_s) {
                 cues.push(Cue::Hoof);
             }
+        }
+        // Over road damage (spec Phase 8 Q12): the own wheel's thump or
+        // tick, once per bump.
+        if let Some(seen) = f.client.and_then(|c| c.road_bumps().last())
+            && seen.seq != watch.road_bump
+        {
+            watch.road_bump = seen.seq;
+            cues.push(seen.cue());
         }
         if let Some(n) = f.workout_laps {
             if let Some(prev) = watch.workout {

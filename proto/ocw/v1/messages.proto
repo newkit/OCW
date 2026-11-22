@@ -324,7 +324,8 @@ message VoiceHearing {
 
 // The headphones this rider sees (spec §2.6, §7.1.7 Q11, Q12, Q17): the
 // riders who cannot hear this rider – they hear nobody (hears_nobody) or
-// chose not to hear this rider (muted them, Voice room without them).
+// chose not to hear this rider (muted them, Voice room without them, set
+// them to 0 % volume, or blocked them: spec §7.1.7 Q18).
 // Worked out by the server per viewer from the riders' statuses: one yes
 // / no per rider (yes = listed), the riders' own lists never leave the
 // server. Empty while this rider is not in the voice call. Sent to this
@@ -638,6 +639,11 @@ message RiderStatus {
   // RiderUpdate.status, so a list of whom a rider muted reaches nobody
   // (older clients then show headphones only for hears_nobody).
   repeated uint32 not_hearing = 6;
+  // Riders this rider set to 0 % volume (spec §7.1.7 Q18: they count as
+  // "cannot hear you", like a mute). Client → server only, like
+  // not_hearing: the server never relays it (servers older than spec v5.32 do
+  // not know the field and drop it), only the per-viewer NotHearingYou.
+  repeated uint32 silenced = 7;
 }
 
 // Commands that change the simulation. Only accepted by a local server (spec §2.9).
@@ -1258,6 +1264,9 @@ enum ContactKind {
   // Slid out on a slippery road (Phase 9 S6 grip → Phase 12): leaning
   // further than the wet road holds.
   CONTACT_KIND_SLIDE = 9;
+  // Slipped on wet leaves in a corner (spec 4.6.2 Q6; damage on, never in
+  // group rides).
+  CONTACT_KIND_LEAVES = 10;
 }
 
 message CrashState {

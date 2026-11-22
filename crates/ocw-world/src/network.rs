@@ -211,6 +211,12 @@ pub struct RoadNetwork {
     /// Phase 12 K3: trees, buildings, walls, barriers, railings, tunnel
     /// walls), if its package has any.
     obstacles: Option<std::sync::Arc<crate::obstacles::WorldObstacles>>,
+    /// The damaged roads under the wheels (spec Phase 8 Q12, v5.35), if
+    /// its package has any.
+    road_feel: Option<std::sync::Arc<crate::road_feel::RoadFeelMap>>,
+    /// Where leaves lie on the roads (spec 4.6.2 Q6: wet leaves in the
+    /// ride), if the world has land use.
+    leaves: Option<std::sync::Arc<crate::leaves::LeafMap>>,
     /// The junction surfaces (spec §4.8.8, J1): riders ride the heights
     /// the renderer draws there.
     junctions: std::sync::Arc<crate::junction::JunctionSet>,
@@ -242,7 +248,20 @@ impl RoadNetwork {
             package: String::new(),
             fingerprint,
             obstacles: None,
+            road_feel: None,
+            leaves: None,
         }
+    }
+
+    /// The same network with the leaf map of its world (spec 4.6.2 Q6).
+    pub fn with_leaves(mut self, leaves: Option<std::sync::Arc<crate::leaves::LeafMap>>) -> Self {
+        self.leaves = leaves;
+        self
+    }
+
+    /// Where leaves lie on the roads (spec 4.6.2 Q6).
+    pub fn leaves(&self) -> Option<&std::sync::Arc<crate::leaves::LeafMap>> {
+        self.leaves.as_ref()
     }
 
     /// The same network with the static obstacles of its world.
@@ -252,6 +271,26 @@ impl RoadNetwork {
     ) -> Self {
         self.obstacles = obstacles;
         self
+    }
+
+    /// The same network with the damaged roads of its world (spec Phase 8
+    /// Q12: bumps and rolling resistance, [`crate::road_feel`]).
+    pub fn with_road_feel(
+        mut self,
+        feel: Option<std::sync::Arc<crate::road_feel::RoadFeelMap>>,
+    ) -> Self {
+        self.road_feel = feel;
+        self
+    }
+
+    /// The damaged roads of the world, if known.
+    pub fn road_feel(&self) -> Option<&crate::road_feel::RoadFeelMap> {
+        self.road_feel.as_deref()
+    }
+
+    /// The same, shared (the browser app adds streamed tiles to it).
+    pub fn road_feel_map(&self) -> Option<&std::sync::Arc<crate::road_feel::RoadFeelMap>> {
+        self.road_feel.as_ref()
     }
 
     /// The static obstacles of the world (spec §14 Phase 12 K3).

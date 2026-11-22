@@ -173,8 +173,11 @@ pub struct WorldRide {
 
 /// The ride the options ask for on `pkg` (its base: graph and routes): a
 /// route of the package (`?route=`, default its first), else a free ride.
+/// `landuse`: a streamed package's encoded land use, for the leaves on the
+/// roads (spec 4.6.2 Q6; `None`: `pkg`'s own).
 pub fn world_ride(
     pkg: &WorldPackage,
+    landuse: Option<&ocw_world::landuse::LandUseIndex>,
     opts: &WorldOptions,
     name: &str,
 ) -> Result<WorldRide, String> {
@@ -187,10 +190,23 @@ pub fn world_ride(
     // Static obstacles from the base (spec §14 Phase 12 K3: OBST, the
     // buildings, railings and tunnel walls; no tiles needed).
     let obstacles = ocw_world::obstacles::WorldObstacles::from_package(pkg).map(Arc::new);
+    // The damaged roads under the wheels (spec Phase 8 Q12): the base has
+    // no tiles; they are added as they are streamed in.
+    let road_feel = Some(Arc::new(ocw_world::road_feel::RoadFeelMap::from_package(
+        pkg,
+    )));
+    // Where leaves lie on the roads (spec 4.6.2 Q6: wet leaves in the
+    // ride): the tiles' land use decoded one at a time.
+    let leaves = match landuse {
+        Some(index) => ocw_world::leaves::LeafMap::from_streamed(pkg, Some(index)),
+        None => ocw_world::leaves::LeafMap::from_package(pkg),
+    };
     let net = Arc::new(
         RoadNetwork::new(graph)
             .with_package_name(pkg.name.clone())
-            .with_obstacles(obstacles),
+            .with_obstacles(obstacles)
+            .with_road_feel(road_feel)
+            .with_leaves(Some(Arc::new(leaves))),
     );
     let profile = RiderProfile::default();
     let route_name = match (&opts.route, opts.free_ride) {
@@ -295,6 +311,9 @@ pub struct WorldStream {
     pub screen: Vec<String>,
     /// The trust dialog was opened for the driver's question.
     asked: bool,
+    /// The damaged roads the ride feels (spec Phase 8 Q12): the streamed
+    /// tiles are added as they arrive.
+    road_feel: Option<Arc<ocw_world::road_feel::RoadFeelMap>>,
 }
 
 impl WorldStream {
@@ -317,6 +336,7 @@ impl WorldStream {
             last_log_s: 0.0,
             screen: Vec::new(),
             asked: false,
+            road_feel: None,
         }
     }
 
@@ -382,7 +402,12 @@ fn on_base(stream: &mut WorldStream, base: StreamBase) -> Result<(), String> {
         base.package.head.tile_count,
         base.trust
     );
-    let ride = world_ride(base.package.base(), &stream.options, &stream.session.name)?;
+    let ride = world_ride(
+        base.package.base(),
+        base.package.land_use(),
+        &stream.options,
+        &stream.session.name,
+    )?;
     info!("world ride: {}", ride.description);
     let mut resident = ResidentTiles::new(base.package, &base.file, stream.options.residency);
     let first = resident.update(ride.start);
@@ -498,7 +523,7 @@ pub fn stream_world(world: &mut World) {
                 .and_then(ResidentTiles::take_package)
         {
             stream.last_publish_s = now;
-            publish(world, pkg);
+            publish(world, pkg, stream.road_feel.as_deref());
         }
     }
     {
@@ -514,7 +539,8 @@ pub fn stream_world(world: &mut World) {
 
 /// New resident tiles for the renderer (no re-mesh of the tiles already
 /// there; the far terrain is rebuilt from them).
-fn publish(world: &mut World, pkg: WorldPackage) {
+fn publish(world: &mut World, pkg: WorldPackage, feel: Option<&ocw_world::road_feel::RoadFeelMap>) {
+    feel_tiles(feel, &pkg);
     let Some(mut pw) = world.get_resource_mut::<PackageWorld>() else {
         return;
     };
@@ -523,6 +549,20 @@ fn publish(world: &mut World, pkg: WorldPackage) {
     let pavement = pw.pavement();
     world.insert_resource(ground);
     world.insert_resource(pavement);
+}
+
+/// The resident tiles the ride's road feel does not have yet (spec Phase 8
+/// Q12): the server and the prediction share the map, so both feel them
+/// from the same tick on.
+fn feel_tiles(feel: Option<&ocw_world::road_feel::RoadFeelMap>, pkg: &WorldPackage) {
+    let Some(feel) = feel else {
+        return;
+    };
+    for (key, tile) in &pkg.tiles {
+        if !feel.has_tile(*key) {
+            feel.add_tile(tile);
+        }
+    }
 }
 
 /// Starts the ride: the session on the package's road graph, the world
@@ -537,6 +577,13 @@ fn start_ride(world: &mut World, stream: &mut WorldStream, ride: WorldRide, now:
     };
     stream.started = true;
     stream.last_publish_s = now;
+    stream.road_feel = match &ride.course {
+        Course::FreeRide { net, .. } | Course::RouteRide { net, .. } => {
+            net.road_feel_map().cloned()
+        }
+        Course::Route(_) => None,
+    };
+    feel_tiles(stream.road_feel.as_deref(), &pkg);
     let id = stream.identity.clone().unwrap_or_default();
     let (zone, _) = ocw_client::sky::place_zone(pkg.time_zone.as_deref(), Some(pkg.origin));
     let pkg = Arc::new(pkg);
@@ -791,13 +838,14 @@ pub(crate) mod tests {
         assert_eq!(slug("Vaduz–Malbun"), "vaduz-malbun");
         assert_eq!(slug("  Rund um  Vaduz "), "rund-um-vaduz");
         let pkg = package();
-        let ride = world_ride(&pkg, &options(), "Ada").unwrap();
+        let ride = world_ride(&pkg, None, &options(), "Ada").unwrap();
         assert!(matches!(ride.course, Course::RouteRide { .. }));
         assert_eq!(ride.start, [100.0, 500.0]);
         assert!(ride.description.contains("4.8 km"), "{}", ride.description);
         // No such route: the error lists the package's routes.
         let e = world_ride(
             &pkg,
+            None,
             &WorldOptions {
                 route: Some("moon".into()),
                 ..options()
@@ -810,6 +858,7 @@ pub(crate) mod tests {
         // A free ride starts somewhere on the graph.
         let free = world_ride(
             &pkg,
+            None,
             &WorldOptions {
                 free_ride: true,
                 ..options()
@@ -821,7 +870,7 @@ pub(crate) mod tests {
         // No graph: an error.
         let mut no_graph = pkg;
         no_graph.graph = None;
-        assert!(world_ride(&no_graph, &options(), "Ada").is_err());
+        assert!(world_ride(&no_graph, None, &options(), "Ada").is_err());
     }
 
     #[test]

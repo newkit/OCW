@@ -13,8 +13,9 @@
 //! pothole, bad many cracks, alligator areas, potholes, broken edges and
 //! loose stones, very bad and worse heavy damage. **Without the tag it is
 //! an estimate** ([`estimate_grade`]): from `tracktype` on tracks, else from
-//! the road class (main roads kept up, minor roads, service roads and
-//! tracks worn) and the surface. Each grade has its chances
+//! the road class and the surface – cleaner and plainer than the tagged
+//! roads (spec Phase 8 Q14 (b), v5.35: main roads excellent, the other
+//! paved classes good, tracks a little worse). Each grade has its chances
 //! ([`wear_density`], scaled by the quality preset's share); main roads
 //! keep their potholes within [`MAIN_ROAD_ZONE_M`] of the edge. Where a
 //! feature lies is a hash of the cell along the road, so it is the same on
@@ -75,30 +76,54 @@ pub fn smoothness_grade(s: Smoothness) -> Option<u8> {
     })
 }
 
-/// The estimated grade of a road without `smoothness`: from `tracktype`
-/// (grade 1 … 5, 0: none) where it is tagged, else from the class (main
-/// roads kept up, minor roads and tracks worn) and the surface (worn asphalt
-/// at least 5).
+/// The estimated grade of a road without `smoothness` (spec Phase 8 Q14
+/// (b), v5.35: untagged roads are drawn **cleaner and plainer** than
+/// before, so that mostly the tagged roads show damage): from `tracktype`
+/// (grade 1 … 5, 0: none) where it is tagged, else from the class – main
+/// roads (trunk, primary, secondary) excellent, every other paved class
+/// good, tracks between good and intermediate – and the surface (worn
+/// asphalt, i.e. a `tracktype=grade1` track, at least 3). Before v5.35:
+/// trunk 1, primary / secondary 2, tertiary / residential / cycleway 3,
+/// unclassified / service / path 4, track 5, `tracktype` 4 … 7, worn
+/// asphalt 5 ([`ESTIMATE_BEFORE_Q14`]).
 pub fn estimate_grade(class: RoadClass, surface: RoadSurface, tracktype: u8) -> u8 {
     let base: u8 = match tracktype {
-        1 => 4,
-        2 | 3 => 5,
-        4 => 6,
-        5 => 7,
+        1 => 2,
+        2 | 3 => 3,
+        4 | 5 => 4,
         _ => match class {
-            RoadClass::Trunk => 1,
-            RoadClass::Primary | RoadClass::Secondary => 2,
-            RoadClass::Tertiary | RoadClass::Residential | RoadClass::Cycleway => 3,
-            RoadClass::Unclassified | RoadClass::Service | RoadClass::Path => 4,
-            RoadClass::Track => 5,
+            RoadClass::Trunk | RoadClass::Primary | RoadClass::Secondary => 1,
+            RoadClass::Tertiary
+            | RoadClass::Residential
+            | RoadClass::Cycleway
+            | RoadClass::Unclassified
+            | RoadClass::Service
+            | RoadClass::Path => 2,
+            RoadClass::Track => 3,
         },
     };
     if surface == RoadSurface::WornAsphalt {
-        base.max(5)
+        base.max(3)
     } else {
         base
     }
 }
+
+/// The estimate before Phase 8 Q14 (b) (v4.75 – v5.34), kept for the
+/// comparison in the tests and the spec: (class, grade) without
+/// `tracktype`.
+pub const ESTIMATE_BEFORE_Q14: [(RoadClass, u8); 10] = [
+    (RoadClass::Trunk, 1),
+    (RoadClass::Primary, 2),
+    (RoadClass::Secondary, 2),
+    (RoadClass::Tertiary, 3),
+    (RoadClass::Unclassified, 4),
+    (RoadClass::Residential, 3),
+    (RoadClass::Service, 4),
+    (RoadClass::Track, 5),
+    (RoadClass::Cycleway, 3),
+    (RoadClass::Path, 4),
+];
 
 /// The wear of a strip: its grade and whether it is an estimate (no OSM
 /// `smoothness`).
@@ -322,6 +347,40 @@ pub fn longitudinal_in_cell(
     })
 }
 
+/// A transverse crack across the road (or its sealing line).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Transverse {
+    /// Where it crosses the middle of the road, along (m; the line wanders
+    /// [`transverse_v_at`] across).
+    pub v: f32,
+    /// How far either side of the middle it reaches (m).
+    pub reach: f32,
+    pub sealed: bool,
+    /// The hash of the cell (the line's wander).
+    pub phase: f32,
+}
+
+/// The transverse crack of cell `k` ([`TRANSVERSE_CELL_M`]) of a road of
+/// half width `half`, for a chance per cell. The shader's `transverse`.
+pub fn transverse_in_cell(k: i32, half: f32, chance: f32, sealed: f32) -> Option<Transverse> {
+    let h = unit(hash2(k, 101));
+    if h >= chance {
+        return None;
+    }
+    Some(Transverse {
+        v: (k as f32 + 0.15 + 0.7 * unit(hash2(k, 103))) * TRANSVERSE_CELL_M,
+        reach: half * (0.4 + 0.6 * unit(hash2(k, 107))),
+        sealed: unit(hash2(k, 109)) < sealed,
+        phase: h,
+    })
+}
+
+/// Where a transverse crack lies along at `u` across (m): the shader's
+/// wandering line.
+pub fn transverse_v_at(t: &Transverse, u: f32) -> f32 {
+    t.v + 0.15 * (u * 1.7 + t.phase * 40.0).sin() + 0.04 * (u * 6.1).sin()
+}
+
 /// The pothole zone of a road: its grade's, at most
 /// [`MAIN_ROAD_ZONE_M`] on main roads (the shader's `zone`).
 pub fn pothole_zone(zone_m: f32, main: bool) -> f32 {
@@ -462,9 +521,9 @@ mod tests {
         let e = |c| wear_of(c, RoadSurface::Asphalt, &RoadCondition::UNKNOWN);
         assert!(e(RoadClass::Primary).estimated);
         let g = |c| e(c).grade;
-        assert!(g(RoadClass::Trunk) < g(RoadClass::Primary));
+        assert_eq!(g(RoadClass::Trunk), g(RoadClass::Primary));
         assert!(g(RoadClass::Primary) < g(RoadClass::Residential));
-        assert!(g(RoadClass::Residential) < g(RoadClass::Unclassified));
+        assert!(g(RoadClass::Residential) <= g(RoadClass::Unclassified));
         assert!(g(RoadClass::Unclassified) < g(RoadClass::Track));
         for c in ALL_CLASSES {
             assert!((1..=MAX_GRADE).contains(&g(c)), "{c:?}");
@@ -485,7 +544,7 @@ mod tests {
             RoadSurface::WornAsphalt,
             &RoadCondition::UNKNOWN,
         );
-        assert!(worn >= 5);
+        assert!(worn >= 3);
         let both = RoadCondition {
             smoothness: Smoothness::Excellent,
             tracktype: 5,
@@ -494,6 +553,77 @@ mod tests {
         assert_eq!(wear_grade(RoadClass::Track, RoadSurface::Asphalt, &both), 1);
         assert_eq!(wear_density(0, 1.0), WearDensity::default());
     }
+    #[test]
+    fn untagged_roads_are_cleaner_than_before_and_tagged_ones_unchanged() {
+        // Phase 8 Q14 (b): every untagged class at most its old grade, the
+        // main and residential streets lower, and only tracks above
+        // "good"; the tagged grades (Q13 (b)) are the same as before.
+        for (c, before) in ESTIMATE_BEFORE_Q14 {
+            let now = wear_grade(c, RoadSurface::Asphalt, &RoadCondition::UNKNOWN);
+            assert!(now <= before, "{c:?}: {now} > {before}");
+            if c != RoadClass::Trunk {
+                assert!(now < before, "{c:?}: {now} not below {before}");
+            }
+            if c != RoadClass::Track {
+                assert!(now <= 2, "{c:?}: {now}");
+            }
+        }
+        let unknown = RoadCondition::UNKNOWN;
+        assert_eq!(
+            wear_grade(RoadClass::Primary, RoadSurface::Asphalt, &unknown),
+            1
+        );
+        assert_eq!(
+            wear_grade(RoadClass::Residential, RoadSurface::Asphalt, &unknown),
+            2
+        );
+        for (sm, g) in [
+            (Smoothness::Excellent, 1),
+            (Smoothness::Good, 2),
+            (Smoothness::Intermediate, 4),
+            (Smoothness::Bad, 5),
+            (Smoothness::VeryBad, 6),
+            (Smoothness::Horrible, 7),
+        ] {
+            let w = wear_grade(RoadClass::Primary, RoadSurface::Asphalt, &cond(sm));
+            assert_eq!(w, g);
+        }
+        // `tracktype` estimates lower than before (4 … 7).
+        let tt = |t| {
+            let c = RoadCondition {
+                tracktype: t,
+                ..RoadCondition::UNKNOWN
+            };
+            wear_grade(RoadClass::Track, RoadSurface::Gravel, &c)
+        };
+        assert_eq!([tt(1), tt(2), tt(3), tt(4), tt(5)], [2, 3, 3, 4, 4]);
+        // Far fewer potholes on 35 km of untagged residential street.
+        let half = RoadClass::Residential.default_width_m() as f32 / 2.0;
+        let (now, before) = (
+            potholes(2, half, 5000, false).len(),
+            potholes(3, half, 5000, false).len(),
+        );
+        assert!(now * 4 < before, "{now} vs {before}");
+    }
+
+    #[test]
+    fn the_transverse_cracks_stay_in_their_cells() {
+        let mut n = 0;
+        for k in -500..500 {
+            if let Some(t) = transverse_in_cell(k, 3.0, 1.0, 0.3) {
+                n += 1;
+                let c0 = k as f32 * TRANSVERSE_CELL_M;
+                for u in [-3.0, 0.0, 3.0] {
+                    let v = transverse_v_at(&t, u);
+                    assert!(v >= c0 && v <= c0 + TRANSVERSE_CELL_M, "{t:?}");
+                }
+                assert!(t.reach <= 3.0 && t.reach >= 1.2);
+            }
+        }
+        assert_eq!(n, 1000);
+        assert!(transverse_in_cell(3, 3.0, 0.0, 0.0).is_none());
+    }
+
     #[test]
     fn density_grows_with_the_grade_and_the_quality_share() {
         for g in 1..MAX_GRADE {
