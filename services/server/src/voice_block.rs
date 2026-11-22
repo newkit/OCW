@@ -80,6 +80,34 @@ pub fn apart<K: Ord + Copy>(
     blocks: &BTreeMap<K, Blocks>,
 ) -> BTreeMap<K, BTreeSet<RiderId>> {
     let mut out: BTreeMap<K, BTreeSet<RiderId>> = BTreeMap::new();
+    for (ka, kb, b) in pairs(riders, blocks) {
+        out.entry(ka).or_default().insert(b);
+        out.entry(kb).or_default().insert(riders[&ka].rider);
+    }
+    out
+}
+
+/// For every rider who blocked someone here, the riders they blocked –
+/// one direction only (spec §7.1.7 Q18: the blocker shows headphones to
+/// the blocked rider). The server keeps it to itself.
+pub fn blocked<K: Ord + Copy>(
+    riders: &BTreeMap<K, Who>,
+    blocks: &BTreeMap<K, Blocks>,
+) -> BTreeMap<K, BTreeSet<RiderId>> {
+    let mut out: BTreeMap<K, BTreeSet<RiderId>> = BTreeMap::new();
+    for (ka, _, b) in pairs(riders, blocks) {
+        out.entry(ka).or_default().insert(b);
+    }
+    out
+}
+
+/// Every block between two riders here: (the blocker's key, the blocked
+/// one's key, the blocked rider).
+fn pairs<K: Ord + Copy>(
+    riders: &BTreeMap<K, Who>,
+    blocks: &BTreeMap<K, Blocks>,
+) -> Vec<(K, K, RiderId)> {
+    let mut out = Vec::new();
     for (ka, a) in riders {
         let Some(list) = blocks.get(ka).filter(|b| !b.is_empty()) else {
             continue;
@@ -88,8 +116,7 @@ pub fn apart<K: Ord + Copy>(
             if ka == kb || a.rider == b.rider || !list.blocks(b) {
                 continue;
             }
-            out.entry(*ka).or_default().insert(b.rider);
-            out.entry(*kb).or_default().insert(a.rider);
+            out.push((*ka, *kb, b.rider));
         }
     }
     out
@@ -142,6 +169,13 @@ mod tests {
             },
         );
         assert_eq!(apart(&riders, &both), a);
+        // Who blocked whom (spec §7.1.7 Q18, the headphones): one way.
+        let b = blocked(&riders, &blocks);
+        assert_eq!(b.get(&1), Some(&set(&[2])));
+        assert_eq!(b.len(), 1, "the blocked rider blocked nobody: {b:?}");
+        let b = blocked(&riders, &both);
+        assert_eq!(b.get(&1), Some(&set(&[2])));
+        assert_eq!(b.get(&2), Some(&set(&[1])));
     }
 
     /// By account: matches the signed-in rider whatever the name; a name
