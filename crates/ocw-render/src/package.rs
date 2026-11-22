@@ -1360,7 +1360,7 @@ pub fn build_tile_meshes_with(
     let mut plants =
         crate::vegetation::tile_plants(pkg, key, &classed, keep, look.season.as_deref(), &ground);
     plants.crowns.shrink_to_fit();
-    let lamps = crate::street_lamps::tile_lamps(pkg, key, keep, &ground);
+    let lamps = crate::street_lamps::tile_lamps(pkg, key, keep, &ground, junctions);
     let obstacles = crate::obstacles::tile_obstacle_meshes(pkg, key, keep, &ground);
     let ground_detail =
         crate::ground_detail::tile_detail(pkg, key, keep, &terrain, &solid, look.season.clone());

@@ -303,7 +303,72 @@ pub fn lint(pkg: &WorldPackage, water: Option<&WaterBodies>) -> LintReport {
     lint_buildings(pkg, &mut r);
     lint_landuse(pkg, &mut r);
     lint_obstacles(pkg, &mut r);
+    lint_lamps(pkg, &mut r);
     r
+}
+
+/// Street lamps never stand in a road (the world look's *Street lamps*
+/// rule of 2026-11-22), placed as both apps place them
+/// ([`ocw_world::lamps::place_lamp`], every road of the graph and the
+/// junction surfaces): `lamp.foot.in_carriageway` / `.in_junction` – a
+/// placed pole touching a carriageway or a junction surface (must be 0);
+/// `lamp.nominal.in_…` – the same for the regular row before the rule
+/// (what the apps drew before); `lamp.placed`, `lamp.moved` (along the
+/// road or to the kerb), `lamp.left_out` (no room).
+fn lint_lamps(pkg: &WorldPackage, r: &mut LintReport) {
+    use ocw_world::lamps::{self, LampSpace, POLE_R_M};
+    let size = f64::from(pkg.tile_size_m);
+    let graph = pkg.graph.as_deref();
+    let tile_edges = graph
+        .map(|g| ocw_world::junction::section::tile_edges(g, size))
+        .unwrap_or_default();
+    let js = graph.map(|g| {
+        ocw_world::junction::JunctionSet::with_index(
+            g,
+            pkg.junctions.as_ref().and_then(|j| j.index_for(g)),
+        )
+    });
+    let town = lamps::town_at(pkg);
+    let none: &[u32] = &[];
+    for (&key, tile) in &pkg.tiles {
+        let edges = lamps::ring_edges(key, |k| tile_edges.get(&k).map_or(none, Vec::as_slice));
+        let space = LampSpace::new(pkg, key, &edges, js.as_ref());
+        let check = |prefix: &str, l: &lamps::Lamp, r: &mut LintReport| {
+            let at = [f64::from(l.foot[0]), f64::from(l.foot[2])];
+            if let Some((b, depth)) = space.road_at(at, f64::from(l.foot[1]), POLE_R_M) {
+                let note = format!("{:?}, {:.1} m pole", b, l.height_m);
+                r.add(
+                    &format!("{prefix}.in_{}", b.label()),
+                    1.0,
+                    case(at, depth, 0, note),
+                );
+            }
+        };
+        for strip in &tile.roads {
+            for n in lamps::nominal_lamps(strip, &town) {
+                let at = [f64::from(n.lamp.foot[0]), f64::from(n.lamp.foot[2])];
+                r.add("lamp.nominal", 1.0, case(at, 0.0, 0, String::new()));
+                check("lamp.nominal", &n.lamp, r);
+                match lamps::place_lamp(strip, &n, &space) {
+                    Some((l, moved)) => {
+                        let to = [f64::from(l.foot[0]), f64::from(l.foot[2])];
+                        r.add("lamp.placed", 1.0, case(to, 0.0, 0, String::new()));
+                        if moved {
+                            let d = (to[0] - at[0]).hypot(to[1] - at[1]);
+                            r.add("lamp.moved", d, case(to, d, 0, "m moved".into()));
+                        }
+                        check("lamp.foot", &l, r);
+                    }
+                    None => {
+                        let why = space
+                            .blocked(n.lamp.foot.map(f64::from))
+                            .map_or("on a bridge without a deck", |b| b.label());
+                        r.add("lamp.left_out", 1.0, case(at, 1.0, 0, why.to_string()));
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// The drawn junction surfaces (spec §4.8.8 J2, [`crate::junctions::seams`]):
@@ -1380,6 +1445,54 @@ mod tests {
         assert_eq!(r.count("landuse.sliver"), 1);
         let text = format_report(&r, (47.0, 9.0));
         assert!(text.contains("road.near_miss_end: 1"), "{text}");
+    }
+
+    /// The lamp lint: a lit T junction whose regular row puts a lamp on the
+    /// side road; placed under the rule, none stands in a road.
+    #[test]
+    fn the_lint_finds_no_lamp_in_a_road() {
+        use ocw_world::junction::fixtures::{self, Road};
+        let v = [
+            [500.0, 500.0],
+            [409.0, 500.0],
+            [620.0, 500.0],
+            [500.0, 620.0],
+        ];
+        let g = fixtures::graph(
+            &v,
+            vec![
+                Road::straight(&v, 1, 0, RoadClass::Primary, 7.5, |_| 0.0),
+                Road::straight(&v, 0, 2, RoadClass::Primary, 7.5, |_| 0.0),
+                Road::straight(&v, 0, 3, RoadClass::Residential, 5.0, |_| 0.0),
+            ],
+        );
+        let roads = fixtures::strips(&g)
+            .into_iter()
+            .map(|(_, mut s)| {
+                s.lit = ocw_world::RoadLit::Yes;
+                s
+            })
+            .collect();
+        let mut p = pkg();
+        let key = TileKey { x: 0, z: 0 };
+        p.tiles.get_mut(&key).unwrap().roads = roads;
+        p.graph = Some(std::sync::Arc::new(g));
+        p.buildings = None;
+        let mut r = LintReport::default();
+        lint_lamps(&p, &mut r);
+        assert!(r.count("lamp.nominal.in_carriageway") >= 1, "{r:?}");
+        assert_eq!(r.count("lamp.foot.in_carriageway"), 0);
+        assert_eq!(r.count("lamp.foot.in_junction"), 0);
+        assert!(r.count("lamp.moved") >= 1);
+        assert_eq!(
+            r.count("lamp.placed") + r.count("lamp.left_out"),
+            r.count("lamp.nominal")
+        );
+        let text = format_report(&r, (47.0, 9.0));
+        assert!(
+            text.contains("lamp.foot") || text.contains("lamp.placed"),
+            "{text}"
+        );
     }
 
     #[test]

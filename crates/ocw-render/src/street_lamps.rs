@@ -18,6 +18,7 @@ use ocw_assets::props::{Instance, place};
 use crate::RideView;
 use crate::building_material::night_factor;
 use crate::camera::FollowCamera;
+use crate::junction_mesh::PackageJunctions;
 use crate::obstacles::append;
 use crate::package::{Keep, MeshArrays, TileGround};
 
@@ -119,9 +120,22 @@ pub const POLE_SINK_M: f32 = 0.05;
 /// The lamps of a package tile with the heights of their feet: on the
 /// `ground` as the tile draws it beside the road (the lowest point under
 /// the pole, [`POLE_SINK_M`] into it), or at the road's height where the
-/// ground is far off (on bridges, along walls and cuttings).
-pub fn tile_lamps(pkg: &WorldPackage, key: TileKey, keep: Keep, ground: &TileGround) -> TileLamps {
-    let lamps: Vec<(Lamp, f32)> = ocw_world::lamps::tile_lamps(pkg, key)
+/// ground is far off (on bridges, along walls and cuttings). Never in a
+/// road (the rule of 2026-11-22, [`ocw_world::lamps::LampSpace`]): with
+/// the package's `junctions` the lamps keep off every road of the graph
+/// and the junction surfaces; without, off the tile's own strips.
+pub fn tile_lamps(
+    pkg: &WorldPackage,
+    key: TileKey,
+    keep: Keep,
+    ground: &TileGround,
+    junctions: Option<&PackageJunctions>,
+) -> TileLamps {
+    let edges = junctions.map_or_else(Vec::new, |pj| {
+        ocw_world::lamps::ring_edges(key, |k| pj.tile_edges(k))
+    });
+    let space = ocw_world::lamps::LampSpace::new(pkg, key, &edges, junctions.map(|pj| &pj.set));
+    let lamps: Vec<(Lamp, f32)> = ocw_world::lamps::tile_lamps(pkg, key, &space)
         .into_iter()
         .filter(|l| keep.is_none_or(|f| f([f64::from(l.foot[0]), f64::from(l.foot[2])])))
         .map(|l| {
