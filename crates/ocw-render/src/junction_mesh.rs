@@ -47,6 +47,9 @@ pub struct PackageJunctions {
     /// and its terrain is settled under them (section `JNCT`, J2): the
     /// renderer leaves the terrain as it is.
     pub settled: bool,
+    /// The vertices with a mini-roundabout (section `JMRB`, J3; growing):
+    /// a disc painted on their junction surface.
+    pub mini_roundabouts: Vec<u32>,
 }
 
 impl PackageJunctions {
@@ -59,6 +62,10 @@ impl PackageJunctions {
             pj.settled = index.as_ref().is_some_and(|i| i.settled());
             pj.set = JunctionSet::with_index(g, index);
             pj.strip_edges = j.strip_edges_for(g).cloned();
+            pj.mini_roundabouts = j
+                .mini_roundabouts_for(g)
+                .map(|m| m.vertices.clone())
+                .unwrap_or_default();
         }
         Some(pj)
     }
@@ -70,6 +77,7 @@ impl PackageJunctions {
             tile_edges: ocw_world::junction::section::tile_edges(g, size),
             strip_edges: None,
             settled: false,
+            mini_roundabouts: Vec::new(),
         }
     }
 
@@ -173,7 +181,22 @@ pub struct ShapedTile<'a> {
     /// The patches drawn in this tile, with the strips their arms take
     /// their look from (per arm).
     pub patches: Vec<(&'a Patch, Vec<ArmLook>)>,
+    /// The mini-roundabouts on them (J3): the patch and the disc's centre.
+    pub discs: Vec<(&'a Patch, [f64; 2])>,
 }
+
+/// A mini-roundabout's painted disc (J3): its radius, from the narrowest
+/// road there (m).
+pub fn mini_disc_radius(p: &Patch) -> f64 {
+    let narrow = p
+        .arms
+        .iter()
+        .map(|a| 2.0 * a.half)
+        .fold(f64::INFINITY, f64::min);
+    (0.3 * narrow).clamp(MINI_DISC_MIN_M, MINI_DISC_MAX_M)
+}
+pub const MINI_DISC_MIN_M: f64 = 1.0;
+pub const MINI_DISC_MAX_M: f64 = 2.0;
 
 /// What an arm of a patch looks like (from its strip).
 #[derive(Debug, Clone)]
@@ -238,6 +261,7 @@ pub fn shape_tile<'a>(
         rows: Vec::with_capacity(strips.len()),
         owners: Vec::with_capacity(strips.len()),
         patches: Vec::new(),
+        discs: Vec::new(),
     };
     // The look of each edge from its strip here (the patches' arms).
     let mut looks: HashMap<usize, ArmLook> = HashMap::new();
@@ -285,7 +309,12 @@ pub fn shape_tile<'a>(
             if !seen.insert(v) || TileKey::containing(g.vertices[v], size) != key {
                 continue;
             }
-            if let Some(p) = pj.set.patch(g, v) {
+            if let Some(p) = pj.set.own_patch(g, v) {
+                for &m in &p.members {
+                    if pj.mini_roundabouts.binary_search(&m).is_ok() {
+                        out.discs.push((p, g.vertices[m as usize]));
+                    }
+                }
                 let arm_looks = p
                     .arms
                     .iter()
@@ -315,8 +344,55 @@ pub fn shaped_meshes(t: &ShapedTile<'_>, ctx: &RoadContext<'_>) -> RoadMeshes {
     for (p, looks) in &t.patches {
         patch_mesh(&mut out.roads, p, looks, ctx);
     }
+    for (p, c) in &t.discs {
+        mini_disc(&mut out.overlays, p, *c, ctx);
+    }
     out
 }
+
+/// A mini-roundabout's disc (J3, OSM `highway=mini_roundabout`): an
+/// overlay on the junction surface round `c` (a grid 0.5 m apart, at the
+/// patch's drawn heights), painted white by `road.wesl` within the radius
+/// (crossing kind 3 with half code 3: uv the offset from the centre, the
+/// colour's alpha the radius).
+pub fn mini_disc(m: &mut MeshArrays, p: &Patch, c: [f64; 2], ctx: &RoadContext<'_>) {
+    let r = mini_disc_radius(p);
+    let reach = r + 0.3;
+    let n = ((2.0 * reach) / 0.5).ceil() as usize;
+    let lift = crate::ROAD_SURFACE_LIFT_M + crate::road_mesh::OVERLAY_LIFT_M;
+    let base = m.positions.len() as u32;
+    let colour = ctx.style.line_colour;
+    for j in 0..=n {
+        for i in 0..=n {
+            let d = [
+                -reach + 2.0 * reach * i as f64 / n as f64,
+                -reach + 2.0 * reach * j as f64 / n as f64,
+            ];
+            let q = [c[0] + d[0], c[1] + d[1]];
+            let h = p.height_at(q).unwrap_or_else(|| p.field(q));
+            vertex(
+                m,
+                Vec3::new(q[0] as f32, h as f32 + lift, q[1] as f32),
+                colour,
+                r as f32,
+                [d[0] as f32, d[1] as f32],
+                [code_b(0, Kind::Crossing, 0), MINI_DISC_CODE],
+            );
+        }
+    }
+    let w = n as u32 + 1;
+    for j in 0..n as u32 {
+        for i in 0..n as u32 {
+            let (a, b) = (base + j * w + i, base + j * w + i + 1);
+            let (cc, d) = (a + w, b + w);
+            // Facing up (as the road strips).
+            m.indices.extend([a, cc, b, b, cc, d]);
+        }
+    }
+}
+
+/// The overlay code of a mini-roundabout's disc: kind 3 + 4 × half code 3.
+pub const MINI_DISC_CODE: f32 = 15.0;
 
 fn v3(p: [f64; 3]) -> Vec3 {
     Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32)
@@ -544,6 +620,7 @@ pub fn patches_near<'a>(g: &RoadGraph, pj: &'a PackageJunctions, key: TileKey) -
         for v in [e.from.0 as usize, e.to.0 as usize] {
             if seen.insert(v)
                 && let Some(p) = pj.set.patch(g, v)
+                && !out.iter().any(|q: &&Patch| q.vertex == p.vertex)
             {
                 out.push(p);
             }

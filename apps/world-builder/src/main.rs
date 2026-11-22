@@ -314,6 +314,10 @@ enum Cmd {
         /// Write the package here instead.
         #[arg(long)]
         out: Option<PathBuf>,
+        /// OSM extracts for the mini-roundabouts (`highway=mini_roundabout`,
+        /// section JMRB, spec 4.8.8 J3); without, the package's stay.
+        #[arg(long)]
+        pbf: Vec<PathBuf>,
         /// Sign the renewed manifest with this signing key.
         #[arg(long, value_name = "KEY")]
         sign_key: Option<PathBuf>,
@@ -1504,6 +1508,10 @@ fn print_reconcile(kinks: usize, rs: &ocw_worldgen::junctions::ReconcileStats) {
         rs.residual_m,
     );
     println!(
+        "junctions: the largest difference at edge {} sample {}",
+        rs.residual_at.0, rs.residual_at.1
+    );
+    println!(
         "junctions: grade limits again after the blend ({} cycles): {} road profiles, {} samples moved (up to {:.2} m); intervals steeper than their class limit + 1 %: {} after the blend -> {} near a junction, {} where the source is steeper (source_steep), {} with too little room between junction surfaces (junction_room), {} elsewhere",
         rs.relimit_cycles,
         rs.relimit.edges,
@@ -2599,6 +2607,7 @@ fn places(
 fn junctions(
     world: &std::path::Path,
     out: Option<PathBuf>,
+    pbf: &[PathBuf],
     key: Option<&ocw_world::manifest::SigningKeyPair>,
 ) {
     use ocw_worldgen::junctions as j;
@@ -2622,6 +2631,36 @@ fn junctions(
         (kinks, j::reconcile_profiles(&mut g, &keep))
     });
     print_reconcile(kinks, &rs);
+    if let Some(e) = g.edges.get(rs.residual_at.0) {
+        let js = ocw_world::junction::JunctionSet::new(&g);
+        let kind = |r: Option<ocw_world::junction::EndRule<'_>>| match r {
+            Some(ocw_world::junction::EndRule::Patch(p, i)) => format!(
+                "patch at v{} ({} members, through {:?}, arm {i}: mouth {:.1} corner {})",
+                p.vertex,
+                p.members.len(),
+                p.through,
+                p.arms[i].mouth_m,
+                p.arms[i].has_corner()
+            ),
+            Some(ocw_world::junction::EndRule::Inside(p)) => {
+                format!("inside the cluster at v{}", p.vertex)
+            }
+            Some(ocw_world::junction::EndRule::Mitre(..)) => "mitre".into(),
+            None => "none".into(),
+        };
+        let [a, b] = js.ends(&g, rs.residual_at.0);
+        println!(
+            "junctions: that edge: w{} {:?} {:.1} m from v{} at {:?} ({}) to v{} ({})",
+            e.osm_way,
+            e.class,
+            e.length_m(),
+            e.from.0,
+            e.points[0],
+            kind(a),
+            e.to.0,
+            kind(b)
+        );
+    }
     let edges = stage("strip edges", || {
         ocw_world::junction::section::strip_edges_of(&pkg, &g0)
     });
@@ -2645,9 +2684,69 @@ fn junctions(
         ss.max_lowered_m,
         ts.elapsed().as_secs_f64()
     );
-    if let Some(data) = stage("junction sections (JNCT, RDGE)", || {
+    if let Some(mut data) = stage("junction sections (JNCT, RDGE)", || {
         j::junction_data(&pkg, true)
     }) {
+        if !pbf.is_empty()
+            && let Some(g) = pkg.graph.as_ref()
+        {
+            let nodes = stage("read PBF mini-roundabouts", || {
+                ocw_worldgen::mini_roundabouts::read_pbfs(pbf).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                })
+            });
+            let proj = ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1);
+            let (south, west, north, east) = package_box(&pkg, 10.0);
+            let near: Vec<(i64, f64, f64)> = nodes
+                .into_iter()
+                .filter(|n| n.1 >= south && n.1 <= north && n.2 >= west && n.2 <= east)
+                .collect();
+            let m = ocw_worldgen::mini_roundabouts::match_vertices(g, &proj, &near);
+            println!(
+                "junctions (JMRB): {} mini-roundabouts in OSM near the package, {} at a junction vertex",
+                near.len(),
+                m.vertices.len()
+            );
+            for &v in m.vertices.iter().take(5) {
+                let q = g.vertices[v as usize];
+                println!("junctions (JMRB):   vertex {v} at {:.1},{:.1}", q[0], q[1]);
+            }
+            data.mini_roundabouts = Some(m);
+        }
+        if let Some(g) = pkg.graph.as_ref() {
+            // J3's clusters and forks, with a few examples.
+            let js = ocw_world::junction::JunctionSet::new(g);
+            let (mut clusters, mut members, mut forks) = (0, 0, 0);
+            let mut ex = Vec::new();
+            for v in 0..g.vertices.len() {
+                let Some(p) = js.own_patch(g, v) else {
+                    continue;
+                };
+                if p.members.len() > 1 {
+                    clusters += 1;
+                    members += p.members.len();
+                    if ex.len() < 6 {
+                        ex.push(format!(
+                            "{} vertices at {:.1},{:.1}",
+                            p.members.len(),
+                            p.centre[0],
+                            p.centre[2]
+                        ));
+                    }
+                }
+                if p.arms
+                    .iter()
+                    .any(|a| a.mouth_m > ocw_world::junction::MAX_MOUTH_M)
+                {
+                    forks += 1;
+                }
+            }
+            println!(
+                "junctions (J3): {clusters} clusters of {members} vertices (e.g. {}); {forks} patches with a mouth beyond 25 m (forks)",
+                ex.join("; ")
+            );
+        }
         println!("{}", junction_summary(&data));
         pkg.junctions = Some(std::sync::Arc::new(data));
     }
@@ -3261,6 +3360,7 @@ fn main() {
         Cmd::Junctions {
             world,
             out,
+            pbf,
             sign_key,
         } => {
             let key = sign_key.map(|k| {
@@ -3269,7 +3369,7 @@ fn main() {
                     std::process::exit(1);
                 })
             });
-            junctions(&world, out, key.as_ref());
+            junctions(&world, out, &pbf, key.as_ref());
             print_stage_profile(None);
         }
         Cmd::Obstacles {

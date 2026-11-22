@@ -23,7 +23,8 @@
 //!
 //! Patches are computed lazily per vertex and kept ([`JunctionSet`]): a
 //! pure function of the vertex's edges, the same in every process.
-//! Vertices that cannot be patched (forks below [`MIN_CORNER_DEG`],
+//! Vertices that cannot be patched (forks below [`MIN_CORNER_DEG`] or too
+//! long for their mouths,
 //! outlines that are not star-shaped, bridges, tunnels, the region border)
 //! keep the overlapping strips of before.
 
@@ -38,7 +39,12 @@ pub const MAX_MOUTH_M: f64 = 25.0;
 /// … and at most this share of the edge's length.
 pub const MOUTH_SHARE: f64 = 0.45;
 /// Arms closer than this (degrees) are a fork the patch cannot hold.
-pub const MIN_CORNER_DEG: f64 = 15.0;
+pub const MIN_CORNER_DEG: f64 = 4.0;
+/// Corners narrower than this (degrees) are a fork (J3): its two arms
+/// separate far out, so their mouths may lie up to [`FORK_MAX_MOUTH_M`]
+/// from the vertex (J1 left forks below 15° without a patch).
+pub const FORK_DEG: f64 = 15.0;
+pub const FORK_MAX_MOUTH_M: f64 = 40.0;
 /// Two arms of the highest class less than this far from straight
 /// (degrees) are a through road (§4.8.8 Q1).
 pub const THROUGH_DEV_DEG: f64 = 30.0;
@@ -56,6 +62,9 @@ pub const OUTLINE_STEP_M: f64 = 1.5;
 pub const MOUTH_STEP_M: f64 = 1.0;
 /// The interior rings of the patch mesh lie about this far apart (m).
 pub const RING_M: f64 = 2.5;
+/// The first interior ring lies this far inside the outline (m), the
+/// second 2.5 times as far (J3).
+pub const OUTER_RING_M: f64 = 0.4;
 /// Side-arm blend: the grade-change rate that sets its length, and its
 /// limits (m) (§4.8.8: `L = clamp(|Δh| / 0.01 per m, 5 m, 30 m)`).
 pub const BLEND_RATE: f64 = 0.01;
@@ -275,6 +284,8 @@ pub struct Arm {
     pub len: f64,
     /// Straight-line direction from the vertex (the first 8 m), outward.
     pub dir: P2,
+    /// The arm's own vertex (the patch's, or a cluster member's, J3).
+    pub origin: P2,
     /// The mouth: metres from the vertex along the edge, its centre and the
     /// outward direction there.
     pub mouth_m: f64,
@@ -290,6 +301,20 @@ pub struct Arm {
     pub blend_m: f64,
     /// The strip's along coordinate at the mouth (dashes, textures).
     pub along: f64,
+    /// Side arm of a through road whose own surface starts at the main
+    /// road's edge (§4.8.8 Q6 (d), J3): metres from the vertex where its
+    /// centre line leaves the main road's carriageway (0: not such an arm –
+    /// a main arm, an arm of a blended patch, or a side arm whose mouth
+    /// lies at the main road's edge, blended as in J2), that point and the
+    /// main road's surface there. Its mouth row lies at its own height and
+    /// grade (no blend); the corner between the main road's edge and the
+    /// mouth slopes from the one to the other ([`Patch::field`]).
+    pub edge_m: f64,
+    pub edge_p: P2,
+    pub edge_h: f64,
+    /// Its profile from the vertex to the mouth: (metres from the vertex,
+    /// height), the edge's samples and both ends.
+    pub corner: Vec<(f64, f64)>,
 }
 
 impl Arm {
@@ -325,6 +350,45 @@ impl Arm {
     fn mouth_dist(&self, p: P2) -> f64 {
         seg_dist(p, xz(self.row[0]), xz(self.row[1]))
     }
+
+    /// A side arm whose own surface starts at the main road's edge (Q6 (d)).
+    pub fn has_corner(&self) -> bool {
+        self.edge_m > 0.0
+    }
+
+    /// The arm's profile `m` metres from the vertex (between the samples
+    /// as the edge interpolates them; past the mouth its extension).
+    pub fn corner_profile(&self, m: f64) -> f64 {
+        if m >= self.mouth_m || self.corner.len() < 2 {
+            return self.h + self.grade * (m - self.mouth_m);
+        }
+        let c = &self.corner;
+        let k = c.partition_point(|q| q.0 <= m).clamp(1, c.len() - 1);
+        let ((m0, h0), (m1, h1)) = (c[k - 1], c[k]);
+        let t = if m1 > m0 {
+            ((m - m0) / (m1 - m0)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        h0 + (h1 - h0) * t
+    }
+
+    /// The side road's surface in its corner at `p` (flat across, by the
+    /// distance along the arm in the mouth's frame): its own profile, plus
+    /// what it misses of the main road's surface at the edge point, faded
+    /// out towards the mouth (nothing when the profile already starts
+    /// there, as the world builder makes it) – and the distance of `p`
+    /// from the arm's centre line in the corner or from its mouth row.
+    fn corner_node(&self, p: P2) -> (f64, f64) {
+        let m = (self.mouth_m + dot(sub(p, self.centre), self.t)).max(self.edge_m);
+        let span = (self.mouth_m - self.edge_m).max(1e-6);
+        let x = ((m - self.edge_m) / span).clamp(0.0, 1.0);
+        let fade = 1.0 - x * x * (3.0 - 2.0 * x);
+        let miss = self.edge_h - self.corner_profile(self.edge_m);
+        let q = self.corner_profile(m) + miss * fade;
+        let rho = seg_dist(p, self.edge_p, self.centre).min(self.mouth_dist(p));
+        (rho, q)
+    }
 }
 
 /// A point of a patch outline.
@@ -348,7 +412,13 @@ pub struct Chain {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Patch {
     pub vertex: u32,
+    /// The vertex, or a cluster's centroid (J3).
     pub centre: [f64; 3],
+    /// The vertices this patch covers (J3 clusters: several, joined by the
+    /// short edges in `inner`; else only `vertex`).
+    pub members: Vec<u32>,
+    pub inner: Vec<usize>,
+    inner_nodes: Vec<InnerNode>,
     /// By polar angle (`atan2(z, x)`, growing).
     pub arms: Vec<Arm>,
     /// The main road's two arms, where there is a clear through road.
@@ -369,17 +439,191 @@ pub struct Patch {
     pub max: P2,
 }
 
+/// An edge inside a cluster patch (J3): its own profile is a node of the
+/// height field along its centre line.
+#[derive(Debug, Clone, PartialEq)]
+struct InnerNode {
+    points: Vec<P2>,
+    cum: Vec<f64>,
+    profile: Vec<f64>,
+    len: f64,
+    half: f64,
+    /// Of the through road's class (part of its carriageway).
+    main: bool,
+}
+
+impl InnerNode {
+    fn of(g: &RoadGraph, ei: usize) -> Self {
+        let e = &g.edges[ei];
+        Self {
+            points: e.points.clone(),
+            cum: cumulative(&e.points),
+            profile: e.profile.clone(),
+            len: e.length_m(),
+            half: e.width_m / 2.0,
+            main: false,
+        }
+    }
+
+    /// The distance of `p` from the centre line and the profile's height
+    /// at its nearest point.
+    fn node(&self, p: P2) -> (f64, f64) {
+        let mut best = (f64::INFINITY, 0.0);
+        for (k, w) in self.points.windows(2).enumerate() {
+            let (a, b) = (w[0], w[1]);
+            let ab = sub(b, a);
+            let l2 = dot(ab, ab);
+            let t = if l2 > 0.0 {
+                (dot(sub(p, a), ab) / l2).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let d = norm(sub(add(a, mul(ab, t)), p));
+            if d < best.0 {
+                best = (d, self.cum[k] + t * l2.sqrt());
+            }
+        }
+        let s = best.1.clamp(0.0, self.len);
+        let n = self.profile.len();
+        let h = if n < 2 {
+            self.profile.first().copied().unwrap_or(0.0)
+        } else {
+            let i = ((s / PROFILE_STEP_M).floor() as usize).min(n - 2);
+            let (s0, s1) = (
+                (i as f64 * PROFILE_STEP_M).min(self.len),
+                ((i + 1) as f64 * PROFILE_STEP_M).min(self.len),
+            );
+            let t = if s1 > s0 {
+                ((s - s0) / (s1 - s0)).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            self.profile[i] + (self.profile[i + 1] - self.profile[i]) * t
+        };
+        (best.0, h)
+    }
+}
+
+/// Where a patch lies: its centre, the vertices it covers and the edges
+/// inside it (a single vertex, or a J3 cluster).
+struct Site {
+    centre: P2,
+    members: Vec<u32>,
+    inner: Vec<usize>,
+}
+
+impl Site {
+    fn single(g: &RoadGraph, v: usize) -> Self {
+        Self {
+            centre: g.vertices[v],
+            members: vec![v as u32],
+            inner: Vec::new(),
+        }
+    }
+
+    fn cluster(&self) -> bool {
+        self.members.len() > 1
+    }
+}
+
 impl Patch {
+    /// Whether this patch belongs to vertex `v` (a cluster's to its first
+    /// member only): iterate patches once, draw them once.
+    pub fn is_at(&self, v: usize) -> bool {
+        self.vertex as usize == v
+    }
+
     fn n(&self) -> usize {
         self.outline.len()
     }
 
-    /// The patch's own height field at `p` (exact, not the mesh).
+    /// The patch's own height field at `p` (exact, not the mesh). With a
+    /// through road (§4.8.8 Q1) its own surface on its carriageway; beyond
+    /// its edges (§4.8.8 Q6 (d), J3) an inverse-square blend of the main
+    /// road's surface (by the distance from its carriageway) and each side
+    /// road's own surface in its corner (by the distance from its centre
+    /// line there or from its mouth): the corners slope from the main
+    /// road's edge to the side roads, C1 at the edge and at the mouths.
     pub fn field(&self, p: P2) -> f64 {
-        match self.through {
-            Some([a, b]) => shepard([&self.arms[a], &self.arms[b]].into_iter(), p),
-            None => shepard(self.arms.iter(), p),
+        let Some([a, b]) = self.through else {
+            return self.blended(p);
+        };
+        let main = shepard([&self.arms[a], &self.arms[b]].into_iter(), p);
+        if !self.arms.iter().any(Arm::has_corner) {
+            return main;
         }
+        let e = self.main_excess(p);
+        if e <= 0.0 {
+            return main;
+        }
+        // The main surface's nodes: its carriageway, and the mouths on it
+        // (its own arms', the side arms blended as in J2).
+        let mut dp = e;
+        for arm in &self.arms {
+            if !arm.has_corner() {
+                dp = dp.min(arm.mouth_dist(p));
+            }
+        }
+        if dp < 1e-9 {
+            return main;
+        }
+        let (mut sw, mut sh) = (1.0 / (dp * dp), main / (dp * dp));
+        for arm in self.arms.iter().filter(|a| a.has_corner()) {
+            let (rho, q) = arm.corner_node(p);
+            if rho < 1e-9 {
+                return q;
+            }
+            let w = 1.0 / (rho * rho);
+            sw += w;
+            sh += w * q;
+        }
+        sh / sw
+    }
+
+    /// How far `p` lies outside the through road's carriageway (m; 0 on
+    /// it): beyond the edge lines of its two arms (the straight lines the
+    /// outline follows), from their vertex to past their mouths, and in a
+    /// cluster beside the edges inside of its class.
+    pub fn main_excess(&self, p: P2) -> f64 {
+        let Some([a, b]) = self.through else {
+            return 0.0;
+        };
+        let mut e = f64::INFINITY;
+        for k in [a, b] {
+            let arm = &self.arms[k];
+            let end = add(arm.origin, mul(arm.dir, arm.mouth_m + 1.0));
+            e = e.min(seg_dist(p, arm.origin, end) - arm.half);
+        }
+        for n in self.inner_nodes.iter().filter(|n| n.main) {
+            e = e.min(n.node(p).0 - n.half);
+        }
+        e.max(0.0)
+    }
+
+    /// A blended patch's field (no through road): the arms' extensions
+    /// and, in a cluster, the edges inside along their centre lines, by
+    /// inverse-square distance.
+    fn blended(&self, p: P2) -> f64 {
+        let (mut sw, mut sh) = (0.0, 0.0);
+        for a in &self.arms {
+            let d = a.mouth_dist(p);
+            if d < 1e-9 {
+                return a.extension(p);
+            }
+            let w = 1.0 / (d * d);
+            sw += w;
+            sh += w * a.extension(p);
+        }
+        for n in &self.inner_nodes {
+            let (d, h) = n.node(p);
+            if d < 1e-9 {
+                return h;
+            }
+            let w = 1.0 / (d * d);
+            sw += w;
+            sh += w * h;
+        }
+        if sw > 0.0 { sh / sw } else { 0.0 }
     }
 
     /// The main road's surface (the through road's; else the field).
@@ -583,6 +827,10 @@ fn build_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Option<Patch> {
 struct Raw {
     edge: usize,
     at_from: bool,
+    /// The arm's own vertex (a cluster's arms leave from different ones)
+    /// and a point 8 m out along it (its polar angle orders the arms).
+    origin: P2,
+    refp: P2,
     dir: P2,
     half: f64,
     len: f64,
@@ -605,6 +853,8 @@ fn raw_arm(g: &RoadGraph, c: P2, v: usize, ei: usize) -> Result<Raw, &'static st
     Ok(Raw {
         edge: ei,
         at_from,
+        origin: c,
+        refp: p,
         dir: unit(sub(p, c)),
         half: e.width_m / 2.0,
         len,
@@ -634,6 +884,7 @@ fn make_arm(g: &RoadGraph, r: &Raw, m: f64, along: Option<f64>) -> Arm {
         half: r.half,
         len: r.len,
         dir: r.dir,
+        origin: r.origin,
         mouth_m: m,
         centre: cp,
         t,
@@ -642,14 +893,19 @@ fn make_arm(g: &RoadGraph, r: &Raw, m: f64, along: Option<f64>) -> Arm {
         grade: grade(e, s, if r.at_from { 1.0 } else { -1.0 }),
         blend_m: 0.0,
         along: along.unwrap_or_else(|| along_at(e, s)),
+        edge_m: 0.0,
+        edge_p: cp,
+        edge_h: h,
+        corner: Vec::new(),
     }
 }
 
 /// The patch of `arms` (by polar angle) at vertex `v`: the through road
 /// (§4.8.8 Q1) and its side arms' mouth rows on the main surface with
 /// their blends; no outline yet.
-fn assemble(g: &RoadGraph, v: usize, arms: Vec<Arm>) -> Result<Patch, &'static str> {
-    let c = g.vertices[v];
+fn assemble(g: &RoadGraph, site: &Site, arms: Vec<Arm>) -> Result<Patch, &'static str> {
+    let c = site.centre;
+    let v = site.members[0] as usize;
     let n = arms.len();
     // Through road: two arms of the highest class, nearly straight; only
     // one such pair.
@@ -671,9 +927,21 @@ fn assemble(g: &RoadGraph, v: usize, arms: Vec<Arm>) -> Result<Patch, &'static s
         let e = &g.edges[arms[0].edge];
         height(e, if arms[0].at_from { 0.0 } else { arms[0].len })
     };
+    let inner_nodes = site
+        .inner
+        .iter()
+        .map(|&ei| {
+            let mut node = InnerNode::of(g, ei);
+            node.main = through.is_some() && g.edges[ei].class == best;
+            node
+        })
+        .collect();
     let mut patch = Patch {
         vertex: v as u32,
         centre: at_y(c, vh),
+        members: site.members.clone(),
+        inner: site.inner.clone(),
+        inner_nodes,
         arms,
         through,
         outline: Vec::new(),
@@ -685,14 +953,46 @@ fn assemble(g: &RoadGraph, v: usize, arms: Vec<Arm>) -> Result<Patch, &'static s
         min: c,
         max: c,
     };
-    // Side arms of a through road: their mouth rows on the main surface,
-    // and the blend beyond.
+    // Side arms of a through road (§4.8.8 Q6 (d), J3): their own surface
+    // starts where their centre line leaves the main road's carriageway;
+    // the mouth row lies at their own height (no blend), the corner slopes
+    // between. A side arm whose mouth lies at the main road's edge (no room
+    // for a corner) keeps J2's rule: its mouth row on the main surface, a
+    // blend beyond.
     if let Some([a, b]) = through {
         for i in 0..n {
             if i == a || i == b {
                 continue;
             }
-            let row = patch.arms[i].row.map(|q| at_y(xz(q), patch.field(xz(q))));
+            // In a cluster a side arm may leave from a vertex off the main
+            // road's carriageway: its corner follows its own profile from
+            // there (nothing missed at the edge point).
+            if patch.main_excess(patch.arms[i].origin) > 0.0 {
+                let m = 1e-3;
+                let corner = corner_samples(g, &patch.arms[i], m);
+                let arm = &mut patch.arms[i];
+                arm.edge_m = m;
+                arm.edge_p = arm.origin;
+                arm.corner = corner;
+                arm.edge_h = arm.corner_profile(m);
+                continue;
+            }
+            if let Some((m, pt)) = edge_exit(g, &patch, i)
+                && m < patch.arms[i].mouth_m - CORNER_MIN_M
+            {
+                let main = shepard([&patch.arms[a], &patch.arms[b]].into_iter(), pt);
+                let corner = corner_samples(g, &patch.arms[i], m);
+                let arm = &mut patch.arms[i];
+                arm.edge_m = m;
+                arm.edge_p = pt;
+                arm.edge_h = main;
+                arm.corner = corner;
+                continue;
+            }
+            let row = patch.arms[i].row.map(|q| {
+                let main = shepard([&patch.arms[a], &patch.arms[b]].into_iter(), xz(q));
+                at_y(xz(q), main)
+            });
             let mid = lerp3(row[0], row[1], 0.5);
             let dh = (mid[1] - patch.arms[i].h).abs();
             let arm = &patch.arms[i];
@@ -709,6 +1009,60 @@ fn assemble(g: &RoadGraph, v: usize, arms: Vec<Arm>) -> Result<Patch, &'static s
     Ok(patch)
 }
 
+/// Where side arm `i`'s centre line leaves the through road's carriageway
+/// ([`Patch::main_excess`]): metres from the vertex (within its mouth) and
+/// the point.
+fn edge_exit(g: &RoadGraph, patch: &Patch, i: usize) -> Option<(f64, P2)> {
+    let arm = &patch.arms[i];
+    let e = &g.edges[arm.edge];
+    let cum = cumulative(&e.points);
+    let at = |m: f64| frame_at(&e.points, &cum, arm.s_edge(m)).0;
+    let step = 0.25;
+    let mut lo = 0.0;
+    let mut m = step;
+    while m <= arm.mouth_m + 1e-9 {
+        if patch.main_excess(at(m)) > 0.0 {
+            // Between lo (on the carriageway) and m (off it).
+            let mut hi = m;
+            for _ in 0..30 {
+                let mid = 0.5 * (lo + hi);
+                if patch.main_excess(at(mid)) > 0.0 {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            }
+            return Some((hi, at(hi)));
+        }
+        lo = m;
+        m += step;
+    }
+    None
+}
+
+/// The arm's profile from the vertex to its mouth (metres from the vertex,
+/// height): its samples, the edge point `edge_m` and the mouth.
+fn corner_samples(g: &RoadGraph, arm: &Arm, edge_m: f64) -> Vec<(f64, f64)> {
+    let e = &g.edges[arm.edge];
+    let n = e.profile.len();
+    let mut out: Vec<(f64, f64)> = (0..n)
+        .map(|i| (i as f64 * PROFILE_STEP_M).min(arm.len))
+        .map(|s| (if arm.at_from { s } else { arm.len - s }, s))
+        .filter(|&(m, _)| m < arm.mouth_m - 1e-9)
+        .map(|(m, s)| (m, height(e, s)))
+        .collect();
+    for m in [edge_m, arm.mouth_m] {
+        out.push((m, height(e, arm.s_edge(m))));
+    }
+    out.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-9);
+    out
+}
+
+/// A side arm's corner needs at least this much room between the main
+/// road's edge and its mouth (m); with less it keeps J2's blend.
+pub const CORNER_MIN_M: f64 = 0.5;
+
 /// An outline point as the package stores it (section `JNCT`): its offset
 /// from the vertex in `f32`. The computed outline is rounded the same way,
 /// so a stored patch and a computed one are the same to the bit.
@@ -722,65 +1076,150 @@ fn quantised(c: P2, p: P2) -> P2 {
 /// [`build_patch`] with the reason when a vertex keeps its overlapping
 /// strips (diagnostics, the analysis test).
 fn try_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Result<Patch, &'static str> {
+    let (patch, outline) = patch_outline(g, adj, v)?;
+    finish(patch, outline)
+}
+
+/// The patch of [`try_patch`] before its outline is checked and meshed:
+/// the arms and the outline points (rounded as stored).
+fn patch_outline(g: &RoadGraph, adj: &[usize], v: usize) -> Result<(Patch, Outline), &'static str> {
     let c = g.vertices[v];
-    // Arms.
-    let mut raws: Vec<Raw> = adj
+    let raws: Vec<Raw> = adj
         .iter()
         .map(|&ei| raw_arm(g, c, v, ei))
         .collect::<Result<_, _>>()?;
-    raws.sort_by(|a, b| {
-        a.dir[1]
-            .atan2(a.dir[0])
-            .total_cmp(&b.dir[1].atan2(b.dir[0]))
-            .then(a.edge.cmp(&b.edge))
-    });
+    outline_at(g, &Site::single(g, v), raws)
+}
+
+/// The patch of a cluster (J3): vertices a few metres apart joined by the
+/// short edges `inner`, with the other edges at them as its arms, round
+/// their centroid.
+fn try_cluster(
+    g: &RoadGraph,
+    adjacency: &[Vec<usize>],
+    members: &[u32],
+    inner: &[usize],
+) -> Result<Patch, &'static str> {
+    let mut c = [0.0, 0.0];
+    for &m in members {
+        c = add(c, g.vertices[m as usize]);
+    }
+    c = mul(c, 1.0 / members.len() as f64);
+    let mut raws = Vec::new();
+    for &m in members {
+        let v = m as usize;
+        for &ei in &adjacency[v] {
+            if !inner.contains(&ei) {
+                raws.push(raw_arm(g, g.vertices[v], v, ei)?);
+            }
+        }
+    }
+    if raws.len() < 2 || raws.len() > MAX_ARMS {
+        return Err("a cluster with too many arms");
+    }
+    let site = Site {
+        centre: c,
+        members: members.to_vec(),
+        inner: inner.to_vec(),
+    };
+    let (patch, outline) = outline_at(g, &site, raws)?;
+    finish(patch, outline)
+}
+
+/// The arms' mouths and the outline of the patch at `site` (rounded as
+/// stored).
+fn outline_at(
+    g: &RoadGraph,
+    site: &Site,
+    mut raws: Vec<Raw>,
+) -> Result<(Patch, Outline), &'static str> {
+    let c = site.centre;
+    let cluster = site.cluster();
+    // A cluster's arms by the polar angle of a point along them round its
+    // centroid; a vertex's by their direction.
+    let polar = |r: &Raw| {
+        if cluster {
+            angle(c, r.refp)
+        } else {
+            r.dir[1].atan2(r.dir[0])
+        }
+    };
+    raws.sort_by(|a, b| polar(a).total_cmp(&polar(b)).then(a.edge.cmp(&b.edge)));
     let n = raws.len();
     let tau = std::f64::consts::TAU;
-    // The angle from arm i to the next.
-    let gap = |i: usize| {
-        let (a, b) = (raws[i].dir, raws[(i + 1) % n].dir);
-        let mut d = b[1].atan2(b[0]) - a[1].atan2(a[0]);
+    let wrap = |mut d: f64| {
         while d <= 0.0 {
             d += tau;
         }
         d
     };
+    // The angle from arm i to the next: round the centre, and between the
+    // arms' directions (the same at one vertex).
+    let gap = |i: usize| wrap(polar(&raws[(i + 1) % n]) - polar(&raws[i]));
+    let turn = |i: usize| {
+        let (a, b) = (raws[i].dir, raws[(i + 1) % n].dir);
+        wrap(b[1].atan2(b[0]) - a[1].atan2(a[0]))
+    };
     if (0..n).any(|i| gap(i) < MIN_CORNER_DEG.to_radians()) {
-        return Err("a fork: arms closer than 15 degrees");
+        return Err("a fork: arms closer than 4 degrees");
     }
+    let fork_arm =
+        |i: usize| gap(i) < FORK_DEG.to_radians() || gap((i + n - 1) % n) < FORK_DEG.to_radians();
     let caps: Vec<f64> = raws
         .iter()
-        .map(|r| MAX_MOUTH_M.min(MOUTH_SHARE * r.len))
+        .enumerate()
+        .map(|(i, r)| {
+            let max = if fork_arm(i) {
+                FORK_MAX_MOUTH_M
+            } else {
+                MAX_MOUTH_M
+            };
+            max.min(MOUTH_SHARE * r.len)
+        })
         .collect();
     // Concave corners.
     let mut corners: Vec<Option<CornerArc>> = Vec::with_capacity(n);
     let mut need = vec![1.0f64; n];
     for (i, r) in raws.iter().enumerate() {
-        let other = raws
+        // The widest other road at its vertex (in a cluster: at its own
+        // member, the edges inside included).
+        let mut other = raws
             .iter()
             .enumerate()
-            .filter(|(k, _)| *k != i)
+            .filter(|(k, o)| *k != i && (!cluster || o.origin == r.origin))
             .map(|(_, o)| o.half)
             .fold(0.0, f64::max);
+        for &ei in &site.inner {
+            let e = &g.edges[ei];
+            if [e.from, e.to]
+                .iter()
+                .any(|w| g.vertices[w.0 as usize] == r.origin)
+            {
+                other = other.max(e.width_m / 2.0);
+            }
+        }
         need[i] = need[i].max(other).max(r.half.min(1.0));
     }
     for i in 0..n {
         let j = (i + 1) % n;
-        let phi = gap(i);
+        let phi = if cluster { turn(i) } else { gap(i) };
         if phi >= std::f64::consts::PI - 0.05 {
             corners.push(None);
             continue;
         }
         let (ri, rj) = (&raws[i], &raws[j]);
-        let li = add(c, mul(side_pos(ri.dir), ri.half));
-        let lj = add(c, mul(side_neg(rj.dir), rj.half));
-        let hit = intersect(li, ri.dir, lj, rj.dir)
-            .filter(|&(_, si, sj)| si <= caps[i] - 0.2 && sj <= caps[j] - 0.2);
+        let li = add(ri.origin, mul(side_pos(ri.dir), ri.half));
+        let lj = add(rj.origin, mul(side_neg(rj.dir), rj.half));
+        let hit = intersect(li, ri.dir, lj, rj.dir).filter(|&(_, si, sj)| {
+            si <= caps[i] - 0.2 && sj <= caps[j] - 0.2 && (!cluster || (si > 0.0 && sj > 0.0))
+        });
         let Some((x, sx_i, sx_j)) = hit else {
             // Nearly straight (a width change): the edge lines meet far
             // out, the outline runs straight across; an acute corner that
-            // far out is a fork the patch cannot hold.
-            if phi > 2.0 {
+            // far out is a fork the patch cannot hold. In a cluster the
+            // outline runs straight from mouth to mouth (two carriageways
+            // side by side).
+            if phi > 2.0 || cluster {
                 corners.push(None);
                 continue;
             }
@@ -811,7 +1250,7 @@ fn try_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Result<Patch, &'static s
         .enumerate()
         .map(|(i, r)| make_arm(g, r, need[i].min(caps[i]), None))
         .collect();
-    let patch = assemble(g, v, arms)?;
+    let patch = assemble(g, site, arms)?;
     // The outline: per arm its mouth (P to Q), then the chain to the next.
     let mut outline: Vec<(P2, Option<usize>)> = Vec::new();
     for (i, corner) in corners.iter().enumerate() {
@@ -853,11 +1292,34 @@ fn try_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Result<Patch, &'static s
                     pts2.pop();
                 }
             }
+            None if cluster && arm.origin != next.origin => {
+                // Two arms of different vertices (two carriageways side by
+                // side, the entries of a small roundabout): round the
+                // centre from mouth to mouth, outside the edges inside.
+                let (a, b) = (xz(q), xz(next.p()));
+                let (r0, r1) = (norm(sub(a, c)), norm(sub(b, c)));
+                let a0 = angle(c, a);
+                let mut a1 = angle(c, b);
+                while a1 <= a0 {
+                    a1 += tau;
+                }
+                // Only forward round the centre (else straight across).
+                let steps = if a1 - a0 < std::f64::consts::PI {
+                    ((a1 - a0) / ARC_STEP_DEG.to_radians()).ceil().max(1.0) as usize
+                } else {
+                    1
+                };
+                for k in 1..steps {
+                    let f = k as f64 / steps as f64;
+                    let (ang, r) = (a0 + (a1 - a0) * f, r0 + (r1 - r0) * f);
+                    pts2.push(add(c, [r * ang.cos(), r * ang.sin()]));
+                }
+            }
             None => {
                 // Straight or convex: through the edge lines' crossing where
                 // it lies between the mouths.
-                let li = add(c, mul(side_pos(arm.dir), arm.half));
-                let lj = add(c, mul(side_neg(next.dir), next.half));
+                let li = add(arm.origin, mul(side_pos(arm.dir), arm.half));
+                let lj = add(next.origin, mul(side_neg(next.dir), next.half));
                 if let Some((x, si, sj)) = intersect(li, arm.dir, lj, next.dir)
                     && si < arm.mouth_m - 0.05
                     && sj < next.mouth_m - 0.05
@@ -892,8 +1354,11 @@ fn try_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Result<Patch, &'static s
         .into_iter()
         .map(|(p, m)| (quantised(c, p), m))
         .collect();
-    finish(patch, outline)
+    Ok((patch, outline))
 }
+
+/// Outline points and the arm whose mouth each lies on.
+type Outline = Vec<(P2, Option<usize>)>;
 
 /// The rest of a patch from its (rounded) outline: the heights of the
 /// outline points (on a mouth the arm's row, elsewhere the field), the
@@ -992,18 +1457,36 @@ fn finish(mut patch: Patch, outline2: Vec<(P2, Option<usize>)>) -> Result<Patch,
 /// A patch from its stored outline (section `JNCT`): the arms (edge, end,
 /// mouth, along) and the outline points; the same as [`try_patch`] gives.
 fn stored_patch(g: &RoadGraph, v: usize, rec: &section::StoredPatch) -> Option<Patch> {
-    let c = *g.vertices.get(v)?;
+    g.vertices.get(v)?;
+    let site = if rec.members.len() > 1 {
+        let mut c = [0.0, 0.0];
+        for &m in &rec.members {
+            c = add(c, *g.vertices.get(m as usize)?);
+        }
+        if rec.inner.iter().any(|&e| e as usize >= g.edges.len()) || rec.members[0] as usize != v {
+            return None;
+        }
+        Site {
+            centre: mul(c, 1.0 / rec.members.len() as f64),
+            members: rec.members.clone(),
+            inner: rec.inner.iter().map(|&e| e as usize).collect(),
+        }
+    } else {
+        Site::single(g, v)
+    };
+    let c = site.centre;
     let mut arms = Vec::with_capacity(rec.arms.len());
     for a in &rec.arms {
         let e = g.edges.get(a.edge as usize)?;
-        let at = if a.at_from { e.from } else { e.to };
-        if at.0 as usize != v || e.from == e.to {
+        let at = (if a.at_from { e.from } else { e.to }).0;
+        if !site.members.contains(&at) || e.from == e.to {
             return None;
         }
-        let r = raw_arm(g, c, v, a.edge as usize).ok()?;
+        let at = at as usize;
+        let r = raw_arm(g, g.vertices[at], at, a.edge as usize).ok()?;
         arms.push(make_arm(g, &r, a.mouth_m, Some(a.along)));
     }
-    let patch = assemble(g, v, arms).ok()?;
+    let patch = assemble(g, &site, arms).ok()?;
     let outline = rec
         .outline
         .iter()
@@ -1026,8 +1509,20 @@ fn mesh(patch: &mut Patch) {
         .iter()
         .map(|o| norm(sub(xz(o.p), c)))
         .fold(0.0, f64::max);
+    // Rings about RING_M apart, and two more close to the outline (J3):
+    // the corners between a main road's edge and a side road's mouth
+    // curve there, the mesh meets the strips with their slope.
     let nr = ((reach / RING_M).ceil() as usize).clamp(2, 10);
-    patch.rings = (0..nr).map(|j| 1.0 - j as f64 / nr as f64).collect();
+    let mut rings: Vec<f64> = (0..nr).map(|j| 1.0 - j as f64 / nr as f64).collect();
+    for d in [OUTER_RING_M, 2.5 * OUTER_RING_M] {
+        let r = 1.0 - d / reach.max(1e-6);
+        if r > rings.get(1).copied().unwrap_or(0.0) + 0.02 {
+            rings.push(r);
+        }
+    }
+    rings.sort_by(|a, b| b.total_cmp(a));
+    let nr = rings.len();
+    patch.rings = rings;
     let mut verts = Vec::with_capacity(nr * n + 1);
     for (j, &r) in patch.rings.iter().enumerate() {
         for o in &patch.outline {
@@ -1168,13 +1663,29 @@ pub enum VertexRule {
 pub enum EndRule<'a> {
     Patch(&'a Patch, usize),
     Mitre(&'a Mitre, usize),
+    /// The edge lies inside a cluster's patch (J3): no strip, the patch's
+    /// surface all along.
+    Inside(&'a Patch),
 }
+
+/// Edges at most this long between two junction vertices that do not both
+/// get a patch alone join them into one cluster (J3: dual carriageways,
+/// offset T junctions, slip roads a few metres apart).
+pub const CLUSTER_EDGE_M: f64 = 12.0;
+/// A cluster has at most this many vertices.
+pub const CLUSTER_MAX: usize = 6;
+
+/// The mouths of a vertex's patch: (edge, its `from` end there, mouth m).
+type Mouths = Vec<(usize, bool, f64)>;
 
 /// The junctions of a road graph, computed per vertex when first asked.
 #[derive(Debug)]
 pub struct JunctionSet {
     adjacency: Vec<Vec<usize>>,
     rules: Vec<OnceLock<Option<Arc<VertexRule>>>>,
+    /// Per vertex: the mouths of its patch alone (edge, its `from` end
+    /// there, mouth m), `None` when it gets none (clusters, J3).
+    alone: Vec<OnceLock<Option<Mouths>>>,
     /// The package's stored junctions (section `JNCT`, spec §4.8.8 J2):
     /// which vertices have a rule and the patches' outlines, so nothing is
     /// searched at load. The result is the same as computed.
@@ -1186,6 +1697,7 @@ impl Clone for JunctionSet {
         Self {
             adjacency: self.adjacency.clone(),
             rules: self.rules.clone(),
+            alone: self.alone.clone(),
             stored: self.stored.clone(),
         }
     }
@@ -1196,6 +1708,7 @@ impl JunctionSet {
         Self {
             adjacency: g.adjacency(),
             rules: (0..g.vertices.len()).map(|_| OnceLock::new()).collect(),
+            alone: (0..g.vertices.len()).map(|_| OnceLock::new()).collect(),
             stored: None,
         }
     }
@@ -1216,6 +1729,11 @@ impl JunctionSet {
 
     /// The rule at vertex `v` of `g` (the graph this set was made for).
     pub fn rule(&self, g: &RoadGraph, v: usize) -> Option<&VertexRule> {
+        self.rule_arc(g, v).map(|_| ())?;
+        self.rules.get(v)?.get()?.as_deref()
+    }
+
+    fn rule_arc(&self, g: &RoadGraph, v: usize) -> Option<Arc<VertexRule>> {
         let slot = self.rules.get(v)?;
         slot.get_or_init(|| {
             if let Some(index) = &self.stored {
@@ -1228,19 +1746,35 @@ impl JunctionSet {
                             .filter(|r| matches!(r, VertexRule::Mitre(_)))
                     }
                     section::StoredRule::Patch(p) => stored_patch(g, v, p).map(VertexRule::Patch),
+                    section::StoredRule::Member(first) => {
+                        let first = *first as usize;
+                        if first == v || first >= g.vertices.len() {
+                            return None;
+                        }
+                        return self
+                            .rule_arc(g, first)
+                            .filter(|r| matches!(&**r, VertexRule::Patch(p) if p.members.contains(&(v as u32))));
+                    }
                 };
                 return rule.map(Arc::new);
             }
-            let adj = &self.adjacency[v];
-            if adj.len() < 2
-                || adj.len() > MAX_ARMS
-                || g.boundary_vertices.contains(&VertexId(v as u32))
-                || adj.iter().any(|&e| {
-                    let e = &g.edges[e];
-                    e.bridge || e.tunnel || e.from == e.to
-                })
-            {
+            if !self.usable(g, v) {
                 return None;
+            }
+            let adj = &self.adjacency[v];
+            // A cluster (J3): made at its first member, shared by the
+            // others; if it cannot be made, each keeps its own rule.
+            if let Some((members, inner)) = self.cluster_of(g, v) {
+                let first = members[0] as usize;
+                if first == v {
+                    if let Ok(p) = try_cluster(g, &self.adjacency, &members, &inner) {
+                        return Some(Arc::new(VertexRule::Patch(p)));
+                    }
+                } else if let Some(r) = self.rule_arc(g, first)
+                    && matches!(&*r, VertexRule::Patch(p) if p.members.contains(&(v as u32)))
+                {
+                    return Some(r);
+                }
             }
             let rule = if adj.len() == 2 {
                 build_mitre(g, adj, v)
@@ -1249,7 +1783,106 @@ impl JunctionSet {
             };
             rule.map(Arc::new)
         })
-        .as_deref()
+        .clone()
+    }
+
+    /// Whether vertex `v` may get a rule: 2 – [`MAX_ARMS`] edges, not at the
+    /// region border, no bridge, tunnel or loop at it.
+    fn usable(&self, g: &RoadGraph, v: usize) -> bool {
+        let adj = &self.adjacency[v];
+        !(adj.len() < 2
+            || adj.len() > MAX_ARMS
+            || g.boundary_vertices.contains(&VertexId(v as u32))
+            || adj.iter().any(|&e| {
+                let e = &g.edges[e];
+                e.bridge || e.tunnel || e.from == e.to
+            }))
+    }
+
+    /// The mouths of junction vertex `v`'s patch alone; `None`: it gets
+    /// none.
+    fn alone(&self, g: &RoadGraph, v: usize) -> Option<&[(usize, bool, f64)]> {
+        self.alone[v]
+            .get_or_init(|| {
+                try_patch(g, &self.adjacency[v], v).ok().map(|p| {
+                    p.arms
+                        .iter()
+                        .map(|a| (a.edge, a.at_from, a.mouth_m))
+                        .collect()
+                })
+            })
+            .as_deref()
+    }
+
+    /// Whether the short edge `ei` from `u` to `w` joins them into a
+    /// cluster: one of them gets no patch alone, or their patches meet on
+    /// it (their mouths together cover 85 % of it: a small roundabout's
+    /// ring, carriageways side by side).
+    fn joins(&self, g: &RoadGraph, ei: usize, u: usize, w: usize) -> bool {
+        let (Some(a), Some(b)) = (self.alone(g, u), self.alone(g, w)) else {
+            return true;
+        };
+        let e = &g.edges[ei];
+        let mouth = |m: &[(usize, bool, f64)], from: bool| {
+            m.iter()
+                .find(|x| x.0 == ei && x.1 == from)
+                .map_or(0.0, |x| x.2)
+        };
+        let (ma, mb) = (
+            mouth(a, e.from.0 as usize == u),
+            mouth(b, e.from.0 as usize == w),
+        );
+        ma + mb >= 0.85 * e.length_m()
+    }
+
+    /// The cluster of vertex `v` (J3): the junction vertices (3 or more
+    /// edges) joined to it by edges of at most [`CLUSTER_EDGE_M`] on the
+    /// ground whose two ends do not both get a patch alone, or whose
+    /// patches nearly meet on them ([`Self::joins`]) – its members
+    /// (growing) and those edges (growing); `None` for a vertex on its own
+    /// or a cluster of more than [`CLUSTER_MAX`].
+    pub fn cluster_of(&self, g: &RoadGraph, v: usize) -> Option<(Vec<u32>, Vec<usize>)> {
+        let junction = |u: usize| self.usable(g, u) && self.adjacency[u].len() >= 3;
+        if !junction(v) {
+            return None;
+        }
+        let mut members = std::collections::BTreeSet::from([v as u32]);
+        let mut inner = std::collections::BTreeSet::new();
+        let mut stack = vec![v];
+        while let Some(u) = stack.pop() {
+            for &ei in &self.adjacency[u] {
+                let e = &g.edges[ei];
+                let w = if e.from.0 as usize == u {
+                    e.to.0
+                } else {
+                    e.from.0
+                } as usize;
+                if w == u
+                    || e.bridge
+                    || e.tunnel
+                    || e.profile.len() < 2
+                    || e.length_m() > CLUSTER_EDGE_M
+                    || !junction(w)
+                    || !self.joins(g, ei, u, w)
+                {
+                    continue;
+                }
+                inner.insert(ei);
+                if members.insert(w as u32) {
+                    if members.len() > CLUSTER_MAX {
+                        return None;
+                    }
+                    stack.push(w);
+                }
+            }
+        }
+        (members.len() > 1).then(|| (members.into_iter().collect(), inner.into_iter().collect()))
+    }
+
+    /// The patch of vertex `v` if it is drawn there (a cluster's at its
+    /// first member only): every patch once.
+    pub fn own_patch(&self, g: &RoadGraph, v: usize) -> Option<&Patch> {
+        self.patch(g, v).filter(|p| p.is_at(v))
     }
 
     /// Why vertex `v` has no junction surface (`None`: it has one, or a
@@ -1300,6 +1933,7 @@ impl JunctionSet {
         let e = &g.edges[ei];
         let at = |v: usize, from_end: bool| -> Option<EndRule<'_>> {
             match self.rule(g, v)? {
+                VertexRule::Patch(p) if p.inner.contains(&ei) => Some(EndRule::Inside(p)),
                 VertexRule::Patch(p) => p
                     .arms
                     .iter()
@@ -1390,6 +2024,9 @@ impl JunctionSet {
             if !which[k] {
                 continue;
             }
+            if let Some(EndRule::Inside(patch)) = end {
+                return patch.height_at(p).or_else(|| Some(patch.field(p)));
+            }
             let Some(EndRule::Patch(patch, ai)) = end else {
                 continue;
             };
@@ -1459,8 +2096,10 @@ impl JunctionSet {
     /// How far a junction reaches into edge `ei` from each end (m; 0: not
     /// at all): the mouth plus a side arm's blend.
     pub fn reach(&self, g: &RoadGraph, ei: usize) -> [f64; 2] {
+        let len = g.edges[ei].length_m();
         self.ends(g, ei).map(|e| match e {
             Some(EndRule::Patch(p, i)) => p.arms[i].mouth_m + p.arms[i].blend_m,
+            Some(EndRule::Inside(_)) => len,
             _ => 0.0,
         })
     }
@@ -1576,6 +2215,7 @@ impl JunctionSet {
             let reach = match ends[k] {
                 Some(EndRule::Patch(p, i)) => p.arms[i].mouth_m + p.arms[i].blend_m + 1.0,
                 Some(EndRule::Mitre(m, _)) => m.shift_m + 1.0,
+                Some(EndRule::Inside(_)) => return true,
                 None => return false,
             };
             let c = g.vertices[v.0 as usize];
@@ -1611,6 +2251,10 @@ impl JunctionSet {
         let ends = self.ends(g, ei);
         if ends.iter().all(Option::is_none) {
             return None;
+        }
+        // Inside a cluster's patch: no strip.
+        if ends.iter().any(|e| matches!(e, Some(EndRule::Inside(_)))) {
+            return Some(Shaped::default());
         }
         let e = &g.edges[ei];
         let len = e.length_m();
@@ -1669,7 +2313,8 @@ impl JunctionSet {
                         mitre_drop[k] = m.shift_m + 0.3;
                     }
                 }
-                None => {}
+                // Handled before (no strip).
+                Some(EndRule::Inside(_)) | None => {}
             }
         }
         if s_last <= lo + 1e-6 || s_first >= hi - 1e-6 {

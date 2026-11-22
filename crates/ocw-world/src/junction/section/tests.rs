@@ -1,6 +1,8 @@
 use super::*;
 use crate::graph::RoadClass;
-use crate::junction::fixtures::{crossing, fork, split, t_junction};
+use crate::junction::fixtures::{
+    crossing, dual_carriageway_t, fork, split, t_junction, t_junction_at,
+};
 
 fn fixtures() -> Vec<RoadGraph> {
     vec![
@@ -12,6 +14,8 @@ fn fixtures() -> Vec<RoadGraph> {
         split(12.0, 6.0, 6.0, 0.04),
         split(45.0, 6.0, 6.0, 0.04),
         split(5.0, 7.5, 5.0, 0.02),
+        dual_carriageway_t(),
+        t_junction_at(0.10, -0.15, 30.0),
     ]
 }
 
@@ -53,6 +57,7 @@ fn an_index_of_another_graph_is_ignored() {
             fingerprint: g.fingerprint(),
             tiles: BTreeMap::new(),
         }),
+        mini_roundabouts: None,
     };
     assert!(data.strip_edges_for(&g).is_some());
     assert!(data.strip_edges_for(&other).is_none());
@@ -69,7 +74,7 @@ fn newer_layouts_kinds_and_fields_are_skipped() {
     let mut bytes = Vec::new();
     write_junctions(&index, &mut bytes);
     let mut newer = bytes.clone();
-    newer[0] = 2;
+    newer[0] = 3;
     assert!(
         read_junctions(&newer)
             .unwrap_err()

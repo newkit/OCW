@@ -51,6 +51,7 @@ pub mod imagery;
 pub mod junctions;
 pub mod landuse;
 pub mod lint;
+pub mod mini_roundabouts;
 pub mod obstacles;
 pub mod osm;
 pub mod package;

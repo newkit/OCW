@@ -94,6 +94,11 @@ fn through_pair(
     } else {
         let p = js.patch(g, v)?;
         let [a, b] = p.through?;
+        // In a cluster only a through road whose two arms leave here.
+        let here = g.vertices[v];
+        if p.arms[a].origin != here || p.arms[b].origin != here {
+            return None;
+        }
         [p.arms[a].edge, p.arms[b].edge]
     };
     (pair[0] != pair[1] && usable(pair[0]) && usable(pair[1])).then_some(pair)
@@ -214,6 +219,8 @@ pub struct ReconcileStats {
     /// those set.
     pub residual_over_1cm: usize,
     pub residual_samples: usize,
+    /// Where the largest difference lies (edge, sample).
+    pub residual_at: (usize, usize),
     /// Samples set on the longer blends of side roads whose blend the
     /// edge's length cut short (first round).
     pub longer_blend_samples: usize,
@@ -244,11 +251,13 @@ pub struct ReconcileStats {
 fn pinned_samples(g: &RoadGraph, js: &JunctionSet) -> std::collections::HashSet<(usize, usize)> {
     let mut out = std::collections::HashSet::new();
     for v in 0..g.vertices.len() {
-        let Some(p) = js.patch(g, v) else {
+        let Some(p) = js.own_patch(g, v) else {
             continue;
         };
         for (ai, a) in p.arms.iter().enumerate() {
-            let side = p.through.is_some_and(|t| !t.contains(&ai));
+            // A side arm with its corner (Q6 (d)) is drawn from its own
+            // height and grade at the mouth, as a main arm.
+            let side = p.through.is_some_and(|t| !t.contains(&ai)) && !a.has_corner();
             let anchor = match (side, a.blend_m > 0.0) {
                 (false, _) => a.mouth_m,
                 (true, true) => a.mouth_m + a.blend_m,
@@ -292,7 +301,7 @@ fn drawn_samples(
     let verts: Vec<usize> = (0..g.vertices.len()).collect();
     let per = crate::par::map(&verts, crate::par::threads(), |&v| {
         let mut out = Vec::new();
-        let Some(p) = js.patch(g, v) else {
+        let Some(p) = js.own_patch(g, v) else {
             return out;
         };
         let mut at_vertex = Vec::new();
@@ -325,6 +334,31 @@ fn drawn_samples(
                 }
             }
         }
+        // A cluster's edges inside (J3): all their samples, the vertex
+        // samples with the arms'.
+        for &ei in &p.inner {
+            let e = &g.edges[ei];
+            let len = e.length_m();
+            let n = e.profile.len();
+            let cum = cumulative(&e.points);
+            for i in 0..n {
+                let s = sample_m(i, len);
+                let vertex = i == 0 || i == n - 1;
+                if !keep(ei, s) || pinned.contains(&(ei, i)) {
+                    if vertex {
+                        vertex_ok = false;
+                    }
+                    continue;
+                }
+                let c = frame_at(&e.points, &cum, s).0;
+                match p.height_at(c) {
+                    Some(h) if vertex => at_vertex.push((ei, i, h)),
+                    Some(h) => out.push((ei, i, h)),
+                    None if vertex => vertex_ok = false,
+                    None => {}
+                }
+            }
+        }
         if vertex_ok {
             out.extend(at_vertex);
         }
@@ -351,7 +385,7 @@ fn longer_blends(
     let verts: Vec<usize> = (0..g.vertices.len()).collect();
     crate::par::map(&verts, crate::par::threads(), |&v| {
         let mut out = Vec::new();
-        let Some(p) = js.patch(g, v) else {
+        let Some(p) = js.own_patch(g, v) else {
             return out;
         };
         let Some(through) = p.through else {
@@ -364,6 +398,10 @@ fn longer_blends(
             let e = &g.edges[a.edge];
             let n = e.profile.len();
             if n < 3 {
+                continue;
+            }
+            if a.has_corner() {
+                out.extend(edge_blend(g, js, a, keep));
                 continue;
             }
             let mid = [
@@ -414,6 +452,54 @@ fn longer_blends(
     })
 }
 
+/// A side road with its corner (spec §4.8.8 Q6 (d), J3): its profile from
+/// the main road's edge – where its centre line leaves the main road's
+/// carriageway, at the main road's surface there – starting at its own
+/// grade and blended into its own profile over `L = clamp(|Δh| / 0.01,
+/// 5 m, 30 m)`, up to one sample before the other end's junction (its
+/// edge point, for a side road with a corner there too). The samples on
+/// that curve: (edge, sample, height). The corner the junction surface
+/// draws then follows this profile.
+fn edge_blend(
+    g: &RoadGraph,
+    js: &JunctionSet,
+    a: &ocw_world::junction::Arm,
+    keep: &(dyn Fn(usize, f64) -> bool + Sync),
+) -> Vec<(usize, usize, f64)> {
+    use ocw_world::junction::{BLEND_MAX_M, BLEND_MIN_M, BLEND_RATE};
+    let e = &g.edges[a.edge];
+    let n = e.profile.len();
+    let own = |m: f64| e.height_at(a.s_edge(m.clamp(0.0, a.len))).unwrap_or(a.h);
+    let slope = |m: f64| (own(m + 0.05) - own(m)) / 0.05;
+    let m0 = a.edge_m;
+    let dh = own(m0) - a.edge_h;
+    // The other end's fixed stretch.
+    let k = usize::from(a.at_from);
+    let other = match js.ends(g, a.edge)[k] {
+        Some(EndRule::Patch(q, i)) if q.arms[i].has_corner() => q.arms[i].edge_m,
+        _ => js.reach(g, a.edge)[k],
+    };
+    let room = a.len - m0 - other - PROFILE_STEP_M;
+    let l = (dh.abs() / BLEND_RATE)
+        .clamp(BLEND_MIN_M, BLEND_MAX_M)
+        .min(room);
+    if l < 1.0 {
+        return Vec::new();
+    }
+    let (g0, p1, g1) = (slope(m0), own(m0 + l), slope(m0 + l));
+    let mut out = Vec::new();
+    for i in 0..n {
+        let s = sample_m(i, a.len);
+        let m = if a.at_from { s } else { a.len - s };
+        if m <= m0 + 1e-6 || m >= m0 + l - 1e-6 || !keep(a.edge, s) {
+            continue;
+        }
+        let t = (m - m0) / l;
+        out.push((a.edge, i, hermite(t, a.edge_h, g0 * l, p1, g1 * l)));
+    }
+    out
+}
+
 /// Cubic Hermite on [0, 1].
 fn hermite(t: f64, p0: f64, m0: f64, p1: f64, m1: f64) -> f64 {
     let (t2, t3) = (t * t, t * t * t);
@@ -437,7 +523,7 @@ fn drawn_on(
     let ends = js.ends(g, ei);
     let k = usize::from(!at_from);
     match ends[k] {
-        Some(EndRule::Patch(q, _)) if q.vertex == p.vertex => {
+        Some(EndRule::Patch(q, _)) | Some(EndRule::Inside(q)) if q.vertex == p.vertex => {
             js.drawn_height_at_end(g, ei, k, s, c)
         }
         _ => None,
@@ -483,7 +569,10 @@ pub fn reconcile_profiles(
     let js = JunctionSet::new(graph);
     for (e, i, h) in drawn_samples(graph, &js, keep) {
         let d = (h - graph.edges[e].profile[i]).abs();
-        st.residual_m = st.residual_m.max(d);
+        if d > st.residual_m {
+            st.residual_m = d;
+            st.residual_at = (e, i);
+        }
         st.residual_samples += 1;
         if d > 0.01 {
             st.residual_over_1cm += 1;
@@ -514,7 +603,7 @@ fn reconcile_rounds(
         let first = round == 0 && longer;
         if first {
             st.patches = (0..graph.vertices.len())
-                .filter(|&v| js.patch(graph, v).is_some())
+                .filter(|&v| js.own_patch(graph, v).is_some())
                 .count();
         }
         let drawn = drawn_samples(graph, &js, keep);
@@ -587,6 +676,9 @@ pub struct Fixed {
     /// reconciliation may have left them off it (the samples it pins
     /// round the end of a short blend can lie inside the patch).
     pub drawn: Vec<(usize, f64)>,
+    /// The mouths (of `mouths`) where a side road leaves the main road's
+    /// edge at its own grade (Q6 (d)): a crease, no grade carried on.
+    pub creases: Vec<f64>,
 }
 
 /// What the re-limiting keeps on edge `ei`: both vertex samples (the
@@ -609,28 +701,56 @@ pub fn fixed_samples(
             samples: vec![true; n],
             mouths: Vec::new(),
             drawn: Vec::new(),
+            creases: Vec::new(),
         };
     }
     let len = e.length_m();
     let mut reach = [0.0f64; 2];
     let mut mouths = Vec::new();
     let mut drawn = Vec::new();
+    let mut creases = Vec::new();
     let mut cum = None;
+    if js
+        .ends(g, ei)
+        .iter()
+        .any(|e| matches!(e, Some(EndRule::Inside(_))))
+    {
+        // Inside a cluster's patch (J3): its surface all along.
+        return Fixed {
+            samples: vec![true; n],
+            mouths: Vec::new(),
+            drawn: Vec::new(),
+            creases: Vec::new(),
+        };
+    }
     for (k, end) in js.ends(g, ei).iter().enumerate() {
         if let Some(EndRule::Patch(p, ai)) = end {
             let a = &p.arms[*ai];
             let main = p.through.is_none_or(|t| t.contains(ai));
-            reach[k] = a.mouth_m + if main { PROFILE_STEP_M } else { 0.0 };
+            // A side road with its corner (Q6 (d)): fixed only on the main
+            // road's carriageway, up to where it leaves it (a crease: it
+            // goes on at its own grade); its corner and mouth follow it.
+            let corner = !main && a.has_corner();
+            let fixed_to = if corner { a.edge_m } else { a.mouth_m };
+            reach[k] = fixed_to + if main { PROFILE_STEP_M } else { 0.0 };
             if !main {
-                let s = a.s_edge(a.mouth_m);
+                let s = a.s_edge(fixed_to);
+                let h = if corner {
+                    a.edge_h
+                } else {
+                    0.5 * (a.row[0][1] + a.row[1][1])
+                };
                 if s > 1e-3 && s < len - 1e-3 && keep(ei, s) {
-                    mouths.push((s, 0.5 * (a.row[0][1] + a.row[1][1])));
+                    mouths.push((s, h));
+                    if corner {
+                        creases.push(s);
+                    }
                 }
                 let cum = cum.get_or_insert_with(|| cumulative(&e.points));
                 for i in 1..n - 1 {
                     let si = sample_m(i, len);
                     let m = if k == 0 { si } else { len - si };
-                    if m <= a.mouth_m - 1e-6 && keep(ei, si) {
+                    if m <= fixed_to - 1e-6 && keep(ei, si) {
                         let c = frame_at(&e.points, cum, si).0;
                         if let Some(h) = drawn_on(g, js, p, ei, k == 0, si, c) {
                             drawn.push((i, h));
@@ -654,38 +774,50 @@ pub fn fixed_samples(
         samples,
         mouths,
         drawn,
+        creases,
     }
 }
 
 /// A profile with the mouths of [`Fixed`] inserted as fixed points and
-/// its samples inside side arms' patches at the drawn height: (heights,
-/// distances, fixed, the original sample of each point).
-fn with_mouths(
-    p: &[f64],
-    d: &[f64],
-    f: &Fixed,
-) -> (Vec<f64>, Vec<f64>, Vec<bool>, Vec<Option<usize>>) {
-    let mut pts: Vec<(f64, f64, bool, Option<usize>)> = (0..p.len())
-        .map(|i| (d[i], p[i], f.samples[i], Some(i)))
+/// its samples inside side arms' patches at the drawn height.
+struct Marked {
+    heights: Vec<f64>,
+    dist: Vec<f64>,
+    fixed: Vec<bool>,
+    /// The original sample of each point.
+    orig: Vec<Option<usize>>,
+    /// A crease at the point ([`Fixed::creases`]).
+    crease: Vec<bool>,
+}
+
+fn with_mouths(p: &[f64], d: &[f64], f: &Fixed) -> Marked {
+    let mut pts: Vec<(f64, f64, bool, Option<usize>, bool)> = (0..p.len())
+        .map(|i| (d[i], p[i], f.samples[i], Some(i), false))
         .collect();
     for &(i, h) in &f.drawn {
         pts[i].1 = h;
     }
     for &(s, h) in &f.mouths {
-        // On a sample: that sample is the mouth (inside the patch, kept).
+        let crease = f.creases.iter().any(|&c| (c - s).abs() < 1e-9);
+        // On a sample: that sample is the mouth (kept, at its height).
         if let Some(q) = pts.iter_mut().find(|q| (q.0 - s).abs() < 0.05) {
             q.2 = true;
+            if crease {
+                q.1 = h;
+                q.4 = true;
+            }
             continue;
         }
-        pts.push((s, h, true, None));
+        pts.push((s, h, true, None, crease));
     }
     pts.sort_by(|a, b| a.0.total_cmp(&b.0));
-    (
-        pts.iter().map(|q| q.1).collect(),
-        pts.iter().map(|q| q.0).collect(),
-        pts.iter().map(|q| q.2).collect(),
-        pts.iter().map(|q| q.3).collect(),
-    )
+    Marked {
+        heights: pts.iter().map(|q| q.1).collect(),
+        dist: pts.iter().map(|q| q.0).collect(),
+        fixed: pts.iter().map(|q| q.2).collect(),
+        orig: pts.iter().map(|q| q.3).collect(),
+        crease: pts.iter().map(|q| q.4).collect(),
+    }
 }
 
 /// What [`relimit_grades`] changed.
@@ -726,14 +858,36 @@ pub fn relimit_profile(
     max_grade: f64,
     max_change_per_m: f64,
 ) -> usize {
+    relimit_profile_creased(
+        p,
+        d,
+        fixed,
+        &vec![false; p.len()],
+        max_grade,
+        max_change_per_m,
+    )
+}
+
+/// [`relimit_profile`] with creases: fixed points where the road may
+/// change its grade at once (a side road leaving the main road's edge at
+/// its own grade, spec §4.8.8 Q6 (d)) – no curvature limit carried on
+/// from them, no kink rounded there.
+pub fn relimit_profile_creased(
+    p: &mut [f64],
+    d: &[f64],
+    fixed: &[bool],
+    crease: &[bool],
+    max_grade: f64,
+    max_change_per_m: f64,
+) -> usize {
     let n = p.len();
     if n < 3 {
         return 0;
     }
     let before = p.to_vec();
     let lim = clamp_grades(p, d, fixed, max_grade);
-    clamp_to_envelopes(p, d, fixed, &lim, max_change_per_m);
-    round_kinks_fixed(p, d, fixed, &lim, max_change_per_m);
+    clamp_to_envelopes(p, d, fixed, crease, &lim, max_change_per_m);
+    round_kinks_fixed(p, d, fixed, crease, &lim, max_change_per_m);
     clamp_grades(p, d, fixed, max_grade);
     p.iter()
         .zip(&before)
@@ -788,13 +942,20 @@ fn clamp_grades(p: &mut [f64], d: &[f64], fixed: &[bool], max_grade: f64) -> Vec
 /// with the grade changing by at most `max_change` per metre up to the
 /// interval's limit `lim`; the profile is clamped between them where they
 /// do not cross.
-fn clamp_to_envelopes(p: &mut [f64], d: &[f64], fixed: &[bool], lim: &[f64], max_change: f64) {
+fn clamp_to_envelopes(
+    p: &mut [f64],
+    d: &[f64],
+    fixed: &[bool],
+    crease: &[bool],
+    lim: &[f64],
+    max_change: f64,
+) {
     let n = p.len();
     let mut lo = vec![f64::NEG_INFINITY; n];
     let mut hi = vec![f64::INFINITY; n];
     // Forward from every fixed sample whose interval before is fixed too.
     for a in 1..n {
-        if !(fixed[a] && fixed[a - 1]) || a + 1 >= n || fixed[a + 1] {
+        if !(fixed[a] && fixed[a - 1]) || a + 1 >= n || fixed[a + 1] || crease[a] {
             continue;
         }
         let g0 = (p[a] - p[a - 1]) / (d[a] - d[a - 1]).max(1e-9);
@@ -814,7 +975,7 @@ fn clamp_to_envelopes(p: &mut [f64], d: &[f64], fixed: &[bool], lim: &[f64], max
     }
     // Backward from every fixed sample whose interval after is fixed too.
     for b in (0..n - 1).rev() {
-        if !(fixed[b] && fixed[b + 1]) || b == 0 || fixed[b - 1] {
+        if !(fixed[b] && fixed[b + 1]) || b == 0 || fixed[b - 1] || crease[b] {
             continue;
         }
         let g0 = (p[b + 1] - p[b]) / (d[b + 1] - d[b]).max(1e-9);
@@ -846,7 +1007,14 @@ fn clamp_to_envelopes(p: &mut [f64], d: &[f64], fixed: &[bool], lim: &[f64], max
 /// neighbour (moved halfway towards the grade the curvature limit allows
 /// there); every move stays within the grades `lim` of the sample's two
 /// intervals, so the grade limit keeps holding.
-fn round_kinks_fixed(p: &mut [f64], d: &[f64], fixed: &[bool], lim: &[f64], max_change: f64) {
+fn round_kinks_fixed(
+    p: &mut [f64],
+    d: &[f64],
+    fixed: &[bool],
+    crease: &[bool],
+    lim: &[f64],
+    max_change: f64,
+) {
     let n = p.len();
     // Moves sample k halfway to `to`, within its intervals' grades.
     let place = |p: &mut [f64], k: usize, to: f64| {
@@ -877,7 +1045,7 @@ fn round_kinks_fixed(p: &mut [f64], d: &[f64], fixed: &[bool], lim: &[f64], max_
             let (g1, g2) = ((p[i] - p[i - 1]) / d1, (p[i + 1] - p[i]) / d2);
             let allowed = max_change * (d1 + d2) / 2.0;
             let excess = (g2 - g1).abs() - allowed;
-            if excess <= 1e-6 {
+            if excess <= 1e-6 || crease[i] {
                 continue;
             }
             let old = (p[i - 1], p[i], p[i + 1]);
@@ -942,17 +1110,18 @@ pub fn relimit_grades(
             return None;
         }
         let f = fixed_samples(g, &js, ei, keep);
-        let (mut p, d2, fx, orig) = with_mouths(&e.profile, &d, &f);
+        let mk = with_mouths(&e.profile, &d, &f);
         let off = f
             .drawn
             .iter()
             .any(|&(i, h)| (e.profile[i] - h).abs() > 1e-3);
+        let (mut p, d2, fx) = (mk.heights, mk.dist, mk.fixed);
         if !off && !needs_relimit(&p, &d2, Some(&fx), max_grade) {
             return None;
         }
-        relimit_profile(&mut p, &d2, &fx, max_grade, max_change);
+        relimit_profile_creased(&mut p, &d2, &fx, &mk.crease, max_grade, max_change);
         let mut out = e.profile.clone();
-        for (h, o) in p.iter().zip(&orig) {
+        for (h, o) in p.iter().zip(&mk.orig) {
             if let Some(i) = o {
                 out[*i] = *h;
             }
@@ -1046,7 +1215,8 @@ pub fn steep_intervals(
             return out;
         }
         let f = fixed_samples(g, js, ei, keep);
-        let (p, d2, fx, _) = with_mouths(&e.profile, &d, &f);
+        let mk = with_mouths(&e.profile, &d, &f);
+        let (p, d2, fx) = (mk.heights, mk.dist, mk.fixed);
         let reach = js.reach(g, ei);
         // The road's own fixed heights: its ends and the bridge decks.
         let own: Vec<bool> = (0..n)
@@ -1105,7 +1275,7 @@ pub fn surface_samples(g: &RoadGraph, js: &JunctionSet, step: f64) -> Vec<[f64; 
     let verts: Vec<usize> = (0..g.vertices.len()).collect();
     let per = crate::par::map(&verts, crate::par::threads(), |&v| {
         let mut out = Vec::new();
-        let Some(p) = js.patch(g, v) else {
+        let Some(p) = js.own_patch(g, v) else {
             return out;
         };
         let (lo, hi) = (p.min, p.max);
@@ -1246,6 +1416,11 @@ pub fn junction_data(pkg: &WorldPackage, settled: bool) -> Option<JunctionData> 
     Some(JunctionData {
         index: Some(Arc::new(index)),
         strip_edges: Some(strip_edges_of(pkg, g)),
+        // The mini-roundabouts (J3) stay as the package has them.
+        mini_roundabouts: pkg
+            .junctions
+            .as_ref()
+            .and_then(|j| j.mini_roundabouts_for(g).cloned()),
     })
 }
 
@@ -1325,12 +1500,30 @@ pub fn seams(pkg: &WorldPackage, g: &RoadGraph) -> (Vec<Seam>, Vec<(usize, &'sta
         .collect();
     let per = crate::par::map(&verts, crate::par::threads(), |&v| {
         let Some(rule) = js.rule(g, v) else {
-            return Err((v, js.fallback_reason(g, v).unwrap_or("no surface")));
+            return Some(Err((v, js.fallback_reason(g, v).unwrap_or("no surface"))));
         };
-        let c = g.vertices[v];
+        // A cluster (J3) is measured once, round its centroid, with the
+        // edges of all its vertices.
+        let mut c = g.vertices[v];
+        let mut edges = adj[v].clone();
+        if let VertexRule::Patch(p) = rule {
+            if !p.is_at(v) {
+                return None;
+            }
+            if p.members.len() > 1 {
+                c = [p.centre[0], p.centre[2]];
+                edges = p
+                    .members
+                    .iter()
+                    .flat_map(|&m| adj[m as usize].clone())
+                    .collect();
+                edges.sort_unstable();
+                edges.dedup();
+            }
+        }
         // The disc of the analysis test, and the whole patch with its
         // mouths (where it meets the strips).
-        let mut r = adj[v]
+        let mut r = edges
             .iter()
             .map(|&e| g.edges[e].width_m / 2.0)
             .fold(0.0, f64::max)
@@ -1346,7 +1539,7 @@ pub fn seams(pkg: &WorldPackage, g: &RoadGraph) -> (Vec<Seam>, Vec<(usize, &'sta
                 tris.push((t.map(|i| p.vertices[i as usize]), PATCH_OWNER));
             }
         }
-        for &ei in &adj[v] {
+        for &ei in &edges {
             for &(key, si) in by_edge.get(&(ei as u32)).into_iter().flatten() {
                 let s = &pkg.tiles[&key].roads[si];
                 if !s
@@ -1377,19 +1570,23 @@ pub fn seams(pkg: &WorldPackage, g: &RoadGraph) -> (Vec<Seam>, Vec<(usize, &'sta
         }
         let mut m = measure(c, r, &tris, v);
         m.patch = matches!(rule, VertexRule::Patch(_));
-        m.degree = adj[v].len();
+        m.degree = match rule {
+            VertexRule::Patch(p) => p.arms.len(),
+            _ => adj[v].len(),
+        };
         if let VertexRule::Patch(p) = rule {
             m.short_side = p.arms.iter().enumerate().any(|(ai, a)| {
                 m.seam_owners.contains(&a.edge)
                     && a.blend_m <= 0.0
+                    && !a.has_corner()
                     && p.through.is_some_and(|t| !t.contains(&ai))
             });
         }
-        Ok(m)
+        Some(Ok(m))
     });
     let mut out = Vec::new();
     let mut without = Vec::new();
-    for x in per {
+    for x in per.into_iter().flatten() {
         match x {
             Ok(s) => out.push(s),
             Err(w) => without.push(w),
