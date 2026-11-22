@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Rebuilds the live world packages' junctions into data/j3-build/ (spec
 # 4.8.8 J3 with Q6 (d)) on a build machine: `world-builder junctions` per
-# package, the manifests and the route files beside them, the lint of the
+# package (with the folder's OSM extracts for the mini-roundabouts), the
+# manifests and the route files beside them, the lint of the
 # rebuilt package next to the live one's and the J2b one's (if
 # data/j2b-build has it). The live packages are only read.
 # Usage: scripts/j3-build.sh [PKG...]  (default: all five)
@@ -20,10 +21,13 @@ for p in "${pkgs[@]}"; do
   cp -p "$D/$dir"/*.route "$OUT/$dir/" 2>/dev/null || true
   echo "== $p"
   start=$(date +%s.%N)
-  "$WB" junctions --world "$D/$p.ocwpkg" --out "$OUT/$p.ocwpkg" > "$OUT/$p.junctions.log" 2>&1
+  # The folder's OSM extracts: the mini-roundabouts (section JMRB).
+  pbf=()
+  for f in "$D/$dir"/*.osm.pbf; do [ -e "$f" ] && pbf+=(--pbf "$f"); done
+  "$WB" junctions --world "$D/$p.ocwpkg" --out "$OUT/$p.ocwpkg" "${pbf[@]}" > "$OUT/$p.junctions.log" 2>&1
   end=$(date +%s.%N)
   echo "build $(echo "$end - $start" | bc) s, peak $(grep -E '^total ' "$OUT/$p.junctions.log" | awk '{print $NF}') GB"
-  grep -E "^junctions:|^total" "$OUT/$p.junctions.log" || true
+  grep -E "^junctions|^total" "$OUT/$p.junctions.log" || true
   ls -l "$D/$p.ocwpkg" "$OUT/$p.ocwpkg" | awk '{print $5, $9}'
   sha256sum "$OUT/$p.ocwpkg"
   if [ "${LINT:-1}" = 1 ]; then

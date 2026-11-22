@@ -507,7 +507,11 @@ fn junction_reaches(pkg: &WorldPackage, g: &RoadGraph) -> Vec<([Option<f64>; 2],
 /// (d)); `junction` – within 30 m beyond a junction surface's reach;
 /// `other` – elsewhere.
 fn kink_cause(reach: &([Option<f64>; 2], Vec<f64>), s: f64, len: f64) -> &'static str {
-    if reach.1.iter().any(|&c| (c - s).abs() <= PROFILE_STEP_M + 1e-6) {
+    if reach
+        .1
+        .iter()
+        .any(|&c| (c - s).abs() <= PROFILE_STEP_M + 1e-6)
+    {
         return "crease";
     }
     let near = |r: Option<f64>, m: f64| r.is_some_and(|r| m <= r + 30.0);

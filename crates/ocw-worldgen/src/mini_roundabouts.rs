@@ -108,10 +108,11 @@ mod tests {
             let (lat, lon) = proj.unproject([x, z]);
             (lat, lon)
         };
-        let nodes: Vec<(i64, f64, f64)> = [(1, at(1.5, 0.0)), (2, at(-118.0, 0.0)), (3, at(10.0, 0.0))]
-            .into_iter()
-            .map(|(id, (lat, lon))| (id, lat, lon))
-            .collect();
+        let nodes: Vec<(i64, f64, f64)> =
+            [(1, at(1.5, 0.0)), (2, at(-118.0, 0.0)), (3, at(10.0, 0.0))]
+                .into_iter()
+                .map(|(id, (lat, lon))| (id, lat, lon))
+                .collect();
         let m = match_vertices(&g, &proj, &nodes);
         assert_eq!(m.vertices, vec![0]);
         assert!(m.fits(&g) && m.contains(0) && !m.contains(1));

@@ -1082,11 +1082,7 @@ fn try_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Result<Patch, &'static s
 
 /// The patch of [`try_patch`] before its outline is checked and meshed:
 /// the arms and the outline points (rounded as stored).
-fn patch_outline(
-    g: &RoadGraph,
-    adj: &[usize],
-    v: usize,
-) -> Result<(Patch, Outline), &'static str> {
+fn patch_outline(g: &RoadGraph, adj: &[usize], v: usize) -> Result<(Patch, Outline), &'static str> {
     let c = g.vertices[v];
     let raws: Vec<Raw> = adj
         .iter()
@@ -1167,14 +1163,17 @@ fn outline_at(
     if (0..n).any(|i| gap(i) < MIN_CORNER_DEG.to_radians()) {
         return Err("a fork: arms closer than 4 degrees");
     }
-    let fork_arm = |i: usize| {
-        gap(i) < FORK_DEG.to_radians() || gap((i + n - 1) % n) < FORK_DEG.to_radians()
-    };
+    let fork_arm =
+        |i: usize| gap(i) < FORK_DEG.to_radians() || gap((i + n - 1) % n) < FORK_DEG.to_radians();
     let caps: Vec<f64> = raws
         .iter()
         .enumerate()
         .map(|(i, r)| {
-            let max = if fork_arm(i) { FORK_MAX_MOUTH_M } else { MAX_MOUTH_M };
+            let max = if fork_arm(i) {
+                FORK_MAX_MOUTH_M
+            } else {
+                MAX_MOUTH_M
+            };
             max.min(MOUTH_SHARE * r.len)
         })
         .collect();
@@ -1192,7 +1191,10 @@ fn outline_at(
             .fold(0.0, f64::max);
         for &ei in &site.inner {
             let e = &g.edges[ei];
-            if [e.from, e.to].iter().any(|w| g.vertices[w.0 as usize] == r.origin) {
+            if [e.from, e.to]
+                .iter()
+                .any(|w| g.vertices[w.0 as usize] == r.origin)
+            {
                 other = other.max(e.width_m / 2.0);
             }
         }
@@ -1461,8 +1463,7 @@ fn stored_patch(g: &RoadGraph, v: usize, rec: &section::StoredPatch) -> Option<P
         for &m in &rec.members {
             c = add(c, *g.vertices.get(m as usize)?);
         }
-        if rec.inner.iter().any(|&e| e as usize >= g.edges.len()) || rec.members[0] as usize != v
-        {
+        if rec.inner.iter().any(|&e| e as usize >= g.edges.len()) || rec.members[0] as usize != v {
             return None;
         }
         Site {
@@ -1674,6 +1675,9 @@ pub const CLUSTER_EDGE_M: f64 = 12.0;
 /// A cluster has at most this many vertices.
 pub const CLUSTER_MAX: usize = 6;
 
+/// The mouths of a vertex's patch: (edge, its `from` end there, mouth m).
+type Mouths = Vec<(usize, bool, f64)>;
+
 /// The junctions of a road graph, computed per vertex when first asked.
 #[derive(Debug)]
 pub struct JunctionSet {
@@ -1681,7 +1685,7 @@ pub struct JunctionSet {
     rules: Vec<OnceLock<Option<Arc<VertexRule>>>>,
     /// Per vertex: the mouths of its patch alone (edge, its `from` end
     /// there, mouth m), `None` when it gets none (clusters, J3).
-    alone: Vec<OnceLock<Option<Vec<(usize, bool, f64)>>>>,
+    alone: Vec<OnceLock<Option<Mouths>>>,
     /// The package's stored junctions (section `JNCT`, spec §4.8.8 J2):
     /// which vertices have a rule and the patches' outlines, so nothing is
     /// searched at load. The result is the same as computed.
@@ -1800,9 +1804,12 @@ impl JunctionSet {
     fn alone(&self, g: &RoadGraph, v: usize) -> Option<&[(usize, bool, f64)]> {
         self.alone[v]
             .get_or_init(|| {
-                try_patch(g, &self.adjacency[v], v)
-                    .ok()
-                    .map(|p| p.arms.iter().map(|a| (a.edge, a.at_from, a.mouth_m)).collect())
+                try_patch(g, &self.adjacency[v], v).ok().map(|p| {
+                    p.arms
+                        .iter()
+                        .map(|a| (a.edge, a.at_from, a.mouth_m))
+                        .collect()
+                })
             })
             .as_deref()
     }
@@ -1845,7 +1852,11 @@ impl JunctionSet {
         while let Some(u) = stack.pop() {
             for &ei in &self.adjacency[u] {
                 let e = &g.edges[ei];
-                let w = if e.from.0 as usize == u { e.to.0 } else { e.from.0 } as usize;
+                let w = if e.from.0 as usize == u {
+                    e.to.0
+                } else {
+                    e.from.0
+                } as usize;
                 if w == u
                     || e.bridge
                     || e.tunnel

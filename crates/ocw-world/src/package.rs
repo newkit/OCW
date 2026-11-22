@@ -792,7 +792,7 @@ impl Sections {
         let junctions = (self.junctions.index.is_some()
             || self.junctions.strip_edges.is_some()
             || self.junctions.mini_roundabouts.is_some())
-            .then(|| std::sync::Arc::new(self.junctions));
+        .then(|| std::sync::Arc::new(self.junctions));
         WorldPackage {
             junctions,
             name: head.name,

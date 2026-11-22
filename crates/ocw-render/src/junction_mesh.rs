@@ -188,7 +188,11 @@ pub struct ShapedTile<'a> {
 /// A mini-roundabout's painted disc (J3): its radius, from the narrowest
 /// road there (m).
 pub fn mini_disc_radius(p: &Patch) -> f64 {
-    let narrow = p.arms.iter().map(|a| 2.0 * a.half).fold(f64::INFINITY, f64::min);
+    let narrow = p
+        .arms
+        .iter()
+        .map(|a| 2.0 * a.half)
+        .fold(f64::INFINITY, f64::min);
     (0.3 * narrow).clamp(MINI_DISC_MIN_M, MINI_DISC_MAX_M)
 }
 pub const MINI_DISC_MIN_M: f64 = 1.0;

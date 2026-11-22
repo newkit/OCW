@@ -171,7 +171,11 @@ fn the_side_road_starts_on_the_main_road() {
     // at its own grade (§4.8.8 Q6 (d)): 20 % × 1.25 m at its 5 m sample.
     let side = &g.edges[2];
     assert!(side.profile[0].abs() < 1e-6);
-    assert!((side.profile[1] - 0.25).abs() < 0.03, "{:?}", &side.profile[..4]);
+    assert!(
+        (side.profile[1] - 0.25).abs() < 0.03,
+        "{:?}",
+        &side.profile[..4]
+    );
     // Its strips, shaped for the junction, keep the package's heights.
     let js = JunctionSet::new(&g);
     for (ei, s) in fixtures::strips(&g) {
@@ -635,7 +639,11 @@ fn side_roads_keep_their_class_grade_after_the_blend() {
     // side road leaves the main road's edge (3.75 m out) at its own grade
     // (§4.8.8 Q6 (d)): 18 % × 1.25 m at its 5 m sample.
     assert_eq!(side.profile[0], g.edges[1].profile[0]);
-    assert!((side.profile[1] - 0.225).abs() < 0.03, "{:?}", &side.profile[..4]);
+    assert!(
+        (side.profile[1] - 0.225).abs() < 0.03,
+        "{:?}",
+        &side.profile[..4]
+    );
     // The main road is a plane along its grade: unchanged.
     for e in [0, 1] {
         for (a, b) in g.edges[e].profile.iter().zip(&g0.edges[e].profile) {
@@ -728,12 +736,19 @@ fn narrow_side_roads_leave_steep_roads_at_their_edge() {
     let st = reconcile_profiles(&mut g, &|_, _| true);
     assert_eq!(st.patches, 2, "{st:?}");
     assert_eq!(
-        (st.steep_room, st.steep_intervals, st.steep_other, st.steep_source),
+        (
+            st.steep_room,
+            st.steep_intervals,
+            st.steep_other,
+            st.steep_source
+        ),
         (0, 0, 0, 0),
         "{st:?}"
     );
     let t = &g.edges[4];
-    let d: Vec<f64> = (0..t.profile.len()).map(|i| sample_m(i, t.length_m())).collect();
+    let d: Vec<f64> = (0..t.profile.len())
+        .map(|i| sample_m(i, t.length_m()))
+        .collect();
     let gr = grades(&t.profile, &d);
     assert!(gr.iter().all(|x| x.abs() <= 0.25 + 0.01), "{gr:?}");
     for e in 0..4 {

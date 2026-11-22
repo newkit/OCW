@@ -1,6 +1,8 @@
 use super::*;
 use crate::graph::RoadClass;
-use crate::junction::fixtures::{crossing, dual_carriageway_t, fork, split, t_junction, t_junction_at};
+use crate::junction::fixtures::{
+    crossing, dual_carriageway_t, fork, split, t_junction, t_junction_at,
+};
 
 fn fixtures() -> Vec<RoadGraph> {
     vec![

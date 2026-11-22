@@ -2642,7 +2642,9 @@ fn junctions(
                 p.arms[i].mouth_m,
                 p.arms[i].has_corner()
             ),
-            Some(ocw_world::junction::EndRule::Inside(p)) => format!("inside the cluster at v{}", p.vertex),
+            Some(ocw_world::junction::EndRule::Inside(p)) => {
+                format!("inside the cluster at v{}", p.vertex)
+            }
             Some(ocw_world::junction::EndRule::Mitre(..)) => "mitre".into(),
             None => "none".into(),
         };
@@ -2706,7 +2708,41 @@ fn junctions(
                 near.len(),
                 m.vertices.len()
             );
+            for &v in m.vertices.iter().take(5) {
+                let q = g.vertices[v as usize];
+                println!("junctions (JMRB):   vertex {v} at {:.1},{:.1}", q[0], q[1]);
+            }
             data.mini_roundabouts = Some(m);
+        }
+        if let Some(g) = pkg.graph.as_ref() {
+            // J3's clusters and forks, with a few examples.
+            let js = ocw_world::junction::JunctionSet::new(g);
+            let (mut clusters, mut members, mut forks) = (0, 0, 0);
+            let mut ex = Vec::new();
+            for v in 0..g.vertices.len() {
+                let Some(p) = js.own_patch(g, v) else {
+                    continue;
+                };
+                if p.members.len() > 1 {
+                    clusters += 1;
+                    members += p.members.len();
+                    if ex.len() < 6 {
+                        ex.push(format!(
+                            "{} vertices at {:.1},{:.1}",
+                            p.members.len(),
+                            p.centre[0],
+                            p.centre[2]
+                        ));
+                    }
+                }
+                if p.arms.iter().any(|a| a.mouth_m > ocw_world::junction::MAX_MOUTH_M) {
+                    forks += 1;
+                }
+            }
+            println!(
+                "junctions (J3): {clusters} clusters of {members} vertices (e.g. {}); {forks} patches with a mouth beyond 25 m (forks)",
+                ex.join("; ")
+            );
         }
         println!("{}", junction_summary(&data));
         pkg.junctions = Some(std::sync::Arc::new(data));

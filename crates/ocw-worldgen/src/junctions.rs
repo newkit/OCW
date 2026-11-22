@@ -858,7 +858,14 @@ pub fn relimit_profile(
     max_grade: f64,
     max_change_per_m: f64,
 ) -> usize {
-    relimit_profile_creased(p, d, fixed, &vec![false; p.len()], max_grade, max_change_per_m)
+    relimit_profile_creased(
+        p,
+        d,
+        fixed,
+        &vec![false; p.len()],
+        max_grade,
+        max_change_per_m,
+    )
 }
 
 /// [`relimit_profile`] with creases: fixed points where the road may
@@ -1505,7 +1512,11 @@ pub fn seams(pkg: &WorldPackage, g: &RoadGraph) -> (Vec<Seam>, Vec<(usize, &'sta
             }
             if p.members.len() > 1 {
                 c = [p.centre[0], p.centre[2]];
-                edges = p.members.iter().flat_map(|&m| adj[m as usize].clone()).collect();
+                edges = p
+                    .members
+                    .iter()
+                    .flat_map(|&m| adj[m as usize].clone())
+                    .collect();
                 edges.sort_unstable();
                 edges.dedup();
             }

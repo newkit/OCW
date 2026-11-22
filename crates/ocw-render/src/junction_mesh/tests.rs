@@ -495,9 +495,11 @@ fn mini_roundabouts_get_a_painted_disc() {
         let h = p.height_at([f64::from(q[0]), f64::from(q[2])]).unwrap();
         assert!((q[1] - (h as f32 + lift)).abs() < 1e-4);
     }
-    assert!(shaped_meshes(&plain, &ctx)
-        .overlays
-        .uvs_b
-        .iter()
-        .all(|b| b[1] != MINI_DISC_CODE));
+    assert!(
+        shaped_meshes(&plain, &ctx)
+            .overlays
+            .uvs_b
+            .iter()
+            .all(|b| b[1] != MINI_DISC_CODE)
+    );
 }

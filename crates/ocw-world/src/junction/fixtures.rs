@@ -187,7 +187,9 @@ pub fn dual_carriageway_t() -> RoadGraph {
             Road::straight(&v, 0, 3, RoadClass::Secondary, 5.0, |s| s * 0.03),
             Road::straight(&v, 4, 1, RoadClass::Secondary, 5.0, |s| (s - 100.0) * 0.03),
             Road::straight(&v, 1, 5, RoadClass::Secondary, 5.0, |s| s * 0.03),
-            Road::straight(&v, 6, 0, RoadClass::Residential, 5.0, |s| (100.0 - s) * 0.06),
+            Road::straight(&v, 6, 0, RoadClass::Residential, 5.0, |s| {
+                (100.0 - s) * 0.06
+            }),
             Road::straight(&v, 0, 1, RoadClass::Secondary, 5.0, |_| 0.0),
         ],
     )

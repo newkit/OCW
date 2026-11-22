@@ -217,7 +217,11 @@ fn forks_get_a_patch_unless_too_narrow() {
     let p = patch_at(&g, 0);
     check_outline(&p);
     check_mouths(&g, &p);
-    assert!(p.arms.iter().any(|a| a.mouth_m > MAX_MOUTH_M), "{:?}", p.arms.iter().map(|a| a.mouth_m).collect::<Vec<_>>());
+    assert!(
+        p.arms.iter().any(|a| a.mouth_m > MAX_MOUTH_M),
+        "{:?}",
+        p.arms.iter().map(|a| a.mouth_m).collect::<Vec<_>>()
+    );
     assert!(p.arms.iter().all(|a| a.mouth_m <= FORK_MAX_MOUTH_M));
     assert!(JunctionSet::new(&fork(3.0)).patch(&fork(3.0), 0).is_none());
 }
@@ -532,7 +536,10 @@ fn junctions_without_a_surface_of_a_real_package() {
         let Some(reason) = js.fallback_reason(&g, v) else {
             continue;
         };
-        if matches!(reason, "the region border" | "a bridge or tunnel" | "a loop edge") {
+        if matches!(
+            reason,
+            "the region border" | "a bridge or tunnel" | "a loop edge"
+        ) {
             continue;
         }
         total += 1;
@@ -618,7 +625,9 @@ fn junctions_a_few_metres_apart_share_one_patch() {
         if *ei == 5 {
             continue;
         }
-        let sh = set.shape_strip(&g, *ei, &s.points, s.width_m / 2.0).unwrap();
+        let sh = set
+            .shape_strip(&g, *ei, &s.points, s.width_m / 2.0)
+            .unwrap();
         for q in &sh.points {
             let p2 = [f64::from(q[0]), f64::from(q[2])];
             let on_mouth = p.arms.iter().any(|a| a.mouth_dist(p2) < 1e-3);

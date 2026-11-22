@@ -129,7 +129,11 @@ impl JunctionIndex {
                     let c = [p.centre[0], p.centre[2]];
                     let cluster = p.members.len() > 1;
                     StoredRule::Patch(StoredPatch {
-                        members: if cluster { p.members.clone() } else { Vec::new() },
+                        members: if cluster {
+                            p.members.clone()
+                        } else {
+                            Vec::new()
+                        },
                         inner: p.inner.iter().map(|&e| e as u32).collect(),
                         arms: p
                             .arms
