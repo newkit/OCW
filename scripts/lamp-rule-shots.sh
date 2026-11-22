@@ -44,7 +44,6 @@ places=(
   "liechtenstein-junction|$li|$(at "$li" -4003,9991)|12|1=camera.orbit 160 35 18"
   "blackforest-village|$bf|$(at "$bf" -7891,-78220)|16|1=camera.orbit 160 35 18"
   "tenerife-town|$tf|$(at "$tf" 24860,-19030)|16|1=camera.orbit 160 30 16"
-  "tenerife-junction|$tf|$(at "$tf" -34371,-5934)|16|1=camera.orbit 160 35 18"
 )
 
 table=$out/index.md
