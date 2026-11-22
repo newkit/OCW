@@ -953,6 +953,10 @@ pub struct AvatarRig {
     /// The hands' shape nodes (shape, side, entity) and the shapes shown.
     hand_nodes: Vec<(HandShape, usize, Entity)>,
     hands_shown: [HandShape; 2],
+    /// The near model's lower lip and the mouth's pulses while the rider
+    /// is heard speaking (spec 14 Phase 4 Q24).
+    lower_lip: Option<Entity>,
+    mouth: ocw_assets::mouth::MouthAnim,
 }
 
 impl AvatarRig {
@@ -974,6 +978,11 @@ impl AvatarRig {
     /// The entity that rocks bike and rider (the marks' parent).
     pub fn sway_entity(&self) -> Entity {
         self.sway
+    }
+
+    /// How far the lips are open (0 … 1; tests, Q24).
+    pub fn mouth_open(&self) -> f32 {
+        self.mouth.open()
     }
 }
 
@@ -1235,14 +1244,19 @@ fn spawn_avatar(
             .node(name)
             .map_or(Entity::PLACEHOLDER, |i| bike_nodes_e[i])
     };
-    // The character editor's close-up looks at the local rider's head.
-    if is_local && !ghost {
+    // The character editor's close-up looks at the local rider's head
+    // (`camera.closeup face … --rider N` at another rider's, Q24 scenes).
+    if !ghost {
         let head = find(nodes::HEAD);
         if head != Entity::PLACEHOLDER {
-            commands
-                .entity(head)
-                .insert(crate::camera::RiderHead { root });
+            commands.entity(head).insert(crate::camera::RiderHead {
+                root,
+                rider: id,
+                local: is_local,
+            });
         }
+    }
+    if is_local && !ghost {
         for side in 0..2 {
             let hand = find(nodes::HAND[side]);
             if hand != Entity::PLACEHOLDER {
@@ -1288,6 +1302,10 @@ fn spawn_avatar(
             })
             .collect(),
         hands_shown: [HandShape::Relaxed; 2],
+        lower_lip: (!ghost)
+            .then(|| find(ocw_assets::rider::LIP_LOWER))
+            .filter(|e| *e != Entity::PLACEHOLDER),
+        mouth: ocw_assets::mouth::MouthAnim::new(id.0),
     };
     commands.entity(root).insert(rig);
     // The status signs (spec §2.6): worn at the head, the phone in the
@@ -1333,6 +1351,11 @@ fn animate(
     cameras: Query<&GlobalTransform, With<crate::camera::FollowCamera>>,
     mut transforms: Query<&mut Transform>,
     mut visibility: Query<&mut Visibility>,
+    // Who is heard speaking (the lips, Q24): the call and the dev fake.
+    (voice, fake): (
+        Option<Res<crate::voice::VoiceHud>>,
+        Option<Res<crate::voice::FakeSpeaking>>,
+    ),
 ) {
     let dt = time.delta_secs();
     let eye = cameras.iter().next().map(GlobalTransform::translation);
@@ -1398,6 +1421,26 @@ fn animate(
                 &mut transforms,
                 &mut visibility,
             );
+        }
+        // The lips while heard speaking (spec 14 Phase 4 Q24 (a)): the near
+        // model only, never under the X mouth.
+        if let Some(lip) = rig.lower_lip {
+            let speaking = crate::voice::heard_speaking(
+                voice.as_deref(),
+                fake.as_deref(),
+                avatar.id,
+                avatar.is_local,
+            );
+            let muted = input.signs.voice_muted;
+            let was = rig.mouth.open();
+            let open = rig
+                .mouth
+                .update(ocw_assets::mouth::moves(speaking, muted, !far), muted, dt);
+            if (open > 0.0 || was > 0.0)
+                && let Ok(mut t) = transforms.get_mut(lip)
+            {
+                t.translation = ocw_assets::rider::lower_lip_offset(open);
+            }
         }
         let Some(p) = p else {
             continue;
@@ -2229,6 +2272,93 @@ mod tests {
         let level = (params.crank - std::f32::consts::FRAC_PI_2).abs() < 0.01
             || (params.crank - 3.0 * std::f32::consts::FRAC_PI_2).abs() < 0.01;
         assert!(level, "crank {}", params.crank);
+    }
+
+    /// The lips while heard speaking (spec 14 Phase 4 Q24 (a)): the lower
+    /// lip of a speaking rider pulses; a muted one (the X mouth) and a
+    /// silent one stay closed; the own rider's moves while the own voice
+    /// is heard; far away (lod1) nothing moves; the dev command's fake
+    /// works without a call.
+    #[test]
+    fn the_lips_move_while_heard_speaking() {
+        let mut view = view(vec![[0.0, 0.0, 0.0], [0.0, 0.0, -500.0]]);
+        view.riders.push(rider(1, ProfileId::Road, true));
+        view.riders.push(rider(2, ProfileId::Road, false));
+        let mut muted = rider(3, ProfileId::Road, false);
+        muted.signs.voice_muted = true;
+        view.riders.push(muted);
+        view.riders.push(rider(4, ProfileId::Road, false));
+        let mut app = app(view);
+        app.insert_resource(crate::voice::VoiceHud {
+            visible: true,
+            self_speaking: true,
+            speaking: vec![RiderId(2), RiderId(3)],
+            ..Default::default()
+        });
+        let ids = [1, 2, 3, 4];
+        let mut max = [0.0f32; 4];
+        let mut lip_max = [0.0f32; 4];
+        for _ in 0..150 {
+            app.update();
+            let ents = app.world().resource::<RiderEntities>().0.clone();
+            for (k, id) in ids.iter().enumerate() {
+                let rig = app.world().get::<AvatarRig>(ents[&RiderId(*id)]).unwrap();
+                max[k] = max[k].max(rig.mouth_open());
+                let lip = rig.lower_lip.expect("the near model's lower lip");
+                let y = app.world().get::<Transform>(lip).unwrap().translation.y;
+                lip_max[k] = lip_max[k].max(-y);
+            }
+        }
+        assert!(max[0] > 0.3 && lip_max[0] > 0.001, "own rider: {max:?}");
+        assert!(max[1] > 0.3 && lip_max[1] > 0.001, "speaking: {max:?}");
+        assert_eq!((max[2], lip_max[2]), (0.0, 0.0), "muted: the X mouth");
+        assert_eq!((max[3], lip_max[3]), (0.0, 0.0), "silent");
+        // The own voice muted: the own lips close.
+        app.world_mut()
+            .resource_mut::<crate::voice::VoiceHud>()
+            .mic_muted = true;
+        for _ in 0..30 {
+            app.update();
+        }
+        let ents = app.world().resource::<RiderEntities>().0.clone();
+        let open = |app: &App, id: u32| {
+            app.world()
+                .get::<AvatarRig>(ents[&RiderId(id)])
+                .unwrap()
+                .mouth_open()
+        };
+        assert_eq!(open(&app, 1), 0.0);
+        // Far away only lod1 shows: nothing moves.
+        let cam = app
+            .world_mut()
+            .spawn((
+                Transform::from_xyz(0.0, 0.0, 400.0),
+                GlobalTransform::from_translation(Vec3::new(0.0, 0.0, 400.0)),
+                crate::camera::FollowCamera,
+            ))
+            .id();
+        for _ in 0..30 {
+            app.update();
+        }
+        let mut far_max = 0.0f32;
+        for _ in 0..60 {
+            app.update();
+            far_max = far_max.max(open(&app, 2));
+        }
+        assert_eq!(far_max, 0.0, "lod1 never moves");
+        // The dev command's fake speaking, near again, without a call.
+        app.world_mut().despawn(cam);
+        *app.world_mut().resource_mut::<crate::voice::VoiceHud>() = Default::default();
+        app.insert_resource(crate::voice::FakeSpeaking {
+            riders: vec![RiderId(4)],
+            own: false,
+        });
+        let mut fake_max = 0.0f32;
+        for _ in 0..60 {
+            app.update();
+            fake_max = fake_max.max(open(&app, 4));
+        }
+        assert!(fake_max > 0.3, "{fake_max}");
     }
 
     #[test]

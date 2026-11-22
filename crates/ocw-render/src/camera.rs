@@ -411,6 +411,10 @@ pub struct CloseUpShot {
     pub screen_x: f32,
     /// What it looks at: the face, or a hand (`camera.closeup`).
     pub on: CloseUpOn,
+    /// Whose face: another rider's (`camera.closeup face … --rider N`,
+    /// scenes such as the lips while speaking, Phase 4 Q24); `None`: the
+    /// own rider's.
+    pub rider: Option<ocw_core::RiderId>,
 }
 
 /// What a close-up looks at.
@@ -431,6 +435,7 @@ impl CloseUpShot {
             distance,
             screen_x: 0.0,
             on: CloseUpOn::Hand(side.min(1)),
+            rider: None,
         }
     }
 }
@@ -443,6 +448,7 @@ impl CloseUpShot {
         distance: 0.74,
         screen_x: 0.36,
         on: CloseUpOn::Face,
+        rider: None,
     };
     /// The face straight from the front (the glasses, the eyes).
     pub const FRONT: CloseUpShot = CloseUpShot {
@@ -451,6 +457,7 @@ impl CloseUpShot {
         distance: 0.72,
         screen_x: 0.36,
         on: CloseUpOn::Face,
+        rider: None,
     };
 }
 
@@ -483,11 +490,13 @@ pub fn close_up_eye(
     (eye, head - right * shot.screen_x * half_w)
 }
 
-/// Marks the head node of the local rider's avatar (the close-up's
-/// target), with the avatar's root.
+/// Marks the head node of a rider's avatar (the close-up's target), with
+/// the avatar's root, the rider and whether it is the local rider.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct RiderHead {
     pub root: Entity,
+    pub rider: ocw_core::RiderId,
+    pub local: bool,
 }
 
 /// Marks a hand node of the local rider's avatar (`camera.closeup`), with
@@ -1010,7 +1019,9 @@ pub(crate) fn follow(
             heads
                 .iter()
                 .find_map(|((head, hand), g)| match (shot.on, head, hand) {
-                    (CloseUpOn::Face, Some(h), _) => {
+                    (CloseUpOn::Face, Some(h), _)
+                        if shot.rider.map_or(h.local, |id| h.rider == id) =>
+                    {
                         Some((h.root, g.transform_point(FACE_IN_HEAD)))
                     }
                     (CloseUpOn::Hand(side), _, Some(h)) if h.side == side => {
@@ -1018,6 +1029,13 @@ pub(crate) fn follow(
                     }
                     _ => None,
                 })?;
+        // Another rider's face: where it was drawn (Q24 scenes).
+        if shot
+            .rider
+            .is_some_and(|id| Some(id) != view.local().map(|l| l.id))
+        {
+            return Some(at);
+        }
         let root = roots.get(root).ok()?;
         let local = root.affine().inverse().transform_point3(at);
         Some(rider.transform_point(local))
@@ -1045,9 +1063,14 @@ pub(crate) fn follow(
     // In a close-up the camera rides along: smoothed in the rider's frame
     // (in the world's it would trail a metre behind a rider at speed –
     // behind the head, 0.6 m in front of which it should be).
-    if head_now.is_some() {
+    // (Another rider's close-up rides along with that head.)
+    let other = close_up
+        .and_then(|c| c.rider)
+        .is_some_and(|id| Some(id) != view.local().map(|l| l.id));
+    if let Some(head) = head_now {
+        let anchor = if other { head } else { rider.translation };
         if let Some(last) = *close_rider {
-            let moved = rider.translation - last;
+            let moved = anchor - last;
             if moved.length() < 50.0 {
                 prev += moved;
                 if let Some(t) = (*smoothed_target).as_mut() {
@@ -1055,7 +1078,7 @@ pub(crate) fn follow(
                 }
             }
         }
-        *close_rider = Some(rider.translation);
+        *close_rider = Some(anchor);
     } else {
         *close_rider = None;
     }

@@ -866,6 +866,8 @@ mod tests {
         items.extend(opt::FACE_LINES);
         items.extend([
             rider::FACE,
+            rider::LIPS,
+            rider::LIP_LOWER,
             opt::FACE_JAW,
             opt::GLASSES_SPORT,
             opt::GLASSES_ROUND,
@@ -911,11 +913,11 @@ mod tests {
         for h in Helmet::ALL {
             let straps = node_tris(&m, h.node(), Some(DETAIL));
             assert!(!straps.is_empty(), "{h:?}");
-            for item in opt::MOUSTACHE
-                .iter()
-                .chain(&opt::BEARD)
-                .chain(&[rider::FACE])
-            {
+            for item in opt::MOUSTACHE.iter().chain(&opt::BEARD).chain(&[
+                rider::FACE,
+                rider::LIPS,
+                rider::LIP_LOWER,
+            ]) {
                 let hits = node_tris(&m, item, None)
                     .iter()
                     .flat_map(|t| [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])])
@@ -939,8 +941,11 @@ mod tests {
     #[test]
     fn the_glasses_clear_the_face() {
         let m = rider::build(Detail::High);
-        let face = node_tris(&m, rider::FACE, None);
+        let mut face = node_tris(&m, rider::FACE, None);
         assert!(!face.is_empty());
+        // The lips (Q24) in their own nodes.
+        face.extend(node_tris(&m, rider::LIPS, None));
+        face.extend(node_tris(&m, rider::LIP_LOWER, None));
         let edges = |t: &[[Vec3; 3]]| -> Vec<(Vec3, Vec3)> {
             t.iter()
                 .flat_map(|t| [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])])

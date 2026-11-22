@@ -9,7 +9,9 @@
 //! (§2.6 Q3: there is no setting).
 //!
 //! Console: `status.sign` shows the own signs and forces one for scenes and
-//! tests (local server only), `dev.bot_status` sets the bots' signs.
+//! tests (local server only), `dev.bot_status` sets the bots' signs,
+//! `dev.speaking` makes riders' lips move as if the voice call heard them
+//! speak (spec 14 Phase 4 Q24, [`FakeSpeaking`]).
 
 use bevy::prelude::*;
 use clap::{Arg, ArgAction, Command};
@@ -17,7 +19,7 @@ use ocw_client::client::ClientCore;
 use ocw_protocol::v1;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, Permission};
 use ocw_render::menu::InputContext;
-use ocw_render::voice::{VoiceHud, VoiceSigns};
+use ocw_render::voice::{FakeSpeaking, VoiceHud, VoiceSigns};
 
 /// Riding in VR with the headset on (spec §2.6: the OpenXR session
 /// *visible* or *focused*, or `--vr-sim`). Set by the VR session (§14
@@ -201,7 +203,56 @@ fn register_commands(app: &mut App) {
                 Err("not riding".into())
             }
         },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::Dev,
+        Command::new("dev.speaking")
+            .about("Show riders speaking without a voice call (spec 14 Phase 4 Q24): their lips move unless muted (the X mouth); no arguments: nobody")
+            .arg(
+                Arg::new("rider")
+                    .long("rider")
+                    .value_parser(clap::value_parser!(u32))
+                    .action(ArgAction::Append)
+                    .help("A rider id (a bot) shown speaking"),
+            )
+            .arg(
+                Arg::new("own")
+                    .long("own")
+                    .action(ArgAction::SetTrue)
+                    .help("The own rider speaks"),
+            ),
+        |world, m| {
+            let fake = fake_speaking(
+                m.get_many::<u32>("rider")
+                    .map(|v| v.copied().collect())
+                    .unwrap_or_default(),
+                m.get_flag("own"),
+            );
+            let text = describe_speaking(&fake);
+            world.insert_resource(fake);
+            Ok(text)
+        },
     ));
+}
+
+/// The fake speakers of `dev.speaking`.
+pub fn fake_speaking(riders: Vec<u32>, own: bool) -> FakeSpeaking {
+    let mut riders: Vec<ocw_core::RiderId> = riders.into_iter().map(ocw_core::RiderId).collect();
+    riders.sort_unstable();
+    riders.dedup();
+    FakeSpeaking { riders, own }
+}
+
+fn describe_speaking(f: &FakeSpeaking) -> String {
+    let mut who: Vec<String> = f.riders.iter().map(|r| format!("rider {}", r.0)).collect();
+    if f.own {
+        who.push("the own rider".into());
+    }
+    if who.is_empty() {
+        "nobody shown speaking".into()
+    } else {
+        format!("shown speaking: {}", who.join(", "))
+    }
 }
 
 #[cfg(test)]
@@ -216,6 +267,20 @@ mod tests {
         // The workshop scene is not one of §2.6 Q2's screens.
         assert!(!in_menu(Some(InputContext::Workshop)));
         assert!(!in_menu(None));
+    }
+
+    #[test]
+    fn dev_speaking_fakes_the_speakers() {
+        let f = fake_speaking(vec![3, 2, 3], true);
+        assert_eq!(f.riders, vec![ocw_core::RiderId(2), ocw_core::RiderId(3)]);
+        assert_eq!(
+            describe_speaking(&f),
+            "shown speaking: rider 2, rider 3, the own rider"
+        );
+        assert_eq!(
+            describe_speaking(&fake_speaking(Vec::new(), false)),
+            "nobody shown speaking"
+        );
     }
 
     #[test]

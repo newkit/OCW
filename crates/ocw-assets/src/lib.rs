@@ -48,6 +48,7 @@ pub mod manifest;
 pub mod materials;
 pub mod mesh;
 pub mod model;
+pub mod mouth;
 pub mod parts;
 pub mod pose;
 pub mod props;

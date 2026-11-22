@@ -587,7 +587,36 @@ pub mod face {
     pub const EAR_RADII: [f32; 3] = [0.0065, 0.016, 0.009];
     /// The lips' centre: where the status sign's X is (`wear/mark-mouth-cross`).
     pub const MOUTH: [f32; 3] = [0.0, -0.051, -0.0835];
-    pub const MOUTH_RADII: [f32; 3] = [0.019, 0.0048, 0.0055];
+    /// The closed lips' half extent (both lips, Q24).
+    pub const MOUTH_RADII: [f32; 3] = [0.019, 0.0055, 0.0061];
+    /// The two lips (Phase 4 Q24, v5.27): centre (from [`MOUTH`]) and
+    /// radii of the upper and the lower lip; closed they meet where the
+    /// one lips ellipsoid of v4.47 was (overlapping by 1 mm).
+    pub const UPPER_LIP: ([f32; 3], [f32; 3]) = ([0.0, 0.0025, 0.0], [0.019, 0.0029, 0.0055]);
+    pub const LOWER_LIP: ([f32; 3], [f32; 3]) = ([0.0, -0.0025, -0.0003], [0.018, 0.0031, 0.0058]);
+    /// The dark inside of the mouth, hidden in the closed lips and seen
+    /// between them while they open: centre (from [`MOUTH`]) and radii. It
+    /// is there twice, in the lips' node and in the lower lip's (dropping
+    /// with it), so the two fill the gap at every opening.
+    pub const MOUTH_INSIDE: ([f32; 3], [f32; 3]) = ([0.0, 0.0, 0.0012], [0.0125, 0.0036, 0.0032]);
+    /// How far the lower lip drops (m) and moves back (m) when the mouth
+    /// is fully open while speaking.
+    pub const LIP_DROP_M: f32 = 0.0065;
+    pub const LIP_BACK_M: f32 = 0.0008;
+}
+
+/// The lips' node under [`FACE`] (Phase 4 Q24): its origin at the mouth's
+/// centre [`face::MOUTH`]; holds the upper lip and the mouth's inside.
+pub const LIPS: &str = "face_lips";
+/// The lower lip under [`LIPS`]: dropped while the rider speaks
+/// ([`lower_lip_offset`]).
+pub const LIP_LOWER: &str = "face_lip_lower";
+
+/// Where the lower lip sits for the mouth open by `open` (0 closed … 1
+/// fully open while speaking): an offset in the [`LIPS`] node's frame.
+pub fn lower_lip_offset(open: f32) -> Vec3 {
+    let k = open.clamp(0.0, 1.0);
+    Vec3::new(0.0, -face::LIP_DROP_M * k, face::LIP_BACK_M * k)
 }
 
 /// The bib's seat on the pelvis (spec 2.6): rings from the hips up to
@@ -1753,14 +1782,6 @@ fn opt_node_face(m: &mut Model, head: usize, skull: Vec3, detail: Detail) {
             4,
         );
     }
-    // The lips.
-    p.slot("lips").ellipsoid(
-        at(MOUTH, 1.0),
-        Vec3::from(MOUTH_RADII),
-        Quat::IDENTITY,
-        3,
-        6,
-    );
     // The chin.
     p.slot("skin").ellipsoid(
         skull + Vec3::new(0.0, -0.088, -0.066),
@@ -1770,6 +1791,30 @@ fn opt_node_face(m: &mut Model, head: usize, skull: Vec3, detail: Detail) {
         4,
     );
     p.attach(m, i);
+    // The lips (Phase 4 Q24): the upper lip and the mouth's inside in
+    // [`LIPS`] at the mouth's centre, the lower lip in its own node, which
+    // the renderer drops while the rider speaks.
+    let mouth = at(MOUTH, 1.0);
+    let local = m.world(i).inverse().transform_point3(mouth);
+    let lips = m.add(Node::new(LIPS, Some(i), local));
+    let lower = m.add(Node::new(self::LIP_LOWER, Some(lips), Vec3::ZERO));
+    let ellipsoid = |p: &mut Parts, slot: &'static str, (c, r): ([f32; 3], [f32; 3]), bands| {
+        p.slot(slot).ellipsoid(
+            mouth + Vec3::from(c),
+            Vec3::from(r),
+            Quat::IDENTITY,
+            bands,
+            2 * bands,
+        );
+    };
+    let mut p = Parts::new();
+    ellipsoid(&mut p, "lips", UPPER_LIP, 4);
+    ellipsoid(&mut p, "eye", MOUTH_INSIDE, 3);
+    p.attach(m, lips);
+    let mut p = Parts::new();
+    ellipsoid(&mut p, "lips", LOWER_LIP, 4);
+    ellipsoid(&mut p, "eye", MOUTH_INSIDE, 3);
+    p.attach(m, lower);
 }
 
 /// Builds the rider model.
@@ -2799,18 +2844,23 @@ mod tests {
             far.node(FACE)
                 .is_some_and(|f| far.nodes[f].primitives.is_empty())
         );
-        let w = near.world(i);
         let skull = skull_centre();
         let slot = |name: &str| near.material(name).expect(name);
-        let centre = |mat: usize| {
-            let pts: Vec<Vec3> = near.nodes[i]
-                .primitives
-                .iter()
-                .filter(|p| p.material == mat)
-                .flat_map(|p| {
-                    p.positions
+        // The face's parts with the lips' nodes (Q24) under it.
+        let centre = |mat: usize, below: bool| {
+            let pts: Vec<Vec3> = (0..near.nodes.len())
+                .filter(|&k| k == i || (below && near.is_below(k, i)))
+                .flat_map(|k| {
+                    let w = near.world(k);
+                    near.nodes[k]
+                        .primitives
                         .iter()
-                        .map(|v| w.transform_point3(Vec3::from(*v)))
+                        .filter(|p| p.material == mat)
+                        .flat_map(move |p| {
+                            p.positions
+                                .iter()
+                                .map(move |v| w.transform_point3(Vec3::from(*v)))
+                        })
                 })
                 .collect();
             assert!(!pts.is_empty());
@@ -2819,9 +2869,11 @@ mod tests {
                 pts,
             )
         };
-        let (lips, _) = centre(slot("lips"));
+        let (lips, _) = centre(slot("lips"), true);
         assert!(lips.distance(Vec3::from(face::MOUTH)) < 2e-3, "{lips}");
-        let (eyes, eye_pts) = centre(slot("eye"));
+        // (The face's own node: the mouth's dark inside, slot `eye` too, is
+        // in the lips' node.)
+        let (eyes, eye_pts) = centre(slot("eye"), false);
         assert!(eyes.x.abs() < 1e-4 && (eyes.y - face::EYE[1]).abs() < 2e-3);
         assert!(eye_pts.iter().any(|p| p.x - skull.x > 0.025));
         assert!(eye_pts.iter().any(|p| p.x - skull.x < -0.025));
@@ -2845,6 +2897,75 @@ mod tests {
             let _ = shown;
             assert_eq!(girth(&near, i, &c), Vec3::ONE, "the head keeps its size");
         }
+    }
+
+    /// The lips open (Phase 4 Q24): two lips in their own nodes under the
+    /// face, the lower one in [`LIP_LOWER`] under [`LIPS`] at the mouth's
+    /// centre (where the X sign sits); the mouth's dark inside is hidden in
+    /// the closed lips (inside the faces of either lip) and shows between
+    /// them once the lower lip drops; the far model has no lips.
+    #[test]
+    fn the_lips_open_in_their_own_nodes() {
+        let near = build(Detail::High);
+        let far = build(Detail::Low);
+        assert!(far.node(LIPS).is_none() && far.node(LIP_LOWER).is_none());
+        let face_i = near.node(FACE).unwrap();
+        let lips = near.node(LIPS).expect("lips");
+        let lower = near.node(LIP_LOWER).expect("lower lip");
+        assert_eq!(near.nodes[lips].parent, Some(face_i));
+        assert_eq!(near.nodes[lower].parent, Some(lips));
+        let mouth = skull_centre() + Vec3::from(face::MOUTH);
+        let at = Vec3::from(near.world(lips).translation);
+        assert!(at.distance(mouth) < 1e-5, "{at} {mouth}");
+        let lips_mat = near.material("lips").unwrap();
+        let eye_mat = near.material("eye").unwrap();
+        assert!(
+            near.nodes[lips]
+                .primitives
+                .iter()
+                .any(|p| p.material == lips_mat)
+        );
+        assert!(
+            near.nodes[lower]
+                .primitives
+                .iter()
+                .any(|p| p.material == lips_mat)
+        );
+        let dark = |node: usize| -> Vec<Vec3> {
+            near.nodes[node]
+                .primitives
+                .iter()
+                .filter(|p| p.material == eye_mat)
+                .flat_map(|p| p.positions.iter().map(|v| Vec3::from(*v)))
+                .collect()
+        };
+        // The inside in the lips' node and its copy dropping with the
+        // lower lip (both frames have the mouth's centre as origin).
+        let (inside, dropping) = (dark(lips), dark(lower));
+        assert!(!inside.is_empty() && !dropping.is_empty());
+        // Inside a lip's inscribed polygon: well within its ellipsoid.
+        let within = |p: Vec3, (c, r): ([f32; 3], [f32; 3]), drop: Vec3| {
+            let q = (p - Vec3::from(c) - drop) / Vec3::from(r);
+            q.length_squared() < 0.7
+        };
+        let hidden = |open: f32| {
+            let d = lower_lip_offset(open);
+            inside
+                .iter()
+                .copied()
+                .chain(dropping.iter().map(|&p| p + d))
+                .all(|p| within(p, face::UPPER_LIP, Vec3::ZERO) || within(p, face::LOWER_LIP, d))
+        };
+        assert!(hidden(0.0), "closed: the inside is hidden");
+        assert!(!hidden(1.0), "open: the inside shows");
+        // Open, the two insides overlap: the gap is dark all the way.
+        let (r, d) = (face::MOUTH_INSIDE.1[1], -lower_lip_offset(1.0).y);
+        assert!(d < 1.9 * r, "{d} {r}");
+        // Open, the lower lip drops a few millimetres, never more.
+        assert_eq!(lower_lip_offset(0.0), Vec3::ZERO);
+        let o = lower_lip_offset(1.0);
+        assert!(o.y < -0.004 && o.y >= -0.007, "{o}");
+        assert_eq!(lower_lip_offset(2.0), o, "clamped");
     }
 
     /// Every hair style, moustache, beard, base body and age shows its
