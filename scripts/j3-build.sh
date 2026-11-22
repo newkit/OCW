@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Rebuilds the live world packages' junctions into data/j3-build/ (spec
 # 4.8.8 J3 with Q6 (d)) on a build machine: `world-builder junctions` per
-# package (with the folder's OSM extracts for the mini-roundabouts), the
+# package (with the folder's OSM extracts: the road condition, section
+# RCND, via `world-builder condition` first, and the mini-roundabouts), the
 # manifests and the route files beside them, the lint of the
 # rebuilt package next to the live one's and the J2b one's (if
 # data/j2b-build has it). The live packages are only read.
@@ -24,7 +25,11 @@ for p in "${pkgs[@]}"; do
   # The folder's OSM extracts: the mini-roundabouts (section JMRB).
   pbf=()
   for f in "$D/$dir"/*.osm.pbf; do [ -e "$f" ] && pbf+=(--pbf "$f"); done
-  "$WB" junctions --world "$D/$p.ocwpkg" --out "$OUT/$p.ocwpkg" "${pbf[@]}" > "$OUT/$p.junctions.log" 2>&1
+  # The road condition from OSM (section RCND; the live packages have
+  # none), then the junctions, whose step renews the manifest.
+  "$WB" condition --world "$D/$p.ocwpkg" --out "$OUT/$p.ocwpkg" "${pbf[@]}" > "$OUT/$p.condition.log" 2>&1
+  grep -E "^road condition|^  smoothness" "$OUT/$p.condition.log" || tail -5 "$OUT/$p.condition.log"
+  "$WB" junctions --world "$OUT/$p.ocwpkg" --out "$OUT/$p.ocwpkg" "${pbf[@]}" > "$OUT/$p.junctions.log" 2>&1
   end=$(date +%s.%N)
   echo "build $(echo "$end - $start" | bc) s, peak $(grep -E '^total ' "$OUT/$p.junctions.log" | awk '{print $NF}') GB"
   grep -E "^junctions|^total" "$OUT/$p.junctions.log" || true
