@@ -7032,6 +7032,7 @@ name = "ocw-sim"
 version = "0.2.5"
 dependencies = [
  "ocw-core",
+ "ocw-sky",
  "ocw-weather",
  "ocw-world",
  "serde",

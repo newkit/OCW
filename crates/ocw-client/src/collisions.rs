@@ -97,6 +97,11 @@ impl CollisionClient {
                     (true, collide::ContactKind::Slide) => {
                         "You slid out on the slippery road".to_owned()
                     }
+                    // Wet leaves in a corner (spec 4.6.2 Q6).
+                    (true, collide::ContactKind::Leaves) => "You slipped on wet leaves".to_owned(),
+                    (false, collide::ContactKind::Leaves) => {
+                        format!("{} slipped on wet leaves at km {km:.1}", u.display_name)
+                    }
                     (true, _) => format!("You crashed ({})", c.kind.label()),
                     (false, collide::ContactKind::Slide) => {
                         format!("{} slid out at km {km:.1}", u.display_name)
@@ -168,6 +173,13 @@ impl CollisionClient {
     pub fn notice(&self, own: Option<RiderId>, now_s: f64) -> Option<String> {
         let c = self.crash(own?, now_s)?;
         Some(match c.phase {
+            // Wet leaves in a corner (spec 4.6.2 Q6).
+            CrashPhase::Falling | CrashPhase::Down if c.kind == collide::ContactKind::Leaves => {
+                format!(
+                    "{LEAVES_NOTICE} - back on the bike in {:.1} s",
+                    c.remaining_s()
+                )
+            }
             CrashPhase::Falling | CrashPhase::Down => format!(
                 "Crash! ({}) - back on the bike in {:.1} s",
                 c.kind.label(),
@@ -177,6 +189,9 @@ impl CollisionClient {
         })
     }
 }
+
+/// The HUD's line when the own rider slipped on wet leaves (spec 4.6.2 Q6).
+pub const LEAVES_NOTICE: &str = "Wet leaves – slipped";
 
 /// The proximity cue (12D, an optional aid): the side someone is on
 /// (-1 left, +1 right, 0 in front) when within [`PROXIMITY_BESIDE_M`]
@@ -205,6 +220,35 @@ pub fn proximity(others: impl IntoIterator<Item = (f64, f64)>) -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Slipped on wet leaves (spec 4.6.2 Q6): the HUD's own line, in the
+    /// HUD's font.
+    #[test]
+    fn a_slip_on_wet_leaves_has_its_notice() {
+        let mut c = CollisionClient::default();
+        let own = RiderId(4);
+        c.crashes.insert(
+            own,
+            Seen {
+                crash: CrashView {
+                    phase: CrashPhase::Down,
+                    elapsed_s: 1.0,
+                    down_s: 3.0,
+                    kind: collide::ContactKind::Leaves,
+                    by: None,
+                    impulse: [0.0, -2.0],
+                    speed: 10.0,
+                },
+                at_s: 0.0,
+            },
+        );
+        let line = c.notice(Some(own), 0.0).unwrap();
+        assert!(
+            line.starts_with("Wet leaves – slipped - back on the bike in"),
+            "{line}"
+        );
+        assert!(ocw_render::font::covers(&line), "{line}");
+    }
 
     #[test]
     fn proximity_cue_beside_and_in_front() {

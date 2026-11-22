@@ -108,6 +108,12 @@ pub struct WeatherPhysics {
     pub rolling_factor: f64,
     /// Grip relative to a dry road ([`grip`]).
     pub grip: f64,
+    /// The road's wetness (0 dry – 1 soaked, [`Ground::wetness`]): wet
+    /// leaves on the road are slippery (spec 4.6.2 Q6).
+    pub wetness: f64,
+    /// Lying snow (0 – 1, [`Ground::snow_cover`]): from half on it hides
+    /// the leaves on the road, as the renderer draws it.
+    pub snow_cover: f64,
 }
 
 /// The wind relative to a rider's direction of travel (m/s).
@@ -183,6 +189,8 @@ impl WeatherPhysics {
             humidity: f64::from(w.humidity),
             rolling_factor: rolling_factor(ground),
             grip: grip(ground, temperature_c),
+            wetness: f64::from(ground.wetness()),
+            snow_cover: f64::from(ground.snow_cover()),
         }
     }
 
@@ -199,6 +207,8 @@ impl WeatherPhysics {
             wind: [0.0, 0.0],
             rolling_factor: 1.0,
             grip: 1.0,
+            wetness: 0.0,
+            snow_cover: 0.0,
             ..self
         }
     }

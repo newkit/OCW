@@ -113,6 +113,9 @@ struct Rider {
     mistake_drift: f64,
     /// A leaning rider's skid on a slippery road (S6 grip → 12B).
     skid: crate::collide::Skid,
+    /// The wet leaves' sway in the lateral offset now (spec 4.6.2 Q6,
+    /// `crate::leaves::apply_wobble`).
+    leaf_wobble: f64,
     joined_tick: u64,
     /// Takes part in collisions (bots at once; clients after joining, 12A).
     solid: bool,
@@ -280,6 +283,11 @@ pub struct Session {
     /// session's *weather affects physics* switch (Q4).
     weather: Option<crate::weather::WeatherPhysics>,
     weather_physics: bool,
+    /// Where leaves lie on the roads (the network's map) and the season
+    /// (set by the game server from its clock): wet leaves in the ride
+    /// (spec 4.6.2 Q6).
+    leaf_map: Option<Arc<ocw_world::leaves::LeafMap>>,
+    leaf_day: Option<Arc<ocw_sky::season::SeasonDay>>,
 }
 
 impl Session {
@@ -300,6 +308,8 @@ impl Session {
             world: crate::collide::WorldCache::default(),
             weather: None,
             weather_physics: false,
+            leaf_map: None,
+            leaf_day: None,
             route,
         }
     }
@@ -319,6 +329,7 @@ impl Session {
             route: first.route().clone(),
             god_area: god_mode::network_area(&net),
             world: crate::collide::WorldCache::new(net.obstacles().cloned()),
+            leaf_map: net.leaves().cloned(),
             free: Some((net, start)),
             ..Self::new(first.route().clone())
         }
@@ -702,6 +713,7 @@ impl Session {
                 bump: None,
                 avoid: Default::default(),
                 skid: Default::default(),
+                leaf_wobble: 0.0,
                 mistake_until: 0,
                 mistake_drift: 0.0,
                 joined_tick: self.tick,
@@ -1110,6 +1122,39 @@ impl Session {
         self.weather_physics
     }
 
+    /// Where leaves lie on the roads (spec 4.6.2 Q6; a free or route ride
+    /// takes its network's).
+    pub fn set_leaf_map(&mut self, map: Option<Arc<ocw_world::leaves::LeafMap>>) {
+        self.leaf_map = map;
+    }
+
+    /// Whether the session knows where leaves lie (spec 4.6.2 Q6).
+    pub fn has_leaf_map(&self) -> bool {
+        self.leaf_map.is_some()
+    }
+
+    /// The season the leaves lie in (spec 4.6.2 Q6): the game server sets
+    /// it from its clock (`crate::leaves::LeafSeason`).
+    pub fn set_leaf_season(&mut self, day: Option<Arc<ocw_sky::season::SeasonDay>>) {
+        self.leaf_day = day;
+    }
+
+    /// The map and the season of the wet leaves, when both are known.
+    pub fn leaf_ground(&self) -> Option<crate::leaves::LeafGround> {
+        Some(crate::leaves::LeafGround {
+            map: self.leaf_map.clone()?,
+            day: self.leaf_day.clone()?,
+        })
+    }
+
+    /// Whether a group ride is running (no slides on wet leaves there,
+    /// spec 4.6.2 Q6).
+    pub fn group_ride_running(&self) -> bool {
+        self.event.as_ref().is_some_and(|e| {
+            e.phase != event::Phase::Finished && matches!(e.kind, EventKind::GroupRide { .. })
+        })
+    }
+
     /// The organiser's weather-physics rule for the current event (Q4: off
     /// unless enabled); `false` without an event.
     pub fn set_event_weather_physics(&mut self, on: bool) -> bool {
@@ -1220,6 +1265,12 @@ impl Session {
             })
             .unwrap_or_default();
         let mut abandons: Vec<(RiderId, event::DnfReason)> = Vec::new();
+        // Wet leaves on the road (spec 4.6.2 Q6): a little speed and a
+        // wobble for everyone; with damage on, never in group rides, a
+        // slide in a corner for client riders.
+        let leaves = self.leaf_ground();
+        let leaf_slides =
+            damage_on && mode == crate::collide::Mode::Full && !self.group_ride_running();
         for (id, rider) in &mut self.riders {
             let d = rider.state.distance;
             if rider.control == Control::Echo {
@@ -1404,6 +1455,9 @@ impl Session {
                 braking: rider.input.brake || fx.held,
             };
             let (speed_before, heading_before) = (rider.state.speed, rider.state.heading);
+            let slick =
+                crate::leaves::slick(leaves.as_ref(), weather.as_ref(), track, &rider.state);
+            let on_leaves = weather.as_ref().map(|w| crate::leaves::on_leaves(w, slick));
             ride::tick_in(
                 &mut rider.state,
                 &fx.profile(&rider.effective),
@@ -1412,9 +1466,40 @@ impl Session {
                 &mut rider.scraping,
                 track,
                 drag,
-                weather.as_ref(),
+                on_leaves.as_ref(),
                 SIM_DT,
             );
+            let limit = if rider.wild {
+                physics::WILD_LIMIT_M
+            } else {
+                physics::lateral_limit(track.road_width_at(rider.state.distance))
+            };
+            crate::leaves::apply_wobble(&mut rider.state, slick, &mut rider.leaf_wobble, limit);
+            if leaf_slides
+                && rider.control == Control::Client
+                && crate::leaves::slides(
+                    *id,
+                    tick,
+                    crate::leaves::slide_hazard(
+                        slick,
+                        rider.state.speed,
+                        rider.state.turn_curvature,
+                    ),
+                    SIM_DT,
+                )
+            {
+                skids.push((
+                    *id,
+                    crate::collide::Response {
+                        crash: Some(crate::leaves::slide_hit(
+                            rider.state.speed,
+                            rider.effective.rider_mass_kg + rider.effective.bike_mass_kg,
+                            rider.state.turn_curvature,
+                        )),
+                        ..Default::default()
+                    },
+                ));
+            }
             // A lean further than the wet road holds skids (S6 → 12B; only
             // with collisions on and less grip than dry: else nothing).
             let skid = crate::collide::skid(

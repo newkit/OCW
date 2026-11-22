@@ -44,8 +44,9 @@ pub const SEASON_RANGE: (f32, f32) = (0.6, 1.6);
 /// Share of the satellite colour in the far colour map.
 pub const SATELLITE_WEIGHT: f32 = 0.7;
 /// Days per season bucket: the tiles are rebuilt when the date moves on
-/// by this much (time machine, long sessions).
-pub const BUCKET_DAYS: u32 = 4;
+/// by this much (time machine, long sessions). The same buckets as the
+/// physics of wet leaves (spec 4.6.2 Q6).
+pub use ocw_sky::season::BUCKET_DAYS;
 
 /// sRGB (0–255) to linear.
 pub fn lin(c: u8) -> f32 {
@@ -207,15 +208,9 @@ pub fn class_tints(
     })
 }
 
-/// The season bucket of a day of the year (changes every [`BUCKET_DAYS`]).
-pub fn season_bucket(day_of_year: u32) -> u32 {
-    day_of_year.saturating_sub(1) / BUCKET_DAYS
-}
-
-/// The day of the year a bucket stands for (its middle).
-pub fn bucket_day(bucket: u32) -> f64 {
-    f64::from(bucket * BUCKET_DAYS) + f64::from(BUCKET_DAYS) / 2.0 + 0.5
-}
+/// The season bucket of a day of the year (changes every [`BUCKET_DAYS`])
+/// and the day a bucket stands for (`ocw_sky::season`).
+pub use ocw_sky::season::{bucket_day, season_bucket};
 
 /// The far colour of a cell (sRGB 0–1): the class colour `class_rgb` with
 /// the satellite colour laid over it.

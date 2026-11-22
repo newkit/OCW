@@ -238,6 +238,9 @@ pub struct GameServer {
     fetcher: Option<std::sync::Mutex<Box<dyn realweather::WeatherFetcher>>>,
     /// (lat, lon) of the course's local metres.
     geo_origin: Option<(f64, f64)>,
+    /// The season the leaves on the road lie in (spec 4.6.2 Q6), from the
+    /// world clock at the course's place.
+    leaf_season: ocw_sim::leaves::LeafSeason,
     /// The scene height (m) of the place real weather was last applied
     /// for: its pressure holds there (spec §14 Phase 9, S6).
     real_pressure_y_m: Option<f64>,
@@ -443,6 +446,7 @@ impl GameServer {
             real,
             fetcher: None,
             geo_origin,
+            leaf_season: Default::default(),
             real_pressure_y_m: None,
             accounts: BTreeMap::new(),
             photos: BTreeMap::new(),
@@ -1993,6 +1997,13 @@ impl GameServer {
         let t0 = self.session_time_s();
         let physics = self.weather_physics_at(t0);
         self.session.set_weather(Some(physics));
+        // The season of the wet leaves on the road (spec 4.6.2 Q6): only
+        // where the world has a leaf map.
+        if self.session.has_leaf_map() {
+            let place = self.geo_origin.unwrap_or(ocw_sky::zone::DEFAULT_PLACE);
+            let day = self.leaf_season.day_at(self.clock.now(t0), place);
+            self.session.set_leaf_season(Some(day));
+        }
         self.session.step();
         let t = self.session_time_s();
         self.weather.tick(t);

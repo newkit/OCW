@@ -541,7 +541,8 @@ pub fn hardness(kind: ContactKind) -> f64 {
         ContactKind::RearEnd => 0.5,
         ContactKind::WheelTouch | ContactKind::WheelToWheel => 0.3,
         ContactKind::Side => 0.2,
-        ContactKind::Slide => 0.25,
+        // Wet leaves: the same lowside as a slide (spec 4.6.2 Q6).
+        ContactKind::Slide | ContactKind::Leaves => 0.25,
     }
 }
 

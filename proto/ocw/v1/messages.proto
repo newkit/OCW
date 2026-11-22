@@ -1258,6 +1258,9 @@ enum ContactKind {
   // Slid out on a slippery road (Phase 9 S6 grip → Phase 12): leaning
   // further than the wet road holds.
   CONTACT_KIND_SLIDE = 9;
+  // Slipped on wet leaves in a corner (spec 4.6.2 Q6; damage on, never in
+  // group rides).
+  CONTACT_KIND_LEAVES = 10;
 }
 
 message CrashState {
