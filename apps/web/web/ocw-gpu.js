@@ -147,8 +147,8 @@
     return !q.has(FAILED_PARAM) && q.get("gpu") !== "webgl2";
   }
 
-  // The page's own automatic reloads (a WebGPU fallback, a lost WebGL
-  // context): at most one in RELOAD_WINDOW_MS per tab (sessionStorage, it
+  // The page's own automatic reloads after a lost WebGL context (the
+  // WebGPU fallback cannot loop: `mayFallBack`): at most one in RELOAD_WINDOW_MS per tab (sessionStorage, it
   // survives the reload), so a failure that comes back shows a message
   // instead of reloading forever. `now`: ms (Date.now()). True: reload
   // (and the reload is recorded); false: show the message.

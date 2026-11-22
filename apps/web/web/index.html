@@ -817,10 +817,9 @@
       // makes the renderer fail too: that is the context's handler's.
       if (gpuContext.lost) { contextLost(why); return; }
       // Once, from a WebGPU the page chose, never from WebGL 2 and never
-      // twice in ten minutes (the iPhone's restarts, 2026-11-22): a failure
-      // that comes back shows the error instead of reloading forever.
-      if (ocwGpuChoice.mayFallBack(gpu, location.href, hasWebgl2())
-        && ocwGpuChoice.mayReload(tabStorage, Date.now(), why)) {
+      // from a fallback page (the iPhone's restarts, 2026-11-22): a failure
+      // there shows the error instead of reloading forever.
+      if (ocwGpuChoice.mayFallBack(gpu, location.href, hasWebgl2())) {
         ocwGpuChoice.remember(pageStorage, gpuFacts.ua, why, new Date().toISOString().slice(0, 10),
           config.build || "");
         status.className = "loading";
