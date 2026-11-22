@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use ocw_core::RiderId;
 use ocw_protocol::v1;
 
-use crate::audience::{HeardBy, Hearing, Listen};
+use crate::audience::{HeardBy, Hearing, Listen, MyVoice};
 use crate::backend::{BackendCommand, BackendEvent, VoiceBackend};
 use crate::device;
 use crate::echo::{self, ECHO_IDENTITY, EchoConfig, EchoParams};
@@ -32,7 +32,10 @@ pub const TALKED_RECENTLY_S: f64 = 5.0;
 /// switches are kept in [`MuteState`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct VoiceSettings {
-    /// Voice chat at all (on by default: always on, like a call).
+    /// Voice chat at all (on by default: always on, like a call). The
+    /// apps keep it on: there is no single voice off any more (spec §7.1.7
+    /// Q16 – the old one is *My voice* and *I hear* both off, the rider
+    /// stays in the call with the X mouth and the headphones).
     pub enabled: bool,
     /// Attenuate by distance and hear only the nearest riders.
     pub spatial: bool,
@@ -44,9 +47,12 @@ pub struct VoiceSettings {
     /// Microphone and speaker by name (`None`: the system default).
     pub input: Option<String>,
     pub output: Option<String>,
-    /// *Who hears me* (spec §7.1.7 Q8; default no one).
-    pub heard_by: HeardBy,
-    /// *Voice room*: whom the rider listens to (spec §7.1.3).
+    /// *My voice*'s audience (spec §7.1.7 Q16, `voice.my_voice`): whom the
+    /// voice reaches while it is on; its on / off is the microphone
+    /// ([`MuteState::mic_muted`], every ride starts off).
+    pub my_voice: MyVoice,
+    /// *I hear*: whom the rider listens to (spec §7.1.3, Q16;
+    /// `voice.i_hear`).
     pub listen: Listen,
     /// The first call's notice is still to be shown (spec §7.1.2;
     /// `voice.first_call_notice`, shown by the apps' driver).
@@ -62,7 +68,7 @@ impl Default for VoiceSettings {
             max_voices: SpatialConfig::default().max_voices,
             input: None,
             output: None,
-            heard_by: HeardBy::default(),
+            my_voice: MyVoice::default(),
             listen: Listen::default(),
             notice: true,
         }
@@ -505,11 +511,23 @@ impl VoiceController {
         riders::blocks_for(&self.prefs, &self.scope)
     }
 
-    /// The audience to tell the game server (spec §7.1.7 Q8, §7.1.3):
-    /// *Who hears me*, *Voice room* and the selected riders of this scope.
+    /// Who receives the own voice (spec §7.1.7 Q16): no one while *My
+    /// voice* is off (the microphone muted), else its audience.
+    pub fn heard_by(&self) -> HeardBy {
+        self.settings.my_voice.heard_by(!self.mute.mic_muted)
+    }
+
+    /// *My voice* is on: the microphone is not muted (spec §7.1.7 Q16).
+    pub fn my_voice_on(&self) -> bool {
+        !self.mute.mic_muted
+    }
+
+    /// The audience to tell the game server (spec §7.1.7 Q8, Q16, §7.1.3):
+    /// who hears the rider ([`Self::heard_by`]), *I hear* and the selected
+    /// riders of this scope.
     pub fn server_audience(&self) -> v1::VoiceAudience {
         crate::audience::audience_message(
-            self.settings.heard_by,
+            self.heard_by(),
             self.settings.listen,
             riders::selected_for(&self.prefs, &self.scope),
         )
@@ -568,8 +586,8 @@ impl VoiceController {
     ///
     /// - in a group room everybody but the riders blocked or kept apart
     ///   (spec §7.1.7 Q9; `None` when nobody is denied);
-    /// - in the session and event rooms (spec §7.1.7 Q6, Q8): nobody with
-    ///   *Who hears me: No one* or before the game server said; else the
+    /// - in the session and event rooms (spec §7.1.7 Q6, Q8, Q16): nobody
+    ///   while *My voice* is off or before the game server said; else the
     ///   riders the game server lets hear the rider (`heard_by`: in range,
     ///   their room, the own selection), never a blocked one – a block
     ///   always wins.
@@ -596,7 +614,7 @@ impl VoiceController {
                 .filter_map(|p| p.rider)
                 .chain(self.apart.iter().copied())
                 .collect();
-            let allowed: Vec<String> = match (self.settings.heard_by, &self.hearing) {
+            let allowed: Vec<String> = match (self.heard_by(), &self.hearing) {
                 (HeardBy::NoOne, _) | (_, None) => Vec::new(),
                 (heard_by, Some(h)) => h
                     .heard_by
@@ -978,6 +996,8 @@ impl VoiceController {
             .participants
             .values()
             .filter(|p| !p.muted_by_me && !p.blocked_by_me && !p.apart)
+            // *I hear: nobody* (spec §7.1.7 Q16): no voice, in any room.
+            .filter(|_| listen != Listen::Nobody)
             .filter(|p| group || (p.may_hear && (listen == Listen::Everybody || p.selected)))
             .collect();
         let pct = |identity: &str| {
@@ -1221,11 +1241,11 @@ mod tests {
         }
     }
 
-    /// *Who hears me: All nearby* (the tests' usual case; the default is
-    /// no one).
+    /// *My voice: Everybody* (the default audience; the tests' usual case
+    /// with the microphone on).
     fn nearby() -> VoiceSettings {
         VoiceSettings {
-            heard_by: HeardBy::Nearby,
+            my_voice: MyVoice::Everybody,
             ..Default::default()
         }
     }
@@ -1806,14 +1826,15 @@ mod tests {
         assert_eq!(last_subscribers(&b.take_sent()), Some(None), "group: open");
     }
 
-    /// *Who hears me* (spec §7.1.7 Q8): No one (the default) allows
-    /// nobody, before the call connects; All nearby the riders the server
-    /// lists; Selected riders only the selected among them; a block always
-    /// wins.
+    /// *My voice* (spec §7.1.7 Q8, Q16): off (every ride starts so)
+    /// allows nobody, before the call connects; on · Everybody the riders
+    /// the server lists; on · Selected only the selected among them; a
+    /// block always wins; off again allows nobody.
     #[test]
-    fn who_hears_me_sets_the_microphone_permissions() {
-        let (mut c, b) = controller(VoiceSettings::default(), MuteState::default());
-        assert_eq!(c.settings().heard_by, HeardBy::NoOne);
+    fn my_voice_sets_the_microphone_permissions() {
+        let (mut c, b) = controller(VoiceSettings::default(), MuteState::joining(false));
+        assert_eq!(c.heard_by(), HeardBy::NoOne, "joined with My voice off");
+        assert_eq!(c.server_audience().heard_by(), v1::VoiceHeardBy::NoOne);
         c.new_session(true);
         c.set_human_riders(3);
         c.update(0.0, &[]);
@@ -1856,8 +1877,9 @@ mod tests {
                 .any(|s| matches!(s, BackendCommand::SetSubscribers(_))),
             "still no one"
         );
-        // All nearby: whom the server lists.
-        c.set_settings(nearby());
+        // On · Everybody: whom the server lists.
+        c.set_mic(Switch::Off);
+        assert_eq!(c.heard_by(), HeardBy::Nearby);
         c.update(0.3, &[]);
         assert_eq!(
             last_subscribers(&b.take_sent()),
@@ -1887,7 +1909,7 @@ mod tests {
             .into(),
         );
         c.set_settings(VoiceSettings {
-            heard_by: HeardBy::Selected,
+            my_voice: MyVoice::Selected,
             ..Default::default()
         });
         c.update(0.4, &[]);
@@ -1903,10 +1925,38 @@ mod tests {
             ["Bea Climber"],
             "a blocked rider is not sent"
         );
-        // No one again.
-        c.set_settings(VoiceSettings::default());
+        // My voice off (M): no one again, the audience kept.
+        c.set_mic(Switch::On);
         c.update(0.5, &[]);
         assert_eq!(last_subscribers(&b.take_sent()), Some(Some(vec![])));
+        assert_eq!(c.server_audience().heard_by(), v1::VoiceHeardBy::NoOne);
+        assert_eq!(c.settings().my_voice, MyVoice::Selected);
+    }
+
+    /// *I hear: nobody* (spec §7.1.7 Q16): no voice is subscribed – in the
+    /// group room too – while the own microphone still reaches the others
+    /// the server lists; back to everybody hears them again.
+    #[test]
+    fn i_hear_nobody_subscribes_to_nobody() {
+        let (mut c, b) = connected();
+        c.set_settings(VoiceSettings {
+            listen: Listen::Nobody,
+            ..nearby()
+        });
+        c.update(1.0, &[peer(2, 5.0), peer(3, 5.0)]);
+        assert!(heard(&c).is_empty(), "{:?}", heard(&c));
+        assert!(
+            b.take_sent().contains(&BackendCommand::Subscribe {
+                identity: "rider-2".into(),
+                on: false
+            }),
+            "unsubscribed"
+        );
+        assert_eq!(c.server_audience().listen(), v1::VoiceListen::Nobody);
+        assert_eq!(c.heard_by(), HeardBy::Nearby, "others may still hear me");
+        c.set_settings(nearby());
+        c.update(1.1, &[peer(2, 5.0), peer(3, 5.0)]);
+        assert_eq!(heard(&c), ["rider-2", "rider-3"]);
     }
 
     /// *Voice room: Selected riders* (spec §7.1.3): only the selected

@@ -16,10 +16,12 @@
 //!   listens to *Voice room: Selected riders* and S is among them (Q20:
 //!   selected riders are always audible); with the Echo rider on either
 //!   side the Echo rider's wider range ([`ECHO_GRANT_M`], [`ECHO_KEEP_M`]);
-//! - **Who hears me** of S (Q8): *All nearby*, or *Selected riders* with L
-//!   among S's selection (*No one*, the default, lets nobody hear S);
-//! - **Voice room** of L (§7.1.3): *Everybody*, or *Selected riders* with S
-//!   among L's selection;
+//! - **My voice** of S (Q8, Q16; sent as *Who hears me*): on · Everybody
+//!   (`NEARBY`), or on · Selected (`SELECTED`) with L among S's selection
+//!   (off – `NO_ONE`, the wire's default, and how every ride starts – lets
+//!   nobody hear S);
+//! - **I hear** of L (§7.1.3, Q16): *everybody*, or *selected* with S
+//!   among L's selection; *nobody* receives no voice at all;
 //! - **no block** between them in either direction (Q9) – a block always
 //!   wins, also over a selection.
 //!
@@ -64,12 +66,15 @@ pub enum HeardBy {
     Selected,
 }
 
-/// *Voice room* (spec §7.1.3).
+/// *I hear* (spec §7.1.3, §7.1.7 Q16; before *Voice room*).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Listen {
     #[default]
     Everybody,
     Selected,
+    /// Nobody: the rider receives no voice (Q16) and every viewer in the
+    /// call sees its headphones ([`crate::headphones`]).
+    Nobody,
 }
 
 /// A rider's audience as the server keeps it: the two settings and the
@@ -93,6 +98,7 @@ impl Audience {
             listen: match a.listen() {
                 v1::VoiceListen::Everybody => Listen::Everybody,
                 v1::VoiceListen::Selected => Listen::Selected,
+                v1::VoiceListen::Nobody => Listen::Nobody,
             },
             selected: voice_block::Blocks::from_wire(&v1::VoiceBlocks {
                 account_ids: a.selected_account_ids.clone(),
@@ -124,7 +130,13 @@ impl Audience {
         match self.listen {
             Listen::Everybody => true,
             Listen::Selected => self.selected.blocks(speaker),
+            Listen::Nobody => false,
         }
+    }
+
+    /// Hears nobody (*I hear: nobody*, spec §7.1.7 Q16).
+    pub fn hears_nobody(&self) -> bool {
+        self.listen == Listen::Nobody
     }
 
     /// Hears `speaker` at any distance (spec §7.1.7 Q20): listens to
@@ -527,6 +539,36 @@ mod tests {
         members[2].place = Place::Route(311.0);
         let h = hearing(&members, &none, &BTreeMap::new(), None);
         assert_eq!(ids(&h[&1].heard_by), [2]);
+    }
+
+    /// *I hear: nobody* (spec §7.1.7 Q16): the rider receives no voice,
+    /// not even a selected one beside it, while the others still receive
+    /// its own.
+    #[test]
+    fn i_hear_nobody_receives_no_voice() {
+        let none = BTreeMap::new();
+        let mut deaf = nearby();
+        deaf.listen = Listen::Nobody;
+        deaf.selected = voice_block::Blocks::from_wire(&v1::VoiceBlocks {
+            account_ids: vec![],
+            names: vec!["Bea Climber".into()],
+        });
+        let members = vec![
+            member(1, "Ada Rider", 0.0, deaf),
+            member(2, "Bea Climber", 2.0, nearby()),
+            member(3, "Cleo Sprinter", 4.0, nearby()),
+        ];
+        let h = hearing(&members, &none, &BTreeMap::new(), None);
+        assert!(h[&1].may_hear.is_empty(), "{:?}", h[&1]);
+        assert_eq!(ids(&h[&1].heard_by), [2, 3], "the others still hear Ada");
+        assert_eq!(ids(&h[&2].may_hear), [1, 3]);
+        assert!(!h[&2].heard_by.contains(&RiderId(1)));
+        assert!(members[0].audience.hears_nobody());
+        let a = Audience::from_wire(&v1::VoiceAudience {
+            listen: v1::VoiceListen::Nobody as i32,
+            ..Default::default()
+        });
+        assert!(a.hears_nobody());
     }
 
     #[test]

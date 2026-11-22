@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use ocw_core::RiderId;
 use ocw_protocol::v1;
-use ocw_voice::audience::{HeardBy, Hearing};
+use ocw_voice::audience::{Hearing, MyVoice};
 use ocw_voice::backend::{BackendCommand, BackendEvent, VoiceBackend};
 use ocw_voice::livekit::LiveKitBackend;
 use ocw_voice::mix::{FRAME_SAMPLES, VOICE_RATE};
@@ -93,7 +93,7 @@ impl Trio {
                 let mut c = VoiceController::new(
                     Box::new(b.clone()),
                     VoiceSettings {
-                        heard_by: HeardBy::Nearby,
+                        my_voice: MyVoice::Everybody,
                         ..Default::default()
                     },
                     MuteState::default(),

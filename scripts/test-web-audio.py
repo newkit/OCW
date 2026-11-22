@@ -562,18 +562,19 @@ def part_livekit(r, port, a, procs):
         r.click()
         ok[name] = r.wait(f"{name} in the call", lambda: (r.voice() or {}).get("status") == "connected", 40)
     r.check("livekit: all pages joined the real LiveKit room", all(ok.values()), ok)
-    # Every shared ride is joined muted and heard by no one (spec §7.1.7
-    # Q7, Q8): each page checks, then unmutes and lets all nearby hear it.
+    # Every shared ride starts with My voice off – muted and heard by no
+    # one (spec §7.1.7 Q7, Q16): each page checks, then turns it on for
+    # everybody nearby.
     muted = {}
     for name in names:
         r.use(name)
         v = r.voice() or {}
         muted[name] = (v.get("mic_muted"), v.get("heard_by"), (v.get("hearing") or {}).get("heard_by"))
-    r.check("livekit: every page joins muted, heard by no one",
+    r.check("livekit: every page joins with My voice off, heard by no one",
             all(m[0] is True and m[1] == "no_one" and not m[2] for m in muted.values()), muted)
     for name in names:
         r.use(name)
-        r.console("set voice.heard_by nearby")
+        r.console("set voice.my_voice everybody")
         r.console("voice.mute-mic off")
     # Voices are heard only within 10 m (spec §7.1.7 Q20): the pages stop
     # pedalling and stand together at 2.0 km (8 % up: at 0 W nobody rolls).
@@ -723,7 +724,7 @@ def livekit_range(r, names, joined):
     # to Voice room = Selected riders with Ada.
     r.use("Cleo")
     r.console("teleport 0.9")
-    r.console("set voice.room selected")
+    r.console("set voice.i_hear selected")
     r.console("voice.select Ada on")
     far_ada = r.wait("Cleo plays the selected Ada 1.1 km away", lambda: tracks("Cleo") == {ident["Ada"]}, 30)
     h = hearing("Cleo")
@@ -735,7 +736,7 @@ def livekit_range(r, names, joined):
     r.use("Cleo")
     r.shot("livekit-range-selected-far")
     r.console("voice.select Ada off")
-    r.console("set voice.room everybody")
+    r.console("set voice.i_hear everybody")
     # Back together.
     r.use("Cleo")
     r.console("teleport 2.0")
@@ -743,12 +744,12 @@ def livekit_range(r, names, joined):
     back_c = r.wait("Cleo plays Ada again", lambda: ident["Ada"] in tracks("Cleo"), 30)
     r.check("livekit range: back near, both play each other again", back and back_c,
             {n: sorted(tracks(n)) for n in names})
-    # Ada: Who hears me = Selected riders, with Bea.
+    # Ada: My voice = on · Selected, with Bea.
     r.use("Ada")
     r.console("voice.select Bea on")
-    r.console("set voice.heard_by selected")
+    r.console("set voice.my_voice selected")
     only_bea = r.wait("Ada allows Bea only", lambda: allowed("Ada") == {ident["Bea"]}, 15)
-    r.check("livekit audience: Who hears me = Selected riders allows only Bea", only_bea,
+    r.check("livekit audience: My voice = Selected allows only Bea", only_bea,
             sorted(allowed("Ada") or []))
     stop = r.wait("Cleo stops playing Ada", lambda: ident["Ada"] not in tracks("Cleo"), 20)
     r.check("livekit audience: Cleo (not selected) no longer plays Ada, Bea does",
@@ -757,15 +758,26 @@ def livekit_range(r, names, joined):
     v = r.voice()
     r.check("livekit audience: the selection is shown and remembered",
             any(s.get("name") == "Bea" for s in (v or {}).get("selected") or []), (v or {}).get("selected"))
-    # Cleo: Voice room = Selected riders, nobody selected yet, then Bea.
+    # Cleo: I hear = selected, nobody selected yet, then Bea.
     r.use("Cleo")
-    r.console("set voice.room selected")
+    r.console("set voice.i_hear selected")
     quiet = r.wait("Cleo plays nobody", lambda: not tracks("Cleo"), 20)
     r.use("Cleo")
     r.console("voice.select Bea on")
     bea = r.wait("Cleo plays Bea only", lambda: tracks("Cleo") == {ident["Bea"]}, 20)
-    r.check("livekit audience: Voice room = Selected riders plays only the selection", quiet and bea,
+    r.check("livekit audience: I hear = selected plays only the selection", quiet and bea,
             sorted(tracks("Cleo")))
+    # Cleo: I hear = nobody (spec §7.1.7 Q16): she plays nobody, the
+    # server sends her nobody's voice, and Bea still plays her.
+    r.use("Cleo")
+    r.console("set voice.i_hear nobody")
+    deaf = r.wait("Cleo plays nobody (I hear nobody)", lambda: not tracks("Cleo"), 20)
+    h = hearing("Cleo")
+    r.check("livekit audience: I hear = nobody plays nobody and is sent nobody's voice",
+            deaf and not h.get("may_hear"), {"tracks": sorted(tracks("Cleo")), "hearing": h})
+    r.use("Cleo")
+    r.shot("livekit-i-hear-nobody")
+    r.console("set voice.i_hear everybody")
     r.use("Cleo")
     r.shot("livekit-selected")
 

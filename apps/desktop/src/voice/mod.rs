@@ -235,7 +235,7 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("voice.mute-mic")
-            .about("Mute or unmute your microphone (M, gamepad Select); every shared ride is joined muted")
+            .about("My voice off / on: mute or unmute your microphone (M, gamepad Select); every shared ride starts with it off")
             .arg(switch_arg()),
         |world, m| set_mute(world, Toggle::Mic, m.get_one::<String>("state").map(String::as_str)),
     ))
@@ -251,6 +251,13 @@ fn register_commands(app: &mut App) {
                 m.get_one::<String>("state").map(String::as_str),
             )
         },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("voice.off").about(
+            "Voice off: My voice off and I hear nobody (spec 7.1.7 Q16); you stay in the call, M and voice.i_hear turn each back on",
+        ),
+        |world, _| Ok(with_voice(world, voice_cmd::voice_off_command)),
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
@@ -318,7 +325,7 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("voice.select")
-            .about("Select a rider for the voice room and Who hears me (set voice.room / voice.heard_by selected); remembered (rider id, identity, name or a remembered key; on, off, toggle)")
+            .about("Select a rider for I hear and My voice (one list: set voice.i_hear / voice.my_voice selected); remembered (rider id, identity, name or a remembered key; on, off, toggle)")
             .arg(Arg::new("who").required(true))
             .arg(Arg::new("state").value_parser(["on", "off", "toggle"])),
         |world, m| {
@@ -461,23 +468,36 @@ mod tests {
         assert!(run(&mut app, "voice.select nobody").contains("nobody called"));
     }
 
-    /// *Voice room* and *Who hears me* (spec §7.1.3, §7.1.7 Q8) are
-    /// settings; they reach the controller and are saved.
+    /// *My voice* and *I hear* (spec §7.1.7 Q16) are settings; they reach
+    /// the controller and are saved; `voice.off` turns both off (the old
+    /// voice off): the microphone muted and I hear nobody, remembered.
     #[test]
-    fn voice_room_and_who_hears_me_are_settings() {
+    fn my_voice_and_i_hear_are_settings() {
         let mut app = app();
-        run(&mut app, "set voice.heard_by nearby");
-        run(&mut app, "set voice.room selected");
+        run(&mut app, "set voice.my_voice selected");
+        run(&mut app, "set voice.i_hear selected");
         app.update();
         let voice = app.world().resource::<Voice>();
         let s = voice.0.lock().unwrap().settings().clone();
-        assert_eq!(s.heard_by, ocw_voice::audience::HeardBy::Nearby);
+        assert_eq!(s.my_voice, ocw_voice::audience::MyVoice::Selected);
         assert_eq!(s.listen, ocw_voice::audience::Listen::Selected);
         let us = app.world().resource::<UserSettings>();
         let toml = us.settings.to_toml();
-        assert!(toml.contains("heard_by = \"nearby\""), "{toml}");
-        assert!(toml.contains("room = \"selected\""), "{toml}");
-        assert!(run(&mut app, "set voice.heard_by everybody").contains("no_one, nearby, selected"));
+        assert!(toml.contains("my_voice = \"selected\""), "{toml}");
+        assert!(toml.contains("i_hear = \"selected\""), "{toml}");
+        assert!(run(&mut app, "set voice.i_hear nobody").contains("voice.i_hear = nobody"));
+        assert!(run(&mut app, "set voice.my_voice no_one").contains("everybody, selected"));
+        assert!(run(&mut app, "set voice.heard_by nearby").contains("unknown"));
+        run(&mut app, "set voice.i_hear everybody");
+        run(&mut app, "voice.mute-mic off");
+        assert!(run(&mut app, "voice.off").contains("my voice off, I hear nobody"));
+        let voice = app.world().resource::<Voice>();
+        let c = voice.0.lock().unwrap();
+        assert!(c.mute().mic_muted);
+        assert_eq!(c.settings().listen, ocw_voice::audience::Listen::Nobody);
+        drop(c);
+        let us = app.world().resource::<UserSettings>();
+        assert!(us.settings.to_toml().contains("i_hear = \"nobody\""));
     }
 
     /// Volume and Block (spec §7.1.7 Q9) from the console: a participant

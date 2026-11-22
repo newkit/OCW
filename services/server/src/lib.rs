@@ -1804,9 +1804,15 @@ impl GameServer {
     fn refresh_not_hearing_you(&mut self) {
         let conns: Vec<(ConnectionId, RiderId)> =
             self.riders.iter().map(|(c, r)| (*c, *r)).collect();
+        // *I hear: nobody* (spec §7.1.7 Q16), from the riders' audiences.
+        let hear_nobody: std::collections::BTreeSet<RiderId> = conns
+            .iter()
+            .filter(|(c, _)| self.voice_audience.get(c).is_some_and(|a| a.hears_nobody()))
+            .map(|(_, r)| *r)
+            .collect();
         for (conn, rider) in conns {
             let in_voice = self.statuses.get(&rider).is_some_and(|st| st.in_voice);
-            let set = headphones::cannot_hear(rider, in_voice, &self.statuses);
+            let set = headphones::cannot_hear(rider, in_voice, &self.statuses, &hear_nobody);
             let before = self.not_hearing_you.get(&conn);
             if before.map_or(set.is_empty(), |b| *b == set) {
                 continue;
@@ -3105,6 +3111,30 @@ mod tests {
         server.disconnect(b);
         let told = run(&mut server);
         assert_eq!(told.get(&a), Some(&vec![rc.0]));
+        // *I hear: nobody* (spec §7.1.7 Q16) from Ada's audience alone –
+        // her status says nothing: Cleo sees headphones on Ada; Ada gets
+        // no voice from the server.
+        send(&mut server, c, st(&[]));
+        send(&mut server, a, st(&[]));
+        server.handle(
+            a,
+            &encode(&client_message(C::VoiceAudience(v1::VoiceAudience {
+                heard_by: v1::VoiceHeardBy::Nearby as i32,
+                listen: v1::VoiceListen::Nobody as i32,
+                ..Default::default()
+            }))),
+        );
+        let told = run(&mut server);
+        assert_eq!(
+            told.get(&c),
+            Some(&vec![ra.0]),
+            "Cleo sees Ada's headphones"
+        );
+        assert!(seen(&server, a).is_empty(), "Ada sees none on Cleo");
+        assert!(
+            server.voice_hearing(a).may_hear.is_empty(),
+            "Ada hears nobody"
+        );
     }
 
     /// The status signs (spec §2.6): relayed from the samples into the

@@ -1,14 +1,18 @@
 //! Settings → Voice (spec §3.2.1 M8, §2.4) as rows of command lines, like
-//! the other Settings pages: the mute switches, the voice room (*Voice
-//! room*, *Who hears me*, *Choose riders*; spec §7.1.3, §7.1.7 Q8),
+//! the other Settings pages: *My voice* (on / off · Everybody / Selected)
+//! and *I hear* (everybody / selected / nobody) as two separate rows (spec
+//! §7.1.7 Q16), *Choose riders* (one list for both, Q19), the speaker,
 //! participants (each with Mute for me, a volume and Block, spec §7.1.7
-//! Q9), the blocked riders, devices and options. Bevy-free.
+//! Q9), the blocked riders, devices and options. Six rows (ten-foot rule):
+//! the old *Voice chat* row (voice on / off) is gone – its off is both
+//! rows off (`voice.off` does it in one command) and its state is the
+//! *Participants* row's value. Bevy-free.
 
 use super::pages::{Activate, Page, Row, setting_row};
 use crate::settings::Settings;
 
-use crate::voice::{ChoiceRider, VoiceMenuInfo};
-use ocw_voice::audience::{HeardBy, Listen};
+use crate::voice::{ChoiceRider, VoiceMenuInfo, my_voice_text};
+use ocw_voice::audience::{Listen, MyVoice};
 
 fn open(label: &str, value: String, page: Page) -> Row {
     Row {
@@ -79,6 +83,8 @@ fn participant_state(p: &crate::voice::MenuParticipant, info: &VoiceMenuInfo) ->
         "blocked".to_owned()
     } else if p.muted_by_me {
         "muted by you".to_owned()
+    } else if info.listen == Listen::Nobody {
+        "you hear nobody".to_owned()
     } else if info.listen == Listen::Selected && !p.selected {
         "not selected".to_owned()
     } else if p.mic_muted {
@@ -122,19 +128,22 @@ fn selection_summary(info: &VoiceMenuInfo) -> String {
     format!("{all} selected ({here} here)")
 }
 
-/// The Voice page's *Voice room* value: whom the rider hears and who
-/// hears the rider, short.
-fn room_summary(info: &VoiceMenuInfo) -> String {
-    let hear = match info.listen {
-        Listen::Everybody => "all".to_owned(),
-        Listen::Selected => "selected".to_owned(),
+/// The *My voice* row (spec §7.1.7 Q16): Confirm turns it on / off (the
+/// microphone, M; every ride starts off), ← / → choose whom it reaches
+/// (Everybody / Selected, kept while it is off).
+fn my_voice_row(info: &VoiceMenuInfo) -> Row {
+    let other = match info.my_voice {
+        MyVoice::Everybody => MyVoice::Selected,
+        MyVoice::Selected => MyVoice::Everybody,
     };
-    let me = match info.heard_by {
-        HeardBy::NoOne => "no one",
-        HeardBy::Nearby => "nearby",
-        HeardBy::Selected => "selected",
-    };
-    format!("hear {hear}, heard by {me}")
+    let audience = format!("set voice.my_voice {}", other.key());
+    Row {
+        label: "My voice".into(),
+        value: Some(my_voice_text(!info.mic_muted, info.my_voice)),
+        left: Some(audience.clone()),
+        right: Some(audience),
+        confirm: Some(Activate::Command("voice.mute-mic toggle".into())),
+    }
 }
 
 /// The rows of a voice page.
@@ -149,11 +158,14 @@ pub fn rows(page: Page, settings: &Settings, info: &VoiceMenuInfo) -> Vec<Row> {
     };
     match page {
         Page::Voice => vec![
-            toggle(
-                "Microphone",
-                if info.mic_muted { "muted" } else { "on" },
-                "voice.mute-mic",
+            my_voice_row(info),
+            choice_row(
+                "I hear",
+                &Listen::ALL.map(|l| (l.key(), l.label())),
+                &text("voice.i_hear"),
+                "voice.i_hear",
             ),
+            open("Choose riders", selection_summary(info), Page::VoiceSelect),
             toggle(
                 "Speaker (voices)",
                 if on("voice.speaker_muted") {
@@ -163,41 +175,17 @@ pub fn rows(page: Page, settings: &Settings, info: &VoiceMenuInfo) -> Vec<Row> {
                 },
                 "voice.mute-speaker",
             ),
-            open("Voice room", room_summary(info), Page::VoiceRoom),
+            // The call's state (before on the *Voice chat* row).
             open(
                 "Participants",
                 if info.blocked.is_empty() {
-                    info.participants.len().to_string()
+                    info.status.clone()
                 } else {
-                    format!(
-                        "{}, {} blocked",
-                        info.participants.len(),
-                        info.blocked.len()
-                    )
+                    format!("{}, {} blocked", info.status, info.blocked.len())
                 },
                 Page::VoiceParticipants,
             ),
             open("Devices and options", String::new(), Page::VoiceDevices),
-            Row {
-                label: "Voice chat".into(),
-                value: Some(format!(
-                    "{} - {}",
-                    if on("voice.enabled") { "on" } else { "off" },
-                    info.status
-                )),
-                left: Some(format!(
-                    "set voice.enabled {}",
-                    if on("voice.enabled") { "off" } else { "on" }
-                )),
-                right: Some(format!(
-                    "set voice.enabled {}",
-                    if on("voice.enabled") { "off" } else { "on" }
-                )),
-                confirm: Some(Activate::Command(format!(
-                    "set voice.enabled {}",
-                    if on("voice.enabled") { "off" } else { "on" }
-                ))),
-            },
         ],
         Page::VoiceDevices => vec![
             device_row(
@@ -217,21 +205,6 @@ pub fn rows(page: Page, settings: &Settings, info: &VoiceMenuInfo) -> Vec<Row> {
             setting_row(settings, "voice.volume", "Voice volume (%)"),
             setting_row(settings, "voice.spatial", "Spatial voice"),
             setting_row(settings, "voice.max_voices", "Voices heard at most"),
-        ],
-        Page::VoiceRoom => vec![
-            choice_row(
-                "Voice room",
-                &Listen::ALL.map(|l| (l.key(), l.label())),
-                &text("voice.room"),
-                "voice.room",
-            ),
-            choice_row(
-                "Who hears me",
-                &HeardBy::ALL.map(|h| (h.key(), h.label())),
-                &text("voice.heard_by"),
-                "voice.heard_by",
-            ),
-            open("Choose riders", selection_summary(info), Page::VoiceSelect),
         ],
         Page::VoiceSelect => {
             let here: Vec<&ChoiceRider> = info.choices.iter().filter(|c| c.here).collect();
@@ -415,37 +388,69 @@ mod tests {
         }
     }
 
+    /// The Voice page (spec §7.1.7 Q16): *My voice* and *I hear* as two
+    /// separate rows, *Choose riders*, the speaker, the participants with
+    /// the call's state, the devices – six rows, no *Voice chat* row.
     #[test]
     fn voice_page_toggles_and_opens() {
         let s = Settings::default();
         let r = rows(Page::Voice, &s, &info());
         assert!(r.len() <= 6, "ten-foot limit");
-        // The microphone as it is now (joined muted, spec §7.1.7 Q7), not
-        // a saved setting.
-        let mic = row(&r, "Microphone");
-        assert_eq!(mic.value.as_deref(), Some("muted"));
-        assert_eq!(mic.confirm, cmd("voice.mute-mic"));
-        assert_eq!(mic.left.as_deref(), Some("voice.mute-mic"));
-        let unmuted = VoiceMenuInfo {
+        let labels: Vec<&str> = r.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "My voice",
+                "I hear",
+                "Choose riders",
+                "Speaker (voices)",
+                "Participants",
+                "Devices and options"
+            ]
+        );
+        // My voice as it is now (joined with it off, spec §7.1.7 Q7), not
+        // a saved setting: Confirm turns it on / off (M), ← / → choose
+        // whom it reaches.
+        let mine = row(&r, "My voice");
+        assert_eq!(mine.value.as_deref(), Some("off (everybody)"));
+        assert_eq!(mine.confirm, cmd("voice.mute-mic toggle"));
+        assert_eq!(mine.left.as_deref(), Some("set voice.my_voice selected"));
+        assert_eq!(mine.right.as_deref(), Some("set voice.my_voice selected"));
+        let on = VoiceMenuInfo {
             mic_muted: false,
+            my_voice: MyVoice::Selected,
             ..info()
         };
-        let r2 = rows(Page::Voice, &s, &unmuted);
-        assert_eq!(row(&r2, "Microphone").value.as_deref(), Some("on"));
+        let r2 = rows(Page::Voice, &s, &on);
+        let mine = row(&r2, "My voice");
+        assert_eq!(mine.value.as_deref(), Some("on, selected"));
+        assert_eq!(mine.right.as_deref(), Some("set voice.my_voice everybody"));
+        // I hear: everybody → selected → nobody → everybody.
+        let hear = row(&r, "I hear");
+        assert_eq!(hear.value.as_deref(), Some("Everybody"));
+        assert_eq!(hear.confirm, cmd("set voice.i_hear selected"));
+        assert_eq!(hear.left.as_deref(), Some("set voice.i_hear nobody"));
+        let (nobody, _) = Settings::parse("[voice]\ni_hear = \"nobody\"\n").unwrap();
+        let r3 = rows(Page::Voice, &nobody, &info());
+        assert_eq!(row(&r3, "I hear").value.as_deref(), Some("Nobody"));
+        assert_eq!(
+            row(&r3, "I hear").confirm,
+            cmd("set voice.i_hear everybody")
+        );
         let spk = row(&r, "Speaker (voices)");
         assert_eq!(spk.value.as_deref(), Some("on"));
         assert_eq!(spk.confirm, cmd("voice.mute-speaker"));
-        let room = row(&r, "Voice room");
-        assert_eq!(room.value.as_deref(), Some("hear all, heard by no one"));
-        assert_eq!(room.confirm, Some(Activate::Open(Page::VoiceRoom)));
-        assert_eq!(row(&r, "Participants").value.as_deref(), Some("2"));
+        let choose = row(&r, "Choose riders");
+        assert_eq!(choose.value.as_deref(), Some("0 selected (0 here)"));
+        assert_eq!(choose.confirm, Some(Activate::Open(Page::VoiceSelect)));
+        // The call's state (once the *Voice chat* row's).
+        assert_eq!(row(&r, "Participants").value.as_deref(), Some("connected"));
         assert_eq!(
             row(&r, "Participants").confirm,
             Some(Activate::Open(Page::VoiceParticipants))
         );
-        let chat = row(&r, "Voice chat");
-        assert_eq!(chat.value.as_deref(), Some("on - connected"));
-        assert_eq!(chat.confirm, cmd("set voice.enabled off"));
+        assert!(r.iter().all(|r| r.label != "Voice chat"));
+        assert_eq!(Page::VoiceSelect.parent(), Some(Page::Voice));
     }
 
     #[test]
@@ -471,10 +476,10 @@ mod tests {
         assert!(r.len() <= 6, "ten-foot limit");
     }
 
-    /// Voice → Voice room (spec §7.1.3, §7.1.7 Q8): the two choices and
-    /// *Choose riders*; the defaults are Everybody and No one.
+    /// Voice → Choose riders (spec §7.1.3, §7.1.7 Q19: one list for both
+    /// rows), its summary on the Voice page.
     #[test]
-    fn voice_room_page_sets_the_room_and_who_hears_me() {
+    fn choose_riders_lists_the_selection() {
         let mut i = info();
         i.choices = vec![
             ChoiceRider {
@@ -502,31 +507,10 @@ mod tests {
                 speaking: false,
             },
         ];
-        let r = rows(Page::VoiceRoom, &Settings::default(), &i);
-        assert!(r.len() <= 6);
-        let room = row(&r, "Voice room");
-        assert_eq!(room.value.as_deref(), Some("Everybody"));
-        assert_eq!(room.confirm, cmd("set voice.room selected"));
-        assert_eq!(room.left.as_deref(), Some("set voice.room selected"));
-        let me = row(&r, "Who hears me");
-        assert_eq!(me.value.as_deref(), Some("No one"));
-        assert_eq!(me.right.as_deref(), Some("set voice.heard_by nearby"));
-        assert_eq!(me.left.as_deref(), Some("set voice.heard_by selected"));
+        let r = rows(Page::Voice, &Settings::default(), &i);
         let choose = row(&r, "Choose riders");
         assert_eq!(choose.value.as_deref(), Some("2 selected (1 here)"));
         assert_eq!(choose.confirm, Some(Activate::Open(Page::VoiceSelect)));
-        let (s, _) =
-            Settings::parse("[voice]\nroom = \"selected\"\nheard_by = \"nearby\"\n").unwrap();
-        let r = rows(Page::VoiceRoom, &s, &i);
-        assert_eq!(
-            row(&r, "Voice room").value.as_deref(),
-            Some("Selected riders")
-        );
-        assert_eq!(row(&r, "Who hears me").value.as_deref(), Some("All nearby"));
-        assert_eq!(
-            row(&r, "Who hears me").right.as_deref(),
-            Some("set voice.heard_by selected")
-        );
         // Choose riders: the riders here with a check mark, then the
         // selected ones not here now; Confirm toggles.
         let r = rows(Page::VoiceSelect, &Settings::default(), &i);
@@ -567,6 +551,10 @@ mod tests {
         let r = rows(Page::VoiceParticipants, &Settings::default(), &i);
         assert_eq!(r[0].value.as_deref(), Some("heard 50 %"), "selected");
         assert_eq!(r[1].value.as_deref(), Some("not selected, volume 150 %"));
+        // I hear nobody (spec §7.1.7 Q16).
+        i.listen = Listen::Nobody;
+        let r = rows(Page::VoiceParticipants, &Settings::default(), &i);
+        assert_eq!(r[0].value.as_deref(), Some("you hear nobody"));
     }
 
     /// Settings → Audio → Voice (spec §7 *Echo bot*, §3.2.1).
@@ -675,7 +663,7 @@ mod tests {
         let voice = rows(Page::Voice, &Settings::default(), &i);
         assert_eq!(
             row(&voice, "Participants").value.as_deref(),
-            Some("2, 1 blocked")
+            Some("connected, 1 blocked")
         );
         let none = rows(Page::VoiceBlocked, &Settings::default(), &info());
         assert_eq!(none[0].label, "Nobody blocked");

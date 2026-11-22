@@ -269,7 +269,8 @@ message VoiceApart {
   repeated uint32 riders = 1;
 }
 
-// Who hears this rider (spec §7.1.7 Q8: *Who hears me*, default no one).
+// Who hears this rider (spec §7.1.7 Q8, Q16: *My voice*; NO_ONE while My
+// voice is off, which every ride starts with).
 enum VoiceHeardBy {
   // No one (the default, also of a client that never said).
   VOICE_HEARD_BY_NO_ONE = 0;
@@ -279,12 +280,17 @@ enum VoiceHeardBy {
   VOICE_HEARD_BY_SELECTED = 2;
 }
 
-// Whom this rider listens to (spec §7.1.3 *Voice room*).
+// Whom this rider listens to (spec §7.1.3, §7.1.7 Q16 *I hear*).
 enum VoiceListen {
   // Everybody within hearing range (the default).
   VOICE_LISTEN_EVERYBODY = 0;
-  // Only the selected riders (within hearing range).
+  // Only the selected riders (at any distance, spec §7.1.7 Q20).
   VOICE_LISTEN_SELECTED = 1;
+  // Nobody (spec §7.1.7 Q16 *I hear: nobody*): no voice is sent to this
+  // rider, and every rider in the call sees its headphones. An older
+  // server reads it as EVERYBODY; the client then still subscribes to
+  // nobody and says so in RiderStatus.hears_nobody.
+  VOICE_LISTEN_NOBODY = 2;
 }
 
 // The rider's voice audience (spec §7.1.7 Q6, Q8, §7.1.3): *Who hears me*,

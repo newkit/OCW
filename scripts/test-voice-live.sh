@@ -105,7 +105,7 @@ pids+=("$!")
 #    is no one, Q8).
 (OCW_APP=target/debug/ocw-desktop OCW_TEST_OUTPUT=off .claude/skills/run-ocw/drive.sh shot "$out/desktop.jpg" 40 -- \
    --server "127.0.0.1:$game" --server-cert "$fp" --route hills --name "Cleo Climber" \
-   --settings-file "$work/settings.toml" --cmd "set voice.heard_by nearby" --cmd "voice.mute-mic off" --cmd "voice.status" >"$work/drive" 2>&1) &
+   --settings-file "$work/settings.toml" --cmd "set voice.my_voice everybody" --cmd "voice.mute-mic off" --cmd "voice.status" >"$work/drive" 2>&1) &
 dr=$!; pids+=("$dr")
 connected=1
 for _ in $(seq 1 1200); do

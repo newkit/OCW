@@ -102,12 +102,11 @@ pub enum Page {
     /// Participants → Blocked riders: every rider blocked, here or not;
     /// Confirm unblocks.
     VoiceBlocked,
-    /// Voice → Voice room (spec §7.1.3, §7.1.7 Q8): *Voice room*
-    /// (Everybody / Selected riders), *Who hears me* (No one / All nearby
-    /// / Selected riders) and *Choose riders*.
-    VoiceRoom,
-    /// Voice room → Choose riders: the riders in the voice room with a
-    /// check mark each, then the selected riders not here now.
+    /// Voice → Choose riders (spec §7.1.3, §7.1.7 Q19: one list for *My
+    /// voice: Selected* and *I hear: selected*): the riders in the voice
+    /// room with a check mark each, then the selected riders not here now.
+    /// (The *Voice room* page of v4.51 is gone: its two settings are rows
+    /// of the Voice page, Q16.)
     VoiceSelect,
     /// Audio → Voice: the voice volume and the echo test (spec §7 *Echo
     /// bot*; rows from `voice::page`, the Audio page is full).
@@ -282,7 +281,6 @@ impl Page {
             Self::VoiceParticipants => "Voice participants",
             Self::VoiceRider(_) => "Voice: rider",
             Self::VoiceBlocked => "Blocked riders",
-            Self::VoiceRoom => "Voice room",
             Self::VoiceSelect => "Choose riders",
             Self::AudioVoice => "Audio: voice",
             Self::TimeMachine => "Time machine",
@@ -426,7 +424,6 @@ impl Page {
                 | Self::VoiceParticipants
                 | Self::VoiceRider(_)
                 | Self::VoiceBlocked
-                | Self::VoiceRoom
                 | Self::VoiceSelect
                 | Self::AudioVoice
         )
@@ -445,8 +442,7 @@ impl Page {
             Self::World(_) => Some(Self::Worlds),
             Self::WorldRoutes(i) | Self::WorldParts(i) => Some(Self::World(i)),
             Self::WorldSource(_) => Some(Self::WorldSources),
-            Self::VoiceDevices | Self::VoiceParticipants | Self::VoiceRoom => Some(Self::Voice),
-            Self::VoiceSelect => Some(Self::VoiceRoom),
+            Self::VoiceDevices | Self::VoiceParticipants | Self::VoiceSelect => Some(Self::Voice),
             Self::VoiceRider(_) | Self::VoiceBlocked => Some(Self::VoiceParticipants),
             Self::AudioVoice => Some(Self::Audio),
             Self::RidingAids | Self::UnicornControls | Self::Bindings => Some(Self::Controls),
@@ -533,13 +529,10 @@ impl Page {
                 "GPX files from the gpx folder of the OCW data folder and from Downloads, matched onto the roads of the loaded world package.",
             ],
             Self::Voice => &[
-                "Voice chat is always on: shared rides join you, muted. M: microphone, Shift+M: voices (pad: Select, R3).",
+                "My voice: who hears you - off at every ride start, M turns it on. I hear: whom you hear. Heard to 10 m, selected riders always. Shift+M: voices.",
             ],
             Self::VoiceDevices => &[
                 "Microphone and speaker for voice chat; a missing device falls back to the default. Voices fade from 5 m to silence at 10 m.",
-            ],
-            Self::VoiceRoom => &[
-                "Voice room: whom you hear. Who hears me: who hears you (no one until you change it). Heard to 10 m, selected riders always; blocks win.",
             ],
             Self::VoiceSelect => &[
                 "Confirm selects a rider or takes them off. Your selection is remembered, also for riders not here now.",
@@ -1632,7 +1625,6 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         | Page::VoiceParticipants
         | Page::VoiceRider(_)
         | Page::VoiceBlocked
-        | Page::VoiceRoom
         | Page::VoiceSelect
         | Page::AudioVoice => Vec::new(),
         // From the world clock (`timemachine::rows`).

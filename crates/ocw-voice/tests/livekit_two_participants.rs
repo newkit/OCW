@@ -219,12 +219,12 @@ fn two_desktop_controllers_hear_each_other() {
         .enumerate()
         .map(|(i, _)| {
             let b = Shared(Arc::new(Mutex::new(LiveKitBackend::headless())));
-            // Both let all nearby hear them (the default is no one, spec
-            // §7.1.7 Q8); the game server lets each hear the other (Q6).
+            // Both let all nearby hear them (My voice on · Everybody, spec
+            // §7.1.7 Q16); the game server lets each hear the other (Q6).
             let mut c = VoiceController::new(
                 Box::new(b.clone()),
                 VoiceSettings {
-                    heard_by: ocw_voice::audience::HeardBy::Nearby,
+                    my_voice: ocw_voice::audience::MyVoice::Everybody,
                     ..Default::default()
                 },
                 MuteState::default(),
@@ -591,7 +591,7 @@ fn range_and_audiences_are_enforced_by_the_server() {
     {
         let a = &mut trio.riders[0].c;
         let mut s = a.settings().clone();
-        s.heard_by = ocw_voice::audience::HeardBy::Selected;
+        s.my_voice = ocw_voice::audience::MyVoice::Selected;
         a.set_settings(s);
         a.set_rider_prefs(
             [(

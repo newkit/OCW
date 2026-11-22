@@ -498,10 +498,10 @@ page needs `wss://`, i.e. LiveKit behind TLS). For browsers on other
 machines, give the server a LiveKit URL they can reach (`--bind 0.0.0.0`,
 TCP 7880 and 7881 open plus its UDP media port: 7882 with `rtc.udp_port`
 set, as the bundled voice server does, else LiveKit's range 50000–60000).
-Every ride is joined muted: M / Shift+M (gamepad Select / R3) switch the
-microphone / the voices; *Settings → Voice → Voice room* says who hears you
-(no one until you choose *All nearby* or *Selected riders*) and whom you
-hear, as on the desktop.
+Every ride starts with *My voice* off (muted): M / Shift+M (gamepad Select
+/ R3) switch your voice / the voices; *Settings → Voice* has *My voice*
+(who hears you) and *I hear* (whom you hear) as two rows, as on the
+desktop.
 
 #### Menus, settings and captures
 
@@ -2907,29 +2907,43 @@ app](#browser-app-preview).
 
 Voice is **always on, like a call** (spec §2.4, §7): on a shared ride – a
 server with other riders, or a voice group – the app joins the voice room by
-itself, **with your microphone muted** (every ride; spec §7.1.7 Q7); solo
-rides (the local server, bots only) never connect. **M** / gamepad
-**Select** unmutes / mutes your microphone for this ride, **Shift+M** /
-**R3** mutes all voices (remembered in `settings.toml`); the HUD's voice
-indicator shows both, the connection state, who is talking and the room
-(`ROOM: everybody - heard by: no one`). Riders are at full volume up to
-10 m and fade to silence at 300 m; the game server sends a rider's voice
-only to riders who can hear it (spec §7.1.7 Q6, Q10). **Who hears you** is
-yours to choose: *No one* (the default), *All nearby* or *Selected riders*;
-and whom you hear: *Voice room: Everybody* or *Selected riders* (Settings →
-Voice → Voice room, *Choose riders*; spec §7.1.3, Q8). A block always wins.
-Settings → Voice has the switches, the voice room, the participants (mute
-one rider for yourself, a volume, Block), the devices, the voice volume and
-spatial voice (at most 24 voices at once, those talking first).
-Console: `voice.status`, `voice.mute-mic [on|off|toggle]`,
-`voice.mute-speaker [on|off|toggle]`, `voice.mute RIDER`, `voice.volume
-RIDER PERCENT`, `voice.block RIDER`, `voice.select RIDER [on|off|toggle]`,
-`voice.group NAME` (a private room; `--leave` goes back), `voice.devices`,
-`voice.echo` (the echo test, below); settings `voice.enabled`,
-`voice.heard_by` (`no_one`, `nearby`, `selected`), `voice.room`
-(`everybody`, `selected`), `voice.volume`, `voice.spatial`,
+itself, **with *My voice* off** (your microphone muted, every ride; spec
+§7.1.7 Q7); solo rides (the local server, bots only) never connect.
+Riders are at full volume up to 5 m and fade to silence at 10 m; the game
+server sends a rider's voice only to riders who can hear it (spec §7.1.7
+Q6, Q10, Q20). *Settings → Voice* has two separate rows (spec §7.1.7 Q16):
+
+- **My voice** – who hears you: *off* (the microphone muted; others see an
+  X over your mouth) or *on* for *Everybody* (everybody within 10 m) or
+  *Selected* (the riders of *Choose riders*). Confirm / **M** / gamepad
+  **Select** turns it on or off for this ride (every ride starts off),
+  ← / → choose Everybody or Selected (remembered).
+- **I hear** – whom you hear: *everybody* (within 10 m), *selected* (the
+  riders of *Choose riders*, at any distance) or *nobody* (you hear no one
+  while others may still hear you; every rider in the call sees
+  headphones on you).
+
+*Choose riders* is one list for both (Q19); a block always wins. The old
+voice off is both rows off (`voice.off`); you stay in the call. The page
+also has the speaker (**Shift+M** / **R3** mutes all voices, remembered in
+`settings.toml`), the participants with the call's state (mute one rider
+for yourself, a volume, Block) and the devices, the voice volume and
+spatial voice (at most 24 voices at once, those talking first). The HUD's
+voice indicator shows the switches, the connection state, who is talking
+and both rows (`MY VOICE: off (everybody) - I HEAR: everybody`).
+Console: `voice.status`, `voice.mute-mic [on|off|toggle]` (My voice off /
+on), `voice.mute-speaker [on|off|toggle]`, `voice.off`, `voice.mute
+RIDER`, `voice.volume RIDER PERCENT`, `voice.block RIDER`, `voice.select
+RIDER [on|off|toggle]`, `voice.group NAME` (a private room; `--leave` goes
+back), `voice.devices`, `voice.echo` (the echo test, below); settings
+`voice.my_voice` (`everybody`, `selected`), `voice.i_hear` (`everybody`,
+`selected`, `nobody`), `voice.volume`, `voice.spatial`,
 `voice.max_voices`, `voice.input`, `voice.output`, `audio.echo_bot`,
-`audio.echo_delay_ms`.
+`audio.echo_delay_ms`. Settings from before (`voice.heard_by`,
+`voice.room`, `voice.enabled`) are read once and saved as the new ones:
+*No one* / *All nearby* → My voice Everybody (off at the start anyway),
+*Selected riders* → Selected; the room → I hear; voice off → I hear
+nobody.
 
 Voice needs two things:
 

@@ -41,8 +41,8 @@ pub struct JoinPolicy {
 
 impl JoinPolicy {
     /// Whether to be in the room at `now_s`. `enabled`: voice chat is on
-    /// (setting `voice.enabled`); turning it off leaves at once, as does a
-    /// server without voice.
+    /// (`VoiceSettings::enabled`; the apps keep it on, spec §7.1.7 Q16); off
+    /// leaves at once, as does a server without voice.
     pub fn wanted(&mut self, facts: &RideFacts, enabled: bool, now_s: f64) -> bool {
         if !enabled || !facts.server_offers_voice {
             self.wanted = false;
