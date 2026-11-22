@@ -60,6 +60,7 @@ pub mod quality;
 pub mod recording;
 pub mod rider_list;
 pub mod riders;
+pub mod road_bumps;
 pub mod settings;
 pub mod sky;
 pub mod strava;

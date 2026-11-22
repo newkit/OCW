@@ -93,7 +93,11 @@ pub struct RoadLook {
 
 /// The damage tables of `road.wesl` for the quality preset's share of the
 /// features: per wear grade (index) the chances and the repair look of
-/// `ocw_world::road_wear::wear_density`.
+/// `ocw_world::road_wear::wear_density`. The features a rider feels (spec
+/// Phase 8 Q12, `ocw_world::road_feel`: potholes and edge breaks,
+/// transverse cracks, alligator areas) are drawn in full by every preset,
+/// so every bump has its drawn cause; the preset thins only the others
+/// (longitudinal cracks, patches, loose stones).
 pub fn damage_tables(share: f32) -> DamageTables {
     let mut t = DamageTables {
         damage: [Vec4::ZERO; 8],
@@ -102,8 +106,14 @@ pub fn damage_tables(share: f32) -> DamageTables {
     };
     for g in 0..=ocw_world::road_wear::MAX_GRADE {
         let d = ocw_world::road_wear::wear_density(g, share);
+        let felt = ocw_world::road_wear::wear_density(g, 1.0);
         let i = usize::from(g);
-        t.damage[i] = Vec4::new(d.transverse, d.longitudinal, d.alligator, d.pothole);
+        t.damage[i] = Vec4::new(
+            felt.transverse,
+            d.longitudinal,
+            felt.alligator,
+            felt.pothole,
+        );
         t.repair[i] = Vec4::new(d.patch, d.sealed, d.pothole_zone_m, d.tracks);
         if g > 0 {
             t.loose[i] = Vec4::new(d.stones, d.ruts, 0.0, 0.0);
@@ -432,7 +442,11 @@ mod tests {
         assert_eq!(damage_detail(&high).x, 1.0);
         assert_eq!(damage_detail(&low).x, 0.0);
         let lo = damage_tables(low.road_damage_share);
-        assert!(lo.damage[6].w < l.damage[6].w && lo.damage[6].x < l.damage[6].x);
+        // What a rider feels (Q12) is drawn in full on every preset.
+        assert_eq!(lo.damage[6].w, l.damage[6].w);
+        assert_eq!(lo.damage[6].x, l.damage[6].x);
+        assert_eq!(lo.damage[6].z, l.damage[6].z);
+        assert!(lo.damage[6].y < l.damage[6].y);
         assert!(lo.loose[6].x < l.loose[6].x);
     }
 

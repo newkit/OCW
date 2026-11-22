@@ -111,10 +111,20 @@ pub fn load_course_at(
             "world obstacles (spec §14 Phase 12 K3)"
         );
     }
+    // The damaged roads under the wheels (spec Phase 8 Q12).
+    let road_feel = Arc::new(ocw_world::road_feel::RoadFeelMap::from_package(
+        &world.package,
+    ));
+    tracing::info!(
+        strips = road_feel.strip_count(),
+        "damaged road strips felt in the ride (spec Phase 8 Q12)"
+    );
+    let road_feel = Some(road_feel);
     let net = Arc::new(
         RoadNetwork::new(graph)
             .with_package_name(hood.set.name())
-            .with_obstacles(obstacles),
+            .with_obstacles(obstacles)
+            .with_road_feel(road_feel),
     );
     let change = v1::WorldChange {
         package_id: world.identity.id.clone(),
