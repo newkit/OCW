@@ -10,7 +10,7 @@ D=${OCW_DATA:-$HOME/src/OCW/data}
 BEFORE_APP=${OCW_BEFORE_APP:-/var/tmp/ocw/ocw-desktop}
 OUT=test-output/junctions-j3
 only=""
-for s in ${1//,/ }; do only="$only,$s-rider,$s-drone"; done
+for s in ${1//,/ }; do only="$only,junction-$s-rider,junction-$s-drone"; done
 only=${only#,}
 worlds() {
   local dir=$1

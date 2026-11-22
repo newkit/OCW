@@ -139,6 +139,23 @@ pub fn t_junction(main_class: RoadClass, main_grade: f64, side_grade: f64) -> Ro
     )
 }
 
+/// [`t_junction`] as the world builder leaves it (J3, §4.8.8 Q6 (d)):
+/// the side road lies on the main road's carriageway up to its edge
+/// (3.75 m) and climbs `side_grade` from there.
+pub fn t_junction_built(main_class: RoadClass, main_grade: f64, side_grade: f64) -> RoadGraph {
+    let v = [[0.0, 0.0], [-120.0, 0.0], [120.0, 0.0], [0.0, 120.0]];
+    graph(
+        &v,
+        vec![
+            Road::straight(&v, 1, 0, main_class, 7.5, move |s| (s - 120.0) * main_grade),
+            Road::straight(&v, 0, 2, main_class, 7.5, move |s| s * main_grade),
+            Road::straight(&v, 0, 3, RoadClass::Residential, 5.0, move |s| {
+                (s - 3.75).max(0.0) * side_grade
+            }),
+        ],
+    )
+}
+
 /// A T junction as [`t_junction`] (secondary main road, 7.5 m), with the
 /// side road (residential, 5 m) leaving at `angle_deg` from the main road's
 /// +x arm (towards +z): a narrow angle puts its mouth far out.

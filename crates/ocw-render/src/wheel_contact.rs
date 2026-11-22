@@ -575,8 +575,11 @@ fn tyres_touch_the_road_on_the_fitted_route_file() {
 /// heights are the drawn ones and the tyres of a rider on the centre line
 /// stay within 2 mm of the drawn surface (patch, trimmed and blended
 /// strips). Beside the centre (1.6 m) through the rounded corner of a turn
-/// the wheels are placed by path distance on a curve: within 5 mm at the T
-/// and the crossing; at the hairpin (a corner of ~3 m radius) printed only.
+/// the wheels are placed by path distance on a curve: within 12 mm at the
+/// T (its side road as the world builder shapes it, J3: the crease at the
+/// main road's edge) and the crossing; at
+/// the hairpin (a corner of ~3 m radius) and at a T whose side road climbs
+/// from the vertex printed only.
 #[test]
 fn tyres_touch_the_junction_surfaces() {
     use ocw_world::junction::fixtures;
@@ -591,6 +594,10 @@ fn tyres_touch_the_junction_surfaces() {
     let junctions = [
         (
             "T 8 % / 20 %",
+            fixtures::t_junction_built(RoadClass::Secondary, 0.08, 0.20),
+        ),
+        (
+            "T 8 % / 20 %, not built",
             fixtures::t_junction(RoadClass::Secondary, 0.08, 0.20),
         ),
         ("crossing", fixtures::crossing([0.06, -0.04, 0.10, 0.0])),
@@ -649,11 +656,17 @@ fn tyres_touch_the_junction_surfaces() {
                 worst[1] * 1000.0
             );
             centre = centre.max(worst[0]);
-            if label != "hairpin" {
+            // Printed only: the hairpin, and a side road the world builder
+            // has not shaped (it climbs from the vertex, 0.75 m above the
+            // main road at its edge: the corner takes that up, J3).
+            if label != "hairpin" && !label.ends_with("not built") {
                 beside = beside.max(worst[1]);
             }
         }
     }
     assert!(centre <= TOLERANCE_M + 1e-4, "centre line {centre}");
-    assert!(beside <= 0.005, "beside the centre {beside}");
+    // 12 mm (5 mm before J3): a side road now leaves the main road's edge
+    // at its own grade (§4.8.8 Q6 (d)), a crease under the wheelbase of a
+    // rider 1.6 m beside the centre turning in (11 mm at the T).
+    assert!(beside <= 0.012, "beside the centre {beside}");
 }
