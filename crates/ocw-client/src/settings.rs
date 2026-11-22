@@ -736,20 +736,14 @@ pub const SETTINGS: &[SettingDef] = &[
         apply: Apply::Command("audio.output \"{}\""),
     },
     // Voice chat (spec §2.4, §7, M8): always on like a call; every change
-    // is handed to the voice controller by `voice.apply`.
-    SettingDef {
-        key: "voice.enabled",
-        kind: Kind::Bool,
-        default: "on",
-        description: "Voice chat: join the voice room automatically on shared rides",
-        scope: Scope::Live,
-        apply: Apply::Command("voice.apply enabled {}"),
-    },
+    // is handed to the voice controller by `voice.apply`. The old
+    // `voice.enabled` is gone (spec §7.1.7 Q16: its off is *My voice* and
+    // *I hear* both off; [`Settings::migrate_voice`]).
     SettingDef {
         key: "voice.mic_muted",
         kind: Kind::Bool,
         default: "off",
-        description: "Own microphone muted now (M, gamepad Select); every shared ride is joined muted, so it is not remembered for the next",
+        description: "My voice off: the own microphone muted now (M, gamepad Select); every shared ride starts with My voice off, so it is not remembered for the next",
         scope: Scope::Live,
         apply: Apply::Command("voice.mute-mic {}"),
     },
@@ -794,26 +788,26 @@ pub const SETTINGS: &[SettingDef] = &[
         apply: Apply::Command("voice.apply max_voices {}"),
     },
     SettingDef {
-        key: "voice.room",
+        key: "voice.my_voice",
         kind: Kind::Choice(&["everybody", "selected"]),
         default: "everybody",
-        description: "Voice room: listen to everybody nearby (up to 10 m), or only to the selected riders, at any distance (voice.select WHO)",
+        description: "My voice: whom it reaches while it is on (M) - everybody nearby (up to 10 m; riders who selected you at any distance) or the selected riders (voice.select WHO); off nobody hears you",
         scope: Scope::Live,
-        apply: Apply::Command("voice.apply room {}"),
+        apply: Apply::Command("voice.apply my_voice {}"),
     },
     SettingDef {
-        key: "voice.heard_by",
-        kind: Kind::Choice(&["no_one", "nearby", "selected"]),
-        default: "no_one",
-        description: "Who hears me: no one, all nearby (up to 10 m; riders who selected you at any distance), or the selected riders (voice.select WHO)",
+        key: "voice.i_hear",
+        kind: Kind::Choice(&["everybody", "selected", "nobody"]),
+        default: "everybody",
+        description: "I hear: everybody nearby (up to 10 m), only the selected riders at any distance (voice.select WHO), or nobody (others may still hear you)",
         scope: Scope::Live,
-        apply: Apply::Command("voice.apply heard_by {}"),
+        apply: Apply::Command("voice.apply i_hear {}"),
     },
     SettingDef {
         key: "voice.first_call_notice",
         kind: Kind::Bool,
         default: "on",
-        description: "Show the voice notice (joined muted, who hears you) at the next call; off once shown",
+        description: "Show the voice notice (My voice is off, M turns it on; whom you hear) at the next call; off once shown",
         scope: Scope::Live,
         apply: Apply::Command("voice.apply first_call_notice {}"),
     },
@@ -1263,6 +1257,7 @@ impl Settings {
             session: BTreeMap::new(),
         };
         s.forget_retired();
+        s.migrate_voice();
         let mut warnings = Vec::new();
         for key in s.unknown_keys() {
             warnings.push(format!("unknown setting {key} (kept in the file)"));
@@ -1443,6 +1438,50 @@ impl Settings {
             if t.is_empty() {
                 self.doc.remove(section);
             }
+        }
+    }
+
+    /// The voice settings before the Voice page's two rows (spec §7.1.7
+    /// Q16), read into the new ones and dropped from the file (the next
+    /// save writes only the new keys): `voice.heard_by` → `voice.my_voice`
+    /// (`no_one` → everybody with My voice off, as every ride starts;
+    /// `nearby` → everybody; `selected` → selected), `voice.room` →
+    /// `voice.i_hear` (everybody / selected), `voice.enabled = off` →
+    /// `voice.i_hear = nobody` (both rows off: the old voice off; My voice
+    /// starts off anyway). A new key already in the file wins. The
+    /// selected riders (`[voice_riders]`) are not touched.
+    fn migrate_voice(&mut self) {
+        let Some(voice) = self.doc.get_mut("voice").and_then(|v| v.as_table_mut()) else {
+            return;
+        };
+        let text = |v: Option<toml::Value>| v.and_then(|v| v.as_str().map(str::to_owned));
+        let heard_by = text(voice.remove("heard_by"));
+        let room = text(voice.remove("room"));
+        let enabled = voice.remove("enabled").and_then(|v| v.as_bool());
+        let my_voice = heard_by
+            .as_deref()
+            .and_then(ocw_voice::audience::HeardBy::parse)
+            .map(|h| ocw_voice::audience::MyVoice::from_heard_by(h).1);
+        let i_hear = if enabled == Some(false) {
+            Some(ocw_voice::audience::Listen::Nobody)
+        } else {
+            room.as_deref()
+                .and_then(ocw_voice::audience::Listen::parse)
+                .filter(|l| *l != ocw_voice::audience::Listen::Nobody)
+        };
+        // Only what differs from the defaults is written, as `set` would.
+        if let Some(m) = my_voice.filter(|m| *m != Default::default()) {
+            voice
+                .entry("my_voice")
+                .or_insert_with(|| toml::Value::String(m.key().into()));
+        }
+        if let Some(l) = i_hear.filter(|l| *l != Default::default()) {
+            voice
+                .entry("i_hear")
+                .or_insert_with(|| toml::Value::String(l.key().into()));
+        }
+        if voice.is_empty() {
+            self.doc.remove("voice");
         }
     }
 
@@ -1710,7 +1749,61 @@ mod tests {
         let s = Settings::default();
         assert_eq!(s.get("voice.mic_muted"), Ok(Value::Bool(false)));
         assert_eq!(s.get("voice.speaker_muted"), Ok(Value::Bool(false)));
-        assert_eq!(s.get("voice.enabled"), Ok(Value::Bool(true)));
+        assert!(
+            def("voice.enabled").is_none(),
+            "spec §7.1.7 Q16: no single voice off"
+        );
+        assert_eq!(s.get("voice.my_voice"), Ok(Value::Text("everybody".into())));
+        assert_eq!(s.get("voice.i_hear"), Ok(Value::Text("everybody".into())));
+    }
+
+    /// Spec §7.1.7 Q16: the old voice settings (`ocw.toml` or the
+    /// browser's `localStorage`, both read by `Settings::parse`) become
+    /// the two rows without a warning, and the file keeps only the new
+    /// keys; the selected riders stay.
+    #[test]
+    fn old_voice_settings_are_migrated() {
+        let get = |text: &str| {
+            let (s, w) = Settings::parse(text).unwrap();
+            assert!(w.is_empty(), "{w:?}");
+            let t = |k: &str| s.get(k).unwrap().to_string();
+            (t("voice.my_voice"), t("voice.i_hear"), s.to_toml())
+        };
+        let (m, i, toml) = get("[voice]\nheard_by = \"nearby\"\nroom = \"selected\"\n");
+        assert_eq!((m.as_str(), i.as_str()), ("everybody", "selected"));
+        assert!(
+            !toml.contains("heard_by") && !toml.contains("room"),
+            "{toml}"
+        );
+        assert!(toml.contains("i_hear = \"selected\""), "{toml}");
+        let (m, i, _) = get("[voice]\nheard_by = \"selected\"\n");
+        assert_eq!((m.as_str(), i.as_str()), ("selected", "everybody"));
+        // No one: My voice off, which every ride starts with anyway.
+        let (m, _, toml) = get("[voice]\nheard_by = \"no_one\"\n");
+        assert_eq!(m, "everybody");
+        assert!(!toml.contains("voice"), "nothing left to keep: {toml}");
+        // The old voice off: both rows off (I hear nobody; My voice starts
+        // off), whatever the room said.
+        let (_, i, toml) = get("[voice]\nenabled = false\nroom = \"selected\"\nvolume = 80\n");
+        assert_eq!(i, "nobody");
+        assert!(
+            !toml.contains("enabled") && toml.contains("volume = 80"),
+            "{toml}"
+        );
+        let (_, i, _) = get("[voice]\nenabled = true\n");
+        assert_eq!(i, "everybody");
+        // A new key already there wins.
+        let (m, i, _) = get(
+            "[voice]\nheard_by = \"selected\"\nmy_voice = \"everybody\"\nroom = \"selected\"\ni_hear = \"nobody\"\n",
+        );
+        assert_eq!((m.as_str(), i.as_str()), ("everybody", "nobody"));
+        // The selection is kept.
+        let (s, _) = Settings::parse(
+            "[voice]\nheard_by = \"selected\"\n\n[voice_riders.\"name:local/Bea Climber\"]\nname = \"Bea Climber\"\nselected = true\n",
+        )
+        .unwrap();
+        assert!(s.voice_riders()["name:local/Bea Climber"].selected);
+        assert_eq!(s.get("voice.my_voice"), Ok(Value::Text("selected".into())));
     }
 
     #[test]

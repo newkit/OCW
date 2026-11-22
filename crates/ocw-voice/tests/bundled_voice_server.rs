@@ -507,7 +507,7 @@ fn range_and_audiences_hold_on_the_bundled_server() {
     {
         let a = &mut trio.riders[0].c;
         let mut s = a.settings().clone();
-        s.heard_by = ocw_voice::audience::HeardBy::Selected;
+        s.my_voice = ocw_voice::audience::MyVoice::Selected;
         a.set_settings(s);
         a.set_rider_prefs(
             [(

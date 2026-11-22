@@ -7,18 +7,19 @@
 //! Always on, like a call: on a shared ride (a remote server with voice and
 //! another human rider) the app asks the game server for a LiveKit token
 //! over the game connection (WebTransport) and joins the room; the local
-//! server in the page has no voice (a solo ride). Every shared ride is
-//! joined muted (spec §7.1.7 Q7): `M` unmutes the microphone for the ride,
-//! `Shift+M` mutes the speaker (all voices; kept in the settings,
+//! server in the page has no voice (a solo ride). Every shared ride starts
+//! with *My voice* off (spec §7.1.7 Q7, Q16): `M` turns it on for the
+//! ride, `Shift+M` mutes the speaker (all voices; kept in the settings,
 //! `voice.speaker_muted`). Who hears the rider and whom the rider hears:
-//! `voice.heard_by`, `voice.room`, `voice.select WHO` (spec §7.1.3,
-//! §7.1.7 Q8), decided by the game server (Q6). The HUD's voice
+//! `voice.my_voice`, `voice.i_hear`, `voice.select WHO` (spec §7.1.3,
+//! §7.1.7 Q8, Q16), decided by the game server (Q6); `voice.off` turns
+//! both off. The HUD's voice
 //! indicator is the shared one (`ocw_render::voice`). The echo test
 //! (`voice.echo …`) works on solo rides too (the browser's microphone
 //! through a delay in the shim). Console as on the desktop: `voice.status`,
 //! `voice.mute-mic`, `voice.mute-speaker`, `voice.mute WHO`,
 //! `voice.volume WHO PERCENT`, `voice.block WHO`, `voice.select WHO`,
-//! `voice.group`,
+//! `voice.off`, `voice.group`,
 //! `voice.devices`, `voice.echo`, `voice.apply`.
 
 use std::sync::Mutex;
@@ -216,9 +217,12 @@ pub fn voice_json(c: &VoiceController, info: &VoiceMenuInfo, hud: &VoiceHud) -> 
             "selected": p.selected, "may_hear": p.may_hear,
             "distance_m": p.distance_m,
         })).collect::<Vec<_>>(),
-        // Who hears whom (spec §7.1.3, §7.1.7 Q6, Q8).
-        "voice_room": s.listen.key(),
-        "heard_by": s.heard_by.key(),
+        // Who hears whom (spec §7.1.3, §7.1.7 Q6, Q8, Q16): the two rows
+        // and what the server is told.
+        "my_voice": s.my_voice.key(),
+        "my_voice_on": c.my_voice_on(),
+        "i_hear": s.listen.key(),
+        "heard_by": c.heard_by().key(),
         "selected": info.choices.iter().filter(|r| r.selected).map(|r| serde_json::json!({
             "who": r.who, "name": r.name, "here": r.here,
         })).collect::<Vec<_>>(),
@@ -335,7 +339,7 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("voice.mute-mic")
-            .about("Mute or unmute your microphone (M); remembered")
+            .about("My voice off / on: mute or unmute your microphone (M); every shared ride starts with it off")
             .arg(switch_arg()),
         |world, m| {
             let arg = m.get_one::<String>("state").map(String::as_str);
@@ -351,6 +355,13 @@ fn register_commands(app: &mut App) {
             let arg = m.get_one::<String>("state").map(String::as_str);
             with_voice(world, |c, store| shared::mute_command(c, store, Toggle::Speaker, arg))
         },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("voice.off").about(
+            "Voice off: My voice off and I hear nobody (spec 7.1.7 Q16); you stay in the call, M and voice.i_hear turn each back on",
+        ),
+        |world, _| Ok(with_voice(world, shared::voice_off_command)),
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
@@ -424,7 +435,7 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("voice.select")
-            .about("Select a rider for the voice room and Who hears me (set voice.room / voice.heard_by selected); remembered (rider id, identity, name or a remembered key; on, off, toggle)")
+            .about("Select a rider for I hear and My voice (one list: set voice.i_hear / voice.my_voice selected); remembered (rider id, identity, name or a remembered key; on, off, toggle)")
             .arg(Arg::new("who").required(true))
             .arg(Arg::new("state").value_parser(["on", "off", "toggle"])),
         |world, m| {
@@ -697,22 +708,24 @@ mod tests {
         let voice = a2.world().resource::<Voice>();
         let prefs = voice.0.lock().unwrap().rider_prefs().clone();
         assert!(prefs["name:local/Bea Climber"].blocked);
-        // Selected riders and Who hears me (spec §7.1.3, §7.1.7 Q8): the
+        // Selected riders and My voice (spec §7.1.3, §7.1.7 Q8, Q16): the
         // same commands as on the desktop, saved in the page.
         assert!(run(&mut a, "voice.block 2 off").contains("unblocked"));
         assert!(run(&mut a, "voice.select 2").contains("Bea Climber selected"));
-        assert!(run(&mut a, "set voice.heard_by selected").contains("voice.heard_by = selected"));
+        assert!(run(&mut a, "set voice.my_voice selected").contains("voice.my_voice = selected"));
         a.update();
         let text = mem.0.lock().unwrap().clone().unwrap();
         assert!(text.contains("selected = true"), "{text}");
-        assert!(text.contains("heard_by = \"selected\""), "{text}");
+        assert!(text.contains("my_voice = \"selected\""), "{text}");
         let info = a.world().resource::<VoiceInfo>().0.clone();
         let hud = a.world().resource::<VoiceHud>().clone();
         let voice = a.world().resource::<Voice>();
         let j: serde_json::Value =
             serde_json::from_str(&voice_json(&voice.0.lock().unwrap(), &info, &hud)).unwrap();
-        assert_eq!(j["heard_by"], "selected");
-        assert_eq!(j["voice_room"], "everybody");
+        assert_eq!(j["my_voice"], "selected");
+        assert_eq!(j["my_voice_on"], false, "joined with My voice off");
+        assert_eq!(j["heard_by"], "no_one");
+        assert_eq!(j["i_hear"], "everybody");
         assert_eq!(j["participants"][0]["selected"], true);
         assert_eq!(j["selected"][0]["name"], "Bea Climber");
         let a3 = app(Shared::default(), mem.clone());
@@ -720,8 +733,8 @@ mod tests {
         let c = voice.0.lock().unwrap();
         assert!(c.rider_prefs()["name:local/Bea Climber"].selected);
         assert_eq!(
-            c.settings().heard_by,
-            ocw_voice::audience::HeardBy::Selected
+            c.settings().my_voice,
+            ocw_voice::audience::MyVoice::Selected
         );
     }
 

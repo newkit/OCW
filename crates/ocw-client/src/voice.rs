@@ -25,7 +25,7 @@ use ocw_protocol::v1;
 use ocw_render::Signs;
 use ocw_render::voice::{EchoHud, VoiceHud, VoiceSigns};
 use ocw_render::{RideView, RiderView};
-use ocw_voice::audience::{HeardBy, Listen};
+use ocw_voice::audience::{Listen, MyVoice};
 use ocw_voice::hotkeys::{Input, Toggle};
 use ocw_voice::spatial::Peer;
 use ocw_voice::{EchoStatus, Levels, MuteState, Status, Switch, VoiceController, VoiceSettings};
@@ -56,8 +56,9 @@ pub fn voice_signs(c: &VoiceController, voice_offered: bool) -> VoiceSigns {
 /// state carries today:
 ///
 /// - **hears nobody** (every viewer in the call sees the headphones): the
-///   speaker is muted (Shift+M, `voice.speaker_muted`), or voice is turned
-///   off in the settings while the server offers it;
+///   speaker is muted (Shift+M, `voice.speaker_muted`), *I hear: nobody*
+///   (`voice.i_hear`, spec §7.1.7 Q16), or voice is off in the controller
+///   while the server offers it;
 /// - **does not hear these riders** (only they see the headphones): the
 ///   participants the rider muted for themselves (`voice.mute WHO`).
 ///
@@ -67,7 +68,8 @@ pub fn voice_signs(c: &VoiceController, voice_offered: bool) -> VoiceSigns {
 ///
 /// Not counted (the proposal: not merely distance): riders out of hearing
 /// range or beyond the subscription cap (`heard: None` without a mute),
-/// and *Who hears me* (Q8, the other direction: the viewer is not heard).
+/// and *My voice* (Q8, Q16, the other direction: the viewer is not heard;
+/// its off is the X mouth).
 /// **Block (Q9, built) does not count here** and neither does
 /// a rider's volume at 0 %: whether the headphones show for them is the
 /// open question §7.1.7 Q18 (a blocked rider would learn of the block
@@ -81,8 +83,9 @@ pub fn not_hearing_reasons(
     let in_voice = matches!(status, Status::Connected | Status::Reconnecting);
     let speaker_off = in_voice && c.mute().speaker_muted;
     let voice_off = matches!(status, Status::Off) && voice_offered;
+    let nobody = in_voice && c.settings().listen == Listen::Nobody;
     let selective = c.settings().listen == Listen::Selected && c.group().is_none();
-    let mut muted: Vec<RiderId> = if in_voice {
+    let mut muted: Vec<RiderId> = if in_voice && !nobody {
         c.participants()
             .filter(|p| p.muted_by_me || (selective && !p.selected && !p.blocked_by_me))
             .filter_map(|p| p.rider)
@@ -92,7 +95,7 @@ pub fn not_hearing_reasons(
     };
     muted.sort_unstable();
     muted.dedup();
-    (speaker_off || voice_off, muted)
+    (speaker_off || voice_off || nobody, muted)
 }
 
 /// The status signs `viewer` sees on rider `of` (spec §2.6, §7.1.7 Q11):
@@ -149,11 +152,12 @@ pub struct VoiceMenuInfo {
     pub echo: String,
     /// The riders blocked (spec §7.1.7 Q9), by name: present or not.
     pub blocked: Vec<BlockedRider>,
-    /// The microphone is muted now (riders join muted, spec §7.1.7 Q7).
+    /// The microphone is muted now: *My voice* off (riders join so, spec
+    /// §7.1.7 Q7, Q16).
     pub mic_muted: bool,
-    /// *Voice room* and *Who hears me* (spec §7.1.3, §7.1.7 Q8).
+    /// *I hear* and *My voice*'s audience (spec §7.1.3, §7.1.7 Q16).
     pub listen: Listen,
-    pub heard_by: HeardBy,
+    pub my_voice: MyVoice,
     /// The riders to choose from for *Selected riders* (spec §7.1.3): the
     /// riders in the session (bots and the Echo rider not), then the
     /// selected ones not here now.
@@ -259,15 +263,16 @@ pub fn settings_of(s: &Settings) -> (VoiceSettings, MuteState) {
     let text = |k: &str| s.get(k).ok().map(|v| v.to_string()).unwrap_or_default();
     (
         VoiceSettings {
-            enabled: on("voice.enabled"),
+            // No single voice off (spec §7.1.7 Q16): both rows off is.
+            enabled: true,
             spatial: on("voice.spatial"),
             volume: int("voice.volume", 100) as f32 / 100.0,
             max_voices: int("voice.max_voices", ocw_voice::spatial::MAX_VOICES as i64).max(1)
                 as usize,
             input: device("voice.input"),
             output: device("voice.output"),
-            heard_by: HeardBy::parse(&text("voice.heard_by")).unwrap_or_default(),
-            listen: Listen::parse(&text("voice.room")).unwrap_or_default(),
+            my_voice: MyVoice::parse(&text("voice.my_voice")).unwrap_or_default(),
+            listen: Listen::parse(&text("voice.i_hear")).unwrap_or_default(),
             notice: notice_pending(s),
         },
         MuteState {
@@ -324,8 +329,10 @@ pub fn echo_hud(s: &EchoStatus, levels: Levels, delay_ms: u32) -> Option<EchoHud
     })
 }
 
-/// The HUD's room line (spec §7.1.4): "ROOM: everybody" or "ROOM: 3
-/// selected (2 here)", and who hears the rider.
+/// The HUD's voice line (spec §7.1.4, §7.1.7 Q16): the two rows of the
+/// Voice page – "MY VOICE: off (everybody) - I HEAR: everybody", "MY
+/// VOICE: on, selected - I HEAR: 3 selected (2 here)", "… - I HEAR:
+/// nobody", "… - I HEAR: group NAME".
 pub fn room_text(c: &VoiceController) -> String {
     let s = c.settings();
     let selected = ocw_voice::riders::selected_list(c.rider_prefs())
@@ -336,15 +343,27 @@ pub fn room_text(c: &VoiceController) -> String {
         .participants()
         .filter(|p| p.selected && !p.blocked_by_me)
         .count();
-    let room = match (c.group(), s.listen) {
+    let hear = match (c.group(), s.listen) {
+        (_, Listen::Nobody) => "nobody".to_owned(),
         (Some(g), _) => format!("group {g}"),
         (None, Listen::Everybody) => "everybody".to_owned(),
         (None, Listen::Selected) => format!("{selected} selected ({here} here)"),
     };
     format!(
-        "ROOM: {room} - heard by: {}",
-        s.heard_by.label().to_lowercase()
+        "MY VOICE: {} - I HEAR: {hear}",
+        my_voice_text(c.my_voice_on(), s.my_voice)
     )
+}
+
+/// *My voice* as the page and the HUD show it (spec §7.1.7 Q16): "on,
+/// everybody", "off (selected)" – the audience is kept while it is off.
+pub fn my_voice_text(on: bool, audience: MyVoice) -> String {
+    let who = audience.label().to_lowercase();
+    if on {
+        format!("on, {who}")
+    } else {
+        format!("off ({who})")
+    }
 }
 
 /// The HUD text of a status (with the number of others in the room).
@@ -556,7 +575,7 @@ impl VoiceDriver {
         let notice = self
             .notice_until
             .filter(|until| now_s < *until)
-            .map(|_| first_call_notice(c.settings().heard_by));
+            .map(|_| first_call_notice(c.settings().my_voice, c.settings().listen));
         let text = status_text(&status, participants.len());
         let inputs = c.input_devices();
         let outputs = c.output_devices();
@@ -581,7 +600,7 @@ impl VoiceDriver {
                 .collect(),
             mic_muted: c.mute().mic_muted,
             listen: s.listen,
-            heard_by: s.heard_by,
+            my_voice: s.my_voice,
             choices: choices(c, client),
         };
         let own = client.and_then(|c| c.rider_id());
@@ -684,8 +703,9 @@ fn remember(store: Option<&mut dyn SettingsStore>, key: &str, value: &str) -> St
 
 /// `voice.mute-mic` / `voice.mute-speaker [on|off|toggle]` (M / Shift+M,
 /// gamepad Select / R3): applied to the call; the speaker is remembered in
-/// the settings (`voice.speaker_muted`), the microphone is not – every
-/// shared ride is joined muted (spec §7.1.7 Q7).
+/// the settings (`voice.speaker_muted`), the microphone – *My voice* on /
+/// off (spec §7.1.7 Q16) – is not: every shared ride is joined with My
+/// voice off (Q7).
 pub fn mute_command(
     c: &mut VoiceController,
     store: Option<&mut dyn SettingsStore>,
@@ -715,9 +735,12 @@ pub fn mute_command(
         Toggle::Speaker => c.set_speaker(s),
     };
     let m = c.mute();
+    let audience = c.settings().my_voice.label().to_lowercase();
     Ok(match which {
-        Toggle::Mic if m.mic_muted => format!("microphone muted{note}"),
-        Toggle::Mic => format!("microphone on{note}"),
+        Toggle::Mic if m.mic_muted => {
+            format!("my voice off: microphone muted, nobody hears you{note}")
+        }
+        Toggle::Mic => format!("my voice on: microphone on, heard by {audience}{note}"),
         Toggle::Speaker if m.speaker_muted => format!("speaker muted: no voices{note}"),
         Toggle::Speaker => format!("speaker on{note}"),
     })
@@ -749,13 +772,30 @@ pub fn notice_pending(settings: &Settings) -> bool {
         .unwrap_or(true)
 }
 
-/// The first call's notice (spec §7.1.2, adapted to Q7 / Q8: joined
-/// muted, *Who hears me*), 8 s on the HUD.
-pub fn first_call_notice(heard_by: HeardBy) -> String {
+/// The first call's notice (spec §7.1.2, adapted to Q7 / Q16: My voice
+/// starts off, whom M lets hear it, whom the rider hears), 8 s on the HUD.
+pub fn first_call_notice(my_voice: MyVoice, listen: Listen) -> String {
+    let to = match my_voice {
+        MyVoice::Everybody => "everybody nearby",
+        MyVoice::Selected => "the selected riders",
+    };
     format!(
-        "Voice: you join muted - M unmutes. Who hears you: {} (Settings > Voice > Voice room).",
-        heard_by.label().to_lowercase()
+        "Voice: My voice is off - M turns it on for {to}. I hear: {} (Settings > Voice).",
+        listen.label().to_lowercase()
     )
+}
+
+/// `voice.off` (spec §7.1.7 Q16): the old voice off as a shortcut – both
+/// rows off: *My voice* off (the microphone muted, the X mouth) and *I
+/// hear: nobody* (remembered; the headphones). The rider stays in the
+/// call; each row turns on again by itself (M, `set voice.i_hear …`).
+pub fn voice_off_command(c: &mut VoiceController, store: Option<&mut dyn SettingsStore>) -> String {
+    c.set_mic(Switch::On);
+    let note = remember(store, "voice.i_hear", Listen::Nobody.key());
+    let mut s = c.settings().clone();
+    s.listen = Listen::Nobody;
+    c.set_settings(s);
+    format!("voice off: my voice off, I hear nobody{note}")
 }
 
 /// How long the first call's notice stays (s).
@@ -846,9 +886,9 @@ pub fn status_command(c: &VoiceController, note: Option<&str>) -> String {
     }
     let s = c.settings();
     out.push(format!(
-        "voice room: {}, who hears me: {}",
-        s.listen.label().to_lowercase(),
-        s.heard_by.label().to_lowercase()
+        "my voice: {}, I hear: {}",
+        my_voice_text(c.my_voice_on(), s.my_voice),
+        s.listen.label().to_lowercase()
     ));
     if let Some(h) = c.hearing() {
         let list = |set: &std::collections::BTreeSet<RiderId>| {
@@ -1025,9 +1065,9 @@ pub fn block_command(
     })
 }
 
-/// `voice.select WHO [on|off|toggle]` (spec §7.1.3, §7.1.7 Q8): one of
-/// the *Selected riders* – heard with *Voice room: Selected riders*,
-/// hearing the own rider with *Who hears me: Selected riders*;
+/// `voice.select WHO [on|off|toggle]` (spec §7.1.3, §7.1.7 Q8, Q16, Q19):
+/// one of the selected riders (one list) – heard with *I hear: selected*,
+/// hearing the own rider with *My voice: Selected*;
 /// remembered like a block (by account, else by name on this server). A
 /// block wins: a blocked rider stays unheard and does not hear the rider.
 pub fn select_command(
@@ -1052,9 +1092,9 @@ pub fn select_command(
     Ok(match (selected, blocked) {
         (true, true) => format!("{name} selected, but blocked: the block wins{note}"),
         (true, false) => format!(
-            "{name} selected (voice room: {}, who hears me: {}){note}",
+            "{name} selected (I hear: {}, my voice: {}){note}",
             set.listen.label().to_lowercase(),
-            set.heard_by.label().to_lowercase()
+            set.my_voice.label().to_lowercase()
         ),
         (false, _) => format!("{name} no longer selected{note}"),
     })
@@ -1245,6 +1285,50 @@ mod tests {
         assert!(f.send.is_empty());
         assert!(!f.hud.visible && f.hud.mic_muted && !f.hud.speaker_muted);
         assert_eq!(f.menu.status, "no voice on this server");
+        // The HUD's voice line: the Voice page's two rows (spec §7.1.7
+        // Q16), My voice off at the start.
+        assert_eq!(f.hud.room, "MY VOICE: off (everybody) - I HEAR: everybody");
+        assert_eq!(f.menu.my_voice, MyVoice::Everybody);
+    }
+
+    /// Spec §7.1.7 Q16: the two rows as the HUD, the notice, the settings
+    /// and `voice.off` (both off, the old voice off) see them.
+    #[test]
+    fn my_voice_and_i_hear_in_texts_settings_and_voice_off() {
+        let (s, _) =
+            Settings::parse("[voice]\nmy_voice = \"selected\"\ni_hear = \"nobody\"\n").unwrap();
+        let (v, m) = settings_of(&s);
+        assert_eq!((v.my_voice, v.listen), (MyVoice::Selected, Listen::Nobody));
+        assert!(v.enabled, "no single voice off any more");
+        let mut c = VoiceController::new(Box::new(MockBackend::default()), v, m);
+        assert_eq!(room_text(&c), "MY VOICE: on, selected - I HEAR: nobody");
+        c.set_mic(Switch::On);
+        assert_eq!(room_text(&c), "MY VOICE: off (selected) - I HEAR: nobody");
+        assert_eq!(
+            first_call_notice(MyVoice::Everybody, Listen::Everybody),
+            "Voice: My voice is off - M turns it on for everybody nearby. I hear: everybody (Settings > Voice)."
+        );
+        assert!(
+            first_call_notice(MyVoice::Selected, Listen::Selected)
+                .contains("on for the selected riders. I hear: selected")
+        );
+        // `voice.off`: My voice off and I hear nobody, from on · everybody.
+        let mut c = VoiceController::new(
+            Box::new(MockBackend::default()),
+            VoiceSettings::default(),
+            MuteState::default(),
+        );
+        assert!(c.my_voice_on());
+        assert!(voice_off_command(&mut c, None).contains("my voice off, I hear nobody"));
+        assert!(!c.my_voice_on() && c.mute().mic_muted, "the X mouth");
+        assert_eq!(c.settings().listen, Listen::Nobody);
+        assert_eq!(c.heard_by(), ocw_voice::audience::HeardBy::NoOne);
+        assert_eq!(c.server_audience().listen(), v1::VoiceListen::Nobody);
+        assert!(
+            mute_command(&mut c, None, Toggle::Mic, Some("off"))
+                .unwrap()
+                .contains("my voice on")
+        );
     }
 
     /// A grant while requesting connects the backend; its events reach
@@ -1426,7 +1510,7 @@ mod tests {
                         c: VoiceController::new(
                             Box::new(Recording(backend.clone())),
                             VoiceSettings {
-                                heard_by: HeardBy::Nearby,
+                                my_voice: MyVoice::Everybody,
                                 ..Default::default()
                             },
                             MuteState::default(),
@@ -1653,14 +1737,31 @@ mod tests {
         select_command(&mut w.sides[2].c, None, "Bea Climber", Some("on")).unwrap();
         w.run_with_status(20);
         assert_eq!(w.all_headphones(), [(0, 2)]);
-        // Back to everybody; Ada lets nobody hear her (*Who hears me: No
-        // one*) – that is not "cannot hear you".
+        // Back to everybody; Ada turns My voice off (spec §7.1.7 Q16:
+        // nobody hears her) – the X mouth, not "cannot hear you".
         let mut s = w.sides[2].c.settings().clone();
         s.listen = Listen::Everybody;
         w.sides[2].c.set_settings(s);
-        let mut s = w.sides[0].c.settings().clone();
-        s.heard_by = HeardBy::NoOne;
-        w.sides[0].c.set_settings(s);
+        w.sides[0].c.set_mic(Switch::On);
+        w.run_with_status(20);
+        assert!(w.all_headphones().is_empty(), "{:?}", w.all_headphones());
+        assert!(w.server.voice_hearing(w.sides[0].conn).heard_by.is_empty());
+        assert!(voice_signs(&w.sides[0].c, true).mic_muted, "the X mouth");
+        // Cleo: *I hear: nobody* (Q16) – every rider in the call sees her
+        // headphones (from her status and from her audience at the
+        // server); she gets no voice; Ada and Bea still hear each other.
+        let mut s = w.sides[2].c.settings().clone();
+        s.listen = Listen::Nobody;
+        w.sides[2].c.set_settings(s);
+        w.run_with_status(20);
+        assert_eq!(w.all_headphones(), [(0, 2), (1, 2)]);
+        assert!(w.sides[2].subscribed().is_empty(), "Cleo hears nobody");
+        assert!(w.server.voice_hearing(w.sides[2].conn).may_hear.is_empty());
+        assert!(voice_signs(&w.sides[2].c, true).hears_nobody);
+        let mut s = w.sides[2].c.settings().clone();
+        s.listen = Listen::Everybody;
+        w.sides[2].c.set_settings(s);
+        w.sides[0].c.set_mic(Switch::Off);
         w.run_with_status(20);
         assert!(w.all_headphones().is_empty(), "{:?}", w.all_headphones());
         // Range: Cleo rides 20 m ahead (out of hearing) – no headphones.
@@ -1729,7 +1830,7 @@ mod tests {
                 .contains("Cleo Sprinter selected")
         );
         let mut s = w.sides[0].c.settings().clone();
-        s.heard_by = HeardBy::Selected;
+        s.my_voice = MyVoice::Selected;
         w.sides[0].c.set_settings(s);
         w.run(10);
         assert_eq!(w.allowed(0), Some(w.set(&[2])), "only Cleo may hear Ada");
@@ -1740,10 +1841,8 @@ mod tests {
             w.set(&[1, 2]),
             "Ada still hears both"
         );
-        // Bea: *Who hears me: No one* (the default).
-        let mut s = w.sides[1].c.settings().clone();
-        s.heard_by = HeardBy::NoOne;
-        w.sides[1].c.set_settings(s);
+        // Bea: My voice off (as every ride starts, spec §7.1.7 Q7, Q16).
+        w.sides[1].c.set_mic(Switch::On);
         w.run(10);
         assert_eq!(w.allowed(1), Some(w.set(&[])));
         assert_eq!(w.sides[0].subscribed(), w.set(&[2]));

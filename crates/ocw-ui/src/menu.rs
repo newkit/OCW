@@ -162,6 +162,7 @@ impl Plugin for MenuPlugin {
                                 "ride",
                                 "strava-waiting",
                                 "strava",
+                                "voice",
                             ])
                             .default_value("toggle"),
                     )
@@ -193,6 +194,8 @@ impl Plugin for MenuPlugin {
                         Some("strava-waiting") => Action::OpenSub(sub::Page::StravaWaiting),
                         // The Strava page (Navi → Strava; spec 2.8.1).
                         Some("strava") => Action::OpenSub(sub::Page::Strava),
+                        // Settings → Voice (spec 7.1.7 Q16; scenes, tests).
+                        Some("voice") => Action::OpenSub(sub::Page::Voice),
                         _ if open => Action::Close,
                         _ => Action::Open,
                     };

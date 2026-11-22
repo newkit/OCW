@@ -30,8 +30,8 @@ pub struct VoiceHud {
     /// What the own rider's status signs say about voice (spec §2.6,
     /// §7.1.7 Q11): sent to the others with the samples.
     pub signs: VoiceSigns,
-    /// The room line (spec §7.1.4): "ROOM: everybody - heard by: no one",
-    /// "ROOM: 3 selected (2 here) - …".
+    /// The voice line (spec §7.1.4, §7.1.7 Q16): the Voice page's two rows,
+    /// "MY VOICE: off (everybody) - I HEAR: 3 selected (2 here)".
     pub room: String,
     /// The first call's notice (spec §7.1.2), while it shows.
     pub notice: Option<String>,
@@ -385,17 +385,17 @@ mod tests {
         v.self_speaking = true;
         assert!(lines(&v).0.starts_with("MIC on - talking"));
         // The room line and the first call's notice (spec §7.1.2, §7.1.4).
-        v.room = "ROOM: everybody - heard by: no one".into();
+        v.room = "MY VOICE: off (everybody) - I HEAR: everybody".into();
         v.speaking_names.clear();
         assert_eq!(
             lines(&v).1,
-            "voice connected (2)\nROOM: everybody - heard by: no one"
+            "voice connected (2)\nMY VOICE: off (everybody) - I HEAR: everybody"
         );
-        v.notice = Some("Voice: you join muted - M unmutes.".into());
+        v.notice = Some("Voice: My voice is off - M turns it on.".into());
         assert!(
             lines(&v)
                 .1
-                .starts_with("Voice: you join muted - M unmutes.\nvoice connected")
+                .starts_with("Voice: My voice is off - M turns it on.\nvoice connected")
         );
     }
 }

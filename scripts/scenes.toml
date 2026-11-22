@@ -109,6 +109,26 @@ at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=men
 shot = 9.5
 
 [[scene]]
+name = "menu-voice-rows"
+description = "Settings -> Voice (spec 7.1.7 Q16): My voice (off at the start, Everybody) and I hear (Everybody) as two separate rows, Choose riders, Speaker, Participants with the call's state, Devices; the HUD's voice line below (shown by the echo test)"
+args = ["--route", "hills", "--bots", "2", "--echo-bot"]
+at = ["0.5=menu voice"]
+shot = 8
+
+[[scene]]
+name = "menu-voice-rows-on-selected-nobody"
+description = "Settings -> Voice (spec 7.1.7 Q16): My voice on, Selected and I hear nobody; the HUD's voice line says the same"
+args = ["--route", "hills", "--bots", "2", "--echo-bot"]
+at = ["0.3=set --temp voice.my_voice selected", "0.3=set --temp voice.i_hear nobody", "0.4=voice.mute-mic off", "0.5=menu voice"]
+shot = 8
+
+[[scene]]
+name = "hud-voice-line"
+description = "The HUD's voice indicator (spec 7.1.7 Q16): MIC / SPEAKER, the echo test and the line MY VOICE: off (everybody) - I HEAR: everybody"
+args = ["--route", "hills", "--bots", "2", "--echo-bot"]
+shot = 8
+
+[[scene]]
 name = "menu-workshop-bike"
 description = "In-game menu: Workshop -> Bike page of a rider profile (gravel bike, colours, kit) with the rider behind it"
 args = ["--route", "hills", "--bots", "0"]
