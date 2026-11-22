@@ -2735,7 +2735,10 @@ fn junctions(
                         ));
                     }
                 }
-                if p.arms.iter().any(|a| a.mouth_m > ocw_world::junction::MAX_MOUTH_M) {
+                if p.arms
+                    .iter()
+                    .any(|a| a.mouth_m > ocw_world::junction::MAX_MOUTH_M)
+                {
                     forks += 1;
                 }
             }
