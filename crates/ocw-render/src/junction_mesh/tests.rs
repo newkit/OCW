@@ -369,9 +369,11 @@ fn the_terrain_is_lowered_under_a_patch_and_a_lowered_side_road() {
     let (_, y0) = at(0.0, 0.0);
     let h0 = p.height_at([0.0, 0.0]).unwrap() as f32;
     assert!(y0 <= h0 + crate::ROAD_SURFACE_LIFT_M - TERRAIN_UNDER_M + 1e-4);
-    // Beside the side road at 15 m: its drawn surface lies below its
-    // profile; the ground goes down with it, staying under the road.
-    let side = p.arms.iter().position(|a| a.blend_m > 0.0).unwrap();
+    // Beside the side road: in its corner (J3, §4.8.8 Q6 (d)) its drawn
+    // surface lies below its profile (it leaves the main road's edge at
+    // the main road's height); the ground goes down with it, staying under
+    // the road.
+    let side = p.arms.iter().position(|a| a.has_corner()).unwrap();
     let sunk = JunctionSet::sunk(&g, p, side);
     assert!(!sunk.is_empty());
     let (c, delta) = sunk[sunk.len() / 2];
@@ -471,9 +473,10 @@ fn mini_roundabouts_get_a_painted_disc() {
     let ctx = ctx_with(&style, &ground);
     let key = TileKey::containing([0.0, 0.0], SIZE);
     let strips = tiles(&g).remove(&key).unwrap();
-    let mut pj = PackageJunctions::of_graph(&g, SIZE);
-    let plain = shape_tile(&g, &pj, key, SIZE, &strips, &style);
+    let pj_plain = PackageJunctions::of_graph(&g, SIZE);
+    let plain = shape_tile(&g, &pj_plain, key, SIZE, &strips, &style);
     assert!(plain.discs.is_empty());
+    let mut pj = PackageJunctions::of_graph(&g, SIZE);
     pj.mini_roundabouts = vec![0];
     let t = shape_tile(&g, &pj, key, SIZE, &strips, &style);
     assert_eq!(t.discs.len(), 1);

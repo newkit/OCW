@@ -3117,6 +3117,38 @@ args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-253
 at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 200 38 24"]
 shot = 9
 
+[[scene]]
+name = "junction-dual-rider"
+description = "Junction seams (near rider height): Liechtenstein, a road meeting a dual carriageway (two junction vertices a few metres apart: one J3 cluster patch)"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2009.2,-5393.8", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 6 9"]
+shot = 9
+
+[[scene]]
+name = "junction-dual-drone"
+description = "Junction seams (low drone angle): Liechtenstein, a road meeting a dual carriageway (two junction vertices a few metres apart: one J3 cluster patch)"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2009.2,-5393.8", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 200 38 24"]
+shot = 9
+
+[[scene]]
+name = "junction-mini-rider"
+description = "Junction seams (near rider height): Liechtenstein, a mini-roundabout (OSM highway=mini_roundabout: a painted disc since J3)"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2617.9,-5699.8", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 6 9"]
+shot = 9
+
+[[scene]]
+name = "junction-mini-drone"
+description = "Junction seams (low drone angle): Liechtenstein, a mini-roundabout (OSM highway=mini_roundabout: a painted disc since J3)"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2617.9,-5699.8", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 200 38 24"]
+shot = 9
+
 # --- Rider clothing: bib under the jersey, back pockets (bug 2026-11-16) ------
 # The same views before / after the fix (spec §2.6, Phase 4 4C, Phase 8 T6).
 

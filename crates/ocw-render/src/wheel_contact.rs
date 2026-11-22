@@ -631,8 +631,10 @@ fn tyres_touch_the_junction_surfaces() {
                     .height_near(p[0] as f32, p[2] as f32, p[1] as f32 + lift)
                     .expect("road under the path");
                 let dh = (p[1] as f32 + lift - drawn).abs();
+                // 4 mm: the corners between a main road's edge and a side
+                // road curve (J3), the path's points lie 0.5 m apart.
                 assert!(
-                    dh < 0.003,
+                    dh < 0.004,
                     "{label} exit {k}: path {dh} m off the drawn surface at {d}"
                 );
                 for (ci, (_, case)) in cases(&path, d).into_iter().take(2).enumerate() {
