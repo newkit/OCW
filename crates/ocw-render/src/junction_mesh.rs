@@ -285,7 +285,7 @@ pub fn shape_tile<'a>(
             if !seen.insert(v) || TileKey::containing(g.vertices[v], size) != key {
                 continue;
             }
-            if let Some(p) = pj.set.patch(g, v) {
+            if let Some(p) = pj.set.own_patch(g, v) {
                 let arm_looks = p
                     .arms
                     .iter()
@@ -544,6 +544,7 @@ pub fn patches_near<'a>(g: &RoadGraph, pj: &'a PackageJunctions, key: TileKey) -
         for v in [e.from.0 as usize, e.to.0 as usize] {
             if seen.insert(v)
                 && let Some(p) = pj.set.patch(g, v)
+                && !out.iter().any(|q: &&Patch| q.vertex == p.vertex)
             {
                 out.push(p);
             }

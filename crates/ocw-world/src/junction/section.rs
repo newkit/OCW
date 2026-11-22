@@ -9,7 +9,8 @@
 //! mouths, the outline points):
 //!
 //! ```text
-//! layout version: u8 (1)
+//! layout version: u8 (2 since J3: the side roads' corners, 4.8.8 Q6 (d),
+//!   change the drawn surface and clusters came; layout 1 is ignored)
 //! flags: u8 (bit 0: the profiles are reconciled with the patches and the
 //!   terrain is settled under them in the package – J2; the renderer then
 //!   leaves the terrain as it is)
@@ -19,13 +20,18 @@
 //!   record length: u16 (the bytes after it; readers skip unknown bytes
 //!     at a record's end)
 //!   vertex: u32
-//!   kind: u8 (0 patch, 1 mitre; records of unknown kinds are skipped)
-//!   patch only:
+//!   kind: u8 (0 patch, 1 mitre, 2 cluster patch, 3 cluster member;
+//!     records of unknown kinds are skipped)
+//!   patch and cluster patch:
 //!     arm count: u8, per arm (by polar angle): edge u32, flags u8 (bit 0:
-//!       the edge's `from` end is here), mouth m: f64 (from the vertex),
+//!       the edge's `from` end is here), mouth m: f64 (from its vertex),
 //!       along: f64 (the strip's along coordinate at the mouth)
-//!     outline count: u16, per point: dx, dz f32 (from the vertex), mouth
-//!       arm u8 (255: none)
+//!     outline count: u16, per point: dx, dz f32 (from the patch's centre:
+//!       the vertex, a cluster's centroid), mouth arm u8 (255: none)
+//!   cluster patch (J3, at its first vertex) also: member count u8,
+//!     members u32 (growing, the first this record's), inner edge count
+//!     u8, inner edges u32 (inside the patch, no strip)
+//!   cluster member: the first member u32 (its patch is that one's)
 //! ```
 //!
 //! Vertices without a record have no junction surface (the overlapping
@@ -53,7 +59,9 @@ use crate::package::{Bytes, TileKey};
 
 pub const JUNCTIONS_TAG: &[u8; 4] = b"JNCT";
 pub const STRIP_EDGES_TAG: &[u8; 4] = b"RDGE";
-const JUNCTIONS_VERSION: u8 = 1;
+/// 2 (J3, 4.8.8 Q6 (d)): the side roads' corners change the drawn surface
+/// (a layout 1 section was made for J2's) and clusters (kinds 2 and 3).
+const JUNCTIONS_VERSION: u8 = 2;
 const STRIP_EDGES_VERSION: u8 = 1;
 /// `JNCT` flag: profiles reconciled, terrain settled (J2).
 pub const FLAG_SETTLED: u8 = 1;
@@ -80,12 +88,18 @@ pub struct StoredPoint {
 pub struct StoredPatch {
     pub arms: Vec<StoredArm>,
     pub outline: Vec<StoredPoint>,
+    /// A cluster's vertices (its first is the record's) and the edges
+    /// inside it (J3); empty for one vertex.
+    pub members: Vec<u32>,
+    pub inner: Vec<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum StoredRule {
     Patch(StoredPatch),
     Mitre,
+    /// A cluster's other vertex: the patch is that of its first member.
+    Member(u32),
 }
 
 /// The stored junction rules (section `JNCT`).
@@ -109,9 +123,14 @@ impl JunctionIndex {
             };
             let stored = match rule {
                 VertexRule::Mitre(_) => StoredRule::Mitre,
+                VertexRule::Patch(p) if !p.is_at(v) => StoredRule::Member(p.vertex),
                 VertexRule::Patch(p) => {
-                    let c = g.vertices[v];
+                    // Offsets from the patch's centre (a cluster's centroid).
+                    let c = [p.centre[0], p.centre[2]];
+                    let cluster = p.members.len() > 1;
                     StoredRule::Patch(StoredPatch {
+                        members: if cluster { p.members.clone() } else { Vec::new() },
+                        inner: p.inner.iter().map(|&e| e as u32).collect(),
                         arms: p
                             .arms
                             .iter()
@@ -334,8 +353,12 @@ pub fn write_junctions(i: &JunctionIndex, b: &mut Vec<u8>) {
         r.extend(v.to_le_bytes());
         match rule {
             StoredRule::Mitre => r.push(1),
+            StoredRule::Member(first) => {
+                r.push(3);
+                r.extend(first.to_le_bytes());
+            }
             StoredRule::Patch(p) => {
-                r.push(0);
+                r.push(if p.members.len() > 1 { 2 } else { 0 });
                 r.push(p.arms.len() as u8);
                 for a in &p.arms {
                     r.extend(a.edge.to_le_bytes());
@@ -348,6 +371,16 @@ pub fn write_junctions(i: &JunctionIndex, b: &mut Vec<u8>) {
                     r.extend(o.d[0].to_le_bytes());
                     r.extend(o.d[1].to_le_bytes());
                     r.push(o.mouth.unwrap_or(255));
+                }
+                if p.members.len() > 1 {
+                    r.push(p.members.len() as u8);
+                    for m in &p.members {
+                        r.extend(m.to_le_bytes());
+                    }
+                    r.push(p.inner.len() as u8);
+                    for e in &p.inner {
+                        r.extend(e.to_le_bytes());
+                    }
                 }
             }
         }
@@ -378,7 +411,8 @@ pub fn read_junctions(payload: &[u8]) -> Result<JunctionIndex, String> {
         last = Some(v);
         let rule = match q.u8()? {
             1 => StoredRule::Mitre,
-            0 => {
+            3 => StoredRule::Member(q.u32()?),
+            kind @ (0 | 2) => {
                 let n = q.u8()? as usize;
                 let mut arms = Vec::with_capacity(n);
                 for _ in 0..n {
@@ -400,7 +434,24 @@ pub fn read_junctions(payload: &[u8]) -> Result<JunctionIndex, String> {
                     };
                     outline.push(StoredPoint { d, mouth });
                 }
-                StoredRule::Patch(StoredPatch { arms, outline })
+                let (mut members, mut inner) = (Vec::new(), Vec::new());
+                if kind == 2 {
+                    for _ in 0..q.u8()? {
+                        members.push(q.u32()?);
+                    }
+                    for _ in 0..q.u8()? {
+                        inner.push(q.u32()?);
+                    }
+                    if members.first() != Some(&v) {
+                        return Err("junction cluster without its vertex".into());
+                    }
+                }
+                StoredRule::Patch(StoredPatch {
+                    arms,
+                    outline,
+                    members,
+                    inner,
+                })
             }
             // A kind from a newer builder: no surface here.
             _ => continue,

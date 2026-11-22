@@ -166,11 +166,12 @@ fn the_side_road_starts_on_the_main_road() {
             assert!((a - b).abs() < 0.005);
         }
     }
-    // The side road's first samples lie on the main road (flat across
-    // along +z: the main road's height at x = 0 is 0).
+    // The side road starts on the main road (flat across along +z: the
+    // main road's height at x = 0 is 0) and leaves its edge (3.75 m out)
+    // at its own grade (§4.8.8 Q6 (d)): 20 % × 1.25 m at its 5 m sample.
     let side = &g.edges[2];
     assert!(side.profile[0].abs() < 1e-6);
-    assert!(side.profile[1].abs() < 0.01, "{:?}", &side.profile[..4]);
+    assert!((side.profile[1] - 0.25).abs() < 0.03, "{:?}", &side.profile[..4]);
     // Its strips, shaped for the junction, keep the package's heights.
     let js = JunctionSet::new(&g);
     for (ei, s) in fixtures::strips(&g) {
@@ -204,7 +205,7 @@ fn patched_vertices_skip_the_mouth_easing() {
     );
     assert_eq!(skipped, g);
     // A fork the patch cannot hold keeps no patch.
-    assert!(!patched_vertices(&fork(10.0))[0]);
+    assert!(!patched_vertices(&fork(3.0))[0]);
 }
 
 /// A through road changing its grade at a junction (Valünastrasse: −3 %
@@ -373,7 +374,7 @@ fn the_seam_lint_measures_the_drawn_surfaces() {
     assert!(m.seam_m < 0.01, "{m:?}");
     // 2 m × 8 m of the disc (radius 4 m) under both.
     assert!(m.zfight_m2 > 12.0 && m.zfight_m2 < 18.0, "{m:?}");
-    let f = fork(10.0);
+    let f = fork(3.0);
     let (_, without) = seams(&package(&f), &f);
     assert_eq!(without.len(), 1);
     assert!(without[0].1.contains("fork"), "{without:?}");
@@ -486,9 +487,11 @@ fn short_steep_side_roads_get_their_blend_in_the_profile() {
             Road::straight(&v, 0, 3, RoadClass::Residential, 5.0, |s| s * 0.20),
         ],
     );
+    // J3 (Q6 (d)): the side road leaves the main road's edge at its own
+    // grade; its blend (from the edge point) lies in its profile.
     let p = JunctionSet::new(&g0).patch(&g0, 0).cloned().unwrap();
     let side = p.arms.iter().find(|a| a.edge == 2).unwrap().clone();
-    assert!(side.blend_m < 5.0, "cut short: {side:?}");
+    assert!(side.has_corner() && side.blend_m == 0.0, "{side:?}");
     let mut g = g0.clone();
     let st = reconcile_profiles(&mut g, &|_, _| true);
     assert!(st.longer_blend_samples >= 2, "{st:?}");
@@ -496,8 +499,7 @@ fn short_steep_side_roads_get_their_blend_in_the_profile() {
         let (s, _) = seams(&package(g), g);
         s.iter().find(|s| s.vertex == 0).unwrap().seam_m
     };
-    let (before, after) = (seam(&g0), seam(&g));
-    assert!(after < 0.5 * before, "seam {before:.3} -> {after:.3}");
+    assert!(seam(&g) <= SEAM_M, "seam {:.3}", seam(&g));
     // The far end keeps its height.
     assert_eq!(g.edges[2].profile.last(), g0.edges[2].profile.last());
 }
@@ -629,10 +631,11 @@ fn side_roads_keep_their_class_grade_after_the_blend() {
     let d: Vec<f64> = (0..side.profile.len()).map(|i| sample_m(i, len)).collect();
     let gr = grades(&side.profile, &d);
     assert!(gr.iter().all(|x| x.abs() <= 0.20 + 0.01), "{gr:?}");
-    // The junction stays on the main road: the vertex at its height, the
-    // side road's first sample (inside the patch) on its surface.
+    // The junction stays on the main road: the vertex at its height; the
+    // side road leaves the main road's edge (3.75 m out) at its own grade
+    // (§4.8.8 Q6 (d)): 18 % × 1.25 m at its 5 m sample.
     assert_eq!(side.profile[0], g.edges[1].profile[0]);
-    assert!(side.profile[1].abs() < 0.02, "{:?}", &side.profile[..4]);
+    assert!((side.profile[1] - 0.225).abs() < 0.03, "{:?}", &side.profile[..4]);
     // The main road is a plane along its grade: unchanged.
     for e in [0, 1] {
         for (a, b) in g.edges[e].profile.iter().zip(&g0.edges[e].profile) {
@@ -680,4 +683,178 @@ fn short_roads_between_junctions_have_too_little_room() {
         "{st:?}"
     );
     assert!(st.steep_room > 0, "{st:?}");
+}
+
+/// §4.8.8 Q6 (d): the J2b case of `junction_room` – a 33 m track leaving a
+/// main road climbing at 12 % at a narrow angle (30°) and falling at 10 %
+/// to a level road. J2 put its mouths on the main roads' surfaces 12 – 15 m
+/// out, 2.5 m above its own height on the steep side: the 3 – 9 m between
+/// them could not hold 25 %. Now the track leaves each main road at its
+/// edge (7.5 m from the vertex) at its own grade and the corners slope:
+/// within its limit, the main roads unchanged, the drawn surface, the lint
+/// clean of grades over the limit.
+#[test]
+fn narrow_side_roads_leave_steep_roads_at_their_edge() {
+    let a = 30f64.to_radians();
+    let end = [33.0 * a.cos(), 33.0 * a.sin()];
+    let v = [
+        [0.0, 0.0],
+        [-150.0, 0.0],
+        [150.0, 0.0],
+        end,
+        [-150.0, end[1]],
+        [150.0, end[1]],
+    ];
+    let g0 = fixtures::graph(
+        &v,
+        vec![
+            Road::straight(&v, 1, 0, RoadClass::Secondary, 7.5, |s| (s - 150.0) * 0.12),
+            Road::straight(&v, 0, 2, RoadClass::Secondary, 7.5, |s| s * 0.12),
+            Road::straight(&v, 4, 3, RoadClass::Secondary, 7.5, |_| -3.3),
+            Road::straight(&v, 3, 5, RoadClass::Secondary, 7.5, |_| -3.3),
+            Road::straight(&v, 0, 3, RoadClass::Track, 3.0, |s| -0.10 * s),
+        ],
+    );
+    let js = JunctionSet::new(&g0);
+    for vx in [0, 3] {
+        let p = js.patch(&g0, vx).expect("a patch");
+        let side = p.arms.iter().find(|x| x.edge == 4).unwrap();
+        assert!(side.has_corner(), "vertex {vx}");
+        assert!((side.edge_m - 7.5).abs() < 0.1, "{}", side.edge_m);
+        assert!(side.mouth_m > side.edge_m + 2.0, "{}", side.mouth_m);
+    }
+    drop(js);
+    let mut g = g0.clone();
+    let st = reconcile_profiles(&mut g, &|_, _| true);
+    assert_eq!(st.patches, 2, "{st:?}");
+    assert_eq!(
+        (st.steep_room, st.steep_intervals, st.steep_other, st.steep_source),
+        (0, 0, 0, 0),
+        "{st:?}"
+    );
+    let t = &g.edges[4];
+    let d: Vec<f64> = (0..t.profile.len()).map(|i| sample_m(i, t.length_m())).collect();
+    let gr = grades(&t.profile, &d);
+    assert!(gr.iter().all(|x| x.abs() <= 0.25 + 0.01), "{gr:?}");
+    for e in 0..4 {
+        for (x, y) in g.edges[e].profile.iter().zip(&g0.edges[e].profile) {
+            assert!((x - y).abs() < 0.005, "main road {e}");
+        }
+    }
+    assert!(st.residual_m < 0.02, "{st:?}");
+    let r = crate::lint::lint(&package(&g), None);
+    assert_eq!(r.count("road.vertical.grade_over_limit"), 0);
+}
+
+/// The kinks (> 8 points between two 5 m intervals) of a real package by
+/// where they lie at their junction (`OCW_J3_WORLD=pkg`, skipped without):
+/// the kind of arm (main, side with its corner, side blended as in J2, arm
+/// of a blended patch, mitre) and the distance from its vertex.
+#[test]
+fn kinks_of_a_real_package() {
+    let Some(path) = std::env::var_os("OCW_J3_WORLD") else {
+        eprintln!("OCW_J3_WORLD not set: skipped");
+        return;
+    };
+    let pkg = WorldPackage::from_bytes(&std::fs::read(path).unwrap()).unwrap();
+    let g = pkg.graph.clone().unwrap();
+    let js = match pkg.junctions.as_ref() {
+        Some(j) => JunctionSet::with_index(&g, j.index_for(&g)),
+        None => JunctionSet::new(&g),
+    };
+    let mut by: BTreeMap<String, usize> = BTreeMap::new();
+    let mut ex: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (ei, e) in g.edges.iter().enumerate() {
+        let p = &e.profile;
+        if p.len() < 3 || e.bridge || e.tunnel {
+            continue;
+        }
+        let len = e.length_m();
+        let d: Vec<f64> = (0..p.len()).map(|i| sample_m(i, len)).collect();
+        let ends = js.ends(&g, ei);
+        for i in 1..p.len() - 1 {
+            let (d1, d2) = (d[i] - d[i - 1], d[i + 1] - d[i]);
+            if d1 < 1.0 || d2 < 1.0 {
+                continue;
+            }
+            let (g1, g2) = ((p[i] - p[i - 1]) / d1, (p[i + 1] - p[i]) / d2);
+            if (g2 - g1).abs() <= 0.08 {
+                continue;
+            }
+            // The nearer end.
+            let k = usize::from(len - d[i] < d[i]);
+            let m = if k == 0 { d[i] } else { len - d[i] };
+            let kind = match ends[k] {
+                Some(EndRule::Patch(pt, ai)) => {
+                    let a = &pt.arms[ai];
+                    let side = pt.through.is_some_and(|t| !t.contains(&ai));
+                    let what = match (pt.through.is_some(), side, a.has_corner()) {
+                        (false, _, _) => "blended patch",
+                        (true, false, _) => "main arm",
+                        (true, true, true) => "side, corner",
+                        (true, true, false) => "side, J2 blend",
+                    };
+                    let rel = if a.has_corner() && m <= a.edge_m + PROFILE_STEP_M {
+                        "at the edge point"
+                    } else if m <= a.mouth_m {
+                        "inside"
+                    } else if m <= a.mouth_m + 30.0 {
+                        "< 30 m past the mouth"
+                    } else {
+                        "farther"
+                    };
+                    format!("{what}: {rel}")
+                }
+                Some(EndRule::Mitre(..)) if m <= 30.0 => "mitre < 30 m".to_string(),
+                _ if m <= 30.0 => "no surface, < 30 m".to_string(),
+                _ => "elsewhere".to_string(),
+            };
+            *by.entry(kind.clone()).or_default() += 1;
+            let x = ex.entry(kind).or_default();
+            if x.len() < 4 {
+                x.push(format!(
+                    "e{ei} {:?} {:.0} m from v{} {:+.1} to {:+.1} %",
+                    e.class,
+                    m,
+                    if k == 0 { e.from.0 } else { e.to.0 },
+                    g1 * 100.0,
+                    g2 * 100.0
+                ));
+            }
+        }
+    }
+    for (k, n) in &by {
+        println!("{n:6}  {k}   e.g. {}", ex[k].join("; "));
+    }
+}
+
+/// J3: a cluster (a side road meeting a dual carriageway 5 m apart) is one
+/// junction surface in the world builder: counted once, the edge inside it
+/// reconciled with its surface all along, the lint measuring it once with
+/// no junction left without a surface and no seam.
+#[test]
+fn clusters_are_one_junction_surface() {
+    let g0 = fixtures::dual_carriageway_t();
+    let mut g = g0.clone();
+    let st = reconcile_profiles(&mut g, &|_, _| true);
+    assert_eq!(st.patches, 1, "{st:?}");
+    assert!(st.residual_m < 0.02, "{st:?}");
+    let js = JunctionSet::new(&g);
+    let p = js.patch(&g, 0).expect("the cluster");
+    assert_eq!(p.members, vec![0, 1]);
+    let inner = &g.edges[5];
+    for (i, h) in inner.profile.iter().enumerate() {
+        let s = sample_m(i, inner.length_m());
+        let d = p.height_at([0.0, s]).unwrap();
+        assert!((h - d).abs() < 0.02, "sample {i}: {h} vs {d}");
+    }
+    let pkg = package(&g);
+    let (seams, without) = seams(&pkg, &g);
+    assert!(without.is_empty(), "{without:?}");
+    let cluster: Vec<&Seam> = seams.iter().filter(|s| s.patch).collect();
+    assert_eq!(cluster.len(), 1, "{seams:?}");
+    assert_eq!(cluster[0].degree, 5);
+    // Within 3 cm where the patch's corner meets a carriageway's strip
+    // beside the median (the lint's 2 cm on the real packages).
+    assert!(cluster[0].seam_m < 0.03, "{:?}", cluster[0]);
 }

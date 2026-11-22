@@ -466,6 +466,58 @@ fn steep_causes(
         .collect()
 }
 
+/// Where each edge's junctions reach (spec §4.8.8): per edge and end the
+/// reach of its junction surface (the mouth plus a side road's blend; a
+/// mitre's corner; `None`: no surface there) and the points where a side
+/// road leaves a main road's edge at its own grade (Q6 (d): a crease),
+/// metres from the edge's `from` vertex – for the kinks by cause.
+fn junction_reaches(pkg: &WorldPackage, g: &RoadGraph) -> Vec<([Option<f64>; 2], Vec<f64>)> {
+    use ocw_world::junction::{EndRule, JunctionSet};
+    let js = match pkg.junctions.as_ref() {
+        Some(j) => JunctionSet::with_index(g, j.index_for(g)),
+        None => JunctionSet::new(g),
+    };
+    (0..g.edges.len())
+        .map(|ei| {
+            let mut creases = Vec::new();
+            let ends = js.ends(g, ei);
+            let mut reach = [None; 2];
+            for (k, end) in ends.iter().enumerate() {
+                reach[k] = match end {
+                    Some(EndRule::Patch(p, i)) => {
+                        let a = &p.arms[*i];
+                        if a.has_corner() {
+                            creases.push(a.s_edge(a.edge_m));
+                        }
+                        Some(a.mouth_m + a.blend_m)
+                    }
+                    Some(EndRule::Mitre(m, _)) => Some(m.shift_m),
+                    Some(EndRule::Inside(_)) => Some(g.edges[ei].length_m()),
+                    None => None,
+                };
+            }
+            (reach, creases)
+        })
+        .collect()
+}
+
+/// The cause of a kink at `s` metres along an edge of length `len`
+/// (`road.vertical.kink.CAUSE`): `crease` – within one interval of a point
+/// where a side road leaves the main road's edge at its own grade (Q6
+/// (d)); `junction` – within 30 m beyond a junction surface's reach;
+/// `other` – elsewhere.
+fn kink_cause(reach: &([Option<f64>; 2], Vec<f64>), s: f64, len: f64) -> &'static str {
+    if reach.1.iter().any(|&c| (c - s).abs() <= PROFILE_STEP_M + 1e-6) {
+        return "crease";
+    }
+    let near = |r: Option<f64>, m: f64| r.is_some_and(|r| m <= r + 30.0);
+    if near(reach.0[0], s) || near(reach.0[1], len - s) {
+        "junction"
+    } else {
+        "other"
+    }
+}
+
 fn lint_roads(pkg: &WorldPackage, g: &RoadGraph, r: &mut LintReport) {
     let index = SegmentIndex::new(g, 20.0, |e| !g.edges[e].tunnel);
     let adj = g.adjacency();
@@ -491,6 +543,7 @@ fn lint_roads(pkg: &WorldPackage, g: &RoadGraph, r: &mut LintReport) {
     }
     let max_half = g.edges.iter().map(|e| e.width_m / 2.0).fold(0.0, f64::max);
     let steep_cause = steep_causes(pkg, g);
+    let reaches = junction_reaches(pkg, g);
     for (ei, e) in g.edges.iter().enumerate() {
         let len = lens[ei];
         if e.bridge {
@@ -571,16 +624,17 @@ fn lint_roads(pkg: &WorldPackage, g: &RoadGraph, r: &mut LintReport) {
                 if let Some(pg) = prev_g
                     && (grade - pg).abs() > 0.08
                 {
-                    r.add(
-                        "road.vertical.kink",
-                        ds,
+                    let c = || {
                         case(
                             at,
                             (grade - pg).abs() * 100.0,
                             e.osm_way,
                             format!("{:+.1} % → {:+.1} %", pg * 100.0, grade * 100.0),
-                        ),
-                    );
+                        )
+                    };
+                    r.add("road.vertical.kink", ds, c());
+                    let cause = kink_cause(&reaches[ei], d[i], len);
+                    r.add(&format!("road.vertical.kink.{cause}"), ds, c());
                 }
                 prev_g = Some(grade);
             }
