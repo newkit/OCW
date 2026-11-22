@@ -175,13 +175,17 @@ pub fn rows(page: Page, settings: &Settings, info: &VoiceMenuInfo) -> Vec<Row> {
                 },
                 "voice.mute-speaker",
             ),
-            // The call's state (before on the *Voice chat* row).
+            // The call's state (before on the *Voice chat* row), short: a
+            // reason after ":" is in `voice.status`.
             open(
                 "Participants",
-                if info.blocked.is_empty() {
-                    info.status.clone()
-                } else {
-                    format!("{}, {} blocked", info.status, info.blocked.len())
+                {
+                    let state = info.status.split(':').next().unwrap_or_default();
+                    if info.blocked.is_empty() {
+                        state.to_owned()
+                    } else {
+                        format!("{state}, {} blocked", info.blocked.len())
+                    }
                 },
                 Page::VoiceParticipants,
             ),
@@ -445,6 +449,16 @@ mod tests {
         assert_eq!(choose.confirm, Some(Activate::Open(Page::VoiceSelect)));
         // The call's state (once the *Voice chat* row's).
         assert_eq!(row(&r, "Participants").value.as_deref(), Some("connected"));
+        let unavailable = VoiceMenuInfo {
+            status: "unavailable: voice chat is not built into this app".into(),
+            ..info()
+        };
+        let r4 = rows(Page::Voice, &s, &unavailable);
+        assert_eq!(
+            row(&r4, "Participants").value.as_deref(),
+            Some("unavailable"),
+            "short; the reason is in voice.status"
+        );
         assert_eq!(
             row(&r, "Participants").confirm,
             Some(Activate::Open(Page::VoiceParticipants))
