@@ -299,6 +299,14 @@ mod ride_tests {
             .with_rolling_extra(0.1);
         let r = physics::resistance(&p, &env, 9.0).rolling;
         assert!((r / base - 1.25).abs() < 1e-9);
+        // Added to the weather's factor (a wet road, wet leaves), not
+        // multiplied with it: 1.06 + 0.15.
+        let wet = Environment::with_grade(0.0)
+            .with_surface(ocw_world::Surface::Asphalt)
+            .in_weather(0.0, ocw_core::AIR_DENSITY, 1.06)
+            .with_rolling_extra(0.15);
+        let r = physics::resistance(&p, &wet, 9.0).rolling;
+        assert!((r / base - 1.21).abs() < 1e-9, "{}", r / base);
         // On gravel on top of its factor.
         let gravel = Environment::with_grade(0.0)
             .with_surface(ocw_world::Surface::Gravel)

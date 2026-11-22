@@ -186,8 +186,14 @@ pub struct Environment {
     /// Extra shares of rolling resistance on top of the surface's, added
     /// up (each road effect adds its own: the road damage of spec Phase 8
     /// Q12, `crate::road_feel`; wet leaves …): the rolling resistance is
-    /// `rolling_factor · (1 + rolling_extra)` ([`Environment::rolling`]).
+    /// `rolling_factor + surface_rolling · rolling_extra`
+    /// ([`Environment::rolling`]): shares of the surface's own resistance,
+    /// added to the weather's (whose factor wet leaves raise) – every road
+    /// effect adds its share, none multiplies another's.
     pub rolling_extra: f64,
+    /// The surface's own factor (asphalt 1, gravel 2.5, grass 6), before
+    /// the weather: what the extras are shares of.
+    pub surface_rolling: f64,
     /// The brake key is held: like a real brake it holds the rider at
     /// standstill against moderate pedalling (see [`step`]).
     pub brake_holds: bool,
@@ -207,6 +213,7 @@ impl Environment {
             brake_mps2: 0.0,
             rolling_factor: 1.0,
             rolling_extra: 0.0,
+            surface_rolling: 1.0,
             brake_holds: false,
         }
     }
@@ -223,13 +230,14 @@ impl Environment {
     /// The factor on the road bike's rolling resistance: the surface's and
     /// the weather's, with the extras added.
     pub fn rolling(&self) -> f64 {
-        self.rolling_factor * (1.0 + self.rolling_extra.max(0.0))
+        self.rolling_factor + self.surface_rolling * self.rolling_extra.max(0.0)
     }
 
     /// The same environment on another surface.
     pub fn with_surface(self, surface: ocw_world::Surface) -> Self {
         Self {
             rolling_factor: surface.rolling_factor(),
+            surface_rolling: surface.rolling_factor(),
             ..self
         }
     }
