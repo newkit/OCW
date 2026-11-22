@@ -458,7 +458,7 @@ mod tests {
         let status = run(&mut app, "voice.status");
         assert!(status.contains("microphone"), "{status}");
         assert!(
-            status.contains("voice room: everybody, who hears me: no one"),
+            status.contains("my voice: off (everybody), I hear: everybody"),
             "{status}"
         );
         assert!(run(&mut app, "voice.group Bad").contains("invalid group name"));
