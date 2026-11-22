@@ -93,7 +93,7 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 .DEFAULT_GOAL := help
 .PHONY: help test-web-account test-web-trust version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-blender test-blender models-diff deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
-	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-gpu test-web-webkit deps-webkit test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-voice-livekit test-voice-bundled test-host-voice test-voice-live test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser deps-vr deps-vr-linux deps-vr-linux-debian deps-vr-linux-fedora deps-vr-linux-arch deps-vr-linux-unknown deps-vr-windows deps-vr-macos test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
+	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-gpu test-web-webkit test-web-ios deps-webkit test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-voice-livekit test-voice-bundled test-host-voice test-voice-live test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser deps-vr deps-vr-linux deps-vr-linux-debian deps-vr-linux-fedora deps-vr-linux-arch deps-vr-linux-unknown deps-vr-windows deps-vr-macos test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
@@ -319,6 +319,7 @@ deps-browser: ## The browser tests' browser: pinned Chromium (scripts/browsers.j
 
 PLAYWRIGHT_VENV ?= $(HOME)/.cache/ocw/playwright-venv
 PLAYWRIGHT_VERSION ?= 1.65.2
+IOS_MINUTES ?= 5
 deps-webkit: ## Safari's engine for test-web-webkit: Playwright $(PLAYWRIGHT_VERSION) and its WebKit build in a venv ($(PLAYWRIGHT_VENV); no sudo; Linux needs WebKit's libraries, which Debian 13 has)
 	python3 -m venv $(PLAYWRIGHT_VENV)
 	$(PLAYWRIGHT_VENV)/bin/pip install -q playwright==$(PLAYWRIGHT_VERSION)
@@ -359,6 +360,9 @@ test-web-gpu: web ## Headless Chromium: the page's GPU choice (ocw-gpu.js rules)
 
 test-web-webkit: web ## WebKit (Safari's engine, Playwright; make deps-webkit): Safari 26 with WebGPU takes the WebGL 2 build – an iPhone 15's start page and ride (portrait and landscape: the safe areas, touch taps and a held side, the manifest, the wake lock; spec 3.2.3 TS4; the phone layout and the touch power buttons, spec 3.2, TS5), Safari on macOS with the desktop HUD unchanged; rides and draws (B7); into test-output/web/
 	scripts/test-web-webkit.py --out test-output/web
+
+test-web-ios: web ## WebKit iPhone 15 (Playwright; make deps-webkit): a long Hills ride (IOS_MINUTES, 5) with the page hidden and shown every minute, then the WebGL context lost while hidden (the app stops, the ride loads again once) and again (a message, no second reload) – the iPhone restarts of 2026-11-22 (spec 14 Phase 10 B7); memory every 5 s; worlds: scripts/test-web-ios.py --world ID --route NAME --deaths; into test-output/web-ios/
+	scripts/test-web-ios.py --out test-output/web-ios --minutes $(IOS_MINUTES) --budget-mb 600
 
 PREVIEW_WORLDS ?= target/web-preview-worlds/release
 PREVIEW_SITE ?= target/web-preview-site

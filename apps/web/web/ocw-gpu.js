@@ -137,6 +137,59 @@
     return u.toString();
   }
 
+  // Whether a failure of `gpu` may reload the page on WebGL 2: only a
+  // WebGPU the page chose itself, never from WebGL 2, never a second time
+  // (the URL already is a fallback) – else the error shows (no loop).
+  function mayFallBack(gpu, href, hasWebgl2) {
+    if (!gpu || gpu.api !== "webgpu" || gpu.forced || !hasWebgl2) return false;
+    let q;
+    try { q = new URL(href).searchParams; } catch (e) { return false; }
+    return !q.has(FAILED_PARAM) && q.get("gpu") !== "webgl2";
+  }
+
+  // The page's own automatic reloads (a WebGPU fallback, a lost WebGL
+  // context): at most one in RELOAD_WINDOW_MS per tab (sessionStorage, it
+  // survives the reload), so a failure that comes back shows a message
+  // instead of reloading forever. `now`: ms (Date.now()). True: reload
+  // (and the reload is recorded); false: show the message.
+  const RELOAD_KEY = "ocw.page.auto-reload";
+  const RELOAD_WINDOW_MS = 10 * 60 * 1000;
+  function mayReload(storage, now, why) {
+    let last = null;
+    try { last = JSON.parse(storageGet(storage, RELOAD_KEY) || "null"); } catch (e) { last = null; }
+    if (last && typeof last.at === "number" && now - last.at >= 0 && now - last.at < RELOAD_WINDOW_MS) return false;
+    // Without a storage the page cannot know it reloaded before: no reload.
+    return storageSet(storage, RELOAD_KEY, JSON.stringify({at: now, why: String(why || "").slice(0, 200)}));
+  }
+
+  // A ride that ended without its page being closed (iOS Safari kills a
+  // tab that uses too much memory and loads it again, spec 14 Phase 10
+  // B2): `rideStarted` marks the ride in sessionStorage, `rideClosed`
+  // (pagehide) clears it; `lastRideDied` at the next start says the page
+  // before died in the ride, and how often in a row. The page then rides
+  // with less memory, and after two such ends shows the start page with
+  // the reason instead of loading the world again (no restart loop).
+  const RIDE_KEY = "ocw.page.ride";
+  function lastRideDied(storage, href) {
+    let r = null;
+    try { r = JSON.parse(storageGet(storage, RIDE_KEY) || "null"); } catch (e) { r = null; }
+    if (!r || !r.open) return {died: 0, href: null};
+    return {died: Number(r.died || 0) + 1, href: String(r.href || ""), same: r.href === href};
+  }
+  function rideStarted(storage, href, died) {
+    return storageSet(storage, RIDE_KEY, JSON.stringify({open: true, href, died: died || 0}));
+  }
+  function rideClosed(storage) { storageDel(storage, RIDE_KEY); }
+
+  // The same ride with less memory after the page died in it: Low
+  // graphics, the phone's memory saver, marked so the page says why.
+  function saverUrl(href) {
+    const u = new URL(href);
+    u.searchParams.set("quality", "low");
+    u.searchParams.set("memory", "saver");
+    return u.toString();
+  }
+
   // The start page's checkbox "WebGL 2 with low graphics": ticked where
   // the page would take WebGL 2 anyway (Safari, a remembered failure, no
   // WebGPU) and on phones and tablets. `query(checked)`: what a ride card
@@ -267,5 +320,6 @@
     return state;
   }
 
-  root.ocwGpuChoice = {facts, choose, recall, remember, forget, fallbackUrl, startPage, uniform, watch, KEY, FAILED_PARAM};
+  root.ocwGpuChoice = {facts, choose, recall, remember, forget, fallbackUrl, startPage, uniform, watch, KEY, FAILED_PARAM,
+    mayFallBack, mayReload, RELOAD_KEY, RELOAD_WINDOW_MS, lastRideDied, rideStarted, rideClosed, saverUrl, RIDE_KEY};
 })(typeof window !== "undefined" ? window : globalThis);
