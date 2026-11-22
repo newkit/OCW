@@ -196,6 +196,16 @@ impl FeelTile {
     }
 }
 
+/// Where a point lies: the damaged strip under it and its frame.
+struct Located {
+    key: TileKey,
+    tile: Arc<FeelTile>,
+    strip: usize,
+    seg: usize,
+    u: f32,
+    v: f32,
+}
+
 fn cell(p: [f64; 2]) -> (i32, i32) {
     (
         (p[0] / CELL_M).floor() as i32,
@@ -283,22 +293,36 @@ impl RoadFeelMap {
     }
 
     /// The nearest damaged strip under `p` with its tile.
-    fn locate(&self, p: [f64; 2]) -> Option<(TileKey, Arc<FeelTile>, usize, usize, f32, f32)> {
-        let mut best: Option<(TileKey, Arc<FeelTile>, usize, usize, f32, f32, f64)> = None;
-        for (k, t) in self.tiles_near(p) {
-            if let Some((si, i, u, v, d)) = t.locate(p)
-                && best.as_ref().is_none_or(|b| d < b.6)
+    fn locate(&self, p: [f64; 2]) -> Option<Located> {
+        let mut best: Option<(Located, f64)> = None;
+        for (key, tile) in self.tiles_near(p) {
+            if let Some((strip, seg, u, v, d)) = tile.locate(p)
+                && best.as_ref().is_none_or(|b| d < b.1)
             {
-                best = Some((k, t, si, i, u, v, d));
+                let at = Located {
+                    key,
+                    tile,
+                    strip,
+                    seg,
+                    u,
+                    v,
+                };
+                best = Some((at, d));
             }
         }
-        best.map(|(k, t, si, i, u, v, _)| (k, t, si, i, u, v))
+        best.map(|b| b.0)
     }
 
     /// The damaged strip under the point `p` (home metres, x, z); `None`
     /// on good roads and off the road.
     pub fn at(&self, p: [f64; 2]) -> Option<StripFeel> {
-        let (_, t, si, _, u, v) = self.locate(p)?;
+        let Located {
+            tile: t,
+            strip: si,
+            u,
+            v,
+            ..
+        } = self.locate(p)?;
         let s = &t.strips[si];
         Some(StripFeel {
             grade: s.grade,
@@ -313,7 +337,15 @@ impl RoadFeelMap {
     /// `to` it enters on the way, in no particular order.
     pub fn crossed(&self, from: [f64; 2], to: [f64; 2]) -> Vec<Feature> {
         let mut out = Vec::new();
-        let Some((key, t, si, i, u1, v1)) = self.locate(to) else {
+        let Some(Located {
+            key,
+            tile: t,
+            strip: si,
+            seg: i,
+            u: u1,
+            v: v1,
+        }) = self.locate(to)
+        else {
             return out;
         };
         let s = &t.strips[si];
