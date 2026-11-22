@@ -183,6 +183,17 @@ pub struct Environment {
     /// (asphalt = 1); each profile feels its own share of it
     /// (`RiderProfile::surface_factor`).
     pub rolling_factor: f64,
+    /// Extra shares of rolling resistance on top of the surface's, added
+    /// up (each road effect adds its own: the road damage of spec Phase 8
+    /// Q12, `crate::road_feel`; wet leaves …): the rolling resistance is
+    /// `rolling_factor + surface_rolling · rolling_extra`
+    /// ([`Environment::rolling`]): shares of the surface's own resistance,
+    /// added to the weather's (whose factor wet leaves raise) – every road
+    /// effect adds its share, none multiplies another's.
+    pub rolling_extra: f64,
+    /// The surface's own factor (asphalt 1, gravel 2.5, grass 6), before
+    /// the weather: what the extras are shares of.
+    pub surface_rolling: f64,
     /// The brake key is held: like a real brake it holds the rider at
     /// standstill against moderate pedalling (see [`step`]).
     pub brake_holds: bool,
@@ -201,14 +212,32 @@ impl Environment {
             drag_factor: 1.0,
             brake_mps2: 0.0,
             rolling_factor: 1.0,
+            rolling_extra: 0.0,
+            surface_rolling: 1.0,
             brake_holds: false,
         }
+    }
+
+    /// The same environment with `extra` more rolling resistance (a share:
+    /// 0.15 = 15 % more), added to the extras already there.
+    pub fn with_rolling_extra(self, extra: f64) -> Self {
+        Self {
+            rolling_extra: self.rolling_extra + extra,
+            ..self
+        }
+    }
+
+    /// The factor on the road bike's rolling resistance: the surface's and
+    /// the weather's, with the extras added.
+    pub fn rolling(&self) -> f64 {
+        self.rolling_factor + self.surface_rolling * self.rolling_extra.max(0.0)
     }
 
     /// The same environment on another surface.
     pub fn with_surface(self, surface: ocw_world::Surface) -> Self {
         Self {
             rolling_factor: surface.rolling_factor(),
+            surface_rolling: surface.rolling_factor(),
             ..self
         }
     }
@@ -278,7 +307,7 @@ pub fn resistance(profile: &RiderProfile, env: &Environment, speed: f64) -> Resi
     Resistance {
         gravity: m * GRAVITY * angle.sin(),
         rolling: if speed > 0.0 {
-            profile.crr * profile.surface_factor(env.rolling_factor) * m * GRAVITY * angle.cos()
+            profile.crr * profile.surface_factor(env.rolling()) * m * GRAVITY * angle.cos()
         } else {
             0.0
         },

@@ -21,6 +21,7 @@ pub mod leaves;
 pub mod physics;
 pub mod prediction;
 pub mod ride;
+pub mod road_feel;
 pub mod session;
 pub mod trainer;
 pub mod weather;

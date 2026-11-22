@@ -89,11 +89,16 @@ pub fn build(args: &Args) -> Result<RideSetup, String> {
     }
     // The home package's static obstacles (spec §14 Phase 12 K3).
     let obstacles = ocw_world::obstacles::WorldObstacles::from_package(pkg).map(Arc::new);
+    // The damaged roads under the wheels (spec Phase 8 Q12).
+    let road_feel = Some(Arc::new(ocw_world::road_feel::RoadFeelMap::from_package(
+        pkg,
+    )));
     let net = hood.set.graph().cloned().map(|graph| {
         Arc::new(
             RoadNetwork::new(graph)
                 .with_package_name(hood.set.name())
                 .with_obstacles(obstacles)
+                .with_road_feel(road_feel.clone())
                 // Wet leaves in the ride (spec 4.6.2 Q6).
                 .with_leaves(Some(Arc::new(ocw_world::leaves::LeafMap::from_package(
                     pkg,
