@@ -38,6 +38,7 @@
 pub mod account;
 pub mod activities;
 pub mod aids;
+pub mod arrival;
 pub mod audio;
 pub mod bindings;
 pub mod camera_fx;

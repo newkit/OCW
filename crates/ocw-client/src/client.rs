@@ -172,6 +172,9 @@ pub struct ClientCore {
     /// How old a snapshot is on arrival (half the round trip; 0 for the
     /// in-process server): the prediction extrapolates it by this much.
     snapshot_age_s: f64,
+    /// How late each snapshot is read (in ticks, against the freshest):
+    /// the prediction and the others' interpolation take it into account.
+    arrival: crate::arrival::ArrivalClock,
     /// The steering mode saved while the menu holds autodrive.
     menu_hold: Option<HeldSteering>,
     /// The current event (spec §2.3) and the time trial's ghost.
@@ -293,6 +296,7 @@ impl ClientCore {
             seq: 0,
             stats: NetStats::default(),
             snapshot_age_s: 0.0,
+            arrival: Default::default(),
             menu_hold: None,
             event: EventClient::new(route.id()),
             last_snapshot_at: None,
@@ -982,6 +986,12 @@ impl ClientCore {
         }
         self.stats.snapshots += 1;
         self.stats.last_snapshot_tick = s.server_tick;
+        // Read a frame late (see `arrival`): the prediction extrapolates
+        // the snapshot by that much more, and it counts as having come at
+        // the time it would have on time.
+        let late_s = f64::from(self.arrival.late_ticks(s.server_tick, now_s)) * ocw_core::SIM_DT;
+        let now_s = now_s - late_s;
+        let age_s = self.snapshot_age_s + late_s;
         self.last_snapshot_at = Some((s.server_tick, now_s));
         self.refresh_leaves(now_s);
         self.human_riders = s.human_riders;
@@ -1089,8 +1099,7 @@ impl ClientCore {
                 Some(p) => p,
                 None => &self.route,
             };
-            self.predictor
-                .reconcile(track, state, self.snapshot_age_s, power);
+            self.predictor.reconcile(track, state, age_s, power);
         }
         if own_seen {
             // A snap (teleport, large error) must not be interpolated.
@@ -1099,8 +1108,8 @@ impl ClientCore {
             }
         }
         // The others' last known places now: the snapshot's, moved on by
-        // its age (half the round trip).
-        let age = self.snapshot_age_s;
+        // its age (half the round trip and how late it was read).
+        let age = age_s;
         self.others_now = others
             .iter()
             .map(|(id, st)| {
@@ -1574,6 +1583,8 @@ impl ClientCore {
 
     /// One fixed physics tick of the local prediction.
     pub fn predict_step(&mut self) {
+        // Counted always: snapshots are compared with these steps.
+        self.arrival.step();
         if self.rider_id.is_none() {
             return;
         }
@@ -5885,5 +5896,196 @@ mod tests {
             cue,
             ocw_audio::cues::Cue::Pothole | ocw_audio::cues::Cue::Crack
         ));
+    }
+
+    /// The riders' motion as drawn, frame by frame (see [`motion_probe`]).
+    #[derive(Debug, Clone, Copy)]
+    struct Motion {
+        /// Change of the own rider's drawn velocity per frame (m/s): RMS
+        /// and largest.
+        own_rms: f64,
+        own_max: f64,
+        /// Snapshots that moved the prediction by more than 2 cm, and the
+        /// mean distance error at a snapshot (m).
+        corrections: u32,
+        mean_error: f64,
+        /// The same change of velocity for the other riders (m/s).
+        others_rms: f64,
+        others_max: f64,
+    }
+
+    /// Rides 60 s with `bots` others at `frame_hz` frames per second, as
+    /// the desktop app does: the server's messages first (`PreUpdate`),
+    /// then the fixed 50 Hz prediction steps (and, when `stepped`, the
+    /// frame capture's server ticks with them), then the view at the
+    /// frame's overstep. A threaded server ticks on its own clock, 7 ms
+    /// out of phase.
+    fn motion_probe(bots: u32, frame_hz: f64, stepped: bool) -> Motion {
+        let server = GameServer::new(
+            route(),
+            ServerConfig {
+                bots,
+                start_m: 0.0,
+                collisions: true,
+                ..Default::default()
+            },
+        );
+        let mut h = Harness::with(
+            server,
+            ClientCore::new(route(), "Ada Rider", RiderProfile::default()),
+        );
+        h.ride(260.0, 10.0);
+        let track = route();
+        let dt = 1.0 / frame_hz;
+        let mut t = h.time_s;
+        let mut server_clock = t + 0.007;
+        let mut acc = 0.0;
+        let mut inbox: Vec<Vec<u8>> = Vec::new();
+        let mut last_sample = t;
+        let mut own: Vec<[f64; 3]> = Vec::new();
+        let mut others: BTreeMap<RiderId, Vec<Option<[f64; 3]>>> = BTreeMap::new();
+        let (mut corrections, mut snaps, mut err_sum) = (0u32, 0u32, 0.0);
+        for _ in 0..(60.0 * frame_hz) as usize {
+            t += dt;
+            h.time_s = t;
+            if !stepped {
+                while server_clock <= t {
+                    inbox.extend(h.server.tick());
+                    server_clock += ocw_core::SIM_DT;
+                }
+            }
+            // PreUpdate: the messages that came since the last frame.
+            for m in std::mem::take(&mut inbox) {
+                let before = h.client.stats().snapshots;
+                h.receive(&m);
+                if h.client.stats().snapshots > before {
+                    snaps += 1;
+                    let e = h.client.prediction_error().abs();
+                    err_sum += e;
+                    corrections += u32::from(e > 0.02);
+                }
+            }
+            if t - last_sample >= 0.25 {
+                last_sample = t;
+                if let Some(s) = h.client.on_device_event(power(260.0, t)) {
+                    for reply in h.server.handle(h.conn, &s) {
+                        inbox.push(reply);
+                    }
+                }
+            }
+            // FixedUpdate: the prediction (and the capture's server).
+            acc += dt;
+            while acc >= ocw_core::SIM_DT - 1e-9 {
+                if stepped {
+                    inbox.extend(h.server.tick());
+                }
+                h.client.predict_step();
+                acc -= ocw_core::SIM_DT;
+            }
+            // Update: the frame's view.
+            let all = h.client.view(t, acc.max(0.0) / ocw_core::SIM_DT);
+            let at = |v: &RiderView| {
+                track
+                    .sample(v.state.distance)
+                    .offset_position(v.state.lateral_offset)
+            };
+            own.push(at(&all[0]));
+            for o in &all[1..] {
+                let seq = others.entry(o.id).or_default();
+                seq.resize(own.len() - 1, None);
+                seq.push(Some(at(o)));
+            }
+        }
+        let change = |a: &[f64; 3], b: &[f64; 3], c: &[f64; 3]| {
+            (0..3)
+                .map(|k| (c[k] - 2.0 * b[k] + a[k]).powi(2))
+                .sum::<f64>()
+                .sqrt()
+                / dt
+        };
+        let stats = |v: &[f64]| {
+            let rms = (v.iter().map(|j| j * j).sum::<f64>() / v.len().max(1) as f64).sqrt();
+            (rms, v.iter().copied().fold(0.0, f64::max))
+        };
+        let own_changes: Vec<f64> = own
+            .windows(3)
+            .map(|w| change(&w[0], &w[1], &w[2]))
+            .collect();
+        let mut other_changes = Vec::new();
+        for seq in others.values() {
+            for w in seq.windows(3) {
+                if let [Some(a), Some(b), Some(c)] = w {
+                    other_changes.push(change(a, b, c));
+                }
+            }
+        }
+        let (own_rms, own_max) = stats(&own_changes);
+        let (others_rms, others_max) = stats(&other_changes);
+        Motion {
+            own_rms,
+            own_max,
+            corrections,
+            mean_error: err_sum / f64::from(snaps.max(1)),
+            others_rms,
+            others_max,
+        }
+    }
+
+    /// The numbers for comparing commits (`cargo test -p ocw-client
+    /// motion_probe_numbers -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn motion_probe_numbers() {
+        for (bots, hz, stepped) in [
+            (6, 60.0, false),
+            (6, 144.0, false),
+            (6, 30.0, false),
+            (6, 25.0, false),
+            (6, 14.0, false),
+            (6, 25.0, true),
+            (6, 30.0, true),
+        ] {
+            let m = motion_probe(bots, hz, stepped);
+            eprintln!(
+                "MOTION {hz:5} Hz {}: own dv rms {:.4} max {:.4} m/s, corrections > 2 cm {}, mean |error| {:.1} mm; others dv rms {:.4} max {:.4} m/s",
+                if stepped { "capture " } else { "threaded" },
+                m.own_rms,
+                m.own_max,
+                m.corrections,
+                m.mean_error * 1000.0,
+                m.others_rms,
+                m.others_max
+            );
+        }
+    }
+
+    /// Regression test for the jumping riders (spec 6.5, fixed v5.38): at
+    /// 25 frames a second – a slow machine, and every `--capture` video –
+    /// snapshots are read up to two ticks late, with a beat against the
+    /// 10 Hz. Taken as fresh, they pulled the own rider back at every
+    /// snapshot (599 corrections a minute, 9 cm on average, its velocity
+    /// changing by 0.16 m/s RMS from frame to frame) and stretched the
+    /// others' interpolation (1.4 m/s RMS, up to 3.6 m/s).
+    #[test]
+    fn riders_move_smoothly_when_snapshots_are_read_late() {
+        // (frames a second, capture, the others' limit): measured after
+        // the fix 0.11 / 0.08 / 0.03 / 0.45 m/s, before 1.43 / 1.43 /
+        // 0.03 / 1.94; the own rider 0.017 – 0.025 m/s, before up to 0.42.
+        for (hz, stepped, others) in [
+            (25.0, true, 0.3),
+            (25.0, false, 0.3),
+            (60.0, false, 0.1),
+            (14.0, false, 0.8),
+        ] {
+            let m = motion_probe(6, hz, stepped);
+            assert!(
+                m.own_rms < 0.04 && m.mean_error < 0.01 && m.corrections < 30,
+                "{hz} Hz, stepped {stepped}: own rider {m:?}"
+            );
+            assert!(
+                m.others_rms < others,
+                "{hz} Hz, stepped {stepped}: others {m:?}"
+            );
+        }
     }
 }
