@@ -112,6 +112,9 @@ fn describe(s: &v1::RiderStatus) -> String {
     if !s.not_hearing.is_empty() {
         out.push(format!("does not hear {} rider(s)", s.not_hearing.len()));
     }
+    if !s.silenced.is_empty() {
+        out.push(format!("{} rider(s) at 0 % volume", s.silenced.len()));
+    }
     if out.is_empty() {
         out.push("no signs".into());
     }
@@ -182,6 +185,13 @@ fn register_commands(app: &mut App) {
                     .value_parser(clap::value_parser!(u32))
                     .action(ArgAction::Append)
                     .help("Does not hear this rider id (only that rider sees the headphones)"),
+            )
+            .arg(
+                Arg::new("silenced")
+                    .long("silenced")
+                    .value_parser(clap::value_parser!(u32))
+                    .action(ArgAction::Append)
+                    .help("Set this rider id to 0 % volume (only that rider sees the headphones; spec §7.1.7 Q18)"),
             ),
         |world, m| {
             let on = |k: &str| m.get_flag(k);
@@ -189,10 +199,17 @@ fn register_commands(app: &mut App) {
                 voice_muted: on("muted"),
                 in_menu: on("menu"),
                 in_vr: on("vr"),
-                in_voice: on("muted") || on("deaf") || m.contains_id("not-hearing"),
+                in_voice: on("muted")
+                    || on("deaf")
+                    || m.contains_id("not-hearing")
+                    || m.contains_id("silenced"),
                 hears_nobody: on("deaf"),
                 not_hearing: m
                     .get_many::<u32>("not-hearing")
+                    .map(|v| v.copied().collect())
+                    .unwrap_or_default(),
+                silenced: m
+                    .get_many::<u32>("silenced")
                     .map(|v| v.copied().collect())
                     .unwrap_or_default(),
             };
@@ -290,10 +307,12 @@ mod tests {
             mic_muted: true,
             hears_nobody: false,
             not_hearing: vec![ocw_core::RiderId(4)],
+            silenced: vec![ocw_core::RiderId(5)],
         };
         let s = own_status(&voice, false, false, &ForcedSigns::default());
         assert!(s.voice_muted && s.in_voice && !s.in_menu && !s.in_vr);
         assert_eq!(s.not_hearing, vec![4]);
+        assert_eq!(s.silenced, vec![5]);
         let f = ForcedSigns {
             muted: Some(false),
             menu: Some(true),
