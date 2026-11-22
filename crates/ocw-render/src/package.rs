@@ -68,6 +68,19 @@ impl Default for StreamRadius {
     }
 }
 
+/// The most the ring of near tiles may be, whatever the render distance
+/// (`None`: no cap): a phone's browser meshes 3 × 3 tiles (1) to stay in
+/// its memory (spec 14 Phase 10 B2; `ocw_ui::view_distance::apply`).
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct StreamRadiusCap(pub Option<i32>);
+
+impl StreamRadiusCap {
+    /// `want` within the cap (at least 1).
+    pub fn limit(&self, want: i32) -> i32 {
+        self.0.map_or(want, |c| want.min(c.max(1)))
+    }
+}
+
 impl StreamRadius {
     /// The ring for `focus` (riding: at most this one).
     pub fn cap(&self, focus: &mut crate::flight_world::StreamFocus, riding: bool) {

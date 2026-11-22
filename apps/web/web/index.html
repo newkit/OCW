@@ -100,7 +100,7 @@
       white-space: pre-line; line-height: 1.5; }
     #ocw-status.loading { background: rgba(16, 20, 26, 0.92);
       font: 15px ui-monospace, SFMono-Regular, Menlo, monospace; }
-    #ocw-status.error { color: #ffb4a8; background: rgba(16, 20, 26, 0.92); }
+    #ocw-status.error { color: #ffb4a8; background: rgba(16, 20, 26, 0.92); z-index: 20; }
     #ocw-status[hidden] { display: none; }
     /* The devices panel (B4): a transparent overlay over the ride (spec
        3.2 Q2, 2026-11-19: "make it a transparent overlay") – a light veil
@@ -589,6 +589,56 @@
     // a WebGPU failure remembered here and Safari's WebGPU take WebGL 2).
     const gpuFacts = ocwGpuChoice.facts(navigator, window);
     const pageStorage = (() => { try { return window.localStorage; } catch (e) { return null; } })();
+    // This tab's storage: it survives a reload, also the one iOS Safari
+    // makes after it killed the page (the page's own reloads and a ride
+    // that died are counted there; ocw-gpu.js).
+    const tabStorage = (() => { try { return window.sessionStorage; } catch (e) { return null; } })();
+    // A lost WebGL context (spec 14 Phase 10 B7): iOS takes the GPU from
+    // a page in the background, and Bevy cannot rebuild its renderer – so
+    // the page keeps the context restorable (preventDefault) and, once it
+    // is visible again, loads the ride again: once in ten
+    // minutes; a loss that comes back shows a message with a button
+    // instead (never a reload loop). window.ocwGpuContext() for tests.
+    const gpuContext = {lost: 0, restored: 0, action: "", why: ""};
+    window.ocwGpuContext = () => JSON.stringify(gpuContext);
+    const contextLost = (why) => {
+      if (gpuContext.action) return;
+      gpuContext.why = String(why || "the WebGL context was lost");
+      const reloadWhenVisible = () => {
+        if (document.visibilityState !== "visible") {
+          document.addEventListener("visibilitychange", reloadWhenVisible, {once: true});
+          return;
+        }
+        if (ocwGpuChoice.mayReload(tabStorage, Date.now(), gpuContext.why)) {
+          gpuContext.action = "reload";
+          status.hidden = false;
+          status.className = "loading";
+          status.textContent = "The graphics were taken away (the app was in the background?) – loading the ride again …";
+          setTimeout(() => location.reload(), 800);
+        } else {
+          gpuContext.action = "message";
+          status.hidden = false;
+          status.className = "error";
+          status.innerHTML = "<div>The graphics were taken away again (" + gpuContext.why.replace(/[&<>"]/g, "")
+            + ").<br><a href=\"\" onclick=\"location.reload(); return false\">Load the ride again</a> · <a href=\"./\">Rides</a></div>";
+        }
+      };
+      reloadWhenVisible();
+    };
+    {
+      const canvas = document.getElementById("ocw-canvas");
+      canvas.addEventListener("webglcontextlost", (e) => {
+        e.preventDefault();
+        gpuContext.lost++;
+        console.warn("ocw-web: the WebGL context was lost");
+        // The app stops at once: with the context gone wgpu frees no
+        // frame's buffers, and the wasm memory grew ~45 MB a second until
+        // iOS killed the tab (the restarts of 2026-11-22).
+        try { if (window.ocw && window.ocw.gpuLost) window.ocw.gpuLost(); } catch (err) { /* not started */ }
+        contextLost("the WebGL context was lost");
+      });
+      canvas.addEventListener("webglcontextrestored", () => { gpuContext.restored++; });
+    }
     const hasWebgl2 = () => {
       try { return !!document.createElement("canvas").getContext("webgl2"); } catch (e) { return false; }
     };
@@ -664,7 +714,35 @@
       bar.hidden = false;
     }
 
+    // The page before died in this ride (iOS Safari kills a tab that uses
+    // too much memory and loads it again: "keeps restarting", 2026-11-22):
+    // the first time the ride goes on with less memory (memory=saver,
+    // Low), the second time the page stops and says so instead of loading
+    // the world once more. pagehide (a reload, a link, closing the tab)
+    // ends a ride normally.
+    function afterDeath() {
+      const last = ocwGpuChoice.lastRideDied(tabStorage, location.href);
+      if (!last.died) return {go: true, died: 0};
+      console.warn(`ocw-web: the page before died in the ride (${last.died}×)`);
+      if (last.died >= 2 || query.get("memory") === "saver") {
+        ocwGpuChoice.rideClosed(tabStorage);
+        const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+        status.hidden = false;
+        status.className = "error";
+        status.innerHTML = "<div>This ride stopped twice: the browser closed the page, most likely because the ride "
+          + "needed more memory than this device gives a page.<br>"
+          + `<a href="${esc(location.href)}">Try again</a> · <a href="./">Rides</a> (the test routes need little memory)</div>`;
+        return {go: false, died: last.died};
+      }
+      history.replaceState(null, "", ocwGpuChoice.saverUrl(location.href));
+      gpuNote("The page was closed in the ride (probably for memory) – riding on with less detail.");
+      return {go: true, died: last.died};
+    }
+
     async function ride() {
+    const death = afterDeath();
+    if (!death.go) return;
+    addEventListener("pagehide", () => ocwGpuChoice.rideClosed(tabStorage));
     const gpu = await chooseGpu();
     window.ocwGpu = gpu;
     console.log(`ocw-web: GPU API ${gpu.api || "none"} (${gpu.reason})`);
@@ -698,6 +776,7 @@
         }
       }
       started = true;
+      ocwGpuChoice.rideStarted(tabStorage, location.href, death.died);
       performance.mark("ocw-started");
       console.log(`ocw-web: module started in ${(performance.now() - t0).toFixed(0)} ms`);
       // The app hides the status (or shows a world's loading screen in it).
@@ -734,7 +813,13 @@
       console.error(`ocw-web: ${gpu.api || "no GPU"} failed: ${why}`);
       window.ocwGpuFailure = why;
       status.hidden = false;
-      if (gpu.api === "webgpu" && !gpu.forced && hasWebgl2()) {
+      // A lost WebGL context (iOS takes it from a page in the background)
+      // makes the renderer fail too: that is the context's handler's.
+      if (gpuContext.lost) { contextLost(why); return; }
+      // Once, from a WebGPU the page chose, never from WebGL 2 and never
+      // from a fallback page (the iPhone's restarts, 2026-11-22): a failure
+      // there shows the error instead of reloading forever.
+      if (ocwGpuChoice.mayFallBack(gpu, location.href, hasWebgl2())) {
         ocwGpuChoice.remember(pageStorage, gpuFacts.ua, why, new Date().toISOString().slice(0, 10),
           config.build || "");
         status.className = "loading";
@@ -746,7 +831,7 @@
       status.className = "error";
       const other = gpu.api === "webgpu" && hasWebgl2()
         ? `<br><a href="${esc(ocwGpuChoice.fallbackUrl(location.href))}">Ride with WebGL 2 instead</a>` : "";
-      status.innerHTML = `The ${gpu.api === "webgl2" ? "WebGL 2" : "WebGPU"} renderer failed: ${esc(why)}${other}`;
+      status.innerHTML = `<div>The ${gpu.api === "webgl2" ? "WebGL 2" : "WebGPU"} renderer failed: ${esc(why)}${other}</div>`;
     }
 
     // The GPU note (B7): why this ride runs on WebGL 2; 12 s.

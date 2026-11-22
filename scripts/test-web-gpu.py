@@ -60,6 +60,12 @@ CHROME_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Ge
              "Chrome/157.0.0.0 Safari/537.36")
 IOS_CHROME_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 26_1 like Mac OS X) AppleWebKit/605.1.15 "
                  "(KHTML, like Gecko) CriOS/141.0 Mobile/15E148 Safari/604.1")
+# Firefox and Edge on iOS (WebKit too; the user's restarts of 2026-11-22
+# were in Safari and Firefox on an iPhone 15).
+IOS_FIREFOX_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 26_1 like Mac OS X) AppleWebKit/605.1.15 "
+                  "(KHTML, like Gecko) FxiOS/145.0 Mobile/15E148 Safari/605.1.15")
+IOS_EDGE_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 26_1 like Mac OS X) AppleWebKit/605.1.15 "
+               "(KHTML, like Gecko) Version/26.0 EdgiOS/142.0 Mobile/15E148 Safari/605.1.15")
 
 # ocw-gpu.js's rules, run in the page; returns [{check, ok, detail}].
 LOGIC = r"""
@@ -84,6 +90,8 @@ LOGIC = r"""
     iphone: G.facts({userAgent: IPHONE_UA, vendor: "Apple Computer, Inc.", platform: "iPhone", maxTouchPoints: 5}, win(true)),
     ipad: G.facts({userAgent: SAFARI_UA, vendor: "Apple Computer, Inc.", platform: "MacIntel", maxTouchPoints: 5}, win(true)),
     ioschrome: G.facts({userAgent: IOS_CHROME_UA, vendor: "Apple Computer, Inc.", platform: "iPhone", maxTouchPoints: 5}, win(true)),
+    iosfirefox: G.facts({userAgent: IOS_FIREFOX_UA, vendor: "Apple Computer, Inc.", platform: "iPhone", maxTouchPoints: 5}, win(true)),
+    iosedge: G.facts({userAgent: IOS_EDGE_UA, vendor: "", platform: "iPhone", maxTouchPoints: 5}, win(true)),
     android: G.facts({userAgent: CHROME_UA.replace("X11; Linux x86_64", "Linux; Android 15; Pixel 9") + " Mobile",
                       vendor: "Google Inc.", platform: "Linux armv8l", maxTouchPoints: 5,
                       userAgentData: {mobile: true}}, win(true)),
@@ -93,6 +101,9 @@ LOGIC = r"""
   check("facts: an iPhone is WebKit, iOS, a phone", F.iphone.webkit && F.iphone.ios && F.iphone.phone, JSON.stringify(F.iphone));
   check("facts: an iPad asking for desktop pages is iOS", F.ipad.ios && F.ipad.webkit && F.ipad.phone, JSON.stringify(F.ipad));
   check("facts: Chrome on iOS is WebKit", F.ioschrome.webkit && F.ioschrome.ios, JSON.stringify(F.ioschrome));
+  check("facts: Firefox (FxiOS) and Edge (EdgiOS) on iOS are WebKit, iOS, phones (whatever the vendor says)",
+        F.iosfirefox.webkit && F.iosfirefox.ios && F.iosfirefox.phone && F.iosedge.webkit && F.iosedge.ios,
+        JSON.stringify([F.iosfirefox, F.iosedge]));
   check("facts: Android is a phone, no WebKit", F.android.phone && !F.android.webkit, JSON.stringify(F.android));
   const choose = (f, q, extra) => G.choose(Object.assign({query: new URLSearchParams(q || ""), facts: f, gpu: gpuOk,
                                                           webgl2: () => true, storage: mem()}, extra || {}));
@@ -106,6 +117,12 @@ LOGIC = r"""
   check("iPadOS: WebGL 2", c.api === "webgl2", JSON.stringify(c));
   c = await choose(F.ioschrome);
   check("Chrome on iOS (WebKit): WebGL 2", c.api === "webgl2", JSON.stringify(c));
+  for (const k of ["iosfirefox", "iosedge"]) {
+    c = await choose(F[k]);
+    check(`${k} with WebGPU: WebGL 2`, c.api === "webgl2" && /iOS/.test(c.reason), JSON.stringify(c));
+    c = await choose(F[k], "", {gpu: undefined});
+    check(`${k} without navigator.gpu: WebGL 2`, c.api === "webgl2", JSON.stringify(c));
+  }
   c = await choose(F.iphone, "gpu=webgpu");
   check("gpu=webgpu on an iPhone: WebGPU, forced", c.api === "webgpu" && c.forced, JSON.stringify(c));
   c = await choose(F.iphone, "gpu=webgpu", {gpu: gpuNone});
@@ -147,6 +164,44 @@ LOGIC = r"""
         u.searchParams.get("world") === "liechtenstein" && u.searchParams.get("route") === "vaduz-malbun"
         && u.searchParams.getAll("gpu").join() === "webgl2" && u.searchParams.get("quality") === "low"
         && u.searchParams.get("webgpu-failed") === "1" && u.pathname === "/OCW/", u.toString());
+  // The fallback never loops (the iPhone's restarts, 2026-11-22).
+  const href = "https://newkit.github.io/OCW/?world=liechtenstein";
+  const wgpu = {api: "webgpu", forced: false};
+  check("fallback: a chosen WebGPU falls back once", G.mayFallBack(wgpu, href, true), "");
+  check("fallback: never from WebGL 2", !G.mayFallBack({api: "webgl2", forced: false}, href, true)
+        && !G.mayFallBack({api: "webgl2", forced: true}, href, true), "");
+  check("fallback: never from a forced WebGPU or without WebGL 2",
+        !G.mayFallBack({api: "webgpu", forced: true}, href, true) && !G.mayFallBack(wgpu, href, false), "");
+  check("fallback: never from a page that already is the fallback",
+        !G.mayFallBack(wgpu, G.fallbackUrl(href), true) && !G.mayFallBack(wgpu, href + "&gpu=webgl2", true), "");
+  const tab = mem();
+  const t = 1763800000000;
+  check("reload: the first one is allowed and recorded", G.mayReload(tab, t, "x") && tab.map.has(G.RELOAD_KEY), "");
+  check("reload: a second within ten minutes is not",
+        !G.mayReload(tab, t + 1000, "x") && !G.mayReload(tab, t + G.RELOAD_WINDOW_MS - 1, "x"), "");
+  check("reload: allowed again after ten minutes", G.mayReload(tab, t + G.RELOAD_WINDOW_MS, "x"), "");
+  check("reload: never without a storage (nothing could stop a loop)",
+        !G.mayReload(null, t, "x") && !G.mayReload(broken, t, "x"), "");
+  const loop = mem();
+  let reloads = 0;
+  for (let i = 0; i < 50; i++) if (G.mayReload(loop, t + i * 2000, "the same failure")) reloads++;
+  check("reload: a failure that comes back every 2 s reloads once in 100 s", reloads === 1, reloads);
+  const rides = mem();
+  check("ride: none open at the first start", G.lastRideDied(rides, href).died === 0, "");
+  G.rideStarted(rides, href, 0);
+  let d = G.lastRideDied(rides, href);
+  check("ride: a page that died in the ride is noticed at the next start", d.died === 1 && d.same, JSON.stringify(d));
+  G.rideStarted(rides, G.saverUrl(href), 1);
+  d = G.lastRideDied(rides, G.saverUrl(href));
+  check("ride: … the second time counts 2", d.died === 2, JSON.stringify(d));
+  G.rideClosed(rides);
+  check("ride: a closed page (pagehide) is no death", G.lastRideDied(rides, href).died === 0, "");
+  check("ride: a storage that throws: no death, no exception", G.lastRideDied(broken, href).died === 0
+        && G.rideStarted(broken, href, 0) === false, "");
+  const su = new URL(G.saverUrl(href + "&quality=high&route=vaduz-malbun"));
+  check("saver URL keeps the ride, Low, memory=saver", su.searchParams.get("world") === "liechtenstein"
+        && su.searchParams.get("route") === "vaduz-malbun" && su.searchParams.get("quality") === "low"
+        && su.searchParams.get("memory") === "saver", su.toString());
   let sp = G.startPage(F.chrome, null, true);
   check("start page, desktop Chrome: unticked; ticked adds gpu=webgl2&quality=low",
         !sp.ticked && sp.query(true) === "&gpu=webgl2&quality=low" && sp.query(false) === "", JSON.stringify(sp));
@@ -167,7 +222,8 @@ LOGIC = r"""
   check("noise within 2 still uniform", G.uniform(near), "");
   return out;
 })()
-""".replace("IOS_CHROME_UA", json.dumps(IOS_CHROME_UA)).replace("CHROME_UA", json.dumps(CHROME_UA)) \
+""".replace("IOS_FIREFOX_UA", json.dumps(IOS_FIREFOX_UA)).replace("IOS_EDGE_UA", json.dumps(IOS_EDGE_UA)) \
+   .replace("IOS_CHROME_UA", json.dumps(IOS_CHROME_UA)).replace("CHROME_UA", json.dumps(CHROME_UA)) \
    .replace("SAFARI_UA", json.dumps(SAFARI_UA)).replace("IPHONE_UA", json.dumps(IPHONE_UA))
 
 INJECT = {

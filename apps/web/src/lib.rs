@@ -71,6 +71,7 @@ pub mod fitstore;
 pub mod god;
 pub mod gpu_memory;
 pub mod heap;
+pub mod memory;
 #[cfg(test)]
 mod memory_report;
 pub mod page_config;
@@ -316,6 +317,12 @@ pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) 
             // a ride reloaded on WebGL 2 after WebGPU failed (ocw-gpu.js).
             ("gpu", _) if matches!(value.as_str(), "webgpu" | "webgl2") => {}
             ("webgpu-failed", _) => {}
+            // The world's memory (`memory::MemoryMode`; the page sets
+            // `saver` after a page died in a ride, ocw-gpu.js).
+            ("memory", _) => match memory::MemoryMode::parse(value) {
+                Some(m) => config.memory = m,
+                None => bad(),
+            },
             // Read below (B3; the origin after the route; a join link).
             ("server" | "cert-hash" | "join", _) => {}
             // The accounts server (spec §9.1; `account`).
@@ -511,12 +518,24 @@ pub fn app(config: SessionConfig) -> App {
 /// [`app`] with the settings already read (the page applies the ones
 /// read at the start to the config first).
 pub fn app_with_settings(
-    config: SessionConfig,
+    mut config: SessionConfig,
     mut settings: settings::WebSettings,
     mut warnings: Vec<String>,
 ) -> App {
     let mut app = App::new();
     visit_quality(&config, &mut settings, &mut warnings);
+    // Phones keep fewer world tiles (the iPhone's restarts, 2026-11-22).
+    let memory = memory::MemoryMode::resolve(config.memory, &device_info());
+    if let Some(w) = config.world.as_mut() {
+        w.residency = memory.residency(w.residency);
+    }
+    app.insert_resource(ocw_render::package::StreamRadiusCap(memory.ring_cap()));
+    if memory != memory::MemoryMode::Normal {
+        info!(
+            "world memory: {} (fewer tiles in memory and on the GPU)",
+            memory.name()
+        );
+    }
     app.insert_resource(settings)
         .insert_resource(settings::Warnings(warnings))
         // What the quality preset's `auto` decides by (B7).
@@ -562,6 +581,8 @@ pub fn app_with_settings(
     // The quality preset's pixel-ratio cap (B7): fewer pixels on HiDPI
     // phones at Low and Medium.
     .add_systems(PostUpdate, cap_pixel_ratio)
+    // A lost WebGL context stops the app (the iPhone's restarts, 2026-11-22).
+    .add_systems(First, stop_when_gpu_lost)
     .add_systems(Startup, || {
         info!("Open Cycling World {} starting", build_id())
     })
@@ -739,6 +760,37 @@ pub fn queue_console(line: &str) {
         .push(line.to_string());
 }
 
+/// The page saw the GPU go (`webglcontextlost`; `window.ocw.gpuLost()`).
+static GPU_LOST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Marks the GPU as lost: the next frame stops the app.
+pub fn mark_gpu_lost() {
+    GPU_LOST.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether the app must stop for a lost GPU (and then clears the mark):
+/// once per loss.
+pub fn take_gpu_lost() -> bool {
+    GPU_LOST.swap(false, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Stops the app when the page lost its WebGL context (spec 14 Phase 10
+/// B7; the iPhone's restarts of 2026-11-22). wgpu's GL backend cannot
+/// rebuild its device, and with the context gone the frames' buffers are
+/// never freed: the wasm memory grew by ~45 MB a second (224 MB → 2.7 GB
+/// in 35 s in WebKit) until iOS would kill the tab and Safari load it
+/// again – a restart loop whenever iOS takes the GPU from the page. Now
+/// the app ends there; the page loads the ride again (once in ten
+/// minutes) or says what happened.
+fn stop_when_gpu_lost(mut exit: MessageWriter<AppExit>) {
+    if take_gpu_lost() {
+        warn!(
+            "the GPU was lost (WebGL context lost): the app stops, the page loads the ride again"
+        );
+        exit.write(AppExit::Success);
+    }
+}
+
 /// Hands the page's console lines to the console.
 pub(crate) fn console_from_page(console: Option<ResMut<ocw_render::console::ConsoleState>>) {
     let Some(mut console) = console else { return };
@@ -759,6 +811,13 @@ pub fn wasm_memory_bytes() -> Option<u64> {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn wasm_memory_bytes() -> Option<u64> {
     None
+}
+
+/// `window.ocw.gpuLost()`: the page's canvas lost its WebGL context.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = gpuLost)]
+pub fn page_gpu_lost() {
+    mark_gpu_lost();
 }
 
 /// `window.ocw.console(line)`: runs a console command (the browser test
@@ -938,6 +997,22 @@ pub fn is_dev_host(host: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A lost WebGL context stops the app once (the page loads the ride
+    /// again): without the stop the wasm memory grew by ~45 MB a second
+    /// until iOS killed the tab (2026-11-22).
+    #[test]
+    fn a_lost_gpu_stops_the_app_once() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_systems(First, stop_when_gpu_lost);
+        app.update();
+        assert!(app.world().resource::<Messages<AppExit>>().is_empty());
+        mark_gpu_lost();
+        app.update();
+        assert_eq!(app.world().resource::<Messages<AppExit>>().len(), 1);
+        assert!(!take_gpu_lost(), "the mark is used once");
+    }
 
     /// A renderer error stops rendering and tells the page; the app is not
     /// quit (Bevy's default), so the page can fall back to WebGL 2 (B7).

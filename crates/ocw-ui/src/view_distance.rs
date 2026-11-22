@@ -16,7 +16,7 @@ use ocw_client::view_distance::{
 };
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, Permission};
 use ocw_render::frame_rate::{FpsBadgeNote, FrameLimit, RenderRate};
-use ocw_render::package::StreamRadius;
+use ocw_render::package::{StreamRadius, StreamRadiusCap};
 use ocw_render::quality::{QualityPreset, RenderQuality, stream_radius_for};
 
 use crate::quality::QualityChoice;
@@ -326,10 +326,18 @@ pub fn apply(world: &mut World) {
     if world.get_resource::<RenderQuality>().map(|q| q.0) != Some(preset) {
         world.insert_resource(RenderQuality(preset));
     }
+    let cap = world
+        .get_resource::<StreamRadiusCap>()
+        .copied()
+        .unwrap_or_default();
     let mut state = world.resource_mut::<ViewDistanceState>();
     state.distance = preset.view_m;
     let now = state.now_s;
-    let (ring, at) = next_ring(state.radius, stream_radius_for(preset.view_m), now);
+    let (ring, at) = next_ring(
+        state.radius,
+        cap.limit(stream_radius_for(preset.view_m)),
+        now,
+    );
     state.radius = Some((ring, at));
     let note = format!(
         "{}{}",
