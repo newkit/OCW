@@ -443,6 +443,15 @@ pub fn physics_line(client: &ClientCore, now_s: f64) -> String {
             here.weather.grip * 100.0,
             (here.weather.rolling_factor - 1.0) * 100.0
         );
+        // Wet leaves on the road (spec 4.6.2 Q6).
+        let slick = client.leaf_slick(now_s);
+        if slick > 0.0 {
+            s += &format!(
+                ", wet leaves {:.0} % (rolling +{:.0} % more)",
+                slick * 100.0,
+                ocw_sim::leaves::extra_rolling(slick) * 100.0
+            );
+        }
     }
     s
 }

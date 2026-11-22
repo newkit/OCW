@@ -235,6 +235,11 @@ pub struct ClientCore {
     /// Whose voice this rider may receive and who may receive its own
     /// (`VoiceHearing`, spec §7.1.7 Q6); `None` until the server said.
     voice_hearing: Option<ocw_voice::audience::Hearing>,
+    /// Where leaves lie on the roads and their season (spec 4.6.2 Q6:
+    /// wet leaves cost a little speed and wobble the bike, predicted as
+    /// the server rides them).
+    leaf_map: Option<Arc<ocw_world::leaves::LeafMap>>,
+    leaf_season: ocw_sim::leaves::LeafSeason,
 }
 
 /// Steering mode before the menu opened (spec §3.2.1), restored on closing.
@@ -318,6 +323,8 @@ impl ClientCore {
             voice_apart: Default::default(),
             not_hearing_you: Default::default(),
             voice_hearing: None,
+            leaf_map: None,
+            leaf_season: Default::default(),
             route,
         }
     }
@@ -341,6 +348,7 @@ impl ClientCore {
         // The own rider's contacts with the world are predicted (spec §14
         // Phase 12D, K3).
         core.predictor.set_world(net.obstacles().cloned());
+        core.leaf_map = net.leaves().cloned();
         Self {
             free: Some(FreeRide {
                 net,
@@ -792,6 +800,56 @@ impl ClientCore {
         self.clock.now(now_s)
     }
 
+    /// The season of the leaves on the road at client time `now_s` (spec
+    /// 4.6.2 Q6), as the server takes it: the world clock's day at the
+    /// ride's place. Without a leaf map or a clock: none.
+    fn refresh_leaves(&mut self, now_s: f64) {
+        let Some(map) = self.leaf_map.clone() else {
+            return;
+        };
+        let Some(ms) = self.world_ms(now_s) else {
+            return;
+        };
+        let place = self.geo_origin().unwrap_or(ocw_sky::zone::DEFAULT_PLACE);
+        let day = self.leaf_season.day_at(ms, place);
+        self.predictor
+            .set_leaves(Some(ocw_sim::leaves::LeafGround { map, day }));
+    }
+
+    /// The wet leaves' wobble on the lean of a rider in `state` on `track`
+    /// at client time `now_s` (spec 4.6.2 Q6; rad).
+    fn leaf_lean(&self, now_s: f64, track: &dyn Track, state: &RiderState) -> f64 {
+        let Some(ground) = self.predictor.leaves() else {
+            return 0.0;
+        };
+        let Some(w) = self.weather.physics_now(now_s) else {
+            return 0.0;
+        };
+        if !self.weather.physics_on() {
+            return 0.0;
+        }
+        let s = ocw_sim::leaves::slick(Some(ground), Some(&w), track, state);
+        ocw_sim::leaves::wobble_lean(s, state.speed, state.distance)
+    }
+
+    /// The slickness of the wet leaves under the own rider now (0 – 1,
+    /// spec 4.6.2 Q6; for tests and the console).
+    pub fn leaf_slick(&self, now_s: f64) -> f64 {
+        let (Some(ground), Some(w)) = (self.predictor.leaves(), self.weather.physics_now(now_s))
+        else {
+            return 0.0;
+        };
+        if !self.weather.physics_on() {
+            return 0.0;
+        }
+        ocw_sim::leaves::slick(
+            Some(ground),
+            Some(&w),
+            self.track(),
+            &self.predictor.state(),
+        )
+    }
+
     /// The server's clock as last received (mode, speed, who may change it).
     pub fn clock_info(&self) -> Option<&ocw_protocol::ClockInfo> {
         self.clock_info.as_ref()
@@ -925,6 +983,7 @@ impl ClientCore {
         self.stats.snapshots += 1;
         self.stats.last_snapshot_tick = s.server_tick;
         self.last_snapshot_at = Some((s.server_tick, now_s));
+        self.refresh_leaves(now_s);
         self.human_riders = s.human_riders;
         self.echo_rider = ocw_protocol::echo_rider(s);
         if let Some(c) = &s.clock {
@@ -1742,7 +1801,8 @@ impl ClientCore {
             look: Some(self.look),
             parts: self.rider_parts(own),
             crash: self.collisions.crash(own, now_s),
-            wobble: self.collisions.wobble(own, tick_now),
+            wobble: self.collisions.wobble(own, tick_now)
+                + self.leaf_lean(now_s, self.track(), &own_state),
             damage: self.damage.visible(own),
             cue: self.anim_cue(own, true, &own_state, own_path, tick_now),
             // The own rider never sees headphones on itself.
@@ -1779,7 +1839,12 @@ impl ClientCore {
                 crash: self.collisions.crash(id, now_s),
                 damage: self.damage.visible(id),
                 // Others are drawn slightly in the past.
-                wobble: self.collisions.wobble(id, others_tick),
+                wobble: self.collisions.wobble(id, others_tick)
+                    + match path {
+                        Some(p) => self.leaf_lean(now_s, p, &state),
+                        None if self.free.is_none() => self.leaf_lean(now_s, &self.route, &state),
+                        None => 0.0,
+                    },
                 cue,
                 signs: self.statuses.get(&id).map_or_else(Default::default, |st| {
                     let told = self.not_hearing_you.contains(&id);

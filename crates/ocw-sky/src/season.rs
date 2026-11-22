@@ -939,6 +939,21 @@ pub const COVERED_DEPTH_M: f64 = 0.05;
 /// The snow lying at a place: the climatological (or observed) snowpack
 /// of the date and the snow the session's weather let fall, whichever
 /// covers more (spec 9C; decided in 9I-S8).
+/// The season is looked at in buckets of this many days (the renderer
+/// rebuilds its tiles when the bucket changes; the physics of wet leaves
+/// uses the same day, spec 4.6.2 Q6).
+pub const BUCKET_DAYS: u32 = 4;
+
+/// The season bucket of a day of the year (1 …).
+pub fn season_bucket(day_of_year: u32) -> u32 {
+    day_of_year.saturating_sub(1) / BUCKET_DAYS
+}
+
+/// The day of the year a bucket stands for (its middle).
+pub fn bucket_day(bucket: u32) -> f64 {
+    f64::from(bucket * BUCKET_DAYS) + f64::from(BUCKET_DAYS) / 2.0 + 0.5
+}
+
 pub fn lying_snow(season: f32, weather: f32) -> f32 {
     season.max(weather).clamp(0.0, 1.0)
 }
@@ -999,6 +1014,17 @@ impl SeasonDay {
     /// The climatological snow cover at `alt_m` (0 – 1).
     pub fn snow(&self, alt_m: f64) -> f32 {
         self.state(alt_m).snow
+    }
+
+    /// The leaf fall at `alt_m` (0 in summer, 1 when the leaves are down;
+    /// spec 4.6.2): the leaves come down with the autumn colour and lie
+    /// through the winter, the fresh green of spring covers the last of
+    /// them. The renderer's leaf patches and the leaves on the road, and
+    /// the physics of wet leaves (4.6.2 Q6), count with it.
+    pub fn leaf_fall(&self, alt_m: f64) -> f32 {
+        let f = self.foliage(LeafType::Deciduous, alt_m, 0.0);
+        let fallen = (1.0 - f.leaves).clamp(0.0, 1.0);
+        ((0.5 * f.autumn + fallen) * (1.0 - 0.6 * f.fresh)).clamp(0.0, 1.0)
     }
 
     /// The climatological snow line: the lowest altitude where half the

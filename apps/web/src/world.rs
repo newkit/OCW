@@ -173,8 +173,11 @@ pub struct WorldRide {
 
 /// The ride the options ask for on `pkg` (its base: graph and routes): a
 /// route of the package (`?route=`, default its first), else a free ride.
+/// `landuse`: a streamed package's encoded land use, for the leaves on the
+/// roads (spec 4.6.2 Q6; `None`: `pkg`'s own).
 pub fn world_ride(
     pkg: &WorldPackage,
+    landuse: Option<&ocw_world::landuse::LandUseIndex>,
     opts: &WorldOptions,
     name: &str,
 ) -> Result<WorldRide, String> {
@@ -192,11 +195,18 @@ pub fn world_ride(
     let road_feel = Some(Arc::new(ocw_world::road_feel::RoadFeelMap::from_package(
         pkg,
     )));
+    // Where leaves lie on the roads (spec 4.6.2 Q6: wet leaves in the
+    // ride): the tiles' land use decoded one at a time.
+    let leaves = match landuse {
+        Some(index) => ocw_world::leaves::LeafMap::from_streamed(pkg, Some(index)),
+        None => ocw_world::leaves::LeafMap::from_package(pkg),
+    };
     let net = Arc::new(
         RoadNetwork::new(graph)
             .with_package_name(pkg.name.clone())
             .with_obstacles(obstacles)
-            .with_road_feel(road_feel),
+            .with_road_feel(road_feel)
+            .with_leaves(Some(Arc::new(leaves))),
     );
     let profile = RiderProfile::default();
     let route_name = match (&opts.route, opts.free_ride) {
@@ -392,7 +402,12 @@ fn on_base(stream: &mut WorldStream, base: StreamBase) -> Result<(), String> {
         base.package.head.tile_count,
         base.trust
     );
-    let ride = world_ride(base.package.base(), &stream.options, &stream.session.name)?;
+    let ride = world_ride(
+        base.package.base(),
+        base.package.land_use(),
+        &stream.options,
+        &stream.session.name,
+    )?;
     info!("world ride: {}", ride.description);
     let mut resident = ResidentTiles::new(base.package, &base.file, stream.options.residency);
     let first = resident.update(ride.start);
@@ -823,13 +838,14 @@ pub(crate) mod tests {
         assert_eq!(slug("Vaduz–Malbun"), "vaduz-malbun");
         assert_eq!(slug("  Rund um  Vaduz "), "rund-um-vaduz");
         let pkg = package();
-        let ride = world_ride(&pkg, &options(), "Ada").unwrap();
+        let ride = world_ride(&pkg, None, &options(), "Ada").unwrap();
         assert!(matches!(ride.course, Course::RouteRide { .. }));
         assert_eq!(ride.start, [100.0, 500.0]);
         assert!(ride.description.contains("4.8 km"), "{}", ride.description);
         // No such route: the error lists the package's routes.
         let e = world_ride(
             &pkg,
+            None,
             &WorldOptions {
                 route: Some("moon".into()),
                 ..options()
@@ -842,6 +858,7 @@ pub(crate) mod tests {
         // A free ride starts somewhere on the graph.
         let free = world_ride(
             &pkg,
+            None,
             &WorldOptions {
                 free_ride: true,
                 ..options()
@@ -853,7 +870,7 @@ pub(crate) mod tests {
         // No graph: an error.
         let mut no_graph = pkg;
         no_graph.graph = None;
-        assert!(world_ride(&no_graph, &options(), "Ada").is_err());
+        assert!(world_ride(&no_graph, None, &options(), "Ada").is_err());
     }
 
     #[test]

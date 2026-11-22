@@ -14,7 +14,7 @@
 //! loose stones, very bad and worse heavy damage. **Without the tag it is
 //! an estimate** ([`estimate_grade`]): from `tracktype` on tracks, else from
 //! the road class and the surface – cleaner and plainer than the tagged
-//! roads (spec Phase 8 Q14 (b), v5.34: main roads excellent, the other
+//! roads (spec Phase 8 Q14 (b), v5.35: main roads excellent, the other
 //! paved classes good, tracks a little worse). Each grade has its chances
 //! ([`wear_density`], scaled by the quality preset's share); main roads
 //! keep their potholes within [`MAIN_ROAD_ZONE_M`] of the edge. Where a
@@ -77,12 +77,12 @@ pub fn smoothness_grade(s: Smoothness) -> Option<u8> {
 }
 
 /// The estimated grade of a road without `smoothness` (spec Phase 8 Q14
-/// (b), v5.34: untagged roads are drawn **cleaner and plainer** than
+/// (b), v5.35: untagged roads are drawn **cleaner and plainer** than
 /// before, so that mostly the tagged roads show damage): from `tracktype`
 /// (grade 1 … 5, 0: none) where it is tagged, else from the class – main
 /// roads (trunk, primary, secondary) excellent, every other paved class
 /// good, tracks between good and intermediate – and the surface (worn
-/// asphalt, i.e. a `tracktype=grade1` track, at least 3). Before v5.34:
+/// asphalt, i.e. a `tracktype=grade1` track, at least 3). Before v5.35:
 /// trunk 1, primary / secondary 2, tertiary / residential / cycleway 3,
 /// unclassified / service / path 4, track 5, `tracktype` 4 … 7, worn
 /// asphalt 5 ([`ESTIMATE_BEFORE_Q14`]).
@@ -109,7 +109,7 @@ pub fn estimate_grade(class: RoadClass, surface: RoadSurface, tracktype: u8) -> 
     }
 }
 
-/// The estimate before Phase 8 Q14 (b) (v4.75 – v5.33), kept for the
+/// The estimate before Phase 8 Q14 (b) (v4.75 – v5.34), kept for the
 /// comparison in the tests and the spec: (class, grade) without
 /// `tracktype`.
 pub const ESTIMATE_BEFORE_Q14: [(RoadClass, u8); 10] = [

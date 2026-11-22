@@ -1,5 +1,5 @@
 //! The own rider's bumps over road damage as the client presents them
-//! (spec Phase 8 Q12 (c), v5.34): a short **resistance kick** on the
+//! (spec Phase 8 Q12 (c), v5.35): a short **resistance kick** on the
 //! trainer in SIM mode ([`crate::trainer::TrainerControl`]), a small
 //! **camera shake** (off with `camera.shake off`, reduced motion and the
 //! kiosk's show mode) and a **sound** (`ocw_audio::cues::Cue::Pothole`,

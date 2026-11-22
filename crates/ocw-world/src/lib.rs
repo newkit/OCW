@@ -22,6 +22,7 @@ pub mod junction;
 pub mod lamps;
 pub mod landmarks;
 pub mod landuse;
+pub mod leaves;
 pub mod look;
 pub mod manifest;
 pub mod matching;

@@ -1,4 +1,4 @@
-//! The road damage in the ride (spec Phase 8 Q12 (c), v5.34): a bad
+//! The road damage in the ride (spec Phase 8 Q12 (c), v5.35): a bad
 //! surface rolls harder, and riding over a pothole, an edge break, an open
 //! crack or into an alligator area is a **bump** – a small loss of speed
 //! here, and on the client a short resistance kick on the trainer, a small
