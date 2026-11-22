@@ -10,7 +10,8 @@
 #       ocw-desktop with voice and the material library
 #   OUT_DIR/OpenCyclingWorld-<version>-<sha>-linux-x86_64.tar.xz
 #       ocw-desktop, ocw-server, world-builder, ocw-studio (stripped),
-#       materials/, LICENSE-MIT, LICENSE-APACHE, strava.example.toml
+#       materials/, LICENSE-MIT, LICENSE-APACHE, secrets.example.toml (the
+#       Strava credentials of spec 3.2.4; strava.toml is migrated into it)
 #   OUT_DIR/OpenCyclingWorld-<version>-<sha>-linux-x86_64/   the tarball's
 #       folder, also used by the Windows zip (materials, licences)
 #
@@ -49,7 +50,7 @@ for b in ocw-desktop ocw-server world-builder ocw-studio; do
   strip "$dir/$b"
 done
 scripts/install-materials.sh "$dir/materials"
-install -m 644 LICENSE-MIT LICENSE-APACHE packaging/strava.example.toml "$dir/"
+install -m 644 LICENSE-MIT LICENSE-APACHE packaging/secrets.example.toml "$dir/"
 rm -f "$out/$base-linux-x86_64.tar.xz"
 tar -C "$out" -cf - "$base-linux-x86_64" | xz -T0 -6 >"$out/$base-linux-x86_64.tar.xz"
 
