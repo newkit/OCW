@@ -12,8 +12,8 @@
 //! presented once (by its id, for [`REPEAT_TICKS`]) even when a
 //! reconciliation moves the prediction back over it.
 
-use std::sync::OnceLock;
 use std::collections::VecDeque;
+use std::sync::OnceLock;
 
 use ocw_sim::RiderState;
 use ocw_sim::road_feel::{BumpKind, RoadBump};
@@ -149,7 +149,10 @@ mod tests {
             ocw_audio::cues::Cue::Pothole
         );
         assert_eq!(crack.cue(), ocw_audio::cues::Cue::Crack);
-        assert_eq!(seen(BumpKind::Alligator, 0.18).cue(), ocw_audio::cues::Cue::Crack);
+        assert_eq!(
+            seen(BumpKind::Alligator, 0.18).cue(),
+            ocw_audio::cues::Cue::Crack
+        );
         // The shake starts when first shown.
         assert_eq!(hole.age_s(10.0), 0.0);
         assert!((hole.age_s(10.25) - 0.25).abs() < 1e-12);
