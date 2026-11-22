@@ -69,8 +69,9 @@ use crate::forest::{FOREST_TAG, read_forest, write_forest};
 use crate::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
 use crate::graph_route::{GraphRoute, RouteStep};
 use crate::junction::section::{
-    JUNCTIONS_TAG, JunctionData, STRIP_EDGES_TAG, read_junctions, read_strip_edges,
-    write_junctions, write_strip_edges,
+    JUNCTIONS_TAG, JunctionData, MINI_ROUNDABOUTS_TAG, STRIP_EDGES_TAG, read_junctions,
+    read_mini_roundabouts, read_strip_edges, write_junctions, write_mini_roundabouts,
+    write_strip_edges,
 };
 use crate::lamps::{ROAD_LIT_TAG, RoadLit, read_road_lit, write_road_lit};
 use crate::landmarks::{LANDMARKS_TAG, read_landmarks, write_landmarks};
@@ -467,6 +468,11 @@ impl WorldPackage {
                 write_strip_edges(s, &mut payload);
                 sections.push((STRIP_EDGES_TAG, payload));
             }
+            if let Some(m) = &j.mini_roundabouts {
+                let mut payload = Vec::new();
+                write_mini_roundabouts(m, &mut payload);
+                sections.push((MINI_ROUNDABOUTS_TAG, payload));
+            }
         }
         let mut payload = Vec::new();
         if write_road_surfaces(
@@ -783,7 +789,9 @@ struct Sections {
 
 impl Sections {
     fn into_package(self, head: PackageHead, tiles: BTreeMap<TileKey, Tile>) -> WorldPackage {
-        let junctions = (self.junctions.index.is_some() || self.junctions.strip_edges.is_some())
+        let junctions = (self.junctions.index.is_some()
+            || self.junctions.strip_edges.is_some()
+            || self.junctions.mini_roundabouts.is_some())
             .then(|| std::sync::Arc::new(self.junctions));
         WorldPackage {
             junctions,
@@ -934,6 +942,14 @@ fn read_sections(
             // (the junctions are computed from the graph, the same).
             match read_junctions(payload) {
                 Ok(i) => s.junctions.index = Some(std::sync::Arc::new(i)),
+                Err(e) if e.contains("not supported") => {}
+                Err(e) => return Err(e),
+            }
+        } else if &tag == MINI_ROUNDABOUTS_TAG && full {
+            // Optional (spec §4.7, §4.8.8 J3): a newer layout is skipped
+            // (no discs painted).
+            match read_mini_roundabouts(payload) {
+                Ok(m) => s.junctions.mini_roundabouts = Some(m),
                 Err(e) if e.contains("not supported") => {}
                 Err(e) => return Err(e),
             }

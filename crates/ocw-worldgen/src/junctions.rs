@@ -219,6 +219,8 @@ pub struct ReconcileStats {
     /// those set.
     pub residual_over_1cm: usize,
     pub residual_samples: usize,
+    /// Where the largest difference lies (edge, sample).
+    pub residual_at: (usize, usize),
     /// Samples set on the longer blends of side roads whose blend the
     /// edge's length cut short (first round).
     pub longer_blend_samples: usize,
@@ -567,7 +569,10 @@ pub fn reconcile_profiles(
     let js = JunctionSet::new(graph);
     for (e, i, h) in drawn_samples(graph, &js, keep) {
         let d = (h - graph.edges[e].profile[i]).abs();
-        st.residual_m = st.residual_m.max(d);
+        if d > st.residual_m {
+            st.residual_m = d;
+            st.residual_at = (e, i);
+        }
         st.residual_samples += 1;
         if d > 0.01 {
             st.residual_over_1cm += 1;
@@ -1404,6 +1409,11 @@ pub fn junction_data(pkg: &WorldPackage, settled: bool) -> Option<JunctionData> 
     Some(JunctionData {
         index: Some(Arc::new(index)),
         strip_edges: Some(strip_edges_of(pkg, g)),
+        // The mini-roundabouts (J3) stay as the package has them.
+        mini_roundabouts: pkg
+            .junctions
+            .as_ref()
+            .and_then(|j| j.mini_roundabouts_for(g).cloned()),
     })
 }
 

@@ -209,6 +209,12 @@ fn markings(u: f32, du: f32, v: f32, dv: f32, half: f32, lines: u32, extra: u32)
 // A transverse marking (ocw_world::road_dress::crossing_paint_at): (line
 // paint, crossing paint) at (u, t along the overlay).
 fn crossing(u: f32, du: f32, t: f32, dt: f32, half: f32, kind: u32, h: u32) -> vec2<f32> {
+    // A mini-roundabout's disc (spec 4.8.8 J3; junction_mesh::mini_disc):
+    // (u, t) the offset from its centre, `half` its radius.
+    if h == 3u {
+        let fw = max(max(du, dt), 1e-3);
+        return vec2<f32>(clamp((half - length(vec2<f32>(u, t))) / fw + 0.5, 0.0, 1.0), 0.0);
+    }
     var in_half = band_cov(u, du, -half, half);
     if h == 1u {
         in_half = band_cov(u, du, 0.0, half);

@@ -428,6 +428,7 @@ fn stored_junctions_and_strip_edges_shape_the_same_tiles() {
         pkg.junctions = Some(Arc::new(JunctionData {
             index: Some(Arc::new(index)),
             strip_edges: Some(strip_edges_of(&pkg, &g)),
+            mini_roundabouts: None,
         }));
         let stored = PackageJunctions::new(&pkg).unwrap();
         assert!(stored.settled && stored.set.is_stored());
@@ -456,4 +457,47 @@ fn stored_junctions_and_strip_edges_shape_the_same_tiles() {
             plain.strip_edges(&g, key, &fewer)
         );
     }
+}
+
+/// J3: a mini-roundabout (section `JMRB`) gets a disc on its junction
+/// surface: an overlay of the disc code round the vertex, at the patch's
+/// drawn heights (lifted as the other overlays), its radius from the
+/// narrowest road; a junction without one gets none.
+#[test]
+fn mini_roundabouts_get_a_painted_disc() {
+    let g = crossing([0.04, -0.02, 0.03, 0.0]);
+    let style = MarkingStyle::default();
+    let ground = |_: f32, _: f32| None;
+    let ctx = ctx_with(&style, &ground);
+    let key = TileKey::containing([0.0, 0.0], SIZE);
+    let strips = tiles(&g).remove(&key).unwrap();
+    let mut pj = PackageJunctions::of_graph(&g, SIZE);
+    let plain = shape_tile(&g, &pj, key, SIZE, &strips, &style);
+    assert!(plain.discs.is_empty());
+    pj.mini_roundabouts = vec![0];
+    let t = shape_tile(&g, &pj, key, SIZE, &strips, &style);
+    assert_eq!(t.discs.len(), 1);
+    let (p, c) = t.discs[0];
+    assert_eq!(c, [0.0, 0.0]);
+    let r = mini_disc_radius(p);
+    assert!((r - 1.5).abs() < 1e-9, "{r}");
+    let meshes = shaped_meshes(&t, &ctx);
+    let lift = crate::ROAD_SURFACE_LIFT_M + crate::road_mesh::OVERLAY_LIFT_M;
+    let disc: Vec<usize> = (0..meshes.overlays.positions.len())
+        .filter(|&i| meshes.overlays.uvs_b[i][1] == MINI_DISC_CODE)
+        .collect();
+    assert!(disc.len() > 50, "{}", disc.len());
+    for &i in &disc {
+        let q = meshes.overlays.positions[i];
+        let uv = meshes.overlays.uvs[i];
+        assert!((f64::from(uv[0]) - f64::from(q[0])).abs() < 1e-4);
+        assert!((meshes.overlays.colors[i][3] - r as f32).abs() < 1e-6);
+        let h = p.height_at([f64::from(q[0]), f64::from(q[2])]).unwrap();
+        assert!((q[1] - (h as f32 + lift)).abs() < 1e-4);
+    }
+    assert!(shaped_meshes(&plain, &ctx)
+        .overlays
+        .uvs_b
+        .iter()
+        .all(|b| b[1] != MINI_DISC_CODE));
 }

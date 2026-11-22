@@ -55,6 +55,7 @@ fn an_index_of_another_graph_is_ignored() {
             fingerprint: g.fingerprint(),
             tiles: BTreeMap::new(),
         }),
+        mini_roundabouts: None,
     };
     assert!(data.strip_edges_for(&g).is_some());
     assert!(data.strip_edges_for(&other).is_none());

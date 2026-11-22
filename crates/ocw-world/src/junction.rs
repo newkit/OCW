@@ -964,6 +964,19 @@ fn assemble(g: &RoadGraph, site: &Site, arms: Vec<Arm>) -> Result<Patch, &'stati
             if i == a || i == b {
                 continue;
             }
+            // In a cluster a side arm may leave from a vertex off the main
+            // road's carriageway: its corner follows its own profile from
+            // there (nothing missed at the edge point).
+            if patch.main_excess(patch.arms[i].origin) > 0.0 {
+                let m = 1e-3;
+                let corner = corner_samples(g, &patch.arms[i], m);
+                let arm = &mut patch.arms[i];
+                arm.edge_m = m;
+                arm.edge_p = arm.origin;
+                arm.corner = corner;
+                arm.edge_h = arm.corner_profile(m);
+                continue;
+            }
             if let Some((m, pt)) = edge_exit(g, &patch, i)
                 && m < patch.arms[i].mouth_m - CORNER_MIN_M
             {
@@ -1339,48 +1352,11 @@ fn outline_at(
         .into_iter()
         .map(|(p, m)| (quantised(c, p), m))
         .collect();
-    Ok((patch, star_outline(c, outline)))
+    Ok((patch, outline))
 }
 
 /// Outline points and the arm whose mouth each lies on.
 type Outline = Vec<(P2, Option<usize>)>;
-
-/// Drops the outline points between the mouths that turn back round the
-/// centre (J3): where an arm curves within the junction its mouth row
-/// lies off the straight edge line its corner follows, and the outline
-/// doubled back beside the mouth (J1: "not star-shaped", a quarter of the
-/// junctions without a surface). The mouth points stay; the outline then
-/// runs straight past the corner's end.
-fn star_outline(c: P2, mut o: Outline) -> Outline {
-    let pi = std::f64::consts::PI;
-    let turn = |a: P2, b: P2| {
-        let mut d = angle(c, b) - angle(c, a);
-        while d <= -pi {
-            d += std::f64::consts::TAU;
-        }
-        while d > pi {
-            d -= std::f64::consts::TAU;
-        }
-        d
-    };
-    loop {
-        let n = o.len();
-        if n < 4 {
-            return o;
-        }
-        let bad = (0..n).find(|&k| {
-            o[k].1.is_none()
-                && (turn(o[(k + n - 1) % n].0, o[k].0) <= 1e-6
-                    || turn(o[k].0, o[(k + 1) % n].0) <= 1e-6)
-        });
-        match bad {
-            Some(k) => {
-                o.remove(k);
-            }
-            None => return o,
-        }
-    }
-}
 
 /// The rest of a patch from its (rounded) outline: the heights of the
 /// outline points (on a mouth the arm's row, elsewhere the field), the
@@ -1421,7 +1397,7 @@ fn finish(mut patch: Patch, outline2: Vec<(P2, Option<usize>)>) -> Result<Patch,
     for i in 0..na {
         let j = (i + 1) % na;
         let Some(last) = (0..n).rev().find(|&k| outline[k].mouth == Some(i)) else {
-            return Err("the outline is not star-shaped (chain)");
+            return Err("the outline is not star-shaped");
         };
         let mut points = vec![outline[last].p];
         let mut k = (last + 1) % n;
@@ -1431,11 +1407,11 @@ fn finish(mut patch: Patch, outline2: Vec<(P2, Option<usize>)>) -> Result<Patch,
             k = (k + 1) % n;
             guard += 1;
             if guard > n {
-                return Err("the outline is not star-shaped (chain)");
+                return Err("the outline is not star-shaped");
             }
         }
         if outline[k].mouth != Some(j) {
-            return Err("the outline is not star-shaped (chain)");
+            return Err("the outline is not star-shaped");
         }
         points.push(outline[k].p);
         chains.push(Chain {
@@ -1457,17 +1433,17 @@ fn finish(mut patch: Patch, outline2: Vec<(P2, Option<usize>)>) -> Result<Patch,
             a += tau;
         }
         if a - prev < 1e-6 || a - prev > std::f64::consts::PI {
-            return Err("the outline is not star-shaped (angle)");
+            return Err("the outline is not star-shaped");
         }
         angles.push(a);
         prev = a;
     }
     if prev - angles[0] >= tau - 1e-6 {
-        return Err("the outline is not star-shaped (wrap)");
+        return Err("the outline is not star-shaped");
     }
     let first = angles[0] + tau;
     if first - prev < 1e-6 || first - prev > std::f64::consts::PI {
-        return Err("the outline is not star-shaped (wrap)");
+        return Err("the outline is not star-shaped");
     }
     patch.outline = outline;
     patch.angles = angles;

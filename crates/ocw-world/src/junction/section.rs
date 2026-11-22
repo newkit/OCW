@@ -214,12 +214,80 @@ impl StripEdges {
 pub struct JunctionData {
     pub index: Option<Arc<JunctionIndex>>,
     pub strip_edges: Option<StripEdges>,
+    /// Section `JMRB` (J3): the vertices OSM tags `highway=mini_roundabout`.
+    pub mini_roundabouts: Option<MiniRoundabouts>,
+}
+
+pub const MINI_ROUNDABOUTS_TAG: &[u8; 4] = b"JMRB";
+const MINI_ROUNDABOUTS_VERSION: u8 = 1;
+
+/// The mini-roundabouts of a package (section `JMRB`, J3; 4.8.8 *Built
+/// (J3)*): the graph vertices OSM tags `highway=mini_roundabout`, where
+/// the renderer paints a disc on the junction surface. Small, so streamed
+/// with the base too.
+///
+/// ```text
+/// layout version: u8 (1)
+/// vertex count: u32 (of the graph it was made for)
+/// count: u32, then the vertices u32 (growing)
+/// ```
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct MiniRoundabouts {
+    pub vertex_count: u32,
+    pub vertices: Vec<u32>,
+}
+
+impl MiniRoundabouts {
+    /// Made for `g` (its vertices; the profiles may have changed since).
+    pub fn fits(&self, g: &RoadGraph) -> bool {
+        self.vertex_count as usize == g.vertices.len()
+    }
+
+    pub fn contains(&self, v: u32) -> bool {
+        self.vertices.binary_search(&v).is_ok()
+    }
+}
+
+pub fn write_mini_roundabouts(m: &MiniRoundabouts, b: &mut Vec<u8>) {
+    b.push(MINI_ROUNDABOUTS_VERSION);
+    b.extend(m.vertex_count.to_le_bytes());
+    b.extend((m.vertices.len() as u32).to_le_bytes());
+    for v in &m.vertices {
+        b.extend(v.to_le_bytes());
+    }
+}
+
+pub fn read_mini_roundabouts(payload: &[u8]) -> Result<MiniRoundabouts, String> {
+    let mut r = Bytes::new(payload);
+    let version = r.u8()?;
+    if version != MINI_ROUNDABOUTS_VERSION {
+        return Err(format!("mini-roundabouts layout {version} not supported"));
+    }
+    let vertex_count = r.u32()?;
+    let n = r.u32()? as usize;
+    let mut vertices = Vec::with_capacity(n.min(payload.len() / 4));
+    for _ in 0..n {
+        vertices.push(r.u32()?);
+    }
+    if vertices.windows(2).any(|w| w[1] <= w[0]) {
+        return Err("mini-roundabouts out of order".into());
+    }
+    r.finish("mini-roundabouts section")?;
+    Ok(MiniRoundabouts {
+        vertex_count,
+        vertices,
+    })
 }
 
 impl JunctionData {
     /// The index if it was made for `g`.
     pub fn index_for(&self, g: &RoadGraph) -> Option<Arc<JunctionIndex>> {
         self.index.clone().filter(|i| i.fits(g))
+    }
+
+    /// The mini-roundabouts if they were made for `g`.
+    pub fn mini_roundabouts_for(&self, g: &RoadGraph) -> Option<&MiniRoundabouts> {
+        self.mini_roundabouts.as_ref().filter(|m| m.fits(g))
     }
 
     /// The strip edges if they were made for `g`.
