@@ -211,7 +211,7 @@ pub struct RoadNetwork {
     /// Phase 12 K3: trees, buildings, walls, barriers, railings, tunnel
     /// walls), if its package has any.
     obstacles: Option<std::sync::Arc<crate::obstacles::WorldObstacles>>,
-    /// The damaged roads under the wheels (spec Phase 8 Q12, v5.33), if
+    /// The damaged roads under the wheels (spec Phase 8 Q12, v5.34), if
     /// its package has any.
     road_feel: Option<std::sync::Arc<crate::road_feel::RoadFeelMap>>,
     /// The junction surfaces (spec §4.8.8, J1): riders ride the heights

@@ -89,6 +89,9 @@ pub struct VoiceSigns {
     pub hears_nobody: bool,
     /// Riders not heard by own choice: each of them sees headphones.
     pub not_hearing: Vec<RiderId>,
+    /// Riders set to 0 % volume (spec §7.1.7 Q18): each of them sees
+    /// headphones too (sent apart from `not_hearing`, `RiderStatus.silenced`).
+    pub silenced: Vec<RiderId>,
 }
 
 /// The echo test's line: a hint and two level meters.
