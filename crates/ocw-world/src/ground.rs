@@ -141,6 +141,9 @@ struct GroundTile {
     row_start: Vec<u32>,
     /// (last column of the run, cover code).
     runs: Vec<(u16, u8)>,
+    /// Water surface levels at the terrain vertices in and around water
+    /// (the land use's, sorted by vertex index).
+    water: Vec<(u32, f32)>,
 }
 
 impl GroundTile {
@@ -256,6 +259,7 @@ impl GroundTile {
             cells,
             row_start,
             runs,
+            water: landuse.map_or_else(Vec::new, |(lu, _)| lu.water.clone()),
         })
     }
 
@@ -274,7 +278,11 @@ impl GroundTile {
     }
 
     fn bytes(&self) -> usize {
-        self.heights.len() * 2 + self.runs.len() * 4 + self.row_start.len() * 4 + 48
+        self.heights.len() * 2
+            + self.runs.len() * 4
+            + self.row_start.len() * 4
+            + self.water.len() * 8
+            + 48
     }
 }
 
@@ -379,7 +387,9 @@ impl GroundMap {
 
     /// Whether (x, z) lies on a tile of the map (inside the world).
     pub fn covers(&self, x: f64, z: f64) -> bool {
-        x.is_finite() && z.is_finite() && self.has_tile(TileKey::containing([x, z], self.tile_size_m))
+        x.is_finite()
+            && z.is_finite()
+            && self.has_tile(TileKey::containing([x, z], self.tile_size_m))
     }
 
     /// Height of the drawn terrain at (x, z) (the grid triangulated like
@@ -400,12 +410,36 @@ impl GroundMap {
         );
         let (i, k) = ((fx as usize).min(n - 2), (fz as usize).min(n - 2));
         let (tx, tz) = (fx - i as f64, fz - k as f64);
-        let (h00, h10, h01, h11) = (t.h(n, i, k), t.h(n, i + 1, k), t.h(n, i, k + 1), t.h(n, i + 1, k + 1));
+        let (h00, h10, h01, h11) = (
+            t.h(n, i, k),
+            t.h(n, i + 1, k),
+            t.h(n, i, k + 1),
+            t.h(n, i + 1, k + 1),
+        );
         Some(if tx + tz <= 1.0 {
             h00 + tx * (h10 - h00) + tz * (h01 - h00)
         } else {
             h11 + (1.0 - tx) * (h01 - h11) + (1.0 - tz) * (h10 - h11)
         })
+    }
+
+    /// The water surface's level at (x, z) (the nearest terrain vertex's),
+    /// where the land use has one; `None` elsewhere.
+    pub fn water_level(&self, x: f64, z: f64) -> Option<f64> {
+        if !(x.is_finite() && z.is_finite()) {
+            return None;
+        }
+        let size = self.tile_size_m;
+        let key = TileKey::containing([x, z], size);
+        let t = self.tile(key)?;
+        let o = key.origin(size);
+        let n = self.samples as usize;
+        let s = size / f64::from(self.samples - 1);
+        let i = (((x - o[0]) / s).round().max(0.0) as usize).min(n - 1);
+        let k = (((z - o[1]) / s).round().max(0.0) as usize).min(n - 1);
+        let index = (k * n + i) as u32;
+        let at = t.water.binary_search_by_key(&index, |w| w.0).ok()?;
+        Some(f64::from(t.water[at].1))
     }
 
     /// The cover at (x, z); `None` off the map.
@@ -439,7 +473,11 @@ impl GroundMap {
             (Some(b), None) => (here - b) / h,
             (None, None) => 0.0,
         };
-        Some(if g.is_finite() { g.clamp(-MAX_GRADE, MAX_GRADE) } else { 0.0 })
+        Some(if g.is_finite() {
+            g.clamp(-MAX_GRADE, MAX_GRADE)
+        } else {
+            0.0
+        })
     }
 }
 
@@ -532,7 +570,10 @@ impl Track for OffRoadTrack {
         OFF_ROAD_WIDTH_M
     }
     fn name_at(&self, distance: f64) -> String {
-        format!("off the road ({})", self.cover_at(distance).unwrap_or_default().name())
+        format!(
+            "off the road ({})",
+            self.cover_at(distance).unwrap_or_default().name()
+        )
     }
 }
 
@@ -585,7 +626,10 @@ pub(crate) mod tests {
     }
 
     /// A land use of 200 cells (5 m) a tile, `class(x, z)` per cell centre.
-    pub fn with_landuse(mut pkg: WorldPackage, class: impl Fn(f64, f64) -> LandClass) -> WorldPackage {
+    pub fn with_landuse(
+        mut pkg: WorldPackage,
+        class: impl Fn(f64, f64) -> LandClass,
+    ) -> WorldPackage {
         let cells = 200u32;
         let mut tiles = BTreeMap::new();
         for key in pkg.tiles.keys() {
@@ -616,7 +660,12 @@ pub(crate) mod tests {
         let pkg = package(2, |x, z| 400.0 + 0.3 * x + 30.0 * (z / 70.0).sin());
         let g = GroundMap::from_package(&pkg);
         assert_eq!(g.tile_count(), 2);
-        for (x, z) in [(12.3, 456.7), (999.9, 3.0), (1500.5, 500.5), (1990.0, 990.0)] {
+        for (x, z) in [
+            (12.3, 456.7),
+            (999.9, 3.0),
+            (1500.5, 500.5),
+            (1990.0, 990.0),
+        ] {
             let a = g.height(x, z).unwrap();
             let b = pkg.surface_height(x, z).unwrap();
             assert!((a - b).abs() < 0.02, "{x},{z}: {a} vs {b}");
@@ -644,7 +693,7 @@ pub(crate) mod tests {
         let cliff = package(1, |x, _| if x > 500.0 { 0.0 } else { 300.0 });
         let g = GroundMap::from_package(&cliff);
         let s = g.slope(500.0, 300.0, [1.0, 0.0]).unwrap();
-        assert!(s.is_finite() && s < -1.0 && s >= -MAX_GRADE, "{s}");
+        assert!(s.is_finite() && (-MAX_GRADE..-1.0).contains(&s), "{s}");
     }
 
     #[test]
@@ -663,7 +712,12 @@ pub(crate) mod tests {
         let mut pkg = pkg;
         let house = Building {
             kind: crate::buildings::BuildingKind::House,
-            outline: vec![[100.0, 100.0], [112.0, 100.0], [112.0, 110.0], [100.0, 110.0]],
+            outline: vec![
+                [100.0, 100.0],
+                [112.0, 100.0],
+                [112.0, 110.0],
+                [100.0, 110.0],
+            ],
             holes: vec![],
             base_y: 499.5,
             eave_y: 506.0,
@@ -671,7 +725,11 @@ pub(crate) mod tests {
             tags: Default::default(),
             parts: Default::default(),
         };
-        pkg.buildings = Some([(TileKey { x: 0, z: 0 }, vec![house])].into_iter().collect());
+        pkg.buildings = Some(
+            [(TileKey { x: 0, z: 0 }, vec![house])]
+                .into_iter()
+                .collect(),
+        );
         let g = GroundMap::from_package(&pkg);
         assert_eq!(g.cover(50.0, 50.0), Some(Cover::Grass));
         assert_eq!(g.cover(106.0, 105.0), Some(Cover::Building));

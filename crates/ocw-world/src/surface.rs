@@ -64,8 +64,7 @@ impl Surface {
     }
 
     pub fn parse(s: &str) -> Option<Self> {
-        Self::ALL.into_iter()
-            .find(|v| v.name() == s)
+        Self::ALL.into_iter().find(|v| v.name() == s)
     }
 }
 

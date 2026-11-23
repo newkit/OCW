@@ -1785,7 +1785,10 @@ mod tests {
         let back = <v1::RiderUpdate as prost::Message>::decode(encode(&quantize(&off)).as_slice())
             .unwrap();
         let p = rider_off_road(&back).unwrap();
-        assert!((p.x - 1234.5678).abs() < 1e-3 && (p.z + 987.6543).abs() < 1e-3, "{p:?}");
+        assert!(
+            (p.x - 1234.5678).abs() < 1e-3 && (p.z + 987.6543).abs() < 1e-3,
+            "{p:?}"
+        );
         let dy = (p.yaw - (-0.75f64).rem_euclid(std::f64::consts::TAU)).abs();
         assert!(dy < 2e-5, "{p:?}");
         assert_eq!(rider_off_road(&quantize(&snap(None))), None);

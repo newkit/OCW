@@ -3,165 +3,9 @@
 //! cover's rolling resistance, landing allowed and refused (Q8 (a)),
 //! joining a road again.
 
-use std::collections::BTreeMap;
-
+use super::test_world::{TREE, height, world};
 use super::*;
 use ocw_core::{RiderProfile, SIM_DT};
-use ocw_world::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
-use ocw_world::landuse::{LandClass, LandUse, LandUseTile};
-use ocw_world::obstacles::{ObstacleKind, Obstacles, PointObstacle, TileObstacles};
-use ocw_world::{Tile, TileKey, WorldPackage};
-
-/// The test world's height (m) at (x, z): flat around the road along
-/// z = 500 and north of it; south of z = 400 a 40 % ramp up (x < 1000)
-/// or a 200 m cliff at z = 300 (x ≥ 1000).
-pub(crate) fn height(x: f64, z: f64) -> f64 {
-    if z >= 400.0 {
-        0.0
-    } else if x < 1000.0 {
-        0.4 * (400.0 - z)
-    } else if z > 300.0 {
-        0.0
-    } else {
-        200.0
-    }
-}
-
-/// What covers the test world: a lake, a wood and rock north of the road,
-/// meadow elsewhere.
-pub(crate) fn class(x: f64, z: f64) -> LandClass {
-    if (1200.0..1400.0).contains(&x) && (600.0..800.0).contains(&z) {
-        LandClass::Water
-    } else if (600.0..800.0).contains(&x) && z >= 600.0 {
-        LandClass::Forest
-    } else if (1600.0..1800.0).contains(&x) && (600.0..800.0).contains(&z) {
-        LandClass::Rock
-    } else {
-        LandClass::Meadow
-    }
-}
-
-/// The house of the test world (its footprint) and a tree.
-pub(crate) const HOUSE: [[f32; 2]; 4] = [[300.0, 700.0], [312.0, 700.0], [312.0, 710.0], [300.0, 710.0]];
-pub(crate) const TREE: [f32; 2] = [500.0, 700.0];
-
-/// The test world: 2 × 1 tiles of 1 km (10 m grid, 5 m land use), the
-/// road along z = 500 from x = 0 to 2000 (two edges, 6 m wide), a lake, a
-/// wood, rock, a house and a tree.
-pub(crate) fn world() -> Arc<RoadNetwork> {
-    let n = 101u32;
-    let mut tiles = BTreeMap::new();
-    let mut lu = BTreeMap::new();
-    for tx in 0..2 {
-        let key = TileKey { x: tx, z: 0 };
-        let o = key.origin(1000.0);
-        let mut heights = Vec::new();
-        for k in 0..n {
-            for i in 0..n {
-                heights.push(height(o[0] + f64::from(i) * 10.0, o[1] + f64::from(k) * 10.0) as f32);
-            }
-        }
-        tiles.insert(
-            key,
-            Tile {
-                key,
-                heights,
-                roads: Vec::new(),
-            },
-        );
-        let mut classes = Vec::new();
-        for r in 0..200 {
-            for c in 0..200 {
-                classes.push(class(
-                    o[0] + (f64::from(c) + 0.5) * 5.0,
-                    o[1] + (f64::from(r) + 0.5) * 5.0,
-                ));
-            }
-        }
-        lu.insert(
-            key,
-            LandUseTile {
-                classes,
-                water: Vec::new(),
-            },
-        );
-    }
-    let house = ocw_world::buildings::Building {
-        kind: ocw_world::buildings::BuildingKind::House,
-        outline: HOUSE.to_vec(),
-        holes: vec![],
-        base_y: -0.5,
-        eave_y: 6.0,
-        roof: ocw_world::buildings::Roof::Flat,
-        tags: Default::default(),
-        parts: Default::default(),
-    };
-    let mut obst = Obstacles::new(1000.0);
-    obst.tiles.insert(
-        TileKey { x: 0, z: 0 },
-        TileObstacles {
-            points: vec![PointObstacle {
-                kind: ObstacleKind::Block,
-                flags: 0,
-                pos: TREE,
-                angle: 0.0,
-                width_m: 0.0,
-                height_m: 1.0,
-            }],
-            ..Default::default()
-        },
-    );
-    let pkg = WorldPackage {
-        name: "offroad-test".into(),
-        origin: (47.14, 9.52),
-        tile_size_m: 1000.0,
-        samples: n,
-        tiles,
-        graph: None,
-        landuse: Some(LandUse {
-            cells: 200,
-            tiles: lu,
-        }),
-        buildings: Some([(TileKey { x: 0, z: 0 }, vec![house])].into_iter().collect()),
-        bridges: None,
-        routes: Vec::new(),
-        region: None,
-        time_zone: None,
-        look: Default::default(),
-        obstacles: Some(obst),
-        places: None,
-        junctions: None,
-    };
-    let vertices = vec![[0.0, 500.0], [1000.0, 500.0], [2000.0, 500.0]];
-    let edges = (0..2u32)
-        .map(|k| Edge {
-            id: EdgeId(900 + u64::from(k)),
-            from: VertexId(k),
-            to: VertexId(k + 1),
-            points: vec![vertices[k as usize], vertices[k as usize + 1]],
-            class: RoadClass::Tertiary,
-            name: Some("Testweg".into()),
-            width_m: 6.0,
-            bridge: false,
-            tunnel: false,
-            dead_end_m: None,
-            boundary: false,
-            oneway: Oneway::No,
-            osm_way: i64::from(k),
-            profile: Vec::new(),
-        })
-        .collect();
-    let graph = RoadGraph {
-        vertices,
-        edges,
-        boundary_vertices: Default::default(),
-    };
-    Arc::new(
-        RoadNetwork::new(graph)
-            .with_obstacles(ocw_world::obstacles::WorldObstacles::from_package(&pkg).map(Arc::new))
-            .with_ground(Some(Arc::new(GroundMap::from_package(&pkg)))),
-    )
-}
 
 fn ground() -> Arc<GroundMap> {
     world().ground().unwrap().clone()
@@ -224,7 +68,10 @@ fn sane(path: &[(RiderState, OffRoadPose)]) {
     let mut last: Option<OffRoadPose> = None;
     for (st, p) in path {
         assert!(st.speed.is_finite() && st.distance.is_finite(), "{st:?}");
-        assert!(p.x.is_finite() && p.z.is_finite() && p.yaw.is_finite(), "{p:?}");
+        assert!(
+            p.x.is_finite() && p.z.is_finite() && p.yaw.is_finite(),
+            "{p:?}"
+        );
         assert!((0.0..=MAX_SPEED_MPS).contains(&st.speed), "{st:?}");
         assert_eq!((st.lateral_offset, st.heading), (0.0, 0.0));
         if let Some(l) = last {
@@ -271,7 +118,10 @@ fn a_forty_percent_descent_speeds_up_without_a_cap() {
     let (a, b) = (down[100], down[101]);
     let along = b.0.distance - a.0.distance;
     let run = (b.1.z - a.1.z).abs();
-    assert!((run - along * 0.4f64.atan().cos()).abs() < 0.02, "{run} vs {along}");
+    assert!(
+        (run - along * 0.4f64.atan().cos()).abs() < 0.02,
+        "{run} vs {along}"
+    );
 }
 
 #[test]
@@ -311,7 +161,13 @@ fn water_and_the_worlds_edge_stop_the_rider_and_leaning_turns_away() {
 #[test]
 fn the_cover_rolls_as_its_surface() {
     // The same power on meadow, rock and forest floor: rock fastest.
-    let speed = |x: f64| ride([x, 700.0], NORTH, 0.0, 200.0, 0.0, 40.0).last().unwrap().0.speed;
+    let speed = |x: f64| {
+        ride([x, 700.0], NORTH, 0.0, 200.0, 0.0, 40.0)
+            .last()
+            .unwrap()
+            .0
+            .speed
+    };
     let (meadow, rock, forest) = (speed(1000.0), speed(1700.0), speed(700.0));
     assert!(rock > meadow && meadow > forest, "{rock} {meadow} {forest}");
 }
@@ -356,9 +212,18 @@ fn landing_is_allowed_on_land_and_refused_on_water_buildings_and_obstacles() {
             l => panic!("{x},{z}: {l:?}"),
         }
     }
+    // On the water the ring floats on its surface.
+    let l = at(1300.0, 700.0);
+    assert!(
+        (l.at()[1] - super::test_world::LAKE_LEVEL).abs() < 1e-6,
+        "{l:?}"
+    );
     // The ring stands on the ground there.
     let l = at(500.0, 100.0);
-    assert!(l.allowed() && (l.at()[1] - height(500.0, 100.0)).abs() < 0.05, "{l:?}");
+    assert!(
+        l.allowed() && (l.at()[1] - height(500.0, 100.0)).abs() < 0.05,
+        "{l:?}"
+    );
 }
 
 #[test]
@@ -398,13 +263,24 @@ fn normalize_folds_a_push_into_the_track() {
     let n = normalize(&mut st, &t);
     let p = OffRoadPose::of(&n);
     // 2 m north and 0.5 m right (east) of where it was, turned right.
-    assert!((p.x - 900.5).abs() < 1e-9 && (p.z - 798.0).abs() < 1e-9, "{p:?}");
+    assert!(
+        (p.x - 900.5).abs() < 1e-9 && (p.z - 798.0).abs() < 1e-9,
+        "{p:?}"
+    );
     assert!((p.yaw - (NORTH - 0.1)).abs() < 1e-9, "{p:?}");
     assert_eq!((st.lateral_offset, st.heading), (0.0, 0.0));
     assert_eq!(n.anchor_m(), 52.0);
     // Interpolation takes the short way round.
-    let a = OffRoadPose { x: 0.0, z: 0.0, yaw: 3.1 };
-    let b = OffRoadPose { x: 2.0, z: 0.0, yaw: -3.1 };
+    let a = OffRoadPose {
+        x: 0.0,
+        z: 0.0,
+        yaw: 3.1,
+    };
+    let b = OffRoadPose {
+        x: 2.0,
+        z: 0.0,
+        yaw: -3.1,
+    };
     let m = OffRoadPose::lerp(a, b, 0.5);
     assert!((m.x - 1.0).abs() < 1e-12 && (m.yaw.abs() - std::f64::consts::PI).abs() < 1e-9);
 }

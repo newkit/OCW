@@ -93,6 +93,9 @@ pub struct RideView {
     pub route: Route,
     /// Free ride: every rider's path through the road graph.
     pub paths: BTreeMap<RiderId, Arc<RidePath>>,
+    /// Riders off the road on the terrain (spec §14 Phase 13A): the
+    /// terrain's track each rides now (before their path).
+    pub off_road: BTreeMap<RiderId, Arc<ocw_world::ground::OffRoadTrack>>,
     /// Free ride on the road graph (no route centre line or start arch).
     pub free_ride: bool,
     /// The junction ahead of the local rider (free ride, spec §2.2.1).
@@ -194,6 +197,29 @@ pub struct PinView {
     pub pos: [f64; 3],
 }
 
+/// What the landing ring marks (spec §14 Phase 13A, Q8 (a)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LandingKind {
+    /// On the road (or the route): the gold ring.
+    #[default]
+    Road,
+    /// On the ground off the road: green, riding the terrain in wild mode.
+    Ground,
+    /// Not here (water, a building, an obstacle, outside the world): red.
+    Refused,
+}
+
+impl LandingKind {
+    /// The ring's colour and glow.
+    pub fn colour(self) -> ([f32; 3], [f32; 3]) {
+        match self {
+            LandingKind::Road => ([1.0, 0.9, 0.5], [6.0, 4.4, 1.6]),
+            LandingKind::Ground => ([0.45, 1.0, 0.45], [1.6, 6.0, 1.6]),
+            LandingKind::Refused => ([1.0, 0.25, 0.2], [7.0, 0.9, 0.6]),
+        }
+    }
+}
+
 /// The local rider's flight in god mode (spec §14 Phase 13B, 13D).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct FlightView {
@@ -214,6 +240,9 @@ pub struct FlightView {
     pub first_person: bool,
     /// Where leaving (G) lands: the glowing ring on the road.
     pub landing: Option<[f64; 3]>,
+    /// What is there (spec §14 Phase 13A): a road (gold), the ground
+    /// (green: riding off the road) or nowhere to land (red).
+    pub landing_kind: LandingKind,
     /// Gliding down / back (G, Shift + G).
     pub leaving: bool,
     /// The keys line of the flight HUD.
@@ -270,6 +299,7 @@ impl RideView {
     pub fn new(route: Route) -> Self {
         Self {
             route,
+            off_road: BTreeMap::new(),
             riders: Vec::new(),
             elapsed_s: 0.0,
             status: String::new(),
@@ -308,8 +338,12 @@ impl RideView {
         self.riders.iter().find(|r| r.is_local)
     }
 
-    /// What rider `id` rides along: their free-ride path, or the route.
+    /// What rider `id` rides along: the terrain's track off the road,
+    /// their free-ride path, or the route.
     pub fn track(&self, id: RiderId) -> &dyn Track {
+        if let Some(t) = self.off_road.get(&id) {
+            return t.as_ref();
+        }
         match self.paths.get(&id) {
             Some(p) => p.as_ref(),
             None => &self.route,

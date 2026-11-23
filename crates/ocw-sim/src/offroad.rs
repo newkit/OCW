@@ -87,7 +87,12 @@ impl OffRoadPose {
 
     /// The track through the pose, its distance `distance` there.
     pub fn track(&self, ground: Arc<GroundMap>, distance: f64) -> OffRoadTrack {
-        OffRoadTrack::new(ground, [self.x, self.z], crate::god::forward(self.yaw), distance)
+        OffRoadTrack::new(
+            ground,
+            [self.x, self.z],
+            crate::god::forward(self.yaw),
+            distance,
+        )
     }
 
     /// Linear between two poses (the yaw the short way round).
@@ -231,7 +236,10 @@ pub fn road_join(net: &RoadNetwork, at: [f64; 2], y: f64, dir: [f64; 2]) -> Opti
     }
     let g = net.geometry(edge);
     let len = g.length();
-    let (a, b) = (g.point_at((s - 1.0).max(0.0)), g.point_at((s + 1.0).min(len)));
+    let (a, b) = (
+        g.point_at((s - 1.0).max(0.0)),
+        g.point_at((s + 1.0).min(len)),
+    );
     let along = [b[0] - a[0], b[2] - a[2]];
     let n = along[0].hypot(along[1]);
     if n < 1e-9 {
@@ -268,7 +276,11 @@ pub fn road_join(net: &RoadNetwork, at: [f64; 2], y: f64, dir: [f64; 2]) -> Opti
 pub enum Landing {
     /// On or near a road (within its half width + [`ROAD_LANDING_MARGIN_M`]):
     /// the nearest point of the graph (edge, offset), standing there.
-    Road { edge: usize, offset_m: f64, at: [f64; 3] },
+    Road {
+        edge: usize,
+        offset_m: f64,
+        at: [f64; 3],
+    },
     /// Off the road, on the ground at `at`.
     Ground { at: [f64; 3] },
     /// Not here (water, a building, an obstacle, outside the world's tiles).
@@ -314,7 +326,12 @@ pub fn blocked(world: &mut WorldCache, x: f64, z: f64, y: f64, yaw: f64, tick: u
     let body = standing_body(x, z, yaw);
     let reach = collide::BODY_LENGTH_M / 2.0 + 0.5;
     let mut solids = Vec::new();
-    world.solids_near([x - reach, z - reach], [x + reach, z + reach], tick, &mut solids);
+    world.solids_near(
+        [x - reach, z - reach],
+        [x + reach, z + reach],
+        tick,
+        &mut solids,
+    );
     solids
         .iter()
         .filter(|s| s.reaches(y))
@@ -369,8 +386,9 @@ pub fn landing(
     };
     let at = [x, y, z];
     match ground.cover(x, z) {
+        // The ring on the water's surface.
         Some(Cover::Water) => Landing::Refused {
-            at,
+            at: [x, ground.water_level(x, z).unwrap_or(y).max(y), z],
             why: "not on water",
         },
         Some(Cover::Building) => Landing::Refused {
@@ -414,5 +432,50 @@ pub fn from_band(ground: Arc<GroundMap>, track: &dyn Track, state: &RiderState) 
     )
 }
 
+/// The other riders' places off the road between snapshots (like
+/// [`crate::SnapshotBuffer`] for their states, with the same times).
+#[derive(Debug, Clone, Default)]
+pub struct PoseBuffer {
+    snapshots: std::collections::VecDeque<(f64, std::collections::BTreeMap<RiderId, OffRoadPose>)>,
+}
+
+impl PoseBuffer {
+    pub fn push(&mut self, time_s: f64, poses: impl IntoIterator<Item = (RiderId, OffRoadPose)>) {
+        self.snapshots
+            .push_back((time_s, poses.into_iter().collect()));
+        while self.snapshots.len() > 32 {
+            self.snapshots.pop_front();
+        }
+    }
+
+    /// The places at `render_time_s`: interpolated where a rider is off
+    /// the road in both surrounding snapshots, else the newer one's.
+    pub fn sample(&self, render_time_s: f64) -> std::collections::BTreeMap<RiderId, OffRoadPose> {
+        let Some((_, newest)) = self.snapshots.back() else {
+            return Default::default();
+        };
+        let later = self.snapshots.iter().position(|(t, _)| *t >= render_time_s);
+        let (a, b) = match later {
+            Some(0) | None => return newest.clone(),
+            Some(i) => (&self.snapshots[i - 1], &self.snapshots[i]),
+        };
+        let span = b.0 - a.0;
+        let t = if span > 0.0 {
+            ((render_time_s - a.0) / span).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        b.1.iter()
+            .map(|(id, pb)| {
+                let p = a.1.get(id).map_or(*pb, |pa| OffRoadPose::lerp(*pa, *pb, t));
+                (*id, p)
+            })
+            .collect()
+    }
+}
+
+#[doc(hidden)]
+pub mod test_world;
+
 #[cfg(test)]
-pub(crate) mod tests;
+mod tests;

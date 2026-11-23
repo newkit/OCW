@@ -432,7 +432,10 @@ impl Session {
     pub fn off_road_allowed(&self) -> bool {
         self.plan.is_none()
             && self.event.is_none()
-            && self.free.as_ref().is_some_and(|(n, _)| n.ground().is_some())
+            && self
+                .free
+                .as_ref()
+                .is_some_and(|(n, _)| n.ground().is_some())
     }
 
     /// Number of physics ticks since the session started.
@@ -1124,8 +1127,8 @@ impl Session {
         };
         let next = r.path.as_ref().map_or(0, RidePath::next_index);
         let d = r.state.distance;
-        let mut path = RidePath::start(net, join.edge, join.offset_m, join.forward, d, next)
-            .with_plan(plan);
+        let mut path =
+            RidePath::start(net, join.edge, join.offset_m, join.forward, d, next).with_plan(plan);
         path.extend(d, &mut |j| j.default);
         r.path = Some(path);
         r.path_reset = true;

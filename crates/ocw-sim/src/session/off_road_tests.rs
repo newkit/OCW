@@ -6,7 +6,7 @@
 
 use super::*;
 use crate::god::GodPose;
-use crate::offroad::tests::world;
+use crate::offroad::test_world::world;
 
 fn free() -> Session {
     Session::free_ride(
@@ -67,7 +67,10 @@ fn landing_on_a_meadow_rides_the_terrain_in_wild_mode() {
     let d0 = s.rider_state(me).unwrap().distance;
     s.take_path_changes();
     let at = land(&mut s, me, 900.0, 800.0, NORTH).unwrap();
-    assert!((at[0] - 900.0).abs() < 1e-6 && (at[2] - 800.0).abs() < 1e-6, "{at:?}");
+    assert!(
+        (at[0] - 900.0).abs() < 1e-6 && (at[2] - 800.0).abs() < 1e-6,
+        "{at:?}"
+    );
     let pose = s.off_road(me).expect("off the road");
     assert_eq!((pose.x, pose.z, pose.yaw), (900.0, 800.0, NORTH));
     let st = s.rider_state(me).unwrap();
@@ -77,7 +80,10 @@ fn landing_on_a_meadow_rides_the_terrain_in_wild_mode() {
     assert_eq!(s.riders[&me].steering, Steering::Lean(0.0));
     // The snapshot says so.
     let snap = s.snapshot();
-    assert_eq!(snap.iter().find(|r| r.id == me).unwrap().off_road, Some(pose));
+    assert_eq!(
+        snap.iter().find(|r| r.id == me).unwrap().off_road,
+        Some(pose)
+    );
     // Riding north across the meadow: the distance counts (Q9 (a)),
     // hearts by the work as always.
     let hearts = s.hearts(me);
@@ -87,7 +93,10 @@ fn landing_on_a_meadow_rides_the_terrain_in_wild_mode() {
     let st = s.rider_state(me).unwrap();
     let p = s.off_road(me).unwrap();
     assert!(st.speed > 4.0, "{st:?}");
-    assert!((p.z - (800.0 - (st.distance - d0))).abs() < 0.5, "{p:?} {st:?}");
+    assert!(
+        (p.z - (800.0 - (st.distance - d0))).abs() < 0.5,
+        "{p:?} {st:?}"
+    );
     assert!((p.x - 900.0).abs() < 0.01);
     assert!(s.hearts(me) > hearts);
     // The track is the terrain's: the gradient there, a meadow.
@@ -128,10 +137,7 @@ fn route_rides_land_on_the_route() {
     let plan = ocw_world::RoutePlan::new(
         &net,
         "row",
-        vec![
-            Segment::whole(&net, 0, true),
-            Segment::whole(&net, 1, true),
-        ],
+        vec![Segment::whole(&net, 0, true), Segment::whole(&net, 1, true)],
         false,
     )
     .unwrap();
@@ -146,7 +152,16 @@ fn route_rides_land_on_the_route() {
     let mut s = Session::new(Route::test_loop());
     let me = s.add_rider("Bea Climber", RiderProfile::default());
     s.enter_god(me).unwrap();
-    assert!(s.leave_god(me, GodLeave::Land { x: 1300.0, z: 700.0 }).is_ok());
+    assert!(
+        s.leave_god(
+            me,
+            GodLeave::Land {
+                x: 1300.0,
+                z: 700.0
+            }
+        )
+        .is_ok()
+    );
     assert!(s.off_road(me).is_none());
 }
 

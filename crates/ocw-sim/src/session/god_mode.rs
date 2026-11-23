@@ -217,11 +217,7 @@ impl Session {
     /// wild mode (spec §14 Phase 13A): free 2D riding off the road. The
     /// distance goes on from where the flight began (nothing credited).
     fn land_off_road(&mut self, id: RiderId, x: f64, z: f64, yaw: f64) {
-        let Some(ground) = self
-            .free
-            .as_ref()
-            .and_then(|(n, _)| n.ground().cloned())
-        else {
+        let Some(ground) = self.free.as_ref().and_then(|(n, _)| n.ground().cloned()) else {
             return;
         };
         let r = self.riders.get_mut(&id).expect("checked");
