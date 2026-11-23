@@ -892,7 +892,7 @@ fn junction_verges_dump() {
     let key = ocw_world::TileKey::containing([f64::from(at[0]), f64::from(at[1])], size);
     let mut lines = String::new();
     let mut put = |owner: String, m: &MeshArrays| {
-        for t in m.indices.chunks_exact(3) {
+        for t in m.indices.as_chunks::<3>().0 {
             let q: Vec<Vec3> = t
                 .iter()
                 .map(|&i| Vec3::from(m.positions[i as usize]))

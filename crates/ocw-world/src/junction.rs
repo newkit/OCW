@@ -1236,9 +1236,9 @@ fn assemble(g: &RoadGraph, site: &Site, arms: Vec<Arm>) -> Result<Patch, &'stati
             // road's edge, its strip past the mouth on the main road's
             // surface: between them the strip rose above it).
             let along = on.iter().any(Option::is_some);
-            for k in 0..2 {
+            for (k, on_k) in on.into_iter().enumerate() {
                 let q = xz(patch.arms[i].row[k]);
-                let m = on[k].or_else(|| along.then(|| patch.main_own(q)).flatten());
+                let m = on_k.or_else(|| along.then(|| patch.main_own(q)).flatten());
                 if let Some(m) = m
                     && patch.arms[i].row[k][1] > m
                 {
