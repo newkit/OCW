@@ -711,6 +711,8 @@ impl ModelDoc {
     pub fn reimport(&self, mut m: Model) -> (ModelOp, Vec<String>) {
         let mut notes = ocw_assets::import::normalise(&mut m);
         notes.extend(ocw_assets::import::keep_from_previous(&mut m, &self.model));
+        // The canonical writer's name, as `model import` sets it.
+        m.generator = ocw_assets::GENERATOR.into();
         // The studio's points the new file lacks.
         for (i, n) in self.model.nodes.iter().enumerate() {
             let point = n.name.starts_with("anchor_")

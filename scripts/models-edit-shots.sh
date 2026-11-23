@@ -4,6 +4,7 @@
 # through .claude/skills/run-ocw/drive.sh:
 #
 #   scripts/models-edit-shots.sh [OUT_DIR]      (default test-output/models-e4)
+#   ONLY=NAME scripts/models-edit-shots.sh     one picture (e.g. blender-reimport)
 #
 # A bike with a node selected and the move gizmo (and the rotate and scale
 # gizmos), an anchor being added, collision proxies in both forms (a mesh
@@ -17,9 +18,12 @@ out=${1:-test-output/models-e4}
 mkdir -p "$out"
 export OCW_PACKAGE=ocw-studio OCW_SIZE=${OCW_SIZE:-1600x900}
 drive=.claude/skills/run-ocw/drive.sh
-printf '# OCW Studio – Models workspace, editing (spec §14 Phase 16, 16B, E4)\n\n| Picture | Window system | What it shows | Arguments |\n|---|---|---|---|\n' >"$out/index.md"
+[ -n "${ONLY:-}" ] && [ -f "$out/index.md" ] ||
+  printf '# OCW Studio – Models workspace, editing (spec §14 Phase 16, 16B, E4)\n\n| Picture | Window system | What it shows | Arguments |\n|---|---|---|---|\n' >"$out/index.md"
 shot() {
   local name=$1 what=$2; shift 2
+  # ONLY=NAME takes just that picture (the index gets its rows appended).
+  if [ -n "${ONLY:-}" ] && [ "$ONLY" != "$name" ]; then return; fi
   for ws in x11 wayland; do
     local mode=shot
     [ "$ws" = wayland ] && mode=shot-wayland
@@ -48,4 +52,21 @@ shot diff-before-save "The diff before saving: the saddle moved and renamed, an 
   "${bike[@]}" --cmd "studio model select saddle" --cmd "studio model nudge 0 0.02 -0.01" --cmd "studio model rename saddle_comfort" \
   --cmd "studio model select bike" --cmd "studio model anchor bottle 0 0.42 0.12" \
   --cmd "studio model entry author Ada Rider" --cmd "studio model save"
+# The Blender round trip (15F) back into the document, where Blender is
+# installed (marge: make deps-blender): the editable copy (`model export`)
+# through Blender's importer and exporter with the README's preset, then
+# `studio model reimport` and the diff before saving.
+blender=${BLENDER:-$(command -v blender || true)}
+[ -z "$blender" ] && [ -x "$HOME/.local/bin/blender" ] && blender=$HOME/.local/bin/blender
+if [ -n "$blender" ] && [ -z "${SKIP_BLENDER:-}" ] && [ "${ONLY:-blender-reimport}" = blender-reimport ]; then
+  b="$out/blender"
+  mkdir -p "$b"
+  cargo run -q -p ocw-assets -- model export bikes/bike-road-endurance --out "$b"
+  printf '[{"src": "%s", "out": "%s"}]\n' "$PWD/$b/bike-road-endurance.glb" "$PWD/$b/from-blender.glb" >"$b/jobs.json"
+  "$blender" -b --factory-startup --python-exit-code 1 --python tools/blender/roundtrip.py -- "$b/jobs.json" "$b/results.json" >"$b/blender.log" 2>&1
+  shot blender-reimport "The road bike after a Blender round trip ($("$blender" --version 2>/dev/null | head -1)): re-imported into the document; the diff before saving shows no structural change" \
+    "${bike[@]}" --cmd "studio model reimport $b/from-blender.glb" --cmd "studio model save"
+else
+  echo "no Blender: the round trip picture is skipped"
+fi
 echo "screenshots in $out (index.md)"
