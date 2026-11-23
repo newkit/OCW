@@ -225,13 +225,18 @@ pub fn world_ride(
     // The ground away from the roads (spec §14 Phase 13A): the base has
     // no tiles; they are added as they are streamed in (like the road feel).
     let ground = Arc::new(ocw_world::ground::GroundMap::from_package(pkg));
+    // Off the road every drawn tree is an obstacle (spec 14 Phase 13 Q10
+    // (a)): the trunks come from the renderer's package of resident tiles
+    // (the same `Arc`, set as the tiles arrive; no copy).
+    let woods = Arc::new(ocw_world::woods::Woods::empty(pkg.tile_size_m));
     let net = Arc::new(
         RoadNetwork::new(graph)
             .with_package_name(pkg.name.clone())
             .with_obstacles(obstacles)
             .with_road_feel(road_feel)
             .with_leaves(Some(Arc::new(leaves)))
-            .with_ground(Some(ground)),
+            .with_ground(Some(ground))
+            .with_woods(Some(woods)),
     );
     let profile = RiderProfile::default();
     let route_name = match (&opts.route, opts.free_ride) {
@@ -405,6 +410,9 @@ pub struct WorldStream {
     /// The renderer's current package (shared with it), for the poles
     /// near the rider as the rider moves.
     lamp_pkg: Option<Arc<WorldPackage>>,
+    /// The trees off the road (spec 14 Phase 13 Q10): the resident tiles'
+    /// package is shared with it.
+    woods: Option<Arc<ocw_world::woods::Woods>>,
 }
 
 impl WorldStream {
@@ -431,6 +439,7 @@ impl WorldStream {
             ground: None,
             obstacles: None,
             lamp_pkg: None,
+            woods: None,
         }
     }
 
@@ -624,7 +633,12 @@ pub fn stream_world(world: &mut World) {
             }
             let pkg = Arc::new(pkg);
             stream.lamp_pkg = Some(pkg.clone());
-            publish(world, pkg, stream.road_feel.as_deref());
+            publish(
+                world,
+                pkg,
+                stream.road_feel.as_deref(),
+                stream.woods.as_deref(),
+            );
         }
         if let (Some(pkg), Some(c)) = (&stream.lamp_pkg, centre) {
             lamp_tiles(stream.obstacles.as_deref(), pkg, Some(c));
@@ -647,11 +661,15 @@ fn publish(
     world: &mut World,
     pkg: Arc<WorldPackage>,
     feel: Option<&ocw_world::road_feel::RoadFeelMap>,
+    woods: Option<&ocw_world::woods::Woods>,
 ) {
     feel_tiles(feel, &pkg);
     let Some(mut pw) = world.get_resource_mut::<PackageWorld>() else {
         return;
     };
+    if let Some(w) = woods {
+        w.set_package(pkg.clone());
+    }
     Arc::make_mut(&mut pw.set).update_tiles(0, pkg);
     let ground = pw.ground();
     let pavement = pw.pavement();
@@ -676,7 +694,7 @@ fn feel_tiles(feel: Option<&ocw_world::road_feel::RoadFeelMap>, pkg: &WorldPacka
 /// The street lamps' poles are placed for the resident tiles within this
 /// ring around the rider's tile (the 3 × 3 a phone meshes): a pole is
 /// only hit near a rider, and placing them needs the junctions of their
-/// roads, which stay in memory (v5.57: all 49 resident tiles of
+/// roads, which stay in memory (v5.64: all 49 resident tiles of
 /// Liechtenstein took 41 MB of junction rules for 1 MB of poles).
 pub const LAMP_RING: i32 = 1;
 
@@ -747,11 +765,18 @@ fn start_ride(world: &mut World, stream: &mut WorldStream, ride: WorldRide, now:
         Course::FreeRide { net, .. } | Course::RouteRide { net, .. } => net.obstacles().cloned(),
         Course::Route(_) => None,
     };
+    stream.woods = match &ride.course {
+        Course::FreeRide { net, .. } | Course::RouteRide { net, .. } => net.woods().cloned(),
+        Course::Route(_) => None,
+    };
     let id = stream.identity.clone().unwrap_or_default();
     let (zone, _) = ocw_client::sky::place_zone(pkg.time_zone.as_deref(), Some(pkg.origin));
     let pkg = Arc::new(pkg);
     lamp_tiles(stream.obstacles.as_deref(), &pkg, Some(ride.start));
     stream.lamp_pkg = Some(pkg.clone());
+    if let Some(w) = &stream.woods {
+        w.set_package(pkg.clone());
+    }
     world.insert_resource(PackageWorld {
         set: Arc::new(WorldSet::new(&id, pkg)),
         loader: None,

@@ -665,8 +665,9 @@ fn tyres_touch_the_junction_surfaces() {
         }
     }
     assert!(centre <= TOLERANCE_M + 1e-4, "centre line {centre}");
-    // 12 mm (5 mm before J3): a side road now leaves the main road's edge
-    // at its own grade (§4.8.8 Q6 (d)), a crease under the wheelbase of a
-    // rider 1.6 m beside the centre turning in (11 mm at the T).
-    assert!(beside <= 0.012, "beside the centre {beside}");
+    // 15 mm (5 mm before J3, 12 mm before J5): a side road now leaves the
+    // main road's edge at its own grade (§4.8.8 Q6 (d)), a crease under the
+    // wheelbase of a rider 1.6 m beside the centre turning in, and its
+    // mouth leans with the main road (J5; 13 mm at the T).
+    assert!(beside <= 0.015, "beside the centre {beside}");
 }

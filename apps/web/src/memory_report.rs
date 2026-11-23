@@ -243,7 +243,7 @@ fn report(path: &str, route: Option<&str>) {
         }
         ocw_server::Course::Route(_) => None,
     };
-    // `OCW_NO_LAMPS=1`: without them (the memory before v5.57).
+    // `OCW_NO_LAMPS=1`: without them (the memory before v5.64).
     if std::env::var("OCW_NO_LAMPS").is_err() {
         step("street lamp poles near the start (lamp_tiles)", || {
             crate::world::lamp_tiles(obstacles.as_deref(), &pkg, Some(ride.start))

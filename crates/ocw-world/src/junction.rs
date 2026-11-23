@@ -315,12 +315,19 @@ pub struct Arm {
     /// Its profile from the vertex to the mouth: (metres from the vertex,
     /// height), the edge's samples and both ends.
     pub corner: Vec<(f64, f64)>,
-    /// An arm of a blended patch (no through road): the cross slope of the
-    /// plane through all its arms (to its right in the mouth's frame, `t`
-    /// turned by [`side_pos`]), which its extension takes inside the patch
-    /// – flat across at its mouth, as the strip – so arms on one plane
-    /// make that plane (§4.8.8 Q7 (c)); 0 elsewhere.
+    /// The cross slope of the arm's surface at its mouth (to its right in
+    /// the mouth's frame, `t` turned by [`side_pos`]): an arm of a blended
+    /// patch (no through road) takes the plane through all its arms
+    /// (§4.8.8 Q7 (c)), a side road with a corner (Q6 (d)) the main road's
+    /// slope across it at its edge point (J5) – inside the patch its
+    /// surface, and its mouth row, lean so; past the mouth its strip turns
+    /// flat across over [`Arm::warp_m`] (§4.8.8 Rule: the corner between
+    /// two roads no longer twists from the one's slope to a flat mouth
+    /// within a few metres). 0 elsewhere.
     pub cross: f64,
+    /// How far past the mouth the strip turns flat across (m; 0: flat at
+    /// the mouth).
+    pub warp_m: f64,
 }
 
 impl Arm {
@@ -347,20 +354,47 @@ impl Arm {
         }
     }
 
-    /// The arm's surface extended past its mouth: flat across, along its
-    /// grade.
+    /// The arm's surface extended past its mouth: along its grade, with its
+    /// cross slope ([`Arm::cross`]).
     fn extension(&self, p: P2) -> f64 {
         let along = dot(sub(p, self.centre), self.t);
-        let mut h = self.h + self.grade * along;
-        if self.cross != 0.0 {
-            // Flat across at the mouth (C1 with the strip there), the
-            // plane's cross slope from a quarter of the mouth's distance in.
-            let reach = (0.25 * self.mouth_m).max(1.0);
-            let x = (-along / reach).clamp(0.0, 1.0);
-            let across = dot(sub(p, self.centre), side_pos(self.t));
-            h += self.cross * across * x * x * (3.0 - 2.0 * x);
+        self.h + self.grade * along + self.cross * self.across(p)
+    }
+
+    /// How far `p` lies to the right of the arm's centre line in its
+    /// mouth's frame (m).
+    fn across(&self, p: P2) -> f64 {
+        dot(sub(p, self.centre), side_pos(self.t))
+    }
+
+    /// The cross slope and the warp length for a mouth row leaning by
+    /// `cross` (clamped to [`MAX_WARP`]); none where the arm has no room
+    /// past its mouth to turn flat.
+    fn lean(&mut self, cross: f64) {
+        // The room past the mouth before the other end's junction (its
+        // mouth at most [`MOUTH_SHARE`] of the edge): the strip turns flat
+        // within it.
+        let room = (1.0 - MOUTH_SHARE) * self.len - self.mouth_m;
+        if room < 1.0 {
+            return;
         }
-        h
+        let cross = cross.clamp(-MAX_WARP, MAX_WARP);
+        let rise = cross.abs() * self.half;
+        if rise < 0.005 {
+            return;
+        }
+        let l = (WARP_RATE * rise)
+            .sqrt()
+            .clamp(WARP_MIN_M, WARP_MAX_M)
+            .min(room);
+        self.cross = cross;
+        self.warp_m = l;
+        let (c, t) = (self.centre, self.t);
+        for k in 0..2 {
+            let q = xz(self.row[k]);
+            let across = dot(sub(q, c), side_pos(t));
+            self.row[k][1] = self.h + cross * across;
+        }
     }
 
     fn mouth_dist(&self, p: P2) -> f64 {
@@ -401,7 +435,7 @@ impl Arm {
         let x = ((m - self.edge_m) / span).clamp(0.0, 1.0);
         let fade = 1.0 - x * x * (3.0 - 2.0 * x);
         let miss = self.edge_h - self.corner_profile(self.edge_m);
-        let q = self.corner_profile(m) + miss * fade;
+        let q = self.corner_profile(m) + miss * fade + self.cross * self.across(p);
         let rho = seg_dist(p, self.edge_p, self.centre).min(self.mouth_dist(p));
         (rho, q)
     }
@@ -449,6 +483,11 @@ pub struct Patch {
     /// (the star's quads, cut where they cross the through road's
     /// carriageway edge, §4.8.8 Q7).
     sectors: Vec<Vec<u32>>,
+    /// How far each outline point is lifted (m, negative: lowered) from
+    /// the height field so that the sides between the mouths run smoothly
+    /// (J5, §4.8.8 Rule); the surface follows it, fading out inward over
+    /// [`SIDE_LIFT_FADE_M`]. Empty before the outline is known.
+    lift: Vec<f64>,
     /// Ring j point k is `vertices[j * outline.len() + k]`.
     pub vertices: Vec<[f64; 3]>,
     pub triangles: Vec<[u32; 3]>,
@@ -683,6 +722,63 @@ impl Patch {
         self.field(p)
     }
 
+    /// The surface the patch is drawn from: its height field with the
+    /// sides' lift ([`Patch::field`] near the outline smoothed along it,
+    /// J5).
+    pub fn surface(&self, p: P2) -> f64 {
+        self.field(p) + self.lift_at(p)
+    }
+
+    /// The sides' lift at `p`: between the two outline points of its
+    /// sector, fading out inward over [`SIDE_LIFT_FADE_M`]; never on the
+    /// through road's carriageway.
+    fn lift_at(&self, p: P2) -> f64 {
+        let n = self.n();
+        if self.lift.len() != n || n < 3 || self.lift.iter().all(|&l| l == 0.0) {
+            return 0.0;
+        }
+        let c = xz(self.centre);
+        let v = sub(p, c);
+        if norm(v) < 1e-9 {
+            return 0.0;
+        }
+        let tau = std::f64::consts::TAU;
+        let a0 = self.angles[0];
+        let mut th = v[1].atan2(v[0]);
+        while th < a0 {
+            th += tau;
+        }
+        while th >= a0 + tau {
+            th -= tau;
+        }
+        let k = self.angles.partition_point(|&a| a <= th).clamp(1, n) - 1;
+        let k1 = (k + 1) % n;
+        let (ba, bb) = (xz(self.outline[k].p), xz(self.outline[k1].p));
+        let (a, b) = (sub(ba, c), sub(bb, c));
+        let (ca, cb) = (cross(v, a), cross(v, b));
+        let lam = if (ca - cb).abs() > 1e-15 {
+            (ca / (ca - cb)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let q = add(a, mul(sub(b, a), lam));
+        let d = (norm(q) - norm(v)).max(0.0);
+        self.lift_on(self.lift[k] + (self.lift[k1] - self.lift[k]) * lam, d, p)
+    }
+
+    /// A lift `l` of the outline `d` metres in from it at `p`.
+    fn lift_on(&self, l: f64, d: f64, p: P2) -> f64 {
+        if l == 0.0 {
+            return 0.0;
+        }
+        let x = (d / SIDE_LIFT_FADE_M).clamp(0.0, 1.0);
+        let mut f = 1.0 - x * x * (3.0 - 2.0 * x);
+        if self.through.is_some() {
+            f *= (self.main_excess(p) / SIDE_LIFT_FADE_M).clamp(0.0, 1.0);
+        }
+        l * f
+    }
+
     /// The through road's own surface at `p` (its two arms' extensions,
     /// without the side roads' corners); `None` without a through road.
     pub fn main_own(&self, p: P2) -> Option<f64> {
@@ -870,6 +966,7 @@ fn build_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Option<Patch> {
 }
 
 /// An arm before its mouth is known.
+#[derive(Clone)]
 struct Raw {
     edge: usize,
     at_from: bool,
@@ -944,6 +1041,7 @@ fn make_arm(g: &RoadGraph, r: &Raw, m: f64, along: Option<f64>) -> Arm {
         edge_h: h,
         corner: Vec::new(),
         cross: 0.0,
+        warp_m: 0.0,
     }
 }
 
@@ -1000,6 +1098,7 @@ fn assemble(g: &RoadGraph, site: &Site, arms: Vec<Arm>) -> Result<Patch, &'stati
         angles: Vec::new(),
         chains: Vec::new(),
         sectors: Vec::new(),
+        lift: Vec::new(),
         vertices: Vec::new(),
         triangles: Vec::new(),
         min: c,
@@ -1034,11 +1133,22 @@ fn assemble(g: &RoadGraph, site: &Site, arms: Vec<Arm>) -> Result<Patch, &'stati
             {
                 let main = shepard([&patch.arms[a], &patch.arms[b]].into_iter(), pt);
                 let corner = corner_samples(g, &patch.arms[i], m);
+                // The main road's slope across the side road at its edge
+                // point: the side road's surface leans so in its corner and
+                // turns flat past its mouth (J5).
+                let d = 0.05;
+                let f = |x: P2| shepard([&patch.arms[a], &patch.arms[b]].into_iter(), x);
+                let grad = [
+                    (f(add(pt, [d, 0.0])) - f(sub(pt, [d, 0.0]))) / (2.0 * d),
+                    (f(add(pt, [0.0, d])) - f(sub(pt, [0.0, d]))) / (2.0 * d),
+                ];
                 let arm = &mut patch.arms[i];
                 arm.edge_m = m;
                 arm.edge_p = pt;
                 arm.edge_h = main;
                 arm.corner = corner;
+                let cross = dot(grad, side_pos(arm.t));
+                arm.lean(cross);
                 continue;
             }
             let row = patch.arms[i].row.map(|q| {
@@ -1129,12 +1239,23 @@ fn blend_plane(arms: &mut [Arm]) {
     };
     let grad = [solve(1), solve(2)];
     for a in arms.iter_mut() {
-        a.cross = dot(grad, side_pos(a.t)).clamp(-MAX_CROSS, MAX_CROSS);
+        let cross = dot(grad, side_pos(a.t)).clamp(-MAX_CROSS, MAX_CROSS);
+        a.lean(cross);
     }
 }
 
 /// The steepest cross slope a blended patch's arm takes inside it.
 pub const MAX_CROSS: f64 = 0.12;
+
+/// The steepest cross slope a mouth row leans by (J5, §4.8.8 Rule).
+pub const MAX_WARP: f64 = 0.2;
+/// A strip turns flat across over `sqrt(WARP_RATE × rise)` metres past the
+/// mouth (`rise`: how far the row's corner lies off its centre's height),
+/// at least [`WARP_MIN_M`], at most [`WARP_MAX_M`]: its edge bends by at
+/// most 6 × rise / L² = 0.04 per metre (4 points).
+pub const WARP_RATE: f64 = 150.0;
+pub const WARP_MIN_M: f64 = 3.0;
+pub const WARP_MAX_M: f64 = 20.0;
 
 /// Where side arm `i`'s centre line leaves the through road's carriageway
 /// ([`Patch::main_excess`]): metres from the vertex (within its mouth) and
@@ -1202,6 +1323,18 @@ pub const SIDE_UNDER_M: f64 = 0.03;
 /// road's edge and its mouth (m); with less it keeps J2's blend.
 pub const CORNER_MIN_M: f64 = 0.5;
 
+/// The sides' lift fades out this far in from the outline (m, J5).
+pub const SIDE_LIFT_FADE_M: f64 = 1.5;
+/// The sides between two fixed points follow a cubic curve where it stays
+/// within this of the height field (m); else they are pinned to it at the
+/// farthest point too (J5).
+pub const SIDE_LIFT_MAX_M: f64 = 0.15;
+
+/// A strip keeps no point of its own within this distance past a mouth
+/// (m, J5): the mouth row and the next row square to the strip there would
+/// cross where the road bends.
+pub const MOUTH_CLEAR_M: f64 = 1.0;
+
 /// An outline point as the package stores it (section `JNCT`): its offset
 /// from the vertex in `f32`. The computed outline is rounded the same way,
 /// so a stored patch and a computed one are the same to the bit.
@@ -1227,7 +1360,7 @@ fn patch_outline(g: &RoadGraph, adj: &[usize], v: usize) -> Result<(Patch, Outli
         .iter()
         .map(|&ei| raw_arm(g, c, v, ei))
         .collect::<Result<_, _>>()?;
-    outline_at(g, &Site::single(g, v), raws)
+    outline_checked(g, &Site::single(g, v), raws)
 }
 
 /// The patch of a cluster (J3): vertices a few metres apart joined by the
@@ -1261,16 +1394,33 @@ fn try_cluster(
         members: members.to_vec(),
         inner: inner.to_vec(),
     };
-    let (patch, outline) = outline_at(g, &site, raws)?;
+    let (patch, outline) = outline_checked(g, &site, raws)?;
     finish(patch, outline)
 }
 
+/// [`outline_at`] with J5's sides, where J4's straight-line outline is
+/// star-shaped too: a junction J1 – J4 left without a surface keeps its
+/// overlapping strips (J3 tried such surfaces: more kinks and seams).
+fn outline_checked(
+    g: &RoadGraph,
+    site: &Site,
+    raws: Vec<Raw>,
+) -> Result<(Patch, Outline), &'static str> {
+    let (_, legacy) = outline_at(g, site, raws.clone(), true)?;
+    let pts: Vec<P2> = legacy.iter().map(|o| o.0).collect();
+    if !sides::star_ok(site.centre, &pts) {
+        return Err("the outline is not star-shaped");
+    }
+    outline_at(g, site, raws, false)
+}
+
 /// The arms' mouths and the outline of the patch at `site` (rounded as
-/// stored).
+/// stored); `legacy`: the chains between the mouths as J1 – J4 drew them.
 fn outline_at(
     g: &RoadGraph,
     site: &Site,
     mut raws: Vec<Raw>,
+    legacy: bool,
 ) -> Result<(Patch, Outline), &'static str> {
     let c = site.centre;
     let cluster = site.cluster();
@@ -1400,8 +1550,27 @@ fn outline_at(
         for k in 0..=pieces {
             outline.push((xz(lerp3(p, q, k as f64 / pieces as f64)), Some(i)));
         }
-        // The chain from Q_i to P_j.
+        // The chain from Q_i to P_j: along the edge lines and round the
+        // corner (§4.8.8 Rule, J5); the straight-line chain of J1 – J4
+        // where that would not keep the outline star-shaped.
         let next = &patch.arms[j];
+        let radius = corner_radius(arm.class.max(next.class));
+        if !legacy
+            && let Some(chain) = sides::corner_chain(
+                g,
+                arm,
+                next,
+                radius,
+                (cluster && arm.origin != next.origin).then_some(c),
+            )
+            && sides::polar_ok(c, &chain)
+        {
+            let last = chain.len() - 1;
+            for &p2 in &chain[1..last] {
+                outline.push((p2, None));
+            }
+            continue;
+        }
         let mut pts2: Vec<P2> = vec![xz(q)];
         match corner {
             Some(cn) => {
@@ -1483,6 +1652,14 @@ fn outline_at(
             for s in 1..=k {
                 dense.push(add(w[0], mul(sub(w[1], w[0]), s as f64 / k as f64)));
             }
+        }
+        // Smoothed where that keeps it star-shaped (J5): leaving and
+        // reaching the mouths along their arms, its bends rounded.
+        if !legacy
+            && let Some(smooth) = sides::smoothed(&dense, arm.t, next.t)
+            && sides::polar_ok(c, &smooth)
+        {
+            dense = smooth;
         }
         let last = dense.len() - 1;
         for &p2 in &dense[1..last] {
@@ -1588,9 +1765,127 @@ fn finish(mut patch: Patch, outline2: Vec<(P2, Option<usize>)>) -> Result<Patch,
     }
     patch.outline = outline;
     patch.angles = angles;
-    patch.chains = chains;
+    side_lift(&mut patch, &chains);
+    // The chains with the lifted heights.
+    patch.chains = chains
+        .into_iter()
+        .map(|mut ch| {
+            for q in &mut ch.points {
+                q[1] = patch.outline_height(*q);
+            }
+            ch
+        })
+        .collect();
     mesh(&mut patch);
     Ok(patch)
+}
+
+impl Patch {
+    /// The (lifted) height of the outline point at `q` (x, z of an outline
+    /// point).
+    fn outline_height(&self, q: [f64; 3]) -> f64 {
+        self.outline
+            .iter()
+            .find(|o| o.p[0] == q[0] && o.p[2] == q[2])
+            .map_or(q[1], |o| o.p[1])
+    }
+}
+
+/// The sides' lift (J5, §4.8.8 Rule: the sides as smooth as the road):
+/// along each chain between two mouths the outline's heights follow a
+/// cubic curve (C1 with the field's slope along the chain) between fixed
+/// points – the mouth corners, the points on the through road's
+/// carriageway (the main road keeps its surface) and, where the curve
+/// would leave the field by more than [`SIDE_LIFT_MAX_M`], the farthest
+/// point (again, until it does not): the field's S-shaped blends between
+/// two roads' surfaces become even slopes. The outline points move by the
+/// difference; [`Patch::surface`] follows them inward.
+fn side_lift(patch: &mut Patch, chains: &[Chain]) {
+    let n = patch.outline.len();
+    let mut lift = vec![0.0f64; n];
+    let index: std::collections::HashMap<(u64, u64), usize> = patch
+        .outline
+        .iter()
+        .enumerate()
+        .map(|(k, o)| ((o.p[0].to_bits(), o.p[2].to_bits()), k))
+        .collect();
+    for ch in chains {
+        let m = ch.points.len();
+        if m < 3 {
+            continue;
+        }
+        let pts: Vec<P2> = ch.points.iter().map(|q| xz(*q)).collect();
+        let f: Vec<f64> = ch.points.iter().map(|q| q[1]).collect();
+        let mut u = vec![0.0f64; m];
+        for i in 1..m {
+            u[i] = u[i - 1] + norm(sub(pts[i], pts[i - 1]));
+        }
+        // The field's slope along the chain at point i.
+        let slope = |i: usize| {
+            let d = if i == 0 {
+                sub(pts[1], pts[0])
+            } else if i == m - 1 {
+                sub(pts[m - 1], pts[m - 2])
+            } else {
+                sub(pts[i + 1], pts[i - 1])
+            };
+            let d = unit(d);
+            let e = 0.05;
+            (patch.field(add(pts[i], mul(d, e))) - patch.field(sub(pts[i], mul(d, e)))) / (2.0 * e)
+        };
+        let mut fixed = vec![false; m];
+        fixed[0] = true;
+        fixed[m - 1] = true;
+        if patch.through.is_some() {
+            for (x, q) in fixed.iter_mut().zip(&pts) {
+                if patch.main_excess(*q) <= 0.05 {
+                    *x = true;
+                }
+            }
+        }
+        let mut h = f.clone();
+        let mut runs: Vec<(usize, usize)> = Vec::new();
+        let mut a = 0;
+        for (i, &x) in fixed.iter().enumerate().skip(1) {
+            if x {
+                if i > a + 1 {
+                    runs.push((a, i));
+                }
+                a = i;
+            }
+        }
+        while let Some((a, b)) = runs.pop() {
+            let l = u[b] - u[a];
+            if l < 1e-6 {
+                continue;
+            }
+            let (sa, sb) = (slope(a), slope(b));
+            let mut worst = (0.0f64, a);
+            for i in a + 1..b {
+                let t = (u[i] - u[a]) / l;
+                h[i] = hermite(t, f[a], sa * l, f[b], sb * l);
+                let dev = (h[i] - f[i]).abs();
+                if dev > worst.0 {
+                    worst = (dev, i);
+                }
+            }
+            if worst.0 > SIDE_LIFT_MAX_M {
+                let k = worst.1;
+                h[k] = f[k];
+                runs.push((a, k));
+                runs.push((k, b));
+            }
+        }
+        for i in 1..m - 1 {
+            if let Some(&k) = index.get(&(pts[i][0].to_bits(), pts[i][1].to_bits())) {
+                lift[k] = h[i] - f[i];
+            }
+        }
+    }
+    for (o, l) in patch.outline.iter_mut().zip(&lift) {
+        o.p[1] += l;
+    }
+    patch.lift = lift;
 }
 
 /// A patch from its stored outline (section `JNCT`): the arms (edge, end,
@@ -1668,7 +1963,11 @@ fn mesh(patch: &mut Patch) {
                 verts.push(o.p);
             } else {
                 let p2 = add(c, mul(sub(xz(o.p), c), r));
-                verts.push(at_y(p2, patch.field(p2)));
+                let k = verts.len() % n;
+                let lift = patch.lift.get(k).map_or(0.0, |&l| {
+                    patch.lift_on(l, (1.0 - r) * norm(sub(xz(o.p), c)), p2)
+                });
+                verts.push(at_y(p2, patch.field(p2) + lift));
             }
         }
     }
@@ -1761,7 +2060,7 @@ fn refine_at_main_edge(
             let m = xz(lerp3(pa, pb, 0.5));
             let split = on(pa) != on(pb) || on(pa) != on_main(patch, m);
             let id = split.then(|| {
-                verts.push(at_y(m, patch.field(m)));
+                verts.push(at_y(m, patch.surface(m)));
                 (verts.len() - 1) as u32
             });
             mids.insert(key, id);
@@ -1838,7 +2137,7 @@ fn cut_at_main_edge(
             }
         }
         let x = add(pa, mul(sub(pb, pa), lo));
-        verts.push(at_y(x, patch.field(x)));
+        verts.push(at_y(x, patch.surface(x)));
         let i = (verts.len() - 1) as u32;
         cuts.insert(key, i);
         i
@@ -1944,8 +2243,10 @@ fn build_mitre(g: &RoadGraph, adj: &[usize], v: usize) -> Option<VertexRule> {
 
 // --- the set ------------------------------------------------------------------
 
-/// What happens at a vertex.
+/// What happens at a vertex (kept in an `Arc` per vertex: the size of a
+/// patch beside a mitre costs nothing).
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum VertexRule {
     Patch(Patch),
     Mitre(Mitre),
@@ -2283,6 +2584,106 @@ impl JunctionSet {
             .collect()
     }
 
+    /// How far past its mouth an arm's strip turns its cross slope flat
+    /// (m, J5): [`Arm::warp_m`], within the room the edge leaves before its
+    /// other end's junction (0: no cross slope, or a blended arm).
+    pub fn warp_len(&self, g: &RoadGraph, p: &Patch, arm: usize) -> f64 {
+        let a = &p.arms[arm];
+        if a.cross == 0.0 || a.warp_m <= 0.0 || a.blend_m > 0.0 {
+            return 0.0;
+        }
+        let ends = self.ends(g, a.edge);
+        let other = ends[usize::from(a.at_from)]
+            .as_ref()
+            .map_or(0.0, |r| match r {
+                EndRule::Patch(q, i) => q.arms[*i].mouth_m + q.arms[*i].blend_m,
+                EndRule::Mitre(m, _) => m.shift_m + 0.3,
+                EndRule::Inside(_) => a.len,
+            });
+        a.warp_m.min(a.len - a.mouth_m - other).max(0.0)
+    }
+
+    /// How far past its mouth an arm's strip has generated rows (m): its
+    /// blend onto the main road (J2) or the turn of its cross slope to flat
+    /// (J5); 0: none.
+    pub fn past_m(&self, g: &RoadGraph, p: &Patch, arm: usize) -> f64 {
+        let a = &p.arms[arm];
+        if a.blend_m > 0.0 {
+            a.blend_m
+        } else {
+            self.warp_len(g, p, arm)
+        }
+    }
+
+    /// The distances from the vertex of the generated rows past an arm's
+    /// mouth (the mouth first; empty: none).
+    pub fn past_steps(&self, g: &RoadGraph, p: &Patch, arm: usize) -> Vec<f64> {
+        let a = &p.arms[arm];
+        let l = self.past_m(g, p, arm);
+        if l <= 0.0 {
+            return Vec::new();
+        }
+        let k = (l / BLEND_ROW_M).ceil().max(1.0) as usize;
+        (0..=k)
+            .map(|i| a.mouth_m + l * i as f64 / k as f64)
+            .collect()
+    }
+
+    /// The strip's lean at `s` metres from edge `ei`'s `from` vertex (the
+    /// rise of its right corner per metre of half width, in the edge's
+    /// direction): what is left of the cross slopes its two ends' mouths
+    /// lean by (J5).
+    pub fn lean_at(&self, g: &RoadGraph, ei: usize, s: f64) -> f64 {
+        let len = g.edges[ei].length_m();
+        let mut lean = 0.0;
+        for (k, end) in self.ends(g, ei).iter().enumerate() {
+            let Some(EndRule::Patch(p, ai)) = end else {
+                continue;
+            };
+            let a = &p.arms[*ai];
+            let l = self.warp_len(g, p, *ai);
+            if l <= 0.0 {
+                continue;
+            }
+            let m = if k == 0 { s } else { len - s };
+            let x = ((m - a.mouth_m) / l).clamp(0.0, 1.0);
+            let left = 1.0 - x * x * (3.0 - 2.0 * x);
+            lean += a.cross * left * if a.at_from { 1.0 } else { -1.0 };
+        }
+        lean
+    }
+
+    /// The generated row `m` metres from the vertex past arm `arm`'s mouth.
+    pub fn past_row(&self, g: &RoadGraph, p: &Patch, arm: usize, m: f64) -> [[f64; 3]; 2] {
+        let cum = cumulative(&g.edges[p.arms[arm].edge].points);
+        self.past_row_on(g, p, arm, m, &cum)
+    }
+
+    fn past_row_on(
+        &self,
+        g: &RoadGraph,
+        p: &Patch,
+        arm: usize,
+        m: f64,
+        cum: &[f64],
+    ) -> [[f64; 3]; 2] {
+        let a = &p.arms[arm];
+        if a.blend_m > 0.0 {
+            return Self::blend_row_on(g, p, arm, m, cum);
+        }
+        // Leaning by what is left of the cross slopes, flat after.
+        let e = &g.edges[a.edge];
+        let s = a.s_edge(m);
+        let (c, fwd) = frame_at(&e.points, cum, s);
+        let right = side_pos(fwd);
+        let h = height(e, s);
+        let lean = self.lean_at(g, a.edge, s);
+        [
+            at_y(sub(c, mul(right, a.half)), h - lean * a.half),
+            at_y(add(c, mul(right, a.half)), h + lean * a.half),
+        ]
+    }
+
     /// The drawn junction surface at `p` on edge `ei`, `s` metres from its
     /// `from` vertex: inside a patch its mesh, along a blended side arm its
     /// rows; `None` elsewhere (the road's own profile applies).
@@ -2328,12 +2729,13 @@ impl JunctionSet {
             if m <= a.mouth_m + 1e-9 {
                 return patch.height_at(p).or_else(|| Some(patch.field(p)));
             }
-            if a.blend_m > 0.0 && m <= a.mouth_m + a.blend_m {
-                let steps = Self::blend_steps(a);
+            let past = self.past_m(g, patch, *ai);
+            if past > 0.0 && m <= a.mouth_m + past {
+                let steps = self.past_steps(g, patch, *ai);
                 let i = steps.partition_point(|&x| x <= m).clamp(1, steps.len() - 1);
                 let cum = cumulative(&g.edges[ei].points);
-                let r0 = Self::blend_row_on(g, patch, *ai, steps[i - 1], &cum);
-                let r1 = Self::blend_row_on(g, patch, *ai, steps[i], &cum);
+                let r0 = self.past_row_on(g, patch, *ai, steps[i - 1], &cum);
+                let r1 = self.past_row_on(g, patch, *ai, steps[i], &cum);
                 // As the strip draws its quads: (l0, r0, l1), (r0, r1, l1).
                 for tri in [[r0[0], r0[1], r1[0]], [r0[1], r1[1], r1[0]]] {
                     if let Some(h) = tri_height(tri, p, 1e-6) {
@@ -2506,7 +2908,7 @@ impl JunctionSet {
         let ends = self.ends(g, ei);
         let near = |k: usize, v: VertexId| -> bool {
             let reach = match ends[k] {
-                Some(EndRule::Patch(p, i)) => p.arms[i].mouth_m + p.arms[i].blend_m + 1.0,
+                Some(EndRule::Patch(p, i)) => p.arms[i].mouth_m + self.past_m(g, p, i) + 1.0,
                 Some(EndRule::Mitre(m, _)) => m.shift_m + 1.0,
                 Some(EndRule::Inside(_)) => return true,
                 None => return false,
@@ -2562,6 +2964,7 @@ impl JunctionSet {
         let mut mitres: [Option<[[f64; 3]; 2]>; 2] = [None, None];
         let mut mitre_drop = [0.0f64; 2];
         let mut junction_end = [false; 2];
+        let mut near_mouth: [Option<f64>; 2] = [None, None];
         for (k, end) in ends.iter().enumerate() {
             match end {
                 Some(EndRule::Patch(p, ai)) => {
@@ -2574,8 +2977,15 @@ impl JunctionSet {
                         hi = m_edge;
                     }
                     generated.push((m_edge, a.row));
-                    if a.blend_m > 0.0 {
-                        let steps = Self::blend_steps(a);
+                    let past = self.past_m(g, p, *ai);
+                    if past <= 0.0 {
+                        // No kept point right past the mouth: its row,
+                        // square to the strip there, would fold back over
+                        // the mouth row where the road bends (J5).
+                        near_mouth[k] = Some(m_edge);
+                    }
+                    if past > 0.0 {
+                        let steps = self.past_steps(g, p, *ai);
                         let (b0, b1) = (a.s_edge(steps[0]), a.s_edge(*steps.last().unwrap()));
                         replaced.push((b0.min(b1), b0.max(b1)));
                         // Only the rows on this piece of the strip.
@@ -2583,14 +2993,14 @@ impl JunctionSet {
                         for &st in &steps[1..] {
                             let se = a.s_edge(st);
                             if on(se) {
-                                generated.push((se, Self::blend_row_on(g, p, *ai, st, &cum)));
+                                generated.push((se, self.past_row_on(g, p, *ai, st, &cum)));
                             }
                         }
                         // The strip piece may start or end inside the blend.
                         for se in [s_first, s_last] {
                             let m = if k == 0 { se } else { len - se };
-                            if m > a.mouth_m + 1e-6 && m < a.mouth_m + a.blend_m - 1e-6 {
-                                generated.push((se, Self::blend_row_on(g, p, *ai, m, &cum)));
+                            if m > a.mouth_m + 1e-6 && m < a.mouth_m + past - 1e-6 {
+                                generated.push((se, self.past_row_on(g, p, *ai, m, &cum)));
                             }
                         }
                     }
@@ -2626,6 +3036,15 @@ impl JunctionSet {
             if replaced
                 .iter()
                 .any(|&(a, b)| si >= a - 1e-6 && si <= b + 1e-6)
+            {
+                continue;
+            }
+            if near_mouth
+                .iter()
+                .flatten()
+                .any(|&m| (si - m).abs() < MOUTH_CLEAR_M)
+                && i > 0
+                && i + 1 < n
             {
                 continue;
             }
@@ -2720,6 +3139,36 @@ impl JunctionSet {
             .enumerate()
             .map(|(i, it)| it.2.unwrap_or_else(|| plain_row(&points, i, half)))
             .collect();
+        // No row whose corner lies behind the row before it (on the inner
+        // side of a sharp bend, rows square to different pieces of the
+        // centre line cross): the strip's edge would fold back (J5, §4.8.8
+        // Rule). The two end rows stay.
+        let mut keep = vec![true; rows.len()];
+        let mut last = 0;
+        for i in 1..rows.len() {
+            let (a, b) = (rows[last], rows[i]);
+            let ahead = (0..2).all(|k| {
+                let d = [b[k][0] - a[k][0], b[k][2] - a[k][2]];
+                let c = [
+                    points[i][0] - points[last][0],
+                    points[i][2] - points[last][2],
+                ];
+                d[0] * c[0] + d[1] * c[1] > 0.0
+            });
+            if ahead || i + 1 == rows.len() {
+                last = i;
+            } else {
+                keep[i] = false;
+            }
+        }
+        if keep.iter().any(|k| !k) {
+            let mut k = keep.iter();
+            items.retain(|_| *k.next().expect("same length"));
+            let mut k = keep.iter();
+            points.retain(|_| *k.next().expect("same length"));
+            let mut k = keep.iter();
+            rows.retain(|_| *k.next().expect("same length"));
+        }
         // §4.8.8 Q7: a side road's strip never stands above (or on) the
         // main road's carriageway where it crosses it past its mouth (a
         // narrow side road whose mouth lies on the main road): there it
@@ -2789,6 +3238,32 @@ impl JunctionSet {
 
 pub mod fixtures;
 pub mod section;
+mod sides;
 
 #[cfg(test)]
 mod tests;
+
+/// TEMPORARY (J5 diagnostics): the J5 chain of `patch` from arm `i` to the
+/// next, and whether it keeps the outline star-shaped.
+#[doc(hidden)]
+pub fn debug_chain(
+    g: &RoadGraph,
+    patch: &Patch,
+    i: usize,
+) -> (Option<Vec<P2>>, bool, [Vec<P2>; 2]) {
+    let j = (i + 1) % patch.arms.len();
+    let (a, b) = (&patch.arms[i], &patch.arms[j]);
+    let lines = [sides::edge_line(g, a, 1.0), sides::edge_line(g, b, -1.0)];
+    let c = xz(patch.centre);
+    let ch = sides::corner_chain(
+        g,
+        a,
+        b,
+        corner_radius(a.class.max(b.class)),
+        (patch.members.len() > 1 && a.origin != b.origin).then_some(c),
+    );
+    let ok = ch
+        .as_ref()
+        .is_some_and(|c| sides::polar_ok(xz(patch.centre), c));
+    (ch, ok, lines)
+}

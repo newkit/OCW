@@ -473,29 +473,14 @@ pub fn tree_colour(leaf: LeafType, f: &Foliage, shade: f32, hue: f32) -> [f32; 3
 /// The setting of a tree for the leaf-type fallback, by its land class
 /// (`None`: the provisional patches – forest).
 pub fn tree_setting(class: Option<LandClass>) -> TreeSetting {
-    match class {
-        None | Some(LandClass::Forest) => TreeSetting::Forest,
-        Some(LandClass::Orchard) => TreeSetting::Orchard,
-        Some(
-            LandClass::Park
-            | LandClass::Residential
-            | LandClass::Commercial
-            | LandClass::Industrial,
-        ) => TreeSetting::Urban,
-        Some(LandClass::Scrub) => TreeSetting::Scrub,
-        Some(LandClass::Wetland) => TreeSetting::Wetland,
-        Some(_) => TreeSetting::Open,
-    }
+    ocw_world::flora::tree_setting(class)
 }
 
 /// The measured leaf type in `ocw_sky`'s terms.
 pub fn measured(
     m: Option<ocw_world::trees::DominantLeaf>,
 ) -> Option<ocw_sky::season::MeasuredLeaf> {
-    m.map(|m| match m {
-        ocw_world::trees::DominantLeaf::Broadleaved => ocw_sky::season::MeasuredLeaf::Broadleaved,
-        ocw_world::trees::DominantLeaf::Coniferous => ocw_sky::season::MeasuredLeaf::Coniferous,
-    })
+    ocw_world::flora::measured_leaf_type(m)
 }
 
 // --- Uniforms -----------------------------------------------------------------

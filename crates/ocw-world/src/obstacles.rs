@@ -1019,6 +1019,33 @@ impl WorldObstacles {
         self.tile_size_m
     }
 
+    /// The tree cells of tile `key` stored in the section (the grid's
+    /// trees within wild mode's reach, [`crate::trees::tree_cells`]; one
+    /// byte per candidate, `side`² of them), if any – the trunks made off
+    /// the road leave these out ([`crate::woods`]).
+    pub fn tile_tree_cells(&self, key: TileKey) -> Option<(usize, Vec<u8>)> {
+        let src = self.tiles.get(&key)?;
+        let side = self.tree_side;
+        TileObstacles {
+            trees: src.trees.clone(),
+            ..Default::default()
+        }
+        .tree_cells(side)
+        .map(|c| (side, c))
+    }
+
+    /// The feet (x, z) of the planted trees stored for tile `key` (orchard
+    /// rows and mapped trees within wild mode's reach).
+    pub fn tile_planted_feet(&self, key: TileKey) -> Vec<[f32; 2]> {
+        self.tiles.get(&key).map_or_else(Vec::new, |t| {
+            t.points
+                .iter()
+                .filter(|p| p.kind == ObstacleKind::PlantedTree)
+                .map(|p| p.pos)
+                .collect()
+        })
+    }
+
     /// Approximate memory (bytes), for the logs.
     pub fn approx_bytes(&self) -> usize {
         self.tiles

@@ -55,6 +55,7 @@ mod terrain;
 pub mod track;
 pub mod trees;
 pub mod vegetation;
+pub mod woods;
 pub mod world_set;
 
 pub use gradient::{AVERAGE_AHEAD_M, ElevationProfile, GradeBand, ProfileSpec, average_grade};

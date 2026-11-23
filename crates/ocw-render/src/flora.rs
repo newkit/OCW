@@ -580,7 +580,7 @@ pub fn generate(m: &mut MeshArrays, sp: Species, at: &PlantAt, look: &PlantLook,
                 m,
                 base,
                 base + Vec3::Y * trunk_top * s,
-                0.016 * h * s,
+                sp.trunk_radius_m() * s,
                 0.006 * h * s,
                 if near { 5 } else { 4 },
                 foot,
@@ -654,7 +654,7 @@ pub fn generate(m: &mut MeshArrays, sp: Species, at: &PlantAt, look: &PlantLook,
                 m,
                 base,
                 base + Vec3::new(0.3 * (at.pick - 0.5), trunk_top * h, 0.0) * s,
-                0.022 * h * s,
+                sp.trunk_radius_m() * s,
                 0.006 * h * s,
                 if near { 6 } else { 4 },
                 foot,
@@ -859,7 +859,7 @@ pub fn generate(m: &mut MeshArrays, sp: Species, at: &PlantAt, look: &PlantLook,
             let slender = sp == SlenderPalm;
             let lean = Vec3::new(0.04 * (at.pick - 0.5) * h, 0.0, 0.04 * (at.hue - 0.5) * h);
             let top = base + (Vec3::Y * h + lean) * s;
-            let (r0, r1) = if slender { (0.24, 0.16) } else { (0.45, 0.4) };
+            let (r0, r1) = (sp.trunk_radius_m(), if slender { 0.16 } else { 0.4 });
             tube(
                 m,
                 base,
@@ -922,7 +922,7 @@ pub fn generate(m: &mut MeshArrays, sp: Species, at: &PlantAt, look: &PlantLook,
                 m,
                 base,
                 top,
-                0.55 * s,
+                sp.trunk_radius_m() * s,
                 0.4 * s,
                 if near { 7 } else { 5 },
                 foot,
@@ -1044,6 +1044,7 @@ fn broadleaf(
             m,
             base,
             base + (Vec3::Y * (cy * 0.9) + lean) * s,
+            // One stem: `Species::trunk_radius_m` (the collisions' trunk).
             0.02 * h * s / stems as f32 + 0.05 * s,
             0.008 * h * s,
             if near { 6 } else { 4 },

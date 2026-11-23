@@ -386,6 +386,52 @@ pub fn planted(pkg: &WorldPackage, x: f64, z: f64) -> bool {
     rows.is_some() && (runs(crop) || plant_species(crop, FloraRegion::Other).is_some())
 }
 
+/// The solid planted trees of tile `key` (orchard rows, mapped trees;
+/// [`crate::plantings`]) whose foot `keep` accepts, as point obstacles:
+/// the trunk's diameter as the width, the tree's height.
+pub fn planted_points(
+    pkg: &WorldPackage,
+    key: TileKey,
+    keep: impl Fn([f64; 2]) -> bool,
+) -> Vec<crate::obstacles::PointObstacle> {
+    use crate::obstacles::{ObstacleKind, PointObstacle};
+    use crate::trees::TRUNK_RADIUS_M;
+    let point = |pos: [f32; 2], scale: f32, height: f32| PointObstacle {
+        kind: ObstacleKind::PlantedTree,
+        flags: 0,
+        pos,
+        angle: 0.0,
+        width_m: (2.0 * TRUNK_RADIUS_M as f32 * scale).max(0.2),
+        height_m: height.min(25.5),
+    };
+    let (_, plants) = tile_rows(pkg, key);
+    let mut out: Vec<PointObstacle> = plants
+        .iter()
+        .filter(|p| p.species.solid() && keep([f64::from(p.pos[0]), f64::from(p.pos[2])]))
+        .map(|p| {
+            point(
+                [p.pos[0], p.pos[2]],
+                p.scale * 0.6,
+                p.species.height_m() * p.scale,
+            )
+        })
+        .collect();
+    out.extend(
+        mapped_trees(pkg, key)
+            .into_iter()
+            .filter(|(f, t)| t.species.solid() && keep([f64::from(f[0]), f64::from(f[2])]))
+            .map(|(f, t)| {
+                let h = if t.height_m > 0.0 {
+                    t.height_m
+                } else {
+                    t.species.height_m()
+                };
+                point([f[0], f[2]], 1.0, h)
+            }),
+    );
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
