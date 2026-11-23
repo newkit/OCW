@@ -1020,11 +1020,26 @@ impl SeasonDay {
     /// spec 4.6.2): the leaves come down with the autumn colour and lie
     /// through the winter, the fresh green of spring covers the last of
     /// them. The renderer's leaf patches and the leaves on the road, and
-    /// the physics of wet leaves (4.6.2 Q6), count with it.
+    /// the physics of wet leaves (4.6.2 Q6), count with it. Where the
+    /// region's broadleaves are evergreen (laurel forest, the tropics) only
+    /// its few deciduous lone trees drop leaves: the fall is scaled by
+    /// [`SeasonDay::leaf_fall_share`] (spec §14 Phase 9 Q13).
     pub fn leaf_fall(&self, alt_m: f64) -> f32 {
         let f = self.foliage(LeafType::Deciduous, alt_m, 0.0);
         let fallen = (1.0 - f.leaves).clamp(0.0, 1.0);
-        ((0.5 * f.autumn + fallen) * (1.0 - 0.6 * f.fresh)).clamp(0.0, 1.0)
+        ((0.5 * f.autumn + fallen) * (1.0 - 0.6 * f.fresh)).clamp(0.0, 1.0) * self.leaf_fall_share()
+    }
+
+    /// How much of a deciduous place's leaf fall a place of this climate
+    /// has: 1, or – where the broadleaves are evergreen – the share of
+    /// deciduous lone trees ([`LeafMix::open`]: 0.1 on the Canary Islands).
+    pub fn leaf_fall_share(&self) -> f32 {
+        let t = &self.climate.trees;
+        if t.evergreen_broadleaves {
+            t.open.clamp(0.0, 1.0) as f32
+        } else {
+            1.0
+        }
     }
 
     /// The climatological snow line: the lowest altitude where half the
@@ -1213,6 +1228,150 @@ pub fn grass(c: &Climate, s: &State) -> Grass {
     Grass {
         green: (up * (1.0 - down)) as f32,
         dry: (c.summer_dry * ramp(f64::from(s.temp_c), p.dry_c)) as f32,
+    }
+}
+
+// --- How marked the seasons are -------------------------------------------------
+
+/// The seasons are marked by the leaves where at least this share of the
+/// trees a rider sees turns and drops its leaves (deciduous broadleaves
+/// and larches; spec §14 Phase 9 Q13, *Worlds with weak or no seasons*).
+/// Central Europe has 17 – 85 % up to the tree line, Tenerife's laurel
+/// forest and Canary pines none (its lone fruit trees and chestnuts: 10 %).
+pub const LEAVES_MIN: f64 = 0.15;
+/// A yearly temperature range (the warmest minus the coldest day's
+/// climatological mean) of at least this is a marked temperature year
+/// (°C): Vaduz 18.8, Puerto de la Cruz 6.6, the Teide summit 14.
+pub const MARKED_RANGE_C: f64 = 10.0;
+/// A snow season: at least this many days of lying snow (climatological
+/// cover ≥ 50 %) a year at the altitude.
+pub const SNOW_SEASON_DAYS: u32 = 14;
+/// The leaves turn at a place when the deciduous phenology runs through a
+/// whole cycle there: some day at least this coloured (0 – 1) …
+const CYCLE_AUTUMN: f32 = 0.15;
+/// … and some day bare to at most this much leaf.
+const CYCLE_BARE: f32 = 0.15;
+
+/// How marked the seasons are at one place and altitude (spec §14 Phase 9
+/// Q13): pure and deterministic, from the place's climate (the season
+/// model) and the trees around it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SeasonStrength {
+    /// The yearly temperature range at the altitude (°C, twice
+    /// [`Climate::amplitude_at`]).
+    pub range_c: f64,
+    /// The share of the trees around that turn and drop their leaves
+    /// (0 – 1): the larger of the forests' (by the measured broadleaf share
+    /// where the package has one – deciduous only where the region's
+    /// broadleaves are) and the lone trees' in the open – a rider sees
+    /// both.
+    pub deciduous: f64,
+    /// Whether the deciduous phenology runs through a whole cycle at the
+    /// altitude (colours some day, bare some day).
+    pub leaf_cycle: bool,
+    /// Days of lying snow a year (climatological cover ≥ 50 %).
+    pub snow_days: u32,
+}
+
+/// The levels of [`SeasonStrength::level`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SeasonLevel {
+    /// The leaves turn: spring green-up, autumn colours and leaf fall
+    /// (every season jump means something).
+    Marked,
+    /// The leaves do not turn, but there is a snow season at the
+    /// altitude (Las Cañadas, the Teide).
+    SnowOnly,
+    /// The leaves do not turn and no snow lies (the Canary coast): only
+    /// the sun, the day length and the meadows change over the year.
+    Weak,
+}
+
+impl SeasonStrength {
+    /// The strength at `alt_m` in `model`'s climate; `broadleaf` the
+    /// measured broadleaf share of the forests around (0 – 1, the package's
+    /// forest section), `None` for the region's mix.
+    pub fn at(model: &SeasonModel, alt_m: f64, broadleaf: Option<f64>) -> Self {
+        let c = model.climate();
+        let mix = &c.trees;
+        let (fd, fl) = match broadleaf {
+            Some(b) => mix.measured_shares(TreeSetting::Forest, alt_m, b),
+            None => mix.forest_shares(alt_m),
+        };
+        let (od, ol) = mix.shares(TreeSetting::Open, alt_m);
+        let deciduous = (fd + fl).max(od + ol).clamp(0.0, 1.0);
+        let (mut coloured, mut bare, mut snow_days) = (0.0f32, 1.0f32, 0u32);
+        for d in 1..=365u32 {
+            let s = model.state_at(f64::from(d), alt_m);
+            if s.snow >= 0.5 {
+                snow_days += 1;
+            }
+            let f = foliage(&c.phenology, LeafType::Deciduous, &s, 0.0);
+            coloured = coloured.max(f.autumn);
+            bare = bare.min(f.leaves);
+        }
+        Self {
+            range_c: 2.0 * c.amplitude_at(alt_m),
+            deciduous,
+            leaf_cycle: coloured >= CYCLE_AUTUMN && bare <= CYCLE_BARE,
+            snow_days,
+        }
+    }
+
+    /// The leaves turn here (see [`LEAVES_MIN`]): spring green-up, autumn
+    /// colours and leaf fall mean something.
+    pub fn leaves_turn(&self) -> bool {
+        self.deciduous >= LEAVES_MIN && self.leaf_cycle
+    }
+
+    /// A snow season at the altitude (see [`SNOW_SEASON_DAYS`]).
+    pub fn snow_season(&self) -> bool {
+        self.snow_days >= SNOW_SEASON_DAYS
+    }
+
+    /// A marked temperature year (see [`MARKED_RANGE_C`]).
+    pub fn marked_temperature(&self) -> bool {
+        self.range_c >= MARKED_RANGE_C
+    }
+
+    pub fn level(&self) -> SeasonLevel {
+        if self.leaves_turn() {
+            SeasonLevel::Marked
+        } else if self.snow_season() {
+            SeasonLevel::SnowOnly
+        } else {
+            SeasonLevel::Weak
+        }
+    }
+
+    /// One line on the seasons where they are weak (`None` where the
+    /// leaves turn): "Weak seasons here: evergreen trees, only 7 °C
+    /// between the coolest and the warmest days, no lying snow."
+    pub fn note(&self) -> Option<String> {
+        let what = match self.level() {
+            SeasonLevel::Marked => return None,
+            SeasonLevel::SnowOnly => "Weak seasons here but for the snow",
+            SeasonLevel::Weak => "Weak seasons here",
+        };
+        let trees = if self.deciduous < LEAVES_MIN {
+            "evergreen trees"
+        } else {
+            "the leaves hardly turn"
+        };
+        let only = if self.marked_temperature() {
+            ""
+        } else {
+            "only "
+        };
+        let snow = if self.snow_season() {
+            format!("snow lies {} days a year", self.snow_days)
+        } else {
+            "no lying snow".to_owned()
+        };
+        Some(format!(
+            "{what}: {trees}, {only}{:.0} °C between the coolest and the warmest days, {snow}.",
+            self.range_c
+        ))
     }
 }
 
@@ -1752,5 +1911,95 @@ mod tests {
             (x.gdd - y.gdd).abs() < 1.0 && (x.snow - y.snow).abs() < 0.01,
             "{x:?} {y:?}"
         );
+    }
+
+    /// Spec §14 Phase 9 Q13 (*Worlds with weak or no seasons*): the season
+    /// strength of the three worlds and of Tenerife's altitude bands, by
+    /// the documented thresholds.
+    #[test]
+    fn season_strength_of_the_worlds_and_tenerifes_heights() {
+        let li = SeasonModel::new(ALPINE_RHINE);
+        let bf = SeasonModel::new(BLACK_FOREST);
+        let tf = SeasonModel::new(CANARIES);
+        // Liechtenstein and the Black Forest: the leaves turn from the
+        // valleys to the passes, measured broadleaf share or not.
+        for (m, alts) in [
+            (&li, &[455.0, 1000.0, 1600.0, 2000.0][..]),
+            (&bf, &[250.0, 800.0, 1200.0, 1490.0][..]),
+        ] {
+            for &alt in alts {
+                for measured in [None, Some(0.0), Some(0.3), Some(1.0)] {
+                    let s = SeasonStrength::at(m, alt, measured);
+                    assert_eq!(s.level(), SeasonLevel::Marked, "{alt} {measured:?} {s:?}");
+                    assert!(s.leaves_turn() && s.marked_temperature());
+                    assert!(s.deciduous >= LEAVES_MIN && s.range_c > 17.0, "{s:?}");
+                    assert_eq!(s.note(), None);
+                }
+            }
+        }
+        // Snow seasons: none in Vaduz, months in Malbun.
+        assert_eq!(SeasonStrength::at(&li, VADUZ, None).snow_days, 0);
+        assert!(SeasonStrength::at(&li, MALBUN, None).snow_days > 120);
+        // Tenerife: evergreen from the coast to the summit (its measured
+        // broadleaves are laurel forest), no lying snow below the summit
+        // cone.
+        for alt in [
+            0.0, 50.0, 500.0, 1000.0, 1500.0, 2000.0, 2370.0, 3000.0, 3700.0,
+        ] {
+            for measured in [None, Some(0.0), Some(0.7), Some(1.0)] {
+                let s = SeasonStrength::at(&tf, alt, measured);
+                assert!(!s.leaves_turn(), "{alt} {measured:?} {s:?}");
+                assert!(s.deciduous < LEAVES_MIN, "{s:?}");
+                assert_ne!(s.level(), SeasonLevel::Marked);
+                assert!(s.note().is_some());
+            }
+        }
+        // Puerto de la Cruz at sea level: weak, 6.6 °C, no snow.
+        let coast = SeasonStrength::at(&tf, 20.0, None);
+        assert_eq!(coast.level(), SeasonLevel::Weak);
+        assert!(
+            !coast.marked_temperature() && coast.range_c < 7.0,
+            "{coast:?}"
+        );
+        assert_eq!(coast.snow_days, 0);
+        assert_eq!(
+            coast.note().unwrap(),
+            "Weak seasons here: evergreen trees, only 7 °C between the coolest and the warmest days, no lying snow."
+        );
+        // Las Cañadas (2 000 – 2 400 m, the highest roads): a larger swing
+        // but no lying snow in the climatology.
+        let canadas = SeasonStrength::at(&tf, 2200.0, None);
+        assert_eq!(canadas.level(), SeasonLevel::Weak, "{canadas:?}");
+        assert!(canadas.marked_temperature(), "{canadas:?}");
+        // The Teide's summit cone: a snow season.
+        let teide = SeasonStrength::at(&tf, 3700.0, None);
+        assert_eq!(teide.level(), SeasonLevel::SnowOnly, "{teide:?}");
+        assert!(teide.snow_days >= SNOW_SEASON_DAYS && teide.snow_days < 200);
+        assert!(
+            teide
+                .note()
+                .unwrap()
+                .starts_with("Weak seasons here but for the snow")
+        );
+        // Deterministic.
+        assert_eq!(SeasonStrength::at(&tf, 3700.0, None), teide);
+    }
+
+    /// Q13: where the broadleaves are evergreen (Tenerife) the leaf fall is
+    /// that of the few deciduous lone trees – near zero, whatever the
+    /// degree days do; unchanged in the Alps.
+    #[test]
+    fn evergreen_places_drop_almost_no_leaves() {
+        let tf = SeasonModel::new(CANARIES);
+        let li = SeasonModel::new(ALPINE_RHINE);
+        for d in (1..=365).step_by(4) {
+            let day = tf.day(f64::from(d));
+            assert!((day.leaf_fall_share() - 0.1).abs() < 1e-6);
+            for alt in [20.0, 600.0, 1200.0, 2000.0] {
+                assert!(day.leaf_fall(alt) <= 0.1 + 1e-6, "{d} {alt}");
+            }
+            assert_eq!(li.day(f64::from(d)).leaf_fall_share(), 1.0);
+        }
+        assert!(li.day(320.0).leaf_fall(VADUZ) > 0.9);
     }
 }

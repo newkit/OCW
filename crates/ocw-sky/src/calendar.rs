@@ -10,7 +10,7 @@
 //! page from it.
 
 use crate::moon::{self, Phase};
-use crate::season::{self, Climate, LeafType, SeasonModel, State};
+use crate::season::{self, Climate, LeafType, SeasonLevel, SeasonModel, SeasonStrength, State};
 use crate::time::{MS_PER_DAY, UnixMs, civil_from_days, days_from_civil, utc_midnight};
 
 /// A civil date (year, month 1–12, day 1–31).
@@ -336,6 +336,9 @@ pub struct SeasonYear {
     pub seasons: [u32; 6],
     pub climate: Climate,
     pub alt_m: f64,
+    /// How marked the seasons are here (spec 14 Phase 9 Q13): which of the
+    /// seasons the Season page offers ([`SeasonYear::offers`]).
+    pub strength: SeasonStrength,
 }
 
 /// Day of the year (1 … 365) of a fractional day.
@@ -348,6 +351,18 @@ impl SeasonYear {
     /// model is evaluated on (the renderer's season bucket, so that the
     /// band shows what the world shows that day).
     pub fn new(model: &SeasonModel, alt_m: f64, day_of: impl Fn(u32) -> f64) -> Self {
+        Self::with_forest(model, alt_m, day_of, None)
+    }
+
+    /// [`SeasonYear::new`] with the measured broadleaf share of the
+    /// forests around (0 – 1, the package's forest section) for the season
+    /// strength.
+    pub fn with_forest(
+        model: &SeasonModel,
+        alt_m: f64,
+        day_of: impl Fn(u32) -> f64,
+        broadleaf: Option<f64>,
+    ) -> Self {
         let c = *model.climate();
         let states: Vec<State> = (1..=366)
             .map(|d| model.state_at(day_of(d), alt_m))
@@ -445,6 +460,7 @@ impl SeasonYear {
             seasons,
             climate: c,
             alt_m,
+            strength: SeasonStrength::at(model, alt_m, broadleaf),
         }
     }
 
@@ -458,17 +474,33 @@ impl SeasonYear {
         self.seasons[Season::ALL.iter().position(|&x| x == s).expect("listed")]
     }
 
-    /// The season of a day of the year: the one whose representative day
-    /// is nearest (over the year's turn).
+    /// Whether World → Time → Season offers `s` here (spec §14 Phase 9 Q13,
+    /// *Worlds with weak or no seasons*): all six where the leaves turn
+    /// ([`SeasonLevel::Marked`]); elsewhere only *Summer* (the warmest
+    /// day: the highest sun, the longest day, dry meadows) and *Winter*
+    /// (the middle of the snow season at the altitude, else the coldest
+    /// day: the lowest sun, the shortest day, snow on the peaks) – spring,
+    /// early summer, autumn and late autumn would only move the date
+    /// between days that look the same, their trees do not change.
+    pub fn offers(&self, s: Season) -> bool {
+        matches!(s, Season::Summer | Season::Winter) || self.strength.level() == SeasonLevel::Marked
+    }
+
+    /// The seasons offered here, in the order of [`Season::ALL`].
+    pub fn offered(&self) -> impl Iterator<Item = Season> + '_ {
+        Season::ALL.into_iter().filter(|&s| self.offers(s))
+    }
+
+    /// The season of a day of the year: the offered one whose
+    /// representative day is nearest (over the year's turn).
     pub fn season_of(&self, doy: u32) -> Season {
         let dist = |a: u32| {
             let d = (i64::from(a) - i64::from(doy)).rem_euclid(365);
             d.min(365 - d)
         };
-        Season::ALL
-            .into_iter()
+        self.offered()
             .min_by_key(|&s| dist(self.season_doy(s)))
-            .expect("six seasons")
+            .expect("summer and winter are always offered")
     }
 
     /// The date of season `s` nearest to `around` (decision Q11: the
@@ -478,13 +510,12 @@ impl SeasonYear {
         nearest(self.season_doy(s), around)
     }
 
-    /// The next (`dir` > 0) or previous representative day of any season,
-    /// strictly after / before `from` (the Season row's ← / →), and its
-    /// season.
+    /// The next (`dir` > 0) or previous representative day of any offered
+    /// season ([`SeasonYear::offers`]), strictly after / before `from`
+    /// (the Season row's ← / →), and its season.
     pub fn step_season(&self, from: Date, dir: i32) -> (Season, Date) {
         let at = day_number(from);
-        Season::ALL
-            .into_iter()
+        self.offered()
             .map(|s| {
                 let d = if dir > 0 {
                     next_after(self.season_doy(s), from)
@@ -494,7 +525,7 @@ impl SeasonYear {
                 (s, d)
             })
             .min_by_key(|(_, d)| (day_number(*d) - at).abs())
-            .expect("six seasons")
+            .expect("summer and winter are always offered")
     }
 }
 
@@ -841,6 +872,88 @@ mod tests {
         let (_, back) = v.step_season(d, -1);
         assert!(back < d);
         assert_eq!(Season::parse("Late_Autumn"), Some(Season::LateAutumn));
+    }
+
+    /// Q13: the season jumps offered per place – all six in Liechtenstein
+    /// and the Black Forest (as before), only summer and winter on
+    /// Tenerife, winter in the snow on the Teide; the season of a day and
+    /// the ← / → steps keep to the offered ones.
+    #[test]
+    fn offered_season_jumps_per_place() {
+        const FELDBERG: (f64, f64, f64) = (47.87, 8.0, 1450.0);
+        const FREIBURG: (f64, f64, f64) = (48.0, 7.85, 250.0);
+        for (lat, lon, alt) in [VADUZ, MALBUN, FELDBERG, FREIBURG] {
+            let y = year(lat, lon, alt);
+            assert_eq!(y.strength.level(), SeasonLevel::Marked, "{alt}");
+            assert_eq!(y.offered().collect::<Vec<_>>(), Season::ALL, "{alt}");
+            let measured = SeasonYear::with_forest(
+                &SeasonModel::for_place(lat, lon),
+                alt,
+                f64::from,
+                Some(0.1),
+            );
+            assert_eq!(measured.offered().count(), 6, "{alt}");
+            assert_eq!(measured.seasons, y.seasons, "the days unchanged");
+        }
+        let tenerife = [
+            (28.41, -16.55, 20.0),   // Puerto de la Cruz
+            (28.39, -16.52, 600.0),  // La Orotava's upper town
+            (28.33, -16.47, 1500.0), // the pine forest
+            (28.28, -16.58, 2200.0), // Las Cañadas
+            (28.27, -16.64, 3700.0), // the Teide
+        ];
+        for (lat, lon, alt) in tenerife {
+            for b in [None, Some(0.0), Some(0.8)] {
+                let y =
+                    SeasonYear::with_forest(&SeasonModel::for_place(lat, lon), alt, f64::from, b);
+                assert_eq!(
+                    y.offered().collect::<Vec<_>>(),
+                    [Season::Summer, Season::Winter],
+                    "{alt} {b:?}"
+                );
+                assert!(!y.offers(Season::Autumn) && !y.offers(Season::Spring));
+                // No autumn colours, no bare trees in the calendar's bands.
+                assert!(!y.looks.contains(&Look::Autumn), "{alt}");
+                assert!(!y.looks.contains(&Look::Bare), "{alt}");
+                assert!(!y.looks.contains(&Look::Fresh), "{alt}");
+                // In November the season is winter (nearer than August;
+                // on the Teide the snow season's middle is in spring, so
+                // the past summer is nearer there).
+                let now = y.season_of(day_of_year((2026, 11, 23)));
+                assert_eq!(
+                    now,
+                    if alt < 3000.0 {
+                        Season::Winter
+                    } else {
+                        Season::Summer
+                    },
+                    "{alt}"
+                );
+                // ← / → step between summer and winter only.
+                let (s, d) = y.step_season((2026, 11, 23), 1);
+                assert_eq!(s, Season::Winter);
+                let (s2, _) = y.step_season(d, 1);
+                assert_eq!(s2, Season::Summer);
+                let (s3, _) = y.step_season((2026, 11, 23), -1);
+                assert_eq!(s3, Season::Summer);
+            }
+        }
+        // The Teide's winter is the middle of its snow season; the coast's
+        // its coldest days, green meadows (August's are dry).
+        let teide = year(28.27, -16.64, 3700.0);
+        assert_eq!(teide.strength.level(), SeasonLevel::SnowOnly);
+        assert_eq!(
+            teide.look(teide.season_date(Season::Winter, (2026, 11, 23))),
+            Look::Snow
+        );
+        let coast = year(28.41, -16.55, 20.0);
+        assert_eq!(coast.strength.level(), SeasonLevel::Weak);
+        let w = coast.season_date(Season::Winter, (2026, 11, 23));
+        assert!(matches!(w.1, 1..=3), "{w:?}");
+        assert_eq!(coast.look(w), Look::Summer);
+        let s = coast.season_date(Season::Summer, (2026, 11, 23));
+        assert!(matches!(s.1, 7..=9), "{s:?}");
+        assert_eq!(coast.look(s), Look::Dry);
     }
 
     /// Decision Q11: a season jumps the date to its representative day of

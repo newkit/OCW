@@ -5218,3 +5218,46 @@ riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 7
 at = ["0.5=time 2026-06-21 15:00", "1=camera.mode side"]
 shot = 14
 pick = false
+
+# --- Weak seasons (spec 14 Phase 9 Q13): the Season page per place and the
+# look of Tenerife's coast in November against July.
+
+[[scene]]
+name = "season-weak-page-tenerife-coast"
+description = "World -> Time -> Season in Puerto de la Cruz (Tenerife, sea level) on 23 November: one line says the seasons are weak there (evergreen trees, 7 °C between the coolest and the warmest days, no lying snow); only Summer and Winter offered, Winter with the snow on the Teide"
+world = "tenerife"
+args = ["--world", "{world}", "--route-file", "{world_dir}/puerto-teide.route", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-11-23 12:00", "3=menu season"]
+shot = 7
+
+[[scene]]
+name = "season-weak-page-tenerife-canadas"
+description = "World -> Time -> Season in Las Cañadas below the Teide (Tenerife, about 2,200 m) on 23 November: weak seasons (evergreen, a larger temperature swing, no lying snow at the road), Summer and Winter only, Winter with the snow line on the Teide's cone"
+world = "tenerife"
+args = ["--world", "{world}", "--route-file", "{world_dir}/canadas-teide.route", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-11-23 12:00", "3=menu season"]
+shot = 7
+
+[[scene]]
+name = "season-weak-page-liechtenstein"
+description = "World -> Time -> Season in Vaduz (Liechtenstein) on 23 November: as before, all six seasons (spring to winter) with their days, no line about weak seasons"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-11-23 12:00", "3=menu season"]
+shot = 7
+
+[[scene]]
+name = "season-weak-tenerife-coast-november"
+description = "Puerto de la Cruz (Tenerife) on 23 November at noon: evergreen laurels and palms, green meadows, no autumn colours, no leaves on the road"
+world = "tenerife"
+args = ["--world", "{world}", "--route-file", "{world_dir}/puerto-teide.route", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-11-23 12:00", "0.5=hud.profile off", "1=teleport 0.6", "1=camera.orbit 160 14 22", "5=season"]
+shot = 14
+
+[[scene]]
+name = "season-weak-tenerife-coast-july"
+description = "Puerto de la Cruz (Tenerife) on 15 July at noon, the same view: the trees the same, only the meadows drier and the sun higher"
+world = "tenerife"
+args = ["--world", "{world}", "--route-file", "{world_dir}/puerto-teide.route", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud.profile off", "1=teleport 0.6", "1=camera.orbit 160 14 22", "5=season"]
+shot = 14

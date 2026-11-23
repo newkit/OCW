@@ -25,9 +25,34 @@ use crate::timemachine::{TimeMachine, WorldPlace, place_latlon};
 pub struct CalendarMenu(pub CalendarInfo);
 
 /// The season year is computed again when the place's climate (the
-/// renderer's model key) or the rider's altitude (per 25 m) changes.
+/// renderer's model key), the rider's altitude (per 25 m) or the measured
+/// broadleaf share around (per 5 %) changes.
 #[derive(Resource, Debug, Default, PartialEq)]
-struct YearKey(Option<((&'static str, i32), i64)>);
+struct YearKey(Option<((&'static str, i32), i64, i32)>);
+
+/// The broadleaf share around the rider, with the package and the place
+/// (in 1/400 degrees) it was measured for.
+#[derive(Resource, Debug, Default)]
+struct ForestNear(Option<(usize, i64, i64)>, Option<f64>);
+
+/// Half the side of the square around the rider whose forests count for
+/// the season strength (m; spec §14 Phase 9 Q13).
+pub const FOREST_AROUND_M: f64 = 1500.0;
+
+/// The measured broadleaf share (0 – 1) of the forests within
+/// [`FOREST_AROUND_M`] of (lat, lon) in the home package, if it has a forest
+/// section with trees there.
+pub fn broadleaf_around(world: &World, lat: f64, lon: f64) -> Option<f64> {
+    let pkg = world
+        .get_resource::<ocw_render::package::PackageWorld>()?
+        .home()
+        .clone();
+    let forest = pkg.look.forest.as_ref()?;
+    let [x, z] = ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1).project(lat, lon);
+    let r = FOREST_AROUND_M;
+    let (_, b) = forest.mean_in(f64::from(pkg.tile_size_m), [x - r, z - r], [x + r, z + r])?;
+    b.map(f64::from)
+}
 
 /// The day the season model is evaluated on for a day of the year: the
 /// middle of its season bucket, as the renderer (`ocw_render::season`).
@@ -65,9 +90,31 @@ pub fn update(world: &mut World) {
         .get_resource::<TimeMachine>()
         .map(|t| t.control.clone())
         .unwrap_or_default();
+    // The forests around, again when the rider has moved about 250 m or
+    // the home package changed.
+    let near_key = (
+        world
+            .get_resource::<ocw_render::package::PackageWorld>()
+            .map_or(0, |p| Arc::as_ptr(p.home()) as usize),
+        (latlon.0 * 400.0).round() as i64,
+        (latlon.1 * 400.0).round() as i64,
+    );
+    let cached = world
+        .get_resource::<ForestNear>()
+        .filter(|f| f.0 == Some(near_key))
+        .map(|f| f.1);
+    let broadleaf = match cached {
+        Some(b) => b,
+        None => {
+            let b = broadleaf_around(world, latlon.0, latlon.1);
+            world.insert_resource(ForestNear(Some(near_key), b));
+            b
+        }
+    };
     let key = (
         ocw_render::season::model_key(latlon.0, latlon.1),
         (alt / 25.0).round() as i64,
+        broadleaf.map_or(-1, |b| (b * 20.0).round() as i32),
     );
     let prev = world.get_resource::<YearKey>().and_then(|k| k.0);
     let rebuild = prev != Some(key);
@@ -79,7 +126,9 @@ pub fn update(world: &mut World) {
             (Some(m), Some(p)) if p.0 == key.0 => m.clone(),
             _ => Arc::new(SeasonModel::for_place(latlon.0, latlon.1)),
         };
-        info.year = Some(Arc::new(SeasonYear::new(&model, alt, model_day)));
+        info.year = Some(Arc::new(SeasonYear::with_forest(
+            &model, alt, model_day, broadleaf,
+        )));
         info.model = Some(model);
         info.line = None;
     }
@@ -96,6 +145,7 @@ pub fn update(world: &mut World) {
     info.zone = Some(zone);
     info.place = latlon;
     info.alt_m = alt;
+    info.broadleaf = broadleaf;
     // Real weather's measured snow on the world date (S7 / S8).
     info.measured = match (observed, info.date, &info.model) {
         (Some(obs), Some(d), Some(model)) => {
