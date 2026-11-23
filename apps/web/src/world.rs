@@ -219,12 +219,16 @@ pub fn world_ride(
         Some(index) => ocw_world::leaves::LeafMap::from_streamed(pkg, Some(index)),
         None => ocw_world::leaves::LeafMap::from_package(pkg),
     };
+    // The ground away from the roads (spec §14 Phase 13A): the base has
+    // no tiles; they are added as they are streamed in (like the road feel).
+    let ground = Arc::new(ocw_world::ground::GroundMap::from_package(pkg));
     let net = Arc::new(
         RoadNetwork::new(graph)
             .with_package_name(pkg.name.clone())
             .with_obstacles(obstacles)
             .with_road_feel(road_feel)
-            .with_leaves(Some(Arc::new(leaves))),
+            .with_leaves(Some(Arc::new(leaves)))
+            .with_ground(Some(ground)),
     );
     let profile = RiderProfile::default();
     let route_name = match (&opts.route, opts.free_ride) {
@@ -388,6 +392,9 @@ pub struct WorldStream {
     /// The damaged roads the ride feels (spec Phase 8 Q12): the streamed
     /// tiles are added as they arrive.
     road_feel: Option<Arc<ocw_world::road_feel::RoadFeelMap>>,
+    /// The ground off the roads (spec §14 Phase 13A): the streamed tiles
+    /// are added as they arrive, like the road feel.
+    ground: Option<Arc<ocw_world::ground::GroundMap>>,
 }
 
 impl WorldStream {
@@ -411,6 +418,7 @@ impl WorldStream {
             screen: Vec::new(),
             asked: false,
             road_feel: None,
+            ground: None,
         }
     }
 
@@ -598,6 +606,9 @@ pub fn stream_world(world: &mut World) {
                 .and_then(ResidentTiles::take_package)
         {
             stream.last_publish_s = now;
+            if let Some(g) = &stream.ground {
+                g.add_package_tiles(&pkg);
+            }
             publish(world, pkg, stream.road_feel.as_deref());
         }
     }
@@ -659,6 +670,13 @@ fn start_ride(world: &mut World, stream: &mut WorldStream, ride: WorldRide, now:
         Course::Route(_) => None,
     };
     feel_tiles(stream.road_feel.as_deref(), &pkg);
+    stream.ground = match &ride.course {
+        Course::FreeRide { net, .. } | Course::RouteRide { net, .. } => net.ground().cloned(),
+        Course::Route(_) => None,
+    };
+    if let Some(g) = &stream.ground {
+        g.add_package_tiles(&pkg);
+    }
     let id = stream.identity.clone().unwrap_or_default();
     let (zone, _) = ocw_client::sky::place_zone(pkg.time_zone.as_deref(), Some(pkg.origin));
     let pkg = Arc::new(pkg);

@@ -200,6 +200,9 @@ pub fn surface_color(surface: ocw_world::Surface) -> Color {
         ocw_world::Surface::Asphalt => Color::srgb(0.22, 0.22, 0.24),
         ocw_world::Surface::Gravel => Color::srgb(0.58, 0.52, 0.42),
         ocw_world::Surface::Grass => Color::srgb(0.30, 0.45, 0.22),
+        ocw_world::Surface::ForestFloor => Color::srgb(0.30, 0.25, 0.17),
+        ocw_world::Surface::Rock => Color::srgb(0.48, 0.47, 0.45),
+        ocw_world::Surface::Sand => Color::srgb(0.76, 0.69, 0.52),
     }
 }
 

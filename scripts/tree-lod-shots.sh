@@ -13,7 +13,10 @@
 # file names, default "after"). OCW_TREE_SCENES=FILE takes the scenes from
 # a file: scripts/tree-lod-scenes-forest.txt (a wood in the Rhine valley
 # from 600 m to 60 m on four dates, the Black Forest),
-# scripts/tree-lod-scenes-unicorn.txt (the unicorn low over a wood).
+# scripts/tree-lod-scenes-unicorn.txt (the unicorn low over a wood),
+# scripts/plant-files-scenes.txt (the plants near and far in Liechtenstein,
+# the Black Forest and on Tenerife, July and November: spec 15G Q11 (a)).
+# OCW_FLORA=files draws the plants from their model files.
 set -euo pipefail
 export LC_ALL=C
 cd "$(dirname "$0")/.."
@@ -34,18 +37,23 @@ env=()
 
 li=$data/pilot/liechtenstein.ocwpkg
 bf=$data/blackforest/blackforest-north.ocwpkg
+tf=$data/tenerife/tenerife.ocwpkg
+bfs=$data/blackforest/blackforest.ocwpkg
 quiet="0.5=hud off;0.5=hud.profile off;0.5=weather clear"
 at() { echo "--world $1 --no-neighbours --free-ride --start $2 --bots 0 --power 0"; }
 
 # name | package | start | date and time | the unicorn: x z height yaw
-# pitch | view (first = from its head, flight = behind it) | more timed
+# pitch | view (first = from its head, flight = behind it, chase = the
+# rider's chase camera, no unicorn) | more timed
 # commands (;-separated, e.g. "2.1=god.flight plane;4.3=god.cruise 0.5")
 scenes=()
-# OCW_TREE_SCENES=FILE: other scenes, one a line (LI / BF for the packages).
+# OCW_TREE_SCENES=FILE: other scenes, one a line (LI / BF / BFS / TF for the packages).
 if [ -n "${OCW_TREE_SCENES:-}" ]; then
   while IFS= read -r line; do
     line=${line//\{LI\}/$li}
     line=${line//\{BF\}/$bf}
+    line=${line//\{TF\}/$tf}
+    line=${line//\{BFS\}/$bfs}
     [ -n "$line" ] && scenes+=("$line")
   done <"$OCW_TREE_SCENES"
 fi
@@ -68,7 +76,13 @@ for s in "${scenes[@]}"; do
   # "now": the world clock and the weather as they come (the user's ride).
   when="0.5=time pause;0.5=time $date;$quiet"
   [ "$date" = now ] && when="0.5=hud off;0.5=hud.profile off"
-  IFS=';' read -ra more <<<"$when;2=god.flight hover;3=god on;4=god.view $view;4.2=god.pose $pose${extra:+;$extra}"
+  # View "chase": no unicorn – the rider's chase camera at the start, set
+  # by the extra commands (camera.orbit; the pose is not used).
+  if [ "$view" = chase ]; then
+    IFS=';' read -ra more <<<"$when${extra:+;$extra}"
+  else
+    IFS=';' read -ra more <<<"$when;2=god.flight hover;3=god on;4=god.view $view;4.2=god.pose $pose${extra:+;$extra}"
+  fi
   for c in "${more[@]}"; do cmds+=(--at "$c"); done
   file=$out/$name-$tag.jpg
   # shellcheck disable=SC2086

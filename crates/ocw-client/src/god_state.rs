@@ -50,8 +50,11 @@ pub struct GodCore {
     first_person: bool,
     seq: u32,
     last_pose_s: Option<f64>,
-    /// Where leaving would land now (the glowing ring).
+    /// Where leaving would land now (the glowing ring), what is there and
+    /// why not, if landing is refused there (spec §14 Phase 13A).
     landing: Option<[f64; 3]>,
+    landing_kind: ocw_render::LandingKind,
+    refused_why: Option<&'static str>,
     /// The unicorn's speed scale survives flights.
     scale: f64,
     /// Plane or hover (`controls.god_flight`), for the next flight too.
@@ -76,6 +79,8 @@ impl Default for GodCore {
             seq: 0,
             last_pose_s: None,
             landing: None,
+            landing_kind: ocw_render::LandingKind::Road,
+            refused_why: None,
             scale: 1.0,
             model: FlightModel::Plane,
             climb_mps: 0.0,
@@ -133,6 +138,47 @@ impl GodCore {
 
     pub fn set_landing(&mut self, spot: Option<[f64; 3]>) {
         self.landing = spot;
+        self.landing_kind = ocw_render::LandingKind::Road;
+        self.refused_why = None;
+    }
+
+    /// The landing spot as the landing rule found it (spec §14 Phase
+    /// 13A): its place, what is there, and why not where it is refused.
+    pub fn set_landing_at(&mut self, landing: Option<ocw_sim::offroad::Landing>) {
+        use ocw_sim::offroad::Landing;
+        self.landing = landing.map(|l| match l {
+            // A refused spot may lie under a roof or the water: the red
+            // ring on what the flight stands over there (its clearance
+            // surface: roofs, water) so it is seen.
+            Landing::Refused { at, .. } if self.flying() => {
+                let below = self.flight.pos[1] - self.height_m;
+                [
+                    at[0],
+                    if below.is_finite() {
+                        at[1].max(below)
+                    } else {
+                        at[1]
+                    },
+                    at[2],
+                ]
+            }
+            l => l.at(),
+        });
+        (self.landing_kind, self.refused_why) = match landing {
+            None | Some(Landing::Road { .. }) => (ocw_render::LandingKind::Road, None),
+            Some(Landing::Ground { .. }) => (ocw_render::LandingKind::Ground, None),
+            Some(Landing::Refused { why, .. }) => (ocw_render::LandingKind::Refused, Some(why)),
+        };
+    }
+
+    /// What the landing ring marks.
+    pub fn landing_kind(&self) -> ocw_render::LandingKind {
+        self.landing_kind
+    }
+
+    /// Why the unicorn cannot land where it is (`None`: it can).
+    pub fn landing_refused(&self) -> Option<&'static str> {
+        self.refused_why
     }
 
     pub fn height_m(&self) -> f64 {

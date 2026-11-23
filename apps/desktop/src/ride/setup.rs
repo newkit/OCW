@@ -93,6 +93,8 @@ pub fn build(args: &Args) -> Result<RideSetup, String> {
     let road_feel = Some(Arc::new(ocw_world::road_feel::RoadFeelMap::from_package(
         pkg,
     )));
+    let ground = Some(Arc::new(ocw_world::ground::GroundMap::from_package(pkg)))
+        .filter(|g| g.tile_count() > 0);
     let net = hood.set.graph().cloned().map(|graph| {
         Arc::new(
             RoadNetwork::new(graph)
@@ -102,7 +104,10 @@ pub fn build(args: &Args) -> Result<RideSetup, String> {
                 // Wet leaves in the ride (spec 4.6.2 Q6).
                 .with_leaves(Some(Arc::new(ocw_world::leaves::LeafMap::from_package(
                     pkg,
-                )))),
+                ))))
+                // Riding off the road after a unicorn landing (spec §14
+                // Phase 13A): the home package's ground.
+                .with_ground(ground.clone()),
         )
     });
     // `--world` alone: the package's first route, else a free ride.

@@ -243,6 +243,15 @@ pub struct ClientCore {
     /// the server rides them).
     leaf_map: Option<Arc<ocw_world::leaves::LeafMap>>,
     leaf_season: ocw_sim::leaves::LeafSeason,
+    /// The other riders off the road (spec §14 Phase 13A): their places
+    /// from the snapshots (interpolated like their states) and the last
+    /// known with the distance it was at.
+    off_others: ocw_sim::offroad::PoseBuffer,
+    off_now: BTreeMap<RiderId, (ocw_sim::offroad::OffRoadPose, f64)>,
+    /// The landing check's index of the world's solids (the ring is
+    /// looked up 4 times a second, spec §14 Phase 13A).
+    landing_world: std::sync::Mutex<ocw_sim::collide::WorldCache>,
+    landing_ticks: std::sync::atomic::AtomicU64,
 }
 
 /// Steering mode before the menu opened (spec §3.2.1), restored on closing.
@@ -329,6 +338,10 @@ impl ClientCore {
             voice_hearing: None,
             leaf_map: None,
             leaf_season: Default::default(),
+            off_others: Default::default(),
+            off_now: BTreeMap::new(),
+            landing_world: Default::default(),
+            landing_ticks: Default::default(),
             route,
         }
     }
@@ -1011,9 +1024,13 @@ impl ClientCore {
         let mut gods = Vec::new();
         let mut reconcile_with = None;
         let mut own_seen = false;
+        let ground = self.free.as_ref().and_then(|f| f.net.ground().cloned());
+        let mut off_poses = Vec::new();
         for u in &s.riders {
             let (id, state) = dequantize(u);
             let god = ocw_protocol::rider_god(u);
+            // Off the road (spec §14 Phase 13A), on a world with ground.
+            let off = ocw_protocol::rider_off_road(u).filter(|_| ground.is_some());
             if Some(id) == self.rider_id {
                 if let Some(e) = self.god.on_own_snapshot(god.is_some(), now_s) {
                     self.god_notice = Some(e);
@@ -1060,17 +1077,31 @@ impl ClientCore {
                     self.avoid = Default::default();
                 }
                 self.was_down = down;
+                if off.is_some() && !self.wild {
+                    // Landed on the ground or out of the band: wild mode,
+                    // as the server switched it on.
+                    self.wild = true;
+                    self.predictor.set_wild(true);
+                    self.set_autodrive(false);
+                }
                 if self.event.holds(self.rider_id) || god.is_some() || self.god.active() || down {
                     // Held at an event's start line, flying in god mode
                     // (the road position frozen, then placed by the
                     // server), or down: exactly the server's.
                     self.predictor.set_state(state);
+                    self.predictor.set_off_road(
+                        off.zip(ground.clone())
+                            .map(|(p, g)| p.track(g, state.distance)),
+                    );
                     self.prev_state = state;
                 } else {
                     // After the loop: with the others of this snapshot.
-                    reconcile_with = Some(state);
+                    reconcile_with = Some((state, off));
                 }
             } else {
+                if let Some(p) = off {
+                    off_poses.push((id, p, state.distance));
+                }
                 others.push((id, state));
             }
         }
@@ -1089,17 +1120,43 @@ impl ClientCore {
         self.accounts
             .retain(|id, _| s.riders.iter().any(|u| u.rider_id == id.0));
         let flying: Vec<RiderId> = gods.iter().map(|(id, _)| *id).collect();
-        if let Some(state) = reconcile_with {
+        // The others off the road: their places now (moved on by the
+        // snapshot's age along their travel) and for the interpolation.
+        self.off_now = off_poses.iter().map(|(id, p, d)| (*id, (*p, *d))).collect();
+        self.off_others
+            .push(now_s, off_poses.iter().map(|(id, p, _)| (*id, *p)));
+        if let Some((state, off)) = reconcile_with {
             // The own rider's contacts with the others are predicted from
             // where this snapshot shows them (spec §14 Phase 12, 6.1).
             let (frame, bodies) = self.other_bodies(&others, &flying);
             self.predictor.set_others(frame, bodies);
             let power = self.power_w();
-            let track: &dyn Track = match self.free.as_ref().and_then(|f| f.own.as_deref()) {
-                Some(p) => p,
-                None => &self.route,
-            };
-            self.predictor.reconcile(track, state, age_s, power);
+            match off.zip(ground) {
+                // Off the road (spec §14 Phase 13A).
+                Some((pose, g)) => {
+                    self.predictor.reconcile_off_road(
+                        state,
+                        pose.track(g, state.distance),
+                        age_s,
+                        power,
+                    );
+                }
+                None if self.predictor.off_road().is_some() => {
+                    // The server put the rider on a road (riding onto it,
+                    // J): its state on the new path.
+                    self.predictor.set_off_road(None);
+                    self.predictor.set_state(state);
+                    self.prev_state = state;
+                }
+                None => {
+                    let track: &dyn Track = match self.free.as_ref().and_then(|f| f.own.as_deref())
+                    {
+                        Some(p) => p,
+                        None => &self.route,
+                    };
+                    self.predictor.reconcile(track, state, age_s, power);
+                }
+            }
         }
         if own_seen {
             // A snap (teleport, large error) must not be interpolated.
@@ -1128,6 +1185,10 @@ impl ClientCore {
     /// What the local rider rides along: the own free-ride path (once
     /// known), or the route.
     pub fn track(&self) -> &dyn Track {
+        // Off the road: the terrain's track (spec §14 Phase 13A).
+        if let Some(t) = self.predictor.off_road() {
+            return t;
+        }
         match self.free.as_ref().and_then(|f| f.own.as_deref()) {
             Some(p) => p,
             None => &self.route,
@@ -1231,6 +1292,9 @@ impl ClientCore {
     /// steering), so the rider can leave the road; switching it off keeps
     /// the steering mode (spec §5.2.1).
     pub fn set_wild(&mut self, wild: bool) {
+        // Off the road the rider is always free of the road (spec §14
+        // Phase 13A); wild mode goes off once back on a road.
+        let wild = wild || self.predictor.off_road().is_some();
         self.wild = wild;
         self.predictor.set_wild(wild);
         if wild {
@@ -1324,6 +1388,10 @@ impl ClientCore {
     /// The junction the own path ends at (the next decision) and its path
     /// distance.
     fn next_junction(&self) -> Option<(Junction, f64)> {
+        // Off the road there is no junction ahead (spec §14 Phase 13A).
+        if self.predictor.off_road().is_some() {
+            return None;
+        }
         self.free.as_ref()?.own.as_ref()?.next_junction()
     }
 
@@ -1465,7 +1533,7 @@ impl ClientCore {
     /// – here in the view the app writes, not removed by a later system,
     /// so no system order can show it for a frame (the flicker).
     pub fn junction_view(&self) -> Option<JunctionView> {
-        if self.god.active() {
+        if self.god.active() || self.predictor.off_road().is_some() {
             return None;
         }
         let fr = self.free.as_ref()?;
@@ -1489,6 +1557,14 @@ impl ClientCore {
     /// server, or why it is not possible.
     pub fn rejoin_route(&mut self) -> Result<Vec<u8>, String> {
         let st = self.predictor.state();
+        if self.predictor.off_road().is_some() {
+            // Off the road (spec §14 Phase 13A): the server puts the
+            // rider on the nearest road (the snapshot brings it here).
+            return Ok(encode(&client_message(C::RouteRejoin(v1::RouteRejoin {
+                distance_cm: (st.distance * 100.0).round().max(0.0) as u32,
+                speed_mm_s: 0,
+            }))));
+        }
         let fr = self.free.as_mut().ok_or("not riding a route")?;
         let own = fr.own.as_mut().ok_or("not riding yet")?;
         // Quantized like the message, so the server finds the same way.
@@ -1546,6 +1622,9 @@ impl ClientCore {
     /// A message for the rider: "Dead end in 800 m", "End of region",
     /// "U-turn" (spec §2.2.2); on a route ride also that the rider left it.
     pub fn notice(&self) -> Option<String> {
+        if self.predictor.off_road().is_some() {
+            return None;
+        }
         let own = self.free.as_ref()?.own.as_ref()?;
         let d = self.predictor.state().distance;
         if own.in_turnaround(d) {
@@ -1605,9 +1684,12 @@ impl ClientCore {
             return;
         }
         let me = self.predictor.state();
-        // Free ride: extend the own path like the server (lock point).
+        let off_road = self.predictor.off_road().is_some();
+        // Free ride: extend the own path like the server (lock point);
+        // not while off the road (spec §14 Phase 13A).
         if let Some(fr) = &mut self.free
             && let Some(own) = &mut fr.own
+            && !off_road
         {
             let d = me.distance;
             if own.needs_extend(d, me.speed) {
@@ -1663,6 +1745,8 @@ impl ClientCore {
             ocw_sim::weather::wake_drift(here.wind, me.speed)
         });
         let drag = match drift {
+            // Off the road nobody shares a road with the rider.
+            _ if off_road => 1.0,
             None => ocw_sim::drafting::drag_factor((me.distance, me.lateral_offset), others),
             Some(drift) => ocw_sim::drafting::drag_factor_in_wind(
                 (me.distance, me.lateral_offset),
@@ -1735,6 +1819,13 @@ impl ClientCore {
             .filter(|(id, _)| !flying.contains(id) && Some(*id) != self.echo_rider)
             .filter_map(|(id, st)| {
                 let (pos, road) = match &self.free {
+                    // Off the road: where its place says (spec §14 Phase 13A).
+                    Some(_) if self.off_now.contains_key(id) => {
+                        let (p, d) = self.off_now[id];
+                        let f = ocw_sim::god::forward(p.yaw);
+                        let s = st.distance - d;
+                        ([p.x + f[0] * s, p.z + f[1] * s], f)
+                    }
                     Some(fr) => {
                         let p = fr.others.get(id)?.sample(st.distance);
                         let at = p.offset_position(st.lateral_offset);
@@ -2743,6 +2834,82 @@ impl ClientCore {
         Some([p[0], p[1] + lift, p[2]])
     }
 
+    /// Where the unicorn over (x, z) facing `yaw` would land (spec §14
+    /// Phase 13A, Q8 (a)): in a free ride (no route, no event) on a world
+    /// with ground anywhere on land – the road when it is near, the ground,
+    /// or refused (water, a building, an obstacle, outside the world) –,
+    /// else on the route as [`Self::landing_spot`]. The same rule as the
+    /// server's (`ocw_sim::offroad::landing`).
+    pub fn landing(&self, x: f64, z: f64, yaw: f64) -> Option<ocw_sim::offroad::Landing> {
+        if let Some(fr) = &self.free
+            && fr.plan.is_none()
+            && fr.net.ground().is_some()
+            && self.event.info().is_none()
+        {
+            let mut w = self.landing_world.lock().ok()?;
+            if w.world.is_none() && fr.net.obstacles().is_some() {
+                *w = ocw_sim::collide::WorldCache::new(fr.net.obstacles().cloned());
+            }
+            let tick = 1 + self
+                .landing_ticks
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if tick.is_multiple_of(240) {
+                w.sweep(tick);
+            }
+            let l = ocw_sim::offroad::landing(&fr.net, x, z, yaw, Some(&mut w), tick);
+            return Some(match l {
+                // The ring on the drawn road surface, as before.
+                ocw_sim::offroad::Landing::Road { edge, offset_m, at } => {
+                    ocw_sim::offroad::Landing::Road {
+                        edge,
+                        offset_m,
+                        at: [
+                            at[0],
+                            at[1] - ocw_world::package::ROAD_LIFT_M
+                                + f64::from(ocw_render::ROAD_SURFACE_LIFT_M),
+                            at[2],
+                        ],
+                    }
+                }
+                l => l,
+            });
+        }
+        let at = self.landing_spot(x, z)?;
+        Some(ocw_sim::offroad::Landing::Road {
+            edge: 0,
+            offset_m: 0.0,
+            at,
+        })
+    }
+
+    /// The terrain's tracks of the riders off the road at `now_s` (spec
+    /// §14 Phase 13A): the own predicted one, the others' interpolated like
+    /// their states (slightly in the past); the renderer places them on it.
+    pub fn off_road_tracks(
+        &self,
+        now_s: f64,
+    ) -> BTreeMap<RiderId, Arc<ocw_world::ground::OffRoadTrack>> {
+        let mut out = BTreeMap::new();
+        if let (Some(own), Some(t)) = (self.rider_id, self.predictor.off_road()) {
+            out.insert(own, Arc::new(t.clone()));
+        }
+        let Some(ground) = self.free.as_ref().and_then(|f| f.net.ground()) else {
+            return out;
+        };
+        let at = now_s - INTERPOLATION_DELAY_S;
+        let poses = self.off_others.sample(at);
+        if poses.is_empty() {
+            return out;
+        }
+        let states = self.others.sample(at);
+        for (id, p) in poses {
+            if let Some(st) = states.get(&id) {
+                out.insert(id, Arc::new(p.track(ground.clone(), st.distance)));
+            }
+        }
+        out
+    }
+
     /// The unicorns to draw at `now_s` (spec §14 Phase 13C): the own
     /// (flying or gliding) and the other riders' in god mode.
     pub fn unicorns(&self, now_s: f64) -> Vec<ocw_render::UnicornView> {
@@ -2838,6 +3005,8 @@ mod tests {
     use ocw_server::{GameServer, ServerConfig};
 
     use super::*;
+
+    mod off_road_tests;
 
     fn route() -> Route {
         Route::test_loop()

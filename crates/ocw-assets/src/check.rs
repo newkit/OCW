@@ -522,6 +522,25 @@ pub fn check_model(e: &Entry, m: &Model, bytes: usize) -> Vec<Finding> {
                     Some(Fix::StampExtras),
                 );
             }
+            // The factor the vertex colours are drawn with (15G Q11 (a)).
+            if let Some(v) = o.get(crate::model::SHADE_SCALE) {
+                let (lo, hi) = crate::model::SHADE_SCALE_RANGE;
+                match v.as_f64() {
+                    Some(s) if s.is_finite() && (f64::from(lo)..=f64::from(hi)).contains(&s) => {}
+                    Some(s) => out.error(
+                        "extras.shade-scale",
+                        Target::File,
+                        format!(
+                            "extras.ocw.shade_scale {s} is outside {lo} – {hi} (the vertex colours are drawn × it)"
+                        ),
+                    ),
+                    None => out.error(
+                        "extras.shade-scale",
+                        Target::File,
+                        format!("extras.ocw.shade_scale is not a number: {v}"),
+                    ),
+                }
+            }
             for k in o.keys() {
                 if PHYSICS_KEYS.contains(&k.as_str()) {
                     out.push(
@@ -850,6 +869,32 @@ mod tests {
         assert_eq!(codes(&f), ["mesh.color-above-one"], "{f:#?}");
         assert!(f[0].message.contains("up to 1.080"), "{}", f[0].message);
         assert_eq!(f[0].severity, Severity::Warning);
+        // Scaled to fit (15G Q11 (a)): no warning, and the scale is valid.
+        assert_eq!(m.fit_shading(), 1.08);
+        assert!(check(&e, &m, 1000).is_empty());
+    }
+
+    /// `extras.ocw.shade_scale` must be a number in 1 – 2 (15G Q11 (a)).
+    #[test]
+    fn shade_scale_is_range_checked() {
+        let (e, mut m) = post("props/post-square-test.glb");
+        for ok in [1.0, 1.098, 2.0] {
+            m.extras["ocw"]["shade_scale"] = serde_json::json!(ok);
+            assert!(check(&e, &m, 1000).is_empty(), "{ok}");
+        }
+        for bad in [
+            serde_json::json!(0.5),
+            serde_json::json!(0.0),
+            serde_json::json!(-1.1),
+            serde_json::json!(2.5),
+            serde_json::json!("1.1"),
+            serde_json::json!(null),
+        ] {
+            m.extras["ocw"]["shade_scale"] = bad.clone();
+            let f = check(&e, &m, 1000);
+            assert_eq!(codes(&f), ["extras.shade-scale"], "{bad}: {f:#?}");
+            assert!(f[0].is_error());
+        }
     }
 
     #[test]

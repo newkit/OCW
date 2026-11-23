@@ -85,6 +85,12 @@ pub struct Predictor {
     /// cost and the wobble are predicted; a slide is the server's).
     leaves: Option<crate::leaves::LeafGround>,
     leaf_wobble: f64,
+    /// Off the road on the terrain (spec §14 Phase 13A): the track the
+    /// rider rides there (as the server's), and the position error still
+    /// to blend in (x, z) with its rate (m/s).
+    off_road: Option<ocw_world::ground::OffRoadTrack>,
+    pending_xz: [f64; 2],
+    xz_rate: f64,
 }
 
 impl Predictor {
@@ -115,7 +121,106 @@ impl Predictor {
             rider_ticks: 0,
             leaves: None,
             leaf_wobble: 0.0,
+            off_road: None,
+            pending_xz: [0.0; 2],
+            xz_rate: 0.0,
         }
+    }
+
+    /// Off the road: the terrain's track the rider rides now (spec §14
+    /// Phase 13A); `None` on the road.
+    pub fn off_road(&self) -> Option<&ocw_world::ground::OffRoadTrack> {
+        self.off_road.as_ref()
+    }
+
+    /// Takes the server's off-road place as it is (a landing, a snap) or
+    /// leaves the terrain (`None`: the server put the rider on a road).
+    pub fn set_off_road(&mut self, track: Option<ocw_world::ground::OffRoadTrack>) {
+        self.off_road = track;
+        self.pending_xz = [0.0; 2];
+        self.controls.wild |= self.off_road.is_some();
+    }
+
+    /// One predicted tick off the road, as the server's step: the terrain's
+    /// physics, the damage's cap, the contacts with the world.
+    fn off_road_tick(
+        &mut self,
+        state: &mut RiderState,
+        track: &ocw_world::ground::OffRoadTrack,
+        power_w: f64,
+        scraping: &mut bool,
+    ) -> ocw_world::ground::OffRoadTrack {
+        let (profile, power_w, controls) = self.damaged(power_w);
+        let (next, _) = crate::offroad::tick(
+            state,
+            track,
+            &profile,
+            power_w,
+            controls,
+            scraping,
+            1.0,
+            self.weather.as_ref(),
+            SIM_DT,
+        );
+        self.damage_cap(state);
+        let wild = self.controls.wild;
+        self.controls.wild = true;
+        self.world_tick(state, &next);
+        self.controls.wild = wild;
+        crate::offroad::normalize(state, &next)
+    }
+
+    /// Reconciles off the road with the server's state and place, `age_s`
+    /// old (spec §14 Phase 13A): extrapolated with the same physics, then
+    /// compared in the plane; errors above [`SNAP_THRESHOLD_M`] (or the
+    /// first state off the road) are taken at once, smaller ones blended
+    /// in over [`CORRECTION_TIME_S`].
+    pub fn reconcile_off_road(
+        &mut self,
+        server: RiderState,
+        track: ocw_world::ground::OffRoadTrack,
+        age_s: f64,
+        power_w: f64,
+    ) {
+        let steps = (age_s.max(0.0) / SIM_DT).round() as usize;
+        let mut st = server;
+        let mut tr = track;
+        let mut scraping = false;
+        for _ in 0..steps {
+            tr = self.off_road_tick(&mut st, &tr, power_w, &mut scraping);
+        }
+        let there = tr.at();
+        let Some(mine) = &self.off_road else {
+            self.last_error = SNAP_THRESHOLD_M * 2.0;
+            self.state = st;
+            self.off_road = Some(tr);
+            self.pending_xz = [0.0; 2];
+            self.pending_correction = 0.0;
+            self.pending_lateral = 0.0;
+            return;
+        };
+        let here = mine.at();
+        let err = [there[0] - here[0], there[1] - here[1]];
+        let dist = err[0].hypot(err[1]);
+        self.last_error = dist;
+        if dist > SNAP_THRESHOLD_M {
+            self.state = st;
+            self.off_road = Some(tr);
+            self.pending_xz = [0.0; 2];
+        } else {
+            // The odometer and the speed are the server's; the place is
+            // blended, the direction follows halfway per snapshot.
+            let mut pose = crate::offroad::OffRoadPose::of(mine);
+            let target = crate::offroad::OffRoadPose::of(&tr);
+            pose.yaw = crate::offroad::OffRoadPose::lerp(pose, target, 0.5).yaw;
+            self.state.distance = st.distance;
+            self.state.speed = st.speed;
+            self.off_road = Some(pose.track(tr.ground().clone(), st.distance));
+            self.pending_xz = err;
+            self.xz_rate = dist / CORRECTION_TIME_S;
+        }
+        self.pending_correction = 0.0;
+        self.pending_lateral = 0.0;
     }
 
     /// Where leaves lie and the season (spec 4.6.2 Q6), as the server.
@@ -507,8 +612,36 @@ impl Predictor {
         self.drag_factor = drag_factor;
     }
 
-    /// Advances the prediction by one physics tick with the current power.
+    /// Advances the prediction by one physics tick with the current power
+    /// (off the road on the terrain's track instead of `route`).
     pub fn step(&mut self, route: &dyn Track, power_w: f64) {
+        if let Some(track) = self.off_road.clone() {
+            let (mut state, mut scraping) = (self.state, self.scraping);
+            let mut next = self.off_road_tick(&mut state, &track, power_w, &mut scraping);
+            if let Some(c) = self.speed_cap
+                && state.speed > c
+            {
+                state.speed = c;
+            }
+            // The server's place blended in.
+            let left = self.pending_xz[0].hypot(self.pending_xz[1]);
+            if left > 0.0 {
+                let k = ((self.xz_rate * SIM_DT) / left).min(1.0);
+                let d = [self.pending_xz[0] * k, self.pending_xz[1] * k];
+                let at = next.at();
+                next = ocw_world::ground::OffRoadTrack::new(
+                    next.ground().clone(),
+                    [at[0] + d[0], at[1] + d[1]],
+                    next.direction(),
+                    next.anchor_m(),
+                );
+                self.pending_xz = [self.pending_xz[0] - d[0], self.pending_xz[1] - d[1]];
+            }
+            self.state = state;
+            self.scraping = scraping;
+            self.off_road = Some(next);
+            return;
+        }
         let (profile, power_w, controls) = self.damaged(power_w);
         let (mut state, mut wobble, mut scraping) = (self.state, self.leaf_wobble, self.scraping);
         self.leaf_tick(
