@@ -2949,6 +2949,11 @@ fn obstacles(
             })
             .collect();
         tiles.sort_by_key(|t| std::cmp::Reverse(t.0));
+        let all: Vec<String> = tiles
+            .iter()
+            .map(|(n, p)| format!("{n}@{:.0},{:.0}", p[0], p[1]))
+            .collect();
+        println!("mapped street lamps by tile: {}", all.join(" "));
         for (n, p) in tiles.iter().take(6) {
             println!(
                 "  mapped street lamps: {n} in the tile of {:.0},{:.0}",

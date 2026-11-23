@@ -2,7 +2,7 @@
 # Pictures of the street lamps mapped in OSM (world look *Street lamps*:
 # `highway=street_lamp` nodes, section OBST) and of a rider bumping into a
 # lamp pole (Phase 12, `dev.lamp`): Vaduz and Santa Cruz de Tenerife at
-# night, with the packages rebuilt with the mapped lamps
+# night (and Schaan, where most of Liechtenstein's mapped lamps are), with the packages rebuilt with the mapped lamps
 # (OCW_LAMP_DATA, default ~/src/OCW/data/lamps-build), and the bump in
 # Vaduz by day with collisions on. Wayland (headless weston) with the
 # release build of ocw-desktop (drive.sh; archived with index.md).
@@ -38,6 +38,8 @@ places=(
   "vaduz-night-wide|$li|$(at "$li" -2862,1652)|12|$night;$quiet;1=camera.orbit 160 22 60"
   "santacruz-night|$tf|$(at "$tf" 26682,-19815)|16|$night;$quiet;1=camera.orbit 130 25 18"
   "santacruz-night-wide|$tf|$(at "$tf" 26682,-19815)|16|$night;$quiet;1=camera.orbit 130 22 60"
+  "schaan-night|$li|$(at "$li" -2376,-2146)|12|$night;$quiet;1=camera.orbit 160 28 30"
+  "santacruz-mapped-night|$tf|$(at "$tf" 26978,-19823)|16|$night;$quiet;1=camera.orbit 140 26 30"
   "vaduz-lamp-bump|$li|$(at "$li" -2862,1652)|11|$day;$bump"
 )
 
