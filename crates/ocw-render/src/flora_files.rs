@@ -650,6 +650,46 @@ mod tests {
         }
     }
 
+    /// Every plant's lowest point is its stem base (15B, Phase 15 Q10 (a)):
+    /// near and far, in the export and the shipped files, within the
+    /// validator's 5 cm – the Teide broom (0.67 m below before), the
+    /// prickly pear (0.10 m below), the agave (0.10 m above) and the
+    /// mountain alder (0.05 m above) included.
+    #[test]
+    fn every_plant_stands_on_its_stem_base() {
+        let lib = ocw_assets::library::ModelLibrary::embedded();
+        let tol = ocw_assets::check::GROUND_TOLERANCE_M;
+        for (e, model) in models().unwrap() {
+            let shipped = lib.get(e.id()).unwrap();
+            for (what, m) in [("export", &model), ("file", &*shipped)] {
+                let (lo, _) = m.near_bounds().unwrap();
+                assert!(
+                    lo.y.abs() <= tol,
+                    "{} {what}: lowest point {}",
+                    e.file,
+                    lo.y
+                );
+                let Some(far) = m.node("lod1") else { continue };
+                let low = (0..m.nodes.len())
+                    .filter(|&i| m.is_below(i, far))
+                    .flat_map(|i| {
+                        let w = m.world(i);
+                        m.nodes[i].primitives.iter().flat_map(move |p| {
+                            p.positions
+                                .iter()
+                                .map(move |q| w.transform_point3(Vec3::from(*q)).y)
+                        })
+                    })
+                    .fold(f32::MAX, f32::min);
+                assert!(
+                    low.abs() <= tol,
+                    "{} {what}: lod1 lowest point {low}",
+                    e.file
+                );
+            }
+        }
+    }
+
     /// The triangle budgets per level (15B: a plant 2,000 in all, 200 in
     /// `lod1`) still hold with both faces of every leaf.
     #[test]

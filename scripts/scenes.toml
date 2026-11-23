@@ -5283,3 +5283,43 @@ world = "tenerife"
 args = ["--world", "{world}", "--route-file", "{world_dir}/puerto-teide.route", "--bots", "0", "--power", "200"]
 at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud.profile off", "1=teleport 0.6", "1=camera.orbit 160 14 22", "5=season"]
 shot = 14
+
+# Phase 15 Q11 follow-up (15P): the unicorn's head (its ears' cones and the
+# far horn) and the rider's lips with normals that survive Blender; the same
+# look before and after.
+[[scene]]
+name = "q11-unicorn-head"
+description = "The unicorn's head close up (15P): ears, horn, eyes and muzzle, flat-shaded, hovering over the Hills route"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "2.5=god on", "4=god.cruise 0 0 0", "4.5=camera.orbit 100 12 5"]
+shot = 9
+
+[[scene]]
+name = "q11-unicorn-head-front"
+description = "The unicorn's head from the front and above (15P): ears and horn"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "2.5=god on", "4=god.cruise 0 0 0", "4.5=camera.orbit 150 25 4"]
+shot = 9
+
+[[scene]]
+name = "q11-unicorn-far"
+description = "The unicorn's far model (lod1) from 90 m (15P): the far head's ears and horn"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "2.5=god on", "4=god.cruise 0 0 0", "4.5=camera.orbit 100 8 90"]
+shot = 9
+
+[[scene]]
+name = "q11-face-closeup"
+description = "The rider's face close up from the front (15P): the lips closed, the mouth's dark inside hidden"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "3.5=camera.closeup face 170 5 0.45"]
+shot = 9
+
+[[scene]]
+name = "lips-speaking"
+description = "The rider speaking (Phase 4 Q24, 15P): the lower lip dropped, the dark inside between the lips, face close up from the front"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "2=dev.speaking --own", "3.5=camera.closeup face 170 5 0.45"]
+shot = 9

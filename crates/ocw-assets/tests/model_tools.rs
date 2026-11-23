@@ -28,6 +28,21 @@ fn the_validator_finds_no_error_in_the_committed_models() {
         eprintln!("{w}");
     }
     eprintln!("warnings by code: {by_code:?}");
+    // Phase 15 Q10 (a): every committed model stands on its origin – the
+    // plants with their lowest point at the stem base, the held phone
+    // marked held.
+    let origin: Vec<String> = report
+        .warnings()
+        .filter(|w| matches!(w.code, "bounds.below-ground" | "bounds.above-ground"))
+        .map(ToString::to_string)
+        .collect();
+    assert!(origin.is_empty(), "{origin:#?}");
+    let phone = report
+        .checked
+        .iter()
+        .find(|c| c.entry.file == "props/phone-slab.glb")
+        .unwrap();
+    assert!(phone.model.is_held(), "the phone is held in the hand");
 }
 
 #[test]

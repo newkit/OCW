@@ -62,7 +62,10 @@ share-alike, non-commercial or no-derivatives licences, never brands.
   height and the saddle travel: the loader fits the frame to every rider
   height, so a new size needs no new file – spec Q7); a plant's `species`,
   `variant`, `height_m`; a wearable's `anchor`; a prop's `osm` tag and its
-  `fit` (below). Physics keys (`mass`, `cda`, `crr`, …) are rejected.
+  `fit` (below); `held: true` on a model held in the hand (the phone): its
+  origin is where the hand holds it, so the validator does not check it
+  against the ground (`bounds.below-ground` / `above-ground`).
+  Physics keys (`mass`, `cda`, `crr`, …) are rejected.
 - **Vertex colours stay at most 1; `extras.ocw.shade_scale` brightens
   them** (spec 15G Q11 (a)): Blender keeps vertex colours as 8 bits,
   clamped to 1, so a file whose shading reaches above its paint colour (the

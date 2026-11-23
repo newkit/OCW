@@ -97,6 +97,12 @@ pub fn is_far_level(name: &str) -> bool {
     matches!(name, "lod1" | "lod2" | "billboard")
 }
 
+/// The `extras.ocw` key that marks a model held in the hand (`true`): it
+/// has no ground, its origin is where the hand holds it, so the validator
+/// does not check its height against its origin (spec 15B, Phase 15 Q10
+/// (a); the phone of the status signs).
+pub const HELD: &str = "held";
+
 /// The `extras.ocw` key of the factor the vertex colours are drawn with
 /// ([`Model::shade_scale`], spec 15G Q11 (a)).
 pub const SHADE_SCALE: &str = "shade_scale";
@@ -135,6 +141,14 @@ impl Model {
     /// Index of the node called `name`.
     pub fn node(&self, name: &str) -> Option<usize> {
         self.nodes.iter().position(|n| n.name == name)
+    }
+
+    /// Whether it is held in the hand (`extras.ocw.held = true`, [`HELD`]).
+    pub fn is_held(&self) -> bool {
+        self.ocw()
+            .and_then(|o| o.get(HELD))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
     }
 
     /// The factor its vertex colours are drawn with (spec 15G Q11 (a)):
