@@ -1027,8 +1027,13 @@ pub fn start() {
     // The settings read at the start, where the query leaves them out.
     let (settings, settings_warnings) = settings::WebSettings::load(settings::default_store());
     settings::apply_to_config(&settings, &mut config, &settings::query_keys(&query));
-    let world = config.world.clone();
     let mut app = app_with_settings(config, settings, settings_warnings);
+    // The world's options as the app set them (a phone's residency and
+    // course, `memory::MemoryMode`): the driver decodes the base with them.
+    let world = app
+        .world()
+        .get_resource::<world::WorldStream>()
+        .map(|s| s.options.clone());
     app.insert_resource(account_start)
         .add_plugins(account::WebAccountPlugin);
     for w in warnings {
