@@ -63,6 +63,17 @@ share-alike, non-commercial or no-derivatives licences, never brands.
   height, so a new size needs no new file – spec Q7); a plant's `species`,
   `variant`, `height_m`; a wearable's `anchor`; a prop's `osm` tag and its
   `fit` (below). Physics keys (`mass`, `cda`, `crr`, …) are rejected.
+- **Vertex colours stay at most 1; `extras.ocw.shade_scale` brightens
+  them** (spec 15G Q11 (a)): Blender keeps vertex colours as 8 bits,
+  clamped to 1, so a file whose shading reaches above its paint colour (the
+  plants' sunlit leaves, up to 1.1 ×) stores the colours divided by
+  `shade_scale` (1 – 2, checked by the validator) and the game, the browser
+  app and OCW Studio's viewer draw every vertex colour of the file times
+  it. Blender drops the asset's extras; `model import` keeps the key from
+  the file it replaces.
+- **Both faces of a leaf are their own triangles with their own normals**,
+  each normal on its triangle's front (Blender turns a normal that points
+  behind its face), and no triangle without area.
 - **How a prop is fitted to its place** (`ocw_assets::props`): `extras.ocw.fit
   = { height_m, sink_m, span_m?, reach_m? }` – the file's height above the
   ground, how deep it is set into the ground (the mesh starts at the origin;

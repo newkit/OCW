@@ -612,6 +612,63 @@ mod tests {
         assert_eq!(write(&back), bytes);
     }
 
+    /// Spec 15G Q11 (a): colours brighter than 1 are kept at most 1 with
+    /// their factor in `extras.ocw.shade_scale`; through the file the drawn
+    /// colours (stored × the scale) are the ones before, every stored one
+    /// is ≤ 1, and a file without bright colours gets no key.
+    #[test]
+    fn shade_scale_round_trips_and_multiplies_back() {
+        let mut m = sample();
+        m.extras = json!({"ocw": {"schema": 1, "kind": "plant", "id": "flora/test-a"}});
+        let p = &mut m.nodes[1].primitives[0];
+        let n = p.positions.len();
+        p.colors = (0..n)
+            .map(|i| {
+                let k = 0.86 + 0.238 * i as f32 / (n - 1) as f32;
+                [0.3 * k, 0.95 * k, 0.2 * k, 1.0]
+            })
+            .collect();
+        let before = p.colors.clone();
+        assert!(before.iter().any(|c| c[1] > 1.0));
+        let mut plain = m.clone();
+        plain.nodes[1].primitives[0].colors = vec![[0.5, 1.0, 0.25, 1.0]; n];
+        assert_eq!(plain.fit_shading(), 1.0);
+        assert!(
+            plain
+                .ocw()
+                .unwrap()
+                .get(crate::model::SHADE_SCALE)
+                .is_none()
+        );
+        assert_eq!(plain.shade_scale(), 1.0);
+
+        let k = m.fit_shading();
+        // The green peak (0.95 × 1.098), rounded up to 1/1000.
+        let max = before.iter().map(|c| c[1]).fold(0.0f32, f32::max);
+        let want = (f64::from(max) * 1000.0 - 1e-3).ceil() / 1000.0;
+        assert_eq!(k, want as f32);
+        assert!(f64::from(k) >= f64::from(max) - 1e-6, "{k} for {max}");
+        let back = read(&write(&m)).unwrap();
+        assert_eq!(back.ocw().unwrap()["shade_scale"].as_f64(), Some(want));
+        assert_eq!(back.ocw().unwrap()["id"], "flora/test-a", "other keys kept");
+        assert_eq!(back.shade_scale(), k);
+        let stored = &back.nodes[1].primitives[0].colors;
+        assert!(stored.iter().flatten().all(|c| *c <= 1.0));
+        for (a, b) in before.iter().zip(stored) {
+            let drawn = crate::model::shaded(*b, back.shade_scale());
+            assert!(
+                (0..4).all(|i| (a[i] - drawn[i]).abs() < 1e-4),
+                "{a:?} {drawn:?}"
+            );
+        }
+        // Out of range and wrong types: clamped, or no scale.
+        let mut odd = back.clone();
+        odd.extras["ocw"]["shade_scale"] = json!(7.5);
+        assert_eq!(odd.shade_scale(), crate::model::SHADE_SCALE_RANGE.1);
+        odd.extras["ocw"]["shade_scale"] = json!("bright");
+        assert_eq!(odd.shade_scale(), 1.0);
+    }
+
     /// The `.gltf` form (Blender's "glTF Separate"): the buffer as a data
     /// URI or as a file next to it.
     #[test]

@@ -97,6 +97,20 @@ pub fn is_far_level(name: &str) -> bool {
     matches!(name, "lod1" | "lod2" | "billboard")
 }
 
+/// The `extras.ocw` key of the factor the vertex colours are drawn with
+/// ([`Model::shade_scale`], spec 15G Q11 (a)).
+pub const SHADE_SCALE: &str = "shade_scale";
+/// The values `extras.ocw.shade_scale` may take (the validator's range):
+/// 1 does nothing, 2 doubles the colours – more would be a file whose
+/// shading does not fit its paint colour.
+pub const SHADE_SCALE_RANGE: (f32, f32) = (1.0, 2.0);
+
+/// A vertex colour `c` as drawn with the model's shade scale `s`: the
+/// colour times `s`, the alpha as it is.
+pub fn shaded(c: [f32; 4], s: f32) -> [f32; 4] {
+    [c[0] * s, c[1] * s, c[2] * s, c[3]]
+}
+
 /// A whole asset.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Model {
@@ -121,6 +135,70 @@ impl Model {
     /// Index of the node called `name`.
     pub fn node(&self, name: &str) -> Option<usize> {
         self.nodes.iter().position(|n| n.name == name)
+    }
+
+    /// The factor its vertex colours are drawn with (spec 15G Q11 (a)):
+    /// `extras.ocw.shade_scale` – the exporter kept the colours at most 1
+    /// (Blender stores them as 8 bits, clamped to 1) by dividing them by it,
+    /// and the renderer multiplies them back. 1 without the key; a value
+    /// out of [`SHADE_SCALE_RANGE`] is clamped into it (the validator
+    /// reports it), anything that is not a number counts as 1.
+    pub fn shade_scale(&self) -> f32 {
+        let (lo, hi) = SHADE_SCALE_RANGE;
+        self.ocw()
+            .and_then(|o| o.get(SHADE_SCALE))
+            .and_then(serde_json::Value::as_f64)
+            .filter(|s| s.is_finite())
+            .map_or(1.0, |s| (s as f32).clamp(lo, hi))
+    }
+
+    /// Scales the vertex colours down to at most 1 where they are brighter
+    /// and writes the factor as `extras.ocw.shade_scale` (rounded up to
+    /// 1/1000, so every colour stays ≤ 1); [`Model::shade_scale`] times a
+    /// stored colour is the colour as it was (to the float's precision).
+    /// Colours at most 1 are left alone and no key is written. Returns the
+    /// factor (1: none). Alpha is not scaled.
+    pub fn fit_shading(&mut self) -> f32 {
+        let max = self
+            .nodes
+            .iter()
+            .flat_map(|n| &n.primitives)
+            .flat_map(|p| &p.colors)
+            .map(|c| c[0].max(c[1]).max(c[2]))
+            .fold(0.0f32, f32::max);
+        if max <= 1.0 {
+            return 1.0;
+        }
+        // (Less a hair, so that an f32 just above 1.08 gives 1.08, not 1.081;
+        // the clamp below keeps the colours ≤ 1.)
+        let s = (f64::from(max) * 1000.0 - 1e-3).ceil() / 1000.0;
+        assert!(
+            s <= f64::from(SHADE_SCALE_RANGE.1),
+            "vertex colours up to {max}: more than the shade scale allows"
+        );
+        let k = s as f32;
+        for c in self
+            .nodes
+            .iter_mut()
+            .flat_map(|n| &mut n.primitives)
+            .flat_map(|p| &mut p.colors)
+        {
+            for ch in &mut c[..3] {
+                *ch = (*ch / k).min(1.0);
+            }
+        }
+        if !self.extras.is_object() {
+            self.extras = serde_json::json!({});
+        }
+        let root = self.extras.as_object_mut().expect("an object");
+        let ocw = root.entry("ocw").or_insert_with(|| serde_json::json!({}));
+        if !ocw.is_object() {
+            *ocw = serde_json::json!({});
+        }
+        ocw.as_object_mut()
+            .expect("an object")
+            .insert(SHADE_SCALE.into(), serde_json::json!(s));
+        k
     }
 
     /// Index of the material called `name`.

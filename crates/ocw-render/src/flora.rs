@@ -433,22 +433,28 @@ pub fn blade(
     let colour = rgba(colour);
     let side = Vec3::Y.cross(dir).normalize_or(Vec3::X);
     let at = |t: f32| root + dir * length * t + Vec3::Y * (up * length * t - droop * t * t);
+    // Both faces are their own triangles with their own normals, each on
+    // its triangles' front (spec 15G Q11 (a); before, each face carried the
+    // other face's normal, which Blender turns round): the upper face
+    // (`flip`) faces `tangent × side`, the lower face the opposite. The tip
+    // is one vertex (no zero-area triangle there).
     for flip in [false, true] {
         let b = m.positions.len() as u32;
         for i in 0..=segs {
             let t = i as f32 / segs as f32;
             let c = at(t);
             let tangent = (at((t + 0.01).min(1.0)) - at((t - 0.01).max(0.0))).normalize_or(dir);
-            let mut nrm = tangent.cross(side).normalize_or(Vec3::Y);
-            if nrm.y < 0.0 {
-                nrm = -nrm;
-            }
-            if flip {
-                nrm = -nrm;
-            }
+            let upper = tangent.cross(side).normalize_or(Vec3::Y);
+            let nrm = if flip { upper } else { -upper };
             let w = width * (std::f32::consts::PI * t.powf(0.8)).sin().max(0.0) * 0.5;
-            let w = if i == segs { 0.0 } else { w.max(width * 0.05) };
-            for p in [c - side * w, c + side * w] {
+            let tip = i == segs;
+            let w = w.max(width * 0.05);
+            let points: &[Vec3] = if tip {
+                &[c]
+            } else {
+                &[c - side * w, c + side * w]
+            };
+            for p in points {
                 m.positions.push(p.to_array());
                 m.uvs.push([p.y - foot_y, 0.0]);
                 m.normals.push(nrm.to_array());
@@ -457,10 +463,13 @@ pub fn blade(
         }
         for i in 0..segs {
             let (a0, a1, b0, b1) = (b + 2 * i, b + 2 * i + 1, b + 2 * i + 2, b + 2 * i + 3);
-            if flip {
-                m.indices.extend([a0, b0, a1, a1, b0, b1]);
-            } else {
-                m.indices.extend([a0, a1, b0, a1, b1, b0]);
+            let last = i + 1 == segs;
+            match (flip, last) {
+                (true, false) => m.indices.extend([a0, b0, a1, a1, b0, b1]),
+                (false, false) => m.indices.extend([a0, a1, b0, a1, b1, b0]),
+                // The tip `b0`.
+                (true, true) => m.indices.extend([a0, b0, a1]),
+                (false, true) => m.indices.extend([a0, a1, b0]),
             }
         }
     }
@@ -480,22 +489,39 @@ fn tier(
     turn: f32,
 ) {
     let h = top - bottom;
-    lathe(
+    // The underside (up to its apex inside the tier) and the upper side
+    // meet at the rim: each has its own rim vertices with its own normal
+    // (spec 15G Q11 (a); a shared rim normal pointed down, away from the
+    // upper side's front, and Blender rewrote it).
+    two_sided_cone(
         m,
         base,
-        Vec3::ZERO,
         s,
-        &[
-            (bottom + h * droop, 0.0),
-            (bottom, r),
-            (bottom + h * 0.45, r * 0.62),
-            (top, 0.0),
-        ],
+        &[(bottom + h * droop, 0.0), (bottom, r)],
+        &[(bottom, r), (bottom + h * 0.45, r * 0.62), (top, 0.0)],
         seg,
         colour,
         turn,
-        (1.0, 1.0),
     );
+}
+
+/// A closed shell of revolution from `under` (from its apex down to the
+/// rim) and `upper` (from the rim up to its apex), with the rim's vertices
+/// twice: on each side with that side's normal.
+#[allow(clippy::too_many_arguments)]
+fn two_sided_cone(
+    m: &mut MeshArrays,
+    base: Vec3,
+    s: f32,
+    under: &[(f32, f32)],
+    upper: &[(f32, f32)],
+    seg: u32,
+    colour: [f32; 3],
+    turn: f32,
+) {
+    debug_assert_eq!(under.last(), upper.first());
+    lathe(m, base, Vec3::ZERO, s, under, seg, colour, turn, (1.0, 1.0));
+    lathe(m, base, Vec3::ZERO, s, upper, seg, colour, turn, (1.0, 1.0));
 }
 
 // --- The species --------------------------------------------------------------
@@ -574,16 +600,16 @@ pub fn generate(m: &mut MeshArrays, sp: Species, at: &PlantAt, look: &PlantLook,
             };
             if !near {
                 let top = if flat_top { 0.94 } else { 1.0 };
-                lathe(
+                // The flat underside and the cone, each with its own rim.
+                two_sided_cone(
                     m,
                     base,
-                    Vec3::ZERO,
                     s,
-                    &[(start * h, 0.0), (start * h, r * larch_k), (top * h, 0.0)],
+                    &[(start * h, 0.0), (start * h, r * larch_k)],
+                    &[(start * h, r * larch_k), (top * h, 0.0)],
                     seg,
                     colour,
                     turn,
-                    (1.0, 1.0),
                 );
                 return;
             }
