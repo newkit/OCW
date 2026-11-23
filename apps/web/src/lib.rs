@@ -525,11 +525,7 @@ pub fn app_with_settings(
     let mut app = App::new();
     visit_quality(&config, &mut settings, &mut warnings);
     // Phones keep fewer world tiles (the iPhone's restarts, 2026-11-22).
-    let memory = memory::MemoryMode::resolve(config.memory, &device_info());
-    if let Some(w) = config.world.as_mut() {
-        w.residency = memory.residency(w.residency);
-        w.course_rings = memory.course_rings(w.residency);
-    }
+    let memory = apply_memory_mode(&mut config, &device_info());
     app.insert_resource(ocw_render::package::StreamRadiusCap(memory.ring_cap()));
     if memory != memory::MemoryMode::Normal {
         info!(
@@ -645,6 +641,24 @@ pub fn app_with_settings(
     // (B6).
     app.add_plugins(ui::WebUiPlugin { record });
     app
+}
+
+/// The memory mode of this visit (the page's `memory=`, else by the
+/// device) applied to the world's options: a phone's residency and its
+/// course (`memory::MemoryMode`). The page's start applies it before it
+/// hands the options to the world's driver (v5.42: the driver once got
+/// them unadjusted and decoded a phone's base whole); applying it again
+/// changes nothing.
+pub fn apply_memory_mode(
+    config: &mut SessionConfig,
+    device: &ocw_client::quality::DeviceInfo,
+) -> memory::MemoryMode {
+    let memory = memory::MemoryMode::resolve(config.memory, device);
+    if let Some(w) = config.world.as_mut() {
+        w.residency = memory.residency(w.residency);
+        w.course_rings = memory.course_rings(w.residency);
+    }
+    memory
 }
 
 /// The window's size at the start: the page's (CSS pixels), never more
@@ -1027,13 +1041,11 @@ pub fn start() {
     // The settings read at the start, where the query leaves them out.
     let (settings, settings_warnings) = settings::WebSettings::load(settings::default_store());
     settings::apply_to_config(&settings, &mut config, &settings::query_keys(&query));
+    // The world's options as the app sets them (a phone's residency and
+    // course): the driver decodes the base with them.
+    apply_memory_mode(&mut config, &device_info());
+    let world = config.world.clone();
     let mut app = app_with_settings(config, settings, settings_warnings);
-    // The world's options as the app set them (a phone's residency and
-    // course, `memory::MemoryMode`): the driver decodes the base with them.
-    let world = app
-        .world()
-        .get_resource::<world::WorldStream>()
-        .map(|s| s.options.clone());
     app.insert_resource(account_start)
         .add_plugins(account::WebAccountPlugin);
     for w in warnings {
@@ -1270,6 +1282,30 @@ mod tests {
 
     /// The pixel-ratio cap: a phone at 3 draws at 1 on Low; a screen within
     /// the cap and High keep the device's own.
+    #[test]
+    fn the_memory_mode_reaches_the_worlds_options_once() {
+        // `memory=phone` on a desktop browser: the residency and the course
+        // the driver gets (v5.42 regression: it got them unadjusted).
+        let (mut config, _) = parse_query("world=liechtenstein&memory=phone", true);
+        let desktop = ocw_client::quality::DeviceInfo::default();
+        assert_eq!(
+            apply_memory_mode(&mut config, &desktop),
+            memory::MemoryMode::Phone
+        );
+        let w = config.world.clone().expect("a world");
+        assert_eq!((w.residency.fetch_radius, w.residency.keep_radius), (2, 3));
+        assert_eq!(w.course_rings, Some(4));
+        apply_memory_mode(&mut config, &desktop);
+        assert_eq!(config.world, Some(w), "a second time changes nothing");
+        // A desktop without the option: the whole world.
+        let (mut config, _) = parse_query("world=liechtenstein", true);
+        assert_eq!(
+            apply_memory_mode(&mut config, &desktop),
+            memory::MemoryMode::Normal
+        );
+        assert_eq!(config.world.expect("a world").course_rings, None);
+    }
+
     #[test]
     fn the_window_starts_at_the_pages_size() {
         // An iPhone's page: its CSS size, not 1280 × 720 (× 3 = 3840 ×
