@@ -216,12 +216,21 @@ fn ticks_deep_in_a_wood() {
     .into_iter()
     .flat_map(|c| woods.grid_trunks(c, &Stored::default()).unwrap_or_default())
     .collect();
-    for before in [3.0, 25.0] {
-        'found: for t in &trunks {
+    let ground = net.ground().unwrap().clone();
+    let in_wood = |p: [f64; 2]| {
+        (p[0] - at[0]).abs() < 40.0
+            && (p[1] - at[1]).abs() < 40.0
+            && ground.cover(p[0], p[1]) == Some(Cover::Forest)
+    };
+    for before in [4.0, 9.0] {
+        'found: for t in trunks.iter().filter(|t| in_wood(t.c)) {
             for k in 0..32 {
                 let yaw = f64::from(k) * std::f64::consts::TAU / 32.0;
                 let d = ocw_sim::god::forward(yaw);
                 let p = [t.c[0] - d[0] * before, t.c[1] - d[1] * before];
+                if !in_wood(p) {
+                    continue;
+                }
                 let clear = trunks.iter().filter(|u| u.id != t.id).all(|u| {
                     let rel = [u.c[0] - p[0], u.c[1] - p[1]];
                     let along = rel[0] * d[0] + rel[1] * d[1];

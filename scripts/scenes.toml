@@ -2045,23 +2045,23 @@ shot = 13
 
 # Off the road every drawn tree is an obstacle (spec 14 Phase 13 Q10 (a)): a
 # dense wood of the northern Black Forest over 200 m from any road; the
-# trunk at -8167.6,-82351.6 (r 0.30 m) has a clear run of 25 m from the south
+# trunk at 3415.1,-97881.0 (r 0.43 m) has clear runs of 4 and 9 m from the south
 # (`woods_bench` prints such runs).
 
 [[scene]]
 name = "q10-woods-stop"
-description = "Off the road deep in a Black Forest wood (spec 14 Phase 13 Q10 (a)): landed from the unicorn 25 m before a trunk, the rider rides at walking pace (45 W on the forest floor) into it and stops there, pressed against the trunk – no crash"
+description = "Off the road deep in a Black Forest wood (spec 14 Phase 13 Q10 (a)): landed from the unicorn 4 m before a trunk, the rider rides at walking pace (45 W on the forest floor) into it and stops there, pressed against the trunk – no crash"
 world = "blackforest-north"
-args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-8167.6,-82326.6", "--bots", "0", "--power", "0"]
-at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=ride.collisions on", "2=god on", "2.5=god.pose -8167.6 -82326.6 3 0", "2.7=god off", "5=sim.power 45", "5=camera.orbit 110 6 2.5", "30=rider.state"]
-shot = 32
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "3415.1,-97872.0", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=ride.collisions on", "2=god on", "2.5=god.pose 3415.1 -97877.0 3 0", "2.7=god off", "5=sim.power 45", "5=camera.orbit 110 6 2.5", "14=rider.state"]
+shot = 16
 
 [[scene]]
 name = "q10-woods-crash-video"
-description = "Video: off the road deep in a Black Forest wood (spec 14 Phase 13 Q10 (a)): landed 25 m before a trunk, the rider sprints at it and crashes – the trunk made on demand from the drawn trees, the ragdoll among the trunks"
+description = "Video: off the road deep in a Black Forest wood (spec 14 Phase 13 Q10 (a)): landed 9 m before a trunk, the rider sprints at it and crashes – the trunk made on demand from the drawn trees, the ragdoll among the trunks"
 world = "blackforest-north"
-args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-8167.6,-82326.6", "--bots", "0", "--power", "0"]
-at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=ride.collisions on", "2=god on", "2.5=god.pose -8167.6 -82326.6 3 0", "2.7=god off", "5.5=sim.power 700", "5.5=camera.orbit 120 9 3"]
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "3415.1,-97872.0", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=ride.collisions on", "2=god on", "2.5=god.pose 3415.1 -97872.0 3 0", "2.7=god off", "5.5=sim.power 700", "5.5=camera.orbit 120 9 3"]
 warmup = 5
 video = 9
 
