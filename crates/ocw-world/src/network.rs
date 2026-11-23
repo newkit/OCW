@@ -223,6 +223,10 @@ pub struct RoadNetwork {
     /// The ground away from the roads (spec §14 Phase 13A: riding off the
     /// road after a unicorn landing), if the world has tiles.
     ground: Option<std::sync::Arc<crate::ground::GroundMap>>,
+    /// The drawn trees away from the roads, as trunks made on demand
+    /// (spec 14 Phase 13 Q10 (a), [`crate::woods`]), if the world has
+    /// tiles with land use.
+    woods: Option<std::sync::Arc<crate::woods::Woods>>,
     /// The edges by 100 m cell, made when first needed ([`Self::nearest_within`]).
     edge_grid: std::sync::Arc<std::sync::OnceLock<EdgeGrid>>,
 }
@@ -294,6 +298,7 @@ impl RoadNetwork {
             road_feel: None,
             leaves: None,
             ground: None,
+            woods: None,
             edge_grid: Default::default(),
         }
     }
@@ -307,6 +312,18 @@ impl RoadNetwork {
     /// The ground away from the roads (heights and cover), if known.
     pub fn ground(&self) -> Option<&std::sync::Arc<crate::ground::GroundMap>> {
         self.ground.as_ref()
+    }
+
+    /// The same network with the trees off the road as obstacles (spec 14
+    /// Phase 13 Q10 (a)).
+    pub fn with_woods(mut self, woods: Option<std::sync::Arc<crate::woods::Woods>>) -> Self {
+        self.woods = woods;
+        self
+    }
+
+    /// The source of the trunks off the road, if any.
+    pub fn woods(&self) -> Option<&std::sync::Arc<crate::woods::Woods>> {
+        self.woods.as_ref()
     }
 
     /// The same network with the leaf map of its world (spec 4.6.2 Q6).

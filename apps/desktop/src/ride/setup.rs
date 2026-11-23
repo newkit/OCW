@@ -95,6 +95,14 @@ pub fn build(args: &Args) -> Result<RideSetup, String> {
     )));
     let ground = Some(Arc::new(ocw_world::ground::GroundMap::from_package(pkg)))
         .filter(|g| g.tile_count() > 0);
+    // Off the road every drawn tree is an obstacle (spec 14 Phase 13 Q10
+    // (a)): the trunks are made on demand from the package the renderer
+    // draws (the same `Arc`, no copy).
+    let woods = ground
+        .as_ref()
+        .and(hood.set.home().package())
+        .filter(|p| p.landuse.is_some())
+        .map(|p| Arc::new(ocw_world::woods::Woods::new(p.clone())));
     let net = hood.set.graph().cloned().map(|graph| {
         Arc::new(
             RoadNetwork::new(graph)
@@ -107,7 +115,8 @@ pub fn build(args: &Args) -> Result<RideSetup, String> {
                 ))))
                 // Riding off the road after a unicorn landing (spec §14
                 // Phase 13A): the home package's ground.
-                .with_ground(ground.clone()),
+                .with_ground(ground.clone())
+                .with_woods(woods),
         )
     });
     // `--world` alone: the package's first route, else a free ride.

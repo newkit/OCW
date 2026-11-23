@@ -142,16 +142,31 @@ fn dot(a: [f32; 2], b: [f32; 2]) -> f32 {
 /// (3 m beyond the edge) and under buildings (plus 1.5 m), also buildings
 /// of the neighbouring tiles that reach into this one.
 pub fn blocked_cells(pkg: &WorldPackage, tile: &Tile, cells: u32) -> Vec<bool> {
+    let n = cells as usize;
+    blocked_cells_in(pkg, tile, cells, 0..n, 0..n)
+}
+
+/// [`blocked_cells`] for the land-use cells of columns `cols` and rows
+/// `rows` only (the others stay `false`): each cell is decided alone, so a
+/// window gives the same answer as the whole tile (the trunks made on
+/// demand off the road, [`crate::woods`]).
+pub fn blocked_cells_in(
+    pkg: &WorldPackage,
+    tile: &Tile,
+    cells: u32,
+    cols: std::ops::Range<usize>,
+    rows: std::ops::Range<usize>,
+) -> Vec<bool> {
     let size = pkg.tile_size_m;
     let o = tile.key.origin(f64::from(size));
     let (ox, oz) = (o[0] as f32, o[1] as f32);
     let n = cells as usize;
     let cs = size / cells as f32;
     let mut blocked = vec![false; n * n];
-    let cell_range = |lo: f32, hi: f32, origin: f32| {
+    let cell_range = |lo: f32, hi: f32, origin: f32, within: &std::ops::Range<usize>| {
         let a = ((lo - origin) / cs).floor().max(0.0) as usize;
         let b = (((hi - origin) / cs).floor() + 1.0).clamp(0.0, n as f32) as usize;
-        a..b
+        a.max(within.start)..b.min(within.end)
     };
     for r in &tile.roads {
         // A cell is blocked if its centre is within the reach (half a cell
@@ -160,8 +175,8 @@ pub fn blocked_cells(pkg: &WorldPackage, tile: &Tile, cells: u32) -> Vec<bool> {
         for w in r.points.windows(2) {
             let (a, b) = ([w[0][0], w[0][2]], [w[1][0], w[1][2]]);
             let ab = sub(b, a);
-            for k in cell_range(a[1].min(b[1]) - reach, a[1].max(b[1]) + reach, oz) {
-                for i in cell_range(a[0].min(b[0]) - reach, a[0].max(b[0]) + reach, ox) {
+            for k in cell_range(a[1].min(b[1]) - reach, a[1].max(b[1]) + reach, oz, &rows) {
+                for i in cell_range(a[0].min(b[0]) - reach, a[0].max(b[0]) + reach, ox, &cols) {
                     let p = [ox + (i as f32 + 0.5) * cs, oz + (k as f32 + 0.5) * cs];
                     let l2 = dot(ab, ab);
                     let t = if l2 > 0.0 {
@@ -190,8 +205,8 @@ pub fn blocked_cells(pkg: &WorldPackage, tile: &Tile, cells: u32) -> Vec<bool> {
                         lo = [lo[0].min(p[0]), lo[1].min(p[1])];
                         hi = [hi[0].max(p[0]), hi[1].max(p[1])];
                     }
-                    for k in cell_range(lo[1] - 1.5, hi[1] + 1.5, oz) {
-                        for i in cell_range(lo[0] - 1.5, hi[0] + 1.5, ox) {
+                    for k in cell_range(lo[1] - 1.5, hi[1] + 1.5, oz, &rows) {
+                        for i in cell_range(lo[0] - 1.5, hi[0] + 1.5, ox, &cols) {
                             blocked[k * n + i] = true;
                         }
                     }
@@ -254,20 +269,54 @@ fn landuse_trees(
     lu: &LandUseTile,
     cells: u32,
 ) -> Vec<(usize, LandClass, [f32; 3], f32)> {
+    let side = cells_per_side(pkg.tile_size_m);
+    landuse_trees_in(pkg, tile, lu, cells, 0..side, 0..side)
+}
+
+/// [`landuse_trees`] for the candidates of columns `cols` and rows `rows`
+/// of the tile's grid only: the same trees as the whole tile's there (each
+/// candidate is decided alone; the land-use cells it needs are checked for
+/// roads and buildings within the window, [`blocked_cells_in`]).
+pub(crate) fn landuse_trees_in(
+    pkg: &WorldPackage,
+    tile: &Tile,
+    lu: &LandUseTile,
+    cells: u32,
+    cols: std::ops::Range<usize>,
+    rows: std::ops::Range<usize>,
+) -> Vec<(usize, LandClass, [f32; 3], f32)> {
     let size = f64::from(pkg.tile_size_m);
     let o = tile.key.origin(size);
     let per_side = cells_per_side(pkg.tile_size_m) as i64;
     let n = cells as usize;
     let cs = size / f64::from(cells);
-    let blocked = blocked_cells(pkg, tile, cells);
+    let whole = cols.start == 0
+        && rows.start == 0
+        && cols.end >= per_side as usize
+        && rows.end >= per_side as usize;
+    let blocked = if whole {
+        blocked_cells(pkg, tile, cells)
+    } else {
+        // The land-use cells the window's candidates can fall in.
+        let lu_of = |r: &std::ops::Range<usize>| {
+            let a = ((r.start as f64 * TREE_CELL_M / cs) as usize).min(n);
+            let b = (((r.end as f64 * TREE_CELL_M / cs) as usize) + 1).min(n);
+            a..b
+        };
+        blocked_cells_in(pkg, tile, cells, lu_of(&cols), lu_of(&rows))
+    };
     let forest = tile_forest(pkg, tile.key);
     // The fields and mapped trees (section VEGE, spec §14 Phase 8 T8):
     // plantations in rows and mapped trees take the place of the grid's.
     let mapped = crate::plantings::mapped_cells(pkg, tile.key);
     let region = crate::flora::FloraRegion::at(pkg.origin.0, pkg.origin.1);
     let mut sites = Vec::new();
-    for k in 0..per_side {
-        for i in 0..per_side {
+    let (cols, rows) = (
+        cols.start as i64..(cols.end as i64).min(per_side),
+        rows.start as i64..(rows.end as i64).min(per_side),
+    );
+    for k in rows {
+        for i in cols.clone() {
             let (gx, gz) = global_cell(tile.key, per_side, i, k);
             let x = o[0] + (i as f64 + f64::from(hash(gx, gz, 2))) * TREE_CELL_M;
             let z = o[1] + (k as f64 + f64::from(hash(gx, gz, 3))) * TREE_CELL_M;

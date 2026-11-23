@@ -222,13 +222,18 @@ pub fn world_ride(
     // The ground away from the roads (spec §14 Phase 13A): the base has
     // no tiles; they are added as they are streamed in (like the road feel).
     let ground = Arc::new(ocw_world::ground::GroundMap::from_package(pkg));
+    // Off the road every drawn tree is an obstacle (spec 14 Phase 13 Q10
+    // (a)): the trunks come from the renderer's package of resident tiles
+    // (the same `Arc`, set as the tiles arrive; no copy).
+    let woods = Arc::new(ocw_world::woods::Woods::empty(pkg.tile_size_m));
     let net = Arc::new(
         RoadNetwork::new(graph)
             .with_package_name(pkg.name.clone())
             .with_obstacles(obstacles)
             .with_road_feel(road_feel)
             .with_leaves(Some(Arc::new(leaves)))
-            .with_ground(Some(ground)),
+            .with_ground(Some(ground))
+            .with_woods(Some(woods)),
     );
     let profile = RiderProfile::default();
     let route_name = match (&opts.route, opts.free_ride) {
@@ -395,6 +400,9 @@ pub struct WorldStream {
     /// The ground off the roads (spec §14 Phase 13A): the streamed tiles
     /// are added as they arrive, like the road feel.
     ground: Option<Arc<ocw_world::ground::GroundMap>>,
+    /// The trees off the road (spec 14 Phase 13 Q10): the resident tiles'
+    /// package is shared with it.
+    woods: Option<Arc<ocw_world::woods::Woods>>,
 }
 
 impl WorldStream {
@@ -419,6 +427,7 @@ impl WorldStream {
             asked: false,
             road_feel: None,
             ground: None,
+            woods: None,
         }
     }
 
@@ -609,7 +618,12 @@ pub fn stream_world(world: &mut World) {
             if let Some(g) = &stream.ground {
                 g.add_package_tiles(&pkg);
             }
-            publish(world, pkg, stream.road_feel.as_deref());
+            publish(
+                world,
+                pkg,
+                stream.road_feel.as_deref(),
+                stream.woods.as_deref(),
+            );
         }
     }
     {
@@ -625,12 +639,21 @@ pub fn stream_world(world: &mut World) {
 
 /// New resident tiles for the renderer (no re-mesh of the tiles already
 /// there; the far terrain is rebuilt from them).
-fn publish(world: &mut World, pkg: WorldPackage, feel: Option<&ocw_world::road_feel::RoadFeelMap>) {
+fn publish(
+    world: &mut World,
+    pkg: WorldPackage,
+    feel: Option<&ocw_world::road_feel::RoadFeelMap>,
+    woods: Option<&ocw_world::woods::Woods>,
+) {
     feel_tiles(feel, &pkg);
     let Some(mut pw) = world.get_resource_mut::<PackageWorld>() else {
         return;
     };
-    Arc::make_mut(&mut pw.set).update_tiles(0, Arc::new(pkg));
+    let pkg = Arc::new(pkg);
+    if let Some(w) = woods {
+        w.set_package(pkg.clone());
+    }
+    Arc::make_mut(&mut pw.set).update_tiles(0, pkg);
     let ground = pw.ground();
     let pavement = pw.pavement();
     world.insert_resource(ground);
@@ -677,9 +700,16 @@ fn start_ride(world: &mut World, stream: &mut WorldStream, ride: WorldRide, now:
     if let Some(g) = &stream.ground {
         g.add_package_tiles(&pkg);
     }
+    stream.woods = match &ride.course {
+        Course::FreeRide { net, .. } | Course::RouteRide { net, .. } => net.woods().cloned(),
+        Course::Route(_) => None,
+    };
     let id = stream.identity.clone().unwrap_or_default();
     let (zone, _) = ocw_client::sky::place_zone(pkg.time_zone.as_deref(), Some(pkg.origin));
     let pkg = Arc::new(pkg);
+    if let Some(w) = &stream.woods {
+        w.set_package(pkg.clone());
+    }
     world.insert_resource(PackageWorld {
         set: Arc::new(WorldSet::new(&id, pkg)),
         loader: None,

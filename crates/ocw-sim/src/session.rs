@@ -26,6 +26,8 @@ mod damage;
 mod god_mode;
 #[cfg(test)]
 mod off_road_tests;
+#[cfg(test)]
+mod woods_tests;
 pub use collisions::{CollisionStats, Crash, JOIN_GHOST_S, Stage};
 pub use damage::DamageStage;
 pub use god_mode::{GodLeave, GodRider};
@@ -339,7 +341,7 @@ impl Session {
         Self {
             route: first.route().clone(),
             god_area: god_mode::network_area(&net),
-            world: crate::collide::WorldCache::new(net.obstacles().cloned()),
+            world: crate::collide::WorldCache::for_network(&net),
             leaf_map: net.leaves().cloned(),
             free: Some((net, start)),
             ..Self::new(first.route().clone())

@@ -9,6 +9,10 @@ publish.workspace = true
 
 # Pure dependencies only: this crate builds for wasm32-unknown-unknown (spec §3.5).
 [dependencies]
+# The seasons' regional leaf mix decides the leaf type of the grid's trees
+# (`trees::grid_tree`, shared by the renderer and the server's trunks off
+# the road, spec 14 Phase 13 Q10); pure, wasm-clean.
+ocw-sky.workspace = true
 # Manifests and signatures (manifest.rs, spec §4.7).
 ed25519-dalek.workspace = true
 sha2.workspace = true

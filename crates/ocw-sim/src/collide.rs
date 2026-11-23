@@ -28,6 +28,7 @@ pub use ocw_world::obstacles::ObstacleKind;
 use ocw_world::obstacles::{
     MAX_POINT_RADIUS_M, PointShapes, Shape, ShapePart, Solid, TileIndex, WorldObstacles,
 };
+use ocw_world::woods::{MAX_TRUNK_RADIUS_M, Stored, Trunk, WoodCell, Woods};
 
 /// The solid footprint of a prop from its model file's collision proxies
 /// (`col_*`, read in both forms – a mesh's bounds or a scaled empty –
@@ -1068,23 +1069,187 @@ pub fn edge_hit(speed: f64, heading: f64, mass: f64, grip: f64, mode: Mode) -> O
 
 /// Tiles of the obstacle index not used for this long are dropped (s).
 pub const WORLD_TILE_KEEP_S: f64 = 30.0;
+/// The trunks off the road of a [`WoodCell`] not used for this long are
+/// dropped (s; spec 14 Phase 13 Q10 (a)): a rider in a wood keeps the few
+/// cells around the last 10 s of riding.
+pub const WOOD_CELL_KEEP_S: f64 = 10.0;
+/// At most this many cells of trunks are kept (the oldest go first):
+/// 2,048 cells of 40 m × 40 m, ~3 km² of dense wood, a few MB at most.
+pub const MAX_WOOD_CELLS: usize = 2048;
+
+/// What the package stores of a tile and its planted trees off the road,
+/// while cells of it are made ([`WorldCache::trunks_near`]).
+#[derive(Debug, Clone, Default)]
+struct WoodTile {
+    stored: Stored,
+    planted: Vec<Trunk>,
+}
 
 /// The world's static obstacles (spec §14 Phase 12 K3) and the spatial
-/// index of the tiles near riders in wild mode, built when first needed.
+/// index of the tiles near riders in wild mode, built when first needed;
+/// off the road also the trunks of the drawn trees, made per
+/// [`WoodCell`] around the riders there and dropped when they have gone
+/// (spec 14 Phase 13 Q10 (a), [`ocw_world::woods`]).
 #[derive(Debug, Clone, Default)]
 pub struct WorldCache {
     pub world: Option<Arc<WorldObstacles>>,
+    /// The drawn trees off the road (`None`: no trunks there).
+    pub woods: Option<Arc<Woods>>,
     /// Per tile its index (`None`: nothing solid) and the tick it was last
     /// used.
     tiles: BTreeMap<TileKey, (Option<Arc<TileIndex>>, u64)>,
+    /// The trunks made off the road per cell and the tick last used.
+    wood_cells: BTreeMap<WoodCell, (Arc<[Solid]>, u64)>,
+    /// The tiles of those cells (what `OBST` stores, the planted trees).
+    wood_tiles: BTreeMap<TileKey, (Arc<WoodTile>, u64)>,
+    /// Cells made since the start (the tests, the logs).
+    wood_made: u64,
 }
 
 impl WorldCache {
     pub fn new(world: Option<Arc<WorldObstacles>>) -> Self {
         Self {
             world,
-            tiles: BTreeMap::new(),
+            ..Self::default()
         }
+    }
+
+    /// The obstacles and the woods of a road network's world.
+    pub fn for_network(net: &ocw_world::RoadNetwork) -> Self {
+        Self::new(net.obstacles().cloned()).with_woods(net.woods().cloned())
+    }
+
+    /// The same with the trunks off the road.
+    pub fn with_woods(mut self, woods: Option<Arc<Woods>>) -> Self {
+        self.woods = woods;
+        self.wood_cells.clear();
+        self.wood_tiles.clear();
+        self
+    }
+
+    /// Nothing solid in this world at all.
+    pub fn is_empty(&self) -> bool {
+        self.world.is_none() && self.woods.is_none()
+    }
+
+    /// The trunks off the road whose circles reach into the box (lo, hi)
+    /// (spec 14 Phase 13 Q10 (a)): the cells it touches are made from the
+    /// drawn trees when first needed (the road-side trees of `OBST` left
+    /// out: they come from [`Self::solids_near`]) and kept while used.
+    pub fn trunks_near(&mut self, lo: [f64; 2], hi: [f64; 2], tick: u64, out: &mut Vec<Solid>) {
+        let Some(woods) = self.woods.clone() else {
+            return;
+        };
+        let m = MAX_TRUNK_RADIUS_M;
+        let (lo, hi) = ([lo[0] - m, lo[1] - m], [hi[0] + m, hi[1] + m]);
+        for cell in WoodCell::covering(lo, hi, woods.tile_size_m()) {
+            let Some(solids) = self.wood_cell(&woods, cell, tick) else {
+                continue;
+            };
+            out.extend(solids.iter().filter(|s| {
+                let (a, b) = s.bounds();
+                a[0] <= hi[0] && b[0] >= lo[0] && a[1] <= hi[1] && b[1] >= lo[1]
+            }));
+        }
+    }
+
+    /// The trunks of `cell`, made if needed (`None`: its tile is not
+    /// loaded – nothing cached, asked again next time).
+    fn wood_cell(&mut self, woods: &Woods, cell: WoodCell, tick: u64) -> Option<Arc<[Solid]>> {
+        if let Some(e) = self.wood_cells.get_mut(&cell) {
+            e.1 = tick;
+            if let Some(t) = self.wood_tiles.get_mut(&cell.tile) {
+                t.1 = tick;
+            }
+            return Some(e.0.clone());
+        }
+        let tile = match self.wood_tiles.get_mut(&cell.tile) {
+            Some(t) => {
+                t.1 = tick;
+                t.0.clone()
+            }
+            None => {
+                if !woods.has_tile(cell.tile) {
+                    return None;
+                }
+                let stored = Stored {
+                    cells: self
+                        .world
+                        .as_ref()
+                        .and_then(|w| w.tile_tree_cells(cell.tile)),
+                    planted: self
+                        .world
+                        .as_ref()
+                        .map(|w| w.tile_planted_feet(cell.tile))
+                        .unwrap_or_default(),
+                };
+                let planted = woods.planted_trunks(cell.tile, &stored)?;
+                let t = Arc::new(WoodTile { stored, planted });
+                self.wood_tiles.insert(cell.tile, (t.clone(), tick));
+                t
+            }
+        };
+        let size = woods.tile_size_m();
+        let mut trunks = woods.grid_trunks(cell, &tile.stored)?;
+        trunks.extend(
+            tile.planted
+                .iter()
+                .filter(|t| WoodCell::containing(t.c, size) == cell)
+                .copied(),
+        );
+        let solids: Arc<[Solid]> = trunks
+            .into_iter()
+            .map(|t| Solid {
+                shape: Shape::Circle { c: t.c, r: t.r },
+                kind: ObstacleKind::Tree,
+                y: None,
+                id: t.id,
+            })
+            .collect();
+        self.wood_cells.insert(cell, (solids.clone(), tick));
+        self.wood_made += 1;
+        if self.wood_cells.len() > MAX_WOOD_CELLS
+            && let Some(old) = self
+                .wood_cells
+                .iter()
+                .filter(|(c, _)| **c != cell)
+                .min_by_key(|(_, (_, used))| *used)
+                .map(|(c, _)| *c)
+        {
+            // The oldest cell goes (a rider far away, or a long ride).
+            self.wood_cells.remove(&old);
+        }
+        Some(solids)
+    }
+
+    /// Cells of trunks off the road in memory.
+    pub fn wood_cells(&self) -> usize {
+        self.wood_cells.len()
+    }
+
+    /// Cells of trunks made so far (made again after a drop counts again).
+    pub fn wood_cells_made(&self) -> u64 {
+        self.wood_made
+    }
+
+    /// The trunks off the road in memory.
+    pub fn wood_trunks(&self) -> usize {
+        self.wood_cells.values().map(|(s, _)| s.len()).sum()
+    }
+
+    /// Approximate memory of the trunks off the road (bytes).
+    pub fn wood_bytes(&self) -> usize {
+        self.wood_trunks() * std::mem::size_of::<Solid>()
+            + self.wood_cells.len() * 64
+            + self
+                .wood_tiles
+                .values()
+                .map(|(t, _)| {
+                    t.stored.cells.as_ref().map_or(0, |(_, c)| c.len())
+                        + t.stored.planted.len() * 8
+                        + t.planted.len() * std::mem::size_of::<Trunk>()
+                })
+                .sum::<usize>()
     }
 
     /// The solids whose index cells overlap the box (lo, hi), from every
@@ -1125,11 +1290,18 @@ impl WorldCache {
         }
     }
 
-    /// Drops the tiles nobody used for [`WORLD_TILE_KEEP_S`].
+    /// Drops the tiles nobody used for [`WORLD_TILE_KEEP_S`] and the cells
+    /// of trunks nobody used for [`WOOD_CELL_KEEP_S`].
     pub fn sweep(&mut self, tick: u64) {
         let keep = (WORLD_TILE_KEEP_S / SIM_DT) as u64;
         self.tiles
             .retain(|_, (_, used)| tick.saturating_sub(*used) <= keep);
+        let keep = (WOOD_CELL_KEEP_S / SIM_DT) as u64;
+        self.wood_cells
+            .retain(|_, (_, used)| tick.saturating_sub(*used) <= keep);
+        let cells = &self.wood_cells;
+        self.wood_tiles
+            .retain(|k, _| cells.keys().any(|c| c.tile == *k));
     }
 
     /// Tiles with an index in memory.
@@ -1138,7 +1310,10 @@ impl WorldCache {
     }
 
     /// Resolves `body` (its road at height `y`) against the solids around
-    /// it ([`resolve_static`]); `scratch` is reused between calls.
+    /// it ([`resolve_static`]); off the road (`deep`) also against the
+    /// trunks of the drawn trees ([`Self::trunks_near`]; none are made with
+    /// collisions off). `scratch` is reused between calls.
+    #[allow(clippy::too_many_arguments)]
     pub fn resolve(
         &mut self,
         body: &Body,
@@ -1146,16 +1321,22 @@ impl WorldCache {
         tick: u64,
         mode: Mode,
         max_heading: f64,
+        deep: bool,
         scratch: &mut Vec<Solid>,
     ) -> Response {
         let reach = BODY_LENGTH_M / 2.0 + 0.5;
         scratch.clear();
-        self.solids_near(
+        if mode == Mode::Off {
+            return Response::default();
+        }
+        let (lo, hi) = (
             [body.pos[0] - reach, body.pos[1] - reach],
             [body.pos[0] + reach, body.pos[1] + reach],
-            tick,
-            scratch,
         );
+        self.solids_near(lo, hi, tick, scratch);
+        if deep {
+            self.trunks_near(lo, hi, tick, scratch);
+        }
         // Railings and tunnel walls only at the height of the own road.
         scratch.retain(|s| s.reaches(y));
         resolve_static(body, scratch, mode, max_heading)
@@ -1351,6 +1532,9 @@ pub fn lean_of(speed: f64, curvature: f64) -> f64 {
 
 #[cfg(test)]
 mod props_tests;
+
+#[cfg(test)]
+mod woods_tests;
 
 #[cfg(test)]
 mod tests {

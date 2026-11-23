@@ -296,6 +296,27 @@ impl Species {
         }
     }
 
+    /// The radius of its drawn trunk at the foot (m) at scale 1 – the
+    /// renderer's generator draws the trunk with it (`ocw-render::flora`)
+    /// and the collisions off the road take it (spec 14 Phase 13 Q10):
+    /// conifers 1.6 % of the height, pines 2.2 %, broadleaves 2 % + 5 cm
+    /// (one stem), the palms and the dragon tree their own; 0 for the soft
+    /// plants ([`Self::solid`]).
+    pub fn trunk_radius_m(self) -> f32 {
+        use Species::*;
+        if !self.solid() {
+            return 0.0;
+        }
+        match self {
+            NorwaySpruce | SilverFir | DouglasFir | Larch => 0.016 * self.height_m(),
+            ScotsPine | CanaryPine => 0.022 * self.height_m(),
+            DatePalm => 0.45,
+            SlenderPalm => 0.24,
+            DragonTree => 0.55,
+            _ => 0.02 * self.height_m() + 0.05,
+        }
+    }
+
     /// Whether a rider in wild mode hits it as a trunk (spec §14 Phase 12
     /// K3): trees and palms; shrubs, succulents and banana plants are soft.
     pub fn solid(self) -> bool {
@@ -927,6 +948,168 @@ pub fn alive(region: FloraRegion, alt_m: f64) -> f32 {
 
 fn ramp(x: f64, lo: f64, hi: f64) -> f64 {
     ((x - lo) / (hi - lo)).clamp(0.0, 1.0)
+}
+
+/// The seasons' tree setting of a land class (`None`: the provisional
+/// patches, a forest) for the leaf-type fallback.
+pub fn tree_setting(class: Option<LandClass>) -> ocw_sky::season::TreeSetting {
+    use ocw_sky::season::TreeSetting;
+    match class {
+        None | Some(LandClass::Forest) => TreeSetting::Forest,
+        Some(LandClass::Orchard) => TreeSetting::Orchard,
+        Some(
+            LandClass::Park
+            | LandClass::Residential
+            | LandClass::Commercial
+            | LandClass::Industrial,
+        ) => TreeSetting::Urban,
+        Some(LandClass::Scrub) => TreeSetting::Scrub,
+        Some(LandClass::Wetland) => TreeSetting::Wetland,
+        Some(_) => TreeSetting::Open,
+    }
+}
+
+/// The measured leaf type for the seasons.
+pub fn measured_leaf_type(m: Option<DominantLeaf>) -> Option<ocw_sky::season::MeasuredLeaf> {
+    m.map(|m| match m {
+        DominantLeaf::Broadleaved => ocw_sky::season::MeasuredLeaf::Broadleaved,
+        DominantLeaf::Coniferous => ocw_sky::season::MeasuredLeaf::Coniferous,
+    })
+}
+
+/// The leaf group of a tree from the seasons' leaf type.
+pub fn leaf_group(leaf: ocw_sky::season::LeafType) -> LeafGroup {
+    use ocw_sky::season::LeafType;
+    match leaf {
+        LeafType::Evergreen => LeafGroup::Evergreen,
+        LeafType::Deciduous => LeafGroup::Deciduous,
+        LeafType::Larch => LeafGroup::Larch,
+    }
+}
+
+/// Whether water or wetland lies within 15 m of (x, z) (alders and
+/// willows on the banks).
+pub fn near_water(pkg: &crate::WorldPackage, x: f64, z: f64) -> bool {
+    let Some(lu) = pkg.landuse.as_ref() else {
+        return false;
+    };
+    let size = f64::from(pkg.tile_size_m);
+    [
+        (0.0, 0.0),
+        (15.0, 0.0),
+        (-15.0, 0.0),
+        (0.0, 15.0),
+        (0.0, -15.0),
+    ]
+    .iter()
+    .any(|(dx, dz)| {
+        matches!(
+            lu.class_at(size, x + dx, z + dz),
+            Some(LandClass::Water | LandClass::Wetland)
+        )
+    })
+}
+
+/// What decides the species of the trees of one tile: the region, the
+/// seasons' leaf mix of the package's place (`ocw_sky::season::Climate`
+/// by its origin – the same on every day and for every viewer) and the
+/// side of Tenerife at the tile's centre. The renderer draws each grid
+/// tree as [`GridTrees::tree`] says, and the trunks off the road
+/// ([`crate::woods`]) take the same species, scale and trunk.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GridTrees {
+    pub region: FloraRegion,
+    pub mix: ocw_sky::season::LeafMix,
+    pub windward: bool,
+}
+
+impl GridTrees {
+    /// For tile `key` of `pkg`.
+    pub fn of_tile(pkg: &crate::WorldPackage, key: crate::TileKey) -> Self {
+        let size = f64::from(pkg.tile_size_m);
+        let o = key.origin(size);
+        let proj = crate::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1);
+        let (lat, lon) = proj.unproject([o[0] + size / 2.0, o[1] + size / 2.0]);
+        Self {
+            region: FloraRegion::at(pkg.origin.0, pkg.origin.1),
+            mix: ocw_sky::season::Climate::for_place(pkg.origin.0, pkg.origin.1).trees,
+            windward: windward(lat, lon),
+        }
+    }
+
+    /// The hash bits of a plant standing at (x, z) (its picks).
+    pub fn bits(x: f32, z: f32) -> (i64, i64) {
+        (i64::from(x.to_bits()), i64::from(z.to_bits()))
+    }
+
+    /// The place of a plant of land class `class` at (x, z), `alt` high.
+    pub fn site(
+        &self,
+        pkg: &crate::WorldPackage,
+        class: Option<LandClass>,
+        x: f32,
+        z: f32,
+        alt: f64,
+    ) -> Site {
+        Site {
+            region: self.region,
+            setting: Setting::of_class(class),
+            alt_m: alt,
+            measured: crate::trees::measured_leaf(pkg, f64::from(x), f64::from(z)),
+            windward: self.windward,
+            near_water: near_water(pkg, f64::from(x), f64::from(z)),
+        }
+    }
+
+    /// The leaf type of a tree (measured, else the regional mix).
+    pub fn leaf(
+        &self,
+        pkg: &crate::WorldPackage,
+        class: Option<LandClass>,
+        x: f32,
+        z: f32,
+        alt: f64,
+    ) -> ocw_sky::season::LeafType {
+        let bits = Self::bits(x, z);
+        let measured =
+            measured_leaf_type(crate::trees::measured_leaf(pkg, f64::from(x), f64::from(z)));
+        self.mix.leaf_type(
+            tree_setting(class),
+            alt,
+            measured,
+            crate::trees::hash(bits.0, bits.1, 13),
+        )
+    }
+
+    /// The species and the drawn scale of the grid's tree of land class
+    /// `class` standing at `foot` with the grid's scale `s`
+    /// ([`crate::trees::tree_sites`]): the species by the regional rules
+    /// within its leaf group, the scale around its class's mean times the
+    /// species' stature at its altitude. Its trunk at the foot is
+    /// [`Species::trunk_radius_m`] times the scale.
+    pub fn tree(
+        &self,
+        pkg: &crate::WorldPackage,
+        class: Option<LandClass>,
+        foot: [f32; 3],
+        s: f32,
+    ) -> (Species, f32) {
+        let (x, z) = (foot[0], foot[2]);
+        let bits = Self::bits(x, z);
+        let alt = f64::from(foot[1]);
+        let leaf = self.leaf(pkg, class, x, z, alt);
+        let site = self.site(pkg, class, x, z, alt);
+        let sp = pick_species(
+            &site,
+            leaf_group(leaf),
+            crate::trees::hash(bits.0, bits.1, 19),
+        );
+        // The grid's scale by land class (0.35 … 1.5) around its class's
+        // mean: the species' own size varies by ±30 %.
+        let (_, s0, s1) = crate::trees::tree_density(class.unwrap_or_default());
+        let scale = s / ((s0 + s1) / 2.0).max(0.1) * stature(self.region, sp, alt);
+        (sp, scale)
+    }
 }
 
 #[cfg(test)]

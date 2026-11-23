@@ -387,7 +387,7 @@ impl Session {
     /// on the road are held by its edge and never reach them (the routed
     /// road is never blocked, Q7).
     fn resolve_world(&mut self, mode: Mode) {
-        if self.world.world.is_none() {
+        if self.world.is_empty() {
             return;
         }
         let tick = self.tick;
@@ -401,6 +401,9 @@ impl Session {
         for id in wild {
             let r = &self.riders[&id];
             let st = r.state;
+            // Off the road the drawn trees are trunks too (spec 14 Phase
+            // 13 Q10 (a)).
+            let deep = r.off_road.is_some();
             let mass = r.effective.rider_mass_kg + r.effective.bike_mass_kg;
             let p = self.track(id).sample(st.distance);
             let at = p.offset_position(st.lateral_offset);
@@ -422,6 +425,7 @@ impl Session {
                 tick,
                 mode,
                 physics::WILD_MAX_HEADING,
+                deep,
                 &mut solids,
             );
             if resp.touched() {

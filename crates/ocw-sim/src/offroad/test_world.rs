@@ -57,6 +57,17 @@ pub const TREE: [f32; 2] = [500.0, 700.0];
 /// road along z = 500 from x = 0 to 2000 (two edges, 6 m wide), a lake, a
 /// wood, rock, a house and a tree.
 pub fn world() -> Arc<RoadNetwork> {
+    network(package(), false)
+}
+
+/// [`world`] with its drawn trees as trunks off the road (spec 14 Phase
+/// 13 Q10 (a)): the wood (x 600 … 800, z ≥ 600) is dense with them.
+pub fn wooded_world() -> Arc<RoadNetwork> {
+    network(package(), true)
+}
+
+/// The test world's package.
+pub fn package() -> WorldPackage {
     let n = 101u32;
     let mut tiles = BTreeMap::new();
     let mut lu = BTreeMap::new();
@@ -124,7 +135,7 @@ pub fn world() -> Arc<RoadNetwork> {
             ..Default::default()
         },
     );
-    let pkg = WorldPackage {
+    WorldPackage {
         name: "offroad-test".into(),
         origin: (47.14, 9.52),
         tile_size_m: 1000.0,
@@ -148,7 +159,12 @@ pub fn world() -> Arc<RoadNetwork> {
         obstacles: Some(obst),
         places: None,
         junctions: None,
-    };
+    }
+}
+
+/// The road network of `pkg` (its obstacles, ground and, with `woods`,
+/// its trees off the road).
+pub fn network(pkg: WorldPackage, woods: bool) -> Arc<RoadNetwork> {
     let vertices = vec![[0.0, 500.0], [1000.0, 500.0], [2000.0, 500.0]];
     let edges = (0..2u32)
         .map(|k| Edge {
@@ -176,6 +192,7 @@ pub fn world() -> Arc<RoadNetwork> {
     Arc::new(
         RoadNetwork::new(graph)
             .with_obstacles(ocw_world::obstacles::WorldObstacles::from_package(&pkg).map(Arc::new))
-            .with_ground(Some(Arc::new(GroundMap::from_package(&pkg)))),
+            .with_ground(Some(Arc::new(GroundMap::from_package(&pkg))))
+            .with_woods(woods.then(|| Arc::new(ocw_world::woods::Woods::new(Arc::new(pkg))))),
     )
 }
