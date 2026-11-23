@@ -505,7 +505,13 @@ mod tests {
     #[test]
     fn angle_weighted_normals() {
         let mut s = Shape::default();
-        s.ellipsoid(Vec3::ZERO, Vec3::new(0.0125, 0.0036, 0.0032), Quat::IDENTITY, 3, 6);
+        s.ellipsoid(
+            Vec3::ZERO,
+            Vec3::new(0.0125, 0.0036, 0.0032),
+            Quat::IDENTITY,
+            3,
+            6,
+        );
         let pos = s.positions.clone();
         // A fan around one vertex: a wide triangle and a thin sliver.
         let mut fan = Shape::default();
@@ -526,7 +532,12 @@ mod tests {
         let mut again = s.clone();
         again.smooth_by_angle();
         assert_eq!(again.positions, pos);
-        assert!(again.normals.iter().all(|n| (n.length() - 1.0).abs() < 1e-5));
+        assert!(
+            again
+                .normals
+                .iter()
+                .all(|n| (n.length() - 1.0).abs() < 1e-5)
+        );
         // The rider's mouth inside (a coarse flat ellipsoid): weighted by
         // area some normals lie behind their triangle, by angle none.
         let behind = |s: &Shape| {

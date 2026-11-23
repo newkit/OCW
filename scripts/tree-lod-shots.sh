@@ -15,7 +15,10 @@
 # from 600 m to 60 m on four dates, the Black Forest),
 # scripts/tree-lod-scenes-unicorn.txt (the unicorn low over a wood),
 # scripts/plant-files-scenes.txt (the plants near and far in Liechtenstein,
-# the Black Forest and on Tenerife, July and November: spec 15G Q11 (a)).
+# the Black Forest and on Tenerife, July and November: spec 15G Q11 (a)),
+# scripts/plant-origin-scenes.txt (the four plants Phase 15 Q10 (a) set on
+# their stem base, up close in their worlds; found with ocw-render's
+# example find-plants).
 # OCW_FLORA=files draws the plants from their model files.
 set -euo pipefail
 export LC_ALL=C

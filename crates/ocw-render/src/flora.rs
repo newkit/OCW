@@ -366,6 +366,56 @@ pub fn blob(
     lathe(m, base, centre, s, &prof, seg, colour, turn, k);
 }
 
+/// [`blob`] cut off flat at the ground (`base`'s height): the part above
+/// the ground as before, closed by a disc on the ground, so the plant's
+/// lowest point is its stem base (spec 15B, Phase 15 Q10 (a)).
+#[allow(clippy::too_many_arguments)]
+pub fn blob_on_ground(
+    m: &mut MeshArrays,
+    base: Vec3,
+    centre: Vec3,
+    r: Vec3,
+    s: f32,
+    seg: u32,
+    rings: u32,
+    colour: [f32; 3],
+    turn: f32,
+) {
+    let mut prof = Vec::with_capacity(rings as usize + 2);
+    for i in 0..=rings + 1 {
+        let t = i as f32 / (rings + 1) as f32 * std::f32::consts::PI;
+        let rr = if i == 0 || i == rings + 1 {
+            0.0
+        } else {
+            t.sin()
+        };
+        prof.push((-t.cos() * r.y, rr));
+    }
+    let prof = cut_at(&prof, -centre.y);
+    let k = (r.x.max(1e-3), r.z.max(1e-3));
+    lathe(m, base, centre, s, &prof, seg, colour, turn, k);
+}
+
+/// A lathe profile (bottom to top) cut at the height `floor`: the points
+/// below it dropped, the crossing segment ending on the floor at its own
+/// radius, closed by a disc (an apex on the floor).
+pub fn cut_at(prof: &[(f32, f32)], floor: f32) -> Vec<(f32, f32)> {
+    let Some(i) = prof.iter().position(|p| p.0 > floor) else {
+        return Vec::new();
+    };
+    if i == 0 {
+        return prof.to_vec();
+    }
+    let ((y0, r0), (y1, r1)) = (prof[i - 1], prof[i]);
+    let rc = r0 + (r1 - r0) * (floor - y0) / (y1 - y0);
+    let mut out = vec![(floor, 0.0)];
+    if rc > 1e-3 {
+        out.push((floor, rc));
+    }
+    out.extend_from_slice(&prof[i..]);
+    out
+}
+
 /// A tapering tube from `a` to `b` (package metres) with radii `ra` /
 /// `rb`, closed at both ends: trunks and branches.
 #[allow(clippy::too_many_arguments)]
@@ -765,8 +815,10 @@ pub fn generate(m: &mut MeshArrays, sp: Species, at: &PlantAt, look: &PlantLook,
                     Broom => (r, 0.62 * h),
                     _ => (r * 0.62 * leafy, 0.5 * h),
                 };
-                let y = if sp == Broom { 0.25 * h } else { 0.52 * h };
-                blob(
+                // The broom's one dome is cut off at the ground (it reached
+                // 0.67 m below it); the others rest on it (Q10 (a)).
+                let y = if sp == Broom { 0.25 * h } else { 0.5 * h };
+                blob_on_ground(
                     m,
                     base,
                     Vec3::new(off * a.cos(), y, off * a.sin()),
@@ -809,7 +861,8 @@ pub fn generate(m: &mut MeshArrays, sp: Species, at: &PlantAt, look: &PlantLook,
                 let a = turn + i as f32 * 1.9;
                 let y = 0.3 + (i as f32 / n as f32) * 0.6 * h;
                 let d = 0.4 * r * h01(at.pick, i);
-                blob(
+                // The lowest pads stand on the ground (Q10 (a)).
+                blob_on_ground(
                     m,
                     base,
                     Vec3::new(d * a.cos(), y, d * a.sin()),
@@ -828,9 +881,10 @@ pub fn generate(m: &mut MeshArrays, sp: Species, at: &PlantAt, look: &PlantLook,
                 let a = turn + i as f32 * 2.39;
                 let dir = Vec3::new(a.cos(), 0.0, a.sin());
                 let up = 0.6 + 0.9 * (i % 3) as f32 / 2.0;
+                // From the ground (it floated 0.1 m above it; Q10 (a)).
                 blade(
                     m,
-                    base + Vec3::Y * 0.1,
+                    base,
                     dir,
                     up,
                     1.0 * s,
@@ -1494,6 +1548,22 @@ mod tests {
         edges
             .iter()
             .all(|(&(a, b), &n)| n == 1 && edges.get(&(b, a)) == Some(&1))
+    }
+
+    /// A profile cut at the ground keeps what is above it (the crossing
+    /// segment ends on the ground at its own radius) and closes it with a
+    /// disc; one already above the ground is unchanged (Q10 (a)).
+    #[test]
+    fn a_profile_cut_at_the_ground() {
+        let prof = [(-1.0, 0.0), (-0.5, 0.8), (0.5, 1.0), (1.0, 0.0)];
+        let cut = cut_at(&prof, 0.0);
+        assert_eq!(cut[0], (0.0, 0.0));
+        assert_eq!(cut[1].0, 0.0);
+        assert!((cut[1].1 - 0.9).abs() < 1e-6, "{cut:?}");
+        assert_eq!(&cut[2..], &prof[2..]);
+        assert_eq!(cut_at(&prof, -2.0), prof.to_vec());
+        // A pole exactly on the ground: nothing to cut.
+        assert_eq!(cut_at(&prof, -1.0), prof.to_vec());
     }
 
     #[test]
