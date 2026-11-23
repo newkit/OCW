@@ -22,7 +22,7 @@ tools = ["dep:image", "dep:texpresso", "dep:ureq", "dep:zip"]
 [dependencies]
 ocw-core.workspace = true
 # The same glam as Bevy's (bevy_math), so poses need no conversion.
-glam.workspace = true
+glam = { workspace = true, features = ["serde"] }
 # glTF 2.0 reader (MIT OR Apache-2.0), the version Bevy's loader uses; no
 # `import` feature (no image decoding, no file access).
 gltf.workspace = true

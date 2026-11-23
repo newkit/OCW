@@ -6925,6 +6925,8 @@ dependencies = [
 name = "ocw-edit"
 version = "0.2.5"
 dependencies = [
+ "glam",
+ "ocw-assets",
  "ocw-fit",
  "ocw-world",
  "serde",

@@ -407,6 +407,7 @@ mod tests {
             color: [0.5, 0.5, 0.5, 1.0],
             metallic: 0.0,
             roughness: 0.5,
+            emissive: [0.0; 3],
         });
         let root = m.add(Node::new("gate", None, Vec3::ZERO));
         for (name, x) in [("post_l", -1.5), ("post_r", 1.5)] {
@@ -540,6 +541,7 @@ mod tests {
             color: [1.0; 4],
             metallic: 0.0,
             roughness: 0.4,
+            emissive: [0.0; 3],
         });
         let root = m.add(Node::new("lamp", None, Vec3::ZERO));
         let mut arm = Node::new("arm", Some(root), Vec3::new(-0.05, 0.0, 0.0));

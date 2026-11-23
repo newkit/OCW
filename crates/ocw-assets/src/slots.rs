@@ -185,6 +185,7 @@ pub fn material(name: &str) -> Material {
         color: srgb(s.color),
         metallic: s.metallic,
         roughness: s.roughness,
+        emissive: [0.0; 3],
     }
 }
 

@@ -188,14 +188,20 @@ pub fn write(model: &Model) -> Vec<u8> {
         .materials
         .iter()
         .map(|m| {
-            json!({
+            let mut v = json!({
                 "name": m.name,
                 "pbrMetallicRoughness": {
                     "baseColorFactor": m.color.map(q),
                     "metallicFactor": m.metallic,
                     "roughnessFactor": m.roughness
                 }
-            })
+            });
+            // Only a glowing material carries it (the files without one
+            // stay byte for byte as before).
+            if m.emissive.iter().any(|c| *c != 0.0) {
+                v["emissiveFactor"] = json!(m.emissive.map(q));
+            }
+            v
         })
         .collect();
     while !bin.len().is_multiple_of(4) {
@@ -385,6 +391,7 @@ pub fn read_opts(
                 color: pbr.base_color_factor(),
                 metallic: pbr.metallic_factor(),
                 roughness: pbr.roughness_factor(),
+                emissive: m.emissive_factor(),
             }
         })
         .collect();

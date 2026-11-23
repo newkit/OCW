@@ -77,6 +77,8 @@ pub struct Studio {
     pub build: Option<BuildJob>,
     /// The Routes workspace: its document, the road graph, the planners.
     pub routes: crate::routes::RouteTools,
+    /// The Models workspace's document (E4, [`crate::model_edit`]).
+    pub models: crate::model_edit::ModelTools,
 }
 
 impl Studio {
@@ -93,6 +95,7 @@ impl Studio {
             way_scope: false,
             build: None,
             routes: crate::routes::RouteTools::default(),
+            models: crate::model_edit::ModelTools::default(),
         }
     }
 
@@ -315,6 +318,8 @@ pub enum StudioCommand {
     Build(BuildRequest),
     /// A Routes workspace command (16D).
     Route(crate::routes::RouteCommand),
+    /// A Models workspace edit (E4).
+    Model(crate::model_edit::ModelCommand),
     /// The workspace shown: its document is the one Undo / Redo act on.
     Workspace(crate::ui::Workspace),
 }
@@ -379,7 +384,24 @@ pub fn apply(world: &mut World, cmd: StudioCommand) -> Result<String, String> {
         let f = &world.resource::<StudioFlight>().flight;
         (f.pos, f.view_yaw(), f.view_pitch())
     };
+    // Ctrl + S saves the active document: in the Models workspace the
+    // model (its diff first).
+    let models_active = {
+        let s = world.resource::<Studio>();
+        s.models.doc.is_some() && s.session.active_id() == s.models.doc
+    };
+    let cmd = match cmd {
+        StudioCommand::SavePatch if models_active => {
+            StudioCommand::Model(crate::model_edit::ModelCommand::Save(None))
+        }
+        c => c,
+    };
     match cmd {
+        StudioCommand::Model(c) => {
+            world.resource_scope(|world, mut view: Mut<crate::models_view::ModelView>| {
+                crate::model_edit::command(&mut world.resource_mut::<Studio>(), &mut view, c, t)
+            })
+        }
         StudioCommand::Open(spec) => crate::world::open(world, spec.trim()),
         StudioCommand::FlyTo(p, height) => {
             let ground = world
@@ -593,6 +615,7 @@ pub fn edit(
         StudioCommand::Workspace(w) => {
             let doc = match w {
                 crate::ui::Workspace::Routes => studio.routes.doc,
+                crate::ui::Workspace::Models => studio.models.doc,
                 _ => studio.world_doc,
             };
             if let Some(id) = doc {
@@ -606,6 +629,7 @@ pub fn edit(
         | StudioCommand::FlightModel(_)
         | StudioCommand::GoToView(_)
         | StudioCommand::Focus
+        | StudioCommand::Model(_)
         | StudioCommand::Build(_) => Err("not a document command".into()),
         other => patch_command(studio, other, now_s),
     }
@@ -1098,12 +1122,21 @@ pub fn focus_point(studio: &Studio) -> Option<[f64; 3]> {
 fn run_pending(world: &mut World) {
     let cmds = std::mem::take(&mut world.resource_mut::<Pending>().0);
     for c in cmds {
+        // The Models workspace has its own status line.
+        let model = matches!(c, StudioCommand::Model(_)) || {
+            let s = world.resource::<Studio>();
+            s.models.doc.is_some() && s.session.active_id() == s.models.doc
+        };
         let msg = match apply(world, c) {
             Ok(m) => m,
             Err(e) => format!("error: {e}"),
         };
         if !msg.is_empty() {
             info!("{msg}");
+            if model && let Some(mut v) = world.get_resource_mut::<crate::models_view::ModelView>()
+            {
+                v.status = msg.clone();
+            }
             world.resource_mut::<Studio>().status = msg;
         }
     }
@@ -1263,6 +1296,10 @@ impl Plugin for EditPlugin {
                 .subcommand(words(
                     "route",
                     "The Routes workspace: new [NAME] | import PATH | package N | plan X Z X Z … | via add|insert|move|remove … | drag GX GZ X Z | reverse | loop on|off | outback | cut start|end N | split N | profile P | planner builtin|brouter | brouter url URL | brouter profile P | brouter ok | brouter plan | export PATH | save [PATH] | testride | info",
+                ))
+                .subcommand(words(
+                    "model",
+                    "The Models workspace's edits (E4): select NAME|none | move|rotate|scale X Y Z | rename NAME | parent NAME|none [keep|local] | delete | anchor NAME [X Y Z] | hotspot SLOT [X Y Z] | lod lod1|lod2|billboard | proxy box|cylinder|capsule mesh|empty [CX CY CZ HX HY HZ] | slot MATERIAL SLOT [defaults] | colour|emissive MATERIAL R G B | metallic|roughness MATERIAL V | extras KEY VALUE|- | entry KEY TEXT | copyright TEXT | fixes | fix N|all | save [PATH] | save confirm|cancel | reimport [PATH] | blender | gizmo move|rotate|scale | snap on|off | info",
                 ))
                 .subcommand(words(
                     "patch",
@@ -1509,6 +1546,63 @@ fn studio_command(world: &mut World, m: &clap::ArgMatches) -> Result<String, Str
         }
         return Ok(msg);
     }
+    if let Some(("model", a)) = m.subcommand() {
+        let words: Vec<String> = a
+            .get_many::<String>("words")
+            .map(|w| w.cloned().collect())
+            .unwrap_or_default();
+        // The viewer's model as a document now (a `--cmd` line may come
+        // before the first frame's sync).
+        let models_active = world
+            .get_resource::<crate::models_view::ModelsActive>()
+            .is_some_and(|a| a.0);
+        world.resource_scope(|world, mut view: Mut<crate::models_view::ModelView>| {
+            crate::model_edit::ensure_doc(
+                &mut world.resource_mut::<Studio>(),
+                &mut view,
+                models_active,
+            );
+        });
+        // The panel's paint slot picker (shown for a material).
+        if words.first().map(String::as_str) == Some("picker") {
+            let pick = match words.get(1).map(String::as_str) {
+                None | Some("off") => None,
+                Some(m) => {
+                    let s = world.resource::<Studio>();
+                    let d = s.models.document(s).ok_or("no model is open")?;
+                    let mats = &d.content().model.materials;
+                    Some(
+                        m.parse::<usize>()
+                            .ok()
+                            .filter(|i| *i < mats.len())
+                            .or_else(|| d.content().model.material(m))
+                            .ok_or_else(|| format!("no material `{m}`"))?,
+                    )
+                }
+            };
+            world
+                .resource_mut::<crate::models_ui::ModelsForm>()
+                .slot_picker = pick;
+            return Ok(match pick {
+                Some(i) => format!("paint slot picker for material {i}"),
+                None => "paint slot picker closed".into(),
+            });
+        }
+        let cmd = match crate::model_edit::console_model(
+            &words,
+            world.resource::<Studio>(),
+            world.resource::<crate::models_view::ModelView>(),
+        )? {
+            Console::Say(text) => return Ok(text),
+            Console::Run(c) => c,
+        };
+        let msg = apply(world, cmd)?;
+        if !msg.is_empty() {
+            world.resource_mut::<Studio>().status = msg.clone();
+            world.resource_mut::<crate::models_view::ModelView>().status = msg.clone();
+        }
+        return Ok(msg);
+    }
     if let Some((group @ ("select" | "road" | "point" | "patch"), a)) = m.subcommand() {
         let words: Vec<String> = a
             .get_many::<String>("words")
@@ -1577,7 +1671,7 @@ fn studio_command(world: &mut World, m: &clap::ArgMatches) -> Result<String, Str
         },
         _ => {
             return Err(
-                "studio undo|redo|status|open|fly|view|select|road|point|patch|route".into(),
+                "studio undo|redo|status|open|fly|view|select|road|point|patch|route|model".into(),
             );
         }
     };
