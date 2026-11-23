@@ -1807,14 +1807,21 @@ fn opt_node_face(m: &mut Model, head: usize, skull: Vec3, detail: Detail) {
             2 * bands,
         );
     };
-    let mut p = Parts::new();
-    ellipsoid(&mut p, "lips", UPPER_LIP, 4);
-    ellipsoid(&mut p, "eye", MOUTH_INSIDE, 3);
-    p.attach(m, lips);
-    let mut p = Parts::new();
-    ellipsoid(&mut p, "lips", LOWER_LIP, 4);
-    ellipsoid(&mut p, "eye", MOUTH_INSIDE, 3);
-    p.attach(m, lower);
+    // Normals that survive Blender (spec 15P, Phase 15 Q11): smoothed by
+    // corner angle, as Blender computes them – the lower lip's
+    // area-weighted normals came back up to 0.002 off, and the dark
+    // inside's lay behind four of its triangles each (by angle they all
+    // lie on their triangles' fronts).
+    let mut lip = |node, radii| {
+        let mut p = Parts::new();
+        ellipsoid(&mut p, "lips", radii, 4);
+        ellipsoid(&mut p, "eye", MOUTH_INSIDE, 3);
+        p.slot("lips").smooth_by_angle();
+        p.slot("eye").smooth_by_angle();
+        p.attach(m, node);
+    };
+    lip(lips, UPPER_LIP);
+    lip(lower, LOWER_LIP);
 }
 
 /// Builds the rider model.
@@ -2966,6 +2973,44 @@ mod tests {
         let o = lower_lip_offset(1.0);
         assert!(o.y < -0.004 && o.y >= -0.007, "{o}");
         assert_eq!(lower_lip_offset(2.0), o, "clamped");
+    }
+
+    /// The lips survive Blender (spec 15P, Phase 15 Q11): in the generator
+    /// and in the shipped file every triangle of both lips' nodes has an
+    /// area and its normals on its front, and the normals of the lips and
+    /// the dark inside are the corner-angle-weighted ones Blender computes
+    /// itself.
+    #[test]
+    fn the_lips_normals_lie_on_their_triangles_fronts() {
+        let shipped = crate::shipped::model("riders/rider-body");
+        for (what, m) in [("generator", &build(Detail::High)), ("file", &*shipped)] {
+            for name in [LIPS, LIP_LOWER] {
+                let node = &m.nodes[m.node(name).unwrap()];
+                assert_eq!(node.primitives.len(), 2, "{what} {name}");
+                for p in &node.primitives {
+                    let mut by_angle = vec![Vec3::ZERO; p.positions.len()];
+                    for t in p.indices.as_chunks::<3>().0 {
+                        let v = t.map(|k| Vec3::from(p.positions[k as usize]));
+                        let face = (v[1] - v[0]).cross(v[2] - v[0]);
+                        assert!(face.length() > 1e-9, "{what} {name}: no area {v:?}");
+                        let face = face.normalize();
+                        for (j, &k) in t.iter().enumerate() {
+                            let n = Vec3::from(p.normals[k as usize]);
+                            assert!(n.dot(face) > 0.05, "{what} {name}: {n} behind {face}");
+                            let (a, b) = (v[(j + 1) % 3] - v[j], v[(j + 2) % 3] - v[j]);
+                            by_angle[k as usize] += face * a.angle_between(b);
+                        }
+                    }
+                    // The file's positions are rounded to 1/65536 m: on
+                    // millimetre triangles that turns the angles a little.
+                    let tol = if what == "file" { 5e-3 } else { 1e-4 };
+                    for (n, w) in p.normals.iter().zip(by_angle) {
+                        let d = Vec3::from(*n).distance(w.normalize());
+                        assert!(d < tol, "{what} {name}: {n:?} not by angle ({d})");
+                    }
+                }
+            }
+        }
     }
 
     /// Every hair style, moustache, beard, base body and age shows its

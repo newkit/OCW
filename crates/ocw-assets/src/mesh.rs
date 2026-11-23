@@ -364,6 +364,29 @@ impl Shape {
     pub fn triangles(&self) -> usize {
         self.indices.len() / 3
     }
+
+    /// Every vertex normal again from its triangles, each weighted by the
+    /// triangle's angle at the vertex – the way Blender computes a
+    /// smooth vertex normal. A custom normal Blender would compute
+    /// itself is stored as "its own" and comes back exactly; one far
+    /// from it is stored relative to it and can come back up to 0.8°
+    /// off (an angle snapped to its reference edge; spec 15P, the lower
+    /// lip of Phase 15 Q11). Use it on small smooth parts whose
+    /// area-weighted normals Blender rewrites.
+    pub fn smooth_by_angle(&mut self) {
+        let mut normals = vec![Vec3::ZERO; self.positions.len()];
+        for t in self.indices.as_chunks::<3>().0 {
+            let p = t.map(|i| self.positions[i as usize]);
+            let face = (p[1] - p[0]).cross(p[2] - p[0]).normalize_or_zero();
+            for k in 0..3 {
+                let (a, b) = (p[(k + 1) % 3] - p[k], p[(k + 2) % 3] - p[k]);
+                normals[t[k] as usize] += face * a.angle_between(b);
+            }
+        }
+        for (n, m) in self.normals.iter_mut().zip(normals) {
+            *n = m.normalize_or(*n);
+        }
+    }
 }
 
 /// Shapes by paint slot, for one node.
@@ -474,6 +497,47 @@ mod tests {
         let mut s = Shape::default();
         s.annulus(Vec3::ZERO, Vec3::X, 0.0, 0.1, 0.01, 12);
         outward(&s, Vec3::ZERO);
+    }
+
+    /// `smooth_by_angle` weights each triangle's normal by its corner
+    /// angle (a vertex of a thin sliver gets little of the sliver's
+    /// normal) and keeps the shape.
+    #[test]
+    fn angle_weighted_normals() {
+        let mut s = Shape::default();
+        s.ellipsoid(Vec3::ZERO, Vec3::new(0.0125, 0.0036, 0.0032), Quat::IDENTITY, 3, 6);
+        let pos = s.positions.clone();
+        // A fan around one vertex: a wide triangle and a thin sliver.
+        let mut fan = Shape::default();
+        let v = [
+            Vec3::ZERO,
+            Vec3::X,
+            Vec3::new(0.0, 1.0, 1.0).normalize(),
+            Vec3::new(0.05, 1.0, 0.0).normalize(),
+        ];
+        fan.add_smooth(&v, &[[0, 1, 2], [0, 2, 3]]);
+        fan.smooth_by_angle();
+        assert_eq!(fan.positions, v);
+        let f0 = (v[1]).cross(v[2]).normalize();
+        let f1 = (v[2]).cross(v[3]).normalize();
+        let (a0, a1) = (v[1].angle_between(v[2]), v[2].angle_between(v[3]));
+        let want = (f0 * a0 + f1 * a1).normalize();
+        assert!(fan.normals[0].distance(want) < 1e-5, "{}", fan.normals[0]);
+        let mut again = s.clone();
+        again.smooth_by_angle();
+        assert_eq!(again.positions, pos);
+        assert!(again.normals.iter().all(|n| (n.length() - 1.0).abs() < 1e-5));
+        // The rider's mouth inside (a coarse flat ellipsoid): weighted by
+        // area some normals lie behind their triangle, by angle none.
+        let behind = |s: &Shape| {
+            s.indices.chunks(3).any(|t| {
+                let [a, b, c] = [0, 1, 2].map(|k| s.positions[t[k] as usize]);
+                let face = (b - a).cross(c - a).normalize();
+                t.iter().any(|&k| s.normals[k as usize].dot(face) <= 0.05)
+            })
+        };
+        assert!(behind(&s), "area-weighted");
+        assert!(!behind(&again), "angle-weighted");
     }
 
     #[test]

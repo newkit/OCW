@@ -348,9 +348,15 @@ pub fn ellipsoid(r: Vec3, seg: u32, rings: u32) -> Shape {
     Shape { positions, indices }
 }
 
-/// A capped frustum along +y from 0 (radius `r0`) to `len` (radius `r1`).
+/// A capped frustum along +y from 0 (radius `r0`) to `len` (radius `r1`);
+/// with `r1` 0 a cone to one tip vertex (no triangles without area: their
+/// zero normals were what Blender recomputed in the ears and the far
+/// horn, spec 15P).
 pub fn tube(r0: f32, r1: f32, len: f32, sides: u32) -> Shape {
     let sides = sides.max(3);
+    if r1 <= 0.0 {
+        return cone(r0, len, sides);
+    }
     let mut positions = Vec::new();
     for (y, r) in [(0.0, r0), (len, r1)] {
         for s in 0..sides {
@@ -368,6 +374,27 @@ pub fn tube(r0: f32, r1: f32, len: f32, sides: u32) -> Shape {
         indices.extend([a, d, b, a, c, d]);
         indices.extend([bottom, a, b]);
         indices.extend([top, d, c]);
+    }
+    Shape { positions, indices }
+}
+
+/// A cone along +y from the base disc at 0 (radius `r0`) to the tip at
+/// `len`: the sides and the base, `2 * sides` triangles.
+fn cone(r0: f32, len: f32, sides: u32) -> Shape {
+    let mut positions: Vec<Vec3> = (0..sides)
+        .map(|s| {
+            let u = TAU * s as f32 / sides as f32;
+            Vec3::new(r0 * u.cos(), 0.0, r0 * u.sin())
+        })
+        .collect();
+    positions.push(Vec3::ZERO);
+    positions.push(Vec3::new(0.0, len, 0.0));
+    let (bottom, tip) = (sides, sides + 1);
+    let mut indices = Vec::new();
+    for s in 0..sides {
+        let (a, b) = (s, (s + 1) % sides);
+        indices.extend([a, tip, b]);
+        indices.extend([bottom, a, b]);
     }
     Shape { positions, indices }
 }
@@ -867,6 +894,40 @@ mod tests {
         }
     }
 
+    /// The unicorn survives Blender (spec 15P, Phase 15 Q11): in the
+    /// generator and in the shipped file every triangle has an area and
+    /// its normals on its front (the ears' and the far horn's cones once
+    /// ended in a ring of one point: triangles without area, zero
+    /// normals); a cone is a tip and a base.
+    #[test]
+    fn every_triangle_has_its_normals_on_its_front() {
+        let shipped = crate::shipped::model(crate::kinds::id_of(FILE));
+        for (what, m) in [("generator", &model()), ("file", &*shipped)] {
+            for node in &m.nodes {
+                for p in &node.primitives {
+                    for t in p.indices.as_chunks::<3>().0 {
+                        let v = t.map(|k| Vec3::from(p.positions[k as usize]));
+                        let face = (v[1] - v[0]).cross(v[2] - v[0]);
+                        assert!(face.length() > 1e-9, "{what} {}: no area {v:?}", node.name);
+                        let face = face.normalize();
+                        for &k in t {
+                            let n = Vec3::from(p.normals[k as usize]);
+                            assert!(n.dot(face) > 0.999, "{what} {}: {n} not {face}", node.name);
+                        }
+                    }
+                }
+            }
+        }
+        let cone = tube(0.05, 0.0, 0.17, 5);
+        assert_eq!((cone.triangles(), cone.positions.len()), (10, 7));
+        let (pos, nor) = cone.flat();
+        for (p, n) in pos.iter().zip(&nor) {
+            let c = Vec3::new(0.0, 0.05, 0.0);
+            assert!((Vec3::from(*p) - c).dot(Vec3::from(*n)) > 0.0, "outwards");
+            assert!(Vec3::from(*n).is_normalized());
+        }
+    }
+
     #[test]
     fn joint_names_and_slots_round_trip() {
         let mut names: Vec<String> = skeleton().iter().map(|d| d.joint.node()).collect();
@@ -949,7 +1010,9 @@ mod tests {
     /// The meshes are the ones the renderer generated before the file
     /// (v5.09, `ocw-render::unicorn::model_lod`): per joint, paint and
     /// level the same triangles, bounds, centre and area, and the same
-    /// pivots.
+    /// pivots. The head's coat (near and far) and the far horn have the
+    /// cones of 15P: fewer triangles (the ones without area are gone) and
+    /// so another vertex centre, the same bounds and area.
     #[test]
     fn the_parts_match_the_old_generated_unicorn() {
         let reference = include_str!("../tests/data/unicorn-generated-v5.09.txt");
