@@ -25,7 +25,58 @@ use std::sync::Arc;
 use ocw_core::SIM_DT;
 use ocw_world::TileKey;
 pub use ocw_world::obstacles::ObstacleKind;
-use ocw_world::obstacles::{MAX_POINT_RADIUS_M, Shape, Solid, TileIndex, WorldObstacles};
+use ocw_world::obstacles::{
+    MAX_POINT_RADIUS_M, PointShapes, Shape, ShapePart, Solid, TileIndex, WorldObstacles,
+};
+
+/// The solid footprint of a prop from its model file's collision proxies
+/// (`col_*`, read in both forms – a mesh's bounds or a scaled empty –
+/// while 15H Q9 is open; [`ocw_assets::props::proxies`]), in the model's
+/// frame: a file with posts (cylinder or capsule proxies) is a post at
+/// its point as wide as its widest one – the bars of a gate and the arm
+/// of a lift gate swing and stay open, as before; a file of boxes only
+/// (a concrete block, a cycle barrier's rails, a lamp's pole) collides
+/// with its boxes where they stand.
+pub fn shape_of_model(m: &ocw_assets::model::Model) -> Vec<ShapePart> {
+    let proxies = ocw_assets::props::proxies(m);
+    let post = proxies
+        .iter()
+        .filter(|p| p.shape != "box")
+        .map(|p| f64::from(p.half.x.max(p.half.z)))
+        .fold(None, |a: Option<f64>, r| Some(a.map_or(r, |a| a.max(r))));
+    if let Some(r) = post {
+        return vec![ShapePart::circle(r)];
+    }
+    proxies
+        .iter()
+        .map(|p| ShapePart {
+            round: false,
+            centre: [f64::from(p.centre.x), f64::from(p.centre.z)],
+            half: [f64::from(p.half.x), f64::from(p.half.z)],
+        })
+        .collect()
+}
+
+/// The point obstacles' footprints from their model files (spec 15H /
+/// 15N; [`shape_of_model`]), read once: what the server and the client's
+/// prediction collide with (kinds without a file – trees – keep
+/// [`ObstacleKind::radius_m`]).
+pub fn props_shapes() -> &'static PointShapes {
+    static SHAPES: std::sync::OnceLock<PointShapes> = std::sync::OnceLock::new();
+    SHAPES.get_or_init(|| {
+        PointShapes::new(
+            ObstacleKind::ALL
+                .iter()
+                .filter(|k| !k.is_line())
+                .filter_map(|&k| {
+                    let id = k.model_id()?;
+                    let parts = shape_of_model(&ocw_assets::shipped::model(id));
+                    (!parts.is_empty()).then_some((k, parts))
+                })
+                .collect(),
+        )
+    })
+}
 
 /// Footprint of a rider and bike (m): wheelbase plus wheels, handlebar
 /// width (12B). The default road bike; every profile uses it for now.
@@ -1050,10 +1101,12 @@ impl WorldCache {
         for x in a.x..=b.x {
             for z in a.z..=b.z {
                 let key = TileKey { x, z };
-                let entry = self
-                    .tiles
-                    .entry(key)
-                    .or_insert_with(|| (world.tile_index(key).map(Arc::new), tick));
+                let entry = self.tiles.entry(key).or_insert_with(|| {
+                    (
+                        world.tile_index_with(key, props_shapes()).map(Arc::new),
+                        tick,
+                    )
+                });
                 entry.1 = tick;
                 if let Some(index) = &entry.0 {
                     let first = out.len();
@@ -1295,6 +1348,9 @@ pub fn skid_lean(
 pub fn lean_of(speed: f64, curvature: f64) -> f64 {
     (speed * speed * curvature / ocw_core::GRAVITY).atan()
 }
+
+#[cfg(test)]
+mod props_tests;
 
 #[cfg(test)]
 mod tests {

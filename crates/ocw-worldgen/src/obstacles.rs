@@ -296,6 +296,101 @@ pub fn cut_line(points: &[[f64; 2]], outside: impl Fn([f64; 2]) -> bool) -> Vec<
     out
 }
 
+/// The point obstacles of `data` whose kind `want` accepts into `o`
+/// (by the tile they stand in, within the corridor), counted in `st`.
+/// Street lamps (`highway=street_lamp`) are stored where they are mapped,
+/// never as road barriers, their height OSM's `height` or 0 (the road
+/// class's, [`ocw_world::lamps::osm_lamp`]).
+fn add_points(
+    pkg: &WorldPackage,
+    data: &BarrierData,
+    proj: &LocalProjection,
+    roads: &StripIndex,
+    o: &mut Obstacles,
+    st: &mut ObstacleStats,
+    want: impl Fn(ObstacleKind) -> bool,
+) {
+    let size = f64::from(pkg.tile_size_m);
+    let tile_of = |p: [f64; 2]| TileKey::containing(p, size);
+    let mut points: Vec<(i64, &Tags)> = data.points.iter().map(|(i, t)| (*i, t)).collect();
+    points.sort_by_key(|p| p.0);
+    for (id, tags) in points {
+        let (Some(kind), Some(&(lat, lon))) = (point_kind(tags), data.nodes.get(&id)) else {
+            continue;
+        };
+        if !want(kind) {
+            continue;
+        }
+        let p = proj.project(lat, lon);
+        if !pkg.tiles.contains_key(&tile_of(p)) {
+            continue;
+        }
+        let Some(near) = roads.nearest(p, CORRIDOR_M) else {
+            st.outside_corridor += 1;
+            continue;
+        };
+        let mut flags = 0;
+        if near.edge_m <= CORRIDOR_MARGIN_M
+            && !matches!(
+                kind,
+                ObstacleKind::Pylon | ObstacleKind::Post | ObstacleKind::StreetLamp
+            )
+        {
+            flags |= ROAD_BARRIER;
+            st.road_barriers += 1;
+        }
+        if near.edge_m <= 0.0 && flags & ROAD_BARRIER != 0 {
+            flags |= ON_ROAD;
+            st.on_road += 1;
+        }
+        // A gate or lift gate on the road spans it, across its direction.
+        let spans =
+            matches!(kind, ObstacleKind::Gate | ObstacleKind::LiftGate) && flags & ON_ROAD != 0;
+        let height = match kind {
+            ObstacleKind::StreetLamp => height_m(tags).unwrap_or(0.0),
+            _ => height_m(tags).unwrap_or(kind.default_height_m() as f32),
+        };
+        let point = PointObstacle {
+            kind,
+            flags,
+            pos: [p[0] as f32, p[1] as f32],
+            angle: near.angle as f32,
+            width_m: if spans { near.width_m as f32 } else { 0.0 },
+            height_m: height,
+        };
+        *st.by_kind.entry(kind).or_default() += 1;
+        o.tiles.entry(tile_of(p)).or_default().points.push(point);
+    }
+}
+
+/// Puts the street lamps mapped in OSM (`highway=street_lamp` nodes of
+/// `data`) into the package's section `OBST` (world look *Street lamps*;
+/// made if missing), replacing the ones it has and keeping everything
+/// else (barriers, posts, the planted trees, the tree cells). Returns the
+/// counts (`by_kind[StreetLamp]`; `outside_corridor` for lamps far from
+/// every road).
+pub fn set_street_lamps(
+    pkg: &mut WorldPackage,
+    data: &BarrierData,
+    proj: &LocalProjection,
+) -> ObstacleStats {
+    let roads = StripIndex::new(pkg);
+    let mut o = pkg
+        .obstacles
+        .take()
+        .unwrap_or_else(|| Obstacles::new(pkg.tile_size_m));
+    for t in o.tiles.values_mut() {
+        t.points.retain(|p| p.kind != ObstacleKind::StreetLamp);
+    }
+    let mut st = ObstacleStats::default();
+    add_points(pkg, data, proj, &roads, &mut o, &mut st, |k| {
+        k == ObstacleKind::StreetLamp
+    });
+    o.tiles.retain(|_, t| !t.is_empty());
+    pkg.obstacles = Some(o);
+    st
+}
+
 /// Builds the section from the barrier data and the package (its strips,
 /// land use, buildings and terrain for the trees).
 pub fn build_obstacles(
@@ -309,46 +404,8 @@ pub fn build_obstacles(
     let mut st = ObstacleStats::default();
     let tile_of = |p: [f64; 2]| TileKey::containing(p, size);
     // Points.
-    let mut points: Vec<(i64, &Tags)> = data.points.iter().map(|(i, t)| (*i, t)).collect();
-    points.sort_by_key(|p| p.0);
-    for (id, tags) in points {
-        let (Some(kind), Some(&(lat, lon))) = (point_kind(tags), data.nodes.get(&id)) else {
-            continue;
-        };
-        let p = proj.project(lat, lon);
-        if !pkg.tiles.contains_key(&tile_of(p)) {
-            continue;
-        }
-        let Some(near) = roads.nearest(p, CORRIDOR_M) else {
-            st.outside_corridor += 1;
-            continue;
-        };
-        let mut flags = 0;
-        if near.edge_m <= CORRIDOR_MARGIN_M
-            && kind != ObstacleKind::Pylon
-            && kind != ObstacleKind::Post
-        {
-            flags |= ROAD_BARRIER;
-            st.road_barriers += 1;
-        }
-        if near.edge_m <= 0.0 && flags & ROAD_BARRIER != 0 {
-            flags |= ON_ROAD;
-            st.on_road += 1;
-        }
-        // A gate or lift gate on the road spans it, across its direction.
-        let spans =
-            matches!(kind, ObstacleKind::Gate | ObstacleKind::LiftGate) && flags & ON_ROAD != 0;
-        let point = PointObstacle {
-            kind,
-            flags,
-            pos: [p[0] as f32, p[1] as f32],
-            angle: near.angle as f32,
-            width_m: if spans { near.width_m as f32 } else { 0.0 },
-            height_m: height_m(tags).unwrap_or(kind.default_height_m() as f32),
-        };
-        *st.by_kind.entry(kind).or_default() += 1;
-        o.tiles.entry(tile_of(p)).or_default().points.push(point);
-    }
+    add_points(pkg, data, proj, &roads, &mut o, &mut st, |_| true);
+
     // Lines: cut out of the carriageways and to the corridor.
     let mut ways: Vec<&(i64, Vec<i64>, Tags)> = data.ways.iter().collect();
     ways.sort_by_key(|w| w.0);

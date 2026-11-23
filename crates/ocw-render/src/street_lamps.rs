@@ -131,11 +131,7 @@ pub fn tile_lamps(
     ground: &TileGround,
     junctions: Option<&PackageJunctions>,
 ) -> TileLamps {
-    let edges = junctions.map_or_else(Vec::new, |pj| {
-        ocw_world::lamps::ring_edges(key, |k| pj.tile_edges(k))
-    });
-    let space = ocw_world::lamps::LampSpace::new(pkg, key, &edges, junctions.map(|pj| &pj.set));
-    let lamps: Vec<(Lamp, f32)> = ocw_world::lamps::tile_lamps(pkg, key, &space)
+    let lamps: Vec<(Lamp, f32)> = placed_lamps(pkg, key, junctions)
         .into_iter()
         .filter(|l| keep.is_none_or(|f| f([f64::from(l.foot[0]), f64::from(l.foot[2])])))
         .map(|l| {
@@ -149,6 +145,23 @@ pub fn tile_lamps(
         })
         .collect();
     lamp_arrays(&lamps)
+}
+
+/// The lamps of a package tile, before they are fitted to the drawn
+/// ground: the mapped ones (OSM `highway=street_lamp`, section `OBST`)
+/// and the regular rows, kept out of the roads
+/// ([`ocw_world::lamps::tile_lamps`]) – the same lamps the server's
+/// obstacles have ([`ocw_world::lamps::package_lamps`]).
+pub fn placed_lamps(
+    pkg: &WorldPackage,
+    key: TileKey,
+    junctions: Option<&PackageJunctions>,
+) -> Vec<Lamp> {
+    let edges = junctions.map_or_else(Vec::new, |pj| {
+        ocw_world::lamps::ring_edges(key, |k| pj.tile_edges(k))
+    });
+    let space = ocw_world::lamps::LampSpace::new(pkg, key, &edges, junctions.map(|pj| &pj.set));
+    ocw_world::lamps::tile_lamps(pkg, key, &space)
 }
 
 pub struct StreetLampsPlugin;
@@ -364,6 +377,88 @@ mod tests {
                 assert!(Vec3::from(t.spots[0]).distance(Vec3::new(arm, h - 0.32, 0.0)) < 1e-3);
             }
         }
+    }
+
+    /// The renderer places the lamps the server's obstacles have (both
+    /// kinds: OSM's mapped lamps and the rows along lit roads), from the
+    /// whole package and from a streamed version holding only the tile
+    /// and its ring.
+    #[test]
+    fn the_drawn_lamps_are_the_servers() {
+        use ocw_world::junction::fixtures;
+        use ocw_world::obstacles::{ObstacleKind, Obstacles, PointObstacle, TileObstacles};
+        use std::collections::BTreeMap;
+        let mut g = fixtures::t_junction(ocw_world::graph::RoadClass::Primary, 0.0, 0.0);
+        for v in &mut g.vertices {
+            *v = [v[0] + 500.0, v[1] + 500.0];
+        }
+        for e in &mut g.edges {
+            for p in &mut e.points {
+                *p = [p[0] + 500.0, p[1] + 500.0];
+            }
+        }
+        let key = TileKey { x: 0, z: 0 };
+        let roads = fixtures::strips(&g)
+            .into_iter()
+            .map(|(_, mut s)| {
+                s.lit = ocw_world::RoadLit::Yes;
+                s
+            })
+            .collect();
+        let lamp = |x: f32, z: f32| PointObstacle {
+            kind: ObstacleKind::StreetLamp,
+            flags: 0,
+            pos: [x, z],
+            angle: 0.0,
+            width_m: 0.0,
+            height_m: 0.0,
+        };
+        let mut o = Obstacles::new(1000.0);
+        o.tiles.insert(
+            key,
+            TileObstacles {
+                // Beside the main road, on it, and at the junction.
+                points: vec![lamp(450.0, 507.0), lamp(560.0, 501.0), lamp(502.0, 503.0)],
+                ..Default::default()
+            },
+        );
+        let pkg = WorldPackage {
+            name: "lamps".into(),
+            origin: (47.0, 9.0),
+            tile_size_m: 1000.0,
+            samples: 2,
+            tiles: BTreeMap::from([(
+                key,
+                ocw_world::Tile {
+                    key,
+                    heights: vec![0.0; 4],
+                    roads,
+                },
+            )]),
+            graph: Some(std::sync::Arc::new(g)),
+            landuse: None,
+            buildings: None,
+            bridges: None,
+            routes: Vec::new(),
+            region: None,
+            time_zone: None,
+            look: Default::default(),
+            obstacles: Some(o),
+            places: None,
+            junctions: None,
+        };
+        let pj = PackageJunctions::new(&pkg);
+        let drawn = placed_lamps(&pkg, key, pj.as_ref());
+        let server = ocw_world::lamps::package_lamps(&pkg);
+        assert_eq!(server.get(&key), Some(&drawn));
+        assert!(drawn.len() > 3, "{drawn:?}");
+        // The mapped ones come first, out of the roads.
+        assert_eq!([drawn[0].foot[0], drawn[0].foot[2]], [450.0, 507.0]);
+        assert!(
+            drawn[1].foot[2] > 504.0,
+            "moved to the kerb: {:?}",
+            drawn[1]
+        );
     }
 
     #[test]

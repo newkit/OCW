@@ -16,15 +16,30 @@
 //! (both sides, staggered, on wide roads) – and never in a road: a foot
 //! that would stand on a carriageway or a junction surface is moved along
 //! the road or left out ([`place_lamp`], [`LampSpace`]).
+//!
+//! Street lamps mapped in OSM (`highway=street_lamp` nodes) are stored by
+//! the world builder in the section `OBST` as points of the kind
+//! [`ObstacleKind::StreetLamp`] where they are mapped (an addition to the
+//! section: older readers leave unknown kinds out). Each one stands where
+//! it is mapped unless that is in a road – then it is moved to the nearest
+//! side of the nearest carriageway ([`osm_lamp`]) – with its arm towards
+//! that road; the regular row along a lit road skips the spots near a
+//! mapped lamp ([`tile_lamps`]). [`package_lamps`] places every lamp of a
+//! package, for the server's obstacles.
+
+use std::collections::BTreeMap;
 
 use crate::graph::RoadClass;
 use crate::landuse::LandClass;
+use crate::obstacles::{ObstacleKind, PointObstacle};
 use crate::package::{Bytes, RoadStrip, TileKey, WorldPackage};
 
 #[cfg(test)]
+mod osm_tests;
+#[cfg(test)]
 mod rule_tests;
 mod space;
-pub use space::{Blocked, FOOT_CLEAR_M, LEVEL_M, LampSpace, POLE_R_M, ring, ring_edges};
+pub use space::{Blocked, FOOT_CLEAR_M, LEVEL_M, LampSpace, NearRoad, POLE_R_M, ring, ring_edges};
 
 /// Section tag of the roads' lit state.
 pub const ROAD_LIT_TAG: &[u8; 4] = b"LITR";
@@ -363,17 +378,331 @@ pub fn town_at(pkg: &WorldPackage) -> impl Fn(f32, f32) -> bool + '_ {
     }
 }
 
-/// All lamps of a package tile, kept out of the roads in `space` (the
-/// space of this tile, [`LampSpace::new`]).
-pub fn tile_lamps(pkg: &WorldPackage, key: TileKey, space: &LampSpace) -> Vec<Lamp> {
-    let Some(tile) = pkg.tiles.get(&key) else {
-        return Vec::new();
+/// A mapped street lamp stands at most this far beside the edge of a
+/// carriageway (m); farther ones are left out (they light no road).
+pub const OSM_REACH_M: f64 = 15.0;
+/// Steps (m) of the search for a free foot across the road.
+pub const OSM_STEP_M: f64 = 0.25;
+/// How far beyond the kerb a mapped lamp on a carriageway may be moved
+/// (m), and how far a lamp mapped in a building or on a wall.
+pub const OSM_MOVE_M: f64 = 6.0;
+/// The kerb: a moved lamp's centre this far outside the carriageway (m;
+/// as [`place_lamp`]'s kerb).
+pub const KERB_OFF_M: f64 = 0.45;
+
+/// The street lamps mapped in OSM in tile `key` (section `OBST`).
+pub fn osm_nodes(pkg: &WorldPackage, key: TileKey) -> impl Iterator<Item = &PointObstacle> {
+    pkg.obstacles
+        .as_ref()
+        .and_then(|o| o.tiles.get(&key))
+        .into_iter()
+        .flat_map(|t| t.points.iter())
+        .filter(|p| p.kind == ObstacleKind::StreetLamp)
+}
+
+/// Where a mapped street lamp stands (the world look's *Street lamps*
+/// rule): where it is mapped, its arm towards the nearest carriageway –
+/// unless its foot would stand in a road (a carriageway or a junction
+/// surface: an OSM node on the road), a building or on a wall; then on
+/// the nearest free spot across that road, at its kerb or beyond (up to
+/// [`OSM_MOVE_M`]; on a bridge deck on its parapet), else the nearest free
+/// spot round the node (a node in a junction's mouth, rings of
+/// [`OSM_STEP_M`] up to [`OSM_MOVE_M`]). The height is OSM's `height`
+/// (3–14 m), else the road class's. `None`: no carriageway within
+/// [`OSM_REACH_M`], or no free spot. The `f32` is how far it was moved
+/// (m; 0 where mapped).
+pub fn osm_lamp(p: &PointObstacle, space: &LampSpace) -> Option<(Lamp, f32)> {
+    let at = [f64::from(p.pos[0]), f64::from(p.pos[1])];
+    let near = space.nearest_road(at, OSM_REACH_M)?;
+    let y = if near.y.is_finite() { near.y } else { 0.0 };
+    let free = |q: [f64; 2]| space.blocked([q[0], y, q[1]]).is_none();
+    let foot = if free(at) && !space.on_bridge(at) {
+        at
+    } else {
+        moved_foot(at, &near, y, space, &free)?
     };
+    // The arm towards the nearest carriageway from where it stands.
+    let to = space
+        .nearest_road(foot, OSM_REACH_M + OSM_MOVE_M)
+        .unwrap_or(near);
+    let (dx, dz) = (to.closest[0] - foot[0], to.closest[1] - foot[1]);
+    let l = dx.hypot(dz);
+    let toward = if l > 1e-6 {
+        [(dx / l) as f32, (dz / l) as f32]
+    } else {
+        [(-to.dir[1]) as f32, to.dir[0] as f32]
+    };
+    let height_m = if (3.0..=14.0).contains(&p.height_m) {
+        p.height_m
+    } else {
+        lamp_height_m(to.class)
+    };
+    let lamp = Lamp {
+        foot: [foot[0] as f32, y as f32, foot[1] as f32],
+        toward,
+        height_m,
+        arm_m: ((to.half * 0.5) as f32).clamp(0.6, 2.0),
+    };
+    let moved = (foot[0] - at[0]).hypot(foot[1] - at[1]);
+    Some((lamp, moved as f32))
+}
+
+/// The free foot nearest to a mapped lamp `at` that cannot stand there
+/// ([`osm_lamp`]).
+fn moved_foot(
+    at: [f64; 2],
+    near: &NearRoad,
+    y: f64,
+    space: &LampSpace,
+    free: &dyn Fn([f64; 2]) -> bool,
+) -> Option<[f64; 2]> {
+    // Across the road, towards the mapped spot (the right-hand side for a
+    // node on the centre line).
+    let (n, d) = if near.centre_m > 1e-3 {
+        (
+            [
+                (at[0] - near.closest[0]) / near.centre_m,
+                (at[1] - near.closest[1]) / near.centre_m,
+            ],
+            near.centre_m,
+        )
+    } else {
+        ([-near.dir[1], near.dir[0]], 0.0)
+    };
+    let across = |o: f64| [near.closest[0] + n[0] * o, near.closest[1] + n[1] * o];
+    if let Some(deck) = space.deck_foot(near.closest, y) {
+        // On a bridge: on its parapet, the side nearest to the node.
+        return [deck, -deck].into_iter().map(across).find(|q| free(*q));
+    }
+    if space.on_bridge(near.closest) {
+        // A bridge of the graph without a deck has no room.
+        return None;
+    }
+    let steps = (OSM_MOVE_M / OSM_STEP_M).round() as i32;
+    let kerb = near.half + KERB_OFF_M;
+    let mut best: Option<f64> = None;
+    let mut consider = |o: f64| {
+        if best.is_some_and(|b: f64| (b - d).abs() <= (o - d).abs()) {
+            return;
+        }
+        if free(across(o)) {
+            best = Some(o);
+        }
+    };
+    // Never on the carriageway, at most OSM_MOVE_M beyond the kerb …
+    for side in [1.0, -1.0] {
+        for k in 0..=steps {
+            consider(side * (kerb + f64::from(k) * OSM_STEP_M));
+        }
+    }
+    // … and off the road (in a building, on a wall) towards and away from
+    // it on its own side.
+    if d > kerb {
+        for k in 1..=steps {
+            for o in [d - f64::from(k) * OSM_STEP_M, d + f64::from(k) * OSM_STEP_M] {
+                if o >= kerb {
+                    consider(o);
+                }
+            }
+        }
+    }
+    if let Some(o) = best {
+        return Some(across(o));
+    }
+    // Round the node (a junction's mouth, between two roads): the first
+    // ring with a free spot, its first direction from +x.
+    const DIRECTIONS: usize = 32;
+    (1..=steps).find_map(|k| {
+        let r = f64::from(k) * OSM_STEP_M;
+        (0..DIRECTIONS).find_map(|i| {
+            let a = i as f64 * std::f64::consts::TAU / DIRECTIONS as f64;
+            let q = [at[0] + r * a.cos(), at[1] + r * a.sin()];
+            free(q).then_some(q)
+        })
+    })
+}
+
+/// Whether a regular lamp of `strip` at `foot` is near a mapped one
+/// (`osm`: the mapped feet round the tile): within half the spacing of
+/// it, the mapped lamp beside the same road (within the lamps' reach of
+/// its centre line).
+fn near_mapped(strip: &RoadStrip, foot: [f32; 3], osm: &[[f32; 2]]) -> bool {
+    let r = spacing_m(strip.class) / 2.0;
+    let reach = f64::from(strip.width_m) / 2.0 + 12.0;
+    osm.iter().any(|q| {
+        let (dx, dz) = (q[0] - foot[0], q[1] - foot[2]);
+        if dx * dx + dz * dz >= r * r {
+            return false;
+        }
+        let p = [f64::from(q[0]), f64::from(q[1])];
+        strip.points.windows(2).any(|w| {
+            crate::obstacles::segment_distance(
+                p,
+                [f64::from(w[0][0]), f64::from(w[0][2])],
+                [f64::from(w[1][0]), f64::from(w[1][2])],
+            ) < reach
+        })
+    })
+}
+
+/// What [`tile_lamps_counted`] did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LampCounts {
+    /// Mapped lamps (OSM) placed, of them moved out of a road, left out.
+    pub osm: usize,
+    pub osm_moved: usize,
+    pub osm_left_out: usize,
+    /// Regular lamps along lit roads placed, and skipped near a mapped one.
+    pub rows: usize,
+    pub rows_skipped: usize,
+}
+
+impl std::ops::AddAssign for LampCounts {
+    fn add_assign(&mut self, o: Self) {
+        self.osm += o.osm;
+        self.osm_moved += o.osm_moved;
+        self.osm_left_out += o.osm_left_out;
+        self.rows += o.rows;
+        self.rows_skipped += o.rows_skipped;
+    }
+}
+
+/// All lamps of a package tile, kept out of the roads in `space` (the
+/// space of this tile, [`LampSpace::new`]): the mapped ones of the tile
+/// ([`osm_lamp`]), then the regular rows along its lit strips without the
+/// spots near a mapped lamp.
+pub fn tile_lamps(pkg: &WorldPackage, key: TileKey, space: &LampSpace) -> Vec<Lamp> {
+    tile_lamps_counted(pkg, key, space).0
+}
+
+/// [`tile_lamps`] with what it did.
+pub fn tile_lamps_counted(
+    pkg: &WorldPackage,
+    key: TileKey,
+    space: &LampSpace,
+) -> (Vec<Lamp>, LampCounts) {
+    let mut c = LampCounts::default();
+    let mut out = Vec::new();
+    let Some(tile) = pkg.tiles.get(&key) else {
+        return (out, c);
+    };
+    for p in osm_nodes(pkg, key) {
+        match osm_lamp(p, space) {
+            Some((l, moved)) => {
+                c.osm += 1;
+                if moved > 0.01 {
+                    c.osm_moved += 1;
+                }
+                out.push(l);
+            }
+            None => c.osm_left_out += 1,
+        }
+    }
+    let osm: Vec<[f32; 2]> = ring(key)
+        .flat_map(|k| osm_nodes(pkg, k).map(|p| p.pos))
+        .collect();
     let town = town_at(pkg);
-    tile.roads
-        .iter()
-        .flat_map(|s| strip_lamps(s, &town, space))
-        .collect()
+    for s in &tile.roads {
+        for l in strip_lamps(s, &town, space) {
+            if !osm.is_empty() && near_mapped(s, l.foot, &osm) {
+                c.rows_skipped += 1;
+            } else {
+                c.rows += 1;
+                out.push(l);
+            }
+        }
+    }
+    (out, c)
+}
+
+/// What the lamps of a whole package are placed with: the graph edges
+/// near each tile and the package's junctions (stored, else computed),
+/// as both apps' renderers have them.
+pub struct PackageSpaces<'a> {
+    pkg: &'a WorldPackage,
+    tile_edges: std::collections::HashMap<TileKey, Vec<u32>>,
+    junctions: Option<crate::junction::JunctionSet>,
+}
+
+impl<'a> PackageSpaces<'a> {
+    pub fn new(pkg: &'a WorldPackage) -> Self {
+        let graph = pkg.graph.as_deref();
+        Self {
+            pkg,
+            tile_edges: graph
+                .map(|g| crate::junction::section::tile_edges(g, f64::from(pkg.tile_size_m)))
+                .unwrap_or_default(),
+            junctions: graph.map(|g| {
+                crate::junction::JunctionSet::with_index(
+                    g,
+                    pkg.junctions.as_ref().and_then(|j| j.index_for(g)),
+                )
+            }),
+        }
+    }
+
+    /// The space round tile `key`.
+    pub fn space(&self, key: TileKey) -> LampSpace<'_> {
+        let none: &[u32] = &[];
+        let edges = ring_edges(key, |k| self.tile_edges.get(&k).map_or(none, Vec::as_slice));
+        LampSpace::new(self.pkg, key, &edges, self.junctions.as_ref())
+    }
+}
+
+/// Every street lamp of a package by the tile whose strips (or mapped
+/// lamps) placed it, as the apps draw them ([`tile_lamps`]): for the
+/// server's obstacles (lamp poles a rider can hit) and the lint. Empty
+/// for a package without tiles (a streamed base). Native builds place the
+/// tiles on all cores; the result does not depend on it.
+pub fn package_lamps(pkg: &WorldPackage) -> BTreeMap<TileKey, Vec<Lamp>> {
+    package_lamps_counted(pkg).0
+}
+
+/// [`package_lamps`] with what the placement did.
+pub fn package_lamps_counted(pkg: &WorldPackage) -> (BTreeMap<TileKey, Vec<Lamp>>, LampCounts) {
+    let keys: Vec<TileKey> = pkg.tiles.keys().copied().collect();
+    if keys.is_empty() {
+        return Default::default();
+    }
+    let spaces = PackageSpaces::new(pkg);
+    let one = |key: TileKey| tile_lamps_counted(pkg, key, &spaces.space(key));
+    let results: Vec<(Vec<Lamp>, LampCounts)> = each_tile(&keys, &one);
+    let mut total = LampCounts::default();
+    let mut out = BTreeMap::new();
+    for (key, (lamps, c)) in keys.into_iter().zip(results) {
+        total += c;
+        if !lamps.is_empty() {
+            out.insert(key, lamps);
+        }
+    }
+    (out, total)
+}
+
+/// `f` of every key, in order (on all cores natively).
+#[cfg(not(target_arch = "wasm32"))]
+fn each_tile<T: Send>(keys: &[TileKey], f: &(dyn Fn(TileKey) -> T + Sync)) -> Vec<T> {
+    let threads = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .clamp(1, 16);
+    if threads == 1 || keys.len() < 8 {
+        return keys.iter().map(|k| f(*k)).collect();
+    }
+    let chunk = keys.len().div_ceil(threads);
+    std::thread::scope(|s| {
+        let handles: Vec<_> = keys
+            .chunks(chunk)
+            .map(|c| s.spawn(move || c.iter().map(|k| f(*k)).collect::<Vec<T>>()))
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().expect("lamp placement thread"))
+            .collect()
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
+fn each_tile<T>(keys: &[TileKey], f: &dyn Fn(TileKey) -> T) -> Vec<T> {
+    keys.iter().map(|k| f(*k)).collect()
 }
 
 /// Buildings within this distance count towards light pollution (m).

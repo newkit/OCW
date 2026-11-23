@@ -98,6 +98,12 @@ pub enum ObstacleKind {
     /// diameter. Solid as a [`ObstacleKind::Tree`]; drawn by the vegetation,
     /// not as an object.
     PlantedTree = 9,
+    /// A street lamp mapped in OSM (`highway=street_lamp`; world look
+    /// *Street lamps*): stored where it is mapped, placed beside the road
+    /// by [`crate::lamps::osm_lamp`] (the same in both apps and on the
+    /// server) and solid there, as a pole of its model file; never solid
+    /// where it is mapped.
+    StreetLamp = 10,
     // Lines.
     Fence = 32,
     Wall = 33,
@@ -116,7 +122,7 @@ pub enum ObstacleKind {
 }
 
 impl ObstacleKind {
-    pub const ALL: [ObstacleKind; 19] = [
+    pub const ALL: [ObstacleKind; 20] = [
         Self::Bollard,
         Self::Post,
         Self::Gate,
@@ -126,6 +132,7 @@ impl ObstacleKind {
         Self::Barrier,
         Self::Pylon,
         Self::PlantedTree,
+        Self::StreetLamp,
         Self::Fence,
         Self::Wall,
         Self::Hedge,
@@ -173,8 +180,9 @@ impl ObstacleKind {
         match (tags("power").as_deref(), tags("man_made").as_deref()) {
             (Some("tower"), _) => Some(Self::Pylon),
             (Some("pole"), _) | (_, Some("utility_pole")) => Some(Self::Post),
-            _ => match tags("information").as_deref() {
-                Some("guidepost") => Some(Self::Post),
+            _ => match (tags("information").as_deref(), tags("highway").as_deref()) {
+                (Some("guidepost"), _) => Some(Self::Post),
+                (_, Some("street_lamp")) => Some(Self::StreetLamp),
                 _ => None,
             },
         }
@@ -213,8 +221,29 @@ impl ObstacleKind {
             Self::Barrier => 0.3,
             Self::Pylon => 2.5,
             Self::PlantedTree => crate::trees::TRUNK_RADIUS_M,
+            Self::StreetLamp => crate::lamps::POLE_R_M,
             _ => 0.0,
         }
+    }
+
+    /// The model file a point obstacle is drawn from (spec 15H names,
+    /// `artwork/3dmodels/props/`; kinds without their own file use the
+    /// generic barrier post). Street lamps have three files by height
+    /// (`ocw-render::street_lamps`), whose poles are the same: this is the
+    /// middle one. `None`: not drawn as an object (trees).
+    pub fn model_id(self) -> Option<&'static str> {
+        Some(match self {
+            Self::Bollard => "props/bollard-round",
+            Self::Post => "props/post-hexagonal",
+            Self::Pylon => "props/pylon-pyramid",
+            Self::Block => "props/block-concrete-box",
+            Self::Gate => "props/gate-swing",
+            Self::LiftGate => "props/barrier-lift-arm",
+            Self::CycleBarrier => "props/barrier-cycle-staggered",
+            Self::StreetLamp => "props/lamp-street-arm-road",
+            Self::PlantedTree | Self::Tree => return None,
+            _ => "props/barrier-post-hexagonal",
+        })
     }
 
     /// Half the thickness of a line obstacle (m).
@@ -248,6 +277,7 @@ impl ObstacleKind {
             Self::Hedge => 1.6,
             Self::GuardRail => 0.75,
             Self::Kerb => 0.12,
+            Self::StreetLamp => 6.0,
             _ => 1.0,
         }
     }
@@ -272,6 +302,7 @@ impl ObstacleKind {
             Self::TunnelWall => "tunnel wall",
             Self::Building => "building",
             Self::Tree | Self::PlantedTree => "tree",
+            Self::StreetLamp => "street lamp",
         }
     }
 }
@@ -295,9 +326,11 @@ impl PointObstacle {
         self.flags & ROAD_BARRIER != 0
     }
 
-    /// Hit by riders in wild mode (road barriers never are, Q7).
+    /// Hit by riders in wild mode where it is stored (road barriers never
+    /// are, Q7; a street lamp is hit where it is placed, beside the road:
+    /// [`WorldObstacles`] adds the placed lamps).
     pub fn solid(&self) -> bool {
-        self.kind.solid() && !self.road_barrier()
+        self.kind.solid() && !self.road_barrier() && self.kind != ObstacleKind::StreetLamp
     }
 }
 
@@ -525,6 +558,123 @@ impl Solid {
     }
 }
 
+/// The yaw (rad about +y) a point obstacle's model is turned by, from
+/// the direction of its way (`angle`): the model's +x across the way
+/// (a gate's bars span the road), as the renderer draws it.
+pub fn yaw_of_angle(angle: f64) -> f64 {
+    -(angle + std::f64::consts::FRAC_PI_2)
+}
+
+/// The yaw of a street lamp's model facing `toward` (x, z): its +x, the
+/// arm, points that way (as `ocw-render::street_lamps` draws it).
+pub fn yaw_toward(toward: [f32; 2]) -> f64 {
+    f64::from(-toward[1]).atan2(f64::from(toward[0]))
+}
+
+/// A point of the model's footprint (mx, mz) turned by `yaw` about +y,
+/// as world (x, z) offsets.
+fn turned(yaw: f64, m: [f64; 2]) -> [f64; 2] {
+    let (s, c) = yaw.sin_cos();
+    [m[0] * c + m[1] * s, -m[0] * s + m[1] * c]
+}
+
+/// One part of a point obstacle's solid footprint in its model's frame
+/// (metres from the point; x and z of the model file, before the yaw).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShapePart {
+    /// A post (a cylinder or capsule proxy): a circle of radius `half[0]`;
+    /// else a box of half extents `half`.
+    pub round: bool,
+    pub centre: [f64; 2],
+    pub half: [f64; 2],
+}
+
+impl ShapePart {
+    pub fn circle(r: f64) -> Self {
+        Self {
+            round: true,
+            centre: [0.0, 0.0],
+            half: [r, r],
+        }
+    }
+
+    /// The solid it is at `pos`, turned by `yaw`: a circle, or a box as a
+    /// wall along its longer side (its half thickness the shorter half
+    /// extent; a square box is a circle of that size).
+    pub fn shape(&self, pos: [f64; 2], yaw: f64) -> Shape {
+        let c = turned(yaw, self.centre);
+        let c = [pos[0] + c[0], pos[1] + c[1]];
+        if self.round {
+            return Shape::Circle { c, r: self.half[0] };
+        }
+        let (long, short, axis) = if self.half[0] >= self.half[1] {
+            (self.half[0], self.half[1], [1.0, 0.0])
+        } else {
+            (self.half[1], self.half[0], [0.0, 1.0])
+        };
+        let l = long - short;
+        if l < 1e-3 {
+            return Shape::Circle { c, r: short };
+        }
+        let d = turned(yaw, [axis[0] * l, axis[1] * l]);
+        Shape::Segment {
+            a: [c[0] - d[0], c[1] - d[1]],
+            b: [c[0] + d[0], c[1] + d[1]],
+            half: short,
+        }
+    }
+
+    /// How far it reaches from the point (m).
+    pub fn reach_m(&self) -> f64 {
+        let r = if self.round {
+            self.half[0]
+        } else {
+            self.half[0].hypot(self.half[1])
+        };
+        self.centre[0].hypot(self.centre[1]) + r
+    }
+}
+
+/// The solid footprints of the point obstacles by kind (spec 15H / 15N:
+/// from the collision proxies `col_*` of their model files, read by
+/// `ocw_sim::collide::props_shapes`; the server and the client's
+/// prediction use the same table). Kinds it does not list are circles of
+/// [`ObstacleKind::radius_m`] – the hard-coded sizes of before, also
+/// [`PointShapes::radii`].
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PointShapes {
+    parts: BTreeMap<ObstacleKind, Vec<ShapePart>>,
+}
+
+impl PointShapes {
+    /// Every kind a circle of its [`ObstacleKind::radius_m`] (the sizes
+    /// before the files' proxies were read).
+    pub fn radii() -> Self {
+        Self::default()
+    }
+
+    /// The footprints of these kinds (the others: [`ObstacleKind::radius_m`]).
+    pub fn new(parts: BTreeMap<ObstacleKind, Vec<ShapePart>>) -> Self {
+        Self { parts }
+    }
+
+    /// The footprint of `kind`.
+    pub fn parts(&self, kind: ObstacleKind) -> Vec<ShapePart> {
+        match self.parts.get(&kind) {
+            Some(p) if !p.is_empty() => p.clone(),
+            _ => vec![ShapePart::circle(kind.radius_m())],
+        }
+    }
+
+    /// How far `kind`'s footprint reaches from its point (m).
+    pub fn reach_m(&self, kind: ObstacleKind) -> f64 {
+        self.parts(kind)
+            .iter()
+            .map(ShapePart::reach_m)
+            .fold(0.0, f64::max)
+    }
+}
+
 /// A segment of a line obstacle, by tile.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Piece {
@@ -550,6 +700,10 @@ struct TileSource {
     ring_points: Vec<[f32; 2]>,
     /// Deflated tree cells (the tile's own).
     trees: Vec<u8>,
+    /// The street lamps placed in the tile (both kinds: OSM's and the
+    /// rows along lit roads, [`crate::lamps::tile_lamps`]): foot (x, z)
+    /// and the yaw of their model.
+    lamps: Vec<([f32; 2], f32)>,
 }
 
 /// The static obstacles of a world, ready for the collision model: the
@@ -603,7 +757,32 @@ impl WorldObstacles {
         if let Some(g) = &pkg.graph {
             w.add_tunnel_walls(g);
         }
+        // The street lamps as the apps place them (the package's tiles
+        // needed: none from a streamed base).
+        // Each pole in the tile its foot stands in (a strip's lamps can
+        // stand a few metres into the next tile).
+        let size = f64::from(pkg.tile_size_m);
+        for lamps in crate::lamps::package_lamps(pkg).into_values() {
+            for l in lamps {
+                let at = [f64::from(l.foot[0]), f64::from(l.foot[2])];
+                w.tiles
+                    .entry(TileKey::containing(at, size))
+                    .or_default()
+                    .lamps
+                    .push(([l.foot[0], l.foot[2]], yaw_toward(l.toward) as f32));
+            }
+        }
         (!w.tiles.is_empty()).then_some(w)
+    }
+
+    /// The street lamps placed (poles a rider can hit).
+    pub fn lamp_count(&self) -> usize {
+        self.tiles.values().map(|t| t.lamps.len()).sum()
+    }
+
+    /// The street lamp poles of tile `key`: foot (x, z) and model yaw.
+    pub fn tile_lamp_feet(&self, key: TileKey) -> &[([f32; 2], f32)] {
+        self.tiles.get(&key).map_or(&[], |t| t.lamps.as_slice())
     }
 
     /// Adds the segments of a line to every tile they reach.
@@ -763,6 +942,7 @@ impl WorldObstacles {
                     + t.rings.len() * 12
                     + t.ring_points.len() * 8
                     + t.trees.len()
+                    + t.lamps.len() * 12
                     + std::mem::size_of::<TileSource>()
             })
             .sum()
@@ -773,31 +953,56 @@ impl WorldObstacles {
         self.tiles.keys().copied()
     }
 
-    /// The spatial index of a tile (`None`: nothing solid there).
+    /// The spatial index of a tile (`None`: nothing solid there), the
+    /// point obstacles circles of [`ObstacleKind::radius_m`]
+    /// ([`PointShapes::radii`]; the ride uses [`Self::tile_index_with`]
+    /// and the model files' proxies).
     pub fn tile_index(&self, key: TileKey) -> Option<TileIndex> {
+        self.tile_index_with(key, &PointShapes::radii())
+    }
+
+    /// The spatial index of a tile with the point obstacles' footprints
+    /// of `shapes` (spec 15H: the model files' collision proxies), the
+    /// street lamps' poles included.
+    pub fn tile_index_with(&self, key: TileKey, shapes: &PointShapes) -> Option<TileIndex> {
         let src = self.tiles.get(&key)?;
         let mut solids = Vec::new();
-        for (i, p) in src.points.iter().enumerate() {
+        let tile_id = (key.x as u32 as u64 & 0xFFFF) << 40 | (key.z as u32 as u64 & 0xFFFF) << 24;
+        let mut part = 0u64;
+        for p in &src.points {
+            let c = [f64::from(p.pos[0]), f64::from(p.pos[1])];
             // Planted trees hit as trees, their trunk as wide as stored.
-            let (kind, r) = match p.kind {
-                ObstacleKind::PlantedTree if p.width_m > 0.0 => {
-                    (ObstacleKind::Tree, f64::from(p.width_m) / 2.0)
-                }
-                ObstacleKind::PlantedTree => (ObstacleKind::Tree, p.kind.radius_m()),
-                k => (k, k.radius_m()),
+            let tree = match p.kind {
+                ObstacleKind::PlantedTree if p.width_m > 0.0 => Some(f64::from(p.width_m) / 2.0),
+                ObstacleKind::PlantedTree => Some(p.kind.radius_m()),
+                _ => None,
             };
-            solids.push(Solid {
-                shape: Shape::Circle {
-                    c: [f64::from(p.pos[0]), f64::from(p.pos[1])],
-                    r,
-                },
-                kind,
-                y: None,
-                id: 5 << 56
-                    | (key.x as u32 as u64 & 0xFFFF) << 40
-                    | (key.z as u32 as u64 & 0xFFFF) << 24
-                    | i as u64,
-            });
+            let (kind, parts) = match tree {
+                Some(r) => (ObstacleKind::Tree, vec![ShapePart::circle(r)]),
+                None => (p.kind, shapes.parts(p.kind)),
+            };
+            let yaw = yaw_of_angle(f64::from(p.angle));
+            for sp in parts {
+                solids.push(Solid {
+                    shape: sp.shape(c, yaw),
+                    kind,
+                    y: None,
+                    id: 5 << 56 | tile_id | part,
+                });
+                part += 1;
+            }
+        }
+        let poles = shapes.parts(ObstacleKind::StreetLamp);
+        for (i, (foot, yaw)) in src.lamps.iter().enumerate() {
+            let c = [f64::from(foot[0]), f64::from(foot[1])];
+            for (k, sp) in poles.iter().enumerate() {
+                solids.push(Solid {
+                    shape: sp.shape(c, f64::from(*yaw)),
+                    kind: ObstacleKind::StreetLamp,
+                    y: None,
+                    id: 7 << 56 | tile_id | (i as u64) << 2 | (k as u64 & 3),
+                });
+            }
         }
         for &(n, start, len) in &src.rings {
             let ring = &src.ring_points[start as usize..(start + len) as usize];

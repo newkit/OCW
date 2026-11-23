@@ -266,16 +266,7 @@ pub fn point_mesh(
 /// The model file of a point obstacle kind (spec §14 Phase 15, 15H names;
 /// kinds without their own file use the generic barrier post).
 pub fn model_id_of(kind: ObstacleKind) -> &'static str {
-    match kind {
-        ObstacleKind::Bollard => "props/bollard-round",
-        ObstacleKind::Post => "props/post-hexagonal",
-        ObstacleKind::Pylon => "props/pylon-pyramid",
-        ObstacleKind::Block => "props/block-concrete-box",
-        ObstacleKind::Gate => "props/gate-swing",
-        ObstacleKind::LiftGate => "props/barrier-lift-arm",
-        ObstacleKind::CycleBarrier => "props/barrier-cycle-staggered",
-        _ => "props/barrier-post-hexagonal",
-    }
+    kind.model_id().unwrap_or("props/barrier-post-hexagonal")
 }
 
 /// A line obstacle's mesh (per segment, feet on the terrain).
@@ -357,7 +348,11 @@ pub fn tile_obstacle_meshes(
     for p in t
         .points
         .iter()
-        .filter(|p| kept(p.pos) && p.kind != ObstacleKind::PlantedTree)
+        // Planted trees are drawn by the vegetation, the mapped street
+        // lamps beside their road by `street_lamps`.
+        .filter(|p| {
+            kept(p.pos) && !matches!(p.kind, ObstacleKind::PlantedTree | ObstacleKind::StreetLamp)
+        })
     {
         let target = if p.road_barrier() {
             &mut road

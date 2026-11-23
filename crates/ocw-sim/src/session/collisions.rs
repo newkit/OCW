@@ -73,10 +73,17 @@ pub enum Stage {
     /// A rider in wild mode put 8 m before the nearest tree off the road
     /// ahead, riding straight at it.
     Tree,
+    /// A rider in wild mode put [`STAGE_LAMP_M`] before the nearest street
+    /// lamp's pole beside the road ahead, riding slowly at it (a bump).
+    Lamp,
 }
 
 /// `dev.tree` puts the rider this far before the tree (m).
 pub const STAGE_TREE_M: f64 = 8.0;
+/// `dev.lamp` puts the rider this far before the lamp pole (m) …
+pub const STAGE_LAMP_M: f64 = 6.0;
+/// … riding at it this fast (m/s; below the crash threshold: a bump).
+pub const STAGE_LAMP_MPS: f64 = 2.5;
 
 /// The collision switches of a session.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -447,8 +454,8 @@ impl Session {
     /// other rider counts as making a mistake (it may cause a crash).
     pub fn stage(&mut self, id: RiderId, what: Stage) -> Result<String, String> {
         let mode = self.collision_mode();
-        if what == Stage::Tree {
-            return self.stage_tree(id, mode);
+        if matches!(what, Stage::Tree | Stage::Lamp) {
+            return self.stage_tree(id, mode, what == Stage::Lamp);
         }
         match (mode, what) {
             (Mode::Off, _) => return Err("collisions are off (set ride.collisions on)".into()),
@@ -491,7 +498,7 @@ impl Session {
                 st.speed.max(4.0),
                 -side * 0.12,
             ),
-            Stage::Crash | Stage::Tree => (
+            Stage::Crash | Stage::Tree | Stage::Lamp => (
                 st.distance + 1.55,
                 st.lateral_offset + side * 0.3,
                 (st.speed - 2.5).max(0.0),
@@ -527,7 +534,9 @@ impl Session {
         }
         Ok(match what {
             Stage::Bump => format!("{name} bumps into you from the side"),
-            Stage::Crash | Stage::Tree => format!("{name} cuts in front of you: wheel touch"),
+            Stage::Crash | Stage::Tree | Stage::Lamp => {
+                format!("{name} cuts in front of you: wheel touch")
+            }
         })
     }
 }
@@ -535,8 +544,10 @@ impl Session {
 impl Session {
     /// `dev.tree` (K3, local server only): the rider (in wild mode) is put
     /// [`STAGE_TREE_M`] before the nearest tree off the road ahead (within
-    /// 120 m along and 55 m beside), riding straight at it at least 7 m/s.
-    fn stage_tree(&mut self, id: RiderId, mode: Mode) -> Result<String, String> {
+    /// 120 m along and 55 m beside), riding straight at it at least 7 m/s;
+    /// with `lamp` (`dev.lamp`) [`STAGE_LAMP_M`] before the nearest street
+    /// lamp's pole beside the road, at [`STAGE_LAMP_MPS`].
+    fn stage_tree(&mut self, id: RiderId, mode: Mode, lamp: bool) -> Result<String, String> {
         if mode == Mode::Off {
             return Err("collisions are off (set ride.collisions on)".into());
         }
@@ -573,31 +584,50 @@ impl Session {
             }
             (s, d)
         };
+        let (kind, before, beside) = if lamp {
+            (collide::ObstacleKind::StreetLamp, STAGE_LAMP_M, 0.5)
+        } else {
+            (collide::ObstacleKind::Tree, STAGE_TREE_M, 2.0)
+        };
         let target = solids
             .iter()
-            .filter(|s| s.kind == collide::ObstacleKind::Tree)
+            .filter(|s| s.kind == kind)
             .filter_map(|s| match s.shape {
                 ocw_world::obstacles::Shape::Circle { c, .. } => Some(frame(c)),
                 ocw_world::obstacles::Shape::Segment { .. } => None,
             })
             .filter(|(s, d)| {
-                *s > st.distance + STAGE_TREE_M
+                *s > st.distance + before
                     && *s < st.distance + 120.0
-                    && d.abs() > width / 2.0 + 2.0
+                    && d.abs() > width / 2.0 + beside
                     && d.abs() < 55.0
             })
             .min_by(|a, b| (a.0 + a.1.abs()).total_cmp(&(b.0 + b.1.abs())))
-            .ok_or("no tree off the road ahead")?;
+            .ok_or(if lamp {
+                "no street lamp beside the road ahead"
+            } else {
+                "no tree off the road ahead"
+            })?;
         let r = self.riders.get_mut(&id).expect("checked");
         r.state = RiderState {
-            distance: target.0 - STAGE_TREE_M,
+            distance: target.0 - before,
             lateral_offset: target.1,
             heading: 0.0,
-            speed: st.speed.max(7.0),
+            speed: if lamp {
+                STAGE_LAMP_MPS
+            } else {
+                st.speed.max(7.0)
+            },
             turn_curvature: 0.0,
         };
         r.steering = Steering::Lean(0.0);
         r.avoid = AvoidState::default();
+        if lamp {
+            return Ok(format!(
+                "riding at a street lamp {STAGE_LAMP_M:.0} m ahead, {:.1} m beside the road",
+                target.1
+            ));
+        }
         Ok(format!(
             "riding at a tree {STAGE_TREE_M:.0} m ahead, {:.1} m beside the road",
             target.1

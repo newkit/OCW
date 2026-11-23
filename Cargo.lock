@@ -7031,6 +7031,8 @@ dependencies = [
 name = "ocw-sim"
 version = "0.2.5"
 dependencies = [
+ "glam",
+ "ocw-assets",
  "ocw-core",
  "ocw-sky",
  "ocw-weather",

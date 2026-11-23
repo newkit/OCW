@@ -620,6 +620,7 @@ pub fn stage_contact(crash: bool) -> v1::ClientMessage {
         cmd: Some(v1::dev_command::Cmd::Stage(v1::StageContact {
             crash,
             tree: false,
+            lamp: false,
         })),
     }))
 }
@@ -630,6 +631,18 @@ pub fn stage_tree() -> v1::ClientMessage {
         cmd: Some(v1::dev_command::Cmd::Stage(v1::StageContact {
             crash: false,
             tree: true,
+            lamp: false,
+        })),
+    }))
+}
+
+/// `dev.lamp`: ride slowly at the nearest street lamp's pole (a bump).
+pub fn stage_lamp() -> v1::ClientMessage {
+    client_message(v1::client_message::Msg::Dev(v1::DevCommand {
+        cmd: Some(v1::dev_command::Cmd::Stage(v1::StageContact {
+            crash: false,
+            tree: false,
+            lamp: true,
         })),
     }))
 }

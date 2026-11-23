@@ -19,7 +19,7 @@
 //! purpose) are not part of it and never move.
 
 use crate::bridges::{KERB_M, PARAPET_T_M};
-use crate::graph::RoadGraph;
+use crate::graph::{RoadClass, RoadGraph};
 use crate::junction::{JunctionSet, Patch};
 use crate::obstacles::ObstacleKind;
 use crate::package::{TileKey, WorldPackage};
@@ -81,6 +81,23 @@ struct Road {
     yb: f64,
     half: f64,
     bridge: bool,
+    class: RoadClass,
+}
+
+/// The carriageway nearest to a point ([`LampSpace::nearest_road`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NearRoad {
+    /// The nearest point of its centre line (x, z).
+    pub closest: [f64; 2],
+    /// Distance from that centre line (m).
+    pub centre_m: f64,
+    /// Unit direction of the centre line there (x, z).
+    pub dir: [f64; 2],
+    /// Half the carriageway's width (m).
+    pub half: f64,
+    /// The road's height there (m; `NAN` unknown).
+    pub y: f64,
+    pub class: RoadClass,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -211,6 +228,7 @@ impl<'a> LampSpace<'a> {
                         yb: b[1],
                         half,
                         bridge: false,
+                        class: strip.class,
                     });
                 }
             }
@@ -238,6 +256,7 @@ impl<'a> LampSpace<'a> {
                         yb: heights.get(i + 1).copied().unwrap_or(f64::NAN),
                         half,
                         bridge: e.bridge,
+                        class: e.class,
                     });
                 }
                 vertices.extend([e.from.0, e.to.0]);
@@ -475,6 +494,67 @@ impl<'a> LampSpace<'a> {
                     .then(|| d.half + f64::from(KERB_M) - f64::from(PARAPET_T_M) / 2.0)
             }
             _ => None,
+        })
+    }
+
+    /// The carriageway whose edge is nearest to `p` within `reach` metres
+    /// of it (centre line distance less half the width; the first of
+    /// equals in the space's order, so the same in every app), with the
+    /// height of the nearest road of known height.
+    pub fn nearest_road(&self, p: [f64; 2], reach: f64) -> Option<NearRoad> {
+        let mut best: Option<(f64, NearRoad)> = None;
+        let mut level: Option<(f64, f64)> = None;
+        let r = ((reach + 8.0) / CELL_M).ceil() as isize;
+        let (cx, cz) = (
+            self.cell_range(p[0], self.lo[0]),
+            self.cell_range(p[1], self.lo[1]),
+        );
+        let n = self.n as isize;
+        let mut seen = std::collections::BTreeSet::new();
+        for z in (cz - r).max(0)..=(cz + r).min(n - 1) {
+            for x in (cx - r).max(0)..=(cx + r).min(n - 1) {
+                for item in &self.cells[z as usize * self.n + x as usize] {
+                    let Item::Road(i) = *item else {
+                        continue;
+                    };
+                    if !seen.insert(i) {
+                        continue;
+                    }
+                    let road = &self.roads[i as usize];
+                    let (d, t) = seg_dist(p, road.a, road.b);
+                    let y = road.ya + (road.yb - road.ya) * t;
+                    if y.is_finite() && level.is_none_or(|(ld, _)| d < ld) {
+                        level = Some((d, y));
+                    }
+                    let edge = d - road.half;
+                    if edge > reach || best.is_some_and(|(b, _)| edge >= b) {
+                        continue;
+                    }
+                    let (dx, dz) = (road.b[0] - road.a[0], road.b[1] - road.a[1]);
+                    let l = dx.hypot(dz);
+                    if l < 1e-6 {
+                        continue;
+                    }
+                    let closest = [road.a[0] + dx * t, road.a[1] + dz * t];
+                    best = Some((
+                        edge,
+                        NearRoad {
+                            closest,
+                            centre_m: d,
+                            dir: [dx / l, dz / l],
+                            half: road.half,
+                            y,
+                            class: road.class,
+                        },
+                    ));
+                }
+            }
+        }
+        best.map(|(_, mut b)| {
+            if !b.y.is_finite() {
+                b.y = level.map_or(f64::NAN, |l| l.1);
+            }
+            b
         })
     }
 

@@ -107,6 +107,7 @@ pub fn load_course_at(
     if let Some(o) = &obstacles {
         tracing::info!(
             tiles = o.tiles().count(),
+            lamps = o.lamp_count(),
             mb = o.approx_bytes() as f64 / 1e6,
             "world obstacles (spec §14 Phase 12 K3)"
         );

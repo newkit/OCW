@@ -15,9 +15,17 @@ ocw-weather.workspace = true
 # The season of the leaves on the road (spec 4.6.2 Q6: wet leaves in the
 # ride); pure, wasm-clean.
 ocw-sky.workspace = true
+# The point obstacles' and street lamps' solid shapes from the collision
+# proxies `col_*` of their model files (spec 15H / 15N, Phase 12): the
+# shipped props, embedded; wasm-clean without its `tools`.
+ocw-assets.workspace = true
 # Workout files (spec §2.8); both build for wasm32.
 serde.workspace = true
 toml.workspace = true
+
+[dev-dependencies]
+# Model nodes in the proxy tests (the same glam as ocw-assets').
+glam.workspace = true
 
 [lints]
 workspace = true
