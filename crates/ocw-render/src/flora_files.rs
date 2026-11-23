@@ -590,7 +590,16 @@ mod tests {
                     e.file
                 );
             }
-            assert_eq!(model.shade_scale(), shipped.shade_scale(), "{}", e.file);
+            // The generator's maths may differ in the last bit between CPUs
+            // (aarch64 fuses multiply-adds), which can move the rounded-up
+            // scale by one step of 1/1000; the shipped file is the truth.
+            assert!(
+                (model.shade_scale() - shipped.shade_scale()).abs() <= 1.001e-3,
+                "{}: {} vs {}",
+                e.file,
+                model.shade_scale(),
+                shipped.shade_scale()
+            );
             scaled += usize::from(model.shade_scale() > 1.0);
         }
         // The 63 files whose shading went above 1 (15M).
