@@ -129,12 +129,21 @@ pub fn load_course_at(
         mb = leaves.approx_bytes() as f64 / 1e6,
         "leaves on the roads (spec 4.6.2 Q6)"
     );
+    // The ground away from the roads (spec §14 Phase 13A: riding off the
+    // road after a unicorn landing), from the home package's tiles.
+    let ground = ocw_world::ground::GroundMap::from_package(&world.package);
+    tracing::info!(
+        tiles = ground.tile_count(),
+        mb = ground.approx_bytes() as f64 / 1e6,
+        "ground for riding off the road (spec §14 Phase 13A)"
+    );
     let net = Arc::new(
         RoadNetwork::new(graph)
             .with_package_name(hood.set.name())
             .with_obstacles(obstacles)
             .with_road_feel(road_feel)
-            .with_leaves(Some(Arc::new(leaves))),
+            .with_leaves(Some(Arc::new(leaves)))
+            .with_ground((ground.tile_count() > 0).then(|| Arc::new(ground))),
     );
     let change = v1::WorldChange {
         package_id: world.identity.id.clone(),

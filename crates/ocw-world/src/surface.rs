@@ -12,9 +12,25 @@ pub enum Surface {
     Gravel,
     /// Off the road: meadows, fields.
     Grass,
+    /// Off the road (spec §14 Phase 13A, free riding on the terrain): the
+    /// forest floor – leaves, needles, roots.
+    ForestFloor,
+    /// Off the road: bare rock (hard but rough).
+    Rock,
+    /// Off the road: sand, scree, soft soil, wetland, snow.
+    Sand,
 }
 
 impl Surface {
+    pub const ALL: [Surface; 6] = [
+        Surface::Asphalt,
+        Surface::Gravel,
+        Surface::Grass,
+        Surface::ForestFloor,
+        Surface::Rock,
+        Surface::Sand,
+    ];
+
     /// Factor on the rider's rolling resistance coefficient (asphalt = 1):
     /// typical Crr ~0.004 on asphalt, ~0.01 on gravel, ~0.025 on grass.
     pub fn rolling_factor(self) -> f64 {
@@ -22,6 +38,9 @@ impl Surface {
             Surface::Asphalt => 1.0,
             Surface::Gravel => 2.5,
             Surface::Grass => 6.0,
+            Surface::ForestFloor => 7.5,
+            Surface::Rock => 3.0,
+            Surface::Sand => 15.0,
         }
     }
 
@@ -38,12 +57,14 @@ impl Surface {
             Surface::Asphalt => "asphalt",
             Surface::Gravel => "gravel",
             Surface::Grass => "grass",
+            Surface::ForestFloor => "forest_floor",
+            Surface::Rock => "rock",
+            Surface::Sand => "sand",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
-        [Surface::Asphalt, Surface::Gravel, Surface::Grass]
-            .into_iter()
+        Self::ALL.into_iter()
             .find(|v| v.name() == s)
     }
 }
@@ -59,7 +80,7 @@ mod tests {
         assert!(Surface::Gravel.rolling_factor() < Surface::Grass.rolling_factor());
         assert_eq!(Surface::of_class(RoadClass::Track), Surface::Gravel);
         assert_eq!(Surface::of_class(RoadClass::Secondary), Surface::Asphalt);
-        for s in [Surface::Asphalt, Surface::Gravel, Surface::Grass] {
+        for s in Surface::ALL {
             assert_eq!(Surface::parse(s.name()), Some(s));
         }
         assert_eq!(Surface::parse("ice"), None);

@@ -150,10 +150,43 @@ impl Session {
         }
     }
 
+    /// Where the unicorn over (x, z) facing `yaw` lands (spec §14 Phase
+    /// 13A, Q8 (a)): in a free ride anywhere on land inside the world's
+    /// tiles (on the road when it is near, else on the ground; refused on
+    /// water, buildings and obstacles), on fixed routes and route rides on
+    /// the route ([`crate::offroad::Landing::Road`] marks only that it is
+    /// allowed there).
+    pub fn landing(&mut self, x: f64, z: f64, yaw: f64) -> crate::offroad::Landing {
+        let tick = self.tick;
+        if self.off_road_allowed()
+            && let Some((net, _)) = &self.free
+        {
+            return crate::offroad::landing(net, x, z, yaw, Some(&mut self.world), tick);
+        }
+        crate::offroad::Landing::Road {
+            edge: 0,
+            offset_m: 0.0,
+            at: [x, 0.0, z],
+        }
+    }
+
     /// Ends god mode: the rider stands (speed 0) on the road below the
-    /// unicorn or where the flight began. Returns the road point (local
-    /// metres) the rider stands on.
+    /// unicorn, on the ground there (spec §14 Phase 13A: free rides), or
+    /// where the flight began. Returns the point (local metres) the rider
+    /// stands on. A landing that is not allowed there (water, a building,
+    /// an obstacle, outside the world) is refused: the rider flies on.
     pub fn leave_god(&mut self, id: RiderId, how: GodLeave) -> Result<[f64; 3], String> {
+        let yaw = self.god(id).ok_or("not in god mode")?.pose.yaw;
+        let ground = match how {
+            GodLeave::Land { x, z } => match self.landing(x, z, yaw) {
+                crate::offroad::Landing::Refused { why, .. } => {
+                    return Err(format!("cannot land here: {why}"));
+                }
+                crate::offroad::Landing::Ground { .. } => true,
+                crate::offroad::Landing::Road { .. } => false,
+            },
+            GodLeave::FlyBack => false,
+        };
         let g = self
             .riders
             .get_mut(&id)
@@ -170,6 +203,7 @@ impl Session {
                     ..g.frozen
                 };
             }
+            GodLeave::Land { x, z } if ground => self.land_off_road(id, x, z, yaw),
             GodLeave::Land { x, z } => self.land(id, x, z, g.frozen),
         }
         let st = self.rider_state(id).expect("checked");
@@ -177,6 +211,30 @@ impl Session {
             .track(id)
             .sample(st.distance)
             .offset_position(st.lateral_offset))
+    }
+
+    /// Places the rider standing on the ground at (x, z), facing `yaw`, in
+    /// wild mode (spec §14 Phase 13A): free 2D riding off the road. The
+    /// distance goes on from where the flight began (nothing credited).
+    fn land_off_road(&mut self, id: RiderId, x: f64, z: f64, yaw: f64) {
+        let Some(ground) = self
+            .free
+            .as_ref()
+            .and_then(|(n, _)| n.ground().cloned())
+        else {
+            return;
+        };
+        let r = self.riders.get_mut(&id).expect("checked");
+        let d = r.state.distance;
+        r.state = RiderState {
+            distance: d,
+            ..Default::default()
+        };
+        r.off_road = Some(crate::offroad::OffRoadPose { x, z, yaw }.track(ground, d));
+        r.turn = None;
+        r.wild = true;
+        r.scraping = false;
+        r.steering = Steering::Lean(0.0);
     }
 
     /// Places the rider standing on the road nearest (x, z).
@@ -233,6 +291,7 @@ impl Session {
         let r = self.riders.get_mut(&id).expect("checked");
         r.wild = false;
         r.scraping = false;
+        r.off_road = None;
     }
 }
 

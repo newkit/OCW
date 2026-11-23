@@ -298,7 +298,27 @@ pub fn quantize(s: &ocw_sim::RiderSnapshot) -> v1::RiderUpdate {
         status: None,
         // The server adds the account once a second (spec §7.1.7 Q9).
         account_id: String::new(),
+        off_road: s.off_road.as_ref().map(off_road_to_wire),
     }
+}
+
+/// A rider's place off the road on the wire (spec §14 Phase 13A).
+pub fn off_road_to_wire(p: &ocw_sim::offroad::OffRoadPose) -> v1::OffRoadPose {
+    let yaw = p.yaw.rem_euclid(std::f64::consts::TAU);
+    v1::OffRoadPose {
+        x_mm: (p.x * 1000.0).round() as i64,
+        z_mm: (p.z * 1000.0).round() as i64,
+        yaw_e5: (yaw * 1e5).round() as i32,
+    }
+}
+
+/// A rider's place off the road from a snapshot, if off the road.
+pub fn rider_off_road(u: &v1::RiderUpdate) -> Option<ocw_sim::offroad::OffRoadPose> {
+    u.off_road.as_ref().map(|p| ocw_sim::offroad::OffRoadPose {
+        x: p.x_mm as f64 / 1000.0,
+        z: p.z_mm as f64 / 1000.0,
+        yaw: f64::from(p.yaw_e5) / 1e5,
+    })
 }
 
 /// The collision model on the wire (spec §14 Phase 12A).
@@ -1612,6 +1632,7 @@ mod tests {
                     power_w: 310.0,
                     last_input_seq: 77,
                     god: None,
+                    off_road: None,
                     crash: None,
                     bump: None,
                     bike: ocw_core::ProfileId::Gravel,
@@ -1634,6 +1655,7 @@ mod tests {
                     power_w: 0.0,
                     last_input_seq: 0,
                     god: None,
+                    off_road: None,
                     crash: None,
                     bump: None,
                     bike: Default::default(),
@@ -1712,6 +1734,7 @@ mod tests {
             power_w: -5.0,
             last_input_seq: 0,
             god: None,
+            off_road: None,
             crash: None,
             bump: None,
             bike: Default::default(),
@@ -1739,6 +1762,7 @@ mod tests {
             power_w: 180.0,
             last_input_seq: 0,
             god,
+            off_road: None,
             crash: None,
             bump: None,
             bike: Default::default(),
@@ -1750,6 +1774,21 @@ mod tests {
         let back = <v1::RiderUpdate as prost::Message>::decode(bytes.as_slice()).unwrap();
         assert_eq!(rider_god(&back), Some(pose));
         assert_eq!(rider_god(&quantize(&snap(None))), None);
+        // Off the road (spec §14 Phase 13A): the pose round trips to the
+        // millimetre, the yaw to 1e-5 rad (wrapped into 0 … 2π).
+        let mut off = snap(None);
+        off.off_road = Some(ocw_sim::offroad::OffRoadPose {
+            x: 1234.5678,
+            z: -987.6543,
+            yaw: -0.75,
+        });
+        let back = <v1::RiderUpdate as prost::Message>::decode(encode(&quantize(&off)).as_slice())
+            .unwrap();
+        let p = rider_off_road(&back).unwrap();
+        assert!((p.x - 1234.5678).abs() < 1e-3 && (p.z + 987.6543).abs() < 1e-3, "{p:?}");
+        let dy = (p.yaw - (-0.75f64).rem_euclid(std::f64::consts::TAU)).abs();
+        assert!(dy < 2e-5, "{p:?}");
+        assert_eq!(rider_off_road(&quantize(&snap(None))), None);
         // An old server's update (no mode): riding.
         assert_eq!(rider_god(&v1::RiderUpdate::default()), None);
         let Msg::God(r) = decode_client(&encode(&god_leave(true, 1.0, 2.0))).unwrap() else {
@@ -1875,6 +1914,7 @@ mod tests {
             power_w: 201.6,
             last_input_seq: 9,
             god: None,
+            off_road: None,
             crash: None,
             bump: None,
             bike: Default::default(),
@@ -2290,6 +2330,7 @@ mod tests {
             power_w: 0.0,
             last_input_seq: 0,
             god: None,
+            off_road: None,
             crash: Some(crash),
             bump: Some(Bump {
                 tick: 99,
@@ -2598,6 +2639,7 @@ mod tests {
             power_w: 0.0,
             last_input_seq: 0,
             god: None,
+            off_road: None,
             crash: None,
             bump: None,
             build_hash: b.hash(),

@@ -18,6 +18,7 @@ pub mod freeride;
 pub mod god;
 pub mod interpolation;
 pub mod leaves;
+pub mod offroad;
 pub mod physics;
 pub mod prediction;
 pub mod ride;

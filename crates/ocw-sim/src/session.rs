@@ -24,6 +24,8 @@ use crate::ride::{self, Controls};
 mod collisions;
 mod damage;
 mod god_mode;
+#[cfg(test)]
+mod off_road_tests;
 pub use collisions::{CollisionStats, Crash, JOIN_GHOST_S, Stage};
 pub use damage::DamageStage;
 pub use god_mode::{GodLeave, GodRider};
@@ -103,6 +105,11 @@ struct Rider {
     /// God mode (spec §14 Phase 13): out of the physics, the road
     /// position frozen, flying as a unicorn.
     god: Option<GodRider>,
+    /// Off the road on the terrain (spec §14 Phase 13A, free ride only):
+    /// the straight track through the rider along the heading
+    /// ([`crate::offroad`]); the path is kept but not ridden until the
+    /// rider joins a road again.
+    off_road: Option<ocw_world::ground::OffRoadTrack>,
     /// Collisions (spec §14 Phase 12): the crash under way, the last soft
     /// bump, autodrive's passing line, a chaotic bot's (or a staged)
     /// mistake until this tick and its drift, and when the rider joined.
@@ -144,6 +151,10 @@ pub struct RiderSnapshot {
     pub last_input_seq: u32,
     /// In god mode: the unicorn's pose (spec §14 Phase 13E).
     pub god: Option<crate::god::GodPose>,
+    /// Off the road (spec §14 Phase 13A): where the rider is and the
+    /// direction of travel; the state's distance is the track's there
+    /// (lateral offset and heading 0).
+    pub off_road: Option<crate::offroad::OffRoadPose>,
     /// A crash under way (spec §14 Phase 12C).
     pub crash: Option<crate::collide::CrashView>,
     /// The last soft bump (for the wobble and the sound).
@@ -395,12 +406,33 @@ impl Session {
         self.riders.get(&id)?.path.as_ref()
     }
 
-    /// What rider `id` rides along: their path, or the route.
+    /// What rider `id` rides along: off the road the terrain's track
+    /// (spec §14 Phase 13A), else their path, or the route.
     pub fn track(&self, id: RiderId) -> &dyn Track {
+        if let Some(t) = self.riders.get(&id).and_then(|r| r.off_road.as_ref()) {
+            return t;
+        }
         match self.path(id) {
             Some(p) => p,
             None => &self.route,
         }
+    }
+
+    /// Where rider `id` is off the road, if they are (spec §14 Phase 13A).
+    pub fn off_road(&self, id: RiderId) -> Option<crate::offroad::OffRoadPose> {
+        self.riders
+            .get(&id)?
+            .off_road
+            .as_ref()
+            .map(crate::offroad::OffRoadPose::of)
+    }
+
+    /// Whether riders may leave the roads here (spec §14 Phase 13A, Q8
+    /// (a)): a free ride (no route plan, no event) on a world with ground.
+    pub fn off_road_allowed(&self) -> bool {
+        self.plan.is_none()
+            && self.event.is_none()
+            && self.free.as_ref().is_some_and(|(n, _)| n.ground().is_some())
     }
 
     /// Number of physics ticks since the session started.
@@ -709,6 +741,7 @@ impl Session {
                 path_changed: None,
                 slot,
                 god: None,
+                off_road: None,
                 crash: None,
                 bump: None,
                 avoid: Default::default(),
@@ -936,7 +969,8 @@ impl Session {
     pub fn set_wild(&mut self, id: RiderId, wild: bool) -> bool {
         match self.riders.get_mut(&id) {
             Some(r) if r.control == Control::Client => {
-                r.wild = wild;
+                // Off the road the rider is always free of the road.
+                r.wild = wild || r.off_road.is_some();
                 true
             }
             _ => false,
@@ -993,6 +1027,20 @@ impl Session {
     /// client asked (distance, speed), used when close to the server's
     /// state so both find the same way.
     pub fn rejoin_route(&mut self, id: RiderId, from: Option<(f64, f64)>) -> Result<(), String> {
+        // Off the road (spec §14 Phase 13A): J puts the rider on the
+        // nearest road, standing (like the unicorn's landing).
+        if let Some(t) = self.riders.get(&id).and_then(|r| r.off_road.clone()) {
+            let r = self.riders.get_mut(&id).expect("checked");
+            let st = r.state;
+            let at = t.sample(st.distance).offset_position(st.lateral_offset);
+            if !self.teleport_to(id, at[0], at[2]) {
+                return Err("no road to rejoin".into());
+            }
+            let r = self.riders.get_mut(&id).expect("checked");
+            r.state.speed = 0.0;
+            r.state.turn_curvature = 0.0;
+            return Ok(());
+        }
         let r = self.riders.get_mut(&id).ok_or("no such rider")?;
         let (d, v) = match from {
             Some((d, v)) if (d - r.state.distance).abs() < 10.0 => (d, v),
@@ -1014,6 +1062,7 @@ impl Session {
     pub fn teleport(&mut self, id: RiderId, distance: f64) -> Option<f64> {
         let finish = self.route.finish();
         let r = self.riders.get_mut(&id)?;
+        r.off_road = None;
         match &mut r.path {
             Some(path) => {
                 if let Some(i) = path.extend(distance, &mut |j| j.default) {
@@ -1055,9 +1104,36 @@ impl Session {
         r.path = Some(path);
         r.path_reset = true;
         r.path_changed = None;
+        r.off_road = None;
         r.state.lateral_offset = 0.0;
         r.state.heading = 0.0;
         true
+    }
+
+    /// Puts rider `id` on the road graph from the terrain (spec §14 Phase
+    /// 13A, [`crate::offroad::road_join`]): a new path from the join along
+    /// the travel, the rider where they were beside the centre line.
+    fn join_road(&mut self, id: RiderId, join: crate::offroad::Join) {
+        let Some((net, _)) = &self.free else {
+            return;
+        };
+        let net = net.clone();
+        let plan = self.plan.clone();
+        let Some(r) = self.riders.get_mut(&id) else {
+            return;
+        };
+        let next = r.path.as_ref().map_or(0, RidePath::next_index);
+        let d = r.state.distance;
+        let mut path = RidePath::start(net, join.edge, join.offset_m, join.forward, d, next)
+            .with_plan(plan);
+        path.extend(d, &mut |j| j.default);
+        r.path = Some(path);
+        r.path_reset = true;
+        r.path_changed = None;
+        r.turn = None;
+        r.off_road = None;
+        r.state.lateral_offset = join.lateral_m;
+        r.state.heading = join.heading;
     }
 
     /// Path changes since the last call (for broadcasting).
@@ -1228,7 +1304,11 @@ impl Session {
             .iter()
             .filter(|(_, r)| r.god.is_none() && r.control != Control::Echo)
             .map(|(id, r)| {
-                let at = r.path.as_ref().and_then(|p| p.locate(r.state.distance));
+                // Off the road nobody shares a road with the rider.
+                let at = match r.off_road {
+                    Some(_) => None,
+                    None => r.path.as_ref().and_then(|p| p.locate(r.state.distance)),
+                };
                 let lane = match r.steering {
                     Steering::Auto(t) => t,
                     Steering::Lean(_) => r.state.lateral_offset,
@@ -1271,6 +1351,14 @@ impl Session {
         let leaves = self.leaf_ground();
         let leaf_slides =
             damage_on && mode == crate::collide::Mode::Full && !self.group_ride_running();
+        // Riding off the road (spec §14 Phase 13A): free rides on a world
+        // with ground; who reached a road joins it after the loop.
+        let off_ground = self
+            .off_road_allowed()
+            .then(|| self.free.as_ref().and_then(|(n, _)| n.ground().cloned()))
+            .flatten();
+        let net = self.free.as_ref().map(|(n, _)| n.clone());
+        let mut joins: Vec<(RiderId, crate::offroad::Join)> = Vec::new();
         for (id, rider) in &mut self.riders {
             let d = rider.state.distance;
             if rider.control == Control::Echo {
@@ -1286,6 +1374,75 @@ impl Session {
             if held {
                 // Countdown: the field waits at the start line.
                 rider.state.speed = 0.0;
+                continue;
+            }
+            if let Some(t) = rider.off_road.take() {
+                // Off the road (spec §14 Phase 13A): pushes since the last
+                // tick folded into the track, then one tick on the terrain.
+                let t = crate::offroad::normalize(&mut rider.state, &t);
+                rider.off_road = Some(t.clone());
+                if rider.crash.is_some() {
+                    collisions::crash_tick(rider, tick, physics::WILD_LIMIT_M);
+                    continue;
+                }
+                let fx = if damage_on {
+                    rider.damage.effects()
+                } else {
+                    crate::damage::Effects::NONE
+                };
+                let steering = match rider.steering {
+                    Steering::Lean(l) => Steering::Lean(l * fx.lean_factor),
+                    s => s,
+                };
+                let controls = Controls {
+                    steering,
+                    wild: true,
+                    braking: rider.input.brake || fx.held,
+                };
+                let (next, rise) = crate::offroad::tick(
+                    &mut rider.state,
+                    &t,
+                    &fx.profile(&rider.effective),
+                    fx.power(rider.input.power_w),
+                    controls,
+                    &mut rider.scraping,
+                    1.0,
+                    weather.as_ref(),
+                    SIM_DT,
+                );
+                if let Some(c) = fx.speed_cap
+                    && rider.state.speed > c
+                {
+                    rider.state.speed = c;
+                }
+                // Hearts by the work, as on the road (Q9 (a)); the climb is
+                // the terrain's rise.
+                let blocked = match rider.control {
+                    Control::Client if rider.virtual_power => Some(NoHearts::VirtualPower),
+                    Control::Client if fx.held => Some(NoHearts::Down),
+                    Control::Client => None,
+                    Control::Bot { .. } | Control::Echo => Some(NoHearts::Bot),
+                };
+                rider.meter.add(rider.input.power_w, SIM_DT, rise, blocked);
+                // Onto a road: back to riding along the road graph.
+                if let Some(net) = &net {
+                    let p = next.sample(rider.state.distance);
+                    if let Some(j) = crate::offroad::road_join(
+                        net,
+                        [p.position[0], p.position[2]],
+                        p.position[1],
+                        next.direction(),
+                    ) {
+                        joins.push((*id, j));
+                    }
+                }
+                rider.off_road = Some(next);
+                if damage_on
+                    && let Some(reason) =
+                        damage::damage_tick(rider, entrants.contains(id), damage_rules)
+                {
+                    abandons.push((*id, reason));
+                }
                 continue;
             }
             // Free ride: extend the path, lock the next junction's exit.
@@ -1557,12 +1714,28 @@ impl Session {
             {
                 edge_hits.push((*id, speed_before, heading_before));
             }
+            // Out of wild mode's band in a free ride (spec §14 Phase 13A):
+            // on into the terrain, in 2D.
+            if let Some(g) = &off_ground
+                && rider.control == Control::Client
+                && rider.wild
+                && rider.crash.is_none()
+                && crate::offroad::leaves_band(rider.state.lateral_offset, rider.state.heading)
+            {
+                let t = crate::offroad::from_band(g.clone(), track, &rider.state);
+                rider.state.lateral_offset = 0.0;
+                rider.state.heading = 0.0;
+                rider.off_road = Some(t);
+            }
             if damage_on
                 && let Some(reason) =
                     damage::damage_tick(rider, entrants.contains(id), damage_rules)
             {
                 abandons.push((*id, reason));
             }
+        }
+        for (id, j) in joins {
+            self.join_road(id, j);
         }
         if let Some(ev) = &mut self.event {
             for (id, reason) in abandons {
@@ -1589,6 +1762,13 @@ impl Session {
         // Contacts after the physics step, before the broadcast (12B).
         if !held {
             self.resolve_collisions(mode);
+        }
+        // Off the road the broadcast state is the track's own (lateral
+        // offset and heading 0 at its anchor), pushes folded in.
+        for r in self.riders.values_mut() {
+            if let Some(t) = r.off_road.take() {
+                r.off_road = Some(crate::offroad::normalize(&mut r.state, &t));
+            }
         }
         if let Some(ev) = &mut self.event {
             let progress: Vec<Progress> = before
@@ -1621,6 +1801,7 @@ impl Session {
                 power_w: r.input.power_w,
                 last_input_seq: r.last_input_seq,
                 god: r.god.map(|g| g.pose),
+                off_road: r.off_road.as_ref().map(crate::offroad::OffRoadPose::of),
                 crash: r.crash.and_then(|c| c.view(self.tick)),
                 bump: r.bump,
                 build_hash: r.build.as_ref().map_or(0, |b| b.hash()),
@@ -1767,8 +1948,10 @@ impl Session {
         r.wild = false;
         r.scraping = false;
         r.slot = slot;
-        // An event's start formation ends god mode and any crash.
+        // An event's start formation ends god mode, any crash and the
+        // ride off the road.
         r.god = None;
+        r.off_road = None;
         r.crash = None;
         r.bump = None;
         r.avoid = Default::default();

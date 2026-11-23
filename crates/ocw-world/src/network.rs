@@ -220,6 +220,49 @@ pub struct RoadNetwork {
     /// The junction surfaces (spec §4.8.8, J1): riders ride the heights
     /// the renderer draws there.
     junctions: std::sync::Arc<crate::junction::JunctionSet>,
+    /// The ground away from the roads (spec §14 Phase 13A: riding off the
+    /// road after a unicorn landing), if the world has tiles.
+    ground: Option<std::sync::Arc<crate::ground::GroundMap>>,
+    /// The edges by 100 m cell, made when first needed ([`Self::nearest_within`]).
+    edge_grid: std::sync::Arc<std::sync::OnceLock<EdgeGrid>>,
+}
+
+/// Cell size of the edge index (m).
+const EDGE_CELL_M: f64 = 100.0;
+
+/// The edges whose polylines pass each cell.
+#[derive(Debug, Default)]
+struct EdgeGrid {
+    cells: HashMap<(i32, i32), Vec<u32>>,
+}
+
+impl EdgeGrid {
+    fn of(graph: &RoadGraph) -> Self {
+        let mut cells: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
+        let cell = |v: f64| (v / EDGE_CELL_M).floor() as i32;
+        for (i, e) in graph.edges.iter().enumerate() {
+            let mut mine: Vec<(i32, i32)> = Vec::new();
+            let pts = &e.points;
+            let segs: Vec<([f64; 2], [f64; 2])> = if pts.len() == 1 {
+                vec![(pts[0], pts[0])]
+            } else {
+                pts.windows(2).map(|w| (w[0], w[1])).collect()
+            };
+            for (a, b) in segs {
+                for cx in cell(a[0].min(b[0]))..=cell(a[0].max(b[0])) {
+                    for cz in cell(a[1].min(b[1]))..=cell(a[1].max(b[1])) {
+                        if !mine.contains(&(cx, cz)) {
+                            mine.push((cx, cz));
+                        }
+                    }
+                }
+            }
+            for c in mine {
+                cells.entry(c).or_default().push(i as u32);
+            }
+        }
+        Self { cells }
+    }
 }
 
 impl RoadNetwork {
@@ -250,7 +293,20 @@ impl RoadNetwork {
             obstacles: None,
             road_feel: None,
             leaves: None,
+            ground: None,
+            edge_grid: Default::default(),
         }
+    }
+
+    /// The same network with the ground of its world (spec §14 Phase 13A).
+    pub fn with_ground(mut self, ground: Option<std::sync::Arc<crate::ground::GroundMap>>) -> Self {
+        self.ground = ground;
+        self
+    }
+
+    /// The ground away from the roads (heights and cover), if known.
+    pub fn ground(&self) -> Option<&std::sync::Arc<crate::ground::GroundMap>> {
+        self.ground.as_ref()
     }
 
     /// The same network with the leaf map of its world (spec 4.6.2 Q6).
@@ -567,6 +623,58 @@ impl RoadNetwork {
             }
         }
         best.map(|(_, i, s)| (i, s))
+    }
+
+    /// The point of the road graph nearest to `p` within `radius` m (an
+    /// index of 100 m cells: cheap enough for every physics tick, spec
+    /// §14 Phase 13A): (edge, metres from its `from` vertex, the distance
+    /// from `p`, the road's height there); `None` when no road is that near.
+    pub fn nearest_within(&self, p: [f64; 2], radius: f64) -> Option<(usize, f64, f64, f64)> {
+        if !(p[0].is_finite() && p[1].is_finite()) {
+            return None;
+        }
+        let grid = self.edge_grid.get_or_init(|| EdgeGrid::of(&self.graph));
+        let cell = |v: f64| (v / EDGE_CELL_M).floor() as i32;
+        let mut cand: Vec<u32> = Vec::new();
+        for cx in cell(p[0] - radius)..=cell(p[0] + radius) {
+            for cz in cell(p[1] - radius)..=cell(p[1] + radius) {
+                if let Some(list) = grid.cells.get(&(cx, cz)) {
+                    for &i in list {
+                        if !cand.contains(&i) {
+                            cand.push(i);
+                        }
+                    }
+                }
+            }
+        }
+        cand.sort_unstable();
+        let r2 = radius * radius;
+        let mut best: Option<(f64, usize, f64, f64)> = None;
+        for i in cand {
+            let i = i as usize;
+            // The polyline first: most candidates are farther.
+            if polyline_d2(&self.graph.edges[i].points, p) > r2 + 1.0 {
+                continue;
+            }
+            let g = self.geometry(i);
+            for (k, w) in g.points.windows(2).enumerate() {
+                let (a, b) = ([w[0][0], w[0][2]], [w[1][0], w[1][2]]);
+                let ab = [b[0] - a[0], b[1] - a[1]];
+                let len2 = ab[0] * ab[0] + ab[1] * ab[1];
+                let t = if len2 > 0.0 {
+                    (((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / len2).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                let d2 = (a[0] + ab[0] * t - p[0]).powi(2) + (a[1] + ab[1] * t - p[1]).powi(2);
+                if d2 <= r2 && best.is_none_or(|(bd, _, _, _)| d2 < bd) {
+                    let s = g.cumulative[k] + (g.cumulative[k + 1] - g.cumulative[k]) * t;
+                    let y = w[0][1] + (w[1][1] - w[0][1]) * t;
+                    best = Some((d2, i, s, y));
+                }
+            }
+        }
+        best.map(|(d2, i, s, y)| (i, s, d2.sqrt(), y))
     }
 
     /// A random start on a real road (no tracks, paths or dead ends, at

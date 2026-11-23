@@ -15,6 +15,7 @@ pub mod formats;
 pub mod geo;
 pub mod gpx;
 pub mod gradient;
+pub mod ground;
 pub mod graph;
 pub mod graph_route;
 pub mod inspect;
