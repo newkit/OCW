@@ -66,7 +66,7 @@ def kinks(g):
 def chart(name, rec, series, metres, out, title):
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7.2), sharex=True, gridspec_kw=dict(height_ratios=[1.1, 1]))
     fig.patch.set_facecolor(SURF)
-    base = rec["j3"]["drawn"][0]
+    base = series[-1][1][0]
     lines = []
     all_kinks = {}
     for key, h in sorted(series, key=lambda kh: kh[0] not in ("j3", "j4", "j5")):
@@ -166,6 +166,10 @@ def main():
             series.append(("j4", j4[(v, e)]["j3"]["drawn"]))
         if (v, e) in j5:
             series.append(("j5", j5[(v, e)]["j3"]["drawn"]))
+        if a.j4 and a.j4 == a.live:
+            # The J4 file stands for the live one too: its "j3" field is
+            # the J4 package, drawn once.
+            series = [kh for kh in series if kh[0] != "j3"]
         metres = min(metres, min(len(h) for _, h in series) - 1)
         if "far" in parts[4:]:
             # The other end's edge point (a short road between two junctions).
