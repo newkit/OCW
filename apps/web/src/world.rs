@@ -640,8 +640,15 @@ pub fn stream_world(world: &mut World) {
                 stream.woods.as_deref(),
             );
         }
-        if let (Some(pkg), Some(c)) = (&stream.lamp_pkg, centre) {
-            lamp_tiles(stream.obstacles.as_deref(), pkg, Some(c));
+        // Poles are only hit in wild mode (also off the road): placed
+        // while the own rider is wild, dropped when it is back on the road
+        // (bots never leave it), so an ordinary ride pays nothing.
+        let wild = world
+            .get_resource::<crate::plugin::Session>()
+            .is_some_and(|s| s.0.client.wild());
+        match (&stream.lamp_pkg, centre) {
+            (Some(pkg), Some(c)) if wild => lamp_tiles(stream.obstacles.as_deref(), pkg, Some(c)),
+            _ => drop_lamp_tiles(stream.obstacles.as_deref()),
         }
     }
     {
@@ -692,11 +699,20 @@ fn feel_tiles(feel: Option<&ocw_world::road_feel::RoadFeelMap>, pkg: &WorldPacka
 }
 
 /// The street lamps' poles are placed for the resident tiles within this
-/// ring around the rider's tile (the 3 × 3 a phone meshes): a pole is
-/// only hit near a rider, and placing them needs the junctions of their
-/// roads, which stay in memory (v5.64: all 49 resident tiles of
-/// Liechtenstein took 41 MB of junction rules for 1 MB of poles).
+/// ring around the rider's tile (the 3 × 3 a phone meshes), and only
+/// while the own rider is in wild mode: a pole is only hit there, and
+/// placing them needs the junctions of their roads, which stay in memory
+/// (v5.64: all 49 resident tiles of Liechtenstein took 14 MB more heap).
 pub const LAMP_RING: i32 = 1;
+
+/// Drops every streamed pole (the own rider is back on the road).
+pub fn drop_lamp_tiles(obstacles: Option<&ocw_world::obstacles::WorldObstacles>) {
+    if let Some(o) = obstacles
+        && !o.streamed_lamp_tiles().is_empty()
+    {
+        o.sync_streamed_lamps(&[], |_| Vec::new());
+    }
+}
 
 /// The street lamps' poles of the resident tiles near `centre`
 /// (package metres; [`LAMP_RING`], spec 14 Phase 12 K3; `None`: all
@@ -772,7 +788,6 @@ fn start_ride(world: &mut World, stream: &mut WorldStream, ride: WorldRide, now:
     let id = stream.identity.clone().unwrap_or_default();
     let (zone, _) = ocw_client::sky::place_zone(pkg.time_zone.as_deref(), Some(pkg.origin));
     let pkg = Arc::new(pkg);
-    lamp_tiles(stream.obstacles.as_deref(), &pkg, Some(ride.start));
     stream.lamp_pkg = Some(pkg.clone());
     if let Some(w) = &stream.woods {
         w.set_package(pkg.clone());
@@ -1101,6 +1116,12 @@ pub(crate) mod tests {
         assert!(n > 0 && n == obst.tile_lamp_feet(key).len(), "{n}");
         lamp_tiles(Some(&obst), &Arc::new(with_tiles(&full, &[])), None);
         assert_eq!(poles(&mut cache, 3), 0);
+        // Back on the road: every pole dropped.
+        lamp_tiles(Some(&obst), &Arc::new(full.clone()), None);
+        assert!(poles(&mut cache, 4) > 0);
+        drop_lamp_tiles(Some(&obst));
+        assert_eq!(obst.lamp_count(), 0);
+        assert_eq!(poles(&mut cache, 5), 0);
     }
 
     /// In the browser's local server a rider in wild mode bumps into a
