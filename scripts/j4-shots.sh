@@ -32,3 +32,5 @@ shot terrain-edge "j3 j4" -3310 590 -6240 0 -18 -3310,-6310
 export OCW_SHOT_TIME=07:15
 shot terrain-meadow "j3 j4" -3310 562 -6240 10 -9 -3310,-6310
 ls -la $OUT
+export OCW_SHOT_TIME=17:30
+shot a-corner "j4" -1441.0 557.5 5966.0 80 -35 -1440,5868

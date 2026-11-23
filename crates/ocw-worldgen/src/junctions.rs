@@ -2235,6 +2235,204 @@ fn plain_row(pts: &[[f32; 3]], i: usize, half: f32) -> [[f32; 3]; 2] {
     ]
 }
 
+/// A fault of the bands beside a carriageway at a junction (spec §4.8.8
+/// *Rule: the sides of a road are as smooth as the road*).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SideFault {
+    /// `gap`, `step`, `kink` or `corner`.
+    pub kind: &'static str,
+    pub vertex: usize,
+    pub at: [f64; 2],
+    /// The gap (m), the step (m), the change of grade (points) or the bend
+    /// (degrees).
+    pub value: f64,
+}
+
+/// A gap wider than this (m) between a strip's edge and the junction
+/// surface's outline at a mouth corner is a finding.
+pub const SIDE_GAP_M: f64 = 0.01;
+/// A step higher than this (m) between neighbouring side points less than
+/// 0.6 m apart (beyond what the side's grade explains).
+pub const SIDE_STEP_M: f64 = 0.05;
+/// A change of grade of more than this along a side band (points, over
+/// stretches of at least 1 m) beyond the change of the carriageway edge it
+/// belongs to.
+pub const SIDE_KINK: f64 = 8.0;
+/// A bend sharper than this (degrees) between two pieces of a side band,
+/// each at least 0.3 m long.
+pub const SIDE_CORNER_DEG: f64 = 25.0;
+
+/// The sides of every junction surface as the renderer draws them: each
+/// chain of the outline between two mouths (the corner's side band) and
+/// the edges of the arms' strips (their rows' corners) from the mouth on,
+/// as far as the junction reaches and 5 m more. Measured: `gap` – a mouth
+/// corner of the outline that no row of its arm's strip starts at (a
+/// hole); `step` – a jump of the side's height between the outline and the
+/// strip at a mouth corner, or between neighbouring points of a side less
+/// than 0.6 m apart; `kink` – a change of grade along a chain's band over
+/// stretches of at least 1 m above 8 points; `corner` – a bend in plan
+/// above 25° along a chain or where a chain turns into its arm's edge.
+/// One finding per junction and kind, its worst.
+pub fn side_faults(pkg: &WorldPackage, g: &RoadGraph) -> Vec<SideFault> {
+    let js = match pkg.junctions.as_ref() {
+        Some(j) => JunctionSet::with_index(g, j.index_for(g)),
+        None => JunctionSet::new(g),
+    };
+    let stored = pkg.junctions.as_ref().and_then(|j| j.strip_edges_for(g));
+    let edges_owned;
+    let edges = match stored {
+        Some(s) => s,
+        None => {
+            edges_owned = strip_edges_of(pkg, g);
+            &edges_owned
+        }
+    };
+    let mut by_edge: HashMap<u32, Vec<(ocw_world::TileKey, usize)>> = HashMap::new();
+    for (key, tile) in &pkg.tiles {
+        if let Some(ix) = edges.tile(*key, tile.roads.len()) {
+            for (i, &e) in ix.iter().enumerate() {
+                if e != NO_EDGE {
+                    by_edge.entry(e).or_default().push((*key, i));
+                }
+            }
+        }
+    }
+    let verts: Vec<usize> = (0..g.vertices.len()).collect();
+    let per = crate::par::map(&verts, crate::par::threads(), |&v| {
+        let mut out: Vec<SideFault> = Vec::new();
+        let Some(p) = js.own_patch(g, v) else {
+            return out;
+        };
+        let mut worst: HashMap<&'static str, SideFault> = HashMap::new();
+        let mut note = |kind: &'static str, at: [f64; 2], value: f64| {
+            let e = worst.entry(kind).or_insert(SideFault {
+                kind,
+                vertex: v,
+                at,
+                value: 0.0,
+            });
+            if value > e.value {
+                e.at = at;
+                e.value = value;
+            }
+        };
+        // The arms' strips' rows (shaped as drawn).
+        let mut rows_of: HashMap<usize, Vec<Vec<[[f64; 3]; 2]>>> = HashMap::new();
+        for a in &p.arms {
+            for &(key, si) in by_edge.get(&(a.edge as u32)).into_iter().flatten() {
+                let s = &pkg.tiles[&key].roads[si];
+                let half = s.width_m / 2.0;
+                if let Some(sh) = js.shape_strip(g, a.edge, &s.points, half)
+                    && sh.rows.len() >= 2
+                {
+                    rows_of.entry(a.edge).or_default().push(
+                        sh.rows
+                            .iter()
+                            .map(|r| r.map(|q| q.map(f64::from)))
+                            .collect(),
+                    );
+                }
+            }
+        }
+        let xz = |q: [f64; 3]| [q[0], q[2]];
+        let dist = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]);
+        let bend = |a: [f64; 2], b: [f64; 2], c: [f64; 2]| {
+            let (u, w) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
+            let (lu, lw) = (u[0].hypot(u[1]), w[0].hypot(w[1]));
+            if lu < 0.3 || lw < 0.3 {
+                return 0.0;
+            }
+            ((u[0] * w[0] + u[1] * w[1]) / (lu * lw))
+                .clamp(-1.0, 1.0)
+                .acos()
+                .to_degrees()
+        };
+        // The point of the arm's strip edge that starts at corner `c` and
+        // the next one along it (the strip's first row there).
+        let strip_start = |edge: usize, c: [f64; 3]| -> Option<([f64; 3], [f64; 3])> {
+            for rows in rows_of.get(&edge).into_iter().flatten() {
+                for (i, r) in rows.iter().enumerate() {
+                    for k in 0..2 {
+                        if dist(xz(r[k]), xz(c)) < SIDE_GAP_M {
+                            let j = if i == 0 { 1 } else { i - 1 };
+                            return Some((r[k], rows[j][k]));
+                        }
+                    }
+                }
+            }
+            None
+        };
+        for ch in &p.chains {
+            let pts: Vec<[f64; 3]> = ch.points.clone();
+            let n = pts.len();
+            if n < 2 {
+                continue;
+            }
+            // Plan: bends along the chain.
+            for i in 1..n - 1 {
+                let b = bend(xz(pts[i - 1]), xz(pts[i]), xz(pts[i + 1]));
+                if b > SIDE_CORNER_DEG {
+                    note("corner", xz(pts[i]), b);
+                }
+            }
+            // Height: grade changes along the chain over stretches ≥ 1 m.
+            let mut stretch: Vec<(f64, f64)> = Vec::new();
+            let mut acc = (0.0, pts[0][1]);
+            let mut walked = 0.0;
+            for w in pts.windows(2) {
+                walked += dist(xz(w[0]), xz(w[1]));
+                if walked - acc.0 >= 1.0 {
+                    stretch.push(((w[1][1] - acc.1) / (walked - acc.0), walked));
+                    acc = (walked, w[1][1]);
+                }
+            }
+            for w in stretch.windows(2) {
+                let dg = (w[1].0 - w[0].0).abs() * 100.0;
+                if dg > SIDE_KINK {
+                    let i = pts.len() / 2;
+                    note("kink", xz(pts[i.min(n - 1)]), dg);
+                }
+            }
+            // Steps between close points.
+            for w in pts.windows(2) {
+                let d = dist(xz(w[0]), xz(w[1]));
+                if d < 0.6 && (w[1][1] - w[0][1]).abs() > SIDE_STEP_M + 0.25 * d {
+                    note("step", xz(w[1]), (w[1][1] - w[0][1]).abs());
+                }
+            }
+            // Its two ends meet the arms' strips.
+            for (end, inner, arm) in [
+                (pts[0], pts[1], ch.from_arm),
+                (pts[n - 1], pts[n - 2], ch.to_arm),
+            ] {
+                let a = &p.arms[arm];
+                match strip_start(a.edge, end) {
+                    None => {
+                        // A strip may not exist (an arm inside a cluster):
+                        // only arms with strips count.
+                        if rows_of.contains_key(&a.edge) {
+                            note("gap", xz(end), 1.0);
+                        }
+                    }
+                    Some((q, next)) => {
+                        let dh = (q[1] - end[1]).abs();
+                        if dh > 0.02 {
+                            note("step", xz(end), dh);
+                        }
+                        let b = bend(xz(inner), xz(end), xz(next));
+                        if b > SIDE_CORNER_DEG {
+                            note("corner", xz(end), b);
+                        }
+                    }
+                }
+            }
+        }
+        out.extend(worst.into_values());
+        out
+    });
+    per.into_iter().flatten().collect()
+}
+
 /// The barycentric coordinates of `p` in the triangle (xz) `t`, if inside.
 fn bary(t: &[[f64; 3]; 3], p: [f64; 2]) -> Option<[f64; 3]> {
     let (a, b, c) = ([t[0][0], t[0][2]], [t[1][0], t[1][2]], [t[2][0], t[2][2]]);

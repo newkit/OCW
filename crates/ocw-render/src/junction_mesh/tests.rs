@@ -296,7 +296,16 @@ fn the_corner_verge_meets_the_arms_verge_without_a_hole() {
         for arm in &p.arms {
             for c in arm.row {
                 let c = Vec2::new(c[0] as f32, c[2] as f32);
-                for q in patch.iter().filter(|q| q.xz().distance(c) < 1.3) {
+                // The verge's outer edge 0.4 m out on both (a wide verge on
+                // one of them was the step and the hole).
+                let outer = |v: &[Vec3]| {
+                    v.iter().any(|q| {
+                        let d = q.xz().distance(c);
+                        d > 0.3 && d < 0.45
+                    })
+                };
+                assert!(outer(&patch) && outer(&arms), "verge widths at {c:?}");
+                for q in patch.iter().filter(|q| q.xz().distance(c) < 0.45) {
                     assert!(
                         arms.iter().any(|w| w.distance(*q) < 0.01),
                         "a hole at the mouth corner {c:?}: {q:?}"

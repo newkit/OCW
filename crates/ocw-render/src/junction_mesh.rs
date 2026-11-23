@@ -289,9 +289,20 @@ pub fn shape_tile<'a>(
                 let mut t = s.clone();
                 t.points = sh.points;
                 t.dress.start_m += sh.cut_m[0];
+                // At a junction surface: no junction zone, but the mouth's
+                // along coordinate (as −1 − along: the verge fades in from
+                // it, `road_mesh`; §4.8.8 Rule).
+                let ends = pj.set.ends(g, ei);
+                let rev = ocw_world::junction::strip_reversed(&g.edges[ei], &s.points);
                 for (k, end) in sh.junction_end.iter().enumerate() {
                     if *end {
-                        t.dress.junction_m[k] = 0.0;
+                        let ek = if rev { 1 - k } else { k };
+                        t.dress.junction_m[k] = match ends[ek] {
+                            Some(ocw_world::junction::EndRule::Patch(p, ai)) => {
+                                -1.0 - p.arms[ai].along as f32
+                            }
+                            _ => 0.0,
+                        };
                     }
                 }
                 move_crossings(&mut t, sh.cut_m[0], sh.junction_end, style);
@@ -528,7 +539,7 @@ pub fn patch_mesh(m: &mut MeshArrays, p: &Patch, looks: &[ArmLook], ctx: &RoadCo
         // meets their verges at the mouths without a step or a hole, and
         // follows the corner as one even band (before, its width followed
         // the ground's drop point by point: a jagged outer edge).
-        let narrow = vec![true; n];
+        let narrow = vec![1.0f32; n];
         side_dress(
             m,
             &SideDress {
