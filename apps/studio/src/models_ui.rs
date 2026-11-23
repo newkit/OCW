@@ -356,8 +356,8 @@ fn bike_combo(ui: &mut egui::Ui, id: &str, bike: &mut ProfileId) -> bool {
 fn tryon_section(ui: &mut egui::Ui, view: &mut ModelView) {
     let Some(o) = view.open.clone() else { return };
     let kind = o.entry.kind;
-    let cycles = TryOn::default_for(kind, &o.id).is_none()
-        && crate::models_cycle::has_cycles(&o.model);
+    let cycles =
+        TryOn::default_for(kind, &o.id).is_none() && crate::models_cycle::has_cycles(&o.model);
     egui::CollapsingHeader::new(if cycles { "Flight cycles" } else { "Try it on" })
         .default_open(true)
         .show(ui, |ui| {
