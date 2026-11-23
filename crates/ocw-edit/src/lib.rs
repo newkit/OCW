@@ -21,6 +21,11 @@
 //!   saved views). The world patch operations of 16C / E5 plug in as more
 //!   [`world::WorldOp`]s (or a document kind of their own).
 //!
+//! - [`model`]: the Models workspace's document (16B, E4): one model
+//!   file with its manifest entry, node / point / proxy / material /
+//!   metadata edits with their inverses, the contract's validator, the
+//!   fixes, the save with `model diff` and the re-import.
+//!
 //! - [`route`]: the Routes workspace's document (via-points and legs on a
 //!   package's road graph, the imported track and its problem sections),
 //!   the [`route::Editor`] that turns route edits into commands with the
@@ -34,6 +39,7 @@
 
 pub mod autosave;
 pub mod document;
+pub mod model;
 pub mod route;
 pub mod selection;
 pub mod session;

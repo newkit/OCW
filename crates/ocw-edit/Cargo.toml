@@ -18,6 +18,10 @@ ocw-world.workspace = true
 # FIT courses and activities in and out of the Routes workspace (16D, E2);
 # pure, no dependencies.
 ocw-fit.workspace = true
+# The Models workspace's document (16B, E4): the model files, their
+# validator, writer and diff (Phase 15); pure and wasm-safe.
+ocw-assets.workspace = true
+glam = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
 

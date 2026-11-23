@@ -518,7 +518,13 @@ fn panels(
                     &mut state.tool,
                     &mut pending,
                 ),
-                Workspace::Models => crate::models_ui::models_panel(ui, &mut mview, &mut mform),
+                Workspace::Models => crate::models_ui::models_panel(
+                    ui,
+                    &mut mview,
+                    &mut mform,
+                    &studio,
+                    &mut pending,
+                ),
                 Workspace::Routes => {
                     let st = &mut *state;
                     crate::routes_ui::routes_panel(
@@ -566,7 +572,16 @@ fn panels(
     let view = root.allocate_rect(central, egui::Sense::click_and_drag());
     focus.over_view = (view.hovered() || view.dragged()) && !models_ws;
     if models_ws {
-        crate::models_ui::view_input(&ctx, &view, &mut mview);
+        // The edit gizmo first (E4); the camera orbits otherwise.
+        let gizmo = match model_cams.single() {
+            Ok(c) => {
+                crate::models_ui::edit_input(&ctx, &view, &mut mview, c, &studio, &mut pending)
+            }
+            Err(_) => false,
+        };
+        if !gizmo {
+            crate::models_ui::view_input(&ctx, &view, &mut mview);
+        }
         if let Ok((cam, t)) = model_cams.single() {
             let labels = crate::models_view::gizmo_labels(&mview, cam, t);
             crate::models_ui::paint_labels(&root, central, &labels);

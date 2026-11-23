@@ -617,6 +617,11 @@ pub fn diff(a: &Model, b: &Model) -> ModelDiff {
                         [ma.roughness, 0.0, 0.0, 0.0],
                         [mb.roughness, 0.0, 0.0, 0.0],
                     ),
+                    (
+                        "emissive",
+                        [ma.emissive[0], ma.emissive[1], ma.emissive[2], 0.0],
+                        [mb.emissive[0], mb.emissive[1], mb.emissive[2], 0.0],
+                    ),
                 ] {
                     if !close(&x, &y) {
                         changes.push(Change::MaterialChanged {

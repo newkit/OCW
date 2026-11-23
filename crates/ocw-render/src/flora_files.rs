@@ -178,18 +178,21 @@ fn split(sp: Species, pick: f32, detail: Detail) -> Result<Vec<(Material, Primit
             color: [crown_file[0], crown_file[1], crown_file[2], 1.0],
             metallic: 0.0,
             roughness: 0.85,
+            emissive: [0.0; 3],
         },
         Material {
             name: "bark".into(),
             color: [bark[0], bark[1], bark[2], 1.0],
             metallic: 0.0,
             roughness: 0.9,
+            emissive: [0.0; 3],
         },
         Material {
             name: "dry".into(),
             color: [1.0; 4],
             metallic: 0.0,
             roughness: 0.9,
+            emissive: [0.0; 3],
         },
     ];
     let mut out = Vec::new();

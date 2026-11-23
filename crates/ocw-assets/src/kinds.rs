@@ -3,10 +3,10 @@
 //! budgets and the file-name pattern (15H: function first, then shape).
 //! `artwork/3dmodels/README.md` has the same table for artists.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// What a model is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
     /// A bike (one per physics profile; `profile` names it).

@@ -7,15 +7,21 @@
 //! sees the file convention.
 
 use glam::{Affine3A, Quat, Vec3};
+use serde::{Deserialize, Serialize};
 
 /// A material, named after its paint slot (see [`crate::slots`]).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Material {
     pub name: String,
     /// Linear RGBA (glTF `baseColorFactor`).
     pub color: [f32; 4],
     pub metallic: f32,
     pub roughness: f32,
+    /// Linear RGB (glTF `emissiveFactor`; written only when not black).
+    /// The default glow of a light's slot (`bulb`), set in OCW Studio
+    /// (16B *Materials*).
+    #[serde(default)]
+    pub emissive: [f32; 3],
 }
 
 /// Converts an sRGB `0xRRGGBB` colour to linear RGBA.
@@ -32,7 +38,7 @@ pub fn srgb(hex: u32) -> [f32; 4] {
 }
 
 /// Triangles in one material.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Primitive {
     pub material: usize,
     pub positions: Vec<[f32; 3]>,
@@ -55,7 +61,7 @@ impl Primitive {
 
 /// A node: a rigid part (or an empty anchor) at a transform relative to
 /// its parent.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Node {
     pub name: String,
     pub parent: Option<usize>,
@@ -92,7 +98,7 @@ pub fn is_far_level(name: &str) -> bool {
 }
 
 /// A whole asset.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Model {
     pub materials: Vec<Material>,
     /// Parents come before their children.

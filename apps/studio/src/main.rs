@@ -21,8 +21,10 @@
 //!   the route document, imports with map matching, the built-in planner
 //!   and BRouter, exports, *Test ride*;
 //! - [`models`], [`models_view`], [`models_ui`]: the Models workspace (16B,
-//!   stage E3, view only): the model browser, the viewer, the stats and
-//!   the validator's findings, the try-on;
+//!   stage E3): the model browser, the viewer, the stats and the
+//!   validator's findings, the try-on; [`model_edit`], [`model_gizmo`]:
+//!   its edits (stage E4) – the model document with undo, the gizmo and
+//!   picking, save with the diff first, re-import, *Open in Blender*;
 //! - [`ui`]: the egui panels.
 
 mod build;
@@ -31,6 +33,8 @@ mod flight;
 mod icon;
 mod info;
 mod map;
+mod model_edit;
+mod model_gizmo;
 mod models;
 mod models_ui;
 mod models_view;

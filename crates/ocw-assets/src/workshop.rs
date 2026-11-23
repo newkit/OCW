@@ -104,6 +104,7 @@ fn material(name: &str) -> Material {
         color: srgb(c),
         metallic: m,
         roughness: r,
+        emissive: [0.0; 3],
     }
 }
 

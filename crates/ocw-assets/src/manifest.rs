@@ -7,7 +7,7 @@
 
 use std::collections::BTreeSet;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::check::{self, Finding, Severity, Target};
 use crate::glb;
@@ -49,7 +49,7 @@ pub const KEYS: [&str; 10] = [
 ];
 
 /// One manifest entry (spec §14 Phase 15, 15C).
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Entry {
     /// The path in the model folder (`bikes/bike-tt.glb`); the id is it
     /// without `.glb` ([`crate::kinds::id_of`]).

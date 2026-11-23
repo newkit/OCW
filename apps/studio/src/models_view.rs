@@ -192,6 +192,19 @@ pub struct ModelView {
     /// Crank angle of the ride try-on (rad).
     pub crank: f32,
     reload_timer: f32,
+    /// The open model is a document of the edit stage (E4,
+    /// [`crate::model_edit`]): a changed file is re-imported into it
+    /// (`external_change`) instead of opened anew.
+    pub editing: bool,
+    pub external_change: bool,
+    /// The selected node (the edit gizmo's), by index.
+    pub selected: Option<usize>,
+    /// Only transforms changed: the drawn nodes are moved, not rebuilt.
+    pub retransform: bool,
+    /// The edit gizmo: its mode, the handle under the pointer or dragged.
+    pub gizmo_mode: crate::model_gizmo::GizmoMode,
+    pub gizmo_hot: Option<usize>,
+    pub gizmo_drag: Option<crate::model_gizmo::GizmoDrag>,
 }
 
 impl ModelView {
@@ -219,7 +232,58 @@ impl ModelView {
             status: String::new(),
             crank: 0.0,
             reload_timer: 0.0,
+            editing: false,
+            external_change: false,
+            selected: None,
+            retransform: false,
+            gizmo_mode: crate::model_gizmo::GizmoMode::Move,
+            gizmo_hot: None,
+            gizmo_drag: None,
         }
+    }
+
+    /// Shows an edited version of the open model (E4): its findings,
+    /// stats and gizmos again; only moved nodes are moved, anything else
+    /// is drawn anew.
+    pub fn refresh(&mut self, model: Model, entry: Entry) {
+        let Some(o) = &self.open else { return };
+        let moved_only = o.entry == entry
+            && o.model.materials == model.materials
+            && o.model.nodes.len() == model.nodes.len()
+            && o.model.nodes.iter().zip(&model.nodes).all(|(a, b)| {
+                a.name == b.name
+                    && a.parent == b.parent
+                    && a.extras == b.extras
+                    && a.primitives == b.primitives
+            });
+        // (The file's size changes with the geometry, not with a move.)
+        let bytes = if moved_only {
+            o.bytes
+        } else {
+            ocw_assets::glb::write(&model).len()
+        };
+        let next = opened(
+            o.id.clone(),
+            o.path.clone(),
+            entry,
+            o.listed,
+            Arc::new(model),
+            bytes,
+        );
+        self.open = Some(next);
+        // A try-on that poses the open model is drawn anew.
+        let posed = matches!(self.tryon, TryOn::Ride { .. } | TryOn::Rider { .. });
+        if moved_only && !posed {
+            self.retransform = true;
+        } else {
+            self.dirty = true;
+        }
+        if let Highlight::Node(i) = self.highlight
+            && self.open.as_ref().is_some_and(|o| i >= o.model.nodes.len())
+        {
+            self.highlight = Highlight::None;
+        }
+        self.style_dirty = true;
     }
 
     /// The library: a folder (`--models`, `OCW_MODELS`, or
@@ -492,7 +556,9 @@ impl Plugin for ModelsPlugin {
                 (
                     activate,
                     hot_reload,
+                    crate::model_edit::sync,
                     rebuild,
+                    retransform,
                     animate,
                     style,
                     camera_and_light,
@@ -651,7 +717,10 @@ fn hot_reload(time: Res<Time>, mut view: ResMut<ModelView>) {
             .and_then(|p| std::fs::read(p).ok())
             .is_some_and(|b| b.len() != o.bytes)
     };
-    if changed {
+    if changed && view.editing {
+        // The document re-imports it (keeping its history).
+        view.external_change = true;
+    } else if changed {
         let keep = (view.orbit, view.tryon.clone());
         match view.open(&id) {
             Ok(m) => view.status = format!("reloaded {m}"),
@@ -792,7 +861,11 @@ fn spawn_model(
                             ),
                             metallic: mat.metallic,
                             perceptual_roughness: mat.roughness,
-                            emissive: if matches!(
+                            emissive: if mat.emissive.iter().any(|c| *c > 0.0) {
+                                // The file's own glow (E4 edits it).
+                                LinearRgba::rgb(mat.emissive[0], mat.emissive[1], mat.emissive[2])
+                                    * 2.0
+                            } else if matches!(
                                 mat.name.as_str(),
                                 "light_front" | "light_rear" | "phone_screen"
                             ) {
@@ -1215,6 +1288,30 @@ fn animate(
 }
 
 /// Visibility by level and toggles, and the highlight.
+/// Moves the drawn nodes of the open model to its (edited) transforms.
+fn retransform(mut view: ResMut<ModelView>, mut nodes: Query<(&ViewNode, &mut Transform)>) {
+    if !std::mem::take(&mut view.retransform) {
+        return;
+    }
+    let Some(o) = &view.open else { return };
+    for (n, mut t) in &mut nodes {
+        if !matches!(n.part, Part::Main | Part::Copy) {
+            continue;
+        }
+        let Some(node) = o.model.nodes.get(n.index) else {
+            continue;
+        };
+        let want = Transform {
+            translation: node.translation,
+            rotation: node.rotation,
+            scale: node.scale,
+        };
+        if *t != want {
+            *t = want;
+        }
+    }
+}
+
 fn style(
     mut view: ResMut<ModelView>,
     mats: Res<ViewMats>,
@@ -1373,8 +1470,69 @@ pub fn main_offset(view: &ModelView) -> Option<Transform> {
     })
 }
 
+/// The edit gizmo of the selected node (E4): its frame in the scene.
+pub fn edit_frame(view: &ModelView) -> Option<crate::model_gizmo::Frame> {
+    let o = view.open.as_ref()?;
+    let i = view.selected.filter(|i| *i < o.model.nodes.len())?;
+    let offset = bevy::math::Affine3A::from_mat4(main_offset(view)?.to_matrix());
+    let len = o
+        .stats
+        .bounds
+        .map_or(0.3, |(lo, hi)| (hi - lo).length() * 0.16)
+        .clamp(0.03, 2.0);
+    Some(crate::model_gizmo::frame(
+        &o.model,
+        i,
+        offset,
+        view.gizmo_mode,
+        len,
+    ))
+}
+
+/// The edit gizmo's axis colours (x red, y green, z blue; the handle
+/// under the pointer or dragged in white).
+pub fn axis_colour(axis: usize, hot: bool) -> Color {
+    if hot {
+        return Color::WHITE;
+    }
+    match axis {
+        0 => Color::srgb(0.95, 0.25, 0.25),
+        1 => Color::srgb(0.3, 0.9, 0.3),
+        _ => Color::srgb(0.3, 0.5, 1.0),
+    }
+}
+
+fn draw_edit_gizmo(view: &ModelView, gizmos: &mut Gizmos<ModelGizmos>) {
+    use crate::model_gizmo::GizmoMode;
+    let Some(f) = edit_frame(view) else { return };
+    for axis in 0..3 {
+        let c = axis_colour(axis, view.gizmo_hot == Some(axis));
+        match view.gizmo_mode {
+            GizmoMode::Move => {
+                let tip = f.origin + f.axes[axis] * f.len;
+                gizmos.arrow(f.origin, tip, c);
+            }
+            GizmoMode::Scale => {
+                let tip = f.origin + f.axes[axis] * f.len;
+                gizmos.line(f.origin, tip, c);
+                gizmos.cube(
+                    Transform::from_translation(tip).with_scale(Vec3::splat(f.len * 0.08)),
+                    c,
+                );
+            }
+            GizmoMode::Rotate => {
+                gizmos.linestrip(crate::model_gizmo::ring(&f, axis, 64), c);
+            }
+        }
+    }
+}
+
 fn draw_gizmos(view: Res<ModelView>, mut gizmos: Gizmos<ModelGizmos>, active: Res<ModelsActive>) {
-    if !view.gizmos || !active.0 {
+    if !active.0 {
+        return;
+    }
+    draw_edit_gizmo(&view, &mut gizmos);
+    if !view.gizmos {
         return;
     }
     let Some(o) = &view.open else { return };
