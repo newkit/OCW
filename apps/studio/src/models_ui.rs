@@ -1074,14 +1074,17 @@ fn bike_combo(ui: &mut egui::Ui, id: &str, bike: &mut ProfileId) -> bool {
 fn tryon_section(ui: &mut egui::Ui, view: &mut ModelView) {
     let Some(o) = view.open.clone() else { return };
     let kind = o.entry.kind;
-    egui::CollapsingHeader::new("Try it on")
+    let cycles =
+        TryOn::default_for(kind, &o.id).is_none() && crate::models_cycle::has_cycles(&o.model);
+    egui::CollapsingHeader::new(if cycles { "Flight cycles" } else { "Try it on" })
         .default_open(true)
         .show(ui, |ui| {
             let Some(default) = TryOn::default_for(kind, &o.id) else {
-                ui.weak(match kind {
-                    Kind::Creature => "The unicorn is shown in its rest pose; the game turns its joint nodes in flight (the wing and gallop cycles here are open, 16 E3).",
-                    _ => "No try-on for this kind yet.",
-                });
+                if crate::models_cycle::has_cycles(&o.model) {
+                    crate::models_cycle::section(ui, view);
+                } else {
+                    ui.weak("No try-on for this kind yet.");
+                }
                 return;
             };
             ui.horizontal(|ui| {

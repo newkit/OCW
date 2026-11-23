@@ -25,6 +25,8 @@
 //!   validator's findings, the try-on; [`model_edit`], [`model_gizmo`]:
 //!   its edits (stage E4) – the model document with undo, the gizmo and
 //!   picking, save with the diff first, re-import, *Open in Blender*;
+//!   [`models_cycle`]: the unicorn's flight cycles in the viewer (the
+//!   game's animation);
 //! - [`ui`]: the egui panels.
 
 mod build;
@@ -36,6 +38,7 @@ mod map;
 mod model_edit;
 mod model_gizmo;
 mod models;
+mod models_cycle;
 mod models_ui;
 mod models_view;
 mod overlay;
@@ -216,6 +219,7 @@ fn main() -> AppExit {
         overlay::OverlayPlugin,
         ui::UiPlugin,
         models_view::ModelsPlugin,
+        models_cycle::CyclePlugin,
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, routes::update_routes);

@@ -322,6 +322,8 @@ pub enum StudioCommand {
     Model(crate::model_edit::ModelCommand),
     /// The workspace shown: its document is the one Undo / Redo act on.
     Workspace(crate::ui::Workspace),
+    /// The unicorn's flight cycles in the Models viewer (16B, E3).
+    Cycle(crate::models_cycle::CycleCommand),
 }
 
 /// The commands sent this frame, carried out by [`run_pending`].
@@ -445,6 +447,10 @@ pub fn apply(world: &mut World, cmd: StudioCommand) -> Result<String, String> {
             Ok(format!("looking at {:.0}, {:.0}", target[0], target[2]))
         }
         StudioCommand::Build(req) => start_build(&mut world.resource_mut::<Studio>(), req),
+        StudioCommand::Cycle(c) => crate::models_cycle::command(
+            &mut world.resource_mut::<crate::models_view::ModelView>(),
+            c,
+        ),
         StudioCommand::Route(c) => {
             let fit = matches!(
                 c,
@@ -630,6 +636,7 @@ pub fn edit(
         | StudioCommand::GoToView(_)
         | StudioCommand::Focus
         | StudioCommand::Model(_)
+        | StudioCommand::Cycle(_)
         | StudioCommand::Build(_) => Err("not a document command".into()),
         other => patch_command(studio, other, now_s),
     }
@@ -1300,6 +1307,10 @@ impl Plugin for EditPlugin {
                 .subcommand(words(
                     "model",
                     "The Models workspace's edits (E4): select NAME|none | move|rotate|scale X Y Z | rename NAME | parent NAME|none [keep|local] | delete | anchor NAME [X Y Z] | hotspot SLOT [X Y Z] | lod lod1|lod2|billboard | proxy box|cylinder|capsule mesh|empty [CX CY CZ HX HY HZ] | slot MATERIAL SLOT [defaults] | colour|emissive MATERIAL R G B | metallic|roughness MATERIAL V | extras KEY VALUE|- | entry KEY TEXT | copyright TEXT | fixes | fix N|all | save [PATH] | save confirm|cancel | reimport [PATH] | blender | gizmo move|rotate|scale | snap on|off | info",
+                    ))
+                .subcommand(words(
+                    "cycle",
+                    "The unicorn's flight cycles in the Models viewer: wing | gallop | flight | landing | rest | play | pause | speed X | at SECONDS | record DIR [SECONDS] [FPS] | info",
                 ))
                 .subcommand(words(
                     "patch",
@@ -1531,6 +1542,16 @@ pub fn patch_lines(studio: &Studio) -> Vec<String> {
 }
 
 fn studio_command(world: &mut World, m: &clap::ArgMatches) -> Result<String, String> {
+    if let Some(("cycle", a)) = m.subcommand() {
+        let words: Vec<String> = a
+            .get_many::<String>("words")
+            .map(|w| w.cloned().collect())
+            .unwrap_or_default();
+        return apply(
+            world,
+            StudioCommand::Cycle(crate::models_cycle::parse(&words)?),
+        );
+    }
     if let Some(("route", a)) = m.subcommand() {
         let words: Vec<String> = a
             .get_many::<String>("words")
