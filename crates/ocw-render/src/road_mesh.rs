@@ -47,6 +47,10 @@ pub const SHOULDER_SLOPE: f32 = 1.5;
 pub const SHOULDER_MAX_DROP_M: f32 = 1.5;
 /// The shoulder ends this far under the terrain surface.
 pub const SHOULDER_SINK_M: f32 = 0.04;
+/// Along a strip its verge widens by at most this much per metre (J6,
+/// §4.8.8 Rule; where the ground asks for more, the verge slopes steeper
+/// for a few metres).
+pub const VERGE_WIDEN: f32 = 0.3;
 /// The skirt hangs this far below the shoulder's outer edge.
 pub const SKIRT_M: f32 = 0.3;
 /// Overlays (crossings) lie this far above the road surface.
@@ -104,11 +108,6 @@ pub struct Shoulder {
     /// The ground lies too far below: a retaining wall.
     pub wall: bool,
 }
-
-/// A junction corner's verge is at most this share of the corner's radius
-/// wide where the corner turns towards it (its outer edge would fold back
-/// on itself; §4.8.8 Rule, J5).
-pub const CORNER_VERGE_SHARE: f32 = 0.8;
 
 /// The shoulder at a road edge: `ground` is the terrain surface height at
 /// (x, z) (`None` beyond the package's tiles), `narrow` keeps it at its
@@ -370,7 +369,24 @@ fn strip_mesh(
     for (si, side) in [-1.0f32, 1.0].into_iter().enumerate() {
         let sidewalk = s.dress.sidewalk_m[si] > 0.0;
         let edge: Vec<Vec3> = edges.iter().map(|e| e[si]).collect();
-        let out: Vec<Vec3> = rights.iter().map(|r| *r * side).collect();
+        // Out square to the edge line (J6, §4.8.8 Rule): a row past a
+        // junction's mouth may lie askew to it where the road bends there,
+        // and a verge out along such a row reached back over the corner's
+        // verge (the V at Letzanaweg). The end rows keep the row's
+        // direction (the next tile's strip, the junction surface's corner
+        // verge go on from there).
+        let out: Vec<Vec3> = (0..n)
+            .map(|i| {
+                let r = rights[i] * side;
+                if i == 0 || i == n - 1 {
+                    return r;
+                }
+                let d = (edge[i + 1] - edge[i - 1]).with_y(0.0).normalize_or_zero();
+                let nrm = Vec3::new(-d.z, 0.0, d.x);
+                let nrm = if nrm.dot(r) < 0.0 { -nrm } else { nrm };
+                if nrm.length_squared() < 0.25 { r } else { nrm }
+            })
+            .collect();
         let decks: Vec<bool> = edge
             .iter()
             .map(|top| (ctx.deck)([top.x, top.y - crate::ROAD_SURFACE_LIFT_M, top.z]))
@@ -462,10 +478,9 @@ pub(crate) struct SideDress<'a> {
     /// How far to keep the shoulder at its narrowest (1: junction zones;
     /// 0: its own width).
     pub narrow: &'a [f32],
-    /// A junction surface's corner (J5): the verge's width smoothed along
-    /// it (its ends as they are, where the arms' verges go on) and at most
-    /// [`CORNER_VERGE_SHARE`] of the radius where the corner turns towards
-    /// it.
+    /// A junction surface's corner (J5, J6): the verge out to its own
+    /// smooth outer edge ([`corner_outer`]; its ends as they are, where the
+    /// arms' verges go on).
     pub corner: bool,
 }
 
@@ -559,14 +574,58 @@ pub(crate) fn side_dress(
             }
         })
         .collect();
-    if d.corner && n >= 3 {
-        let widths = corner_widths(&tops, d.out, &shoulders);
+    // Along a strip the verge widens by at most VERGE_WIDEN per metre from
+    // a narrower point (J6, §4.8.8 Rule): where the ground drops away just
+    // past a junction's mouth the verge no longer jumps from the corner's
+    // width to several metres within a row (a V of grass between the two
+    // outer edges at Letzanaweg). Its end points stay (a junction's corner
+    // verge and the next tile's strip go on from them); walls and decks
+    // keep theirs.
+    if !d.corner && n >= 3 {
+        let mut w: Vec<f32> = shoulders.iter().map(|s| s.width).collect();
+        let free_at: Vec<bool> = (0..n).map(|i| !d.decks[i] && !shoulders[i].wall).collect();
+        let free = |i: usize| free_at[i];
         for i in 1..n - 1 {
-            if !d.decks[i] && !shoulders[i].wall {
-                shoulders[i] = shoulder_sized(tops[i], d.out[i], ctx.ground, 0.0, Some(widths[i]));
+            if free(i) && free(i - 1) {
+                let l = (tops[i] - tops[i - 1]).with_y(0.0).length();
+                w[i] = w[i].min(w[i - 1] + VERGE_WIDEN * l);
+            }
+        }
+        for i in (1..n - 1).rev() {
+            if free(i) && free(i + 1) {
+                let l = (tops[i + 1] - tops[i]).with_y(0.0).length();
+                w[i] = w[i].min(w[i + 1] + VERGE_WIDEN * l);
+            }
+        }
+        for i in 1..n - 1 {
+            if free(i) && w[i] < shoulders[i].width - 1e-4 {
+                shoulders[i] = shoulder_sized(tops[i], d.out[i], ctx.ground, 0.0, Some(w[i]));
             }
         }
     }
+    // The outward direction per point: a corner's verge (J6) goes out to
+    // its own smooth outer edge, not square to the carriageway's edge.
+    let mut outs: Vec<Vec3> = d.out.to_vec();
+    // A strip's too (J6): the outer edge on the inner side of a tight
+    // bend – a strip turning right past a junction's mouth – folds or
+    // zigzags otherwise (a V of grass at Letzanaweg). Not on a bridge.
+    if n >= 3 && (d.corner || !d.decks.iter().any(|&x| x)) {
+        let outer = corner_outer(&tops, d.out, &shoulders, d.corner);
+        for i in 1..n - 1 {
+            if d.decks[i] || shoulders[i].wall {
+                continue;
+            }
+            let v = (outer[i] - Vec2::new(tops[i].x, tops[i].z)).extend(0.0);
+            let v = Vec3::new(v.x, 0.0, v.y);
+            let w = v.length();
+            if w < 1e-3 {
+                continue;
+            }
+            outs[i] = v / w;
+            shoulders[i] = shoulder_sized(tops[i], outs[i], ctx.ground, 0.0, Some(w));
+        }
+    }
+    let d = &SideDress { out: &outs, ..*d };
     let e0 = side * half;
     let lip_of = |i: usize| {
         if d.decks[i] {
@@ -678,86 +737,259 @@ pub(crate) fn side_dress(
     face(m, r2, r3, true);
 }
 
-/// A junction corner's verge widths (J5): each point's own (by the
-/// ground's drop) at most [`CORNER_VERGE_SHARE`] of the corner's radius
-/// where the corner turns towards the verge (measured over 0.5 m each
-/// way), then smoothed along the corner with its two ends kept.
-fn corner_widths(tops: &[Vec3], out: &[Vec3], sh: &[Shoulder]) -> Vec<f32> {
+/// The outer edge of a junction corner's verge bends at most as a curve
+/// of this radius would (m; §4.8.8 Rule, J6), measured over pieces of
+/// [`CORNER_VERGE_PIECE_M`], where the corner leaves room: round a corner
+/// of a smaller radius it does not follow the carriageway's edge at the
+/// verge's width (a fold, or the V of J5 where the width was cut to fit)
+/// but runs as its own curve.
+pub const CORNER_VERGE_RADIUS_M: f32 = 1.5;
+/// Bends of a corner verge's outer edge are measured over pieces this long
+/// (m), as the side lint measures the carriageway's.
+pub const CORNER_VERGE_PIECE_M: f32 = 0.3;
+
+/// A cubic Bézier from `a` leaving along `ua` to `b` arriving along `ub`
+/// with handles `ha`, `hb`, at `t`.
+fn bezier2(a: Vec2, ua: Vec2, b: Vec2, ub: Vec2, ha: f32, hb: f32, t: f32) -> Vec2 {
+    let (c1, c2) = (a + ua * ha, b - ub * hb);
+    let s = 1.0 - t;
+    a * (s * s * s) + c1 * (3.0 * s * s * t) + c2 * (3.0 * s * t * t) + b * (t * t * t)
+}
+
+/// The point `s` along polyline `p` (lengths `cum`), straight on along
+/// `ends` (the direction arriving at its first point, leaving its last)
+/// past its ends.
+fn along2(p: &[Vec2], cum: &[f32], ends: [Vec2; 2], s: f32) -> Vec2 {
+    let n = p.len();
+    let total = cum[n - 1];
+    if s <= 0.0 {
+        return p[0] + ends[0] * s;
+    }
+    if s >= total {
+        return p[n - 1] + ends[1] * (s - total);
+    }
+    let k = cum.partition_point(|&c| c < s).clamp(1, n - 1);
+    let l = (cum[k] - cum[k - 1]).max(1e-6);
+    p[k - 1].lerp(p[k], (s - cum[k - 1]) / l)
+}
+
+fn lengths2(p: &[Vec2]) -> Vec<f32> {
+    let mut cum = vec![0.0f32; p.len()];
+    for i in 1..p.len() {
+        cum[i] = cum[i - 1] + p[i].distance(p[i - 1]);
+    }
+    cum
+}
+
+/// The bend of polyline `p` at arc length `s` over pieces of
+/// [`CORNER_VERGE_PIECE_M`] each way (radians).
+fn bend2(p: &[Vec2], cum: &[f32], ends: [Vec2; 2], s: f32) -> f32 {
+    let h = CORNER_VERGE_PIECE_M;
+    let (p0, p1, p2) = (
+        along2(p, cum, ends, s - h),
+        along2(p, cum, ends, s),
+        along2(p, cum, ends, s + h),
+    );
+    let (a, b) = (p1 - p0, p2 - p1);
+    if a.length() < 1e-5 || b.length() < 1e-5 {
+        return std::f32::consts::PI;
+    }
+    a.angle_to(b).abs()
+}
+
+/// The worst bend along polyline `p` (every 10 cm).
+fn worst_bend2(p: &[Vec2], ends: [Vec2; 2]) -> f32 {
+    let cum = lengths2(p);
+    let total = cum[cum.len() - 1];
+    let mut worst = 0.0f32;
+    let mut s = 0.0;
+    while s <= total + 1e-4 {
+        worst = worst.max(bend2(p, &cum, ends, s));
+        s += 0.1;
+    }
+    worst
+}
+
+/// The outer edge of a junction corner's verge (J6), a point per point of
+/// the corner's edge (`tops`): each point's own width (by the ground's
+/// drop) smoothed along the corner, the offset line's loops cut out where
+/// the corner turns tighter than the verge is wide, and the stretches that
+/// still bend more than [`CORNER_VERGE_RADIUS_M`] allows replaced by a
+/// cubic curve tangent to the line on both sides (reaching farther along
+/// it until it bends little enough, at most to the corner's ends) – its
+/// two ends kept where the arms' verges end and leaving them along the
+/// corner's first and last pieces, so it runs on from the arms' verges'
+/// outer edges without a step or a V; never nearer the edge than the
+/// narrowest verge.
+fn corner_outer(tops: &[Vec3], out: &[Vec3], sh: &[Shoulder], corner: bool) -> Vec<Vec2> {
     let n = tops.len();
     let xz = |v: Vec3| Vec2::new(v.x, v.z);
-    let mut cum = vec![0.0f32; n];
-    for i in 1..n {
-        cum[i] = cum[i - 1] + (xz(tops[i]) - xz(tops[i - 1])).length();
-    }
-    let at = |i: usize, back: bool| -> usize {
-        let mut k = i;
-        loop {
-            if back {
-                if k == 0 {
-                    return 0;
-                }
-                k -= 1;
-            } else {
-                if k + 1 >= n {
-                    return n - 1;
-                }
-                k += 1;
-            }
-            if (cum[k] - cum[i]).abs() >= 0.5 {
-                return k;
-            }
-        }
-    };
+    let inner: Vec<Vec2> = tops.iter().map(|t| xz(*t)).collect();
+    let cum = lengths2(&inner);
+    // The widths smoothed along the corner, the ends kept.
     let mut w: Vec<f32> = (0..n)
         .map(|i| {
-            let own = if sh[i].wall {
+            if sh[i].wall {
                 SHOULDER_MIN_M
             } else {
                 sh[i].width
-            };
-            let (a, c) = (xz(tops[at(i, true)]), xz(tops[at(i, false)]));
-            let b = xz(tops[i]);
-            // The circle through a, b, c: its radius and whether its
-            // centre lies on the verge's side.
-            let (ab, cb) = (a - b, c - b);
-            let d = 2.0 * (ab.x * cb.y - ab.y * cb.x);
-            if d.abs() < 1e-6 {
-                return own;
-            }
-            let (la, lc) = (ab.length_squared(), cb.length_squared());
-            let centre = b + Vec2::new(cb.y * la - ab.y * lc, ab.x * lc - cb.x * la) / d;
-            let r = (centre - b).length();
-            let o = Vec2::new(out[i].x, out[i].z);
-            if o.dot(centre - b) > 0.0 {
-                own.min(CORNER_VERGE_SHARE * r).max(SHOULDER_MIN_M.min(own))
-            } else {
-                own
             }
         })
         .collect();
-    // Near the two ends no narrower than the ends' widths less 0.6 m per
-    // metre along (the ends are the arms' verges: a narrower band right
-    // beside them left a notch), within each point's own width.
-    let (w0, w1, total) = (w[0], w[n - 1], cum[n - 1]);
-    for i in 1..n - 1 {
-        let own = if sh[i].wall {
-            SHOULDER_MIN_M
-        } else {
-            sh[i].width
-        };
-        let floor = (w0 - 0.6 * cum[i]).max(w1 - 0.6 * (total - cum[i]));
-        w[i] = w[i].max(floor.min(own));
-    }
-    // Smoothed: a few passes of neighbours' means (by length), ends kept.
     for _ in 0..4 {
         let prev = w.clone();
         for i in 1..n - 1 {
             let (l0, l1) = (cum[i] - cum[i - 1], cum[i + 1] - cum[i]);
-            let m = (prev[i - 1] * l1 + prev[i + 1] * l0) / (l0 + l1).max(1e-6);
-            w[i] = (0.5 * (prev[i] + m)).min(prev[i].max(m));
+            w[i] =
+                0.5 * prev[i] + 0.5 * (prev[i - 1] * l1 + prev[i + 1] * l0) / (l0 + l1).max(1e-6);
         }
     }
-    w
+    let mut q: Vec<Vec2> = (0..n)
+        .map(|i| inner[i] + Vec2::new(out[i].x, out[i].z) * w[i])
+        .collect();
+    // Loops cut out: where two pieces cross, the points between go to the
+    // crossing.
+    let cross = |a: Vec2, b: Vec2, c: Vec2, d: Vec2| -> Option<Vec2> {
+        let (r, s) = (b - a, d - c);
+        let den = r.perp_dot(s);
+        if den.abs() < 1e-9 {
+            return None;
+        }
+        let t = (c - a).perp_dot(s) / den;
+        let u = (c - a).perp_dot(r) / den;
+        ((1e-4..=1.0 - 1e-4).contains(&t) && (1e-4..=1.0 - 1e-4).contains(&u)).then(|| a + r * t)
+    };
+    'cut: loop {
+        for i in 0..n - 1 {
+            // (Loops of an offset line are local: within 40 points.)
+            for j in (i + 2)..(n - 1).min(i + 40) {
+                if let Some(x) = cross(q[i], q[i + 1], q[j], q[j + 1]) {
+                    for p in &mut q[i + 1..=j] {
+                        *p = x;
+                    }
+                    continue 'cut;
+                }
+            }
+        }
+        break;
+    }
+    // Along the arms past the ends (the arms' verges go on so).
+    let t_in = (inner[0] - inner[1]).normalize_or_zero();
+    let t_out = (inner[n - 1] - inner[n - 2]).normalize_or_zero();
+    let ends = [-t_in, t_out];
+    // The two arms' verges cross beyond the mouths (a verge wider than a
+    // short corner leaves room for): they cover the corner's outside, the
+    // corner's verge runs straight from the one's outer end to the
+    // other's, under them.
+    if corner {
+        let (a, b) = (q[0], q[n - 1]);
+        let den = t_in.perp_dot(t_out);
+        if den.abs() > 1e-6 {
+            let s = (b - a).perp_dot(t_out) / den;
+            let u = (b - a).perp_dot(t_in) / den;
+            if s > 0.0 && u > 0.0 {
+                let total = cum[n - 1].max(1e-6);
+                return (0..n).map(|i| a.lerp(b, cum[i] / total)).collect();
+            }
+        }
+    }
+    let limit = 2.0 * (CORNER_VERGE_PIECE_M / (2.0 * CORNER_VERGE_RADIUS_M)).asin();
+    let qcum = lengths2(&q);
+    let tight: Vec<usize> = (0..n)
+        .filter(|&k| bend2(&q, &qcum, ends, qcum[k]) > limit * 1.02)
+        .collect();
+    let mut res = q.clone();
+    if tight.is_empty() {
+        return res;
+    }
+    // Neighbouring tight points (at most two apart) make one stretch.
+    let mut regions: Vec<[usize; 2]> = Vec::new();
+    for &k in &tight {
+        match regions.last_mut() {
+            Some(r) if k <= r[1] + 2 => r[1] = k,
+            _ => regions.push([k, k]),
+        }
+    }
+    // The point `metres` (of the corner's edge) before / after `k`.
+    let reach = |k: usize, fwd: bool, metres: f32| -> usize {
+        let mut j = k;
+        loop {
+            let nj = if fwd { j + 1 } else { j.wrapping_sub(1) };
+            if nj >= n {
+                return j;
+            }
+            j = nj;
+            if (cum[j] - cum[k]).abs() >= metres {
+                return j;
+            }
+        }
+    };
+    let dir_before = |k: usize| -> Vec2 {
+        (0..k)
+            .rev()
+            .map(|j| q[k] - q[j])
+            .find(|d| d.length() > 1e-5)
+            .map_or(-t_in, |d| d.normalize())
+    };
+    let dir_after = |k: usize| -> Vec2 {
+        (k + 1..n)
+            .map(|j| q[j] - q[k])
+            .find(|d| d.length() > 1e-5)
+            .map_or(t_out, |d| d.normalize())
+    };
+    const HANDLES: [f32; 5] = [0.15, 0.3, 0.45, 0.65, 0.9];
+    let mut done_to = 0usize;
+    for [a0, b0] in regions {
+        if b0 < done_to {
+            continue;
+        }
+        // (worst bend, a, b, ua, ub, handles)
+        let mut best: Option<(f32, usize, usize, Vec2, Vec2, [f32; 2])> = None;
+        for grow in 0..30 {
+            let m = CORNER_VERGE_PIECE_M + 0.75 * grow as f32;
+            let (a, b) = (reach(a0, false, m).max(done_to), reach(b0, true, m));
+            let (pa, pb) = (q[a], q[b]);
+            let ua = if a > 0 { dir_before(a) } else { -t_in };
+            let ub = if b < n - 1 { dir_after(b) } else { t_out };
+            let chord = pa.distance(pb);
+            if chord > 1e-3 {
+                for ka in HANDLES {
+                    for kb in HANDLES {
+                        let h = [ka * chord, kb * chord];
+                        let pts: Vec<Vec2> = (0..=24)
+                            .map(|i| bezier2(pa, ua, pb, ub, h[0], h[1], i as f32 / 24.0))
+                            .collect();
+                        let wb = worst_bend2(&pts, [ua, ub]);
+                        if best.is_none_or(|x| wb < x.0 - 1e-6) {
+                            best = Some((wb, a, b, ua, ub, h));
+                        }
+                    }
+                }
+            }
+            if best.is_some_and(|x| x.0 <= limit * 1.02) || (a == 0 && b == n - 1) {
+                break;
+            }
+        }
+        let Some((_, a, b, ua, ub, h)) = best else {
+            continue;
+        };
+        let l = (cum[b] - cum[a]).max(1e-6);
+        for (k, r) in res.iter_mut().enumerate().take(b).skip(a + 1) {
+            let f = (cum[k] - cum[a]) / l;
+            *r = bezier2(q[a], ua, q[b], ub, h[0], h[1], f);
+        }
+        done_to = b;
+    }
+    // Never nearer the edge than the narrowest verge.
+    for i in 1..n - 1 {
+        let o = Vec2::new(out[i].x, out[i].z);
+        let v = res[i] - inner[i];
+        let d = v.dot(o);
+        if d < SHOULDER_MIN_M {
+            res[i] += o * (SHOULDER_MIN_M - d);
+        }
+    }
+    res
 }
 
 /// A point at arc length `s` along a strip (with its cumulative lengths):

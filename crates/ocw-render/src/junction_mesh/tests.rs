@@ -340,6 +340,189 @@ fn the_corner_verge_meets_the_arms_verge_without_a_hole() {
     }
 }
 
+/// §4.8.8 Rule, J6 (the V at Letzanaweg): where the ground lies well
+/// below a junction whose corner has a small radius (a path or a track
+/// leaving a road, a side road at an acute angle), the outer edge of the
+/// corner's verge runs as one smooth curve from the main road's verge to
+/// the side road's: it never bends tighter than about a metre (J5 cut the
+/// verge to 0.8 of the corner's radius there – a V-shaped notch of grass
+/// between the two wide verges) and leaves each arm's verge along its
+/// outer edge (tangent at the joint).
+#[test]
+fn the_corner_verge_s_outer_edge_runs_on_smoothly() {
+    use ocw_world::junction::fixtures::{Road, graph};
+    let ground_y = -1.2f32;
+    let mut checked = 0;
+    for (label, side, angle) in [
+        ("path at 90°", RoadClass::Path, 90.0f64),
+        ("track at 90°", RoadClass::Track, 90.0),
+        ("path at 55°", RoadClass::Path, 55.0),
+        ("residential at 50°", RoadClass::Residential, 50.0),
+    ] {
+        let a = angle.to_radians();
+        let v = [
+            [0.0, 0.0],
+            [-120.0, 0.0],
+            [120.0, 0.0],
+            [120.0 * a.cos(), 120.0 * a.sin()],
+        ];
+        let width = if side == RoadClass::Residential {
+            5.0
+        } else {
+            2.5
+        };
+        let g = graph(
+            &v,
+            vec![
+                Road::straight(&v, 1, 0, RoadClass::Residential, 6.0, |_| 0.0),
+                Road::straight(&v, 0, 2, RoadClass::Residential, 6.0, |_| 0.0),
+                Road::straight(&v, 0, 3, side, width, |_| 0.0),
+            ],
+        );
+        let pj = PackageJunctions::of_graph(&g, SIZE);
+        assert!(pj.set.patch(&g, 0).is_some(), "{label}: a patch");
+        let style = MarkingStyle::default();
+        let ground = move |_: f32, _: f32| Some(ground_y);
+        let ctx = ctx_with(&style, &ground);
+        let mut parts = Vec::new();
+        for (key, strips) in tiles(&g) {
+            let t = shape_tile(&g, &pj, key, SIZE, &strips, &style);
+            for i in 0..t.strips.len() {
+                let rows = [t.rows[i].as_deref()];
+                parts.push((
+                    t.owners[i],
+                    road_meshes_rows(std::slice::from_ref(&t.strips[i]), &rows, &ctx),
+                ));
+            }
+            for (q, looks) in &t.patches {
+                let mut m = RoadMeshes::default();
+                patch_mesh(&mut m.roads, q, looks, &ctx);
+                parts.push((Owner::Patch(q.vertex), m));
+            }
+        }
+        // The verges' outer edges: their shoulder vertices down at the
+        // ground, in mesh order (a chain's in order along it).
+        let outer = |want: fn(&Owner) -> bool, gap: f32| -> Vec<Vec<Vec2>> {
+            let mut runs: Vec<Vec<Vec2>> = Vec::new();
+            for (_, m) in parts.iter().filter(|(o, _)| want(o)) {
+                let mut run: Vec<Vec2> = Vec::new();
+                for (q, b) in m.roads.positions.iter().zip(&m.roads.uvs_b) {
+                    if decode_b(b[0]).1 != Kind::Shoulder as u8 || q[1] > ground_y + 0.2 {
+                        continue;
+                    }
+                    let p = Vec2::new(q[0], q[2]);
+                    // (A strip's rows lie up to 6 m apart, a corner's points close.)
+                    if run.last().is_some_and(|l| l.distance(p) > gap) {
+                        runs.push(std::mem::take(&mut run));
+                    }
+                    run.push(p);
+                }
+                runs.push(run);
+            }
+            runs.retain(|r| r.len() >= 2);
+            runs
+        };
+        let (corners, arms) = (
+            outer(|o| matches!(o, Owner::Patch(_)), 2.5),
+            outer(|o| matches!(o, Owner::Edge(_)), 6.5),
+        );
+        let arm_pts: Vec<Vec2> = arms.iter().flatten().copied().collect();
+        for c in &corners {
+            let mut cum = vec![0.0f32];
+            for w in c.windows(2) {
+                cum.push(cum.last().unwrap() + w[0].distance(w[1]));
+            }
+            let total = *cum.last().unwrap();
+            let at = |s: f32| -> Vec2 {
+                let k = cum.partition_point(|&x| x <= s).clamp(1, c.len() - 1);
+                let l = (cum[k] - cum[k - 1]).max(1e-6);
+                c[k - 1].lerp(c[k], ((s - cum[k - 1]) / l).clamp(0.0, 1.0))
+            };
+            // Each end: on an arm's verge's outer point; the direction of
+            // that verge's outer edge arriving there (from away from the
+            // junction, the vertex at 0, 0).
+            let mut arrive = Vec::new();
+            for end in [c[0], c[c.len() - 1]] {
+                assert!(
+                    arm_pts.iter().any(|q| q.distance(end) < 0.01),
+                    "{label}: the corner's verge ends at {end:?} off the arm's verge ({:?})",
+                    arm_pts
+                        .iter()
+                        .filter(|q| q.distance(end) < 2.0)
+                        .collect::<Vec<_>>()
+                );
+                let run = arms
+                    .iter()
+                    .find(|r| r.iter().any(|q| q.distance(end) < 0.01))
+                    .unwrap();
+                let k = run.iter().position(|q| q.distance(end) < 0.01).unwrap();
+                let beyond = [k.wrapping_sub(1), k + 1]
+                    .into_iter()
+                    .filter_map(|j| run.get(j))
+                    .copied()
+                    .max_by(|a, b| a.length().total_cmp(&b.length()))
+                    .unwrap();
+                arrive.push((end - beyond).normalize());
+            }
+            // Where the two arms' verges cross beyond the mouths (a verge
+            // wider than the corner leaves room for) they cover the
+            // corner's outside: its verge lies within them (between its
+            // ends and their outer edges' crossing).
+            let (e0, e1) = (c[0], c[c.len() - 1]);
+            let (o0, o1) = (-arrive[0], -arrive[1]);
+            let den = o0.perp_dot(o1);
+            let s0 = (e1 - e0).perp_dot(o1) / den;
+            let s1 = (e1 - e0).perp_dot(o0) / den;
+            if den.abs() > 1e-4 && s0 > 0.0 && s1 > 0.0 {
+                let x = e0 + o0 * s0;
+                let area = |a: Vec2, b: Vec2, p: Vec2| (b - a).perp_dot(p - a);
+                let sign = area(e0, x, e1).signum();
+                for p in c {
+                    let inside = [area(e0, x, *p), area(x, e1, *p), area(e1, e0, *p)]
+                        .iter()
+                        .all(|v| v * sign >= -0.01);
+                    assert!(
+                        inside,
+                        "{label}: the corner's verge at {p:?} reaches out of the arms' verges"
+                    );
+                }
+                checked += 2;
+                continue;
+            }
+            // Along the corner: no bend above the side lint's 25° over
+            // pieces of 0.3 m (a curve tighter than 0.69 m).
+            let h = 0.3f32;
+            let mut s = h;
+            while s + h <= total {
+                let (p0, p1, p2) = (at(s - h), at(s), at(s + h));
+                let turn = (p1 - p0).angle_to(p2 - p1).abs().to_degrees();
+                assert!(
+                    turn <= 25.0,
+                    "{label}: the corner's verge bends by {turn:.0}° at {p1:?} (its outer edge {c:?})"
+                );
+                s += 0.1;
+            }
+            // At each end it leaves along the arm's verge's outer edge: no bend
+            // above 25° there either (over 0.3 m, as the side lint measures).
+            for (k, (end, next)) in [(c[0], at(0.3)), (c[c.len() - 1], at(total - 0.3))]
+                .into_iter()
+                .enumerate()
+            {
+                let deg = arrive[k]
+                    .angle_to((next - end).normalize())
+                    .abs()
+                    .to_degrees();
+                assert!(
+                    deg <= 25.0,
+                    "{label}: the verges' outer edges meet at {end:?} at {deg:.1}°"
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked >= 16, "{checked} joints checked");
+}
+
 /// Markings at the mouths (§4.8.8 Q2 fallback): the patch of a through
 /// road carries its centre line; its edge line only on the side without a
 /// side road. Without a through road no lines.
