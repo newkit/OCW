@@ -365,6 +365,8 @@ impl ClientCore {
         // The own rider's contacts with the world are predicted (spec §14
         // Phase 12D, K3).
         core.predictor.set_world(net.obstacles().cloned());
+        // Off the road the drawn trees too (spec 14 Phase 13 Q10 (a)).
+        core.predictor.set_woods(net.woods().cloned());
         core.leaf_map = net.leaves().cloned();
         Self {
             free: Some(FreeRide {
@@ -2847,8 +2849,8 @@ impl ClientCore {
             && self.event.info().is_none()
         {
             let mut w = self.landing_world.lock().ok()?;
-            if w.world.is_none() && fr.net.obstacles().is_some() {
-                *w = ocw_sim::collide::WorldCache::new(fr.net.obstacles().cloned());
+            if w.is_empty() && (fr.net.obstacles().is_some() || fr.net.woods().is_some()) {
+                *w = ocw_sim::collide::WorldCache::for_network(&fr.net);
             }
             let tick = 1 + self
                 .landing_ticks

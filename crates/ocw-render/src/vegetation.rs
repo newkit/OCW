@@ -20,8 +20,8 @@
 
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, futures::check_ready};
-use ocw_sky::season::{Crop, CropStage, LeafType, SeasonDay};
-use ocw_world::flora::{FloraRegion, LeafGroup, Setting, Site, Species, pick_species, stature};
+use ocw_sky::season::{Crop, CropStage, SeasonDay};
+use ocw_world::flora::{FloraRegion, GridTrees, Species, leaf_group, pick_species};
 use ocw_world::landuse::LandClass;
 use ocw_world::plantings;
 use ocw_world::trees::hash;
@@ -397,38 +397,6 @@ impl TilePlants {
     }
 }
 
-/// The leaf group of a tree from the seasons' leaf type.
-fn group(leaf: LeafType) -> LeafGroup {
-    match leaf {
-        LeafType::Evergreen => LeafGroup::Evergreen,
-        LeafType::Deciduous => LeafGroup::Deciduous,
-        LeafType::Larch => LeafGroup::Larch,
-    }
-}
-
-/// Whether water or wetland lies within 15 m of (x, z) (alders and
-/// willows on the banks).
-fn near_water(pkg: &WorldPackage, x: f64, z: f64) -> bool {
-    let Some(lu) = pkg.landuse.as_ref() else {
-        return false;
-    };
-    let size = f64::from(pkg.tile_size_m);
-    [
-        (0.0, 0.0),
-        (15.0, 0.0),
-        (-15.0, 0.0),
-        (0.0, 15.0),
-        (0.0, -15.0),
-    ]
-    .iter()
-    .any(|(dx, dz)| {
-        matches!(
-            lu.class_at(size, x + dx, z + dz),
-            Some(LandClass::Water | LandClass::Wetland)
-        )
-    })
-}
-
 /// The stand of a field crop on the day: its height (m; 0: nothing
 /// standing) and colour (linear).
 pub fn stand(crop: FieldCrop, day: Option<&SeasonDay>, alt_m: f64) -> (f32, [f32; 3]) {
@@ -481,11 +449,10 @@ pub fn tile_plants(
 ) -> TilePlants {
     let size = pkg.tile_size_m;
     let o = key.origin(f64::from(size));
-    let region = FloraRegion::at(pkg.origin.0, pkg.origin.1);
-    let mix = ocw_sky::season::Climate::for_place(pkg.origin.0, pkg.origin.1).trees;
-    let proj = ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1);
-    let (lat, lon) = proj.unproject([o[0] + f64::from(size) / 2.0, o[1] + f64::from(size) / 2.0]);
-    let windward = ocw_world::flora::windward(lat, lon);
+    // The species of the trees: the same rules as the trunks off the road
+    // (spec 14 Phase 13 Q10, `ocw_world::woods`).
+    let gt = GridTrees::of_tile(pkg, key);
+    let region = gt.region;
     let grid = |per: u32| -> Vec<TreeChunk> {
         let cs = size / per as f32;
         let n = per as usize;
@@ -515,24 +482,6 @@ pub fn tile_plants(
     let detail_of = |x: f32, z: f32| cell_of(DETAIL_CHUNKS, x, z);
     let kept = |x: f32, z: f32| keep.is_none_or(|f| f([f64::from(x), f64::from(z)]));
     let mut crowns = Vec::new();
-    let site_of = |class: Option<LandClass>, x: f32, z: f32, alt: f64| Site {
-        region,
-        setting: Setting::of_class(class),
-        alt_m: alt,
-        measured: ocw_world::trees::measured_leaf(pkg, f64::from(x), f64::from(z)),
-        windward,
-        near_water: near_water(pkg, f64::from(x), f64::from(z)),
-    };
-    let leaf_of = |class: Option<LandClass>, x: f32, z: f32, alt: f64, bits: (i64, i64)| {
-        let setting = crate::season::tree_setting(class);
-        let measured = crate::season::measured(ocw_world::trees::measured_leaf(
-            pkg,
-            f64::from(x),
-            f64::from(z),
-        ));
-        let mix = season.map_or(&mix, |d| &d.climate.trees);
-        mix.leaf_type(setting, alt, measured, hash(bits.0, bits.1, 13))
-    };
     let put = |chunks: &mut Vec<TreeChunk>,
                crowns: &mut Vec<[f32; 4]>,
                sp: Species,
@@ -577,15 +526,8 @@ pub fn tile_plants(
     };
     // The grid's trees.
     for &((base, s), class) in classed {
-        let bits = (i64::from(base.x.to_bits()), i64::from(base.z.to_bits()));
-        let alt = f64::from(base.y);
-        let leaf = leaf_of(class, base.x, base.z, alt, bits);
-        let site = site_of(class, base.x, base.z, alt);
-        let sp = pick_species(&site, group(leaf), hash(bits.0, bits.1, 19));
-        // The grid's scale by land class (0.35 … 1.5) around its class's
-        // mean: the species' own size varies by ±30 %.
-        let (_, s0, s1) = ocw_world::trees::tree_density(class.unwrap_or_default());
-        let scale = s / ((s0 + s1) / 2.0).max(0.1) * stature(region, sp, alt);
+        let bits = GridTrees::bits(base.x, base.z);
+        let (sp, scale) = gt.tree(pkg, class, base.to_array(), s);
         put(&mut chunks, &mut crowns, sp, base, scale, bits, false);
     }
     // The mapped trees.
@@ -603,10 +545,10 @@ pub fn tile_plants(
                 .and_then(|l| l.class_at(f64::from(size), f64::from(base.x), f64::from(base.z)));
             // Mapped trees stand in towns and along roads: the town mix.
             let class = class.or(Some(LandClass::Residential));
-            let leaf = leaf_of(class, base.x, base.z, alt, bits);
+            let leaf = gt.leaf(pkg, class, base.x, base.z, alt);
             pick_species(
-                &site_of(class, base.x, base.z, alt),
-                group(leaf),
+                &gt.site(pkg, class, base.x, base.z, alt),
+                leaf_group(leaf),
                 hash(bits.0, bits.1, 19),
             )
         } else {
@@ -852,6 +794,85 @@ fn plantings_blocked(pkg: &WorldPackage, x: f64, z: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Off the road every drawn tree is an obstacle (spec 14 Phase 13
+    /// Q10 (a)): the trunks the server and the prediction make
+    /// (`ocw_world::woods`) are the trees this tile draws – each solid
+    /// grid tree's foot, its species' trunk at the drawn scale, the
+    /// orchard's rows and the mapped tree – and nothing else.
+    #[test]
+    fn the_server_makes_the_trunks_of_the_drawn_trees() {
+        use ocw_world::woods::fixture::{KEY, wood_package};
+        use ocw_world::woods::{Stored, WoodCell, Woods};
+        let pkg = std::sync::Arc::new(wood_package());
+        let classed: Vec<(TreeSite, Option<LandClass>)> =
+            ocw_world::trees::classed_tree_sites(&pkg, &pkg.tiles[&KEY])
+                .into_iter()
+                .map(|((p, s), c)| ((Vec3::from_array(p), s), c))
+                .collect();
+        let ground = TileGround::new(&pkg, KEY, None);
+        let plants = tile_plants(&pkg, KEY, &classed, None, None, &ground);
+        // The drawn solid plants: foot (x, z) and the trunk's radius.
+        let mut drawn: Vec<([f64; 2], f64)> = plants
+            .chunks
+            .iter()
+            .chain(&plants.details)
+            .flat_map(|c| {
+                let o = Vec3::from(c.origin);
+                c.near.plants.iter().filter(|p| p.sp.solid()).map(move |p| {
+                    let b = p.at.base + o;
+                    (
+                        [f64::from(b.x), f64::from(b.z)],
+                        f64::from(p.sp.trunk_radius_m() * p.at.scale),
+                    )
+                })
+            })
+            .collect();
+        let woods = Woods::new(pkg.clone());
+        let mut made: Vec<([f64; 2], f64)> = Vec::new();
+        for c in WoodCell::covering([0.0, 0.0], [999.9, 999.9], 1000.0) {
+            made.extend(
+                woods
+                    .grid_trunks(c, &Stored::default())
+                    .unwrap()
+                    .iter()
+                    .map(|t| (t.c, t.r)),
+            );
+        }
+        let grid = made.len();
+        // The planted trees as the road-side `OBST` has them (TRUNK_RADIUS_M).
+        let planted = woods.planted_trunks(KEY, &Stored::default()).unwrap();
+        assert!(planted.len() > 20);
+        made.extend(planted.iter().map(|t| (t.c, t.r)));
+        assert_eq!(made.len(), drawn.len(), "{grid} grid trunks");
+        let by_place =
+            |a: &([f64; 2], f64), b: &([f64; 2], f64)| a.0.partial_cmp(&b.0).expect("finite");
+        drawn.sort_by(by_place);
+        made.sort_by(by_place);
+        let mut grid_seen = 0;
+        for (d, m) in drawn.iter().zip(&made) {
+            assert!(
+                (d.0[0] - m.0[0]).abs() < 2e-3 && (d.0[1] - m.0[1]).abs() < 2e-3,
+                "drawn at {:?}, trunk at {:?}",
+                d.0,
+                m.0
+            );
+            let planted_here = planted
+                .iter()
+                .any(|t| (t.c[0] - m.0[0]).abs() < 1e-6 && (t.c[1] - m.0[1]).abs() < 1e-6);
+            if !planted_here {
+                // A grid tree: exactly the drawn trunk.
+                assert!(
+                    (d.1 - m.1).abs() < 1e-6,
+                    "radius {} drawn, {} made",
+                    d.1,
+                    m.1
+                );
+                grid_seen += 1;
+            }
+        }
+        assert_eq!(grid_seen, grid);
+    }
 
     #[test]
     fn stands_follow_the_crop_calendar() {

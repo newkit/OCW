@@ -137,13 +137,29 @@ pub fn load_course_at(
         mb = ground.approx_bytes() as f64 / 1e6,
         "ground for riding off the road (spec §14 Phase 13A)"
     );
+    // Off the road every drawn tree is an obstacle (spec 14 Phase 13 Q10
+    // (a)): the trunks are made on demand near the riders there from what
+    // the trees are placed from (the home package's tiles, land use,
+    // buildings, forest and fields).
+    let woods = (ground.tile_count() > 0 && world.package.landuse.is_some()).then(|| {
+        Arc::new(ocw_world::woods::Woods::new(Arc::new(
+            ocw_world::woods::tree_inputs(&world.package),
+        )))
+    });
+    if woods.is_some() {
+        tracing::info!(
+            tiles = world.package.tiles.len(),
+            "trees off the road as trunks made on demand (spec 14 Phase 13 Q10)"
+        );
+    }
     let net = Arc::new(
         RoadNetwork::new(graph)
             .with_package_name(hood.set.name())
             .with_obstacles(obstacles)
             .with_road_feel(road_feel)
             .with_leaves(Some(Arc::new(leaves)))
-            .with_ground((ground.tile_count() > 0).then(|| Arc::new(ground))),
+            .with_ground((ground.tile_count() > 0).then(|| Arc::new(ground)))
+            .with_woods(woods),
     );
     let change = v1::WorldChange {
         package_id: world.identity.id.clone(),

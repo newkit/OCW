@@ -320,18 +320,17 @@ fn standing_body(x: f64, z: f64, yaw: f64) -> Body {
 /// Whether a rider standing at (x, z, height `y`) facing `yaw` overlaps a
 /// solid of the world (a tree, a wall, a fence, a pole, a building's wall).
 pub fn blocked(world: &mut WorldCache, x: f64, z: f64, y: f64, yaw: f64, tick: u64) -> bool {
-    if world.world.is_none() {
+    if world.is_empty() {
         return false;
     }
     let body = standing_body(x, z, yaw);
     let reach = collide::BODY_LENGTH_M / 2.0 + 0.5;
     let mut solids = Vec::new();
-    world.solids_near(
-        [x - reach, z - reach],
-        [x + reach, z + reach],
-        tick,
-        &mut solids,
-    );
+    let (lo, hi) = ([x - reach, z - reach], [x + reach, z + reach]);
+    world.solids_near(lo, hi, tick, &mut solids);
+    // On the ground: the drawn trees deep in a wood too (spec 14 Phase 13
+    // Q10 (a)).
+    world.trunks_near(lo, hi, tick, &mut solids);
     solids
         .iter()
         .filter(|s| s.reaches(y))

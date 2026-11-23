@@ -165,7 +165,7 @@ impl Predictor {
         self.damage_cap(state);
         let wild = self.controls.wild;
         self.controls.wild = true;
-        self.world_tick(state, &next);
+        self.world_tick(state, &next, true);
         self.controls.wild = wild;
         crate::offroad::normalize(state, &next)
     }
@@ -455,7 +455,15 @@ impl Predictor {
         &mut self,
         world: Option<std::sync::Arc<ocw_world::obstacles::WorldObstacles>>,
     ) {
-        self.world = WorldCache::new(world);
+        let woods = self.world.woods.take();
+        self.world = WorldCache::new(world).with_woods(woods);
+    }
+
+    /// The drawn trees off the road as trunks (spec 14 Phase 13 Q10 (a)),
+    /// the same as the server's.
+    pub fn set_woods(&mut self, woods: Option<std::sync::Arc<ocw_world::woods::Woods>>) {
+        let world = self.world.world.take();
+        self.world = WorldCache::new(world).with_woods(woods);
     }
 
     /// The damage's effects in force (the server's, spec §14 Phase 12E).
@@ -500,8 +508,10 @@ impl Predictor {
 
     /// In wild mode: pushed out of the world's solids, the speed into
     /// them lost (as the server does it; a crash is only the server's).
-    fn world_tick(&mut self, state: &mut RiderState, route: &dyn Track) {
-        if !self.controls.wild || !self.mode.on() || self.world.world.is_none() {
+    /// Off the road (`deep`) the drawn trees' trunks too (spec 14 Phase 13
+    /// Q10 (a)).
+    fn world_tick(&mut self, state: &mut RiderState, route: &dyn Track, deep: bool) {
+        if !self.controls.wild || !self.mode.on() || self.world.is_empty() {
             return;
         }
         self.ticks += 1;
@@ -526,6 +536,7 @@ impl Predictor {
             self.ticks,
             self.mode,
             physics::WILD_MAX_HEADING,
+            deep,
             &mut scratch,
         );
         if r.touched() {
@@ -676,7 +687,7 @@ impl Predictor {
         self.state = state;
         self.ghost_tick(route);
         let mut state = self.state;
-        self.world_tick(&mut state, route);
+        self.world_tick(&mut state, route, false);
         self.state = state;
         if let Some(c) = self.speed_cap
             && self.state.speed > c
@@ -736,7 +747,7 @@ impl Predictor {
                 self.solid,
                 self.rider_ticks,
             );
-            self.world_tick(&mut extrapolated, route);
+            self.world_tick(&mut extrapolated, route, false);
         }
         let error = extrapolated.distance - self.state.distance;
         self.last_error = error;

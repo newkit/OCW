@@ -2043,6 +2043,28 @@ args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-836
 at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "1=camera.orbit 35 20 8", "6=rider.wild on", "6.5=dev.tree", "8=camera.orbit 120 28 9"]
 shot = 13
 
+# Off the road every drawn tree is an obstacle (spec 14 Phase 13 Q10 (a)): a
+# dense wood of the northern Black Forest over 200 m from any road; the
+# trunk at -10998,-79638 (r 0.30 m) has a clear run of 25 m from the south
+# (`woods_bench` prints such runs).
+
+[[scene]]
+name = "q10-woods-stop"
+description = "Off the road deep in a Black Forest wood (spec 14 Phase 13 Q10 (a)): landed from the unicorn 3 m before a trunk, the rider rides at walking pace into it and stops there, pressed against the trunk – no crash"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-10998,-79613", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=ride.collisions on", "2=god on", "2.5=god.pose -10998 -79635 3 0", "3=god off", "6=sim.power 45", "6.5=camera.orbit 110 6 2.5"]
+shot = 16
+
+[[scene]]
+name = "q10-woods-crash-video"
+description = "Video: off the road deep in a Black Forest wood (spec 14 Phase 13 Q10 (a)): landed 25 m before a trunk, the rider sprints at it and crashes – the trunk made on demand from the drawn trees, the ragdoll among the trunks"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-10998,-79613", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=ride.collisions on", "2=god on", "2.5=god.pose -10998 -79613 3 0", "3=god off", "5.5=sim.power 700", "5.5=camera.orbit 120 9 3"]
+warmup = 5
+video = 9
+
 [[scene]]
 name = "k3-bridge-railing"
 description = "Wild mode on a bridge in Liechtenstein (spec §14 Phase 12 K3): the rider steered into the parapet is held by it (the bridge railing from BRDG bounds riders on the deck) and slides along it"
