@@ -1229,22 +1229,41 @@ fn assemble(g: &RoadGraph, site: &Site, arms: Vec<Arm>) -> Result<Patch, &'stati
                 }
             });
             // J6 (§4.8.8 Rule: a side road never above the main road): a
-            // mouth with a corner on the main road starts on it – its
-            // other corner no higher than the main road's surface there
-            // either (a path or a service road drawn along the main road,
-            // its mouth row leaning up to its own height across the main
-            // road's edge, its strip past the mouth on the main road's
-            // surface: between them the strip rose above it).
-            let along = on.iter().any(Option::is_some);
-            for (k, on_k) in on.into_iter().enumerate() {
-                let q = xz(patch.arms[i].row[k]);
-                let m = on_k.or_else(|| along.then(|| patch.main_own(q)).flatten());
-                if let Some(m) = m
-                    && patch.arms[i].row[k][1] > m
-                {
-                    patch.arms[i].row[k][1] = m;
-                }
+            // mouth with a corner on the main road and standing above it
+            // starts on the main road – blended onto its surface as a side
+            // road whose mouth lies at the main road's edge (J2): the
+            // mouth row on the main road's surface, the strip turning from
+            // it to its own profile past the mouth, the patch's surface
+            // there the main road's (a path or a service road drawn along
+            // the main road leaned up to its own height across the main
+            // road's edge, its strip past the mouth was put under the main
+            // road: between them the strip rose above it; lowering only
+            // the mouth row left a step to the patch's surface).
+            let above = (0..2).any(|k| on[k].is_some_and(|m| patch.arms[i].row[k][1] > m + 0.005));
+            if !above {
+                continue;
             }
+            let row: [[f64; 3]; 2] = std::array::from_fn(|k| {
+                let q = xz(patch.arms[i].row[k]);
+                let own = shepard([&patch.arms[a], &patch.arms[b]].into_iter(), q);
+                at_y(q, on[k].map_or(own, |m| m.min(own)))
+            });
+            let mid = lerp3(row[0], row[1], 0.5);
+            let dh = (mid[1] - patch.arms[i].h).abs();
+            let room = 0.5 * patch.arms[i].len - patch.arms[i].mouth_m;
+            let mut l = (dh / BLEND_RATE).clamp(BLEND_MIN_M, BLEND_MAX_M).min(room);
+            if l < 1.0 {
+                l = 0.0;
+            }
+            let arm = &mut patch.arms[i];
+            arm.edge_m = 0.0;
+            arm.edge_p = [0.0, 0.0];
+            arm.edge_h = 0.0;
+            arm.corner = Vec::new();
+            arm.cross = 0.0;
+            arm.warp_m = 0.0;
+            arm.row = row;
+            arm.blend_m = l;
         }
     }
     Ok(patch)
