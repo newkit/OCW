@@ -349,13 +349,16 @@ fn update_overlay(
     // `hud off` hides the fan too (clean pictures and videos).
     let hud_off = hud.is_some_and(|h| !h.0);
     let Some(j) = view.junction.as_ref().filter(|_| !hud_off) else {
-        *vis = Visibility::Hidden;
+        vis.set_if_neq(Visibility::Hidden);
         *shown = None;
         return;
     };
-    *vis = Visibility::Inherited;
+    vis.set_if_neq(Visibility::Inherited);
     if let Ok(mut t) = label_text.single_mut() {
-        t.0 = label(j);
+        let l = label(j);
+        if t.0 != l {
+            t.0 = l;
+        }
     }
     if let Ok(mut t) = hint_text.single_mut() {
         // Not once locked (nothing to choose), nor while the touch hints

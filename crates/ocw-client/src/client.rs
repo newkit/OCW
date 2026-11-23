@@ -1459,8 +1459,15 @@ impl ClientCore {
     }
 
     /// The junction overlay (spec §2.2.1): the next junction within the
-    /// look-ahead, or the one just locked until it is passed.
+    /// look-ahead, or the one just locked until it is passed. None while
+    /// the rider flies in Unicorn mode (decision of 2026-11-23: the fan and
+    /// its key hint are off in flight and back once the rider rides again)
+    /// – here in the view the app writes, not removed by a later system,
+    /// so no system order can show it for a frame (the flicker).
     pub fn junction_view(&self) -> Option<JunctionView> {
+        if self.god.active() {
+            return None;
+        }
         let fr = self.free.as_ref()?;
         let st = self.predictor.state();
         let d = st.distance;
@@ -4891,6 +4898,73 @@ mod tests {
             mine.position,
             at.position
         );
+    }
+
+    /// The junction fan is off in Unicorn mode and back once the rider
+    /// rides again (decision of 2026-11-23, spec 2.2.1: it flickered in
+    /// flight – the view had it until a later system took it out).
+    #[test]
+    fn the_junction_fan_hides_in_flight_and_comes_back_when_riding() {
+        use crate::god_state::{GodEvent, Phase};
+        use ocw_sim::god::FlightInput;
+        let mut h = Harness::free(0);
+        // 350 m: the junction at x = 600 m is within the look-ahead.
+        for _ in 0..400 {
+            h.ride(250.0, 0.1);
+            if h.client.junction_view().is_some() {
+                break;
+            }
+        }
+        assert!(h.client.junction_view().is_some(), "a junction ahead");
+        let msg = h.client.god_mut().request_enter(h.time_s).unwrap();
+        h.send(&msg);
+        assert!(h.client.god().flying());
+        let still = FlightInput::default();
+        let flat = |_: f64, _: f64| Some(0.0);
+        let step = |h: &mut Harness| {
+            let t = h.time_s;
+            let ev =
+                h.client
+                    .god_mut()
+                    .step(&still, (0.0, 0.0), 0.0, ocw_core::SIM_DT, t, &flat, None);
+            for msg in h.server.tick() {
+                h.receive(&msg);
+            }
+            h.client.predict_step();
+            h.time_s += ocw_core::SIM_DT;
+            ev
+        };
+        for _ in 0..50 {
+            step(&mut h);
+            assert!(h.client.junction_view().is_none(), "no fan in flight");
+        }
+        // Gliding down to land: still none.
+        let pos = h.client.god().flight().pos;
+        let spot = h.client.landing_spot(pos[0], pos[2]).unwrap();
+        h.client.god_mut().set_landing(Some(spot));
+        let msg = h.client.god_mut().request_leave(false, h.time_s).unwrap();
+        h.send(&msg);
+        let mut landed = false;
+        for _ in 0..300 {
+            if h.client.god().active() {
+                assert!(h.client.junction_view().is_none(), "none while leaving");
+            }
+            if step(&mut h) == Some(GodEvent::Landed) {
+                landed = true;
+                break;
+            }
+        }
+        assert!(landed && h.client.god().phase() == Phase::Riding);
+        // Riding again: the fan comes back before the next junction.
+        let mut back = false;
+        for _ in 0..600 {
+            h.ride(250.0, 0.1);
+            if h.client.junction_view().is_some() {
+                back = true;
+                break;
+            }
+        }
+        assert!(back, "the fan is back when riding");
     }
 
     /// Collisions on the client (spec §14 Phase 12D, 12H): a bump the

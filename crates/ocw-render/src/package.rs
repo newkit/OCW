@@ -1446,9 +1446,8 @@ fn setup_materials(
         ..default()
     };
     commands.insert_resource(PackageMaterials {
-        trees: tree_materials.add(crate::see_through::swaying(
-            see_through(vertex_coloured.clone()),
-            None,
+        trees: tree_materials.add(crate::see_through::with_crown_alpha(
+            crate::see_through::swaying(see_through(vertex_coloured.clone()), None),
         )),
         vertex_coloured: materials.add(vertex_coloured),
         water: materials.add(StandardMaterial {
