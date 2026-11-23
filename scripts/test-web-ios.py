@@ -495,7 +495,19 @@ def main():
                 pg.evaluate("window.ocw.console('ride.collisions on')")
                 pg.focus("#ocw-canvas")
                 pg.keyboard.press("w")
+                # No pedalling: the staged speed coasts into the pole (with
+                # power the rider slides round the thin pole and rides on).
+                pg.evaluate("window.ocw.console('sim.power 0')")
                 pg.wait_for_timeout(1000)
+
+                def bumps():
+                    try:
+                        s = json.loads(pg.evaluate("window.ocw.netStats()") or "{}")
+                    except Exception:  # noqa: BLE001
+                        s = {}
+                    return s.get("collisions") or {}
+
+                b0 = bumps()
                 pg.evaluate("window.ocw.console('dev.lamp')")
                 pg.wait_for_timeout(700)
                 log = console_log(pg)
@@ -507,7 +519,11 @@ def main():
                 pg.screenshot(path=f"{base}-lamp-bump.png")
                 pg.wait_for_timeout(2000)
                 pg.screenshot(path=f"{base}-lamp-after.png")
+                b1 = bumps()
+                check("the rider bumps into the pole (the local server counts a contact)",
+                      b1.get("contacts", 0) > b0.get("contacts", 0), {"before": b0, "after": b1})
                 summary["lamp_log"] = console_log(pg)[-8:]
+                pg.evaluate("window.ocw.console('sim.power 250')")
 
             summary["ready_s"] = round(ready_t - t0, 1)
             check("the ride shows on WebGL 2 (Safari with WebGPU)", (st.get("gpu") or {}).get("api") == "webgl2"

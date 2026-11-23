@@ -118,11 +118,18 @@ IPHONE_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit
              "(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1")
 ANDROID_UA = ("Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) "
               "Chrome/131.0.0.0 Mobile Safari/537.36")
+# Android's Chrome has element full screen (WebKit here does not say so):
+# the first-ride tip offers the "Full screen" button there.
+ANDROID_FULLSCREEN = """
+for (const o of [Document.prototype, document]) {
+  Object.defineProperty(o, "fullscreenEnabled", {get: () => true, configurable: true});
+}
+"""
 LAYOUTS = {
     "layout-iphone-390x844": ((390, 844), (59, 0, 34, 0), 3, NO_FULLSCREEN, IPHONE_UA),
     "layout-iphone-844x390": ((844, 390), (0, 59, 21, 59), 3, NO_FULLSCREEN, IPHONE_UA),
-    "layout-android-360x640": ((360, 640), (0, 0, 0, 0), 3, "", ANDROID_UA),
-    "layout-android-640x360": ((640, 360), (0, 0, 0, 0), 3, "", ANDROID_UA),
+    "layout-android-360x640": ((360, 640), (0, 0, 0, 0), 3, ANDROID_FULLSCREEN, ANDROID_UA),
+    "layout-android-640x360": ((640, 360), (0, 0, 0, 0), 3, ANDROID_FULLSCREEN, ANDROID_UA),
 }
 # A touch pointer on the canvas (winit reads pointer events; Playwright's
 # WebKit can only tap, not hold).
