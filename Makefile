@@ -361,8 +361,8 @@ test-web-gpu: web ## Headless Chromium: the page's GPU choice (ocw-gpu.js rules)
 test-web-webkit: web ## WebKit (Safari's engine, Playwright; make deps-webkit): Safari 26 with WebGPU takes the WebGL 2 build – an iPhone 15's start page and ride (portrait and landscape: the safe areas, touch taps and a held side, the manifest, the wake lock; spec 3.2.3 TS4; the phone layout and the touch power buttons, spec 3.2, TS5), Safari on macOS with the desktop HUD unchanged; rides and draws (B7); into test-output/web/
 	scripts/test-web-webkit.py --out test-output/web
 
-test-web-ios: web ## WebKit iPhone 15 (Playwright; make deps-webkit): a long Hills ride (IOS_MINUTES, 5) with the page hidden and shown every minute, then the WebGL context lost while hidden (the app stops, the ride loads again once) and again (a message, no second reload) – the iPhone restarts of 2026-11-22 (spec 14 Phase 10 B7); memory every 5 s; worlds: scripts/test-web-ios.py --world ID --route NAME --deaths; into test-output/web-ios/
-	scripts/test-web-ios.py --out test-output/web-ios --minutes $(IOS_MINUTES) --budget-mb 600
+test-web-ios: web ## WebKit iPhone 15 (Playwright; make deps-webkit): a long Hills ride (IOS_MINUTES, 5) with the page hidden and shown every minute, then the WebGL context lost while hidden (the app stops, the ride loads again once) and again (a message, no second reload) – the iPhone restarts of 2026-11-22 (spec 14 Phase 10 B7); memory every 5 s (wasm + all WebGL memory, render targets included) against the phone budget of v5.42 (test routes 200 MB, worlds 450 MB, peak and end of the ride); worlds: scripts/test-web-ios.py --world ID --route NAME --deaths; into test-output/web-ios/
+	scripts/test-web-ios.py --out test-output/web-ios --minutes $(IOS_MINUTES)
 
 PREVIEW_WORLDS ?= target/web-preview-worlds/release
 PREVIEW_SITE ?= target/web-preview-site

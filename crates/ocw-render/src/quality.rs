@@ -419,6 +419,19 @@ pub fn limit_view_to(
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Default)]
 pub struct RenderQuality(pub QualityPreset);
 
+/// The largest sun shadow map whatever the preset (`None`: the preset's):
+/// a phone's browser takes 1024² (4 MB instead of 2048²'s 16 MB on the
+/// GPU; spec 14 Phase 10 B7, the iPhone's memory).
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ShadowMapCap(pub Option<usize>);
+
+impl ShadowMapCap {
+    /// `px` within the cap (at least 256).
+    pub fn limit(&self, px: usize) -> usize {
+        self.0.map_or(px, |c| px.min(c.max(256)))
+    }
+}
+
 /// A house mesh of a tile with its level of detail (0 near, 1 mid, 2
 /// far; `houses::lod_ranges`).
 #[derive(Component, Debug, Clone, Copy)]
@@ -494,19 +507,28 @@ pub fn apply_quality(
     cameras: Query<(Entity, Option<&Msaa>, Ref<FollowCamera>)>,
     mut houses: Query<(Ref<HouseLod>, &mut VisibilityRange)>,
     trees: Query<(Entity, Ref<TileTrees>, Has<VisibilityRange>)>,
+    cap: Option<Res<ShadowMapCap>>,
 ) {
     let q = quality.0;
+    let cap = cap.as_deref().copied().unwrap_or_default();
     let before = last.unwrap_or_default();
     let changed = *last != Some(q);
     *last = Some(q);
     if changed && q.shadow_map_px != before.shadow_map_px {
         if let Some(map) = shadow_map.as_deref_mut() {
-            map.size = q.shadow_map_px;
+            map.size = cap.limit(q.shadow_map_px);
         } else {
             commands.insert_resource(DirectionalLightShadowMap {
-                size: q.shadow_map_px,
+                size: cap.limit(q.shadow_map_px),
             });
         }
+    }
+    if shadow_map
+        .as_ref()
+        .is_some_and(|m| m.size != cap.limit(m.size))
+        && let Some(map) = shadow_map.as_deref_mut()
+    {
+        map.size = cap.limit(map.size);
     }
     if changed
         && q.particle_share != before.particle_share
@@ -782,6 +804,34 @@ mod tests {
         assert_eq!(far, 1000.0);
         let (far, _) = QualityPreset::of(QualityLevel::High).limit_view(120_000.0, clear);
         assert_eq!(far, 120_000.0);
+    }
+
+    /// A phone's cap on the sun's shadow map holds whatever the preset
+    /// asks (the iPhone's memory, v5.42); without a cap the preset's.
+    #[test]
+    fn the_shadow_map_cap_holds() {
+        assert_eq!(ShadowMapCap(None).limit(4096), 4096);
+        assert_eq!(ShadowMapCap(Some(1024)).limit(2048), 1024);
+        assert_eq!(ShadowMapCap(Some(1024)).limit(512), 512);
+        assert_eq!(ShadowMapCap(Some(1)).limit(2048), 256);
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(QualityPlugin)
+            .insert_resource(DirectionalLightShadowMap { size: 4096 })
+            .insert_resource(ShadowMapCap(Some(1024)));
+        app.update();
+        assert_eq!(
+            app.world().resource::<DirectionalLightShadowMap>().size,
+            1024,
+            "High's 4096 capped"
+        );
+        app.insert_resource(RenderQuality(QualityPreset::of(QualityLevel::Low)));
+        app.update();
+        app.update();
+        assert_eq!(
+            app.world().resource::<DirectionalLightShadowMap>().size,
+            1024
+        );
     }
 
     /// The preset reaches the sun, the camera, the particles, the houses

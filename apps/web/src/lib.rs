@@ -525,10 +525,7 @@ pub fn app_with_settings(
     let mut app = App::new();
     visit_quality(&config, &mut settings, &mut warnings);
     // Phones keep fewer world tiles (the iPhone's restarts, 2026-11-22).
-    let memory = memory::MemoryMode::resolve(config.memory, &device_info());
-    if let Some(w) = config.world.as_mut() {
-        w.residency = memory.residency(w.residency);
-    }
+    let memory = apply_memory_mode(&mut config, &device_info());
     app.insert_resource(ocw_render::package::StreamRadiusCap(memory.ring_cap()));
     if memory != memory::MemoryMode::Normal {
         info!(
@@ -551,6 +548,11 @@ pub fn app_with_settings(
                 primary_window: Some(Window {
                     title: "Open Cycling World".into(),
                     canvas: Some(CANVAS_ID.into()),
+                    // The page's size from the first frame: Bevy's default
+                    // 1280 × 720 at an iPhone's pixel ratio of 3 made three
+                    // 3840 × 2160 targets (95 MB of GPU memory) for the
+                    // first two seconds (the iPhone's memory, v5.42).
+                    resolution: initial_resolution(),
                     // The canvas fills the page; the arrows and Page Up /
                     // Down ride instead of scrolling it.
                     fit_canvas_to_parent: true,
@@ -563,11 +565,7 @@ pub fn app_with_settings(
             .set(AssetPlugin {
                 meta_check: bevy::asset::AssetMetaCheck::Never,
                 ..default()
-            })
-            // Bevy's audio plays sample files; OCW's sounds are
-            // synthesised by the shared mixer, played through Web Audio
-            // by `audio::WebAudioPlugin` (B5).
-            .disable::<bevy::audio::AudioPlugin>(),
+            }),
     )
     // A renderer error goes to the page (B7): WebGPU falls back to WebGL 2,
     // otherwise the page shows it – never Bevy's quit with a black canvas.
@@ -583,10 +581,25 @@ pub fn app_with_settings(
     .add_systems(PostUpdate, cap_pixel_ratio)
     // A lost WebGL context stops the app (the iPhone's restarts, 2026-11-22).
     .add_systems(First, stop_when_gpu_lost)
+    // Where the heap's start peak comes from (`window.ocw.heap().trace`).
+    .add_systems(First, || {
+        heap::FRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        heap::mark(1);
+    })
+    .add_systems(PreUpdate, || heap::mark(2))
+    .add_systems(Update, || heap::mark(3))
+    .add_systems(PostUpdate, || heap::mark(4))
+    .add_systems(Last, || heap::mark(5))
     .add_systems(Startup, || {
         info!("Open Cycling World {} starting", build_id())
     })
     .add_plugins(OcwRenderPlugins)
+    // Phones: smaller shadow maps (the iPhone's memory, v5.42).
+    .insert_resource(ocw_render::quality::ShadowMapCap(memory.shadow_map_cap()))
+    .insert_resource(memory.tile_pace())
+    .insert_resource(ocw_render::package::PlantThinning(memory.plant_thinning()))
+    // Near the phone's budget the world steps down (`memory::MemoryGuard`).
+    .add_systems(Update, memory::guard_memory)
     // The GPU memory for the status line and the browser test (B2).
     .add_plugins(gpu_memory::GpuMemoryPlugin);
     // The browser's WebTransport for a remote server (B3).
@@ -606,6 +619,17 @@ pub fn app_with_settings(
             voice::unavailable(&why)
         })));
     }
+    // Bevy allocates the point lights' shadow cube (1024² × 6, 24 MB) even
+    // though no light of ours casts a point shadow: phones take a tiny one.
+    if let Some(guard) = memory::MemoryGuard::for_mode(memory) {
+        app.insert_resource(guard);
+    }
+    if let Some(size) = memory.photo_size() {
+        app.insert_resource(size);
+    }
+    if let Some(size) = memory.point_shadow_px() {
+        app.insert_resource(bevy::light::PointLightShadowMap { size });
+    }
     app.add_plugins(plugin::WebSessionPlugin { config });
     // Settings first: audio and voice start with the saved values.
     app.add_plugins((
@@ -617,6 +641,52 @@ pub fn app_with_settings(
     // (B6).
     app.add_plugins(ui::WebUiPlugin { record });
     app
+}
+
+/// The memory mode of this visit (the page's `memory=`, else by the
+/// device) applied to the world's options: a phone's residency and its
+/// course (`memory::MemoryMode`). The page's start applies it before it
+/// hands the options to the world's driver (v5.42: the driver once got
+/// them unadjusted and decoded a phone's base whole); applying it again
+/// changes nothing.
+pub fn apply_memory_mode(
+    config: &mut SessionConfig,
+    device: &ocw_client::quality::DeviceInfo,
+) -> memory::MemoryMode {
+    let memory = memory::MemoryMode::resolve(config.memory, device);
+    if let Some(w) = config.world.as_mut() {
+        w.residency = memory.residency(w.residency);
+        w.course_rings = memory.course_rings(w.residency);
+    }
+    memory
+}
+
+/// The window's size at the start: the page's (CSS pixels), never more
+/// than Bevy's default; natively Bevy's default.
+pub fn initial_resolution() -> bevy::window::WindowResolution {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let size = web_sys::window().map(|w| {
+            let n = |v: Result<wasm_bindgen::JsValue, _>| {
+                v.ok().and_then(|v| v.as_f64()).unwrap_or(0.0)
+            };
+            (n(w.inner_width()), n(w.inner_height()))
+        });
+        if let Some((w, h)) = size {
+            let (w, h) = start_size(w, h);
+            return bevy::window::WindowResolution::new(w, h);
+        }
+    }
+    bevy::window::WindowResolution::default()
+}
+
+/// [`initial_resolution`]'s numbers: the page's size in whole pixels, at
+/// most 1280 each way (a page without a size: Bevy's default 1280 × 720).
+pub fn start_size(w: f64, h: f64) -> (u32, u32) {
+    if !(w >= 1.0 && h >= 1.0) {
+        return (1280, 720);
+    }
+    (w.min(1280.0) as u32, h.min(1280.0) as u32)
 }
 
 /// Whether the renderer's error was already reported to the page (the
@@ -936,6 +1006,10 @@ pub fn page_heap() -> String {
         "gpu_textures": g.image_bytes,
         "meshes": g.meshes,
         "textures": g.images,
+        "cpu_images": g.cpu_image_bytes,
+        "cpu_meshes": g.cpu_mesh_bytes,
+        "cpu_images_top": gpu_memory::cpu_images_top(),
+        "trace": heap::trace_marks(),
     })
     .to_string()
 }
@@ -967,6 +1041,9 @@ pub fn start() {
     // The settings read at the start, where the query leaves them out.
     let (settings, settings_warnings) = settings::WebSettings::load(settings::default_store());
     settings::apply_to_config(&settings, &mut config, &settings::query_keys(&query));
+    // The world's options as the app sets them (a phone's residency and
+    // course): the driver decodes the base with them.
+    apply_memory_mode(&mut config, &device_info());
     let world = config.world.clone();
     let mut app = app_with_settings(config, settings, settings_warnings);
     app.insert_resource(account_start)
@@ -1205,6 +1282,40 @@ mod tests {
 
     /// The pixel-ratio cap: a phone at 3 draws at 1 on Low; a screen within
     /// the cap and High keep the device's own.
+    #[test]
+    fn the_memory_mode_reaches_the_worlds_options_once() {
+        // `memory=phone` on a desktop browser: the residency and the course
+        // the driver gets (v5.42 regression: it got them unadjusted).
+        let (mut config, _) = parse_query("world=liechtenstein&memory=phone", true);
+        let desktop = ocw_client::quality::DeviceInfo::default();
+        assert_eq!(
+            apply_memory_mode(&mut config, &desktop),
+            memory::MemoryMode::Phone
+        );
+        let w = config.world.clone().expect("a world");
+        assert_eq!((w.residency.fetch_radius, w.residency.keep_radius), (2, 3));
+        assert_eq!(w.course_rings, Some(4));
+        apply_memory_mode(&mut config, &desktop);
+        assert_eq!(config.world, Some(w), "a second time changes nothing");
+        // A desktop without the option: the whole world.
+        let (mut config, _) = parse_query("world=liechtenstein", true);
+        assert_eq!(
+            apply_memory_mode(&mut config, &desktop),
+            memory::MemoryMode::Normal
+        );
+        assert_eq!(config.world.expect("a world").course_rings, None);
+    }
+
+    #[test]
+    fn the_window_starts_at_the_pages_size() {
+        // An iPhone's page: its CSS size, not 1280 × 720 (× 3 = 3840 ×
+        // 2160 targets for the first frames).
+        assert_eq!(start_size(393.0, 659.0), (393, 659));
+        assert_eq!(start_size(2560.0, 1440.0), (1280, 1280));
+        assert_eq!(start_size(0.0, 0.0), (1280, 720));
+        assert_eq!(start_size(f64::NAN, 500.0), (1280, 720));
+    }
+
     #[test]
     fn the_pixel_ratio_is_capped() {
         use ocw_render::quality::{QualityLevel, QualityPreset};

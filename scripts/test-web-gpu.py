@@ -202,6 +202,20 @@ LOGIC = r"""
   check("saver URL keeps the ride, Low, memory=saver", su.searchParams.get("world") === "liechtenstein"
         && su.searchParams.get("route") === "vaduz-malbun" && su.searchParams.get("quality") === "low"
         && su.searchParams.get("memory") === "saver", su.toString());
+  // Each death one step further: saver, minimal, then none (v5.42).
+  const s1 = G.nextMemoryStep(href), s2 = s1 && G.nextMemoryStep(s1.href), s3 = s2 && G.nextMemoryStep(s2.href);
+  check("deaths: saver, then minimal, then stop (no loop)", s1 && s1.mode === "saver" && s2 && s2.mode === "minimal"
+        && s3 === null && new URL(s2.href).searchParams.get("quality") === "low"
+        && new URL(s2.href).searchParams.get("world") === "liechtenstein", JSON.stringify([s1, s2, s3]));
+  const qs = (s) => new URLSearchParams(s);
+  check("pixel ratio: an iPhone in WebKit draws at 1.5, at 1 in the saver modes",
+        G.pixelRatioCap(F.iphone, qs(""), 3, false) === 1.5 && G.pixelRatioCap(F.iphone, qs("memory=saver"), 3, false) === 1
+        && G.pixelRatioCap(F.iphone, qs("memory=minimal"), 3, false) === 1, "");
+  check("pixel ratio: desktops, Chromium phones (devicePixelContentBoxSize) and a ratio within the cap unchanged",
+        G.pixelRatioCap(F.chrome, qs(""), 2, false) === null && G.pixelRatioCap(F.android, qs(""), 3, true) === null
+        && G.pixelRatioCap(F.iphone, qs(""), 1, false) === null, "");
+  check("pixel ratio: ?pixel-ratio= chooses (0.5 – 4)", G.pixelRatioCap(F.chrome, qs("pixel-ratio=1.25"), 2, true) === 1.25
+        && G.pixelRatioCap(F.iphone, qs("pixel-ratio=9"), 3, false) === 1.5, "");
   let sp = G.startPage(F.chrome, null, true);
   check("start page, desktop Chrome: unticked; ticked adds gpu=webgl2&quality=low",
         !sp.ticked && sp.query(true) === "&gpu=webgl2&quality=low" && sp.query(false) === "", JSON.stringify(sp));

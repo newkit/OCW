@@ -261,6 +261,17 @@ pub struct LandUseIndex {
 impl LandUseIndex {
     /// Indexes a section payload (copied) written by [`write_landuse`].
     pub fn new(bytes: &[u8], samples: u32) -> Result<Self, String> {
+        Self::new_kept(bytes, samples, None)
+    }
+
+    /// [`LandUseIndex::new`] copying only the records of the tiles in
+    /// `keep` (and the sea tile; `None`: all) – a phone's course, without
+    /// a copy of the whole section first (Tenerife: 75 MB; v5.42).
+    pub fn new_kept(
+        bytes: &[u8],
+        samples: u32,
+        keep: Option<&std::collections::BTreeSet<TileKey>>,
+    ) -> Result<Self, String> {
         let mut r = Bytes::new(bytes);
         let version = r.u32()?;
         if version != LANDUSE_VERSION {
@@ -270,21 +281,39 @@ impl LandUseIndex {
         if cells == 0 || cells > 4096 {
             return Err(format!("land-use grid of {cells} cells is not supported"));
         }
-        let mut tiles = BTreeMap::new();
+        let mut records = Vec::new();
         let mut sea_tile = None;
         for _ in 0..r.u32()? {
             let at = r.position();
             let (key, t) = read_tile(&mut r, cells, samples)?;
-            if sea_tile.is_none() && t.water.iter().any(|&(_, level)| level == 0.0) {
+            let sea = sea_tile.is_none() && t.water.iter().any(|&(_, level)| level == 0.0);
+            if sea {
                 sea_tile = Some(key);
             }
-            tiles.insert(key, at);
+            if sea || keep.is_none_or(|k| k.contains(&key)) {
+                records.push((key, at, r.position()));
+            }
         }
         r.finish("land-use section")?;
+        let Some(_) = keep else {
+            return Ok(Self {
+                cells,
+                samples,
+                bytes: bytes.to_vec(),
+                tiles: records.into_iter().map(|(k, at, _)| (k, at)).collect(),
+                sea_tile,
+            });
+        };
+        let mut kept = Vec::with_capacity(records.iter().map(|r| r.2 - r.1).sum());
+        let mut tiles = BTreeMap::new();
+        for (k, a, b) in records {
+            tiles.insert(k, kept.len());
+            kept.extend_from_slice(&bytes[a..b]);
+        }
         Ok(Self {
             cells,
             samples,
-            bytes: bytes.to_vec(),
+            bytes: kept,
             tiles,
             sea_tile,
         })
@@ -313,6 +342,32 @@ impl LandUseIndex {
 
     pub fn len(&self) -> usize {
         self.tiles.len()
+    }
+
+    /// Keeps only the records of the tiles in `keep` (and the sea tile,
+    /// for the far terrain's sea), copied into a buffer of their size (the
+    /// phone's course, spec 14 Phase 10 B7, v5.42).
+    pub fn retain(&mut self, keep: &std::collections::BTreeSet<TileKey>) {
+        let mut starts: Vec<usize> = self.tiles.values().copied().collect();
+        starts.sort_unstable();
+        let end = |at: usize| {
+            let i = starts.partition_point(|&s| s <= at);
+            starts.get(i).copied().unwrap_or(self.bytes.len())
+        };
+        let kept: Vec<(TileKey, usize, usize)> = self
+            .tiles
+            .iter()
+            .filter(|(k, _)| keep.contains(k) || self.sea_tile == Some(**k))
+            .map(|(k, &at)| (*k, at, end(at)))
+            .collect();
+        let mut bytes = Vec::with_capacity(kept.iter().map(|k| k.2 - k.1).sum());
+        let mut tiles = BTreeMap::new();
+        for (k, a, b) in kept {
+            tiles.insert(k, bytes.len());
+            bytes.extend_from_slice(&self.bytes[a..b]);
+        }
+        self.bytes = bytes;
+        self.tiles = tiles;
     }
 
     pub fn is_empty(&self) -> bool {
@@ -425,6 +480,24 @@ pub(crate) mod tests {
         l.tiles.get_mut(&far).unwrap().water = vec![(0, 0.0)];
         let mut b = Vec::new();
         write_landuse(&l, &mut b);
-        assert_eq!(LandUseIndex::new(&b, 3).unwrap().sea_tile, Some(far));
+        let mut ix = LandUseIndex::new(&b, 3).unwrap();
+        assert_eq!(ix.sea_tile, Some(far));
+        // A phone's course (v5.42): only the kept tiles and the sea tile,
+        // decoded as before, in fewer bytes.
+        let before = ix.bytes();
+        let k = TileKey { x: 0, z: 0 };
+        let want = ix.tile(k);
+        ix.retain(&[k].into());
+        assert_eq!(ix.tile(k), want);
+        assert!(ix.tile(far).is_some(), "the sea tile stays");
+        let mut none = LandUseIndex::new(&b, 3).unwrap();
+        none.retain(&[TileKey { x: 7, z: 7 }].into());
+        assert_eq!(none.len(), 1, "only the sea tile");
+        assert!(none.bytes() < before);
+        // … the same when indexed with the kept tiles at once.
+        let at_once = LandUseIndex::new_kept(&b, 3, Some(&[k].into())).unwrap();
+        assert_eq!(at_once.tile(k), want);
+        assert_eq!((at_once.len(), at_once.sea_tile), (2, Some(far)));
+        assert_eq!(at_once.bytes(), ix.bytes());
     }
 }

@@ -33,6 +33,35 @@ use crate::camera::FollowCamera;
 pub const PHOTO_W: u32 = 2560;
 pub const PHOTO_H: u32 = 1440;
 pub const PHOTO_FOV_Y: f32 = 0.70;
+
+/// The size the photos are rendered at ([`PHOTO_W`] × [`PHOTO_H`] by
+/// default). A photo's camera renders into its own targets at this size
+/// – at 2560 × 1440 five textures and a read-back buffer of 14 MB each,
+/// ~85 MB of GPU memory and 40 MB more wasm memory for a moment – so a
+/// phone's browser takes photos at 1280 × 720 (spec 14 Phase 10 B7, the
+/// iPhone's memory, v5.42).
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PhotoSize {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Default for PhotoSize {
+    fn default() -> Self {
+        Self {
+            width: PHOTO_W,
+            height: PHOTO_H,
+        }
+    }
+}
+
+impl PhotoSize {
+    /// A phone's: a quarter of the pixels.
+    pub const PHONE: Self = Self {
+        width: PHOTO_W / 2,
+        height: PHOTO_H / 2,
+    };
+}
 /// The flash's light at full brightness (lm) and reach (m).
 pub const FLASH_LM: f32 = 4.0e6;
 pub const FLASH_RANGE_M: f32 = 60.0;
@@ -827,6 +856,10 @@ struct PhotoCamera {
 /// camera's first frames warm up its exposure and shadows), cleans up.
 fn take_photos(world: &mut World) {
     let requests = std::mem::take(&mut world.resource_mut::<PhotoRequests>().0);
+    let size = world
+        .get_resource::<PhotoSize>()
+        .copied()
+        .unwrap_or_default();
     if !requests.is_empty() && world.get_resource::<Assets<Image>>().is_some() {
         let follow = world
             .query_filtered::<Entity, With<FollowCamera>>()
@@ -836,8 +869,8 @@ fn take_photos(world: &mut World) {
             let image = world
                 .resource_mut::<Assets<Image>>()
                 .add(Image::new_target_texture(
-                    PHOTO_W,
-                    PHOTO_H,
+                    size.width,
+                    size.height,
                     TextureFormat::Bgra8UnormSrgb,
                     None,
                 ));

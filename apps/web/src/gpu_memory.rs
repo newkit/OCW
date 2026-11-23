@@ -25,6 +25,15 @@ static MESH_COUNT: AtomicU64 = AtomicU64::new(0);
 static SLAB_BYTES: AtomicU64 = AtomicU64::new(0);
 static IMAGE_BYTES: AtomicU64 = AtomicU64::new(0);
 static IMAGE_COUNT: AtomicU64 = AtomicU64::new(0);
+static CPU_IMAGE_BYTES: AtomicU64 = AtomicU64::new(0);
+static CPU_MESH_BYTES: AtomicU64 = AtomicU64::new(0);
+/// The biggest images kept on the CPU ("1280×1280×1 6.6 MB", …).
+static CPU_IMAGES_TOP: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// The biggest images the main world keeps (for `window.ocw.heap()`).
+pub fn cpu_images_top() -> Vec<String> {
+    CPU_IMAGES_TOP.lock().map(|v| v.clone()).unwrap_or_default()
+}
 
 /// The last sums.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -37,6 +46,11 @@ pub struct GpuMemory {
     /// All textures with their mip levels.
     pub image_bytes: u64,
     pub images: u64,
+    /// The main world's copies: image data and mesh arrays kept on the
+    /// CPU (assets made with `RenderAssetUsages::MAIN_WORLD`, on the wasm
+    /// heap; the iPhone's memory, v5.42).
+    pub cpu_image_bytes: u64,
+    pub cpu_mesh_bytes: u64,
 }
 
 impl GpuMemory {
@@ -47,6 +61,8 @@ impl GpuMemory {
             slab_bytes: SLAB_BYTES.load(Relaxed),
             image_bytes: IMAGE_BYTES.load(Relaxed),
             images: IMAGE_COUNT.load(Relaxed),
+            cpu_image_bytes: CPU_IMAGE_BYTES.load(Relaxed),
+            cpu_mesh_bytes: CPU_MESH_BYTES.load(Relaxed),
         }
     }
 
@@ -139,14 +155,83 @@ fn sum_gpu_memory(
     IMAGE_COUNT.store(count, Relaxed);
 }
 
+/// The bytes of a mesh's arrays still in the main world (0 once they
+/// went to the render world only).
+pub fn cpu_mesh_bytes(m: &Mesh) -> usize {
+    let attributes = m
+        .try_attributes()
+        .map(|a| a.map(|(_, v)| v.get_bytes().len()).sum::<usize>())
+        .unwrap_or(0);
+    let indices = match m.try_indices_option() {
+        Ok(Some(bevy::mesh::Indices::U16(i))) => i.len() * 2,
+        Ok(Some(bevy::mesh::Indices::U32(i))) => i.len() * 4,
+        _ => 0,
+    };
+    attributes + indices
+}
+
+/// The main world's image data and mesh arrays (what stays on the wasm
+/// heap after the upload).
+fn sum_cpu_memory(
+    mut frame: Local<u32>,
+    images: Option<Res<Assets<Image>>>,
+    meshes: Option<Res<Assets<Mesh>>>,
+) {
+    *frame += 1;
+    let (Some(images), Some(meshes)) = (images, meshes) else {
+        return;
+    };
+    if *frame % EVERY_FRAMES != 1 {
+        return;
+    }
+    let mut kept: Vec<(usize, String)> = images
+        .iter()
+        .filter_map(|(_, i)| {
+            let n = i.data.as_ref().map_or(0, Vec::len);
+            let s = i.texture_descriptor.size;
+            (n > 0).then(|| {
+                (
+                    n,
+                    format!(
+                        "{}×{}×{} {:.1} MB",
+                        s.width,
+                        s.height,
+                        s.depth_or_array_layers,
+                        n as f64 / 1048576.0
+                    ),
+                )
+            })
+        })
+        .collect();
+    let img: usize = kept.iter().map(|k| k.0).sum();
+    kept.sort_by_key(|k| std::cmp::Reverse(k.0));
+    if let Ok(mut top) = CPU_IMAGES_TOP.lock() {
+        *top = kept.into_iter().take(8).map(|k| k.1).collect();
+    }
+    let mesh: usize = meshes.iter().map(|(_, m)| cpu_mesh_bytes(m)).sum();
+    CPU_IMAGE_BYTES.store(img as u64, Relaxed);
+    CPU_MESH_BYTES.store(mesh as u64, Relaxed);
+}
+
 /// Sums the GPU memory in the render world (no-op without one: the
 /// native tests).
 pub struct GpuMemoryPlugin;
 
 impl Plugin for GpuMemoryPlugin {
     fn build(&self, app: &mut App) {
+        app.add_systems(Last, sum_cpu_memory);
         if let Some(render) = app.get_sub_app_mut(RenderApp) {
             render.add_systems(Render, sum_gpu_memory.in_set(RenderSystems::Cleanup));
+            // The heap's trace in the render world (`heap::mark`).
+            render.add_systems(
+                Render,
+                (
+                    (|| crate::heap::mark(6)).in_set(RenderSystems::PrepareAssets),
+                    (|| crate::heap::mark(7)).in_set(RenderSystems::Queue),
+                    (|| crate::heap::mark(8)).in_set(RenderSystems::Render),
+                    (|| crate::heap::mark(9)).in_set(RenderSystems::Cleanup),
+                ),
+            );
         }
     }
 }
