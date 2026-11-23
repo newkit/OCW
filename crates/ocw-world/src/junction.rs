@@ -1760,6 +1760,30 @@ fn outline_at(
         }
         let last = dense.len() - 1;
         options.push(dense[1..last].to_vec());
+        // J6: the chains ordered by their worst bend (as the side lint
+        // measures it, the strips' edges on at both ends), J5's sides first
+        // where they bend no more than the others.
+        if general && options.len() > 1 {
+            let (q2, p2) = (xz(q), xz(next.p()));
+            let score = |o: &Vec<P2>| {
+                let mut pts = vec![add(q2, arm.t), q2];
+                pts.extend(o.iter().copied());
+                pts.push(p2);
+                pts.push(add(p2, next.t));
+                sides::worst_bend(&pts)
+            };
+            let mut scored: Vec<(f64, usize, Vec<P2>)> = options
+                .into_iter()
+                .enumerate()
+                .map(|(k, o)| (score(&o), k, o))
+                .collect();
+            // Within a degree the earlier (J5's sides, then smoothed) wins.
+            scored.sort_by(|a, b| {
+                let (x, y) = (a.0.to_degrees().round(), b.0.to_degrees().round());
+                x.total_cmp(&y).then(a.1.cmp(&b.1))
+            });
+            options = scored.into_iter().map(|x| x.2).collect();
+        }
         choices.push(options);
     }
     // Each corner's first choice; where the outline crosses itself, the

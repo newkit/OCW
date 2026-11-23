@@ -582,3 +582,21 @@ pub(super) fn star_ok(c: P2, pts: &[P2]) -> bool {
     }
     total < std::f64::consts::TAU + 1e-6
 }
+
+/// The worst bend of polyline `p` (radians) over pieces of at least 0.3 m
+/// each way, as the side lint (`side.corner`) measures it; its first and
+/// last points only as the pieces' far ends.
+pub(super) fn worst_bend(p: &[P2]) -> f64 {
+    let n = p.len();
+    let mut worst = 0.0f64;
+    for i in 1..n.saturating_sub(1) {
+        let back = (0..i).rev().find(|&k| norm(sub(p[i], p[k])) >= 0.3);
+        let fwd = (i + 1..n).find(|&k| norm(sub(p[k], p[i])) >= 0.3);
+        let (Some(a), Some(c)) = (back, fwd) else {
+            continue;
+        };
+        let (u, w) = (sub(p[i], p[a]), sub(p[c], p[i]));
+        worst = worst.max(turn(u, w).abs());
+    }
+    worst
+}
