@@ -2236,6 +2236,12 @@ fn plain_row(pts: &[[f32; 3]], i: usize, half: f32) -> [[f32; 3]; 2] {
     ]
 }
 
+/// A stretch of a side: its grade and direction (xz).
+type Stretch = (f64, [f64; 2]);
+/// Where an arm's strip edge starts at a mouth corner: that point, the next
+/// row's, and the edge from there on.
+type StripStart = ([f64; 3], [f64; 3], Vec<[f64; 3]>);
+
 /// A fault of the bands beside a carriageway at a junction (spec §4.8.8
 /// *Rule: the sides of a road are as smooth as the road*).
 #[derive(Debug, Clone, PartialEq)]
@@ -2351,25 +2357,24 @@ pub fn side_faults(pkg: &WorldPackage, g: &RoadGraph) -> Vec<SideFault> {
         // The point of the arm's strip edge that starts at corner `c` and
         // the next one along it (the strip's first row there).
         // (Also the strip's edge from there on, away from the patch.)
-        let strip_start =
-            |edge: usize, c: [f64; 3]| -> Option<([f64; 3], [f64; 3], Vec<[f64; 3]>)> {
-                for rows in rows_of.get(&edge).into_iter().flatten() {
-                    for (i, r) in rows.iter().enumerate() {
-                        for k in 0..2 {
-                            if dist(xz(r[k]), xz(c)) < SIDE_GAP_M {
-                                let j = if i == 0 { 1 } else { i - 1 };
-                                let side: Vec<[f64; 3]> = if i == 0 {
-                                    rows.iter().map(|r| r[k]).collect()
-                                } else {
-                                    rows[..=i].iter().rev().map(|r| r[k]).collect()
-                                };
-                                return Some((r[k], rows[j][k], side));
-                            }
+        let strip_start = |edge: usize, c: [f64; 3]| -> Option<StripStart> {
+            for rows in rows_of.get(&edge).into_iter().flatten() {
+                for (i, r) in rows.iter().enumerate() {
+                    for k in 0..2 {
+                        if dist(xz(r[k]), xz(c)) < SIDE_GAP_M {
+                            let j = if i == 0 { 1 } else { i - 1 };
+                            let side: Vec<[f64; 3]> = if i == 0 {
+                                rows.iter().map(|r| r[k]).collect()
+                            } else {
+                                rows[..=i].iter().rev().map(|r| r[k]).collect()
+                            };
+                            return Some((r[k], rows[j][k], side));
                         }
                     }
                 }
-                None
-            };
+            }
+            None
+        };
         for ch in &p.chains {
             let pts: Vec<[f64; 3]> = ch.points.clone();
             let n = pts.len();
@@ -2442,7 +2447,7 @@ pub fn side_faults(pkg: &WorldPackage, g: &RoadGraph) -> Vec<SideFault> {
                 ((b.0 - a.0) - turned).abs() * 100.0
             };
             // Height: grade changes along the chain over stretches ≥ 1 m.
-            let mut stretch: Vec<((f64, [f64; 2]), [f64; 2])> = Vec::new();
+            let mut stretch: Vec<(Stretch, [f64; 2])> = Vec::new();
             let mut start = 0;
             while start + 1 < n {
                 let mut walked = 0.0;
