@@ -121,7 +121,13 @@ fn fragment(
     in: VertexOutput,
     @builtin(front_facing) is_front: bool,
 ) -> FragmentOutput {
-    let keep = see_through_keep(in.world_position.xyz, view.world_position, see_through);
+    var keep = see_through_keep(in.world_position.xyz, view.world_position, see_through);
+    // A vertex alpha below 1 is the share of the pixels a part covers: the
+    // see-through crown of twigs of a bare tree and thinning autumn crowns
+    // (`flora::crown_form`), the same in the near and the far model.
+@if(VERTEX_COLORS) {
+    keep = min(keep, in.color.a);
+}
     if keep < bayer4(in.position.xy) {
         discard;
     }

@@ -1036,27 +1036,34 @@ fn broadleaf(
             let to = base + Vec3::new(reach * a.cos(), y0 + ry * h * 1.1, reach * a.sin()) * s;
             tube(m, from, to, 0.012 * h * s, 0.003 * h * s, 3, foot, twig());
         }
-        if !near {
-            // From afar the bare crown is a thin grey haze.
+    }
+    // The crown is the same in both details (spec 4.6.1, the bug of
+    // 2026-11-23: the trees turned bald when coming closer – the far model
+    // kept a grey crown of twigs that the near one did not have): the same
+    // form, size, colour and opacity by [`crown_form`], only the detail of
+    // the mesh differs.
+    let (k, opacity) = match crown_form(sp, look) {
+        CrownForm::Twigs { opacity } => {
+            // The fine twigs of a bare crown: a see-through grey-brown haze
+            // around the branches (dithered by the tree material).
+            let from = m.colors.len();
             blob(
                 m,
                 base,
                 Vec3::Y * cy,
-                Vec3::new(rx * r * 0.85, ry * h * 0.9, rx * r * 0.85),
+                Vec3::new(rx * r * TWIG_CROWN, ry * h * 0.9, rx * r * TWIG_CROWN),
                 s,
-                5,
-                1,
+                if near { 7 } else { 5 },
+                if near { 3 } else { 1 },
                 mix3(twig(), crown, leaves * 2.0),
                 at.turn,
             );
+            set_opacity(m, from, opacity);
             return;
         }
-    }
-    if leaves < 0.12 && !(sp == Species::FruitTree && look.bloom > 0.3) {
-        return;
-    }
-    // Blossom before the leaves: the crown at least half grown.
-    let k = (0.55 + 0.45 * leaves).max(if look.bloom > 0.3 { 0.8 } else { 0.0 });
+        CrownForm::Leaves { size, opacity } => (size, opacity),
+    };
+    let from = m.colors.len();
     if !near {
         blob(
             m,
@@ -1069,6 +1076,7 @@ fn broadleaf(
             crown,
             at.turn,
         );
+        set_opacity(m, from, opacity);
         return;
     }
     // The main crown and its lumps.
@@ -1099,6 +1107,66 @@ fn broadleaf(
             shade3(crown, 0.9 + 0.2 * h01(at.pick, i + 3)),
             a,
         );
+    }
+    set_opacity(m, from, opacity);
+}
+
+/// Below this many leaves a deciduous crown is bare: only its twigs.
+pub const BARE_LEAVES: f32 = 0.12;
+/// The bare crown of twigs: its width (share of the crown radius) and how
+/// much of it covers what is behind (the rest shows through, dithered).
+pub const TWIG_CROWN: f32 = 0.85;
+pub const TWIG_OPACITY: f32 = 0.45;
+
+/// The crown of a broadleaf on the day, the same in both details.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CrownForm {
+    /// Bare: the haze of its twigs.
+    Twigs { opacity: f32 },
+    /// In leaf: the crown at `size` (share of the full crown), thinning
+    /// crowns more see-through.
+    Leaves { size: f32, opacity: f32 },
+}
+
+impl CrownForm {
+    pub fn opacity(self) -> f32 {
+        match self {
+            CrownForm::Twigs { opacity } | CrownForm::Leaves { opacity, .. } => opacity,
+        }
+    }
+}
+
+/// The crown of a broadleaf of `sp` with `look` (both details draw it).
+pub fn crown_form(sp: Species, look: &PlantLook) -> CrownForm {
+    let leaves = if leaf_type(sp) == LeafType::Evergreen {
+        1.0
+    } else {
+        look.leaves
+    };
+    let blossom = sp == Species::FruitTree && look.bloom > 0.3;
+    if leaves < BARE_LEAVES && !blossom {
+        return CrownForm::Twigs {
+            opacity: TWIG_OPACITY,
+        };
+    }
+    // Blossom before the leaves: the crown at least half grown.
+    let size = (0.55 + 0.45 * leaves).max(if blossom { 0.8 } else { 0.0 });
+    let opacity = if blossom {
+        1.0
+    } else {
+        (0.35 + 1.3 * leaves).min(1.0)
+    };
+    CrownForm::Leaves { size, opacity }
+}
+
+/// Sets the opacity (vertex alpha: the tree material leaves that share of
+/// the pixels, `see_through.wesl`) of the vertices from `from` on.
+fn set_opacity(m: &mut MeshArrays, from: usize, opacity: f32) {
+    if opacity >= 1.0 {
+        return;
+    }
+    for c in &mut m.colors[from..] {
+        c[3] = opacity;
     }
 }
 
@@ -1516,6 +1584,103 @@ mod tests {
         );
         let top = a.positions.iter().map(|p| p[1]).fold(f32::MIN, f32::max) - 100.0;
         assert!(top > Species::Beech.height_m() * 1.1);
+    }
+
+    /// Regression (2026-11-23, "the trees turn bald all of a sudden when
+    /// getting closer"): a tree has the same leaf state in its near and
+    /// its far model on every day – in May, July, late October and late
+    /// November, in the valley and up high: the same crown form, opacity,
+    /// height and colour (the far model kept a grey crown of twigs that the
+    /// near model did not have, and a thin autumn crown was a grey haze
+    /// from afar but a coloured crown up close).
+    #[test]
+    fn near_and_far_models_have_the_same_leaves_every_season() {
+        let li = ocw_sky::season::SeasonModel::for_place(47.14, 9.52);
+        let bf = ocw_sky::season::SeasonModel::for_place(48.6, 8.2);
+        // The crown: every vertex that is not trunk or branch (bark or
+        // twig colour at full opacity).
+        let crown = |sp: Species, m: &MeshArrays| -> (f32, f32, [f32; 3], usize) {
+            let same = |c: &[f32; 4], d: [f32; 3]| (0..3).all(|i| (c[i] - d[i]).abs() < 1e-5);
+            let parts: Vec<(&[f32; 3], &[f32; 4])> = m
+                .positions
+                .iter()
+                .zip(&m.colors)
+                .filter(|(_, c)| c[3] < 1.0 || !(same(c, twig()) || same(c, bark_colour(sp))))
+                .collect();
+            let top = parts.iter().map(|(p, _)| p[1]).fold(0.0f32, f32::max) - 100.0;
+            let alpha = parts.iter().map(|(_, c)| c[3]).fold(1.0f32, f32::min);
+            let n = parts.len().max(1) as f32;
+            let colour = std::array::from_fn(|i| parts.iter().map(|(_, c)| c[i]).sum::<f32>() / n);
+            (top, alpha, colour, parts.len())
+        };
+        let mut forms = std::collections::BTreeSet::new();
+        for (model, alt) in [(&li, 455.0), (&li, 1300.0), (&bf, 700.0)] {
+            // 10 May, 15 July, 28 October, 23 November.
+            for day in [130.0, 196.0, 301.0, 327.0] {
+                let d = model.day(day);
+                for sp in [
+                    Species::Beech,
+                    Species::SycamoreMaple,
+                    Species::Ash,
+                    Species::Oak,
+                    Species::Birch,
+                    Species::Lime,
+                    Species::FruitTree,
+                    Species::Alder,
+                    Species::Willow,
+                    Species::Chestnut,
+                    Species::Laurel,
+                ] {
+                    for jitter in [-1.0, 0.0, 1.0] {
+                        let look = plant_look(Some(&d), sp, alt, jitter);
+                        let form = crown_form(sp, &look);
+                        forms.insert(match form {
+                            CrownForm::Twigs { .. } => "bare",
+                            CrownForm::Leaves { opacity, .. } if opacity < 1.0 => "thin",
+                            CrownForm::Leaves { .. } => "full",
+                        });
+                        let mut near = MeshArrays::default();
+                        plant(&mut near, sp, &at(1.0), &look, Detail::Near);
+                        let mut far = MeshArrays::default();
+                        plant(&mut far, sp, &at(1.0), &look, Detail::Far);
+                        let (nt, na, nc, nn) = crown(sp, &near);
+                        let (ft, fa, fc, fnn) = crown(sp, &far);
+                        let what = format!("{sp:?} day {day} at {alt} m: {look:?}");
+                        assert!(nn > 0 && fnn > 0, "{what}: a crown in both");
+                        assert_eq!(na, fa, "{what}: opacity");
+                        assert!((na - form.opacity()).abs() < 1e-6, "{what}");
+                        assert!(
+                            (nt - ft).abs() < 0.15 * nt.max(ft),
+                            "{what}: top {nt} / {ft}"
+                        );
+                        for i in 0..3 {
+                            assert!(
+                                (nc[i] - fc[i]).abs() < 0.04,
+                                "{what}: colour {nc:?} / {fc:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            forms.contains("bare") && forms.contains("full"),
+            "{forms:?}"
+        );
+        // Late November in the valley: the beech is bare in both models,
+        // a see-through crown of twigs; July: a full, opaque crown.
+        let nov = plant_look(Some(&li.day(327.0)), Species::Beech, 455.0, 0.0);
+        assert_eq!(
+            crown_form(Species::Beech, &nov),
+            CrownForm::Twigs {
+                opacity: TWIG_OPACITY
+            }
+        );
+        let jul = plant_look(Some(&li.day(196.0)), Species::Beech, 455.0, 0.0);
+        assert_eq!(crown_form(Species::Beech, &jul).opacity(), 1.0);
+        // Evergreen laurels never go bare.
+        let lau = plant_look(Some(&li.day(20.0)), Species::Laurel, 455.0, 0.0);
+        assert_eq!(crown_form(Species::Laurel, &lau).opacity(), 1.0);
     }
 
     #[test]

@@ -6,9 +6,10 @@
 //! [`SeeThroughMaterial`] is a [`StandardMaterial`] with a small fragment
 //! shader (`see_through.wesl`) that discards fragments in a 4 × 4 ordered
 //! dither (screen-door transparency) by [`keep`]: no blending, so depth
-//! sorting stays as for opaque meshes, and the shadow pass (which uses the
-//! standard prepass shader) still draws the whole tree – a faded crown keeps
-//! its shadow. [`keep`] is the CPU twin of the shader, for the tests.
+//! sorting stays as for opaque meshes, and the shadow pass
+//! (`see_through_prepass.wesl`) still draws the whole tree – a faded crown
+//! keeps its shadow; only see-through crowns of twigs (vertex alpha,
+//! [`with_crown_alpha`]) cast part of theirs. [`keep`] is the CPU twin of the shader, for the tests.
 
 use bevy::asset::{AssetPath, embedded_asset, embedded_path};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin};
@@ -40,6 +41,7 @@ pub struct SeeThroughPlugin;
 impl Plugin for SeeThroughPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "see_through.wesl");
+        embedded_asset!(app, "see_through_prepass.wesl");
         app.add_plugins(MaterialPlugin::<SeeThroughMaterial>::default())
             .add_systems(PostUpdate, update_focus.after(crate::camera::follow));
     }
@@ -103,6 +105,25 @@ impl MaterialExtension for SeeThroughFade {
             AssetPath::from_path_buf(embedded_path!("see_through.wesl")).with_source("embedded"),
         )
     }
+
+    /// The shadows of see-through crowns ([`with_crown_alpha`]).
+    fn prepass_fragment_shader() -> ShaderRef {
+        ShaderRef::Path(
+            AssetPath::from_path_buf(embedded_path!("see_through_prepass.wesl"))
+                .with_source("embedded"),
+        )
+    }
+}
+
+/// A tree material whose parts with a vertex alpha below 1 are drawn
+/// see-through, that share of their pixels in an ordered dither, and cast
+/// that share of their shadow (`see_through_prepass.wesl`): the crowns of
+/// twigs of bare trees and thinning autumn crowns (`flora::crown_form`).
+/// Alpha-masked with a cutoff of 0 so the shadow pass runs the fragment
+/// shader; nothing is cut by the mask itself.
+pub fn with_crown_alpha(mut m: SeeThroughMaterial) -> SeeThroughMaterial {
+    m.base.alpha_mode = AlphaMode::Mask(0.0);
+    m
 }
 
 /// A see-through material on top of `base`.
