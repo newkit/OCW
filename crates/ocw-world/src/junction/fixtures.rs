@@ -309,3 +309,31 @@ pub fn split(bend_deg: f64, w1: f64, w2: f64, grade: f64) -> RoadGraph {
         ],
     )
 }
+
+/// A T junction as [`t_junction`] (secondary main road, 7.5 m, climbing
+/// `main_grade` towards +x) whose side road (residential, 5 m, climbing
+/// `side_grade` away) leaves to +z and bends by `bend_deg` towards −x
+/// `at_m` from the vertex (§4.8.8 Rule, J5: an arm that curves within the
+/// junction).
+pub fn t_junction_bent(main_grade: f64, side_grade: f64, bend_deg: f64, at_m: f64) -> RoadGraph {
+    let b = bend_deg.to_radians();
+    let far = [-120.0 * b.sin(), at_m + 120.0 * b.cos()];
+    let v = [[0.0, 0.0], [-120.0, 0.0], [120.0, 0.0], far];
+    graph(
+        &v,
+        vec![
+            Road::straight(&v, 1, 0, RoadClass::Secondary, 7.5, move |s| {
+                (s - 120.0) * main_grade
+            }),
+            Road::straight(&v, 0, 2, RoadClass::Secondary, 7.5, move |s| s * main_grade),
+            Road {
+                from: 0,
+                to: 3,
+                points: vec![[0.0, 0.0], [0.0, at_m], far],
+                class: RoadClass::Residential,
+                width_m: 5.0,
+                height: Box::new(move |s| s * side_grade),
+            },
+        ],
+    )
+}

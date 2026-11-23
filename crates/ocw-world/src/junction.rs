@@ -34,10 +34,6 @@ use crate::graph::{Edge, PROFILE_STEP_M, RoadClass, RoadGraph, VertexId};
 
 type P2 = [f64; 2];
 
-/// TEMPORARY (J5 diagnostics): the outline chains of J4.
-#[doc(hidden)]
-pub static LEGACY_SIDES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
 /// A mouth lies at most this far from the vertex (m) …
 pub const MAX_MOUTH_M: f64 = 25.0;
 /// … and at most this share of the edge's length.
@@ -371,20 +367,6 @@ impl Arm {
         dot(sub(p, self.centre), side_pos(self.t))
     }
 
-    /// How much of the cross slope is left `m` metres from the vertex
-    /// (past the mouth: 1 there, 0 after [`Arm::warp_m`], C1 at both ends).
-    pub fn warp_left(&self, m: f64) -> f64 {
-        if self.cross == 0.0 || self.warp_m <= 0.0 {
-            return if m <= self.mouth_m && self.cross != 0.0 {
-                1.0
-            } else {
-                0.0
-            };
-        }
-        let x = ((m - self.mouth_m) / self.warp_m).clamp(0.0, 1.0);
-        1.0 - x * x * (3.0 - 2.0 * x)
-    }
-
     /// The cross slope and the warp length for a mouth row leaning by
     /// `cross` (clamped to [`MAX_WARP`]); none where the arm has no room
     /// past its mouth to turn flat.
@@ -401,7 +383,10 @@ impl Arm {
         if rise < 0.005 {
             return;
         }
-        let l = (WARP_RATE * rise).sqrt().clamp(WARP_MIN_M, WARP_MAX_M).min(room);
+        let l = (WARP_RATE * rise)
+            .sqrt()
+            .clamp(WARP_MIN_M, WARP_MAX_M)
+            .min(room);
         self.cross = cross;
         self.warp_m = l;
         let (c, t) = (self.centre, self.t);
@@ -981,6 +966,7 @@ fn build_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Option<Patch> {
 }
 
 /// An arm before its mouth is known.
+#[derive(Clone)]
 struct Raw {
     edge: usize,
     at_from: bool,
@@ -1374,7 +1360,7 @@ fn patch_outline(g: &RoadGraph, adj: &[usize], v: usize) -> Result<(Patch, Outli
         .iter()
         .map(|&ei| raw_arm(g, c, v, ei))
         .collect::<Result<_, _>>()?;
-    outline_at(g, &Site::single(g, v), raws)
+    outline_checked(g, &Site::single(g, v), raws)
 }
 
 /// The patch of a cluster (J3): vertices a few metres apart joined by the
@@ -1408,16 +1394,33 @@ fn try_cluster(
         members: members.to_vec(),
         inner: inner.to_vec(),
     };
-    let (patch, outline) = outline_at(g, &site, raws)?;
+    let (patch, outline) = outline_checked(g, &site, raws)?;
     finish(patch, outline)
 }
 
+/// [`outline_at`] with J5's sides, where J4's straight-line outline is
+/// star-shaped too: a junction J1 – J4 left without a surface keeps its
+/// overlapping strips (J3 tried such surfaces: more kinks and seams).
+fn outline_checked(
+    g: &RoadGraph,
+    site: &Site,
+    raws: Vec<Raw>,
+) -> Result<(Patch, Outline), &'static str> {
+    let (_, legacy) = outline_at(g, site, raws.clone(), true)?;
+    let pts: Vec<P2> = legacy.iter().map(|o| o.0).collect();
+    if !sides::star_ok(site.centre, &pts) {
+        return Err("the outline is not star-shaped");
+    }
+    outline_at(g, site, raws, false)
+}
+
 /// The arms' mouths and the outline of the patch at `site` (rounded as
-/// stored).
+/// stored); `legacy`: the chains between the mouths as J1 – J4 drew them.
 fn outline_at(
     g: &RoadGraph,
     site: &Site,
     mut raws: Vec<Raw>,
+    legacy: bool,
 ) -> Result<(Patch, Outline), &'static str> {
     let c = site.centre;
     let cluster = site.cluster();
@@ -1552,7 +1555,7 @@ fn outline_at(
         // where that would not keep the outline star-shaped.
         let next = &patch.arms[j];
         let radius = corner_radius(arm.class.max(next.class));
-        if !LEGACY_SIDES.load(std::sync::atomic::Ordering::Relaxed)
+        if !legacy
             && let Some(chain) = sides::corner_chain(
                 g,
                 arm,
@@ -1649,6 +1652,14 @@ fn outline_at(
             for s in 1..=k {
                 dense.push(add(w[0], mul(sub(w[1], w[0]), s as f64 / k as f64)));
             }
+        }
+        // Smoothed where that keeps it star-shaped (J5): leaving and
+        // reaching the mouths along their arms, its bends rounded.
+        if !legacy
+            && let Some(smooth) = sides::smoothed(&dense, arm.t, next.t)
+            && sides::polar_ok(c, &smooth)
+        {
+            dense = smooth;
         }
         let last = dense.len() - 1;
         for &p2 in &dense[1..last] {
@@ -1953,10 +1964,9 @@ fn mesh(patch: &mut Patch) {
             } else {
                 let p2 = add(c, mul(sub(xz(o.p), c), r));
                 let k = verts.len() % n;
-                let lift = patch
-                    .lift
-                    .get(k)
-                    .map_or(0.0, |&l| patch.lift_on(l, (1.0 - r) * norm(sub(xz(o.p), c)), p2));
+                let lift = patch.lift.get(k).map_or(0.0, |&l| {
+                    patch.lift_on(l, (1.0 - r) * norm(sub(xz(o.p), c)), p2)
+                });
                 verts.push(at_y(p2, patch.field(p2) + lift));
             }
         }
@@ -2581,11 +2591,13 @@ impl JunctionSet {
             return 0.0;
         }
         let ends = self.ends(g, a.edge);
-        let other = ends[usize::from(a.at_from)].as_ref().map_or(0.0, |r| match r {
-            EndRule::Patch(q, i) => q.arms[*i].mouth_m + q.arms[*i].blend_m,
-            EndRule::Mitre(m, _) => m.shift_m + 0.3,
-            EndRule::Inside(_) => a.len,
-        });
+        let other = ends[usize::from(a.at_from)]
+            .as_ref()
+            .map_or(0.0, |r| match r {
+                EndRule::Patch(q, i) => q.arms[*i].mouth_m + q.arms[*i].blend_m,
+                EndRule::Mitre(m, _) => m.shift_m + 0.3,
+                EndRule::Inside(_) => a.len,
+            });
         a.warp_m.min(a.len - a.mouth_m - other).max(0.0)
     }
 
@@ -3125,6 +3137,36 @@ impl JunctionSet {
             .enumerate()
             .map(|(i, it)| it.2.unwrap_or_else(|| plain_row(&points, i, half)))
             .collect();
+        // No row whose corner lies behind the row before it (on the inner
+        // side of a sharp bend, rows square to different pieces of the
+        // centre line cross): the strip's edge would fold back (J5, §4.8.8
+        // Rule). The two end rows stay.
+        let mut keep = vec![true; rows.len()];
+        let mut last = 0;
+        for i in 1..rows.len() {
+            let (a, b) = (rows[last], rows[i]);
+            let ahead = (0..2).all(|k| {
+                let d = [b[k][0] - a[k][0], b[k][2] - a[k][2]];
+                let c = [
+                    points[i][0] - points[last][0],
+                    points[i][2] - points[last][2],
+                ];
+                d[0] * c[0] + d[1] * c[1] > 0.0
+            });
+            if ahead || i + 1 == rows.len() {
+                last = i;
+            } else {
+                keep[i] = false;
+            }
+        }
+        if keep.iter().any(|k| !k) {
+            let mut k = keep.iter();
+            items.retain(|_| *k.next().expect("same length"));
+            let mut k = keep.iter();
+            points.retain(|_| *k.next().expect("same length"));
+            let mut k = keep.iter();
+            rows.retain(|_| *k.next().expect("same length"));
+        }
         // §4.8.8 Q7: a side road's strip never stands above (or on) the
         // main road's carriageway where it crosses it past its mouth (a
         // narrow side road whose mouth lies on the main road): there it
@@ -3202,7 +3244,11 @@ mod tests;
 /// TEMPORARY (J5 diagnostics): the J5 chain of `patch` from arm `i` to the
 /// next, and whether it keeps the outline star-shaped.
 #[doc(hidden)]
-pub fn debug_chain(g: &RoadGraph, patch: &Patch, i: usize) -> (Option<Vec<P2>>, bool, [Vec<P2>; 2]) {
+pub fn debug_chain(
+    g: &RoadGraph,
+    patch: &Patch,
+    i: usize,
+) -> (Option<Vec<P2>>, bool, [Vec<P2>; 2]) {
     let j = (i + 1) % patch.arms.len();
     let (a, b) = (&patch.arms[i], &patch.arms[j]);
     let lines = [sides::edge_line(g, a, 1.0), sides::edge_line(g, b, -1.0)];

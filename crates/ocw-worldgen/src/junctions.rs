@@ -2351,24 +2351,25 @@ pub fn side_faults(pkg: &WorldPackage, g: &RoadGraph) -> Vec<SideFault> {
         // The point of the arm's strip edge that starts at corner `c` and
         // the next one along it (the strip's first row there).
         // (Also the strip's edge from there on, away from the patch.)
-        let strip_start = |edge: usize, c: [f64; 3]| -> Option<([f64; 3], [f64; 3], Vec<[f64; 3]>)> {
-            for rows in rows_of.get(&edge).into_iter().flatten() {
-                for (i, r) in rows.iter().enumerate() {
-                    for k in 0..2 {
-                        if dist(xz(r[k]), xz(c)) < SIDE_GAP_M {
-                            let j = if i == 0 { 1 } else { i - 1 };
-                            let side: Vec<[f64; 3]> = if i == 0 {
-                                rows.iter().map(|r| r[k]).collect()
-                            } else {
-                                rows[..=i].iter().rev().map(|r| r[k]).collect()
-                            };
-                            return Some((r[k], rows[j][k], side));
+        let strip_start =
+            |edge: usize, c: [f64; 3]| -> Option<([f64; 3], [f64; 3], Vec<[f64; 3]>)> {
+                for rows in rows_of.get(&edge).into_iter().flatten() {
+                    for (i, r) in rows.iter().enumerate() {
+                        for k in 0..2 {
+                            if dist(xz(r[k]), xz(c)) < SIDE_GAP_M {
+                                let j = if i == 0 { 1 } else { i - 1 };
+                                let side: Vec<[f64; 3]> = if i == 0 {
+                                    rows.iter().map(|r| r[k]).collect()
+                                } else {
+                                    rows[..=i].iter().rev().map(|r| r[k]).collect()
+                                };
+                                return Some((r[k], rows[j][k], side));
+                            }
                         }
                     }
                 }
-            }
-            None
-        };
+                None
+            };
         for ch in &p.chains {
             let pts: Vec<[f64; 3]> = ch.points.clone();
             let n = pts.len();
@@ -2480,7 +2481,10 @@ pub fn side_faults(pkg: &WorldPackage, g: &RoadGraph) -> Vec<SideFault> {
                 }
             }
             // Its two ends meet the arms' strips.
-            let (i0, i1) = (reach(0, true).unwrap_or(1), reach(n - 1, false).unwrap_or(n - 2));
+            let (i0, i1) = (
+                reach(0, true).unwrap_or(1),
+                reach(n - 1, false).unwrap_or(n - 2),
+            );
             for (end, inner, arm, from_start) in [
                 (pts[0], pts[i0], ch.from_arm, true),
                 (pts[n - 1], pts[i1], ch.to_arm, false),

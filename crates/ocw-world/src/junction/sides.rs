@@ -78,16 +78,7 @@ pub(super) fn edge_line(g: &RoadGraph, arm: &Arm, sign: f64) -> Vec<P2> {
         if a * sign > 0.0 {
             // The inner side of the bend: the offset lines' crossing.
             let den = (1.0 + dot(d0, d1)).max(0.25);
-            let mitre = add(c, mul(add(off(d0), off(d1)), 1.0 / den));
-            if k == cs.len() - 2 {
-                // At the mouth the crossing lies past the mouth corner: the
-                // line leaves the corner and meets the edge coming in a
-                // little inward (the bend rounded below).
-                let ahead = dot(sub(mitre, corner), d1).max(0.0);
-                out.push(sub(mitre, mul(d0, ahead + 0.5)));
-            } else {
-                out.push(mitre);
-            }
+            out.push(add(c, mul(add(off(d0), off(d1)), 1.0 / den)));
         } else {
             // The outer side: round round the centre line's point.
             let n0 = off(d0);
@@ -101,10 +92,41 @@ pub(super) fn edge_line(g: &RoadGraph, arm: &Arm, sign: f64) -> Vec<P2> {
     out.reverse();
     // Past the mouth corner nothing (the join at the mouth may have put
     // points of the strip's own side there).
-    while out.len() > 2 && dot(sub(out[1], corner), arm.t) > 1e-6 {
+    while out.len() > 2 && dot(sub(out[1], corner), arm.t) > -1e-3 {
         out.remove(1);
     }
     out.dedup_by(|a, b| norm(sub(*a, *b)) < 1e-4);
+    // It leaves the mouth corner square to the mouth row, as the strip's
+    // edge goes on (where the mouth lies on a bend of the centre line the
+    // offset line coming in does not pass the corner): a curve from the
+    // corner into the line coming in.
+    if out.len() >= 2 {
+        let rest: Vec<P2> = out[1..].to_vec();
+        let cr = lengths(&rest);
+        let total = cr[cr.len() - 1];
+        let inward = mul(arm.t, -1.0);
+        let first = unit(sub(out[1], corner));
+        if total > 1e-3 && dot(first, inward) < (2f64).to_radians().cos() {
+            let s = total.min(1.0);
+            let (x, ux) = if rest.len() >= 2 {
+                at_len(&rest, &cr, s)
+            } else {
+                (rest[0], first)
+            };
+            let chord = norm(sub(x, corner));
+            let h = handle(chord, turn(inward, ux));
+            let mut e = vec![corner];
+            e.extend(bezier(corner, inward, x, ux, h, h));
+            e.push(x);
+            for (k, &q) in rest.iter().enumerate() {
+                if cr[k] > s + 1e-6 {
+                    e.push(q);
+                }
+            }
+            e.dedup_by(|a, b| norm(sub(*a, *b)) < 1e-4);
+            return e;
+        }
+    }
     out
 }
 
@@ -261,26 +283,34 @@ pub(super) fn corner_chain(
             let (_, dj_in) = at_len(&ej, &cf, b);
             let dout = mul(dj_in, -1.0);
             let ang = turn(din, dout);
-            let t = if ang.abs() < 1e-4 {
+            // The tangent lengths of the corner's radius, each as far as
+            // its arm leaves room (a corner squeezed on one side reaches
+            // farther along the other: a wider curve than a symmetric one).
+            let want = if ang.abs() < 1e-4 {
                 0.0
             } else {
                 radius * (ang.abs() / 2.0).tan()
-            }
-            .min(a)
-            .min(b);
+            };
+            let (t, tb) = (want.min(a), want.min(b));
             walk(&ei, &ce, a - t, &mut pts);
             let (ti, ui) = at_len(&ei, &ce, a - t);
-            let (tj, uj_in) = at_len(&ej, &cf, b - t);
+            let (tj, uj_in) = at_len(&ej, &cf, b - tb);
             let uj = mul(uj_in, -1.0);
             if norm(sub(ti, *pts.last().expect("q"))) > 1e-4 {
                 pts.push(ti);
             }
-            if t > 1e-4 {
-                let chord = norm(sub(tj, ti));
-                let h = handle(chord, turn(ui, uj));
-                pts.extend(bezier(ti, ui, tj, uj, h, h));
+            if t.min(tb) > 1e-4 {
+                // Handles of a circular arc's Bézier for each tangent length.
+                let th = turn(ui, uj).abs();
+                let k = if th > 1e-3 {
+                    (4.0 / 3.0) * (th / 4.0).tan() / (th / 2.0).tan()
+                } else {
+                    1.0 / 3.0
+                };
+                pts.extend(bezier(ti, ui, tj, uj, k * t, k * tb));
             }
             pts.push(tj);
+            let t = tb;
             let mut back = Vec::new();
             walk(&ej, &cf, b - t, &mut back);
             back.reverse();
@@ -295,16 +325,16 @@ pub(super) fn corner_chain(
             let uj = unit(sub(lj[nj - 2], lj[nj - 1]));
             let gap = norm(sub(lj[nj - 1], li[ni - 1]));
             let ang = turn(ui, uj);
-            // Nearly straight on (a width change): one smooth taper from
-            // mouth to mouth.
-            let back = if ang.abs() < 30f64.to_radians() {
-                ci[ni - 1].min(cj[nj - 1])
-            } else {
-                0.0
-            };
-            let _ = gap;
-            let (sa, sb) = if back > 0.0 {
-                (0.0, 0.0)
+            // Nearly straight on (a width change): the wider road keeps its
+            // width up to the vertex, the taper lies along the narrower one
+            // (over 4 times the width change, at most to its mouth).
+            let (sa, sb) = if ang.abs() < 30f64.to_radians() && gap > 1e-3 {
+                let taper = 4.0 * gap;
+                if ai.half >= aj.half {
+                    (ci[ni - 1], (cj[nj - 1] - taper).max(0.0))
+                } else {
+                    ((ci[ni - 1] - taper).max(0.0), cj[nj - 1])
+                }
             } else {
                 (ci[ni - 1], cj[nj - 1])
             };
@@ -385,7 +415,9 @@ fn rounded(p: &[P2]) -> Vec<P2> {
     let cum = lengths(p);
     let total = cum[n - 1];
     let bends: Vec<usize> = (1..n - 1)
-        .filter(|&k| turn(sub(p[k], p[k - 1]), sub(p[k + 1], p[k])).abs() > SIDE_STEP_DEG.to_radians())
+        .filter(|&k| {
+            turn(sub(p[k], p[k - 1]), sub(p[k + 1], p[k])).abs() > SIDE_STEP_DEG.to_radians()
+        })
         .collect();
     if bends.is_empty() {
         return p.to_vec();
@@ -458,7 +490,9 @@ fn round_centre(c: P2, q: P2, tq: P2, p: P2, tp: P2) -> Option<Vec<P2>> {
     let gap = |r: f64| (2.0 / r).min(span / 4.0);
     let (f0, f1) = (gap(r0) / span, 1.0 - gap(r1) / span);
     let arc = |f: f64| add(c, mul(unit(rot(a, span * f)), r0 + (r1 - r0) * f));
-    let steps = ((span * (f1 - f0)) / SIDE_STEP_DEG.to_radians()).ceil().max(1.0) as usize;
+    let steps = ((span * (f1 - f0)) / SIDE_STEP_DEG.to_radians())
+        .ceil()
+        .max(1.0) as usize;
     let mid: Vec<P2> = (0..=steps)
         .map(|k| arc(f0 + (f1 - f0) * k as f64 / steps as f64))
         .collect();
@@ -481,4 +515,70 @@ fn round_centre(c: P2, q: P2, tq: P2, p: P2, tp: P2) -> Option<Vec<P2>> {
         }
     }
     Some(dense)
+}
+
+/// A chain from one mouth corner to the next (`tq`, `tp`: the two arms'
+/// outward directions there) made smooth: its first and last metre curves
+/// that leave and reach the mouths along their arms, its bends rounded,
+/// cut for the mesh. `None` for a chain too short.
+pub(super) fn smoothed(pts: &[P2], tq: P2, tp: P2) -> Option<Vec<P2>> {
+    let n = pts.len();
+    if n < 2 {
+        return None;
+    }
+    let cum = lengths(pts);
+    let total = cum[n - 1];
+    if total < 0.2 {
+        return None;
+    }
+    let l = (0.3 * total).min(1.0);
+    let (a, ua) = at_len(pts, &cum, l);
+    let (b, ub) = at_len(pts, &cum, total - l);
+    let mut out = vec![pts[0]];
+    let inq = mul(tq, -1.0);
+    let h = handle(norm(sub(a, pts[0])), turn(inq, ua));
+    out.extend(bezier(pts[0], inq, a, ua, h, h));
+    out.push(a);
+    for k in 1..n - 1 {
+        if cum[k] > l + 1e-6 && cum[k] < total - l - 1e-6 {
+            out.push(pts[k]);
+        }
+    }
+    out.push(b);
+    let h = handle(norm(sub(pts[n - 1], b)), turn(ub, tp));
+    out.extend(bezier(b, ub, pts[n - 1], tp, h, h));
+    out.push(pts[n - 1]);
+    out.dedup_by(|a, b| norm(sub(*a, *b)) < 1e-4);
+    let r = rounded(&out);
+    let mut dense: Vec<P2> = vec![r[0]];
+    for w in r.windows(2) {
+        let k = (norm(sub(w[1], w[0])) / PIECE_M).ceil().max(1.0) as usize;
+        for s in 1..=k {
+            dense.push(add(w[0], mul(sub(w[1], w[0]), s as f64 / k as f64)));
+        }
+    }
+    Some(dense)
+}
+
+/// Whether a closed outline is star-shaped from `c` (as the star mesh
+/// wants it): its polar angles grow strictly, less than half a turn per
+/// piece, once round.
+pub(super) fn star_ok(c: P2, pts: &[P2]) -> bool {
+    let n = pts.len();
+    if n < 3 {
+        return false;
+    }
+    let mut total = 0.0;
+    for k in 0..n {
+        let (a, b) = (sub(pts[k], c), sub(pts[(k + 1) % n], c));
+        if norm(a) < 0.3 {
+            return false;
+        }
+        let d = turn(a, b);
+        if d <= 1e-6 {
+            return false;
+        }
+        total += d;
+    }
+    total < std::f64::consts::TAU + 1e-6
 }

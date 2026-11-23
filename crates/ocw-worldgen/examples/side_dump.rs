@@ -24,7 +24,10 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let limit: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(usize::MAX);
+    let limit: usize = args
+        .get(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(usize::MAX);
     let mut pkg =
         WorldPackage::from_bytes(&std::fs::read(pkg_path).expect("package")).expect("pkg");
     let g = pkg.graph.clone().expect("road graph");
@@ -33,9 +36,7 @@ fn main() {
     if std::env::var("RECOMPUTE").is_ok_and(|v| v == "1") {
         pkg.junctions = None;
     }
-    if std::env::var("LEGACY").is_ok_and(|v| v == "1") {
-        ocw_world::junction::LEGACY_SIDES.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
+
     let js = match pkg.junctions.as_ref() {
         Some(j) => JunctionSet::with_index(&g, j.index_for(&g)),
         None => JunctionSet::new(&g),

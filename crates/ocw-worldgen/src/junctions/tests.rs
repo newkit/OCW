@@ -1209,3 +1209,69 @@ fn creases_never_make_a_short_road_steeper() {
     assert!(after <= 0.20_f64.max(before) + 1e-6, "{after} {p:?}");
     assert_eq!(p[d.len() - 1], p0[d.len() - 1]);
 }
+
+/// The lint's `side.*` counts of the package the world builder makes of
+/// `g` (its profiles reconciled with the junction surfaces).
+fn side_counts(g0: &RoadGraph) -> [usize; 4] {
+    let mut g = g0.clone();
+    reconcile_profiles(&mut g, &|_, _| true);
+    let pkg = package(&g);
+    let r = crate::lint::lint(&pkg, None);
+    ["side.gap", "side.step", "side.kink", "side.corner"].map(|k| r.count(k))
+}
+
+/// Spec §4.8.8 Rule (J5): a side road that bends by 20° (15° the other
+/// way) 9 m out, at its mouth: the outline between the mouths runs along
+/// its real edge and round the corner, leaving the mouth along the strip –
+/// no bend above 25° in the sides (J4 drew the corner along the side
+/// road's first 8 m as a straight line and met the mouth row, square to
+/// the road past the bend, at an angle).
+#[test]
+fn junction_sides_follow_a_bending_side_road() {
+    for g in [
+        fixtures::t_junction_bent(0.02, 0.03, 20.0, 9.0),
+        fixtures::t_junction_bent(0.0, -0.04, -15.0, 9.0),
+    ] {
+        let js = JunctionSet::new(&g);
+        assert!(js.patch(&g, 0).is_some(), "{:?}", js.fallback_reason(&g, 0));
+        drop(js);
+        assert_eq!(side_counts(&g), [0; 4]);
+    }
+}
+
+/// Spec §4.8.8 Rule (J5): a side road off a steep main road (15 % and
+/// 12 %, at 90° and 60°): its mouth row leans with the main road's slope
+/// across it and its strip turns flat beyond, so the corners between the
+/// two roads do not twist within a few metres – no kink, no step in the
+/// sides (J4 kept the mouth row flat: the corners twisted by the main
+/// road's grade times the side road's half width).
+#[test]
+fn junction_sides_stay_smooth_beside_a_steep_main_road() {
+    for g in [
+        t_junction(RoadClass::Residential, 0.15, 0.0),
+        fixtures::t_junction_at(0.12, 0.02, 60.0),
+    ] {
+        let [gap, step, kink, _] = side_counts(&g);
+        assert_eq!([gap, step, kink], [0, 0, 0]);
+    }
+}
+
+/// Spec §4.8.8 Rule (J5): a road that narrows at a way split (7.5 m to
+/// 4 m, bending 20°): the sides taper along one smooth curve from mouth
+/// to mouth.
+#[test]
+fn a_narrowing_road_tapers_smoothly() {
+    let g = fixtures::split(20.0, 7.5, 4.0, 0.03);
+    assert_eq!(side_counts(&g), [0; 4]);
+}
+
+/// Spec §4.8.8 Rule (J5): the lint measures a side's change of grade
+/// beyond what its turn explains on the surface's slope – a blended
+/// junction of four roads on one plane tilted at 10 % has no kink in its
+/// sides however tightly they turn.
+#[test]
+fn sides_on_a_sloping_plane_have_no_kink() {
+    let g = crossing([0.10, 0.0, -0.10, 0.0]);
+    let [_, step, kink, _] = side_counts(&g);
+    assert_eq!([step, kink], [0, 0]);
+}
