@@ -191,6 +191,8 @@ pub struct ModelView {
     pub status: String,
     /// Crank angle of the ride try-on (rad).
     pub crank: f32,
+    /// The unicorn's flight cycles ([`crate::models_cycle`]).
+    pub cycle: crate::models_cycle::CyclePlayer,
     reload_timer: f32,
 }
 
@@ -218,6 +220,7 @@ impl ModelView {
             distance: 0.0,
             status: String::new(),
             crank: 0.0,
+            cycle: Default::default(),
             reload_timer: 0.0,
         }
     }

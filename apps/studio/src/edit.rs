@@ -317,6 +317,8 @@ pub enum StudioCommand {
     Route(crate::routes::RouteCommand),
     /// The workspace shown: its document is the one Undo / Redo act on.
     Workspace(crate::ui::Workspace),
+    /// The unicorn's flight cycles in the Models viewer (16B, E3).
+    Cycle(crate::models_cycle::CycleCommand),
 }
 
 /// The commands sent this frame, carried out by [`run_pending`].
@@ -423,6 +425,10 @@ pub fn apply(world: &mut World, cmd: StudioCommand) -> Result<String, String> {
             Ok(format!("looking at {:.0}, {:.0}", target[0], target[2]))
         }
         StudioCommand::Build(req) => start_build(&mut world.resource_mut::<Studio>(), req),
+        StudioCommand::Cycle(c) => crate::models_cycle::command(
+            &mut world.resource_mut::<crate::models_view::ModelView>(),
+            c,
+        ),
         StudioCommand::Route(c) => {
             let fit = matches!(
                 c,
@@ -606,6 +612,7 @@ pub fn edit(
         | StudioCommand::FlightModel(_)
         | StudioCommand::GoToView(_)
         | StudioCommand::Focus
+        | StudioCommand::Cycle(_)
         | StudioCommand::Build(_) => Err("not a document command".into()),
         other => patch_command(studio, other, now_s),
     }
@@ -1265,6 +1272,10 @@ impl Plugin for EditPlugin {
                     "The Routes workspace: new [NAME] | import PATH | package N | plan X Z X Z … | via add|insert|move|remove … | drag GX GZ X Z | reverse | loop on|off | outback | cut start|end N | split N | profile P | planner builtin|brouter | brouter url URL | brouter profile P | brouter ok | brouter plan | export PATH | save [PATH] | testride | info",
                 ))
                 .subcommand(words(
+                    "cycle",
+                    "The unicorn's flight cycles in the Models viewer: wing | gallop | flight | landing | rest | play | pause | speed X | at SECONDS | record DIR [SECONDS] [FPS] | info",
+                ))
+                .subcommand(words(
                     "patch",
                     "The world patch: list | save [PATH] | open PATH | delete N | title TEXT | author TEXT | build [OUT]",
                 )),
@@ -1494,6 +1505,16 @@ pub fn patch_lines(studio: &Studio) -> Vec<String> {
 }
 
 fn studio_command(world: &mut World, m: &clap::ArgMatches) -> Result<String, String> {
+    if let Some(("cycle", a)) = m.subcommand() {
+        let words: Vec<String> = a
+            .get_many::<String>("words")
+            .map(|w| w.cloned().collect())
+            .unwrap_or_default();
+        return apply(
+            world,
+            StudioCommand::Cycle(crate::models_cycle::parse(&words)?),
+        );
+    }
     if let Some(("route", a)) = m.subcommand() {
         let words: Vec<String> = a
             .get_many::<String>("words")

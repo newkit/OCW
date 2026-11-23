@@ -22,7 +22,8 @@
 //!   and BRouter, exports, *Test ride*;
 //! - [`models`], [`models_view`], [`models_ui`]: the Models workspace (16B,
 //!   stage E3, view only): the model browser, the viewer, the stats and
-//!   the validator's findings, the try-on;
+//!   the validator's findings, the try-on; [`models_cycle`]: the
+//!   unicorn's flight cycles in the viewer (the game's animation);
 //! - [`ui`]: the egui panels.
 
 mod build;
@@ -32,6 +33,7 @@ mod icon;
 mod info;
 mod map;
 mod models;
+mod models_cycle;
 mod models_ui;
 mod models_view;
 mod overlay;
@@ -216,6 +218,7 @@ fn main() -> AppExit {
         overlay::OverlayPlugin,
         ui::UiPlugin,
         models_view::ModelsPlugin,
+        models_cycle::CyclePlugin,
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, routes::update_routes);
