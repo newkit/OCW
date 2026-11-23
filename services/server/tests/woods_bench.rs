@@ -13,41 +13,67 @@ use ocw_core::RiderProfile;
 use ocw_server::Course;
 use ocw_sim::god::GodPose;
 use ocw_sim::{GodLeave, RiderInput, Session};
-use ocw_world::landuse::LandClass;
+use ocw_world::ground::Cover;
 use ocw_world::woods::{Stored, WoodCell};
 
 /// A spot in a wood at least `away` m from any road with the densest
-/// trunks found on a 100 m grid of the package.
+/// trunks found on a 100 m grid of the world (inside it: tiles all round).
 fn deep_in_a_wood(net: &ocw_world::RoadNetwork, away: f64) -> Option<([f64; 2], usize)> {
     let woods = net.woods()?.clone();
-    let pkg = woods.package()?;
-    let size = f64::from(pkg.tile_size_m);
-    let lu = pkg.landuse.as_ref()?;
+    let ground = net.ground()?.clone();
+    let size = f64::from(woods.tile_size_m());
+    let (lo, hi) = net.graph().vertices.iter().fold(
+        ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]),
+        |(lo, hi), v| {
+            (
+                [lo[0].min(v[0]), lo[1].min(v[1])],
+                [hi[0].max(v[0]), hi[1].max(v[1])],
+            )
+        },
+    );
+    let (a, b) = (
+        ocw_world::TileKey::containing(lo, size),
+        ocw_world::TileKey::containing(hi, size),
+    );
     let mut best: Option<([f64; 2], usize)> = None;
-    for key in pkg.tiles.keys() {
-        let o = key.origin(size);
-        for k in 0..10 {
-            for i in 0..10 {
-                let p = [
-                    o[0] + 50.0 + f64::from(i) * 100.0,
-                    o[1] + 50.0 + f64::from(k) * 100.0,
-                ];
-                if lu.class_at(size, p[0], p[1]) != Some(LandClass::Forest)
-                    || net.nearest_within(p, away).is_some()
-                {
-                    continue;
-                }
-                let cell = WoodCell::containing(p, pkg.tile_size_m);
-                let n = woods
-                    .grid_trunks(cell, &Stored::default())
-                    .map_or(0, |t| t.len());
-                if best.is_none_or(|(_, b)| n > b) {
-                    best = Some((p, n));
+    for tz in a.z..=b.z {
+        for tx in a.x..=b.x {
+            let key = ocw_world::TileKey { x: tx, z: tz };
+            let inner = (-2..=2).all(|dz| {
+                (-2..=2).all(|dx| {
+                    ground.has_tile(ocw_world::TileKey {
+                        x: key.x + dx,
+                        z: key.z + dz,
+                    })
+                })
+            });
+            if !inner {
+                continue;
+            }
+            let o = key.origin(size);
+            for k in 0..10 {
+                for i in 0..10 {
+                    let p = [
+                        o[0] + 50.0 + f64::from(i) * 100.0,
+                        o[1] + 50.0 + f64::from(k) * 100.0,
+                    ];
+                    if ground.cover(p[0], p[1]) != Some(Cover::Forest)
+                        || net.nearest_within(p, away).is_some()
+                    {
+                        continue;
+                    }
+                    let cell = WoodCell::containing(p, woods.tile_size_m());
+                    let n = woods
+                        .grid_trunks(cell, &Stored::default())
+                        .map_or(0, |t| t.len());
+                    if best.is_none_or(|(_, b)| n > b) {
+                        best = Some((p, n));
+                    }
                 }
             }
-        }
-        if best.is_some_and(|(_, n)| n >= 22) {
-            break;
+            if best.is_some_and(|(_, n)| n >= 22) {
+                return best;
+            }
         }
     }
     best
@@ -150,45 +176,9 @@ fn ticks_deep_in_a_wood() {
     println!("deep in a wood at {at:?}: {n} trunks in its 40 m cell");
     // Making one cell.
     let woods = net.woods().unwrap().clone();
-    // What the server keeps for the trees (`tree_inputs`), roughly.
-    let pkg = woods.package().unwrap();
-    let heights: usize = pkg.tiles.values().map(|t| t.heights.len() * 4).sum();
-    let roads: usize = pkg
-        .tiles
-        .values()
-        .flat_map(|t| &t.roads)
-        .map(|r| r.points.len() * 12 + 64)
-        .sum();
-    let lu: usize = pkg.landuse.as_ref().map_or(0, |l| {
-        l.tiles
-            .values()
-            .map(|t| t.classes.len() + t.water.len() * 8)
-            .sum()
-    });
-    let houses: usize = pkg.buildings.as_ref().map_or(0, |b| {
-        b.values().flatten().map(|b| b.outline.len() * 8 + 96).sum()
-    });
-    let forest: usize = pkg.look.forest.as_ref().map_or(0, |f| {
-        f.tiles
-            .values()
-            .map(|t| t.density.len() + t.broadleaf.len())
-            .sum()
-    });
-    let fields: usize = pkg.look.vegetation.as_ref().map_or(0, |v| {
-        v.tiles
-            .values()
-            .map(|t| t.crops.len() + t.rows.len() + t.trees.len() * 16)
-            .sum()
-    });
     println!(
-        "the server's tree inputs, {} tiles: heights {:.1} MB, roads {:.1} MB, land use {:.1} MB, buildings {:.1} MB, forest {:.1} MB, fields {:.1} MB",
-        pkg.tiles.len(),
-        heights as f64 / 1e6,
-        roads as f64 / 1e6,
-        lu as f64 / 1e6,
-        houses as f64 / 1e6,
-        forest as f64 / 1e6,
-        fields as f64 / 1e6
+        "the server's baked trees: {:.1} MB",
+        woods.baked_bytes() as f64 / 1e6
     );
     let t0 = Instant::now();
     let mut made = 0;

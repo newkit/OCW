@@ -79,7 +79,8 @@ fn the_trunks_are_the_drawn_trees() {
         .into_iter()
         .filter_map(|((p, s), class)| {
             let (sp, scale) = gt.tree(&pkg, class, p, s);
-            let r = f64::from(sp.trunk_radius_m() * scale);
+            // Whole millimetres.
+            let r = f64::from((sp.trunk_radius_m() * scale * 1000.0).round()) / 1000.0;
             (r > 0.0).then(|| ([f64::from(p[0]), f64::from(p[2])], r))
         })
         .collect();
@@ -172,14 +173,40 @@ fn a_tile_not_loaded_gives_nothing_yet() {
     assert!(!woods.grid_trunks(c, &Stored::default()).unwrap().is_empty());
     let far = WoodCell::containing([1300.0, 300.0], 1000.0);
     assert!(woods.grid_trunks(far, &Stored::default()).is_none());
-    // The server's copy places the same trees.
-    let slim = Woods::new(Arc::new(tree_inputs(&wood_package())));
-    assert_eq!(
-        slim.grid_trunks(c, &Stored::default()),
-        woods.grid_trunks(c, &Stored::default())
+}
+
+#[test]
+fn a_servers_baked_tiles_give_the_same_trunks() {
+    let pkg = wood_package();
+    let woods = Woods::new(Arc::new(wood_package()));
+    let baked = Woods::bake(&pkg);
+    assert!(baked.package().is_none());
+    // A forested tile: well under its 31 KB of radii.
+    assert!(
+        baked.baked_bytes() < 25_000,
+        "{} bytes",
+        baked.baked_bytes()
     );
-    assert_eq!(
-        slim.planted_trunks(KEY, &Stored::default()),
-        woods.planted_trunks(KEY, &Stored::default())
-    );
+    let near = |p: [f64; 2]| (p[0] - 503.0).abs() <= 62.0;
+    let stored = Stored {
+        cells: Some((
+            125,
+            crate::trees::tree_cells(&pkg, &pkg.tiles[&KEY], near).unwrap(),
+        )),
+        planted: crate::plantings::planted_points(&pkg, KEY, near)
+            .iter()
+            .map(|p| p.pos)
+            .collect(),
+    };
+    for c in all_cells() {
+        for s in [&Stored::default(), &stored] {
+            assert_eq!(baked.grid_trunks(c, s), woods.grid_trunks(c, s));
+        }
+    }
+    for s in [&Stored::default(), &stored] {
+        assert_eq!(baked.planted_trunks(KEY, s), woods.planted_trunks(KEY, s));
+    }
+    let far = WoodCell::containing([1300.0, 300.0], 1000.0);
+    assert!(!baked.has_tile(far.tile));
+    assert!(baked.grid_trunks(far, &Stored::default()).is_none());
 }

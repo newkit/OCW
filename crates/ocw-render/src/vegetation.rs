@@ -861,9 +861,9 @@ mod tests {
                 .iter()
                 .any(|t| (t.c[0] - m.0[0]).abs() < 1e-6 && (t.c[1] - m.0[1]).abs() < 1e-6);
             if !planted_here {
-                // A grid tree: exactly the drawn trunk.
+                // A grid tree: the drawn trunk (to the millimetre).
                 assert!(
-                    (d.1 - m.1).abs() < 1e-6,
+                    (d.1 - m.1).abs() <= 5e-4 + 1e-9,
                     "radius {} drawn, {} made",
                     d.1,
                     m.1

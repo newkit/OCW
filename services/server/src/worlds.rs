@@ -58,6 +58,31 @@ pub fn resolve<'a>(entries: &'a [WorldEntry], wanted: &str) -> Result<&'a WorldE
     }
 }
 
+/// The trees of every tile of `pkg` baked for the trunks off the road
+/// ([`ocw_world::woods::bake_tile`]), on all cores.
+pub fn bake_woods(pkg: &ocw_world::WorldPackage) -> ocw_world::woods::Woods {
+    let keys: Vec<ocw_world::TileKey> = pkg.tiles.keys().copied().collect();
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let chunk = keys.len().div_ceil(threads).max(1);
+    let tiles = std::thread::scope(|s| {
+        let parts: Vec<_> = keys
+            .chunks(chunk)
+            .map(|part| {
+                s.spawn(move || {
+                    part.iter()
+                        .filter_map(|k| Some((*k, ocw_world::woods::bake_tile(pkg, *k)?)))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        parts
+            .into_iter()
+            .flat_map(|h| h.join().expect("baking the trees"))
+            .collect()
+    });
+    ocw_world::woods::Woods::baked(pkg.tile_size_m, tiles)
+}
+
 /// Loads `spec` (verified, with its installed neighbours) and builds the
 /// course: the route `route` of the package, else a free ride from a start
 /// chosen by `seed`; with the [`v1::WorldChange`] that tells the clients.
@@ -138,17 +163,15 @@ pub fn load_course_at(
         "ground for riding off the road (spec §14 Phase 13A)"
     );
     // Off the road every drawn tree is an obstacle (spec 14 Phase 13 Q10
-    // (a)): the trunks are made on demand near the riders there from what
-    // the trees are placed from (the home package's tiles, land use,
-    // buildings, forest and fields).
-    let woods = (ground.tile_count() > 0 && world.package.landuse.is_some()).then(|| {
-        Arc::new(ocw_world::woods::Woods::new(Arc::new(
-            ocw_world::woods::tree_inputs(&world.package),
-        )))
-    });
-    if woods.is_some() {
+    // (a)): the trunks are made on demand near the riders there from the
+    // home package's trees, baked per tile here (the trees' inputs would
+    // be hundreds of MB).
+    let woods = (ground.tile_count() > 0 && world.package.landuse.is_some())
+        .then(|| Arc::new(bake_woods(&world.package)));
+    if let Some(w) = &woods {
         tracing::info!(
             tiles = world.package.tiles.len(),
+            mb = w.baked_bytes() as f64 / 1e6,
             "trees off the road as trunks made on demand (spec 14 Phase 13 Q10)"
         );
     }
