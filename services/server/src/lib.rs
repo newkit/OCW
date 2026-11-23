@@ -1496,12 +1496,14 @@ impl GameServer {
                         tracing::info!(%rider, fly_back = l.fly_back, "god mode off");
                         let d = self.session.rider_state(rider).map_or(0.0, |s| s.distance);
                         let road = ocw_world::Track::name_at(self.session.track(rider), d);
+                        let off_road = self.session.off_road(rider).is_some();
                         v1::GodResult {
                             ok: true,
-                            message: if l.fly_back {
-                                format!("back on {road}")
-                            } else {
-                                format!("landed on {road}")
+                            message: match (l.fly_back, off_road) {
+                                (true, _) => format!("back on {road}"),
+                                // Spec §14 Phase 13A: free riding on the terrain.
+                                (false, true) => format!("landed {road}: wild mode on"),
+                                (false, false) => format!("landed on {road}"),
                             },
                             active: false,
                             start: None,
@@ -1509,6 +1511,7 @@ impl GameServer {
                             y_m: at[1],
                             z_m: at[2],
                             fly_back: l.fly_back,
+                            off_road,
                         }
                     }
                     Err(e) => refused(e, self.session.is_god(rider)),

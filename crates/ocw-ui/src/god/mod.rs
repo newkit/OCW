@@ -215,8 +215,16 @@ pub fn ask(c: &mut ClientCore, what: Ask, now: f64) -> Result<Option<Vec<u8>>, S
         }
         Ask::Off | Ask::Toggle | Ask::Back if flying => {
             let p = c.god().flight().pos;
-            let spot = c.landing_spot(p[0], p[2]);
-            c.god_mut().set_landing(spot);
+            let yaw = c.god().flight().yaw;
+            let spot = c.landing(p[0], p[2], yaw);
+            c.god_mut().set_landing_at(spot);
+            // Not on water, buildings or obstacles (spec §14 Phase 13A,
+            // Q8 (a)): the ring is red, the unicorn flies on.
+            if what != Ask::Back
+                && let Some(why) = c.god().landing_refused()
+            {
+                return Err(format!("cannot land here: {why}"));
+            }
             Ok(c.god_mut().request_leave(what == Ask::Back, now))
         }
         Ask::On => Err("already in unicorn mode".into()),
@@ -526,8 +534,9 @@ fn fly(world: &mut World) {
             if c.god().flying() && now - last_spot >= 0.25 {
                 spot_at = now;
                 let p = c.god().flight().pos;
-                let spot = c.landing_spot(p[0], p[2]);
-                c.god_mut().set_landing(spot);
+                let yaw = c.god().flight().yaw;
+                let spot = c.landing(p[0], p[2], yaw);
+                c.god_mut().set_landing_at(spot);
             }
             msg = c.god_mut().pose_message(now);
         }
@@ -678,6 +687,7 @@ fn update_view(world: &mut World) {
             scale: f.scale,
             first_person: g.first_person(),
             landing: g.landing(),
+            landing_kind: g.landing_kind(),
             leaving: u.leaving,
             keys: match f.model {
                 FlightModel::Plane => KEYS,

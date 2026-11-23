@@ -771,6 +771,9 @@ message GodResult {
   double z_m = 7;
   // Leaving: whether it was the flight back to the take-off point.
   bool fly_back = 8;
+  // Leaving: landed off the road, on the ground (spec §14 Phase 13A; wild
+  // mode is on).
+  bool off_road = 9;
 }
 
 // The session rides another world now (after the host's WorldRequest,
@@ -1237,6 +1240,20 @@ message RiderUpdate {
   // snapshot of a whole second (1 Hz) only; empty: anonymous (or not in
   // this snapshot).
   string account_id = 22;
+  // Off the road on the terrain (spec §14 Phase 13A, free rides): where
+  // the rider is and the direction of travel; distance_cm is then the
+  // odometer (the distance ridden) and lateral_offset_cm / heading_mrad
+  // are relative to that pose. Absent: on the road (or its path).
+  OffRoadPose off_road = 23;
+}
+
+// A rider's place off the road (spec §14 Phase 13A): local millimetres
+// and the yaw of the direction of travel (1e-5 rad, the unicorn's
+// convention: counter-clockwise from north seen from above).
+message OffRoadPose {
+  sint64 x_mm = 1;
+  sint64 z_mm = 2;
+  sint32 yaw_e5 = 3;
 }
 
 enum CrashPhase {

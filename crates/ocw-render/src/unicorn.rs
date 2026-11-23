@@ -1170,24 +1170,36 @@ fn landing_ring(
     mut u: ResMut<Unicorns>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut rings: Query<(&mut Transform, &mut Visibility), With<LandingRing>>,
+    mut rings: Query<
+        (
+            &mut Transform,
+            &mut Visibility,
+            &MeshMaterial3d<StandardMaterial>,
+        ),
+        With<LandingRing>,
+    >,
 ) {
     let spot = view
         .flight
         .as_ref()
         .and_then(|f| f.landing.filter(|_| !f.leaving));
+    let kind = view
+        .flight
+        .as_ref()
+        .map_or(crate::LandingKind::Road, |f| f.landing_kind);
     let ring = match u.ring.filter(|e| rings.contains(*e)) {
         Some(e) => e,
         None => {
             if spot.is_none() {
                 return;
             }
+            let (base, glow) = kind.colour();
             let e = commands
                 .spawn((
                     Mesh3d(meshes.add(to_mesh(&ring_shape(2.2, 0.16)))),
                     MeshMaterial3d(materials.add(StandardMaterial {
-                        base_color: Color::srgb(1.0, 0.9, 0.5),
-                        emissive: LinearRgba::rgb(6.0, 4.4, 1.6),
+                        base_color: Color::srgb(base[0], base[1], base[2]),
+                        emissive: LinearRgba::rgb(glow[0], glow[1], glow[2]),
                         unlit: true,
                         ..default()
                     })),
@@ -1201,9 +1213,18 @@ fn landing_ring(
             return;
         }
     };
-    let Ok((mut t, mut vis)) = rings.get_mut(ring) else {
+    let Ok((mut t, mut vis, mat)) = rings.get_mut(ring) else {
         return;
     };
+    // Gold on a road, green on the ground, red where it cannot land.
+    let (base, glow) = kind.colour();
+    let c = Color::srgb(base[0], base[1], base[2]);
+    if materials.get(&mat.0).is_some_and(|m| m.base_color != c)
+        && let Some(mut m) = materials.get_mut(&mat.0)
+    {
+        m.base_color = c;
+        m.emissive = LinearRgba::rgb(glow[0], glow[1], glow[2]);
+    }
     match spot {
         Some(p) => {
             let pulse = 1.0 + 0.12 * (time.elapsed_secs() * 4.0).sin();

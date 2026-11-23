@@ -140,6 +140,11 @@ pub fn ride_params(input: &RideInput) -> RideParams {
             Surface::Asphalt => (0.10, 0.0, 0.0, 0.0),
             Surface::Gravel => (0.16, 6.0, 0.30, 0.0),
             Surface::Grass => (0.07, 1.0, 0.12, 0.22),
+            // Off the road (spec §14 Phase 13A): twigs and leaves, the
+            // rattle of rock, the hiss of sand.
+            Surface::ForestFloor => (0.08, 3.0, 0.18, 0.18),
+            Surface::Rock => (0.18, 9.0, 0.40, 0.0),
+            Surface::Sand => (0.06, 2.0, 0.10, 0.30),
         };
         let level = rel.min(1.5);
         p.roll_gain = (roll * level.sqrt()) as f32;

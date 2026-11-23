@@ -36,6 +36,8 @@ pub fn fill(
     view.elapsed_s = elapsed_s;
     // Interpolate between the last two 50 Hz prediction steps.
     view.riders = client.view(now, overstep);
+    // Riders off the road ride the terrain's track (spec §14 Phase 13A).
+    view.off_road = client.off_road_tracks(now);
     view.position = view
         .local()
         .and_then(|l| crate::gps::position(client.track(), client.geo_origin(), &l.state));

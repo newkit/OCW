@@ -17,6 +17,7 @@ pub mod gpx;
 pub mod gradient;
 pub mod graph;
 pub mod graph_route;
+pub mod ground;
 pub mod inspect;
 pub mod junction;
 pub mod lamps;
