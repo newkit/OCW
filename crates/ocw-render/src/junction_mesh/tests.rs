@@ -241,9 +241,9 @@ fn the_outline_dress_meets_the_arms_dress() {
 
 /// §4.8.8 Q7 follow-up ("that little hole"): with the ground a little
 /// under the roads (a verge, not a wall), the verge round a junction's
-/// corner meets the arms' verges at every mouth corner – every shoulder
-/// vertex of the patch near a mouth corner is one of the arm's strip, so
-/// no step and no hole – and is as wide along the whole corner.
+/// corner meets the arms' verges at every mouth corner – the corner's
+/// verge ends on the arm's verge's outer point, so no step and no hole –
+/// and both are as wide as the ground's drop asks (J5: no wall).
 #[test]
 fn the_corner_verge_meets_the_arms_verge_without_a_hole() {
     for g in [
@@ -293,26 +293,50 @@ fn the_corner_verge_meets_the_arms_verge_without_a_hole() {
             shoulders(|o| matches!(o, Owner::Edge(_))),
         );
         assert!(!patch.is_empty());
+        let mut checked = 0;
         for arm in &p.arms {
-            for c in arm.row {
-                let c = Vec2::new(c[0] as f32, c[2] as f32);
-                // The verge's outer edge 0.4 m out on both (a wide verge on
-                // one of them was the step and the hole).
-                let outer = |v: &[Vec3]| {
-                    v.iter().any(|q| {
-                        let d = q.xz().distance(c);
-                        d > 0.3 && d < 0.45
+            let (r0, r1) = (
+                Vec2::new(arm.row[0][0] as f32, arm.row[0][2] as f32),
+                Vec2::new(arm.row[1][0] as f32, arm.row[1][2] as f32),
+            );
+            let along = (r1 - r0).normalize();
+            for (c, sign) in [(r0, -1.0f32), (r1, 1.0)] {
+                // The arm's verge at the mouth corner: its points on the
+                // mouth row's line, out from the corner – the outer one
+                // where the ground's drop puts it (wider than 0.5 m: the ground
+                // lies 0.18 m or more below), J4 kept the corner's at 0.4 m, a
+                // wall where the ground lies low (§4.8.8 Rule, J5).
+                let on_row: Vec<Vec3> = arms
+                    .iter()
+                    .filter(|q| {
+                        let v = q.xz() - c;
+                        let out = v.dot(along) * sign;
+                        out > 0.05 && out < 4.0 && (v - along * v.dot(along)).length() < 0.02
                     })
-                };
-                assert!(outer(&patch) && outer(&arms), "verge widths at {c:?}");
-                for q in patch.iter().filter(|q| q.xz().distance(c) < 0.45) {
+                    .copied()
+                    .collect();
+                // A retaining wall where the ground lies more than 1.5 m
+                // below (the side road climbing away): no verge to meet.
+                if on_row.is_empty() {
+                    continue;
+                }
+                checked += 1;
+                let far = on_row
+                    .iter()
+                    .map(|q| q.xz().distance(c))
+                    .fold(0.0f32, f32::max);
+                assert!(far >= 0.5, "the arm's verge at {c:?}: {far} m");
+                // The corner's verge has the same points there (no step,
+                // no hole).
+                for w in &on_row {
                     assert!(
-                        arms.iter().any(|w| w.distance(*q) < 0.01),
-                        "a hole at the mouth corner {c:?}: {q:?}"
+                        patch.iter().any(|q| q.distance(*w) < 0.01),
+                        "a hole at the mouth corner {c:?}: {w:?}"
                     );
                 }
             }
         }
+        assert!(checked >= 4, "{checked} mouth corners with a verge");
     }
 }
 

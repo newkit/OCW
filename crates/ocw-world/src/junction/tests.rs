@@ -60,7 +60,9 @@ fn check_mouths(g: &RoadGraph, p: &Patch) {
                 let r = JunctionSet::blend_row(g, p, i, a.mouth_m + d);
                 r[0][1] + (r[1][1] - r[0][1]) * f
             } else {
-                height(e, s_out)
+                // Its own profile, leaning as the mouth row (J5: the lean
+                // turns flat from the mouth on with a level start).
+                height(e, s_out) + (on_row - a.h)
             };
             let slope_out = (out_h - on_row) / d;
             assert!(
@@ -92,10 +94,11 @@ fn a_narrow_side_road_leaves_at_the_main_road_edge_at_its_own_grade() {
     assert!(s.mouth_m > s.edge_m + 2.0, "mouth {}", s.mouth_m);
     // The main surface at the edge point: 10 % along x.
     assert!((s.edge_h - 0.10 * s.edge_p[0]).abs() < 1e-6);
-    // The mouth row: the side road's own height there.
-    for q in s.row {
-        assert!((q[1] + 0.15 * s.mouth_m).abs() < 1e-9, "{q:?}");
-    }
+    // The mouth row: the side road's own height there (its middle; it
+    // leans with the main road's slope across it, J5).
+    let mid = 0.5 * (s.row[0][1] + s.row[1][1]);
+    assert!((mid + 0.15 * s.mouth_m).abs() < 1e-9, "{:?}", s.row);
+    assert!(s.cross.abs() > 0.01, "{}", s.cross);
     // The main road's carriageway: its own plane (10 % along x, flat
     // across), wherever the side road leaves.
     for x in [-6.0, -3.0, 0.0, 3.0, 6.0, 9.0] {
@@ -115,7 +118,7 @@ fn a_narrow_side_road_leaves_at_the_main_road_edge_at_its_own_grade() {
     // The side road's corner: from the main road's edge (its surface) down
     // to the mouth (the side road's own height), falling steadily, within
     // the two.
-    let row_h = s.row[0][1];
+    let row_h = 0.5 * (s.row[0][1] + s.row[1][1]);
     let mut prev = f64::INFINITY;
     for k in 0..=40 {
         let m = s.edge_m + (s.mouth_m - s.edge_m) * f64::from(k) / 40.0;
@@ -161,9 +164,8 @@ fn a_t_junction_keeps_the_main_road_and_the_side_road_starts_at_its_edge() {
     assert!((s.edge_m - 3.75).abs() < 0.01, "{}", s.edge_m);
     assert_eq!(s.blend_m, 0.0);
     assert!((s.edge_h - p.field(s.edge_p)).abs() < 1e-9);
-    for q in s.row {
-        assert!((q[1] - 0.20 * s.mouth_m).abs() < 1e-9, "{q:?}");
-    }
+    let mid = 0.5 * (s.row[0][1] + s.row[1][1]);
+    assert!((mid - 0.20 * s.mouth_m).abs() < 1e-9, "{:?}", s.row);
     let mut prev = f64::NEG_INFINITY;
     for k in 0..=40 {
         let z = s.edge_m + (s.mouth_m - s.edge_m) * f64::from(k) / 40.0;
@@ -731,7 +733,7 @@ fn side_roads_never_stand_above_the_main_road() {
                 if i < p.outline.len() {
                     continue;
                 }
-                assert!((q[1] - p.field([q[0], q[2]])).abs() < 1e-9);
+                assert!((q[1] - p.surface([q[0], q[2]])).abs() < 1e-9);
             }
         }
     }

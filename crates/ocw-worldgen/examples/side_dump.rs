@@ -1,0 +1,154 @@
+//! Dumps the sides of a package's junction surfaces with their faults as
+//! JSON lines (spec 4.8.8 *Rule: the sides of a road are as smooth as the
+//! road*): per junction with a `side.*` or `junction.mouth.above_main`
+//! finding its arms, outline chains and the first rows of the arms'
+//! strips, for looking at the causes.
+//!
+//! ```text
+//! cargo run -p ocw-worldgen --release --example side_dump -- PKG.ocwpkg OUT.jsonl [LIMIT]
+//! ```
+
+use std::collections::{BTreeMap, HashMap};
+use std::io::Write;
+
+use ocw_world::WorldPackage;
+use ocw_world::junction::JunctionSet;
+use ocw_world::junction::section::{NO_EDGE, strip_edges_of};
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let (pkg_path, out) = match &args[..] {
+        [p, o, ..] => (p, o),
+        _ => {
+            eprintln!("usage: side_dump PKG.ocwpkg OUT.jsonl [LIMIT]");
+            std::process::exit(2);
+        }
+    };
+    let limit: usize = args
+        .get(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(usize::MAX);
+    let mut pkg =
+        WorldPackage::from_bytes(&std::fs::read(pkg_path).expect("package")).expect("pkg");
+    let g = pkg.graph.clone().expect("road graph");
+    // RECOMPUTE=1: the junctions as this checkout computes them (the stored
+    // outlines and strip edges left out).
+    if std::env::var("RECOMPUTE").is_ok_and(|v| v == "1") {
+        pkg.junctions = None;
+    }
+
+    let js = match pkg.junctions.as_ref() {
+        Some(j) => JunctionSet::with_index(&g, j.index_for(&g)),
+        None => JunctionSet::new(&g),
+    };
+    let faults = ocw_worldgen::junctions::side_faults(&pkg, &g);
+    let above = ocw_worldgen::junctions::mouths_above_main(&pkg, &g);
+    let mut by_v: BTreeMap<usize, Vec<serde_json::Value>> = BTreeMap::new();
+    for f in &faults {
+        by_v.entry(f.vertex).or_default().push(serde_json::json!({
+            "kind": f.kind, "at": f.at, "value": f.value}));
+    }
+    for m in &above {
+        by_v.entry(m.vertex).or_default().push(serde_json::json!({
+            "kind": format!("above.{}", m.cause), "at": m.at, "value": m.above_m, "edge": m.edge}));
+    }
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for f in by_v.values().flatten() {
+        *counts
+            .entry(f["kind"].as_str().unwrap_or("").to_string())
+            .or_default() += 1;
+    }
+    eprintln!("{counts:?}");
+    let (mut patches, mut reasons) = (0usize, BTreeMap::<&str, usize>::new());
+    for v in 0..g.vertices.len() {
+        if js.own_patch(&g, v).is_some() {
+            patches += 1;
+        } else if let Some(r) = js.fallback_reason(&g, v) {
+            *reasons.entry(r).or_default() += 1;
+        }
+    }
+    eprintln!("patches {patches}, without {reasons:?}");
+    let owned;
+    let edges = match pkg.junctions.as_ref().and_then(|j| j.strip_edges_for(&g)) {
+        Some(s) => s,
+        None => {
+            owned = strip_edges_of(&pkg, &g);
+            &owned
+        }
+    };
+    let mut by_edge: HashMap<u32, Vec<(ocw_world::TileKey, usize)>> = HashMap::new();
+    for (key, tile) in &pkg.tiles {
+        if let Some(ix) = edges.tile(*key, tile.roads.len()) {
+            for (i, &e) in ix.iter().enumerate() {
+                if e != NO_EDGE {
+                    by_edge.entry(e).or_default().push((*key, i));
+                }
+            }
+        }
+    }
+    let mut w = std::io::BufWriter::new(std::fs::File::create(out).expect("out"));
+    for (n, (v, fs)) in by_v.iter().enumerate() {
+        if n >= limit {
+            break;
+        }
+        let Some(p) = js.own_patch(&g, *v) else {
+            continue;
+        };
+        let arms: Vec<serde_json::Value> = p
+            .arms
+            .iter()
+            .enumerate()
+            .map(|(ai, a)| {
+                let e = &g.edges[a.edge];
+                let mut strips = Vec::new();
+                for &(key, si) in by_edge.get(&(a.edge as u32)).into_iter().flatten() {
+                    let s = &pkg.tiles[&key].roads[si];
+                    let half = s.width_m / 2.0;
+                    let sh = js.shape_strip(&g, a.edge, &s.points, half);
+                    let rows: Vec<[[f32; 3]; 2]> = match &sh {
+                        Some(sh) => sh.rows.clone(),
+                        None => Vec::new(),
+                    };
+                    // The rows within 15 m of the mouth.
+                    let near: Vec<(usize, [[f32; 3]; 2])> = rows
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, r)| {
+                            let c = [
+                                f64::from(r[0][0] + r[1][0]) / 2.0,
+                                f64::from(r[0][2] + r[1][2]) / 2.0,
+                            ];
+                            (c[0] - a.centre[0]).hypot(c[1] - a.centre[1]) < 15.0
+                        })
+                        .map(|(i, r)| (i, *r))
+                        .collect();
+                    strips.push(serde_json::json!({
+                        "shaped": sh.is_some(), "n": rows.len(), "rows": near,
+                        "dress": format!("{:?}", s.dress.sidewalk_m)}));
+                }
+                serde_json::json!({
+                    "i": ai, "edge": a.edge, "way": e.osm_way, "class": format!("{:?}", a.class),
+                    "half": a.half, "len": a.len, "at_from": a.at_from, "dir": a.dir,
+                    "origin": a.origin, "mouth_m": a.mouth_m, "centre": a.centre, "t": a.t,
+                    "row": a.row, "h": a.h, "grade": a.grade, "blend_m": a.blend_m,
+                    "edge_m": a.edge_m, "edge_h": a.edge_h, "cross": a.cross,
+                    "name": e.name, "strips": strips,
+                    "edge_points": e.points.iter().take(12).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        let chains: Vec<serde_json::Value> = p
+            .chains
+            .iter()
+            .map(|c| {
+                let (j5, ok, lines) = ocw_world::junction::debug_chain(&g, p, c.from_arm);
+                serde_json::json!({"from": c.from_arm, "to": c.to_arm, "points": c.points, "j5": j5, "j5_ok": ok, "lines": lines})
+            })
+            .collect();
+        let rec = serde_json::json!({
+            "vertex": v, "centre": p.centre, "members": p.members, "through": p.through,
+            "faults": fs, "arms": arms, "chains": chains,
+        });
+        writeln!(w, "{rec}").expect("write");
+    }
+}

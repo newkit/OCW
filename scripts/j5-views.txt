@@ -1,0 +1,16 @@
+# The J5 comparison views (scripts/j5-shots.sh; spec 4.8.8 Rule):
+# NAME PACKAGE X Y Z HEADING PITCH START_X,START_Z
+# Letzanaweg leaving Bergstrasse, Triesen (the user's corner, J4's a-corner)
+li-letzanaweg-corner pilot/liechtenstein -1441.0 557.5 5966.0 80 -35 -1440,5868
+li-letzanaweg-side pilot/liechtenstein -1437.7 554.38 5970.6 2.1 -6 -1440,5868
+# Corners where the J4 lint found a fault of the sides (examples/side_pick,
+# the fourth of each kind): a T, a fork, a path off a main road per world
+li-t pilot/liechtenstein -810.5 848.37 4755.4 318.6 -24 -820,4745
+li-fork pilot/liechtenstein -3448.0 452.71 -2064.6 121.2 -24 -3436,-2057
+li-path pilot/liechtenstein -988.8 459.71 -6174.0 304.7 -24 -1000,-6182
+tf-t tenerife/tenerife 12518.5 241.92 -25156.3 155.7 -24 12524,-25144
+tf-fork tenerife/tenerife -14054.2 22.02 30867.4 252.2 -24 -14068,30872
+tf-path tenerife/tenerife -20232.8 35.80 25421.3 133.6 -24 -20223,25431
+bf-t blackforest/blackforest-north 31512.2 346.77 -94306.5 306.0 -24 31501,-94315
+bf-fork blackforest/blackforest-north 3182.4 255.52 -64417.1 264.5 -24 3168,-64416
+bf-path blackforest/blackforest-north 1252.9 152.32 -70486.6 322.9 -24 1244,-70498
