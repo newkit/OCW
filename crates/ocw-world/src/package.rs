@@ -931,7 +931,11 @@ impl SectionReader {
         } else if &tag == LANDUSE_TAG && full && streamed {
             // Decoded per tile when its tiles are there (spec §14 Phase
             // 10 B2).
-            s.landuse_index = Some(crate::landuse::LandUseIndex::new(payload, samples)?);
+            s.landuse_index = Some(crate::landuse::LandUseIndex::new_kept(
+                payload,
+                samples,
+                self.keep.as_ref(),
+            )?);
         } else if &tag == LANDUSE_TAG && full {
             s.landuse = Some(read_landuse(payload, samples)?);
         } else if &tag == BUILDINGS_TAG && full {
