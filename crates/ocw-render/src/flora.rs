@@ -1567,6 +1567,64 @@ mod tests {
         assert!(t[1] - t[0] < g[1] - g[0]);
     }
 
+    /// Spec §14 Phase 9 Q13: Tenerife's forests – laurel forest,
+    /// fayal-brezal, Canary pine, measured or by the region's mix – never
+    /// show autumn colours or drop their leaves, at any height and on any
+    /// day; their verges get no autumn litter.
+    #[test]
+    fn tenerifes_forests_stay_evergreen() {
+        use ocw_sky::season::{CANARIES, MeasuredLeaf, TreeSetting};
+        use ocw_world::flora::{FloraRegion, LeafGroup, Setting, Site, pick_species};
+        use ocw_world::trees::DominantLeaf;
+        let model = ocw_sky::season::SeasonModel::new(CANARIES);
+        let days: Vec<_> = (1..=365)
+            .step_by(8)
+            .map(|d| model.day(f64::from(d)))
+            .collect();
+        for alt in [50.0, 400.0, 800.0, 1200.0, 1600.0, 2000.0, 2300.0] {
+            for measured in [
+                None,
+                Some(MeasuredLeaf::Broadleaved),
+                Some(MeasuredLeaf::Coniferous),
+            ] {
+                for windward in [true, false] {
+                    for k in 0..20 {
+                        let pick = (k as f32 + 0.5) / 20.0;
+                        let leaf =
+                            CANARIES
+                                .trees
+                                .leaf_type(TreeSetting::Forest, alt, measured, pick);
+                        assert_eq!(leaf, LeafType::Evergreen, "{alt} {measured:?}");
+                        let site = Site {
+                            region: FloraRegion::Tenerife,
+                            setting: Setting::Forest,
+                            alt_m: alt,
+                            measured: measured.map(|m| match m {
+                                MeasuredLeaf::Broadleaved => DominantLeaf::Broadleaved,
+                                MeasuredLeaf::Coniferous => DominantLeaf::Coniferous,
+                            }),
+                            windward,
+                            near_water: false,
+                        };
+                        let sp = pick_species(&site, LeafGroup::Evergreen, pick);
+                        assert_eq!(leaf_type(sp), LeafType::Evergreen, "{sp:?}");
+                        for d in &days {
+                            let l = plant_look(Some(d), sp, alt, pick * 2.0 - 1.0);
+                            assert_eq!((l.leaves, l.autumn), (1.0, 0.0), "{sp:?} {alt}");
+                        }
+                    }
+                }
+            }
+        }
+        for d in &days {
+            for alt in [50.0, 800.0, 1600.0] {
+                let fx = crate::ground_detail::SeasonFx::of(Some(d), alt);
+                // A tenth of a deciduous place's (Vaduz: up to 1).
+                assert!(fx.autumn <= 0.15 && fx.fall <= 0.1 + 1e-6, "{fx:?}");
+            }
+        }
+    }
+
     #[test]
     fn seasons_per_species_in_vaduz() {
         let model = ocw_sky::season::SeasonModel::for_place(47.14, 9.52);

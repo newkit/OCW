@@ -112,6 +112,9 @@ pub struct CalendarInfo {
     /// The rider's place (lat, lon) and altitude (m).
     pub place: (f64, f64),
     pub alt_m: f64,
+    /// The measured broadleaf share of the forests around the rider (0 – 1,
+    /// the package's forest section), for the season strength (Q13).
+    pub broadleaf: Option<f64>,
     pub model: Option<Arc<SeasonModel>>,
     pub year: Option<Arc<SeasonYear>>,
     /// The look of the world date with real weather's measured snow
@@ -602,25 +605,34 @@ pub fn dates_rows(c: &Cal, info: &CalendarInfo) -> Vec<Row> {
     out
 }
 
-/// World → Time → Season: the six seasons of the place, each its
+/// World → Time → Season: the seasons of the place, each its
 /// representative day nearest to the world date (decision Q11: the date
-/// jumps there, the time of day kept).
+/// jumps there, the time of day kept). Where the seasons are weak only
+/// *Summer* and *Winter* (Q13, [`SeasonYear::offers`]), Winter with the
+/// snow line of its day if snow lies on the peaks.
 pub fn season_rows(info: &CalendarInfo) -> Vec<Row> {
     let (Some(y), Some(today)) = (&info.year, info.date) else {
         return Vec::new();
     };
     let now = y.season_of(cal::day_of_year(today));
-    Season::ALL
-        .into_iter()
+    let weak = y.strength.note().is_some();
+    y.offered()
         .map(|s| {
             let d = y.season_date(s, today);
+            let snow = match (&info.model, s) {
+                (Some(m), Season::Winter) if weak => winter_snow(m, d),
+                _ => None,
+            };
             Row {
                 label: if s == now {
                     format!("{} (now)", s.label())
                 } else {
                     s.label().to_owned()
                 },
-                value: Some(cal::short_date(d)),
+                value: Some(match snow {
+                    Some(line) => format!("{} · {line}", cal::short_date(d)),
+                    None => cal::short_date(d),
+                }),
                 left: None,
                 right: None,
                 confirm: Some(if info.may_change {
@@ -633,6 +645,31 @@ pub fn season_rows(info: &CalendarInfo) -> Vec<Row> {
             }
         })
         .collect()
+}
+
+/// "snow above 3,450 m" on day `d` (the climatological snow line, below
+/// the highest summits of the worlds: 4,000 m), else `None`.
+fn winter_snow(model: &SeasonModel, d: Date) -> Option<String> {
+    let h = model
+        .day(f64::from(cal::day_of_year(d)))
+        .snow_line_m()
+        .filter(|h| *h < SNOW_NOTE_BELOW_M)?;
+    Some(if h <= ocw_sky::season::MIN_ALT_M {
+        "snow everywhere".into()
+    } else {
+        format!("snow above {} m", thousands(h))
+    })
+}
+
+/// Winter's snow line is shown below this altitude (m).
+pub const SNOW_NOTE_BELOW_M: f64 = 4000.0;
+
+/// The Season page's line where the seasons are weak (spec §14 Phase 9
+/// Q13): "Weak seasons here: evergreen trees, … Summer and winter only."
+/// – `None` where the leaves turn.
+pub fn season_note(info: &CalendarInfo) -> Option<String> {
+    let note = info.year.as_ref()?.strength.note()?;
+    Some(format!("{note} Summer and winter only."))
 }
 
 /// The Season row of World → Time: the season of the world date at the
@@ -1225,6 +1262,86 @@ mod tests {
         let mut m = open(Platform::Desktop, &ro);
         assert_eq!(m.apply_with(Action::Click(SELECT), &ro), Effect::None);
         assert!(calendar(&m));
+    }
+
+    /// The calendar's info at a place and altitude.
+    fn info_at(zone: &str, place: (f64, f64), alt: f64) -> CalendarInfo {
+        let model = Arc::new(SeasonModel::for_place(place.0, place.1));
+        let year = Arc::new(SeasonYear::new(&model, alt, f64::from));
+        CalendarInfo {
+            zone: Some(Zone::get(zone).unwrap()),
+            place,
+            alt_m: alt,
+            model: Some(model),
+            year: Some(year),
+            date: Some((2026, 11, 23)),
+            ..info()
+        }
+    }
+
+    /// Spec §14 Phase 9 Q13: the Season page per place – Liechtenstein
+    /// and the Black Forest unchanged (six seasons, no note), Tenerife's
+    /// coast and the Teide one line and only Summer and Winter, the Teide's
+    /// winter with its snow line.
+    #[test]
+    fn the_season_page_per_place() {
+        let labels = |rows: &[Row]| {
+            rows.iter()
+                .map(|r| r.label.trim_end_matches(" (now)").to_owned())
+                .collect::<Vec<_>>()
+        };
+        let all: Vec<String> = Season::ALL.iter().map(|s| s.label().to_owned()).collect();
+        for (zone, place, alt) in [
+            ("Europe/Vaduz", (47.141, 9.521), 455.0),
+            ("Europe/Vaduz", (47.10, 9.61), 1600.0),
+            ("Europe/Berlin", (47.87, 8.0), 1450.0),
+            ("Europe/Berlin", (48.0, 7.85), 250.0),
+        ] {
+            let i = info_at(zone, place, alt);
+            let rows = season_rows(&i);
+            assert_eq!(labels(&rows), all, "{place:?}");
+            assert_eq!(season_note(&i), None);
+            assert!(
+                rows.iter()
+                    .all(|r| !r.value.as_ref().unwrap().contains("snow"))
+            );
+            assert!(rows.iter().any(|r| r.label.ends_with("(now)")));
+        }
+        let puerto = info_at("Atlantic/Canary", (28.41, -16.55), 20.0);
+        let rows = season_rows(&puerto);
+        assert_eq!(labels(&rows), ["Summer", "Winter"]);
+        assert_eq!(rows[1].label, "Winter (now)", "23 November");
+        assert!(
+            matches!(&rows[0].confirm, Some(Activate::CommandBack(l)) if l.starts_with("time date 2026-08")),
+            "{:?}",
+            rows[0].confirm
+        );
+        let note = season_note(&puerto).unwrap();
+        assert!(
+            note.starts_with("Weak seasons here: evergreen trees"),
+            "{note}"
+        );
+        assert!(note.ends_with("Summer and winter only."), "{note}");
+        // The coast sees snow on the Teide in winter.
+        let w = rows[1].value.as_deref().unwrap();
+        assert!(w.contains(" · snow above 3,"), "{w}");
+        let teide = info_at("Atlantic/Canary", (28.27, -16.64), 3700.0);
+        let rows = season_rows(&teide);
+        assert_eq!(labels(&rows), ["Summer", "Winter"]);
+        assert!(season_note(&teide).unwrap().contains("but for the snow"));
+        let d = line_date(match &rows[1].confirm {
+            Some(Activate::CommandBack(l)) => l,
+            c => panic!("{c:?}"),
+        })
+        .unwrap();
+        assert_eq!(teide.year.as_ref().unwrap().look(d), Look::Snow);
+        // World → Time's Season row steps between them.
+        let row = season_row(&puerto);
+        assert_eq!(row.value.as_deref(), Some("Winter"));
+        let next = line_date(&row.right.unwrap()).unwrap();
+        assert!(next.1 <= 3 && next.0 == 2027, "{next:?}");
+        let prev = line_date(&row.left.unwrap()).unwrap();
+        assert_eq!((prev.0, prev.1), (2026, 8));
     }
 
     /// Calendar → Dates and World → Time → Season.

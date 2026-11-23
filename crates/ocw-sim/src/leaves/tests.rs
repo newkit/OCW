@@ -23,6 +23,11 @@ const PLACE: (f64, f64) = (48.0, 8.2);
 /// A package of 3 × 3 tiles of broadleaf wood (measured 100 %) – or of
 /// `class` everywhere.
 fn package(class: LandClass) -> WorldPackage {
+    package_at(class, PLACE)
+}
+
+/// [`package`] at `origin` (its region and season).
+fn package_at(class: LandClass, origin: (f64, f64)) -> WorldPackage {
     let cells = 50u32;
     let mut lu = LandUse {
         cells,
@@ -53,7 +58,7 @@ fn package(class: LandClass) -> WorldPackage {
     }
     let mut pkg = WorldPackage {
         name: "Leafy".into(),
-        origin: PLACE,
+        origin,
         tile_size_m: 1000.0,
         samples: 2,
         tiles: BTreeMap::new(),
@@ -414,4 +419,39 @@ fn the_season_follows_the_world_clock() {
     assert!(Arc::ptr_eq(&nov, &again), "cached within the bucket");
     let jul = ls.day_at(1_782_907_200_000, PLACE);
     assert!(jul.leaf_fall(400.0) < 0.05, "{}", jul.leaf_fall(400.0));
+}
+
+/// Spec §14 Phase 9 Q13: on Tenerife a wood measured all broadleaves is
+/// laurel forest and keeps its leaves – the wet leaves on its roads are
+/// near zero all year (the Black Forest's: up to 0.8 a metre), and they
+/// never make the road slick to speak of.
+#[test]
+fn wet_leaves_are_near_zero_in_tenerifes_evergreen_woods() {
+    let puerto = (28.41, -16.55);
+    let map = Arc::new(LeafMap::from_package(&package_at(
+        LandClass::Forest,
+        puerto,
+    )));
+    let model = SeasonModel::for_place(puerto.0, puerto.1);
+    let route = straight();
+    let state = RiderState {
+        distance: 300.0,
+        lateral_offset: 1.0,
+        speed: 9.0,
+        ..Default::default()
+    };
+    let mut most = 0.0f64;
+    for doy in (1..=365).step_by(4) {
+        let g = LeafGround {
+            map: map.clone(),
+            day: Arc::new(model.day(bucket_day(season_bucket(doy)))),
+        };
+        let a = g.per_metre(&route, &state);
+        most = most.max(a);
+        let s = slick(Some(&g), Some(&weather(1.0)), &route, &state);
+        assert!(s < 0.02, "day {doy}: {s}");
+    }
+    assert!(most < 0.01, "{most}");
+    let bf = ground(LandClass::Forest, NOVEMBER).per_metre(&route, &state);
+    assert!(bf > 50.0 * most.max(1e-3), "{bf} vs {most}");
 }
