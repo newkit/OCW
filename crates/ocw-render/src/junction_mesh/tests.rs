@@ -239,6 +239,83 @@ fn the_outline_dress_meets_the_arms_dress() {
     }
 }
 
+/// §4.8.8 Q7 follow-up ("that little hole"): with the ground a little
+/// under the roads (a verge, not a wall), the verge round a junction's
+/// corner meets the arms' verges at every mouth corner – every shoulder
+/// vertex of the patch near a mouth corner is one of the arm's strip, so
+/// no step and no hole – and is as wide along the whole corner.
+#[test]
+fn the_corner_verge_meets_the_arms_verge_without_a_hole() {
+    for g in [
+        fixtures::t_junction_built(RoadClass::Secondary, 0.0, 0.12),
+        t_junction(RoadClass::Secondary, 0.04, 0.10),
+    ] {
+        let pj = PackageJunctions::of_graph(&g, SIZE);
+        let p = pj.set.patch(&g, 0).unwrap().clone();
+        let style = MarkingStyle::default();
+        // The ground 0.5 m under the main road's level: a verge of 1.15 m
+        // where it would follow the ground's drop.
+        let ground = |_: f32, _: f32| Some(-0.5f32);
+        let ctx = ctx_with(&style, &ground);
+        let mut parts = Vec::new();
+        for (key, strips) in tiles(&g) {
+            let t = shape_tile(&g, &pj, key, SIZE, &strips, &style);
+            for i in 0..t.strips.len() {
+                let rows = [t.rows[i].as_deref()];
+                parts.push((
+                    t.owners[i],
+                    road_meshes_rows(std::slice::from_ref(&t.strips[i]), &rows, &ctx),
+                ));
+            }
+            for (q, looks) in &t.patches {
+                let mut m = RoadMeshes::default();
+                patch_mesh(&mut m.roads, q, looks, &ctx);
+                parts.push((Owner::Patch(q.vertex), m));
+            }
+        }
+        let shoulders = |want: fn(&Owner) -> bool| -> Vec<Vec3> {
+            parts
+                .iter()
+                .filter(|(o, _)| want(o))
+                .flat_map(|(_, m)| {
+                    m.roads
+                        .positions
+                        .iter()
+                        .zip(&m.roads.uvs_b)
+                        .filter(|(_, b)| decode_b(b[0]).1 == Kind::Shoulder as u8)
+                        .map(|(q, _)| Vec3::from(*q))
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        };
+        let (patch, arms) = (
+            shoulders(|o| matches!(o, Owner::Patch(_))),
+            shoulders(|o| matches!(o, Owner::Edge(_))),
+        );
+        assert!(!patch.is_empty());
+        for arm in &p.arms {
+            for c in arm.row {
+                let c = Vec2::new(c[0] as f32, c[2] as f32);
+                // The verge's outer edge 0.4 m out on both (a wide verge on
+                // one of them was the step and the hole).
+                let outer = |v: &[Vec3]| {
+                    v.iter().any(|q| {
+                        let d = q.xz().distance(c);
+                        d > 0.3 && d < 0.45
+                    })
+                };
+                assert!(outer(&patch) && outer(&arms), "verge widths at {c:?}");
+                for q in patch.iter().filter(|q| q.xz().distance(c) < 0.45) {
+                    assert!(
+                        arms.iter().any(|w| w.distance(*q) < 0.01),
+                        "a hole at the mouth corner {c:?}: {q:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// Markings at the mouths (§4.8.8 Q2 fallback): the patch of a through
 /// road carries its centre line; its edge line only on the side without a
 /// side road. Without a through road no lines.

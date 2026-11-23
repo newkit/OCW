@@ -676,3 +676,64 @@ fn a_small_roundabout_is_one_patch() {
         assert!(sh.points.is_empty(), "ring arc {ei}");
     }
 }
+
+/// §4.8.8 Q7: the side roads' corners never stand above the main road's
+/// surface on its carriageway – the patch's triangles are cut at the
+/// carriageway's edge, so a steep side road's slope starts at the edge,
+/// not inside the main road (before, the star mesh's triangles across the
+/// edge lifted the main road by up to 0.4 m at steep side roads). The
+/// corner off the carriageway still rises to the side road, and the
+/// drawn surface is still the mesh (every mesh vertex at the field).
+#[test]
+fn side_roads_never_stand_above_the_main_road() {
+    let mut measured = 0;
+    for g in [
+        t_junction(RoadClass::Secondary, 0.08, 0.20),
+        fixtures::t_junction_built(RoadClass::Secondary, 0.0, 0.20),
+        fixtures::t_junction_at(0.10, -0.15, 30.0),
+        fixtures::dual_carriageway_t(),
+    ] {
+        let js = JunctionSet::new(&g);
+        for v in 0..g.vertices.len() {
+            let Some(p) = js.own_patch(&g, v) else {
+                continue;
+            };
+            if p.through.is_none() {
+                continue;
+            }
+            check_outline(p);
+            let mut worst = f64::NEG_INFINITY;
+            let mut x = p.min[0];
+            while x <= p.max[0] {
+                let mut z = p.min[1];
+                while z <= p.max[1] {
+                    let q = [x, z];
+                    if p.main_excess(q) <= 0.0
+                        && let (Some(h), Some(m)) = (p.height_at(q), p.main_own(q))
+                    {
+                        worst = worst.max(h - m);
+                        measured += 1;
+                    }
+                    z += 0.1;
+                }
+                x += 0.1;
+            }
+            assert!(
+                worst < 0.005,
+                "vertex {v}: {worst:.3} m above the main road"
+            );
+            // Off the carriageway the corner rises to the side road.
+            if let Some(s) = p.arms.iter().find(|a| a.has_corner() && a.edge_m > 0.01) {
+                let out = [s.edge_p[0] + s.t[0] * 1.0, s.edge_p[1] + s.t[1] * 1.0];
+                assert!(p.height_at(out).is_some());
+            }
+            for (i, q) in p.vertices.iter().enumerate() {
+                if i < p.outline.len() {
+                    continue;
+                }
+                assert!((q[1] - p.field([q[0], q[2]])).abs() < 1e-9);
+            }
+        }
+    }
+    assert!(measured > 1000, "{measured}");
+}

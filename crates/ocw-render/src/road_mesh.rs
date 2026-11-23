@@ -105,6 +105,10 @@ pub struct Shoulder {
     pub wall: bool,
 }
 
+/// Beside a junction surface the verge widens from its narrowest to its
+/// own width over this many metres (§4.8.8 Rule: no step at the mouth).
+pub const SIDE_FADE_M: f32 = 6.0;
+
 /// The shoulder at a road edge: `ground` is the terrain surface height at
 /// (x, z) (`None` beyond the package's tiles), `narrow` keeps it at its
 /// narrowest (junction zones, where other roads come in).
@@ -113,6 +117,16 @@ pub fn shoulder(
     out: Vec3,
     ground: &dyn Fn(f32, f32) -> Option<f32>,
     narrow: bool,
+) -> Shoulder {
+    shoulder_blend(top, out, ground, if narrow { 1.0 } else { 0.0 })
+}
+
+/// [`shoulder`] between its own width (`narrow` 0) and its narrowest (1).
+pub fn shoulder_blend(
+    top: Vec3,
+    out: Vec3,
+    ground: &dyn Fn(f32, f32) -> Option<f32>,
+    narrow: f32,
 ) -> Shoulder {
     let lip = top.y - SHOULDER_STEP_M;
     let Some(g0) = ground(top.x, top.z) else {
@@ -137,11 +151,7 @@ pub fn shoulder(
             wall: true,
         };
     }
-    let width = if narrow {
-        SHOULDER_MIN_M
-    } else {
-        SHOULDER_MIN_M + SHOULDER_SLOPE * drop.max(0.0)
-    };
+    let width = SHOULDER_MIN_M + SHOULDER_SLOPE * drop.max(0.0) * (1.0 - narrow.clamp(0.0, 1.0));
     let o = top + out * width;
     let g = ground(o.x, o.z).unwrap_or(g0);
     let outer_y = (g - SHOULDER_SINK_M).min(lip);
@@ -366,7 +376,29 @@ fn strip_mesh(
                 }
             })
             .collect();
-        let narrow: Vec<bool> = local.iter().map(|&l| s.dress.in_junction(l)).collect();
+        // Narrow in junction zones, and fading in from the mouth of a
+        // junction surface (`junction_m` < 0 there: −1 − the mouth's along).
+        let mouths: Vec<f32> = s
+            .dress
+            .junction_m
+            .iter()
+            .filter(|&&j| j < 0.0)
+            .map(|&j| -1.0 - j)
+            .collect();
+        let narrow: Vec<f32> = local
+            .iter()
+            .map(|&l| {
+                if s.dress.in_junction(l) {
+                    return 1.0;
+                }
+                let a = s.dress.start_m + l;
+                mouths
+                    .iter()
+                    .map(|m| 1.0 - (a - m).abs() / SIDE_FADE_M)
+                    .fold(0.0f32, f32::max)
+                    .clamp(0.0, 1.0)
+            })
+            .collect();
         side_dress(
             m,
             &SideDress {
@@ -428,8 +460,9 @@ pub(crate) struct SideDress<'a> {
     /// Sidewalk width and kerb height per point.
     pub kerbs: &'a [(f32, f32)],
     pub decks: &'a [bool],
-    /// Keep the shoulder at its narrowest (junction zones).
-    pub narrow: &'a [bool],
+    /// How far to keep the shoulder at its narrowest (1: junction zones and
+    /// junction corners; 0: its own width).
+    pub narrow: &'a [f32],
 }
 
 /// The kerb, sidewalk, lip, shoulder and skirt (or retaining wall) beside a
@@ -518,7 +551,7 @@ pub(crate) fn side_dress(
                     wall: false,
                 }
             } else {
-                shoulder(top, d.out[i], ctx.ground, d.narrow[i])
+                shoulder_blend(top, d.out[i], ctx.ground, d.narrow[i])
             }
         })
         .collect();

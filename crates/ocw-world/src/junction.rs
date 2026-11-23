@@ -315,6 +315,12 @@ pub struct Arm {
     /// Its profile from the vertex to the mouth: (metres from the vertex,
     /// height), the edge's samples and both ends.
     pub corner: Vec<(f64, f64)>,
+    /// An arm of a blended patch (no through road): the cross slope of the
+    /// plane through all its arms (to its right in the mouth's frame, `t`
+    /// turned by [`side_pos`]), which its extension takes inside the patch
+    /// – flat across at its mouth, as the strip – so arms on one plane
+    /// make that plane (§4.8.8 Q7 (c)); 0 elsewhere.
+    pub cross: f64,
 }
 
 impl Arm {
@@ -344,7 +350,17 @@ impl Arm {
     /// The arm's surface extended past its mouth: flat across, along its
     /// grade.
     fn extension(&self, p: P2) -> f64 {
-        self.h + self.grade * dot(sub(p, self.centre), self.t)
+        let along = dot(sub(p, self.centre), self.t);
+        let mut h = self.h + self.grade * along;
+        if self.cross != 0.0 {
+            // Flat across at the mouth (C1 with the strip there), the
+            // plane's cross slope from a quarter of the mouth's distance in.
+            let reach = (0.25 * self.mouth_m).max(1.0);
+            let x = (-along / reach).clamp(0.0, 1.0);
+            let across = dot(sub(p, self.centre), side_pos(self.t));
+            h += self.cross * across * x * x * (3.0 - 2.0 * x);
+        }
+        h
     }
 
     fn mouth_dist(&self, p: P2) -> f64 {
@@ -429,9 +445,10 @@ pub struct Patch {
     /// first).
     angles: Vec<f64>,
     pub chains: Vec<Chain>,
-    /// Ring scales (1 = the outline, decreasing; the centre is the last
-    /// vertex of the mesh).
-    rings: Vec<f64>,
+    /// The triangles of each sector between outline points `k` and `k + 1`
+    /// (the star's quads, cut where they cross the through road's
+    /// carriageway edge, §4.8.8 Q7).
+    sectors: Vec<Vec<u32>>,
     /// Ring j point k is `vertices[j * outline.len() + k]`.
     pub vertices: Vec<[f64; 3]>,
     pub triangles: Vec<[u32; 3]>,
@@ -600,6 +617,41 @@ impl Patch {
         e.max(0.0)
     }
 
+    /// The through road's drawn surface at `p` if `p` lies on its
+    /// carriageway near the patch, or within `margin` of it: on the patch
+    /// its own surface, beside its two arms (their edges' centre lines, up
+    /// to `reach` metres past their mouths) their profile; `None`
+    /// elsewhere.
+    pub fn main_road_height(&self, g: &RoadGraph, p: P2, reach: f64, margin: f64) -> Option<f64> {
+        let [a, b] = self.through?;
+        if self.main_excess(p) <= margin {
+            return self.main_own(p);
+        }
+        let mut best: Option<f64> = None;
+        for k in [a, b] {
+            let arm = &self.arms[k];
+            let e = &g.edges[arm.edge];
+            let mut walked = 0.0;
+            for w in e.points.windows(2) {
+                let (q0, q1) = (w[0], w[1]);
+                let l = norm(sub(q1, q0));
+                if l > 1e-9 {
+                    let t = (dot(sub(p, q0), sub(q1, q0)) / (l * l)).clamp(0.0, 1.0);
+                    let s = walked + t * l;
+                    let m = if arm.at_from { s } else { arm.len - s };
+                    if m <= arm.mouth_m + reach
+                        && norm(sub(add(q0, mul(sub(q1, q0), t)), p)) <= arm.half + margin
+                    {
+                        let h = height(e, s);
+                        best = Some(best.map_or(h, |x: f64| x.max(h)));
+                    }
+                }
+                walked += l;
+            }
+        }
+        best
+    }
+
     /// A blended patch's field (no through road): the arms' extensions
     /// and, in a cluster, the edges inside along their centre lines, by
     /// inverse-square distance.
@@ -629,6 +681,13 @@ impl Patch {
     /// The main road's surface (the through road's; else the field).
     pub fn main_surface(&self, p: P2) -> f64 {
         self.field(p)
+    }
+
+    /// The through road's own surface at `p` (its two arms' extensions,
+    /// without the side roads' corners); `None` without a through road.
+    pub fn main_own(&self, p: P2) -> Option<f64> {
+        let [a, b] = self.through?;
+        Some(shepard([&self.arms[a], &self.arms[b]].into_iter(), p))
     }
 
     /// The arm whose surface, colour and frame the patch takes: the first
@@ -687,24 +746,11 @@ impl Patch {
         if t > 1.0 + 1e-7 {
             return None;
         }
-        let nr = self.rings.len();
-        let vert = |j: usize, i: usize| {
-            if j >= nr {
-                self.vertices[nr * n]
-            } else {
-                self.vertices[j * n + i]
-            }
-        };
-        // Ring band j (ring j outside, j + 1 inside; past the last ring the
-        // centre).
-        let j = self
-            .rings
-            .partition_point(|&r| r > t)
-            .saturating_sub(1)
-            .min(nr - 1);
-        for jj in [j, j.saturating_sub(1), (j + 1).min(nr - 1)] {
-            let (o0, o1, i0, i1) = (vert(jj, k), vert(jj, k1), vert(jj + 1, k), vert(jj + 1, k1));
-            for tri in [[o0, o1, i1], [o0, i1, i0]] {
+        // The sector's triangles, then its neighbours' (on a spoke).
+        let ns = self.sectors.len();
+        for kk in [k, (k + ns - 1) % ns.max(1), (k + 1) % ns.max(1)] {
+            for &ti in self.sectors.get(kk).into_iter().flatten() {
+                let tri = self.triangles[ti as usize].map(|i| self.vertices[i as usize]);
                 if let Some(h) = tri_height(tri, p, 1e-7) {
                     return Some(h);
                 }
@@ -897,6 +943,7 @@ fn make_arm(g: &RoadGraph, r: &Raw, m: f64, along: Option<f64>) -> Arm {
         edge_p: cp,
         edge_h: h,
         corner: Vec::new(),
+        cross: 0.0,
     }
 }
 
@@ -923,6 +970,11 @@ fn assemble(g: &RoadGraph, site: &Site, arms: Vec<Arm>) -> Result<Patch, &'stati
         }
     }
     let through = (pairs.len() == 1).then(|| pairs[0]);
+    // A blended patch's plane (Q7 (c)); clusters keep their surface.
+    let mut arms = arms;
+    if through.is_none() && !site.cluster() {
+        blend_plane(&mut arms);
+    }
     let vh = {
         let e = &g.edges[arms[0].edge];
         height(e, if arms[0].at_from { 0.0 } else { arms[0].len })
@@ -947,7 +999,7 @@ fn assemble(g: &RoadGraph, site: &Site, arms: Vec<Arm>) -> Result<Patch, &'stati
         outline: Vec::new(),
         angles: Vec::new(),
         chains: Vec::new(),
-        rings: Vec::new(),
+        sectors: Vec::new(),
         vertices: Vec::new(),
         triangles: Vec::new(),
         min: c,
@@ -1005,9 +1057,84 @@ fn assemble(g: &RoadGraph, site: &Site, arms: Vec<Arm>) -> Result<Patch, &'stati
             arm.row = row;
             arm.blend_m = l;
         }
+        // §4.8.8 Q7: a side road's mouth row never stands above the main
+        // road's carriageway (a path drawn along the main road, its mouth
+        // corner on it): such a corner lies on the main road's surface.
+        for i in 0..n {
+            if i == a || i == b {
+                continue;
+            }
+            for k in 0..2 {
+                let q = xz(patch.arms[i].row[k]);
+                if patch.main_excess(q) <= 0.0
+                    && let Some(m) = patch.main_own(q)
+                    && patch.arms[i].row[k][1] > m
+                {
+                    patch.arms[i].row[k][1] = m;
+                }
+            }
+        }
     }
     Ok(patch)
 }
+
+/// The cross slopes of a blended patch's arms ([`Arm::cross`]): the least
+/// squares plane through the arms' mouths – their heights, and their
+/// grades along them weighted by the mouth's distance – drawn towards a
+/// level plane where the arms leave little to fit (forks: their arms
+/// nearly in a line), and each arm's slope across in it (at most
+/// [`MAX_CROSS`]).
+fn blend_plane(arms: &mut [Arm]) {
+    if arms.len() < 3 {
+        return;
+    }
+    // Rows of [1, x, z] · (h0, gx, gz) = value, with a weight.
+    let c = arms.iter().fold([0.0, 0.0], |s, a| add(s, a.centre));
+    let c = mul(c, 1.0 / arms.len() as f64);
+    let mut m = [[0.0f64; 3]; 3];
+    let mut b = [0.0f64; 3];
+    let mut row = |r: [f64; 3], v: f64, w: f64| {
+        for i in 0..3 {
+            for j in 0..3 {
+                m[i][j] += w * r[i] * r[j];
+            }
+            b[i] += w * r[i] * v;
+        }
+    };
+    let mut ridge = 0.0;
+    for a in arms.iter() {
+        let q = sub(a.centre, c);
+        row([1.0, q[0], q[1]], a.h, 1.0);
+        let l = a.mouth_m.max(1.0);
+        row([0.0, a.t[0], a.t[1]], a.grade, l * l);
+        ridge += 0.25 * l * l;
+    }
+    m[1][1] += ridge;
+    m[2][2] += ridge;
+    let det = |m: &[[f64; 3]; 3]| {
+        m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+    };
+    let d = det(&m);
+    if d.abs() < 1e-12 {
+        return;
+    }
+    let solve = |k: usize| {
+        let mut mk = m;
+        for (i, r) in mk.iter_mut().enumerate() {
+            r[k] = b[i];
+        }
+        det(&mk) / d
+    };
+    let grad = [solve(1), solve(2)];
+    for a in arms.iter_mut() {
+        a.cross = dot(grad, side_pos(a.t)).clamp(-MAX_CROSS, MAX_CROSS);
+    }
+}
+
+/// The steepest cross slope a blended patch's arm takes inside it.
+pub const MAX_CROSS: f64 = 0.12;
 
 /// Where side arm `i`'s centre line leaves the through road's carriageway
 /// ([`Patch::main_excess`]): metres from the vertex (within its mouth) and
@@ -1058,6 +1185,18 @@ fn corner_samples(g: &RoadGraph, arm: &Arm, edge_m: f64) -> Vec<(f64, f64)> {
     out.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-9);
     out
 }
+
+/// How far past its mouths a side road's strip is checked against the main
+/// road's carriageway (m, §4.8.8 Q7).
+pub const MAIN_REACH_M: f64 = 40.0;
+
+/// A side road's strip rows within this distance of the main road's
+/// carriageway lie under it too (their quads would reach onto it).
+pub const SIDE_MARGIN_M: f64 = 1.0;
+
+/// A side road's strip lies this far under the main road's surface where
+/// it crosses the main road's carriageway past its mouth (§4.8.8 Q7).
+pub const SIDE_UNDER_M: f64 = 0.03;
 
 /// A side arm's corner needs at least this much room between the main
 /// road's edge and its mouth (m); with less it keeps J2's blend.
@@ -1522,9 +1661,8 @@ fn mesh(patch: &mut Patch) {
     }
     rings.sort_by(|a, b| b.total_cmp(a));
     let nr = rings.len();
-    patch.rings = rings;
     let mut verts = Vec::with_capacity(nr * n + 1);
-    for (j, &r) in patch.rings.iter().enumerate() {
+    for (j, &r) in rings.iter().enumerate() {
         for o in &patch.outline {
             if j == 0 {
                 verts.push(o.p);
@@ -1551,16 +1689,29 @@ fn mesh(patch: &mut Patch) {
             (j * n + k) as u32
         }
     };
+    // Per sector (between outline points k and k + 1) its triangles.
     let mut tris = Vec::with_capacity(2 * n * nr);
-    for j in 0..nr {
-        for k in 0..n {
+    let mut sector = Vec::with_capacity(2 * n * nr);
+    for k in 0..n {
+        for j in 0..nr {
             let k1 = (k + 1) % n;
             let (o0, o1, i0, i1) = (idx(j, k), idx(j, k1), idx(j + 1, k), idx(j + 1, k1));
             tris.push([o0, o1, i1]);
+            sector.push(k);
             if j + 1 < nr {
                 tris.push([o0, i1, i0]);
+                sector.push(k);
             }
         }
+    }
+    // A through road with side roads' corners (§4.8.8 Q6 (d)): the
+    // triangles crossing its carriageway's edge are cut there (§4.8.8 Q7),
+    // so the corners' slope never reaches onto the main road's surface.
+    if patch.through.is_some() {
+        for _ in 0..REFINE_ROUNDS {
+            (tris, sector) = refine_at_main_edge(patch, &mut verts, tris, sector);
+        }
+        (tris, sector) = cut_at_main_edge(patch, &mut verts, tris, sector);
     }
     // Facing up (as the road strips: cross(b − a, c − a).y > 0).
     for t in &mut tris {
@@ -1570,8 +1721,150 @@ fn mesh(patch: &mut Patch) {
             t.swap(1, 2);
         }
     }
+    let mut sectors = vec![Vec::new(); n];
+    for (ti, &k) in sector.iter().enumerate() {
+        sectors[k].push(ti as u32);
+    }
     patch.vertices = verts;
     patch.triangles = tris;
+    patch.sectors = sectors;
+}
+
+/// The triangles near the through road's carriageway edge are halved this
+/// many times before they are cut there (§4.8.8 Q7): the edge of a
+/// cluster's carriageways (the union of their strips) bends inside a
+/// triangle of the star mesh.
+const REFINE_ROUNDS: usize = 2;
+
+/// Splits every triangle side whose corners or middle lie on different
+/// sides of the through road's carriageway edge at its middle (a shared
+/// vertex at the field's height), and each triangle by its split sides
+/// (one: two triangles, two: three, three: four), so the mesh stays
+/// closed. Returns the triangles with their sectors.
+fn refine_at_main_edge(
+    patch: &Patch,
+    verts: &mut Vec<[f64; 3]>,
+    tris: Vec<[u32; 3]>,
+    sector: Vec<usize>,
+) -> (Vec<[u32; 3]>, Vec<usize>) {
+    use std::collections::HashMap;
+    let on = |q: [f64; 3]| on_main(patch, xz(q));
+    let mut mids: HashMap<(u32, u32), Option<u32>> = HashMap::new();
+    for t in &tris {
+        for k in 0..3 {
+            let (a, b) = (t[k], t[(k + 1) % 3]);
+            let key = (a.min(b), a.max(b));
+            if mids.contains_key(&key) {
+                continue;
+            }
+            let (pa, pb) = (verts[a as usize], verts[b as usize]);
+            let m = xz(lerp3(pa, pb, 0.5));
+            let split = on(pa) != on(pb) || on(pa) != on_main(patch, m);
+            let id = split.then(|| {
+                verts.push(at_y(m, patch.field(m)));
+                (verts.len() - 1) as u32
+            });
+            mids.insert(key, id);
+        }
+    }
+    let mid = |a: u32, b: u32| mids[&(a.min(b), a.max(b))];
+    let mut out = Vec::with_capacity(tris.len() * 2);
+    let mut out_sector = Vec::with_capacity(tris.len() * 2);
+    for (t, sec) in tris.into_iter().zip(sector) {
+        let m = [mid(t[0], t[1]), mid(t[1], t[2]), mid(t[2], t[0])];
+        let pieces: Vec<[u32; 3]> = match m {
+            [None, None, None] => vec![t],
+            [Some(a), Some(b), Some(c)] => {
+                vec![[t[0], a, c], [a, t[1], b], [c, b, t[2]], [a, b, c]]
+            }
+            _ => {
+                // Rotate so the first split side is side 0 (t0–t1).
+                let r = (0..3)
+                    .find(|&k| m[k].is_some() && m[(k + 2) % 3].is_none())
+                    .unwrap_or(0);
+                let (v0, v1, v2) = (t[r], t[(r + 1) % 3], t[(r + 2) % 3]);
+                let (m01, m12) = (m[r].expect("split"), m[(r + 1) % 3]);
+                match m12 {
+                    None => vec![[v0, m01, v2], [m01, v1, v2]],
+                    Some(m12) => vec![[v0, m01, v2], [m01, v1, m12], [m01, m12, v2]],
+                }
+            }
+        };
+        for q in pieces {
+            out.push(q);
+            out_sector.push(sec);
+        }
+    }
+    (out, out_sector)
+}
+
+/// On the through road's carriageway (within rounding).
+fn on_main(patch: &Patch, p: P2) -> bool {
+    patch.main_excess(p) <= 1e-6
+}
+
+/// Cuts the triangles that have corners on and off the through road's
+/// carriageway at its edge ([`Patch::main_excess`]): the edge's crossing
+/// of each such triangle side becomes a vertex (shared by both triangles
+/// of the side, at the field's height there: the main road's surface),
+/// the triangle a triangle and a quad. Returns the triangles with their
+/// sectors.
+fn cut_at_main_edge(
+    patch: &Patch,
+    verts: &mut Vec<[f64; 3]>,
+    tris: Vec<[u32; 3]>,
+    sector: Vec<usize>,
+) -> (Vec<[u32; 3]>, Vec<usize>) {
+    let on: Vec<bool> = verts.iter().map(|q| on_main(patch, xz(*q))).collect();
+    let mut cuts: std::collections::HashMap<(u32, u32), u32> = std::collections::HashMap::new();
+    let mut cut = |verts: &mut Vec<[f64; 3]>, a: u32, b: u32| -> u32 {
+        let key = (a.min(b), a.max(b));
+        if let Some(&i) = cuts.get(&key) {
+            return i;
+        }
+        // From the corner on the carriageway to the one off it.
+        let (pa, pb) = if on[key.0 as usize] {
+            (xz(verts[key.0 as usize]), xz(verts[key.1 as usize]))
+        } else {
+            (xz(verts[key.1 as usize]), xz(verts[key.0 as usize]))
+        };
+        let (mut lo, mut hi) = (0.0, 1.0);
+        for _ in 0..40 {
+            let mid = 0.5 * (lo + hi);
+            if on_main(patch, add(pa, mul(sub(pb, pa), mid))) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        let x = add(pa, mul(sub(pb, pa), lo));
+        verts.push(at_y(x, patch.field(x)));
+        let i = (verts.len() - 1) as u32;
+        cuts.insert(key, i);
+        i
+    };
+    let mut out = Vec::with_capacity(tris.len() + 16);
+    let mut out_sector = Vec::with_capacity(tris.len() + 16);
+    for (t, k) in tris.into_iter().zip(sector) {
+        let s = t.map(|i| on[i as usize]);
+        if s[0] == s[1] && s[1] == s[2] {
+            out.push(t);
+            out_sector.push(k);
+            continue;
+        }
+        // The corner alone on its side, then the other two in order.
+        let lone = (0..3)
+            .find(|&i| s[i] != s[(i + 1) % 3] && s[i] != s[(i + 2) % 3])
+            .expect("one corner differs");
+        let (a, b, c) = (t[lone], t[(lone + 1) % 3], t[(lone + 2) % 3]);
+        let xab = cut(verts, a, b);
+        let xac = cut(verts, a, c);
+        for piece in [[a, xab, xac], [xab, b, c], [xab, c, xac]] {
+            out.push(piece);
+            out_sector.push(k);
+        }
+    }
+    (out, out_sector)
 }
 
 // --- mitres -------------------------------------------------------------------
@@ -2376,12 +2669,97 @@ impl JunctionSet {
         if items.len() < 2 {
             return Some(Shaped::default());
         }
-        let points: Vec<[f32; 3]> = items.iter().map(|it| it.1).collect();
-        let rows: Vec<[[f32; 3]; 2]> = items
+        // §4.8.8 Q7: a side road's strip gets a row every 0.5 m wherever
+        // it comes near the main road's carriageway (past its mouth, up to
+        // `MAIN_REACH_M` on), so it can lie under the main road's surface
+        // exactly as far as it reaches onto it (below), also where the main
+        // road curves under a long quad.
+        for end in &ends {
+            let Some(EndRule::Patch(p, ai)) = end else {
+                continue;
+            };
+            if !p.through.is_some_and(|t| !t.contains(ai)) {
+                continue;
+            }
+            let a = &p.arms[*ai];
+            let near = |c: [f32; 3], d: P2| {
+                let c = [f64::from(c[0]), f64::from(c[2])];
+                let r = side_pos(d);
+                [-1.0, 0.0, 1.0].into_iter().any(|k| {
+                    let q = add(c, mul(r, k * f64::from(half)));
+                    p.main_road_height(g, q, MAIN_REACH_M, SIDE_MARGIN_M)
+                        .is_some()
+                })
+            };
+            let mut extra = Vec::new();
+            for w in items.windows(2) {
+                let ((s0, c0, _), (s1, c1, _)) = (w[0], w[1]);
+                let m0 = if a.at_from { s0 } else { len - s0 };
+                if (s1 - s0).abs() < 0.6 || m0 > a.mouth_m + MAIN_REACH_M {
+                    continue;
+                }
+                let d = unit([f64::from(c1[0] - c0[0]), f64::from(c1[2] - c0[2])]);
+                let steps = ((s1 - s0).abs() / 0.5).floor() as usize;
+                let at = |t: f64| -> [f32; 3] {
+                    std::array::from_fn(|i| c0[i] + (c1[i] - c0[i]) * t as f32)
+                };
+                if !(0..=steps).any(|q| near(at(q as f64 / steps as f64), d)) {
+                    continue;
+                }
+                for q in 1..steps {
+                    let t = q as f64 / steps as f64;
+                    extra.push((s0 + (s1 - s0) * t, at(t), None));
+                }
+            }
+            items.extend(extra);
+        }
+        items.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut points: Vec<[f32; 3]> = items.iter().map(|it| it.1).collect();
+        let mut rows: Vec<[[f32; 3]; 2]> = items
             .iter()
             .enumerate()
             .map(|(i, it)| it.2.unwrap_or_else(|| plain_row(&points, i, half)))
             .collect();
+        // §4.8.8 Q7: a side road's strip never stands above (or on) the
+        // main road's carriageway where it crosses it past its mouth (a
+        // narrow side road whose mouth lies on the main road): there it
+        // lies under the main road's surface, which is drawn.
+        for end in &ends {
+            let Some(EndRule::Patch(p, ai)) = end else {
+                continue;
+            };
+            if !p.through.is_some_and(|t| !t.contains(ai)) {
+                continue;
+            }
+            let mouth = p.arms[*ai].s_edge(p.arms[*ai].mouth_m);
+            let main_at = |q: &[f32; 3]| {
+                p.main_road_height(
+                    g,
+                    [f64::from(q[0]), f64::from(q[2])],
+                    MAIN_REACH_M,
+                    SIDE_MARGIN_M,
+                )
+            };
+            let on = |q: &[f32; 3]| main_at(q).is_some();
+            let under = |q: &mut [f32; 3]| {
+                let x = [f64::from(q[0]), f64::from(q[2])];
+                if let Some(m) = main_at(q).or_else(|| p.main_own(x)) {
+                    let cap = (m - SIDE_UNDER_M) as f32;
+                    if q[1] > cap {
+                        q[1] = cap;
+                    }
+                }
+            };
+            // A row with a corner on the carriageway lies under it whole (a
+            // row across its edge would rise above it between its corners).
+            for (i, it) in items.iter().enumerate() {
+                if (it.0 - mouth).abs() < 1e-6 || !rows[i].iter().any(on) {
+                    continue;
+                }
+                rows[i].iter_mut().for_each(under);
+                under(&mut points[i]);
+            }
+        }
         // 3D length cut off each end, along the original points.
         let mut cum3 = vec![0.0f64; n];
         for i in 1..n {

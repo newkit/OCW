@@ -475,6 +475,53 @@ fn lint_junctions(pkg: &WorldPackage, g: &ocw_world::graph::RoadGraph, r: &mut L
         .entry("junction.measured".to_string())
         .or_default()
         .count = found.len();
+    // The sides of the junctions (4.8.8 Rule): listed also when none.
+    for k in ["gap", "step", "kink", "corner"] {
+        r.tallies.entry(format!("side.{k}")).or_default();
+    }
+    for f in crate::junctions::side_faults(pkg, g) {
+        let unit = match f.kind {
+            "kink" => "points",
+            "corner" => "degrees",
+            _ => "m",
+        };
+        r.add(
+            &format!("side.{}", f.kind),
+            1.0,
+            case(
+                f.at,
+                f.value,
+                0,
+                format!("vertex {}, {:.2} {unit}", f.vertex, f.value),
+            ),
+        );
+    }
+    // A side road's surface above the main road's at the mouth (Q7),
+    // listed also when none is found.
+    r.tallies
+        .entry("junction.mouth.above_main".to_string())
+        .or_default();
+    for m in crate::junctions::mouths_above_main(pkg, g) {
+        let note = format!(
+            "vertex {}, {} {:.2} m above the main road",
+            m.vertex,
+            match g.edges.get(m.edge) {
+                Some(e) => format!("edge {} (w{})", m.edge, e.osm_way),
+                None => "the junction surface".to_string(),
+            },
+            m.above_m
+        );
+        r.add(
+            "junction.mouth.above_main",
+            1.0,
+            case(m.at, m.above_m, 0, note.clone()),
+        );
+        r.add(
+            &format!("junction.mouth.above_main.{}", m.cause),
+            1.0,
+            case(m.at, m.above_m, 0, note),
+        );
+    }
     for (v, why) in without {
         let key: String = why
             .chars()

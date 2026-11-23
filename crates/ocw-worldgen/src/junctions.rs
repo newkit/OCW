@@ -224,6 +224,10 @@ pub struct ReconcileStats {
     /// Samples set on the longer blends of side roads whose blend the
     /// edge's length cut short (first round).
     pub longer_blend_samples: usize,
+    /// Blended junctions laid on their plane and the samples set on it and
+    /// on the curves from it (first round; spec §4.8.8 Q7 (c)).
+    pub planes: usize,
+    pub plane_samples: usize,
     /// Profile intervals steeper than their class limit + 1 % after the
     /// blend, before re-limiting (all causes).
     pub steep_before: usize,
@@ -486,6 +490,8 @@ fn edge_blend(
     if l < 1.0 {
         return Vec::new();
     }
+    // At its own grade from the edge; the crease there is rounded with the
+    // grade limits ([`round_creases`], Q7 (b)).
     let (g0, p1, g1) = (slope(m0), own(m0 + l), slope(m0 + l));
     let mut out = Vec::new();
     for i in 0..n {
@@ -500,6 +506,211 @@ fn edge_blend(
     out
 }
 
+/// A blended junction's surface is one plane (spec §4.8.8 Q7 (c)) and each
+/// road turns from it to its own grade over this many metres past the
+/// junction surface at least and at most.
+pub const PLANE_BLEND_MIN_M: f64 = 10.0;
+pub const PLANE_BLEND_MAX_M: f64 = 20.0;
+
+/// The plane through a blended junction (no through road, Q1): the least
+/// squares fit to each arm's own profile at its mouth and 5 m on (height
+/// and the arm's line), its gradient limited to the steepest class grade
+/// of its roads. Returns (height at the patch's centre, gradient x, z).
+fn junction_plane(g: &RoadGraph, p: &Patch) -> Option<(f64, f64, f64)> {
+    let c = [p.centre[0], p.centre[2]];
+    let mut pts: Vec<([f64; 2], f64)> = Vec::new();
+    let mut lim = 0.0f64;
+    for a in &p.arms {
+        let e = &g.edges[a.edge];
+        let cum = cumulative(&e.points);
+        for m in [a.mouth_m, (a.mouth_m + PROFILE_STEP_M).min(a.len)] {
+            let s = a.s_edge(m);
+            let q = frame_at(&e.points, &cum, s).0;
+            pts.push((q, e.height_at(s)?));
+        }
+        lim = lim.max(limits(a.class).0);
+    }
+    if pts.len() < 3 {
+        return None;
+    }
+    // Normal equations of h = h0 + gx·dx + gz·dz, with a small ridge on
+    // the gradient (two arms in a line leave the cross slope free: 0).
+    let mut m = [[0.0f64; 3]; 3];
+    let mut b = [0.0f64; 3];
+    for (q, h) in &pts {
+        let r = [1.0, q[0] - c[0], q[1] - c[1]];
+        for i in 0..3 {
+            for j in 0..3 {
+                m[i][j] += r[i] * r[j];
+            }
+            b[i] += r[i] * h;
+        }
+    }
+    let ridge = 1e-3 * (m[1][1] + m[2][2]).max(1.0);
+    m[1][1] += ridge;
+    m[2][2] += ridge;
+    let det = |m: &[[f64; 3]; 3]| {
+        m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+    };
+    let d = det(&m);
+    if d.abs() < 1e-12 {
+        return None;
+    }
+    let solve = |k: usize| {
+        let mut mk = m;
+        for i in 0..3 {
+            mk[i][k] = b[i];
+        }
+        det(&mk) / d
+    };
+    let (h0, mut gx, mut gz) = (solve(0), solve(1), solve(2));
+    let gl = gx.hypot(gz);
+    if gl > lim && gl > 0.0 {
+        gx *= lim / gl;
+        gz *= lim / gl;
+    }
+    // The height at the centre with the limited gradient (the mean of the
+    // fit points' residuals).
+    let mean = pts
+        .iter()
+        .map(|(q, h)| h - gx * (q[0] - c[0]) - gz * (q[1] - c[1]))
+        .sum::<f64>()
+        / pts.len() as f64;
+    let _ = h0;
+    Some((mean, gx, gz))
+}
+
+/// The blended junctions' smoother surface (spec §4.8.8 Q7 (c)): at each
+/// junction without a through road (equal crossings, Y junctions, forks)
+/// every road's profile from the vertex to the first sample past its
+/// mouth lies on the junction's plane ([`junction_plane`]) – the patch
+/// made from them is that plane – and from there it turns to its own
+/// height and grade along a cubic Hermite curve of 10 – 20 m (by the
+/// height and the grade it has to make up, up to one sample before the
+/// other end's junction). Clusters keep the surface of J3 (their edges
+/// inside are nodes of it). Per junction the samples set: (edge, sample,
+/// height).
+fn blended_planes(
+    g: &RoadGraph,
+    js: &JunctionSet,
+    keep: &(dyn Fn(usize, f64) -> bool + Sync),
+) -> Vec<Vec<(usize, usize, f64)>> {
+    use ocw_world::junction::BLEND_RATE;
+    let verts: Vec<usize> = (0..g.vertices.len()).collect();
+    crate::par::map(&verts, crate::par::threads(), |&v| {
+        let mut out = Vec::new();
+        let Some(p) = js.own_patch(g, v) else {
+            return out;
+        };
+        // Clusters keep their surface (their edges inside are nodes of it).
+        if p.through.is_some() || p.arms.len() < 2 || p.members.len() > 1 {
+            return out;
+        }
+        let Some((h0, gx, gz)) = junction_plane(g, p) else {
+            return out;
+        };
+        let c = [p.centre[0], p.centre[2]];
+        let plane = |q: [f64; 2]| h0 + gx * (q[0] - c[0]) + gz * (q[1] - c[1]);
+        // Every road on the plane and its curve, or none (a junction whose
+        // plane one road cannot reach within its class grade – or the
+        // grade it has – keeps the surface of J3: no `junction_room`
+        // gained, spec §4.8.8 Q7 follow-up).
+        for a in &p.arms {
+            let e = &g.edges[a.edge];
+            let n = e.profile.len();
+            if n < 2 {
+                continue;
+            }
+            let len = a.len;
+            let cum = cumulative(&e.points);
+            // Samples by distance from this vertex.
+            let m_of = |i: usize| {
+                let s = sample_m(i, len);
+                if a.at_from { s } else { len - s }
+            };
+            let idx: Vec<usize> = if a.at_from {
+                (0..n).collect()
+            } else {
+                (0..n).rev().collect()
+            };
+            // The first sample past the mouth: still on the plane.
+            let Some(k1) = idx.iter().position(|&i| m_of(i) > a.mouth_m + 1e-6) else {
+                return Vec::new();
+            };
+            let k = usize::from(a.at_from);
+            let other = js.reach(g, a.edge)[k];
+            let room_end = len - other - PROFILE_STEP_M;
+            let on_plane = |i: usize| plane(frame_at(&e.points, &cum, sample_m(i, len)).0);
+            if idx[..=k1]
+                .iter()
+                .any(|&i| m_of(i) > room_end + 1e-6 || !keep(a.edge, sample_m(i, len)))
+            {
+                return Vec::new();
+            }
+            // From there the curve to the road's own profile.
+            let i1 = idx[k1];
+            let m1 = m_of(i1);
+            let h1 = on_plane(i1);
+            let own = |m: f64| e.height_at(a.s_edge(m.clamp(0.0, len))).unwrap_or(h1);
+            let own_slope = |m: f64| (own(m + 0.05) - own(m)) / 0.05;
+            let slope1 = {
+                let d = 0.05;
+                let q0 = frame_at(&e.points, &cum, a.s_edge(m1)).0;
+                let q1 = frame_at(&e.points, &cum, a.s_edge((m1 + d).min(len))).0;
+                (plane(q1) - plane(q0)) / d
+            };
+            let want = ((own(m1) - h1).abs() / BLEND_RATE)
+                .max((own_slope(m1) - slope1).abs() / crate::junctions::CREASE_RATE)
+                .clamp(PLANE_BLEND_MIN_M, PLANE_BLEND_MAX_M);
+            // The end: a sample at least `want` on, before the room ends.
+            let Some(k2) = idx[k1 + 1..]
+                .iter()
+                .position(|&i| m_of(i) >= m1 + want - 1e-6)
+                .map(|x| x + k1 + 1)
+            else {
+                return Vec::new();
+            };
+            let i2 = idx[k2];
+            let m2 = m_of(i2);
+            if m2 > room_end + 1e-6 {
+                return Vec::new();
+            }
+            let (p2, g2) = (e.profile[i2], own_slope(m2));
+            let l = m2 - m1;
+            let mut arm: Vec<(usize, f64)> = idx[..=k1].iter().map(|&i| (i, on_plane(i))).collect();
+            for &i in &idx[k1 + 1..k2] {
+                if !keep(a.edge, sample_m(i, len)) {
+                    return Vec::new();
+                }
+                let t = (m_of(i) - m1) / l;
+                arm.push((i, hermite(t, h1, slope1 * l, p2, g2 * l)));
+            }
+            arm.push((i2, p2));
+            // Not steeper than the class grade or what the road has there.
+            let new_steep = arm
+                .windows(2)
+                .filter(|w| (m_of(w[1].0) - m_of(w[0].0)).abs() >= 1.0)
+                .map(|w| ((w[1].1 - w[0].1) / (m_of(w[1].0) - m_of(w[0].0))).abs())
+                .fold(0.0f64, f64::max);
+            let old_steep = arm
+                .windows(2)
+                .filter(|w| (m_of(w[1].0) - m_of(w[0].0)).abs() >= 1.0)
+                .map(|w| {
+                    ((e.profile[w[1].0] - e.profile[w[0].0]) / (m_of(w[1].0) - m_of(w[0].0))).abs()
+                })
+                .fold(0.0f64, f64::max);
+            if new_steep > limits(a.class).0.max(old_steep) + 1e-6 {
+                return Vec::new();
+            }
+            arm.pop();
+            out.extend(arm.into_iter().map(|(i, h)| (a.edge, i, h)));
+        }
+        out
+    })
+}
+
 /// Cubic Hermite on [0, 1].
 fn hermite(t: f64, p0: f64, m0: f64, p1: f64, m1: f64) -> f64 {
     let (t2, t3) = (t * t, t * t * t);
@@ -507,6 +718,36 @@ fn hermite(t: f64, p0: f64, m0: f64, p1: f64, m1: f64) -> f64 {
         + (t3 - 2.0 * t2 + t) * m0
         + (-2.0 * t3 + 3.0 * t2) * p1
         + (t3 - t2) * m1
+}
+
+/// A side road's crease is rounded into a vertical curve this long at
+/// least and at most (m; spec §4.8.8 Q7 (b)), changing its grade by at
+/// most [`CREASE_RATE`] per metre where it can.
+pub const CREASE_MIN_M: f64 = 5.0;
+pub const CREASE_MAX_M: f64 = 10.0;
+pub const CREASE_RATE: f64 = 0.015;
+
+/// The vertical curve's length for a change of grade `dg` (Q7 (b)).
+pub fn crease_curve_m(dg: f64) -> f64 {
+    (dg.abs() / CREASE_RATE).clamp(CREASE_MIN_M, CREASE_MAX_M)
+}
+
+/// The main road's slope (its own surface, outward along the side road)
+/// where side arm `a` leaves its carriageway (Q6 (d)'s edge point);
+/// `None` for an arm without a corner or one leaving from a cluster vertex
+/// off the main road's carriageway (no crease there).
+fn main_slope_out(g: &RoadGraph, p: &Patch, a: &ocw_world::junction::Arm) -> Option<f64> {
+    if !a.has_corner() || a.edge_m < 0.01 {
+        return None;
+    }
+    let e = &g.edges[a.edge];
+    let cum = cumulative(&e.points);
+    let (_, fwd) = frame_at(&e.points, &cum, a.s_edge(a.edge_m));
+    let out = if a.at_from { fwd } else { [-fwd[0], -fwd[1]] };
+    let d = 0.05;
+    let q = a.edge_p;
+    let f = |k: f64| p.main_own([q[0] + out[0] * d * k, q[1] + out[1] * d * k]);
+    Some((f(1.0)? - f(-1.0)?) / (2.0 * d))
 }
 
 /// The drawn height on edge `ei` at `s` (point `c`) from the patch `p`'s
@@ -609,15 +850,20 @@ fn reconcile_rounds(
         let drawn = drawn_samples(graph, &js, keep);
         // First round: the side roads whose blend the edge's length cut
         // short get the blend they need in their profile.
-        let blends = if first {
+        let mut blends = if first {
             longer_blends(graph, &js, keep)
         } else {
             Vec::new()
         };
-        drop(js);
         if first {
             st.longer_blend_samples = blends.iter().map(Vec::len).sum();
+            // Q7 (c): the blended junctions' plane and the curves from it.
+            let planes = blended_planes(graph, &js, keep);
+            st.planes = planes.iter().filter(|p| !p.is_empty()).count();
+            st.plane_samples = planes.iter().map(Vec::len).sum();
+            blends.extend(planes);
         }
+        drop(js);
         // A sample both ends reach (the middle of a short edge): the mean.
         let mut by: BTreeMap<(usize, usize), (f64, u32)> = BTreeMap::new();
         for (e, i, h) in drawn {
@@ -679,6 +925,11 @@ pub struct Fixed {
     /// The mouths (of `mouths`) where a side road leaves the main road's
     /// edge at its own grade (Q6 (d)): a crease, no grade carried on.
     pub creases: Vec<f64>,
+    /// Per crease (metres from the `from` vertex) the main road's slope
+    /// there along the edge (rising towards its `to` end) and the side the
+    /// road goes on to (+1: towards `to`): rounded into a vertical curve
+    /// (Q7 (b)). Creases at a cluster vertex off the main road have none.
+    pub crease_grades: Vec<(f64, f64, f64)>,
 }
 
 /// What the re-limiting keeps on edge `ei`: both vertex samples (the
@@ -702,6 +953,7 @@ pub fn fixed_samples(
             mouths: Vec::new(),
             drawn: Vec::new(),
             creases: Vec::new(),
+            crease_grades: Vec::new(),
         };
     }
     let len = e.length_m();
@@ -709,6 +961,7 @@ pub fn fixed_samples(
     let mut mouths = Vec::new();
     let mut drawn = Vec::new();
     let mut creases = Vec::new();
+    let mut crease_grades = Vec::new();
     let mut cum = None;
     if js
         .ends(g, ei)
@@ -721,6 +974,7 @@ pub fn fixed_samples(
             mouths: Vec::new(),
             drawn: Vec::new(),
             creases: Vec::new(),
+            crease_grades: Vec::new(),
         };
     }
     for (k, end) in js.ends(g, ei).iter().enumerate() {
@@ -744,6 +998,11 @@ pub fn fixed_samples(
                     mouths.push((s, h));
                     if corner {
                         creases.push(s);
+                        if let Some(gm) = main_slope_out(g, p, a) {
+                            // Outward is towards `to` from the `from` end.
+                            let dir = if k == 0 { 1.0 } else { -1.0 };
+                            crease_grades.push((s, gm * dir, dir));
+                        }
                     }
                 }
                 let cum = cum.get_or_insert_with(|| cumulative(&e.points));
@@ -775,6 +1034,7 @@ pub fn fixed_samples(
         mouths,
         drawn,
         creases,
+        crease_grades,
     }
 }
 
@@ -788,6 +1048,8 @@ struct Marked {
     orig: Vec<Option<usize>>,
     /// A crease at the point ([`Fixed::creases`]).
     crease: Vec<bool>,
+    /// Its main road's slope (along the edge) and the side it goes on to.
+    crease_grade: Vec<Option<(f64, f64)>>,
 }
 
 fn with_mouths(p: &[f64], d: &[f64], f: &Fixed) -> Marked {
@@ -811,12 +1073,25 @@ fn with_mouths(p: &[f64], d: &[f64], f: &Fixed) -> Marked {
         pts.push((s, h, true, None, crease));
     }
     pts.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let crease_grade = pts
+        .iter()
+        .map(|q| {
+            if !q.4 {
+                return None;
+            }
+            f.crease_grades
+                .iter()
+                .find(|c| (c.0 - q.0).abs() < 0.05)
+                .map(|c| (c.1, c.2))
+        })
+        .collect();
     Marked {
         heights: pts.iter().map(|q| q.1).collect(),
         dist: pts.iter().map(|q| q.0).collect(),
         fixed: pts.iter().map(|q| q.2).collect(),
         orig: pts.iter().map(|q| q.3).collect(),
         crease: pts.iter().map(|q| q.4).collect(),
+        crease_grade,
     }
 }
 
@@ -1069,6 +1344,142 @@ fn round_kinks_fixed(
     }
 }
 
+/// Rounds each crease (spec §4.8.8 Q7 (b)): from the crease point (fixed,
+/// on the main road's edge) the profile leaves with the main road's slope
+/// `gm` (along the edge) and turns to its own grade (its mean grade over
+/// the next 10 m) along a parabola – a vertical curve of
+/// [`crease_curve_m`], 5 – 10 m. The curve ends lower or higher than the
+/// road did there; the difference is spread over the road beyond as a
+/// slightly steeper or gentler stretch (within the class grade
+/// `max_grade` where the road has room, else up to the next fixed point),
+/// so the road keeps its heights farther on. With a fixed point within
+/// the curve, a cubic Hermite curve to it. Only free points move. Returns
+/// whether anything moved.
+pub fn round_creases(
+    p: &mut [f64],
+    d: &[f64],
+    fixed: &[bool],
+    crease: &[Option<(f64, f64)>],
+    max_grade: f64,
+) -> bool {
+    let n = p.len();
+    let mut moved = false;
+    for c in 0..n {
+        let Some((gm, dir)) = crease[c] else {
+            continue;
+        };
+        // The points from the crease on, outward, with their distance.
+        let mut seq: Vec<(usize, f64)> = Vec::new();
+        let mut i = c;
+        loop {
+            let nx = if dir > 0.0 {
+                (i + 1 < n).then_some(i + 1)
+            } else {
+                i.checked_sub(1)
+            };
+            let Some(nx) = nx else { break };
+            seq.push((nx, (d[nx] - d[c]) * dir));
+            if fixed[nx] {
+                break;
+            }
+            i = nx;
+        }
+        let Some(&(last, u_last)) = seq.last() else {
+            continue;
+        };
+        if seq.len() < 2 || u_last < 1.0 {
+            continue;
+        }
+        let gm_out = gm * dir;
+        let h0 = p[c];
+        // The road's height `u` metres out (between its points).
+        let orig: Vec<(f64, f64)> = std::iter::once((0.0, h0))
+            .chain(seq.iter().map(|&(k, u)| (u, p[k])))
+            .collect();
+        let at = |u: f64| -> f64 {
+            let k = orig.partition_point(|q| q.0 <= u).clamp(1, orig.len() - 1);
+            let ((u0, a), (u1, b)) = (orig[k - 1], orig[k]);
+            if u1 - u0 < 1e-9 {
+                b
+            } else {
+                a + (b - a) * ((u - u0) / (u1 - u0)).clamp(0.0, 1.0)
+            }
+        };
+        let reach = 10.0f64.min(u_last);
+        let g1 = (at(reach) - h0) / reach;
+        // The steepest the stretch may get: the class grade, or what it
+        // has already (the curve never makes it steeper than that – no
+        // `junction_room` gained, spec §4.8.8 Q7 follow-up).
+        let steepest = |t: &[f64]| -> f64 {
+            let mut prev = (0.0, h0);
+            let mut worst = 0.0f64;
+            for (&(_, u), &h) in seq.iter().zip(t) {
+                if u - prev.0 >= 1.0 {
+                    worst = worst.max(((h - prev.1) / (u - prev.0)).abs());
+                }
+                prev = (u, h);
+            }
+            worst
+        };
+        let orig_h: Vec<f64> = seq.iter().map(|&(k, _)| p[k]).collect();
+        let allowed = max_grade.max(steepest(&orig_h)) + 1e-6;
+        let shape = |lc: f64| -> Vec<f64> {
+            let mut target: Vec<f64> = Vec::with_capacity(seq.len());
+            if u_last <= lc + 1.0 {
+                // No room past the curve: a Hermite curve to the fixed point.
+                let ge = if seq.len() >= 2 {
+                    let (ua, ub) = (seq[seq.len() - 2].1, u_last);
+                    (p[last] - p[seq[seq.len() - 2].0]) / (ub - ua).max(1e-9)
+                } else {
+                    g1
+                };
+                for &(_, u) in &seq {
+                    let t = u / u_last;
+                    target.push(hermite(t, h0, gm_out * u_last, p[last], ge * u_last));
+                }
+            } else {
+                let curve = |u: f64| h0 + gm_out * u + (g1 - gm_out) * u * u / (2.0 * lc);
+                let delta = at(lc) - curve(lc);
+                // Spread the difference beyond the curve, fading out
+                // smoothly (no kink where it starts or ends): at most 1.5
+                // times its mean extra grade, within the class grade where
+                // there is room.
+                let head = (max_grade - g1.abs()).max(0.01);
+                let spread = (1.5 * delta.abs() / head).max(3.0 * lc).min(u_last - lc);
+                for &(k, u) in &seq {
+                    target.push(if u <= lc {
+                        curve(u)
+                    } else if u < lc + spread {
+                        let x = (u - lc) / spread;
+                        p[k] - delta * (1.0 - x * x * (3.0 - 2.0 * x))
+                    } else {
+                        p[k]
+                    });
+                }
+            }
+            target
+        };
+        // The curve for the change of grade; shorter (down to 5 m) where
+        // that would leave the road steeper than allowed; none where even
+        // that would (the crease of Q6 (d) stays).
+        let full = crease_curve_m(g1 - gm_out);
+        let Some(target) = [full, CREASE_MIN_M]
+            .into_iter()
+            .map(&shape)
+            .find(|t| steepest(t) <= allowed)
+        else {
+            continue;
+        };
+        for (&(k, _), &h) in seq.iter().zip(&target) {
+            if !fixed[k] && (h - p[k]).abs() > 1e-6 {
+                p[k] = h;
+                moved = true;
+            }
+        }
+    }
+    moved
+}
+
 /// Whether a profile needs re-limiting: an interval steeper than its
 /// class limit, or a kink above the lint's 8 points at a free sample.
 fn needs_relimit(p: &[f64], d: &[f64], fixed: Option<&[bool]>, max_grade: f64) -> bool {
@@ -1105,8 +1516,13 @@ pub fn relimit_grades(
         let len = e.length_m();
         let d: Vec<f64> = (0..n).map(|i| sample_m(i, len)).collect();
         let (max_grade, max_change) = limits(e.class);
-        // The cheap test first (no junction lookups for the good roads).
-        if !needs_relimit(&e.profile, &d, None, max_grade) {
+        // The cheap test first (no junction lookups for the good roads),
+        // except at a side road's crease (rounded always, Q7 (b)).
+        let creased = js
+            .ends(g, ei)
+            .iter()
+            .any(|end| matches!(end, Some(EndRule::Patch(p, i)) if p.arms[*i].has_corner()));
+        if !creased && !needs_relimit(&e.profile, &d, None, max_grade) {
             return None;
         }
         let f = fixed_samples(g, &js, ei, keep);
@@ -1116,10 +1532,15 @@ pub fn relimit_grades(
             .iter()
             .any(|&(i, h)| (e.profile[i] - h).abs() > 1e-3);
         let (mut p, d2, fx) = (mk.heights, mk.dist, mk.fixed);
-        if !off && !needs_relimit(&p, &d2, Some(&fx), max_grade) {
+        let mut rounded = p.clone();
+        let creases = round_creases(&mut rounded, &d2, &fx, &mk.crease_grade, max_grade);
+        if !off && !creases && !needs_relimit(&p, &d2, Some(&fx), max_grade) {
             return None;
         }
         relimit_profile_creased(&mut p, &d2, &fx, &mk.crease, max_grade, max_change);
+        if round_creases(&mut p, &d2, &fx, &mk.crease_grade, max_grade) {
+            clamp_grades(&mut p, &d2, &fx, max_grade);
+        }
         let mut out = e.profile.clone();
         for (h, o) in p.iter().zip(&mk.orig) {
             if let Some(i) = o {
@@ -1595,6 +2016,211 @@ pub fn seams(pkg: &WorldPackage, g: &RoadGraph) -> (Vec<Seam>, Vec<(usize, &'sta
     (out, without)
 }
 
+/// A side road's surface standing above the main road's drawn surface
+/// (spec §4.8.8 Q7: never above the main road at the mouth).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MouthAbove {
+    pub vertex: usize,
+    /// How far above the main road's own surface (m) at its worst point.
+    pub above_m: f64,
+    pub at: [f64; 2],
+    /// `mesh`: the junction surface pulled above the main road's own
+    /// surface on its carriageway (a corner's slope reaching onto it);
+    /// `strip`: a side road's strip lying over the main road's carriageway.
+    pub cause: &'static str,
+    /// The side road (edge) at the worst point (`usize::MAX`: the patch).
+    pub edge: usize,
+}
+
+/// More than this above the main road's surface (m) is a finding.
+pub const MOUTH_ABOVE_M: f64 = 0.02;
+
+/// Where a side road's drawn surface stands above (or pokes through) the
+/// main road's drawn surface at a junction with a through road (spec
+/// §4.8.8 Q7): sampled every 0.2 m over the main road's carriageway at the
+/// patch (its two arms from the vertex to 1 m past their mouths) and over
+/// the main arms' strips within the disc of the seam lint – the junction
+/// surface's mesh against the main road's own surface there (`mesh`), the
+/// side roads' strips (as `shape_strip` draws them) against the main
+/// road's drawn surface (`strip`). One finding per junction, its worst
+/// point.
+pub fn mouths_above_main(pkg: &WorldPackage, g: &RoadGraph) -> Vec<MouthAbove> {
+    let js = match pkg.junctions.as_ref() {
+        Some(j) => JunctionSet::with_index(g, j.index_for(g)),
+        None => JunctionSet::new(g),
+    };
+    let stored = pkg.junctions.as_ref().and_then(|j| j.strip_edges_for(g));
+    let edges_owned;
+    let edges = match stored {
+        Some(s) => s,
+        None => {
+            edges_owned = strip_edges_of(pkg, g);
+            &edges_owned
+        }
+    };
+    let mut by_edge: HashMap<u32, Vec<(ocw_world::TileKey, usize)>> = HashMap::new();
+    for (key, tile) in &pkg.tiles {
+        if let Some(ix) = edges.tile(*key, tile.roads.len()) {
+            for (i, &e) in ix.iter().enumerate() {
+                if e != NO_EDGE {
+                    by_edge.entry(e).or_default().push((*key, i));
+                }
+            }
+        }
+    }
+    let verts: Vec<usize> = (0..g.vertices.len()).collect();
+    let per = crate::par::map(&verts, crate::par::threads(), |&v| {
+        let p = js.own_patch(g, v)?;
+        let [ma, mb] = p.through?;
+        if p.arms.len() < 3 {
+            return None;
+        }
+        let main_edges = [p.arms[ma].edge, p.arms[mb].edge];
+        let c = [p.centre[0], p.centre[2]];
+        let mut r = p.arms.iter().map(|a| a.half).fold(0.0, f64::max) + MARGIN_M;
+        for o in &p.outline {
+            r = r.max((o.p[0] - c[0]).hypot(o.p[2] - c[1]) + 1.0);
+        }
+        // The strips of the arms (shaped as drawn): (triangle, edge).
+        let mut tris: Vec<([[f64; 3]; 3], usize)> = Vec::new();
+        for a in &p.arms {
+            let ei = a.edge;
+            for &(key, si) in by_edge.get(&(ei as u32)).into_iter().flatten() {
+                let s = &pkg.tiles[&key].roads[si];
+                if !s
+                    .points
+                    .iter()
+                    .any(|q| (f64::from(q[0]) - c[0]).hypot(f64::from(q[2]) - c[1]) < r + 8.0)
+                {
+                    continue;
+                }
+                let half = s.width_m / 2.0;
+                let rows = match js.shape_strip(g, ei, &s.points, half) {
+                    Some(sh) => sh.rows,
+                    None => (0..s.points.len())
+                        .map(|i| plain_row(&s.points, i, half))
+                        .collect(),
+                };
+                for w in rows.windows(2) {
+                    let [l0, r0] = w[0].map(|q| q.map(f64::from));
+                    let [l1, r1] = w[1].map(|q| q.map(f64::from));
+                    tris.push(([l0, r0, l1], ei));
+                    tris.push(([r0, r1, l1], ei));
+                }
+            }
+        }
+        let ck = |x: f64| x.floor() as i64;
+        let mut cells: HashMap<(i64, i64), Vec<u32>> = HashMap::new();
+        for (i, (t, _)) in tris.iter().enumerate() {
+            let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
+            for q in t {
+                lo = [lo[0].min(q[0]), lo[1].min(q[2])];
+                hi = [hi[0].max(q[0]), hi[1].max(q[2])];
+            }
+            if hi[0] < c[0] - r || lo[0] > c[0] + r || hi[1] < c[1] - r || lo[1] > c[1] + r {
+                continue;
+            }
+            for x in ck(lo[0])..=ck(hi[0]) {
+                for z in ck(lo[1])..=ck(hi[1]) {
+                    cells.entry((x, z)).or_default().push(i as u32);
+                }
+            }
+        }
+        // The patch's triangles with each corner's height above the main
+        // road's own surface (0 on its carriageway, where the mesh is it).
+        let ptris: Vec<([[f64; 3]; 3], [f64; 3])> = p
+            .triangles
+            .iter()
+            .map(|t| {
+                let c3 = t.map(|i| p.vertices[i as usize]);
+                let ex = c3.map(|q| q[1] - p.main_own([q[0], q[2]]).unwrap_or(q[1]));
+                (c3, ex)
+            })
+            .collect();
+        let mut pcells: HashMap<(i64, i64), Vec<u32>> = HashMap::new();
+        for (i, (t, _)) in ptris.iter().enumerate() {
+            let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
+            for q in t {
+                lo = [lo[0].min(q[0]), lo[1].min(q[2])];
+                hi = [hi[0].max(q[0]), hi[1].max(q[2])];
+            }
+            for x in ck(lo[0])..=ck(hi[0]) {
+                for z in ck(lo[1])..=ck(hi[1]) {
+                    pcells.entry((x, z)).or_default().push(i as u32);
+                }
+            }
+        }
+        let steps = (2.0 * r / SAMPLE_M).ceil() as usize;
+        let mut worst: Option<MouthAbove> = None;
+        for iz in 0..=steps {
+            for ix in 0..=steps {
+                let q = [
+                    c[0] - r + ix as f64 * SAMPLE_M,
+                    c[1] - r + iz as f64 * SAMPLE_M,
+                ];
+                if (q[0] - c[0]).hypot(q[1] - c[1]) > r {
+                    continue;
+                }
+                // The main road's drawn surface here, and the highest side
+                // road surface.
+                let on_main = p.main_excess(q) <= 0.0;
+                let mut main_h = None;
+                let mut side: Option<(f64, usize)> = None;
+                if on_main {
+                    main_h = p.height_at(q).or_else(|| p.main_own(q));
+                    // The junction surface's triangle here: how far its
+                    // corners off the carriageway (a side road's corner)
+                    // lift it above the main road's own surface.
+                    for &ti in pcells.get(&(ck(q[0]), ck(q[1]))).into_iter().flatten() {
+                        let (t, ex) = &ptris[ti as usize];
+                        if let Some(l) = bary(t, q) {
+                            let leak = l[0] * ex[0] + l[1] * ex[1] + l[2] * ex[2];
+                            if leak > MOUTH_ABOVE_M
+                                && worst.as_ref().is_none_or(|w| leak > w.above_m)
+                            {
+                                worst = Some(MouthAbove {
+                                    vertex: v,
+                                    above_m: leak,
+                                    at: q,
+                                    cause: "mesh",
+                                    edge: usize::MAX,
+                                });
+                            }
+                            break;
+                        }
+                    }
+                }
+                for &ti in cells.get(&(ck(q[0]), ck(q[1]))).into_iter().flatten() {
+                    let (t, o) = &tris[ti as usize];
+                    let Some(h) = tri_h(t, q) else { continue };
+                    if main_edges.contains(o) {
+                        if !on_main {
+                            main_h = Some(main_h.map_or(h, |m: f64| m.max(h)));
+                        }
+                    } else if side.is_none_or(|s| h > s.0) {
+                        side = Some((h, *o));
+                    }
+                }
+                let (Some(m), Some((h, o))) = (main_h, side) else {
+                    continue;
+                };
+                let above = h - m;
+                if above > MOUTH_ABOVE_M && worst.as_ref().is_none_or(|w| above > w.above_m) {
+                    worst = Some(MouthAbove {
+                        vertex: v,
+                        above_m: above,
+                        at: q,
+                        cause: "strip",
+                        edge: o,
+                    });
+                }
+            }
+        }
+        worst
+    });
+    per.into_iter().flatten().collect()
+}
+
 /// Flat across, as `road_mesh` draws an unshaped strip.
 fn plain_row(pts: &[[f32; 3]], i: usize, half: f32) -> [[f32; 3]; 2] {
     let n = pts.len();
@@ -1607,6 +2233,220 @@ fn plain_row(pts: &[[f32; 3]], i: usize, half: f32) -> [[f32; 3]; 2] {
         [p[0] - r[0] * half, p[1], p[2] - r[1] * half],
         [p[0] + r[0] * half, p[1], p[2] + r[1] * half],
     ]
+}
+
+/// A fault of the bands beside a carriageway at a junction (spec §4.8.8
+/// *Rule: the sides of a road are as smooth as the road*).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SideFault {
+    /// `gap`, `step`, `kink` or `corner`.
+    pub kind: &'static str,
+    pub vertex: usize,
+    pub at: [f64; 2],
+    /// The gap (m), the step (m), the change of grade (points) or the bend
+    /// (degrees).
+    pub value: f64,
+}
+
+/// A gap wider than this (m) between a strip's edge and the junction
+/// surface's outline at a mouth corner is a finding.
+pub const SIDE_GAP_M: f64 = 0.01;
+/// A step higher than this (m) between neighbouring side points less than
+/// 0.6 m apart (beyond what the side's grade explains).
+pub const SIDE_STEP_M: f64 = 0.05;
+/// A change of grade of more than this along a side band (points, over
+/// stretches of at least 1 m) beyond the change of the carriageway edge it
+/// belongs to.
+pub const SIDE_KINK: f64 = 8.0;
+/// A bend sharper than this (degrees) between two pieces of a side band,
+/// each at least 0.3 m long.
+pub const SIDE_CORNER_DEG: f64 = 25.0;
+
+/// The sides of every junction surface as the renderer draws them: each
+/// chain of the outline between two mouths (the corner's side band) and
+/// the edges of the arms' strips (their rows' corners) from the mouth on,
+/// as far as the junction reaches and 5 m more. Measured: `gap` – a mouth
+/// corner of the outline that no row of its arm's strip starts at (a
+/// hole); `step` – a jump of the side's height between the outline and the
+/// strip at a mouth corner, or between neighbouring points of a side less
+/// than 0.6 m apart; `kink` – a change of grade along a chain's band over
+/// stretches of at least 1 m above 8 points; `corner` – a bend in plan
+/// above 25° along a chain or where a chain turns into its arm's edge.
+/// One finding per junction and kind, its worst.
+pub fn side_faults(pkg: &WorldPackage, g: &RoadGraph) -> Vec<SideFault> {
+    let js = match pkg.junctions.as_ref() {
+        Some(j) => JunctionSet::with_index(g, j.index_for(g)),
+        None => JunctionSet::new(g),
+    };
+    let stored = pkg.junctions.as_ref().and_then(|j| j.strip_edges_for(g));
+    let edges_owned;
+    let edges = match stored {
+        Some(s) => s,
+        None => {
+            edges_owned = strip_edges_of(pkg, g);
+            &edges_owned
+        }
+    };
+    let mut by_edge: HashMap<u32, Vec<(ocw_world::TileKey, usize)>> = HashMap::new();
+    for (key, tile) in &pkg.tiles {
+        if let Some(ix) = edges.tile(*key, tile.roads.len()) {
+            for (i, &e) in ix.iter().enumerate() {
+                if e != NO_EDGE {
+                    by_edge.entry(e).or_default().push((*key, i));
+                }
+            }
+        }
+    }
+    let verts: Vec<usize> = (0..g.vertices.len()).collect();
+    let per = crate::par::map(&verts, crate::par::threads(), |&v| {
+        let mut out: Vec<SideFault> = Vec::new();
+        let Some(p) = js.own_patch(g, v) else {
+            return out;
+        };
+        let mut worst: HashMap<&'static str, SideFault> = HashMap::new();
+        let mut note = |kind: &'static str, at: [f64; 2], value: f64| {
+            let e = worst.entry(kind).or_insert(SideFault {
+                kind,
+                vertex: v,
+                at,
+                value: 0.0,
+            });
+            if value > e.value {
+                e.at = at;
+                e.value = value;
+            }
+        };
+        // The arms' strips' rows (shaped as drawn).
+        let mut rows_of: HashMap<usize, Vec<Vec<[[f64; 3]; 2]>>> = HashMap::new();
+        for a in &p.arms {
+            for &(key, si) in by_edge.get(&(a.edge as u32)).into_iter().flatten() {
+                let s = &pkg.tiles[&key].roads[si];
+                let half = s.width_m / 2.0;
+                if let Some(sh) = js.shape_strip(g, a.edge, &s.points, half)
+                    && sh.rows.len() >= 2
+                {
+                    rows_of.entry(a.edge).or_default().push(
+                        sh.rows
+                            .iter()
+                            .map(|r| r.map(|q| q.map(f64::from)))
+                            .collect(),
+                    );
+                }
+            }
+        }
+        let xz = |q: [f64; 3]| [q[0], q[2]];
+        let dist = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]);
+        let bend = |a: [f64; 2], b: [f64; 2], c: [f64; 2]| {
+            let (u, w) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
+            let (lu, lw) = (u[0].hypot(u[1]), w[0].hypot(w[1]));
+            if lu < 0.3 || lw < 0.3 {
+                return 0.0;
+            }
+            ((u[0] * w[0] + u[1] * w[1]) / (lu * lw))
+                .clamp(-1.0, 1.0)
+                .acos()
+                .to_degrees()
+        };
+        // The point of the arm's strip edge that starts at corner `c` and
+        // the next one along it (the strip's first row there).
+        let strip_start = |edge: usize, c: [f64; 3]| -> Option<([f64; 3], [f64; 3])> {
+            for rows in rows_of.get(&edge).into_iter().flatten() {
+                for (i, r) in rows.iter().enumerate() {
+                    for k in 0..2 {
+                        if dist(xz(r[k]), xz(c)) < SIDE_GAP_M {
+                            let j = if i == 0 { 1 } else { i - 1 };
+                            return Some((r[k], rows[j][k]));
+                        }
+                    }
+                }
+            }
+            None
+        };
+        for ch in &p.chains {
+            let pts: Vec<[f64; 3]> = ch.points.clone();
+            let n = pts.len();
+            if n < 2 {
+                continue;
+            }
+            // Plan: bends along the chain.
+            for i in 1..n - 1 {
+                let b = bend(xz(pts[i - 1]), xz(pts[i]), xz(pts[i + 1]));
+                if b > SIDE_CORNER_DEG {
+                    note("corner", xz(pts[i]), b);
+                }
+            }
+            // Height: grade changes along the chain over stretches ≥ 1 m.
+            let mut stretch: Vec<(f64, f64)> = Vec::new();
+            let mut acc = (0.0, pts[0][1]);
+            let mut walked = 0.0;
+            for w in pts.windows(2) {
+                walked += dist(xz(w[0]), xz(w[1]));
+                if walked - acc.0 >= 1.0 {
+                    stretch.push(((w[1][1] - acc.1) / (walked - acc.0), walked));
+                    acc = (walked, w[1][1]);
+                }
+            }
+            for w in stretch.windows(2) {
+                let dg = (w[1].0 - w[0].0).abs() * 100.0;
+                if dg > SIDE_KINK {
+                    let i = pts.len() / 2;
+                    note("kink", xz(pts[i.min(n - 1)]), dg);
+                }
+            }
+            // Steps between close points.
+            for w in pts.windows(2) {
+                let d = dist(xz(w[0]), xz(w[1]));
+                if d < 0.6 && (w[1][1] - w[0][1]).abs() > SIDE_STEP_M + 0.25 * d {
+                    note("step", xz(w[1]), (w[1][1] - w[0][1]).abs());
+                }
+            }
+            // Its two ends meet the arms' strips.
+            for (end, inner, arm) in [
+                (pts[0], pts[1], ch.from_arm),
+                (pts[n - 1], pts[n - 2], ch.to_arm),
+            ] {
+                let a = &p.arms[arm];
+                match strip_start(a.edge, end) {
+                    None => {
+                        // A strip may not exist (an arm inside a cluster):
+                        // only arms with strips count.
+                        if rows_of.contains_key(&a.edge) {
+                            note("gap", xz(end), 1.0);
+                        }
+                    }
+                    Some((q, next)) => {
+                        let dh = (q[1] - end[1]).abs();
+                        if dh > 0.02 {
+                            note("step", xz(end), dh);
+                        }
+                        let b = bend(xz(inner), xz(end), xz(next));
+                        if b > SIDE_CORNER_DEG {
+                            note("corner", xz(end), b);
+                        }
+                    }
+                }
+            }
+        }
+        out.extend(worst.into_values());
+        out
+    });
+    per.into_iter().flatten().collect()
+}
+
+/// The barycentric coordinates of `p` in the triangle (xz) `t`, if inside.
+fn bary(t: &[[f64; 3]; 3], p: [f64; 2]) -> Option<[f64; 3]> {
+    let (a, b, c) = ([t[0][0], t[0][2]], [t[1][0], t[1][2]], [t[2][0], t[2][2]]);
+    let cr = |u: [f64; 2], v: [f64; 2]| u[0] * v[1] - u[1] * v[0];
+    let sub = |u: [f64; 2], v: [f64; 2]| [u[0] - v[0], u[1] - v[1]];
+    let d = cr(sub(b, a), sub(c, a));
+    if d.abs() < 1e-12 {
+        return None;
+    }
+    let w1 = cr(sub(p, a), sub(c, a)) / d;
+    let w2 = cr(sub(b, a), sub(p, a)) / d;
+    let w0 = 1.0 - w1 - w2;
+    let e = -1e-4;
+    (w0 >= e && w1 >= e && w2 >= e).then_some([w0, w1, w2])
 }
 
 fn tri_h(t: &[[f64; 3]; 3], p: [f64; 2]) -> Option<f64> {

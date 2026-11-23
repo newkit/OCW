@@ -342,6 +342,31 @@ enum Cmd {
         #[arg(long, value_name = "KEY")]
         sign_key: Option<PathBuf>,
     },
+    /// A light smoothing of the terrain off the roads (spec §4.8.8 Q7 (d),
+    /// v5.52) for an existing package: every grid vertex towards the
+    /// Gaussian mean of its neighbours within the radius, by at most the
+    /// largest change; roads, junction surfaces, water and building sites
+    /// keep their heights (the change fades in beside them) and the terrain
+    /// is settled under the roads again; prints the change (max / mean).
+    /// `package` does the same while cleaning. Every other section as it
+    /// was (the manifest is renewed).
+    SmoothTerrain {
+        /// The package (rewritten in place unless --out is given).
+        #[arg(long)]
+        world: PathBuf,
+        /// Write the package here instead.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// The kernel's radius (m; σ is half of it).
+        #[arg(long, default_value_t = ocw_worldgen::terrain_smooth::RADIUS_M)]
+        radius: f64,
+        /// The largest change of a vertex (m).
+        #[arg(long, default_value_t = ocw_worldgen::terrain_smooth::MAX_CHANGE_M)]
+        max_change: f64,
+        /// Sign the renewed manifest with this signing key.
+        #[arg(long, value_name = "KEY")]
+        sign_key: Option<PathBuf>,
+    },
     /// Fields, plantations and mapped trees (spec §14 Phase 8 T8): the OSM
     /// crops, vineyards, orchards, banana plantations, single trees and
     /// tree rows into the section VEGE of an existing package; the trees of
@@ -1528,6 +1553,10 @@ fn print_reconcile(kinks: usize, rs: &ocw_worldgen::junctions::ReconcileStats) {
         rs.residual_m,
     );
     println!(
+        "junctions: {} blended junctions laid on their plane, {} samples set on it and on the curves from it (Q7 (c))",
+        rs.planes, rs.plane_samples
+    );
+    println!(
         "junctions: the largest difference at edge {} sample {}",
         rs.residual_at.0, rs.residual_at.1
     );
@@ -1812,6 +1841,17 @@ fn package(args: PackageArgs) {
         }
     }
     if clean {
+        // A light smoothing off the roads (spec §4.8.8 Q7 (d)), before the
+        // building sites are levelled; the settling follows below.
+        let (sm, sms) = stage("smooth terrain", || {
+            ocw_worldgen::terrain_smooth::smooth_package_terrain(
+                &mut pkg,
+                ocw_worldgen::terrain_smooth::RADIUS_M,
+                ocw_worldgen::terrain_smooth::MAX_CHANGE_M,
+                false,
+            )
+        });
+        area_report.push(smooth_report(&sm, &sms));
         if let (Some(fps), Some(wt)) = (footprints.as_ref(), water_test.as_ref()) {
             let outlines: Vec<Vec<[f64; 2]>> = fps.0.iter().map(|f| f.outer.clone()).collect();
             let keep = |p: [f64; 2]| road_zone.covers(p, spacing) || wt.is_water(p);
@@ -2807,6 +2847,77 @@ fn junctions(
     });
 }
 
+/// The build log's line of a terrain smoothing.
+fn smooth_report(
+    st: &ocw_worldgen::terrain_smooth::SmoothStats,
+    ss: &ocw_worldgen::clean::SettleStats,
+) -> String {
+    format!(
+        "clean: terrain smoothed off the roads: {} of {} grid vertices changed ({} kept: roads, junction surfaces, water, buildings; {} at the largest change), max {:.3} m, mean {:.4} m over all ({:.4} m over the changed, signed {:+.4} m); settled again: {} vertices lowered (up to {:.2} m)",
+        st.changed,
+        st.vertices,
+        st.kept,
+        st.capped,
+        st.max_change_m,
+        st.mean_change_m,
+        st.mean_changed_m,
+        st.mean_signed_m,
+        ss.vertices_lowered,
+        ss.max_lowered_m
+    )
+}
+
+/// `world-builder smooth-terrain` (spec §4.8.8 Q7 (d)).
+fn smooth_terrain(
+    world: &std::path::Path,
+    out: Option<PathBuf>,
+    radius: f64,
+    max_change: f64,
+    key: Option<&ocw_world::manifest::SigningKeyPair>,
+) {
+    let t = Instant::now();
+    let mut pkg = stage("read package", || read_package(world));
+    let before = std::fs::metadata(world).map_or(0, |m| m.len());
+    let (st, ss) = stage("smooth terrain", || {
+        ocw_worldgen::terrain_smooth::smooth_package_terrain(&mut pkg, radius, max_change, true)
+    });
+    println!("{}", smooth_report(&st, &ss));
+    let path = out.unwrap_or_else(|| world.to_path_buf());
+    let bytes = stage("serialise", || pkg.to_bytes());
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    stage("write", || {
+        std::fs::write(&path, &bytes).unwrap_or_else(|e| {
+            eprintln!("{}: {e}", path.display());
+            std::process::exit(1);
+        })
+    });
+    println!(
+        "{}: {:.1} MB -> {:.1} MB ({:+.3} MB), {:.1} s",
+        path.display(),
+        before as f64 / 1e6,
+        bytes.len() as f64 / 1e6,
+        (bytes.len() as f64 - before as f64) / 1e6,
+        t.elapsed().as_secs_f64()
+    );
+    if path != world {
+        let _ = std::fs::copy(dist::sidecar(world), dist::sidecar(&path));
+    }
+    stage("manifest + hash", || {
+        dist::write_manifest(
+            &path,
+            &dist::ManifestArgs {
+                id: None,
+                name: None,
+                version: None,
+                dem_attribution: Vec::new(),
+            },
+            key,
+        )
+    });
+}
+
 /// Where to look at the obstacles (scenes, checks): rows of road bollards
 /// (three or more within 8 m) and the longest bridges, in package metres.
 fn print_obstacle_examples(pkg: &ocw_world::WorldPackage) {
@@ -3437,6 +3548,22 @@ fn main() {
                 })
             });
             junctions(&world, out, &pbf, key.as_ref());
+            print_stage_profile(None);
+        }
+        Cmd::SmoothTerrain {
+            world,
+            out,
+            radius,
+            max_change,
+            sign_key,
+        } => {
+            let key = sign_key.map(|k| {
+                ocw_worldstore::keys::read_signing_key(&k).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                })
+            });
+            smooth_terrain(&world, out, radius, max_change, key.as_ref());
             print_stage_profile(None);
         }
         Cmd::Obstacles {
