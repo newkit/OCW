@@ -251,6 +251,7 @@ impl ModelView {
     pub fn refresh(&mut self, model: Model, entry: Entry) {
         let Some(o) = &self.open else { return };
         let moved_only = o.entry == entry
+            && o.model.shade_scale() == model.shade_scale()
             && o.model.materials == model.materials
             && o.model.nodes.len() == model.nodes.len()
             && o.model.nodes.iter().zip(&model.nodes).all(|(a, b)| {
@@ -734,8 +735,10 @@ fn hot_reload(time: Res<Time>, mut view: ResMut<ModelView>) {
     }
 }
 
-/// The triangle mesh of a primitive.
-fn tri_mesh(p: &ocw_assets::model::Primitive) -> Mesh {
+/// The triangle mesh of a primitive, its vertex colours × the model's
+/// `shade` scale (`extras.ocw.shade_scale`, spec 15G Q11 (a): the plants
+/// look as in the game).
+fn tri_mesh(p: &ocw_assets::model::Primitive, shade: f32) -> Mesh {
     let mut m = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
@@ -743,7 +746,12 @@ fn tri_mesh(p: &ocw_assets::model::Primitive) -> Mesh {
     m.insert_attribute(Mesh::ATTRIBUTE_POSITION, p.positions.clone());
     m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, p.normals.clone());
     if p.colors.len() == p.positions.len() && !p.colors.is_empty() {
-        m.insert_attribute(Mesh::ATTRIBUTE_COLOR, p.colors.clone());
+        let colors: Vec<[f32; 4]> = p
+            .colors
+            .iter()
+            .map(|c| ocw_assets::model::shaded(*c, shade))
+            .collect();
+        m.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     }
     if p.uvs.len() == p.positions.len() && !p.uvs.is_empty() {
         m.insert_attribute(Mesh::ATTRIBUTE_UV_0, p.uvs.clone());
@@ -893,7 +901,7 @@ fn spawn_model(
                 lines,
             };
             s.commands.spawn((
-                Mesh3d(s.meshes.add(tri_mesh(p))),
+                Mesh3d(s.meshes.add(tri_mesh(p, model.shade_scale()))),
                 MeshMaterial3d(base.clone()),
                 at,
                 prim(None),
@@ -2022,6 +2030,34 @@ mod tests {
             parse(&words("select material frame")),
             Ok(ModelCmd::Select(SelectBy::Material("frame".into())))
         );
+    }
+
+    /// The viewer draws a plant's vertex colours × its shade scale, as the
+    /// game does (15G Q11 (a)): the file keeps them ≤ 1.
+    #[test]
+    fn plant_colours_are_drawn_times_the_shade_scale() {
+        let lib = ModelLibrary::embedded();
+        let m = lib.get("flora/tree-beech-round-a").unwrap();
+        let k = m.shade_scale();
+        assert!(
+            k > 1.0,
+            "the beech's crown is shaded above its paint colour"
+        );
+        let p = &m.nodes[0].primitives[0];
+        let mesh = tri_mesh(p, k);
+        let Some(bevy::mesh::VertexAttributeValues::Float32x4(c)) =
+            mesh.attribute(Mesh::ATTRIBUTE_COLOR)
+        else {
+            panic!("no colours");
+        };
+        for (drawn, stored) in c.iter().zip(&p.colors) {
+            assert!(stored[..3].iter().all(|v| *v <= 1.0));
+            for i in 0..3 {
+                assert!((drawn[i] - stored[i] * k).abs() < 1e-6);
+            }
+            assert_eq!(drawn[3], stored[3]);
+        }
+        assert!(c.iter().any(|d| d[1] > 1.0), "brighter than 1 again");
     }
 
     /// Every committed model opens without an error and with no error

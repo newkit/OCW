@@ -1,0 +1,20 @@
+bf-schauinsland-2026-07-15-far|{BFS}|-5942,568|2026-07-15 13:00|-5942 1000 220 180 -22|flight|
+bf-schauinsland-2026-07-15-near|{BFS}|-5942,568|2026-07-15 13:00|-|chase|1=camera.orbit 150 25 70
+bf-schauinsland-2026-11-23-far|{BFS}|-5942,568|2026-11-23 13:00|-5942 1000 220 180 -22|flight|
+bf-schauinsland-2026-11-23-near|{BFS}|-5942,568|2026-11-23 13:00|-|chase|1=camera.orbit 150 25 70
+li-forest-2026-07-15-far|{LI}|-2430,2220|2026-07-15 13:00|-4250 2600 10 80 -6|flight|
+li-forest-2026-07-15-near|{LI}|-2430,2220|2026-07-15 13:00|-|chase|1=camera.orbit 150 20 60
+li-forest-2026-11-23-far|{LI}|-2430,2220|2026-11-23 13:00|-4250 2600 10 80 -6|flight|
+li-forest-2026-11-23-near|{LI}|-2430,2220|2026-11-23 13:00|-|chase|1=camera.orbit 150 20 60
+tf-agave-2026-07-15-far|{TF}|-31300,-9140|2026-07-15 13:00|-31300 -8750 90 180 -14|flight|
+tf-agave-2026-07-15-near|{TF}|-31300,-9140|2026-07-15 13:00|-|chase|1=camera.orbit 120 30 22
+tf-agave-2026-11-23-far|{TF}|-31300,-9140|2026-11-23 13:00|-31300 -8750 90 180 -14|flight|
+tf-agave-2026-11-23-near|{TF}|-31300,-9140|2026-11-23 13:00|-|chase|1=camera.orbit 120 30 22
+tf-bananas-2026-07-15-near|{TF}|-33260,-8460|2026-07-15 13:00|-|chase|1=camera.orbit 110 30 30
+tf-bananas-2026-11-23-near|{TF}|-33260,-8460|2026-11-23 13:00|-|chase|1=camera.orbit 110 30 30
+tf-palms-2026-07-15-far|{TF}|-20700,23380|2026-07-15 13:00|-20700 23900 60 180 -8|flight|
+tf-palms-2026-07-15-near|{TF}|-20700,23380|2026-07-15 13:00|-|chase|1=camera.orbit 120 14 24
+tf-palms-2026-11-23-far|{TF}|-20700,23380|2026-11-23 13:00|-20700 23900 60 180 -8|flight|
+tf-palms-2026-11-23-near|{TF}|-20700,23380|2026-11-23 13:00|-|chase|1=camera.orbit 120 14 24
+tf-palms-above-2026-07-15-near|{TF}|-20700,23380|2026-07-15 13:00|-|chase|1=camera.orbit 120 50 40
+tf-palms-above-2026-11-23-near|{TF}|-20700,23380|2026-11-23 13:00|-|chase|1=camera.orbit 120 50 40

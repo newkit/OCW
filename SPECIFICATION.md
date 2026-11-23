@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 5.53 – November 2026
+Version 5.54 – November 2026
 
 | Version | Change |
 |---|---|
+| 5.54 | **Built: the plant files survive Blender – vertex colours kept at most 1 with `extras.ocw.shade_scale` multiplied back by the game, the browser app and OCW Studio, and every leaf triangle with its normals on its front; the 108 plant files exported again and all 108 come back from Blender 5.2.4 unchanged** (Phase 15 Q11 (a), decided 2026-11-23; 14 Phase 15, 15P; numbered after main's 5.46, may be renumbered at merge): `Model::fit_shading` / `shade_scale` (63 files scaled by 1.01 – 1.098, the validator checks 1 – 2), blades with each face's own normal and a one-vertex tip (no triangles without area), conifer tiers and far cones with the underside's and the upper side's own rim; triangles: date palm 532 → 468, slender palm 284 → 248, banana 112 → 92, agave 188 → 150, the rest unchanged (all within the plant budget); `make test-blender` 219 of 221 (before 33 of the 108 plants; the unicorn's head and the rider's lower lip still differ, untouched). The shading looks the same; the leaves that had the other face's normal (palms, bananas, agave, ferns, the conifer tiers' upper rims) are now lit from their own side – sunlit from above, in shade from below. Screenshots before / after on Wayland (`test-output/plant-files-q11/`) |
 | 5.53 | **Built: riding off the road after a unicorn landing – in a free ride the unicorn lands anywhere on land (the ring green on the ground, red on water, buildings and obstacles, where G is refused), the rider rides the terrain in 2D at its real gradient in wild mode, the distance, elevation, GPS track and hearts count, and riding onto a road joins it again** (14 Phase 13, 13A / 13I; Q7 (b), Q8 (a), Q9 (a)): server-authoritative and deterministic – `ocw_world::ground` (`GroundMap`: the package's terrain heights and the land cover per tile, buildings rasterised; `OffRoadTrack`: a straight track along the heading that the ordinary physics tick rides), `ocw_sim::offroad` (the tick on the terrain, water and the world's edge stop, landing allowed or refused, joining a road, leaving wild mode's 60 m band into the terrain in free ride), the session, the prediction and its reconciliation in the plane, `RiderUpdate.off_road` / `GodResult.off_road`, the off-road surfaces forest floor, rock and sand, the ring's colours; desktop and browser alike. Open: drafting off the road, the trees of the woods far from roads as obstacles (new Phase 13 Q10). Numbered after 5.51, may be renumbered at merge. |
 | 5.52 | **Junction kinks smoothed: creases rounded into 5 – 10 m vertical curves with the side road never above the main road's surface, blended junctions with a smoother surface over the junction and 10 – 20 m of each road, and a light terrain smoothing off the roads (about 10 – 20 m, at most ~0.5 m change, roads keep their heights); packages rebuilt** (decision by the user, 2026-11-23, after the Q6 / crease pictures; 4.8.8 Q7 (d) plus the terrain smoothing; to be built). |
 | 5.51 | **Riding off the road counts like any riding – distance, elevation and time in the FIT file, the GPS track following the real off-road position, hearts by work as always** (decision from the build dashboard, 2026-11-23; Phase 13 Q9 (a); to be built with 13A). |
@@ -5957,7 +5958,8 @@ The candidates:
   - colours in the file are the defaults.
 - **Metadata in `extras`, never physics (2.5):**
   - asset-level `extras.ocw = { schema = 1, kind, id }`;
-  - per kind: a bike's `profile` name, a plant's `species` and `height_m`, a prop's `osm` tags it stands for (`barrier=bollard`).
+  - per kind: a bike's `profile` name, a plant's `species` and `height_m`, a prop's `osm` tags it stands for (`barrier=bollard`);
+  - `shade_scale` (v5.54, Q11 (a)): vertex colours stay at most 1 (Blender keeps them as 8 bits, clamped to 1); a file whose shading reaches above its paint colour stores them divided by `shade_scale` (a number in 1 – 2, checked by the validator) and every app draws its vertex colours times it.
 
   The validator rejects physics keys, as today.
 - **Budgets** (triangles; checked by the validator):
@@ -6148,7 +6150,7 @@ The validator checks every name against the pattern, that ids are unique, and th
 - **Q5 – The Blender add-on: decided (2026-11-16, dashboard): later** – the optional add-on of 15D (export preset, kind / id panel, anchor names, budget check; GPL-2.0-or-later in `tools/blender/ocw_models/`) is not built now; it is taken up again after Phase 15's format and import tools have settled (not scheduled in M1–M6 until then).
 - **Q9 (open) – The shape of a collision proxy col_* (15B, Phase 12):** a 3D model file can carry invisible helper shapes named `col_…` that tell the game what a rider bumps into – a box round a bench, a cylinder round a post (Phase 12's collisions). The model rules (15B) name these shapes but not how a file gives their size. Built: the model checker and the studio take the size from the shape's mesh when it has one, else from a unit shape – box, cylinder or capsule of size 1 – scaled by the node, like Blender's empties. Options: (a) keep both ways – a modelled mesh for artists who model the proxy, an empty for quick ones; (b) only meshes; (c) only empties, with their size written as `extras.ocw.half_extents`. Proposal: a.
 - **Q10 (open) – Plants and props off their origin (15B):** every model has an origin – the point the game puts on the ground. The model checker warns when a model meant to stand on the ground reaches more than 5 cm below its origin or floats above it. On the committed files: the Teide broom shrubs reach 0.67 m below their stem base, the prickly-pear cactus 0.10 m, the agave floats 0.10 m above and the mountain alder 0.05 m, and the phone prop is centred because it is held in the hand. Options: (a) re-export the four plants with their lowest point at the stem base – when their generators are touched next, or by hand in Blender – and mark held props (`extras.ocw.held = true`) so the check skips them; (b) accept the offsets, since the game buries the bases in the terrain anyway, and drop the warning for plants. Proposal: a.
-- **Q11 – Plant files that do not survive Blender (15F, Q1): decided (2026-11-23, dashboard): (a), to be built** – every model is to get a Blender source (Q1), made by importing its file into Blender, and an artist will edit models there. The new round-trip test (`make test-blender`, 15M) imports every committed file into Blender 5.2, exports it with our preset and compares it with the original: 114 of the 189 files come back unchanged – all bikes, riders, wearables and the phone – but 75 of the 108 plant files do not. Two things in the plant generator's output are lost: (1) **63 plant files have vertex colours above 1** – the crown shading makes sunlit leaves up to 10 % brighter than their paint colour (up to 1.098); Blender keeps vertex colours as 8 bits and clamps them at 1, so after any edit in Blender these leaves are up to 10 % darker in their bright parts; (2) **21 plant files have normals that Blender rewrites** – on the needle crowns of spruce, larch and Douglas fir about 20 triangles each come back with a normal pointing straight up, and on the agave, the two palms and the banana leaf normals that point away from their triangle's front come back turned to the front, so the light on those leaves changes. Options: (a) fix the plant generator before the plant sources are made: scale the shading to at most 1 and write the scale into the file (`extras.ocw.shade_scale`, multiplied back by the renderer, so the plants look the same), and give every leaf triangle a normal on its front side (both faces of a leaf as their own triangles, with their own normals); re-export the 108 plant files and compare screenshots before and after; (b) keep the files as they are: the plant sources are made anyway and a plant edited in Blender changes its shading a little (bright parts up to 10 % darker, some normals turned); (c) make no Blender sources for plants until the generator is removed (Q6); the round trip lists them as known differences. Proposal: a.
+- **Q11 – Plant files that do not survive Blender (15F, Q1): decided (2026-11-23, the user): (a) fix the plant generator before the plant sources are made – built (v5.54, 15P: all 108 plant files come back from Blender unchanged)** – *Was asked:* every model is to get a Blender source (Q1), made by importing its file into Blender, and an artist will edit models there. The new round-trip test (`make test-blender`, 15M) imports every committed file into Blender 5.2, exports it with our preset and compares it with the original: 114 of the 189 files come back unchanged – all bikes, riders, wearables and the phone – but 75 of the 108 plant files do not. Two things in the plant generator's output are lost: (1) **63 plant files have vertex colours above 1** – the crown shading makes sunlit leaves up to 10 % brighter than their paint colour (up to 1.098); Blender keeps vertex colours as 8 bits and clamps them at 1, so after any edit in Blender these leaves are up to 10 % darker in their bright parts; (2) **21 plant files have normals that Blender rewrites** – on the needle crowns of spruce, larch and Douglas fir about 20 triangles each come back with a normal pointing straight up, and on the agave, the two palms and the banana leaf normals that point away from their triangle's front come back turned to the front, so the light on those leaves changes. Options: (a) fix the plant generator before the plant sources are made: scale the shading to at most 1 and write the scale into the file (`extras.ocw.shade_scale`, multiplied back by the renderer, so the plants look the same), and give every leaf triangle a normal on its front side (both faces of a leaf as their own triangles, with their own normals); re-export the 108 plant files and compare screenshots before and after; (b) keep the files as they are: the plant sources are made anyway and a plant edited in Blender changes its shading a little (bright parts up to 10 % darker, some normals turned); (c) make no Blender sources for plants until the generator is removed (Q6); the round trip lists them as known differences. Proposal: a.
 
 #### 15I – Built (M1, v4.24)
 
@@ -6232,7 +6234,7 @@ The validator checks every name against the pattern, that ids are unique, and th
 
 **Tests (11.4):** `scripts/test-deps-blender.sh` (a fake release on a `file://` mirror: install, the link, no second download, a missing link restored, a wrong SHA-256 refused without leaving anything, a new pin next to the old one, `--print-version` is the pin); `scripts/test-models-diff.sh` (a throwaway repository with LFS models where git-lfs is installed: nothing changed, a committed change with its structural diff, a removed file, an untracked new one, a manifest entry changed alone, the staged form gives the same output, an unknown base exits 2); `diff`: re-indexed, split and turned triangles with unused vertices and normals 5e-4 off are the same mesh, a vertex moved by 1 mm, a flipped triangle and a normal 1° off are changes with what moved, an index out of range is a change; `import`: the extras Blender drops are kept from the replaced file without overwriting; `check`: the colour warning.
 
-**Open:** Q11 (the plant files); the Blender sources (`artwork/3dmodels/sources/`, Q1: `tools/blender/glb_to_blend.py`) are not made yet – they wait for Q11 for the plants; marge has no `git-lfs`, so `test-models-diff.sh` checks the LFS path only where it is installed (deb); the Khronos `gltf_validator`.
+**Open:** ~~Q11 (the plant files)~~ decided (a) and built (v5.54, 15P); the Blender sources (`artwork/3dmodels/sources/`, Q1: `tools/blender/glb_to_blend.py`) are not made yet – for the plants nothing waits any more; marge has no `git-lfs`, so `test-models-diff.sh` checks the LFS path only where it is installed (deb); the Khronos `gltf_validator`.
 #### 15N – Built (M2's props: point obstacles and street lamps as files, v5.12)
 
 **What was built (branch `worktree-agent-ae5023b2e0d98b4ec`, 2026-11-19):** the props part of MX / M2 – the point obstacles and the street lamps are drawn from model files; their shape code is gone (Q6, Q7: files only).
@@ -6259,6 +6261,67 @@ The validator checks every name against the pattern, that ids are unique, and th
 **Screenshots and video** (`test-output/phase15-m4/`, `index.md`; before = main v5.09, after = this step; marge Wayland, leela X11, the browser on marge on WebGPU and WebGL 2): the unicorn flying low over Vaduz (`god-unicorn-flight`), banking in a turn (`god-unicorn-side`) and the 21 s flight video (`god-plane-video.mp4`: the right turn with the bank, the climb, the wing beat from the side) – the video runs on stepped game time, so its frames before and after compare directly (PSNR 34 – 37 dB, the unicorn's pose the same; the stills are real-time and catch other moments of the flight); the workshop overview and the mirror (`workshop-overview`, `workshop-mirror`; the room the same, only the ride window's daylight follows the real time of day); the unicorn in the browser on WebGPU and WebGL 2 (the browser has no workshop); the studio's Models workspace with the unicorn, the stand, a hook and the pegboard. On X11 (lavapipe) the god-mode stills come too early to show the unicorn and the before overview caught a half-loaded frame; the X11 flight video and the after shots show them.
 
 **Open:** the cause of the lost reflection with separate piece entities (the merged room avoids it).
+
+#### 15P – Built: plant files that survive Blender (Q11 (a), v5.54)
+
+**What was built (branch `worktree-agent-a11958feda96480f3`, 2026-11-23):** the plant generator was fixed as decided in Q11 (a) and the 108 plant files were exported again (`export-flora`); **all 108 now come back from Blender 5.2.4 unchanged** (`make test-blender`).
+- **The shading kept at most 1 – `extras.ocw.shade_scale`:**
+  - The crown's vertex colours are its shading: up to 1.098 × the paint colour on the sunlit side.
+  - `Model::fit_shading` (`ocw_assets::model`) divides every vertex colour of a file by the factor that brings the brightest to 1, rounded up to 1/1000, and writes it as `extras.ocw.shade_scale`. On 63 files it is between 1.01 and 1.098; the other 45 have no colour above 1 and get no key.
+  - `Model::shade_scale()` reads the factor back (1 without the key; clamped into 1 – 2). The renderer multiplies every vertex colour of the file by it: `flora_files::draw`, the same code in the desktop and the browser app. OCW Studio's viewer does the same (`models_view::tri_mesh`).
+  - Drawn, every colour is the one before, within the float's precision.
+  - Blender drops the asset's extras. `model import` keeps the key from the file it replaces (15M), so the round trip keeps it.
+  - The contract (15B *Metadata*, `artwork/3dmodels/README.md`) names the key. The validator rejects a `shade_scale` that is not a number or lies outside 1 – 2 (`extras.shade-scale`, an error).
+- **Every leaf triangle has its normals on its front (`ocw-render::flora`):**
+  - **Blades (palm fronds, the banana's leaves, the agave, the dead fronds; also the ferns of the ground detail, which use the same blade):** both faces already were their own triangles, but each face carried the other face's normal (the upper face's normal pointed down, the lower face's up). Now each face has the normal of its own front: `tangent × side` for the upper face, the opposite for the lower one.
+  - **The blade's tip is one vertex.** Before, the last segment closed on two vertices at the same point: two triangles without area per blade (on each face).
+  - **Needle tiers (spruce, fir, Douglas fir, larch near; the far cone of every conifer):** the underside and the upper side met at a shared rim, and its normal pointed down, away from the upper side's front. That is why Blender turned about 20 triangles per tree straight up. Now `two_sided_cone` draws each side with its own rim vertices and normals (+7 vertices per tier near, +5 far).
+  - The bark keeps its normals: the tube caps' rims stand at right angles to the cap, which Blender keeps.
+- **Triangles (budget per plant file: 2,000 in all, 200 in `lod1`; before → after, the whole file / `lod1`):**
+  - date palm 532 → 468 / 64 → 52;
+  - slender palm 284 → 248 / 64 → 52;
+  - banana 112 → 92 / 48 → 40;
+  - agave 188 → 150 / 20 → 10 (the triangles without area at the tips are gone);
+  - every other plant is unchanged.
+
+  Both faces of a leaf were already there, so nothing was added and every file stays well within its budget.
+- **Files:** 83 of the 108 plant files changed (the other 25 had neither a colour above 1 nor a tier or blade), and the manifest is unchanged. `export-flora --check` and `model export-all --check` are clean.
+
+**Round trip (marge, Blender 5.2.4, `make test-blender`):**
+- Before (main e8fd6ab4): 33 of the 108 plant files came back unchanged.
+- After: **108 of 108**, and 219 of all 221 files.
+- The two files that still differ are not plants and were not touched (byte for byte main's): `creatures/unicorn-winged.glb` (normals of `head` and `head_lod1`) and `riders/rider-body.glb` (normals of `face_lip_lower`). Blender turns a few of their normals in the same way. They are files added or changed after 15M's run, and they are left for their own fix.
+- Summaries: `test-output/blender-roundtrip/2026-11-23-135447/` (before), `…/2026-11-23-142216/` (after).
+
+**What looks different:**
+- **The shading (shade_scale):** nothing. The broadleaf woods of Liechtenstein, July and November, near and far, are the same picture before and after. The far / near crown rule of v5.44 (`flora::crown_form`) is unchanged.
+- **The normals:** the leaves that had the wrong normals are now lit from their own side.
+  - Banana plantations and palm crowns seen from above are sunlit green where they were in shadow before.
+  - Fronds seen from below are in shade where they were lit before.
+  - The upper rims of the spruce and fir tiers are a little lighter.
+  - This is the light of the leaves' real sides, and it is what Blender itself shows. It cannot be kept as it was with normals on the triangles' front.
+
+**Screenshots** (`test-output/plant-files-q11/`, `index.md`; marge, Wayland, release builds; before = main e8fd6ab4, after = this branch; each scene drawn by the generator and from the files, `OCW_FLORA=files`; `scripts/tree-lod-shots.sh` with `scripts/plant-files-scenes.txt`, its new view `chase` without the unicorn):
+- **The scenes:** Liechtenstein's woods in the Rhine valley, the Black Forest's spruce and fir on the Schauinsland road, Tenerife's palms at Los Cristianos (beside them and from above), the succulent scrub near Buenavista and the banana plantations. Each was shot on 15 July and 23 November at 13:00, near (the chase camera) and far (the unicorn 400 – 1,000 m away).
+- **The broadleaf woods:** the same picture before and after, near and far, in July and November, both from the generator and from the files. Before / after differs no more than two runs of the same build (PSNR 31 – 37 dB).
+- **The far / near crown rule of v5.44:** holds, with the same bare November crowns near and far.
+- **The banana plantations and the palm crowns seen from above:** now sunlit green where they were dark.
+- **The palm fronds seen from below:** in shade.
+- **The conifers:** a little lighter on the tiers.
+- **The agave:** the scene shows the scrub's cardones, with no agave close to the camera.
+
+**Tests (11.4):**
+- `ocw_assets::glb` `shade_scale_round_trips_and_multiplies_back`: bright colours are fitted, the key round-trips through the file, stored colours are ≤ 1, stored × scale is the colour before, no key without bright colours, out-of-range values are clamped.
+- `ocw_assets::check` `shade_scale_is_range_checked`: 1, 1.098 and 2 pass; 0.5, 0, −1.1, 2.5, a string and null are errors. A fitted file no longer gets the colour warning.
+- `ocw-render::flora_files`:
+  - `no_plant_file_has_a_vertex_colour_above_one`: the export and the shipped files; the scale in 1 – 1.1, the same in both, exactly 63 files scaled, no colour warning.
+  - `leaf_normals_are_on_the_triangles_front`: every `leaf`, `needle` and `dry` triangle has an area and every corner normal is on its front (cos > 0.05), in the export and the shipped files.
+  - `plants_stay_within_their_budget`.
+  - The existing `plants_from_files_are_the_generators_plants`, drawn through `shade_scale`, still matches the generator.
+- `ocw-studio` `plant_colours_are_drawn_times_the_shade_scale`.
+- The Blender round trip of the plants: `make test-blender`, above.
+
+**Open:** the Blender sources of the plants (Q1, `tools/blender/glb_to_blend.py`) can now be made. The normals Blender turns on the unicorn's head and the rider's lower lip need their own fix (as here: normals on their faces' fronts).
 
 ### Phase 16 – OCW Studio: the editor for models, worlds and routes (planning, 2026-11-15; the E1 core – the studio shell – built v4.03, see 16A; the Routes workspace (E1) and BRouter (E2) built v4.27, see 16D; the Models workspace's view (E3) built v4.71, see 16B; its edits (E4) built v5.45, see 16B *Built (E4)*)
 

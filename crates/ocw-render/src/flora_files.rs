@@ -258,6 +258,10 @@ pub fn model(sp: Species, i: usize) -> Result<(Entry, Model), String> {
             "height_m": sp.height_m(),
         }),
     );
+    // The crown shading reaches 1.1 × the paint colour; Blender keeps
+    // vertex colours ≤ 1, so the file keeps them ≤ 1 and says by how much
+    // to brighten them (`extras.ocw.shade_scale`, spec 15G Q11 (a)).
+    m.fit_shading();
     Ok((e, m))
 }
 
@@ -298,6 +302,8 @@ pub fn draw(
     // The generator turns its rings from +x towards +z.
     let rot = Quat::from_rotation_y(-at.turn);
     let s = at.scale;
+    // The file's colours are kept ≤ 1; drawn × its shade scale (Q11 (a)).
+    let shade = model.shade_scale();
     for p in &model.nodes[node].primitives {
         let mat = &model.materials[p.material];
         let tint = if mat.name == crown_slot(sp) {
@@ -312,7 +318,10 @@ pub fn draw(
             m.normals.push((rot * Vec3::from(p.normals[v])).to_array());
             let uv = p.uvs.get(v).copied().unwrap_or([pos.y - at.base.y, 0.0]);
             m.uvs.push([uv[0] * s, uv[1]]);
-            let c = p.colors.get(v).copied().unwrap_or([1.0; 4]);
+            let c = p
+                .colors
+                .get(v)
+                .map_or([1.0; 4], |c| ocw_assets::model::shaded(*c, shade));
             m.colors
                 .push([tint[0] * c[0], tint[1] * c[1], tint[2] * c[2], 1.0]);
         }
@@ -539,6 +548,108 @@ mod tests {
                     close(&g, &f, &format!("{} {detail:?} {at:?}", e.file), tol);
                 }
             }
+        }
+    }
+
+    /// Spec 15G Q11 (a), what Blender keeps: no vertex colour above 1 in
+    /// any plant file – the export and the shipped files – with the shading
+    /// in `extras.ocw.shade_scale` where it reaches above the paint colour,
+    /// and drawn × it the crown is as bright as the generator's (the
+    /// sunlit leaves up to 10 % above the paint colour, as before).
+    #[test]
+    fn no_plant_file_has_a_vertex_colour_above_one() {
+        let lib = ocw_assets::library::ModelLibrary::embedded();
+        let mut scaled = 0;
+        for (e, model) in models().unwrap() {
+            let shipped = lib.get(e.id()).unwrap();
+            for m in [&model, &*shipped] {
+                let mut max = 0.0f32;
+                for p in m.nodes.iter().flat_map(|n| &n.primitives) {
+                    for c in &p.colors {
+                        assert!(c.iter().all(|v| *v <= 1.0), "{}: {c:?}", e.file);
+                        max = max.max(c[0].max(c[1]).max(c[2]));
+                    }
+                }
+                let k = m.shade_scale();
+                assert!(
+                    (ocw_assets::model::SHADE_SCALE_RANGE.0..=1.1).contains(&k),
+                    "{}: {k}",
+                    e.file
+                );
+                if k > 1.0 {
+                    // The brightest vertex fills the range (no headroom
+                    // left beyond the 1/1000 rounding).
+                    assert!(max > 1.0 - 2e-3, "{}: {max} × {k}", e.file);
+                }
+                let findings = ocw_assets::check::check_model(&e, m, 1000);
+                assert!(
+                    findings
+                        .iter()
+                        .all(|f| f.code != "mesh.color-above-one" && f.code != "extras.shade-scale"),
+                    "{}: {findings:#?}",
+                    e.file
+                );
+            }
+            assert_eq!(model.shade_scale(), shipped.shade_scale(), "{}", e.file);
+            scaled += usize::from(model.shade_scale() > 1.0);
+        }
+        // The 63 files whose shading went above 1 (15M).
+        assert_eq!(scaled, 63);
+    }
+
+    /// Spec 15G Q11 (a): every leaf triangle (the crown's `leaf` /
+    /// `needle`, the `dry` fronds) has its normals on its front side and an
+    /// area – both faces of a leaf are their own triangles with their own
+    /// normals – in the export and in the shipped files; the bark keeps its
+    /// own (the caps' rims are at right angles, which Blender keeps).
+    #[test]
+    fn leaf_normals_are_on_the_triangles_front() {
+        let lib = ocw_assets::library::ModelLibrary::embedded();
+        for (e, model) in models().unwrap() {
+            let shipped = lib.get(e.id()).unwrap();
+            for m in [&model, &*shipped] {
+                for (node, p) in m
+                    .nodes
+                    .iter()
+                    .flat_map(|n| n.primitives.iter().map(move |p| (&n.name, p)))
+                {
+                    let slot = m.materials[p.material].name.as_str();
+                    if slot == "bark" {
+                        continue;
+                    }
+                    for t in p.indices.chunks(3) {
+                        let v = [0, 1, 2].map(|k| Vec3::from(p.positions[t[k] as usize]));
+                        let face = (v[1] - v[0]).cross(v[2] - v[0]);
+                        assert!(
+                            face.length() > 1e-6,
+                            "{} {node}/{slot}: a triangle without area at {v:?}",
+                            e.file
+                        );
+                        let face = face.normalize();
+                        for &k in t {
+                            let n = Vec3::from(p.normals[k as usize]);
+                            assert!(
+                                n.dot(face) > 0.05,
+                                "{} {node}/{slot}: normal {n} behind the face {face} at {:?}",
+                                e.file,
+                                p.positions[k as usize]
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The triangle budgets per level (15B: a plant 2,000 in all, 200 in
+    /// `lod1`) still hold with both faces of every leaf.
+    #[test]
+    fn plants_stay_within_their_budget() {
+        let (near, far) = ocw_assets::kinds::Kind::Plant.budget();
+        for (e, m) in models().unwrap() {
+            assert!(m.triangles() <= near, "{}: {}", e.file, m.triangles());
+            let lod = m.triangles_below(m.node("lod1"));
+            assert!(lod <= far.unwrap(), "{}: lod1 {lod}", e.file);
         }
     }
 
