@@ -788,6 +788,43 @@ struct Sections {
 }
 
 impl Sections {
+    /// Keeps the per-tile parts read so far only for the tiles in `keep`
+    /// (what [`WorldPackage::cut`] and [`StreamedPackage::keep_tiles`]
+    /// keep; the graph, routes and places stay whole).
+    fn trim(&mut self, keep: &BTreeSet<TileKey>) {
+        let k = |key: &TileKey| keep.contains(key);
+        if let Some(b) = self.buildings.as_mut() {
+            b.retain(|key, _| k(key));
+        }
+        if let Some(b) = self.bridges.as_mut() {
+            b.retain(|key, _| k(key));
+        }
+        if let Some(r) = self.look.roofs.as_mut() {
+            r.retain(|key, _| k(key));
+        }
+        if let Some(s) = self.look.seasons.as_mut() {
+            s.tiles.retain(|key, _| k(key));
+        }
+        if let Some(f) = self.look.forest.as_mut() {
+            f.tiles.retain(|key, _| k(key));
+        }
+        if let Some(v) = self.look.vegetation.as_mut() {
+            v.tiles.retain(|key, _| k(key));
+        }
+        if let Some(o) = self.obstacles.as_mut() {
+            o.tiles.retain(|key, _| k(key));
+        }
+        if let Some(l) = self.landuse_index.as_mut()
+            && l.len() > keep.len()
+        {
+            l.retain(keep);
+        }
+        self.surfaces.retain(|(key, _)| k(key));
+        self.dress.retain(|(key, _)| k(key));
+        self.lit.retain(|(key, _)| k(key));
+        self.condition.retain(|(key, _)| k(key));
+    }
+
     fn into_package(self, head: PackageHead, tiles: BTreeMap<TileKey, Tile>) -> WorldPackage {
         let junctions = (self.junctions.index.is_some()
             || self.junctions.strip_edges.is_some()
@@ -826,9 +863,7 @@ fn read_sections(
     full: bool,
     streamed: bool,
 ) -> Result<Sections, String> {
-    let mut s = Sections::default();
-    let mut building_tags = None;
-    let mut building_parts = None;
+    let mut reader = SectionReader::new(samples, full, streamed);
     let count = r.u32()?;
     for _ in 0..count {
         if streamed && r.pos == r.b.len() {
@@ -837,6 +872,60 @@ fn read_sections(
         let tag: [u8; 4] = r.arr()?;
         let len = usize::try_from(r.u64()?).map_err(|_| "section too large")?;
         let payload = r.take(len)?;
+        reader.section(tag, payload)?;
+    }
+    Ok(reader.finish())
+}
+
+/// The sections read one at a time ([`read_sections`], and
+/// [`StreamedPackage::from_chunks`] over the base's chunks without
+/// joining them first).
+struct SectionReader {
+    s: Sections,
+    building_tags: Option<crate::buildings::BuildingTagRecords>,
+    building_parts: Option<crate::buildings::BuildingPartRecords>,
+    samples: u32,
+    full: bool,
+    streamed: bool,
+    /// Keep the per-tile parts of these tiles only, cut after each
+    /// section ([`StreamedPackage::from_chunks_kept`]).
+    keep: Option<BTreeSet<TileKey>>,
+    /// The road graph is already there (read first): its section is
+    /// skipped.
+    skip_graph: bool,
+}
+
+impl SectionReader {
+    fn new(samples: u32, full: bool, streamed: bool) -> Self {
+        Self {
+            s: Sections::default(),
+            building_tags: None,
+            building_parts: None,
+            samples,
+            full,
+            streamed,
+            keep: None,
+            skip_graph: false,
+        }
+    }
+
+    /// One section's payload, cut to [`SectionReader::keep`].
+    fn section(&mut self, tag: [u8; 4], payload: &[u8]) -> Result<(), String> {
+        self.read_section(tag, payload)?;
+        if let Some(keep) = &self.keep {
+            self.s.trim(keep);
+        }
+        Ok(())
+    }
+
+    fn read_section(&mut self, tag: [u8; 4], payload: &[u8]) -> Result<(), String> {
+        if self.skip_graph && &tag == GRAPH_TAG {
+            return Ok(());
+        }
+        let (samples, full, streamed) = (self.samples, self.full, self.streamed);
+        let s = &mut self.s;
+        let building_tags = &mut self.building_tags;
+        let building_parts = &mut self.building_parts;
         if &tag == GRAPH_TAG {
             s.graph = Some(read_graph(payload)?);
         } else if &tag == LANDUSE_TAG && full && streamed {
@@ -851,7 +940,7 @@ fn read_sections(
             // Optional styling: a layout this reader does not know
             // is skipped (the houses get their regional defaults).
             match read_building_tags(payload) {
-                Ok(t) => building_tags = Some(t),
+                Ok(t) => *building_tags = Some(t),
                 Err(e) if e.contains("not supported") => {}
                 Err(e) => return Err(e),
             }
@@ -859,7 +948,7 @@ fn read_sections(
             // Optional (spec §14 Phase 8 T4, v3.26): a newer layout is
             // skipped (the outline buildings are drawn alone).
             match read_building_parts(payload) {
-                Ok(p) => building_parts = Some(p),
+                Ok(p) => *building_parts = Some(p),
                 Err(e) if e.contains("not supported") => {}
                 Err(e) => return Err(e),
             }
@@ -975,14 +1064,20 @@ fn read_sections(
             }
         }
         // Unknown sections (from newer builders) are skipped.
+        Ok(())
     }
-    if let (Some(b), Some(t)) = (s.buildings.as_mut(), building_tags) {
-        apply_building_tags(b, t);
+
+    /// The sections, with the buildings' tags and parts applied.
+    fn finish(self) -> Sections {
+        let mut s = self.s;
+        if let (Some(b), Some(t)) = (s.buildings.as_mut(), self.building_tags) {
+            apply_building_tags(b, t);
+        }
+        if let (Some(b), Some(p)) = (s.buildings.as_mut(), self.building_parts) {
+            apply_building_parts(b, p);
+        }
+        s
     }
-    if let (Some(b), Some(p)) = (s.buildings.as_mut(), building_parts) {
-        apply_building_parts(b, p);
-    }
-    Ok(s)
 }
 
 /// Sections a streaming client does not fetch with the base (spec §14
@@ -1023,7 +1118,7 @@ impl StreamedPackage {
         let mut r = Bytes::new(header);
         let head = read_head(&mut r)?;
         r.finish("package header")?;
-        let mut s = if head.version >= 2 {
+        let s = if head.version >= 2 {
             let mut r = Bytes::new(sections);
             let s = read_sections(&mut r, head.samples, true, true)?;
             r.finish("package sections")?;
@@ -1034,13 +1129,126 @@ impl StreamedPackage {
             }
             Sections::default()
         };
+        Ok(Self::of_sections(head, s))
+    }
+
+    /// [`StreamedPackage::from_parts`] over the chunks from `sections` on
+    /// (in file order) without joining them into one buffer first: each
+    /// chunk is decoded and dropped in turn (spec 14 Phase 10 B7, the
+    /// iPhone's memory, v5.42 – the joined copy of Tenerife's base was
+    /// 146 MB more at the start, and the wasm memory keeps its peak). A
+    /// section split over chunks is joined on its own.
+    pub fn from_chunks(
+        header: &[u8],
+        chunks: impl IntoIterator<Item = Vec<u8>>,
+    ) -> Result<Self, String> {
+        Self::decode_chunks(header, chunks, None, false)
+    }
+
+    /// [`StreamedPackage::from_chunks`] keeping the per-tile parts only
+    /// for the tiles `keep` chooses from the package's road graph and
+    /// routes (a phone's course, spec 14 Phase 10 B7, v5.42): the graph
+    /// and the routes are read first, then every other section is cut as
+    /// soon as it is decoded – the whole base (Tenerife: 250 MB) is never
+    /// in memory at once. `keep` returning `None` keeps everything. Equal
+    /// to [`StreamedPackage::from_chunks`] then
+    /// [`StreamedPackage::keep_tiles`].
+    pub fn from_chunks_kept(
+        header: &[u8],
+        chunks: Vec<Vec<u8>>,
+        keep: impl FnOnce(&WorldPackage) -> Option<BTreeSet<TileKey>>,
+    ) -> Result<Self, String> {
+        let mut r = Bytes::new(header);
+        let head = read_head(&mut r)?;
+        r.finish("package header")?;
+        // The graph and the routes first, wherever the chunks split them
+        // (a big section spans several chunks): the other sections are
+        // only stepped over.
+        let mut first = SectionReader::new(head.samples, false, true);
+        let total: usize = chunks.iter().map(Vec::len).sum();
+        let mut pos = 4;
+        while pos + 12 <= total {
+            let top = gather(&chunks, pos, 12).ok_or("package truncated")?;
+            let tag: [u8; 4] = top[..4].try_into().expect("4 bytes");
+            let len = u64::from_le_bytes(top[4..].try_into().expect("8 bytes"));
+            let len = usize::try_from(len).map_err(|_| "section too large")?;
+            if &tag == GRAPH_TAG || &tag == ROUTES_TAG {
+                let payload = gather(&chunks, pos + 12, len).ok_or("package truncated")?;
+                first.section(tag, &payload)?;
+            }
+            pos += 12 + len;
+        }
+        let mini = first.finish().into_package(head.clone(), BTreeMap::new());
+        let kept = keep(&mini);
+        // The graph read once: the second pass skips it.
+        let graph = mini.graph.clone();
+        let mut p = Self::decode_chunks(header, chunks, kept.clone(), graph.is_some())?;
+        if graph.is_some() {
+            p.base.graph = graph;
+        }
+        if let Some(k) = &kept {
+            // The sections are cut; the base's own copy of what it shares
+            // (a no-op but for the map types cut by `cut`).
+            p.keep_tiles(k);
+        }
+        Ok(p)
+    }
+
+    fn decode_chunks(
+        header: &[u8],
+        chunks: impl IntoIterator<Item = Vec<u8>>,
+        keep: Option<BTreeSet<TileKey>>,
+        skip_graph: bool,
+    ) -> Result<Self, String> {
+        let mut r = Bytes::new(header);
+        let head = read_head(&mut r)?;
+        r.finish("package header")?;
+        let mut chunks = chunks.into_iter();
+        if head.version < 2 {
+            if chunks.any(|c| !c.is_empty()) {
+                return Err("a version 1 package has no sections".into());
+            }
+            return Ok(Self::of_sections(head, Sections::default()));
+        }
+        let mut stream = ChunkStream {
+            chunks: &mut chunks,
+            buf: Vec::new(),
+            pos: 0,
+        };
+        let count = u32::from_le_bytes(
+            stream
+                .take(4)?
+                .ok_or("package truncated")?
+                .try_into()
+                .expect("4 bytes"),
+        );
+        let mut reader = SectionReader::new(head.samples, true, true);
+        reader.keep = keep;
+        reader.skip_graph = skip_graph;
+        for _ in 0..count {
+            let Some(top) = stream.take(12)? else {
+                break;
+            };
+            let tag: [u8; 4] = top[..4].try_into().expect("4 bytes");
+            let len = u64::from_le_bytes(top[4..].try_into().expect("8 bytes"));
+            let len = usize::try_from(len).map_err(|_| "section too large")?;
+            let payload = stream.take(len)?.ok_or("package truncated")?;
+            reader.section(tag, payload)?;
+        }
+        if stream.take(1)?.is_some() {
+            return Err("trailing bytes in the package sections".into());
+        }
+        Ok(Self::of_sections(head, reader.finish()))
+    }
+
+    fn of_sections(head: PackageHead, mut s: Sections) -> Self {
         let surfaces = s.surfaces.iter().cloned().collect();
         let dress = s.dress.iter().cloned().collect();
         let lit = s.lit.iter().cloned().collect();
         let condition = s.condition.iter().cloned().collect();
         let landuse = s.landuse_index.take();
         let base = s.into_package(head.clone(), BTreeMap::new());
-        Ok(Self {
+        Self {
             base,
             head,
             surfaces,
@@ -1048,7 +1256,26 @@ impl StreamedPackage {
             lit,
             condition,
             landuse,
-        })
+        }
+    }
+
+    /// Keeps the per-tile parts of the base (buildings, bridges, roofs,
+    /// seasons, forest, vegetation, obstacles, the encoded land use, the
+    /// road surfaces, dress, lights and condition) only for the tiles in
+    /// `keep`; the road graph, routes and places stay whole. A phone keeps
+    /// them along its course only (spec 14 Phase 10 B7, the iPhone's
+    /// memory, v5.42: Tenerife's base is 250 MB decoded, most of it
+    /// per-tile parts of tiles the ride never comes near).
+    pub fn keep_tiles(&mut self, keep: &BTreeSet<TileKey>) {
+        let cut = self.base.cut(keep);
+        self.base = cut;
+        self.surfaces.retain(|k, _| keep.contains(k));
+        self.dress.retain(|k, _| keep.contains(k));
+        self.lit.retain(|k, _| keep.contains(k));
+        self.condition.retain(|k, _| keep.contains(k));
+        if let Some(l) = self.landuse.as_mut() {
+            l.retain(keep);
+        }
     }
 
     /// The package without its tiles (and without its land use: that is
@@ -1501,6 +1728,61 @@ fn class_from(code: u8) -> Result<RoadClass, String> {
         .get(usize::from(code))
         .copied()
         .ok_or_else(|| format!("unknown road class {code}"))
+}
+
+/// `n` bytes from `pos` of the chunks read as one (copied; `None` past
+/// their end).
+fn gather(chunks: &[Vec<u8>], mut pos: usize, n: usize) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(n);
+    for c in chunks {
+        if pos >= c.len() {
+            pos -= c.len();
+            continue;
+        }
+        let take = (c.len() - pos).min(n - out.len());
+        out.extend_from_slice(&c[pos..pos + take]);
+        pos = 0;
+        if out.len() == n {
+            return Some(out);
+        }
+    }
+    (out.len() == n).then_some(out)
+}
+
+/// The bytes of a list of chunks read in order, a chunk at a time: what
+/// is asked for within the current chunk is borrowed from it, a read over
+/// the end of one joins only the rest of it with the next.
+struct ChunkStream<'c, I: Iterator<Item = Vec<u8>>> {
+    chunks: &'c mut I,
+    buf: Vec<u8>,
+    pos: usize,
+}
+
+impl<I: Iterator<Item = Vec<u8>>> ChunkStream<'_, I> {
+    /// The next `n` bytes; `None` at the end of the last chunk (an end
+    /// within the `n` bytes is an error).
+    fn take(&mut self, n: usize) -> Result<Option<&[u8]>, String> {
+        while self.buf.len() - self.pos < n {
+            let Some(next) = self.chunks.next() else {
+                if self.pos == self.buf.len() {
+                    return Ok(None);
+                }
+                return Err("package truncated".into());
+            };
+            if self.pos == self.buf.len() {
+                // The usual case: sections end at chunk ends.
+                self.buf = next;
+            } else {
+                self.buf.drain(..self.pos);
+                self.buf.reserve_exact(next.len());
+                self.buf.extend_from_slice(&next);
+            }
+            self.pos = 0;
+        }
+        let out = &self.buf[self.pos..self.pos + n];
+        self.pos += n;
+        Ok(Some(out))
+    }
 }
 
 pub(crate) struct Bytes<'a> {
@@ -2756,7 +3038,108 @@ mod tests {
             }
         }
         assert!(chunks.iter().any(|(n, _)| n == "section ORTC"));
-        let s = StreamedPackage::from_parts(&bytes[header], &sections).unwrap();
+        let s = StreamedPackage::from_parts(&bytes[header.clone()], &sections).unwrap();
+        // The same from the chunks one by one, never joined (the iPhone's
+        // memory, v5.42) – also with a section split over two chunks and
+        // with the sections cut into small pieces; a cut-off end fails.
+        let parts: Vec<Vec<u8>> = chunks
+            .iter()
+            .filter(|(n, _)| {
+                n == "sections"
+                    || (n.starts_with("section ")
+                        && !STREAM_SKIPPED_SECTIONS
+                            .iter()
+                            .any(|t| n == &format!("section {}", String::from_utf8_lossy(*t))))
+            })
+            .map(|(_, r)| bytes[r.clone()].to_vec())
+            .collect();
+        let tiles_of = |s: &StreamedPackage| {
+            let t: Vec<Tile> = chunks
+                .iter()
+                .filter(|(n, _)| n.starts_with("tile "))
+                .map(|(_, r)| s.read_tile(&bytes[r.clone()]).unwrap())
+                .collect();
+            s.package(t)
+        };
+        let want = tiles_of(&s);
+        let by_chunk = StreamedPackage::from_chunks(&bytes[header.clone()], parts.clone()).unwrap();
+        // A phone's course: the per-tile parts only for the kept tiles,
+        // the same tiles as the whole base gives them.
+        let mut course = by_chunk.clone();
+        let one: BTreeSet<TileKey> = [TileKey { x: 1, z: 0 }].into();
+        course.keep_tiles(&one);
+        let t = course
+            .read_tile(
+                &bytes[chunks
+                    .iter()
+                    .find(|(n, _)| n == "tile 1,0")
+                    .unwrap()
+                    .1
+                    .clone()],
+            )
+            .unwrap();
+        assert_eq!(t.roads[0].surface, RoadSurface::Gravel, "its surfaces kept");
+        assert_eq!(course.base(), &s.base().cut(&one));
+        // … and the same when the cut is made while decoding, from the
+        // graph and the routes (the phone's start, v5.42).
+        let mut asked = false;
+        let kept = StreamedPackage::from_chunks_kept(&bytes[header.clone()], parts.clone(), |p| {
+            asked = true;
+            assert!(p.tiles.is_empty());
+            assert_eq!(p.graph.is_some(), s.base().graph.is_some());
+            assert_eq!(p.routes, s.base().routes);
+            Some(one.clone())
+        })
+        .unwrap();
+        assert!(asked);
+        assert_eq!(kept.base(), course.base());
+        for piece in [5usize, 64] {
+            let small: Vec<Vec<u8>> = sections.chunks(piece).map(<[u8]>::to_vec).collect();
+            let p = StreamedPackage::from_chunks_kept(&bytes[header.clone()], small, |p| {
+                assert_eq!(p.routes, s.base().routes, "the routes over split chunks");
+                assert_eq!(p.graph.is_some(), s.base().graph.is_some());
+                Some(one.clone())
+            })
+            .unwrap();
+            assert_eq!(p.base(), course.base(), "pieces of {piece}");
+        }
+        let whole =
+            StreamedPackage::from_chunks_kept(&bytes[header.clone()], parts.clone(), |_| None)
+                .unwrap();
+        assert_eq!(whole.base(), by_chunk.base());
+        assert!(
+            course
+                .package([t])
+                .tiles
+                .contains_key(&TileKey { x: 1, z: 0 })
+        );
+        let other = chunks
+            .iter()
+            .find(|(n, _)| n == "tile -1,2")
+            .unwrap()
+            .1
+            .clone();
+        let o = course.read_tile(&bytes[other.clone()]).unwrap();
+        assert_eq!(
+            o,
+            StreamedPackage::from_parts(&bytes[header.clone()], &sections)
+                .unwrap()
+                .read_tile(&bytes[other])
+                .unwrap(),
+            "the tiles themselves are whole"
+        );
+        assert_eq!(tiles_of(&by_chunk), want);
+        assert_eq!(by_chunk.head.tile_count, s.head.tile_count);
+        for piece in [7usize, 100, 4096] {
+            let small: Vec<Vec<u8>> = sections.chunks(piece).map(<[u8]>::to_vec).collect();
+            let p = StreamedPackage::from_chunks(&bytes[header.clone()], small).unwrap();
+            assert_eq!(tiles_of(&p), want, "pieces of {piece}");
+        }
+        let mut cut = parts.clone();
+        let last = cut.last_mut().unwrap();
+        last.truncate(last.len() - 1);
+        assert!(StreamedPackage::from_chunks(&bytes[header.clone()], cut).is_err());
+        assert!(StreamedPackage::from_chunks(&bytes[header.clone()], Vec::new()).is_err());
         assert!(s.base().look.ortho.is_none());
         assert_eq!(s.base().look.forest, p.look.forest);
         assert!(chunks.iter().any(|(n, _)| n == "section FRST"));

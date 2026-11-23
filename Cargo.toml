@@ -67,7 +67,11 @@ ocw-map = { path = "crates/ocw-map" }
 ocw-accounts = { path = "services/accounts" }
 
 # Bevy is pinned to an exact version (spec §3.1). Only ocw-render and apps/desktop may use it.
-bevy = "=0.20.1"
+# Bevy's default features without `audio` (v5.42, the iPhone's memory):
+# every app plays its sound through the shared mixer (cpal natively, Web
+# Audio in the browser) and disabled Bevy's AudioPlugin, so rodio, its
+# decoders and its cpal backend were only code in the browser's module.
+bevy = { version = "=0.20.1", default-features = false, features = ["2d", "3d", "ui"] }
 bevy_egui = "=0.43.1"
 # Ragdoll falls (spec §14 Phase 12C, Q5; chosen by the K2 spike): Avian, the
 # ECS-native physics engine for this Bevy version (MIT OR Apache-2.0; its

@@ -295,10 +295,18 @@ pub fn array_image(
             return Err(format!("{label}: layers differ in size or format"));
         }
     }
-    let data: Vec<u8> = textures
+    // One buffer of the exact size (a collected iterator grows by doubling:
+    // up to twice the array's bytes at once).
+    let total: usize = textures
         .iter()
-        .flat_map(|t| t.levels.iter().flatten().copied())
-        .collect();
+        .map(|t| t.levels.iter().map(Vec::len).sum::<usize>())
+        .sum();
+    let mut data: Vec<u8> = Vec::with_capacity(total);
+    for t in textures {
+        for level in &t.levels {
+            data.extend_from_slice(level);
+        }
+    }
     Ok(Image {
         data: Some(data),
         data_order: TextureDataOrder::LayerMajor,

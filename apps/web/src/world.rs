@@ -72,6 +72,10 @@ pub struct WorldOptions {
     pub preview: bool,
     /// Where worlds by id are found (the page configuration's `worlds`).
     pub base: String,
+    /// A phone keeps the base's per-tile parts only within this many
+    /// rings of its course (`None`: the whole world; `memory::MemoryMode::
+    /// course_rings`; spec 14 Phase 10 B7, v5.42).
+    pub course_rings: Option<i32>,
 }
 
 impl WorldOptions {
@@ -88,6 +92,7 @@ impl WorldOptions {
             trust_roots: Vec::new(),
             preview: cfg!(feature = "preview"),
             base: WORLDS_BASE.into(),
+            course_rings: None,
         }
     }
 
@@ -157,6 +162,19 @@ impl WorldOptions {
             ranges: RangeParams::default(),
             cache_budget: self.cache_budget,
             batch_tiles: 16,
+            // A phone: the base's per-tile parts along the course only, cut
+            // while the base is decoded (v5.42).
+            keep: self.course_rings.map(|rings| {
+                let opts = self.clone();
+                ocw_worldstore::stream::driver::KeepTiles(Arc::new(move |p: &WorldPackage| {
+                    let keep = course_tiles(p, &opts, rings)?;
+                    info!(
+                        "world memory: the base's per-tile parts kept for the {} tiles along the course",
+                        keep.len()
+                    );
+                    Some(keep)
+                }))
+            }),
         })
     }
 }
@@ -277,6 +295,62 @@ pub fn world_ride(
     })
 }
 
+/// A free ride's course on a phone: the rings around its start (the
+/// base's per-tile parts are kept there; beyond, houses, trees and
+/// obstacles are left out – the terrain and the roads come with the
+/// tiles).
+pub const FREE_RIDE_RINGS: i32 = 8;
+
+/// The route the options ask for (`None`: a free ride).
+fn wanted_route<'a>(
+    pkg: &'a WorldPackage,
+    opts: &WorldOptions,
+) -> Option<&'a ocw_world::GraphRoute> {
+    let name = match (&opts.route, opts.free_ride) {
+        (_, true) => return None,
+        (Some(r), false) => r.clone(),
+        (None, false) => pkg.routes.first()?.name.clone(),
+    };
+    pkg.routes
+        .iter()
+        .find(|r| r.name.eq_ignore_ascii_case(&name) || slug(&r.name) == slug(&name))
+}
+
+/// The tiles within `rings` of the ride's course: along the route (a
+/// point every 200 m), or [`FREE_RIDE_RINGS`] around a free ride's start
+/// (the same start [`world_ride`] takes). `None` without a road graph or
+/// when the route does not fit it ([`world_ride`] says why).
+pub fn course_tiles(
+    pkg: &WorldPackage,
+    opts: &WorldOptions,
+    rings: i32,
+) -> Option<BTreeSet<TileKey>> {
+    let net = RoadNetwork::new(pkg.graph.clone()?);
+    let (points, r) = match wanted_route(pkg, opts) {
+        Some(route) => (route.resolve(&net).ok()?.points(&net, 200.0), rings),
+        None if opts.route.is_some() && !opts.free_ride => return None,
+        None => {
+            let (edge, offset, _) = net.random_start(1)?;
+            let p = net.geometry(edge).point_at(offset);
+            (vec![[p[0], p[2]]], rings.max(FREE_RIDE_RINGS))
+        }
+    };
+    let size = f64::from(pkg.tile_size_m);
+    let mut keep = BTreeSet::new();
+    for p in points {
+        let c = TileKey::containing(p, size);
+        for dz in -r..=r {
+            for dx in -r..=r {
+                keep.insert(TileKey {
+                    x: c.x + dx,
+                    z: c.z + dz,
+                });
+            }
+        }
+    }
+    Some(keep)
+}
+
 /// `Vaduz–Malbun` → `vaduz-malbun` (route names in page links).
 pub fn slug(name: &str) -> String {
     let s: String = name
@@ -391,6 +465,7 @@ impl WorldStream {
 
 /// The base arrived: the ride is prepared and the first tiles requested.
 fn on_base(stream: &mut WorldStream, base: StreamBase) -> Result<(), String> {
+    // (A phone's base came cut to its course: `StreamConfig::keep`.)
     let m = &base.manifest;
     stream.identity = Some(format!("{}@{}", m.id, m.version));
     info!(

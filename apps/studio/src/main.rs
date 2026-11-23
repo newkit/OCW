@@ -167,26 +167,22 @@ fn main() -> AppExit {
         }
     }
     let mut app = App::new();
-    app.add_plugins(
-        DefaultPlugins
-            .set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "OCW Studio".into(),
-                    // App id (Wayland) / WM_CLASS (X11): the desktop entry
-                    // `ocw-studio.desktop` and its icon.
-                    name: Some(icon::APP_ID.into()),
-                    resolution: WindowResolution::new(args.window.0, args.window.1),
-                    present_mode: if args.no_vsync {
-                        PresentMode::AutoNoVsync
-                    } else {
-                        PresentMode::AutoVsync
-                    },
-                    ..default()
-                }),
-                ..default()
-            })
-            .disable::<bevy::audio::AudioPlugin>(),
-    )
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(Window {
+            title: "OCW Studio".into(),
+            // App id (Wayland) / WM_CLASS (X11): the desktop entry
+            // `ocw-studio.desktop` and its icon.
+            name: Some(icon::APP_ID.into()),
+            resolution: WindowResolution::new(args.window.0, args.window.1),
+            present_mode: if args.no_vsync {
+                PresentMode::AutoNoVsync
+            } else {
+                PresentMode::AutoVsync
+            },
+            ..default()
+        }),
+        ..default()
+    }))
     .insert_resource(RideView {
         free_ride: true,
         ..RideView::new(ocw_world::Route::test_hills())

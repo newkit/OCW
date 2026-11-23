@@ -477,10 +477,7 @@ fn main() -> AppExit {
                     ..default()
                 }),
                 ..default()
-            })
-            // Bevy's own audio (rodio) only plays on the default device and
-            // has no bus mixer; game audio is `audio::GameAudioPlugin`.
-            .disable::<bevy::audio::AudioPlugin>(),
+            }),
     )
     // The client prediction runs in FixedUpdate at the same rate as the server tick.
     .insert_resource(Time::<Fixed>::from_hz(f64::from(SIM_TICK_HZ)))

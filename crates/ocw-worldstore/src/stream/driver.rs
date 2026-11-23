@@ -16,7 +16,7 @@
 //! 4. the base (header and sections) is loaded, verified and decoded;
 //! 5. then the tiles the app asks for, batch by batch.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use ocw_world::TileKey;
 use ocw_world::manifest::{
@@ -29,6 +29,23 @@ use super::load::{LoadStats, RangeFetch, StreamError, load_chunks};
 use super::plan::{RangeParams, base_chunks};
 use super::progress::{LoadProgress, Stage, Storage};
 use super::{MAX_MANIFEST_BYTES, WorldRef, accept_manifest, sibling_url};
+
+/// Chooses, from the package's road graph and routes, the tiles whose
+/// per-tile parts the decoded base keeps (`None`: all); a phone keeps its
+/// course only (spec 14 Phase 10 B7, the iPhone's memory, v5.42;
+/// `StreamedPackage::from_chunks_kept`).
+#[derive(Clone)]
+pub struct KeepTiles(pub Arc<KeepFn>);
+
+/// [`KeepTiles`]' function.
+pub type KeepFn =
+    dyn Fn(&ocw_world::WorldPackage) -> Option<std::collections::BTreeSet<TileKey>> + Send + Sync;
+
+impl std::fmt::Debug for KeepTiles {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("KeepTiles(..)")
+    }
+}
 
 /// What to stream and how.
 #[derive(Debug, Clone)]
@@ -44,6 +61,8 @@ pub struct StreamConfig {
     pub cache_budget: u64,
     /// Most tiles in one batch of requests.
     pub batch_tiles: usize,
+    /// The tiles the base keeps its per-tile parts for (`None`: all).
+    pub keep: Option<KeepTiles>,
 }
 
 /// The decoded base of the package, handed to the app once.
@@ -347,29 +366,27 @@ impl<F: RangeFetch, S: ChunkStore> StreamDriver<F, S> {
             },
         )
         .await?;
-        // The sections in one buffer of the right size, each chunk freed
-        // once copied (spec §14 Phase 10 B2: the wasm memory keeps its
-        // peak, and Tenerife's base is 146 MB – the chunks, a growing copy
-        // and the decoded base at once took three times that).
-        let total: usize = chunks
-            .iter()
-            .filter(|c| file.chunks[c.index].name != "header")
-            .map(|c| c.bytes.len())
-            .sum();
+        // The sections decoded chunk by chunk, each freed once read (spec
+        // 14 Phase 10 B2, B7: the wasm memory keeps its peak, and
+        // Tenerife's base is 146 MB – joined into one buffer first, the
+        // chunks, the copy and the decoded base were there at once; the
+        // iPhone's memory, v5.42).
         let mut header = None;
-        let mut sections = Vec::with_capacity(total);
+        let mut sections = Vec::with_capacity(chunks.len());
         for c in chunks {
             if file.chunks[c.index].name == "header" {
                 header = Some(c.bytes);
             } else {
-                sections.extend_from_slice(&c.bytes);
+                sections.push(c.bytes);
             }
         }
         let header =
             header.ok_or_else(|| StreamError::Decode("the package has no header chunk".into()))?;
-        let package =
-            StreamedPackage::from_parts(&header, &sections).map_err(StreamError::Decode)?;
-        drop(sections);
+        let package = match &self.config.keep {
+            Some(k) => StreamedPackage::from_chunks_kept(&header, sections, |p| (k.0)(p)),
+            None => StreamedPackage::from_chunks(&header, sections),
+        }
+        .map_err(StreamError::Decode)?;
         let elapsed = self.elapsed();
         let mut s = shared.lock().expect("not poisoned");
         let st = self.storage(&s);
@@ -478,6 +495,7 @@ mod tests {
             },
             cache_budget: 1 << 20,
             batch_tiles: 4,
+            keep: None,
         }
     }
 

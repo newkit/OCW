@@ -315,6 +315,32 @@ impl LandUseIndex {
         self.tiles.len()
     }
 
+    /// Keeps only the records of the tiles in `keep` (and the sea tile,
+    /// for the far terrain's sea), copied into a buffer of their size (the
+    /// phone's course, spec 14 Phase 10 B7, v5.42).
+    pub fn retain(&mut self, keep: &std::collections::BTreeSet<TileKey>) {
+        let mut starts: Vec<usize> = self.tiles.values().copied().collect();
+        starts.sort_unstable();
+        let end = |at: usize| {
+            let i = starts.partition_point(|&s| s <= at);
+            starts.get(i).copied().unwrap_or(self.bytes.len())
+        };
+        let kept: Vec<(TileKey, usize, usize)> = self
+            .tiles
+            .iter()
+            .filter(|(k, _)| keep.contains(k) || self.sea_tile == Some(**k))
+            .map(|(k, &at)| (*k, at, end(at)))
+            .collect();
+        let mut bytes = Vec::with_capacity(kept.iter().map(|k| k.2 - k.1).sum());
+        let mut tiles = BTreeMap::new();
+        for (k, a, b) in kept {
+            tiles.insert(k, bytes.len());
+            bytes.extend_from_slice(&self.bytes[a..b]);
+        }
+        self.bytes = bytes;
+        self.tiles = tiles;
+    }
+
     pub fn is_empty(&self) -> bool {
         self.tiles.is_empty()
     }
@@ -425,6 +451,19 @@ pub(crate) mod tests {
         l.tiles.get_mut(&far).unwrap().water = vec![(0, 0.0)];
         let mut b = Vec::new();
         write_landuse(&l, &mut b);
-        assert_eq!(LandUseIndex::new(&b, 3).unwrap().sea_tile, Some(far));
+        let mut ix = LandUseIndex::new(&b, 3).unwrap();
+        assert_eq!(ix.sea_tile, Some(far));
+        // A phone's course (v5.42): only the kept tiles and the sea tile,
+        // decoded as before, in fewer bytes.
+        let before = ix.bytes();
+        let k = TileKey { x: 0, z: 0 };
+        let want = ix.tile(k);
+        ix.retain(&[k].into());
+        assert_eq!(ix.tile(k), want);
+        assert!(ix.tile(far).is_some(), "the sea tile stays");
+        let mut none = LandUseIndex::new(&b, 3).unwrap();
+        none.retain(&[TileKey { x: 7, z: 7 }].into());
+        assert_eq!(none.len(), 1, "only the sea tile");
+        assert!(none.bytes() < before);
     }
 }

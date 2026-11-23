@@ -97,6 +97,45 @@ pub const JUMP_M: f64 = 200.0;
 /// After a jump, the tiles up to this ring around the rider (1 = 3 × 3)
 /// are there in the next frame.
 pub const URGENT_RING: i32 = 1;
+
+/// How many tiles are built at once: the urgent ring after a jump and the
+/// most pending beyond it. Each tile's meshes take 14 – 28 MB of heap until
+/// they are uploaded, so the 3 × 3 urgent tiles of the start held ~200 MB
+/// at once – and the browser's wasm memory never shrinks. A phone builds
+/// only the rider's own tile at once and one more at a time
+/// ([`TileBuildPace::PHONE`]; spec 14 Phase 10 B7, the iPhone's memory,
+/// v5.42); the ground around comes tile by tile within a second.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TileBuildPace {
+    /// The ring built at once after a jump (0: the rider's tile only).
+    pub urgent_ring: i32,
+    /// Tiles being built or waiting for their upload beyond it.
+    pub max_pending: usize,
+    /// Rings beyond the wanted ones a meshed tile stays before it is
+    /// dropped (1: 5 × 5 tiles stay meshed around a 3 × 3 ring; 0: only
+    /// the wanted ones – a phone's 9 tiles' meshes instead of up to 25).
+    pub keep_margin: i32,
+}
+
+impl Default for TileBuildPace {
+    fn default() -> Self {
+        Self {
+            urgent_ring: URGENT_RING,
+            max_pending: MAX_PENDING_TILES,
+            keep_margin: 1,
+        }
+    }
+}
+
+impl TileBuildPace {
+    /// A phone's browser: one tile at a time, no meshed tiles beyond the
+    /// wanted ones.
+    pub const PHONE: Self = Self {
+        urgent_ring: 0,
+        max_pending: 1,
+        keep_margin: 0,
+    };
+}
 /// Loads the tiles of member `i` of the world set again (verified), for
 /// neighbours that come into range. Runs on a background task.
 pub type PackageLoader = Arc<dyn Fn(usize) -> Result<WorldPackage, String> + Send + Sync>;
@@ -314,9 +353,37 @@ pub struct TileLook {
     pub season: Option<Arc<ocw_sky::season::SeasonDay>>,
     /// The snow ramp the far terrain bakes in (the shaders' near snow).
     pub snow: ocw_sky::season::Ramp,
+    /// Every how many of the grid's trees one is drawn (0 or 1: all). A
+    /// phone's browser draws every second ([`PlantThinning`]): the far
+    /// models of the trees are half of a forested tile's GPU memory (11 of
+    /// 21 MB on the northern Black Forest; spec 14 Phase 10 B7, v5.42).
+    pub plant_thinning: u8,
+}
+
+/// The renderer's [`TileLook::plant_thinning`] (the app sets it; 0 by
+/// default: all trees).
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PlantThinning(pub u8);
+
+/// Whether the tree at `p` is drawn with `thinning` (every n-th by a hash
+/// of its position, so a tile and its rebuilds keep the same trees).
+pub fn tree_kept(p: Vec3, thinning: u8) -> bool {
+    if thinning <= 1 {
+        return true;
+    }
+    let h = (p.x.to_bits().wrapping_mul(0x9E37_79B1) ^ p.z.to_bits().wrapping_mul(0x85EB_CA77))
+        .rotate_left(13)
+        .wrapping_mul(0xC2B2_AE3D);
+    (h >> 16).is_multiple_of(u32::from(thinning))
 }
 
 impl TileLook {
+    /// With [`TileLook::plant_thinning`] set.
+    pub fn with_plant_thinning(mut self, thinning: u8) -> Self {
+        self.plant_thinning = thinning;
+        self
+    }
+
     pub fn textured(&self) -> bool {
         self.palette.is_some()
     }
@@ -336,6 +403,7 @@ impl TileLook {
             },
             season: None,
             snow: ocw_sky::season::Ramp::default(),
+            plant_thinning: 0,
         }
     }
 
@@ -1306,6 +1374,9 @@ pub fn build_tile_meshes_with(
     if let Some(f) = keep {
         classed.retain(|((p, _), _)| f([f64::from(p.x), f64::from(p.z)]));
     }
+    if look.plant_thinning > 1 {
+        classed.retain(|((p, _), _)| tree_kept(*p, look.plant_thinning));
+    }
     let lu = tile_landuse(pkg, key);
     // The kept buildings with their measured roof colours (section ROOF,
     // in the order of the tile's buildings).
@@ -1553,9 +1624,14 @@ pub fn wanted_tiles_for(set: &WorldSet, focus: &StreamFocus) -> Vec<TileId> {
 /// The tiles [`urgent_tiles`] builds at once after a jump: of the
 /// [`wanted_tiles`], those up to [`URGENT_RING`], nearest first.
 pub fn urgent_tiles(set: &WorldSet, p: [f64; 2]) -> Vec<TileId> {
+    urgent_tiles_within(set, p, URGENT_RING)
+}
+
+/// [`urgent_tiles`] up to `ring`.
+pub fn urgent_tiles_within(set: &WorldSet, p: [f64; 2], ring: i32) -> Vec<TileId> {
     wanted_tile_rings(set, &riding_focus(p))
         .into_iter()
-        .filter(|&(ring, _)| ring <= URGENT_RING)
+        .filter(|&(r, _)| r <= ring)
         .map(|(_, id)| id)
         .collect()
 }
@@ -1606,15 +1682,17 @@ pub fn far_tiles<'a>(
     p: [f64; 2],
     loaded: impl IntoIterator<Item = &'a TileId>,
 ) -> Vec<TileId> {
-    far_tiles_for(set, &riding_focus(p), loaded)
+    far_tiles_for(set, &riding_focus(p), loaded, 1)
 }
 
-/// [`far_tiles`] for a [`StreamFocus`]: beyond one ring more than wanted
-/// around its centre and around the point ahead.
+/// [`far_tiles`] for a [`StreamFocus`]: beyond `margin` rings more than
+/// wanted around its centre and around the point ahead (1 as before; a
+/// phone 0, [`TileBuildPace::keep_margin`]).
 pub fn far_tiles_for<'a>(
     set: &WorldSet,
     focus: &StreamFocus,
     loaded: impl IntoIterator<Item = &'a TileId>,
+    margin: i32,
 ) -> Vec<TileId> {
     loaded
         .into_iter()
@@ -1627,9 +1705,9 @@ pub fn far_tiles_for<'a>(
                     let centre = TileKey::containing(m.frame.invert(focus.centre), size);
                     let near_ahead = focus.ahead.is_some_and(|a| {
                         let a = TileKey::containing(m.frame.invert(a), size);
-                        key.ring(a) <= crate::flight_world::AHEAD_RADIUS + 1
+                        key.ring(a) <= crate::flight_world::AHEAD_RADIUS + margin
                     });
-                    key.ring(centre) > focus.radius + 1 && !near_ahead
+                    key.ring(centre) > focus.radius + margin && !near_ahead
                 }
             }
         })
@@ -1749,7 +1827,11 @@ fn stream_tiles(
     library: Option<Res<MaterialLibrary>>,
     mut seasons: Option<ResMut<crate::season::SeasonCache>>,
     radius: Option<Res<StreamRadius>>,
+    pace: Option<Res<TileBuildPace>>,
+    thinning: Option<Res<PlantThinning>>,
 ) {
+    let pace = pace.as_deref().copied().unwrap_or_default();
+    let thinning = thinning.as_deref().copied().unwrap_or_default().0;
     let set = &world.set;
     let Some(mut focus) = crate::flight_world::stream_focus(&view) else {
         return;
@@ -1794,6 +1876,7 @@ fn stream_tiles(
                 None => base,
             }
             .with_season(season_day.clone(), snow)
+            .with_plant_thinning(thinning)
         })
         .collect();
     let look = move |i: usize| looks.get(i).cloned().unwrap_or_default();
@@ -1850,6 +1933,7 @@ fn stream_tiles(
         |id| streamer.loaded.contains_key(&id),
         &streamer.stale,
         &pending,
+        pace,
     ) {
         streamer.stale.remove(&id);
         streamer
@@ -1862,7 +1946,7 @@ fn stream_tiles(
         // frame waits for them – and uploaded in this frame, so the ground
         // is there in the first frame at the new place instead of tile by
         // tile over half a second (spec §4.5).
-        let urgent: Vec<TileId> = urgent_tiles(set, p)
+        let urgent: Vec<TileId> = urgent_tiles_within(set, p, pace.urgent_ring)
             .into_iter()
             .filter(|id| !streamer.loaded.contains_key(id))
             .collect();
@@ -1892,7 +1976,7 @@ fn stream_tiles(
             }
         }
     }
-    let far = far_tiles_for(set, &focus, streamer.loaded.keys());
+    let far = far_tiles_for(set, &focus, streamer.loaded.keys(), pace.keep_margin);
     for id in far {
         streamer.terrain.remove(&id);
         if let Some(e) = streamer.loaded.remove(&id) {
@@ -1920,11 +2004,13 @@ pub const MAX_PENDING_TILES: usize = 3;
 /// (being built or waiting for their upload) – the urgent ring always,
 /// the others while fewer than [`MAX_PENDING_TILES`] are pending; then the
 /// stale tiles no longer wanted (still loaded, until they are dropped).
+/// `pace`: the urgent ring and the most pending ([`TileBuildPace`]).
 pub(crate) fn tiles_to_build(
     wanted: &[(i32, TileId)],
     loaded: impl Fn(TileId) -> bool,
     stale: &HashSet<TileId>,
     pending: &HashSet<TileId>,
+    pace: TileBuildPace,
 ) -> Vec<TileId> {
     let mut out = Vec::new();
     let mut busy = pending.len();
@@ -1945,7 +2031,7 @@ pub(crate) fn tiles_to_build(
         if (loaded(id) && !stale.contains(&id)) || pending.contains(&id) || out.contains(&id) {
             continue;
         }
-        if ring > URGENT_RING && busy >= MAX_PENDING_TILES {
+        if ring > pace.urgent_ring && busy >= pace.max_pending {
             continue;
         }
         busy += 1;
@@ -2738,6 +2824,18 @@ mod tests {
             far_tiles(&set, [0.0, 50.0], &loaded).len(),
             loaded.iter().filter(|t| t.0 == 1).count()
         );
+        // A phone's margin of 0 (the iPhone's memory, v5.42): a tile two
+        // rings out of a 3 × 3 ring goes at once; with the margin of 1 it
+        // stays.
+        let focus = crate::flight_world::StreamFocus {
+            centre: [0.0, 50.0],
+            radius: 1,
+            ahead: None,
+        };
+        let two_out = (0usize, TileKey { x: -2, z: 0 });
+        assert!(loaded.contains(&two_out), "{loaded:?}");
+        assert!(!far_tiles_for(&set, &focus, &loaded, 1).contains(&two_out));
+        assert!(far_tiles_for(&set, &focus, &loaded, 0).contains(&two_out));
     }
 
     /// The render distance's ring (spec §14 Phase 10, 10G) caps the riding
@@ -3136,6 +3234,28 @@ mod tests {
         );
     }
 
+    /// A phone's thinned trees (v5.42): every second about, always the
+    /// same ones; 0 and 1 keep all.
+    #[test]
+    fn thinning_keeps_every_nth_tree_always_the_same() {
+        let pts: Vec<Vec3> = (0..2000)
+            .map(|i| {
+                Vec3::new(
+                    (i % 50) as f32 * 3.7 + 0.25,
+                    0.0,
+                    (i / 50) as f32 * 4.1 - 7.0,
+                )
+            })
+            .collect();
+        assert!(pts.iter().all(|&p| tree_kept(p, 0) && tree_kept(p, 1)));
+        let half = pts.iter().filter(|&&p| tree_kept(p, 2)).count();
+        assert!((800..1200).contains(&half), "{half} of 2000");
+        let third = pts.iter().filter(|&&p| tree_kept(p, 3)).count();
+        assert!((520..820).contains(&third), "{third} of 2000");
+        assert!(pts.iter().all(|&p| tree_kept(p, 2) == tree_kept(p, 2)));
+        assert_eq!(TileLook::default().plant_thinning, 0, "desktops: all trees");
+    }
+
     /// Spec §14 Phase 8 T8 (the memory regression of v3.49): a tile
     /// waiting for its upload is not built again in every frame (the queue
     /// grew by all its tiles each frame, in the browser to gigabytes), at
@@ -3152,7 +3272,8 @@ mod tests {
         let none = HashSet::new();
         // The start: the urgent ring at once, nothing more while it is
         // pending.
-        let first = tiles_to_build(&wanted, |_| false, &none, &none);
+        let pace = TileBuildPace::default();
+        let first = tiles_to_build(&wanted, |_| false, &none, &none, pace);
         assert_eq!(first.len(), 9, "{first:?}");
         assert!(
             first
@@ -3169,7 +3290,7 @@ mod tests {
             .take(MAX_PENDING_TILES)
             .map(|&(_, t)| t)
             .collect();
-        let next = tiles_to_build(&wanted, |t| loaded.contains(&t), &none, &queued);
+        let next = tiles_to_build(&wanted, |t| loaded.contains(&t), &none, &queued, pace);
         assert!(next.is_empty(), "{next:?}");
         // One uploaded: one more starts, never one of the queued.
         let mut queued = queued;
@@ -3177,7 +3298,7 @@ mod tests {
         queued.remove(&up);
         let mut loaded = loaded;
         loaded.insert(up);
-        let next = tiles_to_build(&wanted, |t| loaded.contains(&t), &none, &queued);
+        let next = tiles_to_build(&wanted, |t| loaded.contains(&t), &none, &queued, pace);
         assert_eq!(next.len(), 1);
         assert!(!queued.contains(&next[0]) && !loaded.contains(&next[0]));
         // Stale (a new season): rebuilt nearest first, a few at a time, the
@@ -3190,6 +3311,7 @@ mod tests {
             |t| all.contains(&t) || t == id(3, 0),
             &stale,
             &none,
+            pace,
         );
         assert_eq!(next.len(), 9, "the urgent ring: {next:?}");
         assert_eq!(next[0], id(0, 0));
@@ -3201,8 +3323,21 @@ mod tests {
             |t| fresh.contains(&t) || t == id(3, 0),
             &only_far,
             &none,
+            pace,
         );
         assert_eq!(next, vec![id(3, 0)]);
+        // A phone (the iPhone's memory, v5.42): the rider's tile at once,
+        // then one at a time – never 9 tiles' meshes on the heap together.
+        let phone = TileBuildPace::PHONE;
+        let first = tiles_to_build(&wanted, |_| false, &none, &none, phone);
+        assert_eq!(first, vec![id(0, 0)], "{first:?}");
+        let pending: HashSet<TileId> = first.iter().copied().collect();
+        let next = tiles_to_build(&wanted, |_| false, &none, &pending, phone);
+        assert!(next.is_empty(), "one pending at a time: {next:?}");
+        let loaded: HashSet<TileId> = first.iter().copied().collect();
+        let next = tiles_to_build(&wanted, |t| loaded.contains(&t), &none, &none, phone);
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].1.x.abs().max(next[0].1.z.abs()), 1, "nearest first");
     }
 
     /// The plants' geometry per tile on a real package (not run by

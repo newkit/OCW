@@ -190,6 +190,45 @@
     return u.toString();
   }
 
+  // Each death goes one step further (v5.42: the iPhone died in the saver
+  // mode too): the page's memory mode → saver → minimal → stop. Returns
+  // {href, mode} for the next try, or null when even the minimal mode
+  // died (the page stops and says so; never a loop).
+  const MEMORY_STEPS = ["saver", "minimal"];
+  function nextMemoryStep(href) {
+    const u = new URL(href);
+    const now = u.searchParams.get("memory");
+    const i = MEMORY_STEPS.indexOf(now);
+    if (i === MEMORY_STEPS.length - 1) return null;
+    const mode = MEMORY_STEPS[i + 1];
+    u.searchParams.set("quality", "low");
+    u.searchParams.set("memory", mode);
+    return {href: u.toString(), mode};
+  }
+
+  // The canvas' pixel ratio for the app on a phone (spec 14 Phase 10 B7,
+  // the iPhone's memory). WebKit (Safari, every browser on iOS) has no
+  // `devicePixelContentBoxSize`, so winit sizes the canvas at the full
+  // device pixel ratio (3 on an iPhone: 1179 × 2556 px) and the app's own
+  // cap (the quality preset's) cannot apply there – every render target
+  // (main target, depth, the canvas' buffers) is 9 × that of a 1 × canvas,
+  // and iOS counts it against the tab. So the page tells the app a smaller
+  // `devicePixelRatio` before it starts: the drawing buffer shrinks, the
+  // CSS size stays (the browser scales the picture up). `?pixel-ratio=N`
+  // (0.5 – 4) chooses; else phones and tablets in WebKit get 1.5 (1 in the
+  // memory saver modes); elsewhere `null` (the device's own: desktops and
+  // Chromium phones, where the preset's cap works, are unchanged).
+  function pixelRatioCap(f, query, dpr, hasDeviceBox) {
+    const q = Number(query && query.get ? query.get("pixel-ratio") : NaN);
+    let cap = null;
+    if (q >= 0.5 && q <= 4) cap = q;
+    else if (!hasDeviceBox && f && f.phone) {
+      const mem = query && query.get ? query.get("memory") : null;
+      cap = mem === "saver" || mem === "minimal" ? 1 : 1.5;
+    }
+    return cap !== null && Number(dpr || 1) > cap ? cap : null;
+  }
+
   // The start page's checkbox "WebGL 2 with low graphics": ticked where
   // the page would take WebGL 2 anyway (Safari, a remembered failure, no
   // WebGPU) and on phones and tablets. `query(checked)`: what a ride card
@@ -321,5 +360,6 @@
   }
 
   root.ocwGpuChoice = {facts, choose, recall, remember, forget, fallbackUrl, startPage, uniform, watch, KEY, FAILED_PARAM,
-    mayFallBack, mayReload, RELOAD_KEY, RELOAD_WINDOW_MS, lastRideDied, rideStarted, rideClosed, saverUrl, RIDE_KEY};
+    mayFallBack, mayReload, RELOAD_KEY, RELOAD_WINDOW_MS, lastRideDied, rideStarted, rideClosed, saverUrl, RIDE_KEY,
+    pixelRatioCap, nextMemoryStep, MEMORY_STEPS};
 })(typeof window !== "undefined" ? window : globalThis);
