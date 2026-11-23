@@ -92,8 +92,11 @@ fn reconciled_profiles_are_the_drawn_surface() {
                 "edge {e} sample {i}"
             );
             // The drawn surface moved little (the side road's blend now
-            // starts at the main road's height and is shorter).
-            if let Some(b) = before.get(&(e, i)) {
+            // starts at the main road's height and is shorter); the
+            // crossing's lies on its plane now (Q7 (c)).
+            if let Some(b) = before.get(&(e, i))
+                && g0.edges.len() == 3
+            {
                 let a = g0.edges[e].profile[i];
                 assert!(
                     (h - b).abs() <= (a - b).abs().max(0.03),
@@ -636,11 +639,13 @@ fn side_roads_keep_their_class_grade_after_the_blend() {
     let gr = grades(&side.profile, &d);
     assert!(gr.iter().all(|x| x.abs() <= 0.20 + 0.01), "{gr:?}");
     // The junction stays on the main road: the vertex at its height; the
-    // side road leaves the main road's edge (3.75 m out) at its own grade
-    // (§4.8.8 Q6 (d)): 18 % × 1.25 m at its 5 m sample.
+    // side road leaves the main road's edge (3.75 m out, §4.8.8 Q6 (d))
+    // with the main road's slope along it (0 % across the main road) and
+    // turns to its 18 % over a vertical curve (Q7 (b)): little more than
+    // level at its 5 m sample (J3: 18 % × 1.25 m = 0.225 m).
     assert_eq!(side.profile[0], g.edges[1].profile[0]);
     assert!(
-        (side.profile[1] - 0.225).abs() < 0.03,
+        side.profile[1] - side.profile[0] < 0.06,
         "{:?}",
         &side.profile[..4]
     );
@@ -872,4 +877,204 @@ fn clusters_are_one_junction_surface() {
     // Within 3 cm where the patch's corner meets a carriageway's strip
     // beside the median (the lint's 2 cm on the real packages).
     assert!(cluster[0].seam_m < 0.03, "{:?}", cluster[0]);
+}
+
+/// The kinks of a profile (changes of grade above 8 points between two
+/// intervals at least 1 m long), as the lint counts them.
+fn kinks(p: &[f64], len: f64) -> Vec<(usize, f64)> {
+    let d: Vec<f64> = (0..p.len()).map(|i| sample_m(i, len)).collect();
+    let mut out = Vec::new();
+    let mut prev: Option<f64> = None;
+    for i in 0..p.len() - 1 {
+        if d[i + 1] - d[i] < 1.0 {
+            continue;
+        }
+        let g = (p[i + 1] - p[i]) / (d[i + 1] - d[i]);
+        if let Some(pg) = prev
+            && (g - pg).abs() > 0.08
+        {
+            out.push((i, (g - pg) * 100.0));
+        }
+        prev = Some(g);
+    }
+    out
+}
+
+/// Spec §4.8.8 Q7 (b): a side road climbing 12 % off a flat main road
+/// leaves its edge with the main road's slope along it (0 %) and turns to
+/// its own grade over a vertical curve of 8 m – no kink (J3 left a change
+/// of 12 points at the edge) –, the drawn surface still follows the
+/// profile, the main road is unchanged, and the road beyond keeps its own
+/// profile.
+#[test]
+fn creases_are_rounded_into_a_vertical_curve() {
+    assert_eq!(crease_curve_m(0.03), CREASE_MIN_M);
+    assert!((crease_curve_m(0.12) - 8.0).abs() < 1e-9);
+    assert_eq!(crease_curve_m(0.40), CREASE_MAX_M);
+    let g0 = fixtures::t_junction_built(RoadClass::Secondary, 0.0, 0.12);
+    let mut g = g0.clone();
+    let st = reconcile_profiles(&mut g, &|_, _| true);
+    assert!(st.residual_m < 0.02, "{st:?}");
+    let side = &g.edges[2];
+    let len = side.length_m();
+    assert_eq!(kinks(&side.profile, len), vec![], "{:?}", side.profile);
+    // The drawn surface along the side road's centre line: level with the
+    // main road at its edge (3.75 m), gentle just past it (the main road's
+    // 0 % turning), its own 12 % beyond the curve and the stretch that
+    // makes up the height the curve left.
+    let js = JunctionSet::new(&g);
+    let at = |z: f64| {
+        js.drawn_height(&g, 2, z, [0.0, z])
+            .unwrap_or_else(|| side.height_at(z).unwrap())
+    };
+    assert!(at(3.75).abs() < 0.01, "{}", at(3.75));
+    let early = at(5.25) - at(4.25);
+    assert!(early < 0.05, "the grade just past the edge: {early}");
+    let late = (side.height_at(65.0).unwrap() - side.height_at(60.0).unwrap()) / 5.0;
+    assert!((late - 0.12).abs() < 0.01, "{late}");
+    for e in 0..2 {
+        assert_eq!(g.edges[e].profile, g0.edges[e].profile, "main road {e}");
+    }
+    let tail = g0.edges[2].profile.len() - 6;
+    assert_eq!(side.profile[tail..], g0.edges[2].profile[tail..]);
+    let r = crate::lint::lint(&package(&g), None);
+    assert_eq!(r.count("road.vertical.kink"), 0);
+    assert_eq!(r.count("road.vertical.grade_over_limit"), 0);
+}
+
+/// [`round_creases`] on a bare profile: the crease point and the far end
+/// keep their heights, the road leaves the crease gently (the main road's
+/// 0 %) and reaches its 15 % without a kink, the height the curve loses
+/// spread within the limit; the same the other way along an edge.
+#[test]
+fn round_creases_shapes_the_curve_and_keeps_its_ends() {
+    // A crease at 2.5 m (main road 0 % before it), then 15 %.
+    let mut d = vec![0.0, 2.5];
+    d.extend((1..12).map(|i| f64::from(i) * 5.0));
+    let p0: Vec<f64> = d.iter().map(|&x| (x - 2.5).max(0.0) * 0.15).collect();
+    let mut fixed = vec![false; d.len()];
+    fixed[0] = true;
+    fixed[1] = true;
+    let mut crease = vec![None; d.len()];
+    crease[1] = Some((0.0, 1.0));
+    fixed[d.len() - 1] = true;
+    let mut p = p0.clone();
+    assert!(round_creases(&mut p, &d, &fixed, &crease, 0.25));
+    assert_eq!(p[..2], p0[..2]);
+    // The far end keeps its height; the road gets there a little steeper
+    // than its 15 %, within the 25 % limit, without a kink.
+    assert_eq!(p.last(), p0.last());
+    let gr = grades(&p, &d);
+    assert!(gr[1] < 0.06, "{gr:?}");
+    assert!(gr.iter().all(|x| *x <= 0.25 + 1e-9), "{gr:?}");
+    for w in gr.windows(2) {
+        assert!((w[1] - w[0]).abs() < 0.08 + 1e-9, "{gr:?}");
+    }
+    // Close to a fixed point again (a second pass moves little).
+    let again = p.clone();
+    round_creases(&mut p, &d, &fixed, &crease, 0.25);
+    for (a, b) in p.iter().zip(&again) {
+        assert!((a - b).abs() < 0.05, "{p:?} vs {again:?}");
+    }
+    let p = again;
+    // The same edge the other way round: the junction at its `to` end.
+    let n = d.len();
+    let len = d[n - 1];
+    let dr: Vec<f64> = d.iter().rev().map(|x| len - x).collect();
+    let mut pr: Vec<f64> = p0.iter().rev().copied().collect();
+    let fixed_r: Vec<bool> = fixed.iter().rev().copied().collect();
+    let mut crease_r = vec![None; n];
+    crease_r[n - 2] = Some((0.0, -1.0));
+    assert!(round_creases(&mut pr, &dr, &fixed_r, &crease_r, 0.25));
+    let back: Vec<f64> = pr.iter().rev().copied().collect();
+    for (a, b) in back.iter().zip(&p) {
+        assert!((a - b).abs() < 1e-9, "{back:?} vs {p:?}");
+    }
+}
+
+/// Spec §4.8.8 Q7: at no T junction the world builder shapes does a side
+/// road's surface stand above (or poke through) the main road's drawn
+/// surface – steep side roads up and down, at a right angle and at 30° and
+/// 45°, and a side road meeting a dual carriageway (a cluster): the lint's
+/// `junction.mouth.above_main` is 0.
+#[test]
+fn side_roads_stay_below_the_main_road_surface() {
+    for g0 in [
+        t_junction(RoadClass::Secondary, 0.08, 0.20),
+        t_junction(RoadClass::Secondary, -0.06, -0.18),
+        fixtures::t_junction_at(0.10, -0.15, 30.0),
+        fixtures::t_junction_at(0.12, 0.20, 45.0),
+        fixtures::dual_carriageway_t(),
+    ] {
+        let mut g = g0.clone();
+        reconcile_profiles(&mut g, &|_, _| true);
+        let pkg = package(&g);
+        assert_eq!(mouths_above_main(&pkg, &g), vec![]);
+        let r = crate::lint::lint(&pkg, None);
+        assert_eq!(r.count("junction.mouth.above_main"), 0);
+    }
+}
+
+/// Spec §4.8.8 Q7 (c): an equal crossing whose four roads climb and fall
+/// differently (+15 %, −5 %, +10 %, +12 % outward): its junction surface is
+/// one plane (the heights at the mouths and the centre within 2 cm of it),
+/// each road turns from the plane's slope to its own grade over 10 – 20 m
+/// past the mouth without a kink above 8 points and within its class
+/// grade, the roads farther out keep their profiles, and the profiles are
+/// the drawn surface.
+#[test]
+fn blended_junctions_lie_on_one_plane() {
+    let g0 = crossing([0.15, -0.05, 0.10, 0.12]);
+    let mut g = g0.clone();
+    let st = reconcile_profiles(&mut g, &|_, _| true);
+    assert_eq!(st.planes, 1, "{st:?}");
+    assert!(st.residual_m < 0.02, "{st:?}");
+    let js = JunctionSet::new(&g);
+    let p = js.patch(&g, 0).expect("a patch");
+    assert!(p.through.is_none());
+    // The plane through the centre and two mouths holds the others.
+    let pts: Vec<([f64; 2], f64)> = std::iter::once(([0.0, 0.0], p.height_at([0.0, 0.0]).unwrap()))
+        .chain(
+            p.arms
+                .iter()
+                .map(|a| (a.centre, p.height_at(a.centre).unwrap_or(a.h))),
+        )
+        .collect();
+    let (c0, c1, c2) = (pts[0], pts[1], pts[2]);
+    let det = (c1.0[0] - c0.0[0]) * (c2.0[1] - c0.0[1]) - (c2.0[0] - c0.0[0]) * (c1.0[1] - c0.0[1]);
+    let gx = ((c1.1 - c0.1) * (c2.0[1] - c0.0[1]) - (c2.1 - c0.1) * (c1.0[1] - c0.0[1])) / det;
+    let gz = ((c1.0[0] - c0.0[0]) * (c2.1 - c0.1) - (c2.0[0] - c0.0[0]) * (c1.1 - c0.1)) / det;
+    for (q, h) in &pts {
+        let on = c0.1 + gx * (q[0] - c0.0[0]) + gz * (q[1] - c0.0[1]);
+        assert!((h - on).abs() < 0.02, "{q:?}: {h} vs {on}");
+    }
+    for (e, e0) in g.edges.iter().zip(&g0.edges) {
+        let len = e.length_m();
+        assert_eq!(
+            kinks(&e.profile, len),
+            vec![],
+            "edge {}: {:?}",
+            e.osm_way,
+            e.profile
+        );
+        let d: Vec<f64> = (0..e.profile.len()).map(|i| sample_m(i, len)).collect();
+        assert!(
+            grades(&e.profile, &d)
+                .iter()
+                .all(|x| x.abs() <= 0.20 + 0.01)
+        );
+        // Past the mouth, the curve and a sample: unchanged.
+        let a = p
+            .arms
+            .iter()
+            .find(|a| g.edges[a.edge].osm_way == e.osm_way)
+            .unwrap();
+        for (i, (x, y)) in e.profile.iter().zip(&e0.profile).enumerate() {
+            if sample_m(i, len) > a.mouth_m + PLANE_BLEND_MAX_M + 2.0 * PROFILE_STEP_M {
+                assert_eq!(x, y, "edge {} sample {i}", e.osm_way);
+            }
+        }
+    }
+    let r = crate::lint::lint(&package(&g), None);
+    assert_eq!(r.count("road.vertical.kink"), 0);
 }

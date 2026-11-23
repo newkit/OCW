@@ -4,11 +4,13 @@ another (spec 4.8.8 Q6 (d) / Q7).
 
 Input: the JSON lines of `cargo run -p ocw-worldgen --release --example
 junction_profiles -- A.ocwpkg B.ocwpkg OUT.jsonl` (B is the "j3" field, A
-the "live" field). Two such files can be given: the first for the live
-package, the second for a J2b build (its "live" field is the J2b package).
+the "live" field). More such files can be given: the first for the live
+package, one for a J2b build (its "live" field is the J2b package) and one
+for a J4 build (spec 4.8.8 Q7; made from the live package and the J4
+package: its "j3" field is the J4 package).
 
-    charts.py --live LIVE.jsonl [--j2b J2B.jsonl] --out DIR \
-        NAME:VERTEX:EDGE[:METRES][:j2b] ...
+    charts.py --live LIVE.jsonl [--j2b J2B.jsonl] [--j4 J4.jsonl] --out DIR \
+        NAME:VERTEX:EDGE[:METRES][:j2b][:far] ...
 
 Per example a PNG: the side road's height (above the main road's centre)
 and its grade over 5 m stretches from the junction's centre, the main road's
@@ -32,6 +34,7 @@ STYLE = {
     "live": dict(color="#2a78d6", ls=(0, (6, 3)), lw=2.0, label="live package (as main draws it)"),
     "j2b": dict(color="#eb6834", ls=(0, (1.5, 2)), lw=2.2, label="J2b build (before Q6 (d), never installed)"),
     "j3": dict(color="#1baf7a", ls="-", lw=2.0, label="J3 package (Q6 (d))"),
+    "j4": dict(color="#c2185b", ls=(0, (5, 2, 1, 2)), lw=2.4, label="J4 package (Q7: creases rounded, blended planes)"),
 }
 INK, INK2, GRID, SURF = "#0b0b0b", "#52514e", "#e4e3df", "#fcfcfb"
 BAND = "#fab219"
@@ -64,7 +67,7 @@ def chart(name, rec, series, metres, out, title):
     base = rec["j3"]["drawn"][0]
     lines = []
     all_kinks = {}
-    for key, h in sorted(series, key=lambda kh: kh[0] != "j3"):
+    for key, h in sorted(series, key=lambda kh: kh[0] not in ("j3", "j4")):
         h = h[: metres + 1]
         st = STYLE[key]
         x = list(range(len(h)))
@@ -84,8 +87,9 @@ def chart(name, rec, series, metres, out, title):
         for s, a, b in k:
             ax2.plot([s, s], [a, b], color=st["color"], lw=1.2)
             ax2.plot([s], [b], "o", ms=9, mfc=SURF, mec=st["color"], mew=2)
-    # The J3 kinks: shaded and labelled.
-    for i, (s, a, b) in enumerate(all_kinks.get("j3", [])):
+    # The newest package's kinks: shaded and labelled.
+    newest = "j4" if "j4" in all_kinks else "j3"
+    for i, (s, a, b) in enumerate(all_kinks.get(newest, [])):
         for ax in (ax1, ax2):
             ax.axvspan(s - 1.2, s + 1.2, color=BAND, alpha=0.28, lw=0)
         ax2.annotate(
@@ -123,7 +127,7 @@ def chart(name, rec, series, metres, out, title):
     fig.suptitle(title, x=0.01, ha="left", fontsize=12.5, color=INK)
     ax1.legend(handles=lines, loc="lower right" if series[-1][1][metres] > series[-1][1][0] else "lower left",
                frameon=False, fontsize=9)
-    fig.text(0.01, 0.005, "shaded: a kink in the J3 package (grade changes by more than 8 points between two 5 m stretches); "
+    fig.text(0.01, 0.005, f"shaded: a kink in the {newest.upper()} package (grade changes by more than 8 points between two 5 m stretches); "
              "rings: kinks of each package", fontsize=8.5, color=INK2)
     fig.tight_layout(rect=(0, 0.02, 1, 0.97))
     path = os.path.join(out, f"{name}.png")
@@ -136,12 +140,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--live", required=True)
     ap.add_argument("--j2b")
+    ap.add_argument("--j4")
     ap.add_argument("--out", required=True)
     ap.add_argument("--title", action="append", default=[], help="NAME=TITLE")
     ap.add_argument("examples", nargs="+")
     a = ap.parse_args()
     live = load(a.live)
     j2b = load(a.j2b) if a.j2b else {}
+    j4 = load(a.j4) if a.j4 else {}
     titles = dict(t.split("=", 1) for t in a.title)
     os.makedirs(a.out, exist_ok=True)
     for ex in a.examples:
@@ -152,7 +158,9 @@ def main():
         series = [("live", rec["live"]["drawn"]), ("j3", rec["j3"]["drawn"])]
         if "j2b" in parts[4:] and (v, e) in j2b:
             series.insert(1, ("j2b", j2b[(v, e)]["live"]["profile"]))
-        metres = min(metres, len(rec["j3"]["drawn"]) - 1)
+        if (v, e) in j4:
+            series.append(("j4", j4[(v, e)]["j3"]["drawn"]))
+        metres = min(metres, min(len(h) for _, h in series) - 1)
         if "far" in parts[4:]:
             # The other end's edge point (a short road between two junctions).
             far = [r for (vv, ee), r in live.items() if ee == e and vv != v]

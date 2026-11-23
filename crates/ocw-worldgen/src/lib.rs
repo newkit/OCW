@@ -64,5 +64,6 @@ pub mod route;
 pub mod spatial;
 pub mod stages;
 pub mod svg;
+pub mod terrain_smooth;
 pub mod vegetation;
 pub mod water;
