@@ -740,7 +740,11 @@ fn corner_widths(tops: &[Vec3], out: &[Vec3], sh: &[Shoulder]) -> Vec<f32> {
     // beside them left a notch), within each point's own width.
     let (w0, w1, total) = (w[0], w[n - 1], cum[n - 1]);
     for i in 1..n - 1 {
-        let own = if sh[i].wall { SHOULDER_MIN_M } else { sh[i].width };
+        let own = if sh[i].wall {
+            SHOULDER_MIN_M
+        } else {
+            sh[i].width
+        };
         let floor = (w0 - 0.6 * cum[i]).max(w1 - 0.6 * (total - cum[i]));
         w[i] = w[i].max(floor.min(own));
     }
