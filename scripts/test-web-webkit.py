@@ -37,6 +37,13 @@ gives the page a `navigator.gpu` with an adapter, as Safari 26 has:
            Devices panel collapsed, the power buttons (+ adds power and
            does not steer, − takes some away, stop brakes, + rides on), a
            held right side in portrait too;
+  layout-* the first ride's touch layout (spec 3.2.3) at iPhone 15 and
+           small Android sizes, portrait and landscape (390 × 844, 844 × 390
+           with the notch's insets; 360 × 640, 640 × 360): the first-ride
+           tip, the screen tip's banner (Add to Home Screen on the iPhone,
+           Full screen on Android), the power buttons, the chevrons and the
+           HUD's boxes – no two overlap, all inside the safe area, the
+           first-ride tip above the rider;
   mac      Safari on macOS (1280 × 720): the Hills ride on WebGL 2, draws;
            the desktop HUD unchanged (not compact, scale 1, keys), the
            Devices panel open, no power buttons.
@@ -104,6 +111,25 @@ Object.defineProperty(Navigator.prototype, "wakeLock", {get: () => __wakeLock, c
 PHONES = {
     "iphone": ("iPhone 15", (59, 0, 34, 0), NO_FULLSCREEN + NO_WAKE_LOCK),
     "iphone-landscape": ("iPhone 15 landscape", (0, 59, 21, 59), NO_FULLSCREEN + FAKE_WAKE_LOCK),
+}
+# The layout cases (spec 3.2.3): CSS size, insets (top, right, bottom,
+# left), device pixel ratio, the page's APIs, the user agent.
+IPHONE_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 "
+             "(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1")
+ANDROID_UA = ("Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) "
+              "Chrome/131.0.0.0 Mobile Safari/537.36")
+# Android's Chrome has element full screen (WebKit here does not say so):
+# the first-ride tip offers the "Full screen" button there.
+ANDROID_FULLSCREEN = """
+for (const o of [Document.prototype, document]) {
+  Object.defineProperty(o, "fullscreenEnabled", {get: () => true, configurable: true});
+}
+"""
+LAYOUTS = {
+    "layout-iphone-390x844": ((390, 844), (59, 0, 34, 0), 3, NO_FULLSCREEN, IPHONE_UA),
+    "layout-iphone-844x390": ((844, 390), (0, 59, 21, 59), 3, NO_FULLSCREEN, IPHONE_UA),
+    "layout-android-360x640": ((360, 640), (0, 0, 0, 0), 3, ANDROID_FULLSCREEN, ANDROID_UA),
+    "layout-android-640x360": ((640, 360), (0, 0, 0, 0), 3, ANDROID_FULLSCREEN, ANDROID_UA),
 }
 # A touch pointer on the canvas (winit reads pointer events; Playwright's
 # WebKit can only tap, not hold).
@@ -187,17 +213,19 @@ def main():
         viewport: [innerWidth, innerHeight, devicePixelRatio],
         ua: navigator.userAgent, vendor: navigator.vendor})"""
 
-    def ride(pg, label):
+    def ride(pg, label, seconds=None):
         extra = ""
         if label in PHONES:
             extra = "&touch=on&safe-insets=" + ",".join(str(v) for v in PHONES[label][1])
+        elif label in LAYOUTS:
+            extra = "&touch=on&safe-insets=" + ",".join(str(v) for v in LAYOUTS[label][1])
         pg.goto(root + "?route=hills&bots=1" + extra)
         try:
             pg.wait_for_function("() => window.ocwGpu && document.getElementById('ocw-status').hidden"
                                  " && window.ocwFrames > 20", timeout=120000)
         except Exception as e:  # noqa: BLE001
             lines.append(f"[{label}] wait: {e}")
-        pg.wait_for_timeout(int(a.seconds * 1000))
+        pg.wait_for_timeout(int((a.seconds if seconds is None else seconds) * 1000))
         st = json.loads(pg.evaluate(state_js))
         shot = f"{base}-{label}.png"
         pg.screenshot(path=shot)
@@ -322,6 +350,38 @@ def main():
             pg.wait_for_timeout(3000)
             pg.screenshot(path=f"{base}-{label}-riding.png")
 
+    def touch_layout(pg, label, errors):
+        """The first ride's touch layout (spec 3.2.3): the first-ride tip,
+        the screen tip's banner, the power buttons, the chevrons and the
+        HUD's boxes apart, inside the safe area, the tip above the rider."""
+        (w, h), (it, ir, ib, il), _, _, _ = LAYOUTS[label]
+        pg.wait_for_timeout(1200)
+        hud, st, sc = hud_layout(pg), steer(pg), screen(pg)
+        boxes = {"first-ride tip": hud.get("touch_tip"), "screen tip": sc.get("tip_rect"),
+                 "top panel": hud.get("top_panel"), "top-right column": hud.get("top_right"),
+                 "profile": hud.get("profile"), "Devices button": dom_box(pg, "#ocw-devices-show")}
+        for i, c in enumerate(hud.get("chevrons") or []):
+            boxes[f"chevron {i}"] = c
+        for i, b in enumerate(st.get("power_buttons") or []):
+            boxes[f"power button {i}"] = [b[0], b[1], b[2] - b[0], b[3] - b[1]]
+        shown = {k: v for k, v in boxes.items() if v}
+        check(f"{label}: the first-ride tip, the screen tip and the power buttons show",
+              st.get("tip") and boxes["first-ride tip"] and boxes["screen tip"] and st.get("power")
+              and len(st.get("power_buttons") or []) == 3,
+              {"steer": {k: st.get(k) for k in ("shown", "tip", "power")}, "screen": sc.get("tip"), "boxes": boxes})
+        names = list(shown)
+        clashes = [(x, y) for i, x in enumerate(names) for y in names[i + 1:] if overlap(shown[x], shown[y])]
+        check(f"{label}: nothing overlaps (tips, power buttons, chevrons, HUD)", not clashes,
+              {"clashes": clashes, "boxes": shown})
+        off = [k for k, v in shown.items() if v[0] < il - 0.5 or v[1] < it - 0.5 or v[0] + v[2] > w - ir + 0.5
+               or v[1] + v[3] > h - ib + 0.5]
+        check(f"{label}: every box inside the safe area", not off, {"off": off, "boxes": shown})
+        tip = boxes["first-ride tip"] or [0, h, 0, 0]
+        check(f"{label}: the first-ride tip above the rider (its bottom in the upper half)",
+              tip[1] + tip[3] <= h * 0.5 + 0.5, tip)
+        pg.screenshot(path=f"{base}-{label}.png")
+        check(f"{label}: no page errors", not errors, errors[:5])
+
     def phone(pg, label, errors):
         """The phone page of spec 3.2.3 TS4 (after the ride shows)."""
         _, insets, _ = PHONES[label]
@@ -420,8 +480,14 @@ def main():
         browser = pw.webkit.launch()
         summary["webkit"] = browser.version
         try:
-            for label in ("iphone", "iphone-landscape", "mac"):
-                if label in PHONES:
+            for label in ("iphone", "iphone-landscape", "mac", *LAYOUTS):
+                if label in LAYOUTS:
+                    (lw, lh), _, dpr, js, ua = LAYOUTS[label]
+                    ctx = browser.new_context(viewport={"width": lw, "height": lh}, device_scale_factor=dpr,
+                                              is_mobile=True, has_touch=True, user_agent=ua)
+                    if js:
+                        ctx.add_init_script(js)
+                elif label in PHONES:
                     ctx = browser.new_context(**pw.devices[PHONES[label][0]])
                     ctx.add_init_script(PHONES[label][2])
                 else:
@@ -448,6 +514,12 @@ def main():
                           ticked and "gpu=webgl2" in href and "quality=low" in href, href)
                     check("iPhone: the box's label is a finger-sized target (≥ 44 px high)", box[1] >= 44, box)
                     pg.unroute("**/config.json")
+                if label in LAYOUTS:
+                    st, _ = ride(pg, label, seconds=6)
+                    touch_layout(pg, label, errors)
+                    summary[label] = st
+                    ctx.close()
+                    continue
                 st, shot = ride(pg, label)
                 drawn, how = image_drawn(shot)
                 gpu = st.get("gpu") or {}

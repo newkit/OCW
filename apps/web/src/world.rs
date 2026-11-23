@@ -206,8 +206,11 @@ pub fn world_ride(
         )
     })?;
     // Static obstacles from the base (spec §14 Phase 12 K3: OBST, the
-    // buildings, railings and tunnel walls; no tiles needed).
-    let obstacles = ocw_world::obstacles::WorldObstacles::from_package(pkg).map(Arc::new);
+    // buildings, railings and tunnel walls; no tiles needed). The street
+    // lamps' poles come with the tiles as they stream in (`lamp_tiles`).
+    let obstacles = Some(Arc::new(
+        ocw_world::obstacles::WorldObstacles::from_streamed_base(pkg),
+    ));
     // The damaged roads under the wheels (spec Phase 8 Q12): the base has
     // no tiles; they are added as they are streamed in.
     let road_feel = Some(Arc::new(ocw_world::road_feel::RoadFeelMap::from_package(
@@ -400,6 +403,13 @@ pub struct WorldStream {
     /// The ground off the roads (spec §14 Phase 13A): the streamed tiles
     /// are added as they arrive, like the road feel.
     ground: Option<Arc<ocw_world::ground::GroundMap>>,
+    /// The ride's static obstacles (spec 14 Phase 12 K3): the street
+    /// lamps' poles of the resident tiles are placed as they arrive and
+    /// dropped with them.
+    obstacles: Option<Arc<ocw_world::obstacles::WorldObstacles>>,
+    /// The renderer's current package (shared with it), for the poles
+    /// near the rider as the rider moves.
+    lamp_pkg: Option<Arc<WorldPackage>>,
     /// The trees off the road (spec 14 Phase 13 Q10): the resident tiles'
     /// package is shared with it.
     woods: Option<Arc<ocw_world::woods::Woods>>,
@@ -427,6 +437,8 @@ impl WorldStream {
             asked: false,
             road_feel: None,
             ground: None,
+            obstacles: None,
+            lamp_pkg: None,
             woods: None,
         }
     }
@@ -603,6 +615,7 @@ pub fn stream_world(world: &mut World) {
             .get_resource::<ocw_render::package::StreamRadius>()
             .map_or(ocw_render::package::STREAM_RADIUS, |r| r.0);
         let policy = residency_for(stream.options.residency, ring);
+        let centre = focus.as_ref().map(|f| f.centre);
         if let (Some(focus), Some(r)) = (focus, stream.resident.as_mut()) {
             r.policy = policy;
             let wanted = r.update(focus.centre);
@@ -618,12 +631,24 @@ pub fn stream_world(world: &mut World) {
             if let Some(g) = &stream.ground {
                 g.add_package_tiles(&pkg);
             }
+            let pkg = Arc::new(pkg);
+            stream.lamp_pkg = Some(pkg.clone());
             publish(
                 world,
                 pkg,
                 stream.road_feel.as_deref(),
                 stream.woods.as_deref(),
             );
+        }
+        // Poles are only hit in wild mode (also off the road): placed
+        // while the own rider is wild, dropped when it is back on the road
+        // (bots never leave it), so an ordinary ride pays nothing.
+        let wild = world
+            .get_resource::<crate::plugin::Session>()
+            .is_some_and(|s| s.0.client.wild());
+        match (&stream.lamp_pkg, centre) {
+            (Some(pkg), Some(c)) if wild => lamp_tiles(stream.obstacles.as_deref(), pkg, Some(c)),
+            _ => drop_lamp_tiles(stream.obstacles.as_deref()),
         }
     }
     {
@@ -641,7 +666,7 @@ pub fn stream_world(world: &mut World) {
 /// there; the far terrain is rebuilt from them).
 fn publish(
     world: &mut World,
-    pkg: WorldPackage,
+    pkg: Arc<WorldPackage>,
     feel: Option<&ocw_world::road_feel::RoadFeelMap>,
     woods: Option<&ocw_world::woods::Woods>,
 ) {
@@ -649,7 +674,6 @@ fn publish(
     let Some(mut pw) = world.get_resource_mut::<PackageWorld>() else {
         return;
     };
-    let pkg = Arc::new(pkg);
     if let Some(w) = woods {
         w.set_package(pkg.clone());
     }
@@ -671,6 +695,59 @@ fn feel_tiles(feel: Option<&ocw_world::road_feel::RoadFeelMap>, pkg: &WorldPacka
         if !feel.has_tile(*key) {
             feel.add_tile(tile);
         }
+    }
+}
+
+/// The street lamps' poles are placed for the resident tiles within this
+/// ring around the rider's tile (the 3 × 3 a phone meshes), and only
+/// while the own rider is in wild mode: a pole is only hit there, and
+/// placing them needs the junctions of their roads, which stay in memory
+/// (v5.64: all 49 resident tiles of Liechtenstein took 14 MB more heap).
+pub const LAMP_RING: i32 = 1;
+
+/// Drops every streamed pole (the own rider is back on the road).
+pub fn drop_lamp_tiles(obstacles: Option<&ocw_world::obstacles::WorldObstacles>) {
+    if let Some(o) = obstacles
+        && !o.streamed_lamp_tiles().is_empty()
+    {
+        o.sync_streamed_lamps(&[], |_| Vec::new());
+    }
+}
+
+/// The street lamps' poles of the resident tiles near `centre`
+/// (package metres; [`LAMP_RING`], spec 14 Phase 12 K3; `None`: all
+/// resident tiles): the tiles that came are placed as the renderer places
+/// their lamps (`ocw_render::street_lamps::placed_lamps`, with the
+/// package's cached junctions), those that went are dropped – the local
+/// server and the prediction share the obstacles, so both have them from
+/// the same tick.
+pub fn lamp_tiles(
+    obstacles: Option<&ocw_world::obstacles::WorldObstacles>,
+    pkg: &Arc<WorldPackage>,
+    centre: Option<[f64; 2]>,
+) {
+    let Some(o) = obstacles else {
+        return;
+    };
+    let size = f64::from(pkg.tile_size_m);
+    let wanted: Vec<TileKey> = pkg
+        .tiles
+        .keys()
+        .copied()
+        .filter(|k| centre.is_none_or(|c| k.ring(TileKey::containing(c, size)) <= LAMP_RING))
+        .collect();
+    // The junctions only when a tile is placed (the renderer's, cached).
+    let junctions = std::cell::OnceCell::new();
+    let (placed, dropped) = o.sync_streamed_lamps(&wanted, |key| {
+        let j = junctions.get_or_init(|| ocw_render::junction_mesh::package_junctions(pkg));
+        ocw_render::street_lamps::placed_lamps(pkg, key, j.as_deref())
+    });
+    if placed + dropped > 0 {
+        debug!(
+            "world obstacles: street lamps of {placed} tiles placed, {dropped} dropped; {} poles, {} KB",
+            o.lamp_count(),
+            o.approx_bytes() / 1024
+        );
     }
 }
 
@@ -700,6 +777,10 @@ fn start_ride(world: &mut World, stream: &mut WorldStream, ride: WorldRide, now:
     if let Some(g) = &stream.ground {
         g.add_package_tiles(&pkg);
     }
+    stream.obstacles = match &ride.course {
+        Course::FreeRide { net, .. } | Course::RouteRide { net, .. } => net.obstacles().cloned(),
+        Course::Route(_) => None,
+    };
     stream.woods = match &ride.course {
         Course::FreeRide { net, .. } | Course::RouteRide { net, .. } => net.woods().cloned(),
         Course::Route(_) => None,
@@ -707,6 +788,7 @@ fn start_ride(world: &mut World, stream: &mut WorldStream, ride: WorldRide, now:
     let id = stream.identity.clone().unwrap_or_default();
     let (zone, _) = ocw_client::sky::place_zone(pkg.time_zone.as_deref(), Some(pkg.origin));
     let pkg = Arc::new(pkg);
+    stream.lamp_pkg = Some(pkg.clone());
     if let Some(w) = &stream.woods {
         w.set_package(pkg.clone());
     }
@@ -909,6 +991,192 @@ pub(crate) mod tests {
             places: None,
             junctions: None,
         }
+    }
+
+    /// [`package`] with its road lit (`lit=yes`) and each tile's strip
+    /// where the graph's edge runs (x from the tile's west edge, the
+    /// row z = 0): a row of street lamps along it in every tile.
+    fn lit_package() -> WorldPackage {
+        let mut pkg = package();
+        for (key, t) in pkg.tiles.iter_mut() {
+            if key.z != 0 {
+                t.roads.clear();
+            }
+            let x0 = key.x as f32 * 1000.0;
+            for r in &mut t.roads {
+                r.lit = ocw_world::RoadLit::Yes;
+                r.points = vec![[x0, 450.0, 500.0], [x0 + 1000.0, 450.0, 500.0]];
+            }
+        }
+        pkg
+    }
+
+    /// `pkg` with only the tiles of `keys` (the streamed versions hold
+    /// the resident tiles).
+    fn with_tiles(pkg: &WorldPackage, keys: &[TileKey]) -> WorldPackage {
+        let mut p = pkg.clone();
+        p.tiles.retain(|k, _| keys.contains(k));
+        p
+    }
+
+    fn net_obstacles(ride: &WorldRide) -> Arc<ocw_world::obstacles::WorldObstacles> {
+        match &ride.course {
+            Course::FreeRide { net, .. } | Course::RouteRide { net, .. } => {
+                net.obstacles().cloned().expect("the ride has obstacles")
+            }
+            Course::Route(_) => panic!("a package ride"),
+        }
+    }
+
+    /// The browser's obstacles have the street lamps' poles of the tiles it
+    /// holds – exactly the desktop's for the same tiles (index by index,
+    /// with the model files' collision proxies) – placed as the tiles come
+    /// and dropped with them (spec 14 Phase 12 K3).
+    #[test]
+    fn the_streamed_tiles_bring_their_lamp_poles() {
+        use ocw_sim::collide::props_shapes;
+        use ocw_world::obstacles::WorldObstacles;
+        let full = lit_package();
+        let base = with_tiles(&full, &[]);
+        let ride = world_ride(&base, None, &options(), "Ada").unwrap();
+        let obst = net_obstacles(&ride);
+        assert_eq!(obst.lamp_count(), 0, "a streamed base has no lamps");
+        let same = |keys: &[TileKey]| {
+            let desktop = WorldObstacles::from_package(&with_tiles(&full, keys)).unwrap();
+            assert!(desktop.lamp_count() > 0);
+            assert_eq!(obst.lamp_count(), desktop.lamp_count(), "{keys:?}");
+            let mut tiles: Vec<TileKey> = desktop.tiles().chain(obst.tiles()).collect();
+            tiles.dedup();
+            for k in tiles {
+                assert_eq!(obst.tile_lamp_feet(k), desktop.tile_lamp_feet(k), "{k:?}");
+                assert_eq!(
+                    obst.tile_index_with(k, props_shapes()),
+                    desktop.tile_index_with(k, props_shapes()),
+                    "{k:?}"
+                );
+            }
+        };
+        let k = |x, z| TileKey { x, z };
+        let first = [k(0, 0), k(1, 0), k(0, 1), k(1, 1)];
+        lamp_tiles(Some(&obst), &Arc::new(with_tiles(&full, &first)), None);
+        same(&first);
+        // The rider moved east: tiles 0 went, 2 came.
+        let later = [k(1, 0), k(2, 0), k(1, 1), k(2, 1)];
+        lamp_tiles(Some(&obst), &Arc::new(with_tiles(&full, &later)), None);
+        same(&later);
+        assert_eq!(obst.tile_lamp_feet(k(0, 0)), Vec::new());
+        let mut held = obst.streamed_lamp_tiles();
+        held.sort();
+        let mut want = later.to_vec();
+        want.sort();
+        assert_eq!(held, want);
+        // All tiles: the desktop's whole package.
+        let all: Vec<TileKey> = full.tiles.keys().copied().collect();
+        lamp_tiles(Some(&obst), &Arc::new(full.clone()), None);
+        same(&all);
+        assert_eq!(
+            obst.lamp_count(),
+            WorldObstacles::from_package(&full).unwrap().lamp_count()
+        );
+        // Near a rider in tile (3, 0): only the tiles of its ring (LAMP_RING).
+        lamp_tiles(Some(&obst), &Arc::new(full.clone()), Some([3500.0, 500.0]));
+        let mut held = obst.streamed_lamp_tiles();
+        held.sort();
+        let mut near: Vec<TileKey> = all
+            .iter()
+            .copied()
+            .filter(|t| t.ring(k(3, 0)) <= LAMP_RING)
+            .collect();
+        near.sort();
+        assert_eq!(held, near);
+        same(&near);
+    }
+
+    /// A cached index of a tile is built again when its streamed poles
+    /// come or go (the server and the prediction keep tiles for 30 s).
+    #[test]
+    fn the_collision_cache_sees_poles_that_came_later() {
+        use ocw_sim::collide::{ObstacleKind, WorldCache};
+        let full = lit_package();
+        let base = with_tiles(&full, &[]);
+        let ride = world_ride(&base, None, &options(), "Ada").unwrap();
+        let obst = net_obstacles(&ride);
+        let mut cache = WorldCache::new(Some(obst.clone()));
+        let poles = |cache: &mut WorldCache, tick| {
+            let mut out = Vec::new();
+            cache.solids_near([0.0, 0.0], [999.0, 999.0], tick, &mut out);
+            out.iter()
+                .filter(|s| s.kind == ObstacleKind::StreetLamp)
+                .count()
+        };
+        assert_eq!(poles(&mut cache, 1), 0);
+        let key = TileKey { x: 0, z: 0 };
+        lamp_tiles(Some(&obst), &Arc::new(with_tiles(&full, &[key])), None);
+        let n = poles(&mut cache, 2);
+        assert!(n > 0 && n == obst.tile_lamp_feet(key).len(), "{n}");
+        lamp_tiles(Some(&obst), &Arc::new(with_tiles(&full, &[])), None);
+        assert_eq!(poles(&mut cache, 3), 0);
+        // Back on the road: every pole dropped.
+        lamp_tiles(Some(&obst), &Arc::new(full.clone()), None);
+        assert!(poles(&mut cache, 4) > 0);
+        drop_lamp_tiles(Some(&obst));
+        assert_eq!(obst.lamp_count(), 0);
+        assert_eq!(poles(&mut cache, 5), 0);
+    }
+
+    /// In the browser's local server a rider in wild mode bumps into a
+    /// streamed tile's lamp pole (`dev.lamp`: put before the nearest pole
+    /// beside the road, riding slowly at it): stopped at the pole, the
+    /// server counts the bump, the prediction stops there too.
+    #[test]
+    fn a_browser_rider_bumps_into_a_streamed_lamp_pole() {
+        use crate::session::{ServerLink, WebSession};
+        let full = lit_package();
+        let base = with_tiles(&full, &[]);
+        let ride = world_ride(&base, None, &options(), "Ada").unwrap();
+        let obst = net_obstacles(&ride);
+        lamp_tiles(Some(&obst), &Arc::new(full.clone()), None);
+        let mut s = WebSession::ride(ride.course, ride.client, 0, 0.0, 150.0);
+        let dt = 1.0 / 60.0;
+        let mut now = 0.0;
+        let mut fixed = 0.0;
+        let mut run = |s: &mut WebSession, seconds: f64| {
+            for _ in 0..(seconds / dt).round() as u32 {
+                now += dt;
+                fixed += dt;
+                while fixed >= ocw_core::SIM_DT {
+                    fixed -= ocw_core::SIM_DT;
+                    s.client.predict_step();
+                }
+                // The steering intent (wild mode), as the app's frame sends it.
+                if let Some(msg) = s.client.steer_message(now) {
+                    s.send(&msg);
+                }
+                s.frame(dt, now);
+            }
+        };
+        run(&mut s, 3.0);
+        s.send(&ClientCore::rules_message(Some(true), None));
+        s.client.set_wild(true);
+        run(&mut s, 1.0);
+        s.send(&ClientCore::stage_lamp_message());
+        run(&mut s, 6.0);
+        let ServerLink::Local(server) = &s.server else {
+            panic!("the local server");
+        };
+        let session = server.server().session();
+        let id = s.client.rider_id().unwrap();
+        let st = session.rider_state(id).unwrap();
+        assert!(
+            session.collision_stats().bumps >= 1,
+            "{:?} {st:?}",
+            session.collision_stats()
+        );
+        assert!(session.crash(id).is_none(), "a bump, no crash");
+        assert!(st.speed < 0.5, "stopped at the pole: {st:?}");
+        // The prediction stops where the server does.
+        let me = s.client.state();
+        assert!((me.distance - st.distance).abs() < 0.5, "{me:?} {st:?}");
     }
 
     /// The package published at `worlds/test/strip/2/` (unsigned).

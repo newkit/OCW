@@ -472,6 +472,14 @@ impl WebSession {
             "distance_m": self.client.state().distance,
             "prediction_error_m": self.client.prediction_error(),
         });
+        // The local server's contacts (the browser tests: a bump into a
+        // street lamp's pole, spec 14 Phase 12 K3).
+        if let ServerLink::Local(s) = &self.server {
+            let c = s.server().session().collision_stats();
+            v["collisions"] = serde_json::json!({
+                "contacts": c.contacts, "bumps": c.bumps, "crashes": c.crashes,
+            });
+        }
         if let Some(r) = self.remote_link() {
             let l = r.link.lock().expect("not poisoned");
             let c = l.counters();
