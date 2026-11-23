@@ -7,9 +7,10 @@ junction_profiles -- A.ocwpkg B.ocwpkg OUT.jsonl` (B is the "j3" field, A
 the "live" field). More such files can be given: the first for the live
 package, one for a J2b build (its "live" field is the J2b package) and one
 for a J4 build (spec 4.8.8 Q7; made from the live package and the J4
-package: its "j3" field is the J4 package).
+package: its "j3" field is the J4 package) and one for a J5 build (spec
+4.8.8 Rule; likewise, its "j3" field is the J5 package).
 
-    charts.py --live LIVE.jsonl [--j2b J2B.jsonl] [--j4 J4.jsonl] --out DIR \
+    charts.py --live LIVE.jsonl [--j2b J2B.jsonl] [--j4 J4.jsonl] [--j5 J5.jsonl] --out DIR \
         NAME:VERTEX:EDGE[:METRES][:j2b][:far] ...
 
 Per example a PNG: the side road's height (above the main road's centre)
@@ -35,6 +36,7 @@ STYLE = {
     "j2b": dict(color="#eb6834", ls=(0, (1.5, 2)), lw=2.2, label="J2b build (before Q6 (d), never installed)"),
     "j3": dict(color="#1baf7a", ls="-", lw=2.0, label="J3 package (Q6 (d))"),
     "j4": dict(color="#c2185b", ls=(0, (5, 2, 1, 2)), lw=2.4, label="J4 package (Q7: creases rounded, blended planes)"),
+    "j5": dict(color="#5b3fb3", ls="-", lw=2.6, label="J5 package (Rule: the sides as smooth as the road)"),
 }
 INK, INK2, GRID, SURF = "#0b0b0b", "#52514e", "#e4e3df", "#fcfcfb"
 BAND = "#fab219"
@@ -67,7 +69,7 @@ def chart(name, rec, series, metres, out, title):
     base = rec["j3"]["drawn"][0]
     lines = []
     all_kinks = {}
-    for key, h in sorted(series, key=lambda kh: kh[0] not in ("j3", "j4")):
+    for key, h in sorted(series, key=lambda kh: kh[0] not in ("j3", "j4", "j5")):
         h = h[: metres + 1]
         st = STYLE[key]
         x = list(range(len(h)))
@@ -88,7 +90,7 @@ def chart(name, rec, series, metres, out, title):
             ax2.plot([s, s], [a, b], color=st["color"], lw=1.2)
             ax2.plot([s], [b], "o", ms=9, mfc=SURF, mec=st["color"], mew=2)
     # The newest package's kinks: shaded and labelled.
-    newest = "j4" if "j4" in all_kinks else "j3"
+    newest = "j5" if "j5" in all_kinks else "j4" if "j4" in all_kinks else "j3"
     for i, (s, a, b) in enumerate(all_kinks.get(newest, [])):
         for ax in (ax1, ax2):
             ax.axvspan(s - 1.2, s + 1.2, color=BAND, alpha=0.28, lw=0)
@@ -141,6 +143,7 @@ def main():
     ap.add_argument("--live", required=True)
     ap.add_argument("--j2b")
     ap.add_argument("--j4")
+    ap.add_argument("--j5")
     ap.add_argument("--out", required=True)
     ap.add_argument("--title", action="append", default=[], help="NAME=TITLE")
     ap.add_argument("examples", nargs="+")
@@ -148,6 +151,7 @@ def main():
     live = load(a.live)
     j2b = load(a.j2b) if a.j2b else {}
     j4 = load(a.j4) if a.j4 else {}
+    j5 = load(a.j5) if a.j5 else {}
     titles = dict(t.split("=", 1) for t in a.title)
     os.makedirs(a.out, exist_ok=True)
     for ex in a.examples:
@@ -160,6 +164,8 @@ def main():
             series.insert(1, ("j2b", j2b[(v, e)]["live"]["profile"]))
         if (v, e) in j4:
             series.append(("j4", j4[(v, e)]["j3"]["drawn"]))
+        if (v, e) in j5:
+            series.append(("j5", j5[(v, e)]["j3"]["drawn"]))
         metres = min(metres, min(len(h) for _, h in series) - 1)
         if "far" in parts[4:]:
             # The other end's edge point (a short road between two junctions).

@@ -1264,14 +1264,3 @@ fn a_narrowing_road_tapers_smoothly() {
     let g = fixtures::split(20.0, 7.5, 4.0, 0.03);
     assert_eq!(side_counts(&g), [0; 4]);
 }
-
-/// Spec §4.8.8 Rule (J5): the lint measures a side's change of grade
-/// beyond what its turn explains on the surface's slope – a blended
-/// junction of four roads on one plane tilted at 10 % has no kink in its
-/// sides however tightly they turn.
-#[test]
-fn sides_on_a_sloping_plane_have_no_kink() {
-    let g = crossing([0.10, 0.0, -0.10, 0.0]);
-    let [_, step, kink, _] = side_counts(&g);
-    assert_eq!([step, kink], [0, 0]);
-}

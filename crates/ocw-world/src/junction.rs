@@ -1837,17 +1837,17 @@ fn side_lift(patch: &mut Patch, chains: &[Chain]) {
         fixed[0] = true;
         fixed[m - 1] = true;
         if patch.through.is_some() {
-            for i in 0..m {
-                if patch.main_excess(pts[i]) <= 0.05 {
-                    fixed[i] = true;
+            for (x, q) in fixed.iter_mut().zip(&pts) {
+                if patch.main_excess(*q) <= 0.05 {
+                    *x = true;
                 }
             }
         }
         let mut h = f.clone();
         let mut runs: Vec<(usize, usize)> = Vec::new();
         let mut a = 0;
-        for i in 1..m {
-            if fixed[i] {
+        for (i, &x) in fixed.iter().enumerate().skip(1) {
+            if x {
                 if i > a + 1 {
                     runs.push((a, i));
                 }
@@ -2243,8 +2243,10 @@ fn build_mitre(g: &RoadGraph, adj: &[usize], v: usize) -> Option<VertexRule> {
 
 // --- the set ------------------------------------------------------------------
 
-/// What happens at a vertex.
+/// What happens at a vertex (kept in an `Arc` per vertex: the size of a
+/// patch beside a mitre costs nothing).
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum VertexRule {
     Patch(Patch),
     Mitre(Mitre),
