@@ -522,6 +522,16 @@ pub fn check_model(e: &Entry, m: &Model, bytes: usize) -> Vec<Finding> {
                     Some(Fix::StampExtras),
                 );
             }
+            // Held in the hand: a boolean (15B, Q10 (a)).
+            if let Some(v) = o.get(crate::model::HELD)
+                && !v.is_boolean()
+            {
+                out.error(
+                    "extras.held",
+                    Target::File,
+                    format!("extras.ocw.held is not true or false: {v}"),
+                );
+            }
             // The factor the vertex colours are drawn with (15G Q11 (a)).
             if let Some(v) = o.get(crate::model::SHADE_SCALE) {
                 let (lo, hi) = crate::model::SHADE_SCALE_RANGE;
@@ -684,7 +694,8 @@ pub fn check_model(e: &Entry, m: &Model, bytes: usize) -> Vec<Finding> {
     // Bounds: the kind's origin, the axes, the units.
     if let Some((lo, hi)) = m.near_bounds() {
         let size = hi - lo;
-        if stands_on_ground(kind) {
+        // A model held in the hand has no ground (Q10 (a)).
+        if stands_on_ground(kind) && !m.is_held() {
             if lo.y < -GROUND_TOLERANCE_M {
                 out.warn(
                     "bounds.below-ground",
@@ -989,6 +1000,22 @@ mod tests {
         assert_eq!(codes(&check(&e, &m, 1000)), ["bounds.below-ground"]);
         m.nodes[0].translation.y = 0.3;
         assert_eq!(codes(&check(&e, &m, 1000)), ["bounds.above-ground"]);
+        // Held in the hand (Q10 (a)): no ground to check; the key must be
+        // a boolean.
+        m.extras["ocw"][crate::model::HELD] = serde_json::json!(true);
+        assert!(m.is_held());
+        assert!(codes(&check(&e, &m, 1000)).is_empty());
+        m.nodes[0].translation.y = -0.3;
+        assert!(codes(&check(&e, &m, 1000)).is_empty());
+        m.extras["ocw"][crate::model::HELD] = serde_json::json!(false);
+        assert!(!m.is_held());
+        assert_eq!(codes(&check(&e, &m, 1000)), ["bounds.below-ground"]);
+        m.extras["ocw"][crate::model::HELD] = serde_json::json!("yes");
+        assert!(!m.is_held());
+        assert_eq!(
+            codes(&check(&e, &m, 1000)),
+            ["extras.held", "bounds.below-ground"]
+        );
         // In centimetres.
         let (e, mut m) = post("props/post-square-test.glb");
         m.nodes[0].scale = Vec3::splat(200.0);
