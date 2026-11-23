@@ -1718,13 +1718,14 @@ pub fn surface_samples(g: &RoadGraph, js: &JunctionSet, step: f64) -> Vec<[f64; 
             out.push(o.p);
         }
         for (ai, a) in p.arms.iter().enumerate() {
-            if a.blend_m <= 0.0 {
+            let past = js.past_m(g, p, ai);
+            if past <= 0.0 {
                 continue;
             }
-            let n = a.blend_m.ceil().max(1.0) as usize;
+            let n = past.ceil().max(1.0) as usize;
             for k in 0..=n {
-                let s = a.mouth_m + a.blend_m * k as f64 / n as f64;
-                let r = JunctionSet::blend_row(g, p, ai, s);
+                let s = a.mouth_m + past * k as f64 / n as f64;
+                let r = js.past_row(g, p, ai, s);
                 let w = ((2.0 * a.half) / 0.5).ceil().max(1.0) as usize;
                 for j in 0..=w {
                     let t = j as f64 / w as f64;
@@ -2349,13 +2350,19 @@ pub fn side_faults(pkg: &WorldPackage, g: &RoadGraph) -> Vec<SideFault> {
         };
         // The point of the arm's strip edge that starts at corner `c` and
         // the next one along it (the strip's first row there).
-        let strip_start = |edge: usize, c: [f64; 3]| -> Option<([f64; 3], [f64; 3])> {
+        // (Also the strip's edge from there on, away from the patch.)
+        let strip_start = |edge: usize, c: [f64; 3]| -> Option<([f64; 3], [f64; 3], Vec<[f64; 3]>)> {
             for rows in rows_of.get(&edge).into_iter().flatten() {
                 for (i, r) in rows.iter().enumerate() {
                     for k in 0..2 {
                         if dist(xz(r[k]), xz(c)) < SIDE_GAP_M {
                             let j = if i == 0 { 1 } else { i - 1 };
-                            return Some((r[k], rows[j][k]));
+                            let side: Vec<[f64; 3]> = if i == 0 {
+                                rows.iter().map(|r| r[k]).collect()
+                            } else {
+                                rows[..=i].iter().rev().map(|r| r[k]).collect()
+                            };
+                            return Some((r[k], rows[j][k], side));
                         }
                     }
                 }
@@ -2368,42 +2375,115 @@ pub fn side_faults(pkg: &WorldPackage, g: &RoadGraph) -> Vec<SideFault> {
             if n < 2 {
                 continue;
             }
+            // The chain point at least 0.3 m (straight) before / after
+            // point `i`: bends are measured over pieces of 0.3 m, however
+            // finely the chain is cut.
+            let reach = |i: usize, fwd: bool| -> Option<usize> {
+                let mut k = i;
+                loop {
+                    if fwd {
+                        k += 1;
+                        if k >= n {
+                            return None;
+                        }
+                    } else {
+                        if k == 0 {
+                            return None;
+                        }
+                        k -= 1;
+                    }
+                    if dist(xz(pts[k]), xz(pts[i])) >= 0.3 {
+                        return Some(k);
+                    }
+                }
+            };
             // Plan: bends along the chain.
             for i in 1..n - 1 {
-                let b = bend(xz(pts[i - 1]), xz(pts[i]), xz(pts[i + 1]));
+                let (Some(a), Some(c)) = (reach(i, false), reach(i, true)) else {
+                    continue;
+                };
+                let b = bend(xz(pts[a]), xz(pts[i]), xz(pts[c]));
                 if b > SIDE_CORNER_DEG {
                     note("corner", xz(pts[i]), b);
                 }
             }
-            // Height: grade changes along the chain over stretches ≥ 1 m.
-            let mut stretch: Vec<(f64, f64)> = Vec::new();
-            let mut acc = (0.0, pts[0][1]);
-            let mut walked = 0.0;
-            for w in pts.windows(2) {
-                walked += dist(xz(w[0]), xz(w[1]));
-                if walked - acc.0 >= 1.0 {
-                    stretch.push(((w[1][1] - acc.1) / (walked - acc.0), walked));
-                    acc = (walked, w[1][1]);
+            // The drawn surface's slope at a point (its field, which the
+            // outline points lie on): a side band that turns on a sloping
+            // surface changes its grade by the turn alone (on a plane at
+            // 20 % round a corner of 1.5 m by 0.13 per metre) – that is the
+            // surface's slope, not a kink or step of the side.
+            let slope = |q: [f64; 2]| {
+                let e = 0.05;
+                [
+                    (p.surface([q[0] + e, q[1]]) - p.surface([q[0] - e, q[1]])) / (2.0 * e),
+                    (p.surface([q[0], q[1] + e]) - p.surface([q[0], q[1] - e])) / (2.0 * e),
+                ]
+            };
+            // A stretch of at least 1 m from `pts[0]` along `pts`: its grade
+            // and direction.
+            let first_metre = |pts: &[[f64; 3]]| -> Option<(f64, [f64; 2])> {
+                let mut walked = 0.0;
+                for w in pts.windows(2) {
+                    walked += dist(xz(w[0]), xz(w[1]));
+                    if walked >= 1.0 {
+                        let d = [w[1][0] - pts[0][0], w[1][2] - pts[0][2]];
+                        let l = d[0].hypot(d[1]).max(1e-9);
+                        return Some(((w[1][1] - pts[0][1]) / walked, [d[0] / l, d[1] / l]));
+                    }
                 }
+                None
+            };
+            // The change of grade from stretch `a` into `b` at `at`, less
+            // what the turn explains on the surface's slope (points).
+            let kink = |a: (f64, [f64; 2]), b: (f64, [f64; 2]), at: [f64; 2]| {
+                let gr = slope(at);
+                let turned = gr[0] * (b.1[0] - a.1[0]) + gr[1] * (b.1[1] - a.1[1]);
+                ((b.0 - a.0) - turned).abs() * 100.0
+            };
+            // Height: grade changes along the chain over stretches ≥ 1 m.
+            let mut stretch: Vec<((f64, [f64; 2]), [f64; 2])> = Vec::new();
+            let mut start = 0;
+            while start + 1 < n {
+                let mut walked = 0.0;
+                let mut end = None;
+                for k in start + 1..n {
+                    walked += dist(xz(pts[k - 1]), xz(pts[k]));
+                    if walked >= 1.0 {
+                        end = Some(k);
+                        break;
+                    }
+                }
+                let Some(k) = end else { break };
+                if let Some(st) = first_metre(&pts[start..=k]) {
+                    stretch.push((st, xz(pts[k])));
+                }
+                start = k;
             }
             for w in stretch.windows(2) {
-                let dg = (w[1].0 - w[0].0).abs() * 100.0;
+                let dg = kink(w[0].0, w[1].0, w[0].1);
                 if dg > SIDE_KINK {
-                    let i = pts.len() / 2;
-                    note("kink", xz(pts[i.min(n - 1)]), dg);
+                    note("kink", w[0].1, dg);
                 }
             }
-            // Steps between close points.
+            // Steps between close points: a jump the surface's slope does
+            // not explain.
             for w in pts.windows(2) {
                 let d = dist(xz(w[0]), xz(w[1]));
-                if d < 0.6 && (w[1][1] - w[0][1]).abs() > SIDE_STEP_M + 0.25 * d {
-                    note("step", xz(w[1]), (w[1][1] - w[0][1]).abs());
+                if d < 0.6 {
+                    let m = [(w[0][0] + w[1][0]) / 2.0, (w[0][2] + w[1][2]) / 2.0];
+                    let gr = slope(m);
+                    let rise = gr[0] * (w[1][0] - w[0][0]) + gr[1] * (w[1][2] - w[0][2]);
+                    let jump = (w[1][1] - w[0][1] - rise).abs();
+                    if jump > SIDE_STEP_M {
+                        note("step", xz(w[1]), jump);
+                    }
                 }
             }
             // Its two ends meet the arms' strips.
-            for (end, inner, arm) in [
-                (pts[0], pts[1], ch.from_arm),
-                (pts[n - 1], pts[n - 2], ch.to_arm),
+            let (i0, i1) = (reach(0, true).unwrap_or(1), reach(n - 1, false).unwrap_or(n - 2));
+            for (end, inner, arm, from_start) in [
+                (pts[0], pts[i0], ch.from_arm, true),
+                (pts[n - 1], pts[i1], ch.to_arm, false),
             ] {
                 let a = &p.arms[arm];
                 match strip_start(a.edge, end) {
@@ -2414,10 +2494,24 @@ pub fn side_faults(pkg: &WorldPackage, g: &RoadGraph) -> Vec<SideFault> {
                             note("gap", xz(end), 1.0);
                         }
                     }
-                    Some((q, next)) => {
+                    Some((q, next, edge)) => {
                         let dh = (q[1] - end[1]).abs();
                         if dh > 0.02 {
                             note("step", xz(end), dh);
+                        }
+                        // The grade along the side at the joint: the
+                        // chain's last metre into the strip edge's first.
+                        let inward: Vec<[f64; 3]> = if from_start {
+                            pts.clone()
+                        } else {
+                            pts.iter().rev().copied().collect()
+                        };
+                        if let (Some(a), Some(b)) = (first_metre(&inward), first_metre(&edge)) {
+                            let a = (-a.0, [-a.1[0], -a.1[1]]);
+                            let dg = kink(a, b, xz(end));
+                            if dg > SIDE_KINK {
+                                note("kink", xz(end), dg);
+                            }
                         }
                         let b = bend(xz(inner), xz(end), xz(next));
                         if b > SIDE_CORNER_DEG {
