@@ -368,6 +368,49 @@ fn lint_lamps(pkg: &WorldPackage, r: &mut LintReport) {
                 }
             }
         }
+        // The lamps mapped in OSM (`highway=street_lamp`): where they
+        // stand, how many were moved out of a road (an OSM node on the
+        // carriageway) or left out, and the regular lamps skipped beside
+        // them.
+        for p in lamps::osm_nodes(pkg, key) {
+            let at = [f64::from(p.pos[0]), f64::from(p.pos[1])];
+            match lamps::osm_lamp(p, &space) {
+                Some((l, moved)) => {
+                    let to = [f64::from(l.foot[0]), f64::from(l.foot[2])];
+                    r.add("lamp.osm.placed", 1.0, case(to, 0.0, 0, String::new()));
+                    if moved > 0.01 {
+                        r.add(
+                            "lamp.osm.moved",
+                            f64::from(moved),
+                            case(to, f64::from(moved), 0, "m moved".into()),
+                        );
+                    }
+                    check("lamp.foot", &l, r);
+                }
+                None => {
+                    let far = space.nearest_road(at, lamps::OSM_REACH_M).is_none();
+                    let (what, why) = if far {
+                        ("lamp.osm.left_out.far", "no carriageway within 15 m")
+                    } else {
+                        ("lamp.osm.left_out.no_room", "no free spot beside the road")
+                    };
+                    r.add(what, 1.0, case(at, 1.0, 0, why.into()));
+                }
+            }
+        }
+        let (_, c) = lamps::tile_lamps_counted(pkg, key, &space);
+        if c.rows_skipped > 0 {
+            r.add(
+                "lamp.row.skipped_near_osm",
+                c.rows_skipped as f64,
+                case(
+                    key.origin(size),
+                    c.rows_skipped as f64,
+                    0,
+                    "regular lamps beside a mapped one".into(),
+                ),
+            );
+        }
     }
 }
 

@@ -692,6 +692,10 @@ message StageContact {
   // `dev.tree` (Phase 12 K3): the rider in wild mode is put before the
   // nearest tree off the road ahead, riding at it (`crash` is ignored).
   bool tree = 2;
+  // `dev.lamp` (world look *Street lamps*, Phase 12): the same before the
+  // nearest street lamp's pole beside the road ahead, riding slowly at it
+  // (a bump).
+  bool lamp = 3;
 }
 
 message TeleportPoint {

@@ -203,6 +203,15 @@ pub fn register_commands(app: &mut App) {
             |world, _| {
                 send_or_err(world, ClientCore::stage_tree_message())
             },
+        ))
+        .console_command(ConsoleCommand::new(
+            Permission::Dev,
+            Command::new("dev.lamp").about(
+                "Stage a bump into a street lamp's pole (wild mode on first): you are put 6 m before the nearest lamp beside the road ahead, riding slowly at it",
+            ),
+            |world, _| {
+                send_or_err(world, ClientCore::stage_lamp_message())
+            },
         ));
 }
 

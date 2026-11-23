@@ -2028,6 +2028,11 @@ impl ClientCore {
         encode(&ocw_protocol::stage_tree())
     }
 
+    /// `dev.lamp` for the local server: ride at a street lamp's pole.
+    pub fn stage_lamp_message() -> Vec<u8> {
+        encode(&ocw_protocol::stage_lamp())
+    }
+
     /// The own rider's crash at client time `now_s`, if down.
     pub fn own_crash(&self, now_s: f64) -> Option<ocw_sim::collide::CrashView> {
         self.collisions.crash(self.rider_id?, now_s)

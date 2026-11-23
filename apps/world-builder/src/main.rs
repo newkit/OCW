@@ -281,6 +281,26 @@ enum Cmd {
         #[arg(long, value_name = "KEY")]
         sign_key: Option<PathBuf>,
     },
+    /// Street lamps mapped in OSM (world look *Street lamps*): the
+    /// `highway=street_lamp` nodes near the roads into the section OBST of
+    /// an existing package (as points of the kind street lamp; the other
+    /// obstacles and the trees are kept; the manifest is renewed). The apps
+    /// place a lamp at each, beside its road; `package` and `obstacles`
+    /// write them too.
+    StreetLamps {
+        /// The package (rewritten in place unless --out is given).
+        #[arg(long)]
+        world: PathBuf,
+        /// OSM extracts the package was built from.
+        #[arg(long, required = true)]
+        pbf: Vec<PathBuf>,
+        /// Write the package here instead.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Sign the renewed manifest with this signing key.
+        #[arg(long, value_name = "KEY")]
+        sign_key: Option<PathBuf>,
+    },
     /// Place names (spec §4.7, §14 Phase 16 16A): the OSM place=* nodes
     /// and areas (cities, towns, villages, hamlets, suburbs,
     /// neighbourhoods, localities, isolated dwellings) on the tiles into
@@ -2832,6 +2852,10 @@ fn print_obstacle_examples(pkg: &ocw_world::WorldPackage) {
             t.elapsed().as_secs_f64() * 1000.0 / keys.len().max(1) as f64,
             total / keys.len().max(1)
         );
+        println!(
+            "  street lamp poles (riders hit them; mapped and along lit roads): {}",
+            w.lamp_count()
+        );
         // Roads through dense forest: the most trunks within 15 m of the
         // middle of an edge (a wild ride into the trees).
         if let Some(g) = &pkg.graph {
@@ -2883,22 +2907,65 @@ fn print_obstacle_examples(pkg: &ocw_world::WorldPackage) {
     }
 }
 
-/// `world-builder obstacles` (spec §14 Phase 12 K3).
+/// `world-builder obstacles` (spec §14 Phase 12 K3), or with `lamps_only`
+/// `world-builder street-lamps` (only the mapped street lamps replaced).
 fn obstacles(
     world: &std::path::Path,
     pbf: &[PathBuf],
     out: Option<PathBuf>,
     key: Option<&ocw_world::manifest::SigningKeyPair>,
+    lamps_only: bool,
 ) {
     let t = Instant::now();
     let mut pkg = stage("read package", || read_package(world));
     let before = std::fs::metadata(world).map_or(0, |m| m.len());
     let data = read_barriers(pbf, &pkg);
     let proj = ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1);
-    let st = stage("obstacles (OBST)", || {
-        ocw_worldgen::obstacles::add_obstacles(&mut pkg, &data, &proj)
-    });
-    println!("obstacles (OBST): {}", st.summary());
+    if lamps_only {
+        let st = stage("street lamps (OBST)", || {
+            ocw_worldgen::obstacles::set_street_lamps(&mut pkg, &data, &proj)
+        });
+        println!("street lamps (OBST): {}", st.summary());
+        let (_, c) = stage("place lamps", || {
+            ocw_world::lamps::package_lamps_counted(&pkg)
+        });
+        println!(
+            "street lamps placed: {} mapped in OSM ({} moved out of a road, {} left out), {} along lit roads ({} skipped near a mapped one)",
+            c.osm, c.osm_moved, c.osm_left_out, c.rows, c.rows_skipped
+        );
+        // Where to look at them: the tiles with the most mapped lamps.
+        let mut tiles: Vec<(usize, [f32; 2])> = pkg
+            .obstacles
+            .iter()
+            .flat_map(|o| o.tiles.values())
+            .filter_map(|t| {
+                let l: Vec<[f32; 2]> = t
+                    .points
+                    .iter()
+                    .filter(|p| p.kind == ocw_world::obstacles::ObstacleKind::StreetLamp)
+                    .map(|p| p.pos)
+                    .collect();
+                l.first().map(|p| (l.len(), *p))
+            })
+            .collect();
+        tiles.sort_by_key(|t| std::cmp::Reverse(t.0));
+        let all: Vec<String> = tiles
+            .iter()
+            .map(|(n, p)| format!("{n}@{:.0},{:.0}", p[0], p[1]))
+            .collect();
+        println!("mapped street lamps by tile: {}", all.join(" "));
+        for (n, p) in tiles.iter().take(6) {
+            println!(
+                "  mapped street lamps: {n} in the tile of {:.0},{:.0}",
+                p[0], p[1]
+            );
+        }
+    } else {
+        let st = stage("obstacles (OBST)", || {
+            ocw_worldgen::obstacles::add_obstacles(&mut pkg, &data, &proj)
+        });
+        println!("obstacles (OBST): {}", st.summary());
+    }
     print_obstacle_examples(&pkg);
     let path = out.unwrap_or_else(|| world.to_path_buf());
     let bytes = stage("serialise", || pkg.to_bytes());
@@ -3384,7 +3451,22 @@ fn main() {
                     std::process::exit(1);
                 })
             });
-            obstacles(&world, &pbf, out, key.as_ref());
+            obstacles(&world, &pbf, out, key.as_ref(), false);
+            print_stage_profile(None);
+        }
+        Cmd::StreetLamps {
+            world,
+            pbf,
+            out,
+            sign_key,
+        } => {
+            let key = sign_key.map(|k| {
+                ocw_worldstore::keys::read_signing_key(&k).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                })
+            });
+            obstacles(&world, &pbf, out, key.as_ref(), true);
             print_stage_profile(None);
         }
         Cmd::Check { world, peak } => {
