@@ -44,6 +44,9 @@ use crate::buildings::Buildings;
 use crate::graph::RoadGraph;
 use crate::package::{Bytes, TileKey, WorldPackage};
 
+mod streamed;
+pub use streamed::{Pole, StreamedLamps};
+
 /// Section tag.
 pub const OBSTACLES_TAG: &[u8; 4] = b"OBST";
 const OBSTACLES_VERSION: u8 = 1;
@@ -571,6 +574,11 @@ pub fn yaw_toward(toward: [f32; 2]) -> f64 {
     f64::from(-toward[1]).atan2(f64::from(toward[0]))
 }
 
+/// A street lamp's model yaw (its arm towards the road).
+fn lamp_yaw(l: &crate::lamps::Lamp) -> f32 {
+    yaw_toward(l.toward) as f32
+}
+
 /// A point of the model's footprint (mx, mz) turned by `yaw` about +y,
 /// as world (x, z) offsets.
 fn turned(yaw: f64, m: [f64; 2]) -> [f64; 2] {
@@ -715,6 +723,9 @@ pub struct WorldObstacles {
     tile_size_m: f32,
     tree_side: usize,
     tiles: BTreeMap<TileKey, TileSource>,
+    /// The street lamp poles of a streamed package's resident tiles (the
+    /// browser; [`Self::add_streamed_lamps`]), after the package's own.
+    streamed: StreamedLamps,
 }
 
 /// A line's id: its source, its number and the segment.
@@ -726,10 +737,23 @@ impl WorldObstacles {
     /// From a package (its base suffices: tiles are not needed). `None`
     /// when it has nothing a rider could hit.
     pub fn from_package(pkg: &WorldPackage) -> Option<Self> {
+        let w = Self::base(pkg);
+        (!w.tiles.is_empty()).then_some(w)
+    }
+
+    /// From a streamed package's base: [`Self::from_package`], also when
+    /// nothing in the base is solid – the tiles' street lamps come as they
+    /// stream in ([`Self::add_streamed_lamps`]).
+    pub fn from_streamed_base(pkg: &WorldPackage) -> Self {
+        Self::base(pkg)
+    }
+
+    fn base(pkg: &WorldPackage) -> Self {
         let mut w = Self {
             tile_size_m: pkg.tile_size_m,
             tree_side: crate::trees::cells_per_side(pkg.tile_size_m),
             tiles: BTreeMap::new(),
+            streamed: StreamedLamps::default(),
         };
         if let Some(o) = &pkg.obstacles {
             w.tree_side = usize::from(o.tree_side);
@@ -769,20 +793,83 @@ impl WorldObstacles {
                     .entry(TileKey::containing(at, size))
                     .or_default()
                     .lamps
-                    .push(([l.foot[0], l.foot[2]], yaw_toward(l.toward) as f32));
+                    .push(([l.foot[0], l.foot[2]], lamp_yaw(&l)));
             }
         }
-        (!w.tiles.is_empty()).then_some(w)
+        w
     }
 
-    /// The street lamps placed (poles a rider can hit).
+    /// The street lamps placed (poles a rider can hit), the streamed ones
+    /// included.
     pub fn lamp_count(&self) -> usize {
-        self.tiles.values().map(|t| t.lamps.len()).sum()
+        self.tiles.values().map(|t| t.lamps.len()).sum::<usize>() + self.streamed.count()
     }
 
-    /// The street lamp poles of tile `key`: foot (x, z) and model yaw.
-    pub fn tile_lamp_feet(&self, key: TileKey) -> &[([f32; 2], f32)] {
-        self.tiles.get(&key).map_or(&[], |t| t.lamps.as_slice())
+    /// The street lamp poles standing in tile `key`: foot (x, z) and model
+    /// yaw (the package's, then the streamed ones).
+    pub fn tile_lamp_feet(&self, key: TileKey) -> Vec<Pole> {
+        let mut out = self
+            .tiles
+            .get(&key)
+            .map_or_else(Vec::new, |t| t.lamps.clone());
+        out.extend(self.streamed.poles_in(key));
+        out
+    }
+
+    /// The street lamps placed by a streamed tile `source` (spec 14 Phase
+    /// 12 K3, the browser: [`crate::lamps::tile_lamps`] of the resident
+    /// tile, as the renderer places them), replacing its earlier ones. The
+    /// server and the prediction sharing this see them from now on.
+    pub fn add_streamed_lamps(&self, source: TileKey, lamps: &[crate::lamps::Lamp]) {
+        self.streamed
+            .set(source, lamps, f64::from(self.tile_size_m), lamp_yaw);
+    }
+
+    /// Brings the streamed poles to the tiles of `wanted` (tiles a
+    /// streamed package holds now – the browser: those near the rider):
+    /// those that have none yet are placed with `place` (the lamps a
+    /// tile's strips and mapped lamps place, [`crate::lamps::tile_lamps`]),
+    /// the tiles no longer wanted dropped. Returns (placed, dropped) tiles.
+    pub fn sync_streamed_lamps(
+        &self,
+        wanted: &[TileKey],
+        place: impl Fn(TileKey) -> Vec<crate::lamps::Lamp>,
+    ) -> (usize, usize) {
+        let mut dropped = 0;
+        for key in self.streamed.sources() {
+            if !wanted.contains(&key) {
+                self.streamed.drop_source(key);
+                dropped += 1;
+            }
+        }
+        let mut placed = 0;
+        for &key in wanted {
+            if !self.streamed.has_source(key) {
+                self.add_streamed_lamps(key, &place(key));
+                placed += 1;
+            }
+        }
+        (placed, dropped)
+    }
+
+    /// Drops the street lamps of a streamed tile that left the memory.
+    pub fn drop_streamed_lamps(&self, source: TileKey) {
+        self.streamed.drop_source(source);
+    }
+
+    /// The streamed tiles whose lamps are placed.
+    pub fn streamed_lamp_tiles(&self) -> Vec<TileKey> {
+        self.streamed.sources()
+    }
+
+    pub fn has_streamed_lamps(&self, source: TileKey) -> bool {
+        self.streamed.has_source(source)
+    }
+
+    /// The version of tile `key`'s solids: changes when streamed poles
+    /// come into it or go (a cached index of another version is stale).
+    pub fn tile_version(&self, key: TileKey) -> u64 {
+        self.streamed.version(key)
     }
 
     /// Adds the segments of a line to every tile they reach.
@@ -945,12 +1032,17 @@ impl WorldObstacles {
                     + t.lamps.len() * 12
                     + std::mem::size_of::<TileSource>()
             })
-            .sum()
+            .sum::<usize>()
+            + self.streamed.approx_bytes()
     }
 
-    /// Tiles with anything solid.
+    /// Tiles with anything solid (those with streamed poles included).
     pub fn tiles(&self) -> impl Iterator<Item = TileKey> + '_ {
-        self.tiles.keys().copied()
+        let mut keys: Vec<TileKey> = self.tiles.keys().copied().collect();
+        keys.extend(self.streamed.foot_tiles());
+        keys.sort();
+        keys.dedup();
+        keys.into_iter()
     }
 
     /// The spatial index of a tile (`None`: nothing solid there), the
@@ -965,7 +1057,8 @@ impl WorldObstacles {
     /// of `shapes` (spec 15H: the model files' collision proxies), the
     /// street lamps' poles included.
     pub fn tile_index_with(&self, key: TileKey, shapes: &PointShapes) -> Option<TileIndex> {
-        let src = self.tiles.get(&key)?;
+        let empty = TileSource::default();
+        let src = self.tiles.get(&key).unwrap_or(&empty);
         let mut solids = Vec::new();
         let tile_id = (key.x as u32 as u64 & 0xFFFF) << 40 | (key.z as u32 as u64 & 0xFFFF) << 24;
         let mut part = 0u64;
@@ -993,7 +1086,8 @@ impl WorldObstacles {
             }
         }
         let poles = shapes.parts(ObstacleKind::StreetLamp);
-        for (i, (foot, yaw)) in src.lamps.iter().enumerate() {
+        let streamed = self.streamed.poles_in(key);
+        for (i, (foot, yaw)) in src.lamps.iter().chain(&streamed).enumerate() {
             let c = [f64::from(foot[0]), f64::from(foot[1])];
             for (k, sp) in poles.iter().enumerate() {
                 solids.push(Solid {

@@ -297,6 +297,8 @@ pub struct HudBoxes {
     pub top_panel: Option<[f32; 4]>,
     pub top_right: Option<[f32; 4]>,
     pub profile: Option<[f32; 4]>,
+    /// The touch steering's first-ride tip (`crate::touch_hud`).
+    pub touch_tip: Option<[f32; 4]>,
     /// The big line's and the small lines' count.
     pub big_lines: usize,
     pub small_lines: usize,
@@ -316,6 +318,7 @@ fn measure_hud(
         Has<HudTopPanel>,
         Has<HudTopRight>,
         Has<ProfilePanel>,
+        Has<crate::touch_hud::TipPanel>,
     )>,
     big: Query<&Text, (With<HudText>, Without<HudSmallText>)>,
     small: Query<&Text, (With<HudSmallText>, Without<HudText>)>,
@@ -324,8 +327,8 @@ fn measure_hud(
     let off = crate::safe_area::ui_offset(windows.single().ok(), safe.as_deref());
     let k = scale.map_or(1.0, |s| s.0);
     let mut out = HudBoxes::default();
-    for (c, t, v, top, right, profile) in &nodes {
-        if !(top || right || profile) || !v.get() || c.size().x <= 0.0 {
+    for (c, t, v, top, right, profile, tip) in &nodes {
+        if !(top || right || profile || tip) || !v.get() || c.size().x <= 0.0 {
             continue;
         }
         let inv = c.inverse_scale_factor();
@@ -336,6 +339,8 @@ fn measure_hud(
             out.top_panel = r;
         } else if right {
             out.top_right = r;
+        } else if tip {
+            out.touch_tip = r;
         } else {
             out.profile = r;
         }

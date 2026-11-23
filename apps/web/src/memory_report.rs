@@ -234,6 +234,28 @@ fn report(path: &str, route: Option<&str>) {
     let (junctions, _) = step("junctions (package_junctions)", || {
         ocw_render::junction_mesh::package_junctions(&pkg)
     });
+    // The street lamps' poles of the tiles in the local server's
+    // obstacles (spec 14 Phase 12 K3; the junctions shared with the
+    // renderer's).
+    let obstacles = match &ride.course {
+        ocw_server::Course::FreeRide { net, .. } | ocw_server::Course::RouteRide { net, .. } => {
+            net.obstacles().cloned()
+        }
+        ocw_server::Course::Route(_) => None,
+    };
+    // `OCW_NO_LAMPS=1`: without them (the memory before v5.57).
+    if std::env::var("OCW_NO_LAMPS").is_err() {
+        step("street lamp poles near the start (lamp_tiles)", || {
+            crate::world::lamp_tiles(obstacles.as_deref(), &pkg, Some(ride.start))
+        });
+    }
+    if let Some(o) = &obstacles {
+        println!(
+            "  ({} poles; the obstacles {})",
+            o.lamp_count(),
+            mb(o.approx_bytes() as i64)
+        );
+    }
     let day = Some(172.0);
     let mut look = TileLook::default().with_region(&pkg.look, None, day);
     if std::env::var("OCW_PHONE").is_ok() {

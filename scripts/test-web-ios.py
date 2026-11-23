@@ -244,6 +244,13 @@ def image_drawn(path):
     return max(st.stddev) > 8.0, f"stddev {max(st.stddev):.1f}"
 
 
+def console_log(pg):
+    try:
+        return json.loads(pg.evaluate("window.ocw.consoleState()") or "{}").get("log") or []
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--dir", default="target/web")
@@ -258,6 +265,9 @@ def main():
     p.add_argument("--no-context-loss", action="store_true", help="skip the lost WebGL context at the end")
     p.add_argument("--teleport-every", type=float, default=0.0,
                    help="seconds; a teleport 3 km further along the route each time (new tiles; 0: never)")
+    p.add_argument("--lamp-bump", action="store_true",
+                   help="after the start: collisions on, wild mode (W), dev.lamp – the rider bumps into a street "
+                        "lamp's pole of a streamed tile (spec 14 Phase 12 K3); screenshots")
     p.add_argument("--deaths", action="store_true",
                    help="at the end: the page dies in the ride twice (as iOS kills a tab for memory)")
     p.add_argument("--budget-mb", type=float, default=None,
@@ -477,6 +487,28 @@ def main():
                 lines.append(f"wait: {e}")
             ready_t = time.time()
             st = sample("ready")
+
+            def lamp_bump(pg):
+                """A bump into a streamed tile's lamp pole (K3): the server's
+                obstacles have the poles of the tiles the page holds."""
+                pg.wait_for_timeout(3000)
+                pg.evaluate("window.ocw.console('ride.collisions on')")
+                pg.focus("#ocw-canvas")
+                pg.keyboard.press("w")
+                pg.wait_for_timeout(1000)
+                pg.evaluate("window.ocw.console('dev.lamp')")
+                pg.wait_for_timeout(700)
+                log = console_log(pg)
+                said = [x for x in log if "street lamp" in str(x)]
+                check("dev.lamp finds a street lamp's pole of a streamed tile beside the road", said and
+                      "riding at a street lamp" in str(said[-1]), log[-6:])
+                pg.screenshot(path=f"{base}-lamp-approach.png")
+                pg.wait_for_timeout(2300)
+                pg.screenshot(path=f"{base}-lamp-bump.png")
+                pg.wait_for_timeout(2000)
+                pg.screenshot(path=f"{base}-lamp-after.png")
+                summary["lamp_log"] = console_log(pg)[-8:]
+
             summary["ready_s"] = round(ready_t - t0, 1)
             check("the ride shows on WebGL 2 (Safari with WebGPU)", (st.get("gpu") or {}).get("api") == "webgl2"
                   and not st.get("status"), {"gpu": st.get("gpu"), "status": st.get("status")})
@@ -488,6 +520,8 @@ def main():
             summary["canvas_sample"] = smp
             check("the WebGPU watchdog is not installed on WebGL 2 (its one-colour check never runs here)",
                   not smp.get("watchdog"), smp)
+            if a.lamp_bump:
+                lamp_bump(pg)
             end = ready_t + a.minutes * 60
             next_bg = ready_t + a.background_every if a.background_every > 0 else float("inf")
             next_shot = ready_t + 60

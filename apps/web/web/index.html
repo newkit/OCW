@@ -81,18 +81,22 @@
       pointer-events: none; padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
       env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
     /* The screen tips (spec 3.2.3): full screen or Add to Home Screen with
-       the first-ride tip, "turn your phone" once in portrait. */
-    #ocw-screen-tip { position: fixed; top: calc(50% + 8px); left: 50%; pointer-events: none;
-      transform: translateX(-50%); max-width: calc(100% - 32px - var(--safe-left) - var(--safe-right));
-      box-sizing: border-box; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+       the first-ride tip, "turn your phone" once in portrait – a small
+       banner, placed by the page (placeTip) where it covers neither the
+       first-ride tip nor the HUD, the chevrons or the power buttons: in
+       portrait in the app's slot above the first-ride tip, in landscape at
+       the bottom between the height profile and the Devices button. */
+    #ocw-screen-tip { position: fixed; top: calc(8px + var(--safe-top)); left: 50%; pointer-events: none;
+      transform: translateX(-50%); max-width: calc(100% - 16px - var(--safe-left) - var(--safe-right));
+      box-sizing: border-box; display: flex; gap: 4px; align-items: center; flex-wrap: nowrap;
       justify-content: center; color: #e5e9f0; background: rgba(10, 13, 18, 0.72);
-      border: 1px solid rgba(136, 192, 208, 0.5); border-radius: 6px; padding: 6px 10px;
-      font: 14px system-ui, sans-serif; text-align: center; }
+      border: 1px solid rgba(136, 192, 208, 0.5); border-radius: 6px; padding: 2px 2px 2px 10px;
+      font: 12px/1.25 system-ui, sans-serif; text-align: left; }
     #ocw-screen-tip[hidden] { display: none; }
     /* Only its buttons take a touch: the rest steers as everywhere. */
     #ocw-screen-tip button { pointer-events: auto; font: inherit; color: #10141a; background: #88c0d0; border: 0;
-      border-radius: 4px; padding: 8px 12px; min-height: 44px; cursor: pointer; }
-    #ocw-screen-tip button.close { background: transparent; color: #d8dee9; padding: 8px; min-width: 44px; }
+      border-radius: 4px; padding: 4px 10px; min-height: 36px; cursor: pointer; flex: none; }
+    #ocw-screen-tip button.close { background: transparent; color: #d8dee9; padding: 4px; min-width: 36px; font-size: 16px; }
     #ocw-status { position: fixed; inset: 0; display: flex; align-items: center;
       justify-content: center; text-align: left; pointer-events: none;
       padding: calc(16px + var(--safe-top)) calc(16px + var(--safe-right))
@@ -502,11 +506,62 @@
         tipKind = kind;
         tip.innerHTML = html;
         tip.hidden = false;
+        placeTip();
         const fs = tip.querySelector("button.fs");
         if (fs) fs.onclick = () => { enter(); hideTip(); canvas.focus(); };
         const x = tip.querySelector("button.close");
         if (x) x.onclick = () => { if (kind === "fullscreen") mark("ocw.tip.fullscreen"); hideTip(); canvas.focus(); };
       };
+      // The banner's place (spec 3.2.3): the first candidate on the screen
+      // that covers none of the app's boxes (window.ocw.hudLayout(): the
+      // panels, the first-ride tip, the chevrons; the power buttons; the
+      // Devices button): the app's slot above the first-ride tip
+      // (portrait), the bottom between the height profile and the Devices
+      // button (landscape), below the first-ride tip, the top.
+      const tipBoxes = () => {
+        let hud = {}, st = {}, mp = {};
+        try { hud = JSON.parse((window.ocw && window.ocw.hudLayout && window.ocw.hudLayout()) || "{}"); } catch (e) { hud = {}; }
+        try { st = JSON.parse((window.ocw && window.ocw.steer && window.ocw.steer()) || "{}"); } catch (e) { st = {}; }
+        try { mp = JSON.parse((window.ocw && window.ocw.hudMap && window.ocw.hudMap()) || "{}"); } catch (e) { mp = {}; }
+        const boxes = [];
+        for (const k of ["top_panel", "top_right", "profile", "touch_tip"]) if (hud[k]) boxes.push(hud[k]);
+        for (const c of hud.chevrons || []) boxes.push(c);
+        for (const b of st.power_buttons || []) boxes.push([b[0], b[1], b[2] - b[0], b[3] - b[1]]);
+        if (mp.shown && mp.rect) boxes.push(mp.rect);
+        for (const id of ["ocw-devices-show", "ocw-devices", "ocw-preview-bar"]) {
+          const e = document.getElementById(id);
+          if (e && !e.hidden && getComputedStyle(e).display !== "none") {
+            const r = e.getBoundingClientRect();
+            if (r.width > 0) boxes.push([r.left, r.top, r.width, r.height]);
+          }
+        }
+        return {hud, boxes};
+      };
+      const hits = (a, b) => a[0] < b[0] + b[2] - 0.5 && b[0] < a[0] + a[2] - 0.5
+        && a[1] < b[1] + b[3] - 0.5 && b[1] < a[1] + a[3] - 0.5;
+      const placeTip = () => {
+        if (tip.hidden) return;
+        const {hud, boxes} = tipBoxes();
+        const W = innerWidth, H = innerHeight;
+        const slot = hud.banner_slot;
+        const wide = W - 16 - insets.left - insets.right;
+        tip.style.maxWidth = `${Math.max(120, Math.min(wide, slot ? slot[2] : 440))}px`;
+        tip.style.transform = "none";
+        const r = tip.getBoundingClientRect();
+        const [tw, th] = [r.width, r.height];
+        const cx = (W - tw) / 2;
+        const cand = [];
+        if (slot) cand.push([slot[0] + (slot[2] - tw) / 2, slot[1] + Math.max(0, (slot[3] - th) / 2)]);
+        cand.push([cx, H - insets.bottom - 8 - th]);
+        if (hud.touch_tip) cand.push([cx, hud.touch_tip[1] + hud.touch_tip[3] + 8]);
+        cand.push([cx, insets.top + 8]);
+        const fits = ([x, y]) => x >= insets.left - 0.5 && y >= insets.top - 0.5 && x + tw <= W - insets.right + 0.5
+          && y + th <= H - insets.bottom + 0.5 && !boxes.some((b) => hits([x, y, tw, th], b));
+        const [x, y] = cand.find(fits) || cand[cand.length - 1];
+        tip.style.left = `${Math.round(x)}px`;
+        tip.style.top = `${Math.round(y)}px`;
+      };
+      addEventListener("resize", () => setTimeout(placeTip, 100));
       const hideTip = () => { if (!tip.hidden && tipKind === "turn") mark("ocw.tip.turn"); tip.hidden = true; tipKind = ""; };
       const touchFirst = () => !!(window.matchMedia && matchMedia("(pointer: coarse)").matches) && navigator.maxTouchPoints > 0;
       const portrait = () => innerHeight > innerWidth;
@@ -525,6 +580,7 @@
               ? `<button class="fs">⛶ Full screen</button><button class="close" aria-label="Close">×</button>`
               : `<span>⛶ Full screen: Share → Add to Home Screen</span><button class="close" aria-label="Close">×</button>`);
           } else if (tip.hidden) tip.hidden = false;
+          placeTip();
           return;
         }
         if (tipKind === "fullscreen") hideTip();
@@ -532,6 +588,7 @@
         if (touchFirst() && portrait() && !seen("ocw.tip.turn") && (!turnUntil || performance.now() < turnUntil)) {
           if (!turnUntil) turnUntil = performance.now() + 8000;
           if (tipKind !== "turn") showTip("turn", `<span>↻ Turn your phone for a wider view</span>`);
+          placeTip();
           return;
         }
         if (tipKind === "turn") hideTip();
@@ -555,6 +612,7 @@
           return JSON.stringify({riding, insets, fullscreen: !!fsElement(), fullscreen_api: fsSupported,
             standalone: standalone(), wake_lock: lockState, wake_lock_error: lockError,
             tip: tip.hidden ? "" : tipKind, tip_text: tip.hidden ? "" : tip.textContent,
+            tip_rect: tip.hidden ? null : (() => { const r = tip.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; })(),
             touch_action: getComputedStyle(document.body).touchAction});
         },
       };

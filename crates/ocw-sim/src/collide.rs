@@ -1074,9 +1074,10 @@ pub const WORLD_TILE_KEEP_S: f64 = 30.0;
 #[derive(Debug, Clone, Default)]
 pub struct WorldCache {
     pub world: Option<Arc<WorldObstacles>>,
-    /// Per tile its index (`None`: nothing solid) and the tick it was last
-    /// used.
-    tiles: BTreeMap<TileKey, (Option<Arc<TileIndex>>, u64)>,
+    /// Per tile its index (`None`: nothing solid), the tick it was last
+    /// used and the tile's version it was built of (streamed street lamps
+    /// came or went: built again, [`WorldObstacles::tile_version`]).
+    tiles: BTreeMap<TileKey, (Option<Arc<TileIndex>>, u64, u64)>,
 }
 
 impl WorldCache {
@@ -1101,12 +1102,15 @@ impl WorldCache {
         for x in a.x..=b.x {
             for z in a.z..=b.z {
                 let key = TileKey { x, z };
-                let entry = self.tiles.entry(key).or_insert_with(|| {
-                    (
-                        world.tile_index_with(key, props_shapes()).map(Arc::new),
-                        tick,
-                    )
-                });
+                let version = world.tile_version(key);
+                let build = || world.tile_index_with(key, props_shapes()).map(Arc::new);
+                let entry = self
+                    .tiles
+                    .entry(key)
+                    .or_insert_with(|| (build(), tick, version));
+                if entry.2 != version {
+                    *entry = (build(), tick, version);
+                }
                 entry.1 = tick;
                 if let Some(index) = &entry.0 {
                     let first = out.len();
@@ -1129,7 +1133,7 @@ impl WorldCache {
     pub fn sweep(&mut self, tick: u64) {
         let keep = (WORLD_TILE_KEEP_S / SIM_DT) as u64;
         self.tiles
-            .retain(|_, (_, used)| tick.saturating_sub(*used) <= keep);
+            .retain(|_, (_, used, _)| tick.saturating_sub(*used) <= keep);
     }
 
     /// Tiles with an index in memory.

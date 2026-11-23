@@ -16,8 +16,9 @@ impl Plugin for TouchHudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TouchHud>()
             .init_resource::<crate::hud_fit::HudLayout>()
+            .init_resource::<TouchLayout>()
             .add_systems(Startup, spawn)
-            .add_systems(Update, (update, place_power_buttons));
+            .add_systems(Update, (update, place_power_buttons, place_tip));
     }
 }
 
@@ -150,12 +151,84 @@ pub fn power_avoid(boxes: &crate::hud::HudBoxes, off: Vec2, ui_scale: f32) -> Ve
         .collect()
 }
 
-/// Where the first-ride tip starts (% of the HUD's height): in the upper
-/// part of the zones, and on a compact HUD (a phone) lower, below the
-/// bike computer's panel.
-pub fn tip_top(compact: bool) -> f32 {
-    if compact { 40.0 } else { 28.0 }
+/// The left chevron's distance from the left edge (UI px).
+const CHEV_LEFT: f32 = 36.0;
+/// The gap between the first-ride tip and its neighbours (CSS px).
+pub const TIP_GAP_PX: f32 = 8.0;
+/// The slot of the page's screen tip (full screen / Add to Home Screen,
+/// a small banner of one or two lines; CSS px high) above the first-ride
+/// tip in portrait.
+pub const BANNER_PX: f32 = 44.0;
+
+/// Where the first-ride tip goes (UI px): below the HUD's top boxes, in
+/// a band of its own – in portrait left of the power buttons' column
+/// (the page's screen-tip banner in a slot right above it), in landscape
+/// between the chevrons and below the power buttons' row (the banner
+/// goes to the bottom there, the page places it) – above the rider in
+/// the middle, clear of the chevrons, the power buttons and the panels.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TipPlace {
+    /// The tip's top edge and its horizontal span (it is centred in it).
+    pub top: f32,
+    pub left: f32,
+    pub right: f32,
+    /// The screen tip's slot (portrait).
+    pub banner: Option<Rect>,
 }
+
+/// [`TipPlace`] in the UI area `ui` (UI px at `ui_scale`), below the
+/// boxes of `avoid` (the top panel and the top-right column, UI px,
+/// [`power_avoid`]) and clear of the power buttons `power` (while shown).
+pub fn tip_place(
+    ui: Vec2,
+    ui_scale: f32,
+    avoid: &[Rect],
+    power: Option<&[(PowerButton, Rect)]>,
+) -> TipPlace {
+    let k = ui_scale.max(0.1);
+    let gap = TIP_GAP_PX / k;
+    let portrait = ui.y > ui.x;
+    let mut top = avoid.iter().map(|r| r.max.y).fold(0.0, f32::max) + gap;
+    let (left, mut right) = if portrait {
+        (gap, ui.x - gap)
+    } else {
+        (CHEV_LEFT + CHEV_W + gap, ui.x - CHEV_RIGHT - CHEV_W - gap)
+    };
+    if let Some(p) = power.filter(|p| !p.is_empty()) {
+        let min_x = p.iter().map(|(_, r)| r.min.x).fold(f32::MAX, f32::min);
+        let max_y = p.iter().map(|(_, r)| r.max.y).fold(0.0, f32::max);
+        if portrait {
+            right = right.min(min_x - gap);
+        } else {
+            top = top.max(max_y + gap);
+        }
+    }
+    let banner = portrait.then(|| {
+        let r = Rect::new(left, top, right, top + BANNER_PX / k);
+        top = r.max.y + gap;
+        r
+    });
+    TipPlace {
+        top,
+        left,
+        right: right.max(left + 1.0),
+        banner,
+    }
+}
+
+/// The touch layout for the page (window px, logical – CSS px in the
+/// browser: `[left, top, width, height]`): the screen tip's slot
+/// ([`TipPlace::banner`]) and the chevrons, for the page's banner and
+/// the layout checks (`window.ocw.hudLayout()`).
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
+pub struct TouchLayout {
+    pub banner: Option<[f32; 4]>,
+    pub chevrons: Vec<[f32; 4]>,
+}
+
+/// The first-ride tip's box (measured by the HUD: `HudBoxes::touch_tip`).
+#[derive(Component)]
+pub(crate) struct TipPanel;
 
 #[derive(Component)]
 struct PowerRow;
@@ -265,7 +338,7 @@ fn spawn(mut commands: Commands) {
                 if right {
                     n.right = px(CHEV_RIGHT);
                 } else {
-                    n.left = px(36);
+                    n.left = px(CHEV_LEFT);
                 }
                 r.spawn((n, Chevron, crate::navi_map::MapAvoid, Pickable::IGNORE))
                     .with_children(|c| {
@@ -288,13 +361,14 @@ fn spawn(mut commands: Commands) {
                         }
                     });
             }
-            // The tip, centred in the upper part of the zones.
+            // The tip, centred in its band ([`tip_place`], placed by
+            // [`place_tip`]).
             r.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    top: percent(tip_top(false)),
+                    top: percent(28),
                     left: px(0),
-                    right: px(0),
+                    width: percent(100),
                     justify_content: JustifyContent::Center,
                     display: Display::None,
                     ..default()
@@ -305,11 +379,13 @@ fn spawn(mut commands: Commands) {
             .with_children(|row| {
                 row.spawn((
                     Node {
-                        padding: UiRect::axes(px(16), px(8)),
+                        padding: UiRect::axes(px(12), px(6)),
                         border_radius: BorderRadius::all(px(8)),
+                        max_width: percent(100),
                         ..default()
                     },
                     BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+                    TipPanel,
                     Pickable::IGNORE,
                 ))
                 .with_child((
@@ -412,6 +488,65 @@ fn place_power_buttons(
     }
 }
 
+/// Places the first-ride tip ([`tip_place`]) every frame and publishes
+/// the touch layout ([`TouchLayout`]).
+#[allow(clippy::too_many_arguments)] // a Bevy system
+fn place_tip(
+    hud: Res<TouchHud>,
+    layout: Res<crate::hud_fit::HudLayout>,
+    scale: Option<Res<UiScale>>,
+    boxes: Option<Res<crate::hud::HudBoxes>>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    safe: Option<Res<crate::safe_area::SafeArea>>,
+    mut tip_box: Query<&mut Node, With<TipBox>>,
+    mut out: ResMut<TouchLayout>,
+) {
+    if !hud.shown {
+        out.set_if_neq(TouchLayout::default());
+        return;
+    }
+    let k = scale.map_or(1.0, |s| s.0).max(0.1);
+    let off = crate::safe_area::ui_offset(windows.single().ok(), safe.as_deref());
+    let avoid = boxes
+        .as_deref()
+        .map(|b| power_avoid(b, off, k))
+        .unwrap_or_default();
+    let ui = layout.ui_px;
+    let power = hud.power.then(|| power_buttons(ui, k, &avoid));
+    let place = tip_place(ui, k, &avoid, power.as_ref().map(|p| p.as_slice()));
+    for mut n in &mut tip_box {
+        let (top, left, width) = (px(place.top), px(place.left), px(place.right - place.left));
+        if n.top != top || n.left != left || n.width != width {
+            n.top = top;
+            n.left = left;
+            n.width = width;
+        }
+    }
+    let window = |r: Rect| {
+        let min = r.min * k + off;
+        let size = r.size() * k;
+        [min.x, min.y, size.x, size.y]
+    };
+    let chev_top = ui.y * (1.0 - CHEV_BOTTOM) - CHEV_H;
+    out.set_if_neq(TouchLayout {
+        banner: place.banner.filter(|_| hud.tip.is_some()).map(window),
+        chevrons: vec![
+            window(Rect::new(
+                CHEV_LEFT,
+                chev_top,
+                CHEV_LEFT + CHEV_W,
+                chev_top + CHEV_H,
+            )),
+            window(Rect::new(
+                ui.x - CHEV_RIGHT - CHEV_W,
+                chev_top,
+                ui.x - CHEV_RIGHT,
+                chev_top + CHEV_H,
+            )),
+        ],
+    });
+}
+
 /// A chevron's opacity.
 pub fn chevron_alpha(hud: &TouchHud, right: bool) -> f32 {
     let (flash, held) = if right {
@@ -457,14 +592,6 @@ fn update(
     }
     for mut n in &mut tip_box {
         n.display = show(hud.tip.is_some());
-        n.top = percent(tip_top(layout.compact));
-        // In portrait on a phone the power buttons' column is at the
-        // right edge: the tip keeps left of it.
-        n.right = percent(if layout.narrow && hud.power {
-            22.0
-        } else {
-            0.0
-        });
     }
     if let (Ok(mut t), Some(tip)) = (tip_text.single_mut(), &hud.tip)
         && t.0 != *tip
@@ -569,6 +696,74 @@ mod tests {
         let a = power_avoid(&boxes, Vec2::new(0.0, 59.0), 0.5);
         assert_eq!(a.len(), 2);
         assert_eq!(a[0], Rect::new(18.0, 18.0, 768.0, 196.0));
+    }
+
+    /// The first-ride tip's band (spec 3.2.3): below the top boxes, in
+    /// portrait left of the power buttons' column with the screen tip's
+    /// slot above it, in landscape between the chevrons below the power
+    /// buttons' row – clear of the buttons and the chevrons, in the upper
+    /// half (above the rider), at iPhone 15 and small Android sizes.
+    #[test]
+    fn the_first_ride_tip_keeps_clear_of_the_buttons_and_chevrons() {
+        for css in [
+            Vec2::new(390.0, 844.0 - 93.0),
+            Vec2::new(844.0 - 118.0, 390.0 - 21.0),
+            Vec2::new(360.0, 640.0),
+            Vec2::new(640.0, 360.0),
+        ] {
+            let k = 0.75;
+            let ui = css / k;
+            // A top panel over the width (portrait) or the left half.
+            let portrait = ui.y > ui.x;
+            let panel = if portrait {
+                Rect::new(10.0, 10.0, ui.x - 10.0, 150.0)
+            } else {
+                Rect::new(10.0, 10.0, ui.x * 0.6, 140.0)
+            };
+            let column = Rect::new(
+                ui.x - 260.0,
+                10.0,
+                ui.x - 10.0,
+                if portrait { 175.0 } else { 40.0 },
+            );
+            let avoid = [panel, column];
+            let power = power_buttons(ui, k, &avoid);
+            let t = tip_place(ui, k, &avoid, Some(&power));
+            let tip = Rect::new(t.left, t.top, t.right, t.top + 60.0 / k);
+            assert!(t.right - t.left > 150.0 / k, "{css}: {t:?}");
+            assert!(tip.max.y <= ui.y * 0.5, "{css}: above the rider {t:?}");
+            for r in avoid.iter().chain(power.iter().map(|(_, r)| r)) {
+                assert!(tip.intersect(*r).is_empty(), "{css}: {t:?} {r:?}");
+            }
+            let chev_top = ui.y * (1.0 - CHEV_BOTTOM) - CHEV_H;
+            let chevrons = [
+                Rect::new(CHEV_LEFT, chev_top, CHEV_LEFT + CHEV_W, chev_top + CHEV_H),
+                Rect::new(
+                    ui.x - CHEV_RIGHT - CHEV_W,
+                    chev_top,
+                    ui.x - CHEV_RIGHT,
+                    chev_top + CHEV_H,
+                ),
+            ];
+            for c in chevrons {
+                assert!(tip.intersect(c).is_empty(), "{css}: {t:?} {c:?}");
+            }
+            match t.banner {
+                Some(b) => {
+                    assert!(portrait, "{css}");
+                    assert!(b.max.y < t.top && b.min.y >= panel.max.y, "{css}: {b:?}");
+                    for (_, r) in &power {
+                        assert!(b.intersect(*r).is_empty(), "{css}: {b:?} {r:?}");
+                    }
+                    assert!((b.height() * k - BANNER_PX).abs() < 0.01);
+                }
+                None => assert!(!portrait, "{css}: the banner slot in portrait"),
+            }
+        }
+        // Without the power buttons the tip takes the width.
+        let ui = Vec2::new(390.0, 751.0) / 0.75;
+        let t = tip_place(ui, 0.75, &[], None);
+        assert!((t.right - (ui.x - TIP_GAP_PX / 0.75)).abs() < 0.01, "{t:?}");
     }
 
     /// The hints draw headless and hide with the setting.

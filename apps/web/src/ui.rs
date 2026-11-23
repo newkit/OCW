@@ -658,6 +658,7 @@ pub fn hud_layout_view_json(
     layout: &ocw_render::hud_fit::HudLayout,
     ui_scale: f32,
     boxes: &ocw_render::hud::HudBoxes,
+    touch: &ocw_render::touch_hud::TouchLayout,
 ) -> String {
     serde_json::json!({
         "compact": layout.compact,
@@ -667,6 +668,11 @@ pub fn hud_layout_view_json(
         "top_panel": boxes.top_panel,
         "top_right": boxes.top_right,
         "profile": boxes.profile,
+        // The touch steering's first-ride tip, the slot of the page's
+        // screen tip (portrait) and the chevrons (spec 3.2.3).
+        "touch_tip": boxes.touch_tip,
+        "banner_slot": touch.banner,
+        "chevrons": touch.chevrons,
         "big_lines": boxes.big_lines,
         "small_lines": boxes.small_lines,
         "text": boxes.text,
@@ -678,14 +684,21 @@ fn publish_hud_layout(
     layout: Option<Res<ocw_render::hud_fit::HudLayout>>,
     scale: Option<Res<UiScale>>,
     boxes: Option<Res<ocw_render::hud::HudBoxes>>,
+    touch: Option<Res<ocw_render::touch_hud::TouchLayout>>,
 ) {
     let (Some(layout), Some(boxes)) = (layout, boxes) else {
         return;
     };
-    let changed = layout.is_changed() || boxes.is_changed();
+    let changed =
+        layout.is_changed() || boxes.is_changed() || touch.as_ref().is_some_and(|t| t.is_changed());
     if changed || HUD_LAYOUT_JSON.lock().expect("not poisoned").is_empty() {
-        *HUD_LAYOUT_JSON.lock().expect("not poisoned") =
-            hud_layout_view_json(&layout, scale.map_or(1.0, |s| s.0), &boxes);
+        let none = ocw_render::touch_hud::TouchLayout::default();
+        *HUD_LAYOUT_JSON.lock().expect("not poisoned") = hud_layout_view_json(
+            &layout,
+            scale.map_or(1.0, |s| s.0),
+            &boxes,
+            touch.as_deref().unwrap_or(&none),
+        );
     }
 }
 
