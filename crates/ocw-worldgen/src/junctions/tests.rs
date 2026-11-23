@@ -1264,3 +1264,145 @@ fn a_narrowing_road_tapers_smoothly() {
     let g = fixtures::split(20.0, 7.5, 4.0, 0.03);
     assert_eq!(side_counts(&g), [0; 4]);
 }
+
+/// Three junctions of the real packages where J5 left a side road above
+/// the main road (`junction.mouth.above_main`), as their road graphs
+/// (from the patch's centre: `from to class width x,z;… heights`): a
+/// service road starting on a secondary road and climbing along it (Black
+/// Forest middle, 4 cm above), a service road leaving a secondary road
+/// along its edge (Tenerife, 2 cm), a residential road leaving at 28°
+/// where the main road curves towards it (Tenerife, 6 – 13 cm).
+const ALONG_MAIN: [&str; 3] = [
+    "0 1 Service 3.50 -18.27,-9.94;1.47,-2.42 1.866,1.558,1.500,1.376,1.002,0.777
+2 1 Service 3.50 -1.47,2.42;1.47,-2.42 0.028,0.573,0.777
+1 3 Service 3.50 1.47,-2.42;17.76,-1.87;24.40,0.01 0.777,0.971,1.192,1.096,1.132,1.285
+4 2 Secondary 8.00 -21.66,-5.28;-1.47,2.42 1.165,0.910,0.650,0.384,0.113,0.028
+2 5 Secondary 8.00 -1.47,2.42;64.33,27.49;72.67,30.67;97.45,41.71;119.89,51.72;163.67,81.75 0.028,-0.247,-0.536,-0.824,-1.118,-1.416,-1.719,-2.026,-2.338,-2.654,-2.974,-3.299,-3.626,-3.958,-4.292,-4.630,-4.970,-5.313,-5.659,-6.006,-6.356,-6.707,-7.060,-7.414,-7.769,-8.126,-8.483,-8.841,-9.199,-9.558,-9.917,-10.277,-10.636,-10.996,-11.356,-11.715,-12.075,-12.372",
+    "0 1 Service 3.50 0.00,0.00;-0.91,4.19;-7.30,4.33 0.000,0.406,1.559,1.697
+2 0 Secondary 6.50 -89.95,-74.96;-28.86,-11.89;-16.97,-4.06;-9.58,-0.88;0.00,0.00 -4.486,-4.298,-4.108,-3.916,-3.724,-3.531,-3.337,-3.143,-2.949,-2.755,-2.562,-2.369,-2.178,-1.988,-1.800,-1.614,-1.429,-1.245,-1.064,-0.883,-0.704,-0.525,-0.346,-0.168,0.000
+0 3 Secondary 6.50 0.00,0.00;17.88,-3.60 0.000,0.179,0.360,0.541,0.660",
+    "0 1 Residential 5.00 3.87,-0.37;8.70,3.37;10.82,6.12;13.60,17.62;15.54,27.39;15.41,33.11;15.04,39.23;14.38,45.16;11.21,56.19;6.27,69.03;-0.88,87.35;-10.23,114.93;-12.27,121.95;-13.25,130.19;-14.36,151.59;-14.39,160.72;-14.41,165.57 0.527,0.204,-0.184,-0.638,-1.154,-1.729,-2.357,-3.031,-3.745,-4.494,-5.271,-6.073,-6.896,-7.735,-8.588,-9.454,-10.330,-11.216,-12.113,-13.021,-13.941,-14.874,-15.828,-16.828,-17.828,-18.828,-19.828,-20.828,-21.828,-22.828,-23.828,-24.828,-25.828,-26.828,-27.828,-28.674
+2 3 Unclassified 5.00 -27.58,-46.08;-8.54,-9.54;-6.23,-4.69;-3.87,0.37 4.620,4.112,3.607,3.108,2.617,2.136,1.670,1.222,0.797,0.397,0.029,-0.116
+3 4 Unclassified 5.00 -3.87,0.37;-2.47,5.19;-1.44,14.80 -0.116,-0.432,-0.708,-1.033
+4 0 Residential 5.00 -1.44,14.80;0.31,10.99;1.56,8.10;2.62,4.94;3.87,-0.37 -1.033,-0.733,-0.254,0.432,0.527
+0 5 Residential 5.00 3.87,-0.37;4.75,-9.59;4.07,-16.48;0.20,-38.71;-0.50,-54.60;0.65,-62.28;2.98,-69.19 0.527,0.881,1.305,1.798,2.356,2.975,3.646,4.362,5.117,5.905,6.719,7.556,8.412,9.284,10.111
+3 0 Residential 5.00 -3.87,0.37;3.87,-0.37 -0.116,0.267,0.527",
+];
+
+/// A road graph from [`ALONG_MAIN`]'s lines (its profiles as given).
+fn graph_of(text: &str) -> RoadGraph {
+    use ocw_world::graph::{Edge, EdgeId, Oneway, VertexId};
+    let mut vertices: Vec<[f64; 2]> = Vec::new();
+    let mut edges = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        let (from, to): (u32, u32) = (f[0].parse().unwrap(), f[1].parse().unwrap());
+        let class = match f[2] {
+            "Secondary" => RoadClass::Secondary,
+            "Unclassified" => RoadClass::Unclassified,
+            "Residential" => RoadClass::Residential,
+            "Service" => RoadClass::Service,
+            other => panic!("{other}"),
+        };
+        let points: Vec<[f64; 2]> = f[4]
+            .split(';')
+            .map(|q| {
+                let v: Vec<f64> = q.split(',').map(|x| x.parse().unwrap()).collect();
+                [v[0], v[1]]
+            })
+            .collect();
+        for (v, p) in [(from, points[0]), (to, *points.last().unwrap())] {
+            let v = v as usize;
+            if vertices.len() <= v {
+                vertices.resize(v + 1, [f64::NAN; 2]);
+            }
+            vertices[v] = p;
+        }
+        edges.push(Edge {
+            id: EdgeId(i as u64 + 1),
+            from: VertexId(from),
+            to: VertexId(to),
+            points,
+            class,
+            name: None,
+            width_m: f[3].parse().unwrap(),
+            bridge: false,
+            tunnel: false,
+            dead_end_m: None,
+            boundary: false,
+            oneway: Oneway::No,
+            osm_way: i as i64 + 1,
+            profile: f[5].split(',').map(|x| x.parse().unwrap()).collect(),
+        });
+    }
+    RoadGraph {
+        vertices,
+        edges,
+        boundary_vertices: Default::default(),
+    }
+}
+
+/// Spec §4.8.8 Rule (J6; the user: a side road never above the main
+/// road): the junctions where J5 left a side road's strip above the main
+/// road's drawn surface – side roads starting on the main road and
+/// climbing along it, one leaving where the main road curves towards it –
+/// have none: the mouth row of a side road with a corner on the main road
+/// (or, leaving at a narrow angle, within a metre of it) lies on its
+/// surface, and the strip's triangles over the main road's real
+/// carriageway go under it.
+#[test]
+fn side_roads_along_the_main_road_never_stand_above_it() {
+    for (k, text) in ALONG_MAIN.iter().enumerate() {
+        let g = graph_of(text);
+        let js = JunctionSet::new(&g);
+        let patches = (0..g.vertices.len())
+            .filter(|&v| js.own_patch(&g, v).is_some())
+            .count();
+        assert!(patches >= 1, "junction {k}: a patch");
+        drop(js);
+        let pkg = package(&g);
+        let m = mouths_above_main(&pkg, &g);
+        assert!(m.is_empty(), "junction {k}: {m:?}");
+    }
+}
+
+/// Two junctions of Liechtenstein whose arms curve within the junction
+/// (as [`ALONG_MAIN`]): J5's sides along the real edge lines would not
+/// keep the outline star-shaped, so they kept J4's straight chain with a
+/// `side.corner`; one also a `side.kink`.
+const CURVING: [&str; 2] = [
+    "0 1 Unclassified 5.00 61.04,314.22;0.00,0.00 0.683,0.680,0.663,0.629,0.593,0.561,0.527,0.491,0.454,0.415,0.374,0.333,0.291,0.249,0.206,0.164,0.123,0.082,0.043,0.005,-0.032,-0.067,-0.100,-0.131,-0.160,-0.186,-0.210,-0.231,-0.250,-0.267,-0.281,-0.293,-0.303,-0.311,-0.317,-0.321,-0.322,-0.322,-0.321,-0.317,-0.312,-0.304,-0.295,-0.285,-0.273,-0.261,-0.248,-0.234,-0.220,-0.205,-0.190,-0.174,-0.159,-0.143,-0.127,-0.112,-0.097,-0.082,-0.068,-0.054,-0.041,-0.029,-0.018,-0.009,-0.000,-0.000
+1 2 Unclassified 5.00 0.00,0.00;-3.95,-34.34;-7.35,-54.02 -0.000,0.004,-0.009,-0.034,-0.055,-0.070,-0.085,-0.097,-0.108,-0.117,-0.125,-0.129
+1 3 Unclassified 5.00 0.00,0.00;-5.20,-4.56;-9.94,-5.78;-16.78,-6.45;-30.66,-3.09;-48.72,3.04;-71.52,14.00;-77.89,17.89 -0.000,0.007,0.012,0.023,0.035,0.046,0.057,0.070,0.083,0.097,0.111,0.126,0.142,0.158,0.174,0.191,0.208,0.224",
+    "0 1 Residential 5.00 59.07,-0.08;55.07,-0.11;0.00,0.00 8.899,8.741,8.274,7.558,6.591,5.636,4.708,3.847,3.106,2.464,1.771,0.852,-0.057
+1 2 Residential 5.00 0.00,0.00;-19.40,0.50 -0.057,-0.943,-1.580,-2.020,-2.429
+1 3 Residential 5.00 0.00,0.00;1.48,-1.27;2.64,-2.67;3.45,-4.14;4.03,-5.82;4.30,-7.56;4.29,-9.41;-0.96,-79.93;-2.98,-111.58 -0.057,0.472,1.133,1.204,1.002,0.618,0.341,0.164,0.066,0.057,0.074,0.092,0.110,0.128,0.147,0.165,0.184,0.203,0.223,0.242,0.262,0.282,0.301,0.315",
+];
+
+/// Spec §4.8.8 Rule (J6): an outline need not be star-shaped from the
+/// vertex, only a simple polygon – its surface is then a constrained
+/// Delaunay triangulation with points inside at the surface's heights –
+/// so the sides follow the arms' real edge lines also where an arm curves
+/// within the junction: no `side.corner` or `side.kink` there (J5: one
+/// corner each, a kink at the second), and the surface meets the strips.
+#[test]
+fn curving_arms_get_sides_along_their_edges() {
+    for (k, text) in CURVING.iter().enumerate() {
+        let g = graph_of(text);
+        let js = JunctionSet::new(&g);
+        let p = js
+            .patch(&g, 1)
+            .unwrap_or_else(|| panic!("junction {k}: a patch"));
+        assert!(!p.is_star(), "junction {k}: not star-shaped");
+        drop(js);
+        let pkg = package(&g);
+        let r = crate::lint::lint(&pkg, None);
+        let counts = ["side.gap", "side.step", "side.kink", "side.corner"].map(|k| r.count(k));
+        assert_eq!(counts, [0; 4], "junction {k}: {:?}", side_faults(&pkg, &g));
+        let (seams, without) = seams(&pkg, &g);
+        assert!(without.is_empty(), "junction {k}: {without:?}");
+        for s in seams.iter().filter(|s| s.patch) {
+            assert!(s.seam_m < 0.02, "junction {k}: {s:?}");
+        }
+    }
+}

@@ -9,12 +9,21 @@ fn patch_at(g: &RoadGraph, v: usize) -> Patch {
 }
 
 /// The outline is closed and simple (star-shaped round the vertex: the
-/// polar angles grow once round), every mouth meets its arm.
+/// polar angles grow once round; J6: else a simple polygon, counter-
+/// clockwise), every mouth meets its arm.
 fn check_outline(p: &Patch) {
     let c = xz(p.centre);
     let n = p.outline.len();
     let mut total = 0.0;
+    if !p.is_star() {
+        let pts: Vec<P2> = p.outline.iter().map(|o| xz(o.p)).collect();
+        assert!(plane_mesh::simple_ccw(&pts), "the outline is not simple");
+        total = std::f64::consts::TAU;
+    }
     for k in 0..n {
+        if !p.is_star() {
+            break;
+        }
         let (a, b) = (xz(p.outline[k].p), xz(p.outline[(k + 1) % n].p));
         let mut d = angle(c, b) - angle(c, a);
         while d <= 0.0 {
