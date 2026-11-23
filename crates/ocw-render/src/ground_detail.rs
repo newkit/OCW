@@ -312,13 +312,16 @@ impl SeasonFx {
         let f = d.foliage(LeafType::Deciduous, alt_m, 0.0);
         // Leaves come down with the autumn colour and lie through the
         // winter; the fresh green of spring covers the last of them.
+        // Where the broadleaves are evergreen (Tenerife) only the few
+        // deciduous trees' share of it changes (spec §14 Phase 9 Q13).
+        let k = d.leaf_fall_share();
         let fallen = (1.0 - f.leaves).clamp(0.0, 1.0);
-        let litter = (0.15 + 0.5 * f.autumn + fallen) * (1.0 - 0.6 * f.fresh);
+        let litter = (0.15 + k * (0.5 * f.autumn + fallen)) * (1.0 - 0.6 * k * f.fresh);
         Self {
             green: g.green,
             dry: g.dry,
             litter: litter.clamp(0.0, 1.0),
-            autumn: (f.autumn * (0.4 + fallen)).clamp(0.0, 1.0),
+            autumn: (k * f.autumn * (0.4 + fallen)).clamp(0.0, 1.0),
             // The same leaf fall as the physics of wet leaves (4.6.2 Q6).
             fall: d.leaf_fall(alt_m),
             snow: d.snow(alt_m),

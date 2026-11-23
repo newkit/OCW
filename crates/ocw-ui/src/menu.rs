@@ -163,6 +163,7 @@ impl Plugin for MenuPlugin {
                                 "strava-waiting",
                                 "strava",
                                 "voice",
+                                "season",
                             ])
                             .default_value("toggle"),
                     )
@@ -196,6 +197,8 @@ impl Plugin for MenuPlugin {
                         Some("strava") => Action::OpenSub(sub::Page::Strava),
                         // Settings → Voice (spec 7.1.7 Q16; scenes, tests).
                         Some("voice") => Action::OpenSub(sub::Page::Voice),
+                        // World → Time → Season (spec 14 Phase 9 Q13; scenes).
+                        Some("season") => Action::OpenSub(sub::Page::Season),
                         _ if open => Action::Close,
                         _ => Action::Open,
                     };
@@ -373,6 +376,13 @@ fn page_text(world: &World, page: Page) -> Vec<String> {
             .get_resource::<crate::join::JoinUi>()
             .map(|u| ocw_client::menu::join::text(&u.info, crate::now(world)))
             .unwrap_or_default();
+    }
+    // Where the seasons are weak, the Season page says so (spec §14 Phase
+    // 9 Q13).
+    if page == Page::Sub(sub::Page::Season) {
+        return ocw_client::menu::calendar::season_note(calendar_info(world))
+            .into_iter()
+            .collect();
     }
     world
         .get_resource::<MenuHooks>()

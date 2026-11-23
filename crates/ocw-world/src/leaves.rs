@@ -22,7 +22,10 @@
 //! open land and half that in towns (swept streets), thinned by the
 //! climatological snow cover ((1 − snow)²). The leaf fall (0 in summer, 1
 //! when the leaves are down, `ocw_sky::season::SeasonDay::leaf_fall`) and
-//! the snow come from the season at the road's altitude.
+//! the snow come from the season at the road's altitude. Tenerife's woods
+//! are evergreen (laurel, fayal-brezal, Canary pine): they count as open
+//! land ([`evergreen_woods`]), and the season's fall there is that of its
+//! few deciduous lone trees, a tenth (spec §14 Phase 9 Q13).
 
 use std::collections::BTreeMap;
 
@@ -120,6 +123,12 @@ pub fn region_broadleaf(region: FloraRegion, alt_m: f64) -> f32 {
     }
 }
 
+/// Whether the region's woods are evergreen (their broadleaves too): no
+/// leaf fall from the woods themselves.
+pub fn evergreen_woods(region: FloraRegion) -> bool {
+    region == FloraRegion::Tenerife
+}
+
 /// Leaves per metre of one side's half of the carriageway at a place of
 /// `code` (see the module docs): `fall` the season's leaf fall (0 – 1),
 /// `snow` its climatological snow cover (0 – 1), at `alt_m`.
@@ -129,6 +138,11 @@ pub fn per_metre(code: LeafCode, region: FloraRegion, alt_m: f64, fall: f32, sno
         LeafCode::None => 0.0,
         LeafCode::Open => OPEN_PER_M,
         LeafCode::Town => OPEN_PER_M * SWEPT,
+        // Laurel forest, fayal-brezal and Canary pines keep their leaves:
+        // only the lone deciduous trees by the road shed, as in open land
+        // (spec §14 Phase 9 Q13; the season's fall is already scaled to
+        // those few trees, `SeasonDay::leaf_fall`).
+        LeafCode::Wood | LeafCode::WoodMeasured(_) if evergreen_woods(region) => OPEN_PER_M,
         LeafCode::Wood | LeafCode::WoodMeasured(_) => {
             WOOD_PER_M
                 * code
@@ -439,6 +453,32 @@ mod tests {
         // A wood measured all conifers still has a few leaves.
         assert!(
             (per_metre(LeafCode::WoodMeasured(0), map.region(), 0.0, 1.0, 0.0) - 0.16).abs() < 1e-6
+        );
+    }
+
+    /// Spec §14 Phase 9 Q13: Tenerife's woods are evergreen – a laurel
+    /// wood (measured broadleaves) or a pine wood sheds no more than open
+    /// land; the Black Forest's woods as before.
+    #[test]
+    fn evergreen_woods_shed_like_open_land() {
+        let tf = FloraRegion::Tenerife;
+        assert!(evergreen_woods(tf));
+        for code in [
+            LeafCode::Wood,
+            LeafCode::WoodMeasured(0),
+            LeafCode::WoodMeasured(BROADLEAF_STEPS),
+        ] {
+            for alt in [50.0, 800.0, 1600.0] {
+                assert_eq!(
+                    per_metre(code, tf, alt, 1.0, 0.0),
+                    per_metre(LeafCode::Open, tf, alt, 1.0, 0.0)
+                );
+            }
+        }
+        assert!(!evergreen_woods(FloraRegion::BlackForest));
+        assert!(
+            (per_metre(LeafCode::Wood, FloraRegion::BlackForest, 500.0, 1.0, 0.0) - 0.24).abs()
+                < 1e-6
         );
     }
 
