@@ -613,6 +613,10 @@ fn blended_planes(
         };
         let c = [p.centre[0], p.centre[2]];
         let plane = |q: [f64; 2]| h0 + gx * (q[0] - c[0]) + gz * (q[1] - c[1]);
+        // Every road on the plane and its curve, or none (a junction whose
+        // plane one road cannot reach within its class grade – or the
+        // grade it has – keeps the surface of J3: no `junction_room`
+        // gained, spec §4.8.8 Q7 follow-up).
         for a in &p.arms {
             let e = &g.edges[a.edge];
             let n = e.profile.len();
@@ -633,24 +637,17 @@ fn blended_planes(
             };
             // The first sample past the mouth: still on the plane.
             let Some(k1) = idx.iter().position(|&i| m_of(i) > a.mouth_m + 1e-6) else {
-                continue;
+                return Vec::new();
             };
             let k = usize::from(a.at_from);
             let other = js.reach(g, a.edge)[k];
             let room_end = len - other - PROFILE_STEP_M;
             let on_plane = |i: usize| plane(frame_at(&e.points, &cum, sample_m(i, len)).0);
-            let mut ok = true;
-            for &i in &idx[..=k1] {
-                if m_of(i) > room_end + 1e-6 || !keep(a.edge, sample_m(i, len)) {
-                    ok = false;
-                    break;
-                }
-            }
-            if !ok {
-                continue;
-            }
-            for &i in &idx[..=k1] {
-                out.push((a.edge, i, on_plane(i)));
+            if idx[..=k1]
+                .iter()
+                .any(|&i| m_of(i) > room_end + 1e-6 || !keep(a.edge, sample_m(i, len)))
+            {
+                return Vec::new();
             }
             // From there the curve to the road's own profile.
             let i1 = idx[k1];
@@ -673,23 +670,42 @@ fn blended_planes(
                 .position(|&i| m_of(i) >= m1 + want - 1e-6)
                 .map(|x| x + k1 + 1)
             else {
-                continue;
+                return Vec::new();
             };
             let i2 = idx[k2];
             let m2 = m_of(i2);
             if m2 > room_end + 1e-6 {
-                continue;
+                return Vec::new();
             }
             let (p2, g2) = (e.profile[i2], own_slope(m2));
             let l = m2 - m1;
+            let mut arm: Vec<(usize, f64)> = idx[..=k1].iter().map(|&i| (i, on_plane(i))).collect();
             for &i in &idx[k1 + 1..k2] {
-                let s = sample_m(i, len);
-                if !keep(a.edge, s) {
-                    continue;
+                if !keep(a.edge, sample_m(i, len)) {
+                    return Vec::new();
                 }
                 let t = (m_of(i) - m1) / l;
-                out.push((a.edge, i, hermite(t, h1, slope1 * l, p2, g2 * l)));
+                arm.push((i, hermite(t, h1, slope1 * l, p2, g2 * l)));
             }
+            arm.push((i2, p2));
+            // Not steeper than the class grade or what the road has there.
+            let new_steep = arm
+                .windows(2)
+                .filter(|w| (m_of(w[1].0) - m_of(w[0].0)).abs() >= 1.0)
+                .map(|w| ((w[1].1 - w[0].1) / (m_of(w[1].0) - m_of(w[0].0))).abs())
+                .fold(0.0f64, f64::max);
+            let old_steep = arm
+                .windows(2)
+                .filter(|w| (m_of(w[1].0) - m_of(w[0].0)).abs() >= 1.0)
+                .map(|w| {
+                    ((e.profile[w[1].0] - e.profile[w[0].0]) / (m_of(w[1].0) - m_of(w[0].0))).abs()
+                })
+                .fold(0.0f64, f64::max);
+            if new_steep > limits(a.class).0.max(old_steep) + 1e-6 {
+                return Vec::new();
+            }
+            arm.pop();
+            out.extend(arm.into_iter().map(|(i, h)| (a.edge, i, h)));
         }
         out
     })
@@ -1391,39 +1407,69 @@ pub fn round_creases(
         };
         let reach = 10.0f64.min(u_last);
         let g1 = (at(reach) - h0) / reach;
-        let lc = crease_curve_m(g1 - gm_out);
-        let mut target: Vec<f64> = Vec::with_capacity(seq.len());
-        if u_last <= lc + 1.0 {
-            // No room past the curve: a Hermite curve to the fixed point.
-            let ge = if seq.len() >= 2 {
-                let (ua, ub) = (seq[seq.len() - 2].1, u_last);
-                (p[last] - p[seq[seq.len() - 2].0]) / (ub - ua).max(1e-9)
-            } else {
-                g1
-            };
-            for &(_, u) in &seq {
-                let t = u / u_last;
-                target.push(hermite(t, h0, gm_out * u_last, p[last], ge * u_last));
+        // The steepest the stretch may get: the class grade, or what it
+        // has already (the curve never makes it steeper than that – no
+        // `junction_room` gained, spec §4.8.8 Q7 follow-up).
+        let steepest = |t: &[f64]| -> f64 {
+            let mut prev = (0.0, h0);
+            let mut worst = 0.0f64;
+            for (&(_, u), &h) in seq.iter().zip(t) {
+                if u - prev.0 >= 1.0 {
+                    worst = worst.max(((h - prev.1) / (u - prev.0)).abs());
+                }
+                prev = (u, h);
             }
-        } else {
-            let curve = |u: f64| h0 + gm_out * u + (g1 - gm_out) * u * u / (2.0 * lc);
-            let delta = at(lc) - curve(lc);
-            // Spread the difference beyond the curve, fading out smoothly
-            // (no kink where it starts or ends): at most 1.5 times its mean
-            // extra grade, within the class grade where there is room.
-            let head = (max_grade - g1.abs()).max(0.01);
-            let spread = (1.5 * delta.abs() / head).max(3.0 * lc).min(u_last - lc);
-            for &(k, u) in &seq {
-                target.push(if u <= lc {
-                    curve(u)
-                } else if u < lc + spread {
-                    let x = (u - lc) / spread;
-                    p[k] - delta * (1.0 - x * x * (3.0 - 2.0 * x))
+            worst
+        };
+        let orig_h: Vec<f64> = seq.iter().map(|&(k, _)| p[k]).collect();
+        let allowed = max_grade.max(steepest(&orig_h)) + 1e-6;
+        let shape = |lc: f64| -> Vec<f64> {
+            let mut target: Vec<f64> = Vec::with_capacity(seq.len());
+            if u_last <= lc + 1.0 {
+                // No room past the curve: a Hermite curve to the fixed point.
+                let ge = if seq.len() >= 2 {
+                    let (ua, ub) = (seq[seq.len() - 2].1, u_last);
+                    (p[last] - p[seq[seq.len() - 2].0]) / (ub - ua).max(1e-9)
                 } else {
-                    p[k]
-                });
+                    g1
+                };
+                for &(_, u) in &seq {
+                    let t = u / u_last;
+                    target.push(hermite(t, h0, gm_out * u_last, p[last], ge * u_last));
+                }
+            } else {
+                let curve = |u: f64| h0 + gm_out * u + (g1 - gm_out) * u * u / (2.0 * lc);
+                let delta = at(lc) - curve(lc);
+                // Spread the difference beyond the curve, fading out
+                // smoothly (no kink where it starts or ends): at most 1.5
+                // times its mean extra grade, within the class grade where
+                // there is room.
+                let head = (max_grade - g1.abs()).max(0.01);
+                let spread = (1.5 * delta.abs() / head).max(3.0 * lc).min(u_last - lc);
+                for &(k, u) in &seq {
+                    target.push(if u <= lc {
+                        curve(u)
+                    } else if u < lc + spread {
+                        let x = (u - lc) / spread;
+                        p[k] - delta * (1.0 - x * x * (3.0 - 2.0 * x))
+                    } else {
+                        p[k]
+                    });
+                }
             }
-        }
+            target
+        };
+        // The curve for the change of grade; shorter (down to 5 m) where
+        // that would leave the road steeper than allowed; none where even
+        // that would (the crease of Q6 (d) stays).
+        let full = crease_curve_m(g1 - gm_out);
+        let Some(target) = [full, CREASE_MIN_M]
+            .into_iter()
+            .map(&shape)
+            .find(|t| steepest(t) <= allowed)
+        else {
+            continue;
+        };
         for (&(k, _), &h) in seq.iter().zip(&target) {
             if !fixed[k] && (h - p[k]).abs() > 1e-6 {
                 p[k] = h;

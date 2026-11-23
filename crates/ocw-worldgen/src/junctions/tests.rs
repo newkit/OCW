@@ -639,13 +639,13 @@ fn side_roads_keep_their_class_grade_after_the_blend() {
     let gr = grades(&side.profile, &d);
     assert!(gr.iter().all(|x| x.abs() <= 0.20 + 0.01), "{gr:?}");
     // The junction stays on the main road: the vertex at its height; the
-    // side road leaves the main road's edge (3.75 m out, §4.8.8 Q6 (d))
-    // with the main road's slope along it (0 % across the main road) and
-    // turns to its 18 % over a vertical curve (Q7 (b)): little more than
-    // level at its 5 m sample (J3: 18 % × 1.25 m = 0.225 m).
+    // side road leaves the main road's edge (3.75 m out, §4.8.8 Q6 (d));
+    // at its class limit right after the junction the crease has no room
+    // to be rounded (Q7 (b) would make it steeper): its own grade from the
+    // edge, 18 % × 1.25 m = 0.225 m at its 5 m sample.
     assert_eq!(side.profile[0], g.edges[1].profile[0]);
     assert!(
-        side.profile[1] - side.profile[0] < 0.06,
+        side.profile[1] - side.profile[0] < 0.25,
         "{:?}",
         &side.profile[..4]
     );
@@ -1016,7 +1016,7 @@ fn side_roads_stay_below_the_main_road_surface() {
 }
 
 /// Spec §4.8.8 Q7 (c): an equal crossing whose four roads climb and fall
-/// differently (+15 %, −5 %, +10 %, +12 % outward): its junction surface is
+/// differently (+8 %, −3 %, +2 %, +6 % outward): its junction surface is
 /// one plane (the heights at the mouths and the centre within 2 cm of it),
 /// each road turns from the plane's slope to its own grade over 10 – 20 m
 /// past the mouth without a kink above 8 points and within its class
@@ -1024,7 +1024,7 @@ fn side_roads_stay_below_the_main_road_surface() {
 /// the drawn surface.
 #[test]
 fn blended_junctions_lie_on_one_plane() {
-    let g0 = crossing([0.15, -0.05, 0.10, 0.12]);
+    let g0 = crossing([0.08, -0.03, 0.02, 0.06]);
     let mut g = g0.clone();
     let st = reconcile_profiles(&mut g, &|_, _| true);
     assert_eq!(st.planes, 1, "{st:?}");
@@ -1077,4 +1077,135 @@ fn blended_junctions_lie_on_one_plane() {
     }
     let r = crate::lint::lint(&package(&g), None);
     assert_eq!(r.count("road.vertical.kink"), 0);
+}
+
+/// Spec §4.8.8 Q7 follow-up: a path drawn along a main road that curves
+/// towards it (the path leaves at 15° and runs 0.3 – 0.5 m above the main
+/// road, its strip over the main road's carriageway for 20 m) never
+/// stands above the main road's surface: its rows near the carriageway
+/// lie under it, also where the main road curves under a long quad –
+/// before and after the reconciliation.
+#[test]
+fn a_path_along_a_curving_main_road_stays_below_it() {
+    let v = [[0.0, 0.0], [-100.0, 0.0], [100.0, -20.0], [100.0, -32.0]];
+    let main_e = Road {
+        from: 0,
+        to: 2,
+        points: vec![
+            [0.0, 0.0],
+            [30.0, 0.0],
+            [50.0, -2.0],
+            [70.0, -6.0],
+            [100.0, -20.0],
+        ],
+        class: RoadClass::Secondary,
+        width_m: 7.5,
+        height: Box::new(|s| s * 0.02),
+    };
+    let path = Road {
+        from: 0,
+        to: 3,
+        points: vec![[0.0, 0.0], [25.0, -6.7], [60.0, -12.0], [100.0, -32.0]],
+        class: RoadClass::Path,
+        width_m: 1.8,
+        height: Box::new(|s| s * 0.022 + 0.3),
+    };
+    let g0 = fixtures::graph(
+        &v,
+        vec![
+            Road::straight(&v, 1, 0, RoadClass::Secondary, 7.5, |s| (s - 100.0) * 0.02),
+            main_e,
+            path,
+        ],
+    );
+    let js = JunctionSet::new(&g0);
+    assert!(
+        js.patch(&g0, 0).is_some_and(|p| p.through.is_some()),
+        "{:?}",
+        js.fallback_reason(&g0, 0)
+    );
+    drop(js);
+    let mut g = g0.clone();
+    reconcile_profiles(&mut g, &|_, _| true);
+    for gg in [&g0, &g] {
+        let pkg = package(gg);
+        assert_eq!(mouths_above_main(&pkg, gg), vec![]);
+    }
+}
+
+/// Spec §4.8.8 Q7 follow-up: a cluster whose second vertex lies just off
+/// the main road's carriageway (0.45 m), with paths leaving it 8 cm above
+/// the main road: the junction surface's corners there do not lift the
+/// main road's surface (the mesh refined and cut along the carriageway's
+/// edge), before and after the reconciliation.
+#[test]
+fn a_cluster_vertex_beside_the_main_road_does_not_lift_it() {
+    let v = [
+        [0.0, 0.0],
+        [-100.0, 0.0],
+        [100.0, 0.0],
+        [0.0, -4.2],
+        [-60.0, -4.6],
+        [60.0, -4.6],
+    ];
+    let g0 = fixtures::graph(
+        &v,
+        vec![
+            Road::straight(&v, 1, 0, RoadClass::Primary, 7.5, |_| 0.0),
+            Road::straight(&v, 0, 2, RoadClass::Primary, 7.5, |_| 0.0),
+            Road::straight(&v, 0, 3, RoadClass::Path, 1.8, |s| s * 0.02),
+            Road::straight(&v, 3, 4, RoadClass::Path, 1.8, |_| 0.08),
+            Road::straight(&v, 3, 5, RoadClass::Path, 1.8, |_| 0.08),
+        ],
+    );
+    let mut g = g0.clone();
+    reconcile_profiles(&mut g, &|_, _| true);
+    for gg in [&g0, &g] {
+        let pkg = package(gg);
+        assert_eq!(mouths_above_main(&pkg, gg), vec![]);
+        let js = JunctionSet::new(gg);
+        let p = js.patch(gg, 0).expect("a patch");
+        // On the carriageway the drawn surface is the main road's own.
+        let mut x = p.min[0];
+        while x <= p.max[0] {
+            let mut z = p.min[1];
+            while z <= p.max[1] {
+                let q = [x, z];
+                if p.main_excess(q) <= 0.0
+                    && let (Some(h), Some(m)) = (p.height_at(q), p.main_own(q))
+                {
+                    assert!(h - m < 0.02, "{q:?}: {h} vs {m}");
+                }
+                z += 0.1;
+            }
+            x += 0.1;
+        }
+    }
+}
+
+/// Spec §4.8.8 Q7 follow-up: a crease with too little room before the
+/// next fixed height (a 22 m side road climbing 18 % to a level main road)
+/// is rounded over a shorter curve or not at all – never steeper than the
+/// class grade or the road was.
+#[test]
+fn creases_never_make_a_short_road_steeper() {
+    let mut d = vec![0.0, 2.5];
+    d.extend((1..5).map(|i| f64::from(i) * 5.0));
+    d.push(22.0);
+    let p0: Vec<f64> = d
+        .iter()
+        .map(|&x| (x - 2.5).clamp(0.0, 19.5) * 0.18)
+        .collect();
+    let mut fixed = vec![false; d.len()];
+    fixed[0] = true;
+    fixed[1] = true;
+    fixed[d.len() - 1] = true;
+    let mut crease = vec![None; d.len()];
+    crease[1] = Some((0.0, 1.0));
+    let before = grades(&p0, &d).iter().fold(0.0f64, |a, x| a.max(x.abs()));
+    let mut p = p0.clone();
+    round_creases(&mut p, &d, &fixed, &crease, 0.20);
+    let after = grades(&p, &d).iter().fold(0.0f64, |a, x| a.max(x.abs()));
+    assert!(after <= 0.20_f64.max(before) + 1e-6, "{after} {p:?}");
+    assert_eq!(p[d.len() - 1], p0[d.len() - 1]);
 }

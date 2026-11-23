@@ -1708,6 +1708,9 @@ fn mesh(patch: &mut Patch) {
     // triangles crossing its carriageway's edge are cut there (§4.8.8 Q7),
     // so the corners' slope never reaches onto the main road's surface.
     if patch.through.is_some() {
+        for _ in 0..REFINE_ROUNDS {
+            (tris, sector) = refine_at_main_edge(patch, &mut verts, tris, sector);
+        }
         (tris, sector) = cut_at_main_edge(patch, &mut verts, tris, sector);
     }
     // Facing up (as the road strips: cross(b − a, c − a).y > 0).
@@ -1725,6 +1728,74 @@ fn mesh(patch: &mut Patch) {
     patch.vertices = verts;
     patch.triangles = tris;
     patch.sectors = sectors;
+}
+
+/// The triangles near the through road's carriageway edge are halved this
+/// many times before they are cut there (§4.8.8 Q7): the edge of a
+/// cluster's carriageways (the union of their strips) bends inside a
+/// triangle of the star mesh.
+const REFINE_ROUNDS: usize = 2;
+
+/// Splits every triangle side whose corners or middle lie on different
+/// sides of the through road's carriageway edge at its middle (a shared
+/// vertex at the field's height), and each triangle by its split sides
+/// (one: two triangles, two: three, three: four), so the mesh stays
+/// closed. Returns the triangles with their sectors.
+fn refine_at_main_edge(
+    patch: &Patch,
+    verts: &mut Vec<[f64; 3]>,
+    tris: Vec<[u32; 3]>,
+    sector: Vec<usize>,
+) -> (Vec<[u32; 3]>, Vec<usize>) {
+    use std::collections::HashMap;
+    let on = |q: [f64; 3]| on_main(patch, xz(q));
+    let mut mids: HashMap<(u32, u32), Option<u32>> = HashMap::new();
+    for t in &tris {
+        for k in 0..3 {
+            let (a, b) = (t[k], t[(k + 1) % 3]);
+            let key = (a.min(b), a.max(b));
+            if mids.contains_key(&key) {
+                continue;
+            }
+            let (pa, pb) = (verts[a as usize], verts[b as usize]);
+            let m = xz(lerp3(pa, pb, 0.5));
+            let split = on(pa) != on(pb) || on(pa) != on_main(patch, m);
+            let id = split.then(|| {
+                verts.push(at_y(m, patch.field(m)));
+                (verts.len() - 1) as u32
+            });
+            mids.insert(key, id);
+        }
+    }
+    let mid = |a: u32, b: u32| mids[&(a.min(b), a.max(b))];
+    let mut out = Vec::with_capacity(tris.len() * 2);
+    let mut out_sector = Vec::with_capacity(tris.len() * 2);
+    for (t, sec) in tris.into_iter().zip(sector) {
+        let m = [mid(t[0], t[1]), mid(t[1], t[2]), mid(t[2], t[0])];
+        let pieces: Vec<[u32; 3]> = match m {
+            [None, None, None] => vec![t],
+            [Some(a), Some(b), Some(c)] => {
+                vec![[t[0], a, c], [a, t[1], b], [c, b, t[2]], [a, b, c]]
+            }
+            _ => {
+                // Rotate so the first split side is side 0 (t0–t1).
+                let r = (0..3)
+                    .find(|&k| m[k].is_some() && m[(k + 2) % 3].is_none())
+                    .unwrap_or(0);
+                let (v0, v1, v2) = (t[r], t[(r + 1) % 3], t[(r + 2) % 3]);
+                let (m01, m12) = (m[r].expect("split"), m[(r + 1) % 3]);
+                match m12 {
+                    None => vec![[v0, m01, v2], [m01, v1, v2]],
+                    Some(m12) => vec![[v0, m01, v2], [m01, v1, m12], [m01, m12, v2]],
+                }
+            }
+        };
+        for q in pieces {
+            out.push(q);
+            out_sector.push(sec);
+        }
+    }
+    (out, out_sector)
 }
 
 /// On the through road's carriageway (within rounding).
@@ -2598,40 +2669,49 @@ impl JunctionSet {
         if items.len() < 2 {
             return Some(Shaped::default());
         }
-        // §4.8.8 Q7: past the mouth of a side road whose strip starts on
-        // the main road's carriageway, its first stretch gets a row every
-        // 0.5 m, so it can lie under the main road's surface exactly as far
-        // as it crosses the carriageway (below).
-        for (k, end) in ends.iter().enumerate() {
+        // §4.8.8 Q7: a side road's strip gets a row every 0.5 m wherever
+        // it comes near the main road's carriageway (past its mouth, up to
+        // `MAIN_REACH_M` on), so it can lie under the main road's surface
+        // exactly as far as it reaches onto it (below), also where the main
+        // road curves under a long quad.
+        for end in &ends {
             let Some(EndRule::Patch(p, ai)) = end else {
                 continue;
             };
+            if !p.through.is_some_and(|t| !t.contains(ai)) {
+                continue;
+            }
             let a = &p.arms[*ai];
-            if !p.through.is_some_and(|t| !t.contains(ai))
-                || p.main_excess(a.centre) > a.half + 1e-6
-            {
-                continue;
-            }
-            let mouth = a.s_edge(a.mouth_m);
-            let Some(im) = items.iter().position(|it| (it.0 - mouth).abs() < 1e-6) else {
-                continue;
+            let near = |c: [f32; 3], d: P2| {
+                let c = [f64::from(c[0]), f64::from(c[2])];
+                let r = side_pos(d);
+                [-1.0, 0.0, 1.0].into_iter().any(|k| {
+                    let q = add(c, mul(r, k * f64::from(half)));
+                    p.main_road_height(g, q, MAIN_REACH_M, SIDE_MARGIN_M)
+                        .is_some()
+                })
             };
-            let Some(jn) = (if k == 0 {
-                im.checked_add(1)
-            } else {
-                im.checked_sub(1)
-            })
-            .filter(|&j| j < items.len()) else {
-                continue;
-            };
-            let (s0, c0) = (items[im].0, items[im].1);
-            let (s1, c1) = (items[jn].0, items[jn].1);
-            let steps = ((s1 - s0).abs() / 0.5).floor() as usize;
-            for q in 1..steps {
-                let t = q as f64 / steps as f64;
-                let c = std::array::from_fn(|i| c0[i] + (c1[i] - c0[i]) * t as f32);
-                items.push((s0 + (s1 - s0) * t, c, None));
+            let mut extra = Vec::new();
+            for w in items.windows(2) {
+                let ((s0, c0, _), (s1, c1, _)) = (w[0], w[1]);
+                let m0 = if a.at_from { s0 } else { len - s0 };
+                if (s1 - s0).abs() < 0.6 || m0 > a.mouth_m + MAIN_REACH_M {
+                    continue;
+                }
+                let d = unit([f64::from(c1[0] - c0[0]), f64::from(c1[2] - c0[2])]);
+                let steps = ((s1 - s0).abs() / 0.5).floor() as usize;
+                let at = |t: f64| -> [f32; 3] {
+                    std::array::from_fn(|i| c0[i] + (c1[i] - c0[i]) * t as f32)
+                };
+                if !(0..=steps).any(|q| near(at(q as f64 / steps as f64), d)) {
+                    continue;
+                }
+                for q in 1..steps {
+                    let t = q as f64 / steps as f64;
+                    extra.push((s0 + (s1 - s0) * t, at(t), None));
+                }
             }
+            items.extend(extra);
         }
         items.sort_by(|a, b| a.0.total_cmp(&b.0));
         let mut points: Vec<[f32; 3]> = items.iter().map(|it| it.1).collect();

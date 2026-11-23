@@ -523,6 +523,12 @@ pub fn patch_mesh(m: &mut MeshArrays, p: &Patch, looks: &[ArmLook], ctx: &RoadCo
         };
         let dress_look = DressLook::of(&strip, ctx);
         let flags = vec![false; n];
+        // The verge round the corner keeps the narrow width the arms'
+        // strips have in their junction zones (§4.8.8 Q7 follow-up): it
+        // meets their verges at the mouths without a step or a hole, and
+        // follows the corner as one even band (before, its width followed
+        // the ground's drop point by point: a jagged outer edge).
+        let narrow = vec![true; n];
         side_dress(
             m,
             &SideDress {
@@ -534,7 +540,7 @@ pub fn patch_mesh(m: &mut MeshArrays, p: &Patch, looks: &[ArmLook], ctx: &RoadCo
                 along: &along,
                 kerbs: &kerbs,
                 decks: &flags,
-                narrow: &flags,
+                narrow: &narrow,
             },
             &dress_look,
             ctx,
