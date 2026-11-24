@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Close-ups of the road damage (spec 4.6 *Road damage*, *Variety*, v5.68):
 # a bad road in the Black Forest and on Tenerife, a medium one in
-# Liechtenstein and a bad Vaduz street (`road.damage` sets the condition), dry and wet, in a low
-# morning sun, from a close orbit behind the rider and from above the road ahead, on
+# Liechtenstein and a bad Vaduz street (`road.damage` sets the condition),
+# dry and wet, at midday in clear weather, low and close above the road, on
 # Wayland with the release build of ocw-desktop (drive.sh; archived in
 # test-output/ with index.md). OCW_APP runs a saved binary (the build
 # before a change), OCW_RD_TAG names it (before / after). Needs the world
@@ -30,21 +30,34 @@ li=$data/pilot/liechtenstein.ocwpkg
 
 # name | package | ride arguments (;-separated) | start commands | condition | time
 scenes=(
-  "blackforest-bad|$bf|--route;Baden-Baden - Mummelsee|teleport 7|horrible|2026-06-20 08:40"
-  "tenerife-bad|$tf|--route;Buenavista - Masca - Santiago del Teide|teleport 9|horrible|2026-06-20 08:15"
-  "liechtenstein-medium|$li|--route;Vaduz - Malbun|teleport 11|intermediate|2026-06-20 06:50"
-  "vaduz-street-bad|$li|--free-ride;--start;-2430,2220||very_bad|2026-06-20 07:30"
+  "blackforest-bad|$bf|--route;Baden-Baden - Mummelsee|teleport 7|horrible|2026-06-20 12:30"
+  "tenerife-bad|$tf|--route;Buenavista - Masca - Santiago del Teide|teleport 9|horrible|2026-06-20 13:00"
+  "liechtenstein-medium|$li|--route;Vaduz - Malbun|teleport 11|intermediate|2026-06-20 12:30"
+  "vaduz-street-bad|$li|--free-ride;--start;-2430,2220||very_bad|2026-06-20 12:30"
 )
-# weather | commands (;-separated)
-weathers=(
-  "dry|weather clear;weather wetness=0 puddles=0"
-  "wet|weather clear;weather wetness=1 puddles=0.5"
-)
-# view | camera command
-views=(
-  "orbit|camera.orbit 25 24 3.2"
-  "top|camera.orbit 200 55 8"
-)
+# OCW_RD_SCENES (lines of the same form; $bf, $tf, $li as above) replaces
+# them, e.g. to sweep a route for a stretch with several holes.
+if [ -n "${OCW_RD_SCENES:-}" ]; then
+  scenes=()
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    line=${line//\$bf/$bf}; line=${line//\$tf/$tf}; line=${line//\$li/$li}
+    scenes+=("$line")
+  done <<<"$OCW_RD_SCENES"
+fi
+# weather | commands (;-separated); OCW_RD_WEATHERS picks some ("dry wet").
+weathers=()
+for w in "dry|weather clear;weather wetness=0 puddles=0" \
+         "wet|weather clear;weather wetness=1 puddles=0.5"; do
+  for want in ${OCW_RD_WEATHERS:-dry wet}; do [ "${w%%|*}" = "$want" ] && weathers+=("$w"); done
+done
+# view | camera command: low and close, looking down at the road beside
+# and ahead of the rider (about 3 m up, 3 - 10 m away); OCW_RD_VIEWS
+# ("close wide") picks some.
+views=()
+for v in "close|camera.orbit 35 45 4.5" "wide|camera.orbit 200 40 6"; do
+  for want in ${OCW_RD_VIEWS:-close}; do [ "${v%%|*}" = "$want" ] && views+=("$v"); done
+done
 
 table=$out/index.md
 [ -f "$table" ] || printf '| scene | weather | view | build | picture |\n|---|---|---|---|---|\n' >"$table"
