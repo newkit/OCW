@@ -206,6 +206,53 @@ pub enum Scan {
     Chooser(Option<String>),
 }
 
+/// The sensor bridge page's note (spec 14 Phase 10, 10D.2).
+pub const BRIDGE_NOTE: &str = "The desktop app keeps the trainer on Bluetooth and passes it to one browser on the same network.";
+
+/// The sensor bridge as the Devices pages show it (spec 14 Phase 10,
+/// 10D.2 *Built (local bridge)*).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BridgeInfo {
+    /// The desktop: sharing its trainer with a browser.
+    Host {
+        /// Sharing (the endpoint runs).
+        sharing: bool,
+        /// The pairing code (`7K2M-Q9XP-4DA`).
+        code: Option<String>,
+        /// `https://192.168.1.23:47810`.
+        address: Option<String>,
+        /// The paired browser (what it says it is).
+        browser: Option<String>,
+        /// Why sharing could not start.
+        error: Option<String>,
+    },
+    /// The browser: riding with the trainer of another device.
+    Client {
+        /// The code in use.
+        code: Option<String>,
+        /// "connecting", "paired with …", "refused: …".
+        state: String,
+        /// The browser has WebTransport (else the bridge cannot work here).
+        supported: bool,
+    },
+}
+
+impl BridgeInfo {
+    /// The Devices list row's value.
+    fn value(&self) -> String {
+        match self {
+            Self::Host { sharing: false, error: Some(_), .. } => "failed".into(),
+            Self::Host { sharing: false, .. } => "off".into(),
+            Self::Host { browser: Some(b), .. } => short_label(&format!("paired, {b}"), 24),
+            Self::Host { code: Some(c), .. } => format!("on, {c}"),
+            Self::Host { .. } => "on".into(),
+            Self::Client { supported: false, .. } => "not in this browser".into(),
+            Self::Client { code: None, .. } => "off".into(),
+            Self::Client { state, .. } => short_label(state, 24),
+        }
+    }
+}
+
 /// What the Devices pages show (filled by the app).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DevicesInfo {
@@ -217,6 +264,8 @@ pub struct DevicesInfo {
     pub file: Option<String>,
     /// The virtual trainer gives the power now.
     pub virtual_trainer: bool,
+    /// The sensor bridge (`None`: the app has none).
+    pub bridge: Option<BridgeInfo>,
 }
 
 /// Messages a Devices page shows (the newest).
@@ -259,7 +308,65 @@ pub fn rows(page: Page, info: &DevicesInfo) -> Vec<Row> {
             Some(e) => device_rows(e, info),
             None => Vec::new(),
         },
+        Page::Bridge => info.bridge.as_ref().map(bridge_rows).unwrap_or_default(),
         _ => Vec::new(),
+    }
+}
+
+/// The bridge row of the Devices list: the desktop shares, the browser
+/// uses another device's trainer.
+fn bridge_row(b: &BridgeInfo) -> Row {
+    let label = match b {
+        BridgeInfo::Host { .. } => "Share with a browser",
+        BridgeInfo::Client { .. } => "Use a trainer from another device",
+    };
+    open_row(label, Some(b.value()), Page::Bridge)
+}
+
+fn bridge_rows(b: &BridgeInfo) -> Vec<Row> {
+    match b {
+        BridgeInfo::Host {
+            sharing,
+            code,
+            address,
+            browser,
+            error,
+        } => {
+            let mut toggle = Row::action(
+                "Share with a browser",
+                if *sharing { "bridge.share off" } else { "bridge.share on" },
+            );
+            toggle.value = Some(if *sharing { "on" } else { "off" }.into());
+            let mut out = vec![toggle];
+            if *sharing {
+                out.push(info_row("Pairing code", code.clone()));
+                out.push(info_row("Address", address.clone()));
+                out.push(info_row(
+                    "Browser",
+                    Some(browser.as_deref().map_or("none yet".into(), |b| short_label(b, 28))),
+                ));
+                out.push(Row::action("New code", "bridge.share new-code"));
+            } else if let Some(e) = error {
+                out.push(info_row("Not sharing", Some(short_label(e, 40))));
+            }
+            out
+        }
+        BridgeInfo::Client {
+            code,
+            state,
+            supported,
+        } => {
+            if !supported {
+                return vec![info_row("Not in this browser", Some("no WebTransport".into()))];
+            }
+            let mut out = vec![Row::action("Enter the pairing code", "bridge.pair")];
+            if code.is_some() {
+                out.push(info_row("Code", code.clone()));
+                out.push(info_row("State", Some(short_label(state, 40))));
+                out.push(Row::action("Stop using it", "bridge.stop"));
+            }
+            out
+        }
     }
 }
 
@@ -294,6 +401,9 @@ fn list_rows(info: &DevicesInfo) -> Vec<Row> {
                 });
             }
         }
+    }
+    if let Some(b) = &info.bridge {
+        out.push(bridge_row(b));
     }
     out.extend(info.entries.iter().enumerate().map(|(i, e)| {
         open_row(
@@ -366,6 +476,22 @@ pub fn status(page: Page, info: &DevicesInfo) -> String {
         && let Some(e) = info.entries.get(i)
     {
         return short_label(&format!("{}: {}", e.name, e.link.text()), 60);
+    }
+    if page == Page::Bridge {
+        return match &info.bridge {
+            Some(BridgeInfo::Host {
+                sharing: true,
+                code: Some(c),
+                browser: None,
+                ..
+            }) => format!("Type {c} in the browser's Devices page"),
+            Some(BridgeInfo::Host { browser: Some(b), .. }) => {
+                short_label(&format!("Paired with {b}"), 60)
+            }
+            Some(BridgeInfo::Host { error: Some(e), .. }) => short_label(e, 60),
+            Some(BridgeInfo::Client { state, .. }) => short_label(state, 60),
+            _ => String::new(),
+        };
     }
     match (info.messages.last(), &info.file) {
         (Some(m), _) => short_label(m, 56),
@@ -518,6 +644,76 @@ mod tests {
         info.scan = Scan::Chooser(Some("no Web Bluetooth".into()));
         let r = rows(Page::Devices, &info);
         assert_eq!(r[0].confirm, Some(Activate::Disabled));
+    }
+
+    #[test]
+    fn the_bridge_page_shares_on_the_desktop_and_pairs_in_the_browser() {
+        // Desktop, not sharing: the list row opens the page, which turns
+        // sharing on.
+        let mut info = DevicesInfo {
+            bridge: Some(BridgeInfo::Host {
+                sharing: false,
+                code: None,
+                address: None,
+                browser: None,
+                error: None,
+            }),
+            ..Default::default()
+        };
+        let r = rows(Page::Devices, &info);
+        assert_eq!(label(&r, 1), "Share with a browser");
+        assert_eq!(r[1].value.as_deref(), Some("off"));
+        assert_eq!(r[1].confirm, Some(Activate::Open(Page::Bridge)));
+        let b = rows(Page::Bridge, &info);
+        assert_eq!(b.len(), 1);
+        assert_eq!(b[0].confirm, Some(Activate::Command("bridge.share on".into())));
+        // Sharing: the code, the address, no browser yet, a new code.
+        info.bridge = Some(BridgeInfo::Host {
+            sharing: true,
+            code: Some("7K2M-Q9XP-4DA".into()),
+            address: Some("https://192.168.1.23:47810".into()),
+            browser: None,
+            error: None,
+        });
+        let b = rows(Page::Bridge, &info);
+        let labels: Vec<&str> = b.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(labels, ["Share with a browser", "Pairing code", "Address", "Browser", "New code"]);
+        assert_eq!(b[0].confirm, Some(Activate::Command("bridge.share off".into())));
+        assert_eq!(b[1].value.as_deref(), Some("7K2M-Q9XP-4DA"));
+        assert_eq!(b[3].value.as_deref(), Some("none yet"));
+        assert_eq!(status(Page::Bridge, &info), "Type 7K2M-Q9XP-4DA in the browser's Devices page");
+        assert_eq!(rows(Page::Devices, &info)[1].value.as_deref(), Some("on, 7K2M-Q9XP-4DA"));
+        if let Some(BridgeInfo::Host { browser, .. }) = &mut info.bridge {
+            *browser = Some("Quest Browser".into());
+        }
+        assert_eq!(status(Page::Bridge, &info), "Paired with Quest Browser");
+        // The browser: enter the code; once in use, its state and stop.
+        info.bridge = Some(BridgeInfo::Client {
+            code: None,
+            state: String::new(),
+            supported: true,
+        });
+        info.scan = Scan::Chooser(None);
+        let r = rows(Page::Devices, &info);
+        assert_eq!(label(&r, 3), "Use a trainer from another device");
+        let b = rows(Page::Bridge, &info);
+        assert_eq!(b.len(), 1);
+        assert_eq!(b[0].confirm, Some(Activate::Command("bridge.pair".into())));
+        info.bridge = Some(BridgeInfo::Client {
+            code: Some("7K2M-Q9XP-4DA".into()),
+            state: "paired with Test desktop".into(),
+            supported: true,
+        });
+        let b = rows(Page::Bridge, &info);
+        assert_eq!(b.last().unwrap().confirm, Some(Activate::Command("bridge.stop".into())));
+        assert_eq!(status(Page::Bridge, &info), "paired with Test desktop");
+        // Without WebTransport: says so.
+        info.bridge = Some(BridgeInfo::Client {
+            code: None,
+            state: String::new(),
+            supported: false,
+        });
+        assert_eq!(rows(Page::Bridge, &info)[0].label, "Not in this browser");
     }
 
     #[test]

@@ -12,6 +12,7 @@ mod activities;
 mod argsfile;
 mod audio;
 mod automation;
+mod bridge;
 mod build_id;
 mod camera_path;
 mod collisions;
@@ -229,6 +230,11 @@ pub struct Args {
     /// section of ocw.toml).
     #[arg(long, value_name = "PATH")]
     pub devices_file: Option<PathBuf>,
+    /// Share the trainer with a browser on the same network from the start
+    /// (the sensor bridge, spec 14 Phase 10, 10D.2; Settings → Trainer →
+    /// Devices → Share with a browser).
+    #[arg(long)]
+    pub share_bridge: bool,
     /// The local config file (default: ocw.toml in the config folder,
     /// ~/.config/ocw/ on Linux; secrets.toml is read next to it). An old
     /// settings.toml given here is converted in place (kept as .bak).
@@ -506,6 +512,7 @@ fn main() -> AppExit {
     .add_plugins((
         connection::ConnectionPlugin { route },
         devices::DevicesPlugin,
+        bridge::BridgePlugin,
         input::InputPlugin,
         god::GodPlugin,
         automation::AutomationPlugin,

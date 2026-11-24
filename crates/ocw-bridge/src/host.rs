@@ -144,7 +144,7 @@ pub struct BridgeHost {
     pub code: PairingCode,
     pub addr: SocketAddr,
     shared: SharedRef,
-    events: Receiver<HostEvent>,
+    events: Mutex<Receiver<HostEvent>>,
     endpoint: Arc<Mutex<Option<quinn::Endpoint>>>,
     thread: Option<std::thread::JoinHandle<()>>,
     start: Instant,
@@ -256,7 +256,7 @@ impl BridgeHost {
             code,
             addr,
             shared,
-            events,
+            events: Mutex::new(events),
             endpoint,
             thread: Some(thread),
             start,
@@ -319,7 +319,7 @@ impl BridgeHost {
 
     /// Events since the last call.
     pub fn events(&self) -> Vec<HostEvent> {
-        self.events.try_iter().collect()
+        self.events.lock().expect("not poisoned").try_iter().collect()
     }
 
     /// The paired browser (what it says it is).
@@ -432,7 +432,7 @@ async fn serve(
     let mut buf = vec![0u8; 4096];
     // The hello.
     let hello: ToHost = loop {
-        if let Some(m) = frames.next::<ToHost>() {
+        if let Some(m) = frames.next_message::<ToHost>() {
             break m.map_err(|e| e.to_string())?;
         }
         let n = tokio::time::timeout(HANDSHAKE_TIMEOUT, recv.read(&mut buf))
@@ -516,7 +516,7 @@ async fn serve(
     });
     // The reader: pings and controls.
     let reason = 'conn: loop {
-        while let Some(m) = frames.next::<ToHost>() {
+        while let Some(m) = frames.next_message::<ToHost>() {
             let m = match m {
                 Ok(m) => m,
                 Err(e) => break 'conn e.to_string(),

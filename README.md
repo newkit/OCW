@@ -467,9 +467,37 @@ the chooser. Console: `devices.list`, `devices.connect trainer|power|hr`,
 
 **Browsers without Web Bluetooth** (Firefox, Safari, every browser on iOS,
 Chromium on Linux without the flag above): the panel says so and the ride
-uses **virtual power** (↑ / ↓, `sim.power`). A bridge that
-relays a trainer through another device comes with accounts (spec §14
-Phase 10 B7, Phase 5).
+uses **virtual power** (↑ / ↓, `sim.power`) – or the trainer of the
+desktop app through the sensor bridge (below).
+
+#### The trainer of the desktop app in the browser (sensor bridge)
+
+The desktop app can lend its trainer (and heart-rate strap) to **one
+browser on the same network** – the Quest browser in VR, an iPad or iPhone
+(iOS 26.4 or later), Firefox, any browser with WebTransport (spec 14
+Phase 10, 10D.2). No account, no server:
+
+1. **Desktop:** Settings → Trainer → Devices → **Share with a browser** →
+   *on*. The page shows an 11-character **pairing code** (e.g.
+   `7K2M-Q9XP-4DA`), the address and a **QR code** of the preview link with
+   the code (`bridge.share on|off|new-code`, `bridge.status`,
+   `--share-bridge`).
+2. **Browser** (<https://newkit.github.io/OCW/>): Settings → Trainer →
+   Devices → **Use a trainer from another device** → *Enter the pairing
+   code* (the system keyboard opens), or scan the QR code with the tablet's
+   camera (`?bridge=CODE`; console `bridge.pair CODE`, `bridge.stop`,
+   `bridge.status`). On the Quest, pair on the flat page, then *Enter VR*.
+
+The desktop's power, cadence and heart rate then drive the browser's ride
+(the device *Desktop trainer (bridge)*), and the browser's ride sets the
+trainer's load (SIM gradient, ERG target) – the desktop's own ride stops
+setting it while a browser is paired. The code stays the same until *New
+code* (the browser reconnects by itself after a reload or a drop); it
+changes when the computer's address changes. Chrome 147 and later asks
+once to allow access to the local network. The connection is WebTransport
+on UDP ports 47810–47813, only from the local network; allow them in the
+computer's firewall. `make test-bridge BRIDGE_DEVICES=…` runs it end to
+end (desktop + headless Chromium).
 
 #### Sound and voice in the browser
 

@@ -98,7 +98,7 @@ impl Browser {
     async fn next(&mut self) -> Option<ToBrowser> {
         let mut buf = [0u8; 2048];
         loop {
-            if let Some(m) = self.frames.next::<ToBrowser>() {
+            if let Some(m) = self.frames.next_message::<ToBrowser>() {
                 return Some(m.expect("a message"));
             }
             let n = tokio::time::timeout(Duration::from_secs(5), self.recv.read(&mut buf))

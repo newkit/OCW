@@ -23,6 +23,9 @@ ocw-weather.workspace = true
 # Devices: the frame-driven virtual trainer and, on wasm32, Web Bluetooth
 # (`ble::web`: the shared protocol over the browser's GATT objects, B4).
 ocw-devices.workspace = true
+# The local sensor bridge: a trainer of the desktop app on the same network
+# (spec 14 Phase 10, 10D.2).
+ocw-bridge.workspace = true
 ocw-render.workspace = true
 # The client loop, shared with the desktop app.
 ocw-client.workspace = true

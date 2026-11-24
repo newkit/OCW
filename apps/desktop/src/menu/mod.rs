@@ -187,6 +187,7 @@ mod tests {
             TrustedKey(0),
             Devices,
             Device(0),
+            Bridge,
             Join,
             HostWorld,
             HostRoute,
@@ -222,7 +223,7 @@ mod tests {
                 | HistoryRideFile(_) | HistoryWeeks | HistoryMonths | HistoryBests
                 | HistoryWaiting | StravaWaiting | EventRules | Account | TrustedKeys
                 | TrustedKey(_) | Join | HostWorld | HostRoute | HostTime | HostWeather
-                | HostOptions | HostSummary | HostLink | Start | Devices | Device(_)
+                | HostOptions | HostSummary | HostLink | Start | Devices | Device(_) | Bridge
                 | Calendar(_) | CalendarDates(_) | Season | Character | CharacterBody
                 | CharacterFace | CharacterHair | CharacterFacialHair | CharacterPick(_) => {}
             }

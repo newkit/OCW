@@ -183,7 +183,7 @@ impl Frames {
     }
 
     /// The next whole message, if there is one.
-    pub fn next<T: for<'de> Deserialize<'de>>(&mut self) -> Option<Result<T, FrameError>> {
+    pub fn next_message<T: for<'de> Deserialize<'de>>(&mut self) -> Option<Result<T, FrameError>> {
         if self.buf.len() < 4 {
             return None;
         }
@@ -240,7 +240,7 @@ mod tests {
             let mut got = Vec::new();
             for chunk in bytes.chunks(split) {
                 f.push(chunk);
-                while let Some(m) = f.next::<ToBrowser>() {
+                while let Some(m) = f.next_message::<ToBrowser>() {
                     got.push(m.unwrap());
                 }
             }
@@ -255,10 +255,10 @@ mod tests {
     fn bad_frames_are_errors() {
         let mut f = Frames::default();
         f.push(&(MAX_FRAME as u32 + 1).to_le_bytes());
-        assert!(matches!(f.next::<ToHost>(), Some(Err(FrameError::TooLarge(_)))));
+        assert!(matches!(f.next_message::<ToHost>(), Some(Err(FrameError::TooLarge(_)))));
         let mut f = Frames::default();
         f.push(&frame(&serde_json::json!({"t": "nonsense"})));
-        assert!(matches!(f.next::<ToHost>(), Some(Err(FrameError::Bad(_)))));
+        assert!(matches!(f.next_message::<ToHost>(), Some(Err(FrameError::Bad(_)))));
     }
 
     #[test]

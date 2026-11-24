@@ -58,6 +58,7 @@
 
 pub mod account;
 pub mod audio;
+pub mod bridge;
 #[cfg(target_arch = "wasm32")]
 mod browser;
 #[cfg(target_arch = "wasm32")]
