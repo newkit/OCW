@@ -36,6 +36,7 @@ rd = load("test_web_readme", "test-web-readme.py")
 site = load("web_preview_site", "web-preview-site.py")
 pwi = load("preview_worlds_index", "preview_worlds_index.py")
 tw = load("test_web", "test-web.py")
+wf = load("wasm_features", "wasm_features.py")
 KEY = "ab" * 32
 
 
@@ -311,6 +312,55 @@ class PreviewRideSizes(unittest.TestCase):
             n = site.app_bytes(d)
             self.assertGreater(n, 4000)  # random bytes do not compress
             self.assertEqual(site.app_bytes(os.path.join(d, "none")), 0)
+
+
+class WasmSimd(unittest.TestCase):
+    """Q10 (a): both builds use WebAssembly SIMD; the preview's site refuses
+    a build without it."""
+
+    @staticmethod
+    def module(feats, custom_first=True):
+        def leb(n):
+            out = bytearray()
+            while True:
+                b = n & 0x7F
+                n >>= 7
+                out.append(b | (0x80 if n else 0))
+                if not n:
+                    return bytes(out)
+        body = leb(len(feats)) + b"".join(p.encode() + leb(len(f)) + f.encode() for p, f in feats)
+        name = b"target_features"
+        custom = b"\0" + leb(len(name) + 1 + len(body)) + leb(len(name)) + name + body
+        types = b"\x01\x04\x01\x60\x00\x00"
+        return b"\0asm\x01\0\0\0" + (custom + types if custom_first else types + custom)
+
+    def test_features_of_the_linker_section(self):
+        m = self.module([("+", "simd128"), ("+", "bulk-memory"), ("-", "atomics")])
+        self.assertEqual(wf.features(m), {"simd128", "bulk-memory"})
+        self.assertEqual(wf.features(self.module([("+", "mutable-globals")], custom_first=False)), {"mutable-globals"})
+        self.assertIsNone(wf.features(b"\0asm\x01\0\0\0\x01\x04\x01\x60\x00\x00"))
+        with self.assertRaises(ValueError):
+            wf.features(b"not wasm")
+
+    def test_require_exits_without_simd(self):
+        with tempfile.TemporaryDirectory() as d:
+            ok, old = Path(d, "ok.wasm"), Path(d, "old.wasm")
+            ok.write_bytes(self.module([("+", "simd128")]))
+            old.write_bytes(self.module([("+", "sign-ext")]))
+            run = lambda p: subprocess.run([sys.executable, "-I", str(HERE / "wasm_features.py"), str(p),
+                                            "--require", "simd128"], capture_output=True, text=True)
+            self.assertEqual(run(ok).returncode, 0)
+            r = run(old)
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("without simd128", r.stderr)
+
+    def test_the_preview_site_needs_the_simd_builds(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertFalse(site.built_with_simd(d))
+            Path(d, "sizes.txt").write_text("profile: web-preview-release\n")
+            self.assertFalse(site.built_with_simd(d))
+            Path(d, "sizes.txt").write_text("profile: x\nwasm features: +simd128 (Q10 (a))\n")
+            self.assertTrue(site.built_with_simd(d))
 
 
 class PreviewWorldsIndex(unittest.TestCase):

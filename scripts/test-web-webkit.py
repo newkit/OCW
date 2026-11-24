@@ -44,6 +44,13 @@ gives the page a `navigator.gpu` with an adapter, as Safari 26 has:
            Full screen on Android), the power buttons, the chevrons and the
            HUD's boxes – no two overlap, all inside the safe area, the
            first-ride tip above the rider;
+  too-old  an iPhone whose Safari has no WebAssembly SIMD (before 16.4;
+           WebAssembly.validate stubbed to refuse the page's SIMD test
+           module, spec 14 Phase 10 Q10 (a)): the start page and a ride link
+           show "This browser is too old … please update (Safari 16.4 /
+           Chrome 91 / Firefox 89 or newer)", no rides offered, no module
+           fetched, no page error; the other cases check that WebKit has
+           SIMD (window.ocwSimd);
   mac      Safari on macOS (1280 × 720): the Hills ride on WebGL 2, draws;
            the desktop HUD unchanged (not compact, scale 1, keys), the
            Devices panel open, no power buttons.
@@ -106,6 +113,13 @@ const __wakeLock = {
 };
 Object.defineProperty(Navigator.prototype, "wakeLock", {get: () => __wakeLock, configurable: true});
 """
+# A browser without WebAssembly SIMD (Safari before 16.4; Q10 (a)): the
+# page's SIMD test module does not validate.
+NO_SIMD = """
+WebAssembly.validate = () => false;
+"""
+TOO_OLD = ("This browser is too old for Open Cycling World – please update "
+           "(Safari 16.4 / Chrome 91 / Firefox 89 or newer).")
 # The phone cases: the device, the insets (top, right, bottom, left) and
 # the page's APIs.
 PHONES = {
@@ -475,6 +489,42 @@ def main():
                   {"released": released, "requests": [n0, n1]})
         check(f"{label}: no page errors", not errors, errors[:5])
 
+    def too_old(browser, pw):
+        """No WebAssembly SIMD (Q10 (a)): the message, nothing loaded."""
+        ctx = browser.new_context(**pw.devices["iPhone 15"])
+        ctx.add_init_script(NO_SIMD + FAKE_GPU)
+        pg = ctx.new_page()
+        errors, wasm = [], []
+        pg.on("console", lambda m: lines.append(f"[too-old] {time.time() - t0:7.2f} s  {m.type}: {m.text[:600]}"))
+        pg.on("pageerror", lambda e: (lines.append(f"[too-old] PAGEERROR {e}"), errors.append(str(e)[:300])))
+        pg.on("request", lambda r: wasm.append(r.url) if r.url.endswith(".wasm") or "ocw_web" in r.url else None)
+        read = """() => JSON.stringify({simd: window.ocwSimd, start: !document.getElementById('ocw-start').hidden,
+            status: document.getElementById('ocw-status').hidden ? '' : document.getElementById('ocw-status').innerText,
+            cls: document.getElementById('ocw-status').className, rides: document.querySelectorAll('#ocw-start a.ride').length,
+            title: document.title})"""
+        pg.route("**/config.json", lambda route: route.fulfill(
+            status=200, content_type="application/json", body=PREVIEW_CONFIG))
+        pg.goto(root)
+        pg.wait_for_function("() => window.ocwSimd !== undefined", timeout=30000)
+        pg.wait_for_timeout(1500)
+        st = json.loads(pg.evaluate(read))
+        pg.screenshot(path=f"{base}-too-old-start.png")
+        check("too-old: no SIMD → the start page says the browser is too old (Safari 16.4 / Chrome 91 / Firefox 89)",
+              st["simd"] is False and TOO_OLD in st["status"] and "too-old" in st["cls"], st)
+        check("too-old: no rides offered on the start page", not st["start"] and st["rides"] == 0, st)
+        pg.unroute("**/config.json")
+        pg.goto(root + "?route=hills&bots=1")
+        pg.wait_for_function("() => window.ocwSimd !== undefined", timeout=30000)
+        pg.wait_for_timeout(3000)
+        st2 = json.loads(pg.evaluate(read))
+        pg.screenshot(path=f"{base}-too-old-ride.png")
+        check("too-old: a ride link says it too instead of a failed load", TOO_OLD in st2["status"]
+              and "Start failed" not in st2["status"], st2)
+        check("too-old: no module fetched (neither build's .wasm nor its JS)", not wasm, wasm)
+        check("too-old: no page errors", not errors, errors[:5])
+        summary["too-old"] = {"start": st, "ride": st2}
+        ctx.close()
+
     summary = {"ok": False}
     with sync_playwright() as pw:
         browser = pw.webkit.launch()
@@ -521,6 +571,8 @@ def main():
                     ctx.close()
                     continue
                 st, shot = ride(pg, label)
+                check(f"{label}: WebKit has WebAssembly SIMD (the page's test module validates)",
+                      pg.evaluate("window.ocwSimd") is True)
                 drawn, how = image_drawn(shot)
                 gpu = st.get("gpu") or {}
                 check(f"{label}: Safari with WebGPU takes WebGL 2", gpu.get("api") == "webgl2"
@@ -553,6 +605,7 @@ def main():
                           {"canvas": cw, "viewport": vp})
                 summary[label] = st
                 ctx.close()
+            too_old(browser, pw)
             summary["ok"] = all(c["ok"] for c in checks)
         except Exception as e:  # noqa: BLE001
             summary["error"] = repr(e)

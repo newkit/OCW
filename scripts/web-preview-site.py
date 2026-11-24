@@ -112,6 +112,17 @@ def load_time(nbytes, mbit=LINE_MBIT):
     return f"about {s / 60:.0f} min"
 
 
+def built_with_simd(build):
+    """Q10 (a): the live page serves the SIMD builds – scripts/build-web.sh
+    checked cargo's modules (scripts/wasm_features.py) and says so in
+    sizes.txt."""
+    sizes = os.path.join(build, "sizes.txt")
+    if not os.path.isfile(sizes):
+        return False
+    with open(sizes) as f:
+        return "wasm features: +simd128" in f.read()
+
+
 def app_bytes(build):
     """The app's first download: both wasm modules are built, the page loads
     one, served gzip-compressed by GitHub Pages (B8a) – so the larger
@@ -316,6 +327,8 @@ def main():
     for f in ("index.html", "ocw_web_bg.wasm", "ocw_web_webgl2_bg.wasm"):
         if not os.path.isfile(os.path.join(a.build, f)):
             sys.exit(f"{a.build}/{f} missing: build the preview first (make web-preview)")
+    if not built_with_simd(a.build):
+        sys.exit(f"{a.build}: not built with WebAssembly SIMD (sizes.txt): rebuild with make web-preview")
     shutil.rmtree(a.out, ignore_errors=True)
     os.makedirs(a.out)
     for f in BUILD_FILES:

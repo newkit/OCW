@@ -7,7 +7,11 @@ name: Web preview
 # (signed on the build machine that holds the keys,
 # scripts/publish-preview-worlds.sh – no secret is needed here), assembles
 # the site (scripts/web-preview-site.py: config.json, credits.html,
-# worlds/) and deploys it with actions/deploy-pages.
+# worlds/) and deploys it with actions/deploy-pages. Both modules use
+# WebAssembly SIMD (spec 14 Phase 10 Q10 (a): the wasm32 rustflags of
+# .cargo/config.toml – no RUSTFLAGS here, it would replace them; checked by
+# scripts/build-web.sh, and web-preview-site.py refuses a build without);
+# the page tells a browser without SIMD that it is too old.
 #
 # Building Bevy twice for wasm32 with fat LTO takes long, so it does not run
 # on every push: by hand (Actions → Web preview → Run workflow, or
