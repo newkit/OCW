@@ -533,6 +533,9 @@ pub struct MarkCode {
     /// A main road (trunk, primary, secondary): potholes near the edges
     /// only (`crate::road_wear::MAIN_ROAD_ZONE_M`).
     pub main: bool,
+    /// The road's damage seed ([`road_seed`], 0 … 63; bits 12 – 17 of the
+    /// lines code).
+    pub seed: u8,
 }
 
 impl MarkCode {
@@ -565,11 +568,12 @@ impl MarkCode {
             wear: crate::road_wear::wear_grade(class, surface, condition),
             concrete: condition.kind.concrete(),
             main: crate::road_wear::main_road(class),
+            seed: road_seed(dress.edge_m) as u8,
         }
     }
 
-    /// The first integer (`uv_b.y`, < 4096): lanes, centre, edges, lane
-    /// lines, town.
+    /// The first integer (`uv_b.y`, < 2^18, exact in an interpolated
+    /// `f32`): lanes, centre, edges, lane lines, town and the damage seed.
     pub fn lines_code(&self) -> u32 {
         u32::from(self.lanes[0].min(7))
             | u32::from(self.lanes[1].min(7)) << 3
@@ -577,6 +581,7 @@ impl MarkCode {
             | u32::from(self.edge_lines) << 9
             | u32::from(self.lane_lines) << 10
             | u32::from(self.town) << 11
+            | u32::from(self.seed & 63) << 12
     }
 
     /// The extra bits beside the layer and the kind (`uv_b.x / 64`, < 1024):
@@ -613,6 +618,7 @@ impl MarkCode {
             wear: (extra >> 5 & 7) as u8,
             concrete: extra >> 8 & 1 == 1,
             main: extra >> 9 & 1 == 1,
+            seed: (lines >> 12 & 63) as u8,
         }
     }
 }
@@ -928,16 +934,43 @@ pub fn unit(h: u32) -> f32 {
     (h >> 8) as f32 / (1u32 << 24) as f32
 }
 
+/// The number of road seeds (6 bits in the lines code, [`MarkCode::seed`]).
+pub const ROAD_SEEDS: u32 = 64;
+/// How far apart along (in cells) two road seeds put their damage.
+pub const SEED_STRIDE: i32 = 1_000_003;
+
+/// The damage seed of a road (0 … [`ROAD_SEEDS`] − 1): a hash of its
+/// edge's length, which every strip of the edge shares (`RoadDress::edge_m`,
+/// set by the world builder for all tiles' pieces), so that two roads of
+/// the same grade do not show the same holes and cracks at the same
+/// distances from their starts, while a road's damage still runs on over
+/// the tile borders. 0 where the length is unknown.
+pub fn road_seed(edge_m: f32) -> u32 {
+    if edge_m > 0.0 {
+        hash2(edge_m.to_bits() as i32, 977) >> 26
+    } else {
+        0
+    }
+}
+
+/// The hash key of damage cell `k` on a road of `seed` (the shader's
+/// `ckey`): the seed moves the road's cells far along the hash sequence.
+pub fn cell_key(k: i32, seed: u32) -> i32 {
+    k.wrapping_add((seed as i32).wrapping_mul(SEED_STRIDE))
+}
+
 /// Whether (u, v) lies in a repaired patch of asphalt, for a patch chance
-/// per cell and half (deterministic per position; the shader's twin).
-pub fn patch_at(half: f32, u: f32, v: f32, chance: f32) -> bool {
-    let k = (v / PATCH_CELL_M).floor() as i32;
+/// per cell and half on a road of `seed` (deterministic per position; the
+/// shader's twin).
+pub fn patch_at(half: f32, u: f32, v: f32, chance: f32, seed: u32) -> bool {
+    let k0 = (v / PATCH_CELL_M).floor();
+    let k = cell_key(k0 as i32, seed);
     let side = i32::from(u >= 0.0);
     let h = hash2(k, side);
     if unit(h) >= chance {
         return false;
     }
-    let start = k as f32 * PATCH_CELL_M + unit(hash2(k, side + 7)) * 3.0;
+    let start = k0 * PATCH_CELL_M + unit(hash2(k, side + 7)) * 3.0;
     let len = 1.5 + unit(hash2(k, side + 13)) * 4.0;
     let w = half * (0.45 + 0.5 * unit(hash2(k, side + 29)));
     (start..start + len).contains(&v) && u.abs() <= w
@@ -1312,7 +1345,7 @@ mod tests {
         };
         let unknown = crate::RoadCondition::UNKNOWN;
         let c = MarkCode::of(&d, RoadClass::Primary, RoadSurface::Asphalt, &unknown);
-        assert!(c.lines_code() < 4096 && c.extra_code() < 1024);
+        assert!(c.lines_code() < 1 << 18 && c.extra_code() < 1024);
         assert_eq!(
             c.wear,
             crate::road_wear::wear_grade(RoadClass::Primary, RoadSurface::Asphalt, &unknown)
@@ -1480,14 +1513,28 @@ mod tests {
             let v = i as f32 * 0.5;
             for u in [-2.0f32, -0.5, 0.5, 2.0] {
                 n += 1;
-                let p = patch_at(3.0, u, v, 0.15);
-                assert_eq!(p, patch_at(3.0, u, v, 0.15));
+                let p = patch_at(3.0, u, v, 0.15, 5);
+                assert_eq!(p, patch_at(3.0, u, v, 0.15, 5));
                 hits += usize::from(p);
             }
         }
         let share = hits as f32 / n as f32;
         assert!((0.01..0.12).contains(&share), "{share}");
-        assert!((0..2000).all(|i| !patch_at(3.0, 0.5, i as f32, 0.0)));
+        assert!((0..2000).all(|i| !patch_at(3.0, 0.5, i as f32, 0.0, 0)));
+        // Another road (seed) has its patches elsewhere.
+        let at = |seed| {
+            (0..4000)
+                .map(|i| patch_at(3.0, 0.5, i as f32 * 0.5, 0.15, seed))
+                .collect::<Vec<_>>()
+        };
+        assert_ne!(at(1), at(2));
+        // The seed of an edge: the same for each of its strips, spread over
+        // the 64 values.
+        assert_eq!(road_seed(123.25), road_seed(123.25));
+        assert_eq!(road_seed(0.0), 0);
+        let seeds: std::collections::BTreeSet<u32> =
+            (1..400).map(|i| road_seed(i as f32 * 7.3)).collect();
+        assert!(seeds.len() > 50 && seeds.iter().all(|&s| s < ROAD_SEEDS));
     }
 
     #[test]
