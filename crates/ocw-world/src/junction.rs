@@ -488,7 +488,11 @@ pub struct Patch {
     /// (J5, §4.8.8 Rule); the surface follows it, fading out inward over
     /// [`SIDE_LIFT_FADE_M`]. Empty before the outline is known.
     lift: Vec<f64>,
-    /// Ring j point k is `vertices[j * outline.len() + k]`.
+    /// An outline that is not star-shaped from the centre (J6): its
+    /// triangles by 1 m cells (`plane_mesh`); `None` for the star mesh.
+    cells: Option<plane_mesh::CellIndex>,
+    /// Star mesh: ring j point k is `vertices[j * outline.len() + k]`
+    /// (J6's mesh: the outline points first, then the inner points).
     pub vertices: Vec<[f64; 3]>,
     pub triangles: Vec<[u32; 3]>,
     pub min: P2,
@@ -737,6 +741,13 @@ impl Patch {
         if self.lift.len() != n || n < 3 || self.lift.iter().all(|&l| l == 0.0) {
             return 0.0;
         }
+        if self.angles.len() != n {
+            // Not star-shaped (J6): from the nearest piece of the outline.
+            let pts: Vec<P2> = self.outline.iter().map(|o| xz(o.p)).collect();
+            let (d, k, lam) = plane_mesh::nearest_piece(&pts, p);
+            let k1 = (k + 1) % n;
+            return self.lift_on(self.lift[k] + (self.lift[k1] - self.lift[k]) * lam, d, p);
+        }
         let c = xz(self.centre);
         let v = sub(p, c);
         if norm(v) < 1e-9 {
@@ -786,6 +797,12 @@ impl Patch {
         Some(shepard([&self.arms[a], &self.arms[b]].into_iter(), p))
     }
 
+    /// Whether the outline is star-shaped from the centre (the star mesh);
+    /// J6 meshes other simple outlines by `plane_mesh`.
+    pub fn is_star(&self) -> bool {
+        self.cells.is_none()
+    }
+
     /// The arm whose surface, colour and frame the patch takes: the first
     /// of the through road, else the widest.
     pub fn main_arm(&self) -> usize {
@@ -805,6 +822,24 @@ impl Patch {
     /// The drawn surface at `p` (on the patch's triangles); `None` outside
     /// the patch.
     pub fn height_at(&self, p: P2) -> Option<f64> {
+        if let Some(cells) = &self.cells {
+            if p[0] < self.min[0] - 0.01
+                || p[1] < self.min[1] - 0.01
+                || p[0] > self.max[0] + 0.01
+                || p[1] > self.max[1] + 0.01
+            {
+                return None;
+            }
+            for tol in [1e-7, 1e-5] {
+                for &ti in cells.at(p) {
+                    let tri = self.triangles[ti as usize].map(|i| self.vertices[i as usize]);
+                    if let Some(h) = tri_height(tri, p, tol) {
+                        return Some(h);
+                    }
+                }
+            }
+            return None;
+        }
         let n = self.n();
         let c = xz(self.centre);
         let v = sub(p, c);
@@ -1099,6 +1134,7 @@ fn assemble(g: &RoadGraph, site: &Site, arms: Vec<Arm>) -> Result<Patch, &'stati
         chains: Vec::new(),
         sectors: Vec::new(),
         lift: Vec::new(),
+        cells: None,
         vertices: Vec::new(),
         triangles: Vec::new(),
         min: c,
@@ -1174,15 +1210,60 @@ fn assemble(g: &RoadGraph, site: &Site, arms: Vec<Arm>) -> Result<Patch, &'stati
             if i == a || i == b {
                 continue;
             }
-            for k in 0..2 {
+            // On its carriageway as the patch draws it (straight from the
+            // vertex), or on its real one (its curving centre line, J6):
+            // there on its surface. A side road leaving at a narrow angle
+            // (a fork, a road along the main road) whose mouth lies within
+            // SIDE_MARGIN_M of it starts on it too (where the main road
+            // curves towards it, its strip covers the mouth).
+            let narrow = [a, b]
+                .iter()
+                .any(|&m| dot(patch.arms[i].dir, patch.arms[m].dir) > ALONG_DEG.to_radians().cos());
+            let margin = if narrow { SIDE_MARGIN_M } else { 0.0 };
+            let on: [Option<f64>; 2] = std::array::from_fn(|k| {
                 let q = xz(patch.arms[i].row[k]);
-                if patch.main_excess(q) <= 0.0
-                    && let Some(m) = patch.main_own(q)
-                    && patch.arms[i].row[k][1] > m
-                {
-                    patch.arms[i].row[k][1] = m;
+                if patch.main_excess(q) <= 0.0 {
+                    patch.main_own(q)
+                } else {
+                    patch.main_road_height(g, q, MAIN_REACH_M, margin)
                 }
+            });
+            // J6 (§4.8.8 Rule: a side road never above the main road): a
+            // mouth with a corner on the main road and standing above it
+            // starts on the main road – blended onto its surface as a side
+            // road whose mouth lies at the main road's edge (J2): the
+            // mouth row on the main road's surface, the strip turning from
+            // it to its own profile past the mouth, the patch's surface
+            // there the main road's (a path or a service road drawn along
+            // the main road leaned up to its own height across the main
+            // road's edge, its strip past the mouth was put under the main
+            // road: between them the strip rose above it; lowering only
+            // the mouth row left a step to the patch's surface).
+            let above = (0..2).any(|k| on[k].is_some_and(|m| patch.arms[i].row[k][1] > m + 0.005));
+            if !above {
+                continue;
             }
+            let row: [[f64; 3]; 2] = std::array::from_fn(|k| {
+                let q = xz(patch.arms[i].row[k]);
+                let own = shepard([&patch.arms[a], &patch.arms[b]].into_iter(), q);
+                at_y(q, on[k].map_or(own, |m| m.min(own)))
+            });
+            let mid = lerp3(row[0], row[1], 0.5);
+            let dh = (mid[1] - patch.arms[i].h).abs();
+            let room = 0.5 * patch.arms[i].len - patch.arms[i].mouth_m;
+            let mut l = (dh / BLEND_RATE).clamp(BLEND_MIN_M, BLEND_MAX_M).min(room);
+            if l < 1.0 {
+                l = 0.0;
+            }
+            let arm = &mut patch.arms[i];
+            arm.edge_m = 0.0;
+            arm.edge_p = [0.0, 0.0];
+            arm.edge_h = 0.0;
+            arm.corner = Vec::new();
+            arm.cross = 0.0;
+            arm.warp_m = 0.0;
+            arm.row = row;
+            arm.blend_m = l;
         }
     }
     Ok(patch)
@@ -1315,6 +1396,10 @@ pub const MAIN_REACH_M: f64 = 40.0;
 /// carriageway lie under it too (their quads would reach onto it).
 pub const SIDE_MARGIN_M: f64 = 1.0;
 
+/// A side road leaving its main road at less than this angle (degrees)
+/// runs along it: a fork, a path drawn beside it (J6).
+pub const ALONG_DEG: f64 = 35.0;
+
 /// A side road's strip lies this far under the main road's surface where
 /// it crosses the main road's carriageway past its mouth (§4.8.8 Q7).
 pub const SIDE_UNDER_M: f64 = 0.03;
@@ -1424,6 +1509,11 @@ fn outline_at(
 ) -> Result<(Patch, Outline), &'static str> {
     let c = site.centre;
     let cluster = site.cluster();
+    // J6: outlines need not be star-shaped, only simple (their mesh then
+    // comes from `plane_mesh`); clusters keep J5's star-shaped choice
+    // (their chains round the centre between two carriageways leave
+    // seams with the strips beside a median when drawn otherwise).
+    let general = !legacy && !cluster;
     // A cluster's arms by the polar angle of a point along them round its
     // centroid; a vertex's by their direction.
     let polar = |r: &Raw| {
@@ -1540,19 +1630,27 @@ fn outline_at(
         .map(|(i, r)| make_arm(g, r, need[i].min(caps[i]), None))
         .collect();
     let patch = assemble(g, site, arms)?;
-    // The outline: per arm its mouth (P to Q), then the chain to the next.
-    let mut outline: Vec<(P2, Option<usize>)> = Vec::new();
+    // The outline: per arm its mouth (P to Q), then the chain to the next –
+    // per corner the chains it may take, the first preferred (J6: J5's
+    // sides wherever the outline stays a simple polygon, star-shaped or
+    // not; else J4's line, smoothed or not).
+    let mut mouths: Vec<Vec<P2>> = Vec::with_capacity(n);
+    let mut choices: Vec<Vec<Vec<P2>>> = Vec::with_capacity(n);
     for (i, corner) in corners.iter().enumerate() {
         let j = (i + 1) % n;
         let arm = &patch.arms[i];
         let (p, q) = (arm.p(), arm.q());
         let pieces = (norm(sub(xz(q), xz(p))) / MOUTH_STEP_M).ceil().max(1.0) as usize;
-        for k in 0..=pieces {
-            outline.push((xz(lerp3(p, q, k as f64 / pieces as f64)), Some(i)));
-        }
+        mouths.push(
+            (0..=pieces)
+                .map(|k| xz(lerp3(p, q, k as f64 / pieces as f64)))
+                .collect(),
+        );
+        let mut options: Vec<Vec<P2>> = Vec::new();
         // The chain from Q_i to P_j: along the edge lines and round the
         // corner (§4.8.8 Rule, J5); the straight-line chain of J1 – J4
-        // where that would not keep the outline star-shaped.
+        // where that would not keep the outline a simple polygon (J5: not
+        // star-shaped).
         let next = &patch.arms[j];
         let radius = corner_radius(arm.class.max(next.class));
         if !legacy
@@ -1563,13 +1661,10 @@ fn outline_at(
                 radius,
                 (cluster && arm.origin != next.origin).then_some(c),
             )
-            && sides::polar_ok(c, &chain)
+            && (general || sides::polar_ok(c, &chain))
         {
             let last = chain.len() - 1;
-            for &p2 in &chain[1..last] {
-                outline.push((p2, None));
-            }
-            continue;
+            options.push(chain[1..last].to_vec());
         }
         let mut pts2: Vec<P2> = vec![xz(q)];
         match corner {
@@ -1653,17 +1748,84 @@ fn outline_at(
                 dense.push(add(w[0], mul(sub(w[1], w[0]), s as f64 / k as f64)));
             }
         }
-        // Smoothed where that keeps it star-shaped (J5): leaving and
-        // reaching the mouths along their arms, its bends rounded.
+        // Smoothed where that keeps it star-shaped (J5) or simple (J6):
+        // leaving and reaching the mouths along their arms, its bends
+        // rounded.
         if !legacy
             && let Some(smooth) = sides::smoothed(&dense, arm.t, next.t)
-            && sides::polar_ok(c, &smooth)
+            && (general || sides::polar_ok(c, &smooth))
         {
-            dense = smooth;
+            let last = smooth.len() - 1;
+            options.push(smooth[1..last].to_vec());
         }
         let last = dense.len() - 1;
-        for &p2 in &dense[1..last] {
-            outline.push((p2, None));
+        options.push(dense[1..last].to_vec());
+        // J6: the chains ordered by their worst bend (as the side lint
+        // measures it, the strips' edges on at both ends), J5's sides first
+        // where they bend no more than the others.
+        if general && options.len() > 1 {
+            let (q2, p2) = (xz(q), xz(next.p()));
+            let score = |o: &Vec<P2>| {
+                let mut pts = vec![add(q2, arm.t), q2];
+                pts.extend(o.iter().copied());
+                pts.push(p2);
+                pts.push(add(p2, next.t));
+                sides::worst_bend(&pts)
+            };
+            let mut scored: Vec<(f64, usize, Vec<P2>)> = options
+                .into_iter()
+                .enumerate()
+                .map(|(k, o)| (score(&o), k, o))
+                .collect();
+            // Within a degree the earlier (J5's sides, then smoothed) wins.
+            scored.sort_by(|a, b| {
+                let (x, y) = (a.0.to_degrees().round(), b.0.to_degrees().round());
+                x.total_cmp(&y).then(a.1.cmp(&b.1))
+            });
+            options = scored.into_iter().map(|x| x.2).collect();
+        }
+        choices.push(options);
+    }
+    // Each corner's first choice; where the outline crosses itself, the
+    // corners whose chains cross take their next (J6).
+    let mut pick = vec![0usize; n];
+    let assemble_outline = |pick: &[usize]| -> (Vec<(P2, Option<usize>)>, Vec<usize>) {
+        let mut out: Vec<(P2, Option<usize>)> = Vec::new();
+        let mut owner: Vec<usize> = Vec::new();
+        for i in 0..n {
+            for &p2 in &mouths[i] {
+                out.push((p2, Some(i)));
+                owner.push(i);
+            }
+            for &p2 in &choices[i][pick[i]] {
+                out.push((p2, None));
+                owner.push(i);
+            }
+        }
+        (out, owner)
+    };
+    let (mut outline, mut owner) = assemble_outline(&pick);
+    if general {
+        for _ in 0..=2 * n {
+            let pts: Vec<P2> = outline.iter().map(|o| o.0).collect();
+            let bad = plane_mesh::crossing_pieces(&pts);
+            if bad.is_empty() {
+                break;
+            }
+            let mut changed = false;
+            let mut corners_bad: Vec<usize> = bad.iter().map(|&k| owner[k]).collect();
+            corners_bad.sort_unstable();
+            corners_bad.dedup();
+            for i in corners_bad {
+                if pick[i] + 1 < choices[i].len() {
+                    pick[i] += 1;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+            (outline, owner) = assemble_outline(&pick);
         }
     }
     let outline = outline
@@ -1681,7 +1843,6 @@ type Outline = Vec<(P2, Option<usize>)>;
 /// chains between the mouths, the star check and the mesh.
 fn finish(mut patch: Patch, outline2: Vec<(P2, Option<usize>)>) -> Result<Patch, &'static str> {
     let c = xz(patch.centre);
-    let tau = std::f64::consts::TAU;
     let n = outline2.len();
     if n < 3 || patch.arms.is_empty() {
         return Err("the outline is not star-shaped");
@@ -1738,7 +1899,43 @@ fn finish(mut patch: Patch, outline2: Vec<(P2, Option<usize>)>) -> Result<Patch,
             points,
         });
     }
-    // Star-shaped from the centre: polar angles strictly growing, once round.
+    // Star-shaped from the centre: polar angles strictly growing, once
+    // round; else (J6) a simple polygon, meshed by `plane_mesh`.
+    let star = match star_angles(c, &outline) {
+        Ok(angles) => Some(angles),
+        Err(e) => {
+            let pts: Vec<P2> = outline.iter().map(|o| xz(o.p)).collect();
+            if !plane_mesh::simple_ccw(&pts) {
+                return Err(e);
+            }
+            None
+        }
+    };
+    patch.outline = outline;
+    patch.angles = star.clone().unwrap_or_default();
+    side_lift(&mut patch, &chains);
+    // The chains with the lifted heights.
+    patch.chains = chains
+        .into_iter()
+        .map(|mut ch| {
+            for q in &mut ch.points {
+                q[1] = patch.outline_height(*q);
+            }
+            ch
+        })
+        .collect();
+    if star.is_some() {
+        mesh(&mut patch);
+    } else {
+        plane(&mut patch)?;
+    }
+    Ok(patch)
+}
+
+/// The outline points' polar angles round `c`, unwrapped, if the outline
+/// is star-shaped from it.
+fn star_angles(c: P2, outline: &[OutlinePoint]) -> Result<Vec<f64>, &'static str> {
+    let tau = std::f64::consts::TAU;
     let mut angles = Vec::with_capacity(outline.len());
     let mut prev = angle(c, xz(outline[0].p));
     angles.push(prev);
@@ -1763,21 +1960,76 @@ fn finish(mut patch: Patch, outline2: Vec<(P2, Option<usize>)>) -> Result<Patch,
     if first - prev < 1e-6 || first - prev > std::f64::consts::PI {
         return Err("the outline is not star-shaped");
     }
-    patch.outline = outline;
-    patch.angles = angles;
-    side_lift(&mut patch, &chains);
-    // The chains with the lifted heights.
-    patch.chains = chains
-        .into_iter()
-        .map(|mut ch| {
-            for q in &mut ch.points {
-                q[1] = patch.outline_height(*q);
+    Ok(angles)
+}
+
+/// The mesh of an outline that is not star-shaped (J6, `plane_mesh`): a
+/// constrained Delaunay triangulation of the outline and points inside it
+/// at the surface's heights, cut at the through road's carriageway edge
+/// as the star mesh.
+fn plane(patch: &mut Patch) -> Result<(), &'static str> {
+    let pts: Vec<P2> = patch.outline.iter().map(|o| xz(o.p)).collect();
+    let mut inner = plane_mesh::inner_points(&pts);
+    // Points along the through road's carriageway edges (every 0.5 m),
+    // so that the triangles follow them and the cut there (below) leaves
+    // no triangle of a side road's corner reaching onto the main road (the
+    // star mesh's rings do so by their spacing).
+    if let Some([a, b]) = patch.through {
+        for k in [a, b] {
+            let arm = &patch.arms[k];
+            let len = arm.mouth_m + 1.0;
+            let steps = (len / 0.5).ceil() as usize;
+            for side in [-1.0, 1.0] {
+                let off = mul(side_pos(arm.dir), side * arm.half);
+                for s in 0..=steps {
+                    let q = add(
+                        add(arm.origin, mul(arm.dir, len * s as f64 / steps as f64)),
+                        off,
+                    );
+                    if plane_mesh::inside(&pts, q)
+                        && plane_mesh::nearest_piece(&pts, q).0 > 0.1
+                        && inner.iter().all(|w| norm(sub(*w, q)) > 0.2)
+                    {
+                        inner.push(q);
+                    }
+                }
             }
-            ch
-        })
-        .collect();
-    mesh(&mut patch);
-    Ok(patch)
+        }
+    }
+    let mut tris =
+        plane_mesh::triangulate(&pts, &inner).ok_or("the outline cannot be triangulated")?;
+    let mut verts: Vec<[f64; 3]> = patch.outline.iter().map(|o| o.p).collect();
+    for q in &inner {
+        verts.push(at_y(*q, patch.surface(*q)));
+    }
+    let c = xz(patch.centre);
+    patch.centre[1] = patch.field(c);
+    let (mut lo, mut hi) = (pts[0], pts[0]);
+    for q in &pts {
+        lo = [lo[0].min(q[0]), lo[1].min(q[1])];
+        hi = [hi[0].max(q[0]), hi[1].max(q[1])];
+    }
+    patch.min = lo;
+    patch.max = hi;
+    let mut sector = vec![0usize; tris.len()];
+    if patch.through.is_some() {
+        for _ in 0..REFINE_ROUNDS {
+            (tris, sector) = refine_at_main_edge(patch, &mut verts, tris, sector);
+        }
+        (tris, _) = cut_at_main_edge(patch, &mut verts, tris, sector);
+    }
+    for t in &mut tris {
+        let [a, b, cc] = t.map(|i| verts[i as usize]);
+        let up = (b[2] - a[2]) * (cc[0] - a[0]) - (b[0] - a[0]) * (cc[2] - a[2]);
+        if up < 0.0 {
+            t.swap(1, 2);
+        }
+    }
+    patch.cells = Some(plane_mesh::CellIndex::of(&verts, &tris, lo, hi));
+    patch.vertices = verts;
+    patch.triangles = tris;
+    patch.sectors = Vec::new();
+    Ok(())
 }
 
 impl Patch {
@@ -3208,6 +3460,88 @@ impl JunctionSet {
                 rows[i].iter_mut().for_each(under);
                 under(&mut points[i]);
             }
+            // J6 (§4.8.8 Rule: a side road never above the main road): the
+            // drawn triangles between two rows, sampled, wherever they lie
+            // over the main road's real carriageway (its curving centre
+            // line) – a strip leaving at a slant or along a curving main
+            // road reaches over it between rows whose corners lie beside
+            // it. Such rows go down until the triangles lie under it; the
+            // mouth row stays (the patch's), the row after it goes down by
+            // as much more as its share there asks.
+            let s_mouth = mouth;
+            let room = |s: f64| {
+                let m = if p.arms[*ai].at_from { s } else { len - s };
+                m <= p.arms[*ai].mouth_m + MAIN_REACH_M
+            };
+            for _ in 0..4 {
+                let mut changed = false;
+                for i in 0..rows.len().saturating_sub(1) {
+                    if !room(items[i].0) && !room(items[i + 1].0) {
+                        continue;
+                    }
+                    let fixed = [
+                        (items[i].0 - s_mouth).abs() < 1e-6,
+                        (items[i + 1].0 - s_mouth).abs() < 1e-6,
+                    ];
+                    let [l0, r0] = rows[i];
+                    let [l1, r1] = rows[i + 1];
+                    let mut need = [0.0f64; 2];
+                    // The two triangles as drawn ([l0, r0, l1], [r0, r1, l1]),
+                    // each corner's row.
+                    for (tri, of) in [([l0, r0, l1], [0, 0, 1]), ([r0, r1, l1], [0, 1, 1])] {
+                        for a in 0..=4 {
+                            for b in 0..=(4 - a) {
+                                let w = [a as f64 / 4.0, b as f64 / 4.0, (4 - a - b) as f64 / 4.0];
+                                let at = |k: usize| -> f64 {
+                                    (0..3).map(|c| w[c] * f64::from(tri[c][k])).sum()
+                                };
+                                let q = [at(0), at(2)];
+                                let Some(m) = p.main_road_height(g, q, MAIN_REACH_M, 0.0) else {
+                                    continue;
+                                };
+                                let over = at(1) - m;
+                                if over <= 0.005 {
+                                    continue;
+                                }
+                                let drop = over + SIDE_UNDER_M;
+                                // The share of each row in this point.
+                                let share = [
+                                    (0..3).filter(|&c| of[c] == 0).map(|c| w[c]).sum::<f64>(),
+                                    (0..3).filter(|&c| of[c] == 1).map(|c| w[c]).sum::<f64>(),
+                                ];
+                                match fixed {
+                                    [true, false] => {
+                                        need[1] = need[1].max(drop / share[1].max(0.25));
+                                    }
+                                    [false, true] => {
+                                        need[0] = need[0].max(drop / share[0].max(0.25));
+                                    }
+                                    [false, false] => {
+                                        need = [need[0].max(drop), need[1].max(drop)];
+                                    }
+                                    [true, true] => {}
+                                }
+                            }
+                        }
+                    }
+                    for (k, d) in need.into_iter().enumerate() {
+                        // At most half a metre a round (a strip that would
+                        // need more stands steep over the main road).
+                        let d = d.min(0.5);
+                        if d > 0.0 {
+                            let r = i + k;
+                            for c in &mut rows[r] {
+                                c[1] -= d as f32;
+                            }
+                            points[r][1] -= d as f32;
+                            changed = true;
+                        }
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
         }
         // 3D length cut off each end, along the original points.
         let mut cum3 = vec![0.0f64; n];
@@ -3237,6 +3571,7 @@ impl JunctionSet {
 }
 
 pub mod fixtures;
+mod plane_mesh;
 pub mod section;
 mod sides;
 

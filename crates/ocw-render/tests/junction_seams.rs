@@ -841,3 +841,101 @@ fn junction_in_detail() {
         println!("  tile strips {} -> {}", tile.roads.len(), t.strips.len());
     }
 }
+
+/// The drawn road parts round one junction as triangles, for a plan view
+/// of its sides (spec 4.8.8 Rule; `OCW_JUNCTION_WORLD=pkg
+/// OCW_JUNCTION_AT=x,z OCW_VERGE_DUMP=out.csv`, plotted by
+/// `scripts/verge-plot.py`): per line the owner (`patch` / `edge` /
+/// `strip` and its id), the part's kind (0 surface, 2 shoulder, 4
+/// sidewalk) and the three corners (x, y, z).
+#[test]
+fn junction_verges_dump() {
+    let (Some(path), Some(at), Some(out)) = (
+        std::env::var_os("OCW_JUNCTION_WORLD"),
+        std::env::var_os("OCW_JUNCTION_AT"),
+        std::env::var_os("OCW_VERGE_DUMP"),
+    ) else {
+        eprintln!("OCW_VERGE_DUMP not set: skipped");
+        return;
+    };
+    let path = path
+        .to_string_lossy()
+        .split(':')
+        .next()
+        .unwrap()
+        .to_string();
+    let at: Vec<f32> = at
+        .to_string_lossy()
+        .split(',')
+        .map(|v| v.parse().unwrap())
+        .collect();
+    let radius: f32 = std::env::var("OCW_VERGE_RADIUS")
+        .ok()
+        .and_then(|r| r.parse().ok())
+        .unwrap_or(18.0);
+    let c = Vec2::new(at[0], at[1]);
+    let pkg = WorldPackage::from_bytes(&std::fs::read(path).unwrap()).unwrap();
+    let g = pkg.graph.as_ref().unwrap();
+    let pj = PackageJunctions::new(&pkg).unwrap();
+    let style = MarkingStyle::default();
+    let size = f64::from(pkg.tile_size_m);
+    let ground = |x: f32, z: f32| {
+        pkg.surface_height(f64::from(x), f64::from(z))
+            .map(|h| h as f32)
+    };
+    let ctx = RoadContext {
+        colours: None,
+        ground: &ground,
+        deck: &|_| false,
+        style: &style,
+    };
+    let key = ocw_world::TileKey::containing([f64::from(at[0]), f64::from(at[1])], size);
+    let mut lines = String::new();
+    let mut put = |owner: String, m: &MeshArrays| {
+        for t in m.indices.as_chunks::<3>().0 {
+            let q: Vec<Vec3> = t
+                .iter()
+                .map(|&i| Vec3::from(m.positions[i as usize]))
+                .collect();
+            if q.iter().all(|p| p.xz().distance(c) > radius) {
+                continue;
+            }
+            let kind = decode_b(m.uvs_b[t[0] as usize][0]).1;
+            lines.push_str(&format!(
+                "{owner},{kind},{}\n",
+                q.iter()
+                    .map(|p| format!("{:.3},{:.3},{:.3}", p.x, p.y, p.z))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ));
+        }
+    };
+    for dx in -1..=1 {
+        for dz in -1..=1 {
+            let k = ocw_world::TileKey {
+                x: key.x + dx,
+                z: key.z + dz,
+            };
+            let Some(tile) = pkg.tiles.get(&k) else {
+                continue;
+            };
+            let t = shape_tile(g, &pj, k, size, &tile.roads, &style);
+            for i in 0..t.strips.len() {
+                let rows = [t.rows[i].as_deref()];
+                let m = road_meshes_rows(std::slice::from_ref(&t.strips[i]), &rows, &ctx);
+                let owner = match t.owners[i] {
+                    Owner::Edge(e) => format!("edge,{e}"),
+                    Owner::Patch(v) => format!("patch,{v}"),
+                    Owner::Strip(s) => format!("strip,{s}"),
+                };
+                put(owner, &m.roads);
+            }
+            for (p, looks) in &t.patches {
+                let mut m = MeshArrays::default();
+                patch_mesh(&mut m, p, looks, &ctx);
+                put(format!("patch,{}", p.vertex), &m);
+            }
+        }
+    }
+    std::fs::write(out, lines).unwrap();
+}
