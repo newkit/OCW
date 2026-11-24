@@ -19,8 +19,8 @@
 //! profile gives (`AvatarRig::eye_point`) – and turned with the bike's
 //! heading (never pitched or rolled, comfort). With `local` only (no
 //! floor) the anchor's height goes to that eye point. Without a rider
-//! (unicorn flight) the chase camera is the eye point. The own head is still
-//! drawn (the eyes are inside it; its back faces are culled) and the HUD
+//! (unicorn flight) the chase camera is the eye point. The own head is
+//! hidden during the session (its node, v5.77) and the HUD
 //! lands in one eye (Bevy UI's default camera) – W2's bike computer and
 //! hidden head replace both. W2 replaces this with the desktop VR
 //! mode's eye cameras, anchor, recentring and bike computer
@@ -35,7 +35,7 @@ use bevy::prelude::*;
 use bevy::render::view::Msaa;
 use bevy::transform::TransformSystems;
 use bevy::window::PrimaryWindow;
-use ocw_render::camera::FollowCamera;
+use ocw_render::camera::{FollowCamera, RiderHead};
 use ocw_render::riders::{Avatar, AvatarRig};
 
 use crate::xr::{self, Anchor, FrameStats, Space, XrEvent, XrFrame, XrState};
@@ -253,8 +253,22 @@ fn manage_eyes(
     xr: Res<WebXr>,
     eyes: Query<Entity, With<XrEyeCamera>>,
     mut follow: Query<&mut Camera, (With<FollowCamera>, Without<XrEyeCamera>)>,
+    mut heads: Query<(&RiderHead, &mut Visibility)>,
 ) {
     let want = xr.state.in_headset() && xr.frame.is_some();
+    // The own head is not drawn while the eyes are in it (the helmet's
+    // straps and the face from inside; until W2's render layers): hidden
+    // during the session, shown again after.
+    let head = if xr.state.in_session() {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
+    };
+    for (h, mut v) in &mut heads {
+        if h.local && *v != head {
+            *v = head;
+        }
+    }
     if want && eyes.is_empty() {
         for i in 0..2 {
             commands.spawn((
