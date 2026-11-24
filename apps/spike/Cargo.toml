@@ -10,7 +10,8 @@ publish.workspace = true
 [dependencies]
 ocw-core.workspace = true
 ocw-world.workspace = true
-bevy.workspace = true
+# Bevy's full sets, as before the browser's feature pruning (10G).
+bevy = { workspace = true, features = ["2d", "3d", "ui"] }
 clap.workspace = true
 
 [lints]

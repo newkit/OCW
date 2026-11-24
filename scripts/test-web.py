@@ -375,6 +375,9 @@ def chromium_flags(profile, w, h, gpu="webgpu", software=False):
     if software:
         flags += (["--use-webgpu-adapter=swiftshader"] if gpu == "webgpu"
                   else ["--use-angle=swiftshader"]) + ["--enable-unsafe-swiftshader"]
+    # More flags for a measurement, e.g. the uncapped frame rate of 10G's
+    # module-size work: OCW_CHROMIUM_FLAGS="--disable-gpu-vsync --disable-frame-rate-limit".
+    flags += os.environ.get("OCW_CHROMIUM_FLAGS", "").split()
     return flags
 
 

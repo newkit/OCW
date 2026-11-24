@@ -160,10 +160,11 @@ then you build the app and serve it yourself, as below.
   Without network the build still succeeds, with a warning, and the page
   rides without voice. `python3` also runs the dev server and the browser
   tests.
-- **Optional:** `wasm-opt` (binaryen) shrinks the modules of `make web`
-  when it is installed; `make web-preview` always uses it and fetches the
-  pinned release itself (`scripts/fetch-binaryen.sh`; Debian's
-  `apt install binaryen` is too old for today's modules). Python's
+- **wasm-opt** (binaryen) shrinks the modules of `make web` and
+  `make web-preview`; when none is installed the build fetches the pinned
+  release itself (`scripts/fetch-binaryen.sh`; Debian's
+  `apt install binaryen` is too old for today's modules) – `make web` goes
+  on unoptimised with a warning when it cannot. Optional: Python's
   `brotli` module (or the `brotli` tool) adds the brotli size to
   `sizes.txt`.
 - **A browser.** Chrome or Edge 113+ draw with WebGPU, and they are the
@@ -688,19 +689,21 @@ attribution, the licences and the privacy note.
 |---|---|---|
 | Output | `target/web/` | `target/web-preview/` |
 | Profile | `web-release`: `opt-level = "s"`, thin LTO | `web-preview-release`: the same with fat LTO and one codegen unit |
-| `wasm-opt` | `-Os`, only when installed | `-Oz`, always: `scripts/fetch-binaryen.sh` fetches the pinned binaryen (version_133, SHA-256-checked) into `~/.cache/ocw/tools/` when none is installed |
+| `wasm-opt` | `-Os` (`WEB_WASM_OPT=off`: none) | `-Oz`, always: `scripts/fetch-binaryen.sh` fetches the pinned binaryen (version_133, SHA-256-checked) into `~/.cache/ocw/tools/` when none is installed |
 | Trusted worlds | the production roots (none yet); on localhost also `trust-root`, `trust=dev`, `allow-unsigned` | only the **web preview's root** (`crates/ocw-worldstore/keys/preview-roots.json`, feature `preview` of `ocw-web`); the localhost-only options stay localhost-only |
 | `config.json` | `channel: dev`: changes nothing | `channel: preview`, `worlds/`, empty `server`, `voice`, `signin`: no `?server=` and no voice on a public page, the start page's rides |
 | Voice | LiveKit's SDK fetched | not included |
 
-Sizes of one module (the WebGPU build; the WebGL 2 build is about the
-same; a browser downloads only one):
+Sizes of one module (the WebGPU build; the WebGL 2 build is 1.6 – 1.9 MiB
+bigger; a browser downloads only one; measured 2026-11-24, spec 10G
+*The module's size*; `scripts/wasm-size.sh` shows what a module is made of):
 
-| Build | raw | gzip | brotli |
-|---|---|---|---|
-| `make web` (`web-release`) | 76.3 MiB | 17.0 MiB | 10.7 MiB |
-| `make web-preview` before `wasm-opt` | 51.0 MiB | 12.6 MiB | 8.5 MiB |
-| `make web-preview` (after `wasm-opt -Oz`) | 42.2 MiB | 13.2 MiB | 8.8 MiB |
+| Build | raw | gzip |
+|---|---|---|
+| `make web` before `wasm-opt` | 71.5 MiB | 16.2 MiB |
+| `make web` (after `wasm-opt -Os`) | 61.8 MiB | 16.7 MiB |
+| `make web-preview` before `wasm-opt` | 49.7 MiB | 12.3 MiB |
+| `make web-preview` (after `wasm-opt -Oz`) | 41.8 MiB | 12.8 MiB |
 
 `wasm-opt` makes the module much smaller but the compressed download a
 little larger; the preview keeps it for the smaller module the browser
