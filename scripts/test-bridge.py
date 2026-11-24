@@ -9,6 +9,8 @@ On a build machine with the trainer in range (marge and its Wahoo KICKR):
 1. the desktop app shares its devices (`--share-bridge`) – on a headless
    Wayland compositor through `drive.sh shot-wayland`, with the devices of
    `--devices-file` (the KICKR; without one the virtual trainer at 180 W),
+   the code naming 127.0.0.1 (no real address in the pictures; `--lan`
+   names the machine's LAN address),
    in a config folder of its own (the code is not saved in the user's);
    after the ride it opens Devices → Share with a browser (the code, the
    address, the QR code) for its screenshot;
@@ -79,6 +81,9 @@ def main():
     p.add_argument("--size", default="1280x720")
     p.add_argument("--desktop-start", type=float, default=240.0,
                    help="seconds to wait for the desktop's code (it is built first)")
+    p.add_argument("--lan", action="store_true",
+                   help="the code names this machine's LAN address (its pictures then show it: "
+                        "keep them out of test-output); default 127.0.0.1")
     a = p.parse_args()
 
     os.makedirs(a.out, exist_ok=True)
@@ -98,6 +103,9 @@ def main():
         desktop_args += ["--virtual", "--power", "180"]
     desktop_shot = f"{base}-desktop.jpg"
     env = dict(os.environ, OCW_CONFIG_DIR=cfg, OCW_TEST_OUTPUT="off",
+               # No real address in the pictures (they reach the art
+               # project): the code names loopback unless --lan.
+               **({} if a.lan else {"OCW_BRIDGE_IP": "127.0.0.1"}),
                OCW_SHOT_TIMEOUT=str(int(ride_s + a.desktop_start + 120)))
     desktop_log = open(f"{base}-desktop-drive.log", "w")
     desktop = subprocess.Popen(
@@ -242,9 +250,13 @@ def main():
     summary["desktop_shot"] = desktop_shot if os.path.exists(desktop_shot) else None
     if os.path.exists(app_log):
         text = open(app_log, errors="replace").read()
-        summary["desktop_lines"] = [l.split("ocw_desktop", 1)[-1].strip()[:200]
-                                    for l in text.splitlines()
-                                    if "bridge" in l or "KICKR" in l][:40]
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", text)
+        # No device ids or Bluetooth addresses in the summary (it reaches
+        # the art project's archive).
+        summary["desktop_lines"] = [
+            re.sub(r"\s+id=\S+", "", l.split(" INFO ", 1)[-1].strip())[:200]
+            for l in plain.splitlines()
+            if ("bridge" in l or "KICKR" in l) and "console:" in l][:30]
         fps = re.findall(r"fps[=: ]+([0-9.]+)", text)
         summary["desktop_fps_samples"] = fps[-5:]
     age_p95 = summary["age_ms"]["p95"]

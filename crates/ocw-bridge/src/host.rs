@@ -97,11 +97,20 @@ pub struct HostOptions {
     pub now_unix_s: i64,
 }
 
+/// The environment variable that sets the address the code names (a
+/// computer on several networks; tests and screenshots, which use
+/// 127.0.0.1 so no real address shows).
+pub const IP_ENV: &str = "OCW_BRIDGE_IP";
+
 impl HostOptions {
     pub fn new(secret: u32, name: &str, now_unix_s: i64) -> Self {
+        let ip = std::env::var(IP_ENV)
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or_else(lan_ipv4);
         Self {
             secret,
-            ip: lan_ipv4(),
+            ip,
             bind: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
             name: name.into(),
             now_unix_s,

@@ -346,7 +346,7 @@ fn show_qr(
             Node {
                 position_type: PositionType::Absolute,
                 right: Val::Px(32.0),
-                bottom: Val::Px(32.0),
+                top: Val::Percent(18.0),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 row_gap: Val::Px(6.0),
