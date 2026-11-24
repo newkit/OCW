@@ -1013,6 +1013,17 @@ pub fn page_xr() -> String {
     webxr::page_json()
 }
 
+/// `window.ocw.xrReport(json)`: the headset run's report to the desktop
+/// over the sensor bridge (14I W4); "" when queued, else why not.
+#[cfg(all(target_arch = "wasm32", feature = "webxr"))]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = xrReport)]
+pub fn page_xr_report(json: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(json) {
+        Ok(data) => bridge::report("xr", data).err().unwrap_or_default(),
+        Err(e) => format!("not JSON: {e}"),
+    }
+}
+
 /// `window.ocw.wasmMemory()`: the wasm memory in bytes.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(js_name = wasmMemory)]

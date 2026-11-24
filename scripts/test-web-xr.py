@@ -18,7 +18,10 @@ session.
 
 On the test route (no bots, 150 W, noon, clear) it checks:
 
-  1. the page offers Enter VR (isSessionSupported) – `-flat.jpg`;
+  1. the page offers Enter VR (isSessionSupported) – `-flat.jpg` – and the
+     sensor bridge's pairing panel (14I Q7 (b)): a code typed and Pair
+     pressed starts the bridge (`-pair.jpg`; no desktop app runs here, so
+     it stays connecting);
   2. a click on it starts the session: two eye cameras side by side with
      the views' projections and poses, the app stepped from the XR frames,
      the canvas copied into a framebuffer of our own (`xrcopy=fbo`, the
@@ -30,7 +33,11 @@ On the test route (no bots, 150 W, noon, clear) it checks:
      `-xr-turned.jpg`, `-xr-down.jpg`; a short sweep as `-xr-sweep.mp4`
      (ffmpeg) with its frames;
   4. the frame timing in the emulator (a sanity number only: the headset's
-     comes in W4);
+     comes in W4); the beacon queued its report for the desktop;
+  4b. the reference space (14I Q8 (a)): `local-floor`; the eyes as high
+     above the road as the emulated head above the floor (seated 1.45 m,
+     then 1.70 m out of the saddle – `-xr-standing.jpg`), across the ground
+     at the rider's eye point; the saddle and eye heights of the profile;
   5. visible-blurred and back; exit: the flat view again, the window's
      frames run on – `-after.jpg`;
   6. without the emulator the page says why there is no VR and shows no
@@ -100,6 +107,33 @@ def quat(yaw_deg, pitch_deg):
     bx, by, bz, bw = qx
     return (aw * bx + ax * bw + ay * bz - az * by, aw * by - ax * bz + ay * bw + az * bx,
             aw * bz + ax * by - ay * bx + az * bw, aw * bw - ax * bx - ay * by - az * bz)
+
+
+def pairing_code(ip, slot, secret):
+    """A sensor-bridge pairing code (`ocw_bridge::code::PairingCode::compact`:
+    the address form, the address, the port slot, the 30-bit secret in
+    Crockford base32, a SHA-256 check symbol)."""
+    import hashlib
+    alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+    a, b, c, d = (int(x) for x in ip.split("."))
+    if (a, b) == (192, 168):
+        form, addr, n = 0, (c << 8) | d, 16
+    elif a == 10:
+        form, addr, n = 1, (b << 16) | (c << 8) | d, 24
+    elif a == 172 and 16 <= b <= 31:
+        form, addr, n = 2, ((b - 16) << 16) | (c << 8) | d, 20
+    else:
+        form, addr, n = 3, (a << 24) | (b << 16) | (c << 8) | d, 32
+    bits = []
+    for value, k in ((form, 2), (addr, n), (slot, 2), (secret, 30)):
+        bits += [(value >> i) & 1 for i in range(k - 1, -1, -1)]
+    symbols = []
+    for i in range(0, len(bits), 5):
+        chunk = bits[i:i + 5] + [0] * (5 - len(bits[i:i + 5]))
+        symbols.append(int("".join(map(str, chunk)), 2))
+    symbols.append(hashlib.sha256(b"ocw-bridge-code" + bytes(symbols)).digest()[0] >> 3)
+    s = "".join(alphabet[v] for v in symbols)
+    return "-".join(s[i:i + 4] for i in range(0, len(s), 4))
 
 
 def write_png(path, w, h, rgba_bottom_up):
@@ -217,6 +251,17 @@ class Run:
                           {"type": kind, "x": r[0], "y": r[1], "button": "left", "clickCount": 1})
         return True
 
+    def click_selector(self, selector):
+        r = self.json(f"(() => {{ const b = document.querySelector({json.dumps(selector)});"
+                      " if (!b) return null; const r = b.getBoundingClientRect();"
+                      " return [r.x + r.width / 2, r.y + r.height / 2]; })()")
+        if not r:
+            return False
+        for kind in ("mousePressed", "mouseReleased"):
+            self.cdp.call("Input.dispatchMouseEvent",
+                          {"type": kind, "x": r[0], "y": r[1], "button": "left", "clickCount": 1})
+        return True
+
     def readback(self, width=480):
         r = self.json(f"window.ocwXr.readback({width})")
         if not r:
@@ -244,8 +289,12 @@ def main():
     p.add_argument("--eye-height", type=float, default=1.45,
                    help="the emulated head above the floor (m; a rider on the saddle)")
     p.add_argument("--query", default="bots=0&power=150&start=1.2")
+    p.add_argument("--bridge-code", default=None,
+                   help="a pairing code typed into the page's panel (default: one for 192.168.0.250, where"
+                        " no desktop app answers)")
     a = p.parse_args()
     a.chromium = a.chromium or web_browser.find()
+    a.bridge_code = a.bridge_code or pairing_code("192.168.0.250", 0, 0x2A5F1C3)
     tw = test_web()
     missing = tw.web_serve().missing_build(a.dir, ["ocw_web_webxr_bg.wasm", "ocw-xr.js"])
     if missing:
@@ -291,6 +340,23 @@ def main():
         checks["offered"] = bool(offered) and run.xr().get("state") == "offered"
         run.wait(4.0)
         s["shots"]["flat"] = run.shot(base + "-flat.jpg")
+
+        # 1b. The sensor bridge's panel before Enter VR (14I Q7 (b)): type
+        # the desktop's code, press Pair (real input events).
+        panel = run.js("(() => { const p = document.getElementById('ocw-xr-pair'); return !!p && !p.hidden; })()")
+        run.js("document.getElementById('ocw-xr-code').focus()")
+        cdp.call("Input.insertText", {"text": a.bridge_code})
+        run.click_selector("#ocw-xr-pair button")
+        paired = run.until(lambda: (run.json("JSON.parse(window.ocw.devices() || 'null')") or {})
+                           .get("bridge", {}).get("code"), 15)
+        run.wait(1.5)
+        line = run.js("document.getElementById('ocw-xr-pair-state').textContent")
+        s["bridge"] = {"panel": panel, "code": paired, "line": line,
+                       "devices": (run.json("JSON.parse(window.ocw.devices() || 'null')") or {}).get("bridge")}
+        s["shots"]["pair"] = run.shot(base + "-pair.jpg")
+        want = a.bridge_code.replace("-", "").upper()
+        checks["bridge_pairing_on_the_page"] = bool(panel) and bool(paired) \
+            and paired.replace("-", "") == want and want[:4] in (line or "").replace("-", "")
 
         # 2. Enter VR by a click (the user gesture).
         clicked = run.click("ocw-xr-enter")
@@ -364,6 +430,32 @@ def main():
                                              "longest_gap_ms", "late", "frames", "framebuffer")}
         s["timing"]["page"] = run.page_xr()
         checks["frames_counted"] = (x.get("frames") or 0) > 100 and x.get("fps") is not None
+        beacon = run.page_xr().get("beacon") or {}
+        s["beacon"] = beacon
+        checks["beacon_queued"] = beacon.get("sent", 0) >= 1 and not beacon.get("error")
+
+        # 4b. The reference space and the eye height (14I Q8 (a)).
+        seated = run.xr()
+        run.head(height=1.70)
+        run.wait(1.5)
+        standing = run.xr()
+        s["shots"]["standing"] = run.shot(base + "-xr-standing.jpg")
+        s["shots"]["standing_left"] = run.shot(base + "-xr-standing-left.jpg",
+                                               {"x": 0, "y": 0, "width": w // 2, "height": h})
+        run.head(height=a.eye_height)
+        run.wait(1.0)
+        keys = ("space", "saddle_m", "eye_seated_m", "eye_standing_m", "head_m", "eye_above_road_m",
+                "eye_from_point_m")
+        s["floor"] = {"seated": {k: seated.get(k) for k in keys}, "standing": {k: standing.get(k) for k in keys}}
+        near = lambda v, want, tol: v is not None and abs(v - want) < tol  # noqa: E731
+        checks["local_floor"] = seated.get("space") == "local-floor"
+        checks["eye_height_is_the_real_head"] = near(seated.get("eye_above_road_m"), a.eye_height, 0.02) \
+            and near(standing.get("eye_above_road_m"), 1.70, 0.02)
+        checks["eyes_at_the_rider_eye_point"] = near(seated.get("eye_from_point_m"), 0.0, 0.02) \
+            and near(standing.get("eye_from_point_m"), 0.0, 0.02)
+        checks["profile_heights"] = (seated.get("saddle_m") or 0) > 0.6 \
+            and (seated.get("eye_seated_m") or 0) > (seated.get("saddle_m") or 9) \
+            and (seated.get("eye_standing_m") or 0) > (seated.get("eye_seated_m") or 9)
 
         # 5. Visibility and exit.
         run.js("window.ocwXrDevice.updateVisibilityState('visible-blurred')")

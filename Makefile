@@ -93,7 +93,7 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 .DEFAULT_GOAL := help
 .PHONY: help test-web-account test-web-trust version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-blender test-blender models-diff deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
-	test test-unit test-wasm test-web-build test-web test-web-xr web-xr test-web-webgl2 test-web-gpu test-web-webkit test-web-ios deps-webkit test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-voice-livekit test-voice-bundled test-host-voice test-voice-live test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser deps-vr deps-vr-linux deps-vr-linux-debian deps-vr-linux-fedora deps-vr-linux-arch deps-vr-linux-unknown deps-vr-windows deps-vr-macos test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
+	test test-unit test-wasm test-web-build test-web test-web-xr web-xr web-preview-xr test-web-webgl2 test-web-gpu test-web-webkit test-web-ios deps-webkit test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-voice-livekit test-voice-bundled test-host-voice test-voice-live test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser deps-vr deps-vr-linux deps-vr-linux-debian deps-vr-linux-fedora deps-vr-linux-arch deps-vr-linux-unknown deps-vr-windows deps-vr-macos test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
@@ -338,8 +338,11 @@ web-worlds: ## Publish world packages for the web dev server into target/web/wor
 web-preview: ## The public preview's build into target/web-preview/ (spec §14 Phase 10 B8a): fat LTO, wasm-opt -Oz (pinned binaryen), only the web preview's signing root trusted, no LiveKit
 	scripts/build-web.sh --preview
 
-web-preview-site: ## Assemble the preview's site into target/web-preview-site/ (config.json, credits.html, the signed worlds of target/web-preview-worlds/release/ or a downloaded web-preview-worlds release; PREVIEW_WORLDS)
-	scripts/web-preview-site.py --worlds $(PREVIEW_WORLDS)
+web-preview-xr: ## The WebXR preview build into target/web-preview-xr/ (spec §14 Phase 14, 14I Q6 (a): published at /xr/ by web-preview-site): WebGL 2 + feature webxr, the preview's trust and size options
+	WEB_GPU=webxr WEB_OUT=target/web-preview-xr scripts/build-web.sh --preview
+
+web-preview-site: ## Assemble the preview's site into target/web-preview-site/ (config.json, credits.html, the signed worlds of target/web-preview-worlds/release/ or a downloaded web-preview-worlds release; PREVIEW_WORLDS); with target/web-preview-xr/ (make web-preview-xr) the WebXR build under xr/
+	scripts/web-preview-site.py --worlds $(PREVIEW_WORLDS) $(if $(wildcard target/web-preview-xr/ocw_web_webxr_bg.wasm),--xr-build target/web-preview-xr)
 
 web-preview-worlds: ## On marge only (the preview's keys): sign the preview's worlds, publish them and upload them to the pre-release web-preview-worlds
 	scripts/publish-preview-worlds.sh --upload

@@ -427,25 +427,91 @@ pub fn rig_eye(origin: [f32; 3], origin_yaw: f32, eye: Pose) -> Pose {
     }
 }
 
-/// How far the eyes are ahead of the head's centre (m).
-pub const EYES_AHEAD_OF_HEAD_M: f32 = 0.1;
-
-/// The point on the floor of the reference space (`local-floor`): under
-/// the rider's eyes – the head's centre `head` moved
-/// [`EYES_AHEAD_OF_HEAD_M`] along the bike's heading `yaw` – at the bike's
-/// height `ground_y` (where the wheels touch the road). The tracked head
-/// then puts the eyes where the rider's are (a rider's head is about 1.4 –
-/// 1.6 m above the floor on a trainer, as on the road).
-pub fn floor_under_eyes(head: [f32; 3], ground_y: f32, yaw: f32) -> [f32; 3] {
-    let (s, c) = yaw.sin_cos();
-    // −Z turned by `yaw` about +Y.
-    let ahead = [-s, -c];
-    [
-        head[0] + ahead[0] * EYES_AHEAD_OF_HEAD_M,
-        ground_y,
-        head[2] + ahead[1] * EYES_AHEAD_OF_HEAD_M,
-    ]
+/// The reference space the session got (spec 14I Q8, decided (a)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Space {
+    /// `local-floor`: y = 0 is the real floor. The game floor (the road
+    /// under the bike) is put there, so the headset's height is the
+    /// rider's real eye height – right for every rider, higher out of the
+    /// saddle.
+    #[default]
+    LocalFloor,
+    /// `local` only (no floor known): the origin is the head where the
+    /// session started; that point is put at the rider's seated eye point
+    /// (from the profile's saddle height).
+    Local,
 }
+
+impl Space {
+    /// The page's word (the `started` event's detail).
+    pub fn parse(detail: &str) -> Self {
+        if detail == "local" {
+            Self::Local
+        } else {
+            Self::LocalFloor
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::LocalFloor => "local-floor",
+            Self::Local => "local",
+        }
+    }
+}
+
+/// The viewer's place in the reference space at the session's start (or
+/// a recentre): the point that is put on the rider's eye point, and the
+/// heading that becomes the bike's.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Anchor {
+    pub position: [f32; 3],
+    pub yaw: f32,
+}
+
+impl Anchor {
+    pub fn from_viewer(viewer: Pose) -> Self {
+        Self {
+            position: viewer.position,
+            yaw: yaw_of(viewer.orientation),
+        }
+    }
+}
+
+/// Where the reference space's origin stands in the world and its heading
+/// (for [`rig_eye`]), spec 14I Q8:
+///
+/// - across the ground the anchor (the head at the start) goes onto `eyes`
+///   – the rider's seated eye point on the bike in the world (the saddle
+///   at the height the rider profile gives, `ocw_assets::pose::eye_point`)
+///   – and the anchor's heading onto the bike's `bike_yaw`;
+/// - in height, `local-floor` puts the space's floor on the road
+///   (`ground_y`): the eyes are as high as the real head, whatever the
+///   anchor's height – a rider on a trainer whose saddle is as high as the
+///   profile's has the eyes at `eyes`' height and rises out of the saddle;
+///   `local` (no floor) puts the anchor's height at `eyes`.
+pub fn space_origin(
+    space: Space,
+    anchor: Anchor,
+    eyes: [f32; 3],
+    ground_y: f32,
+    bike_yaw: f32,
+) -> ([f32; 3], f32) {
+    let yaw = bike_yaw - anchor.yaw;
+    let (s, c) = yaw.sin_cos();
+    let p = anchor.position;
+    // The anchor turned like the space (as in `rig_eye`).
+    let (rx, rz) = (c * p[0] + s * p[2], -s * p[0] + c * p[2]);
+    let y = match space {
+        Space::LocalFloor => ground_y,
+        Space::Local => eyes[1] - p[1],
+    };
+    ([eyes[0] - rx, y, eyes[2] - rz], yaw)
+}
+
+/// A seated rider's eyes above the floor when no rider is known (m; the
+/// unicorn's flight, or before the avatar is built).
+pub const SEATED_EYE_M: f32 = 1.45;
 
 /// The XR frames' timing (spec 14I W3 / W4: the frame-time readout; here
 /// the emulator's sanity numbers): the gaps between frames and the page's
@@ -878,17 +944,63 @@ mod tests {
         }
     }
 
+    /// 14I Q8: with `local-floor` the real floor is the road – the eyes
+    /// are as high above the road as the real head is above the floor
+    /// (seated, then 25 cm higher out of the saddle), and the head at the
+    /// start lands on the rider's eye point, looking along the bike.
     #[test]
-    fn the_floor_is_under_the_eyes_at_the_road() {
-        for yaw in [0.0f32, 1.0, -2.2] {
-            let got = floor_under_eyes([10.0, 21.5, -4.0], 20.0, yaw);
-            let ahead = Quat::from_rotation_y(yaw) * Vec3::NEG_Z * EYES_AHEAD_OF_HEAD_M;
-            let want = Vec3::new(10.0, 20.0, -4.0) + ahead;
+    fn local_floor_puts_the_real_floor_on_the_road() {
+        let ground = 20.0;
+        // The rider's seated eyes on the bike (from the saddle height).
+        let eyes = [10.0, ground + 1.42, -4.0];
+        for bike_yaw in [0.0f32, 0.9, -2.4] {
+            // The head at the start: 0.4 m beside the space's origin, 1.40 m
+            // above the real floor, facing 30° left of the space's −Z.
+            let start = Pose {
+                position: [0.4, 1.40, -0.2],
+                orientation: Quat::from_euler(bevy::math::EulerRot::YXZ, 0.52, -0.2, 0.0)
+                    .to_array(),
+            };
+            let anchor = Anchor::from_viewer(start);
+            let (origin, yaw) = space_origin(Space::LocalFloor, anchor, eyes, ground, bike_yaw);
+            assert!((origin[1] - ground).abs() < 1e-6, "the floor on the road");
+            let at_start = rig_eye(origin, yaw, start);
+            let p = Vec3::from_array(at_start.position);
             assert!(
-                Vec3::from_array(got).abs_diff_eq(want, 1e-5),
-                "{yaw}: {got:?}"
+                (p.x - eyes[0]).abs() < 1e-4 && (p.z - eyes[2]).abs() < 1e-4,
+                "{p}"
             );
+            // The real height above the floor, not the profile's.
+            assert!((p.y - (ground + 1.40)).abs() < 1e-5, "{p}");
+            // Looking along the bike.
+            assert!((yaw_of(at_start.orientation) - bike_yaw).abs() < 1e-4);
+            // Out of the saddle: the head 25 cm higher, the eyes too.
+            let up = Pose {
+                position: [0.4, 1.65, -0.35],
+                ..start
+            };
+            let p_up = Vec3::from_array(rig_eye(origin, yaw, up).position);
+            assert!((p_up.y - (ground + 1.65)).abs() < 1e-5, "{p_up}");
         }
+    }
+
+    /// Without `local-floor` the head at the start is put at the rider's
+    /// seated eye height, whatever the space says its height is.
+    #[test]
+    fn local_falls_back_to_the_seated_eye_point() {
+        let eyes = [3.0, 101.38, 7.0];
+        let start = Pose {
+            position: [0.05, 0.02, 0.1],
+            orientation: Quat::from_rotation_y(-0.3).to_array(),
+        };
+        let (origin, yaw) =
+            space_origin(Space::Local, Anchor::from_viewer(start), eyes, 100.0, 1.2);
+        let p = rig_eye(origin, yaw, start);
+        assert!(Vec3::from_array(p.position).abs_diff_eq(Vec3::from_array(eyes), 1e-4));
+        assert!((yaw_of(p.orientation) - 1.2).abs() < 1e-4);
+        assert_eq!(Space::parse("local"), Space::Local);
+        assert_eq!(Space::parse("local-floor"), Space::LocalFloor);
+        assert_eq!(Space::parse(""), Space::LocalFloor);
     }
 
     #[test]

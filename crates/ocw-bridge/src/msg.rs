@@ -31,7 +31,19 @@ pub enum ToHost {
     Ping { id: u64, c: f64 },
     /// The page stops the bridge.
     Bye,
+    /// A report of the page for the desktop to keep (spec 14 Phase 14, 14I
+    /// W3 / W4: the headset run's frame times and device facts – the
+    /// browser on a standalone headset has no other way back): `kind`
+    /// names it (`xr`), `data` is the page's JSON, kept as it came. At
+    /// most [`MAX_REPORT`] bytes; the desktop appends it to a file.
+    Report {
+        kind: String,
+        data: serde_json::Value,
+    },
 }
+
+/// The largest report the desktop keeps (bytes of its JSON).
+pub const MAX_REPORT: usize = 16 * 1024;
 
 /// Desktop → browser.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -334,6 +346,20 @@ mod tests {
             control: Control::Erg(200.0),
         };
         let back: ToHost = serde_json::from_slice(&frame(&m)[4..]).unwrap();
+        assert_eq!(back, m);
+    }
+
+    /// 14I W4: the headset's report goes through as JSON.
+    #[test]
+    fn a_report_round_trips() {
+        let m = ToHost::Report {
+            kind: "xr".into(),
+            data: serde_json::json!({"fps": 71.8, "space": "local-floor"}),
+        };
+        let bytes = frame(&m);
+        let text = std::str::from_utf8(&bytes[4..]).unwrap();
+        assert!(text.contains(r#""t":"report""#), "{text}");
+        let back: ToHost = serde_json::from_slice(&bytes[4..]).unwrap();
         assert_eq!(back, m);
     }
 }

@@ -11,10 +11,15 @@
 //! then copies the canvas into the layer's framebuffer. When the session
 //! ends the eyes go and the chase camera draws again.
 //!
-//! The spike's rig: the reference space's floor stands on the road under
-//! the local rider's eyes (the avatar's head), turned with the bike's
-//! heading (never pitched or rolled, comfort); without a rider (unicorn
-//! flight) where the chase camera is, 1.6 m lower. The own head is still
+//! The rig (14I Q8, decided (a): `local-floor`): the reference space's
+//! floor is the road under the bike, so the real floor is the game floor
+//! and the headset's height is the rider's real eye height; the head where
+//! the session started (the anchor; `recentre` takes a new one) is put on
+//! the local rider's seated eye point – the saddle at the height the rider
+//! profile gives (`AvatarRig::eye_point`) – and turned with the bike's
+//! heading (never pitched or rolled, comfort). With `local` only (no
+//! floor) the anchor's height goes to that eye point. Without a rider
+//! (unicorn flight) the chase camera is the eye point. The own head is still
 //! drawn (the eyes are inside it; its back faces are culled) and the HUD
 //! lands in one eye (Bevy UI's default camera) – W2's bike computer and
 //! hidden head replace both. W2 replaces this with the desktop VR
@@ -29,10 +34,10 @@ use bevy::prelude::*;
 use bevy::render::view::Msaa;
 use bevy::transform::TransformSystems;
 use bevy::window::PrimaryWindow;
-use ocw_render::camera::{FollowCamera, RiderHead};
-use ocw_render::riders::Avatar;
+use ocw_render::camera::FollowCamera;
+use ocw_render::riders::{Avatar, AvatarRig};
 
-use crate::xr::{self, FrameStats, XrEvent, XrFrame, XrState};
+use crate::xr::{self, Anchor, FrameStats, Space, XrEvent, XrFrame, XrState};
 
 /// What the page sent since the last update (frames and session events;
 /// wasm has one thread, the lock is never contended).
@@ -85,14 +90,27 @@ pub struct WebXr {
     pub eyes: Vec<(Vec3, Quat, [u32; 4])>,
     /// The page's last reason for not entering.
     pub failed: Option<String>,
-    /// The reference space has no floor (`local`, the head's place at the
-    /// start): its origin is put at a seated rider's eye height.
-    pub no_floor: bool,
+    /// The reference space the browser gave (14I Q8: `local-floor`, else
+    /// `local`).
+    pub space: Space,
+    /// The head where the session started (or was recentred): put on the
+    /// rider's eye point. `None` until the first frame with a pose.
+    pub anchor: Option<Anchor>,
+    /// The local rider's saddle height and seated / standing eye heights
+    /// above the road (m; for `window.ocw.xr()` and the headset run's
+    /// report).
+    pub saddle_m: Option<f32>,
+    pub eye_seated_m: Option<f32>,
+    pub eye_standing_m: Option<f32>,
+    /// The headset's height above the floor in the last frame (m; with
+    /// `local-floor` the rider's real eye height).
+    pub head_m: Option<f32>,
+    /// The eyes' middle above the road under the bike, and its distance
+    /// across the ground from the rider's eye point (m; the test checks
+    /// Q8 with them).
+    pub eye_above_road_m: Option<f32>,
+    pub eye_from_point_m: Option<f32>,
 }
-
-/// Where a `local` space's origin (the head at the start) goes above the
-/// road when the browser has no `local-floor` (m).
-pub const SEATED_EYE_M: f32 = 1.5;
 
 /// An eye camera (index of the view).
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,6 +181,13 @@ fn take_inbox(mut xr: ResMut<WebXr>) {
         (inbox.frame.take(), std::mem::take(&mut inbox.events))
     };
     for (name, detail) in events {
+        // A new anchor at the next frame (the page's Recentre, later a
+        // controller button); the session's state stays.
+        if name == "recentre" {
+            xr.anchor = None;
+            info!("xr: recentred");
+            continue;
+        }
         let Some(event) = XrEvent::parse(&name, &detail) else {
             warn!("xr: unknown page event {name} {detail}");
             continue;
@@ -178,13 +203,15 @@ fn take_inbox(mut xr: ResMut<WebXr>) {
                     xr.placed = 0;
                 }
                 if event == XrEvent::Started {
-                    xr.no_floor = detail == "local";
+                    xr.space = Space::parse(&detail);
+                    xr.anchor = None;
                 }
                 if let XrEvent::Failed(why) = &event {
                     xr.failed = Some(why.clone());
                 }
                 if to == XrState::Ended {
                     xr.frame = None;
+                    xr.anchor = None;
                 }
                 xr.state = to;
             }
@@ -195,6 +222,10 @@ fn take_inbox(mut xr: ResMut<WebXr>) {
         Some(Ok(f)) if xr.state.in_session() => {
             xr.frames += 1;
             xr.stats.push(f.time_ms, f.previous_frame_ms);
+            if xr.anchor.is_none() && !f.views.is_empty() {
+                xr.anchor = Some(Anchor::from_viewer(f.viewer));
+            }
+            xr.head_m = (xr.space == Space::LocalFloor).then_some(f.viewer.position[1]);
             xr.frame = Some(f);
         }
         Some(Ok(_)) => {}
@@ -257,26 +288,44 @@ fn manage_eyes(
     }
 }
 
-/// Where the reference space's floor is in the world, and its heading.
+/// The rig's targets this frame: the rider's seated eye point in the
+/// world, the road's height under the bike and the bike's heading, and the
+/// rider's saddle and eye heights above the road (14I Q8).
+struct RigTarget {
+    eyes: [f32; 3],
+    ground_y: f32,
+    yaw: f32,
+    heights: Option<[f32; 3]>,
+}
+
 #[allow(clippy::type_complexity)] // Bevy system queries
-fn rig_origin(
-    avatars: &Query<(Entity, &Avatar, &GlobalTransform), Without<XrEyeCamera>>,
-    heads: &Query<(&RiderHead, &GlobalTransform), Without<XrEyeCamera>>,
+fn rig_target(
+    avatars: &Query<(&Avatar, &AvatarRig, &GlobalTransform), Without<XrEyeCamera>>,
     follow: &Query<&GlobalTransform, (With<FollowCamera>, Without<XrEyeCamera>)>,
-) -> Option<([f32; 3], f32)> {
-    if let Some((bike, _, g)) = avatars.iter().find(|(_, a, _)| a.is_local) {
+) -> Option<RigTarget> {
+    if let Some((_, rig, g)) = avatars.iter().find(|(a, ..)| a.is_local) {
         let (_, r, t) = g.to_scale_rotation_translation();
+        let seated = rig.eye_point(0.0);
+        let standing = rig.eye_point(1.0);
+        // Turned with the bike only (no pitch from the road: the eye point
+        // in the bike's frame, the bike's heading).
         let yaw = xr::yaw_of(r.to_array());
-        // Under the rider's eyes (the bike's origin is further back).
-        let head = heads
-            .iter()
-            .find(|(h, _)| h.root == bike)
-            .map_or(t, |(_, hg)| hg.translation());
-        return Some((xr::floor_under_eyes(head.to_array(), t.y, yaw), yaw));
+        let eyes = t + Quat::from_array(xr::yaw_quat(yaw)) * seated;
+        return Some(RigTarget {
+            eyes: eyes.to_array(),
+            ground_y: t.y,
+            yaw,
+            heights: Some([rig.saddle_height(), seated.y, standing.y]),
+        });
     }
     let g = follow.single().ok()?;
     let (_, r, t) = g.to_scale_rotation_translation();
-    Some(((t - Vec3::Y * 1.6).to_array(), xr::yaw_of(r.to_array())))
+    Some(RigTarget {
+        eyes: t.to_array(),
+        ground_y: t.y - xr::SEATED_EYE_M,
+        yaw: xr::yaw_of(r.to_array()),
+        heights: None,
+    })
 }
 
 /// Puts each eye where its view is, with its projection, in its part of
@@ -285,8 +334,7 @@ fn rig_origin(
 #[allow(clippy::type_complexity)] // a Bevy system query
 fn place_eyes(
     mut xr: ResMut<WebXr>,
-    avatars: Query<(Entity, &Avatar, &GlobalTransform), Without<XrEyeCamera>>,
-    heads: Query<(&RiderHead, &GlobalTransform), Without<XrEyeCamera>>,
+    avatars: Query<(&Avatar, &AvatarRig, &GlobalTransform), Without<XrEyeCamera>>,
     follow: Query<&GlobalTransform, (With<FollowCamera>, Without<XrEyeCamera>)>,
     window: Query<&Window, With<PrimaryWindow>>,
     mut eyes: Query<(
@@ -300,11 +348,16 @@ fn place_eyes(
     let Some(frame) = xr.frame.clone() else {
         return;
     };
-    let Some((mut origin, yaw)) = rig_origin(&avatars, &heads, &follow) else {
+    let Some(target) = rig_target(&avatars, &follow) else {
         return;
     };
-    if xr.no_floor {
-        origin[1] += SEATED_EYE_M;
+    let anchor = xr.anchor.unwrap_or(Anchor::from_viewer(frame.viewer));
+    let (origin, yaw) =
+        xr::space_origin(xr.space, anchor, target.eyes, target.ground_y, target.yaw);
+    if let Some([saddle, seated, standing]) = target.heights {
+        xr.saddle_m = Some(saddle);
+        xr.eye_seated_m = Some(seated);
+        xr.eye_standing_m = Some(standing);
     }
     let size = window
         .single()
@@ -352,6 +405,10 @@ fn place_eyes(
         placed.push((t.translation, t.rotation, [pos[0], pos[1], px[0], px[1]]));
     }
     if !placed.is_empty() {
+        let mid = placed.iter().map(|(p, ..)| *p).sum::<Vec3>() / placed.len() as f32;
+        xr.eye_above_road_m = Some(mid.y - target.ground_y);
+        xr.eye_from_point_m =
+            Some(Vec2::new(mid.x - target.eyes[0], mid.z - target.eyes[2]).length());
         xr.placed += 1;
         xr.eyes = placed;
     }
@@ -454,6 +511,14 @@ fn publish(xr: Res<WebXr>) {
         "views": xr.frame.as_ref().map_or(0, |f| f.views.len()),
         "framebuffer": xr.frame.as_ref().map(|f| f.framebuffer),
         "viewer": xr.frame.as_ref().map(|f| f.viewer.position),
+        "space": xr.space.name(),
+        "anchored": xr.anchor.is_some(),
+        "saddle_m": r(xr.saddle_m),
+        "eye_seated_m": r(xr.eye_seated_m),
+        "eye_standing_m": r(xr.eye_standing_m),
+        "head_m": r(xr.head_m),
+        "eye_above_road_m": xr.eye_above_road_m,
+        "eye_from_point_m": xr.eye_from_point_m,
         "eyes": eyes,
         "fps": r(s.fps()),
         "gap_ms_p50": r(s.gap_ms(0.5)),
@@ -558,10 +623,15 @@ mod tests {
         let e = eyes(&mut app);
         assert_eq!(e.len(), 2);
         assert!(!follow_active(&mut app));
-        // No rider: the floor 1.6 m below the chase camera; the eyes 1.6 m
-        // above it, 6 cm apart.
+        // No rider: the chase camera is the eye point, the floor
+        // SEATED_EYE_M below it (local-floor); the head 1.6 m above the
+        // floor, the eyes 6 cm apart around the camera's place.
         let (l, r) = (e[0].2.translation(), e[1].2.translation());
-        assert!((l.y - 3.0).abs() < 1e-4, "{l}");
+        assert!((l.y - (3.0 - xr::SEATED_EYE_M + 1.6)).abs() < 1e-4, "{l}");
+        assert!(
+            ((l + r) * 0.5).abs_diff_eq(Vec3::new(5.0, l.y, 9.0), 1e-4),
+            "{l} {r}"
+        );
         assert!(((r - l).length() - 0.06).abs() < 1e-4, "{l} {r}");
         // Side by side in the 1280 × 720 window (the frame's framebuffer
         // is 200 × 100 with two 100 px views).

@@ -13,6 +13,18 @@
 //                          the button's click)
 //   ocwXr.state()          {state, space, frames, copy, error, …} (tests)
 //   ocwXr.readback(w)      the test copy's pixels (copy=fbo, below)
+//   ocwXr.pair(code)       the sensor bridge (14I Q7 (b), 10D.2): the code the
+//                          desktop app shows, typed into the page's panel
+//                          before Enter VR (or ?bridge=CODE in the link)
+//   ocwXr.report(reason)   the beacon (14I W3 / W4): the session's numbers to
+//                          the desktop over the bridge (every 10 s in VR and
+//                          at the end; the desktop keeps them in
+//                          <data dir>/ocw/reports/xr.jsonl)
+//
+// The reference space (14I Q8 (a)): local-floor, so the real floor is the
+// road; `local` when the browser has no floor (the app puts the head at the
+// start at the rider's seated eye point). The controller's squeeze, or the
+// headset's own recentring (the space's reset event), recentres.
 //
 // How the app is stepped: Bevy's loop (winit) draws in the window's
 // requestAnimationFrame, but a session's frames – the only ones whose
@@ -50,7 +62,10 @@
     pending: new Map(), queued: new Map(), nextId: 1,
     t0: 0, lastWork: 0, frames: 0, copy: "", copies: 0, error: "",
     testFbo: null, workMs: [],
+    beacon: {sent: 0, last: "", error: "", timer: null}, pairTimer: null,
   };
+  // How often the beacon reports during a session (ms).
+  const BEACON_MS = 10000;
 
   // The page's requestAnimationFrame, wrapped from the start so that the
   // callback winit is waiting for can be taken over when a session starts.
@@ -129,7 +144,74 @@
       n.hidden = true;
       doc.body.appendChild(n);
     }
-    return {button: b, note: n};
+    return {button: b, note: n, pair: pairPanel()};
+  }
+
+  // The sensor bridge's panel (14I Q7 (b)): pair with the desktop app before
+  // entering VR – in the headset the page cannot be reached.
+  function pairPanel() {
+    let p = doc.getElementById("ocw-xr-pair");
+    if (p) return p;
+    p = doc.createElement("form");
+    p.id = "ocw-xr-pair";
+    p.hidden = true;
+    p.innerHTML =
+      '<label for="ocw-xr-code">Trainer from the desktop app</label>' +
+      '<div class="row"><input id="ocw-xr-code" autocomplete="off" autocapitalize="characters" spellcheck="false"' +
+      ' placeholder="code, e.g. 7K2M-Q9XP-4DA" maxlength="20"><button type="submit">Pair</button></div>' +
+      '<div id="ocw-xr-pair-state">Desktop: Settings → Trainer → Devices → Share with a browser shows the code.</div>';
+    p.onsubmit = (e) => { e.preventDefault(); pair(doc.getElementById("ocw-xr-code").value); };
+    doc.body.appendChild(p);
+    return p;
+  }
+
+  function bridgeInfo() {
+    try { return JSON.parse((st.app && st.app.devices && st.app.devices()) || "null"); } catch (e) { return null; }
+  }
+
+  // The panel's line: the bridge's state and the power that drives the ride.
+  function pairState() {
+    const j = bridgeInfo();
+    const b = j && j.bridge;
+    const line = doc.getElementById("ocw-xr-pair-state");
+    if (!line || !b) return b;
+    if (b.supported === false) {
+      line.textContent = "This browser has no WebTransport: the sensor bridge cannot work here (virtual power instead).";
+      line.className = "error";
+    } else if (b.code) {
+      const w = j.rider_power_w != null ? ` · ${Math.round(j.rider_power_w)} W` : "";
+      line.textContent = `Bridge ${b.code}: ${b.state || "…"}${b.paired ? w : ""}`;
+      line.className = b.paired ? "ok" : "";
+    }
+    return b;
+  }
+
+  function pair(code) {
+    code = String(code || "").trim();
+    if (!code || !st.app) return false;
+    st.app.console("bridge.pair " + code);
+    console.log("ocw-xr: pairing with the desktop app");
+    pairState();
+    return true;
+  }
+
+  // The beacon: what the headset measured, to the desktop over the bridge.
+  function report(reason) {
+    if (!st.app || !st.app.xrReport) return "no app";
+    let xr = null;
+    try { xr = JSON.parse(st.app.xr() || "null"); } catch (e) { xr = null; }
+    const b = bridgeInfo();
+    const data = {
+      reason, page_s: Math.round(performance.now() / 100) / 10,
+      xr, page: state(),
+      bridge: b && b.bridge ? {state: b.bridge.state, rtt_ms: b.bridge.rtt_ms, readings: b.bridge.readings,
+        dropped: b.bridge.dropped} : null,
+      power_w: b ? b.rider_power_w : null, distance_m: b ? b.distance_m : null,
+    };
+    const why = st.app.xrReport(JSON.stringify(data));
+    st.beacon.last = reason;
+    if (why) st.beacon.error = why; else st.beacon.sent++;
+    return why;
   }
 
   function note(text, error) {
@@ -158,6 +240,11 @@
     st.why = why || (ok ? "" : st.why || "No VR headset found by this browser (immersive-vr not supported): riding in the flat view.");
     event("supported", ok ? "true" : "false");
     button.hidden = !ok;
+    // The pairing panel: with a headset (and in the test's emulator).
+    const panel = pairPanel();
+    panel.hidden = !ok;
+    if (!st.pairTimer) st.pairTimer = setInterval(pairState, 1000);
+    pairState();
     note(ok ? "" : st.why, false);
     if (!ok) setTimeout(() => note("", false), 15000);
     console.log(`ocw-xr: immersive-vr ${ok ? "supported" : "not supported"}${ok ? "" : " – " + st.why}`);
@@ -205,6 +292,12 @@
       console.log("ocw-xr: device " + JSON.stringify(st.device));
       session.addEventListener("end", ended);
       session.addEventListener("visibilitychange", () => event("visibility", session.visibilityState));
+      // Recentre (14I Q8): the controller's squeeze, or the headset's own
+      // recentring (the reference space is reset).
+      session.addEventListener("squeeze", () => event("recentre", "squeeze"));
+      if (space.addEventListener) space.addEventListener("reset", () => event("recentre", "reset"));
+      pairPanel().hidden = true;
+      st.beacon.timer = setInterval(() => report("periodic"), BEACON_MS);
       takeOverFrames();
       session.requestAnimationFrame(frame);
       event("started", type);
@@ -229,6 +322,9 @@
   }
 
   function ended() {
+    if (st.beacon.timer) { clearInterval(st.beacon.timer); st.beacon.timer = null; }
+    report("end");
+    pairPanel().hidden = false;
     st.session = null;
     st.layer = null;
     st.space = null;
@@ -365,8 +461,11 @@
       error: st.error, waiting: st.queued.size + st.pending.size,
       framebuffer: st.layer ? [st.layer.framebufferWidth, st.layer.framebufferHeight] : null,
       work_ms_p50: q(0.5), work_ms_p95: q(0.95), device: st.device || null,
+      beacon: {sent: st.beacon.sent, last: st.beacon.last, error: st.beacon.error},
     };
   }
 
-  root.ocwXr = {install, offer, enter, exit, state, readback};
+  function recentre() { event("recentre", "page"); }
+
+  root.ocwXr = {install, offer, enter, exit, state, readback, pair, report, recentre};
 })(window);

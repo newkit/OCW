@@ -501,6 +501,48 @@ on UDP ports 47810–47813, only from the local network; allow them in the
 computer's firewall. `make test-bridge BRIDGE_DEVICES=…` runs it end to
 end (desktop + headless Chromium).
 
+#### VR in the headset's browser (WebXR): the first headset run
+
+The WebXR build (spec 14 Phase 14, 14I) is published next to the preview
+at **https://newkit.github.io/OCW/xr/** (`make web-preview-xr`; locally
+`make web-xr` and `?xr=1`). It is a test build for the Meta Quest
+browser. For the first run (14I W4, about 10 minutes):
+
+1. **The desktop app** on a computer on the same network as the headset,
+   with the trainer connected (the Wahoo KICKR): Settings → Trainer →
+   Devices → *Share with a browser* shows a pairing code like
+   `7K2M-Q9XP-4DA` (allow UDP 47810–47813 in its firewall).
+2. **In the headset**, open the Quest browser at
+   `newkit.github.io/OCW/xr/` and pick *Liechtenstein* on the start
+   page (the world streams while you ride; the first visit downloads the
+   app, later visits use the cache).
+3. **Pair before entering VR:** type the code into the panel *Trainer
+   from the desktop app* and press *Pair*. Its line says *paired with …*
+   and the power; if it says *no WebTransport*, the Quest 1's browser is
+   too old for the bridge – ride with virtual power instead. (A code used
+   on the preview before is remembered.)
+4. **Sit on the bike**, then press *Enter VR*. The floor of the game is
+   your real floor (`local-floor`): your eyes are where your head is, and
+   the bike's saddle stands at the height your rider profile gives
+   (Settings → Riders: body height). The view looks along the bike from
+   where your head was when you pressed *Enter VR*; squeeze a controller's
+   grip (or recentre with the headset's button) to set it again.
+5. **Ride 5 minutes** (autodrive steers), then *Exit VR* with the
+   headset's button.
+
+What is measured and sent back: every 10 seconds and when the session
+ends, the page sends a report to the desktop app over the bridge – fps,
+the frame gap and the page's work per frame (median and 95th
+percentile), the longest gap and the late frames, the headset's
+framebuffer size and scale factor, its frame rates and WebGL multiview
+extensions, the browser's user agent, the floor mode with your real eye
+height and the profile's saddle and eye heights, and the bridge's round
+trip and readings. No pictures, no account, nothing else. The desktop
+keeps them as JSON lines in `~/.local/share/ocw/reports/xr.jsonl`
+(Linux; the data folder on Windows and macOS, see *Where OCW keeps its
+files*) and prints a line per report in its console
+(`bridge: xr report – … fps …`). Without a bridge nothing is sent.
+
 #### Sound and voice in the browser
 
 Browsers start sound only after a click or key press (the autoplay rule).
@@ -685,7 +727,7 @@ or the server and bot builds, where it needs them). Screenshots, logs and JSON s
 | `make deps-browser` | Not a test: downloads the tests' pinned Chromium (above) |
 | `make test-web-build` | Both builds compile for wasm32 (part of `make check`) |
 | `make test-web` | WebGPU: load, ride, the menus by keyboard and a fake gamepad, settings over a reload, the screenshot / video / FIT downloads, Unicorn mode (G, + climbs, the inspection, a pin, the menu row, landing), fps |
-| `make test-web-xr` | The WebXR build (`make web-xr`) in an emulated Quest 1 (the Immersive Web Emulation Runtime, iwer, injected: `scripts/fetch-iwer.sh`): *Enter VR*, both eyes from the session's frames, head tracking, the copy into a framebuffer, visible-blurred, exit to the flat view, the note without a headset; pictures, a sweep video and the emulator's frame times into `test-output/web-xr/` |
+| `make test-web-xr` | The WebXR build (`make web-xr`) in an emulated Quest 1 (the Immersive Web Emulation Runtime, iwer, injected: `scripts/fetch-iwer.sh`): the sensor bridge's pairing panel, *Enter VR*, `local-floor` with the eye height of the real head (seated and standing) at the rider's eye point, the beacon's report queued, both eyes from the session's frames, head tracking, the copy into a framebuffer, visible-blurred, exit to the flat view, the note without a headset; pictures, a sweep video and the emulator's frame times into `test-output/web-xr/` |
 | `make test-web-webgl2` | Chromium without WebGPU: the page falls back to the WebGL 2 build and rides. Then WebGPU High against WebGL 2 Low in the same view, and the Graphics page. Then `test-web-gpu` |
 | `make test-web-gpu` | The page's GPU choice (`ocw-gpu.js`'s rules, pure), then WebGPU failures injected into the real app (a validation error, a refused device, no frame): each ride comes back on WebGL 2 with the note and draws; the remembered failure; `?gpu=webgpu`; a healthy WebGPU ride raises no alarm; Safari on an iPhone 15 takes WebGL 2 |
 | `make test-web-webkit` | WebKit, Safari's engine (Playwright's build, `make deps-webkit`: a venv in `~/.cache/ocw/playwright-venv`, no sudo): an iPhone 15 (portrait and landscape) and Safari on macOS, with Safari 26's `navigator.gpu` faked in – the start page's WebGL 2 box ticked, the ride on WebGL 2 rides and draws; on the iPhone the manifest and its icons, the safe-area insets passed in (`?safe-insets=`), taps on each half steer and taps behind the notch or on the home bar do not, a held side, no full screen (the Add to Home Screen tip), the wake lock missing (tolerated) and present (asked again), no page errors |

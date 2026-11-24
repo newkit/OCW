@@ -317,6 +317,19 @@ async fn a_wrong_code_does_not_pair() {
         ToBrowser::Welcome { .. }
     ));
     let _ = host_event(&h, |e| matches!(e, HostEvent::Paired { .. })).await;
+    // 14I W4: the headset page's report reaches the desktop as it was sent.
+    let data = serde_json::json!({"fps": 71.9, "space": "local-floor"});
+    b.send(&ToHost::Report {
+        kind: "xr".into(),
+        data: data.clone(),
+    })
+    .await;
+    let HostEvent::Report { kind, data: got } =
+        host_event(&h, |e| matches!(e, HostEvent::Report { .. })).await
+    else {
+        unreachable!()
+    };
+    assert_eq!((kind.as_str(), got), ("xr", data));
     b.send(&ToHost::Bye).await;
     let HostEvent::Unpaired { reason } =
         host_event(&h, |e| matches!(e, HostEvent::Unpaired { .. })).await

@@ -265,6 +265,7 @@ fn poll_bridge(
                 devices.command_all(command);
                 host.applied(id);
             }
+            HostEvent::Report { kind, data } => lines.push(keep_report(&kind, &data)),
         }
     }
     if browser != bridge.browser {
@@ -381,8 +382,74 @@ fn show_qr(
     overlay.entity = Some(e);
 }
 
+/// The browser's reports (spec 14 Phase 14, 14I W4: the headset run's
+/// frame times and device facts): `<data dir>/ocw/reports/<kind>.jsonl`.
+pub fn reports_dir() -> Option<std::path::PathBuf> {
+    crate::ride::data_dir().map(|d| d.join("reports"))
+}
+
+/// One kept report: a JSON line with when it came (Unix ms) and what.
+pub fn report_line(kind: &str, data: &serde_json::Value, unix_ms: u64) -> String {
+    serde_json::json!({"received_unix_ms": unix_ms, "kind": kind, "data": data}).to_string()
+}
+
+/// A report's file name: the kind's letters only.
+pub fn report_file(kind: &str) -> String {
+    let k: String = kind
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .take(32)
+        .collect();
+    format!("{}.jsonl", if k.is_empty() { "report" } else { &k })
+}
+
+/// Appends a report to its file; the console line says where (and the
+/// headset run's main numbers).
+fn keep_report(kind: &str, data: &serde_json::Value) -> String {
+    use std::io::Write as _;
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64);
+    let Some(dir) = reports_dir() else {
+        return format!("bridge: a {kind} report (no data directory to keep it)");
+    };
+    let path = dir.join(report_file(kind));
+    let wrote = std::fs::create_dir_all(&dir).and_then(|()| {
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)?;
+        writeln!(f, "{}", report_line(kind, data, ms))
+    });
+    let num = |k: &str| data.pointer(k).and_then(serde_json::Value::as_f64);
+    let summary = match (num("/xr/fps"), num("/xr/work_ms_p50")) {
+        (Some(fps), Some(w)) => format!(" – {fps:.1} fps, work p50 {w:.1} ms"),
+        _ => String::new(),
+    };
+    match wrote {
+        Ok(()) => format!("bridge: {kind} report{summary} → {}", path.display()),
+        Err(e) => format!("bridge: {kind} report{summary} not kept: {e}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    /// 14I W4: a report is one JSON line with its time, kind and data; the
+    /// file name keeps only the kind's letters.
+    #[test]
+    fn reports_are_kept_as_json_lines() {
+        let data = serde_json::json!({"xr": {"fps": 71.9}});
+        let line = super::report_line("xr", &data, 1_790_000_000_000);
+        let back: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(back["kind"], "xr");
+        assert_eq!(back["data"], data);
+        assert_eq!(back["received_unix_ms"], 1_790_000_000_000u64);
+        assert!(!line.contains('\n'));
+        assert_eq!(super::report_file("xr"), "xr.jsonl");
+        assert_eq!(super::report_file("../../etc"), "etc.jsonl");
+        assert_eq!(super::report_file("/"), "report.jsonl");
+    }
+
     use super::*;
 
     #[test]

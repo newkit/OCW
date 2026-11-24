@@ -313,6 +313,98 @@ class PreviewRideSizes(unittest.TestCase):
             self.assertEqual(site.app_bytes(os.path.join(d, "none")), 0)
 
 
+class PreviewXrSite(unittest.TestCase):
+    """14I Q6 (a): the WebXR build is published under xr/ next to the normal
+    preview, which stays byte for byte as it was."""
+
+    def build(self, d, names):
+        os.makedirs(d)
+        for n in names:
+            Path(d, n).write_bytes(os.urandom(3000) if n.endswith(".wasm") else n.encode())
+
+    def release(self, d):
+        os.makedirs(d)
+        pkg, man = b"OCWPKG02" + os.urandom(100), json.dumps({"signed": {"name": "Liechtenstein"}}).encode()
+        Path(d, "li.ocwpkg").write_bytes(pkg)
+        Path(d, "li.manifest.json").write_bytes(man)
+        Path(d, "preview-worlds.json").write_text(json.dumps({"worlds": [{
+            "id": "liechtenstein", "name": "Liechtenstein", "version": 4, "bytes": len(pkg),
+            "routes": [{"name": "Vaduz loop", "km": 20.0, "slug": "vaduz-loop"}],
+            "files": {"worlds/liechtenstein/4/liechtenstein.ocwpkg": "li.ocwpkg",
+                      "worlds/liechtenstein/4/manifest.json": "li.manifest.json"},
+            "sha256": {"li.ocwpkg": hashlib.sha256(pkg).hexdigest(),
+                       "li.manifest.json": hashlib.sha256(man).hexdigest()}}]}))
+
+    def run_site(self, root, *extra):
+        out = os.path.join(root, "site" + str(len(extra)))
+        r = subprocess.run([sys.executable, "-I", str(HERE / "web-preview-site.py"),
+                            "--build", os.path.join(root, "web"), "--worlds", os.path.join(root, "rel"),
+                            "--out", out, "--build-id", "abc123", *extra],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return out, r.stdout
+
+    def files(self, out):
+        return {str(p.relative_to(out)): p.read_bytes() for p in Path(out).rglob("*") if p.is_file()}
+
+    def test_xr_next_to_the_unchanged_preview(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.build(os.path.join(root, "web"), ["index.html", "ocw_web.js", "ocw_web_bg.wasm",
+                                                   "ocw_web_webgl2.js", "ocw_web_webgl2_bg.wasm", "ocw-xr.js"])
+            self.build(os.path.join(root, "xr"), ["index.html", "ocw_web_webxr.js", "ocw_web_webxr_bg.wasm",
+                                                  "ocw-xr.js", "ocw-gpu.js", "config.json"])
+            self.release(os.path.join(root, "rel"))
+            plain, _ = self.run_site(root)
+            with_xr, said = self.run_site(root, "--xr-build", os.path.join(root, "xr"))
+            self.assertIn("WebXR at xr/", said)
+            a, b = self.files(plain), self.files(with_xr)
+            # The normal preview: the same files with the same bytes (site.txt
+            # lists the xr/ files too).
+            for k, v in a.items():
+                if k != "site.txt":
+                    self.assertEqual(b[k], v, k)
+            xr = {k for k in b if k.startswith("xr/")}
+            self.assertEqual(set(b) - set(a), xr)
+            self.assertIn("xr/ocw_web_webxr_bg.wasm", xr)
+            self.assertIn("xr/ocw-xr.js", xr)
+            self.assertNotIn("xr/ocw_web_bg.wasm", xr)
+            self.assertFalse(any(k.startswith("xr/worlds") for k in xr), "the worlds are shared")
+            config = json.loads(b["xr/config.json"])
+            self.assertEqual(config["worlds"], "../worlds/")
+            self.assertEqual(config["channel"], "preview")
+            self.assertTrue(config["start"])
+            self.assertTrue(all(r["query"].endswith("&xr=1") for r in config["start"]))
+            self.assertIn("world=liechtenstein&route=vaduz-loop&xr=1", [r["query"] for r in config["start"]])
+            self.assertIn(b"../credits.html", b["xr/credits.html"])
+            self.assertIn("xr/ocw_web_webxr_bg.wasm", b["site.txt"].decode())
+            # The /xr/ page's worlds resolve to the site's (as the browser
+            # does it).
+            from urllib.parse import urljoin
+            self.assertEqual(urljoin("https://newkit.github.io/OCW/xr/", config["worlds"]),
+                             "https://newkit.github.io/OCW/worlds/")
+
+    def test_no_xr_module_is_skipped(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.build(os.path.join(root, "web"), ["index.html", "ocw_web_bg.wasm", "ocw_web_webgl2_bg.wasm"])
+            self.build(os.path.join(root, "xr"), ["index.html"])
+            self.release(os.path.join(root, "rel"))
+            out, said = self.run_site(root, "--xr-build", os.path.join(root, "xr"))
+            self.assertIn("no /xr/", said)
+            self.assertFalse(os.path.exists(os.path.join(out, "xr")))
+
+    def test_the_size_limit_counts_xr(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.build(os.path.join(root, "web"), ["index.html", "ocw_web_bg.wasm", "ocw_web_webgl2_bg.wasm"])
+            self.build(os.path.join(root, "xr"), ["index.html", "ocw_web_webxr_bg.wasm"])
+            self.release(os.path.join(root, "rel"))
+            r = subprocess.run([sys.executable, "-I", str(HERE / "web-preview-site.py"),
+                                "--build", os.path.join(root, "web"), "--worlds", os.path.join(root, "rel"),
+                                "--out", os.path.join(root, "o"), "--max-mb", "0.0105",
+                                "--xr-build", os.path.join(root, "xr")], capture_output=True, text=True)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("GitHub Pages: 1 GB", r.stderr)
+
+
 class PreviewWorldsIndex(unittest.TestCase):
     """The preview's release index finds worlds whose ids have several levels
     (europe/spain/tenerife; regression of 2026-11-15) as well as one level."""
