@@ -26,17 +26,24 @@ use std::sync::{Arc, RwLock};
 use crate::RoadSurface;
 use crate::graph::RoadClass;
 use crate::package::{RoadStrip, Tile, TileKey, WorldPackage};
-use crate::road_dress::patch_at;
-use crate::road_wear::{self, ALLIGATOR_CELL_M, POTHOLE_CELL_M, TRANSVERSE_CELL_M};
+use crate::road_dress::{patch_at, road_seed};
+use crate::road_wear::{
+    self, ALLIGATOR_CELL_M, BLOCK_CELL_M, HoleSpec, POTHOLE_CELL_M, TRANSVERSE_CELL_M,
+};
 
 /// Strips of this wear grade and worse are felt; grades 1 – 2 (excellent,
 /// good) are not.
 pub const FEEL_MIN_GRADE: u8 = 3;
 /// Cell size of a tile's segment index (m).
 const CELL_M: f64 = 16.0;
-/// A wheel is in a pothole within this share of its drawn radius (the
-/// outline is ragged, the rim breaks off).
-pub const HOLE_SHARE: f32 = 0.8;
+/// A wheel is in a pothole inside this share of its drawn outline
+/// ([`road_wear::Pothole::shape_q`]; the rim breaks off).
+pub const HOLE_Q: f32 = 0.85;
+/// How far along a pothole cell's holes reach at most (m; the cells'
+/// margin, `road_wear`'s tests).
+const HOLE_REACH_M: f32 = 1.4;
+/// A tick's way is sampled this finely against a hole's outline (m).
+const HOLE_STEP_M: f32 = 0.04;
 /// Tiles this close to a point are searched too (a strip's segment may
 /// reach over the tile border).
 const BORDER_M: f64 = 8.0;
@@ -45,14 +52,18 @@ const BORDER_M: f64 = 8.0;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FeatureKind {
     /// A pothole (on gravel and dirt a hollow, on paving a sunken spot),
-    /// with its radius (m).
-    Pothole { r: f32 },
+    /// or one of a cluster's holes, with its radius and depth (m). Holes
+    /// filled with tarmac are smooth.
+    Pothole { r: f32, depth: f32 },
     /// A pothole that bites into the road edge.
-    EdgeBreak { r: f32 },
-    /// An open transverse crack (sealed ones are smooth).
-    Crack,
+    EdgeBreak { r: f32, depth: f32 },
+    /// An open transverse crack (sealed ones are smooth) of its half
+    /// width (m).
+    Crack { width: f32 },
     /// Into an alligator (fatigue cracking) area.
     Alligator,
+    /// Into a block-cracked area.
+    Block,
 }
 
 /// A feature met, with an id that is the same every time the same feature
@@ -86,14 +97,17 @@ struct FeelStrip {
     grade: u8,
     surface: RoadSurface,
     track: bool,
+    /// The road's damage seed (`road_dress::road_seed`).
+    seed: u32,
     /// Cracks, sealing, alligator areas and patches on this surface.
     cracks: bool,
     transverse: f32,
     alligator: f32,
-    pothole: f32,
+    block: f32,
     patch: f32,
     sealed: f32,
-    zone: f32,
+    branch: f32,
+    holes: HoleSpec,
 }
 
 impl FeelStrip {
@@ -112,38 +126,45 @@ impl FeelStrip {
             a += ((q[0] - p[0]).powi(2) + (q[1] - p[1]).powi(2) + (q[2] - p[2]).powi(2)).sqrt();
             along.push(a);
         }
+        let track = s.class == RoadClass::Track;
+        let zone = road_wear::pothole_zone(d.pothole_zone_m, road_wear::main_road(s.class));
         Some(Self {
             points: s.points.iter().map(|p| [p[0], p[2]]).collect(),
             along,
             half: s.width_m / 2.0,
             grade,
             surface: s.surface,
-            track: s.class == RoadClass::Track,
+            track,
+            seed: road_seed(s.dress.edge_m),
             cracks,
             transverse: d.transverse,
             alligator: d.alligator,
-            pothole: d.pothole * factor,
+            block: d.block,
             patch: d.patch,
             sealed: d.sealed,
-            zone: road_wear::pothole_zone(d.pothole_zone_m, road_wear::main_road(s.class)),
+            branch: d.branch,
+            holes: HoleSpec::of(&d, factor, zone, track, road_wear::fillable(s.surface)),
         })
     }
 
-    /// The frame of `p` on segment `i` (t clamped for v, u along the
-    /// segment's normal) and the distance to the segment.
+    /// The frame of `p` on segment `i` (u along the segment's normal, v
+    /// along it, also just beyond its ends) and the distance to the segment.
     fn frame(&self, i: usize, p: [f64; 2]) -> (f32, f32, f64) {
         let (a, b) = (self.points[i], self.points[i + 1]);
         let (ax, az) = (f64::from(a[0]), f64::from(a[1]));
         let (dx, dz) = (f64::from(b[0]) - ax, f64::from(b[1]) - az);
         let len2 = (dx * dx + dz * dz).max(1e-12);
         let (px, pz) = (p[0] - ax, p[1] - az);
-        let t = ((px * dx + pz * dz) / len2).clamp(0.0, 1.0);
+        let raw = (px * dx + pz * dz) / len2;
+        let t = raw.clamp(0.0, 1.0);
         let len = len2.sqrt();
         // Right of the direction: (-dz, dx), as the road mesh.
         let u = (px * -dz + pz * dx) / len;
         let (qx, qz) = (t * dx - px, t * dz - pz);
         let dist = (qx * qx + qz * qz).sqrt();
-        let v = self.along[i] + (self.along[i + 1] - self.along[i]) * t as f32;
+        // Along from the unclamped position: a tick's start just before the
+        // segment (a joint) keeps its own place, not the segment's start.
+        let v = self.along[i] + (self.along[i + 1] - self.along[i]) * raw as f32;
         (u as f32, v, dist)
     }
 }
@@ -373,27 +394,47 @@ impl RoadFeelMap {
             id,
         };
         let (lo, hi) = (v0.min(v1), v0.max(v1));
-        // Potholes and edge breaks: the wheel's way passes within the
-        // hole's radius and did not start in it.
-        if s.pothole > 0.0 {
-            let k0 = ((lo - road_wear::MAX_POTHOLE_R) / POTHOLE_CELL_M).floor() as i32;
-            let k1 = ((hi + road_wear::MAX_POTHOLE_R) / POTHOLE_CELL_M).floor() as i32;
+        // Potholes, a cluster's holes and edge breaks: the wheel's way
+        // enters the drawn outline (its noise-warped ellipse, inside
+        // HOLE_Q) and did not start in it. Filled holes are smooth.
+        if s.holes.chance > 0.0 {
+            let step = ((u1 - u0).powi(2) + (v1 - v0).powi(2)).sqrt();
+            let n = ((step / HOLE_STEP_M).ceil() as usize).clamp(1, 64);
+            let k0 = ((lo - HOLE_REACH_M) / POTHOLE_CELL_M).floor() as i32;
+            let k1 = ((hi + HOLE_REACH_M) / POTHOLE_CELL_M).floor() as i32;
             for k in k0..=k1 {
                 for side in 0..2 {
-                    let Some(p) =
-                        road_wear::pothole_in_cell(k, side, s.half, s.pothole, s.zone, s.track)
+                    let Some(p) = road_wear::pothole_in_cell(k, side, s.seed, s.half, &s.holes)
                     else {
                         continue;
                     };
-                    let reach = p.r * HOLE_SHARE;
-                    let start = ((u0 - p.u).powi(2) + (v0 - p.v).powi(2)).sqrt();
-                    if start > reach && seg_dist([u0, v0], [u1, v1], [p.u, p.v]) <= reach {
-                        let kind = if p.edge {
-                            FeatureKind::EdgeBreak { r: p.r }
+                    if p.filled {
+                        continue;
+                    }
+                    for j in 0..p.shapes() {
+                        let (c, reach) = p.shape_reach(j, HOLE_Q);
+                        if seg_dist([u0, v0], [u1, v1], c) > reach || p.shape_q(j, u0, v0) < HOLE_Q
+                        {
+                            continue;
+                        }
+                        let hit = (1..=n).any(|i| {
+                            let t = i as f32 / n as f32;
+                            p.shape_q(j, u0 + (u1 - u0) * t, v0 + (v1 - v0) * t) < HOLE_Q
+                        });
+                        if !hit {
+                            continue;
+                        }
+                        let r = if j == 0 {
+                            p.r
                         } else {
-                            FeatureKind::Pothole { r: p.r }
+                            p.lobes[j - 1].map_or(p.r, |l| l.r)
                         };
-                        out.push(feature(kind, id(1, k, side)));
+                        let kind = if p.edge {
+                            FeatureKind::EdgeBreak { r, depth: p.depth }
+                        } else {
+                            FeatureKind::Pothole { r, depth: p.depth }
+                        };
+                        out.push(feature(kind, id(1, k, side + 2 * j as i32)));
                     }
                 }
             }
@@ -407,18 +448,25 @@ impl RoadFeelMap {
             let k0 = (lo / TRANSVERSE_CELL_M).floor() as i32;
             let k1 = (hi / TRANSVERSE_CELL_M).floor() as i32;
             for k in k0..=k1 {
-                let Some(c) = road_wear::transverse_in_cell(k, s.half, s.transverse, s.sealed)
-                else {
+                let Some(c) = road_wear::transverse_in_cell(
+                    k,
+                    s.seed,
+                    s.half,
+                    s.transverse,
+                    s.sealed,
+                    s.branch,
+                ) else {
                     continue;
                 };
-                if c.sealed || u1.abs() > c.reach {
+                if c.sealed || u1 < c.span.0 || u1 > c.span.1 {
                     continue;
                 }
                 let at0 = road_wear::transverse_v_at(&c, u0);
                 let at1 = road_wear::transverse_v_at(&c, u1);
                 let crossed = (v0 - at0).signum() != (v1 - at1).signum() && v0 != at0;
-                if crossed && !patch_at(s.half, u1, at1, s.patch) {
-                    out.push(feature(FeatureKind::Crack, id(2, k, 0)));
+                if crossed && !patch_at(s.half, u1, at1, s.patch, s.seed) {
+                    let kind = FeatureKind::Crack { width: c.width };
+                    out.push(feature(kind, id(2, k, 0)));
                 }
             }
         }
@@ -429,19 +477,32 @@ impl RoadFeelMap {
             for k in k0..=k1 {
                 for side in 0..2 {
                     let Some(a) =
-                        road_wear::alligator_in_cell(k, side, s.half, s.alligator, s.track)
+                        road_wear::alligator_in_cell(k, side, s.seed, s.half, s.alligator, s.track)
                     else {
                         continue;
                     };
-                    let inside = |u: f32, v: f32| {
-                        let x = (u - a.u) / a.half_w;
-                        let h = 0.5 * (a.v.1 - a.v.0);
-                        let y = (v - a.v.0 - h) / h;
-                        x * x + y * y < 0.85
-                    };
-                    if inside(u1, v1) && !inside(u0, v0) && !patch_at(s.half, u1, v1, s.patch) {
+                    let inside = |u: f32, v: f32| a.e(u, v) < road_wear::ALLIGATOR_E;
+                    if inside(u1, v1)
+                        && !inside(u0, v0)
+                        && !patch_at(s.half, u1, v1, s.patch, s.seed)
+                    {
                         out.push(feature(FeatureKind::Alligator, id(3, k, side)));
                     }
+                }
+            }
+        }
+        // Into a block-cracked area (its noise-warped outline, as drawn).
+        if s.block > 0.0 {
+            let k0 = (lo / BLOCK_CELL_M).floor() as i32;
+            let k1 = (hi / BLOCK_CELL_M).floor() as i32;
+            for k in k0..=k1 {
+                let Some(b) = road_wear::block_in_cell(k, s.seed, s.half, s.block, s.holes.t)
+                else {
+                    continue;
+                };
+                let inside = |u: f32, v: f32| b.e(u, v) < road_wear::BLOCK_E;
+                if inside(u1, v1) && !inside(u0, v0) && !patch_at(s.half, u1, v1, s.patch, s.seed) {
+                    out.push(feature(FeatureKind::Block, id(4, k, 0)));
                 }
             }
         }
@@ -486,6 +547,7 @@ pub mod fixture {
             surface: RoadSurface::Asphalt,
             dress: RoadDress {
                 start_m: 0.0,
+                edge_m: len,
                 ..RoadDress::of_class(class, width)
             },
             lit: Default::default(),
@@ -598,24 +660,39 @@ mod tests {
         );
         let map = map_of(vec![s]);
         let d = road_wear::wear_density(6, 1.0);
-        // Every pothole met is one road_wear places, and the wheel's line
-        // passes within its radius.
+        let seed = road_seed(900.0);
+        let spec = HoleSpec::of(&d, 1.0, d.pothole_zone_m, false, true);
+        // Every pothole met is one road_wear places (an open one), and the
+        // wheel's line runs through its drawn outline.
         let mut holes = 0;
         for u in [-2.6f32, -1.8, -0.9, 0.9, 1.8, 2.6] {
             for f in ride(&map, f64::from(u)) {
-                if let FeatureKind::Pothole { r } | FeatureKind::EdgeBreak { r } = f.kind {
+                if let FeatureKind::Pothole { r, depth } | FeatureKind::EdgeBreak { r, depth } =
+                    f.kind
+                {
                     holes += 1;
                     let found = (-10..140).any(|k| {
                         (0..2).any(|side| {
-                            road_wear::pothole_in_cell(
-                                k,
-                                side,
-                                half,
-                                d.pothole,
-                                d.pothole_zone_m,
-                                false,
+                            road_wear::pothole_in_cell(k, side, seed, half, &spec).is_some_and(
+                                |p| {
+                                    !p.filled
+                                        && p.depth == depth
+                                        && (0..p.shapes()).any(|j| {
+                                            let (c, reach) = p.shape_reach(j, HOLE_Q);
+                                            let rj = if j == 0 {
+                                                p.r
+                                            } else {
+                                                p.lobes[j - 1].unwrap().r
+                                            };
+                                            rj == r
+                                                && (c[0] - u).abs() <= reach
+                                                && (0..2000).any(|i| {
+                                                    let v = c[1] - reach + i as f32 * 0.001;
+                                                    p.shape_q(j, u, v) < HOLE_Q
+                                                })
+                                        })
+                                },
                             )
-                            .is_some_and(|p| p.r == r && (p.u - u).abs() <= p.r)
                         })
                     });
                     assert!(found, "{f:?} at {u}");
@@ -627,15 +704,111 @@ mod tests {
         // the line.
         let cracks = ride(&map, 0.5)
             .iter()
-            .filter(|f| f.kind == FeatureKind::Crack)
+            .filter(|f| matches!(f.kind, FeatureKind::Crack { .. }))
             .count();
         let expect = (0..82)
-            .filter_map(|k| road_wear::transverse_in_cell(k, half, d.transverse, d.sealed))
-            .filter(|c| !c.sealed && c.reach >= 0.5)
+            .filter_map(|k| {
+                road_wear::transverse_in_cell(k, seed, half, d.transverse, d.sealed, d.branch)
+            })
+            .filter(|c| !c.sealed && c.span.0 <= 0.5 && c.span.1 >= 0.5)
             .count();
         assert!(cracks > 0 && cracks <= expect, "{cracks} of {expect}");
         // The same feature has the same id on every ride.
         assert_eq!(ride(&map, 1.8), ride(&map, 1.8));
+    }
+
+    #[test]
+    fn the_feel_follows_the_drawn_outlines_and_depths() {
+        // A horrible street: every open hole is felt where a line through
+        // its outline runs, not beside it; filled holes are not felt.
+        let half = 3.0;
+        let map = map_of(vec![strip(
+            RoadClass::Residential,
+            Smoothness::Horrible,
+            6.0,
+            900.0,
+        )]);
+        let d = road_wear::wear_density(7, 1.0);
+        let seed = road_seed(900.0);
+        let spec = HoleSpec::of(&d, 1.0, d.pothole_zone_m, false, true);
+        let line = |u: f32, v0: f32, v1: f32| {
+            let mut out = Vec::new();
+            let mut v = v0;
+            while v < v1 {
+                out.extend(map.crossed(
+                    [10.0 + f64::from(v), 500.0 + f64::from(u)],
+                    [10.0 + f64::from(v) + 0.25, 500.0 + f64::from(u)],
+                ));
+                v += 0.25;
+            }
+            out
+        };
+        let (mut open, mut filled, mut depths) = (0, 0, Vec::new());
+        for k in 1..120 {
+            for side in 0..2 {
+                let Some(p) = road_wear::pothole_in_cell(k, side, seed, half, &spec) else {
+                    continue;
+                };
+                if p.u.abs() > half - 0.05 {
+                    continue;
+                }
+                let met = |f: &Feature| match f.kind {
+                    FeatureKind::Pothole { depth, .. } | FeatureKind::EdgeBreak { depth, .. } => {
+                        depth == p.depth
+                    }
+                    _ => false,
+                };
+                let through = line(p.u, p.v - 2.0, p.v + 2.0);
+                if p.filled {
+                    filled += 1;
+                    assert!(!through.iter().any(met), "a filled hole felt: {p:?}");
+                    continue;
+                }
+                open += 1;
+                if p.shape_q(0, p.u, p.v) < HOLE_Q {
+                    assert!(through.iter().any(met), "{p:?}");
+                    depths.push(p.depth);
+                }
+                // Beside the drawn outline (and its lobes): nothing of it.
+                let (_, reach) = p.shape_reach(0, HOLE_Q);
+                let lobes = p.lobes.iter().flatten().map(|l| l.u.abs() + l.r * 1.5);
+                let far = (p.u.abs() + reach + 0.05).max(lobes.fold(0.0, f32::max) + 0.05);
+                if far < half {
+                    let beside = line(far * p.u.signum(), p.v - 2.0, p.v + 2.0);
+                    assert!(!beside.iter().any(met), "{p:?} at {far}");
+                }
+            }
+        }
+        assert!(open > 20 && filled > 3, "{open} {filled}");
+        // The depths met vary from shallow to deep.
+        let (lo, hi) = depths
+            .iter()
+            .fold((1.0f32, 0.0f32), |a, &x| (a.0.min(x), a.1.max(x)));
+        assert!(lo < 0.04 && hi > 0.06, "{lo} {hi}");
+        // Block-cracked areas are entered on a horrible road.
+        let blocks = [-1.5f64, 1.5]
+            .iter()
+            .flat_map(|&u| ride(&map, u))
+            .filter(|f| f.kind == FeatureKind::Block)
+            .count();
+        assert!(blocks > 0);
+    }
+
+    #[test]
+    fn two_roads_have_their_damage_in_different_places() {
+        let feel = |len: f32| {
+            let mut s = strip(RoadClass::Residential, Smoothness::VeryBad, 6.0, 900.0);
+            s.dress.edge_m = len;
+            let map = map_of(vec![s]);
+            ride(&map, -1.8)
+                .iter()
+                .map(|f| (f.id, format!("{:?}", f.kind)))
+                .collect::<Vec<_>>()
+        };
+        let (a, b) = (feel(900.0), feel(1234.5));
+        assert!(!a.is_empty() && !b.is_empty());
+        let kinds = |v: &[(u64, String)]| v.iter().map(|x| x.1.clone()).collect::<Vec<_>>();
+        assert_ne!(kinds(&a), kinds(&b));
     }
 
     #[test]

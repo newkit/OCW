@@ -2,8 +2,10 @@
 //! (spec Phase 8 Q12 (c), v5.35): a short **resistance kick** on the
 //! trainer in SIM mode ([`crate::trainer::TrainerControl`]), a small
 //! **camera shake** (off with `camera.shake off`, reduced motion and the
-//! kiosk's show mode) and a **sound** (`ocw_audio::cues::Cue::Pothole`,
-//! `Cue::Crack`).
+//! kiosk's show mode) and a **sound** (`ocw_audio::cues::Cue::Pothole`
+//! for a deep or large hole, `Cue::Dip` for a shallow small one,
+//! `Cue::Crack`), all by the bump's strength – the hole's size and depth,
+//! the crack's width.
 //!
 //! The bumps come from the prediction: the same pure road data and the
 //! same function (`ocw_sim::road_feel::crossed`) the game server uses for
@@ -25,11 +27,14 @@ pub const KICK_CRR_PER_STRENGTH: f64 = 4.0;
 /// kick reaches it within that).
 pub const KICK_S: f64 = 0.6;
 /// The camera shake's strength per bump strength (a crash shakes with 1):
-/// the largest pothole 0.28, an open crack 0.04.
+/// the largest, deepest pothole 0.3, an open crack 0.03 – 0.05.
 pub const SHAKE_PER_STRENGTH: f64 = 0.35;
 /// A feature met again within this many prediction ticks (3 s) is not
 /// presented again.
 pub const REPEAT_TICKS: u64 = 150;
+
+/// A pothole bump below this strength sounds as a shallow dip.
+pub const DIP_BELOW: f64 = 0.5;
 
 /// A bump being presented.
 #[derive(Debug, Clone)]
@@ -57,8 +62,11 @@ impl Seen {
     /// The sound of the bump.
     pub fn cue(&self) -> ocw_audio::cues::Cue {
         match self.bump.kind {
+            BumpKind::Pothole | BumpKind::EdgeBreak if self.bump.strength < DIP_BELOW => {
+                ocw_audio::cues::Cue::Dip
+            }
             BumpKind::Pothole | BumpKind::EdgeBreak => ocw_audio::cues::Cue::Pothole,
-            BumpKind::Crack | BumpKind::Alligator => ocw_audio::cues::Cue::Crack,
+            BumpKind::Crack | BumpKind::Alligator | BumpKind::Block => ocw_audio::cues::Cue::Crack,
         }
     }
 }
@@ -147,6 +155,15 @@ mod tests {
         assert_eq!(
             seen(BumpKind::EdgeBreak, 0.5).cue(),
             ocw_audio::cues::Cue::Pothole
+        );
+        // A shallow small hole: a dip; block cracking ticks like a crack.
+        assert_eq!(
+            seen(BumpKind::Pothole, 0.32).cue(),
+            ocw_audio::cues::Cue::Dip
+        );
+        assert_eq!(
+            seen(BumpKind::Block, 0.16).cue(),
+            ocw_audio::cues::Cue::Crack
         );
         assert_eq!(crack.cue(), ocw_audio::cues::Cue::Crack);
         assert_eq!(

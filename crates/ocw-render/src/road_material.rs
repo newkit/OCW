@@ -78,6 +78,13 @@ pub struct RoadLook {
     /// Per wear grade: x loose stone chance per 10 cm cell, y rut depth of
     /// unpaved roads.
     pub loose: [Vec4; 8],
+    /// Per wear grade (`road_wear::wear_density`): x block-cracked area
+    /// chance, y edge crack share, z branched crack share, w largest
+    /// pothole radius (m).
+    pub cracks: [Vec4; 8],
+    /// Per wear grade: x filled pothole share, y clustered share, z the
+    /// grade as 0 … 1 (depth, block size).
+    pub holes: [Vec4; 8],
     /// The quality preset's damage ([`damage_detail`]): x 1 = alligator
     /// crack pattern, y damage drawn up to (m), z the `road.damage` override
     /// ([`RoadDamageOverride::code`]).
@@ -97,12 +104,15 @@ pub struct RoadLook {
 /// Phase 8 Q12, `ocw_world::road_feel`: potholes and edge breaks,
 /// transverse cracks, alligator areas) are drawn in full by every preset,
 /// so every bump has its drawn cause; the preset thins only the others
-/// (longitudinal cracks, patches, loose stones).
+/// (longitudinal cracks, loose stones); the repaired patches and the
+/// block-cracked areas, which decide what is felt too, are drawn in full.
 pub fn damage_tables(share: f32) -> DamageTables {
     let mut t = DamageTables {
         damage: [Vec4::ZERO; 8],
         repair: [Vec4::ZERO; 8],
         loose: [Vec4::ZERO; 8],
+        cracks: [Vec4::ZERO; 8],
+        holes: [Vec4::ZERO; 8],
     };
     for g in 0..=ocw_world::road_wear::MAX_GRADE {
         let d = ocw_world::road_wear::wear_density(g, share);
@@ -114,9 +124,11 @@ pub fn damage_tables(share: f32) -> DamageTables {
             felt.alligator,
             felt.pothole,
         );
-        t.repair[i] = Vec4::new(d.patch, d.sealed, d.pothole_zone_m, d.tracks);
+        t.repair[i] = Vec4::new(felt.patch, d.sealed, d.pothole_zone_m, d.tracks);
         if g > 0 {
             t.loose[i] = Vec4::new(d.stones, d.ruts, 0.0, 0.0);
+            t.cracks[i] = Vec4::new(felt.block, d.edge_cracks, d.branch, d.pothole_r_max);
+            t.holes[i] = Vec4::new(d.filled, d.cluster, d.t, 0.0);
         }
     }
     t
@@ -128,6 +140,8 @@ pub struct DamageTables {
     pub damage: [Vec4; 8],
     pub repair: [Vec4; 8],
     pub loose: [Vec4; 8],
+    pub cracks: [Vec4; 8],
+    pub holes: [Vec4; 8],
 }
 
 impl DamageTables {
@@ -136,6 +150,8 @@ impl DamageTables {
             damage: l.damage,
             repair: l.repair,
             loose: l.loose,
+            cracks: l.cracks,
+            holes: l.holes,
         }
     }
 }
@@ -234,6 +250,8 @@ pub fn sync_damage(
             l.damage = t.damage;
             l.repair = t.repair;
             l.loose = t.loose;
+            l.cracks = t.cracks;
+            l.holes = t.holes;
             l.detail = detail;
         }
     }
@@ -272,6 +290,8 @@ impl RoadLook {
             damage: damage_tables(1.0).damage,
             repair: damage_tables(1.0).repair,
             loose: damage_tables(1.0).loose,
+            cracks: damage_tables(1.0).cracks,
+            holes: damage_tables(1.0).holes,
             detail: damage_detail(&crate::quality::QualityPreset::default()),
             weather: Vec4::ZERO,
             season: Vec4::ZERO,
@@ -448,6 +468,18 @@ mod tests {
         assert_eq!(lo.damage[6].z, l.damage[6].z);
         assert!(lo.damage[6].y < l.damage[6].y);
         assert!(lo.loose[6].x < l.loose[6].x);
+        // Patches and block cracking (they decide what is felt) in full,
+        // the shapes the grade's.
+        assert_eq!(lo.repair[6].x, l.repair[6].x);
+        assert_eq!(lo.cracks[6], l.cracks[6]);
+        assert_eq!(lo.holes, l.holes);
+        let d7 = ocw_world::road_wear::wear_density(7, 1.0);
+        assert_eq!(
+            l.cracks[7],
+            Vec4::new(d7.block, d7.edge_cracks, d7.branch, d7.pothole_r_max)
+        );
+        assert_eq!(l.holes[7], Vec4::new(d7.filled, d7.cluster, 1.0, 0.0));
+        assert_eq!((l.cracks[0], l.holes[0]), (Vec4::ZERO, Vec4::ZERO));
     }
 
     #[test]
