@@ -1485,7 +1485,7 @@ fn try_cluster(
     // J7's corners between arms at different members (their edge lines
     // meeting behind them, straight on through the cluster). Where that
     // cannot be made, each member keeps its own rule: tried, J6's cluster
-    // outline instead left 50 more `side.corner` in Liechtenstein.
+    // outline instead left 57 more `side.corner` in Liechtenstein.
     let (patch, outline) = outline_checked(g, &site, raws, true)?;
     finish(patch, outline)
 }
