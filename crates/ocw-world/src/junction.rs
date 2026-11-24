@@ -581,6 +581,10 @@ struct Site {
     /// The members that are plain way splits its arms run on past (J8):
     /// not junctions of their own, not counted in the centre.
     run_on: Vec<u32>,
+    /// The mouths move out for their corners along the real edge lines
+    /// (J8; not for a junction's patch alone, which decides the clusters
+    /// and the way splits run on past as J7 did).
+    grow: bool,
 }
 
 impl Site {
@@ -590,6 +594,7 @@ impl Site {
             members: vec![v as u32],
             inner: Vec::new(),
             run_on: Vec::new(),
+            grow: true,
         }
     }
 
@@ -1507,19 +1512,46 @@ fn quantised(c: P2, p: P2) -> P2 {
 /// [`build_patch`] with the reason when a vertex keeps its overlapping
 /// strips (diagnostics, the analysis test).
 fn try_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Result<Patch, &'static str> {
-    let (patch, outline) = patch_outline(g, adj, v)?;
+    // J8: the mouths out for the corners; where that patch cannot be made,
+    // as before.
+    try_patch_with(g, adj, v, true).or_else(|_| try_patch_with(g, adj, v, false))
+}
+
+/// [`try_patch`] with the mouths moved out for the corners or not (J8).
+fn try_patch_with(
+    g: &RoadGraph,
+    adj: &[usize],
+    v: usize,
+    grow: bool,
+) -> Result<Patch, &'static str> {
+    let (patch, outline) = patch_outline_with(g, adj, v, grow)?;
     finish(patch, outline)
 }
 
 /// The patch of [`try_patch`] before its outline is checked and meshed:
 /// the arms and the outline points (rounded as stored).
+#[cfg(test)]
 fn patch_outline(g: &RoadGraph, adj: &[usize], v: usize) -> Result<(Patch, Outline), &'static str> {
+    patch_outline_with(g, adj, v, true)
+}
+
+/// [`patch_outline`] with the mouths moved out for the corners or not.
+fn patch_outline_with(
+    g: &RoadGraph,
+    adj: &[usize],
+    v: usize,
+    grow: bool,
+) -> Result<(Patch, Outline), &'static str> {
     let c = g.vertices[v];
     let raws: Vec<Raw> = adj
         .iter()
         .map(|&ei| raw_arm(g, c, v, ei))
         .collect::<Result<_, _>>()?;
-    outline_checked(g, &Site::single(g, v), raws, false)
+    let site = Site {
+        grow,
+        ..Site::single(g, v)
+    };
+    outline_checked(g, &site, raws, false)
 }
 
 /// The patch of a cluster (J3): vertices a few metres apart joined by the
@@ -1553,6 +1585,7 @@ fn try_cluster(
         members: members.to_vec(),
         inner: inner.to_vec(),
         run_on: Vec::new(),
+        grow: false,
     };
     // J7's corners between arms at different members first (their edge
     // lines meeting behind them, straight on through the cluster); where
@@ -1721,7 +1754,7 @@ fn outline_at(
     // roads' real edge lines (the corner arcs above take the straight
     // lines from the vertex: where an arm curves or runs on past a way
     // split its corner was cut short at the mouth), within the caps.
-    if !legacy && !cluster {
+    if !legacy && !cluster && site.grow {
         for _ in 0..MOUTH_ROUNDS {
             let arms: Vec<Arm> = raws
                 .iter()
@@ -2311,6 +2344,7 @@ fn stored_patch(g: &RoadGraph, v: usize, rec: &section::StoredPatch) -> Option<P
             members: rec.members.clone(),
             inner: rec.inner.iter().map(|&e| e as usize).collect(),
             run_on: rec.run_on.clone(),
+            grow: true,
         }
     } else {
         Site::single(g, v)
@@ -2860,17 +2894,20 @@ impl JunctionSet {
             }))
     }
 
-    /// The mouths of junction vertex `v`'s patch alone; `None`: it gets
-    /// none.
+    /// The mouths of junction vertex `v`'s patch alone (as J7 placed them,
+    /// without J8's mouths out for the corners: the clusters and the way
+    /// splits run on past are decided from them); `None`: it gets none.
     fn alone(&self, g: &RoadGraph, v: usize) -> Option<&[(usize, bool, f64)]> {
         self.alone[v]
             .get_or_init(|| {
-                try_patch(g, &self.adjacency[v], v).ok().map(|p| {
-                    p.arms
-                        .iter()
-                        .map(|a| (a.edge, a.at_from, a.mouth_m))
-                        .collect()
-                })
+                try_patch_with(g, &self.adjacency[v], v, false)
+                    .ok()
+                    .map(|p| {
+                        p.arms
+                            .iter()
+                            .map(|a| (a.edge, a.at_from, a.mouth_m))
+                            .collect()
+                    })
             })
             .as_deref()
     }
@@ -3094,14 +3131,23 @@ impl JunctionSet {
         inner.sort_unstable();
         let mut members = vec![v as u32];
         members.extend(run_on.iter().copied());
-        let site = Site {
+        let mut site = Site {
             centre: c,
             members,
             inner,
             run_on,
+            grow: true,
         };
-        let (patch, outline) = outline_checked(g, &site, raws, true).ok()?;
-        finish(patch, outline).ok()
+        // Where the mouths moved out for the corners cannot be made, as
+        // they were.
+        outline_checked(g, &site, raws.clone(), true)
+            .and_then(|(patch, outline)| finish(patch, outline))
+            .or_else(|_| {
+                site.grow = false;
+                let (patch, outline) = outline_checked(g, &site, raws, true)?;
+                finish(patch, outline)
+            })
+            .ok()
     }
 
     /// The patch of vertex `v` if it is drawn there (a cluster's at its

@@ -49,9 +49,13 @@ fn main() {
         eprintln!("usage: kink_diff BEFORE.ocwpkg AFTER.ocwpkg");
         std::process::exit(2);
     };
-    let load = |p: &str| WorldPackage::from_bytes(&std::fs::read(p).expect("package")).expect("pkg");
+    let load =
+        |p: &str| WorldPackage::from_bytes(&std::fs::read(p).expect("package")).expect("pkg");
     let (pa, pb) = (load(a), load(b));
-    let (ga, gb) = (pa.graph.clone().expect("graph"), pb.graph.clone().expect("graph"));
+    let (ga, gb) = (
+        pa.graph.clone().expect("graph"),
+        pb.graph.clone().expect("graph"),
+    );
     assert_eq!(ga.edges.len(), gb.edges.len(), "the same road graph");
     let js = match pb.junctions.as_ref() {
         Some(j) => JunctionSet::with_index(&gb, j.index_for(&gb)),
@@ -87,7 +91,13 @@ fn main() {
     let new: HashSet<_> = kb.difference(&ka).copied().collect();
     note(&gone, 0);
     note(&new, 1);
-    println!("kinks {} -> {} (gone {}, new {})", ka.len(), kb.len(), gone.len(), new.len());
+    println!(
+        "kinks {} -> {} (gone {}, new {})",
+        ka.len(),
+        kb.len(),
+        gone.len(),
+        new.len()
+    );
     for (k, [g, n]) in by {
         println!("{k}: gone {g}, new {n}");
     }
