@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 5.69 – November 2026
+Version 5.70 – November 2026
 
 | Version | Change |
 |---|---|
+| 5.70 | **The browser's sensor bridge (Phase 10, 10D.2) is built before the first headset runs, so the real trainer (the KICKR) drives the ride in the headset** (decision by the user, 2026-11-24; Phase 14 Q7 (b); to be built). |
 | 5.69 | **The VR headset loads the browser app from the public GitHub Pages preview (HTTPS); VR test builds go under the separate path `/xr/`** (decision by the user, 2026-11-24; Phase 14 Q6 (a)). |
 | 5.68 | **The browser app is built with WebAssembly SIMD in both builds (WebGPU and WebGL 2); a browser without it gets "this browser is too old" from the start page, checked with a tiny SIMD test module** (decision by the user, 2026-11-24; Phase 10 Q10 (a); to be built). |
 | 5.67 | **Built: the sides of a road are as smooth as the road, J7 (4.8.8 Rule) – paths along a road (OSM sidewalk and cycle-track ways) drawn as a band of its side, one band round the junction's corner and no mouths of their own (routable and rideable as before, on the band's height), a corner its arms cut short turning round again (the Black Forest path view's sharp verge tip of J6 a round nose), clusters with rounded corners between arms of different members; all five packages rebuilt into `data/j7-build/`** (4.8.8 *Built (J7 / the Rule)*; lint J6 → J7: `side.corner` −21 to −32 % (428 → 291 … 5,615 → 4,351), `side.kink` −2 to −8 %, `side.step` 7 – 90, `side.gap` 0 – 1, `junction.mouth.above_main` 0, seams −1 to −25 %, overlaps −27 to −56 %, road kinks −8 to +1 %, `lamp.foot` 0; section `JNCT` layout 3; not at 0 – short arms, clusters without paths, forks, steep junctions; bending a short arm's mouth onto 85 % of its edge tried and dropped; not installed; may be renumbered at merge). |
@@ -6070,7 +6071,7 @@ Decided by the user (Q5): build **V8 WebXR basic** first, measure the frame rate
 - **Effort (estimate):** W0 – W3 about 1 – 2 days of agent time, about 2 – 4 million tokens; W4 depends on headset time.
 - **Open questions:**
   - **Q6 – Where the headset loads the app from: decided (2026-11-24, the user): (a) as proposed – the GitHub Pages preview, VR test builds under `/xr/`** – the first VR plan runs OCW in the Meta Quest 1's own web browser (WebXR), so the headset opens the browser app from a web address – and WebXR works only over HTTPS. Options: (a) the public preview on GitHub Pages – HTTPS works at once, but every test build is then public; (b) a server on our local network (marge) with HTTPS – the Quest browser warns about a self-made certificate, and a real certificate needs a domain. Proposal: a – the GitHub Pages preview for the first headset run W4, with test builds under a separate path `/xr/`.
-  - **Q7 (open) – The trainer in the first runs:** in the first headset runs the bike has to move. The browser app cannot yet talk to the real trainer (the Wahoo KICKR): that needs the sensor bridge of Phase 10 (10D.2), not built yet. Options: (a) virtual power and autodrive only – the app pedals and steers by itself, enough to measure the frame rate; (b) build the sensor bridge first, so the KICKR drives the headset ride. Proposal: a.
+  - **Q7 – The trainer in the first runs: decided (2026-11-24, the user): (b) – the sensor bridge (Phase 10, 10D.2) is built first, so the KICKR drives the headset ride; to be built** – in the first headset runs the bike has to move. The browser app cannot yet talk to the real trainer (the Wahoo KICKR): that needs the sensor bridge of Phase 10 (10D.2), not built yet. Options: (a) virtual power and autodrive only – the app pedals and steers by itself, enough to measure the frame rate; (b) build the sensor bridge first, so the KICKR drives the headset ride. Proposal: a.
   - **Q8 (open) – Seated or standing reference:** WebXR needs a reference for where the rider's head is. Options: (a) `local-floor` – the headset knows the floor, and the eye height on the bike comes from the saddle height in the rider profile, so the view sits at the right height whoever rides; (b) `local` – a seated reference, recentred to the bike's eye point when *Enter VR* is pressed, whatever the real height. Proposal: a.
 
 ### Phase 15 – Model files: 3D objects in a standard open format (planning, 2026-11-15; **M1 built v4.24** – format, folder, loader and the export of today's bikes, rider, helmets and plants, see 15I; **M2's tools built v4.71** – `model import / export / diff` and the extended validator, see 15J; **M3's helmet switch built v5.09** – the helmets worn from their files, see 15L; **the Blender tooling built v5.10** – `make deps-blender`, the round trip `make test-blender`, `make models-diff`, see 15M; **the props as files built v5.12** – point obstacles and street lamps drawn from `props/*.glb`, see 15N; **M4 and M3's workshop built v5.16** – the unicorn and the workshop pieces drawn from their files, see 15O; the switch of the other kinds and the generator removal open)
@@ -7366,7 +7367,7 @@ kiosk runs `2dc1892` (the same code without this appendix).
 
 <!-- open-questions:begin (generated by tools/build-dashboard/spec_questions.py overview; do not edit by hand) -->
 
-37 open questions (of 223), each with what it is about, the options and the proposal; answered in the build dashboard or in the conversation, and decided where it stands. Refresh with `python3 tools/build-dashboard/spec_questions.py overview --write SPECIFICATION.md`.
+36 open questions (of 223), each with what it is about, the options and the proposal; answered in the build dashboard or in the conversation, and decided where it stands. Refresh with `python3 tools/build-dashboard/spec_questions.py overview --write SPECIFICATION.md`.
 
 
 **Phase 4 – Avatar and Bicycle Editor**
@@ -7382,7 +7383,6 @@ kiosk runs `2dc1892` (the same code without this appendix).
 
 **Phase 14 – Standalone VR: Quest, Pico and WebXR**
 
-- **Phase 14 Q7 – The trainer in the first runs:** in the first headset runs the bike has to move. The browser app cannot yet talk to the real trainer (the Wahoo KICKR): that needs the sensor bridge of Phase 10 (10D.2), not built yet. Options: (a) virtual power and autodrive only – the app pedals and steers by itself, enough to measure the frame rate; (b) build the sensor bridge first, so the KICKR drives the headset ride. Proposal: a.
 - **Phase 14 Q8 – Seated or standing reference:** WebXR needs a reference for where the rider's head is. Options: (a) local-floor – the headset knows the floor, and the eye height on the bike comes from the saddle height in the rider profile, so the view sits at the right height whoever rides; (b) local – a seated reference, recentred to the bike's eye point when Enter VR is pressed, whatever the real height. Proposal: a.
 
 **16H – Open questions (to the user)**
