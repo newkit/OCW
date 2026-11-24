@@ -13,13 +13,13 @@ use bevy::prelude::*;
 use ocw_world::lamps::Lamp;
 use ocw_world::package::{TileKey, WorldPackage};
 
-use ocw_assets::props::{Instance, place};
+use ocw_assets::props::{Instance, Level, has_lod1, place_level};
 
 use crate::RideView;
 use crate::building_material::night_factor;
 use crate::camera::FollowCamera;
 use crate::junction_mesh::PackageJunctions;
-use crate::obstacles::append;
+use crate::obstacles::{LodCell, LodCells, append};
 use crate::package::{Keep, MeshArrays, TileGround};
 
 /// Point lights in the pool around the camera.
@@ -57,6 +57,10 @@ pub struct TileLamps {
     pub heads: MeshArrays,
     /// Where the light comes from (package metres, just under the heads).
     pub spots: Vec<[f32; 3]>,
+    /// Lamps whose file has a `lod1`: near and far by cell (layers: the
+    /// poles, the heads), switched at 60 m (spec 16H Q24 (a),
+    /// [`crate::lod::PROP`]).
+    pub lod: Vec<LodCell>,
 }
 
 /// The lamp head positions of a streamed tile in its package's frame (a
@@ -81,11 +85,21 @@ pub struct LampMaterials {
 /// (`ocw_assets::props`: the arm stretched, the head and its light moved),
 /// turned towards the road; the `bulb` parts are the heads.
 pub fn lamp_arrays(lamps: &[(Lamp, f32)]) -> TileLamps {
-    let mut out = TileLamps::default();
     let files: Vec<(std::sync::Arc<ocw_assets::model::Model>, f32)> = LAMP_FILES
         .iter()
         .map(|(id, h)| (ocw_assets::shipped::model(id), *h))
         .collect();
+    lamp_arrays_from(&files, lamps)
+}
+
+/// [`lamp_arrays`] with these files (model, head height): a file with a
+/// `lod1` goes to [`TileLamps::lod`], near and far.
+pub fn lamp_arrays_from(
+    files: &[(std::sync::Arc<ocw_assets::model::Model>, f32)],
+    lamps: &[(Lamp, f32)],
+) -> TileLamps {
+    let mut out = TileLamps::default();
+    let mut cells = LodCells::default();
     for (l, foot_y) in lamps {
         let Some((model, _)) = files.iter().min_by(|a, b| {
             (a.1 - l.height_m)
@@ -102,14 +116,25 @@ pub fn lamp_arrays(lamps: &[(Lamp, f32)]) -> TileLamps {
             reach_m: Some(l.arm_m),
         };
         let y = *foot_y;
-        let p = place(model, &inst, foot, yaw, &|_, _| y);
-        append(&mut out.poles, &p, |s| s != BULB);
-        append(&mut out.heads, &p, |s| s == BULB);
+        let ground = |_: f32, _: f32| y;
+        let p = place_level(model, &inst, foot, yaw, &ground, Level::Near);
+        if has_lod1(model) {
+            let far = place_level(model, &inst, foot, yaw, &ground, Level::Lod1);
+            let (n, f) = cells.at(foot);
+            append(&mut n[0], &p, |s| s != BULB);
+            append(&mut n[1], &p, |s| s == BULB);
+            append(&mut f[0], &far, |s| s != BULB);
+            append(&mut f[1], &far, |s| s == BULB);
+        } else {
+            append(&mut out.poles, &p, |s| s != BULB);
+            append(&mut out.heads, &p, |s| s == BULB);
+        }
         let light = p
             .anchor(LIGHT_ANCHOR)
             .unwrap_or(foot + Vec3::Y * (l.height_m - 0.32));
         out.spots.push(light.to_array());
     }
+    out.lod = cells.finish();
     out
 }
 
@@ -295,6 +320,72 @@ fn update_light_pollution(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Lamps whose file has a `lod1` (spec 16H Q24 (a)): drawn near up to
+    /// 60 m and with their `lod1` beyond, by cell, the light where it was.
+    #[test]
+    fn lamps_with_a_lod1_switch_at_the_props_distance() {
+        let red = |m: &ocw_assets::model::Material| {
+            if m.name == BULB {
+                m.clone()
+            } else {
+                ocw_assets::model::Material {
+                    name: "paint_red".into(),
+                    color: [1.0, 0.0, 0.0, 1.0],
+                    ..m.clone()
+                }
+            }
+        };
+        let files: Vec<_> = LAMP_FILES
+            .iter()
+            .map(|(id, h)| {
+                let m = ocw_assets::props::with_copied_lod1(&ocw_assets::shipped::model(id), &red);
+                (std::sync::Arc::new(m), *h)
+            })
+            .collect();
+        let lamp = |x: f32| Lamp {
+            foot: [x, 500.0, 20.0],
+            toward: [-1.0, 0.0],
+            height_m: 6.0,
+            arm_m: 1.5,
+        };
+        let plain = lamp_arrays(&[(lamp(10.0), 499.5)]);
+        let t = lamp_arrays_from(&files, &[(lamp(10.0), 499.5), (lamp(40.0), 499.5)]);
+        assert!(t.poles.indices.is_empty() && t.heads.indices.is_empty());
+        assert_eq!(t.lod.len(), 2, "one cell each (30 m apart)");
+        assert_eq!(t.spots[0], plain.spots[0]);
+        let c = &t.lod[0];
+        assert_eq!(c.origin, [10.0, 499.5, 20.0]);
+        // Near: the file's near model; far: its lod1 (here the same shape
+        // in another paint), both relative to the cell's origin.
+        let back = |m: &MeshArrays| -> Vec<[f32; 3]> {
+            m.positions
+                .iter()
+                .map(|p| [p[0] + c.origin[0], p[1] + c.origin[1], p[2] + c.origin[2]])
+                .collect()
+        };
+        let same = |a: Vec<[f32; 3]>, b: &[[f32; 3]]| {
+            a.len() == b.len()
+                && a.iter()
+                    .zip(b)
+                    .all(|(p, q)| Vec3::from(*p).distance(Vec3::from(*q)) < 1e-3)
+        };
+        assert!(same(back(&c.near[0]), &plain.poles.positions));
+        assert!(same(back(&c.near[1]), &plain.heads.positions));
+        assert_eq!(back(&c.far[0]).len(), plain.poles.positions.len());
+        assert_ne!(
+            c.far[0].colors, c.near[0].colors,
+            "lod1 is drawn, not the near model"
+        );
+        assert_eq!(c.far[1].indices.len(), plain.heads.indices.len());
+        // The ranges the tile gives them: the props' switch.
+        let near = crate::lod::PROP.near_range();
+        let far = crate::lod::PROP.far_range(None);
+        assert_eq!(near.end_margin, 54.0..66.0);
+        assert_eq!(far.start_margin, 54.0..66.0);
+        // The shipped lamps have no lod1: one mesh, drawn at any distance.
+        assert!(plain.lod.is_empty());
+    }
 
     #[test]
     fn lamp_meshes_stand_on_their_feet() {

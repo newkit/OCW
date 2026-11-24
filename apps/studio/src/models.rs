@@ -297,19 +297,11 @@ pub fn node_level(m: &Model, i: usize) -> Level {
 }
 
 /// Where the game switches a kind from its near model to `lod1` (m from
-/// the camera): the riders' and bikes' `ocw_render::riders::LOD_DISTANCE_M`
-/// (wear follows the rider), the plants' middle of
-/// `ocw_render::vegetation::NEAR_FADE_M`; `None` where the game has no
-/// switch for the kind yet.
+/// the camera): the game's own table, `ocw_render::lod` (spec 16H Q24
+/// (a): bikes, riders, wear and the unicorn 40 m, props 60 m, plants
+/// 270 m); `None` where the kind never switches (workshop pieces, parts).
 pub fn lod_distance(kind: Kind) -> Option<f32> {
-    match kind {
-        Kind::Bike | Kind::Rider | Kind::Wearable => Some(ocw_render::riders::LOD_DISTANCE_M),
-        Kind::Plant => {
-            let r = ocw_render::vegetation::NEAR_FADE_M;
-            Some(0.5 * (r.start + r.end))
-        }
-        _ => None,
-    }
+    ocw_render::lod::distance_m(kind)
 }
 
 /// The level shown for `mode` at camera distance `distance`.
@@ -783,10 +775,36 @@ mod tests {
             shown_level(LodMode::Auto, d + 1.0, Kind::Bike, true, false),
             Level::Lod1
         );
-        assert_eq!(
-            shown_level(LodMode::Auto, 1e4, Kind::Prop, true, false),
-            Level::Near
-        );
+        // The auto level follows the game's table for every kind (16H
+        // Q24): props at 60 m, the unicorn at 40 m, workshop pieces never.
+        for k in Kind::ALL {
+            match ocw_render::lod::distance_m(k) {
+                Some(d) => {
+                    assert_eq!(lod_distance(k), Some(d), "{k:?}");
+                    assert_eq!(
+                        shown_level(LodMode::Auto, d - 1.0, k, true, false),
+                        Level::Near
+                    );
+                    assert_eq!(
+                        shown_level(LodMode::Auto, d + 1.0, k, true, false),
+                        Level::Lod1
+                    );
+                    // Without a `lod1` the near model at any distance.
+                    assert_eq!(
+                        shown_level(LodMode::Auto, d + 1.0, k, false, false),
+                        Level::Near
+                    );
+                }
+                None => assert_eq!(
+                    shown_level(LodMode::Auto, 1e4, k, true, false),
+                    Level::Near,
+                    "{k:?}"
+                ),
+            }
+        }
+        assert_eq!(lod_distance(Kind::Prop), Some(60.0));
+        assert_eq!(lod_distance(Kind::Creature), Some(40.0));
+        assert_eq!(lod_distance(Kind::Workshop), None);
         assert_eq!(
             shown_level(LodMode::Far, 1.0, Kind::Bike, true, false),
             Level::Lod1
