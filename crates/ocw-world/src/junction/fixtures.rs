@@ -268,6 +268,47 @@ pub fn crossing(grades: [f64; 4]) -> RoadGraph {
     graph(&v, roads)
 }
 
+/// A crossing of a tertiary street along x (7 m) and a residential street
+/// along z (6 m) at (0, 0), each with a sidewalk drawn as a way of its own
+/// 5 m off its centre on the side of the +x, +z quarter (OSM
+/// `footway=sidewalk`): the sidewalks cross the other street at (0, 5)
+/// and (5, 0) – vertices on it – and meet at the corner (5, 5). Gently
+/// climbing towards +x.
+pub fn crossing_with_sidewalks() -> RoadGraph {
+    let v = [
+        [0.0, 0.0],
+        [-80.0, 0.0],
+        [5.0, 0.0],
+        [80.0, 0.0],
+        [0.0, -80.0],
+        [0.0, 5.0],
+        [0.0, 80.0],
+        [5.0, 5.0],
+        [-60.0, 5.0],
+        [60.0, 5.0],
+        [5.0, -60.0],
+        [5.0, 60.0],
+    ];
+    let h = |x0: f64, dx: f64| move |s: f64| 0.02 * (x0 + dx * s);
+    let roads = vec![
+        Road::straight(&v, 1, 0, RoadClass::Tertiary, 7.0, h(-80.0, 1.0)),
+        Road::straight(&v, 0, 2, RoadClass::Tertiary, 7.0, h(0.0, 1.0)),
+        Road::straight(&v, 2, 3, RoadClass::Tertiary, 7.0, h(5.0, 1.0)),
+        Road::straight(&v, 4, 0, RoadClass::Residential, 6.0, h(0.0, 0.0)),
+        Road::straight(&v, 0, 5, RoadClass::Residential, 6.0, h(0.0, 0.0)),
+        Road::straight(&v, 5, 6, RoadClass::Residential, 6.0, h(0.0, 0.0)),
+        // The sidewalk along x, crossing the residential street at (0, 5).
+        Road::straight(&v, 8, 5, RoadClass::Path, 2.0, h(-60.0, 1.0)),
+        Road::straight(&v, 5, 7, RoadClass::Path, 2.0, h(0.0, 1.0)),
+        Road::straight(&v, 7, 9, RoadClass::Path, 2.0, h(5.0, 1.0)),
+        // The sidewalk along z, crossing the tertiary street at (5, 0).
+        Road::straight(&v, 10, 2, RoadClass::Path, 2.0, h(5.0, 0.0)),
+        Road::straight(&v, 2, 7, RoadClass::Path, 2.0, h(5.0, 0.0)),
+        Road::straight(&v, 7, 11, RoadClass::Path, 2.0, h(5.0, 0.0)),
+    ];
+    graph(&v, roads)
+}
+
 /// A fork: a road from −x splits at (0, 0) into two arms `spread_deg`
 /// apart (symmetric about +x).
 pub fn fork(spread_deg: f64) -> RoadGraph {

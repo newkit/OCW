@@ -269,6 +269,22 @@ pub fn road_meshes_rows(
     rows: &[Option<&Rows>],
     ctx: &RoadContext<'_>,
 ) -> RoadMeshes {
+    road_meshes_bands(strips, rows, &[], ctx)
+}
+
+/// The kerb of a band drawn for a path along a road without a sidewalk
+/// of its own (m; J7).
+pub const BAND_KERB_M: f32 = 0.08;
+
+/// [`road_meshes_rows`] with the bands of the paths along some strips
+/// (J7, §4.8.8 Rule): per point how far beyond the strip's edges [left,
+/// right] its sidewalk reaches, at least.
+pub fn road_meshes_bands(
+    strips: &[RoadStrip],
+    rows: &[Option<&Rows>],
+    bands: &[Option<&[[f32; 2]]>],
+    ctx: &RoadContext<'_>,
+) -> RoadMeshes {
     let mut out = RoadMeshes::default();
     let shaped = |i: usize| rows.get(i).copied().flatten().is_some();
     let mut corners = crate::road_corners::corners(strips);
@@ -276,11 +292,17 @@ pub fn road_meshes_rows(
     let trims = crate::road_corners::trims(&corners, strips.len());
     for (i, (s, trim)) in strips.iter().zip(&trims).enumerate() {
         let r = rows.get(i).copied().flatten();
+        let band = bands
+            .get(i)
+            .copied()
+            .flatten()
+            .filter(|b| b.len() == s.points.len());
         if r.is_none() && trim.iter().flatten().any(Option::is_some) {
             let cut = crate::road_corners::with_cuts(s, trim);
-            strip_mesh(&mut out.roads, &cut, ctx, trim, None);
+            let band = band.filter(|b| b.len() == cut.points.len());
+            strip_mesh(&mut out.roads, &cut, ctx, trim, None, band);
         } else {
-            strip_mesh(&mut out.roads, s, ctx, trim, r);
+            strip_mesh(&mut out.roads, s, ctx, trim, r, band);
         }
         crossing_overlays(&mut out.overlays, s, ctx, r);
     }
@@ -300,6 +322,7 @@ fn strip_mesh(
     ctx: &RoadContext<'_>,
     trim: &[[Option<f32>; 2]; 2],
     rows: Option<&Rows>,
+    band: Option<&[[f32; 2]]>,
 ) {
     let lift = Vec3::Y * crate::ROAD_SURFACE_LIFT_M;
     let p: Vec<Vec3> = s.points.iter().map(|q| Vec3::from(*q) + lift).collect();
@@ -367,7 +390,19 @@ fn strip_mesh(
     }
     let look = DressLook::of(s, ctx);
     for (si, side) in [-1.0f32, 1.0].into_iter().enumerate() {
-        let sidewalk = s.dress.sidewalk_m[si] > 0.0;
+        // A path along the road (J7): its sidewalk reaches the path's far
+        // edge there (not in a junction zone without a junction surface).
+        let band_at = |i: usize| -> f32 {
+            band.map_or(0.0, |b| {
+                if s.dress.in_junction(local[i]) {
+                    0.0
+                } else {
+                    b[i][si]
+                }
+            })
+        };
+        let banded = (0..n).any(|i| band_at(i) > 0.0);
+        let sidewalk = s.dress.sidewalk_m[si] > 0.0 || banded;
         let edge: Vec<Vec3> = edges.iter().map(|e| e[si]).collect();
         // Out square to the edge line (J6, §4.8.8 Rule): a row past a
         // junction's mouth may lie askew to it where the road bends there,
@@ -394,13 +429,28 @@ fn strip_mesh(
         let kerbs: Vec<(f32, f32)> = (0..n)
             .map(|i| {
                 if sidewalk && !decks[i] {
-                    crate::road_corners::kerb_trimmed(
-                        &s.dress,
-                        si,
-                        local[i],
-                        local[n - 1],
-                        &trim[si],
-                    )
+                    let (w, k) = if s.dress.sidewalk_m[si] > 0.0 {
+                        crate::road_corners::kerb_trimmed(
+                            &s.dress,
+                            si,
+                            local[i],
+                            local[n - 1],
+                            &trim[si],
+                        )
+                    } else {
+                        (0.0, 0.0)
+                    };
+                    let b = band_at(i);
+                    if b > w {
+                        let k = if s.dress.kerb_m > 0.0 {
+                            s.dress.kerb_m
+                        } else {
+                            BAND_KERB_M
+                        };
+                        (b, k)
+                    } else {
+                        (w, k)
+                    }
                 } else {
                     (0.0, 0.0)
                 }

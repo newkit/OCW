@@ -874,7 +874,12 @@ fn junction_verges_dump() {
         .and_then(|r| r.parse().ok())
         .unwrap_or(18.0);
     let c = Vec2::new(at[0], at[1]);
-    let pkg = WorldPackage::from_bytes(&std::fs::read(path).unwrap()).unwrap();
+    let mut pkg = WorldPackage::from_bytes(&std::fs::read(path).unwrap()).unwrap();
+    // OCW_RECOMPUTE=1: the junctions as this checkout computes them (the
+    // stored ones left out).
+    if std::env::var("OCW_RECOMPUTE").is_ok_and(|v| v == "1") {
+        pkg.junctions = None;
+    }
     let g = pkg.graph.as_ref().unwrap();
     let pj = PackageJunctions::new(&pkg).unwrap();
     let style = MarkingStyle::default();

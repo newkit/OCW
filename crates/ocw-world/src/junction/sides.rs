@@ -203,6 +203,60 @@ fn bezier(a: P2, ua: P2, b: P2, ub: P2, ha: f64, hb: f64) -> Vec<P2> {
     (1..n).map(|i| at(i as f64 / n as f64)).collect()
 }
 
+/// A biarc from `a` (leaving along `ua`) to `b` (arriving along `ub`): two
+/// circular arcs of equal tangent lengths, joined tangentially, sampled so
+/// that neighbouring pieces bend by at most [`SIDE_STEP_DEG`] (both ends
+/// excluded). Bends evenly where one cubic cannot (a U-turn).
+fn biarc(a: P2, ua: P2, b: P2, ub: P2) -> Vec<P2> {
+    let v = sub(b, a);
+    let t = add(ua, ub);
+    let k = 2.0 * (1.0 - dot(ua, ub));
+    let vt = dot(v, t);
+    let d = if k.abs() < 1e-9 {
+        // Parallel tangents the same way.
+        if vt.abs() < 1e-9 {
+            return bezier(a, ua, b, ub, norm(v) / 3.0, norm(v) / 3.0);
+        }
+        dot(v, v) / (2.0 * vt)
+    } else {
+        (-vt + (vt * vt + k * dot(v, v)).sqrt()) / k
+    };
+    if !(d.is_finite() && d > 1e-6) {
+        return bezier(a, ua, b, ub, norm(v) / 3.0, norm(v) / 3.0);
+    }
+    let j = mul(add(add(a, mul(ua, d)), sub(b, mul(ub, d))), 0.5);
+    let arc = |p0: P2, u0: P2, p1: P2| -> Vec<P2> {
+        let c = sub(p1, p0);
+        let l = norm(c);
+        if l < 1e-9 {
+            return Vec::new();
+        }
+        let th = 2.0 * turn(u0, c);
+        let steps = ((th.abs() / SIDE_STEP_DEG.to_radians()).ceil() as usize).clamp(1, 64);
+        if th.abs() < 1e-6 {
+            return (1..steps)
+                .map(|i| add(p0, mul(c, i as f64 / steps as f64)))
+                .collect();
+        }
+        let r = l / (2.0 * (th.abs() / 2.0).sin());
+        let nrm = rot(u0, th.signum() * std::f64::consts::FRAC_PI_2);
+        (1..steps)
+            .map(|i| {
+                let phi = th.abs() * i as f64 / steps as f64;
+                add(
+                    add(p0, mul(u0, r * phi.sin())),
+                    mul(nrm, r * (1.0 - phi.cos())),
+                )
+            })
+            .collect()
+    };
+    let uj = unit(sub(sub(b, mul(ub, d)), add(a, mul(ua, d))));
+    let mut out = arc(a, ua, j);
+    out.push(j);
+    out.extend(arc(j, uj, b));
+    out
+}
+
 /// The handle length of a cubic Bézier that follows a circular arc of
 /// `angle` between two points `chord` apart (1/3 of the chord when
 /// straight).
@@ -229,17 +283,13 @@ pub(super) fn corner_chain(
     aj: &Arm,
     radius: f64,
     centre: Option<P2>,
+    straight_on: [bool; 2],
 ) -> Option<Vec<P2>> {
     let li = edge_line(g, ai, 1.0);
     let lj = edge_line(g, aj, -1.0);
     let (q, p) = (li[0], lj[0]);
     if norm(sub(q, p)) < 1e-3 || li.len() < 2 || lj.len() < 2 {
         return None;
-    }
-    if let Some(c) = centre
-        && first_crossing(&li, &lj).is_none()
-    {
-        return round_centre(c, q, ai.t, p, aj.t);
     }
     let (ci, cj) = (lengths(&li), lengths(&lj));
     let mut pts: Vec<P2> = vec![q];
@@ -272,6 +322,26 @@ pub(super) fn corner_chain(
         let (_, dj) = at_len(&ej, &lengths(&ej), x.1);
         (turn(di, mul(dj, -1.0)) < 0.0).then_some(x)
     });
+    // Two arms of a cluster whose edge lines do not meet: round the
+    // centre. (J7: where they meet straight on past their vertices and
+    // each arm that needs it goes on straight through the cluster there –
+    // a street through the cluster's inner edge to the main road, where a
+    // sidewalk way crosses it – the corner between them, as at one vertex;
+    // J3 – J6 went round the centre there too, a corner of 85° at the main
+    // road's mouth. Not a small roundabout's entries: the ring turns.)
+    let meets = |x: &(f64, f64, P2)| {
+        let (la, lb) = (lengths(&li), lengths(&lj));
+        let (oa, ob) = (
+            x.0 <= la[la.len() - 1] + 1e-6,
+            x.1 <= lb[lb.len() - 1] + 1e-6,
+        );
+        (oa || straight_on[0]) && (ob || straight_on[1])
+    };
+    if let Some(c) = centre
+        && !crossing.as_ref().is_some_and(meets)
+    {
+        return round_centre(c, q, ai.t, p, aj.t);
+    }
     match crossing {
         Some((a, b, _)) => {
             let (ei, ej) = (
@@ -291,30 +361,117 @@ pub(super) fn corner_chain(
             } else {
                 radius * (ang.abs() / 2.0).tan()
             };
+            // The chain with tangent lengths `t`, `tb` and the handles
+            // `hs` (`None`: a circular arc's for the uncut corner), and
+            // its curve alone.
+            let build = |t: f64, tb: f64, hs: Option<[f64; 2]>| -> (Vec<P2>, Vec<P2>) {
+                // (Handles [0, 0]: a biarc.)
+                let mut out = pts.clone();
+                walk(&ei, &ce, a - t, &mut out);
+                let (ti, ui) = at_len(&ei, &ce, a - t);
+                let (tj, uj_in) = at_len(&ej, &cf, b - tb);
+                let uj = mul(uj_in, -1.0);
+                if norm(sub(ti, *out.last().expect("q"))) > 1e-4 {
+                    out.push(ti);
+                }
+                let mut curve = vec![ti];
+                if t.min(tb) > 1e-4 {
+                    let [h0, h1] = hs.unwrap_or_else(|| {
+                        // Handles of a circular arc's Bézier for each
+                        // tangent length.
+                        let th = turn(ui, uj).abs();
+                        let k = if th > 1e-3 {
+                            (4.0 / 3.0) * (th / 4.0).tan() / (th / 2.0).tan()
+                        } else {
+                            1.0 / 3.0
+                        };
+                        [k * t, k * tb]
+                    });
+                    let c = if h0 == 0.0 && h1 == 0.0 {
+                        biarc(ti, ui, tj, uj)
+                    } else {
+                        bezier(ti, ui, tj, uj, h0, h1)
+                    };
+                    curve.extend(c.iter().copied());
+                    out.extend(c);
+                }
+                curve.push(tj);
+                out.push(tj);
+                let mut back = Vec::new();
+                walk(&ej, &cf, b - tb, &mut back);
+                back.reverse();
+                out.extend(back);
+                (out, curve)
+            };
             let (t, tb) = (want.min(a), want.min(b));
-            walk(&ei, &ce, a - t, &mut pts);
-            let (ti, ui) = at_len(&ei, &ce, a - t);
-            let (tj, uj_in) = at_len(&ej, &cf, b - tb);
-            let uj = mul(uj_in, -1.0);
-            if norm(sub(ti, *pts.last().expect("q"))) > 1e-4 {
-                pts.push(ti);
-            }
-            if t.min(tb) > 1e-4 {
-                // Handles of a circular arc's Bézier for each tangent length.
-                let th = turn(ui, uj).abs();
-                let k = if th > 1e-3 {
-                    (4.0 / 3.0) * (th / 4.0).tan() / (th / 2.0).tan()
-                } else {
-                    1.0 / 3.0
+            let (first, _) = build(t, tb, None);
+            // The worst bend with the strips' edges on at both ends, as
+            // the side lint measures it.
+            let score = |c: &[P2]| {
+                let mut v = vec![add(q, ai.t)];
+                v.extend(c.iter().copied());
+                v.push(p);
+                v.push(add(p, aj.t));
+                worst_bend(&v)
+            };
+            let mut chosen = first;
+            // J7: where the arms cut the tangents short and an edge line
+            // bends before the corner (a cycleway turning just before its
+            // mouth), the uncut circle's handles draw a hook at the mouth
+            // corner: then the tangent lengths and handles that bend least
+            // while the curve stays off both carriageways (beyond the
+            // tangent points the edge lines are not crossed).
+            let worst = score(&chosen);
+            if worst > CUT_SHORT_DEG.to_radians() && t.min(tb) > 1e-4 {
+                let off_edges = |curve: &[P2], t: f64, tb: f64| {
+                    let beyond = |l: &[P2], c: &[f64], s: f64| -> Vec<P2> {
+                        let mut v = vec![at_len(l, c, s).0];
+                        v.extend(
+                            l.iter()
+                                .zip(c)
+                                .filter(|(_, x)| **x > s + 1e-6)
+                                .map(|(q, _)| *q),
+                        );
+                        v
+                    };
+                    let (bi, bj) = (
+                        beyond(&ei, &ce, a - t + 0.02),
+                        beyond(&ej, &cf, b - tb + 0.02),
+                    );
+                    first_crossing(curve, &bi).is_none() && first_crossing(curve, &bj).is_none()
                 };
-                pts.extend(bezier(ti, ui, tj, uj, k * t, k * tb));
+                let mut best = (worst, None::<(f64, f64, [f64; 2])>);
+                for fa in [1.0, 0.85, 0.7, 0.55, 0.4, 0.25] {
+                    for fb in [1.0, 0.85, 0.7, 0.55, 0.4, 0.25] {
+                        let (t1, tb1) = (a * fa, b * fb);
+                        let (ti, ui) = at_len(&ei, &ce, a - t1);
+                        let (tj, uj_in) = at_len(&ej, &cf, b - tb1);
+                        let h = handle(norm(sub(tj, ti)), turn(ui, mul(uj_in, -1.0)));
+                        // Bézier curves of several handles, and a biarc
+                        // (two circular arcs: an even bend where one cubic
+                        // cannot follow a U-turn).
+                        let mut shapes: Vec<[f64; 2]> = vec![[0.0, 0.0]];
+                        for ka in [0.5, 0.7, 0.9, 1.1, 1.35, 1.6, 2.0] {
+                            for kb in [0.5, 0.7, 0.9, 1.1, 1.35, 1.6, 2.0] {
+                                shapes.push([h * ka, h * kb]);
+                            }
+                        }
+                        {
+                            for hs in shapes {
+                                let (c, curve) = build(t1, tb1, Some(hs));
+                                let w = score(&c);
+                                if w < best.0 - 1e-6 && off_edges(&curve, t1, tb1) {
+                                    best = (w, Some((t1, tb1, hs)));
+                                }
+                            }
+                        }
+                    }
+                }
+                if let (_, Some((t1, tb1, hs))) = best {
+                    chosen = build(t1, tb1, Some(hs)).0;
+                }
             }
-            pts.push(tj);
-            let t = tb;
-            let mut back = Vec::new();
-            walk(&ej, &cf, b - t, &mut back);
-            back.reverse();
-            pts.extend(back);
+            pts = chosen;
         }
         None => {
             // A smooth join of the two edge lines' inner ends; nearly
@@ -470,6 +627,11 @@ fn rounded(p: &[P2]) -> Vec<P2> {
     out.dedup_by(|a, b| norm(sub(*a, *b)) < 1e-4);
     out
 }
+
+/// A corner whose circular arc (its tangents cut short by the arms) bends
+/// more than this (degrees, as the side lint measures) looks for tangent
+/// lengths and handles that bend less (J7).
+const CUT_SHORT_DEG: f64 = 20.0;
 
 /// A bend of a side is rounded over at most this much of each piece (m).
 const ROUND_MAX_M: f64 = 2.0;

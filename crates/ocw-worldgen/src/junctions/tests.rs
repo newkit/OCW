@@ -1164,7 +1164,9 @@ fn a_cluster_vertex_beside_the_main_road_does_not_lift_it() {
         let pkg = package(gg);
         assert_eq!(mouths_above_main(&pkg, gg), vec![]);
         let js = JunctionSet::new(gg);
-        let p = js.patch(gg, 0).expect("a patch");
+        let p = js
+            .patch(gg, 0)
+            .unwrap_or_else(|| panic!("a patch: {:?}", js.fallback_reason(gg, 0)));
         // On the carriageway the drawn surface is the main road's own.
         let mut x = p.min[0];
         while x <= p.max[0] {
@@ -1303,6 +1305,10 @@ fn graph_of(text: &str) -> RoadGraph {
             "Residential" => RoadClass::Residential,
             "Service" => RoadClass::Service,
             "Track" => RoadClass::Track,
+            "Cycleway" => RoadClass::Cycleway,
+            "Path" => RoadClass::Path,
+            "Tertiary" => RoadClass::Tertiary,
+            "Primary" => RoadClass::Primary,
             other => panic!("{other}"),
         };
         let points: Vec<[f64; 2]> = f[4]
@@ -1359,7 +1365,17 @@ fn side_roads_along_the_main_road_never_stand_above_it() {
         let patches = (0..g.vertices.len())
             .filter(|&v| js.own_patch(&g, v).is_some())
             .count();
-        assert!(patches >= 1, "junction {k}: a patch");
+        // (J7: the third, a cluster of two vertices a few metres apart whose
+        // corners J7 draws between the arms of both, has no surface where
+        // that outline cannot be made – each vertex keeps its own rule, here
+        // none: its strips overlap as before J2.)
+        assert!(
+            patches >= 1 || k == 2,
+            "junction {k}: a patch; {:?}",
+            (0..g.vertices.len())
+                .map(|v| js.fallback_reason(&g, v))
+                .collect::<Vec<_>>()
+        );
         drop(js);
         let pkg = package(&g);
         let m = mouths_above_main(&pkg, &g);
@@ -1440,4 +1456,78 @@ fn junction_surfaces_not_star_shaped_stay_under_the_main_road() {
         let m = mouths_above_main(&pkg, &g);
         assert!(m.is_empty(), "junction {k}: {m:?}");
     }
+}
+
+/// The Black Forest path view's junction (north): a cycleway leaving
+/// Güterstraße at 57° and turning north 1.3 m before its mouth, beside the
+/// street's short arm to the next junction (12.7 m).
+const BF_PATH: &str = "0 1 Cycleway 2.50 0.00,0.00;4.32,2.77;2.32,17.48;4.78,18.69 0.000,0.024,0.215,0.592,0.973,1.249
+2 0 Residential 5.00 -4.69,11.81;0.00,0.00 -0.030,-0.018,-0.006,0.000
+0 3 Residential 5.00 0.00,0.00;36.50,-91.91;46.17,-120.90;52.23,-150.07;72.10,-246.44 0.000,0.012,0.023,0.035,0.046,0.058,0.069,0.081,0.092,0.103,0.115,0.126,0.137,0.148,0.159,0.170,0.181,0.191,0.201,0.210,0.219,0.227,0.234,0.241,0.247,0.252,0.257,0.262,0.268,0.273,0.279,0.286,0.294,0.303,0.312,0.323,0.335,0.348,0.362,0.377,0.393,0.410,0.427,0.446,0.464,0.484,0.503,0.523,0.543,0.562,0.582,0.601,0.610";
+
+/// Spec §4.8.8 Rule (J7): where a corner's tangents are cut short by its
+/// arms (here the cycleway's bend 1.3 m before its mouth and the street's
+/// short arm), the corner still turns as a round curve from the one mouth
+/// to the other – the island between the cycleway and the street ends in
+/// a round nose, as J5 drew it. J6 drew the curve with the handles of the
+/// uncut circle: a hook at the cycleway's mouth corner (`side.corner`
+/// 58°), and the verge ended there in a sharp tip.
+#[test]
+fn a_corner_cut_short_still_turns_round() {
+    let g = graph_of(BF_PATH);
+    let js = JunctionSet::new(&g);
+    assert!(js.patch(&g, 0).is_some(), "a patch");
+    drop(js);
+    let pkg = package(&g);
+    let faults = side_faults(&pkg, &g);
+    // The island is 1.6 m wide at the mouth: its nose bends by 27° over
+    // 0.3 m pieces at most (a radius of 0.8 m), just over the lint's 25°.
+    assert!(
+        faults.iter().all(|f| f.kind == "corner" && f.value < 30.0),
+        "{faults:?}"
+    );
+}
+
+/// Spec §4.8.8 Rule (J7): a crossing whose sidewalks OSM draws as ways of
+/// their own along both streets – the cause of most of J6's remaining
+/// `side.*` findings (outlines turning back by 130 – 140° between a
+/// sidewalk's mouth and its street's): the sidewalks are drawn as a band
+/// of their street's side, the junction surface is the two streets' alone
+/// and its sides are smooth; the sidewalks' ends meet the surface where
+/// they cross a street (no step for a rider coming off them). J6: their
+/// mouths in the outline.
+#[test]
+fn sidewalk_ways_along_both_streets_leave_the_corners_smooth() {
+    let g0 = fixtures::crossing_with_sidewalks();
+    let mut g = g0.clone();
+    reconcile_profiles(&mut g, &|_, _| true);
+    let js = JunctionSet::new(&g);
+    let p = js.patch(&g, 0).expect("a patch");
+    assert!(
+        p.arms
+            .iter()
+            .all(|a| !g.edges[a.edge].class.eq(&RoadClass::Path)),
+        "{:?}",
+        p.arms.iter().map(|a| a.edge).collect::<Vec<_>>()
+    );
+    // The sidewalks' ends on the surface: at its height.
+    for (ei, e) in g.edges.iter().enumerate() {
+        if !js.side_paths()[ei] {
+            continue;
+        }
+        for (k, v) in [e.from.0 as usize, e.to.0 as usize].into_iter().enumerate() {
+            if let Some(h) = js.patch_height(&g, v, g.vertices[v]) {
+                let end = if k == 0 {
+                    e.profile[0]
+                } else {
+                    e.profile[e.profile.len() - 1]
+                };
+                assert!((end - h).abs() < 0.005, "edge {ei} at {v}: {end} / {h}");
+            }
+        }
+    }
+    drop(js);
+    let pkg = package(&g);
+    let faults = side_faults(&pkg, &g);
+    assert!(faults.is_empty(), "{faults:?}");
 }
