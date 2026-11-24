@@ -894,7 +894,7 @@ fn view_section(ui: &mut egui::Ui, view: &mut ModelView) {
                     (Some(d), true) => format!("the game switches to lod1 at {d:.0} m"),
                     (Some(d), false) =>
                         format!("no lod1 in the file (the game's switch: {d:.0} m)"),
-                    (None, true) => "the game has no switch for this kind yet".into(),
+                    (None, true) => "the game never switches this kind (only seen up close)".into(),
                     (None, false) => "no lod1 in the file".into(),
                 }
             ));

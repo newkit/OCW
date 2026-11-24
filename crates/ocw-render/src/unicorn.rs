@@ -96,12 +96,15 @@ pub enum Lod {
     Impostor,
 }
 
-/// The near model ends (the far one begins) at this distance (m) …
-pub const NEAR_END_M: f32 = 80.0;
+/// The near model ends (the far one begins) at this distance (m): 40 m
+/// like the riders (spec 16H Q24 (a); 80 m before), from the table of
+/// every kind's switch ([`crate::lod::CREATURE`]) …
+pub const NEAR_END_M: f32 = crate::lod::CREATURE.at_m;
 /// … the far model ends (the impostor begins) here.
 pub const FAR_END_M: f32 = 500.0;
-/// The models cross-fade over this part of each boundary (m, either side).
-const LOD_MARGIN_M: f32 = 10.0;
+/// The far model and the impostor cross-fade over this part of their
+/// boundary (m, either side; near and far over the table's fade).
+const IMPOSTOR_MARGIN_M: f32 = 10.0;
 
 impl Lod {
     /// The level drawn at `distance_m` from the camera (the middle of the
@@ -119,18 +122,11 @@ impl Lod {
     /// Bevy's visibility range of this level.
     pub fn range(self) -> bevy::camera::visibility::VisibilityRange {
         use bevy::camera::visibility::VisibilityRange;
-        let m = LOD_MARGIN_M;
+        let m = IMPOSTOR_MARGIN_M;
+        let switch = crate::lod::CREATURE;
         match self {
-            Lod::Near => VisibilityRange {
-                start_margin: 0.0..0.0,
-                end_margin: NEAR_END_M - m..NEAR_END_M + m,
-                use_aabb: false,
-            },
-            Lod::Far => VisibilityRange {
-                start_margin: NEAR_END_M - m..NEAR_END_M + m,
-                end_margin: FAR_END_M - m..FAR_END_M + m,
-                use_aabb: false,
-            },
+            Lod::Near => switch.near_range(),
+            Lod::Far => switch.far_range(Some(FAR_END_M - m..FAR_END_M + m)),
             Lod::Impostor => VisibilityRange::abrupt(FAR_END_M, f32::MAX),
         }
     }
@@ -1419,8 +1415,13 @@ mod tests {
         assert!((450..=800).contains(&far), "far {far}");
         assert_eq!(m.triangles(Lod::Impostor), 0);
         assert_eq!(Lod::at(8.0), Lod::Near);
-        assert_eq!(Lod::at(79.0), Lod::Near);
+        // 40 m like the riders (spec 16H Q24 (a); 80 m before).
+        assert_eq!(NEAR_END_M, crate::riders::LOD_DISTANCE_M);
+        assert_eq!(Lod::at(39.0), Lod::Near);
+        assert_eq!(Lod::at(41.0), Lod::Far);
+        assert_eq!(Lod::at(79.0), Lod::Far);
         assert_eq!(Lod::at(120.0), Lod::Far);
+        assert_eq!(Lod::Near.range().end_margin, crate::lod::CREATURE.fade());
         assert_eq!(Lod::at(499.0), Lod::Far);
         assert_eq!(Lod::at(501.0), Lod::Impostor);
         assert_eq!(Lod::at(5_000.0), Lod::Impostor);

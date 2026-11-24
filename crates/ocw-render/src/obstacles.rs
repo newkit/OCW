@@ -20,7 +20,7 @@ use bevy::camera::visibility::VisibilityRange;
 use bevy::prelude::*;
 use clap::{Arg, Command};
 use ocw_assets::model::Model;
-use ocw_assets::props::{Instance, Placed, place};
+use ocw_assets::props::{Instance, Level, Placed, has_lod1, place_level};
 use ocw_world::obstacles::{LineObstacle, ObstacleKind, PointObstacle};
 use ocw_world::{TileKey, WorldPackage};
 
@@ -45,12 +45,100 @@ pub struct RoadBarrierMesh;
 /// One chunk of a tile's obstacles.
 #[derive(Default)]
 pub struct ObstacleChunk {
-    /// Where the chunk's mesh is placed (its first vertex; the level of
-    /// detail is measured from there).
+    /// Where the chunk's mesh is placed (its first vertex, or the middle
+    /// of a [`LodCells`] cell's props; the level of detail is measured
+    /// from there).
     pub origin: [f32; 3],
     pub mesh: MeshArrays,
     /// Road barriers (toggled by the setting).
     pub road: bool,
+    /// Which level of its props the mesh is (`None`: props without a
+    /// `lod1`, drawn the same at any distance).
+    pub level: Option<Level>,
+}
+
+impl ObstacleChunk {
+    /// Its visibility range: up to [`DRAW_M`]; the near level of props
+    /// with a `lod1` up to [`crate::lod::PROP`]'s switch (60 m), the far
+    /// level from there (spec 16H Q24 (a)).
+    pub fn range(&self) -> VisibilityRange {
+        match self.level {
+            None => draw_range(),
+            Some(Level::Near) => crate::lod::PROP.near_range(),
+            Some(Level::Lod1) => crate::lod::PROP.far_range(Some(draw_range().end_margin)),
+        }
+    }
+}
+
+/// Props with a far level (`lod1`) are merged per cell of this size (m),
+/// a near and a far mesh each, so the switch at 60 m happens within half
+/// a cell's diagonal (at most 11 m, about the fade) of each prop: the
+/// cell's origin is the middle of its props' feet.
+pub const LOD_CELL_M: f32 = 16.0;
+
+/// The props with a `lod1` of a tile, by [`LOD_CELL_M`] cell: two layers
+/// of meshes per level (the obstacles: the rest and the road barriers;
+/// the street lamps: poles and glowing heads).
+#[derive(Default)]
+pub struct LodCells {
+    cells: std::collections::BTreeMap<(i32, i32), LodCellSum>,
+}
+
+#[derive(Default)]
+struct LodCellSum {
+    feet: Vec3,
+    n: f32,
+    near: [MeshArrays; 2],
+    far: [MeshArrays; 2],
+}
+
+/// One cell of [`LodCells`], its meshes relative to `origin`.
+#[derive(Default)]
+pub struct LodCell {
+    pub origin: [f32; 3],
+    pub near: [MeshArrays; 2],
+    pub far: [MeshArrays; 2],
+}
+
+impl LodCells {
+    /// The near and far meshes of the cell of a prop standing at `foot`.
+    pub fn at(&mut self, foot: Vec3) -> (&mut [MeshArrays; 2], &mut [MeshArrays; 2]) {
+        let key = (
+            (foot.x / LOD_CELL_M).floor() as i32,
+            (foot.z / LOD_CELL_M).floor() as i32,
+        );
+        let c = self.cells.entry(key).or_default();
+        c.feet += foot;
+        c.n += 1.0;
+        (&mut c.near, &mut c.far)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.cells.is_empty()
+    }
+
+    /// The cells, each moved to the middle of its props' feet.
+    pub fn finish(self) -> Vec<LodCell> {
+        self.cells
+            .into_values()
+            .map(|c| {
+                let o = c.feet / c.n;
+                let shift = |mut m: MeshArrays| {
+                    for p in &mut m.positions {
+                        *p = [p[0] - o.x, p[1] - o.y, p[2] - o.z];
+                    }
+                    m
+                };
+                let [a, b] = c.near;
+                let [d, e] = c.far;
+                LodCell {
+                    origin: o.to_array(),
+                    near: [shift(a), shift(b)],
+                    far: [shift(d), shift(e)],
+                }
+            })
+            .collect()
+    }
 }
 
 /// The obstacle meshes of a tile.
@@ -245,6 +333,17 @@ pub fn point_mesh(
     model: &Model,
     ground: &dyn Fn(f32, f32) -> f32,
 ) {
+    point_mesh_level(m, p, model, ground, Level::Near);
+}
+
+/// [`point_mesh`] of the file's `level`.
+pub fn point_mesh_level(
+    m: &mut MeshArrays,
+    p: &PointObstacle,
+    model: &Model,
+    ground: &dyn Fn(f32, f32) -> f32,
+    level: Level,
+) {
     let span = if p.width_m > 0.5 {
         p.width_m
     } else {
@@ -258,7 +357,7 @@ pub fn point_mesh(
     let foot = Vec3::new(p.pos[0], ground(p.pos[0], p.pos[1]), p.pos[1]);
     append(
         m,
-        &place(model, &inst, foot, yaw_of(p.angle), ground),
+        &place_level(model, &inst, foot, yaw_of(p.angle), ground, level),
         |_| true,
     );
 }
@@ -325,6 +424,20 @@ pub fn tile_obstacle_meshes(
     keep: Keep,
     ground: &TileGround,
 ) -> TileObstacleMeshes {
+    let shipped = |k: ObstacleKind| ocw_assets::shipped::model(model_id_of(k));
+    tile_obstacle_meshes_from(pkg, key, keep, ground, &shipped)
+}
+
+/// [`tile_obstacle_meshes`] with each kind's file from `model_of`: the
+/// props of a file with a `lod1` are drawn near and far by
+/// [`LodCells`] cell, the others in their chunk.
+pub fn tile_obstacle_meshes_from(
+    pkg: &WorldPackage,
+    key: TileKey,
+    keep: Keep,
+    ground: &TileGround,
+    model_of: &dyn Fn(ObstacleKind) -> Arc<Model>,
+) -> TileObstacleMeshes {
     let Some(t) = pkg.obstacles.as_ref().and_then(|o| o.tiles.get(&key)) else {
         return TileObstacleMeshes::default();
     };
@@ -338,6 +451,7 @@ pub fn tile_obstacle_meshes(
     };
     let kept = |p: [f32; 2]| keep.is_none_or(|f| f([f64::from(p[0]), f64::from(p[1])]));
     let colours = Palette::new();
+    let mut cells = LodCells::default();
     // The kinds' files, read once per tile.
     let mut models: Vec<(ObstacleKind, Arc<Model>)> = Vec::new();
     let n = (CHUNKS * CHUNKS) as usize;
@@ -364,12 +478,21 @@ pub fn tile_obstacle_meshes(
         let model = match models.iter().find(|(k, _)| *k == p.kind) {
             Some((_, m)) => m.clone(),
             None => {
-                let m = ocw_assets::shipped::model(model_id_of(p.kind));
+                let m = model_of(p.kind);
                 models.push((p.kind, m.clone()));
                 m
             }
         };
-        point_mesh(&mut target[chunk_of(p.pos)], p, &model, &at);
+        if has_lod1(&model) {
+            // Near and far by cell (spec 16H Q24 (a): props at 60 m).
+            let layer = usize::from(on_road);
+            let foot = Vec3::new(p.pos[0], at(p.pos[0], p.pos[1]), p.pos[1]);
+            let (near, far) = cells.at(foot);
+            point_mesh_level(&mut near[layer], p, &model, &at, Level::Near);
+            point_mesh_level(&mut far[layer], p, &model, &at, Level::Lod1);
+        } else {
+            point_mesh(&mut target[chunk_of(p.pos)], p, &model, &at);
+        }
     }
     for l in t
         .lines
@@ -394,7 +517,22 @@ pub fn tile_obstacle_meshes(
                 origin,
                 mesh,
                 road: is_road,
+                level: None,
             });
+        }
+    }
+    for cell in cells.finish() {
+        for (level, layers) in [(Level::Near, cell.near), (Level::Lod1, cell.far)] {
+            for (layer, mesh) in layers.into_iter().enumerate() {
+                if !mesh.indices.is_empty() {
+                    chunks.push(ObstacleChunk {
+                        origin: cell.origin,
+                        mesh,
+                        road: layer == 1,
+                        level: Some(level),
+                    });
+                }
+            }
         }
     }
     TileObstacleMeshes { chunks }
@@ -595,6 +733,80 @@ mod tests {
         // Kept out: nothing of a tile the keep filter refuses.
         let none: &(dyn Fn([f64; 2]) -> bool + Sync) = &|_| false;
         assert!(tile_obstacle_meshes(&pkg, TileKey { x: 0, z: 0 }, Some(none), &ground).is_empty());
+    }
+
+    /// Props whose file has a `lod1` (spec 16H Q24 (a)): near and far
+    /// meshes per cell, the near one drawn up to 60 m, the `lod1` from
+    /// there to the obstacles' draw distance; props without stay in their
+    /// chunk, drawn the same at any distance.
+    #[test]
+    fn props_with_a_lod1_are_drawn_with_it_beyond_60_m() {
+        let pkg = package();
+        let key = TileKey { x: 0, z: 0 };
+        let ground = TileGround::new(&pkg, key, None);
+        let red = |m: &ocw_assets::model::Material| ocw_assets::model::Material {
+            name: "paint_red".into(),
+            color: [1.0, 0.0, 0.0, 1.0],
+            ..m.clone()
+        };
+        // Bollards with a far level, the other kinds as shipped.
+        let model_of = |k: ObstacleKind| {
+            let m = ocw_assets::shipped::model(model_id_of(k));
+            if k == ObstacleKind::Bollard {
+                Arc::new(ocw_assets::props::with_copied_lod1(&m, &red))
+            } else {
+                m
+            }
+        };
+        let plain = tile_obstacle_meshes(&pkg, key, None, &ground);
+        let m = tile_obstacle_meshes_from(&pkg, key, None, &ground, &model_of);
+        let levels: Vec<_> = m.chunks.iter().filter_map(|c| c.level).collect();
+        assert_eq!(levels, [Level::Near, Level::Lod1], "one bollard, one cell");
+        let near = m
+            .chunks
+            .iter()
+            .find(|c| c.level == Some(Level::Near))
+            .unwrap();
+        let far = m
+            .chunks
+            .iter()
+            .find(|c| c.level == Some(Level::Lod1))
+            .unwrap();
+        assert!(near.road && far.road, "the bollard is a road barrier");
+        assert_eq!(near.mesh.positions.len(), far.mesh.positions.len());
+        assert!(
+            far.mesh.colors.iter().all(|c| c[1] == 0.0 && c[0] > 0.0),
+            "lod1 drawn"
+        );
+        assert!(
+            near.mesh.colors.iter().any(|c| c[1] > 0.0),
+            "the near model"
+        );
+        // Its cell's origin is its foot (one prop).
+        assert!((near.origin[0] - 100.0).abs() < 1e-3 && (near.origin[2] - 500.0).abs() < 1e-3);
+        // Up to 60 m near, beyond it lod1 (cross-faded over 54 – 66 m),
+        // to the obstacles' draw distance.
+        assert_eq!(near.range().end_margin, 54.0..66.0);
+        assert_eq!(far.range().start_margin, 54.0..66.0);
+        assert_eq!(far.range().end_margin, draw_range().end_margin);
+        let (a, b) = (near.range(), far.range());
+        assert!(a.end_margin.end <= b.start_margin.end && b.start_margin.start < 60.0);
+        // The rest unchanged: as many triangles less as the bollard has.
+        let tris = |c: &ObstacleChunk| c.mesh.indices.len() / 3;
+        let lod_less: usize = m
+            .chunks
+            .iter()
+            .filter(|c| c.level.is_none())
+            .map(tris)
+            .sum();
+        let all: usize = plain.chunks.iter().map(tris).sum();
+        assert_eq!(lod_less + tris(near), all);
+        assert!(
+            plain
+                .chunks
+                .iter()
+                .all(|c| c.level.is_none() && c.range().end_margin == draw_range().end_margin)
+        );
     }
 
     // --- Posts on the drawn ground (spec §4.6.1, 2026-11-17) ---------------

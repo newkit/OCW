@@ -33,6 +33,7 @@ pub mod hud_fit;
 pub mod inspect_hud;
 pub mod junction;
 pub mod junction_mesh;
+pub mod lod;
 pub mod materials;
 pub mod media;
 pub mod menu;

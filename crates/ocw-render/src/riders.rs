@@ -721,25 +721,18 @@ pub fn ghost_material() -> StandardMaterial {
 /// (`lod1`: bike and seated rider in a few meshes), m. Beyond it the
 /// avatar is not posed either (only its wheels' and cranks' angles go on).
 pub const LOD_DISTANCE_M: f32 = 40.0;
-/// Width of the cross-fade between the two models (m).
-const LOD_FADE_M: f32 = 4.0;
+/// Half the width of the cross-fade between the two models (m).
+pub const LOD_FADE_M: f32 = 4.0;
 
-/// The near model's visibility range (up to [`LOD_DISTANCE_M`]).
+/// The near model's visibility range (up to [`LOD_DISTANCE_M`];
+/// [`crate::lod::RIDER`], the table of every kind's switch).
 pub fn near_range() -> VisibilityRange {
-    VisibilityRange {
-        start_margin: 0.0..0.0,
-        end_margin: LOD_DISTANCE_M - LOD_FADE_M..LOD_DISTANCE_M + LOD_FADE_M,
-        use_aabb: false,
-    }
+    crate::lod::RIDER.near_range()
 }
 
 /// The far model's visibility range (from [`LOD_DISTANCE_M`] on).
 pub fn far_range() -> VisibilityRange {
-    VisibilityRange {
-        start_margin: LOD_DISTANCE_M - LOD_FADE_M..LOD_DISTANCE_M + LOD_FADE_M,
-        end_margin: 1.0e7..1.0e7,
-        use_aabb: false,
-    }
+    crate::lod::RIDER.far_range(None)
 }
 
 /// A model's meshes, uploaded once: `(mesh, material index)` per primitive,
