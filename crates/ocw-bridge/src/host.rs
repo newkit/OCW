@@ -42,6 +42,12 @@ pub enum HostEvent {
     /// Trainer control from the paired browser: give it to the trainer,
     /// then [`BridgeHost::applied`]`(id)`.
     Control { id: u64, command: DeviceCommand },
+    /// A report of the paired browser to keep (14I W4: the headset run's
+    /// numbers), at most [`crate::msg::MAX_REPORT`] bytes.
+    Report {
+        kind: String,
+        data: serde_json::Value,
+    },
 }
 
 /// Whether an address is on the local network.
@@ -550,6 +556,12 @@ async fn serve(
                             id,
                             command: control.command(),
                         });
+                    }
+                }
+                ToHost::Report { kind, data } => {
+                    let small = data.to_string().len() <= crate::msg::MAX_REPORT;
+                    if s.gate.is_paired(conn_id) && small {
+                        let _ = events.send(HostEvent::Report { kind, data });
                     }
                 }
                 ToHost::Bye => break 'conn "the browser stopped the bridge".to_owned(),

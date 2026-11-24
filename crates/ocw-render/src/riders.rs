@@ -962,6 +962,19 @@ impl AvatarRig {
         self.animator.params
     }
 
+    /// The saddle's top above the ground (m): where the bike's saddle sits
+    /// for this rider's body height (spec 4C; WebXR's floor, 14I Q8).
+    pub fn saddle_height(&self) -> f32 {
+        self.bike.saddle.y
+    }
+
+    /// The rider's eyes in the avatar's frame (ground y = 0, −Z ahead),
+    /// seated (`stand` 0) or out of the saddle (1), without the pedalling's
+    /// sway (14I Q8: the VR eye point).
+    pub fn eye_point(&self, stand: f32) -> Vec3 {
+        ocw_assets::pose::eye_point_on(&self.rider, &self.bike, &self.fit, stand)
+    }
+
     /// The bike's anchors (the damage marks sit on them, spec §14 Phase
     /// 12E).
     pub fn bike_rig(&self) -> &BikeRig {

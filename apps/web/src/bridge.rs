@@ -89,6 +89,38 @@ pub fn take_request() -> Option<String> {
     PENDING.lock().expect("not poisoned").take()
 }
 
+/// Reports waiting for the connection (spec 14I W4: the headset run's
+/// numbers go to the desktop, the only way back from a standalone
+/// headset's browser). The newest [`MAX_WAITING`] are kept.
+static OUTBOX: Mutex<Vec<(String, serde_json::Value)>> = Mutex::new(Vec::new());
+/// Reports kept while the bridge is not paired.
+pub const MAX_WAITING: usize = 8;
+
+/// Sends a report (`kind`, the page's JSON) to the desktop with the next
+/// bridge step: `Err` when it is too large or no bridge was started; it
+/// waits while connecting.
+pub fn report(kind: &str, data: serde_json::Value) -> Result<(), String> {
+    if data.to_string().len() > ocw_bridge::msg::MAX_REPORT {
+        return Err(format!(
+            "the report is over {} bytes",
+            ocw_bridge::msg::MAX_REPORT
+        ));
+    }
+    if status().code.is_none() {
+        return Err("no sensor bridge: pair with the desktop app first".into());
+    }
+    let mut q = OUTBOX.lock().expect("not poisoned");
+    q.push((kind.to_owned(), data));
+    let over = q.len().saturating_sub(MAX_WAITING);
+    q.drain(..over);
+    Ok(())
+}
+
+/// The reports to send now.
+pub fn take_reports() -> Vec<(String, serde_json::Value)> {
+    std::mem::take(&mut *OUTBOX.lock().expect("not poisoned"))
+}
+
 /// Stops the bridge: the state says so (the device's Shutdown ends the
 /// connection with a goodbye).
 pub fn stopped() {
@@ -434,6 +466,11 @@ mod web {
                     write(&writer, &m);
                 }
             }
+            if matches!(session.borrow().phase, Phase::Paired { .. }) {
+                for (kind, data) in super::take_reports() {
+                    write(&writer, &ToHost::Report { kind, data });
+                }
+            }
             let now = page_ms();
             if now >= next_ping {
                 next_ping = now + 1000.0;
@@ -481,5 +518,29 @@ mod web {
             "controls_applied": s.controls_applied,
             "desktop_devices": s.devices.iter().map(|(n, st)| serde_json::json!({"name": n, "state": format!("{st:?}")})).collect::<Vec<_>>(),
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 14I W4: the headset page's reports wait for a started bridge (the
+    /// newest few kept), too large ones are refused.
+    #[test]
+    fn reports_wait_for_the_bridge_and_keep_the_newest() {
+        set_state(None, "off");
+        assert!(report("xr", serde_json::json!({"n": 0})).is_err());
+        set_state(Some("7K2M-Q9XP-4DA".into()), "connecting");
+        for n in 0..(MAX_WAITING + 3) {
+            report("xr", serde_json::json!({ "n": n })).unwrap();
+        }
+        let big = "x".repeat(ocw_bridge::msg::MAX_REPORT + 1);
+        assert!(report("xr", serde_json::json!({ "big": big })).is_err());
+        let sent = take_reports();
+        assert_eq!(sent.len(), MAX_WAITING);
+        assert_eq!(sent[0].1["n"], 3);
+        assert!(take_reports().is_empty());
+        stopped();
     }
 }

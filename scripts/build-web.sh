@@ -2,10 +2,14 @@
 # Builds the browser app (spec §14 Phase 10, B1 / B7 / B8a) into target/web/:
 #   ocw_web_bg.wasm, ocw_web.js                 the WebGPU build
 #   ocw_web_webgl2_bg.wasm, ocw_web_webgl2.js   the WebGL 2 build (B7)
+#   ocw_web_webxr_bg.wasm, ocw_web_webxr.js     the WebXR build (spec §14
+#                                               Phase 14, 14I W1: WebGL 2
+#                                               with the feature webxr; only
+#                                               with WEB_GPU=…webxr, `make web-xr`)
 #   index.html (loads the one the browser can run), config.json (the page
 #   configuration, B8a), sizes.txt,
 #   ocw-voice.js and livekit-client.umd.js (voice, B5), ocw-gpu.js (the GPU
-#   choice and the WebGPU watchdog, B7)
+#   choice and the WebGPU watchdog, B7), ocw-xr.js (the WebXR session, 14I)
 #
 #   scripts/build-web.sh            the `web-release` profile (release, size-optimised)
 #   scripts/build-web.sh --preview  the public preview (B8a, `make web-preview`)
@@ -18,7 +22,8 @@
 #                                   (voice is off in the preview)
 #   WEB_PROFILE=dev scripts/build-web.sh   a quick debug build
 #   WEB_GPU=webgpu scripts/build-web.sh    only one of the builds (webgpu,
-#                                          webgl2; default: both)
+#                                          webgl2, webxr; default: webgpu
+#                                          and webgl2)
 #   WEB_OUT=DIR, WEB_WASM_OPT="-O3"        another output directory, other
 #                                          wasm-opt passes (default: -Oz for
 #                                          the preview, -Os otherwise; off:
@@ -102,10 +107,14 @@ for gpu in $gpus; do
   case $gpu in
     webgpu) name=ocw_web ;;
     webgl2) name=ocw_web_webgl2 ;;
-    *) echo "WEB_GPU: unknown $gpu (webgpu, webgl2)" >&2; exit 1 ;;
+    webxr) name=ocw_web_webxr ;;
+    *) echo "WEB_GPU: unknown $gpu (webgpu, webgl2, webxr)" >&2; exit 1 ;;
   esac
+  # The WebXR build is WebGL 2 with the session's eyes (14I W1).
+  feat=$gpu
+  [ "$gpu" = webxr ] && feat=webgl2,webxr
   t1=$(date +%s)
-  cargo build -p ocw-web --target wasm32-unknown-unknown --profile "$profile" --features "$gpu$features"
+  cargo build -p ocw-web --target wasm32-unknown-unknown --profile "$profile" --features "$feat$features"
   # Both builds write the same file: bind each before the next build.
   wasm-bindgen --target web --no-typescript "${strip[@]}" --out-name "$name" --out-dir "$out" "$wasm"
   before[$name]=$(stat -c %s "$out/${name}_bg.wasm")
@@ -121,7 +130,7 @@ for gpu in $gpus; do
   echo "$gpu: $(( $(date +%s) - t1 )) s"
   names+=("$name")
 done
-cp apps/web/web/index.html apps/web/web/ocw-voice.js apps/web/web/ocw-gpu.js artwork/logos/ocw.svg "$out/"
+cp apps/web/web/index.html apps/web/web/ocw-voice.js apps/web/web/ocw-gpu.js apps/web/web/ocw-xr.js artwork/logos/ocw.svg "$out/"
 # Add to Home Screen (spec 3.2.3): the web app manifest and its icons (the
 # Apple touch icon is ocw-256.png).
 cp apps/web/web/manifest.webmanifest artwork/logos/ocw-256.png artwork/logos/ocw-512.png "$out/"
