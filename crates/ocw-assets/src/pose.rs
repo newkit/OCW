@@ -61,6 +61,10 @@ pub struct BikeRig {
     pub wheelbase: f32,
     /// TT bike: the elbows rest on pads, they bend down instead of out.
     pub aero_bars: bool,
+    /// The bar's centre at the stem's clamp (the `handlebar` node): the VR
+    /// bike computer's out-front mount sits ahead of it (spec §14 Phase
+    /// 11, v4.68 on `agent/vr-x1`; WebXR 14I W2).
+    pub bar_clamp: Vec3,
 }
 
 /// Rig nodes of the rider model.
@@ -286,6 +290,7 @@ impl BikeRig {
             tyre_crown: m.position(TYRE_CROWN).map_or(0.0, |p| p.y),
             wheelbase: world(m, WHEEL_REAR)?.z - world(m, WHEEL_FRONT)?.z,
             aero_bars: m.node("aero_pads").is_some(),
+            bar_clamp: world(m, HANDLEBAR)?,
         };
         if rig.pedal_x[0] >= 0.0 || rig.pedal_x[1] <= 0.0 {
             return Err("pedal_l must be on the left (-x), pedal_r on the right".into());

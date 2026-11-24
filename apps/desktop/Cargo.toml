@@ -53,6 +53,8 @@ dirs.workspace = true
 ocw-fit.workspace = true
 tracing.workspace = true
 serde_json.workspace = true
+# The headset's left-eye pictures over the sensor bridge (spec 14I W3).
+base64.workspace = true
 # Strava uploads (MIT OR Apache-2.0; rustls, no OpenSSL).
 ureq.workspace = true
 # Game audio output (Apache-2.0; spec §3.3).

@@ -30,21 +30,33 @@ pub enum QualityLevel {
     /// The renderer's own look (the default).
     #[default]
     High,
+    /// The Oculus Quest 1 in WebXR (spec §14 Phase 14, 14I W3): Low and
+    /// less – a shorter view, smaller shadows, fewer trees, houses,
+    /// particles and riders drawn – for two eyes at 72 Hz on a
+    /// Snapdragon 835 (the layer's render scale and foveation go with it:
+    /// `ocw_client::quality::XrLayer`). Chosen by `auto` in an immersive
+    /// session on a Quest 1; not on the flat screen's ladder
+    /// ([`Self::ALL`]).
+    Quest1,
 }
 
 impl QualityLevel {
+    /// The ladder of the flat screen, cheapest first.
     pub const ALL: [Self; 3] = [Self::Low, Self::Medium, Self::High];
+    /// Every level by name (the console's and the setting's words).
+    pub const NAMED: [Self; 4] = [Self::Low, Self::Medium, Self::High, Self::Quest1];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
+            Self::Quest1 => "quest1",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|l| l.name() == s.trim())
+        Self::NAMED.into_iter().find(|l| l.name() == s.trim())
     }
 }
 
@@ -53,6 +65,9 @@ impl std::fmt::Display for QualityLevel {
         f.write_str(self.name())
     }
 }
+
+/// The other riders the `quest1` level draws (14I W3).
+pub const QUEST1_MAX_RIDERS: usize = 8;
 
 /// Shadow cascades per light the renderer can draw: Bevy's limit of this
 /// build (1 on WebGL 2, 4 elsewhere).
@@ -99,6 +114,9 @@ pub struct QualityPreset {
     pub ground_detail: f32,
     /// … up to this distance from the camera (m), faded out before it.
     pub ground_detail_m: f32,
+    /// The other riders drawn at most: the nearest along the road (`None`:
+    /// all; the own rider and the ghost always; `crate::riders`).
+    pub max_riders: Option<usize>,
 }
 
 impl QualityPreset {
@@ -122,6 +140,7 @@ impl QualityPreset {
                 road_damage_m: 160.0,
                 ground_detail: 1.0,
                 ground_detail_m: 80.0,
+                max_riders: None,
             },
             QualityLevel::Medium => Self {
                 level,
@@ -139,6 +158,7 @@ impl QualityPreset {
                 road_damage_m: 110.0,
                 ground_detail: 0.6,
                 ground_detail_m: 55.0,
+                max_riders: None,
             },
             // WebGL 2 and phones: one cascade (WebGL 2 has no more) over
             // the rider's surroundings, no MSAA.
@@ -158,6 +178,30 @@ impl QualityPreset {
                 road_damage_m: 60.0,
                 ground_detail: 0.25,
                 ground_detail_m: 35.0,
+                max_riders: None,
+            },
+            // The Quest 1 in WebXR (14I W3): Low's one cascade at half the
+            // map over the nearest 40 m, no MSAA, half Low's view (4 km)
+            // with the trees to 800 m (the render distance's least), the
+            // houses' details nearer, few particles and little ground
+            // detail, and at most 8 other riders.
+            QualityLevel::Quest1 => Self {
+                level,
+                shadow_map_px: 1024,
+                shadow_cascades: 1,
+                shadow_distance_m: 40.0,
+                first_cascade_m: 40.0,
+                msaa_samples: 1,
+                view_m: Some(4_000.0),
+                tree_view_m: Some(800.0),
+                house_lod_scale: 0.4,
+                particle_share: 0.12,
+                max_pixel_ratio: Some(1.0),
+                road_damage_share: 0.3,
+                road_damage_m: 35.0,
+                ground_detail: 0.1,
+                ground_detail_m: 20.0,
+                max_riders: Some(QUEST1_MAX_RIDERS),
             },
         }
     }
@@ -602,6 +646,35 @@ mod tests {
         let r = tree_range(&h);
         assert_eq!(r.start_margin, crate::vegetation::NEAR_FADE_M);
         assert!(r.end_margin.start > 1.0e6);
+    }
+
+    /// 14I W3: the Quest 1's level is Low and cheaper in every number,
+    /// draws at most 8 other riders, is named but not on the ladder.
+    #[test]
+    fn the_quest1_level_is_cheaper_than_low() {
+        let q = QualityPreset::of(QualityLevel::Quest1);
+        let low = QualityPreset::of(QualityLevel::Low);
+        assert!(q.shadow_map_px < low.shadow_map_px);
+        assert_eq!(q.shadow_cascades, 1);
+        assert!(q.shadow_distance_m < low.shadow_distance_m);
+        assert_eq!(q.msaa(), Msaa::Off);
+        assert!(q.view_m.unwrap() < low.view_m.unwrap());
+        assert!(q.tree_view_m.unwrap() < low.tree_view_m.unwrap());
+        assert!(q.house_lod_scale < low.house_lod_scale);
+        assert!(q.particles() < low.particles());
+        assert!(q.road_damage_share < low.road_damage_share);
+        assert!(q.ground_detail < low.ground_detail);
+        assert_eq!(q.max_riders, Some(QUEST1_MAX_RIDERS));
+        assert_eq!(low.max_riders, None);
+        assert_eq!(QualityLevel::parse("quest1"), Some(QualityLevel::Quest1));
+        assert!(!QualityLevel::ALL.contains(&QualityLevel::Quest1));
+        // At its own distance the render distance changes nothing.
+        assert_eq!(q.with_view_distance(q.view_m), q);
+        assert!(
+            q.summary().contains("MSAA off, view 4.0 km"),
+            "{}",
+            q.summary()
+        );
     }
 
     /// Each level is cheaper than the one above in every number.

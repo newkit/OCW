@@ -20,6 +20,19 @@
 //                          the desktop over the bridge (every 10 s in VR and
 //                          at the end; the desktop keeps them in
 //                          <data dir>/ocw/reports/xr.jsonl)
+//   ocwXr.shot()           a left-eye picture of the headset's view over the
+//                          bridge at the next frame (14I W3, `vr.shot`'s
+//                          counterpart: a small JPEG ≤ 16 KB, also every
+//                          60 s of a session; the desktop keeps them in
+//                          <data dir>/ocw/reports/xr-shots/); lastShot()
+//                          the last one (tests)
+//
+// The controllers (14I W2): each frame's WebXR gamepads (oculus-touch-v2:
+// the buttons and the thumbstick's axes 2 / 3) and grips go to the app
+// before the frame (window.ocw.xrPads); the app maps them like the desktop
+// VR mode's Touch controllers. The layer's render scale and foveation come
+// from the app's quality level for this headset (window.ocw.xrLayer: the
+// `quest1` level on a Quest 1, 14I W3); ?xrscale= / ?xrfoveation= win.
 //
 // The reference space (14I Q8 (a)): local-floor, so the real floor is the
 // road; `local` when the browser has no floor (the app puts the head at the
@@ -53,6 +66,8 @@
   const realCaf = root.cancelAnimationFrame.bind(root);
   // Frame data layout (apps/web/src/xr.rs: FRAME_LAYOUT, HEADER_LEN, VIEW_LEN).
   const LAYOUT = 1, HEADER = 13, VIEW = 28;
+  // Controller data (apps/web/src/xr.rs: PADS_LAYOUT, PAD_LEN, MAX_PADS).
+  const PADS_LAYOUT = 1, PAD = 20, MAX_PADS = 4;
   const query = new URLSearchParams(root.location.search);
   const st = {
     installed: false, app: null, state: "unknown", why: "",
@@ -63,9 +78,15 @@
     t0: 0, lastWork: 0, frames: 0, copy: "", copies: 0, error: "",
     testFbo: null, workMs: [],
     beacon: {sent: 0, last: "", error: "", timer: null}, pairTimer: null,
+    level: null, pads: 0,
+    shots: {sent: 0, error: "", bytes: 0, next: 0, now: false, last: null},
   };
   // How often the beacon reports during a session (ms).
   const BEACON_MS = 10000;
+  // The left-eye pictures over the bridge: the first after FIRST_SHOT_MS,
+  // then every SHOT_MS; at most SHOT_B64 characters of base64 (the
+  // bridge's report is at most 16 KB with its JSON).
+  const FIRST_SHOT_MS = 15000, SHOT_MS = 60000, SHOT_B64 = 15000;
 
   // The page's requestAnimationFrame, wrapped from the start so that the
   // callback winit is waiting for can be taken over when a session starts.
@@ -253,6 +274,8 @@
 
   async function enter() {
     if (st.session || st.state === "entering") return false;
+    // The headset (14I W3: the Quest 1 gets the quest1 level).
+    event("device", root.navigator.userAgent);
     event("enter", "");
     const {button} = ui();
     button.disabled = true;
@@ -268,9 +291,13 @@
       // No MSAA and no depth in the layer: the app draws with its own and
       // the layer only receives the copied picture (14I W3 sets the scale
       // and the foveation for the Quest 1).
-      const scale = Number(query.get("xrscale")) || 1.0;
+      let level = {};
+      try { level = JSON.parse((st.app.xrLayer && st.app.xrLayer(root.navigator.userAgent)) || "{}"); } catch (e) { level = {}; }
+      const scale = Number(query.get("xrscale")) || level.scale || 1.0;
       const layer = new root.XRWebGLLayer(session, gl, {antialias: false, depth: false, stencil: false, alpha: false, framebufferScaleFactor: scale});
-      if ("fixedFoveation" in layer && query.has("xrfoveation")) layer.fixedFoveation = Number(query.get("xrfoveation"));
+      const foveation = query.has("xrfoveation") ? Number(query.get("xrfoveation")) : level.foveation;
+      if ("fixedFoveation" in layer && foveation != null) layer.fixedFoveation = foveation;
+      st.level = Object.assign({}, level, {scale, foveation: foveation == null ? null : foveation});
       session.updateRenderState({baseLayer: layer, depthNear: 0.05, depthFar: 20000});
       let space, type = "local-floor";
       try { space = await session.requestReferenceSpace("local-floor"); } catch (e) {
@@ -278,6 +305,7 @@
         space = await session.requestReferenceSpace("local");
       }
       Object.assign(st, {session, gl, layer, space, spaceType: type, t0: performance.now(), frames: 0, copies: 0, workMs: [], error: ""});
+      st.shots.next = FIRST_SHOT_MS;
       // The facts W4 logs in the headset (spec 14A, W0's open points).
       const exts = gl.getSupportedExtensions() || [];
       st.device = {
@@ -353,10 +381,7 @@
     d[3] = layer.framebufferHeight;
     d[4] = t - st.t0;
     d[5] = st.lastWork;
-    const put = (o, tr) => {
-      d[o] = tr.position.x; d[o + 1] = tr.position.y; d[o + 2] = tr.position.z;
-      d[o + 3] = tr.orientation.x; d[o + 4] = tr.orientation.y; d[o + 5] = tr.orientation.z; d[o + 6] = tr.orientation.w;
-    };
+    const put = (o, tr) => putPose(d, o, tr);
     if (pose) put(6, pose.transform); else d[12] = 1;
     views.forEach((v, i) => {
       const o = HEADER + VIEW * i;
@@ -366,6 +391,7 @@
       d.set(v.projectionMatrix, o + 5);
       put(o + 21, v.transform);
     });
+    try { if (st.app.xrPads) st.app.xrPads(padData(session, xrFrame)); } catch (e) { st.error = "xrPads: " + e; }
     try { st.app.xrFrame(d); } catch (e) { st.error = "xrFrame: " + e; }
     const q = st.queued;
     st.queued = new Map();
@@ -375,10 +401,84 @@
       }
     }
     copy(layer);
+    if (st.shots.now || t - st.t0 >= st.shots.next) {
+      st.shots.now = false;
+      st.shots.next = t - st.t0 + SHOT_MS;
+      leftEyeShot(layer, views, t);
+    }
     st.frames++;
     st.lastWork = performance.now() - w0;
     st.workMs.push(st.lastWork);
     if (st.workMs.length > 600) st.workMs.shift();
+  }
+
+  function putPose(d, o, tr) {
+    d[o] = tr.position.x; d[o + 1] = tr.position.y; d[o + 2] = tr.position.z;
+    d[o + 3] = tr.orientation.x; d[o + 4] = tr.orientation.y; d[o + 5] = tr.orientation.z; d[o + 6] = tr.orientation.w;
+  }
+
+  // The controllers of this frame: per hand the grip's pose, the buttons'
+  // values and the axes (xr-standard; oculus-touch-v2 on the Quest).
+  function padData(session, xrFrame) {
+    const sources = [];
+    for (const s of session.inputSources || []) {
+      if (s.gamepad && (s.handedness === "left" || s.handedness === "right") && sources.length < MAX_PADS) sources.push(s);
+    }
+    const d = new Float32Array(2 + PAD * sources.length);
+    d[0] = PADS_LAYOUT;
+    d[1] = sources.length;
+    sources.forEach((s, i) => {
+      const o = 2 + PAD * i;
+      d[o] = s.handedness === "left" ? 1 : 2;
+      let grip = null;
+      try { grip = s.gripSpace ? xrFrame.getPose(s.gripSpace, st.space) : null; } catch (e) { grip = null; }
+      if (grip) { d[o + 1] = 1; putPose(d, o + 2, grip.transform); } else d[o + 8] = 1;
+      const b = s.gamepad.buttons || [], a = s.gamepad.axes || [];
+      for (let k = 0; k < 7; k++) d[o + 9 + k] = b[k] ? b[k].value : 0;
+      for (let k = 0; k < 4; k++) d[o + 16 + k] = a[k] || 0;
+    });
+    st.pads = sources.length;
+    return d;
+  }
+
+  // A left-eye picture of this frame (the canvas still holds it): a small
+  // JPEG to the desktop over the bridge (14I W3).
+  function leftEyeShot(layer, views, t) {
+    const canvas = doc.getElementById("ocw-canvas");
+    const left = views.find((v) => v.eye === "left") || views[0];
+    if (!canvas || !left) return;
+    try {
+      const vp = layer.getViewport(left);
+      const fw = layer.framebufferWidth, fh = layer.framebufferHeight;
+      const cw = canvas.width, ch = canvas.height;
+      const sx = vp.x / fw * cw, sw = vp.width / fw * cw;
+      const sy = (1 - (vp.y + vp.height) / fh) * ch, sh = vp.height / fh * ch;
+      let data = null, w = 0, h = 0, q = 0;
+      for (const [width, quality] of [[320, 0.55], [320, 0.35], [224, 0.35]]) {
+        w = width; h = Math.max(8, Math.round(width * sh / Math.max(1, sw))); q = quality;
+        const c = doc.createElement("canvas");
+        c.width = w; c.height = h;
+        c.getContext("2d").drawImage(canvas, sx, sy, sw, sh, 0, 0, w, h);
+        const url = c.toDataURL("image/jpeg", quality);
+        data = url.slice(url.indexOf(",") + 1);
+        if (data.length <= SHOT_B64) break;
+      }
+      st.shots.bytes = Math.round(data.length * 3 / 4);
+      st.shots.last = {jpeg_base64: data, w, h, quality: q};
+      if (data.length > SHOT_B64) { st.shots.error = `too large (${st.shots.bytes} bytes)`; return; }
+      const why = st.app.xrShot ? st.app.xrShot(JSON.stringify({jpeg_base64: data, w, h, quality: q,
+        page_s: Math.round(performance.now() / 100) / 10, session_s: Math.round((t - st.t0) / 100) / 10})) : "no app";
+      if (why) st.shots.error = why; else { st.shots.sent++; st.shots.error = ""; }
+    } catch (e) {
+      st.shots.error = String(e);
+    }
+  }
+
+  function shot() { st.shots.now = true; return !!st.session; }
+
+  function lastShot() {
+    const l = st.shots.last;
+    return l ? {w: l.w, h: l.h, quality: l.quality, bytes: st.shots.bytes, jpeg_base64: l.jpeg_base64} : null;
   }
 
   // The canvas (both eyes) into the layer's framebuffer, scaled.
@@ -462,10 +562,13 @@
       framebuffer: st.layer ? [st.layer.framebufferWidth, st.layer.framebufferHeight] : null,
       work_ms_p50: q(0.5), work_ms_p95: q(0.95), device: st.device || null,
       beacon: {sent: st.beacon.sent, last: st.beacon.last, error: st.beacon.error},
+      level: st.level, pads: st.pads,
+      canvas: (() => { const c = doc.getElementById("ocw-canvas"); return c ? [c.width, c.height] : null; })(),
+      shots: {sent: st.shots.sent, error: st.shots.error, bytes: st.shots.bytes},
     };
   }
 
   function recentre() { event("recentre", "page"); }
 
-  root.ocwXr = {install, offer, enter, exit, state, readback, pair, report, recentre};
+  root.ocwXr = {install, offer, enter, exit, state, readback, pair, report, recentre, shot, lastShot};
 })(window);

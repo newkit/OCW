@@ -6875,6 +6875,7 @@ name = "ocw-desktop"
 version = "0.2.5"
 dependencies = [
  "arboard",
+ "base64 0.22.1",
  "bevy",
  "clap",
  "cpal",
@@ -6989,6 +6990,7 @@ dependencies = [
  "ocw-sky",
  "ocw-weather",
  "ocw-world",
+ "ocw-xr",
  "png",
  "raw-window-handle",
  "serde",
@@ -7171,6 +7173,7 @@ dependencies = [
  "ocw-winres",
  "ocw-world",
  "ocw-worldstore",
+ "ocw-xr",
  "serde",
  "serde_json",
  "wasm-bindgen",
@@ -7233,6 +7236,13 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "ureq",
+]
+
+[[package]]
+name = "ocw-xr"
+version = "0.2.5"
+dependencies = [
+ "glam",
 ]
 
 [[package]]

@@ -7,7 +7,7 @@
 
 use bevy::prelude::*;
 use clap::{Arg, Command};
-use ocw_client::quality::{DeviceInfo, GpuApi, QualitySetting, resolve};
+use ocw_client::quality::{DeviceInfo, GpuApi, QualitySetting, XrHeadset, resolve_xr};
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, Permission};
 use ocw_render::quality::{QualityLevel, QualityPreset, RenderQuality};
 
@@ -17,6 +17,10 @@ use ocw_render::quality::{QualityLevel, QualityPreset, RenderQuality};
 pub struct QualityContext {
     pub api: GpuApi,
     pub device: DeviceInfo,
+    /// An immersive session runs on this headset (spec §14 Phase 14, 14I
+    /// W3: `auto` on a Quest 1 is the `quest1` level); `None`: the flat
+    /// view.
+    pub xr: Option<XrHeadset>,
 }
 
 /// The chosen setting and the level it resolved to.
@@ -47,7 +51,7 @@ impl Plugin for QualityPlugin {
             .console_command(ConsoleCommand::new(
                 Permission::User,
                 Command::new("quality")
-                    .about("Graphics quality: auto (by GPU and device), low, medium or high; without an argument: what runs (spec §14 Phase 10 B7)")
+                    .about("Graphics quality: auto (by GPU and device; quest1 in VR on a Quest 1), low, medium, high or quest1; without an argument: what runs (spec §14 Phase 10 B7, Phase 14 14I W3)")
                     .arg(Arg::new("level").value_parser(QualitySetting::CHOICES.to_vec())),
                 |world, m| {
                     if let Some(word) = m.get_one::<String>("level") {
@@ -88,7 +92,7 @@ pub fn set_quality(world: &mut World, setting: QualitySetting) {
         .get_resource::<QualityContext>()
         .cloned()
         .unwrap_or_default();
-    let (level, reason) = resolve(setting, ctx.api, &ctx.device);
+    let (level, reason) = resolve_xr(setting, ctx.api, &ctx.device, ctx.xr);
     world.insert_resource(QualityChoice {
         setting,
         level,
@@ -170,6 +174,7 @@ mod tests {
         let mut web = app(QualityContext {
             api: GpuApi::WebGl2,
             device: DeviceInfo::default(),
+            xr: None,
         });
         let out = run(&mut web, "quality auto");
         assert!(out.contains("quality: low (auto: WebGL 2)"), "{out}");

@@ -15,6 +15,11 @@
 //!
 //! A level chosen by name always wins (also High on WebGL 2: the renderer
 //! then draws what WebGL 2 can – one cascade).
+//!
+//! In an immersive WebXR session on the **Oculus Quest 1** (spec §14 Phase
+//! 14, 14I W3) `auto` is the **`quest1`** level ([`resolve_xr`]), with the
+//! XR layer's render scale and fixed foveation of [`XrLayer`]; another
+//! headset keeps the rules above (the WebXR build is WebGL 2: Low).
 
 use ocw_render::quality::QualityLevel;
 
@@ -29,7 +34,7 @@ pub enum QualitySetting {
 
 impl QualitySetting {
     /// The setting's words (`display.quality`'s choices).
-    pub const CHOICES: &'static [&'static str] = &["auto", "low", "medium", "high"];
+    pub const CHOICES: &'static [&'static str] = &["auto", "low", "medium", "high", "quest1"];
 
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim() {
@@ -144,10 +149,117 @@ pub fn resolve(
     }
 }
 
+/// The headset of an immersive session, as far as the quality cares
+/// (14I W3; `ocw_xr::headset::from_user_agent` finds it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum XrHeadset {
+    /// The Oculus Quest (first generation): Snapdragon 835, 72 Hz.
+    Quest1,
+    /// Any other (the later Quests are postponed; a PC headset).
+    Other,
+}
+
+/// The level in an immersive session (`xr`: its headset; `None`: the flat
+/// view): `auto` on a Quest 1 is [`QualityLevel::Quest1`], everything else
+/// as [`resolve`] (a level chosen by name always wins).
+pub fn resolve_xr(
+    setting: QualitySetting,
+    api: GpuApi,
+    device: &DeviceInfo,
+    xr: Option<XrHeadset>,
+) -> (QualityLevel, &'static str) {
+    match (setting, xr) {
+        (QualitySetting::Auto, Some(XrHeadset::Quest1)) => {
+            (QualityLevel::Quest1, "auto: Quest 1 in VR")
+        }
+        _ => resolve(setting, api, device),
+    }
+}
+
+/// The XR layer's options for a level (14I W3): the render scale – of the
+/// eyes in the canvas and of the layer's framebuffer
+/// (`framebufferScaleFactor`, 1.0 = the browser's recommended size) – and
+/// the fixed foveation (`XRWebGLLayer.fixedFoveation`, 0 … 1; `None`: the
+/// browser's own). The page's `xrscale=` / `xrfoveation=` still win.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct XrLayer {
+    pub scale: f32,
+    pub foveation: Option<f32>,
+}
+
+/// The `quest1` level's render scale: the Quest 1's standalone scale
+/// (`ocw_xr::headset::QUEST_1.render_scale_standalone`, 0.8 of the
+/// recommended 1216 × 1344 per eye: about 973 × 1075).
+pub const QUEST1_RENDER_SCALE: f32 = 0.8;
+/// … and its fixed foveation: the highest (Meta's level "high"; the Quest
+/// 1's lenses blur the edges anyway).
+pub const QUEST1_FOVEATION: f32 = 1.0;
+
+impl XrLayer {
+    pub fn of(level: QualityLevel) -> Self {
+        match level {
+            QualityLevel::Quest1 => Self {
+                scale: QUEST1_RENDER_SCALE,
+                foveation: Some(QUEST1_FOVEATION),
+            },
+            _ => Self {
+                scale: 1.0,
+                foveation: None,
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use QualityLevel::*;
+
+    /// 14I W3: `auto` in a session on a Quest 1 is `quest1` with its
+    /// layer options; another headset or the flat view keeps the rules; a
+    /// level by name wins in the headset too.
+    #[test]
+    fn auto_on_a_quest_1_in_vr_is_the_quest1_level() {
+        let quest = DeviceInfo::from_json(r#"{"mobile": false, "cores": 8, "memory_gb": 4}"#);
+        let auto = QualitySetting::Auto;
+        assert_eq!(
+            resolve_xr(auto, GpuApi::WebGl2, &quest, Some(XrHeadset::Quest1)),
+            (Quest1, "auto: Quest 1 in VR")
+        );
+        assert_eq!(
+            resolve_xr(auto, GpuApi::WebGl2, &quest, Some(XrHeadset::Other)),
+            (Low, "auto: WebGL 2")
+        );
+        assert_eq!(
+            resolve_xr(auto, GpuApi::WebGl2, &quest, None),
+            resolve(auto, GpuApi::WebGl2, &quest)
+        );
+        assert_eq!(
+            resolve_xr(
+                QualitySetting::Fixed(Medium),
+                GpuApi::WebGl2,
+                &quest,
+                Some(XrHeadset::Quest1)
+            ),
+            (Medium, "chosen")
+        );
+        assert_eq!(
+            QualitySetting::parse("quest1"),
+            Some(QualitySetting::Fixed(Quest1))
+        );
+        let layer = XrLayer::of(Quest1);
+        assert_eq!(layer.scale, 0.8);
+        assert_eq!(layer.foveation, Some(1.0));
+        for l in QualityLevel::ALL {
+            assert_eq!(
+                XrLayer::of(l),
+                XrLayer {
+                    scale: 1.0,
+                    foveation: None
+                }
+            );
+        }
+    }
 
     fn desktop_browser() -> DeviceInfo {
         DeviceInfo::from_json(

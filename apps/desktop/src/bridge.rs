@@ -403,8 +403,37 @@ pub fn report_file(kind: &str) -> String {
     format!("{}.jsonl", if k.is_empty() { "report" } else { &k })
 }
 
+/// The headset's left-eye pictures (spec 14 Phase 14, 14I W3): the report
+/// kind, and the folder below the reports where the JPEGs go.
+pub const SHOT_KIND: &str = "xr-shot";
+pub const SHOTS_DIR: &str = "xr-shots";
+
+/// A picture report's JPEG and the line kept for it (the data without the
+/// picture, with its file name): `None` when it holds no JPEG.
+pub fn split_shot(
+    data: &serde_json::Value,
+    unix_ms: u64,
+) -> Option<(Vec<u8>, String, serde_json::Value)> {
+    use base64::Engine as _;
+    let b64 = data.get("jpeg_base64")?.as_str()?;
+    let jpeg = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
+    // A JPEG starts with its SOI marker.
+    if jpeg.len() < 4 || jpeg[..2] != [0xFF, 0xD8] {
+        return None;
+    }
+    let name = format!("xr-shot-{unix_ms}.jpg");
+    let mut line = data.clone();
+    if let Some(o) = line.as_object_mut() {
+        o.remove("jpeg_base64");
+        o.insert("file".into(), format!("{SHOTS_DIR}/{name}").into());
+        o.insert("bytes".into(), jpeg.len().into());
+    }
+    Some((jpeg, name, line))
+}
+
 /// Appends a report to its file; the console line says where (and the
-/// headset run's main numbers).
+/// headset run's main numbers). A picture (`xr-shot`) goes into its own
+/// JPEG file, its line without the picture.
 fn keep_report(kind: &str, data: &serde_json::Value) -> String {
     use std::io::Write as _;
     let ms = std::time::SystemTime::now()
@@ -413,6 +442,22 @@ fn keep_report(kind: &str, data: &serde_json::Value) -> String {
     let Some(dir) = reports_dir() else {
         return format!("bridge: a {kind} report (no data directory to keep it)");
     };
+    let shot = (kind == SHOT_KIND).then(|| split_shot(data, ms)).flatten();
+    let mut picture = None;
+    let data = match shot {
+        Some((jpeg, name, line)) => {
+            let path = dir.join(SHOTS_DIR).join(&name);
+            let wrote = std::fs::create_dir_all(dir.join(SHOTS_DIR))
+                .and_then(|()| std::fs::write(&path, &jpeg));
+            picture = Some(match wrote {
+                Ok(()) => format!(", the picture {}", path.display()),
+                Err(e) => format!(", the picture not kept: {e}"),
+            });
+            line
+        }
+        None => data.clone(),
+    };
+    let data = &data;
     let path = dir.join(report_file(kind));
     let wrote = std::fs::create_dir_all(&dir).and_then(|()| {
         let mut f = std::fs::OpenOptions::new()
@@ -426,9 +471,13 @@ fn keep_report(kind: &str, data: &serde_json::Value) -> String {
         (Some(fps), Some(w)) => format!(" – {fps:.1} fps, work p50 {w:.1} ms"),
         _ => String::new(),
     };
+    let picture = picture.unwrap_or_default();
     match wrote {
-        Ok(()) => format!("bridge: {kind} report{summary} → {}", path.display()),
-        Err(e) => format!("bridge: {kind} report{summary} not kept: {e}"),
+        Ok(()) => format!(
+            "bridge: {kind} report{summary} → {}{picture}",
+            path.display()
+        ),
+        Err(e) => format!("bridge: {kind} report{summary} not kept: {e}{picture}"),
     }
 }
 
@@ -451,6 +500,31 @@ mod tests {
     }
 
     use super::*;
+
+    /// 14I W3: a left-eye picture over the bridge becomes a JPEG file; its
+    /// line keeps the rest and names the file; a report without a JPEG is
+    /// none.
+    #[test]
+    fn a_headset_picture_is_kept_as_a_jpeg() {
+        use base64::Engine as _;
+        let jpeg = [
+            0xFF, 0xD8, 0xFF, 0xE0, 0, 16, b'J', b'F', b'I', b'F', 0xFF, 0xD9,
+        ];
+        let b64 = base64::engine::general_purpose::STANDARD.encode(jpeg);
+        let data = serde_json::json!({"jpeg_base64": b64, "w": 320, "h": 354});
+        let (bytes, name, line) = split_shot(&data, 1_790_000_000_000).unwrap();
+        assert_eq!(bytes, jpeg);
+        assert_eq!(name, "xr-shot-1790000000000.jpg");
+        assert_eq!(line["file"], "xr-shots/xr-shot-1790000000000.jpg");
+        assert_eq!(line["w"], 320);
+        assert_eq!(line["bytes"], 12);
+        assert!(line.get("jpeg_base64").is_none());
+        assert!(split_shot(&serde_json::json!({"w": 1}), 0).is_none());
+        let png = base64::engine::general_purpose::STANDARD.encode(b"\x89PNG....");
+        assert!(split_shot(&serde_json::json!({"jpeg_base64": png}), 0).is_none());
+        assert!(split_shot(&serde_json::json!({"jpeg_base64": "not base64!"}), 0).is_none());
+        assert_eq!(report_file(SHOT_KIND), "xr-shot.jsonl");
+    }
 
     #[test]
     fn the_secret_is_read_from_its_section() {

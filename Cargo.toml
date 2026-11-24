@@ -23,6 +23,7 @@ members = [
     "crates/ocw-client",
     "crates/ocw-audio",
     "crates/ocw-ui",
+    "crates/ocw-xr",
     "crates/ocw-auth",
     "crates/ocw-edit",
     "crates/ocw-map",
@@ -48,6 +49,7 @@ ocw-world = { path = "crates/ocw-world" }
 ocw-worldgen = { path = "crates/ocw-worldgen" }
 ocw-fit = { path = "crates/ocw-fit" }
 ocw-ui = { path = "crates/ocw-ui" }
+ocw-xr = { path = "crates/ocw-xr" }
 ocw-worldstore = { path = "crates/ocw-worldstore" }
 ocw-render = { path = "crates/ocw-render" }
 # ocw-assets without its command-line tools (`tools` feature) for the app.
