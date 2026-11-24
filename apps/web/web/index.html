@@ -55,6 +55,11 @@
     the public preview (channel "preview") the start page's rides
     ("start"). Without a ride option in the query (route, world, server)
     the preview shows its start page instead of loading the module.
+    WebXR (spec §14 Phase 14, 14I W1; ocw-xr.js): ?xr=1 loads the WebXR
+    build (ocw_web_webxr.js: WebGL 2 with the feature webxr, `make web-xr`)
+    and shows Enter VR when the browser has immersive VR (a headset's
+    browser; HTTPS or localhost), else a note; xrscale=, xrfoveation= set
+    the layer, xrcopy=fbo tests the copy into a framebuffer of our own.
   -->
   <style>
     html, body { margin: 0; height: 100%; background: #10141a; color: #d8dee9;
@@ -154,6 +159,19 @@
   <!-- Voice (B5): the shim the app talks to; LiveKit's JS SDK is loaded
        before the module unless the page configuration has no voice (B8a). -->
   <script src="ocw-voice.js"></script>
+  <!-- WebXR (14I W1): the immersive session; only the ?xr=1 build uses it. -->
+  <script src="ocw-xr.js"></script>
+  <style>
+    #ocw-xr-enter { position: fixed; left: 50%; bottom: 140px; transform: translateX(-50%);
+      font: 600 20px system-ui, sans-serif; color: #10141a; background: #a3be8c; border: 0;
+      border-radius: 8px; padding: 14px 28px; min-height: 48px; cursor: pointer; z-index: 5; }
+    #ocw-xr-enter:disabled { opacity: 0.6; cursor: progress; }
+    #ocw-xr-enter[hidden], #ocw-xr-note[hidden] { display: none; }
+    #ocw-xr-note { position: fixed; left: 50%; bottom: 140px; transform: translateX(-50%);
+      max-width: calc(100% - 32px); box-sizing: border-box; color: #10141a; background: #ebcb8b;
+      border-radius: 4px; padding: 6px 12px; font: 14px system-ui, sans-serif; z-index: 5; }
+    #ocw-xr-note.error { background: #bf616a; color: #fff; }
+  </style>
   <style>
     /* The public preview's start page and its line in the ride (B8a). */
     #ocw-start { position: fixed; inset: 0; overflow-y: auto; background: #10141a; }
@@ -703,7 +721,13 @@
     const hasWebgl2 = () => {
       try { return !!document.createElement("canvas").getContext("webgl2"); } catch (e) { return false; }
     };
-    const chooseGpu = () => ocwGpuChoice.choose({
+    // WebXR (14I W1): ?xr=1 takes the WebXR build (WebGL 2; WebGPU in
+    // WebXR is not shipped on the Quest 1).
+    const xrWanted = ["1", "true", "on"].includes(new URLSearchParams(location.search).get("xr") || "");
+    const chooseGpu = async () => xrWanted
+      ? (hasWebgl2() ? {api: "webgl2", reason: "the WebXR build (xr=1)", forced: true, xr: true}
+        : {api: null, reason: "no WebGL 2 for the WebXR build"})
+      : ocwGpuChoice.choose({
       query: new URLSearchParams(location.search), facts: gpuFacts, gpu: navigator.gpu,
       webgl2: hasWebgl2, storage: pageStorage,
     });
@@ -838,7 +862,8 @@
       const t0 = performance.now();
       performance.mark("ocw-import");
       try {
-        const ocw = await import(gpu.api === "webgl2" ? "./ocw_web_webgl2.js" : "./ocw_web.js");
+        if (gpu.xr) ocwXr.install();
+        const ocw = await import(gpu.xr ? "./ocw_web_webxr.js" : gpu.api === "webgl2" ? "./ocw_web_webgl2.js" : "./ocw_web.js");
         // window.ocw.console("teleport 3"), window.ocw.wasmMemory(): for tests.
         window.ocw = ocw;
         // Ride -> Join: a pasted link goes to the link field (spec §3.2.1).
@@ -867,6 +892,7 @@
       window.ocwScreen.ride();
       devicesPanel();
       soundHint();
+      if (gpu.xr) ocwXr.offer(window.ocw);
     }
     }
 

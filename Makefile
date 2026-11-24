@@ -93,7 +93,7 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 .DEFAULT_GOAL := help
 .PHONY: help test-web-account test-web-trust version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-blender test-blender models-diff deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
-	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-gpu test-web-webkit test-web-ios deps-webkit test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-voice-livekit test-voice-bundled test-host-voice test-voice-live test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser deps-vr deps-vr-linux deps-vr-linux-debian deps-vr-linux-fedora deps-vr-linux-arch deps-vr-linux-unknown deps-vr-windows deps-vr-macos test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
+	test test-unit test-wasm test-web-build test-web test-web-xr web-xr test-web-webgl2 test-web-gpu test-web-webkit test-web-ios deps-webkit test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-voice-livekit test-voice-bundled test-host-voice test-voice-live test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser deps-vr deps-vr-linux deps-vr-linux-debian deps-vr-linux-fedora deps-vr-linux-arch deps-vr-linux-unknown deps-vr-windows deps-vr-macos test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
@@ -295,9 +295,10 @@ test-wasm: ## Check that the core crates (and the server lib) build for wasm32-u
 	$(CARGO) check $(WASM_CRATES) --target wasm32-unknown-unknown
 	$(CARGO) check -p ocw-server --lib --target wasm32-unknown-unknown
 
-test-web-build: ## Build the browser app for wasm32, the WebGPU and the WebGL 2 build (spec §14 Phase 10, B7; CI: part of check)
+test-web-build: ## Build the browser app for wasm32, the WebGPU, the WebGL 2 and the WebXR build (spec §14 Phase 10, B7; Phase 14 14I; CI: part of check)
 	$(CARGO) build -p ocw-web --target wasm32-unknown-unknown --features webgpu
 	$(CARGO) build -p ocw-web --target wasm32-unknown-unknown --features webgl2
+	$(CARGO) build -p ocw-web --target wasm32-unknown-unknown --features webgl2,webxr
 
 deps-web: ## The browser app's tools: wasm-bindgen-cli matching Cargo.lock (cargo install, no sudo)
 	@if [ "$$(wasm-bindgen --version 2>/dev/null)" = "wasm-bindgen $(WASM_BINDGEN_VERSION)" ]; then \
@@ -306,6 +307,9 @@ deps-web: ## The browser app's tools: wasm-bindgen-cli matching Cargo.lock (carg
 
 web: ## Build the browser app into target/web/ (the `web-release` profile; WEB_PROFILE=dev for a debug build)
 	scripts/build-web.sh
+
+web-xr: ## The browser app with its WebXR build too (spec §14 Phase 14, 14I W1): target/web/ with ocw_web_webxr.js (WebGL 2 + feature webxr, the page's ?xr=1)
+	WEB_GPU="webgpu webgl2 webxr" scripts/build-web.sh
 
 web-serve: ## Serve target/web/ (and its worlds/, with range requests) on http://$(WEB_BIND):$(WEB_PORT)/ (COOP/COEP headers; WEB_PORT, WEB_BIND=0.0.0.0 for the LAN); fails without a build
 	scripts/web-serve.py --port $(WEB_PORT) --bind $(WEB_BIND)
@@ -349,6 +353,9 @@ test-web: web ## Headless Chromium on WebGPU: load the web app, ride, screenshot
 test-web-account: web ## Headless Chromium: sign in with the fake Google through the redirect, link Strava, sign out (ocw-server --auth-dev, spec §9.1); screenshots into test-output/web/
 	$(CARGO) build -p ocw-server
 	scripts/test-web-account.py --out test-output/web
+
+test-web-xr: web-xr ## Headless Chromium with the Immersive Web Emulation Runtime (iwer, Quest 1 profile): Enter VR, a stereo frame of the test route, head tracking, the copy into a framebuffer, exit (14I W1); eyes and the emulated view into test-output/web-xr/
+	scripts/test-web-xr.py --out test-output/web-xr
 
 test-web-webgl2: web ## Headless Chromium without WebGPU: the page falls back to the WebGL 2 build (ride, menus, fps); then WebGPU High vs WebGL 2 Low, same view, and the Graphics page (B7); the GPU choice and the WebGPU fallback (test-web-gpu); into test-output/web/
 	scripts/test-web.py --out test-output/web --gpu webgl2
