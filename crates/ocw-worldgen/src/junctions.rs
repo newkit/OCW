@@ -456,6 +456,67 @@ fn longer_blends(
     })
 }
 
+/// The paths along a road (J7, `ocw_world::junction::alongside`: drawn as
+/// a band of the road's side, no arm of a junction): where an end lies on
+/// a junction surface (a cluster's, where the path crosses a street beside
+/// a junction) its profile meets the surface's height there, blended over
+/// `clamp(|Δh| / 0.01, 5 m, 30 m)` (at most half its length) – the rider
+/// goes on from the path to the street without a step. (edge, sample,
+/// height).
+fn side_path_ends(
+    g: &RoadGraph,
+    js: &JunctionSet,
+    keep: &(dyn Fn(usize, f64) -> bool + Sync),
+) -> Vec<(usize, usize, f64)> {
+    use ocw_world::junction::{BLEND_MAX_M, BLEND_MIN_M, BLEND_RATE};
+    let side = js.side_paths();
+    let mut out = Vec::new();
+    for (ei, e) in g.edges.iter().enumerate() {
+        if !side.get(ei).copied().unwrap_or(false) || e.profile.len() < 2 {
+            continue;
+        }
+        let len = e.length_m();
+        let n = e.profile.len();
+        // Per end: the height change it needs and its sample.
+        let mut delta = [0.0f64; 2];
+        for (k, v) in [e.from.0 as usize, e.to.0 as usize].into_iter().enumerate() {
+            let i = if k == 0 { 0 } else { n - 1 };
+            if let Some(h) = js.patch_height(g, v, g.vertices[v]) {
+                delta[k] = h - e.profile[i];
+            }
+        }
+        if delta.iter().all(|d| d.abs() < 1e-4) {
+            continue;
+        }
+        let reach = |d: f64| {
+            (d.abs() / BLEND_RATE)
+                .clamp(BLEND_MIN_M, BLEND_MAX_M)
+                .min(0.5 * len)
+        };
+        let (l0, l1) = (reach(delta[0]), reach(delta[1]));
+        for i in 0..n {
+            let s = sample_m(i, len);
+            if !keep(ei, s) {
+                continue;
+            }
+            // A smooth step: 1 at the end, 0 at the blend's length.
+            let fall = |m: f64, l: f64| {
+                if m >= l {
+                    0.0
+                } else {
+                    let t = m / l;
+                    1.0 - t * t * (3.0 - 2.0 * t)
+                }
+            };
+            let d = delta[0] * fall(s, l0) + delta[1] * fall(len - s, l1);
+            if d.abs() > 1e-6 {
+                out.push((ei, i, e.profile[i] + d));
+            }
+        }
+    }
+    out
+}
+
 /// A side road with its corner (spec §4.8.8 Q6 (d), J3): its profile from
 /// the main road's edge – where its centre line leaves the main road's
 /// carriageway, at the main road's surface there – starting at its own
@@ -855,6 +916,9 @@ fn reconcile_rounds(
         } else {
             Vec::new()
         };
+        // J7: the paths along a road (drawn as a band of its side) meet the
+        // junction surfaces their ends lie on.
+        blends.push(side_path_ends(graph, &js, keep));
         if first {
             st.longer_blend_samples = blends.iter().map(Vec::len).sum();
             // Q7 (c): the blended junctions' plane and the curves from it.
@@ -1908,7 +1972,14 @@ pub fn seams(pkg: &WorldPackage, g: &RoadGraph) -> (Vec<Seam>, Vec<(usize, &'sta
             }
         }
     }
-    let adj = g.adjacency();
+    // The paths along a road are drawn as a band of its side (J7): not
+    // measured as carriageways.
+    let side = js.side_paths();
+    let adj: Vec<Vec<usize>> = g
+        .adjacency()
+        .into_iter()
+        .map(|a| a.into_iter().filter(|&e| !side[e]).collect())
+        .collect();
     let verts: Vec<usize> = (0..g.vertices.len())
         .filter(|&v| {
             let a = &adj[v];

@@ -1445,7 +1445,7 @@ fn patch_outline(g: &RoadGraph, adj: &[usize], v: usize) -> Result<(Patch, Outli
         .iter()
         .map(|&ei| raw_arm(g, c, v, ei))
         .collect::<Result<_, _>>()?;
-    outline_checked(g, &Site::single(g, v), raws)
+    outline_checked(g, &Site::single(g, v), raws, false)
 }
 
 /// The patch of a cluster (J3): vertices a few metres apart joined by the
@@ -1479,7 +1479,14 @@ fn try_cluster(
         members: members.to_vec(),
         inner: inner.to_vec(),
     };
-    let (patch, outline) = outline_checked(g, &site, raws)?;
+    // J7's corners between arms at different members first (their edge
+    // lines meeting behind them, straight on through the cluster); where
+    // that costs the patch, J6's.
+    // J7's corners between arms at different members (their edge lines
+    // meeting behind them, straight on through the cluster). Where that
+    // cannot be made, each member keeps its own rule: tried, J6's cluster
+    // outline instead left 50 more `side.corner` in Liechtenstein.
+    let (patch, outline) = outline_checked(g, &site, raws, true)?;
     finish(patch, outline)
 }
 
@@ -1490,13 +1497,14 @@ fn outline_checked(
     g: &RoadGraph,
     site: &Site,
     raws: Vec<Raw>,
+    j7: bool,
 ) -> Result<(Patch, Outline), &'static str> {
-    let (_, legacy) = outline_at(g, site, raws.clone(), true)?;
+    let (_, legacy) = outline_at(g, site, raws.clone(), true, j7)?;
     let pts: Vec<P2> = legacy.iter().map(|o| o.0).collect();
     if !sides::star_ok(site.centre, &pts) {
         return Err("the outline is not star-shaped");
     }
-    outline_at(g, site, raws, false)
+    outline_at(g, site, raws, false, j7)
 }
 
 /// The arms' mouths and the outline of the patch at `site` (rounded as
@@ -1506,6 +1514,7 @@ fn outline_at(
     site: &Site,
     mut raws: Vec<Raw>,
     legacy: bool,
+    j7: bool,
 ) -> Result<(Patch, Outline), &'static str> {
     let c = site.centre;
     let cluster = site.cluster();
@@ -1589,8 +1598,17 @@ fn outline_at(
         let (ri, rj) = (&raws[i], &raws[j]);
         let li = add(ri.origin, mul(side_pos(ri.dir), ri.half));
         let lj = add(rj.origin, mul(side_neg(rj.dir), rj.half));
+        // In a cluster the edge lines of two arms at different members may
+        // meet behind one of them (J7): on the inner edge it goes on from
+        // (a street through the cluster to the main road), within the
+        // cluster's reach.
+        let behind = if j7 && cluster && ri.origin != rj.origin {
+            -CLUSTER_EDGE_M
+        } else {
+            0.0
+        };
         let hit = intersect(li, ri.dir, lj, rj.dir).filter(|&(_, si, sj)| {
-            si <= caps[i] - 0.2 && sj <= caps[j] - 0.2 && (!cluster || (si > 0.0 && sj > 0.0))
+            si <= caps[i] - 0.2 && sj <= caps[j] - 0.2 && (!cluster || (si > behind && sj > behind))
         });
         let Some((x, sx_i, sx_j)) = hit else {
             // Nearly straight (a width change): the edge lines meet far
@@ -1634,6 +1652,23 @@ fn outline_at(
     // per corner the chains it may take, the first preferred (J6: J5's
     // sides wherever the outline stays a simple polygon, star-shaped or
     // not; else J4's line, smoothed or not).
+    // Whether an arm's edge goes on straight (within 20°) through its
+    // cluster member along an edge inside the cluster (J7).
+    let straight_on = |arm: &Arm| {
+        site.inner.iter().any(|&ei| {
+            let e = &g.edges[ei];
+            let at_origin = |w: VertexId| g.vertices[w.0 as usize] == arm.origin;
+            let d = if at_origin(e.from) {
+                unit(sub(e.points[1], e.points[0]))
+            } else if at_origin(e.to) {
+                let n = e.points.len();
+                unit(sub(e.points[n - 2], e.points[n - 1]))
+            } else {
+                return false;
+            };
+            dot(d, mul(arm.dir, -1.0)) > 20f64.to_radians().cos()
+        })
+    };
     let mut mouths: Vec<Vec<P2>> = Vec::with_capacity(n);
     let mut choices: Vec<Vec<Vec<P2>>> = Vec::with_capacity(n);
     for (i, corner) in corners.iter().enumerate() {
@@ -1660,6 +1695,7 @@ fn outline_at(
                 next,
                 radius,
                 (cluster && arm.origin != next.origin).then_some(c),
+                [j7 && straight_on(arm), j7 && straight_on(next)],
             )
             && (general || sides::polar_ok(c, &chain))
         {
@@ -2527,7 +2563,14 @@ type Mouths = Vec<(usize, bool, f64)>;
 /// The junctions of a road graph, computed per vertex when first asked.
 #[derive(Debug)]
 pub struct JunctionSet {
+    /// The edges at each vertex that take part in its junction: the
+    /// paths drawn as a band of a road's side left out (J7, [`alongside`]).
     adjacency: Vec<Vec<usize>>,
+    /// The number of edges at each vertex, those paths included: a vertex
+    /// where they cross a street stays a member of its cluster (J7).
+    degree: Vec<usize>,
+    /// Per edge: a path drawn as a band of a road's side (J7).
+    side: Arc<Vec<bool>>,
     rules: Vec<OnceLock<Option<Arc<VertexRule>>>>,
     /// Per vertex: the mouths of its patch alone (edge, its `from` end
     /// there, mouth m), `None` when it gets none (clusters, J3).
@@ -2542,6 +2585,8 @@ impl Clone for JunctionSet {
     fn clone(&self) -> Self {
         Self {
             adjacency: self.adjacency.clone(),
+            degree: self.degree.clone(),
+            side: self.side.clone(),
             rules: self.rules.clone(),
             alone: self.alone.clone(),
             stored: self.stored.clone(),
@@ -2551,8 +2596,17 @@ impl Clone for JunctionSet {
 
 impl JunctionSet {
     pub fn new(g: &RoadGraph) -> Self {
+        let full = g.adjacency();
+        let side = alongside::side_paths(g);
+        let degree: Vec<usize> = full.iter().map(Vec::len).collect();
+        let adjacency = full
+            .into_iter()
+            .map(|a| a.into_iter().filter(|&e| !side[e]).collect())
+            .collect();
         Self {
-            adjacency: g.adjacency(),
+            adjacency,
+            degree,
+            side: Arc::new(side),
             rules: (0..g.vertices.len()).map(|_| OnceLock::new()).collect(),
             alone: (0..g.vertices.len()).map(|_| OnceLock::new()).collect(),
             stored: None,
@@ -2566,6 +2620,12 @@ impl JunctionSet {
         let mut set = Self::new(g);
         set.stored = index.filter(|i| i.fits(g));
         set
+    }
+
+    /// Per edge: a path drawn as a band of a road's side, not a road of
+    /// its own (J7, [`alongside`]): it takes no part in the junctions.
+    pub fn side_paths(&self) -> &[bool] {
+        &self.side
     }
 
     /// Whether the rules come from a stored index.
@@ -2622,7 +2682,9 @@ impl JunctionSet {
                     return Some(r);
                 }
             }
-            let rule = if adj.len() == 2 {
+            let rule = if adj.len() < 2 {
+                None
+            } else if adj.len() == 2 {
                 build_mitre(g, adj, v)
             } else {
                 build_patch(g, adj, v).map(VertexRule::Patch)
@@ -2636,7 +2698,9 @@ impl JunctionSet {
     /// region border, no bridge, tunnel or loop at it.
     fn usable(&self, g: &RoadGraph, v: usize) -> bool {
         let adj = &self.adjacency[v];
-        !(adj.len() < 2
+        // (Side paths counted: a vertex where a sidewalk way meets a short
+        // link from the street may join a cluster, J7.)
+        !(self.degree[v] < 2
             || adj.len() > MAX_ARMS
             || g.boundary_vertices.contains(&VertexId(v as u32))
             || adj.iter().any(|&e| {
@@ -2665,6 +2729,10 @@ impl JunctionSet {
     /// it (their mouths together cover 85 % of it: a small roundabout's
     /// ring, carriageways side by side).
     fn joins(&self, g: &RoadGraph, ei: usize, u: usize, w: usize) -> bool {
+        // A vertex where only side paths make it a junction (J7) joins.
+        if self.adjacency[u].len() < 3 || self.adjacency[w].len() < 3 {
+            return true;
+        }
         let (Some(a), Some(b)) = (self.alone(g, u), self.alone(g, w)) else {
             return true;
         };
@@ -2688,8 +2756,12 @@ impl JunctionSet {
     /// (growing) and those edges (growing); `None` for a vertex on its own
     /// or a cluster of more than [`CLUSTER_MAX`].
     pub fn cluster_of(&self, g: &RoadGraph, v: usize) -> Option<(Vec<u32>, Vec<usize>)> {
-        let junction = |u: usize| self.usable(g, u) && self.adjacency[u].len() >= 3;
-        if !junction(v) {
+        // A junction: 3 or more edges, side paths counted (J7: where a
+        // sidewalk way crosses a street beside a junction, that vertex
+        // stays a member – the street's arm goes on from it; its own
+        // drawn edges are 2). A cluster needs one junction of its own.
+        let junction = |u: usize| self.usable(g, u) && self.degree[u] >= 3;
+        if !(junction(v) && (self.adjacency[v].len() >= 3 || self.side_member(g, v))) {
             return None;
         }
         let mut members = std::collections::BTreeSet::from([v as u32]);
@@ -2704,6 +2776,7 @@ impl JunctionSet {
                     e.from.0
                 } as usize;
                 if w == u
+                    || self.side[ei]
                     || e.bridge
                     || e.tunnel
                     || e.profile.len() < 2
@@ -2723,6 +2796,19 @@ impl JunctionSet {
             }
         }
         (members.len() > 1).then(|| (members.into_iter().collect(), inner.into_iter().collect()))
+    }
+
+    /// Whether vertex `v`, a junction only by side paths (J7), lies within
+    /// [`CLUSTER_EDGE_M`] of a junction of its own along a drawn edge.
+    fn side_member(&self, g: &RoadGraph, v: usize) -> bool {
+        self.adjacency[v].iter().any(|&ei| {
+            let e = &g.edges[ei];
+            let w = e.other(VertexId(v as u32)).0 as usize;
+            w != v
+                && e.length_m() <= CLUSTER_EDGE_M
+                && self.usable(g, w)
+                && self.adjacency[w].len() >= 3
+        })
     }
 
     /// The patch of vertex `v` if it is drawn there (a cluster's at its
@@ -3570,6 +3656,7 @@ impl JunctionSet {
     }
 }
 
+pub mod alongside;
 pub mod fixtures;
 mod plane_mesh;
 pub mod section;
@@ -3596,6 +3683,7 @@ pub fn debug_chain(
         b,
         corner_radius(a.class.max(b.class)),
         (patch.members.len() > 1 && a.origin != b.origin).then_some(c),
+        [false, false],
     );
     let ok = ch
         .as_ref()

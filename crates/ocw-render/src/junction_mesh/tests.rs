@@ -1,5 +1,5 @@
 use super::*;
-use crate::road_mesh::decode_b;
+use crate::road_mesh::{decode_b, road_meshes_rows};
 use ocw_world::graph::RoadClass;
 use ocw_world::junction::fixtures::{self, crossing, split, t_junction};
 use ocw_world::road_dress::{Crossing, CrossingKind, Half, MarkingStyle};
@@ -65,9 +65,15 @@ fn parts(g: &RoadGraph) -> Vec<(Owner, RoadMeshes)> {
         let t = shape_tile(g, &pj, key, SIZE, &strips, &style);
         for i in 0..t.strips.len() {
             let rows = [t.rows[i].as_deref()];
+            let bands = [t.bands[i].as_deref()];
             out.push((
                 t.owners[i],
-                road_meshes_rows(std::slice::from_ref(&t.strips[i]), &rows, &ctx),
+                crate::road_mesh::road_meshes_bands(
+                    std::slice::from_ref(&t.strips[i]),
+                    &rows,
+                    &bands,
+                    &ctx,
+                ),
             ));
         }
         for (p, looks) in &t.patches {
@@ -790,4 +796,43 @@ fn mini_roundabouts_get_a_painted_disc() {
             .iter()
             .all(|b| b[1] != MINI_DISC_CODE)
     );
+}
+
+/// Spec §4.8.8 Rule (J7): sidewalks OSM draws as ways of their own along
+/// both streets of a crossing are drawn as a band of their street's side –
+/// no strip of their own, the street's sidewalk reaching over them – and
+/// the band goes on round the junction's corner, one band from the one
+/// street to the other (J6: the sidewalks as roads with their own mouths
+/// at the junction, the outline turning back at them).
+#[test]
+fn sidewalk_ways_are_drawn_as_a_band_of_their_street_s_side() {
+    let g = fixtures::crossing_with_sidewalks();
+    let side = PackageJunctions::of_graph(&g, SIZE)
+        .set
+        .side_paths()
+        .to_vec();
+    assert_eq!(side.iter().filter(|&&x| x).count(), 6);
+    let parts = parts(&g);
+    for (o, _) in &parts {
+        assert!(!matches!(o, Owner::Edge(e) if side[*e]), "{o:?} drawn");
+    }
+    let walk = surface_tris(&parts, &[Kind::Sidewalk]);
+    let on = |x: f32, z: f32| {
+        walk.iter()
+            .any(|(_, t)| tri_height(t, x, z, 1e-4).is_some())
+    };
+    // Along both streets over the sidewalks' centre lines.
+    for k in 0..30 {
+        let d = 12.0 + k as f32;
+        assert!(on(d, 5.0), "along x at {d}");
+        assert!(on(5.0, d), "along z at {d}");
+    }
+    // Round the corner (radius 6 m from the streets' edges at z 3.5 and
+    // x 3): the middle of the band, 1.25 m beyond the kerb.
+    let c = Vec2::new(9.0, 9.5);
+    for k in 0..=18 {
+        let a = std::f32::consts::PI * (1.0 + 0.5 * k as f32 / 18.0);
+        let q = c + Vec2::new(a.cos(), a.sin()) * (6.0 - 1.25);
+        assert!(on(q.x, q.y), "round the corner at {q}");
+    }
 }

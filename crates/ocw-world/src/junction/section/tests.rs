@@ -74,7 +74,7 @@ fn newer_layouts_kinds_and_fields_are_skipped() {
     let mut bytes = Vec::new();
     write_junctions(&index, &mut bytes);
     let mut newer = bytes.clone();
-    newer[0] = 3;
+    newer[0] = 4;
     assert!(
         read_junctions(&newer)
             .unwrap_err()

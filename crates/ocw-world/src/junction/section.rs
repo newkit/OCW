@@ -9,8 +9,10 @@
 //! mouths, the outline points):
 //!
 //! ```text
-//! layout version: u8 (2 since J3: the side roads' corners, 4.8.8 Q6 (d),
-//!   change the drawn surface and clusters came; layout 1 is ignored)
+//! layout version: u8 (3 since J7: paths along a road are drawn as a band
+//!   of its side and take no part in the junctions; 2 since J3: the side
+//!   roads' corners, 4.8.8 Q6 (d), change the drawn surface and clusters
+//!   came; older layouts are ignored)
 //! flags: u8 (bit 0: the profiles are reconciled with the patches and the
 //!   terrain is settled under them in the package – J2; the renderer then
 //!   leaves the terrain as it is)
@@ -59,9 +61,12 @@ use crate::package::{Bytes, TileKey};
 
 pub const JUNCTIONS_TAG: &[u8; 4] = b"JNCT";
 pub const STRIP_EDGES_TAG: &[u8; 4] = b"RDGE";
-/// 2 (J3, 4.8.8 Q6 (d)): the side roads' corners change the drawn surface
-/// (a layout 1 section was made for J2's) and clusters (kinds 2 and 3).
-const JUNCTIONS_VERSION: u8 = 2;
+/// 3 (J7, 4.8.8 Rule): paths along a road take no part in the junctions
+/// (a layout 2 section has their mouths, where the renderer now draws a
+/// band of the road's side). 2 (J3, 4.8.8 Q6 (d)): the side roads' corners
+/// change the drawn surface (a layout 1 section was made for J2's) and
+/// clusters (kinds 2 and 3).
+const JUNCTIONS_VERSION: u8 = 3;
 const STRIP_EDGES_VERSION: u8 = 1;
 /// `JNCT` flag: profiles reconciled, terrain settled (J2).
 pub const FLAG_SETTLED: u8 = 1;

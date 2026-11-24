@@ -30,7 +30,8 @@ use ocw_world::{RoadDress, RoadSurface, TileKey, WorldPackage};
 
 use crate::package::MeshArrays;
 use crate::road_mesh::{
-    DressLook, Kind, RoadContext, RoadMeshes, SideDress, code_b, road_meshes_rows, side_dress,
+    BAND_KERB_M, DressLook, Kind, RoadContext, RoadMeshes, SideDress, code_b, road_meshes_bands,
+    side_dress,
 };
 
 /// The terrain is kept this far under a patch's drawn surface (m).
@@ -50,6 +51,8 @@ pub struct PackageJunctions {
     /// The vertices with a mini-roundabout (section `JMRB`, J3; growing):
     /// a disc painted on their junction surface.
     pub mini_roundabouts: Vec<u32>,
+    /// The paths along a road, by place (J7): drawn as a band of its side.
+    pub bands: ocw_world::junction::alongside::SideBands,
 }
 
 impl PackageJunctions {
@@ -72,12 +75,15 @@ impl PackageJunctions {
 
     /// The junctions of a road graph in tiles of `size` metres.
     pub fn of_graph(g: &RoadGraph, size: f64) -> Self {
+        let set = JunctionSet::new(g);
+        let bands = ocw_world::junction::alongside::SideBands::new(g, set.side_paths());
         Self {
-            set: JunctionSet::new(g),
+            set,
             tile_edges: ocw_world::junction::section::tile_edges(g, size),
             strip_edges: None,
             settled: false,
             mini_roundabouts: Vec::new(),
+            bands,
         }
     }
 
@@ -177,6 +183,10 @@ pub enum Owner {
 pub struct ShapedTile<'a> {
     pub strips: Vec<RoadStrip>,
     pub rows: Vec<Option<Vec<[[f32; 3]; 2]>>>,
+    /// Per strip and point: how far beyond its edges [left, right] the
+    /// paths along it reach (J7: drawn as a band of its side; `None`:
+    /// none).
+    pub bands: Vec<Option<Vec<[f32; 2]>>>,
     pub owners: Vec<Owner>,
     /// The patches drawn in this tile, with the strips their arms take
     /// their look from (per arm).
@@ -259,6 +269,7 @@ pub fn shape_tile<'a>(
     let mut out = ShapedTile {
         strips: Vec::with_capacity(strips.len()),
         rows: Vec::with_capacity(strips.len()),
+        bands: Vec::with_capacity(strips.len()),
         owners: Vec::with_capacity(strips.len()),
         patches: Vec::new(),
         discs: Vec::new(),
@@ -269,9 +280,14 @@ pub fn shape_tile<'a>(
         let Some(ei) = *ei else {
             out.strips.push(s.clone());
             out.rows.push(None);
+            out.bands.push(None);
             out.owners.push(Owner::Strip(i));
             continue;
         };
+        // A path along a road (J7): drawn as a band of the road's side.
+        if pj.set.side_paths().get(ei).copied().unwrap_or(false) {
+            continue;
+        }
         looks.entry(ei).or_insert_with(|| ArmLook {
             reversed: ocw_world::junction::strip_reversed(&g.edges[ei], &s.points),
             class: s.class,
@@ -281,6 +297,8 @@ pub fn shape_tile<'a>(
         });
         match pj.set.shape_strip(g, ei, &s.points, s.width_m / 2.0) {
             None => {
+                out.bands
+                    .push(strip_bands(g, pj, &s.points, s.width_m / 2.0));
                 out.strips.push(s.clone());
                 out.rows.push(None);
             }
@@ -297,6 +315,8 @@ pub fn shape_tile<'a>(
                     }
                 }
                 move_crossings(&mut t, sh.cut_m[0], sh.junction_end, style);
+                out.bands
+                    .push(strip_bands(g, pj, &t.points, t.width_m / 2.0));
                 out.strips.push(t);
                 out.rows.push(Some(sh.rows));
             }
@@ -321,13 +341,29 @@ pub fn shape_tile<'a>(
                     .arms
                     .iter()
                     .map(|a| {
-                        looks.get(&a.edge).cloned().unwrap_or_else(|| ArmLook {
+                        let mut look = looks.get(&a.edge).cloned().unwrap_or_else(|| ArmLook {
                             reversed: false,
                             class: a.class,
                             surface: RoadSurface::of_class(a.class),
                             dress: RoadDress::of_class(a.class, (2.0 * a.half) as f32),
                             condition: ocw_world::RoadCondition::UNKNOWN,
-                        })
+                        });
+                        // The bands of the paths along it at its mouth (J7):
+                        // the corner's sidewalk goes on from them.
+                        if !pj.bands.is_empty() {
+                            let r = pj.bands.reach(g, a.centre, a.t, a.half);
+                            for (k, plus) in [(0, false), (1, true)] {
+                                if r[k] > 0.0 {
+                                    let si = usize::from((plus == a.at_from) != look.reversed);
+                                    let w = &mut look.dress.sidewalk_m[si];
+                                    *w = w.max(r[k] as f32);
+                                    if look.dress.kerb_m <= 0.0 {
+                                        look.dress.kerb_m = BAND_KERB_M;
+                                    }
+                                }
+                            }
+                        }
+                        look
                     })
                     .collect();
                 out.patches.push((p, arm_looks));
@@ -338,11 +374,36 @@ pub fn shape_tile<'a>(
     out
 }
 
+/// How far beyond a strip's edges [left, right] the paths along it reach,
+/// per point (J7, `alongside::SideBands`); `None` where none do.
+fn strip_bands(
+    g: &RoadGraph,
+    pj: &PackageJunctions,
+    points: &[[f32; 3]],
+    half: f32,
+) -> Option<Vec<[f32; 2]>> {
+    if pj.bands.is_empty() || points.len() < 2 {
+        return None;
+    }
+    let n = points.len();
+    let at = |i: usize| [f64::from(points[i][0]), f64::from(points[i][2])];
+    let out: Vec<[f32; 2]> = (0..n)
+        .map(|i| {
+            let (a, b) = (at(i.saturating_sub(1)), at((i + 1).min(n - 1)));
+            let d = [b[0] - a[0], b[1] - a[1]];
+            let r = pj.bands.reach(g, at(i), d, f64::from(half));
+            [r[0] as f32, r[1] as f32]
+        })
+        .collect();
+    out.iter().any(|r| r[0] > 0.0 || r[1] > 0.0).then_some(out)
+}
+
 /// The road meshes of a shaped tile (all strips together, as the renderer
 /// draws them, plus the patches).
 pub fn shaped_meshes(t: &ShapedTile<'_>, ctx: &RoadContext<'_>) -> RoadMeshes {
     let rows: Vec<Option<&crate::road_mesh::Rows>> = t.rows.iter().map(|r| r.as_deref()).collect();
-    let mut out = road_meshes_rows(&t.strips, &rows, ctx);
+    let bands: Vec<Option<&[[f32; 2]]>> = t.bands.iter().map(|b| b.as_deref()).collect();
+    let mut out = road_meshes_bands(&t.strips, &rows, &bands, ctx);
     for (p, looks) in &t.patches {
         patch_mesh(&mut out.roads, p, looks, ctx);
     }
