@@ -28,6 +28,7 @@
 
 use bevy::camera::visibility::VisibilitySystems;
 use bevy::camera::{CameraProjection, Exposure, SubCameraView, Viewport};
+use bevy::light::SimulationLightSystems;
 use bevy::math::Vec3A;
 use bevy::pbr::{AtmosphereSettings, DistanceFog};
 use bevy::prelude::*;
@@ -169,7 +170,13 @@ impl Plugin for WebXrPlugin {
                 (manage_eyes, place_eyes, copy_camera_look, publish)
                     .chain()
                     .after(TransformSystems::Propagate)
-                    .before(VisibilitySystems::UpdateFrusta),
+                    .before(VisibilitySystems::UpdateFrusta)
+                    // Cameras switched on or off here must be so before the
+                    // shadow cascades are built: they are built only for
+                    // active cameras, and the renderer unwraps a camera's
+                    // cascades (bevy_pbr light.rs: the chase camera switched
+                    // back on after the session panicked there).
+                    .before(SimulationLightSystems::UpdateDirectionalLightCascades),
             );
     }
 }
@@ -402,8 +409,14 @@ fn place_eyes(
         {
             ep.tangents = tangents;
         }
-        placed.push((t.translation, t.rotation, [pos[0], pos[1], px[0], px[1]]));
+        placed.push((
+            eye.0,
+            (t.translation, t.rotation, [pos[0], pos[1], px[0], px[1]]),
+        ));
     }
+    // In the views' order (the query's order is not).
+    placed.sort_by_key(|(i, _)| *i);
+    let placed: Vec<_> = placed.into_iter().map(|(_, e)| e).collect();
     if !placed.is_empty() {
         let mid = placed.iter().map(|(p, ..)| *p).sum::<Vec3>() / placed.len() as f32;
         xr.eye_above_road_m = Some(mid.y - target.ground_y);
@@ -620,6 +633,9 @@ mod tests {
         assert_eq!(xr.state, XrState::Running);
         assert_eq!(xr.frames, 2);
         assert!(xr.placed >= 1);
+        // `window.ocw.xr()`'s eyes in the views' order (left first).
+        let viewports: Vec<u32> = xr.eyes.iter().map(|(.., vp)| vp[0]).collect();
+        assert_eq!(viewports, [0, 640]);
         let e = eyes(&mut app);
         assert_eq!(e.len(), 2);
         assert!(!follow_active(&mut app));
