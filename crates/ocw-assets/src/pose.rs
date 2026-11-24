@@ -1948,7 +1948,7 @@ mod tests {
     /// 14I Q8: the eyes sit above the saddle the profile's height gives,
     /// higher for a taller rider (a higher saddle) and higher again out of
     /// the saddle; a 1.78 m rider's eyes are where a real one's are on a
-    /// road bike (1.3 – 1.6 m above the floor).
+    /// road bike (1.1 – 1.65 m above the floor, low on the time-trial bike).
     #[test]
     fn the_eye_point_follows_the_saddle_height() {
         let base = crate::shipped::rider_rig();
@@ -1960,7 +1960,7 @@ mod tests {
                 let seated = eye_point(&body, 0.0);
                 let standing = eye_point(&body, 1.0);
                 assert!(
-                    seated.y > body.bike.saddle.y + 0.3 * scale,
+                    seated.y > body.bike.saddle.y + 0.15 * scale,
                     "{profile:?} {scale}: eyes {seated} saddle {}",
                     body.bike.saddle
                 );
@@ -1970,7 +1970,7 @@ mod tests {
                 );
                 if (scale - 1.0).abs() < 1e-6 {
                     assert!(
-                        (1.2..1.65).contains(&seated.y),
+                        (1.1..1.65).contains(&seated.y),
                         "{profile:?}: seated eyes {seated}"
                     );
                 }
