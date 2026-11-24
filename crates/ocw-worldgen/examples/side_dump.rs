@@ -52,6 +52,14 @@ fn main() {
         by_v.entry(m.vertex).or_default().push(serde_json::json!({
             "kind": format!("above.{}", m.cause), "at": m.at, "value": m.above_m, "edge": m.edge}));
     }
+    // ONLY=prefix: only the junctions with a finding of that kind (e.g.
+    // `above`, `side.corner`).
+    if let Ok(only) = std::env::var("ONLY") {
+        by_v.retain(|_, fs| {
+            fs.iter()
+                .any(|f| f["kind"].as_str().unwrap_or("").starts_with(&only))
+        });
+    }
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     for f in by_v.values().flatten() {
         *counts
@@ -146,7 +154,7 @@ fn main() {
             })
             .collect();
         let rec = serde_json::json!({
-            "vertex": v, "centre": p.centre, "members": p.members, "through": p.through,
+            "vertex": v, "centre": p.centre, "star": p.is_star(), "members": p.members, "through": p.through,
             "faults": fs, "arms": arms, "chains": chains,
         });
         writeln!(w, "{rec}").expect("write");

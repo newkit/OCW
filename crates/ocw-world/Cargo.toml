@@ -21,6 +21,9 @@ serde_json = { workspace = true, features = ["raw_value"] }
 thiserror.workspace = true
 # Deflate of the seasonal tint maps (look.rs, spec §14 Phase 8 T3); pure Rust.
 miniz_oxide = "0.8"
+# Junction surfaces whose outline is not star-shaped (junction/plane_mesh.rs,
+# spec 4.8.8 Rule, J6): constrained Delaunay triangulation; pure Rust.
+spade = "2.15"
 # World patches (patch.rs, spec §14 Phase 16 16C): `<package>.ocwpatch`, TOML;
 # pure Rust, already used by the wasm client crates.
 toml.workspace = true
