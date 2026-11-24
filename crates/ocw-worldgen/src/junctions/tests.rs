@@ -1561,3 +1561,20 @@ fn a_side_road_split_near_the_junction_has_smooth_sides() {
     let faults = side_faults(&pkg, &g);
     assert!(faults.is_empty(), "{faults:?}");
 }
+
+/// J8: the Black Forest path view's island keeps J7's round nose (27°
+/// over 0.3 m pieces): a junction's mouths moved out for its corners, or
+/// its arms run on past a way split, only where its sides bend no more
+/// than before (moved out, its nose bent by more, a sharper tip than
+/// J7's).
+#[test]
+fn the_black_forest_path_view_keeps_its_round_nose() {
+    let g = graph_of(BF_PATH);
+    let pkg = package(&g);
+    let worst = side_faults(&pkg, &g)
+        .iter()
+        .filter(|f| f.kind == "corner")
+        .map(|f| f.value)
+        .fold(0.0f64, f64::max);
+    assert!(worst < 27.5, "{worst:.1}°");
+}

@@ -1512,9 +1512,43 @@ fn quantised(c: P2, p: P2) -> P2 {
 /// [`build_patch`] with the reason when a vertex keeps its overlapping
 /// strips (diagnostics, the analysis test).
 fn try_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Result<Patch, &'static str> {
-    // J8: the mouths out for the corners; where that patch cannot be made,
-    // as before.
-    try_patch_with(g, adj, v, true).or_else(|_| try_patch_with(g, adj, v, false))
+    // J8: the mouths out for the corners, where that bends its sides no
+    // more than before; where that patch cannot be made, as before.
+    let plain = try_patch_with(g, adj, v, false);
+    match (try_patch_with(g, adj, v, true), plain) {
+        (Ok(grown), Ok(plain)) => Ok(less_bent(grown, plain)),
+        (Ok(grown), Err(_)) => Ok(grown),
+        (Err(_), plain) => plain,
+    }
+}
+
+/// The worst bend of a patch's sides (radians) as the side lint measures
+/// it: over pieces of 0.3 m, the arms' strip edges on at both ends of each
+/// chain.
+fn side_bend(p: &Patch) -> f64 {
+    let mut worst = 0.0f64;
+    for ch in &p.chains {
+        let n = ch.points.len();
+        if n < 2 {
+            continue;
+        }
+        let (a, b) = (&p.arms[ch.from_arm], &p.arms[ch.to_arm]);
+        let mut pts = vec![add(xz(ch.points[0]), a.t)];
+        pts.extend(ch.points.iter().map(|q| xz(*q)));
+        pts.push(add(xz(ch.points[n - 1]), b.t));
+        worst = worst.max(sides::worst_bend(&pts));
+    }
+    worst
+}
+
+/// `new` unless its sides bend more than `old`'s (J8: a patch changed for
+/// its corners never draws a sharper one).
+fn less_bent(new: Patch, old: Patch) -> Patch {
+    if side_bend(&new) <= side_bend(&old) + 1e-3 {
+        new
+    } else {
+        old
+    }
 }
 
 /// [`try_patch`] with the mouths moved out for the corners or not (J8).
@@ -3139,15 +3173,20 @@ impl JunctionSet {
             grow: true,
         };
         // Where the mouths moved out for the corners cannot be made, as
-        // they were.
-        outline_checked(g, &site, raws.clone(), true)
+        // they were; and only where its sides bend no more than the
+        // junction's own patch's.
+        let run_on = outline_checked(g, &site, raws.clone(), true)
             .and_then(|(patch, outline)| finish(patch, outline))
             .or_else(|_| {
                 site.grow = false;
                 let (patch, outline) = outline_checked(g, &site, raws, true)?;
                 finish(patch, outline)
             })
-            .ok()
+            .ok()?;
+        match try_patch(g, adj, v) {
+            Ok(own) if side_bend(&run_on) > side_bend(&own) + 1e-3 => None,
+            _ => Some(run_on),
+        }
     }
 
     /// The patch of vertex `v` if it is drawn there (a cluster's at its
