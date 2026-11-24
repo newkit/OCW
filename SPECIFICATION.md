@@ -5221,15 +5221,15 @@ Sources: [caniuse: WebTransport](https://caniuse.com/mdn-api_webtransport), [Chr
 
 **Tests (11.4):** the code (every address form, typing variants, typos caught), the certificate (equal on every derivation, validity within 14 days, the DER), the messages (frames in any split, controls clamped), the relay (one browser at a time, the same page reconnecting, order and timestamps on the browser's clock, duplicates and late readings, a new desktop run, the backoff, the control and its round trip), the menu rows; **loopback** (`crates/ocw-bridge/tests/loopback.rs`): the desktop's endpoint and a WebTransport client that trusts it only by the hashes it derives from the code, as a browser does – pairing, 20 readings in order with their timestamps, heart rate, the SIM control round trip, a second page refused, the same page taking over, a wrong certificate failing the handshake, a forged proof refused, `bye`, the clean stop; the desktop's sharing (start, the code kept across restarts, a new code, stop, the QR code). **End to end** (`make test-bridge`, `scripts/test-bridge.py`): the desktop shares its devices on a headless Wayland compositor, headless Chromium opens the browser app with `?bridge=CODE` and rides Liechtenstein; latency, control and screenshots of both sides.
 
-**Measured (marge, 2026-11-24; `scripts/test-bridge.py`, 120 s of Liechtenstein, Vaduz – Malbun):** the desktop app on a headless Wayland compositor (debug build, about 40 fps), headless Chromium 157 (WebGPU) with the browser app from the dev server, both on marge, the code naming marge's LAN address:
+**Measured (marge, 2026-11-24; `scripts/test-bridge.py`, 120 s of Liechtenstein, Vaduz – Malbun):** the desktop app on a headless Wayland compositor (debug build, about 40 fps), headless Chromium 157 (WebGPU) with the browser app from the dev server, both on marge; two runs – the code naming marge's LAN address, and naming 127.0.0.1 (the run whose pictures are kept: no real address in them):
 
 | | |
 |---|---|
-| pairing | the page paired 0.6 – 2.1 s after its ride started and stayed paired 99.3 – 99.6 % of the ride (the rest: the first frames before the hello) |
-| readings | 476 in 120 s (3.97 a second, the desktop's 4 Hz), none dropped or out of order |
-| age of a reading on arrival | p50 **10 ms**, p95 **31 ms**, max 223 ms (once, while the world's tiles loaded) – the target was < 150 ms |
-| ping round trip | p50 21 ms, p95 42 ms (the page's event loop between frames; 0.4 ms when idle) |
-| trainer control round trip (browser → desktop → its devices → `applied`) | p50 **24 ms**, max 72 ms; 116 SIM controls in 120 s |
+| pairing | the page paired 0.6 – 2.3 s after its ride started and stayed paired 98.9 – 99.6 % of the ride (the rest: the first frames before the hello) |
+| readings | 476 in 120 s in each run (3.97 a second, the desktop's 4 Hz), none dropped or out of order |
+| age of a reading on arrival | p50 **10 / 14 ms**, p95 **31 / 35 ms**, max 223 / 158 ms (single readings while the world's tiles loaded) – the target was < 150 ms |
+| ping round trip | p50 21 / 26 ms, p95 42 / 41 ms (the page's event loop between frames; 0.4 ms when idle) |
+| trainer control round trip (browser → desktop → its devices → `applied`) | p50 **24 / 31 ms**, max 72 ms / once 1.0 s (a hitch of the debug desktop); 116 / 118 SIM controls in 120 s |
 
 **Not yet with the KICKR's own power:** in the hardware run the desktop could not reach the Wahoo KICKR (the trainer did not advertise at all – asleep or off – and a Bluetooth scan on marge found no fitness device), so the browser's readings came from the desktop's virtual trainer (180 W) through the same relay, and the SIM controls went to the virtual trainer; with the desktop connected to the KICKR (`make test-bridge BRIDGE_DEVICES=/tmp/ocw/kickr/devices.toml` on marge, once someone wakes the trainer by turning the pedals) the same run carries its power. Also to check on devices: the Quest 1's browser (W4), Safari on iOS 26.4, Firefox, and the local-network permission prompt of Chrome 147+ from the GitHub Pages page.
 

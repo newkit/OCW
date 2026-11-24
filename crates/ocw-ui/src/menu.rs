@@ -589,7 +589,11 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
             (Page::Sub(p), _, _) if history.is_some() => {
                 ocw_client::menu::history::status(p, history.as_ref().expect("some"))
             }
-            (Page::Sub(p @ (sub::Page::Devices | sub::Page::Device(_) | sub::Page::Bridge)), _, _) => world
+            (
+                Page::Sub(p @ (sub::Page::Devices | sub::Page::Device(_) | sub::Page::Bridge)),
+                _,
+                _,
+            ) => world
                 .get_resource::<DevicesMenu>()
                 .map(|d| ocw_client::menu::devices::status(p, d))
                 .unwrap_or_default(),

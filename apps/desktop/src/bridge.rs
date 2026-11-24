@@ -19,8 +19,8 @@
 use bevy::asset::RenderAssetUsages;
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
-use bevy::text::FontSize;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::text::FontSize;
 use clap::{Arg, Command};
 use ocw_bridge::host::{BridgeHost, HostEvent, HostOptions, new_secret};
 use ocw_client::menu::devices::BridgeInfo;
@@ -251,7 +251,9 @@ fn poll_bridge(
     for e in host.events() {
         match e {
             HostEvent::Paired { client } => {
-                lines.push(format!("bridge: paired with {client}; it sets the trainer's load now"));
+                lines.push(format!(
+                    "bridge: paired with {client}; it sets the trainer's load now"
+                ));
                 browser = Some(client);
             }
             HostEvent::Unpaired { reason } => {
@@ -327,7 +329,9 @@ fn show_qr(
     }
     overlay.link = want.clone();
     let Some(link) = want else { return };
-    let Some((rgba, w)) = qr_image(&link) else { return };
+    let Some((rgba, w)) = qr_image(&link) else {
+        return;
+    };
     let mut image = Image::new(
         Extent3d {
             width: w,
@@ -414,7 +418,14 @@ mod tests {
         let mut b = Bridge::load(Some(files.secret(SECTION)));
         assert!(matches!(b.info(), BridgeInfo::Host { sharing: false, .. }));
         b.start(false).expect("starts");
-        let BridgeInfo::Host { sharing: true, code: Some(code), address: Some(addr), browser: None, .. } = b.info() else {
+        let BridgeInfo::Host {
+            sharing: true,
+            code: Some(code),
+            address: Some(addr),
+            browser: None,
+            ..
+        } = b.info()
+        else {
             panic!("{:?}", b.info())
         };
         assert!(addr.starts_with("https://"));
@@ -424,10 +435,20 @@ mod tests {
         // The same code after a restart of the app (the secret is saved).
         let mut again = Bridge::load(Some(files.secret(SECTION)));
         again.start(false).unwrap();
-        let BridgeInfo::Host { code: Some(code2), .. } = again.info() else { panic!() };
+        let BridgeInfo::Host {
+            code: Some(code2), ..
+        } = again.info()
+        else {
+            panic!()
+        };
         assert_eq!(code2, code);
         again.start(true).unwrap();
-        let BridgeInfo::Host { code: Some(code3), .. } = again.info() else { panic!() };
+        let BridgeInfo::Host {
+            code: Some(code3), ..
+        } = again.info()
+        else {
+            panic!()
+        };
         assert_ne!(code3, code);
         assert!(again.status().contains(&code3));
         assert_eq!(again.stop(), "stopped sharing the trainer");

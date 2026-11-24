@@ -56,7 +56,10 @@ pub struct Paired {
 pub enum Admit {
     /// Paired as connection `conn`; `replaces`: the same page's older
     /// connection, to close.
-    Paired { conn: u64, replaces: Option<u64> },
+    Paired {
+        conn: u64,
+        replaces: Option<u64>,
+    },
     Refused(String),
 }
 
@@ -151,7 +154,13 @@ pub struct Relay {
 impl Relay {
     /// The message for a device event at the desktop's time `h_ms`;
     /// `virt`: from the virtual trainer.
-    pub fn message(&mut self, name: &str, event: &DeviceEvent, h_ms: f64, virt: bool) -> Option<ToBrowser> {
+    pub fn message(
+        &mut self,
+        name: &str,
+        event: &DeviceEvent,
+        h_ms: f64,
+        virt: bool,
+    ) -> Option<ToBrowser> {
         Some(match *event {
             DeviceEvent::Power {
                 watts, cadence_rpm, ..
@@ -226,7 +235,9 @@ const PINGS_KEPT: usize = 16;
 pub enum Phase {
     /// Connecting (or waiting to reconnect).
     Connecting,
-    Paired { host: String },
+    Paired {
+        host: String,
+    },
     /// The desktop refused; no more attempts (a wrong code, another
     /// browser).
     Refused(String),
@@ -423,9 +434,7 @@ impl Session {
             ToBrowser::Closed { why } => {
                 tracing::info!(%why, "bridge closed by the desktop");
             }
-            ToBrowser::Power {
-                seq, h, w, rpm, ..
-            } => {
+            ToBrowser::Power { seq, h, w, rpm, .. } => {
                 if self.fresh(seq) {
                     let timestamp = self.timestamp(h, now_ms);
                     events.push(DeviceEvent::Power {
@@ -489,17 +498,22 @@ mod tests {
     fn one_browser_at_a_time_and_the_same_page_reconnects() {
         let mut g = Gate::new(77);
         // A wrong code is refused.
-        assert!(matches!(g.hello(&hello(78, "a"), 0.0), Admit::Refused(w) if w.contains("wrong pairing code")));
-        assert!(matches!(
-            g.hello(&ToHost::Bye, 0.0),
-            Admit::Refused(_)
-        ));
-        let Admit::Paired { conn: a, replaces: None } = g.hello(&hello(77, "page-a"), 0.0) else {
+        assert!(
+            matches!(g.hello(&hello(78, "a"), 0.0), Admit::Refused(w) if w.contains("wrong pairing code"))
+        );
+        assert!(matches!(g.hello(&ToHost::Bye, 0.0), Admit::Refused(_)));
+        let Admit::Paired {
+            conn: a,
+            replaces: None,
+        } = g.hello(&hello(77, "page-a"), 0.0)
+        else {
             panic!()
         };
         // Another page while the first is alive: refused.
         g.heard(a, 1_000.0);
-        assert!(matches!(g.hello(&hello(77, "page-b"), 2_000.0), Admit::Refused(w) if w.contains("Test browser")));
+        assert!(
+            matches!(g.hello(&hello(77, "page-b"), 2_000.0), Admit::Refused(w) if w.contains("Test browser"))
+        );
         // The same page again (a reconnect): replaces its old connection.
         let Admit::Paired { conn: a2, replaces } = g.hello(&hello(77, "page-a"), 2_500.0) else {
             panic!()
@@ -510,18 +524,39 @@ mod tests {
         assert!(!g.ended(a));
         assert!(g.paired().is_some());
         // A page gone quiet for longer than ALIVE_MS is replaced.
-        let Admit::Paired { replaces, .. } = g.hello(&hello(77, "page-b"), 2_500.0 + ALIVE_MS + 1.0) else {
+        let Admit::Paired { replaces, .. } =
+            g.hello(&hello(77, "page-b"), 2_500.0 + ALIVE_MS + 1.0)
+        else {
             panic!()
         };
         assert_eq!(replaces, Some(a2));
         // Version mismatch.
-        let ToHost::Hello { proof, session, client, .. } = hello(77, "x") else { panic!() };
-        let old = ToHost::Hello { v: 0, proof, session, client };
+        let ToHost::Hello {
+            proof,
+            session,
+            client,
+            ..
+        } = hello(77, "x")
+        else {
+            panic!()
+        };
+        let old = ToHost::Hello {
+            v: 0,
+            proof,
+            session,
+            client,
+        };
         assert!(matches!(g.hello(&old, 0.0), Admit::Refused(w) if w.contains("version")));
     }
 
     fn power(seq: u64, h: f64, w: f64) -> ToBrowser {
-        ToBrowser::Power { seq, h, w, rpm: Some(90.0), virt: false }
+        ToBrowser::Power {
+            seq,
+            h,
+            w,
+            rpm: Some(90.0),
+            virt: false,
+        }
     }
 
     fn welcome(epoch: u64) -> ToBrowser {
@@ -529,7 +564,10 @@ mod tests {
             v: VERSION,
             host: "Desk".into(),
             epoch,
-            devices: vec![DeviceInfo { name: "KICKR".into(), state: DeviceState::Connected }],
+            devices: vec![DeviceInfo {
+                name: "KICKR".into(),
+                state: DeviceState::Connected,
+            }],
         }
     }
 
@@ -537,7 +575,9 @@ mod tests {
         events
             .iter()
             .filter_map(|e| match e {
-                DeviceEvent::Power { watts, timestamp, .. } => Some((*watts, timestamp.as_millis())),
+                DeviceEvent::Power {
+                    watts, timestamp, ..
+                } => Some((*watts, timestamp.as_millis())),
                 _ => None,
             })
             .collect()
@@ -550,12 +590,31 @@ mod tests {
         let mut s = Session::new(1, "p".into(), "b".into(), 10_000.0);
         let ev = s.on_message(welcome(5), 10_100.0);
         assert_eq!(ev, [DeviceEvent::Connected { kind: KIND }]);
-        assert_eq!(s.phase, Phase::Paired { host: "Desk".into() });
+        assert_eq!(
+            s.phase,
+            Phase::Paired {
+                host: "Desk".into()
+            }
+        );
         // Pings: 10 ms round trip, desktop 3 000 ahead; one slow ping (90 ms
         // queueing) does not move the estimate.
         let _ = s.ping(10_200.0);
-        s.on_message(ToBrowser::Pong { id: 1, c: 10_200.0, h: 13_205.0 }, 10_210.0);
-        s.on_message(ToBrowser::Pong { id: 2, c: 11_200.0, h: 14_290.0 }, 11_300.0);
+        s.on_message(
+            ToBrowser::Pong {
+                id: 1,
+                c: 10_200.0,
+                h: 13_205.0,
+            },
+            10_210.0,
+        );
+        s.on_message(
+            ToBrowser::Pong {
+                id: 2,
+                c: 11_200.0,
+                h: 14_290.0,
+            },
+            11_300.0,
+        );
         let (off, rtt) = s.clock().unwrap();
         assert_eq!((off, rtt), (3_000.0, 10.0));
         assert_eq!(s.rtt_ms(), Some(100.0));
@@ -574,7 +633,14 @@ mod tests {
         assert!(ev.is_empty());
         assert_eq!((s.readings, s.dropped), (2, 2));
         // Heart rate too, numbered with the power.
-        let ev = s.on_message(ToBrowser::HeartRate { seq: 4, h: 14_800.0, bpm: 140.0 }, 11_820.0);
+        let ev = s.on_message(
+            ToBrowser::HeartRate {
+                seq: 4,
+                h: 14_800.0,
+                bpm: 140.0,
+            },
+            11_820.0,
+        );
         assert!(matches!(ev[..], [DeviceEvent::HeartRate { bpm, .. }] if bpm == 140.0));
         assert_eq!(all, [(200.0, 1_500), (220.0, 1_750)]);
         // A reading stamped in the browser's future (clock jitter) is taken
@@ -606,11 +672,19 @@ mod tests {
         let ev = s.on_message(power(1, 0.0, 180.0), 3_100.0);
         assert_eq!(watts(&ev).len(), 1);
         // Refused (another browser): no more attempts.
-        s.on_message(ToBrowser::Refused { why: "another browser".into() }, 4_000.0);
+        s.on_message(
+            ToBrowser::Refused {
+                why: "another browser".into(),
+            },
+            4_000.0,
+        );
         assert!(s.is_refused());
         let mut b = Backoff::default();
         let delays: Vec<f64> = (0..7).map(|_| b.next_ms()).collect();
-        assert_eq!(delays, [500.0, 1_000.0, 2_000.0, 4_000.0, 5_000.0, 5_000.0, 5_000.0]);
+        assert_eq!(
+            delays,
+            [500.0, 1_000.0, 2_000.0, 4_000.0, 5_000.0, 5_000.0, 5_000.0]
+        );
     }
 
     #[test]
@@ -631,43 +705,79 @@ mod tests {
         s.on_message(welcome(1), 10.0);
         let open = s.on_open(20.0);
         assert!(matches!(open[0], ToHost::Hello { .. }));
-        let ToHost::Control { id, control } = open[1] else { panic!() };
+        let ToHost::Control { id, control } = open[1] else {
+            panic!()
+        };
         assert_eq!(control.command(), sim(0.03));
         s.on_message(ToBrowser::Applied { id }, 45.0);
         assert_eq!(s.control_rtt_ms, Some(25.0));
         // The same command again: nothing; a new one: sent.
         assert_eq!(s.control(sim(0.03), 100.0), None);
-        let Some(ToHost::Control { id, control }) = s.control(sim(0.05), 200.0) else { panic!() };
+        let Some(ToHost::Control { id, control }) = s.control(sim(0.05), 200.0) else {
+            panic!()
+        };
         assert_eq!(control.command(), sim(0.05));
         s.on_message(ToBrowser::Applied { id }, 212.0);
         assert_eq!(s.control_rtt_ms, Some(12.0));
         assert_eq!(s.controls_applied, 2);
         // ERG, and nothing for the virtual trainer's own commands.
-        assert!(s.control(DeviceCommand::SetTargetPower(250.0), 300.0).is_some());
-        assert_eq!(s.control(DeviceCommand::SetVirtualPower(100.0), 300.0), None);
+        assert!(
+            s.control(DeviceCommand::SetTargetPower(250.0), 300.0)
+                .is_some()
+        );
+        assert_eq!(
+            s.control(DeviceCommand::SetVirtualPower(100.0), 300.0),
+            None
+        );
         assert_eq!(s.control(DeviceCommand::Shutdown, 300.0), None);
     }
 
     #[test]
     fn the_desktop_numbers_readings_and_reports_devices() {
         let mut r = Relay::default();
-        let p = DeviceEvent::Power { watts: 250.0, cadence_rpm: None, timestamp: Duration::ZERO };
-        let hr = DeviceEvent::HeartRate { bpm: 120.0, timestamp: Duration::ZERO };
+        let p = DeviceEvent::Power {
+            watts: 250.0,
+            cadence_rpm: None,
+            timestamp: Duration::ZERO,
+        };
+        let hr = DeviceEvent::HeartRate {
+            bpm: 120.0,
+            timestamp: Duration::ZERO,
+        };
         assert_eq!(
             r.message("KICKR", &p, 5.0, false),
-            Some(ToBrowser::Power { seq: 1, h: 5.0, w: 250.0, rpm: None, virt: false })
+            Some(ToBrowser::Power {
+                seq: 1,
+                h: 5.0,
+                w: 250.0,
+                rpm: None,
+                virt: false
+            })
         );
         assert_eq!(
             r.message("TICKR", &hr, 6.0, false),
-            Some(ToBrowser::HeartRate { seq: 2, h: 6.0, bpm: 120.0 })
+            Some(ToBrowser::HeartRate {
+                seq: 2,
+                h: 6.0,
+                bpm: 120.0
+            })
         );
         assert_eq!(
             r.message("KICKR", &DeviceEvent::Disconnected, 7.0, false),
-            Some(ToBrowser::Device { name: "KICKR".into(), state: DeviceState::Reconnecting })
+            Some(ToBrowser::Device {
+                name: "KICKR".into(),
+                state: DeviceState::Reconnecting
+            })
         );
         let mut s = Session::new(1, "p".into(), "b".into(), 0.0);
         s.on_message(welcome(1), 0.0);
-        s.on_message(ToBrowser::Device { name: "KICKR".into(), state: DeviceState::Reconnecting }, 1.0);
+        s.on_message(
+            ToBrowser::Device {
+                name: "KICKR".into(),
+                state: DeviceState::Reconnecting,
+            },
+            1.0,
+        );
         assert_eq!(s.devices, [("KICKR".to_owned(), DeviceState::Reconnecting)]);
         assert_ne!(proof(1), proof(2));
         assert_eq!(proof(1).len(), 32);

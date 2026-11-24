@@ -103,10 +103,7 @@ mod tests {
         let c = PairingCode::new(Ipv4Addr::new(192, 168, 1, 2), 0, 5);
         let link = page_link(PREVIEW_URL, &c);
         assert!(link.starts_with("https://newkit.github.io/OCW/?bridge="));
-        assert_eq!(
-            PairingCode::parse(link.rsplit('=').next().unwrap()),
-            Ok(c)
-        );
+        assert_eq!(PairingCode::parse(link.rsplit('=').next().unwrap()), Ok(c));
         assert!(page_link("http://localhost:8000/?world=x", &c).contains("?world=x&bridge="));
     }
 }

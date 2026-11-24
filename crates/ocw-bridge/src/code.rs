@@ -65,7 +65,10 @@ impl fmt::Display for CodeError {
         match self {
             Self::Empty => write!(f, "no code typed"),
             Self::BadChar(c) => write!(f, "{c:?} is not in a pairing code (digits and letters)"),
-            Self::Length => write!(f, "the code is too short or too long – check every character"),
+            Self::Length => write!(
+                f,
+                "the code is too short or too long – check every character"
+            ),
             Self::Check => write!(f, "the code has a typo – check every character"),
         }
     }
@@ -206,12 +209,7 @@ impl PairingCode {
         let ip = match form {
             0 => Ipv4Addr::new(192, 168, (addr >> 8) as u8, addr as u8),
             1 => Ipv4Addr::new(10, (addr >> 16) as u8, (addr >> 8) as u8, addr as u8),
-            2 => Ipv4Addr::new(
-                172,
-                16 + (addr >> 16) as u8,
-                (addr >> 8) as u8,
-                addr as u8,
-            ),
+            2 => Ipv4Addr::new(172, 16 + (addr >> 16) as u8, (addr >> 8) as u8, addr as u8),
             _ => Ipv4Addr::from(addr as u32),
         };
         let slot = bits.take(2).ok_or(CodeError::Length)? as u8;
@@ -290,13 +288,23 @@ mod tests {
 
     #[test]
     fn typos_are_caught() {
-        let c = PairingCode::new(Ipv4Addr::new(192, 168, 178, 40), 0, 0x1234_5678 & SECRET_MASK);
+        let c = PairingCode::new(
+            Ipv4Addr::new(192, 168, 178, 40),
+            0,
+            0x1234_5678 & SECRET_MASK,
+        );
         let text = c.compact();
         assert_eq!(PairingCode::parse(""), Err(CodeError::Empty));
         assert_eq!(PairingCode::parse("--"), Err(CodeError::Empty));
         assert_eq!(PairingCode::parse("7K2U"), Err(CodeError::BadChar('U')));
-        assert_eq!(PairingCode::parse(&text[..text.len() - 1]), Err(CodeError::Length));
-        assert_eq!(PairingCode::parse(&format!("{text}7")), Err(CodeError::Length));
+        assert_eq!(
+            PairingCode::parse(&text[..text.len() - 1]),
+            Err(CodeError::Length)
+        );
+        assert_eq!(
+            PairingCode::parse(&format!("{text}7")),
+            Err(CodeError::Length)
+        );
         // Every single changed symbol is caught (by the check symbol, or as
         // another address form of the wrong length), except where the check
         // symbol happens to collide (1 in 32): count them.

@@ -9,11 +9,11 @@
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::{Duration, Instant};
 
+use ocw_bridge::PairingCode;
 use ocw_bridge::cert::browser_hashes;
 use ocw_bridge::host::{BridgeHost, HostEvent, HostOptions};
 use ocw_bridge::msg::{Frames, ToBrowser, ToHost, frame};
 use ocw_bridge::relay::{KIND, Phase, Session};
-use ocw_bridge::PairingCode;
 use ocw_devices::{DeviceCommand, DeviceEvent, SimulationParameters};
 
 const SECRET: u32 = 0x1A2B_3C4D & 0x3FFF_FFFF;
@@ -145,11 +145,19 @@ fn power(w: f64) -> DeviceEvent {
 async fn a_browser_pairs_gets_the_trainer_in_order_and_controls_it() {
     let h = host();
     assert_eq!(h.code.ip, Ipv4Addr::LOCALHOST);
-    h.relay("Wahoo KICKR 0001", &DeviceEvent::Connected { kind: "trainer" }, false);
-    let mut b = Browser::connect(&h.code, SECRET, "page-a").await.expect("connects");
+    h.relay(
+        "Wahoo KICKR 0001",
+        &DeviceEvent::Connected { kind: "trainer" },
+        false,
+    );
+    let mut b = Browser::connect(&h.code, SECRET, "page-a")
+        .await
+        .expect("connects");
     // Welcome: paired, the desktop's devices listed.
     let (m, ev) = b.step().await.unwrap();
-    let ToBrowser::Welcome { host, devices, .. } = m else { panic!("{m:?}") };
+    let ToBrowser::Welcome { host, devices, .. } = m else {
+        panic!("{m:?}")
+    };
     assert_eq!(host, "Test desktop");
     assert_eq!(devices[0].name, "Wahoo KICKR 0001");
     assert_eq!(ev, [DeviceEvent::Connected { kind: KIND }]);
@@ -179,18 +187,34 @@ async fn a_browser_pairs_gets_the_trainer_in_order_and_controls_it() {
         worst = worst.max(sent.elapsed());
         assert!(matches!(m, ToBrowser::Power { seq, .. } if seq == u64::from(i as u32) + 1));
         for e in ev {
-            if let DeviceEvent::Power { watts, timestamp, .. } = e {
+            if let DeviceEvent::Power {
+                watts, timestamp, ..
+            } = e
+            {
                 got.push((watts, timestamp));
             }
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
     assert_eq!(got.len(), 20);
-    assert!(got.windows(2).all(|w| w[1].1 >= w[0].1 && w[1].0 == w[0].0 + 1.0));
-    assert!(worst < Duration::from_millis(150), "relay latency {worst:?}");
+    assert!(
+        got.windows(2)
+            .all(|w| w[1].1 >= w[0].1 && w[1].0 == w[0].0 + 1.0)
+    );
+    assert!(
+        worst < Duration::from_millis(150),
+        "relay latency {worst:?}"
+    );
     assert!(b.session.sample_age_ms.unwrap() < 150.0);
     // Heart rate.
-    h.relay("TICKR", &DeviceEvent::HeartRate { bpm: 133.0, timestamp: Duration::ZERO }, false);
+    h.relay(
+        "TICKR",
+        &DeviceEvent::HeartRate {
+            bpm: 133.0,
+            timestamp: Duration::ZERO,
+        },
+        false,
+    );
     let (_, ev) = b.step().await.unwrap();
     assert!(matches!(ev[..], [DeviceEvent::HeartRate { bpm, .. }] if bpm == 133.0));
     // Control round trip: the browser's SIM gradient reaches the desktop as
@@ -221,15 +245,22 @@ async fn a_browser_pairs_gets_the_trainer_in_order_and_controls_it() {
     assert_eq!(h.stats().relayed, 21);
 
     // One browser at a time: another page is refused while this one lives.
-    let mut other = Browser::connect(&h.code, SECRET, "page-b").await.expect("connects");
+    let mut other = Browser::connect(&h.code, SECRET, "page-b")
+        .await
+        .expect("connects");
     let (m, _) = other.step().await.unwrap();
-    assert!(matches!(&m, ToBrowser::Refused { why } if why.contains("another browser")), "{m:?}");
+    assert!(
+        matches!(&m, ToBrowser::Refused { why } if why.contains("another browser")),
+        "{m:?}"
+    );
     assert!(other.session.is_refused());
     assert!(other.next().await.is_none(), "closed after the refusal");
 
     // The same page reconnecting (its old connection not noticed dead yet)
     // takes over; the old one hears why.
-    let mut again = Browser::connect(&h.code, SECRET, "page-a").await.expect("connects");
+    let mut again = Browser::connect(&h.code, SECRET, "page-a")
+        .await
+        .expect("connects");
     let (m, _) = again.step().await.unwrap();
     assert!(matches!(m, ToBrowser::Welcome { .. }));
     loop {
@@ -281,7 +312,10 @@ async fn a_wrong_code_does_not_pair() {
     assert_eq!(h.paired(), None);
     // The browser leaves cleanly with Bye: the desktop unpairs.
     let mut b = Browser::connect(&h.code, SECRET, "q").await.unwrap();
-    assert!(matches!(b.step().await.unwrap().0, ToBrowser::Welcome { .. }));
+    assert!(matches!(
+        b.step().await.unwrap().0,
+        ToBrowser::Welcome { .. }
+    ));
     let _ = host_event(&h, |e| matches!(e, HostEvent::Paired { .. })).await;
     b.send(&ToHost::Bye).await;
     let HostEvent::Unpaired { reason } =

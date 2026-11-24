@@ -46,7 +46,9 @@ pub enum ToBrowser {
         devices: Vec<DeviceInfo>,
     },
     /// Not paired (why), then the desktop closes the connection.
-    Refused { why: String },
+    Refused {
+        why: String,
+    },
     /// Power (W) and cadence from the desktop's trainer or power meter;
     /// `h`: the desktop's time of the reading (ms since its bridge
     /// started), `seq` counts every relayed reading.
@@ -60,16 +62,31 @@ pub enum ToBrowser {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         virt: bool,
     },
-    HeartRate { seq: u64, h: f64, bpm: f64 },
+    HeartRate {
+        seq: u64,
+        h: f64,
+        bpm: f64,
+    },
     /// One of the desktop's devices connected, dropped or failed.
-    Device { name: String, state: DeviceState },
+    Device {
+        name: String,
+        state: DeviceState,
+    },
     /// A control reached the trainer.
-    Applied { id: u64 },
+    Applied {
+        id: u64,
+    },
     /// The answer to a ping, with the desktop's time.
-    Pong { id: u64, c: f64, h: f64 },
+    Pong {
+        id: u64,
+        c: f64,
+        h: f64,
+    },
     /// Another page of the same browser took over, or the desktop stopped
     /// sharing.
-    Closed { why: String },
+    Closed {
+        why: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -248,17 +265,26 @@ mod tests {
         }
         // The JSON is small and readable.
         let p = String::from_utf8(frame(&msgs[1])[4..].to_vec()).unwrap();
-        assert_eq!(p, r#"{"t":"power","seq":1,"h":1250.5,"w":212.0,"rpm":88.0}"#);
+        assert_eq!(
+            p,
+            r#"{"t":"power","seq":1,"h":1250.5,"w":212.0,"rpm":88.0}"#
+        );
     }
 
     #[test]
     fn bad_frames_are_errors() {
         let mut f = Frames::default();
         f.push(&(MAX_FRAME as u32 + 1).to_le_bytes());
-        assert!(matches!(f.next_message::<ToHost>(), Some(Err(FrameError::TooLarge(_)))));
+        assert!(matches!(
+            f.next_message::<ToHost>(),
+            Some(Err(FrameError::TooLarge(_)))
+        ));
         let mut f = Frames::default();
         f.push(&frame(&serde_json::json!({"t": "nonsense"})));
-        assert!(matches!(f.next_message::<ToHost>(), Some(Err(FrameError::Bad(_)))));
+        assert!(matches!(
+            f.next_message::<ToHost>(),
+            Some(Err(FrameError::Bad(_)))
+        ));
     }
 
     #[test]
@@ -274,14 +300,22 @@ mod tests {
         let c = Control::of(DeviceCommand::SetSimulation(p)).unwrap();
         assert_eq!(c.command(), DeviceCommand::SetSimulation(p));
         assert_eq!(
-            Control::of(DeviceCommand::SetTargetPower(230.0)).unwrap().command(),
+            Control::of(DeviceCommand::SetTargetPower(230.0))
+                .unwrap()
+                .command(),
             DeviceCommand::SetTargetPower(230.0)
         );
         assert_eq!(Control::of(DeviceCommand::Shutdown), None);
         assert_eq!(Control::of(DeviceCommand::SetVirtualPower(100.0)), None);
         // A wild browser cannot push the trainer beyond sane limits.
-        assert_eq!(Control::Erg(1e9).command(), DeviceCommand::SetTargetPower(2000.0));
-        assert_eq!(Control::Erg(f64::NAN).command(), DeviceCommand::SetTargetPower(150.0));
+        assert_eq!(
+            Control::Erg(1e9).command(),
+            DeviceCommand::SetTargetPower(2000.0)
+        );
+        assert_eq!(
+            Control::Erg(f64::NAN).command(),
+            DeviceCommand::SetTargetPower(150.0)
+        );
         let DeviceCommand::SetSimulation(s) = (Control::Sim {
             grade: 3.0,
             wind_mps: 0.0,
@@ -295,7 +329,10 @@ mod tests {
         };
         assert_eq!((s.grade, s.wind_grade), (0.4, 0.0));
         // On the wire.
-        let m = ToHost::Control { id: 4, control: Control::Erg(200.0) };
+        let m = ToHost::Control {
+            id: 4,
+            control: Control::Erg(200.0),
+        };
         let back: ToHost = serde_json::from_slice(&frame(&m)[4..]).unwrap();
         assert_eq!(back, m);
     }

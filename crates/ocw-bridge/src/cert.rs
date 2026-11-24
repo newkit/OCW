@@ -191,7 +191,9 @@ fn ecdsa_with_sha256() -> Vec<u8> {
 }
 
 fn name() -> Vec<u8> {
-    seq(&set(&seq(&[oid(OID_CN), tlv(0x0C, NAME.as_bytes())].concat())))
+    seq(&set(&seq(
+        &[oid(OID_CN), tlv(0x0C, NAME.as_bytes())].concat()
+    )))
 }
 
 fn tbs_certificate(
@@ -298,7 +300,10 @@ mod tests {
         assert_eq!(a.hash(), b.hash());
         // Another secret, another week: another certificate.
         assert_ne!(BridgeCert::current(7, NOW).hash(), a.hash());
-        assert_ne!(BridgeCert::current(0x1234_5678 & 0x3FFF_FFFF, NOW + WEEK_S).hash(), a.hash());
+        assert_ne!(
+            BridgeCert::current(0x1234_5678 & 0x3FFF_FFFF, NOW + WEEK_S).hash(),
+            a.hash()
+        );
         // The browser offers last, this and next week's hash.
         let hashes = browser_hashes(0x1234_5678 & 0x3FFF_FFFF, NOW);
         assert_eq!(hashes.len(), 3);

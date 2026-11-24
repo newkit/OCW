@@ -241,12 +241,20 @@ impl BridgeInfo {
     /// The Devices list row's value.
     fn value(&self) -> String {
         match self {
-            Self::Host { sharing: false, error: Some(_), .. } => "failed".into(),
+            Self::Host {
+                sharing: false,
+                error: Some(_),
+                ..
+            } => "failed".into(),
             Self::Host { sharing: false, .. } => "off".into(),
-            Self::Host { browser: Some(b), .. } => short_label(&format!("paired, {b}"), 24),
+            Self::Host {
+                browser: Some(b), ..
+            } => short_label(&format!("paired, {b}"), 24),
             Self::Host { code: Some(c), .. } => format!("on, {c}"),
             Self::Host { .. } => "on".into(),
-            Self::Client { supported: false, .. } => "not in this browser".into(),
+            Self::Client {
+                supported: false, ..
+            } => "not in this browser".into(),
             Self::Client { code: None, .. } => "off".into(),
             Self::Client { state, .. } => short_label(state, 24),
         }
@@ -334,7 +342,11 @@ fn bridge_rows(b: &BridgeInfo) -> Vec<Row> {
         } => {
             let mut toggle = Row::action(
                 "Share with a browser",
-                if *sharing { "bridge.share off" } else { "bridge.share on" },
+                if *sharing {
+                    "bridge.share off"
+                } else {
+                    "bridge.share on"
+                },
             );
             toggle.value = Some(if *sharing { "on" } else { "off" }.into());
             let mut out = vec![toggle];
@@ -343,7 +355,11 @@ fn bridge_rows(b: &BridgeInfo) -> Vec<Row> {
                 out.push(info_row("Address", address.clone()));
                 out.push(info_row(
                     "Browser",
-                    Some(browser.as_deref().map_or("none yet".into(), |b| short_label(b, 28))),
+                    Some(
+                        browser
+                            .as_deref()
+                            .map_or("none yet".into(), |b| short_label(b, 28)),
+                    ),
                 ));
                 out.push(Row::action("New code", "bridge.share new-code"));
             } else if let Some(e) = error {
@@ -357,7 +373,10 @@ fn bridge_rows(b: &BridgeInfo) -> Vec<Row> {
             supported,
         } => {
             if !supported {
-                return vec![info_row("Not in this browser", Some("no WebTransport".into()))];
+                return vec![info_row(
+                    "Not in this browser",
+                    Some("no WebTransport".into()),
+                )];
             }
             let mut out = vec![Row::action("Enter the pairing code", "bridge.pair")];
             if code.is_some() {
@@ -485,9 +504,9 @@ pub fn status(page: Page, info: &DevicesInfo) -> String {
                 browser: None,
                 ..
             }) => format!("Type {c} in the browser's Devices page"),
-            Some(BridgeInfo::Host { browser: Some(b), .. }) => {
-                short_label(&format!("Paired with {b}"), 60)
-            }
+            Some(BridgeInfo::Host {
+                browser: Some(b), ..
+            }) => short_label(&format!("Paired with {b}"), 60),
             Some(BridgeInfo::Host { error: Some(e), .. }) => short_label(e, 60),
             Some(BridgeInfo::Client { state, .. }) => short_label(state, 60),
             _ => String::new(),
@@ -666,7 +685,10 @@ mod tests {
         assert_eq!(r[1].confirm, Some(Activate::Open(Page::Bridge)));
         let b = rows(Page::Bridge, &info);
         assert_eq!(b.len(), 1);
-        assert_eq!(b[0].confirm, Some(Activate::Command("bridge.share on".into())));
+        assert_eq!(
+            b[0].confirm,
+            Some(Activate::Command("bridge.share on".into()))
+        );
         // Sharing: the code, the address, no browser yet, a new code.
         info.bridge = Some(BridgeInfo::Host {
             sharing: true,
@@ -677,12 +699,30 @@ mod tests {
         });
         let b = rows(Page::Bridge, &info);
         let labels: Vec<&str> = b.iter().map(|r| r.label.as_str()).collect();
-        assert_eq!(labels, ["Share with a browser", "Pairing code", "Address", "Browser", "New code"]);
-        assert_eq!(b[0].confirm, Some(Activate::Command("bridge.share off".into())));
+        assert_eq!(
+            labels,
+            [
+                "Share with a browser",
+                "Pairing code",
+                "Address",
+                "Browser",
+                "New code"
+            ]
+        );
+        assert_eq!(
+            b[0].confirm,
+            Some(Activate::Command("bridge.share off".into()))
+        );
         assert_eq!(b[1].value.as_deref(), Some("7K2M-Q9XP-4DA"));
         assert_eq!(b[3].value.as_deref(), Some("none yet"));
-        assert_eq!(status(Page::Bridge, &info), "Type 7K2M-Q9XP-4DA in the browser's Devices page");
-        assert_eq!(rows(Page::Devices, &info)[1].value.as_deref(), Some("on, 7K2M-Q9XP-4DA"));
+        assert_eq!(
+            status(Page::Bridge, &info),
+            "Type 7K2M-Q9XP-4DA in the browser's Devices page"
+        );
+        assert_eq!(
+            rows(Page::Devices, &info)[1].value.as_deref(),
+            Some("on, 7K2M-Q9XP-4DA")
+        );
         if let Some(BridgeInfo::Host { browser, .. }) = &mut info.bridge {
             *browser = Some("Quest Browser".into());
         }
@@ -705,7 +745,10 @@ mod tests {
             supported: true,
         });
         let b = rows(Page::Bridge, &info);
-        assert_eq!(b.last().unwrap().confirm, Some(Activate::Command("bridge.stop".into())));
+        assert_eq!(
+            b.last().unwrap().confirm,
+            Some(Activate::Command("bridge.stop".into()))
+        );
         assert_eq!(status(Page::Bridge, &info), "paired with Test desktop");
         // Without WebTransport: says so.
         info.bridge = Some(BridgeInfo::Client {

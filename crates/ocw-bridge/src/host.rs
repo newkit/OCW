@@ -26,9 +26,7 @@ use tokio::sync::mpsc as tmpsc;
 
 use crate::cert::BridgeCert;
 use crate::code::{PORT_SLOTS, PairingCode, port};
-use crate::msg::{
-    DeviceInfo, DeviceState, Frames, ToBrowser, ToHost, VERSION, frame,
-};
+use crate::msg::{DeviceInfo, DeviceState, Frames, ToBrowser, ToHost, VERSION, frame};
 use crate::relay::{Admit, Gate, Relay};
 
 /// What the app hears from the bridge.
@@ -328,7 +326,11 @@ impl BridgeHost {
 
     /// Events since the last call.
     pub fn events(&self) -> Vec<HostEvent> {
-        self.events.lock().expect("not poisoned").try_iter().collect()
+        self.events
+            .lock()
+            .expect("not poisoned")
+            .try_iter()
+            .collect()
     }
 
     /// The paired browser (what it says it is).
@@ -387,7 +389,10 @@ async fn accept_loop(
             incoming.refuse();
             lock(&shared).stats.refused += 1;
             let _ = events.send(HostEvent::Refused {
-                why: format!("a connection from outside the local network ({})", remote.ip()),
+                why: format!(
+                    "a connection from outside the local network ({})",
+                    remote.ip()
+                ),
             });
             continue;
         }
