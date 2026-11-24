@@ -1969,7 +1969,33 @@ fn star_angles(c: P2, outline: &[OutlinePoint]) -> Result<Vec<f64>, &'static str
 /// as the star mesh.
 fn plane(patch: &mut Patch) -> Result<(), &'static str> {
     let pts: Vec<P2> = patch.outline.iter().map(|o| xz(o.p)).collect();
-    let inner = plane_mesh::inner_points(&pts);
+    let mut inner = plane_mesh::inner_points(&pts);
+    // Points along the through road's carriageway edges (every 0.5 m),
+    // so that the triangles follow them and the cut there (below) leaves
+    // no triangle of a side road's corner reaching onto the main road (the
+    // star mesh's rings do so by their spacing).
+    if let Some([a, b]) = patch.through {
+        for k in [a, b] {
+            let arm = &patch.arms[k];
+            let len = arm.mouth_m + 1.0;
+            let steps = (len / 0.5).ceil() as usize;
+            for side in [-1.0, 1.0] {
+                let off = mul(side_pos(arm.dir), side * arm.half);
+                for s in 0..=steps {
+                    let q = add(
+                        add(arm.origin, mul(arm.dir, len * s as f64 / steps as f64)),
+                        off,
+                    );
+                    if plane_mesh::inside(&pts, q)
+                        && plane_mesh::nearest_piece(&pts, q).0 > 0.1
+                        && inner.iter().all(|w| norm(sub(*w, q)) > 0.2)
+                    {
+                        inner.push(q);
+                    }
+                }
+            }
+        }
+    }
     let mut tris =
         plane_mesh::triangulate(&pts, &inner).ok_or("the outline cannot be triangulated")?;
     let mut verts: Vec<[f64; 3]> = patch.outline.iter().map(|o| o.p).collect();

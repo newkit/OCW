@@ -344,10 +344,11 @@ fn the_corner_verge_meets_the_arms_verge_without_a_hole() {
 /// below a junction whose corner has a small radius (a path or a track
 /// leaving a road, a side road at an acute angle), the outer edge of the
 /// corner's verge runs as one smooth curve from the main road's verge to
-/// the side road's: it never bends tighter than about a metre (J5 cut the
-/// verge to 0.8 of the corner's radius there – a V-shaped notch of grass
-/// between the two wide verges) and leaves each arm's verge along its
-/// outer edge (tangent at the joint).
+/// the side road's: no bend above the side lint's 25° over 0.3 m, also
+/// where it leaves each arm's verge's outer edge; where the two arms'
+/// verges cross beyond short mouths it lies within them (J5 cut the verge
+/// to 0.8 of the corner's radius there – a V-shaped notch of grass between
+/// the two wide verges).
 #[test]
 fn the_corner_verge_s_outer_edge_runs_on_smoothly() {
     use ocw_world::junction::fixtures::{Road, graph};
