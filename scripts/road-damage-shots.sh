@@ -51,15 +51,16 @@ for w in "dry|weather clear;weather wetness=0 puddles=0" \
          "wet|weather clear;weather wetness=1 puddles=0.5"; do
   for want in ${OCW_RD_WEATHERS:-dry wet}; do [ "${w%%|*}" = "$want" ] && weathers+=("$w"); done
 done
-# view | camera command: low and close, looking down at the road beside
-# the rider (about 3.8 m up, 3 - 10 m away); OCW_RD_VIEWS ("right left
-# wide") picks some.
+# view | camera command: low and close – along: about 4 m up in front of
+# the rider, looking down at the road from 3 to 20 m; right / left: about
+# 3.8 m up beside the rider; OCW_RD_VIEWS ("along right left wide") picks
+# some.
 views=()
 # (camera.orbit looks at the rider from the side or the front, far ahead
 # from behind: yaw ±120 looks down about 45 degrees at the road on either
 # side of the rider.)
-for v in "right|camera.orbit 120 52 4.8" "left|camera.orbit -120 52 4.8" "wide|camera.orbit 200 40 6"; do
-  for want in ${OCW_RD_VIEWS:-right left}; do [ "${v%%|*}" = "$want" ] && views+=("$v"); done
+for v in "along|camera.orbit 165 36 6.5" "right|camera.orbit 120 52 4.8" "left|camera.orbit -120 52 4.8" "wide|camera.orbit 200 40 6"; do
+  for want in ${OCW_RD_VIEWS:-along}; do [ "${v%%|*}" = "$want" ] && views+=("$v"); done
 done
 
 table=$out/index.md
