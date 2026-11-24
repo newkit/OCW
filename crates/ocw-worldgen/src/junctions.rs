@@ -470,6 +470,7 @@ fn side_path_ends(
 ) -> Vec<(usize, usize, f64)> {
     use ocw_world::junction::{BLEND_MAX_M, BLEND_MIN_M, BLEND_RATE};
     let side = js.side_paths();
+    let roads = ocw_world::junction::alongside::road_index(g);
     let mut out = Vec::new();
     for (ei, e) in g.edges.iter().enumerate() {
         if !side.get(ei).copied().unwrap_or(false) || e.profile.len() < 2 {
@@ -477,16 +478,23 @@ fn side_path_ends(
         }
         let len = e.length_m();
         let n = e.profile.len();
+        let cum = cumulative(&e.points);
+        // The rider rides on the band drawn for it: its profile at the
+        // band's height (the road's beside it, the kerb and the fall).
+        let base: Vec<f64> = (0..n)
+            .map(|i| {
+                let s = sample_m(i, len);
+                let (p, _) = ocw_world::junction::frame_at(&e.points, &cum, s);
+                ocw_world::junction::alongside::band_height(g, &roads, p).unwrap_or(e.profile[i])
+            })
+            .collect();
         // Per end: the height change it needs and its sample.
         let mut delta = [0.0f64; 2];
         for (k, v) in [e.from.0 as usize, e.to.0 as usize].into_iter().enumerate() {
             let i = if k == 0 { 0 } else { n - 1 };
             if let Some(h) = js.patch_height(g, v, g.vertices[v]) {
-                delta[k] = h - e.profile[i];
+                delta[k] = h - base[i];
             }
-        }
-        if delta.iter().all(|d| d.abs() < 1e-4) {
-            continue;
         }
         let reach = |d: f64| {
             (d.abs() / BLEND_RATE)
@@ -494,7 +502,7 @@ fn side_path_ends(
                 .min(0.5 * len)
         };
         let (l0, l1) = (reach(delta[0]), reach(delta[1]));
-        for i in 0..n {
+        for (i, &b) in base.iter().enumerate() {
             let s = sample_m(i, len);
             if !keep(ei, s) {
                 continue;
@@ -508,9 +516,9 @@ fn side_path_ends(
                     1.0 - t * t * (3.0 - 2.0 * t)
                 }
             };
-            let d = delta[0] * fall(s, l0) + delta[1] * fall(len - s, l1);
-            if d.abs() > 1e-6 {
-                out.push((ei, i, e.profile[i] + d));
+            let h = b + delta[0] * fall(s, l0) + delta[1] * fall(len - s, l1);
+            if (h - e.profile[i]).abs() > 1e-6 {
+                out.push((ei, i, h));
             }
         }
     }

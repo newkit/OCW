@@ -30,6 +30,9 @@ pub const ALONG_GAP_M: f64 = 3.0;
 pub const ALONG_OVER_M: f64 = 0.5;
 /// … and runs alongside it within this angle (degrees).
 pub const ALONG_DEG: f64 = 20.0;
+/// … and its height differs from the road's by at most this (m): a path
+/// on an embankment above the road or a terrace below is its own.
+pub const ALONG_LEVEL_M: f64 = 0.5;
 /// The first and last metres of a path (turning to its crossing) are not
 /// checked.
 pub const ALONG_END_M: f64 = 5.0;
@@ -140,6 +143,7 @@ pub fn side_paths(g: &RoadGraph) -> Vec<bool> {
             }
             ss.iter().all(|&s| {
                 let (p, d) = frame_at(&e.points, &cum, s);
+                let h = e.height_at(s);
                 roads
                     .near(p, 12.0 + half + ALONG_GAP_M)
                     .into_iter()
@@ -150,13 +154,66 @@ pub fn side_paths(g: &RoadGraph) -> Vec<bool> {
                         if cross(u, d).abs() > sin_max || dot(u, d).abs() < cos_max {
                             return false;
                         }
-                        let (q, _) = closest(p, a, b);
+                        let (q, t) = closest(p, a, b);
                         let gap = norm(sub(p, q)) - r.width_m / 2.0 - half;
-                        (-ALONG_OVER_M..=ALONG_GAP_M).contains(&gap)
+                        // At the road's level (not on an embankment above
+                        // it or a terrace below).
+                        let start: f64 = r.points[..=k as usize]
+                            .windows(2)
+                            .map(|w| norm(sub(w[1], w[0])))
+                            .sum();
+                        let rh = r.height_at(start + t * norm(sub(b, a)));
+                        let level = match (h, rh) {
+                            (Some(h), Some(rh)) => (h - rh).abs() <= ALONG_LEVEL_M,
+                            _ => true,
+                        };
+                        level && (-ALONG_OVER_M..=ALONG_GAP_M).contains(&gap)
                     })
             })
         })
         .collect()
+}
+
+/// The height of the band drawn for a side path at point `p` of its centre
+/// line: the nearest road's (not a path) height there, its kerb of
+/// [`BAND_KERB_M`] and the sidewalk's fall of [`BAND_FALL`] per metre out
+/// from its edge; `None` without a road within reach. `roads`: from
+/// [`road_index`].
+pub fn band_height(g: &RoadGraph, roads: &RoadIndex, p: P2) -> Option<f64> {
+    let mut best: Option<(f64, f64, f64)> = None;
+    for (ri, k) in roads.0.near(p, 12.0 + ALONG_GAP_M) {
+        let r = &g.edges[ri as usize];
+        let (a, b) = (r.points[k as usize], r.points[k as usize + 1]);
+        let (q, t) = closest(p, a, b);
+        let d = norm(sub(p, q));
+        if best.is_none_or(|x| d < x.0) {
+            let start: f64 = r.points[..=k as usize]
+                .windows(2)
+                .map(|w| norm(sub(w[1], w[0])))
+                .sum();
+            if let Some(h) = r.height_at(start + t * norm(sub(b, a))) {
+                best = Some((d, h, r.width_m / 2.0));
+            }
+        }
+    }
+    let (d, h, half) = best?;
+    Some(h + BAND_KERB_M + (d - half).max(0.0) * BAND_FALL)
+}
+
+/// The kerb (m) and the fall per metre of a band drawn for a side path
+/// where its road has no sidewalk of its own (the renderer's
+/// `BAND_KERB_M`, the sidewalk's `SIDEWALK_FALL`).
+pub const BAND_KERB_M: f64 = 0.08;
+pub const BAND_FALL: f64 = 0.02;
+
+/// The roads (not paths) of a graph by place.
+pub struct RoadIndex(Segments);
+
+pub fn road_index(g: &RoadGraph) -> RoadIndex {
+    RoadIndex(Segments::new(g, |ei| {
+        let e = &g.edges[ei];
+        !is_path(e.class) && e.from != e.to && e.points.len() >= 2
+    }))
 }
 
 /// The side paths of a graph by place, for drawing their bands.
