@@ -392,6 +392,11 @@ BLE_DEVICE ?= KICKR
 test-web-ble-real: web ## Headless Chromium rides the real trainer in range ($(BLE_DEVICE), marge's KICKR) over BlueZ: the chooser answered over DevTools, SIM, ERG
 	scripts/test-web-ble.py --out test-output/web --mode real --device $(BLE_DEVICE) --seconds 20
 
+BRIDGE_DEVICES ?=
+BRIDGE_SECONDS ?= 120
+test-bridge: web web-worlds ## The sensor bridge end to end (spec 14 Phase 10, 10D.2): the desktop shares its devices ($(BRIDGE_DEVICES): a devices file, e.g. marge's KICKR; default the virtual trainer), headless Chromium pairs by the code and rides $(WEB_WORLD_ROUTE) $(BRIDGE_SECONDS) s; latency, control, screenshots into test-output/bridge/
+	scripts/test-bridge.py --out test-output/bridge --seconds $(BRIDGE_SECONDS) --world $(WEB_WORLD) --route $(WEB_WORLD_ROUTE) $(if $(BRIDGE_DEVICES),--devices-file $(BRIDGE_DEVICES))
+
 test-web-audio: web ## Headless Chromium: the game sound locked until a click (autoplay rule), then the mixer's chunks scheduled through Web Audio with sound in them; a volume kept over a reload; screenshots into test-output/web/
 	scripts/test-web-audio.py --out test-output/web --part audio
 

@@ -427,7 +427,21 @@ fn devices(
                 Err(e) => console.print(format!("{name}: {e}")),
             }
         }
+        // The sensor bridge (spec 14 Phase 10, 10D.2): the page's code
+        // (`?bridge=`, or this origin's last one) at the first frame.
+        if !*loaded {
+            let _ = crate::bridge::supported();
+            if let Some(code) = crate::bridge::page_code() {
+                crate::bridge::request(code);
+            }
+        }
     }
+    if let Some(code) = crate::bridge::take_request() {
+        let line = use_bridge(s, &code).unwrap_or_else(|e| format!("bridge: {e}"));
+        info!("{line}");
+        console.print(line);
+    }
+    s.devices.bridge_info = crate::bridge::info();
     // Remembered once connected (spec §3.2.1 *Devices*): saved then.
     if std::mem::take(&mut s.devices.remembered_changed) {
         persist(s);
@@ -474,7 +488,23 @@ pub fn devices_json(s: &WebSession) -> String {
     v["virtual_sample"] = s.client.virtual_power().into();
     v["distance_m"] = s.client.state().distance.into();
     v["joined"] = s.client.rider_id().is_some().into();
+    v["bridge"] = crate::bridge::json();
     v.to_string()
+}
+
+/// Uses the trainer of the desktop app with this code (the sensor bridge,
+/// spec 14 Phase 10, 10D.2): a device of the ride, replacing an earlier
+/// bridge.
+pub fn use_bridge(s: &mut WebSession, typed: &str) -> Result<String, String> {
+    let code = ocw_bridge::PairingCode::parse(typed).map_err(|e| e.to_string())?;
+    let handle = crate::bridge::start(code)?;
+    s.devices.forget(crate::bridge::BRIDGE_ID);
+    let line = s.devices.add(
+        handle,
+        ocw_devices::ble::web::DeviceKind::Trainer,
+        crate::bridge::BRIDGE_ID.into(),
+    );
+    Ok(format!("{line}: code {code}, desktop at {}", code.url()))
 }
 
 /// Saves the remembered devices (the page's `localStorage`).
@@ -620,6 +650,55 @@ fn register_commands(app: &mut App) {
             let kind = ocw_devices::ble::web::DeviceKind::parse(kind).expect("checked by clap");
             connect_device(kind)
         },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("bridge.pair")
+            .about("Use the trainer of the desktop app on the same network (the sensor bridge): the code it shows under Settings → Trainer → Devices → Share with a browser; without a code the page asks for it")
+            .arg(Arg::new("code").num_args(0..)),
+        |world, m| {
+            let typed: Vec<String> = m
+                .get_many::<String>("code")
+                .map(|v| v.cloned().collect())
+                .unwrap_or_default();
+            let typed = if typed.is_empty() {
+                #[cfg(target_arch = "wasm32")]
+                let asked = crate::bridge::prompt_code();
+                #[cfg(not(target_arch = "wasm32"))]
+                let asked: Option<String> = None;
+                asked.ok_or("no code typed")?
+            } else {
+                typed.join("")
+            };
+            match world.get_resource_mut::<Session>() {
+                Some(mut s) => use_bridge(&mut s.0, &typed),
+                None => {
+                    // The world is still loading: used once the ride runs.
+                    ocw_bridge::PairingCode::parse(&typed).map_err(|e| e.to_string())?;
+                    crate::bridge::request(typed);
+                    Ok("the bridge connects when the ride starts".into())
+                }
+            }
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("bridge.stop").about("Stop using the desktop app's trainer (the sensor bridge)"),
+        |world, _| {
+            let s = session_mut(world)?;
+            let n = s.devices.forget(crate::bridge::BRIDGE_ID);
+            crate::bridge::stopped();
+            Ok(if n > 0 {
+                "stopped using the desktop app's trainer".into()
+            } else {
+                "the bridge was not in use".into()
+            })
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("bridge.status").about("The sensor bridge: code, state, round trip, readings"),
+        |_, _| Ok(crate::bridge::json().to_string()),
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
