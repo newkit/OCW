@@ -748,3 +748,143 @@ fn side_roads_never_stand_above_the_main_road() {
     }
     assert!(measured > 1000, "{measured}");
 }
+
+/// The worst bend of a patch's sides as the side lint measures it (over
+/// pieces of 0.3 m, the strips' edges on at both ends; degrees).
+fn worst_side_bend(p: &Patch) -> f64 {
+    let mut worst = 0.0f64;
+    for ch in &p.chains {
+        let (a, b) = (&p.arms[ch.from_arm], &p.arms[ch.to_arm]);
+        let n = ch.points.len();
+        let mut pts = vec![add(xz(ch.points[0]), a.t)];
+        pts.extend(ch.points.iter().map(|q| xz(*q)));
+        pts.push(add(xz(ch.points[n - 1]), b.t));
+        worst = worst.max(sides::worst_bend(&pts).to_degrees());
+    }
+    worst
+}
+
+/// Spec 4.8.8 Rule (J8): a side road whose OSM way is split 6 m from the
+/// junction (a plain way split: same class and width, bending 10°) – its
+/// arm used to end there, its mouth at 45 % of the 6 m edge, the corners
+/// squeezed into a hook. Now the arm runs on past the split: the patch
+/// covers the short edge (inside it, no strip), the arm is the edge
+/// beyond with its mouth where the corners' radius needs it, the sides
+/// bend no more than the lint allows, and the stored patch is the
+/// computed one. J7: the arm on the short edge.
+#[test]
+fn an_arm_runs_on_past_a_way_split() {
+    let g = fixtures::t_junction_split(0.03, 0.06, 6.0, 10.0);
+    let js = JunctionSet::new(&g);
+    let p = js.patch(&g, 0).expect("a patch").clone();
+    assert_eq!(
+        (p.members.clone(), p.inner.clone(), p.run_on.clone()),
+        (vec![0, 4], vec![2], vec![4])
+    );
+    assert!(!p.is_cluster());
+    assert!(p.arms.iter().all(|a| a.edge != 2));
+    let side = p
+        .arms
+        .iter()
+        .find(|a| a.edge == 3)
+        .expect("the arm runs on");
+    assert_eq!(side.origin, g.vertices[4]);
+    // Past the split, where the 6 m corners end (3.75 + 6 m from the
+    // vertex): about 3.75 m along the next edge.
+    assert!(side.mouth_m > 3.0, "{}", side.mouth_m);
+    assert!(matches!(
+        js.ends(&g, 2),
+        [Some(EndRule::Inside(_)), Some(EndRule::Inside(_))]
+    ));
+    assert!(matches!(js.ends(&g, 3)[0], Some(EndRule::Patch(q, _)) if q.vertex == 0));
+    assert!(matches!(js.rule(&g, 4), Some(VertexRule::Patch(q)) if q.vertex == 0));
+    assert!(js.own_patch(&g, 4).is_none());
+    check_outline(&p);
+    let worst = worst_side_bend(&p);
+    assert!(worst < 25.0, "{worst:.1}°");
+    // The surface along the edge inside: the patch's.
+    let e = &g.edges[2];
+    let mid = frame_at(&e.points, &cumulative(&e.points), 3.0).0;
+    assert!(js.drawn_height(&g, 2, 3.0, mid).is_some());
+    // Stored and read back: the same patch.
+    let index = Arc::new(section::JunctionIndex::of_set(&g, &js, 0));
+    let mut bytes = Vec::new();
+    section::write_junctions(&index, &mut bytes);
+    let read = Arc::new(section::read_junctions(&bytes).expect("read"));
+    let stored = JunctionSet::with_index(&g, Some(read));
+    assert_eq!(stored.patch(&g, 0), Some(&p));
+    assert_eq!(stored.patch(&g, 4), Some(&p));
+}
+
+/// J8: an arm runs on only past a way split that squeezes it – one far
+/// enough out keeps its mitre – and not past a split between two
+/// junctions whose arms it squeezes both (it belongs to neither).
+#[test]
+fn a_way_split_far_out_or_between_two_junctions_stays() {
+    let g = fixtures::t_junction_split(0.03, 0.06, 30.0, 10.0);
+    let js = JunctionSet::new(&g);
+    let p = js.patch(&g, 0).expect("a patch");
+    assert!(p.run_on.is_empty() && p.arms.iter().any(|a| a.edge == 2));
+    assert!(matches!(js.rule(&g, 4), Some(VertexRule::Mitre(_))));
+    // Two T junctions 12 m apart along their side road, split halfway.
+    let v = [
+        [0.0, 0.0],
+        [-100.0, 0.0],
+        [100.0, 0.0],
+        [0.0, 6.0],
+        [0.0, 12.0],
+        [-100.0, 12.0],
+        [100.0, 12.0],
+    ];
+    use fixtures::Road;
+    let g = fixtures::graph(
+        &v,
+        vec![
+            Road::straight(&v, 1, 0, RoadClass::Secondary, 7.5, |_| 0.0),
+            Road::straight(&v, 0, 2, RoadClass::Secondary, 7.5, |_| 0.0),
+            Road::straight(&v, 0, 3, RoadClass::Residential, 5.0, |_| 0.0),
+            Road::straight(&v, 3, 4, RoadClass::Residential, 5.0, |_| 0.0),
+            Road::straight(&v, 5, 4, RoadClass::Secondary, 7.5, |_| 0.0),
+            Road::straight(&v, 4, 6, RoadClass::Secondary, 7.5, |_| 0.0),
+        ],
+    );
+    let js = JunctionSet::new(&g);
+    assert!(js.runs_on(&g, 0, 2).is_none() && js.runs_on(&g, 4, 3).is_none());
+    for v in [0, 4] {
+        if let Some(p) = js.patch(&g, v) {
+            assert!(p.run_on.is_empty());
+        }
+    }
+}
+
+/// J8: the mouths lie out far enough for each corner's radius along the
+/// roads' real edge lines. The corner arcs place them by the straight
+/// lines from the vertex to a point 8 m out; a side road that bends 9 m
+/// from the vertex meets the main road's edge line elsewhere, and its
+/// corner was cut short at the mouth (a hook). Now no corner is cut where
+/// the arms' caps leave room, and the sides bend no more than the lint
+/// allows. J7: 0.9 m short.
+#[test]
+fn mouths_lie_out_for_the_corners_along_the_real_edges() {
+    for (bend, at) in [(20.0, 9.0), (-15.0, 9.0), (-20.0, 9.0)] {
+        let g = fixtures::t_junction_bent(0.02, 0.05, bend, at);
+        let p = try_patch(&g, &g.adjacency()[0], 0)
+            .unwrap_or_else(|e| panic!("bend {bend} at {at}: {e}"));
+        let n = p.arms.len();
+        for i in 0..n {
+            let (a, b) = (&p.arms[i], &p.arms[(i + 1) % n]);
+            let radius = corner_radius(a.class.max(b.class));
+            let d = sides::corner_deficit(&g, a, b, radius, None, [false; 2]);
+            for (arm, dk) in [(a, d[0]), (b, d[1])] {
+                let cap = MAX_MOUTH_M.min(MOUTH_SHARE * arm.len);
+                assert!(
+                    dk < 0.1 || arm.mouth_m > cap - 0.1,
+                    "bend {bend} at {at}: corner {i} cut {dk:.2} m short"
+                );
+            }
+        }
+        check_outline(&p);
+        let worst = worst_side_bend(&p);
+        assert!(worst < 25.0, "bend {bend} at {at}: {worst:.1}°");
+    }
+}

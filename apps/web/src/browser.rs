@@ -495,7 +495,7 @@ async fn drive(
         }
         idle += 1;
         // The storage line now and then (other tabs use the quota too).
-        if idle % 200 == 0 {
+        if idle.is_multiple_of(200) {
             let (quota, persisted) = storage_estimate(false).await;
             let mut s = shared.lock().expect("not poisoned");
             s.quota = quota;

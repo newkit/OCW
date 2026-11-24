@@ -164,6 +164,7 @@ impl Plugin for MenuPlugin {
                                 "strava",
                                 "voice",
                                 "season",
+                                "bridge",
                             ])
                             .default_value("toggle"),
                     )
@@ -199,6 +200,9 @@ impl Plugin for MenuPlugin {
                         Some("voice") => Action::OpenSub(sub::Page::Voice),
                         // World → Time → Season (spec 14 Phase 9 Q13; scenes).
                         Some("season") => Action::OpenSub(sub::Page::Season),
+                        // Devices → the sensor bridge (spec 14 Phase 10,
+                        // 10D.2; scenes, the bridge test).
+                        Some("bridge") => Action::OpenSub(sub::Page::Bridge),
                         _ if open => Action::Close,
                         _ => Action::Open,
                     };
@@ -329,7 +333,10 @@ pub fn sub_rows(world: &World, page: sub::Page) -> Vec<Row> {
         let empty = VoiceMenuInfo::default();
         let info = world.get_resource::<VoiceMenu>().map_or(&empty, |v| &v.0);
         ocw_client::menu::voice::rows(page, s, info)
-    } else if matches!(page, sub::Page::Devices | sub::Page::Device(_)) {
+    } else if matches!(
+        page,
+        sub::Page::Devices | sub::Page::Device(_) | sub::Page::Bridge
+    ) {
         let empty = DevicesMenu::default();
         let info = world.get_resource::<DevicesMenu>().unwrap_or(&empty);
         ocw_client::menu::devices::rows(page, info)
@@ -582,7 +589,11 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
             (Page::Sub(p), _, _) if history.is_some() => {
                 ocw_client::menu::history::status(p, history.as_ref().expect("some"))
             }
-            (Page::Sub(p @ (sub::Page::Devices | sub::Page::Device(_))), _, _) => world
+            (
+                Page::Sub(p @ (sub::Page::Devices | sub::Page::Device(_) | sub::Page::Bridge)),
+                _,
+                _,
+            ) => world
                 .get_resource::<DevicesMenu>()
                 .map(|d| ocw_client::menu::devices::status(p, d))
                 .unwrap_or_default(),

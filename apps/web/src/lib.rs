@@ -58,6 +58,7 @@
 
 pub mod account;
 pub mod audio;
+pub mod bridge;
 #[cfg(target_arch = "wasm32")]
 mod browser;
 #[cfg(target_arch = "wasm32")]
@@ -84,7 +85,10 @@ pub mod ui;
 pub mod voice;
 #[cfg(target_arch = "wasm32")]
 mod webtransport;
+#[cfg(feature = "webxr")]
+pub mod webxr;
 pub mod world;
+pub mod xr;
 
 #[path = "../../desktop/src/build_id.rs"]
 mod build_id;
@@ -539,6 +543,8 @@ pub fn app_with_settings(
         .insert_resource(ocw_ui::quality::QualityContext {
             api: gpu_api(),
             device: device_info(),
+            // An immersive session sets it (14I W3, `webxr`).
+            xr: None,
         });
     let record = config.record;
     let route = config.route.clone();
@@ -640,6 +646,9 @@ pub fn app_with_settings(
     // The desktop's menus and machines over this session, the downloads
     // (B6).
     app.add_plugins(ui::WebUiPlugin { record });
+    // WebXR (spec §14 Phase 14, 14I W1): the immersive session's eyes.
+    #[cfg(feature = "webxr")]
+    app.add_plugins(webxr::WebXrPlugin);
     app
 }
 
@@ -754,11 +763,27 @@ fn device_pixel_box() -> bool {
     true
 }
 
+/// The canvas' scale factor during an immersive session (spec §14 Phase
+/// 14, 14I W3; the `webxr` build sets it): the eyes draw into the canvas
+/// and the page copies it into the XR layer's framebuffer, so the canvas
+/// gets the framebuffer's pixels – the layer's render scale is then the
+/// eyes' too, and the copy is 1 : 1. `None`: the preset's cap.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
+pub struct XrCanvasScale(pub Option<f32>);
+
+/// The scale factor that gives a canvas of `logical_width` CSS px the
+/// framebuffer's `framebuffer_width` px (`None` for nonsense sizes).
+pub fn xr_canvas_scale(logical_width: f32, framebuffer_width: f32) -> Option<f32> {
+    (logical_width >= 1.0 && framebuffer_width >= 1.0)
+        .then(|| (framebuffer_width / logical_width).clamp(0.25, 8.0))
+}
+
 /// Applies [`pixel_ratio_override`] to the page's window when the preset
 /// or the device's pixel ratio changes (the browser only: the desktop's
 /// window keeps its own scale).
 fn cap_pixel_ratio(
     quality: Option<Res<ocw_render::quality::RenderQuality>>,
+    xr: Option<Res<XrCanvasScale>>,
     mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
 ) {
     let cap = usable_pixel_ratio_cap(
@@ -766,7 +791,10 @@ fn cap_pixel_ratio(
         device_pixel_box(),
     );
     for mut w in &mut windows {
-        let want = pixel_ratio_override(w.resolution.base_scale_factor(), cap);
+        // In an immersive session the canvas is as large as the XR layer's
+        // framebuffer (14I W3: its render scale), whatever the preset says.
+        let xr = xr.as_ref().and_then(|x| x.0);
+        let want = xr.or_else(|| pixel_ratio_override(w.resolution.base_scale_factor(), cap));
         if w.resolution.scale_factor_override() != want {
             w.resolution.set_scale_factor_override(want);
         }
@@ -981,6 +1009,70 @@ pub fn page_steer() -> String {
 #[wasm_bindgen::prelude::wasm_bindgen(js_name = setting)]
 pub fn page_setting(key: &str) -> String {
     ui::setting_text(key)
+}
+
+/// `window.ocw.xrFrame(data)`: the XR frame's poses and projections
+/// (`web/ocw-xr.js`, before it steps the app; 14I W1).
+#[cfg(all(target_arch = "wasm32", feature = "webxr"))]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = xrFrame)]
+pub fn page_xr_frame(data: &[f32]) {
+    webxr::page_frame(data);
+}
+
+/// `window.ocw.xrEvent(name, detail)`: the immersive session's events
+/// (supported, enter, started, failed, visibility, ended).
+#[cfg(all(target_arch = "wasm32", feature = "webxr"))]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = xrEvent)]
+pub fn page_xr_event(name: &str, detail: &str) {
+    webxr::page_event(name, detail);
+}
+
+/// `window.ocw.xr()`: the session, the eyes and the frame timing as JSON.
+#[cfg(all(target_arch = "wasm32", feature = "webxr"))]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = xr)]
+pub fn page_xr() -> String {
+    webxr::page_json()
+}
+
+/// `window.ocw.xrReport(json)`: the headset run's report to the desktop
+/// over the sensor bridge (14I W4); "" when queued, else why not.
+#[cfg(all(target_arch = "wasm32", feature = "webxr"))]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = xrReport)]
+pub fn page_xr_report(json: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(json) {
+        Ok(data) => bridge::report("xr", data).err().unwrap_or_default(),
+        Err(e) => format!("not JSON: {e}"),
+    }
+}
+
+/// `window.ocw.xrPads(data)`: the controllers of the XR frame (WebXR
+/// gamepads and grips, `web/ocw-xr.js`, before `xrFrame`; 14I W2).
+#[cfg(all(target_arch = "wasm32", feature = "webxr"))]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = xrPads)]
+pub fn page_xr_pads(data: &[f32]) {
+    webxr::page_pads(data);
+}
+
+/// `window.ocw.xrLayer(userAgent)`: the quality level a session on this
+/// headset runs and the XR layer's render scale and foveation (JSON; 14I
+/// W3: the `quest1` level on a Quest 1).
+#[cfg(all(target_arch = "wasm32", feature = "webxr"))]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = xrLayer)]
+pub fn page_xr_layer(user_agent: &str) -> String {
+    webxr::page_layer(user_agent)
+}
+
+/// `window.ocw.xrShot(json)`: a left-eye picture of the headset's view to
+/// the desktop over the sensor bridge (14I W3, `vr.shot`'s counterpart:
+/// `{"jpeg_base64": …, "w": …, "h": …}`, ≤ 16 KB); "" when queued, else why
+/// not.
+#[cfg(all(target_arch = "wasm32", feature = "webxr"))]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = xrShot)]
+pub fn page_xr_shot(json: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(json) {
+        Ok(data) => bridge::report("xr-shot", data).err().unwrap_or_default(),
+        Err(e) => format!("not JSON: {e}"),
+    }
 }
 
 /// `window.ocw.wasmMemory()`: the wasm memory in bytes.
@@ -1314,6 +1406,19 @@ mod tests {
         assert_eq!(start_size(2560.0, 1440.0), (1280, 1280));
         assert_eq!(start_size(0.0, 0.0), (1280, 720));
         assert_eq!(start_size(f64::NAN, 500.0), (1280, 720));
+    }
+
+    /// 14I W3: in VR the canvas gets the XR layer's pixels (the layer's
+    /// render scale is the eyes'): a 1280 px wide page and a 1946 px layer
+    /// framebuffer (two eyes at 0.8 of the Quest 1's 1216 px) draw at 1.52.
+    #[test]
+    fn the_canvas_takes_the_xr_layers_pixels() {
+        let s = xr_canvas_scale(1280.0, 1946.0).unwrap();
+        assert!((s - 1.5203).abs() < 1e-3, "{s}");
+        assert_eq!(xr_canvas_scale(1280.0, 1280.0), Some(1.0));
+        assert_eq!(xr_canvas_scale(0.0, 1946.0), None);
+        assert_eq!(xr_canvas_scale(1280.0, 0.0), None);
+        assert_eq!(xr_canvas_scale(10.0, 100_000.0), Some(8.0));
     }
 
     #[test]

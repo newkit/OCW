@@ -63,7 +63,7 @@ const fn slot(name: &'static str, tint: Tint, color: u32, metallic: f32, roughne
 }
 
 /// All slots.
-pub const ALL: [Slot; 84] = [
+pub const ALL: [Slot; 87] = [
     slot("frame", Tint::Frame, 0x1E1E22, 0.1, 0.32),
     slot("tyre", Tint::Fixed, 0x1A1A1A, 0.0, 0.85),
     slot("tyre_wall", Tint::Fixed, 0x8A6A45, 0.0, 0.8),
@@ -170,6 +170,12 @@ pub const ALL: [Slot; 84] = [
     slot("window_frame", Tint::Fixed, 0xF4F4F0, 0.0, 0.5),
     slot("card", Tint::Fixed, 0xF4F1EA, 0.0, 0.7),
     slot("stand", Tint::Fixed, 0x3A3F47, 0.6, 0.38),
+    // The VR bike computer (spec §14 Phase 11, v4.68 on `agent/vr-x1`;
+    // WebXR 14I W2): its body, the screen window under the live screen,
+    // the LED bar (lit by the renderer).
+    slot("computer_body", Tint::Fixed, 0x2B2E34, 0.05, 0.55),
+    slot("computer_screen", Tint::Fixed, 0x14201C, 0.0, 0.2),
+    slot("computer_led", Tint::Fixed, 0x3AD0FF, 0.0, 0.3),
 ];
 
 /// The slot called `name`.

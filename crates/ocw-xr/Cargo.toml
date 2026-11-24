@@ -1,0 +1,19 @@
+[package]
+name = "ocw-xr"
+description = "VR logic for Open Cycling World (spec §14 Phase 11): poses, projections, recentre, the first-person anchor, the bike computer, the controllers' bindings, the session state machine, swapchain formats, headset profiles"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Pure and Bevy-free (spec §10): no OpenXR, no GPU, no threads, no clock
+# reads. Builds for wasm32 and Android too, so the standalone headset
+# build (Phase 14) and WebXR reuse it; the OpenXR calls live behind the
+# `session::XrRuntime` / `frame` traits (the native binding is
+# `ocw-xr-openxr`, the tests use `mock`).
+[dependencies]
+glam.workspace = true
+
+[lints]
+workspace = true

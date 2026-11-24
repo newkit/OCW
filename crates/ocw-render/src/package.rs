@@ -2360,6 +2360,34 @@ fn upload_tile(
                     TileDetail,
                 ));
             }
+            // Lamps with a `lod1` (spec 16H Q24 (a)): near and far by
+            // cell, switched at 60 m like every prop.
+            for cell in lamps.lod {
+                let at = Transform::from_translation(Vec3::from(cell.origin));
+                let near = crate::lod::PROP.near_range();
+                let far = crate::lod::PROP.far_range(None);
+                for (range, [poles, heads]) in [(near, cell.near), (far, cell.far)] {
+                    if !poles.indices.is_empty() {
+                        c.spawn((
+                            Mesh3d(meshes.add(poles.mesh())),
+                            MeshMaterial3d(materials.vertex_coloured.clone()),
+                            at,
+                            range.clone(),
+                            TileDetail,
+                        ));
+                    }
+                    if let (Some(h), false) = (lamp_heads, heads.indices.is_empty()) {
+                        c.spawn((
+                            Mesh3d(meshes.add(heads.mesh())),
+                            MeshMaterial3d(h.clone()),
+                            at,
+                            range,
+                            NotShadowCaster,
+                            TileDetail,
+                        ));
+                    }
+                }
+            }
             // World objects (spec §14 Phase 12 K3): per chunk, up to
             // `obstacles::DRAW_M`; the road barriers only with
             // `display.road_barriers` (Q7).
@@ -2370,11 +2398,12 @@ fn upload_tile(
                 crate::ground_detail::spawn_chunks(c, pkg, id.0, ground_detail);
             }
             for chunk in obstacles.chunks {
+                let range = chunk.range();
                 let mut e = c.spawn((
                     Mesh3d(meshes.add(chunk.mesh.mesh())),
                     MeshMaterial3d(materials.vertex_coloured.clone()),
                     Transform::from_translation(Vec3::from(chunk.origin)),
-                    crate::obstacles::draw_range(),
+                    range,
                 ));
                 if chunk.road {
                     e.insert((Visibility::Hidden, crate::obstacles::RoadBarrierMesh));

@@ -11,7 +11,7 @@ export PATH := $(OCW_CARGO_SHIM):$(PATH)
 endif
 
 CARGO ?= cargo
-WASM_CRATES := -p ocw-core -p ocw-auth -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice -p ocw-sky -p ocw-weather -p ocw-devices -p ocw-worldstore -p ocw-audio -p ocw-edit -p ocw-map
+WASM_CRATES := -p ocw-core -p ocw-auth -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice -p ocw-sky -p ocw-weather -p ocw-devices -p ocw-worldstore -p ocw-audio -p ocw-edit -p ocw-map -p ocw-xr
 # The browser app (spec §14 Phase 10): wasm-bindgen-cli must be the version
 # of the wasm-bindgen crate in Cargo.lock.
 WASM_BINDGEN_VERSION := $(shell awk '/^name = "wasm-bindgen"$$/ { getline; gsub(/version = |"/, ""); print; exit }' Cargo.lock)
@@ -93,7 +93,7 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 .DEFAULT_GOAL := help
 .PHONY: help test-web-account test-web-trust version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-blender test-blender models-diff deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
-	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-gpu test-web-webkit test-web-ios deps-webkit test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-voice-livekit test-voice-bundled test-host-voice test-voice-live test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser deps-vr deps-vr-linux deps-vr-linux-debian deps-vr-linux-fedora deps-vr-linux-arch deps-vr-linux-unknown deps-vr-windows deps-vr-macos test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
+	test test-unit test-wasm test-web-build test-web test-web-xr web-xr web-preview-xr test-web-webgl2 test-web-gpu test-web-webkit test-web-ios deps-webkit test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-voice-livekit test-voice-bundled test-host-voice test-voice-live test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser deps-vr deps-vr-linux deps-vr-linux-debian deps-vr-linux-fedora deps-vr-linux-arch deps-vr-linux-unknown deps-vr-windows deps-vr-macos test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
@@ -277,8 +277,9 @@ release: ## Optimized build of ocw-desktop and ocw-server (with voice if clang-2
 # test-multiplayer uses the build machines of config/machines.toml.
 test: test-unit ## All unit and integration tests (= test-unit; no hardware, network or GPU)
 
-test-unit: ## Run all unit and integration tests (cargo test --workspace)
+test-unit: ## Run all unit and integration tests (cargo test --workspace; and the browser app's WebXR module, feature webxr)
 	$(CARGO) test --workspace
+	$(CARGO) test -p ocw-web --features webxr --lib webxr
 
 fmt: ## Format all code
 	$(CARGO) fmt --all
@@ -295,9 +296,10 @@ test-wasm: ## Check that the core crates (and the server lib) build for wasm32-u
 	$(CARGO) check $(WASM_CRATES) --target wasm32-unknown-unknown
 	$(CARGO) check -p ocw-server --lib --target wasm32-unknown-unknown
 
-test-web-build: ## Build the browser app for wasm32, the WebGPU and the WebGL 2 build (spec §14 Phase 10, B7; CI: part of check)
+test-web-build: ## Build the browser app for wasm32, the WebGPU, the WebGL 2 and the WebXR build (spec §14 Phase 10, B7; Phase 14 14I; CI: part of check)
 	$(CARGO) build -p ocw-web --target wasm32-unknown-unknown --features webgpu
 	$(CARGO) build -p ocw-web --target wasm32-unknown-unknown --features webgl2
+	$(CARGO) build -p ocw-web --target wasm32-unknown-unknown --features webgl2,webxr
 
 deps-web: ## The browser app's tools: wasm-bindgen-cli matching Cargo.lock (cargo install, no sudo)
 	@if [ "$$(wasm-bindgen --version 2>/dev/null)" = "wasm-bindgen $(WASM_BINDGEN_VERSION)" ]; then \
@@ -306,6 +308,9 @@ deps-web: ## The browser app's tools: wasm-bindgen-cli matching Cargo.lock (carg
 
 web: ## Build the browser app into target/web/ (the `web-release` profile; WEB_PROFILE=dev for a debug build)
 	scripts/build-web.sh
+
+web-xr: ## The browser app with its WebXR build too (spec §14 Phase 14, 14I W1): target/web/ with ocw_web_webxr.js (WebGL 2 + feature webxr, the page's ?xr=1)
+	WEB_GPU="webgpu webgl2 webxr" scripts/build-web.sh
 
 web-serve: ## Serve target/web/ (and its worlds/, with range requests) on http://$(WEB_BIND):$(WEB_PORT)/ (COOP/COEP headers; WEB_PORT, WEB_BIND=0.0.0.0 for the LAN); fails without a build
 	scripts/web-serve.py --port $(WEB_PORT) --bind $(WEB_BIND)
@@ -334,8 +339,11 @@ web-worlds: ## Publish world packages for the web dev server into target/web/wor
 web-preview: ## The public preview's build into target/web-preview/ (spec §14 Phase 10 B8a): fat LTO, wasm-opt -Oz (pinned binaryen), only the web preview's signing root trusted, no LiveKit
 	scripts/build-web.sh --preview
 
-web-preview-site: ## Assemble the preview's site into target/web-preview-site/ (config.json, credits.html, the signed worlds of target/web-preview-worlds/release/ or a downloaded web-preview-worlds release; PREVIEW_WORLDS)
-	scripts/web-preview-site.py --worlds $(PREVIEW_WORLDS)
+web-preview-xr: ## The WebXR preview build into target/web-preview-xr/ (spec §14 Phase 14, 14I Q6 (a): published at /xr/ by web-preview-site): WebGL 2 + feature webxr, the preview's trust and size options
+	WEB_GPU=webxr WEB_OUT=target/web-preview-xr scripts/build-web.sh --preview
+
+web-preview-site: ## Assemble the preview's site into target/web-preview-site/ (config.json, credits.html, the signed worlds of target/web-preview-worlds/release/ or a downloaded web-preview-worlds release; PREVIEW_WORLDS); with target/web-preview-xr/ (make web-preview-xr) the WebXR build under xr/
+	scripts/web-preview-site.py --worlds $(PREVIEW_WORLDS) $(if $(wildcard target/web-preview-xr/ocw_web_webxr_bg.wasm),--xr-build target/web-preview-xr)
 
 web-preview-worlds: ## On marge only (the preview's keys): sign the preview's worlds, publish them and upload them to the pre-release web-preview-worlds
 	scripts/publish-preview-worlds.sh --upload
@@ -349,6 +357,9 @@ test-web: web ## Headless Chromium on WebGPU: load the web app, ride, screenshot
 test-web-account: web ## Headless Chromium: sign in with the fake Google through the redirect, link Strava, sign out (ocw-server --auth-dev, spec §9.1); screenshots into test-output/web/
 	$(CARGO) build -p ocw-server
 	scripts/test-web-account.py --out test-output/web
+
+test-web-xr: web-xr ## Headless Chromium with the Immersive Web Emulation Runtime (iwer, Quest 1 profile): Enter VR, a stereo frame of the test route, head tracking, the copy into a framebuffer, exit (14I W1); eyes and the emulated view into test-output/web-xr/
+	scripts/test-web-xr.py --out test-output/web-xr
 
 test-web-webgl2: web ## Headless Chromium without WebGPU: the page falls back to the WebGL 2 build (ride, menus, fps); then WebGPU High vs WebGL 2 Low, same view, and the Graphics page (B7); the GPU choice and the WebGPU fallback (test-web-gpu); into test-output/web/
 	scripts/test-web.py --out test-output/web --gpu webgl2
@@ -391,6 +402,11 @@ test-web-ble-emulation: web ## Headless Chromium's own Web Bluetooth with a simu
 BLE_DEVICE ?= KICKR
 test-web-ble-real: web ## Headless Chromium rides the real trainer in range ($(BLE_DEVICE), marge's KICKR) over BlueZ: the chooser answered over DevTools, SIM, ERG
 	scripts/test-web-ble.py --out test-output/web --mode real --device $(BLE_DEVICE) --seconds 20
+
+BRIDGE_DEVICES ?=
+BRIDGE_SECONDS ?= 120
+test-bridge: web web-worlds ## The sensor bridge end to end (spec 14 Phase 10, 10D.2): the desktop shares its devices ($(BRIDGE_DEVICES): a devices file, e.g. marge's KICKR; default the virtual trainer), headless Chromium pairs by the code and rides $(WEB_WORLD_ROUTE) $(BRIDGE_SECONDS) s; latency, control, screenshots into test-output/bridge/
+	scripts/test-bridge.py --out test-output/bridge --seconds $(BRIDGE_SECONDS) --world $(WEB_WORLD) --route $(WEB_WORLD_ROUTE) $(if $(BRIDGE_DEVICES),--devices-file $(BRIDGE_DEVICES))
 
 test-web-audio: web ## Headless Chromium: the game sound locked until a click (autoplay rule), then the mixer's chunks scheduled through Web Audio with sound in them; a volume kept over a reload; screenshots into test-output/web/
 	scripts/test-web-audio.py --out test-output/web --part audio

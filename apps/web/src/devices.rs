@@ -22,7 +22,7 @@
 //!   *Devices*); [`WebDevices::menu_info`] fills the shared Devices page.
 
 use ocw_client::client::ClientCore;
-use ocw_client::menu::devices::{DevicesInfo, Entry, Link, Role, Scan};
+use ocw_client::menu::devices::{BridgeInfo, DevicesInfo, Entry, Link, Role, Scan};
 use ocw_client::trainer::{TrainerControl, TrainerMode};
 use ocw_client::workout::WorkoutSession;
 use ocw_core::RiderProfile;
@@ -115,6 +115,9 @@ pub struct WebDevices {
     recent: DevicesInfo,
     /// The remembered devices changed (the page saves them).
     pub remembered_changed: bool,
+    /// The sensor bridge as the Devices page shows it (spec 14 Phase 10,
+    /// 10D.2; set by the page each frame).
+    pub bridge_info: BridgeInfo,
 }
 
 impl WebDevices {
@@ -131,6 +134,11 @@ impl WebDevices {
             messages: Vec::new(),
             recent: DevicesInfo::default(),
             remembered_changed: false,
+            bridge_info: BridgeInfo::Client {
+                code: None,
+                state: String::new(),
+                supported: true,
+            },
         }
     }
 
@@ -207,7 +215,11 @@ impl WebDevices {
                     DeviceEvent::Connected { kind } => {
                         d.state = LinkState::Connected(kind);
                         let mut line = format!("{}: connected ({kind})", d.name);
-                        if self.remembered.kind_of(&d.id) != Some(d.kind) {
+                        // The bridge is not a Bluetooth device: its code is
+                        // kept by `crate::bridge`.
+                        if d.id != crate::bridge::BRIDGE_ID
+                            && self.remembered.kind_of(&d.id) != Some(d.kind)
+                        {
                             self.remembered.remember(RememberedDevice {
                                 kind: d.kind,
                                 id: d.id.clone(),
@@ -444,6 +456,7 @@ impl WebDevices {
             messages: self.recent.messages.clone(),
             file: Some("this browser (localStorage)".into()),
             virtual_trainer: self.uses_virtual(),
+            bridge: Some(self.bridge_info.clone()),
         }
     }
 
@@ -596,11 +609,44 @@ mod tests {
         assert!(info.virtual_trainer);
         let rows = ocw_client::menu::devices::rows(ocw_client::menu::pages::Page::Devices, &info);
         assert_eq!(rows[0].label, "Add a trainer");
-        assert_eq!(rows[3].label, "TICKR");
+        // Then the sensor bridge (spec 14 Phase 10, 10D.2), then the devices.
+        assert_eq!(rows[3].label, "Use a trainer from another device");
+        assert_eq!(rows[4].label, "TICKR");
         let json = d.json(200.0);
         assert_eq!(json["virtual"], true);
         assert_eq!(json["devices"][0]["name"], "TICKR");
         assert!(json["last_command"]["sim"]["grade"].is_number());
+    }
+
+    /// The sensor bridge (spec 14 Phase 10, 10D.2) is a trainer of the ride
+    /// – its readings become samples, its control goes to it – but it is
+    /// never remembered as a Bluetooth device (its code is kept apart).
+    #[test]
+    fn the_bridge_drives_the_ride_but_is_not_remembered() {
+        let mut d = WebDevices::new(RiderProfile::default(), 200.0);
+        let mut client = joined_client();
+        let (h, tx, cmds) = backend(crate::bridge::BRIDGE_NAME);
+        d.add(h, DeviceKind::Trainer, crate::bridge::BRIDGE_ID.into());
+        tx.send(DeviceEvent::Connected {
+            kind: ocw_bridge::relay::KIND,
+        })
+        .unwrap();
+        tx.send(DeviceEvent::Power {
+            watts: 231.0,
+            cadence_rpm: Some(88.0),
+            timestamp: Duration::from_millis(250),
+        })
+        .unwrap();
+        let samples = d.poll(&mut client);
+        assert_eq!(samples.len(), 1);
+        assert!(!d.uses_virtual());
+        assert_eq!(client.power_w(), 231.0);
+        assert!(d.remembered.devices.is_empty());
+        assert!(!d.remembered_changed);
+        // `bridge.stop`: forgotten, the backend hears Shutdown.
+        assert_eq!(d.forget(crate::bridge::BRIDGE_ID), 1);
+        assert_eq!(cmds.try_recv(), Ok(DeviceCommand::Shutdown));
+        assert!(d.uses_virtual());
     }
 
     /// Remembered only once connected (as on the desktop); a failure says

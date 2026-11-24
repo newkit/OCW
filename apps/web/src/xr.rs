@@ -1,0 +1,1412 @@
+//! WebXR's pure side (spec §14 Phase 14, 14I W1): the immersive session's
+//! state, the frames the page hands over and the eyes' cameras – no Bevy,
+//! no browser, unit-tested natively.
+//!
+//! The page (`web/ocw-xr.js`) runs the session: the *Enter VR* button
+//! (a user gesture), `navigator.xr.requestSession('immersive-vr')`, the
+//! `XRWebGLLayer` on the app's WebGL 2 context. In each frame of the
+//! session's `requestAnimationFrame` it hands the viewer's and the eyes'
+//! poses and projections over ([`parse_frame`]: one `Float32Array`), steps
+//! the app (Bevy's loop waits on the window's `requestAnimationFrame`,
+//! which the page runs from the XR frame while the session lasts), and
+//! copies the canvas into the layer's framebuffer. The Bevy side
+//! (`webxr.rs`, feature `webxr`) puts two eye cameras where
+//! [`rig_eye`] says, with [`eye_clip_from_view`]'s projection, into the
+//! canvas parts [`View::canvas_rect`] gives.
+//!
+//! Conventions: WebXR's matrices are column-major `Float32Array`s, OpenGL
+//! clip space (depth −1 … 1, finite far plane); its poses are metres in the
+//! reference space (`local-floor`: y up from the floor, −z ahead at the
+//! start), quaternions `[x, y, z, w]`. Bevy draws right-handed, −Z ahead,
+//! with an **infinite reverse-Z** projection (depth 1 at the near plane, 0
+//! at infinity) – the same as the desktop VR mode's eyes (Phase 11,
+//! `ocw-xr::projection` on branch `agent/vr-x1`, which W2 shares).
+
+/// The layout version of the page's frame data (`ocw-xr.js`, `frameData`).
+pub const FRAME_LAYOUT: f32 = 1.0;
+/// Floats before the first view: layout, view count, framebuffer width
+/// and height (px), the frame's time and the page's time for the previous
+/// frame (ms), the viewer's position (3) and orientation (4).
+pub const HEADER_LEN: usize = 13;
+/// Floats per view: the eye (0 none, 1 left, 2 right), its viewport in the
+/// framebuffer (x, y, width, height in px, OpenGL's origin bottom left),
+/// the projection (16, column-major), the eye's position (3) and
+/// orientation (4).
+pub const VIEW_LEN: usize = 28;
+/// More views than this are refused (a headset has two, a CAVE more; the
+/// spike draws two).
+pub const MAX_VIEWS: usize = 4;
+/// The eyes' near plane (m): a hand on the bars is 0.3 m away.
+pub const EYE_NEAR_M: f32 = 0.05;
+
+/// The immersive session's state (spec 14I W1: offered → entering →
+/// running → visible-blurred → ended).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum XrState {
+    /// Not known yet: the page has not asked the browser.
+    #[default]
+    Unknown,
+    /// The browser has no immersive VR (no `navigator.xr`, no headset, not
+    /// a secure context): the flat view only, the page says why.
+    Unsupported,
+    /// The *Enter VR* button is shown.
+    Offered,
+    /// Pressed: the session is being requested and set up.
+    Entering,
+    /// In the headset, frames from the session.
+    Running,
+    /// Still drawing, but the system's UI has the input
+    /// (`visibilityState` `visible-blurred`).
+    Blurred,
+    /// Not shown (`hidden`): the session sends no frames.
+    Hidden,
+    /// Ended (by the user, the page or the browser): back to the flat
+    /// view; the button is offered again.
+    Ended,
+}
+
+/// What happens to the session (from the page, `window.ocw.xrEvent`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum XrEvent {
+    /// `isSessionSupported('immersive-vr')` answered.
+    Supported(bool),
+    /// The *Enter VR* button was pressed.
+    Enter,
+    /// The session runs (the layer is set, the first frame was asked for).
+    Started,
+    /// Entering failed (refused, no layer): the reason.
+    Failed(String),
+    /// The session's `visibilityState` changed.
+    Visibility(Visibility),
+    /// The session ended.
+    Ended,
+}
+
+/// WebXR's `XRVisibilityState`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility {
+    Visible,
+    VisibleBlurred,
+    Hidden,
+}
+
+impl XrEvent {
+    /// The page's words (`window.ocw.xrEvent(name, detail)`).
+    pub fn parse(name: &str, detail: &str) -> Option<Self> {
+        Some(match name {
+            "supported" => Self::Supported(detail == "true"),
+            "enter" => Self::Enter,
+            "started" => Self::Started,
+            "failed" => Self::Failed(detail.to_owned()),
+            "visibility" => Self::Visibility(match detail {
+                "visible" => Visibility::Visible,
+                "visible-blurred" => Visibility::VisibleBlurred,
+                "hidden" => Visibility::Hidden,
+                _ => return None,
+            }),
+            "ended" => Self::Ended,
+            _ => return None,
+        })
+    }
+}
+
+impl XrState {
+    /// The state after `event`; an event that does not fit the state
+    /// leaves it as it is (`Err` says why, for the log).
+    pub fn next(self, event: &XrEvent) -> Result<Self, String> {
+        use XrState::*;
+        let to = match (self, event) {
+            (_, XrEvent::Supported(false)) => Unsupported,
+            (Unknown | Unsupported | Ended, XrEvent::Supported(true)) => Offered,
+            (Offered | Ended, XrEvent::Enter) => Entering,
+            (Entering, XrEvent::Started) => Running,
+            (Entering, XrEvent::Failed(_)) => Offered,
+            (Running | Blurred | Hidden, XrEvent::Visibility(v)) => match v {
+                Visibility::Visible => Running,
+                Visibility::VisibleBlurred => Blurred,
+                Visibility::Hidden => Hidden,
+            },
+            (Entering | Running | Blurred | Hidden, XrEvent::Ended) => Ended,
+            (s, e) => return Err(format!("xr: {e:?} in state {s:?} ignored")),
+        };
+        Ok(to)
+    }
+
+    /// Whether the eyes are drawn (frames come from the session).
+    pub fn in_headset(self) -> bool {
+        matches!(self, Self::Running | Self::Blurred)
+    }
+
+    /// Whether the session exists (the flat view is not shown).
+    pub fn in_session(self) -> bool {
+        matches!(self, Self::Running | Self::Blurred | Self::Hidden)
+    }
+
+    /// The state's name (the page's button, `window.ocw.xr()`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::Unsupported => "unsupported",
+            Self::Offered => "offered",
+            Self::Entering => "entering",
+            Self::Running => "running",
+            Self::Blurred => "visible-blurred",
+            Self::Hidden => "hidden",
+            Self::Ended => "ended",
+        }
+    }
+}
+
+/// Which eye a view is (WebXR's `XREye`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Eye {
+    None,
+    Left,
+    Right,
+}
+
+/// A position and an orientation (`[x, y, z, w]`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Pose {
+    pub position: [f32; 3],
+    pub orientation: [f32; 4],
+}
+
+impl Pose {
+    pub const IDENTITY: Self = Self {
+        position: [0.0; 3],
+        orientation: [0.0, 0.0, 0.0, 1.0],
+    };
+}
+
+/// One view of a frame (an eye).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct View {
+    pub eye: Eye,
+    /// In the layer's framebuffer: x, y, width, height (px, OpenGL's
+    /// origin at the bottom left).
+    pub viewport: [f32; 4],
+    /// WebXR's projection (column-major, OpenGL clip space).
+    pub projection: [f32; 16],
+    /// The eye in the reference space.
+    pub pose: Pose,
+}
+
+/// One XR frame as the page hands it over.
+#[derive(Debug, Clone, PartialEq)]
+pub struct XrFrame {
+    /// The layer's framebuffer (px).
+    pub framebuffer: [f32; 2],
+    /// The frame's time (ms, the page's clock).
+    pub time_ms: f64,
+    /// How long the page's previous XR frame took (ms: the app's step,
+    /// rendering and the copy), 0 for the first.
+    pub previous_frame_ms: f32,
+    /// The head (WebXR's viewer) in the reference space.
+    pub viewer: Pose,
+    pub views: Vec<View>,
+}
+
+fn pose_at(d: &[f32]) -> Pose {
+    Pose {
+        position: [d[0], d[1], d[2]],
+        orientation: [d[3], d[4], d[5], d[6]],
+    }
+}
+
+/// Reads the page's frame data (`ocw-xr.js`: [`HEADER_LEN`] floats, then
+/// [`VIEW_LEN`] per view).
+pub fn parse_frame(d: &[f32]) -> Result<XrFrame, String> {
+    if d.len() < HEADER_LEN {
+        return Err(format!(
+            "xr frame: {} floats, the header has {HEADER_LEN}",
+            d.len()
+        ));
+    }
+    if d[0] != FRAME_LAYOUT {
+        return Err(format!(
+            "xr frame: layout {} (this build reads {FRAME_LAYOUT})",
+            d[0]
+        ));
+    }
+    let n = d[1] as usize;
+    if d[1] < 0.0 || d[1].fract() != 0.0 || n > MAX_VIEWS {
+        return Err(format!("xr frame: {} views", d[1]));
+    }
+    if d.len() != HEADER_LEN + n * VIEW_LEN {
+        return Err(format!(
+            "xr frame: {} floats for {n} views (want {})",
+            d.len(),
+            HEADER_LEN + n * VIEW_LEN
+        ));
+    }
+    if d.iter().any(|v| !v.is_finite()) {
+        return Err("xr frame: a value is not finite".into());
+    }
+    let views = (0..n)
+        .map(|i| {
+            let v = &d[HEADER_LEN + i * VIEW_LEN..HEADER_LEN + (i + 1) * VIEW_LEN];
+            let eye = match v[0] as i32 {
+                1 => Eye::Left,
+                2 => Eye::Right,
+                _ => Eye::None,
+            };
+            let mut projection = [0.0; 16];
+            projection.copy_from_slice(&v[5..21]);
+            View {
+                eye,
+                viewport: [v[1], v[2], v[3], v[4]],
+                projection,
+                pose: pose_at(&v[21..28]),
+            }
+        })
+        .collect();
+    Ok(XrFrame {
+        framebuffer: [d[2], d[3]],
+        time_ms: f64::from(d[4]),
+        previous_frame_ms: d[5],
+        viewer: pose_at(&d[6..13]),
+        views,
+    })
+}
+
+impl View {
+    /// Where the eye goes on the canvas, as fractions of its size with the
+    /// origin at the **top** left (Bevy's viewports): the page copies the
+    /// whole canvas onto the whole framebuffer, so each eye lands in its
+    /// viewport whatever the canvas' size. `None` for an empty viewport
+    /// (the emulator's mono mode gives the right eye no width).
+    pub fn canvas_rect(&self, framebuffer: [f32; 2]) -> Option<[f32; 4]> {
+        let [x, y, w, h] = self.viewport;
+        let [fw, fh] = framebuffer;
+        if w < 1.0 || h < 1.0 || fw < 1.0 || fh < 1.0 {
+            return None;
+        }
+        let x0 = (x / fw).clamp(0.0, 1.0);
+        let x1 = ((x + w) / fw).clamp(0.0, 1.0);
+        // OpenGL's y runs up from the bottom; Bevy's down from the top.
+        let top = (1.0 - (y + h) / fh).clamp(0.0, 1.0);
+        let bottom = (1.0 - y / fh).clamp(0.0, 1.0);
+        (x1 > x0 && bottom > top).then_some([x0, top, x1 - x0, bottom - top])
+    }
+}
+
+/// Pixels of a render target of `size` for a [`View::canvas_rect`]:
+/// position and size (at least 1 × 1, inside the target).
+pub fn rect_pixels(rect: [f32; 4], size: [u32; 2]) -> ([u32; 2], [u32; 2]) {
+    let [w, h] = [size[0].max(1) as f32, size[1].max(1) as f32];
+    let x = (rect[0] * w).round().clamp(0.0, w - 1.0);
+    let y = (rect[1] * h).round().clamp(0.0, h - 1.0);
+    let x1 = ((rect[0] + rect[2]) * w).round().clamp(x + 1.0, w);
+    let y1 = ((rect[1] + rect[3]) * h).round().clamp(y + 1.0, h);
+    ([x as u32, y as u32], [(x1 - x) as u32, (y1 - y) as u32])
+}
+
+/// The tangents of an eye's frustum edges (left, right, down, up; left
+/// and down negative for a view through its centre) from an OpenGL
+/// perspective matrix (`glFrustum`: column-major, `m[0]` = 2n/(r−l),
+/// `m[8]` = (r+l)/(r−l), `m[5]` = 2n/(t−b), `m[9]` = (t+b)/(t−b)).
+pub fn frustum_tangents(m: &[f32; 16]) -> Result<[f32; 4], String> {
+    if m[0] <= 0.0 || m[5] <= 0.0 || m[11] != -1.0 || m[15] != 0.0 {
+        return Err(format!("xr: not a perspective projection: {m:?}"));
+    }
+    let left = (m[8] - 1.0) / m[0];
+    let right = (m[8] + 1.0) / m[0];
+    let down = (m[9] - 1.0) / m[5];
+    let up = (m[9] + 1.0) / m[5];
+    Ok([left, right, down, up])
+}
+
+/// Bevy's projection for the frustum of `tangents` ([`frustum_tangents`]):
+/// the asymmetric form of glam's right-handed
+/// `perspective_infinite_reverse` (column-major) – depth 1 at `near`, 0 at
+/// infinity. For a symmetric frustum it is glam's matrix (tested).
+pub fn clip_from_view(tangents: [f32; 4], near: f32) -> [f32; 16] {
+    let [l, r, d, u] = tangents;
+    let (w, h) = (r - l, u - d);
+    [
+        2.0 / w,
+        0.0,
+        0.0,
+        0.0,
+        //
+        0.0,
+        2.0 / h,
+        0.0,
+        0.0,
+        //
+        (r + l) / w,
+        (u + d) / h,
+        0.0,
+        -1.0,
+        //
+        0.0,
+        0.0,
+        near,
+        0.0,
+    ]
+}
+
+/// The eye's Bevy projection from WebXR's (the frustum kept, our near
+/// plane and an infinite far one).
+pub fn eye_clip_from_view(webxr: &[f32; 16]) -> Result<[f32; 16], String> {
+    Ok(clip_from_view(frustum_tangents(webxr)?, EYE_NEAR_M))
+}
+
+/// The frustum's eight corners at the distances `near` and `far` (view
+/// space, −Z ahead): bottom right, top right, top left, bottom left at
+/// `near`, then the same at `far` (Bevy's `get_frustum_corners` order:
+/// the shadow cascades are fitted to them).
+pub fn frustum_corners(tangents: [f32; 4], near: f32, far: f32) -> [[f32; 3]; 8] {
+    let [l, r, d, u] = tangents;
+    let at = |z: f32| {
+        [
+            [r * z, d * z, -z],
+            [r * z, u * z, -z],
+            [l * z, u * z, -z],
+            [l * z, d * z, -z],
+        ]
+    };
+    let (a, b) = (at(near), at(far));
+    [a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3]]
+}
+
+fn quat_mul(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    let [ax, ay, az, aw] = a;
+    let [bx, by, bz, bw] = b;
+    [
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+        aw * bw - ax * bx - ay * by - az * bz,
+    ]
+}
+
+fn quat_normalized(q: [f32; 4]) -> [f32; 4] {
+    let n = q.iter().map(|v| v * v).sum::<f32>().sqrt();
+    if n > 1e-6 {
+        q.map(|v| v / n)
+    } else {
+        [0.0, 0.0, 0.0, 1.0]
+    }
+}
+
+/// A turn about +Y (up) by `yaw` rad (counter-clockwise seen from above).
+pub fn yaw_quat(yaw: f32) -> [f32; 4] {
+    let (s, c) = (0.5 * yaw).sin_cos();
+    [0.0, s, 0.0, c]
+}
+
+/// The turn about +Y of an orientation (its heading; the pitch and roll
+/// dropped): the angle of its forward (−Z) direction in the ground plane.
+pub fn yaw_of(q: [f32; 4]) -> f32 {
+    let [x, y, z, w] = quat_normalized(q);
+    // The rotated −Z axis: −(third column of the rotation matrix).
+    let fx = -(2.0 * (x * z + w * y));
+    let fz = -(1.0 - 2.0 * (x * x + y * y));
+    (-fx).atan2(-fz)
+}
+
+/// Where an eye is in the world: the reference space's origin (the floor
+/// under the saddle for `local-floor`) stands at `origin` turned by
+/// `origin_yaw` (the bike's heading: the head is never pitched or rolled
+/// by the road – comfort, Phase 11), the eye at `eye` in that space.
+pub fn rig_eye(origin: [f32; 3], origin_yaw: f32, eye: Pose) -> Pose {
+    let turn = yaw_quat(origin_yaw);
+    let p = eye.position;
+    let (s, c) = origin_yaw.sin_cos();
+    // Rotating (x, z) counter-clockwise about +Y seen from above.
+    let rotated = [c * p[0] + s * p[2], p[1], -s * p[0] + c * p[2]];
+    Pose {
+        position: [
+            origin[0] + rotated[0],
+            origin[1] + rotated[1],
+            origin[2] + rotated[2],
+        ],
+        orientation: quat_normalized(quat_mul(turn, eye.orientation)),
+    }
+}
+
+/// The reference space the session got (spec 14I Q8, decided (a)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Space {
+    /// `local-floor`: y = 0 is the real floor. The game floor (the road
+    /// under the bike) is put there, so the headset's height is the
+    /// rider's real eye height – right for every rider, higher out of the
+    /// saddle.
+    #[default]
+    LocalFloor,
+    /// `local` only (no floor known): the origin is the head where the
+    /// session started; that point is put at the rider's seated eye point
+    /// (from the profile's saddle height).
+    Local,
+}
+
+impl Space {
+    /// The page's word (the `started` event's detail).
+    pub fn parse(detail: &str) -> Self {
+        if detail == "local" {
+            Self::Local
+        } else {
+            Self::LocalFloor
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::LocalFloor => "local-floor",
+            Self::Local => "local",
+        }
+    }
+}
+
+/// The viewer's place in the reference space at the session's start (or
+/// a recentre): the point that is put on the rider's eye point, and the
+/// heading that becomes the bike's.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Anchor {
+    pub position: [f32; 3],
+    pub yaw: f32,
+}
+
+impl Anchor {
+    pub fn from_viewer(viewer: Pose) -> Self {
+        Self {
+            position: viewer.position,
+            yaw: yaw_of(viewer.orientation),
+        }
+    }
+}
+
+/// Where the reference space's origin stands in the world and its heading
+/// (for [`rig_eye`]), spec 14I Q8:
+///
+/// - across the ground the anchor (the head at the start) goes onto `eyes`
+///   – the rider's seated eye point on the bike in the world (the saddle
+///   at the height the rider profile gives, `ocw_assets::pose::eye_point`)
+///   – and the anchor's heading onto the bike's `bike_yaw`;
+/// - in height, `local-floor` puts the space's floor on the road
+///   (`ground_y`): the eyes are as high as the real head, whatever the
+///   anchor's height – a rider on a trainer whose saddle is as high as the
+///   profile's has the eyes at `eyes`' height and rises out of the saddle;
+///   `local` (no floor) puts the anchor's height at `eyes`.
+pub fn space_origin(
+    space: Space,
+    anchor: Anchor,
+    eyes: [f32; 3],
+    ground_y: f32,
+    bike_yaw: f32,
+) -> ([f32; 3], f32) {
+    let yaw = bike_yaw - anchor.yaw;
+    let (s, c) = yaw.sin_cos();
+    let p = anchor.position;
+    // The anchor turned like the space (as in `rig_eye`).
+    let (rx, rz) = (c * p[0] + s * p[2], -s * p[0] + c * p[2]);
+    let y = match space {
+        Space::LocalFloor => ground_y,
+        Space::Local => eyes[1] - p[1],
+    };
+    ([eyes[0] - rx, y, eyes[2] - rz], yaw)
+}
+
+/// A seated rider's eyes above the floor when no rider is known (m; the
+/// unicorn's flight, or before the avatar is built).
+pub const SEATED_EYE_M: f32 = 1.45;
+
+/// The XR frames' timing (spec 14I W3 / W4: the frame-time readout; here
+/// the emulator's sanity numbers): the gaps between frames and the page's
+/// time per frame, the last [`FrameStats::KEEP`] of each.
+#[derive(Debug, Clone, Default)]
+pub struct FrameStats {
+    last_time_ms: Option<f64>,
+    gaps_ms: Vec<f32>,
+    work_ms: Vec<f32>,
+    /// Frames seen.
+    pub frames: u64,
+    /// The longest gap (ms).
+    pub longest_gap_ms: f32,
+}
+
+impl FrameStats {
+    pub const KEEP: usize = 600;
+
+    /// A frame at `time_ms` whose predecessor took `previous_ms` of the
+    /// page's time.
+    pub fn push(&mut self, time_ms: f64, previous_ms: f32) {
+        self.frames += 1;
+        if let Some(t) = self.last_time_ms {
+            let gap = (time_ms - t) as f32;
+            if gap >= 0.0 {
+                keep(&mut self.gaps_ms, gap);
+                self.longest_gap_ms = self.longest_gap_ms.max(gap);
+            }
+        }
+        if previous_ms > 0.0 {
+            keep(&mut self.work_ms, previous_ms);
+        }
+        self.last_time_ms = Some(time_ms);
+    }
+
+    /// A new session starts counting afresh.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// The gap between frames at quantile `q` (0 … 1), ms.
+    pub fn gap_ms(&self, q: f32) -> Option<f32> {
+        quantile(&self.gaps_ms, q)
+    }
+
+    /// The page's time per frame at quantile `q`, ms.
+    pub fn work_ms(&self, q: f32) -> Option<f32> {
+        quantile(&self.work_ms, q)
+    }
+
+    /// Frames per second from the median gap.
+    pub fn fps(&self) -> Option<f32> {
+        self.gap_ms(0.5).filter(|g| *g > 0.0).map(|g| 1000.0 / g)
+    }
+
+    /// Frames that came later than 1.5 × the median gap (dropped ones).
+    pub fn late(&self) -> usize {
+        let Some(m) = self.gap_ms(0.5) else { return 0 };
+        self.gaps_ms.iter().filter(|g| **g > 1.5 * m).count()
+    }
+}
+
+fn keep(v: &mut Vec<f32>, x: f32) {
+    if v.len() == FrameStats::KEEP {
+        v.remove(0);
+    }
+    v.push(x);
+}
+
+fn quantile(v: &[f32], q: f32) -> Option<f32> {
+    if v.is_empty() {
+        return None;
+    }
+    let mut s = v.to_vec();
+    s.sort_by(f32::total_cmp);
+    let i = ((s.len() - 1) as f32 * q.clamp(0.0, 1.0)).round() as usize;
+    Some(s[i])
+}
+
+/// The layout version of the page's controller data (`ocw-xr.js`,
+/// `padData`; 14I W2).
+pub const PADS_LAYOUT: f32 = 1.0;
+/// Floats per controller after the layout and the count: the hand (0
+/// none, 1 left, 2 right), whether the grip's pose is known (0 / 1), the
+/// grip's position (3) and orientation (4) in the reference space, the
+/// `xr-standard` buttons' values (7: trigger, squeeze, –, thumbstick
+/// press, X / A, Y / B, thumbrest – `oculus-touch-v2`, spec 14A) and the
+/// axes (4: –, –, thumbstick x, thumbstick y; WebXR's y is + toward the
+/// rider).
+pub const PAD_LEN: usize = 20;
+/// More controllers than this are refused.
+pub const MAX_PADS: usize = 4;
+
+/// A hand's side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hand {
+    None,
+    Left,
+    Right,
+}
+
+/// One controller of a frame (an `XRInputSource` with a gamepad).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct XrPad {
+    pub hand: Hand,
+    /// The grip in the reference space (`None`: not tracked this frame).
+    pub grip: Option<Pose>,
+    pub buttons: [f32; 7],
+    pub axes: [f32; 4],
+}
+
+/// Reads the page's controller data: the layout, the count, then
+/// [`PAD_LEN`] floats per controller.
+pub fn parse_pads(d: &[f32]) -> Result<Vec<XrPad>, String> {
+    if d.len() < 2 || d[0] != PADS_LAYOUT {
+        return Err(format!(
+            "xr pads: layout {:?} (this build reads {PADS_LAYOUT})",
+            d.first()
+        ));
+    }
+    let n = d[1] as usize;
+    if d[1] < 0.0 || d[1].fract() != 0.0 || n > MAX_PADS || d.len() != 2 + n * PAD_LEN {
+        return Err(format!("xr pads: {} floats for {} pads", d.len(), d[1]));
+    }
+    if d.iter().any(|v| !v.is_finite()) {
+        return Err("xr pads: a value is not finite".into());
+    }
+    Ok((0..n)
+        .map(|i| {
+            let p = &d[2 + i * PAD_LEN..2 + (i + 1) * PAD_LEN];
+            let mut buttons = [0.0; 7];
+            buttons.copy_from_slice(&p[9..16]);
+            let mut axes = [0.0; 4];
+            axes.copy_from_slice(&p[16..20]);
+            XrPad {
+                hand: match p[0] as i32 {
+                    1 => Hand::Left,
+                    2 => Hand::Right,
+                    _ => Hand::None,
+                },
+                grip: (p[1] > 0.5).then(|| pose_at(&p[2..9])),
+                buttons: buttons.map(|b| b.clamp(0.0, 1.0)),
+                axes: axes.map(|a| a.clamp(-1.0, 1.0)),
+            }
+        })
+        .collect())
+}
+
+/// The controls in WebXR (14I W2), on the bike computer when the headset
+/// starts showing the ride.
+pub const CONTROLS_HINT: &str = "R stick: ride · L stick ◀▶: exits · L click: menu";
+
+/// The WebXR gamepads (`oculus-touch-v2`, spec 14A) as the desktop VR
+/// mode's controller state (`ocw_xr::controllers`, the Q10 map: the right
+/// stick rides, the left stick moves through the menu; A / B / X / Y,
+/// the triggers and the grips as there). The Quest's left menu button
+/// belongs to the system in WebXR (it is no gamepad button), so **the left
+/// stick's press is the menu** while the menu is closed and its confirm
+/// while it is open – kept for the whole press, so the press that opens
+/// the menu does not also confirm in it.
+#[derive(Debug, Clone, Default)]
+pub struct PadReader {
+    /// The left stick's press began as the menu button (`Some(true)`) or as
+    /// the click (`Some(false)`); `None`: not pressed.
+    left_press_is_menu: Option<bool>,
+}
+
+impl PadReader {
+    /// This frame's state from the page's controllers.
+    pub fn state(
+        &mut self,
+        pads: &[XrPad],
+        menu_open: bool,
+    ) -> ocw_xr::controllers::ControllerState {
+        use ocw_xr::controllers::{ControllerState, Input, InputValue};
+        let mut s = ControllerState::at_rest(!pads.is_empty());
+        let pressed = |v: f32| v > 0.5;
+        let mut left_press = false;
+        for p in pads {
+            let stick = InputValue::Stick([p.axes[2], -p.axes[3]]);
+            let b = p.buttons;
+            match p.hand {
+                Hand::Left => {
+                    s.set(Input::LeftTrigger, InputValue::Value(b[0]));
+                    s.set(Input::LeftGrip, InputValue::Value(b[1]));
+                    left_press = pressed(b[3]);
+                    s.set(Input::X, InputValue::Button(pressed(b[4])));
+                    s.set(Input::Y, InputValue::Button(pressed(b[5])));
+                    s.set(Input::LeftStick, stick);
+                }
+                Hand::Right => {
+                    s.set(Input::RightTrigger, InputValue::Value(b[0]));
+                    s.set(Input::RightGrip, InputValue::Value(b[1]));
+                    s.set(Input::RightStickClick, InputValue::Button(pressed(b[3])));
+                    s.set(Input::A, InputValue::Button(pressed(b[4])));
+                    s.set(Input::B, InputValue::Button(pressed(b[5])));
+                    s.set(Input::RightStick, stick);
+                }
+                Hand::None => {}
+            }
+        }
+        let as_menu = match (left_press, self.left_press_is_menu) {
+            (false, _) => None,
+            (true, Some(m)) => Some(m),
+            (true, None) => Some(!menu_open),
+        };
+        self.left_press_is_menu = as_menu;
+        match as_menu {
+            Some(true) => s.set(Input::Menu, InputValue::Button(true)),
+            Some(false) => s.set(Input::LeftStickClick, InputValue::Button(true)),
+            None => {}
+        }
+        s
+    }
+}
+
+/// The bike computer's bridge field (14I W2; at most 11 characters, the top
+/// row's right beside the clock): the
+/// sensor bridge's state from `bridge::json()` – off (no code), paired, or
+/// waiting while it connects; a browser without WebTransport says so.
+pub fn bridge_line(bridge: &serde_json::Value) -> String {
+    if bridge["supported"] == false {
+        return "No bridge".into();
+    }
+    if bridge["code"].is_null() {
+        return "Bridge off".into();
+    }
+    if bridge["paired"] == true {
+        return "Bridge ok".into();
+    }
+    let state = bridge["state"].as_str().unwrap_or("");
+    if state.starts_with("refused") {
+        "Bridge err".into()
+    } else {
+        "Bridge wait".into()
+    }
+}
+
+/// The bike computer's frame-time field (14I W3: the in-headset readout;
+/// at most 16 characters): the page's work per frame (median) and the
+/// frame rate – "11.8 ms · 72 fps"; "–" before there are numbers.
+pub fn frame_line(stats: &FrameStats) -> String {
+    match (stats.work_ms(0.5), stats.fps()) {
+        (Some(w), Some(f)) => format!("{w:.1} ms · {f:.0} fps"),
+        (None, Some(f)) => format!("{f:.0} fps"),
+        _ => "–".into(),
+    }
+}
+
+/// Where the menu's panel floats (14I W2: the flat UI is never drawn over
+/// the eyes; while the menu is open it is a panel in the world): ahead of
+/// the rider's eye point at a comfortable reading distance, a little below
+/// the eyes, facing the rider, turned with the bike only.
+pub const MENU_PANEL_AHEAD_M: f32 = 1.1;
+pub const MENU_PANEL_BELOW_M: f32 = 0.12;
+/// The panel's width (m; its height follows the UI's 16 : 9).
+pub const MENU_PANEL_WIDTH_M: f32 = 1.2;
+/// The UI's picture on the panel (px).
+pub const MENU_PANEL_PX: [u32; 2] = [1280, 720];
+
+/// The panel's centre and orientation in the world for the rider's eye
+/// point `eyes` and the bike's heading `yaw`.
+pub fn menu_panel_pose(eyes: [f32; 3], yaw: f32) -> Pose {
+    let (s, c) = yaw.sin_cos();
+    // Ahead is −Z turned by the yaw: (−sin, 0, −cos).
+    Pose {
+        position: [
+            eyes[0] - s * MENU_PANEL_AHEAD_M,
+            eyes[1] - MENU_PANEL_BELOW_M,
+            eyes[2] - c * MENU_PANEL_AHEAD_M,
+        ],
+        orientation: yaw_quat(yaw),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::math::{Mat4, Quat, Vec3, Vec4};
+
+    /// An OpenGL frustum matrix (`glFrustum`), column-major.
+    fn gl_frustum(l: f32, r: f32, b: f32, t: f32, n: f32, f: f32) -> [f32; 16] {
+        [
+            2.0 * n / (r - l),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            2.0 * n / (t - b),
+            0.0,
+            0.0,
+            (r + l) / (r - l),
+            (t + b) / (t - b),
+            -(f + n) / (f - n),
+            -1.0,
+            0.0,
+            0.0,
+            -2.0 * f * n / (f - n),
+            0.0,
+        ]
+    }
+
+    /// A view for [`frame_data`]: eye, viewport, projection, pose.
+    type TestView = (f32, [f32; 4], [f32; 16], [f32; 7]);
+
+    fn frame_data(views: &[TestView]) -> Vec<f32> {
+        let mut d = vec![
+            FRAME_LAYOUT,
+            views.len() as f32,
+            2880.0,
+            1600.0,
+            1000.0,
+            9.5,
+            0.0,
+            1.6,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+        ];
+        for (eye, vp, proj, pose) in views {
+            d.push(*eye);
+            d.extend_from_slice(vp);
+            d.extend_from_slice(proj);
+            d.extend_from_slice(pose);
+        }
+        d
+    }
+
+    #[test]
+    fn the_session_goes_offered_entering_running_blurred_ended() {
+        let mut s = XrState::default();
+        for (e, want) in [
+            (XrEvent::Supported(true), XrState::Offered),
+            (XrEvent::Enter, XrState::Entering),
+            (XrEvent::Started, XrState::Running),
+            (
+                XrEvent::Visibility(Visibility::VisibleBlurred),
+                XrState::Blurred,
+            ),
+            (XrEvent::Visibility(Visibility::Visible), XrState::Running),
+            (XrEvent::Visibility(Visibility::Hidden), XrState::Hidden),
+            (
+                XrEvent::Visibility(Visibility::VisibleBlurred),
+                XrState::Blurred,
+            ),
+            (XrEvent::Ended, XrState::Ended),
+            // The button is offered again: a second session.
+            (XrEvent::Enter, XrState::Entering),
+            (XrEvent::Started, XrState::Running),
+            (XrEvent::Ended, XrState::Ended),
+        ] {
+            s = s.next(&e).unwrap_or_else(|why| panic!("{why}"));
+            assert_eq!(s, want, "after {e:?}");
+        }
+    }
+
+    #[test]
+    fn eyes_are_drawn_only_while_the_session_shows_them() {
+        assert!(XrState::Running.in_headset());
+        assert!(XrState::Blurred.in_headset());
+        assert!(!XrState::Hidden.in_headset());
+        assert!(XrState::Hidden.in_session());
+        for s in [
+            XrState::Unknown,
+            XrState::Unsupported,
+            XrState::Offered,
+            XrState::Entering,
+            XrState::Ended,
+        ] {
+            assert!(!s.in_headset() && !s.in_session(), "{s:?}");
+        }
+    }
+
+    #[test]
+    fn a_refused_session_offers_the_button_again_and_odd_events_are_ignored() {
+        let s = XrState::Entering
+            .next(&XrEvent::Failed("NotAllowedError".into()))
+            .unwrap();
+        assert_eq!(s, XrState::Offered);
+        // Frames or visibility without a session, a second Enter: ignored.
+        assert!(XrState::Offered.next(&XrEvent::Started).is_err());
+        assert!(
+            XrState::Offered
+                .next(&XrEvent::Visibility(Visibility::Hidden))
+                .is_err()
+        );
+        assert!(XrState::Running.next(&XrEvent::Enter).is_err());
+        assert!(XrState::Unsupported.next(&XrEvent::Enter).is_err());
+        // No headset any more: unsupported from anywhere.
+        assert_eq!(
+            XrState::Offered.next(&XrEvent::Supported(false)).unwrap(),
+            XrState::Unsupported
+        );
+    }
+
+    #[test]
+    fn the_pages_event_words_parse() {
+        assert_eq!(
+            XrEvent::parse("supported", "true"),
+            Some(XrEvent::Supported(true))
+        );
+        assert_eq!(
+            XrEvent::parse("supported", "false"),
+            Some(XrEvent::Supported(false))
+        );
+        assert_eq!(
+            XrEvent::parse("visibility", "visible-blurred"),
+            Some(XrEvent::Visibility(Visibility::VisibleBlurred))
+        );
+        assert_eq!(
+            XrEvent::parse("failed", "NotAllowedError: no gesture"),
+            Some(XrEvent::Failed("NotAllowedError: no gesture".into()))
+        );
+        assert_eq!(XrEvent::parse("visibility", "dim"), None);
+        assert_eq!(XrEvent::parse("jump", ""), None);
+    }
+
+    #[test]
+    fn a_frame_parses_with_its_views() {
+        let p = gl_frustum(-1.0, 0.8, -1.1, 0.9, 0.1, 1000.0);
+        let d = frame_data(&[
+            (
+                1.0,
+                [0.0, 0.0, 1440.0, 1600.0],
+                p,
+                [-0.032, 1.6, 0.0, 0.0, 0.0, 0.0, 1.0],
+            ),
+            (
+                2.0,
+                [1440.0, 0.0, 1440.0, 1600.0],
+                p,
+                [0.032, 1.6, 0.0, 0.0, 0.0, 0.0, 1.0],
+            ),
+        ]);
+        let f = parse_frame(&d).unwrap();
+        assert_eq!(f.framebuffer, [2880.0, 1600.0]);
+        assert_eq!(f.time_ms, 1000.0);
+        assert_eq!(f.previous_frame_ms, 9.5);
+        assert_eq!(f.viewer.position, [0.0, 1.6, 0.0]);
+        assert_eq!(f.views.len(), 2);
+        assert_eq!(f.views[0].eye, Eye::Left);
+        assert_eq!(f.views[1].eye, Eye::Right);
+        assert_eq!(f.views[1].viewport, [1440.0, 0.0, 1440.0, 1600.0]);
+        assert_eq!(f.views[1].projection, p);
+        assert_eq!(f.views[1].pose.position, [0.032, 1.6, 0.0]);
+    }
+
+    #[test]
+    fn broken_frames_are_refused() {
+        let p = gl_frustum(-1.0, 1.0, -1.0, 1.0, 0.1, 100.0);
+        let good = frame_data(&[(
+            1.0,
+            [0.0, 0.0, 10.0, 10.0],
+            p,
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+        )]);
+        assert!(parse_frame(&good).is_ok());
+        assert!(parse_frame(&good[..5]).is_err(), "short header");
+        assert!(parse_frame(&good[..good.len() - 1]).is_err(), "short view");
+        let mut layout = good.clone();
+        layout[0] = 2.0;
+        assert!(parse_frame(&layout).is_err(), "other layout");
+        let mut count = good.clone();
+        count[1] = 9.0;
+        assert!(parse_frame(&count).is_err(), "too many views");
+        let mut nan = good.clone();
+        nan[20] = f32::NAN;
+        assert!(parse_frame(&nan).is_err(), "NaN");
+        // No views (no pose this frame) is a frame without eyes.
+        let empty = frame_data(&[]);
+        assert!(parse_frame(&empty).unwrap().views.is_empty());
+    }
+
+    #[test]
+    fn viewports_become_canvas_parts_from_the_top_left() {
+        let fb = [2880.0, 1600.0];
+        let view = |vp| View {
+            eye: Eye::Left,
+            viewport: vp,
+            projection: [0.0; 16],
+            pose: Pose::IDENTITY,
+        };
+        assert_eq!(
+            view([0.0, 0.0, 1440.0, 1600.0]).canvas_rect(fb),
+            Some([0.0, 0.0, 0.5, 1.0])
+        );
+        assert_eq!(
+            view([1440.0, 0.0, 1440.0, 1600.0]).canvas_rect(fb),
+            Some([0.5, 0.0, 0.5, 1.0])
+        );
+        // OpenGL's bottom-left origin: the lower quarter is Bevy's bottom.
+        assert_eq!(
+            view([0.0, 0.0, 1440.0, 400.0]).canvas_rect(fb),
+            Some([0.0, 0.75, 0.5, 0.25])
+        );
+        // The emulator's mono mode: the right eye has no width.
+        assert_eq!(view([1440.0, 0.0, 0.0, 1600.0]).canvas_rect(fb), None);
+        assert_eq!(view([0.0, 0.0, 10.0, 10.0]).canvas_rect([0.0, 0.0]), None);
+    }
+
+    #[test]
+    fn canvas_parts_become_pixels_inside_the_target() {
+        assert_eq!(
+            rect_pixels([0.5, 0.0, 0.5, 1.0], [1281, 720]),
+            ([641, 0], [640, 720])
+        );
+        assert_eq!(
+            rect_pixels([0.0, 0.0, 0.5, 1.0], [1281, 720]),
+            ([0, 0], [641, 720])
+        );
+        // Never empty, never outside.
+        assert_eq!(
+            rect_pixels([0.99, 0.99, 0.0, 0.0], [100, 100]),
+            ([99, 99], [1, 1])
+        );
+        assert_eq!(rect_pixels([0.0, 0.0, 1.0, 1.0], [0, 0]), ([0, 0], [1, 1]));
+    }
+
+    #[test]
+    fn the_frustum_is_read_from_webxrs_matrix() {
+        let near = 0.1;
+        let (l, r, b, t) = (-near, 0.8 * near, -1.1 * near, 0.9 * near);
+        let tan = frustum_tangents(&gl_frustum(l, r, b, t, near, 1000.0)).unwrap();
+        for (got, want) in tan.iter().zip([-1.0, 0.8, -1.1, 0.9]) {
+            assert!((got - want).abs() < 1e-5, "{tan:?}");
+        }
+        // An orthographic or broken matrix is refused.
+        let mut ortho = [0.0; 16];
+        ortho[0] = 1.0;
+        ortho[5] = 1.0;
+        ortho[10] = -1.0;
+        ortho[15] = 1.0;
+        assert!(frustum_tangents(&ortho).is_err());
+    }
+
+    #[test]
+    fn a_symmetric_eye_is_glams_infinite_reverse_z_projection() {
+        let (fov, aspect, near) = (1.6f32, 0.9f32, EYE_NEAR_M);
+        let t = (0.5 * fov).tan();
+        let gl = gl_frustum(
+            -t * aspect * near,
+            t * aspect * near,
+            -t * near,
+            t * near,
+            near,
+            500.0,
+        );
+        let ours = Mat4::from_cols_array(&eye_clip_from_view(&gl).unwrap());
+        // glam's right-handed `perspective_infinite_reverse` (Bevy's own).
+        let f = 1.0 / t;
+        let glam = Mat4::from_cols(
+            Vec4::new(f / aspect, 0.0, 0.0, 0.0),
+            Vec4::new(0.0, f, 0.0, 0.0),
+            Vec4::new(0.0, 0.0, 0.0, -1.0),
+            Vec4::new(0.0, 0.0, near, 0.0),
+        );
+        assert!(ours.abs_diff_eq(glam, 1e-5), "{ours:?} vs {glam:?}");
+        let bevy = bevy::camera::PerspectiveProjection {
+            fov,
+            aspect_ratio: aspect,
+            near,
+            ..Default::default()
+        };
+        let bevy = bevy::camera::CameraProjection::get_clip_from_view(&bevy);
+        assert!(ours.abs_diff_eq(bevy, 1e-5), "{ours:?} vs Bevy's {bevy:?}");
+    }
+
+    #[test]
+    fn an_asymmetric_eye_maps_its_frustum_edges_to_the_clip_edges() {
+        let tan = [-1.2f32, 0.9, -1.3, 0.8];
+        let m = Mat4::from_cols_array(&clip_from_view(tan, EYE_NEAR_M));
+        let ndc = |p: Vec3| {
+            let c = m * Vec4::new(p.x, p.y, p.z, 1.0);
+            c.truncate() / c.w
+        };
+        for z in [0.3f32, 7.0, 900.0] {
+            let at = |tx: f32, ty: f32| ndc(Vec3::new(tx * z, ty * z, -z));
+            assert!((at(tan[0], 0.0).x + 1.0).abs() < 1e-5);
+            assert!((at(tan[1], 0.0).x - 1.0).abs() < 1e-5);
+            assert!((at(0.0, tan[2]).y + 1.0).abs() < 1e-5);
+            assert!((at(0.0, tan[3]).y - 1.0).abs() < 1e-5);
+        }
+        // Reverse Z: 1 at the near plane, towards 0 far away.
+        assert!((ndc(Vec3::new(0.0, 0.0, -EYE_NEAR_M)).z - 1.0).abs() < 1e-5);
+        assert!(ndc(Vec3::new(0.0, 0.0, -1.0e6)).z < 1e-6);
+    }
+
+    #[test]
+    fn the_corners_lie_on_the_frustum_edges() {
+        let tan = [-1.2f32, 0.9, -1.3, 0.8];
+        let c = frustum_corners(tan, 0.5, 100.0);
+        assert_eq!(c[0], [0.9 * 0.5, -1.3 * 0.5, -0.5], "near bottom right");
+        assert_eq!(c[2], [-1.2 * 0.5, 0.8 * 0.5, -0.5], "near top left");
+        assert_eq!(c[5], [0.9 * 100.0, 0.8 * 100.0, -100.0], "far top right");
+        assert_eq!(
+            c[7],
+            [-1.2 * 100.0, -1.3 * 100.0, -100.0],
+            "far bottom left"
+        );
+    }
+
+    #[test]
+    fn the_rig_turns_the_space_with_the_bike_but_never_pitches_it() {
+        let to_vec = |p: [f32; 3]| Vec3::from_array(p);
+        let to_quat = |q: [f32; 4]| Quat::from_array(q);
+        let origin = [100.0, 20.0, -50.0];
+        // An eye 1.5 m up, 0.03 m to the right, looking 10° down.
+        let eye = Pose {
+            position: [0.03, 1.5, 0.0],
+            orientation: Quat::from_rotation_x(-10f32.to_radians()).to_array(),
+        };
+        for yaw in [0.0f32, 0.7, -2.5, 3.1] {
+            let got = rig_eye(origin, yaw, eye);
+            let turn = Quat::from_rotation_y(yaw);
+            let want_pos = to_vec(origin) + turn * to_vec(eye.position);
+            assert!(to_vec(got.position).abs_diff_eq(want_pos, 1e-4), "{yaw}");
+            let want_rot = turn * to_quat(eye.orientation);
+            assert!(
+                to_quat(got.orientation).abs_diff_eq(want_rot, 1e-5),
+                "{yaw}"
+            );
+            // The head's height above the origin stays the head's own.
+            assert!((got.position[1] - 21.5).abs() < 1e-5);
+        }
+    }
+
+    /// 14I Q8: with `local-floor` the real floor is the road – the eyes
+    /// are as high above the road as the real head is above the floor
+    /// (seated, then 25 cm higher out of the saddle), and the head at the
+    /// start lands on the rider's eye point, looking along the bike.
+    #[test]
+    fn local_floor_puts_the_real_floor_on_the_road() {
+        let ground = 20.0;
+        // The rider's seated eyes on the bike (from the saddle height).
+        let eyes = [10.0, ground + 1.42, -4.0];
+        for bike_yaw in [0.0f32, 0.9, -2.4] {
+            // The head at the start: 0.4 m beside the space's origin, 1.40 m
+            // above the real floor, facing 30° left of the space's −Z.
+            let start = Pose {
+                position: [0.4, 1.40, -0.2],
+                orientation: Quat::from_euler(bevy::math::EulerRot::YXZ, 0.52, -0.2, 0.0)
+                    .to_array(),
+            };
+            let anchor = Anchor::from_viewer(start);
+            let (origin, yaw) = space_origin(Space::LocalFloor, anchor, eyes, ground, bike_yaw);
+            assert!((origin[1] - ground).abs() < 1e-6, "the floor on the road");
+            let at_start = rig_eye(origin, yaw, start);
+            let p = Vec3::from_array(at_start.position);
+            assert!(
+                (p.x - eyes[0]).abs() < 1e-4 && (p.z - eyes[2]).abs() < 1e-4,
+                "{p}"
+            );
+            // The real height above the floor, not the profile's.
+            assert!((p.y - (ground + 1.40)).abs() < 1e-5, "{p}");
+            // Looking along the bike.
+            assert!((yaw_of(at_start.orientation) - bike_yaw).abs() < 1e-4);
+            // Out of the saddle: the head 25 cm higher, the eyes too.
+            let up = Pose {
+                position: [0.4, 1.65, -0.35],
+                ..start
+            };
+            let p_up = Vec3::from_array(rig_eye(origin, yaw, up).position);
+            assert!((p_up.y - (ground + 1.65)).abs() < 1e-5, "{p_up}");
+        }
+    }
+
+    /// Without `local-floor` the head at the start is put at the rider's
+    /// seated eye height, whatever the space says its height is.
+    #[test]
+    fn local_falls_back_to_the_seated_eye_point() {
+        let eyes = [3.0, 101.38, 7.0];
+        let start = Pose {
+            position: [0.05, 0.02, 0.1],
+            orientation: Quat::from_rotation_y(-0.3).to_array(),
+        };
+        let (origin, yaw) =
+            space_origin(Space::Local, Anchor::from_viewer(start), eyes, 100.0, 1.2);
+        let p = rig_eye(origin, yaw, start);
+        assert!(Vec3::from_array(p.position).abs_diff_eq(Vec3::from_array(eyes), 1e-4));
+        assert!((yaw_of(p.orientation) - 1.2).abs() < 1e-4);
+        assert_eq!(Space::parse("local"), Space::Local);
+        assert_eq!(Space::parse("local-floor"), Space::LocalFloor);
+        assert_eq!(Space::parse(""), Space::LocalFloor);
+    }
+
+    #[test]
+    fn the_heading_of_an_orientation_ignores_pitch_and_roll() {
+        for yaw in [0.0f32, 0.4, -1.9, 3.0] {
+            let pitched = Quat::from_euler(bevy::math::EulerRot::YXZ, yaw, 0.15, -0.1);
+            let got = yaw_of(pitched.to_array());
+            assert!((got - yaw).abs() < 1e-4, "{yaw} → {got}");
+            let back = Quat::from_array(yaw_quat(got));
+            assert!(back.abs_diff_eq(Quat::from_rotation_y(yaw), 1e-4));
+        }
+    }
+
+    #[test]
+    fn frame_stats_measure_gaps_work_and_late_frames() {
+        let mut s = FrameStats::default();
+        assert_eq!(s.fps(), None);
+        let mut t = 0.0f64;
+        for i in 0..100 {
+            // 72 Hz with one dropped frame every 25.
+            t += if i % 25 == 24 { 27.8 } else { 13.9 };
+            s.push(t, 8.0 + (i % 5) as f32);
+        }
+        assert_eq!(s.frames, 100);
+        let fps = s.fps().unwrap();
+        assert!((fps - 71.94).abs() < 0.1, "{fps}");
+        assert_eq!(s.late(), 4);
+        assert!((s.longest_gap_ms - 27.8).abs() < 1e-3);
+        assert_eq!(s.work_ms(0.5), Some(10.0));
+        assert_eq!(s.work_ms(1.0), Some(12.0));
+        s.reset();
+        assert_eq!(s.frames, 0);
+        assert_eq!(s.gap_ms(0.5), None);
+    }
+
+    #[test]
+    fn frame_stats_keep_a_window() {
+        let mut s = FrameStats::default();
+        for i in 0..(FrameStats::KEEP + 50) {
+            s.push(i as f64 * 10.0, 1.0);
+        }
+        assert_eq!(s.gaps_ms.len(), FrameStats::KEEP);
+        assert_eq!(s.work_ms.len(), FrameStats::KEEP);
+    }
+
+    /// 14I W2: the eyes' projection is the desktop VR mode's
+    /// (`ocw_xr::projection::clip_from_view` of the same frustum).
+    #[test]
+    fn the_eye_projection_is_the_desktop_vr_modes() {
+        let tangents: [f32; 4] = [-1.2, 0.9, -1.1, 0.95];
+        let fov = ocw_xr::projection::Fov {
+            left: tangents[0].atan(),
+            right: tangents[1].atan(),
+            down: tangents[2].atan(),
+            up: tangents[3].atan(),
+        };
+        let ours = Mat4::from_cols_array(&clip_from_view(tangents, EYE_NEAR_M));
+        let desktop = ocw_xr::projection::clip_from_view(&fov, EYE_NEAR_M);
+        assert!(ours.abs_diff_eq(desktop, 1e-5), "{ours} {desktop}");
+    }
+
+    fn pad(hand: f32, buttons: [f32; 7], axes: [f32; 4]) -> Vec<f32> {
+        let mut v = vec![hand, 1.0, 0.1, 1.0, -0.3, 0.0, 0.0, 0.0, 1.0];
+        v.extend_from_slice(&buttons);
+        v.extend_from_slice(&axes);
+        v
+    }
+
+    fn pads(list: &[Vec<f32>]) -> Vec<XrPad> {
+        let mut d = vec![PADS_LAYOUT, list.len() as f32];
+        for p in list {
+            d.extend_from_slice(p);
+        }
+        parse_pads(&d).unwrap()
+    }
+
+    /// The page's controller data: both hands, the grip's pose, buttons
+    /// and axes; broken data is refused.
+    #[test]
+    fn the_pads_are_read() {
+        let p = pads(&[
+            pad(
+                1.0,
+                [0.2, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, -0.5, 0.25],
+            ),
+            pad(2.0, [0.0; 7], [0.0; 4]),
+        ]);
+        assert_eq!(p.len(), 2);
+        assert_eq!(p[0].hand, Hand::Left);
+        assert_eq!(p[1].hand, Hand::Right);
+        assert_eq!(p[0].grip.unwrap().position, [0.1, 1.0, -0.3]);
+        assert_eq!(p[0].buttons[1], 1.0);
+        assert_eq!(p[0].axes[2], -0.5);
+        assert!(parse_pads(&[2.0, 0.0]).is_err(), "another layout");
+        assert!(parse_pads(&[PADS_LAYOUT, 1.0, 1.0]).is_err(), "too short");
+        assert_eq!(parse_pads(&[PADS_LAYOUT, 0.0]).unwrap(), vec![]);
+        let mut d = vec![PADS_LAYOUT, 1.0];
+        d.extend(pad(2.0, [0.0; 7], [0.0; 4]));
+        d[5] = f32::NAN;
+        assert!(parse_pads(&d).is_err());
+    }
+
+    /// The `oculus-touch-v2` indices (spec 14A) on the Q10 map: the right
+    /// stick rides (forward is WebXR's −y), A / B / X / Y, the triggers and
+    /// the grips; the left stick's press is the menu with the menu closed
+    /// and confirms with it open – kept for the whole press.
+    #[test]
+    fn the_touch_controllers_map_onto_the_desktop_vr_controls() {
+        use ocw_xr::controllers::{Input, PadAxis, PadButton, PadMapper};
+        let mut r = PadReader::default();
+        assert!(!r.state(&[], false).active);
+        let s = r.state(
+            &pads(&[
+                pad(
+                    1.0,
+                    [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 0.0],
+                ),
+                pad(
+                    2.0,
+                    [0.9, 0.3, 0.0, 1.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.2, -0.9],
+                ),
+            ]),
+            false,
+        );
+        assert!(s.active);
+        assert!(s.button(Input::X) && s.button(Input::Y) && s.button(Input::A));
+        assert!(!s.button(Input::B));
+        assert!(s.button(Input::RightStickClick));
+        assert!((s.value(Input::RightTrigger) - 0.9).abs() < 1e-6);
+        assert!((s.value(Input::RightGrip) - 0.3).abs() < 1e-6);
+        assert_eq!(s.stick(Input::RightStick), [0.2, 0.9]);
+        // Through the desktop's mapper: the right stick forward is the
+        // gamepad's left stick up (faster), A is South.
+        let f = PadMapper::default().map(&s, 0.014);
+        assert!(f.axis(PadAxis::LeftStickY) > 0.8);
+        assert_eq!(f.button(PadButton::South), 1.0);
+        assert_eq!(f.button(PadButton::RightTrigger2), 0.9);
+        // The left stick's press opens the menu …
+        let click = |v: f32| pads(&[pad(1.0, [0.0, 0.0, 0.0, v, 0.0, 0.0, 0.0], [0.0; 4])]);
+        let s = r.state(&click(1.0), false);
+        assert!(s.button(Input::Menu) && !s.button(Input::LeftStickClick));
+        // … and, held on with the menu now open, stays the menu button.
+        let s = r.state(&click(1.0), true);
+        assert!(s.button(Input::Menu) && !s.button(Input::LeftStickClick));
+        assert!(!r.state(&click(0.0), true).button(Input::Menu));
+        // A new press in the open menu confirms.
+        let s = r.state(&click(1.0), true);
+        assert!(s.button(Input::LeftStickClick) && !s.button(Input::Menu));
+        assert!(CONTROLS_HINT.contains("menu"));
+    }
+
+    /// The bike computer's status row (14I W2 / W3): the bridge's state
+    /// and the frame time, each short enough for its field.
+    #[test]
+    fn the_status_row_says_bridge_and_frame_time() {
+        use serde_json::json;
+        assert_eq!(
+            bridge_line(&json!({"code": null, "supported": true})),
+            "Bridge off"
+        );
+        assert_eq!(
+            bridge_line(&json!({"code": "7K2M", "paired": true, "supported": true})),
+            "Bridge ok"
+        );
+        assert_eq!(
+            bridge_line(&json!({"code": "7K2M", "paired": false, "state": "connecting"})),
+            "Bridge wait"
+        );
+        assert_eq!(
+            bridge_line(&json!({"code": "7K2M", "state": "refused: busy"})),
+            "Bridge err"
+        );
+        assert_eq!(bridge_line(&json!({"supported": false})), "No bridge");
+        for b in [
+            "Bridge off",
+            "Bridge ok",
+            "Bridge wait",
+            "Bridge err",
+            "No bridge",
+        ] {
+            assert!(b.chars().count() <= 11, "{b}");
+        }
+        let mut s = FrameStats::default();
+        assert_eq!(frame_line(&s), "–");
+        let mut t = 0.0;
+        for _ in 0..50 {
+            t += 13.9;
+            s.push(t, 11.84);
+        }
+        assert_eq!(frame_line(&s), "11.8 ms · 72 fps");
+        assert!(frame_line(&s).chars().count() <= 16);
+    }
+
+    /// The menu's panel: ahead of the eyes in the bike's heading, a little
+    /// below, facing back at the rider.
+    #[test]
+    fn the_menu_panel_floats_ahead_of_the_eyes() {
+        let p = menu_panel_pose([10.0, 1.5, 20.0], 0.0);
+        assert!((p.position[2] - (20.0 - MENU_PANEL_AHEAD_M)).abs() < 1e-5);
+        assert!((p.position[1] - (1.5 - MENU_PANEL_BELOW_M)).abs() < 1e-5);
+        assert!((p.position[0] - 10.0).abs() < 1e-5);
+        // Turned a quarter left (+Y): ahead is −X.
+        let q = menu_panel_pose([0.0, 1.5, 0.0], std::f32::consts::FRAC_PI_2);
+        assert!((q.position[0] + MENU_PANEL_AHEAD_M).abs() < 1e-5, "{q:?}");
+        assert!(q.position[2].abs() < 1e-5);
+        // The panel's normal (+Z) points back at the eyes.
+        let n = Quat::from_array(q.orientation) * Vec3::Z;
+        assert!((n - Vec3::X).length() < 1e-5, "{n}");
+    }
+}

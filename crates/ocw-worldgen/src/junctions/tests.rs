@@ -1531,3 +1531,50 @@ fn sidewalk_ways_along_both_streets_leave_the_corners_smooth() {
     let faults = side_faults(&pkg, &g);
     assert!(faults.is_empty(), "{faults:?}");
 }
+
+/// Spec 4.8.8 Rule (J8): a side road whose OSM way is split 6 m from the
+/// junction (a plain way split) – J7's most common squeezed corner: the
+/// arm ended at the split, its corners squeezed into hooks. Now the arm
+/// runs on past the split: after the reconciliation the short edge's
+/// profile is the junction surface up to the split (there it meets the
+/// edge beyond, whose profile the mouth keeps), and the junction's sides
+/// have no `side.*` finding.
+#[test]
+fn a_side_road_split_near_the_junction_has_smooth_sides() {
+    let mut g = fixtures::t_junction_split(0.03, 0.06, 6.0, 10.0);
+    reconcile_profiles(&mut g, &|_, _| true);
+    let js = JunctionSet::new(&g);
+    let p = js.patch(&g, 0).expect("a patch");
+    assert_eq!(p.run_on, vec![4]);
+    let e = &g.edges[2];
+    let cum = cumulative(&e.points);
+    let n = e.profile.len();
+    assert!((e.profile[n - 1] - g.edges[3].profile[0]).abs() < 1e-9);
+    for (i, h) in e.profile.iter().enumerate().take(n - 1) {
+        let s = sample_m(i, e.length_m());
+        let c = frame_at(&e.points, &cum, s).0;
+        let drawn = p.height_at(c).expect("on the patch");
+        assert!((h - drawn).abs() < 0.01, "sample {i}: {h} / {drawn}");
+    }
+    drop(js);
+    let pkg = package(&g);
+    let faults = side_faults(&pkg, &g);
+    assert!(faults.is_empty(), "{faults:?}");
+}
+
+/// J8: the Black Forest path view's island keeps J7's round nose (27°
+/// over 0.3 m pieces): a junction's mouths moved out for its corners, or
+/// its arms run on past a way split, only where its sides bend no more
+/// than before (moved out, its nose bent by more, a sharper tip than
+/// J7's).
+#[test]
+fn the_black_forest_path_view_keeps_its_round_nose() {
+    let g = graph_of(BF_PATH);
+    let pkg = package(&g);
+    let worst = side_faults(&pkg, &g)
+        .iter()
+        .filter(|f| f.kind == "corner")
+        .map(|f| f.value)
+        .fold(0.0f64, f64::max);
+    assert!(worst < 27.5, "{worst:.1}°");
+}

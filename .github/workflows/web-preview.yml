@@ -2,7 +2,10 @@ name: Web preview
 
 # The browser app's public preview on GitHub Pages (spec §14 Phase 10 B8a):
 # builds the preview (`make web-preview`: two size-optimised modules,
-# WebGPU and WebGL 2, trusting only the web preview's signing root),
+# WebGPU and WebGL 2, trusting only the web preview's signing root) and the
+# WebXR test build for the headset (`make web-preview-xr`, published at
+# /xr/ – spec 14 Phase 14, 14I Q6 (a); if it fails, the normal preview is
+# deployed without it),
 # downloads the signed worlds of the `web-preview-worlds` pre-release
 # (signed on the build machine that holds the keys,
 # scripts/publish-preview-worlds.sh – no secret is needed here), assembles
@@ -38,7 +41,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
       # The model files are Git LFS objects (spec §14 Phase 15, Q2): pulled
@@ -70,6 +73,10 @@ jobs:
         run: scripts/fetch-binaryen.sh
       - name: Build the preview (make web-preview)
         run: make web-preview
+      - name: Build the WebXR preview for /xr/ (make web-preview-xr)
+        id: xr
+        continue-on-error: true
+        run: make web-preview-xr
       - name: The crates in the module (for the credits page)
         run: cargo metadata --format-version 1 --locked --filter-platform wasm32-unknown-unknown > target/web-preview-crates.json
       - name: Fetch the signed worlds (pre-release web-preview-worlds)
@@ -78,7 +85,9 @@ jobs:
         run: gh release download web-preview-worlds --dir target/web-preview-worlds/release --clobber
       - name: Assemble the site (make web-preview-site)
         run: |
-          scripts/web-preview-site.py --crates target/web-preview-crates.json \
+          xr=()
+          if [ "${{ steps.xr.outcome }}" = success ]; then xr=(--xr-build target/web-preview-xr); fi
+          scripts/web-preview-site.py --crates target/web-preview-crates.json "${xr[@]}" \
             --build-id "$(git rev-parse --short HEAD) ($(date -u +%Y-%m-%d))"
           cat target/web-preview/sizes.txt
           tail -1 target/web-preview-site/site.txt

@@ -39,7 +39,7 @@ thread_local! {
 /// The game sound as a `MediaStream` for videos (`window.ocwAudioStream`).
 fn tap_for_video(ctx: &AudioContext) {
     let Ok(make) = Reflect::get(ctx, &JsValue::from_str("createMediaStreamDestination"))
-        .and_then(|f| f.dyn_into::<Function>().map_err(JsValue::from))
+        .and_then(|f| f.dyn_into::<Function>())
     else {
         return;
     };

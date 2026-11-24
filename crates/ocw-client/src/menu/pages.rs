@@ -207,6 +207,11 @@ pub enum Page {
     Devices,
     /// One of them (index into the list): connect or forget it.
     Device(usize),
+    /// Devices → the sensor bridge (spec 14 Phase 10, 10D.2; rows from
+    /// `menu::devices`): the desktop shares its trainer with a browser (the
+    /// code, the address, the paired browser); the browser uses a trainer
+    /// of another device (the code, the state).
+    Bridge,
     /// Ride → Join (spec §3.2.1; rows from `menu::join`): the link and
     /// fingerprint fields, Paste, Join, the recent servers.
     Join,
@@ -318,6 +323,7 @@ impl Page {
             Self::TrustedKey(_) => "Trusted key",
             Self::Devices => "Devices",
             Self::Device(_) => "Device",
+            Self::Bridge => "Sensor bridge",
             Self::Join => "Join a ride",
             Self::HostWorld => "Host a ride: world",
             Self::HostRoute => "Host a ride: route",
@@ -451,7 +457,7 @@ impl Page {
             Self::ViewDistance | Self::WorldDetail | Self::Photographer => Some(Self::Graphics),
             Self::TrustedKey(_) => Some(Self::TrustedKeys),
             Self::Devices => Some(Self::Trainer),
-            Self::Device(_) => Some(Self::Devices),
+            Self::Device(_) | Self::Bridge => Some(Self::Devices),
             Self::HostRoute => Some(Self::HostWorld),
             Self::HostTime => Some(Self::HostRoute),
             Self::HostWeather => Some(Self::HostTime),
@@ -617,6 +623,7 @@ impl Page {
             Self::TrustedKey(_) => &[super::trust::KEY_NOTE],
             Self::Devices => &[super::devices::NOTE],
             Self::Device(_) => &[super::devices::DEVICE_NOTE],
+            Self::Bridge => &[super::devices::BRIDGE_NOTE],
             Self::Join => &[
                 "Paste or type the link the host shares (ocw://HOST:PORT?cert=...). Your ride goes on until the shared one is ready.",
             ],
@@ -1401,7 +1408,7 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         // From the trusted world keys (`menu::trust`).
         Page::TrustedKeys | Page::TrustedKey(_) => Vec::new(),
         // From the app's devices (`menu::devices`).
-        Page::Devices | Page::Device(_) => Vec::new(),
+        Page::Devices | Page::Device(_) | Page::Bridge => Vec::new(),
         // From the join state (`menu::join`) and the host wizard (`host`).
         Page::Join
         | Page::HostWorld

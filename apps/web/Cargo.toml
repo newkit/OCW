@@ -23,7 +23,13 @@ ocw-weather.workspace = true
 # Devices: the frame-driven virtual trainer and, on wasm32, Web Bluetooth
 # (`ble::web`: the shared protocol over the browser's GATT objects, B4).
 ocw-devices.workspace = true
+# The local sensor bridge: a trainer of the desktop app on the same network
+# (spec 14 Phase 10, 10D.2).
+ocw-bridge.workspace = true
 ocw-render.workspace = true
+# VR logic shared with the desktop VR mode (14I W2): the controllers' map,
+# the projection, the headset profiles (pure).
+ocw-xr.workspace = true
 # The client loop, shared with the desktop app.
 ocw-client.workspace = true
 # The desktop's menus, settings, time and weather machines, events and
@@ -67,6 +73,12 @@ webgl2 = ["bevy/webgl2"]
 # keys/preview-roots.json), which replaces the production roots; the
 # localhost-only trust options stay as they are.
 preview = []
+# WebXR (spec §14 Phase 14, 14I W1): the immersive session in the headset's
+# browser – the eye cameras stepped from the session's frames
+# (`src/webxr.rs`, `web/ocw-xr.js`). Built with `webgl2` (WebGPU in WebXR
+# is not shipped on the Quest 1) as its own module (`make web-xr`), so the
+# page's normal builds stay as they are.
+webxr = []
 
 # In the browser only: Bevy's web platform glue; wasm-bindgen pinned to
 # the version in Cargo.lock, which the wasm-bindgen CLI of `make web` must

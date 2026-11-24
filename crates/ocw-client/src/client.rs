@@ -6144,7 +6144,7 @@ mod tests {
         let cue = bumps.last().unwrap().cue();
         assert!(matches!(
             cue,
-            ocw_audio::cues::Cue::Pothole | ocw_audio::cues::Cue::Crack
+            ocw_audio::cues::Cue::Pothole | ocw_audio::cues::Cue::Dip | ocw_audio::cues::Cue::Crack
         ));
     }
 

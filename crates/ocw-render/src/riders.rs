@@ -586,10 +586,33 @@ pub fn kit_variants(parts: &[String]) -> Vec<String> {
     v
 }
 
+/// The other riders drawn under the quality's cap (spec §14 Phase 14,
+/// 14I W3: the `quest1` level draws the 8 nearest): `None` – all of them;
+/// else the ids of the `cap` riders nearest to the local one along the
+/// road (the local rider is never counted and always drawn; without one,
+/// the first `cap` of the view).
+pub fn riders_drawn(view: &RideView, cap: Option<usize>) -> Option<Vec<RiderId>> {
+    let cap = cap?;
+    let at = view.local().map(|l| l.state.distance);
+    let mut others: Vec<(f64, RiderId)> = view
+        .riders
+        .iter()
+        .filter(|r| !r.is_local)
+        .enumerate()
+        .map(|(i, r)| (at.map_or(i as f64, |d| (r.state.distance - d).abs()), r.id))
+        .collect();
+    if others.len() <= cap {
+        return None;
+    }
+    others.sort_by(|a, b| a.0.total_cmp(&b.0));
+    Some(others.into_iter().take(cap).map(|(_, id)| id).collect())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn sync_riders(
     mut commands: Commands,
     view: Res<RideView>,
+    quality: Option<Res<crate::quality::RenderQuality>>,
     mut entities: ResMut<RiderEntities>,
     mut avatars: Query<(&mut Transform, &AvatarLook, &mut Visibility), With<Avatar>>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -601,6 +624,8 @@ fn sync_riders(
     mut library: Local<Option<Library>>,
 ) {
     let lib = library.get_or_insert_with(|| Library::new(&mut meshes));
+    // The quality's cap on the other riders (14I W3).
+    let drawn = riders_drawn(&view, quality.and_then(|q| q.0.max_riders));
     // The ghost rides on the local rider's track.
     let ghost = view
         .ghost
@@ -657,6 +682,18 @@ fn sync_riders(
         // The wobble after a soft bump (spec §14 Phase 12B): a lean swing.
         if wobble != 0.0 {
             t.rotation *= lean_rotation(wobble);
+        }
+        // Over the quality's cap: not drawn (hidden if built, else not
+        // built until it comes near).
+        let capped =
+            !is_local && id != GHOST_ID && drawn.as_ref().is_some_and(|d| !d.contains(&id));
+        if capped {
+            if let Some(e) = entities.0.get(&id).copied()
+                && let Ok((_, _, mut vis)) = avatars.get_mut(e)
+            {
+                vis.set_if_neq(Visibility::Hidden);
+            }
+            continue;
         }
         // Falling or down as a ragdoll, or remounting: the ragdoll shows
         // the rider (spec §14 Phase 12C).
@@ -721,25 +758,18 @@ pub fn ghost_material() -> StandardMaterial {
 /// (`lod1`: bike and seated rider in a few meshes), m. Beyond it the
 /// avatar is not posed either (only its wheels' and cranks' angles go on).
 pub const LOD_DISTANCE_M: f32 = 40.0;
-/// Width of the cross-fade between the two models (m).
-const LOD_FADE_M: f32 = 4.0;
+/// Half the width of the cross-fade between the two models (m).
+pub const LOD_FADE_M: f32 = 4.0;
 
-/// The near model's visibility range (up to [`LOD_DISTANCE_M`]).
+/// The near model's visibility range (up to [`LOD_DISTANCE_M`];
+/// [`crate::lod::RIDER`], the table of every kind's switch).
 pub fn near_range() -> VisibilityRange {
-    VisibilityRange {
-        start_margin: 0.0..0.0,
-        end_margin: LOD_DISTANCE_M - LOD_FADE_M..LOD_DISTANCE_M + LOD_FADE_M,
-        use_aabb: false,
-    }
+    crate::lod::RIDER.near_range()
 }
 
 /// The far model's visibility range (from [`LOD_DISTANCE_M`] on).
 pub fn far_range() -> VisibilityRange {
-    VisibilityRange {
-        start_margin: LOD_DISTANCE_M - LOD_FADE_M..LOD_DISTANCE_M + LOD_FADE_M,
-        end_margin: 1.0e7..1.0e7,
-        use_aabb: false,
-    }
+    crate::lod::RIDER.far_range(None)
 }
 
 /// A model's meshes, uploaded once: `(mesh, material index)` per primitive,
@@ -967,6 +997,19 @@ impl AvatarRig {
 
     pub fn params(&self) -> PoseParams {
         self.animator.params
+    }
+
+    /// The saddle's top above the ground (m): where the bike's saddle sits
+    /// for this rider's body height (spec 4C; WebXR's floor, 14I Q8).
+    pub fn saddle_height(&self) -> f32 {
+        self.bike.saddle.y
+    }
+
+    /// The rider's eyes in the avatar's frame (ground y = 0, −Z ahead),
+    /// seated (`stand` 0) or out of the saddle (1), without the pedalling's
+    /// sway (14I Q8: the VR eye point).
+    pub fn eye_point(&self, stand: f32) -> Vec3 {
+        ocw_assets::pose::eye_point_on(&self.rider, &self.bike, &self.fit, stand)
     }
 
     /// The bike's anchors (the damage marks sit on them, spec §14 Phase
@@ -1336,7 +1379,7 @@ fn spawn_avatar(
 }
 
 /// Animates the avatars from the ride: riding state, cranks, wheels, pose.
-fn animate(
+pub(crate) fn animate(
     time: Res<Time>,
     view: Res<RideView>,
     mut avatars: Query<
@@ -1491,6 +1534,44 @@ mod tests {
 
     fn road_rig() -> BikeRig {
         ocw_assets::shipped::bike_rig(ProfileId::Road)
+    }
+
+    /// 14I W3: under a cap only the nearest others are drawn, the local
+    /// rider always; no cap (or few riders): all.
+    #[test]
+    fn a_rider_cap_draws_the_nearest() {
+        let mut v = view(vec![[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]]);
+        let rider = |id: u32, d: f64, local: bool| crate::RiderView {
+            id: RiderId(id),
+            name: format!("Rider {id}"),
+            state: ocw_sim::RiderState {
+                distance: d,
+                ..Default::default()
+            },
+            power_w: 200.0,
+            cadence_rpm: None,
+            heart_rate_bpm: None,
+            is_local: local,
+            bike: ProfileId::Road,
+            look: None,
+            parts: Vec::new(),
+            crash: None,
+            wobble: 0.0,
+            damage: None,
+            cue: Default::default(),
+            signs: Default::default(),
+        };
+        v.riders.push(rider(1, 500.0, true));
+        for (id, d) in [(2, 900.0), (3, 510.0), (4, 300.0), (5, 480.0)] {
+            v.riders.push(rider(id, d, false));
+        }
+        assert_eq!(riders_drawn(&v, None), None);
+        assert_eq!(riders_drawn(&v, Some(4)), None, "all fit");
+        assert_eq!(
+            riders_drawn(&v, Some(2)),
+            Some(vec![RiderId(3), RiderId(5)])
+        );
+        assert_eq!(riders_drawn(&v, Some(0)), Some(vec![]));
     }
 
     fn view(points: Vec<[f64; 3]>) -> RideView {

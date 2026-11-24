@@ -328,6 +328,11 @@ pub struct Arm {
     /// How far past the mouth the strip turns flat across (m; 0: flat at
     /// the mouth).
     pub warp_m: f64,
+    /// An arm that runs on past a plain way split (J8): the centre line
+    /// from the patch's vertex to [`Arm::origin`] (the split, both
+    /// included) along the edges inside the patch before it; empty for an
+    /// arm leaving from its vertex.
+    pub lead: Vec<P2>,
 }
 
 impl Arm {
@@ -468,6 +473,9 @@ pub struct Patch {
     /// short edges in `inner`; else only `vertex`).
     pub members: Vec<u32>,
     pub inner: Vec<usize>,
+    /// The members that are plain way splits its arms run on past (J8; the
+    /// edges before them in `inner`): one junction, drawn as at its vertex.
+    pub run_on: Vec<u32>,
     inner_nodes: Vec<InnerNode>,
     /// By polar angle (`atan2(z, x)`, growing).
     pub arms: Vec<Arm>,
@@ -570,6 +578,13 @@ struct Site {
     centre: P2,
     members: Vec<u32>,
     inner: Vec<usize>,
+    /// The members that are plain way splits its arms run on past (J8):
+    /// not junctions of their own, not counted in the centre.
+    run_on: Vec<u32>,
+    /// The mouths move out for their corners along the real edge lines
+    /// (J8; not for a junction's patch alone, which decides the clusters
+    /// and the way splits run on past as J7 did).
+    grow: bool,
 }
 
 impl Site {
@@ -578,11 +593,14 @@ impl Site {
             centre: g.vertices[v],
             members: vec![v as u32],
             inner: Vec::new(),
+            run_on: Vec::new(),
+            grow: true,
         }
     }
 
+    /// Several junctions (J3), not one with its arms run on (J8).
     fn cluster(&self) -> bool {
-        self.members.len() > 1
+        self.members.len() > self.run_on.len() + 1
     }
 }
 
@@ -591,6 +609,12 @@ impl Patch {
     /// member only): iterate patches once, draw them once.
     pub fn is_at(&self, v: usize) -> bool {
         self.vertex as usize == v
+    }
+
+    /// A cluster of several junctions (J3); not one junction whose arms
+    /// run on past way splits (J8).
+    pub fn is_cluster(&self) -> bool {
+        self.members.len() > self.run_on.len() + 1
     }
 
     fn n(&self) -> usize {
@@ -1014,6 +1038,8 @@ struct Raw {
     len: f64,
     class: RoadClass,
     cum: Vec<f64>,
+    /// [`Arm::lead`] (J8).
+    lead: Vec<P2>,
 }
 
 /// The arm of edge `ei` at vertex `v` (at `c`).
@@ -1038,7 +1064,28 @@ fn raw_arm(g: &RoadGraph, c: P2, v: usize, ei: usize) -> Result<Raw, &'static st
         len,
         class: e.class,
         cum,
+        lead: Vec::new(),
     })
+}
+
+/// The arm of edge `oi` leaving the plain way split `w` that edge `ei`
+/// leads to from vertex `v` (J8): it runs on past the split, `ei` inside
+/// the patch.
+fn raw_run_on(
+    g: &RoadGraph,
+    v: usize,
+    ei: usize,
+    w: usize,
+    oi: usize,
+) -> Result<Raw, &'static str> {
+    let mut r = raw_arm(g, g.vertices[w], w, oi)?;
+    let e = &g.edges[ei];
+    let mut lead = e.points.clone();
+    if e.from.0 as usize != v {
+        lead.reverse();
+    }
+    r.lead = lead;
+    Ok(r)
 }
 
 /// The arm with its mouth `m` metres from the vertex; `along` (the
@@ -1077,6 +1124,7 @@ fn make_arm(g: &RoadGraph, r: &Raw, m: f64, along: Option<f64>) -> Arm {
         corner: Vec::new(),
         cross: 0.0,
         warp_m: 0.0,
+        lead: r.lead.clone(),
     }
 }
 
@@ -1108,16 +1156,46 @@ fn assemble(g: &RoadGraph, site: &Site, arms: Vec<Arm>) -> Result<Patch, &'stati
     if through.is_none() && !site.cluster() {
         blend_plane(&mut arms);
     }
-    let vh = {
-        let e = &g.edges[arms[0].edge];
-        height(e, if arms[0].at_from { 0.0 } else { arms[0].len })
+    // The height at the vertex: of the first arm's edge there (an arm run
+    // on past a way split leaves from the split, J8: the first that leaves
+    // from the vertex, or the edge inside the patch at it).
+    let vh = match arms.iter().find(|a| a.lead.is_empty()) {
+        Some(a) if site.run_on.is_empty() || a.origin == c => {
+            height(&g.edges[a.edge], if a.at_from { 0.0 } else { a.len })
+        }
+        _ => {
+            let a = &arms[0];
+            let at_v = site.inner.iter().find_map(|&ei| {
+                let e = &g.edges[ei];
+                if e.from.0 as usize == v {
+                    Some(height(e, 0.0))
+                } else if e.to.0 as usize == v {
+                    Some(height(e, e.length_m()))
+                } else {
+                    None
+                }
+            });
+            at_v.unwrap_or_else(|| height(&g.edges[a.edge], if a.at_from { 0.0 } else { a.len }))
+        }
+    };
+    // An edge run on past (J8) is of the through road's carriageway when
+    // its arm is one of the through road's.
+    let leads_to = |ei: usize, k: usize| {
+        let e = &g.edges[ei];
+        !arms[k].lead.is_empty()
+            && [e.from, e.to]
+                .iter()
+                .any(|w| g.vertices[w.0 as usize] == arms[k].origin)
     };
     let inner_nodes = site
         .inner
         .iter()
         .map(|&ei| {
             let mut node = InnerNode::of(g, ei);
-            node.main = through.is_some() && g.edges[ei].class == best;
+            node.main = match through {
+                Some([a, b]) if !site.run_on.is_empty() => leads_to(ei, a) || leads_to(ei, b),
+                _ => through.is_some() && g.edges[ei].class == best,
+            };
             node
         })
         .collect();
@@ -1126,6 +1204,7 @@ fn assemble(g: &RoadGraph, site: &Site, arms: Vec<Arm>) -> Result<Patch, &'stati
         centre: at_y(c, vh),
         members: site.members.clone(),
         inner: site.inner.clone(),
+        run_on: site.run_on.clone(),
         inner_nodes,
         arms,
         through,
@@ -1433,19 +1512,80 @@ fn quantised(c: P2, p: P2) -> P2 {
 /// [`build_patch`] with the reason when a vertex keeps its overlapping
 /// strips (diagnostics, the analysis test).
 fn try_patch(g: &RoadGraph, adj: &[usize], v: usize) -> Result<Patch, &'static str> {
-    let (patch, outline) = patch_outline(g, adj, v)?;
+    // J8: the mouths out for the corners, where that bends its sides no
+    // more than before; where that patch cannot be made, as before.
+    let plain = try_patch_with(g, adj, v, false);
+    match (try_patch_with(g, adj, v, true), plain) {
+        (Ok(grown), Ok(plain)) => Ok(less_bent(grown, plain)),
+        (Ok(grown), Err(_)) => Ok(grown),
+        (Err(_), plain) => plain,
+    }
+}
+
+/// The worst bend of a patch's sides (radians) as the side lint measures
+/// it: over pieces of 0.3 m, the arms' strip edges on at both ends of each
+/// chain.
+fn side_bend(p: &Patch) -> f64 {
+    let mut worst = 0.0f64;
+    for ch in &p.chains {
+        let n = ch.points.len();
+        if n < 2 {
+            continue;
+        }
+        let (a, b) = (&p.arms[ch.from_arm], &p.arms[ch.to_arm]);
+        let mut pts = vec![add(xz(ch.points[0]), a.t)];
+        pts.extend(ch.points.iter().map(|q| xz(*q)));
+        pts.push(add(xz(ch.points[n - 1]), b.t));
+        worst = worst.max(sides::worst_bend(&pts));
+    }
+    worst
+}
+
+/// `new` unless its sides bend more than `old`'s (J8: a patch changed for
+/// its corners never draws a sharper one).
+fn less_bent(new: Patch, old: Patch) -> Patch {
+    if side_bend(&new) <= side_bend(&old) + 1e-3 {
+        new
+    } else {
+        old
+    }
+}
+
+/// [`try_patch`] with the mouths moved out for the corners or not (J8).
+fn try_patch_with(
+    g: &RoadGraph,
+    adj: &[usize],
+    v: usize,
+    grow: bool,
+) -> Result<Patch, &'static str> {
+    let (patch, outline) = patch_outline_with(g, adj, v, grow)?;
     finish(patch, outline)
 }
 
 /// The patch of [`try_patch`] before its outline is checked and meshed:
 /// the arms and the outline points (rounded as stored).
+#[cfg(test)]
 fn patch_outline(g: &RoadGraph, adj: &[usize], v: usize) -> Result<(Patch, Outline), &'static str> {
+    patch_outline_with(g, adj, v, true)
+}
+
+/// [`patch_outline`] with the mouths moved out for the corners or not.
+fn patch_outline_with(
+    g: &RoadGraph,
+    adj: &[usize],
+    v: usize,
+    grow: bool,
+) -> Result<(Patch, Outline), &'static str> {
     let c = g.vertices[v];
     let raws: Vec<Raw> = adj
         .iter()
         .map(|&ei| raw_arm(g, c, v, ei))
         .collect::<Result<_, _>>()?;
-    outline_checked(g, &Site::single(g, v), raws, false)
+    let site = Site {
+        grow,
+        ..Site::single(g, v)
+    };
+    outline_checked(g, &site, raws, false)
 }
 
 /// The patch of a cluster (J3): vertices a few metres apart joined by the
@@ -1478,6 +1618,8 @@ fn try_cluster(
         centre: c,
         members: members.to_vec(),
         inner: inner.to_vec(),
+        run_on: Vec::new(),
+        grow: false,
     };
     // J7's corners between arms at different members first (their edge
     // lines meeting behind them, straight on through the cluster); where
@@ -1526,7 +1668,8 @@ fn outline_at(
     // A cluster's arms by the polar angle of a point along them round its
     // centroid; a vertex's by their direction.
     let polar = |r: &Raw| {
-        if cluster {
+        // (An arm run on past a way split, J8: by the point along it too.)
+        if cluster || !r.lead.is_empty() {
             angle(c, r.refp)
         } else {
             r.dir[1].atan2(r.dir[0])
@@ -1640,6 +1783,37 @@ fn outline_at(
             ti: add(x, mul(ri.dir, tlen)),
             tj: add(x, mul(rj.dir, tlen)),
         }));
+    }
+    // J8: the mouths far enough out for each corner's radius along the
+    // roads' real edge lines (the corner arcs above take the straight
+    // lines from the vertex: where an arm curves or runs on past a way
+    // split its corner was cut short at the mouth), within the caps.
+    if !legacy && !cluster && site.grow {
+        for _ in 0..MOUTH_ROUNDS {
+            let arms: Vec<Arm> = raws
+                .iter()
+                .enumerate()
+                .map(|(i, r)| make_arm(g, r, need[i].min(caps[i]), Some(0.0)))
+                .collect();
+            let mut grew = false;
+            for i in 0..n {
+                let j = (i + 1) % n;
+                let radius = corner_radius(arms[i].class.max(arms[j].class));
+                let d = sides::corner_deficit(g, &arms[i], &arms[j], radius, None, [false; 2]);
+                for (k, dk) in [(i, d[0]), (j, d[1])] {
+                    let m = need[k].min(caps[k]);
+                    // Not on a steep arm: its mouth farther out leaves its
+                    // blend less room (road kinks, Tenerife).
+                    if dk > 0.05 && m < caps[k] - 0.05 && arms[k].grade.abs() <= GROW_MAX_GRADE {
+                        need[k] = (m + dk).min(caps[k]);
+                        grew = true;
+                    }
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
     }
     // Mouths.
     let arms: Vec<Arm> = raws
@@ -2181,17 +2355,30 @@ fn side_lift(patch: &mut Patch, chains: &[Chain]) {
 fn stored_patch(g: &RoadGraph, v: usize, rec: &section::StoredPatch) -> Option<Patch> {
     g.vertices.get(v)?;
     let site = if rec.members.len() > 1 {
+        // The centre: the centroid of the junctions (a cluster's, J3), not
+        // of the way splits its arms run on past (J8).
         let mut c = [0.0, 0.0];
+        let mut k = 0usize;
         for &m in &rec.members {
-            c = add(c, *g.vertices.get(m as usize)?);
+            let p = *g.vertices.get(m as usize)?;
+            if !rec.run_on.contains(&m) {
+                c = add(c, p);
+                k += 1;
+            }
         }
-        if rec.inner.iter().any(|&e| e as usize >= g.edges.len()) || rec.members[0] as usize != v {
+        if rec.inner.iter().any(|&e| e as usize >= g.edges.len())
+            || rec.members[0] as usize != v
+            || k == 0
+            || rec.run_on.iter().any(|w| !rec.members.contains(w))
+        {
             return None;
         }
         Site {
-            centre: mul(c, 1.0 / rec.members.len() as f64),
+            centre: mul(c, 1.0 / k as f64),
             members: rec.members.clone(),
             inner: rec.inner.iter().map(|&e| e as usize).collect(),
+            run_on: rec.run_on.clone(),
+            grow: true,
         }
     } else {
         Site::single(g, v)
@@ -2204,8 +2391,19 @@ fn stored_patch(g: &RoadGraph, v: usize, rec: &section::StoredPatch) -> Option<P
         if !site.members.contains(&at) || e.from == e.to {
             return None;
         }
-        let at = at as usize;
-        let r = raw_arm(g, g.vertices[at], at, a.edge as usize).ok()?;
+        let r = if site.run_on.contains(&at) {
+            // Run on past the split `at`: the edge inside from the vertex.
+            let at = at as usize;
+            let lead = site.inner.iter().copied().find(|&ei| {
+                let x = &g.edges[ei];
+                let (f, t) = (x.from.0 as usize, x.to.0 as usize);
+                (f == v && t == at) || (f == at && t == v)
+            })?;
+            raw_run_on(g, v, lead, at, a.edge as usize).ok()?
+        } else {
+            let at = at as usize;
+            raw_arm(g, g.vertices[at], at, a.edge as usize).ok()?
+        };
         arms.push(make_arm(g, &r, a.mouth_m, Some(a.along)));
     }
     let patch = assemble(g, &site, arms).ok()?;
@@ -2556,6 +2754,16 @@ pub enum EndRule<'a> {
 pub const CLUSTER_EDGE_M: f64 = 12.0;
 /// A cluster has at most this many vertices.
 pub const CLUSTER_MAX: usize = 6;
+/// A junction's arm runs on past a plain way split at most this far from
+/// the junction (m, J8) …
+pub const RUN_ON_M: f64 = 15.0;
+/// … where the two edges bend by at most this much (degrees).
+pub const RUN_ON_BEND_DEG: f64 = 20.0;
+/// The mouths move out for their corners' radius along the real edge
+/// lines at most this many times (J8).
+pub const MOUTH_ROUNDS: usize = 3;
+/// … on arms at most this steep at their mouth.
+pub const GROW_MAX_GRADE: f64 = 0.06;
 
 /// The mouths of a vertex's patch: (edge, its `from` end there, mouth m).
 type Mouths = Vec<(usize, bool, f64)>;
@@ -2682,12 +2890,23 @@ impl JunctionSet {
                     return Some(r);
                 }
             }
+            // A way split a junction's arm runs on past (J8): that
+            // junction's patch.
+            if adj.len() == 2
+                && let Some(u) = self.run_on_owner(g, v)
+                && let Some(r) = self.rule_arc(g, u)
+                && matches!(&*r, VertexRule::Patch(p) if p.members.contains(&(v as u32)))
+            {
+                return Some(r);
+            }
             let rule = if adj.len() < 2 {
                 None
             } else if adj.len() == 2 {
                 build_mitre(g, adj, v)
             } else {
-                build_patch(g, adj, v).map(VertexRule::Patch)
+                self.run_on_patch(g, v)
+                    .or_else(|| build_patch(g, adj, v))
+                    .map(VertexRule::Patch)
             };
             rule.map(Arc::new)
         })
@@ -2709,17 +2928,20 @@ impl JunctionSet {
             }))
     }
 
-    /// The mouths of junction vertex `v`'s patch alone; `None`: it gets
-    /// none.
+    /// The mouths of junction vertex `v`'s patch alone (as J7 placed them,
+    /// without J8's mouths out for the corners: the clusters and the way
+    /// splits run on past are decided from them); `None`: it gets none.
     fn alone(&self, g: &RoadGraph, v: usize) -> Option<&[(usize, bool, f64)]> {
         self.alone[v]
             .get_or_init(|| {
-                try_patch(g, &self.adjacency[v], v).ok().map(|p| {
-                    p.arms
-                        .iter()
-                        .map(|a| (a.edge, a.at_from, a.mouth_m))
-                        .collect()
-                })
+                try_patch_with(g, &self.adjacency[v], v, false)
+                    .ok()
+                    .map(|p| {
+                        p.arms
+                            .iter()
+                            .map(|a| (a.edge, a.at_from, a.mouth_m))
+                            .collect()
+                    })
             })
             .as_deref()
     }
@@ -2809,6 +3031,162 @@ impl JunctionSet {
                 && self.usable(g, w)
                 && self.adjacency[w].len() >= 3
         })
+    }
+
+    /// A plain way split at the far end of edge `ei` from vertex `v` (J8):
+    /// its other end `w`, where one other drawn edge goes on – of the same
+    /// class and width, bending at most [`RUN_ON_BEND_DEG`], no side path,
+    /// bridge, tunnel, loop or the region border there. `(w, the edge
+    /// going on)`.
+    pub fn split_beyond(&self, g: &RoadGraph, v: usize, ei: usize) -> Option<(usize, usize)> {
+        let e = g.edges.get(ei)?;
+        let w = e.other(VertexId(v as u32)).0 as usize;
+        if w == v || self.degree[w] != 2 || self.adjacency[w].len() != 2 {
+            return None;
+        }
+        let adj = &self.adjacency[w];
+        let oi = if adj[0] == ei { adj[1] } else { adj[0] };
+        if oi == ei || !adj.contains(&ei) {
+            return None;
+        }
+        let o = &g.edges[oi];
+        let far = o.other(VertexId(w as u32)).0 as usize;
+        if far == v
+            || far == w
+            || g.boundary_vertices.contains(&VertexId(w as u32))
+            || e.bridge
+            || e.tunnel
+            || o.bridge
+            || o.tunnel
+            || o.class != e.class
+            || (o.width_m - e.width_m).abs() > WIDTH_CHANGE_M
+            || o.profile.len() < 2
+            || e.profile.len() < 2
+        {
+            return None;
+        }
+        let out_dir = |x: &Edge| {
+            let pts = &x.points;
+            if x.from.0 as usize == w {
+                unit(sub(pts[1], pts[0]))
+            } else {
+                unit(sub(pts[pts.len() - 2], pts[pts.len() - 1]))
+            }
+        };
+        let bend = std::f64::consts::PI - dot(out_dir(e), out_dir(o)).clamp(-1.0, 1.0).acos();
+        (bend <= RUN_ON_BEND_DEG.to_radians()).then_some((w, oi))
+    }
+
+    /// A junction that may run its arms on past way splits (J8): 3 or more
+    /// drawn edges, a rule of its own (not a cluster's).
+    fn run_on_junction(&self, g: &RoadGraph, u: usize) -> bool {
+        self.usable(g, u) && self.adjacency[u].len() >= 3 && self.cluster_of(g, u).is_none()
+    }
+
+    /// Whether junction `u`'s arm on edge `ei` is squeezed by its edge:
+    /// its patch alone puts that mouth at its share of the edge
+    /// ([`MOUTH_SHARE`]), or it gets no patch alone.
+    fn squeezed(&self, g: &RoadGraph, u: usize, ei: usize) -> bool {
+        let e = &g.edges[ei];
+        let at_from = e.from.0 as usize == u;
+        match self.alone(g, u) {
+            None => true,
+            Some(m) => m
+                .iter()
+                .find(|x| x.0 == ei && x.1 == at_from)
+                .is_none_or(|x| x.2 >= MOUTH_SHARE * e.length_m() - 1e-6),
+        }
+    }
+
+    /// Whether junction `u` runs its arm on edge `ei` on past the plain way
+    /// split at the edge's far end (J8): the edge shorter than
+    /// [`RUN_ON_M`], the arm squeezed by it, and the junction at the far
+    /// end of the edge going on does not run on past the same split (the
+    /// split belongs to neither then). `(the split, the edge going on)`.
+    pub fn runs_on(&self, g: &RoadGraph, u: usize, ei: usize) -> Option<(usize, usize)> {
+        let e = g.edges.get(ei)?;
+        if e.length_m() >= RUN_ON_M || !self.run_on_junction(g, u) {
+            return None;
+        }
+        let (w, oi) = self.split_beyond(g, u, ei)?;
+        if !self.squeezed(g, u, ei) {
+            return None;
+        }
+        let o = &g.edges[oi];
+        let far = o.other(VertexId(w as u32)).0 as usize;
+        if o.length_m() < RUN_ON_M
+            && self.run_on_junction(g, far)
+            && self.split_beyond(g, far, oi).is_some()
+            && self.squeezed(g, far, oi)
+        {
+            return None;
+        }
+        Some((w, oi))
+    }
+
+    /// The junction whose arm runs on past way split `w` (J8).
+    fn run_on_owner(&self, g: &RoadGraph, w: usize) -> Option<usize> {
+        if self.adjacency[w].len() != 2 || self.degree[w] != 2 {
+            return None;
+        }
+        self.adjacency[w].iter().find_map(|&ei| {
+            let u = g.edges[ei].other(VertexId(w as u32)).0 as usize;
+            (u != w && self.runs_on(g, u, ei).is_some_and(|(x, _)| x == w)).then_some(u)
+        })
+    }
+
+    /// The patch of junction `v` with its arms run on past the way splits
+    /// that squeeze them (J8); `None` where it has none to run on past or
+    /// that patch cannot be made.
+    fn run_on_patch(&self, g: &RoadGraph, v: usize) -> Option<Patch> {
+        if !self.run_on_junction(g, v) {
+            return None;
+        }
+        let adj = &self.adjacency[v];
+        let runs: Vec<(usize, usize, usize)> = adj
+            .iter()
+            .filter_map(|&ei| self.runs_on(g, v, ei).map(|(w, oi)| (ei, w, oi)))
+            .collect();
+        if runs.is_empty() {
+            return None;
+        }
+        let c = g.vertices[v];
+        let mut raws = Vec::with_capacity(adj.len());
+        for &ei in adj {
+            let r = match runs.iter().find(|x| x.0 == ei) {
+                Some(&(_, w, oi)) => raw_run_on(g, v, ei, w, oi),
+                None => raw_arm(g, c, v, ei),
+            };
+            raws.push(r.ok()?);
+        }
+        let mut run_on: Vec<u32> = runs.iter().map(|x| x.1 as u32).collect();
+        run_on.sort_unstable();
+        let mut inner: Vec<usize> = runs.iter().map(|x| x.0).collect();
+        inner.sort_unstable();
+        let mut members = vec![v as u32];
+        members.extend(run_on.iter().copied());
+        let mut site = Site {
+            centre: c,
+            members,
+            inner,
+            run_on,
+            grow: true,
+        };
+        // Where the mouths moved out for the corners cannot be made, as
+        // they were; and only where its sides bend no more than the
+        // junction's own patch's.
+        let run_on = outline_checked(g, &site, raws.clone(), true)
+            .and_then(|(patch, outline)| finish(patch, outline))
+            .or_else(|_| {
+                site.grow = false;
+                let (patch, outline) = outline_checked(g, &site, raws, true)?;
+                finish(patch, outline)
+            })
+            .ok()?;
+        match try_patch(g, adj, v) {
+            Ok(own) if side_bend(&run_on) > side_bend(&own) + 1e-3 => None,
+            _ => Some(run_on),
+        }
     }
 
     /// The patch of vertex `v` if it is drawn there (a cluster's at its

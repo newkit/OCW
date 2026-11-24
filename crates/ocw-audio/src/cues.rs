@@ -56,6 +56,9 @@ pub enum Cue {
     /// Over a pothole or an edge break (spec Phase 8 Q12): the tyre's
     /// hollow thump on the hole's far edge and a short rattle of the bike.
     Pothole,
+    /// Over a shallow, small pothole (Phase 8 Q12, v5.68): a lighter,
+    /// shorter thump without the rattle.
+    Dip,
     /// Over an open crack or into an alligator area (Phase 8 Q12): a dull
     /// tick of the tyre and a faint rattle.
     Crack,
@@ -65,7 +68,7 @@ pub enum Cue {
 
 impl Cue {
     /// The names `audio.play` takes.
-    pub const NAMES: [(&'static str, Cue); 25] = [
+    pub const NAMES: [(&'static str, Cue); 26] = [
         ("move", Cue::UiMove),
         ("value", Cue::UiValue),
         ("confirm", Cue::UiConfirm),
@@ -85,6 +88,7 @@ impl Cue {
         ("rub", Cue::Rub),
         ("shutter", Cue::Shutter),
         ("pothole", Cue::Pothole),
+        ("dip", Cue::Dip),
         ("crack", Cue::Crack),
         ("test-music", Cue::Test(Bus::Music)),
         ("test-effects", Cue::Test(Bus::Effects)),
@@ -126,6 +130,7 @@ impl Cue {
             Cue::Proximity => 0.5,
             Cue::Rub => 0.06,
             Cue::Pothole => 0.3,
+            Cue::Dip => 0.16,
             Cue::Crack => 0.09,
             Cue::Shutter => 0.45,
             Cue::Test(_) => 0.8,
@@ -170,6 +175,7 @@ impl CueVoice {
             filter: match cue {
                 Cue::WingBeat => Svf::new(380.0, 0.8, sample_rate),
                 Cue::Hoof | Cue::Bump | Cue::Pothole => Svf::new(240.0, 0.9, sample_rate),
+                Cue::Dip => Svf::new(420.0, 0.9, sample_rate),
                 Cue::Crack => Svf::new(900.0, 1.2, sample_rate),
                 Cue::Crash => Svf::new(3200.0, 1.5, sample_rate),
                 _ => Svf::new(2600.0, 2.0, sample_rate),
@@ -306,6 +312,23 @@ impl CueVoice {
                     + tone(t, 0.11, 0.16, 82.0, 0.22)
                     + low * 0.8 * (knock(0.0, 0.04) + 0.5 * knock(0.11, 0.03))
                     + rattle
+            }
+            // A shallow hole: one light knock of the tyre dropping in and a
+            // softer one coming out, no rattle.
+            Cue::Dip => {
+                let n = self.noise.white();
+                let low = self.filter.process(n).low;
+                let knock = |at: f32, tau: f32| {
+                    let x = t - at;
+                    if x >= 0.0 {
+                        (x / 0.002).min(1.0) * (-x / tau).exp()
+                    } else {
+                        0.0
+                    }
+                };
+                tone(t, 0.0, 0.12, 105.0, 0.22)
+                    + tone(t, 0.07, 0.08, 120.0, 0.1)
+                    + low * 0.55 * (knock(0.0, 0.025) + 0.4 * knock(0.07, 0.02))
             }
             // A dull tick of the tyre over the crack and a faint rattle.
             Cue::Crack => {

@@ -237,6 +237,22 @@ pub fn models() -> Vec<(Entry, Model)> {
         stamp(&mut m, &e, json!({}));
         out.push((e, m));
     }
+    // The VR bike computer (spec §14 Phase 11, v4.68 on `agent/vr-x1`;
+    // WebXR 14I W2).
+    {
+        let mut m = crate::computer::build();
+        let e = entry(
+            crate::computer::FILE,
+            Kind::Part,
+            "ocw_assets::computer::build()",
+        );
+        stamp(
+            &mut m,
+            &e,
+            json!({ "slot": "computer", "anchor": crate::computer::MOUNT_ANCHOR, "screen": crate::computer::SCREEN_ANCHOR }),
+        );
+        out.push((e, m));
+    }
     out
 }
 
@@ -314,7 +330,14 @@ pub fn write_manifest(old: &str, prefixes: &[&str], new: &[Entry]) -> Result<Str
 }
 
 /// The folders this crate's exporter owns in the manifest.
-pub const OWN_PREFIXES: [&str; 5] = ["bikes/", "creatures/", "riders/", "wear/", "workshop/"];
+pub const OWN_PREFIXES: [&str; 6] = [
+    "bikes/",
+    "creatures/",
+    "parts/computer/",
+    "riders/",
+    "wear/",
+    "workshop/",
+];
 
 #[cfg(test)]
 mod tests {
@@ -325,8 +348,8 @@ mod tests {
         let a = files();
         let b = files();
         // Bikes, the riders, the rider's part files (4N N8), helmets.
-        // … the unicorn and the workshop pieces.
-        let more = 1 + crate::workshop::Piece::ALL.len();
+        // … the unicorn, the workshop pieces and the VR bike computer.
+        let more = 1 + crate::workshop::Piece::ALL.len() + 1;
         assert_eq!(
             a.len(),
             6 + 2 + crate::rider_split::part_files().len() + 4 + more

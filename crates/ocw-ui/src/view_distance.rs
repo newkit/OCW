@@ -444,6 +444,7 @@ mod tests {
         .insert_resource(crate::quality::QualityContext {
             api,
             device: DeviceInfo::default(),
+            xr: None,
         });
         app.update();
         app

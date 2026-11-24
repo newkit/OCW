@@ -30,6 +30,7 @@ pub mod anim;
 pub mod bikes;
 pub mod check;
 pub mod clothing;
+pub mod computer;
 #[cfg(feature = "tools")]
 pub mod convert;
 pub mod diff;

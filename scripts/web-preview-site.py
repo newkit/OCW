@@ -4,6 +4,7 @@
     scripts/web-preview-site.py [--build target/web-preview]
         [--worlds target/web-preview-worlds/release] [--out target/web-preview-site]
         [--crates crates.json] [--build-id TEXT] [--max-mb 1000]
+        [--xr-build target/web-preview-xr]
 
 Inputs:
   --build    the preview build (`scripts/build-web.sh --preview`)
@@ -17,6 +18,13 @@ Inputs:
   --crates   optional `cargo metadata --format-version 1 --filter-platform
              wasm32-unknown-unknown` output: the Rust crates compiled into
              the module, listed with their licences on the credits page.
+  --xr-build optional: the WebXR preview build (`make web-preview-xr`:
+             `WEB_GPU=webxr scripts/build-web.sh --preview`), published
+             under xr/ (spec 14 Phase 14, 14I Q6 (a): VR test builds at
+             /xr/ next to the normal preview, which stays as it is). Its
+             page shares the site's worlds (../worlds/), its rides open
+             the WebXR module (xr=1), its credits link goes to the site's.
+             Skipped with a note when the directory has no WebXR module.
 
 Writes OUT/: the build (index.html, the two modules, ocw-voice.js, ocw-gpu.js, the
 logo), worlds/ in the `world-builder publish` layout, config.json (the
@@ -50,7 +58,7 @@ TEST_RIDES = [
 ]
 
 BUILD_FILES = ("index.html", "ocw_web.js", "ocw_web_bg.wasm", "ocw_web_webgl2.js",
-               "ocw_web_webgl2_bg.wasm", "ocw-voice.js", "ocw-gpu.js", "ocw.svg", "sizes.txt",
+               "ocw_web_webgl2_bg.wasm", "ocw-voice.js", "ocw-gpu.js", "ocw-xr.js", "ocw.svg", "sizes.txt",
                # Add to Home Screen (spec 3.2.3): the manifest and its icons.
                "manifest.webmanifest", "ocw-256.png", "ocw-512.png")
 
@@ -123,12 +131,20 @@ def built_with_simd(build):
         return "wasm features: +simd128" in f.read()
 
 
-def app_bytes(build):
+MODULES = (("ocw_web_bg.wasm", "ocw_web.js"), ("ocw_web_webgl2_bg.wasm", "ocw_web_webgl2.js"))
+# The WebXR build's files (14I W1; ocw-web's features webgl2,webxr) and the
+# page files it needs beside them.
+XR_MODULES = (("ocw_web_webxr_bg.wasm", "ocw_web_webxr.js"),)
+XR_FILES = ("index.html", "ocw_web_webxr.js", "ocw_web_webxr_bg.wasm", "ocw-voice.js", "ocw-gpu.js",
+            "ocw-xr.js", "ocw.svg", "sizes.txt", "manifest.webmanifest", "ocw-256.png", "ocw-512.png")
+
+
+def app_bytes(build, modules=MODULES):
     """The app's first download: both wasm modules are built, the page loads
     one, served gzip-compressed by GitHub Pages (B8a) – so the larger
     gzipped module plus its JS glue."""
     best = 0
-    for wasm, js in (("ocw_web_bg.wasm", "ocw_web.js"), ("ocw_web_webgl2_bg.wasm", "ocw_web_webgl2.js")):
+    for wasm, js in modules:
         w = os.path.join(build, wasm)
         if not os.path.isfile(w):
             continue
@@ -148,6 +164,43 @@ def size_line(app, world=0):
                 " no world data.")
     return (f"Download: {app / 1e6:.0f} MB app + up to {world / 1e6:.0f} MB world, streamed while you ride"
             f" (all of it: {load_time(app + world)} at {LINE_MBIT} Mbit/s); cached for the next visit.")
+
+
+def xr_site(xr_build, found, out, build_id=""):
+    """The WebXR preview under OUT/xr/ (14I Q6 (a)): the XR build's page and
+    module, a config.json with the site's worlds (../worlds/) and the rides
+    with xr=1, a credits.html that leads to the site's. Returns the number
+    of files placed (0: no WebXR module in xr_build, skipped)."""
+    if not os.path.isfile(os.path.join(xr_build, "ocw_web_webxr_bg.wasm")):
+        print(f"note: {xr_build}/ocw_web_webxr_bg.wasm missing: no /xr/ (make web-preview-xr)")
+        return 0
+    # Q10 (a): /xr/ serves a SIMD build too.
+    if not built_with_simd(xr_build):
+        sys.exit(f"{xr_build}: not built with WebAssembly SIMD (sizes.txt): rebuild with make web-preview-xr")
+    xr = os.path.join(out, "xr")
+    os.makedirs(xr, exist_ok=True)
+    n = 0
+    for f in XR_FILES:
+        src = os.path.join(xr_build, f)
+        if os.path.isfile(src):
+            place(src, os.path.join(xr, f))
+            n += 1
+    rides = [dict(r, query=r["query"] + "&xr=1") for r in start_rides(found, app_bytes(xr_build, XR_MODULES))]
+    config = {
+        "channel": "preview",
+        "worlds": "../worlds/",
+        "server": "", "voice": "", "signin": "",
+        "build": (build_id + " · WebXR").strip(" ·"),
+        "start": rides,
+    }
+    with open(os.path.join(xr, "config.json"), "w") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    with open(os.path.join(xr, "credits.html"), "w") as f:
+        f.write('<!doctype html><meta charset="utf-8"><title>Credits</title>'
+                '<meta http-equiv="refresh" content="0; url=../credits.html">'
+                '<a href="../credits.html">Credits</a>\n')
+    return n + 2
 
 
 def start_rides(found, app=0):
@@ -323,6 +376,7 @@ def main():
     p.add_argument("--crates", default=None)
     p.add_argument("--build-id", default="")
     p.add_argument("--max-mb", type=float, default=1000.0)
+    p.add_argument("--xr-build", default=None)
     a = p.parse_args()
     for f in ("index.html", "ocw_web_bg.wasm", "ocw_web_webgl2_bg.wasm"):
         if not os.path.isfile(os.path.join(a.build, f)):
@@ -347,6 +401,7 @@ def main():
         json.dump(config, f, indent=2, ensure_ascii=False)
         f.write("\n")
     credits(found, crates_table(a.crates) if a.crates else [], a.out)
+    xr_files = xr_site(a.xr_build, found, a.out, a.build_id) if a.xr_build else 0
     open(os.path.join(a.out, ".nojekyll"), "w").close()
     total, lines = 0, []
     for d, _, files in os.walk(a.out):
@@ -359,7 +414,8 @@ def main():
     with open(os.path.join(a.out, "site.txt"), "w") as f:
         f.write("\n".join(sorted(lines[:-1], key=lambda l: l.split()[-1])) + "\n" + lines[-1] + "\n")
     print("\n".join(lines[-1:]))
-    print(f"site: {a.out}/ ({len(lines) - 1} files, {len(found)} worlds, {len(config['start'])} rides)")
+    print(f"site: {a.out}/ ({len(lines) - 1} files, {len(found)} worlds, {len(config['start'])} rides"
+          + (f"; WebXR at xr/: {xr_files} files" if xr_files else "") + ")")
     if total > a.max_mb * 1e6:
         sys.exit(f"the site is {total / 1e6:.0f} MB, over {a.max_mb:.0f} MB (GitHub Pages: 1 GB)")
 

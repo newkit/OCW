@@ -94,12 +94,24 @@ fn through_pair(
     } else {
         let p = js.patch(g, v)?;
         let [a, b] = p.through?;
-        // In a cluster only a through road whose two arms leave here.
+        // In a cluster only a through road whose two arms leave here; an
+        // arm run on past a way split (J8) by the edge it runs on past.
         let here = g.vertices[v];
-        if p.arms[a].origin != here || p.arms[b].origin != here {
-            return None;
-        }
-        [p.arms[a].edge, p.arms[b].edge]
+        let edge_here = |k: usize| -> Option<usize> {
+            let arm = &p.arms[k];
+            if arm.origin == here {
+                return Some(arm.edge);
+            }
+            if arm.lead.is_empty() {
+                return None;
+            }
+            p.inner.iter().copied().find(|&ei| {
+                let e = &g.edges[ei];
+                let ends = [e.from.0 as usize, e.to.0 as usize];
+                ends.contains(&v) && ends.iter().any(|&w| g.vertices[w] == arm.origin)
+            })
+        };
+        [edge_here(a)?, edge_here(b)?]
     };
     (pair[0] != pair[1] && usable(pair[0]) && usable(pair[1])).then_some(pair)
 }
@@ -319,7 +331,9 @@ fn drawn_samples(
             for i in 0..n {
                 let s = sample_m(i, len);
                 let m = if a.at_from { s } else { len - s };
-                let vertex = if a.at_from { i == 0 } else { i == n - 1 };
+                // (An arm run on past a way split, J8: its end there is
+                // not the junction's vertex.)
+                let vertex = a.lead.is_empty() && if a.at_from { i == 0 } else { i == n - 1 };
                 if m > reach {
                     continue;
                 }
@@ -348,6 +362,12 @@ fn drawn_samples(
             for i in 0..n {
                 let s = sample_m(i, len);
                 let vertex = i == 0 || i == n - 1;
+                // At a way split an arm runs on past (J8): the arm's own
+                // first sample there (it keeps the mouth's profile).
+                let end = if i == 0 { e.from } else { e.to };
+                if vertex && p.run_on.contains(&end.0) {
+                    continue;
+                }
                 if !keep(ei, s) || pinned.contains(&(ei, i)) {
                     if vertex {
                         vertex_ok = false;
@@ -674,7 +694,9 @@ fn blended_planes(
             return out;
         };
         // Clusters keep their surface (their edges inside are nodes of it).
-        if p.through.is_some() || p.arms.len() < 2 || p.members.len() > 1 {
+        // (One junction whose arms run on past way splits, J8, takes its
+        // plane; the edges run on past lie on it.)
+        if p.through.is_some() || p.arms.len() < 2 || p.is_cluster() {
             return out;
         }
         let Some((h0, gx, gz)) = junction_plane(g, p) else {
@@ -775,6 +797,18 @@ fn blended_planes(
             }
             arm.pop();
             out.extend(arm.into_iter().map(|(i, h)| (a.edge, i, h)));
+        }
+        // The edges an arm runs on past (J8): on the plane all along.
+        for &ei in &p.inner {
+            let e = &g.edges[ei];
+            let (len, cum) = (e.length_m(), cumulative(&e.points));
+            for i in 0..e.profile.len() {
+                let s = sample_m(i, len);
+                if !keep(ei, s) {
+                    return Vec::new();
+                }
+                out.push((ei, i, plane(frame_at(&e.points, &cum, s).0)));
+            }
         }
         out
     })

@@ -432,6 +432,7 @@ impl Devices {
             messages: self.info.messages.clone(),
             file: self.file_text(),
             virtual_trainer: running.iter().any(|r| r.id.is_none()),
+            bridge: None,
         }
     }
 }
@@ -444,11 +445,19 @@ fn poll_devices(
     link: Res<ServerLink>,
     mut client: ResMut<ClientState>,
     mut console: ResMut<ConsoleState>,
+    bridge: Option<Res<crate::bridge::Bridge>>,
 ) {
     let mut events = Vec::new();
     for (i, r) in devices.running().iter().enumerate() {
         for e in r.handle.events.try_iter() {
             events.push((i, r.handle.name.clone(), e));
+        }
+    }
+    // The sensor bridge passes every reading on as it comes (spec 14
+    // Phase 10, 10D.2).
+    if let Some(b) = &bridge {
+        for (_, name, e) in &events {
+            b.relay(name, e, is_virtual(name));
         }
     }
     let mut take_over: Option<String> = None;
@@ -521,7 +530,12 @@ pub fn control_trainer(
     client: Res<ClientState>,
     devices: Res<Devices>,
     mut trainer: ResMut<Trainer>,
+    bridge: Option<Res<crate::bridge::Bridge>>,
 ) {
+    // A paired browser's ride sets the load (the bridge sends its control).
+    if bridge.is_some_and(|b| b.browser_controls()) {
+        return;
+    }
     if let Some(cmd) = trainer.0.follow(time.elapsed_secs_f64(), &client.0) {
         devices.command_all(cmd);
     }
@@ -608,9 +622,14 @@ fn publish_status(
 }
 
 /// Settings → Trainer → Devices (the shared menu's model).
-fn publish_menu(devices: Res<Devices>, menu: Option<ResMut<ocw_ui::menu::DevicesMenu>>) {
+fn publish_menu(
+    devices: Res<Devices>,
+    menu: Option<ResMut<ocw_ui::menu::DevicesMenu>>,
+    bridge: Option<Res<crate::bridge::Bridge>>,
+) {
     let Some(mut menu) = menu else { return };
-    let info = devices.menu_info();
+    let mut info = devices.menu_info();
+    info.bridge = bridge.map(|b| b.info());
     if menu.0 != info {
         menu.0 = info;
     }

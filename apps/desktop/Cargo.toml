@@ -33,6 +33,10 @@ ocw-ui.workspace = true
 # The game sounds and their mixer (shared with apps/web, spec §14 Phase 10 B5).
 ocw-audio.workspace = true
 ocw-server.workspace = true
+# The local sensor bridge: the trainer shared with a browser (spec 14
+# Phase 10, 10D.2); qrcode (MIT OR Apache-2.0) draws its page link.
+ocw-bridge.workspace = true
+qrcode = { version = "0.14", default-features = false }
 # Bevy's full 2D, 3D and UI sets, as before the browser's feature pruning
 # (the workspace's list is the browser's minimum; spec 14 Phase 10, 10G).
 bevy = { workspace = true, features = ["2d", "3d", "ui"] }
@@ -49,6 +53,8 @@ dirs.workspace = true
 ocw-fit.workspace = true
 tracing.workspace = true
 serde_json.workspace = true
+# The headset's left-eye pictures over the sensor bridge (spec 14I W3).
+base64.workspace = true
 # Strava uploads (MIT OR Apache-2.0; rustls, no OpenSSL).
 ureq.workspace = true
 # Game audio output (Apache-2.0; spec §3.3).

@@ -6818,6 +6818,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "ocw-bridge"
+version = "0.2.5"
+dependencies = [
+ "getrandom 0.3.4",
+ "ocw-devices",
+ "p256",
+ "quinn",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "web-transport-quinn",
+]
+
+[[package]]
 name = "ocw-client"
 version = "0.2.5"
 dependencies = [
@@ -6856,6 +6875,7 @@ name = "ocw-desktop"
 version = "0.2.5"
 dependencies = [
  "arboard",
+ "base64 0.22.1",
  "bevy",
  "clap",
  "cpal",
@@ -6866,6 +6886,7 @@ dependencies = [
  "ocw-assets",
  "ocw-audio",
  "ocw-auth",
+ "ocw-bridge",
  "ocw-client",
  "ocw-core",
  "ocw-devices",
@@ -6881,6 +6902,7 @@ dependencies = [
  "ocw-winres",
  "ocw-world",
  "ocw-worldstore",
+ "qrcode",
  "serde",
  "serde_json",
  "tokio",
@@ -6968,6 +6990,7 @@ dependencies = [
  "ocw-sky",
  "ocw-weather",
  "ocw-world",
+ "ocw-xr",
  "png",
  "raw-window-handle",
  "serde",
@@ -7134,6 +7157,7 @@ dependencies = [
  "js-sys",
  "ocw-audio",
  "ocw-auth",
+ "ocw-bridge",
  "ocw-client",
  "ocw-core",
  "ocw-devices",
@@ -7149,6 +7173,7 @@ dependencies = [
  "ocw-winres",
  "ocw-world",
  "ocw-worldstore",
+ "ocw-xr",
  "serde",
  "serde_json",
  "wasm-bindgen",
@@ -7211,6 +7236,13 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "ureq",
+]
+
+[[package]]
+name = "ocw-xr"
+version = "0.2.5"
+dependencies = [
+ "glam",
 ]
 
 [[package]]
@@ -8028,6 +8060,12 @@ name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
+
+[[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
 
 [[package]]
 name = "quick-error"

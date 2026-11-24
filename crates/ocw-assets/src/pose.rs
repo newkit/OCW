@@ -61,6 +61,10 @@ pub struct BikeRig {
     pub wheelbase: f32,
     /// TT bike: the elbows rest on pads, they bend down instead of out.
     pub aero_bars: bool,
+    /// The bar's centre at the stem's clamp (the `handlebar` node): the VR
+    /// bike computer's out-front mount sits ahead of it (spec §14 Phase
+    /// 11, v4.68 on `agent/vr-x1`; WebXR 14I W2).
+    pub bar_clamp: Vec3,
 }
 
 /// Rig nodes of the rider model.
@@ -286,6 +290,7 @@ impl BikeRig {
             tyre_crown: m.position(TYRE_CROWN).map_or(0.0, |p| p.y),
             wheelbase: world(m, WHEEL_REAR)?.z - world(m, WHEEL_FRONT)?.z,
             aero_bars: m.node("aero_pads").is_some(),
+            bar_clamp: world(m, HANDLEBAR)?,
         };
         if rig.pedal_x[0] >= 0.0 || rig.pedal_x[1] <= 0.0 {
             return Err("pedal_l must be on the left (-x), pedal_r on the right".into());
@@ -1411,6 +1416,40 @@ pub fn photographer(
     )
 }
 
+/// The eyes of a posed rider in the bike's frame (the ground at y = 0, −Z
+/// ahead): the neck on the torso, [`EYES`] in the head scaled with the
+/// rider.
+pub fn eyes(rider: &RiderRig, p: &Pose) -> Vec3 {
+    let torso_world = p.pelvis.1 * p.torso;
+    let head_world = torso_world * p.head;
+    let torso_pos = p.pelvis.0 + p.pelvis.1 * rider.torso;
+    let k = rider.neck.length() / REFERENCE_NECK;
+    torso_pos + torso_world * rider.neck + head_world * (EYES * k)
+}
+
+/// Where a rider's eyes are on a fitted bike (spec 14 Phase 14, 14I Q8):
+/// seated (`stand` 0) or out of the saddle (1), the hands on the hoods,
+/// the cranks level – the bike's frame, ground at y = 0. The saddle stands
+/// where [`BodyFit`] put it for the rider profile's body height, so this
+/// is the eye height that rider has on that bike.
+pub fn eye_point(body: &BodyFit, stand: f32) -> Vec3 {
+    eye_point_on(&body.rider, &body.bike, &body.fit, stand)
+}
+
+/// [`eye_point`] for a rider rig already fitted to its bike.
+pub fn eye_point_on(rider: &RiderRig, bike: &BikeRig, fit: &Fit, stand: f32) -> Vec3 {
+    let p = pose(
+        rider,
+        bike,
+        fit,
+        &PoseParams {
+            stand,
+            ..Default::default()
+        },
+    );
+    eyes(rider, &p)
+}
+
 /// Where hand `side` of a posed rider model holds (tests): the centre of
 /// the bar its fingers wrap, else the grip node.
 #[cfg(test)]
@@ -1909,6 +1948,44 @@ mod tests {
         assert!(tt > road + 0.15, "tt {tt} road {road}");
         assert!(mtb < road - 0.1, "mtb {mtb} road {road}");
         assert!((0.6..1.2).contains(&road), "road {road}");
+    }
+
+    /// 14I Q8: the eyes sit above the saddle the profile's height gives,
+    /// higher for a taller rider (a higher saddle) and higher again out of
+    /// the saddle; a 1.78 m rider's eyes are where a real one's are on a
+    /// road bike (1.1 – 1.65 m above the floor, low on the time-trial bike).
+    #[test]
+    fn the_eye_point_follows_the_saddle_height() {
+        let base = crate::shipped::rider_rig();
+        for profile in ocw_core::ProfileId::ALL {
+            let bike = crate::shipped::bike_rig(profile);
+            let mut last: Option<(f32, f32)> = None;
+            for scale in [0.86f32, 1.0, 1.14] {
+                let body = BodyFit::new(&base, &bike, scale);
+                let seated = eye_point(&body, 0.0);
+                let standing = eye_point(&body, 1.0);
+                assert!(
+                    seated.y > body.bike.saddle.y + 0.15 * scale,
+                    "{profile:?} {scale}: eyes {seated} saddle {}",
+                    body.bike.saddle
+                );
+                assert!(
+                    standing.y > seated.y + 0.01,
+                    "{profile:?} {scale}: standing {standing} seated {seated}"
+                );
+                if (scale - 1.0).abs() < 1e-6 {
+                    assert!(
+                        (1.1..1.65).contains(&seated.y),
+                        "{profile:?}: seated eyes {seated}"
+                    );
+                }
+                if let Some((saddle, eye)) = last {
+                    assert!(body.bike.saddle.y > saddle, "{profile:?} {scale}: saddle");
+                    assert!(seated.y > eye, "{profile:?} {scale}: eyes");
+                }
+                last = Some((body.bike.saddle.y, seated.y));
+            }
+        }
     }
 
     #[test]

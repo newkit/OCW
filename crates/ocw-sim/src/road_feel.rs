@@ -1,6 +1,7 @@
 //! The road damage in the ride (spec Phase 8 Q12 (c), v5.35): a bad
 //! surface rolls harder, and riding over a pothole, an edge break, an open
-//! crack or into an alligator area is a **bump** – a small loss of speed
+//! crack or into an alligator or block-cracked area is a **bump** (a
+//! pothole's by its size and depth, a crack's by its width) – a small loss of speed
 //! here, and on the client a short resistance kick on the trainer, a small
 //! camera shake and a sound (`ocw-client::road_bumps`).
 //!
@@ -47,25 +48,34 @@ pub enum BumpKind {
     EdgeBreak,
     Crack,
     Alligator,
+    Block,
 }
 
 /// A bump over road damage.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RoadBump {
     pub kind: BumpKind,
-    /// 0 … 1: a large pothole at speed 0.8, a small one 0.35, an open
-    /// crack 0.12, into an alligator area 0.18.
+    /// 0 … 1: a large deep pothole 0.85, a small shallow one 0.3, an
+    /// open crack 0.09 – 0.15 by its width, into an alligator area 0.18,
+    /// into a block-cracked one 0.16.
     pub strength: f64,
     /// The feature's id (the same each time it is met).
     pub id: u64,
 }
 
-/// Strength of a crack and of riding into an alligator area.
-pub const CRACK_STRENGTH: f64 = 0.12;
+/// Strength of an open crack from the finest (3 mm half width) to the
+/// widest (1 cm).
+pub const CRACK_STRENGTH: (f64, f64) = (0.09, 0.15);
+/// Riding into an alligator area and into a block-cracked one.
 pub const ALLIGATOR_STRENGTH: f64 = 0.18;
-/// A pothole's strength from the smallest (15 cm radius) to the largest
-/// (60 cm).
-pub const POTHOLE_STRENGTH: (f64, f64) = (0.35, 0.8);
+pub const BLOCK_STRENGTH: f64 = 0.16;
+/// A pothole's strength: this at the smallest (10 cm radius) and
+/// shallowest (1 cm) …
+pub const POTHOLE_STRENGTH: f64 = 0.3;
+/// … plus this from the smallest to the largest radius (60 cm) …
+pub const POTHOLE_PER_SIZE: f64 = 0.2;
+/// … and this from 1 to 8 cm deep: the largest, deepest hole 0.85.
+pub const POTHOLE_PER_DEPTH: f64 = 0.35;
 /// An edge break: the wheel meets only a part of it.
 pub const EDGE_BREAK_SHARE: f64 = 0.9;
 /// Holes on gravel and dirt are softer hollows, on paving sunken spots.
@@ -105,15 +115,23 @@ pub fn bump_of(f: &Feature) -> RoadBump {
         RoadSurface::Asphalt | RoadSurface::WornAsphalt => 1.0,
         _ => SOFT_HOLE_SHARE,
     };
-    let hole = |r: f32| {
-        let x = ((f64::from(r) - 0.15) / 0.45).clamp(0.0, 1.0);
-        (POTHOLE_STRENGTH.0 + (POTHOLE_STRENGTH.1 - POTHOLE_STRENGTH.0) * x) * soft
+    let hole = |r: f32, depth: f32| {
+        let size = ((f64::from(r) - 0.1) / 0.5).clamp(0.0, 1.0);
+        let deep = ((f64::from(depth) - 0.01) / 0.07).clamp(0.0, 1.0);
+        (POTHOLE_STRENGTH + POTHOLE_PER_SIZE * size + POTHOLE_PER_DEPTH * deep) * soft
     };
     let (kind, strength) = match f.kind {
-        FeatureKind::Pothole { r } => (BumpKind::Pothole, hole(r)),
-        FeatureKind::EdgeBreak { r } => (BumpKind::EdgeBreak, hole(r) * EDGE_BREAK_SHARE),
-        FeatureKind::Crack => (BumpKind::Crack, CRACK_STRENGTH),
+        FeatureKind::Pothole { r, depth } => (BumpKind::Pothole, hole(r, depth)),
+        FeatureKind::EdgeBreak { r, depth } => {
+            (BumpKind::EdgeBreak, hole(r, depth) * EDGE_BREAK_SHARE)
+        }
+        FeatureKind::Crack { width } => {
+            let w = ((f64::from(width) - 0.003) / 0.007).clamp(0.0, 1.0);
+            let (lo, hi) = CRACK_STRENGTH;
+            (BumpKind::Crack, lo + (hi - lo) * w)
+        }
         FeatureKind::Alligator => (BumpKind::Alligator, ALLIGATOR_STRENGTH),
+        FeatureKind::Block => (BumpKind::Block, BLOCK_STRENGTH),
     };
     RoadBump {
         kind,
@@ -184,31 +202,46 @@ mod tests {
     #[test]
     fn bumps_per_damage_kind() {
         let a = RoadSurface::Asphalt;
-        let small = bump_of(&feature(FeatureKind::Pothole { r: 0.15 }, a));
-        let large = bump_of(&feature(FeatureKind::Pothole { r: 0.6 }, a));
-        let edge = bump_of(&feature(FeatureKind::EdgeBreak { r: 0.6 }, a));
-        let crack = bump_of(&feature(FeatureKind::Crack, a));
-        let alligator = bump_of(&feature(FeatureKind::Alligator, a));
-        let hollow = bump_of(&feature(
-            FeatureKind::Pothole { r: 0.6 },
-            RoadSurface::Gravel,
+        let hole = |r, depth| FeatureKind::Pothole { r, depth };
+        let small = bump_of(&feature(hole(0.1, 0.01), a));
+        let large = bump_of(&feature(hole(0.6, 0.08), a));
+        let wide_shallow = bump_of(&feature(hole(0.6, 0.015), a));
+        let small_deep = bump_of(&feature(hole(0.12, 0.07), a));
+        let edge = bump_of(&feature(
+            FeatureKind::EdgeBreak {
+                r: 0.6,
+                depth: 0.08,
+            },
+            a,
         ));
+        let fine = bump_of(&feature(FeatureKind::Crack { width: 0.003 }, a));
+        let crack = bump_of(&feature(FeatureKind::Crack { width: 0.01 }, a));
+        let alligator = bump_of(&feature(FeatureKind::Alligator, a));
+        let block = bump_of(&feature(FeatureKind::Block, a));
+        let hollow = bump_of(&feature(hole(0.6, 0.08), RoadSurface::Gravel));
         assert_eq!(small.kind, BumpKind::Pothole);
-        assert!((small.strength - 0.35).abs() < 1e-6);
-        assert!((large.strength - 0.8).abs() < 1e-12);
+        assert!((small.strength - 0.3).abs() < 1e-6, "{}", small.strength);
+        assert!((large.strength - 0.85).abs() < 1e-6);
+        // Size and depth both count: the deep small hole bites harder than
+        // the wide shallow one.
+        assert!(small_deep.strength > wide_shallow.strength);
+        assert!(wide_shallow.strength > small.strength);
         assert_eq!(edge.kind, BumpKind::EdgeBreak);
         assert!(edge.strength < large.strength && edge.strength > small.strength);
-        assert_eq!((crack.kind, crack.strength), (BumpKind::Crack, 0.12));
+        assert_eq!(crack.kind, BumpKind::Crack);
+        assert!((fine.strength - 0.09).abs() < 1e-6 && (crack.strength - 0.15).abs() < 1e-6);
         assert_eq!(alligator.kind, BumpKind::Alligator);
-        assert!(crack.strength < alligator.strength && alligator.strength < small.strength);
+        assert_eq!((block.kind, block.strength), (BumpKind::Block, 0.16));
+        assert!(crack.strength < block.strength && block.strength < alligator.strength);
+        assert!(alligator.strength < small.strength);
         assert!(hollow.strength < large.strength);
         assert_eq!(large.id, 7);
-        // The speed it costs: at most 0.28 m/s (1 km/h) for the largest
+        // The speed it costs: at most 0.3 m/s (1.1 km/h) for the largest
         // hole at speed, less when slow, never more than the speed.
-        assert!((speed_loss(&large, 12.0) - 0.28).abs() < 1e-12);
+        assert!((speed_loss(&large, 12.0) - 0.2975).abs() < 1e-6);
         assert!(speed_loss(&large, 4.0) < speed_loss(&large, 8.0));
         assert_eq!(speed_loss(&large, 0.0), 0.0);
-        assert!(speed_loss(&crack, 10.0) < 0.05);
+        assert!(speed_loss(&crack, 10.0) < 0.06);
     }
 
     #[test]

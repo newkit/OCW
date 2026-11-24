@@ -140,11 +140,80 @@ fn ground_of(m: &Model, i: usize) -> Ground {
     }
 }
 
-/// Whether node `i` is drawn (not a proxy, an anchor or a far level).
-fn drawn(m: &Model, i: usize) -> bool {
-    !m.under_named(i, |n| {
-        is_far_level(n) || n.starts_with("col_") || n.starts_with("anchor_")
-    })
+/// Which of a file's levels [`place_level`] draws (spec 15B): the near
+/// model, or the far one under `lod1` (spec 16H Q24: props switch at
+/// 60 m, `ocw-render::lod`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Level {
+    #[default]
+    Near,
+    Lod1,
+}
+
+/// Whether `m` has a far level `lod1` with geometry to draw.
+pub fn has_lod1(m: &Model) -> bool {
+    m.node(LOD1).is_some_and(|l| m.triangles_below(Some(l)) > 0)
+}
+
+/// The far level's node name.
+const LOD1: &str = "lod1";
+
+/// Whether node `i` is drawn at `level` (never a proxy or an anchor; the
+/// near level without the far ones, `lod1` only what is under it).
+fn drawn(m: &Model, i: usize, level: Level) -> bool {
+    let aside = |n: &str| n.starts_with("col_") || n.starts_with("anchor_");
+    match level {
+        Level::Near => !m.under_named(i, |n| is_far_level(n) || aside(n)),
+        Level::Lod1 => {
+            m.under_named(i, |n| n == LOD1)
+                && !m.under_named(i, |n| (n != LOD1 && is_far_level(n)) || aside(n))
+        }
+    }
+}
+
+/// `m` with a far level made from its near model: every drawn node copied
+/// under a new `lod1` (named `<node>_lod1`, at the node's place, with the
+/// roles it inherits), its materials through `material` (spec 16H Q24:
+/// the tests of the props' switch and the look of it in a test build;
+/// the shipped props have no `lod1` of their own yet). A file that has a
+/// `lod1` already is returned as it is.
+pub fn with_copied_lod1(
+    m: &Model,
+    material: &dyn Fn(&crate::model::Material) -> crate::model::Material,
+) -> Model {
+    let mut out = m.clone();
+    let Some(root) = m.nodes.iter().position(|n| n.parent.is_none()) else {
+        return out;
+    };
+    if m.node(LOD1).is_some() {
+        return out;
+    }
+    let lod = out.add(crate::model::Node::new(LOD1, Some(root), Vec3::ZERO));
+    let base = m.world(root).inverse();
+    for (i, n) in m.nodes.iter().enumerate() {
+        if n.primitives.is_empty() || !drawn(m, i, Level::Near) {
+            continue;
+        }
+        let (scale, rotation, translation) = (base * m.world(i)).to_scale_rotation_translation();
+        let mut c = crate::model::Node::new(&format!("{}_{LOD1}", n.name), Some(lod), translation);
+        c.rotation = rotation;
+        c.scale = scale;
+        let mut roles = serde_json::Map::new();
+        for key in [SPAN, REACH, GROUND] {
+            if let Some(v) = role(m, i, key) {
+                roles.insert(key.into(), v.into());
+            }
+        }
+        if !roles.is_empty() {
+            c.extras = serde_json::json!({ "ocw": Value::Object(roles) });
+        }
+        c.primitives = n.primitives.clone();
+        for p in &mut c.primitives {
+            p.material = out.material_or_add(material(&m.materials[p.material]));
+        }
+        out.add(c);
+    }
+    out
 }
 
 /// One material's placed triangles.
@@ -193,12 +262,27 @@ struct NodeFit {
 /// `foot` (x, z; `foot.y` the ground under it), turned by `yaw` about +Y
 /// (Bevy's `Quat::from_rotation_y`), nodes on `ground(x, z)` by their role.
 /// A model without a fit is placed as it is (height 1:1, no sink).
+/// The near model ([`place_level`] for the far one).
 pub fn place(
     m: &Model,
     inst: &Instance,
     foot: Vec3,
     yaw: f32,
     ground: &dyn Fn(f32, f32) -> f32,
+) -> Placed {
+    place_level(m, inst, foot, yaw, ground, Level::Near)
+}
+
+/// [`place`] at `level`: the far level `lod1` is fitted by the same rules
+/// (its nodes carry their own roles); the anchors are the near model's at
+/// either level, so a lamp's light stays where it was.
+pub fn place_level(
+    m: &Model,
+    inst: &Instance,
+    foot: Vec3,
+    yaw: f32,
+    ground: &dyn Fn(f32, f32) -> f32,
+    level: Level,
 ) -> Placed {
     let fit = FileFit::of(m).unwrap_or(FileFit {
         height_m: 1.0,
@@ -280,7 +364,7 @@ pub fn place(
                 .push((n.name.clone(), p + Vec3::Y * base(&f, p)));
             continue;
         }
-        if n.primitives.is_empty() || !drawn(m, i) {
+        if n.primitives.is_empty() || !drawn(m, i, level) {
             continue;
         }
         let f = node_fit(i);
@@ -396,6 +480,77 @@ mod tests {
         }
         p.indices = vec![0, 1, 2];
         p
+    }
+
+    /// The far level (spec 16H Q24): `place_level(Lod1)` draws only what is
+    /// under `lod1`, fitted by the same rules, with the near model's
+    /// anchors; `place` never draws it.
+    #[test]
+    fn the_far_level_is_placed_on_its_own_with_the_near_anchors() {
+        let mut m = Model::default();
+        m.materials.push(Material {
+            name: "steel".into(),
+            color: [1.0; 4],
+            metallic: 0.0,
+            roughness: 0.5,
+            emissive: [0.0; 3],
+        });
+        let root = m.add(Node::new("post", None, Vec3::ZERO));
+        let mut near = Node::new("pole", Some(root), Vec3::ZERO);
+        near.primitives.push(quad_box(
+            Vec3::new(-0.1, 0.0, -0.1),
+            Vec3::new(0.1, 2.0, 0.1),
+        ));
+        let near = m.add(near);
+        m.add(Node::new(
+            "anchor_light",
+            Some(near),
+            Vec3::new(0.0, 1.8, 0.0),
+        ));
+        let lod = m.add(Node::new("lod1", Some(root), Vec3::ZERO));
+        let mut far = Node::new("pole_lod1", Some(lod), Vec3::ZERO);
+        far.primitives.push(quad_box(
+            Vec3::new(-0.2, 0.0, -0.2),
+            Vec3::new(0.2, 2.0, 0.2),
+        ));
+        m.add(far);
+        assert!(has_lod1(&m));
+        let flat = |_: f32, _: f32| 0.0;
+        let inst = Instance::default();
+        let x_max = |p: &Placed| {
+            p.parts
+                .iter()
+                .flat_map(|q| &q.positions)
+                .map(|v| v[0])
+                .fold(f32::MIN, f32::max)
+        };
+        let n = place(&m, &inst, Vec3::ZERO, 0.0, &flat);
+        let f = place_level(&m, &inst, Vec3::ZERO, 0.0, &flat, Level::Lod1);
+        assert_eq!((n.parts.len(), f.parts.len()), (1, 1));
+        assert!((x_max(&n) - 0.1).abs() < 1e-5);
+        assert!((x_max(&f) - 0.2).abs() < 1e-5);
+        assert_eq!(n.anchor("anchor_light"), f.anchor("anchor_light"));
+        assert!(f.anchor("anchor_light").is_some());
+        // The far level copied from the near one: placed where the near
+        // model is, in the materials it is given.
+        let mut plain = m.clone();
+        plain.nodes.truncate(lod);
+        let copied = with_copied_lod1(&plain, &|_| Material {
+            name: "paint_red".into(),
+            color: [1.0, 0.0, 0.0, 1.0],
+            metallic: 0.0,
+            roughness: 0.5,
+            emissive: [0.0; 3],
+        });
+        assert!(has_lod1(&copied));
+        let c = place_level(&copied, &inst, Vec3::ZERO, 0.0, &flat, Level::Lod1);
+        assert_eq!(c.parts[0].positions, n.parts[0].positions);
+        assert_eq!(c.parts[0].slot, "paint_red");
+        assert_eq!(place(&copied, &inst, Vec3::ZERO, 0.0, &flat), n);
+        // A file without `lod1` has no far level to draw.
+        let mut bare = m.clone();
+        bare.nodes[lod].name = "other".into();
+        assert!(!has_lod1(&bare));
     }
 
     /// A gate-like model: two posts (moved), a bar between them (stretched,
