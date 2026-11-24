@@ -1,0 +1,23 @@
+# The J8 comparison views (scripts/j5-shots.sh with VIEWS=scripts/j8-views.txt;
+# spec 4.8.8 Rule): J7's views and three junctions whose corners J8 fixed
+# (arms run on past a way split, mouths out for their corners).
+# NAME PACKAGE X Y Z HEADING PITCH START_X,START_Z
+li-letzanaweg-corner pilot/liechtenstein -1441.0 557.5 5966.0 80 -35 -1440,5868
+li-letzanaweg-side pilot/liechtenstein -1437.7 554.38 5970.6 2.1 -6 -1440,5868
+li-t pilot/liechtenstein -810.5 848.37 4755.4 318.6 -24 -820,4745
+li-fork pilot/liechtenstein -3448.0 452.71 -2064.6 121.2 -24 -3436,-2057
+li-path pilot/liechtenstein -988.8 459.71 -6174.0 304.7 -24 -1000,-6182
+tf-t tenerife/tenerife 12518.5 241.92 -25156.3 155.7 -24 12524,-25144
+tf-fork tenerife/tenerife -14054.2 22.02 30867.4 252.2 -24 -14068,30872
+tf-path tenerife/tenerife -20232.8 35.80 25421.3 133.6 -24 -20223,25431
+bf-t blackforest/blackforest-north 31512.2 346.77 -94306.5 306.0 -24 31501,-94315
+bf-fork blackforest/blackforest-north 3182.4 255.52 -64417.1 264.5 -24 3168,-64416
+bf-path blackforest/blackforest-north 1252.9 152.32 -70486.6 322.9 -24 1244,-70498
+li-case-cluster9 pilot/liechtenstein -2754.0 478.78 -1236.3 326 -44 -2757,-1228
+li-case-short57 pilot/liechtenstein -2857.0 508.75 1267.8 326 -44 -2860,1275
+li-case-short100 pilot/liechtenstein -2250.1 474.11 4458.4 326 -44 -2254,4466
+li-case-other291 pilot/liechtenstein -1497.7 446.60 -8981.5 326 -44 -1501,-8973
+li-case-steep720 pilot/liechtenstein -2307.4 478.55 2059.9 326 -44 -2311,2067
+li-j8-run4721 pilot/liechtenstein -807.2 564.6 -7166.8 326 -44 -810,-7160
+li-j8-run4792 pilot/liechtenstein -628.0 474.7 -6475.1 326 -44 -631,-6468
+li-j8-fix3392 pilot/liechtenstein -572.8 957.5 4750.3 326 -44 -576,4757
