@@ -67,11 +67,38 @@ ocw-map = { path = "crates/ocw-map" }
 ocw-accounts = { path = "services/accounts" }
 
 # Bevy is pinned to an exact version (spec §3.1). Only ocw-render and apps/desktop may use it.
-# Bevy's default features without `audio` (v5.42, the iPhone's memory):
-# every app plays its sound through the shared mixer (cpal natively, Web
-# Audio in the browser) and disabled Bevy's AudioPlugin, so rodio, its
-# decoders and its cpal backend were only code in the browser's module.
-bevy = { version = "=0.20.1", default-features = false, features = ["2d", "3d", "ui"] }
+# Only the Bevy parts the shared crates (ocw-render, ocw-ui) and the
+# browser app use (spec 14 Phase 10, 10G *Memory on phones*: every plugin
+# of DefaultPlugins is code and shaders in the browser's module, which an
+# iPhone compiles into ~4 × its size of memory). Not here: audio (every app
+# plays the shared mixer, v5.42), glTF loading and scenes (models come from
+# ocw-assets' own reader), animation and morph targets, gizmos, anti-aliasing
+# and post-processing passes (the renderer uses MSAA, which is bevy_render's),
+# the HDR / SMAA tables, mesh and sprite picking (only the UI is picked),
+# states, UI widgets and input focus, the clipboard, custom cursors, the
+# system-information diagnostics, and `webgl2` (the browser app chooses its
+# GPU API with its own `webgpu` / `webgl2` features, so the WebGPU build no
+# longer carries wgpu's GL backend). The desktop, OCW Studio and the spike
+# add Bevy's full sets (`2d`, `3d`, `ui`) in their own Cargo.toml, so the
+# native apps keep every plugin they had.
+bevy = { version = "=0.20.1", default-features = false, features = [
+    # default_app
+    "std", "async_executor", "bevy_asset", "bevy_log", "reflect_auto_register",
+    # default_platform: windows, gamepads, the default font slot (our
+    # Fira Mono replaces it), Linux window systems (native only)
+    "bevy_winit", "bevy_gilrs", "default_font", "multi_threaded", "x11", "wayland",
+    # common_api
+    "bevy_camera", "bevy_color", "bevy_curve", "bevy_image", "bevy_mesh", "bevy_shader",
+    "bevy_material", "bevy_text", "bevy_window", "png",
+    # 3D: lights, PBR, the core pipeline; tonemapping's tables are KTX2 with zstd
+    "bevy_render", "bevy_core_pipeline", "bevy_light", "bevy_pbr", "bevy_mikktspace",
+    "tonemapping_luts", "ktx2", "zstd_rust",
+    # UI (menus, HUD) and its picking (pointer clicks on UI nodes)
+    "bevy_ui", "bevy_ui_render", "bevy_sprite", "bevy_sprite_render", "bevy_picking", "ui_picking",
+] }
+# The console (egui) with all of bevy_egui's default features: `bevy_ui`
+# orders the console's pass after the UI's (above the HUD), `picking` keeps
+# the pointer over the console from reaching the UI under it.
 bevy_egui = "=0.43.1"
 # Ragdoll falls (spec §14 Phase 12C, Q5; chosen by the K2 spike): Avian, the
 # ECS-native physics engine for this Bevy version (MIT OR Apache-2.0; its

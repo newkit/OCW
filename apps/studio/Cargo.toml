@@ -33,7 +33,9 @@ ocw-ui.workspace = true
 # The game's local riders (`ocw_client::riders`, in ocw.toml): the rider
 # the Routes workspace's expected time is for (16D).
 ocw-client.workspace = true
-bevy.workspace = true
+# Bevy's full 2D, 3D and UI sets (gizmos, glTF, scenes), as before the
+# browser's feature pruning (spec 14 Phase 10, 10G).
+bevy = { workspace = true, features = ["2d", "3d", "ui"] }
 bevy_egui.workspace = true
 clap.workspace = true
 dirs.workspace = true

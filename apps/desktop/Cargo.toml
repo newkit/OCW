@@ -33,7 +33,9 @@ ocw-ui.workspace = true
 # The game sounds and their mixer (shared with apps/web, spec §14 Phase 10 B5).
 ocw-audio.workspace = true
 ocw-server.workspace = true
-bevy.workspace = true
+# Bevy's full 2D, 3D and UI sets, as before the browser's feature pruning
+# (the workspace's list is the browser's minimum; spec 14 Phase 10, 10G).
+bevy = { workspace = true, features = ["2d", "3d", "ui"] }
 # The version Bevy uses: probing window surfaces (`surface`).
 wgpu = { version = "=30.0.1", default-features = false }
 clap.workspace = true

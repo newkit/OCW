@@ -31,9 +31,10 @@
 # Toolchain: the rustup target wasm32-unknown-unknown (rust-toolchain.toml)
 # and wasm-bindgen-cli of exactly the wasm-bindgen version in Cargo.lock:
 #   cargo install wasm-bindgen-cli --version <version> --locked
-# (`make deps-web` does that). wasm-opt (binaryen) is used when installed,
-# and always for --preview (scripts/fetch-binaryen.sh fetches the pinned
-# release when none is installed).
+# (`make deps-web` does that). wasm-opt (binaryen) runs on every release
+# build (scripts/fetch-binaryen.sh fetches the pinned release when none is
+# installed; required for --preview, else skipped with a warning when it
+# cannot be had).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -68,15 +69,19 @@ if [ "$have" != "$want" ]; then
   exit 1
 fi
 
-# wasm-opt: required for the preview (the pinned binaryen when none is
-# installed), else when installed.
+# wasm-opt: required for the preview, else used when it can be had (the
+# pinned binaryen when none is installed).
 wasm_opt=
 if [ "$opt_passes" = off ]; then
   :
 elif [ $preview = 1 ]; then
   wasm_opt=$(scripts/fetch-binaryen.sh)
-elif [ "$profile" != dev ] && command -v wasm-opt >/dev/null; then
-  wasm_opt=$(command -v wasm-opt)
+elif [ "$profile" != dev ]; then
+  # The pinned binaryen when none is installed (10G *Memory on phones*: the
+  # test machines' modules were served without wasm-opt, a quarter bigger
+  # than what the preview serves); without it the build goes on unoptimised.
+  wasm_opt=$(scripts/fetch-binaryen.sh 2>/dev/null) ||
+    { wasm_opt=; echo "warning: no wasm-opt (scripts/fetch-binaryen.sh failed): module not optimised" >&2; }
 fi
 
 t0=$(date +%s)
