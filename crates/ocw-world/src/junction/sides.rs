@@ -297,7 +297,7 @@ pub(super) fn corner_chain(
     centre: Option<P2>,
     straight_on: [bool; 2],
 ) -> Option<Vec<P2>> {
-    corner_chain_with(g, ai, aj, radius, centre, straight_on, &mut [0.0; 2])
+    corner_chain_with(g, ai, aj, radius, centre, straight_on, None)
 }
 
 /// How much farther out each arm's mouth would have to lie for the
@@ -312,11 +312,12 @@ pub(super) fn corner_deficit(
     straight_on: [bool; 2],
 ) -> [f64; 2] {
     let mut d = [0.0; 2];
-    let _ = corner_chain_with(g, ai, aj, radius, centre, straight_on, &mut d);
+    let _ = corner_chain_with(g, ai, aj, radius, centre, straight_on, Some(&mut d));
     d
 }
 
-/// [`corner_chain`], with the tangent lengths cut short ([`corner_deficit`]).
+/// [`corner_chain`]; with `deficit` only the tangent lengths it cuts
+/// short ([`corner_deficit`], no chain).
 fn corner_chain_with(
     g: &RoadGraph,
     ai: &Arm,
@@ -324,7 +325,7 @@ fn corner_chain_with(
     radius: f64,
     centre: Option<P2>,
     straight_on: [bool; 2],
-    deficit: &mut [f64; 2],
+    deficit: Option<&mut [f64; 2]>,
 ) -> Option<Vec<P2>> {
     let li = edge_line(g, ai, 1.0);
     let lj = edge_line(g, aj, -1.0);
@@ -445,7 +446,10 @@ fn corner_chain_with(
                 (out, curve)
             };
             let (t, tb) = (want.min(a), want.min(b));
-            *deficit = [(want - a).max(0.0), (want - b).max(0.0)];
+            if let Some(d) = deficit {
+                *d = [(want - a).max(0.0), (want - b).max(0.0)];
+                return None;
+            }
             let (first, _) = build(t, tb, None);
             // The worst bend with the strips' edges on at both ends, as
             // the side lint measures it.
