@@ -111,6 +111,9 @@
       font: 15px ui-monospace, SFMono-Regular, Menlo, monospace; }
     #ocw-status.error { color: #ffb4a8; background: rgba(16, 20, 26, 0.92); z-index: 20; }
     #ocw-status[hidden] { display: none; }
+    /* No WebAssembly SIMD (Q10 (a)): the browser is too old. */
+    #ocw-status.too-old { text-align: center; font: 17px/1.5 system-ui, sans-serif; }
+    #ocw-status.too-old span { color: #d8dee9; font-size: 15px; }
     /* The devices panel (B4): a transparent overlay over the ride (spec
        3.2 Q2, 2026-11-19: "make it a transparent overlay") – a light veil
        and a text shadow, the 3D view shows through it and clicks beside
@@ -766,7 +769,13 @@
       el.onerror = () => { console.warn(`ocw-web: ${src} not loaded`); ok(false); };
       document.head.appendChild(el);
     });
-    if (preview && !riding && Array.isArray(config.start) && config.start.length) {
+    // WebAssembly SIMD (spec 14 Phase 10, Q10 (a)): both modules need it,
+    // so a browser without it gets "too old" here – before any module is
+    // fetched – instead of a failed load (the start page too).
+    window.ocwSimd = ocwGpuChoice.simd(typeof WebAssembly !== "undefined" ? WebAssembly : null);
+    if (!window.ocwSimd) {
+      tooOld();
+    } else if (preview && !riding && Array.isArray(config.start) && config.start.length) {
       // The preview's start page: nothing big is fetched until a ride is chosen.
       startPage();
     } else {
@@ -774,6 +783,18 @@
       // Voice (B5): LiveKit's SDK, unless this page has no voice (B8a).
       if (config.voice !== "") await loadScript("livekit-client.umd.js");
       await ride();
+    }
+
+    // No WebAssembly SIMD (Q10 (a)): the message, nothing loaded.
+    function tooOld() {
+      console.warn("ocw-web: no WebAssembly SIMD: " + navigator.userAgent);
+      status.hidden = false;
+      status.className = "error too-old";
+      status.innerHTML = "<div><b></b><br><span></span></div>";
+      status.querySelector("b").textContent = ocwGpuChoice.TOO_OLD;
+      status.querySelector("span").textContent = "It cannot run WebAssembly SIMD, which the app needs. "
+        + "On an iPhone or iPad: Settings → General → Software Update.";
+      document.title = "Open Cycling World – please update the browser";
     }
 
     // The preview's start page (B8a): the rides of config.start.

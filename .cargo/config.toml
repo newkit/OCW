@@ -4,3 +4,13 @@
 # It also means the .exe files need no Visual C++ redistributable.
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
+
+# The browser app (and every wasm32 build) with WebAssembly SIMD (spec 14
+# Phase 10, Q10 (a), 10G *The module's size*): vector instructions; the
+# module is smaller (egui's text rasteriser drops its scalar fallback). A
+# browser without SIMD (Safari before 16.4, Chrome before 91, Firefox before
+# 89) cannot load it: the page checks first and says the browser is too old
+# (apps/web/web/ocw-gpu.js `simd`). RUSTFLAGS replaces this list:
+# scripts/build-web.sh adds the flag to it then.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]

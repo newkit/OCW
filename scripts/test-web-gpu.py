@@ -96,6 +96,14 @@ LOGIC = r"""
                       vendor: "Google Inc.", platform: "Linux armv8l", maxTouchPoints: 5,
                       userAgentData: {mobile: true}}, win(true)),
   };
+  // WebAssembly SIMD (Q10 (a)): this Chromium has it.
+  check("simd: Chromium validates the SIMD test module; a refusing, missing or throwing WebAssembly → too old",
+        G.simd(WebAssembly) && !G.simd({validate: () => false}) && !G.simd(null) && !G.simd({})
+        && !G.simd({validate: () => { throw new Error("x"); }}) && G.TOO_OLD.includes("Safari 16.4 / Chrome 91 / Firefox 89"), "");
+  // () -> () { i32.const 0; drop }: the same module without SIMD.
+  const noSimd = [0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 10, 7, 1, 5, 0, 65, 0, 26, 11];
+  check("simd: the same module without its v128 parts validates (only SIMD can refuse the test)",
+        WebAssembly.validate(new Uint8Array(noSimd)), JSON.stringify(noSimd));
   check("facts: Chrome is no WebKit, no phone", !F.chrome.webkit && !F.chrome.phone && !F.chrome.ios, JSON.stringify(F.chrome));
   check("facts: Safari on macOS is WebKit, no phone", F.safari.webkit && !F.safari.ios && !F.safari.phone, JSON.stringify(F.safari));
   check("facts: an iPhone is WebKit, iOS, a phone", F.iphone.webkit && F.iphone.ios && F.iphone.phone, JSON.stringify(F.iphone));

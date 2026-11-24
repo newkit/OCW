@@ -29,6 +29,12 @@
 #                                          the preview, -Os otherwise; off:
 #                                          none)
 #
+# WebAssembly SIMD in both builds (spec 14 Phase 10, Q10 (a)): the target's
+# rustflags in .cargo/config.toml (`+simd128`); a RUSTFLAGS in the
+# environment replaces them, so the flag is added to it. Every release
+# build checks that cargo's module uses SIMD (scripts/wasm_features.py); the
+# page tells a browser without it that it is too old (ocw-gpu.js `simd`).
+#
 # Bevy chooses WebGPU or WebGL 2 when it is compiled (its shaders, limits
 # and bind group layouts differ), so there are two modules: the `webgpu` /
 # `webgl2` features of ocw-web.
@@ -89,6 +95,10 @@ elif [ "$profile" != dev ]; then
     { wasm_opt=; echo "warning: no wasm-opt (scripts/fetch-binaryen.sh failed): module not optimised" >&2; }
 fi
 
+if [ -n "${RUSTFLAGS:-}" ] && [[ "$RUSTFLAGS" != *simd128* ]]; then
+  export RUSTFLAGS="$RUSTFLAGS -C target-feature=+simd128"
+fi
+
 t0=$(date +%s)
 dir=$profile
 [ "$profile" = dev ] && dir=debug
@@ -115,6 +125,10 @@ for gpu in $gpus; do
   [ "$gpu" = webxr ] && feat=webgl2,webxr
   t1=$(date +%s)
   cargo build -p ocw-web --target wasm32-unknown-unknown --profile "$profile" --features "$feat$features"
+  # Q10 (a): the module uses SIMD (else a stray RUSTFLAGS / config dropped it).
+  if [ "$profile" != dev ]; then
+    python3 -I scripts/wasm_features.py "$wasm" --require simd128 >/dev/null
+  fi
   # Both builds write the same file: bind each before the next build.
   wasm-bindgen --target web --no-typescript "${strip[@]}" --out-name "$name" --out-dir "$out" "$wasm"
   before[$name]=$(stat -c %s "$out/${name}_bg.wasm")
@@ -124,7 +138,7 @@ for gpu in $gpus; do
     # module that uses one it was not told about).
     "$wasm_opt" $opt_passes --enable-bulk-memory --enable-nontrapping-float-to-int \
       --enable-sign-ext --enable-mutable-globals --enable-reference-types --enable-multivalue \
-      -o "$out/${name}_bg.wasm" "$out/${name}_bg.wasm"
+      --enable-simd -o "$out/${name}_bg.wasm" "$out/${name}_bg.wasm"
     echo "$gpu: wasm-opt $opt_passes $(( $(date +%s) - t2 )) s"
   fi
   echo "$gpu: $(( $(date +%s) - t1 )) s"
@@ -152,6 +166,7 @@ mib() { case $1 in n/a) echo n/a ;; *) awk -v b="$1" 'BEGIN { printf "%.1f MiB",
 {
   echo "profile: $profile${features:+ (features$features)}"
   [ -n "$wasm_opt" ] && echo "wasm-opt: $("$wasm_opt" --version) $opt_passes"
+  echo "wasm features: +simd128 (Q10 (a); the page checks SIMD before it loads a module)"
   for name in "${names[@]}"; do
     bin=$out/${name}_bg.wasm
     raw=$(stat -c %s "$bin")

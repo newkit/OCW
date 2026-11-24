@@ -13,6 +13,9 @@
 //                                       the start page's checkbox
 //   ocwGpuChoice.uniform(rgba)          a sampled canvas of one colour
 //   ocwGpuChoice.watch({...})           the WebGPU watchdog (below)
+//   ocwGpuChoice.simd(WebAssembly)      WebAssembly SIMD there? (Q10 (a):
+//                                       both builds use it; the page says
+//                                       "too old" without, TOO_OLD)
 //
 // The rules (in this order):
 //   1. `?gpu=webgl2` / `?gpu=webgpu` choose (a test can force WebGPU);
@@ -35,6 +38,25 @@
   "use strict";
   const KEY = "ocw.gpu.webgpu-failed";
   const FAILED_PARAM = "webgpu-failed";
+
+  // WebAssembly SIMD (spec 14 Phase 10, Q10 (a)): both modules are built
+  // with `+simd128`, and a browser without SIMD cannot compile them – so
+  // the page validates this tiny module first (a function that returns a
+  // v128: i32.const 0, i8x16.splat, i8x16.popcnt; the test of
+  // wasm-feature-detect) and tells such a browser it is too old instead of
+  // a failed load. Safari 16.4, Chrome 91 and Firefox 89 have it.
+  const SIMD_TEST = [0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0,
+    10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11];
+  const TOO_OLD = "This browser is too old for Open Cycling World – please update "
+    + "(Safari 16.4 / Chrome 91 / Firefox 89 or newer).";
+
+  function simd(wa) {
+    try {
+      return !!(wa && typeof wa.validate === "function" && wa.validate(new Uint8Array(SIMD_TEST)));
+    } catch (e) {
+      return false;
+    }
+  }
 
   function facts(nav, win) {
     nav = nav || {};
@@ -361,5 +383,5 @@
 
   root.ocwGpuChoice = {facts, choose, recall, remember, forget, fallbackUrl, startPage, uniform, watch, KEY, FAILED_PARAM,
     mayFallBack, mayReload, RELOAD_KEY, RELOAD_WINDOW_MS, lastRideDied, rideStarted, rideClosed, saverUrl, RIDE_KEY,
-    pixelRatioCap, nextMemoryStep, MEMORY_STEPS};
+    pixelRatioCap, nextMemoryStep, MEMORY_STEPS, simd, SIMD_TEST, TOO_OLD};
 })(typeof window !== "undefined" ? window : globalThis);
