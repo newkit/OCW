@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 5.71 – November 2026
+Version 5.72 – November 2026
 
 | Version | Change |
 |---|---|
+| 5.72 | **A local sensor bridge first, without accounts: the desktop app keeps the trainer (Bluetooth) and passes power, cadence and heart rate to a browser session on the same network – the Quest browser in WebXR, an iPad or iPhone – paired with a short code; it moves onto the backend's relay with Phase 5** (decision by the user, 2026-11-24, so the first headset runs (Phase 14 Q7 (b)) need not wait for Phase 5; 10D.2, 14I W4; to be built). |
 | 5.71 | **WebXR uses the floor as its reference (`local-floor`): the game floor is the real floor and the bike's saddle sits at the rider profile's saddle height, so the view is at the right height for every rider and rises when standing on the pedals** (decision by the user, 2026-11-24, after a sketch of both options; Phase 14 Q8 (a); to be built). |
 | 5.70 | **The browser's sensor bridge (Phase 10, 10D.2) is built before the first headset runs, so the real trainer (the KICKR) drives the ride in the headset** (decision by the user, 2026-11-24; Phase 14 Q7 (b); to be built). |
 | 5.69 | **The VR headset loads the browser app from the public GitHub Pages preview (HTTPS); VR test builds go under the separate path `/xr/`** (decision by the user, 2026-11-24; Phase 14 Q6 (a)). |
@@ -5395,7 +5396,7 @@ The ages carry a common offset of about −8 ms (the server's tick instant runs 
 
 **Open (B6):** ~~god mode (and its HUD) in the browser~~ (done, v3.39: Phase 13 G5); the workshop and the character editor for logged-in riders (accounts, Phase 5); routes and world switches inside a browser ride; real weather on the in-browser local server (the providers need an async `fetch` in the frame server; on a remote server it works); touch on real phones and tablets (the pointer events are the desktop's; not tried on a device); the FIT file to the backend / Strava (Phase 5, 2.8); a Devices menu page next to the panel; the video's frame rate under load (MediaRecorder takes what the page renders); Safari / Firefox (B8 matrix).
 
-**B7 – WebGL 2 fallback and quality presets: done (v3.27); the sensor bridge (10D.2) is open** – it relays samples through the backend between two sessions of one account, so it waits for Phase 5 (accounts, the backend).
+**B7 – WebGL 2 fallback and quality presets: done (v3.27); the sensor bridge (10D.2) is open** – it relays samples through the backend between two sessions of one account, so it waits for Phase 5 (accounts, the backend). **A local bridge comes first (v5.72, decided by the user 2026-11-24):** the desktop app relays the trainer's samples to a browser session on the same network, paired with a short code, no account; the backend relay follows with Phase 5.
 
 - **Two builds, one page.** Bevy chooses WebGPU or WebGL 2 when it is compiled (its shaders, limits and bind group layouts differ; with both features it takes WebGPU), so `ocw-web` has the features **`webgpu`** and **`webgl2`** – a wasm32 build needs exactly one (a `compile_error!` says so), native builds and tests take neither (the workspace's Bevy stays the desktop's). `scripts/build-web.sh` (`make web`) builds both into `target/web/`: `ocw_web.js` / `ocw_web_bg.wasm` (WebGPU) and `ocw_web_webgl2.js` / `ocw_web_webgl2_bg.wasm`; `WEB_GPU=webgpu` builds one; `make test-web-build` checks both. `index.html` asks `navigator.gpu.requestAdapter()`: an adapter → the WebGPU build; no `navigator.gpu`, no adapter or an error → the WebGL 2 build (if the browser has WebGL 2 at all; else the page says what it needs). `?gpu=webgl2` / `?gpu=webgpu` choose; `window.ocwGpu` gives the choice and why. The HUD's build id ends in `web WebGPU` / `web WebGL2`; the console's **`gpu`** prints the API, the adapter (name, backend, driver) and the quality that runs (the desktop too: `gpu: native – adapter …`).
 - **What WebGL 2 cannot do degrades, found by running it** (headless Chromium, WebGL 2 through ANGLE on Vulkan). Each check reads the adapter at run time (`RenderAdapter`, `RenderAdapterInfo`), so the desktop and the WebGPU build draw exactly as before:
