@@ -1735,7 +1735,9 @@ fn outline_at(
                 let d = sides::corner_deficit(g, &arms[i], &arms[j], radius, None, [false; 2]);
                 for (k, dk) in [(i, d[0]), (j, d[1])] {
                     let m = need[k].min(caps[k]);
-                    if dk > 0.05 && m < caps[k] - 0.05 {
+                    // Not on a steep arm: its mouth farther out leaves its
+                    // blend less room (road kinks, Tenerife).
+                    if dk > 0.05 && m < caps[k] - 0.05 && arms[k].grade.abs() <= GROW_MAX_GRADE {
                         need[k] = (m + dk).min(caps[k]);
                         grew = true;
                     }
@@ -2692,6 +2694,8 @@ pub const RUN_ON_BEND_DEG: f64 = 20.0;
 /// The mouths move out for their corners' radius along the real edge
 /// lines at most this many times (J8).
 pub const MOUTH_ROUNDS: usize = 3;
+/// … on arms at most this steep at their mouth.
+pub const GROW_MAX_GRADE: f64 = 0.06;
 
 /// The mouths of a vertex's patch: (edge, its `from` end there, mouth m).
 type Mouths = Vec<(usize, bool, f64)>;
