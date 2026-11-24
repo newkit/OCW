@@ -38,6 +38,15 @@ On the test route (no bots, 150 W, noon, clear) it checks:
      above the road as the emulated head above the floor (seated 1.45 m,
      then 1.70 m out of the saddle – `-xr-standing.jpg`), across the ground
      at the rider's eye point; the saddle and eye heights of the profile;
+  4c. W2 / W3 (14I): no flat HUD over the eyes (the default UI camera draws
+     into a picture), the bike computer on the bars in both eyes with the
+     controllers in view – the head tilted down at the bars, the Touch
+     controllers held in front: `-xr-computer-left.jpg` / `-right.jpg`;
+     the Quest 1's user agent runs the `quest1` level (and `low` again
+     after); the right stick forward rides faster; the left stick's press
+     opens the menu as a panel in the world (`-xr-menu-left.jpg`), B closes
+     it; a left-eye picture for the beacon (`-xr-beacon-shot.jpg`, ≤ 16 KB)
+     queued over the bridge;
   5. visible-blurred and back; exit: the flat view again, the window's
      frames run on – `-after.jpg`;
   6. without the emulator the page says why there is no VR and shows no
@@ -457,6 +466,77 @@ def main():
             and (seated.get("eye_seated_m") or 0) > (seated.get("saddle_m") or 9) \
             and (seated.get("eye_standing_m") or 0) > (seated.get("eye_seated_m") or 9)
 
+        # 4c. W2 / W3: the bike computer, no flat HUD, the controllers, the
+        # quest1 level, the menu panel, the beacon's picture.
+        x = run.xr()
+        s["w2"] = {k: x.get(k) for k in ("flat_ui", "menu_panel", "computer", "computer_screen",
+                                         "controllers_shown", "pads", "quality", "headset")}
+        s["w2"]["page_level"] = run.page_xr().get("level")
+        checks["no_flat_hud_in_xr"] = x.get("flat_ui") is False and x.get("menu_panel") is False
+        checks["quest1_level_in_the_session"] = (x.get("quality") or {}).get("level") == "quest1" \
+            and x.get("headset") == "quest1" and (run.page_xr().get("level") or {}).get("level") == "quest1"
+        comp = x.get("computer") or {}
+        screen = x.get("computer_screen") or {}
+        eye_mid = [sum(e["pos"][i] for e in x.get("eyes", [])) / max(1, len(x.get("eyes", []))) for i in range(3)]
+        # The unit's root is the local bike's sway (the unit on its bar).
+        s["w2"]["computer_root_from_eyes_m"] = math.dist(comp.get("pos", [0, 0, 0]), eye_mid) if comp else None
+        checks["bike_computer_on_the_bars"] = bool(comp.get("visible")) and screen.get("shown") is True \
+            and 0.5 < (s["w2"]["computer_root_from_eyes_m"] or 0) < 2.5 and comp["pos"][1] < eye_mid[1] - 0.3 \
+            and str(screen.get("link", "")).startswith("Bridge") and "fps" in str(screen.get("frame", ""))
+        # The controllers in front of the rider, the head looking down at
+        # the bars (the computer and both controllers in the eyes).
+        run.js("const d = window.ocwXrDevice;"
+               "d.controllers.left.position.set(-0.24, 1.02, -0.42);"
+               "d.controllers.right.position.set(0.24, 1.02, -0.42);")
+        run.head(pitch=-48.0)
+        run.wait(2.5)
+        x = run.xr()
+        checks["controllers_drawn"] = (x.get("controllers_shown") or 0) == 4 and len(x.get("pads") or []) == 2
+        s["shots"]["computer_view"] = run.shot(base + "-xr-computer.jpg")
+        s["shots"]["computer_left"] = run.shot(base + "-xr-computer-left.jpg",
+                                               {"x": 0, "y": 0, "width": w // 2, "height": h})
+        s["shots"]["computer_right"] = run.shot(base + "-xr-computer-right.jpg",
+                                                {"x": w // 2, "y": 0, "width": w - w // 2, "height": h})
+        # The beacon's left-eye picture (W3), taken at the next frame.
+        run.js("window.ocwXr.shot()")
+        run.wait(1.5)
+        last = run.json("window.ocwXr.lastShot()") or {}
+        if last.get("jpeg_base64"):
+            path = base + "-xr-beacon-shot.jpg"
+            with open(path, "wb") as f:
+                f.write(base64.b64decode(last["jpeg_base64"]))
+            s["shots"]["beacon_shot"] = path
+        shots = run.page_xr().get("shots") or {}
+        s["w2"]["beacon_shot"] = {k: last.get(k) for k in ("w", "h", "quality", "bytes")} | {"page": shots}
+        checks["beacon_left_eye_picture"] = bool(last.get("jpeg_base64")) and 0 < (last.get("bytes") or 0) <= 12000 \
+            and shots.get("sent", 0) >= 1 and not shots.get("error")
+        run.head()
+        # The right stick forward: faster (the gamepad's "faster").
+        dev = lambda: run.json("JSON.parse(window.ocw.devices() || 'null')") or {}  # noqa: E731
+        p0 = dev().get("rider_power_w")
+        run.js("window.ocwXrDevice.controllers.right.updateAxes('thumbstick', 0, -1)")
+        run.wait(3.0)
+        p1 = dev().get("rider_power_w")
+        run.js("window.ocwXrDevice.controllers.right.updateAxes('thumbstick', 0, 0)")
+        run.wait(0.5)
+        s["w2"]["stick_power_w"] = [p0, p1]
+        checks["right_stick_rides_faster"] = p0 is not None and p1 is not None and p1 > p0 + 5
+        # The left stick's press: the menu, as a panel in the world; B
+        # closes it.
+        run.js("window.ocwXrDevice.controllers.left.updateButtonValue('thumbstick', 1)")
+        run.wait(0.4)
+        run.js("window.ocwXrDevice.controllers.left.updateButtonValue('thumbstick', 0)")
+        opened = run.until(lambda: run.xr().get("menu_panel"), 5)
+        run.wait(1.0)
+        s["shots"]["menu_left"] = run.shot(base + "-xr-menu-left.jpg", {"x": 0, "y": 0, "width": w // 2, "height": h})
+        menu_flat = run.xr().get("flat_ui")
+        run.js("window.ocwXrDevice.controllers.right.updateButtonValue('b-button', 1)")
+        run.wait(0.4)
+        run.js("window.ocwXrDevice.controllers.right.updateButtonValue('b-button', 0)")
+        closed = run.until(lambda: run.xr().get("menu_panel") is False, 5)
+        s["w2"]["menu"] = {"opened": bool(opened), "closed": bool(closed), "flat_ui": menu_flat}
+        checks["menu_on_the_left_stick_as_a_panel"] = bool(opened) and bool(closed) and menu_flat is False
+
         # 5. Visibility and exit.
         run.js("window.ocwXrDevice.updateVisibilityState('visible-blurred')")
         blurred = run.until(lambda: run.xr().get("state") == "visible-blurred", 10)
@@ -474,6 +554,9 @@ def main():
         s["shots"]["after"] = run.shot(base + "-after.jpg")
         checks["exit_back_to_flat"] = bool(ended) and s["after"]["frames_in_2s"] > 10 \
             and s["after"]["button"] == "Enter VR" and any("the flat view again" in t for t in lines)
+        # The flat view's level again (W3).
+        s["after"]["quality"] = [t for t in lines if "xr: quality" in t]
+        checks["flat_level_after_the_session"] = any("xr: quality low" in t and "flat view" in t for t in lines)
 
         # 6. Without the emulator.
         cdp.call("Page.removeScriptToEvaluateOnNewDocument", {"identifier": script})

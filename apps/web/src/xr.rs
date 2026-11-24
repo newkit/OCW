@@ -591,6 +591,202 @@ fn quantile(v: &[f32], q: f32) -> Option<f32> {
     Some(s[i])
 }
 
+/// The layout version of the page's controller data (`ocw-xr.js`,
+/// `padData`; 14I W2).
+pub const PADS_LAYOUT: f32 = 1.0;
+/// Floats per controller after the layout and the count: the hand (0
+/// none, 1 left, 2 right), whether the grip's pose is known (0 / 1), the
+/// grip's position (3) and orientation (4) in the reference space, the
+/// `xr-standard` buttons' values (7: trigger, squeeze, –, thumbstick
+/// press, X / A, Y / B, thumbrest – `oculus-touch-v2`, spec 14A) and the
+/// axes (4: –, –, thumbstick x, thumbstick y; WebXR's y is + toward the
+/// rider).
+pub const PAD_LEN: usize = 20;
+/// More controllers than this are refused.
+pub const MAX_PADS: usize = 4;
+
+/// A hand's side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hand {
+    None,
+    Left,
+    Right,
+}
+
+/// One controller of a frame (an `XRInputSource` with a gamepad).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct XrPad {
+    pub hand: Hand,
+    /// The grip in the reference space (`None`: not tracked this frame).
+    pub grip: Option<Pose>,
+    pub buttons: [f32; 7],
+    pub axes: [f32; 4],
+}
+
+/// Reads the page's controller data: the layout, the count, then
+/// [`PAD_LEN`] floats per controller.
+pub fn parse_pads(d: &[f32]) -> Result<Vec<XrPad>, String> {
+    if d.len() < 2 || d[0] != PADS_LAYOUT {
+        return Err(format!(
+            "xr pads: layout {:?} (this build reads {PADS_LAYOUT})",
+            d.first()
+        ));
+    }
+    let n = d[1] as usize;
+    if d[1] < 0.0 || d[1].fract() != 0.0 || n > MAX_PADS || d.len() != 2 + n * PAD_LEN {
+        return Err(format!("xr pads: {} floats for {} pads", d.len(), d[1]));
+    }
+    if d.iter().any(|v| !v.is_finite()) {
+        return Err("xr pads: a value is not finite".into());
+    }
+    Ok((0..n)
+        .map(|i| {
+            let p = &d[2 + i * PAD_LEN..2 + (i + 1) * PAD_LEN];
+            let mut buttons = [0.0; 7];
+            buttons.copy_from_slice(&p[9..16]);
+            let mut axes = [0.0; 4];
+            axes.copy_from_slice(&p[16..20]);
+            XrPad {
+                hand: match p[0] as i32 {
+                    1 => Hand::Left,
+                    2 => Hand::Right,
+                    _ => Hand::None,
+                },
+                grip: (p[1] > 0.5).then(|| pose_at(&p[2..9])),
+                buttons: buttons.map(|b| b.clamp(0.0, 1.0)),
+                axes: axes.map(|a| a.clamp(-1.0, 1.0)),
+            }
+        })
+        .collect())
+}
+
+/// The controls in WebXR (14I W2), on the bike computer when the headset
+/// starts showing the ride.
+pub const CONTROLS_HINT: &str = "R stick: ride · L stick ◀▶: exits · L click: menu";
+
+/// The WebXR gamepads (`oculus-touch-v2`, spec 14A) as the desktop VR
+/// mode's controller state (`ocw_xr::controllers`, the Q10 map: the right
+/// stick rides, the left stick moves through the menu; A / B / X / Y,
+/// the triggers and the grips as there). The Quest's left menu button
+/// belongs to the system in WebXR (it is no gamepad button), so **the left
+/// stick's press is the menu** while the menu is closed and its confirm
+/// while it is open – kept for the whole press, so the press that opens
+/// the menu does not also confirm in it.
+#[derive(Debug, Clone, Default)]
+pub struct PadReader {
+    /// The left stick's press began as the menu button (`Some(true)`) or as
+    /// the click (`Some(false)`); `None`: not pressed.
+    left_press_is_menu: Option<bool>,
+}
+
+impl PadReader {
+    /// This frame's state from the page's controllers.
+    pub fn state(
+        &mut self,
+        pads: &[XrPad],
+        menu_open: bool,
+    ) -> ocw_xr::controllers::ControllerState {
+        use ocw_xr::controllers::{ControllerState, Input, InputValue};
+        let mut s = ControllerState::at_rest(!pads.is_empty());
+        let pressed = |v: f32| v > 0.5;
+        let mut left_press = false;
+        for p in pads {
+            let stick = InputValue::Stick([p.axes[2], -p.axes[3]]);
+            let b = p.buttons;
+            match p.hand {
+                Hand::Left => {
+                    s.set(Input::LeftTrigger, InputValue::Value(b[0]));
+                    s.set(Input::LeftGrip, InputValue::Value(b[1]));
+                    left_press = pressed(b[3]);
+                    s.set(Input::X, InputValue::Button(pressed(b[4])));
+                    s.set(Input::Y, InputValue::Button(pressed(b[5])));
+                    s.set(Input::LeftStick, stick);
+                }
+                Hand::Right => {
+                    s.set(Input::RightTrigger, InputValue::Value(b[0]));
+                    s.set(Input::RightGrip, InputValue::Value(b[1]));
+                    s.set(Input::RightStickClick, InputValue::Button(pressed(b[3])));
+                    s.set(Input::A, InputValue::Button(pressed(b[4])));
+                    s.set(Input::B, InputValue::Button(pressed(b[5])));
+                    s.set(Input::RightStick, stick);
+                }
+                Hand::None => {}
+            }
+        }
+        let as_menu = match (left_press, self.left_press_is_menu) {
+            (false, _) => None,
+            (true, Some(m)) => Some(m),
+            (true, None) => Some(!menu_open),
+        };
+        self.left_press_is_menu = as_menu;
+        match as_menu {
+            Some(true) => s.set(Input::Menu, InputValue::Button(true)),
+            Some(false) => s.set(Input::LeftStickClick, InputValue::Button(true)),
+            None => {}
+        }
+        s
+    }
+}
+
+/// The bike computer's bridge field (14I W2; at most 11 characters, the top
+/// row's right beside the clock): the
+/// sensor bridge's state from `bridge::json()` – off (no code), paired, or
+/// waiting while it connects; a browser without WebTransport says so.
+pub fn bridge_line(bridge: &serde_json::Value) -> String {
+    if bridge["supported"] == false {
+        return "No bridge".into();
+    }
+    if bridge["code"].is_null() {
+        return "Bridge off".into();
+    }
+    if bridge["paired"] == true {
+        return "Bridge ok".into();
+    }
+    let state = bridge["state"].as_str().unwrap_or("");
+    if state.starts_with("refused") {
+        "Bridge err".into()
+    } else {
+        "Bridge wait".into()
+    }
+}
+
+/// The bike computer's frame-time field (14I W3: the in-headset readout;
+/// at most 16 characters): the page's work per frame (median) and the
+/// frame rate – "11.8 ms · 72 fps"; "–" before there are numbers.
+pub fn frame_line(stats: &FrameStats) -> String {
+    match (stats.work_ms(0.5), stats.fps()) {
+        (Some(w), Some(f)) => format!("{w:.1} ms · {f:.0} fps"),
+        (None, Some(f)) => format!("{f:.0} fps"),
+        _ => "–".into(),
+    }
+}
+
+/// Where the menu's panel floats (14I W2: the flat UI is never drawn over
+/// the eyes; while the menu is open it is a panel in the world): ahead of
+/// the rider's eye point at a comfortable reading distance, a little below
+/// the eyes, facing the rider, turned with the bike only.
+pub const MENU_PANEL_AHEAD_M: f32 = 1.1;
+pub const MENU_PANEL_BELOW_M: f32 = 0.12;
+/// The panel's width (m; its height follows the UI's 16 : 9).
+pub const MENU_PANEL_WIDTH_M: f32 = 1.2;
+/// The UI's picture on the panel (px).
+pub const MENU_PANEL_PX: [u32; 2] = [1280, 720];
+
+/// The panel's centre and orientation in the world for the rider's eye
+/// point `eyes` and the bike's heading `yaw`.
+pub fn menu_panel_pose(eyes: [f32; 3], yaw: f32) -> Pose {
+    let (s, c) = yaw.sin_cos();
+    // Ahead is −Z turned by the yaw: (−sin, 0, −cos).
+    Pose {
+        position: [
+            eyes[0] - s * MENU_PANEL_AHEAD_M,
+            eyes[1] - MENU_PANEL_BELOW_M,
+            eyes[2] - c * MENU_PANEL_AHEAD_M,
+        ],
+        orientation: yaw_quat(yaw),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1044,5 +1240,173 @@ mod tests {
         }
         assert_eq!(s.gaps_ms.len(), FrameStats::KEEP);
         assert_eq!(s.work_ms.len(), FrameStats::KEEP);
+    }
+
+    /// 14I W2: the eyes' projection is the desktop VR mode's
+    /// (`ocw_xr::projection::clip_from_view` of the same frustum).
+    #[test]
+    fn the_eye_projection_is_the_desktop_vr_modes() {
+        let tangents: [f32; 4] = [-1.2, 0.9, -1.1, 0.95];
+        let fov = ocw_xr::projection::Fov {
+            left: tangents[0].atan(),
+            right: tangents[1].atan(),
+            down: tangents[2].atan(),
+            up: tangents[3].atan(),
+        };
+        let ours = Mat4::from_cols_array(&clip_from_view(tangents, EYE_NEAR_M));
+        let desktop = ocw_xr::projection::clip_from_view(&fov, EYE_NEAR_M);
+        assert!(ours.abs_diff_eq(desktop, 1e-5), "{ours} {desktop}");
+    }
+
+    fn pad(hand: f32, buttons: [f32; 7], axes: [f32; 4]) -> Vec<f32> {
+        let mut v = vec![hand, 1.0, 0.1, 1.0, -0.3, 0.0, 0.0, 0.0, 1.0];
+        v.extend_from_slice(&buttons);
+        v.extend_from_slice(&axes);
+        v
+    }
+
+    fn pads(list: &[Vec<f32>]) -> Vec<XrPad> {
+        let mut d = vec![PADS_LAYOUT, list.len() as f32];
+        for p in list {
+            d.extend_from_slice(p);
+        }
+        parse_pads(&d).unwrap()
+    }
+
+    /// The page's controller data: both hands, the grip's pose, buttons
+    /// and axes; broken data is refused.
+    #[test]
+    fn the_pads_are_read() {
+        let p = pads(&[
+            pad(
+                1.0,
+                [0.2, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, -0.5, 0.25],
+            ),
+            pad(2.0, [0.0; 7], [0.0; 4]),
+        ]);
+        assert_eq!(p.len(), 2);
+        assert_eq!(p[0].hand, Hand::Left);
+        assert_eq!(p[1].hand, Hand::Right);
+        assert_eq!(p[0].grip.unwrap().position, [0.1, 1.0, -0.3]);
+        assert_eq!(p[0].buttons[1], 1.0);
+        assert_eq!(p[0].axes[2], -0.5);
+        assert!(parse_pads(&[2.0, 0.0]).is_err(), "another layout");
+        assert!(parse_pads(&[PADS_LAYOUT, 1.0, 1.0]).is_err(), "too short");
+        assert_eq!(parse_pads(&[PADS_LAYOUT, 0.0]).unwrap(), vec![]);
+        let mut d = vec![PADS_LAYOUT, 1.0];
+        d.extend(pad(2.0, [0.0; 7], [0.0; 4]));
+        d[5] = f32::NAN;
+        assert!(parse_pads(&d).is_err());
+    }
+
+    /// The `oculus-touch-v2` indices (spec 14A) on the Q10 map: the right
+    /// stick rides (forward is WebXR's −y), A / B / X / Y, the triggers and
+    /// the grips; the left stick's press is the menu with the menu closed
+    /// and confirms with it open – kept for the whole press.
+    #[test]
+    fn the_touch_controllers_map_onto_the_desktop_vr_controls() {
+        use ocw_xr::controllers::{Input, PadAxis, PadButton, PadMapper};
+        let mut r = PadReader::default();
+        assert!(!r.state(&[], false).active);
+        let s = r.state(
+            &pads(&[
+                pad(
+                    1.0,
+                    [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 0.0],
+                ),
+                pad(
+                    2.0,
+                    [0.9, 0.3, 0.0, 1.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.2, -0.9],
+                ),
+            ]),
+            false,
+        );
+        assert!(s.active);
+        assert!(s.button(Input::X) && s.button(Input::Y) && s.button(Input::A));
+        assert!(!s.button(Input::B));
+        assert!(s.button(Input::RightStickClick));
+        assert!((s.value(Input::RightTrigger) - 0.9).abs() < 1e-6);
+        assert!((s.value(Input::RightGrip) - 0.3).abs() < 1e-6);
+        assert_eq!(s.stick(Input::RightStick), [0.2, 0.9]);
+        // Through the desktop's mapper: the right stick forward is the
+        // gamepad's left stick up (faster), A is South.
+        let f = PadMapper::default().map(&s, 0.014);
+        assert!(f.axis(PadAxis::LeftStickY) > 0.8);
+        assert_eq!(f.button(PadButton::South), 1.0);
+        assert_eq!(f.button(PadButton::RightTrigger2), 0.9);
+        // The left stick's press opens the menu …
+        let click = |v: f32| pads(&[pad(1.0, [0.0, 0.0, 0.0, v, 0.0, 0.0, 0.0], [0.0; 4])]);
+        let s = r.state(&click(1.0), false);
+        assert!(s.button(Input::Menu) && !s.button(Input::LeftStickClick));
+        // … and, held on with the menu now open, stays the menu button.
+        let s = r.state(&click(1.0), true);
+        assert!(s.button(Input::Menu) && !s.button(Input::LeftStickClick));
+        assert!(!r.state(&click(0.0), true).button(Input::Menu));
+        // A new press in the open menu confirms.
+        let s = r.state(&click(1.0), true);
+        assert!(s.button(Input::LeftStickClick) && !s.button(Input::Menu));
+        assert!(CONTROLS_HINT.contains("menu"));
+    }
+
+    /// The bike computer's status row (14I W2 / W3): the bridge's state
+    /// and the frame time, each short enough for its field.
+    #[test]
+    fn the_status_row_says_bridge_and_frame_time() {
+        use serde_json::json;
+        assert_eq!(
+            bridge_line(&json!({"code": null, "supported": true})),
+            "Bridge off"
+        );
+        assert_eq!(
+            bridge_line(&json!({"code": "7K2M", "paired": true, "supported": true})),
+            "Bridge ok"
+        );
+        assert_eq!(
+            bridge_line(&json!({"code": "7K2M", "paired": false, "state": "connecting"})),
+            "Bridge wait"
+        );
+        assert_eq!(
+            bridge_line(&json!({"code": "7K2M", "state": "refused: busy"})),
+            "Bridge err"
+        );
+        assert_eq!(bridge_line(&json!({"supported": false})), "No bridge");
+        for b in [
+            "Bridge off",
+            "Bridge ok",
+            "Bridge wait",
+            "Bridge err",
+            "No bridge",
+        ] {
+            assert!(b.chars().count() <= 11, "{b}");
+        }
+        let mut s = FrameStats::default();
+        assert_eq!(frame_line(&s), "–");
+        let mut t = 0.0;
+        for _ in 0..50 {
+            t += 13.9;
+            s.push(t, 11.84);
+        }
+        assert_eq!(frame_line(&s), "11.8 ms · 72 fps");
+        assert!(frame_line(&s).chars().count() <= 16);
+    }
+
+    /// The menu's panel: ahead of the eyes in the bike's heading, a little
+    /// below, facing back at the rider.
+    #[test]
+    fn the_menu_panel_floats_ahead_of_the_eyes() {
+        let p = menu_panel_pose([10.0, 1.5, 20.0], 0.0);
+        assert!((p.position[2] - (20.0 - MENU_PANEL_AHEAD_M)).abs() < 1e-5);
+        assert!((p.position[1] - (1.5 - MENU_PANEL_BELOW_M)).abs() < 1e-5);
+        assert!((p.position[0] - 10.0).abs() < 1e-5);
+        // Turned a quarter left (+Y): ahead is −X.
+        let q = menu_panel_pose([0.0, 1.5, 0.0], std::f32::consts::FRAC_PI_2);
+        assert!((q.position[0] + MENU_PANEL_AHEAD_M).abs() < 1e-5, "{q:?}");
+        assert!(q.position[2].abs() < 1e-5);
+        // The panel's normal (+Z) points back at the eyes.
+        let n = Quat::from_array(q.orientation) * Vec3::Z;
+        assert!((n - Vec3::X).length() < 1e-5, "{n}");
     }
 }

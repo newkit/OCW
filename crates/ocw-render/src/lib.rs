@@ -68,6 +68,10 @@ pub mod tunnel_cut;
 pub mod unicorn;
 pub mod vegetation;
 pub mod voice;
+// VR (spec §14 Phase 11 / 14I W2): the bike computer on the bars and the
+// controllers as a gamepad; added by an app only when it has a headset
+// mode (`VrPlugin`; the browser's WebXR build).
+pub mod vr;
 pub mod weather;
 pub mod webgl;
 #[cfg(test)]

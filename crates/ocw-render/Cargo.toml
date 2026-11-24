@@ -18,6 +18,9 @@ ocw-sky.workspace = true
 # The weather it draws (spec §14 Phase 9, S4).
 ocw-weather.workspace = true
 ocw-assets.workspace = true
+# VR (spec §14 Phase 11 / 14): the bike computer's placement and the
+# controllers' map (pure, wasm).
+ocw-xr.workspace = true
 # The plants' model files (spec §14 Phase 15, M1): extras.
 serde_json.workspace = true
 bevy.workspace = true

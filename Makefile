@@ -11,7 +11,7 @@ export PATH := $(OCW_CARGO_SHIM):$(PATH)
 endif
 
 CARGO ?= cargo
-WASM_CRATES := -p ocw-core -p ocw-auth -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice -p ocw-sky -p ocw-weather -p ocw-devices -p ocw-worldstore -p ocw-audio -p ocw-edit -p ocw-map
+WASM_CRATES := -p ocw-core -p ocw-auth -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice -p ocw-sky -p ocw-weather -p ocw-devices -p ocw-worldstore -p ocw-audio -p ocw-edit -p ocw-map -p ocw-xr
 # The browser app (spec §14 Phase 10): wasm-bindgen-cli must be the version
 # of the wasm-bindgen crate in Cargo.lock.
 WASM_BINDGEN_VERSION := $(shell awk '/^name = "wasm-bindgen"$$/ { getline; gsub(/version = |"/, ""); print; exit }' Cargo.lock)
@@ -277,8 +277,9 @@ release: ## Optimized build of ocw-desktop and ocw-server (with voice if clang-2
 # test-multiplayer uses the build machines of config/machines.toml.
 test: test-unit ## All unit and integration tests (= test-unit; no hardware, network or GPU)
 
-test-unit: ## Run all unit and integration tests (cargo test --workspace)
+test-unit: ## Run all unit and integration tests (cargo test --workspace; and the browser app's WebXR module, feature webxr)
 	$(CARGO) test --workspace
+	$(CARGO) test -p ocw-web --features webxr --lib webxr
 
 fmt: ## Format all code
 	$(CARGO) fmt --all

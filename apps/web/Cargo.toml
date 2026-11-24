@@ -27,6 +27,9 @@ ocw-devices.workspace = true
 # (spec 14 Phase 10, 10D.2).
 ocw-bridge.workspace = true
 ocw-render.workspace = true
+# VR logic shared with the desktop VR mode (14I W2): the controllers' map,
+# the projection, the headset profiles (pure).
+ocw-xr.workspace = true
 # The client loop, shared with the desktop app.
 ocw-client.workspace = true
 # The desktop's menus, settings, time and weather machines, events and
