@@ -9,7 +9,9 @@
 //! mouths, the outline points):
 //!
 //! ```text
-//! layout version: u8 (3 since J7: paths along a road are drawn as a band
+//! layout version: u8 (4 since J8: a junction's arm runs on past a plain
+//!   way split that squeezed it, the mouths lie out for their corners'
+//!   radius along the real edge lines; 3 since J7: paths along a road are drawn as a band
 //!   of its side and take no part in the junctions; 2 since J3: the side
 //!   roads' corners, 4.8.8 Q6 (d), change the drawn surface and clusters
 //!   came; older layouts are ignored)
@@ -31,8 +33,11 @@
 //!     outline count: u16, per point: dx, dz f32 (from the patch's centre:
 //!       the vertex, a cluster's centroid), mouth arm u8 (255: none)
 //!   cluster patch (J3, at its first vertex) also: member count u8,
-//!     members u32 (growing, the first this record's), inner edge count
-//!     u8, inner edges u32 (inside the patch, no strip)
+//!     members u32 (growing, the first this record's; J8: a junction
+//!     whose arms run on past way splits first, then those splits),
+//!     inner edge count u8, inner edges u32 (inside the patch, no strip),
+//!     run-on count u8, the members that are such way splits u32 (J8; the
+//!     patch's centre is the centroid of the other members)
 //!   cluster member: the first member u32 (its patch is that one's)
 //! ```
 //!
@@ -61,12 +66,15 @@ use crate::package::{Bytes, TileKey};
 
 pub const JUNCTIONS_TAG: &[u8; 4] = b"JNCT";
 pub const STRIP_EDGES_TAG: &[u8; 4] = b"RDGE";
-/// 3 (J7, 4.8.8 Rule): paths along a road take no part in the junctions
+/// 4 (J8, 4.8.8 Rule): a junction's arm runs on past a plain way split
+/// that squeezed it (a cluster patch's record lists those splits) and the
+/// mouths lie out for their corners' radius (a layout 3 section has the
+/// squeezed mouths). 3 (J7, 4.8.8 Rule): paths along a road take no part in the junctions
 /// (a layout 2 section has their mouths, where the renderer now draws a
 /// band of the road's side). 2 (J3, 4.8.8 Q6 (d)): the side roads' corners
 /// change the drawn surface (a layout 1 section was made for J2's) and
 /// clusters (kinds 2 and 3).
-const JUNCTIONS_VERSION: u8 = 3;
+const JUNCTIONS_VERSION: u8 = 4;
 const STRIP_EDGES_VERSION: u8 = 1;
 /// `JNCT` flag: profiles reconciled, terrain settled (J2).
 pub const FLAG_SETTLED: u8 = 1;
@@ -97,6 +105,8 @@ pub struct StoredPatch {
     /// inside it (J3); empty for one vertex.
     pub members: Vec<u32>,
     pub inner: Vec<u32>,
+    /// The members that are way splits its arms run on past (J8; growing).
+    pub run_on: Vec<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -140,6 +150,7 @@ impl JunctionIndex {
                             Vec::new()
                         },
                         inner: p.inner.iter().map(|&e| e as u32).collect(),
+                        run_on: p.run_on.clone(),
                         arms: p
                             .arms
                             .iter()
@@ -458,6 +469,10 @@ pub fn write_junctions(i: &JunctionIndex, b: &mut Vec<u8>) {
                     for e in &p.inner {
                         r.extend(e.to_le_bytes());
                     }
+                    r.push(p.run_on.len() as u8);
+                    for w in &p.run_on {
+                        r.extend(w.to_le_bytes());
+                    }
                 }
             }
         }
@@ -511,13 +526,16 @@ pub fn read_junctions(payload: &[u8]) -> Result<JunctionIndex, String> {
                     };
                     outline.push(StoredPoint { d, mouth });
                 }
-                let (mut members, mut inner) = (Vec::new(), Vec::new());
+                let (mut members, mut inner, mut run_on) = (Vec::new(), Vec::new(), Vec::new());
                 if kind == 2 {
                     for _ in 0..q.u8()? {
                         members.push(q.u32()?);
                     }
                     for _ in 0..q.u8()? {
                         inner.push(q.u32()?);
+                    }
+                    for _ in 0..q.u8()? {
+                        run_on.push(q.u32()?);
                     }
                     if members.first() != Some(&v) {
                         return Err("junction cluster without its vertex".into());
@@ -528,6 +546,7 @@ pub fn read_junctions(payload: &[u8]) -> Result<JunctionIndex, String> {
                     outline,
                     members,
                     inner,
+                    run_on,
                 })
             }
             // A kind from a newer builder: no surface here.

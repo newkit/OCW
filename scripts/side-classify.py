@@ -15,7 +15,8 @@ for line in open(sys.argv[1]):
     kinds = {f["kind"] for f in r["faults"]}
     if not kinds:
         continue
-    members = len(r.get("members") or [])
+    # (J8: way splits an arm runs on past are no members of a cluster.)
+    members = len(r.get("members") or []) - len(r.get("run_on") or [])
     path_arms = [a for a in arms if a["class"] in PATHS]
     # A path arm nearly parallel to another arm (within 30 deg).
     par = False

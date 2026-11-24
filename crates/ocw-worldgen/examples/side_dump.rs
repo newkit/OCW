@@ -228,7 +228,34 @@ fn main() {
                         "shaped": sh.is_some(), "n": rows.len(), "rows": near,
                         "dress": format!("{:?}", s.dress.sidewalk_m)}));
                 }
+                // J8: a plain way split at the arm's far end (and how far).
+                let origin_v = if a.at_from { e.from.0 } else { e.to.0 } as usize;
+                let split = js.split_beyond(&g, origin_v, a.edge).map(|(w, o)| {
+                    serde_json::json!({"w": w, "next": o, "next_len": g.edges[o].length_m()})
+                });
+                let far = e.other(ocw_world::graph::VertexId(origin_v as u32)).0 as usize;
+                // At a far end of two drawn edges: the other's class, width
+                // and the full degree (side paths included).
+                let far_next = js
+                    .edges_at(far)
+                    .iter()
+                    .find(|&&o| o != a.edge)
+                    .filter(|_| js.edges_at(far).len() == 2)
+                    .map(|&o| {
+                        let x = &g.edges[o];
+                        serde_json::json!({"class": format!("{:?}", x.class), "dw": x.width_m - e.width_m,
+                            "len": x.length_m(), "bridge": x.bridge || x.tunnel,
+                            "rule": format!("{:?}", js.rule(&g, far).map(|r| matches!(r, ocw_world::junction::VertexRule::Patch(_))))})
+                    });
+                // How far the far end's junction reaches into the edge, and
+                // whether the two ends would be a cluster.
+                let far_reach = js.reach(&g, a.edge)[usize::from(a.at_from)];
+                let far_cluster = js.cluster_of(&g, far).is_some();
                 serde_json::json!({
+                    "far_reach": far_reach, "far_cluster": far_cluster,
+                    "lead": !a.lead.is_empty(),
+                    "far_next": far_next,
+                    "split": split, "far_deg": js.edges_at(far).len(),
                     "i": ai, "edge": a.edge, "way": e.osm_way, "class": format!("{:?}", a.class),
                     "half": a.half, "len": a.len, "at_from": a.at_from, "dir": a.dir,
                     "origin": a.origin, "mouth_m": a.mouth_m, "centre": a.centre, "t": a.t,
@@ -248,7 +275,7 @@ fn main() {
             })
             .collect();
         let rec = serde_json::json!({
-            "vertex": v, "centre": p.centre, "star": p.is_star(), "members": p.members, "through": p.through,
+            "vertex": v, "centre": p.centre, "star": p.is_star(), "members": p.members, "run_on": p.run_on, "through": p.through,
             "faults": fs, "arms": arms, "chains": chains,
         });
         writeln!(w, "{rec}").expect("write");
