@@ -1,0 +1,40 @@
+[package]
+name = "ocw-bridge"
+description = "Open Cycling World's local sensor bridge: the desktop app relays its trainer to a browser on the same network (no engine dependency)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Spec 14 Phase 10, 10D.2 *Built (local bridge)*. The pairing code, the
+# certificate derived from it, the messages and both sides' relay logic are
+# pure and build for wasm32 (the browser app uses them); the desktop's
+# endpoint (`host`: QUIC + WebTransport on a thread of its own) is native
+# only.
+[dependencies]
+ocw-devices.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+p256.workspace = true
+tracing.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+quinn.workspace = true
+rustls.workspace = true
+web-transport-quinn.workspace = true
+url.workspace = true
+tokio = { workspace = true, features = ["rt", "net", "io-util", "time", "sync", "macros"] }
+# The pairing secret (OS randomness).
+getrandom.workspace = true
+
+[dev-dependencies]
+tracing-subscriber.workspace = true
+
+# The loopback test's client runs on a runtime of its own beside the bridge.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[lints]
+workspace = true

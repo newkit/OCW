@@ -27,6 +27,7 @@ members = [
     "crates/ocw-edit",
     "crates/ocw-map",
     "crates/ocw-winres",
+    "crates/ocw-bridge",
     "apps/studio",
     "services/accounts",
 ]
@@ -64,6 +65,7 @@ ocw-auth = { path = "crates/ocw-auth" }
 ocw-winres = { path = "crates/ocw-winres" }
 ocw-edit = { path = "crates/ocw-edit" }
 ocw-map = { path = "crates/ocw-map" }
+ocw-bridge = { path = "crates/ocw-bridge" }
 ocw-accounts = { path = "services/accounts" }
 
 # Bevy is pinned to an exact version (spec §3.1). Only ocw-render and apps/desktop may use it.
@@ -161,6 +163,11 @@ bytes = "1"
 web-transport-quinn = { version = "0.13.6", default-features = false, features = ["ring"] }
 url = "2"
 time = { version = "0.3", default-features = false }
+# The local sensor bridge's certificate (spec 14 Phase 10, 10D.2, v5.72):
+# ECDSA P-256 with deterministic RFC 6979 signatures (RustCrypto, MIT OR
+# Apache-2.0; already in the tree through openidconnect), pure Rust, so the
+# browser derives the same certificate from the pairing code as the desktop.
+p256 = { version = "0.14", default-features = false, features = ["ecdsa"] }
 
 # Audio output (spec §3.3), only in apps/desktop: cpal (Apache-2.0), the same
 # version Bevy's own audio links, so no second copy (and one libasound).
