@@ -56,6 +56,18 @@ pub(super) fn edge_line(g: &RoadGraph, arm: &Arm, sign: f64) -> Vec<P2> {
             cs.push(p);
         }
     }
+    // An arm run on past a way split (J8): its centre line from the
+    // junction's vertex through the edges inside the patch.
+    if arm.lead.len() >= 2 {
+        let mut full: Vec<P2> = arm.lead[..arm.lead.len() - 1].to_vec();
+        full.dedup_by(|a, b| norm(sub(*a, *b)) < 1e-4);
+        for p in cs {
+            if full.last().is_none_or(|q| norm(sub(p, *q)) > 1e-4) {
+                full.push(p);
+            }
+        }
+        cs = full;
+    }
     let corner = super::xz(if sign > 0.0 { arm.q() } else { arm.p() });
     if cs.len() < 2 {
         return vec![corner, arm.origin];
@@ -285,6 +297,35 @@ pub(super) fn corner_chain(
     centre: Option<P2>,
     straight_on: [bool; 2],
 ) -> Option<Vec<P2>> {
+    corner_chain_with(g, ai, aj, radius, centre, straight_on, &mut [0.0; 2])
+}
+
+/// How much farther out each arm's mouth would have to lie for the
+/// corner between them to get its whole radius along their real edge
+/// lines (m; J8): the tangent lengths [`corner_chain`] has to cut short.
+pub(super) fn corner_deficit(
+    g: &RoadGraph,
+    ai: &Arm,
+    aj: &Arm,
+    radius: f64,
+    centre: Option<P2>,
+    straight_on: [bool; 2],
+) -> [f64; 2] {
+    let mut d = [0.0; 2];
+    let _ = corner_chain_with(g, ai, aj, radius, centre, straight_on, &mut d);
+    d
+}
+
+/// [`corner_chain`], with the tangent lengths cut short ([`corner_deficit`]).
+fn corner_chain_with(
+    g: &RoadGraph,
+    ai: &Arm,
+    aj: &Arm,
+    radius: f64,
+    centre: Option<P2>,
+    straight_on: [bool; 2],
+    deficit: &mut [f64; 2],
+) -> Option<Vec<P2>> {
     let li = edge_line(g, ai, 1.0);
     let lj = edge_line(g, aj, -1.0);
     let (q, p) = (li[0], lj[0]);
@@ -404,6 +445,7 @@ pub(super) fn corner_chain(
                 (out, curve)
             };
             let (t, tb) = (want.min(a), want.min(b));
+            *deficit = [(want - a).max(0.0), (want - b).max(0.0)];
             let (first, _) = build(t, tb, None);
             // The worst bend with the strips' edges on at both ends, as
             // the side lint measures it.

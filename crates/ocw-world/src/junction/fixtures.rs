@@ -378,3 +378,30 @@ pub fn t_junction_bent(main_grade: f64, side_grade: f64, bend_deg: f64, at_m: f6
         ],
     )
 }
+
+/// A T junction as [`t_junction`] (secondary main road, 7.5 m, climbing
+/// `main_grade` towards +x) whose side road (residential, 5 m, climbing
+/// `side_grade` away to +z) is split into two ways `at_m` from the vertex
+/// (vertex 4, an OSM way split at a tag change: edge 2 up to it, edge 3
+/// on), the second bending by `bend_deg` towards −x (J8: a short arm that
+/// only ends at a way split).
+pub fn t_junction_split(main_grade: f64, side_grade: f64, at_m: f64, bend_deg: f64) -> RoadGraph {
+    let b = bend_deg.to_radians();
+    let far = [-120.0 * b.sin(), at_m + 120.0 * b.cos()];
+    let v = [[0.0, 0.0], [-120.0, 0.0], [120.0, 0.0], far, [0.0, at_m]];
+    graph(
+        &v,
+        vec![
+            Road::straight(&v, 1, 0, RoadClass::Secondary, 7.5, move |s| {
+                (s - 120.0) * main_grade
+            }),
+            Road::straight(&v, 0, 2, RoadClass::Secondary, 7.5, move |s| s * main_grade),
+            Road::straight(&v, 0, 4, RoadClass::Residential, 5.0, move |s| {
+                s * side_grade
+            }),
+            Road::straight(&v, 4, 3, RoadClass::Residential, 5.0, move |s| {
+                (s + at_m) * side_grade
+            }),
+        ],
+    )
+}
