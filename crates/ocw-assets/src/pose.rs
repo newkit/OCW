@@ -65,6 +65,47 @@ pub struct BikeRig {
     /// bike computer's out-front mount sits ahead of it (spec §14 Phase
     /// 11, v4.68 on `agent/vr-x1`; WebXR 14I W2).
     pub bar_clamp: Vec3,
+    /// The road levers' hood bodies (left, right) the handshake grip
+    /// wraps (spec 14 Phase 4 Q31): from the model's
+    /// [`bike_nodes::HOOD_BODY`] anchors, else from the hoods' grip
+    /// anchors; `None` without drop bars (TT and flat bars).
+    pub hood_bodies: Option<[HoodBody; 2]>,
+}
+
+/// A road lever's hood body (spec 14 Phase 4 Q31): an ellipsoid round
+/// `centre`, its semi-axes `radii` (across, up, along) in the frame turned
+/// by `rotation` (bike frame). The hood anchor node carries it as its
+/// translation, rotation and scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HoodBody {
+    pub centre: Vec3,
+    pub rotation: Quat,
+    pub radii: Vec3,
+}
+
+/// The generated road levers' hood: its semi-axes (m) and its tilt about
+/// the bike's x (rad; [`HoodBody`]).
+pub const HOOD_RADII: Vec3 = Vec3::new(0.016, 0.024, 0.038);
+pub const HOOD_TILT: f32 = -0.25;
+/// The hood's centre from the hoods' grip anchor when a model has no hood
+/// anchors (m, bike frame).
+pub const HOOD_FROM_GRIP: Vec3 = Vec3::new(0.0, -HOOD_BELOW_GRIP, -0.007);
+
+impl HoodBody {
+    /// The hood under a hoods grip anchor `grip` (models without hood
+    /// anchors).
+    pub fn under_grip(grip: Vec3) -> Self {
+        Self {
+            centre: grip + HOOD_FROM_GRIP,
+            rotation: Quat::from_rotation_x(HOOD_TILT),
+            radii: HOOD_RADII,
+        }
+    }
+
+    /// A point (bike frame) in the hood's own frame.
+    pub fn local(&self, p: Vec3) -> Vec3 {
+        self.rotation.inverse() * (p - self.centre)
+    }
 }
 
 /// Rig nodes of the rider model.
@@ -129,6 +170,8 @@ pub mod bike_nodes {
     pub const HOODS: [&str; 2] = ["grip_hoods_l", "grip_hoods_r"];
     pub const TOPS: [&str; 2] = ["grip_tops_l", "grip_tops_r"];
     pub const DROPS: [&str; 2] = ["grip_drops_l", "grip_drops_r"];
+    /// The road levers' hood bodies (optional; [`super::HoodBody`]).
+    pub const HOOD_BODY: [&str; 2] = ["hood_body_l", "hood_body_r"];
     /// The far level of detail: bike and a seated rider in a few meshes.
     pub const LOD1: &str = "lod1";
     /// Anchor above the front tyre's ground contact: the centre of
@@ -291,6 +334,26 @@ impl BikeRig {
             wheelbase: world(m, WHEEL_REAR)?.z - world(m, WHEEL_FRONT)?.z,
             aero_bars: m.node("aero_pads").is_some(),
             bar_clamp: world(m, HANDLEBAR)?,
+            hood_bodies: None,
+        };
+        let drop_bars = !rig.aero_bars && rig.hoods != rig.drops;
+        let anchored = HOOD_BODY.map(|n| {
+            m.node(n).map(|i| {
+                let (scale, rotation, centre) = m.world(i).to_scale_rotation_translation();
+                HoodBody {
+                    centre,
+                    rotation,
+                    radii: scale,
+                }
+            })
+        });
+        let rig = Self {
+            hood_bodies: match anchored {
+                [Some(l), Some(r)] => Some([l, r]),
+                _ if drop_bars => Some(rig.hoods.map(HoodBody::under_grip)),
+                _ => None,
+            },
+            ..rig
         };
         if rig.pedal_x[0] >= 0.0 || rig.pedal_x[1] <= 0.0 {
             return Err("pedal_l must be on the left (-x), pedal_r on the right".into());
@@ -426,6 +489,13 @@ pub struct PoseParams {
     pub one_hand: f32,
     /// Extra head tilt down (rad; a VR rider in the menu).
     pub head_down: f32,
+    /// On the road hoods: 0 the draped grip … 1 the handshake grip (spec
+    /// 14 Phase 4 Q31; [`crate::anim::grip_schedule`]).
+    pub handshake: f32,
+    /// The sprint's own posture beyond standing on the drops (spec 2.6,
+    /// v5.84): the hips forward over the cranks, the torso lower, the
+    /// elbows bent and out, the head up, the hands deep in the hooks.
+    pub sprint: f32,
 }
 
 /// The bike's tilt towards the foot at a stop (rad, ~10°).
@@ -736,6 +806,9 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
     // them, and leans only a little with the bike tilted to the foot.
     let frame = Quat::from_rotation_z(-0.8 * rock_roll - (1.0 - FOOT_TILT_BODY) * tilt);
     let mut hip = fit.hip_seated.lerp(fit.hip_standing, stand);
+    // The sprint: the hips further forward over the cranks.
+    let sprint = p.sprint.clamp(0.0, 1.0);
+    hip += Vec3::new(0.0, -SPRINT_HIP_DROP, -SPRINT_HIP_FORWARD) * (sprint * stand);
     // The bike throw at the line: the hips go back.
     hip += Vec3::new(0.0, -0.03, THROW_BACK_M) * p.throw;
     // The foot on the ground (the ankle, in the rolled bike frame), flat
@@ -764,8 +837,10 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
         bike.hoods[s] * w_hoods + bike.tops[s] * p.tops + bike.drops[s] * p.drops
     });
     let grip_centre = 0.5 * (grips[0] + grips[1]);
-    let reach =
-        rider.arm() * (ARM_REACH - 0.1 * p.tuck - 0.04 * stand + 0.08 * p.throw + 0.06 * p.sit_up);
+    let reach = rider.arm()
+        * (ARM_REACH - 0.1 * p.tuck - 0.04 * stand - SPRINT_ARM_BEND * sprint
+            + 0.08 * p.throw
+            + 0.06 * p.sit_up);
     let pelvis_tilt = |lean: f32| Quat::from_rotation_x(-0.45 * lean);
     let shoulder_centre = |lean: f32| {
         let sh_y = 0.5 * (rider.shoulders[0].y + rider.shoulders[1].y);
@@ -881,7 +956,7 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
         let mut pole = if bike.aero_bars {
             Vec3::new(0.0, -1.0, 0.25)
         } else {
-            out * 0.7 + Vec3::new(0.0, -0.35, 0.6)
+            out * (0.7 + SPRINT_ELBOWS_OUT * sprint) + Vec3::new(0.0, -0.35, 0.6)
         };
         let mut grip = grips[s];
         if s == 1 && ph > 0.0 {
@@ -923,6 +998,10 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
                 shoulder,
                 [w_hoods, p.tops, p.drops],
                 hand_len,
+                GripStyle {
+                    handshake: p.handshake,
+                    sprint,
+                },
             );
             // A TT bar too far for a short rider: the hand slides back
             // along the extension until the arm reaches it.
@@ -996,7 +1075,8 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
                 - 0.25 * p.sit_up
                 - 0.12 * p.throw
                 - crate::anim::PHONE_HEAD_DOWN * reading
-                - p.head_down,
+                - p.head_down
+                + SPRINT_HEAD_UP * sprint,
         );
     // The phone in the hand, its screen towards the eyes.
     let phone = (ph >= crate::anim::PHONE_PICK).then(|| {
@@ -1037,6 +1117,27 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
 /// the drops run forward, the tops (and the hand across the hoods) across;
 /// TT bars (extensions, base bar ends) forward; flat bars across.
 pub fn bar_at(bike: &BikeRig, grip: Vec3, w: [f32; 3]) -> (HandShape, Vec3, Vec3) {
+    bar_at_styled(bike, grip, w, GripStyle::default())
+}
+
+/// How the hands hold the bar beyond where (spec 14 Phase 4 Q31, v5.84):
+/// the hoods' handshake grip and the sprint's hands deep in the hooks.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct GripStyle {
+    /// On the hoods: 0 draped … 1 handshake.
+    pub handshake: f32,
+    /// In a sprint (0 … 1).
+    pub sprint: f32,
+}
+
+/// [`bar_at`] for a [`GripStyle`]: in a sprint the drops are held further
+/// forward, deep in the hooks, the index finger nearer the lever.
+pub fn bar_at_styled(
+    bike: &BikeRig,
+    grip: Vec3,
+    w: [f32; 3],
+    style: GripStyle,
+) -> (HandShape, Vec3, Vec3) {
     let flat = !bike.aero_bars && bike.hoods == bike.drops;
     if bike.aero_bars {
         // The extensions and the base bar's ends run forward (the
@@ -1062,7 +1163,7 @@ pub fn bar_at(bike: &BikeRig, grip: Vec3, w: [f32; 3]) -> (HandShape, Vec3, Vec3
         _ => (
             HandShape::Wrap,
             Vec3::Z,
-            grip + Vec3::Z * (DROPS_BACK * w[2]),
+            grip + Vec3::Z * (drops_back(style.sprint) * w[2]),
         ),
     }
 }
@@ -1083,6 +1184,58 @@ pub const DROPS_BACK: f32 = 0.035;
 /// How far the hood's body lies below its grip anchor (m).
 pub const HOOD_BELOW_GRIP: f32 = 0.011;
 
+/// In a sprint the drops are held this much further forward (m), deep in
+/// the hooks, the index finger nearer the lever.
+pub const SPRINT_DROPS_FORWARD: f32 = 0.01;
+
+/// How far behind the drops' grip anchor the hand holds them at sprint
+/// weight `sprint` (m).
+pub fn drops_back(sprint: f32) -> f32 {
+    DROPS_BACK - SPRINT_DROPS_FORWARD * sprint.clamp(0.0, 1.0)
+}
+
+/// The sprint's hips: this much further forward over the cranks and lower
+/// (m) than standing on a climb.
+pub const SPRINT_HIP_FORWARD: f32 = 0.03;
+pub const SPRINT_HIP_DROP: f32 = 0.0;
+/// The sprint's arms: bent this much more (share of the arm's length),
+/// the torso lower; the elbows out by this (the arm's pole).
+pub const SPRINT_ARM_BEND: f32 = 0.05;
+pub const SPRINT_ELBOWS_OUT: f32 = 0.4;
+/// The sprint's head: lifted this much (rad) – the torso low, the eyes up
+/// the road.
+pub const SPRINT_HEAD_UP: f32 = 0.22;
+
+/// The handshake grip's post (the line the fingers wrap, upright through
+/// the hood's nose and the lever) this share of the hood's half length
+/// ahead of its centre.
+pub const HANDSHAKE_POST_AHEAD: f32 = 0.53;
+/// The hand lifts this much (m, at the default height) halfway through a
+/// change between the draped and the handshake grip – it lets go and
+/// takes hold again.
+pub const REGRIP_LIFT_M: f32 = 0.012;
+
+/// The handshake grip on the hood `hood` (spec 14 Phase 4 Q31 (b)): the
+/// hand's rotation (bike frame) and where its wrist goes, for side `s` and
+/// a hand `hand_len` long. The palm lies against the hood's outer side
+/// (facing in), the hand's long axis back along the hood to the wrist
+/// behind it, the knuckle line upright – the index finger on top – and
+/// the fingers wrap the post through the hood's nose and the lever under
+/// it ([`hand::HANDSHAKE_RADIUS`]); the thumb goes over the hood's top to
+/// its inner side ([`hand::HANDSHAKE_THUMB`]). The rotation is the same
+/// for both sides (the left hand's mesh is the right's mirror image).
+pub fn handshake_on_hood(hood: &HoodBody, s: usize, hand_len: f32) -> (Quat, Vec3) {
+    let scale = hand_len / crate::rider::body::HAND;
+    // In the hood's frame: x across, the hand's y back along the hood (to
+    // the wrist), z down (the index finger, −z, on top).
+    let local = Quat::from_mat3(&Mat3::from_cols(Vec3::X, Vec3::Z, Vec3::NEG_Y));
+    let rot = (hood.rotation * local).normalize();
+    let post =
+        hood.centre + hood.rotation * Vec3::new(0.0, 0.0, -HANDSHAKE_POST_AHEAD * hood.radii.z);
+    let b = hand::bar_centre(HandShape::Handshake, s).unwrap_or(Vec3::ZERO) * scale;
+    (rot, post - rot * b)
+}
+
 /// A hand holding the bar: its shape, its rotation (bike frame) and where
 /// the wrist goes, for side `s` at grip `grip` with the shoulder at
 /// `shoulder`, a hand `hand_len` long. The hand's knuckle line lies along
@@ -1092,6 +1245,7 @@ pub const HOOD_BELOW_GRIP: f32 = 0.011;
 /// drops and the TT bars (the knuckles out, the thumb on top), so the
 /// fingers wrap it ([`crate::rider::hand::bar_centre`] at the bar's
 /// centre).
+#[allow(clippy::too_many_arguments)]
 pub fn hand_on_bar(
     bike: &BikeRig,
     s: usize,
@@ -1099,8 +1253,55 @@ pub fn hand_on_bar(
     shoulder: Vec3,
     w: [f32; 3],
     hand_len: f32,
+    style: GripStyle,
 ) -> (HandShape, Quat, Vec3) {
-    let (shape, k, c) = bar_at(bike, grip, w);
+    let (shape, rot, wrist) = hand_on_bar_plain(bike, s, grip, shoulder, w, hand_len, style);
+    // The hoods: from the draped grip to the handshake grip (Q31), the
+    // hand let go and taken hold again in between – the wrist turns and
+    // moves smoothly, lifted a little halfway, the fingers change shape
+    // halfway, off the hood.
+    let h = style.handshake.clamp(0.0, 1.0) * w[0].clamp(0.0, 1.0);
+    match bike.hood_bodies {
+        Some(hoods) if shape == HandShape::Hoods && h > 0.0 => {
+            let side = s.min(1);
+            let (hr, hw) = handshake_on_hood(&hoods[side], side, hand_len);
+            // Relative to the draped grip held fully on the hoods, so the
+            // blend into the tops and drops stays as it was.
+            let (_, full_rot, full_wrist) = hand_on_bar_plain(
+                bike,
+                side,
+                bike.hoods[side],
+                shoulder,
+                [1.0, 0.0, 0.0],
+                hand_len,
+                style,
+            );
+            let scale = hand_len / crate::rider::body::HAND;
+            let lift = Vec3::Y * (REGRIP_LIFT_M * scale * (std::f32::consts::PI * h).sin());
+            let rot = rot * (full_rot.inverse() * full_rot.slerp(hr, h));
+            let wrist = wrist + (hw - full_wrist) * h + lift;
+            let shape = if h >= 0.5 {
+                HandShape::Handshake
+            } else {
+                HandShape::Hoods
+            };
+            (shape, rot.normalize(), wrist)
+        }
+        _ => (shape, rot, wrist),
+    }
+}
+
+/// [`hand_on_bar`] without the handshake grip.
+fn hand_on_bar_plain(
+    bike: &BikeRig,
+    s: usize,
+    grip: Vec3,
+    shoulder: Vec3,
+    w: [f32; 3],
+    hand_len: f32,
+    style: GripStyle,
+) -> (HandShape, Quat, Vec3) {
+    let (shape, k, c) = bar_at_styled(bike, grip, w, style);
     let n = hand::palm_sign(s);
     let to_sh = (shoulder - c).normalize_or(Vec3::Y);
     let inward = if s == 0 { Vec3::X } else { Vec3::NEG_X };
@@ -2526,6 +2727,354 @@ mod hand_tests {
                 assert!(near.node(n).is_some(), "{n}");
                 assert!(low.node(n).is_none(), "{n} far");
                 assert_eq!(hand::of_node(n), Some((shape, side)));
+            }
+        }
+    }
+
+    /// Every point of hand `side`'s digits in `shape` clear of every bar,
+    /// grip and hood body of `held` (the fingertip's radius at `scale`).
+    fn assert_clear(
+        m: &Model,
+        held: &crate::bikes::HeldBars,
+        side: usize,
+        shape: HandShape,
+        scale: f32,
+        what: &str,
+    ) {
+        let finger_r = hand::TIP_RADIUS * scale - 0.0015;
+        for (k, d) in digits(m, side, shape).iter().enumerate() {
+            for q in d {
+                for (t, (pts, radii)) in held.tubes.iter().enumerate() {
+                    let (dist, r) = to_tube(*q, pts, radii);
+                    assert!(
+                        dist >= r + finger_r,
+                        "{what} side {side} digit {k} point {q}: {dist:.4} into bar {t} of {r:.4}"
+                    );
+                }
+                for (c, radii, rot) in &held.hoods {
+                    let e = (rot.inverse() * (*q - *c)) / (*radii + Vec3::splat(finger_r));
+                    assert!(
+                        e.length() >= 1.0,
+                        "{what} side {side} digit {k} point {q}: into the hood ({:.3})",
+                        e.length()
+                    );
+                }
+            }
+        }
+    }
+
+    /// The sprint's pose weights (anim's targets for a sprint).
+    fn sprinting(crank: f32) -> PoseParams {
+        PoseParams {
+            crank,
+            stand: 1.0,
+            drops: 1.0,
+            tuck: 0.6,
+            rock: crate::anim::SPRINT_ROCK,
+            sprint: 1.0,
+            ..Default::default()
+        }
+    }
+
+    /// Q31 (b): on every road bike (drop bars) and for a short, a default
+    /// and a tall rider, seated and out of the saddle, the handshake grip
+    /// wraps the hood – the palm against its outer side facing in, the
+    /// thumb over the top to its inner side, the fingertips round the nose
+    /// to the inner side – and no finger or thumb cuts into the hood, the
+    /// bar or a grip. The models' hood anchors are the generator's hoods.
+    #[test]
+    fn the_handshake_grip_wraps_every_road_hood_without_clipping() {
+        let near = build(Detail::High);
+        let rig = RiderRig::from_model(&near).unwrap();
+        let cos30 = 30f32.to_radians().cos();
+        let mut road = 0;
+        for profile in ProfileId::ALL {
+            let bike = crate::shipped::bike_rig(profile);
+            let Some(hoods) = bike.hood_bodies else {
+                continue;
+            };
+            road += 1;
+            let held = crate::bikes::held_bars(profile);
+            for (h, (c, r, q)) in hoods.iter().zip(&held.hoods) {
+                assert!(h.centre.distance(*c) < 1e-4, "{profile:?}: {h:?} {c}");
+                assert!(h.radii.distance(*r) < 1e-4, "{profile:?}: {h:?} {r}");
+                assert!(h.rotation.angle_between(*q) < 1e-3, "{profile:?}: {h:?}");
+            }
+            for scale in [0.84, 1.0, 1.15] {
+                let body = BodyFit::new(&rig, &bike, scale);
+                for stand in [0.0, 1.0] {
+                    let params = PoseParams {
+                        crank: 0.7,
+                        stand,
+                        rock: 0.1 * stand,
+                        handshake: 1.0,
+                        ..Default::default()
+                    };
+                    let p = pose(&body.rider, &body.bike, &body.fit, &params);
+                    let what = format!("{profile:?} handshake ×{scale} stand {stand}");
+                    assert_eq!(p.hand_shapes, [HandShape::Handshake; 2], "{what}");
+                    let m = posed(&near, &p, scale);
+                    let mut normals = Vec::new();
+                    for (side, hood) in hoods.iter().enumerate() {
+                        assert_clear(&m, &held, side, HandShape::Handshake, scale, &what);
+                        let inward = if side == 0 { Vec3::X } else { Vec3::NEG_X };
+                        let (normal, _, thumb) = palm_frame(&m, side, HandShape::Handshake);
+                        normals.push(normal);
+                        assert!(
+                            normal.dot(inward) >= cos30,
+                            "{what} side {side}: the palm faces {normal}, not in"
+                        );
+                        let t = hood.local(thumb);
+                        assert!(
+                            t.x * inward.x > 0.0 && t.y > 0.0,
+                            "{what} side {side}: the thumb {t} not over the top on the inside"
+                        );
+                        for (k, d) in digits(&m, side, HandShape::Handshake)[..4]
+                            .iter()
+                            .enumerate()
+                        {
+                            let tip = hood.local(*d.last().unwrap());
+                            assert!(
+                                tip.x * inward.x > 0.005 && tip.z < 0.0,
+                                "{what} side {side}: fingertip {k} {tip} not round the nose to the inside"
+                            );
+                            assert!(
+                                tip.length() < 0.065,
+                                "{what} side {side}: fingertip {k} {tip} far"
+                            );
+                        }
+                    }
+                    let mirrored = normals[1] * Vec3::new(-1.0, 1.0, 1.0);
+                    assert!(
+                        normals[0].dot(mirrored) > 15f32.to_radians().cos(),
+                        "{what}"
+                    );
+                }
+            }
+        }
+        assert_eq!(road, 4, "the road, aero, climbing and gravel bikes");
+    }
+
+    /// A change between the draped and the handshake grip moves the hand
+    /// smoothly: the wrist and the hand turn a little each step, lifted
+    /// off the hood halfway, where the fingers change their shape.
+    #[test]
+    fn the_grip_change_moves_the_hand_smoothly() {
+        let near = build(Detail::High);
+        let rig = RiderRig::from_model(&near).unwrap();
+        let bike = crate::shipped::bike_rig(ProfileId::Road);
+        let body = BodyFit::new(&rig, &bike, 1.0);
+        let at = |h: f32| {
+            let p = pose(
+                &body.rider,
+                &body.bike,
+                &body.fit,
+                &PoseParams {
+                    handshake: h,
+                    ..Default::default()
+                },
+            );
+            let m = posed(&near, &p, 1.0);
+            let w = m.world(m.node(nodes::HAND[1]).unwrap());
+            let (_, rot, pos) = w.to_scale_rotation_translation();
+            (p.hand_shapes[1], rot, pos)
+        };
+        let steps: Vec<_> = (0..=40).map(|i| at(i as f32 / 40.0)).collect();
+        for (i, w) in steps.windows(2).enumerate() {
+            let (moved, turned) = (w[0].2.distance(w[1].2), w[0].1.angle_between(w[1].1));
+            assert!(
+                moved < 0.006 && turned < 0.08,
+                "step {i}: {moved} m, {turned} rad"
+            );
+        }
+        assert_eq!(steps[19].0, HandShape::Hoods);
+        assert_eq!(steps[20].0, HandShape::Handshake);
+        let (a, b) = (steps[0].2, steps[40].2);
+        assert!(a.distance(b) > 0.01, "the grips differ");
+        assert!(
+            steps[20].2.y > 0.5 * (a.y + b.y) + 0.008,
+            "lifted halfway: {} between {} and {}",
+            steps[20].2.y,
+            a.y,
+            b.y
+        );
+    }
+
+    /// The sprint (v5.84): on the drop bars the hands are low in the hooks,
+    /// further forward than on the drops otherwise, the index finger
+    /// nearer the lever, the fingers round the drops without clipping.
+    #[test]
+    fn sprinters_hold_the_drops_deep_in_the_hooks() {
+        let near = build(Detail::High);
+        let rig = RiderRig::from_model(&near).unwrap();
+        for profile in ProfileId::ALL {
+            let bike = crate::shipped::bike_rig(profile);
+            if bike.hood_bodies.is_none() {
+                continue;
+            }
+            let held = crate::bikes::held_bars(profile);
+            let to_lever = |q: Vec3, side: usize| {
+                held.levers[side]
+                    .windows(2)
+                    .map(|s| {
+                        let ab = s[1] - s[0];
+                        let t = ((q - s[0]).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
+                        q.distance(s[0] + ab * t)
+                    })
+                    .fold(f32::MAX, f32::min)
+            };
+            for scale in [0.84, 1.0, 1.15] {
+                let body = BodyFit::new(&rig, &bike, scale);
+                let plain = pose(
+                    &body.rider,
+                    &body.bike,
+                    &body.fit,
+                    &PoseParams {
+                        drops: 1.0,
+                        ..Default::default()
+                    },
+                );
+                let pm = posed(&near, &plain, scale);
+                for i in 0..4 {
+                    let p = pose(
+                        &body.rider,
+                        &body.bike,
+                        &body.fit,
+                        &sprinting(i as f32 * 1.6),
+                    );
+                    let what = format!("{profile:?} sprint ×{scale} crank {i}");
+                    assert_eq!(p.hand_shapes, [HandShape::Wrap; 2], "{what}");
+                    let m = posed(&near, &p, scale);
+                    for side in 0..2 {
+                        assert_clear(&m, &held, side, HandShape::Wrap, scale, &what);
+                        let grip = held_point(&m, &p, side);
+                        assert!(
+                            grip.distance(body.bike.drops[side]) < 0.05,
+                            "{what} side {side}: held at {grip}"
+                        );
+                        let index = *digits(&m, side, HandShape::Wrap)[0].last().unwrap();
+                        let before = *digits(&pm, side, HandShape::Wrap)[0].last().unwrap();
+                        let (now, was) = (to_lever(index, side), to_lever(before, side));
+                        assert!(
+                            now < 0.07 && now < was - 0.004,
+                            "{what} side {side}: the index {now} from the lever (was {was})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The sprint's body (v5.84): out of the saddle, the hips forward over
+    /// the cranks and clear of the saddle all round the stroke, the torso
+    /// lower than standing on a climb; the bike rocks ±7° with the strokes
+    /// – away from the pedal pushing down – and the body counter-sways,
+    /// staying nearly upright above it.
+    #[test]
+    fn a_sprint_stands_clear_of_the_saddle_and_rocks_the_bike() {
+        use std::f32::consts::{FRAC_PI_2, TAU};
+        let near = build(Detail::High);
+        let rig = RiderRig::from_model(&near).unwrap();
+        for profile in ProfileId::ALL {
+            let bike = crate::shipped::bike_rig(profile);
+            for scale in [0.84, 1.0, 1.15] {
+                let body = BodyFit::new(&rig, &bike, scale);
+                let climb = pose(
+                    &body.rider,
+                    &body.bike,
+                    &body.fit,
+                    &PoseParams {
+                        stand: 1.0,
+                        rock: 0.1,
+                        ..Default::default()
+                    },
+                );
+                let mut widest = 0.0f32;
+                for i in 0..16 {
+                    let crank = i as f32 / 16.0 * TAU;
+                    let p = pose(&body.rider, &body.bike, &body.fit, &sprinting(crank));
+                    let what = format!("{profile:?} ×{scale} crank {i}");
+                    let crotch = p.pelvis.0.y - HIP_ABOVE_SADDLE.y * scale;
+                    assert!(
+                        crotch - body.bike.saddle.y > 0.015,
+                        "{what}: {:.3} above the saddle",
+                        crotch - body.bike.saddle.y
+                    );
+                    assert!(
+                        p.pelvis.0.z < climb.pelvis.0.z - 0.02,
+                        "{what}: hips forward"
+                    );
+                    widest = widest.max(p.bike_roll.abs());
+                    // The body nearly upright while the bike rocks.
+                    let up = Quat::from_rotation_z(p.bike_roll) * p.pelvis.1 * p.torso * Vec3::Y;
+                    assert!(
+                        up.x.abs() < 0.35 * p.bike_roll.abs().sin() + 0.02,
+                        "{what}: the torso leans {up} with the bike's {}",
+                        p.bike_roll
+                    );
+                }
+                assert!(
+                    (widest - crate::anim::SPRINT_ROCK).abs() < 0.01,
+                    "{profile:?} ×{scale}: rocks {widest}"
+                );
+                // The right pedal forward, pushing down: the bike leans left.
+                let p = pose(&body.rider, &body.bike, &body.fit, &sprinting(FRAC_PI_2));
+                assert!(p.bike_roll > 0.1, "{profile:?}: {}", p.bike_roll);
+                // Lower than standing on a climb: the shoulders' height
+                // (not on the TT bike: it climbs on the extensions, low,
+                // and sprints on the base bar).
+                let m = posed(&near, &p, scale);
+                let c = posed(&near, &climb, scale);
+                let sh = |m: &Model| m.position(nodes::UPPER_ARM[1]).unwrap().y;
+                assert!(
+                    bike.aero_bars || sh(&m) < sh(&c) - 0.01,
+                    "{profile:?} ×{scale}: torso low ({} against {})",
+                    sh(&m),
+                    sh(&c)
+                );
+            }
+        }
+    }
+
+    /// The TT and the MTB bike keep their own grips (v5.84): no hoods, so
+    /// the handshake changes nothing; a sprint holds the TT bike's base bar
+    /// ends and stands on the MTB's flat bar, the fingers round them.
+    #[test]
+    fn tt_and_mtb_keep_their_own_grips() {
+        let near = build(Detail::High);
+        let rig = RiderRig::from_model(&near).unwrap();
+        for profile in [ProfileId::TimeTrial, ProfileId::Mountain] {
+            let bike = crate::shipped::bike_rig(profile);
+            assert!(bike.hood_bodies.is_none(), "{profile:?}");
+            let held = crate::bikes::held_bars(profile);
+            for scale in [0.84, 1.0, 1.15] {
+                let body = BodyFit::new(&rig, &bike, scale);
+                for (tops, drops) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)] {
+                    let p = |handshake: f32| {
+                        pose(
+                            &body.rider,
+                            &body.bike,
+                            &body.fit,
+                            &PoseParams {
+                                tops,
+                                drops,
+                                handshake,
+                                ..Default::default()
+                            },
+                        )
+                    };
+                    assert_eq!(p(0.0), p(1.0), "{profile:?} ×{scale}");
+                }
+                let p = pose(&body.rider, &body.bike, &body.fit, &sprinting(0.4));
+                let what = format!("{profile:?} sprint ×{scale}");
+                assert_eq!(p.hand_shapes, [HandShape::Wrap; 2], "{what}");
+                let m = posed(&near, &p, scale);
+                for side in 0..2 {
+                    assert_clear(&m, &held, side, HandShape::Wrap, scale, &what);
+                    let grip = held_point(&m, &p, side);
+                    let tol = if bike.aero_bars { 0.16 } else { 0.05 };
+                    assert!(grip.distance(body.bike.drops[side]) < tol, "{what}: {grip}");
+                }
             }
         }
     }

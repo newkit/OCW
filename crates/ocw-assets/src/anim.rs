@@ -51,6 +51,13 @@ pub struct AnimInput {
     pub cue: Cue,
     /// The rider's status signs (spec §2.6): the phone, the VR head tilt.
     pub signs: Signs,
+    /// The game time (s): the server's tick time every client shares
+    /// (the grip schedule, spec 14 Phase 4 Q31).
+    pub time_s: f64,
+    /// The power this rider sustains (W; 0 = not known yet): a slow
+    /// average of its pedalling power, kept by the [`Animator`] – a surge
+    /// well above it is a sprint ([`sprint_threshold`]).
+    pub sustained_w: f64,
 }
 
 /// The rider status signs as one viewer sees them (spec §2.6, §7.1.7
@@ -161,6 +168,7 @@ impl StatusAnim {
             &mut p.rock,
             &mut p.arms_up,
             &mut p.throw,
+            &mut p.sprint,
         ] {
             *v *= 1.0 - w;
         }
@@ -212,6 +220,40 @@ pub const STAND_GRADE: (f64, f64) = (0.085, 0.065);
 pub const STAND_W: f64 = 120.0;
 pub const SPRINT_W: (f64, f64) = (650.0, 480.0);
 pub const SPRINT_MPS: f64 = 7.0;
+/// A sprint is also a surge well above the power the rider sustains (spec
+/// 2.6, v5.84): this many times it (enter / leave) …
+pub const SURGE: (f64, f64) = (1.5, 1.25);
+/// … and at least this much (W; enter, leave): a weak rider's sprint, not
+/// a strong rider's attack on a climb.
+pub const SURGE_MIN_W: (f64, f64) = (350.0, 280.0);
+/// With a measured cadence a sprint spins this fast (rpm; enter, leave).
+pub const SPRINT_RPM: (f64, f64) = (88.0, 72.0);
+/// The sustained power's time constant (s): about the last few minutes
+/// of pedalling (coasting leaves it as it was).
+pub const SUSTAINED_S: f64 = 90.0;
+
+/// The power from which a rider sprints (W): `SPRINT_W` or, lower, a surge
+/// above the power it sustains (`sustained_w`, 0 = unknown); `staying`:
+/// already sprinting (the lower thresholds).
+pub fn sprint_threshold(sustained_w: f64, staying: bool) -> f64 {
+    let i = usize::from(staying);
+    let abs = [SPRINT_W.0, SPRINT_W.1][i];
+    if sustained_w <= 0.0 {
+        return abs;
+    }
+    let surge = [SURGE.0, SURGE.1][i] * sustained_w;
+    abs.min(surge.max([SURGE_MIN_W.0, SURGE_MIN_W.1][i]))
+}
+
+/// Whether `i` is a sprint (`staying`: already sprinting): the speed, the
+/// power above [`sprint_threshold`] and, measured, a high cadence.
+pub fn is_sprint(i: &AnimInput, staying: bool) -> bool {
+    let spin = match i.cadence_rpm {
+        Some(c) => c >= if staying { SPRINT_RPM.1 } else { SPRINT_RPM.0 },
+        None => true,
+    };
+    spin && i.speed_mps >= SPRINT_MPS && i.power_w >= sprint_threshold(i.sustained_w, staying)
+}
 /// Shortest time between two pedalling states (s): no flicker at a
 /// threshold. Stopping and coasting change at once.
 pub const MIN_DWELL_S: f64 = 0.8;
@@ -241,12 +283,7 @@ pub fn select(prev: Riding, i: &AnimInput) -> Riding {
     if !pedalling {
         return Coasting;
     }
-    let sprint = if prev == Sprinting {
-        SPRINT_W.1
-    } else {
-        SPRINT_W.0
-    };
-    if i.power_w >= sprint && i.speed_mps >= SPRINT_MPS {
+    if is_sprint(i, prev == Sprinting) {
         return Sprinting;
     }
     let g = i.grade - i.bias;
@@ -335,15 +372,27 @@ pub fn targets(state: Riding, speed_mps: f64, grade: f64, aero_bars: bool) -> Po
             p.stand = 1.0;
             p.rock = 0.1;
         }
+        // The sprint (v5.84): out of the saddle, the hands low in the
+        // hooks, the hips over the cranks, the torso low, the bike rocked
+        // a few degrees from side to side with the strokes. On a TT bike
+        // its drops are the base bar's ends, on a flat bar the grips.
         Riding::Sprinting => {
             p.stand = 1.0;
             p.drops = 1.0;
-            p.tuck = 0.5;
-            p.rock = 0.16;
+            p.tuck = 0.6;
+            p.rock = SPRINT_ROCK;
+            p.sprint = 1.0;
         }
     }
     p
 }
+
+/// The bike's rocking in a sprint (rad amplitude, ±7°): away from the
+/// pedal pushing down, the rider's body counter-swaying above it.
+pub const SPRINT_ROCK: f32 = 0.12;
+/// A rider in VR sees the own bike rock this share of it (the real bars
+/// stay still under the real hands).
+pub const VR_ROCK_SHARE: f32 = 0.35;
 
 /// Moves the weights of `current` towards `target` (time constant
 /// [`BLEND_S`]; the body motions of v3.47 their own, [`BLEND_CUE_S`]);
@@ -356,6 +405,7 @@ pub fn blend(current: &mut PoseParams, target: &PoseParams, dt: f32) {
     step(&mut current.drops, target.drops);
     step(&mut current.tuck, target.tuck);
     step(&mut current.rock, target.rock);
+    step(&mut current.sprint, target.sprint);
     let [
         corner,
         look,
@@ -558,6 +608,7 @@ pub fn aim(state: Riding, i: &AnimInput, aero_bars: bool, stop_foot: usize) -> A
     let up = arms_up.max(sit_up) as f32;
     p.stand *= 1.0 - up;
     p.rock *= 1.0 - up;
+    p.sprint *= 1.0 - up;
     p.drops *= 1.0 - up;
     p.tuck *= 1.0 - up;
     p.tops = p.tops.max(sit_up as f32);
@@ -587,6 +638,65 @@ pub fn hold_crank(theta: f32, target: f32, dt: f32) -> f32 {
     (theta + diff * k).rem_euclid(TAU)
 }
 
+/// The grip schedule's mean time between two changes (s; spec 14 Phase 4
+/// Q31): every change falls within ±[`GRIP_JITTER_S`] of a multiple of it,
+/// so a grip is held 20 – 90 s.
+pub const GRIP_PERIOD_S: f64 = 55.0;
+pub const GRIP_JITTER_S: f64 = 17.0;
+/// A grip change takes this long (s): the hand lets go and takes hold.
+pub const GRIP_BLEND_S: f32 = 0.4;
+/// Cruising (seated, coasting) a handshake spell lasts only this share
+/// of its time, then the hands drape again; on a climb a draped spell
+/// only this share, then the hands take the handshake grip (or leave the
+/// tops for the hoods).
+pub const CRUISE_HANDSHAKE_SHARE: f64 = 0.4;
+pub const CLIMB_DRAPED_SHARE: f64 = 0.35;
+
+/// A stable hash of a rider and a number (0 … 1).
+fn unit_hash(id: u32, k: i64) -> f64 {
+    let mut h = u64::from(id) ^ (k as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xC4CE_B9FE_1A85_EC53);
+    h ^= h >> 33;
+    (h >> 11) as f64 / (1u64 << 53) as f64
+}
+
+/// When the `k`-th grip change of rider `id` falls (game time, s).
+pub fn grip_change_s(id: u32, k: i64) -> f64 {
+    k as f64 * GRIP_PERIOD_S + (2.0 * unit_hash(id, k) - 1.0) * GRIP_JITTER_S
+}
+
+/// Which grip on the hoods rider `id` holds at game time `t_s` in `state`
+/// (spec 14 Phase 4 Q31): `true` the handshake grip, `false` draped. The
+/// grips take turns in spells of 20 – 90 s, each rider its own (seeded by
+/// the id, read from the game time every client shares, so all of them
+/// show the same); cruising most of the time draped, on a climb and out of
+/// the saddle mostly the handshake. A pure function: no state, no frame
+/// rate.
+pub fn grip_schedule(id: u32, t_s: f64, state: Riding) -> bool {
+    if state == Riding::Standing {
+        return true;
+    }
+    let mut k = (t_s / GRIP_PERIOD_S).floor() as i64;
+    // The spell holding t: between change k and k + 1.
+    while grip_change_s(id, k) > t_s {
+        k -= 1;
+    }
+    while grip_change_s(id, k + 1) <= t_s {
+        k += 1;
+    }
+    let (from, to) = (grip_change_s(id, k), grip_change_s(id, k + 1));
+    let into = (t_s - from) / (to - from);
+    let first = unit_hash(id, -1) < 0.5;
+    let handshake = (k.rem_euclid(2) == 0) == first;
+    match state {
+        Riding::Climbing => handshake || into >= CLIMB_DRAPED_SHARE,
+        _ => handshake && into < CRUISE_HANDSHAKE_SHARE,
+    }
+}
+
 /// A rider's animation (spec §2.6): the riding state, the pose weights
 /// and the cranks, updated every frame from the ride. Deterministic.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -598,6 +708,15 @@ pub struct Animator {
     pub status: StatusAnim,
     /// The foot this rider puts down at a stop ([`stop_foot`]).
     pub stop_foot: usize,
+    /// The rider's id (the grip schedule's seed).
+    pub id: u32,
+    /// The power it sustains (W, 0 = no pedalling seen yet).
+    pub sustained_w: f64,
+    /// The grip change's progress (0 draped … 1 handshake, linear; drawn
+    /// eased).
+    pub grip: f32,
+    /// A grip held whatever the schedule says (scenes: `dev.grip`).
+    pub grip_override: Option<bool>,
 }
 
 /// The foot changes sides only once it is back on its pedal (below this).
@@ -614,14 +733,59 @@ impl Animator {
             },
             stop_foot,
             status: StatusAnim::default(),
+            id,
+            sustained_w: 0.0,
+            grip: 0.0,
+            grip_override: None,
         }
+    }
+
+    /// Follows the power the rider sustains: a slow average of its
+    /// pedalling power (coasting and stops leave it).
+    fn sustain(&mut self, power_w: f64, dt: f64) {
+        if power_w < PEDAL_W.1 || !power_w.is_finite() {
+            return;
+        }
+        self.sustained_w = if self.sustained_w <= 0.0 {
+            power_w
+        } else {
+            self.sustained_w + (power_w - self.sustained_w) * (1.0 - (-dt / SUSTAINED_S).exp())
+        };
+    }
+
+    /// The grip on the hoods drawn now (0 draped … 1 handshake): the
+    /// change eased over [`GRIP_BLEND_S`].
+    pub fn handshake(&self) -> f32 {
+        smoothstep(0.0, 1.0, f64::from(self.grip)) as f32
     }
 
     /// One frame of `dt` seconds; the pose weights to draw.
     pub fn update(&mut self, input: &AnimInput, aero_bars: bool, dt: f32) -> PoseParams {
+        // A sprint is a surge well above the power the rider sustains.
+        let mut input = *input;
+        if input.sustained_w <= 0.0 {
+            input.sustained_w = self.sustained_w;
+        }
+        let input = &input;
         let state = self.selector.update(input, f64::from(dt));
+        self.sustain(input.power_w, f64::from(dt));
         let aim = aim(state, input, aero_bars, self.stop_foot);
         let mut target = aim.pose;
+        // The grip on the hoods (Q31): the schedule's, changed over
+        // GRIP_BLEND_S; on a climb a handshake spell takes the hands from
+        // the tops to the hoods.
+        let handshake = self
+            .grip_override
+            .unwrap_or_else(|| grip_schedule(self.id, input.time_s, state));
+        if state == Riding::Climbing && handshake && !aero_bars && self.grip_override.is_none() {
+            target.tops = 0.0;
+        }
+        let step = dt / GRIP_BLEND_S;
+        self.grip = if handshake {
+            (self.grip + step).min(1.0)
+        } else {
+            (self.grip - step).max(0.0)
+        };
         // One foot at a time: the other side comes out only once this one
         // is back on its pedal.
         if target.foot_side != self.params.foot_side {
@@ -646,6 +810,11 @@ impl Animator {
         // The status signs (spec §2.6): the phone overrides the hands.
         self.status.update(input.signs, dt);
         let mut out = self.params;
+        out.handshake = self.handshake();
+        // In VR the own bike rocks less: the real bars stay still.
+        if input.signs.in_vr {
+            out.rock *= VR_ROCK_SHARE;
+        }
         self.status.apply(&mut out);
         out
     }
@@ -1187,5 +1356,270 @@ mod status_tests {
             b.update(*s, dt);
         }
         assert_eq!(a, b);
+    }
+}
+
+/// The hoods' grip schedule and the sprint (spec 14 Phase 4 Q31, v5.84).
+#[cfg(test)]
+mod grip_tests {
+    use super::*;
+    use Riding::*;
+
+    /// The spells of one grip over `hours` of game time in `state`, as
+    /// (handshake, length s), sampled every 0.25 s.
+    fn spells(id: u32, state: Riding, hours: f64) -> Vec<(bool, f64)> {
+        let mut out: Vec<(bool, f64)> = Vec::new();
+        let n = (hours * 3600.0 * 4.0) as usize;
+        for i in 0..n {
+            let g = grip_schedule(id, 1000.0 + i as f64 * 0.25, state);
+            match out.last_mut() {
+                Some((h, len)) if *h == g => *len += 0.25,
+                _ => out.push((g, 0.25)),
+            }
+        }
+        out
+    }
+
+    fn share(spells: &[(bool, f64)]) -> f64 {
+        let all: f64 = spells.iter().map(|s| s.1).sum();
+        spells.iter().filter(|s| s.0).map(|s| s.1).sum::<f64>() / all
+    }
+
+    /// The grips take turns from time to time: on the hoods, a draped
+    /// spell and a handshake spell each last 20 – 90 s when the state
+    /// does not change it; cruising mostly draped, on a climb mostly the
+    /// handshake (or the hoods instead of the tops), out of the saddle
+    /// always the handshake. Each rider its own rhythm.
+    #[test]
+    fn the_grips_take_turns_every_20_to_90_seconds() {
+        for id in [1u32, 2, 7, 1234, 99_999] {
+            // The raw turns: every change 20 – 90 s after the last.
+            for k in 0..200 {
+                let d = grip_change_s(id, k + 1) - grip_change_s(id, k);
+                assert!((20.0..=90.0).contains(&d), "rider {id} spell {k}: {d} s");
+            }
+            let cruise = spells(id, Seated, 2.0);
+            // The first and last spells are cut by the sampled window.
+            for (h, len) in &cruise[1..cruise.len() - 1] {
+                assert!(
+                    *len >= 8.0 && *len <= 3.0 * 90.0,
+                    "rider {id}: {h} for {len} s"
+                );
+            }
+            let c = share(&cruise);
+            assert!((0.1..0.35).contains(&c), "rider {id} cruising: {c}");
+            let climb = share(&spells(id, Climbing, 2.0));
+            assert!(climb > 0.6, "rider {id} climbing: {climb}");
+            assert_eq!(share(&spells(id, Standing, 0.2)), 1.0);
+        }
+        // Riders differ.
+        let a: Vec<bool> = (0..200)
+            .map(|i| grip_schedule(1, i as f64 * 10.0, Seated))
+            .collect();
+        let b: Vec<bool> = (0..200)
+            .map(|i| grip_schedule(2, i as f64 * 10.0, Seated))
+            .collect();
+        assert_ne!(a, b);
+    }
+
+    /// Every client shows the same: the schedule is a function of the
+    /// rider and the game time only, and the animator reaches the same
+    /// grip at any frame rate.
+    #[test]
+    fn the_grip_schedule_is_deterministic_at_any_frame_rate() {
+        for t in [0.0, 13.7, 600.25, 86_400.5] {
+            assert_eq!(grip_schedule(42, t, Seated), grip_schedule(42, t, Seated));
+        }
+        let ride = |fps: f32| {
+            let mut a = Animator::new(42);
+            let dt = 1.0 / fps;
+            let mut out = Vec::new();
+            let n = 600 * fps as i64;
+            for i in 0..n {
+                let t = i as f64 / f64::from(fps);
+                let p = a.update(
+                    &AnimInput {
+                        speed_mps: 10.0,
+                        power_w: 220.0,
+                        time_s: t,
+                        ..Default::default()
+                    },
+                    false,
+                    dt,
+                );
+                // Sampled once per game second.
+                if i % fps as i64 == 0 {
+                    out.push(p.handshake);
+                }
+            }
+            out
+        };
+        let (a, b) = (ride(60.0), ride(30.0));
+        assert_eq!(a.len(), b.len());
+        for (x, y) in a.iter().zip(&b) {
+            assert!((x - y).abs() < 0.15, "{x} vs {y}");
+        }
+        assert!(a.iter().any(|h| *h > 0.99) && a.iter().any(|h| *h < 0.01));
+    }
+
+    /// A change of grip takes GRIP_BLEND_S (0.4 s), eased: no snapping.
+    #[test]
+    fn a_grip_change_blends_over_four_tenths_of_a_second() {
+        let dt = 1.0 / 60.0;
+        let mut a = Animator::new(3);
+        let i = AnimInput {
+            speed_mps: 10.0,
+            power_w: 220.0,
+            ..Default::default()
+        };
+        a.grip_override = Some(false);
+        for _ in 0..30 {
+            a.update(&i, false, dt);
+        }
+        assert_eq!(a.update(&i, false, dt).handshake, 0.0);
+        a.grip_override = Some(true);
+        let mut seen = vec![0.0f32];
+        for _ in 0..40 {
+            seen.push(a.update(&i, false, dt).handshake);
+        }
+        let done = seen
+            .iter()
+            .position(|h| *h >= 1.0)
+            .expect("reaches the handshake");
+        let s = done as f32 * dt;
+        assert!(
+            (GRIP_BLEND_S - dt..=GRIP_BLEND_S + dt).contains(&s),
+            "{s} s"
+        );
+        // Eased: slow at the ends, never more than 2.5 % of the way in a
+        // frame at 60 fps.
+        for w in seen.windows(2) {
+            assert!(w[1] >= w[0] && w[1] - w[0] < 0.07, "{w:?}");
+        }
+        assert!(seen[1] < 0.01, "eased in: {}", seen[1]);
+        // And back.
+        a.grip_override = Some(false);
+        let back: Vec<f32> = (0..40).map(|_| a.update(&i, false, dt).handshake).collect();
+        assert_eq!(*back.last().unwrap(), 0.0);
+        assert!(back.windows(2).all(|w| w[1] <= w[0]));
+    }
+
+    fn effort(speed: f64, cadence: Option<f64>, power: f64, sustained: f64) -> AnimInput {
+        AnimInput {
+            speed_mps: speed,
+            cadence_rpm: cadence,
+            power_w: power,
+            sustained_w: sustained,
+            ..Default::default()
+        }
+    }
+
+    /// A sprint is a surge well above the power the rider sustains and,
+    /// measured, a high cadence – or simply very high power; never a
+    /// steady effort, however hard.
+    #[test]
+    fn a_sprint_is_a_surge_well_above_the_sustained_power() {
+        // A rider who sustains 180 W sprints at 420 W, spinning.
+        assert_eq!(
+            select(Seated, &effort(12.0, Some(105.0), 420.0, 180.0)),
+            Sprinting
+        );
+        // Not grinding at 70 rpm, and not slowly.
+        assert_eq!(
+            select(Seated, &effort(12.0, Some(70.0), 420.0, 180.0)),
+            Seated
+        );
+        assert_eq!(
+            select(Seated, &effort(5.0, Some(105.0), 420.0, 180.0)),
+            Seated
+        );
+        // Others (no cadence): the power alone.
+        assert_eq!(select(Seated, &effort(12.0, None, 420.0, 180.0)), Sprinting);
+        // A rider sustaining 320 W rides 420 W seated; 700 W is a sprint.
+        assert_eq!(
+            select(Seated, &effort(12.0, Some(100.0), 420.0, 320.0)),
+            Seated
+        );
+        assert_eq!(
+            select(Seated, &effort(12.0, Some(100.0), 700.0, 320.0)),
+            Sprinting
+        );
+        // Hysteresis: the weak rider's sprint goes on down to 280 W.
+        assert_eq!(
+            select(Sprinting, &effort(12.0, Some(95.0), 300.0, 190.0)),
+            Sprinting
+        );
+        assert_eq!(
+            select(Sprinting, &effort(12.0, Some(95.0), 250.0, 190.0)),
+            Seated
+        );
+        assert_eq!(
+            select(Sprinting, &effort(12.0, Some(65.0), 400.0, 190.0)),
+            Seated
+        );
+        // Unknown sustained power: only the absolute threshold.
+        assert_eq!(sprint_threshold(0.0, false), SPRINT_W.0);
+    }
+
+    /// The animator learns the sustained power from the ride: a steady
+    /// 500 W (the kiosk's show mode) never sprints; a 180 W rider's surge
+    /// to 450 W does, standing on the drops, and sits down on the hoods
+    /// when it ends.
+    #[test]
+    fn the_animator_sprints_on_a_surge_and_sits_down_after() {
+        let dt = 1.0 / 30.0;
+        let ride = |a: &mut Animator, power: f64, cadence: f64, seconds: f32| {
+            let mut p = PoseParams::default();
+            for _ in 0..(seconds / dt) as usize {
+                p = a.update(&effort(11.0, Some(cadence), power, 0.0), false, dt);
+            }
+            p
+        };
+        let mut steady = Animator::new(1);
+        for _ in 0..20 {
+            ride(&mut steady, 500.0, 95.0, 10.0);
+            assert_ne!(steady.state(), Sprinting);
+        }
+        let mut a = Animator::new(2);
+        ride(&mut a, 180.0, 90.0, 300.0);
+        assert!((a.sustained_w - 180.0).abs() < 1.0, "{}", a.sustained_w);
+        let p = ride(&mut a, 450.0, 110.0, 3.0);
+        assert_eq!(a.state(), Sprinting);
+        assert!(p.stand > 0.95 && p.drops > 0.95 && p.sprint > 0.95, "{p:?}");
+        assert!((p.rock - SPRINT_ROCK).abs() < 0.01);
+        // A 12 s sprint lifts the sustained power only a little.
+        ride(&mut a, 450.0, 110.0, 9.0);
+        assert_eq!(a.state(), Sprinting);
+        assert!(a.sustained_w < 240.0, "{}", a.sustained_w);
+        let p = ride(&mut a, 170.0, 88.0, 3.0);
+        assert_eq!(a.state(), Seated);
+        assert!(p.stand < 0.05 && p.drops < 0.05 && p.sprint < 0.05, "{p:?}");
+    }
+
+    /// A rider in VR sees the own bike rock less (the real bars stay
+    /// still); everyone else as before.
+    #[test]
+    fn a_vr_riders_bike_rocks_less() {
+        let mut a = Animator::new(4);
+        let mut b = Animator::new(4);
+        let i = effort(12.0, None, 900.0, 0.0);
+        let vr = AnimInput {
+            signs: Signs {
+                in_vr: true,
+                ..Default::default()
+            },
+            ..i
+        };
+        let (mut p, mut q) = (PoseParams::default(), PoseParams::default());
+        for _ in 0..120 {
+            p = a.update(&i, false, 1.0 / 60.0);
+            q = b.update(&vr, false, 1.0 / 60.0);
+        }
+        assert!(
+            (q.rock - p.rock * VR_ROCK_SHARE).abs() < 1e-4,
+            "{} {}",
+            p.rock,
+            q.rock
+        );
     }
 }

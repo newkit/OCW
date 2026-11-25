@@ -113,6 +113,10 @@ pub struct RideView {
     pub riders: Vec<RiderView>,
     /// Session time in seconds.
     pub elapsed_s: f64,
+    /// The game time (s): the server's tick time every client shares
+    /// (`None` before the first snapshot) – the riders' grip schedule
+    /// (spec 14 Phase 4 Q31).
+    pub game_s: Option<f64>,
     /// Device and trainer status for the HUD.
     pub status: String,
     /// The status in the compact HUD (a phone, spec 3.2 *Phone layout*):
@@ -308,6 +312,7 @@ impl RideView {
             off_road: BTreeMap::new(),
             riders: Vec::new(),
             elapsed_s: 0.0,
+            game_s: None,
             status: String::new(),
             status_compact: None,
             terrain_base: None,

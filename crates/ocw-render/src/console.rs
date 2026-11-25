@@ -965,6 +965,25 @@ fn register_builtin_commands(app: &mut App) {
         },
     ))
     .console_command(ConsoleCommand::new(
+        Dev,
+        Command::new("dev.grip")
+            .about("Hold a grip on the road hoods (scenes, spec 14 Phase 4 Q31): draped, handshake, or auto (the schedule)")
+            .arg(Arg::new("grip").required(true).value_parser(["draped", "handshake", "auto"])),
+        |world, m| {
+            let grip = m.get_one::<String>("grip").expect("required");
+            let held = match grip.as_str() {
+                "draped" => Some(false),
+                "handshake" => Some(true),
+                _ => None,
+            };
+            world.insert_resource(crate::riders::GripOverride(held));
+            Ok(match held {
+                Some(_) => format!("every rider holds the hoods {grip}"),
+                None => "the hoods' grip follows the schedule".into(),
+            })
+        },
+    ))
+    .console_command(ConsoleCommand::new(
         User,
         Command::new("camera.orbit")
             .about("Orbit the chase camera: yaw (0 = behind, 180 = in front) and pitch in degrees, distance in m")
@@ -1313,7 +1332,7 @@ mod tests {
         assert_eq!(tab(&mut app, "dev.").0, "dev.");
         assert!(tab(&mut app, "help dev.").1.is_empty());
         app.world_mut().resource_mut::<ConsoleState>().permission = Permission::Dev;
-        assert_eq!(tab(&mut app, "dev.").0, "dev.thing ");
+        assert_eq!(tab(&mut app, "dev.t").0, "dev.thing ");
         assert_eq!(tab(&mut app, "help dev.t").0, "help dev.thing ");
         // Typing ends the list.
         app.world_mut()

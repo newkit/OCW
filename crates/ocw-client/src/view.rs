@@ -34,6 +34,7 @@ pub fn fill(
     shake: bool,
 ) {
     view.elapsed_s = elapsed_s;
+    view.game_s = client.server_time_s(now);
     // Interpolate between the last two 50 Hz prediction steps.
     view.riders = client.view(now, overstep);
     // Riders off the road ride the terrain's track (spec §14 Phase 13A).

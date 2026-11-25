@@ -1709,6 +1709,24 @@ source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
 author = "Open Cycling World contributors"
 
 [[asset]]
+file = "wear/hand-handshake-l.glb"
+kind = "wearable"
+anchor = "hand_l"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hand_handshake_l")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
+file = "wear/hand-handshake-r.glb"
+kind = "wearable"
+anchor = "hand_r"
+generator = 'ocw_assets::rider_split::extract(rider::build(Detail::High), "hand_handshake_r")'
+license = "MIT OR Apache-2.0"
+source = "own work, exported from the OCW generators (spec §14 Phase 15, M1)"
+author = "Open Cycling World contributors"
+
+[[asset]]
 file = "wear/hand-hoods-l.glb"
 kind = "wearable"
 anchor = "hand_l"
