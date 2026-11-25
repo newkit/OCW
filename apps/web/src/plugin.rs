@@ -167,6 +167,7 @@ fn dev_from_server(session: Option<Res<Session>>, console: Option<ResMut<Console
 /// The frame's time into the session; the server's notices to the console.
 fn frame(
     time: Res<Time>,
+    fixed: Res<Time<Fixed>>,
     mut session: ResMut<Session>,
     mut console: ResMut<ConsoleState>,
     grants: Option<ResMut<crate::voice::PendingVoiceGrants>>,
@@ -174,6 +175,9 @@ fn frame(
 ) {
     let now = time.elapsed_secs_f64();
     let remote = session.0.is_remote();
+    // The last prediction step's time: the worker's stamps count the steps
+    // taken since a snapshot came (10G *B3 worker*).
+    session.0.step_s = Some(fixed.elapsed_secs_f64());
     let notices = session.0.frame(time.delta_secs_f64(), now);
     // The voice token grants (spec §7) go to the voice controller.
     if let Some(mut g) = grants {
@@ -385,6 +389,8 @@ fn update_view(
     );
     view.status = s.status_line();
     view.status_compact = Some(s.status_compact());
+    // How smoothly the riders move (remote rides; `net.stats`).
+    s.observe_motion(now, fixed.overstep_fraction_f64());
 }
 
 /// The devices (B4): the ones the page connected start in the session;

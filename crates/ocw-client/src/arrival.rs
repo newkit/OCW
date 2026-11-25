@@ -17,6 +17,14 @@
 //! behind that one. The prediction extrapolates a snapshot by its lateness
 //! (plus the network's age), and the others' interpolation places it at
 //! the time it would have arrived on time.
+//!
+//! Where the transport stamps each message on arrival (the browser's
+//! network worker, spec 14 Phase 10, 10G *B3 worker*), the client knows
+//! how many steps it had taken when the snapshot came, not only when it
+//! read it: [`ArrivalClock::late_ticks_stamped`] keeps that lead (a
+//! fraction of a step too) as the snapshot's in the window, so a message
+//! that waited for the page sets no later baseline and counts as late by
+//! exactly the steps taken since it came.
 
 use std::collections::VecDeque;
 
@@ -32,8 +40,8 @@ pub const MAX_LATE_TICKS: i64 = 25;
 pub struct ArrivalClock {
     steps: u64,
     /// (arrival time, prediction steps − server tick) of the recent
-    /// snapshots.
-    window: VecDeque<(f64, i64)>,
+    /// snapshots (fractional where the arrival was stamped).
+    window: VecDeque<(f64, f64)>,
 }
 
 impl ArrivalClock {
@@ -45,7 +53,16 @@ impl ArrivalClock {
     /// A snapshot of `server_tick` arrived at `now_s`: how many ticks it
     /// is later than the freshest one of the last [`WINDOW_S`].
     pub fn late_ticks(&mut self, server_tick: u64, now_s: f64) -> u32 {
-        let lead = self.steps as i64 - server_tick as i64;
+        self.late_ticks_stamped(server_tick, now_s, 0.0)
+    }
+
+    /// The same for a snapshot stamped on arrival: `steps_since` (≥ 0,
+    /// fractional) prediction steps were taken between its arrival and
+    /// now. Its lead at arrival goes into the window; the lateness is the
+    /// steps now against the freshest lead, rounded to whole steps.
+    pub fn late_ticks_stamped(&mut self, server_tick: u64, now_s: f64, steps_since: f64) -> u32 {
+        let now_lead = self.steps as f64 - server_tick as f64;
+        let lead = now_lead - steps_since.max(0.0);
         while self
             .window
             .front()
@@ -53,18 +70,20 @@ impl ArrivalClock {
         {
             self.window.pop_front();
         }
-        let fresh = self.window.iter().map(|(_, l)| *l).min();
+        let fresh = self
+            .window
+            .iter()
+            .map(|(_, l)| *l)
+            .fold(f64::INFINITY, f64::min);
         self.window.push_back((now_s, lead));
-        match fresh {
-            Some(f) if lead - f > MAX_LATE_TICKS => {
-                // A new clock: start again from this snapshot.
-                self.window.clear();
-                self.window.push_back((now_s, lead));
-                0
-            }
-            Some(f) if lead > f => (lead - f) as u32,
-            _ => 0,
+        let fresh = fresh.min(lead);
+        if now_lead - fresh > MAX_LATE_TICKS as f64 {
+            // A new clock: start again from this snapshot.
+            self.window.clear();
+            self.window.push_back((now_s, lead));
+            return (now_lead - lead).round().max(0.0) as u32;
         }
+        (now_lead - fresh).round().max(0.0) as u32
     }
 }
 
@@ -106,6 +125,39 @@ mod tests {
                 assert_eq!(c.late_ticks(i + 7, i as f64 * 0.02), 0);
             }
         }
+    }
+
+    /// Stamped arrivals (10G *B3 worker*): a snapshot that waited two
+    /// frames for the page is late by the steps since it came, and sets
+    /// no later baseline for the next ones.
+    #[test]
+    fn stamped_snapshots_are_late_by_the_steps_since_they_came() {
+        let mut c = ArrivalClock::default();
+        for _ in 0..10 {
+            c.step();
+        }
+        // Came on time, read at once.
+        assert_eq!(c.late_ticks_stamped(10, 0.0, 0.0), 0);
+        for _ in 0..5 {
+            c.step();
+        }
+        // Came on time (tick 15 at step 15) but read 4 steps later.
+        for _ in 0..4 {
+            c.step();
+        }
+        assert_eq!(c.late_ticks_stamped(15, 0.1, 4.0), 4);
+        // The window keeps the lead it came with (0), not the 4 it was
+        // read with. A snapshot ahead of the prediction (tick 25 at step
+        // 21, came 0.4 steps ago) is the freshest and not late.
+        c.step();
+        c.step();
+        assert_eq!(c.late_ticks_stamped(25, 0.2, 0.4), 0);
+        // A stamp a fraction of a step late rounds to the nearest step.
+        for _ in 0..5 {
+            c.step();
+        }
+        assert_eq!(c.late_ticks_stamped(30, 0.3, 1.4), 1);
+        assert_eq!(c.late_ticks_stamped(30, 0.3, 1.6), 2);
     }
 
     /// The client fell behind for good (its clock was clamped after a

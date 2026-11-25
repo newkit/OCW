@@ -81,6 +81,9 @@ pub struct SessionConfig {
     /// Why voice is off on this page (the page configuration, B8a: the
     /// preview has no voice server); `None`: the page's voice shim.
     pub voice_off: Option<String>,
+    /// Who reads the WebTransport connections (page option `net-worker`,
+    /// 10G *B3 worker*): the network worker where it can.
+    pub net_reader: crate::netconn::ReaderMode,
 }
 
 impl Default for SessionConfig {
@@ -102,6 +105,7 @@ impl Default for SessionConfig {
             memory: None,
             access_token: None,
             voice_off: None,
+            net_reader: Default::default(),
         }
     }
 }
@@ -115,6 +119,16 @@ pub trait Transport: Send + Sync {
     fn pump(&mut self, link: &Arc<Mutex<ClientLink>>, now_s: f64);
     /// Closes the connection ("client quit").
     fn close(&mut self) {}
+    /// The link's clock now (the clock the messages are stamped with; the
+    /// browser's is the wall clock, the test fake's the game time `now_s`).
+    fn clock_s(&self, now_s: f64) -> f64 {
+        now_s
+    }
+    /// Who reads the messages ("worker", "main thread"; empty: not known
+    /// yet, or no such thing).
+    fn reader(&self) -> &'static str {
+        ""
+    }
 }
 
 /// The link to a remote server and what it measured.
@@ -132,6 +146,9 @@ pub struct RemoteLink {
     /// The highest sample sequence number the server applied (its own
     /// rider's `last_input_seq`): the server got the inputs.
     pub acked_seq: u32,
+    /// How smoothly the riders move as drawn (v5.40's measure; 10G *B3
+    /// worker*).
+    pub motion: ocw_client::motion::MotionMeter,
 }
 
 /// The server the session rides on.
@@ -150,6 +167,9 @@ pub struct WebSession {
     /// Server ticks run so far (for the start-up log and the tests; local
     /// server only).
     pub ticks: u64,
+    /// The game time of the last prediction step (`Time<Fixed>`; 10G *B3
+    /// worker*: how many steps were taken since a stamped message came).
+    pub step_s: Option<f64>,
 }
 
 impl WebSession {
@@ -218,6 +238,7 @@ impl WebSession {
             trainer: FrameVirtualTrainer::new(power_w),
             devices,
             ticks: 0,
+            step_s: None,
         }
     }
 
@@ -244,11 +265,13 @@ impl WebSession {
                 others_seen: BTreeSet::new(),
                 max_riders: 0,
                 acked_seq: 0,
+                motion: Default::default(),
             })),
             client,
             trainer: FrameVirtualTrainer::new(power_w),
             devices,
             ticks: 0,
+            step_s: None,
         }
     }
 
@@ -330,13 +353,53 @@ impl WebSession {
                 for (at, m) in &timed {
                     r.observe(m, *at, own);
                 }
-                timed.into_iter().map(|(_, m)| m).collect()
+                // The client takes each message at its arrival on the game
+                // clock: as long before this frame as it came before the
+                // link's now (the network worker's stamps, 10G *B3 worker*).
+                let link_now = r.transport.clock_s(now_s);
+                let mut notices = Vec::new();
+                for (at, m) in timed {
+                    let before = self.client.stats().snapshots;
+                    let arrived = now_s - (link_now - at).clamp(0.0, 1.0);
+                    let step_s = self.step_s.unwrap_or(now_s);
+                    if let Some(n) = self.client.on_server_message_at(&m, now_s, arrived, step_s) {
+                        notices.push(n);
+                    }
+                    if self.client.stats().snapshots > before {
+                        r.motion.snapshot(now_s, self.client.prediction_error());
+                    }
+                }
+                return notices;
             }
         };
         messages
             .iter()
             .filter_map(|bytes| self.client.on_server_message(bytes, now_s))
             .collect()
+    }
+
+    /// One drawn frame at game time `now_s` (`alpha`: the fixed step's
+    /// overstep) into the motion measure (remote rides only).
+    pub fn observe_motion(&mut self, now_s: f64, alpha: f64) {
+        let ServerLink::Remote(r) = &mut self.server else {
+            return;
+        };
+        let track = self.client.track();
+        let own = self.client.rider_id();
+        let at = |v: &ocw_render::RiderView| {
+            let p = track
+                .sample(v.state.distance)
+                .offset_position(v.state.lateral_offset);
+            [p[0], p[1], p[2]]
+        };
+        let views = self.client.view(now_s, alpha);
+        let own_pos = views.iter().find(|v| Some(v.id) == own).map(at);
+        let others: Vec<_> = views
+            .iter()
+            .filter(|v| Some(v.id) != own)
+            .map(|v| (v.id, at(v)))
+            .collect();
+        r.motion.frame(now_s, own_pos, &others);
     }
 
     /// The remote link's state (`None`: the local server).
@@ -494,6 +557,15 @@ impl WebSession {
             v["others_seen"] = r.others_seen.iter().cloned().collect::<Vec<_>>().into();
             v["max_riders"] = r.max_riders.into();
             v["timing"] = serde_json::to_value(r.timing.summary()).unwrap_or_default();
+            v["motion"] = serde_json::to_value(r.motion.summary()).unwrap_or_default();
+            v["late_ticks"] = st.late_ticks.to_vec().into();
+            v["extrapolated_ticks"] = st.extrapolated_ticks.to_vec().into();
+            v["reader"] = r.transport.reader().into();
+            #[cfg(target_arch = "wasm32")]
+            {
+                v["worker"] = serde_json::to_value(crate::netconn::stats()).unwrap_or_default();
+                v["reader_note"] = crate::netconn::fallback_reason().into();
+            }
         }
         v.to_string()
     }

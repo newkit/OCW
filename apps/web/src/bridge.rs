@@ -33,6 +33,9 @@ struct Status {
     state: String,
     supported: bool,
     json: serde_json::Value,
+    /// Who reads the connection ("worker", "main thread"; 10G *B3
+    /// worker*).
+    reader: &'static str,
 }
 
 static STATUS: Mutex<Status> = Mutex::new(Status {
@@ -40,6 +43,7 @@ static STATUS: Mutex<Status> = Mutex::new(Status {
     state: String::new(),
     supported: true,
     json: serde_json::Value::Null,
+    reader: "",
 });
 
 /// A code typed in the console or given by the page, until the ride takes
@@ -70,6 +74,11 @@ pub fn json() -> serde_json::Value {
     v["code"] = s.code.clone().into();
     v["state"] = s.state.clone().into();
     v["supported"] = s.supported.into();
+    v["reader"] = s.reader.into();
+    #[cfg(target_arch = "wasm32")]
+    {
+        v["reader_note"] = crate::netconn::fallback_reason().into();
+    }
     v
 }
 
@@ -146,51 +155,17 @@ mod web {
     use std::sync::mpsc::{self, Receiver, Sender};
 
     use bevy::prelude::{info, warn};
-    use js_sys::{Promise, Reflect, Uint8Array};
+    use js_sys::Reflect;
     use ocw_bridge::PairingCode;
     use ocw_bridge::cert::browser_hashes;
     use ocw_bridge::msg::{Frames, ToBrowser, ToHost, frame};
     use ocw_bridge::relay::{Phase, Session};
     use ocw_devices::{DeviceCommand, DeviceEvent, DeviceHandle, FailReason};
-    use wasm_bindgen::prelude::wasm_bindgen;
-    use wasm_bindgen::{JsCast, JsValue};
-    use wasm_bindgen_futures::{JsFuture, spawn_local};
+    use wasm_bindgen_futures::spawn_local;
 
     use super::{BRIDGE_NAME, CODE_KEY, SESSION_KEY, set_state, status};
-    use crate::browser::{js, sleep};
-
-    #[wasm_bindgen]
-    extern "C" {
-        type WebTransport;
-        #[wasm_bindgen(constructor, catch)]
-        fn new(url: &str, options: &js_sys::Object) -> Result<WebTransport, JsValue>;
-        #[wasm_bindgen(method, getter)]
-        fn ready(this: &WebTransport) -> Promise;
-        #[wasm_bindgen(method, getter)]
-        fn closed(this: &WebTransport) -> Promise;
-        #[wasm_bindgen(method, js_name = createBidirectionalStream)]
-        fn create_bidirectional_stream(this: &WebTransport) -> Promise;
-        #[wasm_bindgen(method, js_name = close, catch)]
-        fn close_with(this: &WebTransport, info: &js_sys::Object) -> Result<(), JsValue>;
-
-        type BridgeReader;
-        #[wasm_bindgen(method)]
-        fn read(this: &BridgeReader) -> Promise;
-        type BridgeWriter;
-        #[wasm_bindgen(method)]
-        fn write(this: &BridgeWriter, chunk: &JsValue) -> Promise;
-    }
-
-    fn get(o: &JsValue, k: &str) -> JsValue {
-        Reflect::get(o, &k.into()).unwrap_or(JsValue::UNDEFINED)
-    }
-
-    fn call0(o: &JsValue, f: &str) -> JsValue {
-        get(o, f)
-            .dyn_ref::<js_sys::Function>()
-            .and_then(|f| f.call0(o).ok())
-            .unwrap_or(JsValue::UNDEFINED)
-    }
+    use crate::browser::sleep;
+    use crate::netconn::{self, ConnOptions, NetEvent, Stage};
 
     /// Whether the browser has WebTransport.
     pub fn supported() -> bool {
@@ -345,18 +320,27 @@ mod web {
         }
     }
 
-    fn write(w: &BridgeWriter, m: &ToHost) {
-        let p = w.write(&Uint8Array::from(&frame(m)[..]).into());
-        spawn_local(async move {
-            let _ = JsFuture::from(p).await;
-        });
+    fn write(id: u32, m: &ToHost) {
+        netconn::send(id, vec![frame(m)], Vec::new());
     }
 
-    fn close(t: &WebTransport, reason: &str) {
-        let info = js_sys::Object::new();
-        let _ = Reflect::set(&info, &"closeCode".into(), &0.into());
-        let _ = Reflect::set(&info, &"reason".into(), &reason.into());
-        let _ = t.close_with(&info);
+    fn close(id: u32, reason: &str) {
+        netconn::close(id, 0, reason);
+    }
+
+    /// A stamp of the network (the wall clock) on the page's clock.
+    fn page_ms_of(wall_ms: f64) -> f64 {
+        let origin = web_sys::window()
+            .and_then(|w| w.performance())
+            .map_or(0.0, |p| p.time_origin());
+        wall_ms - origin
+    }
+
+    /// What the connection's events left for the loop.
+    #[derive(Default)]
+    struct Link {
+        open: bool,
+        done: Option<String>,
     }
 
     /// One connection: until it is lost, refused or stopped.
@@ -368,127 +352,137 @@ mod web {
         commands: &Receiver<DeviceCommand>,
     ) -> End {
         let unix_s = (js_sys::Date::now() / 1000.0) as i64;
-        let hashes = js_sys::Array::new();
-        for h in browser_hashes(code.secret, unix_s) {
-            let o = js_sys::Object::new();
-            let _ = Reflect::set(&o, &"algorithm".into(), &"sha-256".into());
-            let _ = Reflect::set(&o, &"value".into(), &Uint8Array::from(&h[..]).into());
-            hashes.push(&o);
-        }
-        let opts = js_sys::Object::new();
-        let _ = Reflect::set(&opts, &"serverCertificateHashes".into(), &hashes.into());
         let url = code.url();
-        let t = match WebTransport::new(&url, &opts) {
-            Ok(t) => t,
-            Err(e) => return End::Lost(js(e)),
-        };
-        if let Err(e) = JsFuture::from(t.ready()).await {
-            return End::Lost(format!("cannot reach the desktop app: {}", js(e)));
-        }
-        let bidi = match JsFuture::from(t.create_bidirectional_stream()).await {
-            Ok(b) => b,
-            Err(e) => return End::Lost(js(e)),
-        };
-        let writer: BridgeWriter = call0(&get(&bidi, "writable"), "getWriter").unchecked_into();
-        let reader: BridgeReader = call0(&get(&bidi, "readable"), "getReader").unchecked_into();
-        for m in session.borrow_mut().on_open(page_ms()) {
-            write(&writer, &m);
-        }
-        info!(%url, "sensor bridge: connected");
-        // The reader: every message as it arrives (the ride takes the
-        // events in its next frame).
-        let done: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
-        {
+        let link: Rc<RefCell<Link>> = Rc::default();
+        // Every message as it arrives (read in the network worker where the
+        // browser lets it, stamped when it came; 10G *B3 worker*): the ride
+        // takes the events in its next frame.
+        let id = {
             let session = session.clone();
             let events = events.clone();
-            let done = done.clone();
-            let closed = t.closed();
-            spawn_local(async move {
-                let mut frames = Frames::default();
-                loop {
-                    let r = match JsFuture::from(reader.read()).await {
-                        Ok(r) => r,
-                        Err(e) => {
-                            *done.borrow_mut() = Some(js(e));
-                            return;
-                        }
-                    };
-                    if get(&r, "done").as_bool().unwrap_or(true) {
-                        let why = match JsFuture::from(closed).await {
-                            Ok(i) => get(&i, "reason").as_string().unwrap_or_default(),
-                            Err(e) => js(e),
-                        };
-                        *done.borrow_mut() = Some(if why.is_empty() {
-                            "the desktop app closed the connection".into()
-                        } else {
-                            why
-                        });
+            let link = link.clone();
+            let mut frames = Frames::default();
+            netconn::open(
+                ConnOptions {
+                    url: url.clone(),
+                    hashes: browser_hashes(code.secret, unix_s).to_vec(),
+                    datagrams: false,
+                    rtt: false,
+                    game: false,
+                },
+                move |ev| {
+                    let mut l = link.borrow_mut();
+                    if l.done.is_some() {
                         return;
                     }
-                    frames.push(&Uint8Array::new(&get(&r, "value")).to_vec());
-                    while let Some(m) = frames.next_message::<ToBrowser>() {
-                        let m = match m {
-                            Ok(m) => m,
-                            Err(e) => {
-                                *done.borrow_mut() = Some(e.to_string());
-                                return;
+                    match ev {
+                        NetEvent::Connected { .. } => l.open = true,
+                        NetEvent::Stream { at_ms, bytes } => {
+                            frames.push(&bytes);
+                            let at = page_ms_of(at_ms);
+                            while let Some(m) = frames.next_message::<ToBrowser>() {
+                                let m = match m {
+                                    Ok(m) => m,
+                                    Err(e) => {
+                                        l.done = Some(e.to_string());
+                                        return;
+                                    }
+                                };
+                                let closed_msg = match &m {
+                                    ToBrowser::Closed { why } => Some(why.clone()),
+                                    _ => None,
+                                };
+                                for e in session.borrow_mut().on_message(m, at) {
+                                    let _ = events.send(e);
+                                }
+                                if let Some(why) = closed_msg {
+                                    l.done = Some(why);
+                                    return;
+                                }
                             }
-                        };
-                        let closed_msg = match &m {
-                            ToBrowser::Closed { why } => Some(why.clone()),
-                            _ => None,
-                        };
-                        for e in session.borrow_mut().on_message(m, page_ms()) {
-                            let _ = events.send(e);
                         }
-                        if let Some(why) = closed_msg {
-                            *done.borrow_mut() = Some(why);
+                        NetEvent::StreamEnd => {
+                            l.done = Some("the desktop app closed the connection".into())
                         }
+                        NetEvent::Closed { reason, error } => {
+                            l.done = Some(if reason.is_empty() && !error {
+                                "the desktop app closed the connection".into()
+                            } else {
+                                reason
+                            })
+                        }
+                        NetEvent::Failed {
+                            stage: Stage::Ready,
+                            error,
+                        } => l.done = Some(format!("cannot reach the desktop app: {error}")),
+                        NetEvent::Failed { error, .. } => l.done = Some(error),
+                        NetEvent::Datagram { .. } | NetEvent::Rtt(_) => {}
                     }
-                }
-            });
+                },
+            )
+        };
+        // Until the stream is open (a stop ends the wait).
+        loop {
+            if RUN.load(Ordering::Relaxed) != run {
+                close(id, "replaced");
+                return End::Shutdown;
+            }
+            if let Some(why) = link.borrow_mut().done.take() {
+                close(id, "lost");
+                return End::Lost(why);
+            }
+            if link.borrow().open {
+                break;
+            }
+            sleep(10).await;
         }
+        for m in session.borrow_mut().on_open(page_ms()) {
+            write(id, &m);
+        }
+        let reader = netconn::reader(id).map_or("", |r| r.as_str());
+        status().reader = reader;
+        info!(%url, reader, "sensor bridge: connected");
         let mut next_ping = 0.0;
         loop {
             if RUN.load(Ordering::Relaxed) != run {
-                close(&t, "replaced");
+                close(id, "replaced");
                 return End::Shutdown;
             }
             for cmd in commands.try_iter() {
                 if cmd == DeviceCommand::Shutdown {
-                    write(&writer, &ToHost::Bye);
+                    write(id, &ToHost::Bye);
                     sleep(50).await;
-                    close(&t, "stopped");
+                    close(id, "stopped");
                     return End::Shutdown;
                 }
                 let m = session.borrow_mut().control(cmd, page_ms());
                 if let Some(m) = m {
-                    write(&writer, &m);
+                    write(id, &m);
                 }
             }
             if matches!(session.borrow().phase, Phase::Paired { .. }) {
                 for (kind, data) in super::take_reports() {
-                    write(&writer, &ToHost::Report { kind, data });
+                    write(id, &ToHost::Report { kind, data });
                 }
             }
             let now = page_ms();
             if now >= next_ping {
                 next_ping = now + 1000.0;
                 let p = session.borrow_mut().ping(now);
-                write(&writer, &p);
+                write(id, &p);
             }
             {
                 let s = session.borrow();
                 if let Phase::Refused(why) = &s.phase {
                     let why = why.clone();
                     drop(s);
-                    close(&t, "refused");
+                    close(id, "refused");
                     return End::Refused(why);
                 }
                 publish(code, &s);
             }
-            if let Some(why) = done.borrow_mut().take() {
-                close(&t, "lost");
+            if let Some(why) = link.borrow_mut().done.take() {
+                close(id, "lost");
                 return End::Lost(why);
             }
             sleep(25).await;
