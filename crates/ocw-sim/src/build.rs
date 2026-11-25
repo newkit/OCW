@@ -12,13 +12,16 @@
 //! ([`PartTable`], `assets/parts.toml`).
 //!
 //! [`build`] adds them up – bike mass = profile mass + Σ (part − base
-//! part), at least [`min_bike_mass_kg`] – and then **caps the whole build**:
-//! at the reference ride ([`REFERENCE_POWER_W`], [`REFERENCE_RIDER_KG`])
-//! the build may be at most [`FLAT_CAP`] faster or slower than the
-//! profile's base build on flat asphalt and [`CLIMB_CAP`] on a
-//! [`CLIMB_GRADE`] climb. A build beyond the band keeps the largest share
-//! of its change that fits (every value moves back towards the profile by
-//! the same share), so the best stacked build sits exactly on the cap.
+//! part), at least [`min_bike_mass_kg`] – and then **caps each kind
+//! separately** (Phase 4 Q27 (b)): rolling (Crr), aero (CdA), weight (mass)
+//! and drivetrain (efficiency) each may make the bike at most its own
+//! share ([`Kind::budget`]) of [`FLAT_CAP`] faster or slower than the
+//! profile's base build on flat asphalt and of [`CLIMB_CAP`] on a
+//! [`CLIMB_GRADE`] climb, at each of the [`REFERENCE_POWERS_W`]
+//! ([`REFERENCE_RIDER_KG`]). A kind beyond its share keeps the largest
+//! part of its change that fits; the shares add up to the caps, so the
+//! whole build stays within them. Since each kind is one value held on
+//! its own, a better part never lowers what the other parts give.
 //!
 //! Race modes ([`PhysicsMode`]): *Open* (parts count, within the caps),
 //! *Profile* (only the frame's profile counts; the default for races and
@@ -90,6 +93,73 @@ pub const REFERENCE_RIDER_KG: f64 = 75.0;
 /// are bounded by the flat cap at every speed, weight builds by the climb
 /// cap).
 pub const REFERENCE_POWERS_W: [f64; 3] = [150.0, 250.0, 400.0];
+
+/// The kinds of a build that the caps hold apart (spec 4G *Caps*, Phase 4
+/// Q27 (b)): each moves one value of the physics, and each is held within
+/// its own share of [`FLAT_CAP`] / [`CLIMB_CAP`] ([`Kind::budget`]), so a
+/// better part of one kind never lowers what the other kinds give.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Kind {
+    /// Rolling resistance (Crr): the tyres.
+    Rolling,
+    /// Drag area (CdA): frames, wheels, cockpits, bags and aero kit.
+    Aero,
+    /// The mass of bike and kit.
+    Weight,
+    /// Drivetrain efficiency: groupsets and stiff race shoes.
+    Drivetrain,
+}
+
+impl Kind {
+    pub const ALL: [Kind; 4] = [Kind::Rolling, Kind::Aero, Kind::Weight, Kind::Drivetrain];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Kind::Rolling => "rolling",
+            Kind::Aero => "aero",
+            Kind::Weight => "weight",
+            Kind::Drivetrain => "drivetrain",
+        }
+    }
+
+    /// The kind's share of the caps: the largest speed difference (flat,
+    /// climb) that this kind alone may make against the profile, at each
+    /// of the [`REFERENCE_POWERS_W`] (75 kg, steady state). The shares add
+    /// up to [`FLAT_CAP`] and [`CLIMB_CAP`], so the whole build stays
+    /// within the old limit. Taken from the catalogue (spec 4G *Caps*):
+    /// the kinds that only one slot moves – rolling (the tyres) and the
+    /// drivetrain (groupset and race shoes) – get all that the catalogue's
+    /// best gives on any profile at any reference power (race tyres
+    /// +0.59 % / +0.47 % at 150 W, top groupset with race shoes +0.16 % /
+    /// +0.39 %), so they are never cut; the kinds that stack over many
+    /// slots – aero (frame, wheels, cockpit, kit) and weight (every part)
+    /// – share the rest, aero the flat and weight the climb.
+    pub fn budget(self) -> (f64, f64) {
+        match self {
+            Kind::Rolling => (0.0060, 0.0047),
+            Kind::Aero => (0.0060, 0.0020),
+            Kind::Weight => (0.0013, 0.0143),
+            Kind::Drivetrain => (0.0017, 0.0040),
+        }
+    }
+
+    fn index(self) -> usize {
+        self as usize
+    }
+
+    /// `base` with this kind's value taken from `from`.
+    pub fn with(self, base: &BuildParams, from: &BuildParams) -> BuildParams {
+        let mut p = *base;
+        match self {
+            Kind::Rolling => p.crr = from.crr,
+            Kind::Aero => p.cda_m2 = from.cda_m2,
+            Kind::Weight => p.bike_mass_kg = from.bike_mass_kg,
+            Kind::Drivetrain => p.drivetrain_efficiency = from.drivetrain_efficiency,
+        }
+        p
+    }
+}
+
 /// The speeds of the watts-saved scores (km/h, flat).
 pub const SCORE_SPEEDS_KMH: [f64; 3] = [25.0, 35.0, 45.0];
 /// Aero items "pay off above" this speed (km/h; spec 4G: noticeable from
@@ -352,7 +422,8 @@ pub struct BuildParams {
 }
 
 impl BuildParams {
-    fn of(profile: ProfileId) -> Self {
+    /// The profile's own values (the stock bike).
+    pub fn of(profile: ProfileId) -> Self {
         let p = profile.profile();
         Self {
             bike_mass_kg: p.bike_mass_kg,
@@ -363,7 +434,7 @@ impl BuildParams {
     }
 
     /// `self` moved `t` of the way to `to`.
-    fn lerp(&self, to: &Self, t: f64) -> Self {
+    pub fn lerp(&self, to: &Self, t: f64) -> Self {
         let l = |a: f64, b: f64| a + (b - a) * t;
         Self {
             bike_mass_kg: l(self.bike_mass_kg, to.bike_mass_kg),
@@ -400,8 +471,9 @@ pub struct Build {
     /// The kit's weight against the base kit (kg; in `bike_mass_kg`,
     /// after the floor).
     pub kit_mass_kg: f64,
-    /// Share of the raw change that is kept (1 = within the band).
-    pub scale: f64,
+    /// Share of each kind's raw change that is kept (1 = within its
+    /// budget), by [`Kind::ALL`]'s order.
+    pub kept: [f64; 4],
     /// Speed against the profile's base build at the reference ride, on
     /// the flat and on the climb (0.012 = 1.2 % faster), after the caps.
     pub flat_gain: f64,
@@ -419,15 +491,26 @@ impl Build {
             params: p,
             mass_floored: false,
             kit_mass_kg: 0.0,
-            scale: 1.0,
+            kept: [1.0; 4],
             flat_gain: 0.0,
             climb_gain: 0.0,
         }
     }
 
-    /// Whether the caps cut the build back.
+    /// Whether the caps cut the build back (any kind).
     pub fn capped(&self) -> bool {
-        self.scale < 1.0 - 1e-9
+        Kind::ALL.iter().any(|k| self.kind_capped(*k))
+    }
+
+    /// The share of `kind`'s raw change that is kept (1 = within its
+    /// budget).
+    pub fn kept(&self, kind: Kind) -> f64 {
+        self.kept[kind.index()]
+    }
+
+    /// Whether the caps cut `kind` back.
+    pub fn kind_capped(&self, kind: Kind) -> bool {
+        self.kept(kind) < 1.0 - 1e-9
     }
 
     pub fn is_stock(&self) -> bool {
@@ -504,8 +587,41 @@ pub fn watts_saved(
     steady_state_power(from, &env, speed_mps) - steady_state_power(to, &env, speed_mps)
 }
 
+/// The share of `kind`'s change from `base` (the profile) to `raw` that
+/// stays within the kind's budget at every reference power: the kind's
+/// value alone, moved that share of the way, against the profile
+/// (1 = all of it; spec 4G *Caps*, Q27 (b)).
+pub fn kept_share(kind: Kind, profile: ProfileId, base: &BuildParams, raw: &BuildParams) -> f64 {
+    let reference = base.rider_profile(profile, REFERENCE_RIDER_KG);
+    let (flat_budget, climb_budget) = kind.budget();
+    let within = |t: f64| {
+        let p = kind
+            .with(base, &base.lerp(raw, t))
+            .rider_profile(profile, REFERENCE_RIDER_KG);
+        REFERENCE_POWERS_W.iter().all(|w| {
+            let (flat, climb) = gains_at_power(&reference, &p, *w);
+            flat.abs() <= flat_budget && climb.abs() <= climb_budget
+        })
+    };
+    if within(1.0) {
+        return 1.0;
+    }
+    // The largest share that stays within the budget (one value: the
+    // gains grow steadily with the share).
+    let (mut lo, mut hi) = (0.0, 1.0);
+    for _ in 0..60 {
+        let mid = 0.5 * (lo + hi);
+        if within(mid) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    lo
+}
+
 /// The build of a bike of `profile` with `parts` (ids; see
-/// [`PartTable::fitted`]), capped (module docs).
+/// [`PartTable::fitted`]), each kind capped (module docs).
 pub fn build(table: &PartTable, profile: ProfileId, parts: &[String]) -> Build {
     let fitted = table.fitted(profile, parts);
     if fitted.is_empty() {
@@ -547,36 +663,18 @@ pub fn build(table: &PartTable, profile: ProfileId, parts: &[String]) -> Build {
             .min(0.999),
     };
     let reference = base.rider_profile(profile, REFERENCE_RIDER_KG);
-    let at = |t: f64| {
-        base.lerp(&raw, t)
-            .rider_profile(profile, REFERENCE_RIDER_KG)
-    };
-    // Within the band at every reference power (v3.05).
-    let within = |t: f64| {
-        let p = at(t);
-        REFERENCE_POWERS_W.iter().all(|w| {
-            let (flat, climb) = gains_at_power(&reference, &p, *w);
-            flat.abs() <= FLAT_CAP && climb.abs() <= CLIMB_CAP
-        })
-    };
-    let scale = if within(1.0) {
-        1.0
-    } else {
-        // The largest share that stays in the band (the gains grow
-        // steadily with the share).
-        let (mut lo, mut hi) = (0.0, 1.0);
-        for _ in 0..50 {
-            let mid = 0.5 * (lo + hi);
-            if within(mid) {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
-        }
-        lo
-    };
-    let params = base.lerp(&raw, scale);
-    let (flat_gain, climb_gain) = gains(&reference, &at(scale));
+    // Each kind within its own budget at every reference power (Q27 (b)).
+    let mut kept = [1.0; 4];
+    let mut params = base;
+    for kind in Kind::ALL {
+        let t = kept_share(kind, profile, &base, &raw);
+        kept[kind.index()] = t;
+        params = kind.with(&params, &base.lerp(&raw, t));
+    }
+    let (flat_gain, climb_gain) = gains(
+        &reference,
+        &params.rider_profile(profile, REFERENCE_RIDER_KG),
+    );
     Build {
         profile,
         parts: fitted.iter().map(|p| p.id.clone()).collect(),
@@ -584,7 +682,7 @@ pub fn build(table: &PartTable, profile: ProfileId, parts: &[String]) -> Build {
         params,
         mass_floored: summed < floor,
         kit_mass_kg,
-        scale,
+        kept,
         flat_gain,
         climb_gain,
     }
@@ -1032,14 +1130,23 @@ mod tests {
         super::best_parts(t(), profile)
     }
 
-    /// Whether a build sits on the cap (`sign` +1: fast, −1: slow) on the
-    /// flat or the climb at one of the reference powers.
-    fn at_cap(b: &Build, sign: f64) -> bool {
-        let base = RiderProfile::curated(b.profile, REFERENCE_RIDER_KG);
-        let p = b.rider_profile(REFERENCE_RIDER_KG);
+    /// What `kind` alone gives on `b` at `power_w`: (flat, climb).
+    fn kind_gains(b: &Build, kind: Kind, power_w: f64) -> (f64, f64) {
+        let base = BuildParams::of(b.profile);
+        let reference = base.rider_profile(b.profile, REFERENCE_RIDER_KG);
+        let p = kind
+            .with(&base, &b.params)
+            .rider_profile(b.profile, REFERENCE_RIDER_KG);
+        gains_at_power(&reference, &p, power_w)
+    }
+
+    /// Whether `kind` sits on its budget (`sign` +1: fast, −1: slow) on
+    /// the flat or the climb at one of the reference powers.
+    fn at_cap(b: &Build, kind: Kind, sign: f64) -> bool {
+        let (flat_budget, climb_budget) = kind.budget();
         REFERENCE_POWERS_W.iter().any(|w| {
-            let (flat, climb) = gains_at_power(&base, &p, *w);
-            (flat - sign * FLAT_CAP).abs() < 1e-6 || (climb - sign * CLIMB_CAP).abs() < 1e-6
+            let (flat, climb) = kind_gains(b, kind, *w);
+            (flat - sign * flat_budget).abs() < 1e-6 || (climb - sign * climb_budget).abs() < 1e-6
         })
     }
 
@@ -1048,17 +1155,36 @@ mod tests {
     #[test]
     fn best_builds_per_profile() {
         for profile in ProfileId::ALL {
-            let b = build(t(), profile, &best_parts(profile));
-            println!(
-                "{:14} {:+.2} % flat {:+.2} % climb {:.2} kg scale {:.2} {}",
-                profile.id(),
-                b.flat_gain * 100.0,
-                b.climb_gain * 100.0,
-                b.params.bike_mass_kg,
-                b.scale,
-                b.parts.join(",")
-            );
-            assert!(!b.parts.is_empty());
+            for kit in [false, true] {
+                let mut parts = best_parts(profile);
+                if kit {
+                    parts.extend(best_kit(t(), profile));
+                }
+                let b = build(t(), profile, &parts);
+                let kinds: Vec<String> = Kind::ALL
+                    .iter()
+                    .map(|k| {
+                        let (f, c) = kind_gains(&b, *k, REFERENCE_POWER_W);
+                        format!(
+                            "{} {:+.2}/{:+.2} kept {:.2}",
+                            k.id(),
+                            f * 100.0,
+                            c * 100.0,
+                            b.kept(*k)
+                        )
+                    })
+                    .collect();
+                println!(
+                    "{:14} {:4} {:+.2} % flat {:+.2} % climb {:.2} kg | {}",
+                    profile.id(),
+                    if kit { "kit" } else { "bike" },
+                    b.flat_gain * 100.0,
+                    b.climb_gain * 100.0,
+                    b.params.bike_mass_kg,
+                    kinds.join(" | ")
+                );
+                assert!(!b.parts.is_empty());
+            }
         }
     }
 
@@ -1137,7 +1263,11 @@ mod tests {
         // The disc: aero +2 (−0.008 m² CdA) on the TT bike.
         let tt = ProfileId::TimeTrial.profile();
         let disc = build(t(), ProfileId::TimeTrial, &ids(&["wheels.tt.disc"]));
-        assert!((disc.params.cda_m2 - (tt.cda_m2 - 2.0 * AERO_STEP_M2)).abs() < 1e-12);
+        assert!((disc.raw.cda_m2 - (tt.cda_m2 - 2.0 * AERO_STEP_M2)).abs() < 1e-12);
+        // Alone it is past the aero budget (+0.89 % flat at 400 W against
+        // 0.6 %): kept as far as the budget goes.
+        assert!(disc.kind_capped(Kind::Aero) && !disc.kind_capped(Kind::Weight));
+        assert!(disc.params.cda_m2 < tt.cda_m2 - AERO_STEP_M2);
         // A top-tube bag: aero −1, more drag.
         let bag = build(t(), ProfileId::Road, &ids(&["bag.top_tube"]));
         assert!((bag.params.cda_m2 - (road.cda_m2 + AERO_STEP_M2)).abs() < 1e-12);
@@ -1176,9 +1306,10 @@ mod tests {
         assert!(aero.flat_gain > aero.climb_gain);
     }
 
-    /// The best stacked build hits the cap exactly; nothing gets past it.
+    /// A stacked best build's capped kinds sit exactly on their budgets;
+    /// nothing gets past the caps.
     #[test]
-    fn stacked_best_builds_hit_exactly_the_cap() {
+    fn stacked_best_builds_hit_exactly_the_kind_budgets() {
         let mut hit = 0;
         for profile in ProfileId::ALL {
             let parts = best_parts(profile);
@@ -1189,19 +1320,22 @@ mod tests {
                 b.flat_gain > 0.0 && b.climb_gain > 0.0,
                 "{profile:?}: {b:?}"
             );
-            if b.capped() {
-                // On the cap: one of the two at the boundary (1e-6) at one
-                // of the reference powers (v3.05).
-                assert!(at_cap(&b, 1.0), "{profile:?}: {b:?}");
-                hit += 1;
+            for kind in Kind::ALL {
+                if b.kind_capped(kind) {
+                    // On its budget: flat or climb at the boundary (1e-6)
+                    // at one of the reference powers.
+                    assert!(at_cap(&b, kind, 1.0), "{profile:?} {kind:?}: {b:?}");
+                    hit += 1;
+                }
             }
         }
-        // The aero road bike's best build (aero frame, wheels, cockpit,
-        // race tyres, top groupset) is past the band and lands on the
-        // flat cap.
+        // The aero road bike's best build (aero frame, wheels, cockpit)
+        // is past the aero budget and lands on it; its other kinds keep
+        // all of their change.
         let aero = build(t(), ProfileId::RoadAero, &best_parts(ProfileId::RoadAero));
-        assert!(aero.capped(), "{aero:?}");
-        assert!(at_cap(&aero, 1.0), "{aero:?}");
+        assert!(aero.kind_capped(Kind::Aero), "{aero:?}");
+        assert!(at_cap(&aero, Kind::Aero, 1.0), "{aero:?}");
+        assert!(!aero.kind_capped(Kind::Drivetrain), "{aero:?}");
         assert!(hit >= 1);
     }
 
@@ -1237,7 +1371,11 @@ aero = -9
         let b = build(&table, ProfileId::Road, &ids(&["bag.anchor"]));
         assert!(b.capped());
         assert!(b.flat_gain >= -FLAT_CAP - 1e-12 && b.climb_gain >= -CLIMB_CAP - 1e-12);
-        assert!(at_cap(&b, -1.0), "{b:?}");
+        // 9 kg more and two aero steps of drag: both sit on their
+        // budgets' lower edges, the tyres and the drivetrain untouched.
+        assert!(at_cap(&b, Kind::Weight, -1.0), "{b:?}");
+        assert!(at_cap(&b, Kind::Aero, -1.0), "{b:?}");
+        assert!(!b.kind_capped(Kind::Rolling) && !b.kind_capped(Kind::Drivetrain));
     }
 
     /// The mass floor: 6.8 kg for road, TT and gravel bikes, 9.0 kg for
@@ -1748,5 +1886,267 @@ mod tile_tests {
             .grams(),
             "same weight"
         );
+    }
+}
+
+/// The caps per kind (spec 4G *Caps*, Phase 4 Q27 (b)).
+#[cfg(test)]
+mod kind_cap_tests {
+    use super::*;
+
+    fn t() -> &'static PartTable {
+        PartTable::shipped()
+    }
+
+    /// What `kind` alone gives on `b` at `power_w`: (flat, climb).
+    fn kind_gains(b: &Build, kind: Kind, power_w: f64) -> (f64, f64) {
+        let base = BuildParams::of(b.profile);
+        let reference = base.rider_profile(b.profile, REFERENCE_RIDER_KG);
+        let p = kind
+            .with(&base, &b.params)
+            .rider_profile(b.profile, REFERENCE_RIDER_KG);
+        gains_at_power(&reference, &p, power_w)
+    }
+
+    /// The whole build at `power_w` against the profile: (flat, climb).
+    fn total_gains(b: &Build, power_w: f64) -> (f64, f64) {
+        let reference = RiderProfile::curated(b.profile, REFERENCE_RIDER_KG);
+        gains_at_power(&reference, &b.rider_profile(REFERENCE_RIDER_KG), power_w)
+    }
+
+    /// The catalogue's parts of `slot` that fit `profile`.
+    fn slot_parts(profile: ProfileId, slot: &str) -> Vec<&'static PartPhysics> {
+        t().parts()
+            .iter()
+            .filter(|p| p.slot == slot && p.fits(profile))
+            .collect()
+    }
+
+    fn slots() -> Vec<&'static str> {
+        t().slots()
+    }
+
+    /// Builds to sweep for `profile`: the stock bike, the best bike, the
+    /// best bike with the best kit, that with each slot left to its base
+    /// part, and 120 builds with a pseudo-random part (or none) in every
+    /// slot (a fixed seed: the same every run).
+    fn builds(profile: ProfileId) -> Vec<Vec<String>> {
+        let best = best_parts(t(), profile);
+        let mut kit = best.clone();
+        kit.extend(best_kit(t(), profile));
+        let mut out = vec![Vec::new(), best, kit.clone()];
+        for i in 0..kit.len() {
+            let mut b = kit.clone();
+            b.remove(i);
+            out.push(b);
+        }
+        let mut seed: u64 = 0x5eed_0c37 ^ profile.id().len() as u64;
+        let mut next = move || {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (seed >> 33) as usize
+        };
+        for _ in 0..120 {
+            let mut b = Vec::new();
+            for slot in slots() {
+                let parts = slot_parts(profile, slot);
+                let pick = next() % (parts.len() + 1);
+                if let Some(p) = parts.get(pick) {
+                    b.push(p.id.clone());
+                }
+            }
+            out.push(b);
+        }
+        out
+    }
+
+    /// `a` is at least as good as `b` in every way that counts: no
+    /// heavier (where the weight counts), rolls no worse, no more drag, no
+    /// less efficient.
+    fn better_in_every_way(a: &PartPhysics, b: &PartPhysics) -> bool {
+        let weight_counts = !a.is_kit() || KIT_WEIGHT_SLOTS.contains(&a.slot.as_str());
+        (!weight_counts || a.weight_g <= b.weight_g)
+            && a.rolling <= b.rolling
+            && a.aero >= b.aero
+            && a.efficiency >= b.efficiency
+    }
+
+    /// The shares add up to the old limits, each within them.
+    #[test]
+    fn the_budgets_add_up_to_the_caps() {
+        let flat: f64 = Kind::ALL.iter().map(|k| k.budget().0).sum();
+        let climb: f64 = Kind::ALL.iter().map(|k| k.budget().1).sum();
+        assert!((flat - FLAT_CAP).abs() < 1e-12, "{flat}");
+        assert!((climb - CLIMB_CAP).abs() < 1e-12, "{climb}");
+        for k in Kind::ALL {
+            let (f, c) = k.budget();
+            assert!(f > 0.0 && f < FLAT_CAP && c > 0.0 && c < CLIMB_CAP, "{k:?}");
+        }
+    }
+
+    /// No part that is better in every way than the slot's base part shows
+    /// a loss on any bike, whatever else is fitted (the bug of Q27: the
+    /// race tyres on the upgraded aero road bike read "−0.1 % flat · −0.2 %
+    /// climb · capped"); and of two parts of a slot, the one better in
+    /// every way never shows less.
+    #[test]
+    fn no_part_better_in_every_way_shows_a_loss() {
+        let mut checked = 0;
+        for profile in ProfileId::ALL {
+            for others in builds(profile) {
+                for slot in slots() {
+                    let Some(base) = t().base(slot, profile) else {
+                        continue;
+                    };
+                    let gains: Vec<(&PartPhysics, PartGain)> = slot_parts(profile, slot)
+                        .into_iter()
+                        .filter_map(|p| Some((p, part_gain(t(), profile, &others, &p.id)?)))
+                        .collect();
+                    for (p, g) in &gains {
+                        if better_in_every_way(p, base) {
+                            assert!(
+                                g.flat >= -1e-9 && g.climb >= -1e-9,
+                                "{profile:?} {} on {others:?}: {g:?}",
+                                p.id
+                            );
+                            checked += 1;
+                        }
+                        for (q, h) in &gains {
+                            if better_in_every_way(p, q) {
+                                assert!(
+                                    g.flat >= h.flat - 1e-9 && g.climb >= h.climb - 1e-9,
+                                    "{profile:?} {} vs {} on {others:?}: {g:?} {h:?}",
+                                    p.id,
+                                    q.id
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(checked > 1000, "{checked}");
+    }
+
+    /// Every kind stays within its budget and the whole build within the
+    /// old limit (±1.5 % flat, ±2.5 % climb) at 150, 250 and 400 W, for
+    /// every swept build.
+    #[test]
+    fn each_kind_within_its_budget_and_the_build_within_the_caps() {
+        for profile in ProfileId::ALL {
+            for parts in builds(profile) {
+                let b = build(t(), profile, &parts);
+                for w in REFERENCE_POWERS_W {
+                    for kind in Kind::ALL {
+                        let (fb, cb) = kind.budget();
+                        let (f, c) = kind_gains(&b, kind, w);
+                        assert!(
+                            f.abs() <= fb + 1e-9 && c.abs() <= cb + 1e-9,
+                            "{profile:?} {kind:?} {w} W {parts:?}: {f} {c}"
+                        );
+                    }
+                    let (f, c) = total_gains(&b, w);
+                    assert!(
+                        f.abs() <= FLAT_CAP + 1e-9 && c.abs() <= CLIMB_CAP + 1e-9,
+                        "{profile:?} {w} W {parts:?}: {f} {c}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The whole build stays within the old limit for any parts at all,
+    /// not only the catalogue's: every kind pushed to its budget's edge
+    /// (far beyond any part) in the same direction, on every profile, at
+    /// every reference power.
+    #[test]
+    fn every_kind_at_its_budget_together_stays_within_the_caps() {
+        for profile in ProfileId::ALL {
+            let base = BuildParams::of(profile);
+            for sign in [1.0, -1.0] {
+                // Far beyond any build: a fifth of the Crr, half the CdA,
+                // 6 kg off, a perfect drivetrain (and the other way).
+                let far = BuildParams {
+                    crr: base.crr * (1.0 - sign * 0.8),
+                    cda_m2: base.cda_m2 * (1.0 - sign * 0.5),
+                    bike_mass_kg: base.bike_mass_kg - sign * 6.0,
+                    drivetrain_efficiency: if sign > 0.0 { 0.999 } else { 0.8 },
+                };
+                let mut params = base;
+                for kind in Kind::ALL {
+                    let t = kept_share(kind, profile, &base, &far);
+                    assert!(t < 1.0, "{profile:?} {kind:?}: the edge is reached");
+                    params = kind.with(&params, &base.lerp(&far, t));
+                }
+                let reference = base.rider_profile(profile, REFERENCE_RIDER_KG);
+                let p = params.rider_profile(profile, REFERENCE_RIDER_KG);
+                for w in REFERENCE_POWERS_W {
+                    let (f, c) = gains_at_power(&reference, &p, w);
+                    println!(
+                        "{profile:?} {sign:+} {w} W: {:+.3} % / {:+.3} %",
+                        f * 100.0,
+                        c * 100.0
+                    );
+                    assert!(
+                        f.abs() <= FLAT_CAP && c.abs() <= CLIMB_CAP,
+                        "{profile:?} {sign} {w} W: {f} {c}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The bug of Q27: on the upgraded aero road bike of the screenshot
+    /// `bike-stand-tiles-capped` (top aero frame, top carbon wheels, race
+    /// tyres, top groupset, integrated cockpit) the race tyres' tile is a
+    /// gain on the flat and on the climb, as much as without the aero
+    /// parts.
+    #[test]
+    fn the_race_tyres_on_the_upgraded_aero_road_bike_gain() {
+        let bike: Vec<String> = [
+            "frame.road-aero.top",
+            "wheels.road-carbon.top",
+            "tyres.road.race",
+            "groupset.road-electronic.top",
+            "cockpit.road.integrated",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let b = build(t(), ProfileId::RoadAero, &bike);
+        assert!(b.kind_capped(Kind::Aero), "{b:?}");
+        let g = part_gain(t(), ProfileId::RoadAero, &bike, "tyres.road.race").unwrap();
+        assert!(g.flat >= 0.0005 && g.climb >= 0.0005, "{g:?}");
+        assert!(g.line().starts_with('+'), "{}", g.line());
+        assert!(g.line().contains(" · +"), "{}", g.line());
+        // Rolling is not cut: the tyres roll as well as on the stock bike
+        // (their weight is under the mass floor on this bike).
+        assert!(!b.kind_capped(Kind::Rolling), "{b:?}");
+        let alone = part_gain(t(), ProfileId::RoadAero, &[], "tyres.road.race").unwrap();
+        assert!(g.flat >= alone.flat - 0.001, "{g:?} {alone:?}");
+        // The aero wheels' tile on that bike is still a gain.
+        let w = part_gain(t(), ProfileId::RoadAero, &bike, "wheels.road-carbon.top").unwrap();
+        assert!(w.flat > 0.0 && w.climb >= 0.0, "{w:?}");
+    }
+
+    /// Profile and Equal race modes ignore the parts, capped or not.
+    #[test]
+    fn race_modes_leave_the_parts_cosmetic() {
+        for profile in ProfileId::ALL {
+            let mut parts = best_parts(t(), profile);
+            parts.extend(best_kit(t(), profile));
+            let b = build(t(), profile, &parts);
+            let base = RiderProfile::curated(profile, 81.0);
+            assert_eq!(effective(PhysicsMode::Profile, &base, Some(&b)), base);
+            assert_eq!(
+                effective(PhysicsMode::Equal, &base, Some(&b)),
+                RiderProfile::curated(EQUAL_PROFILE, 81.0)
+            );
+            assert_eq!(
+                effective(PhysicsMode::Open, &base, Some(&b)),
+                b.rider_profile(81.0)
+            );
+        }
     }
 }
