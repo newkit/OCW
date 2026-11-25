@@ -65,6 +65,19 @@ fn candidates_near(
     regions: &[PackageRegion],
     opts: &LoadOptions,
 ) -> Vec<Candidate> {
+    candidates_with_manifests(home, regions, opts)
+        .into_iter()
+        .map(|(c, _)| c)
+        .collect()
+}
+
+/// [`candidates_near`] with each candidate's manifest (as read, not
+/// verified yet).
+fn candidates_with_manifests(
+    home: &LoadedWorld,
+    regions: &[PackageRegion],
+    opts: &LoadOptions,
+) -> Vec<(Candidate, SignedManifest)> {
     let touches = |m: &SignedManifest| {
         m.manifest.bounds.is_some_and(|b| {
             regions
@@ -72,7 +85,7 @@ fn candidates_near(
                 .any(|r| b.region().boxes_touch(r, TOUCH_TOLERANCE_DEG))
         })
     };
-    let mut out: Vec<Candidate> = Vec::new();
+    let mut out: Vec<(Candidate, SignedManifest)> = Vec::new();
     let mut seen: BTreeSet<String> = [home.identity.id.clone()].into();
     // The cache: the newest version of each id.
     let mut entries = opts.cache.list();
@@ -82,11 +95,16 @@ fn candidates_near(
             continue;
         }
         seen.insert(e.id.clone());
-        if e.manifest().is_ok_and(|m| touches(&m)) {
-            out.push(Candidate {
-                spec: format!("{}@{}", e.id, e.version),
-                id: e.id,
-            });
+        if let Ok(m) = e.manifest()
+            && touches(&m)
+        {
+            out.push((
+                Candidate {
+                    spec: format!("{}@{}", e.id, e.version),
+                    id: e.id,
+                },
+                m,
+            ));
         }
     }
     // Packages next to a package loaded by path.
@@ -109,12 +127,64 @@ fn candidates_near(
             continue;
         }
         seen.insert(m.manifest.id.clone());
-        out.push(Candidate {
-            spec: f.display().to_string(),
-            id: m.manifest.id.clone(),
-        });
+        out.push((
+            Candidate {
+                spec: f.display().to_string(),
+                id: m.manifest.id.clone(),
+            },
+            m,
+        ));
     }
     out
+}
+
+/// A package next to the world that was not joined because it is signed
+/// by a user key not trusted here (spec 4.7 *User keys*). OCW Studio's 2D
+/// map draws only its outline, marked "unknown key" (spec 16H Q15): it is
+/// not opened without the user's consent (16H Q14).
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnknownKeyNeighbour {
+    pub spec: String,
+    pub id: String,
+    /// The world's name and the name its key claims (from the manifest,
+    /// not verified).
+    pub name: String,
+    pub claimed_signer: String,
+    /// The region box its manifest states.
+    pub bounds: PackageRegion,
+}
+
+/// The packages touching the home package or one of its joined neighbours
+/// that were left out because their user key is not trusted here. Only
+/// their manifests are read; nothing is loaded.
+pub fn unknown_key_neighbours(
+    home: &LoadedWorld,
+    hood: &Neighbourhood,
+    opts: &LoadOptions,
+) -> Vec<UnknownKeyNeighbour> {
+    let Some(home_box) = home_region(home) else {
+        return Vec::new();
+    };
+    let mut regions = vec![home_box];
+    regions.extend(hood.worlds.iter().filter_map(|w| w.package.region.clone()));
+    let joined: BTreeSet<&str> = hood.identities.iter().map(|i| i.id.as_str()).collect();
+    candidates_with_manifests(home, &regions, opts)
+        .into_iter()
+        .filter(|(c, _)| !joined.contains(c.id.as_str()))
+        .filter_map(|(c, m)| {
+            let bounds = m.manifest.bounds?.region();
+            match crate::userkeys::decide(&m, &opts.trust, opts.now_unix_s) {
+                crate::userkeys::Decision::Ask(r) => Some(UnknownKeyNeighbour {
+                    spec: c.spec,
+                    id: c.id,
+                    name: r.world.clone(),
+                    claimed_signer: r.claimed_signer.clone(),
+                    bounds,
+                }),
+                _ => None,
+            }
+        })
+        .collect()
 }
 
 /// The home package and its neighbours, ready to ride.
@@ -521,5 +591,66 @@ mod tests {
         let n = neighbourhood(&home, home_path.to_str().unwrap(), &strict, true);
         assert_eq!(n.set.len(), 1);
         assert!(n.log[0].contains("not loaded"), "{:?}", n.log);
+    }
+
+    /// Spec 16H Q15: a neighbour signed by a user key not trusted here is
+    /// not joined; [`unknown_key_neighbours`] names it with its box (for
+    /// the studio's outline), a trusted or joined one is not listed.
+    #[test]
+    fn a_neighbour_by_an_unknown_user_key_is_listed_not_joined() {
+        use ocw_world::manifest::{RootKeyPair, SigningKeyPair};
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("build");
+        let home_path = write(&dir, "west.ocwpkg", "test/west", &half("West", true));
+        // The east half, signed by a throwaway user key (fictional name).
+        let east = half("East", false);
+        let bytes = east.to_bytes();
+        let root = RootKeyPair::from_seed("Ada Rider", [77; 32]);
+        let cert = root.certify(
+            "Ada Rider",
+            SigningKeyPair::public_key_of([78; 32]),
+            NOW - 3600,
+            NOW + 3600,
+        );
+        let key = SigningKeyPair::new([78; 32], cert)
+            .unwrap()
+            .with_root(root.public())
+            .unwrap();
+        let mut m = Manifest::new(
+            "user/ada/east",
+            "East",
+            1,
+            NOW,
+            "test",
+            vec![Attribution::openstreetmap()],
+        )
+        .unwrap();
+        m.add_file("east.ocwpkg", &bytes).unwrap();
+        std::fs::write(dir.join("east.ocwpkg"), &bytes).unwrap();
+        std::fs::write(
+            dir.join("east.ocwpkg.manifest.json"),
+            SignedManifest::signed(&m, &key).to_json(),
+        )
+        .unwrap();
+        let opts = opts(&tmp.path().join("cache"));
+        let home = load_world(home_path.to_str().unwrap(), &opts).unwrap();
+        let n = neighbourhood(&home, home_path.to_str().unwrap(), &opts, true);
+        assert_eq!(n.set.len(), 1, "not joined: {:?}", n.log);
+        let u = unknown_key_neighbours(&home, &n, &opts);
+        assert_eq!(u.len(), 1, "{u:?}");
+        assert_eq!(u[0].id, "user/ada/east");
+        assert_eq!(u[0].name, "East");
+        assert_eq!(u[0].claimed_signer, "Ada Rider");
+        assert!((u[0].bounds.west - 9.5).abs() < 1e-9);
+        // Trusted: joined, no longer listed.
+        let mut trust = opts.trust.clone();
+        trust.roots.push(root.public());
+        let trusted = LoadOptions {
+            trust,
+            ..opts.clone()
+        };
+        let n = neighbourhood(&home, home_path.to_str().unwrap(), &trusted, true);
+        assert_eq!(n.set.len(), 2, "{:?}", n.log);
+        assert!(unknown_key_neighbours(&home, &n, &trusted).is_empty());
     }
 }

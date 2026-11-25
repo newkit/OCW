@@ -39,9 +39,95 @@ pub fn map_data(pkg: &WorldPackage) -> MapData {
     MapData::of(pkg, land_rgb)
 }
 
+/// A layer of the 2D map that can be switched (spec 16H Q15 (a)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Layer {
+    /// The package's orthophoto corridor (section `ORTC`).
+    Aerial,
+    /// The joined neighbouring packages, dimmed.
+    Neighbours,
+    /// The world's own border line.
+    Border,
+}
+
+impl Layer {
+    pub const ALL: [Layer; 3] = [Layer::Aerial, Layer::Neighbours, Layer::Border];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Layer::Aerial => "aerial",
+            Layer::Neighbours => "neighbours",
+            Layer::Border => "border",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "aerial" | "photo" | "ortho" => Some(Layer::Aerial),
+            "neighbours" | "neighbors" => Some(Layer::Neighbours),
+            "border" => Some(Layer::Border),
+            _ => None,
+        }
+    }
+}
+
+/// Which layers the 2D map draws: the aerial photo is **off by default**,
+/// the neighbours and the border on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MapLayers {
+    pub aerial: bool,
+    pub neighbours: bool,
+    pub border: bool,
+}
+
+impl Default for MapLayers {
+    fn default() -> Self {
+        Self {
+            aerial: false,
+            neighbours: true,
+            border: true,
+        }
+    }
+}
+
+impl MapLayers {
+    pub fn get(&self, l: Layer) -> bool {
+        match l {
+            Layer::Aerial => self.aerial,
+            Layer::Neighbours => self.neighbours,
+            Layer::Border => self.border,
+        }
+    }
+
+    /// Switches `l` on, off or (`None`) over; its new state.
+    pub fn set(&mut self, l: Layer, on: Option<bool>) -> bool {
+        let v = on.unwrap_or(!self.get(l));
+        match l {
+            Layer::Aerial => self.aerial = v,
+            Layer::Neighbours => self.neighbours = v,
+            Layer::Border => self.border = v,
+        }
+        v
+    }
+
+    /// "aerial off, neighbours on, border on".
+    pub fn describe(&self) -> String {
+        Layer::ALL
+            .iter()
+            .map(|l| format!("{} {}", l.name(), if self.get(*l) { "on" } else { "off" }))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
 /// Marks drawn over the map.
 #[derive(Debug, Clone, Default)]
 pub struct Overlay<'a> {
+    /// The border and the neighbours (16H Q15).
+    pub surround: Option<&'a crate::surround::Surround>,
+    pub layers: MapLayers,
+    /// The aerial photo's tiles this frame (when the layer is on).
+    pub aerial: crate::aerial::AerialFrame,
     /// The 3D camera: position (x, z) and yaw.
     pub camera: Option<([f64; 2], f64)>,
     /// Saved views: position (x, z) and name.
@@ -431,6 +517,23 @@ pub fn paint(
         let s = view.to_screen(p, mid);
         egui::pos2(s[0], s[1])
     };
+    let vis = view.visible([rect.width(), rect.height()]);
+    let neighbours = overlay
+        .surround
+        .filter(|_| overlay.layers.neighbours)
+        .map_or(&[][..], |s| &s.neighbours[..]);
+    // The neighbours' ground: a dim fill of their regions (their tiles
+    // are not loaded for the map).
+    for n in neighbours {
+        let mut mesh = egui::Mesh::default();
+        for p in &n.fill_points {
+            mesh.colored_vertex(pos([f64::from(p[0]), f64::from(p[1])]), NEIGHBOUR_GROUND);
+        }
+        for t in &n.fill {
+            mesh.add_triangle(t[0], t[1], t[2]);
+        }
+        painter.add(egui::Shape::mesh(mesh));
+    }
     if let (Some(r), Some(tex)) = (&data.land, land) {
         let a = pos(r.origin);
         let b = pos([
@@ -444,7 +547,36 @@ pub fn paint(
             egui::Color32::WHITE,
         );
     }
-    let vis = view.visible([rect.width(), rect.height()]);
+    // The aerial photo over the land use (16H Q15; off by default).
+    for (tex, a, b) in &overlay.aerial.tiles {
+        painter.image(
+            *tex,
+            egui::Rect::from_min_max(pos(*a), pos(*b)),
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+    }
+    // The neighbours' roads, dimmed and a little thinner.
+    for pass in [false, true] {
+        for r in neighbours
+            .iter()
+            .flat_map(|n| &n.roads)
+            .filter(|r| overlaps(r.min, r.max, &vis))
+        {
+            let (px, c, from) = road_style(r.class);
+            let major = from.is_infinite();
+            if major != pass || view.m_per_px > from {
+                continue;
+            }
+            let width = (px * 0.8).max((f64::from(r.width_m) / view.m_per_px) as f32 * 0.8);
+            let pts: Vec<egui::Pos2> = r
+                .points
+                .iter()
+                .map(|p| pos([f64::from(p[0]), f64::from(p[1])]))
+                .collect();
+            painter.add(egui::Shape::line(pts, egui::Stroke::new(width, dim(c))));
+        }
+    }
     if view.m_per_px < BUILDINGS_BELOW_M_PER_PX {
         let mut mesh = egui::Mesh::default();
         let colour = egui::Color32::from_rgb(196, 182, 166);
@@ -482,6 +614,9 @@ pub fn paint(
                 egui::Stroke::new(width, egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2])),
             ));
         }
+    }
+    if let Some(s) = overlay.surround {
+        paint_surround(&painter, view, mid, s, &overlay.layers);
     }
     if let Some(g) = overlay.graph {
         paint_marks(&painter, view, mid, g, &overlay.marks);
@@ -547,7 +682,105 @@ pub fn paint(
         egui::FontId::proportional(11.0),
         egui::Color32::from_gray(220),
     );
+    if let Some(note) = &overlay.aerial.note {
+        painter.text(
+            egui::pos2(rect.left() + 10.0, rect.top() + 8.0),
+            egui::Align2::LEFT_TOP,
+            note,
+            egui::FontId::proportional(12.0),
+            egui::Color32::from_gray(230),
+        );
+    }
     input
+}
+
+/// The neighbours' ground on the map.
+const NEIGHBOUR_GROUND: egui::Color32 = egui::Color32::from_rgb(58, 63, 60);
+/// The world's own border.
+const BORDER: egui::Color32 = egui::Color32::from_rgb(236, 236, 228);
+/// A package by an unknown key.
+const UNKNOWN: egui::Color32 = egui::Color32::from_rgb(240, 170, 60);
+
+/// A road colour dimmed for the neighbours: half way to the map's
+/// background, a little transparent.
+pub fn dim(c: [u8; 3]) -> egui::Color32 {
+    let bg = [38u16, 42, 46];
+    let m = |i: usize| ((u16::from(c[i]) + bg[i]) / 2) as u8;
+    egui::Color32::from_rgba_unmultiplied(m(0), m(1), m(2), 200)
+}
+
+fn closed(pts: &[[f64; 2]], pos: &dyn Fn([f64; 2]) -> egui::Pos2) -> Vec<egui::Pos2> {
+    let mut v: Vec<egui::Pos2> = pts.iter().map(|p| pos(*p)).collect();
+    if let Some(f) = v.first().copied() {
+        v.push(f);
+    }
+    v
+}
+
+/// The border line, the neighbours' outlines and names, and the packages
+/// by an unknown key (dashed, marked).
+fn paint_surround(
+    painter: &egui::Painter,
+    view: &MapView,
+    mid: [f32; 2],
+    s: &crate::surround::Surround,
+    layers: &MapLayers,
+) {
+    let pos = |p: [f64; 2]| {
+        let q = view.to_screen(p, mid);
+        egui::pos2(q[0], q[1])
+    };
+    let halo = egui::Color32::from_black_alpha(200);
+    let label = |at: egui::Pos2, text: &str, colour: egui::Color32| {
+        let font = egui::FontId::proportional(13.0);
+        let g = painter.layout_no_wrap(text.to_owned(), font.clone(), colour);
+        let p = at - g.size() * 0.5;
+        let h = painter.layout_no_wrap(text.to_owned(), font, halo);
+        for d in [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]] {
+            painter.galley(p + egui::vec2(d[0], d[1]), h.clone(), halo);
+        }
+        painter.galley(p, g, colour);
+    };
+    if layers.neighbours {
+        for n in &s.neighbours {
+            for r in &n.outline {
+                painter.add(egui::Shape::line(
+                    closed(r, &pos),
+                    egui::Stroke::new(1.0, egui::Color32::from_gray(120)),
+                ));
+            }
+            label(
+                pos(n.label_at),
+                &format!("{} (neighbour)", n.name),
+                egui::Color32::from_gray(175),
+            );
+        }
+    }
+    for u in &s.unknown {
+        for sh in egui::Shape::dashed_line(
+            &closed(&u.outline, &pos),
+            egui::Stroke::new(1.5, UNKNOWN),
+            8.0,
+            6.0,
+        ) {
+            painter.add(sh);
+        }
+        label(
+            pos(u.label_at),
+            &format!(
+                "{} – unknown key ('{}'), not opened",
+                u.name, u.claimed_signer
+            ),
+            UNKNOWN,
+        );
+    }
+    if layers.border {
+        for r in &s.border {
+            let pts = closed(r, &pos);
+            painter.add(egui::Shape::line(pts.clone(), egui::Stroke::new(3.0, halo)));
+            painter.add(egui::Shape::line(pts, egui::Stroke::new(1.2, BORDER)));
+        }
+    }
 }
 
 /// The world patch's marks over the map: changed roads tinted, removed
@@ -983,6 +1216,33 @@ pub mod tests {
                 );
             }
         }
+    }
+
+    /// Spec 16H Q15: the aerial photo is off by default, the neighbours
+    /// and the border on; each switches on, off and over.
+    #[test]
+    fn the_layers_switch_and_the_aerial_photo_starts_off() {
+        let mut l = MapLayers::default();
+        assert!(!l.aerial && l.neighbours && l.border);
+        assert_eq!(l.describe(), "aerial off, neighbours on, border on");
+        assert!(l.set(Layer::Aerial, None), "toggled on");
+        assert!(l.get(Layer::Aerial));
+        assert!(!l.set(Layer::Aerial, None), "toggled off");
+        assert!(l.set(Layer::Aerial, Some(true)));
+        assert!(l.set(Layer::Aerial, Some(true)), "on stays on");
+        assert!(!l.set(Layer::Neighbours, Some(false)));
+        assert!(!l.set(Layer::Border, Some(false)));
+        assert_eq!(l.describe(), "aerial on, neighbours off, border off");
+        for x in Layer::ALL {
+            assert_eq!(Layer::parse(x.name()), Some(x));
+        }
+        assert_eq!(Layer::parse("photo"), Some(Layer::Aerial));
+        assert_eq!(Layer::parse("roads"), None);
+        // Dimmed roads: half way to the background.
+        assert_eq!(
+            dim([238, 242, 246]),
+            egui::Color32::from_rgba_unmultiplied(138, 142, 146, 200)
+        );
     }
 
     #[test]

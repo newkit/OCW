@@ -39,6 +39,9 @@ bevy = { workspace = true, features = ["2d", "3d", "ui"] }
 bevy_egui.workspace = true
 clap.workspace = true
 dirs.workspace = true
+# Decodes the orthophoto corridor's JPEG chunks for the map's aerial
+# layer (16H Q15; already in the tree through ocw-render).
+image.workspace = true
 # The planner settings file (16H Q3) and BRouter's HTTP API (E2; native,
 # rustls, already used by the game and the world store).
 serde.workspace = true

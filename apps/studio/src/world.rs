@@ -142,6 +142,8 @@ pub struct Loaded {
     /// The World workspace's rows ([`crate::info::package_rows`]).
     pub rows: Vec<(String, String)>,
     pub map: MapData,
+    /// The border and the neighbours on the map (16H Q15).
+    pub surround: crate::surround::Surround,
     /// Where the camera starts: above the middle of the package.
     pub start: [f64; 3],
     /// The package file and its manifest (the patch goes next to it).
@@ -164,6 +166,26 @@ pub fn load(spec: &str, settings: &LoadSettings) -> Result<Loaded, String> {
     let pkg = &world.package;
     let rows = crate::info::package_rows(&details, pkg, &sections);
     let map = crate::map::map_data(pkg);
+    // The map's neighbours are the skeletons just joined (no further
+    // loading); one by a user key not trusted here only as an outline.
+    let unknown = if settings.no_neighbours {
+        Vec::new()
+    } else {
+        ocw_worldstore::neighbours::unknown_key_neighbours(&world, &hood, &opts)
+    };
+    for u in &unknown {
+        info!(
+            "neighbour {}: signed by an unknown key ('{}'): drawn as an outline, not opened",
+            u.spec, u.claimed_signer
+        );
+    }
+    let regions: Vec<_> = hood
+        .worlds
+        .iter()
+        .map(|w| w.package.region.clone())
+        .collect();
+    let surround =
+        crate::surround::surround(pkg, (map.min, map.max), &hood.set, &regions, &unknown);
     let mid = [
         (map.min[0] + map.max[0]) * 0.5,
         (map.min[1] + map.max[1]) * 0.5,
@@ -180,6 +202,7 @@ pub fn load(spec: &str, settings: &LoadSettings) -> Result<Loaded, String> {
         details,
         rows,
         map,
+        surround,
         start,
         file,
         manifest,
@@ -196,6 +219,13 @@ pub struct OpenWorld {
     /// The map's land-use texture (made by the UI on first use).
     pub land_texture: Option<bevy_egui::egui::TextureHandle>,
     pub map_view: Option<crate::map::MapView>,
+    /// The border and the neighbours (16H Q15).
+    pub surround: crate::surround::Surround,
+    /// The aerial-photo layer, where the package has an orthophoto
+    /// corridor (decoded only while the layer is on).
+    pub aerial: Option<crate::aerial::AerialLayer>,
+    /// The next fit (no `map_view`) takes the neighbours in too.
+    pub fit_all: bool,
 }
 
 /// Shows `loaded` in the studio: the renderer's world, the camera above
@@ -208,10 +238,12 @@ pub fn show(world: &mut World, loaded: Loaded, now_s: f64, rebuild: bool) {
         details,
         rows,
         map,
+        surround,
         start,
         file,
         manifest,
     } = loaded;
+    let aerial = crate::aerial::AerialLayer::of(render.home().clone());
     let package = crate::patch::StudioPackage::new(render.home().clone(), file, manifest);
     world.insert_resource(render);
     if let Some(mut view) = world.get_resource_mut::<RideView>() {
@@ -234,6 +266,9 @@ pub fn show(world: &mut World, loaded: Loaded, now_s: f64, rebuild: bool) {
         map,
         land_texture: None,
         map_view: None,
+        surround,
+        aerial,
+        fit_all: false,
     });
 }
 
@@ -268,7 +303,12 @@ pub fn open(world: &mut World, spec: &str) -> Result<String, String> {
         Prepared::Asked(msg) => return Ok(msg),
         Prepared::Loaded(l) => *l,
     };
-    let msg = format!("opened {} ({})", loaded.details.region, loaded.details.id);
+    let msg = format!(
+        "opened {} ({}); beside it: {}",
+        loaded.details.region,
+        loaded.details.id,
+        loaded.surround.summary()
+    );
     let now = world
         .get_resource::<Time<Real>>()
         .map_or(0.0, |t| t.elapsed_secs_f64());

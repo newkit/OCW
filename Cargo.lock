@@ -7079,6 +7079,7 @@ dependencies = [
  "bevy_egui",
  "clap",
  "dirs",
+ "image",
  "ocw-assets",
  "ocw-client",
  "ocw-core",

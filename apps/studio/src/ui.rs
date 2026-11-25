@@ -163,6 +163,8 @@ impl BuildForm {
 pub struct UiState {
     pub workspace: Workspace,
     pub show_map: bool,
+    /// The 2D map's layers (16H Q15: the aerial photo off by default).
+    pub layers: crate::map::MapLayers,
     /// File → Open's path field (open while `Some`).
     pub open_path: Option<String>,
     /// File → Open patch's path field.
@@ -183,6 +185,7 @@ impl Default for UiState {
         Self {
             workspace: Workspace::World,
             show_map: true,
+            layers: crate::map::MapLayers::default(),
             open_path: None,
             open_patch: None,
             save_as: None,
@@ -412,10 +415,22 @@ fn panels(
             });
             ui.menu_button("View", |ui| {
                 ui.checkbox(&mut state.show_map, "2D map");
+                // The map's layers (16H Q15): the aerial photo where the
+                // package has one (key O), the neighbours, the border.
+                let has_photo = world.as_ref().is_some_and(|w| w.aerial.is_some());
+                ui.add_enabled(
+                    has_photo,
+                    egui::Checkbox::new(&mut state.layers.aerial, "Aerial photo (O)"),
+                )
+                .on_disabled_hover_text("This package has no aerial photo");
+                ui.checkbox(&mut state.layers.neighbours, "Neighbouring packages");
+                ui.checkbox(&mut state.layers.border, "World border");
                 if ui.button("Fit the map").clicked() {
-                    if let Some(w) = world.as_mut() {
-                        w.map_view = None;
-                    }
+                    pending.send(StudioCommand::MapFit(false));
+                    ui.close();
+                }
+                if ui.button("Fit the world and its neighbours").clicked() {
+                    pending.send(StudioCommand::MapFit(true));
                     ui.close();
                 }
                 ui.separator();
@@ -557,13 +572,20 @@ fn panels(
                 match world.as_mut() {
                     Some(w) => {
                         let routes = state.workspace == Workspace::Routes;
-                        let (input, m_per_px) = map_panel(ui, rect, w, &studio, &flight, routes);
+                        let layers = state.layers;
+                        let (input, m_per_px) =
+                            map_panel(ui, rect, w, &studio, &flight, routes, layers);
                         let tol = crate::pick::map_tolerance_m(m_per_px);
+                        // The neighbours are only drawn: a click on one
+                        // edits nothing (edits stay in the open package).
+                        let foreign = |p: [f64; 2]| {
+                            !routes && layers.neighbours && w.surround.in_neighbour(p)
+                        };
                         if let Some(d) = input.drag {
                             route_drag(&mut state, &mut pending, d, tol);
                         } else if let Some(p) = input.fly {
                             pending.send(StudioCommand::FlyTo(p, None));
-                        } else if let Some(p) = input.click {
+                        } else if let Some(p) = input.click.filter(|p| !foreign(*p)) {
                             let (cmd, next) = click_command(&state.tool, state.workspace, p, tol);
                             pending.send(cmd);
                             state.tool = next;
@@ -1521,6 +1543,7 @@ fn map_panel(
     studio: &Studio,
     flight: &StudioFlight,
     routes: bool,
+    layers: crate::map::MapLayers,
 ) -> (crate::map::MapInput, f64) {
     if w.land_texture.is_none()
         && let Some(r) = &w.map.land
@@ -1532,11 +1555,33 @@ fn map_panel(
             egui::TextureOptions::LINEAR,
         ));
     }
-    let mut view = w
-        .map_view
-        .unwrap_or_else(|| MapView::fit(w.map.min, w.map.max, [rect.width(), rect.height()]));
+    let mut view = w.map_view.unwrap_or_else(|| {
+        let (lo, hi) = if std::mem::take(&mut w.fit_all) {
+            w.surround.extent(w.map.min, w.map.max)
+        } else {
+            (w.map.min, w.map.max)
+        };
+        let v = MapView::fit(lo, hi, [rect.width(), rect.height()]);
+        info!(
+            "map fitted: centre {:.0}, {:.0}, {:.1} m per point",
+            v.centre[0], v.centre[1], v.m_per_px
+        );
+        v
+    });
     let f = &flight.flight;
+    // The aerial photo: decoded only while the layer is on.
+    let aerial = match w.aerial.as_mut() {
+        Some(a) if layers.aerial => a.frame(ui.ctx(), &view, [rect.width(), rect.height()]),
+        Some(a) => {
+            a.idle();
+            Default::default()
+        }
+        None => Default::default(),
+    };
     let overlay = Overlay {
+        surround: Some(&w.surround),
+        layers,
+        aerial,
         camera: Some(([f.pos[0], f.pos[2]], f.view_yaw())),
         views: studio
             .world()

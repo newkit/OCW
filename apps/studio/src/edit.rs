@@ -280,6 +280,10 @@ pub enum StudioCommand {
     /// Centre the 2D map on a package point at a zoom (metres per point;
     /// screenshots of the map labels).
     MapView([f64; 2], f64),
+    /// Switches a layer of the 2D map on, off or (`None`) over (16H Q15).
+    MapLayer(crate::map::Layer, Option<bool>),
+    /// Fits the 2D map to the package (`true`: with its neighbours).
+    MapFit(bool),
     FlightModel(FlightModel),
     /// Selects what is at a package point (x, z): a height point of the
     /// patch, else the nearest road within the tolerance (m); nothing
@@ -426,6 +430,35 @@ pub fn apply(world: &mut World, cmd: StudioCommand) -> Result<String, String> {
                 m_per_px: m,
             });
             Ok(format!("map at {:.0}, {:.0}, {m} m per point", p[0], p[1]))
+        }
+        StudioCommand::MapFit(all) => {
+            let mut w = world
+                .get_resource_mut::<crate::world::OpenWorld>()
+                .ok_or("no world open")?;
+            w.map_view = None;
+            w.fit_all = all;
+            Ok(if all {
+                "map: the world and its neighbours".into()
+            } else {
+                "map: the world".into()
+            })
+        }
+        StudioCommand::MapLayer(l, on) => {
+            let photo = world
+                .get_resource::<crate::world::OpenWorld>()
+                .map(|w| w.aerial.is_some());
+            if l == crate::map::Layer::Aerial && photo == Some(false) && on != Some(false) {
+                return Err("this package has no aerial photo (section ORTC)".into());
+            }
+            let mut ui = world
+                .get_resource_mut::<crate::ui::UiState>()
+                .ok_or("no map")?;
+            let v = ui.layers.set(l, on);
+            Ok(format!(
+                "map: {} {}",
+                l.name(),
+                if v { "on" } else { "off" }
+            ))
         }
         StudioCommand::FlightModel(m) => {
             let mut f = world.resource_mut::<StudioFlight>();
@@ -632,6 +665,8 @@ pub fn edit(
         StudioCommand::Open(_)
         | StudioCommand::FlyTo(..)
         | StudioCommand::MapView(..)
+        | StudioCommand::MapLayer(..)
+        | StudioCommand::MapFit(_)
         | StudioCommand::FlightModel(_)
         | StudioCommand::GoToView(_)
         | StudioCommand::Focus
@@ -1204,6 +1239,9 @@ fn shortcut_keys(
         pending.send(StudioCommand::Redo);
     } else if ctrl && k.just_pressed(KeyCode::KeyS) {
         pending.send(StudioCommand::SavePatch);
+    } else if !ctrl && k.just_pressed(KeyCode::KeyO) {
+        // The map's aerial photo (16H Q15).
+        pending.send(StudioCommand::MapLayer(crate::map::Layer::Aerial, None));
     }
 }
 
@@ -1249,6 +1287,19 @@ impl Plugin for EditPlugin {
                                 .required(true)
                                 .value_parser(value_parser!(f64)),
                         ),
+                )
+                .subcommand(
+                    Command::new("map-fit")
+                        .about("Fit the 2D map to the package (all: with its neighbours)")
+                        .arg(Arg::new("all").value_parser(["all"])),
+                )
+                .subcommand(
+                    Command::new("layer")
+                        .about(
+                            "The 2D map's layers: studio layer [aerial|neighbours|border] [on|off|toggle]",
+                        )
+                        .arg(Arg::new("layer"))
+                        .arg(Arg::new("state")),
                 )
                 .subcommand(
                     Command::new("fly")
@@ -1653,6 +1704,28 @@ fn studio_command(world: &mut World, m: &clap::ArgMatches) -> Result<String, Str
             ],
             *a.get_one::<f64>("m_per_px").expect("required"),
         ),
+        Some(("map-fit", a)) => StudioCommand::MapFit(a.get_one::<String>("all").is_some()),
+        Some(("layer", a)) => {
+            let Some(name) = a.get_one::<String>("layer") else {
+                return Ok(format!(
+                    "map: {}",
+                    world
+                        .get_resource::<crate::ui::UiState>()
+                        .map(|u| u.layers)
+                        .unwrap_or_default()
+                        .describe()
+                ));
+            };
+            let l = crate::map::Layer::parse(name)
+                .ok_or("studio layer aerial|neighbours|border [on|off|toggle]")?;
+            let on = match a.get_one::<String>("state").map(String::as_str) {
+                None | Some("toggle") => None,
+                Some("on") => Some(true),
+                Some("off") => Some(false),
+                Some(o) => return Err(format!("{o}: on, off or toggle")),
+            };
+            StudioCommand::MapLayer(l, on)
+        }
         Some(("fly", a)) => StudioCommand::FlyTo(
             [
                 *a.get_one::<f64>("x").expect("required"),
