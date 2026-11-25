@@ -890,6 +890,7 @@ impl ManifestOpts {
             name,
             version: self.version,
             dem_attribution: self.dem_attribution.clone(),
+            patches: None,
         }
     }
 }
@@ -2213,7 +2214,7 @@ fn calibrate(
     );
     // The manifest gets the new hash and the imagery's notices.
     if path != world {
-        let _ = std::fs::copy(dist::sidecar(world), dist::sidecar(&path));
+        dist::carry_manifest(world, &path);
     }
     let m = stage("manifest + hash", || {
         dist::write_manifest(
@@ -2223,6 +2224,7 @@ fn calibrate(
                 name: None,
                 version: None,
                 dem_attribution: Vec::new(),
+                patches: None,
             },
             key,
         )
@@ -2306,7 +2308,7 @@ fn forest(
         t.elapsed().as_secs_f64()
     );
     if path != world {
-        let _ = std::fs::copy(dist::sidecar(world), dist::sidecar(&path));
+        dist::carry_manifest(world, &path);
     }
     let m = stage("manifest + hash", || {
         dist::write_manifest(
@@ -2316,6 +2318,7 @@ fn forest(
                 name: None,
                 version: None,
                 dem_attribution: Vec::new(),
+                patches: None,
             },
             key,
         )
@@ -2439,7 +2442,7 @@ fn condition(
         t.elapsed().as_secs_f64()
     );
     if path != world {
-        let _ = std::fs::copy(dist::sidecar(world), dist::sidecar(&path));
+        dist::carry_manifest(world, &path);
     }
     stage("manifest + hash", || {
         dist::write_manifest(
@@ -2449,6 +2452,7 @@ fn condition(
                 name: None,
                 version: None,
                 dem_attribution: Vec::new(),
+                patches: None,
             },
             key,
         )
@@ -2530,7 +2534,7 @@ fn vegetation(
         t.elapsed().as_secs_f64()
     );
     if path != world {
-        let _ = std::fs::copy(dist::sidecar(world), dist::sidecar(&path));
+        dist::carry_manifest(world, &path);
     }
     stage("manifest + hash", || {
         dist::write_manifest(
@@ -2540,6 +2544,7 @@ fn vegetation(
                 name: None,
                 version: None,
                 dem_attribution: Vec::new(),
+                patches: None,
             },
             key,
         )
@@ -2644,7 +2649,7 @@ fn places(
         t.elapsed().as_secs_f64()
     );
     if path != world {
-        let _ = std::fs::copy(dist::sidecar(world), dist::sidecar(&path));
+        dist::carry_manifest(world, &path);
     }
     stage("manifest + hash", || {
         dist::write_manifest(
@@ -2654,6 +2659,7 @@ fn places(
                 name: None,
                 version: None,
                 dem_attribution: Vec::new(),
+                patches: None,
             },
             key,
         )
@@ -2834,7 +2840,7 @@ fn junctions(
         t.elapsed().as_secs_f64()
     );
     if path != world {
-        let _ = std::fs::copy(dist::sidecar(world), dist::sidecar(&path));
+        dist::carry_manifest(world, &path);
     }
     stage("manifest + hash", || {
         dist::write_manifest(
@@ -2844,6 +2850,7 @@ fn junctions(
                 name: None,
                 version: None,
                 dem_attribution: Vec::new(),
+                patches: None,
             },
             key,
         )
@@ -2905,7 +2912,7 @@ fn smooth_terrain(
         t.elapsed().as_secs_f64()
     );
     if path != world {
-        let _ = std::fs::copy(dist::sidecar(world), dist::sidecar(&path));
+        dist::carry_manifest(world, &path);
     }
     stage("manifest + hash", || {
         dist::write_manifest(
@@ -2915,6 +2922,7 @@ fn smooth_terrain(
                 name: None,
                 version: None,
                 dem_attribution: Vec::new(),
+                patches: None,
             },
             key,
         )
@@ -3102,7 +3110,7 @@ fn obstacles(
         t.elapsed().as_secs_f64()
     );
     if path != world {
-        let _ = std::fs::copy(dist::sidecar(world), dist::sidecar(&path));
+        dist::carry_manifest(world, &path);
     }
     stage("manifest + hash", || {
         dist::write_manifest(
@@ -3112,6 +3120,7 @@ fn obstacles(
                 name: None,
                 version: None,
                 dem_attribution: Vec::new(),
+                patches: None,
             },
             key,
         )
@@ -3796,8 +3805,15 @@ fn main() {
                 out: out.clone(),
                 patches,
             });
+            // The patches travel next to the package, recorded in its
+            // manifest (spec 16H Q9).
+            let placed = dist::place_patches(&out, &patch);
             stage("manifest + hash", || {
-                dist::write_manifest(&out, &manifest.args(Some(name)), key.as_ref());
+                let args = dist::ManifestArgs {
+                    patches: Some(placed),
+                    ..manifest.args(Some(name))
+                };
+                dist::write_manifest(&out, &args, key.as_ref());
             });
             print_stage_profile(profile.as_deref());
         }

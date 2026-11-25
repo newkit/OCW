@@ -24,6 +24,9 @@
 # outside Baden-Württemberg.
 #
 # Environment: OCW_SIGN_KEY  signing key for the manifests (default: unsigned).
+#              OCW_NO_PATCHES=1  build without the world patches of
+#                         worlds/blackforest/patches/ (spec 16H Q10; the
+#                         patches used go next to the package, 16H Q9).
 #              OCW_SRTM_ONLY=1  build without the DGM1 into data/blackforest/srtm/
 #                         (no routes), to compare with the SRTM terrain.
 #
@@ -60,6 +63,8 @@ else
 fi
 cargo build -q --release -p world-builder
 WB=target/release/world-builder
+# The project's own world patches (spec 16H Q10): worlds/<region>/patches/.
+. scripts/world-patches.sh
 # Region calibration (spec §14 Phase 8 T3) if the imagery covers the package.
 # The forest type and density (section FRST, spec §14 Phase 8 T3) of
 # `scripts/fetch-forest.sh` go in with the calibration, or alone without it
@@ -90,6 +95,7 @@ calibrate() { # package pbf...
 for part in "${parts[@]}"; do
   [ -n "${BBOX[$part]:-}" ] || { echo "unknown part $part (south, middle, north)" >&2; exit 1; }
   out=$OUT/${FILE[$part]}.ocwpkg
+  world_patches blackforest "$D" "${FILE[$part]}"
   SRC=(--pbf "$D/freiburg-regbez.osm.pbf" --pbf "$D/karlsruhe-regbez.osm.pbf"
        --poly "$D/freiburg-regbez.poly" --poly "$D/karlsruhe-regbez.poly"
        --hgt "$D/N47E007.hgt" --hgt "$D/N47E008.hgt" --hgt "$D/N48E007.hgt" --hgt "$D/N48E008.hgt"
@@ -97,7 +103,7 @@ for part in "${parts[@]}"; do
   # Build time and builder peak memory go to $OUT/measure.log.
   scripts/measure.py --label "package $part" --out "$OUT/measure.log" -- \
     $WB package "${SRC[@]}" --name "${NAME[$part]}" --id "${ID[$part]}" \
-    "${DEM[@]:2}" ${OCW_SIGN_KEY:+--sign-key "$OCW_SIGN_KEY"} --out "$out"
+    "${DEM[@]:2}" ${OCW_SIGN_KEY:+--sign-key "$OCW_SIGN_KEY"} "${PATCH_ARGS[@]}" --out "$out"
   # Signature routes (spec §2.7): route files for --route-file, and the same
   # start and end on the package's graph as package routes.
   route() { # name file from to

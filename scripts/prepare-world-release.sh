@@ -6,7 +6,10 @@
 #
 # For every package PKG (e.g. data/blackforest/blackforest-north.ocwpkg):
 #   OUT_DIR/ocw-world-<stem>-v<N>.zip   the package, its manifest, the route
-#       files beside it (the ones named in its routes), LICENSE-DATA.md (every
+#       files beside it (the ones named in its routes), the world patches it
+#       was built with (`<stem>.ocwpatch`, recorded in the manifest with their
+#       SHA-256, spec 16H Q9: the ODbL offer of the changes; a missing or
+#       changed one is a warning and left out), LICENSE-DATA.md (every
 #       source with its attribution, from the manifest) and README.md;
 # and per source folder (data/pilot, data/blackforest) once:
 #   OUT_DIR/<region>-osm-source.zip     the OSM extract(s) and .poly files
@@ -43,6 +46,29 @@ PY
   stage=$out/$name_v
   rm -rf "$stage"; mkdir -p "$stage"
   cp "$pkg" "$manifest" "$stage/"
+  # The world patches recorded in the manifest (spec 16H Q9), when the file
+  # beside the package is the one it was built with.
+  patches=$(python3 -I - "$manifest" "$dir" <<'PY'
+import hashlib, json, os, sys
+m = json.load(open(sys.argv[1]))
+s = m["signed"] if not isinstance(m["signed"], str) else json.loads(m["signed"])
+for p in s.get("patches", []):
+    path = os.path.join(sys.argv[2], p["path"])
+    try:
+        data = open(path, "rb").read()
+    except OSError:
+        print(f"warning: patch {p['path']}: MISSING next to the package (the manifest records sha256 {p['sha256']}): not in the release zip", file=sys.stderr)
+        continue
+    got = hashlib.sha256(data).hexdigest()
+    if got != p["sha256"].lower():
+        print(f"warning: patch {p['path']}: CHANGED since the build (sha256 {got}, built with {p['sha256']}): not in the release zip; rebuild the package", file=sys.stderr)
+        continue
+    print(p["path"])
+PY
+)
+  while IFS= read -r f; do
+    [ -n "$f" ] && cp "$dir/$f" "$stage/" && echo "  patch $f"
+  done <<<"$patches"
   routes=$($WB routes --world "$pkg")
   # Route files beside the package that belong to it (see build-*.sh).
   for f in "$dir"/*.route; do
@@ -68,6 +94,10 @@ lines += ["",
           "  The OSM extract(s) they were built from are offered in this release",
           "  (`*-osm-source.zip`). Terrain, meshes and rendered views are Produced Works and",
           "  carry \"© OpenStreetMap contributors\".",
+          *([f"- **World patches:** the package was built with the changes in "
+             + ", ".join(f"`{p['path']}`" for p in s.get("patches", []))
+             + " (in this zip, part of the Derivative Database, under the ODbL as well).", ""]
+            if s.get("patches") else []),
           "- **Elevation models:** the terrain and road heights were derived from the models",
           "  above (averaged, smoothed along the roads and adapted to them), i.e. modified.",
           "",
