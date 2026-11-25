@@ -1378,10 +1378,18 @@ fn spawn_avatar(
     root
 }
 
+/// A grip on the hoods held by every rider whatever the schedule says
+/// (`dev.grip draped|handshake`, scenes; spec 14 Phase 4 Q31); `None`: the
+/// schedule.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GripOverride(pub Option<bool>);
+
 /// Animates the avatars from the ride: riding state, cranks, wheels, pose.
+#[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 pub(crate) fn animate(
     time: Res<Time>,
     view: Res<RideView>,
+    grip_override: Option<Res<GripOverride>>,
     mut avatars: Query<
         (
             &Avatar,
@@ -1402,7 +1410,11 @@ pub(crate) fn animate(
 ) {
     let dt = time.delta_secs();
     let eye = cameras.iter().next().map(GlobalTransform::translation);
+    // The grip schedule's clock (Q31): the game time every client shares.
+    let time_s = view.game_s.unwrap_or(view.elapsed_s);
+    let grip_override = grip_override.and_then(|g| g.0);
     for (avatar, mut rig, at, signs) in &mut avatars {
+        rig.animator.grip_override = grip_override;
         let mut bent = [0.0f32; 2];
         let input = if avatar.id == GHOST_ID {
             let Some(g) = view.ghost else { continue };
@@ -1418,6 +1430,8 @@ pub(crate) fn animate(
                 curvature: g.turn_curvature,
                 cue: anim::Cue::default(),
                 signs: Default::default(),
+                time_s,
+                sustained_w: 0.0,
             }
         } else {
             let Some(r) = view.riders.iter().find(|r| r.id == avatar.id) else {
@@ -1438,6 +1452,9 @@ pub(crate) fn animate(
                 cue: r.cue,
                 // The status signs (spec §2.6), as this viewer sees them.
                 signs: r.signs,
+                time_s,
+                // Kept by the animator from the power (a sprint is a surge).
+                sustained_w: 0.0,
             }
         };
         let rig = &mut *rig;

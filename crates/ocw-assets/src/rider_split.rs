@@ -386,7 +386,7 @@ mod tests {
         let full = build(Detail::High);
         let base = strip(&full);
         let files = part_files();
-        assert_eq!(files.len(), 19 + 19 + 5 + 7 + 5 + 10);
+        assert_eq!(files.len(), 19 + 19 + 5 + 7 + 5 + 12);
         let mut seen = std::collections::BTreeSet::new();
         for p in &files {
             assert!(seen.insert(p.file.clone()), "{} twice", p.file);

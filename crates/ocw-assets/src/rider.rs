@@ -159,8 +159,14 @@ pub mod hand {
         /// Round a bar: tops, drops, the TT extensions and base bar, the
         /// MTB grips.
         Wrap,
-        /// Round a road lever's hood (thicker).
+        /// Draped over a road lever's hood (Phase 4 Q31 (a)): the palm on
+        /// top, the fingers over its front.
         Hoods,
+        /// The handshake grip on a road lever's hood (Phase 4 Q31 (b)):
+        /// the palm against the hood's outer side, the fingers wrapped
+        /// round its nose and the lever under it, the thumb over the top
+        /// on the inside.
+        Handshake,
         /// Holding the phone of the status signs.
         Phone,
         /// Loose, a little curled: standing, the hand off the bar.
@@ -170,9 +176,10 @@ pub mod hand {
     }
 
     impl HandShape {
-        pub const ALL: [HandShape; 5] = [
+        pub const ALL: [HandShape; 6] = [
             HandShape::Wrap,
             HandShape::Hoods,
+            HandShape::Handshake,
             HandShape::Phone,
             HandShape::Relaxed,
             HandShape::Open,
@@ -182,6 +189,7 @@ pub mod hand {
             match self {
                 HandShape::Wrap => "wrap",
                 HandShape::Hoods => "hoods",
+                HandShape::Handshake => "handshake",
                 HandShape::Phone => "phone",
                 HandShape::Relaxed => "relaxed",
                 HandShape::Open => "open",
@@ -195,6 +203,7 @@ pub mod hand {
             match self {
                 HandShape::Wrap => Some(WRAP_RADIUS),
                 HandShape::Hoods => Some(HOODS_RADIUS),
+                HandShape::Handshake => Some(HANDSHAKE_RADIUS),
                 HandShape::Phone => Some(PHONE_RADIUS),
                 HandShape::Relaxed | HandShape::Open => None,
             }
@@ -207,6 +216,18 @@ pub mod hand {
     pub const WRAP_RADIUS: f32 = 0.0205;
     pub const HOODS_RADIUS: f32 = 0.042;
     pub const PHONE_RADIUS: f32 = 0.03;
+    /// The handshake grip's "bar": an upright post through the hood's
+    /// nose (and the lever under it) the fingers wrap (model metres; the
+    /// hood is 3.2 cm wide, so a short rider's hand still clears it).
+    pub const HANDSHAKE_RADIUS: f32 = 0.024;
+    /// The handshake thumb's joints (u towards the post, v, z; the hand's
+    /// frame, index side −z up): from the palm's top edge over the hood's
+    /// top to its inner side, forward.
+    pub const HANDSHAKE_THUMB: [[f32; 3]; 3] = [
+        [0.024, -0.038, -0.037],
+        [0.042, -0.05, -0.037],
+        [0.056, -0.058, -0.026],
+    ];
     /// A finger's radius at its base and at its tip.
     pub const FINGER_RADIUS: f32 = 0.0085;
     pub const TIP_RADIUS: f32 = 0.0068;
@@ -244,9 +265,10 @@ pub mod hand {
 
     /// The node of `shape` on hand `side` (0 left, 1 right).
     pub fn node(shape: HandShape, side: usize) -> &'static str {
-        const NAMES: [[&str; 2]; 5] = [
+        const NAMES: [[&str; 2]; 6] = [
             ["hand_wrap_l", "hand_wrap_r"],
             ["hand_hoods_l", "hand_hoods_r"],
+            ["hand_handshake_l", "hand_handshake_r"],
             ["hand_phone_l", "hand_phone_r"],
             ["hand_relaxed_l", "hand_relaxed_r"],
             ["hand_open_l", "hand_open_r"],
@@ -515,15 +537,15 @@ pub mod hand {
     pub fn thumb(shape: HandShape, side: usize) -> Digit {
         let n = palm_sign(side);
         let base = Vec3::new(n * 0.006, -0.028, -0.034);
-        if shape == HandShape::Hoods {
+        if matches!(shape, HandShape::Hoods | HandShape::Handshake) {
             let at = |p: [f32; 3]| Vec3::new(n * p[0], p[1], p[2]);
+            let joints = if shape == HandShape::Hoods {
+                HOOD_THUMB
+            } else {
+                HANDSHAKE_THUMB
+            };
             return Digit {
-                points: vec![
-                    base,
-                    at(HOOD_THUMB[0]),
-                    at(HOOD_THUMB[1]),
-                    at(HOOD_THUMB[2]),
-                ],
+                points: vec![base, at(joints[0]), at(joints[1]), at(joints[2])],
                 base_end: 2,
             };
         }
@@ -2630,7 +2652,9 @@ mod tests {
             .collect();
         let tris = triangles(&m, &shown);
         assert!((1500..6000).contains(&tris), "{tris} triangles");
-        assert!(m.triangles() < 16_000, "all variants: {}", m.triangles());
+        // Every variant at once (one hand shape per hand is drawn; six
+        // shapes since the handshake grip, Q31).
+        assert!(m.triangles() < 17_500, "all variants: {}", m.triangles());
         let low = build(Detail::Low);
         let low_tris = triangles(&low, &base_only(&low));
         assert!(low_tris * 2 < tris, "far LOD {low_tris} vs {tris}");

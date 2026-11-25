@@ -5323,3 +5323,87 @@ args = ["--route", "hills", "--bots", "0", "--power", "200"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
 at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "2=dev.speaking --own", "3.5=camera.closeup face 170 5 0.45"]
 shot = 9
+
+# --- Phase 4 Q31 (v5.85): the hoods' two grips, the sprint ---------------------
+
+[[scene]]
+name = "q31-draped-side"
+description = "Q31 (a): road bike, the draped grip on the hoods (palm on top, fingers over the front), the right hand from the side"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.5=dev.grip draped", "3.5=camera.closeup right-hand 90 8 0.45"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "q31-draped-above"
+description = "Q31 (a): road bike, the draped grip on the hoods, both hands from above"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.5=dev.grip draped", "3.5=camera.closeup right-hand 160 72 0.75"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "q31-handshake-side"
+description = "Q31 (b): road bike, the handshake grip on the hoods (palm against the hood's outer side, fingers round its nose and the lever, thumb over the top), the right hand from the side"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.5=dev.grip handshake", "3.5=camera.closeup right-hand 90 8 0.45"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "q31-handshake-front"
+description = "Q31 (b): road bike, the handshake grip, the right hand from the front and inside (the fingertips and the thumb on the hood's inner side)"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.5=dev.grip handshake", "3.5=camera.closeup right-hand 200 20 0.45"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "q31-handshake-above"
+description = "Q31 (b): road bike, the handshake grip on the hoods, both hands from above"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.5=dev.grip handshake", "3.5=camera.closeup right-hand 160 72 0.75"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "q31-sprint-drops-side"
+description = "v5.85 sprint: road bike at 1100 W, the right hand deep in the hooks of the drops, the index finger near the lever (from the front right)"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1=sim.power 1100", "3.5=camera.closeup right-hand 145 12 0.6"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "q31-sprint-body"
+description = "v5.85 sprint: road bike at 1100 W, out of the saddle on the drops, hips over the cranks, torso low, from the front quarter"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1=sim.power 1100", "2=camera.orbit 140 6 4"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "q31-sprint-front"
+description = "v5.85 sprint: road bike at 1100 W from the front: the bike rocked to one side, the rider counter-swaying above it"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "1=sim.power 1100", "2=camera.orbit 178 6 2.6"]
+shot = 7
+pick = false
+
+[[scene]]
+name = "q31-grip-then-sprint-video"
+description = "Video (Q31, v5.85): a rider on the hoods changes from the draped to the handshake grip and back, then sprints – down to the drops, out of the saddle, rocking the bike – and sits down on the hoods again"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.5=dev.grip draped", "1=camera.orbit 150 10 3.2", "6=dev.grip handshake", "9=dev.grip draped", "11=sim.power 1100", "17=sim.power 200"]
+warmup = 3
+video = 18
+pick = false

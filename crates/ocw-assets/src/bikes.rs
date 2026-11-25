@@ -654,6 +654,7 @@ fn rig_of(d: &Design, f: &Frame) -> BikeRig {
         wheelbase: f.rear_hub.z - f.front_hub.z,
         aero_bars: d.bars == Bars::Aero,
         bar_clamp: f.bar_clamp,
+        hood_bodies: hood_bodies(d, f.bar_clamp),
     }
 }
 
@@ -928,16 +929,10 @@ fn bars(p: &mut Parts, d: &Design, kit: &Kit, c: Vec3, sides: u32, hi: bool) {
                     let (hood, radii, rot) = hood_body(hw, reach, flare, side);
                     let hood = c + hood;
                     p.slot("component").ellipsoid(hood, radii, rot, 4, 6);
-                    p.slot("component").sweep(
-                        &[
-                            hood + Vec3::new(0.0, 0.0, -0.03),
-                            c + Vec3::new(side * (hw + flare * 0.4), -drop * 0.45, -reach - 0.03),
-                            c + Vec3::new(side * (hw + flare * 0.7), -drop * 0.8, -reach + 0.0),
-                        ],
-                        &[0.007, 0.006, 0.005],
-                        4,
-                        false,
-                    );
+                    let lever = lever_path(hw, reach, drop, flare)
+                        .map(|v| c + Vec3::new(v.x * side, v.y, v.z));
+                    p.slot("component")
+                        .sweep(&lever, &[0.007, 0.006, 0.005], 4, false);
                 }
             }
             if hi {
@@ -1038,9 +1033,41 @@ fn drop_bar_path(width: f32, reach: f32, drop: f32, flare: f32) -> ([Vec3; 8], [
 fn hood_body(hw: f32, reach: f32, flare: f32, side: f32) -> (Vec3, Vec3, Quat) {
     (
         Vec3::new(side * (hw + flare * 0.15), 0.014, -reach - 0.012),
-        Vec3::new(0.016, 0.024, 0.038),
-        Quat::from_rotation_x(-0.25),
+        pose::HOOD_RADII,
+        Quat::from_rotation_x(pose::HOOD_TILT),
     )
+}
+
+/// The hood bodies of a design's drop bar, left and right (bike frame,
+/// from the stem clamp `c`; spec 14 Phase 4 Q31): `None` for other bars.
+fn hood_bodies(d: &Design, c: Vec3) -> Option<[pose::HoodBody; 2]> {
+    match d.bars {
+        Bars::Drop {
+            width,
+            reach,
+            flare,
+            ..
+        } => Some([-1.0f32, 1.0].map(|side| {
+            let (h, radii, rotation) = hood_body(width * 0.5, reach, flare, side);
+            pose::HoodBody {
+                centre: c + h,
+                rotation,
+                radii,
+            }
+        })),
+        _ => None,
+    }
+}
+
+/// The brake lever blade's centre line under a drop bar's hood (right
+/// side, from the stem clamp): from the hood's front down to its tip.
+fn lever_path(hw: f32, reach: f32, drop: f32, flare: f32) -> [Vec3; 3] {
+    let (hood, _, _) = hood_body(hw, reach, flare, 1.0);
+    [
+        hood + Vec3::new(0.0, 0.0, -0.03),
+        Vec3::new(hw + flare * 0.4, -drop * 0.45, -reach - 0.03),
+        Vec3::new(hw + flare * 0.7, -drop * 0.8, -reach + 0.0),
+    ]
 }
 
 /// The TT base bar and extension (right side, from the clamp) with radii.
@@ -1079,6 +1106,8 @@ fn flat_grip(hw: f32, rise: f32) -> (Vec3, Vec3, f32) {
 pub struct HeldBars {
     pub tubes: Vec<(Vec<Vec3>, Vec<f32>)>,
     pub hoods: Vec<(Vec3, Vec3, Quat)>,
+    /// The brake levers' blades under the hoods (drop bars; left, right).
+    pub levers: Vec<Vec<Vec3>>,
 }
 
 pub fn held_bars(profile: ProfileId) -> HeldBars {
@@ -1088,6 +1117,7 @@ pub fn held_bars(profile: ProfileId) -> HeldBars {
     let mut out = HeldBars {
         tubes: Vec::new(),
         hoods: Vec::new(),
+        levers: Vec::new(),
     };
     for side in [-1.0f32, 1.0] {
         let s = |v: Vec3| c + Vec3::new(v.x * side, v.y, v.z);
@@ -1105,6 +1135,12 @@ pub fn held_bars(profile: ProfileId) -> HeldBars {
                 ));
                 let (h, r, q) = hood_body(width * 0.5, reach, flare, side);
                 out.hoods.push((c + h, r, q));
+                out.levers.push(
+                    lever_path(width * 0.5, reach, drop, flare)
+                        .iter()
+                        .map(|v| s(*v))
+                        .collect(),
+                );
             }
             Bars::Aero => {
                 for (pts, radii) in [
@@ -1745,6 +1781,17 @@ pub fn build_with(
     for (names, g) in [(HOODS, hoods), (TOPS, tops), (DROPS, drops)] {
         for s in 0..2 {
             m.add(Node::new(names[s], Some(bar), g[s]));
+        }
+    }
+    // The hood bodies (Q31, the handshake grip): an empty per side, its
+    // translation, rotation and scale the hood's centre, tilt and
+    // semi-axes (from the clamp).
+    if let Some(hoods) = hood_bodies(&d, Vec3::ZERO) {
+        for (name, h) in HOOD_BODY.iter().zip(hoods) {
+            let mut n = Node::new(name, Some(bar), h.centre);
+            n.rotation = h.rotation;
+            n.scale = h.radii;
+            m.add(n);
         }
     }
     if d.bars == Bars::Aero {
