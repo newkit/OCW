@@ -1604,6 +1604,7 @@ fn try_cluster(
     adjacency: &[Vec<usize>],
     members: &[u32],
     inner: &[usize],
+    crossings: Option<&Crossings>,
 ) -> Result<Patch, &'static str> {
     let mut c = [0.0, 0.0];
     for &m in members {
@@ -1649,18 +1650,29 @@ fn try_cluster(
             let site = Site { free: true, ..site };
             let (patch, outline) = outline_at(g, &site, raws, false, true)?;
             let patch = finish(patch, outline)?;
-            let own = members
+            let owns: Vec<Patch> = members
                 .iter()
                 .filter_map(|&m| {
                     let m = m as usize;
-                    try_patch(g, &adjacency[m], m).ok().map(|p| side_bend(&p))
+                    try_patch(g, &adjacency[m], m).ok()
                 })
+                .collect();
+            let own = owns
+                .iter()
+                .map(side_bend)
                 .fold(FREE_CLUSTER_BEND_DEG.to_radians(), f64::max);
+            // Nor where it swallows a painted crossing the members' own
+            // patches leave on its strip.
+            let kept = count_swallowed(crossings, g, &patch)
+                <= owns
+                    .iter()
+                    .map(|p| count_swallowed(crossings, g, p))
+                    .sum::<usize>();
             // (On arms at most 6 % steep: on steeper ones the plane over
             // both members kinks the roads, +10 % road kinks in
             // Liechtenstein.)
             let flat = patch.arms.iter().all(|a| a.grade.abs() <= GROW_MAX_GRADE);
-            if flat && side_bend(&patch) <= own + 1e-3 {
+            if flat && kept && side_bend(&patch) <= own + 1e-3 {
                 Ok(patch)
             } else {
                 Err("the outline is not star-shaped")
@@ -1668,6 +1680,31 @@ fn try_cluster(
         }
         r => r,
     }
+}
+
+/// How many of the painted `crossings` (per edge, J9) patch `p` swallows:
+/// those on its arms' edges whose painted length starts within the arm's
+/// mouth, and every one on an edge inside it.
+fn count_swallowed(crossings: Option<&Crossings>, g: &RoadGraph, p: &Patch) -> usize {
+    let Some(cs) = crossings else {
+        return 0;
+    };
+    let mut n = 0;
+    for a in &p.arms {
+        let len = g.edges[a.edge].length_m();
+        n += cs.get(a.edge).map_or(0, |list| {
+            list.iter()
+                .filter(|&&(s, half)| {
+                    let d = if a.at_from { s } else { len - s };
+                    d - half < a.mouth_m
+                })
+                .count()
+        });
+    }
+    for &ei in &p.inner {
+        n += cs.get(ei).map_or(0, Vec::len);
+    }
+    n
 }
 
 /// An arm's mouth may lie this far before what its edge's far end takes
@@ -2812,6 +2849,10 @@ pub const MOUTH_ROUNDS: usize = 3;
 /// … on arms at most this steep at their mouth.
 pub const GROW_MAX_GRADE: f64 = 0.06;
 
+/// Per edge, its painted crossings: (distance from its `from` vertex, half
+/// the painted length) (J9).
+pub type Crossings = Vec<Vec<(f64, f64)>>;
+
 /// The mouths of a vertex's patch: (edge, its `from` end there, mouth m).
 type Mouths = Vec<(usize, bool, f64)>;
 
@@ -2834,6 +2875,11 @@ pub struct JunctionSet {
     /// which vertices have a rule and the patches' outlines, so nothing is
     /// searched at load. The result is the same as computed.
     stored: Option<Arc<section::JunctionIndex>>,
+    /// Per edge: the painted crossings on its strips (distance from its
+    /// `from` vertex, half the painted length), where the world builder
+    /// knows them (J9): its clusters and longer mouths never swallow one
+    /// that the junctions' own patches leave on the strip.
+    crossings: Option<Arc<Crossings>>,
 }
 
 impl Clone for JunctionSet {
@@ -2845,6 +2891,7 @@ impl Clone for JunctionSet {
             rules: self.rules.clone(),
             alone: self.alone.clone(),
             stored: self.stored.clone(),
+            crossings: self.crossings.clone(),
         }
     }
 }
@@ -2865,12 +2912,33 @@ impl JunctionSet {
             rules: (0..g.vertices.len()).map(|_| OnceLock::new()).collect(),
             alone: (0..g.vertices.len()).map(|_| OnceLock::new()).collect(),
             stored: None,
+            crossings: None,
         }
     }
 
     /// The junctions of `g` from its package's stored index (section
     /// `JNCT`) when that was made for this graph (same fingerprint and
     /// vertex count), else computed as [`JunctionSet::new`].
+    /// The junctions of `g` knowing the painted crossings of its edges
+    /// (`per_edge[e]`: distance from the edge's `from` vertex, half the
+    /// painted length; J9): a cluster's simple outline or an arm taking the
+    /// room its far end leaves is not used where it would swallow more of
+    /// them than the junctions' own patches (a crossing inside a junction
+    /// surface is drawn at its mouth, not where OSM has it). Ignored when
+    /// it does not have one list per edge.
+    pub fn with_crossings(mut self, g: &RoadGraph, per_edge: Arc<Crossings>) -> Self {
+        if per_edge.len() == g.edges.len() {
+            self.crossings = Some(per_edge);
+        }
+        self
+    }
+
+    /// How many painted crossings patch `p` swallows: those on its arms'
+    /// edges within their mouths and those on the edges inside it (J9).
+    fn swallowed(&self, g: &RoadGraph, p: &Patch) -> usize {
+        count_swallowed(self.crossings.as_deref(), g, p)
+    }
+
     pub fn with_index(g: &RoadGraph, index: Option<Arc<section::JunctionIndex>>) -> Self {
         let mut set = Self::new(g);
         set.stored = index.filter(|i| i.fits(g));
@@ -2928,7 +2996,7 @@ impl JunctionSet {
             if let Some((members, inner)) = self.cluster_of(g, v) {
                 let first = members[0] as usize;
                 if first == v {
-                    if let Ok(p) = try_cluster(g, &self.adjacency, &members, &inner) {
+                    if let Ok(p) = try_cluster(g, &self.adjacency, &members, &inner, self.crossings.as_deref()) {
                         return Some(Arc::new(VertexRule::Patch(p)));
                     }
                 } else if let Some(r) = self.rule_arc(g, first)
@@ -3242,7 +3310,14 @@ impl JunctionSet {
     /// none, or it was made): diagnostics for `examples/side_dump` (J9).
     pub fn cluster_failure(&self, g: &RoadGraph, v: usize) -> Option<&'static str> {
         let (members, inner) = self.cluster_of(g, v)?;
-        try_cluster(g, &self.adjacency, &members, &inner).err()
+        try_cluster(
+            g,
+            &self.adjacency,
+            &members,
+            &inner,
+            self.crossings.as_deref(),
+        )
+        .err()
     }
 
     /// How far out junction `v`'s arm on edge `ei` may lie where the edge's
@@ -3308,7 +3383,9 @@ impl JunctionSet {
         let own = try_patch(g, adj, v).ok()?;
         let (patch, outline) = outline_checked(g, &Site::single(g, v), raws, false).ok()?;
         let room = finish(patch, outline).ok()?;
-        (side_bend(&room) < side_bend(&own) - 1e-3).then_some(room)
+        (side_bend(&room) < side_bend(&own) - 1e-3
+            && self.swallowed(g, &room) <= self.swallowed(g, &own))
+        .then_some(room)
     }
 
     /// The patch of vertex `v` if it is drawn there (a cluster's at its

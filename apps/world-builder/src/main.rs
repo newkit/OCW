@@ -1605,7 +1605,7 @@ fn junction_summary(j: &ocw_world::junction::section::JunctionData) -> String {
 fn settle_junctions(pkg: &mut ocw_world::WorldPackage) -> ocw_worldgen::clean::SettleStats {
     let samples = match pkg.graph.as_ref() {
         Some(g) => {
-            let js = ocw_world::junction::JunctionSet::new(g);
+            let js = ocw_worldgen::junctions::junction_set(g);
             ocw_worldgen::junctions::surface_samples(g, &js, 0.5)
         }
         None => Vec::new(),
@@ -2678,6 +2678,9 @@ fn junctions(
         eprintln!("{}: no road graph", world.display());
         std::process::exit(1);
     };
+    // The painted crossings stay where OSM has them: no cluster or longer
+    // mouth swallows one (spec 4.8.8 J9).
+    stage("painted crossings", || j::keep_crossings(Some(&pkg), &g0));
     // The bridge decks stay as planned (their spans along their edges).
     let decks = stage("bridge decks", || j::bridge_spans(&pkg, &g0));
     let mut g = (*g0).clone();
@@ -2692,7 +2695,7 @@ fn junctions(
     });
     print_reconcile(kinks, &rs);
     if let Some(e) = g.edges.get(rs.residual_at.0) {
-        let js = ocw_world::junction::JunctionSet::new(&g);
+        let js = j::junction_set(&g);
         let kind = |r: Option<ocw_world::junction::EndRule<'_>>| match r {
             Some(ocw_world::junction::EndRule::Patch(p, i)) => format!(
                 "patch at v{} ({} members, through {:?}, arm {i}: mouth {:.1} corner {})",
@@ -2776,7 +2779,7 @@ fn junctions(
         }
         if let Some(g) = pkg.graph.as_ref() {
             // J3's clusters and forks, with a few examples.
-            let js = ocw_world::junction::JunctionSet::new(g);
+            let js = j::junction_set(g);
             let (mut clusters, mut members, mut forks) = (0, 0, 0);
             let mut ex = Vec::new();
             for v in 0..g.vertices.len() {
