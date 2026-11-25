@@ -1,0 +1,20 @@
+# The J9 comparison views (scripts/j5-shots.sh with VIEWS=scripts/j9-views.txt;
+# spec 4.8.8 Rule): WHICH=j8 in a checkout of main (the J8 packages drawn by
+# J8's code), WHICH=j9 in this one. Letzanaweg, the Black Forest path view,
+# J8's run-on cases and junctions J9 fixed (li-j9-fixVERTEX: camera 14 m up,
+# looking north-north-west at 44° down onto the junction's vertex).
+# NAME PACKAGE X Y Z HEADING PITCH START_X,START_Z
+li-letzanaweg-corner pilot/liechtenstein -1441.0 557.5 5966.0 80 -35 -1440,5868
+li-letzanaweg-side pilot/liechtenstein -1437.7 554.38 5970.6 2.1 -6 -1440,5868
+li-t pilot/liechtenstein -810.5 848.37 4755.4 318.6 -24 -820,4745
+li-fork pilot/liechtenstein -3448.0 452.71 -2064.6 121.2 -24 -3436,-2057
+bf-path blackforest/blackforest-north 1252.9 152.32 -70486.6 322.9 -24 1244,-70498
+li-j8-run4721 pilot/liechtenstein -807.2 564.6 -7166.8 326 -44 -810,-7160
+li-j8-run4792 pilot/liechtenstein -628.0 474.7 -6475.1 326 -44 -631,-6468
+li-j8-fix3392 pilot/liechtenstein -572.8 957.5 4750.3 326 -44 -576,4757
+li-j9-fix2009 pilot/liechtenstein -3532.1 461.87 -659.4 326 -44 -3535,-652
+li-j9-fix5952 pilot/liechtenstein -178.7 458.24 -5577.0 326 -44 -182,-5570
+li-j9-fix2716 pilot/liechtenstein -3332.5 466.39 -5877.5 326 -44 -3336,-5870
+li-j9-fix966 pilot/liechtenstein 1044.1 468.41 -6408.0 326 -44 1041,-6401
+li-j9-fix617 pilot/liechtenstein -2893.1 469.51 2560.1 326 -44 -2896,2567
+li-j9-fix483 pilot/liechtenstein -388.9 518.18 -7110.3 326 -44 -392,-7103

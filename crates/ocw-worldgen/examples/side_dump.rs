@@ -251,8 +251,9 @@ fn main() {
                 // whether the two ends would be a cluster.
                 let far_reach = js.reach(&g, a.edge)[usize::from(a.at_from)];
                 let far_cluster = js.cluster_of(&g, far).is_some();
+                let far_failure = js.cluster_failure(&g, far);
                 serde_json::json!({
-                    "far_reach": far_reach, "far_cluster": far_cluster,
+                    "far_reach": far_reach, "far_cluster": far_cluster, "far_failure": far_failure,
                     "lead": !a.lead.is_empty(),
                     "far_next": far_next,
                     "split": split, "far_deg": js.edges_at(far).len(),
@@ -275,7 +276,7 @@ fn main() {
             })
             .collect();
         let rec = serde_json::json!({
-            "vertex": v, "centre": p.centre, "star": p.is_star(), "members": p.members, "run_on": p.run_on, "through": p.through,
+            "vertex": v, "cluster_failure": js.cluster_failure(&g, *v), "centre": p.centre, "star": p.is_star(), "members": p.members, "run_on": p.run_on, "through": p.through,
             "faults": fs, "arms": arms, "chains": chains,
         });
         writeln!(w, "{rec}").expect("write");
