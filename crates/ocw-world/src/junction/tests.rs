@@ -940,10 +940,22 @@ fn an_arm_up_to_a_bridge_takes_the_room_it_leaves() {
     let js = JunctionSet::new(&g);
     let p = js.patch(&g, 0).expect("a patch").clone();
     let side = p.arms.iter().find(|a| a.edge == 2).expect("the side arm");
-    assert!(side.mouth_m > 5.0 && side.mouth_m <= 9.0 + 1e-9, "{}", side.mouth_m);
+    assert!(
+        side.mouth_m > 5.0 && side.mouth_m <= 9.0 + 1e-9,
+        "{}",
+        side.mouth_m
+    );
     let share = try_patch(&g, js.edges_at(0), 0).expect("its share");
     assert!(
-        (share.arms.iter().find(|a| a.edge == 2).expect("arm").mouth_m - 4.5).abs() < 1e-6
+        (share
+            .arms
+            .iter()
+            .find(|a| a.edge == 2)
+            .expect("arm")
+            .mouth_m
+            - 4.5)
+            .abs()
+            < 1e-6
     );
     assert!(super::side_bend(&p) < super::side_bend(&share) - 1e-3);
     check_outline(&p);
