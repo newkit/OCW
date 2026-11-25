@@ -1542,7 +1542,7 @@ pub(crate) mod tests {
         let world = World::new();
         let mut w = world.open();
         open_kit(&world, &mut w, Slot::Gloves);
-        let gloves =|w: &Workshop| w.design_preview().unwrap().design.gloves;
+        let gloves = |w: &Workshop| w.design_preview().unwrap().design.gloves;
         let focus = |w: &Workshop| w.picker.as_ref().unwrap().focus;
         // → on the tiles moves over the items, the colour stays.
         world.step(&mut w, &[Act::Right]);

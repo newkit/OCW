@@ -2430,8 +2430,8 @@ fn spawn_swatches(c: &mut ChildSpawnerCommands, s: &SwatchRowView, inner_w: f32)
                 ));
                 // The standard colour's mark, light on dark colours.
                 if s.standard == Some(i) {
-                    let light = 0.299 * f32::from(r) + 0.587 * f32::from(g) + 0.114 * f32::from(b)
-                        < 128.0;
+                    let [lr, lg, lb] = [r, g, b].map(f32::from);
+                    let light = 0.299 * lr + 0.587 * lg + 0.114 * lb < 128.0;
                     inner.with_children(|m| {
                         m.spawn((
                             Text::new("std"),
