@@ -368,6 +368,7 @@ mod web {
                     hashes: browser_hashes(code.secret, unix_s).to_vec(),
                     datagrams: false,
                     rtt: false,
+                    game: false,
                 },
                 move |ev| {
                     let mut l = link.borrow_mut();

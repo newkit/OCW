@@ -663,17 +663,21 @@ impl ClientCore {
     /// The same for a message read at `now_s` that arrived earlier, at
     /// `arrived_s` on the same clock: the browser's network worker stamps
     /// each message when it comes off the network, not when the frame
-    /// reads it (spec 14 Phase 10, 10G *B3 worker*). A snapshot then counts
-    /// as having come at `arrived_s` (the others' interpolation, the clock,
-    /// the weather); the own prediction still extrapolates it by the ticks
-    /// it is read late ([`crate::arrival`]).
+    /// reads it (spec 14 Phase 10, 10G *B3 worker*). `step_s`: the game
+    /// time of the last prediction step (`Time<Fixed>`). A snapshot then
+    /// counts as having come at `arrived_s` (the others' interpolation, the
+    /// clock, the weather), and the own prediction extrapolates it by the
+    /// steps taken since it came ([`crate::arrival`]), however long it
+    /// waited for the frame.
     pub fn on_server_message_at(
         &mut self,
         bytes: &[u8],
         now_s: f64,
         arrived_s: f64,
+        step_s: f64,
     ) -> Option<Notice> {
-        let arrived = arrived_s.is_finite().then(|| arrived_s.min(now_s));
+        let arrived =
+            (arrived_s.is_finite() && step_s.is_finite()).then(|| (arrived_s.min(now_s), step_s));
         self.on_server_message_inner(bytes, now_s, arrived)
     }
 
@@ -681,7 +685,7 @@ impl ClientCore {
         &mut self,
         bytes: &[u8],
         now_s: f64,
-        arrived_s: Option<f64>,
+        arrived_s: Option<(f64, f64)>,
     ) -> Option<Notice> {
         self.stats.messages_in += 1;
         let Ok(msg) = decode_server(bytes) else {
@@ -1024,7 +1028,7 @@ impl ClientCore {
         self.snapshot_age_s = age_s.clamp(0.0, 1.0);
     }
 
-    fn on_snapshot(&mut self, s: &v1::Snapshot, now_s: f64, arrived_s: Option<f64>) {
+    fn on_snapshot(&mut self, s: &v1::Snapshot, now_s: f64, arrived_s: Option<(f64, f64)>) {
         // Datagrams may arrive out of order: an older snapshot would move
         // everyone back in time.
         if self.stats.snapshots > 0 && s.server_tick <= self.stats.last_snapshot_tick {
@@ -1036,13 +1040,21 @@ impl ClientCore {
         // Read a frame late (see `arrival`): the prediction extrapolates
         // the snapshot by that much more, and it counts as having come at
         // the time it would have on time.
-        let late = self.arrival.late_ticks(s.server_tick, now_s);
+        let late = match arrived_s {
+            // Stamped: late by the steps taken since it came.
+            Some((at, step_s)) if at > now_s - 1.0 => self.arrival.late_ticks_stamped(
+                s.server_tick,
+                now_s,
+                (step_s - at) / ocw_core::SIM_DT,
+            ),
+            _ => self.arrival.late_ticks(s.server_tick, now_s),
+        };
         self.stats.late_ticks[(late as usize).min(3)] += 1;
         let late_s = f64::from(late) * ocw_core::SIM_DT;
         // Stamped on arrival (the browser's network worker): placed at its
         // real arrival, not at the tick-rounded estimate of a late read.
         let now_s = match arrived_s {
-            Some(at) if at > now_s - 1.0 => at,
+            Some((at, _)) if at > now_s - 1.0 => at,
             _ => now_s - late_s,
         };
         let age_s = self.snapshot_age_s + late_s;
@@ -6233,6 +6245,8 @@ mod tests {
         let mut t = h.time_s;
         let mut server_clock = t + 0.007;
         let mut acc = 0.0;
+        // The game time of the last prediction step (`Time<Fixed>`).
+        let mut step_t = t;
         let mut inbox: Vec<(f64, Vec<u8>)> = Vec::new();
         let mut last_sample = t;
         let mut own: Vec<[f64; 3]> = Vec::new();
@@ -6252,7 +6266,7 @@ mod tests {
             for (at, m) in std::mem::take(&mut inbox) {
                 let before = h.client.stats().snapshots;
                 if stamped {
-                    if let Some(n) = h.client.on_server_message_at(&m, t, at) {
+                    if let Some(n) = h.client.on_server_message_at(&m, t, at, step_t) {
                         h.notices.push(n);
                     }
                 } else {
@@ -6280,6 +6294,7 @@ mod tests {
                     inbox.extend(h.server.tick().into_iter().map(|m| (t, m)));
                 }
                 h.client.predict_step();
+                step_t += ocw_core::SIM_DT;
                 acc -= ocw_core::SIM_DT;
             }
             // Update: the frame's view.

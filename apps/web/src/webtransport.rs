@@ -94,6 +94,7 @@ fn connect(options: &RemoteOptions, link: SharedLink) -> u32 {
         hashes: options.cert_hashes.clone(),
         datagrams: true,
         rtt: true,
+        game: true,
     };
     netconn::open(opts, move |ev| {
         if let Some(reason) = netconn::server_end(&ev) {

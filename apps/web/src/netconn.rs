@@ -28,9 +28,13 @@ use std::collections::HashMap;
 /// Who reads a connection (page option `net-worker`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ReaderMode {
-    /// The worker where it can, else the page's thread.
-    #[default]
+    /// The worker where it can, else the page's thread (`net-worker=on`).
     Auto,
+    /// The sensor bridge in the worker, the game link on the page's thread
+    /// (`net-worker=bridge`, the default: the own rider moved less smoothly
+    /// with the game link in the worker, 10G *Open (B3)*).
+    #[default]
+    BridgeOnly,
     /// Always the page's thread (`net-worker=off`: the comparison).
     MainThread,
     /// The worker says it has no WebTransport (`net-worker=refuse`, the
@@ -42,9 +46,21 @@ impl ReaderMode {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "auto" | "on" | "1" => Some(Self::Auto),
+            "bridge" => Some(Self::BridgeOnly),
             "off" | "0" | "main" => Some(Self::MainThread),
             "refuse" => Some(Self::Refuse),
             _ => None,
+        }
+    }
+
+    /// Whether a connection goes to the worker (`game`: the game server's,
+    /// else the sensor bridge's); where not, why.
+    pub fn worker_for(self, game: bool) -> Result<(), &'static str> {
+        match self {
+            Self::Auto | Self::Refuse => Ok(()),
+            Self::BridgeOnly if !game => Ok(()),
+            Self::BridgeOnly => Err("net-worker=bridge: the game link on the page's thread"),
+            Self::MainThread => Err("net-worker=off"),
         }
     }
 }
@@ -318,6 +334,8 @@ pub struct ConnOptions {
     pub datagrams: bool,
     /// Report the smoothed round trip once a second.
     pub rtt: bool,
+    /// The game server's connection (else the sensor bridge's).
+    pub game: bool,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -490,6 +508,7 @@ mod web {
     /// thread, never inside another call of this module).
     pub fn open(options: ConnOptions, handler: impl FnMut(NetEvent) + 'static) -> u32 {
         let handler: Handler = Rc::new(RefCell::new(Box::new(handler)));
+        let game = options.game;
         let (id, mode) = NET.with(|n| {
             let mut n = n.borrow_mut();
             let id = n.next;
@@ -505,8 +524,8 @@ mod web {
             );
             (id, n.mode)
         });
-        if mode == ReaderMode::MainThread {
-            to_main(id, "net-worker=off");
+        if let Err(why) = mode.worker_for(game) {
+            to_main(id, why);
             return id;
         }
         match ensure_worker() {
@@ -1242,6 +1261,14 @@ mod tests {
         assert_eq!(ReaderMode::parse("auto"), Some(ReaderMode::Auto));
         assert_eq!(ReaderMode::parse("off"), Some(ReaderMode::MainThread));
         assert_eq!(ReaderMode::parse("refuse"), Some(ReaderMode::Refuse));
+        assert_eq!(ReaderMode::parse("on"), Some(ReaderMode::Auto));
+        assert_eq!(ReaderMode::parse("bridge"), Some(ReaderMode::BridgeOnly));
+        // Who goes to the worker: (game link, bridge).
+        let to_worker = |m: ReaderMode| (m.worker_for(true).is_ok(), m.worker_for(false).is_ok());
+        assert_eq!(to_worker(ReaderMode::Auto), (true, true));
+        assert_eq!(to_worker(ReaderMode::BridgeOnly), (false, true));
+        assert_eq!(to_worker(ReaderMode::MainThread), (false, false));
+        assert_eq!(to_worker(ReaderMode::Refuse), (true, true));
         assert_eq!(ReaderMode::parse("maybe"), None);
         assert_eq!(Reader::Worker.as_str(), "worker");
         assert_eq!(Reader::MainThread.as_str(), "main thread");

@@ -167,6 +167,9 @@ pub struct WebSession {
     /// Server ticks run so far (for the start-up log and the tests; local
     /// server only).
     pub ticks: u64,
+    /// The game time of the last prediction step (`Time<Fixed>`; 10G *B3
+    /// worker*: how many steps were taken since a stamped message came).
+    pub step_s: Option<f64>,
 }
 
 impl WebSession {
@@ -235,6 +238,7 @@ impl WebSession {
             trainer: FrameVirtualTrainer::new(power_w),
             devices,
             ticks: 0,
+            step_s: None,
         }
     }
 
@@ -267,6 +271,7 @@ impl WebSession {
             trainer: FrameVirtualTrainer::new(power_w),
             devices,
             ticks: 0,
+            step_s: None,
         }
     }
 
@@ -356,7 +361,8 @@ impl WebSession {
                 for (at, m) in timed {
                     let before = self.client.stats().snapshots;
                     let arrived = now_s - (link_now - at).clamp(0.0, 1.0);
-                    if let Some(n) = self.client.on_server_message_at(&m, now_s, arrived) {
+                    let step_s = self.step_s.unwrap_or(now_s);
+                    if let Some(n) = self.client.on_server_message_at(&m, now_s, arrived, step_s) {
                         notices.push(n);
                     }
                     if self.client.stats().snapshots > before {

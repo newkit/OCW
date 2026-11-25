@@ -24,8 +24,10 @@ it saves:
                             messages waited for a frame, and how smoothly
                             the riders moved (10G B3 worker)
 
-`--net-worker off` reads on the page's thread (the comparison), `refuse`
-makes the worker refuse so the page's thread takes over (the fallback);
+The game link is read on the page's thread by default (the sensor bridge
+in the network worker); `--net-worker on` reads it in the worker, `off`
+on the page's thread, `refuse` makes the worker refuse so the page's
+thread takes over (the fallback);
 `--frame-ms 40` paces the page to 25 fps, a busy slow machine.
 
 Exits 0 when the browser joined over WebTransport (read where asked), saw at least --riders
@@ -219,9 +221,10 @@ def main():
                         " else the system's chromium; scripts/web_browser.py)")
     p.add_argument("--size", default="1280x720")
     p.add_argument("--software", action="store_true")
-    p.add_argument("--net-worker", default="auto", choices=("auto", "off", "refuse"),
-                   help="who reads the WebTransport connection (10G B3 worker): the network worker "
-                        "(auto), the page's thread (off), or the worker refuses and the page's thread "
+    p.add_argument("--net-worker", default="default", choices=("default", "on", "off", "refuse"),
+                   help="who reads the game's WebTransport connection (10G B3 worker): the page's "
+                        "default (the page's thread; the bridge in the worker), the network worker "
+                        "(on), the page's thread (off), or the worker refuses and the page's thread "
                         "takes over (refuse: the fallback)")
     p.add_argument("--frame-ms", type=float, default=0.0,
                    help="pace the page's frames to this many ms each (40: a slow machine at 25 fps); "
@@ -293,7 +296,7 @@ def main():
         httpd = tw.web_serve().server(a.dir, stats=stats)
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         query = f"{info['query']}&name={a.name}&route=hills"
-        if a.net_worker != "auto":
+        if a.net_worker != "default":
             query += f"&net-worker={a.net_worker}"
         if a.frame_ms:
             query += f"&frame-ms={a.frame_ms:g}"
@@ -435,7 +438,7 @@ def main():
     summary["reader"] = b.get("reader")
     summary["worker"] = b.get("worker")
     summary["motion"] = b.get("motion")
-    want_reader = "worker" if a.net_worker == "auto" else "main thread"
+    want_reader = "worker" if a.net_worker == "on" else "main thread"
     others = b.get("others_seen") or []
     checks = {
         f"the connection was read on the {want_reader}": b.get("reader") == want_reader,

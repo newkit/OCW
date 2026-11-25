@@ -1233,12 +1233,16 @@ mod tests {
         let (c, w) = parse_query("net-worker=off&frame-ms=40", false);
         assert!(w.is_empty(), "{w:?}");
         assert_eq!(c.net_reader, netconn::ReaderMode::MainThread);
+        // The default: the bridge in the worker, the game link on the
+        // page's thread; `on` opts the game link in.
         let (c, _) = parse_query("", false);
+        assert_eq!(c.net_reader, netconn::ReaderMode::BridgeOnly);
+        let (c, _) = parse_query("net-worker=on", false);
         assert_eq!(c.net_reader, netconn::ReaderMode::Auto);
         let (c, _) = parse_query("net-worker=refuse", false);
         assert_eq!(c.net_reader, netconn::ReaderMode::Refuse);
         let (c, w) = parse_query("net-worker=maybe&frame-ms=0", false);
-        assert_eq!(c.net_reader, netconn::ReaderMode::Auto);
+        assert_eq!(c.net_reader, netconn::ReaderMode::BridgeOnly);
         assert_eq!(w.len(), 2, "{w:?}");
     }
 
