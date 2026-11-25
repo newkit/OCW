@@ -318,7 +318,11 @@ type ModelsUi<'w> = (
 fn panels(
     mut contexts: EguiContexts,
     mut state: ResMut<UiState>,
-    (studio, preview): (Res<Studio>, Res<PatchPreview>),
+    (studio, preview, menu_view): (
+        Res<Studio>,
+        Res<PatchPreview>,
+        Option<Res<ocw_render::menu::MenuView>>,
+    ),
     mut world: Option<ResMut<OpenWorld>>,
     flight: Res<StudioFlight>,
     ground: Option<Res<ocw_render::Ground>>,
@@ -331,6 +335,10 @@ fn panels(
     model_cams: ModelCameras,
 ) -> Result {
     let models_ws = state.workspace == Workspace::Models;
+    // The trust dialog (the shared menu, spec 16H Q14) is drawn over the
+    // 3D view: the 2D map steps aside meanwhile, so the dialog has the
+    // room it has in the game (all of it fits from 4:3 on).
+    let dialog = menu_view.is_some_and(|m| m.open);
     if mactive.0 != models_ws {
         mactive.0 = models_ws;
     }
@@ -538,7 +546,7 @@ fn panels(
                 }
             });
         });
-    if state.show_map && !models_ws {
+    if state.show_map && !models_ws && !dialog {
         let width = (ctx.viewport_rect().width() * 0.36).max(240.0);
         egui::Panel::right("studio-map")
             .resizable(true)
@@ -587,8 +595,10 @@ fn panels(
             crate::models_ui::paint_labels(&root, central, &labels);
         }
     }
-    // A click (not a drag) in the 3D view picks what is under it.
+    // A click (not a drag) in the 3D view picks what is under it – not
+    // while the trust dialog is open: the click is its.
     if !models_ws
+        && !dialog
         && view.clicked()
         && let Some(p) = view.interact_pointer_pos()
         && let Ok((cam, transform)) = cameras.single()

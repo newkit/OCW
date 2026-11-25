@@ -145,6 +145,15 @@ type WorldParams<'w> = (
     Option<Res<'w, ocw_render::package::PackageWorld>>,
 );
 
+/// Who else has the input: the panels' focus, the console, the trust
+/// dialog (the shared menu); and the layout's `+` / `−` keys.
+type InputParams<'w> = (
+    Res<'w, UiFocus>,
+    Res<'w, StudioLayout>,
+    Option<Res<'w, ocw_render::console::ConsoleState>>,
+    Option<Res<'w, ocw_render::menu::MenuView>>,
+);
+
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn fly(
     time: Res<Time>,
@@ -154,20 +163,20 @@ fn fly(
     scroll: Option<Res<AccumulatedMouseScroll>>,
     pads: Query<(Entity, &Gamepad)>,
     mut trigger_rest: Local<bevy::platform::collections::HashMap<Entity, [Option<f32>; 2]>>,
-    (focus, layout, console): (
-        Res<UiFocus>,
-        Res<StudioLayout>,
-        Option<Res<ocw_render::console::ConsoleState>>,
-    ),
+    (focus, layout, console, menu): InputParams,
     (ground, obstacles, trees, package): WorldParams,
     mut state: ResMut<StudioFlight>,
     mut view: ResMut<RideView>,
 ) {
     let dt = time.delta_secs_f64();
-    let typing = focus.keyboard || console.is_some_and(|c| c.is_open());
+    // The trust dialog (the shared menu) has the keys, the pad and the
+    // mouse while it is open.
+    let dialog = menu.is_some_and(|m| m.open);
+    let typing = focus.keyboard || console.is_some_and(|c| c.is_open()) || dialog;
     trigger_rest.retain(|e, _| pads.contains(*e));
     let pad_list: Vec<PadFlight> = pads
         .iter()
+        .filter(|_| !dialog)
         .map(|(e, p)| pad_flight(p, trigger_rest.entry(e).or_default()))
         .collect();
     let input = match keys.as_deref() {
@@ -178,12 +187,12 @@ fn fly(
         .as_deref()
         .is_some_and(|b| b.pressed(MouseButton::Left) || b.pressed(MouseButton::Right));
     let mouse = match motion.as_deref() {
-        Some(m) if held && focus.over_view => (m.delta.x, m.delta.y),
+        Some(m) if held && focus.over_view && !dialog => (m.delta.x, m.delta.y),
         _ => (0.0, 0.0),
     };
     let look = look_delta(mouse, &pad_list, false, dt);
     let wheel = match scroll.as_deref() {
-        Some(s) if focus.over_view => f64::from(match s.unit {
+        Some(s) if focus.over_view && !dialog => f64::from(match s.unit {
             MouseScrollUnit::Line => s.delta.y,
             MouseScrollUnit::Pixel => s.delta.y / 40.0,
         }),
