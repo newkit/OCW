@@ -29,6 +29,7 @@
 //!   game's animation);
 //! - [`ui`]: the egui panels.
 
+mod aerial;
 mod build;
 mod edit;
 mod flight;
@@ -46,6 +47,7 @@ mod patch;
 mod pick;
 mod routes;
 mod routes_ui;
+mod surround;
 mod ui;
 mod world;
 

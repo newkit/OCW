@@ -91,7 +91,8 @@ pub fn tile_extent(pkg: &WorldPackage) -> ([f64; 2], [f64; 2]) {
 }
 
 impl MapData {
-    /// The map of `pkg` (its own tiles; neighbours are not drawn yet),
+    /// The map of `pkg` (its own tiles; OCW Studio draws the neighbours
+    /// beside it, `apps/studio/src/surround.rs`),
     /// the land use coloured by `land_rgb`.
     pub fn of(pkg: &WorldPackage, land_rgb: impl Fn(LandClass) -> [u8; 3]) -> Self {
         let (min, max) = tile_extent(pkg);
