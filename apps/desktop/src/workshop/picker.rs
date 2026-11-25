@@ -425,13 +425,8 @@ pub fn kit_rows(cat: &Catalogue, garage: &Garage, slot: Slot) -> Vec<Row> {
             kind: Kind::Equipped { item: worn },
         });
     }
-    // The kit's own colour (free, looks only), whatever item is worn.
-    if let Some(f) = kit_colour_field(slot) {
-        out.push(Row {
-            part: None,
-            kind: Kind::Design(f),
-        });
-    }
+    // The kit's own colour (free, looks only, whatever item is worn) is
+    // the picker's swatch row above these tiles ([`Swatches`], 4N Q30).
     for it in &garage.items {
         let Some(p) = cat.get(&it.part) else { continue };
         if p.slot != slot || Some(it.id) == worn {
@@ -1162,6 +1157,63 @@ pub struct Picker {
     pub design: Option<(DesignPage, ocw_core::RiderLook)>,
     /// A page of the bench catalogue (spec 4D).
     pub bench: Option<super::bench::BenchPage>,
+    /// The swatch row above a kit picker's tiles (shorts, socks, shoes,
+    /// gloves; 4N Q30 (a)): the kit's own colours, the selected one shown
+    /// live on the rider through `design`'s draft.
+    pub swatches: Option<Swatches>,
+}
+
+/// A kit picker's row of colour swatches above its item tiles (spec §14
+/// Phase 4, 4N Q30 (a)): the colours of `field` (the standard colour,
+/// then the palette) and the focus between the row and the tiles
+/// ([`ocw_client::part_tiles::SwatchFocus`]; its `tile` mirrors
+/// [`Picker::focus`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Swatches {
+    pub field: Field,
+    pub colours: Vec<Option<Rgb>>,
+    pub focus: ocw_client::part_tiles::SwatchFocus,
+}
+
+impl Swatches {
+    /// The row of `field` with the colour of `look` selected.
+    pub fn new(field: Field, look: &ocw_core::RiderLook) -> Self {
+        let colours = super::designer::kit_colours();
+        let now = field.kit_colour(look).flatten();
+        let swatch = colours.iter().position(|c| *c == now).unwrap_or(0);
+        Self {
+            field,
+            colours,
+            focus: ocw_client::part_tiles::SwatchFocus {
+                on_swatches: false,
+                swatch,
+                tile: 0,
+            },
+        }
+    }
+
+    /// The selected colour (`None`: standard).
+    pub fn selected(&self) -> Option<Rgb> {
+        self.colours.get(self.focus.swatch).copied().flatten()
+    }
+
+    /// The colour a swatch shows (the standard one: the model's own).
+    pub fn shown(&self, i: usize) -> Rgb {
+        self.colours
+            .get(i)
+            .copied()
+            .flatten()
+            .unwrap_or_else(|| self.field.standard_colour())
+    }
+
+    /// The name of swatch `i`: "standard (black)", "#1E88E5".
+    pub fn name(&self, i: usize) -> String {
+        let l = self.field.with_kit_colour(
+            ocw_core::RiderLook::default(),
+            self.colours.get(i).copied().flatten(),
+        );
+        self.field.value(&l)
+    }
 }
 
 /// The colour field of a kit slot (spec 4C: the kit's own colours, looks
@@ -1187,22 +1239,75 @@ impl Picker {
             dialog: None,
             design: None,
             bench: None,
+            swatches: None,
         }
     }
 
-    /// The picker of kit `slot` (spec 4C): its items and, for shorts,
-    /// socks, shoes and gloves, the colour row on a draft of `look`.
+    /// The picker of kit `slot` (spec 4C): its items as tiles and, for
+    /// shorts, socks, shoes and gloves, the row of colour swatches above
+    /// them (4N Q30 (a)) on a draft of `look`.
     pub fn kit(slot: Slot, rows: Vec<Row>, look: ocw_core::RiderLook) -> Self {
+        let field = kit_colour_field(slot);
         Self {
-            design: kit_colour_field(slot).map(|_| (DesignPage::Kit, look)),
+            design: field.map(|_| (DesignPage::Kit, look)),
+            swatches: field.map(|f| Swatches::new(f, &look)),
             ..Self::new(slot, rows)
+        }
+    }
+
+    /// The focus is on the swatch row.
+    pub fn on_swatches(&self) -> bool {
+        self.swatches.as_ref().is_some_and(|s| s.focus.on_swatches)
+    }
+
+    /// The arrows on a kit picker with a swatch row: between the row and
+    /// the tiles, along each; the selected swatch's colour goes on the
+    /// draft (shown live on the rider).
+    pub fn step_swatched(&mut self, dir: ocw_client::part_tiles::Dir) {
+        let n = self.rows.len();
+        let focus = self.focus;
+        let Some(s) = &mut self.swatches else {
+            return self.step_tiles(dir);
+        };
+        s.focus.tile = focus;
+        s.focus = s
+            .focus
+            .step(s.colours.len(), n, ocw_client::part_tiles::COLUMNS, dir);
+        self.focus = s.focus.tile;
+        self.sync_swatch();
+    }
+
+    /// Swatch `i` focused and selected (the pointer over it, a click).
+    pub fn focus_swatch(&mut self, i: usize) {
+        if let Some(s) = &mut self.swatches
+            && i < s.colours.len()
+        {
+            s.focus.on_swatches = true;
+            s.focus.swatch = i;
+        }
+        self.sync_swatch();
+    }
+
+    /// Tile `i` focused (the swatch row keeps its colour).
+    pub fn focus_tile(&mut self, i: usize) {
+        self.focus = i;
+        if let Some(s) = &mut self.swatches {
+            s.focus.on_swatches = false;
+            s.focus.tile = i;
+        }
+    }
+
+    /// The draft takes the selected swatch's colour.
+    fn sync_swatch(&mut self) {
+        if let (Some(s), Some((_, look))) = (&self.swatches, &mut self.design) {
+            *look = s.field.with_kit_colour(*look, s.selected());
         }
     }
 
     /// The jersey designer's own pages (every row a field), not a kit
     /// picker with a colour row.
     pub fn is_designer(&self) -> bool {
-        self.design.is_some() && !self.slot.is_kit()
+        self.design.is_some() && self.swatches.is_none() && !self.slot.is_kit()
     }
 
     /// The jersey designer's page `page`, its draft starting from `look`.
@@ -1283,11 +1388,11 @@ impl Picker {
     /// paint – not the kit, the bench, the character or the designer.
     pub fn tiles(&self) -> bool {
         // The stand's parts and paints (4B) and the mirror's character and
-        // kit pickers (4N: the same tile model as the menu's editor); the
-        // bench's catalogue, the jersey designer and the kit pickers with a
-        // colour row (shorts, socks, shoes, gloves: ← / → change the
-        // colour there) stay lists.
-        self.bench.is_none() && self.design.is_none()
+        // kit pickers (4N: the same tile model as the menu's editor; the
+        // shorts, socks, shoes and gloves with their swatch row above the
+        // tiles, Q30 (a)); the bench's catalogue and the jersey designer
+        // stay lists.
+        self.bench.is_none() && (self.design.is_none() || self.swatches.is_some())
     }
 
     /// The mirror's pickers (character and kit): tiles of the rider.

@@ -48,6 +48,48 @@ pub fn step(focus: usize, len: usize, cols: usize, dir: Dir) -> usize {
     }
 }
 
+/// The focus of a picker with a row of colour swatches above its tiles
+/// (spec §14 Phase 4, 4N Q30 (a): shorts, socks, shoes and gloves): the
+/// swatch row or a tile, and each one's place, kept while the other has
+/// the focus (↑ from the first tile row goes to the swatches, ↓ back to
+/// the same tile).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SwatchFocus {
+    /// The focus is on the swatch row.
+    pub on_swatches: bool,
+    /// The selected swatch (its colour is shown on the rider).
+    pub swatch: usize,
+    /// The focused tile.
+    pub tile: usize,
+}
+
+impl SwatchFocus {
+    /// After a move with `swatches` swatches over `tiles` tiles in `cols`
+    /// columns: on the swatch row ← / → one swatch (stopping at the
+    /// ends), ↓ to the tiles; on the tiles ↑ from the first row to the
+    /// swatch row, else the grid's [`step`].
+    pub fn step(self, swatches: usize, tiles: usize, cols: usize, dir: Dir) -> Self {
+        let mut f = self;
+        f.swatch = f.swatch.min(swatches.saturating_sub(1));
+        if f.on_swatches && swatches > 0 {
+            match dir {
+                Dir::Left => f.swatch = f.swatch.saturating_sub(1),
+                Dir::Right => f.swatch = (f.swatch + 1).min(swatches - 1),
+                Dir::Down if tiles > 0 => f.on_swatches = false,
+                Dir::Up | Dir::Down => {}
+            }
+            return f;
+        }
+        f.on_swatches = false;
+        if dir == Dir::Up && swatches > 0 && f.tile.min(tiles.saturating_sub(1)) < cols.max(1) {
+            f.on_swatches = true;
+        } else {
+            f.tile = step(f.tile, tiles, cols, dir);
+        }
+        f
+    }
+}
+
 /// The first tile row shown so that `focus` is among the `rows` rows on
 /// screen (the grid scrolls by whole rows; the last rows fill the view).
 pub fn first_row(focus: usize, len: usize, cols: usize, rows: usize) -> usize {
@@ -172,6 +214,60 @@ mod tests {
         // One column behaves like a list.
         assert_eq!(step(2, 5, 1, Dir::Down), 3);
         assert_eq!(step(2, 5, 1, Dir::Up), 1);
+    }
+
+    /// The swatch row above the tiles (4N Q30 (a)): ↑ from the first tile
+    /// row goes up to the swatches, ← / → move along them and stop at
+    /// the ends, ↓ goes back to the tile the focus came from.
+    #[test]
+    fn the_focus_moves_between_the_swatch_row_and_the_tiles() {
+        // 13 swatches (standard + 12), 3 columns, 7 tiles.
+        let s = |f: SwatchFocus, d| f.step(13, 7, 3, d);
+        let start = SwatchFocus {
+            on_swatches: false,
+            swatch: 0,
+            tile: 1,
+        };
+        let up = s(start, Dir::Up);
+        assert!(up.on_swatches);
+        assert_eq!((up.swatch, up.tile), (0, 1), "the tile is kept");
+        assert_eq!(s(up, Dir::Left).swatch, 0, "stops at the first");
+        let right = s(s(up, Dir::Right), Dir::Right);
+        assert_eq!((right.on_swatches, right.swatch), (true, 2));
+        assert_eq!(s(right, Dir::Up), right, "nothing above the swatches");
+        let mut end = right;
+        for _ in 0..20 {
+            end = s(end, Dir::Right);
+        }
+        assert_eq!(end.swatch, 12, "stops at the last");
+        let down = s(right, Dir::Down);
+        assert_eq!(
+            down,
+            SwatchFocus {
+                on_swatches: false,
+                swatch: 2,
+                tile: 1
+            },
+            "back to the same tile, the colour kept"
+        );
+        // On the tiles the grid's own moves; ↑ from the second row stays
+        // on the tiles.
+        let lower = s(down, Dir::Down);
+        assert_eq!((lower.on_swatches, lower.tile), (false, 4));
+        let back = s(lower, Dir::Up);
+        assert_eq!((back.on_swatches, back.tile), (false, 1));
+        assert_eq!(s(down, Dir::Right).tile, 2);
+        // No swatches: a plain grid; no tiles: ↓ stays on the swatches.
+        assert!(!start.step(0, 7, 3, Dir::Up).on_swatches);
+        assert!(up.step(13, 0, 3, Dir::Down).on_swatches);
+        // A swatch beyond the row (fewer colours) comes back.
+        let far = SwatchFocus {
+            on_swatches: true,
+            swatch: 40,
+            tile: 0,
+        };
+        assert_eq!(far.step(13, 7, 3, Dir::Left).swatch, 11);
+        assert_eq!(far.step(13, 7, 3, Dir::Up).swatch, 12);
     }
 
     #[test]

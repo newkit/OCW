@@ -657,9 +657,50 @@ impl Workshop {
                 }
                 return None;
             }
-            // The jersey designer: ← / → change the focused field (also the
-            // colour row of a kit picker, spec 4C).
-            if let Some((_, draft)) = p.design {
+            // A kit picker's swatch row above its tiles (4N Q30 (a)): the
+            // arrows move between the row and the tiles and along each,
+            // the selected colour shows live on the rider; Confirm on the
+            // row applies it (free), the pointer's hover selects, a click
+            // applies.
+            if p.swatches.is_some() {
+                use ocw_client::part_tiles::Dir;
+                let dir = match a {
+                    Act::Up => Some(Dir::Up),
+                    Act::Down => Some(Dir::Down),
+                    Act::Left => Some(Dir::Left),
+                    Act::Right => Some(Dir::Right),
+                    _ => None,
+                };
+                let apply = |w: &mut Self| {
+                    let draft = w.picker.as_ref()?.design?.1;
+                    w.caption =
+                        Some("Colour applied – free, looks only, and seen by everyone.".into());
+                    w.line(super::designer::line(&draft))
+                };
+                match a {
+                    _ if dir.is_some() => {
+                        p.step_swatched(dir.expect("checked"));
+                        return None;
+                    }
+                    Act::Swatch(i) => {
+                        p.focus_swatch(i);
+                        return None;
+                    }
+                    Act::SwatchClick(i) => {
+                        p.focus_swatch(i);
+                        return apply(self);
+                    }
+                    Act::Confirm | Act::Action if p.on_swatches() => return apply(self),
+                    Act::Row(i) if i < p.rows.len() => {
+                        p.focus_tile(i);
+                        return None;
+                    }
+                    Act::RowClick(i) if i < p.rows.len() => p.focus_tile(i),
+                    _ => {}
+                }
+            }
+            // The jersey designer: ← / → change the focused field.
+            if let Some((_, draft)) = p.design.filter(|_| p.swatches.is_none()) {
                 let on_field = p.design_field().is_some();
                 match a {
                     Act::Left if on_field => {
@@ -1441,51 +1482,151 @@ pub(crate) mod tests {
         assert_eq!(w.bikes.len(), 6);
     }
 
-    /// The kit's colours (spec 4C): the shorts, socks, shoes and gloves
-    /// pickers have a colour row; ← / → change a draft shown live,
-    /// Confirm applies it as a `kit.design` line; the other rows still buy.
+    /// Opens the mirror's picker of kit `slot`.
+    fn open_kit(world: &World, w: &mut Workshop, slot: Slot) {
+        world.step(w, &[Act::Down, Act::Down, Act::Confirm]);
+        world.settle(w);
+        w.dress.slot = MirrorSlot::ALL
+            .iter()
+            .position(|s| *s == MirrorSlot::Kit(slot))
+            .unwrap();
+        world.step(w, &[Act::Confirm]);
+    }
+
+    /// The kit's colours (spec §14 Phase 4, 4N Q30 (a)): the shorts,
+    /// socks, shoes and gloves are picked from item tiles with a row of
+    /// colour swatches above them – ↑ from the first tile row to the
+    /// swatches, ← / → along them (a draft shown live on the rider),
+    /// Confirm applies it as a `kit.design` line, ↓ back to the same
+    /// tile; the pointer's hover selects a swatch, a click applies it; the
+    /// item tiles still preview and buy; Back restores the saved look.
     #[test]
-    fn kit_pickers_have_their_own_colour_row() {
+    fn kit_pickers_are_tiles_with_a_swatch_row() {
+        use super::super::designer::Field;
+        use ocw_core::bike::PALETTE;
+        for (slot, field) in [
+            (Slot::Shorts, Field::Shorts),
+            (Slot::Socks, Field::Socks),
+            (Slot::Shoes, Field::Shoes),
+            (Slot::Gloves, Field::Gloves),
+        ] {
+            let world = World::new();
+            let mut w = world.open();
+            open_kit(&world, &mut w, slot);
+            let p = w.picker.as_ref().expect("kit picker");
+            assert!(
+                p.tiles() && p.of_the_rider() && !p.is_designer(),
+                "{slot:?}"
+            );
+            let s = p.swatches.as_ref().expect("a swatch row");
+            assert_eq!(s.field, field);
+            assert_eq!(s.colours.len(), PALETTE.len() + 1, "standard + palette");
+            assert_eq!(s.focus.swatch, 0, "the standard colour selected");
+            assert!(!p.on_swatches(), "the focus starts on the worn item");
+            assert!(
+                p.rows.iter().all(|r| r.part.is_some()),
+                "{slot:?}: only items among the tiles"
+            );
+        }
         let world = World::new();
         let mut w = world.open();
-        world.step(&mut w, &[Act::Down, Act::Down, Act::Confirm]);
-        world.settle(&mut w);
-        let gloves = MirrorSlot::ALL
-            .iter()
-            .position(|s| *s == MirrorSlot::Kit(Slot::Gloves))
-            .unwrap();
-        w.dress.slot = gloves;
-        world.step(&mut w, &[Act::Confirm]);
-        let p = w.picker.as_ref().expect("gloves picker");
-        assert_eq!(
-            p.rows[1].kind,
-            Kind::Design(super::super::designer::Field::Gloves)
-        );
-        assert!(!p.is_designer());
-        // On the worn item ← / → do nothing; on the colour row they step.
+        open_kit(&world, &mut w, Slot::Gloves);
+        let gloves = |w: &Workshop| w.design_preview().unwrap().design.gloves;
+        let focus = |w: &Workshop| w.picker.as_ref().unwrap().focus;
+        // → on the tiles moves over the items, the colour stays.
         world.step(&mut w, &[Act::Right]);
-        assert_eq!(w.design_preview().unwrap().design.gloves, None);
-        world.step(&mut w, &[Act::Down, Act::Right]);
-        let c = w.design_preview().unwrap().design.gloves;
-        assert!(c.is_some(), "a colour shown live");
+        assert_eq!(focus(&w), 1);
+        assert_eq!(gloves(&w), None);
+        let worn = world.with_ctx(&w, |w, ctx| w.rider_look(ctx).1);
+        let item = w.picker.as_ref().unwrap().rows[1].part.clone().unwrap();
+        let model = &ocw_assets::shipped::catalogue().get(&item).unwrap().model;
+        assert!(worn.contains(model), "the focused item on the rider: {worn:?}");
+        // ↑ to the swatches, → twice: the second palette colour, live.
+        world.step(&mut w, &[Act::Up]);
+        assert!(w.picker.as_ref().unwrap().on_swatches());
+        world.step(&mut w, &[Act::Right, Act::Right]);
+        assert_eq!(gloves(&w), Some(PALETTE[1]));
+        world.step(&mut w, &[Act::Left]);
+        assert_eq!(gloves(&w), Some(PALETTE[0]));
+        // ↓ back to the same item tile, the colour kept on the draft.
+        world.step(&mut w, &[Act::Down]);
+        let p = w.picker.as_ref().unwrap();
+        assert!(!p.on_swatches());
+        assert_eq!(p.focus, 1);
+        assert_eq!(gloves(&w), Some(PALETTE[0]));
+        // Confirm on the swatch row applies the colour.
+        world.step(&mut w, &[Act::Up, Act::Right]);
         let out = world.step(&mut w, &[Act::Confirm]);
         let [Out::Line(l)] = out.as_slice() else {
             panic!("{out:?}")
         };
         assert!(
-            l.starts_with("kit.design ") && l.contains(&format!("--gloves {}", c.unwrap())),
+            l.starts_with("kit.design ") && l.contains(&format!("--gloves {}", PALETTE[1])),
             "{l}"
         );
-        // A shop row opens its buy dialog as before.
-        world.step(&mut w, &[Act::Down, Act::Confirm]);
+        // The view: the selected swatch outlined, the row focused, named.
+        let v =
+            super::super::swatch_row_view(w.picker.as_ref().unwrap().swatches.as_ref().unwrap());
+        assert_eq!((v.selected, v.focused), (2, true));
+        assert_eq!(v.colours.len(), 13);
+        assert_eq!(v.colours[2], PALETTE[1]);
+        assert_eq!(v.colours[0], Field::Gloves.standard_colour());
+        assert_eq!(v.label, format!("Colour of the gloves: {}", PALETTE[1]));
+        // The pointer: hovering a swatch selects it, a click applies it.
+        world.step(&mut w, &[Act::Swatch(5)]);
+        assert_eq!(gloves(&w), Some(PALETTE[4]));
+        let out = world.step(&mut w, &[Act::SwatchClick(7)]);
+        let [Out::Line(l)] = out.as_slice() else {
+            panic!("{out:?}")
+        };
+        assert!(l.contains(&format!("--gloves {}", PALETTE[6])), "{l}");
+        // Hovering an item tile moves the focus there; a click on a shop
+        // tile opens its buy dialog as before.
+        let shop = w
+            .picker
+            .as_ref()
+            .unwrap()
+            .rows
+            .iter()
+            .position(|r| r.kind == Kind::Shop)
+            .expect("gloves in the shop");
+        world.step(&mut w, &[Act::Row(shop)]);
+        let p = w.picker.as_ref().unwrap();
+        assert!(!p.on_swatches());
+        assert_eq!(p.focus, shop);
+        world.step(&mut w, &[Act::RowClick(shop)]);
         assert!(w.picker.as_ref().unwrap().dialog.is_some());
-        // The helmet has no colour row here (its colour is the designer's).
+        world.step(&mut w, &[Act::Back]);
+        assert!(w.picker.as_ref().unwrap().dialog.is_none());
+        // Back restores the saved look (no draft).
+        world.step(&mut w, &[Act::Back]);
+        assert!(w.picker.is_none());
+        assert!(w.design_preview().is_none());
+        // The helmet and the jersey have no swatch row here (their
+        // colours are the designer's).
+        let helmet = Picker::kit(Slot::Helmet, Vec::new(), ocw_core::RiderLook::default());
+        assert!(helmet.swatches.is_none() && helmet.tiles());
         let helmet = picker::kit_rows(
             ocw_assets::shipped::catalogue(),
             world.wallet.get("Ann").unwrap(),
             Slot::Helmet,
         );
         assert!(helmet.iter().all(|r| !matches!(r.kind, Kind::Design(_))));
+    }
+
+    /// A colour already chosen is the selected swatch when the picker
+    /// opens (4N Q30 (a)).
+    #[test]
+    fn the_swatch_row_selects_the_worn_colour() {
+        use super::super::designer::Field;
+        let mut look = ocw_core::RiderLook::default();
+        look.design.socks = Some(ocw_core::bike::PALETTE[3]);
+        let p = Picker::kit(Slot::Socks, Vec::new(), look);
+        let s = p.swatches.as_ref().unwrap();
+        assert_eq!(s.focus.swatch, 4);
+        assert_eq!(s.selected(), Some(ocw_core::bike::PALETTE[3]));
+        assert_eq!(s.field, Field::Socks);
+        assert_eq!(s.name(0), "standard (white)");
     }
 
     #[test]
