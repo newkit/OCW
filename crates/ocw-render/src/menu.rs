@@ -668,6 +668,17 @@ pub fn page_height_vh(view: &MenuView, aspect: f32, paragraphs: usize) -> f32 {
 /// How many of the page's text paragraphs fit (all of them, if the page
 /// fits into [`PANEL_MAX_VH`]): a page too tall for the window drops its
 /// description from the end rather than cutting off its last items.
+/// The aspect (width / height) the menu lays out in: the default UI
+/// camera's viewport when it has one (OCW Studio draws the menu – its
+/// trust dialog – into the 3D view between its panels), else the window,
+/// else 16:9.
+pub fn menu_aspect(ui_viewport: Option<(f32, f32)>, window: Option<(f32, f32)>) -> f32 {
+    ui_viewport
+        .filter(|(w, h)| *w > 0.0 && *h > 0.0)
+        .or(window)
+        .map_or(16.0 / 9.0, |(w, h)| w / h.max(1.0))
+}
+
 pub fn fitted_paragraphs(view: &MenuView, aspect: f32) -> usize {
     (0..=view.text.len())
         .rev()
@@ -1350,12 +1361,20 @@ fn draw_menu(
         Query<&mut Text, With<MenuHint>>,
         Query<(&mut Text, &mut Node), (With<MenuEmphasis>, Without<MenuRoot>)>,
     )>,
-    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    (windows, ui_cameras): (
+        Query<&Window, With<bevy::window::PrimaryWindow>>,
+        Query<&Camera, With<bevy::ui::IsDefaultUiCamera>>,
+    ),
     mut last_aspect: Local<f32>,
 ) {
-    let aspect = windows
-        .single()
-        .map_or(16.0 / 9.0, |w| w.width() / w.height().max(1.0));
+    let aspect = menu_aspect(
+        ui_cameras
+            .single()
+            .ok()
+            .and_then(Camera::logical_viewport_size)
+            .map(|s| (s.x, s.y)),
+        windows.single().ok().map(|w| (w.width(), w.height())),
+    );
     let resized = (aspect - *last_aspect).abs() > 1e-3;
     *last_aspect = aspect;
     // Rows of a new page appear a frame after they were spawned: style them
@@ -1754,6 +1773,19 @@ mod tests {
             moon_legend: "● full  ○ new  ◑ ◐ quarters".into(),
         });
         v
+    }
+
+    /// The menu lays out in the UI camera's viewport (the studio's 3D
+    /// view), else in the window.
+    #[test]
+    fn the_menu_fits_the_ui_cameras_viewport() {
+        let a = menu_aspect(Some((1300.0, 1400.0)), Some((2560.0, 1440.0)));
+        assert!((a - 1300.0 / 1400.0).abs() < 1e-6);
+        let a = menu_aspect(None, Some((1600.0, 1200.0)));
+        assert!((a - 4.0 / 3.0).abs() < 1e-6);
+        let a = menu_aspect(Some((0.0, 0.0)), Some((1600.0, 1200.0)));
+        assert!((a - 4.0 / 3.0).abs() < 1e-6);
+        assert!((menu_aspect(None, None) - 16.0 / 9.0).abs() < 1e-6);
     }
 
     /// The calendar fits the ten-foot panel at 16:9 and 4:3 with its

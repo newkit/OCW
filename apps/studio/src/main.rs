@@ -140,15 +140,26 @@ fn main() -> AppExit {
         trust_dev_root: args.trust_dev_root,
         trust_root: args.trust_root.clone(),
         no_neighbours: args.no_neighbours,
+        keys_file: None,
     };
     // The package is loaded before the window opens (a bad path ends here,
-    // like the game's `--world`).
-    let loaded = args.world.as_deref().map(|spec| {
-        world::load(spec, &settings).unwrap_or_else(|e| {
-            eprintln!("{spec}: {e}");
-            std::process::exit(1);
-        })
-    });
+    // like the game's `--world`). One signed by a user key not trusted
+    // here asks first with the trust dialog (spec 16H Q14 (a)): the
+    // studio starts without it and opens it once the user agreed.
+    let fail = |spec: &str, e: String| -> ! {
+        eprintln!("{spec}: {e}");
+        std::process::exit(1);
+    };
+    let consent = match args.world.as_deref() {
+        Some(spec) => world::consent(spec, &settings).unwrap_or_else(|e| fail(spec, e)),
+        None => None,
+    };
+    let loaded = match args.world.as_deref() {
+        Some(spec) if consent.is_none() => {
+            Some(world::load(spec, &settings).unwrap_or_else(|e| fail(spec, e)))
+        }
+        _ => None,
+    };
     let (library, library_label) = models_view::ModelView::library(args.models.as_deref());
     let mut model_view = models_view::ModelView::new(library, library_label);
     let mut workspace = args.workspace;
@@ -201,7 +212,7 @@ fn main() -> AppExit {
     .insert_resource(ocw_render::frame_rate::LogRenderRate(
         args.log_fps.filter(|s| *s > 0.0),
     ))
-    .insert_resource(settings)
+    .insert_resource(settings.clone())
     .insert_resource(edit::Studio::new(store, store_dir))
     .insert_resource(model_view)
     .insert_resource(ui::UiState {
@@ -220,6 +231,8 @@ fn main() -> AppExit {
         ui::UiPlugin,
         models_view::ModelsPlugin,
         models_cycle::CyclePlugin,
+        // The game's trust dialog and trusted keys (spec 16H Q14 (a)).
+        world::TrustDialogPlugin(settings),
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, routes::update_routes);
@@ -245,6 +258,11 @@ fn main() -> AppExit {
     }
     if let Some(l) = loaded {
         world::show(app.world_mut(), l, 0.0, false);
+    }
+    if let (Some(request), Some(spec)) = (consent, args.world.as_deref()) {
+        let line = world::open_line(spec);
+        let msg = ocw_ui::trust::ask(app.world_mut(), request, Some(line), None, false);
+        eprintln!("{msg}");
     }
     app.run()
 }
