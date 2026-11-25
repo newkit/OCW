@@ -1540,7 +1540,10 @@ pub(crate) mod tests {
         let worn = world.with_ctx(&w, |w, ctx| w.rider_look(ctx).1);
         let item = w.picker.as_ref().unwrap().rows[1].part.clone().unwrap();
         let model = &ocw_assets::shipped::catalogue().get(&item).unwrap().model;
-        assert!(worn.contains(model), "the focused item on the rider: {worn:?}");
+        assert!(
+            worn.contains(model),
+            "the focused item on the rider: {worn:?}"
+        );
         // ↑ to the swatches, → twice: the second palette colour, live.
         world.step(&mut w, &[Act::Up]);
         assert!(w.picker.as_ref().unwrap().on_swatches());
