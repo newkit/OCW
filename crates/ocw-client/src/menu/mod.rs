@@ -24,6 +24,7 @@ pub mod history;
 pub mod join;
 pub mod model;
 pub mod pages;
+pub mod sharing;
 pub mod start;
 pub mod time;
 pub mod trust;

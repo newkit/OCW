@@ -139,6 +139,10 @@ struct Shared {
     /// The connections' outboxes (only the paired one gets readings).
     outs: HashMap<u64, tmpsc::UnboundedSender<ToBrowser>>,
     sessions: HashMap<u64, web_transport_quinn::Session>,
+    /// The connections' QUIC links (their round trip).
+    quic: HashMap<u64, quinn::Connection>,
+    /// When each connection paired (ms of the bridge's clock).
+    paired_at: HashMap<u64, f64>,
     /// The desktop's devices as last reported (for the welcome).
     devices: Vec<DeviceInfo>,
     stats: HostStats,
@@ -150,6 +154,20 @@ type SharedRef = Arc<Mutex<Shared>>;
 
 fn lock(s: &SharedRef) -> std::sync::MutexGuard<'_, Shared> {
     s.lock().expect("not poisoned")
+}
+
+/// The paired browser's link, for the desktop's Sharing screen (spec 14
+/// Phase 10, 10D.2).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LinkInfo {
+    /// What the browser says it is ("Quest Browser").
+    pub client: String,
+    /// The connection's round trip (QUIC's smoothed estimate, ms).
+    pub rtt_ms: f64,
+    /// Since the browser was last heard (its pings come every second; ms).
+    pub heard_ms_ago: f64,
+    /// Since it paired (ms).
+    pub paired_ms_ago: f64,
 }
 
 /// The running bridge.
@@ -348,6 +366,25 @@ impl BridgeHost {
         lock(&self.shared).stats.clone()
     }
 
+    /// The paired browser's link: its round trip and when it was last
+    /// heard (`None`: no browser paired).
+    pub fn link(&self) -> Option<LinkInfo> {
+        let now = self.now_ms();
+        let s = lock(&self.shared);
+        let p = s.gate.paired()?;
+        let rtt_ms = s
+            .quic
+            .get(&p.conn)
+            .map_or(f64::NAN, |c| c.rtt().as_secs_f64() * 1000.0);
+        let since = s.paired_at.get(&p.conn).copied().unwrap_or(now);
+        Some(LinkInfo {
+            client: p.client.clone(),
+            rtt_ms,
+            heard_ms_ago: (now - p.heard_ms).max(0.0),
+            paired_ms_ago: (now - since).max(0.0),
+        })
+    }
+
     /// Stops sharing: the browser hears why, the port is freed.
     pub fn stop(mut self) {
         self.shutdown();
@@ -467,6 +504,7 @@ async fn serve(
         _ => String::new(),
     };
     let (tx, mut rx) = tmpsc::unbounded_channel::<ToBrowser>();
+    let quic = conn.clone();
     let admitted = {
         let mut s = lock(&shared);
         if s.closing {
@@ -487,9 +525,13 @@ async fn serve(
                     if let Some(sess) = s.sessions.remove(&old) {
                         sess.close(2, b"replaced");
                     }
+                    s.quic.remove(&old);
+                    s.paired_at.remove(&old);
                 }
                 s.outs.insert(conn, tx.clone());
                 s.sessions.insert(conn, session.clone());
+                s.quic.insert(conn, quic);
+                s.paired_at.insert(conn, now_ms(start));
                 Ok((
                     conn,
                     ToBrowser::Welcome {
@@ -578,6 +620,8 @@ async fn serve(
         let mut s = lock(&shared);
         s.outs.remove(&conn_id);
         s.sessions.remove(&conn_id);
+        s.quic.remove(&conn_id);
+        s.paired_at.remove(&conn_id);
         s.gate.ended(conn_id)
     };
     drop(tx);

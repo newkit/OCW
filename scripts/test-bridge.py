@@ -22,12 +22,20 @@ On a build machine with the trainer in range (marge and its Wahoo KICKR):
 4. every 250 ms `window.ocw.devices()` is read: the bridge's state, the
    readings, their age on arrival, the ping round trip, the trainer
    control's round trip, the rider's power;
-5. screenshots of the browser (riding, the bridge page) and the desktop.
+5. screenshots of the browser (riding, the bridge page) and the desktop:
+   every DESKTOP_SHOT_S of its run (the Sharing screen while the browser
+   rides, the ride again after it left), its bridge page at the end;
+6. the page sends a report with its measured frame rate
+   (`window.ocw.bridgeReport`), which the Sharing screen shows;
+7. the desktop's log: the Sharing screen came up when the browser paired
+   and went when it left, the own ride paused and went on, and its render
+   rate (`--log-fps`) with the screen up and without.
 
 Writes OUT/bridge-TIME.json (the summary), OUT/bridge-TIME-browser-*.jpg,
-OUT/bridge-TIME-desktop.jpg and the logs. Exit 0 when the browser paired,
-got readings from the desktop, the readings' age stayed under 150 ms (p95)
-and the trainer control came back applied.
+OUT/bridge-TIME-desktop*.jpg and the logs. Exit 0 when the browser paired,
+got readings from the desktop, the readings' age stayed under 150 ms (p95),
+the trainer control came back applied, and the desktop showed the Sharing
+screen with its ride paused while paired and went back to the ride after.
 """
 
 import argparse
@@ -46,6 +54,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import web_browser  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# The desktop's screenshots (s apart) and its render-rate log (s).
+DESKTOP_SHOT_S = 15
+LOG_FPS_S = 5
 ROOT = os.path.dirname(HERE)
 
 
@@ -68,6 +79,57 @@ def pct(values, p):
     return s[min(len(s) - 1, int(round(p / 100 * (len(s) - 1))))]
 
 
+# The page's frame rate over 120 frames, sent to the desktop as a report
+# (its Sharing screen shows the last one).
+PAGE_REPORT_JS = """(async () => {
+  const t = []; let last = performance.now();
+  await new Promise(done => {
+    const f = now => { t.push(now - last); last = now;
+      if (t.length < 120) requestAnimationFrame(f); else done(); };
+    requestAnimationFrame(f);
+  });
+  t.shift();
+  const sum = t.reduce((a, b) => a + b, 0);
+  const s = [...t].sort((a, b) => a - b);
+  const data = {reason: "test-bridge", fps: Math.round(10000 * t.length / sum) / 10,
+                frame_ms_p50: Math.round(10 * s[s.length >> 1]) / 10};
+  const why = window.ocw.bridgeReport ? window.ocw.bridgeReport("page", JSON.stringify(data))
+                                      : "no bridgeReport";
+  return {...data, error: why || null};
+})()"""
+
+FPS_RE = re.compile(r"render rate.*?fps=\"?([0-9.]+).*?p50_ms=\"?([0-9.]+)")
+
+
+def sharing_summary(log):
+    """The Sharing screen in the desktop's log: when it came and went (line
+    numbers), the own ride's pause and how far it rolled meanwhile, and the
+    render rate with the screen up and without (the frame cost)."""
+    lines = log.splitlines()
+    find = lambda pat: next((i for i, l in enumerate(lines) if pat in l), None)
+    shown, closed = find("sharing screen: shown"), find("sharing screen: closed")
+    paused, resumed = find("the own ride pauses at"), find("the own ride goes on at")
+    m = re.search(r"the own ride goes on at .*\(([+-][0-9.]+) m while paused\)", log)
+    up, ride = [], []
+    for i, l in enumerate(lines):
+        f = FPS_RE.search(l)
+        if not f:
+            continue
+        on = shown is not None and i > shown and (closed is None or i < closed)
+        (up if on else ride).append((float(f.group(1)), float(f.group(2))))
+    # The first intervals with the screen up include the switch; the ride's
+    # the world's loading: the middle of each.
+    mid = lambda v: statistics.median(v) if v else None
+    return {
+        "shown": shown is not None, "closed": closed is not None,
+        "paused": paused is not None, "resumed": resumed is not None,
+        "paused_m": float(m.group(1)) if m else None,
+        "fps_sharing": mid([f for f, _ in up]), "p50_ms_sharing": mid([p for _, p in up]),
+        "fps_ride": mid([f for f, _ in ride]), "p50_ms_ride": mid([p for _, p in ride]),
+        "fps_samples": {"sharing": len(up), "ride": len(ride)},
+    }
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--seconds", type=float, default=120.0)
@@ -81,6 +143,9 @@ def main():
     p.add_argument("--size", default="1280x720")
     p.add_argument("--desktop-start", type=float, default=240.0,
                    help="seconds to wait for the desktop's code (it is built first)")
+    p.add_argument("--desktop-arg", action="append", default=[],
+                   help="one more argument for the desktop app (repeat), e.g. --no-vsync "
+                        "with OCW_PROFILE=release to measure the Sharing screen's frame cost")
     p.add_argument("--lan", action="store_true",
                    help="the code names this machine's LAN address (its pictures then show it: "
                         "keep them out of test-output); default 127.0.0.1")
@@ -94,9 +159,17 @@ def main():
     # 1. The desktop: shares from the start, rides long enough for the
     # browser's ride, then shows its bridge page for the screenshot.
     cfg = tempfile.mkdtemp(prefix="ocw-bridge-cfg-")
-    ride_s = a.seconds + 45
-    desktop_args = ["--share-bridge", "--name", "Ada Rider",
+    # Long enough for the browser's ride and its leaving (the Sharing
+    # screen goes, the ride comes back) before the bridge page's picture.
+    ride_s = a.seconds + 90
+    desktop_args = ["--share-bridge", "--name", "Ada Rider", "--log-fps", str(LOG_FPS_S),
                     "--at", f"{ride_s - 6:.0f}=menu open", "--at", f"{ride_s - 5:.0f}=menu bridge"]
+    desktop_shots = []
+    for t in range(DESKTOP_SHOT_S, int(ride_s) - 10, DESKTOP_SHOT_S):
+        path = f"{base}-desktop-{t:03d}s.jpg"
+        desktop_shots.append(path)
+        desktop_args += ["--at", f"{t}=screenshot {path}"]
+    desktop_args += a.desktop_arg
     if a.devices_file:
         desktop_args += ["--devices-file", a.devices_file]
     else:
@@ -152,7 +225,7 @@ def main():
     chromium = web_browser.find()
     proc, cdp = test_web.start_browser(chromium, flags, blog)
     summary["browser"] = web_browser.describe(chromium)
-    samples, shots = [], {}
+    samples, shots, reports = [], {}, []
     try:
         targets = cdp.call("Target.getTargets", session=False)["targetInfos"]
         page = next(t for t in targets if t["type"] == "page")
@@ -174,7 +247,11 @@ def main():
         ride0 = time.time()
         summary["ride_start_s"] = round(ride0 - t0, 2)
         shot_at = {"riding": 25, "riding-late": a.seconds - 10}
+        report_at = [20, a.seconds / 2]
         while time.time() - ride0 < a.seconds:
+            if report_at and time.time() - ride0 >= report_at[0]:
+                report_at.pop(0)
+                reports.append(cdp.eval(PAGE_REPORT_JS, await_promise=True))
             cdp.pump(0.05)
             j = cdp.eval("window.ocw.devices()")
             if j:
@@ -247,6 +324,7 @@ def main():
         "reader": last.get("reader"),
         "reader_note": last.get("reader_note"),
         "browser_shots": shots,
+        "page_reports": reports,
     })
     # 5. The desktop finishes its ride and its screenshot.
     try:
@@ -265,9 +343,14 @@ def main():
             if ("bridge" in l or "KICKR" in l) and "console:" in l][:30]
         fps = re.findall(r"fps[=: ]+([0-9.]+)", text)
         summary["desktop_fps_samples"] = fps[-5:]
+        summary["sharing"] = sharing_summary(plain)
+    summary["desktop_shots"] = [p for p in desktop_shots if os.path.exists(p)]
     age_p95 = summary["age_ms"]["p95"]
+    sh = summary.get("sharing") or {}
     summary["ok"] = bool(paired) and (summary["readings"] or 0) > 0 \
-        and age_p95 is not None and age_p95 < 150 and (summary["controls_applied"] or 0) > 0
+        and age_p95 is not None and age_p95 < 150 and (summary["controls_applied"] or 0) > 0 \
+        and sh.get("shown") and sh.get("closed") and sh.get("paused") and sh.get("resumed") \
+        and sh.get("paused_m") is not None and abs(sh["paused_m"]) < 30
     json.dump({**summary, "trace": samples}, open(f"{base}.json", "w"), indent=2)
     print(json.dumps(summary, indent=2))
     sys.exit(0 if summary["ok"] else 1)

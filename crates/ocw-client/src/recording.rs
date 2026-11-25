@@ -32,6 +32,10 @@ pub struct Sample {
     /// In god mode (spec §14 Phase 13E): no distance credited (also not
     /// the step to the landing spot).
     pub flying: bool,
+    /// The own ride is paused (spec 14 Phase 10, 10D.2: the trainer is
+    /// shared with a browser): nothing is recorded, and the distance
+    /// across the pause is not credited.
+    pub paused: bool,
 }
 
 /// A finished ride, ready to be saved.
@@ -72,6 +76,9 @@ pub struct RideRecorder {
     markers: Vec<Marker>,
     /// Game time of the last crash marked.
     last_crash_s: Option<f64>,
+    /// A pause began since the last record (10D.2): the next record
+    /// credits no distance (the rider's roll to a stop).
+    after_pause: bool,
 }
 
 impl RideRecorder {
@@ -87,6 +94,7 @@ impl RideRecorder {
             laps: Vec::new(),
             markers: Vec::new(),
             last_crash_s: None,
+            after_pause: false,
         }
     }
 
@@ -136,13 +144,17 @@ impl RideRecorder {
         s: Sample,
         wall_unix_s: i64,
     ) -> bool {
+        if s.paused {
+            self.after_pause |= self.last.is_some();
+            return false;
+        }
         if let Some((t, raw)) = self.last {
             let dt = s.game_s - t;
             if dt < RECORD_INTERVAL_S - 1e-6 {
                 return false;
             }
             let delta = s.distance - raw;
-            let flew = s.flying || self.was_flying;
+            let flew = s.flying || self.was_flying || std::mem::take(&mut self.after_pause);
             if !flew && (0.0..=MAX_PLAUSIBLE_SPEED_MPS * dt + 5.0).contains(&delta) {
                 self.distance_m += delta;
             }
@@ -200,6 +212,7 @@ impl RideRecorder {
         let markers = std::mem::take(&mut self.markers);
         let start_unix_s = self.start_unix_s.take()?;
         self.last = None;
+        self.after_pause = false;
         self.distance_m = 0.0;
         if records.len() < 2 {
             return None;
@@ -267,6 +280,7 @@ pub fn sample(client: &ClientCore, game_s: f64) -> Sample {
         cadence_rpm: client.cadence_rpm(),
         heart_rate_bpm: client.heart_rate_bpm(),
         flying: client.god().active(),
+        paused: client.paused(),
     }
 }
 
@@ -416,6 +430,36 @@ mod tests {
         r.observe(&route, route.geo_origin(), sample(3.0, 1516.0), 0);
         r.observe(&route, route.geo_origin(), sample(4.0, 200.0), 0); // teleport back
         assert_eq!(r.distance_m(), 16.0);
+    }
+
+    /// The Sharing screen (spec 14 Phase 10, 10D.2): while the own ride is
+    /// paused nothing is recorded, and the metres it rolled to a stop are
+    /// not credited when it resumes; riding on counts again.
+    #[test]
+    fn a_paused_ride_is_left_out_of_the_recording() {
+        let route = Route::test_loop();
+        let mut r = RideRecorder::new("Loop");
+        let paused = |t, d| Sample {
+            paused: true,
+            ..sample(t, d)
+        };
+        r.observe(&route, route.geo_origin(), sample(0.0, 0.0), 0);
+        r.observe(&route, route.geo_origin(), sample(1.0, 8.0), 0);
+        for t in 2..60 {
+            assert!(!r.observe(&route, route.geo_origin(), paused(t as f64, 20.0), 0));
+        }
+        assert_eq!(r.records().len(), 2, "no records while paused");
+        assert_eq!(r.distance_m(), 8.0);
+        // Resumed where the rider stopped (12 m on): that roll is not
+        // credited, the riding after it is.
+        assert!(r.observe(&route, route.geo_origin(), sample(60.0, 20.0), 0));
+        assert_eq!(r.distance_m(), 8.0);
+        r.observe(&route, route.geo_origin(), sample(61.0, 28.0), 0);
+        assert_eq!(r.distance_m(), 16.0);
+        // A pause before the first record records nothing either.
+        let mut fresh = RideRecorder::new("Loop");
+        assert!(!fresh.observe(&route, route.geo_origin(), paused(0.0, 0.0), 0));
+        assert!(fresh.records().is_empty() && fresh.start_unix_s().is_none());
     }
 
     /// God mode (spec §14 Phase 13E): ride time goes on, no distance is
