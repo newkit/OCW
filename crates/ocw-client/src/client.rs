@@ -172,6 +172,10 @@ pub struct ClientCore {
     /// Hearts the server credited the own rider in this session.
     hearts: u32,
     braking: bool,
+    /// The own ride is paused (spec 14 Phase 10, 10D.2: the desktop shares
+    /// its trainer with a browser, whose ride counts): no power reaches the
+    /// server, the brake holds the rider, no hearts.
+    paused: bool,
     last_sample_us: u64,
     seq: u32,
     stats: NetStats,
@@ -307,6 +311,7 @@ impl ClientCore {
             virtual_device: false,
             hearts: 0,
             braking: false,
+            paused: false,
             last_sample_us: 0,
             seq: 0,
             stats: NetStats::default(),
@@ -614,10 +619,11 @@ impl ClientCore {
             seq: self.seq,
             client_time_us: self.last_sample_us,
             power_w: Some(self.power_w() as f32),
-            cadence_rpm: self.cadence_rpm.map(|c| c as f32),
-            heart_rate_bpm: self.heart_rate_bpm.map(|h| h as f32),
-            brake: Some(self.braking),
-            virtual_power: Some(self.virtual_power()),
+            cadence_rpm: self.cadence_rpm().map(|c| c as f32),
+            heart_rate_bpm: self.heart_rate_bpm().map(|h| h as f32),
+            brake: Some(self.braking || self.paused),
+            // Paused: flagged virtual too, so nothing earns hearts.
+            virtual_power: Some(self.virtual_power() || self.paused),
             status: Some(self.status.clone()),
         })))
     }
@@ -647,12 +653,34 @@ impl ClientCore {
             return None;
         }
         self.braking = braking;
-        self.predictor.set_braking(braking);
+        self.predictor.set_braking(braking || self.paused);
         Some(self.sample())
     }
 
     pub fn braking(&self) -> bool {
         self.braking
+    }
+
+    /// Pauses or resumes the own ride (spec 14 Phase 10, 10D.2: while the
+    /// desktop shares its trainer with a browser, the browser's ride is
+    /// the one that counts). Paused, the samples carry no power, cadence
+    /// or heart rate and the brake (the rider stops and stays: no
+    /// distance), flagged virtual (no hearts); the recording leaves the
+    /// pause out ([`crate::recording`]). Returns the sample to send at
+    /// once when it changed.
+    pub fn set_paused(&mut self, paused: bool) -> Option<Vec<u8>> {
+        if paused == self.paused {
+            return None;
+        }
+        self.paused = paused;
+        self.predictor.set_braking(self.braking || paused);
+        self.rider_id?;
+        Some(self.sample())
+    }
+
+    /// Whether the own ride is paused ([`ClientCore::set_paused`]).
+    pub fn paused(&self) -> bool {
+        self.paused
     }
 
     /// Handles one encoded server message received at client time `now_s`.
@@ -1957,8 +1985,8 @@ impl ClientCore {
                 .unwrap_or_default(),
             state: own_state,
             power_w: self.power_w(),
-            cadence_rpm: self.cadence_rpm,
-            heart_rate_bpm: self.heart_rate_bpm,
+            cadence_rpm: self.cadence_rpm(),
+            heart_rate_bpm: self.heart_rate_bpm(),
             is_local: true,
             // The own bike and look are known locally.
             bike: self.profile.bike,
@@ -2740,6 +2768,9 @@ impl ClientCore {
     }
     /// The rider's power: the device's plus the keyboard's (↑).
     pub fn power_w(&self) -> f64 {
+        if self.paused {
+            return 0.0;
+        }
         self.power_w + self.key_power_w
     }
 
@@ -2836,10 +2867,10 @@ impl ClientCore {
         Some(self.sample())
     }
     pub fn cadence_rpm(&self) -> Option<f64> {
-        self.cadence_rpm
+        self.cadence_rpm.filter(|_| !self.paused)
     }
     pub fn heart_rate_bpm(&self) -> Option<f64> {
-        self.heart_rate_bpm
+        self.heart_rate_bpm.filter(|_| !self.paused)
     }
     pub fn prediction_error(&self) -> f64 {
         self.predictor.last_error()
@@ -4070,6 +4101,68 @@ mod tests {
         h.send(&msg);
         h.ride(250.0, 3.0);
         assert!(h.client.state().speed > 1.0);
+    }
+
+    /// The Sharing screen (spec 14 Phase 10, 10D.2): while the desktop
+    /// shares its trainer with a browser its own ride pauses – the rider
+    /// stops within a few metres and stays, its distance stands still, no
+    /// hearts are earned however hard the trainer is pedalled – and
+    /// resumes cleanly afterwards.
+    #[test]
+    fn a_paused_ride_stands_still_earns_nothing_and_resumes() {
+        let mut h = Harness::new(0, false);
+        h.ride(400.0, 40.0);
+        let own = h.client.rider_id().unwrap();
+        let hearts = h.client.server_hearts();
+        assert!(hearts >= 1, "{hearts}");
+        let at = h.client.state().distance;
+        let msg = h.client.set_paused(true).expect("sent at once");
+        match ocw_protocol::decode_client(&msg).unwrap() {
+            C::Sample(s) => {
+                assert_eq!(s.power_w, Some(0.0));
+                assert_eq!(s.cadence_rpm, None);
+                assert_eq!(s.brake, Some(true));
+                assert_eq!(s.virtual_power, Some(true));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(h.client.set_paused(true).is_none(), "unchanged");
+        assert!(h.client.paused());
+        h.send(&msg);
+        // The trainer is still pedalled hard (the browser's ride).
+        h.ride(400.0, 6.0);
+        let stopped = h.client.state().distance;
+        assert!(
+            stopped - at < 25.0,
+            "stopped within a few metres: {}",
+            stopped - at
+        );
+        assert_eq!(h.server.session().rider_state(own).unwrap().speed, 0.0);
+        assert_eq!(h.client.power_w(), 0.0);
+        assert_eq!(h.client.cadence_rpm(), None);
+        h.ride(400.0, 60.0);
+        let server = h.server.session().rider_state(own).unwrap();
+        assert!(
+            (server.distance - stopped).abs() < 0.01,
+            "no distance while paused"
+        );
+        assert!((h.client.state().distance - stopped).abs() < 0.05);
+        assert_eq!(h.client.server_hearts(), hearts, "no hearts while paused");
+        // Resumed: riding again, earning again.
+        let msg = h.client.set_paused(false).expect("sent at once");
+        match ocw_protocol::decode_client(&msg).unwrap() {
+            C::Sample(s) => {
+                assert_eq!(s.brake, Some(false));
+                assert_eq!(s.virtual_power, Some(false));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        h.send(&msg);
+        h.ride(400.0, 40.0);
+        assert!(h.client.state().distance > stopped + 100.0);
+        assert!(h.client.state().speed > 5.0);
+        assert!(h.client.server_hearts() > hearts);
+        assert_eq!(h.client.power_w(), 400.0);
     }
 
     /// ↑ adds power on top of the device (e.g. a real trainer nobody pedals).

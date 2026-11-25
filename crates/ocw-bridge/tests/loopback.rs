@@ -167,6 +167,15 @@ async fn a_browser_pairs_gets_the_trainer_in_order_and_controls_it() {
         HostEvent::Paired { client } if client == "Test browser"
     ));
     assert_eq!(h.paired().as_deref(), Some("Test browser"));
+    // The link for the desktop's Sharing screen (10D.2): who, the
+    // connection's round trip, when it was heard.
+    let link = h.link().expect("paired");
+    assert_eq!(link.client, "Test browser");
+    assert!(link.rtt_ms.is_finite() && link.rtt_ms < 150.0, "{link:?}");
+    assert!(
+        link.heard_ms_ago < 5_000.0 && link.paired_ms_ago < 5_000.0,
+        "{link:?}"
+    );
     // Clock: three pings.
     for _ in 0..3 {
         let p = b.session.ping(b.now());
@@ -278,6 +287,7 @@ async fn a_browser_pairs_gets_the_trainer_in_order_and_controls_it() {
     assert!(matches!(m, ToBrowser::Power { seq: 22, w, .. } if w == 300.0));
     drop(b);
 
+    assert_eq!(h.link().map(|l| l.client).as_deref(), Some("Test browser"));
     // A clean stop: the browser hears it, the stream ends.
     h.stop();
     let mut closed = false;
@@ -310,6 +320,7 @@ async fn a_wrong_code_does_not_pair() {
         HostEvent::Refused { .. }
     ));
     assert_eq!(h.paired(), None);
+    assert!(h.link().is_none());
     // The browser leaves cleanly with Bye: the desktop unpairs.
     let mut b = Browser::connect(&h.code, SECRET, "q").await.unwrap();
     assert!(matches!(

@@ -32,6 +32,11 @@ pub enum InputContext {
     Console,
     /// The workshop scene is open (spec §14 Phase 4, 4A): its own input.
     Workshop,
+    /// The desktop shares its trainer with a browser and shows the
+    /// *Sharing* screen instead of its ride (spec 14 Phase 10, 10D.2):
+    /// no ride input; Enter / the pad's Confirm stops sharing, Esc opens
+    /// the menu.
+    Sharing,
 }
 
 impl InputContext {
@@ -43,10 +48,24 @@ impl InputContext {
     /// [`InputContext::of`] with the workshop scene: the console wins,
     /// then the menu, then the workshop.
     pub fn with_workshop(console_open: bool, menu_open: bool, workshop_open: bool) -> Self {
+        Self::with_screens(console_open, menu_open, false, workshop_open)
+    }
+
+    /// [`InputContext::with_workshop`] with the *Sharing* screen: the
+    /// console, then the menu, then the Sharing screen (it replaces the
+    /// ride, also a workshop opened before), then the workshop.
+    pub fn with_screens(
+        console_open: bool,
+        menu_open: bool,
+        sharing: bool,
+        workshop_open: bool,
+    ) -> Self {
         if console_open {
             Self::Console
         } else if menu_open {
             Self::Menu
+        } else if sharing {
+            Self::Sharing
         } else if workshop_open {
             Self::Workshop
         } else {
@@ -298,11 +317,13 @@ fn update_input_context(
     console: Option<Res<ConsoleState>>,
     view: Res<MenuView>,
     workshop: Option<Res<crate::workshop::WorkshopView>>,
+    sharing: Option<Res<crate::sharing::SharingView>>,
     mut context: ResMut<InputContext>,
 ) {
-    let c = InputContext::with_workshop(
+    let c = InputContext::with_screens(
         console.is_some_and(|c| c.is_open()),
         view.open,
+        sharing.is_some_and(|s| s.open),
         workshop.is_some_and(|w| w.open),
     );
     context.set_if_neq(c);
@@ -327,10 +348,10 @@ impl Plugin for MenuPlugin {
 }
 
 /// Text sizes in % of the window height (spec: at least 3 %).
-const TITLE_VH: f32 = 6.0;
-const ITEM_VH: f32 = 4.2;
-const TEXT_VH: f32 = 3.2;
-const HINT_VH: f32 = 3.0;
+pub(crate) const TITLE_VH: f32 = 6.0;
+pub(crate) const ITEM_VH: f32 = 4.2;
+pub(crate) const TEXT_VH: f32 = 3.2;
+pub(crate) const HINT_VH: f32 = 3.0;
 /// The emphasised lines (a fingerprint: monospaced, larger than the text).
 const EMPHASIS_VH: f32 = 4.0;
 
@@ -366,7 +387,7 @@ pub fn map_height_vh(map: &MenuMap) -> f32 {
 
 /// Panel layout in % of the window height (vh). [`page_height_vh`] adds
 /// these up; `spawn_menu` / `spawn_rows` use the same numbers.
-const PANEL_WIDTH_VH: f32 = 110.0;
+pub(crate) const PANEL_WIDTH_VH: f32 = 110.0;
 /// A grid page's panel is wider (five cells with one-line labels).
 const GRID_PANEL_WIDTH_VH: f32 = 150.0;
 /// Grid cells: icon size, label size, padding, gaps (vh).
@@ -391,18 +412,18 @@ const GRID_GAP_PCT: f32 = 1.0;
 /// Pixels of a cell's icon image.
 const GRID_ICON_PX: u32 = 128;
 /// … but at most this share of the window width (narrow windows).
-const PANEL_MAX_VW: f32 = 94.0;
+pub(crate) const PANEL_MAX_VW: f32 = 94.0;
 /// The panel's height budget: the page must fit into it.
 pub const PANEL_MAX_VH: f32 = 94.0;
-const PANEL_PAD_X_VH: f32 = 4.0;
-const PANEL_PAD_Y_VH: f32 = 2.5;
-const PANEL_BORDER_VH: f32 = 0.3;
-const PANEL_GAP_VH: f32 = 1.0;
+pub(crate) const PANEL_PAD_X_VH: f32 = 4.0;
+pub(crate) const PANEL_PAD_Y_VH: f32 = 2.5;
+pub(crate) const PANEL_BORDER_VH: f32 = 0.3;
+pub(crate) const PANEL_GAP_VH: f32 = 1.0;
 const LIST_GAP_VH: f32 = 0.8;
 const LIST_MARGIN_VH: f32 = 0.6;
-const ROW_PAD_X_VH: f32 = 2.5;
-const ROW_PAD_Y_VH: f32 = 0.7;
-const ROW_BORDER_VH: f32 = 0.45;
+pub(crate) const ROW_PAD_X_VH: f32 = 2.5;
+pub(crate) const ROW_PAD_Y_VH: f32 = 0.7;
+pub(crate) const ROW_BORDER_VH: f32 = 0.45;
 /// Bevy's default line height, in font sizes.
 const LINE_HEIGHT: f32 = 1.2;
 /// Advance of every glyph of the UI font (Fira Mono: 600 / 1000 em).
@@ -654,12 +675,12 @@ pub fn fitted_paragraphs(view: &MenuView, aspect: f32) -> usize {
         .unwrap_or(0)
 }
 
-const PANEL: Color = Color::srgba(0.02, 0.03, 0.05, 0.88);
-const ROW: Color = Color::srgba(1.0, 1.0, 1.0, 0.07);
-const ROW_FOCUSED: Color = Color::srgba(1.0, 0.78, 0.24, 0.22);
-const FOCUS: Color = Color::srgb(1.0, 0.78, 0.24);
-const TEXT: Color = Color::WHITE;
-const DIM: Color = Color::srgb(0.78, 0.8, 0.84);
+pub(crate) const PANEL: Color = Color::srgba(0.02, 0.03, 0.05, 0.88);
+pub(crate) const ROW: Color = Color::srgba(1.0, 1.0, 1.0, 0.07);
+pub(crate) const ROW_FOCUSED: Color = Color::srgba(1.0, 0.78, 0.24, 0.22);
+pub(crate) const FOCUS: Color = Color::srgb(1.0, 0.78, 0.24);
+pub(crate) const TEXT: Color = Color::WHITE;
+pub(crate) const DIM: Color = Color::srgb(0.78, 0.8, 0.84);
 /// The text of a dimmed row (it does nothing).
 const DISABLED: Color = Color::srgba(1.0, 1.0, 1.0, 0.42);
 /// The frame of a grid's current choice.
@@ -698,7 +719,7 @@ pub struct MenuChartBar;
 #[derive(Component)]
 pub struct MenuMapImage;
 
-fn font(vh: f32) -> TextFont {
+pub(crate) fn font(vh: f32) -> TextFont {
     TextFont {
         font_size: FontSize::Vh(vh),
         ..default()
@@ -2084,6 +2105,13 @@ mod tests {
         assert_eq!(InputContext::of(false, true), InputContext::Menu);
         assert_eq!(InputContext::of(true, false), InputContext::Console);
         assert_eq!(InputContext::of(true, true), InputContext::Console);
+        // The Sharing screen (10D.2): over the ride and the workshop,
+        // under the menu and the console.
+        let s = |c, m, w| InputContext::with_screens(c, m, true, w);
+        assert_eq!(s(false, false, false), InputContext::Sharing);
+        assert_eq!(s(false, false, true), InputContext::Sharing);
+        assert_eq!(s(false, true, false), InputContext::Menu);
+        assert_eq!(s(true, false, false), InputContext::Console);
     }
 
     /// The rider list's markers (spec §14 Phase 13E, 12F): a unicorn before

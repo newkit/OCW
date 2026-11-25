@@ -13,6 +13,14 @@
 //!   leaves the trainer's load to the paired browser
 //!   ([`Bridge::browser_controls`]).
 //!
+//! - While a browser is paired the window shows the **Sharing** screen
+//!   instead of the ride ([`sharing_screen`], drawn by
+//!   `ocw_render::sharing`): the browser, the live numbers, the grade it
+//!   sets, the bridge, the headset's last report, the code and *Stop
+//!   sharing*; the own ride pauses meanwhile (no distance, no recording,
+//!   no hearts: `ClientCore::set_paused`) and goes on when the browser
+//!   leaves or sharing stops.
+//!
 //! Console: `bridge.share [on|off|new-code]`, `bridge.status`; the command
 //! line's `--share-bridge` shares from the start.
 
@@ -24,8 +32,12 @@ use bevy::text::FontSize;
 use clap::{Arg, Command};
 use ocw_bridge::host::{BridgeHost, HostEvent, HostOptions, new_secret};
 use ocw_client::menu::devices::BridgeInfo;
+use ocw_client::menu::sharing::{Report, SetLoad, SharingInfo};
 use ocw_devices::DeviceEvent;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
+use ocw_render::menu::InputContext;
+use ocw_render::sharing::{SharingPointer, SharingView};
+use std::time::Instant;
 
 use crate::Args;
 use crate::config::Slot;
@@ -45,6 +57,14 @@ pub struct Bridge {
     slot: Option<Slot>,
     browser: Option<String>,
     error: Option<String>,
+    /// The last power reading relayed: watts, cadence, when.
+    power: Option<(f64, Option<f64>, Instant)>,
+    /// The last heart rate relayed.
+    heart: Option<(f64, Instant)>,
+    /// What the paired browser last set on the trainer.
+    load: Option<(SetLoad, Instant)>,
+    /// The paired browser's last report (the headset's beacon).
+    report: Option<(Report, Instant)>,
 }
 
 /// The secret in its section's text (`secret = 123`).
@@ -132,11 +152,47 @@ impl Bridge {
         }
     }
 
-    /// A device event for the paired browser.
-    pub fn relay(&self, device: &str, event: &DeviceEvent, virt: bool) {
-        if let Some(h) = &self.host {
-            h.relay(device, event, virt);
+    /// A device event for the paired browser (and the Sharing screen's
+    /// live numbers).
+    pub fn relay(&mut self, device: &str, event: &DeviceEvent, virt: bool) {
+        let Some(h) = &self.host else { return };
+        h.relay(device, event, virt);
+        match event {
+            DeviceEvent::Power {
+                watts, cadence_rpm, ..
+            } => self.power = Some((*watts, *cadence_rpm, Instant::now())),
+            DeviceEvent::HeartRate { bpm, .. } => self.heart = Some((*bpm, Instant::now())),
+            _ => {}
         }
+    }
+
+    /// The paired browser, while the trainer is shared with it.
+    pub fn sharing_with(&self) -> Option<&str> {
+        self.host.as_ref().and(self.browser.as_deref())
+    }
+
+    /// What the Sharing screen shows (`None`: no browser paired).
+    pub fn sharing_info(&self, pad_confirm_east: bool) -> Option<SharingInfo> {
+        let browser = self.sharing_with()?.to_owned();
+        let host = self.host.as_ref()?;
+        let link = host.link();
+        let age = |t: Instant| t.elapsed().as_secs_f64();
+        Some(SharingInfo {
+            browser,
+            power_w: self.power.map(|p| p.0),
+            cadence_rpm: self.power.and_then(|p| p.1),
+            heart_rate_bpm: self.heart.map(|h| h.0),
+            power_age_s: self.power.map(|p| age(p.2)),
+            heart_age_s: self.heart.map(|h| age(h.1)),
+            load: self.load.map(|(l, t)| (l, age(t))),
+            rtt_ms: link.as_ref().map(|l| l.rtt_ms),
+            heard_s_ago: link.as_ref().map_or(0.0, |l| l.heard_ms_ago / 1000.0),
+            paired_s: link.as_ref().map_or(0.0, |l| l.paired_ms_ago / 1000.0),
+            relayed: host.stats().relayed,
+            report: self.report.as_ref().map(|(r, t)| (r.clone(), age(*t))),
+            code: host.code.to_string(),
+            pad_confirm_east,
+        })
     }
 
     /// A paired browser sets the trainer's load.
@@ -210,7 +266,9 @@ impl Plugin for BridgePlugin {
         }
         app.insert_resource(bridge)
             .init_resource::<QrOverlay>()
-            .add_systems(Update, (poll_bridge, show_qr))
+            .add_plugins(ocw_render::sharing::SharingPlugin)
+            .init_resource::<SharingPause>()
+            .add_systems(Update, ((poll_bridge, sharing_screen).chain(), show_qr))
             .add_systems(Last, stop_on_exit);
         app.console_command(ConsoleCommand::new(
             Permission::User,
@@ -248,12 +306,16 @@ fn poll_bridge(
     let Some(host) = &bridge.host else { return };
     let mut lines = Vec::new();
     let mut browser = bridge.browser.clone();
+    let (mut load, mut report) = (bridge.load, bridge.report.clone());
     for e in host.events() {
         match e {
             HostEvent::Paired { client } => {
                 lines.push(format!(
                     "bridge: paired with {client}; it sets the trainer's load now"
                 ));
+                if browser.as_ref() != Some(&client) {
+                    (load, report) = (None, None);
+                }
                 browser = Some(client);
             }
             HostEvent::Unpaired { reason } => {
@@ -262,18 +324,119 @@ fn poll_bridge(
             }
             HostEvent::Refused { why } => lines.push(format!("bridge: refused {why}")),
             HostEvent::Control { id, command } => {
+                if let Some(l) = SetLoad::of(&command) {
+                    load = Some((l, Instant::now()));
+                }
                 devices.command_all(command);
                 host.applied(id);
             }
-            HostEvent::Report { kind, data } => lines.push(keep_report(&kind, &data)),
+            HostEvent::Report { kind, data } => {
+                report = Some((Report::of(&kind, &data), Instant::now()));
+                lines.push(keep_report(&kind, &data));
+            }
         }
     }
+    bridge.load = load;
+    bridge.report = report;
     if browser != bridge.browser {
         bridge.browser = browser;
     }
     for l in lines {
         info!("{l}");
         console.print(l);
+    }
+}
+
+/// What the Sharing screen paused, to resume.
+#[derive(Resource, Default)]
+pub struct SharingPause {
+    /// The own ride is paused: where (m) and since when.
+    since: Option<(f64, Instant)>,
+    /// A workout the screen paused.
+    workout: bool,
+}
+
+/// The Sharing screen's input: Enter / the pad's Confirm while it has the
+/// input (not under the menu or the console).
+type SharingInput<'w, 's> = (
+    Option<Res<'w, InputContext>>,
+    Option<Res<'w, ButtonInput<KeyCode>>>,
+    Query<'w, 's, &'static Gamepad>,
+    Option<Res<'w, ocw_ui::settings::UserSettings>>,
+);
+
+/// The Sharing screen (spec 14 Phase 10, 10D.2): up while a browser is
+/// paired; the own ride (and a running workout) paused meanwhile, resumed
+/// when the browser leaves or *Stop sharing* is chosen (Enter, the pad's
+/// Confirm, a click).
+#[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
+pub fn sharing_screen(
+    mut bridge: ResMut<Bridge>,
+    mut client: Option<ResMut<crate::connection::ClientState>>,
+    link: Option<Res<crate::connection::Link>>,
+    mut view: ResMut<SharingView>,
+    mut pointer: ResMut<SharingPointer>,
+    mut pause: ResMut<SharingPause>,
+    (context, keys, pads, settings): SharingInput,
+    mut workouts: Option<ResMut<crate::workout::Workouts>>,
+    mut console: ResMut<ConsoleState>,
+) {
+    let east = settings.is_some_and(|s| {
+        s.settings
+            .get("controls.pad_confirm")
+            .is_ok_and(|v| v.to_string() == "east")
+    });
+    let clicked = std::mem::take(&mut pointer.0);
+    let confirm = view.open
+        && context.is_some_and(|c| *c == InputContext::Sharing)
+        && ocw_ui::controls::pressed(keys.as_deref(), pads.iter(), east).confirm;
+    if view.open && (clicked || confirm) {
+        let line = bridge.stop();
+        console.print(line);
+    }
+    let sharing = bridge.sharing_with().map(str::to_owned);
+    let mut lines = Vec::new();
+    if let Some(c) = client.as_mut() {
+        let c = &mut c.0;
+        if sharing.is_some() != c.paused() {
+            if let Some(sample) = c.set_paused(sharing.is_some())
+                && let Some(l) = &link
+            {
+                l.send_bytes(sample);
+            }
+            let at = c.state().distance;
+            if let Some(who) = &sharing {
+                pause.since = Some((at, Instant::now()));
+                lines.push(format!(
+                    "sharing: the own ride pauses at {at:.0} m while {who} rides with the trainer (no distance, no recording, no hearts here)"
+                ));
+            } else if let Some((from, t)) = pause.since.take() {
+                lines.push(format!(
+                    "sharing: the own ride goes on at {at:.0} m after {:.0} s paused ({:+.1} m while paused)",
+                    t.elapsed().as_secs_f64(),
+                    at - from
+                ));
+            }
+        }
+    }
+    if let Some(w) = workouts.as_mut() {
+        if sharing.is_some() && !pause.workout && w.0.now().is_some() && w.0.pause().is_ok() {
+            pause.workout = true;
+            lines.push("sharing: the workout pauses too".into());
+        } else if sharing.is_none() && std::mem::take(&mut pause.workout) {
+            let _ = w.0.resume();
+            lines.push("sharing: the workout goes on".into());
+        }
+    }
+    for l in lines {
+        console.print(l);
+    }
+    match bridge.sharing_info(east) {
+        Some(info) => {
+            view.set_if_neq(ocw_client::menu::sharing::view(&info));
+        }
+        None if view.open => *view = SharingView::default(),
+        None => {}
     }
 }
 
@@ -524,6 +687,101 @@ mod tests {
         assert!(split_shot(&serde_json::json!({"jpeg_base64": png}), 0).is_none());
         assert!(split_shot(&serde_json::json!({"jpeg_base64": "not base64!"}), 0).is_none());
         assert_eq!(report_file(SHOT_KIND), "xr-shot.jsonl");
+    }
+
+    /// The Sharing screen (10D.2): up as soon as a browser is paired, with
+    /// its numbers; the own ride paused meanwhile; *Stop sharing* (a click
+    /// or Enter) ends it and the ride goes on; so does the browser leaving.
+    #[test]
+    fn the_sharing_screen_follows_the_paired_browser() {
+        use crate::client::ClientCore;
+        use crate::connection::ClientState;
+        use ocw_core::RiderProfile;
+        let mut b = Bridge::default();
+        b.start(false).expect("starts");
+        let code = b.host.as_ref().unwrap().code.to_string();
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(b)
+            .init_resource::<SharingView>()
+            .init_resource::<SharingPointer>()
+            .init_resource::<SharingPause>()
+            .init_resource::<ConsoleState>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .insert_resource(InputContext::Sharing)
+            .insert_resource(ClientState(ClientCore::new(
+                ocw_world::Route::test_loop(),
+                "Ada Rider",
+                RiderProfile::default(),
+            )))
+            .add_systems(Update, sharing_screen);
+        let open = |app: &App| app.world().resource::<SharingView>().open;
+        let paused = |app: &App| app.world().resource::<ClientState>().0.paused();
+        app.update();
+        assert!(!open(&app), "sharing, but no browser yet: the ride");
+        assert!(!paused(&app));
+        // A browser pairs; the trainer's reading reaches the screen.
+        let pair = |app: &mut App| {
+            let mut b = app.world_mut().resource_mut::<Bridge>();
+            b.browser = Some("Quest Browser".into());
+            b.relay(
+                "Virtual trainer",
+                &DeviceEvent::Power {
+                    watts: 182.0,
+                    cadence_rpm: Some(88.0),
+                    timestamp: std::time::Duration::ZERO,
+                },
+                true,
+            );
+        };
+        pair(&mut app);
+        app.update();
+        assert!(open(&app));
+        assert!(paused(&app), "the own ride pauses");
+        let v = app.world().resource::<SharingView>().clone();
+        assert_eq!(v.subtitle, "Your trainer rides in Quest Browser");
+        assert_eq!(v.tiles[0].value, "182");
+        assert_eq!(v.tiles[1].value, "88");
+        assert!(v.rows.contains(&("Pairing code".into(), code)));
+        // Stop sharing, clicked.
+        app.world_mut().resource_mut::<SharingPointer>().0 = true;
+        app.update();
+        assert!(!open(&app));
+        assert!(!paused(&app), "the ride goes on");
+        assert!(app.world().resource::<Bridge>().host.is_none(), "stopped");
+        assert!(!app.world().resource::<SharingPointer>().0);
+        // Again by Enter.
+        app.world_mut()
+            .resource_mut::<Bridge>()
+            .start(false)
+            .unwrap();
+        pair(&mut app);
+        app.update();
+        assert!(open(&app) && paused(&app));
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Enter);
+        app.update();
+        assert!(!open(&app) && !paused(&app));
+        // The browser leaves: back to the ride, still sharing.
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .clear();
+        app.world_mut()
+            .resource_mut::<Bridge>()
+            .start(false)
+            .unwrap();
+        pair(&mut app);
+        app.update();
+        assert!(open(&app));
+        app.world_mut().resource_mut::<Bridge>().browser = None;
+        app.update();
+        assert!(!open(&app) && !paused(&app));
+        assert!(app.world().resource::<Bridge>().host.is_some());
+        let lines = app.world().resource::<ConsoleState>().log().join("\n");
+        assert!(lines.contains("the own ride pauses"), "{lines}");
+        assert!(lines.contains("the own ride goes on"), "{lines}");
+        app.world_mut().resource_mut::<Bridge>().stop();
     }
 
     #[test]

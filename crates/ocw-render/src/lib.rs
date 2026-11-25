@@ -56,6 +56,7 @@ pub mod road_style;
 pub mod safe_area;
 pub mod season;
 pub mod see_through;
+pub mod sharing;
 pub mod sky;
 pub mod stamp;
 pub mod status_signs;

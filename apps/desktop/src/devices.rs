@@ -445,7 +445,7 @@ fn poll_devices(
     link: Res<ServerLink>,
     mut client: ResMut<ClientState>,
     mut console: ResMut<ConsoleState>,
-    bridge: Option<Res<crate::bridge::Bridge>>,
+    bridge: Option<ResMut<crate::bridge::Bridge>>,
 ) {
     let mut events = Vec::new();
     for (i, r) in devices.running().iter().enumerate() {
@@ -455,7 +455,7 @@ fn poll_devices(
     }
     // The sensor bridge passes every reading on as it comes (spec 14
     // Phase 10, 10D.2).
-    if let Some(b) = &bridge {
+    if let Some(mut b) = bridge {
         for (_, name, e) in &events {
             b.relay(name, e, is_virtual(name));
         }

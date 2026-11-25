@@ -946,6 +946,20 @@ pub fn page_net_stats() -> String {
     plugin::net_stats_json()
 }
 
+/// `window.ocw.bridgeReport(kind, json)`: a report of the page to the
+/// desktop over the sensor bridge (any build; the headset's beacon is
+/// `xrReport`): its Sharing screen shows the last one's fps and frame time
+/// (`fps`, `frame_ms_p50`; spec 14 Phase 10, 10D.2). "" when queued, else
+/// why not.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = bridgeReport)]
+pub fn page_bridge_report(kind: &str, json: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(json) {
+        Ok(data) => bridge::report(kind, data).err().unwrap_or_default(),
+        Err(e) => format!("not JSON: {e}"),
+    }
+}
+
 /// `window.ocw.audio()`: the game audio's state as JSON (locked / running,
 /// the schedule, the level, the mix; B5).
 #[cfg(target_arch = "wasm32")]
