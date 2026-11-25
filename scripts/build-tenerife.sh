@@ -20,6 +20,9 @@
 # Atlantic/Canary (from the origin, spec §14 Phase 9I).
 #
 # Environment: OCW_SIGN_KEY  signing key for the manifest (default: unsigned).
+#              OCW_NO_PATCHES=1  build without the world patches of
+#                         worlds/<region>/patches/ (spec 16H Q10; the patches
+#                         used go next to the package, 16H Q9).
 #              OCW_SRTM_ONLY=1  build without the MDT05 into
 #                         data/tenerife/srtm/ (no routes), to compare.
 #
@@ -53,6 +56,8 @@ else
 fi
 cargo build -q --release -p world-builder
 WB=target/release/world-builder
+# The project's own world patches (spec 16H Q10): worlds/<region>/patches/.
+. scripts/world-patches.sh
 # Region calibration (spec §14 Phase 8 T3) if the imagery covers the package.
 # The forest type and density (section FRST, spec §14 Phase 8 T3) of
 # `scripts/fetch-forest.sh` go in with the calibration, or alone without it
@@ -81,13 +86,14 @@ calibrate() { # package pbf...
   fi
 }
 out=$OUT/tenerife.ocwpkg
+world_patches tenerife "$D" tenerife
 SRC=(--pbf "$D/canary-islands.osm.pbf" --poly "$D/canary-islands.poly"
      --hgt "$D/N28W017.hgt" --hgt "$D/N27W017.hgt"
      "${DEM[@]:0:2}" --bbox "$BBOX" --origin "$ORIGIN")
 # Build time and builder peak memory go to $OUT/measure.log.
 scripts/measure.py --label "package tenerife" --out "$OUT/measure.log" -- \
   $WB package "${SRC[@]}" --name "Tenerife" --id europe/spain/tenerife --land-tiles \
-  "${DEM[@]:2}" ${OCW_SIGN_KEY:+--sign-key "$OCW_SIGN_KEY"} --out "$out"
+  "${DEM[@]:2}" ${OCW_SIGN_KEY:+--sign-key "$OCW_SIGN_KEY"} "${PATCH_ARGS[@]}" --out "$out"
 if [ -n "${OCW_SRTM_ONLY:-}" ]; then
   $WB check --world "$out" --peak "$TEIDE" | grep -E "terrain above|peak|tiles"
   exit 0

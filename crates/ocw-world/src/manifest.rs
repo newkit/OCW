@@ -297,6 +297,75 @@ pub struct Manifest {
     /// (spec §2.2.2). Absent in older manifests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bounds: Option<Bounds>,
+    /// The world patches the package was built with (spec 14 Phase 16,
+    /// 16C *Licences*, 16H Q9): each its own file next to the package
+    /// (`<package>.ocwpatch`), named with its SHA-256 so the ODbL offer of
+    /// the changes can be checked. Not part of [`Manifest::files`]: a
+    /// client never needs it to ride, and a missing or changed patch file
+    /// is only reported (by `world-builder` and the release script), never
+    /// a load failure. Absent in older manifests and ignored by older
+    /// readers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub patches: Vec<PatchFile>,
+}
+
+/// A world patch file recorded in a manifest ([`Manifest::patches`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchFile {
+    /// File name next to the manifest (no directories).
+    pub path: String,
+    pub size: u64,
+    pub sha256: Sha256Hash,
+}
+
+/// What lies next to a package where its manifest records a patch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PatchStatus {
+    /// The file is there with the recorded SHA-256.
+    Same,
+    /// No such file.
+    Missing,
+    /// A file with another content (edited after the build).
+    Changed { size: u64, sha256: Sha256Hash },
+}
+
+impl PatchFile {
+    /// The record of a patch file `path` with content `bytes`.
+    pub fn of(path: &str, bytes: &[u8]) -> Result<Self, String> {
+        validate_file_name(path)?;
+        Ok(Self {
+            path: path.into(),
+            size: bytes.len() as u64,
+            sha256: sha256(bytes),
+        })
+    }
+
+    /// Compares the file found next to the package (`None`: not there).
+    pub fn status(&self, found: Option<&[u8]>) -> PatchStatus {
+        match found {
+            None => PatchStatus::Missing,
+            Some(b) if b.len() as u64 == self.size && sha256(b) == self.sha256 => PatchStatus::Same,
+            Some(b) => PatchStatus::Changed {
+                size: b.len() as u64,
+                sha256: sha256(b),
+            },
+        }
+    }
+
+    /// A report line for `status` (the build and publish reports).
+    pub fn describe(&self, status: &PatchStatus) -> String {
+        match status {
+            PatchStatus::Same => format!("patch {}: OK (sha256 {})", self.path, self.sha256),
+            PatchStatus::Missing => format!(
+                "patch {}: MISSING next to the package (the manifest records sha256 {}): the ODbL offer of the changes is incomplete",
+                self.path, self.sha256
+            ),
+            PatchStatus::Changed { sha256, .. } => format!(
+                "patch {}: CHANGED since the build (sha256 {sha256}, the package was built with {}): rebuild the package with it, or put the patch it was built with back",
+                self.path, self.sha256
+            ),
+        }
+    }
 }
 
 /// A latitude / longitude box in degrees.
@@ -412,6 +481,7 @@ impl Manifest {
             attribution,
             files: Vec::new(),
             bounds: None,
+            patches: Vec::new(),
         })
     }
 
@@ -1324,6 +1394,92 @@ mod tests {
         .unwrap();
         m.add_file("region.ocwpkg", bytes).unwrap();
         m
+    }
+
+    /// 16H Q9: the patch a package was built with, recorded by name and
+    /// SHA-256; signed and unsigned manifests keep it.
+    #[test]
+    fn patch_record_round_trips() {
+        let bytes = package_bytes(true);
+        let mut m = manifest(&bytes);
+        let patch = b"ocwpatch = 1\npackage = \"test/region\"\n";
+        m.patches
+            .push(PatchFile::of("region.ocwpatch", patch).unwrap());
+        let (_, key) = keys();
+        for signed in [
+            SignedManifest::unsigned(&m),
+            SignedManifest::signed(&m, &key),
+        ] {
+            let json = signed.to_json();
+            assert!(json.contains("region.ocwpatch"), "{json}");
+            let back = SignedManifest::parse(&json).unwrap();
+            assert_eq!(back.manifest, m);
+            assert_eq!(back.manifest.patches[0].size, patch.len() as u64);
+            assert_eq!(back.manifest.patches[0].sha256, sha256(patch));
+        }
+        let (root, _) = keys();
+        let trust = TrustStore::new([root.public()]);
+        let back = SignedManifest::parse(&SignedManifest::signed(&m, &key).to_json()).unwrap();
+        assert!(back.verify_signature(&trust, T0).is_ok());
+        // A bad file name is refused, as in `files`.
+        assert!(PatchFile::of("../x.ocwpatch", patch).is_err());
+        assert!(PatchFile::of(".hidden", patch).is_err());
+    }
+
+    /// Manifests written before 16H Q9 have no `patches`: they read as
+    /// none, and a manifest without patches writes no field (byte-identical
+    /// to before).
+    #[test]
+    fn manifests_without_a_patch_record() {
+        let m = manifest(&package_bytes(true));
+        let json = SignedManifest::unsigned(&m).to_json();
+        assert!(!json.contains("patches"), "{json}");
+        let back = SignedManifest::parse(&json).unwrap();
+        assert!(back.manifest.patches.is_empty());
+        // An old reader (the fields before 16H Q9) reads a new manifest:
+        // the unknown field is skipped.
+        #[derive(Deserialize)]
+        #[allow(dead_code)]
+        struct OldManifest {
+            format: u32,
+            id: String,
+            name: String,
+            version: u64,
+            created_unix_s: i64,
+            generator: String,
+            package_format: String,
+            attribution: Vec<Attribution>,
+            files: Vec<FileEntry>,
+            #[serde(default)]
+            bounds: Option<Bounds>,
+        }
+        let mut with = m.clone();
+        with.patches
+            .push(PatchFile::of("region.ocwpatch", b"x").unwrap());
+        let text = serde_json::to_string(&with).unwrap();
+        assert!(text.contains("\"patches\""));
+        let old: OldManifest = serde_json::from_str(&text).unwrap();
+        assert_eq!(old.id, "test/region");
+        assert_eq!(old.files, with.files);
+    }
+
+    /// The patch next to a package: the same, missing or changed.
+    #[test]
+    fn patch_status_next_to_the_package() {
+        let p = PatchFile::of("a.ocwpatch", b"one").unwrap();
+        assert_eq!(p.status(Some(b"one")), PatchStatus::Same);
+        assert_eq!(p.status(None), PatchStatus::Missing);
+        let changed = p.status(Some(b"two"));
+        assert_eq!(
+            changed,
+            PatchStatus::Changed {
+                size: 3,
+                sha256: sha256(b"two")
+            }
+        );
+        assert!(p.describe(&changed).contains("CHANGED"));
+        assert!(p.describe(&PatchStatus::Missing).contains("MISSING"));
+        assert!(p.describe(&PatchStatus::Same).contains("OK"));
     }
 
     #[test]

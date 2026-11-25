@@ -91,7 +91,7 @@ VIDEO ?= /tmp/ocw.mp4
 VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
-.PHONY: help test-web-account test-web-trust version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-blender test-blender models-diff deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
+.PHONY: help test-web-account test-web-trust version version-next version-bump test-release-version test-world-patches release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-blender test-blender models-diff deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
 	test test-unit test-wasm test-web-build test-web test-web-xr web-xr web-preview-xr test-web-webgl2 test-web-gpu test-web-webkit test-web-ios deps-webkit test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-voice-livekit test-voice-bundled test-host-voice test-voice-live test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser deps-vr deps-vr-linux deps-vr-linux-debian deps-vr-linux-fedora deps-vr-linux-arch deps-vr-linux-unknown deps-vr-windows deps-vr-macos test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
@@ -280,6 +280,7 @@ test: test-unit ## All unit and integration tests (= test-unit; no hardware, net
 test-unit: ## Run all unit and integration tests (cargo test --workspace; and the browser app's WebXR module, feature webxr)
 	$(CARGO) test --workspace
 	$(CARGO) test -p ocw-web --features webxr --lib webxr
+	scripts/test-world-patches.sh
 
 fmt: ## Format all code
 	$(CARGO) fmt --all
@@ -623,6 +624,9 @@ version-bump: ## Bump the workspace version in Cargo.toml and Cargo.lock (PART=p
 
 test-release-version: ## Test the version bump of GitHub releases on a copy of the manifests
 	scripts/test-release-version.sh
+
+test-world-patches: ## Test which world patches the build scripts take (worlds/<region>/patches/, spec 16H Q10; no build)
+	scripts/test-world-patches.sh
 
 release-check: ## Show the version, the latest GitHub release and the next release version
 	@cur=$$($(call version_of,.)); last=$$($(latest_release)); $(newer); \

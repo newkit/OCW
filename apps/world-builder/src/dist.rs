@@ -4,8 +4,8 @@
 use std::path::{Path, PathBuf};
 
 use ocw_world::manifest::{
-    Attribution, Manifest, RootKeyPair, SignedManifest, SigningKeyPair, UnsignedPolicy,
-    apply_policy, sha256,
+    Attribution, Manifest, PatchFile, PatchStatus, RootKeyPair, SignedManifest, SigningKeyPair,
+    UnsignedPolicy, apply_policy, sha256,
 };
 use ocw_worldstore::keys::{
     default_key_dir, random_seed, read_root_secret, read_signing_key, write_new,
@@ -130,6 +130,10 @@ pub struct ManifestArgs {
     pub version: Option<u64>,
     /// Elevation sources (empty: keep the old manifest's, else SRTM).
     pub dem_attribution: Vec<String>,
+    /// The world patches the package was built with, already next to it
+    /// ([`place_patches`]; `package` sets them, also to none); `None`
+    /// keeps the old manifest's record (a later step on the same build).
+    pub patches: Option<Vec<PatchFile>>,
 }
 
 /// Writes (or rewrites) `<package>.manifest.json` for `package`, signed
@@ -192,6 +196,12 @@ pub fn write_manifest(
     let mut m = Manifest::new(&id, &name, version, now_unix_s(), GENERATOR, attribution)
         .unwrap_or_else(|e| fail(e));
     m.add_file(file, &bytes).unwrap_or_else(|e| fail(e));
+    let kept = args.patches.is_none();
+    m.patches = args
+        .patches
+        .clone()
+        .or_else(|| old.as_ref().map(|o| o.patches.clone()))
+        .unwrap_or_default();
     let signed = match key {
         Some(k) => SignedManifest::signed(&m, k),
         None => SignedManifest::unsigned(&m),
@@ -206,7 +216,137 @@ pub fn write_manifest(
         if key.is_some() { "signed" } else { "unsigned" },
         m.files[0].chunks.len()
     );
+    // A later step keeps the record: say if the file beside it no longer
+    // matches it (the build report; never a failure, 16H Q9).
+    if kept {
+        report_patches(package, &m);
+    }
     signed
+}
+
+/// The file name of the `index`-th patch of a stack next to `package`:
+/// `<package>.ocwpatch`, then `<package>.2.ocwpatch`, … (spec 16H Q9).
+pub fn patch_file_name(package: &Path, index: usize) -> String {
+    let stem = package
+        .file_stem()
+        .map_or_else(|| "world".into(), |s| s.to_string_lossy().into_owned());
+    let ext = ocw_world::patch::EXTENSION;
+    if index == 0 {
+        format!("{stem}.{ext}")
+    } else {
+        format!("{stem}.{}.{ext}", index + 1)
+    }
+}
+
+/// Puts the patch stack a package was built with next to it (spec 16H Q9:
+/// the patch travels as its own file `<package>.ocwpatch`) and returns
+/// their records for the manifest. A different file already there is kept
+/// as `….bak`; a patch that already is that file stays. Without patches, a
+/// patch file lying next to the package is noted as not recorded.
+pub fn place_patches(package: &Path, patches: &[PathBuf]) -> Vec<PatchFile> {
+    let dir = package.parent().unwrap_or(Path::new("."));
+    if patches.is_empty() {
+        let lying = dir.join(patch_file_name(package, 0));
+        if lying.exists() {
+            println!(
+                "patch: {} lies next to the package but was not used in this build (not recorded in the manifest)",
+                lying.display()
+            );
+        }
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for (i, src) in patches.iter().enumerate() {
+        let name = patch_file_name(package, i);
+        let dest = dir.join(&name);
+        let bytes = std::fs::read(src).unwrap_or_else(|e| fail(format!("{}: {e}", src.display())));
+        let same_file = match (src.canonicalize(), dest.canonicalize()) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        };
+        if !same_file {
+            if let Ok(old) = std::fs::read(&dest)
+                && old != bytes
+            {
+                let mut bak = dest.as_os_str().to_owned();
+                bak.push(".bak");
+                std::fs::rename(&dest, &bak)
+                    .unwrap_or_else(|e| fail(format!("{}: {e}", dest.display())));
+                println!(
+                    "patch: the other {} kept as {}",
+                    dest.display(),
+                    PathBuf::from(bak).display()
+                );
+            }
+            std::fs::write(&dest, &bytes)
+                .unwrap_or_else(|e| fail(format!("{}: {e}", dest.display())));
+        }
+        let record = PatchFile::of(&name, &bytes).unwrap_or_else(|e| fail(e));
+        println!(
+            "patch: {} -> {} (sha256 {}, recorded in the manifest)",
+            src.display(),
+            dest.display(),
+            record.sha256
+        );
+        out.push(record);
+    }
+    out
+}
+
+/// Each recorded patch of `m` against the file next to `package`.
+pub fn patch_statuses(package: &Path, m: &Manifest) -> Vec<(PatchFile, PatchStatus)> {
+    let dir = package.parent().unwrap_or(Path::new("."));
+    m.patches
+        .iter()
+        .map(|p| {
+            let found = std::fs::read(dir.join(&p.path)).ok();
+            (p.clone(), p.status(found.as_deref()))
+        })
+        .collect()
+}
+
+/// Prints the patch lines of the build / publish report: OK ones on
+/// stdout, a missing or changed one as a warning. Returns the number of
+/// warnings.
+pub fn report_patches(package: &Path, m: &Manifest) -> usize {
+    let mut warnings = 0;
+    for (p, status) in patch_statuses(package, m) {
+        let line = p.describe(&status);
+        if status == PatchStatus::Same {
+            println!("  {line}");
+        } else {
+            warnings += 1;
+            eprintln!("warning: {line}");
+        }
+    }
+    warnings
+}
+
+/// For a step that writes its result to another file than its input
+/// (`--out`): the input's manifest and the patches it records go along,
+/// so the result keeps both next to it.
+pub fn carry_manifest(world: &Path, out: &Path) {
+    if world == out {
+        return;
+    }
+    let _ = std::fs::copy(sidecar(world), sidecar(out));
+    let Some(m) = std::fs::read_to_string(sidecar(world))
+        .ok()
+        .and_then(|t| SignedManifest::parse(&t).ok())
+        .map(|s| s.manifest)
+    else {
+        return;
+    };
+    let (from, to) = (
+        world.parent().unwrap_or(Path::new(".")),
+        out.parent().unwrap_or(Path::new(".")),
+    );
+    if from == to {
+        return;
+    }
+    for p in &m.patches {
+        let _ = std::fs::copy(from.join(&p.path), to.join(&p.path));
+    }
 }
 
 pub fn keys_init_root(name: &str, dir: Option<PathBuf>) {
@@ -383,6 +523,8 @@ pub fn verify(package: &Path, trust_roots: Vec<PathBuf>, dev_root: bool, allow_u
     for a in &m.attribution {
         println!("  attribution: {} ({})", a.notice, a.licence);
     }
+    // The patches it was built with (16H Q9): reported, never a failure.
+    report_patches(&mp, m);
     let policy = if allow_unsigned {
         UnsignedPolicy::Warn
     } else {
@@ -429,6 +571,19 @@ pub fn publish(package: &Path, out: &Path) {
             std::fs::read(src.join(&f.path)).unwrap_or_else(|e| fail(format!("{}: {e}", f.path)));
         m.verify_file(&f.path, &bytes).unwrap_or_else(|e| fail(e));
         std::fs::write(dest.join(&f.path), &bytes).unwrap_or_else(|e| fail(e));
+    }
+    // The world patches it was built with (16H Q9, the ODbL offer of the
+    // changes): copied when they match the manifest; a missing or changed
+    // one is a warning in the report and not copied (it is not the patch
+    // the package was built with).
+    for (p, status) in patch_statuses(&mp, m) {
+        if status == PatchStatus::Same {
+            std::fs::copy(src.join(&p.path), dest.join(&p.path))
+                .unwrap_or_else(|e| fail(format!("{}: {e}", p.path)));
+            println!("  patch {} published (sha256 {})", p.path, p.sha256);
+        } else {
+            eprintln!("warning: {} – not published", p.describe(&status));
+        }
     }
     std::fs::write(dest.join(ocw_worldstore::cache::MANIFEST_FILE), &text)
         .unwrap_or_else(|e| fail(e));
@@ -513,6 +668,7 @@ pub fn refresh_manifest(package: &Path) -> bool {
             name: None,
             version: None,
             dem_attribution: Vec::new(),
+            patches: None,
         },
         None,
     );
@@ -563,6 +719,7 @@ mod tests {
             name: None,
             version: None,
             dem_attribution: Vec::new(),
+            patches: None,
         };
         write_manifest(&path, &args, None);
         // The package changes (a route is added) after the manifest was written.
@@ -619,6 +776,7 @@ mod tests {
                 name: None,
                 version: Some(version),
                 dem_attribution: Vec::new(),
+                patches: None,
             };
             write_manifest(&path, &args, None);
             publish(&path, &out);
@@ -630,6 +788,168 @@ mod tests {
             std::fs::read_to_string(out.join("test/pub/latest")).unwrap(),
             "4\n"
         );
+    }
+
+    fn tiny_package(dir: &Path) -> PathBuf {
+        let path = dir.join("p.ocwpkg");
+        let pkg = ocw_world::WorldPackage {
+            name: "Test".into(),
+            origin: (47.9, 7.9),
+            tile_size_m: 1000.0,
+            samples: 3,
+            tiles: Default::default(),
+            graph: None,
+            landuse: None,
+            buildings: None,
+            bridges: None,
+            routes: vec![],
+            region: None,
+            time_zone: None,
+            look: Default::default(),
+            obstacles: None,
+            places: None,
+            junctions: None,
+        };
+        std::fs::write(&path, pkg.to_bytes()).unwrap();
+        path
+    }
+
+    fn read_manifest(p: &Path) -> Manifest {
+        SignedManifest::parse(&std::fs::read_to_string(sidecar(p)).unwrap())
+            .unwrap()
+            .manifest
+    }
+
+    const PATCH: &str = "ocwpatch = 1\npackage = \"test/patched\"\n";
+
+    /// 16H Q9: `package --patch` puts the patch next to the package as
+    /// `<package>.ocwpatch` and records its SHA-256; later steps keep the
+    /// record; a build without a patch records none.
+    #[test]
+    fn a_patched_build_records_its_patch() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = tiny_package(dir.path());
+        let src_dir = dir.path().join("worlds").join("test").join("patches");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let (a, b) = (src_dir.join("fix.ocwpatch"), src_dir.join("more.ocwpatch"));
+        std::fs::write(&a, PATCH).unwrap();
+        std::fs::write(&b, format!("{PATCH}title = \"more\"\n")).unwrap();
+        // A user's own patch already lying there is kept as .bak.
+        std::fs::write(dir.path().join("p.ocwpatch"), "mine").unwrap();
+        let placed = place_patches(&path, &[a, b]);
+        assert_eq!(
+            placed.iter().map(|p| p.path.as_str()).collect::<Vec<_>>(),
+            ["p.ocwpatch", "p.2.ocwpatch"]
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("p.ocwpatch")).unwrap(),
+            PATCH
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("p.ocwpatch.bak")).unwrap(),
+            "mine"
+        );
+        let args = ManifestArgs {
+            id: Some("test/patched".into()),
+            name: None,
+            version: None,
+            dem_attribution: Vec::new(),
+            patches: Some(placed.clone()),
+        };
+        write_manifest(&path, &args, None);
+        let m = read_manifest(&path);
+        assert_eq!(m.patches, placed);
+        assert_eq!(m.patches[0].sha256, sha256(PATCH.as_bytes()));
+        assert_eq!(report_patches(&path, &m), 0);
+        // A later step (routes, calibration, signing) keeps the record.
+        write_manifest(
+            &path,
+            &ManifestArgs {
+                patches: None,
+                ..args
+            },
+            None,
+        );
+        assert_eq!(read_manifest(&path).patches, placed);
+        // A step writing elsewhere (`--out`) takes manifest and patches along.
+        let other = dir.path().join("out");
+        std::fs::create_dir_all(&other).unwrap();
+        let out = other.join("p.ocwpkg");
+        std::fs::copy(&path, &out).unwrap();
+        carry_manifest(&path, &out);
+        assert_eq!(
+            std::fs::read_to_string(other.join("p.ocwpatch")).unwrap(),
+            PATCH
+        );
+        assert_eq!(report_patches(&out, &read_manifest(&out)), 0);
+        // The patch placed from its own place stays as it is.
+        let again = place_patches(&path, &[dir.path().join("p.ocwpatch")]);
+        assert_eq!(again[0].sha256, placed[0].sha256);
+        // A build without a patch records none.
+        let none = place_patches(&path, &[]);
+        write_manifest(
+            &path,
+            &ManifestArgs {
+                id: None,
+                name: None,
+                version: None,
+                dem_attribution: Vec::new(),
+                patches: Some(none),
+            },
+            None,
+        );
+        assert!(read_manifest(&path).patches.is_empty());
+    }
+
+    /// 16H Q9: `publish` copies the patch next to the published package;
+    /// a patch changed after the build is a warning and not published
+    /// (it is not the patch the package was built with), never a failure.
+    #[test]
+    fn publish_copies_the_patch_and_warns_on_a_changed_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = tiny_package(dir.path());
+        let patch = dir.path().join("p.ocwpatch");
+        std::fs::write(&patch, PATCH).unwrap();
+        let placed = place_patches(&path, std::slice::from_ref(&patch));
+        let out = dir.path().join("worlds");
+        let args = |version| ManifestArgs {
+            id: Some("test/patched".into()),
+            name: None,
+            version: Some(version),
+            dem_attribution: Vec::new(),
+            patches: Some(placed.clone()),
+        };
+        write_manifest(&path, &args(1), None);
+        publish(&path, &out);
+        let d1 = out.join("test/patched/1");
+        assert_eq!(
+            std::fs::read_to_string(d1.join("p.ocwpatch")).unwrap(),
+            PATCH
+        );
+        let published = SignedManifest::parse(
+            &std::fs::read_to_string(d1.join(ocw_worldstore::cache::MANIFEST_FILE)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(published.manifest.patches, placed);
+        // The user edits the patch after the build: reported, not copied.
+        std::fs::write(&patch, format!("{PATCH}title = \"edited\"\n")).unwrap();
+        write_manifest(&path, &args(2), None);
+        let m = read_manifest(&path);
+        assert!(matches!(
+            patch_statuses(&path, &m)[0].1,
+            PatchStatus::Changed { .. }
+        ));
+        assert_eq!(report_patches(&path, &m), 1);
+        publish(&path, &out);
+        let d2 = out.join("test/patched/2");
+        assert!(d2.join("p.ocwpkg").is_file());
+        assert!(!d2.join("p.ocwpatch").exists());
+        // Gone: the same.
+        std::fs::remove_file(&patch).unwrap();
+        assert_eq!(patch_statuses(&path, &m)[0].1, PatchStatus::Missing);
+        write_manifest(&path, &args(3), None);
+        publish(&path, &out);
+        assert!(out.join("test/patched/3/p.ocwpkg").is_file());
     }
 
     /// Spec §13, Phase 8A: every imagery source of a calibrated package is
@@ -703,6 +1023,7 @@ mod tests {
             name: None,
             version: None,
             dem_attribution: vec!["lgl-dgm1".into()],
+            patches: None,
         };
         let m = write_manifest(&path, &args, None).manifest;
         let sources: Vec<&str> = m.attribution.iter().map(|a| a.source.as_str()).collect();
