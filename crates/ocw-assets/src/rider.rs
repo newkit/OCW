@@ -625,6 +625,11 @@ pub mod face {
     /// is fully open while speaking.
     pub const LIP_DROP_M: f32 = 0.0065;
     pub const LIP_BACK_M: f32 = 0.0008;
+    /// The jaw with the chin (bug 2026-11-25, 4N *Fixed (v5.98)*): centre,
+    /// radii and the tilt about x (rad; the chin forward at the bottom) of
+    /// one ellipsoid whose centre lies inside the skull, under the lips
+    /// and inside every beard, clear of the helmet straps.
+    pub const JAW: ([f32; 3], [f32; 3], f32) = ([0.0, -0.066, -0.032], [0.044, 0.03, 0.05], 0.3);
 }
 
 /// The lips' node under [`FACE`] (Phase 4 Q24): its origin at the mouth's
@@ -1672,8 +1677,8 @@ fn hair_and_face(m: &mut Model, head: usize, skull: Vec3, detail: Detail) {
     opt_node(m, opt::BEARD[4], head, |p| {
         chin(
             p,
-            Vec3::new(0.0, -0.08, -0.08),
-            Vec3::new(0.022, 0.02, 0.017),
+            Vec3::new(0.0, -0.08, -0.068),
+            Vec3::new(0.021, 0.017, 0.011),
             0.3,
         )
     });
@@ -1750,12 +1755,14 @@ fn hair_and_face(m: &mut Model, head: usize, skull: Vec3, detail: Detail) {
     opt_node(m, opt::FACE_JAW, head, |p| {
         if hi {
             for s in [-1.0f32, 1.0] {
+                // Along the jaw's lower edge, a few millimetres out of
+                // it (the old ones stood up to 3 cm out at its corners).
                 p.slot("skin").ellipsoid(
-                    skull + Vec3::new(s * 0.048, -0.074, -0.05),
-                    Vec3::new(0.026, 0.02, 0.03),
+                    skull + Vec3::new(s * 0.03, -0.076, -0.03),
+                    Vec3::new(0.016, 0.013, 0.024),
                     Quat::IDENTITY,
                     3,
-                    5,
+                    6,
                 );
             }
         }
@@ -1804,13 +1811,17 @@ fn opt_node_face(m: &mut Model, head: usize, skull: Vec3, detail: Detail) {
             4,
         );
     }
-    // The chin.
+    // The jaw with the chin: one broad shape grown out of the skull's
+    // lower front (bug 2026-11-25: the old chin, a narrow 4-sided
+    // ellipsoid whose centre lay outside the skull, hung under the face
+    // like a bubble and poked out under the beards).
+    let (c, r, tilt) = JAW;
     p.slot("skin").ellipsoid(
-        skull + Vec3::new(0.0, -0.088, -0.066),
-        Vec3::new(0.024, 0.016, 0.018),
-        Quat::from_rotation_x(0.3),
-        3,
+        skull + Vec3::from(c),
+        Vec3::from(r),
+        Quat::from_rotation_x(tilt),
         4,
+        8,
     );
     p.attach(m, i);
     // The lips (Phase 4 Q24): the upper lip and the mouth's inside in
@@ -2928,6 +2939,173 @@ mod tests {
             let _ = shown;
             assert_eq!(girth(&near, i, &c), Vec3::ONE, "the head keeps its size");
         }
+    }
+
+    /// The vertices of node `name` in rest-pose model coordinates (`slot`:
+    /// only that material's).
+    fn node_points(m: &Model, name: &str, slot: Option<&str>) -> Vec<Vec3> {
+        let i = m.node(name).unwrap_or_else(|| panic!("{name}"));
+        let w = m.world(i);
+        m.nodes[i]
+            .primitives
+            .iter()
+            .filter(|p| slot.is_none_or(|s| m.materials[p.material].name == s))
+            .flat_map(|p| {
+                p.positions
+                    .iter()
+                    .map(move |v| w.transform_point3(Vec3::from(*v)))
+            })
+            .collect()
+    }
+
+    /// How far `p` lies outside an ellipsoid (centre, radii, rotation),
+    /// along the ray from its centre (m; 0 inside).
+    fn outside(p: Vec3, (c, r, rot): (Vec3, Vec3, Quat)) -> f32 {
+        let d = p - c;
+        let k = ((rot.inverse() * d) / r).length();
+        if k <= 1.0 {
+            0.0
+        } else {
+            d.length() * (1.0 - 1.0 / k)
+        }
+    }
+
+    /// The skull's and the jaw's ellipsoids (rest-pose model coordinates).
+    fn skull_and_jaw() -> [(Vec3, Vec3, Quat); 2] {
+        let skull = skull_centre();
+        let (c, r, tilt) = face::JAW;
+        [
+            (skull, Vec3::new(0.078, 0.105, 0.095), Quat::IDENTITY),
+            (
+                skull + Vec3::from(c),
+                Vec3::from(r),
+                Quat::from_rotation_x(tilt),
+            ),
+        ]
+    }
+
+    /// No bubble on the chin (bug reported 2026-11-25, 4N *Fixed
+    /// (v5.98)*): the chin was a narrow ellipsoid whose centre lay outside
+    /// the skull, hanging 2 cm under the face. Now the jaw with the chin
+    /// is one shape whose centre lies deep in the skull, and no skin of
+    /// the face or of the older riders' softer jaw stands more than 6 mm
+    /// out of the skull and the jaw anywhere below the mouth – for every
+    /// age (the softer jaw from the 60s) and so every look (the head is
+    /// the same for every base body, shape and height: `girth` is 1).
+    #[test]
+    fn the_chin_is_no_bubble() {
+        let near = build(Detail::High);
+        let skull = skull_centre();
+        let [head, jaw] = skull_and_jaw();
+        let (jc, jr, _) = jaw;
+        let deep = ((jc - skull) / head.1).length();
+        assert!(deep < 0.8, "the jaw's centre inside the skull: {deep}");
+        // The chin well under the lips.
+        let mouth_y = skull.y + face::MOUTH[1];
+        assert!(jc.y - jr.y < mouth_y - 0.04);
+        let mut worst = (0.0f32, Vec3::ZERO, "");
+        for (node, slot) in [(FACE, Some("skin")), (opt::FACE_JAW, None)] {
+            for p in node_points(&near, node, slot) {
+                if p.y > mouth_y {
+                    continue;
+                }
+                let out = outside(p, head).min(outside(p, jaw));
+                if out > worst.0 {
+                    worst = (out, p - skull, node);
+                }
+            }
+        }
+        assert!(
+            worst.0 < 0.006,
+            "{} mm out at {} ({})",
+            worst.0 * 1e3,
+            worst.1,
+            worst.2
+        );
+        // The lower lip in front of the jaw, also dropped while speaking
+        // (Q24).
+        for open in [0.0, 1.0] {
+            let lip = skull
+                + Vec3::from(face::MOUTH)
+                + Vec3::from(face::LOWER_LIP.0)
+                + lower_lip_offset(open);
+            let front = lip - Vec3::Z * face::LOWER_LIP.1[2];
+            assert!(
+                outside(front, jaw) > 0.003,
+                "the lower lip in front of the jaw ({open})"
+            );
+        }
+    }
+
+    /// Whether the ray from `o` along `d` hits triangle `t`.
+    fn ray_hits(o: Vec3, d: Vec3, t: &[Vec3; 3]) -> bool {
+        let (e1, e2) = (t[1] - t[0], t[2] - t[0]);
+        let h = d.cross(e2);
+        let a = e1.dot(h);
+        if a.abs() < 1e-12 {
+            return false;
+        }
+        let f = 1.0 / a;
+        let s = o - t[0];
+        let u = f * s.dot(h);
+        let q = s.cross(e1);
+        let v = f * d.dot(q);
+        (0.0..=1.0).contains(&u) && v >= 0.0 && u + v <= 1.0 && f * e2.dot(q) > 0.0
+    }
+
+    /// The beards cover the jaw (bug 2026-11-25): seen from the jaw's
+    /// centre, every point of the jaw, the chin and the softer jaw out of
+    /// the skull, below the mouth and in front of the ears lies behind
+    /// each full-face beard (stubble, short stubble, short boxed, full,
+    /// long) – the old chin poked out under them.
+    #[test]
+    fn the_beards_cover_the_jaw() {
+        let near = build(Detail::High);
+        let [head, jaw] = skull_and_jaw();
+        let skull = skull_centre();
+        let mouth_y = skull.y + face::MOUTH[1];
+        let mut skin = node_points(&near, FACE, Some("skin"));
+        skin.extend(node_points(&near, opt::FACE_JAW, None));
+        let skin: Vec<Vec3> = skin
+            .into_iter()
+            .filter(|p| p.y < mouth_y && p.z < skull.z - 0.01 && outside(*p, head) > 0.0)
+            .collect();
+        assert!(skin.len() >= 5, "{}", skin.len());
+        let tris = |name: &str| -> Vec<[Vec3; 3]> {
+            let i = near.node(name).unwrap();
+            let w = near.world(i);
+            near.nodes[i]
+                .primitives
+                .iter()
+                .flat_map(|p| {
+                    p.indices.chunks(3).map(move |t| {
+                        [0, 1, 2]
+                            .map(|k| w.transform_point3(Vec3::from(p.positions[t[k] as usize])))
+                    })
+                })
+                .collect()
+        };
+        let mut bare = Vec::new();
+        for k in [0, 1, 2, 3, 6] {
+            let beard = tris(opt::BEARD[k]);
+            let uncovered: Vec<Vec3> = skin
+                .iter()
+                .filter(|p| {
+                    let dir = (**p - jaw.0).normalize();
+                    !beard.iter().any(|t| ray_hits(**p, dir, t))
+                })
+                .map(|p| *p - skull)
+                .collect();
+            if let Some(at) = uncovered.first() {
+                bare.push(format!(
+                    "{}: {} of {} points, e.g. {at}",
+                    opt::BEARD[k],
+                    uncovered.len(),
+                    skin.len()
+                ));
+            }
+        }
+        assert!(bare.is_empty(), "{bare:#?}");
     }
 
     /// The lips open (Phase 4 Q24): two lips in their own nodes under the

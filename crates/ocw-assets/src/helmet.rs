@@ -710,7 +710,9 @@ fn retention(p: &mut Parts, skull: Vec3) {
 }
 
 /// The straps: in front of and behind each ear down to the splitter
-/// under it, on to the buckle under the chin.
+/// under it, on to the buckle under the chin – a flat buckle in front of
+/// the neck, behind and under every beard (bug 2026-11-25: the old, 14 mm
+/// deep buckle sat 7 mm in the neck).
 fn straps(p: &mut Parts, skull: Vec3) {
     for s in [-1.0f32, 1.0] {
         let v = |x: f32, y: f32, z: f32| skull + Vec3::new(s * x, y, z);
@@ -720,15 +722,15 @@ fn straps(p: &mut Parts, skull: Vec3) {
         p.slot(DETAIL)
             .tube(v(0.083, -0.01, 0.05), split, 0.0035, 0.0035, 3, false);
         p.slot(DETAIL).sweep(
-            &[split, v(0.062, -0.086, -0.026), v(0.02, -0.112, -0.032)],
+            &[split, v(0.062, -0.086, -0.026), v(0.018, -0.11, -0.043)],
             &[0.0035; 3],
             3,
             false,
         );
     }
     p.slot(DETAIL).cuboid(
-        skull + Vec3::new(0.0, -0.113, -0.032),
-        Vec3::new(0.021, 0.004, 0.007),
+        skull + Vec3::new(0.0, -0.112, -0.043),
+        Vec3::new(0.021, 0.004, 0.0028),
         Quat::IDENTITY,
     );
 }
@@ -903,6 +905,55 @@ mod tests {
         assert!(clips.is_empty(), "{clips:#?}");
     }
 
+    /// The buckle sits under the chin (bug 2026-11-25): for every helmet
+    /// the straps' lowest part is the buckle, centred, its top 2 – 18 mm
+    /// under the jaw right above it and in front of the neck.
+    #[test]
+    fn the_buckle_sits_under_the_chin() {
+        let m = rider::build(Detail::High);
+        let skull = rider::skull_centre();
+        let (c, r, tilt) = rider::face::JAW;
+        let rot = Quat::from_rotation_x(tilt);
+        // The jaw's ellipsoid, sampled.
+        let jaw: Vec<Vec3> = (0..=64)
+            .flat_map(|i| (0..64).map(move |j| (i, j)))
+            .map(|(i, j)| {
+                let (a, b) = (
+                    std::f32::consts::PI * i as f32 / 64.0,
+                    std::f32::consts::TAU * j as f32 / 64.0,
+                );
+                skull
+                    + Vec3::from(c)
+                    + rot
+                        * (Vec3::from(r)
+                            * Vec3::new(a.sin() * b.cos(), -a.cos(), a.sin() * b.sin()))
+            })
+            .collect();
+        for h in Helmet::ALL {
+            let pts: Vec<Vec3> = node_tris(&m, h.node(), Some(DETAIL))
+                .into_iter()
+                .flatten()
+                .collect();
+            let low = pts.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+            // The buckle is 8 mm high.
+            let buckle: Vec<Vec3> = pts.into_iter().filter(|p| p.y < low + 0.0081).collect();
+            let top = buckle.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+            let mid = buckle.iter().sum::<Vec3>() / buckle.len() as f32;
+            assert!(mid.x.abs() < 1e-3, "{h:?}: {mid}");
+            // The jaw's lowest point over the buckle.
+            let above = jaw
+                .iter()
+                .filter(|p| (p.x - mid.x).abs() < 0.02 && (p.z - mid.z).abs() < 0.007)
+                .map(|p| p.y)
+                .fold(f32::MAX, f32::min);
+            let gap = above - top;
+            assert!((0.002..0.018).contains(&gap), "{h:?}: {gap}");
+            // In front of the neck (its front at the buckle's height is
+            // about 4 cm in front of the skull's centre).
+            assert!(mid.z - skull.z < -0.04, "{h:?}: {}", mid - skull);
+        }
+    }
+
     /// The straps run over the facial hair (spec §14 Phase 4, 4N N6): no
     /// moustache or beard comes out through a strap, the retention band
     /// or the buckle of any helmet.
@@ -917,6 +968,10 @@ mod tests {
                 rider::FACE,
                 rider::LIPS,
                 rider::LIP_LOWER,
+                // The jaw (in the face since the bug of 2026-11-25), the
+                // older riders' softer jaw and the head itself.
+                opt::FACE_JAW,
+                HEAD,
             ]) {
                 let hits = node_tris(&m, item, None)
                     .iter()

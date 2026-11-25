@@ -5435,3 +5435,98 @@ at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.pro
 warmup = 3
 video = 18
 pick = false
+
+# The bubble on the chin (bug of 2026-11-25, 4N *Fixed (v5.98)*): close-ups
+# of the face and chin from the front, the side and a three-quarter view from
+# below, riding; the same look before / after (chin-a-*) and varied looks
+# (bodies, ages, skin, hair, beards, glasses, every helmet, the helmet off,
+# the far model). Made-up rider name only.
+[[scene]]
+name = "chin-a-front"
+description = "Chin (bug 2026-11-25): riding, the face straight from the front – base body A, 30s, short hair, sport glasses, red road helmet, blue kit"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --age 30s --hair short --skin 3 --glasses 2", "0.7=kit.design --jersey #1E88E5 --second #F2F2EE --helmet #D32F2F --helmet-finish gloss", "3.5=camera.closeup face 180 0 0.55"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "chin-a-side"
+description = "Chin (bug 2026-11-25): riding, the face from the side – base body A, 30s, short hair, sport glasses, red road helmet, blue kit"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --age 30s --hair short --skin 3 --glasses 2", "0.7=kit.design --jersey #1E88E5 --second #F2F2EE --helmet #D32F2F --helmet-finish gloss", "3.5=camera.closeup face 90 -5 0.55"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "chin-a-below"
+description = "Chin (bug 2026-11-25): riding, the face from a three-quarter view from below – base body A, 30s, short hair, sport glasses, red road helmet, blue kit"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --age 30s --hair short --skin 3 --glasses 2", "0.7=kit.design --jersey #1E88E5 --second #F2F2EE --helmet #D32F2F --helmet-finish gloss", "3.5=camera.closeup face 145 -25 0.55"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "chin-b-light-below"
+description = "Chin (bug 2026-11-25): riding, three-quarter from below – base body B, 20s, ponytail, round glasses, white lightweight helmet, green kit"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Bea Climber\"\n[[rider]]\nname = \"Bea Climber\"\nweight_kg = 58.0\nheight_cm = 165.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=hearts.grant 2000", "0.7=workshop.buy helmet.light.top", "0.8=character --body b --age 20s --shape slim --hair ponytail --hair-colour auburn --skin 7 --glasses 3", "0.9=kit.design --pattern stripes --jersey #43A047 --second #1E1E22 --helmet #F2F2EE --helmet-finish gloss", "3.5=camera.closeup face 210 -20 0.55"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "chin-c-aero-side"
+description = "Chin (bug 2026-11-25): riding, from the side – base body C, 60s (softer jaw), a full grey beard, no glasses, the aero road helmet, orange kit"
+args = ["--route", "hills", "--bots", "0", "--power", "240"]
+riders = "active = \"Cleo Sprinter\"\n[[rider]]\nname = \"Cleo Sprinter\"\nweight_kg = 82.0\nheight_cm = 183.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=hearts.grant 2000", "0.7=workshop.buy helmet.aero-road.top", "0.8=character --body c --age 60s --shape normal --hair crew-cut --hair-colour #8A8A8A --skin 5 --glasses 1 --beard full --facial-hair-colour #9A9A9A", "0.9=kit.design --pattern chevrons --jersey #FB8C00 --second #1E1E22 --helmet #1E1E22 --helmet-finish matte", "3.5=camera.closeup face 270 -8 0.55"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "chin-d-tt-front-below"
+description = "Chin (bug 2026-11-25): riding, from the front and below – base body A, 50s, dark skin, a goatee, the time-trial helmet, yellow skinsuit"
+args = ["--route", "hills", "--bots", "0", "--power", "260"]
+riders = "active = \"Dan Rouleur\"\n[[rider]]\nname = \"Dan Rouleur\"\nweight_kg = 70.0\nheight_cm = 175.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=hearts.grant 3000", "0.7=workshop.buy helmet.tt.top", "0.75=workshop.buy jersey.skinsuit.top", "0.8=character --body a --age 50s --shape skinny --hair buzz-cut --hair-colour black --skin 12 --beard goatee --facial-hair-colour black", "0.9=kit.design --jersey #FDD835 --second #1E1E22 --helmet #FDD835 --helmet-finish gloss", "3.5=camera.closeup face 175 -18 0.6"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "chin-e-70-chinstrap-below"
+description = "Chin (bug 2026-11-25): riding, three-quarter from below – base body B, 70+, obese, a chin-strap beard, round glasses, white road helmet, purple kit"
+args = ["--route", "hills", "--bots", "0", "--power", "160"]
+riders = "active = \"Eve Tourer\"\n[[rider]]\nname = \"Eve Tourer\"\nweight_kg = 95.0\nheight_cm = 170.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --age 70+ --shape obese --hair low-bun --hair-colour #D0D0D0 --skin 1 --glasses 3 --beard chin-strap --facial-hair-colour #C8C8C8", "0.7=kit.design --pattern sash --jersey #7E57C2 --second #F2F2EE --helmet #F2F2EE --helmet-finish matte", "3.5=camera.closeup face 140 -22 0.6"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "chin-f-bare-editor"
+description = "Chin (bug 2026-11-25): the helmet off – the character editor's face close-up (three-quarter view), base body C, 40s, short stubble beard, an afro"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Finn Gravel\"\n[[rider]]\nname = \"Finn Gravel\"\nweight_kg = 72.0\nheight_cm = 180.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --body c --age 40s --hair afro --hair-colour black --skin 14 --beard short-stubble-beard --glasses 1", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "chin-f-bare-editor-clean"
+description = "Chin (bug 2026-11-25): the helmet off – the character editor's face close-up (three-quarter view), base body B, 30s, clean-shaven, mid-length hair, fair skin"
+args = ["--route", "hills", "--bots", "0"]
+riders = "active = \"Gia Descender\"\n[[rider]]\nname = \"Gia Descender\"\nweight_kg = 61.0\nheight_cm = 168.0\n"
+at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --body b --age 30s --hair mid-length --hair-colour blond --skin 2 --glasses 1", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
+shot = 9
+pick = false
+
+[[scene]]
+name = "chin-g-far"
+description = "Chin (bug 2026-11-25): the far model (over 40 m) from the front – base body A, 40s, red road helmet; the far head has no chin part"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+riders = "active = \"Hal Domestique\"\n[[rider]]\nname = \"Hal Domestique\"\nweight_kg = 78.0\nheight_cm = 186.0\n"
+at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --age 40s --skin 9 --beard full", "0.7=kit.design --jersey #E53935 --second #F2F2EE --helmet #E53935", "2.5=camera.orbit 175 3 45"]
+shot = 9
+pick = false
