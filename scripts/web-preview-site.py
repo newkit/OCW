@@ -58,7 +58,7 @@ TEST_RIDES = [
 ]
 
 BUILD_FILES = ("index.html", "ocw_web.js", "ocw_web_bg.wasm", "ocw_web_webgl2.js",
-               "ocw_web_webgl2_bg.wasm", "ocw-voice.js", "ocw-gpu.js", "ocw-xr.js", "ocw.svg", "sizes.txt",
+               "ocw_web_webgl2_bg.wasm", "ocw-voice.js", "ocw-gpu.js", "ocw-xr.js", "ocw-net-worker.js", "ocw.svg", "sizes.txt",
                # Add to Home Screen (spec 3.2.3): the manifest and its icons.
                "manifest.webmanifest", "ocw-256.png", "ocw-512.png")
 
@@ -136,7 +136,7 @@ MODULES = (("ocw_web_bg.wasm", "ocw_web.js"), ("ocw_web_webgl2_bg.wasm", "ocw_we
 # page files it needs beside them.
 XR_MODULES = (("ocw_web_webxr_bg.wasm", "ocw_web_webxr.js"),)
 XR_FILES = ("index.html", "ocw_web_webxr.js", "ocw_web_webxr_bg.wasm", "ocw-voice.js", "ocw-gpu.js",
-            "ocw-xr.js", "ocw.svg", "sizes.txt", "manifest.webmanifest", "ocw-256.png", "ocw-512.png")
+            "ocw-xr.js", "ocw-net-worker.js", "ocw.svg", "sizes.txt", "manifest.webmanifest", "ocw-256.png", "ocw-512.png")
 
 
 def app_bytes(build, modules=MODULES):

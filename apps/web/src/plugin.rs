@@ -385,6 +385,8 @@ fn update_view(
     );
     view.status = s.status_line();
     view.status_compact = Some(s.status_compact());
+    // How smoothly the riders move (remote rides; `net.stats`).
+    s.observe_motion(now, fixed.overstep_fraction_f64());
 }
 
 /// The devices (B4): the ones the page connected start in the session;

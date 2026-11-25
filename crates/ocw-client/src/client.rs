@@ -49,6 +49,12 @@ pub struct NetStats {
     pub stale_snapshots: u64,
     /// Free ride: path updates received, and own-path corrections among them.
     pub path_updates: u64,
+    /// Snapshots by the ticks they were read late ([`crate::arrival`]):
+    /// 0, 1, 2, 3 or more.
+    pub late_ticks: [u64; 4],
+    /// Snapshots by the ticks the prediction extrapolated them (age and
+    /// lateness): 0, 1, 2, 3, 4 or more.
+    pub extrapolated_ticks: [u64; 5],
 }
 
 /// Something the user should be told about (shown in the console).
@@ -651,6 +657,32 @@ impl ClientCore {
 
     /// Handles one encoded server message received at client time `now_s`.
     pub fn on_server_message(&mut self, bytes: &[u8], now_s: f64) -> Option<Notice> {
+        self.on_server_message_inner(bytes, now_s, None)
+    }
+
+    /// The same for a message read at `now_s` that arrived earlier, at
+    /// `arrived_s` on the same clock: the browser's network worker stamps
+    /// each message when it comes off the network, not when the frame
+    /// reads it (spec 14 Phase 10, 10G *B3 worker*). A snapshot then counts
+    /// as having come at `arrived_s` (the others' interpolation, the clock,
+    /// the weather); the own prediction still extrapolates it by the ticks
+    /// it is read late ([`crate::arrival`]).
+    pub fn on_server_message_at(
+        &mut self,
+        bytes: &[u8],
+        now_s: f64,
+        arrived_s: f64,
+    ) -> Option<Notice> {
+        let arrived = arrived_s.is_finite().then(|| arrived_s.min(now_s));
+        self.on_server_message_inner(bytes, now_s, arrived)
+    }
+
+    fn on_server_message_inner(
+        &mut self,
+        bytes: &[u8],
+        now_s: f64,
+        arrived_s: Option<f64>,
+    ) -> Option<Notice> {
         self.stats.messages_in += 1;
         let Ok(msg) = decode_server(bytes) else {
             self.stats.malformed += 1;
@@ -730,7 +762,7 @@ impl ClientCore {
                 format!("error: {}", r.message)
             })),
             S::Snapshot(s) => {
-                self.on_snapshot(&s, now_s);
+                self.on_snapshot(&s, now_s, arrived_s);
                 None
             }
             S::Path(p) => {
@@ -992,7 +1024,7 @@ impl ClientCore {
         self.snapshot_age_s = age_s.clamp(0.0, 1.0);
     }
 
-    fn on_snapshot(&mut self, s: &v1::Snapshot, now_s: f64) {
+    fn on_snapshot(&mut self, s: &v1::Snapshot, now_s: f64, arrived_s: Option<f64>) {
         // Datagrams may arrive out of order: an older snapshot would move
         // everyone back in time.
         if self.stats.snapshots > 0 && s.server_tick <= self.stats.last_snapshot_tick {
@@ -1004,9 +1036,18 @@ impl ClientCore {
         // Read a frame late (see `arrival`): the prediction extrapolates
         // the snapshot by that much more, and it counts as having come at
         // the time it would have on time.
-        let late_s = f64::from(self.arrival.late_ticks(s.server_tick, now_s)) * ocw_core::SIM_DT;
-        let now_s = now_s - late_s;
+        let late = self.arrival.late_ticks(s.server_tick, now_s);
+        self.stats.late_ticks[(late as usize).min(3)] += 1;
+        let late_s = f64::from(late) * ocw_core::SIM_DT;
+        // Stamped on arrival (the browser's network worker): placed at its
+        // real arrival, not at the tick-rounded estimate of a late read.
+        let now_s = match arrived_s {
+            Some(at) if at > now_s - 1.0 => at,
+            _ => now_s - late_s,
+        };
         let age_s = self.snapshot_age_s + late_s;
+        self.stats.extrapolated_ticks
+            [((age_s.max(0.0) / ocw_core::SIM_DT).round() as usize).min(4)] += 1;
         self.last_snapshot_at = Some((s.server_tick, now_s));
         self.refresh_leaves(now_s);
         self.human_riders = s.human_riders;
@@ -6169,8 +6210,10 @@ mod tests {
     /// then the fixed 50 Hz prediction steps (and, when `stepped`, the
     /// frame capture's server ticks with them), then the view at the
     /// frame's overstep. A threaded server ticks on its own clock, 7 ms
-    /// out of phase.
-    fn motion_probe(bots: u32, frame_hz: f64, stepped: bool) -> Motion {
+    /// out of phase. `stamped`: each message carries its arrival time
+    /// (the server's tick on its own clock), as the browser's network
+    /// worker stamps them (spec 14 Phase 10, 10G *B3 worker*).
+    fn motion_probe(bots: u32, frame_hz: f64, stepped: bool, stamped: bool) -> Motion {
         let server = GameServer::new(
             route(),
             ServerConfig {
@@ -6190,7 +6233,7 @@ mod tests {
         let mut t = h.time_s;
         let mut server_clock = t + 0.007;
         let mut acc = 0.0;
-        let mut inbox: Vec<Vec<u8>> = Vec::new();
+        let mut inbox: Vec<(f64, Vec<u8>)> = Vec::new();
         let mut last_sample = t;
         let mut own: Vec<[f64; 3]> = Vec::new();
         let mut others: BTreeMap<RiderId, Vec<Option<[f64; 3]>>> = BTreeMap::new();
@@ -6200,14 +6243,21 @@ mod tests {
             h.time_s = t;
             if !stepped {
                 while server_clock <= t {
-                    inbox.extend(h.server.tick());
+                    let at = server_clock;
+                    inbox.extend(h.server.tick().into_iter().map(|m| (at, m)));
                     server_clock += ocw_core::SIM_DT;
                 }
             }
             // PreUpdate: the messages that came since the last frame.
-            for m in std::mem::take(&mut inbox) {
+            for (at, m) in std::mem::take(&mut inbox) {
                 let before = h.client.stats().snapshots;
-                h.receive(&m);
+                if stamped {
+                    if let Some(n) = h.client.on_server_message_at(&m, t, at) {
+                        h.notices.push(n);
+                    }
+                } else {
+                    h.receive(&m);
+                }
                 if h.client.stats().snapshots > before {
                     snaps += 1;
                     let e = h.client.prediction_error().abs();
@@ -6219,7 +6269,7 @@ mod tests {
                 last_sample = t;
                 if let Some(s) = h.client.on_device_event(power(260.0, t)) {
                     for reply in h.server.handle(h.conn, &s) {
-                        inbox.push(reply);
+                        inbox.push((t, reply));
                     }
                 }
             }
@@ -6227,7 +6277,7 @@ mod tests {
             acc += dt;
             while acc >= ocw_core::SIM_DT - 1e-9 {
                 if stepped {
-                    inbox.extend(h.server.tick());
+                    inbox.extend(h.server.tick().into_iter().map(|m| (t, m)));
                 }
                 h.client.predict_step();
                 acc -= ocw_core::SIM_DT;
@@ -6286,25 +6336,55 @@ mod tests {
     #[test]
     #[ignore]
     fn motion_probe_numbers() {
-        for (bots, hz, stepped) in [
-            (6, 60.0, false),
-            (6, 144.0, false),
-            (6, 30.0, false),
-            (6, 25.0, false),
-            (6, 14.0, false),
-            (6, 25.0, true),
-            (6, 30.0, true),
+        for (bots, hz, stepped, stamped) in [
+            (6, 60.0, false, false),
+            (6, 60.0, false, true),
+            (6, 144.0, false, false),
+            (6, 30.0, false, false),
+            (6, 25.0, false, false),
+            (6, 25.0, false, true),
+            (6, 14.0, false, false),
+            (6, 14.0, false, true),
+            (6, 25.0, true, false),
+            (6, 30.0, true, false),
         ] {
-            let m = motion_probe(bots, hz, stepped);
+            let m = motion_probe(bots, hz, stepped, stamped);
             eprintln!(
-                "MOTION {hz:5} Hz {}: own dv rms {:.4} max {:.4} m/s, corrections > 2 cm {}, mean |error| {:.1} mm; others dv rms {:.4} max {:.4} m/s",
+                "MOTION {hz:5} Hz {}{}: own dv rms {:.4} max {:.4} m/s, corrections > 2 cm {}, mean |error| {:.1} mm; others dv rms {:.4} max {:.4} m/s",
                 if stepped { "capture " } else { "threaded" },
+                if stamped { " stamped" } else { "" },
                 m.own_rms,
                 m.own_max,
                 m.corrections,
                 m.mean_error * 1000.0,
                 m.others_rms,
                 m.others_max
+            );
+        }
+    }
+
+    /// Snapshots stamped on arrival (the browser's network worker, 10G *B3
+    /// worker*): the others move more smoothly than with the tick-rounded
+    /// estimate of a late read, the own rider as before. Measured: at 25 Hz
+    /// the others 0.077 → 0.038 m/s RMS (max 2.96 → 0.30), at 14 Hz
+    /// 0.45 → 0.049; the own rider unchanged (0.017 / 0.025).
+    #[test]
+    fn stamped_snapshots_make_the_others_smoother() {
+        for (hz, rms, max) in [(25.0, 0.06, 0.6), (14.0, 0.1, 0.6), (60.0, 0.04, 0.6)] {
+            let read = motion_probe(6, hz, false, false);
+            let stamped = motion_probe(6, hz, false, true);
+            assert!(
+                stamped.others_rms < rms && stamped.others_max < max,
+                "{hz} Hz: {stamped:?}"
+            );
+            assert!(
+                stamped.others_rms <= read.others_rms,
+                "{hz} Hz: {stamped:?} vs {read:?}"
+            );
+            assert!(
+                (stamped.own_rms - read.own_rms).abs() < 0.005
+                    && stamped.corrections <= read.corrections,
+                "{hz} Hz: {stamped:?} vs {read:?}"
             );
         }
     }
@@ -6327,7 +6407,7 @@ mod tests {
             (60.0, false, 0.1),
             (14.0, false, 0.8),
         ] {
-            let m = motion_probe(6, hz, stepped);
+            let m = motion_probe(6, hz, stepped, false);
             assert!(
                 m.own_rms < 0.04 && m.mean_error < 0.01 && m.corrections < 30,
                 "{hz} Hz, stepped {stepped}: own rider {m:?}"

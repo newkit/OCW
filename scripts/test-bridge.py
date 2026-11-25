@@ -192,6 +192,8 @@ def main():
                     "virtual": d.get("virtual"), "mode": d.get("mode"),
                     "desktop_devices": b.get("desktop_devices"),
                     "last_command": d.get("last_command"),
+                    "reader": b.get("reader"),
+                    "reader_note": b.get("reader_note"),
                 })
             for name, at in list(shot_at.items()):
                 if time.time() - ride0 >= at:
@@ -240,6 +242,10 @@ def main():
                            "mean": round(statistics.mean(powers), 1) if powers else None},
         "desktop_devices": last.get("desktop_devices"),
         "last_command": last.get("last_command"),
+        # Who read the connection: the network worker, or the page's
+        # thread where the browser has no worker for it (10G B3 worker).
+        "reader": last.get("reader"),
+        "reader_note": last.get("reader_note"),
         "browser_shots": shots,
     })
     # 5. The desktop finishes its ride and its screenshot.

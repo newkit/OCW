@@ -75,6 +75,7 @@ pub mod heap;
 pub mod memory;
 #[cfg(test)]
 mod memory_report;
+pub mod netconn;
 pub mod page_config;
 pub mod plugin;
 pub mod screen;
@@ -326,6 +327,17 @@ pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) 
             ("memory", _) => match memory::MemoryMode::parse(value) {
                 Some(m) => config.memory = m,
                 None => bad(),
+            },
+            // Who reads the WebTransport connections (10G *B3 worker*).
+            ("net-worker", _) => match netconn::ReaderMode::parse(value) {
+                Some(m) => config.net_reader = m,
+                None => bad(),
+            },
+            // The page's frame pacing for the tests (index.html: each
+            // frame busy until this many ms passed, a slow machine).
+            ("frame-ms", _) => match value.parse::<f64>() {
+                Ok(ms) if (1.0..=1000.0).contains(&ms) => {}
+                _ => bad(),
             },
             // Read below (B3; the origin after the route; a join link).
             ("server" | "cert-hash" | "join", _) => {}
@@ -1125,6 +1137,7 @@ pub fn start() {
     let dev_page = is_dev_host(&host);
     let (mut config, mut warnings) = parse_query(&query, dev_page);
     config.access_token = account::tab_access_token();
+    netconn::set_default_mode(config.net_reader);
     // The page configuration (config.json, B8a): the worlds' base, and on
     // a public page without a hosted server no multiplayer and no voice.
     let (page, page_error) = page_config::from_page();
@@ -1211,6 +1224,22 @@ mod tests {
         // The page's mark of a WebGPU fallback is a known option.
         let (_, w) = parse_query("route=hills&gpu=webgl2&quality=low&webgpu-failed=1", false);
         assert!(w.is_empty(), "{w:?}");
+    }
+
+    /// 10G *B3 worker*: who reads the connections, and the tests' frame
+    /// pacing (read by the page).
+    #[test]
+    fn network_worker_options() {
+        let (c, w) = parse_query("net-worker=off&frame-ms=40", false);
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!(c.net_reader, netconn::ReaderMode::MainThread);
+        let (c, _) = parse_query("", false);
+        assert_eq!(c.net_reader, netconn::ReaderMode::Auto);
+        let (c, _) = parse_query("net-worker=refuse", false);
+        assert_eq!(c.net_reader, netconn::ReaderMode::Refuse);
+        let (c, w) = parse_query("net-worker=maybe&frame-ms=0", false);
+        assert_eq!(c.net_reader, netconn::ReaderMode::Auto);
+        assert_eq!(w.len(), 2, "{w:?}");
     }
 
     #[test]

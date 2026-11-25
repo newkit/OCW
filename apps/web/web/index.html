@@ -659,7 +659,20 @@
     // draws in requestAnimationFrame on the page's thread, so a long frame
     // of the app delays this counter too.
     window.ocwFrames = 0;
-    const countFrames = () => { window.ocwFrames++; requestAnimationFrame(countFrames); };
+    // ?frame-ms=40 (the tests, 10G *B3 worker*): every frame keeps the
+    // page's thread busy until 40 ms passed since the last one – a slow
+    // machine at 25 fps (the browser draws as fast as it may, e.g. headless
+    // Chromium with --disable-frame-rate-limit; else at the next vsync).
+    const frameMs = Number(new URLSearchParams(location.search).get("frame-ms")) || 0;
+    let lastFrame = 0;
+    const countFrames = () => {
+      window.ocwFrames++;
+      if (frameMs > 0) {
+        while (performance.now() < lastFrame + frameMs) { /* busy, like a slow frame */ }
+        lastFrame = performance.now();
+      }
+      requestAnimationFrame(countFrames);
+    };
     requestAnimationFrame(countFrames);
     // What the quality preset's `auto` needs to know about this device
     // (B7; read by the app as JSON).

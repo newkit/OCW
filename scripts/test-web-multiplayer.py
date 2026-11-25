@@ -3,6 +3,7 @@
 
     scripts/test-web-multiplayer.py [--out test-output/web] [--seconds 30]
         [--bin target/release] [--riders 2] [--chromium chromium] [--software]
+        [--net-worker auto|off|refuse] [--frame-ms 40] [--tag NAME]
 
 On one machine (marge): starts `ocw-server --listen --webtransport` (the
 test route Hills, no server bots), `ocw-bot` riders over native QUIC
@@ -17,9 +18,17 @@ it saves:
                             with the ISO timestamp)
   OUT/web-mp-<time>.log     browser console, server and bot output
   OUT/web-mp-<time>.json    the summary: what the browser saw, what the
-                            server saw, snapshot timing browser vs native
+                            server saw, snapshot timing browser vs native,
+                            who read the connection (the network worker
+                            or the page's thread), how long the worker's
+                            messages waited for a frame, and how smoothly
+                            the riders moved (10G B3 worker)
 
-Exits 0 when the browser joined over WebTransport, saw at least --riders
+`--net-worker off` reads on the page's thread (the comparison), `refuse`
+makes the worker refuse so the page's thread takes over (the fallback);
+`--frame-ms 40` paces the page to 25 fps, a busy slow machine.
+
+Exits 0 when the browser joined over WebTransport (read where asked), saw at least --riders
 other riders, rode, the server applied its inputs (the browser rider's
 power on the server, `last_input_seq`, WebTransport datagrams in the
 server statistics) and the bots saw the browser rider; 1 otherwise.
@@ -123,6 +132,9 @@ def start_chromium(a, log):
     ]
     if a.software:
         flags += ["--use-webgpu-adapter=swiftshader", "--enable-unsafe-swiftshader"]
+    if a.frame_ms:
+        # The page paces its frames itself (?frame-ms=): no vsync to wait for.
+        flags += ["--disable-frame-rate-limit", "--disable-gpu-vsync"]
     cmd_r, cmd_w = os.pipe()
     res_r, res_w = os.pipe()
     os.set_inheritable(cmd_r, True)
@@ -162,6 +174,28 @@ def server_rider_lines(server, name):
     return out
 
 
+def record_video(cdp, base, seconds):
+    """Screenshots for `seconds` into BASE.mp4 at the rate they came (None
+    without ffmpeg or frames)."""
+    frames = base + "-frames"
+    os.makedirs(frames, exist_ok=True)
+    t0 = time.time()
+    n = 0
+    while time.time() - t0 < seconds:
+        cdp.screenshot(os.path.join(frames, f"{n:04d}.jpg"))
+        n += 1
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg or n < 2:
+        return None
+    rate = max(1, round(n / (time.time() - t0)))
+    mp4 = base + ".mp4"
+    r = subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-framerate", str(rate),
+                        "-i", os.path.join(frames, "%04d.jpg"), "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", mp4])
+    shutil.rmtree(frames, ignore_errors=True)
+    return mp4 if r.returncode == 0 else None
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--dir", default="target/web")
@@ -185,6 +219,17 @@ def main():
                         " else the system's chromium; scripts/web_browser.py)")
     p.add_argument("--size", default="1280x720")
     p.add_argument("--software", action="store_true")
+    p.add_argument("--net-worker", default="auto", choices=("auto", "off", "refuse"),
+                   help="who reads the WebTransport connection (10G B3 worker): the network worker "
+                        "(auto), the page's thread (off), or the worker refuses and the page's thread "
+                        "takes over (refuse: the fallback)")
+    p.add_argument("--frame-ms", type=float, default=0.0,
+                   help="pace the page's frames to this many ms each (40: a slow machine at 25 fps); "
+                        "Chromium then draws without its frame limit")
+    p.add_argument("--tag", default="", help="added to the output names")
+    p.add_argument("--video", type=float, default=0.0,
+                   help="after the measurement, record this many seconds of the ride as OUT/web-mp-<time>.mp4 "
+                        "(screenshots in a row, ffmpeg)")
     a = p.parse_args()
     a.chromium = a.chromium or web_browser.find()
     missing = tw.web_serve().missing_build(a.dir, ["ocw_web_bg.wasm"])
@@ -195,7 +240,7 @@ def main():
             sys.exit(f"{f} missing: run `make web` and `cargo build --release -p ocw-server -p ocw-bot`")
     os.makedirs(a.out, exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    base = os.path.join(a.out, "web-mp-" + stamp)
+    base = os.path.join(a.out, "web-mp-" + stamp + (f"-{a.tag}" if a.tag else ""))
     work = tempfile.mkdtemp(prefix="ocw-web-mp-")
     quic, wt = free_udp_port(), free_udp_port()
     stats_file = os.path.join(work, "server-stats.json")
@@ -248,6 +293,10 @@ def main():
         httpd = tw.web_serve().server(a.dir, stats=stats)
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         query = f"{info['query']}&name={a.name}&route=hills"
+        if a.net_worker != "auto":
+            query += f"&net-worker={a.net_worker}"
+        if a.frame_ms:
+            query += f"&frame-ms={a.frame_ms:g}"
         url = f"http://127.0.0.1:{httpd.server_address[1]}/?{query}"
         summary["url"] = url
         proc, cdp, profile, flags = start_chromium(a, log)
@@ -292,9 +341,18 @@ def main():
             if joined is None and now > a.timeout:
                 break
             if joined is not None and now >= joined + a.seconds:
+                # The frame rate the page drew at (2 s of window.ocwFrames).
+                summary["frames_per_s"] = cdp.eval(
+                    "new Promise(r => { const f = window.ocwFrames, t = performance.now();"
+                    " setTimeout(() => r((window.ocwFrames - f) * 1000 / (performance.now() - t)), 2000); })",
+                    await_promise=True)
                 net = cdp.eval("window.ocw && window.ocw.netStats ? window.ocw.netStats() : ''")
                 summary["screenshot"] = cdp.screenshot(base + ".jpg")
                 shot_at = now
+                if a.video:
+                    # After the measurement (the screenshots slow the page):
+                    # a short video of the ride from screenshots in a row.
+                    summary["video"] = record_video(cdp, base, a.video)
                 break
             if any("Disconnected" in x or "WebTransport: closed" in x for x in errors):
                 break
@@ -372,8 +430,15 @@ def main():
         **{f"bot_{b['label']}_{b['name']}": pick(b["timing"]) for b in summary["bots"]},
     }
     b = summary.get("browser", {})
+    # Who read the connection, how long the worker's messages waited for
+    # the page, and how smoothly the riders moved (10G B3 worker).
+    summary["reader"] = b.get("reader")
+    summary["worker"] = b.get("worker")
+    summary["motion"] = b.get("motion")
+    want_reader = "worker" if a.net_worker == "auto" else "main thread"
     others = b.get("others_seen") or []
     checks = {
+        f"the connection was read on the {want_reader}": b.get("reader") == want_reader,
         "browser joined over WebTransport": summary.get("joined_s") is not None,
         f"browser saw >= {a.riders} other riders": len(others) >= a.riders,
         "browser rode": float(b.get("distance_m") or 0) > 20,
@@ -401,7 +466,8 @@ def main():
         json.dump(summary, f, indent=2)
     shutil.rmtree(work, ignore_errors=True)
     print(json.dumps({k: summary.get(k) for k in (
-        "ok", "checks", "joined_s", "browser_last", "server", "timing", "errors", "error")}, indent=2))
+        "ok", "checks", "joined_s", "browser_last", "server", "timing", "reader", "worker", "motion",
+        "frames_per_s", "errors", "error")}, indent=2))
     print(f"log: {base}.log  screenshot: {summary.get('screenshot')}")
     sys.exit(0 if summary["ok"] else 1)
 
