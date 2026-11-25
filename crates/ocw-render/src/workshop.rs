@@ -129,6 +129,9 @@ pub struct SwatchRowView {
     pub selected: usize,
     /// The focus is on the row (not on a tile).
     pub focused: bool,
+    /// The swatch of the standard colour (the model's own), marked "std"
+    /// – it may look like a palette colour.
+    pub standard: Option<usize>,
 }
 
 /// The tile grid as shown.
@@ -2142,6 +2145,10 @@ fn spawn_picker(
         // (bug 2026-11-17: the stand's card ran out at the panel's bottom).
         use panel_layout::*;
         let fitted = fitted_card(p, aspect);
+        // No room for any line: no empty card under the tiles.
+        if fitted.is_empty() {
+            return;
+        }
         c.spawn((
             Node {
                 margin: UiRect::top(vh(CARD_MARGIN)),
@@ -2408,16 +2415,39 @@ fn spawn_swatches(c: &mut ChildSpawnerCommands, s: &SwatchRowView, inner_w: f32)
                     _ => Color::srgba(1.0, 1.0, 1.0, 0.18),
                 }),
                 BackgroundColor(Color::NONE),
-                children![(
+            ))
+            .with_children(|sw| {
+                let mut inner = sw.spawn((
                     Node {
                         width: percent(100),
                         height: percent(100),
                         border_radius: BorderRadius::all(vh(0.35)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
                         ..default()
                     },
                     BackgroundColor(Color::srgb_u8(r, g, b)),
-                )],
-            ))
+                ));
+                // The standard colour's mark, light on dark colours.
+                if s.standard == Some(i) {
+                    let light = 0.299 * f32::from(r) + 0.587 * f32::from(g) + 0.114 * f32::from(b)
+                        < 128.0;
+                    inner.with_children(|m| {
+                        m.spawn((
+                            Text::new("std"),
+                            TextFont {
+                                font_size: FontSize::Vh(size * 0.3),
+                                ..default()
+                            },
+                            TextColor(if light {
+                                Color::srgb(0.9, 0.9, 0.9)
+                            } else {
+                                Color::srgb(0.15, 0.15, 0.17)
+                            }),
+                        ));
+                    });
+                }
+            })
             .observe(
                 move |_: On<PointerOver>, mut ptr: ResMut<WorkshopPointer>| {
                     ptr.0.push(WorkshopPointerEvent::Swatch(i));
@@ -2846,6 +2876,7 @@ mod tests {
             colours: vec![Rgb(0x1E1E22); 13],
             selected: 0,
             focused: true,
+            standard: Some(0),
         });
         let (after, inner_h, inner_w) = panel_room(&v, 16.0 / 9.0);
         let (size, _) = swatch_layout(13, inner_w);

@@ -1528,10 +1528,21 @@ pub(crate) mod tests {
                 "{slot:?}: only items among the tiles"
             );
         }
+        // Each tile's picture frames the item: the shorts' legs, the
+        // socks' and shoes' feet, the gloves' hands.
+        use ocw_render::thumbs::RiderShot;
+        for (slot, shot) in [
+            (Slot::Shorts, RiderShot::Legs),
+            (Slot::Socks, RiderShot::Feet),
+            (Slot::Shoes, RiderShot::Feet),
+            (Slot::Gloves, RiderShot::Hands),
+        ] {
+            assert_eq!(MirrorSlot::Kit(slot).shot(), shot, "{slot:?}");
+        }
         let world = World::new();
         let mut w = world.open();
         open_kit(&world, &mut w, Slot::Gloves);
-        let gloves = |w: &Workshop| w.design_preview().unwrap().design.gloves;
+        let gloves =|w: &Workshop| w.design_preview().unwrap().design.gloves;
         let focus = |w: &Workshop| w.picker.as_ref().unwrap().focus;
         // → on the tiles moves over the items, the colour stays.
         world.step(&mut w, &[Act::Right]);
@@ -1574,6 +1585,7 @@ pub(crate) mod tests {
         assert_eq!(v.colours.len(), 13);
         assert_eq!(v.colours[2], PALETTE[1]);
         assert_eq!(v.colours[0], Field::Gloves.standard_colour());
+        assert_eq!(v.standard, Some(0), "the standard swatch marked");
         assert_eq!(v.label, format!("Colour of the gloves: {}", PALETTE[1]));
         // The pointer: hovering a swatch selects it, a click applies it.
         world.step(&mut w, &[Act::Swatch(5)]);

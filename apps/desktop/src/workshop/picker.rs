@@ -333,6 +333,10 @@ impl MirrorSlot {
         match self {
             Self::Char(CharSlot::Glasses) => RiderShot::FaceFront,
             Self::Char(CharSlot::Skin) => RiderShot::Face,
+            // The kit tiles of the legs (4N Q30 (a)): the shorts from the
+            // waist to the knees, the socks with the feet.
+            Self::Kit(Slot::Shorts) => RiderShot::Legs,
+            Self::Kit(Slot::Socks) => RiderShot::Feet,
             s => match s.region() {
                 Some(Region::Head) => RiderShot::Face,
                 Some(Region::Hands) => RiderShot::Hands,

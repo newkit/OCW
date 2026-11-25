@@ -1973,6 +1973,13 @@ fn fill_rider_tiles(v: &mut PickerView, p: &picker::Picker, scene: &Workshop, ct
     use ocw_client::part_tiles::{self, COLUMNS};
     use ocw_render::thumbs::RiderThumb;
     let shot = scene.dress.slot().shot();
+    // A kit picker with a swatch row shows its items in the selected
+    // colour (4N Q30 (a)); the others the saved look.
+    let look = p
+        .swatches
+        .as_ref()
+        .and(scene.design_preview())
+        .unwrap_or(ctx.look);
     for (row, r) in v.rows.iter_mut().zip(&p.rows) {
         match r.kind {
             picker::Kind::Free(picker::Free::Skin(i)) => {
@@ -1992,10 +1999,7 @@ fn fill_rider_tiles(v: &mut PickerView, p: &picker::Picker, scene: &Workshop, ct
                     kit.push(ocw_assets::rider::HELMET_OFF.to_string());
                 }
                 row.thumb = Some(ThumbKey::Rider(RiderThumb {
-                    look: ocw_core::RiderLook {
-                        character,
-                        ..ctx.look
-                    },
+                    look: ocw_core::RiderLook { character, ..look },
                     kit,
                     shot,
                 }));
@@ -2025,6 +2029,7 @@ pub fn swatch_row_view(s: &picker::Swatches) -> ocw_render::workshop::SwatchRowV
         colours: (0..s.colours.len()).map(|i| s.shown(i)).collect(),
         selected: s.focus.swatch,
         focused: s.focus.on_swatches,
+        standard: s.colours.iter().position(Option::is_none),
     }
 }
 
