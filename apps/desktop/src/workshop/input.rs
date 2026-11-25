@@ -49,6 +49,10 @@ pub enum Act {
     /// The pointer is over picker row `i` / clicked it (the panel's UI).
     Row(usize),
     RowClick(usize),
+    /// The pointer is over swatch `i` of a kit picker's colour row /
+    /// clicked or tapped it (4N Q30 (a)).
+    Swatch(usize),
+    SwatchClick(usize),
     /// Dialog button `i` was clicked / tapped.
     Button(usize),
     /// The on-screen ‹ Back button (touch mode, spec §3.2.2).

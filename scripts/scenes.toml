@@ -2191,9 +2191,37 @@ shot = 24
 
 [[scene]]
 name = "workshop-gloves-colour"
-description = "Character corner (spec §14 Phase 4, 4C, v3.23): the gloves picker with its own colour row (‹ colour ›, ← / → live in the mirror, Confirm applies) above the shop's gloves; the rider idling at the mirror"
+description = "Character corner (spec §14 Phase 4, 4N Q30 (a)): the gloves picked from tiles (a picture of the hands each, prices and locks as on the stand) with the row of colour swatches above them – the focus on the row, the third swatch selected (outlined) and shown live on the rider's hands"
 args = ["--route", "hills", "--bots", "3", "--power", "250"]
-at = ["2.2=workshop open", "2.8=workshop mirror", "4.4=workshop slot-next", "4.6=workshop slot-next", "4.8=workshop slot-next", "5=workshop slot-next", "5.2=workshop slot-next", "5.4=workshop slot-next", "5.6=workshop slot-next", "5.8=workshop slot-next", "6=workshop slot-next", "6.2=workshop slot-next", "6.6=workshop select", "7.4=workshop down", "8=workshop right", "8.4=workshop right", "8.8=workshop right"]
+at = ["2.2=workshop open", "2.8=workshop mirror", "4.4=workshop slot-next", "4.6=workshop slot-next", "4.8=workshop slot-next", "5.0=workshop slot-next", "5.2=workshop slot-next", "5.4=workshop slot-next", "5.6=workshop slot-next", "5.8=workshop slot-next", "6.0=workshop slot-next", "6.2=workshop slot-next", "6.4=workshop slot-next", "6.6=workshop slot-next", "6.8=workshop slot-next", "7.2=workshop select", "8.0=workshop up", "8.4=workshop right", "8.8=workshop right", "9.2=workshop right"]
+shot = 24
+
+[[scene]]
+name = "workshop-gloves-colour-phone"
+description = "Phone-shaped window (1688 × 780, a phone held sideways; spec §14 Phase 4, 4N Q30 (a)): the gloves picked from tiles (a picture of the hands each, prices and locks as on the stand) with the row of colour swatches above them – the focus on the row, the third swatch selected (outlined) and shown live on the rider's hands"
+args = ["--route", "hills", "--bots", "3", "--power", "250", "--window", "1688x780"]
+at = ["2.2=workshop open", "2.8=workshop mirror", "4.4=workshop slot-next", "4.6=workshop slot-next", "4.8=workshop slot-next", "5.0=workshop slot-next", "5.2=workshop slot-next", "5.4=workshop slot-next", "5.6=workshop slot-next", "5.8=workshop slot-next", "6.0=workshop slot-next", "6.2=workshop slot-next", "6.4=workshop slot-next", "6.6=workshop slot-next", "6.8=workshop slot-next", "7.2=workshop select", "8.0=workshop up", "8.4=workshop right", "8.8=workshop right", "9.2=workshop right"]
+shot = 24
+
+[[scene]]
+name = "workshop-shorts-colour"
+description = "Character corner (spec §14 Phase 4, 4N Q30 (a)): the shorts as tiles (a picture of the legs each) with the swatch row above – blue selected (outlined, the standard swatch marked std) and shown on the rider, the focus back down on the worn shorts' tile"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2.2=workshop open", "2.8=workshop mirror", "4.4=workshop slot-next", "4.6=workshop slot-next", "4.8=workshop slot-next", "5.0=workshop slot-next", "5.2=workshop slot-next", "5.4=workshop slot-next", "5.6=workshop slot-next", "5.8=workshop slot-next", "6.0=workshop slot-next", "6.2=workshop slot-next", "6.4=workshop slot-next", "6.6=workshop slot-next", "6.8=workshop slot-next", "7.0=workshop slot-next", "7.4=workshop select", "8.2=workshop up", "8.6=workshop right", "9.0=workshop right", "9.4=workshop right", "9.8=workshop right", "10.2=workshop right", "10.6=workshop right", "11.0=workshop right", "11.4=workshop down"]
+shot = 24
+
+[[scene]]
+name = "workshop-socks-tiles"
+description = "Character corner (spec §14 Phase 4, 4N Q30 (a)): the socks as tiles (a picture of the legs each) with the swatch row above – the second item focused and previewed on the rider, the standard colour selected"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2.2=workshop open", "2.8=workshop mirror", "4.4=workshop slot-next", "4.6=workshop slot-next", "4.8=workshop slot-next", "5.0=workshop slot-next", "5.2=workshop slot-next", "5.4=workshop slot-next", "5.6=workshop slot-next", "5.8=workshop slot-next", "6.0=workshop slot-next", "6.2=workshop slot-next", "6.4=workshop slot-next", "6.6=workshop slot-next", "6.8=workshop slot-next", "7.0=workshop slot-next", "7.2=workshop slot-next", "7.6=workshop select", "8.4=workshop right"]
+shot = 24
+
+[[scene]]
+name = "workshop-shoes-colour"
+description = "Character corner (spec §14 Phase 4, 4N Q30 (a)): the shoes as tiles (a picture of the feet each) with the swatch row above – a colour chosen on the row and applied with Enter, the focus back on the shoes' tiles"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2.2=workshop open", "2.8=workshop mirror", "4.4=workshop slot-next", "4.6=workshop slot-next", "4.8=workshop slot-next", "5.0=workshop slot-next", "5.2=workshop slot-next", "5.4=workshop slot-next", "5.6=workshop slot-next", "5.8=workshop slot-next", "6.0=workshop slot-next", "6.2=workshop slot-next", "6.4=workshop slot-next", "6.6=workshop slot-next", "6.8=workshop slot-next", "7.0=workshop slot-next", "7.2=workshop slot-next", "7.4=workshop slot-next", "7.6=workshop slot-next", "8.0=workshop select", "8.8=workshop up", "9.2=workshop right", "9.6=workshop right", "10.0=workshop select", "10.4=workshop down"]
 shot = 24
 
 [[scene]]

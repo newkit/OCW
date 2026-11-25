@@ -114,6 +114,24 @@ pub struct PickerView {
     pub tiles: Option<TilesView>,
     /// A line under the title (the whole bike against the stock bike).
     pub subtitle: Option<String>,
+    /// A row of colour swatches above the tiles (spec §14 Phase 4, 4N
+    /// Q30 (a): the kit's own colours of shorts, socks, shoes, gloves).
+    pub swatches: Option<SwatchRowView>,
+}
+
+/// A kit picker's swatch row as shown (4N Q30 (a)): each swatch the
+/// colour itself, the selected one outlined.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SwatchRowView {
+    /// "Colour of the gloves: standard (black)".
+    pub label: String,
+    pub colours: Vec<Rgb>,
+    pub selected: usize,
+    /// The focus is on the row (not on a tile).
+    pub focused: bool,
+    /// The swatch of the standard colour (the model's own), marked "std"
+    /// – it may look like a palette colour.
+    pub standard: Option<usize>,
 }
 
 /// The tile grid as shown.
@@ -202,6 +220,9 @@ impl Default for WorkshopView {
 pub enum WorkshopPointerEvent {
     Row(usize),
     RowClick(usize),
+    /// Over / clicked swatch `i` of the swatch row (4N Q30 (a)).
+    Swatch(usize),
+    SwatchClick(usize),
     Button(usize),
     Back,
 }
@@ -2052,6 +2073,10 @@ fn spawn_picker(
                 TextColor(Color::srgb(0.75, 0.9, 0.8)),
             ));
         }
+        if let Some(s) = &p.swatches {
+            let (_, _, inner_w) = panel_room(p, aspect);
+            spawn_swatches(c, s, inner_w);
+        }
         if let Some(t) = p.tiles {
             spawn_tiles(c, p, t, &tile_images);
         }
@@ -2120,6 +2145,10 @@ fn spawn_picker(
         // (bug 2026-11-17: the stand's card ran out at the panel's bottom).
         use panel_layout::*;
         let fitted = fitted_card(p, aspect);
+        // No room for any line: no empty card under the tiles.
+        if fitted.is_empty() {
+            return;
+        }
         c.spawn((
             Node {
                 margin: UiRect::top(vh(CARD_MARGIN)),
@@ -2180,6 +2209,13 @@ mod panel_layout {
     pub const CARD_GAP: f32 = 0.4;
     pub const CARD_HEAD: f32 = 2.6;
     pub const CARD_TEXT: f32 = 2.2;
+    /// The swatch row (4N Q30 (a)): its label, the swatches' gap, their
+    /// largest and smallest size (smaller rows wrap) and the outline.
+    pub const SWATCH_LABEL: f32 = 1.9;
+    pub const SWATCH_GAP: f32 = 0.6;
+    pub const SWATCH_MAX: f32 = 5.0;
+    pub const SWATCH_MIN: f32 = 3.0;
+    pub const SWATCH_OUTLINE: f32 = 0.45;
     /// Bevy's line height (of the font size) and the UI font's advance.
     pub const LINE: f32 = 1.2;
     pub const ADVANCE: f32 = 0.6;
@@ -2222,6 +2258,14 @@ pub fn panel_room(p: &PickerView, aspect: f32) -> (f32, f32, f32) {
     let mut used = text_vh(wrapped_lines(&p.title, inner_w, TITLE), TITLE);
     if let Some(sub) = &p.subtitle {
         used += GAP + text_vh(wrapped_lines(sub, inner_w, SUBTITLE), SUBTITLE);
+    }
+    if let Some(s) = &p.swatches {
+        let (size, rows) = swatch_layout(s.colours.len(), inner_w);
+        used += GAP
+            + text_vh(wrapped_lines(&s.label, inner_w, SWATCH_LABEL), SWATCH_LABEL)
+            + GAP
+            + rows as f32 * size
+            + SWATCH_GAP * rows.saturating_sub(1) as f32;
     }
     if let Some(t) = p.tiles {
         if t.first > 0 {
@@ -2309,6 +2353,117 @@ pub fn tile_picture_aspect(r: &PickerRowView) -> f32 {
     }
 }
 
+/// The swatch row's layout in a panel `inner_w` (vh) wide: the swatches'
+/// size (vh, square) and the rows they take – one row of up to
+/// [`panel_layout::SWATCH_MAX`] each while it fits, else rows of the
+/// smallest size that still takes a finger or a click.
+pub fn swatch_layout(n: usize, inner_w: f32) -> (f32, usize) {
+    use panel_layout::*;
+    if n == 0 {
+        return (0.0, 0);
+    }
+    let one_row = (inner_w - SWATCH_GAP * (n - 1) as f32) / n as f32;
+    if one_row >= SWATCH_MIN {
+        return (one_row.min(SWATCH_MAX), 1);
+    }
+    let per_row = (((inner_w + SWATCH_GAP) / (SWATCH_MIN + SWATCH_GAP)).floor() as usize).max(1);
+    (SWATCH_MIN, n.div_ceil(per_row))
+}
+
+/// The swatch row above a kit picker's tiles (4N Q30 (a)): its label,
+/// then each colour as a square swatch, the selected one outlined (in the
+/// focus colour while the row has the focus); hovering selects, a click
+/// or a tap applies.
+fn spawn_swatches(c: &mut ChildSpawnerCommands, s: &SwatchRowView, inner_w: f32) {
+    use panel_layout::*;
+    let (size, _) = swatch_layout(s.colours.len(), inner_w);
+    c.spawn((
+        Text::new(s.label.clone()),
+        TextFont {
+            font_size: FontSize::Vh(SWATCH_LABEL),
+            ..default()
+        },
+        TextColor(if s.focused {
+            FOCUS
+        } else {
+            Color::srgb(0.85, 0.87, 0.9)
+        }),
+    ));
+    c.spawn(Node {
+        flex_direction: FlexDirection::Row,
+        flex_wrap: FlexWrap::Wrap,
+        column_gap: vh(SWATCH_GAP),
+        row_gap: vh(SWATCH_GAP),
+        ..default()
+    })
+    .with_children(|row| {
+        for (i, colour) in s.colours.iter().enumerate() {
+            let [r, g, b] = colour.channels();
+            let selected = i == s.selected;
+            row.spawn((
+                Node {
+                    width: vh(size),
+                    height: vh(size),
+                    border: UiRect::all(vh(SWATCH_OUTLINE)),
+                    border_radius: BorderRadius::all(vh(0.6)),
+                    padding: UiRect::all(vh(SWATCH_OUTLINE * 0.6)),
+                    ..default()
+                },
+                BorderColor::all(match (selected, s.focused) {
+                    (true, true) => FOCUS,
+                    (true, false) => Color::WHITE,
+                    _ => Color::srgba(1.0, 1.0, 1.0, 0.18),
+                }),
+                BackgroundColor(Color::NONE),
+            ))
+            .with_children(|sw| {
+                let mut inner = sw.spawn((
+                    Node {
+                        width: percent(100),
+                        height: percent(100),
+                        border_radius: BorderRadius::all(vh(0.35)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb_u8(r, g, b)),
+                ));
+                // The standard colour's mark, light on dark colours.
+                if s.standard == Some(i) {
+                    let [lr, lg, lb] = [r, g, b].map(f32::from);
+                    let light = 0.299 * lr + 0.587 * lg + 0.114 * lb < 128.0;
+                    inner.with_children(|m| {
+                        m.spawn((
+                            Text::new("std"),
+                            TextFont {
+                                font_size: FontSize::Vh(size * 0.3),
+                                ..default()
+                            },
+                            TextColor(if light {
+                                Color::srgb(0.9, 0.9, 0.9)
+                            } else {
+                                Color::srgb(0.15, 0.15, 0.17)
+                            }),
+                        ));
+                    });
+                }
+            })
+            .observe(
+                move |_: On<PointerOver>, mut ptr: ResMut<WorkshopPointer>| {
+                    ptr.0.push(WorkshopPointerEvent::Swatch(i));
+                },
+            )
+            .observe(
+                move |click: On<PointerClick>, mut ptr: ResMut<WorkshopPointer>| {
+                    if click.button == PointerButton::Primary {
+                        ptr.0.push(WorkshopPointerEvent::SwatchClick(i));
+                    }
+                },
+            );
+        }
+    });
+}
+
 /// The picker's tiles (spec 4B *Tiles*): the shown rows of the grid, each
 /// a thumbnail of the part, its name, its gain and weight against the
 /// slot's base part and its badge (equipped, owned, price, lock).
@@ -2335,8 +2490,10 @@ fn spawn_tiles(
         ..default()
     })
     .with_children(|g| {
+        // While the swatch row above has the focus no tile shows it.
+        let on_swatches = p.swatches.as_ref().is_some_and(|s| s.focused);
         for (i, r) in p.rows.iter().enumerate().skip(t.first).take(t.shown) {
-            let focused = i == p.focus;
+            let focused = i == p.focus && !on_swatches;
             let gain_colour = if r.gain.starts_with('+') {
                 Color::srgb(0.6, 0.92, 0.65)
             } else if r.gain.starts_with('−') {
@@ -2663,6 +2820,73 @@ mod tests {
         assert_eq!(wrapped_lines("aaa bbb ccc", 7.0 * 2.0 * 0.6 + 0.01, 2.0), 2);
         assert_eq!(wrapped_lines("", 10.0, 2.0), 1);
         assert_eq!(wrapped_lines("abcdefghij", 4.0 * 0.6 + 0.01, 1.0), 3);
+    }
+
+    /// The kit pickers' swatch row (4N Q30 (a)): the thirteen colours in
+    /// one row in every window from 4:3 to 21:9, each at most
+    /// `SWATCH_MAX`; a narrow panel wraps them at the smallest size; the
+    /// panel's estimate counts the row, and the card still fits under
+    /// two rows of rider tiles.
+    #[test]
+    fn the_swatch_row_fits_above_the_tiles() {
+        use panel_layout::*;
+        for aspect in [4.0 / 3.0, 16.0 / 10.0, 16.0 / 9.0, 21.0 / 9.0] {
+            let inner_w = WIDTH_VW * aspect - 2.0 * (PAD_X + BORDER);
+            let (size, rows) = swatch_layout(13, inner_w);
+            assert_eq!(rows, 1, "{aspect}");
+            assert!(
+                (SWATCH_MIN..=SWATCH_MAX).contains(&size),
+                "{aspect}: {size}"
+            );
+            assert!(
+                13.0 * size + 12.0 * SWATCH_GAP <= inner_w + 1e-3,
+                "{aspect}"
+            );
+        }
+        // A phone held upright: rows of the smallest swatches.
+        let (size, rows) = swatch_layout(13, 30.0);
+        assert_eq!(size, SWATCH_MIN);
+        assert!(rows > 1);
+        let per_row = 13usize.div_ceil(rows);
+        assert!(per_row as f32 * SWATCH_MIN + (per_row - 1) as f32 * SWATCH_GAP <= 30.0);
+        assert_eq!(swatch_layout(0, 30.0), (0.0, 0));
+        // The estimate: the row adds its label and its swatches.
+        // Two rows of square rider tiles, as the gloves' picker shows them.
+        let mut v = PickerView {
+            title: "Gloves – your kit".into(),
+            rows: (0..7)
+                .map(|i| PickerRowView {
+                    left: format!("Race gloves {i}"),
+                    right: "1,240 ♥".into(),
+                    swatch: Some(Rgb(0x1E1E22)),
+                    ..Default::default()
+                })
+                .collect(),
+            detail: vec!["Free – looks only".into()],
+            tiles: Some(TilesView {
+                cols: 3,
+                first: 0,
+                shown: 6,
+            }),
+            ..Default::default()
+        };
+        let (before, _, _) = panel_room(&v, 16.0 / 9.0);
+        v.swatches = Some(SwatchRowView {
+            label: "Colour of the gloves: standard (black)".into(),
+            colours: vec![Rgb(0x1E1E22); 13],
+            selected: 0,
+            focused: true,
+            standard: Some(0),
+        });
+        let (after, inner_h, inner_w) = panel_room(&v, 16.0 / 9.0);
+        let (size, _) = swatch_layout(13, inner_w);
+        let label = text_vh(1, SWATCH_LABEL);
+        assert!((after - before - (2.0 * GAP + label + size)).abs() < 1e-3);
+        assert!(after < inner_h, "{after} of {inner_h}");
+        assert_eq!(
+            fitted_card(&v, 16.0 / 9.0),
+            vec!["Free – looks only".to_string()]
+        );
     }
 
     #[test]

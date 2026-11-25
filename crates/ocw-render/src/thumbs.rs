@@ -100,6 +100,8 @@ pub enum RiderShot {
     Body,
     /// The hands (gloves).
     Hands,
+    /// The legs from the waist to the knees (shorts; 4N Q30 (a)).
+    Legs,
     /// The feet (shoes, socks).
     Feet,
 }
@@ -649,6 +651,8 @@ pub fn rider_framing(scale: f32, hunch: f32, shot: RiderShot) -> (Vec3, Vec3) {
         // Head to thighs: where the shapes and bodies differ.
         RiderShot::Body => (Vec3::new(0.0, 1.22, 0.0) * scale, 0.6, from(0.35, 0.12)),
         RiderShot::Hands => (Vec3::new(0.12, 0.86, -0.04) * scale, 0.3, from(0.45, 0.25)),
+        // The waist to below the knees: the shorts, tights' legs.
+        RiderShot::Legs => (Vec3::new(0.0, 0.74, 0.0) * scale, 0.36, from(0.35, 0.1)),
         RiderShot::Feet => (Vec3::new(0.05, 0.12, -0.04) * scale, 0.3, from(0.45, 0.45)),
     };
     (at + dir * (radius * scale / half), at)
@@ -1091,6 +1095,7 @@ mod tests {
                 RiderShot::FaceFront,
                 RiderShot::Body,
                 RiderShot::Hands,
+                RiderShot::Legs,
                 RiderShot::Feet,
             ] {
                 let (eye, target) = rider_framing(scale, 0.0, shot);
@@ -1111,6 +1116,13 @@ mod tests {
                     RiderShot::Body => {
                         assert!(target.y + seen > 1.8 * scale, "the helmet");
                         assert!(target.y - seen < 0.7 * scale, "the thighs");
+                    }
+                    // The shorts: the waist (about 1.05 m) to the knees
+                    // (about 0.5 m), no helmet.
+                    RiderShot::Legs => {
+                        assert!(target.y + seen > 1.05 * scale, "the waist");
+                        assert!(target.y + seen < 1.3 * scale, "not the chest");
+                        assert!(target.y - seen < 0.5 * scale, "the knees");
                     }
                     _ => assert!(seen < 0.4 * scale),
                 }
@@ -1562,6 +1574,7 @@ mod tests {
             RiderShot::FaceFront,
             RiderShot::Body,
             RiderShot::Hands,
+            RiderShot::Legs,
             RiderShot::Feet,
         ] {
             let k = rider(RiderLook::default(), shot);

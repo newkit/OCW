@@ -157,6 +157,41 @@ impl Field {
         }
     }
 
+    /// The colour of a kit field (shorts, socks, shoes, gloves) in `l`
+    /// (`Some(None)`: the standard colour); `None` for the other fields.
+    pub fn kit_colour(self, l: &RiderLook) -> Option<Option<Rgb>> {
+        let d = &l.design;
+        Some(match self {
+            Self::Shorts => d.shorts,
+            Self::Socks => d.socks,
+            Self::Shoes => d.shoes,
+            Self::Gloves => d.gloves,
+            _ => return None,
+        })
+    }
+
+    /// `l` with the kit field's colour `c` (other fields: `l`).
+    pub fn with_kit_colour(self, mut l: RiderLook, c: Option<Rgb>) -> RiderLook {
+        let d = &mut l.design;
+        match self {
+            Self::Shorts => d.shorts = c,
+            Self::Socks => d.socks = c,
+            Self::Shoes => d.shoes = c,
+            Self::Gloves => d.gloves = c,
+            _ => {}
+        }
+        l
+    }
+
+    /// The standard colour of a kit field as its swatch shows it (the
+    /// model's own: black shorts and gloves, white socks and shoes).
+    pub fn standard_colour(self) -> Rgb {
+        match self {
+            Self::Socks | Self::Shoes => Rgb(0xF2F2EE),
+            _ => Rgb(0x1E1E22),
+        }
+    }
+
     /// `l` with this field stepped by `d` (← −1, → +1).
     pub fn step(self, mut l: RiderLook, d: i32) -> RiderLook {
         let k = &mut l.design;
@@ -183,6 +218,15 @@ impl Field {
         }
         l
     }
+}
+
+/// The colours of a kit field's swatch row (spec §14 Phase 4, 4N Q30
+/// (a)), in the order ← / → step them: the standard colour, then the
+/// palette.
+pub fn kit_colours() -> Vec<Option<Rgb>> {
+    std::iter::once(None)
+        .chain(PALETTE.iter().copied().map(Some))
+        .collect()
 }
 
 /// The `kit.design` line that makes `l`'s design (every field, so the

@@ -1367,6 +1367,8 @@ fn workshop_input(
         acts.extend(pointer_events.into_iter().map(|e| match e {
             WorkshopPointerEvent::Row(i) => Act::Row(i),
             WorkshopPointerEvent::RowClick(i) => Act::RowClick(i),
+            WorkshopPointerEvent::Swatch(i) => Act::Swatch(i),
+            WorkshopPointerEvent::SwatchClick(i) => Act::SwatchClick(i),
             WorkshopPointerEvent::Button(i) => Act::Button(i),
             WorkshopPointerEvent::Back => Act::BackButton,
         }));
@@ -1765,6 +1767,15 @@ fn picker_view(
             p.bench.unwrap_or(bench::BenchPage::Top),
             p.focused(),
         ),
+        // On the swatch row of a kit picker (4N Q30 (a)): the colour.
+        _ if p.on_swatches() => p.swatches.as_ref().map_or_else(Vec::new, |s| {
+            vec![
+                format!("{}: {}", s.field.name(), s.name(s.focus.swatch)),
+                s.field.help().to_string(),
+                "Free – ← / → choose (live in the mirror), Confirm applies; everyone sees it; ↓ the items."
+                    .into(),
+            ]
+        }),
         _ if p.design_field().is_some() => {
             let draft = p.design.map(|(_, l)| l).unwrap_or_default();
             p.design_field().map_or_else(Vec::new, |f| {
@@ -1866,6 +1877,7 @@ fn picker_view(
         }),
         tiles: None,
         subtitle: None,
+        swatches: None,
     }
 }
 
@@ -1961,6 +1973,13 @@ fn fill_rider_tiles(v: &mut PickerView, p: &picker::Picker, scene: &Workshop, ct
     use ocw_client::part_tiles::{self, COLUMNS};
     use ocw_render::thumbs::RiderThumb;
     let shot = scene.dress.slot().shot();
+    // A kit picker with a swatch row shows its items in the selected
+    // colour (4N Q30 (a)); the others the saved look.
+    let look = p
+        .swatches
+        .as_ref()
+        .and(scene.design_preview())
+        .unwrap_or(ctx.look);
     for (row, r) in v.rows.iter_mut().zip(&p.rows) {
         match r.kind {
             picker::Kind::Free(picker::Free::Skin(i)) => {
@@ -1980,10 +1999,7 @@ fn fill_rider_tiles(v: &mut PickerView, p: &picker::Picker, scene: &Workshop, ct
                     kit.push(ocw_assets::rider::HELMET_OFF.to_string());
                 }
                 row.thumb = Some(ThumbKey::Rider(RiderThumb {
-                    look: ocw_core::RiderLook {
-                        character,
-                        ..ctx.look
-                    },
+                    look: ocw_core::RiderLook { character, ..look },
                     kit,
                     shot,
                 }));
@@ -1997,6 +2013,24 @@ fn fill_rider_tiles(v: &mut PickerView, p: &picker::Picker, scene: &Workshop, ct
         first,
         shown: (RIDER_TILE_ROWS * COLUMNS).min(len.saturating_sub(first)),
     });
+    v.swatches = p.swatches.as_ref().map(swatch_row_view);
+}
+
+/// A kit picker's swatch row as shown (spec §14 Phase 4, 4N Q30 (a)):
+/// every colour (the standard one as the model's own), the selected one
+/// outlined, the label naming it.
+pub fn swatch_row_view(s: &picker::Swatches) -> ocw_render::workshop::SwatchRowView {
+    ocw_render::workshop::SwatchRowView {
+        label: format!(
+            "Colour of the {}: {}",
+            s.field.name().to_lowercase(),
+            s.name(s.focus.swatch)
+        ),
+        colours: (0..s.colours.len()).map(|i| s.shown(i)).collect(),
+        selected: s.focus.swatch,
+        focused: s.focus.on_swatches,
+        standard: s.colours.iter().position(Option::is_none),
+    }
 }
 
 /// Rows of the rider's tiles shown at once (square pictures).
