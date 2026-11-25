@@ -9,7 +9,9 @@
 //! mouths, the outline points):
 //!
 //! ```text
-//! layout version: u8 (4 since J8: a junction's arm runs on past a plain
+//! layout version: u8 (5 since J9: clusters no star-shaped outline holds
+//!   drawn as one simple polygon, mouths out to the room a far end without
+//!   a junction surface leaves; 4 since J8: a junction's arm runs on past a plain
 //!   way split that squeezed it, the mouths lie out for their corners'
 //!   radius along the real edge lines; 3 since J7: paths along a road are drawn as a band
 //!   of its side and take no part in the junctions; 2 since J3: the side
@@ -66,7 +68,10 @@ use crate::package::{Bytes, TileKey};
 
 pub const JUNCTIONS_TAG: &[u8; 4] = b"JNCT";
 pub const STRIP_EDGES_TAG: &[u8; 4] = b"RDGE";
-/// 4 (J8, 4.8.8 Rule): a junction's arm runs on past a plain way split
+/// 5 (J9, 4.8.8 Rule): a cluster no star-shaped outline holds is one
+/// patch with a simple outline, an arm whose edge's far end has no junction
+/// surface may take the room it leaves (a layout 4 section has their own
+/// patches and the mouths at their shares). 4 (J8, 4.8.8 Rule): a junction's arm runs on past a plain way split
 /// that squeezed it (a cluster patch's record lists those splits) and the
 /// mouths lie out for their corners' radius (a layout 3 section has the
 /// squeezed mouths). 3 (J7, 4.8.8 Rule): paths along a road take no part in the junctions
@@ -74,7 +79,7 @@ pub const STRIP_EDGES_TAG: &[u8; 4] = b"RDGE";
 /// band of the road's side). 2 (J3, 4.8.8 Q6 (d)): the side roads' corners
 /// change the drawn surface (a layout 1 section was made for J2's) and
 /// clusters (kinds 2 and 3).
-const JUNCTIONS_VERSION: u8 = 4;
+const JUNCTIONS_VERSION: u8 = 5;
 const STRIP_EDGES_VERSION: u8 = 1;
 /// `JNCT` flag: profiles reconciled, terrain settled (J2).
 pub const FLAG_SETTLED: u8 = 1;

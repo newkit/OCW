@@ -64,9 +64,107 @@ fn sample_m(i: usize, len: f64) -> f64 {
     (i as f64 * PROFILE_STEP_M).min(len)
 }
 
+/// The painted crossings of the package being baked, per edge (distance
+/// from its `from` vertex, half the painted length), for every junction
+/// set this module makes ([`keep_crossings`], J9).
+static CROSSINGS: std::sync::RwLock<Option<Arc<ocw_world::junction::Crossings>>> =
+    std::sync::RwLock::new(None);
+
+/// The junctions of `graph` as the world builder bakes them: knowing the
+/// painted crossings [`keep_crossings`] read (J9), so that no cluster or
+/// longer mouth swallows one the junctions' own patches leave.
+pub fn junction_set(graph: &RoadGraph) -> JunctionSet {
+    let js = JunctionSet::new(graph);
+    match CROSSINGS.read().ok().and_then(|c| c.clone()) {
+        Some(c) => js.with_crossings(graph, c),
+        None => js,
+    }
+}
+
+/// Reads the painted crossings of `pkg`'s road strips (OSM's zebras and
+/// signal crossings, `RoadDress::crossings`) onto the edges of `graph` for
+/// the junction sets made from now on ([`junction_set`], J9); `None`
+/// forgets them.
+pub fn keep_crossings(pkg: Option<&WorldPackage>, graph: &RoadGraph) {
+    let value = pkg.map(|pkg| Arc::new(crossings_per_edge(pkg, graph)));
+    if let Ok(mut c) = CROSSINGS.write() {
+        *c = value;
+    }
+}
+
+/// The painted crossings of `pkg`'s strips per edge of `graph`: distance
+/// from the edge's `from` vertex (the crossing's centre projected on the
+/// edge) and half the painted length.
+pub fn crossings_per_edge(pkg: &WorldPackage, graph: &RoadGraph) -> ocw_world::junction::Crossings {
+    let style = ocw_world::road_dress::MarkingStyle::default();
+    let owned;
+    let edges = match pkg
+        .junctions
+        .as_ref()
+        .and_then(|j| j.strip_edges_for(graph))
+    {
+        Some(s) => s,
+        None => {
+            owned = strip_edges_of(pkg, graph);
+            &owned
+        }
+    };
+    let mut out = vec![Vec::new(); graph.edges.len()];
+    for (key, tile) in &pkg.tiles {
+        let Some(ix) = edges.tile(*key, tile.roads.len()) else {
+            continue;
+        };
+        for (s, &ei) in tile.roads.iter().zip(ix) {
+            if ei == NO_EDGE || s.dress.crossings.is_empty() {
+                continue;
+            }
+            let Some(e) = graph.edges.get(ei as usize) else {
+                continue;
+            };
+            for c in &s.dress.crossings {
+                // The crossing's centre on the strip.
+                let mut walked = 0.0f32;
+                let mut at = None;
+                for w in s.points.windows(2) {
+                    let l = ((w[1][0] - w[0][0]).powi(2) + (w[1][2] - w[0][2]).powi(2)).sqrt();
+                    if walked + l >= c.along_m {
+                        let t = ((c.along_m - walked) / l.max(1e-6)).clamp(0.0, 1.0);
+                        at = Some([
+                            f64::from(w[0][0] + (w[1][0] - w[0][0]) * t),
+                            f64::from(w[0][2] + (w[1][2] - w[0][2]) * t),
+                        ]);
+                        break;
+                    }
+                    walked += l;
+                }
+                let Some(p) = at else { continue };
+                // … projected on the edge.
+                let (mut best, mut acc) = ((f64::INFINITY, 0.0), 0.0);
+                for w in e.points.windows(2) {
+                    let ab = [w[1][0] - w[0][0], w[1][1] - w[0][1]];
+                    let l2 = ab[0] * ab[0] + ab[1] * ab[1];
+                    let l = l2.sqrt();
+                    if l2 > 1e-12 {
+                        let t = (((p[0] - w[0][0]) * ab[0] + (p[1] - w[0][1]) * ab[1]) / l2)
+                            .clamp(0.0, 1.0);
+                        let d = (p[0] - w[0][0] - ab[0] * t).hypot(p[1] - w[0][1] - ab[1] * t);
+                        if d < best.0 {
+                            best = (d, acc + l * t);
+                        }
+                    }
+                    acc += l;
+                }
+                let half = f64::from(style.crossing_length_m(c.kind)) / 2.0;
+                out[ei as usize].push((best.1, half));
+            }
+        }
+    }
+    out
+}
+
 /// The vertices that get a junction surface (a patch), for the easing.
 pub fn patched_vertices(graph: &RoadGraph) -> Vec<bool> {
-    let js = JunctionSet::new(graph);
+    let js = junction_set(graph);
     (0..graph.vertices.len())
         .map(|v| js.patch(graph, v).is_some())
         .collect()
@@ -127,7 +225,7 @@ pub fn smooth_through_kinks(graph: &mut RoadGraph) -> usize {
     let adj = graph.adjacency();
     let mut moved = 0;
     for _ in 0..3 {
-        let js = JunctionSet::new(graph);
+        let js = junction_set(graph);
         let pairs: Vec<(usize, [usize; 2])> = (0..graph.vertices.len())
             .filter_map(|v| through_pair(graph, &js, &adj, v).map(|p| (v, p)))
             .collect();
@@ -892,7 +990,7 @@ pub fn reconcile_profiles(
     let mut st = ReconcileStats::default();
     reconcile_rounds(graph, keep, true, &mut st);
     // The intervals over the limit after the blend (before re-limiting).
-    let js = JunctionSet::new(graph);
+    let js = junction_set(graph);
     st.steep_before = steep_intervals(graph, &js, keep).len();
     drop(js);
     for cycle in 0..RELIMIT_CYCLES {
@@ -910,7 +1008,7 @@ pub fn reconcile_profiles(
         st.last_round_m = again.last_round_m;
     }
     // How far the final profiles are from the final patches' surface.
-    let js = JunctionSet::new(graph);
+    let js = junction_set(graph);
     for (e, i, h) in drawn_samples(graph, &js, keep) {
         let d = (h - graph.edges[e].profile[i]).abs();
         if d > st.residual_m {
@@ -943,7 +1041,7 @@ fn reconcile_rounds(
     st: &mut ReconcileStats,
 ) {
     for round in 0..ROUNDS {
-        let js = JunctionSet::new(graph);
+        let js = junction_set(graph);
         let first = round == 0 && longer;
         if first {
             st.patches = (0..graph.vertices.len())
@@ -1610,7 +1708,7 @@ pub fn relimit_grades(
     graph: &mut RoadGraph,
     keep: &(dyn Fn(usize, f64) -> bool + Sync),
 ) -> RelimitStats {
-    let js = JunctionSet::new(graph);
+    let js = junction_set(graph);
     let ids: Vec<usize> = (0..graph.edges.len()).collect();
     let g: &RoadGraph = graph;
     let new = crate::par::map(&ids, crate::par::threads(), |&ei| {
@@ -1939,7 +2037,7 @@ fn project(points: &[[f64; 2]], cum: &[f64], p: [f64; 2]) -> f64 {
 /// rules and outlines, flagged as settled when `settled`, and `RDGE`.
 pub fn junction_data(pkg: &WorldPackage, settled: bool) -> Option<JunctionData> {
     let g = pkg.graph.as_ref()?;
-    let js = JunctionSet::new(g);
+    let js = junction_set(g);
     let index = JunctionIndex::of_set(g, &js, if settled { FLAG_SETTLED } else { 0 });
     Some(JunctionData {
         index: Some(Arc::new(index)),

@@ -405,3 +405,70 @@ pub fn t_junction_split(main_grade: f64, side_grade: f64, at_m: f64, bend_deg: f
         ],
     )
 }
+
+/// Two side roads joining a main road (secondary, 7.5 m, along x, climbing
+/// `main_grade` towards +x) `gap_m` apart (J9): a residential road (5 m) at
+/// vertex 0 (0, 0) leaving at `a_deg` from +x (90: straight to +z), and a
+/// residential road at vertex 1 (`gap_m`, 0) leaving at `b_deg` – to +z
+/// for angles below 180, to −z above (an offset T junction). The main
+/// road's edge between the two (edge 1) is the short arm both share.
+pub fn offset_t(gap_m: f64, a_deg: f64, b_deg: f64, main_grade: f64) -> RoadGraph {
+    let out = |o: [f64; 2], deg: f64| {
+        let d = deg.to_radians();
+        [o[0] + 100.0 * d.cos(), o[1] + 100.0 * d.sin()]
+    };
+    let v = [
+        [0.0, 0.0],
+        [gap_m, 0.0],
+        [-120.0, 0.0],
+        [gap_m + 120.0, 0.0],
+        out([0.0, 0.0], a_deg),
+        out([gap_m, 0.0], b_deg),
+    ];
+    graph(
+        &v,
+        vec![
+            Road::straight(&v, 2, 0, RoadClass::Secondary, 7.5, move |s| {
+                (s - 120.0) * main_grade
+            }),
+            Road::straight(&v, 0, 1, RoadClass::Secondary, 7.5, move |s| s * main_grade),
+            Road::straight(&v, 1, 3, RoadClass::Secondary, 7.5, move |s| {
+                (s + gap_m) * main_grade
+            }),
+            Road::straight(&v, 0, 4, RoadClass::Residential, 5.0, |s| s * 0.03),
+            Road::straight(&v, 1, 5, RoadClass::Residential, 5.0, |s| s * 0.03),
+        ],
+    )
+}
+
+/// A T junction as [`t_junction`] (secondary main road, 7.5 m, climbing
+/// `main_grade` towards +x) whose side road (residential, 5 m, climbing
+/// `side_grade` away to +z) is `side_m` long up to a bridge (vertex 3;
+/// edge 3 beyond it, 50 m, a bridge): J9, a short arm whose far end has no
+/// junction surface.
+pub fn t_junction_to_bridge(main_grade: f64, side_grade: f64, side_m: f64) -> RoadGraph {
+    let v = [
+        [0.0, 0.0],
+        [-120.0, 0.0],
+        [120.0, 0.0],
+        [0.0, side_m],
+        [0.0, side_m + 50.0],
+    ];
+    let mut g = graph(
+        &v,
+        vec![
+            Road::straight(&v, 1, 0, RoadClass::Secondary, 7.5, move |s| {
+                (s - 120.0) * main_grade
+            }),
+            Road::straight(&v, 0, 2, RoadClass::Secondary, 7.5, move |s| s * main_grade),
+            Road::straight(&v, 0, 3, RoadClass::Residential, 5.0, move |s| {
+                s * side_grade
+            }),
+            Road::straight(&v, 3, 4, RoadClass::Residential, 5.0, move |s| {
+                (s + side_m) * side_grade
+            }),
+        ],
+    );
+    g.edges[3].bridge = true;
+    g
+}

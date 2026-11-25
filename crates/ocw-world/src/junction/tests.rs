@@ -603,7 +603,7 @@ fn junctions_without_a_surface_of_a_real_package() {
 fn junctions_a_few_metres_apart_share_one_patch() {
     let g = fixtures::dual_carriageway_t();
     let adj = g.adjacency();
-    let direct = try_cluster(&g, &adj, &[0, 1], &[5]);
+    let direct = try_cluster(&g, &adj, &[0, 1], &[5], None);
     assert!(direct.is_ok(), "{:?}", direct.err());
     let set = JunctionSet::new(&g);
     assert_eq!(set.cluster_of(&g, 0), Some((vec![0, 1], vec![5])));
@@ -660,7 +660,7 @@ fn a_small_roundabout_is_one_patch() {
     let g = fixtures::small_roundabout();
     let adj = g.adjacency();
     let alone: Vec<bool> = (0..4).map(|v| try_patch(&g, &adj[v], v).is_ok()).collect();
-    let direct = try_cluster(&g, &adj, &[0, 1, 2, 3], &[4, 5, 6, 7]);
+    let direct = try_cluster(&g, &adj, &[0, 1, 2, 3], &[4, 5, 6, 7], None);
     assert!(direct.is_ok(), "alone {alone:?}: {:?}", direct.err());
     let set = JunctionSet::new(&g);
     let p = set.patch(&g, 0).expect("the roundabout's patch").clone();
@@ -887,4 +887,146 @@ fn mouths_lie_out_for_the_corners_along_the_real_edges() {
         let worst = worst_side_bend(&p);
         assert!(worst < 25.0, "bend {bend} at {at}: {worst:.1}°");
     }
+}
+
+/// Spec 4.8.8 Rule (J9): an offset T junction – two side roads join the
+/// main road 12 m apart on opposite sides, leaning the same way (30° and
+/// 240°) – whose patches alone meet on the main road's short edge between
+/// them, so they are one cluster, but no star-shaped outline holds both
+/// (J8: each kept its own patch, the arms on the short edge squeezed, the
+/// second's sides bending 100°). Now the cluster takes a simple outline:
+/// one patch for both, the short edge inside it, the sides bending no
+/// more than the lint allows, stored = computed. Where the simple outline
+/// would bend more (two side roads on the same side leaning together),
+/// each keeps its own patch.
+#[test]
+fn two_junctions_on_a_short_edge_share_one_patch() {
+    let g = fixtures::offset_t(8.0, 60.0, 90.0, 0.02);
+    let js = JunctionSet::new(&g);
+    assert!(!js.patch(&g, 0).is_some_and(Patch::is_cluster));
+    assert!(js.cluster_failure(&g, 0).is_some());
+    let g = fixtures::offset_t(12.0, 30.0, 240.0, 0.02);
+    let js = JunctionSet::new(&g);
+    let p = js.patch(&g, 0).expect("a patch").clone();
+    assert_eq!((p.members.clone(), p.inner.clone()), (vec![0, 1], vec![1]));
+    assert!(p.is_cluster() && !p.is_star());
+    assert!(p.arms.iter().all(|a| a.edge != 1));
+    assert_eq!(js.patch(&g, 1), Some(&p));
+    assert!(js.cluster_failure(&g, 0).is_none());
+    check_outline(&p);
+    let worst = worst_side_bend(&p);
+    assert!(worst < 25.0, "{worst:.1}°");
+    // The surface along the edge inside: the patch's.
+    let mid = [6.0, 0.0];
+    assert!(js.drawn_height(&g, 1, 6.0, mid).is_some());
+    let index = Arc::new(section::JunctionIndex::of_set(&g, &js, 0));
+    let mut bytes = Vec::new();
+    section::write_junctions(&index, &mut bytes);
+    let read = Arc::new(section::read_junctions(&bytes).expect("read"));
+    let stored = JunctionSet::with_index(&g, Some(read));
+    assert_eq!(stored.patch(&g, 0), Some(&p));
+    assert_eq!(stored.patch(&g, 1), Some(&p));
+}
+
+/// Spec 4.8.8 Rule (J9): a side road only 10 m long up to a bridge – its
+/// arm's mouth was held at its share of the edge (4.5 m, J8), the 6 m
+/// corners cut short; the bridge end takes nothing of the edge, so the
+/// mouth may lie out to 1 m before it, where the corners need it: the
+/// sides bend less than with the mouth at its share, stored = computed.
+/// On a side road steeper than 6 % the mouth stays at its share.
+#[test]
+fn an_arm_up_to_a_bridge_takes_the_room_it_leaves() {
+    let g = fixtures::t_junction_to_bridge(0.02, 0.04, 10.0);
+    let js = JunctionSet::new(&g);
+    let p = js.patch(&g, 0).expect("a patch").clone();
+    let side = p.arms.iter().find(|a| a.edge == 2).expect("the side arm");
+    assert!(
+        side.mouth_m > 5.0 && side.mouth_m <= 9.0 + 1e-9,
+        "{}",
+        side.mouth_m
+    );
+    let share = try_patch(&g, js.edges_at(0), 0).expect("its share");
+    assert!(
+        (share
+            .arms
+            .iter()
+            .find(|a| a.edge == 2)
+            .expect("arm")
+            .mouth_m
+            - 4.5)
+            .abs()
+            < 1e-6
+    );
+    assert!(super::side_bend(&p) < super::side_bend(&share) - 1e-3);
+    check_outline(&p);
+    let index = Arc::new(section::JunctionIndex::of_set(&g, &js, 0));
+    let mut bytes = Vec::new();
+    section::write_junctions(&index, &mut bytes);
+    let read = Arc::new(section::read_junctions(&bytes).expect("read"));
+    let stored = JunctionSet::with_index(&g, Some(read));
+    assert_eq!(stored.patch(&g, 0), Some(&p));
+    // Steeper than 6 %: at its share.
+    let g = fixtures::t_junction_to_bridge(0.02, 0.10, 10.0);
+    let js = JunctionSet::new(&g);
+    let p = js.patch(&g, 0).expect("a patch");
+    let side = p.arms.iter().find(|a| a.edge == 2).expect("the side arm");
+    assert!((side.mouth_m - 4.5).abs() < 1e-6, "{}", side.mouth_m);
+}
+
+/// Spec 4.8.8 Rule (J9): a painted crossing stays where OSM has it – a
+/// crossing inside a junction surface is drawn at its mouth. An arm up to a
+/// bridge takes the room its far end leaves only where its longer mouth
+/// swallows no crossing the junction's own patch leaves on the strip, and
+/// two junctions on a short edge share one patch only where it swallows no
+/// more crossings than their own patches (Liechtenstein: a zebra 8.4 m out
+/// was drawn 4.5 m farther out at the shared patch's mouth).
+#[test]
+fn a_painted_crossing_stays_where_osm_has_it() {
+    // The bridge arm: a zebra (3 m long) centred 6 m out on the side road.
+    let g = fixtures::t_junction_to_bridge(0.02, 0.04, 10.0);
+    let free = JunctionSet::new(&g);
+    let side = |js: &JunctionSet| {
+        js.patch(&g, 0)
+            .expect("a patch")
+            .arms
+            .iter()
+            .find(|a| a.edge == 2)
+            .expect("the side arm")
+            .mouth_m
+    };
+    assert!(side(&free) > 5.0);
+    let mut per_edge = vec![Vec::new(); g.edges.len()];
+    per_edge[2].push((6.0, 1.5));
+    let kept = JunctionSet::new(&g).with_crossings(&g, Arc::new(per_edge));
+    assert!((side(&kept) - 4.5).abs() < 1e-6, "{}", side(&kept));
+    // The shared patch: a crossing on an arm it takes farther out than
+    // that arm's own junction did.
+    let g = fixtures::offset_t(12.0, 30.0, 240.0, 0.02);
+    let js = JunctionSet::new(&g);
+    let p = js.patch(&g, 0).expect("a patch").clone();
+    assert!(p.is_cluster());
+    let mut found = None;
+    for a in &p.arms {
+        let e = &g.edges[a.edge];
+        let v = if a.at_from { e.from.0 } else { e.to.0 } as usize;
+        let own = try_patch(&g, js.edges_at(v), v).expect("its own patch");
+        let m = own
+            .arms
+            .iter()
+            .find(|o| o.edge == a.edge && o.at_from == a.at_from)
+            .expect("the arm")
+            .mouth_m;
+        if a.mouth_m > m + 0.5 {
+            // Centred just past the own mouth: the shared patch swallows it.
+            let d = m + 0.2 + 0.1;
+            let s = if a.at_from { d } else { e.length_m() - d };
+            found = Some((a.edge, s));
+            break;
+        }
+    }
+    let (edge, s) = found.expect("an arm the shared patch takes farther out");
+    let mut per_edge = vec![Vec::new(); g.edges.len()];
+    per_edge[edge].push((s, 0.1));
+    let kept = JunctionSet::new(&g).with_crossings(&g, Arc::new(per_edge));
+    assert!(!kept.patch(&g, 0).is_some_and(Patch::is_cluster));
 }
