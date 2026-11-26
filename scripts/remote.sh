@@ -352,7 +352,7 @@ EOF
 # are removed up to the checkout. Prints "@@ocw-sync removed N refused M:
 # FIRST-NAMES" (N counts the stale files only, @STALE@ of them come first).
 read -r -d '' win_remove_ps <<'EOF' || true
-$r = @REPO@; $root = [IO.Path]::GetFullPath($r).TrimEnd('\') + '\'; $ns = @STALE@; $n = 0; $bad = 0; $i = 0; $names = ''
+$ProgressPreference = 'SilentlyContinue'; $r = @REPO@; $root = [IO.Path]::GetFullPath($r).TrimEnd('\') + '\'; $ns = @STALE@; $n = 0; $bad = 0; $i = 0; $names = ''
 $ps = @'
 @PATHS@
 '@ -split "`n"
