@@ -38,7 +38,11 @@
 # The tree is taken as it is when remote.sh is called (a snapshot), and a
 # run copies that snapshot once it has its build slot; files are compared by
 # content, and changed ones get the time of the copy (see snapshot_tree,
-# rsync_sync_opts, with_sync).
+# rsync_sync_opts, with_sync). Files removed or moved away here are deleted
+# there too: each sync keeps the list of the files it sent in the checkout's
+# .ocw-sync/ and deletes the files of the previous list that are gone from
+# the new one – nothing else (build outputs, git-ignored files, target/,
+# data/, test-output/, config/ stay; see stale_sh).
 #
 # Each `run` leaves a task marker on the machine while it runs (read by
 # tools/build-dashboard): a JSON file PID-START.json in /tmp/ocw-tasks/
@@ -222,16 +226,84 @@ snapshot_tree() {
 # changed ones get the time of the copy, so cargo rebuilds exactly them.
 rsync_sync_opts=(-rlpgoD --checksum)
 
+# Stale files (spec 11.2): the file lists above only name what is in the
+# tree now, so a file removed or moved away here (`git mv a/x.rs b/x.rs`)
+# stayed in the machine's checkout and could break its build ("module found
+# at both workshop.rs and workshop/mod.rs"). Each sync now leaves the list
+# of the files it sent in the checkout's .ocw-sync/synced.txt (Windows: the
+# paths of .ocw-sync\manifest.tsv) and, before copying, deletes there
+# exactly the files of the previous list that are not in the new one. Only
+# those: nothing an earlier sync did not send (build outputs, git-ignored
+# files), never under config/, target/, data/, test-output/, .git/ or
+# .ocw-sync/; absolute paths and paths with `..` are refused, and so are
+# files reached through a symlinked directory leading out of the checkout;
+# only files and symlinks are deleted, never directories, except those left
+# empty by it (up to the checkout). A checkout without a list yet (its first
+# sync) deletes nothing. Deleting before the copy keeps a case-only rename
+# right on macOS / Windows (the old name is the new file there: deleted,
+# then sent again). No extra ssh call: Linux / macOS run it in the `mkdir`
+# call (stdin: the new list), Windows reads the old list with the manifest
+# and deletes in the call that already removed deleted files.
+# The machine side for Linux / macOS (POSIX sh, run as `sh -c '…' x REPO`,
+# so no single quotes in it): prints "@@ocw-stale first" or
+# "@@ocw-stale removed N refused M: FIRST-NAMES".
+read -r -d '' stale_sh <<'EOF' || true
+cd "$1" || exit 1
+mkdir -p .ocw-sync && cat >.ocw-sync/synced.new || exit 1
+if [ ! -f .ocw-sync/synced.txt ]; then mv .ocw-sync/synced.new .ocw-sync/synced.txt; echo "@@ocw-stale first"; exit 0; fi
+root=$(pwd -P); n=0; bad=0; names=""
+LC_ALL=C sort -u .ocw-sync/synced.new >.ocw-sync/new.sorted
+LC_ALL=C sort -u .ocw-sync/synced.txt | LC_ALL=C comm -23 - .ocw-sync/new.sorted >.ocw-sync/stale
+while IFS= read -r p; do
+  case "$p" in
+    ""|/*|..|../*|*/..|*/../*) bad=$((bad + 1)); continue ;;
+    config|config/*|target|target/*|data|data/*|test-output|test-output/*|.git|.git/*|.ocw-sync|.ocw-sync/*) continue ;;
+  esac
+  [ -f "$p" ] || [ -L "$p" ] || continue
+  d=$(dirname "$p")
+  real=$(cd "$d" 2>/dev/null && pwd -P) || continue
+  case "$real/" in "$root"/*) ;; *) bad=$((bad + 1)); continue ;; esac
+  rm -f "$p" || continue
+  n=$((n + 1)); if [ $n -le 5 ]; then names="$names $p"; fi
+  while [ "$d" != . ] && rmdir "$d" 2>/dev/null; do d=$(dirname "$d"); done
+done <.ocw-sync/stale
+mv .ocw-sync/synced.new .ocw-sync/synced.txt; rm -f .ocw-sync/new.sorted .ocw-sync/stale
+echo "@@ocw-stale removed $n refused $bad:$names"
+EOF
+
+# `stale_report OUTPUT`: a line on stderr for the machine's report
+# ("@@ocw-stale …" from stale_sh, "@@ocw-sync removed|first …" from the
+# Windows side); nothing when nothing was deleted.
+stale_report() {
+  local l n bad names
+  l=$(printf '%s\n' "$1" | tr -d '\r' | grep -m1 -E '^@@ocw-(stale|sync) (first|removed)' || true)
+  case "$l" in
+    *" first")
+      echo "remote.sh: first sync of this checkout with a file list (.ocw-sync/): no stale files deleted" >&2 ;;
+    *" removed "*)
+      l=${l#* removed }; n=${l%% *}; l=${l#* refused }; bad=${l%%:*}; names=${l#*:}
+      if [ "${n:-0}" != 0 ]; then
+        echo "remote.sh: deleted $n stale file(s) there (removed or moved away here):$names$([ "$n" -gt 5 ] && echo ' …')" >&2
+      fi
+      if [ "${bad:-0}" != 0 ]; then
+        echo "remote.sh: refused $bad stale path(s) leading out of the checkout (absolute, .., symlinked directory)" >&2
+      fi ;;
+  esac
+  return 0
+}
+
 sync_tree() {
   if [ "$os" = windows ]; then
     sync_tree_windows
     return
   fi
+  local out stale_cmd="sh -c '$stale_sh' ocw-stale $repo"
   if [ "${OCW_SEED:-0}" = 1 ]; then
-    "${SSH[@]}" "$target" "${seed_sh//$'\n'/ } mkdir -p $repo && ocw_seed $main_repo $repo"
+    out=$("${SSH[@]}" "$target" "${seed_sh//$'\n'/ } mkdir -p $repo && ocw_seed $main_repo $repo && $stale_cmd" <"$snap_dir/present") || return 1
   else
-    "${SSH[@]}" "$target" "mkdir -p $repo"
+    out=$("${SSH[@]}" "$target" "mkdir -p $repo && $stale_cmd" <"$snap_dir/present") || return 1
   fi
+  stale_report "$out"
   if [ "$os" = macos ]; then
     # macOS ships openrsync, which lacks --delete-missing-args: send only the
     # files that exist and delete tracked files removed here with rm.
@@ -253,21 +325,64 @@ ps_encoded() { printf 'powershell -NoProfile -NonInteractive -EncodedCommand %s'
 # Windows sync state: $repo\.ocw-sync\manifest.tsv holds a header naming the
 # checkout ("# ocw-sync v2<TAB>REPO") and, per file sent, its SHA-1 and the
 # size and mtime (ticks) it got there. This prints "sha<TAB>path" for the
-# entries whose file still exists there, unchanged; a manifest without that
-# header (another checkout's, or the format before v2.94) counts as none.
+# entries whose file still exists there, unchanged, then "@@prev-list" and
+# "@@prev<TAB>path" for every entry (the previous sync's files, for the
+# stale files, see stale_sh); a manifest without that header (another
+# checkout's, or the format before v2.94) counts as none (no @@prev-list).
 read -r -d '' win_manifest_ps <<'EOF' || true
 $r = @REPO@; $m = Join-Path $r '.ocw-sync\manifest.tsv'
 if (Test-Path -LiteralPath $m) {
   $ls = [IO.File]::ReadAllLines($m)
   if ($ls.Count -gt 0 -and $ls[0] -eq ('# ocw-sync v2' + [char]9 + $r)) {
+    $prev = New-Object Collections.Generic.List[string]
     for ($i = 1; $i -lt $ls.Count; $i++) {
       $p = $ls[$i].Split([char]9, 4); if ($p.Count -lt 4) { continue }
+      $prev.Add($p[3])
       $fi = New-Object IO.FileInfo (Join-Path $r $p[3])
       if ($fi.Exists -and $fi.Length -eq [int64]$p[1] -and $fi.LastWriteTimeUtc.Ticks -eq [int64]$p[2]) { [Console]::Out.WriteLine($p[0] + [char]9 + $p[3]) }
     }
+    [Console]::Out.WriteLine('@@prev-list'); foreach ($p in $prev) { [Console]::Out.WriteLine('@@prev' + [char]9 + $p) }
   }
 }
 EOF
+# Deleting files there (Windows): the paths (relative, one per line) of
+# files deleted here and of stale files (see stale_sh) replace @PATHS@ in a
+# literal here-string. Only files (no directories) inside the checkout, not
+# reached through a junction or symlinked directory; directories left empty
+# are removed up to the checkout. Prints "@@ocw-sync removed N refused M:
+# FIRST-NAMES" (N counts the stale files only, @STALE@ of them come first).
+read -r -d '' win_remove_ps <<'EOF' || true
+$ProgressPreference = 'SilentlyContinue'; $r = @REPO@; $root = [IO.Path]::GetFullPath($r).TrimEnd('\') + '\'; $ns = @STALE@; $n = 0; $bad = 0; $i = 0; $names = ''
+$ps = @'
+@PATHS@
+'@ -split "`n"
+foreach ($p in $ps) {
+  $p = $p.TrimEnd("`r"); if (-not $p) { continue }; $i++
+  $f = [IO.Path]::GetFullPath((Join-Path $r $p))
+  if (-not $f.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { $bad++; continue }
+  if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { continue }
+  $d = Split-Path -Parent $f; $ok = $true
+  for ($q = $d; $q.Length -ge $root.Length; $q = Split-Path -Parent $q) { if ((Get-Item -LiteralPath $q -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { $ok = $false; break } }
+  if (-not $ok) { $bad++; continue }
+  Remove-Item -Force -LiteralPath $f -ErrorAction SilentlyContinue; if (Test-Path -LiteralPath $f) { continue }
+  if ($i -le $ns) { $n++; if ($n -le 5) { $names += ' ' + $p } }
+  for ($q = $d; $q.Length -ge $root.Length; $q = Split-Path -Parent $q) { if (@(Get-ChildItem -LiteralPath $q -Force).Count -gt 0) { break }; Remove-Item -Force -LiteralPath $q }
+}
+[Console]::Out.WriteLine('@@ocw-sync removed ' + $n + ' refused ' + $bad + ':' + $names)
+EOF
+# `stale_paths PREV NEW`: the paths of PREV that are not in NEW and may be
+# deleted there (the rules of stale_sh; Windows also refuses drive letters,
+# backslashes and a leading '@ that would end the here-string). Prints
+# "!REFUSED" lines for refused ones.
+stale_paths() {
+  LC_ALL=C comm -23 <(LC_ALL=C sort -u "$1") <(LC_ALL=C sort -u "$2") | while IFS= read -r p; do
+    case "$p" in
+      ""|/*|[A-Za-z]:*|*\\*|"'@"*|..|../*|*/..|*/../*) printf '!%s\n' "$p" ;;
+      config|config/*|target|target/*|data|data/*|test-output|test-output/*|.git|.git/*|.ocw-sync|.ocw-sync/*) ;;
+      *) printf '%s\n' "$p" ;;
+    esac
+  done
+}
 # After a successful extraction: the new manifest from .ocw-sync\incoming.tsv
 # (sha<TAB>path of every file of the snapshot) and the files' size and mtime
 # there now. Files of the snapshot that are not there are left out and
@@ -318,13 +433,35 @@ win_send() {
 # the sync, the whole tree is sent once more; still missing = failed sync.
 sync_tree_windows() {
   "${SSH[@]}" "$target" "New-Item -ItemType Directory -Force -Path $(psq "$repo") | Out-Null" || return 1
-  local gone=() f list out
-  while IFS= read -r f; do [ -e "$snap_dir/tree/$f" ] || gone+=("$(psq "$f")"); done <"$snap_dir/list"
-  if [ ${#gone[@]} -gt 0 ]; then
-    list=$(IFS=,; echo "${gone[*]}")
-    "${SSH[@]}" "$target" "Set-Location -LiteralPath $(psq "$repo"); Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $list"
+  local f out ps bad=0 ns
+  "${SSH[@]}" "$target" "$(ps_encoded "${win_manifest_ps//@REPO@/"$(psq "$repo")"}")" | tr -d '\r' >"$snap_dir/manifest" || : >"$snap_dir/manifest"
+  grep -v '^@@prev' "$snap_dir/manifest" >"$snap_dir/valid" || true
+  # The previous sync's files that are gone now (stale), then the files
+  # deleted here (in the index, not in the tree), in one call.
+  : >"$snap_dir/remove"
+  if grep -qx '@@prev-list' "$snap_dir/manifest"; then
+    grep '^@@prev	' "$snap_dir/manifest" | cut -f2- >"$snap_dir/prev" || true
+    stale_paths "$snap_dir/prev" "$snap_dir/present" >"$snap_dir/stale"
+    bad=$(grep -c '^!' "$snap_dir/stale" || true)
+    grep -v '^!' "$snap_dir/stale" >"$snap_dir/remove" || true
+  else
+    stale_report "@@ocw-sync first"
   fi
-  "${SSH[@]}" "$target" "$(ps_encoded "${win_manifest_ps//@REPO@/"$(psq "$repo")"}")" | tr -d '\r' >"$snap_dir/valid" || : >"$snap_dir/valid"
+  ns=$(wc -l <"$snap_dir/remove")
+  while IFS= read -r f; do
+    [ -e "$snap_dir/tree/$f" ] || case "$f" in *\\*|"'@"*|..|../*|*/..|*/../*) ;; *) printf '%s\n' "$f" ;; esac
+  done <"$snap_dir/list" >>"$snap_dir/remove"
+  # In chunks of 100 paths (the Windows command line holds 32767 characters).
+  local at=0 total k
+  total=$(wc -l <"$snap_dir/remove")
+  while [ "$at" -lt "$total" ]; do
+    k=$((ns - at)); [ "$k" -lt 0 ] && k=0; [ "$k" -gt 100 ] && k=100
+    ps=${win_remove_ps//@REPO@/"$(psq "$repo")"}; ps=${ps//@STALE@/$k}
+    out=$("${SSH[@]}" "$target" "$(ps_encoded "${ps//@PATHS@/"$(tail -n +$((at + 1)) "$snap_dir/remove" | head -n 100)"}")" | tr -d '\r') || true
+    stale_report "$out"
+    at=$((at + 100))
+  done
+  [ "$bad" = 0 ] || echo "remote.sh: refused $bad stale path(s) leading out of the checkout (absolute, .., drive letter)" >&2
   (cd "$snap_dir/tree" && tr '\n' '\0' <"$snap_dir/present" | xargs -0 -r sha1sum) |
     sed 's/^\([0-9a-f]*\) [ *]/\1\t/' >"$snap_dir/hashes"
   mkdir -p "$snap_dir/tree/.ocw-sync"
