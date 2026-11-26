@@ -33,6 +33,21 @@ form_urlencoded.workspace = true
 # both already in the tree through openidconnect).
 rsa = "0.9"
 rand = "0.8"
+# The workshop and hearts (spec 14 Phase 4, 4O): the API's wire types and
+# checks, the parts catalogue and its prices, the hearts rates, the key
+# hierarchy that certifies game servers (spec 4.7).
+ocw-account-api.workspace = true
+ocw-assets.workspace = true
+ocw-core.workspace = true
+ocw-world.workspace = true
+# PostgreSQL (4O W5a; MIT OR Apache-2.0): runtime queries only (no
+# database at build time), the migrations embedded by `migrate!`.
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "migrate", "macros", "json"], optional = true }
+
+[features]
+default = ["postgres"]
+# PostgreSQL storage (`storage.kind = "postgres"`), the hosted backend.
+postgres = ["dep:sqlx"]
 
 [lints]
 workspace = true

@@ -55,6 +55,8 @@ tokio ={ workspace = true, features = ["rt-multi-thread", "net", "io-util", "sig
 # Real weather from the providers (spec §14 Phase 9, S7; `realweather::http`):
 # HTTPS with rustls on the server, never in the clients or the wasm build.
 ureq.workspace = true
+# The ride credits' wire type (spec 14 Phase 4, 4O Q19).
+ocw-account-api.workspace = true
 # The accounts backend (spec §9.1), run by the binary (`--auth-config`,
 # `--auth-dev`); only with the `backend` feature (the apps leave it out).
 ocw-accounts = { workspace = true, optional = true }

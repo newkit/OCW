@@ -44,6 +44,8 @@ ocw-fit.workspace = true
 ocw-map.workspace = true
 # Sign-in (spec §9.1): the Account page, the token set, the flows' forms.
 ocw-auth.workspace = true
+# The account's wire types (spec 14 Phase 4, 4O): the ride summary.
+ocw-account-api.workspace = true
 
 [lints]
 workspace = true

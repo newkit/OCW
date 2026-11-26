@@ -9,6 +9,9 @@
 
 // The headphones per viewer (spec §7.1.7 Q17).
 pub mod headphones;
+// The signed ride credits of a certified server (spec 14 Phase 4, 4O Q19).
+#[cfg(not(target_arch = "wasm32"))]
+pub mod credits;
 // What a hosting runs beside its game server: the router's port mappings
 // and the bundled voice server (spec §7.1.6 V2; native only).
 #[cfg(not(target_arch = "wasm32"))]
@@ -169,6 +172,39 @@ pub struct ServerConfig {
     /// (no gap at all on a server with dev commands); test runs with a
     /// faster photographer (`ocw-server --photo-time-scale`) shorten it.
     pub photo_gap_s: Option<f64>,
+    /// Where the hearts of signed-in riders go when they leave (spec 14
+    /// Phase 4, 4O Q19 (a)): a server whose key the project's root key
+    /// certified signs a ride credit and sends it to the accounts backend
+    /// (`ocw-server --credit-key`). `None`: the apps upload their rides.
+    pub hearts_credits: Option<Credits>,
+}
+
+/// One signed-in rider's ride on this server, as it ended.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EndedRide {
+    pub account_id: String,
+    /// Unique on this server: the join time and the connection.
+    pub ride_id: String,
+    pub started_unix_s: i64,
+    pub ended_unix_s: i64,
+    pub distance_m: f64,
+    pub work_j: f64,
+    pub climb_m: f64,
+}
+
+/// Takes the rides that end (it signs and sends them, off the game loop).
+pub trait CreditSink: Send + Sync {
+    fn ride_ended(&self, ride: EndedRide);
+}
+
+/// The server's [`CreditSink`].
+#[derive(Clone)]
+pub struct Credits(pub std::sync::Arc<dyn CreditSink>);
+
+impl std::fmt::Debug for Credits {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Credits")
+    }
 }
 
 pub use ocw_protocol::ClockAccess;
@@ -246,6 +282,8 @@ pub struct GameServer {
     real_pressure_y_m: Option<f64>,
     /// The accounts of signed-in riders (spec §9.1), by connection.
     accounts: BTreeMap<ConnectionId, v1::Account>,
+    /// When each connection's rider joined (Unix s; the ride credit).
+    joined_at: BTreeMap<ConnectionId, i64>,
     /// The riders' status signs (spec §2.6), from their samples (and
     /// `dev.bot_status` for bots); relayed in the snapshots without the
     /// `not_hearing` lists, looks only.
@@ -449,6 +487,7 @@ impl GameServer {
             leaf_season: Default::default(),
             real_pressure_y_m: None,
             accounts: BTreeMap::new(),
+            joined_at: BTreeMap::new(),
             photos: BTreeMap::new(),
             photo_out: Vec::new(),
             voice_blocks: BTreeMap::new(),
@@ -932,9 +971,11 @@ impl GameServer {
 
     /// Removes a connection and its rider.
     pub fn disconnect(&mut self, conn: ConnectionId) {
+        self.credit_ride(conn);
         self.names.remove(&conn);
         self.taken.release(&conn);
         self.accounts.remove(&conn);
+        self.joined_at.remove(&conn);
         self.voice_issued.remove(&conn);
         self.peer_addrs.remove(&conn);
         self.voice_blocks.remove(&conn);
@@ -958,6 +999,35 @@ impl GameServer {
             tracing::info!(%rider, "rider left");
             self.refresh_voice_apart();
         }
+    }
+
+    /// Hands a leaving signed-in rider's ride to the credit sink (spec 14
+    /// Phase 4, 4O Q19 (a)); a ride that earned nothing is not sent.
+    fn credit_ride(&mut self, conn: ConnectionId) {
+        let (Some(credits), Some(account), Some(rider)) = (
+            &self.config.hearts_credits,
+            self.accounts.get(&conn),
+            self.riders.get(&conn),
+        ) else {
+            return;
+        };
+        let Some((meter, distance_m)) = self.session.ride_totals(*rider) else {
+            return;
+        };
+        if meter.hearts() == 0 {
+            return;
+        }
+        let ended = unix_now_ms() / 1000;
+        let started = self.joined_at.get(&conn).copied().unwrap_or(ended);
+        credits.0.ride_ended(EndedRide {
+            account_id: account.account_id.clone(),
+            ride_id: format!("{started}-{}-{}", conn.0, rider.0),
+            started_unix_s: started,
+            ended_unix_s: ended.max(started),
+            distance_m,
+            work_j: meter.work_j,
+            climb_m: meter.climb_m,
+        });
     }
 
     /// Handles one encoded client message. Returns encoded replies for this connection.
@@ -1277,6 +1347,7 @@ impl GameServer {
         if let Some(a) = &account {
             self.accounts.insert(conn, a.clone());
         }
+        self.joined_at.insert(conn, unix_now_ms() / 1000);
         self.names.insert(conn, hello.display_name.clone());
         self.joined.push(hello.display_name.clone());
         let clock = Some(self.clock_message());
@@ -1308,6 +1379,7 @@ impl GameServer {
             account,
             display_name: hello.display_name.clone(),
             name_note,
+            hearts_credited: self.config.hearts_credits.is_some(),
         })
     }
 
@@ -5846,6 +5918,68 @@ mod auth_tests {
         let told: Vec<ConnectionId> = s.take_directed().into_iter().map(|(c, _)| c).collect();
         assert!(told.contains(&signed) && told.contains(&anon), "{told:?}");
         assert!(!s.voice_apart(signed).is_empty());
+    }
+
+    #[derive(Default)]
+    struct Recorder(std::sync::Mutex<Vec<EndedRide>>);
+
+    impl CreditSink for Recorder {
+        fn ride_ended(&self, ride: EndedRide) {
+            self.0.lock().unwrap().push(ride);
+        }
+    }
+
+    /// A server with a credit key (spec 14 Phase 4, 4O Q19): a signed-in
+    /// rider's ride goes to the credit sink when they leave – the work of
+    /// real power, not that of virtual power, never an anonymous rider's.
+    #[test]
+    fn a_signed_in_riders_ride_is_credited_when_they_leave() {
+        let rec = std::sync::Arc::new(Recorder::default());
+        let mut s = GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                auth: Some(verifier()),
+                hearts_credits: Some(Credits(rec.clone())),
+                ..ServerConfig::default()
+            },
+        );
+        let (signed, k) = join(&mut s, Some(token(600, |_| {})));
+        let ServerMessageKind::Welcome(w) = k else {
+            panic!("{k:?}")
+        };
+        assert!(w.hearts_credited, "the welcome says the server credits");
+        let (anon, _) = join(&mut s, None);
+        let (virt, _) = join(&mut s, Some(token(600, |c| c.sub = "acc_43".into())));
+        for seq in 0..SIM_TICK_HZ * 120 {
+            for (c, virtual_power) in [(signed, false), (anon, false), (virt, true)] {
+                s.handle(
+                    c,
+                    &encode(&client_message(C::Sample(v1::SensorSample {
+                        seq,
+                        power_w: Some(400.0),
+                        cadence_rpm: Some(90.0),
+                        virtual_power: Some(virtual_power),
+                        ..Default::default()
+                    }))),
+                );
+            }
+            s.tick();
+        }
+        for c in [signed, anon, virt] {
+            s.disconnect(c);
+        }
+        let rides = rec.0.lock().unwrap().clone();
+        assert_eq!(rides.len(), 1, "{rides:?}");
+        let r = &rides[0];
+        assert_eq!(r.account_id, "acc_42");
+        assert!(r.work_j > 40_000.0 && r.distance_m > 100.0, "{r:?}");
+        assert!(r.ended_unix_s >= r.started_unix_s);
+        // Without a sink the welcome says so.
+        let (_, k) = join(&mut server(false), Some(token(600, |_| {})));
+        let ServerMessageKind::Welcome(w) = k else {
+            panic!("{k:?}")
+        };
+        assert!(!w.hearts_credited);
     }
 
     #[derive(Debug)]

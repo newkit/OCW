@@ -30,14 +30,31 @@ dir = "config/accounts/keys"
 rotate_days = 30
 
 [storage]
+# "postgres": the hosted backend – accounts, workshop and hearts in
+# PostgreSQL (spec 14 Phase 4, 4O; the migrations run at start). Its URL
+# holds the password: give it in the environment variable `url_env` names
+# (default DATABASE_URL), not here.
+#   kind = "postgres"
+#   url_env = "DATABASE_URL"
+#   max_connections = 8
 # "file": one JSON file (mode 0600) for a single small instance;
-# "memory": nothing survives a restart. PostgreSQL comes with the hosted
-# backend (spec §9.1, proposal).
+# "memory": nothing survives a restart (with both, the workshop and hearts
+# live in memory only: development).
 kind = "file"
 path = "config/accounts/accounts.json"
 # The 32-byte key that encrypts the stored Strava tokens (created on first
 # start, mode 0600). Keep it with a backup of the store, never in git.
 secrets_key = "config/accounts/secrets.key"
+
+[hearts]
+# Game servers whose signing key one of these root keys certified (the key
+# hierarchy of world packages, `world-builder keys init-root` /
+# `new-signing`) credit the hearts of rides they host directly; every other
+# ride counts through the summary the app uploads, after the plausibility
+# checks (spec 14 Phase 4, 4O Q19). Empty: no server credits directly.
+roots = []
+# Key ids (16 hex digits) of revoked roots or servers' signing keys.
+revoked = []
 
 [rate_limit]
 # Requests per minute and client address on /token, /device_authorization,

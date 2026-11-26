@@ -14,7 +14,10 @@
 //! - [`service::AuthService`]: the flows, transport-free,
 //! - [`routes`]: the axum router and [`serve`],
 //! - [`store`]: the account storage trait, in memory or a private JSON
-//!   file (PostgreSQL is the documented next step),
+//!   file; [`pg`]: PostgreSQL (4O W5a, the hosted backend: accounts,
+//!   workshop and hearts),
+//! - [`workshop`]: the account's bikes, parts and kit, the hearts ledger,
+//!   purchases and sales, and the hearts of rides (4O W5c / W5d, Q18–Q21),
 //! - [`keys`]: Ed25519 signing keys with rotation, [`secrets`]: provider
 //!   tokens encrypted at rest, [`limits`]: rate limits,
 //! - [`providers`]: Google and Strava, [`fake`]: in-process fake Google and
@@ -29,11 +32,14 @@ pub mod http;
 pub mod keys;
 pub mod limits;
 pub mod pages;
+#[cfg(feature = "postgres")]
+pub mod pg;
 pub mod providers;
 pub mod routes;
 pub mod secrets;
 pub mod service;
 pub mod store;
+pub mod workshop;
 
 use std::sync::Arc;
 

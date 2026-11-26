@@ -131,6 +131,9 @@ struct Rider {
     /// Hearts (spec §14 Phase 4, 4E): the work and climbing that count,
     /// and whether the client says its power is virtual.
     meter: ocw_core::hearts::HeartsMeter,
+    /// Metres ridden that count like the meter (real power, not down): a
+    /// signed server's ride credit (spec 14 Phase 4, 4O Q19).
+    odometer_m: f64,
     virtual_power: bool,
     /// Damage (spec §14 Phase 12E, K4): the meters, the parts, a stop by
     /// the road; changed since the last [`Session::take_damage_changes`].
@@ -518,6 +521,12 @@ impl Session {
         }
     }
 
+    /// What a rider's ride counted so far (spec 14 Phase 4, 4O Q19): the
+    /// work and climbing that earn hearts and the metres ridden with them.
+    pub fn ride_totals(&self, id: RiderId) -> Option<(ocw_core::hearts::HeartsMeter, f64)> {
+        self.riders.get(&id).map(|r| (r.meter, r.odometer_m))
+    }
+
     /// The hearts a rider earned in this session (spec §14 Phase 4, 4E);
     /// 0 for unknown riders.
     pub fn hearts(&self, id: RiderId) -> u32 {
@@ -757,6 +766,7 @@ impl Session {
                 joined_tick: self.tick,
                 solid: control != Control::Client,
                 meter: Default::default(),
+                odometer_m: 0.0,
                 virtual_power: false,
                 damage: crate::damage::Damage::fresh(),
                 damage_changed: false,
@@ -1429,6 +1439,9 @@ impl Session {
                     Control::Bot { .. } | Control::Echo => Some(NoHearts::Bot),
                 };
                 rider.meter.add(rider.input.power_w, SIM_DT, rise, blocked);
+                if blocked.is_none() && rider.state.speed.is_finite() {
+                    rider.odometer_m += rider.state.speed.max(0.0) * SIM_DT;
+                }
                 // Onto a road: back to riding along the road graph.
                 if let Some(net) = &net {
                     let p = next.sample(rider.state.distance);
@@ -1702,11 +1715,13 @@ impl Session {
             // At most 2 m a tick (100 m/s): a teleport is no climb.
             let rise = (rider.state.distance - d).clamp(0.0, 2.0) * grade;
             rider.meter.add(rider.input.power_w, SIM_DT, rise, blocked);
-            // The virtual brake: the speed above the one in front is shed.
-            if let Some(c) = cap
-                && rider.state.speed > c
-            {
-                rider.state.speed = c;
+            if blocked.is_none() && rider.state.speed.is_finite() {
+                rider.odometer_m += rider.state.speed.max(0.0) * SIM_DT;
+            }
+            // The virtual brake: the speed above the one in front is shed
+            // (at most `avoid::VIRTUAL_BRAKE_MPS2`).
+            if let Some(c) = cap {
+                rider.state.speed = avoid::brake_to(rider.state.speed, c, SIM_DT);
             }
             // Stopped by the road edge while riding into it at a steep
             // angle (wild mode just switched off): a hit on a wall (12B).

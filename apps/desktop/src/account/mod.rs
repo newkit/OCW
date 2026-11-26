@@ -15,6 +15,7 @@
 pub mod flow;
 pub mod store;
 pub mod worker;
+pub mod workshop;
 
 use std::path::PathBuf;
 
@@ -37,6 +38,9 @@ pub struct AccountPlugin {
     pub file: Option<PathBuf>,
     /// Opens the sign-in URL (default: the system browser; tests).
     pub open_url: Option<worker::OpenUrl>,
+    /// `<data dir>/ocw` for the account's workshop cache and ride queue
+    /// (default: the data directory; tests: a temporary one).
+    pub data_dir: Option<PathBuf>,
 }
 
 /// The sign-in; `worker` is `None` when no backend is configured.
@@ -45,7 +49,88 @@ pub struct Account {
     worker: Option<Worker>,
 }
 
+/// What changed in the account's workshop since the app last looked.
+#[derive(Debug, Default)]
+pub struct WorkshopUpdate {
+    /// Signed in (with the account's workshop known, from the backend or
+    /// the cache).
+    pub signed_in: bool,
+    /// The workshop, when it changed since `generation`.
+    pub synced: Option<ocw_account_api::offline::Synced>,
+    pub online: bool,
+    pub queued: usize,
+    pub generation: u64,
+    pub answers: Vec<workshop::ActAnswer>,
+}
+
 impl Account {
+    /// The account's workshop: what changed since `seen` (a generation),
+    /// and the actions' answers (taken).
+    pub fn workshop_update(&self, seen: u64) -> WorkshopUpdate {
+        let Some(w) = &self.worker else {
+            return WorkshopUpdate::default();
+        };
+        let mut sh = w.shared.lock().unwrap_or_else(|e| e.into_inner());
+        let signed_in = matches!(
+            sh.info.state,
+            ocw_client::account::AccountState::SignedIn { .. }
+        );
+        let ws = &mut sh.workshop;
+        WorkshopUpdate {
+            signed_in: signed_in && ws.synced.is_some(),
+            synced: (ws.generation != seen).then(|| ws.synced.clone()).flatten(),
+            online: ws.online,
+            queued: ws.queued,
+            generation: ws.generation,
+            answers: std::mem::take(&mut ws.answers),
+        }
+    }
+
+    /// Sends a workshop action (answered later, [`Self::workshop_update`]).
+    pub fn send_action(&self, id: u64, action: ocw_account_api::workshop::Action) -> bool {
+        match &self.worker {
+            Some(w) => {
+                w.send(Cmd::WorkshopAct { id, action });
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Fetches the account's workshop again (signed in; answered later).
+    pub fn sync_workshop(&self) {
+        if let Some(w) = &self.worker
+            && self.signed_in()
+        {
+            w.send(Cmd::WorkshopSync);
+        }
+    }
+
+    /// Queues a ride's summary for the account (Q19 / Q20).
+    pub fn send_ride(&self, summary: ocw_account_api::rides::RideSummary) -> bool {
+        match &self.worker {
+            Some(w) => {
+                w.send(Cmd::Ride(Box::new(summary)));
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Signed in (whatever the workshop).
+    pub fn signed_in(&self) -> bool {
+        self.worker.as_ref().is_some_and(|w| {
+            matches!(
+                w.shared
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .info
+                    .state,
+                ocw_client::account::AccountState::SignedIn { .. }
+            )
+        })
+    }
+
     /// The access token for a hello, if signed in and still valid.
     pub fn access_token(&self) -> Option<String> {
         let w = self.worker.as_ref()?;
@@ -94,7 +179,13 @@ impl Plugin for AccountPlugin {
                 (None, None) => store::TokenStore::None,
             };
             info!(%issuer, "sign-in: accounts server");
+            let data_dir = self.data_dir.clone().or_else(|| {
+                (!cfg!(test))
+                    .then(crate::workshop::wallet::default_dir)
+                    .flatten()
+            });
             Worker::spawn(WorkerConfig {
+                data_dir,
                 issuer,
                 client_id: ocw_auth::CLIENT_DESKTOP.into(),
                 store,
@@ -271,6 +362,7 @@ mod tests {
                 issuer,
                 file: Some(file),
                 open_url: Some(test_browser),
+                data_dir: None,
             });
         app
     }

@@ -31,6 +31,7 @@ members = [
     "crates/ocw-bridge",
     "apps/studio",
     "services/accounts",
+    "crates/ocw-account-api",
 ]
 
 [workspace.package]
@@ -69,6 +70,7 @@ ocw-edit = { path = "crates/ocw-edit" }
 ocw-map = { path = "crates/ocw-map" }
 ocw-bridge = { path = "crates/ocw-bridge" }
 ocw-accounts = { path = "services/accounts" }
+ocw-account-api = { path = "crates/ocw-account-api" }
 
 # Bevy is pinned to an exact version (spec §3.1). Only ocw-render and apps/desktop may use it.
 # Only the Bevy parts the shared crates (ocw-render, ocw-ui) and the

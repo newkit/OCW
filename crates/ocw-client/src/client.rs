@@ -200,6 +200,9 @@ pub struct ClientCore {
     echo_bot: bool,
     /// The server accepts dev commands (`Welcome.dev_commands`).
     dev_commands: bool,
+    /// The server credits the hearts of this ride itself
+    /// (`Welcome.hearts_credited`, spec 14 Phase 4, 4O Q19).
+    hearts_credited: bool,
     echo_rider: Option<RiderId>,
     /// The session's world clock (spec §14 Phase 9): the server's, advanced
     /// smoothly between snapshots, and its last message.
@@ -324,6 +327,7 @@ impl ClientCore {
             human_riders: 0,
             echo_bot: false,
             dev_commands: false,
+            hearts_credited: false,
             echo_rider: None,
             clock: ocw_sky::ClockPredictor::default(),
             clock_info: None,
@@ -766,6 +770,7 @@ impl ClientCore {
                 self.accounts.clear();
                 self.echo_bot = w.echo_bot;
                 self.dev_commands = w.dev_commands;
+                self.hearts_credited = w.hearts_credited;
                 self.world_access = Some(ocw_protocol::access_from_wire(w.world_access));
                 self.god_access = Some(ocw_protocol::access_from_wire(w.god_access));
                 self.collisions.on_welcome(&w);
@@ -2787,6 +2792,12 @@ impl ClientCore {
         self.virtual_device
     }
 
+    /// The server credits this ride's hearts to the account itself (a
+    /// certified server, spec 14 Phase 4, 4O Q19 (a)): no summary upload.
+    pub fn hearts_credited(&self) -> bool {
+        self.hearts_credited
+    }
+
     /// Whether the power sent is virtual: the virtual trainer, or keyboard
     /// power on top of a real device.
     pub fn virtual_power(&self) -> bool {
@@ -3096,6 +3107,18 @@ mod tests {
 
     fn route() -> Route {
         Route::test_loop()
+    }
+
+    /// The app's local server config (`local_config`: weather physics on)
+    /// on a fixed clock and weather seed: left to the wall clock, every
+    /// run drew other gusts (the seed comes from the clock) and so another
+    /// ride – a test on it passed or failed by the time it ran.
+    fn local_config_fixed(bots: u32, seed: u64) -> ServerConfig {
+        ServerConfig {
+            real_epoch_ms: Some(1_795_000_000_000),
+            weather_seed: Some(seed),
+            ..ocw_server::local::local_config(bots, 0.0)
+        }
     }
 
     fn power(watts: f64, t: f64) -> DeviceEvent {
@@ -5290,7 +5313,7 @@ mod tests {
     /// and the feed.
     #[test]
     fn bumps_reconcile_smoothly_and_crashes_come_only_from_the_server() {
-        let server = GameServer::new(route(), ocw_server::local::local_config(4, 0.0));
+        let server = GameServer::new(route(), local_config_fixed(4, 0));
         let client = ClientCore::new(route(), "Tester", RiderProfile::default());
         let mut h = Harness::with(server, client);
         h.ride(250.0, 10.0);
@@ -5356,11 +5379,12 @@ mod tests {
 
     /// A group bump with 60 ms from the server to the client: the own
     /// rider leans into a bot riding beside (steady 250 W, its lane 0.6 m
-    /// to the right). The prediction's lateral error against the server
-    /// (the best of a few ticks' offsets, the two clocks count from
-    /// different ticks), the largest sideways and along steps, the bumps.
-    fn group_bump_lateral_error(predict: bool) -> (f64, f64, f64, u64) {
-        let server = GameServer::new(route(), ocw_server::local::local_config(1, 0.0));
+    /// to the right), the gusts of weather `seed`. The prediction's
+    /// lateral error against the server (the best of a few ticks' offsets,
+    /// the two clocks count from different ticks), the largest sideways
+    /// and along steps, the bumps.
+    fn group_bump_lateral_error(predict: bool, seed: u64) -> (f64, f64, f64, u64) {
+        let server = GameServer::new(route(), local_config_fixed(1, seed));
         let client = ClientCore::new(route(), "Ada Rider", RiderProfile::default());
         let mut h = Harness::with(server, client);
         h.client.set_predict_rider_contacts(predict);
@@ -5437,8 +5461,10 @@ mod tests {
     /// server's bumps are blended in.
     #[test]
     fn bumps_with_other_riders_are_predicted_and_reconciled() {
-        let (err, step, along, bumps) = group_bump_lateral_error(true);
-        let (blind_err, blind_step, blind_along, blind_bumps) = group_bump_lateral_error(false);
+        // Seed 0: the bot ends up 4 mm behind, level beside (the case of
+        // the next test).
+        let (err, step, along, bumps) = group_bump_lateral_error(true, 0);
+        let (blind_err, blind_step, blind_along, blind_bumps) = group_bump_lateral_error(false, 0);
         eprintln!(
             "group bump, 60 ms: lateral error {:.1} cm predicted ({bumps} bumps, step {:.1} cm, along {:.1} cm), {:.1} cm server only ({blind_bumps} bumps, step {:.1} cm, along {:.1} cm)",
             err * 100.0,
@@ -5453,6 +5479,41 @@ mod tests {
         assert!(step < 0.06, "no sideways snap: {step}");
         assert!(along < 0.1, "no snap along: {along}");
         assert!(err < blind_err * 0.7, "{err} vs {blind_err}");
+    }
+
+    /// The group bump over many gusts (spec 6.3, regression of
+    /// 2026-11-26): the bot rides level beside, a few millimetres ahead or
+    /// behind by the seed. Where the prediction put it a hair ahead while
+    /// the server had it behind, the virtual brake shed 3.4 m/s in one
+    /// tick on the client only, and the next snapshot gave it back at once
+    /// (a step of 10 cm along: the test failed by the wall clock's seed in
+    /// about one run of ten). Braking at most `VIRTUAL_BRAKE_MPS2`, the
+    /// mismatch costs at most 0.1 m/s a tick until a snapshot corrects it.
+    #[test]
+    fn bumps_with_other_riders_stay_smooth_in_any_gusts() {
+        let mut worst = (0.0f64, 0.0f64, 0.0f64);
+        for seed in 0..24 {
+            for predict in [true, false] {
+                let (err, step, along, bumps) = group_bump_lateral_error(predict, seed);
+                worst.1 = worst.1.max(step);
+                worst.2 = worst.2.max(along);
+                if predict {
+                    worst.0 = worst.0.max(err);
+                }
+                assert!(bumps > 0, "seed {seed}");
+                assert!(step < 0.06, "seed {seed} {predict}: sideways {step}");
+                assert!(along < 0.05, "seed {seed} {predict}: along {along}");
+                if predict {
+                    assert!(err < 0.02, "seed {seed}: lateral error {err}");
+                }
+            }
+        }
+        eprintln!(
+            "group bump, 24 seeds: worst lateral error {:.1} cm predicted, step {:.1} cm, along {:.1} cm",
+            worst.0 * 100.0,
+            worst.1 * 100.0,
+            worst.2 * 100.0
+        );
     }
 
     /// What the trainer was sent on a steady climb: the SIM commands of
@@ -5533,6 +5594,8 @@ mod tests {
                 ServerConfig {
                     weather: Some(weather),
                     weather_seed: Some(7),
+                    // The clock too (the season, the light): not the wall's.
+                    real_epoch_ms: Some(1_795_000_000_000),
                     // As in the app's solo ride (spec §14 Phase 9, Q4).
                     weather_physics: true,
                     allow_local_events: true,
