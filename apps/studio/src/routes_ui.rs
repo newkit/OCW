@@ -14,6 +14,7 @@ use ocw_world::formats::TrackFormat;
 use ocw_world::plan::Profile;
 use ocw_world::plan::brouter::STOCK_PROFILES;
 
+use crate::consent::{Answer, answer_text};
 use crate::edit::{Pending, Studio, StudioCommand};
 use crate::routes::{
     POWER_RANGE_W, PendingImport, PlannerKind, RouteCommand, RouteView, grade_rgb, lat_lon_text,
@@ -30,6 +31,9 @@ pub struct RouteForm {
     pub format: TrackFormat,
     /// The BRouter server field (applied on Enter / leaving it).
     pub brouter_url: Option<String>,
+    /// The consent dialog's tick boxes (16H Q21), for the server it asks
+    /// about: "Send the via-points to SERVER …" and "remember" a no.
+    pub consent: Option<(String, bool, bool)>,
 }
 
 impl Default for RouteForm {
@@ -39,6 +43,7 @@ impl Default for RouteForm {
             export: String::new(),
             format: TrackFormat::Gpx,
             brouter_url: None,
+            consent: None,
         }
     }
 }
@@ -578,6 +583,17 @@ fn planner_panel(ui: &mut egui::Ui, studio: &Studio, form: &mut RouteForm, pendi
             send(pending, RouteCommand::BRouterUrl(text.clone()));
             form.brouter_url = None;
         }
+        // The remembered answer for this server (16H Q21) and its Forget.
+        if s.consent.answer(&s.brouter_url).is_some()
+            && ui
+                .button("Forget")
+                .on_hover_text(
+                    "Forget whether the via-points may go to this server: it is asked again (also `studio planner forget`)",
+                )
+                .clicked()
+        {
+            send(pending, RouteCommand::ForgetConsent(None));
+        }
     });
     ui.horizontal(|ui| {
         ui.label("Profile");
@@ -597,22 +613,44 @@ fn planner_panel(ui: &mut egui::Ui, studio: &Studio, form: &mut RouteForm, pendi
         );
         return;
     }
-    let mut consent = studio.routes.brouter_consent;
+    let answer = s.consent.answer(&s.brouter_url);
+    let remembered = s.consent.is_remembered(&s.brouter_url);
+    let mut consent = answer == Some(Answer::Send);
     if ui
-        .checkbox(
-            &mut consent,
-            format!(
-                "Send the via-points to {} to plan (they leave this computer)",
-                s.brouter_url.trim()
-            ),
-        )
+        .checkbox(&mut consent, send_label(s.brouter_url.trim()))
         .changed()
     {
-        send(pending, RouteCommand::BRouterConsent(consent));
+        send(
+            pending,
+            RouteCommand::BRouterConsent {
+                answer: if consent {
+                    Answer::Send
+                } else {
+                    Answer::DontSend
+                },
+                remember: false,
+            },
+        );
     }
+    ui.label(
+        egui::RichText::new(match (answer, remembered) {
+            (Some(Answer::Send), _) => {
+                "Remembered for this server (Forget above, or `studio planner forget`)."
+            }
+            (Some(Answer::DontSend), true) => {
+                "You chose not to send them to this server (remembered)."
+            }
+            (Some(Answer::DontSend), false) => "Not sent this session; asked again next time.",
+            (None, _) => "Not asked yet: Plan with BRouter asks first, once for this server.",
+        })
+        .weak(),
+    );
+    remembered_list(ui, studio, pending);
     ui.horizontal(|ui| {
         let busy = studio.routes.job.is_some();
-        let ok = consent && !busy && doc.is_some_and(|d| d.content().geometry.vias.len() >= 2);
+        let ok = answer != Some(Answer::DontSend)
+            && !busy
+            && doc.is_some_and(|d| d.content().geometry.vias.len() >= 2);
         if ui
             .add_enabled(ok, egui::Button::new("Plan with BRouter"))
             .on_hover_text(
@@ -620,13 +658,134 @@ fn planner_panel(ui: &mut egui::Ui, studio: &Studio, form: &mut RouteForm, pendi
             )
             .clicked()
         {
-            send(pending, RouteCommand::PlanExternal);
+            send(
+                pending,
+                if answer.is_none() {
+                    RouteCommand::AskConsent
+                } else {
+                    RouteCommand::PlanExternal
+                },
+            );
         }
         if let Some(job) = &studio.routes.job {
             ui.spinner();
             ui.label(format!("asking BRouter at {} …", job.server));
         }
     });
+}
+
+/// The tick box's words (as before 16H Q21).
+fn send_label(server: &str) -> String {
+    format!("Send the via-points to {server} to plan (they leave this computer)")
+}
+
+/// The remembered answers of every server, each with its *Forget*.
+fn remembered_list(ui: &mut egui::Ui, studio: &Studio, pending: &mut Pending) {
+    let all: Vec<(String, Answer)> = studio
+        .routes
+        .settings
+        .consent
+        .remembered()
+        .map(|(k, a)| (k.to_string(), a))
+        .collect();
+    if all.is_empty() {
+        return;
+    }
+    egui::CollapsingHeader::new(format!("Remembered answers ({})", all.len()))
+        .id_salt("brouter-consent-list")
+        .show(ui, |ui| {
+            for (server, a) in all {
+                ui.horizontal(|ui| {
+                    ui.label(format!("{server}: {}", answer_text(a)));
+                    if ui.small_button("Forget").clicked() {
+                        send(pending, RouteCommand::ForgetConsent(Some(server.clone())));
+                    }
+                });
+            }
+        });
+}
+
+/// The question before the via-points first go to a BRouter server (16H
+/// Q21 (a); 12): asked once per server, a yes remembered in the planner
+/// settings, a no only with "remember".
+pub fn consent_window(
+    ctx: &egui::Context,
+    studio: &Studio,
+    form: &mut RouteForm,
+    pending: &mut Pending,
+) {
+    let Some(ask) = studio.routes.asking.as_ref() else {
+        form.consent = None;
+        return;
+    };
+    if form.consent.as_ref().is_none_or(|c| c.0 != ask.server) {
+        form.consent = Some((ask.server.clone(), ask.send, ask.remember));
+    }
+    let Some((server, tick, remember)) = form.consent.as_mut() else {
+        return;
+    };
+    let mut open = true;
+    let mut choice: Option<RouteCommand> = None;
+    egui::Window::new("Plan with BRouter?")
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .default_width(520.0)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.label(format!(
+                "Planning with BRouter sends the route's via-points – the places you want to pass – to {server}, which plans the route and may keep them."
+            ));
+            ui.label(
+                egui::RichText::new(
+                    "OCW Studio asks once per server and remembers a yes in its planner settings (Forget next to the server, or `studio planner forget`). Another server is asked about again.",
+                )
+                .weak(),
+            );
+            ui.add_space(6.0);
+            ui.checkbox(tick, send_label(server));
+            ui.add_enabled_ui(!*tick, |ui| {
+                ui.checkbox(remember, format!("Remember \"don't send\" for {server}"));
+            });
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(*tick, egui::Button::new("Plan with BRouter"))
+                    .clicked()
+                {
+                    choice = Some(RouteCommand::BRouterConsent {
+                        answer: Answer::Send,
+                        remember: true,
+                    });
+                }
+                if ui.add_enabled(!*tick, egui::Button::new("Don't send")).clicked() {
+                    choice = Some(RouteCommand::BRouterConsent {
+                        answer: Answer::DontSend,
+                        remember: *remember,
+                    });
+                }
+                if ui.button("Cancel").clicked() {
+                    choice = Some(RouteCommand::CancelConsent);
+                }
+            });
+        });
+    if !open && choice.is_none() {
+        choice = Some(RouteCommand::CancelConsent);
+    }
+    if let Some(c) = choice {
+        let plan = matches!(
+            c,
+            RouteCommand::BRouterConsent {
+                answer: Answer::Send,
+                ..
+            }
+        );
+        send(pending, c);
+        if plan {
+            send(pending, RouteCommand::PlanExternal);
+        }
+        form.consent = None;
+    }
 }
 
 /// The elevation profile: the road's heights coloured by gradient, the
