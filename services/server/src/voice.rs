@@ -95,6 +95,11 @@ pub struct VoiceReach {
     pub port: u16,
     /// The host riders from the internet use (a name or an address).
     pub public_host: Option<String>,
+    /// The whole URL riders from the internet get instead of
+    /// `ws://PUBLIC_HOST:PORT` (`--voice-public-url`, spec 11.5): e.g.
+    /// `wss://ride.example.org`, TLS in front of the signalling port, so
+    /// pages served over `https://` may connect.
+    pub public_url: Option<String>,
 }
 
 /// Whether `ip` is on this machine or the local network (loopback,
@@ -125,9 +130,9 @@ pub fn url_host(host: &str) -> String {
 /// The voice URL a rider connected from `remote` can reach, `local` being
 /// this server's address the rider's packets arrived at: riders on this
 /// machine or the local network get that address; riders from the
-/// internet the public host when one is given, else that address (a host
-/// with a public address of its own). `None`: nothing known, the
-/// configured URL stays.
+/// internet the public URL when one is given (`wss://…`, spec 11.5), else
+/// the public host, else that address (a host with a public address of its
+/// own). `None`: nothing known, the configured URL stays.
 pub fn reach_url(
     reach: &VoiceReach,
     local: Option<std::net::IpAddr>,
@@ -138,6 +143,8 @@ pub fn reach_url(
         .filter(|ip| !ip.is_unspecified());
     let host = if is_local_network(remote.ip()) {
         local.map(|ip| ip.to_string())
+    } else if let Some(url) = &reach.public_url {
+        return Some(url.clone());
     } else {
         reach
             .public_host
@@ -730,10 +737,12 @@ mod tests {
         let lan = VoiceReach {
             port: 7880,
             public_host: None,
+            public_url: None,
         };
         let public = VoiceReach {
             port: 7880,
             public_host: Some("ride.example.org".into()),
+            public_url: None,
         };
         // This machine and the LAN: the address the packets arrived at.
         for reach in [&lan, &public] {
@@ -769,6 +778,24 @@ mod tests {
         assert_eq!(
             reach_url(&lan, Some(ip("198.51.100.4")), sa("203.0.113.7:5000")).as_deref(),
             Some("ws://198.51.100.4:7880")
+        );
+        // A public URL (TLS in front of the signalling port, spec 11.5):
+        // riders from the internet get it whole; the LAN keeps ws://.
+        let tls = VoiceReach {
+            public_url: Some("wss://ride.example.org".into()),
+            ..public.clone()
+        };
+        assert_eq!(
+            reach_url(&tls, Some(ip("172.19.4.67")), sa("203.0.113.7:5000")).as_deref(),
+            Some("wss://ride.example.org")
+        );
+        assert_eq!(
+            reach_url(&tls, None, sa("203.0.113.7:5000")).as_deref(),
+            Some("wss://ride.example.org")
+        );
+        assert_eq!(
+            reach_url(&tls, Some(ip("192.168.1.20")), sa("192.168.1.31:5000")).as_deref(),
+            Some("ws://192.168.1.20:7880")
         );
         // Nothing known: the configured URL stays.
         assert_eq!(reach_url(&lan, None, sa("192.168.1.31:5000")), None);
