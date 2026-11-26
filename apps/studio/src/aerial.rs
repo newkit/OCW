@@ -152,6 +152,9 @@ pub struct AerialLayer {
     // In a mutex: a Bevy resource must be `Sync`.
     results: Option<Mutex<Receiver<Done>>>,
     frame: u64,
+    /// The egui context the textures were made in: a new one (the console
+    /// moved the primary context to another camera) has none of them.
+    made_in: Option<egui::Context>,
 }
 
 impl AerialLayer {
@@ -166,6 +169,7 @@ impl AerialLayer {
             queue: None,
             results: None,
             frame: 0,
+            made_in: None,
         })
     }
 
@@ -230,6 +234,10 @@ impl AerialLayer {
     ) -> AerialFrame {
         self.frame += 1;
         self.unqueue();
+        if self.made_in.as_ref() != Some(ctx) {
+            self.textures.clear();
+            self.made_in = Some(ctx.clone());
+        }
         if view.m_per_px > AERIAL_MAX_M_PER_PX {
             return AerialFrame {
                 tiles: Vec::new(),
@@ -473,5 +481,37 @@ mod tests {
         let layer = AerialLayer::of(Arc::new(pkg)).unwrap();
         assert_eq!(layer.kept(), 0, "nothing decoded before it is drawn");
         assert!(layer.queue.is_none(), "no decoder started");
+    }
+
+    /// Regression (spec 16A *Fixed*, 6.03): tiles made in one egui context
+    /// are not drawn from another one (the console gives the primary
+    /// context a fresh one when it moves to another camera).
+    #[test]
+    fn a_new_egui_context_drops_the_tiles_of_the_old_one() {
+        let mut pkg = crate::map::tests::package();
+        pkg.look.ortho = Some(corridor());
+        let mut layer = AerialLayer::of(Arc::new(pkg)).unwrap();
+        let (old, new) = (egui::Context::default(), egui::Context::default());
+        let texture = old.load_texture(
+            "tile",
+            egui::ColorImage::filled([2, 2], egui::Color32::RED),
+            egui::TextureOptions::LINEAR,
+        );
+        layer.made_in = Some(old.clone());
+        layer.textures.insert(
+            (TileKey { x: 0, z: 0 }, 64),
+            Entry {
+                texture,
+                bytes: 16,
+                used: 0,
+            },
+        );
+        let view = crate::map::MapView::fit([0.0, 0.0], [100.0, 100.0], [200.0, 200.0]);
+        let kept = layer.frame(&old, &view, [200.0, 200.0]);
+        assert_eq!(kept.tiles.len(), 1, "the same context keeps its tile");
+        let fresh = layer.frame(&new, &view, [200.0, 200.0]);
+        assert!(fresh.tiles.is_empty(), "no tile of the old context");
+        assert_eq!(layer.kept(), 0);
+        assert!(layer.made_in.as_ref() == Some(&new));
     }
 }
