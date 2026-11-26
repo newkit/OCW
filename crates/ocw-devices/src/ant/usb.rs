@@ -9,7 +9,9 @@
 //!   only when a udev rule allows it – the packaging question of spec 14
 //!   Phase 17 Q8; without it the Devices page says *cannot open the stick
 //!   (permission)*.
-//! - **Windows:** the stick needs the WinUSB driver bound to it (Q7).
+//! - **Windows:** `nusb` opens only a stick with WinUSB bound to it
+//!   (Zadig); a stick on Garmin's own libusb-win32 driver is opened by
+//!   `libusb0::Libusb0Transport`, tried after this one (Q7 (d)).
 //! - **macOS:** no kernel driver claims it.
 
 use std::time::Duration;

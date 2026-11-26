@@ -41,14 +41,26 @@ js-sys = "0.3"
 version = "0.2.9"
 optional = true
 
+# Garmin's libusb-win32 driver on Windows (spec 14 Phase 17 Q7 (d)): the
+# system's libusb0.dll is loaded at run time (libloading: ISC); we ship and
+# link nothing of libusb-win32 (LGPL).
+[target.'cfg(windows)'.dependencies.libloading]
+version = "0.8.9"
+optional = true
+
 [features]
-ant-usb = ["dep:nusb"]
+ant-usb = ["dep:nusb", "dep:libloading"]
 
 [dev-dependencies]
 tracing-subscriber.workspace = true
 
-[lints]
-workspace = true
+# The workspace forbids unsafe code; here it is denied, and allowed only in
+# `ant::libusb0`'s Windows FFI to libusb0.dll (as in ocw-xr-openxr).
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
 
 [[example]]
 name = "ant"

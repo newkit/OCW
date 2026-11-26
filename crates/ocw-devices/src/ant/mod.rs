@@ -23,7 +23,12 @@
 //!   [`crate::DeviceBackend`];
 //! - `usb` (native, feature `ant-usb`): the transport over `nusb` (pure
 //!   Rust: Linux usbfs with the kernel's serial driver detached, Windows
-//!   WinUSB, macOS IOKit).
+//!   WinUSB, macOS IOKit);
+//! - [`libusb0`] (native): the transport over Garmin's own libusb-win32
+//!   driver on Windows (spec 14 Phase 17 Q7 (d)): the libusb-0.1 calls
+//!   behind the [`libusb0::Usb0`] seam (the system's `libusb0.dll`, loaded
+//!   at run time on Windows with `ant-usb`; a fake in tests), and
+//!   [`Fallback`], which tries `nusb` (WinUSB) first and then it.
 //!
 //! The ANT+ network key is never in this crate (spec 14 Phase 17 Q1 (b)):
 //! the rider enters it once, the app keeps it in `secrets.toml` and hands
@@ -37,12 +42,16 @@ pub mod sim;
 pub mod stick;
 
 #[cfg(not(target_arch = "wasm32"))]
+pub mod libusb0;
+#[cfg(not(target_arch = "wasm32"))]
 mod service;
 #[cfg(all(not(target_arch = "wasm32"), feature = "ant-usb"))]
 pub mod usb;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use service::{AntDevice, AntLink, AntStick, AntTransport, SimTransport};
+pub use service::{
+    AntDevice, AntLink, AntStick, AntTransport, Fallback, SimTransport, fallback_error,
+};
 
 use std::fmt;
 use std::time::Duration;
@@ -345,6 +354,9 @@ pub enum StickStatus {
     NoPermission(String),
     /// Another program uses it.
     Busy(String),
+    /// It is there, but no driver we can use is bound to it (Windows:
+    /// neither Garmin's libusb-win32 driver nor WinUSB; Q7 (d)).
+    NoDriver(String),
     /// Something else failed.
     Failed(String),
 }
@@ -360,6 +372,7 @@ impl StickStatus {
             Self::Opening(n) => format!("{n}, opening ..."),
             Self::NoPermission(_) => "cannot open the stick (permission)".into(),
             Self::Busy(_) => "the stick is busy with another app".into(),
+            Self::NoDriver(_) => "the stick needs a driver".into(),
             Self::Failed(e) => format!("failed: {e}"),
         }
     }
@@ -371,7 +384,8 @@ impl StickStatus {
             | Self::Ready(n)
             | Self::Opening(n)
             | Self::NoPermission(n)
-            | Self::Busy(n) => Some(n),
+            | Self::Busy(n)
+            | Self::NoDriver(n) => Some(n),
             _ => None,
         }
     }

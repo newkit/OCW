@@ -342,7 +342,12 @@ pub fn sub_rows(world: &World, page: sub::Page) -> Vec<Row> {
         ocw_client::menu::voice::rows(page, s, info)
     } else if matches!(
         page,
-        sub::Page::Devices | sub::Page::Device(_) | sub::Page::Bridge | sub::Page::Ant
+        sub::Page::Devices
+            | sub::Page::Device(_)
+            | sub::Page::Bridge
+            | sub::Page::Ant
+            | sub::Page::AntDriver
+            | sub::Page::AntAccess
     ) {
         let empty = DevicesMenu::default();
         let info = world.get_resource::<DevicesMenu>().unwrap_or(&empty);
@@ -611,7 +616,9 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
                     p @ (sub::Page::Devices
                     | sub::Page::Device(_)
                     | sub::Page::Bridge
-                    | sub::Page::Ant),
+                    | sub::Page::Ant
+                    | sub::Page::AntDriver
+                    | sub::Page::AntAccess),
                 ),
                 _,
                 _,
