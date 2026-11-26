@@ -3581,7 +3581,7 @@ ocw-desktop --world europe/spain/tenerife --free-ride
 - the desktop app joined, rode and connected to the voice room;
 - a browser on an `https://` page joined over WebTransport and connected to the voice room over `wss://`.
 
-Chromium's WebTransport handshake to Fly still fails now and then. Many new UDP connections in a short time make the path go quiet for minutes, so test sparingly.
+Chromium's WebTransport handshake to Fly still fails most of the time (3 of 4 attempts; curl's HTTP/3 handshakes all succeed), so the browser path is not reliable yet. Many new UDP connections in a short time make the path go quiet for minutes, so test sparingly.
 
 **What runs.** One machine with one process tree: `ocw-server --listen --webtransport` and the `livekit-server` it starts itself with fresh keys at every start (spec 7.1.1, 7.1.8). The image (`Dockerfile`) builds only `ocw-server` (Rust 1.99.1, release, on Debian trixie) and adds the pinned `livekit-server` 1.13.10 (checked against the release's checksum). The server runs as the user `ocw`, not as root. `start.sh` binds the UDP ports to `fly-global-services`: Fly delivers UDP only to that address, and replies must leave from there. The public address riders see is the app's dedicated IPv4 (`OCW_PUBLIC_HOST`, by default the IPv4 of `ocw-server.fly.dev`).
 
