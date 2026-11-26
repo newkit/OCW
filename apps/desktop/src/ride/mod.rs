@@ -68,6 +68,9 @@ pub struct CurrentRide {
 #[derive(Clone)]
 pub struct CurrentWorld {
     pub spec: String,
+    /// The package file (its folder's `routes/` holds the studio's
+    /// routes, spec 16H Q19).
+    pub file: Option<PathBuf>,
     /// The package's own name (route files name it).
     pub name: String,
     pub routes: Vec<world::RouteInfo>,
@@ -138,6 +141,7 @@ pub fn insert_setup(world: &mut World, setup: RideSetup) {
         Some(w) => {
             current.world = Some(CurrentWorld {
                 spec: w.info.spec.clone(),
+                file: Some(w.info.file.clone()),
                 name: w.render.home().name.clone(),
                 routes: w.routes,
                 net: w.net,
@@ -248,9 +252,13 @@ pub fn refresh_catalog(world: &mut World) {
     }
     if let Some(cur) = current {
         if let Some(w) = &cur.world {
-            if let Some(dir) = routes_dir() {
-                c.user_routes = catalog::user_routes(&dir, &w.name);
-            }
+            // Its routes come with the world; the user's from the folder
+            // next to the package and the data directory (spec 16H Q19).
+            let data = routes_dir();
+            let dirs = catalog::route_dirs(w.file.as_deref(), data.as_deref());
+            let scan = catalog::scan_user_routes(&dirs, &w.name, w.net.as_deref());
+            c.user_routes = scan.routes;
+            c.skipped_routes = scan.skipped;
             c.world = Some(world::loaded_world(w));
         }
         c.current = Some(cur.choice);
@@ -1784,6 +1792,7 @@ mod tests {
         let origin = (47.1, 9.5);
         app.world_mut().resource_mut::<CurrentRide>().world = Some(CurrentWorld {
             spec: "example.ocwpkg".into(),
+            file: None,
             name: "Example Land".into(),
             routes: Vec::new(),
             net: Some(line_network()),
@@ -1817,5 +1826,174 @@ mod tests {
         let out = import_gpx(app.world_mut(), &file, &dir, true).unwrap();
         assert!(out.contains("loading example, route"), "{out}");
         assert!(app.world().resource::<Loading>().0.is_some());
+    }
+
+    /// A graph route on `line_network` for package `pkg` (`None`: no
+    /// package line), from edge 100 onto edge 101.
+    fn studio_route(name: &str, pkg: Option<&str>, edge2: u64) -> String {
+        ocw_world::GraphRoute {
+            name: name.into(),
+            steps: vec![
+                ocw_world::RouteStep::Edge {
+                    id: ocw_world::graph::EdgeId(100),
+                    from_m: 0.0,
+                    to_m: 200.0,
+                },
+                ocw_world::RouteStep::Edge {
+                    id: ocw_world::graph::EdgeId(edge2),
+                    from_m: 0.0,
+                    to_m: 200.0,
+                },
+            ],
+            is_loop: false,
+        }
+        .to_text(pkg.map(|p| (p, 0x1234)))
+    }
+
+    /// Spec 16H Q19 (a): the user's routes come from `routes/` next to the
+    /// package (OCW Studio's *Save route*) and from `<data dir>/ocw/routes/`;
+    /// a file for another package is not listed, a broken one or one off
+    /// these roads is skipped with a note; both sources are marked "yours".
+    #[test]
+    fn user_routes_come_from_next_to_the_package_and_the_data_dir() {
+        let base = std::env::temp_dir().join(format!("ocw-q19-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let pkg_dir = base.join("worlds");
+        let studio = pkg_dir.join("routes");
+        let data = base.join("data").join("routes");
+        std::fs::create_dir_all(&studio).unwrap();
+        std::fs::create_dir_all(&data).unwrap();
+        let w = |p: PathBuf, text: String| std::fs::write(p, text).unwrap();
+        // Next to the package: OCW Studio's routes (and a sibling's).
+        w(
+            studio.join("ada-s-loop.ocwroute"),
+            studio_route("Ada's loop", Some("Example Land"), 101),
+        );
+        w(
+            studio.join("bea-s-climb.ocwroute"),
+            studio_route("Bea's climb", Some("Other_Land"), 101),
+        );
+        w(
+            studio.join("torn.ocwroute"),
+            "ocw-graph-route 1\nname Torn\nedge x\n".into(),
+        );
+        w(
+            studio.join("off-road.ocwroute"),
+            studio_route("Off road", Some("Example Land"), 999),
+        );
+        w(studio.join("notes.txt"), "not a route".into());
+        // The data directory: an imported GPX route and a studio fallback.
+        w(
+            data.join("Along_the_road.ocw-graph-route"),
+            studio_route("Along the road", None, 101),
+        );
+        w(
+            data.join("cy-s-sprint.ocwroute"),
+            studio_route("Cy's sprint", Some("Example_Land"), 101),
+        );
+        // An unreadable "file": a folder with a route's name.
+        std::fs::create_dir_all(data.join("folder.ocwroute")).unwrap();
+
+        let file = pkg_dir.join("example.ocwpkg");
+        let dirs = catalog::route_dirs(Some(&file), Some(&data));
+        assert_eq!(
+            dirs,
+            [
+                (studio.clone(), catalog::RouteSource::NextToPackage),
+                (data.clone(), catalog::RouteSource::DataDir)
+            ]
+        );
+        let net = line_network();
+        let scan = catalog::scan_user_routes(&dirs, "Example Land", Some(&*net));
+        let got: Vec<(&str, catalog::RouteSource)> = scan
+            .routes
+            .iter()
+            .map(|r| (r.name.as_str(), r.source))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("Ada's loop", catalog::RouteSource::NextToPackage),
+                ("Along the road", catalog::RouteSource::DataDir),
+                ("Cy's sprint", catalog::RouteSource::DataDir),
+            ],
+            "Bea's climb is for another package: not listed"
+        );
+        assert_eq!(scan.routes[0].length_m, 400.0);
+        let skipped: Vec<String> = scan
+            .skipped
+            .iter()
+            .map(|s| s.path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            skipped,
+            ["off-road.ocwroute", "torn.ocwroute", "folder.ocwroute"]
+        );
+        assert!(
+            scan.skipped[0].why.starts_with("not on these roads"),
+            "{:?}",
+            scan.skipped
+        );
+        assert!(
+            scan.skipped[1].why.starts_with("not a route"),
+            "{:?}",
+            scan.skipped
+        );
+        assert!(
+            scan.skipped[2].why.starts_with("cannot be read"),
+            "{:?}",
+            scan.skipped
+        );
+        // The same folder twice (e.g. a package kept in the data dir): once.
+        let once = [(data.clone(), catalog::RouteSource::DataDir)];
+        let twice = [
+            once[0].clone(),
+            (data.join("."), catalog::RouteSource::DataDir),
+        ];
+        assert_eq!(
+            catalog::scan_user_routes(&twice, "Example Land", Some(&*net)),
+            catalog::scan_user_routes(&once, "Example Land", Some(&*net))
+        );
+
+        // The game's lists read both folders for the loaded package.
+        let (mut app, _) = app("q19");
+        app.world_mut().resource_mut::<CurrentRide>().world = Some(CurrentWorld {
+            spec: file.display().to_string(),
+            file: Some(file.clone()),
+            name: "Example Land".into(),
+            routes: vec![world::RouteInfo {
+                name: "Valley".into(),
+                length_m: 400.0,
+                climb_m: None,
+            }],
+            net: Some(net),
+            origin: (47.1, 9.5),
+            details: world::WorldDetails::default(),
+        });
+        refresh_catalog(app.world_mut());
+        let c = &app.world().resource::<RideCatalog>().0;
+        let ada = c
+            .user_routes
+            .iter()
+            .find(|r| r.name == "Ada's loop")
+            .expect("the studio's route is listed");
+        assert_eq!(ada.source, catalog::RouteSource::NextToPackage);
+        let rows = pages::rows(crate::settings::pages::Page::Routes, c);
+        let labels: Vec<String> = rows.iter().map(crate::menu::model::row_label).collect();
+        assert_eq!(
+            labels[0], "Valley:  0.4 km",
+            "the package's own first: {labels:?}"
+        );
+        assert!(
+            labels.contains(&"Ada's loop:  0.4 km, yours".to_string()),
+            "{labels:?}"
+        );
+        assert!(
+            labels
+                .iter()
+                .any(|l| l.starts_with("torn.ocwroute:  skipped")),
+            "{labels:?}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

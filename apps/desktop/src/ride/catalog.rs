@@ -1,7 +1,8 @@
 //! What the Ride and Navi pages list (spec §3.2.1, M3), Bevy-free and read
 //! from directories given by the caller (fixture directories in tests):
-//! the user's routes (`<data>/ocw/routes/*.ocw-graph-route`,
-//! e.g. imported GPX files), GPX files to import (`<data>/ocw/gpx/`, the
+//! the user's routes (`routes/*.ocwroute` next to the package, where OCW
+//! Studio saves them, and `<data>/ocw/routes/`: imported GPX files and the
+//! studio's routes without a writable package folder; spec 16H Q19), GPX files to import (`<data>/ocw/gpx/`, the
 //! downloads folder) and the saved rides (`rides/*.fit` with their
 //! sidecar and Strava sync state). The worlds of World → Change world come
 //! from `ocw_worldstore::discover`.
@@ -10,40 +11,146 @@ use std::path::{Path, PathBuf};
 
 use crate::strava::sync::{RideSync, SyncState};
 
-/// A route of the user (an `ocw-graph-route` file).
+/// Where a route of the user was found (spec 16H Q19 (a)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteSource {
+    /// `<package folder>/routes/`: where OCW Studio's *Save route* writes.
+    NextToPackage,
+    /// `<data dir>/ocw/routes/`: imported GPX files, and the studio's
+    /// routes when the package folder is not writable.
+    DataDir,
+}
+
+/// A route of the user (an `ocw-graph-route` file: `.ocwroute` from OCW
+/// Studio, `.ocw-graph-route` from a GPX import).
 #[derive(Debug, Clone, PartialEq)]
 pub struct UserRoute {
     pub path: PathBuf,
     pub name: String,
     pub length_m: f64,
+    pub source: RouteSource,
 }
 
-/// The route files in `dir` made for the package `package` (by the name
-/// in the file; files without one fit any package), sorted by name.
-pub fn user_routes(dir: &Path, package: &str) -> Vec<UserRoute> {
-    let mut out: Vec<UserRoute> = std::fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "ocw-graph-route"))
-        .filter_map(|p| {
-            let text = std::fs::read_to_string(&p).ok()?;
-            let (route, made_for) = ocw_world::GraphRoute::parse(&text).ok()?;
-            if let Some((name, _)) = made_for
-                && name.replace('_', " ") != package.replace('_', " ")
-            {
-                return None;
-            }
-            Some(UserRoute {
-                length_m: super::setup::graph_route_length_m(&route),
-                name: route.name,
-                path: p,
-            })
-        })
-        .collect();
-    out.sort_by(|a, b| a.name.cmp(&b.name).then(a.path.cmp(&b.path)));
+/// A route file that could not be offered: unreadable, not a route, or
+/// not on the loaded package's roads.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkippedRoute {
+    pub path: PathBuf,
+    pub why: String,
+}
+
+/// The user's routes for the loaded package and the files skipped.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RouteScan {
+    pub routes: Vec<UserRoute>,
+    pub skipped: Vec<SkippedRoute>,
+}
+
+/// Route files: `.ocwroute` (OCW Studio's *Save route*) and
+/// `.ocw-graph-route` (the game's GPX import).
+fn is_route_file(p: &Path) -> bool {
+    p.extension()
+        .and_then(|x| x.to_str())
+        .is_some_and(|x| x.eq_ignore_ascii_case("ocwroute") || x == "ocw-graph-route")
+}
+
+/// The folders the game reads the user's routes from, in this order:
+/// `routes/` next to the package file, then `<data dir>/ocw/routes/`.
+pub fn route_dirs(
+    package_file: Option<&Path>,
+    data_routes: Option<&Path>,
+) -> Vec<(PathBuf, RouteSource)> {
+    let mut out = Vec::new();
+    if let Some(dir) = package_file.and_then(Path::parent) {
+        out.push((dir.join("routes"), RouteSource::NextToPackage));
+    }
+    if let Some(d) = data_routes {
+        out.push((d.to_path_buf(), RouteSource::DataDir));
+    }
     out
+}
+
+/// The route files in `dirs` made for the package `package` (by the name
+/// in the file; files without one fit any package), sorted by name. A file
+/// made for another package is left out quietly (it belongs to another
+/// world, e.g. a sibling package in the same folder); an unreadable or
+/// broken file, or one whose roads `net` does not have, is skipped with a
+/// note. A folder listed twice (the same path) is read once.
+pub fn scan_user_routes(
+    dirs: &[(PathBuf, RouteSource)],
+    package: &str,
+    net: Option<&ocw_world::RoadNetwork>,
+) -> RouteScan {
+    let same = |a: &str, b: &str| a.replace('_', " ").trim() == b.replace('_', " ").trim();
+    let mut scan = RouteScan::default();
+    let mut seen: Vec<PathBuf> = Vec::new();
+    for (dir, source) in dirs {
+        let key = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.clone());
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| is_route_file(p))
+            .collect();
+        files.sort();
+        for p in files {
+            let why = match read_user_route(&p, package, net, &same) {
+                Ok(Some(route)) => {
+                    scan.routes.push(UserRoute {
+                        length_m: super::setup::graph_route_length_m(&route),
+                        name: route.name,
+                        path: p,
+                        source: *source,
+                    });
+                    continue;
+                }
+                Ok(None) => continue,
+                Err(why) => why,
+            };
+            eprintln!("route file {} skipped: {why}", p.display());
+            scan.skipped.push(SkippedRoute { path: p, why });
+        }
+    }
+    scan.routes
+        .sort_by(|a, b| a.name.cmp(&b.name).then(a.path.cmp(&b.path)));
+    scan
+}
+
+/// One route file: the route (`None`: made for another package) or why it
+/// is skipped.
+fn read_user_route(
+    p: &Path,
+    package: &str,
+    net: Option<&ocw_world::RoadNetwork>,
+    same: &dyn Fn(&str, &str) -> bool,
+) -> Result<Option<ocw_world::GraphRoute>, String> {
+    let bytes = std::fs::read(p).map_err(|e| format!("cannot be read: {e}"))?;
+    let text = String::from_utf8_lossy(&bytes);
+    let (route, made_for) =
+        ocw_world::GraphRoute::parse(&text).map_err(|e| format!("not a route: {e}"))?;
+    if let Some((name, _)) = &made_for
+        && !same(name, package)
+    {
+        return Ok(None);
+    }
+    if let Some(net) = net {
+        route
+            .resolve(net)
+            .map_err(|e| format!("not on these roads: {e}"))?;
+    }
+    Ok(Some(route))
+}
+
+/// The route files in `dir` made for the package `package` (see
+/// [`scan_user_routes`]; no road check).
+#[cfg(test)]
+pub fn user_routes(dir: &Path, package: &str) -> Vec<UserRoute> {
+    scan_user_routes(&[(dir.to_path_buf(), RouteSource::DataDir)], package, None).routes
 }
 
 /// A file name for a route called `name` in `dir` that does not exist yet.

@@ -528,7 +528,7 @@ impl Page {
             Self::WeatherCustom | Self::WeatherAir => &[super::weather::CUSTOM_NOTE],
             Self::WeatherReal => &[super::weather::REAL_NOTE],
             Self::Routes => &[
-                "Routes of the loaded world package and your imported ones (GPX import). Choose one to ride it.",
+                "Routes of the loaded world package, then yours (OCW Studio, GPX import). Choose one to ride it.",
             ],
             Self::Rides => &["Saved rides (FIT files), newest first, with their Strava state."],
             Self::GpxImport => &[

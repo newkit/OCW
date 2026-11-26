@@ -292,6 +292,9 @@ pub struct RouteTools {
     pub view: RouteView,
     /// Where the route was saved / exported last.
     pub file: Option<PathBuf>,
+    /// Where *Save route* writes when the package folder is not writable
+    /// (`<data dir>/ocw/routes`; `None`: no data directory).
+    pub fallback_dir: Option<PathBuf>,
     pub test_ride: Option<std::process::Child>,
     /// The package's road surface of every edge (by index; empty: the
     /// classes' usual ones): the planner's costs and the figures.
@@ -320,6 +323,7 @@ impl Default for RouteTools {
             dragging: None,
             view: RouteView::default(),
             file: None,
+            fallback_dir: crate::edit::data_routes_dir(),
             test_ride: None,
             surfaces: Arc::new(Vec::new()),
             rider: LocalRider::load(game_config_dir().as_deref()),
@@ -338,6 +342,7 @@ impl RouteTools {
             settings: PlannerSettings::default(),
             settings_path: None,
             rider: LocalRider::default(),
+            fallback_dir: None,
             ..Self::default()
         }
     }
@@ -462,7 +467,8 @@ pub enum RouteCommand {
     /// Writes the route as a file (format by the extension, or given).
     Export(String, Option<TrackFormat>),
     /// Saves the graph route (`<package dir>/routes/<name>.ocwroute`, or
-    /// here) and marks the document saved.
+    /// `<data dir>/ocw/routes/` when the package folder is not writable,
+    /// or here) and marks the document saved.
     Save(Option<String>),
     /// Saves and starts `ocw-desktop --world … --route …`.
     TestRide,
@@ -660,6 +666,42 @@ fn part_number(c: PartChoice) -> String {
 
 /// The default file of a saved route: `<package dir>/routes/<name>.ocwroute`.
 pub fn default_route_path(package_file: &Path, name: &str) -> PathBuf {
+    package_file
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("routes")
+        .join(format!(
+            "{}.{}",
+            route_slug(name),
+            TrackFormat::GraphRoute.extension()
+        ))
+}
+
+/// The file of a saved route when the package folder is not writable:
+/// `<dir>/<name>.ocwroute` in `<data dir>/ocw/routes` (shared by all
+/// packages), with the package's name in front if that file is another
+/// package's route.
+pub fn fallback_route_path(dir: &Path, package: &str, name: &str) -> PathBuf {
+    let ext = TrackFormat::GraphRoute.extension();
+    let plain = dir.join(format!("{}.{ext}", route_slug(name)));
+    let other = std::fs::read_to_string(&plain)
+        .ok()
+        .and_then(|t| ocw_world::GraphRoute::parse(&t).ok())
+        .and_then(|(_, made_for)| made_for)
+        .is_some_and(|(n, _)| n.replace('_', " ") != package.replace('_', " "));
+    if other {
+        dir.join(format!(
+            "{}-{}.{ext}",
+            route_slug(package),
+            route_slug(name)
+        ))
+    } else {
+        plain
+    }
+}
+
+/// A file name for `name`: lower case, `-` between the words.
+fn route_slug(name: &str) -> String {
     let slug: String = name
         .chars()
         .map(|c| {
@@ -674,16 +716,11 @@ pub fn default_route_path(package_file: &Path, name: &str) -> PathBuf {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join("-");
-    let slug = if slug.is_empty() {
+    if slug.is_empty() {
         "route".into()
     } else {
         slug
-    };
-    package_file
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join("routes")
-        .join(format!("{slug}.{}", TrackFormat::GraphRoute.extension()))
+    }
 }
 
 fn write_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -697,28 +734,70 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", shown_path(path)))
 }
 
-fn save(studio: &mut Studio, path: Option<String>) -> Result<PathBuf, String> {
+/// A saved route: the file, and why it is not next to the package (the
+/// package folder is not writable: it went to `<data dir>/ocw/routes`).
+struct Saved {
+    path: PathBuf,
+    fallback: Option<String>,
+}
+
+impl Saved {
+    /// "route saved as …", with why it is not next to the package.
+    fn message(&self) -> String {
+        match &self.fallback {
+            None => format!("route saved as {}", shown_path(&self.path)),
+            Some(why) => format!(
+                "route saved as {} (the package folder is not writable: {why}); the game lists it from there too",
+                shown_path(&self.path)
+            ),
+        }
+    }
+}
+
+fn save(studio: &mut Studio, path: Option<String>) -> Result<Saved, String> {
     let net = studio.routes.net()?;
     let doc = studio.route().ok_or("no route is open")?.content().clone();
-    let path = match path {
-        Some(p) => crate::edit::expand_home(p.trim()),
+    // The package folder's `routes/` unless a file was given or saved to.
+    let (path, default) = match path {
+        Some(p) => (crate::edit::expand_home(p.trim()), false),
         None => match &studio.routes.file {
             Some(f)
                 if TrackFormat::of_name(&f.to_string_lossy()) == Some(TrackFormat::GraphRoute) =>
             {
-                f.clone()
+                (f.clone(), false)
             }
             _ => {
                 let pkg = studio.package.as_ref().ok_or("no world is open")?;
-                default_route_path(&pkg.file, &doc.name)
+                (default_route_path(&pkg.file, &doc.name), true)
             }
         },
     };
     let bytes = formats::export(&doc, &net, TrackFormat::GraphRoute)?;
-    write_file(&path, &bytes)?;
+    let saved = match write_file(&path, &bytes) {
+        Ok(()) => Saved {
+            path,
+            fallback: None,
+        },
+        // Not writable (an installed or read-only package): the data
+        // directory, which the game reads too (spec 16H Q19).
+        Err(e) if default => {
+            let dir = studio
+                .routes
+                .fallback_dir
+                .clone()
+                .ok_or_else(|| format!("{e} (and there is no data directory to save to)"))?;
+            let alt = fallback_route_path(&dir, &doc.package.name, &doc.name);
+            write_file(&alt, &bytes).map_err(|e2| format!("{e}; {e2}"))?;
+            Saved {
+                path: alt,
+                fallback: Some(e),
+            }
+        }
+        Err(e) => return Err(e),
+    };
     studio.route_mut()?.mark_saved();
-    studio.routes.file = Some(path.clone());
-    Ok(path)
+    studio.routes.file = Some(saved.path.clone());
+    Ok(saved)
 }
 
 /// The test ride's program and arguments: `ocw-desktop` next to the studio
@@ -1170,12 +1249,9 @@ pub fn command(studio: &mut Studio, cmd: RouteCommand, now_s: f64) -> Result<Str
             write_file(&p, &bytes)?;
             Ok(format!("exported {} as {}", shown_path(&p), format.name()))
         }
-        C::Save(path) => {
-            let p = save(studio, path)?;
-            Ok(format!("route saved as {}", shown_path(&p)))
-        }
+        C::Save(path) => Ok(save(studio, path)?.message()),
         C::TestRide => {
-            let route = save(studio, None)?;
+            let route = save(studio, None)?.path;
             let pkg = studio.package.as_ref().ok_or("no world is open")?;
             let exe = std::env::current_exe().ok();
             let (prog, args) = test_ride_command(exe.as_deref(), &pkg.file, &route);
@@ -1796,6 +1872,86 @@ mod tests {
             req.to_ascii_lowercase()
                 .contains("user-agent: opencyclingworld-studio/")
         );
+    }
+
+    /// A studio on the grid with an open route "Ada's grid" and the
+    /// package file `file`.
+    fn studio_with_route(file: PathBuf, fallback: Option<PathBuf>) -> Studio {
+        let mut s = studio();
+        let mut pkg = crate::patch::tests::package();
+        pkg.file = file;
+        s.package = Some(pkg);
+        s.routes.fallback_dir = fallback;
+        run(&mut s, RouteCommand::New(Some("Ada's grid".into())), 0.0);
+        run(&mut s, RouteCommand::Click([0.0, 200.0], 5.0), 1.0);
+        run(&mut s, RouteCommand::Click([400.0, 200.0], 5.0), 2.0);
+        s
+    }
+
+    /// Spec 16H Q19 (a): *Save route* writes next to the package, else
+    /// (the package folder is not writable) into `<data dir>/ocw/routes`,
+    /// and says where.
+    #[test]
+    fn save_route_falls_back_to_the_data_dir_and_says_where() {
+        let dir = tmp_dir("save-fallback");
+        let data = dir.join("data").join("routes");
+        // A writable package folder: `routes/` next to the package.
+        let open = dir.join("open");
+        std::fs::create_dir_all(&open).unwrap();
+        let mut s = studio_with_route(open.join("grid.ocwpkg"), Some(data.clone()));
+        let m = run(&mut s, RouteCommand::Save(None), 3.0);
+        let next_to = open.join("routes").join("ada-s-grid.ocwroute");
+        assert!(next_to.is_file(), "{m}");
+        assert!(
+            m.starts_with("route saved as ") && !m.contains("not writable"),
+            "{m}"
+        );
+        assert!(!data.exists(), "nothing in the data dir");
+        // A package folder whose `routes` cannot be made (a file is in the
+        // way, as a read-only folder would be): the data directory.
+        let locked = dir.join("locked");
+        std::fs::create_dir_all(&locked).unwrap();
+        std::fs::write(locked.join("routes"), "in the way").unwrap();
+        let mut s = studio_with_route(locked.join("grid.ocwpkg"), Some(data.clone()));
+        let m = run(&mut s, RouteCommand::Save(None), 3.0);
+        let fell = data.join("ada-s-grid.ocwroute");
+        assert!(fell.is_file(), "{m}");
+        assert!(m.contains("ada-s-grid.ocwroute"), "says where: {m}");
+        assert!(
+            m.contains("the package folder is not writable"),
+            "and why: {m}"
+        );
+        assert_eq!(s.routes.file.as_deref(), Some(fell.as_path()));
+        assert!(!s.route().unwrap().is_dirty(), "saved");
+        let (route, made_for) =
+            ocw_world::GraphRoute::parse(&std::fs::read_to_string(&fell).unwrap()).unwrap();
+        assert_eq!(route.name, "Ada's grid");
+        assert_eq!(made_for.map(|(n, _)| n), Some("Grid".to_string()));
+        // Saving again goes to the same file.
+        let again = run(&mut s, RouteCommand::Save(None), 4.0);
+        assert!(again.contains("ada-s-grid.ocwroute") && !again.contains("not writable"));
+        // Another package's route of the same name is not overwritten.
+        assert_eq!(fallback_route_path(&data, "Grid", "Ada's grid"), fell);
+        assert_eq!(
+            fallback_route_path(&data, "Other Land", "Ada's grid"),
+            data.join("other-land-ada-s-grid.ocwroute")
+        );
+        // No data directory either: the error says so.
+        let mut s = studio_with_route(locked.join("grid.ocwpkg"), None);
+        let e = command(&mut s, RouteCommand::Save(None), 3.0).unwrap_err();
+        assert!(e.contains("no data directory"), "{e}");
+        // A file given by name is not redirected.
+        let mut s = studio_with_route(open.join("grid.ocwpkg"), Some(data.clone()));
+        let bad = locked.join("routes").join("x.ocwroute");
+        assert!(
+            command(
+                &mut s,
+                RouteCommand::Save(Some(bad.display().to_string())),
+                3.0
+            )
+            .is_err()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
