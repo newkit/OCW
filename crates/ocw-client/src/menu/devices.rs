@@ -31,6 +31,17 @@ pub const DEVICE_NOTE: &str =
 /// The ANT+ page's note (spec 3.4.1, 14 Phase 17 Q1 (b)).
 pub const ANT_NOTE: &str = "ANT+ straps need the ANT+ network key (16 hex digits), which Garmin publishes for ANT+ developers. It stays on this computer, in secrets.toml.";
 
+/// Devices -> ANT+ -> Driver for the ANT stick (Windows; spec 3.4.1 *The
+/// driver route on Windows*, 14 Phase 17 Q7 (d)).
+pub const ANT_DRIVER_NOTE: &str = "Needs Garmin's ANT driver (as for Zwift): Windows Update > Optional updates, then plug the stick in again. Fallback: WinUSB with Zadig.";
+
+/// Devices -> ANT+ -> Install access (Linux; 14 Phase 17 Q8 (b)).
+pub const ANT_ACCESS_NOTE: &str = "Linux opens the stick only with a udev rule. Install access asks for your password (pkexec) and adds it; then plug the stick in again.";
+
+/// The command that installs the Linux access rule (`ocw-desktop
+/// --install-udev-rule` in a terminal does the same).
+pub const ANT_ACCESS_COMMAND: &str = "ant.access.install";
+
 /// The ANT+ page's status line while the key is typed.
 pub const ANT_TYPING: &str = "Type the 16 hex digits; Enter saves, Esc cancels";
 
@@ -297,7 +308,27 @@ pub struct AntInfo {
     pub typing: Option<String>,
     /// Where the key is kept ("~/.config/ocw/secrets.toml [ant]").
     pub key_file: Option<String>,
+    /// The stick cannot be opened, and this is how to fix it here.
+    pub fix: Option<AntFix>,
+    /// The last *Install access* run ("installed", "pkexec is missing:
+    /// ...").
+    pub access: Option<String>,
 }
+
+/// How to make a stick that cannot be opened work (by the system).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AntFix {
+    /// Windows: Garmin's driver from Windows Update, or Zadig / WinUSB
+    /// (Q7 (d)).
+    WindowsDriver,
+    /// Linux: the udev rule through `pkexec` (Q8 (b)).
+    LinuxAccess,
+}
+
+/// The ANT+ page's row for the fix.
+pub const ANT_DRIVER_ROW: &str = "Driver for the ANT stick";
+/// See [`ANT_DRIVER_ROW`].
+pub const ANT_ACCESS_ROW: &str = "Install access for the ANT stick";
 
 impl AntInfo {
     /// The Devices list row's value.
@@ -369,6 +400,8 @@ pub fn rows(page: Page, info: &DevicesInfo) -> Vec<Row> {
         },
         Page::Bridge => info.bridge.as_ref().map(bridge_rows).unwrap_or_default(),
         Page::Ant => info.ant.as_ref().map(ant_rows).unwrap_or_default(),
+        Page::AntDriver => info.ant.as_ref().map(driver_rows).unwrap_or_default(),
+        Page::AntAccess => info.ant.as_ref().map(access_rows).unwrap_or_default(),
         _ => Vec::new(),
     }
 }
@@ -376,6 +409,15 @@ pub fn rows(page: Page, info: &DevicesInfo) -> Vec<Row> {
 /// Devices → ANT+: the stick, the network key (enter, change, remove).
 fn ant_rows(a: &AntInfo) -> Vec<Row> {
     let mut out = vec![info_row("Stick", Some(short_label(&a.state, 40)))];
+    match a.fix {
+        Some(AntFix::WindowsDriver) => {
+            out.push(open_row(ANT_DRIVER_ROW, None, Page::AntDriver));
+        }
+        Some(AntFix::LinuxAccess) => {
+            out.push(open_row(ANT_ACCESS_ROW, None, Page::AntAccess));
+        }
+        None => {}
+    }
     match &a.typing {
         Some(shown) => {
             let mut field = Row::action("Network key", "ant.key.save");
@@ -401,6 +443,44 @@ fn ant_rows(a: &AntInfo) -> Vec<Row> {
     }
     if let Some(f) = &a.key_file {
         out.push(info_row("Kept in", Some(short_label(f, 40))));
+    }
+    out
+}
+
+/// Devices -> ANT+ -> Driver for the ANT stick (Windows): the two routes
+/// (the note explains them); the status line has the stick's state.
+fn driver_rows(_: &AntInfo) -> Vec<Row> {
+    vec![
+        info_row(
+            "1. Windows Update",
+            Some("Optional updates: Garmin's ANT driver".into()),
+        ),
+        info_row(
+            "2. Or Zadig",
+            Some("WinUSB (Zwift then loses the stick)".into()),
+        ),
+        info_row(
+            "One program at a time",
+            Some("close Zwift, Garmin Express".into()),
+        ),
+    ]
+}
+
+/// Devices -> ANT+ -> Install access (Linux): install the udev rule, and
+/// what the last try said.
+fn access_rows(a: &AntInfo) -> Vec<Row> {
+    let mut out = vec![
+        Row::action(
+            "Install access (asks for your password)",
+            ANT_ACCESS_COMMAND,
+        ),
+        info_row(
+            "Rule file",
+            Some("/etc/udev/rules.d/60-ocw-ant.rules".into()),
+        ),
+    ];
+    if let Some(r) = &a.access {
+        out.push(info_row("Last try", Some(short_label(r, 40))));
     }
     out
 }
@@ -589,7 +669,7 @@ pub fn status(page: Page, info: &DevicesInfo) -> String {
     {
         return short_label(&format!("{}: {}", e.name, e.link.text()), 60);
     }
-    if page == Page::Ant {
+    if matches!(page, Page::Ant | Page::AntDriver | Page::AntAccess) {
         return match (&info.ant, info.messages.last()) {
             (Some(a), _) if a.typing.is_some() => ANT_TYPING.into(),
             (_, Some(m)) => short_label(m, 56),
@@ -974,6 +1054,7 @@ mod tests {
                 key_set: false,
                 typing: None,
                 key_file: Some("~/.config/ocw/secrets.toml [ant]".into()),
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -1014,5 +1095,68 @@ mod tests {
                 .iter()
                 .any(|r| r.label.starts_with("ANT+"))
         );
+    }
+
+    /// A stick that cannot be opened: the ANT+ page offers the fix of the
+    /// system (spec 14 Phase 17 Q7 (d) on Windows, Q8 (b) on Linux).
+    #[test]
+    fn the_ant_page_offers_the_driver_or_the_access_rule() {
+        let mut info = DevicesInfo {
+            ant: Some(AntInfo {
+                state: "cannot open the stick (permission)".into(),
+                key_set: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        // Nothing to fix: no row.
+        let labels = |info: &DevicesInfo, p| -> Vec<String> {
+            rows(p, info).into_iter().map(|r| r.label).collect()
+        };
+        assert!(!labels(&info, Page::Ant).iter().any(|l| l == ANT_ACCESS_ROW));
+        // Linux: Install access for the ANT stick -> its page -> pkexec.
+        info.ant.as_mut().unwrap().fix = Some(AntFix::LinuxAccess);
+        let a = rows(Page::Ant, &info);
+        assert_eq!(a[1].label, ANT_ACCESS_ROW);
+        assert_eq!(a[1].confirm, Some(Activate::Open(Page::AntAccess)));
+        assert_eq!(Page::AntAccess.parent(), Some(Page::Ant));
+        let page = rows(Page::AntAccess, &info);
+        assert_eq!(
+            page[0].confirm,
+            Some(Activate::Command(ANT_ACCESS_COMMAND.into()))
+        );
+        assert!(
+            page.iter()
+                .any(|r| { r.value.as_deref() == Some("/etc/udev/rules.d/60-ocw-ant.rules") })
+        );
+        assert!(Page::AntAccess.notes()[0].contains("pkexec"));
+        // What the last try said.
+        info.ant.as_mut().unwrap().access = Some("pkexec is missing".into());
+        let page = rows(Page::AntAccess, &info);
+        assert_eq!(
+            page.last().unwrap().value.as_deref(),
+            Some("pkexec is missing")
+        );
+        // Windows: Driver for the ANT stick -> Windows Update, Zadig, one
+        // program at a time.
+        let ant = info.ant.as_mut().unwrap();
+        ant.fix = Some(AntFix::WindowsDriver);
+        ant.state = "the stick needs a driver".into();
+        let a = rows(Page::Ant, &info);
+        assert_eq!(a[1].label, ANT_DRIVER_ROW);
+        assert_eq!(a[1].confirm, Some(Activate::Open(Page::AntDriver)));
+        assert_eq!(
+            labels(&info, Page::AntDriver),
+            ["1. Windows Update", "2. Or Zadig", "One program at a time"]
+        );
+        let note = Page::AntDriver.notes()[0];
+        assert!(note.contains("Optional updates") && note.contains("Zadig"));
+        // Short enough for the 16:9 page (the desktop's test measures it).
+        assert!(note.len() <= ANT_NOTE.len() && ANT_ACCESS_NOTE.len() <= ANT_NOTE.len());
+        for p in [Page::AntDriver, Page::AntAccess] {
+            assert!(p.notes().iter().all(|t| t.is_ascii()), "{p:?}");
+            assert!(rows(p, &info).len() < 7);
+            assert!(rows(p, &info).iter().all(|r| r.label.len() <= 48));
+        }
     }
 }

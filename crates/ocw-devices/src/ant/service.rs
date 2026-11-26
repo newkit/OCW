@@ -10,7 +10,9 @@
 //! [`RECONNECT_DELAY`].
 //!
 //! The transports: `usb::UsbTransport` (the real sticks, feature
-//! `ant-usb`) and [`SimTransport`] (the simulated stick).
+//! `ant-usb`), `libusb0::Libusb0Transport` (Garmin's libusb-win32 driver
+//! on Windows), [`Fallback`] (one, then the other) and [`SimTransport`]
+//! (the simulated stick).
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
@@ -38,6 +40,60 @@ pub trait AntTransport: Send + 'static {
     /// Opens the first stick (errors: [`DeviceError::NoStick`],
     /// [`DeviceError::StickPermission`], [`DeviceError::StickBusy`]).
     fn open(&mut self) -> Result<Box<dyn AntLink>, DeviceError>;
+}
+
+/// Two routes to the stick, tried in order (spec 14 Phase 17 Q7 (d): on
+/// Windows `nusb` over WinUSB first, then Garmin's libusb-win32 driver).
+/// When neither opens the stick, the error says the most useful thing:
+/// busy wins; a stick the second route saw gives its error; a stick only
+/// the first route saw (it is plugged in, but its driver is neither)
+/// gives [`DeviceError::StickDriver`].
+pub struct Fallback<A, B> {
+    pub first: A,
+    pub second: B,
+}
+
+impl<A: AntTransport, B: AntTransport> Fallback<A, B> {
+    pub fn new(first: A, second: B) -> Self {
+        Self { first, second }
+    }
+}
+
+/// The error of [`Fallback::open`] when both routes failed.
+pub fn fallback_error(first: DeviceError, second: DeviceError) -> DeviceError {
+    use DeviceError as E;
+    match (first, second) {
+        (E::StickBusy, _) | (_, E::StickBusy) => E::StickBusy,
+        // The second route did not see the stick (not bound to its
+        // driver, or the driver is missing) ...
+        (E::NoStick, E::NoStick | E::StickDriver(_)) => E::NoStick,
+        (a, E::NoStick) => E::StickDriver(a.to_string()),
+        (a, E::StickDriver(b)) => E::StickDriver(format!("{a}; {b}")),
+        // ... or saw it and failed: its reason.
+        (_, b) => b,
+    }
+}
+
+impl<A: AntTransport, B: AntTransport> AntTransport for Fallback<A, B> {
+    fn find(&mut self) -> Option<String> {
+        self.first.find().or_else(|| self.second.find())
+    }
+
+    fn open(&mut self) -> Result<Box<dyn AntLink>, DeviceError> {
+        let first = match self.first.open() {
+            Ok(link) => return Ok(link),
+            Err(e) => e,
+        };
+        match self.second.open() {
+            Ok(link) => {
+                tracing::debug!(
+                    "ANT stick: the first route failed ({first}), the second opened it"
+                );
+                Ok(link)
+            }
+            Err(second) => Err(fallback_error(first, second)),
+        }
+    }
 }
 
 /// An open stick: bytes in and out.
@@ -393,6 +449,10 @@ impl<T: AntTransport> Service<T> {
                     self.set_status(match e {
                         DeviceError::StickPermission => StickStatus::NoPermission(name),
                         DeviceError::StickBusy => StickStatus::Busy(name),
+                        DeviceError::StickDriver(why) => {
+                            tracing::info!(stick = %name, "ANT stick without a usable driver: {why}");
+                            StickStatus::NoDriver(name)
+                        }
                         DeviceError::NoStick => StickStatus::NoStick,
                         other => StickStatus::Failed(other.to_string()),
                     });

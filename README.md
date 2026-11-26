@@ -2109,10 +2109,36 @@ package is installed only when all its files match the manifest.
   `ant.key.clear`.
 - The *ANT+ (USB stick)* row says what is missing: *network key needed*,
   *no stick*, *cannot open the stick (permission)*, *the stick is busy with
-  another app* (Garmin Express, Zwift, …). On Linux an ordinary user may
-  open the stick only when a udev rule allows it, on Windows the stick needs
-  the WinUSB driver – how OCW sets these up is not decided yet (spec 14
-  Phase 17 Q7, Q8).
+  another app* (Garmin Express, Zwift, …; only one program can use the
+  stick at a time), *the stick needs a driver* (Windows).
+- **Windows driver** (spec 14 Phase 17 Q7 (d)): OCW uses **Garmin's own
+  ANT driver** – the one Zwift, Garmin Express and TrainerRoad use – so
+  usually there is nothing to install. If Windows has not installed it yet,
+  let **Windows Update** do it: on Windows 11 under *Settings → Windows
+  Update → Advanced options → Optional updates* ("Dynastream Innovations –
+  ANT USB-m" or "ANT USB Stick 2"), then plug the stick in again. OCW loads
+  the system's `libusb0.dll` that this driver installs (it ships no copy);
+  if it is missing, the Devices page says the stick needs a driver and
+  *Driver for the ANT stick* explains the two routes. The fallback is
+  **Zadig** (bind *WinUSB* to the stick); OCW tries WinUSB first and
+  Garmin's driver second, but after Zadig Garmin Express and Zwift no longer
+  see the stick until the driver is rolled back in the Device Manager.
+- **Linux access** (Q8 (b)): an ordinary user may open the stick only when a
+  udev rule allows it. When the stick cannot be opened for permission, the
+  ANT+ page offers **Install access for the ANT stick** (console
+  `ant.access.install`); in a terminal `ocw-desktop --install-udev-rule`
+  does the same (from the AppImage: `./OCW-*.AppImage
+  --install-udev-rule`; from the tar.xz: `./ocw-desktop
+  --install-udev-rule`). It asks for your password with `pkexec`, writes
+  `/etc/udev/rules.d/60-ocw-ant.rules` – the USB device and its
+  `/dev/ttyUSBn`, `SUBSYSTEM=="usb"` / `SUBSYSTEM=="tty"`,
+  `ATTRS{idVendor}=="0fcf"`, `ATTRS{idProduct}=="1004|1008|1009"`,
+  `MODE="0660"`, `TAG+="uaccess"` (no `dialout` group needed) – and runs
+  `udevadm control --reload-rules && udevadm trigger`; then plug the stick
+  in again. It does nothing when the rule is there already, never replaces
+  a different rule in that file without asking (`--replace-udev-rule`), and
+  without `pkexec` / polkit it changes nothing and prints the rule and the
+  command to run as root instead.
 - **Two heart-rate straps** (a Bluetooth and an ANT+ one, or the same strap
   on both): only one heart rate is used, the first that sends – never a
   mix. The other strap's page has **Use for heart rate** (`devices.hr ID`,
@@ -2947,6 +2973,7 @@ you can run are offered (no *Dev* commands on a remote server).
 | `devices.forget ID\|NAME\|all` | Disconnect and forget a device |
 | `devices.hr ID\|NAME\|auto` | *Use for heart rate*: with two straps, use this one's heart rate (`auto`: the first that sends) |
 | `ant.key.edit` / `ant.key.paste` / `ant.key.save` / `ant.key.cancel` / `ant.key.clear` | The ANT+ network key (Devices → ANT+): type it (masked), paste, save it in `secrets.toml`, cancel, remove |
+| `ant.access.install` | Linux: install the ANT stick's udev rule through `pkexec` (Devices → ANT+ → *Install access for the ANT stick*; the same as `ocw-desktop --install-udev-rule`) |
 | `devices.virtual` | Start an additional virtual trainer |
 | **Rides and Strava** | |
 | `ride.status` | The current recording |

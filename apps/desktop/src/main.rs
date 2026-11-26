@@ -9,6 +9,7 @@
 
 mod account;
 mod activities;
+mod ant_access;
 mod argsfile;
 mod audio;
 mod automation;
@@ -240,6 +241,16 @@ pub struct Args {
     /// Do not look for an ANT USB stick (ANT+ off).
     #[arg(long)]
     pub no_ant: bool,
+    /// Linux: install the udev rule that lets the logged-in user open the
+    /// ANT USB stick (/etc/udev/rules.d/60-ocw-ant.rules; asks for the
+    /// password with pkexec, then reloads udev) and exit (spec 14 Phase 17
+    /// Q8 (b)).
+    #[arg(long)]
+    pub install_udev_rule: bool,
+    /// With --install-udev-rule: replace a different rule in that file
+    /// without asking.
+    #[arg(long, requires = "install_udev_rule")]
+    pub replace_udev_rule: bool,
     /// Share the trainer with a browser on the same network from the start
     /// (the sensor bridge, spec 14 Phase 10, 10D.2; Settings → Trainer →
     /// Devices → Share with a browser).
@@ -433,6 +444,9 @@ fn main() -> AppExit {
     }
     let matches = Args::command().get_matches_from(argv);
     let mut args = Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+    if args.install_udev_rule {
+        std::process::exit(ant_access::cli(args.replace_udev_rule));
+    }
     // ocw.toml (spec 3.2.4; the old files migrated into it once) with the
     // settings and the local riders (spec 3.2.1): before anything reads
     // the options they fill in.

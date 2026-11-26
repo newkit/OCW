@@ -40,8 +40,8 @@ use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 use clap::{Arg, ArgAction, Command, value_parser};
-use ocw_client::menu::devices::{AntInfo, DevicesInfo, Entry, Link, Role, Scan};
-use ocw_devices::ant::{self, AntDeviceId, AntStick, NetworkKey};
+use ocw_client::menu::devices::{AntFix, AntInfo, DevicesInfo, Entry, Link, Role, Scan};
+use ocw_devices::ant::{self, AntDeviceId, AntStick, NetworkKey, StickStatus};
 use ocw_devices::ble::{self, BleDevice, FoundDevice};
 use ocw_devices::{
     DeviceBackend, DeviceCommand, DeviceError, DeviceEvent, DeviceHandle, VirtualTrainer,
@@ -105,7 +105,54 @@ pub fn ant_stick(args: &Args, key: Option<NetworkKey>) -> Option<AntStick> {
             }
         };
     }
-    Some(AntStick::start(ant::usb::UsbTransport::new(), key))
+    // Windows (spec 14 Phase 17 Q7 (d)): WinUSB through nusb first (a
+    // stick bound with Zadig), then Garmin's own libusb-win32 driver.
+    #[cfg(windows)]
+    let transport = ant::Fallback::new(
+        ant::usb::UsbTransport::new(),
+        ant::libusb0::Libusb0Transport::system(),
+    );
+    #[cfg(not(windows))]
+    let transport = ant::usb::UsbTransport::new();
+    Some(AntStick::start(transport, key))
+}
+
+/// What the Devices page offers for a stick that cannot be opened, on
+/// this system (`std::env::consts::OS`): Windows – Garmin's driver from
+/// Windows Update, or Zadig (Q7 (d)); Linux – the udev rule (Q8 (b)).
+pub fn ant_fix(status: &StickStatus, os: &str) -> Option<AntFix> {
+    match (os, status) {
+        ("windows", StickStatus::NoDriver(_) | StickStatus::NoPermission(_)) => {
+            Some(AntFix::WindowsDriver)
+        }
+        ("linux", StickStatus::NoPermission(_)) => Some(AntFix::LinuxAccess),
+        _ => None,
+    }
+}
+
+/// How *Install access for the ANT stick* runs (`pkexec` on the system; a
+/// fake in tests) and where the rule goes.
+#[derive(Resource, Clone)]
+pub struct AntAccess {
+    pub runner: Arc<dyn crate::ant_access::Runner>,
+    pub path: std::path::PathBuf,
+}
+
+impl Default for AntAccess {
+    fn default() -> Self {
+        Self {
+            runner: Arc::new(crate::ant_access::System),
+            path: crate::ant_access::RULE_PATH.into(),
+        }
+    }
+}
+
+/// A running *Install access* (pkexec waits for the password) and what
+/// the last one said.
+#[derive(Resource, Default)]
+struct AccessJob {
+    rx: Option<Mutex<Receiver<crate::ant_access::Outcome>>>,
+    last: Option<String>,
 }
 
 /// What `secrets.toml [ant]` holds.
@@ -190,6 +237,8 @@ impl Plugin for DevicesPlugin {
         app.insert_resource(devices)
             .insert_resource(Trainer(TrainerControl::new(profile)))
             .init_resource::<KeyEntry>()
+            .init_resource::<AntAccess>()
+            .init_resource::<AccessJob>()
             .add_systems(PreUpdate, poll_devices)
             .add_systems(
                 Update,
@@ -198,6 +247,7 @@ impl Plugin for DevicesPlugin {
                     control_trainer,
                     publish_status,
                     poll_key_entry,
+                    poll_access,
                     publish_menu,
                 )
                     .chain(),
@@ -835,17 +885,23 @@ fn publish_menu(
     devices: Res<Devices>,
     io: Res<DeviceIo>,
     key: Res<KeyEntry>,
+    access: Res<AccessJob>,
     menu: Option<ResMut<ocw_ui::menu::DevicesMenu>>,
     bridge: Option<Res<crate::bridge::Bridge>>,
 ) {
     let Some(mut menu) = menu else { return };
     let mut info = devices.menu_info();
     info.bridge = bridge.map(|b| b.info());
-    info.ant = io.ant.as_ref().map(|stick| AntInfo {
-        state: stick.status().text(),
-        key_set: stick.has_key(),
-        typing: key.typing.then(|| key.shown(16)),
-        key_file: devices.ant_key.as_ref().map(crate::config::Slot::describe),
+    info.ant = io.ant.as_ref().map(|stick| {
+        let status = stick.status();
+        AntInfo {
+            state: status.text(),
+            key_set: stick.has_key(),
+            typing: key.typing.then(|| key.shown(16)),
+            key_file: devices.ant_key.as_ref().map(crate::config::Slot::describe),
+            fix: ant_fix(&status, std::env::consts::OS),
+            access: access.last.clone(),
+        }
     });
     if menu.0 != info {
         menu.0 = info;
@@ -939,6 +995,60 @@ fn paste_key(world: &mut World) -> Result<String, String> {
     }
     k.field.paste(&text);
     Ok("pasted".into())
+}
+
+/// `ant.access.install`: the udev rule through pkexec, on a thread (the
+/// password dialog blocks); [`poll_access`] reports the outcome.
+fn start_access(world: &mut World) -> Result<String, String> {
+    if world.resource::<AccessJob>().rx.is_some() {
+        return Err("Install access is already running".into());
+    }
+    let access = world.resource::<AntAccess>().clone();
+    let (tx, rx) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("ocw-ant-access".into())
+        .spawn(move || {
+            let outcome = crate::ant_access::install(access.runner.as_ref(), &access.path, false);
+            let _ = tx.send(outcome);
+        })
+        .map_err(|e| e.to_string())?;
+    world.resource_mut::<AccessJob>().rx = Some(Mutex::new(rx));
+    let line = "installing access for the ANT stick (pkexec asks for your password) ...";
+    world.resource_mut::<Devices>().info.push_message(line);
+    Ok(line.into())
+}
+
+/// The outcome of *Install access*: the page's line, the console's text
+/// (with the rule and the manual command when it was refused).
+fn poll_access(world: &mut World) {
+    let got = {
+        let job = world.resource::<AccessJob>();
+        let Some(rx) = &job.rx else { return };
+        let rx = rx.lock().unwrap_or_else(|e| e.into_inner());
+        match rx.try_recv() {
+            Ok(o) => Some(o),
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => None,
+        }
+    };
+    let outcome = got
+        .unwrap_or_else(|| crate::ant_access::Outcome::Failed("the install thread ended".into()));
+    let path = world.resource::<AntAccess>().path.clone();
+    let short = outcome.short();
+    let text = outcome.message(&path);
+    if outcome.ok() {
+        info!("{text}");
+    } else {
+        warn!("{text}");
+    }
+    let mut job = world.resource_mut::<AccessJob>();
+    job.rx = None;
+    job.last = Some(short.clone());
+    world
+        .resource_mut::<Devices>()
+        .info
+        .push_message(format!("Install access: {short}"));
+    world.resource_mut::<ConsoleState>().print(text);
 }
 
 /// `ant.key.clear`: no key any more (ANT+ stops).
@@ -1115,6 +1225,12 @@ fn register_commands(app: &mut App) {
         Permission::User,
         Command::new("ant.key.clear").about("Remove the ANT+ network key (ANT+ stops)"),
         |world, _| clear_key(world),
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new(ocw_client::menu::devices::ANT_ACCESS_COMMAND)
+            .about("Linux: install the udev rule that lets you open the ANT stick (asks for the password with pkexec; the same as ocw-desktop --install-udev-rule)"),
+        |world, _| start_access(world),
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
@@ -2023,7 +2139,7 @@ mod tests {
     }
 
     /// The Devices page says what is wrong with the stick, in neutral
-    /// words (spec 14 Phase 17 Q7 / Q8 still open: no udev / Zadig flow).
+    /// words; the fix for the system is a row of its own (below).
     #[test]
     fn a_stick_that_cannot_be_opened_is_named_neutrally() {
         let sim = SimTransport::new(None, vec![SimSensor::strap(1, 70.0)]);
@@ -2044,5 +2160,77 @@ mod tests {
         });
         let status = StickStatus::NoPermission("x".into()).text();
         assert!(!status.contains("udev") && !status.contains("Zadig"));
+    }
+
+    /// A fake runner without pkexec: the real one is never run in tests.
+    struct NoPkexec(std::sync::atomic::AtomicUsize);
+
+    impl crate::ant_access::Runner for NoPkexec {
+        fn find(&self, program: &str) -> Option<std::path::PathBuf> {
+            assert_eq!(program, "pkexec");
+            self.0.fetch_add(1, Ordering::Relaxed);
+            None
+        }
+        fn run(&self, _: &std::path::Path, _: &[String]) -> std::io::Result<Option<i32>> {
+            panic!("pkexec must not run in tests");
+        }
+    }
+
+    /// Linux, no permission: the ANT+ page offers *Install access for the
+    /// ANT stick* (spec 14 Phase 17 Q8 (b)); without pkexec it refuses and
+    /// the console shows the rule and the manual command. Windows: the
+    /// driver page (Q7 (d)).
+    #[test]
+    fn a_stick_without_permission_offers_the_fix_of_the_system() {
+        use ocw_client::menu::devices::{ANT_ACCESS_ROW, rows};
+        // The rule by system.
+        let denied = StickStatus::NoPermission("ANT USB-m stick".into());
+        let no_driver = StickStatus::NoDriver("ANT USB-m stick".into());
+        assert_eq!(ant_fix(&denied, "linux"), Some(AntFix::LinuxAccess));
+        assert_eq!(ant_fix(&no_driver, "windows"), Some(AntFix::WindowsDriver));
+        assert_eq!(ant_fix(&denied, "windows"), Some(AntFix::WindowsDriver));
+        assert_eq!(ant_fix(&denied, "macos"), None);
+        assert_eq!(ant_fix(&StickStatus::Busy("x".into()), "linux"), None);
+        assert_eq!(ant_fix(&StickStatus::NoStick, "windows"), None);
+        assert_eq!(no_driver.text(), "the stick needs a driver");
+        if std::env::consts::OS != "linux" {
+            return;
+        }
+        let sim = SimTransport::new(None, vec![SimSensor::strap(1, 70.0)]);
+        sim.set_denied(true);
+        let mock = Mock::default();
+        let io = ant_io(&mock, &sim, Some(NetworkKey::TEST));
+        let mut app = app_with(&[], Some(io));
+        let dir = std::env::temp_dir().join(format!("ocw-ant-access-{}", std::process::id()));
+        let fake = Arc::new(NoPkexec(Default::default()));
+        app.insert_resource(AntAccess {
+            runner: fake.clone(),
+            path: dir.join("60-ocw-ant.rules"),
+        });
+        run(&mut app, "devices.connect ant:120:1:1");
+        until(&mut app, "the fix is offered", |m| {
+            m.ant
+                .as_ref()
+                .is_some_and(|a| a.fix == Some(AntFix::LinuxAccess))
+        });
+        let r = rows(Page::Ant, &menu(&app));
+        assert!(r.iter().any(|r| r.label == ANT_ACCESS_ROW), "{r:?}");
+        // Install access: refused cleanly without pkexec.
+        let line = run(&mut app, "ant.access.install");
+        assert!(line.contains("pkexec"), "{line}");
+        until(&mut app, "the outcome", |m| {
+            m.ant
+                .as_ref()
+                .and_then(|a| a.access.as_deref())
+                .is_some_and(|a| a.starts_with("no pkexec"))
+        });
+        assert_eq!(fake.0.load(Ordering::Relaxed), 1);
+        let log = app.world().resource::<ConsoleState>().log().join("\n");
+        let [usb, tty] = crate::ant_access::rule_lines();
+        assert!(log.contains(&usb) && log.contains(&tty), "{log}");
+        assert!(log.contains("sudo udevadm control --reload-rules"), "{log}");
+        assert!(!dir.join("60-ocw-ant.rules").exists());
+        let r = rows(Page::AntAccess, &menu(&app));
+        assert!(r.iter().any(|r| r.label == "Last try"), "{r:?}");
     }
 }

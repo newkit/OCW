@@ -69,6 +69,9 @@ pub enum FailReason {
     StickBusy,
     /// ANT+: the ANT+ network key has not been entered yet.
     NoKey,
+    /// ANT+: the stick is there but no driver we can use is bound to it
+    /// (Windows: neither Garmin's libusb-win32 driver nor WinUSB).
+    NoDriver,
 }
 
 impl FailReason {
@@ -84,6 +87,7 @@ impl FailReason {
             DeviceError::StickPermission => Self::NoPermission,
             DeviceError::StickBusy => Self::StickBusy,
             DeviceError::NoNetworkKey => Self::NoKey,
+            DeviceError::StickDriver(_) => Self::NoDriver,
         }
     }
 
@@ -97,6 +101,7 @@ impl FailReason {
             Self::NoPermission => "cannot open the ANT stick (permission)",
             Self::StickBusy => "the ANT stick is busy with another app",
             Self::NoKey => "the ANT+ network key is needed (Devices -> ANT+)",
+            Self::NoDriver => "the ANT stick needs a driver (Devices -> ANT+)",
         }
     }
 }
@@ -176,6 +181,10 @@ pub enum DeviceError {
     StickBusy,
     #[error("the ANT+ network key is needed")]
     NoNetworkKey,
+    /// The stick is plugged in, but no driver we can use is bound to it
+    /// (the details for the log).
+    #[error("the ANT stick has no usable driver: {0}")]
+    StickDriver(String),
 }
 
 /// A source of trainer / sensor data.

@@ -11,7 +11,10 @@
 //! it. The ANT+ network key is read from the file `OCW_ANT_KEY_FILE` names
 //! (16 hex digits, e.g. the `network_key` line of `secrets.toml` copied
 //! into its own file); it is never printed and never in this repository.
-//! `--sim` uses the simulated stick (any key) instead of a real one.
+//! `--sim` uses the simulated stick (any key) instead of a real one. On
+//! Windows the stick is opened as the desktop app does: WinUSB (`nusb`)
+//! first, then Garmin's libusb-win32 driver (`libusb0.dll`; Q7 (d)), and
+//! `sticks` names both routes.
 
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
@@ -19,6 +22,21 @@ use std::time::{Duration, Instant};
 use ocw_devices::ant::sim::SimSensor;
 use ocw_devices::ant::usb::UsbTransport;
 use ocw_devices::ant::{AntStick, AntTransport, NetworkKey, SimTransport};
+
+/// The real sticks, as the desktop app opens them.
+#[cfg(windows)]
+fn real() -> impl AntTransport {
+    ocw_devices::ant::Fallback::new(
+        UsbTransport::new(),
+        ocw_devices::ant::libusb0::Libusb0Transport::system(),
+    )
+}
+
+/// The real sticks, as the desktop app opens them.
+#[cfg(not(windows))]
+fn real() -> impl AntTransport {
+    UsbTransport::new()
+}
 
 fn key() -> Option<NetworkKey> {
     let path = std::env::var_os("OCW_ANT_KEY_FILE")?;
@@ -65,14 +83,21 @@ fn main() {
                 key,
             )
         } else {
-            AntStick::start(UsbTransport::new(), key)
+            AntStick::start(real(), key)
         }
     };
     match args.first().map(String::as_str) {
-        Some("sticks") => match UsbTransport::new().find() {
-            Some(name) => println!("{name}"),
-            None => println!("no ANT stick plugged in"),
-        },
+        Some("sticks") => {
+            match UsbTransport::new().find() {
+                Some(name) => println!("{name} (nusb)"),
+                None => println!("no ANT stick plugged in (nusb)"),
+            }
+            #[cfg(windows)]
+            match ocw_devices::ant::libusb0::Libusb0Transport::system().find() {
+                Some(name) => println!("{name} (Garmin's libusb-win32 driver)"),
+                None => println!("no ANT stick on Garmin's libusb-win32 driver"),
+            }
+        }
         Some("scan") => {
             let Some(k) = key().or(sim.then_some(NetworkKey::TEST)) else {
                 eprintln!("set OCW_ANT_KEY_FILE to a file with the ANT+ network key");

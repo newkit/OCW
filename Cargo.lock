@@ -7079,6 +7079,7 @@ dependencies = [
  "btleplug",
  "futures",
  "js-sys",
+ "libloading 0.8.9",
  "nusb",
  "thiserror 2.0.21",
  "tokio",

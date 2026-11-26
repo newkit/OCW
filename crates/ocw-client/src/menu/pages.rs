@@ -220,6 +220,12 @@ pub enum Page {
     /// `menu::devices`, the desktop only): the ANT USB stick's state and
     /// the ANT+ network key's entry.
     Ant,
+    /// Devices -> ANT+ -> Driver for the ANT stick (Windows, when the stick
+    /// cannot be opened; 14 Phase 17 Q7 (d)): Windows Update, or Zadig.
+    AntDriver,
+    /// Devices -> ANT+ -> Install access for the ANT stick (Linux, when
+    /// opening fails for permission; 14 Phase 17 Q8 (b)): the udev rule.
+    AntAccess,
     /// Ride → Join (spec §3.2.1; rows from `menu::join`): the link and
     /// fingerprint fields, Paste, Join, the recent servers.
     Join,
@@ -334,6 +340,8 @@ impl Page {
             Self::Device(_) => "Device",
             Self::Bridge => "Sensor bridge",
             Self::Ant => "ANT+",
+            Self::AntDriver => "ANT stick driver",
+            Self::AntAccess => "ANT stick access",
             Self::Join => "Join a ride",
             Self::HostWorld => "Host a ride: world",
             Self::HostRoute => "Host a ride: route",
@@ -469,6 +477,7 @@ impl Page {
             Self::TrustedKey(_) => Some(Self::TrustedKeys),
             Self::Devices => Some(Self::Trainer),
             Self::Device(_) | Self::Bridge | Self::Ant => Some(Self::Devices),
+            Self::AntDriver | Self::AntAccess => Some(Self::Ant),
             Self::HostRoute => Some(Self::HostWorld),
             Self::HostTime => Some(Self::HostRoute),
             Self::HostWeather => Some(Self::HostTime),
@@ -639,6 +648,8 @@ impl Page {
             Self::Device(_) => &[super::devices::DEVICE_NOTE],
             Self::Bridge => &[super::devices::BRIDGE_NOTE],
             Self::Ant => &[super::devices::ANT_NOTE],
+            Self::AntDriver => &[super::devices::ANT_DRIVER_NOTE],
+            Self::AntAccess => &[super::devices::ANT_ACCESS_NOTE],
             Self::Join => &[
                 "Paste or type the link the host shares (ocw://HOST:PORT?cert=...). Your ride goes on until the shared one is ready.",
             ],
@@ -1441,7 +1452,12 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         // From the trusted world keys (`menu::trust`).
         Page::TrustedKeys | Page::TrustedKey(_) => Vec::new(),
         // From the app's devices (`menu::devices`).
-        Page::Devices | Page::Device(_) | Page::Bridge | Page::Ant => Vec::new(),
+        Page::Devices
+        | Page::Device(_)
+        | Page::Bridge
+        | Page::Ant
+        | Page::AntDriver
+        | Page::AntAccess => Vec::new(),
         // From the join state (`menu::join`) and the host wizard (`host`).
         Page::Join
         | Page::HostWorld
