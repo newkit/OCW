@@ -28,7 +28,9 @@
 #    grant must then be wss:// (the server's --voice-public-url).
 #    OCW_REMOTE_WEB2=1 adds a second browser rider: each plays a voice-like
 #    tone from its fake microphone, so both must see the other in the room
-#    and hear it speak, over the server's grants and the real SFU path
+#    and hear it speak (each selects the other: I hear selected riders, at
+#    any distance, since riders who join seconds apart are past the 10.5 m
+#    of "everybody nearby"), over the server's grants and the real SFU path
 #    (no server keys needed). The desktop app's voice is judged from its
 #    own log (connected to the room).
 #
@@ -118,13 +120,15 @@ dr=$!; pids+=("$dr")
 # 5. The browser rider at the same time.
 if [ -n "${OCW_REMOTE_WEB:-}" ]; then
   python3 scripts/test-remote-web.py --query "$OCW_REMOTE_WEB" --out "$out" \
-    --seconds "$((seconds - 20))" --name "Dora Descender" ${OCW_REMOTE_HTTPS:+--https} >"$work/web" 2>&1 &
+    --seconds "$((seconds - 20))" --name "Dora Descender" ${OCW_REMOTE_HTTPS:+--https} \
+    ${OCW_REMOTE_WEB2:+--hear "Erin Sprinter"} >"$work/web" 2>&1 &
   web=$!; pids+=("$web")
 fi
 if [ -n "${OCW_REMOTE_WEB:-}" ] && [ -n "${OCW_REMOTE_WEB2:-}" ]; then
   sleep 5
   python3 scripts/test-remote-web.py --query "$OCW_REMOTE_WEB" --out "$out" \
-    --seconds "$((seconds - 25))" --name "Erin Sprinter" ${OCW_REMOTE_HTTPS:+--https} >"$work/web2" 2>&1 &
+    --seconds "$((seconds - 25))" --name "Erin Sprinter" ${OCW_REMOTE_HTTPS:+--https} \
+    --hear "Dora Descender" >"$work/web2" 2>&1 &
   web2=$!; pids+=("$web2")
 fi
 

@@ -36,24 +36,58 @@ fn lock(link: &SharedLink) -> std::sync::MutexGuard<'_, ClientLink> {
     link.lock().expect("not poisoned")
 }
 
+/// A handshake that got no answer, tried again on a new connection
+/// (`netconn::handshake_retry_s`, spec 11.5).
+#[derive(Debug, Default)]
+struct Retry {
+    /// Handshakes that failed so far.
+    failed: u32,
+    /// When to open the next connection (page clock, s).
+    at_s: Option<f64>,
+    connected: bool,
+}
+
+type SharedRetry = Arc<Mutex<Retry>>;
+
 /// The session's transport in the browser: connects on its first pump
-/// (then it has the link to report to) and writes the link's bytes.
+/// (then it has the link to report to) and writes the link's bytes. A
+/// handshake without an answer is tried again on a new connection (a new
+/// UDP flow) a few times before the join fails; the link stays
+/// *connecting* meanwhile and keeps what the session sends.
 pub struct WebTransportLink {
     options: RemoteOptions,
     id: Option<u32>,
+    retry: SharedRetry,
 }
 
 impl WebTransportLink {
     pub fn new(options: RemoteOptions) -> Self {
-        Self { options, id: None }
+        Self {
+            options,
+            id: None,
+            retry: SharedRetry::default(),
+        }
     }
 }
 
 impl Transport for WebTransportLink {
     fn pump(&mut self, link: &SharedLink, _now_s: f64) {
+        let due = {
+            let mut r = self.retry.lock().expect("not poisoned");
+            let due = r.at_s.is_some_and(|t| page_s() >= t);
+            if due {
+                r.at_s = None;
+            }
+            due
+        };
+        if due {
+            self.id = Some(connect(&self.options, link.clone(), self.retry.clone()));
+        }
         let id = match self.id {
             Some(id) => id,
-            None => *self.id.insert(connect(&self.options, link.clone())),
+            None => *self
+                .id
+                .insert(connect(&self.options, link.clone(), self.retry.clone())),
         };
         let out = lock(link).take_outgoing();
         if out.is_empty() {
@@ -70,6 +104,7 @@ impl Transport for WebTransportLink {
     }
 
     fn close(&mut self) {
+        self.retry.lock().expect("not poisoned").at_s = None;
         if let Some(id) = self.id.take() {
             netconn::close(id, 0, "client quit");
         }
@@ -86,8 +121,9 @@ impl Transport for WebTransportLink {
     }
 }
 
-/// Opens the connection; its events go into the link.
-fn connect(options: &RemoteOptions, link: SharedLink) -> u32 {
+/// Opens the connection; its events go into the link (a handshake that
+/// failed and is tried again only schedules the next one).
+fn connect(options: &RemoteOptions, link: SharedLink, retry: SharedRetry) -> u32 {
     info!(url = %options.url, hashes = options.cert_hashes.len(), "WebTransport: connecting");
     let opts = ConnOptions {
         url: options.url.clone(),
@@ -97,6 +133,25 @@ fn connect(options: &RemoteOptions, link: SharedLink) -> u32 {
         game: true,
     };
     netconn::open(opts, move |ev| {
+        {
+            let mut r = retry.lock().expect("not poisoned");
+            if matches!(ev, NetEvent::Connected { .. }) {
+                r.connected = true;
+            } else if let Some(delay) = (!r.connected)
+                .then(|| netconn::handshake_retry_s(&ev, r.failed))
+                .flatten()
+            {
+                r.failed += 1;
+                r.at_s = Some(page_s() + delay);
+                warn!(
+                    error = %netconn::server_end(&ev).unwrap_or_default(),
+                    attempt = r.failed,
+                    retry_in_s = delay,
+                    "WebTransport: no answer to the handshake; trying again on a new connection"
+                );
+                return;
+            }
+        }
         if let Some(reason) = netconn::server_end(&ev) {
             if matches!(ev, NetEvent::Closed { .. }) {
                 warn!(%reason, "WebTransport: closed");

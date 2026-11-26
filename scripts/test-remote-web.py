@@ -73,6 +73,12 @@ def main():
     p.add_argument("--https", action="store_true", help="serve the page over https:// (self-signed)")
     p.add_argument("--cmd", action="append", default=[],
                    help="a console command after joining (repeatable), e.g. the rider's look")
+    p.add_argument("--hear", default=None,
+                   help="the rider to hear: selected (I hear: selected riders), so the voice is"
+                        " heard at any distance (riders who join seconds apart ride 40 m apart,"
+                        " past the 10.5 m of everybody nearby)")
+    p.add_argument("--chromium-flag", action="append", default=[],
+                   help="one more Chromium flag (repeatable), e.g. --log-net-log=FILE")
     a = p.parse_args()
     a.chromium = a.chromium or web_browser.find()
     if not os.path.isdir(os.path.join(a.dir, "worlds")):
@@ -99,7 +105,7 @@ def main():
         extra = (f"--ignore-certificate-errors-spki-list={spki(cert)}",)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     port = httpd.server_address[1]
-    r = wa.Run(a, base, flags_extra=extra)
+    r = wa.Run(a, base, flags_extra=(*extra, *a.chromium_flag))
     ok = False
     try:
         name = a.name.replace(" ", "%20")
@@ -124,6 +130,12 @@ def main():
         seen = r.wait("other participants",
                       lambda: [x.get("name") for x in (r.voice() or {}).get("participants", [])], 40)
         r.check("sees other participants in the voice room", seen, seen)
+        if a.hear:
+            # Selected once the rider is in the room (the selection goes by
+            # the room's riders or remembered ones).
+            r.wait(a.hear, lambda: a.hear in [x.get("name") for x in (r.voice() or {}).get("participants", [])], 40)
+            r.console(f'voice.select "{a.hear}" on')
+            r.console("set voice.i_hear selected")
         r.pump(max(0.0, a.seconds / 2))
         r.shot("riding")
         talk = r.wait("someone speaking", lambda: (r.voice() or {}).get("speaking"), 20)
