@@ -3429,6 +3429,70 @@ ocw-desktop --world europe/spain/tenerife --free-ride
 
 **Multiplayer:** a game server that rides a world (`ocw-server --world …`, [Hosting a ride over the network](#hosting-a-ride-over-the-network)) loads the package from its own disk or cache. The world server only delivers packages to the riders.
 
+### Hosting the server on Fly.io
+
+`deploy/fly/ocw-server/` runs `ocw-server` with its bundled voice server on [Fly.io](https://fly.io) (spec 11.5): one always-on machine in Frankfurt (`fra`), app `ocw-server`. Vercel and other serverless hosts cannot run it: the game needs a long-running process and UDP.
+
+**What runs.** One machine with one process tree: `ocw-server --listen --webtransport` and the `livekit-server` it starts itself with fresh keys at every start (spec 7.1.1, 7.1.8). The image (`Dockerfile`) builds only `ocw-server` (Rust 1.99.1, release, on Debian trixie) and adds the pinned `livekit-server` 1.13.10 (checked against the release's checksum). The server runs as the user `ocw`, not as root. `start.sh` binds the UDP ports to `fly-global-services`: Fly delivers UDP only to that address, and replies must leave from there. The public address riders see is the app's dedicated IPv4 (`OCW_PUBLIC_HOST`, by default the IPv4 of `ocw-server.fly.dev`).
+
+**Ports** (all on the dedicated IPv4):
+
+| Port | Protocol | What |
+|---|---|---|
+| 47800 | UDP | game, QUIC (desktop app, `ocw-bot`) |
+| 47801 | UDP | game, WebTransport (browser app) |
+| 7880 | TCP | voice signalling (LiveKit WebSocket, `ws://`) |
+| 7881 | TCP | voice media over TCP (ICE/TCP), for networks that block UDP |
+| 7882 | UDP | voice media, one port for all riders |
+
+UDP works only over IPv4 on Fly, so riders use the IPv4 address, not `ocw-server.fly.dev` (which also has an IPv6 address).
+
+**The volume** `ocw_data` (1 GB, mounted at `/data`):
+- `worlds/pilot/liechtenstein.ocwpkg` with its manifest and routes: the world the session rides (`OCW_WORLD` in `fly.toml`). Other packages next to it can be switched to from the World menu.
+- `tls/`: the server's own TLS identity, the QUIC certificate (fixed fingerprint) and the WebTransport certificate (13 days, renewed by the server). Made on the first start and kept across restarts and deploys; never in Git.
+- `home/`: the server user's data dir (the voice server's logs).
+- `web-info.json`: the browser page options (WebTransport URL and certificate hash).
+
+**First setup** (once; the Fly account needs a credit card for the dedicated IPv4):
+
+```bash
+fly ips allocate-v4 -a ocw-server                      # dedicated IPv4: UDP needs it
+fly volumes create ocw_data -a ocw-server -r fra -s 1 -y
+git lfs pull                                           # the models: the server's collision shapes
+fly deploy --config deploy/fly/ocw-server/fly.toml \
+  --dockerfile deploy/fly/ocw-server/Dockerfile \
+  --ignorefile deploy/fly/ocw-server/Dockerfile.dockerignore --remote-only .
+```
+
+`--remote-only` builds the image on Fly's builder, never on your machine. Until a world is uploaded the machine waits (`fly logs` says so) and starts the server once the package is there.
+
+**Secrets:** none to set. The voice server's API keys are new at every start and stay in the process environment (spec 7.1.1). The TLS identity is made on the volume. Sign-in, once used, takes `--auth-issuer` in `OCW_SERVER_ARGS` (`fly.toml`'s `[env]`). Any secret of its own goes in with `fly secrets set`, never into `fly.toml`.
+
+**Updating the worlds.** Copy the package with its manifest and route files from marge's live worlds, upload them and compare SHA-256 on both sides:
+
+```bash
+fly ssh sftp shell -a ocw-server     # put liechtenstein.ocwpkg /data/worlds/pilot/liechtenstein.ocwpkg.new, the same for the manifest and the .route files
+fly ssh console -a ocw-server -C "sh -c 'cd /data/worlds/pilot && mv liechtenstein.ocwpkg.new liechtenstein.ocwpkg && sha256sum *.ocwpkg'"
+fly machine restart -a ocw-server    # the session rides the new package
+```
+
+Riders need the same package version: the server refuses a different road graph (`world package mismatch`).
+
+**Joining.** `fly logs -a ocw-server` shows the join links. Use the first one, `ocw://IPV4?cert=…&world=…`: it names the public IPv4 and the certificate fingerprint. The second link and the `Clients connect with` line name the machine's internal UDP address. The browser page options are in `/data/web-info.json` (`fly ssh console -C "cat /data/web-info.json"`):
+
+```bash
+ocw-desktop --server IPV4:47800 --server-cert FINGERPRINT --world data/pilot/liechtenstein.ocwpkg
+# browser: ?server=https://IPV4:47801&cert-hash=HASH&world=liechtenstein…
+```
+
+The WebTransport certificate's hash changes every 11 days (browsers take only short-lived self-signed certificates). The desktop's fingerprint stays the same.
+
+**Voice** runs in the same machine (spec 11.5 says why): LiveKit announces the dedicated IPv4 as its media address (`node_ip`), takes UDP 7882 for all riders and falls back to TCP 7881. Grants name `ws://IPV4:7880`, which the desktop app and pages on `http://` (for example `make web-serve` on `localhost`) can use. A page served over `https://` would need `wss://` (not set up yet).
+
+**Options:** `OCW_SERVER_ARGS` in `fly.toml` (default `--bots 0 --echo-bot`: no server bots, the Echo rider for the voice echo test). `OCW_WORLD` names the package.
+
+**Size and costs.** Measured with Liechtenstein, 3 bots and the Echo rider: `ocw-server` holds 490 MB, `livekit-server` 80 MB, and a 50 Hz tick takes 0.06 ms of the 20 ms budget. So 1 GB of memory is the smallest size that fits, and one shared CPU is plenty. Fly's prices (November 2026, Frankfurt): the machine `shared-cpu-1x` with 1 GB about $7.73 a month, the dedicated IPv4 $2, the 1 GB volume $0.15, outbound traffic $0.02/GB (a rider uses a few MB an hour). That is about $10 a month, always on. The machine does not stop by itself: Fly's proxy cannot wake a stopped machine for UDP, so a stopped server could not be joined.
+
 ## Build infrastructure
 
 OCW is built and tested on dedicated **build machines**, never on the machine
