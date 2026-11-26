@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 6.16 – November 2026
+Version 6.17 – November 2026
 
 | Version | Change |
 |---|---|
+| 6.17 | **With accounts every rider starts fresh with 5,000 ♥ and nothing owned beyond the included base parts; the local wallets of the test riders are test data and not imported** (decision by the user, 2026-11-26; Phase 4 Q21 (a); to be built with the accounts backend, 4O). |
 | 6.16 | **A signed-in rider without internet, or with the server down, rides with the bikes and kit last synced, read-only – no buying or selling; the ride's summary is queued, uploaded when online and credited after the checks** (decision by the user, 2026-11-26; Phase 4 Q20 (a); to be built with the accounts backend, 4O). |
 | 6.15 | **Hearts are credited directly only by game servers whose key is signed by the project's root key; a ride on any other server counts through the ride summary the app uploads afterwards, once it passes the plausibility checks of 6.4 (power curve, cadence, trusted devices)** (decision by the user, 2026-11-26; Phase 4 Q19 (a); to be built with the accounts backend, 4O). |
 | 6.14 | **With accounts, every rider's base parts are included – the 5,000 ♥ start buys a complete bike** (decision by the user, 2026-11-26; Phase 4 Q18 (a); to be built with the accounts backend, 4O). |
@@ -4586,7 +4587,7 @@ The first catalogue (about 30 entries; base parts at 0 ♥ for every slot and bi
 - **Q18 – Base parts: decided (2026-11-26, the user): (a), base parts included, so 5,000 ♥ buys a complete bike; to be built with the accounts** – with accounts every rider starts with 5,000 hearts (♥, the in-game currency; 1 ♥ is about 1 € of the real price) and buys their bike. A bike is a frameset plus parts in its slots – wheels, groupset, tyres and so on. The question: does a bought frameset come with free basic entry-level parts in every slot (the base parts of 4F), so it can be ridden at once, or does every part have to be bought separately? (See 4O *Start: 5,000 ♥ and nothing owned*: "its bike (frameset with its base parts, 4F)" – possibly already answered.) Options: (a) base parts included; (b) every part bought. Proposal: a – base parts included, so 5,000 ♥ buys a complete bike.
 - **Q19 – Which game servers credit hearts: decided (2026-11-26, the user): (a), servers signed by the project's root key credit directly, rides elsewhere count through the uploaded ride summary after the plausibility checks; to be built with the accounts** – riders earn hearts by riding (1 ♥ per 10 kJ of work plus a little for climbing). Anybody can run an OCW game server – ours, a friend's, or the app's own *Host a ride* – and a modified server could hand out hearts freely. So which servers may add hearts to an account? Options: (a) only servers whose key is signed by our project's root key credit directly; rides on any other server count through the ride summary the app uploads afterwards, which must pass the plausibility checks of 6.4 (power curve, cadence, trusted devices); (b) every server credits directly; (c) only our servers, other rides earn nothing. Proposal: a.
 - **Q20 – Offline riding: decided (2026-11-26, the user): (a), offline with the bikes and kit last synced, read-only, the ride's summary queued and credited after the checks; to be built with the accounts** – bikes, kit and hearts live in the account on the server (4O). A signed-in rider without internet, or with the server down, may still want to ride with their own bike. Options: (a) the rider rides offline with the bikes and kit last synced, read-only (no buying or selling); the ride's summary is queued, uploaded when online and credited after the checks; (b) offline only on the plain default bike and kit, without hearts; (c) no riding without the server. Related: 3.2.4 Q4, the rider of *Ride locally*. Proposal: a.
-- **Q21 (open) – Existing riders:** before accounts, the test riders had a local wallet on their computer with hearts and parts. With accounts the local wallet goes away (4O). Options: (a) everybody starts fresh with 5,000 ♥ and nothing owned; (b) keep something of the old wallets, e.g. the bikes or the balance. (See 4O *No local wallet*: "the local wallets made so far are test data: not imported" – possibly already answered.) Proposal: a.
+- **Q21 – Existing riders: decided (2026-11-26, the user): (a), everybody starts fresh with 5,000 ♥ and nothing owned; the local test wallets are not imported; to be built with the accounts** – before accounts, the test riders had a local wallet on their computer with hearts and parts. With accounts the local wallet goes away (4O). Options: (a) everybody starts fresh with 5,000 ♥ and nothing owned; (b) keep something of the old wallets, e.g. the bikes or the balance. (See 4O *No local wallet*: "the local wallets made so far are test data: not imported" – possibly already answered.) Proposal: a.
 
 ### Phase 5 – Multiplayer
 
@@ -7681,12 +7682,8 @@ kiosk runs `2dc1892` (the same code without this appendix).
 
 <!-- open-questions:begin (generated by tools/build-dashboard/spec_questions.py overview; do not edit by hand) -->
 
-13 open questions (of 224), each with what it is about, the options and the proposal; answered in the build dashboard or in the conversation, and decided where it stands. Refresh with `python3 tools/build-dashboard/spec_questions.py overview --write SPECIFICATION.md`.
+12 open questions (of 224), each with what it is about, the options and the proposal; answered in the build dashboard or in the conversation, and decided where it stands. Refresh with `python3 tools/build-dashboard/spec_questions.py overview --write SPECIFICATION.md`.
 
-
-**Phase 4 – Avatar and Bicycle Editor**
-
-- **Phase 4 Q21 – Existing riders:** before accounts, the test riders had a local wallet on their computer with hearts and parts. With accounts the local wallet goes away (4O). Options: (a) everybody starts fresh with 5,000 ♥ and nothing owned; (b) keep something of the old wallets, e.g. the bikes or the balance. (See 4O No local wallet: "the local wallets made so far are test data: not imported" – possibly already answered.) Proposal: a.
 
 **Phase 10 – Browser App: riding in the browser**
 
