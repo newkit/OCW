@@ -637,6 +637,112 @@ fn export_and_deletion(e: &Env) {
     );
 }
 
+impl Env {
+    fn put(&self, path: &str, token: &str, body: &str) -> (u16, String) {
+        let mut r = agent()
+            .put(&self.url(path))
+            .header("content-type", "application/json")
+            .header("authorization", &format!("Bearer {token}"))
+            .send(body)
+            .unwrap();
+        (r.status().as_u16(), r.body_mut().read_to_string().unwrap())
+    }
+}
+
+/// The ride's damage kept with the account and repaired over HTTP (4O
+/// part 4): `/workshop/garage` keeps it, `/workshop/repair` charges the
+/// local rule's price, once per idempotency key.
+fn damage_and_repairs(e: &Env) {
+    let t = e.sign_in("Hal Headwind");
+    let damage = Action::Damage {
+        bike: STARTER_BIKE.into(),
+        condition: [("rear_wheel".to_string(), 500)].into(),
+        injury: Some(ocw_account_api::workshop::Injury {
+            condition_pm: 800,
+            at_unix: e.now(),
+        }),
+    };
+    e.act_ok(&t, "d1", &damage);
+    let st = e.state(&t);
+    let bike = st.garage.bike(STARTER_BIKE).unwrap();
+    assert_eq!(bike.condition.get("rear_wheel"), Some(&500));
+    assert_eq!(st.garage.injury.map(|i| i.condition_pm), Some(800));
+    let repair = Action::Repair {
+        bike: STARTER_BIKE.into(),
+        part: Some("rear_wheel".into()),
+    };
+    let (s, _) = e.act(&t, None, &repair);
+    assert_eq!(s, 400, "a repair needs an idempotency key");
+    let a = e.act_ok(&t, "r1", &repair);
+    assert!(
+        a.paid > 0 && a.hearts == START_HEARTS - i64::from(a.paid),
+        "{a:?}"
+    );
+    // The same key again: the first answer, nothing charged twice.
+    let again = e.act_ok(&t, "r1", &repair);
+    assert_eq!(again.hearts, a.hearts);
+    let st = e.state(&t);
+    assert!(st.garage.bike(STARTER_BIKE).unwrap().condition.is_empty());
+    assert!(st.ledger.iter().any(|l| l.reason == Reason::Repair));
+    let (s, b) = e.act(&t, Some("r2"), &repair);
+    assert!(s >= 400 && b.contains("needs no repair"), "{s} {b}");
+    e.assert_books(&t);
+}
+
+/// The rider of an account (4O W5b): none at first, kept with its name
+/// checked and unique on the backend, the account's name follows it (the
+/// next token carries it), in the export, gone with the account.
+fn rider_of_the_account(e: &Env) {
+    let t = e.sign_in("Ines Echelon");
+    let (s, _) = e.get("/account/rider", Some(&t));
+    assert_eq!(s, 404, "no rider yet");
+    let doc = |name: &str| {
+        serde_json::json!({
+            "name": name,
+            "rider": {"name": "old", "weight_kg": 61.5, "height_cm": 168.0, "skin": 4},
+        })
+        .to_string()
+    };
+    let name = format!("Ines E{}", SUBJECT.load(Ordering::SeqCst));
+    let (s, b) = e.put("/account/rider", &t, &doc(&format!("  {name} ")));
+    assert_eq!(s, 200, "{b}");
+    let kept: ocw_account_api::rider::RiderDoc = serde_json::from_str(&b).unwrap();
+    assert_eq!(kept.name, name, "trimmed");
+    assert_eq!(kept.rider["name"], name.as_str());
+    assert_eq!(kept.rider["skin"], 4);
+    let (s, b) = e.get("/account/rider", Some(&t));
+    assert_eq!(s, 200, "{b}");
+    assert!(b.contains("61.5"));
+    let account = e.account_of(&t);
+    assert_eq!(
+        e.svc.store().account(&account).unwrap().display_name,
+        name,
+        "the account's name follows"
+    );
+    // Another account cannot take it (any case); a bad name is refused.
+    let t2 = e.sign_in("Jun Breakaway");
+    let (s, b) = e.put("/account/rider", &t2, &doc(&name.to_uppercase()));
+    assert_eq!(s, 409, "{b}");
+    assert!(b.contains("taken"));
+    let (s, _) = e.put("/account/rider", &t2, &doc("x"));
+    assert_eq!(s, 400, "too short");
+    let (s, _) = e.put("/account/rider", &t2, "[1]");
+    assert_eq!(s, 400);
+    // In the export; gone with the account (the name free again).
+    let (s, b) = e.get("/account/export", Some(&t));
+    assert_eq!(s, 200);
+    let v: serde_json::Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(v["modules"]["rider"]["name"], name.as_str());
+    let r = agent()
+        .delete(&e.url("/account"))
+        .header("authorization", &format!("Bearer {t}"))
+        .call()
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 204);
+    let (s, b) = e.put("/account/rider", &t2, &doc(&name));
+    assert_eq!(s, 200, "{b}");
+}
+
 // ---- memory and PostgreSQL ------------------------------------------------
 
 fn pg_url() -> Option<String> {
@@ -676,4 +782,6 @@ both!(
     summaries_and_plausibility,
     offline_queue_uploads_once,
     export_and_deletion,
+    damage_and_repairs,
+    rider_of_the_account,
 );

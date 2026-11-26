@@ -97,6 +97,9 @@ pub trait Store: Send + Sync {
     fn unlink(&self, account: &str, provider: Provider) -> Result<(), StoreError>;
     /// Deletes the account with its identities, tokens and secrets.
     fn delete_account(&self, account: &str) -> Result<(), StoreError>;
+    /// The account's display name (its rider's name, 4O W5b): the name
+    /// in its next tokens.
+    fn rename(&self, account: &str, name: &str) -> Result<(), StoreError>;
 
     fn put_refresh(&self, record: RefreshRecord) -> Result<(), StoreError>;
     fn refresh(&self, hash: &str) -> Option<RefreshRecord>;
@@ -283,6 +286,16 @@ impl Store for MemStore {
             let old = acc.identities.remove(pos);
             d.identities.remove(&ident_key(old.provider, &old.subject));
             d.secrets.remove(&secret_key(account, provider));
+            Ok(())
+        })
+    }
+
+    fn rename(&self, account: &str, name: &str) -> Result<(), StoreError> {
+        self.with(|d| {
+            d.accounts
+                .get_mut(account)
+                .ok_or(StoreError::NoAccount)?
+                .display_name = name.to_owned();
             Ok(())
         })
     }

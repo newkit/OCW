@@ -431,6 +431,36 @@ impl AuthClient {
         )
     }
 
+    /// `GET /account/rider`: the account's rider (`None`: none yet).
+    pub fn rider(&self, s: &Session) -> Result<Option<ocw_account_api::rider::RiderDoc>, ApiError> {
+        let r = self
+            .agent
+            .get(&format!("{}/account/rider", self.issuer))
+            .header("authorization", &format!("Bearer {}", s.access_token))
+            .call();
+        match Self::api(r) {
+            Ok(d) => Ok(Some(d)),
+            Err(ApiError::Refused(m)) if m.contains("no rider yet") => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// `PUT /account/rider`: keeps the rider (its name checked, unique).
+    pub fn put_rider(
+        &self,
+        s: &Session,
+        doc: &ocw_account_api::rider::RiderDoc,
+    ) -> Result<ocw_account_api::rider::RiderDoc, ApiError> {
+        let body = serde_json::to_string(doc).map_err(|e| ApiError::Refused(e.to_string()))?;
+        Self::api(
+            self.agent
+                .put(&format!("{}/account/rider", self.issuer))
+                .header("authorization", &format!("Bearer {}", s.access_token))
+                .header("content-type", "application/json")
+                .send(&body),
+        )
+    }
+
     /// `POST /rides/summary`: a ride's summary, credited once.
     pub fn ride_summary(
         &self,

@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 
 use bevy::prelude::*;
 use ocw_account_api::offline::{self, OfflineQueue, Synced};
+use ocw_account_api::rider::RiderDoc;
 use ocw_account_api::rides::{RideAnswer, RideSummary};
 use ocw_account_api::workshop::{Action, ActionAnswer, WorkshopState};
 use ocw_ui::workshop::{ActAnswer, WorkshopHost, WorkshopUpdate};
@@ -55,6 +56,12 @@ pub struct Inner {
     pub uploading: bool,
     /// Lines for the console.
     pub said: Vec<String>,
+    /// The account's rider (W5b) with a generation; `None`: not fetched.
+    pub rider: ocw_ui::profiles::FetchedRider,
+    /// A `GET` / `PUT /account/rider` is on its way.
+    pub rider_busy: bool,
+    /// A rider not sent yet (offline).
+    pub rider_put: Option<RiderDoc>,
 }
 
 impl Inner {
@@ -136,6 +143,30 @@ impl Inner {
         self.answers.push(ActAnswer { id, result });
         self.generation += 1;
         keep
+    }
+
+    /// The account's rider arrived (`None`: it has none yet).
+    pub fn rider_arrived(&mut self, doc: Option<RiderDoc>) {
+        self.rider_busy = false;
+        self.generation += 1;
+        self.rider = Some((self.generation, doc));
+    }
+
+    /// What to do about the rider now: a `PUT` waiting, or the first
+    /// `GET` (online, nothing on its way).
+    pub fn rider_due(&mut self) -> Option<Option<RiderDoc>> {
+        if self.rider_busy || !self.online || self.account.is_none() {
+            return None;
+        }
+        if let Some(d) = self.rider_put.take() {
+            self.rider_busy = true;
+            return Some(Some(d));
+        }
+        if self.rider.is_none() {
+            self.rider_busy = true;
+            return Some(None);
+        }
+        None
     }
 
     /// Queues a ride's summary: the queue's new text (to keep).
@@ -314,10 +345,16 @@ pub fn follow(world: &mut World) {
         sync_now = true;
     }
     let ride = s.as_ref().and_then(|_| inner.next_ride());
+    let rider = s.as_ref().and_then(|_| inner.rider_due());
     drop(inner);
     if let Some(s) = s {
         if sync_now {
             sync(ws.clone(), s.clone());
+        }
+        match rider {
+            Some(Some(doc)) => put_rider(ws.clone(), s.clone(), doc),
+            Some(None) => get_rider(ws.clone(), s.clone()),
+            None => {}
         }
         if let Some(r) = ride {
             upload(ws, s, r);
@@ -375,6 +412,20 @@ pub struct WebWorkshopPlugin {
 
 impl Plugin for WebWorkshopPlugin {
     fn build(&self, app: &mut App) {
+        // The account's rider is the riding rider when signed in (W5b).
+        app.insert_resource(ocw_ui::profiles::RiderAccount {
+            fetched: |w| {
+                session(w)?;
+                w.get_resource::<WebWorkshop>()?.lock().rider.clone()
+            },
+            put: |w, d| {
+                if let Some(ws) = w.get_resource::<WebWorkshop>() {
+                    let mut i = ws.lock();
+                    i.rider_put = Some(d);
+                }
+            },
+        })
+        .add_plugins(ocw_ui::profiles::RiderAccountPlugin);
         app.insert_resource(host(self.local))
             .init_resource::<WebWorkshop>()
             .init_resource::<ocw_ui::profiles::RiderProfiles>()
@@ -396,6 +447,68 @@ fn keep(key: &str, text: &str) {
 #[cfg(target_arch = "wasm32")]
 fn ride_suffix() -> String {
     crate::account::random_key()[..12].to_string()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn get_rider(ws: WebWorkshop, (issuer, token, _): (String, String, String)) {
+    wasm_bindgen_futures::spawn_local(async move {
+        let r = crate::account::call_json(
+            "GET",
+            &format!("{issuer}/account/rider"),
+            None,
+            &token,
+            None,
+        )
+        .await;
+        let mut inner = ws.lock();
+        match r {
+            Ok((200, body)) => match serde_json::from_str::<RiderDoc>(&body) {
+                Ok(d) => inner.rider_arrived(Some(d)),
+                Err(e) => {
+                    inner.rider_busy = false;
+                    warn!("account rider: {e}");
+                }
+            },
+            Ok((404, _)) => inner.rider_arrived(None),
+            _ => inner.rider_busy = false,
+        }
+    });
+}
+
+#[cfg(target_arch = "wasm32")]
+fn put_rider(ws: WebWorkshop, (issuer, token, _): (String, String, String), doc: RiderDoc) {
+    wasm_bindgen_futures::spawn_local(async move {
+        let body = serde_json::to_string(&doc).unwrap_or_default();
+        let r = crate::account::call_json(
+            "PUT",
+            &format!("{issuer}/account/rider"),
+            Some(&body),
+            &token,
+            None,
+        )
+        .await;
+        let mut inner = ws.lock();
+        match r {
+            Ok((200, body)) => match serde_json::from_str::<RiderDoc>(&body) {
+                Ok(d) => inner.rider_arrived(Some(d)),
+                Err(_) => inner.rider_busy = false,
+            },
+            Ok((s, body)) if s < 500 && s != 429 => {
+                // Refused (a name taken): the account's rider again.
+                inner.said.push(format!(
+                    "account: the rider was not saved: {}",
+                    refusal(s, &body)
+                ));
+                inner.rider_busy = false;
+                inner.rider = None;
+            }
+            _ => {
+                inner.rider_busy = false;
+                inner.rider_put = Some(doc);
+                inner.online = false;
+            }
+        }
+    });
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -497,6 +610,19 @@ fn keep(_: &str, _: &str) {}
 #[cfg(not(target_arch = "wasm32"))]
 fn ride_suffix() -> String {
     "native".into()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn get_rider(ws: WebWorkshop, _: (String, String, String)) {
+    ws.lock().rider_busy = false;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn put_rider(ws: WebWorkshop, _: (String, String, String), doc: RiderDoc) {
+    let mut i = ws.lock();
+    i.rider_busy = false;
+    i.rider_put = Some(doc);
+    i.online = false;
 }
 
 #[cfg(not(target_arch = "wasm32"))]

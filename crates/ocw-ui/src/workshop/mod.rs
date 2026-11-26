@@ -117,6 +117,9 @@ pub struct WorkshopState {
     damage_report: Option<Action>,
     /// Actions sent without a word in the console (the damage reports).
     quiet: std::collections::BTreeSet<u64>,
+    /// The account's workshop as last synced (the garage again under a
+    /// new rider name, W5b).
+    account_state: Option<ocw_account_api::workshop::WorkshopState>,
 }
 
 impl WorkshopState {
@@ -147,6 +150,7 @@ impl WorkshopState {
             next_action: 0,
             damage_report: None,
             quiet: std::collections::BTreeSet::new(),
+            account_state: None,
         }
     }
 
@@ -1247,6 +1251,18 @@ fn follow_account(world: &mut World) {
             // (Unchanged generation: nothing new from the thread – every
             // change of `online` or the queue comes with a new one.)
             s.account_gen = upd.generation;
+            if let Some(sy) = upd.synced {
+                s.account_state = Some(sy.state);
+            }
+            // The riding rider renamed (the account's rider, W5b): the
+            // account's garage under the new name.
+            if s.wallet.is_account()
+                && s.wallet.get(&name).is_none()
+                && let Some(st) = s.account_state.clone()
+            {
+                s.wallet.adopt(&name, &st);
+                apply = true;
+            }
         } else if s.wallet.is_account() && !signed_in_now {
             if let Some(local) = s.local.take() {
                 s.wallet = local;
@@ -1254,6 +1270,7 @@ fn follow_account(world: &mut World) {
             s.pending.clear();
             s.quiet.clear();
             s.damage_report = None;
+            s.account_state = None;
             s.account_gen = 0;
             said.push(if h.requires_account {
                 "workshop: signed out".into()

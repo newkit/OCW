@@ -16,6 +16,7 @@
 use std::collections::BTreeMap;
 use std::future::Future;
 
+use ocw_account_api::rider::RiderDoc;
 use ocw_account_api::rides::RideStatus;
 use ocw_account_api::workshop::{Bike, Garage, Item, LedgerEntry, Reason};
 use ocw_auth::Provider;
@@ -341,6 +342,23 @@ impl Store for PgStore {
                     .map_err(io)?;
             }
             t.commit().await.map_err(io)
+        })
+    }
+
+    fn rename(&self, account: &str, name: &str) -> Result<(), StoreError> {
+        let pool = self.pool.clone();
+        let (account, name) = (account.to_owned(), name.to_owned());
+        self.run(async move {
+            let r = sqlx::query("UPDATE accounts SET display_name = $2 WHERE id = $1")
+                .bind(&account)
+                .bind(&name)
+                .execute(&pool)
+                .await
+                .map_err(io)?;
+            if r.rows_affected() == 0 {
+                return Err(StoreError::NoAccount);
+            }
+            Ok(())
         })
     }
 
@@ -948,5 +966,70 @@ impl WorkshopStore for PgStore {
             t.commit().await
         })
         .map_err(wio)
+    }
+}
+
+impl crate::riders::RiderStore for PgStore {
+    fn rider(&self, account: &str) -> Result<Option<RiderDoc>, String> {
+        let pool = self.pool.clone();
+        let account = account.to_owned();
+        self.run(async move {
+            let r = sqlx::query("SELECT name, doc, updated_at FROM riders WHERE account = $1")
+                .bind(&account)
+                .fetch_optional(&pool)
+                .await?;
+            r.map(|r| {
+                Ok(RiderDoc {
+                    name: r.try_get("name")?,
+                    rider: r.try_get::<Json<serde_json::Value>, _>("doc")?.0,
+                    updated_at: r.try_get("updated_at")?,
+                })
+            })
+            .transpose()
+        })
+        .map_err(|e: sqlx::Error| e.to_string())
+    }
+
+    fn put_rider(
+        &self,
+        account: &str,
+        key: &str,
+        doc: &RiderDoc,
+    ) -> Result<(), crate::riders::PutFail> {
+        let pool = self.pool.clone();
+        let (account, key, doc) = (account.to_owned(), key.to_owned(), doc.clone());
+        self.run(async move {
+            sqlx::query(
+                "INSERT INTO riders (account, name, name_key, doc, updated_at)
+                 VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (account) DO UPDATE
+                 SET name = $2, name_key = $3, doc = $4, updated_at = $5",
+            )
+            .bind(&account)
+            .bind(&doc.name)
+            .bind(&key)
+            .bind(Json(&doc.rider))
+            .bind(doc.updated_at)
+            .execute(&pool)
+            .await
+            .map(|_| ())
+        })
+        .map_err(|e| match code(&e).as_deref() {
+            Some("23505") => crate::riders::PutFail::NameTaken,
+            _ => crate::riders::PutFail::Io(e.to_string()),
+        })
+    }
+
+    fn delete_rider(&self, account: &str) -> Result<(), String> {
+        let pool = self.pool.clone();
+        let account = account.to_owned();
+        self.run(async move {
+            sqlx::query("DELETE FROM riders WHERE account = $1")
+                .bind(&account)
+                .execute(&pool)
+                .await
+                .map(|_| ())
+        })
+        .map_err(|e| e.to_string())
     }
 }

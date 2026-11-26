@@ -21,6 +21,7 @@
 
 pub mod offline;
 pub mod plausibility;
+pub mod rider;
 pub mod rides;
 pub mod workshop;
 

@@ -48,6 +48,10 @@ pub fn router(svc: Arc<AuthService>) -> Router {
         )
         .route("/account/export", get(export).options(preflight))
         .route("/account", delete(delete_account).options(preflight))
+        .route(
+            "/account/rider",
+            get(rider_get).put(rider_put).options(preflight),
+        )
         .route("/workshop", get(workshop_state).options(preflight))
         .route("/workshop/ledger", get(workshop_ledger).options(preflight))
         .route(
@@ -201,7 +205,7 @@ async fn preflight(State(svc): Svc, headers: HeaderMap) -> Response {
     let h = r.headers_mut();
     h.insert(
         header::ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("GET, POST, DELETE"),
+        HeaderValue::from_static("GET, POST, PUT, DELETE"),
     );
     h.insert(
         header::ACCESS_CONTROL_ALLOW_HEADERS,
@@ -584,6 +588,20 @@ async fn workshop_sell(State(svc): Svc, headers: HeaderMap, body: Bytes) -> Resp
 
 async fn workshop_garage(State(svc): Svc, headers: HeaderMap, body: Bytes) -> Response {
     workshop_action(svc, headers, Endpoint::Garage, body).await
+}
+
+async fn rider_get(State(svc): Svc, headers: HeaderMap) -> Response {
+    let a = owned_auth(&headers);
+    let s = svc.clone();
+    let r = blocking(move || crate::riders::Riders::new(s).get(a.as_deref())).await;
+    cors(&svc, &headers, api(r))
+}
+
+async fn rider_put(State(svc): Svc, headers: HeaderMap, body: Bytes) -> Response {
+    let a = owned_auth(&headers);
+    let s = svc.clone();
+    let r = blocking(move || crate::riders::Riders::new(s).put(a.as_deref(), &body)).await;
+    cors(&svc, &headers, api(r))
 }
 
 async fn workshop_repair(State(svc): Svc, headers: HeaderMap, body: Bytes) -> Response {
