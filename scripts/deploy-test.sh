@@ -22,6 +22,10 @@
 # data/ or OCW_WORLD_DATA.
 # ocw-desktop.args beside the binary makes the app load the kiosk's world
 # (`--world`, `--route`, see config/README.md).
+# kiosk.env (from scripts/kiosk.env) holds the kiosk's settings: it joins the
+# Fly.io game server (OCW_KIOSK_SERVER=remote, spec 11.5); kiosk-local.env
+# beside it (never written by a deploy) overrides them on one machine. A
+# deploy never starts a stopped kiosk.
 #
 # The material library (scripts/fetch-materials.sh, spec §4.6) goes to
 # /var/tmp/ocw/materials beside the binary, LiveKit's voice server
@@ -100,6 +104,9 @@ OCW_REMOTE_DEPLOY=1 scripts/remote.sh "$machine" run "
   fi
   mkdir -p \"\$D\" && chmod 755 \"\$D\"
   put 755 scripts/ocw-kiosk.sh ocw-kiosk.sh
+  # The kiosk's settings (2026-11-26: join the Fly.io server; machine-local
+  # changes in kiosk-local.env, kept).
+  put 644 scripts/kiosk.env kiosk.env
   [ -f \"\$D/devices.toml\" ] || { [ -f /tmp/ocw/kickr/devices.toml ] && install -m 644 /tmp/ocw/kickr/devices.toml \"\$D/devices.toml\"; } || true
   # The local config folder (~/.config/ocw, user 2026-11-17): the remembered
   # devices live there (not under /tmp, which a reboot empties; the app moves

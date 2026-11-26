@@ -31,6 +31,8 @@
                               install a staged build (scripts/deploy-test.sh
                               MACHINE does the staging and calls this)
     ocw-kiosk.ps1 selftest    the unit tests of the pure functions below
+    ocw-kiosk.ps1 dry-run     what `run` would start now (server mode, join
+                              info, the app's command); starts nothing
 
   The app runs in the build user's interactive desktop session (windows,
   the GPU and the headset are only there; the scheduled task runs only
@@ -53,8 +55,26 @@
     kiosk-local.args  machine-local arguments (kept, appended)
     deploying         while it exists the kiosk stops the app (a deploy
                       replacing a world package the app holds open)
+    kiosk.env, kiosk-local.env
+                      optional settings (OCW_KIOSK_*=VALUE lines, as on
+                      Linux; kiosk-local.env first, the environment wins);
+                      no deploy writes them
   The state folder (%LOCALAPPDATA%\OCW\kiosk-state): kiosk.log, app.log (the
   app's log; app.prev.log the previous run's), app.out.log, pid files.
+
+  Joining a remote server (an option, 2026-11-26; spec 11.5 *Join info*):
+  OCW_KIOSK_SERVER=remote (in kiosk-local.env or the environment) joins the
+  server whose join info OCW_KIOSK_REMOTE names (default
+  https://ocw-server.fly.dev/join.json) like the Linux kiosk: the join info
+  fetched at every start of the app (OCW_KIOSK_REMOTE_TIMEOUT_S, 10 s), its
+  `join` link (else the WebTransport URL with the current hash), the
+  server's package found in worlds\ by its SHA-256, the app started with
+  --join LINK on it and --bots 0 (state\remote.args as OCW_ARGS_FILE), a
+  dropped connection or a failed join fetching it again; no join info
+  (OCW_KIOSK_REMOTE_TRIES, 3, after OCW_KIOSK_REMOTE_DELAY_S, 5 s, doubled)
+  or a missing world falls back to the app's own local server and checks
+  again every OCW_KIOSK_REMOTE_RETRY_S (60). The default stays the local
+  server (Phase 11 Q14 / Q15: the VR kiosk keeps it until it runs again).
 
   PowerShell 5.1 (Windows' own) and newer; ASCII only (5.1 reads files
   without a BOM as ANSI).
@@ -223,6 +243,90 @@ function Get-PrunableBuilds([string[]]$Names, [string]$Current, [int]$Keep = 1) 
     return @($others[$Keep..($others.Count - 1)])
 }
 
+# The settings files' values (OCW_KIOSK_*=VALUE; quotes removed): the first
+# text wins, names in $Set (already in the environment) are left out.
+function Read-KioskEnv([string[]]$Texts, [string[]]$Set) {
+    $out = @{}
+    foreach ($t in $Texts) {
+        foreach ($l in ($t -split "`r?`n")) {
+            $m = [regex]::Match($l, '^\s*(OCW_KIOSK_[A-Z0-9_]+)=(.*?)\s*$')
+            if (-not $m.Success) { continue }
+            $k = $m.Groups[1].Value; $v = $m.Groups[2].Value
+            if ($k -eq "OCW_KIOSK_DIR" -or $out.ContainsKey($k) -or ($Set -contains $k)) { continue }
+            $q = [regex]::Match($v, '^"(.*)"$|^''(.*)''$')
+            if ($q.Success) { $v = $q.Groups[1].Value + $q.Groups[2].Value }
+            $out[$k] = $v
+        }
+    }
+    return $out
+}
+
+# The join info (untrusted; only checked values come out): @{ Link; World
+# (ID@VERSION or ""); Sha; Voice; Error }. The `join` link (QUIC) first,
+# else the WebTransport URL with the current (first) hash.
+function ConvertFrom-JoinInfo([string]$Json) {
+    $r = @{ Link = ""; World = ""; Sha = ""; Voice = ""; Error = "" }
+    try { $d = $Json | ConvertFrom-Json } catch { $r.Error = "not JSON"; return $r }
+    if ($null -eq $d -or $d -isnot [PSCustomObject]) { $r.Error = "not a join info object"; return $r }
+    function Field($Name) { $p = $d.PSObject.Properties[$Name]; if ($p) { return $p.Value } return $null }
+    $urlChars = '[0-9A-Za-z._~:/?&=%@,+\[\]-]'
+    $world = "" + (Field "world"); if ($world -notmatch '^[a-z0-9][a-z0-9/_.-]{0,99}$') { $world = "" }
+    $ver = "" + (Field "world_version"); if ($ver -notmatch '^[0-9]{1,12}$') { $ver = "" }
+    $sha = "" + (Field "world_sha256"); if ($sha -cnotmatch '^[0-9a-f]{64}$') { $sha = "" }
+    $route = Field "route"
+    $link = "" + (Field "join")
+    if ($link -notmatch ('^ocw://[0-9A-Za-z.:\[\]-]+\?' + $urlChars + '{1,1000}$')) {
+        $link = ""
+        $web = "" + (Field "webtransport")
+        $hashes = @(Field "cert_hashes")
+        $h = if ($hashes.Count -gt 0) { "" + $hashes[0] } else { "" }
+        if ($web -match '^https://[0-9A-Za-z.:\[\]-]+$' -and $h -cmatch '^[0-9a-f]{64}$') {
+            $link = $web + "?cert-hash=" + $h
+            if ($world) { $link += "&world=" + $world + $(if ($ver) { "@" + $ver } else { "" }) }
+            if ($route -is [string] -and $route) { $link += "&route=" + [Uri]::EscapeDataString($route) }
+        }
+    }
+    if (-not $link) { $r.Error = "no join link in it (neither join nor webtransport with cert_hashes)"; return $r }
+    $r.Link = $link
+    if ($world) { $r.World = $world + $(if ($ver) { "@" + $ver } else { "" }) }
+    $r.Sha = $sha
+    $v = "" + (Field "voice"); if ($v -match ('^wss?://' + $urlChars + '{1,200}$')) { $r.Voice = $v }
+    return $r
+}
+
+# The local package of the server's world: the first of $Packages (@{ Path;
+# Sha }) with its SHA-256; "" when none (or the info names no hash).
+function Find-RemotePackage($Info, $Packages) {
+    if (-not $Info.Sha) { return "" }
+    foreach ($p in @($Packages)) { if ($p.Sha -eq $Info.Sha) { return $p.Path } }
+    return ""
+}
+
+# The app's arguments for joining: the build's ocw-desktop.args without its
+# course and server options, the server's package and no bots.
+function New-RemoteArgs([string]$ArgsText, [string]$Package, [string]$Url) {
+    $lines = New-Object Collections.Generic.List[string]
+    $lines.Add("# Written by ocw-kiosk.ps1: joining $Url (OCW_KIOSK_SERVER=remote)")
+    foreach ($l in ($ArgsText -split "`r?`n")) {
+        if (-not $l.Trim() -or $l.StartsWith("#")) { continue }
+        if ($l -match '^\s*--(world|route|route-file|route-gpx|free-ride|start|test-route|bots|server|server-cert|insecure-dev|join)(\s|=|$)') { continue }
+        $lines.Add($l)
+    }
+    if ($Package) { $lines.Add("--world " + (ConvertTo-ArgWord $Package)) }
+    $lines.Add("--bots 0")
+    return ($lines -join "`n") + "`n"
+}
+
+# The app's link to the remote server from its log: "dropped: LINE" (a lost
+# connection or a failed join), "joined" or "".
+function Get-RemoteLinkState([string]$LogText) {
+    $clean = $LogText -replace "\x1b\[[0-9;]*m", ""
+    $drop = [regex]::Match($clean, "(Disconnected: |join failed: )[^\r\n]*")
+    if ($drop.Success) { return "dropped: " + $drop.Value }
+    if ($clean -match 'joined [^ \r\n]+: ') { return "joined" }
+    return ""
+}
+
 # ---------------------------------------------------------------------------
 # The supervisor
 # ---------------------------------------------------------------------------
@@ -269,9 +373,64 @@ function Stop-App($Proc) {
     }
 }
 
+# The settings files of the kiosk folder into this process's environment.
+function Import-KioskEnv {
+    $dir = Get-KioskDir
+    $set = @(Get-ChildItem Env: | Where-Object { $_.Name -like "OCW_KIOSK_*" } | ForEach-Object { $_.Name })
+    $vals = Read-KioskEnv @((Read-Text (Join-Path $dir "kiosk-local.env")), (Read-Text (Join-Path $dir "kiosk.env"))) $set
+    foreach ($k in $vals.Keys) { [Environment]::SetEnvironmentVariable($k, $vals[$k]) }
+}
+
+function Get-RemoteUrl {
+    if ($env:OCW_KIOSK_REMOTE) { return $env:OCW_KIOSK_REMOTE }
+    return "https://ocw-server.fly.dev/join.json"
+}
+
+# SHA-256 of the world packages, cached by path, time and size.
+$script:ShaCache = @{}
+function Get-PackageSha([IO.FileInfo]$F) {
+    $key = $F.FullName + "|" + $F.LastWriteTimeUtc.Ticks + "|" + $F.Length
+    if (-not $script:ShaCache.ContainsKey($key)) { $script:ShaCache[$key] = Get-FileSha $F.FullName }
+    return $script:ShaCache[$key]
+}
+
+# Fetches the join info and finds the server's world in worlds\; writes
+# state\remote.args from the build's arguments. @{ Ok; Link; World; Voice;
+# Why; WorldMissing }.
+function Get-RemoteJoin([string]$Dir, [string]$Build) {
+    $url = Get-RemoteUrl
+    $r = @{ Ok = $false; Link = ""; World = ""; Voice = ""; Why = ""; WorldMissing = $false }
+    $timeout = Get-EnvInt "OCW_KIOSK_REMOTE_TIMEOUT_S" 10
+    try {
+        $resp = Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec $timeout -Headers @{ "Cache-Control" = "no-cache" }
+        $text = if ($resp.Content -is [byte[]]) { [Text.Encoding]::UTF8.GetString($resp.Content) } else { "" + $resp.Content }
+    } catch { $r.Why = "join info $url not fetched: " + $_.Exception.Message; return $r }
+    if ($text.Length -gt 65536) { $r.Why = "join info ${url}: too large"; return $r }
+    $info = ConvertFrom-JoinInfo $text
+    if ($info.Error) { $r.Why = "join info ${url}: " + $info.Error; return $r }
+    $r.Link = $info.Link; $r.World = $info.World; $r.Voice = $info.Voice
+    $pkg = ""
+    if ($info.World) {
+        $files = @(Get-ChildItem -LiteralPath (Join-Path $Dir "worlds") -Filter "*.ocwpkg" -File -ErrorAction SilentlyContinue)
+        $pkg = Find-RemotePackage $info @($files | ForEach-Object { @{ Path = $_.FullName; Sha = (Get-PackageSha $_) } })
+        if (-not $pkg) {
+            $r.WorldMissing = $true
+            $r.Why = "the server rides the world " + $info.World + ", which is not installed in " + (Join-Path $Dir "worlds") + " (or differs: deploy the same package)"
+            return $r
+        }
+    }
+    $state = Get-StateDir
+    New-Item -ItemType Directory -Force $state | Out-Null
+    $buildArgs = if ($Build) { Read-Text (Join-Path $Build "ocw-desktop.args") } else { "" }
+    Write-Atomic (Join-Path $state "remote.args") (New-RemoteArgs $buildArgs $pkg $url)
+    $r.Ok = $true
+    return $r
+}
+
 # The inner loop: exits 0 when asked to stop, 3 when a new kiosk script was
 # deployed (the outer loop starts the new one).
 function Invoke-Supervisor {
+    Import-KioskEnv
     $dir = Get-KioskDir
     $state = Get-StateDir
     New-Item -ItemType Directory -Force $state | Out-Null
@@ -285,6 +444,15 @@ function Invoke-Supervisor {
     $script = Join-Path $dir "ocw-kiosk.ps1"
     $me = Get-FileSha $script
     $fails = 0
+    # Joining a remote server (OCW_KIOSK_SERVER=remote; off by default).
+    $remote = ($env:OCW_KIOSK_SERVER -eq "remote")
+    $remoteTries = Get-EnvInt "OCW_KIOSK_REMOTE_TRIES" 3
+    $remoteDelay = Get-EnvInt "OCW_KIOSK_REMOTE_DELAY_S" 5
+    $remoteRetry = Get-EnvInt "OCW_KIOSK_REMOTE_RETRY_S" 60
+    $remoteFails = 0
+    $fallback = $false
+    $nextProbe = Get-Date
+    if ($remote) { Write-KioskLog ("server mode: remote (" + (Get-RemoteUrl) + ")") }
     Set-Content -Path (Join-Path $state "supervisor.pid") -Value $PID
     while ($true) {
         if (Test-Path -LiteralPath $stopFile) { Remove-Item -LiteralPath $stopFile; Write-KioskLog "kiosk stopping"; return 0 }
@@ -300,8 +468,36 @@ function Invoke-Supervisor {
         $ver = (Read-Text (Join-Path $build "VERSION")).Trim()
         if (-not $ver) { $ver = "unknown build" }
         Write-KioskLog "starting $ver ($cur)"
-        $proc = Start-Process -FilePath $exe -WorkingDirectory $build -NoNewWindow -PassThru `
-            -RedirectStandardError $applog -RedirectStandardOutput $appout
+        $joining = $false
+        $appArgs = @()
+        if ($remote -and -not $fallback) {
+            while ($true) {
+                $j = Get-RemoteJoin $dir $build
+                if ($j.Ok) {
+                    $joining = $true
+                    $appArgs = @("--join", "`"" + $j.Link + "`"")
+                    Write-KioskLog ("joining the remote server: " + $j.Link + " (world " + $(if ($j.World) { $j.World } else { "none" }) + "; voice " + $(if ($j.Voice) { $j.Voice } else { "none" }) + ")")
+                    break
+                }
+                if ($j.WorldMissing) { break }
+                $remoteFails++
+                if ($remoteFails -ge $remoteTries) { break }
+                $w = $remoteDelay * [math]::Pow(2, $remoteFails - 1)
+                Write-KioskLog ($j.Why + "; trying again in $w s")
+                Start-Sleep -Seconds $w
+            }
+            if (-not $joining) {
+                $fallback = $true
+                $nextProbe = (Get-Date).AddSeconds($remoteRetry)
+                Write-KioskLog ($j.Why + " - falling back to the app's own local server and checking " + (Get-RemoteUrl) + " again every $remoteRetry s")
+            }
+        }
+        $env:OCW_ARGS_FILE = $(if ($joining) { Join-Path $state "remote.args" } else { $null })
+        $startArgs = @{ FilePath = $exe; WorkingDirectory = $build; NoNewWindow = $true; PassThru = $true
+            RedirectStandardError = $applog; RedirectStandardOutput = $appout }
+        if ($appArgs.Count -gt 0) { $startArgs.ArgumentList = $appArgs }
+        $proc = Start-Process @startArgs
+        Remove-Item Env:\OCW_ARGS_FILE -ErrorAction SilentlyContinue
         # The handle now: without it PowerShell's process object has no
         # exit code later (the kiosk logged "code " for a crash).
         $null = $proc.Handle
@@ -311,6 +507,7 @@ function Invoke-Supervisor {
         $vrSeen = $false
         $retryAt = $null
         $sessionSeen = 0
+        $joined = $false
         while (-not $proc.HasExited) {
             Start-Sleep -Seconds $poll
             if (Test-Path -LiteralPath $stopFile) { $reason = "stop"; break }
@@ -332,6 +529,19 @@ function Invoke-Supervisor {
             for ($i = $sessionSeen; $i -lt $sessions.Count; $i++) { Write-KioskLog $sessions[$i] }
             $sessionSeen = $sessions.Count
             if ($null -ne $retryAt -and (Get-Date) -ge $retryAt) { $reason = "vr-retry"; Write-KioskLog "restarting the app to try VR again"; break }
+            if ($joining) {
+                $ls = Get-RemoteLinkState ((Read-Text $applog) + "`n" + (Read-Text $appout))
+                if ($ls.StartsWith("dropped: ")) { $reason = "remote"; Write-KioskLog ("remote server: " + $ls.Substring(9) + "; fetching the join info again"); break }
+                if ($ls -eq "joined" -and -not $joined) { $joined = $true; $remoteFails = 0; Write-KioskLog "joined the remote server" }
+            }
+            if ($fallback -and (Get-Date) -ge $nextProbe) {
+                $nextProbe = (Get-Date).AddSeconds($remoteRetry)
+                $j = Get-RemoteJoin $dir $build
+                if ($j.Ok) {
+                    Write-KioskLog ("the remote server can be joined again (" + $j.Link + "), switching to it")
+                    $fallback = $false; $remoteFails = $remoteTries - 1; $reason = "switch"; break
+                }
+            }
         }
         Stop-App $proc
         $code = if ($proc.HasExited) { "{0} (0x{0:X8})" -f $proc.ExitCode } else { "?" }
@@ -339,6 +549,21 @@ function Invoke-Supervisor {
         switch ($reason) {
             "stop" { Remove-Item -LiteralPath $stopFile -ErrorAction SilentlyContinue; Write-KioskLog "kiosk stopping"; return 0 }
             "script" { Write-KioskLog "new kiosk script deployed, restarting the kiosk"; return 3 }
+            "remote" {
+                $fails = 0
+                $w = $remoteDelay
+                if (-not $joined) {
+                    $remoteFails++
+                    $w = $remoteDelay * [math]::Pow(2, [math]::Max(0, $remoteFails - 1))
+                    if ($remoteFails -ge $remoteTries) {
+                        $fallback = $true
+                        $nextProbe = (Get-Date).AddSeconds($remoteRetry)
+                        Write-KioskLog "$remoteFails joins of the remote server failed in a row - falling back to the app's own local server and checking again every $remoteRetry s"
+                        $w = 0
+                    }
+                }
+                if ($w -gt 0) { Write-KioskLog "restarting the app in $w s"; Start-Sleep -Seconds $w }
+            }
             "exited" {
                 $d = Get-RestartDelay $fails ((Get-Date) - $t0).TotalSeconds $quick
                 $fails = $d.Fails
@@ -556,6 +781,35 @@ Add-Type -Namespace W -Name D -MemberDefinition '[DllImport("user32.dll")] publi
     }
 }
 
+# What the supervisor would start now (the server mode, the join info, the
+# app's command); starts nothing (writes state\remote.args when joinable).
+function Invoke-DryRun {
+    Import-KioskEnv
+    $dir = Get-KioskDir
+    $cur = (Read-Text (Join-Path $dir "current.txt")).Trim()
+    $build = if ($cur) { Join-Path $dir $cur } else { "" }
+    $exe = if ($build) { Join-Path $build "ocw-desktop.exe" } else { "(no build deployed)" }
+    Write-Host ("kiosk folder: " + $dir)
+    if ($env:OCW_KIOSK_SERVER -ne "remote") {
+        Write-Host "server mode: local (the app's own local server)"
+        Write-Host ("app command: " + $exe + " (arguments from " + $build + "\ocw-desktop.args)")
+        return
+    }
+    Write-Host ("server mode: remote (" + (Get-RemoteUrl) + ")")
+    $j = Get-RemoteJoin $dir $build
+    if (-not $j.Ok) {
+        Write-Host ("not joinable: " + $j.Why)
+        Write-Host ("the kiosk would retry, then fall back to: " + $exe + " (its own local server)")
+        return
+    }
+    Write-Host ("join link: " + $j.Link)
+    Write-Host ("world: " + $(if ($j.World) { $j.World } else { "none" }) + "; voice: " + $(if ($j.Voice) { $j.Voice } else { "none" }))
+    $af = Join-Path (Get-StateDir) "remote.args"
+    Write-Host "app arguments file (${af}):"
+    (Read-Text $af) -split "`n" | Where-Object { $_ -and -not $_.StartsWith("#") } | ForEach-Object { Write-Host "  $_" }
+    Write-Host ("app command: OCW_ARGS_FILE=" + $af + " " + $exe + " --join `"" + $j.Link + "`"")
+}
+
 # ---------------------------------------------------------------------------
 # Deploy (called by scripts/deploy-test.sh on the machine)
 # ---------------------------------------------------------------------------
@@ -704,6 +958,29 @@ function Invoke-SelfTest {
     $d = Get-RestartDelay 2 2 15; Check "third quick exit" "$($d.Fails) $($d.WaitS)" "0 30"
     Check "prune" ((Get-PrunableBuilds @("20261101-1", "20261102-1", "20261103-1", "20261104-1") "20261104-1") -join ",") "20261102-1,20261101-1"
     Check "prune keeps one other" (@(Get-PrunableBuilds @("20261101-1", "20261102-1") "20261102-1")).Count 0
+    # Joining a remote server (OCW_KIOSK_SERVER=remote, spec 11.5).
+    $e = Read-KioskEnv @("# local`nOCW_KIOSK_REMOTE=`"http://a/j.json`"`n", "OCW_KIOSK_SERVER=remote`nOCW_KIOSK_REMOTE=http://b/j.json`nOCW_KIOSK_DIR=x`nOTHER=1`n") @()
+    Check "env files: first wins, quotes off" "$($e['OCW_KIOSK_SERVER']) $($e['OCW_KIOSK_REMOTE']) $($e.Count)" "remote http://a/j.json 2"
+    Check "env files: the environment wins" ((Read-KioskEnv @("OCW_KIOSK_SERVER=remote") @("OCW_KIOSK_SERVER")).Count) 0
+    $fp = "a" * 64; $wt = "c" * 64; $sha = "e" * 64
+    $ji = '{"webtransport": "https://203.0.113.7:47801", "cert_hashes": ["' + $wt + '", "' + ("d" * 64) + '"], "voice": "wss://voice.example.org", "world": "liechtenstein", "world_version": 10, "world_sha256": "' + $sha + '", "query": "x"'
+    $i = ConvertFrom-JoinInfo ($ji + ', "join": "ocw://203.0.113.7?cert=' + $fp + '&world=liechtenstein@10"}')
+    Check "join info: the QUIC link" "$($i.Link) $($i.World) $($i.Voice) $($i.Error)" "ocw://203.0.113.7?cert=$fp&world=liechtenstein@10 liechtenstein@10 wss://voice.example.org "
+    $i = ConvertFrom-JoinInfo ($ji + '}')
+    Check "join info: WebTransport, the current hash" $i.Link "https://203.0.113.7:47801?cert-hash=$wt&world=liechtenstein@10"
+    $i2 = ConvertFrom-JoinInfo ($ji + ', "join": "ocw://203.0.113.7?cert=\"x y"}')
+    Check "join info: a bad join link is not used" $i2.Link $i.Link
+    Check "join info: not JSON" (ConvertFrom-JoinInfo "<html>").Error "not JSON"
+    Check "join info: no link" ((ConvertFrom-JoinInfo '{"world": "x"}').Error -like "no join link*") $true
+    $pk = @(@{ Path = 'C:\k\worlds\other.ocwpkg'; Sha = "f" * 64 }, @{ Path = 'C:\k\worlds\liechtenstein.ocwpkg'; Sha = $sha })
+    Check "remote package by SHA-256" (Find-RemotePackage $i $pk) 'C:\k\worlds\liechtenstein.ocwpkg'
+    Check "remote package missing" (Find-RemotePackage $i @($pk[0])) ""
+    $ra = New-RemoteArgs "# x`n--world 'C:\k\worlds\tenerife.ocwpkg'`n--route 'Puerto de la Cruz - Teide'`n--virtual`n--vr`n--window 960x540`n" 'C:\k\worlds\liechtenstein.ocwpkg' "http://a/j.json"
+    Check "remote args" (($ra -split "`n" | Where-Object { $_ -and -not $_.StartsWith("#") }) -join "|") "--virtual|--vr|--window 960x540|--world 'C:\k\worlds\liechtenstein.ocwpkg'|--bots 0"
+    Check "link: joined" (Get-RemoteLinkState "x`n2026 INFO ocw_desktop::ride::join: joined 203.0.113.7:47800: liechtenstein, free ride`n") "joined"
+    Check "link: dropped" (Get-RemoteLinkState "joined 1.2.3.4:47800: x`n`e[33mWARN`e[0m c: Disconnected: timed out`r`n") "dropped: Disconnected: timed out"
+    Check "link: join failed" (Get-RemoteLinkState "WARN j: join failed: no answer`n") "dropped: join failed: no answer"
+    Check "link: nothing yet" (Get-RemoteLinkState "starting") ""
     # Deployment end to end in a temp folder (no app started).
     $tmp = Join-Path $env:TEMP ("ocw-kiosk-selftest-" + $PID)
     try {
@@ -731,8 +1008,27 @@ function Invoke-SelfTest {
         $cur2 = (Read-Text (Join-Path $k "current.txt")).Trim()
         Check "second deploy is new" (Test-NewDeployment $cur $cur2) $true
         Check "second deploy keeps the world" ((Read-Text (Join-Path (Join-Path $k $cur2) "ocw-desktop.args")) -match "tenerife.ocwpkg") $true
+        # The remote join on that build, from a join.json file (file:// URL).
+        $pkgPath = Join-Path $k "worlds\liechtenstein.ocwpkg"
+        Set-Content -Path $pkgPath -Value "remote world"
+        $jf = Join-Path $tmp "join.json"
+        $realSha = Get-FileSha $pkgPath
+        Set-Content -Path $jf -Value ($ji.Replace($sha, $realSha) + '}')
+        $env:OCW_KIOSK_REMOTE = ([Uri]$jf).AbsoluteUri
+        $j = Get-RemoteJoin $k (Join-Path $k $cur2)
+        Check "remote join ok" "$($j.Ok) $($j.Why)" "True "
+        $rargs = Read-Text (Join-Path $env:OCW_KIOSK_STATE "remote.args")
+        Check "remote join args world" ($rargs -match [regex]::Escape("--world '" + $pkgPath + "'")) $true
+        Check "remote join args no own world" ($rargs -match "tenerife") $false
+        Check "remote join args vr kept" ($rargs -match "(?m)^--vr") $true
+        Set-Content -Path $jf -Value ($ji + '}')
+        $j = Get-RemoteJoin $k (Join-Path $k $cur2)
+        Check "remote join, other world" "$($j.Ok) $($j.WorldMissing)" "False True"
+        Remove-Item -LiteralPath $jf
+        $j = Get-RemoteJoin $k (Join-Path $k $cur2)
+        Check "remote join, no join info" "$($j.Ok) $($j.WorldMissing) $($j.Why -like 'join info * not fetched*')" "False False True"
     } finally {
-        Remove-Item Env:\OCW_KIOSK_DIR, Env:\OCW_KIOSK_STATE -ErrorAction SilentlyContinue
+        Remove-Item Env:\OCW_KIOSK_DIR, Env:\OCW_KIOSK_STATE, Env:\OCW_KIOSK_REMOTE -ErrorAction SilentlyContinue
         Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
     }
     Write-Host "selftest: $($script:n - $script:fails) of $($script:n) passed"
@@ -752,6 +1048,7 @@ switch ($Action) {
     "deploy" { Invoke-Deploy }
     "worldinfo" { Invoke-WorldInfo }
     "selftest" { Invoke-SelfTest }
+    "dry-run" { Invoke-DryRun }
     default { Get-Help $PSCommandPath -Detailed | Out-String | Write-Host; exit 2 }
 }
 # Done: not the exit code of the last native command (schtasks /query).
