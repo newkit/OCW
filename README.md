@@ -3032,6 +3032,17 @@ rate once a second; seconds of virtual power count nothing) and queued in
 backend answers (it tries again every minute) and the backend credits each
 ride once, after its checks.
 
+**In the browser app:** the same workshop – the bike stand, the part
+pickers, the changing corner and the jersey designer – on the signed-in
+rider's account (*Workshop* in the menu, or `workshop open`): the balance
+reads "· account", purchases and sales are sent with `fetch()` and answered
+a moment later, and the workshop last synced is kept in the page's
+`localStorage`, so a page opened offline shows it read-only. A ride saved
+with *Captures → Download this ride (FIT)* (`ride.save`) is summed up for the account
+like on the desktop, queued in `localStorage` and uploaded when the backend
+answers. Signed out, the workshop, the character and the garage stay locked
+("log in to customize"): the browser has no local wallet.
+
 **A game server that credits hearts itself** (Q19 (a)): `ocw-server
 --credit-key server-signing.key [--credit-backend https://accounts.example.org]`
 with a signing key the project's root key certified (`world-builder keys

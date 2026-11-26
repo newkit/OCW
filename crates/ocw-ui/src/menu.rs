@@ -509,6 +509,15 @@ fn menu_input(world: &mut World) {
                 lines.push(line);
             }
         }
+        // The browser's Workshop item opens the locked page (Phase 10 Q5);
+        // signed in, the account's workshop opens instead (4O part 3).
+        if state.menu.page() == Some(Page::WorkshopLocked) {
+            let h = crate::workshop::host(world);
+            if h.requires_account && (h.signed_in)(world) {
+                state.menu.apply(Action::Close);
+                lines.push("workshop open".into());
+            }
+        }
     });
     {
         let mut console = world.resource_mut::<ConsoleState>();

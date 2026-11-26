@@ -850,7 +850,7 @@ pub fn may_customize(anonymous: bool) -> bool {
 
 /// What the locked mirror says to an anonymous rider.
 pub const LOCKED_MIRROR: &str =
-    "The mirror is locked: log in to customize your rider (accounts come with Phase 5).";
+    "The mirror is locked: log in to customize your rider (Settings → Account).";
 
 #[cfg(test)]
 mod tests {

@@ -411,7 +411,6 @@ impl Garage {
     }
 
     /// The item on `bike`'s `slot` (`None`: the base part).
-    #[cfg(test)]
     pub fn equipped(&self, bike: &str, slot: Slot) -> Option<&Item> {
         let id = *self.bike(bike)?.parts.get(slot.id())?;
         self.item(id)
@@ -679,7 +678,9 @@ pub fn shown(hearts: i64) -> String {
 }
 pub const LEDGER_FILE: &str = "hearts-ledger.jsonl";
 
-/// `<data dir>/ocw` (`OCW_DATA_DIR` overrides it), where the wallet lives.
+/// `<data dir>/ocw` (`OCW_DATA_DIR` overrides it), where the wallet lives
+/// (the desktop; the browser keeps no local wallet).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn default_dir() -> Option<PathBuf> {
     match std::env::var_os("OCW_DATA_DIR") {
         Some(d) => Some(PathBuf::from(d)),
@@ -778,8 +779,8 @@ impl Wallet {
 
     fn now(&self) -> i64 {
         self.now_unix.unwrap_or_else(|| {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+            web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_secs() as i64)
         })
     }

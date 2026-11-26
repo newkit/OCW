@@ -278,6 +278,9 @@ pub struct WebRecording {
     pub recorder: RideRecorder,
     pub enabled: bool,
     last_lap: LapKey,
+    /// Per record: its power was virtual (the account's ride summary
+    /// counts no power then, spec 14 Phase 4, 4O).
+    pub virtual_s: Vec<bool>,
 }
 
 /// A video being recorded: its name and when it started (game time).
@@ -374,6 +377,7 @@ impl Plugin for WebUiPlugin {
             recorder: RideRecorder::new("Open Cycling World"),
             enabled: self.record,
             last_lap: LapKey::default(),
+            virtual_s: Vec::new(),
         })
         .init_resource::<Video>()
         .add_systems(
@@ -809,6 +813,12 @@ fn record(time: Res<Time>, session: Option<Res<Session>>, mut rec: ResMut<WebRec
     let s = &session.0;
     let now = time.elapsed_secs_f64();
     observe_client(&mut rec.recorder, &s.client, now, unix_now());
+    let n = rec.recorder.records().len();
+    let v = s.client.virtual_power();
+    rec.virtual_s.truncate(n);
+    while rec.virtual_s.len() < n {
+        rec.virtual_s.push(v);
+    }
     let key = (s.devices.workout.lap_count(), s.client.event_lap_segment());
     if starts_lap(rec.last_lap, key) {
         rec.recorder.mark_lap(now);
@@ -828,11 +838,22 @@ fn show_video(time: Res<Time>, video: Res<Video>, mut view: ResMut<RideView>) {
 fn save_ride(world: &mut World) -> Result<String, String> {
     // The ride ends: a Strava recording in it is written too.
     crate::strava::stop(world);
-    let ride = world
-        .resource_mut::<WebRecording>()
-        .recorder
-        .finish()
-        .ok_or("nothing to save yet (a ride needs two records, one a second)")?;
+    let (ride, virtual_s) = {
+        let mut rec = world.resource_mut::<WebRecording>();
+        let ride = rec
+            .recorder
+            .finish()
+            .ok_or("nothing to save yet (a ride needs two records, one a second)")?;
+        (ride, std::mem::take(&mut rec.virtual_s))
+    };
+    // Signed in: the ride's summary for the account (Q19 / Q20).
+    let credited = world
+        .get_resource::<crate::plugin::Session>()
+        .is_some_and(|s| s.0.client.hearts_credited());
+    match crate::workshop::queue_ride(world, &ride.activity, &virtual_s, credited) {
+        Ok(id) => info!(ride = %id, "ride summary queued for the account"),
+        Err(why) => info!("no ride summary for the account: {why}"),
+    }
     let name = download_name(ride.activity.start_unix_s);
     let bytes = ocw_fit::encode(&ride.activity);
     let (n, km) = (

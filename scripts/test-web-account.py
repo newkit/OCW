@@ -11,7 +11,9 @@ backend's redirect brings the page back with the code; the page exchanges
 it with fetch() over CORS), checks that the code left the address bar and
 the ride's options came back, opens Settings → Account (screenshot
 OUT/web-account-<time>-signed-in.jpg), links Strava (the link ticket over
-CORS with the bearer token, a second redirect), signs out. Exits 0 when
+CORS with the bearer token, a second redirect), buys carbon wheels on the
+account and opens the workshop (OUT/web-account-<time>-workshop.jpg; 4O
+part 3), signs out. Exits 0 when
 every check passed; the checks and the console go to OUT/web-account-<time>.log.
 """
 
@@ -146,6 +148,24 @@ def main():
         check("Strava linked", m.get("status") == "Signed in as Ada Rider (Google, Strava)", m.get("status"))
         cdp.screenshot(base + "-linked.jpg")
         console("menu close")
+        # The account's workshop in the browser (spec 14 Phase 4, 4O part
+        # 3): a look of its own, carbon wheels bought on the account (the
+        # answer of a fetch() a moment later), then the workshop opened.
+        console("character --body a --shape normal --age 40s --hair 5 --hair-colour #2B2B2B")
+        console("kit.design --pattern stripes --jersey #1565C0 --second #FFFFFF --number 8")
+        cdp.pump(2.0)
+        console("workshop.buy wheels.road-carbon.mid")
+        t = said("balance 3,585", 30)
+        check("carbon wheels bought on the account", t is not None, t)
+        console("workshop.paint #F9A825")
+        said("balance", 15)
+        console("workshop open")
+        cdp.pump(5.0)
+        cdp.screenshot(base + "-workshop.jpg")
+        console("workshop close")
+        cdp.pump(1.5)
+        cached = cdp.eval("Object.keys(localStorage).filter(k => k.endsWith('.workshop')).length")
+        check("the workshop kept for offline", cached == 1, cached)
         stored = cdp.eval("localStorage.getItem('ocw.account.session') || ''")
         check("localStorage keeps no access token", '"access_token":""' in stored, len(stored))
         console("account signout")
@@ -168,7 +188,7 @@ def main():
     log.close()
     for c in checks:
         print(f"{'ok  ' if c['ok'] else 'FAIL'} {c['check']}: {c['detail']}")
-    print(f"log: {base}.log  screenshots: {base}-signed-out.jpg {base}-signed-in.jpg {base}-linked.jpg")
+    print(f"log: {base}.log  screenshots: {base}-signed-out.jpg {base}-signed-in.jpg {base}-linked.jpg {base}-workshop.jpg")
     sys.exit(0 if ok else 1)
 
 

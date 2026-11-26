@@ -12,8 +12,21 @@ use ocw_render::console::ConsoleCorePlugin;
 use ocw_world::Route;
 
 use super::*;
-use crate::connection::ConnectionPlugin;
+use crate::connection::{ClientState, ConnectionPlugin};
 use crate::menu::MenuPlugin;
+use crate::settings::RiderProfiles;
+use ocw_assets::parts::{Catalogue, Slot};
+use ocw_core::{ProfileId, Rgb};
+use ocw_render::RideView;
+use ocw_render::console::{ConsoleState, Permission};
+use ocw_render::menu::InputContext;
+use ocw_render::workshop::{WorkshopPointer, WorkshopPointerEvent, WorkshopView};
+use ocw_ui::workshop::input::Act;
+use ocw_ui::workshop::model::Workshop;
+
+fn cat() -> &'static Catalogue {
+    ocw_assets::shipped::catalogue()
+}
 
 fn app() -> App {
     let capture = std::env::temp_dir().join(format!("ocw-workshop-test-{}", std::process::id()));
