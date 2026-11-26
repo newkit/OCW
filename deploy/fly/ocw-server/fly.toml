@@ -1,0 +1,87 @@
+# ocw-server on Fly.io (README "Hosting the server on Fly.io", spec 11.5):
+# the game server and its bundled voice server (LiveKit) in one machine in
+# Frankfurt. Deploy from the repository root:
+#
+#   fly deploy --config deploy/fly/ocw-server/fly.toml \
+#     --dockerfile deploy/fly/ocw-server/Dockerfile \
+#     --ignorefile deploy/fly/ocw-server/Dockerfile.dockerignore --remote-only .
+#
+# UDP needs the app's dedicated IPv4 (`fly ips allocate-v4`); the start
+# script binds UDP to fly-global-services.
+
+app = "ocw-server"
+primary_region = "fra"
+kill_signal = "SIGINT"
+kill_timeout = "10s"
+
+[env]
+  # The world the session rides (on the volume) and more server options
+  # (`ocw-server --help`): no server-side bots, the Echo rider for the
+  # voice echo test.
+  OCW_WORLD = "/data/worlds/pilot/liechtenstein.ocwpkg"
+  OCW_SERVER_ARGS = "--bots 0 --echo-bot"
+
+# World packages, the server's TLS identity, the voice server's logs.
+[mounts]
+  source = "ocw_data"
+  destination = "/data"
+
+# Always on: Fly's proxy cannot start a stopped machine for UDP, so a game
+# server that stops by itself could not be joined again.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+
+# Game (QUIC, desktop app and ocw-bot).
+[[services]]
+  protocol = "udp"
+  internal_port = 47800
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 47800
+
+# Browser app (WebTransport over HTTP/3).
+[[services]]
+  protocol = "udp"
+  internal_port = 47801
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 47801
+
+# Voice media (LiveKit's one UDP port for all riders).
+[[services]]
+  protocol = "udp"
+  internal_port = 7882
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 7882
+
+# Voice signalling (LiveKit's WebSocket, plain TCP through Fly's proxy).
+[[services]]
+  protocol = "tcp"
+  internal_port = 7880
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 7880
+  [[services.tcp_checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "60s"
+
+# Voice media over TCP (ICE/TCP), for riders whose network blocks UDP.
+[[services]]
+  protocol = "tcp"
+  internal_port = 7881
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 7881

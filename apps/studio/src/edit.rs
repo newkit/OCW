@@ -1563,7 +1563,11 @@ impl Plugin for EditPlugin {
                 ))
                 .subcommand(words(
                     "route",
-                    "The Routes workspace: new [NAME] | import PATH | package N | plan X Z X Z … | via add|insert|move|remove … | drag GX GZ X Z | reverse | loop on|off | outback | cut start|end N | split N | profile P | planner builtin|brouter | brouter url URL | brouter profile P | brouter ok | brouter plan | export PATH | save [PATH] | testride | info",
+                    "The Routes workspace: new [NAME] | import PATH | package N | plan X Z X Z … | via add|insert|move|remove … | drag GX GZ X Z | reverse | loop on|off | outback | cut start|end N | split N | profile P | planner builtin|brouter | brouter url URL | brouter profile P | brouter ok | brouter no [remember] | brouter ask | brouter plan | export PATH | save [PATH] | testride | info",
+                ))
+                .subcommand(words(
+                    "planner",
+                    "The planner settings (16H Q21): forget [SERVER|all] (the remembered answer whether the via-points may go to a BRouter server; no SERVER: the current one) | info",
                 ))
                 .subcommand(words(
                     "model",
@@ -1825,6 +1829,23 @@ fn studio_command(world: &mut World, m: &clap::ArgMatches) -> Result<String, Str
             return Ok(crate::routes::route_lines(world.resource::<Studio>()).join("\n"));
         }
         let cmd = crate::routes::console_route(&words)?;
+        let msg = apply(world, StudioCommand::Route(cmd))?;
+        if !msg.is_empty() {
+            world.resource_mut::<Studio>().status = msg.clone();
+        }
+        return Ok(msg);
+    }
+    if let Some(("planner", a)) = m.subcommand() {
+        let words: Vec<String> = a
+            .get_many::<String>("words")
+            .map(|w| w.cloned().collect())
+            .unwrap_or_default();
+        let cmd = match crate::routes::console_planner(&words)? {
+            Some(cmd) => cmd,
+            None => {
+                return Ok(crate::routes::planner_lines(world.resource::<Studio>()).join("\n"));
+            }
+        };
         let msg = apply(world, StudioCommand::Route(cmd))?;
         if !msg.is_empty() {
             world.resource_mut::<Studio>().status = msg.clone();

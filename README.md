@@ -1410,6 +1410,48 @@ route; the game also lists it under *Navi → Routes*, marked *yours* (see
 `.ocwroute`); the game lists only what is in the two folders. The same from
 the console: `studio route save [PATH]`.
 
+#### Route planning with BRouter
+
+The built-in planner plans on the package's own roads, offline. Under
+*Planner* you can pick **BRouter** instead, a route-planning server
+(open source, MIT): enter its address under *Server* (there is none by
+default – your own, a friend's, or a public one within its terms;
+`ocw-studio --brouter-url URL` sets it too) and its profile (trekking,
+fastbike, …). BRouter's answer is matched onto the package's roads; parts
+that do not fit are marked as problem sections.
+
+**Your via-points leave this computer.** Planning with BRouter sends the
+route's via-points – the places you want to pass – to that server. So the
+first *Plan with BRouter* for a server asks first: tick *Send the
+via-points to SERVER to plan (they leave this computer)* and press *Plan
+with BRouter*, or press *Don't send*. The answer is **remembered per
+server** (its scheme, host and port: `http://localhost:17777` and
+`http://localhost:17777/brouter` are the same server,
+`https://localhost:17777` is another) in OCW Studio's planner settings,
+`~/.config/ocw/studio/planner.json` (`route.planner.brouter_consent`;
+Windows `%APPDATA%\ocw\studio\`, macOS `~/Library/Application
+Support/ocw/studio/`; `OCW_CONFIG_DIR` moves it), so you are asked once per
+server. A changed server is asked about again. A *Don't send* is remembered
+only if you also tick *Remember "don't send" for SERVER*; otherwise it
+holds until you close the studio and the next session asks again. The tick
+box stays in the Routes panel: untick it to stop sending.
+
+**To forget an answer:** press *Forget* next to the server field (the
+current server), or open *Remembered answers* in the panel and press
+*Forget* next to any server; or use the console:
+
+```text
+studio planner forget            # the current server's answer
+studio planner forget http://localhost:17777
+studio planner forget all        # every server's
+studio planner info              # the planner, the server and the remembered answers
+```
+
+The same from the console: `studio route planner brouter`, `studio route
+brouter url URL`, `studio route brouter profile P`, `studio route brouter
+ok` (send, remembered), `studio route brouter no [remember]`, `studio route
+brouter ask` (the question), `studio route brouter plan`.
+
 ## Connecting a gamepad
 
 Any controller that the operating system sees as a gamepad works (Xbox,
@@ -3528,6 +3570,70 @@ ocw-desktop --world europe/spain/tenerife --free-ride
 
 **Multiplayer:** a game server that rides a world (`ocw-server --world …`, [Hosting a ride over the network](#hosting-a-ride-over-the-network)) loads the package from its own disk or cache. The world server only delivers packages to the riders.
 
+### Hosting the server on Fly.io
+
+`deploy/fly/ocw-server/` runs `ocw-server` with its bundled voice server on [Fly.io](https://fly.io) (spec 11.5): one always-on machine in Frankfurt (`fra`), app `ocw-server`. Vercel and other serverless hosts cannot run it: the game needs a long-running process and UDP.
+
+**What runs.** One machine with one process tree: `ocw-server --listen --webtransport` and the `livekit-server` it starts itself with fresh keys at every start (spec 7.1.1, 7.1.8). The image (`Dockerfile`) builds only `ocw-server` (Rust 1.99.1, release, on Debian trixie) and adds the pinned `livekit-server` 1.13.10 (checked against the release's checksum). The server runs as the user `ocw`, not as root. `start.sh` binds the UDP ports to `fly-global-services`: Fly delivers UDP only to that address, and replies must leave from there. The public address riders see is the app's dedicated IPv4 (`OCW_PUBLIC_HOST`, by default the IPv4 of `ocw-server.fly.dev`).
+
+**Ports** (all on the dedicated IPv4):
+
+| Port | Protocol | What |
+|---|---|---|
+| 47800 | UDP | game, QUIC (desktop app, `ocw-bot`) |
+| 47801 | UDP | game, WebTransport (browser app) |
+| 7880 | TCP | voice signalling (LiveKit WebSocket, `ws://`) |
+| 7881 | TCP | voice media over TCP (ICE/TCP), for networks that block UDP |
+| 7882 | UDP | voice media, one port for all riders |
+
+UDP works only over IPv4 on Fly, so riders use the IPv4 address, not `ocw-server.fly.dev` (which also has an IPv6 address).
+
+**The volume** `ocw_data` (1 GB, mounted at `/data`):
+- `worlds/pilot/liechtenstein.ocwpkg` with its manifest and routes: the world the session rides (`OCW_WORLD` in `fly.toml`). Other packages next to it can be switched to from the World menu.
+- `tls/`: the server's own TLS identity, the QUIC certificate (fixed fingerprint) and the WebTransport certificate (13 days, renewed by the server). Made on the first start and kept across restarts and deploys; never in Git.
+- `home/`: the server user's data dir (the voice server's logs).
+- `web-info.json`: the browser page options (WebTransport URL and certificate hash).
+
+**First setup** (once; the Fly account needs a credit card for the dedicated IPv4):
+
+```bash
+fly ips allocate-v4 -a ocw-server                      # dedicated IPv4: UDP needs it
+fly volumes create ocw_data -a ocw-server -r fra -s 1 -y
+git lfs pull                                           # the models: the server's collision shapes
+fly deploy --config deploy/fly/ocw-server/fly.toml \
+  --dockerfile deploy/fly/ocw-server/Dockerfile \
+  --ignorefile deploy/fly/ocw-server/Dockerfile.dockerignore --remote-only .
+```
+
+`--remote-only` builds the image on Fly's builder, never on your machine. Until a world is uploaded the machine waits (`fly logs` says so) and starts the server once the package is there.
+
+**Secrets:** none to set. The voice server's API keys are new at every start and stay in the process environment (spec 7.1.1). The TLS identity is made on the volume. Sign-in, once used, takes `--auth-issuer` in `OCW_SERVER_ARGS` (`fly.toml`'s `[env]`). Any secret of its own goes in with `fly secrets set`, never into `fly.toml`.
+
+**Updating the worlds.** Copy the package with its manifest and route files from marge's live worlds, upload them and compare SHA-256 on both sides:
+
+```bash
+fly ssh sftp shell -a ocw-server     # put liechtenstein.ocwpkg /data/worlds/pilot/liechtenstein.ocwpkg.new, the same for the manifest and the .route files
+fly ssh console -a ocw-server -C "sh -c 'cd /data/worlds/pilot && mv liechtenstein.ocwpkg.new liechtenstein.ocwpkg && sha256sum *.ocwpkg'"
+fly machine restart -a ocw-server    # the session rides the new package
+```
+
+Riders need the same package version: the server refuses a different road graph (`world package mismatch`).
+
+**Joining.** `fly logs -a ocw-server` shows the join links. Use the first one, `ocw://IPV4?cert=…&world=…`: it names the public IPv4 and the certificate fingerprint. The second link and the `Clients connect with` line name the machine's internal UDP address. The browser page options are in `/data/web-info.json` (`fly ssh console -C "cat /data/web-info.json"`):
+
+```bash
+ocw-desktop --server IPV4:47800 --server-cert FINGERPRINT --world data/pilot/liechtenstein.ocwpkg
+# browser: ?server=https://IPV4:47801&cert-hash=HASH&world=liechtenstein…
+```
+
+The WebTransport certificate's hash changes every 11 days (browsers take only short-lived self-signed certificates). The desktop's fingerprint stays the same.
+
+**Voice** runs in the same machine (spec 11.5 says why): LiveKit announces the dedicated IPv4 as its media address (`node_ip`), takes UDP 7882 for all riders and falls back to TCP 7881. Grants name `ws://IPV4:7880`, which the desktop app and pages on `http://` (for example `make web-serve` on `localhost`) can use. A page served over `https://` would need `wss://` (not set up yet).
+
+**Options:** `OCW_SERVER_ARGS` in `fly.toml` (default `--bots 0 --echo-bot`: no server bots, the Echo rider for the voice echo test). `OCW_WORLD` names the package.
+
+**Size and costs.** Measured with Liechtenstein, 3 bots and the Echo rider: `ocw-server` holds 490 MB, `livekit-server` 80 MB, and a 50 Hz tick takes 0.06 ms of the 20 ms budget. So 1 GB of memory is the smallest size that fits, and one shared CPU is plenty. Fly's prices (November 2026, Frankfurt): the machine `shared-cpu-1x` with 1 GB about $7.73 a month, the dedicated IPv4 $2, the 1 GB volume $0.15, outbound traffic $0.02/GB (a rider uses a few MB an hour). That is about $10 a month, always on. The machine does not stop by itself: Fly's proxy cannot wake a stopped machine for UDP, so a stopped server could not be joined.
+
 ## Build infrastructure
 
 OCW is built and tested on dedicated **build machines**, never on the machine
@@ -4135,6 +4241,7 @@ All test runs execute on the build machines (`scripts/remote.sh MACHINE run
 | `make test-scenes [ONLY=glob,…] [WORLD=pkg] [REMOTE=machine]`, `test-scenes-list` | The scene harness (below) |
 | `make test-multiplayer`, `test-multiplayer-local` | Server + kiosk on marge with `ocw-bot` riders on the other machines over QUIC (see [Multiplayer test](#multiplayer-test-across-machines)); or all on one machine over loopback |
 | `make test-web`, `test-web-world`, `test-web-multiplayer`, `test-web-ble*`, `test-web-audio`, `test-web-voice`, `test-web-livekit`, `test-web-webgl2` | Headless Chromium runs of the browser app (`scripts/test-web*.py`; see [Testing the browser app](#testing-the-browser-app)), into `test-output/web/` |
+| `make test-studio-planners` | OCW Studio's planners against our own BRouter (see [Planner tests with our own BRouter](#planner-tests-with-our-own-brouter)); on marge |
 | `make test-kiosk` | `scripts/test-kiosk.sh`: the kiosk script with a fake app (no display or build) |
 | `make test-remote` | `scripts/test-remote.sh`: `remote.sh`'s slot order, snapshot and sync, the Windows manifest, `remote-gc.sh`'s choice, the build-log parser (no machine needed) |
 | `make test-release-version` | `scripts/test-release-version.sh`: the version bump on a copy of the manifests |
@@ -4204,6 +4311,52 @@ are made smaller – JPEG quality ~80, older PNGs a 256-colour palette – with
 their metadata kept; videos over 3 MB are re-encoded with sound and metadata) with one row per
 file in its `index.md` (the scene's description), ready for the art
 project's day zip (OCW-ART). Look at every image before picking it.
+
+### Planner tests with our own BRouter
+
+OCW Studio's BRouter planner is tested against **our own BRouter server**,
+never a public one: `make test-studio-planners` (on marge:
+`scripts/remote.sh marge run 'make test-studio-planners'`). It runs
+`scripts/brouter-test-server.sh run …`, which
+
+1. downloads BRouter 1.7.10 from its GitHub release (SHA-256 checked) and
+   the two map-creation profiles of the same tag (`all.brf`,
+   `softaccess.brf`, checked too) into the cache – once;
+2. builds BRouter's routing data (`rd5` segment files) with BRouter's own
+   map tool from **our** data: the OSM extract `liechtenstein.osm.pbf` and
+   our SRTM 1″ tile `N47E009.hgt` (converted to BRouter's elevation tile
+   `srtm_38_03.bef` by its `ElevationRasterTileConverter`), never
+   brouter.de's ready files. The result is cached (`segments-KEY/` with a
+   `build.json`; rebuilt only when BRouter or an input file changes):
+   Liechtenstein takes about 2 minutes and gives one 362 KB `E5_N45.rd5`;
+3. starts the server on the loopback (`127.0.0.1:17777`), runs the tests
+   with `OCW_BROUTER_URL` and `OCW_BROUTER_PACKAGE` set, and **stops the
+   server afterwards**, also when a test fails or the run is interrupted.
+
+The test (`brouter_live_vaduz_malbun_follows_the_package`) plans from the
+start to the end of the Liechtenstein package's route *Vaduz – Malbun*
+through the studio's own path (the question, the request, the answer
+matched onto the package's roads) and checks that the planned route stays
+on the package's roads and is within 10 % of the package route's length
+(today 12.7 km against 13.3 km). Without a server (plain `cargo test`) it
+is skipped.
+
+**Settings:** the machine's paths live in a config file, not in the
+script – copy `config/brouter-test.example.conf` to
+`~/.config/ocw/brouter-test.conf` on the machine (or name one with
+`OCW_BROUTER_CONFIG`) and set where the extract, the `.hgt` tiles and the
+package are (`BROUTER_DATA`, `BROUTER_PBF`, `BROUTER_DEM`,
+`BROUTER_PACKAGE`), the cache (`BROUTER_CACHE`) and the port. By hand:
+
+```bash
+scripts/brouter-test-server.sh config   # the settings in use
+scripts/brouter-test-server.sh build    # the segments (cached)
+scripts/brouter-test-server.sh start    # then: ocw-studio --brouter-url http://127.0.0.1:17777
+scripts/brouter-test-server.sh stop
+```
+
+`scripts/studio-brouter-shots.sh` takes the screenshots of the question and
+of a route planned by this server (into `test-output/studio-brouter/`).
 
 ### Releases
 

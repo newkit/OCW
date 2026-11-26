@@ -686,6 +686,7 @@ fn panels(
         pending.send(StudioCommand::SavePatchAs(path));
     }
     build_window(&ctx, &mut state.build, &studio, &mut pending);
+    crate::routes_ui::consent_window(&ctx, &studio, &mut state.route_form, &mut pending);
     focus.keyboard = ctx.egui_wants_keyboard_input();
     // The world camera draws into the 3D view only.
     let ppp = ctx.pixels_per_point();
