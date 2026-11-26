@@ -3,7 +3,8 @@
 #
 #   world_patches REGION DATA_DIR STEM
 #
-# sets PATCH_ARGS to `--patch FILE ...` for the patches of package STEM:
+# sets PATCH_ARGS to `--patch FILE ... --strict-patch` for the patches of
+# package STEM (an operation whose target is gone fails the build, 16H Q7):
 # worlds/REGION/patches/STEM.ocwpatch first, then STEM.*.ocwpatch in name
 # order (a stack, e.g. `blackforest-north.020-bridge.ocwpatch`). The folder
 # is in git and reviewed like code. The old place, DATA_DIR/patches/ (not in
@@ -22,6 +23,9 @@ world_patches() {
       if [ "$dir" = "$data/patches" ]; then
         echo "notice: world patches for $stem read from the old place $dir/ (not in git); move them to worlds/$region/patches/ (spec 16H Q10)" >&2
       fi
+      # Our official builds fail on a patch target that is gone in this
+      # OSM data (16H Q7 (a)); users' builds in OCW Studio only warn.
+      PATCH_ARGS+=(--strict-patch)
       echo "world patches for $stem: ${PATCH_ARGS[*]}" >&2
       return 0
     fi

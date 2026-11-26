@@ -122,6 +122,28 @@ pub fn print_report(report: &Report) {
     }
 }
 
+/// `package --strict-patch` (16H Q7 (a), our official builds): the
+/// failure message when an operation lost its target – which ones and
+/// what to do; `None` when every target was found.
+pub fn strict_failure(report: &Report) -> Option<String> {
+    let n = report.missing_count();
+    if n == 0 {
+        return None;
+    }
+    let lost: Vec<String> = report
+        .lines()
+        .into_iter()
+        .filter(|l| l.starts_with("  MISSING "))
+        .collect();
+    Some(format!(
+        "patch: FAILED (--strict-patch) – {n} operation(s) lost their target (a road or node gone or redrawn in this OSM data); the package was not written:
+{}
+Fix the patch (target the road anew in OCW Studio, or delete the operation) and build again; `world-builder patch check --world PKG --patch FILE --pbf PBF` lists them without a build.",
+        lost.join("
+")
+    ))
+}
+
 /// Checks a stack against a built package: with `osm`, way and node
 /// targets against the OSM data, else way targets against the package's
 /// graph; edge targets and height points against the graph.
@@ -265,6 +287,25 @@ height_m = 498.0
         assert!(matches!(outcome(&r, 2), Outcome::Applied(_)));
         assert!(matches!(outcome(&r, 1), Outcome::Missing(m) if m.contains("way 999")));
         assert_eq!(r.unchecked_count(), 0);
+
+        // `package --strict-patch` (16H Q7 (a)): the lost targets fail
+        // the official build, named one by one; all found: no failure.
+        let msg = strict_failure(&r).expect("fails");
+        assert!(msg.contains("FAILED (--strict-patch) – 2 operation(s) lost their target"));
+        assert!(
+            msg.contains("way 999") && msg.contains("in-a-field"),
+            "{msg}"
+        );
+        assert!(!msg.contains("on-hauptstrasse"), "{msg}");
+        assert!(msg.contains("not written"));
+        let fine = check_package(
+            &pkg,
+            &stack(&BODY[..BODY.find("[[op]]\nop = \"remove_road\"").unwrap()]),
+            Some(&mut osm),
+        )
+        .unwrap();
+        assert_eq!(fine.missing_count(), 0);
+        assert_eq!(strict_failure(&fine), None);
     }
 
     #[test]

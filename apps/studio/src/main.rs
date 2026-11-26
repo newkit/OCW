@@ -49,6 +49,7 @@ mod patch_prompt;
 mod pick;
 mod routes;
 mod routes_ui;
+mod signing;
 mod surround;
 mod ui;
 mod world;

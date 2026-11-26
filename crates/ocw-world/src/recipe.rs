@@ -14,7 +14,8 @@
 //!
 //! Arguments name the package as `{package}` and a source as
 //! `{src:NAME}`; the package step's `--out`, `--patch`, `--sign-key` and
-//! `--profile` are not recorded (the one who builds chooses them).
+//! `--profile` and the switch `--strict-patch` are not recorded (the one
+//! who builds chooses them).
 //!
 //! ```toml
 //! ocwrecipe = 1
@@ -71,6 +72,10 @@ pub const SOURCE_FLAGS: [(&str, &str); 7] = [
 
 /// Flags of the package step the one who builds chooses (not recorded).
 const OWN_FLAGS: [&str; 4] = ["--out", "--patch", "--sign-key", "--profile"];
+/// Switches of the package step that are ours alone (not recorded): an
+/// official build fails on a patch target that is gone (16H Q7 (a)), a
+/// user's build from the recipe only warns.
+const OWN_SWITCHES: [&str; 1] = ["--strict-patch"];
 
 /// The recipe of `package`: `<stem>.recipe.toml` next to it.
 pub fn recipe_path(package: &Path) -> PathBuf {
@@ -268,6 +273,10 @@ impl Recipe {
                     i += 2;
                     continue;
                 }
+                if is_build && OWN_SWITCHES.contains(&a.as_str()) {
+                    i += 1;
+                    continue;
+                }
                 out.push(a.clone());
                 if let Some(v) = next {
                     if a == "--world" && same(v) {
@@ -427,7 +436,7 @@ mod tests {
     /// (route file, listing and check steps in between).
     fn log() -> Vec<Vec<String>> {
         [
-            "package|--pbf|d/li.osm.pbf|--poly|d/li.poly|--hgt|d/N47E009.hgt|--dem|d/swissalti3d|--name|Liechtenstein|--dem-attribution|swissalti3d|--sign-key|k.key|--patch|w/li.ocwpatch|--out|d/li.ocwpkg",
+            "package|--pbf|d/li.osm.pbf|--poly|d/li.poly|--hgt|d/N47E009.hgt|--dem|d/swissalti3d|--name|Liechtenstein|--dem-attribution|swissalti3d|--sign-key|k.key|--patch|w/li.ocwpatch|--strict-patch|--out|d/li.ocwpkg",
             "route|--pbf|d/li.osm.pbf|--poly|d/li.poly|--hgt|d/N47E009.hgt|--name|Vaduz - Malbun|--out|d/vaduz-malbun.route",
             "route|--world|d/li.ocwpkg|--name|Vaduz - Malbun|--from|47.1395,9.5220|--to|47.1013,9.6094",
             "calibrate|--world|d/li.ocwpkg|--imagery|d/imagery|--pbf|d/li.osm.pbf|--season-cells|50|--forest|d/forest",
@@ -460,7 +469,7 @@ mod tests {
         assert_eq!(
             r.steps[0].args.join(" "),
             "--pbf {src:li.osm.pbf} --poly {src:li.poly} --hgt {src:N47E009.hgt} --dem {src:swissalti3d} --name Liechtenstein --dem-attribution swissalti3d",
-            "no --out, --patch, --sign-key"
+            "no --out, --patch, --strict-patch, --sign-key"
         );
         assert_eq!(
             r.steps[2].args.join(" "),

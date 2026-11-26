@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 
-use ocw_world::manifest::{PatchStatus, SignedManifest};
+use ocw_world::manifest::{PatchStatus, SignedManifest, SigningKeyPair};
 use ocw_world::recipe::{Recipe, recipe_path};
 
 /// The source data of a package build (`world-builder package`).
@@ -414,6 +414,21 @@ pub fn report_lines(output: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// The Build dialog's warning when operations of the patch lost their
+/// target (16H Q7 (a)): a user's build goes on – only our official builds
+/// fail (`--strict-patch`) –, but says so plainly. `None`: none lost.
+pub fn missing_warning(output: &[String]) -> Option<String> {
+    let n = report_lines(output)
+        .iter()
+        .filter(|l| l.starts_with("  MISSING "))
+        .count();
+    (n > 0).then(|| {
+        format!(
+            "Warning: {n} change(s) of the patch were not applied – their road or point is gone in this OSM data (deleted or redrawn since the patch was made). The package was built without them; select the operations marked MISSING in the patch list and target them anew, or delete them."
+        )
+    })
+}
+
 /// A build running (or done).
 #[derive(Debug, Default)]
 pub struct BuildState {
@@ -421,6 +436,46 @@ pub struct BuildState {
     pub lines: Vec<String>,
     /// The exit: `Ok(code)`, or why it could not start.
     pub done: Option<Result<i32, String>>,
+    /// Why the built package could not be signed with the user's key.
+    pub sign_error: Option<String>,
+}
+
+/// Signs the manifest of the built package `out` (`<out>.manifest.json`,
+/// written unsigned by the build's last step) with the studio user's own
+/// key (spec 4.7 *User keys*, 16C *Signing and trust*): the manifest as
+/// the build wrote it – id, version, credits, the patches and the recipe
+/// it records – only after checking that it describes the file. The line
+/// for the build's output.
+pub fn sign_output(out: &Path, key: &SigningKeyPair) -> Result<String, String> {
+    let side = {
+        let mut s = out.as_os_str().to_owned();
+        s.push(".manifest.json");
+        PathBuf::from(s)
+    };
+    let shown = crate::edit::shown_path(&side);
+    let text = std::fs::read_to_string(&side).map_err(|e| format!("{shown}: {e}"))?;
+    let m = SignedManifest::parse(&text)
+        .map_err(|e| format!("{shown}: {e}"))?
+        .manifest;
+    let bytes = std::fs::read(out).map_err(|e| format!("{}: {e}", crate::edit::shown_path(out)))?;
+    let name = out
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    m.verify_file(&name, &bytes)
+        .map_err(|e| format!("{shown} does not describe the built package: {e}"))?;
+    std::fs::write(&side, SignedManifest::signed(&m, key).to_json())
+        .map_err(|e| format!("{shown}: {e}"))?;
+    let c = key.claims();
+    let fp = key
+        .root
+        .as_ref()
+        .map(|r| r.fingerprint().to_string())
+        .unwrap_or_default();
+    Ok(format!(
+        "signed with your key '{}' (fingerprint {fp}): the game shows it as unofficial, '{}'; others trust it after comparing the fingerprint with you",
+        c.name, c.name
+    ))
 }
 
 /// A build of the patched package, its output shared with its threads.
@@ -433,6 +488,9 @@ pub struct BuildJob {
     pub full: bool,
     /// What the plan said (what is missing for the whole chain).
     pub note: Option<String>,
+    /// The name of the user's key that signs the result (spec 4.7 *User
+    /// keys*); `None`: left unsigned (the tests).
+    pub signer: Option<String>,
 }
 
 /// Runs `program args…` to its end, its output into `state`; the exit.
@@ -489,12 +547,27 @@ impl BuildJob {
     }
 
     /// Starts the steps `lines` one after the other (stopping at the first
-    /// that fails), after checking the source files against `checks`.
+    /// that fails), after checking the source files against `checks`
+    /// (unsigned; the tests).
+    #[cfg(test)]
     pub fn start_chain(
         program: &Path,
         lines: &[Vec<String>],
         checks: &[(PathBuf, String)],
         out: PathBuf,
+    ) -> Self {
+        Self::start_signed(program, lines, checks, out, None)
+    }
+
+    /// [`Self::start_chain`], and when every step succeeded the result's
+    /// manifest is signed with `key` (the studio user's own key, spec 4.7
+    /// *User keys*; [`sign_output`]).
+    pub fn start_signed(
+        program: &Path,
+        lines: &[Vec<String>],
+        checks: &[(PathBuf, String)],
+        out: PathBuf,
+        key: Option<SigningKeyPair>,
     ) -> Self {
         let state = Arc::new(Mutex::new(BuildState::default()));
         let name = program.file_name().map_or_else(
@@ -512,8 +585,10 @@ impl BuildJob {
             state: state.clone(),
             full: false,
             note: None,
+            signer: key.as_ref().map(|k| k.claims().name),
         };
         let (program, lines, checks) = (program.to_path_buf(), lines.to_vec(), checks.to_vec());
+        let result = job.out.clone();
         std::thread::spawn(move || {
             for (p, sha) in &checks {
                 if let Some(w) = check_source(p, sha) {
@@ -535,6 +610,19 @@ impl BuildJob {
                     break;
                 }
             }
+            if code == Ok(0)
+                && let Some(key) = &key
+            {
+                let signed = sign_output(&result, key);
+                let mut s = state.lock().expect("build state");
+                match signed {
+                    Ok(line) => s.lines.push(line),
+                    Err(e) => {
+                        s.lines.push(format!("not signed: {e}"));
+                        s.sign_error = Some(e);
+                    }
+                }
+            }
             state.lock().expect("build state").done = Some(code);
         });
         job
@@ -551,6 +639,14 @@ impl BuildJob {
         }
     }
 
+    /// ", signed as 'Ada Rider'" (spec 4.7 *User keys*).
+    fn signed_as(&self) -> String {
+        self.signer
+            .as_deref()
+            .map(|n| format!(", signed as '{n}'"))
+            .unwrap_or_default()
+    }
+
     pub fn running(&self) -> bool {
         self.state.lock().is_ok_and(|s| s.done.is_none())
     }
@@ -564,15 +660,23 @@ impl BuildJob {
             .count();
         match &s.done {
             None => format!("building… ({} lines)", s.lines.len()),
-            Some(Ok(0)) if missing > 0 => format!(
-                "built {}{} – {missing} operation(s) MISSING (not applied)",
+            Some(Ok(0)) if s.sign_error.is_some() => format!(
+                "built {}{} but NOT signed: {}",
                 crate::edit::shown_path(&self.out),
-                self.kind()
+                self.kind(),
+                s.sign_error.as_deref().unwrap_or_default()
+            ),
+            Some(Ok(0)) if missing > 0 => format!(
+                "built {}{}{} – {missing} operation(s) MISSING (not applied)",
+                crate::edit::shown_path(&self.out),
+                self.kind(),
+                self.signed_as()
             ),
             Some(Ok(0)) => format!(
-                "built {}{}",
+                "built {}{}{}",
                 crate::edit::shown_path(&self.out),
-                self.kind()
+                self.kind(),
+                self.signed_as()
             ),
             Some(Ok(c)) => format!("the build failed (exit {c})"),
             Some(Err(e)) => format!("the build could not start: {e}"),
@@ -595,6 +699,20 @@ mod tests {
         ));
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn a_lost_target_is_a_warning_in_the_build_dialog() {
+        let ok: Vec<String> = vec!["  ok       a.ocwpatch:3 road way 70: OSM tags changed".into()];
+        assert_eq!(missing_warning(&ok), None);
+        let mut lost = ok.clone();
+        lost.push("  MISSING  a.ocwpatch:9 remove road way 999: way 999 is not among the OSM roads near the region".into());
+        lost.push("  MISSING  a.ocwpatch:12 height point p: no road".into());
+        let w = missing_warning(&lost).expect("warns");
+        assert!(
+            w.starts_with("Warning: 2 change(s) of the patch were not applied"),
+            "{w}"
+        );
     }
 
     #[test]

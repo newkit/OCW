@@ -76,6 +76,11 @@ pub const ROAD_BARRIER: u8 = 1;
 /// Flag: on the carriageway itself (a road barrier on the road: a gate
 /// across a through road is a data error the lint notes, spec 12H).
 pub const ON_ROAD: u8 = 2;
+/// Flag (stored only): the stored angle is turned by π – a point whose
+/// direction matters beyond its way's axis, the face of a
+/// [`ObstacleKind::NoBikeSign`] (16H Q6); the angle byte keeps the way's
+/// axis (modulo π) as older readers expect it.
+pub const TURNED: u8 = 4;
 
 /// What an obstacle is. Codes are stored in packages: only add new ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -107,6 +112,12 @@ pub enum ObstacleKind {
     /// server) and solid there, as a pole of its model file; never solid
     /// where it is mapped.
     StreetLamp = 10,
+    /// A warning sign "no bicycles" at an end of a road a world patch
+    /// closed for bikes (16H Q6, [`crate::bike_signs`]): beside the
+    /// carriageway, facing the rider who comes onto the road (`angle`:
+    /// the direction its face looks). Looks only (not solid); older
+    /// readers skip the code.
+    NoBikeSign = 11,
     // Lines.
     Fence = 32,
     Wall = 33,
@@ -125,7 +136,7 @@ pub enum ObstacleKind {
 }
 
 impl ObstacleKind {
-    pub const ALL: [ObstacleKind; 20] = [
+    pub const ALL: [ObstacleKind; 21] = [
         Self::Bollard,
         Self::Post,
         Self::Gate,
@@ -136,6 +147,7 @@ impl ObstacleKind {
         Self::Pylon,
         Self::PlantedTree,
         Self::StreetLamp,
+        Self::NoBikeSign,
         Self::Fence,
         Self::Wall,
         Self::Hedge,
@@ -210,7 +222,7 @@ impl ObstacleKind {
 
     /// Whether riders in wild mode hit it (kerbs are ridden over).
     pub fn solid(self) -> bool {
-        self != Self::Kerb
+        !matches!(self, Self::Kerb | Self::NoBikeSign)
     }
 
     /// Radius of a point obstacle (m).
@@ -244,7 +256,8 @@ impl ObstacleKind {
             Self::LiftGate => "props/barrier-lift-arm",
             Self::CycleBarrier => "props/barrier-cycle-staggered",
             Self::StreetLamp => "props/lamp-street-arm-road",
-            Self::PlantedTree | Self::Tree => return None,
+            // Drawn from the world data (`ocw-render::obstacles`), not a file.
+            Self::PlantedTree | Self::Tree | Self::NoBikeSign => return None,
             _ => "props/barrier-post-hexagonal",
         })
     }
@@ -281,6 +294,7 @@ impl ObstacleKind {
             Self::GuardRail => 0.75,
             Self::Kerb => 0.12,
             Self::StreetLamp => 6.0,
+            Self::NoBikeSign => crate::bike_signs::HEIGHT_M as f64,
             _ => 1.0,
         }
     }
@@ -306,6 +320,7 @@ impl ObstacleKind {
             Self::Building => "building",
             Self::Tree | Self::PlantedTree => "tree",
             Self::StreetLamp => "street lamp",
+            Self::NoBikeSign => "no-bicycles sign",
         }
     }
 }
@@ -397,6 +412,28 @@ impl Obstacles {
         }
     }
 
+    /// Adds a point obstacle to the tile it is in.
+    pub fn add_point(&mut self, p: PointObstacle, tile_size_m: f32) {
+        let key = TileKey::containing(
+            [f64::from(p.pos[0]), f64::from(p.pos[1])],
+            f64::from(tile_size_m),
+        );
+        self.tiles.entry(key).or_default().points.push(p);
+    }
+
+    /// Takes out every point obstacle of `kind` (a step that places them
+    /// again); empty tiles go.
+    pub fn take_points(&mut self, kind: ObstacleKind) -> Vec<PointObstacle> {
+        let mut out = Vec::new();
+        for t in self.tiles.values_mut() {
+            let (k, rest): (Vec<_>, Vec<_>) = t.points.drain(..).partition(|p| p.kind == kind);
+            t.points = rest;
+            out.extend(k);
+        }
+        self.tiles.retain(|_, t| !t.is_empty());
+        out
+    }
+
     /// Counts per kind (points, lines) and stored trees, for reports.
     pub fn counts(&self) -> (BTreeMap<ObstacleKind, usize>, usize) {
         let mut by = BTreeMap::new();
@@ -431,7 +468,10 @@ pub fn write_obstacles(o: &Obstacles, b: &mut Vec<u8>) {
         b.extend((t.points.len() as u32).to_le_bytes());
         for p in &t.points {
             b.push(p.kind.code());
-            b.push(p.flags);
+            // A sign's face keeps its side (the angle byte is modulo π).
+            let full = p.angle.rem_euclid(std::f32::consts::TAU);
+            let turned = p.kind == ObstacleKind::NoBikeSign && full >= std::f32::consts::PI;
+            b.push((p.flags & !TURNED) | if turned { TURNED } else { 0 });
             b.extend(p.pos[0].to_le_bytes());
             b.extend(p.pos[1].to_le_bytes());
             let a = p.angle.rem_euclid(std::f32::consts::PI) / std::f32::consts::PI * 256.0;
@@ -475,7 +515,11 @@ pub fn read_obstacles(bytes: &[u8]) -> Result<Obstacles, String> {
             let kind = r.u8()?;
             let flags = r.u8()?;
             let pos = [r.f32()?, r.f32()?];
-            let angle = f32::from(r.u8()?) / 256.0 * std::f32::consts::PI;
+            let mut angle = f32::from(r.u8()?) / 256.0 * std::f32::consts::PI;
+            if flags & TURNED != 0 {
+                angle += std::f32::consts::PI;
+            }
+            let flags = flags & !TURNED;
             let width_m = f32::from(r.u8()?) / 10.0;
             let height_m = f32::from(r.u8()?) / 10.0;
             if let Some(kind) = ObstacleKind::from_code(kind) {
@@ -1379,6 +1423,41 @@ mod tests {
         t.set_tree_cells(&cells);
         o.tiles.insert(TileKey { x: 0, z: 0 }, t);
         o
+    }
+
+    /// 16H Q6 regression: a warning sign's face keeps its side through
+    /// the section (the angle byte alone is modulo π – a sign facing north
+    /// came back facing south, showing riders its back).
+    #[test]
+    fn a_signs_facing_survives_the_section() {
+        let mut o = Obstacles::new(1000.0);
+        for (i, a) in [-1.6_f32, 1.5, 3.5, 0.2].into_iter().enumerate() {
+            o.add_point(
+                PointObstacle {
+                    kind: ObstacleKind::NoBikeSign,
+                    flags: 0,
+                    pos: [10.0 * i as f32, 5.0],
+                    angle: a,
+                    width_m: 0.0,
+                    height_m: 2.3,
+                },
+                1000.0,
+            );
+        }
+        let mut b = Vec::new();
+        write_obstacles(&o, &mut b);
+        let back = read_obstacles(&b).unwrap();
+        let got = &back.tiles[&TileKey { x: 0, z: 0 }].points;
+        for (p, q) in o.tiles[&TileKey { x: 0, z: 0 }].points.iter().zip(got) {
+            let d = (p.angle - q.angle).rem_euclid(std::f32::consts::TAU);
+            assert!(
+                d.min(std::f32::consts::TAU - d) < 0.02,
+                "{} -> {}",
+                p.angle,
+                q.angle
+            );
+            assert_eq!(q.flags, 0, "the stored flag is not kept in memory");
+        }
     }
 
     #[test]

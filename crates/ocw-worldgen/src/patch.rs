@@ -41,7 +41,7 @@ pub fn apply_to_osm(plan: &Plan, osm: &mut OsmData, report: &mut Report) {
         let way = &mut osm.ways[i];
         edit_tags(way, &r.edit);
         let what = if r.edit.bike == Some(BikeAccess::Closed) {
-            "OSM tags changed; closed for bikes".to_string()
+            "closed for bikes: stays rideable, warning signs at its ends".to_string()
         } else if rideable(way).is_some() {
             "OSM tags changed".to_string()
         } else {
@@ -107,9 +107,8 @@ fn edit_tags(way: &mut Way, e: &ocw_world::patch::RoadEdit) {
             },
         );
     }
-    if e.bike == Some(BikeAccess::Closed) {
-        set(way, "bicycle", "no");
-    }
+    // Closed for bikes changes no tag: the road stays rideable and gets
+    // warning signs at its ends (16H Q6; `Patching::bike_signs`).
     if let Some(n) = &e.name {
         if n.is_empty() {
             way.tags.remove("name");
@@ -169,6 +168,38 @@ impl Patching {
 
     pub fn on_profiles(&mut self, graph: &mut RoadGraph, proj: &LocalProjection) {
         apply_height_points(&self.plan, graph, proj, &mut self.report);
+    }
+
+    /// The warning signs at the ends of the roads the plan closed for
+    /// bikes (16H Q6), on the package's final graph.
+    pub fn bike_signs(&self, graph: &RoadGraph) -> Vec<ocw_world::obstacles::PointObstacle> {
+        let closed = ocw_world::patch::closed_edges(&self.plan, graph);
+        ocw_world::bike_signs::place(graph, &closed)
+    }
+
+    /// Puts the signs of [`Patching::bike_signs`] into the package's
+    /// obstacles (section `OBST`, made if it has none), replacing any
+    /// there; the signs placed.
+    pub fn add_bike_signs(
+        &self,
+        pkg: &mut ocw_world::WorldPackage,
+    ) -> Vec<ocw_world::obstacles::PointObstacle> {
+        let Some(graph) = pkg.graph.clone() else {
+            return Vec::new();
+        };
+        let signs = self.bike_signs(&graph);
+        let size = pkg.tile_size_m;
+        let had = pkg.obstacles.is_some();
+        let mut o = pkg
+            .obstacles
+            .take()
+            .unwrap_or_else(|| ocw_world::obstacles::Obstacles::new(size));
+        o.take_points(ocw_world::obstacles::ObstacleKind::NoBikeSign);
+        for p in &signs {
+            o.add_point(*p, size);
+        }
+        pkg.obstacles = (had || !signs.is_empty()).then_some(o);
+        signs
     }
 
     /// The surface an edge target asked for (way targets changed the OSM
@@ -262,17 +293,26 @@ way = 103
             filter::rideable(way(&osm, 102)),
             Some(ocw_world::graph::RoadClass::Path)
         );
-        assert_eq!(filter::rideable(way(&osm, 101)), None);
+        // Closed for bikes (16H Q6): still rideable, the tags unchanged.
+        assert!(filter::rideable(way(&osm, 101)).is_some());
+        assert_ne!(way(&osm, 101).tag("bicycle"), Some("no"));
         assert!(osm.ways.iter().all(|w| w.id != 103));
         assert_eq!(report.missing_count(), 1);
         assert!(matches!(
             &report.get(OpRef { patch: 0, op: 4 }).unwrap().outcome,
             Outcome::Missing(m) if m.contains("way 9999")
         ));
-        // The graph follows: no dead end (101) and no bridge (103) left;
-        // without the bridge the loop is a dead end at 9 and 10 now.
+        // The graph follows: no bridge (103) left, the closed dead end
+        // (101) kept, with a warning sign at its open end.
         let (g, _) = build_road_graph(&osm, &Region::bbox(46.490, 9.485, 46.510, 9.515));
-        assert!(g.edges.iter().all(|e| e.osm_way != 101 && e.osm_way != 103));
+        assert!(g.edges.iter().all(|e| e.osm_way != 103));
+        assert!(g.edges.iter().any(|e| e.osm_way == 101));
+        let signs = ocw_world::bike_signs::place(&g, &ocw_world::patch::closed_edges(&plan, &g));
+        assert!(!signs.is_empty());
+        for s in &signs {
+            let p = [f64::from(s.pos[0]), f64::from(s.pos[1])];
+            assert!(ocw_world::bike_signs::clearance(&g, p) >= ocw_world::bike_signs::CLEAR_M);
+        }
         assert!(g.edges.iter().any(|e| e.osm_way == 100 && e.width_m == 4.5));
     }
 }
