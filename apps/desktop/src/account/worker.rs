@@ -15,11 +15,12 @@ use ocw_client::account::{AccountInfo, AccountState};
 
 use super::flow::{AuthClient, BROWSER_TIMEOUT, FlowError, now_s};
 use super::store::TokenStore;
+use super::workshop::{ActAnswer, RETRY_S, WorkshopShared, WorkshopSync};
 
 /// Opens a URL in the browser.
 pub type OpenUrl = fn(&str) -> Result<(), String>;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     SignIn(Option<Provider>),
     /// The device flow (kiosk).
@@ -29,6 +30,15 @@ pub enum Command {
     SignOut,
     Export(PathBuf),
     Delete,
+    /// Fetch the account's workshop now (spec 14 Phase 4, 4O).
+    WorkshopSync,
+    /// A workshop action; its answer lands in [`Shared::workshop`].
+    WorkshopAct {
+        id: u64,
+        action: ocw_account_api::workshop::Action,
+    },
+    /// A ride's summary: queued, uploaded when the backend answers (Q20).
+    Ride(Box<ocw_account_api::rides::RideSummary>),
 }
 
 /// What the app reads.
@@ -37,6 +47,8 @@ pub struct Shared {
     pub info: AccountInfo,
     /// The access token for the next hello and its expiry (Unix s).
     pub access: Option<(String, i64)>,
+    /// The account's workshop (signed in), spec 14 Phase 4, 4O.
+    pub workshop: WorkshopShared,
 }
 
 pub struct Worker {
@@ -48,6 +60,9 @@ pub struct Worker {
 }
 
 pub struct WorkerConfig {
+    /// `<data dir>/ocw`: the account's workshop cache and ride queue
+    /// (`None`: in memory only).
+    pub data_dir: Option<PathBuf>,
     pub issuer: String,
     pub client_id: String,
     pub store: TokenStore,
@@ -69,6 +84,7 @@ impl Worker {
                 ..AccountInfo::default()
             },
             access: None,
+            workshop: WorkshopShared::default(),
         }));
         let cancel = Arc::new(AtomicBool::new(false));
         let mut t = Thread {
@@ -79,6 +95,9 @@ impl Worker {
             shared: shared.clone(),
             messages: msg_tx,
             cancel: cancel.clone(),
+            data_dir: cfg.data_dir,
+            ws: None,
+            generation: 0,
         };
         std::thread::Builder::new()
             .name("ocw-account".into())
@@ -100,9 +119,104 @@ struct Thread {
     shared: Arc<Mutex<Shared>>,
     messages: Sender<String>,
     cancel: Arc<AtomicBool>,
+    data_dir: Option<PathBuf>,
+    /// The signed-in account's workshop.
+    ws: Option<WorkshopSync>,
+    generation: u64,
+}
+
+fn idempotency_key() -> String {
+    let mut b = [0u8; 16];
+    getrandom::fill(&mut b).expect("the OS random source works");
+    b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
 impl Thread {
+    /// The workshop of the session's account (opened on first use).
+    fn workshop(&mut self) -> Option<(&mut WorkshopSync, &AuthClient, &Session)> {
+        let s = self.session.as_ref()?;
+        if self.ws.as_ref().is_none_or(|w| w.account != s.account_id) {
+            let (w, warnings) = WorkshopSync::open(self.data_dir.as_deref(), &s.account_id);
+            for w in warnings {
+                let _ = self.messages.send(format!("account: {w}"));
+            }
+            self.ws = Some(w);
+        }
+        Some((self.ws.as_mut()?, &self.client, self.session.as_ref()?))
+    }
+
+    fn publish_workshop(&mut self) {
+        self.generation += 1;
+        let g = self.generation;
+        let Some(w) = &self.ws else { return };
+        let mut fresh = w.shared(g);
+        let mut sh = self.shared.lock().unwrap_or_else(|e| e.into_inner());
+        fresh.answers = std::mem::take(&mut sh.workshop.answers);
+        sh.workshop = fresh;
+    }
+
+    /// Syncs the workshop and uploads queued rides (signed in).
+    fn workshop_round(&mut self) {
+        let now = now_s();
+        let mut said = Vec::new();
+        let Some((w, c, s)) = self.workshop() else {
+            return;
+        };
+        // A backend woken from sleep (a hosted one that stops when idle)
+        // answers after a few seconds: one more try before going offline.
+        if let Err(e) = w.sync(c, s, now) {
+            tracing::debug!(%e, "workshop sync");
+            if matches!(e, super::flow::ApiError::Offline(_)) {
+                std::thread::sleep(Duration::from_secs(3));
+                if let Err(e) = w.sync(c, s, now_s()) {
+                    tracing::debug!(%e, "workshop sync, second try");
+                }
+            }
+        }
+        let r = w.upload(c, s);
+        for a in &r.answers {
+            said.push(format!(
+                "account: ride {} {:?}{}{}",
+                a.ride_id,
+                a.status,
+                if a.hearts > 0 {
+                    format!(", {} ♥", a.hearts)
+                } else {
+                    String::new()
+                },
+                if a.reasons.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", a.reasons.join("; "))
+                }
+            ));
+        }
+        for (id, why) in &r.dropped {
+            said.push(format!("account: ride {id} not taken: {why}"));
+        }
+        if !r.answers.is_empty() {
+            // The balance changed: fetch it again.
+            let _ = w.sync(c, s, now);
+        }
+        for m in said {
+            self.say(m);
+        }
+        self.publish_workshop();
+    }
+
+    /// Offline: try again now and then; queued rides go up when online.
+    fn workshop_tick(&mut self) {
+        let now = now_s();
+        let due = match &self.ws {
+            None => self.session.is_some(),
+            Some(w) => {
+                (!w.online && now - w.last_try >= RETRY_S) || (w.online && !w.queue.is_empty())
+            }
+        };
+        if due && self.session.is_some() {
+            self.workshop_round();
+        }
+    }
     fn say(&self, m: impl Into<String>) {
         let _ = self.messages.send(m.into());
     }
@@ -141,6 +255,11 @@ impl Thread {
 
     fn forget(&mut self, why: Option<String>) {
         self.session = None;
+        self.ws = None;
+        self.shared
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .workshop = WorkshopShared::default();
         self.store.delete();
         self.publish(AccountState::SignedOut, why);
     }
@@ -153,11 +272,20 @@ impl Thread {
             self.session = Some(s);
             self.publish(self.signed_in_state(), None);
             self.refresh_if_due(true);
+            // The cached workshop at once (riding offline), then the
+            // backend's.
+            if self.workshop().is_some() {
+                self.publish_workshop();
+            }
+            self.workshop_round();
         }
         loop {
             match rx.recv_timeout(Duration::from_secs(5)) {
                 Ok(cmd) => self.handle(cmd),
-                Err(RecvTimeoutError::Timeout) => self.refresh_if_due(false),
+                Err(RecvTimeoutError::Timeout) => {
+                    self.refresh_if_due(false);
+                    self.workshop_tick();
+                }
                 Err(RecvTimeoutError::Disconnected) => return,
             }
         }
@@ -291,6 +419,41 @@ impl Thread {
                     Err(e) => self.say(format!("account: export failed: {e}")),
                 }
             }
+            Command::WorkshopSync => {
+                self.refresh_if_due(false);
+                self.workshop_round();
+            }
+            Command::WorkshopAct { id, action } => {
+                self.refresh_if_due(false);
+                let now = now_s();
+                let key = idempotency_key();
+                let result = match self.workshop() {
+                    Some((w, c, s)) => w.act(c, s, &action, &key, now),
+                    None => Err("sign in first".into()),
+                };
+                if let Err(e) = &result {
+                    self.say(format!("account: {e}"));
+                }
+                self.shared
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .workshop
+                    .answers
+                    .push(ActAnswer { id, result });
+                self.publish_workshop();
+            }
+            Command::Ride(summary) => {
+                let id = summary.ride_id.clone();
+                match self.workshop() {
+                    Some((w, ..)) => w.queue_ride(*summary),
+                    None => {
+                        self.say(format!("account: ride {id} not kept: signed out"));
+                        return;
+                    }
+                }
+                self.refresh_if_due(false);
+                self.workshop_round();
+            }
             Command::Delete => {
                 let Some(s) = self.session.clone() else {
                     self.say("account: sign in first");
@@ -317,6 +480,7 @@ impl Thread {
                 self.keep(s);
                 self.say(format!("account: {what} as {name}"));
                 self.publish(self.signed_in_state(), None);
+                self.workshop_round();
             }
             Err(e) => {
                 self.say(format!("account: {e}"));

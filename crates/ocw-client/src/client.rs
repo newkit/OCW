@@ -200,6 +200,9 @@ pub struct ClientCore {
     echo_bot: bool,
     /// The server accepts dev commands (`Welcome.dev_commands`).
     dev_commands: bool,
+    /// The server credits the hearts of this ride itself
+    /// (`Welcome.hearts_credited`, spec 14 Phase 4, 4O Q19).
+    hearts_credited: bool,
     echo_rider: Option<RiderId>,
     /// The session's world clock (spec §14 Phase 9): the server's, advanced
     /// smoothly between snapshots, and its last message.
@@ -324,6 +327,7 @@ impl ClientCore {
             human_riders: 0,
             echo_bot: false,
             dev_commands: false,
+            hearts_credited: false,
             echo_rider: None,
             clock: ocw_sky::ClockPredictor::default(),
             clock_info: None,
@@ -766,6 +770,7 @@ impl ClientCore {
                 self.accounts.clear();
                 self.echo_bot = w.echo_bot;
                 self.dev_commands = w.dev_commands;
+                self.hearts_credited = w.hearts_credited;
                 self.world_access = Some(ocw_protocol::access_from_wire(w.world_access));
                 self.god_access = Some(ocw_protocol::access_from_wire(w.god_access));
                 self.collisions.on_welcome(&w);
@@ -2789,6 +2794,12 @@ impl ClientCore {
 
     /// Whether the power sent is virtual: the virtual trainer, or keyboard
     /// power on top of a real device.
+    /// The server credits this ride's hearts to the account itself (a
+    /// certified server, spec 14 Phase 4, 4O Q19 (a)): no summary upload.
+    pub fn hearts_credited(&self) -> bool {
+        self.hearts_credited
+    }
+
     pub fn virtual_power(&self) -> bool {
         self.virtual_device || self.key_power_w > 0.0
     }

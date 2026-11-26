@@ -99,6 +99,9 @@ pub struct Recording {
     pub hearts_start: Option<u32>,
     /// The last workout ridden in this ride.
     pub workout: Option<String>,
+    /// Per record: its power was virtual (the account's ride summary
+    /// counts no power then, spec 14 Phase 4, 4O).
+    pub virtual_s: Vec<bool>,
 }
 
 impl Recording {
@@ -136,6 +139,7 @@ impl Plugin for RecordingPlugin {
             enabled,
             hearts_start: None,
             workout: None,
+            virtual_s: Vec::new(),
         })
         .insert_resource(HistoryHooks {
             store: history_store,
@@ -186,6 +190,12 @@ fn record(
     if started && !rec.recorder.records().is_empty() {
         rec.hearts_start = Some(client.0.server_hearts());
         rec.workout = None;
+        rec.virtual_s.clear();
+    }
+    let n = rec.recorder.records().len();
+    let v = client.0.virtual_power();
+    while rec.virtual_s.len() < n {
+        rec.virtual_s.push(v);
     }
     if let Some((name, _)) = workouts.and_then(|w| w.0.now())
         && rec.workout.as_deref() != Some(name.as_str())
@@ -274,8 +284,10 @@ pub fn save_now(world: &mut World, min_duration_s: f64) -> Result<Option<PathBuf
     };
     rec.hearts_start = None;
     rec.workout = None;
+    let virtual_s = std::mem::take(&mut rec.virtual_s);
     let dir = rec.dir.clone().ok_or("no data directory for rides")?;
     let path = save_ride(&dir, &ride)?;
+    queue_account_ride(world, &ride, &virtual_s, &path);
     let id = path
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
@@ -292,6 +304,52 @@ pub fn save_now(world: &mut World, min_duration_s: f64) -> Result<Option<PathBuf
         warn!("training history: {e}");
     }
     Ok(Some(path))
+}
+
+/// Signed in (spec 14 Phase 4, 4O Q19 / Q20): the ride's summary goes to
+/// the account – queued and uploaded by the account thread, credited once
+/// after the backend's checks – unless a certified server credited it
+/// already, or it is a capture, the kiosk's show or Training mode.
+fn queue_account_ride(world: &World, ride: &FinishedRide, virtual_s: &[bool], fit: &Path) {
+    let Some(account) = world.get_resource::<crate::account::Account>() else {
+        return;
+    };
+    let args = world.get_resource::<Args>();
+    let credited = world
+        .get_resource::<ClientState>()
+        .is_some_and(|c| c.0.hearts_credited());
+    let training = world.get_resource::<crate::workshop::PlayMode>()
+        == Some(&crate::workshop::PlayMode::Training);
+    if !ocw_client::ride_summary::uploads(
+        account.signed_in(),
+        credited,
+        args.is_some_and(|a| a.capture.is_some()),
+        args.is_some_and(|a| a.no_hearts),
+        training,
+    ) {
+        return;
+    }
+    let rider = crate::settings::local_rider(world);
+    let bike = world
+        .get_resource::<crate::workshop::WorkshopState>()
+        .and_then(|s| s.wallet.get(&rider.name).map(|g| g.active.clone()));
+    let mut r = [0u8; 6];
+    let _ = getrandom::fill(&mut r);
+    let stem = fit
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let id = format!(
+        "{stem}-{}",
+        r.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    );
+    match ocw_client::ride_summary::summary(&ride.activity, virtual_s, &id, rider.weight_kg, bike) {
+        Some(s) => {
+            info!(ride = %id, "ride summary queued for the account");
+            account.send_ride(s);
+        }
+        None => info!("no real power in this ride: no summary for the account"),
+    }
 }
 
 /// The ids of every rider's history (an imported FIT file is in none).
@@ -978,6 +1036,7 @@ mod tests {
             enabled: true,
             hearts_start: None,
             workout: None,
+            virtual_s: Vec::new(),
         };
         for i in 0..10 {
             rec.recorder.observe(

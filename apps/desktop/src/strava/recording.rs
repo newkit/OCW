@@ -294,6 +294,7 @@ mod tests {
             enabled: true,
             hearts_start: None,
             workout: None,
+            virtual_s: Vec::new(),
         });
         w.insert_resource(ActivitiesFolder {
             dir: base.join("home/Activities/OCW"),

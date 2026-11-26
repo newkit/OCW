@@ -365,6 +365,89 @@ impl AuthClient {
     }
 }
 
+/// Why a workshop or rides call got no answer (spec 14 Phase 4, 4O).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApiError {
+    /// No connection, a timeout, the backend down (5xx, 429): offline.
+    Offline(String),
+    /// The backend refused (4xx): the sentence for the rider.
+    Refused(String),
+    /// The token is no longer good (401).
+    SignedOut,
+}
+
+impl std::fmt::Display for ApiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Offline(m) => write!(f, "the account server does not answer ({m})"),
+            Self::Refused(m) => f.write_str(m),
+            Self::SignedOut => f.write_str("signed out: sign in again"),
+        }
+    }
+}
+
+impl AuthClient {
+    fn api<T: serde::de::DeserializeOwned>(
+        r: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
+    ) -> Result<T, ApiError> {
+        let (status, body) = Self::read(r).map_err(|e| ApiError::Offline(e.to_string()))?;
+        match status {
+            200 => serde_json::from_str(&body).map_err(|e| ApiError::Offline(e.to_string())),
+            401 => Err(ApiError::SignedOut),
+            s if s >= 500 || s == 429 => Err(ApiError::Offline(error_text(s, &body))),
+            s => Err(ApiError::Refused(error_text(s, &body))),
+        }
+    }
+
+    /// `GET /workshop`: the account's balance, garage and ledger.
+    pub fn workshop(
+        &self,
+        s: &Session,
+    ) -> Result<ocw_account_api::workshop::WorkshopState, ApiError> {
+        Self::api(
+            self.agent
+                .get(&format!("{}/workshop", self.issuer))
+                .header("authorization", &format!("Bearer {}", s.access_token))
+                .call(),
+        )
+    }
+
+    /// `POST /workshop/purchase|sell|garage` with an idempotency key (a
+    /// retry after a lost answer changes nothing).
+    pub fn workshop_act(
+        &self,
+        s: &Session,
+        action: &ocw_account_api::workshop::Action,
+        key: &str,
+    ) -> Result<ocw_account_api::workshop::ActionAnswer, ApiError> {
+        let body = serde_json::to_string(action).map_err(|e| ApiError::Refused(e.to_string()))?;
+        Self::api(
+            self.agent
+                .post(&format!("{}{}", self.issuer, action.endpoint().path()))
+                .header("authorization", &format!("Bearer {}", s.access_token))
+                .header("content-type", "application/json")
+                .header("idempotency-key", key)
+                .send(&body),
+        )
+    }
+
+    /// `POST /rides/summary`: a ride's summary, credited once.
+    pub fn ride_summary(
+        &self,
+        s: &Session,
+        summary: &ocw_account_api::rides::RideSummary,
+    ) -> Result<ocw_account_api::rides::RideAnswer, ApiError> {
+        let body = serde_json::to_string(summary).map_err(|e| ApiError::Refused(e.to_string()))?;
+        Self::api(
+            self.agent
+                .post(&format!("{}/rides/summary", self.issuer))
+                .header("authorization", &format!("Bearer {}", s.access_token))
+                .header("content-type", "application/json")
+                .send(&body),
+        )
+    }
+}
+
 fn error_text(status: u16, body: &str) -> String {
     serde_json::from_str::<ocw_auth::oidc::ErrorResponse>(body)
         .ok()

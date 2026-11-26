@@ -258,6 +258,39 @@ struct Args {
     /// allowed, Phase 10 Q5).
     #[arg(long)]
     auth_required: bool,
+    /// Credit the hearts of signed-in riders (spec 14 Phase 4, 4O Q19):
+    /// this server's signing key file (`world-builder keys new-signing`;
+    /// the accounts backend trusts it when the project's root key certified
+    /// it). When a rider leaves, a signed ride credit goes to the accounts
+    /// backend; the apps then upload no summary of that ride.
+    #[arg(long, value_name = "FILE")]
+    credit_key: Option<PathBuf>,
+    /// The accounts backend the credits go to (default: the sign-in's
+    /// issuer).
+    #[arg(long, value_name = "URL", requires = "credit_key")]
+    credit_backend: Option<String>,
+}
+
+/// The hearts credits of `--credit-key` (spec 14 Phase 4, 4O Q19).
+fn start_credits(args: &Args, auth: Option<&Auth>) -> Option<ocw_server::Credits> {
+    let path = args.credit_key.as_ref()?;
+    let fail = |e: String| -> ! {
+        eprintln!("--credit-key: {e}");
+        std::process::exit(2);
+    };
+    let json =
+        std::fs::read_to_string(path).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())));
+    let key = ocw_world::manifest::SigningKeyPair::from_json(&json).unwrap_or_else(|e| fail(e));
+    let backend = args
+        .credit_backend
+        .clone()
+        .or_else(|| auth.map(|a| a.verifier.issuer().to_owned()))
+        .unwrap_or_else(|| fail("no accounts backend: --credit-backend URL or a sign-in".into()));
+    let claims = key.claims();
+    tracing::info!(key = %claims.key_id, name = %claims.name, %backend, "hearts credited by this server");
+    let sender = ocw_server::credits::BackendCredits::start(key, backend)
+        .unwrap_or_else(|e| fail(e.to_string()));
+    Some(ocw_server::Credits(std::sync::Arc::new(sender)))
 }
 
 /// Sign-in (spec §9.1): the verifier of the hello's tokens, and what keeps
@@ -683,6 +716,7 @@ fn main() {
             weather_physics: args.weather_physics == "on",
             auth: auth.as_ref().map(|a| a.verifier.clone()),
             auth_required: args.auth_required,
+            hearts_credits: start_credits(&args, auth.as_ref()),
         },
     );
     // Real weather (spec §14 Phase 9, S7): the server asks the providers,

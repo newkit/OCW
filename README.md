@@ -2966,6 +2966,36 @@ PostgreSQL 17.11 (portable Linux x86_64 binaries, SHA-256 checked, cached in
 temporary directory and runs the accounts tests against it and against the
 memory store.
 
+**In the desktop app:** signed in (*Settings → Account*, with
+`--account-server URL` or `OCW_ACCOUNT_SERVER`), the workshop is the
+account's: its balance, bikes, parts and kit; the balance line reads
+"5,000 ♥ · account". Buying, selling, fitting, selecting and painting are sent
+to the backend and answered a moment later – the app never waits for it
+(the line reads "saving …" meanwhile; the answer is printed in the console).
+Signed out, the workshop is the **local test wallet** as before, marked
+"local test wallet"; it is never imported into an account. Right after
+signing in, until the backend answers (a server woken from sleep takes a few
+seconds), the line reads "connecting to your account …". Repairs, hanging a
+spare frameset and `hearts.grant` are not available with an account yet.
+
+**Offline** (no network, the backend down): the app rides with the bikes and
+kit last synced – kept in `<data dir>/ocw/accounts/<account>/workshop.json` –
+and the workshop is read-only ("account, offline (read-only)"). Every ride
+that earns hearts is summed up from its recording (power, cadence and heart
+rate once a second; seconds of virtual power count nothing) and queued in
+`ride-queue.jsonl` next to it; the account thread uploads the queue when the
+backend answers (it tries again every minute) and the backend credits each
+ride once, after its checks.
+
+**A game server that credits hearts itself** (Q19 (a)): `ocw-server
+--credit-key server-signing.key [--credit-backend https://accounts.example.org]`
+with a signing key the project's root key certified (`world-builder keys
+new-signing`), and that root in the backend's `[hearts] roots`. When a
+signed-in rider leaves, the server signs a ride credit (work, climbing,
+distance) and posts it to `/rides/credit`, retrying while the backend does
+not answer; its welcome tells the apps, which then upload no summary of
+that ride. Without `--credit-key` the apps upload their rides themselves.
+
 ## Running the server
 
 By default every ride runs on the *local server*: the same game-server logic

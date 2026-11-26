@@ -859,6 +859,7 @@ mod tests {
                 enabled: true,
                 hearts_start: None,
                 workout: None,
+                virtual_s: Vec::new(),
             })
             .add_plugins(StravaPlugin {
                 config_dir: Some(dir.join("config")),

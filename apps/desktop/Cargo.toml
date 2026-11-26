@@ -71,6 +71,8 @@ ocw-voice.workspace = true
 # Linux – libdbus is linked already by btleplug –, the Keychain on macOS,
 # the Credential Manager on Windows; a private file when none answers).
 ocw-auth.workspace = true
+# The account's workshop and rides (spec 14 Phase 4, 4O).
+ocw-account-api.workspace = true
 getrandom.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]

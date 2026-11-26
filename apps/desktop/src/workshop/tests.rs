@@ -757,3 +757,114 @@ fn the_bike_stand_tiles_with_every_device() {
     assert!(view(&app).picker.is_none());
     assert_eq!(stand_variants(&app), fitted, "cancel restores");
 }
+
+/// The account's workshop (spec 14 Phase 4, 4O): signed in, the workshop
+/// is the account's – its 5,000 ♥ and starter bike, not the local test
+/// wallet – a purchase is sent and answered without blocking a frame, and
+/// signed out the local wallet is back, marked local; offline the
+/// workshop is read-only (Q20 (a)).
+#[test]
+fn signed_in_the_workshop_is_the_accounts() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dev = rt
+        .block_on(ocw_accounts::fake::DevBackend::start("127.0.0.1:0", None))
+        .unwrap();
+    let dir = std::env::temp_dir().join(format!("ocw-ws-account-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    fn browser(url: &str) -> Result<(), String> {
+        let url = url.to_owned();
+        std::thread::spawn(move || {
+            let _ = ocw_accounts::fake::TestBrowser::new().open(&url);
+        });
+        Ok(())
+    }
+    let mut app = app();
+    app.init_resource::<ocw_ui::menu::AccountMenu>()
+        .add_plugins(crate::account::AccountPlugin {
+            issuer: Some(dev.issuer.clone()),
+            file: Some(dir.join("account.json")),
+            open_url: Some(browser),
+            data_dir: Some(dir.clone()),
+        });
+    let local = balance(&app);
+    let label = |app: &App| {
+        let s = app.world().resource::<WorkshopState>();
+        balance_label(s, s.wallet.balance("Rider"))
+    };
+    assert!(label(&app).contains("local test wallet"), "{}", label(&app));
+    let wait = |app: &mut App, what: &str, done: &dyn Fn(&App) -> bool| {
+        for _ in 0..600 {
+            app.update();
+            if done(app) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("timed out waiting for {what}");
+    };
+    let logged = |app: &App, needle: &str| {
+        app.world()
+            .resource::<ConsoleState>()
+            .log()
+            .iter()
+            .any(|l| l.contains(needle))
+    };
+    run(&mut app, "account signin google");
+    wait(&mut app, "the account's workshop", &|a| {
+        a.world().resource::<WorkshopState>().wallet.is_account()
+    });
+    assert_eq!(balance(&app), ocw_account_api::START_HEARTS);
+    assert!(label(&app).ends_with("· account"), "{}", label(&app));
+    {
+        let s = app.world().resource::<WorkshopState>();
+        let g = s.wallet.get("Rider").unwrap();
+        assert_eq!(g.bikes.len(), 1, "only the starter bike");
+        assert!(g.items.is_empty());
+    }
+    // A purchase: sent at once, answered later.
+    run(&mut app, "workshop.buy wheels.road-alloy.mid");
+    assert!(logged(&app, "sent to your account"));
+    wait(&mut app, "the purchase", &|a| {
+        balance(a) == ocw_account_api::START_HEARTS - 600
+    });
+    {
+        let s = app.world().resource::<WorkshopState>();
+        let g = s.wallet.get("Rider").unwrap();
+        assert_eq!(g.items.len(), 1);
+        assert_eq!(g.items[0].part, "wheels.road-alloy.mid");
+    }
+    // Refused by the backend: too expensive; the balance stays.
+    run(&mut app, "bikes.buy frame.tt.top");
+    wait(&mut app, "the refusal", &|a| logged(a, "more needed"));
+    assert_eq!(balance(&app), ocw_account_api::START_HEARTS - 600);
+    // Not with an account yet.
+    run(&mut app, "bikes.hang 1");
+    assert!(logged(&app, "not available with an account"));
+    // Offline: read-only.
+    app.world_mut()
+        .resource_mut::<WorkshopState>()
+        .wallet
+        .account
+        .as_mut()
+        .unwrap()
+        .online = false;
+    assert!(label(&app).contains("offline (read-only)"));
+    run(&mut app, "workshop.sell 1");
+    assert!(logged(&app, "offline: buying and selling wait"));
+    // The cache file for riding offline.
+    assert!(
+        std::fs::read_dir(dir.join("accounts")).unwrap().any(|d| d
+            .unwrap()
+            .path()
+            .join("workshop.json")
+            .exists())
+    );
+    // Signed out: the local test wallet again.
+    run(&mut app, "account signout");
+    wait(&mut app, "the local wallet", &|a| {
+        !a.world().resource::<WorkshopState>().wallet.is_account()
+    });
+    assert_eq!(balance(&app), local);
+    assert!(label(&app).contains("local test wallet"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
