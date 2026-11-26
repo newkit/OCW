@@ -1165,6 +1165,44 @@ args = ["--world", "{world}", "--route-file", "{world_dir}/badenbaden-mummelsee.
 at = ["0.5=hud off", "0.5=hud.profile off", "2.5=teleport 24.9", "2.5=camera.orbit 90 8 30"]
 shot = 12
 
+# The unicorn over the Hornisgrinde (1,164 m) on a clear autumn evening
+# (14 October, 18:15, golden hour, a few fair-weather clouds), quality High,
+# no HUD. Render with OCW_FPS=0 (no FPS counter) and, for the video,
+# OCW_CAPTURE_FPS=30; OCW_PROFILE=release is much faster.
+[[scene]]
+name = "unicorn-hornisgrinde-tower"
+description = "The unicorn flying up the western slope of the Hornisgrinde at golden hour: wings spread, rainbow trail over the autumn forest and the hairpins of the Hornisgrinde roads, the summit's TV tower on the right, the hills towards the Rhine plain in the evening light"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "17913,-75221", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-10-14 18:15", "0.5=weather fair clouds=0.35", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "2=god.flight plane", "3=god on", "4=god.pose 17300 -76200 220 60 -3", "4.2=god.cruise 0.35 0 0", "4.2=camera.orbit 40 10 14"]
+shot = 9
+
+[[scene]]
+name = "unicorn-hornisgrinde-plateau"
+description = "The unicorn seen from the front, lit by the low sun, flying west off the Hornisgrinde: the summit plateau with its bog pools and buildings on the right, the forested ridge and the northern Black Forest behind"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "17913,-75221", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-10-14 18:15", "0.5=weather fair clouds=0.35", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "2=god.flight plane", "3=god on", "4=god.pose 18100 -76500 150 265 -3", "4.2=god.cruise 0.35 0 0", "4.2=camera.orbit 130 10 14"]
+shot = 9
+
+[[scene]]
+name = "unicorn-hornisgrinde-sunset"
+description = "The unicorn leaving the Hornisgrinde westwards into the evening sun: the autumn forest of the summit's slopes below, the foothills glowing gold and the Rhine plain in the haze"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "17913,-75221", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-10-14 18:15", "0.5=weather fair clouds=0.35", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "2=god.flight plane", "3=god on", "4=god.pose 18000 -76400 180 260 -3", "4.2=god.cruise 0.35 0 0", "4.2=camera.orbit 35 8 13"]
+shot = 9
+
+[[scene]]
+name = "unicorn-hornisgrinde-orbit-video"
+description = "Video (1080p): the unicorn circles over the Hornisgrinde at golden hour, climbing slightly; the camera at its side swings round with it – the summit plateau and its TV tower, the forested slopes, the hills towards the Rhine plain"
+world = "blackforest-north"
+args = ["--window", "1920x1080", "--world", "{world}", "--no-neighbours", "--free-ride", "--start", "17913,-75221", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-10-14 18:15", "0.5=weather fair clouds=0.35", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "2=god.flight plane", "3=god on", "4=god.pose 17700 -76500 200 0 -3", "4.2=god.cruise 0.35 0.08 -18", "4.2=camera.orbit 60 12 15"]
+warmup = 5
+video = 15
+max_video_mb = 8
+
 [[scene]]
 name = "showcase-hochstrasse"
 description = "Showcase: a group on the Schwarzwaldhochstraße at Hundseck (Baden-Baden - Mummelsee km 19.8, 900 m), forest and far views, seen from the front"
