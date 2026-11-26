@@ -256,7 +256,7 @@
   <section id="ocw-start" hidden aria-label="Start">
     <main>
       <h1><img src="ocw.svg" alt="" onerror="this.remove()">Open Cycling World <span class="badge">browser preview</span></h1>
-      <p class="lead">An open-source indoor cycling simulation, in your browser: ride solo on a test
+      <p class="lead" id="ocw-start-lead">An open-source indoor cycling simulation, in your browser: ride solo on a test
         route or in Liechtenstein, with virtual power or your smart trainer over Bluetooth (Chrome or Edge).
         This is a development build – expect rough edges.</p>
       <h2>Choose a ride</h2>
@@ -886,6 +886,8 @@
         `<span class="${ok ? "yes" : "no"}">${ok ? "✓" : "✗"} ${esc(n)}</span>`).join("");
       if (config.build) document.getElementById("ocw-start-build").textContent = "Build " + config.build;
       if (joinInfo) {
+        document.getElementById("ocw-start-lead").textContent = "An open-source indoor cycling simulation, in your browser: ride solo on a test "
+          + "route or in the worlds, or together with everyone on the public server, with virtual power or your smart trainer over Bluetooth (Chrome or Edge). This is a development build – expect rough edges.";
         document.getElementById("ocw-start-soon").textContent = "Ride together: the rides on the public server join everyone who is on it, "
           + "with voice chat (every ride starts with your voice off: M turns it on). Others see the name you ride with. "
           + "Sign-in, and with it your own rider's look, is coming in the hosted version.";
