@@ -6853,6 +6853,7 @@ dependencies = [
  "ocw-assets",
  "ocw-auth",
  "ocw-core",
+ "ocw-sim",
  "ocw-world",
  "openidconnect",
  "rand 0.8.8",

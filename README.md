@@ -3020,8 +3020,12 @@ Signed in, the account's workshop also replaces the free garage of
 wallet** as before, marked "local test wallet" (in Training mode "free
 (Training mode) · local"); it is never imported into an account. Right after
 signing in, until the backend answers (a server woken from sleep takes a few
-seconds), the line reads "connecting to your account …". Repairs, hanging a
-spare frameset and `hearts.grant` are not available with an account yet.
+seconds), the line reads "connecting to your account …". Repairs are the
+account's too (`workshop.repair PART|all`, the workshop's repair dialog): the
+damage a ride leaves on the bike and the rider's injury are sent to the
+account after the ride, and a repair costs the same as in the local garage.
+Hanging a spare frameset and `hearts.grant` are not available with an
+account yet.
 
 **Offline** (no network, the backend down): the app rides with the bikes and
 kit last synced – kept in `<data dir>/ocw/accounts/<account>/workshop.json` –
@@ -3051,6 +3055,15 @@ signed-in rider leaves, the server signs a ride credit (work, climbing,
 distance) and posts it to `/rides/credit`, retrying while the backend does
 not answer; its welcome tells the apps, which then upload no summary of
 that ride. Without `--credit-key` the apps upload their rides themselves.
+
+**A game server that checks the parts** (4O W5d): with `--check-parts` (and a
+sign-in; the garages come from `--credit-backend` or the sign-in's issuer)
+the server fetches a signed-in rider's garage with the rider's own token
+when they join or change bikes, and counts only the parts the account owns:
+a part not owned counts as the base part, a bike profile the garage has no
+bike of as the starter's road bike, and anonymous riders ride base parts.
+Until the garage arrives (a backend woken from sleep takes a few seconds)
+only base parts count; then the bike asked for applies again.
 
 ## Running the server
 

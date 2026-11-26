@@ -112,6 +112,11 @@ pub struct WorkshopState {
     /// Account actions sent and not answered: id → apply the bike after.
     pending: std::collections::BTreeMap<u64, bool>,
     next_action: u64,
+    /// The ride's damage for the account, sent when it answers (the
+    /// newest replaces an unsent one).
+    damage_report: Option<Action>,
+    /// Actions sent without a word in the console (the damage reports).
+    quiet: std::collections::BTreeSet<u64>,
 }
 
 impl WorkshopState {
@@ -140,6 +145,8 @@ impl WorkshopState {
             connecting: false,
             pending: std::collections::BTreeMap::new(),
             next_action: 0,
+            damage_report: None,
+            quiet: std::collections::BTreeSet::new(),
         }
     }
 
@@ -619,7 +626,15 @@ fn register_commands(app: &mut App) {
         |world, m| {
             locked(world)?;
             let part = m.get_one::<String>("part").expect("required").clone();
-            not_with_account(world, "workshop.repair")?;
+            // Signed in: the account repairs (its price, 4O part 4).
+            if let Some(r) = via_account(world, "repairing", false, |g| {
+                Ok(Action::Repair {
+                    bike: bike_arg(g, m)?.id.clone(),
+                    part: (part != "all").then(|| part.clone()),
+                })
+            }) {
+                return r;
+            }
             garage_op(world, m, |w, name, bike| {
                 if part == "all" {
                     let (paid, n) = w.repair_all(cat(), name, bike)?;
@@ -1237,12 +1252,25 @@ fn follow_account(world: &mut World) {
                 s.wallet = local;
             }
             s.pending.clear();
+            s.quiet.clear();
+            s.damage_report = None;
             s.account_gen = 0;
-            said.push("workshop: signed out – the local test wallet".into());
+            said.push(if h.requires_account {
+                "workshop: signed out".into()
+            } else {
+                "workshop: signed out – the local test wallet".into()
+            });
             apply = true;
         }
         for a in upd.answers {
             let after = s.pending.remove(&a.id).unwrap_or(false);
+            if s.quiet.remove(&a.id) {
+                match a.result {
+                    Ok(ans) => s.wallet.adopt_answer(&name, &ans),
+                    Err(e) => debug!("workshop: the ride's damage not kept: {e}"),
+                }
+                continue;
+            }
             match a.result {
                 Ok(ans) => {
                     s.wallet.adopt_answer(&name, &ans);
@@ -1273,6 +1301,29 @@ fn follow_account(world: &mut World) {
             info!("{m}");
             c.print(m);
         }
+    }
+    // The ride's damage for the account, once it answers (one at a time).
+    let report = {
+        let mut s = world.resource_mut::<WorkshopState>();
+        let online = s.wallet.account.as_ref().is_some_and(|a| a.online);
+        if online && s.quiet.is_empty() {
+            s.damage_report.take().map(|r| {
+                s.next_action += 1;
+                let id = s.next_action;
+                s.pending.insert(id, false);
+                s.quiet.insert(id);
+                (id, r)
+            })
+        } else {
+            None
+        }
+    };
+    if let Some((id, r)) = report
+        && !(h.send_action)(world, id, r)
+    {
+        let mut s = world.resource_mut::<WorkshopState>();
+        s.pending.remove(&id);
+        s.quiet.remove(&id);
     }
     if apply && world.resource::<WorkshopState>().scene.is_none() {
         apply_bike(world);
@@ -1575,6 +1626,22 @@ fn keep_damage(
     };
     if state.wallet.keep_damage(&name, &bike, &kept) {
         state.dirty = true;
+        // Signed in: the account keeps it (4O part 4), sent by
+        // `follow_account` while the backend answers.
+        if state.wallet.is_account()
+            && let Some(g) = state.wallet.get(&name)
+            && let Some(b) = g.bike(&bike)
+        {
+            let report = Action::Damage {
+                bike: bike.clone(),
+                condition: b.condition.clone(),
+                injury: g.injury.map(|i| ocw_account_api::workshop::Injury {
+                    condition_pm: i.condition_pm,
+                    at_unix: i.at_unix,
+                }),
+            };
+            state.damage_report = Some(report);
+        }
     }
 }
 

@@ -186,8 +186,8 @@ impl Injury {
 }
 
 /// A base part's repair price when the catalogue has no paid part of the
-/// slot for the bike (hearts, W6).
-pub const BASE_REPAIR_HEARTS: u32 = 20;
+/// slot for the bike (hearts, W6; shared with the accounts backend).
+pub use ocw_sim::damage::BASE_REPAIR_HEARTS;
 
 /// The price a damage part's repair is priced from (W6): the price paid
 /// for the item on its slot; a base part: the cheapest paid part of the
@@ -199,22 +199,18 @@ pub fn slot_price(cat: &Catalogue, g: &Garage, bike: &Bike, p: DamagePart) -> u3
         .parts
         .get(slot.id())
         .and_then(|i| g.item(*i))
-        .map(|i| i.paid)
-        .filter(|h| *h > 0);
-    let price = paid.unwrap_or_else(|| {
-        let options = if slot == Slot::Frame {
-            cat.frames(bike.profile())
-        } else {
-            cat.for_slot(slot, bike.profile().bike())
-        };
-        options
-            .iter()
-            .filter(|q| q.hearts > 0)
-            .map(|q| q.hearts)
-            .min()
-            .unwrap_or(BASE_REPAIR_HEARTS)
-    });
-    (f64::from(price) * p.price_share()).ceil() as u32
+        .map(|i| i.paid);
+    let options = if slot == Slot::Frame {
+        cat.frames(bike.profile())
+    } else {
+        cat.for_slot(slot, bike.profile().bike())
+    };
+    let cheapest = options
+        .iter()
+        .filter(|q| q.hearts > 0)
+        .map(|q| q.hearts)
+        .min();
+    damage::slot_price(paid, cheapest, p)
 }
 
 /// The repair price of damage part `p` on `bike` (0: as new).

@@ -857,6 +857,11 @@ fn signed_in_the_workshop_is_the_accounts() {
     run(&mut app, "bikes.buy frame.tt.top");
     wait(&mut app, "the refusal", &|a| logged(a, "more needed"));
     assert_eq!(balance(&app), ocw_account_api::START_HEARTS - 600);
+    // Repairs go to the account (4O part 4): nothing to repair yet.
+    run(&mut app, "workshop.repair all");
+    wait(&mut app, "the repair's answer", &|a| {
+        logged(a, "needs no repair")
+    });
     // Not with an account yet.
     run(&mut app, "bikes.hang 1");
     assert!(logged(&app, "not available with an account"));

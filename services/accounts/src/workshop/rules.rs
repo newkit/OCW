@@ -20,10 +20,11 @@
 
 use std::collections::BTreeMap;
 
-use ocw_account_api::workshop::{Action, Bike, Garage, Item, MAX_BIKES, Reason};
+use ocw_account_api::workshop::{Action, Bike, Garage, Injury, Item, MAX_BIKES, Reason};
 use ocw_assets::parts::{Catalogue, Part, Slot};
 use ocw_core::ProfileId;
 use ocw_core::hearts::format as hearts;
+use ocw_sim::damage::{self, Part as DamagePart};
 
 /// One line for the ledger.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -498,6 +499,130 @@ fn unequip(g: &mut Garage, bike: &str, slot: &str) -> Result<Applied, RuleError>
     })
 }
 
+/// A damage part's condition on `bike` (per mille → 0 … 1; 1: as new).
+fn condition(bike: &Bike, p: DamagePart) -> f64 {
+    bike.condition
+        .get(p.id())
+        .map_or(1.0, |pm| f64::from((*pm).min(1000)) / 1000.0)
+}
+
+/// What repairing `p` on `bike` costs (0: as new) – the local garage's
+/// rule (`ocw_sim::damage::slot_price`, `repair_price`).
+pub fn repair_quote(cat: &Catalogue, g: &Garage, bike: &Bike, p: DamagePart) -> u32 {
+    let c = condition(bike, p);
+    if c >= 1.0 {
+        return 0;
+    }
+    let slot = Slot::parse(p.slot()).expect("damage parts map to slots");
+    let paid = bike
+        .parts
+        .get(slot.id())
+        .and_then(|i| g.item(*i))
+        .map(|i| i.paid);
+    let options = if slot == Slot::Frame {
+        cat.frames(profile(bike))
+    } else {
+        cat.for_slot(slot, profile(bike).bike())
+    };
+    let cheapest = options
+        .iter()
+        .filter(|q| q.hearts > 0)
+        .map(|q| q.hearts)
+        .min();
+    damage::repair_price(damage::slot_price(paid, cheapest, p), c, p)
+}
+
+/// Repairs `part` of `bike` (`None`: every damaged part) for its price
+/// (ledger reason `repair`).
+fn repair(
+    cat: &Catalogue,
+    g: &mut Garage,
+    balance: i64,
+    bike: &str,
+    part: Option<&str>,
+) -> Result<Applied, RuleError> {
+    let b = bike_ref(g, bike)?;
+    let parts: Vec<DamagePart> = match part {
+        Some(id) => {
+            let p = DamagePart::from_id(id)
+                .ok_or_else(|| RuleError::NotFound(format!("no damage part {id}")))?;
+            if condition(b, p) >= 1.0 {
+                return Err(RuleError::Refused(format!(
+                    "the {} needs no repair",
+                    p.label()
+                )));
+            }
+            vec![p]
+        }
+        None => DamagePart::ALL
+            .into_iter()
+            .filter(|p| condition(b, *p) < 1.0)
+            .collect(),
+    };
+    if parts.is_empty() {
+        return Err(RuleError::Refused(format!("{bike} needs no repair")));
+    }
+    let price: u32 = parts.iter().map(|p| repair_quote(cat, g, b, *p)).sum();
+    let what = match parts.as_slice() {
+        [p] => format!("repairing the {}", p.label()),
+        _ => format!("repairing {} parts", parts.len()),
+    };
+    afford(&what, i64::from(price), balance)?;
+    let b = bike_mut(g, bike)?;
+    for p in &parts {
+        b.condition.remove(p.id());
+    }
+    Ok(Applied {
+        message: format!(
+            "{} of {bike} repaired for {}",
+            match parts.as_slice() {
+                [p] => format!("The {}", p.label()),
+                _ => format!("{} parts", parts.len()),
+            },
+            hearts(i64::from(price))
+        ),
+        bookings: (price > 0)
+            .then(|| Booking::new(-i64::from(price), Reason::Repair, format!("repair:{bike}")))
+            .into_iter()
+            .collect(),
+        paid: price,
+        ..Applied::default()
+    })
+}
+
+/// Keeps the damage a ride left (spec 14 Phase 12 Q6): the parts'
+/// condition of `bike` and the rider's injury, as the app reports them.
+fn keep_damage(
+    g: &mut Garage,
+    bike: &str,
+    condition: &BTreeMap<String, u32>,
+    injury: Option<Injury>,
+) -> Result<Applied, RuleError> {
+    for (id, pm) in condition {
+        if DamagePart::from_id(id).is_none() {
+            return Err(RuleError::NotFound(format!("no damage part {id}")));
+        }
+        if *pm > 1000 {
+            return Err(RuleError::Refused(format!(
+                "{id}: {pm} ‰ is not a condition"
+            )));
+        }
+    }
+    if injury.is_some_and(|i| i.condition_pm > 1000) {
+        return Err(RuleError::Refused("the injury is not a condition".into()));
+    }
+    bike_mut(g, bike)?.condition = condition
+        .iter()
+        .filter(|(_, pm)| **pm < 1000)
+        .map(|(k, v)| (k.clone(), *v))
+        .collect();
+    g.injury = injury.filter(|i| i.condition_pm < 1000);
+    Ok(Applied {
+        message: format!("damage of {bike} kept"),
+        ..Applied::default()
+    })
+}
+
 /// Applies `action` to the garage (`balance`: the account's hearts now;
 /// `date`: today, `YYYY-MM-DD`). On an error nothing changed.
 pub fn apply(
@@ -523,6 +648,12 @@ pub fn apply(
                 ..Applied::default()
             })
         }
+        Action::Repair { bike, part } => repair(cat, &mut work, balance, bike, part.as_deref()),
+        Action::Damage {
+            bike,
+            condition,
+            injury,
+        } => keep_damage(&mut work, bike, condition, *injury),
         Action::Paint { bike, colour } => {
             if let Some(c) = colour
                 && ocw_core::Rgb::parse(c).is_none()
@@ -831,5 +962,118 @@ mod tests {
         )
         .unwrap();
         assert_eq!(g.bike(&nb).unwrap().paint.as_deref(), Some("#C03020"));
+    }
+
+    /// Repairs on the account (spec 14 Phase 4, W6; 4O part 4): the damage
+    /// a ride left is kept with the account, a repair costs what the local
+    /// garage asks (the shared rule) and leaves the part as new; nothing
+    /// to repair, an unknown part or too few hearts are refused.
+    #[test]
+    fn damage_is_kept_and_repaired_at_the_local_price() {
+        let mut g = Garage::starter("Gus Gravel");
+        let mut bal = START_HEARTS;
+        let bike = STARTER_BIKE.to_string();
+        let nothing = run(
+            &mut g,
+            &mut bal,
+            Action::Repair {
+                bike: bike.clone(),
+                part: None,
+            },
+        );
+        assert!(matches!(nothing, Err(RuleError::Refused(_))), "{nothing:?}");
+        let condition: BTreeMap<String, u32> = [
+            ("front_wheel".to_string(), 600),
+            ("frame".to_string(), 50),
+            ("cockpit".to_string(), 1000),
+        ]
+        .into();
+        run(
+            &mut g,
+            &mut bal,
+            Action::Damage {
+                bike: bike.clone(),
+                condition: condition.clone(),
+                injury: Some(Injury {
+                    condition_pm: 700,
+                    at_unix: 5,
+                }),
+            },
+        )
+        .unwrap();
+        let b = g.bike(&bike).unwrap();
+        assert_eq!(b.condition.len(), 2, "as new is not kept");
+        assert_eq!(g.injury.map(|i| i.condition_pm), Some(700));
+        assert_eq!(bal, START_HEARTS, "keeping damage is free");
+        // Bad reports are refused.
+        for c in [
+            [("seatpost".to_string(), 10)].into(),
+            [("frame".to_string(), 1001)].into(),
+        ] {
+            assert!(
+                run(
+                    &mut g,
+                    &mut bal,
+                    Action::Damage {
+                        bike: bike.clone(),
+                        condition: c,
+                        injury: None,
+                    }
+                )
+                .is_err()
+            );
+        }
+        // The front wheel: the local rule's price.
+        let quote = repair_quote(cat(), &g, g.bike(&bike).unwrap(), DamagePart::FrontWheel);
+        assert!(quote > 0);
+        let r = run(
+            &mut g,
+            &mut bal,
+            Action::Repair {
+                bike: bike.clone(),
+                part: Some("front_wheel".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(r.paid, quote);
+        assert_eq!(bal, START_HEARTS - i64::from(quote));
+        assert_eq!(r.bookings[0].reason, Reason::Repair);
+        assert!(!g.bike(&bike).unwrap().condition.contains_key("front_wheel"));
+        // The frame below 10 %: replaced at the full price; too dear.
+        let frame = repair_quote(cat(), &g, g.bike(&bike).unwrap(), DamagePart::Frame);
+        let mut poor = 1;
+        assert!(matches!(
+            run(
+                &mut g,
+                &mut poor,
+                Action::Repair {
+                    bike: bike.clone(),
+                    part: None
+                }
+            ),
+            Err(RuleError::Insufficient { .. })
+        ));
+        run(
+            &mut g,
+            &mut bal,
+            Action::Repair {
+                bike: bike.clone(),
+                part: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(bal, START_HEARTS - i64::from(quote + frame));
+        assert!(g.bike(&bike).unwrap().condition.is_empty());
+        assert!(
+            run(
+                &mut g,
+                &mut bal,
+                Action::Repair {
+                    bike: bike.clone(),
+                    part: Some("tyre".into())
+                }
+            )
+            .is_err()
+        );
     }
 }
