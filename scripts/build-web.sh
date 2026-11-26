@@ -9,7 +9,8 @@
 #   index.html (loads the one the browser can run), config.json (the page
 #   configuration, B8a), sizes.txt,
 #   ocw-voice.js and livekit-client.umd.js (voice, B5), ocw-gpu.js (the GPU
-#   choice and the WebGPU watchdog, B7), ocw-xr.js (the WebXR session, 14I),
+#   choice and the WebGPU watchdog, B7), ocw-log.js (the page log, 10G),
+#   ocw-xr.js (the WebXR session, 14I),
 #   ocw-net-worker.js (WebTransport read off the render thread, 10G)
 #
 #   scripts/build-web.sh            the `web-release` profile (release, size-optimised)
@@ -145,7 +146,7 @@ for gpu in $gpus; do
   echo "$gpu: $(( $(date +%s) - t1 )) s"
   names+=("$name")
 done
-cp apps/web/web/index.html apps/web/web/ocw-voice.js apps/web/web/ocw-gpu.js apps/web/web/ocw-xr.js apps/web/web/ocw-net-worker.js artwork/logos/ocw.svg "$out/"
+cp apps/web/web/index.html apps/web/web/ocw-voice.js apps/web/web/ocw-gpu.js apps/web/web/ocw-log.js apps/web/web/ocw-xr.js apps/web/web/ocw-net-worker.js artwork/logos/ocw.svg "$out/"
 # Add to Home Screen (spec 3.2.3): the web app manifest and its icons (the
 # Apple touch icon is ocw-256.png).
 cp apps/web/web/manifest.webmanifest artwork/logos/ocw-256.png artwork/logos/ocw-512.png "$out/"

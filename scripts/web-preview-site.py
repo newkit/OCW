@@ -71,7 +71,7 @@ PUBLIC_SERVER = {
 }
 
 BUILD_FILES = ("index.html", "ocw_web.js", "ocw_web_bg.wasm", "ocw_web_webgl2.js",
-               "ocw_web_webgl2_bg.wasm", "ocw-voice.js", "ocw-gpu.js", "ocw-xr.js", "ocw-net-worker.js", "ocw.svg", "sizes.txt",
+               "ocw_web_webgl2_bg.wasm", "ocw-voice.js", "ocw-gpu.js", "ocw-log.js", "ocw-xr.js", "ocw-net-worker.js", "ocw.svg", "sizes.txt",
                # Add to Home Screen (spec 3.2.3): the manifest and its icons.
                "manifest.webmanifest", "ocw-256.png", "ocw-512.png",
                # Voice (B5) with the public server: LiveKit's JS SDK and its licence.
@@ -150,7 +150,7 @@ MODULES = (("ocw_web_bg.wasm", "ocw_web.js"), ("ocw_web_webgl2_bg.wasm", "ocw_we
 # The WebXR build's files (14I W1; ocw-web's features webgl2,webxr) and the
 # page files it needs beside them.
 XR_MODULES = (("ocw_web_webxr_bg.wasm", "ocw_web_webxr.js"),)
-XR_FILES = ("index.html", "ocw_web_webxr.js", "ocw_web_webxr_bg.wasm", "ocw-voice.js", "ocw-gpu.js",
+XR_FILES = ("index.html", "ocw_web_webxr.js", "ocw_web_webxr_bg.wasm", "ocw-voice.js", "ocw-gpu.js", "ocw-log.js",
             "ocw-xr.js", "ocw-net-worker.js", "ocw.svg", "sizes.txt", "manifest.webmanifest", "ocw-256.png", "ocw-512.png")
 
 
