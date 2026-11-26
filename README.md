@@ -3886,8 +3886,11 @@ The WebTransport certificate's hash changes every 11 days (browsers take only sh
 ```bash
 curl -s https://ocw-server.fly.dev/join.json
 # {"webtransport": "https://213.188.222.85:47801", "cert_hashes": ["…"], "voice": "wss://ocw-server.fly.dev",
-#  "world": "liechtenstein", "world_version": 10, "world_sha256": "e5b3f612…", "query": "server=…&cert-hash=…", …}
+#  "world": "liechtenstein", "world_version": 10, "world_sha256": "e5b3f612…", "query": "server=…&cert-hash=…",
+#  "join": "ocw://213.188.222.85?cert=…&world=liechtenstein@10"}
 ```
+
+`join` is the desktop's QUIC join link, with the fixed fingerprint of the QUIC certificate. It is what the kiosks join ([Kiosk: joining a remote server](#kiosk-joining-a-remote-server)). Servers built before November 26, 2026 do not list it yet; the kiosk then joins over WebTransport.
 
 Three days before the certificate ends the server makes the next one and lists its hash second (kept on the volume as `tls/web-next-*`); two days before the end it takes over. A page that fetched both hashes in that day still connects after the switch, and a reload fetches the info again. The public preview rides together with it (`?together=1`, [The public preview](#the-public-preview-github-pages)); test it like the page does with `scripts/test-remote-web.py --together --dir target/web-preview-site --https --name "Ada Rider" --hear "Bea Climber"` (and a second browser with the names swapped).
 
@@ -4437,8 +4440,59 @@ deploys. Environment:
 | `OCW_KIOSK_LISTEN` | The server's address and UDP port (default `0.0.0.0:47800`) |
 | `OCW_KIOSK_BOTS` | Bots on the server (default 10) |
 | `OCW_KIOSK_SERVER_ARGS` | More `ocw-server` options, e.g. `--auth-issuer https://…` |
+| `OCW_KIOSK_SERVER=remote` | Join a remote server instead (below; the deployed `kiosk.env` sets it) |
 
 The server's log is `~/.local/state/ocw/server.log`. Open UDP 47800 in the machine's firewall for riders on other machines.
+
+#### Kiosk: joining a remote server
+
+**The Linux kiosks join the game server on Fly.io** ([Hosting the server on Fly.io](#hosting-the-server-on-flyio), spec 11.2 *Kiosks joining a remote server*): the deploy installs `scripts/kiosk.env` as `/var/tmp/ocw/kiosk.env` with `OCW_KIOSK_SERVER=remote` and `OCW_KIOSK_REMOTE=https://ocw-server.fly.dev/join.json`. The file only configures the kiosk: it starts nothing, and a stopped kiosk stays stopped until you start it.
+
+At every start of the app the kiosk:
+
+1. fetches the join info (`curl`, 10 s timeout) – no hash is baked in, because the server's certificates change when they are renewed and on a new volume;
+2. takes its desktop join link: `join` (`ocw://IPV4?cert=…&world=liechtenstein@10`, native QUIC on UDP 47800, the server's fixed certificate). A server that does not list `join` yet gets the WebTransport link instead (`https://IPV4:47801?cert-hash=CURRENT&world=…`, which the desktop joins too);
+3. looks for the server's world among the packages in `/var/tmp/ocw` by its SHA-256 (`world_sha256`). Without a hash it uses the manifest's id and version;
+4. starts the app with `--join LINK` on that package, with `--bots 0` and no local `ocw-server`. The riders are the ones on the server (the Fly server runs no bots, only the Echo rider for the voice test: `--bots 0 --echo-bot`). The app gets its other options from `~/.local/state/ocw/remote.args`: `ocw-desktop.args` without the kiosk's own world and route, so leela's Tenerife ride becomes the server's Liechtenstein for as long as it is joined.
+
+Voice comes from the server: its grants name `wss://ocw-server.fly.dev`, and the kiosk app is built with `voice` (where clang 21 is installed).
+
+**When it cannot join**, the kiosk says why in `kiosk.log`:
+
+- If the join info cannot be fetched (or names no link), the kiosk tries again 3 times, after 5, 10 and 20 s.
+- If a join fails (`join failed: …` in the app log, e.g. a UDP flow Fly lost), the app is restarted with fresh join info, with the same pauses.
+- If the server's world package is not installed here, or differs from the server's, the kiosk does not retry.
+- In all three cases it then **falls back to the local mode**: its own `ocw-server` with bots, as before. While in that mode it checks the join info every 60 s and switches back once it can join.
+- A dropped connection (`Disconnected: …`, e.g. the server restarted or was deployed) restarts the app after 5 s with freshly fetched join info.
+
+I chose to fall back rather than wait without riding: the screen keeps showing a ride, and the switch back happens by itself.
+
+| Variable | Effect |
+|---|---|
+| `OCW_KIOSK_SERVER` | `remote`: join the remote server; `1`: the local server (default without `kiosk.env`); `0`, `join` as above |
+| `OCW_KIOSK_REMOTE` | The join info URL (default `https://ocw-server.fly.dev/join.json`) |
+| `OCW_KIOSK_REMOTE_TIMEOUT_S` | Fetch timeout (10) |
+| `OCW_KIOSK_REMOTE_TRIES` | Attempts in a row before the fallback (3) |
+| `OCW_KIOSK_REMOTE_DELAY_S` | First pause between attempts, doubled each time (5) |
+| `OCW_KIOSK_REMOTE_RETRY_S` | How often the fallback checks the join info again (60) |
+
+These come from `/var/tmp/ocw/kiosk.env` (replaced by every deploy) and `/var/tmp/ocw/kiosk-local.env` (machine-local, never written by a deploy, read first). The environment wins over both. To keep one kiosk on its own server, put `OCW_KIOSK_SERVER=1` into its `kiosk-local.env`. A deploy that changes either file restarts a running kiosk on it.
+
+**Checking without starting anything:** `ocw-kiosk.sh dry-run` fetches the join info, checks the world and prints the app's command and arguments file:
+
+```bash
+/var/tmp/ocw/ocw-kiosk.sh dry-run
+# server mode: remote (settings from kiosk*.env: OCW_KIOSK_SERVER OCW_KIOSK_REMOTE)
+# join link: ocw://213.188.222.85?cert=…&world=liechtenstein@10
+# world: liechtenstein@10 -> /var/tmp/ocw/liechtenstein.ocwpkg (SHA-256 matches)
+# app command:
+#   OCW_ARGS_FILE=~/.local/state/ocw/remote.args /var/tmp/ocw/ocw-desktop --join 'ocw://…'
+/var/tmp/ocw/ocw-kiosk.sh status                 # server mode: remote, the last join link
+```
+
+**Turning a kiosk on** stays your step: in a terminal on the machine's desktop, run `/var/tmp/ocw/ocw-kiosk.sh install` (autostart and start) or `/var/tmp/ocw/ocw-kiosk.sh run` (this session only). It joins Fly right away.
+
+**The Windows VR kiosk** has the same mode as an option: `OCW_KIOSK_SERVER=remote` in `%LOCALAPPDATA%\OCW\kiosk\kiosk-local.env` (or the task's environment). The server's package must be in `worlds\`, and `ocw-kiosk.ps1 dry-run` shows the command. Its default stays the app's own local server (Phase 11 Q14 / Q15).
 
 **Setting up a kiosk**, once, as the user of the machine's desktop session (in
 a terminal on that desktop, not over SSH), after the first deploy:

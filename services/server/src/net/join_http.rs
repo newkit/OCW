@@ -64,6 +64,14 @@ pub struct JoinInfo {
     pub route: Option<String>,
     /// The page options for joining (`server=…&cert-hash=…`).
     pub query: String,
+    /// The desktop app's join link over native QUIC
+    /// (`ocw://IPV4?cert=FINGERPRINT&world=ID@VERSION`; the `--listen`
+    /// certificate, whose fingerprint stays the same across restarts):
+    /// what a kiosk joining this server uses (`ocw-kiosk.sh`,
+    /// `OCW_KIOSK_SERVER=remote`, spec 11.5 *Join info*). None without a
+    /// public host.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub join: Option<String>,
 }
 
 impl JoinInfo {
@@ -319,6 +327,10 @@ mod tests {
             world_sha256: Some("cc".repeat(32)),
             route: None,
             query: String::new(),
+            join: Some(format!(
+                "ocw://203.0.113.7?cert={}&world=liechtenstein@10",
+                "dd".repeat(32)
+            )),
         }
         .with_query()
     }
@@ -340,6 +352,12 @@ mod tests {
         assert_eq!(v["cert_hashes"].as_array().unwrap().len(), 2);
         assert_eq!(v["world"], "liechtenstein");
         assert!(v.get("route").is_none(), "a free ride has no route key");
+        assert!(
+            v["join"]
+                .as_str()
+                .unwrap()
+                .starts_with("ocw://203.0.113.7?cert=")
+        );
         let keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
         for k in keys {
             assert!(

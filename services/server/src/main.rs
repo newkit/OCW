@@ -1291,8 +1291,35 @@ fn join_info(args: &Args, net: &NetServer, world: &JoinWorld) -> ocw_server::net
         world_sha256: world.sha256.clone(),
         route: world.route.clone(),
         query: String::new(),
+        join: public_join_link(
+            args.voice_public_host.as_deref(),
+            net.local_addr().port(),
+            net.fingerprint(),
+            world,
+        ),
     }
     .with_query()
+}
+
+/// The desktop's QUIC join link for riders from the internet (the join
+/// info's `join`, spec 11.5): the public host, the QUIC port and
+/// fingerprint, the world as `ID@VERSION` (a local package by its id) and
+/// the route. None without a public host.
+fn public_join_link(
+    public_host: Option<&str>,
+    port: u16,
+    fingerprint: &str,
+    world: &JoinWorld,
+) -> Option<String> {
+    let host = public_host.filter(|h| !h.is_empty())?;
+    let mut link = ocw_protocol::join::JoinLink::new(host, port);
+    link.cert = Some(fingerprint.to_owned());
+    link.world = world.id.as_ref().map(|id| match world.version {
+        Some(v) if !id.starts_with("local/") => format!("{id}@{v}"),
+        _ => id.clone(),
+    });
+    link.route = world.route.clone();
+    Some(link.to_link())
 }
 
 /// A Unix time as `YYYY-MM-DD HH:MM` (UTC).
@@ -1345,6 +1372,34 @@ mod tests {
         );
         assert_eq!(public_web_url(Some(""), 47801), None);
         assert_eq!(public_web_url(None, 47801), None);
+    }
+
+    /// The join info's QUIC link (spec 11.5): public host, fingerprint,
+    /// world with its version; none without a public host.
+    #[test]
+    fn public_join_link_names_host_fingerprint_and_world() {
+        let fp = "ab".repeat(32);
+        let w = JoinWorld {
+            id: Some("liechtenstein".into()),
+            version: Some(10),
+            ..JoinWorld::default()
+        };
+        assert_eq!(
+            public_join_link(Some("203.0.113.7"), 47800, &fp, &w),
+            Some(format!(
+                "ocw://203.0.113.7?cert={fp}&world=liechtenstein@10"
+            ))
+        );
+        let hills = JoinWorld {
+            route: Some("hills".into()),
+            ..JoinWorld::default()
+        };
+        assert_eq!(
+            public_join_link(Some("203.0.113.7"), 47900, &fp, &hills),
+            Some(format!("ocw://203.0.113.7:47900?cert={fp}&route=hills"))
+        );
+        assert_eq!(public_join_link(None, 47800, &fp, &w), None);
+        assert_eq!(public_join_link(Some(""), 47800, &fp, &w), None);
     }
 
     /// --join-http (spec 11.5 *Join info*) needs WebTransport; its
