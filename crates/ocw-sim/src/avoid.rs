@@ -31,6 +31,13 @@ pub const HOLD_GAP_M: f64 = 0.5;
 /// How strongly the gap is held: the allowed speed above the one in front
 /// per metre of gap beyond [`HOLD_GAP_M`] (1/s).
 pub const HOLD_GAIN: f64 = 1.5;
+/// The virtual brake's deceleration (m/s²): the speed above the cap is
+/// shed at most this fast – a hard stop of an upright bike (0.5 g, near
+/// where the rear wheel lifts), never at once. A rider level beside, a
+/// few millimetres ahead, counts as in front (its cap lies 3–4 m/s below
+/// the speed); shed in one tick that was a 17 g stop, and on the client a
+/// few millimetres of prediction error put the cap on or off (spec 6.3).
+pub const VIRTUAL_BRAKE_MPS2: f64 = 5.0;
 /// Clearance kept beside the other rider when passing, between the
 /// footprints (m).
 pub const PASS_CLEARANCE_M: f64 = 0.4;
@@ -119,6 +126,18 @@ pub struct Plan {
     pub speed_cap: Option<f64>,
     /// Blocked on both sides: holding back behind a rider.
     pub holding: bool,
+}
+
+/// `speed` after one tick of `dt` s of the virtual brake towards `cap`
+/// (m/s): at most [`VIRTUAL_BRAKE_MPS2`] × `dt` slower, never below the
+/// cap; at or under the cap unchanged. The server and the prediction
+/// both brake with it.
+pub fn brake_to(speed: f64, cap: f64, dt: f64) -> f64 {
+    if speed > cap {
+        (speed - VIRTUAL_BRAKE_MPS2 * dt).max(cap)
+    } else {
+        speed
+    }
 }
 
 /// The overtaking side from the region's traffic side: `true` = pass on
@@ -407,5 +426,38 @@ mod tests {
         let close = Other::fallen(1.775 + HOLD_GAP_M, 0.0);
         let p = plan(&narrow, &[close], true, &mut st);
         assert!(p.holding && p.speed_cap == Some(0.0), "{p:?}");
+    }
+
+    /// The virtual brake sheds speed at a hard stop's rate, not at once
+    /// (spec 6.3, 2026-11-26): a rider level beside a hair ahead caps the
+    /// speed 3.4 m/s lower; one tick takes 0.1 m/s of it.
+    #[test]
+    fn the_virtual_brake_sheds_speed_at_a_hard_stops_rate() {
+        let me = Me {
+            lateral_m: -0.07,
+            speed: 7.07,
+            lane_m: -0.07,
+            limit_m: 2.0,
+            road_width_m: 6.0,
+            grip: 1.0,
+        };
+        let beside = Other::rider(0.000_2, 0.43, 0.6, 7.07);
+        let cap = plan(&me, &[beside], true, &mut AvoidState::default())
+            .speed_cap
+            .unwrap();
+        assert!((cap - 3.695).abs() < 0.01, "{cap}");
+        let dt = ocw_core::SIM_DT;
+        let v = brake_to(me.speed, cap, dt);
+        assert!(
+            (me.speed - v - VIRTUAL_BRAKE_MPS2 * dt).abs() < 1e-12,
+            "{v}"
+        );
+        // Held down to the cap, never below; under it nothing changes.
+        let mut v = me.speed;
+        for _ in 0..100 {
+            v = brake_to(v, cap, dt);
+        }
+        assert_eq!(v, cap);
+        assert_eq!(brake_to(3.0, cap, dt), 3.0);
     }
 }
