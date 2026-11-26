@@ -13,7 +13,7 @@
 
 use glam::{Quat, Vec3};
 
-use crate::mesh::{Cap, Parts, Ring};
+use crate::mesh::{Cap, Parts, Ring, Shape, ray_last_hit, ray_triangle};
 use crate::model::{Model, Node};
 use crate::pose::nodes::*;
 
@@ -630,6 +630,9 @@ pub mod face {
     /// one ellipsoid whose centre lies inside the skull, under the lips
     /// and inside every beard, clear of the helmet straps.
     pub const JAW: ([f32; 3], [f32; 3], f32) = ([0.0, -0.066, -0.032], [0.044, 0.03, 0.05], 0.3);
+    /// The older riders' softer jaw (from the 60s, 4N N3): centre (x either
+    /// side) and radii of an ellipsoid along the jaw's lower edge.
+    pub const SOFTER_JAW: ([f32; 3], [f32; 3]) = ([0.03, -0.076, -0.03], [0.016, 0.013, 0.024]);
 }
 
 /// The lips' node under [`FACE`] (Phase 4 Q24): its origin at the mouth's
@@ -1184,6 +1187,322 @@ pub fn skull_centre() -> Vec3 {
     v(body::TORSO_PIVOT) + Vec3::Y * (body::TORSO + 0.15) + Vec3::new(0.0, 0.0, -0.015)
 }
 
+/// The skull's half-axes (m), round [`skull_centre`].
+pub const SKULL_RADII: [f32; 3] = [0.078, 0.105, 0.095];
+
+/// The head's skull (skin).
+fn skull_skin(s: &mut Shape, skull: Vec3, detail: Detail) {
+    let bands = if detail == Detail::High { 7 } else { 4 };
+    let radii = Vec3::from(SKULL_RADII);
+    s.ellipsoid(skull, radii, Quat::IDENTITY, bands, detail.sides());
+}
+
+/// The neck (skin), from inside the collar up into the skull.
+fn neck_skin(s: &mut Shape, detail: Detail) {
+    let neck = v(body::TORSO_PIVOT) + Vec3::Y * body::TORSO;
+    let (a, b) = (neck - Vec3::Y * 0.05, neck + Vec3::new(0.0, 0.09, -0.01));
+    s.tube(a, b, 0.05, 0.047, detail.sides(), false);
+}
+
+/// The jaw with the chin [`face::JAW`] (skin, near model).
+fn jaw_skin(s: &mut Shape, skull: Vec3) {
+    let (c, r, tilt) = face::JAW;
+    let rot = Quat::from_rotation_x(tilt);
+    s.ellipsoid(skull + Vec3::from(c), Vec3::from(r), rot, 4, 8);
+}
+
+/// The older riders' softer jaw [`face::SOFTER_JAW`] (skin, near model).
+fn softer_jaw_skin(s: &mut Shape, skull: Vec3) {
+    let (c, r) = face::SOFTER_JAW;
+    for k in [-1.0f32, 1.0] {
+        let at = skull + Vec3::new(k * c[0], c[1], c[2]);
+        s.ellipsoid(at, Vec3::from(r), Quat::IDENTITY, 3, 6);
+    }
+}
+
+/// The skin the facial hair lies on, as drawn (rest-pose model
+/// coordinates): the skull and the neck, on the near model the jaw and,
+/// with `softer`, the older riders' softer jaw too.
+struct Skin(Vec<[Vec3; 3]>);
+
+impl Skin {
+    fn new(skull: Vec3, detail: Detail, softer: bool) -> Self {
+        let mut s = Shape::default();
+        skull_skin(&mut s, skull, detail);
+        neck_skin(&mut s, detail);
+        if detail == Detail::High {
+            jaw_skin(&mut s, skull);
+            if softer {
+                softer_jaw_skin(&mut s, skull);
+            }
+        }
+        Self(s.tris().collect())
+    }
+
+    /// How far the ray from `o` (inside the head) along the unit vector
+    /// `d` reaches to the skin's outer surface.
+    fn reach(&self, o: Vec3, d: Vec3) -> f32 {
+        ray_last_hit(o, d, &self.0).unwrap_or(0.0)
+    }
+}
+
+/// The chin-strap beard (bug 2026-11-26, 4N *Fixed (v6.25)*): the band's
+/// radius and how far its centre line lies out of the skin (m) – it lies
+/// on the jaw line, more than half of it in the skin.
+pub const CHIN_STRAP: (f32, f32) = (0.005, 0.002);
+
+/// The chin-strap beard's centre line (rest-pose model coordinates): from
+/// under one ear along the lower jaw and under the chin to under the
+/// other, every point on the skin as drawn for `detail` (the skull, on
+/// the near model the jaw) plus [`CHIN_STRAP`]'s offset, found along a
+/// ray from inside the head (bug 2026-11-26: the old arc was a fixed
+/// curve 7 – 8 mm out of the near jaw, 1 – 2 cm out of the far head,
+/// and floated in front of the jaw).
+pub fn chin_strap_path(detail: Detail) -> Vec<Vec3> {
+    let skull = skull_centre();
+    let skin = Skin::new(skull, detail, false);
+    let o = skull + Vec3::new(0.0, -0.05, -0.015);
+    let k = if detail == Detail::High { 11 } else { 7 };
+    (0..k)
+        .map(|i| {
+            let a = (i as f32 / (k - 1) as f32 * 2.0 - 1.0) * 85f32.to_radians();
+            let aim = skull
+                + Vec3::new(
+                    0.075 * a.sin(),
+                    -0.025 - 0.072 * a.cos(),
+                    -0.07 * a.cos() - 0.008,
+                );
+            let d = (aim - o).normalize();
+            o + d * (skin.reach(o, d) + CHIN_STRAP.1)
+        })
+        .collect()
+}
+
+/// Where the stubble's grid is seen from (from the skull's centre).
+const STUBBLE_EYE: [f32; 3] = [0.0, -0.045, -0.02];
+
+/// The bare skin round the lips that the stubble leaves free (m), on
+/// every side of both lips, the lower one dropped as far as when
+/// speaking.
+pub const STUBBLE_MARGIN: f32 = 0.004;
+
+/// A stubble beard lying on the skin (bug 2026-11-26, 4N *Fixed
+/// (v6.25)*: the short stubble beard's shell covered the lips): a grid
+/// of rays from inside the head, each vertex on the skin as drawn (with
+/// the older riders' softer jaw) plus up to `thick`, where the old
+/// beard's shell `(centre, radii, tilt)` stood out of the skin – the
+/// same outline – thinning into the skin at its edge and round the
+/// mouth: the lips, also the lower one dropped while speaking, and
+/// [`STUBBLE_MARGIN`] round them stay free. Skin corners between the
+/// rays are covered (the grid is lifted over them).
+fn stubble(s: &mut Shape, skull: Vec3, (c, r, tilt): (Vec3, Vec3, f32), thick: f32) {
+    use face::*;
+    let skin = Skin::new(skull, Detail::High, true);
+    let o = skull + Vec3::from(STUBBLE_EYE);
+    let mut old = Shape::default();
+    old.ellipsoid(skull + c, r, Quat::from_rotation_x(tilt), 4, 8);
+    let old: Vec<[Vec3; 3]> = old.tris().collect();
+    // The mouth's hole, as angles seen from `o`: each edge where the
+    // ray's point on the skin (not on a plane through the mouth: the skin
+    // under the lips lies further back) is at the lips' box plus the
+    // margin.
+    let mouth = skull + Vec3::from(MOUTH);
+    let top = mouth.y + UPPER_LIP.0[1] + UPPER_LIP.1[1] + STUBBLE_MARGIN;
+    let bottom = mouth.y + LOWER_LIP.0[1] - LIP_DROP_M - LOWER_LIP.1[1] - STUBBLE_MARGIN;
+    let half = UPPER_LIP.1[0].max(LOWER_LIP.1[0]) + STUBBLE_MARGIN;
+    let on_skin = |a: f32, e: f32| {
+        let d = Vec3::new(a.sin() * e.cos(), e.sin(), -a.cos() * e.cos());
+        o + d * skin.reach(o, d)
+    };
+    // The angle in `lo..hi` where the increasing `f` crosses zero.
+    let cross = |f: &dyn Fn(f32) -> f32, mut lo: f32, mut hi: f32| {
+        for _ in 0..40 {
+            let m = (lo + hi) / 2.0;
+            if f(m) < 0.0 { lo = m } else { hi = m }
+        }
+        (lo + hi) / 2.0
+    };
+    let (e0, e1) = (f32::to_radians(-32.0), f32::to_radians(12.0));
+    let lo = cross(&|e| on_skin(0.0, e).y - bottom, e0, e1);
+    let hi = cross(&|e| on_skin(0.0, e).y - top, e0, e1);
+    let side = [lo, (lo + hi) / 2.0, hi]
+        .map(|e| cross(&|a| on_skin(a, e).x - half, 0.0, f32::to_radians(30.0)))
+        .into_iter()
+        .fold(0.0, f32::max);
+    let deg = f32::to_radians;
+    let right: Vec<f32> = [side]
+        .into_iter()
+        .chain([30.0, 41.0, 52.0, 63.0, 74.0, 85.0, 96.0].map(deg))
+        .collect();
+    let az: Vec<f32> = right
+        .iter()
+        .rev()
+        .map(|a| -a)
+        .chain([0.0])
+        .chain(right.iter().copied())
+        .collect();
+    let mid = right.len();
+    let mut el: Vec<f32> = [-78.0, -64.0, -52.0, -42.0, -32.0].map(deg).to_vec();
+    let (lo_j, hi_j) = (el.len(), el.len() + 2);
+    el.extend([lo, (lo + hi) / 2.0, hi, deg(12.0)]);
+    debug_assert!(side < deg(30.0) && lo > deg(-32.0) && hi < deg(12.0));
+    let (na, ne) = (az.len(), el.len());
+    let at = |i: usize, j: usize| i * ne + j;
+    // Each vertex: where it is, whether it is in the beard (else on the
+    // skin: the beard's edge) and in the mouth's hole.
+    let out = |d: Vec3| ray_last_hit(o, d, &old).map_or(-1.0, |t| t - skin.reach(o, d));
+    let mut pos = Vec::with_capacity(na * ne);
+    let mut dir = Vec::with_capacity(na * ne);
+    let mut free = Vec::with_capacity(na * ne);
+    let mut rims = Vec::with_capacity(na * ne);
+    let mut hole = Vec::with_capacity(na * ne);
+    for (i, a) in az.iter().enumerate() {
+        for (j, e) in el.iter().enumerate() {
+            let d = Vec3::new(a.sin() * e.cos(), e.sin(), -a.cos() * e.cos());
+            let reach = skin.reach(o, d);
+            let out = out(d);
+            let in_hole = i == mid && j == lo_j + 1;
+            let rim = i.abs_diff(mid) <= 1 && (lo_j..=hi_j).contains(&j) && !in_hole;
+            let beard = out > 0.0 && !rim;
+            let k = if beard { out.min(thick) } else { -0.0003 };
+            pos.push(o + d * (reach + k));
+            dir.push(d);
+            free.push(beard);
+            rims.push(rim || in_hole);
+            hole.push(in_hole);
+        }
+    }
+    // The beard's edge where the old shell met the skin: an outer vertex
+    // next to the beard (also diagonally: it shares a triangle) moves (between its ray and its neighbour's) to
+    // where the shell goes into the skin, on the near side of the skin –
+    // so the stubble ends under the chin instead of hanging down to the
+    // neck in front of the throat (and the helmet's buckle).
+    for i in 0..na {
+        for j in 0..ne {
+            let v = at(i, j);
+            if free[v] || rims[v] {
+                continue;
+            }
+            let near = [
+                (0, 1),
+                (0, -1),
+                (1, 0),
+                (-1, 0),
+                (1, 1),
+                (-1, 1),
+                (1, -1),
+                (-1, -1),
+            ]
+            .into_iter()
+            .filter_map(|(di, dj): (isize, isize)| {
+                let (i, j) = (i.checked_add_signed(di)?, j.checked_add_signed(dj)?);
+                (i < na && j < ne).then(|| at(i, j))
+            })
+            .find(|&n| free[n]);
+            let Some(n) = near else { continue };
+            let (mut b, mut s) = (0.0f32, 1.0f32);
+            for _ in 0..30 {
+                let m = (b + s) / 2.0;
+                if out(dir[n].lerp(dir[v], m).normalize()) > 0.0 {
+                    b = m
+                } else {
+                    s = m
+                }
+            }
+            // On over the skin up to 4 mm past it (the edge covers the
+            // skin it meets, the older riders' softer jaw too), but not
+            // over a jump of the skin (the chin's edge over the neck).
+            let at_t = |t: f32| {
+                let d = dir[n].lerp(dir[v], t).normalize();
+                (d, o + d * skin.reach(o, d))
+            };
+            let (mut d, mut p) = at_t(b);
+            let start = p;
+            while b < 1.0 && p.distance(start) < 0.004 {
+                b = (b + 0.01).min(1.0);
+                let (d2, p2) = at_t(b);
+                if p2.distance(p) > 0.003 {
+                    break;
+                }
+                (d, p) = (d2, p2);
+            }
+            pos[v] = p - d * 0.0003;
+        }
+    }
+    let mut tris: Vec<[usize; 3]> = Vec::new();
+    for i in 0..na - 1 {
+        for j in 0..ne - 1 {
+            let q = [at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1)];
+            // Outward faces; the diagonals mirrored on the left.
+            let pair = if i >= mid {
+                [[q[0], q[2], q[1]], [q[0], q[3], q[2]]]
+            } else {
+                [[q[0], q[3], q[1]], [q[1], q[3], q[2]]]
+            };
+            for t in pair {
+                if t.iter().any(|&k| hole[k]) || !t.iter().any(|&k| free[k]) {
+                    continue;
+                }
+                tris.push(t);
+            }
+        }
+    }
+    // Lift the grid over the skin's corners between its rays.
+    let corners: Vec<Vec3> = skin
+        .0
+        .iter()
+        .flatten()
+        .copied()
+        .filter(|p| {
+            let d = (*p - o).normalize();
+            // On the outer skin and under the old shell: not skin
+            // behind the beard's edge (the neck seen past the chin).
+            skin.reach(o, d) - (*p - o).length() < 1e-5 && out(d) > 0.0
+        })
+        .collect();
+    for _ in 0..8 {
+        let mut lift = vec![0.0f32; pos.len()];
+        for p in &corners {
+            let d = (*p - o).normalize();
+            let hit = tris
+                .iter()
+                .find_map(|t| ray_triangle(o, d, &t.map(|k| pos[k])).map(|k| (t, k)));
+            if let Some((t, k)) = hit {
+                let need = (*p - o).length() + 0.0008 - k;
+                if need > 1e-6 {
+                    for &v in t.iter().filter(|&&v| free[v]) {
+                        lift[v] = lift[v].max(need);
+                    }
+                }
+            }
+        }
+        if lift.iter().all(|l| *l == 0.0) {
+            break;
+        }
+        for (p, l) in pos.iter_mut().zip(lift) {
+            *p += (*p - o).normalize() * l;
+        }
+    }
+    // Only the vertices in use.
+    let mut index = vec![u32::MAX; pos.len()];
+    let mut verts = Vec::new();
+    let tris: Vec<[u32; 3]> = tris
+        .iter()
+        .map(|t| {
+            t.map(|k| {
+                if index[k] == u32::MAX {
+                    index[k] = verts.len() as u32;
+                    verts.push(pos[k]);
+                }
+                index[k]
+            })
+        })
+        .collect();
+    s.add_smooth(&verts, &tris);
+    // Normals by corner angle, as Blender computes them (spec 15P).
+    s.smooth_by_angle();
+}
+
 /// The jersey's torso shell (spec §2.6): rings from the hem to the
 /// shoulders as (height above the torso's pivot, half width, half depth,
 /// z offset from the pivot, the ring's tilt), m. The hem hangs over the
@@ -1642,22 +1961,21 @@ fn hair_and_face(m: &mut Model, head: usize, skull: Vec3, detail: Detail) {
             n,
         )
     };
-    opt_node(m, opt::BEARD[0], head, |p| {
-        chin(
-            p,
-            Vec3::new(0.0, -0.056, -0.024),
-            Vec3::new(0.066, 0.042, 0.064),
-            0.15,
-        )
-    });
-    opt_node(m, opt::BEARD[1], head, |p| {
-        chin(
-            p,
-            Vec3::new(0.0, -0.057, -0.029),
-            Vec3::new(0.0665, 0.043, 0.066),
-            0.15,
-        )
-    });
+    // The stubble and the short stubble beard: on the near model on the
+    // skin, the mouth free (bug 2026-11-26); the far head has no lips.
+    for (k, c, r, thick) in [
+        (0, [0.0, -0.056, -0.024], [0.066, 0.042, 0.064], 0.002),
+        (1, [0.0, -0.057, -0.029], [0.0665, 0.043, 0.066], 0.003),
+    ] {
+        let (c, r) = (Vec3::from(c), Vec3::from(r));
+        opt_node(m, opt::BEARD[k], head, |p| {
+            if hi {
+                stubble(p.slot("facial_hair"), skull, (c, r, 0.15), thick);
+            } else {
+                chin(p, c, r, 0.15);
+            }
+        });
+    }
     opt_node(m, opt::BEARD[2], head, |p| {
         chin(
             p,
@@ -1683,19 +2001,9 @@ fn hair_and_face(m: &mut Model, head: usize, skull: Vec3, detail: Detail) {
         )
     });
     opt_node(m, opt::BEARD[5], head, |p| {
-        // Along the jaw from ear to ear.
-        let path: Vec<Vec3> = (0..7)
-            .map(|k| {
-                let a = (k as f32 / 6.0 - 0.5) * 2.6;
-                skull
-                    + Vec3::new(
-                        0.068 * a.sin(),
-                        -0.035 - 0.05 * a.cos(),
-                        -0.083 * a.cos() + 0.012,
-                    )
-            })
-            .collect();
-        let radii = vec![0.0065; path.len()];
+        // On the jaw line from ear to ear (bug 2026-11-26).
+        let path = chin_strap_path(detail);
+        let radii = vec![CHIN_STRAP.0; path.len()];
         p.slot("facial_hair")
             .sweep(&path, &radii, if hi { 4 } else { 3 }, true);
     });
@@ -1754,17 +2062,9 @@ fn hair_and_face(m: &mut Model, head: usize, skull: Vec3, detail: Detail) {
     });
     opt_node(m, opt::FACE_JAW, head, |p| {
         if hi {
-            for s in [-1.0f32, 1.0] {
-                // Along the jaw's lower edge, a few millimetres out of
-                // it (the old ones stood up to 3 cm out at its corners).
-                p.slot("skin").ellipsoid(
-                    skull + Vec3::new(s * 0.03, -0.076, -0.03),
-                    Vec3::new(0.016, 0.013, 0.024),
-                    Quat::IDENTITY,
-                    3,
-                    6,
-                );
-            }
+            // Along the jaw's lower edge, a few millimetres out of it
+            // (the old ones stood up to 3 cm out at its corners).
+            softer_jaw_skin(p.slot("skin"), skull);
         }
     });
 }
@@ -1815,14 +2115,7 @@ fn opt_node_face(m: &mut Model, head: usize, skull: Vec3, detail: Detail) {
     // lower front (bug 2026-11-25: the old chin, a narrow 4-sided
     // ellipsoid whose centre lay outside the skull, hung under the face
     // like a bubble and poked out under the beards).
-    let (c, r, tilt) = JAW;
-    p.slot("skin").ellipsoid(
-        skull + Vec3::from(c),
-        Vec3::from(r),
-        Quat::from_rotation_x(tilt),
-        4,
-        8,
-    );
+    jaw_skin(p.slot("skin"), skull);
     p.attach(m, i);
     // The lips (Phase 4 Q24): the upper lip and the mouth's inside in
     // [`LIPS`] at the mouth's centre, the lower lip in its own node, which
@@ -2175,22 +2468,9 @@ pub fn build(detail: Detail) -> Model {
     // Head: neck, face (nose).
     let head = m.add(Node::new(HEAD, Some(torso), Vec3::Y * body::TORSO));
     let mut p = Parts::new();
-    p.slot("skin").tube(
-        neck - Vec3::Y * 0.05,
-        neck + Vec3::new(0.0, 0.09, -0.01),
-        0.05,
-        0.047,
-        n,
-        false,
-    );
+    neck_skin(p.slot("skin"), detail);
     let skull = skull_centre();
-    p.slot("skin").ellipsoid(
-        skull,
-        Vec3::new(0.078, 0.105, 0.095),
-        Quat::IDENTITY,
-        if hi { 7 } else { 4 },
-        n,
-    );
+    skull_skin(p.slot("skin"), skull, detail);
     if hi {
         p.slot("skin").ellipsoid(
             skull + Vec3::new(0.0, -0.01, -0.098),
@@ -2975,7 +3255,7 @@ mod tests {
         let skull = skull_centre();
         let (c, r, tilt) = face::JAW;
         [
-            (skull, Vec3::new(0.078, 0.105, 0.095), Quat::IDENTITY),
+            (skull, Vec3::from(SKULL_RADII), Quat::IDENTITY),
             (
                 skull + Vec3::from(c),
                 Vec3::from(r),
@@ -3106,6 +3386,202 @@ mod tests {
             }
         }
         assert!(bare.is_empty(), "{bare:#?}");
+    }
+
+    /// The triangles of node `name` in rest-pose model coordinates
+    /// (`slot`: only that material's).
+    fn node_tris(m: &Model, name: &str, slot: Option<&str>) -> Vec<[Vec3; 3]> {
+        let i = m.node(name).unwrap_or_else(|| panic!("{name}"));
+        let w = m.world(i);
+        m.nodes[i]
+            .primitives
+            .iter()
+            .filter(|p| slot.is_none_or(|s| m.materials[p.material].name == s))
+            .flat_map(|p| {
+                p.indices.chunks(3).map(move |t| {
+                    [0, 1, 2].map(|k| w.transform_point3(Vec3::from(p.positions[t[k] as usize])))
+                })
+            })
+            .collect()
+    }
+
+    /// The distance from `p` to the polyline `path`.
+    fn polyline_distance(p: Vec3, path: &[Vec3]) -> f32 {
+        path.windows(2)
+            .map(|w| {
+                let ab = w[1] - w[0];
+                let k = ((p - w[0]).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
+                p.distance(w[0] + ab * k)
+            })
+            .fold(f32::MAX, f32::min)
+    }
+
+    /// The skin as drawn under the facial hair: the head (skull, neck,
+    /// nose) and, on the near model, the face's skin below the ears (the
+    /// jaw), with `softer` the older riders' softer jaw too.
+    fn drawn_skin(m: &Model, detail: Detail, softer: bool) -> Vec<[Vec3; 3]> {
+        let mut skin = node_tris(m, HEAD, Some("skin"));
+        if detail == Detail::High {
+            let ears = skull_centre().y + face::EAR[1] - face::EAR_RADII[1];
+            skin.extend(
+                node_tris(m, FACE, Some("skin"))
+                    .into_iter()
+                    .filter(|t| t.iter().all(|p| p.y < ears)),
+            );
+            if softer {
+                skin.extend(node_tris(m, opt::FACE_JAW, None));
+            }
+        }
+        skin
+    }
+
+    /// The chin-strap beard lies on the jaw line (bug 2026-11-26, 4N
+    /// *Fixed (v6.25)*: it read as a thin arc a little in front of the
+    /// jaw – a fixed curve whose centre lay 7 – 8 mm out of the near jaw,
+    /// with a 6.5 mm radius, and 1 – 2 cm out of the far head). On both
+    /// models the band is the tube of [`CHIN_STRAP`]'s radius round
+    /// [`chin_strap_path`], and along its whole length (every point and
+    /// the quarters of every segment) the centre line lies between 1.5 mm
+    /// in and 2.5 mm out of the skin as drawn – also over the older
+    /// riders' softer jaw (the head is the same for every face shape, base
+    /// body and build) – so more than half the band is in the skin: no
+    /// gap, no floating arc. It runs from under one ear along the lower
+    /// jaw and under the chin to under the other.
+    #[test]
+    fn the_chin_strap_lies_on_the_jaw_line() {
+        let skull = skull_centre();
+        let o = skull + Vec3::new(0.0, -0.05, -0.015);
+        let (radius, offset) = CHIN_STRAP;
+        assert!(offset < radius / 2.0);
+        for detail in [Detail::High, Detail::Low] {
+            let m = build(detail);
+            let path = chin_strap_path(detail);
+            let band = node_points(&m, opt::BEARD[5], None);
+            assert!(!band.is_empty());
+            for p in &band {
+                let d = polyline_distance(*p, &path);
+                assert!(d < radius + 1e-4, "{detail:?}: {} off the line", d);
+            }
+            let mut ages = vec![("skin", drawn_skin(&m, detail, false))];
+            if detail == Detail::High {
+                ages.push(("softer jaw", drawn_skin(&m, detail, true)));
+            }
+            for (what, skin) in &ages {
+                for w in path.windows(2) {
+                    for f in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                        let p = w[0].lerp(w[1], f);
+                        let d = (p - o).normalize();
+                        let reach = ray_last_hit(o, d, skin).expect("on the head");
+                        let out = (p - o).length() - reach;
+                        assert!(
+                            (-0.0015..0.0025).contains(&out),
+                            "{detail:?}, {what}: {} mm out of the skin at {}",
+                            out * 1e3,
+                            p - skull
+                        );
+                    }
+                }
+            }
+            // From ear to ear: the ends beside the head, under the ears.
+            let ear = skull + Vec3::from(face::EAR);
+            let lobe = ear.y - face::EAR_RADII[1];
+            for end in [path[0], path[path.len() - 1]] {
+                let below = lobe - end.y;
+                assert!(
+                    end.x.abs() > 0.05
+                        && (0.0..0.03).contains(&below)
+                        && (end.z - ear.z).abs() < 0.015,
+                    "{detail:?}: an end at {}",
+                    end - skull
+                );
+            }
+            // Under the chin in the middle, well under the mouth.
+            let mid = path[path.len() / 2];
+            assert!(mid.x.abs() < 1e-4, "{detail:?}");
+            assert!(
+                mid.y < skull.y + face::MOUTH[1] - 0.025,
+                "{detail:?}: {}",
+                mid - skull
+            );
+        }
+    }
+
+    /// The stubble stops round the mouth (bug 2026-11-26, 4N *Fixed
+    /// (v6.25)*: the short stubble beard's shell covered the lips): for
+    /// the stubble and the short stubble beard, with the lips closed, half
+    /// open and fully open while speaking, no vertex lies within half of
+    /// [`STUBBLE_MARGIN`] of the lips' box, and nothing of the beard is in
+    /// front of a lip seen from the front, from below or from either side;
+    /// the beard lies on the skin (at most 0.5 mm in, 6 mm out of it, also
+    /// over the older riders' softer jaw).
+    #[test]
+    fn the_stubble_leaves_the_lips_free() {
+        let m = build(Detail::High);
+        let skull = skull_centre();
+        let mouth = skull + Vec3::from(face::MOUTH);
+        let upper = node_points(&m, LIPS, Some("lips"));
+        let lower = node_points(&m, LIP_LOWER, Some("lips"));
+        assert!(!upper.is_empty() && !lower.is_empty());
+        let views = [
+            Vec3::NEG_Z,
+            Vec3::new(0.0, -0.6, -1.0).normalize(),
+            Vec3::new(0.6, 0.0, -1.0).normalize(),
+            Vec3::new(-0.6, 0.0, -1.0).normalize(),
+        ];
+        let skin = drawn_skin(&m, Detail::High, true);
+        let eye = skull + Vec3::from(STUBBLE_EYE);
+        for k in [0, 1] {
+            let beard = node_tris(&m, opt::BEARD[k], None);
+            assert!(!beard.is_empty());
+            for open in [0.0, 0.5, 1.0] {
+                let drop = lower_lip_offset(open);
+                let mut lips = upper.clone();
+                lips.extend(lower.iter().map(|p| *p + drop));
+                let lo = lips.iter().fold(Vec3::MAX, |a, p| a.min(*p));
+                let hi = lips.iter().fold(Vec3::MIN, |a, p| a.max(*p));
+                let g = STUBBLE_MARGIN / 2.0;
+                let near: Vec<Vec3> = beard
+                    .iter()
+                    .flatten()
+                    .filter(|p| {
+                        (lo.x - g..hi.x + g).contains(&p.x)
+                            && (lo.y - g..hi.y + g).contains(&p.y)
+                            && (lo.z - 0.01..hi.z + 0.005).contains(&p.z)
+                    })
+                    .map(|p| *p - mouth)
+                    .collect();
+                assert!(
+                    near.is_empty(),
+                    "{} (open {open}): {} vertices at the lips, e.g. {}",
+                    opt::BEARD[k],
+                    near.len(),
+                    near[0]
+                );
+                let covered = lips
+                    .iter()
+                    .filter(|p| p.z < mouth.z)
+                    .flat_map(|p| views.iter().map(move |d| (*p, *d)))
+                    .filter(|(p, d)| beard.iter().any(|t| ray_hits(*p, *d, t)))
+                    .count();
+                assert_eq!(
+                    covered,
+                    0,
+                    "{} (open {open}) covers the lips",
+                    opt::BEARD[k]
+                );
+            }
+            for p in beard.iter().flatten() {
+                let d = (*p - eye).normalize();
+                let out = (*p - eye).length() - ray_last_hit(eye, d, &skin).unwrap();
+                assert!(
+                    (-0.0005..0.006).contains(&out),
+                    "{}: {} mm out of the skin at {}",
+                    opt::BEARD[k],
+                    out * 1e3,
+                    *p - skull
+                );
+            }
+        }
     }
 
     /// The lips open (Phase 4 Q24): two lips in their own nodes under the

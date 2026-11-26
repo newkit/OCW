@@ -365,6 +365,15 @@ impl Shape {
         self.indices.len() / 3
     }
 
+    /// The triangles' corner positions.
+    pub fn tris(&self) -> impl Iterator<Item = [Vec3; 3]> + '_ {
+        self.indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|t| t.map(|i| self.positions[i as usize]))
+    }
+
     /// Every vertex normal again from its triangles, each weighted by the
     /// triangle's angle at the vertex – the way Blender computes a
     /// smooth vertex normal. A custom normal Blender would compute
@@ -387,6 +396,33 @@ impl Shape {
             *n = m.normalize_or(*n);
         }
     }
+}
+
+/// Where the ray from `o` along `d` meets triangle `t`: the ray's
+/// parameter (> 0; the distance when `d` is a unit vector), or `None`.
+pub fn ray_triangle(o: Vec3, d: Vec3, t: &[Vec3; 3]) -> Option<f32> {
+    let (e1, e2) = (t[1] - t[0], t[2] - t[0]);
+    let h = d.cross(e2);
+    let a = e1.dot(h);
+    if a.abs() < 1e-12 {
+        return None;
+    }
+    let f = 1.0 / a;
+    let s = o - t[0];
+    let u = f * s.dot(h);
+    let q = s.cross(e1);
+    let v = f * d.dot(q);
+    let k = f * e2.dot(q);
+    ((0.0..=1.0).contains(&u) && v >= 0.0 && u + v <= 1.0 && k > 0.0).then_some(k)
+}
+
+/// How far the ray from `o` along `d` reaches before it leaves the
+/// (closed or open) surface `tris` for good: its last crossing, or `None`
+/// when it misses.
+pub fn ray_last_hit(o: Vec3, d: Vec3, tris: &[[Vec3; 3]]) -> Option<f32> {
+    tris.iter()
+        .filter_map(|t| ray_triangle(o, d, t))
+        .fold(None, |m: Option<f32>, k| Some(m.map_or(k, |m| m.max(k))))
 }
 
 /// Shapes by paint slot, for one node.
