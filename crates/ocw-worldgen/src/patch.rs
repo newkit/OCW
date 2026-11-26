@@ -179,10 +179,13 @@ impl Patching {
 
     /// Puts the signs of [`Patching::bike_signs`] into the package's
     /// obstacles (section `OBST`, made if it has none), replacing any
-    /// there; the number placed.
-    pub fn add_bike_signs(&self, pkg: &mut ocw_world::WorldPackage) -> usize {
+    /// there; the signs placed.
+    pub fn add_bike_signs(
+        &self,
+        pkg: &mut ocw_world::WorldPackage,
+    ) -> Vec<ocw_world::obstacles::PointObstacle> {
         let Some(graph) = pkg.graph.clone() else {
-            return 0;
+            return Vec::new();
         };
         let signs = self.bike_signs(&graph);
         let size = pkg.tile_size_m;
@@ -192,12 +195,11 @@ impl Patching {
             .take()
             .unwrap_or_else(|| ocw_world::obstacles::Obstacles::new(size));
         o.take_points(ocw_world::obstacles::ObstacleKind::NoBikeSign);
-        let n = signs.len();
-        for p in signs {
-            o.add_point(p, size);
+        for p in &signs {
+            o.add_point(*p, size);
         }
-        pkg.obstacles = (had || n > 0).then_some(o);
-        n
+        pkg.obstacles = (had || !signs.is_empty()).then_some(o);
+        signs
     }
 
     /// The surface an edge target asked for (way targets changed the OSM

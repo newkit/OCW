@@ -547,7 +547,9 @@ impl BuildJob {
     }
 
     /// Starts the steps `lines` one after the other (stopping at the first
-    /// that fails), after checking the source files against `checks`.
+    /// that fails), after checking the source files against `checks`
+    /// (unsigned; the tests).
+    #[cfg(test)]
     pub fn start_chain(
         program: &Path,
         lines: &[Vec<String>],

@@ -1009,7 +1009,11 @@ mod tests {
         d.execute(op, 6.0).unwrap();
         assert_eq!(d.content().patch.ops.len(), 2);
         let (changed, removed) = d.content().touched_roads();
-        assert_eq!(changed, [RoadTarget::Way(2), E10].into(), "closed for bikes stays");
+        assert_eq!(
+            changed,
+            [RoadTarget::Way(2), E10].into(),
+            "closed for bikes stays"
+        );
         assert!(removed.is_empty());
         // Taking every attribute out again deletes the operation.
         for c in [

@@ -1263,6 +1263,14 @@ world-builder sign my-alps.ocwpkg --key ~/.config/ocw/keys/user.key
 world-builder keys fingerprint my-alps.ocwpkg        # the fingerprint it carries
 ```
 
+**OCW Studio does this for you:** the first *Build package* asks "Your name
+for signing worlds", makes the key in the same folder (`~/.config/ocw/keys`,
+`$OCW_KEY_DIR`; the secret files readable only by you), adds it to this
+computer's trusted keys and signs `patched/<name>.ocwpkg` with it – its patch
+and build recipe recorded in the signed manifest. Later builds reuse the key
+(`studio sign` shows it); an existing key is never replaced – a key file that
+cannot be read stops the build with a message instead of making a new one.
+
 Send `my-alps.ocwpkg` and `my-alps.ocwpkg.manifest.json`. When someone opens
 it (World → Change world, `--world`, a link in the browser), a dialog shows
 the world, "signed by 'Ada Rider' (unverified name)" and the full fingerprint
@@ -1299,7 +1307,21 @@ world-builder patch check --world my.ocwpkg my.ocwpatch [--pbf extract.osm.pbf]
 ```
 
 Both list every operation as `ok`, `MISSING` (its target is gone – reported,
-never silently dropped; `patch check` exits 1) or unchecked. Sign the result
+never silently dropped; `patch check` exits 1) or unchecked. **Our official
+builds** (`scripts/build-{liechtenstein,blackforest,tenerife}.sh`) add
+`--strict-patch`: a `MISSING` operation fails the build before the package is
+written, with the list of lost targets, so the patch gets fixed (spec 16H Q7);
+your own builds (without it, as OCW Studio runs them) only warn.
+
+**A road closed for bikes** (`bike = "closed"`, spec 16H Q6) stays drawn and
+rideable – a warning: the package gets a round "no bicycles" sign at each end
+of it, beside the carriageway and facing the rider who comes onto the road.
+Patches made before (when it took the road out of the network) keep working;
+their roads come back on the next build, with the signs.
+
+**Saved camera views** travel in the patch file (an optional `[[view]]`
+section with `name`, `pos`, `yaw`, `pitch`; spec 16H Q13); builds and older
+readers ignore it. Sign the result
 with your own key as above.
 
 **Place names on the studio's 2D map:** packages with the section `PLCE`
@@ -1319,7 +1341,7 @@ autosave:
 1. **Click a road** in the 3D view or on the 2D map: the *Road* panel shows
    the package's surface, width, class, one-way, bike access and name next to
    the patch's changes. Each change is one command (a combo box, the width,
-   *closed for riding*, the name; `x` takes a change out again); *Remove
+   *closed for bikes (warning signs)*, the name; `x` takes a change out again); *Remove
    road* / *Restore road*. **Edits act on the whole OSM way by default**
    (spec 16H Q18): the clicked road's whole way – often several stretches
    between junctions – is highlighted on the map and in 3D, and the edit
@@ -1337,13 +1359,16 @@ autosave:
 3. **The patch's operations** are listed under *World patch*, each with what
    the preview found (`ok`, `MISSING` when its target is not in the package,
    `?`); a click selects its road or point, `x` deletes it. Changed roads are
-   tinted orange, removed or closed ones red and struck through, height
+   tinted orange (also those closed for bikes), removed ones red and struck through, height
    points drawn with their radius, and the road profile they make in yellow
    (the package's tiles are not re-meshed in the studio yet).
 4. **File → Save patch** (Ctrl + S) writes `my.ocwpatch` next to the package
    (*Save patch as…* elsewhere). *Open patch…* loads another one – a patch
-   made for another package is refused. The saved camera views stay in the
-   studio (autosave), not in the patch.
+   made for another package is refused. **The saved camera views are saved in
+   the patch file** (spec 16H Q13): views kept only in the autosave move into
+   the file on its next save, and a patch opened with views the studio does
+   not have offers them in the *Views* panel (*Add the patch's views* / *No
+   thanks*; `studio view take | skip`).
    **When you open a package with a patch next to it** (`<name>.ocwpatch`,
    or a stack `<name>.020-bridge.ocwpatch`, `<name>.2.ocwpatch`, …), the
    studio **asks first** (spec 16H Q16), in the same dialog style as the
@@ -1376,11 +1401,20 @@ autosave:
    which steps are left out. Packages without a recipe (older ones) get the
    basic step, as before; a recipe edited after the build is not used.
    `world-builder recipe show --world PKG` prints a package's recipe.
+   **The result is signed with your own key** (see *Sharing a world you
+   edited* above): the first build asks for your name in a small dialog and
+   makes the key; the game then lists the world as *unofficial, 'your
+   name'*, and another computer asks with the trust dialog. **A change whose
+   road is gone** in the OSM data used (`MISSING`) is a red warning in the
+   dialog; the package is still built without it (spec 16H Q7).
 
 The same from the console: `studio select X Z | latlon LAT LON`, `studio road
 surface gravel | width 4 | name Alter Weg | remove | focus`, `studio point add
 | raise 3 | radius 60 | move X Z | remove`, `studio patch list | save [PATH] |
-open PATH | load | skip | build [OUT]`, `studio road scope way|edge`.
+open PATH | load | skip | build [OUT]`, `studio road scope way|edge`, `studio
+sign | sign name NAME | sign cancel`, `studio view take | skip`. **N** over
+the 3D view shows or hides the 2D map (Z, the game's map zoom, does nothing
+in the studio).
 
 **Routes in OCW Studio** (`ocw-studio --world my.ocwpkg --workspace routes`):
 click the map to add via-points, drag the route onto other roads, or

@@ -282,7 +282,7 @@ impl Plugin for BindingsPlugin {
 /// What an app does with a shared binding's action (an app that adds
 /// the shared menu and its bindings without every ride feature, such as
 /// OCW Studio, whose console knows no `set display.map`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub enum ActionUse {
     /// The shared behaviour (the game's console line).
     Shared,

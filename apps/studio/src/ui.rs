@@ -1137,7 +1137,11 @@ fn road_panel(
                 ui.label("Bikes");
                 ui.label("open");
                 let mut closed = r.is_some_and(|r| r.bike.is_some());
-                if ui.checkbox(&mut closed, "closed for riding").changed() {
+                // Still rideable, with warning signs at its ends (16H Q6).
+                if ui
+                    .checkbox(&mut closed, "closed for bikes (warning signs)")
+                    .changed()
+                {
                     pending.send(StudioCommand::SetRoad(RoadChange::BikeClosed(closed)));
                 }
                 ui.end_row();

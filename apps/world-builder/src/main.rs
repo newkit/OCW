@@ -1948,10 +1948,25 @@ fn package(args: PackageArgs) {
     if !patches.is_empty() {
         // Roads a patch closed for bikes stay rideable, with a warning
         // sign at each end (16H Q6).
-        let n = patching.add_bike_signs(&mut pkg);
-        if n > 0 {
+        let signs = patching.add_bike_signs(&mut pkg);
+        if !signs.is_empty() {
+            let at: Vec<String> = signs
+                .iter()
+                .take(8)
+                .map(|p| {
+                    format!(
+                        "{:.0},{:.0} facing {:.0}°",
+                        p.pos[0],
+                        p.pos[1],
+                        p.angle.to_degrees()
+                    )
+                })
+                .collect();
             area_report.push(format!(
-                "patch: {n} warning sign(s) at the ends of roads closed for bikes (OBST)"
+                "patch: {} warning sign(s) at the ends of roads closed for bikes (OBST), at x,z {}{}",
+                signs.len(),
+                at.join("; "),
+                if signs.len() > at.len() { " …" } else { "" }
             ));
         }
     }

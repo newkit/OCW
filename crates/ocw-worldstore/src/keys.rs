@@ -232,7 +232,8 @@ mod tests {
         let before = std::fs::read(&made.signing).unwrap();
         assert!(
             init_user(&d, "Bea Climber", USER_KEY_DAYS, now)
-                .unwrap_err()
+                .err()
+                .expect("an error")
                 .contains("not overwriting")
         );
         assert_eq!(std::fs::read(&made.signing).unwrap(), before);
@@ -244,7 +245,12 @@ mod tests {
         assert!(user_signing_key(&d, now).is_err());
         // The root without its signing key: an error too.
         std::fs::remove_file(&made.signing).unwrap();
-        assert!(user_signing_key(&d, now).unwrap_err().contains("missing"));
+        assert!(
+            user_signing_key(&d, now)
+                .err()
+                .expect("an error")
+                .contains("missing")
+        );
         // A signing key without a root of its own is not a user key.
         let d2 = dir.path().join("official");
         let root = RootKeyPair::from_seed("r", random_seed().unwrap());
@@ -254,7 +260,8 @@ mod tests {
         write_new(&d2.join(USER_SIGNING), &plain.to_json(), true).unwrap();
         assert!(
             user_signing_key(&d2, now)
-                .unwrap_err()
+                .err()
+                .expect("an error")
                 .contains("not a user key")
         );
     }
