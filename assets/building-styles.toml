@@ -469,3 +469,76 @@ window = "none"
 
 [style.kind.garage]
 roofs = { flat = 1.0 }
+
+# --- Andorra (the eastern Pyrenees): rubble-stone walls of grey granite and
+# schist, dark slate roofs with low gables and wide eaves, timber balconies
+# (Andorra's building rules ask for stone and slate in the villages and most
+# new buildings: the apartment blocks of Andorra la Vella and Escaldes too,
+# with stone-clad ground floors and plaster above) ---------------------------
+
+[[style]]
+id = "pyrenean"
+name = "Andorra (Pyrenean stone and slate)"
+time_zones = ["Europe/Andorra"]
+
+[style.kind.other]
+roofs = { gabled = 0.75, hipped = 0.25 }
+pitch = 0.7
+overhang_m = 0.6
+walls = { stone = 0.7, plaster = 0.3 }
+upper = { stone = 0.6, timber = 0.15 }
+wall_colours = ["#e8e2d6", "#ddd5c5", "#d6c9b0", "#cfc6b8"]
+roof_materials = { slate = 0.9, metal = 0.1 }
+roof_colours = ["#5a3a30", "#6b3e2e"]
+window = "alpine"
+chimney = 0.6
+dormers = { shed = 0.15, gabled = 0.1, window = 0.1 }
+balconies = { long = 0.35, gable = 0.25 }
+
+[style.kind.apartments]
+roofs = { gabled = 0.6, hipped = 0.4 }
+walls = { stone = 0.5, plaster = 0.5 }
+upper = { plaster = 0.6 }
+window = "apartments"
+balconies = { long = 0.55, gable = 0.1 }
+
+[style.kind.hotel]
+walls = { stone = 0.6, plaster = 0.4 }
+upper = { plaster = 0.5 }
+window = "apartments"
+balconies = { long = 0.6 }
+
+[style.kind.commercial]
+walls = { stone = 0.4, plaster = 0.3, glass = 0.3 }
+upper = { plaster = 0.5 }
+window = "shop"
+
+[style.kind.farm]
+walls = { stone = 0.85, timber = 0.15 }
+upper = { timber = 0.3 }
+window = "farm"
+balconies = { long = 0.3 }
+
+[style.kind.barn]
+roofs = { gabled = 1.0 }
+walls = { stone = 0.7, timber = 0.3 }
+upper = { timber = 0.5 }
+window = "barn"
+chimney = 0.0
+
+[style.kind.religious]
+roofs = { gabled = 1.0 }
+walls = { stone = 1.0 }
+upper = { stone = 1.0 }
+pitch = 0.8
+overhang_m = 0.3
+window = "church"
+chimney = 0.0
+
+[style.kind.industrial]
+roofs = { gabled = 1.0 }
+pitch = 0.5
+walls = { stone = 0.3, metal = 0.4, concrete = 0.3 }
+upper = { stone = 0.0 }
+window = "industrial"
+chimney = 0.0

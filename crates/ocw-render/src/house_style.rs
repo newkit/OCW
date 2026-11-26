@@ -1044,7 +1044,7 @@ mod tests {
         let s = BuildingStyles::parse(STYLES_TOML).unwrap_or_else(|e| panic!("{e:#?}"));
         assert_eq!(s.styles[0].id, "central");
         assert!(s.windows.len() <= MAX_WINDOW_STYLES);
-        for id in ["alpine", "blackforest", "canary"] {
+        for id in ["alpine", "blackforest", "canary", "pyrenean"] {
             assert!(s.styles.iter().any(|x| x.id == id), "{id}");
         }
         // Mistakes are reported, not ignored.
@@ -1088,6 +1088,16 @@ mod tests {
         assert_eq!(
             s.select(Some("Atlantic/Canary"), (28.3, -16.5), 50.0),
             style("canary")
+        );
+        assert_eq!(
+            s.select(Some("Europe/Andorra"), (42.507, 1.522), 1050.0),
+            style("pyrenean"),
+            "Andorra la Vella"
+        );
+        assert_eq!(
+            s.select(Some("Europe/Paris"), (42.507, 1.522), 1050.0),
+            0,
+            "the French side keeps the default"
         );
         assert_eq!(s.select(None, vaduz, 1600.0), 0);
         assert_eq!(s.select(Some("Asia/Tokyo"), (35.0, 139.0), 0.0), 0);

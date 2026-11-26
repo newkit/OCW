@@ -202,6 +202,9 @@ const REGIONS: &[(&str, [f64; 4], &str)] = &[
     ("Black Forest", [47.75, 49.8, 7.5, 10.2], "Europe/Berlin"),
     ("Switzerland", [45.82, 47.81, 5.95, 10.49], "Europe/Zurich"),
     ("Austria", [46.37, 49.02, 9.53, 17.16], "Europe/Vienna"),
+    // Andorra (CET / CEST like its neighbours, but its own zone), before
+    // France's box, which covers it.
+    ("Andorra", [42.42, 42.66, 1.40, 1.79], "Europe/Andorra"),
     ("Germany", [47.27, 55.06, 5.87, 15.04], "Europe/Berlin"),
     ("France", [41.3, 51.1, -5.2, 9.6], "Europe/Paris"),
     ("Italy", [36.6, 47.1, 6.6, 18.5], "Europe/Rome"),
@@ -327,6 +330,8 @@ mod tests {
             "Tenerife origin"
         );
         assert_eq!(zone_for(28.13, -15.43), "Atlantic/Canary", "Gran Canaria");
+        assert_eq!(zone_for(42.54, 1.58), "Europe/Andorra", "Andorra origin");
+        assert!(Zone::get("Europe/Andorra").is_ok());
         assert_eq!(zone_for(40.0, -105.0), "Etc/GMT+7");
         assert_eq!(longitude_zone(3.0), "Etc/UTC");
         // Every default is a zone the bundled tzdb knows.

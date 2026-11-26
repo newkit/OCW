@@ -11,7 +11,9 @@
 #
 # Regions: liechtenstein (data/pilot/), blackforest (data/blackforest/, all
 # three parts by default), tenerife (data/tenerife/; the HRL covers the
-# Canary Islands: Canary pine is coniferous, the laurel forest broadleaved).
+# Canary Islands: Canary pine is coniferous, the laurel forest broadleaved),
+# andorra (data/andorra/; Andorra is not an EEA member, the layers are read
+# over its box like any other).
 #
 # Source (checked 2026-11-14): the EEA's public ArcGIS ImageServers
 # image.discomap.eea.europa.eu/arcgis/rest/services/GioLandPublic/
@@ -26,7 +28,7 @@
 # the sources to data/<region>/SOURCES.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-region=${1:?usage: fetch-forest.sh liechtenstein|blackforest|tenerife [PACKAGE...]}
+region=${1:?usage: fetch-forest.sh liechtenstein|blackforest|tenerife|andorra [PACKAGE...]}
 shift
 pkgs=("$@")
 case "$region" in
@@ -36,7 +38,8 @@ case "$region" in
     def=("$dir/blackforest.ocwpkg" "$dir/blackforest-middle.ocwpkg" "$dir/blackforest-north.ocwpkg")
     ;;
   tenerife) dir=data/tenerife; def=("$dir/tenerife.ocwpkg") ;;
-  *) echo "unknown region '$region' (liechtenstein, blackforest, tenerife)" >&2; exit 1 ;;
+  andorra) dir=data/andorra; def=("$dir/andorra.ocwpkg") ;;
+  *) echo "unknown region '$region' (liechtenstein, blackforest, tenerife, andorra)" >&2; exit 1 ;;
 esac
 if [ ${#pkgs[@]} -eq 0 ]; then
   for p in "${def[@]}"; do [ -f "$p" ] && pkgs+=("$p"); done

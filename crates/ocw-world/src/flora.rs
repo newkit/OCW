@@ -432,6 +432,9 @@ pub enum FloraRegion {
     BlackForest,
     /// Tenerife (the Canary Islands).
     Tenerife,
+    /// Andorra and the eastern Pyrenees around it: pine forests (mountain
+    /// and Scots pine), fir, few broadleaves; no spruce, no larch.
+    Pyrenees,
     /// Elsewhere: the Central European mix.
     Other,
 }
@@ -448,6 +451,8 @@ impl FloraRegion {
             FloraRegion::BlackForest
         } else if inside((27.4, 29.5), (-18.4, -13.2)) {
             FloraRegion::Tenerife
+        } else if inside((42.3, 42.8), (1.2, 2.0)) {
+            FloraRegion::Pyrenees
         } else {
             FloraRegion::Other
         }
@@ -458,6 +463,7 @@ impl FloraRegion {
             FloraRegion::AlpineRhine => "alpine-rhine",
             FloraRegion::BlackForest => "black-forest",
             FloraRegion::Tenerife => "tenerife",
+            FloraRegion::Pyrenees => "pyrenees",
             FloraRegion::Other => "central-europe",
         }
     }
@@ -472,6 +478,9 @@ impl FloraRegion {
             FloraRegion::BlackForest => 1430.0,
             // The upper edge of the Canary pine forest.
             FloraRegion::Tenerife => 2250.0,
+            // Andorra: mountain pines (Pinus uncinata) close the forest at
+            // about 2 300 m and stand alone up to 2 400 – 2 500 m.
+            FloraRegion::Pyrenees => 2350.0,
         }
     }
 }
@@ -645,6 +654,136 @@ const BF_BROADLEAVES: [(f64, &[(Species, f32)]); 3] = [
     (900.0, &[(Beech, 0.6), (SycamoreMaple, 0.35), (Birch, 0.05)]),
 ];
 
+// --- Andorra and the eastern Pyrenees (table 6) -----------------------------
+
+/// The conifers of Andorra by altitude (spec 4.6.1, table 6; the first
+/// national forest inventory, 2022: of 9 137 trees mountain pine 51.7 %,
+/// Scots pine 32.3 %, silver fir 4.9 %). The upright mountain pine (*Pinus
+/// uncinata*, to 20 m) is drawn as a Scots pine below the krummholz belt
+/// (the mountain pine model is the low *Pinus mugo*): its `MountainPine` picks
+/// are resolved by [`pyrenean_pine`].
+const PY_CONIFERS: [(f64, &[(Species, f32)]); 5] = [
+    (f64::MIN, &[(ScotsPine, 0.88), (SilverFir, 0.12)]),
+    (
+        1400.0,
+        &[(ScotsPine, 0.62), (MountainPine, 0.26), (SilverFir, 0.12)],
+    ),
+    (
+        1700.0,
+        &[(MountainPine, 0.62), (ScotsPine, 0.28), (SilverFir, 0.1)],
+    ),
+    (2000.0, &[(MountainPine, 0.95), (ScotsPine, 0.05)]),
+    (2250.0, &[(MountainPine, 1.0)]),
+];
+/// The broadleaves of Andorra by altitude: downy and sessile oaks, ash,
+/// hazel and lime in the lowest valleys (Sant Julià de Lòria, 840 –
+/// 1 300 m; the holm oak of the *carrascars* drawn as an evergreen
+/// broadleaf), birch, rowan and willow higher up.
+const PY_BROADLEAVES: [(f64, &[(Species, f32)]); 3] = [
+    (
+        f64::MIN,
+        &[
+            (Oak, 0.38),
+            (Laurel, 0.16),
+            (Ash, 0.14),
+            (Birch, 0.14),
+            (Lime, 0.06),
+            (Willow, 0.06),
+            (Chestnut, 0.06),
+        ],
+    ),
+    (
+        1300.0,
+        &[
+            (Birch, 0.5),
+            (SycamoreMaple, 0.18),
+            (Ash, 0.12),
+            (Willow, 0.12),
+            (Oak, 0.08),
+        ],
+    ),
+    (
+        1800.0,
+        &[(Birch, 0.65), (SycamoreMaple, 0.2), (Willow, 0.15)],
+    ),
+];
+
+/// The species of a plant in Andorra.
+fn pyrenees(site: &Site, group: LeafGroup, pick: f32) -> Species {
+    let alt = site.alt_m;
+    let tree_line = site.region.tree_line_m();
+    let wet = site.near_water || site.setting == Setting::Wetland;
+    match group {
+        LeafGroup::Evergreen => {
+            let s = match site.setting {
+                Setting::Scrub if alt > tree_line - 300.0 => MountainPine,
+                // Town and meadow conifers: pines, some firs.
+                Setting::Urban | Setting::Park | Setting::Open | Setting::Orchard
+                    if alt < 1600.0 =>
+                {
+                    choose(&[(ScotsPine, 0.75), (SilverFir, 0.25)], pick)
+                }
+                _ => choose(by_altitude(&PY_CONIFERS, alt), pick),
+            };
+            pyrenean_pine(s, alt, tree_line)
+        }
+        LeafGroup::Deciduous => {
+            if wet && alt < 1600.0 {
+                return choose(&[(Alder, 0.4), (Willow, 0.4), (Ash, 0.2)], pick);
+            }
+            match site.setting {
+                Setting::Orchard => FruitTree,
+                Setting::Urban | Setting::Park => choose(
+                    &[
+                        (Lime, 0.3),
+                        (SycamoreMaple, 0.2),
+                        (Ash, 0.15),
+                        (Birch, 0.15),
+                        (FruitTree, 0.2),
+                    ],
+                    pick,
+                ),
+                // The lone trees of the hay meadows: ashes (pollarded
+                // along the walls), walnuts and fruit trees low down,
+                // birches and rowans higher.
+                Setting::Open if alt < 1500.0 => choose(
+                    &[
+                        (Ash, 0.4),
+                        (FruitTree, 0.25),
+                        (Birch, 0.15),
+                        (Oak, 0.1),
+                        (Willow, 0.1),
+                    ],
+                    pick,
+                ),
+                Setting::Open => {
+                    choose(&[(Birch, 0.55), (SycamoreMaple, 0.25), (Willow, 0.2)], pick)
+                }
+                Setting::Scrub if alt > tree_line - 450.0 => {
+                    choose(&[(Birch, 0.5), (Willow, 0.3), (GreenAlder, 0.2)], pick)
+                }
+                Setting::Scrub => {
+                    choose(&[(Oak, 0.3), (Birch, 0.3), (Willow, 0.2), (Ash, 0.2)], pick)
+                }
+                _ => choose(by_altitude(&PY_BROADLEAVES, alt), pick),
+            }
+        }
+        LeafGroup::Larch => Larch,
+    }
+}
+
+/// The mountain pine of a Pyrenean forest: the upright *Pinus uncinata*
+/// below the krummholz belt is drawn as a pine tree (the Scots pine
+/// model), the low *Pinus mugo* model only in the last 300 m below the
+/// tree line and above it.
+fn pyrenean_pine(s: Species, alt: f64, tree_line: f64) -> Species {
+    if s == MountainPine && alt < tree_line - 300.0 {
+        ScotsPine
+    } else {
+        s
+    }
+}
+
 // --- Central Europe outside the regions: the Black Forest's mix -------------
 
 // --- Tenerife (table 3) -------------------------------------------------------
@@ -745,6 +884,7 @@ pub fn pick_species(site: &Site, group: LeafGroup, pick: f32) -> Species {
     }
     match site.region {
         FloraRegion::Tenerife => tenerife(site, group, pick),
+        FloraRegion::Pyrenees => pyrenees(site, group, pick),
         FloraRegion::AlpineRhine => central(site, group, pick, &AR_CONIFERS, &AR_BROADLEAVES, alt),
         FloraRegion::BlackForest | FloraRegion::Other => {
             central(site, group, pick, &BF_CONIFERS, &BF_BROADLEAVES, alt)
@@ -1296,6 +1436,53 @@ mod tests {
             LeafGroup::Deciduous,
         );
         assert!(oak[&Oak] > 0.2 && oak[&Chestnut] > 0.05);
+    }
+
+    /// Spec 4.6.1, table 6: Andorra's forests are pines – Scots pine with
+    /// some fir in the valleys, mountain pine above 1 700 m, drawn low only
+    /// near the tree line (2 350 m) – never spruce or larch from the mix.
+    #[test]
+    fn andorra_pines_by_altitude() {
+        assert_eq!(FloraRegion::at(42.507, 1.522), FloraRegion::Pyrenees);
+        assert_eq!(FloraRegion::at(42.54, 1.73), FloraRegion::Pyrenees);
+        assert_eq!(FloraRegion::Pyrenees.name(), "pyrenees");
+        let at = |alt| {
+            shares(
+                &site(FloraRegion::Pyrenees, Setting::Forest, alt),
+                LeafGroup::Evergreen,
+            )
+        };
+        for alt in [900.0, 1300.0, 1600.0, 1900.0, 2100.0, 2400.0] {
+            let s = at(alt);
+            assert!(!s.contains_key(&NorwaySpruce) && !s.contains_key(&Larch));
+            assert!(!s.contains_key(&DouglasFir), "{alt} {s:?}");
+        }
+        let valley = at(1100.0);
+        assert!(
+            valley[&ScotsPine] > 0.8 && valley[&SilverFir] > 0.05,
+            "{valley:?}"
+        );
+        // The upright mountain pine of the subalpine forest is drawn as a
+        // pine tree, the low mountain pine only near the tree line.
+        let sub = at(1900.0);
+        assert!(
+            sub[&ScotsPine] > 0.85 && !sub.contains_key(&MountainPine),
+            "{sub:?}"
+        );
+        let line = at(2200.0);
+        assert!(line[&MountainPine] > 0.9, "{line:?}");
+        assert_eq!(FloraRegion::Pyrenees.tree_line_m(), 2350.0);
+        // Broadleaves: oaks low down (Sant Julià), birches up high.
+        let low = shares(
+            &site(FloraRegion::Pyrenees, Setting::Forest, 950.0),
+            LeafGroup::Deciduous,
+        );
+        assert!(low[&Oak] > 0.3 && !low.contains_key(&Beech), "{low:?}");
+        let high = shares(
+            &site(FloraRegion::Pyrenees, Setting::Forest, 1900.0),
+            LeafGroup::Deciduous,
+        );
+        assert!(high[&Birch] > 0.5, "{high:?}");
     }
 
     #[test]
