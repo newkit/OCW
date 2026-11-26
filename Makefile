@@ -91,7 +91,7 @@ VIDEO ?= /tmp/ocw.mp4
 VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
-.PHONY: help test-web-account test-web-trust version version-next version-bump test-release-version test-world-patches release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-blender test-blender models-diff deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
+.PHONY: help test-web-account test-web-trust test-studio-planners version version-next version-bump test-release-version test-world-patches release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-blender test-blender models-diff deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
 	test test-unit test-wasm test-web-build test-web test-web-xr web-xr web-preview-xr test-web-webgl2 test-web-gpu test-web-webkit test-web-ios deps-webkit test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-voice-livekit test-voice-bundled test-host-voice test-voice-live test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser deps-vr deps-vr-linux deps-vr-linux-debian deps-vr-linux-fedora deps-vr-linux-arch deps-vr-linux-unknown deps-vr-windows deps-vr-macos test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
@@ -627,6 +627,9 @@ test-release-version: ## Test the version bump of GitHub releases on a copy of t
 
 test-world-patches: ## Test which world patches the build scripts take (worlds/<region>/patches/, spec 16H Q10; no build)
 	scripts/test-world-patches.sh
+
+test-studio-planners: ## OCW Studio's planners against our own BRouter (spec 16H Q22 (a); on marge): segments built from our OSM extract and SRTM tiles (cached), the server only during the test, a planned Vaduz - Malbun checked against the Liechtenstein package (settings: config/brouter-test.example.conf)
+	scripts/brouter-test-server.sh run env OCW_BROUTER_LIVE=1 $(CARGO) test -p ocw-studio -- brouter --nocapture
 
 release-check: ## Show the version, the latest GitHub release and the next release version
 	@cur=$$($(call version_of,.)); last=$$($(latest_release)); $(newer); \

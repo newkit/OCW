@@ -28,6 +28,7 @@ use ocw_world::plan::{EdgeCosts, PlanError, PlannedTrack, Profile, RoutePlanner,
 use ocw_world::road_surface::RoadSurface;
 use serde::{Deserialize, Serialize};
 
+use crate::consent::{Answer, ConsentBook, server_key};
 use crate::edit::{Studio, shown_path};
 use crate::patch::StudioPackage;
 
@@ -43,8 +44,10 @@ pub enum PlannerKind {
 }
 
 /// The planner settings (`route.planner`, `route.planner.brouter_url`,
-/// `route.planner.brouter_profile`; 16H Q3: the server has no default),
-/// kept in `<config dir>/ocw/studio/planner.json`.
+/// `route.planner.brouter_profile`; 16H Q3: the server has no default;
+/// the answers whether the via-points may go to a server,
+/// `route.planner.brouter_consent`, 16H Q21), kept in
+/// `<config dir>/ocw/studio/planner.json` (the game gets its own, Q20).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlannerSettings {
     #[serde(rename = "route.planner", default)]
@@ -56,6 +59,9 @@ pub struct PlannerSettings {
     /// The power the expected riding time is for (W; 16D *Views*).
     #[serde(rename = "route.estimate.power_w", default = "default_power")]
     pub power_w: f64,
+    /// Whether the via-points may go to a server, by server (12; 16H Q21).
+    #[serde(rename = "route.planner.brouter_consent", default)]
+    pub consent: ConsentBook,
 }
 
 fn trekking() -> String {
@@ -78,6 +84,7 @@ impl Default for PlannerSettings {
             brouter_url: String::new(),
             brouter_profile: trekking(),
             power_w: DEFAULT_POWER_W,
+            consent: ConsentBook::default(),
         }
     }
 }
@@ -107,6 +114,18 @@ impl PlannerSettings {
         let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
         std::fs::write(p, text + "\n").map_err(|e| format!("{}: {e}", shown_path(p)))
     }
+}
+
+/// The open question whether the via-points may go to the server (the
+/// consent dialog's state).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ConsentAsk {
+    /// The server asked about (the URL as entered).
+    pub server: String,
+    /// The tick box "Send the via-points to SERVER …".
+    pub send: bool,
+    /// "Remember this for SERVER" when not sending.
+    pub remember: bool,
 }
 
 /// A BRouter request on its way.
@@ -284,8 +303,10 @@ pub struct RouteTools {
     pub costs: Option<EdgeCosts>,
     pub settings: PlannerSettings,
     pub settings_path: Option<PathBuf>,
-    /// The user agreed that via-points go to the BRouter server (§12).
-    pub brouter_consent: bool,
+    /// The question whether the via-points may go to the BRouter server
+    /// (12; 16H Q21), while it is open; the answers are in
+    /// `settings.consent`.
+    pub asking: Option<ConsentAsk>,
     pub job: Option<PlanJob>,
     /// The via-point being dragged (a drag of the route inserts one).
     pub dragging: Option<usize>,
@@ -318,7 +339,7 @@ impl Default for RouteTools {
             costs: None,
             settings: PlannerSettings::load(settings_path.as_deref()),
             settings_path,
-            brouter_consent: false,
+            asking: None,
             job: None,
             dragging: None,
             view: RouteView::default(),
@@ -461,8 +482,22 @@ pub enum RouteCommand {
     Planner(PlannerKind),
     BRouterUrl(String),
     BRouterProfile(String),
-    BRouterConsent(bool),
-    /// Plans the via-points with BRouter (in the background).
+    /// The answer whether the via-points may go to the BRouter server:
+    /// "send" is remembered for the server; "don't send" only with
+    /// `remember` (16H Q21). Closes the question.
+    BRouterConsent {
+        answer: Answer,
+        remember: bool,
+    },
+    /// Opens the question (the consent dialog) for the current server.
+    AskConsent,
+    /// Closes the question without an answer (asked again next time).
+    CancelConsent,
+    /// Forgets the remembered answer of a server (`None`: the current
+    /// one; `Some("all")`: every server).
+    ForgetConsent(Option<String>),
+    /// Plans the via-points with BRouter (in the background); asks first
+    /// when the server has no answer yet.
     PlanExternal,
     /// Writes the route as a file (format by the extension, or given).
     Export(String, Option<TrackFormat>),
@@ -871,11 +906,25 @@ fn plan_external(studio: &mut Studio) -> Result<String, String> {
             "enter a BRouter server first (route.planner.brouter_url; there is no default)".into(),
         );
     }
-    if !studio.routes.brouter_consent {
-        return Err(format!(
-            "the via-points would be sent to {}: agree first (Routes → BRouter, or `studio route brouter ok`)",
-            s.brouter_url.trim()
-        ));
+    match s.consent.answer(&s.brouter_url) {
+        Some(Answer::Send) => {}
+        Some(Answer::DontSend) => {
+            return Err(format!(
+                "you chose not to send the via-points to {}: tick the box to send them (Routes → BRouter, or `studio route brouter ok`), or forget the answer (`studio planner forget`)",
+                s.brouter_url.trim()
+            ));
+        }
+        None => {
+            // Asked once per server (16H Q21): the dialog asks now.
+            studio.routes.asking = Some(ConsentAsk {
+                server: s.brouter_url.trim().to_string(),
+                ..ConsentAsk::default()
+            });
+            return Err(format!(
+                "the via-points would be sent to {}: agree first (the question in the Routes panel, or `studio route brouter ok`)",
+                s.brouter_url.trim()
+            ));
+        }
     }
     let doc = studio.route().ok_or("no route is open")?.content();
     let vias: Vec<[f64; 2]> = doc.geometry.vias.iter().map(|v| v.at).collect();
@@ -935,6 +984,9 @@ pub fn take_planned(
             })
             .collect(),
     };
+    // Points every 25 m at most: BRouter's line has them only at the OSM
+    // nodes, and a long straight tunnel is no recording gap (16H Q22).
+    let track = track.densified(25.0);
     let r = import_planned(&net, &doc.package, &track, vias, &planned.credit)?;
     let mut geometry = r.geometry;
     if doc.geometry.closed && geometry.vias.len() > 2 {
@@ -1221,8 +1273,9 @@ pub fn command(studio: &mut Studio, cmd: RouteCommand, now_s: f64) -> Result<Str
                 return Err("the BRouter server is an http:// or https:// URL".into());
             }
             if url != studio.routes.settings.brouter_url {
-                // A new server: ask again before sending anything.
-                studio.routes.brouter_consent = false;
+                // The answers are per server (16H Q21): a new one without
+                // an answer is asked about before anything is sent.
+                studio.routes.asking = None;
             }
             studio.routes.settings.brouter_url = url;
             save_settings(studio)?;
@@ -1233,9 +1286,75 @@ pub fn command(studio: &mut Studio, cmd: RouteCommand, now_s: f64) -> Result<Str
             save_settings(studio)?;
             Ok(format!("BRouter profile: {}", p.trim()))
         }
-        C::BRouterConsent(on) => {
-            studio.routes.brouter_consent = on;
+        C::BRouterConsent { answer, remember } => {
+            let url = studio.routes.settings.brouter_url.trim().to_string();
+            if url.is_empty() {
+                return Err("enter a BRouter server first".into());
+            }
+            studio.routes.asking = None;
+            if studio
+                .routes
+                .settings
+                .consent
+                .decide(&url, answer, remember)?
+            {
+                save_settings(studio)?;
+            }
+            Ok(match (answer, remember) {
+                (Answer::Send, _) => format!(
+                    "the via-points may go to {url} (remembered; forget it in the planner settings or with `studio planner forget`)"
+                ),
+                (Answer::DontSend, true) => format!("nothing is sent to {url} (remembered)"),
+                (Answer::DontSend, false) => format!("nothing is sent to {url} (this session)"),
+            })
+        }
+        C::AskConsent => {
+            let url = studio.routes.settings.brouter_url.trim().to_string();
+            if url.is_empty() {
+                return Err("enter a BRouter server first".into());
+            }
+            server_key(&url).ok_or("the BRouter server is an http:// or https:// URL")?;
+            studio.routes.asking = Some(ConsentAsk {
+                send: studio.routes.settings.consent.may_send(&url),
+                server: url,
+                remember: false,
+            });
             Ok(String::new())
+        }
+        C::CancelConsent => {
+            studio.routes.asking = None;
+            Ok(String::new())
+        }
+        C::ForgetConsent(which) => {
+            let current = studio.routes.settings.brouter_url.trim().to_string();
+            let book = &mut studio.routes.settings.consent;
+            let msg = match which.as_deref().map(str::trim) {
+                Some("all") => {
+                    let n = book.forget_all();
+                    format!("forgot the answers for {n} servers: each is asked again")
+                }
+                w => {
+                    let url = match w {
+                        Some(u) if !u.is_empty() => u.to_string(),
+                        _ => current,
+                    };
+                    if url.is_empty() {
+                        return Err(
+                            "studio planner forget [SERVER|all] (no BRouter server is set)".into(),
+                        );
+                    }
+                    let key = server_key(&url)
+                        .ok_or("the BRouter server is an http:// or https:// URL")?;
+                    if book.forget(&url) {
+                        format!("forgot the answer for {key}: it is asked again")
+                    } else {
+                        format!("no answer is remembered for {key}")
+                    }
+                }
+            };
+            studio.routes.asking = None;
+            save_settings(studio)?;
+            Ok(msg)
         }
         C::PlanExternal => plan_external(studio),
         C::Export(path, format) => {
@@ -1440,6 +1559,68 @@ pub fn update_routes(mut studio: ResMut<Studio>, time: Res<Time<Real>>) {
     studio.routes.update_estimate();
 }
 
+/// The words of `studio planner …` (pure): `forget [SERVER|all]` is a
+/// command; `info` (or nothing) is `None`, the settings' lines.
+pub fn console_planner(words: &[String]) -> Result<Option<RouteCommand>, String> {
+    match words.first().map(String::as_str) {
+        None | Some("info") => Ok(None),
+        Some("forget") => Ok(Some(RouteCommand::ForgetConsent(
+            words
+                .get(1..)
+                .map(|w| w.join(" "))
+                .filter(|w| !w.is_empty()),
+        ))),
+        Some(w) => Err(format!(
+            "studio planner forget [SERVER|all] | info (not `{w}`)"
+        )),
+    }
+}
+
+/// The planner settings in lines (`studio planner info`): the planner,
+/// the BRouter server and profile, and the remembered answers.
+pub fn planner_lines(studio: &Studio) -> Vec<String> {
+    let s = &studio.routes.settings;
+    let mut out = vec![format!(
+        "planner: {}",
+        match s.planner {
+            PlannerKind::Builtin => "built-in",
+            PlannerKind::Brouter => "BRouter",
+        }
+    )];
+    if s.brouter_url.trim().is_empty() {
+        out.push("BRouter server: none".into());
+    } else {
+        let answer = match s.consent.answer(&s.brouter_url) {
+            None => "not asked yet".to_string(),
+            Some(a) => format!(
+                "{}{}",
+                crate::consent::answer_text(a),
+                if s.consent.is_remembered(&s.brouter_url) {
+                    " (remembered)"
+                } else {
+                    " (this session)"
+                }
+            ),
+        };
+        out.push(format!(
+            "BRouter server: {} (profile {}): {answer}",
+            s.brouter_url.trim(),
+            s.brouter_profile
+        ));
+    }
+    let remembered: Vec<_> = s.consent.remembered().collect();
+    if remembered.is_empty() {
+        out.push("remembered answers: none".into());
+    }
+    for (server, a) in remembered {
+        out.push(format!(
+            "remembered: {server}: {}",
+            crate::consent::answer_text(a)
+        ));
+    }
+    out
+}
+
 /// The route words of `studio route …` (pure: the words to a command).
 pub fn console_route(words: &[String]) -> Result<RouteCommand, String> {
     use RouteCommand as C;
@@ -1458,7 +1639,7 @@ pub fn console_route(words: &[String]) -> Result<RouteCommand, String> {
             .ok_or_else(|| "via-points count from 1".into())
     };
     let rest = |i: usize| words.get(i..).map(|r| r.join(" ")).unwrap_or_default();
-    let usage = "studio route new [NAME] | import PATH | import part N|all | import cancel | power W | package N | fit | plan X Z X Z … | via add X Z | via insert N X Z | via move N X Z | via remove N | drag GX GZ X Z | reverse | loop on|off | outback | cut start|end N | split N | profile road|gravel|mtb|quiet | name TEXT | planner builtin|brouter | brouter url URL | brouter profile P | brouter ok | brouter plan | export PATH | save [PATH] | testride";
+    let usage = "studio route new [NAME] | import PATH | import part N|all | import cancel | power W | package N | fit | plan X Z X Z … | via add X Z | via insert N X Z | via move N X Z | via remove N | drag GX GZ X Z | reverse | loop on|off | outback | cut start|end N | split N | profile road|gravel|mtb|quiet | name TEXT | planner builtin|brouter | brouter url URL | brouter profile P | brouter ok | brouter no [remember] | brouter ask | brouter plan | export PATH | save [PATH] | testride";
     Ok(match (w(0), w(1)) {
         (Some("new"), _) => C::New((words.len() > 1).then(|| rest(1))),
         (Some("import"), Some("part")) => match w(2) {
@@ -1502,7 +1683,15 @@ pub fn console_route(words: &[String]) -> Result<RouteCommand, String> {
         (Some("planner"), Some("brouter")) => C::Planner(PlannerKind::Brouter),
         (Some("brouter"), Some("url")) => C::BRouterUrl(rest(2)),
         (Some("brouter"), Some("profile")) => C::BRouterProfile(rest(2)),
-        (Some("brouter"), Some("ok")) => C::BRouterConsent(true),
+        (Some("brouter"), Some("ok")) => C::BRouterConsent {
+            answer: Answer::Send,
+            remember: true,
+        },
+        (Some("brouter"), Some("no")) => C::BRouterConsent {
+            answer: Answer::DontSend,
+            remember: words.get(2).map(String::as_str) == Some("remember"),
+        },
+        (Some("brouter"), Some("ask")) => C::AskConsent,
         (Some("brouter"), Some("plan")) => C::PlanExternal,
         (Some("export"), Some(_)) => C::Export(rest(1), None),
         (Some("save"), _) => C::Save((words.len() > 1).then(|| rest(1))),
@@ -1790,6 +1979,11 @@ mod tests {
         );
         let e = command(&mut s, RouteCommand::PlanExternal, 2.0).unwrap_err();
         assert!(e.contains("agree first"), "{e}");
+        // Not asked yet: the question opens for this server.
+        assert_eq!(
+            s.routes.asking.as_ref().map(|a| a.server.as_str()),
+            Some("http://127.0.0.1:9")
+        );
         assert!(
             command(
                 &mut s,
@@ -1991,6 +2185,7 @@ mod tests {
             brouter_url: "http://localhost:17777".into(),
             brouter_profile: "fastbike".into(),
             power_w: 250.0,
+            consent: ConsentBook::default(),
         };
         s.save(Some(&p)).unwrap();
         let text = std::fs::read_to_string(&p).unwrap();
@@ -2271,6 +2466,329 @@ mod tests {
             console_route(&w("fly"))
                 .unwrap_err()
                 .contains("studio route new")
+        );
+    }
+
+    fn words(w: &[&str]) -> Vec<String> {
+        w.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// 16H Q21 (a): asked once per server, a yes remembered in
+    /// planner.json, a changed server asked again, a no remembered only
+    /// with "remember", and Forget (the button's command and `studio
+    /// planner forget`).
+    #[test]
+    fn the_brouter_question_is_asked_once_per_server_and_remembered() {
+        let dir = tmp_dir("consent");
+        let file = dir.join("planner.json");
+        let mut s = studio();
+        s.routes.settings_path = Some(file.clone());
+        run(&mut s, RouteCommand::New(None), 0.0);
+        run(
+            &mut s,
+            RouteCommand::Plan(vec![[0.0, 0.0], [600.0, 600.0]]),
+            1.0,
+        );
+        let home = "http://127.0.0.1:9";
+        run(&mut s, RouteCommand::BRouterUrl(home.into()), 2.0);
+        // Not asked yet: Plan opens the question, nothing is sent.
+        let e = command(&mut s, RouteCommand::PlanExternal, 2.0).unwrap_err();
+        assert!(e.contains("agree first"), "{e}");
+        assert!(s.routes.job.is_none());
+        assert_eq!(s.routes.asking.as_ref().unwrap().server, home);
+        // Yes: remembered in the file, the question closed.
+        let msg = run(
+            &mut s,
+            RouteCommand::BRouterConsent {
+                answer: Answer::Send,
+                remember: false,
+            },
+            3.0,
+        );
+        assert!(msg.contains("remembered"), "{msg}");
+        assert!(s.routes.asking.is_none());
+        let saved = PlannerSettings::load(Some(&file));
+        assert!(saved.consent.may_send(home));
+        assert!(saved.consent.may_send("http://127.0.0.1:9/brouter"));
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(
+            text.contains("\"route.planner.brouter_consent\"") && text.contains("\"send\""),
+            "{text}"
+        );
+        // The next session (settings read from the file) is not asked.
+        let mut next = studio();
+        next.routes.settings = saved.clone();
+        assert!(next.routes.settings.consent.may_send(home));
+        assert!(
+            planner_lines(&next)
+                .iter()
+                .any(|l| l.contains(home) && l.contains("(remembered)")),
+            "{:?}",
+            planner_lines(&next)
+        );
+        // A changed server is asked again.
+        let other = "http://127.0.0.1:10";
+        run(&mut s, RouteCommand::BRouterUrl(other.into()), 4.0);
+        let e = command(&mut s, RouteCommand::PlanExternal, 4.0).unwrap_err();
+        assert!(e.contains("agree first"), "{e}");
+        assert_eq!(s.routes.asking.as_ref().unwrap().server, other);
+        // No, without remember: this session only, nothing saved.
+        let msg = run(
+            &mut s,
+            RouteCommand::BRouterConsent {
+                answer: Answer::DontSend,
+                remember: false,
+            },
+            5.0,
+        );
+        assert!(msg.contains("this session"), "{msg}");
+        let e = command(&mut s, RouteCommand::PlanExternal, 5.0).unwrap_err();
+        assert!(e.contains("chose not to send"), "{e}");
+        assert!(
+            s.routes.asking.is_none(),
+            "a no is not asked again this session"
+        );
+        let saved = PlannerSettings::load(Some(&file));
+        assert_eq!(saved.consent.answer(other), None, "asked next session");
+        assert!(
+            saved.consent.may_send(home),
+            "the other server keeps its yes"
+        );
+        // No, with remember: saved.
+        run(
+            &mut s,
+            RouteCommand::BRouterConsent {
+                answer: Answer::DontSend,
+                remember: true,
+            },
+            6.0,
+        );
+        let saved = PlannerSettings::load(Some(&file));
+        assert_eq!(saved.consent.answer(other), Some(Answer::DontSend));
+        // Forget (the button): the current server only.
+        let msg = run(&mut s, RouteCommand::ForgetConsent(None), 7.0);
+        assert!(
+            msg.contains("forgot") && msg.contains("127.0.0.1:10"),
+            "{msg}"
+        );
+        let saved = PlannerSettings::load(Some(&file));
+        assert_eq!(saved.consent.answer(other), None);
+        assert!(saved.consent.may_send(home));
+        // `studio planner forget SERVER` and `… all`.
+        let c = console_planner(&words(&["forget", home])).unwrap().unwrap();
+        assert_eq!(c, RouteCommand::ForgetConsent(Some(home.into())));
+        run(&mut s, c, 8.0);
+        assert_eq!(
+            PlannerSettings::load(Some(&file)).consent.answer(home),
+            None
+        );
+        run(
+            &mut s,
+            RouteCommand::BRouterConsent {
+                answer: Answer::Send,
+                remember: false,
+            },
+            9.0,
+        );
+        let c = console_planner(&words(&["forget", "all"]))
+            .unwrap()
+            .unwrap();
+        let msg = run(&mut s, c, 9.0);
+        assert!(msg.contains("1 servers"), "{msg}");
+        assert_eq!(
+            PlannerSettings::load(Some(&file))
+                .consent
+                .remembered()
+                .count(),
+            0
+        );
+        assert_eq!(console_planner(&words(&["info"])).unwrap(), None);
+        assert_eq!(console_planner(&[]).unwrap(), None);
+        assert!(console_planner(&words(&["frobnicate"])).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_console_answers_the_brouter_question() {
+        assert_eq!(
+            console_route(&words(&["brouter", "ok"])).unwrap(),
+            RouteCommand::BRouterConsent {
+                answer: Answer::Send,
+                remember: true
+            }
+        );
+        assert_eq!(
+            console_route(&words(&["brouter", "no"])).unwrap(),
+            RouteCommand::BRouterConsent {
+                answer: Answer::DontSend,
+                remember: false
+            }
+        );
+        assert_eq!(
+            console_route(&words(&["brouter", "no", "remember"])).unwrap(),
+            RouteCommand::BRouterConsent {
+                answer: Answer::DontSend,
+                remember: true
+            }
+        );
+        assert_eq!(
+            console_route(&words(&["brouter", "ask"])).unwrap(),
+            RouteCommand::AskConsent
+        );
+        // The question asks about the current server, ticked when it may
+        // already be sent.
+        let mut s = studio();
+        assert!(command(&mut s, RouteCommand::AskConsent, 0.0).is_err());
+        run(
+            &mut s,
+            RouteCommand::BRouterUrl("http://127.0.0.1:9".into()),
+            0.0,
+        );
+        run(&mut s, RouteCommand::AskConsent, 0.0);
+        assert!(!s.routes.asking.as_ref().unwrap().send);
+        run(&mut s, RouteCommand::CancelConsent, 0.0);
+        assert!(s.routes.asking.is_none());
+        assert_eq!(s.routes.settings.consent.answer("http://127.0.0.1:9"), None);
+    }
+
+    /// The live planner test against our own BRouter (16H Q22 (a)):
+    /// `make test-studio-planners` starts the server
+    /// (scripts/brouter-test-server.sh, segments built from our
+    /// Liechtenstein extract) and sets OCW_BROUTER_URL and
+    /// OCW_BROUTER_PACKAGE. Plans from the start to the end of the
+    /// package's route "Vaduz - Malbun" with BRouter, through the studio's
+    /// own path (consent, the request off the UI thread, the answer matched
+    /// onto the package's graph), and checks that it follows the package's
+    /// roads (no problem section) and that its length is within 10 % of
+    /// the package route's, half of it or more on that route's roads.
+    /// Without OCW_BROUTER_URL it is skipped (OCW_BROUTER_LIVE=1 makes
+    /// that a failure).
+    #[test]
+    fn brouter_live_vaduz_malbun_follows_the_package() {
+        let Ok(url) = std::env::var("OCW_BROUTER_URL") else {
+            assert!(
+                std::env::var_os("OCW_BROUTER_LIVE").is_none(),
+                "OCW_BROUTER_LIVE is set but OCW_BROUTER_URL is not: run it through scripts/brouter-test-server.sh run"
+            );
+            eprintln!("skipped: no OCW_BROUTER_URL (make test-studio-planners runs it)");
+            return;
+        };
+        let path = std::env::var_os("OCW_BROUTER_PACKAGE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../data/pilot/liechtenstein.ocwpkg")
+            });
+        let bytes = std::fs::read(&path)
+            .unwrap_or_else(|e| panic!("the Liechtenstein package (OCW_BROUTER_PACKAGE): {e}"));
+        let pkg = Arc::new(ocw_world::WorldPackage::from_bytes(&bytes).expect("a package"));
+        let sp = StudioPackage::new(pkg.clone(), path, None);
+        let mut s = Studio::new(Some(Box::new(MemoryStore::default())), None);
+        s.routes = RouteTools::detached();
+        s.routes.set_package(&sp, "pilot/liechtenstein");
+        s.package = Some(sp);
+        let i = pkg
+            .routes
+            .iter()
+            .position(|r| r.name.contains("Malbun"))
+            .expect("the package's route Vaduz - Malbun");
+        run(&mut s, RouteCommand::PackageRoute(i), 0.0);
+        let net = s.routes.net.clone().unwrap();
+        let reference = s.route().unwrap().content().plan(&net).unwrap();
+        let ref_len = reference.length_m();
+        let edge_len = |plan: &ocw_world::RoutePlan| -> Vec<(usize, f64)> {
+            plan.steps
+                .iter()
+                .filter_map(|st| match st {
+                    ocw_world::Segment::Edge { edge, from_m, to_m } => {
+                        Some((*edge, (to_m - from_m).abs()))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let ref_edges: std::collections::HashSet<usize> =
+            edge_len(&reference).into_iter().map(|(e, _)| e).collect();
+        let vias = &s.route().unwrap().content().geometry.vias;
+        let (from, to) = (vias[0].at, vias[vias.len() - 1].at);
+        // For scripts/studio-brouter-shots.sh (BROUTER_FROM / BROUTER_TO).
+        eprintln!(
+            "the package route's start {:.0} {:.0}, end {:.0} {:.0} (package metres)",
+            from[0], from[1], to[0], to[1]
+        );
+        run(
+            &mut s,
+            RouteCommand::New(Some("Vaduz - Malbun (BRouter)".into())),
+            1.0,
+        );
+        run(&mut s, RouteCommand::Plan(vec![from, to]), 1.0);
+        run(&mut s, RouteCommand::Planner(PlannerKind::Brouter), 1.0);
+        run(&mut s, RouteCommand::BRouterUrl(url.clone()), 1.0);
+        let profile = std::env::var("OCW_BROUTER_PROFILE").unwrap_or_else(|_| "trekking".into());
+        run(&mut s, RouteCommand::BRouterProfile(profile), 1.0);
+        run(
+            &mut s,
+            RouteCommand::BRouterConsent {
+                answer: Answer::Send,
+                remember: true,
+            },
+            1.0,
+        );
+        run(&mut s, RouteCommand::PlanExternal, 2.0);
+        let job = s.routes.job.take().expect("a request on its way");
+        let answer = job
+            .rx
+            .lock()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(90))
+            .expect("BRouter answers within 90 s")
+            .unwrap_or_else(|e| panic!("BRouter: {e}"));
+        let brouter_len = answer.length_m.unwrap_or(0.0);
+        let msg = take_planned(&mut s, &answer, &job.vias, 3.0).unwrap();
+        eprintln!("{msg}");
+        let d = s.route().unwrap().content();
+        assert!(d.geometry.credits.iter().any(|c| c.contains("BRouter")));
+        let plan = d.plan(&net).unwrap();
+        let len = plan.length_m();
+        let steps = edge_len(&plan);
+        let total: f64 = steps.iter().map(|(_, l)| l).sum();
+        let shared: f64 = steps
+            .iter()
+            .filter(|(e, _)| ref_edges.contains(e))
+            .map(|(_, l)| l)
+            .sum();
+        let problems = d.problems.len();
+        let pts = &d.track.as_ref().expect("BRouter's line").points;
+        for p in &d.problems {
+            let along: f64 = (p.first..p.last.min(pts.len() - 1))
+                .map(|i| {
+                    let (a, b) = (&pts[i], &pts[i + 1]);
+                    let dy = (b.lat - a.lat) * 111_195.0;
+                    let dx = (b.lon - a.lon) * 111_195.0 * a.lat.to_radians().cos();
+                    dx.hypot(dy)
+                })
+                .sum();
+            eprintln!(
+                "  {:?}: points {}..{} ({along:.0} m along, {:?} m off) at {:.5},{:.5}",
+                p.kind, p.first, p.last, p.metres, pts[p.first].lat, pts[p.first].lon
+            );
+        }
+        eprintln!(
+            "Vaduz - Malbun: package {:.0} m; BRouter {:.0} m (its own count {:.0} m), {:.1} % on the package route's roads, {problems} sections off the package's roads",
+            ref_len,
+            len,
+            brouter_len,
+            shared / total.max(1.0) * 100.0
+        );
+        assert_eq!(problems, 0, "BRouter's line leaves the package's roads");
+        assert!(
+            (len - ref_len).abs() <= 0.10 * ref_len,
+            "BRouter {len:.0} m against the package's {ref_len:.0} m"
+        );
+        assert!(
+            shared >= 0.5 * total,
+            "only {:.1} % of BRouter's route is on the package route's roads",
+            shared / total * 100.0
         );
     }
 }

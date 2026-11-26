@@ -150,6 +150,36 @@ pub struct Track {
 }
 
 impl Track {
+    /// The track with points added on every straight stretch longer than
+    /// `step_m`, evenly, heights interpolated (a planner's line has points
+    /// only at the OSM nodes: a straight tunnel or bridge can be 700 m
+    /// from one to the next, which is no recording gap; with the points in
+    /// between, matching checks that the package has a road there too).
+    pub fn densified(&self, step_m: f64) -> Self {
+        let mut points = Vec::with_capacity(self.points.len());
+        for (i, p) in self.points.iter().enumerate() {
+            if let Some(q) = i.checked_sub(1).map(|j| &self.points[j]) {
+                let dy = (p.lat - q.lat) * 111_195.0;
+                let dx = (p.lon - q.lon) * 111_195.0 * q.lat.to_radians().cos();
+                let n = (dx.hypot(dy) / step_m.max(1.0)).ceil() as usize;
+                for k in 1..n {
+                    let t = k as f64 / n as f64;
+                    points.push(TrackPoint {
+                        lat: q.lat + (p.lat - q.lat) * t,
+                        lon: q.lon + (p.lon - q.lon) * t,
+                        ele: q.ele.zip(p.ele).map(|(a, b)| a + (b - a) * t),
+                    });
+                }
+            }
+            points.push(*p);
+        }
+        Self {
+            name: self.name.clone(),
+            format: self.format.clone(),
+            points,
+        }
+    }
+
     pub fn of_gpx(g: &ocw_world::gpx::Gpx, format: &str) -> Self {
         Self {
             name: g.name.clone(),
@@ -1919,6 +1949,69 @@ mod tests {
         );
         // 1200 m on the grid; the last 40 m are past the package's roads.
         assert!((d.plan(&net).unwrap().length_m() - 1200.0).abs() < 5.0);
+    }
+
+    /// A planner's line has points only at OSM nodes: a long straight road
+    /// (the 740 m tunnel Gnalp – Steg on Vaduz – Malbun, found by the live
+    /// BRouter test, 16H Q22) is one jump, which is no recording gap once
+    /// the line is densified – while a jump where the package has no road
+    /// is still found.
+    #[test]
+    fn a_planners_long_straight_road_is_no_gap() {
+        let (net, _) = setup();
+        let proj = LocalProjection::new(ORIGIN.0, ORIGIN.1);
+        let track = |xz: &[[f64; 2]]| Track {
+            name: None,
+            format: "BRouter".into(),
+            points: xz
+                .iter()
+                .map(|p| {
+                    let (lat, lon) = proj.unproject(*p);
+                    TrackPoint {
+                        lat,
+                        lon,
+                        ele: Some(400.0 + p[1] / 10.0),
+                    }
+                })
+                .collect(),
+        };
+        // Along row z = 0 every 20 m, then one 600 m jump up the column
+        // x = 600 (a road).
+        let mut xz: Vec<[f64; 2]> = (0..=30).map(|k| [f64::from(k) * 20.0, 0.0]).collect();
+        xz.push([600.0, 600.0]);
+        let sparse = track(&xz);
+        let vias = [[0.0, 0.0], [600.0, 600.0]];
+        let r = import_planned(&net, &package(&net), &sparse, &vias, "BRouter").unwrap();
+        assert!(
+            r.problems.iter().any(|p| p.kind == ProblemKind::Gap),
+            "{:?}",
+            r.problems
+        );
+        let dense = sparse.densified(25.0);
+        assert!(dense.points.len() > xz.len() + 20, "{}", dense.points.len());
+        // The ends and the heights in between stay.
+        assert_eq!(dense.points[0], sparse.points[0]);
+        assert_eq!(dense.points.last(), sparse.points.last());
+        let mid = dense.points[dense.points.len() - 13];
+        assert!(
+            mid.ele.unwrap() > 400.0 && mid.ele.unwrap() < 460.0,
+            "{mid:?}"
+        );
+        let r = import_planned(&net, &package(&net), &dense, &vias, "BRouter").unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        // A jump straight across the blocks (no road there) is still a
+        // problem when densified.
+        let mut cut: Vec<[f64; 2]> = (0..=10).map(|k| [f64::from(k) * 20.0, 0.0]).collect();
+        cut.push([600.0, 600.0]);
+        let r = import_planned(
+            &net,
+            &package(&net),
+            &track(&cut).densified(25.0),
+            &vias,
+            "BRouter",
+        )
+        .unwrap();
+        assert!(!r.problems.is_empty(), "the cut across has no road");
     }
 
     #[test]

@@ -31,6 +31,7 @@
 
 mod aerial;
 mod build;
+mod consent;
 mod edit;
 mod flight;
 mod icon;
