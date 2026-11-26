@@ -31,7 +31,7 @@ scripts/remote.sh "$machine" run "${env}${cmd}"
 
 # The page: only the files it loads (no cargo output, even from older builds
 # whose `web` profile wrote into target/web/).
-files=(index.html ocw-voice.js ocw-gpu.js ocw-xr.js ocw-net-worker.js ocw_web.js ocw_web_bg.wasm ocw_web_webgl2.js ocw_web_webgl2_bg.wasm
+files=(index.html ocw-voice.js ocw-gpu.js ocw-log.js ocw-xr.js ocw-net-worker.js ocw_web.js ocw_web_bg.wasm ocw_web_webgl2.js ocw_web_webgl2_bg.wasm
        ocw_web_webxr.js ocw_web_webxr_bg.wasm
        livekit-client.umd.js livekit-client.LICENSE.txt sizes.txt)
 filters=(--include=/web/)

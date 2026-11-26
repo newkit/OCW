@@ -6,6 +6,12 @@
        whole screen behind a phone's notch; the HUD, the touch zones and the
        page's panels keep clear of env(safe-area-inset-*). -->
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <!-- The page log (spec 14 Phase 10, 10G *The page log*): the first
+       script, so it captures every line from here on – the console, the
+       app's (Rust) lines, uncaught errors – before the wasm loads. ?log=1
+       or five taps on the version stamp show it; an error screen offers
+       "Show log". -->
+  <script src="ocw-log.js"></script>
   <title>Open Cycling World</title>
   <!-- The logo (artwork/logos/ocw.svg and its PNGs, copied by
        scripts/build-web.sh). -->

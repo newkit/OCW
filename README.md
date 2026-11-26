@@ -691,6 +691,46 @@ change the virtual power: + adds 25 W (hold it to keep adding, as ↑ does),
 − takes 10 W away, stop brakes (as ↓ does), + rides on again. A
 larger HUD: *Settings → Display → Accessibility → HUD size*.
 
+#### Something doesn't work on my phone – the log
+
+A phone has no developer console without a computer (an iPhone's Safari
+needs a Mac and a cable, Android's Chrome `chrome://inspect` on a PC), so
+the page keeps its own log and shows it on the screen. To send it:
+
+1. **Open the log.** Either add **`?log=1`** to the address (or `&log=1`
+   when the address already has a `?`, e.g.
+   `…/OCW/?route=hills&log=1`) and load it, or **tap the small version
+   stamp in the bottom right corner five times quickly** (on the start
+   page: the *Build …* line at the bottom). When the page fails – "this
+   browser is too old", no WebGPU / WebGL 2, the app did not load, the
+   ride stopped after crashes, or the loading screen stays for 45 s – it
+   offers a **Show log** button by itself.
+2. **Press Copy** (then paste into a message or an e-mail) or **Share**
+   (the phone's share sheet: Mail, Messages, … – the log goes as a `.txt`
+   file). If Copy cannot reach the clipboard, the text appears selected in
+   a box: press and hold it, then *Copy*. **Download** saves it as a
+   `.txt` file.
+3. **Send the text** to whoever helps you (an issue on GitHub, a message).
+
+The log starts with the facts that usually explain a failure – the
+browser and system (user agent), the screen and pixel ratio, WebGPU (and
+its adapter) and WebGL 2, WebAssembly SIMD and threads, the memory hints,
+the page's build and the app's build, the graphics the page chose, the
+address – then every line since the page started, with the seconds since
+then: the page's messages, the app's own lines (`rs …`), errors with their
+file and line, failed loads, the page being hidden or shown, and the
+memory every 15 s. It never contains a password or token: secret-looking
+values, the sensor bridge's pairing code and the rider's name (in the
+address and in the app's lines) are replaced by `(hidden)`.
+
+**After a crash:** the page keeps the log in the tab (sessionStorage), so
+when the browser closes and reloads the page (iPhones do this when a page
+uses too much memory), the log of **the page load before** is shown too,
+with whether it ended normally or was killed. So: when the ride crashes,
+open the log on the reloaded page and send it – the crash is in the part
+*the page load before*. *Clear* empties both, *Hide* closes the panel (it
+stays open over reloads until then), *↕* makes it taller.
+
 #### Graphics: WebGPU, WebGL 2 and the quality presets
 
 The WebGL 2 build draws the same world with what WebGL 2 lacks degraded:
@@ -738,6 +778,7 @@ or the server and bot builds, where it needs them). Screenshots, logs and JSON s
 | `make test-web-webgl2` | Chromium without WebGPU: the page falls back to the WebGL 2 build and rides. Then WebGPU High against WebGL 2 Low in the same view, and the Graphics page. Then `test-web-gpu` |
 | `make test-web-gpu` | The page's GPU choice (`ocw-gpu.js`'s rules, pure), then WebGPU failures injected into the real app (a validation error, a refused device, no frame): each ride comes back on WebGL 2 with the note and draws; the remembered failure; `?gpu=webgpu`; a healthy WebGPU ride raises no alarm; Safari on an iPhone 15 takes WebGL 2 |
 | `make test-web-webkit` | WebKit, Safari's engine (Playwright's build, `make deps-webkit`: a venv in `~/.cache/ocw/playwright-venv`, no sudo): an iPhone 15 (portrait and landscape) and Safari on macOS, with Safari 26's `navigator.gpu` faked in – the start page's WebGL 2 box ticked, the ride on WebGL 2 rides and draws; on the iPhone the manifest and its icons, the safe-area insets passed in (`?safe-insets=`), taps on each half steer and taps behind the notch or on the home bar do not, a held side, no full screen (the Add to Home Screen tip), the wake lock missing (tolerated) and present (asked again), no page errors |
+| `make test-web-log` | The page log on phones (Playwright, `make deps-webkit`): WebKit as an iPhone 15 and Chromium as an Android phone – `?log=1` shows the panel before the wasm with the environment header and the page's, the app's (Rust) and the uncaught lines; Copy (the clipboard read back in Chromium), Download, the 2,000-line ring buffer, the load before after a reload and after a load killed without pagehide, five taps on the version stamp, and *Show log* on the too-old, blocked-wasm and no-GPU screens; into `test-output/web-log/` |
 | `make test-web-ios` | WebKit with the iPhone 15 profile, a long ride (`IOS_MINUTES`, 5) with the page hidden and shown every minute and the memory every 5 s; then the WebGL context lost while hidden (the app stops, the ride loads again once) and again (a message, no second reload) – the iPhone's restarts of 2026-11-22; `scripts/test-web-ios.py --world ID --route NAME --deaths` rides a world and emulates two kills of the tab (less memory, then a message instead of a restart loop) |
 | `scripts/test-web-safari.py` | The real Safari on a Mac over `safaridriver` (`--gpu webgpu` tries Safari's WebGPU): the GPU the page chose, the watchdog's state, a screenshot. It needs the Mac's desktop logged in and `sudo safaridriver --enable` once |
 | `make test-web-world` | Liechtenstein streamed from the dev server, a teleport, then a reload from the browser cache |
