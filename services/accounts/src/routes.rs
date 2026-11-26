@@ -12,6 +12,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use axum::Router;
+use axum::body::Bytes;
 use axum::extract::{ConnectInfo, Form, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -21,6 +22,8 @@ use ocw_auth::oidc::ErrorResponse;
 
 use crate::pages;
 use crate::service::{AuthService, Authorize, Callback, OAuthError};
+use crate::workshop::{ApiFail, Workshop};
+use ocw_account_api::workshop::Endpoint;
 
 type Svc = State<Arc<AuthService>>;
 type Pairs = Vec<(String, String)>;
@@ -45,6 +48,16 @@ pub fn router(svc: Arc<AuthService>) -> Router {
         )
         .route("/account/export", get(export).options(preflight))
         .route("/account", delete(delete_account).options(preflight))
+        .route("/workshop", get(workshop_state).options(preflight))
+        .route("/workshop/ledger", get(workshop_ledger).options(preflight))
+        .route(
+            "/workshop/purchase",
+            post(workshop_purchase).options(preflight),
+        )
+        .route("/workshop/sell", post(workshop_sell).options(preflight))
+        .route("/workshop/garage", post(workshop_garage).options(preflight))
+        .route("/rides/credit", post(rides_credit))
+        .route("/rides/summary", post(rides_summary).options(preflight))
         .route("/health", get(|| async { "ok" }))
         .with_state(svc)
 }
@@ -191,7 +204,7 @@ async fn preflight(State(svc): Svc, headers: HeaderMap) -> Response {
     );
     h.insert(
         header::ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("authorization, content-type"),
+        HeaderValue::from_static("authorization, content-type, idempotency-key"),
     );
     h.insert(
         header::ACCESS_CONTROL_MAX_AGE,
@@ -513,6 +526,75 @@ async fn delete_account(State(svc): Svc, headers: HeaderMap) -> Response {
         Err(e) => json_error(e),
     };
     cors(&svc, &headers, r)
+}
+
+// ---- workshop and rides (spec 14 Phase 4, 4O) ---------------------------
+
+fn api<T: serde::Serialize>(r: Option<Result<T, ApiFail>>) -> Response {
+    match r {
+        Some(Ok(v)) => json_ok(&v),
+        Some(Err(e)) => json_error(e.into_oauth()),
+        None => json_error((500, ErrorResponse::new("server_error", "internal error"))),
+    }
+}
+
+fn owned_auth(headers: &HeaderMap) -> Option<String> {
+    auth_header(headers).map(str::to_owned)
+}
+
+async fn workshop_state(State(svc): Svc, headers: HeaderMap) -> Response {
+    let a = owned_auth(&headers);
+    let s = svc.clone();
+    let r = blocking(move || Workshop::new(s).state(a.as_deref())).await;
+    cors(&svc, &headers, api(r))
+}
+
+async fn workshop_ledger(State(svc): Svc, headers: HeaderMap) -> Response {
+    let a = owned_auth(&headers);
+    let s = svc.clone();
+    let r = blocking(move || Workshop::new(s).ledger(a.as_deref())).await;
+    cors(&svc, &headers, api(r))
+}
+
+async fn workshop_action(
+    svc: Arc<AuthService>,
+    headers: HeaderMap,
+    endpoint: Endpoint,
+    body: Bytes,
+) -> Response {
+    let a = owned_auth(&headers);
+    let key = headers
+        .get("idempotency-key")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let s = svc.clone();
+    let r =
+        blocking(move || Workshop::new(s).act(a.as_deref(), endpoint, key.as_deref(), &body)).await;
+    cors(&svc, &headers, api(r))
+}
+
+async fn workshop_purchase(State(svc): Svc, headers: HeaderMap, body: Bytes) -> Response {
+    workshop_action(svc, headers, Endpoint::Purchase, body).await
+}
+
+async fn workshop_sell(State(svc): Svc, headers: HeaderMap, body: Bytes) -> Response {
+    workshop_action(svc, headers, Endpoint::Sell, body).await
+}
+
+async fn workshop_garage(State(svc): Svc, headers: HeaderMap, body: Bytes) -> Response {
+    workshop_action(svc, headers, Endpoint::Garage, body).await
+}
+
+async fn rides_credit(State(svc): Svc, body: Bytes) -> Response {
+    let s = svc.clone();
+    api(blocking(move || Workshop::new(s).credit(&body)).await)
+}
+
+async fn rides_summary(State(svc): Svc, headers: HeaderMap, body: Bytes) -> Response {
+    let a = owned_auth(&headers);
+    let s = svc.clone();
+    let r = blocking(move || Workshop::new(s).summary(a.as_deref(), &body)).await;
+    cors(&svc, &headers, api(r))
 }
 
 #[cfg(test)]

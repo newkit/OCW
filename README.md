@@ -2893,9 +2893,78 @@ there (`make web-serve`, page `?auth=http://127.0.0.1:8480`).
 Redirect URIs at a glance: Google `https://<domain>/callback/google`, Strava
 callback domain `<domain>`; the desktop app uses a loopback redirect
 `http://127.0.0.1:<any port>/callback` (nothing to register), the browser app
-its exact page, kiosks the device code (`https://<domain>/device`). Accounts
-are kept in one private JSON file for now (`[storage] kind = "file"`);
-PostgreSQL follows with the hosted backend.
+its exact page, kiosks the device code (`https://<domain>/device`). The
+hosted backend keeps everything in **PostgreSQL** (`[storage] kind =
+"postgres"`, below); `kind = "file"` (one private JSON file) and `"memory"`
+stay for development – there the workshop and hearts live only in memory.
+
+### Accounts with PostgreSQL: workshop and hearts
+
+With PostgreSQL the backend keeps each account's **workshop and hearts**
+(spec 14 Phase 4, 4O): the hearts balance with an append-only ledger (every
+credit and debit with its reason – start, ride, purchase, sale … – and a
+reference), the bikes, parts and kit, purchases and sales at the parts
+catalogue's prices (`assets/parts.toml`), and the hearts of rides. Every new
+account starts fresh with **5,000 ♥** and nothing bought: a free starter bike
+with its base parts, the base kit (Q21 (a); local test wallets are not
+imported). A frameset bought is a complete bike with base parts in every slot
+(Q18 (a)), so 5,000 ♥ buys an entry or mid-tier bike and kit. The balance
+never goes below zero (checked in the transaction and by the database).
+
+**The configuration** (in `config/accounts.toml`, git-ignored):
+
+```toml
+[storage]
+kind = "postgres"
+# The URL holds the password: give it in the environment, not here.
+url_env = "DATABASE_URL"   # the default; `url = "postgres://…"` also works
+max_connections = 8
+secrets_key = "config/accounts/secrets.key"
+
+[hearts]
+# Game servers whose signing key one of these roots certified credit
+# hearts directly (Q19 (a)); every other ride counts through the summary
+# the app uploads, after the plausibility checks of spec 6.4.
+roots = ["config/accounts/ocw-root.pub.json"]
+revoked = []               # key ids (16 hex digits) of revoked keys
+```
+
+The migrations (`services/accounts/migrations/`, `sqlx`) run when the backend
+starts; it needs one database and a role that owns it. PostgreSQL 17 is the
+version the tests pin (16 works as well). **Run it locally:**
+
+```bash
+# A PostgreSQL of your own (any install; this one is a throw-away cluster):
+initdb -D ~/ocw-pg -U ocw --auth=trust && pg_ctl -D ~/ocw-pg -o "-p 5433" -l ~/ocw-pg.log start
+export DATABASE_URL=postgres://ocw@127.0.0.1:5433/postgres
+cargo run -p ocw-server -- --auth-config config/accounts.toml --bots 0
+```
+
+**How the game connects:** the apps sign in as above and then use the same
+backend with their access token (`Authorization: Bearer …`):
+
+| Endpoint | What |
+|---|---|
+| `GET /workshop` | the account's balance, garage (bikes, items, worn kit) and the newest ledger lines |
+| `GET /workshop/ledger` | the newest ledger lines |
+| `POST /workshop/purchase` | `{"action":"buy_part","bike":…,"part":…}` or `{"action":"buy_bike","frame":…,"with":[…]}`; needs an `Idempotency-Key` header |
+| `POST /workshop/sell` | `{"action":"sell","item":N}` or `{"action":"sell_bike","bike":…}`; needs an `Idempotency-Key` |
+| `POST /workshop/garage` | `equip`, `unequip`, `select`, `paint` (free) |
+| `POST /rides/summary` | the app's summary of a ride (1 Hz power, cadence, heart rate, devices): credited once per ride id after the checks, implausible rides held for review |
+| `POST /rides/credit` | no token: a ride credit signed by a game server's certified key (`SigningKeyPair::sign_document` with `RIDE_CREDIT_CONTEXT`) |
+
+A request repeated with the same `Idempotency-Key` (or a ride sent again)
+gets the first answer and changes nothing; the same key with another request
+is refused. The wire types are in `crates/ocw-account-api` (shared with the
+apps), with the plausibility checks and the apps' offline queue (Q20 (a):
+offline the workshop is read-only with the bikes and kit last synced, and
+ride summaries wait in a queue that is uploaded once the backend answers).
+
+**Tests:** `make test-accounts` (on marge or leela) unpacks a pinned
+PostgreSQL 17.11 (portable Linux x86_64 binaries, SHA-256 checked, cached in
+`~/.cache/ocw/`; nothing is installed), starts a throw-away cluster in a
+temporary directory and runs the accounts tests against it and against the
+memory store.
 
 ## Running the server
 

@@ -1090,6 +1090,79 @@ impl SigningKeyPair {
             None => Ok(k),
         }
     }
+
+    /// Signs another kind of document under its own `context` (a ride
+    /// credit of a game server, spec 14 Phase 4, 4O Q19): the same chain
+    /// as a manifest, checked with [`SignedDocument::verify`].
+    pub fn sign_document(&self, context: &[u8], value: &impl Serialize) -> SignedDocument {
+        let signed = raw_json(value);
+        let signature = sign(&self.key, context, signed.get());
+        SignedDocument {
+            key: self.cert.clone(),
+            signed,
+            signature,
+        }
+    }
+}
+
+/// A document other than a manifest signed by a certified signing key:
+/// the signing key's certificate, the signed JSON as raw bytes and the
+/// signature over them behind the document kind's context string.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignedDocument {
+    pub key: SigningKeyCert,
+    signed: Box<RawValue>,
+    signature: Hex<64>,
+}
+
+impl SignedDocument {
+    /// The signed JSON (parse it after [`Self::verify`]).
+    pub fn signed_json(&self) -> &str {
+        self.signed.get()
+    }
+
+    /// Checks the chain: the certificate signed by a root of `trust`,
+    /// neither key revoked, the document's signature by the signing key
+    /// under `context`, and `issued_unix_s` (the time the document says it
+    /// was signed) within the key's validity and not more than a day
+    /// ahead of `now_unix_s`. Only the roots in `trust` count – a root
+    /// that comes with a user's key is never trusted here.
+    pub fn verify(
+        &self,
+        trust: &TrustStore,
+        context: &[u8],
+        issued_unix_s: i64,
+        now_unix_s: i64,
+    ) -> Result<SigningKeyClaims, VerifyError> {
+        let (claims, root) = self.key.verify(trust)?;
+        for id in [root.key_id, claims.key_id] {
+            if trust.revoked.contains(&id) {
+                return Err(VerifyError::Revoked(id));
+            }
+        }
+        verify(
+            &claims.public_key,
+            context,
+            self.signed.get(),
+            &self.signature,
+        )
+        .map_err(|_| VerifyError::BadSignature("document"))?;
+        if issued_unix_s < claims.valid_from_unix_s || issued_unix_s > claims.valid_until_unix_s {
+            return Err(VerifyError::KeyNotValid {
+                key: claims.key_id,
+                created_unix_s: issued_unix_s,
+                from_unix_s: claims.valid_from_unix_s,
+                until_unix_s: claims.valid_until_unix_s,
+            });
+        }
+        if issued_unix_s > now_unix_s.saturating_add(MAX_CLOCK_SKEW_S) {
+            return Err(VerifyError::FromTheFuture {
+                created_unix_s: issued_unix_s,
+                now_unix_s,
+            });
+        }
+        Ok(claims)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1390,6 +1463,47 @@ mod tests {
             T0 + 30 * DAY,
         );
         (root, SigningKeyPair::new(seed, cert).unwrap())
+    }
+
+    #[test]
+    fn signed_documents_check_the_chain_context_and_time() {
+        const CTX: &[u8] = b"OCW test document v1\0";
+        let (root, key) = keys();
+        let trust = TrustStore::new([root.public()]);
+        let doc = key.sign_document(CTX, &serde_json::json!({"hearts": 12}));
+        let json = serde_json::to_string(&doc).unwrap();
+        let doc: SignedDocument = serde_json::from_str(&json).unwrap();
+        assert!(doc.verify(&trust, CTX, T0, T0).is_ok());
+        assert!(doc.signed_json().contains("12"));
+        // Another context, another root, a revoked key, outside validity.
+        assert!(matches!(
+            doc.verify(&trust, b"other\0", T0, T0),
+            Err(VerifyError::BadSignature(_))
+        ));
+        let other = TrustStore::new([RootKeyPair::from_seed("Other", [5; 32]).public()]);
+        assert!(matches!(
+            doc.verify(&other, CTX, T0, T0),
+            Err(VerifyError::UnknownRoot(_))
+        ));
+        let mut revoked = trust.clone();
+        revoked.revoked.push(key.claims().key_id);
+        assert!(matches!(
+            doc.verify(&revoked, CTX, T0, T0),
+            Err(VerifyError::Revoked(_))
+        ));
+        assert!(matches!(
+            doc.verify(&trust, CTX, T0 + 60 * DAY, T0 + 60 * DAY),
+            Err(VerifyError::KeyNotValid { .. })
+        ));
+        assert!(matches!(
+            doc.verify(&trust, CTX, T0 + 3 * DAY, T0),
+            Err(VerifyError::FromTheFuture { .. })
+        ));
+        // A changed document fails.
+        let tampered = json.replace("\"hearts\": 12", "\"hearts\": 99");
+        assert_ne!(tampered, json);
+        let tampered: SignedDocument = serde_json::from_str(&tampered).unwrap();
+        assert!(tampered.verify(&trust, CTX, T0, T0).is_err());
     }
 
     fn manifest(bytes: &[u8]) -> Manifest {
