@@ -15,8 +15,9 @@
 //! - **`secrets.toml`** next to it, readable only by the user (mode 0600 on
 //!   Unix; on Windows the user's profile folder is private): `[strava]`
 //!   (the API application's `client_id` / `client_secret`),
-//!   `[strava_token]` (its tokens) and `[account]` (the sign-in session
-//!   when no system keyring keeps it). `ocw.toml` never holds a secret
+//!   `[strava_token]` (its tokens), `[account]` (the sign-in session
+//!   when no system keyring keeps it) and `[ant]` (the ANT+ network key
+//!   the rider entered, spec 14 Phase 17 Q1 (b)). `ocw.toml` never holds a secret
 //!   ([`SECRET_KEYS`], checked by a test).
 //! - **Migration** ([`migrate`]): the old files of the config folder
 //!   (`settings.toml`, `riders.toml`, `devices.toml`, `joins.txt`,
@@ -54,6 +55,8 @@ pub const SECRET_KEYS: &[&str] = &[
     "id_token",
     "password",
     "token",
+    // The ANT+ network key (spec 14 Phase 17 Q1 (b)).
+    "network_key",
 ];
 
 /// The sections of `ocw.toml`.

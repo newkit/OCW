@@ -1959,6 +1959,42 @@ package is installed only when all its files match the manifest.
   the browser's own list, remembered in the page's `localStorage`.
   `scripts/test-devices-menu.sh [shot|shot-wayland] DIR` walks this page
   headless with the real Bluetooth stack (own config dir; screenshots in DIR).
+- **ANT+ heart-rate straps and power meters** (desktop; spec 3.4.1, 14
+  Phase 17) through an **ANT USB stick** (ANT USB-m `0fcf:1009`, ANT USB2
+  `0fcf:1008`, and the clones with these ids). The same *Scan for devices*
+  finds them next to the Bluetooth devices ("ANT+ heart rate 12345",
+  "heart rate, ANT+, …"); *Connect* pairs that strap by its device number
+  (a neighbour's strap is never taken), and it is remembered in
+  `devices.toml` with `transport = "ant"` and reconnected at the next
+  start. The heart rate goes the same way as a Bluetooth strap's: HUD,
+  FIT recording, workouts, multiplayer; an ANT+ power meter replaces the
+  virtual trainer like a Bluetooth one.
+- **The ANT+ network key:** ANT+ sensors are heard only with the ANT+
+  network key (16 hex digits), which Garmin publishes for ANT+ developers
+  and which OCW does not ship (spec 14 Phase 17 Q1). Enter it once:
+  *Devices* → *ANT+ (USB stick)* → *Enter the network key*, type it (the
+  field shows `*` only; spaces, commas and `0x` as on Garmin's page are
+  fine; Ctrl+V or *Paste the key* pastes), Enter saves. It is kept in
+  `secrets.toml [ant]` next to `ocw.toml` (readable only by you, never in
+  `ocw.toml` or a log); *Remove the key* deletes it. Console:
+  `ant.key.edit`, `ant.key.paste`, `ant.key.save`, `ant.key.cancel`,
+  `ant.key.clear`.
+- The *ANT+ (USB stick)* row says what is missing: *network key needed*,
+  *no stick*, *cannot open the stick (permission)*, *the stick is busy with
+  another app* (Garmin Express, Zwift, …). On Linux an ordinary user may
+  open the stick only when a udev rule allows it, on Windows the stick needs
+  the WinUSB driver – how OCW sets these up is not decided yet (spec 14
+  Phase 17 Q7, Q8).
+- **Two heart-rate straps** (a Bluetooth and an ANT+ one, or the same strap
+  on both): only one heart rate is used, the first that sends – never a
+  mix. The other strap's page has **Use for heart rate** (`devices.hr ID`,
+  `devices.hr auto` undoes it); the choice is remembered. There is no
+  automatic switching: when the chosen strap goes, the ride has no heart
+  rate until it is back or another one is chosen.
+- Without a stick: `--ant-sim hr:12345:142,hr:23456:128,power:4004:230`
+  rides with a **simulated ANT stick** and these sensors (any key works);
+  `--no-ant` turns ANT+ off. `scripts/test-ant-devices.sh [shot|shot-wayland]
+  DIR` walks the pages headless with it (screenshots in DIR).
 - Trainer control: **SIM** (default; the trainer simulates the road's
   gradient, scaled by `trainer.difficulty`, default 50 %), **ERG** (holds a
   power: `erg.target 200`), or `trainer.mode off`.
@@ -2773,10 +2809,12 @@ you can run are offered (no *Dev* commands on a remote server).
 | `workout skip` | Skip to the next step |
 | `workout pause\|resume` | Pause / resume the workout clock by hand |
 | `workout status` | Step, target, time left, next step |
-| `devices.scan [SECONDS] [--stop]` | Scan for Bluetooth trainers and sensors (in the background, 10 s; each is listed as it appears; `--stop` ends it) |
+| `devices.scan [SECONDS] [--stop]` | Scan for Bluetooth and ANT+ trainers and sensors (in the background, 10 s; each is listed as it appears; `--stop` ends it) |
 | `devices.connect N\|ID` | Connect a device from the last scan; remembered once it connected |
 | `devices.list` | Running, remembered and found devices |
 | `devices.forget ID\|NAME\|all` | Disconnect and forget a device |
+| `devices.hr ID\|NAME\|auto` | *Use for heart rate*: with two straps, use this one's heart rate (`auto`: the first that sends) |
+| `ant.key.edit` / `ant.key.paste` / `ant.key.save` / `ant.key.cancel` / `ant.key.clear` | The ANT+ network key (Devices → ANT+): type it (masked), paste, save it in `secrets.toml`, cancel, remove |
 | `devices.virtual` | Start an additional virtual trainer |
 | **Rides and Strava** | |
 | `ride.status` | The current recording |

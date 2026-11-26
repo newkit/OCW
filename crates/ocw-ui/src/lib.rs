@@ -43,6 +43,7 @@ pub mod events;
 pub mod god;
 pub mod history;
 pub mod join;
+pub mod key_entry;
 pub mod menu;
 pub mod photographer;
 pub mod profiles;

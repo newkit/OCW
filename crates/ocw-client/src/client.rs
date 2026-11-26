@@ -602,7 +602,9 @@ impl ClientCore {
                 timestamp,
             } => (watts, cadence_rpm, timestamp),
             DeviceEvent::HeartRate { bpm, .. } => {
-                self.heart_rate_bpm = Some(bpm);
+                // 0: the strap says it has no heart rate (an ANT+ strap
+                // without new beats for 5 s, spec 3.4.1 *Staleness*).
+                self.heart_rate_bpm = (bpm > 0.0).then_some(bpm);
                 return None;
             }
             DeviceEvent::Connected { .. }
@@ -3605,6 +3607,12 @@ mod tests {
             other => panic!("unexpected {other:?}"),
         }
         assert!(c.on_device_event(DeviceEvent::Disconnected).is_none());
+        // 0 bpm: the strap has none now (an ANT+ strap gone stale).
+        c.on_device_event(DeviceEvent::HeartRate {
+            bpm: 0.0,
+            timestamp: Duration::ZERO,
+        });
+        assert_eq!(c.heart_rate_bpm(), None);
     }
 
     /// Desktop client ↔ server through the real protocol (spec §14, Phase 1).

@@ -15,7 +15,8 @@ path = "src/main.rs"
 ocw-core.workspace = true
 ocw-sim.workspace = true
 ocw-protocol.workspace = true
-ocw-devices.workspace = true
+# With the ANT USB sticks (spec 14 Phase 17).
+ocw-devices = { workspace = true, features = ["ant-usb"] }
 ocw-world.workspace = true
 # World clock, time zones, sun and light (spec §14 Phase 9).
 ocw-sky.workspace = true

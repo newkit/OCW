@@ -34,8 +34,22 @@ wasm-bindgen = "0.2.130"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 
+# ANT USB sticks over raw USB (spec 3.4.1, 14 Phase 17): nusb is pure Rust
+# (MIT OR Apache-2.0; no libusb, which is LGPL-2.1 and C). Only the
+# desktop app turns it on; everything else of `ant` is pure.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.nusb]
+version = "0.2.9"
+optional = true
+
+[features]
+ant-usb = ["dep:nusb"]
+
 [dev-dependencies]
 tracing-subscriber.workspace = true
 
 [lints]
 workspace = true
+
+[[example]]
+name = "ant"
+required-features = ["ant-usb"]

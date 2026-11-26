@@ -133,6 +133,7 @@ impl Plugin for MenuPlugin {
             .init_resource::<AccountMenu>()
             .init_resource::<AudioDeviceMenu>()
             .init_resource::<DevicesMenu>()
+            .init_resource::<crate::key_entry::KeyEntry>()
             .init_resource::<MenuRideMode>()
             .add_systems(
                 Update,
@@ -165,6 +166,8 @@ impl Plugin for MenuPlugin {
                                 "voice",
                                 "season",
                                 "bridge",
+                                "ant",
+                                "devices",
                             ])
                             .default_value("toggle"),
                     )
@@ -203,6 +206,10 @@ impl Plugin for MenuPlugin {
                         // Devices → the sensor bridge (spec 14 Phase 10,
                         // 10D.2; scenes, the bridge test).
                         Some("bridge") => Action::OpenSub(sub::Page::Bridge),
+                        // Devices → ANT+ (spec 14 Phase 17; scenes).
+                        Some("ant") => Action::OpenSub(sub::Page::Ant),
+                        // Settings → Trainer → Devices (scenes).
+                        Some("devices") => Action::OpenSub(sub::Page::Devices),
                         _ if open => Action::Close,
                         _ => Action::Open,
                     };
@@ -335,7 +342,7 @@ pub fn sub_rows(world: &World, page: sub::Page) -> Vec<Row> {
         ocw_client::menu::voice::rows(page, s, info)
     } else if matches!(
         page,
-        sub::Page::Devices | sub::Page::Device(_) | sub::Page::Bridge
+        sub::Page::Devices | sub::Page::Device(_) | sub::Page::Bridge | sub::Page::Ant
     ) {
         let empty = DevicesMenu::default();
         let info = world.get_resource::<DevicesMenu>().unwrap_or(&empty);
@@ -410,7 +417,8 @@ fn menu_input(world: &mut World) {
         .unwrap_or_default();
     world.resource_mut::<MenuState>().menu.set_ride_mode(mode);
     // A text field of Ride → Join is typed into: this frame's keys are its.
-    if crate::join::capture(world) {
+    // The ANT+ network key is typed (Devices → ANT+, spec 14 Phase 17).
+    if crate::join::capture(world) | crate::key_entry::capture(world) {
         world.resource_mut::<MenuState>().repeat.reset();
         world.resource_mut::<MenuPointer>().0.clear();
         return;
@@ -599,7 +607,12 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
                 ocw_client::menu::history::status(p, history.as_ref().expect("some"))
             }
             (
-                Page::Sub(p @ (sub::Page::Devices | sub::Page::Device(_) | sub::Page::Bridge)),
+                Page::Sub(
+                    p @ (sub::Page::Devices
+                    | sub::Page::Device(_)
+                    | sub::Page::Bridge
+                    | sub::Page::Ant),
+                ),
                 _,
                 _,
             ) => world
@@ -947,6 +960,7 @@ mod tests {
                 rssi: Some(-58),
                 link: Link::Connected("Wahoo KICKR".into()),
                 remembered: true,
+                heart_rate: None,
             }],
             ..Default::default()
         };

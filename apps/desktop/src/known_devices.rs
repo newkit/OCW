@@ -1,4 +1,4 @@
-//! Remembered Bluetooth devices (spec §3.4: "paired devices are remembered
+//! Remembered Bluetooth and ANT+ devices (spec §3.4: "paired devices are remembered
 //! and reconnected automatically"), kept in the local config file
 //! (`ocw.toml [devices]`, spec 3.2.4; the old `devices.toml` is migrated
 //! into it), or in the file `--devices-file` names.
@@ -19,10 +19,19 @@ pub struct KnownDevice {
     /// connects. Older files have none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
+    /// How it is reached: `"ant"` (an ANT+ sensor through the ANT stick,
+    /// spec 3.4.1; its id `ant:<type>:<number>:<transmission type>`);
+    /// missing = Bluetooth (older files are unchanged).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KnownDevices {
+    /// The device chosen with *Use for heart rate* (spec 14 Phase 17 Q6
+    /// (c)): with two straps only its heart rate is used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heart_rate: Option<String>,
     #[serde(default, rename = "device")]
     pub devices: Vec<KnownDevice>,
 }
@@ -79,6 +88,9 @@ impl KnownDevices {
     pub fn forget(&mut self, id: &str) -> bool {
         let before = self.devices.len();
         self.devices.retain(|d| d.id != id);
+        if self.heart_rate.as_deref() == Some(id) {
+            self.heart_rate = None;
+        }
         self.devices.len() != before
     }
 }
@@ -127,11 +139,13 @@ mod tests {
             id: "hci0/dev_AA_BB".into(),
             name: "KICKR CORE 1234".into(),
             kind: Some("trainer".into()),
+            transport: None,
         });
         k.remember(KnownDevice {
             id: "hci0/dev_CC".into(),
             name: "HRM".into(),
             kind: None,
+            transport: None,
         });
         k.save(&path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
@@ -151,6 +165,7 @@ mod tests {
             id: "x".into(),
             name: name.into(),
             kind: None,
+            transport: None,
         };
         k.remember(d("old"));
         k.remember(d("new"));
@@ -158,6 +173,43 @@ mod tests {
         assert!(k.forget("x"));
         assert!(!k.forget("x"));
         assert!(k.devices.is_empty());
+    }
+
+    /// An ANT+ strap is remembered with `transport = "ant"`, the choice of
+    /// *Use for heart rate* with it; an old file reads as Bluetooth.
+    #[test]
+    fn ant_devices_and_the_heart_rate_choice_round_trip() {
+        let dir = temp_dir("ant");
+        let path = dir.join("devices.toml");
+        let mut k = KnownDevices::default();
+        k.remember(KnownDevice {
+            id: "ant:120:12345:1".into(),
+            name: "ANT+ heart rate 12345".into(),
+            kind: Some("hr".into()),
+            transport: Some("ant".into()),
+        });
+        k.remember(KnownDevice {
+            id: "hci0/dev_AA".into(),
+            name: "TICKR".into(),
+            kind: Some("hr".into()),
+            transport: None,
+        });
+        k.heart_rate = Some("ant:120:12345:1".into());
+        k.save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("transport = \"ant\""), "{text}");
+        assert!(text.contains("heart_rate = \"ant:120:12345:1\""), "{text}");
+        assert_eq!(KnownDevices::load(&path).unwrap(), k);
+        // Forgetting the chosen one drops the choice.
+        assert!(k.forget("ant:120:12345:1"));
+        assert_eq!(k.heart_rate, None);
+        // In ocw.toml's [devices] section too.
+        let files = crate::config::ConfigFiles::in_dir(&dir);
+        let slot = files.section("devices");
+        k.heart_rate = Some("hci0/dev_AA".into());
+        k.save_slot(&slot).unwrap();
+        assert_eq!(KnownDevices::load_slot(&slot).unwrap(), k);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
