@@ -28,6 +28,12 @@ pub const NOTE: &str = "Choose a device to connect it; once connected it is reme
 pub const DEVICE_NOTE: &str =
     "Connect it in its role, or forget it: it is then not connected at the next start.";
 
+/// The ANT+ page's note (spec 3.4.1, 14 Phase 17 Q1 (b)).
+pub const ANT_NOTE: &str = "ANT+ straps need the ANT+ network key (16 hex digits), which Garmin publishes for ANT+ developers. It stays on this computer, in secrets.toml.";
+
+/// The ANT+ page's status line while the key is typed.
+pub const ANT_TYPING: &str = "Type the 16 hex digits; Enter saves, Esc cancels";
+
 /// What a device is for the ride.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
@@ -174,17 +180,34 @@ pub struct Entry {
     /// In the remembered devices (`devices.toml`, the browser's
     /// `localStorage`).
     pub remembered: bool,
+    /// With two or more heart-rate sources (spec 14 Phase 17 Q6 (c)):
+    /// whether this one gives the heart rate (*Use for heart rate*);
+    /// `None` otherwise.
+    pub heart_rate: Option<bool>,
 }
 
 impl Entry {
-    /// The list's value: "trainer, -61 dBm, connected, remembered".
+    /// An ANT+ sensor (its id `ant:…`), not Bluetooth.
+    pub fn is_ant(&self) -> bool {
+        self.id.starts_with("ant:")
+    }
+
+    /// The list's value: "trainer, -61 dBm, connected, remembered";
+    /// "heart rate, ANT+, connected, HR in use" (spec 3.4.1 *Device
+    /// menu*).
     pub fn summary(&self) -> String {
         let mut parts = vec![self.role.label().to_owned()];
+        if self.is_ant() {
+            parts.push("ANT+".into());
+        }
         if let Some(r) = self.rssi {
             parts.push(format!("{r} dBm"));
         }
         if let Some(s) = self.link.short() {
             parts.push(s.into());
+        }
+        if self.heart_rate == Some(true) {
+            parts.push("HR in use".into());
         }
         if self.remembered {
             parts.push("remembered".into());
@@ -261,6 +284,32 @@ impl BridgeInfo {
     }
 }
 
+/// ANT+ on the Devices pages (spec 3.4.1, 14 Phase 17; the desktop only).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AntInfo {
+    /// The stick: "ANT USB-m stick, in use", "no stick", "cannot open the
+    /// stick (permission)", "network key needed".
+    pub state: String,
+    /// The ANT+ network key is entered.
+    pub key_set: bool,
+    /// While the key is typed: the field as shown (masked, with the
+    /// cursor and the count of digits).
+    pub typing: Option<String>,
+    /// Where the key is kept ("~/.config/ocw/secrets.toml [ant]").
+    pub key_file: Option<String>,
+}
+
+impl AntInfo {
+    /// The Devices list row's value.
+    fn value(&self) -> String {
+        if self.key_set {
+            short_label(&self.state, 28)
+        } else {
+            "network key needed".into()
+        }
+    }
+}
+
 /// What the Devices pages show (filled by the app).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DevicesInfo {
@@ -274,6 +323,8 @@ pub struct DevicesInfo {
     pub virtual_trainer: bool,
     /// The sensor bridge (`None`: the app has none).
     pub bridge: Option<BridgeInfo>,
+    /// ANT+ (`None`: the app has none, the browser).
+    pub ant: Option<AntInfo>,
 }
 
 /// Messages a Devices page shows (the newest).
@@ -317,8 +368,41 @@ pub fn rows(page: Page, info: &DevicesInfo) -> Vec<Row> {
             None => Vec::new(),
         },
         Page::Bridge => info.bridge.as_ref().map(bridge_rows).unwrap_or_default(),
+        Page::Ant => info.ant.as_ref().map(ant_rows).unwrap_or_default(),
         _ => Vec::new(),
     }
+}
+
+/// Devices → ANT+: the stick, the network key (enter, change, remove).
+fn ant_rows(a: &AntInfo) -> Vec<Row> {
+    let mut out = vec![info_row("Stick", Some(short_label(&a.state, 40)))];
+    match &a.typing {
+        Some(shown) => {
+            let mut field = Row::action("Network key", "ant.key.save");
+            field.value = Some(shown.clone());
+            out.push(field);
+            out.push(Row::action("Save the key", "ant.key.save"));
+            out.push(Row::action("Paste the key", "ant.key.paste"));
+            out.push(Row::action("Cancel", "ant.key.cancel"));
+        }
+        None => {
+            let label = if a.key_set {
+                "Change the network key"
+            } else {
+                "Enter the network key"
+            };
+            let mut r = Row::action(label, "ant.key.edit");
+            r.value = Some(if a.key_set { "set" } else { "not set" }.into());
+            out.push(r);
+            if a.key_set {
+                out.push(Row::action("Remove the key", "ant.key.clear"));
+            }
+        }
+    }
+    if let Some(f) = &a.key_file {
+        out.push(info_row("Kept in", Some(short_label(f, 40))));
+    }
+    out
 }
 
 /// The bridge row of the Devices list: the desktop shares, the browser
@@ -424,6 +508,9 @@ fn list_rows(info: &DevicesInfo) -> Vec<Row> {
     if let Some(b) = &info.bridge {
         out.push(bridge_row(b));
     }
+    if let Some(a) = &info.ant {
+        out.push(open_row("ANT+ (USB stick)", Some(a.value()), Page::Ant));
+    }
     out.extend(info.entries.iter().enumerate().map(|(i, e)| {
         open_row(
             &short_label(&e.name, 24),
@@ -464,6 +551,12 @@ fn device_rows(e: &Entry, info: &DevicesInfo) -> Vec<Row> {
         "Remembered",
         Some(if e.remembered { "yes" } else { "no" }.into()),
     ));
+    // Two heart-rate sources: the rider picks one (spec 14 Phase 17 Q6 (c)).
+    if let Some(used) = e.heart_rate {
+        let mut r = Row::action("Use for heart rate", format!("devices.hr {}", e.id));
+        r.value = Some(if used { "yes" } else { "no" }.into());
+        out.push(r);
+    }
     if matches!(e.link, Link::Idle | Link::Failed(_)) {
         let line = match info.scan {
             // The browser connects only from its chooser.
@@ -495,6 +588,14 @@ pub fn status(page: Page, info: &DevicesInfo) -> String {
         && let Some(e) = info.entries.get(i)
     {
         return short_label(&format!("{}: {}", e.name, e.link.text()), 60);
+    }
+    if page == Page::Ant {
+        return match (&info.ant, info.messages.last()) {
+            (Some(a), _) if a.typing.is_some() => ANT_TYPING.into(),
+            (_, Some(m)) => short_label(m, 56),
+            (Some(a), None) => short_label(&format!("ANT+: {}", a.state), 56),
+            _ => String::new(),
+        };
     }
     if page == Page::Bridge {
         return match &info.bridge {
@@ -533,6 +634,7 @@ mod tests {
             rssi: Some(-61),
             link,
             remembered,
+            heart_rate: None,
         }
     }
 
@@ -810,5 +912,107 @@ mod tests {
             Effect::Command("devices.forget hci0/dev_00_00_00_00_00_01".into())
         );
         assert_eq!(m.page(), Some(MenuPage::Sub(Page::Devices)));
+    }
+
+    fn strap(id: &str, name: &str, used: Option<bool>) -> Entry {
+        Entry {
+            id: id.into(),
+            name: name.into(),
+            role: Role::HeartRate,
+            rssi: Some(-58),
+            link: Link::Connected("heart-rate sensor (ANT+)".into()),
+            remembered: true,
+            heart_rate: used,
+        }
+    }
+
+    #[test]
+    fn ant_sensors_say_so_and_two_straps_offer_the_choice() {
+        let info = DevicesInfo {
+            entries: vec![
+                strap("ant:120:12345:1", "ANT+ heart rate 12345", Some(true)),
+                strap("hci0/dev_00_00_00_00_00_02", "TICKR", Some(false)),
+            ],
+            ..Default::default()
+        };
+        let r = rows(Page::Devices, &info);
+        assert_eq!(
+            r[1].value.as_deref(),
+            Some("heart rate, ANT+, -58 dBm, connected, HR in use, remembered")
+        );
+        assert_eq!(
+            r[2].value.as_deref(),
+            Some("heart rate, -58 dBm, connected, remembered")
+        );
+        // The other strap's page: Use for heart rate → devices.hr <id>.
+        let d = rows(Page::Device(1), &info);
+        let use_it = d.iter().find(|r| r.label == "Use for heart rate").unwrap();
+        assert_eq!(use_it.value.as_deref(), Some("no"));
+        assert_eq!(
+            use_it.confirm,
+            Some(Activate::Command(
+                "devices.hr hci0/dev_00_00_00_00_00_02".into()
+            ))
+        );
+        // One strap only: nothing to choose.
+        let one = DevicesInfo {
+            entries: vec![strap("ant:120:1:1", "ANT+ heart rate 1", None)],
+            ..Default::default()
+        };
+        assert!(
+            !rows(Page::Device(0), &one)
+                .iter()
+                .any(|r| r.label == "Use for heart rate")
+        );
+    }
+
+    #[test]
+    fn the_ant_page_enters_the_network_key() {
+        let mut info = DevicesInfo {
+            ant: Some(AntInfo {
+                state: "no stick".into(),
+                key_set: false,
+                typing: None,
+                key_file: Some("~/.config/ocw/secrets.toml [ant]".into()),
+            }),
+            ..Default::default()
+        };
+        // The list: the ANT+ row says what is missing.
+        let r = rows(Page::Devices, &info);
+        assert_eq!(label(&r, 1), "ANT+ (USB stick)");
+        assert_eq!(r[1].value.as_deref(), Some("network key needed"));
+        assert_eq!(r[1].confirm, Some(Activate::Open(Page::Ant)));
+        let a = rows(Page::Ant, &info);
+        let labels: Vec<&str> = a.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(labels, ["Stick", "Enter the network key", "Kept in"]);
+        assert_eq!(a[1].confirm, Some(Activate::Command("ant.key.edit".into())));
+        // Typing: the masked field, save, paste, cancel; the hint above.
+        info.ant.as_mut().unwrap().typing = Some("******|  6 of 16".into());
+        let a = rows(Page::Ant, &info);
+        assert_eq!(a[1].value.as_deref(), Some("******|  6 of 16"));
+        assert_eq!(a[2].confirm, Some(Activate::Command("ant.key.save".into())));
+        assert_eq!(status(Page::Ant, &info), ANT_TYPING);
+        // Set: change or remove; the list shows the stick.
+        let ant = info.ant.as_mut().unwrap();
+        ant.typing = None;
+        ant.key_set = true;
+        ant.state = "ANT USB-m stick, in use".into();
+        let a = rows(Page::Ant, &info);
+        assert_eq!(a[1].label, "Change the network key");
+        assert_eq!(
+            a[2].confirm,
+            Some(Activate::Command("ant.key.clear".into()))
+        );
+        assert_eq!(
+            rows(Page::Devices, &info)[1].value.as_deref(),
+            Some("ANT USB-m stick, in use")
+        );
+        assert_eq!(status(Page::Ant, &info), "ANT+: ANT USB-m stick, in use");
+        // The browser has no ANT+ row.
+        assert!(
+            !rows(Page::Devices, &DevicesInfo::default())
+                .iter()
+                .any(|r| r.label.starts_with("ANT+"))
+        );
     }
 }

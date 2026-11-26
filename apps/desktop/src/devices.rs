@@ -19,8 +19,19 @@
 //!   (`known_devices`: the default file, or `--devices-file`), so the next
 //!   start reconnects it; a failed attempt says why.
 //!
+//! ANT+ (spec 3.4.1, 14 Phase 17): the ANT stick service
+//! ([`ocw_devices::ant::AntStick`]: a real USB stick, or the simulated one
+//! of `--ant-sim`) sits next to Bluetooth in [`DeviceIo`]: one scan runs
+//! both, an `ant:` id connects through the stick, and the rest of the flow
+//! is the same. Devices → ANT+ shows the stick and takes the ANT+ network
+//! key, kept in `secrets.toml [ant]` (never logged; `ant.key.*`). With two
+//! heart-rate sources only one is used: the one chosen with *Use for heart
+//! rate* (`devices.hr <id>`), else the first that sent – no automatic
+//! switching (Q6 (c)).
+//!
 //! The Bluetooth stack is behind [`DeviceIo`] (connect, scan), so the
-//! tests run the whole flow with a mock.
+//! tests run the whole flow with a mock (and ANT+ with the simulated
+//! stick).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -29,13 +40,16 @@ use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 use clap::{Arg, ArgAction, Command, value_parser};
-use ocw_client::menu::devices::{DevicesInfo, Entry, Link, Role, Scan};
+use ocw_client::menu::devices::{AntInfo, DevicesInfo, Entry, Link, Role, Scan};
+use ocw_devices::ant::{self, AntDeviceId, AntStick, NetworkKey};
 use ocw_devices::ble::{self, BleDevice, FoundDevice};
 use ocw_devices::{
     DeviceBackend, DeviceCommand, DeviceError, DeviceEvent, DeviceHandle, VirtualTrainer,
 };
 use ocw_render::RideView;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
+use ocw_ui::join::FieldEnd;
+use ocw_ui::key_entry::KeyEntry;
 
 use crate::Args;
 use crate::connection::{ClientState, Link as ServerLink};
@@ -52,19 +66,72 @@ pub type Scanner = Arc<
         + Sync,
 >;
 
-/// The Bluetooth stack: btleplug in the app, a mock in tests.
+/// The Bluetooth stack (btleplug in the app, a mock in tests) and the ANT
+/// stick service.
 #[derive(Resource)]
 pub struct DeviceIo {
     pub connect: Connector,
     pub scan: Scanner,
+    /// ANT+ (`None`: `--no-ant`).
+    pub ant: Option<AntStick>,
 }
 
 impl DeviceIo {
-    /// The real one (BlueZ, WinRT, CoreBluetooth through btleplug).
+    /// The real one (BlueZ, WinRT, CoreBluetooth through btleplug), no ANT.
     pub fn bluetooth() -> Self {
         Self {
             connect: Box::new(|id, name| BleDevice::new(id, name).start()),
             scan: Arc::new(|d, stop, found| ble::scan_live(d, stop, found)),
+            ant: None,
+        }
+    }
+}
+
+/// The ANT stick service for these arguments: the real USB sticks, the
+/// simulated stick of `--ant-sim`, or none (`--no-ant`).
+pub fn ant_stick(args: &Args, key: Option<NetworkKey>) -> Option<AntStick> {
+    if args.no_ant {
+        return None;
+    }
+    if let Some(spec) = &args.ant_sim {
+        return match ant::sim::parse_sensors(spec) {
+            Ok(sensors) => {
+                info!(sensors = sensors.len(), "a simulated ANT stick (--ant-sim)");
+                Some(AntStick::start(ant::SimTransport::new(None, sensors), key))
+            }
+            Err(e) => {
+                warn!("--ant-sim: {e}");
+                None
+            }
+        };
+    }
+    Some(AntStick::start(ant::usb::UsbTransport::new(), key))
+}
+
+/// What `secrets.toml [ant]` holds.
+#[derive(serde::Deserialize)]
+struct AntSecrets {
+    network_key: Option<String>,
+}
+
+/// The ANT+ network key the rider entered (never logged).
+pub fn load_ant_key(slot: &crate::config::Slot) -> Option<NetworkKey> {
+    let text = match slot.read() {
+        Ok(t) => t?,
+        Err(e) => {
+            warn!("cannot read the ANT+ network key: {e}");
+            return None;
+        }
+    };
+    let Ok(s) = toml::from_str::<AntSecrets>(&text) else {
+        warn!("{}: not readable (the ANT+ network key)", slot.describe());
+        return None;
+    };
+    match NetworkKey::parse(s.network_key.as_deref()?) {
+        Ok(k) => Some(k),
+        Err(e) => {
+            warn!("{}: the ANT+ network key: {e}", slot.describe());
+            None
         }
     }
 }
@@ -74,13 +141,24 @@ pub struct DevicesPlugin;
 impl Plugin for DevicesPlugin {
     fn build(&self, app: &mut App) {
         let args = app.world().resource::<Args>().clone();
-        if !app.world().contains_resource::<DeviceIo>() {
-            app.insert_resource(DeviceIo::bluetooth());
-        }
-        let default = app
+        let files = app
             .world()
             .get_resource::<crate::config::ConfigFiles>()
-            .map(|f| f.section("devices"));
+            .cloned();
+        let ant_key_slot = files.as_ref().map(|f| f.secret("ant"));
+        let ant_key = ant_key_slot.as_ref().and_then(load_ant_key);
+        if !app.world().contains_resource::<DeviceIo>() {
+            let mut io = DeviceIo::bluetooth();
+            io.ant = ant_stick(&args, ant_key);
+            app.insert_resource(io);
+        } else if let Some(stick) = &app.world().resource::<DeviceIo>().ant
+            && ant_key.is_some()
+            && !stick.has_key()
+        {
+            // A stick given from outside (tests) gets the saved key.
+            stick.set_key(ant_key);
+        }
+        let default = files.as_ref().map(|f| f.section("devices"));
         let known_path = known_devices::choose_slot(args.devices_file.clone(), default);
         info!(path = ?known_path, "remembered devices");
         let known = match &known_path {
@@ -91,6 +169,7 @@ impl Plugin for DevicesPlugin {
             None => KnownDevices::default(),
         };
         let mut devices = Devices::new(known, known_path, args.power);
+        devices.ant_key = ant_key_slot;
         if args.virtual_trainer || devices.known.devices.is_empty() {
             if !args.virtual_trainer {
                 warn!(
@@ -110,10 +189,18 @@ impl Plugin for DevicesPlugin {
         let profile = crate::settings::local_rider(app.world()).physics();
         app.insert_resource(devices)
             .insert_resource(Trainer(TrainerControl::new(profile)))
+            .init_resource::<KeyEntry>()
             .add_systems(PreUpdate, poll_devices)
             .add_systems(
                 Update,
-                (poll_scan, control_trainer, publish_status, publish_menu),
+                (
+                    poll_scan,
+                    control_trainer,
+                    publish_status,
+                    poll_key_entry,
+                    publish_menu,
+                )
+                    .chain(),
             )
             .add_systems(Last, shutdown_on_exit);
         register_commands(app);
@@ -123,10 +210,10 @@ impl Plugin for DevicesPlugin {
 #[derive(Resource)]
 pub struct Trainer(pub TrainerControl);
 
-/// What the scan thread reports.
+/// What a scan thread reports (Bluetooth's, ANT+'s).
 enum ScanMsg {
     Found(FoundDevice),
-    Done(Result<(), DeviceError>),
+    Done(&'static str, Result<(), DeviceError>),
 }
 
 /// A running scan.
@@ -134,6 +221,10 @@ struct ScanJob {
     rx: Mutex<Receiver<ScanMsg>>,
     stop: Arc<AtomicBool>,
     until: Instant,
+    /// Scan threads still running.
+    pending: usize,
+    /// Their failures ("Bluetooth: …").
+    errors: Vec<String>,
 }
 
 /// A running backend.
@@ -177,6 +268,11 @@ pub struct Devices {
     info: DevicesInfo,
     /// The virtual trainer's power when it comes back.
     virtual_w: f64,
+    /// Where the ANT+ network key is kept (`secrets.toml [ant]`).
+    ant_key: Option<crate::config::Slot>,
+    /// The heart-rate source when none is chosen: the first device that
+    /// sent a heart rate (spec 14 Phase 17 Q6 (c): no switching).
+    hr_active: Option<String>,
 }
 
 impl Devices {
@@ -204,6 +300,8 @@ impl Devices {
             listed,
             info: DevicesInfo::default(),
             virtual_w,
+            ant_key: None,
+            hr_active: None,
         }
     }
 
@@ -239,7 +337,15 @@ impl Devices {
         }
         let role = self.role_of(id);
         self.list(id, name, role, None);
-        let handle = (io.connect)(id, name).map_err(|e| format!("{name}: {e}"))?;
+        let handle = if AntDeviceId::is_ant(id) {
+            match &io.ant {
+                Some(stick) => stick.connect(id, name),
+                None => Err(DeviceError::Start("ANT+ is off (--no-ant)".into())),
+            }
+        } else {
+            (io.connect)(id, name)
+        }
+        .map_err(|e| format!("{name}: {e}"))?;
         self.running().push(Running {
             id: Some(id.to_owned()),
             role,
@@ -331,6 +437,7 @@ impl Devices {
             id: id.to_owned(),
             name: name.to_owned(),
             kind: role.map(|r| r.key().to_owned()),
+            transport: AntDeviceId::is_ant(id).then(|| "ant".to_owned()),
         });
         match self.save_known() {
             Ok(()) => format!(", remembered in {}", self.file_text().unwrap_or_default()),
@@ -376,6 +483,13 @@ impl Devices {
             .map(|d| d.id.clone())
             .collect();
         let forgotten = ids.iter().filter(|id| self.known.forget(id)).count();
+        if self
+            .hr_active
+            .as_deref()
+            .is_some_and(|a| ids.iter().any(|i| i == a) || all)
+        {
+            self.hr_active = None;
+        }
         if stopped == 0 && forgotten == 0 {
             return Err(format!("{which} is not connected or remembered"));
         }
@@ -399,8 +513,67 @@ impl Devices {
         Ok(line)
     }
 
+    /// Whether a backend runs for this id.
+    fn is_running(&self, id: &str) -> bool {
+        self.running
+            .lock()
+            .expect("not poisoned")
+            .iter()
+            .any(|r| r.id.as_deref() == Some(id))
+    }
+
+    /// The device whose heart rate is used: the one chosen with *Use for
+    /// heart rate* while it runs, else the first that sent one.
+    fn hr_source(&self) -> Option<String> {
+        match &self.known.heart_rate {
+            Some(c) if self.is_running(c) => Some(c.clone()),
+            _ => self.hr_active.clone(),
+        }
+    }
+
+    /// Whether a heart rate from `id` is used (spec 14 Phase 17 Q6 (c)).
+    fn accept_heart_rate(&mut self, id: Option<&str>) -> bool {
+        match self.hr_source() {
+            Some(src) if self.is_running(&src) => id == Some(src.as_str()),
+            _ => {
+                self.hr_active = id.map(str::to_owned);
+                true
+            }
+        }
+    }
+
+    /// `devices.hr <id|name|auto>`: *Use for heart rate*.
+    fn use_for_heart_rate(&mut self, which: &str) -> Result<String, String> {
+        let line = if which == "auto" {
+            self.known.heart_rate = None;
+            self.hr_active = None;
+            "heart rate: from the first device that sends one".to_owned()
+        } else {
+            let l = self
+                .listed
+                .iter()
+                .find(|l| l.id == which || l.name.eq_ignore_ascii_case(which))
+                .ok_or_else(|| format!("{which} is not in the list"))?;
+            let (id, name) = (l.id.clone(), l.name.clone());
+            self.known.heart_rate = Some(id.clone());
+            self.hr_active = Some(id);
+            format!("{name} gives the heart rate")
+        };
+        if let Err(e) = self.save_known() {
+            warn!("the heart-rate choice is not saved: {e}");
+        }
+        self.info.push_message(line.clone());
+        Ok(line)
+    }
+
     /// The Devices page's model.
     fn menu_info(&self) -> DevicesInfo {
+        let hr_source = self.hr_source();
+        let hr_listed = self
+            .listed
+            .iter()
+            .filter(|l| l.role == Role::HeartRate)
+            .count();
         let running = self.running.lock().expect("not poisoned");
         let entries = self
             .listed
@@ -415,6 +588,8 @@ impl Devices {
                     .find(|r| r.id.as_deref() == Some(l.id.as_str()))
                     .map_or(Link::Idle, |r| r.link.clone()),
                 remembered: self.known.devices.iter().any(|d| d.id == l.id),
+                heart_rate: (l.role == Role::HeartRate && hr_listed >= 2)
+                    .then(|| hr_source.as_deref() == Some(l.id.as_str())),
             })
             .collect();
         DevicesInfo {
@@ -433,6 +608,7 @@ impl Devices {
             file: self.file_text(),
             virtual_trainer: running.iter().any(|r| r.id.is_none()),
             bridge: None,
+            ant: None,
         }
     }
 }
@@ -453,6 +629,12 @@ fn poll_devices(
             events.push((i, r.handle.name.clone(), e));
         }
     }
+    // One heart-rate source (spec 14 Phase 17 Q6 (c)): a second strap's
+    // heart rate is not mixed in.
+    let ids: Vec<Option<String>> = devices.running().iter().map(|r| r.id.clone()).collect();
+    events.retain(|(i, _, e)| {
+        !matches!(e, DeviceEvent::HeartRate { .. }) || devices.accept_heart_rate(ids[*i].as_deref())
+    });
     // The sensor bridge passes every reading on as it comes (spec 14
     // Phase 10, 10D.2).
     if let Some(mut b) = bridge {
@@ -481,9 +663,18 @@ fn poll_devices(
             }
             DeviceEvent::Disconnected => {
                 let r = &mut devices.running()[i];
+                let id = r.id.clone();
                 if matches!(r.link, Link::Connected(_)) {
                     r.link = Link::Reconnecting;
                     line = Some(format!("{name}: disconnected, reconnecting"));
+                }
+                // The heart-rate source is gone: no heart rate (not a frozen
+                // one, and not another strap's: spec 14 Phase 17 Q6 (c)).
+                if id.is_some() && devices.hr_source() == id {
+                    client.0.on_device_event(DeviceEvent::HeartRate {
+                        bpm: 0.0,
+                        timestamp: Duration::ZERO,
+                    });
                 }
             }
             DeviceEvent::Failed { reason } => {
@@ -553,9 +744,12 @@ fn poll_scan(mut devices: ResMut<Devices>, mut console: ResMut<ConsoleState>) {
                 Ok(m) => out.push(m),
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
-                    out.push(ScanMsg::Done(Err(DeviceError::Bluetooth(
-                        "scan thread ended".into(),
-                    ))));
+                    for _ in 0..job.pending {
+                        out.push(ScanMsg::Done(
+                            "scan",
+                            Err(DeviceError::Bluetooth("scan thread ended".into())),
+                        ));
+                    }
                     break;
                 }
             }
@@ -582,17 +776,32 @@ fn poll_scan(mut devices: ResMut<Devices>, mut console: ResMut<ConsoleState>) {
                     ));
                 }
             }
-            ScanMsg::Done(result) => {
+            ScanMsg::Done(what, result) => {
+                let Some(job) = devices.scan.as_mut() else {
+                    break;
+                };
+                job.pending = job.pending.saturating_sub(1);
+                if let Err(e) = result {
+                    job.errors.push(format!("{what}: {e}"));
+                }
+                if job.pending > 0 {
+                    continue;
+                }
+                let errors = std::mem::take(&mut job.errors);
                 devices.scan = None;
-                let line = match result {
-                    Ok(()) if devices.found.is_empty() => {
+                let n = devices.found.len();
+                let line = if n == 0 && !errors.is_empty() {
+                    format!("scan failed: {}", errors.join("; "))
+                } else {
+                    let mut line = if n == 0 {
                         "scan: no fitness devices found (awake, in range, and not connected to another app?)".to_string()
+                    } else {
+                        format!("scan: {n} device(s) found, choose one to connect it")
+                    };
+                    if !errors.is_empty() {
+                        line.push_str(&format!(" ({})", errors.join("; ")));
                     }
-                    Ok(()) => format!(
-                        "scan: {} device(s) found, choose one to connect it",
-                        devices.found.len()
-                    ),
-                    Err(e) => format!("scan failed: {e}"),
+                    line
                 };
                 console.print(line.clone());
                 devices.info.push_message(line);
@@ -624,26 +833,142 @@ fn publish_status(
 /// Settings → Trainer → Devices (the shared menu's model).
 fn publish_menu(
     devices: Res<Devices>,
+    io: Res<DeviceIo>,
+    key: Res<KeyEntry>,
     menu: Option<ResMut<ocw_ui::menu::DevicesMenu>>,
     bridge: Option<Res<crate::bridge::Bridge>>,
 ) {
     let Some(mut menu) = menu else { return };
     let mut info = devices.menu_info();
     info.bridge = bridge.map(|b| b.info());
+    info.ant = io.ant.as_ref().map(|stick| AntInfo {
+        state: stick.status().text(),
+        key_set: stick.has_key(),
+        typing: key.typing.then(|| key.shown(16)),
+        key_file: devices.ant_key.as_ref().map(crate::config::Slot::describe),
+    });
     if menu.0 != info {
         menu.0 = info;
     }
 }
 
-fn shutdown_on_exit(mut exit: MessageReader<AppExit>, devices: Res<Devices>) {
+fn shutdown_on_exit(mut exit: MessageReader<AppExit>, devices: Res<Devices>, io: Res<DeviceIo>) {
     if exit.read().next().is_some() {
         devices.command_all(DeviceCommand::Shutdown);
+        if let Some(stick) = &io.ant {
+            stick.shutdown();
+        }
     }
+}
+
+/// The ANT+ network key's field (Devices → ANT+): Enter saves, Esc drops,
+/// Ctrl+V pastes.
+fn poll_key_entry(world: &mut World) {
+    let (end, paste) = {
+        let Some(mut k) = world.get_resource_mut::<KeyEntry>() else {
+            return;
+        };
+        (k.take_end(), k.take_paste())
+    };
+    if paste {
+        let _ = paste_key(world);
+    }
+    let line = match end {
+        Some(FieldEnd::Enter) => save_key(world),
+        Some(FieldEnd::Escape) => cancel_key(world),
+        None => return,
+    };
+    let line = line.unwrap_or_else(|e| e);
+    world.resource_mut::<ConsoleState>().print(line);
+}
+
+/// `ant.key.save`: the typed key into `secrets.toml [ant]` and to the
+/// stick. A key that does not read keeps the field open.
+fn save_key(world: &mut World) -> Result<String, String> {
+    let text = world.resource::<KeyEntry>().text().to_owned();
+    let key = match NetworkKey::parse(&text) {
+        Ok(k) => k,
+        Err(e) => {
+            let line = format!("ANT+ network key: {e}");
+            world.resource_mut::<KeyEntry>().typing = true;
+            world
+                .resource_mut::<Devices>()
+                .info
+                .push_message(line.clone());
+            return Err(line);
+        }
+    };
+    let slot = world
+        .resource::<Devices>()
+        .ant_key
+        .clone()
+        .ok_or("no configuration folder: the ANT+ network key cannot be kept")?;
+    let saved = slot.write(&format!("network_key = \"{}\"\n", key.to_hex()));
+    world.resource_mut::<KeyEntry>().cancel();
+    let line = match saved {
+        Ok(()) => {
+            if let Some(stick) = &world.resource::<DeviceIo>().ant {
+                stick.set_key(Some(key));
+            }
+            format!("ANT+ network key saved in {}", slot.describe())
+        }
+        Err(e) => format!("ANT+ network key not saved: {e}"),
+    };
+    world
+        .resource_mut::<Devices>()
+        .info
+        .push_message(line.clone());
+    Ok(line)
+}
+
+fn cancel_key(world: &mut World) -> Result<String, String> {
+    world.resource_mut::<KeyEntry>().cancel();
+    Ok("the ANT+ network key was not changed".into())
+}
+
+/// `ant.key.paste`: the clipboard into the field.
+fn paste_key(world: &mut World) -> Result<String, String> {
+    let paste = world
+        .get_resource::<ocw_ui::join::JoinHooks>()
+        .map(|h| h.paste)
+        .ok_or("no clipboard")?;
+    let text = paste(world).ok_or("the clipboard has no text")?;
+    let mut k = world.resource_mut::<KeyEntry>();
+    if !k.typing {
+        k.start();
+    }
+    k.field.paste(&text);
+    Ok("pasted".into())
+}
+
+/// `ant.key.clear`: no key any more (ANT+ stops).
+fn clear_key(world: &mut World) -> Result<String, String> {
+    let slot = world
+        .resource::<Devices>()
+        .ant_key
+        .clone()
+        .ok_or("no configuration folder")?;
+    slot.remove()?;
+    if let Some(stick) = &world.resource::<DeviceIo>().ant {
+        stick.set_key(None);
+    }
+    let line = format!("ANT+ network key removed from {}", slot.describe());
+    world
+        .resource_mut::<Devices>()
+        .info
+        .push_message(line.clone());
+    Ok(line)
 }
 
 /// `devices.scan`: starts the background scan (or stops it).
 fn start_scan(world: &mut World, secs: u64, stop: bool) -> Result<String, String> {
     let scanner = world.resource::<DeviceIo>().scan.clone();
+    // ANT+ once the key is there (spec 3.4.1: one scan runs both).
+    let ant = world
+        .resource::<DeviceIo>()
+        .ant
+        .clone()
+        .filter(AntStick::has_key);
     let mut devices = world.resource_mut::<Devices>();
     if stop {
         return match &devices.scan {
@@ -661,6 +986,21 @@ fn start_scan(world: &mut World, secs: u64, stop: bool) -> Result<String, String
     let flag = Arc::new(AtomicBool::new(false));
     let thread_flag = flag.clone();
     let duration = Duration::from_secs(secs);
+    let mut pending = 1;
+    if let Some(stick) = ant {
+        let (tx, flag) = (tx.clone(), flag.clone());
+        std::thread::Builder::new()
+            .name("ocw-ant-scan".into())
+            .spawn(move || {
+                let found_tx = tx.clone();
+                let result = stick.scan(duration, &flag, &mut |d| {
+                    let _ = found_tx.send(ScanMsg::Found(d));
+                });
+                let _ = tx.send(ScanMsg::Done("ANT+", result));
+            })
+            .map_err(|e| e.to_string())?;
+        pending += 1;
+    }
     std::thread::Builder::new()
         .name("ocw-ble-scan".into())
         .spawn(move || {
@@ -668,7 +1008,7 @@ fn start_scan(world: &mut World, secs: u64, stop: bool) -> Result<String, String
             let result = scanner(duration, &thread_flag, &mut |d| {
                 let _ = found_tx.send(ScanMsg::Found(d));
             });
-            let _ = tx.send(ScanMsg::Done(result));
+            let _ = tx.send(ScanMsg::Done("Bluetooth", result));
         })
         .map_err(|e| e.to_string())?;
     devices.found.clear();
@@ -676,6 +1016,8 @@ fn start_scan(world: &mut World, secs: u64, stop: bool) -> Result<String, String
         rx: Mutex::new(rx),
         stop: flag,
         until: Instant::now() + duration,
+        pending,
+        errors: Vec::new(),
     });
     let line = format!("scanning for {secs} s ...");
     devices.info.push_message(line.clone());
@@ -686,7 +1028,7 @@ fn register_commands(app: &mut App) {
     app.console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("devices.scan")
-            .about("Scan for Bluetooth trainers and sensors (in the background; they are listed as they appear)")
+            .about("Scan for Bluetooth and ANT+ trainers and sensors (in the background; they are listed as they appear)")
             .arg(
                 Arg::new("seconds")
                     // `menu::devices::SCAN_SECONDS` (tested).
@@ -734,11 +1076,61 @@ fn register_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
+        Command::new("devices.hr")
+            .about("Use this device's heart rate (Use for heart rate; with two straps only one counts); auto: the first that sends")
+            .arg(Arg::new("device").required(true)),
+        |world, m| {
+            let which = m.get_one::<String>("device").expect("required").clone();
+            world.resource_mut::<Devices>().use_for_heart_rate(&which)
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("ant.key.edit")
+            .about("Type the ANT+ network key (Devices -> ANT+; Enter saves it in secrets.toml, Esc cancels)"),
+        |world, _| {
+            if world.resource::<DeviceIo>().ant.is_none() {
+                return Err("ANT+ is off (--no-ant)".into());
+            }
+            world.resource_mut::<KeyEntry>().start();
+            Ok("typing the ANT+ network key: Enter saves, Esc cancels".into())
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("ant.key.save").about("Save the typed ANT+ network key"),
+        |world, _| save_key(world),
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("ant.key.paste").about("Paste the ANT+ network key from the clipboard"),
+        |world, _| paste_key(world),
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("ant.key.cancel").about("Stop typing the ANT+ network key"),
+        |world, _| cancel_key(world),
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("ant.key.clear").about("Remove the ANT+ network key (ANT+ stops)"),
+        |world, _| clear_key(world),
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
         Command::new("devices.list").about("Show running and remembered devices"),
         |world, _| {
+            let ant = world
+                .resource::<DeviceIo>()
+                .ant
+                .as_ref()
+                .map(|s| s.status().text());
             let devices = world.resource::<Devices>();
             let info = devices.menu_info();
             let mut out = format!("running: {}", devices.names().join(", "));
+            if let Some(a) = ant {
+                out.push_str(&format!("\nANT+: {a}"));
+            }
             out.push_str("\nremembered:");
             if devices.known.devices.is_empty() {
                 out.push_str(" none");
@@ -890,9 +1282,19 @@ mod tests {
     }
 
     fn app_with(extra: &[&str], io: Option<DeviceIo>) -> App {
+        app_in(extra, io, None)
+    }
+
+    /// With the config files of `files` (`ocw.toml`, `secrets.toml`).
+    fn app_in(
+        extra: &[&str],
+        io: Option<DeviceIo>,
+        files: Option<crate::config::ConfigFiles>,
+    ) -> App {
         let mut args = vec!["ocw-desktop", "--bots", "0"];
         if io.is_none() {
-            args.push("--virtual");
+            // No real ANT stick service in unit tests.
+            args.extend(["--virtual", "--no-ant"]);
         }
         args.extend_from_slice(extra);
         let mut app = App::new();
@@ -900,6 +1302,9 @@ mod tests {
             .insert_resource(Args::parse_from(args))
             .insert_resource(RideView::new(Route::test_loop()))
             .init_resource::<ocw_ui::menu::DevicesMenu>();
+        if let Some(f) = files {
+            app.insert_resource(f);
+        }
         if let Some(io) = io {
             app.insert_resource(io);
         }
@@ -977,6 +1382,7 @@ mod tests {
                     }
                     Ok(())
                 }),
+                ant: None,
             };
             (io, tx)
         }
@@ -1127,6 +1533,7 @@ mod tests {
                 id: KICKR.into(),
                 name: "Wahoo KICKR 0001".into(),
                 kind: Some("trainer".into()),
+                transport: None,
             }]
         );
         assert!(
@@ -1262,6 +1669,7 @@ mod tests {
             id: "hci0/dev_AA".into(),
             name: "KICKR".into(),
             kind: None,
+            transport: None,
         });
         known.save(&path).unwrap();
         // --virtual: remembered devices are not connected, only listed.
@@ -1297,5 +1705,344 @@ mod tests {
         assert!(run(&mut app, "devices.connect 1").starts_with("error: no device 1"));
         assert!(run(&mut app, "devices.scan --stop").starts_with("error: no scan"));
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    // ANT+ (spec 14 Phase 17): the simulated stick in place of a real one.
+
+    use ocw_client::menu::join::TextField;
+    use ocw_devices::ant::sim::SimSensor;
+    use ocw_devices::ant::{SimTransport, StickStatus};
+
+    const ANT_STRAP: &str = "ant:120:12345:1";
+    const ANT_STRAP_2: &str = "ant:120:23456:1";
+
+    fn temp_config(name: &str) -> crate::config::ConfigFiles {
+        let dir = std::env::temp_dir().join(format!("ocw-ant-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        crate::config::ConfigFiles::in_dir(&dir)
+    }
+
+    fn ant_io(mock: &Mock, sim: &SimTransport, key: Option<NetworkKey>) -> DeviceIo {
+        let (mut io, _feed) = mock.io();
+        io.ant = Some(AntStick::start(sim.clone(), key));
+        io
+    }
+
+    fn hr_now(app: &App) -> Option<f64> {
+        app.world().resource::<ClientState>().0.heart_rate_bpm()
+    }
+
+    /// Updates until `ok` holds on the app (the stick runs on its thread).
+    fn until_app(app: &mut App, what: &str, secs: u64, ok: impl Fn(&App) -> bool) {
+        let start = Instant::now();
+        loop {
+            app.update();
+            if ok(app) {
+                return;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(secs),
+                "{what}: {:?}",
+                menu(app)
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn type_key(app: &mut App, text: &str) -> String {
+        run(app, "ant.key.edit");
+        app.world_mut().resource_mut::<KeyEntry>().field = TextField::new(text);
+        run(app, "ant.key.save")
+    }
+
+    /// The whole ANT+ path without hardware: the Devices page asks for the
+    /// key → it is typed and kept in secrets.toml (mode 0600, never in
+    /// ocw.toml or the console) → a scan lists the simulated straps →
+    /// choosing one connects it and remembers it with `transport = "ant"`
+    /// → its heart rate reaches the ride (the samples, the HUD's source)
+    /// and the FIT recording → the next start reconnects it with the saved
+    /// key.
+    #[test]
+    fn ant_strap_key_scan_pair_ride_and_heart_rate_in_the_fit_file() {
+        let files = temp_config("flow");
+        let devices_file = files.dir().join("devices.toml");
+        KnownDevices::default().save(&devices_file).unwrap();
+        let sim = SimTransport::new(
+            Some(NetworkKey::TEST),
+            vec![
+                SimSensor::strap(12345, 142.0),
+                SimSensor::strap(23456, 128.0),
+            ],
+        );
+        let mock = Mock::default();
+        let io = ant_io(&mock, &sim, None);
+        let path = devices_file.to_str().unwrap().to_owned();
+        let mut app = app_in(&["--devices-file", &path], Some(io), Some(files.clone()));
+        app.update();
+        // No key yet: the ANT+ row says so.
+        let page = |app: &App| ocw_client::menu::devices::rows(Page::Devices, &menu(app));
+        let ant_row = page(&app)
+            .into_iter()
+            .find(|r| r.label == "ANT+ (USB stick)")
+            .unwrap();
+        assert_eq!(ant_row.value.as_deref(), Some("network key needed"));
+
+        // A key that does not read keeps the field open and saves nothing.
+        let line = type_key(&mut app, "0A 1B 2C");
+        assert!(line.contains("16 hex digits"), "{line}");
+        assert!(app.world().resource::<KeyEntry>().typing);
+        assert!(!files.secrets.exists());
+        // The key: saved privately, the stick gets it.
+        run(&mut app, "ant.key.cancel");
+        let line = type_key(&mut app, "0A 1B 2C 3D 4E 5F 60 71");
+        assert!(line.starts_with("ANT+ network key saved in"), "{line}");
+        assert!(line.ends_with("secrets.toml [ant]"), "{line}");
+        let secrets = std::fs::read_to_string(&files.secrets).unwrap();
+        assert!(
+            secrets.contains("network_key = \"0A1B2C3D4E5F6071\""),
+            "{secrets}"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&files.secrets)
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        let log = app.world().resource::<ConsoleState>().log().join("\n");
+        assert!(
+            !log.contains("0A1B2C3D") && !log.contains("0A 1B 2C 3D"),
+            "{log}"
+        );
+        if let Ok(config) = std::fs::read_to_string(&files.config) {
+            assert!(!config.contains("0A1B2C3D"), "{config}");
+        }
+        assert!(!app.world().resource::<KeyEntry>().typing);
+
+        // Scan: the straps join the list as the stick finds them.
+        run(&mut app, "devices.scan 4");
+        until(&mut app, "two ANT+ straps", |m| m.entries.len() == 2);
+        let m = menu(&app);
+        assert!(
+            m.entries
+                .iter()
+                .all(|e| e.role == Role::HeartRate && e.is_ant())
+        );
+        assert_eq!(
+            page(&app)[2]
+                .value
+                .as_deref()
+                .map(|v| v.starts_with("heart rate, ANT+")),
+            Some(true)
+        );
+        until(&mut app, "the scan's end", |m| m.scan == Scan::Idle);
+        // The stick is plugged in (and open while the scan ran).
+        let state = menu(&app).ant.unwrap().state;
+        assert!(state.starts_with("Simulated ANT stick"), "{state}");
+
+        // Connect the strap of 142 bpm: connected, remembered as ANT.
+        let line = run(&mut app, &format!("devices.connect {ANT_STRAP}"));
+        assert_eq!(line, "ANT+ heart rate 12345: connecting ...");
+        until(&mut app, "connected", |m| {
+            m.entries
+                .iter()
+                .any(|e| e.id == ANT_STRAP && matches!(e.link, Link::Connected(_)))
+        });
+        let saved = KnownDevices::load(&devices_file).unwrap();
+        assert_eq!(
+            saved.devices,
+            [KnownDevice {
+                id: ANT_STRAP.into(),
+                name: "ANT+ heart rate 12345".into(),
+                kind: Some("hr".into()),
+                transport: Some("ant".into()),
+            }]
+        );
+        // A strap does not replace the virtual trainer.
+        assert!(menu(&app).virtual_trainer);
+        until_app(&mut app, "142 bpm in the ride", 5, |a| {
+            hr_now(a) == Some(142.0)
+        });
+
+        // Ride: the recorder takes the heart rate into the FIT file.
+        let mut rec = ocw_client::recording::RideRecorder::new("Loop");
+        for i in 0..5 {
+            app.update();
+            let c = &app.world().resource::<ClientState>().0;
+            let mut s = ocw_client::recording::sample(c, f64::from(i));
+            s.distance = f64::from(i) * 7.0;
+            rec.observe(c.track(), None, s, 1_800_000_000);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let ride = rec.finish().unwrap();
+        let fit = ocw_fit::decode(&ocw_fit::encode(&ride.activity)).unwrap();
+        assert_eq!(fit.records.len(), 5);
+        assert!(
+            fit.records.iter().all(|r| r.heart_rate_bpm == Some(142.0)),
+            "{:?}",
+            fit.records
+        );
+
+        // The next start: the key from secrets.toml, the strap reconnected
+        // (once this app let go of the stick: one program at a time).
+        app.world()
+            .resource::<DeviceIo>()
+            .ant
+            .as_ref()
+            .unwrap()
+            .shutdown();
+        let start = Instant::now();
+        while sim.links_open() > 0 {
+            assert!(start.elapsed() < Duration::from_secs(5));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        {
+            let mock2 = Mock::default();
+            let io2 = ant_io(&mock2, &sim, None);
+            let mut next = app_in(&["--devices-file", &path], Some(io2), Some(files.clone()));
+            until_app(&mut next, "reconnected", 10, |a| hr_now(a) == Some(142.0));
+            assert!(menu(&next).ant.unwrap().key_set);
+        }
+
+        // Removing the key: ANT+ asks for it again.
+        let line = run(&mut app, "ant.key.clear");
+        assert!(line.starts_with("ANT+ network key removed"), "{line}");
+        assert!(
+            !std::fs::read_to_string(&files.secrets)
+                .unwrap()
+                .contains("network_key")
+        );
+        app.update();
+        assert!(!menu(&app).ant.unwrap().key_set);
+        let _ = std::fs::remove_dir_all(files.dir());
+    }
+
+    /// Two straps (a BLE and an ANT+ one, spec 14 Phase 17 Q6 (c)): only
+    /// one heart rate is used – the first that sent, until the rider picks
+    /// the other with *Use for heart rate*; the choice is saved; when the
+    /// chosen strap goes, the heart rate goes too (no switching to the
+    /// other).
+    #[test]
+    fn two_straps_give_one_heart_rate_chosen_by_hand() {
+        let files = temp_config("two");
+        let devices_file = files.dir().join("devices.toml");
+        let mut known = KnownDevices::default();
+        known.remember(KnownDevice {
+            id: STRAP.into(),
+            name: "TICKR".into(),
+            kind: Some("hr".into()),
+            transport: None,
+        });
+        known.remember(KnownDevice {
+            id: ANT_STRAP_2.into(),
+            name: "ANT+ heart rate 23456".into(),
+            kind: Some("hr".into()),
+            transport: Some("ant".into()),
+        });
+        known.save(&devices_file).unwrap();
+        files
+            .secret("ant")
+            .write("network_key = \"0A1B2C3D4E5F6071\"\n")
+            .unwrap();
+        let sim = SimTransport::new(Some(NetworkKey::TEST), vec![SimSensor::strap(23456, 128.0)]);
+        let mock = Mock::default();
+        let io = ant_io(&mock, &sim, None);
+        let path = devices_file.to_str().unwrap().to_owned();
+        let mut app = app_in(&["--devices-file", &path], Some(io), Some(files.clone()));
+        app.update();
+        // The BLE strap connects and sends first.
+        mock.send(
+            STRAP,
+            DeviceEvent::Connected {
+                kind: "heart-rate sensor",
+            },
+        );
+        let ble = |bpm| DeviceEvent::HeartRate {
+            bpm,
+            timestamp: Duration::ZERO,
+        };
+        mock.send(STRAP, ble(100.0));
+        app.update();
+        assert_eq!(hr_now(&app), Some(100.0));
+        // The ANT+ strap connects (the key came from secrets.toml) …
+        until(&mut app, "the ANT+ strap", |m| {
+            m.entries
+                .iter()
+                .any(|e| e.id == ANT_STRAP_2 && matches!(e.link, Link::Connected(_)))
+        });
+        // … but its 128 bpm are not mixed in.
+        for _ in 0..40 {
+            app.update();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(hr_now(&app), Some(100.0));
+        let m = menu(&app);
+        let flag =
+            |m: &DevicesInfo, id: &str| m.entries.iter().find(|e| e.id == id).unwrap().heart_rate;
+        assert_eq!(flag(&m, STRAP), Some(true));
+        assert_eq!(flag(&m, ANT_STRAP_2), Some(false));
+        // The ANT+ strap's page: Use for heart rate.
+        let i = m.entries.iter().position(|e| e.id == ANT_STRAP_2).unwrap();
+        let rows = ocw_client::menu::devices::rows(Page::Device(i), &m);
+        let use_it = rows
+            .iter()
+            .find(|r| r.label == "Use for heart rate")
+            .unwrap();
+        let Some(ocw_client::menu::pages::Activate::Command(line)) = &use_it.confirm else {
+            panic!("{use_it:?}")
+        };
+        assert_eq!(
+            run(&mut app, line),
+            "ANT+ heart rate 23456 gives the heart rate"
+        );
+        until_app(&mut app, "128 bpm", 5, |a| hr_now(a) == Some(128.0));
+        mock.send(STRAP, ble(100.0));
+        app.update();
+        assert_eq!(hr_now(&app), Some(128.0));
+        assert_eq!(
+            KnownDevices::load(&devices_file)
+                .unwrap()
+                .heart_rate
+                .as_deref(),
+            Some(ANT_STRAP_2)
+        );
+        assert_eq!(flag(&menu(&app), ANT_STRAP_2), Some(true));
+        // The chosen strap is taken off: no heart rate, not the BLE one's.
+        sim.radio(|r| r.set_present(23456, false));
+        until_app(&mut app, "the strap gone", 5, |a| hr_now(a).is_none());
+        mock.send(STRAP, ble(101.0));
+        app.update();
+        assert_eq!(hr_now(&app), None);
+        // Back on: its heart rate again.
+        sim.radio(|r| r.set_present(23456, true));
+        until_app(&mut app, "back", 5, |a| hr_now(a) == Some(128.0));
+        let _ = std::fs::remove_dir_all(files.dir());
+    }
+
+    /// The Devices page says what is wrong with the stick, in neutral
+    /// words (spec 14 Phase 17 Q7 / Q8 still open: no udev / Zadig flow).
+    #[test]
+    fn a_stick_that_cannot_be_opened_is_named_neutrally() {
+        let sim = SimTransport::new(None, vec![SimSensor::strap(1, 70.0)]);
+        sim.set_denied(true);
+        let mock = Mock::default();
+        let io = ant_io(&mock, &sim, Some(NetworkKey::TEST));
+        let mut app = app_with(&[], Some(io));
+        run(&mut app, "devices.connect ant:120:1:1");
+        until(&mut app, "permission", |m| {
+            m.ant
+                .as_ref()
+                .is_some_and(|a| a.state == "cannot open the stick (permission)")
+        });
+        until(&mut app, "the entry says why", |m| {
+            m.entries.first().is_some_and(|e| {
+                e.link == Link::Failed(ocw_devices::FailReason::NoPermission.text().into())
+            })
+        });
+        let status = StickStatus::NoPermission("x".into()).text();
+        assert!(!status.contains("udev") && !status.contains("Zadig"));
     }
 }

@@ -280,66 +280,103 @@ pub fn capture(world: &mut World) -> bool {
     let Some(field) = world.get_resource::<JoinUi>().and_then(|u| u.info.typing) else {
         return false;
     };
-    let keys = world.get_resource::<ButtonInput<KeyCode>>().cloned();
-    let mut q = world.query::<&Gamepad>();
-    let pads: Vec<GamepadButton> = q
-        .iter(world)
-        .flat_map(|p| p.get_just_pressed().copied().collect::<Vec<_>>())
-        .collect();
-    let ctrl = keys.as_ref().is_some_and(|k| {
-        k.any_pressed([
-            KeyCode::ControlLeft,
-            KeyCode::ControlRight,
-            KeyCode::SuperLeft,
-            KeyCode::SuperRight,
-        ])
-    });
-    let mut paste = false;
-    let mut done = false;
-    {
+    let pads = pads_pressed(world);
+    let ctrl = ctrl_held(world);
+    let paste = {
         let mut ui = world.resource_mut::<JoinUi>();
         let f = field_mut(&mut ui.info, field);
-        for e in typed.iter().filter(|e| e.state.is_pressed()) {
-            match &e.logical_key {
-                Key::Enter | Key::Escape => done = true,
-                Key::Backspace => f.backspace(),
-                Key::Delete => f.delete(),
-                Key::ArrowLeft => f.left(),
-                Key::ArrowRight => f.right(),
-                Key::Home => f.home(),
-                Key::End => f.end(),
-                Key::Paste => paste = true,
-                Key::Character(c) if ctrl && c.eq_ignore_ascii_case("v") => paste = true,
-                Key::Character(_) if ctrl => {}
-                Key::Space => f.insert(" "),
-                _ => {
-                    if let Some(t) = &e.text
-                        && !ctrl
-                    {
-                        f.insert(t);
-                    }
-                }
-            }
-        }
-        for b in &pads {
-            match b {
-                GamepadButton::DPadUp => f.wheel(1),
-                GamepadButton::DPadDown => f.wheel(-1),
-                GamepadButton::DPadLeft => f.left(),
-                GamepadButton::DPadRight => f.right(),
-                GamepadButton::East | GamepadButton::West => f.backspace(),
-                GamepadButton::South | GamepadButton::Start => done = true,
-                _ => {}
-            }
-        }
-        if done {
+        let (paste, ended) = edit_field(f, &typed, &pads, ctrl);
+        if ended.is_some() {
             ui.info.typing = None;
         }
-    }
+        paste
+    };
     if paste && let Err(e) = paste_into(world, field) {
         world.resource_mut::<ConsoleState>().print(e);
     }
     true
+}
+
+/// How typing into a field ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldEnd {
+    /// Enter (a pad's A / Start): done.
+    Enter,
+    /// Esc: cancelled.
+    Escape,
+}
+
+/// This frame's keys and pad buttons into a text field (shared by the
+/// Join page's fields and the ANT+ network key, spec 14 Phase 17): typed
+/// text, ← / →, Home / End, Backspace / Delete; a gamepad turns the
+/// character wheel (↑ / ↓), moves (← / →), deletes (B / X) and ends (A /
+/// Start). Returns whether a paste was asked for (Ctrl+V / ⌘V) and how
+/// the typing ended, if it did.
+pub fn edit_field(
+    f: &mut ocw_client::menu::join::TextField,
+    typed: &[KeyboardInput],
+    pads: &[GamepadButton],
+    ctrl: bool,
+) -> (bool, Option<FieldEnd>) {
+    let mut paste = false;
+    let mut end = None;
+    for e in typed.iter().filter(|e| e.state.is_pressed()) {
+        match &e.logical_key {
+            Key::Enter => end = Some(FieldEnd::Enter),
+            Key::Escape => end = Some(FieldEnd::Escape),
+            Key::Backspace => f.backspace(),
+            Key::Delete => f.delete(),
+            Key::ArrowLeft => f.left(),
+            Key::ArrowRight => f.right(),
+            Key::Home => f.home(),
+            Key::End => f.end(),
+            Key::Paste => paste = true,
+            Key::Character(c) if ctrl && c.eq_ignore_ascii_case("v") => paste = true,
+            Key::Character(_) if ctrl => {}
+            Key::Space => f.insert(" "),
+            _ => {
+                if let Some(t) = &e.text
+                    && !ctrl
+                {
+                    f.insert(t);
+                }
+            }
+        }
+    }
+    for b in pads {
+        match b {
+            GamepadButton::DPadUp => f.wheel(1),
+            GamepadButton::DPadDown => f.wheel(-1),
+            GamepadButton::DPadLeft => f.left(),
+            GamepadButton::DPadRight => f.right(),
+            GamepadButton::East | GamepadButton::West => f.backspace(),
+            GamepadButton::South | GamepadButton::Start => end = Some(FieldEnd::Enter),
+            _ => {}
+        }
+    }
+    (paste, end)
+}
+
+/// Whether Ctrl (⌘) is held.
+pub fn ctrl_held(world: &World) -> bool {
+    world
+        .get_resource::<ButtonInput<KeyCode>>()
+        .is_some_and(|k| {
+            k.any_pressed([
+                KeyCode::ControlLeft,
+                KeyCode::ControlRight,
+                KeyCode::SuperLeft,
+                KeyCode::SuperRight,
+            ])
+        })
+}
+
+/// The pad buttons pressed this frame.
+pub fn pads_pressed(world: &mut World) -> Vec<GamepadButton> {
+    let mut q = world.query::<&Gamepad>();
+    q.iter(world)
+        .flat_map(|p| p.get_just_pressed().copied().collect::<Vec<_>>())
+        .collect()
 }
 
 #[cfg(test)]

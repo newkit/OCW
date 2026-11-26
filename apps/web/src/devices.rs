@@ -432,6 +432,7 @@ impl WebDevices {
                 rssi: None,
                 link: d.state.link(),
                 remembered: remembered(&d.id),
+                heart_rate: None,
             })
             .collect();
         for r in &self.remembered.devices {
@@ -443,6 +444,7 @@ impl WebDevices {
                     rssi: None,
                     link: Link::Idle,
                     remembered: true,
+                    heart_rate: None,
                 });
             }
         }
@@ -457,6 +459,7 @@ impl WebDevices {
             file: Some("this browser (localStorage)".into()),
             virtual_trainer: self.uses_virtual(),
             bridge: Some(self.bridge_info.clone()),
+            ant: None,
         }
     }
 

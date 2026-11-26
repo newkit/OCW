@@ -230,6 +230,15 @@ pub struct Args {
     /// section of ocw.toml).
     #[arg(long, value_name = "PATH")]
     pub devices_file: Option<PathBuf>,
+    /// A simulated ANT USB stick with these ANT+ sensors instead of a real
+    /// stick (spec 14 Phase 17; tests, screenshots): `hr:N:BPM`,
+    /// `power:N:W[:RPM]`, separated by commas, e.g. `hr:12345:142`. The
+    /// ANT+ network key is still entered (any key works here).
+    #[arg(long, value_name = "SENSORS")]
+    pub ant_sim: Option<String>,
+    /// Do not look for an ANT USB stick (ANT+ off).
+    #[arg(long)]
+    pub no_ant: bool,
     /// Share the trainer with a browser on the same network from the start
     /// (the sensor bridge, spec 14 Phase 10, 10D.2; Settings → Trainer →
     /// Devices → Share with a browser).

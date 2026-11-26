@@ -8,8 +8,12 @@
 //! frame loop) and the Bluetooth LE backends ([`ble`]: FTMS trainers,
 //! Wahoo KICKRs, power meters, cadence and heart-rate sensors – over
 //! btleplug natively, over Web Bluetooth in the browser, spec §14 Phase 10
-//! B4, with the same protocol). ANT+ is deferred.
+//! B4, with the same protocol) and the ANT+ sensors through an ANT USB
+//! stick ([`ant`]: heart-rate straps and power meters, spec 3.4.1 and 14
+//! Phase 17; the codec, channels, pages and the stick core are pure, the
+//! stick service and its USB link native).
 
+pub mod ant;
 pub mod ble;
 pub mod gatt;
 pub mod virtual_power;
@@ -57,6 +61,14 @@ pub enum FailReason {
     NotFound,
     /// It showed up, but connecting or setting it up failed.
     Connect,
+    /// ANT+: no ANT USB stick is plugged in.
+    NoStick,
+    /// ANT+: the stick is there but may not be opened (permission).
+    NoPermission,
+    /// ANT+: another program has the stick.
+    StickBusy,
+    /// ANT+: the ANT+ network key has not been entered yet.
+    NoKey,
 }
 
 impl FailReason {
@@ -65,7 +77,13 @@ impl FailReason {
         match e {
             DeviceError::NoAdapter => Self::NoAdapter,
             DeviceError::NotFound(_) => Self::NotFound,
-            DeviceError::Start(_) | DeviceError::Bluetooth(_) => Self::Connect,
+            DeviceError::Start(_) | DeviceError::Bluetooth(_) | DeviceError::Ant(_) => {
+                Self::Connect
+            }
+            DeviceError::NoStick => Self::NoStick,
+            DeviceError::StickPermission => Self::NoPermission,
+            DeviceError::StickBusy => Self::StickBusy,
+            DeviceError::NoNetworkKey => Self::NoKey,
         }
     }
 
@@ -75,6 +93,10 @@ impl FailReason {
             Self::NoAdapter => "no Bluetooth adapter (or Bluetooth is off)",
             Self::NotFound => "not found (out of range, asleep, or connected to another app)",
             Self::Connect => "the connection failed (busy with another app?)",
+            Self::NoStick => "no ANT stick plugged in",
+            Self::NoPermission => "cannot open the ANT stick (permission)",
+            Self::StickBusy => "the ANT stick is busy with another app",
+            Self::NoKey => "the ANT+ network key is needed (Devices -> ANT+)",
         }
     }
 }
@@ -144,6 +166,16 @@ pub enum DeviceError {
     NoAdapter,
     #[error("device {0} not found")]
     NotFound(String),
+    #[error("ANT: {0}")]
+    Ant(String),
+    #[error("no ANT stick plugged in")]
+    NoStick,
+    #[error("cannot open the ANT stick (permission)")]
+    StickPermission,
+    #[error("the ANT stick is busy with another app")]
+    StickBusy,
+    #[error("the ANT+ network key is needed")]
+    NoNetworkKey,
 }
 
 /// A source of trainer / sensor data.
