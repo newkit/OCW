@@ -111,6 +111,12 @@ impl Plugin for WebSessionPlugin {
             },
         })
         .insert_resource(ocw_ui::UiPlatform(ocw_ui::Platform::Browser))
+        // The workshop, the character and the garage (spec 14 Phase 4, 4O
+        // part 3): the desktop's, on the signed-in rider's account; locked
+        // for anonymous riders (Phase 10 Q5).
+        .add_plugins(crate::workshop::WebWorkshopPlugin {
+            local: self.config.remote.is_none(),
+        })
         .configure_sets(Update, ViewUpdated.in_set(ocw_ui::RideViewSet));
         app.add_systems(PreUpdate, frame.run_if(riding))
             .add_systems(Last, (flush, publish_stats).run_if(riding))
@@ -561,15 +567,6 @@ fn workout_list() -> String {
         .join("\n")
 }
 
-/// The browser's rider is anonymous (spec §14 Phase 10 Q5): a plain
-/// default rider, no customization – the mirror is locked.
-fn locked() -> Result<String, String> {
-    if ocw_core::character::may_customize(true) {
-        return Ok(String::new());
-    }
-    Err(ocw_core::character::LOCKED_MIRROR.into())
-}
-
 fn register_commands(app: &mut App) {
     app.console_command(ConsoleCommand::new(
         Permission::User,
@@ -620,21 +617,6 @@ fn register_commands(app: &mut App) {
             // The server confirms; the prediction snaps on the next snapshot.
             Ok(String::new())
         },
-    ))
-    .console_command(ConsoleCommand::new(
-        Permission::User,
-        Command::new("workshop")
-            .about("The workshop and the changing corner (locked for anonymous riders)")
-            .arg(Arg::new("args").num_args(0..).allow_hyphen_values(true)),
-        |_, _| locked(),
-    ))
-    .console_command(ConsoleCommand::new(
-        Permission::User,
-        // The same command as the desktop's (spec §14 Phase 4, 4N; B6):
-        // the anonymous rider's mirror is locked (Phase 10 Q5).
-        ocw_ui::character::command()
-            .about("The rider's character (locked for anonymous riders)"),
-        |_, _| locked(),
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
@@ -843,6 +825,105 @@ mod tests {
     /// The glue without a window or GPU: the session runs from Bevy's
     /// frame time, the view gets the riders and the sky, and the console
     /// commands reach the session.
+    /// The account's workshop in the browser (spec 14 Phase 4, 4O part
+    /// 3; B6 parity): signed in, *Workshop* opens the desktop's workshop
+    /// on the account – its balance and starter bike, marked "account" –
+    /// and a purchase goes to the account without waiting (natively there
+    /// is no `fetch()`, so it is answered as offline).
+    #[test]
+    fn a_signed_in_rider_gets_the_accounts_workshop() {
+        use ocw_account_api::workshop::{Garage, WorkshopState as Api};
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::input::InputPlugin, ConsoleCorePlugin))
+            .insert_resource(Time::<Fixed>::from_hz(f64::from(ocw_core::SIM_TICK_HZ)))
+            .insert_resource(RideView::new(ocw_world::Route::test_hills()))
+            .add_plugins(WebSessionPlugin {
+                config: SessionConfig::default(),
+            })
+            .add_plugins(crate::ui::WebUiPlugin::default());
+        let frames = |app: &mut App, n: usize| {
+            for _ in 0..n {
+                app.update();
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        };
+        let run = |app: &mut App, line: &str| {
+            app.world_mut().resource_mut::<ConsoleState>().queue(line);
+            app.update();
+            app.update();
+            app.world().resource::<ConsoleState>().log().join("\n")
+        };
+        frames(&mut app, 20);
+        assert!(run(&mut app, "workshop open").contains("log in to customize"));
+        // Signed in (the page's redirect sign-in needs a browser).
+        let mut a = crate::account::WebAccount::default();
+        a.issuer = Some("http://127.0.0.1:9".into());
+        a.session = Some(ocw_auth::client::Session {
+            issuer: "http://127.0.0.1:9".into(),
+            client_id: ocw_auth::CLIENT_WEB.into(),
+            access_token: "token".into(),
+            access_expires_at: i64::MAX / 2,
+            refresh_token: None,
+            account_id: "acc-dora".into(),
+            name: "Dora Downhill".into(),
+            providers: vec!["google".into()],
+        });
+        a.state = ocw_client::account::AccountState::SignedIn {
+            name: "Dora Downhill".into(),
+            providers: vec![ocw_auth::Provider::Google],
+        };
+        app.insert_resource(a);
+        frames(&mut app, 3);
+        let label = |app: &App| {
+            let s = app.world().resource::<ocw_ui::workshop::WorkshopState>();
+            ocw_ui::workshop::balance_label(s, s.wallet.balance("Rider"))
+        };
+        assert!(label(&app).contains("connecting"), "{}", label(&app));
+        // The backend's answer (a fetch() in the page).
+        let ws = app
+            .world()
+            .resource::<crate::workshop::WebWorkshop>()
+            .clone();
+        let answer = |ws: &crate::workshop::WebWorkshop| {
+            ws.lock().synced_ok(
+                Api {
+                    account: "acc-dora".into(),
+                    hearts: 5000,
+                    garage: Garage::starter("Dora Downhill"),
+                    ledger: vec![],
+                    at: 1,
+                },
+                1_800_000_000,
+            );
+        };
+        answer(&ws);
+        frames(&mut app, 3);
+        assert!(
+            app.world()
+                .resource::<ocw_ui::workshop::WorkshopState>()
+                .wallet
+                .is_account()
+        );
+        assert_eq!(label(&app), "5,000 ♥ · account");
+        run(&mut app, "workshop open");
+        assert!(
+            app.world()
+                .resource::<ocw_ui::workshop::WorkshopState>()
+                .scene
+                .is_some(),
+            "the workshop opens"
+        );
+        // Opening it asks the backend again (answered here).
+        answer(&ws);
+        frames(&mut app, 2);
+        let log = run(&mut app, "workshop.buy wheels.road-alloy.mid");
+        assert!(log.contains("sent to your account"), "{log}");
+        frames(&mut app, 3);
+        let log = app.world().resource::<ConsoleState>().log().join("\n");
+        assert!(log.contains("needs the browser"), "{log}");
+        assert_eq!(label(&app), "5,000 ♥ · account, offline (read-only)");
+    }
+
     #[test]
     fn the_plugin_rides_headless() {
         let mut app = App::new();

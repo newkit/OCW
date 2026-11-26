@@ -31,6 +31,13 @@ ocw-audio.workspace = true
 web-time.workspace = true
 bevy.workspace = true
 clap.workspace = true
+# The workshop (spec 14 Phase 4): the parts catalogue, the models' layout,
+# the garage's files (TOML, JSON lines) and the account's wire types (4O).
+ocw-assets.workspace = true
+ocw-account-api.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
 
 # The app icon (`app_icon`, native only): window icon, desktop entry.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

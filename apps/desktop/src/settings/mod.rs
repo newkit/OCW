@@ -40,25 +40,24 @@ pub fn file_settings(settings: Settings, files: ConfigFiles) -> UserSettings {
     }
 }
 
-/// The rider profiles, and the rider of the running ride.
-#[derive(Resource, Default)]
-pub struct RiderProfiles {
-    pub riders: Riders,
-    /// Where they are kept (`ocw.toml [riders]`).
-    pub path: Option<Slot>,
-    /// Who rides now: the active profile at the start, or `--rider`.
-    /// Changes to the profiles apply from the next start.
-    pub riding: Rider,
+/// The rider profiles (shared with the browser app since 4O part 3).
+pub use ocw_ui::profiles::{RiderProfiles, local_rider};
+
+impl ocw_ui::profiles::ProfilesStore for Slot {
+    fn write(&self, text: &str) -> Result<(), String> {
+        Slot::write(self, text)
+    }
+    fn describe(&self) -> String {
+        Slot::describe(self)
+    }
 }
 
-impl RiderProfiles {
-    pub(crate) fn save(&self) -> Result<(), String> {
-        match &self.path {
-            Some(p) => p.write(&self.riders.to_toml()),
-            None => Err("no configuration directory".into()),
-        }
-    }
+/// The desktop's notes on the profiles.
+trait NextStart {
+    fn next_start_note(&self) -> &'static str;
+}
 
+impl NextStart for RiderProfiles {
     /// A note when the next start would ride another profile than now.
     fn next_start_note(&self) -> &'static str {
         if self.riders.active() == self.riding {
@@ -67,15 +66,6 @@ impl RiderProfiles {
             " (applies from the next start; R restarts)"
         }
     }
-}
-
-/// The physics profile and display name of the local rider: from
-/// [`RiderProfiles`] if the app loaded them, else the default rider.
-pub fn local_rider(world: &World) -> Rider {
-    world
-        .get_resource::<RiderProfiles>()
-        .map(|r| r.riding.clone())
-        .unwrap_or_default()
 }
 
 /// Whether autodrive is on at the start (`controls.autodrive`).
@@ -174,7 +164,7 @@ pub fn load(args: &mut Args, matches: &ArgMatches) -> Loaded {
         settings,
         riders: RiderProfiles {
             riders,
-            path: rpath,
+            path: rpath.map(|p| std::sync::Arc::new(p) as _),
             riding,
         },
         warnings,
@@ -666,7 +656,7 @@ mod tests {
         .insert_resource(file_settings(Settings::default(), files.clone()))
         .insert_resource(RiderProfiles {
             riders: Riders::default(),
-            path: Some(files.section("riders")),
+            path: Some(std::sync::Arc::new(files.section("riders"))),
             riding: Rider::default(),
         })
         // Registered by the devices plugin in the app.

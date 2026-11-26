@@ -45,6 +45,7 @@ pub mod history;
 pub mod join;
 pub mod menu;
 pub mod photographer;
+pub mod profiles;
 pub mod quality;
 pub mod riders_page;
 pub mod settings;
@@ -54,6 +55,9 @@ pub mod touch;
 pub mod trust;
 pub mod view_distance;
 pub mod weather;
+// The workshop scene and the garage (spec 14 Phase 4; both apps since
+// 4O part 3).
+pub mod workshop;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod worlds;
 
