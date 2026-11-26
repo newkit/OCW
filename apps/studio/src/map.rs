@@ -39,6 +39,80 @@ pub fn map_data(pkg: &WorldPackage) -> MapData {
     MapData::of(pkg, land_rgb)
 }
 
+/// The land-use raster's texture, made in the egui context that draws the
+/// map. bevy_egui keeps an egui context's textures per camera entity, and
+/// the console gives the primary context a fresh `EguiContext` whenever it
+/// moves to another camera (`ocw_render::console`): a handle made before
+/// the move names a texture the new context never had, and the land use
+/// was not drawn at all (spec 16A *Fixed*, 6.03). So the texture is made
+/// again whenever the context differs from the one it was made in, and
+/// never larger than the context's largest texture side.
+#[derive(Default)]
+pub struct LandTexture {
+    made_in: Option<egui::Context>,
+    handle: Option<egui::TextureHandle>,
+}
+
+impl LandTexture {
+    /// The texture of `raster` in `ctx`, made (again) where needed.
+    pub fn get(
+        &mut self,
+        ctx: &egui::Context,
+        raster: Option<&ocw_map::LandRaster>,
+    ) -> Option<&egui::TextureHandle> {
+        let r = raster?;
+        if self.handle.is_none() || self.made_in.as_ref() != Some(ctx) {
+            let max_side = ctx.input(|i| i.max_texture_side);
+            let (size, rgba) = fit_raster(r, max_side);
+            bevy::log::info!(
+                "map land use: {}×{} texels as a {}×{} texture (largest side {max_side}){}",
+                r.width,
+                r.height,
+                size[0],
+                size[1],
+                if self.handle.is_some() {
+                    ", made again for a new egui context"
+                } else {
+                    ""
+                }
+            );
+            let img = egui::ColorImage::from_rgba_unmultiplied(size, &rgba);
+            self.handle =
+                Some(ctx.load_texture("studio-landuse", img, egui::TextureOptions::LINEAR));
+            self.made_in = Some(ctx.clone());
+        }
+        self.handle.as_ref()
+    }
+}
+
+/// The raster's pixels for a texture of at most `max_side` texels a side:
+/// itself where it fits, else resampled (nearest texel) over the same area,
+/// so the map draws it over the same rectangle whatever the limit.
+pub fn fit_raster(
+    r: &ocw_map::LandRaster,
+    max_side: usize,
+) -> ([usize; 2], std::borrow::Cow<'_, [u8]>) {
+    let max_side = max_side.max(1);
+    if r.width <= max_side && r.height <= max_side {
+        return ([r.width, r.height], std::borrow::Cow::Borrowed(&r.rgba));
+    }
+    let k = r.width.max(r.height).div_ceil(max_side);
+    let (w, h) = (
+        r.width.div_ceil(k).min(max_side),
+        r.height.div_ceil(k).min(max_side),
+    );
+    let mut out = Vec::with_capacity(w * h * 4);
+    for v in 0..h {
+        let sv = ((v * 2 + 1) * r.height / (h * 2)).min(r.height - 1);
+        for u in 0..w {
+            let su = ((u * 2 + 1) * r.width / (w * 2)).min(r.width - 1);
+            let i = (sv * r.width + su) * 4;
+            out.extend_from_slice(&r.rgba[i..i + 4]);
+        }
+    }
+    ([w, h], std::borrow::Cow::Owned(out))
+}
+
 /// A layer of the 2D map that can be switched (spec 16H Q15 (a)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Layer {
@@ -1263,6 +1337,82 @@ pub mod tests {
         assert_eq!(m.roads[1].min, [100.0, 50.0]);
         assert_eq!(m.buildings.len(), 1);
         assert_eq!(m.buildings[0].triangles.len(), 2);
+    }
+
+    /// Regression (spec 16A *Fixed*, 6.03): the land use was not drawn
+    /// when egui's primary context moved to another camera after the
+    /// texture was made – the handle named a texture of the old context.
+    #[test]
+    fn the_land_texture_is_made_in_the_context_that_draws_it() {
+        let r = map_data(&package()).land.unwrap();
+        let mut land = LandTexture::default();
+        let (old, new) = (egui::Context::default(), egui::Context::default());
+        let has = |ctx: &egui::Context, id: egui::TextureId| {
+            ctx.tex_manager()
+                .read()
+                .meta(id)
+                .is_some_and(|m| m.name == "studio-landuse" && m.size == [r.width, r.height])
+        };
+        let a = land.get(&old, Some(&r)).unwrap().id();
+        assert!(has(&old, a));
+        assert_eq!(
+            land.get(&old, Some(&r)).unwrap().id(),
+            a,
+            "kept, not made again"
+        );
+        let b = land.get(&new, Some(&r)).unwrap().id();
+        assert!(has(&new, b), "made again in the new context");
+        assert!(land.get(&new, None).is_none(), "no raster, no texture");
+    }
+
+    /// Every package's land texture fits the context's largest texture side
+    /// (egui's default and WebGL 2's minimum, 2048) and below it, resampled
+    /// over the same area.
+    #[test]
+    fn the_land_texture_fits_the_largest_texture_side() {
+        let mut p = package();
+        p.landuse.as_mut().unwrap().cells = 3000;
+        let t = p
+            .landuse
+            .as_mut()
+            .unwrap()
+            .tiles
+            .values_mut()
+            .next()
+            .unwrap();
+        t.classes = vec![LandClass::Meadow; 3000 * 3000];
+        for z in 0..100 {
+            t.classes[z * 3000..z * 3000 + 100].fill(LandClass::Water);
+        }
+        let r = map_data(&p).land.unwrap();
+        let ctx = egui::Context::default();
+        let max = ctx.input(|i| i.max_texture_side);
+        assert!(
+            r.width <= max && r.height <= max,
+            "{}×{} > {max}",
+            r.width,
+            r.height
+        );
+        let (size, px) = fit_raster(&r, max);
+        assert_eq!(size, [r.width, r.height]);
+        assert!(matches!(px, std::borrow::Cow::Borrowed(_)));
+        for limit in [1024, 500, 333, 7, 1] {
+            let (size, px) = fit_raster(&r, limit);
+            assert!(size[0] <= limit && size[1] <= limit, "{size:?} > {limit}");
+            assert_eq!(px.len(), size[0] * size[1] * 4);
+            // The aspect stays (2 tiles × 1 tile) where the limit allows it.
+            if limit >= 333 {
+                assert_eq!(size[0], 2 * size[1], "{size:?}");
+            }
+            // The first tile's corner (water) and the second tile, empty:
+            // the default ground, opaque.
+            if limit >= 500 {
+                assert_eq!(px[..3], land_rgb(LandClass::Water));
+            }
+            let last = &px[px.len() - 4..];
+            assert_eq!(last[..3], land_rgb(LandClass::Default));
+            assert_eq!(last[3], 255);
+        }
     }
 
     #[test]

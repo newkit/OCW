@@ -216,8 +216,9 @@ pub struct OpenWorld {
     pub details: WorldDetails,
     pub rows: Vec<(String, String)>,
     pub map: MapData,
-    /// The map's land-use texture (made by the UI on first use).
-    pub land_texture: Option<bevy_egui::egui::TextureHandle>,
+    /// The map's land-use texture (made by the UI in the context that
+    /// draws the map, again when that context changes).
+    pub land_texture: crate::map::LandTexture,
     pub map_view: Option<crate::map::MapView>,
     /// The border and the neighbours (16H Q15).
     pub surround: crate::surround::Surround,
@@ -264,7 +265,7 @@ pub fn show(world: &mut World, loaded: Loaded, now_s: f64, rebuild: bool) {
         details,
         rows,
         map,
-        land_texture: None,
+        land_texture: Default::default(),
         map_view: None,
         surround,
         aerial,

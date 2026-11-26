@@ -100,6 +100,14 @@ fn console_on_top(
         }
     }
     if !hosts.iter().any(|e| e == host) {
+        // A fresh context has no textures: whatever was loaded into the
+        // old one must be loaded again (the studio's land-use map did not).
+        let order = cams.get(host).map_or(0, |(_, c, _)| c.order);
+        let was: Vec<String> = hosts.iter().map(|e| e.to_string()).collect();
+        info!(
+            "egui primary context: a fresh one on camera {host} (order {order}), was on [{}]",
+            was.join(", ")
+        );
         commands
             .entity(host)
             .insert((EguiContext::default(), PrimaryEguiContext));

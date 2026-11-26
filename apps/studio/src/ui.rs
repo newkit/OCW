@@ -1545,16 +1545,6 @@ fn map_panel(
     routes: bool,
     layers: crate::map::MapLayers,
 ) -> (crate::map::MapInput, f64) {
-    if w.land_texture.is_none()
-        && let Some(r) = &w.map.land
-    {
-        let img = egui::ColorImage::from_rgba_unmultiplied([r.width, r.height], &r.rgba);
-        w.land_texture = Some(ui.ctx().load_texture(
-            "studio-landuse",
-            img,
-            egui::TextureOptions::LINEAR,
-        ));
-    }
     let mut view = w.map_view.unwrap_or_else(|| {
         let (lo, hi) = if std::mem::take(&mut w.fit_all) {
             w.surround.extent(w.map.min, w.map.max)
@@ -1611,15 +1601,8 @@ fn map_panel(
     let grab = move |p: [f64; 2]| grabs_route(route_view, p, tol);
     let grab: Option<&dyn Fn([f64; 2]) -> bool> =
         (routes && studio.route().is_some()).then_some(&grab as &dyn Fn([f64; 2]) -> bool);
-    let input = crate::map::paint(
-        ui,
-        rect,
-        &mut view,
-        &w.map,
-        w.land_texture.as_ref(),
-        &overlay,
-        grab,
-    );
+    let land = w.land_texture.get(ui.ctx(), w.map.land.as_ref()).cloned();
+    let input = crate::map::paint(ui, rect, &mut view, &w.map, land.as_ref(), &overlay, grab);
     w.map_view = Some(view);
     (input, view.m_per_px)
 }
