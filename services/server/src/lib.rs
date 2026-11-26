@@ -2678,6 +2678,7 @@ mod tests {
             v.reach = Some(voice::VoiceReach {
                 port: 7890,
                 public_host: Some("ride.example.org".into()),
+                public_url: None,
             });
         }
         let lan: std::net::SocketAddr = "192.168.5.9:40000".parse().unwrap();

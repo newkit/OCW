@@ -556,7 +556,11 @@ impl VoiceServer {
     pub fn voice_config(&self, fallback_host: &str, public_host: Option<String>) -> VoiceConfig {
         let port = self.opts.ports.signal;
         VoiceConfig {
-            reach: Some(VoiceReach { port, public_host }),
+            reach: Some(VoiceReach {
+                port,
+                public_host,
+                public_url: None,
+            }),
             ..VoiceConfig::new(
                 format!("ws://{}:{port}", url_host(fallback_host)),
                 self.keys.key.clone(),

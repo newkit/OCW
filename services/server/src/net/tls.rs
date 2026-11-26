@@ -17,6 +17,7 @@
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
@@ -33,9 +34,38 @@ fn provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
 
+/// Whether QUIC sends batches of packets with UDP segmentation offload
+/// (GSO, on where the system has it).
+static SEGMENTATION_OFFLOAD: AtomicBool = AtomicBool::new(true);
+
+/// Turns UDP segmentation offload off (`ocw-server --no-gso`, spec 11.5)
+/// for the transports made from now on. Fly.io's UDP path drops the
+/// batched packets of a QUIC handshake, so most handshakes never got an
+/// answer there; one packet per send gets through.
+pub fn set_segmentation_offload(on: bool) {
+    SEGMENTATION_OFFLOAD.store(on, Ordering::Relaxed);
+}
+
+/// Whether QUIC raises its packet size above the 1200 bytes every path
+/// takes (path MTU discovery).
+static MTU_DISCOVERY: AtomicBool = AtomicBool::new(true);
+
+/// Turns path MTU discovery off (`ocw-server --no-mtu-discovery`, spec
+/// 11.5) for the transports made from now on: every packet stays at the
+/// 1200 bytes QUIC starts with. On Fly.io larger packets from the server
+/// were lost after discovery had raised the size, so the replies on the
+/// reliable stream (voice grants) never arrived.
+pub fn set_mtu_discovery(on: bool) {
+    MTU_DISCOVERY.store(on, Ordering::Relaxed);
+}
+
 /// QUIC transport settings shared by both sides.
 pub(crate) fn transport(datagrams: bool) -> Arc<quinn::TransportConfig> {
     let mut t = quinn::TransportConfig::default();
+    t.enable_segmentation_offload(SEGMENTATION_OFFLOAD.load(Ordering::Relaxed));
+    if !MTU_DISCOVERY.load(Ordering::Relaxed) {
+        t.mtu_discovery_config(None);
+    }
     // A dead peer is noticed within 15 s; keep-alives keep idle (paused)
     // connections and NAT bindings open.
     t.max_idle_timeout(Some(

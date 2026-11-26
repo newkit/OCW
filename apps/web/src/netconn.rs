@@ -298,6 +298,29 @@ impl Arrivals {
     }
 }
 
+/// How many times a game connection whose handshake got no answer is
+/// opened again before the join fails (spec 11.5).
+pub const HANDSHAKE_RETRIES: u32 = 3;
+
+/// Whether a game connection opens again after `ev`, and in how many
+/// seconds; `failed_before`: its handshakes that already failed (spec
+/// 11.5). Only a handshake that failed (`ready` rejected: nothing came
+/// back, as on Fly.io now and then, where a new UDP flow is lost before it
+/// reaches the machine while the next one gets through) is tried again,
+/// each time as a new connection (a new UDP port, so a new flow), after
+/// 0.5, 1 and 2 s; a refused certificate is tried again too, which costs
+/// only a few seconds. A bad URL (`new`), a stream that cannot open or a
+/// connection that ends after it was up are not.
+pub fn handshake_retry_s(ev: &NetEvent, failed_before: u32) -> Option<f64> {
+    match ev {
+        NetEvent::Failed {
+            stage: Stage::Ready,
+            ..
+        } if failed_before < HANDSHAKE_RETRIES => Some(0.5 * f64::from(1u32 << failed_before)),
+        _ => None,
+    }
+}
+
 /// The text a link shows for an event that ends it (the game server's
 /// wording, as before the worker).
 pub fn server_end(ev: &NetEvent) -> Option<String> {
@@ -1054,6 +1077,33 @@ mod tests {
             t: Some(t),
             b: Some(vec![seq as u8]),
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn handshakes_without_an_answer_are_tried_again_on_a_new_flow() {
+        let ready = NetEvent::Failed {
+            stage: Stage::Ready,
+            error: "QUIC_NETWORK_IDLE_TIMEOUT".into(),
+        };
+        let delays: Vec<_> = (0..4).map(|n| handshake_retry_s(&ready, n)).collect();
+        assert_eq!(delays, [Some(0.5), Some(1.0), Some(2.0), None]);
+        for ev in [
+            NetEvent::Failed {
+                stage: Stage::New,
+                error: "bad url".into(),
+            },
+            NetEvent::Failed {
+                stage: Stage::Stream,
+                error: "no stream".into(),
+            },
+            NetEvent::Closed {
+                reason: "lost".into(),
+                error: true,
+            },
+            NetEvent::StreamEnd,
+        ] {
+            assert_eq!(handshake_retry_s(&ev, 0), None, "{ev:?}");
         }
     }
 

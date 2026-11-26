@@ -48,6 +48,18 @@ fn parse_provider(s: &str) -> Result<ocw_weather::real::Choice, String> {
     })
 }
 
+/// A voice URL as LiveKit clients take it: `ws://` or `wss://` and a host.
+fn parse_voice_url(s: &str) -> Result<String, String> {
+    let rest = s
+        .strip_prefix("wss://")
+        .or_else(|| s.strip_prefix("ws://"))
+        .ok_or("a ws:// or wss:// URL")?;
+    if rest.is_empty() || rest.starts_with('/') || rest.contains(char::is_whitespace) {
+        return Err("a ws:// or wss:// URL with a host".into());
+    }
+    Ok(s.trim_end_matches('/').to_owned())
+}
+
 #[derive(Parser)]
 #[command(version, about = "Open Cycling World headless game server")]
 struct Args {
@@ -219,6 +231,13 @@ struct Args {
     /// it the voice server asks a STUN server for the public address.
     #[arg(long, value_name = "HOST")]
     voice_public_host: Option<String>,
+    /// The voice URL riders from the internet get, whole, instead of
+    /// ws://HOST:SIGNAL (spec 11.5): `wss://NAME` when TLS in front of the
+    /// signalling port forwards to it (a hosting's proxy, Fly.io's on 443),
+    /// so browser pages served over https:// can connect. Riders on this
+    /// machine and the LAN keep ws://.
+    #[arg(long, value_name = "URL", requires = "listen", value_parser = parse_voice_url)]
+    voice_public_url: Option<String>,
     /// Open the router's ports automatically while running (UPnP-IGD,
     /// spec §7.1.7 Q4): the game's UDP port (and WebTransport's) and the
     /// bundled voice server's TCP / UDP ports, removed again at the end.
@@ -227,6 +246,16 @@ struct Args {
     /// by default for the headless server.
     #[arg(long, requires = "listen")]
     upnp: bool,
+    /// Send QUIC packets one by one, without UDP segmentation offload
+    /// (GSO): for hosts whose UDP path drops batched packets (Fly.io,
+    /// spec 11.5, where most handshakes got no answer with it).
+    #[arg(long, requires = "listen")]
+    no_gso: bool,
+    /// Keep QUIC packets at 1200 bytes (no path MTU discovery): for hosts
+    /// whose UDP path loses larger packets (Fly.io, spec 11.5, where the
+    /// replies on the reliable stream were lost once the size was raised).
+    #[arg(long, requires = "listen")]
+    no_mtu_discovery: bool,
     /// Run the accounts backend (sign-in with Google and Strava, spec
     /// §9.1) in this process from this configuration (a copy of
     /// services/accounts/accounts.example.toml, git-ignored: it holds the client
@@ -975,7 +1004,15 @@ fn voice_setup(
             "the voice server and the router's ports are not ready yet; the game server starts anyway"
         );
     }
-    (voice.or_else(|| services.voice_config()), Some(services))
+    let mut voice = voice.or_else(|| services.voice_config());
+    if let (Some(url), Some(reach)) = (
+        &args.voice_public_url,
+        voice.as_mut().and_then(|v| v.reach.as_mut()),
+    ) {
+        tracing::info!(%url, "voice URL for riders from the internet");
+        reach.public_url = Some(url.clone());
+    }
+    (voice, Some(services))
 }
 
 /// Loads an `ocw-route` file: the route and the SHA-256 of the file (so
@@ -1005,6 +1042,14 @@ fn listen(
         eprintln!("TLS certificate: {e}");
         std::process::exit(1);
     });
+    if args.no_gso {
+        ocw_server::net::tls::set_segmentation_offload(false);
+        tracing::info!("UDP segmentation offload off (--no-gso)");
+    }
+    if args.no_mtu_discovery {
+        ocw_server::net::tls::set_mtu_discovery(false);
+        tracing::info!("QUIC path MTU discovery off (--no-mtu-discovery): 1200-byte packets");
+    }
     let net = NetServer::bind(addr, &identity).unwrap_or_else(|e| {
         eprintln!("{e}");
         std::process::exit(1);
@@ -1079,13 +1124,20 @@ fn announce_web(args: &Args, net: &NetServer, addr: std::net::SocketAddr) {
         utc(not_after)
     );
     if let Some(path) = &args.web_info_file {
-        let info = serde_json::json!({
+        let mut info = serde_json::json!({
             "url": url,
             "port": addr.port(),
             "cert_hash": hash,
             "not_after_unix_s": not_after,
             "query": webtransport::page_query(&url, &hash),
         });
+        // Behind a hosting's address translation (Fly.io, spec 11.5) the
+        // bound address is an inner one: pages from the internet use the
+        // public host.
+        if let Some(public) = public_web_url(args.voice_public_host.as_deref(), addr.port()) {
+            info["public_query"] = webtransport::page_query(&public, &hash).into();
+            info["public_url"] = public.into();
+        }
         if let Err(e) = std::fs::write(
             path,
             format!(
@@ -1096,6 +1148,16 @@ fn announce_web(args: &Args, net: &NetServer, addr: std::net::SocketAddr) {
             eprintln!("{}: {e}", path.display());
         }
     }
+}
+
+/// The WebTransport URL riders from the internet use: `https://HOST:PORT`
+/// with the public host (`--voice-public-host`), when one is given.
+fn public_web_url(public_host: Option<&str>, port: u16) -> Option<String> {
+    let host = public_host.filter(|h| !h.is_empty())?;
+    Some(format!(
+        "https://{}:{port}",
+        ocw_server::voice::url_host(host)
+    ))
 }
 
 /// Renews the WebTransport certificate when it nears its end.
@@ -1147,5 +1209,75 @@ mod tests {
         let a = Args::try_parse_from(["ocw-server", "--listen", "--upnp"]).unwrap();
         assert!(a.upnp);
         assert!(Args::try_parse_from(["ocw-server", "--upnp"]).is_err());
+    }
+
+    /// The public WebTransport URL of web-info.json (spec 11.5): the
+    /// public host with the bound port, IPv6 in brackets.
+    #[test]
+    fn public_web_url_names_the_public_host() {
+        assert_eq!(
+            public_web_url(Some("203.0.113.7"), 47801).as_deref(),
+            Some("https://203.0.113.7:47801")
+        );
+        assert_eq!(
+            public_web_url(Some("2001:db8::7"), 47801).as_deref(),
+            Some("https://[2001:db8::7]:47801")
+        );
+        assert_eq!(public_web_url(Some(""), 47801), None);
+        assert_eq!(public_web_url(None, 47801), None);
+    }
+
+    /// --no-gso (spec 11.5) only beside --listen.
+    #[test]
+    fn no_gso_needs_listen() {
+        assert!(
+            Args::try_parse_from(["ocw-server", "--listen", "--no-gso"])
+                .unwrap()
+                .no_gso
+        );
+        assert!(
+            !Args::try_parse_from(["ocw-server", "--listen"])
+                .unwrap()
+                .no_gso
+        );
+        assert!(Args::try_parse_from(["ocw-server", "--no-gso"]).is_err());
+        assert!(
+            Args::try_parse_from(["ocw-server", "--listen", "--no-mtu-discovery"])
+                .unwrap()
+                .no_mtu_discovery
+        );
+        assert!(Args::try_parse_from(["ocw-server", "--no-mtu-discovery"]).is_err());
+    }
+
+    /// --voice-public-url (spec 11.5): a ws:// or wss:// URL with a host,
+    /// only beside --listen; a trailing slash is dropped.
+    #[test]
+    fn voice_public_url_is_a_websocket_url() {
+        let a = Args::try_parse_from([
+            "ocw-server",
+            "--listen",
+            "--voice-public-url",
+            "wss://ride.example.org/",
+        ])
+        .unwrap();
+        assert_eq!(
+            a.voice_public_url.as_deref(),
+            Some("wss://ride.example.org")
+        );
+        assert_eq!(
+            parse_voice_url("ws://203.0.113.7:7880").as_deref(),
+            Ok("ws://203.0.113.7:7880")
+        );
+        for bad in [
+            "https://ride.example.org",
+            "wss://",
+            "wss:///x",
+            "ride.example.org",
+        ] {
+            assert!(parse_voice_url(bad).is_err(), "{bad}");
+        }
+        assert!(
+            Args::try_parse_from(["ocw-server", "--voice-public-url", "wss://x.example"]).is_err()
+        );
     }
 }

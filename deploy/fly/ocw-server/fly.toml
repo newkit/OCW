@@ -62,7 +62,10 @@ kill_timeout = "10s"
   [[services.ports]]
     port = 7882
 
-# Voice signalling (LiveKit's WebSocket, plain TCP through Fly's proxy).
+# Voice signalling (LiveKit's WebSocket): plain TCP through Fly's proxy on
+# 7880 (ws://IPV4:7880, the desktop app), and on 443 with TLS ended by
+# Fly's proxy for APP.fly.dev (Fly's own certificate) for pages served over
+# https:// (wss://ocw-server.fly.dev; start.sh, --voice-public-url).
 [[services]]
   protocol = "tcp"
   internal_port = 7880
@@ -71,6 +74,9 @@ kill_timeout = "10s"
   min_machines_running = 1
   [[services.ports]]
     port = 7880
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
   [[services.tcp_checks]]
     interval = "30s"
     timeout = "5s"

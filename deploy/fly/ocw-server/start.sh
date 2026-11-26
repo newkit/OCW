@@ -44,6 +44,12 @@ if [ -z "$public" ]; then
 fi
 echo "public address $public, UDP on $udp_ip" >&2
 
+# Voice for riders from the internet over TLS (spec 11.5): Fly's proxy ends
+# TLS on 443 for APP.fly.dev (a Fly certificate) and forwards to LiveKit's
+# signalling port, so pages served over https:// can connect (wss://).
+# OCW_VOICE_PUBLIC_URL="" keeps ws://IPV4:7880 for everyone.
+voice_url=${OCW_VOICE_PUBLIC_URL-${FLY_APP_NAME:+wss://$FLY_APP_NAME.fly.dev}}
+
 # Wait for the world package (a new volume is empty until it is uploaded:
 # the machine keeps running, so `fly ssh sftp` can reach it).
 while [ ! -f "$world" ]; do
@@ -62,4 +68,6 @@ exec setpriv --reuid=ocw --regid=ocw --clear-groups --reset-env -- \
     --world "$world" \
     --voice-public-host "$public" \
     --voice-ports 7880,7881,7882 \
+    --no-gso --no-mtu-discovery \
+    ${voice_url:+--voice-public-url "$voice_url"} \
     ${OCW_SERVER_ARGS:-}
