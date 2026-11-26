@@ -3054,8 +3054,12 @@ Signed in, the account's workshop also replaces the free garage of
 wallet** as before, marked "local test wallet" (in Training mode "free
 (Training mode) · local"); it is never imported into an account. Right after
 signing in, until the backend answers (a server woken from sleep takes a few
-seconds), the line reads "connecting to your account …". Repairs, hanging a
-spare frameset and `hearts.grant` are not available with an account yet.
+seconds), the line reads "connecting to your account …". Repairs are the
+account's too (`workshop.repair PART|all`, the workshop's repair dialog): the
+damage a ride leaves on the bike and the rider's injury are sent to the
+account after the ride, and a repair costs the same as in the local garage.
+Hanging a spare frameset and `hearts.grant` are not available with an
+account yet.
 
 **Offline** (no network, the backend down): the app rides with the bikes and
 kit last synced – kept in `<data dir>/ocw/accounts/<account>/workshop.json` –
@@ -3066,6 +3070,17 @@ rate once a second; seconds of virtual power count nothing) and queued in
 backend answers (it tries again every minute) and the backend credits each
 ride once, after its checks.
 
+**In the browser app:** the same workshop – the bike stand, the part
+pickers, the changing corner and the jersey designer – on the signed-in
+rider's account (*Workshop* in the menu, or `workshop open`): the balance
+reads "· account", purchases and sales are sent with `fetch()` and answered
+a moment later, and the workshop last synced is kept in the page's
+`localStorage`, so a page opened offline shows it read-only. A ride saved
+with *Captures → Download this ride (FIT)* (`ride.save`) is summed up for the account
+like on the desktop, queued in `localStorage` and uploaded when the backend
+answers. Signed out, the workshop, the character and the garage stay locked
+("log in to customize"): the browser has no local wallet.
+
 **A game server that credits hearts itself** (Q19 (a)): `ocw-server
 --credit-key server-signing.key [--credit-backend https://accounts.example.org]`
 with a signing key the project's root key certified (`world-builder keys
@@ -3074,6 +3089,15 @@ signed-in rider leaves, the server signs a ride credit (work, climbing,
 distance) and posts it to `/rides/credit`, retrying while the backend does
 not answer; its welcome tells the apps, which then upload no summary of
 that ride. Without `--credit-key` the apps upload their rides themselves.
+
+**A game server that checks the parts** (4O W5d): with `--check-parts` (and a
+sign-in; the garages come from `--credit-backend` or the sign-in's issuer)
+the server fetches a signed-in rider's garage with the rider's own token
+when they join or change bikes, and counts only the parts the account owns:
+a part not owned counts as the base part, a bike profile the garage has no
+bike of as the starter's road bike, and anonymous riders ride base parts.
+Until the garage arrives (a backend woken from sleep takes a few seconds)
+only base parts count; then the bike asked for applies again.
 
 ## Running the server
 

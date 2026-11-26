@@ -92,6 +92,18 @@ pub struct Garage {
     /// item.
     #[serde(default)]
     pub kit: BTreeMap<String, u32>,
+    /// The rider's injury carried over (spec 14 Phase 12 Q6; `None`:
+    /// fine), as the app last reported it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub injury: Option<Injury>,
+}
+
+/// The rider's injury carried over: the condition (per mille) when it was
+/// kept and when (Unix s). The same fields as the desktop's local garage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Injury {
+    pub condition_pm: u32,
+    pub at_unix: i64,
 }
 
 fn first_item() -> u32 {
@@ -124,6 +136,7 @@ impl Garage {
             items: Vec::new(),
             next_item: 1,
             kit: BTreeMap::new(),
+            injury: None,
         }
     }
 
@@ -280,6 +293,25 @@ pub enum Action {
         #[serde(default)]
         colour: Option<String>,
     },
+    /// Repairs a damaged part of `bike` (a damage part id: `front_wheel`,
+    /// `frame` …; `None`: every damaged part) at the workshop's price
+    /// (spec 14 Phase 4, W6; 4O part 4).
+    Repair {
+        bike: String,
+        #[serde(default)]
+        part: Option<String>,
+    },
+    /// The damage the ride left (spec 14 Phase 12 Q6): `bike`'s parts'
+    /// condition (damage part id → per mille; a part not named is as new)
+    /// and the rider's injury, kept with the account so the next ride and
+    /// a repair start from it.
+    Damage {
+        bike: String,
+        #[serde(default)]
+        condition: BTreeMap<String, u32>,
+        #[serde(default)]
+        injury: Option<Injury>,
+    },
 }
 
 /// Which endpoint takes an action.
@@ -288,6 +320,7 @@ pub enum Endpoint {
     Purchase,
     Sell,
     Garage,
+    Repair,
 }
 
 impl Endpoint {
@@ -296,6 +329,7 @@ impl Endpoint {
             Self::Purchase => "/workshop/purchase",
             Self::Sell => "/workshop/sell",
             Self::Garage => "/workshop/garage",
+            Self::Repair => "/workshop/repair",
         }
     }
 }
@@ -305,6 +339,7 @@ impl Action {
         match self {
             Self::BuyPart { .. } | Self::BuyBike { .. } => Endpoint::Purchase,
             Self::Sell { .. } | Self::SellBike { .. } => Endpoint::Sell,
+            Self::Repair { .. } => Endpoint::Repair,
             _ => Endpoint::Garage,
         }
     }

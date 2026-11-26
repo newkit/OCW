@@ -13,6 +13,14 @@
 //! change is a console command line (`workshop.buy`, `bikes.select` …),
 //! and leaving the workshop applies the bike (`BikeChange`, 4L Q1).
 //!
+//! Both apps (spec 14 Phase 4, 4O part 3; B6): the module moved from the
+//! desktop into `ocw-ui`; each app inserts its [`WorkshopHost`] (how the
+//! ride runs, the wallet's folder, the account) and reaches its client and
+//! server through [`crate::RideAccess`] ([`RideNow`]). Signed in, the
+//! workshop is the account's (the desktop's `ocw-account` thread, the
+//! browser's `fetch()` calls); signed out, the desktop's local test wallet,
+//! while the browser's anonymous rider stays locked (Phase 10 Q5).
+//!
 //! W4 (spec 4C): the mirror is the character editor – the free character
 //! (`character` command: build, skin, face, hair, glasses; the height
 //! comes from the rider profile) and the kit (bought and worn like parts,
@@ -27,6 +35,7 @@
 pub mod bench;
 pub mod camera;
 pub mod designer;
+pub mod host;
 pub mod input;
 pub mod model;
 pub mod nav;
@@ -51,9 +60,8 @@ use ocw_render::workshop::{
 };
 use wallet::shown as hearts;
 
-use crate::Args;
-use crate::connection::{ClientState, Link};
-use crate::settings::RiderProfiles;
+use crate::profiles::RiderProfiles;
+pub use host::{ActAnswer, WorkshopHost, WorkshopUpdate, host};
 use input::{Act, ActiveInput, Gestures, HintCtx, MouseState, Pad, StickLatch, Touch};
 use model::{Ctx, Out, Workshop};
 use ocw_account_api::workshop::Action;
@@ -66,8 +74,10 @@ pub struct WorkshopPlugin;
 pub struct WorkshopState {
     pub wallet: Wallet,
     pub scene: Option<Workshop>,
-    /// Actions from the console command `workshop`, applied next frame.
-    queued: Vec<Act>,
+    /// Actions from the console command `workshop`, applied next frame
+    /// (public for the apps' tests).
+    #[doc(hidden)]
+    pub queued: Vec<Act>,
     mouse: MouseState,
     latch: StickLatch,
     gestures: Gestures,
@@ -102,6 +112,11 @@ pub struct WorkshopState {
     /// Account actions sent and not answered: id → apply the bike after.
     pending: std::collections::BTreeMap<u64, bool>,
     next_action: u64,
+    /// The ride's damage for the account, sent when it answers (the
+    /// newest replaces an unsent one).
+    damage_report: Option<Action>,
+    /// Actions sent without a word in the console (the damage reports).
+    quiet: std::collections::BTreeSet<u64>,
 }
 
 impl WorkshopState {
@@ -130,6 +145,8 @@ impl WorkshopState {
             connecting: false,
             pending: std::collections::BTreeMap::new(),
             next_action: 0,
+            damage_report: None,
+            quiet: std::collections::BTreeSet::new(),
         }
     }
 
@@ -145,7 +162,7 @@ fn cat() -> &'static Catalogue {
 
 /// The riding rider's name (the wallet's key) and bike profile.
 fn rider(world: &World) -> (String, ProfileId) {
-    let r = crate::settings::local_rider(world);
+    let r = crate::profiles::local_rider(world);
     (r.name.clone(), r.bike())
 }
 
@@ -204,10 +221,11 @@ impl Plugin for WorkshopPlugin {
         // garage, everything free. Campaign mode (postponed) will use the
         // wallet with its hearts.
         let training = app.world().get_resource::<PlayMode>() == Some(&PlayMode::Training);
-        let (mut wallet, warnings) = match wallet::default_dir() {
-            Some(dir) if !cfg!(test) && training => Wallet::load(&dir.join(wallet::TRAINING_DIR)),
-            Some(dir) if !cfg!(test) => Wallet::load(&dir),
-            _ => (Wallet::in_memory(), Vec::new()),
+        // The app's wallet folder (none: in memory – the browser, tests).
+        let (mut wallet, warnings) = match (host(app.world()).wallet_dir)() {
+            Some(dir) if training => Wallet::load(&dir.join(wallet::TRAINING_DIR)),
+            Some(dir) => Wallet::load(&dir),
+            None => (Wallet::in_memory(), Vec::new()),
         };
         wallet.training = training;
         for w in warnings {
@@ -225,17 +243,24 @@ impl Plugin for WorkshopPlugin {
             c.apply(&mut l.design);
             r.riding.set_look(l);
         }
-        app.insert_resource(state).add_systems(
-            Update,
-            (
-                follow_account,
-                earn_hearts,
-                keep_damage,
-                workshop_input,
-                write_view,
-            )
-                .chain(),
-        );
+        app.insert_resource(state)
+            .init_resource::<RideNow>()
+            // (Both are there in the apps; headless tests may lack them.)
+            .init_resource::<InputContext>()
+            .add_message::<TouchInput>()
+            .add_systems(
+                Update,
+                (
+                    read_ride,
+                    follow_account,
+                    earn_hearts,
+                    keep_damage,
+                    workshop_input,
+                    write_ride,
+                    write_view,
+                )
+                    .chain(),
+            );
         register_commands(app);
         register_apply(app);
     }
@@ -280,6 +305,7 @@ fn register_commands(app: &mut App) {
                     .value_parser(clap::value_parser!(f32)),
             ),
         |world, m| {
+            locked(world)?;
             let action = m.get_one::<String>("action").map_or("open", String::as_str);
             match action {
                 "open" => open(world),
@@ -366,7 +392,8 @@ fn register_commands(app: &mut App) {
         Permission::User,
         kit_design_command(),
         |world, m| {
-            let mut l = crate::settings::local_rider(world).look();
+            locked(world)?;
+            let mut l = crate::profiles::local_rider(world).look();
             let before = l;
             apply_design_args(&mut l, m);
             if l != before {
@@ -381,12 +408,13 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::User,
         // One definition for both apps (spec §14 Phase 4, 4N; B6).
-        ocw_ui::character::command(),
+        crate::character::command(),
         |world, m| {
-            let rider = crate::settings::local_rider(world);
+            locked(world)?;
+            let rider = crate::profiles::local_rider(world);
             let mut c = rider.character();
             let before = c;
-            ocw_ui::character::apply(&mut c, m, rider.weight_kg, rider.height_cm)?;
+            crate::character::apply(&mut c, m, rider.weight_kg, rider.height_cm)?;
             if c == before {
                 return Ok(c.summary());
             }
@@ -427,6 +455,7 @@ fn register_commands(app: &mut App) {
                     .value_parser(clap::value_parser!(i64)),
             ),
         |world, m| {
+            locked(world)?;
             not_with_account(world, "hearts.grant")?;
             let n = *m.get_one::<i64>("n").expect("required");
             let (name, bike) = rider(world);
@@ -476,6 +505,7 @@ fn register_commands(app: &mut App) {
             .arg(Arg::new("part").required(true))
             .arg(Arg::new("bike").long("bike")),
         |world, m| {
+            locked(world)?;
             let part = m.get_one::<String>("part").expect("required").clone();
             if let Some(r) = via_account(world, "buying", false, |g| {
                 Ok(Action::BuyPart {
@@ -512,6 +542,7 @@ fn register_commands(app: &mut App) {
             )
             .arg(Arg::new("bike").long("bike")),
         |world, m| {
+            locked(world)?;
             let item = *m.get_one::<u32>("item").expect("required");
             if let Some(r) = via_account(world, "fitting", false, |g| {
                 Ok(Action::Equip {
@@ -535,6 +566,7 @@ fn register_commands(app: &mut App) {
             )
             .arg(Arg::new("bike").long("bike")),
         |world, m| {
+            locked(world)?;
             let slot = Slot::parse(m.get_one::<String>("slot").expect("required")).expect("parsed");
             if let Some(r) = via_account(world, "taking it off", false, |g| {
                 Ok(Action::Unequip {
@@ -562,6 +594,7 @@ fn register_commands(app: &mut App) {
                     .value_parser(clap::value_parser!(u32)),
             ),
         |world, m| {
+            locked(world)?;
             let item = *m.get_one::<u32>("item").expect("required");
             if let Some(r) = via_account(world, "selling", false, |_| Ok(Action::Sell { item })) {
                 return r;
@@ -591,8 +624,17 @@ fn register_commands(app: &mut App) {
             )
             .arg(Arg::new("bike").long("bike")),
         |world, m| {
+            locked(world)?;
             let part = m.get_one::<String>("part").expect("required").clone();
-            not_with_account(world, "workshop.repair")?;
+            // Signed in: the account repairs (its price, 4O part 4).
+            if let Some(r) = via_account(world, "repairing", false, |g| {
+                Ok(Action::Repair {
+                    bike: bike_arg(g, m)?.id.clone(),
+                    part: (part != "all").then(|| part.clone()),
+                })
+            }) {
+                return r;
+            }
             garage_op(world, m, |w, name, bike| {
                 if part == "all" {
                     let (paid, n) = w.repair_all(cat(), name, bike)?;
@@ -634,6 +676,7 @@ fn register_commands(app: &mut App) {
             )
             .arg(Arg::new("bike").long("bike")),
         |world, m| {
+            locked(world)?;
             let part = m.get_one::<String>("part").expect("required").clone();
             not_with_account(world, "workshop.damage")?;
             let c = (m.get_one::<f64>("percent").expect("required") / 100.0).clamp(0.0, 1.0);
@@ -662,6 +705,7 @@ fn register_commands(app: &mut App) {
             .arg(Arg::new("colour").required(true))
             .arg(Arg::new("bike").long("bike")),
         |world, m| {
+            locked(world)?;
             let c = m.get_one::<String>("colour").expect("required");
             let colour = match c.as_str() {
                 "default" => None,
@@ -721,6 +765,7 @@ fn register_commands(app: &mut App) {
                     .help("apply at once (outside the workshop)"),
             ),
         |world, m| {
+            locked(world)?;
             let id = m.get_one::<String>("bike").expect("required").clone();
             if let Some(r) = via_account(world, "selecting", true, |_| Ok(Action::Select { bike: id.clone() })) {
                 return r;
@@ -765,6 +810,7 @@ fn register_commands(app: &mut App) {
                     .help("A part bought with it (groupset, wheels …)"),
             ),
         |world, m| {
+            locked(world)?;
             let frame = m.get_one::<String>("frame").expect("required").clone();
             let with: Vec<String> = m
                 .get_many::<String>("with")
@@ -807,6 +853,7 @@ fn register_commands(app: &mut App) {
             .about("Sell a bike bought at the bench: the frameset's and its parts' refunds (not a starter bike, not the last)")
             .arg(Arg::new("bike").required(true)),
         |world, m| {
+            locked(world)?;
             let id = m.get_one::<String>("bike").expect("required").clone();
             if let Some(r) = via_account(world, "selling the bike", true, |_| Ok(Action::SellBike { bike: id.clone() })) {
                 return r;
@@ -843,6 +890,7 @@ fn register_commands(app: &mut App) {
                     .value_parser(clap::value_parser!(u32)),
             ),
         |world, m| {
+            locked(world)?;
             let item = *m.get_one::<u32>("item").expect("required");
             not_with_account(world, "bikes.hang")?;
             let (name, bike) = rider(world);
@@ -1101,14 +1149,24 @@ fn via_account(
         }
         id
     };
-    let sent = world
-        .get_resource::<crate::account::Account>()
-        .is_some_and(|a| a.send_action(id, action));
+    let sent = (host(world).send_action)(world, id, action);
     if !sent {
         world.resource_mut::<WorkshopState>().pending.remove(&id);
         return Some(Err("sign-in is not set up".into()));
     }
     Some(Ok(format!("{what}: sent to your account …")))
+}
+
+/// The browser's anonymous rider may not customise (spec 14 Phase 10
+/// Q5): the workshop, the character and the garage need an account there.
+fn locked(world: &World) -> Result<(), String> {
+    let h = host(world);
+    let anonymous = h.requires_account && !(h.signed_in)(world);
+    if ocw_core::character::may_customize(anonymous) {
+        Ok(())
+    } else {
+        Err(ocw_core::character::LOCKED_MIRROR.into())
+    }
 }
 
 /// What the account's workshop cannot do yet (repairs, hanging a spare
@@ -1147,11 +1205,9 @@ fn follow_account(world: &mut World) {
     let Some(seen) = world.get_resource::<WorkshopState>().map(|s| s.account_gen) else {
         return;
     };
-    let Some(acc) = world.get_resource::<crate::account::Account>() else {
-        return;
-    };
-    let signed_in_now = acc.signed_in();
-    let upd = acc.workshop_update(seen);
+    let h = host(world);
+    let signed_in_now = (h.signed_in)(world);
+    let upd = (h.workshop_update)(world, seen);
     let mut said = Vec::new();
     let mut apply = false;
     {
@@ -1196,12 +1252,25 @@ fn follow_account(world: &mut World) {
                 s.wallet = local;
             }
             s.pending.clear();
+            s.quiet.clear();
+            s.damage_report = None;
             s.account_gen = 0;
-            said.push("workshop: signed out – the local test wallet".into());
+            said.push(if h.requires_account {
+                "workshop: signed out".into()
+            } else {
+                "workshop: signed out – the local test wallet".into()
+            });
             apply = true;
         }
         for a in upd.answers {
             let after = s.pending.remove(&a.id).unwrap_or(false);
+            if s.quiet.remove(&a.id) {
+                match a.result {
+                    Ok(ans) => s.wallet.adopt_answer(&name, &ans),
+                    Err(e) => debug!("workshop: the ride's damage not kept: {e}"),
+                }
+                continue;
+            }
             match a.result {
                 Ok(ans) => {
                     s.wallet.adopt_answer(&name, &ans);
@@ -1232,6 +1301,29 @@ fn follow_account(world: &mut World) {
             info!("{m}");
             c.print(m);
         }
+    }
+    // The ride's damage for the account, once it answers (one at a time).
+    let report = {
+        let mut s = world.resource_mut::<WorkshopState>();
+        let online = s.wallet.account.as_ref().is_some_and(|a| a.online);
+        if online && s.quiet.is_empty() {
+            s.damage_report.take().map(|r| {
+                s.next_action += 1;
+                let id = s.next_action;
+                s.pending.insert(id, false);
+                s.quiet.insert(id);
+                (id, r)
+            })
+        } else {
+            None
+        }
+    };
+    if let Some((id, r)) = report
+        && !(h.send_action)(world, id, r)
+    {
+        let mut s = world.resource_mut::<WorkshopState>();
+        s.pending.remove(&id);
+        s.quiet.remove(&id);
     }
     if apply && world.resource::<WorkshopState>().scene.is_none() {
         apply_bike(world);
@@ -1305,13 +1397,14 @@ fn open(world: &mut World) -> Result<String, String> {
         layout
     };
     let _ = layout;
-    if let Some(mut c) = world.get_resource_mut::<ClientState>() {
-        c.0.hold_steering();
+    if let Some(mut c) = crate::client_mut(world) {
+        c.hold_steering();
     }
     // Signed in: the account's balance and garage fresh from the backend
     // (answered later; the cached one shows meanwhile).
-    if let Some(a) = world.get_resource::<crate::account::Account>() {
-        a.sync_workshop();
+    let h = host(world);
+    if (h.signed_in)(world) {
+        (h.sync_workshop)(world);
     }
     info!("workshop opened");
     Ok(String::new())
@@ -1337,7 +1430,7 @@ fn apply_bike(world: &mut World) {
             damage,
         )
     };
-    let mut look: RiderLook = crate::settings::local_rider(world).look();
+    let mut look: RiderLook = crate::profiles::local_rider(world).look();
     if let Some(p) = paint {
         look.frame = p;
     }
@@ -1346,20 +1439,84 @@ fn apply_bike(world: &mut World) {
     }
     // The server answers with the build's effect (printed when it
     // arrives); in an event that is not over it applies after the event.
-    let now = world
-        .get_resource_mut::<ClientState>()
-        .is_some_and(|c| !c.0.bike_change_waits());
-    let msg = world.get_resource_mut::<ClientState>().map(|mut c| {
-        c.0.change_bike_with_damage(&bike_id, profile, look, &parts, Some(damage))
-    });
+    let now = crate::client(world).is_some_and(|c| !c.bike_change_waits());
+    let msg = crate::client_mut(world)
+        .map(|mut c| c.change_bike_with_damage(&bike_id, profile, look, &parts, Some(damage)));
     // The ride's damage is this bike's from now on (spec §14 Phase 12 Q6).
     if now && let Some(mut s) = world.get_resource_mut::<WorkshopState>() {
         s.ride_bike = Some(bike_id.clone());
         s.last_damage = None;
     }
-    if let (Some(m), Some(link)) = (msg, world.get_resource::<Link>()) {
-        link.send_bytes(m);
+    if let Some(m) = msg
+        && crate::send(world, m)
+    {
         info!(bike = %bike_id, profile = profile.id(), parts = parts.len(), "bike change sent");
+    }
+}
+
+/// What the workshop reads of the running ride each frame (through
+/// [`crate::RideAccess`], the same in both apps), and what it asks of it.
+#[derive(Resource, Debug)]
+pub struct RideNow {
+    /// A ride runs.
+    pub riding: bool,
+    /// The hearts the server counted in this session.
+    pub hearts: u32,
+    /// The own rider's distance (m).
+    pub distance: f64,
+    /// The own rider's damage (spec 12E).
+    pub damage: Option<ocw_sim::damage::Damage>,
+    /// The server's answer to the bike (its build's effect).
+    pub effect: Option<ocw_protocol::BuildInfo>,
+    pub mode: ocw_sim::PhysicsMode,
+    /// When the session started (game time, s).
+    pub session_start: f64,
+    /// The workshop closed: give the steering back.
+    pub release_steering: bool,
+}
+
+impl Default for RideNow {
+    fn default() -> Self {
+        Self {
+            riding: false,
+            hearts: 0,
+            distance: 0.0,
+            damage: None,
+            effect: None,
+            mode: ocw_sim::PhysicsMode::Open,
+            session_start: 0.0,
+            release_steering: false,
+        }
+    }
+}
+
+/// Reads the ride into [`RideNow`].
+fn read_ride(world: &mut World) {
+    let session_start = (host(world).session_start)(world);
+    let now = match crate::client(world) {
+        Some(c) => RideNow {
+            riding: true,
+            hearts: c.server_hearts(),
+            distance: c.state().distance,
+            damage: c.own_damage().cloned(),
+            effect: c.own_effect().cloned(),
+            mode: c.physics_mode(),
+            session_start,
+            release_steering: false,
+        },
+        None => RideNow {
+            session_start,
+            ..RideNow::default()
+        },
+    };
+    world.insert_resource(now);
+}
+
+/// Hands the ride what the workshop asked of it.
+fn write_ride(world: &mut World) {
+    let release = std::mem::take(&mut world.resource_mut::<RideNow>().release_steering);
+    if release && let Some(mut c) = crate::client_mut(world) {
+        c.release_steering();
     }
 }
 
@@ -1367,30 +1524,28 @@ fn apply_bike(world: &mut World) {
 /// the parts on the active bike as ridden.
 fn earn_hearts(
     time: Res<Time>,
-    args: Res<Args>,
-    client: Option<Res<ClientState>>,
-    session: Option<Res<crate::connection::SessionStart>>,
+    host: Option<Res<WorkshopHost>>,
+    ride: Res<RideNow>,
     riders: Option<Res<RiderProfiles>>,
     mut state: ResMut<WorkshopState>,
 ) {
-    let Some(client) = client else { return };
+    if !ride.riding {
+        return;
+    }
+    let host = host.map(|h| *h).unwrap_or_default();
     let name = riders.map_or_else(
-        || crate::settings::riders::Rider::default().name,
+        || ocw_client::riders::Rider::default().name,
         |r| r.riding.name.clone(),
     );
-    let start = session.map_or(0.0, |s| s.0);
+    let start = ride.session_start;
     if state.session != start {
         // A new session: the server counts from zero.
         state.session = start;
         state.credited = 0;
         state.last_distance = None;
     }
-    let total = client.0.server_hearts();
-    let earns = wallet::earns(
-        args.server.is_none(),
-        args.capture.is_some(),
-        args.no_hearts,
-    );
+    let total = ride.hearts;
+    let earns = wallet::earns(host.local_server, host.capture, host.no_hearts);
     if total > state.credited {
         let new = total - state.credited;
         state.credited = total;
@@ -1400,7 +1555,7 @@ fn earn_hearts(
         }
     }
     // Ridden parts (refund rule): the own rider's distance.
-    let d = client.0.state().distance;
+    let d = ride.distance;
     if let Some(last) = state.last_distance {
         let step = d - last;
         if (0.0..50.0).contains(&step) && state.wallet.ride(&name, step) {
@@ -1421,27 +1576,26 @@ fn earn_hearts(
 /// Phase 12 Q6): the active bike's parts (not a spare bike's) and the
 /// rider's injury; saved with the wallet (at most every 10 s).
 fn keep_damage(
-    args: Res<Args>,
-    client: Option<Res<ClientState>>,
-    session: Option<Res<crate::connection::SessionStart>>,
+    host: Option<Res<WorkshopHost>>,
+    ride: Res<RideNow>,
     riders: Option<Res<RiderProfiles>>,
     mut state: ResMut<WorkshopState>,
 ) {
-    let Some(client) = client else { return };
+    let host = host.map(|h| *h).unwrap_or_default();
     // Not while the workshop is open (its repairs reach the ride when it
     // closes).
-    if !keeps_damage(args.capture.is_some(), args.no_hearts) || state.scene.is_some() {
+    if !keeps_damage(host.capture, host.no_hearts) || state.scene.is_some() {
         return;
     }
-    let Some(d) = client.0.own_damage() else {
+    let Some(d) = ride.damage.as_ref() else {
         return;
     };
     let name = riders.map_or_else(
-        || crate::settings::riders::Rider::default().name,
+        || ocw_client::riders::Rider::default().name,
         |r| r.riding.name.clone(),
     );
     let now = state.wallet.clock();
-    let start = session.map_or(0.0, |s| s.0);
+    let start = ride.session_start;
     let Some(active) = state.wallet.get(&name).map(|g| g.active.clone()) else {
         return;
     };
@@ -1472,6 +1626,22 @@ fn keep_damage(
     };
     if state.wallet.keep_damage(&name, &bike, &kept) {
         state.dirty = true;
+        // Signed in: the account keeps it (4O part 4), sent by
+        // `follow_account` while the backend answers.
+        if state.wallet.is_account()
+            && let Some(g) = state.wallet.get(&name)
+            && let Some(b) = g.bike(&bike)
+        {
+            let report = Action::Damage {
+                bike: bike.clone(),
+                condition: b.condition.clone(),
+                injury: g.injury.map(|i| ocw_account_api::workshop::Injury {
+                    condition_pm: i.condition_pm,
+                    at_unix: i.at_unix,
+                }),
+            };
+            state.damage_report = Some(report);
+        }
     }
 }
 
@@ -1545,7 +1715,7 @@ fn workshop_input(
     riders: Option<Res<RiderProfiles>>,
     mut console: ResMut<ConsoleState>,
     mut state: ResMut<WorkshopState>,
-    mut client: Option<ResMut<ClientState>>,
+    mut ride_now: ResMut<RideNow>,
 ) {
     let dt = time.delta_secs();
     let now = time.elapsed_secs_f64();
@@ -1627,7 +1797,7 @@ fn workshop_input(
         }));
     }
     let name = riders.as_ref().map_or_else(
-        || crate::settings::riders::Rider::default().name,
+        || ocw_client::riders::Rider::default().name,
         |r| r.riding.name.clone(),
     );
     let Some(g) = st.wallet.get(&name).cloned() else {
@@ -1668,9 +1838,7 @@ fn workshop_input(
             Out::Line(l) => console.queue(l),
             Out::Leave { apply, then } => {
                 st.scene = None;
-                if let Some(c) = client.as_mut() {
-                    c.0.release_steering();
-                }
+                ride_now.release_steering = true;
                 if apply {
                     console.queue("workshop.apply");
                 }
@@ -1689,7 +1857,7 @@ fn write_view(
     models: Res<BikeModels>,
     ride: Option<Res<RideView>>,
     riders: Option<Res<RiderProfiles>>,
-    client: Option<Res<ClientState>>,
+    ride_now: Res<RideNow>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut view: ResMut<WorkshopView>,
 ) {
@@ -1818,10 +1986,8 @@ fn write_view(
         Vec::new()
     };
     let picker = scene.picker.as_ref().map(|p| {
-        let server = client.as_ref().and_then(|c| c.0.own_effect());
-        let mode = client
-            .as_ref()
-            .map_or(ocw_sim::PhysicsMode::Open, |c| c.0.physics_mode());
+        let server = ride_now.effect.as_ref();
+        let mode = ride_now.mode;
         let mut v = picker_view(p, g, balance, scene, server, &character, rider.weight_kg);
         if p.tiles() && p.of_the_rider() {
             fill_rider_tiles(&mut v, p, scene, &ctx);
@@ -1890,7 +2056,7 @@ fn write_view(
         picker,
         status: ride
             .as_deref()
-            .map_or_else(String::new, crate::menu::status_line),
+            .map_or_else(String::new, ocw_client::menu::status_line),
         hearts: balance_label(&state, balance),
         hint: input::hint(state.active, hint_ctx),
         caption: scene.caption.clone(),
@@ -2301,6 +2467,3 @@ pub fn register_apply(app: &mut App) {
         },
     ));
 }
-
-#[cfg(test)]
-mod tests;

@@ -49,19 +49,8 @@ pub struct Account {
     worker: Option<Worker>,
 }
 
-/// What changed in the account's workshop since the app last looked.
-#[derive(Debug, Default)]
-pub struct WorkshopUpdate {
-    /// Signed in (with the account's workshop known, from the backend or
-    /// the cache).
-    pub signed_in: bool,
-    /// The workshop, when it changed since `generation`.
-    pub synced: Option<ocw_account_api::offline::Synced>,
-    pub online: bool,
-    pub queued: usize,
-    pub generation: u64,
-    pub answers: Vec<workshop::ActAnswer>,
-}
+/// What changed in the account's workshop (shared with the browser).
+pub use ocw_ui::workshop::WorkshopUpdate;
 
 impl Account {
     /// The account's workshop: what changed since `seen` (a generation),

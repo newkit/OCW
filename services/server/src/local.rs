@@ -62,6 +62,9 @@ pub fn local_config(bots: u32, start_m: f64) -> ServerConfig {
         // The app uploads its own rides' summaries (spec 14 Phase 4, 4O
         // Q19): a local server credits nothing.
         hearts_credits: None,
+        // The app's own garage: every part counts (4O W5d checks hosted
+        // servers only).
+        ownership: None,
     }
 }
 

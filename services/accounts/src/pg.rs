@@ -556,7 +556,7 @@ async fn load(
 ) -> Result<Loaded, sqlx::Error> {
     let mut t = pool.begin().await?;
     let Some(a) = sqlx::query(
-        "SELECT display_name, hearts, workshop_started, active_bike, next_item
+        "SELECT display_name, hearts, workshop_started, active_bike, next_item, injury_pm, injury_at
          FROM accounts WHERE id = $1 FOR UPDATE",
     )
     .bind(&account)
@@ -659,6 +659,16 @@ async fn load(
             items,
             next_item: a.try_get::<i32, _>("next_item")? as u32,
             kit,
+            injury: match (
+                a.try_get::<Option<i32>, _>("injury_pm")?,
+                a.try_get::<Option<i64>, _>("injury_at")?,
+            ) {
+                (Some(pm), Some(at)) => Some(ocw_account_api::workshop::Injury {
+                    condition_pm: pm as u32,
+                    at_unix: at,
+                }),
+                _ => None,
+            },
         }
     } else {
         Garage::starter("")
@@ -731,7 +741,8 @@ async fn write(
     }
     let delta: i64 = change.bookings.iter().map(|b| b.delta).sum();
     let hearts: i64 = sqlx::query_scalar(
-        "UPDATE accounts SET hearts = hearts + $2, workshop_started = $3, active_bike = $4, next_item = $5
+        "UPDATE accounts SET hearts = hearts + $2, workshop_started = $3, active_bike = $4, next_item = $5,
+             injury_pm = $6, injury_at = $7
          WHERE id = $1 RETURNING hearts",
     )
     .bind(&account)
@@ -739,6 +750,8 @@ async fn write(
     .bind(w.started)
     .bind(&g.active)
     .bind(g.next_item as i32)
+    .bind(g.injury.map(|i| i.condition_pm.min(999) as i32))
+    .bind(g.injury.map(|i| i.at_unix))
     .fetch_one(&mut *t)
     .await?;
     for b in &change.bookings {
@@ -928,7 +941,7 @@ impl WorkshopStore for PgStore {
                 "DELETE FROM hearts_ledger WHERE account = $1",
                 "DELETE FROM idempotency WHERE account = $1",
                 "DELETE FROM ride_uploads WHERE account = $1",
-                "UPDATE accounts SET hearts = 0, workshop_started = FALSE, active_bike = '', next_item = 1 WHERE id = $1",
+                "UPDATE accounts SET hearts = 0, workshop_started = FALSE, active_bike = '', next_item = 1, injury_pm = NULL, injury_at = NULL WHERE id = $1",
             ] {
                 sqlx::query(q).bind(&account).execute(&mut *t).await?;
             }

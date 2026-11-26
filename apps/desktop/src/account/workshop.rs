@@ -21,12 +21,8 @@ pub const QUEUE_FILE: &str = "ride-queue.jsonl";
 /// Offline: how often the thread tries the backend again (s).
 pub const RETRY_S: i64 = 60;
 
-/// An action's answer for the app.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ActAnswer {
-    pub id: u64,
-    pub result: Result<ActionAnswer, String>,
-}
+/// An action's answer for the app (shared with the browser).
+pub use ocw_ui::workshop::ActAnswer;
 
 /// What the app reads of the account's workshop.
 #[derive(Debug, Clone, Default)]

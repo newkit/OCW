@@ -17,7 +17,6 @@
 pub mod model;
 
 use bevy::prelude::*;
-pub use ocw_client::menu::status_line;
 pub use ocw_ui::menu::{MenuHooks, MenuState};
 
 use crate::ride::RideCatalog;

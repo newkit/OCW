@@ -12,8 +12,21 @@ use ocw_render::console::ConsoleCorePlugin;
 use ocw_world::Route;
 
 use super::*;
-use crate::connection::ConnectionPlugin;
+use crate::connection::{ClientState, ConnectionPlugin};
 use crate::menu::MenuPlugin;
+use crate::settings::RiderProfiles;
+use ocw_assets::parts::{Catalogue, Slot};
+use ocw_core::{ProfileId, Rgb};
+use ocw_render::RideView;
+use ocw_render::console::{ConsoleState, Permission};
+use ocw_render::menu::InputContext;
+use ocw_render::workshop::{WorkshopPointer, WorkshopPointerEvent, WorkshopView};
+use ocw_ui::workshop::input::Act;
+use ocw_ui::workshop::model::Workshop;
+
+fn cat() -> &'static Catalogue {
+    ocw_assets::shipped::catalogue()
+}
 
 fn app() -> App {
     let capture = std::env::temp_dir().join(format!("ocw-workshop-test-{}", std::process::id()));
@@ -844,6 +857,11 @@ fn signed_in_the_workshop_is_the_accounts() {
     run(&mut app, "bikes.buy frame.tt.top");
     wait(&mut app, "the refusal", &|a| logged(a, "more needed"));
     assert_eq!(balance(&app), ocw_account_api::START_HEARTS - 600);
+    // Repairs go to the account (4O part 4): nothing to repair yet.
+    run(&mut app, "workshop.repair all");
+    wait(&mut app, "the repair's answer", &|a| {
+        logged(a, "needs no repair")
+    });
     // Not with an account yet.
     run(&mut app, "bikes.hang 1");
     assert!(logged(&app, "not available with an account"));
