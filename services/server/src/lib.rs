@@ -30,6 +30,7 @@ pub mod net;
 // UPnP-IGD port mapping on the router while hosting (spec §7.1.7 Q4).
 #[cfg(not(target_arch = "wasm32"))]
 pub mod portmap;
+pub mod public_stats;
 pub mod stats;
 // Snapshot timing at a client (interval, jitter, age; spec §14 Phase 10 B3).
 pub mod timing;
@@ -45,7 +46,7 @@ pub mod wire;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod worlds;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use ocw_core::name::{self, NameRegistry};
@@ -323,6 +324,11 @@ pub struct GameServer {
     /// the server's statistics, `ocw-server --stats-file`).
     joined: Vec<String>,
     left: Vec<String>,
+    /// The connections of test clients (`Hello.bot`, `ocw-bot`): bots on
+    /// the public statistics (spec 11.5 *Status page*).
+    bot_conns: BTreeSet<ConnectionId>,
+    /// Rides started (a connection's first hello), people and bots.
+    ride_starts: (u64, u64),
     /// The session's world clock (spec §14 Phase 9), on session time.
     clock: ocw_sky::WorldClock,
     /// The session's weather (spec §14 Phase 9, S4), on session time.
@@ -552,6 +558,8 @@ impl GameServer {
             peer_addrs: BTreeMap::new(),
             joined: Vec::new(),
             left: Vec::new(),
+            bot_conns: BTreeSet::new(),
+            ride_starts: (0, 0),
             time_base_s: 0.0,
             pending_world: None,
             event_weather: None,
@@ -1015,6 +1023,27 @@ impl GameServer {
         }
     }
 
+    /// The public statistics' numbers now (spec 11.5 *Status page*):
+    /// riders and their speeds, people and bots apart, the rides started
+    /// and the riders in voice – counts only, no names or positions.
+    pub fn public_observation(&self) -> public_stats::Observation {
+        let client_bots: Vec<RiderId> = self
+            .bot_conns
+            .iter()
+            .filter_map(|c| self.riders.get(c).copied())
+            .collect();
+        let mut o = public_stats::Observation {
+            rides_humans: self.ride_starts.0,
+            rides_bots: self.ride_starts.1,
+            voice: self.statuses.values().filter(|s| s.in_voice).count() as u32,
+            ..Default::default()
+        };
+        for (id, speed, server_rider) in self.session.motions() {
+            o.add(server_rider || client_bots.contains(&id), speed);
+        }
+        o
+    }
+
     /// Display names of the clients that joined so far, in order.
     pub fn joined(&self) -> &[String] {
         &self.joined
@@ -1056,6 +1085,7 @@ impl GameServer {
         self.asked.remove(&conn);
         self.voice_issued.remove(&conn);
         self.peer_addrs.remove(&conn);
+        self.bot_conns.remove(&conn);
         self.voice_blocks.remove(&conn);
         self.voice_apart.remove(&conn);
         self.voice_audience.remove(&conn);
@@ -1439,6 +1469,19 @@ impl GameServer {
         self.riders.insert(conn, rider);
         if let Some(a) = &account {
             self.accounts.insert(conn, a.clone());
+        }
+        // A new ride unless this connection rode before (a world switch
+        // sends everyone through a new hello).
+        let bot = hello.bot == Some(true);
+        if !self.joined_at.contains_key(&conn) {
+            if bot {
+                self.ride_starts.1 += 1;
+            } else {
+                self.ride_starts.0 += 1;
+            }
+        }
+        if bot {
+            self.bot_conns.insert(conn);
         }
         self.joined_at.insert(conn, unix_now_ms() / 1000);
         self.names.insert(conn, hello.display_name.clone());
@@ -2555,6 +2598,7 @@ mod tests {
             parts: Vec::new(),
             damage: None,
             access_token: None,
+            bot: None,
         })))
     }
 
@@ -2573,6 +2617,7 @@ mod tests {
                 parts: Vec::new(),
                 damage: None,
                 access_token: None,
+                bot: None,
             }))),
         );
         match decode_server(&reply[0]).unwrap() {
@@ -4708,6 +4753,62 @@ mod tests {
         assert_eq!((server.joined().len(), server.left().len()), (1, 1));
     }
 
+    /// The public statistics (spec 11.5 *Status page*): server bots and
+    /// `ocw-bot` clients count as bots, people as people; joins and
+    /// leaves move the count; a world switch is no new ride; the report
+    /// names nobody.
+    #[test]
+    fn public_statistics_count_people_and_bots_without_names() {
+        let mut server = GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                bots: 2,
+                ..Default::default()
+            },
+        );
+        let ada = server.connect();
+        server.handle(ada, &hello_as(PROTOCOL_VERSION, None, "Ada Rider"));
+        let bea = server.connect();
+        server.handle(bea, &hello_as(PROTOCOL_VERSION, None, "Bea Climber"));
+        let bot = server.connect();
+        server.handle(
+            bot,
+            &encode(&client_message(C::Hello(v1::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                display_name: "linux-1".into(),
+                bot: Some(true),
+                ..Default::default()
+            }))),
+        );
+        for _ in 0..100 {
+            server.tick();
+        }
+        let o = server.public_observation();
+        assert_eq!((o.humans, o.bots), (2, 3), "{o:?}");
+        assert_eq!((o.rides_humans, o.rides_bots), (2, 1));
+        assert!(o.bots_mps > 0.0, "the server bots ride: {o:?}");
+        server.disconnect(bea);
+        let o = server.public_observation();
+        assert_eq!((o.humans, o.bots), (1, 3));
+        // A world switch: everyone says hello again, no new ride.
+        let (conns, _) = server.switch_world(Route::test_hills(), v1::WorldChange::default());
+        assert_eq!(conns.len(), 2);
+        server.handle(ada, &hello_as(PROTOCOL_VERSION, None, "Ada Rider B"));
+        let o = server.public_observation();
+        assert_eq!((o.rides_humans, o.rides_bots, o.humans), (2, 1, 1));
+        let mut stats = public_stats::PublicStats::new(1_795_694_400);
+        stats.observe(1_795_694_400, ocw_core::SIM_DT, &o);
+        let json = serde_json::to_string(&stats.report(
+            1_795_694_400,
+            "test",
+            &public_stats::WorldNote::default(),
+        ))
+        .unwrap();
+        for name in ["Ada", "Bea", "linux-1", "Tester"] {
+            assert!(!json.contains(name), "{json}");
+        }
+    }
+
     fn welcome_or_reject(server: &mut GameServer, conn: ConnectionId, name: &str) -> S {
         let reply = server.handle(conn, &hello_as(PROTOCOL_VERSION, None, name));
         decode_server(&reply[0]).unwrap()
@@ -4838,6 +4939,7 @@ mod tests {
                 parts: Vec::new(),
                 damage: None,
                 access_token: None,
+                bot: None,
             };
             let conn = server.connect();
             let reply = server.handle(conn, &encode(&client_message(C::Hello(hello))));

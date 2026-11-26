@@ -84,6 +84,8 @@ impl BotRider {
             parts: Vec::new(),
             damage: None,
             access_token: None,
+            // Counted among the bots on the server's status page.
+            bot: Some(true),
         };
         // Exactly the profile the server will use for this hello.
         let profile = ocw_server::physics_profile(&hello);

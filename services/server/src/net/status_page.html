@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OCW public server</title>
+<meta name="description" content="Open Cycling World's public test server: ride in your browser or with the desktop app, live statistics.">
+<link rel="icon" href="/_ocw/icon.svg" type="image/svg+xml">
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f5f7fb; --card: #ffffff; --ink: #18202c; --muted: #5b6778; --line: #dfe4ec;
+  --accent: #2463eb; --accent-ink: #ffffff; --good: #148a4a; --code: #eef2f8;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f141b; --card: #18202b; --ink: #e8edf4; --muted: #9aa7b8; --line: #2a3442;
+    --accent: #5b8cff; --accent-ink: #0b1020; --good: #4cc98a; --code: #222c39;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+main { max-width: 880px; margin: 0 auto; padding: 24px 16px 48px; }
+header { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+header img { width: 56px; height: 56px; border-radius: 14px; }
+h1 { font-size: 1.6rem; margin: 0; line-height: 1.2; }
+h2 { font-size: 1.1rem; margin: 0 0 10px; }
+.sub { color: var(--muted); margin: 0; }
+.lead { margin: 16px 0 20px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin: 14px 0; }
+.ride {
+  display: block; text-align: center; background: var(--accent); color: var(--accent-ink);
+  font-size: 1.25rem; font-weight: 700; text-decoration: none; border-radius: 12px; padding: 18px 16px;
+}
+.ride:hover, .ride:focus-visible { filter: brightness(1.08); }
+.hint { color: var(--muted); font-size: .9rem; margin: 8px 0 0; text-align: center; }
+a { color: var(--accent); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.stat { background: var(--bg); border-radius: 10px; padding: 10px 12px; }
+.stat b { display: block; font-size: 1.5rem; font-variant-numeric: tabular-nums; line-height: 1.25; }
+.stat span { color: var(--muted); font-size: .85rem; }
+.live { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: .85rem; font-weight: 400; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.on { background: var(--good); }
+.link { display: flex; gap: 8px; align-items: stretch; margin: 8px 0; }
+.link code {
+  flex: 1; min-width: 0; overflow-wrap: anywhere; background: var(--code); border-radius: 8px;
+  padding: 8px 10px; font-size: .85rem;
+}
+button {
+  font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--ink);
+  border-radius: 8px; padding: 6px 12px; cursor: pointer;
+}
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
+dt { color: var(--muted); }
+dd { margin: 0; }
+ol { margin: 0; padding-left: 1.3em; }
+footer { color: var(--muted); font-size: .85rem; margin-top: 22px; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.two .card { margin: 0; }
+@media (max-width: 640px) { .two { grid-template-columns: 1fr; } h1 { font-size: 1.35rem; } }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <img src="/_ocw/icon.svg" alt="">
+  <div>
+    <h1>Open Cycling World</h1>
+    <p class="sub">Public test server</p>
+  </div>
+</header>
+<p class="lead">This is the public test server of <a href="https://github.com/newkit/OCW">Open Cycling World</a>, a free, open-source indoor cycling game. Everyone who joins rides the same roads at the same time and can talk over voice. It is a test: it may restart or change at any time.</p>
+
+<a class="ride" href="https://newkit.github.io/OCW/?together=1">Ride now in your browser</a>
+<p class="hint">Best in Chrome or Edge on a computer. Ride with virtual power or connect a smart trainer. Or pick another ride on the <a href="https://newkit.github.io/OCW/">start page</a>.</p>
+
+<section class="card" aria-live="polite">
+  <h2>Right now <span class="live"><span class="dot" id="dot"></span><span id="updated">loading …</span></span></h2>
+  <div class="grid">
+    <div class="stat"><b id="s-humans">–</b><span>riders online</span></div>
+    <div class="stat"><b id="s-bots">–</b><span>bots online</span></div>
+    <div class="stat"><b id="s-voice">–</b><span>in voice</span></div>
+    <div class="stat"><b id="s-peak">–</b><span>most riders at once today</span></div>
+    <div class="stat"><b id="s-rides">–</b><span>rides started today</span></div>
+    <div class="stat"><b id="s-km">–</b><span>km ridden today</span></div>
+    <div class="stat"><b id="s-km-total">–</b><span id="s-since">km ridden in total</span></div>
+    <div class="stat"><b id="s-rides-total">–</b><span>rides in total</span></div>
+  </div>
+</section>
+
+<div class="two">
+  <section class="card">
+    <h2>The world</h2>
+    <dl>
+      <dt>Region</dt><dd>{{WORLD_NAME}}</dd>
+      <dt>Version</dt><dd>{{WORLD_VERSION}}</dd>
+      <dt>Ride</dt><dd>{{ROUTE}}</dd>
+    </dl>
+  </section>
+  <section class="card">
+    <h2>The server</h2>
+    <dl>
+      <dt>Version</dt><dd id="s-version">{{VERSION}}</dd>
+      <dt>Up for</dt><dd id="s-uptime">–</dd>
+      <dt>Tick load</dt><dd id="s-tick">–</dd>
+      <dt>Where</dt><dd>Frankfurt (Fly.io)</dd>
+    </dl>
+  </section>
+</div>
+
+<section class="card">
+  <h2>Ride with the desktop app</h2>
+  <ol>
+    <li>Download Open Cycling World for Linux, Windows or macOS from the <a href="https://github.com/newkit/OCW/releases">releases page</a>.</li>
+    <li>In the app open <b>Ride → Join</b> and paste this join link (or start <code>ocw-desktop --join LINK</code>):</li>
+  </ol>
+  <div class="link"><code id="link">{{LINK}}</code><button type="button" id="copy">Copy</button></div>
+  <p class="sub">The link names the server's address and the fingerprint of its certificate; the app checks it when it connects.</p>
+</section>
+
+<section class="card">
+  <h2>Privacy</h2>
+  <p class="sub" style="margin:0">This page shows counts only: no rider names, no addresses, no positions. The numbers are kept since <span id="s-since-date">the server started</span>; "today" is the UTC day. What riding together shares is in the browser app's privacy note.</p>
+</section>
+
+<footer>
+  <a href="https://github.com/newkit/OCW">Source code</a> · <a href="/stats.json">stats.json</a> · <a href="/join.json">join.json</a> · © OpenStreetMap contributors (the world's roads)
+</footer>
+</main>
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var nf = new Intl.NumberFormat("en", { maximumFractionDigits: 0 });
+  var nf1 = new Intl.NumberFormat("en", { maximumFractionDigits: 1, minimumFractionDigits: 1 });
+  function km(x) { return x < 100 ? nf1.format(x) : nf.format(x); }
+  function span(s) {
+    var d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+    if (d > 0) return d + " d " + h + " h";
+    if (h > 0) return h + " h " + m + " min";
+    return m + " min";
+  }
+  function date(unix) {
+    return new Date(unix * 1000).toISOString().slice(0, 16).replace("T", " ") + " UTC";
+  }
+  function show(s) {
+    $("s-humans").textContent = s.riders.humans;
+    $("s-bots").textContent = s.riders.bots;
+    $("s-voice").textContent = s.riders.voice;
+    $("s-peak").textContent = s.today.peak_humans;
+    $("s-rides").textContent = s.today.rides_humans;
+    $("s-km").textContent = km(s.today.km_humans);
+    $("s-km-total").textContent = km(s.total.km_humans);
+    $("s-rides-total").textContent = nf.format(s.total.rides_humans);
+    $("s-since").textContent = "km ridden since " + date(s.since_unix_s).slice(0, 10);
+    $("s-since-date").textContent = date(s.since_unix_s);
+    $("s-version").textContent = s.version;
+    $("s-uptime").textContent = span(s.uptime_s) + " (since " + date(s.started_unix_s) + ")";
+    $("s-tick").textContent = s.tick.mean_ms.toFixed(2) + " ms mean, " + s.tick.p95_ms.toFixed(2) +
+      " ms p95 of " + s.tick.budget_ms + " ms (" + s.tick.hz + " Hz)";
+    $("updated").textContent = "live, " + new Date().toLocaleTimeString();
+    $("dot").className = "dot on";
+  }
+  function load() {
+    fetch("/stats.json", { cache: "no-store" })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(show)
+      .catch(function () { $("updated").textContent = "no answer – trying again"; $("dot").className = "dot"; });
+  }
+  load();
+  setInterval(load, 10000);
+  $("copy").addEventListener("click", function () {
+    var text = $("link").textContent;
+    var done = function () { $("copy").textContent = "Copied"; setTimeout(function () { $("copy").textContent = "Copy"; }, 1500); };
+    if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, function () {});
+  });
+})();
+</script>
+</body>
+</html>

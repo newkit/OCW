@@ -495,6 +495,10 @@ message Hello {
   // expiry, issuer and audience and rejects a bad token (Reject.auth);
   // a server without it ignores the token.
   optional string access_token = 10;
+  // A test client (`ocw-bot`, spec 11.4.1) rather than a person: the
+  // server's public statistics count it among the bots (spec 11.5 *Status
+  // page*), nothing else changes. Absent: a person.
+  optional bool bot = 11;
 }
 
 // The signed-in account of a rider (spec §9.1).

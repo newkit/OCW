@@ -208,9 +208,16 @@ struct Args {
     /// hashes (and the next one a day before a renewal), the voice URL and
     /// the world, for pages that learn them at runtime (the public preview).
     /// Other requests are passed on to --join-upstream (one TLS port of a
-    /// hosting's proxy serves both, Fly.io's 443).
+    /// hosting's proxy serves both, Fly.io's 443). A browser's `GET /`
+    /// gets the server's status page and `/stats.json` its public
+    /// statistics, counts only (spec 11.5 *Status page*).
     #[arg(long, value_name = "ADDR", requires = "webtransport")]
     join_http: Option<std::net::SocketAddr>,
+    /// Keep the status page's totals (rides, km, since when) in this small
+    /// JSON file across restarts (spec 11.5 *Status page*); without it
+    /// they start again at every start.
+    #[arg(long, value_name = "PATH", requires = "join_http")]
+    public_stats_file: Option<PathBuf>,
     /// Where --join-http passes other requests (default: the bundled voice
     /// server's signalling port on 127.0.0.1); `none`: answer 404.
     #[arg(long, value_name = "ADDR|none", requires = "join_http")]
@@ -813,9 +820,13 @@ fn main() {
         .map(|addr| listen(&args, addr, &link_world, public_ip));
     let stop = net.as_ref().map(NetServer::shutdown_on_signal);
     let join = start_join(&args);
-    if let (Some(board), Some(n)) = (&join, &net) {
+    if let (Some((board, status)), Some(n)) = (&join, &net) {
         board.set(&join_info(&args, n, &join_world));
+        status.set_page(page_info(&args, n, &join_world));
     }
+    // The status page's counts (spec 11.5 *Status page*).
+    let mut public = join.as_ref().map(|_| start_public_stats(&args));
+    let mut public_saved = Instant::now();
     // When the WebTransport certificate was last checked for renewal.
     let mut cert_checked = Instant::now();
     let tick = Duration::from_secs_f64(SIM_DT);
@@ -845,8 +856,9 @@ fn main() {
             cert_checked = Instant::now();
             join_changed |= rotate_web_cert(&args, n);
         }
-        if join_changed && let (Some(board), Some(n)) = (&join, &net) {
+        if join_changed && let (Some((board, status)), Some(n)) = (&join, &net) {
             board.set(&join_info(&args, n, &join_world));
+            status.set_page(page_info(&args, n, &join_world));
         }
         let broadcast = server.tick();
         let directed = server.take_directed();
@@ -857,6 +869,26 @@ fn main() {
         }
         let took = started.elapsed();
         stats.record(took, late, server.session().rider_count());
+        if let (Some(p), Some((_, status))) = (&mut public, &join) {
+            let now_s = ocw_server::unix_now_ms() / 1000;
+            p.record_tick(took);
+            p.observe(now_s, SIM_DT, &server.public_observation());
+            if server
+                .session()
+                .tick()
+                .is_multiple_of(u64::from(SIM_TICK_HZ))
+            {
+                status.set_stats(&p.report(
+                    now_s,
+                    env!("CARGO_PKG_VERSION"),
+                    &world_note(&join_world),
+                ));
+            }
+            if public_saved.elapsed() >= Duration::from_secs(60) {
+                public_saved = Instant::now();
+                save_public_stats(&args, p);
+            }
+        }
         let session = server.session();
         if session.tick().is_multiple_of(u64::from(SIM_TICK_HZ)) {
             for r in session.snapshot() {
@@ -938,6 +970,9 @@ fn main() {
         if let Err(e) = std::fs::write(path, report.to_json()) {
             eprintln!("{}: {e}", path.display());
         }
+    }
+    if let Some(p) = &public {
+        save_public_stats(&args, p);
     }
     if let Some(net) = net {
         net.shutdown();
@@ -1226,6 +1261,8 @@ fn rotate_web_cert(args: &Args, net: &mut NetServer) -> bool {
 #[derive(Default)]
 struct JoinWorld {
     id: Option<String>,
+    /// The region's name for people (the status page).
+    name: Option<String>,
     version: Option<u64>,
     sha256: Option<String>,
     route: Option<String>,
@@ -1235,6 +1272,7 @@ impl JoinWorld {
     fn of(change: &ocw_protocol::v1::WorldChange) -> Self {
         Self {
             id: Some(change.package_id.clone()),
+            name: (!change.name.is_empty()).then(|| change.name.clone()),
             version: (change.version > 0).then_some(change.version),
             sha256: (!change.content_sha256.is_empty()).then(|| {
                 change
@@ -1248,8 +1286,14 @@ impl JoinWorld {
     }
 }
 
-/// Starts --join-http (spec 11.5 *Join info*).
-fn start_join(args: &Args) -> Option<ocw_server::net::JoinBoard> {
+/// Starts --join-http (spec 11.5 *Join info*) with the status page
+/// (*Status page*).
+fn start_join(
+    args: &Args,
+) -> Option<(
+    ocw_server::net::JoinBoard,
+    ocw_server::net::join_http::StatusBoard,
+)> {
     let addr = args.join_http?;
     let upstream = match args.join_upstream.as_deref() {
         Some("none") => None,
@@ -1263,15 +1307,108 @@ fn start_join(args: &Args) -> Option<ocw_server::net::JoinBoard> {
         ))),
     };
     let board = ocw_server::net::JoinBoard::default();
-    match ocw_server::net::JoinFront::spawn(addr, upstream, board.clone()) {
+    let status = ocw_server::net::join_http::StatusBoard::default();
+    match ocw_server::net::JoinFront::spawn_with(
+        addr,
+        upstream,
+        board.clone(),
+        Some(status.clone()),
+    ) {
         Ok(front) => {
-            tracing::info!(addr = %front.local_addr(), upstream = ?upstream, path = ocw_server::net::join_http::PATH, "join info for pages (HTTP)");
-            Some(board)
+            tracing::info!(addr = %front.local_addr(), upstream = ?upstream, path = ocw_server::net::join_http::PATH, stats = ocw_server::net::join_http::STATS_PATH, "join info and status page for pages (HTTP)");
+            Some((board, status))
         }
         Err(e) => {
             eprintln!("{e}");
             std::process::exit(1);
         }
+    }
+}
+
+/// The status page's data now (spec 11.5 *Status page*): the desktop
+/// join link with the public host and the world.
+fn page_info(
+    args: &Args,
+    net: &NetServer,
+    world: &JoinWorld,
+) -> ocw_server::net::join_http::PageInfo {
+    let local = net.local_addr();
+    let link_world = world.id.as_ref().map(|id| match world.version {
+        Some(v) if !id.starts_with("local/") => format!("{id}@{v}"),
+        _ => id.clone(),
+    });
+    let desktop_link = match args.voice_public_host.as_deref().filter(|h| !h.is_empty()) {
+        Some(host) => {
+            let mut l = ocw_protocol::join::JoinLink::new(host.to_owned(), local.port());
+            l.cert = Some(net.fingerprint().to_string());
+            l.world = link_world;
+            l.route = world.route.clone();
+            l.to_link()
+        }
+        None => ocw_server::net::join_links(
+            local,
+            net.fingerprint(),
+            link_world.as_deref(),
+            world.route.as_deref(),
+        )
+        .into_iter()
+        .next()
+        .unwrap_or_default(),
+    };
+    ocw_server::net::join_http::PageInfo {
+        desktop_link,
+        world_name: world
+            .name
+            .clone()
+            .or_else(|| world.id.clone())
+            .unwrap_or_default(),
+        world_version: world.version,
+        route: world.route.clone(),
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+    }
+}
+
+/// The status page's world note.
+fn world_note(world: &JoinWorld) -> ocw_server::public_stats::WorldNote {
+    ocw_server::public_stats::WorldNote {
+        id: world.id.clone(),
+        name: world.name.clone(),
+        version: world.version,
+        route: world.route.clone(),
+    }
+}
+
+/// The public statistics to start from: the totals kept in
+/// --public-stats-file, if any.
+fn start_public_stats(args: &Args) -> ocw_server::public_stats::PublicStats {
+    use ocw_server::public_stats::{PublicStats, Saved};
+    let now = ocw_server::unix_now_ms() / 1000;
+    let saved = args.public_stats_file.as_ref().and_then(|p| {
+        let text = std::fs::read_to_string(p).ok()?;
+        match serde_json::from_str::<Saved>(&text) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                tracing::warn!(path = %p.display(), %e, "public statistics file unreadable: starting again");
+                None
+            }
+        }
+    });
+    match saved {
+        Some(s) => PublicStats::resume(now, s),
+        None => PublicStats::new(now),
+    }
+}
+
+/// Writes the totals to --public-stats-file (a new file renamed over the
+/// old one, so a crash never leaves half a file).
+fn save_public_stats(args: &Args, stats: &ocw_server::public_stats::PublicStats) {
+    let Some(path) = &args.public_stats_file else {
+        return;
+    };
+    let tmp = path.with_extension("json.new");
+    let text = serde_json::to_string_pretty(stats.saved()).unwrap_or_default() + "\n";
+    if let Err(e) = std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, path)) {
+        tracing::warn!(path = %path.display(), %e, "cannot save the public statistics");
     }
 }
 

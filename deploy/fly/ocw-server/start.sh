@@ -17,12 +17,15 @@
 #             certificate; made on the first start, kept across restarts)
 #   home/     the server user's data dir (voice server logs, trusted keys)
 #   web-info.json  the WebTransport URL and certificate hash for pages
+#   public-stats.json  the status page's totals (counts only; spec 11.5
+#             *Status page*)
 #
 # Pages from the internet (the public preview on GitHub Pages) fetch the
 # same, current, from https://APP.fly.dev/join.json (spec 11.5 *Join info*):
 # Fly's proxy ends TLS on 443 and forwards to the join endpoint on 8080,
-# which answers /join.json and passes everything else (the voice server's
-# WebSocket) on to LiveKit's signalling port.
+# which answers /join.json, the status page (/ for browsers, /stats.json)
+# and passes everything else (the voice server's WebSocket) on to LiveKit's
+# signalling port.
 set -eu
 
 world=${OCW_WORLD:-/data/worlds/pilot/liechtenstein.ocwpkg}
@@ -72,6 +75,7 @@ exec setpriv --reuid=ocw --regid=ocw --clear-groups --reset-env -- \
     --tls-dir /data/tls \
     --web-info-file /data/web-info.json \
     --join-http 0.0.0.0:8080 \
+    --public-stats-file /data/public-stats.json \
     --world "$world" \
     --voice-public-host "$public" \
     --voice-ports 7880,7881,7882 \
