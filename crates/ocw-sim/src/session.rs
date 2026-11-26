@@ -1702,11 +1702,10 @@ impl Session {
             // At most 2 m a tick (100 m/s): a teleport is no climb.
             let rise = (rider.state.distance - d).clamp(0.0, 2.0) * grade;
             rider.meter.add(rider.input.power_w, SIM_DT, rise, blocked);
-            // The virtual brake: the speed above the one in front is shed.
-            if let Some(c) = cap
-                && rider.state.speed > c
-            {
-                rider.state.speed = c;
+            // The virtual brake: the speed above the one in front is shed
+            // (at most `avoid::VIRTUAL_BRAKE_MPS2`).
+            if let Some(c) = cap {
+                rider.state.speed = avoid::brake_to(rider.state.speed, c, SIM_DT);
             }
             // Stopped by the road edge while riding into it at a steep
             // angle (wild mode just switched off): a hit on a wall (12B).

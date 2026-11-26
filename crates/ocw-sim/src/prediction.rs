@@ -629,10 +629,8 @@ impl Predictor {
         if let Some(track) = self.off_road.clone() {
             let (mut state, mut scraping) = (self.state, self.scraping);
             let mut next = self.off_road_tick(&mut state, &track, power_w, &mut scraping);
-            if let Some(c) = self.speed_cap
-                && state.speed > c
-            {
-                state.speed = c;
+            if let Some(c) = self.speed_cap {
+                state.speed = crate::avoid::brake_to(state.speed, c, SIM_DT);
             }
             // The server's place blended in.
             let left = self.pending_xz[0].hypot(self.pending_xz[1]);
@@ -689,10 +687,8 @@ impl Predictor {
         let mut state = self.state;
         self.world_tick(&mut state, route, false);
         self.state = state;
-        if let Some(c) = self.speed_cap
-            && self.state.speed > c
-        {
-            self.state.speed = c;
+        if let Some(c) = self.speed_cap {
+            self.state.speed = crate::avoid::brake_to(self.state.speed, c, SIM_DT);
         }
         if self.pending_lateral != 0.0 {
             let max_step = self.lateral_rate.abs() * SIM_DT;
