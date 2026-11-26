@@ -1246,7 +1246,7 @@ impl Skin {
     }
 }
 
-/// The chin-strap beard (bug 2026-11-26, 4N *Fixed (v6.25)*): the band's
+/// The chin-strap beard (bug 2026-11-26, 4N *Fixed (v6.40)*): the band's
 /// radius and how far its centre line lies out of the skin (m) – it lies
 /// on the jaw line, more than half of it in the skin.
 pub const CHIN_STRAP: (f32, f32) = (0.005, 0.002);
@@ -1287,7 +1287,7 @@ const STUBBLE_EYE: [f32; 3] = [0.0, -0.045, -0.02];
 pub const STUBBLE_MARGIN: f32 = 0.004;
 
 /// A stubble beard lying on the skin (bug 2026-11-26, 4N *Fixed
-/// (v6.25)*: the short stubble beard's shell covered the lips): a grid
+/// (v6.40)*: the short stubble beard's shell covered the lips): a grid
 /// of rays from inside the head, each vertex on the skin as drawn (with
 /// the older riders' softer jaw) plus up to `thick`, where the old
 /// beard's shell `(centre, radii, tilt)` stood out of the skin – the
@@ -3436,7 +3436,7 @@ mod tests {
     }
 
     /// The chin-strap beard lies on the jaw line (bug 2026-11-26, 4N
-    /// *Fixed (v6.25)*: it read as a thin arc a little in front of the
+    /// *Fixed (v6.40)*: it read as a thin arc a little in front of the
     /// jaw – a fixed curve whose centre lay 7 – 8 mm out of the near jaw,
     /// with a 6.5 mm radius, and 1 – 2 cm out of the far head). On both
     /// models the band is the tube of [`CHIN_STRAP`]'s radius round
@@ -3507,7 +3507,7 @@ mod tests {
     }
 
     /// The stubble stops round the mouth (bug 2026-11-26, 4N *Fixed
-    /// (v6.25)*: the short stubble beard's shell covered the lips): for
+    /// (v6.40)*: the short stubble beard's shell covered the lips): for
     /// the stubble and the short stubble beard, with the lips closed, half
     /// open and fully open while speaking, no vertex lies within half of
     /// [`STUBBLE_MARGIN`] of the lips' box, and nothing of the beard is in

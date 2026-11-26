@@ -5532,13 +5532,13 @@ shot = 9
 pick = false
 
 # The chin-strap beard on the jaw line and the stubble free of the lips
-# (4N *Fixed (v6.25)*): close-ups riding from the front, the side and below;
+# (4N *Fixed (v6.40)*): close-ups riding from the front, the side and below;
 # the same looks before / after (beard-fix-a-* chin strap, beard-fix-b-* short
 # stubble, also speaking) and varied looks after (bodies, ages, skin, hair,
 # helmets, the helmet off, the far model). Made-up rider names only.
 [[scene]]
 name = "beard-fix-a-front"
-description = "Beards (4N v6.25): riding, the chin-strap beard straight from the front – base body A, 30s, short black hair, dark brown chin strap, red road helmet, blue kit"
+description = "Beards (4N v6.40): riding, the chin-strap beard straight from the front – base body A, 30s, short black hair, dark brown chin strap, red road helmet, blue kit"
 args = ["--route", "hills", "--bots", "0", "--power", "220"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
 at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --age 30s --hair short --hair-colour black --skin 4 --glasses 1 --beard chin-strap --facial-hair-colour #3B2A20", "0.7=kit.design --jersey #1E88E5 --second #F2F2EE --helmet #D32F2F --helmet-finish gloss", "3.5=camera.closeup face 180 0 0.55"]
@@ -5547,7 +5547,7 @@ pick = false
 
 [[scene]]
 name = "beard-fix-a-side"
-description = "Beards (4N v6.25): riding, the chin-strap beard from the side – base body A, 30s, short black hair, dark brown chin strap, red road helmet, blue kit"
+description = "Beards (4N v6.40): riding, the chin-strap beard from the side – base body A, 30s, short black hair, dark brown chin strap, red road helmet, blue kit"
 args = ["--route", "hills", "--bots", "0", "--power", "220"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
 at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --age 30s --hair short --hair-colour black --skin 4 --glasses 1 --beard chin-strap --facial-hair-colour #3B2A20", "0.7=kit.design --jersey #1E88E5 --second #F2F2EE --helmet #D32F2F --helmet-finish gloss", "3.5=camera.closeup face 90 -5 0.55"]
@@ -5556,7 +5556,7 @@ pick = false
 
 [[scene]]
 name = "beard-fix-a-below"
-description = "Beards (4N v6.25): riding, the chin-strap beard three-quarter from below – base body A, 30s, short black hair, dark brown chin strap, red road helmet, blue kit"
+description = "Beards (4N v6.40): riding, the chin-strap beard three-quarter from below – base body A, 30s, short black hair, dark brown chin strap, red road helmet, blue kit"
 args = ["--route", "hills", "--bots", "0", "--power", "220"]
 riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 75.0\nheight_cm = 178.0\n"
 at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --age 30s --hair short --hair-colour black --skin 4 --glasses 1 --beard chin-strap --facial-hair-colour #3B2A20", "0.7=kit.design --jersey #1E88E5 --second #F2F2EE --helmet #D32F2F --helmet-finish gloss", "3.5=camera.closeup face 145 -25 0.55"]
@@ -5565,7 +5565,7 @@ pick = false
 
 [[scene]]
 name = "beard-fix-b-front"
-description = "Beards (4N v6.25): riding, the short stubble beard straight from the front, lips closed – base body C, 40s, crew cut, dark skin, black stubble, white lightweight helmet, green kit"
+description = "Beards (4N v6.40): riding, the short stubble beard straight from the front, lips closed – base body C, 40s, crew cut, dark skin, black stubble, white lightweight helmet, green kit"
 args = ["--route", "hills", "--bots", "0", "--power", "200"]
 riders = "active = \"Bea Climber\"\n[[rider]]\nname = \"Bea Climber\"\nweight_kg = 72.0\nheight_cm = 180.0\n"
 at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=hearts.grant 2000", "0.7=workshop.buy helmet.light.top", "0.8=character --body c --age 40s --hair crew-cut --hair-colour black --skin 11 --glasses 1 --beard short-stubble-beard --facial-hair-colour black", "0.9=kit.design --pattern stripes --jersey #43A047 --second #1E1E22 --helmet #F2F2EE --helmet-finish gloss", "3.5=camera.closeup face 180 0 0.5"]
@@ -5574,7 +5574,7 @@ pick = false
 
 [[scene]]
 name = "beard-fix-b-speaking"
-description = "Beards (4N v6.25): riding and speaking (the lower lip dropped), the short stubble beard from the front – base body C, 40s, crew cut, dark skin, black stubble, white lightweight helmet, green kit"
+description = "Beards (4N v6.40): riding and speaking (the lower lip dropped), the short stubble beard from the front – base body C, 40s, crew cut, dark skin, black stubble, white lightweight helmet, green kit"
 args = ["--route", "hills", "--bots", "0", "--power", "200"]
 riders = "active = \"Bea Climber\"\n[[rider]]\nname = \"Bea Climber\"\nweight_kg = 72.0\nheight_cm = 180.0\n"
 at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=hearts.grant 2000", "0.7=workshop.buy helmet.light.top", "0.8=character --body c --age 40s --hair crew-cut --hair-colour black --skin 11 --glasses 1 --beard short-stubble-beard --facial-hair-colour black", "0.9=kit.design --pattern stripes --jersey #43A047 --second #1E1E22 --helmet #F2F2EE --helmet-finish gloss", "2=dev.speaking --own", "3.5=camera.closeup face 170 5 0.45"]
@@ -5583,7 +5583,7 @@ pick = false
 
 [[scene]]
 name = "beard-fix-b-below"
-description = "Beards (4N v6.25): riding, the short stubble beard three-quarter from below – base body C, 40s, crew cut, dark skin, black stubble, white lightweight helmet, green kit"
+description = "Beards (4N v6.40): riding, the short stubble beard three-quarter from below – base body C, 40s, crew cut, dark skin, black stubble, white lightweight helmet, green kit"
 args = ["--route", "hills", "--bots", "0", "--power", "200"]
 riders = "active = \"Bea Climber\"\n[[rider]]\nname = \"Bea Climber\"\nweight_kg = 72.0\nheight_cm = 180.0\n"
 at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=hearts.grant 2000", "0.7=workshop.buy helmet.light.top", "0.8=character --body c --age 40s --hair crew-cut --hair-colour black --skin 11 --glasses 1 --beard short-stubble-beard --facial-hair-colour black", "0.9=kit.design --pattern stripes --jersey #43A047 --second #1E1E22 --helmet #F2F2EE --helmet-finish gloss", "3.5=camera.closeup face 215 -22 0.55"]
@@ -5592,7 +5592,7 @@ pick = false
 
 [[scene]]
 name = "beard-fix-c-chinstrap-70-side"
-description = "Beards (4N v6.25): riding, from the side – base body B, 70+ (softer jaw), obese, low bun, grey chin-strap beard, round glasses, aero road helmet, purple kit"
+description = "Beards (4N v6.40): riding, from the side – base body B, 70+ (softer jaw), obese, low bun, grey chin-strap beard, round glasses, aero road helmet, purple kit"
 args = ["--route", "hills", "--bots", "0", "--power", "160"]
 riders = "active = \"Cleo Sprinter\"\n[[rider]]\nname = \"Cleo Sprinter\"\nweight_kg = 95.0\nheight_cm = 170.0\n"
 at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=hearts.grant 2000", "0.7=workshop.buy helmet.aero-road.top", "0.8=character --body b --age 70+ --shape obese --hair low-bun --hair-colour #D0D0D0 --skin 1 --glasses 3 --beard chin-strap --facial-hair-colour #C8C8C8", "0.9=kit.design --pattern sash --jersey #7E57C2 --second #F2F2EE --helmet #1E1E22 --helmet-finish matte", "3.5=camera.closeup face 270 -8 0.55"]
@@ -5601,7 +5601,7 @@ pick = false
 
 [[scene]]
 name = "beard-fix-d-chinstrap-20-below"
-description = "Beards (4N v6.25): riding, from the front and below – base body A, 20s, slim, fair skin, auburn chin-strap beard and side part, sport glasses, time-trial helmet, yellow skinsuit"
+description = "Beards (4N v6.40): riding, from the front and below – base body A, 20s, slim, fair skin, auburn chin-strap beard and side part, sport glasses, time-trial helmet, yellow skinsuit"
 args = ["--route", "hills", "--bots", "0", "--power", "260"]
 riders = "active = \"Dan Rouleur\"\n[[rider]]\nname = \"Dan Rouleur\"\nweight_kg = 68.0\nheight_cm = 176.0\n"
 at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=hearts.grant 3000", "0.7=workshop.buy helmet.tt.top", "0.75=workshop.buy jersey.skinsuit.top", "0.8=character --body a --age 20s --shape slim --hair side-part --hair-colour auburn --skin 2 --beard chin-strap --facial-hair-colour #B3482A", "0.9=kit.design --jersey #FDD835 --second #1E1E22 --helmet #FDD835 --helmet-finish gloss", "3.5=camera.closeup face 175 -18 0.6"]
@@ -5610,7 +5610,7 @@ pick = false
 
 [[scene]]
 name = "beard-fix-e-stubble-60-speaking"
-description = "Beards (4N v6.25): riding and speaking, three-quarter front – base body B, 60s (softer jaw), grey stubble, short hair, medium skin, sport glasses, red road helmet, orange kit"
+description = "Beards (4N v6.40): riding and speaking, three-quarter front – base body B, 60s (softer jaw), grey stubble, short hair, medium skin, sport glasses, red road helmet, orange kit"
 args = ["--route", "hills", "--bots", "0", "--power", "210"]
 riders = "active = \"Eve Tourer\"\n[[rider]]\nname = \"Eve Tourer\"\nweight_kg = 66.0\nheight_cm = 169.0\n"
 at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --age 60s --hair short --hair-colour #8A8A8A --skin 7 --glasses 2 --beard stubble --facial-hair-colour #9A9A9A", "0.7=kit.design --pattern chevrons --jersey #FB8C00 --second #1E1E22 --helmet #D32F2F --helmet-finish gloss", "2=dev.speaking --own", "3.5=camera.closeup face 150 3 0.5"]
@@ -5619,7 +5619,7 @@ pick = false
 
 [[scene]]
 name = "beard-fix-f-shortstubble-bare"
-description = "Beards (4N v6.25): the helmet off – the character editor's face close-up, base body C, 50s, short stubble beard (brown), an afro, dark skin"
+description = "Beards (4N v6.40): the helmet off – the character editor's face close-up, base body C, 50s, short stubble beard (brown), an afro, dark skin"
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Finn Gravel\"\n[[rider]]\nname = \"Finn Gravel\"\nweight_kg = 74.0\nheight_cm = 181.0\n"
 at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --body c --age 50s --hair afro --hair-colour black --skin 13 --beard short-stubble-beard --facial-hair-colour #4A3020 --glasses 1", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
@@ -5628,7 +5628,7 @@ pick = false
 
 [[scene]]
 name = "beard-fix-g-chinstrap-bare"
-description = "Beards (4N v6.25): the helmet off – the character editor's face close-up, base body A, 30s, a blond chin-strap beard, mid-length hair, fair skin"
+description = "Beards (4N v6.40): the helmet off – the character editor's face close-up, base body A, 30s, a blond chin-strap beard, mid-length hair, fair skin"
 args = ["--route", "hills", "--bots", "0"]
 riders = "active = \"Gia Descender\"\n[[rider]]\nname = \"Gia Descender\"\nweight_kg = 70.0\nheight_cm = 177.0\n"
 at = ["0.5=time pause", "0.5=time 2026-06-20 13:00", "2=character --body a --age 30s --hair mid-length --hair-colour blond --skin 3 --beard chin-strap --facial-hair-colour #D8B27A --glasses 1", "2.4=menu workshop-page", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4.0=menu down", "4.4=menu select"]
@@ -5637,7 +5637,7 @@ pick = false
 
 [[scene]]
 name = "beard-fix-h-far"
-description = "Beards (4N v6.25): the far model (over 40 m) from the front – base body A, 40s, a black chin-strap beard, red road helmet"
+description = "Beards (4N v6.40): the far model (over 40 m) from the front – base body A, 40s, a black chin-strap beard, red road helmet"
 args = ["--route", "hills", "--bots", "0", "--power", "220"]
 riders = "active = \"Hal Domestique\"\n[[rider]]\nname = \"Hal Domestique\"\nweight_kg = 78.0\nheight_cm = 186.0\n"
 at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --age 40s --skin 9 --beard chin-strap --facial-hair-colour black", "0.7=kit.design --jersey #E53935 --second #F2F2EE --helmet #E53935", "2.5=camera.orbit 175 3 45"]
