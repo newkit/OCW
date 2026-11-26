@@ -81,6 +81,7 @@ kill_timeout = "10s"
 # ended by Fly's proxy for APP.fly.dev (Fly's own certificate), to the
 # server's join endpoint (--join-http): /join.json (the WebTransport URL,
 # the certificate hashes, the voice URL and the world, read at runtime),
+# the status page (/ for browsers, /stats.json, /_ocw/),
 # everything else passed on to LiveKit's signalling port
 # (wss://ocw-server.fly.dev; start.sh, --voice-public-url).
 [[services]]

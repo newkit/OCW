@@ -584,6 +584,7 @@ impl ClientCore {
             parts: self.parts.clone(),
             damage: self.carried.clone(),
             access_token: self.access_token.clone(),
+            bot: None,
         })))
     }
 

@@ -419,6 +419,7 @@ mod tests {
                 parts: Vec::new(),
                 damage: None,
                 access_token: None,
+                bot: None,
             }))))
             .unwrap();
         let mut welcomed = false;
@@ -454,6 +455,7 @@ mod tests {
             parts: Vec::new(),
             damage: None,
             access_token: None,
+            bot: None,
         }))));
         let welcome = s.drain();
         // The welcome, then the bot's look (its kit design, spec §14
@@ -494,6 +496,7 @@ mod tests {
             parts: Vec::new(),
             damage: None,
             access_token: None,
+            bot: None,
         })))
     }
 

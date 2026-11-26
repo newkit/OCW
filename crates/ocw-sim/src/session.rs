@@ -1808,6 +1808,17 @@ impl Session {
         }
     }
 
+    /// Every rider's speed (m/s) and whether the server drives it (a bot
+    /// or the Echo rider) – no names, no positions: what the public
+    /// statistics count (spec 11.5 *Status page*). A rider in god mode
+    /// (flying the unicorn) is there with speed 0: the flight is no ride.
+    pub fn motions(&self) -> impl Iterator<Item = (RiderId, f64, bool)> + '_ {
+        self.riders.iter().map(|(id, r)| {
+            let speed = if r.god.is_some() { 0.0 } else { r.state.speed };
+            (*id, speed, r.control != Control::Client)
+        })
+    }
+
     /// Current state of all riders.
     pub fn snapshot(&self) -> Vec<RiderSnapshot> {
         self.riders
