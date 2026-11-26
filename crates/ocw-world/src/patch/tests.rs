@@ -102,6 +102,44 @@ fn round_trip() {
     assert_eq!(WorldPatch::parse(&q.to_toml()).unwrap(), q);
 }
 
+/// 16H Q13 (b): the studio's saved views travel in the patch, as an
+/// optional section – a patch without views is written as before.
+#[test]
+fn saved_views_are_an_optional_section() {
+    let p = WorldPatch::parse(EXAMPLE).unwrap();
+    assert!(p.views.is_empty());
+    assert!(
+        !p.to_toml().contains("[[view]]"),
+        "no section without views"
+    );
+    let mut q = p.clone();
+    q.views.push(PatchView {
+        name: "Vaduz castle".into(),
+        pos: [120.5, 610.0, -340.25],
+        yaw: 0.75,
+        pitch: -0.2,
+    });
+    let text = q.to_toml();
+    assert!(text.contains("[[view]]"), "{text}");
+    let again = WorldPatch::parse(&text).unwrap();
+    assert_eq!(again, q);
+    assert_eq!(again.ops, p.ops, "the operations are unchanged");
+    // Views by hand, after the operations; unknown keys and empty names
+    // are refused.
+    let by_hand =
+        format!("{EXAMPLE}\n[[view]]\nname = \"Pass\"\npos = [1, 2, 3]\nyaw = 0\npitch = 0\n");
+    assert_eq!(WorldPatch::parse(&by_hand).unwrap().views[0].name, "Pass");
+    assert!(WorldPatch::parse(&format!("{by_hand}zoom = 2\n")).is_err());
+    let unnamed =
+        format!("{EXAMPLE}\n[[view]]\nname = \" \"\npos = [1, 2, 3]\nyaw = 0\npitch = 0\n");
+    assert!(
+        WorldPatch::parse(&unnamed)
+            .unwrap_err()
+            .to_string()
+            .contains("[[view]]")
+    );
+}
+
 fn err(text: &str) -> PatchError {
     WorldPatch::parse(text).unwrap_err()
 }
@@ -293,8 +331,10 @@ fn road_attributes_on_edges_and_ways() {
     ));
 }
 
+/// 16H Q6: removed roads leave the graph; a road closed for bikes stays
+/// (drawn and rideable, signs at its ends).
 #[test]
-fn removed_and_closed_roads_leave_the_graph() {
+fn removed_roads_leave_the_graph_and_closed_ones_stay() {
     let s = stack(vec![
         Operation::RemoveRoad(RemoveRoad {
             edge: Some(EdgeId(11)),
@@ -314,10 +354,17 @@ fn removed_and_closed_roads_leave_the_graph() {
     let plan = Plan::new(&s, &mut report);
     let mut g = graph();
     apply_road_edits(&plan, &mut g, Targets::All, &mut report);
-    assert_eq!(g.edges.len(), 1);
-    assert_eq!(g.edges[0].id, EdgeId(10));
-    assert_eq!(g.vertices.len(), 2);
+    let ids: Vec<u64> = g.edges.iter().map(|e| e.id.0).collect();
+    assert_eq!(ids, [10, 12], "e1 removed, the closed way 2 kept");
+    assert_eq!(g.vertices.len(), 3);
     assert_eq!(report.missing_count(), 1);
+    assert!(matches!(
+        &report.get(OpRef { patch: 0, op: 1 }).unwrap().outcome,
+        Outcome::Applied(m) if m.contains("closed for bikes: rideable")
+    ));
+    let closed = closed_edges(&plan, &g);
+    assert_eq!(closed.len(), 1);
+    assert_eq!(g.edges[closed[0]].osm_way, 2);
     assert!(matches!(
         &report.get(OpRef { patch: 0, op: 2 }).unwrap().outcome,
         Outcome::Missing(m) if m.contains("way 77")

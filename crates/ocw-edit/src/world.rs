@@ -1,7 +1,7 @@
 //! The World workspace's document (spec §14 Phase 16, 16C): which package
 //! is open, the views saved in it – named camera positions to fly back to
-//! (studio bookmarks: they belong to the studio session, not to the
-//! package) – and the **world patch** being edited (16C (b), E5 step 2).
+//! (studio bookmarks, saved in the world patch file with it, 16H Q13 (b))
+//! – and the **world patch** being edited (16C (b), E5 step 2).
 //!
 //! **The patch is the document's content** (`ocw_world::patch::WorldPatch`,
 //! saved as `<package>.ocwpatch`): every edit of it is a [`WorldOp`] with
@@ -15,7 +15,9 @@
 //! changing or deleting its own operation. The validators reuse the patch
 //! module's checks ([`check_patch`]: the format rules, the package id) and
 //! check the targets against the package's road graph ([`check_targets`]).
-//! The saved views stay studio-local (autosaved, never in the patch file).
+//! The saved views are autosaved with the document and travel in the patch
+//! file (16H Q13 (b), [`WorldDoc::patch_for_file`]); a patch opened with
+//! views offers those the document lacks ([`WorldDoc::views_to_offer`]).
 
 use std::collections::BTreeSet;
 
@@ -293,6 +295,47 @@ impl WorldDoc {
             .expect("some number is free")
     }
 
+    /// The patch as its file holds it: the operations and the saved views
+    /// (16H Q13 (b): the views travel with the patch; those of an older
+    /// studio's autosave move into the file on its next save).
+    pub fn patch_for_file(&self) -> WorldPatch {
+        let mut p = self.patch.clone();
+        p.views = self
+            .views
+            .iter()
+            .map(|v| ocw_world::patch::PatchView {
+                name: v.name.clone(),
+                pos: v.pos,
+                yaw: v.yaw,
+                pitch: v.pitch,
+            })
+            .collect();
+        p
+    }
+
+    /// The views of a patch file that this document does not have yet
+    /// (the same name at the same place counts as had), to offer them
+    /// when the patch is opened (16H Q13 (b)); new ids are given on add.
+    pub fn views_to_offer(&self, patch: &WorldPatch) -> Vec<View> {
+        patch
+            .views
+            .iter()
+            .filter(|p| {
+                !self
+                    .views
+                    .iter()
+                    .any(|v| v.name == p.name && v.pos == p.pos)
+            })
+            .map(|p| View {
+                id: 0,
+                name: p.name.clone(),
+                pos: p.pos,
+                yaw: p.yaw,
+                pitch: p.pitch,
+            })
+            .collect()
+    }
+
     /// The patch's header.
     pub fn info(&self) -> PatchInfo {
         PatchInfo {
@@ -445,8 +488,9 @@ impl WorldDoc {
         })
     }
 
-    /// The roads the patch changes and those it takes out of the ridable
-    /// graph (removed or closed for bikes), for the previews.
+    /// The roads the patch changes (also those closed for bikes: they stay
+    /// rideable, with warning signs, 16H Q6) and those it takes out of the
+    /// graph (removed), for the previews.
     pub fn touched_roads(&self) -> (BTreeSet<RoadTarget>, BTreeSet<RoadTarget>) {
         let mut changed = BTreeSet::new();
         let mut removed = BTreeSet::new();
@@ -454,11 +498,7 @@ impl WorldDoc {
             match op {
                 Operation::Road(r) => {
                     if let Some(t) = RoadTarget::of(r.way, r.edge) {
-                        if r.bike.is_some() {
-                            removed.insert(t);
-                        } else {
-                            changed.insert(t);
-                        }
+                        changed.insert(t);
                     }
                 }
                 Operation::RemoveRoad(r) => {
@@ -823,6 +863,42 @@ mod tests {
     }
 
     #[test]
+    fn the_views_go_into_the_patch_file_and_are_offered_back() {
+        let mut d = doc();
+        d.execute(WorldOp::add(View::named("Bridge")), 0.0).unwrap();
+        d.execute(
+            WorldOp::add(View {
+                pos: [5.0, 600.0, -7.0],
+                yaw: 1.0,
+                ..View::named("Pass")
+            }),
+            5.0,
+        )
+        .unwrap();
+        let file = d.content().patch_for_file();
+        assert_eq!(file.views.len(), 2);
+        assert_eq!(file.views[1].name, "Pass");
+        assert_eq!(file.views[1].pos, [5.0, 600.0, -7.0]);
+        assert!(
+            d.content().patch.views.is_empty(),
+            "the document keeps them as views"
+        );
+        // Read back: the file's views round-trip; a document that has them
+        // is offered none, a fresh one both.
+        let back = WorldPatch::parse(&file.to_toml()).unwrap();
+        assert_eq!(back.views, file.views);
+        assert!(d.content().views_to_offer(&back).is_empty());
+        let fresh = WorldDoc::new(d.content().package.clone());
+        let offered = fresh.views_to_offer(&back);
+        assert_eq!(offered.len(), 2);
+        assert!(offered.iter().all(|v| v.id == 0));
+        // A view of the same name elsewhere is offered (moved since).
+        let mut moved = back.clone();
+        moved.views[0].pos = [1.0, 1.0, 1.0];
+        assert_eq!(d.content().views_to_offer(&moved).len(), 1);
+    }
+
+    #[test]
     fn the_validator_reports_unnamed_and_doubled_views() {
         let mut d = doc();
         d.execute(WorldOp::add(View::named("A")), 0.0).unwrap();
@@ -933,8 +1009,8 @@ mod tests {
         d.execute(op, 6.0).unwrap();
         assert_eq!(d.content().patch.ops.len(), 2);
         let (changed, removed) = d.content().touched_roads();
-        assert_eq!(changed, [RoadTarget::Way(2)].into());
-        assert_eq!(removed, [E10].into(), "closed for bikes");
+        assert_eq!(changed, [RoadTarget::Way(2), E10].into(), "closed for bikes stays");
+        assert!(removed.is_empty());
         // Taking every attribute out again deletes the operation.
         for c in [
             RoadChange::Surface(None),

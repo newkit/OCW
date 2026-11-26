@@ -512,13 +512,23 @@ pub fn refresh_trees(pkg: &mut WorldPackage) -> Option<ObstacleStats> {
     Some(st)
 }
 
-/// Adds the section to a package (replacing one it has).
+/// Adds the section to a package (replacing one it has; the warning
+/// signs of roads a patch closed for bikes are kept, 16H Q6 – they come
+/// from the patch, not from OSM).
 pub fn add_obstacles(
     pkg: &mut WorldPackage,
     data: &BarrierData,
     proj: &LocalProjection,
 ) -> ObstacleStats {
-    let (o, st) = build_obstacles(pkg, data, proj);
+    let signs = pkg
+        .obstacles
+        .as_mut()
+        .map(|o| o.take_points(ObstacleKind::NoBikeSign))
+        .unwrap_or_default();
+    let (mut o, st) = build_obstacles(pkg, data, proj);
+    for p in signs {
+        o.add_point(p, pkg.tile_size_m);
+    }
     pkg.obstacles = Some(o);
     st
 }

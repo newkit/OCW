@@ -107,6 +107,12 @@ pub enum ObstacleKind {
     /// server) and solid there, as a pole of its model file; never solid
     /// where it is mapped.
     StreetLamp = 10,
+    /// A warning sign "no bicycles" at an end of a road a world patch
+    /// closed for bikes (16H Q6, [`crate::bike_signs`]): beside the
+    /// carriageway, facing the rider who comes onto the road (`angle`:
+    /// the direction its face looks). Looks only (not solid); older
+    /// readers skip the code.
+    NoBikeSign = 11,
     // Lines.
     Fence = 32,
     Wall = 33,
@@ -125,7 +131,7 @@ pub enum ObstacleKind {
 }
 
 impl ObstacleKind {
-    pub const ALL: [ObstacleKind; 20] = [
+    pub const ALL: [ObstacleKind; 21] = [
         Self::Bollard,
         Self::Post,
         Self::Gate,
@@ -136,6 +142,7 @@ impl ObstacleKind {
         Self::Pylon,
         Self::PlantedTree,
         Self::StreetLamp,
+        Self::NoBikeSign,
         Self::Fence,
         Self::Wall,
         Self::Hedge,
@@ -210,7 +217,7 @@ impl ObstacleKind {
 
     /// Whether riders in wild mode hit it (kerbs are ridden over).
     pub fn solid(self) -> bool {
-        self != Self::Kerb
+        !matches!(self, Self::Kerb | Self::NoBikeSign)
     }
 
     /// Radius of a point obstacle (m).
@@ -244,7 +251,8 @@ impl ObstacleKind {
             Self::LiftGate => "props/barrier-lift-arm",
             Self::CycleBarrier => "props/barrier-cycle-staggered",
             Self::StreetLamp => "props/lamp-street-arm-road",
-            Self::PlantedTree | Self::Tree => return None,
+            // Drawn from the world data (`ocw-render::obstacles`), not a file.
+            Self::PlantedTree | Self::Tree | Self::NoBikeSign => return None,
             _ => "props/barrier-post-hexagonal",
         })
     }
@@ -281,6 +289,7 @@ impl ObstacleKind {
             Self::GuardRail => 0.75,
             Self::Kerb => 0.12,
             Self::StreetLamp => 6.0,
+            Self::NoBikeSign => crate::bike_signs::HEIGHT_M as f64,
             _ => 1.0,
         }
     }
@@ -306,6 +315,7 @@ impl ObstacleKind {
             Self::Building => "building",
             Self::Tree | Self::PlantedTree => "tree",
             Self::StreetLamp => "street lamp",
+            Self::NoBikeSign => "no-bicycles sign",
         }
     }
 }
@@ -395,6 +405,28 @@ impl Obstacles {
             tree_side: crate::trees::cells_per_side(tile_size_m) as u16,
             tiles: BTreeMap::new(),
         }
+    }
+
+    /// Adds a point obstacle to the tile it is in.
+    pub fn add_point(&mut self, p: PointObstacle, tile_size_m: f32) {
+        let key = TileKey::containing(
+            [f64::from(p.pos[0]), f64::from(p.pos[1])],
+            f64::from(tile_size_m),
+        );
+        self.tiles.entry(key).or_default().points.push(p);
+    }
+
+    /// Takes out every point obstacle of `kind` (a step that places them
+    /// again); empty tiles go.
+    pub fn take_points(&mut self, kind: ObstacleKind) -> Vec<PointObstacle> {
+        let mut out = Vec::new();
+        for t in self.tiles.values_mut() {
+            let (k, rest): (Vec<_>, Vec<_>) = t.points.drain(..).partition(|p| p.kind == kind);
+            t.points = rest;
+            out.extend(k);
+        }
+        self.tiles.retain(|_, t| !t.is_empty());
+        out
     }
 
     /// Counts per kind (points, lines) and stored trees, for reports.

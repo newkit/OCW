@@ -1,7 +1,7 @@
 //! The world patch over the views (spec §14 Phase 16, 16C *Preview*, E5
 //! step 2): what the patch does, drawn over the 2D map and as lines in the
 //! 3D view (Bevy gizmos) – the selected road highlighted, changed roads
-//! tinted, removed (or closed) roads struck through, height points as
+//! tinted (also those closed for bikes, 16H Q6), removed roads struck through, height points as
 //! markers with their radius, and the road profiles the height points
 //! change as the new line. No tile is re-meshed (the live tile preview of
 //! 16C is a later step).

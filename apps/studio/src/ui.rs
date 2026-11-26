@@ -179,6 +179,9 @@ pub struct UiState {
     pub save_as: Option<String>,
     /// The Build dialog (open while `Some`).
     pub build: Option<BuildForm>,
+    /// The name field of the dialog "Your name for signing worlds" (the
+    /// first *Build package*, spec 4.7 *User keys*).
+    pub sign_name: String,
     pub tool: Tool,
     /// The Routes panel's fields.
     pub route_form: RouteForm,
@@ -196,6 +199,7 @@ impl Default for UiState {
             open_patch: None,
             save_as: None,
             build: None,
+            sign_name: String::new(),
             tool: Tool::Select,
             route_form: RouteForm::default(),
             drag_sent: None,
@@ -686,6 +690,7 @@ fn panels(
         pending.send(StudioCommand::SavePatchAs(path));
     }
     build_window(&ctx, &mut state.build, &studio, &mut pending);
+    sign_window(&ctx, &mut state.sign_name, &studio, &mut pending);
     crate::routes_ui::consent_window(&ctx, &studio, &mut state.route_form, &mut pending);
     focus.keyboard = ctx.egui_wants_keyboard_input();
     // The world camera draws into the 3D view only.
@@ -886,7 +891,30 @@ fn world_panel(
         });
     ui.add_space(8.0);
     ui.label(egui::RichText::new("Views").strong());
-    ui.label("Saved camera views (studio bookmarks, not part of the package or the patch).");
+    ui.label("Saved camera views: saved in the world patch file with the patch (16H Q13), not in the package.");
+    if !studio.offered_views.is_empty() {
+        let names: Vec<&str> = studio
+            .offered_views
+            .iter()
+            .map(|v| v.name.as_str())
+            .collect();
+        ui.colored_label(
+            egui::Color32::from_rgb(120, 200, 255),
+            format!(
+                "The patch has {} saved view(s): {}",
+                names.len(),
+                names.join(", ")
+            ),
+        );
+        ui.horizontal(|ui| {
+            if ui.button("Add the patch's views").clicked() {
+                pending.send(StudioCommand::TakeViews(true));
+            }
+            if ui.button("No thanks").clicked() {
+                pending.send(StudioCommand::TakeViews(false));
+            }
+        });
+    }
     if let Some(doc) = studio.world() {
         for v in &doc.content().views {
             ui.horizontal(|ui| {
@@ -1400,7 +1428,7 @@ pub fn op_summary(op: &Operation) -> String {
                 parts.push(format!("one-way {}", oneway_name(Some(o))));
             }
             if r.bike.is_some() {
-                parts.push("closed for bikes".into());
+                parts.push("closed for bikes (signs, still rideable)".into());
             }
             if let Some(n) = &r.name {
                 parts.push(if n.is_empty() {
@@ -1506,6 +1534,7 @@ fn build_window(
                     "world-builder was not found: put it next to ocw-studio, on the PATH, or name it in OCW_WORLD_BUILDER.",
                 ),
             };
+            ui.label(format!("Signing: {}.", crate::signing::info(studio)));
             let running = studio.build.as_ref().is_some_and(crate::build::BuildJob::running);
             if ui
                 .add_enabled(
@@ -1523,6 +1552,10 @@ fn build_window(
                     ui.colored_label(orange, n);
                 }
                 let st = job.state.lock().map(|s| s.lines.clone()).unwrap_or_default();
+                // A lost target only warns in a user's build (16H Q7 (a)).
+                if let Some(w) = crate::build::missing_warning(&st) {
+                    ui.colored_label(egui::Color32::from_rgb(255, 90, 80), egui::RichText::new(w).strong());
+                }
                 let report = crate::build::report_lines(&st);
                 if !report.is_empty() {
                     ui.label("Patch report:");
@@ -1549,6 +1582,87 @@ fn build_window(
         });
     if !open {
         *form = None;
+    }
+}
+
+/// What the studio does with the shared bindings' actions (the shared
+/// menu brings them along, v6.00): N (the navigation map) shows or hides
+/// the 2D map, as the toolbar's *2D map* does; Z (the navigation map's
+/// zoom) has no counterpart – the 2D map zooms with the wheel – and is
+/// dropped. Nothing reaches the console (it knows no `set display.map`).
+pub fn binding_use(a: ocw_client::bindings::Action) -> ocw_ui::bindings::ActionUse {
+    use ocw_client::bindings::Action;
+    use ocw_ui::bindings::ActionUse;
+    match a {
+        Action::Map => ActionUse::Run(toggle_map),
+        Action::MapZoom => ActionUse::Drop,
+        _ => ActionUse::Shared,
+    }
+}
+
+/// N over the 3D view: the 2D map on or off (not while typing in a field).
+fn toggle_map(world: &mut World) {
+    if world.get_resource::<UiFocus>().is_some_and(|f| f.keyboard) {
+        return;
+    }
+    if let Some(mut ui) = world.get_resource_mut::<UiState>() {
+        ui.show_map = !ui.show_map;
+    }
+}
+
+/// The dialog "Your name for signing worlds" (spec 4.7 *User keys*):
+/// open while a *Build package* waits for the user's key to be made.
+fn sign_window(ctx: &egui::Context, name: &mut String, studio: &Studio, pending: &mut Pending) {
+    if studio.sign_prompt.is_none() {
+        return;
+    }
+    let mut open = true;
+    egui::Window::new(crate::signing::TITLE)
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .default_width(460.0)
+        .show(ctx, |ui| {
+            ui.label(crate::signing::TEXT);
+            ui.add_space(6.0);
+            let field = ui.add(
+                egui::TextEdit::singleline(name)
+                    .hint_text("e.g. Ada Rider")
+                    .desired_width(320.0),
+            );
+            if !field.has_focus() && name.is_empty() {
+                field.request_focus();
+            }
+            let check = crate::signing::check_name(name);
+            if let Err(e) = &check
+                && !name.is_empty()
+            {
+                ui.colored_label(egui::Color32::from_rgb(255, 170, 60), e);
+            }
+            ui.label(
+                egui::RichText::new(format!(
+                    "Kept in {} (the secret files only readable by you); never replaced.",
+                    shown_path(&studio.key_dir)
+                ))
+                .small(),
+            );
+            ui.horizontal(|ui| {
+                let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if ui
+                    .add_enabled(check.is_ok(), egui::Button::new("Make my key and build"))
+                    .clicked()
+                    || (enter && check.is_ok())
+                {
+                    pending.send(StudioCommand::SignName(name.clone()));
+                }
+                if ui.button("Cancel").clicked() {
+                    pending.send(StudioCommand::SignCancel);
+                }
+            });
+        });
+    if !open {
+        pending.send(StudioCommand::SignCancel);
     }
 }
 
