@@ -33,6 +33,16 @@
 #       coverage exists too, but only from the CNIG download centre, which
 #       refuses automated downloads: see SOURCES.md.
 #     - SRTM tiles N28W017, N27W017 (fallback: the sea beyond the DTM).
+#   andorra                  Andorra (the Pyrenees), into data/andorra/
+#     - OpenStreetMap extract of Andorra from Geofabrik (europe/andorra).
+#     - IGN MDT05 (5 m digital terrain model of Spain, ETRS89 / UTM 30N; it
+#       covers Andorra and the Spanish side) in 2 km cloud-optimised
+#       GeoTIFFs from the IGN's OGC API Coverages, moved onto the 5 m
+#       lattice with `world-builder dem-import` (mdt05/); tiles without any
+#       data (the French side) are dropped. Andorra's own terrain model and
+#       orthophotos (Govern d'Andorra, Àrea de Cartografia) have no open
+#       licence that we found: see SOURCES.md.
+#     - SRTM tile N42E001 (fallback: France beyond the DTM).
 #
 # Environment: OCW_FETCH_FRESH=1 downloads the OSM extracts again (the
 # freshest Geofabrik extract, daily); elevation tiles are kept.
@@ -52,6 +62,7 @@ skadi=https://s3.amazonaws.com/elevation-tiles-prod/skadi
 lgl=https://opengeodata.lgl-bw.de/data/dgm
 stac=https://data.geo.admin.ch/api/stac/v0.9/collections/ch.swisstopo.swissalti3d/items
 ign=https://api-coverages.idee.es/collections/EL.ElevationGridCoverage_4083_5_C/coverage
+ign_pb=https://api-coverages.idee.es/collections/EL.ElevationGridCoverage_25830_5_PB/coverage
 # Package boxes of the Black Forest (S,W,N,E; the same as in
 # scripts/build-blackforest.sh), each with a 0.04° margin for the context
 # roads, the margin tiles and the feathering into SRTM.
@@ -60,6 +71,9 @@ BF_BOXES=(47.68,7.58,48.16,8.34 48.08,7.66,48.49,8.44 48.41,7.81,48.84,8.49)
 LI_BOX=47.00,9.42,47.31,9.69
 # Tenerife's package box (scripts/build-tenerife.sh) with the same margin.
 TF_BOX=27.94,-16.98,28.65,-16.06
+# Andorra's package box (scripts/build-andorra.sh: the .poly's box) with the
+# same margin.
+AD_BOX=42.38,1.36,42.70,1.83
 case "$region" in
   liechtenstein)
     out=data/pilot
@@ -80,7 +94,13 @@ case "$region" in
     hgt=(N28W017 N27W017)
     title="Tenerife"
     ;;
-  *) echo "unknown region '$region' (liechtenstein, blackforest, tenerife)" >&2; exit 1 ;;
+  andorra)
+    out=data/andorra
+    osm=("europe/andorra:andorra")
+    hgt=(N42E001)
+    title="Andorra"
+    ;;
+  *) echo "unknown region '$region' (liechtenstein, blackforest, tenerife, andorra)" >&2; exit 1 ;;
 esac
 mkdir -p "$out"
 fetch() { # url file [force]
@@ -206,6 +226,35 @@ PY
     tifs=$(find "$out/mdt05" -name '*.tif' | wc -l)
     rows+="| mdt05/ ($tifs GeoTIFFs, 2 km, 5 m; $(wc -l < "$out/mdt05-tiles.txt") tiles requested, open sea dropped) | IGN MDT05, first PNOA LiDAR coverage (Canary Islands flown 2009–2011, product dates 2008–2015), REGCAN95 / UTM 28N, orthometric heights: OGC API Coverages $ign?subset=x(E:E+2000),y(N:N+2000)&f=COG (bbox $TF_BOX) | CC BY 4.0 (IGN licence, Orden FOM/2807/2015): \"MDT05-cob1 2008-2015 CC-BY 4.0 scne.es\"; derived work: moved onto the 5 m lattice (bilinear, half a cell) and adapted to the roads |"$'\n'
     rows+="| (not used) | IGN MDT02, second PNOA LiDAR coverage (2 m, Canary Islands 2015–2016, sheets MDT02-REGCAN95-HU28-*-COB2.TIF), CC BY 4.0 \"MDT02-cob2 2015-2021 CC-BY 4.0 scne.es\": only from the CNIG download centre (centrodedescargas.cnig.es), which refuses automated downloads; the package's 10 m grid gains little from 2 m over 5 m | – |"$'\n'
+    ;;
+  andorra)
+    build_wb
+    mkdir -p "$out/mdt05-cog" "$out/mdt05"
+    # 2 km tiles on the 2 km lattice of UTM 30N: the IGN serves the whole
+    # peninsula in zone 30 (Andorra lies 4.5° east of its meridian, scale
+    # 1.0017; the projection is exact there, only the grid is not
+    # north-up, which the bilinear sampling of the layers absorbs).
+    $WB dem-tiles --crs utm30 --bbox "$AD_BOX" --size 2000 > "$out/mdt05-tiles.txt"
+    echo "MDT05: $(wc -l < "$out/mdt05-tiles.txt") tiles of 2 km"
+    xargs -P 4 -I{} sh -c 'e=${1%_*}; n=${1#*_}; f="$2/mdt05_$1.tif"
+      [ -s "$f" ] || [ -e "$3/.mdt05_$1.done" ] || {
+        code=$(curl -s --retry 3 -o "$f.part" -w "%{http_code}" \
+          "$4?subset=x(${e}000:$((e + 2))000),y(${n}000:$((n + 2))000)&f=COG")
+        if [ "$code" = 200 ]; then mv "$f.part" "$f"; else rm -f "$f.part"; echo "MDT05 $1: HTTP $code" >&2; fi; }' \
+      _ {} "$out/mdt05-cog" "$out/mdt05" "$ign_pb" < "$out/mdt05-tiles.txt"
+    # Onto the 5 m lattice; tiles without any data (France) are dropped.
+    for f in "$out"/mdt05-cog/*.tif; do
+      [ -e "$f" ] || continue
+      name=$(basename "$f" .tif)
+      line=$($WB dem-import --crs utm30 --cell 5 --tile 2000 --out "$out/mdt05" "$f" | head -1) || {
+        echo "import failed: $f (kept)" >&2; continue; }
+      case "$line" in *" 0.0 % data"*) rm -f "$out/mdt05/$name.tif" ;; esac
+      touch "$out/mdt05/.$name.done"
+      [ -n "${OCW_KEEP_RAW:-}" ] || rm -f "$f"
+    done
+    tifs=$(find "$out/mdt05" -name '*.tif' | wc -l)
+    rows+="| mdt05/ ($tifs GeoTIFFs, 2 km, 5 m; $(wc -l < "$out/mdt05-tiles.txt") tiles requested, those without data – France – dropped) | IGN MDT05, first coverage (the Pyrenees sheets; for the Andorra sheets the IGN's metadata names an exception to the PNOA LiDAR flights), ETRS89 / UTM 30N, orthometric heights: OGC API Coverages $ign_pb?subset=x(E:E+2000),y(N:N+2000)&f=COG (bbox $AD_BOX) | CC BY 4.0 (IGN licence, Orden FOM/2807/2015): \"MDT05 2008-2015 CC-BY 4.0 scne.es\"; derived work: moved onto the 5 m lattice and adapted to the roads |"$'\n'
+    rows+="| (not used) | Govern d'Andorra, Àrea de Cartografia: Andorra's own terrain model and orthophotos (the 2012 flight at 22.5 cm and later ones): no open licence or open download found (2026-11-26) | – |"$'\n'
     ;;
 esac
 

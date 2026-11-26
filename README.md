@@ -1718,6 +1718,7 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   | Black Forest middle: Elzach, Triberg, Hornberg, Wolfach | `data/blackforest/blackforest-middle.ocwpkg` | same | Hornberg - Triberg |
   | Black Forest north: Baden-Baden, Schwarzwaldhochstraße, Mummelsee, Hornisgrinde, Sasbachwalden, Allerheiligen, Ruhestein, Bühlerhöhe, Kniebis | `data/blackforest/blackforest-north.ocwpkg` | same | Baden-Baden - Mummelsee, Sasbachwalden - Mummelsee, Bühl - Bühlerhöhe |
   | Tenerife (Canary Islands, Spain): the whole island – Teide and Las Cañadas, La Orotava, Puerto de la Cruz, Santa Cruz, La Laguna, Anaga, Masca, Los Gigantes, Los Cristianos, Vilaflor; the sea around it (time zone Atlantic/Canary) | `data/tenerife/tenerife.ocwpkg` | OSM (Geofabrik Canary Islands), IGN MDT05 (5 m LiDAR), SRTM | Puerto de la Cruz - Teide, Los Cristianos - Teide, Masca - Santiago del Teide, Buenavista - Masca - Santiago del Teide, La Laguna - Anaga |
+  | Andorra (the Pyrenees): the whole country, 840 – 2,943 m – Andorra la Vella, Escaldes, Sant Julià de Lòria, La Massana, Ordino, Canillo, Encamp, Soldeu, Pas de la Casa; the Port d'Envalira, Arcalís, the Coll d'Ordino, the Coll de la Gallina (time zone Europe/Andorra) | `data/andorra/andorra.ocwpkg` | OSM (Geofabrik Andorra), IGN MDT05 (5 m), SRTM (France) | Andorra la Vella - Port d'Envalira, Ordino - Arcalís, Ordino - Coll d'Ordino, Sant Julià de Lòria - Coll de la Gallina |
 
   Fetch and build on a build machine (the data lands in the git-ignored
   `data/`; the Black Forest DGM1 download is about 1,800 zips of 15 MB,
@@ -1731,6 +1732,8 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   scripts/prepare-world-release.sh OUT data/blackforest/*.ocwpkg   # release zips, no upload
   scripts/fetch-pilot.sh tenerife         # Canary Islands extract, IGN MDT05 (2 km COGs, OGC API), SRTM
   scripts/build-tenerife.sh               # the island and its routes
+  scripts/fetch-pilot.sh andorra          # Andorra extract, IGN MDT05 of the peninsula (UTM 30N), SRTM
+  scripts/build-andorra.sh                # the country, its four climbs and the J9 steps
   scripts/fetch-imagery.sh liechtenstein  # orthophoto + Sentinel-2 seasons for the built package
   scripts/build-liechtenstein.sh          # again: now calibrated (palette, roofs, seasonal tints)
   ```
@@ -1812,6 +1815,8 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   ocw-desktop --world data/tenerife/tenerife.ocwpkg                             # Puerto de la Cruz - Teide
   ocw-desktop --world data/tenerife/tenerife.ocwpkg --route "Masca - Santiago del Teide"
   ocw-desktop --world data/tenerife/tenerife.ocwpkg --free-ride --start -7500,5260   # Las Cañadas
+  ocw-desktop --world data/andorra/andorra.ocwpkg                               # Andorra la Vella - Port d'Envalira
+  ocw-desktop --world data/andorra/andorra.ocwpkg --route "Ordino - Arcalís"
   ```
 
   `world-builder dem-import --crs utm32 --cell 2 --out DIR FILES` turns DTM
@@ -4359,10 +4364,11 @@ World packages are built on marge, in its **main checkout** (`data/` is
 git-ignored and never synced, so a branch checkout has no source data):
 
 ```bash
-scripts/remote.sh marge run 'scripts/fetch-pilot.sh tenerife'        # liechtenstein (default) | blackforest | tenerife
+scripts/remote.sh marge run 'scripts/fetch-pilot.sh tenerife'        # liechtenstein (default) | blackforest | tenerife | andorra
 scripts/remote.sh marge run 'scripts/build-liechtenstein.sh'         # data/pilot/liechtenstein.ocwpkg + route
 scripts/remote.sh marge run 'scripts/build-blackforest.sh north'     # south | middle | north (default: all three)
 scripts/remote.sh marge run 'scripts/build-tenerife.sh'              # data/tenerife/tenerife.ocwpkg
+scripts/remote.sh leela run 'scripts/build-andorra.sh'               # data/andorra/andorra.ocwpkg (with the J9 steps)
 scripts/remote.sh marge run 'scripts/fetch-imagery.sh tenerife'      # after a build: calibration imagery for its cells
 scripts/remote.sh marge run 'scripts/fetch-forest.sh tenerife'       # after a build: forest type and density
 ```

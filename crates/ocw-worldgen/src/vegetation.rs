@@ -182,6 +182,16 @@ pub fn crop_mix(region: FloraRegion, alt_m: f64) -> &'static [(FieldCrop, f32)] 
             (Grass, 0.1),
             (Maize, 0.08),
         ],
+        // Andorra: hay meadows, the tobacco and potato plots of the
+        // valleys (Sant Julià, La Massana, Canillo); no maize statistics
+        // (proposal, spec 4.6.1 table 6).
+        FloraRegion::Pyrenees => &[
+            (Grass, 0.72),
+            (Potato, 0.1),
+            (Vegetables, 0.08),
+            (Cereal, 0.06),
+            (Fallow, 0.04),
+        ],
         _ if alt_m > 900.0 => &[(Grass, 0.7), (Cereal, 0.2), (Potato, 0.1)],
         FloraRegion::AlpineRhine => &[
             (Maize, 0.38),

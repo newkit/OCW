@@ -13,7 +13,8 @@
 #       (`<stem>.recipe.toml`, recorded the same way, spec 16H Q17: the steps
 #       OCW Studio's Build package runs), LICENSE-DATA.md (every
 #       source with its attribution, from the manifest) and README.md;
-# and per source folder (data/pilot, data/blackforest) once:
+# and per source folder (data/pilot, data/blackforest, data/tenerife,
+# data/andorra) once:
 #   OUT_DIR/<region>-osm-source.zip     the OSM extract(s) and .poly files
 #       the packages were built from, with SOURCES.md: the ODbL offer of the
 #       Derivative Database (road graph) in the packages.

@@ -10,6 +10,7 @@ imagery) stay in the git-ignored `data/<region>/` of the build machines.
 | `liechtenstein/patches/` | Liechtenstein | `liechtenstein` (`scripts/build-liechtenstein.sh`) | `data/pilot/` |
 | `blackforest/patches/` | Black Forest | `blackforest`, `blackforest-middle`, `blackforest-north` (`scripts/build-blackforest.sh`) | `data/blackforest/` |
 | `tenerife/patches/` | Tenerife | `tenerife` (`scripts/build-tenerife.sh`) | `data/tenerife/` |
+| `andorra/patches/` | Andorra | `andorra` (`scripts/build-andorra.sh`) | `data/andorra/` |
 
 Each `patches/` folder holds world patches (`.ocwpatch`, spec 16C *Format*)
 for the packages of its region; its README says how they are named,

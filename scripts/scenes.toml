@@ -11,7 +11,8 @@
 #                args, cmds and at are replaced by its path and folder; the
 #                Vaduz-Malbun route file lies beside it); "blackforest": the
 #                Black Forest package instead ("blackforest-middle", "-north":
-#                its neighbours), "tenerife": Tenerife; skipped without the package
+#                its neighbours), "tenerife": Tenerife, "andorra": Andorra; skipped
+#                without the package
 #   args         ocw-desktop arguments (README, "Command-line options")
 #   cmds         console commands at startup (--cmd)
 #   at           timed console commands "SECONDS=COMMAND" (--at, game time

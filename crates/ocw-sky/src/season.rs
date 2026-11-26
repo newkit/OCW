@@ -251,15 +251,53 @@ pub const CANARIES: Climate = Climate {
     },
 };
 
+/// The eastern Pyrenees (Andorra): Andorra la Vella (1 075 m, Roc de Sant
+/// Pere, 1971–2000) 9.8 °C annual mean, January 2.2 °C, July 18.8 °C, 812
+/// mm a year; about 1 200 mm on the high valleys and passes, a slightly
+/// smaller yearly swing up there (Envalira, 2 400 m: about −3 °C in
+/// January, 11 °C in July), a short Mediterranean summer dryness on the
+/// sunny slopes. The forests are pines (mountain pine 52 %, Scots pine 32 %
+/// of the trees of the first national forest inventory, 2022), fir 5 %,
+/// broadleaves 11 % (birch, oaks, rowan, ash, hazel; holm oak in the
+/// south's lowest valleys); no spruce and no larch (spec 4.6.1, table 6).
+pub const PYRENEES: Climate = Climate {
+    region: "pyrenees",
+    sea_mean_c: 15.7,
+    amplitude_c: 8.8,
+    amplitude_gain_per_km: -0.4,
+    lapse_k_per_km: 5.5,
+    warmest_day: 205.0,
+    spread_c: 3.0,
+    precip_mm_day: 1.3,
+    precip_gain_per_km: 0.85,
+    summer_dry: 0.15,
+    maize_share: 0.05,
+    phenology: PHENOLOGY,
+    trees: LeafMix {
+        forest: [
+            (900.0, 0.35, 0.0),
+            (1300.0, 0.15, 0.0),
+            (1700.0, 0.06, 0.0),
+            (2000.0, 0.03, 0.0),
+            (2300.0, 0.01, 0.0),
+        ],
+        scrub: 0.6,
+        lowland_until_m: 1300.0,
+        highland_from_m: 2000.0,
+        ..CENTRAL_EUROPE
+    },
+};
+
 /// A region with its own climate: (latitude range, longitude range,
 /// climate).
 pub type Region = ((f64, f64), (f64, f64), Climate);
 
 /// The regions with their own climate.
-pub const REGIONS: [Region; 3] = [
+pub const REGIONS: [Region; 4] = [
     ((46.8, 47.7), (9.2, 10.0), ALPINE_RHINE),
     ((47.4, 48.9), (7.4, 8.9), BLACK_FOREST),
     ((27.4, 29.5), (-18.4, -13.2), CANARIES),
+    ((42.3, 42.8), (1.2, 2.0), PYRENEES),
 ];
 
 impl Climate {
@@ -1983,6 +2021,45 @@ mod tests {
         );
         // Deterministic.
         assert_eq!(SeasonStrength::at(&tf, 3700.0, None), teide);
+    }
+
+    /// Andorra (spec 4.7 *Fifth world: Andorra*): marked seasons from the
+    /// valley floor to the passes – the pine forests have few broadleaves,
+    /// but the birches, ashes and fruit trees of the meadows turn – a
+    /// short snow season at Andorra la Vella and a long one at Envalira.
+    #[test]
+    fn andorra_has_marked_seasons_and_long_snow_on_the_passes() {
+        assert_eq!(Climate::for_place(42.507, 1.522).region, "pyrenees");
+        assert_eq!(Climate::for_place(42.36, 1.46).region, "pyrenees");
+        let m = SeasonModel::new(PYRENEES);
+        // The climatology of Andorra la Vella (1 075 m): 9.8 °C a year,
+        // about 2 °C in January and 18 – 19 °C in July.
+        let c = m.climate();
+        let year: f64 = (1..=365)
+            .map(|d| c.temp_c(f64::from(d), 1075.0))
+            .sum::<f64>()
+            / 365.0;
+        assert!((year - 9.8).abs() < 0.2, "{year}");
+        assert!(
+            (c.temp_c(15.0, 1075.0) - 2.2).abs() < 1.0,
+            "{}",
+            c.temp_c(15.0, 1075.0)
+        );
+        assert!(
+            (c.temp_c(201.0, 1075.0) - 18.8).abs() < 1.0,
+            "{}",
+            c.temp_c(201.0, 1075.0)
+        );
+        for alt in [840.0, 1075.0, 1600.0, 2000.0, 2408.0] {
+            let s = SeasonStrength::at(&m, alt, None);
+            assert_eq!(s.level(), SeasonLevel::Marked, "{alt} {s:?}");
+            assert!(s.marked_temperature(), "{alt} {s:?}");
+            assert_eq!(s.note(), None);
+        }
+        let valley = SeasonStrength::at(&m, 1075.0, None).snow_days;
+        let pass = SeasonStrength::at(&m, 2408.0, None).snow_days;
+        assert!(valley < 60, "Andorra la Vella: {valley} days");
+        assert!((130..220).contains(&pass), "Port d'Envalira: {pass} days");
     }
 
     /// Q13: where the broadleaves are evergreen (Tenerife) the leaf fall is

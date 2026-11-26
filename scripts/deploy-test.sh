@@ -12,7 +12,8 @@
 # Forest packages data/blackforest/blackforest*.ocwpkg
 # (scripts/build-blackforest.sh, never built by a deploy: 10 minutes) and
 # Tenerife, data/tenerife/tenerife.ocwpkg (scripts/build-tenerife.sh, not
-# built by a deploy either). The data comes from the deploying checkout's
+# built by a deploy either) and Andorra, data/andorra/andorra.ocwpkg
+# (scripts/build-andorra.sh, likewise). The data comes from the deploying checkout's
 # data/ or OCW_WORLD_DATA.
 # ocw-desktop.args beside the binary makes the app load the kiosk's world
 # (`--world`, `--route`, see config/README.md).
@@ -26,16 +27,16 @@
 #   OCW_DEPLOY_WORLD 0: no world packages; rebuild: build the Liechtenstein
 #                    package again before installing (default: install what
 #                    is built)
-#   OCW_WORLD_DATA   folder with pilot/, blackforest/ and tenerife/ on the machine
+#   OCW_WORLD_DATA   folder with pilot/, blackforest/, tenerife/ and andorra/ on the machine
 #                    (default: data/ of the deploying checkout)
 #   OCW_KIOSK_WORLD  the kiosk's world: liechtenstein, blackforest (the
-#                    north package if it is installed, else the south one) or
-#                    tenerife. Default: keep the world the kiosk has now (from
+#                    north package if it is installed, else the south one),
+#                    tenerife or andorra. Default: keep the world the kiosk has now (from
 #                    its ocw-desktop.args), else liechtenstein.
 #   OCW_KIOSK_ROUTE  its route (default: Liechtenstein: the package's first
 #                    route; Black Forest north: "Baden-Baden - Mummelsee",
 #                    south: "Freiburg - Schauinsland"; Tenerife: "Puerto de la
-#                    Cruz - Teide")
+#                    Cruz - Teide"; Andorra: "Ordino - Arcalís")
 #   OCW_KIOSK_ARGS   content of ocw-desktop.args (overrides the two above;
 #                    "" writes an empty file)
 #
@@ -65,7 +66,7 @@ dir=${OCW_DEPLOY_DIR:-/var/tmp/ocw}
 world=${OCW_DEPLOY_WORLD:-1}
 data=${OCW_WORLD_DATA:-data}
 kiosk_world=${OCW_KIOSK_WORLD:-keep}
-case "$kiosk_world" in liechtenstein|blackforest|tenerife|keep) ;; *) echo "OCW_KIOSK_WORLD: liechtenstein, blackforest or tenerife" >&2; exit 2 ;; esac
+case "$kiosk_world" in liechtenstein|blackforest|tenerife|andorra|keep) ;; *) echo "OCW_KIOSK_WORLD: liechtenstein, blackforest, tenerife or andorra" >&2; exit 2 ;; esac
 route_b64=$(printf '%s' "${OCW_KIOSK_ROUTE-}" | base64 -w0)
 args_set=${OCW_KIOSK_ARGS+set}
 args_b64=$(printf '%s' "${OCW_KIOSK_ARGS-}" | base64 -w0)
@@ -109,7 +110,8 @@ OCW_REMOTE_DEPLOY=1 scripts/remote.sh "$machine" run "
   if [ '$world' != 0 ]; then
     for r in \"\$W\"/pilot/*.route \"\$W\"/pilot/*.ocwpkg \"\$W\"/pilot/*.ocwpkg.manifest.json \\
              \"\$W\"/blackforest/*.route \"\$W\"/blackforest/blackforest*.ocwpkg \"\$W\"/blackforest/blackforest*.ocwpkg.manifest.json \\
-             \"\$W\"/tenerife/*.route \"\$W\"/tenerife/tenerife.ocwpkg \"\$W\"/tenerife/tenerife.ocwpkg.manifest.json; do
+             \"\$W\"/tenerife/*.route \"\$W\"/tenerife/tenerife.ocwpkg \"\$W\"/tenerife/tenerife.ocwpkg.manifest.json \\
+             \"\$W\"/andorra/*.route \"\$W\"/andorra/andorra.ocwpkg \"\$W\"/andorra/andorra.ocwpkg.manifest.json; do
       [ -f \"\$r\" ] && put 644 \"\$r\" \"\$(basename \"\$r\")\"
     done
   fi
@@ -117,7 +119,8 @@ OCW_REMOTE_DEPLOY=1 scripts/remote.sh "$machine" run "
   kw='$kiosk_world'
   if [ \"\$kw\" = keep ]; then
     if grep -q '^--world .*blackforest' \"\$D/ocw-desktop.args\" 2>/dev/null; then kw=blackforest
-    elif grep -q '^--world .*tenerife' \"\$D/ocw-desktop.args\" 2>/dev/null; then kw=tenerife; else kw=liechtenstein; fi
+    elif grep -q '^--world .*tenerife' \"\$D/ocw-desktop.args\" 2>/dev/null; then kw=tenerife
+    elif grep -q '^--world .*andorra' \"\$D/ocw-desktop.args\" 2>/dev/null; then kw=andorra; else kw=liechtenstein; fi
   fi
   if [ '$args_set' = set ]; then
     echo '$args_b64' | base64 -d > \"\$D/.args.tmp\"
@@ -125,6 +128,8 @@ OCW_REMOTE_DEPLOY=1 scripts/remote.sh "$machine" run "
     printf '%s\\n' '# Black Forest north (OCW_KIOSK_WORLD=blackforest)' \"--world \$D/blackforest-north.ocwpkg\" \"--route \\\"\${route:-Baden-Baden - Mummelsee}\\\"\" > \"\$D/.args.tmp\"
   elif [ \"\$kw\" = tenerife ] && [ -f \"\$D/tenerife.ocwpkg\" ]; then
     printf '%s\\n' '# Tenerife (OCW_KIOSK_WORLD=tenerife)' \"--world \$D/tenerife.ocwpkg\" \"--route \\\"\${route:-Puerto de la Cruz - Teide}\\\"\" > \"\$D/.args.tmp\"
+  elif [ \"\$kw\" = andorra ] && [ -f \"\$D/andorra.ocwpkg\" ]; then
+    printf '%s\\n' '# Andorra (OCW_KIOSK_WORLD=andorra)' \"--world \$D/andorra.ocwpkg\" \"--route \\\"\${route:-Ordino - Arcalís}\\\"\" > \"\$D/.args.tmp\"
   elif [ \"\$kw\" = blackforest ] && [ -f \"\$D/blackforest.ocwpkg\" ]; then
     printf '%s\\n' '# Black Forest south (OCW_KIOSK_WORLD=blackforest)' \"--world \$D/blackforest.ocwpkg\" \"--route \\\"\${route:-Freiburg - Schauinsland}\\\"\" > \"\$D/.args.tmp\"
   elif [ -f \"\$D/liechtenstein.ocwpkg\" ]; then

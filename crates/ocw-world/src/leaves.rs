@@ -119,6 +119,10 @@ pub fn region_broadleaf(region: FloraRegion, alt_m: f64) -> f32 {
         // Laurel forest in the cloud belt, Canary pine above.
         FloraRegion::Tenerife if alt_m < 1100.0 => 0.7,
         FloraRegion::Tenerife => 0.0,
+        // Andorra's pine forests: oaks, birches and hazels low down, a few
+        // birches among the pines higher up (spec 4.6.1, table 6).
+        FloraRegion::Pyrenees if alt_m < 1300.0 => 0.3,
+        FloraRegion::Pyrenees => 0.06,
         FloraRegion::Other => 0.5,
     }
 }

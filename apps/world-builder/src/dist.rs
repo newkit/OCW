@@ -85,6 +85,14 @@ pub fn dem_attribution(notice: Option<&str>) -> Attribution {
              derived work: moved onto the 5 m lattice and adapted to the roads)",
             "https://creativecommons.org/licenses/by/4.0/",
         ),
+        // The peninsula's MDT05 (UTM 30N), which covers Andorra too.
+        Some("ign-mdt05-pb") => known(
+            "IGN MDT05 (Spain, peninsula and Pyrenees, with Andorra)",
+            "CC BY 4.0",
+            "MDT05 2008-2015 CC-BY 4.0 scne.es (Instituto Geográfico Nacional de España; \
+             derived work: moved onto the 5 m lattice and adapted to the roads)",
+            "https://creativecommons.org/licenses/by/4.0/",
+        ),
         Some(n) => Attribution {
             source: "Elevation model".into(),
             licence: "see notice".into(),
@@ -1163,6 +1171,10 @@ mod tests {
             lgl.notice
                 .starts_with("Datenquelle: LGL, www.lgl-bw.de, dl-de/by-2-0")
         );
+        let pb = dem_attribution(Some("ign-mdt05-pb"));
+        assert_eq!(pb.licence, "CC BY 4.0");
+        assert!(pb.notice.starts_with("MDT05 2008-2015 CC-BY 4.0 scne.es"));
+        assert!(pb.source.contains("Andorra"));
         let ign = dem_attribution(Some("ign-mdt05"));
         assert_eq!(ign.licence, "CC BY 4.0");
         assert!(

@@ -459,6 +459,19 @@ pub fn mix(p: &Place, s: &SeasonFx) -> Mix {
                 m.scale(Shrub, 2.5);
             }
         }
+        FloraRegion::Pyrenees => {
+            // Granite and schist grit, dry pine needles and cones in the
+            // pine woods, rocks and dwarf shrubs (rhododendron, juniper)
+            // higher up.
+            m.scale(Needles, 1.4);
+            m.scale(Cone, 1.4);
+            m.scale(Pebble, 1.3);
+            m.scale(Fern, 0.6);
+            if p.alt_m > 1600.0 {
+                m.scale(Rock, 2.5);
+                m.scale(Shrub, 2.0);
+            }
+        }
         FloraRegion::Other => {}
     }
     if urban {
@@ -609,6 +622,8 @@ pub fn stone_srgb(region: FloraRegion, alt_m: f64) -> ([f32; 3], [f32; 3], f32) 
         FloraRegion::BlackForest => ([0.53, 0.50, 0.47], [0.40, 0.38, 0.37], 0.4),
         // Limestone (grey and a warmer grey).
         FloraRegion::AlpineRhine => ([0.68, 0.66, 0.62], [0.56, 0.53, 0.49], 0.35),
+        // Granite (light grey) and dark slaty schist.
+        FloraRegion::Pyrenees => ([0.58, 0.56, 0.53], [0.34, 0.33, 0.32], 0.4),
         FloraRegion::Other => ([0.52, 0.50, 0.47], [0.44, 0.41, 0.38], 0.3),
     }
 }
@@ -620,6 +635,8 @@ pub fn soil_srgb(region: FloraRegion, h: f32) -> [f32; 3] {
         FloraRegion::Tenerife => mix3([0.56, 0.46, 0.35], [0.30, 0.28, 0.27], h),
         FloraRegion::BlackForest => mix3([0.25, 0.19, 0.14], [0.20, 0.15, 0.11], h),
         FloraRegion::AlpineRhine => mix3([0.40, 0.32, 0.23], [0.48, 0.42, 0.33], h),
+        // Brown mountain soil over granite and schist.
+        FloraRegion::Pyrenees => mix3([0.38, 0.30, 0.22], [0.30, 0.25, 0.19], h),
         FloraRegion::Other => mix3([0.40, 0.32, 0.24], [0.33, 0.27, 0.20], h),
     }
 }

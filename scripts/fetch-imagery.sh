@@ -31,6 +31,10 @@
 #       www.ign.es/wms-inspire/pnoa-ma layer OI.OrthoimageCoverage,
 #       REGCAN95 / UTM 28N (EPSG:4083), requested at 1 m. GRAFCAN's
 #       OrtoExpress needs an express authorisation: not used.
+#   andorra        data/andorra/imagery/   (Sentinel-2 only: no open orthophoto
+#       covers Andorra – PNOA and the ICGC's stop at the border, the
+#       Govern d'Andorra's own flights have no open licence; see
+#       data/andorra/SOURCES.md and spec 4.7 "Fifth world: Andorra")
 #   every region   sentinel-2: our own Sentinel-2 L2A seasonal median
 #     composites (spring 1 Apr–31 May, summer 15 Jun–31 Aug, autumn
 #     25 Sep–10 Nov, winter 1 Dec–28 Feb; 2023–2025, the 12 clearest scenes
@@ -49,7 +53,7 @@
 # Each run appends the sources to data/<region>/SOURCES.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-region=${1:?usage: fetch-imagery.sh liechtenstein|blackforest|tenerife [PACKAGE...]}
+region=${1:?usage: fetch-imagery.sh liechtenstein|blackforest|tenerife|andorra [PACKAGE...]}
 shift
 pkgs=("$@")
 WB=target/release/world-builder
@@ -69,7 +73,11 @@ case "$region" in
     dir=data/tenerife; def=$dir/tenerife.ocwpkg
     crs=utm28; epsg=4083; s2crs=utm28; s2epsg=32628
     ;;
-  *) echo "unknown region '$region' (liechtenstein, blackforest, tenerife)" >&2; exit 1 ;;
+  andorra)
+    dir=data/andorra; def=$dir/andorra.ocwpkg
+    crs=utm31; epsg=25831; s2crs=utm31; s2epsg=32631
+    ;;
+  *) echo "unknown region '$region' (liechtenstein, blackforest, tenerife, andorra)" >&2; exit 1 ;;
 esac
 [ ${#pkgs[@]} -gt 0 ] || pkgs=("$def")
 for pkg in "${pkgs[@]}"; do
