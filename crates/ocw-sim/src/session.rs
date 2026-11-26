@@ -1718,11 +1718,10 @@ impl Session {
             if blocked.is_none() && rider.state.speed.is_finite() {
                 rider.odometer_m += rider.state.speed.max(0.0) * SIM_DT;
             }
-            // The virtual brake: the speed above the one in front is shed.
-            if let Some(c) = cap
-                && rider.state.speed > c
-            {
-                rider.state.speed = c;
+            // The virtual brake: the speed above the one in front is shed
+            // (at most `avoid::VIRTUAL_BRAKE_MPS2`).
+            if let Some(c) = cap {
+                rider.state.speed = avoid::brake_to(rider.state.speed, c, SIM_DT);
             }
             // Stopped by the road edge while riding into it at a steep
             // angle (wild mode just switched off): a hit on a wall (12B).
