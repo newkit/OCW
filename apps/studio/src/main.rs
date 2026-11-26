@@ -44,6 +44,7 @@ mod models_ui;
 mod models_view;
 mod overlay;
 mod patch;
+mod patch_prompt;
 mod pick;
 mod routes;
 mod routes_ui;
@@ -89,6 +90,11 @@ pub struct Args {
     /// Extra trusted root key files.
     #[arg(long, value_name = "FILE")]
     pub trust_root: Vec<PathBuf>,
+    /// The world patch next to the package (`<package>.ocwpatch`, or a
+    /// stack): ask (default), load it or skip it without asking (scripts;
+    /// spec 16H Q16 (b)).
+    #[arg(long, value_enum, default_value = "ask")]
+    pub patch: patch_prompt::PatchChoice,
     /// Do not join the installed neighbouring packages.
     #[arg(long)]
     pub no_neighbours: bool,
@@ -176,6 +182,8 @@ fn main() -> AppExit {
     let store = store_dir
         .clone()
         .map(|d| Box::new(ocw_edit::DirStore::new(d)) as Box<dyn ocw_edit::AutosaveStore>);
+    let mut studio = edit::Studio::new(store, store_dir);
+    studio.patch_choice = args.patch;
     // Desktop entry and icons for menus, docks and file managers (not for
     // the headless screenshot runs).
     #[cfg(target_os = "linux")]
@@ -215,7 +223,7 @@ fn main() -> AppExit {
         args.log_fps.filter(|s| *s > 0.0),
     ))
     .insert_resource(settings.clone())
-    .insert_resource(edit::Studio::new(store, store_dir))
+    .insert_resource(studio)
     .insert_resource(model_view)
     .insert_resource(ui::UiState {
         workspace,
@@ -314,5 +322,15 @@ mod tests {
         ]);
         assert_eq!(a.model.as_deref(), Some("bikes/bike-tt"));
         assert_eq!(a.models, Some(PathBuf::from("artwork/3dmodels")));
+        // The patch next to the package (16H Q16 (b)): asked by default.
+        assert_eq!(a.patch, patch_prompt::PatchChoice::Ask);
+        for (w, c) in [
+            ("load", patch_prompt::PatchChoice::Load),
+            ("skip", patch_prompt::PatchChoice::Skip),
+            ("ask", patch_prompt::PatchChoice::Ask),
+        ] {
+            assert_eq!(Args::parse_from(["ocw-studio", "--patch", w]).patch, c);
+        }
+        assert!(Args::try_parse_from(["ocw-studio", "--patch", "maybe"]).is_err());
     }
 }

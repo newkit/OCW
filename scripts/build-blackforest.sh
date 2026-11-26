@@ -14,7 +14,9 @@
 #                              (B500), Mummelsee, Hornisgrinde,
 #                              Sasbachwalden, Allerheiligen, Ruhestein,
 #                              Bühlerhöhe, Kniebis (48.45–48.80 N)
-#   (+ .manifest.json each) and the route files of their routes.
+#   (+ .manifest.json and the build recipe <stem>.recipe.toml each: the
+#   steps below and their sources, spec 16H Q17, scripts/world-recipe.sh)
+#   and the route files of their routes.
 #
 # All three are cut with --bbox from the same OSM extracts (Regierungsbezirke
 # Freiburg and Karlsruhe, one day) and share the projection origin and the
@@ -65,6 +67,9 @@ cargo build -q --release -p world-builder
 WB=target/release/world-builder
 # The project's own world patches (spec 16H Q10): worlds/<region>/patches/.
 . scripts/world-patches.sh
+# The build recipe shipped next to each package (spec 16H Q17).
+. scripts/world-recipe.sh
+recipe_start "$OUT"
 # Region calibration (spec §14 Phase 8 T3) if the imagery covers the package.
 # The forest type and density (section FRST, spec §14 Phase 8 T3) of
 # `scripts/fetch-forest.sh` go in with the calibration, or alone without it
@@ -133,6 +138,7 @@ for part in "${parts[@]}"; do
       ;;
   esac
   calibrate "$out" "$D/freiburg-regbez.osm.pbf" "$D/karlsruhe-regbez.osm.pbf"
+  recipe_write "$out" blackforest blackforest scripts/build-blackforest.sh
   # Adding the routes rewrote the manifest unsigned (next version): sign again.
   if [ -n "${OCW_SIGN_KEY:-}" ]; then
     $WB sign --key "$OCW_SIGN_KEY" "$out"

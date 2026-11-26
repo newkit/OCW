@@ -98,9 +98,10 @@ pub fn consent(spec: &str, settings: &LoadSettings) -> Result<Option<TrustReques
     }
 }
 
-/// The game's trust dialog in the studio (spec 16H Q14 (a)): the shared
-/// menu (`ocw_ui::menu`, keys / pad / mouse / touch) – only for the
-/// dialog, Esc and Start do not open the game's menu here – the trusted
+/// The game's trust dialog in the studio (spec 16H Q14 (a)) and the
+/// patch question in the same style (16H Q16 (b), [`crate::patch_prompt`]):
+/// the shared menu (`ocw_ui::menu`, keys / pad / mouse / touch) – only for
+/// the dialogs, Esc and Start do not open the game's menu here – the trusted
 /// keys of `settings` and `world trust list | add | remove | show |
 /// accept | once | decline` in the console.
 pub struct TrustDialogPlugin(pub LoadSettings);
@@ -111,9 +112,16 @@ impl Plugin for TrustDialogPlugin {
         app.insert_resource(ocw_ui::menu::MenuHooks {
             // The studio has no game menu: Esc is its own.
             escape: |_| true,
+            // The patch question's text (16H Q16 (b)).
+            text: crate::patch_prompt::menu_text,
             ..Default::default()
         })
         .add_plugins(ocw_ui::menu::MenuPlugin)
+        // The patch question after the trust question (16H Q16 (b)).
+        .add_systems(
+            Update,
+            crate::patch_prompt::show_dialog.after(ocw_ui::ViewExtrasSet),
+        )
         .insert_resource(trusted_keys(&self.0))
         .console_command(ConsoleCommand::new(
             Permission::User,
@@ -423,13 +431,21 @@ mod tests {
             .init_resource::<Opened>()
             .insert_resource(RideView::new(ocw_world::Route::test_loop()))
             .insert_resource(settings.clone())
+            .insert_resource(crate::edit::Studio::new(None, None))
             .add_plugins(TrustDialogPlugin(settings));
-        // `studio open` as in the studio, without drawing the scene.
+        // `studio open` as in the studio, without drawing the scene (the
+        // World document opened as `show` opens it), and `studio patch
+        // load | skip`.
         app.console_command(ConsoleCommand::new(
             ocw_render::console::Permission::User,
             clap::Command::new("studio")
-                .subcommand(clap::Command::new("open").arg(clap::Arg::new("path").required(true))),
+                .subcommand(clap::Command::new("open").arg(clap::Arg::new("path").required(true)))
+                .subcommand(clap::Command::new("patch").arg(clap::Arg::new("word").required(true))),
             |world, m| {
+                if let Some(a) = m.subcommand_matches("patch") {
+                    let load = a.get_one::<String>("word").map(String::as_str) == Some("load");
+                    return crate::patch_prompt::answer(world, load);
+                }
                 let spec = m
                     .subcommand_matches("open")
                     .and_then(|a| a.get_one::<String>("path"))
@@ -439,6 +455,12 @@ mod tests {
                     Prepared::Asked(msg) => Ok(msg),
                     Prepared::Loaded(l) => {
                         world.resource_mut::<Opened>().0.push(l.spec.clone());
+                        let pkg = crate::patch::StudioPackage::new(
+                            l.render.home().clone(),
+                            l.file.clone(),
+                            l.manifest.clone(),
+                        );
+                        crate::edit::open_world_doc(world, &l.spec, &l.details, pkg, 0.0);
                         Ok(format!("opened {}", l.details.id))
                     }
                 }
@@ -621,6 +643,100 @@ mod tests {
         run(&mut app, &open_line(&pkg.display().to_string()));
         assert!(pending(&app));
         assert_eq!(std::fs::read_to_string(&keys).unwrap(), "{ broken");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Spec 16H Q16 (b): a package with a patch next to it asks first –
+    /// after the trust dialog when its key is unknown –, in the same
+    /// dialog style: *Load it* (focused) loads it, Back opens without it;
+    /// every open asks again.
+    #[test]
+    fn the_patch_question_comes_after_the_trust_dialog() {
+        let d = temp("patch");
+        let keys = d.join("trusted-keys.json");
+        let (pkg, _) = user_signed_package(&d, "Ada Rider", 145);
+        let spec = pkg.display().to_string();
+        let mut patch = ocw_world::patch::WorldPatch::new("user/ada/vaduz");
+        patch.author = Some("Ada Rider".into());
+        patch.title = Some("Vaduz fixes".into());
+        for w in [11, 12] {
+            patch.ops.push(ocw_world::patch::Operation::RemoveRoad(
+                ocw_world::patch::RemoveRoad {
+                    way: Some(w),
+                    edge: None,
+                    note: None,
+                },
+            ));
+        }
+        crate::patch::write_patch(&d.join("vaduz.ocwpatch"), &patch).unwrap();
+        let mut app = app(&keys);
+        let studio = |app: &App| -> (usize, bool) {
+            let s = app.world().resource::<crate::edit::Studio>();
+            (
+                s.world().map_or(0, |d| d.content().patch.ops.len()),
+                s.patch_question.is_some(),
+            )
+        };
+        // The key first: the patch is not asked about before it opens.
+        run(&mut app, &open_line(&spec));
+        frames(&mut app, 3);
+        let page = app.world().resource::<MenuState>().menu.page();
+        assert_eq!(page, Some(Page::ConfirmTrust));
+        assert!(opened(&app).is_empty());
+        // Trust this key: opened, then the patch question.
+        menu(&mut app, &[Action::Up, Action::Up, Action::Confirm]);
+        assert_eq!(opened(&app), std::slice::from_ref(&spec));
+        frames(&mut app, 3);
+        assert_eq!(
+            app.world().resource::<MenuState>().menu.page(),
+            Some(Page::ConfirmPatch)
+        );
+        assert_eq!(studio(&app), (0, true), "not loaded before the answer");
+        let v = app.world().resource::<MenuView>().clone();
+        assert!(v.open);
+        assert_eq!(v.title, "Load this world's patch?");
+        assert_eq!(v.items, ["Load it", "Open without it"]);
+        assert_eq!(v.focused, 0, "Load it");
+        assert!(
+            v.text[0].starts_with("This world has a patch: 2 changes (by Ada Rider, "),
+            "{:?}",
+            v.text
+        );
+        assert!(
+            v.text[1].contains("vaduz.ocwpatch 'Vaduz fixes'"),
+            "{:?}",
+            v.text
+        );
+        // Enter: Load it.
+        menu(&mut app, &[Action::Confirm]);
+        assert_eq!(studio(&app), (2, false));
+        assert!(!app.world().resource::<MenuView>().open, "closed");
+        // The next open asks again (the answer is not remembered); Back
+        // (Esc, B) opens without it.
+        run(&mut app, &open_line(&spec));
+        frames(&mut app, 3);
+        assert_eq!(
+            app.world().resource::<MenuState>().menu.page(),
+            Some(Page::ConfirmPatch)
+        );
+        menu(&mut app, &[Action::Back]);
+        frames(&mut app, 3);
+        assert_eq!(studio(&app), (0, false));
+        assert!(!app.world().resource::<MenuView>().open, "closed");
+        assert!(
+            app.world()
+                .resource::<crate::edit::Studio>()
+                .status
+                .starts_with("opened without the patch"),
+        );
+        // And *Open without it* by a click; the console answers too.
+        run(&mut app, &open_line(&spec));
+        frames(&mut app, 3);
+        menu(&mut app, &[Action::Click(1)]);
+        assert_eq!(studio(&app), (0, false));
+        let log = run(&mut app, "studio patch load");
+        assert!(log.contains("loaded (2 operations)"), "{log}");
+        assert_eq!(studio(&app).0, 2);
         let _ = std::fs::remove_dir_all(&d);
     }
 

@@ -301,6 +301,43 @@ mod tests {
         assert_eq!(m.page(), Some(MenuPage::Top));
     }
 
+    /// OCW Studio's patch question (spec 16H Q16 (b)), the same kind of
+    /// dialog: *Load it* focused, *Open without it*; the commands close
+    /// the menu themselves, Back leaves the dialog (the studio then opens
+    /// without the patch).
+    #[test]
+    fn the_patch_question_focuses_load_it() {
+        let mut m = Menu::default();
+        assert_eq!(m.apply(Action::PatchDialog), Effect::Opened);
+        assert_eq!(m.page(), Some(MenuPage::ConfirmPatch));
+        assert_eq!(m.labels(), ["Load it", "Open without it"]);
+        assert_eq!(m.focus(), 0, "Load it is focused");
+        assert_eq!(
+            m.apply(Action::Confirm),
+            Effect::Command("studio patch load".into())
+        );
+        assert_eq!(m.page(), Some(MenuPage::ConfirmPatch), "until it ran");
+        assert_eq!(
+            m.apply(Action::Click(1)),
+            Effect::Command("studio patch skip".into())
+        );
+        assert_eq!(
+            m.apply(Action::Confirm),
+            Effect::Command("studio patch skip".into())
+        );
+        // Asked twice: not stacked; Back leaves it.
+        m.apply(Action::PatchDialog);
+        assert_eq!(m.depth(), 2);
+        m.apply(Action::Back);
+        assert_eq!(m.page(), Some(MenuPage::Top));
+        // Over the trust dialog's place: a trust question first, then the
+        // patch question (the studio asks them in this order).
+        m.apply(Action::Close);
+        m.apply(Action::TrustDialog);
+        m.apply(Action::PatchDialog);
+        assert_eq!(m.page(), Some(MenuPage::ConfirmPatch));
+    }
+
     #[test]
     fn trusted_keys_are_listed_and_removed_after_asking() {
         let mut keys = UserKeys::default();

@@ -10,6 +10,10 @@
 # swissalti3d; Liechtenstein and Switzerland), SRTM on the Austrian side
 # (feathered into it, spec §4.3).
 #
+# With the package goes its build recipe, liechtenstein.recipe.toml (the steps
+# below and their sources, recorded in the manifest; spec 16H Q17), which OCW
+# Studio's Build package runs (scripts/world-recipe.sh).
+#
 # Environment: OCW_SIGN_KEY  signing key for the manifest (default: unsigned).
 #              OCW_NO_PATCHES=1  build without the world patches of
 #                         worlds/<region>/patches/ (spec 16H Q10; the patches
@@ -45,6 +49,9 @@ cargo build -q --release -p world-builder
 WB=target/release/world-builder
 # The project's own world patches (spec 16H Q10): worlds/<region>/patches/.
 . scripts/world-patches.sh
+# The build recipe shipped next to the package (spec 16H Q17).
+. scripts/world-recipe.sh
+recipe_start "$OUT"
 # Region calibration (spec §14 Phase 8 T3) if the imagery covers the package.
 # The forest type and density (section FRST, spec §14 Phase 8 T3) of
 # `scripts/fetch-forest.sh` go in with the calibration, or alone without it
@@ -83,6 +90,7 @@ if [ -z "${OCW_SRTM_ONLY:-}" ]; then
   $WB route "${SRC[@]}" --name "Vaduz - Malbun" --out "$D/vaduz-malbun.route"
   $WB route --world "$out" --name "Vaduz - Malbun" --from 47.1395,9.5220 --to 47.1013,9.6094
   calibrate "$out" "$D/liechtenstein.osm.pbf"
+  recipe_write "$out" pilot liechtenstein scripts/build-liechtenstein.sh
   if [ -n "${OCW_SIGN_KEY:-}" ]; then
     $WB sign --key "$OCW_SIGN_KEY" "$out"
   fi

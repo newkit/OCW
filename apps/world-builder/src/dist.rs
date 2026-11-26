@@ -202,6 +202,12 @@ pub fn write_manifest(
         .clone()
         .or_else(|| old.as_ref().map(|o| o.patches.clone()))
         .unwrap_or_default();
+    // The build recipe (16H Q17): kept by the later steps like the
+    // patches; a new package build starts without one (`recipe write`
+    // records the new one).
+    if kept {
+        m.recipe = old.as_ref().and_then(|o| o.recipe.clone());
+    }
     let signed = match key {
         Some(k) => SignedManifest::signed(&m, k),
         None => SignedManifest::unsigned(&m),
@@ -220,6 +226,7 @@ pub fn write_manifest(
     // matches it (the build report; never a failure, 16H Q9).
     if kept {
         report_patches(package, &m);
+        crate::recipe_cmd::report(package, &m);
     }
     signed
 }
@@ -344,7 +351,7 @@ pub fn carry_manifest(world: &Path, out: &Path) {
     if from == to {
         return;
     }
-    for p in &m.patches {
+    for p in m.patches.iter().chain(&m.recipe) {
         let _ = std::fs::copy(from.join(&p.path), to.join(&p.path));
     }
 }
@@ -523,8 +530,10 @@ pub fn verify(package: &Path, trust_roots: Vec<PathBuf>, dev_root: bool, allow_u
     for a in &m.attribution {
         println!("  attribution: {} ({})", a.notice, a.licence);
     }
-    // The patches it was built with (16H Q9): reported, never a failure.
+    // The patches it was built with (16H Q9) and its build recipe (Q17):
+    // reported, never a failure.
     report_patches(&mp, m);
+    crate::recipe_cmd::report(&mp, m);
     let policy = if allow_unsigned {
         UnsignedPolicy::Warn
     } else {
@@ -583,6 +592,19 @@ pub fn publish(package: &Path, out: &Path) {
             println!("  patch {} published (sha256 {})", p.path, p.sha256);
         } else {
             eprintln!("warning: {} – not published", p.describe(&status));
+        }
+    }
+    // Its build recipe (16H Q17), the same way.
+    if let Some((r, status)) = crate::recipe_cmd::status(&mp, m) {
+        if status == PatchStatus::Same {
+            std::fs::copy(src.join(&r.path), dest.join(&r.path))
+                .unwrap_or_else(|e| fail(format!("{}: {e}", r.path)));
+            println!("  recipe {} published (sha256 {})", r.path, r.sha256);
+        } else {
+            eprintln!(
+                "warning: {} – not published",
+                crate::recipe_cmd::describe(&r, &status)
+            );
         }
     }
     std::fs::write(dest.join(ocw_worldstore::cache::MANIFEST_FILE), &text)
@@ -950,6 +972,80 @@ mod tests {
         write_manifest(&path, &args(3), None);
         publish(&path, &out);
         assert!(out.join("test/patched/3/p.ocwpkg").is_file());
+    }
+
+    /// 16H Q17 (a): the build recipe's record is kept by the later steps
+    /// (routes, calibration, signing), dropped by a new package build,
+    /// carried along with `--out`, and published when it matches.
+    #[test]
+    fn the_recipe_is_kept_carried_and_published() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = tiny_package(dir.path());
+        let first = ManifestArgs {
+            id: Some("test/recipe".into()),
+            name: None,
+            version: None,
+            dem_attribution: Vec::new(),
+            patches: Some(Vec::new()),
+        };
+        write_manifest(&path, &first, None);
+        let pbf = dir.path().join("p.osm.pbf");
+        std::fs::write(&pbf, b"osm").unwrap();
+        let log = dir.path().join("build.log");
+        std::fs::write(
+            &log,
+            crate::recipe_cmd::log_line(&[
+                "package".into(),
+                "--pbf".into(),
+                pbf.display().to_string(),
+                "--out".into(),
+                path.display().to_string(),
+            ]) + "\n",
+        )
+        .unwrap();
+        crate::recipe_cmd::write(&path, &log, None, None, None);
+        let rec = read_manifest(&path).recipe.expect("recorded");
+        // A later step keeps it.
+        let later = ManifestArgs {
+            patches: None,
+            ..first
+        };
+        write_manifest(&path, &later, None);
+        assert_eq!(read_manifest(&path).recipe.as_ref(), Some(&rec));
+        // Published next to the package.
+        let out = dir.path().join("worlds");
+        publish(&path, &out);
+        let v = read_manifest(&path).version;
+        let published = out.join("test/recipe").join(v.to_string());
+        assert!(published.join("p.recipe.toml").is_file());
+        // Carried along by a step with `--out` into another folder.
+        let other = dir.path().join("o");
+        std::fs::create_dir(&other).unwrap();
+        let moved = other.join("p.ocwpkg");
+        std::fs::copy(&path, &moved).unwrap();
+        carry_manifest(&path, &moved);
+        assert!(other.join("p.recipe.toml").is_file());
+        // A changed recipe is not published.
+        std::fs::write(dir.path().join("p.recipe.toml"), "edited").unwrap();
+        let out2 = dir.path().join("worlds2");
+        publish(&path, &out2);
+        assert!(
+            !out2
+                .join("test/recipe")
+                .join(v.to_string())
+                .join("p.recipe.toml")
+                .exists()
+        );
+        // A new package build starts without it.
+        write_manifest(
+            &path,
+            &ManifestArgs {
+                patches: Some(Vec::new()),
+                ..later
+            },
+            None,
+        );
+        assert_eq!(read_manifest(&path).recipe, None);
     }
 
     /// Spec §13, Phase 8A: every imagery source of a calibrated package is

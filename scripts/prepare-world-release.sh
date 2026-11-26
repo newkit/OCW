@@ -9,7 +9,9 @@
 #       files beside it (the ones named in its routes), the world patches it
 #       was built with (`<stem>.ocwpatch`, recorded in the manifest with their
 #       SHA-256, spec 16H Q9: the ODbL offer of the changes; a missing or
-#       changed one is a warning and left out), LICENSE-DATA.md (every
+#       changed one is a warning and left out), its build recipe
+#       (`<stem>.recipe.toml`, recorded the same way, spec 16H Q17: the steps
+#       OCW Studio's Build package runs), LICENSE-DATA.md (every
 #       source with its attribution, from the manifest) and README.md;
 # and per source folder (data/pilot, data/blackforest) once:
 #   OUT_DIR/<region>-osm-source.zip     the OSM extract(s) and .poly files
@@ -69,6 +71,28 @@ PY
   while IFS= read -r f; do
     [ -n "$f" ] && cp "$dir/$f" "$stage/" && echo "  patch $f"
   done <<<"$patches"
+  # The build recipe recorded in the manifest (spec 16H Q17), when the file
+  # beside the package is the one recorded: OCW Studio's Build package runs it.
+  recipe=$(python3 -I - "$manifest" "$dir" <<'PY'
+import hashlib, json, os, sys
+m = json.load(open(sys.argv[1]))
+s = m["signed"] if not isinstance(m["signed"], str) else json.loads(m["signed"])
+r = s.get("recipe")
+if r:
+    path = os.path.join(sys.argv[2], r["path"])
+    try:
+        data = open(path, "rb").read()
+    except OSError:
+        print(f"warning: recipe {r['path']}: MISSING next to the package (the manifest records sha256 {r['sha256']}): not in the release zip", file=sys.stderr)
+        sys.exit(0)
+    got = hashlib.sha256(data).hexdigest()
+    if got != r["sha256"].lower():
+        print(f"warning: recipe {r['path']}: CHANGED since the build (sha256 {got}, recorded {r['sha256']}): not in the release zip; rebuild the package", file=sys.stderr)
+        sys.exit(0)
+    print(r["path"])
+PY
+)
+  if [ -n "$recipe" ]; then cp "$dir/$recipe" "$stage/" && echo "  recipe $recipe"; fi
   routes=$($WB routes --world "$pkg")
   # Route files beside the package that belong to it (see build-*.sh).
   for f in "$dir"/*.route; do

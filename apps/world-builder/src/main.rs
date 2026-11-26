@@ -16,11 +16,13 @@
 //! world-builder sign --key KEY PKG | verify PKG | publish PKG --out DIR | diff OLD NEW
 //! world-builder package … --patch FILE.ocwpatch      (world patches, spec §14 Phase 16 16C)
 //! world-builder patch check --world PKG FILE [--pbf PBF]
+//! world-builder recipe write --world PKG --log FILE   (the build recipe, spec 16H Q17; OCW_RECIPE_LOG)
 //! world-builder condition --world PKG [--pbf PBF…]   (road condition RCND, smoothness report)
 //! ```
 
 mod dist;
 mod patch_cmd;
+mod recipe_cmd;
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -129,6 +131,11 @@ enum Cmd {
     Patch {
         #[command(subcommand)]
         command: patch_cmd::PatchCmd,
+    },
+    /// The build recipe shipped next to a package (spec 16H Q17 (a)).
+    Recipe {
+        #[command(subcommand)]
+        command: recipe_cmd::RecipeCmd,
     },
     /// Key management (spec §4.7): an offline root key signs online
     /// signing keys; signing keys sign package manifests.
@@ -3407,6 +3414,8 @@ fn lint(world: &std::path::Path, pbf: &[PathBuf]) {
 }
 
 fn main() {
+    // The build scripts' log of command lines (the build recipe, 16H Q17).
+    recipe_cmd::log_invocation();
     match Cli::parse().command {
         Cmd::Areas { pbf, at, radius } => areas_at(&pbf, at, radius),
         Cmd::Lint { world, pbf } => lint(&world, &pbf),
@@ -3818,6 +3827,7 @@ fn main() {
             print_stage_profile(profile.as_deref());
         }
         Cmd::Patch { command } => patch_cmd::run(command),
+        Cmd::Recipe { command } => recipe_cmd::run(command),
         Cmd::Keys { command } => match command {
             KeysCmd::InitRoot { name, dir } => dist::keys_init_root(&name, dir),
             KeysCmd::InitUser { name, dir, days } => dist::keys_init_user(&name, dir, days),
