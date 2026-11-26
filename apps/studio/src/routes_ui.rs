@@ -338,7 +338,9 @@ pub fn routes_panel(
     ui.horizontal(|ui| {
         if ui
             .button("Save route")
-            .on_hover_text("As a graph route next to the package (routes/NAME.ocwroute)")
+            .on_hover_text(
+                "As a graph route next to the package (routes/NAME.ocwroute), or in <data dir>/ocw/routes/ when that folder is not writable; the game lists both",
+            )
             .clicked()
         {
             send(pending, RouteCommand::Save(None));

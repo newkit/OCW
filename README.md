@@ -1223,6 +1223,29 @@ package. *Navi → GPX import* offers the `.gpx` files from
 `~/.local/share/ocw/gpx/` and the downloads folder. Not with `--server`
 (the server chooses the course; its host can switch the world).
 
+**Which routes the game lists** (spec 16H Q19): *Navi → Routes* – and
+*Routes* on the page of the world you ride – lists the package's own routes
+first, then your own, marked **yours** (e.g. "Ada's loop: 12.4 km, yours"),
+sorted by name. Yours are the route files in two folders:
+
+- `routes/` **next to the package file** (`<package folder>/routes/*.ocwroute`,
+  e.g. `data/pilot/routes/` for `data/pilot/liechtenstein.ocwpkg`): where OCW
+  Studio's *Save route* writes (see *Routes in OCW Studio* below);
+- **`~/.local/share/ocw/routes/`** (the data folder's `routes/`, see
+  [Where OCW keeps its files](#where-ocw-keeps-its-files)): your GPX imports
+  (`*.ocw-graph-route`) and the studio's routes when the package folder is
+  not writable (`*.ocwroute`).
+
+A route file names the package it was made for, so a route of another world
+– e.g. of a sibling package in the same folder – is not listed with this
+one (a file without a package name fits any). A file that cannot be read, is
+not a route, or no longer fits the package's roads (after a rebuild) is not
+offered: it shows as a note at the end of the list ("torn.ocwroute: skipped:
+not a route") and in the log. The list is read again each time the menu
+opens, so a route just saved in the studio is there at the next Esc. The
+**browser app** lists only the package's own routes: it streams the package
+from a server and reads no folders on your computer.
+
 In manual steering, the keys ramp the lean and it stays when released (press
 the other way to straighten up); the stick sets the lean directly, centred is
 upright. The road's bends have to be steered, see spec §5.2.1.
@@ -1339,6 +1362,21 @@ stretch where there is another way. Under the figures, *Expected time at
 for your active rider (weight and bike from the game's `ocw.toml`). The same
 from the console: `studio route import PATH`, `studio route import part
 N|all|cancel`, `studio route power W`, `studio route info`.
+
+*Save route* writes the route as a graph route next to the package:
+`<package folder>/routes/<name>.ocwroute` (the name in lower case, `-`
+between the words: "Ada's loop" → `routes/ada-s-loop.ocwroute`). When that
+folder is not writable (an installed package, a read-only disk), it saves to
+`~/.local/share/ocw/routes/` instead, and the status line says where and
+why ("route saved as ~/.local/share/ocw/routes/ada-s-loop.ocwroute (the
+package folder is not writable: …)"); a route of another package with the
+same name there is kept, the new one gets the package's name in front. Saving
+again writes to the same file. *Test ride* saves and starts the game on the
+route; the game also lists it under *Navi → Routes*, marked *yours* (see
+[Which routes the game lists](#the-world-menu-changing-the-world-without-restarting)).
+*Export* writes any other path and format (GPX, TCX, FIT, GeoJSON or
+`.ocwroute`); the game lists only what is in the two folders. The same from
+the console: `studio route save [PATH]`.
 
 ## Connecting a gamepad
 
@@ -2095,9 +2133,15 @@ bar or the Run dialog (Win + R).
   `ocw.toml` before that kept as `ocw.toml.bak`. A `--settings-file` in the old
   format is converted in place the same way.
 - **In the data folder:** `rides/` (every ride and its FIT file, the training
-  history), `ghosts/`, `videos/`, `routes/`, `gpx/`, `workouts/`,
-  `camera-paths/`, `host-tls/` (the certificate when you host a ride), and the
-  studio's `studio/autosave/`.
+  history), `ghosts/`, `videos/`, `routes/` (your routes: GPX imports, and
+  OCW Studio's saved routes when the package folder is not writable),
+  `gpx/` (GPX files offered for import), `workouts/`, `camera-paths/`,
+  `host-tls/` (the certificate when you host a ride), and the studio's
+  `studio/autosave/`.
+- **Next to a world package:** `routes/*.ocwroute` (the routes OCW Studio's
+  *Save route* writes there) and `<package>.ocwpatch` (its world patch). The
+  game lists the routes of both `routes/` folders with the package's own
+  (see [Which routes the game lists](#the-world-menu-changing-the-world-without-restarting)).
 - **In the activities folder** (setting `activities.folder`, Menu → Settings →
   Account → Folders): each Strava (S … S) recording in its own subfolder
   `YYYY-MM-DD <place>` with its FIT file and photos, and screenshots and other

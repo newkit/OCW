@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use ocw_worldstore::discover::WorldEntry;
 
-use super::catalog::{RideEntry, UserRoute};
+use super::catalog::{RideEntry, SkippedRoute, UserRoute};
 use super::choice::{RideChoice, WorldMode};
 use super::world::{RouteInfo, WorldDetails, km, route_value, short};
 use crate::settings::pages::{Activate, Page, Row};
@@ -24,7 +24,11 @@ pub struct Catalog {
     /// The loaded package: its spec, name and routes (name, m), and
     /// whether it has a road graph (free ride, GPX import).
     pub world: Option<LoadedWorld>,
+    /// The user's routes for the loaded world: `routes/` next to the
+    /// package (OCW Studio) and `<data dir>/ocw/routes/` (spec 16H Q19).
     pub user_routes: Vec<UserRoute>,
+    /// Route files there that could not be read (listed as notes).
+    pub skipped_routes: Vec<SkippedRoute>,
     pub rides: Vec<RideEntry>,
     pub gpx: Vec<PathBuf>,
     /// The local rider's position in the package's metres (x, z).
@@ -106,6 +110,19 @@ pub fn rows(page: Page, c: &Catalog) -> Vec<Row> {
             if out.is_empty() {
                 out.push(info("No routes here", Some("Navi -> GPX import".into())));
             }
+            // A broken route file is a note, not a ride.
+            out.extend(c.skipped_routes.iter().map(|s| {
+                let file = s.path.file_name().map_or_else(
+                    || s.path.display().to_string(),
+                    |n| n.to_string_lossy().into(),
+                );
+                // The kind of problem ("not a route"); the log has the rest.
+                let kind = s.why.split(':').next().unwrap_or_default();
+                info(
+                    &short(&file, 18),
+                    Some(short(&format!("skipped: {kind}"), 27)),
+                )
+            }));
             out
         }
         Page::Rides => {
@@ -177,7 +194,9 @@ mod tests {
                 path: "/home/r/My tour.ocw-graph-route".into(),
                 name: "My tour".into(),
                 length_m: 5_000.0,
+                source: super::super::catalog::RouteSource::NextToPackage,
             }],
+            skipped_routes: Vec::new(),
             rides: vec![RideEntry {
                 file: "2026-11-11_17-30-05.fit".into(),
                 date: "2026-11-11 17:30".into(),
@@ -253,6 +272,25 @@ mod tests {
             m.page(),
             Some(MenuPage::Sub(crate::settings::pages::Page::Strava))
         );
+    }
+
+    #[test]
+    fn a_skipped_route_file_is_a_note_after_the_routes() {
+        let mut c = catalog();
+        c.skipped_routes = vec![SkippedRoute {
+            path: "/data/routes/torn.ocwroute".into(),
+            why: "not a route: not an ocw-graph-route 1 file".into(),
+        }];
+        let r = rows(Page::Routes, &c);
+        let labels: Vec<String> = r.iter().map(row_label).collect();
+        assert_eq!(labels.len(), 3, "{labels:?}");
+        assert_eq!(labels[1], "My tour:  5.0 km, yours");
+        assert!(
+            labels[2].starts_with("torn.ocwroute:  skipped: not a route"),
+            "{labels:?}"
+        );
+        assert_eq!(r[2].confirm, None, "a note starts nothing");
+        assert!(labels[2].chars().count() <= MAX_ROW_CHARS, "{}", labels[2]);
     }
 
     #[test]

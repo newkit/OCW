@@ -19,6 +19,8 @@ use crate::Args;
 pub struct WorldInfo {
     /// What `--world` said (path or id).
     pub spec: String,
+    /// The package file.
+    pub file: std::path::PathBuf,
     pub identity: PackageIdentity,
     /// One line: identity, trust, file.
     pub description: String,
@@ -41,6 +43,7 @@ impl WorldInfo {
         }
         Self {
             spec: spec.into(),
+            file: w.path.clone(),
             identity: w.identity.clone(),
             description: w.describe(),
             trusted: w.trust.is_trusted() && hood.worlds.iter().all(|n| n.trust.is_trusted()),

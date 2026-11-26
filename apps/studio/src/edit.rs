@@ -37,11 +37,22 @@ use crate::patch::StudioPackage;
 /// `<data dir>/ocw/studio/autosave` (`OCW_DATA_DIR` overrides
 /// `<data dir>/ocw`, as in the game).
 pub fn autosave_dir() -> Option<PathBuf> {
-    let base = match std::env::var_os("OCW_DATA_DIR") {
-        Some(d) => PathBuf::from(d),
-        None => dirs::data_dir()?.join("ocw"),
-    };
-    Some(base.join("studio").join("autosave"))
+    Some(ocw_data_dir()?.join("studio").join("autosave"))
+}
+
+/// `<data dir>/ocw/routes`: where *Save route* goes when the package
+/// folder is not writable; the game lists the routes there too (spec 16H
+/// Q19).
+pub fn data_routes_dir() -> Option<PathBuf> {
+    Some(ocw_data_dir()?.join("routes"))
+}
+
+/// `<data dir>/ocw` (`OCW_DATA_DIR` overrides it, as in the game).
+fn ocw_data_dir() -> Option<PathBuf> {
+    match std::env::var_os("OCW_DATA_DIR") {
+        Some(d) => Some(PathBuf::from(d)),
+        None => Some(dirs::data_dir()?.join("ocw")),
+    }
 }
 
 /// An autosave an earlier session left for the open world.
