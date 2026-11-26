@@ -423,6 +423,51 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::NextStart,
         apply: Apply::Arg("fullscreen"),
     },
+    // VR (spec §14 Phase 11, X1): the headset as a viewing device of the
+    // desktop app (the `vr` build; `--vr` for one session).
+    SettingDef {
+        key: "vr.enabled",
+        kind: Kind::Bool,
+        default: "off",
+        description: "Ride in a VR headset over OpenXR (Oculus Link, SteamVR, Monado); without a headset the app runs as before (desktop app built with VR)",
+        scope: Scope::NextStart,
+        apply: Apply::Arg("vr"),
+    },
+    SettingDef {
+        key: "vr.mirror",
+        kind: Kind::Choice(&["eye", "both", "chase"]),
+        default: "eye",
+        description: "What the monitor shows in VR: one eye, both eyes side by side, or the chase camera (for spectators; costs a third view)",
+        scope: Scope::Live,
+        apply: Apply::Command("vr mirror {}"),
+    },
+    // The bike computer on the bar (spec §14 Phase 11, v4.68): its size
+    // (times the real one, %; readable on the Quest 1 from 275 %) and the
+    // tilt added to its aim at the eyes.
+    SettingDef {
+        key: "vr.computer_size",
+        kind: Kind::Int {
+            min: 100,
+            max: 400,
+            step: 25,
+        },
+        default: "275",
+        description: "VR: the bike computer's size on the bar, % of a real one (larger reads better in the headset)",
+        scope: Scope::Live,
+        apply: Apply::Command("vr computer size {}"),
+    },
+    SettingDef {
+        key: "vr.computer_tilt",
+        kind: Kind::Int {
+            min: -30,
+            max: 30,
+            step: 5,
+        },
+        default: "0",
+        description: "VR: the bike computer's screen tilted toward you (+) or flatter (−), degrees from facing your eyes",
+        scope: Scope::Live,
+        apply: Apply::Command("vr computer tilt {}"),
+    },
     // The ride photographer (spec §2.11).
     SettingDef {
         key: "photographer.enabled",
@@ -1070,6 +1115,11 @@ const NOT_IN_BROWSER: &[&str] = &[
     "host.voice",
     // The browser has no API upload (spec 2.8.1: the simple upload only).
     "strava.auto_upload",
+    // The desktop's OpenXR headset and its monitor mirror (spec 14 Phase
+    // 11); the browser's headset is WebXR (Enter VR on the page). The bike
+    // computer's size and tilt apply in both.
+    "vr.enabled",
+    "vr.mirror",
 ];
 
 /// Whether `key` takes effect on `platform` (the menu hides the others,

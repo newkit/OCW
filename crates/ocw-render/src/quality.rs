@@ -38,13 +38,18 @@ pub enum QualityLevel {
     /// session on a Quest 1; not on the flat screen's ladder
     /// ([`Self::ALL`]).
     Quest1,
+    /// A VR headset (spec §14 Phase 11, X1): two eyes at the headset's
+    /// rate (72 Hz on the Oculus Quest 1, 13.9 ms for both views) – fewer
+    /// shadows, a shorter view and fewer trees, MSAA kept (no TAA smear
+    /// in VR). Not in [`Self::ALL`] (the flat screen's ladder).
+    Vr,
 }
 
 impl QualityLevel {
     /// The ladder of the flat screen, cheapest first.
     pub const ALL: [Self; 3] = [Self::Low, Self::Medium, Self::High];
     /// Every level by name (the console's and the setting's words).
-    pub const NAMED: [Self; 4] = [Self::Low, Self::Medium, Self::High, Self::Quest1];
+    pub const NAMED: [Self; 5] = [Self::Low, Self::Medium, Self::High, Self::Quest1, Self::Vr];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -52,6 +57,7 @@ impl QualityLevel {
             Self::Medium => "medium",
             Self::High => "high",
             Self::Quest1 => "quest1",
+            Self::Vr => "vr",
         }
     }
 
@@ -158,6 +164,34 @@ impl QualityPreset {
                 road_damage_m: 110.0,
                 ground_detail: 0.6,
                 ground_detail_m: 55.0,
+                max_riders: None,
+            },
+            // VR (Phase 11): each eye costs about a flat frame, at 72–90 Hz.
+            // One cascade over the near road (v4.70: every eye draws its own
+            // cascades), **no MSAA** (v4.71, measured on Weela with the Quest
+            // 1 over Link: MSAA 4× held the GPU at 36 fps, 2× at 50–62;
+            // without it 68–72 – below 72 Link halves the rate to 36, which
+            // reads as lag), the view and the trees between Medium and
+            // Low. The same numbers suit the standalone Quest (Phase 14)
+            // with its own render scale.
+            QualityLevel::Vr => Self {
+                level,
+                shadow_map_px: 2048,
+                shadow_cascades: 1,
+                shadow_distance_m: 70.0,
+                first_cascade_m: 70.0,
+                msaa_samples: 1,
+                view_m: Some(12_000.0),
+                tree_view_m: Some(1_500.0),
+                house_lod_scale: 0.6,
+                particle_share: 0.35,
+                max_pixel_ratio: None,
+                // Between Medium and Low, like the rest (main's fields of
+                // v5.x, set at the merge onto main).
+                road_damage_share: 0.6,
+                road_damage_m: 70.0,
+                ground_detail: 0.35,
+                ground_detail_m: 40.0,
                 max_riders: None,
             },
             // WebGL 2 and phones: one cascade (WebGL 2 has no more) over
@@ -674,6 +708,33 @@ mod tests {
             q.summary().contains("MSAA off, view 4.0 km"),
             "{}",
             q.summary()
+        );
+    }
+
+    /// VR: cheaper than Medium where the GPU pays per pixel and view
+    /// (shadows, view distance, trees), no MSAA (v4.71); named, not on the
+    /// ladder.
+    #[test]
+    fn the_vr_preset_fits_two_eyes_at_72_hz() {
+        let vr = QualityPreset::of(QualityLevel::Vr);
+        let medium = QualityPreset::of(QualityLevel::Medium);
+        let low = QualityPreset::of(QualityLevel::Low);
+        assert!(vr.shadow_map_px <= medium.shadow_map_px);
+        assert!(vr.shadow_cascades < medium.shadow_cascades);
+        assert!(vr.shadow_distance_m < medium.shadow_distance_m);
+        assert!(vr.view_m.unwrap() < medium.view_m.unwrap());
+        assert!(vr.tree_view_m.unwrap() < medium.tree_view_m.unwrap());
+        assert!(vr.view_m.unwrap() > low.view_m.unwrap());
+        assert_eq!(vr.msaa(), Msaa::Off);
+        assert_eq!(vr.max_pixel_ratio, None);
+        assert_eq!(QualityLevel::parse("vr"), Some(QualityLevel::Vr));
+        assert!(!QualityLevel::ALL.contains(&QualityLevel::Vr));
+        // v4.70: one cascade (Weela drew 36 fps with two and 4×); v4.71: no
+        // MSAA (68–72 fps on the Quest 1 over Link instead of 50–62 with 2×).
+        assert!(
+            vr.summary().contains("× 1 over 70 m, MSAA off"),
+            "{}",
+            vr.summary()
         );
     }
 

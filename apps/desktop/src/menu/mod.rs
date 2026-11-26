@@ -160,6 +160,7 @@ mod tests {
             ViewDistance,
             WorldDetail,
             Photographer,
+            Vr,
             RiderList,
             Account,
             UnicornControls,
@@ -217,15 +218,16 @@ mod tests {
                 | Rides | GpxImport | Workouts | Voice | VoiceDevices | VoiceParticipants
                 | VoiceRider(_) | VoiceBlocked | VoiceSelect | AudioVoice | TimeMachine
                 | WeatherPresets | WeatherCustom | WeatherAir | WeatherReal | RidingAids
-                | Folders | Graphics | ViewDistance | WorldDetail | Photographer | RiderList
-                | UnicornControls | Bindings | BindGroup(_) | BindReset | Accessibility | Hud
-                | History | HistoryRides | HistoryRide(_) | HistoryClimbs(_)
-                | HistoryRideFile(_) | HistoryWeeks | HistoryMonths | HistoryBests
-                | HistoryWaiting | StravaWaiting | EventRules | Account | TrustedKeys
-                | TrustedKey(_) | Join | HostWorld | HostRoute | HostTime | HostWeather
-                | HostOptions | HostSummary | HostLink | Start | Devices | Device(_) | Bridge
-                | Ant | Calendar(_) | CalendarDates(_) | Season | Character | CharacterBody
-                | CharacterFace | CharacterHair | CharacterFacialHair | CharacterPick(_) => {}
+                | Folders | Graphics | ViewDistance | WorldDetail | Photographer | Vr
+                | RiderList | UnicornControls | Bindings | BindGroup(_) | BindReset
+                | Accessibility | Hud | History | HistoryRides | HistoryRide(_)
+                | HistoryClimbs(_) | HistoryRideFile(_) | HistoryWeeks | HistoryMonths
+                | HistoryBests | HistoryWaiting | StravaWaiting | EventRules | Account
+                | TrustedKeys | TrustedKey(_) | Join | HostWorld | HostRoute | HostTime
+                | HostWeather | HostOptions | HostSummary | HostLink | Start | Devices
+                | Device(_) | Bridge | Ant | Calendar(_) | CalendarDates(_) | Season
+                | Character | CharacterBody | CharacterFace | CharacterHair
+                | CharacterFacialHair | CharacterPick(_) => {}
             }
         }
         all

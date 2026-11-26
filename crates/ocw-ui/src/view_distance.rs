@@ -28,6 +28,9 @@ pub struct ViewDistanceContext {
     /// picture (the desktop's `--screenshot` and `--capture` runs, whose
     /// frame rate is the software renderer's or the capture's).
     pub frozen: bool,
+    /// A VR headset paces the frames (spec §14 Phase 11): its refresh
+    /// (Hz) is the target instead of the monitor's.
+    pub headset_hz: Option<f64>,
 }
 
 /// The tile ring changes at most this often (s): no streaming thrash.
@@ -181,8 +184,15 @@ fn read_at_start(world: &mut World) {
 /// browser and on headless outputs: the target falls back to 60).
 fn read_refresh(
     monitors: Query<(&Monitor, Has<PrimaryMonitor>)>,
+    ctx: Option<Res<ViewDistanceContext>>,
     mut state: ResMut<ViewDistanceState>,
 ) {
+    if let Some(hz) = ctx.and_then(|c| c.headset_hz) {
+        if state.refresh_hz != Some(hz) {
+            state.refresh_hz = Some(hz);
+        }
+        return;
+    }
     let mut best: Option<(bool, f64)> = None;
     for (m, primary) in &monitors {
         if let Some(mhz) = m.refresh_rate_millihertz {
@@ -236,9 +246,23 @@ pub fn adjusted(world: &World, base: QualityPreset) -> QualityPreset {
 }
 
 fn frozen(world: &World) -> bool {
-    world
-        .get_resource::<ViewDistanceContext>()
-        .is_some_and(|c| c.frozen)
+    hold_reason(world).is_some()
+}
+
+/// Why the dynamic mode holds still: a screenshot / capture run, or a VR
+/// headset (v4.70: its steps – down every 2 s, back up when the distance
+/// was not the limit – popped the far terrain and the fog in and out, seen
+/// as flicker; in VR the frame rate is held by the render scale and the
+/// `vr` preset instead).
+fn hold_reason(world: &World) -> Option<&'static str> {
+    let c = world.get_resource::<ViewDistanceContext>()?;
+    if c.frozen {
+        Some("screenshot / capture run")
+    } else if c.headset_hz.is_some() {
+        Some("VR headset")
+    } else {
+        None
+    }
 }
 
 /// The target frame rate (and why) from the setting, the app, the
@@ -368,12 +392,12 @@ pub fn status(world: &World) -> String {
     let Some(s) = world.get_resource::<ViewDistanceState>() else {
         return String::new();
     };
-    let mode = if frozen(world) && s.auto {
-        "auto held (screenshot run)"
-    } else if s.auto {
-        "auto"
-    } else {
-        "fixed"
+    let held = hold_reason(world).filter(|_| s.auto);
+    let mode = match held {
+        Some("VR headset") => "auto held (VR)",
+        Some(_) => "auto held (screenshot run)",
+        None if s.auto => "auto",
+        None => "fixed",
     };
     format!(
         "{}, {mode}, target {:.0} fps",
@@ -408,12 +432,11 @@ pub fn describe(world: &World) -> String {
     let mut out = format!(
         "view: {} ({}; limit {limit}; target {:.0} fps: {}) – trees {}, house LOD × {:.2}, tiles {n} × {n}",
         km_text(s.distance),
-        if frozen(world) && s.auto {
-            "auto, held for this screenshot / capture run"
-        } else if s.auto {
-            "auto"
-        } else {
-            "fixed"
+        match hold_reason(world).filter(|_| s.auto) {
+            Some("VR headset") => "auto, held in the VR headset",
+            Some(_) => "auto, held for this screenshot / capture run",
+            None if s.auto => "auto",
+            None => "fixed",
         },
         s.target_fps,
         s.target_reason,
@@ -575,11 +598,36 @@ mod tests {
         assert_eq!(next_ring(Some((1, 10.0)), 1, 50.0), (1, 10.0));
     }
 
+    /// In a headset session the headset's refresh is the target, not
+    /// the monitor's (the VR kiosk on Weela aimed at the monitor's 165 Hz).
+    #[test]
+    fn a_headset_sets_the_target() {
+        let mut a = app(GpuApi::Native);
+        a.insert_resource(ViewDistanceContext {
+            headset_hz: Some(72.0),
+            ..default()
+        });
+        a.update();
+        a.update();
+        assert_eq!(
+            a.world().resource::<ViewDistanceState>().refresh_hz,
+            Some(72.0)
+        );
+        let out = run(&mut a, "view auto on");
+        assert!(out.contains("72 fps"), "{out}");
+        // and the dynamic mode holds still (no popping in the headset).
+        assert!(out.contains("held in the VR headset"), "{out}");
+        assert_eq!(a.world().resource::<ViewDistanceState>().target_fps, 72.0);
+    }
+
     /// A screenshot run holds the distance at the slider.
     #[test]
     fn frozen_runs_hold_the_slider() {
         let mut a = app(GpuApi::Native);
-        a.insert_resource(ViewDistanceContext { frozen: true });
+        a.insert_resource(ViewDistanceContext {
+            frozen: true,
+            ..default()
+        });
         let out = run(&mut a, "view 20");
         assert!(out.contains("held for this screenshot"), "{out}");
         assert_eq!(preset(&a).view_m, Some(20_000.0));

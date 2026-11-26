@@ -1533,6 +1533,108 @@ under *Game Controllers* in System Settings.
 Then start the app: the left stick steers, the triggers ride and stop (see
 [Controls](#controls)).
 
+## Riding in VR (preview)
+
+OCW rides in a VR headset two ways – **PC VR** in the desktop app (OpenXR,
+spec 14 Phase 11) and **WebXR** in the headset's own browser (spec 14
+Phase 14, 14I; see [VR in the headset's browser](#vr-in-the-headsets-browser-webxr-the-first-headset-run)).
+Both draw the same bike computer on the bar and read the Touch controllers
+through the same mapping (`ocw_xr`, `ocw_render::vr`):
+
+| | **PC VR** (desktop app) | **WebXR** (browser app) |
+|---|---|---|
+| Headset | any OpenXR headset on the PC: the Quest over Meta Quest Link (Windows), SteamVR / ALVR or Monado (Linux) | the Meta Quest browser (Quest 1 first) |
+| Who renders | the PC's GPU, both eyes at the headset's rate (72 Hz on the Quest 1) | the headset itself (WebGL 2) |
+| Start | `ocw-desktop --vr` (a `--features vr` build) or *Settings → Display → HUD → VR headset* | *Enter VR* on `newkit.github.io/OCW/xr/` |
+| Without a headset | `ocw-desktop --vr-sim` (both eyes on the monitor) | `make test-web-xr` (an emulated Quest 1) |
+| Ride information | the bike computer on the out-front mount (no flat HUD in the eyes), size and tilt: `vr computer size 275`, `vr computer tilt -10` – the same in both | the same |
+| Right stick | rides: forward faster, back stop, left / right steer and pick the junction exit | the same |
+| Left stick | moves through the menu while it is open | sideways = the junction exits, its press = the menu (the Quest's left menu button belongs to the system) |
+| Recentre | both grips held, `C`, `vr recentre` | a grip's squeeze, the headset's own recentre |
+| Quality `auto` | `vr` (shadows, view and trees for two eyes at 72 Hz) | `quest1` on a Quest 1 |
+| The monitor | a mirror: one eye, both, or the chase camera (`vr mirror`) | – (the page shows *Exit VR*) |
+| The trainer | the PC's own (Bluetooth) | the desktop's, over the sensor bridge |
+
+### PC VR in the desktop app
+
+The first VR step (spec 14 Phase 11, X1): the headset is a **viewing device
+of the desktop app** – you see the ride in stereo from the saddle, with head
+tracking; you still ride with the trainer, the keyboard and the gamepad – the
+Touch controllers work as one more gamepad (no VR menus yet). All ride
+information is on a bike computer on the handlebar. The monitor keeps a mirror. VR needs the app
+**built with VR** (`--features vr`) and an **OpenXR runtime** with a headset;
+without them the app runs as always and says why at the top of the screen.
+
+**Windows with an Oculus / Meta Quest over Oculus Link** (the development
+headset is a Quest 1):
+
+1. Install the **Meta Quest Link** app (the former "Oculus" PC app – the same
+   software as for the Rift) and sign in; connect the Quest with a USB 3 cable
+   (or Air Link) and allow Link in the headset.
+2. In the Link app: *Settings → General → OpenXR Runtime → Set Meta Quest Link
+   as active*. (If SteamVR was the active OpenXR runtime, this switches it.)
+3. Build OCW with VR (on the Windows machine, from the repository):
+   ```powershell
+   cargo build --release -p ocw-desktop --features vr
+   ```
+4. Put `openxr_loader.dll` (the official Khronos OpenXR loader 1.1.65,
+   Apache-2.0) next to `ocw-desktop.exe` – the Link app has the runtime, apps
+   bring the loader. The Windows release zip carries it (with
+   `openxr_loader.LICENSE.txt`); for your own build,
+   `scripts/fetch-openxr-loader.sh target/release` fetches it from the
+   [OpenXR-SDK-Source release](https://github.com/KhronosGroup/OpenXR-SDK-Source/releases/tag/release-1.1.65)
+   and checks its SHA-256.
+5. Start the ride with the headset:
+   ```powershell
+   target\release\ocw-desktop.exe --vr
+   ```
+   or turn on *Settings → Display → HUD → VR headset → VR headset (next start)*
+   (`vr.enabled`). The app runs at the headset's rate (72 Hz on the Quest 1).
+
+**Linux** (second runtime, Q2): install the OpenXR loader (`libopenxr-loader1`)
+and a runtime – SteamVR with ALVR for a Quest, or Monado – and set it active
+(`~/.config/openxr/1/active_runtime.json`, or `XR_RUNTIME_JSON=…`), then
+`ocw-desktop --vr` from a `--features vr` build.
+
+**In VR:** `C` – or both grips of the Touch controllers held for a moment –
+recentres (look straight ahead: that is now the rider's eye on the bike; it
+also recentres by itself after the head stayed half a metre away for 5 s).
+Look down at the **bike computer** on the out-front mount ahead of the bar:
+the clock and the weather, power, speed, cadence, heart rate, gradient,
+distance and time, the next turn, the elevation profile ahead and the
+messages; *Settings → Display → HUD → VR headset → Bike computer size / tilt*
+(`vr computer size 275`, `vr computer tilt -10`). The **Touch controllers**:
+the **right stick rides** – forward faster, back stop, left / right steer and
+choose the exit at junctions; the **left stick moves through the menu** (☰
+opens it; the stick's click or A confirms, B goes back); A autodrive, B U-turn,
+X wild mode, Y back to the route; the triggers are still faster / stop; both
+grips held recentre. The bike computer shows this for 5 s when the headset
+starts showing the ride. The view keeps the horizon
+level in corners and on climbs. The console's `vr status` shows the session,
+the headset, the IPD and the frame times (time per frame against the
+headset's 13.9 ms at 72 Hz, the latency, missed frames); `vr mirror eye|both|chase`
+sets what the monitor shows (one eye, both eyes, or the chase camera for
+spectators – it costs a third view); `vr reconnect` after the runtime went
+away. The quality preset `vr` (`quality vr`, picked by `auto` in VR) trims
+shadows, view distance and trees for the headset's frame rate.
+
+**Frame rate and stability:** the eyes are drawn at 90 % of the headset
+panel's size by default (`--vr-render-scale 1` for the full panel on a
+faster GPU), without MSAA; a large or full-screen mirror window costs the
+headset frames on a laptop whose monitor hangs on the other GPU (the VR
+kiosk uses a 960 × 540 window);
+in the headset the render distance holds still. *Quit* in the headset's
+menu quits the app. `scripts/vr-soak.ps1 -Minutes 30` (on the Windows VR
+machine, through `scripts/remote.sh … run`) rides in the headset for that
+long, logs `vr status` every 30 s (frame times, missed frames, frames shown /
+empty / failed), takes left-eye screenshots and checks a clean exit.
+
+**Without a headset:** `ocw-desktop --vr-sim` renders both eyes from a
+simulated head that looks around, side by side on the monitor, with the bike
+computer – every build, no OpenXR needed (screenshots, tests). A screenshot in
+a headset session (`--screenshot`) is the left eye; `--vr-look-down 45` (or
+`vr look-down 45`) turns the view down to the bike computer for it.
+
 ## Riding modes
 
 **At the start: a server or local** (spec 3.2.4). When the desktop app starts
@@ -2236,6 +2338,9 @@ event status | event cancel | event dismiss
 | `--capture DIR`, `--capture-fps N`, `--capture-seconds S`, `--capture-warmup S` | Save every frame with a fixed game-time step (smooth videos) as `frame_NNNNN.png`, plus `audio.wav` (game sound in step with the frames), `metadata.txt` (ffmpeg metadata) and `still.jpg` (last frame), then exit |
 | `--no-audio` | No sound: open no audio output (frame capture opens none anyway; videos still get the mixer's sound) |
 | `--echo-bot` | The voice echo test: an Echo rider on the road plays your microphone back, delayed, when you are near it (`voice.echo`, see *Voice chat*) |
+| `--vr` | Ride in a VR headset over OpenXR (the `vr` build; see *Riding in VR*); without a runtime or headset the app runs as before and says why (`vr.enabled`) |
+| `--vr-sim` | VR without a headset: both eye views from a simulated head side by side, with the bike computer (any build) |
+| `--vr-look-down DEG` | VR: turn the view down (the bike computer in a screenshot; in a worn headset it tilts the world) |
 | `--no-vsync` | Draw as fast as possible instead of waiting for the display's refresh (benchmarks) |
 | `--max-fps N` | Draw at most N frames per second (with `--no-vsync`: a steady rate even where the display gives no refresh, e.g. on a locked screen) |
 | `--log-fps S` | Log the real render rate every S seconds (`render rate fps=… worst_ms=…`; wall clock, also during `--capture`) |
@@ -2795,7 +2900,8 @@ you can run are offered (no *Dev* commands on a remote server).
 | `ride.riders` | The riders of the ride and who of them flies in god mode |
 | `god.trail on\|off`, `god.invert on\|off` | The rainbow trail; invert the mouse's Y (settings `display.unicorn_trail`, `controls.invert_y`) |
 | **Camera** | |
-| `quality [auto\|low\|medium\|high]` | The graphics preset for this session (`set display.quality` saves it); without an argument: what runs and why (spec §14 Phase 10 B7) |
+| `quality [auto\|low\|medium\|high\|quest1\|vr]` | The graphics preset for this session (`set display.quality` saves it); without an argument: what runs and why (spec §14 Phase 10 B7); `vr` is the PC headset preset (`auto` picks it with `--vr`), `quest1` the Quest 1's in WebXR |
+| `vr [status\|recentre\|mirror [eye\|both\|chase]\|reconnect\|computer size PERCENT\|computer tilt DEG\|look-down DEG]` | VR (spec §14 Phase 11): the session, headset, IPD and frame times; recentre (key `C`); what the monitor shows; reconnect after the runtime went away; the bike computer's size and tilt (also in the browser for WebXR); the view turned down for a screenshot |
 | `gpu` | The GPU API (the desktop's, WebGPU or WebGL 2), the adapter and the quality preset that runs |
 | `camera.mode chase\|side\|top` | Camera perspective |
 | `camera.orbit YAW PITCH [DISTANCE]` | Orbit the chase camera (degrees; 0 = behind, 180 = in front; metres) |
@@ -4306,6 +4412,46 @@ after three quick crashes); logs in `~/.local/state/ocw/` (`kiosk.log`,
 `app.log`). The dashboard's machine card shows whether it runs and which
 build it has. More: [config/README.md](config/README.md#test-app-on-a-machines-screen-kiosk).
 
+**The Windows VR kiosk (Weela, spec §14 Phase 11, 11I):** the same show
+ride in a VR headset – Weela with a Meta Quest over Meta Quest Link. The
+kiosk runs `ocw-desktop.exe --vr --fullscreen` in show mode on its world
+(default Tenerife, Puerto de la Cruz – Teide): the headset shows the ride,
+the monitor mirrors the left eye.
+
+```bash
+scripts/deploy-test.sh Weela                       # VR release build there, installed to %LOCALAPPDATA%\OCW\kiosk
+OCW_KIOSK_WORLD=blackforest scripts/deploy-test.sh Weela   # another world (kept across deploys)
+```
+
+For a Windows machine `deploy-test.sh` runs `scripts/deploy-test-windows.sh`:
+it builds with `--features vr` there, fetches the Material library there,
+fetches the pinned Khronos `openxr_loader.dll` (with its licence) here, and
+copies the kiosk's world files (package, manifest, route files) from marge's
+kiosk (`/var/tmp/ocw`; `OCW_WORLD_SOURCE`, `OCW_WORLD_SOURCE_DIR`), only those
+whose SHA-256 differs, checked again on the machine. Each deploy is a new
+folder `builds\<time>\` beside the previous one (a running `.exe` cannot be
+replaced); `current.txt` switches to it last and the kiosk restarts the app.
+`OCW_KIOSK_ROUTE`, `OCW_KIOSK_ARGS` and `kiosk-local.args` (in the kiosk
+folder) work as on Linux. Once, as the build user (over SSH is fine – the
+task starts the kiosk in the desktop session, where the user must be logged
+in):
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+& "$env:LOCALAPPDATA\OCW\kiosk\ocw-kiosk.ps1" install     # task "OCW Kiosk", started now; no autostart (-Autostart: at logon)
+& "$env:LOCALAPPDATA\OCW\kiosk\ocw-kiosk.ps1" status      # build, task, app, the VR line and session, log
+& "$env:LOCALAPPDATA\OCW\kiosk\ocw-kiosk.ps1" restart     # or stop / start; uninstall removes the task
+& "$env:LOCALAPPDATA\OCW\kiosk\ocw-kiosk.ps1" screenshot -Out shot.png   # the monitor (the left eye)
+```
+
+Logs: `%LOCALAPPDATA%\OCW\kiosk-state\` (`kiosk.log`: starts, the VR line
+`VR: <runtime> on <headset>`, the session's changes; `app.log` the app's log).
+The session starts showing once the runtime sends it *ready*: the headset
+awake (worn – the proximity sensor) and Link on. Without a headset or runtime
+the app rides on the monitor ("VR is off: …") and the kiosk restarts it every
+5 minutes to try again (`OCW_KIOSK_VR_RETRY_S`, 0 = never). `make
+test-kiosk-windows` checks the script (PowerShell parse, its selftest).
+
 **World packages on leela:** they are built on marge (leela does not build)
 and copied over unchanged; there is no script for it. From the **main
 checkout** (`put` writes into the checkout of the current branch):
@@ -4616,6 +4762,10 @@ Third-party assets keep their own licences, listed next to them:
   [Poly Haven](https://polyhaven.com) (Rob Tuytel, Amal Kumar, Dimitrios
   Savva, Dario Barresi, Charlotte Baglioni); every material with its author and page in the manifest and in
   `CREDITS.md`.
+- The Khronos OpenXR loader `openxr_loader.dll` 1.1.65 in the Windows zip
+  (beside `ocw-desktop.exe`, for VR): Apache-2.0, © The Khronos Group Inc.;
+  its licence is `openxr_loader.LICENSE.txt` next to it
+  (`scripts/fetch-openxr-loader.sh`, pinned by version and SHA-256).
 - UI font Fira Mono (© The Mozilla Foundation and Telefonica S.A.), compiled
   into `ocw-desktop`: SIL Open Font License 1.1, see
   [`crates/ocw-render/assets/fonts/`](crates/ocw-render/assets/fonts/README.md).

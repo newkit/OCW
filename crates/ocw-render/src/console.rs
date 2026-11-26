@@ -1039,7 +1039,7 @@ fn register_builtin_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         User,
         Command::new("screenshot")
-            .about("Save a screenshot of the window: JPEG with its time in EXIF (a .png path: PNG), by default OCW-<time>.jpg in the day's folder of the activities folder (Activities/OCW/YYYY-MM-DD, setting activities.folder); in the browser into the chosen activities folder or a download; previewed in the HUD")
+            .about("Save a screenshot of the window (in a headset session: the left eye): JPEG with its time in EXIF (a .png path: PNG), by default OCW-<time>.jpg in the day's folder of the activities folder (Activities/OCW/YYYY-MM-DD, setting activities.folder); in the browser into the chosen activities folder or a download; previewed in the HUD")
             .arg(Arg::new("path")),
         |world, m| {
             use crate::photo_preview::{Caption, PhotoShot};
@@ -1074,11 +1074,25 @@ fn register_builtin_commands(app: &mut App) {
                     Caption::screenshot("Saved as screenshot.jpg"),
                 ),
             };
+            // A headset session: the left eye, as `--screenshot` (the
+            // window is the mirror, with the flat HUD over it).
+            let headset = world
+                .get_resource::<crate::vr::VrConfig>()
+                .is_some_and(|c| c.mode == crate::vr::VrMode::Headset);
+            let eye = world
+                .get_resource::<crate::vr::EyeImages>()
+                .map(|e| e.eyes[0].clone());
+            let (source, what) = match (eye, crate::autoshot::shot_from(true, headset, true)) {
+                (Some(eye), crate::autoshot::ShotFrom::LeftEye) if headset => {
+                    (Screenshot::image(eye), "the left eye")
+                }
+                _ => (Screenshot::primary_window(), "the window"),
+            };
             world
                 .commands()
-                .spawn((Screenshot::primary_window(), PhotoShot))
+                .spawn((source, PhotoShot))
                 .observe(crate::stamp::save_photo_shot(path.clone(), meta, caption));
-            Ok(format!("saving screenshot to {}", path.display()))
+            Ok(format!("saving a screenshot of {what} to {}", path.display()))
         },
     ))
     .console_command(ConsoleCommand::new(

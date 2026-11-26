@@ -976,6 +976,22 @@ fn register_commands(app: &mut App) {
             _ => Err("world trust list | add KEY | remove FINGERPRINT".into()),
         },
     ));
+    // The bike computer in VR (the settings `vr.computer_size` / `tilt`):
+    // the desktop's `vr computer …`, shared (`ocw_render::vr::computer::
+    // command`); the browser's headset is WebXR (Enter VR on the page).
+    app.console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("vr")
+            .about("VR in the browser (WebXR: Enter VR on the page): computer size PERCENT | tilt DEG (the bike computer on the bar)")
+            .arg(Arg::new("action").value_parser(["computer"]).required(true))
+            .arg(Arg::new("value"))
+            .arg(Arg::new("amount").allow_hyphen_values(true)),
+        |world, m| {
+            let value = m.get_one::<String>("value").map(String::as_str);
+            let amount = m.get_one::<String>("amount").map(String::as_str);
+            ocw_render::vr::computer::command(world, value, amount)
+        },
+    ));
     app.console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("ride.save").about(

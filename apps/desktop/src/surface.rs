@@ -46,6 +46,10 @@ pub enum Verdict {
     Restart { adapter: String },
     /// No adapter can present (or the restart did not help): exit.
     Fail { reason: String },
+    /// A headset owns the device (OpenXR made it, VR runs): another adapter
+    /// would end the session, so the app runs on without its monitor
+    /// window (no mirror) and the headset goes on.
+    Headless { reason: String },
 }
 
 /// Whether a surface with these capabilities can be configured at all
@@ -89,10 +93,29 @@ pub fn verdict(current: &str, candidates: &[Candidate], retried: bool) -> Verdic
     }
 }
 
+/// [`verdict`] while a headset may own the device: with `headset` a
+/// restart or a failure becomes [`Verdict::Headless`].
+pub fn verdict_with_headset(
+    current: &str,
+    candidates: &[Candidate],
+    retried: bool,
+    headset: bool,
+) -> Verdict {
+    match verdict(current, candidates, retried) {
+        Verdict::Restart { .. } | Verdict::Fail { .. } if headset => Verdict::Headless {
+            reason: format!(
+                "graphics adapter '{current}' (the headset's) cannot present to the window: \
+                 VR runs without the monitor mirror"
+            ),
+        },
+        v => v,
+    }
+}
+
 /// The exit for a verdict (`None`: keep running).
 pub fn exit_for(v: &Verdict) -> Option<AppExit> {
     match v {
-        Verdict::Supported => None,
+        Verdict::Supported | Verdict::Headless { .. } => None,
         Verdict::Restart { .. } => Some(AppExit::Success),
         Verdict::Fail { .. } => Some(AppExit::error()),
     }
@@ -125,6 +148,7 @@ fn check_new_windows(
     mut commands: Commands,
     windows: Query<Entity, (With<Window>, With<bevy::window::RawHandleWrapper>)>,
     info: Option<Res<bevy::render::renderer::RenderAdapterInfo>>,
+    vr: Option<Res<ocw_render::vr::VrConfig>>,
     mut exit: MessageWriter<AppExit>,
     _main_thread: bevy::ecs::system::NonSendMarker,
     mut checked: Local<bevy::platform::collections::HashSet<Entity>>,
@@ -145,7 +169,23 @@ fn check_new_windows(
         };
         checked.insert(entity);
         let current = info.name.clone();
-        let v = verdict(&current, &candidates, std::env::var_os(RETRY_ENV).is_some());
+        let headset = vr
+            .as_ref()
+            .is_some_and(|c| c.mode == ocw_render::vr::VrMode::Headset);
+        let v = verdict_with_headset(
+            &current,
+            &candidates,
+            std::env::var_os(RETRY_ENV).is_some(),
+            headset,
+        );
+        if let Verdict::Headless { reason } = &v {
+            warn!("{reason}");
+            // No surface for the window: the renderer never configures it.
+            commands
+                .entity(entity)
+                .remove::<bevy::window::RawHandleWrapper>();
+            continue;
+        }
         let Some(code) = exit_for(&v) else {
             continue;
         };
@@ -161,7 +201,7 @@ fn check_new_windows(
                 }
             }
             Verdict::Fail { reason } => error!("cannot show the window: {reason}"),
-            Verdict::Supported => {}
+            Verdict::Supported | Verdict::Headless { .. } => {}
         }
         commands
             .entity(entity)
@@ -273,6 +313,28 @@ mod tests {
         assert_eq!(verdict(RADV, &[], false), Verdict::Supported);
         assert_eq!(
             verdict(RADV, &[c(LAVAPIPE, true, true)], false),
+            Verdict::Supported
+        );
+    }
+
+    /// Regression (2026-11-16, Monado on marge under Xvfb): the headset's
+    /// GPU cannot present to the window; a restart on lavapipe would end
+    /// the VR session, so VR runs on without the mirror.
+    #[test]
+    fn a_headset_keeps_its_gpu_without_the_window() {
+        let v = verdict_with_headset(RADV, &marge(), false, true);
+        assert!(matches!(v, Verdict::Headless { .. }), "{v:?}");
+        assert_eq!(exit_for(&v), None);
+        // Without a headset: the restart as before.
+        assert_eq!(
+            verdict_with_headset(RADV, &marge(), false, false),
+            Verdict::Restart {
+                adapter: LAVAPIPE.into()
+            }
+        );
+        // A window that presents is shown, headset or not.
+        assert_eq!(
+            verdict_with_headset(LAVAPIPE, &marge(), false, true),
             Verdict::Supported
         );
     }
