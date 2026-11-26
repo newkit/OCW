@@ -60,6 +60,7 @@ pub mod part_tiles;
 pub mod photographer;
 pub mod quality;
 pub mod recording;
+pub mod ride_summary;
 pub mod rider_list;
 pub mod riders;
 pub mod road_bumps;

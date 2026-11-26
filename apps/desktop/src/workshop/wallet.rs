@@ -605,6 +605,57 @@ pub struct Wallet {
     dir: Option<PathBuf>,
     /// The clock (UTC unix seconds) for ledger lines and purchase dates.
     pub now_unix: Option<i64>,
+    /// Signed in (spec 14 Phase 4, 4O): the account's workshop. The
+    /// balance, the ledger and the garage are the backend's as last
+    /// synced; nothing is booked or saved here – every change is an
+    /// action the backend checks ([`Wallet::is_account`]).
+    pub account: Option<AccountView>,
+}
+
+/// The account behind an account wallet.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AccountView {
+    pub account: String,
+    pub hearts: i64,
+    /// The backend answered the last call; offline the workshop is
+    /// read-only (Q20 (a)).
+    pub online: bool,
+    /// When the garage was synced (Unix s).
+    pub synced_at: i64,
+    /// Ride summaries waiting for the backend.
+    pub queued_rides: usize,
+    /// Actions sent, not answered yet.
+    pub pending: usize,
+}
+
+/// The account's garage as the desktop's model (the same fields).
+pub fn garage_of(g: &ocw_account_api::workshop::Garage, rider: &str) -> Garage {
+    let mut out: Garage = serde_json::to_value(g)
+        .and_then(serde_json::from_value)
+        .unwrap_or_else(|_| Garage::starter(rider, ProfileId::default()));
+    out.rider = rider.into();
+    if out.bikes.is_empty() {
+        out = Garage::starter(rider, ProfileId::default());
+    }
+    out
+}
+
+/// The account's ledger lines as the local ledger's.
+pub fn entries_of(rider: &str, ledger: &[ocw_account_api::workshop::LedgerEntry]) -> Vec<Entry> {
+    ledger
+        .iter()
+        .rev()
+        .map(|e| {
+            let (y, mo, d, h, mi, s) = ocw_core::timestamp::civil(e.at);
+            Entry {
+                t: format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z"),
+                rider: rider.into(),
+                delta: e.delta,
+                reason: e.reason.id().into(),
+                reference: e.reference.clone(),
+            }
+        })
+        .collect()
 }
 
 pub const WORKSHOP_FILE: &str = "workshop.toml";
@@ -637,6 +688,46 @@ pub fn default_dir() -> Option<PathBuf> {
 }
 
 impl Wallet {
+    /// The account's workshop as synced (spec 14 Phase 4, 4O): `rider`'s
+    /// garage is the account's, the balance and ledger the backend's.
+    pub fn for_account(
+        view: AccountView,
+        rider: &str,
+        state: &ocw_account_api::workshop::WorkshopState,
+    ) -> Self {
+        let mut w = Self {
+            account: Some(view),
+            ..Self::default()
+        };
+        w.adopt(rider, state);
+        w
+    }
+
+    /// Takes the backend's workshop (a sync or an action's answer).
+    pub fn adopt(&mut self, rider: &str, state: &ocw_account_api::workshop::WorkshopState) {
+        self.garages
+            .insert(rider.into(), garage_of(&state.garage, rider));
+        self.ledger = entries_of(rider, &state.ledger);
+        if let Some(a) = &mut self.account {
+            a.hearts = state.hearts;
+            a.account.clone_from(&state.account);
+        }
+    }
+
+    /// An action's answer: the garage and the balance it left.
+    pub fn adopt_answer(&mut self, rider: &str, a: &ocw_account_api::workshop::ActionAnswer) {
+        self.garages
+            .insert(rider.into(), garage_of(&a.garage, rider));
+        if let Some(v) = &mut self.account {
+            v.hearts = a.hearts;
+        }
+    }
+
+    /// Signed in: the account's workshop (no local booking or saving).
+    pub fn is_account(&self) -> bool {
+        self.account.is_some()
+    }
+
     /// A wallet that is never saved (tests, no data directory).
     pub fn in_memory() -> Self {
         Self::default()
@@ -699,8 +790,9 @@ impl Wallet {
     }
 
     fn book(&mut self, rider: &str, delta: i64, reason: &str, reference: String) {
-        // Training mode: nothing costs or earns hearts.
-        if self.training {
+        // Training mode: nothing costs or earns hearts; an account books on
+        // the backend.
+        if self.training || self.account.is_some() {
             return;
         }
         let t = self.stamp();
@@ -735,6 +827,9 @@ impl Wallet {
     /// The rider's balance: the sum of the ledger ([`UNLIMITED`] in
     /// Training mode).
     pub fn balance(&self, rider: &str) -> i64 {
+        if let Some(a) = &self.account {
+            return a.hearts;
+        }
         if self.training {
             return UNLIMITED;
         }
@@ -1288,6 +1383,10 @@ impl Wallet {
     /// Writes `workshop.toml` (replaced whole) and appends the new ledger
     /// lines. Without a directory: nothing.
     pub fn save(&mut self) -> Result<(), String> {
+        // The account's workshop lives on the backend.
+        if self.account.is_some() {
+            return Ok(());
+        }
         let Some(dir) = self.dir.clone() else {
             return Ok(());
         };

@@ -56,7 +56,8 @@ use crate::connection::{ClientState, Link};
 use crate::settings::RiderProfiles;
 use input::{Act, ActiveInput, Gestures, HintCtx, MouseState, Pad, StickLatch, Touch};
 use model::{Ctx, Out, Workshop};
-use wallet::{Garage, Wallet};
+use ocw_account_api::workshop::Action;
+use wallet::{AccountView, Garage, Wallet};
 
 pub struct WorkshopPlugin;
 
@@ -91,6 +92,16 @@ pub struct WorkshopState {
     /// only a change of it is written, so a repair in the workshop is not
     /// overwritten before the server has it.
     last_damage: Option<Vec<u32>>,
+    /// Signed in (spec 14 Phase 4, 4O): the local test wallet set aside
+    /// while `wallet` is the account's; back when signed out.
+    local: Option<Wallet>,
+    /// The account workshop's generation last taken.
+    account_gen: u64,
+    /// Signed in, the account's workshop not known yet: "connecting".
+    pub connecting: bool,
+    /// Account actions sent and not answered: id → apply the bike after.
+    pending: std::collections::BTreeMap<u64, bool>,
+    next_action: u64,
 }
 
 impl WorkshopState {
@@ -114,6 +125,11 @@ impl WorkshopState {
             damage_session: f64::NAN,
             ride_bike: None,
             last_damage: None,
+            local: None,
+            account_gen: 0,
+            connecting: false,
+            pending: std::collections::BTreeMap::new(),
+            next_action: 0,
         }
     }
 
@@ -211,7 +227,14 @@ impl Plugin for WorkshopPlugin {
         }
         app.insert_resource(state).add_systems(
             Update,
-            (earn_hearts, keep_damage, workshop_input, write_view).chain(),
+            (
+                follow_account,
+                earn_hearts,
+                keep_damage,
+                workshop_input,
+                write_view,
+            )
+                .chain(),
         );
         register_commands(app);
         register_apply(app);
@@ -404,6 +427,7 @@ fn register_commands(app: &mut App) {
                     .value_parser(clap::value_parser!(i64)),
             ),
         |world, m| {
+            not_with_account(world, "hearts.grant")?;
             let n = *m.get_one::<i64>("n").expect("required");
             let (name, bike) = rider(world);
             let mut s = world.resource_mut::<WorkshopState>();
@@ -453,6 +477,14 @@ fn register_commands(app: &mut App) {
             .arg(Arg::new("bike").long("bike")),
         |world, m| {
             let part = m.get_one::<String>("part").expect("required").clone();
+            if let Some(r) = via_account(world, "buying", false, |g| {
+                Ok(Action::BuyPart {
+                    bike: bike_arg(g, m)?.id.clone(),
+                    part: part.clone(),
+                })
+            }) {
+                return r;
+            }
             garage_op(world, m, |w, name, bike| {
                 let r = w.buy(cat(), name, bike, &part)?;
                 let with = if r.fitted.is_empty() {
@@ -481,6 +513,14 @@ fn register_commands(app: &mut App) {
             .arg(Arg::new("bike").long("bike")),
         |world, m| {
             let item = *m.get_one::<u32>("item").expect("required");
+            if let Some(r) = via_account(world, "fitting", false, |g| {
+                Ok(Action::Equip {
+                    bike: bike_arg(g, m)?.id.clone(),
+                    item,
+                })
+            }) {
+                return r;
+            }
             garage_op(world, m, |w, name, bike| w.equip(cat(), name, bike, item))
         },
     ))
@@ -496,6 +536,14 @@ fn register_commands(app: &mut App) {
             .arg(Arg::new("bike").long("bike")),
         |world, m| {
             let slot = Slot::parse(m.get_one::<String>("slot").expect("required")).expect("parsed");
+            if let Some(r) = via_account(world, "taking it off", false, |g| {
+                Ok(Action::Unequip {
+                    bike: bike_arg(g, m)?.id.clone(),
+                    slot: slot.id().into(),
+                })
+            }) {
+                return r;
+            }
             garage_op(world, m, |w, name, bike| {
                 Ok(match w.unequip(name, bike, slot)? {
                     Some(i) => format!("item {i} is a spare part now"),
@@ -515,6 +563,9 @@ fn register_commands(app: &mut App) {
             ),
         |world, m| {
             let item = *m.get_one::<u32>("item").expect("required");
+            if let Some(r) = via_account(world, "selling", false, |_| Ok(Action::Sell { item })) {
+                return r;
+            }
             garage_op(world, m, |w, name, _| {
                 let refund = w.sell(name, item)?;
                 Ok(format!(
@@ -541,6 +592,7 @@ fn register_commands(app: &mut App) {
             .arg(Arg::new("bike").long("bike")),
         |world, m| {
             let part = m.get_one::<String>("part").expect("required").clone();
+            not_with_account(world, "workshop.repair")?;
             garage_op(world, m, |w, name, bike| {
                 if part == "all" {
                     let (paid, n) = w.repair_all(cat(), name, bike)?;
@@ -583,6 +635,7 @@ fn register_commands(app: &mut App) {
             .arg(Arg::new("bike").long("bike")),
         |world, m| {
             let part = m.get_one::<String>("part").expect("required").clone();
+            not_with_account(world, "workshop.damage")?;
             let c = (m.get_one::<f64>("percent").expect("required") / 100.0).clamp(0.0, 1.0);
             garage_op(world, m, |w, name, bike| {
                 let now = w.clock();
@@ -615,6 +668,14 @@ fn register_commands(app: &mut App) {
                 "carbon" => Some(ocw_core::bike::BARE_CARBON),
                 v => Some(Rgb::parse(v).ok_or_else(|| format!("not a colour: {v} (#RRGGBB)"))?),
             };
+            if let Some(r) = via_account(world, "painting", true, |g| {
+                Ok(Action::Paint {
+                    bike: bike_arg(g, m)?.id.clone(),
+                    colour: colour.map(|c| c.to_string()),
+                })
+            }) {
+                return r;
+            }
             garage_op(world, m, |w, name, bike| {
                 w.paint(name, bike, colour)?;
                 Ok(format!(
@@ -661,6 +722,9 @@ fn register_commands(app: &mut App) {
             ),
         |world, m| {
             let id = m.get_one::<String>("bike").expect("required").clone();
+            if let Some(r) = via_account(world, "selecting", true, |_| Ok(Action::Select { bike: id.clone() })) {
+                return r;
+            }
             let (name, _) = rider(world);
             let profile = {
                 let mut s = world.resource_mut::<WorkshopState>();
@@ -706,6 +770,14 @@ fn register_commands(app: &mut App) {
                 .get_many::<String>("with")
                 .map(|v| v.cloned().collect())
                 .unwrap_or_default();
+            if let Some(r) = via_account(world, "buying the bike", false, |_| {
+                Ok(Action::BuyBike {
+                    frame: frame.clone(),
+                    with: with.clone(),
+                })
+            }) {
+                return r;
+            }
             let (name, bike) = rider(world);
             let mut s = world.resource_mut::<WorkshopState>();
             s.wallet.garage(&name, bike);
@@ -736,6 +808,9 @@ fn register_commands(app: &mut App) {
             .arg(Arg::new("bike").required(true)),
         |world, m| {
             let id = m.get_one::<String>("bike").expect("required").clone();
+            if let Some(r) = via_account(world, "selling the bike", true, |_| Ok(Action::SellBike { bike: id.clone() })) {
+                return r;
+            }
             let (name, bike) = rider(world);
             let was_active = {
                 let mut s = world.resource_mut::<WorkshopState>();
@@ -769,6 +844,7 @@ fn register_commands(app: &mut App) {
             ),
         |world, m| {
             let item = *m.get_one::<u32>("item").expect("required");
+            not_with_account(world, "bikes.hang")?;
             let (name, bike) = rider(world);
             let mut s = world.resource_mut::<WorkshopState>();
             s.wallet.garage(&name, bike);
@@ -990,6 +1066,178 @@ fn bike_arg<'g>(g: &'g Garage, m: &clap::ArgMatches) -> Result<&'g wallet::Bike,
     }
 }
 
+/// Signed in (spec 14 Phase 4, 4O): `make` the action from the account's
+/// garage and send it to the backend – answered later, never waited for
+/// ([`follow_account`] applies the answer); `None`: not signed in, the
+/// local wallet does it. Offline the workshop is read-only (Q20 (a)).
+fn via_account(
+    world: &mut World,
+    what: &str,
+    apply: bool,
+    make: impl FnOnce(&Garage) -> Result<Action, String>,
+) -> Option<Result<String, String>> {
+    let (name, _) = rider(world);
+    let s = world.resource::<WorkshopState>();
+    let view = s.wallet.account.clone()?;
+    let action = match s
+        .wallet
+        .get(&name)
+        .ok_or_else(|| "no garage".to_string())
+        .and_then(make)
+    {
+        Ok(a) => a,
+        Err(e) => return Some(Err(e)),
+    };
+    if let Err(e) = ocw_account_api::offline::allowed(&action, view.online) {
+        return Some(Err(e));
+    }
+    let id = {
+        let mut s = world.resource_mut::<WorkshopState>();
+        s.next_action += 1;
+        let id = s.next_action;
+        s.pending.insert(id, apply);
+        if let Some(a) = &mut s.wallet.account {
+            a.pending += 1;
+        }
+        id
+    };
+    let sent = world
+        .get_resource::<crate::account::Account>()
+        .is_some_and(|a| a.send_action(id, action));
+    if !sent {
+        world.resource_mut::<WorkshopState>().pending.remove(&id);
+        return Some(Err("sign-in is not set up".into()));
+    }
+    Some(Ok(format!("{what}: sent to your account …")))
+}
+
+/// What the account's workshop cannot do yet (repairs, hanging a spare
+/// frame, the dev commands; spec 14 Phase 4, 4O *Not yet*).
+fn not_with_account(world: &World, what: &str) -> Result<(), String> {
+    if world.resource::<WorkshopState>().wallet.is_account() {
+        return Err(format!(
+            "{what} is not available with an account yet (signed out it uses the local test wallet)"
+        ));
+    }
+    Ok(())
+}
+
+/// The balance line of the workshop: the account's, offline or connecting,
+/// or the local test wallet's, marked local (spec 14 Phase 4, 4O).
+pub fn balance_label(s: &WorkshopState, balance: i64) -> String {
+    match &s.wallet.account {
+        Some(a) if !a.online => format!("{} · account, offline (read-only)", hearts(balance)),
+        Some(a) if a.pending > 0 => format!("{} · account (saving …)", hearts(balance)),
+        Some(_) => format!("{} · account", hearts(balance)),
+        None if s.connecting => format!("{} · connecting to your account …", hearts(balance)),
+        None if s.wallet.training => format!("{} · local", hearts(balance)),
+        None => format!("{} · local test wallet", hearts(balance)),
+    }
+}
+
+/// Follows the sign-in (spec 14 Phase 4, 4O): signed in, the workshop is
+/// the account's (the local test wallet set aside); signed out, the local
+/// one again. Applies the answers of the actions sent.
+///
+/// Signed in, the account's workshop replaces Training mode's free garage
+/// too (3.2.4 Q4 is the signed-out case): what the rider owns and earns is
+/// the account's.
+fn follow_account(world: &mut World) {
+    let (name, _) = rider(world);
+    let Some(seen) = world.get_resource::<WorkshopState>().map(|s| s.account_gen) else {
+        return;
+    };
+    let Some(acc) = world.get_resource::<crate::account::Account>() else {
+        return;
+    };
+    let signed_in_now = acc.signed_in();
+    let upd = acc.workshop_update(seen);
+    let mut said = Vec::new();
+    let mut apply = false;
+    {
+        let mut s = world.resource_mut::<WorkshopState>();
+        s.connecting = signed_in_now && !upd.signed_in;
+        if upd.signed_in {
+            if let Some(sy) = &upd.synced {
+                let view = AccountView {
+                    account: sy.state.account.clone(),
+                    hearts: sy.state.hearts,
+                    online: upd.online,
+                    synced_at: sy.synced_at,
+                    queued_rides: upd.queued,
+                    pending: s.pending.len(),
+                };
+                if s.wallet.is_account() {
+                    let before = s.wallet.get(&name).map(|g| g.active.clone());
+                    s.wallet.account = Some(view);
+                    s.wallet.adopt(&name, &sy.state);
+                    apply |= s.wallet.get(&name).map(|g| g.active.clone()) != before;
+                } else {
+                    let w = Wallet::for_account(view, &name, &sy.state);
+                    let local = std::mem::replace(&mut s.wallet, w);
+                    s.local = Some(local);
+                    said.push(format!(
+                        "workshop: your account's workshop, {}{}",
+                        hearts(sy.state.hearts),
+                        if upd.online {
+                            ""
+                        } else {
+                            " (offline: read-only, as last synced)"
+                        }
+                    ));
+                    apply = true;
+                }
+            }
+            // (Unchanged generation: nothing new from the thread – every
+            // change of `online` or the queue comes with a new one.)
+            s.account_gen = upd.generation;
+        } else if s.wallet.is_account() && !signed_in_now {
+            if let Some(local) = s.local.take() {
+                s.wallet = local;
+            }
+            s.pending.clear();
+            s.account_gen = 0;
+            said.push("workshop: signed out – the local test wallet".into());
+            apply = true;
+        }
+        for a in upd.answers {
+            let after = s.pending.remove(&a.id).unwrap_or(false);
+            match a.result {
+                Ok(ans) => {
+                    s.wallet.adopt_answer(&name, &ans);
+                    let fitted = if ans.fitted.is_empty() {
+                        String::new()
+                    } else {
+                        format!(", with the {}", ans.fitted.join(", "))
+                    };
+                    said.push(format!(
+                        "{}{fitted}; balance {}",
+                        ans.message,
+                        hearts(ans.hearts)
+                    ));
+                    apply |= after;
+                }
+                Err(e) => said.push(format!("workshop: {e}")),
+            }
+        }
+        let pending = s.pending.len();
+        if let Some(a) = &mut s.wallet.account {
+            a.pending = pending;
+        }
+    }
+    if !said.is_empty()
+        && let Some(mut c) = world.get_resource_mut::<ConsoleState>()
+    {
+        for m in said {
+            info!("{m}");
+            c.print(m);
+        }
+    }
+    if apply && world.resource::<WorkshopState>().scene.is_none() {
+        apply_bike(world);
+    }
+}
+
 /// Runs a garage change for the riding rider and saves the wallet.
 fn garage_op(
     world: &mut World,
@@ -1059,6 +1307,11 @@ fn open(world: &mut World) -> Result<String, String> {
     let _ = layout;
     if let Some(mut c) = world.get_resource_mut::<ClientState>() {
         c.0.hold_steering();
+    }
+    // Signed in: the account's balance and garage fresh from the backend
+    // (answered later; the cached one shows meanwhile).
+    if let Some(a) = world.get_resource::<crate::account::Account>() {
+        a.sync_workshop();
     }
     info!("workshop opened");
     Ok(String::new())
@@ -1638,7 +1891,7 @@ fn write_view(
         status: ride
             .as_deref()
             .map_or_else(String::new, crate::menu::status_line),
-        hearts: hearts(balance),
+        hearts: balance_label(&state, balance),
         hint: input::hint(state.active, hint_ctx),
         caption: scene.caption.clone(),
         ride_window: state.ride_window,

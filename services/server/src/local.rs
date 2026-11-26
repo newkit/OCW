@@ -59,6 +59,9 @@ pub fn local_config(bots: u32, start_m: f64) -> ServerConfig {
         // The photographer's gap is the client's to keep here (dev
         // commands: no gap on the server).
         photo_gap_s: None,
+        // The app uploads its own rides' summaries (spec 14 Phase 4, 4O
+        // Q19): a local server credits nothing.
+        hearts_credits: None,
     }
 }
 

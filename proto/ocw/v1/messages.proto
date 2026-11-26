@@ -980,6 +980,10 @@ message Welcome {
   // `ocw-server --dev-commands` for tests (spec §7.1.11). The clients then
   // allow their dev console commands.
   bool dev_commands = 22;
+  // This server credits the hearts of signed-in riders itself: its key is
+  // certified by the project's root key (spec 14 Phase 4, 4O Q19 (a)).
+  // The app then uploads no ride summary for this ride.
+  bool hearts_credited = 23;
 }
 
 enum ClockMode {
