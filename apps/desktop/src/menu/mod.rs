@@ -189,6 +189,8 @@ mod tests {
             Device(0),
             Bridge,
             Ant,
+            AntDriver,
+            AntAccess,
             Join,
             HostWorld,
             HostRoute,
@@ -225,9 +227,9 @@ mod tests {
                 | HistoryBests | HistoryWaiting | StravaWaiting | EventRules | Account
                 | TrustedKeys | TrustedKey(_) | Join | HostWorld | HostRoute | HostTime
                 | HostWeather | HostOptions | HostSummary | HostLink | Start | Devices
-                | Device(_) | Bridge | Ant | Calendar(_) | CalendarDates(_) | Season
-                | Character | CharacterBody | CharacterFace | CharacterHair
-                | CharacterFacialHair | CharacterPick(_) => {}
+                | Device(_) | Bridge | Ant | AntDriver | AntAccess | Calendar(_)
+                | CalendarDates(_) | Season | Character | CharacterBody | CharacterFace
+                | CharacterHair | CharacterFacialHair | CharacterPick(_) => {}
             }
         }
         all

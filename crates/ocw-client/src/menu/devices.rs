@@ -33,10 +33,10 @@ pub const ANT_NOTE: &str = "ANT+ straps need the ANT+ network key (16 hex digits
 
 /// Devices -> ANT+ -> Driver for the ANT stick (Windows; spec 3.4.1 *The
 /// driver route on Windows*, 14 Phase 17 Q7 (d)).
-pub const ANT_DRIVER_NOTE: &str = "Windows needs a driver for the ANT stick. Usually (as for Zwift): let Windows Update install Garmin's driver - on Windows 11 under Settings > Windows Update > Advanced options > Optional updates (Dynastream Innovations, ANT USB-m or ANT USB Stick 2) - then plug the stick in again. Fallback: bind WinUSB to the stick with Zadig (Garmin Express and Zwift then no longer see it). Only one program can use the stick at a time.";
+pub const ANT_DRIVER_NOTE: &str = "Needs Garmin's ANT driver (as for Zwift): Windows Update > Optional updates, then plug the stick in again. Fallback: WinUSB with Zadig.";
 
 /// Devices -> ANT+ -> Install access (Linux; 14 Phase 17 Q8 (b)).
-pub const ANT_ACCESS_NOTE: &str = "Linux lets you open the ANT stick only with a udev rule. Install access asks for your password (pkexec), writes the rule to /etc/udev/rules.d/60-ocw-ant.rules and reloads udev; then plug the stick in again. Only one program can use the stick at a time.";
+pub const ANT_ACCESS_NOTE: &str = "Linux opens the stick only with a udev rule. Install access asks for your password (pkexec) and adds it; then plug the stick in again.";
 
 /// The command that installs the Linux access rule (`ocw-desktop
 /// --install-udev-rule` in a terminal does the same).
@@ -448,17 +448,16 @@ fn ant_rows(a: &AntInfo) -> Vec<Row> {
 }
 
 /// Devices -> ANT+ -> Driver for the ANT stick (Windows): the two routes
-/// (the note explains them) and the stick's state.
-fn driver_rows(a: &AntInfo) -> Vec<Row> {
+/// (the note explains them); the status line has the stick's state.
+fn driver_rows(_: &AntInfo) -> Vec<Row> {
     vec![
-        info_row("Stick", Some(short_label(&a.state, 40))),
         info_row(
             "1. Windows Update",
             Some("Optional updates: Garmin's ANT driver".into()),
         ),
         info_row(
             "2. Or Zadig",
-            Some("WinUSB for the stick (fallback)".into()),
+            Some("WinUSB (Zwift then loses the stick)".into()),
         ),
         info_row(
             "One program at a time",
@@ -471,7 +470,6 @@ fn driver_rows(a: &AntInfo) -> Vec<Row> {
 /// what the last try said.
 fn access_rows(a: &AntInfo) -> Vec<Row> {
     let mut out = vec![
-        info_row("Stick", Some(short_label(&a.state, 40))),
         Row::action(
             "Install access (asks for your password)",
             ANT_ACCESS_COMMAND,
@@ -1124,7 +1122,7 @@ mod tests {
         assert_eq!(Page::AntAccess.parent(), Some(Page::Ant));
         let page = rows(Page::AntAccess, &info);
         assert_eq!(
-            page[1].confirm,
+            page[0].confirm,
             Some(Activate::Command(ANT_ACCESS_COMMAND.into()))
         );
         assert!(
@@ -1149,16 +1147,12 @@ mod tests {
         assert_eq!(a[1].confirm, Some(Activate::Open(Page::AntDriver)));
         assert_eq!(
             labels(&info, Page::AntDriver),
-            [
-                "Stick",
-                "1. Windows Update",
-                "2. Or Zadig",
-                "One program at a time"
-            ]
+            ["1. Windows Update", "2. Or Zadig", "One program at a time"]
         );
         let note = Page::AntDriver.notes()[0];
         assert!(note.contains("Optional updates") && note.contains("Zadig"));
-        assert!(note.contains("one program"));
+        // Short enough for the 16:9 page (the desktop's test measures it).
+        assert!(note.len() <= ANT_NOTE.len() && ANT_ACCESS_NOTE.len() <= ANT_NOTE.len());
         for p in [Page::AntDriver, Page::AntAccess] {
             assert!(p.notes().iter().all(|t| t.is_ascii()), "{p:?}");
             assert!(rows(p, &info).len() < 7);
