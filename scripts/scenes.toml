@@ -5530,3 +5530,70 @@ riders = "active = \"Hal Domestique\"\n[[rider]]\nname = \"Hal Domestique\"\nwei
 at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --age 40s --skin 9 --beard full", "0.7=kit.design --jersey #E53935 --second #F2F2EE --helmet #E53935", "2.5=camera.orbit 175 3 45"]
 shot = 9
 pick = false
+
+# --- White panels removed (2026-11-26) ---------------------------------------
+# The user circled white rectangles on the deep rims and the down tube; the
+# same looks before / after, then other frames, wheels and paints.
+
+[[scene]]
+name = "white-panels-stand-aero"
+description = "Regression (white panels, 2026-11-26): the red aero road bike on the workshop stand, side view – deep rims and down tube without white label panels"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 64.0\nheight_cm = 170.0\nbike = \"road-aero\"\nframe_color = \"#D9483B\"\njersey_color = \"#F2F2EE\"\n"
+at = ["2=workshop open", "2.6=workshop select"]
+shot = 12
+pick = false
+
+[[scene]]
+name = "white-panels-road-aero"
+description = "Regression (white panels, 2026-11-26): the same red aero road bike riding the Hills test route, side camera"
+args = ["--route", "hills", "--bots", "0", "--power", "230"]
+riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 64.0\nheight_cm = 170.0\nbike = \"road-aero\"\nframe_color = \"#D9483B\"\njersey_color = \"#F2F2EE\"\n"
+at = ["0.5=hud off", "1=camera.mode side"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "white-panels-stand-tt"
+description = "Regression (white panels, 2026-11-26): a blue time-trial bike on the stand – deep front rim and rear disc plain, no white stripes"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Bea Climber\"\n[[rider]]\nname = \"Bea Climber\"\nweight_kg = 82.0\nheight_cm = 188.0\nbike = \"tt\"\nframe_color = \"#1F5FBF\"\njersey_color = \"#FFB300\"\nhelmet_color = \"#1F5FBF\"\nskin = 7\n"
+at = ["2=workshop open", "2.6=workshop select"]
+shot = 12
+pick = false
+
+[[scene]]
+name = "white-panels-road-tt"
+description = "Regression (white panels, 2026-11-26): the blue time-trial bike on the road, side camera – disc and deep rim without white patches"
+args = ["--route", "hills", "--bots", "0", "--power", "300"]
+riders = "active = \"Bea Climber\"\n[[rider]]\nname = \"Bea Climber\"\nweight_kg = 82.0\nheight_cm = 188.0\nbike = \"tt\"\nframe_color = \"#1F5FBF\"\njersey_color = \"#FFB300\"\nhelmet_color = \"#1F5FBF\"\nskin = 7\n"
+at = ["0.5=hud off", "1=camera.mode side"]
+shot = 10
+pick = false
+
+[[scene]]
+name = "white-panels-stand-endurance-carbon"
+description = "Regression (white panels, 2026-11-26): a yellow endurance road bike with the top carbon wheels on the stand – plain deep rims, painted down tube"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Cleo Sprinter\"\n[[rider]]\nname = \"Cleo Sprinter\"\nweight_kg = 58.0\nheight_cm = 160.0\nbike = \"road\"\nframe_color = \"#E8C21A\"\njersey_color = \"#2E7D32\"\nhelmet_color = \"#111111\"\nhair_color = \"#C8A060\"\n"
+at = ["2=hearts.grant 9000", "2.1=workshop.buy wheels.road-carbon.top", "3=workshop open", "3.6=workshop select"]
+shot = 14
+pick = false
+
+[[scene]]
+name = "white-panels-stand-gravel"
+description = "Regression (white panels, 2026-11-26): a green gravel bike on the stand – the down tube's paint unbroken"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Dov Gravel\"\n[[rider]]\nname = \"Dov Gravel\"\nweight_kg = 74.0\nheight_cm = 179.0\nbike = \"gravel\"\nframe_color = \"#3E7D4F\"\njersey_color = \"#8E24AA\"\nskin = 4\n"
+at = ["2=workshop open", "2.6=workshop select"]
+shot = 12
+pick = false
+
+[[scene]]
+name = "white-panels-stand-mtb"
+description = "Regression (white panels, 2026-11-26): a purple hardtail on the stand – the down tube's paint unbroken"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+riders = "active = \"Eli Trail\"\n[[rider]]\nname = \"Eli Trail\"\nweight_kg = 70.0\nheight_cm = 175.0\nbike = \"mtb\"\nframe_color = \"#7A3FA0\"\njersey_color = \"#00897B\"\nhelmet_color = \"#F2F2EE\"\n"
+at = ["2=workshop open", "2.6=workshop select"]
+shot = 12
+pick = false
