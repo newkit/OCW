@@ -179,6 +179,70 @@ s=$(mktemp -d)
 ) || fail=1
 rm -rf "$s"
 
+# Stale files (spec 11.2): sync_tree end to end for Linux and macOS against
+# a local scratch "machine" – `ssh` is a script that runs the command with
+# bash (also rsync's remote side). A file moved away here disappears there
+# (with its emptied directory); untracked build outputs, git-ignored files
+# and anything an earlier sync did not send stay; `..`, absolute paths,
+# config/, target/ and paths through a symlinked directory are never
+# deleted; the first sync deletes nothing.
+for st_os in linux macos; do
+  (
+    set -e
+    sf=""
+    for f in snapshot_tree stale_report sync_tree; do
+      sf+=$(awk -v f="$f" '$0 ~ "^" f "\\(\\) \\{" { p = 1; print; if ($0 ~ /\}[ \t]*$/) exit; next } p { print } p && /^}/ { exit }' scripts/remote.sh)$'\n'
+    done
+    sf+=$(awk '/^read -r -d .. stale_sh / { p = 1 } p { print } p && /^EOF/ { exit }' scripts/remote.sh)$'\n'
+    sf+=$(grep '^rsync_sync_opts=' scripts/remote.sh)$'\n'
+    eval "$sf"
+    check "$(printf '%s' "$stale_sh" | grep -c "'" || true)" 0 "stale ($st_os): the machine script has no single quote (sh -c '…')"
+    x=$(mktemp -d)
+    trap 'rm -rf "$x"' EXIT
+    printf '#!/usr/bin/env bash\nshift; exec bash -c "$*"\n' >"$x/fake-ssh"; chmod +x "$x/fake-ssh"
+    os=$st_os SSH=("$x/fake-ssh") target=fake repo=$x/machine
+    mkdir -p "$x/outside"; echo keep >"$x/outside/victim.txt"; echo keep >"$x/outside.txt"
+    cd "$x"
+    gq() { git -c user.name=t -c user.email=t@t "$@"; }
+    gq init -q -b main src && cd src
+    mkdir -p apps/desktop/src crates/ocw-ui/src
+    echo "mod workshop;" >apps/desktop/src/main.rs; echo "pub fn w() {}" >apps/desktop/src/workshop.rs
+    mkdir -p apps/desktop/src/workshop; echo "pub fn p() {}" >apps/desktop/src/workshop/parts.rs
+    echo keep >keep.txt; printf '*.log\n' >.gitignore; echo local >notes.log
+    gq add -A && gq commit -q -m one
+    log=$x/log
+    snapshot_tree; sync_tree 2>"$log"; rm -rf "$snap_dir"
+    check "$(grep -c 'first sync of this checkout' "$log")/$(cat "$repo/.ocw-sync/synced.txt" | wc -l)" "1/5" "stale ($st_os): the first sync notes it and records the files sent"
+    check "$([ -e "$repo/notes.log" ] && echo sent || echo not)" not "stale ($st_os): git-ignored files are not sent"
+    # The machine's own files: a build output, a git-ignored log, a file
+    # no sync sent, a file in config/.
+    mkdir -p "$repo/target/debug" "$repo/config"; echo bin >"$repo/target/debug/ocw"; echo log >"$repo/notes.log"
+    echo mine >"$repo/remote-only.txt"; echo secret >"$repo/config/machines.toml"
+    gq mv apps/desktop/src/workshop.rs apps/desktop/src/workshop/mod.rs
+    gq mv apps/desktop/src/workshop crates/ocw-ui/src/workshop
+    gq commit -q -m move
+    snapshot_tree; sync_tree 2>"$log"; rm -rf "$snap_dir"
+    check "$(cd "$repo" && ls apps/desktop/src/workshop.rs apps/desktop/src/workshop/parts.rs 2>/dev/null | wc -l)/$(cat "$repo/crates/ocw-ui/src/workshop/mod.rs")" \
+      "0/pub fn w() {}" "stale ($st_os): files moved away here are deleted there, the new ones arrive"
+    check "$([ -d "$repo/apps/desktop/src/workshop" ] && echo left || echo gone)/$([ -f "$repo/apps/desktop/src/main.rs" ] && echo main)" \
+      "gone/main" "stale ($st_os): the emptied directory is removed, its parent with files stays"
+    check "$(grep -c 'deleted 2 stale file(s) there' "$log")" 1 "stale ($st_os): the deletion is reported"
+    check "$(cd "$repo" && cat target/debug/ocw notes.log remote-only.txt config/machines.toml | tr '\n' ' ')" "bin log mine secret " \
+      "stale ($st_os): build outputs, git-ignored and never-sent files and config/ stay"
+    # A tampered list: only the safe path goes.
+    ln -s "$x/outside" "$repo/link"
+    echo x >"$repo/fake-old.txt"
+    printf '%s\n' ../outside.txt "$x/outside.txt" link/victim.txt config/machines.toml target/debug/ocw fake-old.txt >>"$repo/.ocw-sync/synced.txt"
+    snapshot_tree; sync_tree 2>"$log"; rm -rf "$snap_dir"
+    check "$(cat "$x/outside.txt" "$x/outside/victim.txt" "$repo/config/machines.toml" "$repo/target/debug/ocw" | tr '\n' ' ')$([ -e "$repo/fake-old.txt" ] && echo kept || echo deleted)" \
+      "keep keep secret bin deleted" "stale ($st_os): .., absolute, symlinked-directory, config/ and target/ paths are never deleted"
+    check "$(grep -c 'refused 3 stale path' "$log")/$(grep -c 'deleted 1 stale' "$log")" 1/1 "stale ($st_os): the refused paths are reported"
+    snapshot_tree; sync_tree 2>"$log"; rm -rf "$snap_dir"
+    check "$(wc -c <"$log" | tr -d ' ')" 0 "stale ($st_os): nothing to delete, nothing said"
+    [ "$fail" = 0 ]
+  ) || fail=1
+done
+
 # The Windows sync end to end (v2.94) against a simulated machine: `ssh`
 # is a bash function that plays the PowerShell side – the manifest check
 # (header naming the checkout, file exists with the manifest's size and
@@ -192,10 +256,10 @@ rm -rf "$s"
 (
   set -e
   wf=""
-  for f in psq ps_encoded snapshot_tree win_changed win_send sync_tree_windows; do
+  for f in psq ps_encoded snapshot_tree win_changed win_send stale_paths stale_report sync_tree_windows; do
     wf+=$(awk -v f="$f" '$0 ~ "^" f "\\(\\) \\{" { p = 1; print; if ($0 ~ /\}[ \t]*$/) exit; next } p { print } p && /^}/ { exit }' scripts/remote.sh)$'\n'
   done
-  for v in win_manifest_ps win_manifest_write_ps; do
+  for v in win_manifest_ps win_manifest_write_ps win_remove_ps; do
     wf+=$(awk -v v="$v" '$0 ~ "^read -r -d .. " v " " { p = 1 } p { print } p && /^EOF/ { exit }' scripts/remote.sh)$'\n'
   done
   eval "$wf"
@@ -227,13 +291,35 @@ rm -rf "$s"
         if [ -e "$x/missing" ]; then printf '@@ocw-sync missing %s: ...\r\n' "$(cut -d' ' -f2 "$x/missing")"; rm "$x/missing"; fi
         ;;
       powershell*)
-        [ "$(decode "$c")" = "${win_manifest_ps//@REPO@/"$(psq "$repo")"}" ] || { echo "fake: not the manifest script" >&2; return 9; }
+        local dc ns paths ps n=0 bad=0 i=0 names="" d
+        dc=$(decode "$c")
+        if [ "$dc" != "${win_manifest_ps//@REPO@/"$(psq "$repo")"}" ]; then
+          # The remove script: its paths and stale count, checked against
+          # remote.sh's template, then played (files only, inside root).
+          ns=$(printf '%s\n' "$dc" | sed -n '1s/.*\$ns = \([0-9]*\);.*/\1/p')
+          paths=$(printf '%s\n' "$dc" | awk '/^'"'"'@ -split/ { p = 0 } p { print } /^\$ps = @'"'"'$/ { p = 1 }')
+          ps=${win_remove_ps//@REPO@/"$(psq "$repo")"}; ps=${ps//@STALE@/$ns}
+          [ -n "$ns" ] && [ "$dc" = "${ps//@PATHS@/$paths}" ] || { echo "fake: not the manifest or remove script" >&2; return 9; }
+          echo "$paths" >>"$x/removed-paths"
+          while IFS= read -r p; do
+            [ -n "$p" ] || continue; i=$((i + 1))
+            case "$p" in /*|*..*) bad=$((bad + 1)); continue ;; esac
+            [ -f "$root/$p" ] || continue
+            rm -f "$root/$p"
+            if [ $i -le "$ns" ]; then n=$((n + 1)); names="$names $p"; fi
+            d=$(dirname "$p"); while [ "$d" != . ] && rmdir "$root/$d" 2>/dev/null; do d=$(dirname "$d"); done
+          done <<<"$paths"
+          printf '@@ocw-sync removed %s refused %s:%s\r\n' "$n" "$bad" "$names"
+          return 0
+        fi
         local m=$root/.ocw-sync/manifest.tsv
         [ -f "$m" ] || return 0
         [ "$(head -n 1 "$m")" = "$(printf '# ocw-sync v2\t%s' "$repo")" ] || return 0
         tail -n +2 "$m" | while IFS=$'\t' read -r sha size mt p; do
           if [ -e "$root/$p" ] && [ "$(fstat "$root/$p")" = "$size	$mt" ]; then printf '%s\t%s\r\n' "$sha" "$p"; fi
         done
+        printf '@@prev-list\r\n'
+        tail -n +2 "$m" | cut -f4 | while IFS= read -r p; do printf '@@prev\t%s\r\n' "$p"; done
         ;;
       *) echo "fake: unexpected command $c" >&2; return 9 ;;
     esac
@@ -283,6 +369,24 @@ rm -rf "$s"
   sync && rc=0 || rc=$?
   check "$rc/$(grep -c 'still missing 1' "$x/log")" "1/1" "windows safety net: still missing after the full send fails the sync"
   rm -f "$x/drop" "$x/drop-always"
+  # Stale files on Windows: the previous manifest's files that are gone
+  # here are deleted there (emptied directories too); the machine's own
+  # files stay; tampered manifest paths are refused before anything is sent.
+  rm -rf "$snap_dir"; snapshot_tree; sync
+  mkdir -p "$root/target/debug" "$root/config"; echo bin >"$root/target/debug/ocw.exe"; echo mine >"$root/remote-only.txt"; echo s >"$root/config/machines.toml"
+  git mv crates/a/lib.rs crates/b.rs
+  rm -rf "$snap_dir"; snapshot_tree; : >"$x/removed-paths"; sync
+  check "$([ -e "$root/crates/a" ] && echo left || echo gone)/$(cat "$root/crates/b.rs")/$(grep -c 'deleted 1 stale file(s) there (removed or moved away here): crates/a/lib.rs' "$x/log")" \
+    "gone/code/1" "windows stale: a moved file is deleted there with its emptied directory"
+  check "$(cat "$root/target/debug/ocw.exe" "$root/remote-only.txt" "$root/config/machines.toml" | tr '\n' ' ')" "bin mine s " \
+    "windows stale: build outputs, never-sent files and config/ stay"
+  printf 'x\t1\t1\t%s\n' ../outside.txt 'C:/Windows/x.txt' 'crates\..\..\y' config/machines.toml target/debug/ocw.exe >>"$root/.ocw-sync/manifest.tsv"
+  : >"$x/removed-paths"; sync
+  check "$(grep -c 'refused 3 stale path' "$x/log")/$(grep -cE 'outside|Windows|config|target|y$' "$x/removed-paths")/$(cat "$root/config/machines.toml" "$root/target/debug/ocw.exe" | tr '\n' ' ')" \
+    "1/0/s bin " "windows stale: .., drive-letter, backslash, config/ and target/ paths are never sent to the machine"
+  check "$(grep -c 'first sync of this checkout' "$x/log")" 0 "windows stale: a checkout with a manifest is no first sync"
+  rm -rf "$root"; sync
+  check "$(grep -c 'first sync of this checkout' "$x/log")" 1 "windows stale: a new checkout deletes nothing and says so"
   rm -rf "$snap_dir"
   [ "$fail" = 0 ]
 ) || fail=1
