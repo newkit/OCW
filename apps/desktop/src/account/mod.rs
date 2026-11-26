@@ -97,6 +97,15 @@ impl Account {
         }
     }
 
+    /// Fetches the account's workshop again (signed in; answered later).
+    pub fn sync_workshop(&self) {
+        if let Some(w) = &self.worker
+            && self.signed_in()
+        {
+            w.send(Cmd::WorkshopSync);
+        }
+    }
+
     /// Queues a ride's summary for the account (Q19 / Q20).
     pub fn send_ride(&self, summary: ocw_account_api::rides::RideSummary) -> bool {
         match &self.worker {

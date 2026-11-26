@@ -269,4 +269,119 @@ mod tests {
         assert!(o.synced.is_none() && o.queue.is_empty());
         let _ = std::fs::remove_dir_all(&d);
     }
+
+    /// A 20-minute ride at about 200 W, as the recording keeps it.
+    fn ride(start: i64) -> ocw_fit::Activity {
+        ocw_fit::Activity {
+            start_unix_s: start,
+            records: (0..1200)
+                .map(|i| ocw_fit::Record {
+                    elapsed_s: f64::from(i),
+                    distance_m: f64::from(i) * 8.0,
+                    speed_mps: 8.0,
+                    power_w: Some(200.0 + f64::from(i % 7)),
+                    cadence_rpm: Some(88.0),
+                    heart_rate_bpm: None,
+                    altitude_m: Some(100.0 + f64::from(i) * 0.1),
+                    position: None,
+                })
+                .collect(),
+            product_name: String::new(),
+            software_version: 0,
+            laps: Vec::new(),
+            markers: Vec::new(),
+        }
+    }
+
+    /// Q20 (a) end to end against the backend: a ride ridden while the
+    /// backend does not answer stays queued – also over a restart – and
+    /// the workshop is read-only; once the backend answers the queue goes
+    /// up and the ride is credited once, a repeat changes nothing.
+    #[test]
+    fn a_ride_queued_offline_is_credited_once_when_online() {
+        use std::sync::atomic::AtomicBool;
+        use std::time::Duration;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let dev = rt
+            .block_on(ocw_accounts::fake::DevBackend::start("127.0.0.1:0", None))
+            .unwrap();
+        fn browser(url: &str) -> Result<(), String> {
+            let url = url.to_owned();
+            std::thread::spawn(move || {
+                let _ = ocw_accounts::fake::TestBrowser::new().open(&url);
+            });
+            Ok(())
+        }
+        let mut c = AuthClient::new(&dev.issuer, ocw_auth::CLIENT_DESKTOP);
+        let s = c
+            .sign_in(
+                Some(ocw_auth::Provider::Google),
+                None,
+                &browser,
+                &AtomicBool::new(false),
+                Duration::from_secs(20),
+            )
+            .unwrap();
+        // Nothing listens on the discard port: "offline".
+        let down = AuthClient::new("http://127.0.0.1:9", ocw_auth::CLIENT_DESKTOP);
+        let d = temp("queue");
+        let now = super::super::flow::now_s();
+        let sum = ocw_client::ride_summary::summary(&ride(now - 1300), &[], "ride-1", 72.0, None)
+            .unwrap();
+        let (mut w, _) = WorkshopSync::open(Some(&d), &s.account_id);
+        assert!(w.sync(&c, &s, now).is_ok() && w.online);
+        let start = w.synced.as_ref().unwrap().state.hearts;
+        assert_eq!(start, ocw_account_api::START_HEARTS);
+        assert!(matches!(w.sync(&down, &s, now), Err(ApiError::Offline(_))));
+        assert!(!w.online);
+        w.queue_ride(sum.clone());
+        let r = w.upload(&down, &s);
+        assert!(r.answers.is_empty() && r.kept == 1, "{r:?}");
+        // Read-only offline, and the cache is still the last synced.
+        let buy = Action::BuyPart {
+            bike: "road-1".into(),
+            part: "wheels.road-alloy.mid".into(),
+        };
+        assert!(
+            w.act(&down, &s, &buy, "k1", now)
+                .unwrap_err()
+                .contains("offline")
+        );
+        assert_eq!(w.synced.as_ref().unwrap().state.hearts, start);
+        // A restart while offline keeps the queue.
+        drop(w);
+        let (mut w, _) = WorkshopSync::open(Some(&d), &s.account_id);
+        assert_eq!(w.queue.len(), 1);
+        assert_eq!(w.synced.as_ref().unwrap().state.hearts, start);
+        // Online again: uploaded and credited once.
+        let r = w.upload(&c, &s);
+        assert_eq!(r.answers.len(), 1, "{r:?}");
+        let a = &r.answers[0];
+        assert_eq!(
+            a.status,
+            ocw_account_api::rides::RideStatus::Credited,
+            "{a:?}"
+        );
+        assert!(a.hearts > 0 && w.queue.is_empty() && w.online);
+        let sum_after = dev
+            .service
+            .workshop_store()
+            .ledger_sum(&s.account_id)
+            .unwrap();
+        assert_eq!(sum_after, start + i64::from(a.hearts));
+        // The same ride again (a lost answer): booked once.
+        w.queue_ride(sum);
+        let r = w.upload(&c, &s);
+        assert!(r.answers.iter().all(|a| a.repeated), "{r:?}");
+        assert_eq!(
+            dev.service
+                .workshop_store()
+                .ledger_sum(&s.account_id)
+                .unwrap(),
+            sum_after
+        );
+        let (w, _) = WorkshopSync::open(Some(&d), &s.account_id);
+        assert!(w.queue.is_empty(), "the file is empty too");
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

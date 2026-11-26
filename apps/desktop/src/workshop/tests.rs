@@ -114,7 +114,10 @@ fn the_menu_opens_the_scene_and_leaving_returns_to_it() {
     let v = view(&app);
     assert!(v.open, "the scene is open");
     assert_eq!(v.bikes.len(), 6, "the six starter bikes");
-    assert_eq!(v.hearts, "500 ♥");
+    assert_eq!(
+        v.hearts, "500 ♥ · local test wallet",
+        "signed out: marked local"
+    );
     assert!(!app.world().resource::<ocw_render::menu::MenuView>().open);
     assert_eq!(
         *app.world().resource::<InputContext>(),
@@ -779,6 +782,10 @@ fn signed_in_the_workshop_is_the_accounts() {
         Ok(())
     }
     let mut app = app();
+    // The app rides locally in Training mode (3.2.4 Q4); signed in, the
+    // account's workshop takes over all the same (a regression: it once
+    // stayed on Training mode's free garage).
+    app.insert_resource(PlayMode::Training);
     app.init_resource::<ocw_ui::menu::AccountMenu>()
         .add_plugins(crate::account::AccountPlugin {
             issuer: Some(dev.issuer.clone()),

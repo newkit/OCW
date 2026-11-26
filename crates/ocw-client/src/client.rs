@@ -2792,14 +2792,14 @@ impl ClientCore {
         self.virtual_device
     }
 
-    /// Whether the power sent is virtual: the virtual trainer, or keyboard
-    /// power on top of a real device.
     /// The server credits this ride's hearts to the account itself (a
     /// certified server, spec 14 Phase 4, 4O Q19 (a)): no summary upload.
     pub fn hearts_credited(&self) -> bool {
         self.hearts_credited
     }
 
+    /// Whether the power sent is virtual: the virtual trainer, or keyboard
+    /// power on top of a real device.
     pub fn virtual_power(&self) -> bool {
         self.virtual_device || self.key_power_w > 0.0
     }

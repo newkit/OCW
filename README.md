@@ -3014,8 +3014,11 @@ account's: its balance, bikes, parts and kit; the balance line reads
 "5,000 ♥ · account". Buying, selling, fitting, selecting and painting are sent
 to the backend and answered a moment later – the app never waits for it
 (the line reads "saving …" meanwhile; the answer is printed in the console).
-Signed out, the workshop is the **local test wallet** as before, marked
-"local test wallet"; it is never imported into an account. Right after
+Opening the workshop fetches the account's balance and garage again.
+Signed in, the account's workshop also replaces the free garage of
+*Ride locally* (Training mode). Signed out, the workshop is the **local test
+wallet** as before, marked "local test wallet" (in Training mode "free
+(Training mode) · local"); it is never imported into an account. Right after
 signing in, until the backend answers (a server woken from sleep takes a few
 seconds), the line reads "connecting to your account …". Repairs, hanging a
 spare frameset and `hearts.grant` are not available with an account yet.

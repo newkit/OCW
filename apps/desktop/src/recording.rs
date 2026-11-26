@@ -309,7 +309,7 @@ pub fn save_now(world: &mut World, min_duration_s: f64) -> Result<Option<PathBuf
 /// Signed in (spec 14 Phase 4, 4O Q19 / Q20): the ride's summary goes to
 /// the account – queued and uploaded by the account thread, credited once
 /// after the backend's checks – unless a certified server credited it
-/// already, or it is a capture, the kiosk's show or Training mode.
+/// already, or it is a capture or the kiosk's show.
 fn queue_account_ride(world: &World, ride: &FinishedRide, virtual_s: &[bool], fit: &Path) {
     let Some(account) = world.get_resource::<crate::account::Account>() else {
         return;
@@ -318,8 +318,11 @@ fn queue_account_ride(world: &World, ride: &FinishedRide, virtual_s: &[bool], fi
     let credited = world
         .get_resource::<ClientState>()
         .is_some_and(|c| c.0.hearts_credited());
-    let training = world.get_resource::<crate::workshop::PlayMode>()
-        == Some(&crate::workshop::PlayMode::Training);
+    // Training mode's free garage counts only while signed out: signed
+    // in, the workshop is the account's (spec 14 Phase 4, 4O).
+    let training = !account.signed_in()
+        && world.get_resource::<crate::workshop::PlayMode>()
+            == Some(&crate::workshop::PlayMode::Training);
     if !ocw_client::ride_summary::uploads(
         account.signed_in(),
         credited,

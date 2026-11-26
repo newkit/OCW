@@ -1130,7 +1130,7 @@ pub fn balance_label(s: &WorkshopState, balance: i64) -> String {
         Some(a) if a.pending > 0 => format!("{} · account (saving …)", hearts(balance)),
         Some(_) => format!("{} · account", hearts(balance)),
         None if s.connecting => format!("{} · connecting to your account …", hearts(balance)),
-        None if s.wallet.training => hearts(balance),
+        None if s.wallet.training => format!("{} · local", hearts(balance)),
         None => format!("{} · local test wallet", hearts(balance)),
     }
 }
@@ -1138,11 +1138,11 @@ pub fn balance_label(s: &WorkshopState, balance: i64) -> String {
 /// Follows the sign-in (spec 14 Phase 4, 4O): signed in, the workshop is
 /// the account's (the local test wallet set aside); signed out, the local
 /// one again. Applies the answers of the actions sent.
+///
+/// Signed in, the account's workshop replaces Training mode's free garage
+/// too (3.2.4 Q4 is the signed-out case): what the rider owns and earns is
+/// the account's.
 fn follow_account(world: &mut World) {
-    if world.get_resource::<PlayMode>() == Some(&PlayMode::Training) {
-        // Ride locally: Training mode keeps its own garage (3.2.4 Q4).
-        return;
-    }
     let (name, _) = rider(world);
     let Some(seen) = world.get_resource::<WorkshopState>().map(|s| s.account_gen) else {
         return;
@@ -1187,14 +1187,9 @@ fn follow_account(world: &mut World) {
                     ));
                     apply = true;
                 }
-            } else {
-                let pending = s.pending.len();
-                if let Some(a) = &mut s.wallet.account {
-                    a.online = upd.online;
-                    a.queued_rides = upd.queued;
-                    a.pending = pending;
-                }
             }
+            // (Unchanged generation: nothing new from the thread – every
+            // change of `online` or the queue comes with a new one.)
             s.account_gen = upd.generation;
         } else if s.wallet.is_account() && !signed_in_now {
             if let Some(local) = s.local.take() {
@@ -1312,6 +1307,11 @@ fn open(world: &mut World) -> Result<String, String> {
     let _ = layout;
     if let Some(mut c) = world.get_resource_mut::<ClientState>() {
         c.0.hold_steering();
+    }
+    // Signed in: the account's balance and garage fresh from the backend
+    // (answered later; the cached one shows meanwhile).
+    if let Some(a) = world.get_resource::<crate::account::Account>() {
+        a.sync_workshop();
     }
     info!("workshop opened");
     Ok(String::new())
