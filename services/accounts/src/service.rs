@@ -32,7 +32,10 @@ use crate::limits::RateLimiter;
 use crate::providers::{Google, ProviderIdentity, StartRequest, Strava, Upstream};
 use crate::secrets::SecretBox;
 use crate::store::{Account, Identity, MemStore, RefreshRecord, Store, StoreError};
+use crate::workshop::WorkshopHooks;
+use crate::workshop::store::{MemWorkshop, WorkshopStore};
 use crate::{AccountHooks, Clock, random_token};
+use ocw_world::manifest::{Hex, RootKey, TrustStore};
 
 /// An OAuth error answer: HTTP status and body.
 pub type OAuthError = (u16, ErrorResponse);
@@ -176,6 +179,27 @@ pub struct AuthService {
     secrets: SecretBox,
     hooks: RwLock<Vec<Arc<dyn AccountHooks>>>,
     clock: Clock,
+    /// The workshop and hearts (4O): PostgreSQL with `storage.kind =
+    /// "postgres"`, else in memory.
+    workshop: Arc<dyn WorkshopStore>,
+    /// The roots whose servers credit hearts directly (Q19 (a)).
+    hearts_trust: TrustStore,
+}
+
+/// The roots and revoked keys of `[hearts]`.
+pub fn hearts_trust(cfg: &crate::config::HeartsConfig) -> Result<TrustStore, String> {
+    let mut roots = Vec::new();
+    for path in &cfg.roots {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        roots.push(RootKey::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?);
+    }
+    let mut trust = TrustStore::new(roots);
+    for id in &cfg.revoked {
+        trust
+            .revoked
+            .push(Hex::<8>::parse(id).map_err(|e| format!("hearts.revoked {id}: {e}"))?);
+    }
+    Ok(trust)
 }
 
 fn now_s() -> i64 {
@@ -199,13 +223,29 @@ impl AuthService {
             Some(dir) => KeyRing::open(dir.clone(), now, rotate_s, grace_s)?,
             None => KeyRing::memory(now, rotate_s, grace_s),
         };
-        let store: Arc<dyn Store> = match cfg.storage.kind {
-            StorageKind::Memory => Arc::new(MemStore::memory()),
-            StorageKind::File => Arc::new(
-                MemStore::open(cfg.storage.path.clone().expect("validated"))
-                    .map_err(|e| e.to_string())?,
+        let (store, workshop): (Arc<dyn Store>, Arc<dyn WorkshopStore>) = match cfg.storage.kind {
+            StorageKind::Memory => (Arc::new(MemStore::memory()), Arc::new(MemWorkshop::new())),
+            StorageKind::File => (
+                Arc::new(
+                    MemStore::open(cfg.storage.path.clone().expect("validated"))
+                        .map_err(|e| e.to_string())?,
+                ),
+                Arc::new(MemWorkshop::new()),
             ),
+            #[cfg(feature = "postgres")]
+            StorageKind::Postgres => {
+                let pg = Arc::new(crate::pg::PgStore::connect(
+                    &cfg.storage.database_url()?,
+                    cfg.storage.max_connections.unwrap_or(8),
+                )?);
+                (pg.clone(), pg)
+            }
+            #[cfg(not(feature = "postgres"))]
+            StorageKind::Postgres => {
+                return Err("this build has no PostgreSQL storage (feature `postgres`)".into());
+            }
         };
+        let hearts_trust = hearts_trust(&cfg.hearts)?;
         let secrets = match &cfg.storage.secrets_key {
             Some(p) => SecretBox::open(p)?,
             None => SecretBox::ephemeral(),
@@ -225,16 +265,43 @@ impl AuthService {
             upstreams,
             eph: Mutex::new(Ephemeral::default()),
             secrets,
-            hooks: RwLock::new(Vec::new()),
+            hooks: RwLock::new(vec![Arc::new(WorkshopHooks {
+                store: workshop.clone(),
+            }) as Arc<dyn AccountHooks>]),
             clock,
+            workshop,
+            hearts_trust,
             cfg,
         })
     }
 
-    /// Uses another store (tests; PostgreSQL later).
+    /// Uses another store (tests).
     pub fn with_store(mut self, store: Arc<dyn Store>) -> Self {
         self.store = store;
         self
+    }
+
+    /// Uses another workshop store (tests).
+    pub fn with_workshop_store(mut self, workshop: Arc<dyn WorkshopStore>) -> Self {
+        self.hooks = RwLock::new(vec![Arc::new(WorkshopHooks {
+            store: workshop.clone(),
+        }) as Arc<dyn AccountHooks>]);
+        self.workshop = workshop;
+        self
+    }
+
+    /// Trusts these roots' servers to credit hearts (tests).
+    pub fn with_hearts_trust(mut self, trust: TrustStore) -> Self {
+        self.hearts_trust = trust;
+        self
+    }
+
+    pub fn workshop_store(&self) -> &Arc<dyn WorkshopStore> {
+        &self.workshop
+    }
+
+    pub fn hearts_trust(&self) -> &TrustStore {
+        &self.hearts_trust
     }
 
     /// Another module's export and deletion hook (spec §12).

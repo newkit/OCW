@@ -1,0 +1,18 @@
+[package]
+name = "ocw-account-api"
+description = "Open Cycling World account API (spec 14 Phase 4, 4O): the wire types of the backend's workshop, hearts ledger and rides, the ride-summary plausibility checks (spec 6.4) and the apps' offline queue"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Pure and wasm-safe (spec 3.5): shared by the accounts backend
+# (services/accounts) and the apps (ocw-client). No clock, no I/O.
+[dependencies]
+ocw-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

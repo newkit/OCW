@@ -11,7 +11,7 @@ export PATH := $(OCW_CARGO_SHIM):$(PATH)
 endif
 
 CARGO ?= cargo
-WASM_CRATES := -p ocw-core -p ocw-auth -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice -p ocw-sky -p ocw-weather -p ocw-devices -p ocw-worldstore -p ocw-audio -p ocw-edit -p ocw-map -p ocw-xr
+WASM_CRATES := -p ocw-core -p ocw-auth -p ocw-account-api -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice -p ocw-sky -p ocw-weather -p ocw-devices -p ocw-worldstore -p ocw-audio -p ocw-edit -p ocw-map -p ocw-xr
 # The browser app (spec §14 Phase 10): wasm-bindgen-cli must be the version
 # of the wasm-bindgen crate in Cargo.lock.
 WASM_BINDGEN_VERSION := $(shell awk '/^name = "wasm-bindgen"$$/ { getline; gsub(/version = |"/, ""); print; exit }' Cargo.lock)
@@ -91,7 +91,7 @@ VIDEO ?= /tmp/ocw.mp4
 VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
-.PHONY: help test-web-account test-web-trust test-studio-planners version version-next version-bump test-release-version test-world-patches release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-blender test-blender models-diff deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
+.PHONY: help test-accounts test-web-account test-web-trust test-studio-planners version version-next version-bump test-release-version test-world-patches release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-blender test-blender models-diff deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
 	test test-unit test-wasm test-web-build test-web test-web-xr web-xr web-preview-xr test-web-webgl2 test-web-gpu test-web-webkit test-web-ios deps-webkit test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-voice-livekit test-voice-bundled test-host-voice test-voice-live test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser deps-vr deps-vr-linux deps-vr-linux-debian deps-vr-linux-fedora deps-vr-linux-arch deps-vr-linux-unknown deps-vr-windows deps-vr-macos test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
@@ -408,6 +408,9 @@ BRIDGE_DEVICES ?=
 BRIDGE_SECONDS ?= 120
 test-bridge: web web-worlds ## The sensor bridge end to end (spec 14 Phase 10, 10D.2): the desktop shares its devices ($(BRIDGE_DEVICES): a devices file, e.g. marge's KICKR; default the virtual trainer), headless Chromium pairs by the code and rides $(WEB_WORLD_ROUTE) $(BRIDGE_SECONDS) s; latency, control, screenshots into test-output/bridge/
 	scripts/test-bridge.py --out test-output/bridge --seconds $(BRIDGE_SECONDS) --world $(WEB_WORLD) --route $(WEB_WORLD_ROUTE) $(if $(BRIDGE_DEVICES),--devices-file $(BRIDGE_DEVICES))
+
+test-accounts: ## The accounts backend with its workshop and hearts against a throw-away PostgreSQL 17 (spec 14 Phase 4, 4O; pinned portable binaries in ~/.cache/ocw, nothing installed; Linux x86_64: marge, leela)
+	CARGO="$(CARGO)" scripts/test-accounts.sh
 
 test-web-audio: web ## Headless Chromium: the game sound locked until a click (autoplay rule), then the mixer's chunks scheduled through Web Audio with sound in them; a volume kept over a reload; screenshots into test-output/web/
 	scripts/test-web-audio.py --out test-output/web --part audio

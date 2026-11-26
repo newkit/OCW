@@ -43,6 +43,23 @@ pub struct Config {
     pub strava: Option<StravaConfig>,
     #[serde(default)]
     pub rate_limit: RateLimit,
+    /// Who may credit hearts (spec 14 Phase 4, 4O Q19).
+    #[serde(default)]
+    pub hearts: HeartsConfig,
+}
+
+/// The trust of ride credits (Q19 (a)): game servers whose signing key
+/// one of these roots certified (the key hierarchy of spec 4.7) credit
+/// hearts directly; every other ride counts through the uploaded summary.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct HeartsConfig {
+    /// Root public key files (`*.pub.json` of `world-builder keys
+    /// init-root`): the project's root key. Empty: no server credits
+    /// directly.
+    pub roots: Vec<PathBuf>,
+    /// Revoked key ids (16 hex digits): roots or servers' signing keys.
+    pub revoked: Vec<String>,
 }
 
 fn default_listen() -> String {
@@ -110,12 +127,23 @@ impl Default for KeyConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct StorageConfig {
-    /// `memory` (tests, development) or `file` (one JSON file, 0600).
+    /// `memory` (tests, development), `file` (one JSON file, 0600) or
+    /// `postgres` (the hosted backend, 4O; also the workshop and hearts).
     pub kind: StorageKind,
     pub path: Option<PathBuf>,
+    /// `postgres`: the connection URL (`postgres://user:password@host/db`).
+    /// It holds the password, so it is better left out here and given by
+    /// the environment variable `url_env` names (Fly.io sets
+    /// `DATABASE_URL`).
+    pub url: Option<String>,
+    /// `postgres`: the environment variable with the URL (default
+    /// `DATABASE_URL`) when `url` is not set.
+    pub url_env: Option<String>,
+    /// `postgres`: the most connections the backend opens (default 8).
+    pub max_connections: Option<u32>,
     /// The 32-byte key that encrypts the stored provider tokens (Strava),
     /// created on first start (0600). `None`: a key in memory (tokens die
     /// with the process).
@@ -128,6 +156,37 @@ pub enum StorageKind {
     #[default]
     Memory,
     File,
+    Postgres,
+}
+
+/// Never prints the database URL (it holds the password).
+impl fmt::Debug for StorageConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StorageConfig")
+            .field("kind", &self.kind)
+            .field("path", &self.path)
+            .field("url", &self.url.as_ref().map(|_| "***"))
+            .field("url_env", &self.url_env)
+            .field("max_connections", &self.max_connections)
+            .field("secrets_key", &self.secrets_key)
+            .finish()
+    }
+}
+
+impl StorageConfig {
+    /// The PostgreSQL URL: `url`, else the environment variable `url_env`
+    /// (default `DATABASE_URL`).
+    pub fn database_url(&self) -> Result<String, String> {
+        if let Some(u) = &self.url {
+            return Ok(u.clone());
+        }
+        let var = self.url_env.as_deref().unwrap_or("DATABASE_URL");
+        std::env::var(var).map_err(|_| {
+            format!(
+                "storage.kind = \"postgres\" needs storage.url or the environment variable {var}"
+            )
+        })
+    }
 }
 
 /// One app.
@@ -268,6 +327,7 @@ impl Config {
             google: None,
             strava: None,
             rate_limit: RateLimit::default(),
+            hearts: HeartsConfig::default(),
         }
     }
 
@@ -364,5 +424,30 @@ mod tests {
         c.storage.kind = StorageKind::File;
         assert!(c.validate().is_err());
         assert_eq!(Lifetimes::default().access_s, 600);
+    }
+
+    #[test]
+    fn postgres_storage_never_prints_its_url() {
+        let cfg: Config = toml::from_str(
+            r#"
+issuer = "http://127.0.0.1:8480"
+[storage]
+kind = "postgres"
+url = "postgres://ocw:not-a-real-password@127.0.0.1/ocw"
+[hearts]
+roots = ["keys/ocw-root.pub.json"]
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.storage.kind, StorageKind::Postgres);
+        assert!(cfg.storage.database_url().unwrap().contains("not-a-real"));
+        assert!(!format!("{cfg:?}").contains("not-a-real"));
+        assert_eq!(cfg.hearts.roots.len(), 1);
+        let none = StorageConfig {
+            kind: StorageKind::Postgres,
+            url_env: Some("OCW_TEST_NO_SUCH_VARIABLE".into()),
+            ..StorageConfig::default()
+        };
+        assert!(none.database_url().is_err());
     }
 }
