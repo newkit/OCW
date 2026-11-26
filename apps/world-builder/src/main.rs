@@ -314,6 +314,45 @@ enum Cmd {
         #[arg(long, value_name = "KEY")]
         sign_key: Option<PathBuf>,
     },
+    /// Shorelines from the OSM outlines (spec 4.6 *Water surfaces*,
+    /// v6.58) for an existing package: the terrain along every lake,
+    /// river and sea shore follows its signed distance to the outline, so
+    /// the drawn shore is the outline and not the 10 m grid's staircase;
+    /// the band's vertices get water levels; roads, junction surfaces and
+    /// building sites keep their heights. Prints the shore's offset from
+    /// the outline before and after; `package` does the same.
+    Shores {
+        /// The package (rewritten in place unless --out is given).
+        #[arg(long)]
+        world: PathBuf,
+        /// OSM extracts the package was built from.
+        #[arg(long, required = true)]
+        pbf: Vec<PathBuf>,
+        /// Write the package here instead.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Sign the renewed manifest with this signing key.
+        #[arg(long, value_name = "KEY")]
+        sign_key: Option<PathBuf>,
+    },
+    /// Phantom pylons (v6.58) for an existing package: the towers of
+    /// dismantled power lines (`disused:power=line` and the like, and bare
+    /// lines running alongside them) removed from the section OBST (the
+    /// manifest is renewed); `package` and `obstacles` leave them out.
+    Pylons {
+        /// The package (rewritten in place unless --out is given).
+        #[arg(long)]
+        world: PathBuf,
+        /// OSM extracts the package was built from.
+        #[arg(long, required = true)]
+        pbf: Vec<PathBuf>,
+        /// Write the package here instead.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Sign the renewed manifest with this signing key.
+        #[arg(long, value_name = "KEY")]
+        sign_key: Option<PathBuf>,
+    },
     /// Place names (spec §4.7, §14 Phase 16 16A): the OSM place=* nodes
     /// and areas (cities, towns, villages, hamlets, suburbs,
     /// neighbourhoods, localities, isolated dwellings) on the tiles into
@@ -1855,6 +1894,23 @@ fn package(args: PackageArgs) {
                 ws.max_change_m,
                 ws.restored_under_roads
             ));
+            // The shorelines from the OSM outlines (spec 4.6, v6.58): the
+            // terrain follows the signed distance to them, so the drawn
+            // shore is the outline, not the grid's staircase.
+            let outlines = ocw_worldgen::shore::outlines(&i.areas, i.sea.area.as_ref());
+            let kept = footprints.as_ref().map_or_else(Default::default, |f| {
+                let fp: Vec<Vec<[f64; 2]>> = f.0.iter().map(|b| b.outer.clone()).collect();
+                ocw_worldgen::shore::kept_around_footprints(&fp, spacing)
+            });
+            let on_road = |p: [f64; 2]| road_zone.covers(p, spacing);
+            let ss = stage("shorelines", || {
+                ocw_worldgen::shore::fit_shores(&mut pkg, &outlines, &kept, &on_road)
+            });
+            area_report.push(shore_report(&ss));
+            let rs = stage("rivers", || {
+                ocw_worldgen::shore::rivers(&mut pkg, &i.lines, &outlines, &kept, &on_road)
+            });
+            area_report.push(river_report(&rs));
         }
     }
     if clean {
@@ -2977,6 +3033,218 @@ fn smooth_terrain(
     });
 }
 
+fn shore_report(s: &ocw_worldgen::shore::ShoreStats) -> String {
+    format!(
+        "clean: shorelines fitted to {} outlines: {} band vertices ({} raised up to {:.2} m, {} lowered up to {:.2} m, {} kept under roads and buildings, {} without a level near, {} land vertices left dry below the water), {} new water levels",
+        s.outlines,
+        s.band,
+        s.raised,
+        s.max_raise_m,
+        s.lowered,
+        s.max_lower_m,
+        s.kept,
+        s.no_level,
+        s.dry_kept,
+        s.new_levels
+    )
+}
+
+fn river_report(s: &ocw_worldgen::shore::RiverStats) -> String {
+    format!(
+        "clean: rivers and streams along their course (WATR): {} wide at their level, {} streams draped, {} pieces, {:.1} km ({} points inside lakes and the sea left out); {} vertices carved under the wide ones, {} raised beside them, {} grid water levels replaced",
+        s.wide, s.draped, s.pieces, s.km, s.in_areas, s.carved, s.raised, s.levels_dropped
+    )
+}
+
+/// The shore offsets (m) as "p50 / p90 / p99 / max over N points".
+fn offsets_summary(v: &[f64]) -> String {
+    if v.is_empty() {
+        return "no shore points".into();
+    }
+    let q = |p: f64| v[((v.len() - 1) as f64 * p).round() as usize];
+    format!(
+        "p50 {:.2} / p90 {:.2} / p99 {:.2} / max {:.2} m over {} points",
+        q(0.5),
+        q(0.9),
+        q(0.99),
+        v[v.len() - 1],
+        v.len()
+    )
+}
+
+/// `world-builder pylons` (see [`Cmd::Pylons`]).
+fn pylons(
+    world: &std::path::Path,
+    pbf: &[PathBuf],
+    out: Option<PathBuf>,
+    key: Option<&ocw_world::manifest::SigningKeyPair>,
+) {
+    let mut pkg = stage("read package", || read_package(world));
+    let data = read_barriers(pbf, &pkg);
+    let proj = ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1);
+    let lines = data.power_lines.len();
+    let dismantled = data.power_lines.iter().filter(|l| l.dismantled).count();
+    let n = stage("dismantled towers", || {
+        ocw_worldgen::obstacles::remove_dismantled_towers(&mut pkg, &data, &proj)
+    });
+    println!(
+        "pylons: {lines} power lines ({dismantled} dismantled); {n} towers of dismantled lines removed from OBST"
+    );
+    let path = out.unwrap_or_else(|| world.to_path_buf());
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    std::fs::write(&path, pkg.to_bytes()).unwrap_or_else(|e| {
+        eprintln!("{}: {e}", path.display());
+        std::process::exit(1);
+    });
+    if path != world {
+        dist::carry_manifest(world, &path);
+    }
+    dist::write_manifest(
+        &path,
+        &dist::ManifestArgs {
+            id: None,
+            name: None,
+            version: None,
+            dem_attribution: Vec::new(),
+            patches: None,
+        },
+        key,
+    );
+}
+
+/// `world-builder shores` (see [`Cmd::Shores`]).
+fn shores(
+    world: &std::path::Path,
+    pbf: &[PathBuf],
+    out: Option<PathBuf>,
+    key: Option<&ocw_world::manifest::SigningKeyPair>,
+) {
+    let t = Instant::now();
+    let mut pkg = stage("read package", || read_package(world));
+    let before = std::fs::metadata(world).map_or(0, |m| m.len());
+    let mut data = ocw_worldgen::areas::AreaData::read_pbfs(pbf).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(1);
+    });
+    if let Some(r) = &pkg.region {
+        let [s, w, n, e] = r.bounds();
+        let m = LOAD_MARGIN_DEG;
+        data.retain_near((s - m, w - m, n + m, e + m));
+    }
+    let proj = ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1);
+    let (areas, lines) = stage("areas", || ocw_worldgen::landuse::extract(&data, &proj));
+    // The sea's frame: the tiles and a kilometre around (spec 4.6).
+    let size = f64::from(pkg.tile_size_m);
+    let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
+    for k in pkg.tiles.keys() {
+        let o = k.origin(size);
+        lo = [lo[0].min(o[0]), lo[1].min(o[1])];
+        hi = [hi[0].max(o[0] + size), hi[1].max(o[1] + size)];
+    }
+    let m = SEA_FRAME_MARGIN_M;
+    let sea = stage("sea", || {
+        ocw_worldgen::landuse::sea(&data, &proj, [lo[0] - m, lo[1] - m, hi[0] + m, hi[1] + m])
+    });
+    let outlines = ocw_worldgen::shore::outlines(&areas, sea.area.as_ref());
+    let sp = pkg.spacing_m();
+    let surfaces = match pkg.graph.as_ref() {
+        Some(g) => {
+            let js = match pkg.junctions.as_ref() {
+                Some(j) => ocw_world::junction::JunctionSet::with_index(g, j.index_for(g)),
+                None => ocw_world::junction::JunctionSet::new(g),
+            };
+            ocw_worldgen::junctions::surface_samples(g, &js, 0.5)
+        }
+        None => Vec::new(),
+    };
+    let kept = ocw_worldgen::shore::kept_vertices(&pkg, &surfaces);
+    let graph = pkg.graph.clone();
+    let spans = graph
+        .as_ref()
+        .map(|g| ocw_worldgen::junctions::bridge_spans(&pkg, g))
+        .unwrap_or_default();
+    let zone = graph
+        .as_ref()
+        .map(|g| ocw_worldgen::clean::RoadZone::new(g, &spans));
+    let on_road = |p: [f64; 2]| zone.as_ref().is_some_and(|z| z.covers(p, sp));
+    let was = stage("shore offsets before", || {
+        ocw_worldgen::shore::shore_offsets_at(&pkg, &outlines, 5.0, 15.0, &on_road)
+    });
+    let st = stage("shorelines", || {
+        ocw_worldgen::shore::fit_shores(&mut pkg, &outlines, &kept, &on_road)
+    });
+    println!("{}", shore_report(&st));
+    let rs = stage("rivers", || {
+        ocw_worldgen::shore::rivers(&mut pkg, &lines, &outlines, &kept, &on_road)
+    });
+    println!("{}", river_report(&rs));
+    let now = stage("shore offsets after", || {
+        ocw_worldgen::shore::shore_offsets_at(&pkg, &outlines, 5.0, 15.0, &on_road)
+    });
+    // Lakes and wide water (at least 3 grid steps across on average) and
+    // the narrow areas (rivers drawn as areas), apart.
+    let wide: Vec<bool> = outlines
+        .iter()
+        .map(|o| o.mean_width() >= 3.0 * sp)
+        .collect();
+    let part = |v: &[(f64, [f64; 2], usize)], w: bool| -> Vec<f64> {
+        v.iter().filter(|o| wide[o.2] == w).map(|o| o.0).collect()
+    };
+    for (w, what) in [(true, "wide water"), (false, "narrow areas")] {
+        println!(
+            "shore offset from the outline, {what}, before: {}",
+            offsets_summary(&part(&was, w))
+        );
+        println!(
+            "shore offset from the outline, {what}, after:  {}",
+            offsets_summary(&part(&now, w))
+        );
+    }
+    if let Some(worst) = now.iter().rev().find(|o| wide[o.2]) {
+        println!(
+            "worst wide shore after: {:.1} m at {:.0},{:.0}",
+            worst.0, worst.1[0], worst.1[1]
+        );
+    }
+    let path = out.unwrap_or_else(|| world.to_path_buf());
+    let bytes = stage("serialise", || pkg.to_bytes());
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    stage("write", || {
+        std::fs::write(&path, &bytes).unwrap_or_else(|e| {
+            eprintln!("{}: {e}", path.display());
+            std::process::exit(1);
+        })
+    });
+    println!(
+        "{}: {:.1} MB -> {:.1} MB ({:+.3} MB), {:.1} s",
+        path.display(),
+        before as f64 / 1e6,
+        bytes.len() as f64 / 1e6,
+        (bytes.len() as f64 - before as f64) / 1e6,
+        t.elapsed().as_secs_f64()
+    );
+    if path != world {
+        dist::carry_manifest(world, &path);
+    }
+    stage("manifest + hash", || {
+        dist::write_manifest(
+            &path,
+            &dist::ManifestArgs {
+                id: None,
+                name: None,
+                version: None,
+                dem_attribution: Vec::new(),
+                patches: None,
+            },
+            key,
+        )
+    });
+}
+
 /// Where to look at the obstacles (scenes, checks): rows of road bollards
 /// (three or more within 8 m) and the longest bridges, in package metres.
 fn print_obstacle_examples(pkg: &ocw_world::WorldPackage) {
@@ -3641,6 +3909,36 @@ fn main() {
                 })
             });
             obstacles(&world, &pbf, out, key.as_ref(), false);
+            print_stage_profile(None);
+        }
+        Cmd::Pylons {
+            world,
+            pbf,
+            out,
+            sign_key,
+        } => {
+            let key = sign_key.map(|k| {
+                ocw_worldstore::keys::read_signing_key(&k).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                })
+            });
+            pylons(&world, &pbf, out, key.as_ref());
+            print_stage_profile(None);
+        }
+        Cmd::Shores {
+            world,
+            pbf,
+            out,
+            sign_key,
+        } => {
+            let key = sign_key.map(|k| {
+                ocw_worldstore::keys::read_signing_key(&k).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                })
+            });
+            shores(&world, &pbf, out, key.as_ref());
             print_stage_profile(None);
         }
         Cmd::StreetLamps {

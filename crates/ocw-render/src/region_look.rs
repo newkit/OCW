@@ -43,6 +43,77 @@ pub const SEASON_LUMA: f32 = 0.5;
 pub const SEASON_RANGE: (f32, f32) = (0.6, 1.6);
 /// Share of the satellite colour in the far colour map.
 pub const SATELLITE_WEIGHT: f32 = 0.7;
+/// The rock and scree layers follow the measured colour's brightness, but
+/// only this much of its hue: the "rock" of the imagery is rock with
+/// lichen, turf and haze (Andorra's measured [120, 115, 81] turned the grey
+/// limestone texture sand-yellow).
+pub const ROCK_CHROMA: f32 = 0.3;
+/// Above the tree line the satellite colour loses this much of its chroma
+/// at full alpine share (the composites' bare high ground reads yellow,
+/// rock and dry turf are grey-brown) and its weight this much.
+pub const ALPINE_DESATURATE: f32 = 0.7;
+pub const ALPINE_SATELLITE_LESS: f32 = 0.5;
+
+/// Whether an sRGB colour (0 … 1) reads as sand: a yellow to orange hue
+/// (25° – 65°), clearly saturated (above 0.24) and not dark (value above
+/// 0.3) – what bare high ground, rock and far forests must not be.
+pub fn is_sand(c: [f32; 3]) -> bool {
+    let max = c[0].max(c[1]).max(c[2]);
+    let min = c[0].min(c[1]).min(c[2]);
+    if max <= 0.3 || max - min < 1e-6 {
+        return false;
+    }
+    let sat = (max - min) / max;
+    let d = max - min;
+    let hue = if max == c[0] {
+        60.0 * ((c[1] - c[2]) / d).rem_euclid(6.0)
+    } else if max == c[1] {
+        60.0 * ((c[2] - c[0]) / d + 2.0)
+    } else {
+        60.0 * ((c[0] - c[1]) / d + 4.0)
+    };
+    sat > 0.24 && (25.0..=65.0).contains(&hue)
+}
+
+/// The far colour of rock and scree (sRGB): their class colour with half
+/// its chroma (the measured colour of the imagery's "rock" is lichen, turf
+/// and haze on it; the satellite map laid over brings the real hue back);
+/// other classes as they are.
+pub fn stone_grey(class: LandClass, c: [f32; 3]) -> [f32; 3] {
+    match class {
+        LandClass::Rock | LandClass::Scree => desaturate(c, 0.5),
+        _ => c,
+    }
+}
+
+/// `c` (sRGB) with its chroma reduced by `k` (0 … 1), keeping the luma.
+pub fn desaturate(c: [f32; 3], k: f32) -> [f32; 3] {
+    let l = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    c.map(|v| v + (l - v) * k.clamp(0.0, 1.0))
+}
+
+/// [`far_colour`] where the ground is `alpine` (0 … 1): the satellite
+/// colour greyer and weaker above the tree line.
+pub fn far_colour_alpine(class_rgb: [f32; 3], satellite: Option<[u8; 3]>, alpine: f32) -> [f32; 3] {
+    match satellite {
+        Some(s) => {
+            let sat = desaturate(s.map(|v| f32::from(v) / 255.0), ALPINE_DESATURATE * alpine);
+            let w = SATELLITE_WEIGHT * (1.0 - ALPINE_SATELLITE_LESS * alpine);
+            std::array::from_fn(|k| class_rgb[k] + (sat[k] - class_rgb[k]) * w)
+        }
+        None => class_rgb,
+    }
+}
+
+/// The colour of the alpine ground's stone (sRGB) from the class colours
+/// `flat`: scree and rock, greyed like the near layers' tint.
+pub fn alpine_stone(flat: impl Fn(LandClass) -> [f32; 3]) -> [f32; 3] {
+    let (s, r) = (flat(LandClass::Scree), flat(LandClass::Rock));
+    desaturate(
+        std::array::from_fn(|k| 0.55 * s[k] + 0.45 * r[k]),
+        1.0 - ROCK_CHROMA,
+    )
+}
 /// Days per season bucket: the tiles are rebuilt when the date moves on
 /// by this much (time machine, long sessions). The same buckets as the
 /// physics of wet leaves (spec 4.6.2 Q6).
@@ -120,13 +191,15 @@ pub fn layer_tints(
 ) -> [[f32; 3]; GROUND_LAYERS] {
     std::array::from_fn(|layer| {
         let (keys, strength) = layer_keys(layer);
+        let stone = matches!(layer, crate::ground::ROCK | crate::ground::SCREE);
+        let chroma = if stone { ROCK_CHROMA } else { 1.0 };
         keys.iter()
             .find_map(|k| palette.colour(*k))
             .map_or([1.0; 3], |c| {
                 tint_towards(
                     means[layer],
                     lin3(c),
-                    CHROMA_STRENGTH * strength,
+                    CHROMA_STRENGTH * strength * chroma,
                     LUMA_STRENGTH * strength,
                 )
             })

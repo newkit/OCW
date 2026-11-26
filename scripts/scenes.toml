@@ -5796,3 +5796,75 @@ riders = "active = \"Hal Domestique\"\n[[rider]]\nname = \"Hal Domestique\"\nwei
 at = ["0.5=time 2026-06-21 15:00", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --age 40s --skin 9 --beard chin-strap --facial-hair-colour black", "0.7=kit.design --jersey #E53935 --second #F2F2EE --helmet #E53935", "2.5=camera.orbit 175 3 45"]
 shot = 9
 pick = false
+
+# --- Water, far ground, alpine ground, pylons (spec 4.6, v6.58) ------------
+# Before / after the shorelines from the OSM outlines, the river ribbons,
+# the water material, the far canopy, the alpine ground and the towers of
+# dismantled power lines (scripts/water-build.sh packages). Render with
+# OCW_PROFILE=release OCW_FPS=0; the same view before and after.
+
+[[scene]]
+name = "wg-mummelsee-above"
+description = "The Mummelsee from above (1,036 m), golden hour: its shore along the OSM outline, the water's colour, ripples and the sky in it (no HUD)"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "17913,-75221", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-10-14 17:30", "0.5=weather fair clouds=0.35", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose 17990 -75150 110 350 -5"]
+shot = 9
+
+[[scene]]
+name = "wg-titisee"
+description = "The Titisee from the Bruderhalde road: the lake's shore and water, the forest around (no HUD)"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "13560,2700", "--bots", "3", "--power", "200"]
+riders = "active = \"Iris Sprocket\"\n[[rider]]\nname = \"Iris Sprocket\"\nweight_kg = 61.0\nheight_cm = 168.0\nbike = \"gravel\"\nframe_color = \"#00838F\"\njersey_color = \"#FF7043\"\nhelmet_color = \"#263238\"\nkit = \"band\"\n"
+at = ["0.5=time pause", "0.5=time 2026-09-12 15:30", "0.5=weather fair", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair braid --hair-colour #C49A6C --skin 4", "2.5=camera.orbit 120 25 60"]
+shot = 12
+
+[[scene]]
+name = "wg-rhine"
+description = "The Rhine at Vaduz from above: its banks along the OSM riverbank, the water's colour and ripples (no HUD)"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-3679,2171", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-08-20 11:00", "0.5=weather fair", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "2.5=camera.orbit 70 45 80"]
+shot = 10
+
+[[scene]]
+name = "wg-valira"
+description = "The Valira d'Orient at Encamp from above: the river along its course between its banks, the CG-2 beside it (no HUD)"
+world = "andorra"
+args = ["--world", "{world}", "--free-ride", "--start", "-675,133", "--bots", "2", "--power", "200"]
+riders = "active = \"Jon Chainring\"\n[[rider]]\nname = \"Jon Chainring\"\nweight_kg = 80.0\nheight_cm = 190.0\nbike = \"road\"\nframe_color = \"#FBC02D\"\njersey_color = \"#3949AB\"\nhelmet_color = \"#FBC02D\"\nkit = \"sash\"\n"
+at = ["0.5=time pause", "0.5=time 2026-07-02 12:30", "0.5=weather clear", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair short --hair-colour #3B2A1E --skin 12", "2.5=camera.orbit 150 35 80"]
+shot = 12
+
+[[scene]]
+name = "wg-hornisgrinde-far"
+description = "From the Hornisgrinde westwards over the foothills to the Rhine plain at golden hour: the far forests' crowns and colour, the fields beyond (no HUD)"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "17913,-75221", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-10-14 18:15", "0.5=weather fair clouds=0.35", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose 18000 -76400 180 260 -3"]
+shot = 9
+
+[[scene]]
+name = "wg-envalira-pass"
+description = "The Port d'Envalira (2,408 m) from above on an October afternoon: the pass road, the high slopes of turf, scree and rock, where the towers of the dismantled power line stood (no HUD)"
+world = "andorra"
+args = ["--world", "{world}", "--free-ride", "--start", "9500,-210", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-10-08 15:30", "0.5=weather clear", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose 8700 -760 170 115 -16"]
+shot = 9
+
+[[scene]]
+name = "wg-teide-high"
+description = "Las Cañadas and the Teide's high zone from above: pumice, lava and broom, no sand (no HUD)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-7500,5260", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-11-13 11:00", "0.5=weather clear", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose -7600 5600 160 330 -12"]
+shot = 9
+
+[[scene]]
+name = "wg-hornisgrinde-far-noon"
+description = "From the Hornisgrinde westwards over the foothills to the Rhine plain at noon, the sun behind: the far forests' colour without the evening glow (no HUD)"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "17913,-75221", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-10-14 12:30", "0.5=weather fair clouds=0.2", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "2=god.flight hover", "3=god on", "4=god.pose 18000 -76400 180 260 -3"]
+shot = 9

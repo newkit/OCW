@@ -515,7 +515,15 @@ pub fn tile_splat(
         let (lu, kc) = tile_landuse(pkg, k)?;
         (kc == cells).then(|| lu.classes[(r.rem_euclid(n) * n + c.rem_euclid(n)) as usize])
     };
-    let (a, b) = crate::ground::splat_corners(cells as usize, mix, class);
+    // The alpine ground above the region's tree line (v6.58).
+    let tree_line = ocw_world::flora::FloraRegion::at(pkg.origin.0, pkg.origin.1).tree_line_m();
+    let size = f64::from(pkg.tile_size_m);
+    let (o, cs) = (key.origin(size), size / f64::from(cells));
+    let alpine = |c: i64, r: i64| {
+        pkg.height(o[0] + c as f64 * cs, o[1] + r as f64 * cs)
+            .map_or(0.0, |h| crate::ground::alpine_share(h, tree_line))
+    };
+    let (a, b) = crate::ground::splat_corners_alpine(cells as usize, mix, class, alpine);
     Splat { cells, a, b }
 }
 
@@ -1084,6 +1092,11 @@ pub fn land_colour(class: LandClass) -> [f32; 3] {
 
 const ROCK: [f32; 3] = [0.5, 0.48, 0.44];
 
+/// How much of the canopy colour lies over a forest cell of the colour map
+/// (the ground between the far trees and beyond their range: forest, not
+/// litter; the far terrain takes all of it).
+pub const COLOUR_MAP_CANOPY: f32 = 0.6;
+
 /// Colour map of a tile: one texel per land-use cell, the class colour
 /// turning to rock on steep slopes, with a little per-texel and per-patch
 /// noise; plus its mip chain (box filtered).
@@ -1163,6 +1176,14 @@ pub fn colour_map_seasonal(
     let o = tile.key.origin(size);
     let cs = size / f64::from(cells);
     let mut level0 = Vec::with_capacity(n * n * 4);
+    // The alpine ground above the region's tree line and the measured
+    // forest's canopy (v6.58), as the far terrain draws them.
+    let region = ocw_world::flora::FloraRegion::at(pkg.origin.0, pkg.origin.1);
+    let tree_line = region.tree_line_m();
+    let forest = ocw_world::trees::tile_forest(pkg, tile.key);
+    let conifers = crate::flora::far_conifers(region);
+    let mut tones: std::collections::HashMap<i64, crate::season::CanopyTones> =
+        std::collections::HashMap::new();
     for r in 0..n {
         for c in 0..n {
             let class = lu.classes[r * n + c];
@@ -1179,9 +1200,12 @@ pub fn colour_map_seasonal(
                 _ => 0.0,
             };
             let flat = |c: LandClass| {
-                palette
-                    .and_then(|p| p.get(c as usize).copied())
-                    .unwrap_or_else(|| land_colour(c))
+                crate::region_look::stone_grey(
+                    c,
+                    palette
+                        .and_then(|p| p.get(c as usize).copied())
+                        .unwrap_or_else(|| land_colour(c)),
+                )
             };
             let mut colour = flat(class);
             // The field's crop (section VEGE, spec §14 Phase 8 T8): its own
@@ -1204,6 +1228,13 @@ pub fn colour_map_seasonal(
                 };
             }
             colour = crate::season::plantation_ground(crop, colour);
+            let alt = pkg.height(x, z);
+            let alpine = alt.map_or(0.0, |h| crate::ground::alpine_share(h, tree_line));
+            if crate::ground::turns_alpine(class) && alpine > 0.0 {
+                let stone = crate::region_look::alpine_stone(flat);
+                let k = alpine * crate::ground::ALPINE_STONE;
+                colour = std::array::from_fn(|j| colour[j] + (stone[j] - colour[j]) * k);
+            }
             let alpha = summer.map_or(255u8, |m| (m * 250.0f32).round() as u8);
             if !matches!(class, LandClass::Water | LandClass::Glacier) {
                 let rock = palette.map_or(ROCK, |_| flat(LandClass::Rock));
@@ -1216,12 +1247,40 @@ pub fn colour_map_seasonal(
                     None => ((slope - 0.6) / 0.4).clamp(0.0, 1.0),
                 };
                 colour = std::array::from_fn(|j| colour[j] + (rock[j] - colour[j]) * t);
+                // The canopy over the forest floor (the ground beyond the
+                // trees' range is forest, not litter).
+                let measured = forest.and_then(|(f, fc)| f.at(tile.key, size, fc, x, z));
+                let cover =
+                    crate::far_terrain::measured_tree_cover(class, measured.map(|m| m.density))
+                        * (1.0 - t)
+                        * COLOUR_MAP_CANOPY;
+                if cover > 0.0 {
+                    let canopy = match (season, alt) {
+                        (Some(day), Some(h)) => {
+                            let band = (h / 50.0).round() as i64;
+                            tones
+                                .entry(band)
+                                .or_insert_with(|| {
+                                    crate::season::CanopyTones::new(
+                                        conifers,
+                                        band as f64 * 50.0,
+                                        day,
+                                    )
+                                })
+                                .at(measured
+                                    .and_then(|m| m.broadleaf)
+                                    .map(|b| f32::from(b) / 100.0))
+                        }
+                        _ => conifers,
+                    };
+                    colour = std::array::from_fn(|j| colour[j] + (canopy[j] - colour[j]) * cover);
+                }
             }
             if let Some(sat) = satellite
                 && class != LandClass::Water
             {
                 let (u, v) = ((c as f64 + 0.5) / n as f64, (r as f64 + 0.5) / n as f64);
-                colour = crate::region_look::far_colour(colour, Some(sat.at(u, v)));
+                colour = crate::region_look::far_colour_alpine(colour, Some(sat.at(u, v)), alpine);
             }
             let (gc, gr) = (
                 i64::from(tile.key.x) * n as i64 + c as i64,
@@ -1268,7 +1327,11 @@ pub fn colour_map_seasonal(
 }
 
 /// Flat water surfaces: a quad over every terrain grid cell whose four
-/// corners have a water level (the terrain is carved below it).
+/// corners have a water level (the terrain is carved below it, and fitted
+/// to the outline along the shore: the shore is where the drawn terrain
+/// rises through the water). Each vertex carries the water's depth there
+/// (below 0 where the land is above the water) and its kind, the sea where
+/// the level is 0 m (`water::KIND_*`, `uv`).
 pub fn water_arrays(pkg: &WorldPackage, tile: &Tile, lu: &LandUseTile) -> MeshArrays {
     water_arrays_kept(pkg, tile, lu, None)
 }
@@ -1299,6 +1362,13 @@ pub fn water_arrays_kept(
         ]);
         m.normals.push([0.0, 1.0, 0.0]);
         m.colors.push(colour);
+        let depth = tile.heights.get(idx as usize).map_or(1.0, |h| level - h);
+        let kind = if level == 0.0 {
+            crate::water::KIND_SEA
+        } else {
+            crate::water::KIND_LAKE
+        };
+        m.uvs.push([depth, kind]);
     }
     for k in 0..n - 1 {
         for i in 0..n - 1 {
@@ -1472,9 +1542,16 @@ pub fn build_tile_meshes_with(
         }),
         roads: roads.roads,
         overlays: roads.overlays,
-        water: lu.map_or_else(MeshArrays::default, |(lu, _)| {
-            water_arrays_kept(pkg, tile, lu, keep)
-        }),
+        water: {
+            let mut w = lu.map_or_else(MeshArrays::default, |(lu, _)| {
+                water_arrays_kept(pkg, tile, lu, keep)
+            });
+            // The rivers and streams along their course (section WATR).
+            let ribbons =
+                crate::water::ribbon_arrays(pkg, key, keep, &|x, z| pkg.surface_height(x, z));
+            crate::water::append(&mut w, ribbons);
+            w
+        },
         crowns: crate::flight_world::TreeCrowns::from_crowns(plants.crowns.clone()),
         plants,
         houses,
@@ -1503,13 +1580,14 @@ pub(crate) struct PackageMaterials {
     /// Trees: the same, but see-through for the camera (they fade out where
     /// they block the view instead of moving it).
     trees: Handle<SeeThroughMaterial>,
-    pub(crate) water: Handle<StandardMaterial>,
+    pub(crate) water: Handle<crate::water::WaterMaterial>,
 }
 
 fn setup_materials(
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut tree_materials: ResMut<Assets<SeeThroughMaterial>>,
+    mut water: ResMut<Assets<crate::water::WaterMaterial>>,
 ) {
     let vertex_coloured = StandardMaterial {
         base_color: Color::WHITE,
@@ -1521,12 +1599,7 @@ fn setup_materials(
             crate::see_through::swaying(see_through(vertex_coloured.clone()), None),
         )),
         vertex_coloured: materials.add(vertex_coloured),
-        water: materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            perceptual_roughness: 0.08,
-            reflectance: 0.6,
-            ..default()
-        }),
+        water: water.add(crate::water::water_material()),
     });
 }
 
@@ -2663,6 +2736,97 @@ mod tests {
     /// The test tile (100 m, 5 m land-use cells): forest for x < 50, a
     /// pond at x 70…90, z 0…40 (water levels at its vertices), meadow
     /// elsewhere; a building in the forest.
+    /// Regression (2026-11-26, the Port d'Envalira): the bare high slopes
+    /// came out sand-yellow – lowland meadow in dormant straw under the
+    /// satellite's beige, the rock texture tinted towards the measured
+    /// "rock" colour. Above the tree line the grass is turf between scree
+    /// and rock (the splat's stony layers), the far colours are grey-brown,
+    /// and the rock layer keeps its grey.
+    #[test]
+    fn bare_high_ground_is_turf_and_stone_not_sand() {
+        let mut p = package();
+        p.origin = (42.54, 1.60);
+        let key = *p.tiles.keys().next().unwrap();
+        p.tiles.get_mut(&key).unwrap().heights.fill(2400.0);
+        let cells = 30usize;
+        let classes: Vec<LandClass> = (0..cells * cells)
+            .map(|j| match (j % cells) / 10 {
+                0 => LandClass::Meadow,
+                1 => LandClass::Rock,
+                _ => LandClass::Scree,
+            })
+            .collect();
+        let lu = LandUseTile {
+            classes,
+            water: Vec::new(),
+        };
+        p.landuse = Some(ocw_world::landuse::LandUse {
+            cells: cells as u32,
+            tiles: BTreeMap::from([(key, lu.clone())]),
+        });
+        // Andorra's measured palette and the satellite's beige there.
+        let mut palette: Vec<[f32; 3]> = LandClass::ALL.iter().map(|c| land_colour(*c)).collect();
+        let rgb = |c: [u8; 3]| c.map(|v| f32::from(v) / 255.0);
+        palette[LandClass::Default as usize] = rgb([74, 78, 47]);
+        palette[LandClass::Meadow as usize] = rgb([72, 76, 44]);
+        palette[LandClass::Rock as usize] = rgb([120, 115, 81]);
+        palette[LandClass::Scree as usize] = rgb([142, 130, 98]);
+        let sat = SatelliteMap {
+            cells: 2,
+            rgb: vec![[121, 107, 85]; 4],
+        };
+        for doy in [200.0, 281.0] {
+            let day = ocw_sky::season::SeasonModel::for_place(42.54, 1.60).day(doy);
+            let map = colour_map_seasonal(
+                &p,
+                &p.tiles[&key],
+                &lu,
+                cells as u32,
+                Some(&palette),
+                Some(&sat),
+                Some(&day),
+            );
+            for t in map.data[..cells * cells * 4].chunks(4) {
+                let c = [t[0], t[1], t[2]].map(|v| f32::from(v) / 255.0);
+                assert!(!crate::region_look::is_sand(c), "day {doy}: {c:?}");
+            }
+        }
+        // The near ground: the meadow's corners have scree and rock.
+        let s = tile_splat(&p, key, cells as u32, &crate::ground::default_mix());
+        let w = |i: usize| {
+            let (a, b) = (s.a[i], s.b[i]);
+            [a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3]].map(|v| f32::from(v) / 255.0)
+        };
+        let meadow = w(5 * (cells + 1) + 5);
+        assert!(
+            meadow[crate::ground::SCREE] + meadow[crate::ground::ROCK] > 0.3,
+            "{meadow:?}"
+        );
+        // Down in the valley a meadow stays a meadow.
+        p.tiles.get_mut(&key).unwrap().heights.fill(1000.0);
+        let s = tile_splat(&p, key, cells as u32, &crate::ground::default_mix());
+        assert_eq!(s.a[5 * (cells + 1) + 5][crate::ground::MEADOW], 255);
+        // The rock layer's tint keeps it grey.
+        let pal = ocw_world::look::Palette {
+            sources: Vec::new(),
+            entries: vec![ocw_world::look::PaletteEntry {
+                key: ocw_world::look::PaletteKey::Land(LandClass::Rock),
+                rgb: [120, 115, 81],
+                samples: 100,
+                source: 0,
+            }],
+        };
+        let means = [[0.2, 0.2, 0.2]; crate::ground::GROUND_LAYERS];
+        let t = crate::region_look::layer_tints(&pal, &means)[crate::ground::ROCK];
+        let tinted = Color::linear_rgb(0.2 * t[0], 0.2 * t[1], 0.2 * t[2]).to_srgba();
+        assert!(!crate::region_look::is_sand([
+            tinted.red,
+            tinted.green,
+            tinted.blue
+        ]));
+        assert!(t[0] / t[2] < 1.3, "{t:?}");
+    }
+
     fn landuse_package() -> WorldPackage {
         let mut p = package();
         let key = TileKey { x: 0, z: 0 };
@@ -2962,6 +3126,8 @@ mod tests {
             .init_asset::<StandardMaterial>()
             .init_asset::<SeeThroughMaterial>()
             .init_asset::<TerrainMaterial>()
+            .init_asset::<crate::water::WaterMaterial>()
+            .init_asset::<crate::far_terrain::FarMaterial>()
             .init_resource::<CameraObstacles>()
             .insert_resource(PackageWorld::single(Arc::new(pkg)))
             .insert_resource(view)
@@ -3111,12 +3277,13 @@ mod tests {
         assert_eq!(splat.a.len(), 21 * 21);
         // Corner (2, 15) lies in the forest: its mix (forest floor 60 %).
         assert_eq!(splat.a[15 * 21 + 2][crate::ground::FOREST_FLOOR], 153);
-        // The colour map takes the material means: the forest is blue now.
+        // The colour map takes the material means: the forest is blue now
+        // (darkened by the canopy shade), under the green of the canopy
+        // (v6.58: `COLOUR_MAP_CANOPY` of it).
         let map = m.colour_map.unwrap();
         let texel = |c: usize, r: usize, ch: usize| map.data[(r * 20 + c) * 4 + ch];
-        // (Blue, darkened by the canopy shade: 0.5 · 0.73 linear ≈ 160 sRGB.)
-        assert!(texel(2, 15, 2) > 120, "{}", texel(2, 15, 2));
-        assert_eq!(texel(2, 15, 0), 0);
+        assert!(texel(2, 15, 2) > 60, "{}", texel(2, 15, 2));
+        assert!(texel(2, 15, 0) < 30 && texel(2, 15, 1) > texel(2, 15, 0));
         // Roads: layer and metres in the texture coordinates, colour from
         // the library.
         assert_eq!(m.roads.uvs.len(), m.roads.positions.len());

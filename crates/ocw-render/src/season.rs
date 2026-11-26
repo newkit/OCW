@@ -342,6 +342,13 @@ fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
 /// litter.
 pub const BARE_WOOD: [f32; 3] = [0.36, 0.31, 0.26];
 
+/// The deciduous and larch crowns from afar are shaded like the conifers'
+/// [`crate::far_terrain::CANOPY`]: their sides and the shadows between
+/// them (the canopy's mean colour is about two thirds of a sunlit crown's).
+/// Before (v6.58) they were their sunlit leaf colour: a broadleaf wood
+/// 3 km away in October came out as bright as a sand dune.
+pub const FAR_CROWN_SHADE: f32 = 0.66;
+
 /// The colour of the forest canopy from afar (sRGB) at `alt_m`: the
 /// conifers' `conifer` green with the deciduous and larch shares of the
 /// region's mix in their seasonal colour.
@@ -371,7 +378,7 @@ impl CanopyTones {
         let tone = |leaf: LeafType| {
             let f = season.foliage(leaf, alt_m, 0.0);
             let leafy = srgb_of(tree_colour(leaf, &f, 0.5, 0.35));
-            mix3(BARE_WOOD, leafy, f.leaves)
+            mix3(BARE_WOOD, leafy, f.leaves).map(|c| c * FAR_CROWN_SHADE)
         };
         let fallback = mix.shares(TreeSetting::Forest, alt_m);
         Self {
@@ -757,7 +764,7 @@ mod tests {
         let conifer = [0.11, 0.25, 0.11];
         let w = canopy_colour(conifer, 455.0, &m.day(15.0));
         let s = canopy_colour(conifer, 455.0, &m.day(182.0));
-        assert!(w[0] > s[0] + 0.08, "{w:?} {s:?}");
+        assert!(w[0] > s[0] + 0.04, "{w:?} {s:?}");
         let high = canopy_colour(conifer, 1900.0, &m.day(15.0));
         assert!((high[1] - conifer[1]).abs() < 0.05);
         // With the measured forest type (spec §14 Phase 8 T3): a conifer
@@ -768,13 +775,20 @@ mod tests {
         assert!((t.at(Some(0.0))[1] - conifer[1]).abs() < 0.01);
         let bare = t.at(Some(1.0));
         assert!(
-            (0..3).all(|i| (bare[i] - BARE_WOOD[i]).abs() < 0.03),
+            (0..3).all(|i| (bare[i] - BARE_WOOD[i] * FAR_CROWN_SHADE).abs() < 0.03),
             "{bare:?}"
         );
+        // Shaded like the conifers: a bare or leafy broadleaf wood from
+        // afar is dark, never as bright as sand (luma below 0.3).
+        for day in [15.0, 120.0, 182.0, 290.0, 320.0] {
+            let c = CanopyTones::new(conifer, 455.0, &m.day(day)).at(Some(1.0));
+            let luma = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+            assert!(luma < 0.36, "day {day}: {c:?}");
+        }
         let half = t.at(Some(0.5));
         assert!(half[0] > t.at(Some(0.0))[0] && half[0] < bare[0]);
         let high = CanopyTones::new(conifer, 1900.0, &m.day(15.0)).at(Some(1.0));
-        assert!(high[0] > conifer[0] + 0.15, "{high:?}");
+        assert!(high[0] > conifer[0] + 0.1, "{high:?}");
         // Settings by land class.
         assert_eq!(tree_setting(Some(LandClass::Orchard)), TreeSetting::Orchard);
         assert_eq!(tree_setting(Some(LandClass::Meadow)), TreeSetting::Open);

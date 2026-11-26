@@ -127,6 +127,57 @@ pub fn region_mix(region: &ocw_assets::materials::Region) -> ClassMix {
     m
 }
 
+/// The alpine ground (spec 4.6, v6.58): above the tree line the grass of
+/// the land use (no land use, meadows, grassland, heath, parks) is short
+/// turf between scree and rock outcrops, not a lowland meadow – before, the
+/// high slopes of Andorra, the Alps and the Teide came out as one sandy
+/// sheet of dormant straw. The layer mix there (the height blend turns it
+/// into patches): turf, scree, rock and gravel.
+pub fn alpine_mix() -> [f32; GROUND_LAYERS] {
+    let mut w = [0.0; GROUND_LAYERS];
+    w[MEADOW] = 0.5;
+    w[SCREE] = 0.25;
+    w[ROCK] = 0.15;
+    w[GRAVEL] = 0.1;
+    w
+}
+
+/// The stony share of [`alpine_mix`] (scree, rock, gravel).
+pub const ALPINE_STONE: f32 = 0.5;
+
+/// The classes whose ground turns alpine above the tree line.
+pub fn turns_alpine(class: LandClass) -> bool {
+    matches!(
+        class,
+        LandClass::Default | LandClass::Meadow | LandClass::Park | LandClass::Scrub
+    )
+}
+
+/// How alpine the ground is at `alt_m` (0 … 1): from 400 m below the
+/// region's tree line `tree_line_m` (the open pastures above the forest's
+/// closed edge) to 100 m above it.
+pub fn alpine_share(alt_m: f64, tree_line_m: f64) -> f32 {
+    smoothstep(
+        (tree_line_m - 400.0) as f32,
+        (tree_line_m + 100.0) as f32,
+        alt_m as f32,
+    )
+}
+
+/// The layer mix of `class` (its mix `w`) where the ground is `alpine`
+/// (0 … 1, [`alpine_share`]).
+pub fn alpine_weights(
+    class: LandClass,
+    w: [f32; GROUND_LAYERS],
+    alpine: f32,
+) -> [f32; GROUND_LAYERS] {
+    if !turns_alpine(class) || alpine <= 0.0 {
+        return w;
+    }
+    let a = alpine_mix();
+    std::array::from_fn(|i| w[i] + (a[i] - w[i]) * alpine.clamp(0.0, 1.0))
+}
+
 /// Slope (rise over run) where rock starts to show, and where it is all
 /// rock: 75 % … 120 % (37° … 50°). The flat colour map used 60 … 100 %,
 /// but with the limestone texture the steep alpine meadows of the 10 m
@@ -209,6 +260,17 @@ pub fn splat_corners(
     mix: &ClassMix,
     class: impl Fn(i64, i64) -> Option<LandClass>,
 ) -> (Vec<[u8; 4]>, Vec<[u8; 4]>) {
+    splat_corners_alpine(cells, mix, class, |_, _| 0.0)
+}
+
+/// [`splat_corners`] with the alpine ground ([`alpine_weights`]) at each
+/// corner by `alpine(c, r)` (0 … 1).
+pub fn splat_corners_alpine(
+    cells: usize,
+    mix: &ClassMix,
+    class: impl Fn(i64, i64) -> Option<LandClass>,
+    alpine: impl Fn(i64, i64) -> f32,
+) -> (Vec<[u8; 4]>, Vec<[u8; 4]>) {
     let n = cells as i64;
     let at = |c: i64, r: i64| {
         class(c, r)
@@ -219,8 +281,10 @@ pub fn splat_corners(
     for r in 0..=n {
         for c in 0..=n {
             let mut w = [0.0f32; GROUND_LAYERS];
+            let high = alpine(c, r);
             for (dc, dr) in [(-1, -1), (0, -1), (-1, 0), (0, 0)] {
-                let cw = mix[at(c + dc, r + dr) as usize];
+                let cl = at(c + dc, r + dr);
+                let cw = alpine_weights(cl, mix[cl as usize], high);
                 for i in 0..GROUND_LAYERS {
                     w[i] += cw[i] / 4.0;
                 }
