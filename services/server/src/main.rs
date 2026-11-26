@@ -298,6 +298,35 @@ struct Args {
     /// issuer).
     #[arg(long, value_name = "URL", requires = "credit_key")]
     credit_backend: Option<String>,
+    /// Check the parts of signed-in riders against their account (spec 14
+    /// Phase 4, 4O W5d): only parts the account owns count, anonymous
+    /// riders ride base parts (needs a sign-in; the garage comes from
+    /// `--credit-backend` or the sign-in's issuer).
+    #[arg(long)]
+    check_parts: bool,
+}
+
+/// The parts check of `--check-parts` (spec 14 Phase 4, 4O W5d).
+fn start_ownership(args: &Args, auth: Option<&Auth>) -> Option<ocw_server::Ownership> {
+    if !args.check_parts {
+        return None;
+    }
+    let Some(backend) = args
+        .credit_backend
+        .clone()
+        .or_else(|| auth.map(|a| a.verifier.issuer().to_owned()))
+    else {
+        eprintln!("--check-parts: no accounts backend (a sign-in or --credit-backend)");
+        std::process::exit(2);
+    };
+    tracing::info!(%backend, "parts checked against the riders' accounts");
+    match ocw_server::ownership::BackendOwnership::start(backend) {
+        Ok(o) => Some(ocw_server::Ownership(std::sync::Arc::new(o))),
+        Err(e) => {
+            eprintln!("--check-parts: {e}");
+            std::process::exit(2);
+        }
+    }
 }
 
 /// The hearts credits of `--credit-key` (spec 14 Phase 4, 4O Q19).
@@ -746,6 +775,7 @@ fn main() {
             auth: auth.as_ref().map(|a| a.verifier.clone()),
             auth_required: args.auth_required,
             hearts_credits: start_credits(&args, auth.as_ref()),
+            ownership: start_ownership(&args, auth.as_ref()),
         },
     );
     // Real weather (spec §14 Phase 9, S7): the server asks the providers,

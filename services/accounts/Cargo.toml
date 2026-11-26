@@ -39,6 +39,8 @@ rand = "0.8"
 ocw-account-api.workspace = true
 ocw-assets.workspace = true
 ocw-core.workspace = true
+# The repairs' prices (spec 14 Phase 4, W6; the damage parts).
+ocw-sim.workspace = true
 ocw-world.workspace = true
 # PostgreSQL (4O W5a; MIT OR Apache-2.0): runtime queries only (no
 # database at build time), the migrations embedded by `migrate!`.

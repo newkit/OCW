@@ -307,6 +307,12 @@ impl PatchQuestion {
                 }
             }
             out.ops.extend(p.ops.iter().cloned());
+            // The saved views of every file of the stack (16H Q13 (b)).
+            for v in &p.views {
+                if !out.views.contains(v) {
+                    out.views.push(v.clone());
+                }
+            }
         }
         Some(out)
     }

@@ -279,11 +279,43 @@ impl Plugin for BindingsPlugin {
     }
 }
 
+/// What an app does with a shared binding's action (an app that adds
+/// the shared menu and its bindings without every ride feature, such as
+/// OCW Studio, whose console knows no `set display.map`).
+#[derive(Debug, Clone, Copy)]
+pub enum ActionUse {
+    /// The shared behaviour (the game's console line).
+    Shared,
+    /// Nothing happens (the app has no such feature).
+    Drop,
+    /// The app's own function instead, run with the world.
+    Run(fn(&mut World)),
+}
+
+/// The app's hook for the shared bindings' actions; without it (the game,
+/// the browser) every action does what it does in a ride.
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct BindingHooks {
+    pub action: fn(Action) -> ActionUse,
+}
+
+impl Default for BindingHooks {
+    fn default() -> Self {
+        Self {
+            action: |_| ActionUse::Shared,
+        }
+    }
+}
+
 /// The navigation map's keys (spec §3.2 *Navigation map*): N shows or
 /// hides it, Z steps the zoom (auto → 1 … 7 → auto); both as settings
-/// (`display.map`, `display.map_zoom`), so they are kept.
+/// (`display.map`, `display.map_zoom`), so they are kept. An app's
+/// [`BindingHooks`] may drop them or map them to its own.
+#[allow(clippy::too_many_arguments)]
 pub fn map_keys(
     keys: Option<Res<ButtonInput<KeyCode>>>,
+    hooks: Option<Res<BindingHooks>>,
+    mut commands: Commands,
     pads: Query<&Gamepad>,
     bindings: Option<Res<ActiveBindings>>,
     context: Option<Res<ocw_render::menu::InputContext>>,
@@ -299,11 +331,26 @@ pub fn map_keys(
     }
     let b = bindings.as_deref();
     let pressed = |a: Action| key_just_pressed(b, a, &keys) || pad_just_pressed(b, a, pads.iter());
-    if pressed(Action::Map) {
+    let hook = hooks.map_or(BindingHooks::default().action, |h| h.action);
+    // `true`: the shared behaviour.
+    let mut shared = |a: Action| {
+        if !pressed(a) {
+            return false;
+        }
+        match hook(a) {
+            ActionUse::Shared => true,
+            ActionUse::Drop => false,
+            ActionUse::Run(f) => {
+                commands.queue(move |w: &mut World| f(w));
+                false
+            }
+        }
+    };
+    if shared(Action::Map) {
         let on = show.is_some_and(|s| s.0);
         console.queue(format!("set display.map {}", if on { "off" } else { "on" }));
     }
-    if pressed(Action::MapZoom) {
+    if shared(Action::MapZoom) {
         let next = zoom.map(|z| z.0).unwrap_or_default().cycle();
         console.queue(format!("set display.map_zoom {}", next.label()));
     }
@@ -730,6 +777,54 @@ mod tests {
         app.update();
         let s = app.world().resource::<crate::settings::UserSettings>();
         assert_eq!(s.value("display.map_zoom").to_string(), "1");
+    }
+
+    /// An app's hook drops or maps the shared map keys (OCW Studio: N its
+    /// own 2D map, Z nothing) – no `set display.map…` line is queued.
+    #[test]
+    fn an_app_hook_drops_or_maps_the_map_keys() {
+        #[derive(Resource, Default)]
+        struct Toggled(u32);
+        let press = |app: &mut App, k: KeyCode| {
+            {
+                let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+                keys.reset_all();
+                keys.press(k);
+            }
+            app.update();
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .reset_all();
+            app.update();
+        };
+        let lines = |app: &App| app.world().resource::<ConsoleState>().log().join("\n");
+        // Without a hook: N and Z set the game's settings.
+        let mut game = app();
+        game.init_resource::<ocw_render::navi_map::MapZoom>();
+        press(&mut game, KeyCode::KeyN);
+        press(&mut game, KeyCode::KeyZ);
+        let s = game.world().resource::<crate::settings::UserSettings>();
+        assert_eq!(s.value("display.map_zoom").to_string(), "1");
+        // With the hook: N runs the app's function, Z is dropped.
+        let mut studio = app();
+        studio
+            .init_resource::<Toggled>()
+            .init_resource::<ocw_render::navi_map::MapZoom>()
+            .insert_resource(BindingHooks {
+                action: |a| match a {
+                    Action::Map => ActionUse::Run(|w| w.resource_mut::<Toggled>().0 += 1),
+                    Action::MapZoom => ActionUse::Drop,
+                    _ => ActionUse::Shared,
+                },
+            });
+        let before = lines(&studio);
+        press(&mut studio, KeyCode::KeyN);
+        press(&mut studio, KeyCode::KeyZ);
+        press(&mut studio, KeyCode::KeyN);
+        assert_eq!(studio.world().resource::<Toggled>().0, 2);
+        assert_eq!(lines(&studio), before, "nothing queued on the console");
+        let s = studio.world().resource::<crate::settings::UserSettings>();
+        assert_eq!(s.value("display.map_zoom").to_string(), "auto");
     }
 
     #[test]

@@ -12,6 +12,9 @@ pub mod headphones;
 // The signed ride credits of a certified server (spec 14 Phase 4, 4O Q19).
 #[cfg(not(target_arch = "wasm32"))]
 pub mod credits;
+// The parts signed-in riders own, from the accounts backend (4O W5d).
+#[cfg(not(target_arch = "wasm32"))]
+pub mod ownership;
 // What a hosting runs beside its game server: the router's port mappings
 // and the bundled voice server (spec §7.1.6 V2; native only).
 #[cfg(not(target_arch = "wasm32"))]
@@ -177,6 +180,72 @@ pub struct ServerConfig {
     /// certified signs a ride credit and sends it to the accounts backend
     /// (`ocw-server --credit-key`). `None`: the apps upload their rides.
     pub hearts_credits: Option<Credits>,
+    /// The parts a signed-in rider owns (spec 14 Phase 4, 4O W5d; 4E): with
+    /// it, a `BikeChange` (and the hello's parts) count only the parts the
+    /// account owns – a part not owned, or any part of an anonymous rider,
+    /// counts as the base part, a bike profile the garage has no bike of
+    /// as the starter's (`ocw-server --check-parts`). `None`: every part
+    /// counts (a local server, the apps' own wallets).
+    pub ownership: Option<Ownership>,
+}
+
+/// What an account owns, as its garage last said.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Owned {
+    /// Catalogue ids of the parts and kit it owns.
+    pub parts: std::collections::BTreeSet<String>,
+    /// The bike profiles of its bikes (`road`, `gravel`, …).
+    pub profiles: std::collections::BTreeSet<String>,
+}
+
+/// Where the server learns what a signed-in rider owns (the accounts
+/// backend's `GET /workshop` with the rider's own token; tests: a map).
+pub trait PartsOwned: Send + Sync {
+    /// Fetch `account`'s garage again (a rider joined or changed bikes).
+    fn refresh(&self, account: &str, token: &str);
+    /// What `account` owns, as last fetched (`None`: not known yet).
+    fn owned(&self, account: &str) -> Option<Owned>;
+    /// The accounts whose garage arrived since the last call.
+    fn take_updated(&self) -> Vec<String>;
+}
+
+/// The server's [`PartsOwned`].
+#[derive(Clone)]
+pub struct Ownership(pub std::sync::Arc<dyn PartsOwned>);
+
+impl std::fmt::Debug for Ownership {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Ownership")
+    }
+}
+
+/// The profile riders fall back to without a bike of their own (the
+/// accounts' starter bike, 4O).
+pub const STARTER_PROFILE: ocw_core::ProfileId = ocw_core::ProfileId::Road;
+
+/// `parts` and `bike` as they count with ownership checked: only owned
+/// parts, base parts (free) and nothing unknown; a profile the rider has
+/// no bike of: the starter's. `owned`: `None` for an anonymous rider or a
+/// garage not known yet (only base parts then).
+pub fn owned_build(
+    bike: ocw_core::ProfileId,
+    parts: &[String],
+    owned: Option<&Owned>,
+) -> (ocw_core::ProfileId, Vec<String>) {
+    let table = ocw_sim::PartTable::shipped();
+    let bike = match owned {
+        Some(o) if o.profiles.contains(bike.id()) => bike,
+        _ => STARTER_PROFILE,
+    };
+    let parts = parts
+        .iter()
+        .filter(|id| {
+            table.get(id).is_some_and(|p| p.base)
+                || owned.is_some_and(|o| o.parts.contains(id.as_str()))
+        })
+        .cloned()
+        .collect();
+    (bike, parts)
 }
 
 /// One signed-in rider's ride on this server, as it ended.
@@ -284,6 +353,11 @@ pub struct GameServer {
     accounts: BTreeMap<ConnectionId, v1::Account>,
     /// When each connection's rider joined (Unix s; the ride credit).
     joined_at: BTreeMap<ConnectionId, i64>,
+    /// With ownership checked: each signed-in connection's token (to fetch
+    /// its garage) and the bike it asked for last (applied again when the
+    /// garage arrives).
+    tokens: BTreeMap<ConnectionId, String>,
+    asked: BTreeMap<ConnectionId, (ocw_core::ProfileId, Vec<String>)>,
     /// The riders' status signs (spec §2.6), from their samples (and
     /// `dev.bot_status` for bots); relayed in the snapshots without the
     /// `not_hearing` lists, looks only.
@@ -488,6 +562,8 @@ impl GameServer {
             real_pressure_y_m: None,
             accounts: BTreeMap::new(),
             joined_at: BTreeMap::new(),
+            tokens: BTreeMap::new(),
+            asked: BTreeMap::new(),
             photos: BTreeMap::new(),
             photo_out: Vec::new(),
             voice_blocks: BTreeMap::new(),
@@ -976,6 +1052,8 @@ impl GameServer {
         self.taken.release(&conn);
         self.accounts.remove(&conn);
         self.joined_at.remove(&conn);
+        self.tokens.remove(&conn);
+        self.asked.remove(&conn);
         self.voice_issued.remove(&conn);
         self.peer_addrs.remove(&conn);
         self.voice_blocks.remove(&conn);
@@ -1297,7 +1375,22 @@ impl GameServer {
                 name_taken: true,
             });
         }
-        let profile = physics_profile(&hello);
+        let mut profile = physics_profile(&hello);
+        // With ownership checked (4O W5d): the garage is fetched with the
+        // rider's token; until it arrives only base parts count.
+        let (bike, parts) = self.checked_parts(conn, account.as_ref(), profile.bike, &hello.parts);
+        if let (Some(o), Some(a), Some(token)) = (
+            &self.config.ownership,
+            &account,
+            hello.access_token.as_deref().filter(|t| !t.is_empty()),
+        ) {
+            o.0.refresh(&a.account_id, token);
+            self.tokens.insert(conn, token.to_owned());
+        }
+        if bike != profile.bike {
+            profile = ocw_core::RiderProfile::curated(bike, profile.rider_mass_kg);
+        }
+        hello.parts = parts;
         let rider = self.session.add_rider(hello.display_name.clone(), profile);
         let name_note = match checked {
             Ok(n) => {
@@ -1440,8 +1533,89 @@ impl GameServer {
     /// unknown or unfitting ids count as base parts; ownership is checked
     /// with accounts, Phase 5); the look is cosmetic and applies at once.
     /// Everyone learns the new build from a `RiderBuild` once it applies.
+    /// `parts` on `bike` as they count for `conn` (ownership checked when
+    /// the server does; the request kept to apply again when the garage
+    /// arrives).
+    fn checked_parts(
+        &mut self,
+        conn: ConnectionId,
+        account: Option<&v1::Account>,
+        bike: ocw_core::ProfileId,
+        parts: &[String],
+    ) -> (ocw_core::ProfileId, Vec<String>) {
+        let Some(o) = &self.config.ownership else {
+            return (bike, parts.to_vec());
+        };
+        let owned = account.and_then(|a| o.0.owned(&a.account_id));
+        self.asked.insert(conn, (bike, parts.to_vec()));
+        owned_build(bike, parts, owned.as_ref())
+    }
+
+    /// Garages that arrived (ownership checked): the bikes their riders
+    /// asked for apply again with what they own now.
+    fn owned_arrived(&mut self) {
+        let Some(o) = self.config.ownership.clone() else {
+            return;
+        };
+        for account in o.0.take_updated() {
+            let conns: Vec<ConnectionId> = self
+                .accounts
+                .iter()
+                .filter(|(_, a)| a.account_id == account)
+                .map(|(c, _)| *c)
+                .collect();
+            for conn in conns {
+                let (Some((bike, parts)), Some(rider)) = (
+                    self.asked.get(&conn).cloned(),
+                    self.riders.get(&conn).copied(),
+                ) else {
+                    continue;
+                };
+                let (bike, parts) = owned_build(bike, &parts, o.0.owned(&account).as_ref());
+                let kg = self
+                    .session
+                    .base_profile(rider)
+                    .map_or(ocw_core::RiderProfile::default().rider_mass_kg, |p| {
+                        p.rider_mass_kg
+                    });
+                let build = ocw_sim::build::build(ocw_sim::PartTable::shipped(), bike, &parts);
+                self.session.set_bike(
+                    rider,
+                    ocw_core::RiderProfile::curated(bike, kg),
+                    Some(build),
+                );
+                tracing::info!(%rider, %account, bike = bike.id(), parts = parts.len(), "garage arrived: bike applied with the parts owned");
+            }
+        }
+    }
+
     fn bike_change(&mut self, rider: RiderId, change: &v1::BikeChange) -> S {
         let result = |ok: bool, message: String| S::DevResult(v1::DevCommandResult { ok, message });
+        let asked = ocw_core::ProfileId::from_wire(Some(&change.bike_profile));
+        let conn = self
+            .riders
+            .iter()
+            .find(|(_, r)| **r == rider)
+            .map(|(c, _)| *c);
+        let (bike, parts) = match conn {
+            Some(conn) => {
+                let account = self.accounts.get(&conn).cloned();
+                let checked = self.checked_parts(conn, account.as_ref(), asked, &change.parts);
+                // A part bought since the hello: the garage again.
+                if let (Some(o), Some(a), Some(t)) =
+                    (&self.config.ownership, &account, self.tokens.get(&conn))
+                {
+                    o.0.refresh(&a.account_id, t);
+                }
+                checked
+            }
+            None => (asked, change.parts.clone()),
+        };
+        let change = &v1::BikeChange {
+            parts,
+            bike_profile: bike.id().to_owned(),
+            ..change.clone()
+        };
         let bike = ocw_core::ProfileId::from_wire(Some(&change.bike_profile));
         let kg = self
             .session
@@ -2090,6 +2264,7 @@ impl GameServer {
     /// to every connection: free-ride path changes (reliable, at once) and
     /// a snapshot when one is due (every 5th tick at 50/10 Hz).
     pub fn tick(&mut self) -> Vec<Vec<u8>> {
+        self.owned_arrived();
         // The weather's physics for this tick (spec §14 Phase 9, S6): the
         // session rides it while the switch (or the event's rule) is on.
         let t0 = self.session_time_s();
@@ -5927,6 +6102,106 @@ mod auth_tests {
         fn ride_ended(&self, ride: EndedRide) {
             self.0.lock().unwrap().push(ride);
         }
+    }
+
+    #[derive(Default)]
+    struct FakeGarages {
+        owned: std::sync::Mutex<BTreeMap<String, Owned>>,
+        updated: std::sync::Mutex<Vec<String>>,
+        asked: std::sync::Mutex<Vec<(String, String)>>,
+    }
+
+    impl PartsOwned for FakeGarages {
+        fn refresh(&self, account: &str, token: &str) {
+            self.asked
+                .lock()
+                .unwrap()
+                .push((account.into(), token.into()));
+        }
+        fn owned(&self, account: &str) -> Option<Owned> {
+            self.owned.lock().unwrap().get(account).cloned()
+        }
+        fn take_updated(&self) -> Vec<String> {
+            std::mem::take(&mut self.updated.lock().unwrap())
+        }
+    }
+
+    /// The ownership check (spec 14 Phase 4, 4O W5d; 4E): with it, a
+    /// signed-in rider's `BikeChange` counts only the parts the account
+    /// owns (a profile it has no bike of: the starter's), an anonymous
+    /// rider's only base parts; a garage arriving later applies the bike
+    /// asked for again; the rider's token fetches it.
+    #[test]
+    fn only_owned_parts_count_when_the_server_checks() {
+        const OWNED: &str = "wheels.road-carbon.mid";
+        const NOT_YET: &str = "tyres.road.race";
+        let garages = std::sync::Arc::new(FakeGarages::default());
+        garages.owned.lock().unwrap().insert(
+            "acc_42".into(),
+            Owned {
+                parts: [OWNED.to_string()].into(),
+                profiles: ["road".to_string()].into(),
+            },
+        );
+        let mut s = GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                auth: Some(verifier()),
+                ownership: Some(Ownership(garages.clone())),
+                ..ServerConfig::default()
+            },
+        );
+        let (signed, _) = join(&mut s, Some(token(600, |_| {})));
+        let (anon, _) = join(&mut s, None);
+        assert_eq!(
+            garages.asked.lock().unwrap()[0].0,
+            "acc_42",
+            "fetched with the token"
+        );
+        let change = |profile: &str| {
+            encode(&client_message(C::BikeChange(v1::BikeChange {
+                bike_id: "b".into(),
+                bike_profile: profile.into(),
+                look: None,
+                parts: vec![OWNED.into(), NOT_YET.into()],
+                damage: None,
+            })))
+        };
+        let expect =
+            |s: &GameServer, conn: ConnectionId, bike: ocw_core::ProfileId, parts: &[&str]| {
+                let rider = s.riders[&conn];
+                let kg = s.session().base_profile(rider).unwrap().rider_mass_kg;
+                let parts: Vec<String> = parts.iter().map(|p| p.to_string()).collect();
+                let want = ocw_sim::build::build(ocw_sim::PartTable::shipped(), bike, &parts)
+                    .rider_profile(kg);
+                assert_eq!(s.session().rider_profile(rider).unwrap(), want, "{parts:?}");
+            };
+        s.handle(signed, &change("road"));
+        expect(&s, signed, ocw_core::ProfileId::Road, &[OWNED]);
+        s.handle(anon, &change("road"));
+        expect(&s, anon, ocw_core::ProfileId::Road, &[]);
+        // A time-trial bike the garage does not have: the starter's road.
+        s.handle(signed, &change("tt"));
+        expect(&s, signed, ocw_core::ProfileId::Road, &[OWNED]);
+        // The tyres bought meanwhile: the garage arrives, the bike asked
+        // for applies again.
+        s.handle(signed, &change("road"));
+        garages
+            .owned
+            .lock()
+            .unwrap()
+            .get_mut("acc_42")
+            .unwrap()
+            .parts
+            .insert(NOT_YET.into());
+        garages.updated.lock().unwrap().push("acc_42".into());
+        s.tick();
+        expect(&s, signed, ocw_core::ProfileId::Road, &[OWNED, NOT_YET]);
+        // Without the check every part counts (the app's own garage).
+        assert_eq!(
+            owned_build(ocw_core::ProfileId::Gravel, &[NOT_YET.into()], None).0,
+            STARTER_PROFILE
+        );
     }
 
     /// A server with a credit key (spec 14 Phase 4, 4O Q19): a signed-in

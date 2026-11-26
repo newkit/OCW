@@ -375,38 +375,15 @@ pub fn keys_init_root(name: &str, dir: Option<PathBuf>) {
 /// (spec §4.7 *User keys*).
 pub fn keys_init_user(name: &str, dir: Option<PathBuf>, days: u32) {
     let dir = dir.unwrap_or_else(default_key_dir);
-    let root = RootKeyPair::from_seed(name, random_seed().unwrap_or_else(|e| fail(e)));
-    let seed = random_seed().unwrap_or_else(|e| fail(e));
-    let now = now_unix_s();
-    let cert = root.certify(
-        name,
-        SigningKeyPair::public_key_of(seed),
-        now - 3600,
-        now + i64::from(days) * DAY_S,
-    );
-    let key = SigningKeyPair::new(seed, cert)
-        .and_then(|k| k.with_root(root.public()))
-        .unwrap_or_else(|e| fail(e));
-    let (secret, public, signing) = (
-        dir.join("user-root.key"),
-        dir.join("user-root.pub.json"),
-        dir.join("user.key"),
-    );
-    for p in [&secret, &public, &signing] {
-        if p.exists() {
-            fail(format!(
-                "{}: exists; not overwriting a key file",
-                p.display()
-            ));
-        }
-    }
-    write_new(&secret, &root.to_json(), true).unwrap_or_else(|e| fail(e));
-    write_new(&public, &root.public().to_json(), false).unwrap_or_else(|e| fail(e));
-    write_new(&signing, &key.to_json(), true).unwrap_or_else(|e| fail(e));
-    let fp = root.public().fingerprint();
+    // The same files OCW Studio makes on its first *Build package*.
+    let made =
+        ocw_worldstore::keys::init_user(&dir, name, days, now_unix_s()).unwrap_or_else(|e| fail(e));
+    let (secret, public, signing) = (&made.root_secret, &made.root_public, &made.signing);
+    let fp = made.fingerprint();
+    let name = &made.root.name;
     println!(
         "your key '{name}' (key id {}):\n  fingerprint: {fp}\n  root secret: {}  <- keep it safe, never share or commit\n  signing key: {}  <- world-builder sign --key {}\n  public key:  {}  <- others may add it: world trust add FILE\nTell others the fingerprint over a channel they trust (in person, a call); only it identifies your key.",
-        root.public().key_id,
+        made.root.key_id,
         secret.display(),
         signing.display(),
         signing.display(),

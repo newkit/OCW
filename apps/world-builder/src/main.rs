@@ -126,6 +126,12 @@ enum Cmd {
         /// order). Operations whose target is gone are reported.
         #[arg(long = "patch", value_name = "FILE")]
         patch: Vec<PathBuf>,
+        /// Fail – before the package is written – when an operation of a
+        /// patch lost its target (a road gone in this OSM data): our
+        /// official builds (16H Q7 (a)); without it only a warning (users'
+        /// builds in OCW Studio).
+        #[arg(long)]
+        strict_patch: bool,
     },
     /// World patches (spec §14 Phase 16 16C).
     Patch {
@@ -1537,6 +1543,8 @@ struct PackageArgs {
     out: PathBuf,
     /// The world patch stack (spec §14 Phase 16 16C), in order.
     patches: Vec<ocw_world::patch::LoadedPatch>,
+    /// Fail on an operation whose target is gone (16H Q7 (a)).
+    strict_patch: bool,
 }
 
 /// The time zone a package gets (spec §14 Phase 9): `--time-zone` (checked
@@ -1637,6 +1645,7 @@ fn package(args: PackageArgs) {
         time_zone,
         out,
         patches,
+        strict_patch,
     } = args;
     let t = Instant::now();
     let (region, context) = cut_region(&src.poly, bbox, origin);
@@ -1936,6 +1945,31 @@ fn package(args: PackageArgs) {
         });
         area_report.push(format!("obstacles (OBST): {}", st.summary()));
     }
+    if !patches.is_empty() {
+        // Roads a patch closed for bikes stay rideable, with a warning
+        // sign at each end (16H Q6).
+        let signs = patching.add_bike_signs(&mut pkg);
+        if !signs.is_empty() {
+            let at: Vec<String> = signs
+                .iter()
+                .take(8)
+                .map(|p| {
+                    format!(
+                        "{:.0},{:.0} facing {:.0}°",
+                        p.pos[0],
+                        p.pos[1],
+                        p.angle.to_degrees()
+                    )
+                })
+                .collect();
+            area_report.push(format!(
+                "patch: {} warning sign(s) at the ends of roads closed for bikes (OBST), at x,z {}{}",
+                signs.len(),
+                at.join("; "),
+                if signs.len() > at.len() { " …" } else { "" }
+            ));
+        }
+    }
     {
         // Place names for the map labels (section PLCE, spec §4.7, §14
         // Phase 16 16A): OSM place=* nodes and areas on the tiles.
@@ -1953,6 +1987,13 @@ fn package(args: PackageArgs) {
     }) {
         area_report.push(junction_summary(&j));
         pkg.junctions = Some(std::sync::Arc::new(j));
+    }
+    // An official build stops on a patch target that is gone, before the
+    // package is written (16H Q7 (a)).
+    if strict_patch && let Some(msg) = patch_cmd::strict_failure(&patching.report) {
+        patch_cmd::print_report(&patching.report);
+        eprintln!("{msg}");
+        std::process::exit(1);
     }
     let bytes = stage("serialise", || pkg.to_bytes());
     if let Some(dir) = out.parent() {
@@ -3788,6 +3829,7 @@ fn main() {
             sign_key,
             profile,
             patch,
+            strict_patch,
         } => {
             // Read the patches and the key first: a bad patch or key should
             // not cost a whole build.
@@ -3813,6 +3855,7 @@ fn main() {
                 time_zone,
                 out: out.clone(),
                 patches,
+                strict_patch,
             });
             // The patches travel next to the package, recorded in its
             // manifest (spec 16H Q9).
@@ -4123,11 +4166,25 @@ mod tests {
             "a.ocwpatch",
             "--patch",
             "b.ocwpatch",
+            "--strict-patch",
         ])
         .unwrap();
-        let Cmd::Package { patch, .. } = cli.command else {
+        let Cmd::Package {
+            patch,
+            strict_patch,
+            ..
+        } = cli.command
+        else {
             panic!("package");
         };
+        assert!(strict_patch, "16H Q7 (a)");
+        let Cmd::Package { strict_patch, .. } = Cli::try_parse_from(["world-builder", "package"])
+            .unwrap()
+            .command
+        else {
+            panic!("package");
+        };
+        assert!(!strict_patch, "users' builds only warn");
         assert_eq!(
             patch,
             vec![PathBuf::from("a.ocwpatch"), PathBuf::from("b.ocwpatch")]

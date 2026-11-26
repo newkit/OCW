@@ -93,6 +93,18 @@ pub struct Studio {
     pub save_guard: Option<crate::patch_prompt::SaveGuard>,
     /// The last *Build package*.
     pub build: Option<BuildJob>,
+    /// Where the studio user's own key lives (the folder of
+    /// `world-builder keys init-user`: `$OCW_KEY_DIR`, else
+    /// `<config dir>/ocw/keys`; spec 4.7 *User keys*).
+    pub key_dir: PathBuf,
+    /// A *Build package* waiting for the user's name for signing worlds
+    /// (the first build, before the key is made).
+    pub sign_prompt: Option<BuildRequest>,
+    /// Saved views of a patch just opened that the document lacks,
+    /// offered in the Views panel (16H Q13 (b); `studio view take | skip`).
+    pub offered_views: Vec<View>,
+    /// The `world-builder` to run (`None`: looked for, [`crate::build::world_builder`]).
+    pub world_builder: Option<PathBuf>,
     /// The Routes workspace: its document, the road graph, the planners.
     pub routes: crate::routes::RouteTools,
     /// The Models workspace's document (E4, [`crate::model_edit`]).
@@ -115,6 +127,10 @@ impl Studio {
             patch_question: None,
             save_guard: None,
             build: None,
+            key_dir: ocw_worldstore::keys::default_key_dir(),
+            sign_prompt: None,
+            world_builder: None,
+            offered_views: Vec::new(),
             routes: crate::routes::RouteTools::default(),
             models: crate::model_edit::ModelTools::default(),
         }
@@ -228,8 +244,9 @@ impl Studio {
                 q.changes()
             ));
         }
-        let patch = q.merged().ok_or("the patch cannot be loaded")?;
+        let mut patch = q.merged().ok_or("the patch cannot be loaded")?;
         let n = patch.ops.len();
+        let offer = self.offer_views(&mut patch);
         let fresh = self.world().is_some_and(|d| !d.can_undo() && !d.is_dirty());
         if fresh {
             // The document's start, as before the question: replace the
@@ -261,7 +278,31 @@ impl Studio {
         }
         self.patch_file = q.save_file();
         self.save_guard = q.is_stack().then(|| SaveGuard::Stack(q.names()));
-        Ok(format!("patch {} loaded ({n} operations)", q.names()))
+        Ok(format!(
+            "patch {} loaded ({n} operations){offer}",
+            q.names()
+        ))
+    }
+
+    /// Takes the saved views out of a patch being opened (16H Q13 (b)):
+    /// those the World document lacks are offered in the Views panel; the
+    /// note for the message (empty: none).
+    pub fn offer_views(&mut self, patch: &mut ocw_world::patch::WorldPatch) -> String {
+        let offered = match self.world() {
+            Some(d) => d.content().views_to_offer(patch),
+            None => WorldDoc::default().views_to_offer(patch),
+        };
+        patch.views.clear();
+        self.offered_views = offered;
+        if self.offered_views.is_empty() {
+            return String::new();
+        }
+        let names: Vec<&str> = self.offered_views.iter().map(|v| v.name.as_str()).collect();
+        format!(
+            "; it has {} saved view(s) ({}): add them in the Views panel or with `studio view take`",
+            names.len(),
+            names.join(", ")
+        )
     }
 
     /// A height point's position in package metres (x, z).
@@ -328,6 +369,13 @@ impl Studio {
                         self.save_guard = Some(SaveGuard::Stack(q.names()));
                     }
                     patch = q.merged();
+                    if let Some(p) = patch.as_mut() {
+                        // The new document has no views yet: all offered.
+                        let offer = self.offer_views(p);
+                        if let Some(m) = msg.as_mut() {
+                            m.push_str(&offer);
+                        }
+                    }
                 }
                 PatchChoice::Skip => {
                     msg = Some(format!(
@@ -463,6 +511,14 @@ pub enum StudioCommand {
     Focus,
     /// Builds the patched package with `world-builder`.
     Build(BuildRequest),
+    /// The saved views a patch just opened offers (16H Q13 (b)): `true`
+    /// adds them to the World document, `false` lets them go.
+    TakeViews(bool),
+    /// Makes the user's own key with this name (the first *Build
+    /// package*, spec 4.7 *User keys*) and starts the build waiting for it.
+    SignName(String),
+    /// Closes the name dialog: the waiting build is not started.
+    SignCancel,
     /// A Routes workspace command (16D).
     Route(crate::routes::RouteCommand),
     /// A Models workspace edit (E4).
@@ -623,6 +679,15 @@ pub fn apply(world: &mut World, cmd: StudioCommand) -> Result<String, String> {
             Ok(format!("looking at {:.0}, {:.0}", target[0], target[2]))
         }
         StudioCommand::Build(req) => start_build(&mut world.resource_mut::<Studio>(), req),
+        StudioCommand::SignName(name) => crate::signing::make_key(world, &name),
+        StudioCommand::SignCancel => {
+            let had = world.resource_mut::<Studio>().sign_prompt.take().is_some();
+            Ok(if had {
+                "not built: a package you build is signed with your own key, made when you give your name".into()
+            } else {
+                String::new()
+            })
+        }
         StudioCommand::PatchAnswer(load) => crate::patch_prompt::answer(world, load),
         StudioCommand::Cycle(c) => crate::models_cycle::command(
             &mut world.resource_mut::<crate::models_view::ModelView>(),
@@ -731,6 +796,26 @@ pub fn edit(
             }
             Ok(format!("view '{name}' saved"))
         }
+        StudioCommand::TakeViews(take) => {
+            let views = std::mem::take(&mut studio.offered_views);
+            if views.is_empty() {
+                return Err("no saved views are offered (they come with a patch opened)".into());
+            }
+            if !take {
+                return Ok(format!(
+                    "{} saved view(s) of the patch not added",
+                    views.len()
+                ));
+            }
+            let n = views.len();
+            for v in views {
+                world_op(studio, WorldOp::add(v))?;
+            }
+            if let Some(d) = doc.and_then(|id| studio.session.get_mut::<WorldDoc>(id)) {
+                d.seal();
+            }
+            Ok(format!("{n} saved view(s) of the patch added"))
+        }
         StudioCommand::RenameView(id, name) => {
             world_op(studio, WorldOp::Rename { id, name })?;
             Ok(String::new())
@@ -816,7 +901,9 @@ pub fn edit(
         | StudioCommand::Focus
         | StudioCommand::Model(_)
         | StudioCommand::Cycle(_)
-        | StudioCommand::Build(_) => Err("not a document command".into()),
+        | StudioCommand::Build(_)
+        | StudioCommand::SignName(_)
+        | StudioCommand::SignCancel => Err("not a document command".into()),
         other => patch_command(studio, other, now_s),
     }
 }
@@ -1139,15 +1226,16 @@ fn patch_command(studio: &mut Studio, cmd: StudioCommand, now_s: f64) -> Result<
             let path = expand_home(path.trim());
             let doc = studio.world().ok_or("no world is open")?;
             let id = doc.content().package.id.clone();
-            let patch = crate::patch::read_patch(&path, &id)?;
+            let mut patch = crate::patch::read_patch(&path, &id)?;
             let n = patch.ops.len();
+            let offer = studio.offer_views(&mut patch);
             let d = studio.world_mut()?;
             d.execute(WorldOp::SetPatch(Box::new(patch)), now_s)
                 .map_err(|e| e.to_string())?;
             d.seal();
             d.mark_saved();
             d.selection.clear();
-            let msg = format!("patch {} opened ({n} operations)", shown_path(&path));
+            let msg = format!("patch {} opened ({n} operations){offer}", shown_path(&path));
             studio.patch_file = Some(path);
             studio.save_guard = None;
             Ok(msg)
@@ -1219,13 +1307,18 @@ fn save_patch(studio: &mut Studio, path: PathBuf) -> Result<String, String> {
         ));
     }
     let doc = studio.world().ok_or("no world is open")?;
-    let patch = doc.content().patch.clone();
+    // The saved views travel in the file (16H Q13 (b)).
+    let patch = doc.content().patch_for_file();
     crate::patch::write_patch(&path, &patch)?;
     let d = studio.world_mut()?;
     d.seal();
     d.mark_saved();
+    let views = match patch.views.len() {
+        0 => String::new(),
+        n => format!(", {n} saved view(s)"),
+    };
     let msg = format!(
-        "saved {} ({} operations)",
+        "saved {} ({} operations{views})",
         shown_path(&path),
         patch.ops.len()
     );
@@ -1283,9 +1376,19 @@ pub fn start_build(studio: &mut Studio, req: BuildRequest) -> Result<String, Str
     };
     // What it would run (the patch is saved only when it can run).
     planned(studio, &studio.save_path().ok_or("no world is open")?)?;
-    let program = crate::build::world_builder().ok_or(
+    let program = studio.world_builder.clone().or_else(crate::build::world_builder).ok_or(
         "world-builder was not found: put it next to ocw-studio, on the PATH, or name it in OCW_WORLD_BUILDER",
     )?;
+    // The result is signed with the user's own key (spec 4.7 *User keys*):
+    // made on the first build with the name the user gives; a key that
+    // cannot be used stops the build (no new key over it).
+    let key = match crate::signing::own_key(studio)? {
+        Some(k) => k,
+        None => {
+            studio.sign_prompt = Some(req);
+            return Ok(crate::signing::ASK.into());
+        }
+    };
     let needs_save = studio.patch_file.is_none() || studio.world().is_some_and(|d| d.is_dirty());
     if needs_save {
         save_default(studio)?;
@@ -1308,7 +1411,13 @@ pub fn start_build(studio: &mut Studio, req: BuildRequest) -> Result<String, Str
     {
         std::fs::copy(m, &side).map_err(|e| format!("{}: {e}", shown_path(&side)))?;
     }
-    let mut job = BuildJob::start_chain(&program, &plan.lines, &plan.checks, req.out.clone());
+    let mut job = BuildJob::start_signed(
+        &program,
+        &plan.lines,
+        &plan.checks,
+        req.out.clone(),
+        Some(key),
+    );
     job.full = plan.full;
     job.note = plan.note.clone();
     info!("build: {}", job.command);
@@ -1535,6 +1644,14 @@ impl Plugin for EditPlugin {
                         .subcommand(Command::new("add").arg(Arg::new("name").num_args(0..)))
                         .subcommand(Command::new("list"))
                         .subcommand(
+                            Command::new("take")
+                                .about("Add the saved views of the patch just opened"),
+                        )
+                        .subcommand(
+                            Command::new("skip")
+                                .about("Do not add the saved views of the patch just opened"),
+                        )
+                        .subcommand(
                             Command::new("go").arg(
                                 Arg::new("id")
                                     .required(true)
@@ -1580,6 +1697,10 @@ impl Plugin for EditPlugin {
                 .subcommand(words(
                     "patch",
                     "The world patch: list | save [PATH] | open PATH | load | skip (the question when a package with a patch opens) | delete N | title TEXT | author TEXT | build [OUT]",
+                ))
+                .subcommand(words(
+                    "sign",
+                    "Your own key that signs the packages you build (spec 4.7 User keys): info | name NAME (makes the key on the first build and starts it) | cancel",
                 )),
             studio_command,
         ));
@@ -1761,6 +1882,11 @@ pub fn console_patch(group: &str, words: &[String], studio: &Studio) -> Result<C
             }
             run(StudioCommand::SetInfo(info))
         }
+        ("sign", "name") => run(StudioCommand::SignName(
+            rest(words, 1).ok_or("studio sign name NAME (your name for signing worlds)")?,
+        )),
+        ("sign", "cancel") => run(StudioCommand::SignCancel),
+        ("sign", "" | "info") => Ok(Console::Say(crate::signing::info(studio))),
         ("patch", "build") => {
             let pkg = studio.package.as_ref().ok_or("no world is open")?;
             let out = rest(words, 1)
@@ -1909,7 +2035,7 @@ fn studio_command(world: &mut World, m: &clap::ArgMatches) -> Result<String, Str
         }
         return Ok(msg);
     }
-    if let Some((group @ ("select" | "road" | "point" | "patch"), a)) = m.subcommand() {
+    if let Some((group @ ("select" | "road" | "point" | "patch" | "sign"), a)) = m.subcommand() {
         let words: Vec<String> = a
             .get_many::<String>("words")
             .map(|w| w.cloned().collect())
@@ -1995,7 +2121,9 @@ fn studio_command(world: &mut World, m: &clap::ArgMatches) -> Result<String, Str
             Some(("delete", a)) => {
                 StudioCommand::DeleteView(*a.get_one::<u32>("id").expect("required"))
             }
-            _ => return Err("studio view add|list|go|delete".into()),
+            Some(("take", _)) => StudioCommand::TakeViews(true),
+            Some(("skip", _)) => StudioCommand::TakeViews(false),
+            _ => return Err("studio view add|list|go|delete|take|skip".into()),
         },
         _ => {
             return Err(
@@ -2526,6 +2654,55 @@ mod tests {
             ));
         }
         p
+    }
+
+    /// Spec 16H Q13 (b): the saved views go into the patch file on save
+    /// (also views that were only autosaved), and a patch opened with views
+    /// offers those the document lacks.
+    #[test]
+    fn saved_views_travel_in_the_patch_and_are_offered_on_open() {
+        use crate::patch_prompt::PatchChoice;
+        let d = tmp_dir();
+        let file = d.join("testland.ocwpatch");
+        let mut s = patch_studio(&d);
+        run(&mut s, StudioCommand::AddView(Some("Castle".into())), 0.0);
+        run(&mut s, StudioCommand::SelectEdge(200), 1.0);
+        run(&mut s, StudioCommand::RemoveRoad, 1.5);
+        let msg = run(&mut s, StudioCommand::SavePatch, 2.0);
+        assert!(msg.contains("1 saved view(s)"), "{msg}");
+        let saved = crate::patch::read_patch(&file, "local/testland").unwrap();
+        assert_eq!(saved.views.len(), 1);
+        assert_eq!(saved.views[0].name, "Castle");
+        assert_eq!(saved.views[0].pos, CAM.0);
+        assert!(
+            s.world().unwrap().content().patch.views.is_empty(),
+            "kept as the document's views"
+        );
+        // Another session: *Load it* offers the patch's views.
+        let (mut t, msg) = open_with(&d, PatchChoice::Load);
+        let msg = msg.unwrap();
+        assert!(msg.contains("1 saved view(s) (Castle)"), "{msg}");
+        assert_eq!(t.offered_views.len(), 1);
+        assert!(t.world().unwrap().content().views.is_empty());
+        assert_eq!(t.world().unwrap().content().patch.ops.len(), 1);
+        let msg = run(&mut t, StudioCommand::TakeViews(true), 3.0);
+        assert_eq!(msg, "1 saved view(s) of the patch added");
+        assert_eq!(t.world().unwrap().content().views[0].name, "Castle");
+        assert!(t.offered_views.is_empty());
+        assert!(edit(&mut t, StudioCommand::TakeViews(true), CAM, 4.0).is_err());
+        // Opening it again where the view is: nothing offered; *No
+        // thanks* lets them go.
+        let msg = run(
+            &mut t,
+            StudioCommand::OpenPatch(file.display().to_string()),
+            5.0,
+        );
+        assert!(!msg.contains("saved view"), "{msg}");
+        let (mut u, _) = open_with(&d, PatchChoice::Load);
+        let msg = run(&mut u, StudioCommand::TakeViews(false), 6.0);
+        assert!(msg.contains("not added"), "{msg}");
+        assert!(u.world().unwrap().content().views.is_empty());
+        std::fs::remove_dir_all(&d).unwrap();
     }
 
     /// Spec 16H Q16 (b): the patch next to the package is asked about –

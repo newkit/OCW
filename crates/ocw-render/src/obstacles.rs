@@ -362,6 +362,117 @@ pub fn point_mesh_level(
     );
 }
 
+/// A flat disc of `sides` around `c` in the plane of `right` and up,
+/// its face looking along `normal`.
+fn disc(
+    m: &mut MeshArrays,
+    c: [f32; 3],
+    right: [f32; 3],
+    normal: [f32; 3],
+    r: f32,
+    sides: u32,
+    colour: [f32; 4],
+) {
+    let base = m.positions.len() as u32;
+    m.positions.push(c);
+    m.normals.push(normal);
+    m.colors.push(colour);
+    for j in 0..sides {
+        let a = j as f32 / sides as f32 * std::f32::consts::TAU;
+        let (x, y) = (a.cos() * r, a.sin() * r);
+        m.positions
+            .push([c[0] + right[0] * x, c[1] + y, c[2] + right[2] * x]);
+        m.normals.push(normal);
+        m.colors.push(colour);
+    }
+    // Counter-clockwise seen from the front (`normal`).
+    for j in 0..sides {
+        let (a, b) = (base + 1 + j, base + 1 + (j + 1) % sides);
+        if (right[2] * normal[0] - right[0] * normal[2]) > 0.0 {
+            m.indices.extend([base, b, a]);
+        } else {
+            m.indices.extend([base, a, b]);
+        }
+    }
+}
+
+/// The plate of the "no bicycles" sign (m): radius, its red ring.
+pub const SIGN_PLATE_R: f32 = 0.32;
+const SIGN_RING_R: f32 = 0.26;
+
+/// The warning sign at an end of a road closed for bikes (16H Q6;
+/// `ocw_world::bike_signs`): a grey pole and a round plate – a red ring
+/// round a white face with a black bicycle, the European "no bicycles"
+/// sign – facing the rider who comes onto the road (`p.angle`: the
+/// direction its face looks), its back plain grey.
+pub fn no_bike_sign(m: &mut MeshArrays, p: &PointObstacle, foot: f32) {
+    let palette = (
+        lin(0.62, 0.64, 0.66),
+        lin(0.80, 0.08, 0.06),
+        lin(0.96, 0.96, 0.94),
+        lin(0.05, 0.05, 0.05),
+    );
+    let (grey, red, white, black) = palette;
+    let top = p.height_m.max(1.5);
+    let c = [p.pos[0], foot, p.pos[1]];
+    prism(m, c, 0.035, 0.035, 0.0, top - 0.05, 8, grey);
+    let (fx, fz) = (p.angle.cos(), p.angle.sin());
+    let normal = [fx, 0.0, fz];
+    let back = [-fx, 0.0, -fz];
+    // Right as seen from the front.
+    let right = [fz, 0.0, -fx];
+    let mid = top - SIGN_PLATE_R;
+    let at = |d: f32, x: f32, y: f32| {
+        [
+            c[0] + fx * d + right[0] * x,
+            foot + mid + y,
+            c[2] + fz * d + right[2] * x,
+        ]
+    };
+    disc(m, at(0.045, 0.0, 0.0), right, normal, SIGN_PLATE_R, 24, red);
+    disc(m, at(0.05, 0.0, 0.0), right, normal, SIGN_RING_R, 24, white);
+    disc(m, at(0.04, 0.0, 0.0), right, back, SIGN_PLATE_R, 24, grey);
+    // The bicycle: two wheels and the frame between them.
+    for x in [-0.1_f32, 0.1] {
+        disc(m, at(0.055, x, -0.04), right, normal, 0.065, 12, black);
+        disc(m, at(0.056, x, -0.04), right, normal, 0.045, 12, white);
+    }
+    let bar = |m: &mut MeshArrays, a: (f32, f32), b: (f32, f32)| {
+        let (pa, pb) = (at(0.057, a.0, a.1), at(0.057, b.0, b.1));
+        // A thin quad in the plate's plane.
+        let (dx, dy, dz) = (pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]);
+        let len = (dx * dx + dy * dy + dz * dz).sqrt().max(1e-4);
+        // Perpendicular in the plane: (along right, up) rotated by 90°.
+        let along_r = (dx * right[0] + dz * right[2]) / len;
+        let along_y = dy / len;
+        let w = 0.012;
+        let off = |q: [f32; 3], s: f32| {
+            [
+                q[0] - right[0] * along_y * w * s,
+                q[1] + along_r * w * s,
+                q[2] - right[2] * along_y * w * s,
+            ]
+        };
+        let base = m.positions.len() as u32;
+        for q in [off(pa, 1.0), off(pb, 1.0), off(pb, -1.0), off(pa, -1.0)] {
+            m.positions.push(q);
+            m.normals.push(normal);
+            m.colors.push(black);
+        }
+        m.indices
+            .extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+        m.indices
+            .extend([base, base + 2, base + 1, base, base + 3, base + 2]);
+    };
+    bar(m, (-0.1, -0.04), (-0.02, 0.05));
+    bar(m, (-0.02, 0.05), (0.07, 0.05));
+    bar(m, (0.07, 0.05), (0.1, -0.04));
+    bar(m, (-0.1, -0.04), (0.0, -0.04));
+    bar(m, (0.0, -0.04), (0.07, 0.05));
+    bar(m, (-0.02, 0.05), (-0.04, 0.09));
+    bar(m, (0.07, 0.05), (0.06, 0.1));
+}
+
 /// The model file of a point obstacle kind (spec §14 Phase 15, 15H names;
 /// kinds without their own file use the generic barrier post).
 pub fn model_id_of(kind: ObstacleKind) -> &'static str {
@@ -475,6 +586,12 @@ pub fn tile_obstacle_meshes_from(
         };
         let on_road = p.road_barrier();
         let at = |x: f32, z: f32| foot(pkg, ground, x, z, on_road);
+        if p.kind == ObstacleKind::NoBikeSign {
+            // Made from the world data (16H Q6), no model file.
+            let foot = at(p.pos[0], p.pos[1]);
+            no_bike_sign(&mut rest[chunk_of(p.pos)], p, foot);
+            continue;
+        }
         let model = match models.iter().find(|(k, _)| *k == p.kind) {
             Some((_, m)) => m.clone(),
             None => {
@@ -615,6 +732,54 @@ fn show_road_barriers(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 16H Q6: the warning sign stands on its foot, its plate's front
+    /// looks where the sign faces (at the rider coming onto the road).
+    #[test]
+    fn the_no_bike_sign_faces_the_rider() {
+        let mut m = MeshArrays::default();
+        let p = PointObstacle {
+            kind: ObstacleKind::NoBikeSign,
+            flags: 0,
+            pos: [10.0, 20.0],
+            angle: std::f32::consts::FRAC_PI_2,
+            width_m: 0.0,
+            height_m: ocw_world::bike_signs::HEIGHT_M,
+        };
+        no_bike_sign(&mut m, &p, 400.0);
+        assert!(!m.indices.is_empty());
+        assert_eq!(m.positions.len(), m.normals.len());
+        let (lo, hi) = m
+            .positions
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(a, b), q| (a.min(q[1]), b.max(q[1])));
+        assert!(
+            (lo - 400.0).abs() < 1e-3 && (hi - 402.3).abs() < 0.01,
+            "{lo} {hi}"
+        );
+        // Everything within a plate's reach of the pole.
+        assert!(
+            m.positions
+                .iter()
+                .all(|q| (q[0] - 10.0).hypot(q[2] - 20.0) < 0.4)
+        );
+        // The red ring's face looks along +z (angle π/2), its triangles
+        // turn counter-clockwise seen from there.
+        let red = m
+            .colors
+            .iter()
+            .position(|c| c[0] > 0.5 && c[1] < 0.1)
+            .expect("red");
+        assert!((m.normals[red][2] - 1.0).abs() < 1e-5);
+        let tri = m
+            .indices
+            .chunks(3)
+            .find(|t| t[0] as usize == red - 1 || t[0] as usize == red)
+            .unwrap();
+        let v = |i: u32| Vec3::from(m.positions[i as usize]);
+        let n = (v(tri[1]) - v(tri[0])).cross(v(tri[2]) - v(tri[0]));
+        assert!(n.z > 0.0, "front faces the rider: {n}");
+    }
     use ocw_world::obstacles::{Obstacles, ROAD_BARRIER, TileObstacles};
     use std::collections::BTreeMap;
 

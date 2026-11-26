@@ -754,40 +754,16 @@ fn wheel(
     }
     match kind {
         Wheel::Disc => {
+            // No white stripes on the faces (user, 2026-11-26: "remove
+            // the white squares on the frame and rims").
             p.slot("rim")
                 .annulus(hub, Vec3::X, 0.0, rim_out, 0.024, segs);
-            for s in [-1.0f32, 1.0] {
-                // A stripe on each face: the spin shows.
-                p.slot("decal").cuboid(
-                    hub + Vec3::new(s * 0.0125, 0.0, -0.17),
-                    Vec3::new(0.001, 0.016, 0.1),
-                    Quat::IDENTITY,
-                );
-                p.slot("decal").cuboid(
-                    hub + Vec3::new(s * 0.0125, 0.0, 0.17),
-                    Vec3::new(0.001, 0.016, 0.06),
-                    Quat::IDENTITY,
-                );
-            }
         }
         Wheel::ThreeSpoke | Wheel::Spoked(_) => {
+            // Deep rims are plain rim colour: their white label panels
+            // are gone (user, 2026-11-26).
             p.slot("rim")
                 .annulus(hub, Vec3::X, rim_in, rim_out, d.rim_width, segs);
-            if d.rim_depth >= 0.04 {
-                for z in [-1.0f32, 1.0] {
-                    for s in [-1.0f32, 1.0] {
-                        p.slot("decal").cuboid(
-                            hub + Vec3::new(
-                                s * (d.rim_width * 0.5 + 0.0005),
-                                0.0,
-                                z * (rim_in + d.rim_depth * 0.5),
-                            ),
-                            Vec3::new(0.001, 0.08, d.rim_depth * 0.28),
-                            Quat::IDENTITY,
-                        );
-                    }
-                }
-            }
         }
     }
     match kind {
@@ -1429,16 +1405,8 @@ pub fn build_with(
                     Quat::IDENTITY,
                 );
             }
-            // Down tube decal.
+            // No white down-tube panel: the paint shows (user, 2026-11-26).
             let (a, b) = (f.bb, f.head_bottom);
-            frame_tube(
-                p.slot("decal"),
-                a.lerp(b, 0.38),
-                a.lerp(b, 0.62),
-                t * 1.15 * 1.04,
-                aero,
-                sides,
-            );
             // Bottles.
             let down = (b - a).normalize();
             let up_from_down =
@@ -2019,6 +1987,79 @@ mod tests {
                 assert!(o <= off * s + 1e-6, "{p:?}: point {i} ahead of the chord");
                 last = o;
             }
+        }
+    }
+
+    /// Regression (the user, 2026-11-26: "remove the white squares on the
+    /// frame and rims … do it on all models"): no frame or wheel of any
+    /// profile, with any wheel, tyre or bag fitted, carries a near-white
+    /// panel – the down tube shows the paint, the rims (shallow, deep,
+    /// three-spoke, disc) their rim colour. The only white parts left are
+    /// the bottles, the time-trial tyres' wall stripe (on the tyre, outside
+    /// the rim) and the catalogue bag's reflective strip; the shipped files
+    /// have no decal material at all.
+    #[test]
+    fn frames_and_rims_have_no_white_panels() {
+        let near = rider::build(rider::Detail::High);
+        let low = rider::build(rider::Detail::Low);
+        let white = |m: &Model, i: usize| m.materials[i].color[..3].iter().all(|c| *c > 0.75);
+        for p in ProfileId::ALL {
+            let mut fits: Vec<&str> = VARIANTS
+                .iter()
+                .filter(|v| matches!(v.slot, "wheels" | "tyres" | "bag"))
+                .filter(|v| v.fits.contains(&p.bike()))
+                .map(|v| v.id)
+                .collect();
+            fits.push("stock");
+            for v in fits {
+                let m = build_with(p, &near, &low, &[v]);
+                let (d, _) = configure(p, &[v]);
+                let rim_out = d.wheel_radius - d.tyre + 0.004;
+                for name in [ROOT, WHEEL_FRONT, WHEEL_REAR] {
+                    let n = m.node(name).unwrap();
+                    for pr in &m.nodes[n].primitives {
+                        let slot = m.materials[pr.material].name.as_str();
+                        if !white(&m, pr.material) || slot == "bottle" {
+                            continue;
+                        }
+                        assert_eq!(slot, "decal", "{p:?} {v}: white {slot} on {name}");
+                        if name == ROOT {
+                            assert_eq!(v, "bag-top-tube", "{p:?}: white panel on the frame");
+                        } else {
+                            assert_eq!(v, "tyre-road-25-tt", "{p:?}: white panel on a wheel");
+                            for q in &pr.positions {
+                                // Radius about the hub (the axle is X).
+                                let r = q[1].hypot(q[2]);
+                                assert!(r > rim_out, "{p:?} {v}: stripe on the rim ({r})");
+                            }
+                        }
+                    }
+                }
+                // The far LOD's bike has no white panel either.
+                let lod = m.node(LOD1).unwrap();
+                assert!(
+                    m.nodes[lod]
+                        .primitives
+                        .iter()
+                        .all(|pr| m.materials[pr.material].name != "decal"),
+                    "{p:?} {v}: decal in the far LOD"
+                );
+            }
+            let file = format!(
+                "{}/../../artwork/3dmodels/{}",
+                env!("CARGO_MANIFEST_DIR"),
+                crate::export::bike_file(p)
+            );
+            let bytes = std::fs::read(&file).unwrap();
+            assert_eq!(&bytes[..4], b"glTF", "{file}: run git lfs pull");
+            let shipped = crate::glb::read(&bytes).unwrap();
+            assert!(
+                shipped.nodes.iter().all(|n| n
+                    .primitives
+                    .iter()
+                    .all(|pr| shipped.materials[pr.material].name != "decal")),
+                "{file}: white decal panels (run model export-all)"
+            );
         }
     }
 

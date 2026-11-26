@@ -53,6 +53,8 @@ clap.workspace = true
 serde_json.workspace = true
 # Sign-in (spec §9.1): the flows' forms, the kept session.
 ocw-auth.workspace = true
+# The account's workshop (spec 14 Phase 4, 4O part 3).
+ocw-account-api.workspace = true
 serde.workspace = true
 # The live heap for the memory work of B2 (`heap`: a counting wrapper
 # around the system allocator; MIT OR Apache-2.0).

@@ -88,6 +88,7 @@ pub mod voice;
 mod webtransport;
 #[cfg(feature = "webxr")]
 pub mod webxr;
+pub mod workshop;
 pub mod world;
 pub mod xr;
 

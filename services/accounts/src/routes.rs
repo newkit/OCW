@@ -56,6 +56,7 @@ pub fn router(svc: Arc<AuthService>) -> Router {
         )
         .route("/workshop/sell", post(workshop_sell).options(preflight))
         .route("/workshop/garage", post(workshop_garage).options(preflight))
+        .route("/workshop/repair", post(workshop_repair).options(preflight))
         .route("/rides/credit", post(rides_credit))
         .route("/rides/summary", post(rides_summary).options(preflight))
         .route("/health", get(|| async { "ok" }))
@@ -583,6 +584,10 @@ async fn workshop_sell(State(svc): Svc, headers: HeaderMap, body: Bytes) -> Resp
 
 async fn workshop_garage(State(svc): Svc, headers: HeaderMap, body: Bytes) -> Response {
     workshop_action(svc, headers, Endpoint::Garage, body).await
+}
+
+async fn workshop_repair(State(svc): Svc, headers: HeaderMap, body: Bytes) -> Response {
+    workshop_action(svc, headers, Endpoint::Repair, body).await
 }
 
 async fn rides_credit(State(svc): Svc, body: Bytes) -> Response {

@@ -461,6 +461,69 @@ mod net {
         Ok((status, text))
     }
 
+    /// A JSON call of the account's API (the workshop, spec 14 Phase 4,
+    /// 4O): `(status, body)`, `Err` when the backend cannot be reached.
+    pub async fn call_json(
+        method: &str,
+        url: &str,
+        body: Option<&str>,
+        bearer: &str,
+        idempotency_key: Option<&str>,
+    ) -> Result<(u16, String), String> {
+        let js = |e: wasm_bindgen::JsValue| format!("{e:?}");
+        let w = window().ok_or("no window")?;
+        let init = web_sys::RequestInit::new();
+        init.set_method(method);
+        let headers = web_sys::Headers::new().map_err(js)?;
+        headers
+            .set("authorization", &format!("Bearer {bearer}"))
+            .map_err(js)?;
+        if let Some(b) = body {
+            headers
+                .set("content-type", "application/json")
+                .map_err(js)?;
+            init.set_body(&wasm_bindgen::JsValue::from_str(b));
+        }
+        if let Some(k) = idempotency_key {
+            headers.set("idempotency-key", k).map_err(js)?;
+        }
+        init.set_headers(&headers);
+        let req = web_sys::Request::new_with_str_and_init(url, &init).map_err(js)?;
+        let resp: web_sys::Response = JsFuture::from(w.fetch_with_request(&req))
+            .await
+            .map_err(|_| "the account server cannot be reached".to_string())?
+            .dyn_into()
+            .map_err(js)?;
+        let status = resp.status();
+        let text = JsFuture::from(resp.text().map_err(js)?)
+            .await
+            .map_err(js)?
+            .as_string()
+            .unwrap_or_default();
+        Ok((status, text))
+    }
+
+    /// A value kept in the page's `localStorage`.
+    pub fn local_get(key: &str) -> Option<String> {
+        local()?.get_item(key).ok()?
+    }
+
+    /// Keeps a value in the page's `localStorage`.
+    pub fn local_set(key: &str, value: &str) {
+        if let Some(l) = local() {
+            let _ = l.set_item(key, value);
+        }
+    }
+
+    /// 128 random bits as hex (an idempotency key).
+    pub fn random_key() -> String {
+        let mut b = [0u8; 16];
+        if let Some(c) = window().and_then(|w| w.crypto().ok()) {
+            let _ = c.get_random_values_with_u8_array(&mut b);
+        }
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+
     /// Saves the login and goes to the backend (with a link ticket first
     /// when linking).
     pub fn go(a: &mut WebAccount, provider: Option<Provider>, linking: bool) {
@@ -699,6 +762,8 @@ mod net {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) use net::{call_json, local_get, local_set, random_key};
 use net::{exchange, forget, go, keep, refresh, sign_out, unlink};
 
 /// The page start (wasm): the redirect's code, the original query back

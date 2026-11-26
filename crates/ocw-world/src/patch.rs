@@ -77,6 +77,24 @@ pub struct WorldPatch {
     /// The operations, applied in order (a later one wins).
     #[serde(default, rename = "op", skip_serializing_if = "Vec::is_empty")]
     pub ops: Vec<Operation>,
+    /// OCW Studio's saved camera views (16H Q13 (b)): named bookmarks that
+    /// travel with the patch. Optional and written only when there are
+    /// some, so a patch without views reads in every version; builds
+    /// ignore them.
+    #[serde(default, rename = "view", skip_serializing_if = "Vec::is_empty")]
+    pub views: Vec<PatchView>,
+}
+
+/// A saved camera view in a patch (`[[view]]`, 16H Q13 (b)).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PatchView {
+    pub name: String,
+    /// The eye in the package's metres (x, height, z).
+    pub pos: [f64; 3],
+    /// Yaw (rad, counter-clockwise from north) and pitch (rad, up).
+    pub yaw: f64,
+    pub pitch: f64,
 }
 
 /// Imported data a patch uses (spec §13).
@@ -186,7 +204,9 @@ impl PatchOneway {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BikeAccess {
-    /// Closed for riding (OSM `bicycle=no`): not in the ridable graph.
+    /// Closed for bikes (16H Q6): the road stays drawn and rideable, with
+    /// a warning sign at each of its ends (before v6.22 it was left out of
+    /// the graph like OSM's `bicycle=no`; such patches now keep the road).
     Closed,
 }
 
@@ -370,6 +390,8 @@ struct RawPatch {
     source: Vec<Source>,
     #[serde(default)]
     op: Vec<toml::Spanned<Operation>>,
+    #[serde(default)]
+    view: Vec<PatchView>,
 }
 
 #[derive(Deserialize)]
@@ -388,6 +410,7 @@ impl WorldPatch {
             description: None,
             sources: Vec::new(),
             ops: Vec::new(),
+            views: Vec::new(),
         }
     }
 
@@ -444,6 +467,7 @@ impl WorldPatch {
             description: raw.description,
             sources: raw.source,
             ops: raw.op.into_iter().map(toml::Spanned::into_inner).collect(),
+            views: raw.view,
         };
         patch.check(&lines)?;
         Ok((patch, lines))
@@ -484,6 +508,17 @@ impl WorldPatch {
             .any(|s| s.what.trim().is_empty() || s.licence.trim().is_empty())
         {
             return Some("every [[source]] needs `what` and `licence` (spec §13)".into());
+        }
+        if let Some(v) = self.views.iter().find(|v| {
+            v.name.trim().is_empty()
+                || !(v.pos.iter().all(|c| c.is_finite())
+                    && v.yaw.is_finite()
+                    && v.pitch.is_finite())
+        }) {
+            return Some(format!(
+                "every [[view]] needs a name and finite numbers ({:?})",
+                v.name
+            ));
         }
         None
     }
@@ -1058,11 +1093,18 @@ pub fn apply_road_edits(
             {
                 surfaces.insert(e.id, s);
             }
-            if ed.bike == Some(BikeAccess::Closed) {
-                remove.insert(i);
-            }
+            // Closed for bikes stays drawn and rideable, with warning
+            // signs at its ends (16H Q6; [`closed_edges`], `bike_signs`).
         }
-        report.applied(r.at, format!("{} edge(s)", hit.len()));
+        let what = if ed.bike == Some(BikeAccess::Closed) {
+            format!(
+                "{} edge(s); closed for bikes: rideable, warning signs at its ends",
+                hit.len()
+            )
+        } else {
+            format!("{} edge(s)", hit.len())
+        };
+        report.applied(r.at, what);
     }
     for &(at, t) in &plan.removals {
         if !handled(t) {
@@ -1083,6 +1125,25 @@ pub fn apply_road_edits(
         graph.retain_edges(&keep);
     }
     surfaces
+}
+
+/// The edges of `graph` that the plan closes for bikes (16H Q6): the
+/// targets of its `road` operations with `bike = "closed"` – a way's
+/// edges or the edge. They stay in the graph, drawn and rideable; the package
+/// gets a warning sign at each end of them (`crate::bike_signs`).
+pub fn closed_edges(plan: &Plan, graph: &RoadGraph) -> Vec<usize> {
+    let mut closed: BTreeSet<Target> = BTreeSet::new();
+    for r in &plan.roads {
+        if r.edit.bike == Some(BikeAccess::Closed) {
+            closed.insert(r.target);
+        }
+    }
+    (0..graph.edges.len())
+        .filter(|&i| {
+            let e = &graph.edges[i];
+            closed.contains(&Target::Way(e.osm_way)) || closed.contains(&Target::Edge(e.id))
+        })
+        .collect()
 }
 
 /// What a patch stack does to a built package's road graph, without the

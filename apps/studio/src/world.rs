@@ -116,6 +116,11 @@ impl Plugin for TrustDialogPlugin {
             text: crate::patch_prompt::menu_text,
             ..Default::default()
         })
+        // The shared bindings come with the menu: N shows or hides the
+        // studio's 2D map, Z (the navigation map's zoom) does nothing here.
+        .insert_resource(ocw_ui::bindings::BindingHooks {
+            action: crate::ui::binding_use,
+        })
         .add_plugins(ocw_ui::menu::MenuPlugin)
         // The patch question after the trust question (16H Q16 (b)).
         .add_systems(
@@ -492,6 +497,47 @@ mod tests {
             frames(app, 1);
         }
         frames(app, 3);
+    }
+
+    /// The shared bindings in the studio (v6.00 brought them along): N
+    /// over the 3D view shows or hides the 2D map, Z does nothing – and
+    /// neither puts a `set display.map…` line on the console ("unknown
+    /// command" before).
+    #[test]
+    fn n_and_z_over_the_3d_view_print_no_unknown_command() {
+        let d = temp("keys-nz");
+        let mut app = app(&d.join("trusted-keys.json"));
+        app.insert_resource(crate::ui::UiState::default())
+            .init_resource::<crate::flight::UiFocus>();
+        frames(&mut app, 1);
+        let before = app.world().resource::<ConsoleState>().log().len();
+        let press = |app: &mut App, k: KeyCode| {
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(k);
+            frames(app, 1);
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release(k);
+            keys.clear();
+            frames(app, 2);
+        };
+        let shown = |app: &App| app.world().resource::<crate::ui::UiState>().show_map;
+        assert!(shown(&app));
+        press(&mut app, KeyCode::KeyN);
+        assert!(!shown(&app), "N hides the 2D map");
+        press(&mut app, KeyCode::KeyZ);
+        assert!(!shown(&app));
+        press(&mut app, KeyCode::KeyN);
+        assert!(shown(&app), "N shows it again");
+        // Not while typing in a field.
+        app.world_mut()
+            .resource_mut::<crate::flight::UiFocus>()
+            .keyboard = true;
+        press(&mut app, KeyCode::KeyN);
+        assert!(shown(&app));
+        let log = app.world().resource::<ConsoleState>().log()[before..].join("\n");
+        assert!(!log.contains("unknown"), "{log}");
+        assert!(!log.contains("display.map"), "{log}");
     }
 
     fn opened(app: &App) -> &[String] {

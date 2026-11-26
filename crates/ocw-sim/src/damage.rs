@@ -1139,6 +1139,24 @@ pub fn per_mille(c: f64) -> u32 {
     (c.clamp(0.0, 1.0) * 1000.0).round() as u32
 }
 
+/// A base part's repair is priced from this when the catalogue has no paid
+/// part for its slot (spec 14 Phase 4, W6).
+pub const BASE_REPAIR_HEARTS: u32 = 20;
+
+/// The price a damage part's repair is figured from (spec 14 Phase 4, W6;
+/// the same in the apps' local garage and on the accounts backend, 4O
+/// part 4): what the item on its slot cost (`paid`), else the cheapest
+/// paid part of the slot that fits the bike (`cheapest`), else
+/// [`BASE_REPAIR_HEARTS`]; wheels and tyres half of that (pairs, rounded
+/// up).
+pub fn slot_price(paid: Option<u32>, cheapest: Option<u32>, p: Part) -> u32 {
+    let price = paid
+        .filter(|h| *h > 0)
+        .or(cheapest)
+        .unwrap_or(BASE_REPAIR_HEARTS);
+    (f64::from(price) * p.price_share()).ceil() as u32
+}
+
 /// The workshop's repair price (spec §14 Phase 4, 4E, W6) for a part
 /// worth `price` hearts at `condition`: `ceil(price × (1 − condition) ×
 /// 0.3)` ♥ (a part at 60 % costs 12 % of its price); a frame or wheel
