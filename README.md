@@ -28,11 +28,13 @@ in [SPECIFICATION.md](SPECIFICATION.md).
 
 ## Worlds
 
-Four regions, built from OpenStreetMap and official open elevation models, ridden
+Five regions, built from OpenStreetMap and official open elevation models, ridden
 with real gradients, with the trees, crops and plantations of each landscape:
 spruce, fir and beech forests, vineyards and orchards around Vaduz and in the
 Black Forest's foothills, Canary pines, laurel forest, palms, banana
-plantations and the Teide's broom on Tenerife. Download them from the
+plantations and the Teide's broom on Tenerife, and in Andorra mountain and
+Scots pine below bare high pastures, villages of stone and slate and the high
+passes of the Pyrenees. Download them from the
 [latest release](https://github.com/newkit/OCW/releases) and start the app with
 `ocw-desktop --world path/to/<world>.ocwpkg`, or switch worlds in the app
 (menu → **World**). To serve worlds to other riders, see
@@ -46,6 +48,8 @@ plantations and the Teide's broom on Tenerife. Download them from the
 | <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-2026-11-17-schauinsland.jpg" alt="A group climbing the Schauinsland road through spruce and beech forest, with the HUD and the junction arrow" width="100%"> | <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-2026-11-17-rain.jpg" alt="Light rain on the Schauinsland climb: grey sky, wet road, riders and a Black Forest farmhouse" width="100%"> |
 | **Tenerife** – the whole island: the Teide from the coast (42 km, 2,350 m up), the Masca hairpins, Anaga, the sea | |
 | <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-2026-11-17-teide.jpg" alt="Two riders on the TF-21 through Las Cañadas, the cone of the Teide beside the road" width="100%"> | <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-2026-11-17-sunset.jpg" alt="Sunset over Las Cañadas on Tenerife: red light on the lava slopes and on a group of riders" width="100%"> |
+| **Andorra** – the whole country: Andorra la Vella to the Port d'Envalira (27.9 km, 1,390 m up to 2,408 m, the highest paved pass of the Pyrenees), Arcalís, the Coll d'Ordino, the Coll de la Gallina | |
+| <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-2026-11-26-andorra-envalira-winter.jpg" alt="Riders on the Port d'Envalira road below Grau Roig in January, snow on the slopes and the peaks, the road cleared" width="100%"> | <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-2026-11-26-andorra-vella.jpg" alt="Riders on the CG-2 through Andorra la Vella between stone-clad houses, autumn trees and pine slopes above the town" width="100%"> |
 
 ### In the game
 
@@ -58,7 +62,9 @@ plantations and the Teide's broom on Tenerife. Download them from the
 `scripts/test-web.py`), with the ISO
 timestamp every capture carries. Map data © OpenStreetMap contributors (ODbL).
 Elevation: swissALTI3D © swisstopo; DGM1 © LGL, www.lgl-bw.de (dl-de/by-2.0);
-MDT05 © Instituto Geográfico Nacional (CC BY 4.0); SRTM (NASA / USGS).</sub>
+MDT05 © Instituto Geográfico Nacional (CC BY 4.0); SRTM (NASA / USGS).
+Land colours: contains modified Copernicus Sentinel data (Sentinel-2); forest
+type and density © European Union, Copernicus Land Monitoring Service 2018, EEA.</sub>
 
 ## Build and run (Linux)
 
