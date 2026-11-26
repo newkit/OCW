@@ -1,0 +1,47 @@
+# The vendored, ported bevy_mod_xr / bevy_mod_openxr (spec §14 Phase 11 X1,
+# Q3 variant A). Its own workspace, outside the main one (the root
+# Cargo.toml excludes `vendor`), so `cargo clippy --workspace -D warnings`
+# does not lint upstream code. Check it with
+#   cd vendor && CARGO_TARGET_DIR=../target cargo check --workspace --examples
+# (Cargo.lock is seeded from the root one, so the versions match).
+[workspace]
+resolver = "3"
+members = ["bevy_mod_xr", "bevy_mod_openxr"]
+
+[workspace.package]
+version = "0.6.0-ocw.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/awtterpip/bevy_oxr"
+publish = false
+
+[workspace.dependencies]
+bevy = "=0.20.1"
+bevy_app = { version = "=0.20.1", default-features = false }
+bevy_camera = { version = "=0.20.1", default-features = false }
+bevy_color = { version = "=0.20.1", default-features = false }
+bevy_derive = { version = "=0.20.1", default-features = false }
+bevy_extract = { version = "=0.20.1", default-features = false }
+bevy_ecs = { version = "=0.20.1", default-features = false }
+bevy_gizmos = { version = "=0.20.1", default-features = false }
+bevy_log = { version = "=0.20.1", default-features = false }
+bevy_math = { version = "=0.20.1", default-features = false }
+bevy_platform = { version = "=0.20.1", default-features = false }
+bevy_reflect = { version = "=0.20.1", default-features = false }
+bevy_render = { version = "=0.20.1", default-features = false }
+bevy_transform = { version = "=0.20.1", default-features = false }
+bevy_window = { version = "=0.20.1", default-features = false }
+bevy_winit = { version = "=0.20.1", default-features = false }
+bevy_mod_xr = { path = "bevy_mod_xr" }
+openxr = "0.21.1"
+thiserror = "2.0.3"
+wgpu = "=30.0.1"
+wgpu-hal = "=30.0.1"
+
+[profile.dev]
+opt-level = 1
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 3
+debug = false

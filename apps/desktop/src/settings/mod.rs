@@ -193,6 +193,7 @@ pub fn apply_to_args(args: &mut Args, matches: &ArgMatches, settings: &mut Setti
                 "fullscreen" => Value::Bool(args.fullscreen),
                 "random_start" => Value::Bool(args.random_start.unwrap_or(true)),
                 "record" => Value::Bool(args.record.unwrap_or(true)),
+                "vr" => Value::Bool(args.vr),
                 _ => unreachable!("unmapped option {id}"),
             };
             settings.set_command_line(d.key, v);
@@ -209,6 +210,7 @@ pub fn apply_to_args(args: &mut Args, matches: &ArgMatches, settings: &mut Setti
             ("fullscreen", Value::Bool(b)) => args.fullscreen = b,
             ("random_start", Value::Bool(b)) => args.random_start = Some(b),
             ("record", Value::Bool(b)) => args.record = Some(b),
+            ("vr", Value::Bool(b)) => args.vr = b,
             (id, v) => unreachable!("option {id} with value {v:?}"),
         }
     }
@@ -669,6 +671,8 @@ mod tests {
             ),
             |_, _| Ok(String::new()),
         ));
+        // `vr mirror` (vr.mirror), registered by `vr::add` in the app.
+        crate::vr::register_console(&mut app);
         app
     }
 
@@ -902,6 +906,7 @@ mod tests {
             pages::Page::ViewDistance,
             pages::Page::WorldDetail,
             pages::Page::Photographer,
+            pages::Page::Vr,
             pages::Page::EventRules,
         ]) {
             let rows = {

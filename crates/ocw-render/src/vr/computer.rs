@@ -13,10 +13,11 @@
 //! sensor bridge's state in the top row (instead of the weather, which is
 //! all around in VR) and a status row with the frame time (14I W3's in-headset readout, from [`super::VrSession`]).
 //!
-//! Ported from `agent/vr-x1` for WebXR (spec §14 Phase 14, 14I W2): the
-//! session's facts come from [`super::VrSession`] (the branch's `VrState`),
-//! the steady eye is `AvatarRig::eye_point(0.0)` (main's, v5.77), and the
-//! screen's camera draws only while the headset shows the ride.
+//! One bike computer for both headsets (the desktop's OpenXR and `--vr-sim`,
+//! the browser's WebXR, spec 14I W2): the session's facts come from
+//! [`super::VrSession`], which each backend writes; the steady eye is
+//! `AvatarRig::eye_point(0.0)` (v5.77), and the screen's camera draws
+//! only while the headset shows the ride.
 //!
 //! The unit follows the local rider's sway entity (it rocks and turns
 //! with the bike; placed in the same frame as the eyes, before the
@@ -869,6 +870,42 @@ fn profile(
             n.left = left;
         }
     }
+}
+
+/// `vr computer size PERCENT | tilt DEG` (the settings `vr.computer_size`,
+/// `vr.computer_tilt`), the same in both apps (the desktop's `vr`, the
+/// browser's `vr` for WebXR): kept when VR is off, applied when it runs.
+pub fn command(
+    world: &mut World,
+    what: Option<&str>,
+    amount: Option<&str>,
+) -> Result<String, String> {
+    let mut s = world
+        .get_resource::<ComputerSettings>()
+        .copied()
+        .unwrap_or_default();
+    let show = |s: &ComputerSettings| {
+        format!(
+            "bike computer: size {:.0} %, tilt {:+.0}° (toward the rider)",
+            s.setup.size * 100.0,
+            s.setup.tilt_deg
+        )
+    };
+    let Some(what) = what else {
+        return Ok(show(&s));
+    };
+    let n: f32 = amount
+        .ok_or("a number: vr computer size 275 | vr computer tilt -10")?
+        .trim_end_matches(['%', '°'])
+        .parse()
+        .map_err(|_| "a number")?;
+    s.setup = match what {
+        "size" => ComputerSetup::new(n, s.setup.tilt_deg),
+        "tilt" => ComputerSetup::new(s.setup.size * 100.0, n),
+        _ => return Err("size or tilt".into()),
+    };
+    world.insert_resource(s);
+    Ok(show(&s))
 }
 
 #[cfg(test)]

@@ -1,5 +1,8 @@
 [workspace]
 resolver = "3"
+# The vendored bevy_mod_xr / bevy_mod_openxr port (spec §14 Phase 11 X1,
+# Q3 variant A) is its own workspace: upstream code, not linted here.
+exclude = ["vendor"]
 members = [
     "apps/desktop",
     "apps/web",
@@ -24,6 +27,7 @@ members = [
     "crates/ocw-audio",
     "crates/ocw-ui",
     "crates/ocw-xr",
+    "crates/ocw-xr-openxr",
     "crates/ocw-auth",
     "crates/ocw-edit",
     "crates/ocw-map",
@@ -63,6 +67,7 @@ ocw-sky = { path = "crates/ocw-sky" }
 ocw-weather = { path = "crates/ocw-weather" }
 ocw-client = { path = "crates/ocw-client" }
 ocw-audio = { path = "crates/ocw-audio" }
+ocw-xr-openxr = { path = "crates/ocw-xr-openxr" }
 ocw-auth = { path = "crates/ocw-auth" }
 # Build-script helper: the logo icon and version info in the Windows .exe files.
 ocw-winres = { path = "crates/ocw-winres" }

@@ -19,7 +19,9 @@
 //! In an immersive WebXR session on the **Oculus Quest 1** (spec §14 Phase
 //! 14, 14I W3) `auto` is the **`quest1`** level ([`resolve_xr`]), with the
 //! XR layer's render scale and fixed foveation of [`XrLayer`]; another
-//! headset keeps the rules above (the WebXR build is WebGL 2: Low).
+//! headset keeps the rules above (the WebXR build is WebGL 2: Low). A PC
+//! headset through the desktop app's OpenXR (spec §14 Phase 11, `--vr`)
+//! makes `auto` the **`vr`** level.
 
 use ocw_render::quality::QualityLevel;
 
@@ -34,7 +36,7 @@ pub enum QualitySetting {
 
 impl QualitySetting {
     /// The setting's words (`display.quality`'s choices).
-    pub const CHOICES: &'static [&'static str] = &["auto", "low", "medium", "high", "quest1"];
+    pub const CHOICES: &'static [&'static str] = &["auto", "low", "medium", "high", "quest1", "vr"];
 
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim() {
@@ -155,13 +157,18 @@ pub fn resolve(
 pub enum XrHeadset {
     /// The Oculus Quest (first generation): Snapdragon 835, 72 Hz.
     Quest1,
-    /// Any other (the later Quests are postponed; a PC headset).
+    /// A PC headset through OpenXR in the desktop app (spec §14 Phase 11,
+    /// `--vr`): the PC's GPU draws both eyes at the headset's rate.
+    Pc,
+    /// Any other (the later Quests are postponed; a PC headset in a
+    /// browser).
     Other,
 }
 
 /// The level in an immersive session (`xr`: its headset; `None`: the flat
-/// view): `auto` on a Quest 1 is [`QualityLevel::Quest1`], everything else
-/// as [`resolve`] (a level chosen by name always wins).
+/// view): `auto` on a Quest 1 is [`QualityLevel::Quest1`], on a PC headset
+/// (the desktop's OpenXR) [`QualityLevel::Vr`], everything else as
+/// [`resolve`] (a level chosen by name always wins).
 pub fn resolve_xr(
     setting: QualitySetting,
     api: GpuApi,
@@ -172,6 +179,7 @@ pub fn resolve_xr(
         (QualitySetting::Auto, Some(XrHeadset::Quest1)) => {
             (QualityLevel::Quest1, "auto: Quest 1 in VR")
         }
+        (QualitySetting::Auto, Some(XrHeadset::Pc)) => (QualityLevel::Vr, "auto: VR headset"),
         _ => resolve(setting, api, device),
     }
 }
@@ -319,6 +327,29 @@ mod tests {
         let laptop = DeviceInfo::from_json(r#"{"coarse_pointer": false, "max_touch_points": 10}"#);
         assert!(!laptop.touch_facts().touch_first());
         assert!(!DeviceInfo::default().touch_facts().touch_first());
+    }
+
+    #[test]
+    fn auto_in_vr_is_the_vr_preset() {
+        let pc = desktop_browser();
+        let auto = QualitySetting::Auto;
+        assert_eq!(
+            resolve_xr(auto, GpuApi::Native, &pc, Some(XrHeadset::Pc)),
+            (Vr, "auto: VR headset")
+        );
+        assert_eq!(resolve_xr(auto, GpuApi::Native, &pc, None).0, High);
+        // Chosen by name: as chosen, also in VR.
+        assert_eq!(
+            resolve_xr(
+                QualitySetting::Fixed(Medium),
+                GpuApi::Native,
+                &pc,
+                Some(XrHeadset::Pc)
+            )
+            .0,
+            Medium
+        );
+        assert_eq!(QualitySetting::parse("vr"), Some(QualitySetting::Fixed(Vr)));
     }
 
     #[test]

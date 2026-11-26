@@ -144,6 +144,10 @@ pub enum Page {
     /// Graphics → Ride photographer (spec 2.11 Q5): the own photographer
     /// and whether the other riders' photographers are shown.
     Photographer,
+    /// Display → HUD → VR headset (spec 14 Phase 11, X1; the Display and
+    /// Graphics pages are full): the headset switch and the mirror
+    /// (desktop), the bike computer's size and tilt (both apps).
+    Vr,
     /// Navi → Riders in this ride (spec §14 Phase 13E, 12F; rows from
     /// `rider_list`): who rides, where, who flies, who is hurt.
     RiderList,
@@ -298,6 +302,7 @@ impl Page {
             Self::ViewDistance => "Render distance",
             Self::WorldDetail => "World detail",
             Self::Photographer => "Ride photographer",
+            Self::Vr => "VR headset",
             Self::RiderList => "Riders in this ride",
             Self::Account => "Account",
             Self::UnicornControls => "Touch and unicorn mode",
@@ -454,6 +459,7 @@ impl Page {
             Self::RidingAids | Self::UnicornControls | Self::Bindings => Some(Self::Controls),
             Self::BindGroup(_) | Self::BindReset => Some(Self::Bindings),
             Self::Graphics | Self::Accessibility | Self::Hud => Some(Self::Display),
+            Self::Vr => Some(Self::Hud),
             Self::ViewDistance | Self::WorldDetail | Self::Photographer => Some(Self::Graphics),
             Self::TrustedKey(_) => Some(Self::TrustedKeys),
             Self::Devices => Some(Self::Trainer),
@@ -566,6 +572,9 @@ impl Page {
             ],
             Self::ViewDistance => &[
                 "How far the world is drawn. Adjusted: shorter below the target, longer with room, up to the slider (Confirm: the preset's).",
+            ],
+            Self::Vr => &[
+                "In a headset all ride information is on the bike computer on the bar. Desktop: --vr or the switch here; browser: Enter VR on the page.",
             ],
             Self::Photographer => &[
                 "Yours: a person or a drone takes up to 5 photos of your ride. Others: hide their photographers, drones and flashes, for you only.",
@@ -973,6 +982,15 @@ fn aids_summary(settings: &Settings) -> String {
 
 /// The Ride photographer row's value (spec 2.11 Q5): "on", "on, others
 /// hidden", "off", "off, others hidden".
+/// The VR page's row value: the bike computer's size (both apps).
+fn vr_summary(settings: &Settings) -> String {
+    let size = settings
+        .get("vr.computer_size")
+        .ok()
+        .map_or("275".into(), |v| v.to_string());
+    format!("computer {size} %")
+}
+
 fn photographer_summary(settings: &Settings) -> String {
     let on = |k: &str| settings.get(k).ok().and_then(|v| v.as_bool()) != Some(false);
     let own = if on("photographer.enabled") {
@@ -1383,6 +1401,15 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             setting_row(settings, "display.map", "Navigation map"),
             setting_row(settings, "display.map_zoom", "Map zoom"),
             setting_row(settings, "display.gps", "GPS line"),
+            // VR (spec 14 Phase 11): in a headset the HUD is the bike
+            // computer on the bar.
+            open_row("VR headset", Some(vr_summary(settings)), Page::Vr),
+        ],
+        Page::Vr => vec![
+            setting_row(settings, "vr.enabled", "VR headset (next start)"),
+            setting_row(settings, "vr.mirror", "VR mirror"),
+            setting_row(settings, "vr.computer_size", "Bike computer size"),
+            setting_row(settings, "vr.computer_tilt", "Bike computer tilt"),
         ],
         Page::Accessibility => vec![
             setting_row(settings, "display.ui_scale", "HUD size (%)"),
@@ -1741,6 +1768,33 @@ mod tests {
 
     fn cmd(line: &str) -> Option<Activate> {
         Some(Activate::Command(line.into()))
+    }
+
+    /// Display → HUD → VR headset (spec 14 Phase 11, merged onto main):
+    /// the headset's four settings on their own page.
+    #[test]
+    fn the_vr_page_has_the_headset_and_the_bike_computer() {
+        let none = Riders::default();
+        let s = Settings::default();
+        let hud = rows(Page::Hud, &s, &none);
+        assert!(hud.len() <= 6);
+        let r = row(&hud, "VR headset");
+        assert_eq!(r.confirm, Some(Activate::Open(Page::Vr)));
+        assert_eq!(r.value.as_deref(), Some("computer 275 %"));
+        assert_eq!(Page::Vr.parent(), Some(Page::Hud));
+        let page = rows(Page::Vr, &s, &none);
+        assert_eq!(page.len(), 4);
+        for r in &page {
+            assert!(r.label.chars().count() <= MAX_ROW_CHARS);
+        }
+        assert!(!crate::settings::applies(
+            "vr.enabled",
+            crate::menu::model::Platform::Browser
+        ));
+        assert!(crate::settings::applies(
+            "vr.computer_size",
+            crate::menu::model::Platform::Browser
+        ));
     }
 
     /// Graphics → Ride photographer (spec 2.11 Q5): the own photographer

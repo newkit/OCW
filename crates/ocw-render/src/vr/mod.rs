@@ -1,84 +1,1049 @@
-//! VR in the renderer, shared by the headset backends (spec §14 Phase 11
-//! for the desktop's OpenXR on branch `agent/vr-x1`, Phase 14 14I W2 for
-//! WebXR in the browser app): the bike computer on the bars
-//! ([`computer`]) and the controllers as a gamepad ([`controllers`]).
+//! VR in the renderer (spec §14 Phase 11, X1, and Phase 14 14I for
+//! WebXR): the headset as a viewing device of the ride.
 //!
-//! The backend (the browser's `webxr` module, later the desktop's OpenXR
-//! layer) writes [`VrSession`] every frame – whether the headset shows
-//! the ride, the controllers' state, the lines for the bike computer's
-//! status row – and gives its eye cameras [`eye_layers`], so they see the
-//! bike computer, which no other camera draws.
+//! Shared by both headset backends – the desktop's OpenXR (`--vr`, the
+//! `openxr` feature: [`openxr`]; `--vr-sim`) and the browser's WebXR
+//! (`apps/web/src/webxr.rs`): [`VrSession`] (what the backend tells the
+//! renderer each frame), the bike computer ([`computer`]), the controllers
+//! as a gamepad ([`controllers`]), the eyes' projection ([`EyeProjection`])
+//! and their look ([`copy_camera_look`]). [`VrPlugin`] adds the shared
+//! parts; [`PcVrPlugin`] the desktop's eye cameras, rig and mirror (the
+//! browser has its own: the eyes share the canvas there).
 //!
-//! Ported from `agent/vr-x1` (`ocw-render::vr::{computer, controllers}`),
-//! with that branch's `VrState` / `VrConfig` replaced by [`VrSession`] and
-//! its layer 7 (the workshop's on main) by [`VR_LAYER`].
-
-use bevy::camera::visibility::RenderLayers;
-use bevy::prelude::*;
+//! - **Two eye cameras** render into two images ([`EyeImages`]): Bevy 0.20
+//!   has no multiview, so it is a camera per eye, each with the eye's
+//!   asymmetric projection ([`EyeProjection`], from `ocw_xr::projection`).
+//!   A headset backend (the `openxr` feature: [`openxr`]) copies the
+//!   images into the runtime's swapchain; `--vr-sim` only shows them.
+//! - **The camera rig** ([`place_vr`]): the rider's seated eye point on
+//!   the bike (`AvatarRig::eye_point`, as in WebXR), horizon-locked
+//!   (`ocw_xr::anchor`), plus the tracked head after the recentre.
+//!   The rider's own head is on [`OWN_HEAD_LAYER`]: drawn by every camera
+//!   but the eyes (the eyes are inside it), with its shadow (v4.71).
+//! - **The bike computer** ([`computer`], v4.68): no floating panel – all
+//!   ride information is on a GPS unit on an out-front mount at the bar's
+//!   centre, seen when looking down.
+//! - **The controllers** ([`controllers`], v4.68): the Touch controllers as
+//!   a gamepad, both grips held recentre.
+//! - **The mirror** on the monitor ([`VrMirror`]): one eye, both eyes side
+//!   by side, or the usual chase camera (for spectators and captures).
+//!
+//! The world, the server and the inputs do not change: the head pose only
+//! moves the cameras (spec §6.1). Everything here is Bevy glue; the maths
+//! is `ocw_xr`'s, unit-tested there.
 
 pub mod computer;
 pub mod controllers;
+#[cfg(feature = "openxr")]
+pub mod openxr;
 
-/// The render layer only the eye cameras see (the bike computer). Not 7
-/// (the workshop's), 8 (its mirror), 9 (thumbnails) or 11 (the studio's).
-pub const VR_LAYER: usize = 12;
+use bevy::camera::visibility::RenderLayers;
+use bevy::camera::{CameraProjection, Exposure, RenderTarget, SubCameraView};
+use bevy::math::Vec3A;
+use bevy::pbr::{AtmosphereSettings, DistanceFog};
+use bevy::prelude::*;
+use bevy::render::render_resource::{TextureFormat, TextureUsages};
+use bevy::render::view::Msaa;
+use bevy::transform::TransformSystems;
+use ocw_xr::anchor::{world_eyes, world_from_anchor, world_head};
+use ocw_xr::controllers::ControllerState;
+use ocw_xr::frame::FrameStats;
+use ocw_xr::projection::{self, Fov};
+use ocw_xr::recentre::{Recentre, RecentreAdvice};
+use ocw_xr::session::SessionMachine;
+use ocw_xr::view::{self, EyeView, StereoViews};
 
-/// What the eye cameras draw: the world and the VR-only things.
-pub fn eye_layers() -> RenderLayers {
-    RenderLayers::from_layers(&[0, VR_LAYER])
-}
+use crate::camera::{FollowCamera, RiderHead};
+use crate::riders::{Avatar, AvatarRig};
 
-/// The headset session as the renderer needs it (written by the backend).
+/// The headset session as the shared parts need it (written by the
+/// backend every frame: the desktop's OpenXR / `--vr-sim` here, the
+/// browser's WebXR in `ocw-web`).
 #[derive(Resource, Debug, Clone, Default)]
 pub struct VrSession {
     /// The headset shows the ride now (the bike computer's screen is drawn
     /// only then; the controls hint starts each time it becomes true).
     pub shown: bool,
     /// The controls in one line, on the screen for [`computer::HINT_S`]
-    /// when the headset starts showing the ride (empty: no hint).
+    /// when the headset starts showing the ride (empty: the default,
+    /// [`computer::CONTROLS_HINT`]).
     pub controls_hint: String,
     /// The bike computer's status row: the sensor bridge's state …
     pub link: String,
     /// … and the frame time (14I W3: the in-headset readout).
     pub frame: String,
     /// This frame's controllers (`None`: none, or not focused).
-    pub controllers: Option<ocw_xr::controllers::ControllerState>,
-    /// Set by the controllers' recentre gesture; the backend takes it.
+    pub controllers: Option<ControllerState>,
+    /// Recentre on the next frame (the controllers' gesture, `vr
+    /// recentre`, the `C` key); the backend takes it.
     pub recentre_now: bool,
     /// The left stick's sideways flicks are the junction exits while the
     /// menu is closed (WebXR, 14I W2; `PadMapper::exits_on_left_stick`).
+    /// Off for the desktop's OpenXR (Q10: the left stick is the menu's).
     pub exits_on_left_stick: bool,
 }
 
-/// The bike computer and the controllers' gamepad.
+/// How VR runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VrMode {
+    /// A mocked head (`--vr-sim`): both eye views on the monitor, no
+    /// headset, no OpenXR.
+    Sim,
+    /// A headset through a backend (OpenXR).
+    Headset,
+}
+
+/// The VR setup (inserted by the app before [`VrPlugin`]).
+#[derive(Resource, Debug, Clone)]
+pub struct VrConfig {
+    pub mode: VrMode,
+    /// Each eye image (px).
+    pub eye_px: UVec2,
+    /// The eye images' format (the swapchain's).
+    pub format: TextureFormat,
+    /// Only the bike's heading turns the view (no roll, no pitch: the
+    /// comfort default, spec 11B).
+    pub horizon_lock: bool,
+    /// The simulated eyes (sim mode; the runtime's own otherwise).
+    pub sim_ipd_m: f32,
+    pub sim_fov: Fov,
+}
+
+impl VrConfig {
+    /// `--vr-sim`: Quest 1-like eyes at half the panel's pixels (the
+    /// screenshots need no more).
+    pub fn sim() -> Self {
+        Self {
+            mode: VrMode::Sim,
+            eye_px: UVec2::new(720, 800),
+            format: TextureFormat::Rgba8UnormSrgb,
+            horizon_lock: true,
+            sim_ipd_m: view::DEFAULT_IPD_M,
+            sim_fov: view::QUEST1_LEFT_FOV,
+        }
+    }
+}
+
+/// What the monitor shows while VR runs (`vr.mirror`).
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VrMirror {
+    /// The left eye, filling the window.
+    #[default]
+    Eye,
+    /// Both eyes side by side.
+    Both,
+    /// The chase camera, as without VR (costs a third view).
+    Chase,
+}
+
+impl VrMirror {
+    pub const CHOICES: &'static [&'static str] = &["eye", "both", "chase"];
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim() {
+            "eye" => Some(Self::Eye),
+            "both" => Some(Self::Both),
+            "chase" => Some(Self::Chase),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Eye => "eye",
+            Self::Both => "both",
+            Self::Chase => "chase",
+        }
+    }
+}
+
+/// The desktop's headset (OpenXR or `--vr-sim`): what the backend tells
+/// each frame (tracking space), and the rig's state. The controllers and
+/// the recentre request are in [`VrSession`] (shared with WebXR).
+#[derive(Resource, Debug, Default)]
+pub struct VrState {
+    /// The located eyes (tracking space); `None` before the first frame or
+    /// while tracking is lost (the last are kept by the backend).
+    pub views: Option<StereoViews>,
+    /// The session (headset mode).
+    pub session: Option<SessionMachine>,
+    /// The frame loop's numbers (headset mode).
+    pub stats: FrameStats,
+    /// The runtime and headset, one line (headset mode).
+    pub device: String,
+    pub recentre: Recentre,
+    pub advice: RecentreAdvice,
+    /// The last frame's rig (world space).
+    pub anchor: Option<ocw_xr::Pose>,
+    pub head_in_anchor: Option<ocw_xr::Pose>,
+    pub eyes: Option<StereoViews>,
+    /// Render this frame (the runtime may say no: headset off).
+    pub should_render: bool,
+    /// The interaction profile the runtime chose per hand (left, right).
+    pub controller_profiles: [String; 2],
+    /// Look down by this much (degrees) – screenshots of the bike computer
+    /// (`--vr-look-down`, `vr look-down`); 0 in a ride.
+    pub look_down_deg: f32,
+    /// Frames shown, empty and failed in the headset (`vr status`).
+    pub submitted: ocw_xr::frame::SubmitCounts,
+    /// The frame loop's last health line (`ocw_xr::watch`, every 10 s).
+    pub loop_line: String,
+}
+
+impl VrState {
+    /// `vr status` (`controllers`: [`VrSession::controllers`]).
+    pub fn status(
+        &self,
+        cfg: &VrConfig,
+        mirror: VrMirror,
+        controllers: Option<&ControllerState>,
+    ) -> String {
+        let mut lines = vec![match cfg.mode {
+            VrMode::Sim => "VR: simulated head (--vr-sim), no headset".to_string(),
+            VrMode::Headset => format!(
+                "VR: {}",
+                self.session
+                    .as_ref()
+                    .map_or("no session".into(), SessionMachine::summary)
+            ),
+        }];
+        if !self.device.is_empty() {
+            lines.push(format!("  device: {}", self.device));
+        }
+        lines.push(format!(
+            "  eyes: {}×{} px, {}; mirror: {}; horizon lock: {}",
+            cfg.eye_px.x,
+            cfg.eye_px.y,
+            format_name(cfg.format),
+            mirror.name(),
+            if cfg.horizon_lock { "on" } else { "off" }
+        ));
+        if let Some(v) = &self.views {
+            let (h, vert) = v[0].fov.extent();
+            lines.push(format!(
+                "  IPD {:.1} mm, field of view {:.0}° × {:.0}° per eye",
+                view::ipd(v) * 1000.0,
+                h.to_degrees(),
+                vert.to_degrees()
+            ));
+        }
+        if let Some(h) = &self.head_in_anchor {
+            lines.push(format!(
+                "  head from the anchor: {:.2} m (recentre after {:.1} s away)",
+                h.position.length(),
+                self.advice.away_s()
+            ));
+        }
+        if cfg.mode == VrMode::Headset {
+            lines.push(format!("  {}", self.stats.summary().line()));
+            lines.push(format!("  {}", self.submitted.line()));
+            if !self.loop_line.is_empty() {
+                lines.push(format!("  {}", self.loop_line));
+            }
+            lines.push(format!(
+                "  controllers: {}",
+                self.controllers_line(controllers)
+            ));
+        }
+        if self.look_down_deg != 0.0 {
+            lines.push(format!(
+                "  looking down {:.0}° (vr look-down 0 to stop)",
+                self.look_down_deg
+            ));
+        }
+        lines.join("\n")
+    }
+}
+
+impl VrState {
+    /// The controllers for `vr status`.
+    pub fn controllers_line(&self, controllers: Option<&ControllerState>) -> String {
+        let profiles: Vec<&str> = self
+            .controller_profiles
+            .iter()
+            .map(|p| p.rsplit('/').next().unwrap_or(""))
+            .filter(|p| !p.is_empty())
+            .collect();
+        let bound = if profiles.is_empty() {
+            "no profile bound yet".to_string()
+        } else {
+            profiles.join(" + ")
+        };
+        match controllers {
+            None => format!("not synced ({bound})"),
+            Some(c) if !c.active => format!("inactive – no focus or switched off ({bound})"),
+            Some(_) => format!("active ({bound}): a gamepad; both grips held recentre"),
+        }
+    }
+}
+
+fn format_name(f: TextureFormat) -> &'static str {
+    match f {
+        TextureFormat::Rgba8UnormSrgb => "RGBA8 sRGB",
+        TextureFormat::Bgra8UnormSrgb => "BGRA8 sRGB",
+        TextureFormat::Rgba16Float => "RGBA16F",
+        _ => "other",
+    }
+}
+
+/// An eye camera (0 left, 1 right).
+#[derive(Component, Debug, Clone, Copy)]
+pub struct EyeCamera(pub usize);
+
+/// The eye images.
+#[derive(Resource, Debug, Clone)]
+pub struct EyeImages {
+    pub eyes: [Handle<Image>; 2],
+}
+
+/// The mirror camera (window) and its eye pictures.
+#[derive(Component)]
+struct MirrorCamera;
+
+#[derive(Component)]
+struct MirrorEye(usize);
+
+/// The render layer only the eye cameras see (the bike computer). Not 7
+/// (the workshop's), 8 (its mirror), 9 (thumbnails), 10 (the own head) or
+/// 11 (the studio's).
+pub const VR_LAYER: usize = 12;
+
+/// The own rider's head – helmet, glasses, hair, face, the signs over it –
+/// in a headset session (v4.71): every camera but the eyes draws it (the
+/// chase mirror, the follow camera, screenshots of them), and the sun casts
+/// its shadow; the eye cameras never do (the eyes are inside it: no hard
+/// cut, no inside of the helmet). Before, the head was hidden for every
+/// camera, and the rider looked headless on the monitor.
+pub const OWN_HEAD_LAYER: usize = 10;
+
+/// What the eye cameras draw: the world and the VR-only things (the bike
+/// computer), not [`OWN_HEAD_LAYER`].
+pub fn eye_layers() -> RenderLayers {
+    RenderLayers::from_layers(&[0, VR_LAYER])
+}
+
+/// What the other world cameras and the sun see in a headset session: the
+/// world and the own head.
+pub fn world_layers() -> RenderLayers {
+    RenderLayers::from_layers(&[0, OWN_HEAD_LAYER])
+}
+
+/// An eye's projection: OpenXR's asymmetric field of view, infinite
+/// reverse Z (Bevy's convention).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EyeProjection {
+    pub fov: Fov,
+    pub near: f32,
+    /// For the frustum's far side (culling, shadow cascades); the
+    /// projection itself has no far plane.
+    pub far: f32,
+}
+
+impl EyeProjection {
+    /// From the frustum edges' tangents (left, right, down, up; left and
+    /// down negative) – WebXR's projection matrices give these.
+    pub fn from_tangents(t: [f32; 4], near: f32) -> Self {
+        Self {
+            fov: fov_of_tangents(t),
+            near,
+            ..default()
+        }
+    }
+}
+
+/// The field of view of frustum tangents (left, right, down, up).
+pub fn fov_of_tangents([l, r, d, u]: [f32; 4]) -> Fov {
+    Fov {
+        left: l.atan(),
+        right: r.atan(),
+        down: d.atan(),
+        up: u.atan(),
+    }
+}
+
+impl Default for EyeProjection {
+    fn default() -> Self {
+        Self {
+            fov: view::QUEST1_LEFT_FOV,
+            near: projection::NEAR_M,
+            far: PerspectiveProjection::default().far,
+        }
+    }
+}
+
+impl CameraProjection for EyeProjection {
+    fn get_clip_from_view(&self) -> Mat4 {
+        projection::clip_from_view(&self.fov, self.near)
+    }
+
+    fn get_clip_from_view_for_sub(&self, _sub_view: &SubCameraView) -> Mat4 {
+        self.get_clip_from_view()
+    }
+
+    fn update(&mut self, _width: f32, _height: f32) {}
+
+    fn far(&self) -> f32 {
+        self.far
+    }
+
+    fn get_frustum_corners(&self, z_near: f32, z_far: f32) -> [Vec3A; 8] {
+        projection::frustum_corners(&self.fov, z_near, z_far).map(Vec3A::from)
+    }
+}
+
+/// The shared parts of VR (both backends): [`VrSession`], the bike
+/// computer and the controllers' gamepad.
 pub struct VrPlugin;
 
 impl Plugin for VrPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<VrSession>();
-        computer::plugin(app);
-        controllers::plugin(app);
+        app.init_resource::<VrSession>()
+            .add_plugins((computer::plugin, controllers::plugin));
+    }
+}
+
+/// The desktop's VR (OpenXR, `--vr-sim`; needs [`VrConfig`]): the two eye
+/// cameras, the rig, the own head on its layer, the mirror on the
+/// monitor. Adds [`VrPlugin`] when it is not there yet.
+pub struct PcVrPlugin;
+
+impl Plugin for PcVrPlugin {
+    fn build(&self, app: &mut App) {
+        if !app.is_plugin_added::<VrPlugin>() {
+            app.add_plugins(VrPlugin);
+        }
+        app.init_resource::<VrState>()
+            .init_resource::<VrMirror>()
+            .add_systems(Startup, setup)
+            .add_systems(PreUpdate, publish_session)
+            .add_systems(Update, (apply_mirror, recentre_key, no_photo_preview))
+            .add_systems(
+                PostUpdate,
+                place_vr
+                    .after(crate::camera::follow)
+                    .after(crate::riders::animate)
+                    .before(TransformSystems::Propagate),
+            )
+            .add_systems(Update, (own_head_layers, see_own_head))
+            .add_systems(Last, copy_camera_look::<EyeCamera>);
+    }
+}
+
+/// No photo preview card while VR runs (spec 14 Phase 11 X3, 3.2 *Photo
+/// preview*): it would sit on the monitor's flat HUD only; its place is
+/// the bike computer's screen later. Kept off against the setting's
+/// `hud.photo_preview on` at the start.
+fn no_photo_preview(preview: Option<ResMut<crate::photo_preview::PhotoPreview>>) {
+    if let Some(mut p) = preview
+        && p.enabled
+    {
+        p.enabled = false;
+    }
+}
+
+/// [`VrSession`] from the desktop's headset: shown while the session is
+/// visible (`--vr-sim`: always), the controls hint of the OpenXR map
+/// (Q10), the frame time on the bike computer's status row in a headset
+/// (as WebXR's 14I W3 readout).
+fn publish_session(
+    cfg: Res<VrConfig>,
+    state: Res<VrState>,
+    time: Res<Time<Real>>,
+    mut vr: ResMut<VrSession>,
+    mut next_line_s: Local<f32>,
+) {
+    let shown =
+        cfg.mode == VrMode::Sim || state.session.as_ref().is_some_and(SessionMachine::visible);
+    if vr.shown != shown {
+        vr.shown = shown;
+    }
+    if vr.controls_hint != computer::CONTROLS_HINT {
+        vr.controls_hint = computer::CONTROLS_HINT.into();
+    }
+    let now = time.elapsed_secs();
+    if cfg.mode == VrMode::Headset && shown && now >= *next_line_s {
+        // Twice a second (a new text lays the screen out again).
+        *next_line_s = now + 0.5;
+        let s = state.stats.summary();
+        let frame = frame_line(s.mean_ms, s.period_ms);
+        if vr.frame != frame {
+            vr.frame = frame;
+        }
+    }
+}
+
+/// The status row's frame time: the mean CPU frame against the display's
+/// period, at most 16 characters ("11.8 of 13.9 ms"); empty before the
+/// first frames.
+pub fn frame_line(mean_ms: f32, period_ms: f32) -> String {
+    if period_ms <= 0.0 {
+        return String::new();
+    }
+    format!("{mean_ms:.1} of {period_ms:.1} ms")
+}
+
+/// The own rider's head and everything under it (helmet, glasses, hair,
+/// face, the status signs; also what a changed helmet or hairstyle spawns
+/// later) on [`OWN_HEAD_LAYER`] only: hidden in the eyes, seen elsewhere.
+fn own_head_layers(
+    mut commands: Commands,
+    heads: Query<(Entity, &RiderHead)>,
+    children: Query<&Children>,
+    layers: Query<Option<&RenderLayers>>,
+) {
+    let Some((head, _)) = heads.iter().find(|(_, h)| h.local) else {
+        return;
+    };
+    put_on_head_layer(&mut commands, head, &children, &layers);
+}
+
+/// `head` and its descendants on [`OWN_HEAD_LAYER`] (only those not there yet).
+fn put_on_head_layer(
+    commands: &mut Commands,
+    head: Entity,
+    children: &Query<&Children>,
+    layers: &Query<Option<&RenderLayers>>,
+) {
+    let want = RenderLayers::layer(OWN_HEAD_LAYER);
+    for e in std::iter::once(head).chain(children.iter_descendants(head)) {
+        if let Ok(have) = layers.get(e)
+            && have != Some(&want)
+        {
+            commands.entity(e).insert(want.clone());
+        }
+    }
+}
+
+/// The follow camera (chase mirror, screenshots) and the sun see the own
+/// head: the rider has a head on the monitor and in every shadow.
+#[allow(clippy::type_complexity)] // a Bevy query
+fn see_own_head(
+    mut commands: Commands,
+    viewers: Query<
+        (Entity, Option<&RenderLayers>),
+        Or<(With<FollowCamera>, With<crate::sky::Sun>)>,
+    >,
+) {
+    let want = world_layers();
+    for (e, have) in &viewers {
+        if have != Some(&want) {
+            commands.entity(e).insert(want.clone());
+        }
+    }
+}
+
+fn eye_image(size: UVec2, format: TextureFormat) -> Image {
+    let mut image = Image::new_target_texture(size.x.max(16), size.y.max(16), format, None);
+    // The backend copies it into the swapchain.
+    image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
+    image
+}
+
+fn setup(mut commands: Commands, cfg: Res<VrConfig>, mut images: ResMut<Assets<Image>>) {
+    let eyes = [0, 1].map(|_| images.add(eye_image(cfg.eye_px, cfg.format)));
+    for (i, image) in eyes.iter().enumerate() {
+        commands.spawn((
+            Camera3d::default(),
+            Camera {
+                // Before the window's cameras.
+                order: -2 + i as isize,
+                ..default()
+            },
+            RenderTarget::Image(image.clone().into()),
+            Projection::custom(EyeProjection {
+                fov: if i == 0 {
+                    cfg.sim_fov
+                } else {
+                    cfg.sim_fov.mirrored()
+                },
+                ..default()
+            }),
+            Transform::default(),
+            crate::world::fog(),
+            bevy::light::ShadowFilteringMethod::Gaussian,
+            // HDR from the start: the atmosphere (copied from the follow
+            // camera) requires it, and switching later re-specialises every
+            // pipeline of the eye while it runs.
+            bevy::camera::Hdr,
+            eye_layers(),
+            EyeCamera(i),
+        ));
+    }
+    // The mirror: a camera on the window above the chase camera, with the
+    // eye pictures behind the desktop HUD (it is the default UI camera).
+    let mirror = commands
+        .spawn((
+            Camera2d,
+            Camera {
+                order: 10,
+                clear_color: ClearColorConfig::Custom(Color::BLACK),
+                ..default()
+            },
+            MirrorCamera,
+        ))
+        .id();
+    commands
+        .spawn((
+            Node {
+                width: percent(100),
+                height: percent(100),
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                column_gap: px(4),
+                ..default()
+            },
+            GlobalZIndex(-100),
+            UiTargetCamera(mirror),
+        ))
+        .with_children(|row| {
+            for (i, image) in eyes.iter().enumerate() {
+                row.spawn((
+                    ImageNode::new(image.clone()),
+                    Node {
+                        height: percent(100),
+                        aspect_ratio: Some(cfg.eye_px.x as f32 / cfg.eye_px.y.max(1) as f32),
+                        ..default()
+                    },
+                    MirrorEye(i),
+                ));
+            }
+        });
+    commands.insert_resource(EyeImages { eyes });
+}
+
+/// `C` (the chase camera's reset) recentres in VR.
+fn recentre_key(
+    keys: Res<ButtonInput<KeyCode>>,
+    context: Option<Res<crate::menu::InputContext>>,
+    mut state: ResMut<VrSession>,
+) {
+    if crate::menu::ride_input(context) && keys.just_pressed(KeyCode::KeyC) {
+        state.recentre_now = true;
+    }
+}
+
+/// The world pose of a Bevy transform.
+fn pose_of(t: &Transform) -> ocw_xr::Pose {
+    ocw_xr::Pose::new(t.rotation, t.translation)
+}
+
+fn transform_of(p: &ocw_xr::Pose) -> Transform {
+    Transform::from_translation(p.position).with_rotation(p.orientation)
+}
+
+/// Places the eye cameras and (unless the mirror shows the chase view) the
+/// follow camera at the head, from the local rider's bike and the tracked
+/// (or simulated) eyes.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)] // a Bevy system
+pub fn place_vr(
+    cfg: Res<VrConfig>,
+    mirror: Res<VrMirror>,
+    time: Res<Time>,
+    mut state: ResMut<VrState>,
+    mut session: ResMut<VrSession>,
+    avatars: Query<(&Avatar, &Transform, &AvatarRig), Without<EyeCamera>>,
+    mut eyes: Query<
+        (&EyeCamera, &mut Transform, &mut Projection, &mut Camera),
+        (Without<Avatar>, Without<FollowCamera>),
+    >,
+    mut follow: Query<
+        (&mut Transform, &mut Camera),
+        (With<FollowCamera>, Without<EyeCamera>, Without<Avatar>),
+    >,
+) {
+    let Some((_, bike, rig)) = avatars.iter().find(|(a, _, _)| a.is_local) else {
+        return;
+    };
+    // The seated eye point without the pedal strokes (the same as WebXR's
+    // and the bike computer's, 14I Q8).
+    let anchor = world_from_anchor(&pose_of(bike), rig.eye_point(0.0), cfg.horizon_lock);
+    if cfg.mode == VrMode::Sim {
+        let head = view::sim_head(time.elapsed_secs());
+        state.views = Some(view::sim_views(&head, cfg.sim_ipd_m, &cfg.sim_fov));
+        state.should_render = true;
+    }
+    // Before the first tracked frame (or with the headset off its head,
+    // where the runtime may track nothing): the rider's eye, resting.
+    let views = state
+        .views
+        .unwrap_or_else(|| view::sim_views(&ocw_xr::Pose::IDENTITY, cfg.sim_ipd_m, &cfg.sim_fov));
+    let head = view::head(&views);
+    if session.recentre_now || state.anchor.is_none() {
+        state.recentre = Recentre::at(&head);
+        session.recentre_now = false;
+    }
+    let head_in_anchor = state.recentre.apply(&head);
+    let dt = time.delta_secs();
+    if state.advice.update(&head_in_anchor, dt) {
+        state.recentre = Recentre::at(&head);
+    }
+    let mut world = world_eyes(&anchor, &state.recentre, &views);
+    if state.look_down_deg != 0.0 {
+        world = look_down(&world, &anchor, state.look_down_deg);
+    }
+    let render = eyes_render(state.should_render, *mirror);
+    for (eye, mut t, mut p, mut cam) in &mut eyes {
+        let EyeView { pose, fov } = world[eye.0.min(1)];
+        *t = transform_of(&pose);
+        if let Projection::Custom(c) = &mut *p
+            && let Some(ep) = c.get_mut::<EyeProjection>()
+            && ep.fov != fov
+        {
+            ep.fov = fov;
+        }
+        if cam.is_active != render {
+            cam.is_active = render;
+        }
+    }
+    // The follow camera: at the head (distance-based detail and fading
+    // around the rider's eyes), drawing only for the chase mirror.
+    let chase = *mirror == VrMirror::Chase;
+    for (mut t, mut cam) in &mut follow {
+        if !chase {
+            *t = transform_of(&world_head(&anchor, &state.recentre, &head));
+        }
+        if cam.is_active != chase {
+            cam.is_active = chase;
+        }
+    }
+    state.anchor = Some(anchor);
+    state.head_in_anchor = Some(head_in_anchor);
+    state.eyes = Some(world);
+}
+
+/// Whether the eye cameras draw: when the headset shows them, and whenever
+/// the monitor mirrors an eye – with the headset off the head (the runtime
+/// says "do not render") the mirror and a screenshot would be black
+/// (2026-11-17, Weela).
+pub fn eyes_render(headset_wants: bool, mirror: VrMirror) -> bool {
+    headset_wants || mirror != VrMirror::Chase
+}
+
+/// The eyes turned down by `deg` about the head (between the eyes), around
+/// the anchor's left-right axis: the view of the bike computer for a
+/// screenshot.
+pub fn look_down(eyes: &StereoViews, anchor: &ocw_xr::Pose, deg: f32) -> StereoViews {
+    let head = 0.5 * (eyes[0].pose.position + eyes[1].pose.position);
+    let right = anchor.orientation * Vec3::X;
+    let q = Quat::from_axis_angle(right, -deg.to_radians());
+    eyes.map(|e| EyeView {
+        pose: ocw_xr::Pose::new(
+            (q * e.pose.orientation).normalize(),
+            head + q * (e.pose.position - head),
+        ),
+        fov: e.fov,
+    })
+}
+
+/// The mirror's layout.
+fn apply_mirror(
+    mirror: Res<VrMirror>,
+    mut cams: Query<&mut Camera, With<MirrorCamera>>,
+    mut nodes: Query<(&MirrorEye, &mut Node)>,
+) {
+    if !mirror.is_changed() {
+        return;
+    }
+    for mut c in &mut cams {
+        // The chase view: the mirror camera steps aside (off, and below
+        // the follow camera, which then draws the desktop HUD as the
+        // highest window camera); a second camera on the window would
+        // overwrite the chase picture.
+        let chase = *mirror == VrMirror::Chase;
+        c.is_active = !chase;
+        c.order = if chase { -5 } else { 10 };
+    }
+    for (eye, mut n) in &mut nodes {
+        let shown = match *mirror {
+            VrMirror::Eye => eye.0 == 0,
+            VrMirror::Both => true,
+            VrMirror::Chase => false,
+        };
+        n.display = if shown { Display::Flex } else { Display::None };
+        // One eye fills the window's height (cropped at the sides by
+        // nothing: the aspect ratio stays), two share the width.
+        n.height = if *mirror == VrMirror::Both {
+            Val::Auto
+        } else {
+            percent(100)
+        };
+        n.width = if *mirror == VrMirror::Both {
+            percent(49.5)
+        } else {
+            Val::Auto
+        };
+    }
+}
+
+/// The eyes (the cameras with `E`: [`EyeCamera`] here, WebXR's own eye
+/// marker in the browser) look like the chase camera: its fog, exposure,
+/// MSAA, far plane and atmosphere (set by the sky, the weather and the
+/// quality preset, which only know the follow camera).
+#[allow(clippy::type_complexity)]
+pub fn copy_camera_look<E: Component>(
+    mut commands: Commands,
+    follow: Query<
+        (
+            Option<&DistanceFog>,
+            Option<&Exposure>,
+            Option<&Msaa>,
+            Has<AtmosphereSettings>,
+            &Projection,
+        ),
+        (With<FollowCamera>, Without<E>),
+    >,
+    mut eyes: Query<
+        (
+            Entity,
+            Option<&mut DistanceFog>,
+            Option<&Exposure>,
+            Option<&Msaa>,
+            Has<AtmosphereSettings>,
+            &mut Projection,
+        ),
+        With<E>,
+    >,
+) {
+    let Ok((fog, exposure, msaa, atmosphere, projection)) = follow.single() else {
+        return;
+    };
+    let far = match projection {
+        Projection::Perspective(p) => Some(p.far),
+        _ => None,
+    };
+    for (e, eye_fog, eye_exposure, eye_msaa, eye_atmosphere, mut p) in &mut eyes {
+        match (fog, eye_fog) {
+            // The sky changes the fog's colour every frame.
+            (Some(f), Some(mut ef)) => *ef = f.clone(),
+            (Some(f), None) => {
+                commands.entity(e).insert(f.clone());
+            }
+            (None, Some(_)) => {
+                commands.entity(e).remove::<DistanceFog>();
+            }
+            (None, None) => {}
+        }
+        if let Some(x) = exposure
+            && eye_exposure.is_none_or(|ex| ex.ev100 != x.ev100)
+        {
+            commands.entity(e).insert(*x);
+        }
+        if let Some(m) = msaa
+            && eye_msaa != Some(m)
+        {
+            commands.entity(e).insert(*m);
+        }
+        if atmosphere && !eye_atmosphere {
+            commands.entity(e).insert(AtmosphereSettings::default());
+        } else if !atmosphere && eye_atmosphere {
+            commands.entity(e).remove::<AtmosphereSettings>();
+        }
+        if let (Some(far), Projection::Custom(c)) = (far, &mut *p)
+            && let Some(ep) = c.get_mut::<EyeProjection>()
+            && ep.far != far
+        {
+            ep.far = far;
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    /// v4.71 (the user: "the rider without the head looks weird … make sure
+    /// that for the POV view it's faded away"): the head and everything on
+    /// it are on a layer the eyes do not draw and the other cameras and the
+    /// sun do; a helmet put on later goes there too.
+    #[test]
+    fn the_own_head_is_drawn_by_every_camera_but_the_eyes() {
+        use bevy::ecs::system::RunSystemOnce;
+        assert!(!eye_layers().intersects(&RenderLayers::layer(OWN_HEAD_LAYER)));
+        assert!(eye_layers().intersects(&RenderLayers::layer(0)));
+        assert!(eye_layers().intersects(&RenderLayers::layer(VR_LAYER)));
+        assert!(world_layers().intersects(&RenderLayers::layer(OWN_HEAD_LAYER)));
+        assert!(world_layers().intersects(&RenderLayers::layer(0)));
+        let mut world = World::new();
+        let helmet = world.spawn_empty().id();
+        let strap = world.spawn_empty().id();
+        world.entity_mut(helmet).add_child(strap);
+        let head = world.spawn_empty().id();
+        world.entity_mut(head).add_child(helmet);
+        let body = world.spawn_empty().id();
+        let put = move |mut c: Commands, ch: Query<&Children>, l: Query<Option<&RenderLayers>>| {
+            put_on_head_layer(&mut c, head, &ch, &l);
+        };
+        world.run_system_once(put).unwrap();
+        for e in [head, helmet, strap] {
+            assert_eq!(
+                world.get::<RenderLayers>(e),
+                Some(&RenderLayers::layer(OWN_HEAD_LAYER)),
+                "{e:?}"
+            );
+        }
+        assert_eq!(world.get::<RenderLayers>(body), None, "the body stays on 0");
+        // A pair of glasses put on later joins the layer.
+        let glasses = world.spawn_empty().id();
+        world.entity_mut(head).add_child(glasses);
+        world.run_system_once(put).unwrap();
+        assert_eq!(
+            world.get::<RenderLayers>(glasses),
+            Some(&RenderLayers::layer(OWN_HEAD_LAYER))
+        );
+        // The follow camera and the sun see the head (its shadow too).
+        let cam = world.spawn(FollowCamera).id();
+        let sun = world.spawn(crate::sky::Sun).id();
+        let eye = world.spawn((EyeCamera(0), eye_layers())).id();
+        world.run_system_once(see_own_head).unwrap();
+        assert_eq!(world.get::<RenderLayers>(cam), Some(&world_layers()));
+        assert_eq!(world.get::<RenderLayers>(sun), Some(&world_layers()));
+        assert_eq!(world.get::<RenderLayers>(eye), Some(&eye_layers()));
+    }
+
     use super::*;
 
+    /// Main's layer test (14I W2): the eyes see the world and the VR layer,
+    /// which is no layer main uses for something else.
     #[test]
     fn the_eyes_see_the_world_and_the_vr_layer() {
         let eyes = eye_layers();
         assert!(eyes.intersects(&RenderLayers::layer(0)));
         assert!(eyes.intersects(&RenderLayers::layer(VR_LAYER)));
-        // The other cameras (the default layer only) never see it.
         assert!(!RenderLayers::default().intersects(&RenderLayers::layer(VR_LAYER)));
-        // Not a layer main already uses.
         for used in [
             crate::workshop::LAYER,
             crate::workshop::MIRROR_LAYER,
             crate::thumbs::THUMB_LAYER,
+            OWN_HEAD_LAYER,
         ] {
             assert_ne!(used, VR_LAYER);
         }
+        assert_ne!(crate::workshop::LAYER, OWN_HEAD_LAYER);
+        assert_ne!(crate::workshop::MIRROR_LAYER, OWN_HEAD_LAYER);
+        assert_ne!(crate::thumbs::THUMB_LAYER, OWN_HEAD_LAYER);
+    }
+
+    /// The shared projection from WebXR's tangents is the same matrix as
+    /// from the field of view.
+    #[test]
+    fn the_projection_from_tangents_is_the_fovs() {
+        let t = [-1.2, 0.9, -1.1, 0.95];
+        let p = EyeProjection::from_tangents(t, 0.05);
+        let (l, r, u, d) = p.fov.tangents();
+        for (a, b) in [(l, t[0]), (r, t[1]), (d, t[2]), (u, t[3])] {
+            assert!((a - b).abs() < 1e-5, "{a} {b}");
+        }
+        assert_eq!(p.near, 0.05);
+        assert_eq!(
+            p.get_clip_from_view(),
+            projection::clip_from_view(&fov_of_tangents(t), 0.05)
+        );
+    }
+
+    /// The desktop's status row (as WebXR's frame line): fits the row.
+    #[test]
+    fn the_frame_line_fits_the_status_row() {
+        assert_eq!(frame_line(11.84, 13.89), "11.8 of 13.9 ms");
+        assert!(frame_line(123.4, 13.89).chars().count() <= 16);
+        assert_eq!(frame_line(0.0, 0.0), "");
+    }
+
+    #[test]
+    fn mirror_words() {
+        for w in VrMirror::CHOICES {
+            assert_eq!(VrMirror::parse(w).unwrap().name(), *w);
+        }
+        assert_eq!(VrMirror::parse("left"), None);
+        assert_eq!(VrMirror::default(), VrMirror::Eye);
+    }
+
+    /// The eye projection is ocw_xr's: Bevy gets the same matrix and the
+    /// same frustum.
+    #[test]
+    fn the_eye_projection_is_bevys_custom_projection() {
+        let p = EyeProjection::default();
+        let m = p.get_clip_from_view();
+        assert_eq!(
+            m,
+            projection::clip_from_view(&view::QUEST1_LEFT_FOV, projection::NEAR_M)
+        );
+        let c = p.get_frustum_corners(-1.0, -100.0);
+        let expect = projection::frustum_corners(&view::QUEST1_LEFT_FOV, -1.0, -100.0);
+        assert!(
+            c.iter()
+                .zip(expect)
+                .all(|(a, b)| (Vec3::from(*a) - b).length() < 1e-5)
+        );
+        let proj = Projection::custom(p);
+        let Projection::Custom(custom) = proj else {
+            panic!("custom")
+        };
+        assert_eq!(custom.get::<EyeProjection>(), Some(&p));
+    }
+
+    #[test]
+    fn status_names_the_mode_and_the_eyes() {
+        let s = VrState::default().status(&VrConfig::sim(), VrMirror::Both, None);
+        assert!(s.contains("simulated head"), "{s}");
+        assert!(s.contains("720×800 px, RGBA8 sRGB; mirror: both"), "{s}");
+        let mut st = VrState {
+            views: Some(view::sim_views(
+                &ocw_xr::Pose::IDENTITY,
+                0.064,
+                &view::QUEST1_LEFT_FOV,
+            )),
+            ..Default::default()
+        };
+        st.session = Some(SessionMachine::unavailable(
+            ocw_xr::session::XrError::NoHeadset,
+        ));
+        let cfg = VrConfig {
+            mode: VrMode::Headset,
+            ..VrConfig::sim()
+        };
+        let s = st.status(&cfg, VrMirror::Eye, None);
+        assert!(s.contains("VR: unavailable: no headset"), "{s}");
+        assert!(s.contains("IPD 64.0 mm"), "{s}");
+        assert!(s.contains("missed 0 of 0"), "{s}");
+        assert!(
+            s.contains("controllers: not synced (no profile bound yet)"),
+            "{s}"
+        );
+        let pads = ControllerState::at_rest(true);
+        st.controller_profiles = [
+            "/interaction_profiles/oculus/touch_controller".into(),
+            "/interaction_profiles/oculus/touch_controller".into(),
+        ];
+        let s = st.status(&cfg, VrMirror::Eye, Some(&pads));
+        assert!(
+            s.contains("controllers: active (touch_controller + touch_controller)"),
+            "{s}"
+        );
+    }
+
+    /// Regression (2026-11-17, Weela): the left eye was black in a
+    /// screenshot with the headset off the head.
+    #[test]
+    fn the_eyes_draw_for_the_mirror_without_the_headset() {
+        assert!(eyes_render(true, VrMirror::Chase));
+        assert!(eyes_render(false, VrMirror::Eye));
+        assert!(eyes_render(false, VrMirror::Both));
+        assert!(!eyes_render(false, VrMirror::Chase));
+    }
+
+    /// Looking down turns both eyes about the head: the IPD stays, the
+    /// view points lower.
+    #[test]
+    fn looking_down_tilts_the_eyes_about_the_head() {
+        let anchor = ocw_xr::Pose::new(Quat::from_rotation_y(0.7), Vec3::new(3.0, 1.5, -2.0));
+        let eyes = view::sim_views(&anchor, 0.064, &view::QUEST1_LEFT_FOV);
+        let down = look_down(&eyes, &anchor, 40.0);
+        assert!((view::ipd(&down) - 0.064).abs() < 1e-5);
+        for (a, b) in eyes.iter().zip(&down) {
+            let fa = a.pose.orientation * Vec3::NEG_Z;
+            let fb = b.pose.orientation * Vec3::NEG_Z;
+            assert!((fa.angle_between(fb).to_degrees() - 40.0).abs() < 0.1);
+            assert!(fb.y < fa.y - 0.5, "{fa} {fb}");
+        }
+        assert_eq!(look_down(&eyes, &anchor, 0.0), eyes);
     }
 }

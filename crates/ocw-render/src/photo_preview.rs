@@ -30,8 +30,9 @@
 //!   included.
 //! - **Switches:** `hud.photo_preview on|off` (setting
 //!   `display.photo_preview`, default on); hidden with `hud off` (a HUD
-//!   panel). VR (the VR branch's `vr` feature) sets `enabled` false: the
-//!   preview belongs on the VR bike computer later (spec §14 Phase 11 X3).
+//!   panel). The desktop's VR (`vr::PcVrPlugin`) keeps `enabled` false:
+//!   the preview belongs on the VR bike computer later (spec 14 Phase 11
+//!   X3).
 
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::RenderTarget;

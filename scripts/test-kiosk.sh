@@ -109,4 +109,11 @@ wait_for '[ "$(runs)" -ge 1 ]' "app started without the server"
 if grep -q -- "--server" "$t/runs"; then echo "FAIL: --server without a server"; fail=1; fi
 kill -TERM "$kiosk"; wait "$kiosk" 2>/dev/null || true
 pkill -f "sleep 600" 2>/dev/null || true
+# The Windows VR kiosk's world files (scripts/deploy-test-windows.sh): the
+# package (Black Forest: north first), its manifest, every route file.
+l=$'a.route\nblackforest.ocwpkg\nblackforest-north.ocwpkg\nblackforest-north.ocwpkg.manifest.json\ntenerife.ocwpkg\nb.route'
+wf() { scripts/deploy-test-windows.sh --world-files "$1" "$l" | tr '\n' ' '; }
+[ "$(wf blackforest)" = "blackforest-north.ocwpkg blackforest-north.ocwpkg.manifest.json a.route b.route " ] || { echo "FAIL: world files blackforest: $(wf blackforest)"; fail=1; }
+[ "$(wf tenerife)" = "tenerife.ocwpkg a.route b.route " ] || { echo "FAIL: world files tenerife: $(wf tenerife)"; fail=1; }
+[ -z "$(wf liechtenstein)" ] || { echo "FAIL: world files of a missing package: $(wf liechtenstein)"; fail=1; }
 [ "$fail" -eq 0 ] && echo "kiosk tests passed" || exit 1

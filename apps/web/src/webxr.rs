@@ -8,7 +8,7 @@
 //! controllers first (`window.ocw.xrFrame`, `window.ocw.xrPads`). Here,
 //! while the session shows frames, two eye cameras draw the scene side by
 //! side into the canvas – each with its view's projection
-//! ([`EyeProjection`]: the desktop VR mode's `ocw_xr::projection`) and
+//! (`ocw_render::vr::EyeProjection`, shared with the desktop's VR) and
 //! pose, where the layer's viewport says – and the chase camera rests; the
 //! page then copies the canvas into the layer's framebuffer. When the
 //! session ends the eyes go and the chase camera draws again.
@@ -49,20 +49,17 @@
 //! it creates the layer), and the frame time is on the bike computer.
 
 use bevy::camera::visibility::{RenderLayers, VisibilitySystems};
-use bevy::camera::{CameraProjection, Exposure, RenderTarget, SubCameraView, Viewport};
+use bevy::camera::{RenderTarget, Viewport};
 use bevy::light::SimulationLightSystems;
-use bevy::math::Vec3A;
-use bevy::pbr::{AtmosphereSettings, DistanceFog};
 use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
-use bevy::render::view::Msaa;
 use bevy::transform::TransformSystems;
 use bevy::window::PrimaryWindow;
 use ocw_client::quality::{DeviceInfo, GpuApi, QualitySetting, XrHeadset, XrLayer, resolve_xr};
 use ocw_render::camera::{FollowCamera, RiderHead};
 use ocw_render::menu::MenuView;
 use ocw_render::riders::{Avatar, AvatarRig};
-use ocw_render::vr::{VR_LAYER, VrSession};
+use ocw_render::vr::{EyeProjection, VR_LAYER, VrSession};
 
 use crate::xr::{self, Anchor, FrameStats, PadReader, Space, XrEvent, XrFrame, XrPad, XrState};
 
@@ -213,60 +210,6 @@ pub struct XrController {
     pub offset: Transform,
 }
 
-/// An eye's projection: WebXR's frustum as the desktop VR mode's field of
-/// view (`ocw_xr::projection`), infinite reverse Z.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct EyeProjection {
-    /// Left, right, down, up tangents ([`xr::frustum_tangents`]).
-    pub tangents: [f32; 4],
-    pub near: f32,
-    /// For culling and the shadow cascades (the matrix has no far plane).
-    pub far: f32,
-}
-
-impl EyeProjection {
-    /// The field of view in the desktop VR mode's terms.
-    pub fn fov(&self) -> ocw_xr::projection::Fov {
-        let [l, r, d, u] = self.tangents;
-        ocw_xr::projection::Fov {
-            left: l.atan(),
-            right: r.atan(),
-            down: d.atan(),
-            up: u.atan(),
-        }
-    }
-}
-
-impl Default for EyeProjection {
-    fn default() -> Self {
-        Self {
-            tangents: [-1.0, 1.0, -1.0, 1.0],
-            near: xr::EYE_NEAR_M,
-            far: PerspectiveProjection::default().far,
-        }
-    }
-}
-
-impl CameraProjection for EyeProjection {
-    fn get_clip_from_view(&self) -> Mat4 {
-        ocw_xr::projection::clip_from_view(&self.fov(), self.near)
-    }
-
-    fn get_clip_from_view_for_sub(&self, _sub_view: &SubCameraView) -> Mat4 {
-        self.get_clip_from_view()
-    }
-
-    fn update(&mut self, _width: f32, _height: f32) {}
-
-    fn far(&self) -> f32 {
-        self.far
-    }
-
-    fn get_frustum_corners(&self, z_near: f32, z_far: f32) -> [Vec3A; 8] {
-        xr::frustum_corners(self.tangents, z_near, z_far).map(Vec3A::from)
-    }
-}
-
 pub struct WebXrPlugin;
 
 impl Plugin for WebXrPlugin {
@@ -286,7 +229,8 @@ impl Plugin for WebXrPlugin {
                     manage_eyes,
                     place_eyes,
                     place_controllers,
-                    copy_camera_look,
+                    // Shared with the desktop's VR (`ocw_render::vr`).
+                    ocw_render::vr::copy_camera_look::<XrEyeCamera>,
                     publish,
                 )
                     .chain()
@@ -563,7 +507,10 @@ fn manage_eyes(
                     is_active: false,
                     ..default()
                 },
-                Projection::custom(EyeProjection::default()),
+                Projection::custom(EyeProjection::from_tangents(
+                    [-1.0, 1.0, -1.0, 1.0],
+                    xr::EYE_NEAR_M,
+                )),
                 Transform::default(),
                 ocw_render::world::fog(),
                 bevy::light::ShadowFilteringMethod::Gaussian,
@@ -840,9 +787,10 @@ fn place_eyes(
         }
         if let Projection::Custom(c) = &mut *proj
             && let Some(ep) = c.get_mut::<EyeProjection>()
-            && ep.tangents != tangents
+            && let fov = ocw_render::vr::fov_of_tangents(tangents)
+            && ep.fov != fov
         {
-            ep.tangents = tangents;
+            ep.fov = fov;
         }
         placed.push((
             eye.0,
@@ -903,77 +851,6 @@ fn place_controllers(
         };
         if *v != want {
             *v = want;
-        }
-    }
-}
-
-/// The eyes look like the chase camera: its fog, exposure, MSAA, far
-/// plane and atmosphere (set by the sky, the weather and the quality
-/// preset, which only know the chase camera) – as the desktop VR mode's
-/// `copy_camera_look` (branch `agent/vr-x1`).
-#[allow(clippy::type_complexity)] // a Bevy system query
-fn copy_camera_look(
-    mut commands: Commands,
-    follow: Query<
-        (
-            Option<&DistanceFog>,
-            Option<&Exposure>,
-            Option<&Msaa>,
-            Has<AtmosphereSettings>,
-            &Projection,
-        ),
-        (With<FollowCamera>, Without<XrEyeCamera>),
-    >,
-    mut eyes: Query<
-        (
-            Entity,
-            Option<&mut DistanceFog>,
-            Option<&Exposure>,
-            Option<&Msaa>,
-            Has<AtmosphereSettings>,
-            &mut Projection,
-        ),
-        With<XrEyeCamera>,
-    >,
-) {
-    let Ok((fog, exposure, msaa, atmosphere, projection)) = follow.single() else {
-        return;
-    };
-    let far = match projection {
-        Projection::Perspective(p) => Some(p.far),
-        _ => None,
-    };
-    for (e, eye_fog, eye_exposure, eye_msaa, eye_atmosphere, mut p) in &mut eyes {
-        match (fog, eye_fog) {
-            (Some(f), Some(mut ef)) => *ef = f.clone(),
-            (Some(f), None) => {
-                commands.entity(e).insert(f.clone());
-            }
-            (None, Some(_)) => {
-                commands.entity(e).remove::<DistanceFog>();
-            }
-            (None, None) => {}
-        }
-        if let Some(x) = exposure
-            && eye_exposure.is_none_or(|ex| ex.ev100 != x.ev100)
-        {
-            commands.entity(e).insert(*x);
-        }
-        if let Some(m) = msaa
-            && eye_msaa != Some(m)
-        {
-            commands.entity(e).insert(*m);
-        }
-        if atmosphere && !eye_atmosphere {
-            commands.entity(e).insert(AtmosphereSettings::default());
-        } else if !atmosphere && eye_atmosphere {
-            commands.entity(e).remove::<AtmosphereSettings>();
-        }
-        if let (Some(far), Projection::Custom(c)) = (far, &mut *p)
-            && let Some(ep) = c.get_mut::<EyeProjection>()
-            && ep.far != far
-        {
-            ep.far = far;
         }
     }
 }

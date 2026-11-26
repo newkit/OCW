@@ -1,0 +1,33 @@
+[package]
+name = "bevy_mod_xr"
+description = "semi generic Xr Api for Community Driven XR in Bevy (OCW port to Bevy 0.20)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+keywords = ["gamedev", "bevy", "Xr", "Vr"]
+
+[features]
+default = ["gizmos"]
+gizmos = ["dep:bevy_gizmos", "dep:bevy_color"]
+reflect = ["dep:bevy_reflect"]
+
+[dependencies]
+bevy_ecs.workspace = true
+bevy_math.workspace = true
+bevy_render.workspace = true
+# Bevy 0.20 moved extraction (ExtractResource, ExtractComponent) into bevy_extract.
+bevy_extract.workspace = true
+bevy_app.workspace = true
+bevy_reflect = { workspace = true, optional = true }
+bevy_log.workspace = true
+bevy_gizmos = { workspace = true, optional = true }
+bevy_color = { workspace = true, optional = true }
+bevy_transform.workspace = true
+bevy_camera.workspace = true
+bevy_derive.workspace = true
+
+[lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"

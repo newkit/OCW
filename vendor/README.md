@@ -1,0 +1,18 @@
+# Vendored crates
+
+Third-party crates kept in the tree because OCW needs a version that is not
+published. They form their own Cargo workspace (`vendor/Cargo.toml`); the
+root workspace excludes this directory, so its clippy / fmt rules do not
+apply to upstream code.
+
+| Crate | Origin | Version | Licence | Our changes |
+|---|---|---|---|---|
+| `bevy_mod_xr` | <https://github.com/awtterpip/bevy_oxr> (crates.io `bevy_mod_xr` 0.6.0) | 0.6.0 → `0.6.0-ocw.1` | MIT OR Apache-2.0 | Ported from Bevy 0.19 to Bevy 0.20.1 (spec §14 Phase 11 X1, Q3 variant A); clean manifest on our pinned Bevy crates |
+| `bevy_mod_openxr` | <https://github.com/awtterpip/bevy_oxr> (crates.io `bevy_mod_openxr` 0.6.0) | 0.6.0 → `0.6.0-ocw.1` | MIT OR Apache-2.0 | Ported from Bevy 0.19 / wgpu 29 to Bevy 0.20.1 / wgpu 30.0.1 (spec §14 Phase 11 X1, Q3 variant A); clean manifest |
+
+The first commit that added them holds the sources exactly as published on
+crates.io; `git diff` against it shows the port. Check the port with
+
+```bash
+cd vendor && CARGO_TARGET_DIR=../target cargo check --workspace --examples
+```

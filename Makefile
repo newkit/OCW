@@ -93,8 +93,8 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 .DEFAULT_GOAL := help
 .PHONY: help test-accounts test-web-account test-web-trust test-studio-planners version version-next version-bump test-release-version test-world-patches release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-blender test-blender models-diff deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
-	test test-unit test-wasm test-web-build test-web test-web-xr web-xr web-preview-xr test-web-webgl2 test-web-gpu test-web-webkit test-web-ios deps-webkit test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-voice-livekit test-voice-bundled test-host-voice test-voice-live test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser deps-vr deps-vr-linux deps-vr-linux-debian deps-vr-linux-fedora deps-vr-linux-arch deps-vr-linux-unknown deps-vr-windows deps-vr-macos test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
-	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
+	test test-unit test-wasm test-web-build test-web test-web-xr web-xr web-preview-xr test-web-webgl2 test-web-gpu test-web-webkit test-web-ios deps-webkit test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-voice-livekit test-voice-bundled test-host-voice test-voice-live test-kiosk test-kiosk-windows web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser deps-vr deps-vr-linux deps-vr-linux-debian deps-vr-linux-fedora deps-vr-linux-arch deps-vr-linux-unknown deps-vr-windows deps-vr-macos test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
+	test-multiplayer test-multiplayer-local test-scenes test-scenes-list test-vr-monado \
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
 help: ## Show this help
@@ -459,6 +459,12 @@ models-diff: ## The structural diff (`ocw-assets model diff`) of the model files
 		scripts/remote.sh $(MACHINE) put $$d/stage.tar target/models-diff; \
 		scripts/remote.sh $(MACHINE) run 'scripts/models-diff.sh --staged target/models-diff/stage.tar'; \
 	else CARGO="$(CARGO)" scripts/models-diff.sh --base $(BASE); fi
+
+test-kiosk-windows: ## The Windows VR kiosk script (scripts/ocw-kiosk.ps1): PowerShell parse check and its selftest on MACHINE (default Win11Builder; no app started)
+	OCW_REMOTE_JOBS=2 scripts/remote.sh $(or $(MACHINE),Win11Builder) run '$$ProgressPreference = "SilentlyContinue"; Set-ExecutionPolicy -Scope Process Bypass -Force; foreach ($$f in "scripts\ocw-kiosk.ps1","scripts\win-gui-run.ps1","scripts\vr-soak.ps1") { $$e = $$null; [void][Management.Automation.Language.Parser]::ParseFile((Resolve-Path $$f), [ref]$$null, [ref]$$e); if ($$e) { $$e | ForEach-Object { "$$f : $$($$_.Extent.StartLineNumber): $$($$_.Message)" }; exit 1 } else { "parse ok: $$f" } }; & .\scripts\ocw-kiosk.ps1 selftest'
+
+test-vr-monado: ## VR: `ocw-desktop --vr` (vr build) against Monado's simulated headset, headless (spec §14 Phase 11 X1; skipped while Monado and the OpenXR loader are not installed)
+	scripts/test-vr-monado.sh
 
 remote-gc: ## Build machines: list the target/ of merged or gone agent checkouts and their size (GC=1 deletes them; MACHINES="a b" limits)
 	GC=$(GC) scripts/remote-gc.sh $(MACHINES)
