@@ -203,6 +203,18 @@ struct Args {
     /// to this file (and again after a renewal), for scripts and pages.
     #[arg(long, value_name = "PATH", requires = "webtransport")]
     web_info_file: Option<PathBuf>,
+    /// Answer `GET /join.json` on this TCP address (spec 11.5 *Join
+    /// info*): the public WebTransport URL with the current certificate
+    /// hashes (and the next one a day before a renewal), the voice URL and
+    /// the world, for pages that learn them at runtime (the public preview).
+    /// Other requests are passed on to --join-upstream (one TLS port of a
+    /// hosting's proxy serves both, Fly.io's 443).
+    #[arg(long, value_name = "ADDR", requires = "webtransport")]
+    join_http: Option<std::net::SocketAddr>,
+    /// Where --join-http passes other requests (default: the bundled voice
+    /// server's signalling port on 127.0.0.1); `none`: answer 404.
+    #[arg(long, value_name = "ADDR|none", requires = "join_http")]
+    join_upstream: Option<String>,
     /// LiveKit server for voice chat (spec §7), e.g. ws://127.0.0.1:7880;
     /// default: $OCW_LIVEKIT_URL. Voice is off without it.
     #[arg(long, value_name = "URL")]
@@ -597,7 +609,7 @@ fn pump_world_switch(
     server: &mut GameServer,
     mut net: Option<&mut NetServer>,
     loading: &mut Option<WorldLoad>,
-) {
+) -> Option<ocw_protocol::v1::WorldChange> {
     let mut tell = |conns: &[ocw_server::ConnectionId], bytes: &[u8]| {
         if let Some(n) = net.as_deref_mut() {
             n.send_to(conns, bytes);
@@ -638,17 +650,17 @@ fn pump_world_switch(
             }
         }
     }
-    let Some((req, rx)) = loading.as_ref() else {
-        return;
-    };
+    let (req, rx) = loading.as_ref()?;
     let result = match rx.try_recv() {
         Ok(r) => r,
-        Err(std::sync::mpsc::TryRecvError::Empty) => return,
+        Err(std::sync::mpsc::TryRecvError::Empty) => return None,
         Err(std::sync::mpsc::TryRecvError::Disconnected) => Err("the loading thread ended".into()),
     };
+    let mut switched = None;
     match result {
         Ok((course, mut change, origin)) => {
             change.by.clone_from(&req.by);
+            switched = Some(change.clone());
             let (conns, bytes) = server.switch_world(course, change);
             server.set_geo_origin(Some(origin));
             tell(&conns, &bytes);
@@ -662,6 +674,7 @@ fn pump_world_switch(
         }
     }
     *loading = None;
+    switched
 }
 
 fn main() {
@@ -676,10 +689,13 @@ fn main() {
     // What the join link names (spec §6.2 *Join links*): the package and
     // the route.
     let mut link_world: (Option<String>, Option<String>) = (None, None);
+    // What the join info names (--join-http, spec 11.5).
+    let mut join_world = JoinWorld::default();
     let course = match (&args.world, &args.route_file) {
         (Some(spec), _) => {
             let (course, origin, change) = free_ride(&args, spec);
             geo_origin = Some(origin);
+            join_world = JoinWorld::of(&change);
             link_world = (
                 Some(if change.package_id.starts_with("local/") {
                     change.package_id.clone()
@@ -701,10 +717,12 @@ fn main() {
         }
         (None, None) if args.test_route == "hills" => {
             link_world.1 = Some("hills".into());
+            join_world.route = Some("hills".into());
             Course::Route(Route::test_hills())
         }
         (None, None) => {
             link_world.1 = Some("loop".into());
+            join_world.route = Some("loop".into());
             Course::Route(Route::test_loop())
         }
     };
@@ -794,6 +812,10 @@ fn main() {
         .listen
         .map(|addr| listen(&args, addr, &link_world, public_ip));
     let stop = net.as_ref().map(NetServer::shutdown_on_signal);
+    let join = start_join(&args);
+    if let (Some(board), Some(n)) = (&join, &net) {
+        board.set(&join_info(&args, n, &join_world));
+    }
     // When the WebTransport certificate was last checked for renewal.
     let mut cert_checked = Instant::now();
     let tick = Duration::from_secs_f64(SIM_DT);
@@ -812,12 +834,19 @@ fn main() {
         if let Some(net) = &mut net {
             net.pump(&mut server);
         }
-        pump_world_switch(&args, &mut server, net.as_mut(), &mut world_load);
+        let switched = pump_world_switch(&args, &mut server, net.as_mut(), &mut world_load);
+        if let Some(change) = &switched {
+            join_world = JoinWorld::of(change);
+        }
+        let mut join_changed = switched.is_some();
         if let Some(n) = &mut net
             && cert_checked.elapsed() >= Duration::from_secs(60)
         {
             cert_checked = Instant::now();
-            rotate_web_cert(&args, n);
+            join_changed |= rotate_web_cert(&args, n);
+        }
+        if join_changed && let (Some(board), Some(n)) = (&join, &net) {
+            board.set(&join_info(&args, n, &join_world));
         }
         let broadcast = server.tick();
         let directed = server.take_directed();
@@ -1113,6 +1142,7 @@ fn listen(
 fn announce_web(args: &Args, net: &NetServer, addr: std::net::SocketAddr) {
     use ocw_server::net::webtransport;
     let hash = net.web_cert_hash().unwrap_or_default();
+    let hashes = net.web_cert_hashes();
     let not_after = net.web_cert_not_after().unwrap_or_default();
     let url = webtransport::url_for(addr);
     tracing::info!(addr = %addr, cert_hash = %hash, not_after_unix_s = not_after, "listening (WebTransport, UDP)");
@@ -1128,6 +1158,7 @@ fn announce_web(args: &Args, net: &NetServer, addr: std::net::SocketAddr) {
             "url": url,
             "port": addr.port(),
             "cert_hash": hash,
+            "cert_hashes": hashes,
             "not_after_unix_s": not_after,
             "query": webtransport::page_query(&url, &hash),
         });
@@ -1160,19 +1191,108 @@ fn public_web_url(public_host: Option<&str>, port: u16) -> Option<String> {
     ))
 }
 
-/// Renews the WebTransport certificate when it nears its end.
-fn rotate_web_cert(args: &Args, net: &mut NetServer) {
+/// Renews the WebTransport certificate when it nears its end (and
+/// announces the next one a day before). Returns whether the hashes
+/// changed.
+fn rotate_web_cert(args: &Args, net: &mut NetServer) -> bool {
+    use ocw_server::net::WebCertChange;
     let now = ocw_server::unix_now_ms() / 1000;
     match net.rotate_web_cert(now) {
-        Ok(Some(hash)) => {
-            tracing::warn!(cert_hash = %hash, "WebTransport certificate renewed: pages need the new cert-hash");
+        Ok(Some(change)) => {
+            match &change {
+                WebCertChange::Announced { next } => tracing::info!(
+                    next_cert_hash = %next,
+                    "next WebTransport certificate announced (join info: both hashes)"
+                ),
+                WebCertChange::Renewed { hash } => tracing::warn!(
+                    cert_hash = %hash,
+                    "WebTransport certificate renewed: pages need the new cert-hash"
+                ),
+            }
             if let Some(addr) = net.web_addr() {
                 announce_web(args, net, addr);
             }
+            true
         }
-        Ok(None) => {}
-        Err(e) => tracing::error!(%e, "WebTransport certificate renewal failed"),
+        Ok(None) => false,
+        Err(e) => {
+            tracing::error!(%e, "WebTransport certificate renewal failed");
+            false
+        }
     }
+}
+
+/// The world the join info names (spec 11.5 *Join info*).
+#[derive(Default)]
+struct JoinWorld {
+    id: Option<String>,
+    version: Option<u64>,
+    sha256: Option<String>,
+    route: Option<String>,
+}
+
+impl JoinWorld {
+    fn of(change: &ocw_protocol::v1::WorldChange) -> Self {
+        Self {
+            id: Some(change.package_id.clone()),
+            version: (change.version > 0).then_some(change.version),
+            sha256: (!change.content_sha256.is_empty()).then(|| {
+                change
+                    .content_sha256
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect()
+            }),
+            route: (!change.route.is_empty()).then(|| change.route.clone()),
+        }
+    }
+}
+
+/// Starts --join-http (spec 11.5 *Join info*).
+fn start_join(args: &Args) -> Option<ocw_server::net::JoinBoard> {
+    let addr = args.join_http?;
+    let upstream = match args.join_upstream.as_deref() {
+        Some("none") => None,
+        Some(a) => Some(a.parse().unwrap_or_else(|e| {
+            eprintln!("--join-upstream {a}: {e}");
+            std::process::exit(2);
+        })),
+        None => Some(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            args.voice_ports.signal,
+        ))),
+    };
+    let board = ocw_server::net::JoinBoard::default();
+    match ocw_server::net::JoinFront::spawn(addr, upstream, board.clone()) {
+        Ok(front) => {
+            tracing::info!(addr = %front.local_addr(), upstream = ?upstream, path = ocw_server::net::join_http::PATH, "join info for pages (HTTP)");
+            Some(board)
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// The join info of this server now: the public WebTransport URL, the
+/// hashes, the voice URL, the world.
+fn join_info(args: &Args, net: &NetServer, world: &JoinWorld) -> ocw_server::net::JoinInfo {
+    use ocw_server::net::webtransport;
+    let addr = net.web_addr().unwrap_or_else(|| net.local_addr());
+    ocw_server::net::JoinInfo {
+        webtransport: public_web_url(args.voice_public_host.as_deref(), addr.port())
+            .unwrap_or_else(|| webtransport::url_for(addr)),
+        cert_hashes: net.web_cert_hashes(),
+        not_after_unix_s: net.web_cert_not_after().unwrap_or_default(),
+        voice: args.voice_public_url.clone(),
+        world: world.id.clone(),
+        world_version: world.version,
+        world_sha256: world.sha256.clone(),
+        route: world.route.clone(),
+        query: String::new(),
+    }
+    .with_query()
 }
 
 /// A Unix time as `YYYY-MM-DD HH:MM` (UTC).
@@ -1225,6 +1345,27 @@ mod tests {
         );
         assert_eq!(public_web_url(Some(""), 47801), None);
         assert_eq!(public_web_url(None, 47801), None);
+    }
+
+    /// --join-http (spec 11.5 *Join info*) needs WebTransport; its
+    /// upstream is an address or `none`.
+    #[test]
+    fn join_http_needs_webtransport() {
+        let a = Args::try_parse_from([
+            "ocw-server",
+            "--listen",
+            "--webtransport",
+            "--join-http",
+            "0.0.0.0:8080",
+        ])
+        .unwrap();
+        assert_eq!(a.join_http, Some("0.0.0.0:8080".parse().unwrap()));
+        assert!(a.join_upstream.is_none());
+        assert!(
+            Args::try_parse_from(["ocw-server", "--listen", "--join-http", "0.0.0.0:8080"])
+                .is_err()
+        );
+        assert!(Args::try_parse_from(["ocw-server", "--join-upstream", "none"]).is_err());
     }
 
     /// --no-gso (spec 11.5) only beside --listen.

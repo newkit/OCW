@@ -194,6 +194,10 @@ pub const WEB_CERT_BACKDATE_S: i64 = 3600;
 /// A new certificate is made when the current one has less than this left
 /// (at start with `--tls-dir`, and while running).
 pub const WEB_CERT_RENEW_BEFORE_S: i64 = 2 * DAY_S;
+/// The next certificate is made and announced (the join info's second
+/// hash, spec 11.5 *Join info*) this long before it takes over, so pages
+/// that fetched the info in that day still connect after the renewal.
+pub const WEB_CERT_ANNOUNCE_S: i64 = DAY_S;
 
 /// The WebTransport endpoint's certificate (spec §14 Phase 10 B3): an
 /// ECDSA P-256 self-signed certificate valid for 13 days, which browsers
@@ -240,40 +244,88 @@ impl WebIdentity {
     /// `web-cert.validity`), so the hash stays the same across restarts;
     /// a new one when there is none, it is damaged, or it expires within
     /// two days. Returns it and whether it is new.
+    ///
+    /// When the kept one is due and an announced next one is there
+    /// ([`Self::load_next`]), that one takes over (its hash is already in
+    /// the join info).
     pub fn load_or_create(dir: &Path, now_unix_s: i64) -> Result<(Self, bool), String> {
-        let read = || -> Option<Self> {
-            let validity = std::fs::read_to_string(dir.join("web-cert.validity")).ok()?;
-            let mut it = validity.split_whitespace().map(str::parse::<i64>);
-            let (Some(Ok(not_before_unix_s)), Some(Ok(not_after_unix_s))) = (it.next(), it.next())
-            else {
-                return None;
-            };
-            let id = Self {
-                cert: CertificateDer::from(std::fs::read(dir.join("web-cert.der")).ok()?),
-                key: PrivatePkcs8KeyDer::from(std::fs::read(dir.join("web-key.der")).ok()?),
-                not_before_unix_s,
-                not_after_unix_s,
-            };
-            id.rustls_config().ok()?;
-            Some(id)
-        };
-        if let Some(id) = read().filter(|id| id.usable(now_unix_s)) {
+        if let Some(id) = Self::read(dir, "").filter(|id| id.usable(now_unix_s)) {
             return Ok((id, false));
         }
-        let id = Self::generate(now_unix_s)?;
+        let id = match Self::load_next(dir, now_unix_s).filter(|id| id.usable(now_unix_s)) {
+            Some(next) => next,
+            None => Self::generate(now_unix_s)?,
+        };
         id.store(dir)?;
+        Self::remove_next(dir)?;
         Ok((id, true))
+    }
+
+    /// The announced next certificate kept in `dir` (`web-next-*`), if it
+    /// is valid now and within the browsers' 14 days.
+    pub fn load_next(dir: &Path, now_unix_s: i64) -> Option<Self> {
+        Self::read(dir, "next-").filter(|id| {
+            id.not_after_unix_s - id.not_before_unix_s <= WEB_CERT_MAX_VALIDITY_S
+                && now_unix_s >= id.not_before_unix_s
+                && now_unix_s < id.not_after_unix_s
+        })
+    }
+
+    /// Keeps this certificate in `dir` as the announced next one.
+    pub fn store_next(&self, dir: &Path) -> Result<(), String> {
+        self.store_as(dir, "next-")
+    }
+
+    /// Removes the announced next certificate from `dir` (it took over).
+    pub fn remove_next(dir: &Path) -> Result<(), String> {
+        for p in Self::paths(dir, "next-") {
+            match std::fs::remove_file(&p) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                    return Err(format!("{}: {e}", p.display()));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// The certificate, key and validity files of a slot (`""`: the
+    /// current certificate, `"next-"`: the announced next one).
+    fn paths(dir: &Path, slot: &str) -> [std::path::PathBuf; 3] {
+        [
+            dir.join(format!("web-{slot}cert.der")),
+            dir.join(format!("web-{slot}key.der")),
+            dir.join(format!("web-{slot}cert.validity")),
+        ]
+    }
+
+    fn read(dir: &Path, slot: &str) -> Option<Self> {
+        let [cert, key, validity] = Self::paths(dir, slot);
+        let validity = std::fs::read_to_string(validity).ok()?;
+        let mut it = validity.split_whitespace().map(str::parse::<i64>);
+        let (Some(Ok(not_before_unix_s)), Some(Ok(not_after_unix_s))) = (it.next(), it.next())
+        else {
+            return None;
+        };
+        let id = Self {
+            cert: CertificateDer::from(std::fs::read(cert).ok()?),
+            key: PrivatePkcs8KeyDer::from(std::fs::read(key).ok()?),
+            not_before_unix_s,
+            not_after_unix_s,
+        };
+        id.rustls_config().ok()?;
+        Some(id)
     }
 
     /// Writes the certificate into `dir`, replacing an old one.
     pub fn store(&self, dir: &Path) -> Result<(), String> {
+        self.store_as(dir, "")
+    }
+
+    fn store_as(&self, dir: &Path, slot: &str) -> Result<(), String> {
         let ctx = |p: &Path, e: std::io::Error| format!("{}: {e}", p.display());
         std::fs::create_dir_all(dir).map_err(|e| ctx(dir, e))?;
-        let (cert_path, key_path, validity_path) = (
-            dir.join("web-cert.der"),
-            dir.join("web-key.der"),
-            dir.join("web-cert.validity"),
-        );
+        let [cert_path, key_path, validity_path] = Self::paths(dir, slot);
         for p in [&cert_path, &key_path, &validity_path] {
             match std::fs::remove_file(p) {
                 Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(ctx(p, e)),
@@ -299,6 +351,11 @@ impl WebIdentity {
     /// Less than two days left: time for a new certificate.
     pub fn needs_rotation(&self, now_unix_s: i64) -> bool {
         now_unix_s >= self.not_after_unix_s - WEB_CERT_RENEW_BEFORE_S
+    }
+
+    /// A day before the renewal: time to announce the next certificate.
+    pub fn needs_next(&self, now_unix_s: i64) -> bool {
+        now_unix_s >= self.not_after_unix_s - WEB_CERT_RENEW_BEFORE_S - WEB_CERT_ANNOUNCE_S
     }
 
     /// The SHA-256 of the certificate as lowercase hex: the page's
@@ -616,6 +673,41 @@ mod tests {
         )
         .unwrap();
         assert!(WebIdentity::load_or_create(&dir, later).unwrap().1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The announced next certificate (spec 11.5 *Join info*) is kept
+    /// across a restart and takes over when the current one is due.
+    #[test]
+    fn the_next_webtransport_certificate_takes_over() {
+        let dir = std::env::temp_dir().join(format!("ocw-webtls-next-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (first, _) = WebIdentity::load_or_create(&dir, NOW).unwrap();
+        let end = first.not_after_unix_s();
+        assert!(!first.needs_next(end - 3 * DAY_S - 1));
+        let announce = end - 3 * DAY_S;
+        assert!(first.needs_next(announce) && !first.needs_rotation(announce));
+        assert!(WebIdentity::load_next(&dir, announce).is_none());
+        let next = WebIdentity::generate(announce).unwrap();
+        next.store_next(&dir).unwrap();
+        // A restart in the announced day: the current one stays, the next
+        // one is found again.
+        let (again, new) = WebIdentity::load_or_create(&dir, announce + 3600).unwrap();
+        assert!(!new && again.cert_hash() == first.cert_hash());
+        assert_eq!(
+            WebIdentity::load_next(&dir, announce + 3600)
+                .unwrap()
+                .cert_hash(),
+            next.cert_hash()
+        );
+        // A restart after the renewal time: the announced one takes over.
+        let (took, new) = WebIdentity::load_or_create(&dir, end - 2 * DAY_S).unwrap();
+        assert!(new);
+        assert_eq!(took.cert_hash(), next.cert_hash());
+        assert!(
+            WebIdentity::load_next(&dir, end - 2 * DAY_S).is_none(),
+            "the slot is cleared"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

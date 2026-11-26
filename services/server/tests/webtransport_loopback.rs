@@ -17,7 +17,7 @@ use ocw_protocol::{PROTOCOL_VERSION, client_message, decode_server, encode};
 use ocw_server::net::tls::parse_fingerprint;
 use ocw_server::net::{
     ClientOptions, LinkStatus, NetClient, NetServer, ServerIdentity, ServerTrust, Transport,
-    WebIdentity,
+    WebCertChange, WebIdentity,
 };
 use ocw_server::{GameServer, ServerConfig};
 use ocw_world::Route;
@@ -371,9 +371,25 @@ fn the_certificate_rotates_while_running() {
         seen.take(&old);
         seen.rider.is_some()
     });
-    // Two days before the end: a new certificate.
-    let rotated = net.rotate_web_cert(end - 2 * 86_400).unwrap().unwrap();
+    // Three days before the end the next certificate is announced: pages
+    // get both hashes, and one that fetched them then joins after the
+    // renewal too (spec 11.5 *Join info*).
+    let Some(WebCertChange::Announced { next }) = net.rotate_web_cert(end - 3 * 86_400).unwrap()
+    else {
+        panic!("the next certificate is announced a day before the renewal")
+    };
+    assert_eq!(net.web_cert_hashes(), vec![first.clone(), next.clone()]);
+    assert_eq!(net.web_cert_hash().unwrap(), first, "still the current one");
+    assert_eq!(net.rotate_web_cert(end - 3 * 86_400 + 60).unwrap(), None);
+    // Two days before the end: the announced certificate takes over.
+    let Some(WebCertChange::Renewed { hash: rotated }) =
+        net.rotate_web_cert(end - 2 * 86_400).unwrap()
+    else {
+        panic!("renewed two days before the end")
+    };
     assert_ne!(rotated, first);
+    assert_eq!(rotated, next, "the announced certificate");
+    assert_eq!(net.web_cert_hashes(), vec![rotated.clone()]);
     assert_eq!(net.web_cert_hash().unwrap(), rotated);
     let stale = NetClient::connect_web(&url, &pin(&first), ClientOptions::default()).unwrap();
     let fresh = NetClient::connect_web(&url, &pin(&rotated), ClientOptions::default()).unwrap();

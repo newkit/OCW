@@ -1,9 +1,10 @@
 # <img src="artwork/logos/ocw.svg" alt="OCW logo" height="40" align="top"> Open Cycling World
 
 **Try it in your browser: <https://newkit.github.io/OCW/>** – ride solo on the
-test routes or in Liechtenstein, with virtual power or a smart trainer over
-Bluetooth in Chrome or Edge. It is a development build (spec §14 Phase 10
-B8a); multiplayer and voice come with the hosted version.
+test routes or in the worlds, or **ride together with everyone on the public
+server** (Liechtenstein, with voice chat), with virtual power or a smart
+trainer over Bluetooth in Chrome or Edge. It is a development build (spec 14
+Phase 10 B8a, 11.5 *Join info*); sign-in comes with the hosted version.
 
 A cross-platform indoor cycling simulation in Rust: real bicycle hardware, real
 routes from OpenStreetMap, rendered locally with Bevy, with server-authoritative
@@ -143,8 +144,8 @@ join voice calls (B5), has the desktop's menus, settings, captures and
 gamepad support (B6), and flies in **Unicorn mode** like the desktop
 (Phase 13 G5). It draws with **WebGPU**, or with **WebGL 2** where
 WebGPU is missing (B7). A **public preview** runs on GitHub Pages
-(<https://newkit.github.io/OCW/>, B8a): solo, the test routes and
-Liechtenstein; see [The public preview](#the-public-preview-github-pages)
+(<https://newkit.github.io/OCW/>, B8a): the test routes and the worlds
+solo, and riding together on the public server; see [The public preview](#the-public-preview-github-pages)
 for how it is built and updated. Full hosting (B8) comes later; until
 then you build the app and serve it yourself, as below.
 
@@ -758,9 +759,23 @@ or the server and bot builds, where it needs them). Screenshots, logs and JSON s
 <https://newkit.github.io/OCW/> is a solo preview of the browser app (spec
 §14 Phase 10 B8a): its start page offers the Hills and Loop test routes and
 Liechtenstein (Vaduz – Malbun and a free ride), with virtual power or a
-trainer over Web Bluetooth in Chromium. Multiplayer, voice and sign-in are
-off there ("coming in the hosted version"). `credits.html` has the
-attribution, the licences and the privacy note.
+trainer over Web Bluetooth in Chromium. Sign-in is off there ("coming in
+the hosted version"). `credits.html` has the attribution, the licences and
+the privacy note.
+
+**Riding together on the public server** (spec 11.5 *Join info*): the start
+page's first ride, *Ride together: Liechtenstein (public server)*, joins the
+game server on Fly.io ([Hosting the server on Fly.io](#hosting-the-server-on-flyio))
+with everyone who is on it, with voice chat. The page opens `?together=1`
+and, before the app starts, fetches `https://ocw-server.fly.dev/join.json`
+(named by `config.json`'s `server`): the server's WebTransport address, its
+current certificate hash (and the next one a day before a renewal) and its
+world. The app then rides as from a join link (`server=`, `cert-hash=`,
+`world=` in the address; a reload fetches them again). Voice goes over
+`wss://ocw-server.fly.dev` (`config.json`'s `voice`); every ride starts with
+your voice off, M turns it on. Without sign-in every rider has the default
+look; others see the name of the Riders page. The ride is offered only when
+the server's world is among the preview's worlds (the same package file).
 
 **What is different from `make web`:**
 
@@ -770,8 +785,8 @@ attribution, the licences and the privacy note.
 | Profile | `web-release`: `opt-level = "s"`, thin LTO | `web-preview-release`: the same with fat LTO and one codegen unit |
 | `wasm-opt` | `-Os` (`WEB_WASM_OPT=off`: none) | `-Oz`, always: `scripts/fetch-binaryen.sh` fetches the pinned binaryen (version_133, SHA-256-checked) into `~/.cache/ocw/tools/` when none is installed |
 | Trusted worlds | the production roots (none yet); on localhost also `trust-root`, `trust=dev`, `allow-unsigned` | only the **web preview's root** (`crates/ocw-worldstore/keys/preview-roots.json`, feature `preview` of `ocw-web`); the localhost-only options stay localhost-only |
-| `config.json` | `channel: dev`: changes nothing | `channel: preview`, `worlds/`, empty `server`, `voice`, `signin`: no `?server=` and no voice on a public page, the start page's rides |
-| Voice | LiveKit's SDK fetched | not included |
+| `config.json` | `channel: dev`: changes nothing | `channel: preview`, `worlds/`, `server`: the public server's join info, `voice`: its `wss://` URL, empty `signin`, the start page's rides (`web-preview-site.py --no-server`: empty `server` and `voice`, no riding together) |
+| Voice | LiveKit's SDK fetched | LiveKit's SDK fetched (required: voice on the public server) |
 
 Sizes of one module (the WebGPU build; the WebGL 2 build is 1.6 – 1.9 MiB
 bigger; a browser downloads only one; measured 2026-11-24, spec 10G
@@ -3818,7 +3833,7 @@ ocw-desktop --world europe/spain/tenerife --free-ride
 | 47800 | UDP | game, QUIC (desktop app, `ocw-bot`) |
 | 47801 | UDP | game, WebTransport (browser app) |
 | 7880 | TCP | voice signalling (LiveKit WebSocket, `ws://`) |
-| 443 | TCP | voice signalling over TLS (`wss://ocw-server.fly.dev`: Fly's proxy ends TLS with its `*.fly.dev` certificate and forwards to 7880), for pages served over `https://` |
+| 443 | TCP | TLS ended by Fly's proxy with its `*.fly.dev` certificate, to the server's join endpoint on 8080 (`--join-http`): `https://ocw-server.fly.dev/join.json` for pages, everything else passed on to 7880 (voice signalling, `wss://ocw-server.fly.dev`) |
 | 7881 | TCP | voice media over TCP (ICE/TCP), for networks that block UDP |
 | 7882 | UDP | voice media, one port for all riders |
 
@@ -3865,6 +3880,16 @@ ocw-desktop --server IPV4:47800 --server-cert FINGERPRINT --world data/pilot/lie
 ```
 
 The WebTransport certificate's hash changes every 11 days (browsers take only short-lived self-signed certificates). The desktop's fingerprint stays the same.
+
+**Join info for pages** (spec 11.5 *Join info*): pages never have the hash baked in; they fetch it. `ocw-server --join-http 0.0.0.0:8080` (set by `start.sh`) answers `GET /join.json` with the public WebTransport URL, the certificate hashes, the voice URL and the world (no secret; CORS for every origin, not cached), and passes every other request on to LiveKit's signalling port (`--join-upstream`), so Fly's TLS port 443 serves both:
+
+```bash
+curl -s https://ocw-server.fly.dev/join.json
+# {"webtransport": "https://213.188.222.85:47801", "cert_hashes": ["…"], "voice": "wss://ocw-server.fly.dev",
+#  "world": "liechtenstein", "world_version": 10, "world_sha256": "e5b3f612…", "query": "server=…&cert-hash=…", …}
+```
+
+Three days before the certificate ends the server makes the next one and lists its hash second (kept on the volume as `tls/web-next-*`); two days before the end it takes over. A page that fetched both hashes in that day still connects after the switch, and a reload fetches the info again. The public preview rides together with it (`?together=1`, [The public preview](#the-public-preview-github-pages)); test it like the page does with `scripts/test-remote-web.py --together --dir target/web-preview-site --https --name "Ada Rider" --hear "Bea Climber"` (and a second browser with the names swapped).
 
 **Voice** runs in the same machine (spec 11.5 says why): LiveKit announces the dedicated IPv4 as its media address (`node_ip`), takes UDP 7882 for all riders and falls back to TCP 7881. Grants for riders from the internet name `wss://ocw-server.fly.dev` (`--voice-public-url`, set by `start.sh`; `OCW_VOICE_PUBLIC_URL=""` turns it off): TLS on 443 ends in Fly's proxy with Fly's own `*.fly.dev` certificate (no certificate of our own, no cost), which forwards the WebSocket to LiveKit on 7880. So pages served over `https://` (the GitHub Pages preview) can connect, and so can the desktop app. Riders on the machine's own network keep `ws://`. Plain `ws://IPV4:7880` stays open too.
 

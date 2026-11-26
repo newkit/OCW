@@ -28,8 +28,9 @@ Inputs:
 
 Writes OUT/: the build (index.html, the two modules, ocw-voice.js, ocw-gpu.js, the
 logo), worlds/ in the `world-builder publish` layout, config.json (the
-page configuration: worlds/, no server / voice / sign-in, the start page's
-rides), credits.html (attribution, licences, the privacy note),
+page configuration: worlds/, the public server's join info and voice
+(PUBLIC_SERVER, spec 11.5 *Join info*; --no-server: none), no sign-in, the
+start page's rides), credits.html (attribution, licences, the privacy note),
 licenses/ (the font's OFL), .nojekyll, and site.txt (every file with its
 size). Fails when the site is over --max-mb (GitHub Pages: 1 GB).
 """
@@ -57,10 +58,24 @@ TEST_RIDES = [
      "query": "route=loop"},
 ]
 
+# The public server (spec 11.5, README "Hosting the server on Fly.io"):
+# the page fetches its join info at runtime (the WebTransport URL and the
+# certificate hashes change at renewals and restarts) and joins with
+# ?together=1; voice goes to its voice server over wss://. `world` is the
+# package it rides: the start page's ride needs it among the preview's
+# worlds (the same package file, or the road graphs differ).
+PUBLIC_SERVER = {
+    "join": "https://ocw-server.fly.dev/join.json",
+    "voice": "wss://ocw-server.fly.dev",
+    "world": "liechtenstein",
+}
+
 BUILD_FILES = ("index.html", "ocw_web.js", "ocw_web_bg.wasm", "ocw_web_webgl2.js",
                "ocw_web_webgl2_bg.wasm", "ocw-voice.js", "ocw-gpu.js", "ocw-xr.js", "ocw-net-worker.js", "ocw.svg", "sizes.txt",
                # Add to Home Screen (spec 3.2.3): the manifest and its icons.
-               "manifest.webmanifest", "ocw-256.png", "ocw-512.png")
+               "manifest.webmanifest", "ocw-256.png", "ocw-512.png",
+               # Voice (B5) with the public server: LiveKit's JS SDK and its licence.
+               "livekit-client.umd.js", "livekit-client.LICENSE.txt")
 
 
 def sha256(path):
@@ -203,8 +218,47 @@ def xr_site(xr_build, found, out, build_id=""):
     return n + 2
 
 
-def start_rides(found, app=0):
+def public_server(found, enabled=True):
+    """The public server's world among the preview's (None: no riding
+    together on this site)."""
+    if not enabled:
+        return None
+    w = next((w for w in found if w["id"] == PUBLIC_SERVER["world"]), None)
+    if w is None:
+        print(f"warning: world {PUBLIC_SERVER['world']} (the public server's) is not among the"
+              " preview's worlds: no riding together", file=sys.stderr)
+    return w
+
+
+def together_ride(w, app=0):
+    """The start page's ride on the public server (index.html fetches its
+    join info for ?together=1)."""
+    return {
+        "title": f"Ride together: {w['name']} (public server)",
+        "text": "Free ride with everyone on the public server, with voice chat (your voice starts off: M).",
+        "size": size_line(app, w["bytes"]),
+        "query": "together=1",
+    }
+
+
+def page_config(found, server, build_id, start, worlds="worlds/"):
+    """config.json: the worlds, the public server's join info and voice
+    when it rides one of them, no sign-in."""
+    return {
+        "channel": "preview",
+        "worlds": worlds,
+        "server": PUBLIC_SERVER["join"] if server else "",
+        "voice": PUBLIC_SERVER["voice"] if server else "",
+        "signin": "",
+        "build": build_id,
+        "start": start,
+    }
+
+
+def start_rides(found, app=0, server=None):
     rides = [dict(r, size=size_line(app)) for r in TEST_RIDES]
+    if server:
+        rides.insert(0, together_ride(server, app))
     for w in found:
         for r in w["routes"]:
             rides.append({
@@ -337,7 +391,8 @@ images or tile servers are used. Each world names its sources:</p>
 texture library is CC0 (ambientCG, Poly Haven):
 <details><summary>The textures of the desktop app</summary><table>
 <tr><th>Material</th><th>Title</th><th>Author</th><th>Licence</th><th></th></tr>{mats}</table></details></li>
-<li><b>Voice chat</b> (LiveKit's JavaScript SDK, Apache-2.0) is not part of the preview.</li>
+<li><b>Voice chat:</b> LiveKit's JavaScript SDK (<code>livekit-client</code>, LiveKit, Inc., Apache-2.0) –
+<a href="livekit-client.LICENSE.txt">licence text</a>.</li>
 </ul>
 
 <h2>Software</h2>
@@ -348,7 +403,13 @@ and compiled to WebAssembly with <code>wasm-bindgen</code> and binaryen's <code>
 <h2 id="privacy">Privacy</h2>
 <ul>
 <li><b>No tracking:</b> no analytics, no cookies, no advertising, no accounts. The page loads only from
-this site; it does not call other servers.</li>
+this site; riding alone it does not call other servers.</li>
+<li><b>Riding together</b> (the rides on the public server): the page connects to OCW's game and voice
+server at <code>ocw-server.fly.dev</code> (hosted by Fly.io in Frankfurt). Everyone on it sees the name you
+ride with, your rider and where you ride; the server gets your power, cadence and steering to run the
+ride; its log at Fly.io notes when a rider joins and leaves, with the name and IP address. Your voice is off when a ride starts; when you turn it on (M), it
+goes through the voice server to the riders who hear you, and is not recorded
+(<a href="https://fly.io/legal/privacy-policy/">Fly.io's privacy policy</a>).</li>
 <li><b>Your settings</b> (graphics, audio, controls, the trainer's mode, remembered Bluetooth devices) are kept
 in your browser's <code>localStorage</code> for this site, and never leave your browser.</li>
 <li><b>Worlds</b> are downloaded from this site and cached in your browser's storage (the Origin Private File
@@ -359,7 +420,7 @@ their data stays in the page.</li>
 <li><b>Hosting:</b> the site is served by GitHub Pages, which logs visitors' IP addresses for security
 (<a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub's privacy statement</a>).</li>
 </ul>
-<p class="dim">Multiplayer, voice chat and sign-in are coming in the hosted version; this note will grow with them.</p>
+<p class="dim">Sign-in is coming in the hosted version; this note will grow with it.</p>
 </main>
 </body>
 </html>
@@ -373,6 +434,8 @@ def main():
     p.add_argument("--build", default="target/web-preview")
     p.add_argument("--worlds", default="target/web-preview-worlds/release")
     p.add_argument("--out", default="target/web-preview-site")
+    p.add_argument("--no-server", action="store_true",
+                   help="no riding together (config.json without the public server)")
     p.add_argument("--crates", default=None)
     p.add_argument("--build-id", default="")
     p.add_argument("--max-mb", type=float, default=1000.0)
@@ -390,13 +453,11 @@ def main():
         if os.path.isfile(src):
             place(src, os.path.join(a.out, f))
     found = worlds(a.worlds, a.out)
-    config = {
-        "channel": "preview",
-        "worlds": "worlds/",
-        "server": "", "voice": "", "signin": "",
-        "build": a.build_id,
-        "start": start_rides(found, app_bytes(a.build)),
-    }
+    server = public_server(found, not a.no_server)
+    if server and not os.path.isfile(os.path.join(a.out, "livekit-client.umd.js")):
+        sys.exit(f"{a.build}/livekit-client.umd.js missing: the voice of the public server needs it"
+                 " (scripts/build-web.sh --preview fetches it)")
+    config = page_config(found, server, a.build_id, start_rides(found, app_bytes(a.build), server))
     with open(os.path.join(a.out, "config.json"), "w") as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
         f.write("\n")

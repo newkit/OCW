@@ -17,6 +17,14 @@ certificate, Chromium told to accept it), as the public preview is: then
 mixed content rules apply, so the voice grant must be wss:// (spec 11.5,
 --voice-public-url). Screenshots OUT/remote-web-<time>-*.jpg, the log and summary next to them.
 Exits 0 when it joined, rode, connected to voice and saw others there.
+
+    scripts/test-remote-web.py --together --dir target/web-preview-site --https [--name Ada]
+
+rides together as the public preview does (spec 11.5 *Join info*): the
+site's own config.json names the server's join info (web-preview-site.py
+PUBLIC_SERVER), the page opens with ?together=1 only and fetches the
+server's WebTransport URL, certificate hashes and world itself. A preview
+site trusts only the preview's signing root (no trust-root=).
 """
 
 import argparse
@@ -61,7 +69,9 @@ def spki(cert):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--query", required=True, help="the server's page options (server=…&cert-hash=…)")
+    p.add_argument("--query", default=None, help="the server's page options (server=…&cert-hash=…)")
+    p.add_argument("--together", action="store_true",
+                   help="?together=1: the page fetches the join info its config.json names")
     p.add_argument("--world", default="liechtenstein")
     p.add_argument("--dir", default="target/web")
     p.add_argument("--out", default="test-output/remote-server")
@@ -83,7 +93,15 @@ def main():
     a.chromium = a.chromium or web_browser.find()
     if not os.path.isdir(os.path.join(a.dir, "worlds")):
         sys.exit(f"{a.dir}/worlds missing: make web-worlds")
-    root = open("target/web-keys/root.hex").read().strip()
+    if not a.query and not a.together:
+        sys.exit("--query or --together")
+    if a.together:
+        cfg = json.load(open(os.path.join(a.dir, "config.json")))
+        if not str(cfg.get("server", "")).endswith(".json"):
+            sys.exit(f"{a.dir}/config.json names no join info (server): build the site with web-preview-site.py")
+    # A preview site trusts only the preview's root; a dev build the test key.
+    root_file = "target/web-keys/root.hex"
+    root = open(root_file).read().strip() if os.path.isfile(root_file) and not a.together else ""
     os.makedirs(a.out, exist_ok=True)
     base = os.path.join(a.out, "remote-web-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
     httpd = wa.tw.web_serve().server(a.dir, stats={})
@@ -109,12 +127,22 @@ def main():
     ok = False
     try:
         name = a.name.replace(" ", "%20")
-        url = (f"{scheme}://127.0.0.1:{port}/?{a.query}&world={a.world}&trust-root={root}"
-               f"&name={name}&time=noon")
+        if a.together:
+            url = f"{scheme}://127.0.0.1:{port}/?together=1&name={name}&time=noon"
+        else:
+            url = (f"{scheme}://127.0.0.1:{port}/?{a.query}&world={a.world}&trust-root={root}"
+                   f"&name={name}&time=noon")
+        r.summary["url"] = url.split("?", 1)[1]
         r.cdp.call("Page.navigate", {"url": url})
         rid = r.wait("joined the game server",
                      lambda: (r.json("window.ocw && window.ocw.netStats()") or {}).get("rider_id"), 180)
         r.check("joined the hosted game server over WebTransport", rid, rid)
+        if a.together:
+            # What the page made of the join info (the address it rides with).
+            got = r.js("location.search") or ""
+            r.summary["joined_query"] = got
+            r.check("the page fetched the join info (server= and cert-hash= in the address)",
+                    "server=" in got and "cert-hash=" in got, got)
         for c in a.cmd:
             r.console(c)
         r.pump(5.0)

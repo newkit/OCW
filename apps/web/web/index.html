@@ -53,8 +53,14 @@
     before the module starts (window.ocwConfig): the worlds' base, the
     hosted server / voice / sign-in (empty: none – the preview), and for
     the public preview (channel "preview") the start page's rides
-    ("start"). Without a ride option in the query (route, world, server)
-    the preview shows its start page instead of loading the module.
+    ("start"). Without a ride option in the query (route, world, server,
+    together) the preview shows its start page instead of loading the module.
+    Riding together (spec 11.5 *Join info*): when config.json's server is a
+    join info URL (https://…/join.json, the public server on Fly.io),
+    ?together=1 fetches it before the module starts – the server's
+    WebTransport URL, its current certificate hashes (and the next one
+    before a renewal) and its world – and rides there (server=, cert-hash=,
+    world= in the address; a reload fetches them again).
     WebXR (spec §14 Phase 14, 14I W1; ocw-xr.js): ?xr=1 loads the WebXR
     build (ocw_web_webxr.js: WebGL 2 with the feature webxr, `make web-xr`)
     and shows Enter VR when the browser has immersive VR (a headset's
@@ -250,7 +256,7 @@
   <section id="ocw-start" hidden aria-label="Start">
     <main>
       <h1><img src="ocw.svg" alt="" onerror="this.remove()">Open Cycling World <span class="badge">browser preview</span></h1>
-      <p class="lead">An open-source indoor cycling simulation, in your browser: ride solo on a test
+      <p class="lead" id="ocw-start-lead">An open-source indoor cycling simulation, in your browser: ride solo on a test
         route or in Liechtenstein, with virtual power or your smart trainer over Bluetooth (Chrome or Edge).
         This is a development build – expect rough edges.</p>
       <h2>Choose a ride</h2>
@@ -270,7 +276,7 @@
           settings, screenshots and the ride's FIT file. Mouse: the camera, C resets it.</li>
       </ul>
       <p class="caps" id="ocw-start-caps"></p>
-      <p class="soon">Multiplayer, voice chat and sign-in are coming in the hosted version.</p>
+      <p class="soon" id="ocw-start-soon">Multiplayer, voice chat and sign-in are coming in the hosted version.</p>
       <footer>
         <a href="credits.html">Credits and licences</a> ·
         <a href="credits.html#privacy">Privacy</a> ·
@@ -773,8 +779,11 @@
     let config = {};
     try { config = JSON.parse(window.ocwConfig || "{}") || {}; } catch (e) { console.warn("ocw-web: config.json: " + e); }
     const preview = config.channel === "preview";
-    const query = new URLSearchParams(location.search);
-    const riding = ["route", "world", "server"].some((k) => query.has(k));
+    let query = new URLSearchParams(location.search);
+    // The public server's join info (spec 11.5): config.server names it.
+    const joinInfo = typeof config.server === "string" && /^https:\/\/[^ ]+\.json$/.test(config.server) ? config.server : "";
+    const together = !!joinInfo && query.has("together");
+    const riding = ["route", "world", "server", "together"].some((k) => query.has(k));
     const loadScript = (src) => new Promise((ok) => {
       const el = document.createElement("script");
       el.src = src;
@@ -791,11 +800,51 @@
     } else if (preview && !riding && Array.isArray(config.start) && config.start.length) {
       // The preview's start page: nothing big is fetched until a ride is chosen.
       startPage();
-    } else {
+    } else if (!together || await joinTogether()) {
       if (preview) previewBar();
       // Voice (B5): LiveKit's SDK, unless this page has no voice (B8a).
       if (config.voice !== "") await loadScript("livekit-client.umd.js");
       await ride();
+    }
+
+    // Riding together on the public server (spec 11.5 *Join info*): its
+    // current WebTransport URL, certificate hashes and world, fetched now
+    // (never baked into the page: the certificate changes every 11 days and
+    // at restarts) and put into the address the app reads.
+    async function joinTogether() {
+      status.hidden = false;
+      status.className = "loading";
+      status.textContent = "Finding the public server …";
+      try {
+        const r = await fetch(joinInfo, {cache: "no-store"});
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const info = await r.json();
+        const hashes = (info.cert_hashes || []).filter((h) => /^[0-9a-f]{64}$/.test(h));
+        if (!/^https:\/\/[^/?#]+$/.test(info.webtransport || "") || !hashes.length) throw new Error("no WebTransport address in the join info");
+        const p = new URLSearchParams(location.search);
+        for (const k of ["server", "cert-hash", "join"]) p.delete(k);
+        p.set("server", info.webtransport);
+        p.set("cert-hash", hashes.join(","));
+        if (info.world) {
+          for (const k of ["world", "route", "free"]) p.delete(k);
+          p.set("world", info.world);
+          if (info.route) p.set("route", info.route);
+        } else if (info.route) {
+          p.delete("world");
+          p.set("route", info.route);
+        }
+        history.replaceState(null, "", "?" + p.toString());
+        query = p;
+        console.log(`ocw-web: riding together on ${info.webtransport} (${info.world || info.route || "?"}, ${hashes.length} certificate hash(es))`);
+        return true;
+      } catch (e) {
+        console.warn("ocw-web: join info: " + e);
+        status.className = "error";
+        status.innerHTML = "<div><b>The public server cannot be reached right now.</b><br><span></span><br>"
+          + '<a href="">Try again</a> · <a href="./">Rides</a> (riding alone works without it)</div>';
+        status.querySelector("span").textContent = String(e.message || e);
+        return false;
+      }
     }
 
     // No WebAssembly SIMD (Q10 (a)): the message, nothing loaded.
@@ -836,6 +885,13 @@
       document.getElementById("ocw-start-caps").innerHTML = "This browser: " + caps.map(([n, ok]) =>
         `<span class="${ok ? "yes" : "no"}">${ok ? "✓" : "✗"} ${esc(n)}</span>`).join("");
       if (config.build) document.getElementById("ocw-start-build").textContent = "Build " + config.build;
+      if (joinInfo) {
+        document.getElementById("ocw-start-lead").textContent = "An open-source indoor cycling simulation, in your browser: ride solo on a test "
+          + "route or in the worlds, or together with everyone on the public server, with virtual power or your smart trainer over Bluetooth (Chrome or Edge). This is a development build – expect rough edges.";
+        document.getElementById("ocw-start-soon").textContent = "Ride together: the rides on the public server join everyone who is on it, "
+          + "with voice chat (every ride starts with your voice off: M turns it on). Others see the name you ride with. "
+          + "Sign-in, and with it your own rider's look, is coming in the hosted version.";
+      }
       status.hidden = true;
       document.getElementById("ocw-start").hidden = false;
       document.title = "Open Cycling World – browser preview";

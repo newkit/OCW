@@ -342,6 +342,9 @@ pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) 
             },
             // Read below (B3; the origin after the route; a join link).
             ("server" | "cert-hash" | "join", _) => {}
+            // Riding together on the public server (spec 11.5 *Join info*):
+            // index.html fetched its join info into server=, cert-hash=.
+            ("together", _) => {}
             // The accounts server (spec §9.1; `account`).
             ("auth", _) => {}
             ("origin", None) => {}

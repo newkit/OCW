@@ -18,6 +18,12 @@
 //!   dev server's pages); an **empty** value says this page has none: on a
 //!   public page multiplayer (`?server=`) and voice are then off, with the
 //!   note [`HOSTED_NOTE`] (the stage-1 preview on GitHub Pages).
+//!   A `server` ending in `.json` is the public server's **join info**
+//!   (spec 11.5 *Join info*, `https://ocw-server.fly.dev/join.json`):
+//!   index.html fetches it for `?together=1` before the module starts and
+//!   puts the server's current WebTransport URL, certificate hashes and
+//!   world into the query (`server=`, `cert-hash=`, `world=`), which the
+//!   app reads as from a join link ([`PageConfig::join_info`]).
 //! - `channel` (`dev`, `preview`) and `start` (the start page's rides) are
 //!   the page's own (index.html); the app ignores them and unknown keys.
 //!
@@ -92,6 +98,14 @@ impl PageConfig {
     /// Whether this is the public preview's page (`channel: preview`).
     pub fn is_preview(&self) -> bool {
         self.channel == "preview"
+    }
+
+    /// The public server's join info URL (`server` ending in `.json`),
+    /// which index.html reads for `?together=1`.
+    pub fn join_info(&self) -> Option<&str> {
+        self.server
+            .as_deref()
+            .filter(|s| s.starts_with("https://") && s.ends_with(".json"))
     }
 
     /// Why multiplayer is off on this page (`None`: it is not): a public
@@ -221,6 +235,41 @@ mod tests {
                 .worlds
                 .as_deref(),
             Some("https://cdn.example/w/")
+        );
+    }
+
+    /// The preview with the public server (spec 11.5 *Join info*):
+    /// multiplayer and voice on, sign-in still off; the join info named.
+    #[test]
+    fn the_public_server_turns_multiplayer_and_voice_on() {
+        let c = PageConfig::parse(
+            r#"{"channel": "preview", "worlds": "worlds/",
+                "server": "https://ocw-server.fly.dev/join.json",
+                "voice": "wss://ocw-server.fly.dev", "signin": ""}"#,
+        )
+        .unwrap();
+        assert_eq!(c.join_info(), Some("https://ocw-server.fly.dev/join.json"));
+        assert!(c.multiplayer_off(false).is_none() && c.voice_off(false).is_none());
+        assert!(c.signin_off(false).is_some());
+        // The query index.html makes from it is the app's usual one.
+        let q = format!(
+            "together=1&server=https%3A%2F%2F203.0.113.7%3A47801&cert-hash={}%2C{}&world=liechtenstein&name=Ada",
+            "ab".repeat(32),
+            "cd".repeat(32)
+        );
+        let (mut s, mut w) = crate::parse_query(&q, false);
+        c.apply(&mut s, false, &mut w);
+        assert!(w.is_empty(), "{w:?}");
+        let r = s.remote.expect("the server stays");
+        assert_eq!(r.url, "https://203.0.113.7:47801/ocw/1");
+        assert_eq!(r.cert_hashes.len(), 2);
+        assert!(s.voice_off.is_none());
+        // A plain server URL is no join info.
+        assert!(
+            PageConfig::parse(r#"{"server": "https://ocw.example:47801"}"#)
+                .unwrap()
+                .join_info()
+                .is_none()
         );
     }
 
