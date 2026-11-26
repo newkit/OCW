@@ -182,6 +182,8 @@ pub struct AuthService {
     /// The workshop and hearts (4O): PostgreSQL with `storage.kind =
     /// "postgres"`, else in memory.
     workshop: Arc<dyn WorkshopStore>,
+    /// The accounts' riders (4O W5b).
+    riders: Arc<dyn crate::riders::RiderStore>,
     /// The roots whose servers credit hearts directly (Q19 (a)).
     hearts_trust: TrustStore,
 }
@@ -223,14 +225,24 @@ impl AuthService {
             Some(dir) => KeyRing::open(dir.clone(), now, rotate_s, grace_s)?,
             None => KeyRing::memory(now, rotate_s, grace_s),
         };
-        let (store, workshop): (Arc<dyn Store>, Arc<dyn WorkshopStore>) = match cfg.storage.kind {
-            StorageKind::Memory => (Arc::new(MemStore::memory()), Arc::new(MemWorkshop::new())),
+        type Stores = (
+            Arc<dyn Store>,
+            Arc<dyn WorkshopStore>,
+            Arc<dyn crate::riders::RiderStore>,
+        );
+        let (store, workshop, riders): Stores = match cfg.storage.kind {
+            StorageKind::Memory => (
+                Arc::new(MemStore::memory()),
+                Arc::new(MemWorkshop::new()),
+                Arc::new(crate::riders::MemRiders::default()),
+            ),
             StorageKind::File => (
                 Arc::new(
                     MemStore::open(cfg.storage.path.clone().expect("validated"))
                         .map_err(|e| e.to_string())?,
                 ),
                 Arc::new(MemWorkshop::new()),
+                Arc::new(crate::riders::MemRiders::default()),
             ),
             #[cfg(feature = "postgres")]
             StorageKind::Postgres => {
@@ -238,7 +250,7 @@ impl AuthService {
                     &cfg.storage.database_url()?,
                     cfg.storage.max_connections.unwrap_or(8),
                 )?);
-                (pg.clone(), pg)
+                (pg.clone(), pg.clone(), pg)
             }
             #[cfg(not(feature = "postgres"))]
             StorageKind::Postgres => {
@@ -265,11 +277,17 @@ impl AuthService {
             upstreams,
             eph: Mutex::new(Ephemeral::default()),
             secrets,
-            hooks: RwLock::new(vec![Arc::new(WorkshopHooks {
-                store: workshop.clone(),
-            }) as Arc<dyn AccountHooks>]),
+            hooks: RwLock::new(vec![
+                Arc::new(WorkshopHooks {
+                    store: workshop.clone(),
+                }) as Arc<dyn AccountHooks>,
+                Arc::new(crate::riders::RiderHooks {
+                    store: riders.clone(),
+                }),
+            ]),
             clock,
             workshop,
+            riders,
             hearts_trust,
             cfg,
         })
@@ -283,11 +301,21 @@ impl AuthService {
 
     /// Uses another workshop store (tests).
     pub fn with_workshop_store(mut self, workshop: Arc<dyn WorkshopStore>) -> Self {
-        self.hooks = RwLock::new(vec![Arc::new(WorkshopHooks {
-            store: workshop.clone(),
-        }) as Arc<dyn AccountHooks>]);
+        self.hooks = RwLock::new(vec![
+            Arc::new(WorkshopHooks {
+                store: workshop.clone(),
+            }) as Arc<dyn AccountHooks>,
+            Arc::new(crate::riders::RiderHooks {
+                store: self.riders.clone(),
+            }),
+        ]);
         self.workshop = workshop;
         self
+    }
+
+    /// The accounts' riders (4O W5b).
+    pub fn rider_store(&self) -> &Arc<dyn crate::riders::RiderStore> {
+        &self.riders
     }
 
     /// Trusts these roots' servers to credit hearts (tests).

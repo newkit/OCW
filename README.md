@@ -3027,6 +3027,17 @@ account after the ride, and a repair costs the same as in the local garage.
 Hanging a spare frameset and `hearts.grant` are not available with an
 account yet.
 
+**The rider is the account's too** (W5b): signed in, the rider you ride –
+name, weight, height, FTP, bike profile, the character and the kit's look –
+is the account's (`GET` / `PUT /account/rider`), the same on every computer
+and in the browser; the first sign-in brings the rider you rode until then
+(unless it still has the default name "Rider": give yourself a name first),
+and every change goes back to the account a moment later. The name follows
+the name rules (2–20 characters of any script) and is unique on the
+backend: a name another rider has is refused and the account's stays. It
+becomes the account's name, the one others see in a ride. Signed out, the
+local rider profiles (`ocw.toml [riders]`) ride again.
+
 **Offline** (no network, the backend down): the app rides with the bikes and
 kit last synced – kept in `<data dir>/ocw/accounts/<account>/workshop.json` –
 and the workshop is read-only ("account, offline (read-only)"). Every ride

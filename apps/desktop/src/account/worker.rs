@@ -39,6 +39,8 @@ pub enum Command {
     },
     /// A ride's summary: queued, uploaded when the backend answers (Q20).
     Ride(Box<ocw_account_api::rides::RideSummary>),
+    /// The riding rider for the account (W5b).
+    PutRider(Box<ocw_account_api::rider::RiderDoc>),
 }
 
 /// What the app reads.
@@ -49,6 +51,9 @@ pub struct Shared {
     pub access: Option<(String, i64)>,
     /// The account's workshop (signed in), spec 14 Phase 4, 4O.
     pub workshop: WorkshopShared,
+    /// The account's rider (W5b) with a generation; `None`: not fetched
+    /// (signed out).
+    pub rider: ocw_ui::profiles::FetchedRider,
 }
 
 pub struct Worker {
@@ -85,6 +90,7 @@ impl Worker {
             },
             access: None,
             workshop: WorkshopShared::default(),
+            rider: None,
         }));
         let cancel = Arc::new(AtomicBool::new(false));
         let mut t = Thread {
@@ -98,6 +104,7 @@ impl Worker {
             data_dir: cfg.data_dir,
             ws: None,
             generation: 0,
+            rider_put: None,
         };
         std::thread::Builder::new()
             .name("ocw-account".into())
@@ -123,6 +130,8 @@ struct Thread {
     /// The signed-in account's workshop.
     ws: Option<WorkshopSync>,
     generation: u64,
+    /// A rider not sent yet (the backend did not answer).
+    rider_put: Option<ocw_account_api::rider::RiderDoc>,
 }
 
 fn idempotency_key() -> String {
@@ -204,6 +213,49 @@ impl Thread {
         self.publish_workshop();
     }
 
+    fn publish_rider(&mut self, doc: Option<ocw_account_api::rider::RiderDoc>) {
+        self.generation += 1;
+        self.shared.lock().unwrap_or_else(|e| e.into_inner()).rider = Some((self.generation, doc));
+    }
+
+    /// Fetches the account's rider (W5b); offline: tried again later.
+    fn rider_round(&mut self) {
+        let Some(s) = self.session.clone() else {
+            return;
+        };
+        // A change made offline goes first.
+        if let Some(doc) = self.rider_put.take() {
+            self.put_rider(doc);
+            return;
+        }
+        match self.client.rider(&s) {
+            Ok(doc) => self.publish_rider(doc),
+            Err(e) => tracing::debug!(%e, "account rider"),
+        }
+    }
+
+    /// Sends the rider (W5b): kept (its name may be refused – then the
+    /// account's again), or kept for later when the backend is away.
+    fn put_rider(&mut self, doc: ocw_account_api::rider::RiderDoc) {
+        let Some(s) = self.session.clone() else {
+            return;
+        };
+        match self.client.put_rider(&s, &doc) {
+            Ok(kept) => self.publish_rider(Some(kept)),
+            Err(super::flow::ApiError::Offline(e)) => {
+                tracing::debug!(%e, "account rider: later");
+                self.rider_put = Some(doc);
+            }
+            Err(e) => {
+                self.say(format!("account: the rider was not saved: {e}"));
+                match self.client.rider(&s) {
+                    Ok(d) => self.publish_rider(d),
+                    Err(e) => tracing::debug!(%e, "account rider"),
+                }
+            }
+        }
+    }
+
     /// Offline: try again now and then; queued rides go up when online.
     fn workshop_tick(&mut self) {
         let now = now_s();
@@ -215,6 +267,16 @@ impl Thread {
         };
         if due && self.session.is_some() {
             self.workshop_round();
+        }
+        let rider_due = self
+            .shared
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .rider
+            .is_none()
+            || self.rider_put.is_some();
+        if rider_due && self.session.is_some() && self.ws.as_ref().is_some_and(|w| w.online) {
+            self.rider_round();
         }
     }
     fn say(&self, m: impl Into<String>) {
@@ -256,10 +318,12 @@ impl Thread {
     fn forget(&mut self, why: Option<String>) {
         self.session = None;
         self.ws = None;
-        self.shared
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .workshop = WorkshopShared::default();
+        self.rider_put = None;
+        {
+            let mut sh = self.shared.lock().unwrap_or_else(|e| e.into_inner());
+            sh.workshop = WorkshopShared::default();
+            sh.rider = None;
+        }
         self.store.delete();
         self.publish(AccountState::SignedOut, why);
     }
@@ -278,6 +342,7 @@ impl Thread {
                 self.publish_workshop();
             }
             self.workshop_round();
+            self.rider_round();
         }
         loop {
             match rx.recv_timeout(Duration::from_secs(5)) {
@@ -442,6 +507,10 @@ impl Thread {
                     .push(ActAnswer { id, result });
                 self.publish_workshop();
             }
+            Command::PutRider(doc) => {
+                self.refresh_if_due(false);
+                self.put_rider(*doc);
+            }
             Command::Ride(summary) => {
                 let id = summary.ride_id.clone();
                 match self.workshop() {
@@ -481,6 +550,7 @@ impl Thread {
                 self.say(format!("account: {what} as {name}"));
                 self.publish(self.signed_in_state(), None);
                 self.workshop_round();
+                self.rider_round();
             }
             Err(e) => {
                 self.say(format!("account: {e}"));

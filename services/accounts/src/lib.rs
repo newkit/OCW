@@ -35,6 +35,8 @@ pub mod pages;
 #[cfg(feature = "postgres")]
 pub mod pg;
 pub mod providers;
+// The rider of an account (4O W5b).
+pub mod riders;
 pub mod routes;
 pub mod secrets;
 pub mod service;

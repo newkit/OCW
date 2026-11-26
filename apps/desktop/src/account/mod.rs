@@ -106,6 +106,26 @@ impl Account {
         }
     }
 
+    /// The account's rider as last fetched (W5b; `None`: signed out).
+    pub fn rider(&self) -> ocw_ui::profiles::FetchedRider {
+        let w = self.worker.as_ref()?;
+        let sh = w.shared.lock().unwrap_or_else(|e| e.into_inner());
+        if !matches!(
+            sh.info.state,
+            ocw_client::account::AccountState::SignedIn { .. }
+        ) {
+            return None;
+        }
+        sh.rider.clone()
+    }
+
+    /// Sends the riding rider to the account (W5b).
+    pub fn put_rider(&self, doc: ocw_account_api::rider::RiderDoc) {
+        if let Some(w) = &self.worker {
+            w.send(Cmd::PutRider(Box::new(doc)));
+        }
+    }
+
     /// Signed in (whatever the workshop).
     pub fn signed_in(&self) -> bool {
         self.worker.as_ref().is_some_and(|w| {
@@ -185,6 +205,16 @@ impl Plugin for AccountPlugin {
         });
         app.insert_resource(Account { worker })
             .add_systems(Update, (print_messages, refresh_menu));
+        // The account's rider is the riding rider when signed in (W5b).
+        app.insert_resource(ocw_ui::profiles::RiderAccount {
+            fetched: |w| w.get_resource::<Account>().and_then(Account::rider),
+            put: |w, d| {
+                if let Some(a) = w.get_resource::<Account>() {
+                    a.put_rider(d);
+                }
+            },
+        })
+        .add_plugins(ocw_ui::profiles::RiderAccountPlugin);
         register_commands(app);
     }
 }
