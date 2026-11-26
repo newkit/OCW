@@ -1316,12 +1316,20 @@ the ride photographer prefers views with a peak or from a viewpoint.
 is the document you edit, with undo / redo (Ctrl + Z / Ctrl + Shift + Z) and
 autosave:
 
-1. **Click a road** in the 3D view or on the 2D map: its edge is highlighted
-   in both, and the *Road* panel shows the package's surface, width, class,
-   one-way, bike access and name next to the patch's changes. Each change is
-   one command (a combo box, the width, *closed for riding*, the name; `x`
-   takes a change out again); *the whole way* makes the edits act on the OSM
-   way instead of the one edge; *Remove road* / *Restore road*.
+1. **Click a road** in the 3D view or on the 2D map: the *Road* panel shows
+   the package's surface, width, class, one-way, bike access and name next to
+   the patch's changes. Each change is one command (a combo box, the width,
+   *closed for riding*, the name; `x` takes a change out again); *Remove
+   road* / *Restore road*. **Edits act on the whole OSM way by default**
+   (spec 16H Q18): the clicked road's whole way – often several stretches
+   between junctions – is highlighted on the map and in 3D, and the edit
+   changes the way's OSM tags, so rideability and the road's look follow
+   and the edit still finds its road after a rebuild from newer OSM data.
+   *This edge only* (or `studio road scope edge`) is the switch for the one
+   stretch between two junctions; `studio road scope way` switches back.
+   Patches with edge edits keep working: selecting such an operation edits
+   its edge, and an edge's own edit applies over its way's (the panel says
+   so).
 2. **Height points:** *Place height point*, then click the road where it
    goes (it snaps to the selected road and starts at the road's height); in
    its panel set the *Height* or *Raise* and the radius along the road,
@@ -1333,22 +1341,46 @@ autosave:
    points drawn with their radius, and the road profile they make in yellow
    (the package's tiles are not re-meshed in the studio yet).
 4. **File → Save patch** (Ctrl + S) writes `my.ocwpatch` next to the package
-   (*Save patch as…* elsewhere); when you open the package again, that patch
-   is loaded. *Open patch…* loads another one – a patch made for another
-   package is refused. The saved camera views stay in the studio (autosave),
-   not in the patch.
-5. **File → Build package…** runs `world-builder package … --patch` on your
-   computer when the package's sources are there (`<name>.osm.pbf`,
-   `<name>.poly`, `.hgt` tiles or a DTM folder next to the package, or typed
-   in the dialog; `world-builder` next to `ocw-studio`, on the `PATH` or in
-   `OCW_WORLD_BUILDER`) and shows its output and the per-operation report.
-   The result goes to `patched/<name>.ocwpkg`; the original package is not
-   touched.
+   (*Save patch as…* elsewhere). *Open patch…* loads another one – a patch
+   made for another package is refused. The saved camera views stay in the
+   studio (autosave), not in the patch.
+   **When you open a package with a patch next to it** (`<name>.ocwpatch`,
+   or a stack `<name>.020-bridge.ocwpatch`, `<name>.2.ocwpatch`, …), the
+   studio **asks first** (spec 16H Q16), in the same dialog style as the
+   trust dialog and after it when the package's key is unknown: "This
+   world has a patch: N changes (by …, date)", the files, whether the
+   package was built with it (its manifest records it). **Load it** is
+   focused (Enter: your earlier work as the document's start); **Open
+   without it** (or Esc / B) shows the package as built – a later *Save
+   patch* to the default file then keeps the patch that was there as
+   `<name>.ocwpatch.bak`. The answer is not remembered: every open asks.
+   A stack is loaded as one patch in order and saved with *Save patch as*.
+   Console: `studio patch load | skip`; scripts: `ocw-studio --patch
+   load|skip|ask` (default `ask`).
+5. **File → Build package…** writes the result to `patched/<name>.ocwpkg`
+   (the original package is not touched) on your computer (`world-builder`
+   next to `ocw-studio`, on the `PATH` or in `OCW_WORLD_BUILDER`) and shows
+   its output and the per-operation report. **Official packages ship a
+   build recipe** `<name>.recipe.toml` (spec 16H Q17; its SHA-256 is in the
+   manifest): the steps of the official build – package, routes,
+   calibration, forest and vegetation – with their arguments and the
+   sources each needs (OSM extract, polygon, SRTM tiles, DTM folder,
+   imagery, forest and crop maps, by name, files with size and SHA-256,
+   each with the script that downloads it). When the studio finds all of
+   them – next to the package, in the dialog's *Source folder*, or in
+   `data/<region>/` – it runs the **whole chain** with your patch (a
+   source file that differs from the official one is a warning: a newer
+   download). Otherwise it runs the **basic step** (`world-builder package
+   … --patch`: the recipe's package step, or the sources next to the
+   package / typed in the dialog) and says which sources are missing and
+   which steps are left out. Packages without a recipe (older ones) get the
+   basic step, as before; a recipe edited after the build is not used.
+   `world-builder recipe show --world PKG` prints a package's recipe.
 
 The same from the console: `studio select X Z | latlon LAT LON`, `studio road
 surface gravel | width 4 | name Alter Weg | remove | focus`, `studio point add
 | raise 3 | radius 60 | move X Z | remove`, `studio patch list | save [PATH] |
-open PATH | build [OUT]`.
+open PATH | load | skip | build [OUT]`, `studio road scope way|edge`.
 
 **Routes in OCW Studio** (`ocw-studio --world my.ocwpkg --workspace routes`):
 click the map to add via-points, drag the route onto other roads, or

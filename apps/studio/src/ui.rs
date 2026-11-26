@@ -119,6 +119,8 @@ pub struct BuildForm {
     pub hgt: String,
     pub dem: String,
     pub out: String,
+    /// A folder with the build recipe's sources (16H Q17 (a)).
+    pub source_dir: String,
 }
 
 impl BuildForm {
@@ -136,6 +138,7 @@ impl BuildForm {
             out: crate::build::default_output(&pkg.file)
                 .display()
                 .to_string(),
+            source_dir: String::new(),
         }
     }
 
@@ -154,6 +157,9 @@ impl BuildForm {
                 dem: list(&self.dem),
             },
             out: crate::edit::expand_home(self.out.trim()),
+            source_dir: Some(self.source_dir.trim())
+                .filter(|s| !s.is_empty())
+                .map(crate::edit::expand_home),
         }
     }
 }
@@ -958,20 +964,40 @@ fn road_panel(
             ui.label(format!("edge {edge_id}, OSM way {}", edge.osm_way));
         });
         ui.horizontal(|ui| {
+            // The whole OSM way by default (16H Q18 (a)): its tags change,
+            // so rideability and the look follow and the edit survives
+            // newer OSM data; the single edge is the switch.
             ui.label("Edits act on");
-            if ui.radio(!studio.way_scope, "this edge").clicked() {
-                pending.send(StudioCommand::WayScope(false));
-            }
             let n = pkg
                 .target_edges(ocw_edit::world::RoadTarget::Way(edge.osm_way))
                 .len();
+            let way_target = matches!(target, ocw_edit::world::RoadTarget::Way(_));
             if ui
-                .radio(studio.way_scope, format!("the whole way ({n} edges)"))
+                .add_enabled(
+                    edge.osm_way > 0,
+                    egui::RadioButton::new(way_target, format!("the whole OSM way ({n} edges)")),
+                )
+                .on_hover_text("Changes the way's OSM tags: every edge of it, highlighted on the map and in 3D; survives newer OSM data")
                 .clicked()
             {
                 pending.send(StudioCommand::WayScope(true));
             }
+            if ui
+                .radio(!way_target, "this edge only")
+                .on_hover_text("Between its two junctions: by its stable edge id")
+                .clicked()
+            {
+                pending.send(StudioCommand::WayScope(false));
+            }
         });
+        // An edge edit of the patch (older patches, or the switch) applies
+        // over the way's edit on that edge.
+        if way_target_edit_note(content, target, edge_id) {
+            ui.colored_label(
+                egui::Color32::from_rgb(255, 170, 60),
+                format!("edge {edge_id} also has its own edit in the patch: it applies over the way's (switch to this edge only to change it)"),
+            );
+        }
         if removed.is_some() {
             ui.colored_label(
                 egui::Color32::from_rgb(255, 90, 80),
@@ -1425,9 +1451,10 @@ fn build_window(
         .collapsible(false)
         .default_width(620.0)
         .show(ctx, |ui| {
-            ui.label("Builds the package again from its source data with the patch (world-builder package --patch), on this computer. The original package stays as it is.");
+            ui.label("Builds the package again from its source data with the patch, on this computer: the whole chain of its build recipe (package, routes, calibration, forest, vegetation) when its sources are found, else the basic step (world-builder package --patch). The original package stays as it is.");
             egui::Grid::new("build-sources").num_columns(2).show(ui, |ui| {
                 for (label, field) in [
+                    ("Source folder (recipe)", &mut f.source_dir),
                     ("OSM extract (.osm.pbf)", &mut f.pbf),
                     ("Region boundary (.poly)", &mut f.poly),
                     ("SRTM tiles (.hgt)", &mut f.hgt),
@@ -1440,14 +1467,34 @@ fn build_window(
                 }
             });
             let req = f.request();
-            let missing = req.sources.missing();
-            if !missing.is_empty() {
-                ui.colored_label(
-                    egui::Color32::from_rgb(255, 170, 60),
-                    "The build needs the source data the package was made from:",
-                );
-                for m in &missing {
-                    ui.label(format!("  - {m}"));
+            let plan = match (studio.package.as_ref(), crate::edit::package_facts(studio), studio.save_path()) {
+                (Some(pkg), Some(facts), Some(patch)) => {
+                    crate::build::plan(&pkg.file, pkg.manifest.as_deref(), &facts, &req, &patch)
+                }
+                _ => Err(vec!["no world is open".into()]),
+            };
+            let orange = egui::Color32::from_rgb(255, 170, 60);
+            match &plan {
+                Ok(p) if p.full => {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(120, 220, 120),
+                        format!("Full build from the package's recipe: {}.", p.steps()),
+                    );
+                }
+                Ok(p) => {
+                    ui.label(format!("Basic step: {}.", p.steps()));
+                    if let Some(n) = &p.note {
+                        ui.colored_label(orange, n);
+                    }
+                }
+                Err(missing) => {
+                    ui.colored_label(
+                        orange,
+                        "The build needs the source data the package was made from:",
+                    );
+                    for m in missing {
+                        ui.label(format!("  - {m}"));
+                    }
                 }
             }
             let program = crate::build::world_builder();
@@ -1461,7 +1508,7 @@ fn build_window(
             let running = studio.build.as_ref().is_some_and(crate::build::BuildJob::running);
             if ui
                 .add_enabled(
-                    missing.is_empty() && program.is_some() && !running,
+                    plan.is_ok() && program.is_some() && !running,
                     egui::Button::new("Build"),
                 )
                 .clicked()
@@ -1471,6 +1518,9 @@ fn build_window(
             if let Some(job) = &studio.build {
                 ui.separator();
                 ui.label(egui::RichText::new(job.summary()).strong());
+                if let Some(n) = &job.note {
+                    ui.colored_label(orange, n);
+                }
                 let st = job.state.lock().map(|s| s.lines.clone()).unwrap_or_default();
                 let report = crate::build::report_lines(&st);
                 if !report.is_empty() {
@@ -1607,6 +1657,20 @@ fn map_panel(
     (input, view.m_per_px)
 }
 
+/// Whether the Road panel notes that the selected edge has its own edit
+/// while edits act on its whole way (16H Q18: an edge edit applies over
+/// the way's on that edge).
+pub fn way_target_edit_note(
+    content: &ocw_edit::world::WorldDoc,
+    target: ocw_edit::world::RoadTarget,
+    edge_id: u64,
+) -> bool {
+    use ocw_edit::world::RoadTarget;
+    matches!(target, RoadTarget::Way(_))
+        && (content.road_edit(RoadTarget::Edge(edge_id)).is_some()
+            || content.road_removal(RoadTarget::Edge(edge_id)).is_some())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1740,11 +1804,21 @@ mod tests {
             hgt: "x.hgt; y.hgt".into(),
             dem: String::new(),
             out: " out/a.ocwpkg ".into(),
+            source_dir: " ".into(),
         };
         let r = f.request();
         assert_eq!(r.sources.hgt.len(), 2);
         assert!(r.sources.dem.is_empty());
         assert_eq!(r.out, std::path::PathBuf::from("out/a.ocwpkg"));
+        assert_eq!(r.source_dir, None, "no folder picked");
+        let picked = BuildForm {
+            source_dir: "/srv/sources ".into(),
+            ..f.clone()
+        };
+        assert_eq!(
+            picked.request().source_dir,
+            Some(std::path::PathBuf::from("/srv/sources"))
+        );
         assert_eq!(
             BuildForm::of(&Studio::new(None, None)),
             BuildForm::default()

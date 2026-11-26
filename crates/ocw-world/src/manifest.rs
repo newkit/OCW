@@ -307,6 +307,15 @@ pub struct Manifest {
     /// readers.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub patches: Vec<PatchFile>,
+    /// The package's build recipe (spec 14 Phase 16, 16H Q17 (a):
+    /// `<package>.recipe.toml` next to it, `ocw_world::recipe`), recorded
+    /// like the patches: its name, size and SHA-256, so OCW Studio runs
+    /// the steps the package was built with. Not part of
+    /// [`Manifest::files`]; a missing or changed recipe is reported, never
+    /// a load failure. Absent in older manifests and ignored by older
+    /// readers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipe: Option<PatchFile>,
 }
 
 /// A world patch file recorded in a manifest ([`Manifest::patches`]).
@@ -482,6 +491,7 @@ impl Manifest {
             files: Vec::new(),
             bounds: None,
             patches: Vec::new(),
+            recipe: None,
         })
     }
 
@@ -1461,6 +1471,40 @@ mod tests {
         let old: OldManifest = serde_json::from_str(&text).unwrap();
         assert_eq!(old.id, "test/region");
         assert_eq!(old.files, with.files);
+    }
+
+    /// The build recipe's record (16H Q17 (a)): absent writes nothing;
+    /// present, it reads back (signed: the signature holds) and an older
+    /// reader skips it.
+    #[test]
+    fn the_recipe_record() {
+        let m = manifest(&package_bytes(true));
+        let json = SignedManifest::unsigned(&m).to_json();
+        assert!(!json.contains("recipe"), "{json}");
+        assert_eq!(SignedManifest::parse(&json).unwrap().manifest.recipe, None);
+        let mut with = m.clone();
+        with.recipe = Some(PatchFile::of("region.recipe.toml", b"ocwrecipe = 1").unwrap());
+        let (root, key) = keys();
+        let signed = SignedManifest::signed(&with, &key).to_json();
+        assert!(signed.contains("region.recipe.toml"));
+        let back = SignedManifest::parse(&signed).unwrap();
+        assert_eq!(back.manifest, with);
+        let trust = TrustStore::new([root.public()]);
+        assert!(back.verify_signature(&trust, T0).is_ok());
+        let r = back.manifest.recipe.unwrap();
+        assert_eq!(r.status(Some(b"ocwrecipe = 1")), PatchStatus::Same);
+        assert!(matches!(
+            r.status(Some(b"other")),
+            PatchStatus::Changed { .. }
+        ));
+        #[derive(Deserialize)]
+        #[allow(dead_code)]
+        struct Old {
+            id: String,
+            files: Vec<FileEntry>,
+        }
+        let old: Old = serde_json::from_str(&serde_json::to_string(&with).unwrap()).unwrap();
+        assert_eq!(old.id, with.id);
     }
 
     /// The patch next to a package: the same, missing or changed.

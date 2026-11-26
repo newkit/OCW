@@ -82,8 +82,15 @@ pub struct Studio {
     /// Where File → Save writes the patch (`None`: not saved yet; the
     /// default is `<package>.ocwpatch` next to the package).
     pub patch_file: Option<PathBuf>,
-    /// Road edits act on the selected edge's whole OSM way.
+    /// Road edits act on the selected edge's whole OSM way (the default,
+    /// 16H Q18 (a)); `false`: on the selected edge alone.
     pub way_scope: bool,
+    /// How the patch next to a package is answered (`--patch`, 16H Q16).
+    pub patch_choice: crate::patch_prompt::PatchChoice,
+    /// The patch question waiting for an answer (16H Q16 (b)).
+    pub patch_question: Option<crate::patch_prompt::PatchQuestion>,
+    /// What *Save patch* to the default file minds after the question.
+    pub save_guard: Option<crate::patch_prompt::SaveGuard>,
     /// The last *Build package*.
     pub build: Option<BuildJob>,
     /// The Routes workspace: its document, the road graph, the planners.
@@ -103,7 +110,10 @@ impl Studio {
             status: String::new(),
             package: None,
             patch_file: None,
-            way_scope: false,
+            way_scope: true,
+            patch_choice: Default::default(),
+            patch_question: None,
+            save_guard: None,
             build: None,
             routes: crate::routes::RouteTools::default(),
             models: crate::model_edit::ModelTools::default(),
@@ -140,8 +150,15 @@ impl Studio {
     /// What road edits act on: the selected edge, or its OSM way.
     pub fn selected_target(&self) -> Option<RoadTarget> {
         let e = self.selected_edge()?;
-        if self.way_scope {
-            let way = self.package.as_ref()?.edge(e)?.osm_way;
+        // An edge without an OSM way (made by the builder) is edited alone.
+        let way = self
+            .package
+            .as_ref()
+            .and_then(|p| p.edge(e))
+            .map(|e| e.osm_way);
+        if self.way_scope
+            && let Some(way) = way.filter(|w| *w > 0)
+        {
             Some(RoadTarget::Way(way))
         } else {
             Some(RoadTarget::Edge(e))
@@ -153,6 +170,98 @@ impl Studio {
         self.patch_file
             .clone()
             .or_else(|| self.package.as_ref().map(StudioPackage::default_patch_path))
+    }
+
+    /// Opens a World document on the package with `patch` as its start.
+    fn new_world_doc(
+        &mut self,
+        package_ref: PackageRef,
+        name: &str,
+        source: &str,
+        package: &StudioPackage,
+        patch: Option<ocw_world::patch::WorldPatch>,
+    ) -> DocId {
+        let validators = world_validators(Some(package));
+        let name = name.to_owned();
+        self.session.open(|id| {
+            let mut content = WorldDoc::new(package_ref);
+            if let Some(p) = patch {
+                content.patch = p;
+            }
+            let mut d = Document::new(id, name, content).with_source(source.to_string());
+            for v in validators {
+                d = d.with_validator(v);
+            }
+            d
+        })
+    }
+
+    /// Answers the patch question (16H Q16 (b)): `load` loads the patch as
+    /// the document's start (as one undoable step when the document has
+    /// changes already), else the package stays without it. With no
+    /// question waiting, `load` loads the patch next to the package now.
+    pub fn answer_patch(&mut self, load: bool, now_s: f64) -> Result<String, String> {
+        use crate::patch_prompt::{PatchQuestion, SaveGuard};
+        let q = match self.patch_question.take() {
+            Some(q) => q,
+            None if !load => return Err("no patch question is waiting".into()),
+            None => {
+                let pkg = self.package.as_ref().ok_or("no world is open")?;
+                let id = self
+                    .world()
+                    .ok_or("no world is open")?
+                    .content()
+                    .package
+                    .id
+                    .clone();
+                PatchQuestion::find(&pkg.file, pkg.manifest.as_deref(), &id)
+                    .filter(PatchQuestion::any)
+                    .ok_or("there is no patch next to the package")?
+            }
+        };
+        if !load {
+            let default = self.package.as_ref().map(StudioPackage::default_patch_path);
+            self.save_guard = default.map(SaveGuard::Skipped);
+            return Ok(format!(
+                "opened without the patch {} ({} changes); File > Open patch or `studio patch load` loads it",
+                q.names(),
+                q.changes()
+            ));
+        }
+        let patch = q.merged().ok_or("the patch cannot be loaded")?;
+        let n = patch.ops.len();
+        let fresh = self.world().is_some_and(|d| !d.can_undo() && !d.is_dirty());
+        if fresh {
+            // The document's start, as before the question: replace the
+            // empty document (nothing to autosave or undo).
+            let old = self.world_doc.take().ok_or("no world is open")?;
+            let (package_ref, name, source) = {
+                let d = self
+                    .session
+                    .get::<WorldDoc>(old)
+                    .ok_or("no world is open")?;
+                (
+                    d.content().package.clone(),
+                    d.name.clone(),
+                    d.source.clone().unwrap_or_default(),
+                )
+            };
+            let pkg = self.package.take().ok_or("no world is open")?;
+            self.session.close(old);
+            let id = self.new_world_doc(package_ref, &name, &source, &pkg, Some(patch));
+            self.package = Some(pkg);
+            self.session.set_active(id);
+            self.world_doc = Some(id);
+        } else {
+            let d = self.world_mut()?;
+            d.execute(WorldOp::SetPatch(Box::new(patch)), now_s)
+                .map_err(|e| e.to_string())?;
+            d.seal();
+            d.selection.clear();
+        }
+        self.patch_file = q.save_file();
+        self.save_guard = q.is_stack().then(|| SaveGuard::Stack(q.names()));
+        Ok(format!("patch {} loaded ({n} operations)", q.names()))
     }
 
     /// A height point's position in package metres (x, z).
@@ -183,38 +292,54 @@ impl Studio {
             id: details.id.clone(),
             version: details.version,
         };
-        // The patch next to the package is the document's start, if it is
-        // one for this package.
-        let default = package.default_patch_path();
-        let (patch, msg) = if default.is_file() {
-            match crate::patch::read_patch(&default, &details.id) {
-                Ok(p) => {
-                    let m = format!(
-                        "patch {} loaded ({} operations)",
-                        shown_path(&default),
-                        p.ops.len()
-                    );
-                    (Some(p), Some(m))
+        // The patch next to the package (16H Q16 (b)): asked about first,
+        // unless `--patch load|skip` answered for this run.
+        use crate::patch_prompt::{PatchChoice, PatchQuestion, SaveGuard};
+        self.patch_question = None;
+        self.save_guard = None;
+        self.patch_file = None;
+        let question = PatchQuestion::find(&package.file, package.manifest.as_deref(), &details.id);
+        let mut msg = None;
+        let mut patch = None;
+        match question {
+            Some(q) if !q.any() => {
+                let why: Vec<String> = q
+                    .files
+                    .iter()
+                    .filter_map(|f| f.patch.clone().err())
+                    .collect();
+                msg = Some(format!("patch not loaded: {}", why.join("; ")));
+            }
+            Some(q) => match self.patch_choice {
+                PatchChoice::Ask => {
+                    msg = Some(q.console_line());
+                    self.patch_question = Some(q);
+                    // Not loaded (yet): a save keeps the file there.
+                    self.save_guard = Some(SaveGuard::Skipped(package.default_patch_path()));
                 }
-                Err(e) => (None, Some(format!("patch not loaded: {e}"))),
-            }
-        } else {
-            (None, None)
-        };
-        self.patch_file = patch.is_some().then(|| default.clone());
-        let validators = world_validators(Some(&package));
-        let name = details.region.clone();
-        let id = self.session.open(|id| {
-            let mut content = WorldDoc::new(package_ref);
-            if let Some(p) = patch {
-                content.patch = p;
-            }
-            let mut d = Document::new(id, name, content).with_source(source.to_string());
-            for v in validators {
-                d = d.with_validator(v);
-            }
-            d
-        });
+                PatchChoice::Load => {
+                    msg = Some(format!(
+                        "patch {} loaded ({} operations; --patch load)",
+                        q.names(),
+                        q.changes()
+                    ));
+                    self.patch_file = q.save_file();
+                    if q.is_stack() {
+                        self.save_guard = Some(SaveGuard::Stack(q.names()));
+                    }
+                    patch = q.merged();
+                }
+                PatchChoice::Skip => {
+                    msg = Some(format!(
+                        "patch {} not loaded (--patch skip); File > Open patch or `studio patch load` loads it",
+                        q.names()
+                    ));
+                    self.save_guard = Some(SaveGuard::Skipped(package.default_patch_path()));
+                }
+            },
+            None => {}
+        }
+        let id = self.new_world_doc(package_ref, &details.region, source, &package, patch);
         // Routes are edited on this package's roads; one on another
         // package's is closed (its autosave stays).
         self.routes.set_package(&package, &details.id);
@@ -264,8 +389,12 @@ pub enum PointChange {
 /// What *Build package* builds.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BuildRequest {
+    /// The basic step's sources (found next to the package or typed).
     pub sources: Sources,
     pub out: PathBuf,
+    /// A folder the user picked where the build recipe's sources are
+    /// looked for too (16H Q17 (a)).
+    pub source_dir: Option<PathBuf>,
 }
 
 /// What the UI asks for.
@@ -327,6 +456,9 @@ pub enum StudioCommand {
     SavePatchAs(String),
     /// Loads a patch file onto the open package.
     OpenPatch(String),
+    /// Answers the patch question (16H Q16 (b)): `true` *Load it*, else
+    /// *Open without it* (`studio patch load | skip`).
+    PatchAnswer(bool),
     /// Flies the camera to look at the selected road or point.
     Focus,
     /// Builds the patched package with `world-builder`.
@@ -491,6 +623,7 @@ pub fn apply(world: &mut World, cmd: StudioCommand) -> Result<String, String> {
             Ok(format!("looking at {:.0}, {:.0}", target[0], target[2]))
         }
         StudioCommand::Build(req) => start_build(&mut world.resource_mut::<Studio>(), req),
+        StudioCommand::PatchAnswer(load) => crate::patch_prompt::answer(world, load),
         StudioCommand::Cycle(c) => crate::models_cycle::command(
             &mut world.resource_mut::<crate::models_view::ModelView>(),
             c,
@@ -993,10 +1126,8 @@ fn patch_command(studio: &mut Studio, cmd: StudioCommand, now_s: f64) -> Result<
             let op = (!same).then_some(WorldOp::SetInfo(info));
             run_op(studio, op, now_s, false, String::new())
         }
-        StudioCommand::SavePatch => {
-            let path = studio.save_path().ok_or("no world is open")?;
-            save_patch(studio, path)
-        }
+        StudioCommand::SavePatch => save_default(studio),
+        StudioCommand::PatchAnswer(load) => studio.answer_patch(load, now_s),
         StudioCommand::SavePatchAs(path) => {
             let path = expand_home(path.trim());
             if path.as_os_str().is_empty() {
@@ -1018,6 +1149,7 @@ fn patch_command(studio: &mut Studio, cmd: StudioCommand, now_s: f64) -> Result<
             d.selection.clear();
             let msg = format!("patch {} opened ({n} operations)", shown_path(&path));
             studio.patch_file = Some(path);
+            studio.save_guard = None;
             Ok(msg)
         }
         _ => Err("not a patch command".into()),
@@ -1026,11 +1158,22 @@ fn patch_command(studio: &mut Studio, cmd: StudioCommand, now_s: f64) -> Result<
 
 /// "edge 123 (way 45): Hauptstrasse, residential".
 pub fn road_message(studio: &Studio, id: u64) -> String {
-    let Some(e) = studio.package.as_ref().and_then(|p| p.edge(id)) else {
+    let Some(pkg) = studio.package.as_ref() else {
         return format!("edge {id}");
     };
+    let Some(e) = pkg.edge(id) else {
+        return format!("edge {id}");
+    };
+    // How much a road edit changes (16H Q18: the whole way by default).
+    let n = pkg.target_edges(RoadTarget::Way(e.osm_way)).len();
+    let acts = match studio.selected_target() {
+        Some(RoadTarget::Way(_)) if studio.selected_edge() == Some(id) => {
+            format!(", edits act on its {n} edge(s)")
+        }
+        _ => format!(", {n} edge(s)"),
+    };
     format!(
-        "edge {id} (way {}): {}{}",
+        "edge {id} (way {}{acts}): {}{}",
         e.osm_way,
         e.name
             .as_deref()
@@ -1090,36 +1233,66 @@ fn save_patch(studio: &mut Studio, path: PathBuf) -> Result<String, String> {
     Ok(msg)
 }
 
+/// File → *Save patch* to the patch's file (else `<package>.ocwpatch`):
+/// after *Open without it* the patch that lay there is kept as
+/// `<package>.ocwpatch.bak` first; a stack loaded as one patch needs *Save
+/// patch as* (16H Q16 (b)).
+fn save_default(studio: &mut Studio) -> Result<String, String> {
+    use crate::patch_prompt::SaveGuard;
+    let path = studio.save_path().ok_or("no world is open")?;
+    if studio.patch_file.is_none() {
+        match studio.save_guard.clone() {
+            Some(SaveGuard::Stack(names)) => {
+                return Err(format!(
+                    "the patch was loaded from the stack {names}: save it as one file with Save patch as (`studio patch save PATH`)"
+                ));
+            }
+            Some(SaveGuard::Skipped(file)) if file == path && file.is_file() => {
+                let mut bak = file.as_os_str().to_owned();
+                bak.push(".bak");
+                let bak = PathBuf::from(bak);
+                std::fs::rename(&file, &bak).map_err(|e| format!("{}: {e}", shown_path(&file)))?;
+                let msg = save_patch(studio, path)?;
+                studio.save_guard = None;
+                return Ok(format!(
+                    "{msg}; the patch that was there (not loaded) is kept as {}",
+                    shown_path(&bak)
+                ));
+            }
+            _ => {}
+        }
+    }
+    save_patch(studio, path)
+}
+
 /// *Build package*: saves the patch if it changed, checks the sources and
 /// `world-builder`, and starts the build.
 pub fn start_build(studio: &mut Studio, req: BuildRequest) -> Result<String, String> {
     if studio.build.as_ref().is_some_and(BuildJob::running) {
         return Err("a build is running".into());
     }
-    let missing = req.sources.missing();
-    if !missing.is_empty() {
-        return Err(format!(
-            "the build needs the package's source data, missing: {}",
-            missing.join("; ")
-        ));
-    }
+    let planned = |studio: &Studio, patch: &std::path::Path| {
+        let pkg = studio.package.as_ref().ok_or("no world is open")?;
+        let facts = package_facts(studio).ok_or("no world is open")?;
+        crate::build::plan(&pkg.file, pkg.manifest.as_deref(), &facts, &req, patch).map_err(|m| {
+            format!(
+                "the build needs the package's source data, missing: {}",
+                m.join("; ")
+            )
+        })
+    };
+    // What it would run (the patch is saved only when it can run).
+    planned(studio, &studio.save_path().ok_or("no world is open")?)?;
     let program = crate::build::world_builder().ok_or(
         "world-builder was not found: put it next to ocw-studio, on the PATH, or name it in OCW_WORLD_BUILDER",
     )?;
     let needs_save = studio.patch_file.is_none() || studio.world().is_some_and(|d| d.is_dirty());
     if needs_save {
-        let path = studio.save_path().ok_or("no world is open")?;
-        save_patch(studio, path)?;
+        save_default(studio)?;
     }
     let patch = studio.patch_file.clone().ok_or("the patch is not saved")?;
+    let plan = planned(studio, &patch)?;
     let pkg = studio.package.as_ref().ok_or("no world is open")?;
-    let doc = studio.world().ok_or("no world is open")?;
-    let facts = crate::build::PackageFacts {
-        name: pkg.pkg.name.clone(),
-        id: doc.content().package.id.clone(),
-        origin: pkg.pkg.origin,
-        time_zone: pkg.pkg.time_zone.clone(),
-    };
     if let Some(dir) = req.out.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", shown_path(dir)))?;
     }
@@ -1135,11 +1308,37 @@ pub fn start_build(studio: &mut Studio, req: BuildRequest) -> Result<String, Str
     {
         std::fs::copy(m, &side).map_err(|e| format!("{}: {e}", shown_path(&side)))?;
     }
-    let args = crate::build::build_args(&req.sources, &facts, &patch, &req.out);
-    let job = BuildJob::start(&program, &args, req.out.clone());
+    let mut job = BuildJob::start_chain(&program, &plan.lines, &plan.checks, req.out.clone());
+    job.full = plan.full;
+    job.note = plan.note.clone();
     info!("build: {}", job.command);
+    if let Some(n) = &plan.note {
+        info!("build: {n}");
+    }
     studio.build = Some(job);
-    Ok(format!("building {} …", shown_path(&req.out)))
+    Ok(if plan.full {
+        format!(
+            "building {} – the full chain of its recipe: {} …",
+            shown_path(&req.out),
+            plan.steps()
+        )
+    } else if let Some(n) = plan.note {
+        format!("building {} – {n}", shown_path(&req.out))
+    } else {
+        format!("building {} …", shown_path(&req.out))
+    })
+}
+
+/// What a rebuild keeps of the open package (its name, id, origin, zone).
+pub fn package_facts(studio: &Studio) -> Option<crate::build::PackageFacts> {
+    let pkg = studio.package.as_ref()?;
+    let doc = studio.world()?;
+    Some(crate::build::PackageFacts {
+        name: pkg.pkg.name.clone(),
+        id: doc.content().package.id.clone(),
+        origin: pkg.pkg.origin,
+        time_zone: pkg.pkg.time_zone.clone(),
+    })
 }
 
 /// The point the camera looks at for the selection: a height point, else
@@ -1376,7 +1575,7 @@ impl Plugin for EditPlugin {
                 ))
                 .subcommand(words(
                     "patch",
-                    "The world patch: list | save [PATH] | open PATH | delete N | title TEXT | author TEXT | build [OUT]",
+                    "The world patch: list | save [PATH] | open PATH | load | skip (the question when a package with a patch opens) | delete N | title TEXT | author TEXT | build [OUT]",
                 )),
             studio_command,
         ));
@@ -1538,6 +1737,8 @@ pub fn console_patch(group: &str, words: &[String], studio: &Studio) -> Result<C
             Some(path) => run(StudioCommand::SavePatchAs(path)),
             None => run(StudioCommand::SavePatch),
         },
+        ("patch", "load") => run(StudioCommand::PatchAnswer(true)),
+        ("patch", "skip") => run(StudioCommand::PatchAnswer(false)),
         ("patch", "open") => run(StudioCommand::OpenPatch(
             rest(words, 1).ok_or("studio patch open PATH")?,
         )),
@@ -1564,6 +1765,7 @@ pub fn console_patch(group: &str, words: &[String], studio: &Studio) -> Result<C
             run(StudioCommand::Build(BuildRequest {
                 sources: crate::build::find_sources(&pkg.file),
                 out,
+                source_dir: None,
             }))
         }
         _ => Err(format!("studio {group}: see `help studio`")),
@@ -2036,9 +2238,12 @@ mod tests {
         let mut s = patch_studio(&d);
         assert_eq!(
             run(&mut s, StudioCommand::SelectAt([20.0, 3.0], 5.0), 0.0),
-            "edge 100 (way 7): Hauptstrasse, primary"
+            "edge 100 (way 7, edits act on its 2 edge(s)): Hauptstrasse, primary"
         );
         assert_eq!(s.selected_edge(), Some(100));
+        // The whole OSM way by default (16H Q18 (a)); the edge is the switch.
+        assert_eq!(s.selected_target(), Some(RoadTarget::Way(7)));
+        run(&mut s, StudioCommand::WayScope(false), 0.5);
         assert_eq!(s.selected_target(), Some(RoadTarget::Edge(100)));
         run(
             &mut s,
@@ -2206,10 +2411,19 @@ mod tests {
             ..Default::default()
         };
         let file = pkg.file.display().to_string();
+        // It asks first (16H Q16 (b)); Load it: the patch as the start.
         let msg = t.open_package(&file, &file, &details, pkg, 0.0).unwrap();
+        assert!(
+            msg.starts_with("This world has a patch: 2 changes (by Ada Rider"),
+            "{msg}"
+        );
+        assert!(t.world().unwrap().content().patch.ops.is_empty());
+        let msg = t.answer_patch(true, 0.0).unwrap();
         assert!(msg.contains("loaded (2 operations)"), "{msg}");
         assert_eq!(t.world().unwrap().content().patch, before);
         assert!(!t.world().unwrap().is_dirty());
+        assert!(!t.world().unwrap().can_undo(), "the start, not a step");
+        assert_eq!(t.patch_file.as_deref(), Some(path.as_path()));
         // File → Open patch… onto a changed document: replaced, undoable.
         run(&mut t, StudioCommand::DeleteOp(0), 1.0);
         let other = d.join("other.ocwpatch");
@@ -2255,6 +2469,281 @@ mod tests {
             .unwrap();
         let e = edit(&mut t, StudioCommand::SavePatch, CAM, 6.0).unwrap_err();
         assert!(e.starts_with("not saved: the patch has 1 error"), "{e}");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// Opens the test package in `dir` with `choice` (16H Q16).
+    fn open_with(
+        dir: &std::path::Path,
+        choice: crate::patch_prompt::PatchChoice,
+    ) -> (Studio, Option<String>) {
+        let mut s = Studio::new(None, None);
+        s.patch_choice = choice;
+        let mut pkg = crate::patch::tests::package();
+        pkg.file = dir.join("testland.ocwpkg");
+        let details = WorldDetails {
+            id: "local/testland".into(),
+            region: "Testland".into(),
+            ..Default::default()
+        };
+        let file = pkg.file.display().to_string();
+        let msg = s.open_package(&file, &file, &details, pkg, 0.0);
+        (s, msg)
+    }
+
+    /// A patch with `n` changes for the test package.
+    fn test_patch(n: usize, author: &str) -> ocw_world::patch::WorldPatch {
+        let mut p = ocw_world::patch::WorldPatch::new("local/testland");
+        p.author = Some(author.into());
+        for i in 0..n {
+            p.ops.push(ocw_world::patch::Operation::RemoveRoad(
+                ocw_world::patch::RemoveRoad {
+                    way: Some(70 + i as i64),
+                    edge: None,
+                    note: None,
+                },
+            ));
+        }
+        p
+    }
+
+    /// Spec 16H Q16 (b): the patch next to the package is asked about –
+    /// not loaded until *Load it*; *Open without it* keeps the file (a
+    /// later save keeps it as `.bak`); `--patch load|skip` answers before;
+    /// the answer is not remembered (the next open asks again).
+    #[test]
+    fn the_patch_next_to_a_package_is_asked_about_first() {
+        use crate::patch_prompt::PatchChoice;
+        let d = tmp_dir();
+        let file = d.join("testland.ocwpatch");
+        crate::patch::write_patch(&file, &test_patch(3, "Ada Rider")).unwrap();
+        // Ask (the default): nothing loaded yet.
+        let (mut s, msg) = open_with(&d, PatchChoice::Ask);
+        let msg = msg.unwrap();
+        assert!(
+            msg.starts_with("This world has a patch: 3 changes (by Ada Rider, "),
+            "{msg}"
+        );
+        assert!(msg.contains("studio patch load | skip"), "{msg}");
+        assert!(s.patch_question.is_some());
+        assert!(s.world().unwrap().content().patch.ops.is_empty());
+        // A save while it waits does not overwrite the file unasked.
+        run(&mut s, StudioCommand::SelectEdge(200), 0.1);
+        run(&mut s, StudioCommand::RemoveRoad, 0.2);
+        let saved = run(&mut s, StudioCommand::SavePatch, 0.3);
+        assert!(saved.contains("kept as"), "{saved}");
+        let bak = d.join("testland.ocwpatch.bak");
+        assert_eq!(
+            crate::patch::read_patch(&bak, "local/testland")
+                .unwrap()
+                .ops
+                .len(),
+            3
+        );
+        std::fs::remove_file(&bak).unwrap();
+        crate::patch::write_patch(&file, &test_patch(3, "Ada Rider")).unwrap();
+        // Load it, with changes in the document already: one undo step.
+        let msg = run(&mut s, StudioCommand::PatchAnswer(true), 1.0);
+        assert!(msg.contains("loaded (3 operations)"), "{msg}");
+        assert_eq!(s.world().unwrap().content().patch.ops.len(), 3);
+        assert!(s.patch_question.is_none());
+        run(&mut s, StudioCommand::Undo, 2.0);
+        assert_eq!(s.world().unwrap().content().patch.ops.len(), 1);
+        assert!(
+            edit(&mut s, StudioCommand::PatchAnswer(false), CAM, 3.0).is_err(),
+            "nothing waits"
+        );
+        // Open without it: the document stays empty, the file untouched;
+        // the first save keeps the file as `.bak`.
+        let (mut s, _) = open_with(&d, PatchChoice::Ask);
+        let msg = run(&mut s, StudioCommand::PatchAnswer(false), 0.0);
+        assert!(msg.starts_with("opened without the patch"), "{msg}");
+        assert!(s.world().unwrap().content().patch.ops.is_empty());
+        assert_eq!(
+            std::fs::read_to_string(&file)
+                .unwrap()
+                .matches("[[op]]")
+                .count(),
+            3
+        );
+        run(&mut s, StudioCommand::SelectEdge(200), 0.1);
+        run(&mut s, StudioCommand::RemoveRoad, 0.2);
+        let saved = run(&mut s, StudioCommand::SavePatch, 0.3);
+        assert!(saved.contains("testland.ocwpatch.bak"), "{saved}");
+        assert_eq!(
+            crate::patch::read_patch(&bak, "local/testland")
+                .unwrap()
+                .ops
+                .len(),
+            3,
+            "the patch that was there"
+        );
+        assert_eq!(
+            crate::patch::read_patch(&file, "local/testland")
+                .unwrap()
+                .ops
+                .len(),
+            1,
+            "the new one"
+        );
+        // Loaded later by the console word: one undoable step.
+        let msg = run(&mut s, StudioCommand::PatchAnswer(true), 1.0);
+        assert!(msg.contains("loaded (1 operations)"), "{msg}");
+        // Not remembered: the next open asks again.
+        let (s, _) = open_with(&d, PatchChoice::Ask);
+        assert!(s.patch_question.is_some());
+        // `--patch load`: loaded at once as the start; `--patch skip`: not.
+        let (s, msg) = open_with(&d, PatchChoice::Load);
+        assert!(msg.unwrap().contains("--patch load"));
+        assert!(s.patch_question.is_none());
+        assert_eq!(s.world().unwrap().content().patch.ops.len(), 1);
+        assert!(!s.world().unwrap().can_undo());
+        let (s, msg) = open_with(&d, PatchChoice::Skip);
+        assert!(msg.unwrap().contains("not loaded (--patch skip)"));
+        assert!(s.world().unwrap().content().patch.ops.is_empty());
+        assert!(s.patch_question.is_none());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// A stack next to the package (16H Q9 / Q10) is loaded as one patch
+    /// in order and saved only with Save as.
+    #[test]
+    fn a_patch_stack_is_loaded_as_one_and_saved_with_save_as() {
+        use crate::patch_prompt::PatchChoice;
+        let d = tmp_dir();
+        crate::patch::write_patch(&d.join("testland.ocwpatch"), &test_patch(2, "Ada Rider"))
+            .unwrap();
+        crate::patch::write_patch(
+            &d.join("testland.020-bridge.ocwpatch"),
+            &test_patch(1, "Bea Climber"),
+        )
+        .unwrap();
+        let (mut s, msg) = open_with(&d, PatchChoice::Ask);
+        assert!(msg.unwrap().contains("3 changes in 2 files"));
+        run(&mut s, StudioCommand::PatchAnswer(true), 0.0);
+        assert_eq!(s.world().unwrap().content().patch.ops.len(), 3);
+        assert_eq!(s.patch_file, None);
+        let e = edit(&mut s, StudioCommand::SavePatch, CAM, 1.0).unwrap_err();
+        assert!(e.contains("Save patch as"), "{e}");
+        let one = d.join("merged.ocwpatch");
+        run(
+            &mut s,
+            StudioCommand::SavePatchAs(one.display().to_string()),
+            2.0,
+        );
+        assert_eq!(
+            crate::patch::read_patch(&one, "local/testland")
+                .unwrap()
+                .ops
+                .len(),
+            3
+        );
+        // Now saved to its own file: Save works.
+        run(&mut s, StudioCommand::SavePatch, 3.0);
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// Spec 16H Q18 (a): a road edit acts on the whole OSM way by default –
+    /// a `way` operation, which the preview applies to every edge of the
+    /// way – with the single edge as the switch; a patch with edge edits
+    /// (as made before) still opens, applies and is edited on its edge.
+    #[test]
+    fn road_edits_act_on_the_way_by_default_and_old_edge_edits_still_work() {
+        use ocw_world::patch::Operation as Op;
+        let d = tmp_dir();
+        let mut s = patch_studio(&d);
+        run(&mut s, StudioCommand::SelectEdge(100), 0.0);
+        assert_eq!(s.selected_target(), Some(RoadTarget::Way(7)));
+        run(
+            &mut s,
+            StudioCommand::SetRoad(RoadChange::Surface(Some("gravel".into()))),
+            1.0,
+        );
+        let ops = s.world().unwrap().content().patch.ops.clone();
+        let Op::Road(r) = &ops[0] else {
+            panic!("{ops:?}")
+        };
+        assert_eq!((r.way, r.edge), (Some(7), None), "an OSM way edit");
+        assert_eq!(r.surface.as_deref(), Some("gravel"));
+        let pkg = s.package.as_ref().unwrap();
+        let p = crate::patch::Preview::of(pkg, &s.world().unwrap().content().patch, "t");
+        assert!(
+            matches!(p.status(0), crate::patch::OpStatus::Ok(ref m) if m.contains("2 edge")),
+            "both edges of way 7: {:?}",
+            p.status(0)
+        );
+        // The switch: the single edge – a second operation on edge 100.
+        run(&mut s, StudioCommand::WayScope(false), 2.0);
+        run(
+            &mut s,
+            StudioCommand::SetRoad(RoadChange::Width(Some(3.0))),
+            3.0,
+        );
+        run(&mut s, StudioCommand::Seal, 3.1);
+        let ops = s.world().unwrap().content().patch.ops.clone();
+        assert_eq!(ops.len(), 2);
+        let Op::Road(r) = &ops[1] else { panic!() };
+        assert_eq!((r.way, r.edge), (None, Some(EdgeId(100))));
+        // An older patch with an edge edit: opened, applied, and selecting
+        // its operation edits that edge (not the way).
+        let mut old = ocw_world::patch::WorldPatch::new("local/testland");
+        old.ops.push(Op::Road(ocw_world::patch::RoadEdit {
+            edge: Some(EdgeId(300)),
+            name: Some("Alter Weg".into()),
+            ..Default::default()
+        }));
+        let f = d.join("old.ocwpatch");
+        crate::patch::write_patch(&f, &old).unwrap();
+        let mut t = patch_studio(&d);
+        run(
+            &mut t,
+            StudioCommand::OpenPatch(f.display().to_string()),
+            0.0,
+        );
+        let pkg = t.package.as_ref().unwrap();
+        let p = crate::patch::Preview::of(pkg, &t.world().unwrap().content().patch, "old");
+        assert_eq!(p.status(0).tag(), "ok", "{:?}", p.status(0));
+        assert!(t.way_scope);
+        // Selected by a click, its way is the target; the panel notes the
+        // edge's own edit, which applies over the way's.
+        run(&mut t, StudioCommand::SelectEdge(300), 0.5);
+        assert_eq!(t.selected_target(), Some(RoadTarget::Way(7)));
+        let c = t.world().unwrap().content();
+        assert!(crate::ui::way_target_edit_note(c, RoadTarget::Way(7), 300));
+        assert!(!crate::ui::way_target_edit_note(
+            c,
+            RoadTarget::Edge(300),
+            300
+        ));
+        assert!(!crate::ui::way_target_edit_note(c, RoadTarget::Way(7), 100));
+        run(&mut t, StudioCommand::SelectOp(0), 1.0);
+        assert_eq!(t.selected_target(), Some(RoadTarget::Edge(300)));
+        run(
+            &mut t,
+            StudioCommand::SetRoad(RoadChange::Name(Some("Neuer Weg".into()))),
+            2.0,
+        );
+        let ops = &t.world().unwrap().content().patch.ops;
+        assert_eq!(ops.len(), 1, "the same operation");
+        let Op::Road(r) = &ops[0] else { panic!() };
+        assert_eq!(
+            (r.edge, r.name.as_deref()),
+            (Some(EdgeId(300)), Some("Neuer Weg"))
+        );
+        // The console's switch.
+        let w = |t: &str| t.split(' ').map(String::from).collect::<Vec<_>>();
+        assert_eq!(
+            console_patch("road", &w("scope way"), &t).unwrap(),
+            Console::Run(StudioCommand::WayScope(true))
+        );
+        assert_eq!(
+            console_patch("patch", &w("load"), &t).unwrap(),
+            Console::Run(StudioCommand::PatchAnswer(true))
+        );
+        assert_eq!(
+            console_patch("patch", &w("skip"), &t).unwrap(),
+            Console::Run(StudioCommand::PatchAnswer(false))
+        );
         std::fs::remove_dir_all(&d).unwrap();
     }
 

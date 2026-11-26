@@ -39,6 +39,7 @@ pub mod photo_share;
 pub mod places;
 pub mod plan;
 pub mod plantings;
+pub mod recipe;
 pub mod region;
 pub mod road_condition;
 pub mod road_dress;

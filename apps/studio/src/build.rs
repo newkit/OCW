@@ -8,11 +8,26 @@
 //! The sources are looked for next to the package, under the names the
 //! build scripts use (`<name>.osm.pbf`, `<name>.poly`, the `.hgt` tiles,
 //! a DTM folder); each can be given in the Build dialog instead.
+//!
+//! **The build recipe (16H Q17 (a)):** an official package ships
+//! `<package>.recipe.toml` ([`ocw_world::recipe`], recorded in its
+//! manifest): the steps of its official build (package, routes,
+//! calibration, forest, vegetation), their arguments and the sources each
+//! needs. When the sources it names are found – next to the package, in
+//! a folder the user picks, or in `data/<region>/` – *Build package* runs
+//! the whole chain with the patch ([`plan`]); else the basic step (the
+//! recipe's package step, or the sources above) with a note of what is
+//! missing. A package without a recipe (older ones, local builds without
+//! the scripts) gets the basic step as before; a recipe changed since the
+//! build (its SHA-256 no longer the manifest's) is not used.
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
+
+use ocw_world::manifest::{PatchStatus, SignedManifest};
+use ocw_world::recipe::{Recipe, recipe_path};
 
 /// The source data of a package build (`world-builder package`).
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -153,6 +168,205 @@ pub fn build_args(src: &Sources, facts: &PackageFacts, patch: &Path, out: &Path)
     a
 }
 
+/// The build recipe next to `package` (16H Q17 (a)), if it can be used,
+/// and a note when one is there but cannot: broken, not the one the
+/// manifest records (changed since the build), or not recorded.
+pub fn package_recipe(package: &Path, manifest: Option<&Path>) -> (Option<Recipe>, Option<String>) {
+    let path = recipe_path(package);
+    let Ok(bytes) = std::fs::read(&path) else {
+        return (None, None);
+    };
+    let shown = crate::edit::shown_path(&path);
+    let recipe = match Recipe::parse(&String::from_utf8_lossy(&bytes)) {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                None,
+                Some(format!("the build recipe {shown} cannot be read: {e}")),
+            );
+        }
+    };
+    let Some(m) = manifest
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| SignedManifest::parse(&t).ok())
+    else {
+        // A local build without a manifest: nothing to check it against.
+        return (Some(recipe), None);
+    };
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    match m.manifest.recipe {
+        Some(r) if r.path == name => match r.status(Some(&bytes)) {
+            PatchStatus::Same => (Some(recipe), None),
+            _ => (
+                None,
+                Some(format!(
+                    "the build recipe {shown} changed since the package was built (not the one its manifest records): not used"
+                )),
+            ),
+        },
+        _ => (
+            None,
+            Some(format!(
+                "the build recipe {shown} is not recorded in the package's manifest: not used"
+            )),
+        ),
+    }
+}
+
+/// Where a recipe's sources are looked for, in order: next to the package,
+/// the folder the user picked, `data/<region>/` (from the working folder).
+pub fn source_dirs(package: &Path, region: Option<&str>, picked: Option<&Path>) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    let beside = package
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+        .to_path_buf();
+    let mut add = |p: PathBuf| {
+        if p.is_dir() && !out.contains(&p) {
+            out.push(p);
+        }
+    };
+    add(beside);
+    if let Some(p) = picked {
+        add(p.to_path_buf());
+    }
+    if let Some(r) = region.filter(|r| !r.is_empty() && !r.contains(['/', '\\', '.'])) {
+        add(Path::new("data").join(r));
+    }
+    out
+}
+
+/// What *Build package* runs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BuildPlan {
+    /// The `world-builder` command lines, in order.
+    pub lines: Vec<Vec<String>>,
+    /// The recipe's whole chain (else the basic step).
+    pub full: bool,
+    /// Why it is not the whole chain (what is missing), or a note on the
+    /// recipe.
+    pub note: Option<String>,
+    /// Source files to check against the recipe's SHA-256 before the build
+    /// (a difference is a warning: a newer download).
+    pub checks: Vec<(PathBuf, String)>,
+}
+
+impl BuildPlan {
+    /// The steps' names ("package, route, calibrate").
+    pub fn steps(&self) -> String {
+        self.lines
+            .iter()
+            .filter_map(|l| l.first().cloned())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// A recipe source for people: "`imagery` (imagery for the calibration,
+/// a folder; scripts/fetch-imagery.sh liechtenstein)".
+fn describe_source(s: &ocw_world::recipe::Source) -> String {
+    format!(
+        "`{}` ({}{}{})",
+        s.name,
+        s.what,
+        if s.dir { ", a folder" } else { "" },
+        s.fetch
+            .as_deref()
+            .map(|f| format!("; {f}"))
+            .unwrap_or_default()
+    )
+}
+
+/// Plans the build of the package at `package` (its manifest beside it)
+/// to `req.out` with `patch` (16H Q17 (a)): the recipe's whole chain when
+/// its sources are found, else its package step when that step's are,
+/// else the basic step from `req.sources`. `Err`: what is missing for any
+/// build at all.
+pub fn plan(
+    package: &Path,
+    manifest: Option<&Path>,
+    facts: &PackageFacts,
+    req: &crate::edit::BuildRequest,
+    patch: &Path,
+) -> Result<BuildPlan, Vec<String>> {
+    let (recipe, recipe_note) = package_recipe(package, manifest);
+    let patches = [patch.to_path_buf()];
+    let mut note = recipe_note;
+    if let Some(r) = recipe {
+        let dirs = source_dirs(package, r.region.as_deref(), req.source_dir.as_deref());
+        let found = r.find_sources(&dirs);
+        let checks = |only: &Recipe| -> Vec<(PathBuf, String)> {
+            only.sources
+                .iter()
+                .filter_map(|s| Some((found.get(&s.name)?.clone(), s.sha256.clone()?)))
+                .collect()
+        };
+        let missing = r.missing(&found);
+        if missing.is_empty() {
+            let lines = r
+                .commands(&found, &req.out, &patches)
+                .map_err(|e| vec![e])?;
+            return Ok(BuildPlan {
+                lines,
+                full: true,
+                note: None,
+                checks: checks(&r),
+            });
+        }
+        let what: Vec<String> = missing.iter().map(|s| describe_source(s)).collect();
+        let step = &r.steps[0];
+        let package_ok = r.step_sources(step).all(|s| found.contains_key(&s.name));
+        let left_out: Vec<&str> = r.steps[1..].iter().map(|s| s.step.as_str()).collect();
+        let tail = if left_out.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "; left out: {} (the steps of the official build that need them)",
+                left_out.join(", ")
+            )
+        };
+        note = Some(format!(
+            "the full build of the recipe needs {} more source(s), not found next to the package, in the picked folder or in data/{}/: {}. Building the basic step only (the package with the patch){tail}.",
+            missing.len(),
+            r.region.as_deref().unwrap_or("<region>"),
+            what.join("; ")
+        ));
+        if package_ok {
+            let first = Recipe {
+                steps: vec![step.clone()],
+                ..r.clone()
+            };
+            let lines = first
+                .commands(&found, &req.out, &patches)
+                .map_err(|e| vec![e])?;
+            return Ok(BuildPlan {
+                lines,
+                full: false,
+                note,
+                checks: checks(&first),
+            });
+        }
+    }
+    let missing = req.sources.missing();
+    if !missing.is_empty() {
+        let mut m = missing;
+        if let Some(n) = note {
+            m.push(n);
+        }
+        return Err(m);
+    }
+    Ok(BuildPlan {
+        lines: vec![build_args(&req.sources, facts, patch, &req.out)],
+        full: false,
+        note,
+        checks: Vec::new(),
+    })
+}
+
 /// Where the patched package goes by default: `patched/<file>` next to
 /// the package (the original, signed package is never overwritten).
 pub fn default_output(package: &Path) -> PathBuf {
@@ -215,65 +429,126 @@ pub struct BuildJob {
     pub out: PathBuf,
     pub command: String,
     pub state: Arc<Mutex<BuildState>>,
+    /// The recipe's whole chain (16H Q17), else the basic step.
+    pub full: bool,
+    /// What the plan said (what is missing for the whole chain).
+    pub note: Option<String>,
+}
+
+/// Runs `program args…` to its end, its output into `state`; the exit.
+fn run_one(program: &Path, args: &[String], state: &Arc<Mutex<BuildState>>) -> Result<i32, String> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("{}: {e}", program.display()))?;
+    let readers: Vec<Box<dyn std::io::Read + Send>> = vec![
+        Box::new(child.stdout.take().expect("piped")),
+        Box::new(child.stderr.take().expect("piped")),
+    ];
+    let handles: Vec<_> = readers
+        .into_iter()
+        .map(|r| {
+            let state = state.clone();
+            std::thread::spawn(move || {
+                for line in BufReader::new(r).lines().map_while(Result::ok) {
+                    state.lock().expect("build state").lines.push(line);
+                }
+            })
+        })
+        .collect();
+    for h in handles {
+        let _ = h.join();
+    }
+    child
+        .wait()
+        .map(|s| s.code().unwrap_or(-1))
+        .map_err(|e| e.to_string())
+}
+
+/// The warning line of a source that is not the file the recipe names
+/// (`None`: the same, or not readable – the build says so itself).
+pub fn check_source(path: &Path, sha256: &str) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    let got = ocw_world::manifest::sha256(&bytes).to_string();
+    (!got.eq_ignore_ascii_case(sha256)).then(|| {
+        format!(
+            "warning: {} is not the file the official build used (sha256 {got}, the recipe names {sha256}): a newer download? The result may differ from the official package.",
+            crate::edit::shown_path(path)
+        )
+    })
 }
 
 impl BuildJob {
-    /// Starts `program args…`; the output is collected by two threads.
+    /// Starts `program args…` (one step; the tests).
+    #[cfg(test)]
     pub fn start(program: &Path, args: &[String], out: PathBuf) -> Self {
+        Self::start_chain(program, &[args.to_vec()], &[], out)
+    }
+
+    /// Starts the steps `lines` one after the other (stopping at the first
+    /// that fails), after checking the source files against `checks`.
+    pub fn start_chain(
+        program: &Path,
+        lines: &[Vec<String>],
+        checks: &[(PathBuf, String)],
+        out: PathBuf,
+    ) -> Self {
         let state = Arc::new(Mutex::new(BuildState::default()));
-        let command = format!(
-            "{} {}",
-            program.file_name().map_or_else(
-                || program.display().to_string(),
-                |n| n.to_string_lossy().into_owned()
-            ),
-            args.join(" ")
+        let name = program.file_name().map_or_else(
+            || program.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
         );
+        let command = lines
+            .iter()
+            .map(|a| format!("{name} {}", a.join(" ")))
+            .collect::<Vec<_>>()
+            .join(" && ");
         let job = Self {
             out,
             command,
             state: state.clone(),
+            full: false,
+            note: None,
         };
-        let child = Command::new(program)
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn();
-        let mut child = match child {
-            Ok(c) => c,
-            Err(e) => {
-                state.lock().expect("build state").done =
-                    Some(Err(format!("{}: {e}", program.display())));
-                return job;
-            }
-        };
-        let readers: Vec<Box<dyn std::io::Read + Send>> = vec![
-            Box::new(child.stdout.take().expect("piped")),
-            Box::new(child.stderr.take().expect("piped")),
-        ];
-        let handles: Vec<_> = readers
-            .into_iter()
-            .map(|r| {
-                let state = state.clone();
-                std::thread::spawn(move || {
-                    for line in BufReader::new(r).lines().map_while(Result::ok) {
-                        state.lock().expect("build state").lines.push(line);
-                    }
-                })
-            })
-            .collect();
+        let (program, lines, checks) = (program.to_path_buf(), lines.to_vec(), checks.to_vec());
         std::thread::spawn(move || {
-            for h in handles {
-                let _ = h.join();
+            for (p, sha) in &checks {
+                if let Some(w) = check_source(p, sha) {
+                    state.lock().expect("build state").lines.push(w);
+                }
             }
-            let code = match child.wait() {
-                Ok(s) => Ok(s.code().unwrap_or(-1)),
-                Err(e) => Err(e.to_string()),
-            };
+            let n = lines.len();
+            let mut code = Ok(0);
+            for (k, args) in lines.iter().enumerate() {
+                if n > 1 {
+                    state.lock().expect("build state").lines.push(format!(
+                        "== step {}/{n}: {name} {} ==",
+                        k + 1,
+                        args.first().map_or("", String::as_str)
+                    ));
+                }
+                code = run_one(&program, args, &state);
+                if code != Ok(0) {
+                    break;
+                }
+            }
             state.lock().expect("build state").done = Some(code);
         });
         job
+    }
+
+    /// " (full build from its recipe)" / " (basic step only)" (16H Q17).
+    fn kind(&self) -> &'static str {
+        if self.full {
+            " (full build from its recipe)"
+        } else if self.note.is_some() {
+            " (basic step only)"
+        } else {
+            ""
+        }
     }
 
     pub fn running(&self) -> bool {
@@ -290,10 +565,15 @@ impl BuildJob {
         match &s.done {
             None => format!("building… ({} lines)", s.lines.len()),
             Some(Ok(0)) if missing > 0 => format!(
-                "built {} – {missing} operation(s) MISSING (not applied)",
-                crate::edit::shown_path(&self.out)
+                "built {}{} – {missing} operation(s) MISSING (not applied)",
+                crate::edit::shown_path(&self.out),
+                self.kind()
             ),
-            Some(Ok(0)) => format!("built {}", crate::edit::shown_path(&self.out)),
+            Some(Ok(0)) => format!(
+                "built {}{}",
+                crate::edit::shown_path(&self.out),
+                self.kind()
+            ),
             Some(Ok(c)) => format!("the build failed (exit {c})"),
             Some(Err(e)) => format!("the build could not start: {e}"),
         }
@@ -430,6 +710,269 @@ mod tests {
         drop(s);
         assert!(job.summary().starts_with("built"));
         let bad = BuildJob::start(Path::new("/nonexistent/world-builder"), &[], "x".into());
+        for _ in 0..500 {
+            if !bad.running() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         assert!(bad.summary().contains("could not start"));
+    }
+
+    fn wait(job: &BuildJob) {
+        for _ in 0..1000 {
+            if !job.running() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("the build did not end");
+    }
+
+    /// The recipe's steps run one after the other and stop at the first
+    /// that fails; a source that is not the recipe's file is a warning.
+    #[test]
+    fn a_chain_runs_its_steps_in_order_and_stops_at_a_failure() {
+        let me = std::env::current_exe().unwrap();
+        let d = dir();
+        let src = d.join("li.osm.pbf");
+        std::fs::write(&src, b"newer extract").unwrap();
+        let other = ocw_world::manifest::sha256(b"official extract").to_string();
+        let lines: Vec<Vec<String>> = vec![
+            vec!["--list".into(), "the_report_is_picked".into()],
+            vec!["--no-such-option-at-all".into()],
+            vec!["--list".into(), "a_build_job_collects".into()],
+        ];
+        let job = BuildJob::start_chain(&me, &lines, &[(src.clone(), other)], "o.ocwpkg".into());
+        assert_eq!(job.command.matches(" && ").count(), 2);
+        wait(&job);
+        let s = job.state.lock().unwrap();
+        assert!(s.lines[0].starts_with("warning: ") && s.lines[0].contains("newer download"));
+        assert!(s.lines.iter().any(|l| l.contains("step 1/3")));
+        assert!(s.lines.iter().any(|l| l.contains("step 2/3")));
+        assert!(
+            !s.lines.iter().any(|l| l.contains("step 3/3")),
+            "{:?}",
+            s.lines
+        );
+        assert!(matches!(s.done, Some(Ok(c)) if c != 0));
+        drop(s);
+        // The same file: no warning.
+        let same = ocw_world::manifest::sha256(b"newer extract").to_string();
+        assert_eq!(check_source(&src, &same), None);
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// A package with its recipe and manifest (16H Q17 (a)), the recipe
+    /// naming the OSM extract, the polygon, an SRTM tile, a DTM folder and
+    /// the imagery; the package's facts.
+    fn recipe_package(d: &Path) -> (PathBuf, PathBuf, PackageFacts) {
+        use ocw_world::manifest::{Attribution, Manifest, PatchFile};
+        let pkg = d.join("li.ocwpkg");
+        std::fs::write(&pkg, b"pkg").unwrap();
+        let p = |n: &str| d.join("official").join(n).display().to_string();
+        let log: Vec<Vec<String>> = [
+            vec![
+                "package",
+                "--pbf",
+                &p("li.osm.pbf"),
+                "--poly",
+                &p("li.poly"),
+                "--hgt",
+                &p("N47E009.hgt"),
+                "--dem",
+                &p("swissalti3d"),
+                "--name",
+                "Liechtenstein",
+                "--out",
+                &pkg.display().to_string(),
+            ],
+            vec![
+                "route",
+                "--world",
+                &pkg.display().to_string(),
+                "--name",
+                "Vaduz - Malbun",
+                "--from",
+                "47.1,9.5",
+                "--to",
+                "47.1,9.6",
+            ],
+            vec![
+                "calibrate",
+                "--world",
+                &pkg.display().to_string(),
+                "--imagery",
+                &p("imagery"),
+                "--pbf",
+                &p("li.osm.pbf"),
+            ],
+        ]
+        .into_iter()
+        .map(|l| l.into_iter().map(String::from).collect())
+        .collect();
+        let mut r = Recipe::from_log("europe/liechtenstein", &pkg, &log, |path| {
+            let n = path.file_name()?.to_string_lossy().into_owned();
+            n.contains('.').then(|| {
+                (
+                    n.len() as u64,
+                    ocw_world::manifest::sha256(n.as_bytes()).to_string(),
+                )
+            })
+        });
+        r.region = Some("no-such-region-here".into());
+        let text = r.to_toml();
+        std::fs::write(recipe_path(&pkg), &text).unwrap();
+        let mut m = Manifest::new(
+            "europe/liechtenstein",
+            "Liechtenstein",
+            1,
+            0,
+            "test",
+            vec![Attribution::openstreetmap()],
+        )
+        .unwrap();
+        m.add_file("li.ocwpkg", b"pkg").unwrap();
+        m.recipe = Some(PatchFile::of("li.recipe.toml", text.as_bytes()).unwrap());
+        let mp = d.join("li.ocwpkg.manifest.json");
+        std::fs::write(&mp, SignedManifest::unsigned(&m).to_json()).unwrap();
+        let facts = PackageFacts {
+            name: "Liechtenstein".into(),
+            id: "europe/liechtenstein".into(),
+            origin: (47.1, 9.5),
+            time_zone: None,
+        };
+        (pkg, mp, facts)
+    }
+
+    fn request(out: &Path, picked: Option<&Path>) -> crate::edit::BuildRequest {
+        crate::edit::BuildRequest {
+            sources: Sources::default(),
+            out: out.to_path_buf(),
+            source_dir: picked.map(Path::to_path_buf),
+        }
+    }
+
+    /// Spec 16H Q17 (a): the whole chain when the recipe's sources are
+    /// found (in a picked folder); with one missing the basic step from
+    /// the recipe and a note naming it; without the package step's
+    /// sources the old basic step or what is missing; an old package
+    /// without a recipe as before; a changed recipe is not used.
+    #[test]
+    fn build_package_runs_the_recipe_when_its_sources_are_there() {
+        let d = dir();
+        let (pkg, mp, facts) = recipe_package(&d);
+        let out = d.join("patched").join("li.ocwpkg");
+        let patch = d.join("li.ocwpatch");
+        let (r, note) = package_recipe(&pkg, Some(&mp));
+        assert!(note.is_none(), "{note:?}");
+        let r = r.expect("the recipe");
+        assert_eq!(r.steps.len(), 3);
+        // No sources anywhere: nothing to build (the basic sources are
+        // named, and why the recipe could not run).
+        let e = plan(&pkg, Some(&mp), &facts, &request(&out, None), &patch).unwrap_err();
+        assert!(e.iter().any(|m| m.contains(".osm.pbf")), "{e:?}");
+        assert!(e.iter().any(|m| m.contains("`imagery`")), "{e:?}");
+        // All of them in a picked folder: the whole chain.
+        let src = d.join("sources");
+        std::fs::create_dir_all(src.join("swissalti3d")).unwrap();
+        std::fs::create_dir_all(src.join("imagery")).unwrap();
+        for f in ["li.osm.pbf", "li.poly", "N47E009.hgt"] {
+            std::fs::write(src.join(f), f).unwrap();
+        }
+        let p = plan(&pkg, Some(&mp), &facts, &request(&out, Some(&src)), &patch).unwrap();
+        assert!(p.full);
+        assert_eq!(p.steps(), "package, route, calibrate");
+        assert_eq!(p.note, None);
+        let o = out.display().to_string();
+        assert_eq!(
+            p.lines[0].join(" "),
+            format!(
+                "package --pbf {s}/li.osm.pbf --poly {s}/li.poly --hgt {s}/N47E009.hgt --dem {s}/swissalti3d --name Liechtenstein --out {o} --patch {}",
+                patch.display(),
+                s = src.display()
+            )
+        );
+        assert_eq!(
+            p.lines[2][..3],
+            ["calibrate".to_string(), "--world".into(), o.clone()]
+        );
+        // The files' checksums are checked (the folders have none).
+        assert_eq!(p.checks.len(), 3);
+        assert!(
+            p.checks
+                .iter()
+                .all(|(f, sha)| check_source(f, sha).is_none())
+        );
+        // The imagery missing: the package step from the recipe, and why.
+        std::fs::remove_dir(src.join("imagery")).unwrap();
+        let p = plan(&pkg, Some(&mp), &facts, &request(&out, Some(&src)), &patch).unwrap();
+        assert!(!p.full);
+        assert_eq!(p.steps(), "package");
+        let n = p.note.clone().unwrap();
+        assert!(
+            n.contains("`imagery` (imagery for the calibration, a folder"),
+            "{n}"
+        );
+        assert!(n.contains("left out: route, calibrate"), "{n}");
+        assert!(
+            p.lines[0].iter().any(|a| a.ends_with("swissalti3d")),
+            "the recipe's step"
+        );
+        // Next to the package is looked at first (no folder picked).
+        for f in ["li.osm.pbf", "li.poly", "N47E009.hgt"] {
+            std::fs::copy(src.join(f), d.join(f)).unwrap();
+        }
+        std::fs::create_dir_all(d.join("swissalti3d")).unwrap();
+        std::fs::create_dir_all(d.join("imagery")).unwrap();
+        let p = plan(&pkg, Some(&mp), &facts, &request(&out, None), &patch).unwrap();
+        assert!(p.full, "{:?}", p.note);
+        assert!(p.lines[0][2].starts_with(&d.display().to_string()));
+        // Changed after the build: not used – the basic step with a note.
+        std::fs::write(recipe_path(&pkg), r.to_toml() + "# edited\n").unwrap();
+        let (none, note) = package_recipe(&pkg, Some(&mp));
+        assert!(none.is_none() && note.unwrap().contains("changed since"));
+        let basic = basic_request(&d);
+        let p = plan(&pkg, Some(&mp), &facts, &basic, &patch).unwrap();
+        assert!(!p.full && p.note.unwrap().contains("changed since"));
+        assert_eq!(p.lines[0][0], "package");
+        // An old package without a recipe: the basic step as before.
+        std::fs::remove_file(recipe_path(&pkg)).unwrap();
+        assert_eq!(package_recipe(&pkg, Some(&mp)), (None, None));
+        let p = plan(&pkg, Some(&mp), &facts, &basic, &patch).unwrap();
+        assert_eq!(
+            p.lines,
+            vec![build_args(&basic.sources, &facts, &patch, &out)]
+        );
+        assert!(!p.full && p.note.is_none());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// The basic step's request with the sources found next to the package.
+    fn basic_request(d: &Path) -> crate::edit::BuildRequest {
+        crate::edit::BuildRequest {
+            sources: find_sources(&d.join("li.ocwpkg")),
+            out: d.join("patched").join("li.ocwpkg"),
+            source_dir: None,
+        }
+    }
+
+    #[test]
+    fn the_source_folders_and_their_order() {
+        let d = dir();
+        let pkg = d.join("w").join("li.ocwpkg");
+        std::fs::create_dir_all(d.join("w")).unwrap();
+        let picked = d.join("picked");
+        std::fs::create_dir_all(&picked).unwrap();
+        assert_eq!(
+            source_dirs(&pkg, Some("../etc"), Some(&picked)),
+            vec![d.join("w"), picked.clone()],
+            "no folder outside data/ by a region name"
+        );
+        assert_eq!(
+            source_dirs(&pkg, None, Some(&d.join("gone"))),
+            vec![d.join("w")]
+        );
+        std::fs::remove_dir_all(&d).unwrap();
     }
 }

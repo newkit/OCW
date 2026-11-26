@@ -62,6 +62,10 @@ pub enum Action {
     /// §4.7 *User keys*): a world signed by a key nobody here trusts was
     /// chosen, or the host of a shared ride switched to one.
     TrustDialog,
+    /// Open the menu at OCW Studio's patch question ([`Page::ConfirmPatch`],
+    /// spec 14 Phase 16, 16H Q16 (b)): the package just opened has a world
+    /// patch next to it.
+    PatchDialog,
     /// Open the menu at this page (over the top page): an app's question
     /// (Strava's waiting recordings, spec §2.8.1) or a test run's view.
     OpenSub(sub::Page),
@@ -114,6 +118,11 @@ pub enum Page {
     /// spec 14 Phase 7, 7A): what goes and what stays comes from the app
     /// (`menu::history::delete_text`); Cancel is focused.
     ConfirmDelete,
+    /// OCW Studio's question when a package with a world patch next to it
+    /// opens (spec 14 Phase 16, 16H Q16 (b)): *Load it* (focused) / *Open
+    /// without it*; the patch's summary (changes, author, date) comes from
+    /// the app (`MenuHooks::text`). Back, Esc and B open without it.
+    ConfirmPatch,
 }
 
 /// What an item does when selected.
@@ -511,6 +520,27 @@ const TRUST_ITEMS: &[Item] = &[
     ),
     item("Cancel", ItemKind::Back),
 ];
+/// OCW Studio's patch question (spec 16H Q16 (b)). *Load it* is focused:
+/// the patch next to a package is most often the user's own earlier work,
+/// and Enter keeps what the studio did before the question; Back, Esc and
+/// B open without it (nothing is changed on disk either way). The
+/// commands close the menu themselves.
+const PATCH_ITEMS: &[Item] = &[
+    item(
+        "Load it",
+        ItemKind::Command {
+            line: "studio patch load",
+            close: false,
+        },
+    ),
+    item(
+        "Open without it",
+        ItemKind::Command {
+            line: "studio patch skip",
+            close: false,
+        },
+    ),
+];
 const FORGET_ITEMS: &[Item] = &[
     item("Remove the key", ItemKind::RunPendingBack),
     item("Cancel", ItemKind::Back),
@@ -634,6 +664,13 @@ impl Page {
                 text: &[],
                 items: TRUST_ITEMS,
                 initial_focus: 2,
+            },
+            Page::ConfirmPatch => PageDef {
+                title: "Load this world's patch?",
+                // The patch's changes, author, date: from the app.
+                text: &[],
+                items: PATCH_ITEMS,
+                initial_focus: 0,
             },
             Page::ConfirmForget => PageDef {
                 title: "Remove this key?",
@@ -1073,15 +1110,16 @@ impl Menu {
         Effect::Command(line)
     }
 
-    /// Shows the trust dialog over whatever is open (the menu opens at
-    /// its top page first if it was closed).
-    fn open_trust(&mut self) -> Effect {
+    /// Shows a dialog page (the trust dialog, the studio's patch
+    /// question) over whatever is open (the menu opens at its top page
+    /// first if it was closed).
+    fn open_dialog(&mut self, page: Page) -> Effect {
         let opened = !self.is_open();
         if opened {
             self.push(Page::Top);
         }
-        if self.page() != Some(Page::ConfirmTrust) {
-            self.push(Page::ConfirmTrust);
+        if self.page() != Some(page) {
+            self.push(page);
             self.rows.clear();
         }
         if opened { Effect::Opened } else { Effect::None }
@@ -1297,7 +1335,10 @@ impl Menu {
             return if opened { Effect::Opened } else { Effect::None };
         }
         if action == Action::TrustDialog {
-            return self.open_trust();
+            return self.open_dialog(Page::ConfirmTrust);
+        }
+        if action == Action::PatchDialog {
+            return self.open_dialog(Page::ConfirmPatch);
         }
         if let Action::OpenSub(p) = action {
             let opened = !self.is_open();
@@ -1318,9 +1359,11 @@ impl Menu {
             };
         }
         match action {
-            Action::Open | Action::RiderPage | Action::TrustDialog | Action::OpenSub(_) => {
-                Effect::None
-            }
+            Action::Open
+            | Action::RiderPage
+            | Action::TrustDialog
+            | Action::PatchDialog
+            | Action::OpenSub(_) => Effect::None,
             Action::Fine(d) => self.apply_generic(if d < 0 { Action::Left } else { Action::Right }),
             // A grid: the arrows move the focus in two directions.
             Action::Left | Action::Right if self.grid_columns().is_some() => {

@@ -414,6 +414,12 @@ mod tests {
         }
         let d = s.session.get_mut::<WorldDoc>(id).unwrap();
         d.selection.select_only(WorldItem::Edge(100));
+        // Road edits act on the whole OSM way by default (16H Q18 (a)):
+        // the clicked edge first, then the rest of its way.
+        assert!(s.way_scope);
+        assert_eq!(marks(&s).selected, vec![0, 2]);
+        // The single edge (the switch): only it.
+        s.way_scope = false;
         let m = marks(&s);
         assert_eq!(m.selected, vec![0]);
         assert_eq!(m.changed, vec![0], "way 7 without the removed edge 300");
@@ -425,7 +431,7 @@ mod tests {
             (p.radius_m, p.label.as_str(), p.selected),
             (100.0, "+2.0 m", false)
         );
-        // Road edits on the whole way: its other edge is highlighted too.
+        // Back to the whole way: its other edge is highlighted too.
         s.way_scope = true;
         assert_eq!(marks(&s).selected, vec![0, 2]);
         let d = s.session.get_mut::<WorldDoc>(id).unwrap();

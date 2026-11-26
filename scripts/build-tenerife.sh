@@ -5,7 +5,8 @@
 #   scripts/remote.sh marge run scripts/build-tenerife.sh
 #
 # Writes into data/tenerife/ (git-ignored):
-#   tenerife.ocwpkg (+ .manifest.json)  the whole island, 27.98–28.61 N,
+#   tenerife.ocwpkg (+ .manifest.json, tenerife.recipe.toml: the build recipe,
+#                   spec 16H Q17, scripts/world-recipe.sh)  the whole island, 27.98–28.61 N,
 #                   16.94–16.10 W: Santa Cruz, La Laguna, Anaga, La Orotava,
 #                   Puerto de la Cruz, the Teide and Las Cañadas, Masca,
 #                   Los Gigantes, Los Cristianos, Vilaflor, El Médano
@@ -58,6 +59,9 @@ cargo build -q --release -p world-builder
 WB=target/release/world-builder
 # The project's own world patches (spec 16H Q10): worlds/<region>/patches/.
 . scripts/world-patches.sh
+# The build recipe shipped next to the package (spec 16H Q17).
+. scripts/world-recipe.sh
+recipe_start "$OUT"
 # Region calibration (spec §14 Phase 8 T3) if the imagery covers the package.
 # The forest type and density (section FRST, spec §14 Phase 8 T3) of
 # `scripts/fetch-forest.sh` go in with the calibration, or alone without it
@@ -130,6 +134,7 @@ $WB route "${SRC[@]}" --name "Las Cañadas (TF-21)" --out "$D/canadas.route" \
 $WB route "${SRC[@]}" --name "Las Cañadas - El Portillo" --out "$D/canadas-teide.route" \
   --from 28.2184,-16.6277 --to 28.3045,-16.5650 --margin 300
 calibrate "$out" "$D/canary-islands.osm.pbf"
+recipe_write "$out" tenerife tenerife scripts/build-tenerife.sh
 # Adding the routes rewrote the manifest unsigned (next version): sign again.
 if [ -n "${OCW_SIGN_KEY:-}" ]; then
   $WB sign --key "$OCW_SIGN_KEY" "$out"

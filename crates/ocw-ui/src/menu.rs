@@ -563,7 +563,7 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
     let mut view = MenuView {
         open: true,
         // The trust dialog's warning, world and data sources all fit.
-        wide: page == Page::ConfirmTrust,
+        wide: matches!(page, Page::ConfirmTrust | Page::ConfirmPatch),
         title: def.title.into(),
         emphasis,
         status: match (page, world.get_resource::<RideView>(), weather) {
