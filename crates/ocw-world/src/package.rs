@@ -90,6 +90,7 @@ use crate::road_condition::{
 use crate::road_dress::{ROAD_DRESS_TAG, RoadDress, read_road_dress, write_road_dress};
 use crate::road_surface::{ROAD_SURFACE_TAG, RoadSurface, read_road_surfaces, write_road_surfaces};
 use crate::vegetation::{VEGETATION_TAG, read_vegetation, write_vegetation};
+use crate::water_lines::{WATER_LINES_TAG, read_water_lines, write_water_lines};
 
 pub const MAGIC: &[u8; 8] = b"OCWPKG01";
 /// Version 2: version 1 plus tagged sections (the road graph).
@@ -436,6 +437,11 @@ impl WorldPackage {
             let mut payload = Vec::new();
             write_vegetation(v, &mut payload);
             sections.push((VEGETATION_TAG, payload));
+        }
+        if let Some(w) = &self.look.water_lines {
+            let mut payload = Vec::new();
+            write_water_lines(w, &mut payload);
+            sections.push((WATER_LINES_TAG, payload));
         }
         if let Some(o) = &self.look.ortho {
             let mut payload = Vec::new();
@@ -811,6 +817,9 @@ impl Sections {
         if let Some(v) = self.look.vegetation.as_mut() {
             v.tiles.retain(|key, _| k(key));
         }
+        if let Some(w) = self.look.water_lines.as_mut() {
+            w.tiles.retain(|key, _| k(key));
+        }
         if let Some(o) = self.obstacles.as_mut() {
             o.tiles.retain(|key, _| k(key));
         }
@@ -978,6 +987,14 @@ impl SectionReader {
             // trees keep the regional leaf mix and the land use's chances).
             match read_forest(payload) {
                 Ok(f) => s.look.forest = Some(f),
+                Err(e) if e.contains("not supported") => {}
+                Err(e) => return Err(e),
+            }
+        } else if &tag == WATER_LINES_TAG && full {
+            // Optional (spec 4.6, v6.58): a newer layout is skipped (the
+            // rivers are then drawn from the land use's water levels).
+            match read_water_lines(payload) {
+                Ok(w) => s.look.water_lines = Some(w),
                 Err(e) if e.contains("not supported") => {}
                 Err(e) => return Err(e),
             }
@@ -1417,6 +1434,12 @@ impl WorldPackage {
                         cells: v.cells,
                         sources: v.sources.clone(),
                         tiles: cut_map(&v.tiles, keep),
+                    }),
+                water_lines: look
+                    .water_lines
+                    .as_ref()
+                    .map(|w| crate::water_lines::WaterLines {
+                        tiles: cut_map(&w.tiles, keep),
                     }),
             },
             obstacles: self.obstacles.as_ref().map(|o| Obstacles {

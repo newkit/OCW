@@ -22,12 +22,73 @@ use ocw_world::WorldSet;
 use ocw_world::landuse::LandClass;
 use ocw_world::package::{Tile, TileKey, WorldPackage};
 
+use bevy::asset::{AssetPath, embedded_asset, embedded_path};
+use bevy::pbr::{ExtendedMaterial, MaterialExtension};
+use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::shader::ShaderRef;
+
 use crate::camera::FollowCamera;
 use crate::materials::MaterialLibrary;
 use crate::package::{
     Keep, MeshArrays, PackageMaterials, PackageWorld, TileId, TileLook, TileStreamer,
     frame_transform, land_colour, tile_landuse,
 };
+
+/// The far terrain's material: its vertex colours with the crowns of the
+/// forests and the stones of the alpine ground (`far.wesl`, v6.58).
+pub type FarMaterial = ExtendedMaterial<StandardMaterial, FarExtension>;
+
+/// `far.wesl`'s parameters: x crown contrast, y stand contrast, z stone
+/// contrast.
+#[derive(Clone, Copy, Debug, ShaderType, Reflect, PartialEq)]
+pub struct FarLook {
+    pub params: Vec4,
+}
+
+impl Default for FarLook {
+    fn default() -> Self {
+        Self {
+            params: Vec4::new(0.35, 0.2, 0.3, 0.0),
+        }
+    }
+}
+
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
+pub struct FarExtension {
+    #[uniform(100)]
+    pub look: FarLook,
+}
+
+impl MaterialExtension for FarExtension {
+    fn fragment_shader() -> ShaderRef {
+        ShaderRef::Path(
+            AssetPath::from_path_buf(embedded_path!("far.wesl")).with_source("embedded"),
+        )
+    }
+}
+
+/// The far material (double-sided: the skirts).
+pub fn far_material() -> FarMaterial {
+    ExtendedMaterial {
+        base: StandardMaterial {
+            base_color: Color::WHITE, // vertex colours
+            perceptual_roughness: 1.0,
+            cull_mode: None,
+            double_sided: true,
+            ..default()
+        },
+        extension: FarExtension::default(),
+    }
+}
+
+pub struct FarMaterialPlugin;
+
+impl Plugin for FarMaterialPlugin {
+    fn build(&self, app: &mut App) {
+        embedded_asset!(app, "far.wesl");
+        app.add_plugins(MaterialPlugin::<FarMaterial>::default());
+    }
+}
 
 /// Grid spacing of the far terrain (m): every 10th sample of the 10 m grid.
 pub const FAR_SPACING_M: f64 = 100.0;
@@ -108,16 +169,21 @@ pub fn far_tile_arrays(pkg: &WorldPackage, tile: &Tile, look: &TileLook, keep: K
     let forest = ocw_world::trees::tile_forest(pkg, tile.key);
     let palette = look.palette.as_deref();
     let flat = |c: LandClass| {
-        palette
-            .and_then(|p| p.get(c as usize).copied())
-            .unwrap_or_else(|| land_colour(c))
+        crate::region_look::stone_grey(
+            c,
+            palette
+                .and_then(|p| p.get(c as usize).copied())
+                .unwrap_or_else(|| land_colour(c)),
+        )
     };
     // The conifers' green from afar by region (spec §14 Phase 8 T8): the
     // Canary pines lighter and more yellow than spruce and fir.
-    let conifers = crate::flora::far_conifers(ocw_world::flora::FloraRegion::at(
-        pkg.origin.0,
-        pkg.origin.1,
-    ));
+    let region = ocw_world::flora::FloraRegion::at(pkg.origin.0, pkg.origin.1);
+    let conifers = crate::flora::far_conifers(region);
+    let tree_line = region.tree_line_m();
+    // The tile's seasonal satellite map, as on the near tiles' colour maps
+    // (spec 14 Phase 8 T3; v6.58: the far ground looks like what is there).
+    let satellite = crate::package::SatelliteMap::of_tile(pkg, tile.key, &look.season_weights);
     let mut out = MeshArrays::default();
     for k in 0..m {
         for i in 0..m {
@@ -148,6 +214,8 @@ pub fn far_tile_arrays(pkg: &WorldPackage, tile: &Tile, look: &TileLook, keep: K
             let day = look.season.as_deref();
             let tones = day.map(|d| crate::season::CanopyTones::new(conifers, alt, d));
             let mut trees = 0.0f32;
+            let alpine = crate::ground::alpine_share(alt, tree_line);
+            let stone = crate::region_look::alpine_stone(flat);
             let colour = match landuse {
                 Some((lu, cells)) => {
                     // The mean colour of 4 × 4 points over the far cell.
@@ -174,6 +242,10 @@ pub fn far_tile_arrays(pkg: &WorldPackage, tile: &Tile, look: &TileLook, keep: K
                             if let Some(d) = day {
                                 col = crate::season::ground_colour(class, col, alt, d);
                             }
+                            if crate::ground::turns_alpine(class) && alpine > 0.0 {
+                                let k = alpine * crate::ground::ALPINE_STONE;
+                                col = std::array::from_fn(|j| col[j] + (stone[j] - col[j]) * k);
+                            }
                             if !matches!(class, LandClass::Water | LandClass::Glacier) {
                                 let t = rock_t(class);
                                 col = std::array::from_fn(|j| col[j] + (rock[j] - col[j]) * t);
@@ -183,6 +255,17 @@ pub fn far_tile_arrays(pkg: &WorldPackage, tile: &Tile, look: &TileLook, keep: K
                                     * (1.0 - t);
                                 col = std::array::from_fn(|j| col[j] + (canopy[j] - col[j]) * w);
                                 trees += w / 16.0;
+                            }
+                            if let Some(sat) =
+                                satellite.as_ref().filter(|_| class != LandClass::Water)
+                            {
+                                let (u, v) =
+                                    ((x / size).clamp(0.0, 1.0), (z / size).clamp(0.0, 1.0));
+                                col = crate::region_look::far_colour_alpine(
+                                    col,
+                                    Some(sat.at(u, v)),
+                                    alpine,
+                                );
                             }
                             for (acc, c) in sum.iter_mut().zip(col) {
                                 *acc += c / 16.0;
@@ -199,6 +282,8 @@ pub fn far_tile_arrays(pkg: &WorldPackage, tile: &Tile, look: &TileLook, keep: K
             };
             let colour = crate::season::far_snow(colour, look.snow.at(alt), slope, trees);
             out.colors.push(linear(colour));
+            // The far material's crowns and stones (`far.wesl`).
+            out.uvs.push([trees, alpine]);
         }
     }
     let v = |i: usize, k: usize| (k * m + i) as u32;
@@ -238,6 +323,7 @@ pub fn far_tile_arrays(pkg: &WorldPackage, tile: &Tile, look: &TileLook, keep: K
             out.positions.push(p);
             out.normals.push(out.normals[top]);
             out.colors.push(out.colors[top]);
+            out.uvs.push(out.uvs[top]);
         }
         let (a, b) = (v(i0, k0), v(i1, k1));
         out.indices.extend([a, base, b, b, base, base + 1]);
@@ -386,8 +472,8 @@ pub(crate) fn update_far_terrain(
     view: Option<Res<crate::RideView>>,
     mut seasons: Option<ResMut<crate::season::SeasonCache>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut standard: ResMut<Assets<StandardMaterial>>,
-    mut material: Local<Option<Handle<StandardMaterial>>>,
+    mut far_materials: ResMut<Assets<FarMaterial>>,
+    mut material: Local<Option<Handle<FarMaterial>>>,
 ) {
     let set = world.set.clone();
     // The world date in buckets, as the streamed tiles take it.
@@ -455,15 +541,7 @@ pub(crate) fn update_far_terrain(
     far.extent = None;
     far.sea = false;
     let mat = material
-        .get_or_insert_with(|| {
-            standard.add(StandardMaterial {
-                base_color: Color::WHITE, // vertex colours
-                perceptual_roughness: 1.0,
-                cull_mode: None,
-                double_sided: true,
-                ..default()
-            })
-        })
+        .get_or_insert_with(|| far_materials.add(far_material()))
         .clone();
     for p in built {
         let Some(member) = set.members().get(p.member) else {
@@ -528,8 +606,10 @@ fn sea_plane(min: [f64; 2], max: [f64; 2]) -> Mesh {
     MeshArrays {
         positions: vec![[x0, y, z0], [x1, y, z0], [x0, y, z1], [x1, y, z1]],
         normals: vec![[0.0, 1.0, 0.0]; 4],
-        // The colour of the tiles' water (`package::water_arrays`).
+        // The colour of the tiles' water (`package::water_arrays`); deep
+        // sea for the water material.
         colors: vec![linear([0.16, 0.30, 0.37]); 4],
+        uvs: vec![[50.0, crate::water::KIND_SEA]; 4],
         indices: vec![0, 2, 1, 1, 2, 3],
         ..Default::default()
     }
@@ -892,6 +972,71 @@ mod tests {
         assert_eq!(half.indices.len(), 50 * 6 + (5 + 5 + 10) * 6);
     }
 
+    /// Regression (2026-11-26, the hills towards the Rhine plain from the
+    /// Hornisgrinde): a broadleaf wood far away in October came out as
+    /// bright as a sand dune (its crowns' sunlit colour). Shaded like the
+    /// conifers and with the satellite's colour laid over, it is dark and
+    /// green-brown, and the far material knows its trees (the crowns'
+    /// texture).
+    #[test]
+    fn far_forests_are_dark_like_the_satellite_sees_them() {
+        use ocw_world::look::{Season, SeasonInfo, SeasonalTints, encode_tint};
+        let mut p = package(1);
+        p.origin = (48.6, 8.15);
+        let key = TileKey { x: 0, z: 0 };
+        p.tiles.get_mut(&key).unwrap().heights.fill(600.0);
+        let cells = 200usize;
+        p.landuse = Some(LandUse {
+            cells: cells as u32,
+            tiles: BTreeMap::from([(
+                key,
+                LandUseTile {
+                    classes: vec![LandClass::Forest; cells * cells],
+                    water: Vec::new(),
+                },
+            )]),
+        });
+        let srgb = |c: [f32; 4]| {
+            let s = Color::linear_rgb(c[0], c[1], c[2]).to_srgba();
+            [s.red, s.green, s.blue]
+        };
+        let luma = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+        for doy in [100.0, 200.0, 287.0, 330.0] {
+            let day = Arc::new(ocw_sky::season::SeasonModel::for_place(48.6, 8.15).day(doy));
+            let look = TileLook::default().with_season(Some(day), Default::default());
+            let m = far_tile_arrays(&p, &p.tiles[&key], &look, None);
+            let c = srgb(m.colors[60]);
+            assert!(
+                luma(c) < 0.3 && !crate::region_look::is_sand(c),
+                "day {doy}: {c:?}"
+            );
+            // The far material's crowns: full cover, no alpine ground.
+            assert!(m.uvs[60][0] > 0.8 && m.uvs[60][1] == 0.0, "{:?}", m.uvs[60]);
+        }
+        // The satellite's dark green (the Black Forest's autumn composite).
+        let day = Arc::new(ocw_sky::season::SeasonModel::for_place(48.6, 8.15).day(287.0));
+        let mut look = TileLook::default().with_season(Some(day), Default::default());
+        let plain = srgb(far_tile_arrays(&p, &p.tiles[&key], &look, None).colors[60]);
+        p.look.seasons = Some(SeasonalTints {
+            cells: 2,
+            source: 0,
+            seasons: vec![SeasonInfo {
+                season: Season::Autumn,
+                centre_doy: 290,
+                first_doy: 260,
+                last_doy: 320,
+                scenes: 3,
+            }],
+            class_means: vec![Vec::new()],
+            tiles: BTreeMap::from([(key, vec![encode_tint(&[[29, 37, 21]; 4], 2)])]),
+        });
+        look.season_weights = vec![(0, 1.0)];
+        let sat = srgb(far_tile_arrays(&p, &p.tiles[&key], &look, None).colors[60]);
+        let want = [29.0 / 255.0, 37.0 / 255.0, 21.0 / 255.0];
+        let off = |c: [f32; 3]| (0..3).map(|j| (c[j] - want[j]).abs()).fold(0.0, f32::max);
+        assert!(off(sat) < 0.5 * off(plain) + 1e-3, "{sat:?} vs {plain:?}");
+    }
+
     #[test]
     fn far_colours_are_the_land_use_means() {
         let mut p = package(1);
@@ -1058,6 +1203,8 @@ mod tests {
             .init_asset::<StandardMaterial>()
             .init_asset::<SeeThroughMaterial>()
             .init_asset::<TerrainMaterial>()
+            .init_asset::<crate::water::WaterMaterial>()
+            .init_asset::<FarMaterial>()
             .init_resource::<CameraObstacles>()
             .insert_resource(PackageWorld::single(Arc::new(package(10))))
             .insert_resource(view)

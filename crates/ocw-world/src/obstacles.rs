@@ -250,7 +250,9 @@ impl ObstacleKind {
         Some(match self {
             Self::Bollard => "props/bollard-round",
             Self::Post => "props/post-hexagonal",
-            Self::Pylon => "props/pylon-pyramid",
+            // An open lattice tower (v6.58; the solid pyramid stood
+            // beside the roads as a grey obelisk).
+            Self::Pylon => "props/pylon-lattice",
             Self::Block => "props/block-concrete-box",
             Self::Gate => "props/gate-swing",
             Self::LiftGate => "props/barrier-lift-arm",

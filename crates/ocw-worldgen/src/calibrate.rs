@@ -671,6 +671,7 @@ pub fn calibrate(
         forest: pkg.look.forest.take(),
         // The fields and mapped trees (VEGE) too (`crate::vegetation`).
         vegetation: pkg.look.vegetation.take(),
+        water_lines: pkg.look.water_lines.take(),
     };
     stats
 }

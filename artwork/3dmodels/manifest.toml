@@ -1236,6 +1236,14 @@ source = "own work, exported once from the OCW generators (ocw-render obstacles 
 author = "Open Cycling World contributors"
 
 [[asset]]
+file = "props/pylon-lattice.glb"
+kind = "prop"
+generator = "ocw_assets::pylon::lattice()"
+license = "MIT OR Apache-2.0"
+source = "own work, exported once from the OCW generator ocw_assets::pylon (spec 14 Phase 15 MX); the file is the source (Q6)"
+author = "Open Cycling World contributors"
+
+[[asset]]
 file = "props/pylon-pyramid.glb"
 kind = "prop"
 license = "MIT OR Apache-2.0"

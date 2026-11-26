@@ -69,6 +69,7 @@ pub mod tunnel_cut;
 pub mod unicorn;
 pub mod vegetation;
 pub mod voice;
+pub mod water;
 // VR (spec §14 Phase 11 / 14I W2): the bike computer on the bars and the
 // controllers as a gamepad; added by an app only when it has a headset
 // mode (`VrPlugin`; the browser's WebXR build).
@@ -554,6 +555,10 @@ impl Plugin for OcwRenderPlugins {
             navi_map::NaviMapPlugin,
             // The HUD keeps clear of a phone's notch (spec §3.2.3).
             safe_area::SafeAreaPlugin,
+            // Lakes, rivers and the sea (spec 4.6, v6.58).
+            water::WaterPlugin,
+            // The far terrain's crowns and stones (spec 4.5, v6.58).
+            far_terrain::FarMaterialPlugin,
         ));
     }
 }

@@ -57,6 +57,7 @@ mod terrain;
 pub mod track;
 pub mod trees;
 pub mod vegetation;
+pub mod water_lines;
 pub mod woods;
 pub mod world_set;
 

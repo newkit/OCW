@@ -85,6 +85,10 @@ pub struct RegionLook {
     /// Phase 8 T8; optional). Not part of [`RegionLook::is_empty`]: it does
     /// not tint the ground.
     pub vegetation: Option<crate::vegetation::Vegetation>,
+    /// The rivers and streams along their course with their levels
+    /// (section `WATR`, spec 4.6 *Water surfaces*, v6.58; optional). Not
+    /// part of [`RegionLook::is_empty`].
+    pub water_lines: Option<crate::water_lines::WaterLines>,
 }
 
 impl RegionLook {
@@ -853,6 +857,7 @@ pub(crate) mod tests {
             ortho: None,
             forest: None,
             vegetation: None,
+            water_lines: None,
         }
     }
 

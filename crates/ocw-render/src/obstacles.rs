@@ -542,6 +542,48 @@ pub fn tile_obstacle_meshes(
 /// [`tile_obstacle_meshes`] with each kind's file from `model_of`: the
 /// props of a file with a `lod1` are drawn near and far by
 /// [`LodCells`] cell, the others in their chunk.
+/// Pylons of one power line stand this far apart at most (m).
+pub const PYLON_SPAN_M: f32 = 600.0;
+
+/// The direction of the power line through the pylon at `at` (rad, modulo
+/// π; the way-angle convention of [`PointObstacle::angle`]): towards its
+/// nearest neighbour among the package's pylons within [`PYLON_SPAN_M`],
+/// averaged with the one on the other side if there is one; `None`
+/// without a neighbour (the road's direction stays).
+pub fn pylon_line_angle(pkg: &WorldPackage, at: [f32; 2]) -> Option<f32> {
+    let o = pkg.obstacles.as_ref()?;
+    let size = pkg.tile_size_m;
+    let key = TileKey::containing([f64::from(at[0]), f64::from(at[1])], f64::from(size));
+    let mut near: Vec<(f32, [f32; 2])> = Vec::new();
+    for dz in -1..=1 {
+        for dx in -1..=1 {
+            let k = TileKey {
+                x: key.x + dx,
+                z: key.z + dz,
+            };
+            let Some(t) = o.tiles.get(&k) else { continue };
+            for q in t.points.iter().filter(|q| q.kind == ObstacleKind::Pylon) {
+                let d = [q.pos[0] - at[0], q.pos[1] - at[1]];
+                let len = d[0].hypot(d[1]);
+                if len > 15.0 && len <= PYLON_SPAN_M {
+                    near.push((len, [d[0] / len, d[1] / len]));
+                }
+            }
+        }
+    }
+    near.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let first = near.first()?.1;
+    // The nearest one on the other side (more than 120° away).
+    let dir = match near
+        .iter()
+        .find(|n| n.1[0] * first[0] + n.1[1] * first[1] < -0.5)
+    {
+        Some(other) => [first[0] - other.1[0], first[1] - other.1[1]],
+        None => first,
+    };
+    Some(dir[1].atan2(dir[0]).rem_euclid(std::f32::consts::PI))
+}
+
 pub fn tile_obstacle_meshes_from(
     pkg: &WorldPackage,
     key: TileKey,
@@ -599,6 +641,19 @@ pub fn tile_obstacle_meshes_from(
                 models.push((p.kind, m.clone()));
                 m
             }
+        };
+        // A pylon's arms reach across its power line (the direction to
+        // the pylons beside it), not across the road it stands near.
+        let line = (p.kind == ObstacleKind::Pylon)
+            .then(|| pylon_line_angle(pkg, p.pos))
+            .flatten();
+        let turned;
+        let p = match line {
+            Some(a) => {
+                turned = PointObstacle { angle: a, ..*p };
+                &turned
+            }
+            None => p,
         };
         if has_lod1(&model) {
             // Near and far by cell (spec 16H Q24 (a): props at 60 m).
@@ -1095,7 +1150,7 @@ mod tests {
     /// model x across = world z): (kind, x, z half extents about the foot,
     /// bottom and top above the ground).
     type Size = (ObstacleKind, [f32; 2], [f32; 2], [f32; 2]);
-    const OLD_SIZES: [Size; 8] = [
+    const OLD_SIZES: [Size; 7] = [
         (
             ObstacleKind::Bollard,
             [-0.101, 0.101],
@@ -1108,7 +1163,6 @@ mod tests {
             [-0.1126, 0.1126],
             [-0.2, 7.0],
         ),
-        (ObstacleKind::Pylon, [-2.5, 2.5], [-2.5, 2.5], [-0.2, 30.0]),
         (ObstacleKind::Block, [-0.3, 0.3], [-0.6, 0.6], [-0.1, 0.8]),
         (
             ObstacleKind::Gate,
@@ -1135,6 +1189,81 @@ mod tests {
             [-0.1, 1.0],
         ),
     ];
+
+    /// A pylon's arms reach across its power line: the line's direction
+    /// comes from the pylons beside it, not from the road.
+    #[test]
+    fn a_pylon_faces_its_power_line() {
+        let mut pkg = posts_tile(|_, _| 300.0, [1.0, 1.0, 2.0, 2.0]);
+        let pylon = |x: f32, z: f32| PointObstacle {
+            kind: ObstacleKind::Pylon,
+            flags: 0,
+            pos: [x, z],
+            angle: 0.0,
+            width_m: 0.0,
+            height_m: 25.5,
+        };
+        // A line running north-east: pylons 300 m apart on the diagonal.
+        let key = TileKey { x: 0, z: 0 };
+        let set = |pkg: &mut WorldPackage, points: Vec<PointObstacle>| {
+            pkg.obstacles
+                .as_mut()
+                .unwrap()
+                .tiles
+                .entry(key)
+                .or_default()
+                .points = points;
+        };
+        set(
+            &mut pkg,
+            vec![
+                pylon(100.0, 100.0),
+                pylon(312.0, 312.0),
+                pylon(524.0, 524.0),
+            ],
+        );
+        let a = pylon_line_angle(&pkg, [312.0, 312.0]).unwrap();
+        assert!((a - std::f32::consts::FRAC_PI_4).abs() < 1e-3, "{a}");
+        let end = pylon_line_angle(&pkg, [100.0, 100.0]).unwrap();
+        assert!((end - std::f32::consts::FRAC_PI_4).abs() < 1e-3, "{end}");
+        // A lone pylon keeps the road's direction.
+        set(&mut pkg, vec![pylon(100.0, 100.0)]);
+        assert_eq!(pylon_line_angle(&pkg, [100.0, 100.0]), None);
+    }
+
+    /// Regression (2026-11-26, the Port d'Envalira): the power line
+    /// pylons (`power=tower`) stood beside the roads as solid grey
+    /// pyramids 25 m high, obelisks. They are drawn from the open lattice
+    /// tower now: its cross arms reach out beyond the legs' foot, it
+    /// stands at the pylon's height on its 5 m foot, and from the front
+    /// most of its box is open (`ocw_assets::pylon` tests the coverage).
+    #[test]
+    fn pylons_are_lattice_towers_not_obelisks() {
+        assert_eq!(model_id_of(ObstacleKind::Pylon), "props/pylon-lattice");
+        let model = ocw_assets::shipped::model(model_id_of(ObstacleKind::Pylon));
+        let flat = |_: f32, _: f32| 3.0;
+        let p = PointObstacle {
+            kind: ObstacleKind::Pylon,
+            flags: 0,
+            pos: [50.0, 60.0],
+            angle: 0.0,
+            width_m: 0.0,
+            height_m: 25.5,
+        };
+        let mut m = MeshArrays::default();
+        point_mesh(&mut m, &p, &model, &flat);
+        let lo = m.positions.iter().fold([f32::MAX; 3], |a, v| {
+            std::array::from_fn(|k| a[k].min(v[k]))
+        });
+        let hi = m.positions.iter().fold([f32::MIN; 3], |a, v| {
+            std::array::from_fn(|k| a[k].max(v[k]))
+        });
+        assert!((hi[1] - 3.0 - 25.5).abs() < 0.3, "{lo:?} {hi:?}");
+        let (wx, wz) = (hi[0] - lo[0], hi[2] - lo[2]);
+        // The arms across the line (11 m), the foot along it (5 m).
+        assert!(wx.max(wz) > 10.0 && wx.min(wz) < 6.0, "{wx} x {wz}");
+        assert!(m.indices.len() / 3 > 500, "the lattice's members");
+    }
 
     /// Every point obstacle is drawn from its model file (spec §14 Phase
     /// 15, 15H MX), at the size the generator drew it, with the file's

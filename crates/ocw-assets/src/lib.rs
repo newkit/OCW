@@ -53,6 +53,7 @@ pub mod mouth;
 pub mod parts;
 pub mod pose;
 pub mod props;
+pub mod pylon;
 pub mod rider;
 pub mod rider_split;
 pub mod slots;

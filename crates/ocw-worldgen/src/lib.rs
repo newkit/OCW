@@ -61,6 +61,7 @@ pub mod places;
 pub mod profile;
 pub mod projection;
 pub mod route;
+pub mod shore;
 pub mod spatial;
 pub mod stages;
 pub mod svg;

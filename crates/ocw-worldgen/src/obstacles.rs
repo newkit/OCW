@@ -44,24 +44,183 @@ pub struct BarrierData {
     pub points: Vec<(i64, Tags)>,
     /// Barrier ways: node ids and kept tags.
     pub ways: Vec<(i64, Vec<i64>, Tags)>,
+    /// Power lines through towers (v6.58): their nodes and state.
+    pub power_lines: Vec<PowerLine>,
+}
+
+/// An OSM power line (`power=line|minor_line`, or with a lifecycle prefix:
+/// `disused:power=line`, `abandoned:…`, `removed:…`, `razed:…`,
+/// `demolished:…`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PowerLine {
+    pub id: i64,
+    pub nodes: Vec<i64>,
+    /// Out of service or gone: a lifecycle prefix or `disused` /
+    /// `abandoned=yes`.
+    pub dismantled: bool,
+    /// Has any fact besides `power=line` (voltage, operator, name, cables,
+    /// circuits, ref): a line someone mapped as a working line.
+    pub described: bool,
+}
+
+/// Lifecycle prefixes of a feature out of service or gone (OSM).
+const LIFECYCLE: [&str; 5] = ["disused", "abandoned", "removed", "razed", "demolished"];
+
+/// The power line of an OSM way, if it is one (see [`PowerLine`]).
+pub fn power_line<'a>(
+    id: i64,
+    nodes: Vec<i64>,
+    tags: impl Iterator<Item = (&'a str, &'a str)> + Clone,
+) -> Option<PowerLine> {
+    let is_line = |v: &str| matches!(v, "line" | "minor_line");
+    let mut line = false;
+    let mut dismantled = false;
+    let mut described = false;
+    for (k, v) in tags {
+        if k == "power" && is_line(v) {
+            line = true;
+        }
+        if let Some((prefix, rest)) = k.split_once(':')
+            && LIFECYCLE.contains(&prefix)
+            && rest == "power"
+            && is_line(v)
+        {
+            line = true;
+            dismantled = true;
+        }
+        if LIFECYCLE.contains(&k) && v != "no" {
+            dismantled = true;
+        }
+        if matches!(
+            k,
+            "voltage" | "operator" | "name" | "cables" | "circuits" | "ref"
+        ) {
+            described = true;
+        }
+    }
+    line.then_some(PowerLine {
+        id,
+        nodes,
+        dismantled,
+        described,
+    })
+}
+
+/// How near (m) the towers of a bare line must stand to a dismantled
+/// line to count as the same corridor (the Envalira's two rows stand 100 –
+/// 140 m apart).
+pub const ALONGSIDE_M: f64 = 150.0;
+
+/// The towers (`power=tower` node ids of `data`) of dismantled power lines,
+/// which are not drawn (v6.58; the Port d'Envalira, 2026-11-26: OSM keeps
+/// the towers of the 110 kV line Grau Roig – L'Hospitalet, replaced by an
+/// underground cable and taken down, as `power=tower` on a line tagged
+/// `disused:power=line`, and a second row on a bare `power=line` beside
+/// it; the locals see nothing there):
+/// - a tower all of whose lines are dismantled;
+/// - a tower all of whose lines are bare (no voltage, operator, name,
+///   cables, circuits or ref) and run alongside a dismantled line: at
+///   least 80 % of their towers within [`ALONGSIDE_M`] of its course – the
+///   same dismantled corridor mapped twice.
+///
+/// Towers on no line stay (a lone mapped tower is drawn as before).
+pub fn dismantled_towers(data: &BarrierData, proj: &LocalProjection) -> HashSet<i64> {
+    let towers: HashSet<i64> = data
+        .points
+        .iter()
+        .filter(|(_, t)| point_kind(t) == Some(ObstacleKind::Pylon))
+        .map(|p| p.0)
+        .collect();
+    let at = |id: i64| {
+        data.nodes
+            .get(&id)
+            .map(|&(lat, lon)| proj.project(lat, lon))
+    };
+    let mut lines_of: HashMap<i64, Vec<usize>> = HashMap::new();
+    for (i, l) in data.power_lines.iter().enumerate() {
+        for &n in &l.nodes {
+            if towers.contains(&n) {
+                lines_of.entry(n).or_default().push(i);
+            }
+        }
+    }
+    let all_dismantled = |n: &i64| {
+        lines_of
+            .get(n)
+            .is_some_and(|ls| ls.iter().all(|&i| data.power_lines[i].dismantled))
+    };
+    let mut out: HashSet<i64> = towers.iter().copied().filter(all_dismantled).collect();
+    // Bare lines alongside the dismantled lines (their course through
+    // their nodes).
+    let gone: Vec<([f64; 2], [f64; 2])> = data
+        .power_lines
+        .iter()
+        .filter(|l| l.dismantled)
+        .flat_map(|l| {
+            let pts: Vec<[f64; 2]> = l.nodes.iter().filter_map(|&n| at(n)).collect();
+            pts.windows(2).map(|w| (w[0], w[1])).collect::<Vec<_>>()
+        })
+        .collect();
+    if gone.is_empty() {
+        return out;
+    }
+    let near_gone = |p: [f64; 2]| {
+        gone.iter()
+            .any(|&(a, b)| crate::spatial::foot_on_segment(p, a, b).0 <= ALONGSIDE_M)
+    };
+    let alongside: Vec<bool> = data
+        .power_lines
+        .iter()
+        .map(|l| {
+            if l.dismantled || l.described {
+                return false;
+            }
+            let pts: Vec<[f64; 2]> = l
+                .nodes
+                .iter()
+                .filter(|n| towers.contains(n))
+                .filter_map(|&n| at(n))
+                .collect();
+            !pts.is_empty() && pts.iter().filter(|&&p| near_gone(p)).count() * 5 >= pts.len() * 4
+        })
+        .collect();
+    for (&n, ls) in &lines_of {
+        if ls
+            .iter()
+            .all(|&i| data.power_lines[i].dismantled || alongside[i])
+        {
+            out.insert(n);
+        }
+    }
+    out
 }
 
 impl BarrierData {
     /// Two passes: barrier ways, then the nodes (theirs and the obstacle
     /// nodes).
     pub fn read_pbf(path: &Path) -> Result<Self, OsmError> {
-        let ways = par_elements(path, |el, out| {
-            if let osmpbf::Element::Way(w) = el
-                && w.tags().any(|(k, _)| k == "barrier")
-            {
-                let tags: Tags = w
-                    .tags()
-                    .filter(|(k, _)| kept(k))
-                    .map(|(k, v)| (k.to_string(), v.to_string()))
-                    .collect();
-                out.push((w.id(), w.refs().collect::<Vec<_>>(), tags));
+        let all = par_elements(path, |el, out| {
+            if let osmpbf::Element::Way(w) = el {
+                if w.tags().any(|(k, _)| k == "barrier") {
+                    let tags: Tags = w
+                        .tags()
+                        .filter(|(k, _)| kept(k))
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect();
+                    out.push(Ok((w.id(), w.refs().collect::<Vec<_>>(), tags)));
+                } else if let Some(l) = power_line(w.id(), w.refs().collect(), w.tags()) {
+                    out.push(Err(l));
+                }
             }
         })?;
+        let mut ways = Vec::new();
+        let mut power_lines = Vec::new();
+        for w in all {
+            match w {
+                Ok(b) => ways.push(b),
+                Err(l) => power_lines.push(l),
+            }
+        }
         let needed: HashSet<i64> = ways.iter().flat_map(|w| w.1.iter().copied()).collect();
         let found = par_elements(path, |el, out| {
             let (id, lat, lon, tags): (i64, f64, f64, Vec<(&str, &str)>) = match el {
@@ -81,6 +240,7 @@ impl BarrierData {
         })?;
         let mut d = Self {
             ways,
+            power_lines,
             ..Default::default()
         };
         for (id, p, tags) in found {
@@ -107,6 +267,11 @@ impl BarrierData {
             for n in d.points {
                 if points.insert(n.0) {
                     out.points.push(n);
+                }
+            }
+            for l in d.power_lines {
+                if !out.power_lines.iter().any(|o| o.id == l.id) {
+                    out.power_lines.push(l);
                 }
             }
         }
@@ -242,6 +407,8 @@ pub struct ObstacleStats {
     pub line_pieces_cut: usize,
     pub trees: usize,
     pub tree_tiles: usize,
+    /// Towers of dismantled power lines left out ([`dismantled_towers`]).
+    pub dismantled_towers: usize,
 }
 
 /// A height tag in metres ("2", "2.5 m", "1,8").
@@ -314,11 +481,16 @@ fn add_points(
     let tile_of = |p: [f64; 2]| TileKey::containing(p, size);
     let mut points: Vec<(i64, &Tags)> = data.points.iter().map(|(i, t)| (*i, t)).collect();
     points.sort_by_key(|p| p.0);
+    let gone = dismantled_towers(data, proj);
     for (id, tags) in points {
         let (Some(kind), Some(&(lat, lon))) = (point_kind(tags), data.nodes.get(&id)) else {
             continue;
         };
         if !want(kind) {
+            continue;
+        }
+        if gone.contains(&id) {
+            st.dismantled_towers += 1;
             continue;
         }
         let p = proj.project(lat, lon);
@@ -512,6 +684,35 @@ pub fn refresh_trees(pkg: &mut WorldPackage) -> Option<ObstacleStats> {
     Some(st)
 }
 
+/// Removes the towers of dismantled power lines ([`dismantled_towers`])
+/// from the package's section `OBST` (each matched by its mapped place,
+/// within a metre); returns how many went.
+pub fn remove_dismantled_towers(
+    pkg: &mut WorldPackage,
+    data: &BarrierData,
+    proj: &LocalProjection,
+) -> usize {
+    let gone: Vec<[f64; 2]> = dismantled_towers(data, proj)
+        .into_iter()
+        .filter_map(|n| data.nodes.get(&n).map(|&(lat, lon)| proj.project(lat, lon)))
+        .collect();
+    let Some(o) = pkg.obstacles.as_mut() else {
+        return 0;
+    };
+    let mut removed = 0;
+    for t in o.tiles.values_mut() {
+        let before = t.points.len();
+        t.points.retain(|p| {
+            p.kind != ObstacleKind::Pylon
+                || !gone
+                    .iter()
+                    .any(|g| (g[0] - f64::from(p.pos[0])).hypot(g[1] - f64::from(p.pos[1])) < 1.0)
+        });
+        removed += before - t.points.len();
+    }
+    removed
+}
+
 /// Adds the section to a package (replacing one it has; the warning
 /// signs of roads a patch closed for bikes are kept, 16H Q6 – they come
 /// from the patch, not from OSM).
@@ -557,7 +758,14 @@ impl ObstacleStats {
             self.tree_tiles,
             self.outside_corridor,
             self.line_pieces_cut
-        )
+        ) + &if self.dismantled_towers > 0 {
+            format!(
+                ", {} towers of dismantled power lines left out",
+                self.dismantled_towers
+            )
+        } else {
+            String::new()
+        }
     }
 }
 
@@ -623,7 +831,8 @@ mod tests {
             .collect()
     }
 
-    type Nodes<'a> = [(i64, [f64; 2], &'a [(&'a str, &'a str)])];
+    type Tagged<'a> = &'a [(&'a str, &'a str)];
+    type Nodes<'a> = [(i64, [f64; 2], Tagged<'a>)];
     type Ways<'a> = [(i64, &'a [i64], &'a [(&'a str, &'a str)])];
 
     /// Barrier nodes and ways at package metres (x, z).
@@ -639,6 +848,98 @@ mod tests {
             d.ways.push((*id, ns.to_vec(), tags(t)));
         }
         d
+    }
+
+    /// Regression (2026-11-26, the Port d'Envalira; the locals: "there is
+    /// nothing like that"): OSM keeps the towers of a 110 kV line taken
+    /// down years ago as `power=tower` on a way tagged
+    /// `disused:power=line`, and a second row of towers 40 m beside it on a
+    /// bare `power=line`. Neither is built; a working line (with its
+    /// voltage, or bare but far from any dismantled line) and a lone tower
+    /// are.
+    #[test]
+    fn towers_of_dismantled_power_lines_are_left_out() {
+        let pkg = package();
+        let proj = LocalProjection::new(pkg.origin.0, pkg.origin.1);
+        let tower: &[(&str, &str)] = &[("power", "tower")];
+        let mut nodes: Vec<(i64, [f64; 2], Tagged<'_>)> = Vec::new();
+        for i in 0..5 {
+            let x = 100.0 + 150.0 * f64::from(i);
+            nodes.push((10 + i64::from(i), [x, 520.0], tower)); // the disused line
+            nodes.push((20 + i64::from(i), [x + 10.0, 560.0], tower)); // the bare row beside it
+            nodes.push((30 + i64::from(i), [x, 900.0], tower)); // a bare line far away
+            nodes.push((40 + i64::from(i), [x, 460.0], tower)); // a working 110 kV line
+        }
+        nodes.push((50, [500.0, 480.0], tower)); // a lone tower
+        let mut d = data(&proj, &nodes, &[]);
+        let ids = |b: i64| (b..b + 5).collect::<Vec<i64>>();
+        let line = |id: i64, b: i64, t: &[(&str, &str)]| {
+            power_line(id, ids(b), t.iter().copied()).expect("a power line")
+        };
+        d.power_lines = vec![
+            line(
+                1,
+                10,
+                &[
+                    ("disused:power", "line"),
+                    ("power", "line"),
+                    ("voltage", "110000"),
+                ],
+            ),
+            line(2, 20, &[("power", "line")]),
+            line(3, 30, &[("power", "line")]),
+            line(4, 40, &[("power", "line"), ("voltage", "110000")]),
+        ];
+        assert!(d.power_lines[0].dismantled && !d.power_lines[1].described);
+        assert!(
+            power_line(
+                5,
+                vec![],
+                [("power", "minor_line"), ("abandoned", "yes")].into_iter()
+            )
+            .unwrap()
+            .dismantled
+        );
+        assert!(power_line(6, vec![], [("highway", "track")].into_iter()).is_none());
+        let gone = dismantled_towers(&d, &proj);
+        let mut want: Vec<i64> = ids(10);
+        want.extend(ids(20));
+        let mut got: Vec<i64> = gone.iter().copied().collect();
+        got.sort();
+        assert_eq!(got, want);
+        // The section leaves them out.
+        let (o, st) = build_obstacles(&pkg, &d, &proj);
+        assert_eq!(st.dismantled_towers, 10, "{st:?}");
+        let pylons = o
+            .tiles
+            .values()
+            .flat_map(|t| &t.points)
+            .filter(|p| p.kind == ObstacleKind::Pylon)
+            .count();
+        assert!((1..=11).contains(&pylons), "{pylons}");
+        // And an existing section loses them.
+        let mut with_all = pkg.clone();
+        let (o_all, _) = build_obstacles(&pkg, &data(&proj, &nodes, &[]), &proj);
+        with_all.obstacles = Some(o_all);
+        let before = with_all
+            .obstacles
+            .as_ref()
+            .unwrap()
+            .tiles
+            .values()
+            .flat_map(|t| &t.points)
+            .count();
+        let removed = remove_dismantled_towers(&mut with_all, &d, &proj);
+        let after = with_all
+            .obstacles
+            .as_ref()
+            .unwrap()
+            .tiles
+            .values()
+            .flat_map(|t| &t.points)
+            .count();
+        assert_eq!(before - after, removed);
+        assert!(removed > 0);
     }
 
     #[test]
