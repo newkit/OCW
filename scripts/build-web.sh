@@ -19,8 +19,8 @@
 #                                   one codegen unit), the
 #                                   `preview` feature (worlds signed by the web
 #                                   preview's root only), wasm-opt required
-#                                   (scripts/fetch-binaryen.sh), no LiveKit
-#                                   (voice is off in the preview)
+#                                   (scripts/fetch-binaryen.sh), LiveKit's
+#                                   JS SDK (voice on the public server)
 #   WEB_PROFILE=dev scripts/build-web.sh   a quick debug build
 #   WEB_GPU=webgpu scripts/build-web.sh    only one of the builds (webgpu,
 #                                          webgl2, webxr; default: webgpu
@@ -154,10 +154,13 @@ cp apps/web/web/manifest.webmanifest artwork/logos/ocw-256.png artwork/logos/ocw
 # (scripts/web-preview-site.py) writes its own with the worlds and rides.
 if [ $preview = 1 ]; then
   printf '{\n  "channel": "preview",\n  "worlds": "worlds/",\n  "server": "",\n  "voice": "",\n  "signin": ""\n}\n' > "$out/config.json"
+  # Voice with the public server (spec 11.5): the site rides together on
+  # it with voice, so the preview needs LiveKit's JS SDK too (required).
+  scripts/fetch-livekit-client.sh "$out"
 else
   printf '{\n  "channel": "dev",\n  "worlds": "worlds/"\n}\n' > "$out/config.json"
   # Voice (B5): LiveKit's JS SDK, pinned and hash-checked; without it the
-  # page rides on, voice says "unavailable". The preview has no voice.
+  # page rides on, voice says "unavailable".
   scripts/fetch-livekit-client.sh "$out" ||
     echo "warning: livekit-client not fetched: voice is unavailable in this build" >&2
 fi

@@ -63,9 +63,7 @@ kill_timeout = "10s"
     port = 7882
 
 # Voice signalling (LiveKit's WebSocket): plain TCP through Fly's proxy on
-# 7880 (ws://IPV4:7880, the desktop app), and on 443 with TLS ended by
-# Fly's proxy for APP.fly.dev (Fly's own certificate) for pages served over
-# https:// (wss://ocw-server.fly.dev; start.sh, --voice-public-url).
+# 7880 (ws://IPV4:7880, the desktop app).
 [[services]]
   protocol = "tcp"
   internal_port = 7880
@@ -74,6 +72,23 @@ kill_timeout = "10s"
   min_machines_running = 1
   [[services.ports]]
     port = 7880
+  [[services.tcp_checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "60s"
+
+# Pages served over https:// (the public preview, spec 11.5): 443 with TLS
+# ended by Fly's proxy for APP.fly.dev (Fly's own certificate), to the
+# server's join endpoint (--join-http): /join.json (the WebTransport URL,
+# the certificate hashes, the voice URL and the world, read at runtime),
+# everything else passed on to LiveKit's signalling port
+# (wss://ocw-server.fly.dev; start.sh, --voice-public-url).
+[[services]]
+  protocol = "tcp"
+  internal_port = 8080
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
   [[services.ports]]
     port = 443
     handlers = ["tls", "http"]

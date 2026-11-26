@@ -33,12 +33,14 @@
 
 pub mod client;
 pub mod framing;
+pub mod join_http;
 pub mod server;
 pub mod tls;
 pub mod webtransport;
 
 pub use client::{ClientOptions, LinkStatus, NetClient};
-pub use server::{EndpointCounters, NetServer, Transport};
+pub use join_http::{JoinBoard, JoinFront, JoinInfo};
+pub use server::{EndpointCounters, NetServer, Transport, WebCertChange};
 pub use tls::{ServerIdentity, ServerTrust, WebIdentity};
 
 use std::net::{SocketAddr, ToSocketAddrs};

@@ -167,8 +167,20 @@ struct WebEndpoint {
     endpoint: Endpoint,
     local_addr: SocketAddr,
     identity: WebIdentity,
+    /// The next certificate, announced a day before it takes over (spec
+    /// 11.5 *Join info*).
+    next: Option<WebIdentity>,
     /// Where its certificate is kept (`--tls-dir`), for the rotation.
     dir: Option<PathBuf>,
+}
+
+/// What [`NetServer::rotate_web_cert`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WebCertChange {
+    /// The next certificate was made: pages should take its hash too.
+    Announced { next: String },
+    /// The certificate was renewed: new sessions get this one.
+    Renewed { hash: String },
 }
 
 /// A listening game server endpoint.
@@ -250,10 +262,17 @@ impl NetServer {
             self.next_token.clone(),
             Transport::WebTransport,
         ));
+        // An announced next certificate kept from before a restart (newer
+        // than the current one).
+        let next = dir
+            .as_deref()
+            .and_then(|d| WebIdentity::load_next(d, crate::unix_now_ms() / 1000))
+            .filter(|n| n.not_before_unix_s() > identity.not_before_unix_s());
         self.web = Some(WebEndpoint {
             endpoint,
             local_addr,
             identity,
+            next,
             dir,
         });
         Ok(local_addr)
@@ -274,30 +293,56 @@ impl NetServer {
         self.web.as_ref().map(|w| w.identity.cert_hash())
     }
 
+    /// The hashes pages should accept: the current certificate's, then the
+    /// announced next one's (spec 11.5 *Join info*).
+    pub fn web_cert_hashes(&self) -> Vec<String> {
+        self.web.as_ref().map_or_else(Vec::new, |w| {
+            std::iter::once(&w.identity)
+                .chain(w.next.as_ref())
+                .map(WebIdentity::cert_hash)
+                .collect()
+        })
+    }
+
     /// When the WebTransport certificate expires (Unix s).
     pub fn web_cert_not_after(&self) -> Option<i64> {
         self.web.as_ref().map(|w| w.identity.not_after_unix_s())
     }
 
     /// Renews the WebTransport certificate when it has less than two days
-    /// left (call now and then, e.g. every minute). New sessions get the
-    /// new certificate, open ones go on. Returns the new hash.
-    pub fn rotate_web_cert(&mut self, now_unix_s: i64) -> Result<Option<String>, String> {
+    /// left (call now and then, e.g. every minute). A day before, the next
+    /// certificate is made and announced ([`Self::web_cert_hashes`]); at
+    /// the renewal it takes over. New sessions get the new certificate,
+    /// open ones go on.
+    pub fn rotate_web_cert(&mut self, now_unix_s: i64) -> Result<Option<WebCertChange>, String> {
         let Some(web) = self.web.as_mut() else {
             return Ok(None);
         };
-        if !web.identity.needs_rotation(now_unix_s) {
-            return Ok(None);
+        if web.identity.needs_rotation(now_unix_s) {
+            let identity = match web.next.take() {
+                Some(next) if next.usable(now_unix_s) => next,
+                _ => WebIdentity::generate(now_unix_s)?,
+            };
+            web.endpoint
+                .set_server_config(Some(identity.server_config()?));
+            if let Some(dir) = &web.dir {
+                identity.store(dir)?;
+                WebIdentity::remove_next(dir)?;
+            }
+            let hash = identity.cert_hash();
+            web.identity = identity;
+            return Ok(Some(WebCertChange::Renewed { hash }));
         }
-        let identity = WebIdentity::generate(now_unix_s)?;
-        web.endpoint
-            .set_server_config(Some(identity.server_config()?));
-        if let Some(dir) = &web.dir {
-            identity.store(dir)?;
+        if web.next.is_none() && web.identity.needs_next(now_unix_s) {
+            let next = WebIdentity::generate(now_unix_s)?;
+            if let Some(dir) = &web.dir {
+                next.store_next(dir)?;
+            }
+            let hash = next.cert_hash();
+            web.next = Some(next);
+            return Ok(Some(WebCertChange::Announced { next: hash }));
         }
-        let hash = identity.cert_hash();
-        web.identity = identity;
-        Ok(Some(hash))
+        Ok(None)
     }
 
     /// SHA-256 fingerprint of the server certificate, for `--server-cert`.
