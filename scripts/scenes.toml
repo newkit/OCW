@@ -767,6 +767,92 @@ riders = "active = \"Ada Rider\"\n[[rider]]\nname = \"Ada Rider\"\nweight_kg = 6
 at = ["2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-prev", "4.2=workshop select", "5=workshop right", "5.4=workshop right"]
 shot = 24
 
+# --- README pictures of Andorra (readme-2026-11-26-andorra-*.jpg) ------------
+# The fifth world (world = "andorra", scripts/build-andorra.sh; origin 42.54 N
+# 1.60 E, local X east, Z south): Andorra la Vella -6376,3681 (Envalira route
+# km 0), Encamp (km 7.5), Soldeu (km 17), the Port d'Envalira hairpins above
+# Grau Roig (km 24 - 27.9, 2,140 - 2,408 m, pass 9790,-20), the Coll de la
+# Gallina's steep ramps above Sant Julià (km 9 - 10, 13 - 15 %), the Arcalís
+# hairpins near the tree line (km 14 - 16, 2,000 - 2,100 m), the Comapedrosa
+# -12820,-5750. No HUD, the High quality preset; a different made-up rider,
+# kit and bike in every scene, some bots on other bikes. Render with
+# OCW_PROFILE=release OCW_FPS=0; the chosen files are assets of the GitHub
+# release `build-history`.
+
+[[scene]]
+name = "readme-andorra-envalira"
+description = "README: a group on the Port d'Envalira hairpins above Grau Roig (km 26.3, 2,300 m) on an October evening, bare grass and scree, the high peaks behind (no HUD)"
+world = "andorra"
+args = ["--world", "{world}", "--free-ride", "--start", "9080,-220", "--bots", "6", "--power", "250"]
+riders = "active = \"Bea Climber\"\n[[rider]]\nname = \"Bea Climber\"\nweight_kg = 58.0\nheight_cm = 166.0\nbike = \"road\"\nframe_color = \"#C62828\"\njersey_color = \"#FDD835\"\nhelmet_color = \"#212121\"\nkit = \"band\"\n"
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-10-08 17:45", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair ponytail --hair-colour #2B1B14 --skin 9 --glasses 2", "1=dev.bot_bike 2 --bike gravel", "1=dev.bot_bike 4 --bike mtb", "2.5=camera.orbit 210 18 24"]
+shot = 14
+
+[[scene]]
+name = "readme-andorra-envalira-winter"
+description = "README: January on the Port d'Envalira road below Grau Roig (Envalira route km 23, 2,080 m): snow on the high slopes and the peaks, the cleared road, riders in winter sun (no HUD)"
+world = "andorra"
+args = ["--world", "{world}", "--free-ride", "--start", "8192,-910", "--bots", "5", "--power", "240"]
+riders = "active = \"Cleo Pedal\"\n[[rider]]\nname = \"Cleo Pedal\"\nweight_kg = 82.0\nheight_cm = 188.0\nbike = \"gravel\"\nframe_color = \"#1565C0\"\njersey_color = \"#FAFAFA\"\nhelmet_color = \"#E53935\"\nkit = \"sash\"\n"
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2027-01-20 14:00", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair short --hair-colour #8D5524 --skin 5 --beard 2", "1=dev.bot_bike 1 --bike road", "2.5=camera.orbit 160 10 16"]
+shot = 14
+
+[[scene]]
+name = "readme-andorra-gallina"
+description = "README: the steep ramps of the Coll de la Gallina (km 9.4, 1,590 m, 14 %) above Sant Julià de Lòria, the Valira valley below, a September evening (no HUD)"
+world = "andorra"
+args = ["--world", "{world}", "--free-ride", "--start", "-11940,9900", "--bots", "4", "--power", "270"]
+riders = "active = \"Dora Spoke\"\n[[rider]]\nname = \"Dora Spoke\"\nweight_kg = 64.0\nheight_cm = 170.0\nbike = \"road\"\nframe_color = \"#2E7D32\"\njersey_color = \"#00897B\"\nhelmet_color = \"#FFFFFF\"\nkit = \"plain\"\n"
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-09-22 18:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair bun --hair-colour #B3482A --skin 2", "1=dev.bot_bike 3 --bike gravel", "2.5=camera.orbit 150 10 16"]
+shot = 14
+
+[[scene]]
+name = "readme-andorra-vella"
+description = "README: riders on the CG-2 through Andorra la Vella (Envalira route km 0.6), stone-clad houses with dark slate roofs, pine and rock slopes above the town, autumn afternoon (no HUD)"
+world = "andorra"
+args = ["--world", "{world}", "--free-ride", "--start", "-6250,3640", "--bots", "5", "--power", "200"]
+riders = "active = \"Eli Cadence\"\n[[rider]]\nname = \"Eli Cadence\"\nweight_kg = 74.0\nheight_cm = 178.0\nbike = \"road\"\nframe_color = \"#F5F5F5\"\njersey_color = \"#6A1B9A\"\nhelmet_color = \"#FFB300\"\nkit = \"band\"\n"
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-10-15 15:30", "0.5=weather fair", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body c --hair afro --hair-colour #1A1A1A --skin 14", "1=dev.bot_bike 2 --bike mtb", "2.5=camera.orbit 165 16 22"]
+shot = 14
+
+[[scene]]
+name = "readme-andorra-arcalis"
+description = "README: the Arcalís hairpins near the tree line (Ordino - Arcalís km 14.8, 2,020 m): high pastures, the last mountain pines, the cirque's rock walls, a July evening (no HUD)"
+world = "andorra"
+args = ["--world", "{world}", "--free-ride", "--start", "-8350,-9890", "--bots", "5", "--power", "250"]
+riders = "active = \"Finn Gradient\"\n[[rider]]\nname = \"Finn Gradient\"\nweight_kg = 70.0\nheight_cm = 182.0\nbike = \"road\"\nframe_color = \"#FF6F00\"\njersey_color = \"#263238\"\nhelmet_color = \"#4FC3F7\"\nkit = \"sash\"\n"
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-07-20 19:15", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair long --hair-colour #D8B26E --skin 1 --age 30s", "1=dev.bot_bike 1 --bike gravel", "2.5=camera.orbit 165 9 15"]
+shot = 14
+
+[[scene]]
+name = "readme-andorra-unicorn"
+description = "README: the unicorn flying over the Port d'Envalira (2,408 m) on an October evening, the rainbow trail, Grau Roig's cirque and the high peaks around (no HUD)"
+world = "andorra"
+args = ["--world", "{world}", "--free-ride", "--start", "9500,-210", "--bots", "3", "--power", "200"]
+riders = "active = \"Gus Freewheel\"\n[[rider]]\nname = \"Gus Freewheel\"\nweight_kg = 68.0\nheight_cm = 175.0\n"
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-10-08 17:30", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "3=god on", "4=god.pose 9600 -100 90 230 -12", "4.3=god.cruise 0.5 0.05 6"]
+shot = 10
+
+[[scene]]
+name = "readme-andorra-dawn"
+description = "README: dawn mist in the Valira d'Orient at Encamp (Envalira route km 7.5, 1,360 m): low sun through the haze, pine slopes, riders on the CG-2 (no HUD)"
+world = "andorra"
+args = ["--world", "{world}", "--free-ride", "--start", "-675,133", "--bots", "4", "--power", "220"]
+riders = "active = \"Hana Sprint\"\n[[rider]]\nname = \"Hana Sprint\"\nweight_kg = 55.0\nheight_cm = 160.0\nbike = \"road\"\nframe_color = \"#AD1457\"\njersey_color = \"#F8BBD0\"\nhelmet_color = \"#FAFAFA\"\nkit = \"plain\"\n"
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-10-08 08:50", "0.5=weather mist", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body b --hair pixie --hair-colour #5A3825 --skin 7", "2.5=camera.orbit 150 9 16"]
+shot = 14
+
+[[scene]]
+name = "readme-andorra-envalira-video"
+description = "Video: a group on the Port d'Envalira hairpins (km 26, 2,280 m) on an October evening, the camera swinging from behind round to the front (1080p, no HUD)"
+world = "andorra"
+args = ["--world", "{world}", "--free-ride", "--start", "9080,-220", "--bots", "6", "--power", "260", "--window", "1920x1080"]
+riders = "active = \"Ivo Tailwind\"\n[[rider]]\nname = \"Ivo Tailwind\"\nweight_kg = 76.0\nheight_cm = 184.0\nbike = \"road\"\nframe_color = \"#212121\"\njersey_color = \"#43A047\"\nhelmet_color = \"#43A047\"\nkit = \"band\"\n"
+at = ["0.5=set display.quality high", "0.5=time pause", "0.5=time 2026-10-08 17:45", "0.5=weather clear", "0.5=hud off", "0.5=hud.profile off", "0.6=character --body a --hair bald --beard 1 --skin 11", "1=dev.bot_bike 3 --bike gravel", "2.5=camera.orbit 20 12 18", "6=camera.orbit 70 12 18", "9=camera.orbit 120 12 18", "12=camera.orbit 160 12 18"]
+warmup = 4
+video = 13
+max_video_mb = 6
+
 # --- Black Forest world package (world = "blackforest") ---------------------
 # scripts/fetch-pilot.sh blackforest && scripts/build-blackforest.sh
 # (data/blackforest/blackforest.ocwpkg, the southern Black Forest, spec §4.7).
