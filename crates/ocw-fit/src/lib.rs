@@ -2,7 +2,8 @@
 //!
 //! Writes the subset of the Garmin FIT protocol (2.0, little endian) that
 //! training platforms such as Strava need for a virtual ride: `file_id`,
-//! `device_info`, timer `event`s, one `record` per sample, the `lap`s (one
+//! `device_info` (the recorder, and one per sensor in use: [`DeviceInfo`]),
+//! timer `event`s, one `record` per sample, the `lap`s (one
 //! per [`Activity::laps`] segment), one `session` and the `activity`, with
 //! the header and file CRCs.
 //!
@@ -90,6 +91,68 @@ pub struct Record {
     pub position: Option<(f64, f64)>,
 }
 
+/// How a sensor is connected (FIT `source_type`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum SourceType {
+    /// FIT 0: ANT (not ANT+).
+    Ant,
+    /// FIT 1: ANT+.
+    AntPlus,
+    /// FIT 3: Bluetooth Low Energy.
+    BluetoothLowEnergy,
+    /// FIT 5: inside the recording device.
+    Local,
+}
+
+impl SourceType {
+    pub fn fit(self) -> u8 {
+        match self {
+            Self::Ant => 0,
+            Self::AntPlus => 1,
+            Self::BluetoothLowEnergy => 3,
+            Self::Local => 5,
+        }
+    }
+
+    pub fn from_fit(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::Ant),
+            1 => Some(Self::AntPlus),
+            3 => Some(Self::BluetoothLowEnergy),
+            5 => Some(Self::Local),
+            _ => None,
+        }
+    }
+}
+
+/// A sensor of the ride as a FIT `device_info` message (spec 14 Phase 17
+/// A6): what head units write for each paired sensor. `None`: unknown
+/// (written as FIT's invalid value).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct DeviceInfo {
+    pub source: Option<SourceType>,
+    /// ANT+: the device type (`antplus_device_type`: 120 heart rate, 11
+    /// bike power, 121 speed / cadence, 122 cadence, 123 speed, 17 FE-C).
+    pub device_type: Option<u8>,
+    pub ant_device_number: Option<u16>,
+    pub ant_transmission_type: Option<u8>,
+    /// FIT / ANT+ manufacturer id.
+    pub manufacturer: Option<u16>,
+    pub product: Option<u16>,
+    pub serial_number: Option<u32>,
+    /// 3.12 = 3.12 (FIT stores × 100).
+    pub software_version: Option<f64>,
+    pub hardware_version: Option<u8>,
+    /// Volts (FIT stores × 256).
+    pub battery_voltage: Option<f64>,
+    /// 1 new, 2 good, 3 ok, 4 low, 5 critical.
+    pub battery_status: Option<u8>,
+    /// Percent.
+    pub battery_level: Option<u8>,
+    /// "ANT+ power 4004".
+    pub product_name: Option<String>,
+}
+
 /// A finished activity.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Activity {
@@ -109,6 +172,9 @@ pub struct Activity {
     /// Markers (god mode's start and end), written as `event` messages at
     /// their time among the records.
     pub markers: Vec<Marker>,
+    /// The sensors of the ride (one `device_info` each, device index 1,
+    /// 2, … after the recorder's 0).
+    pub devices: Vec<DeviceInfo>,
 }
 
 impl Activity {
@@ -246,7 +312,9 @@ pub fn semicircles(deg: f64) -> i32 {
 enum Value {
     Enum(Option<u8>),
     U8(Option<u8>),
+    U8z(Option<u8>),
     U16(Option<u16>),
+    U16z(Option<u16>),
     U32(Option<u32>),
     U32z(u32),
     S32(Option<i32>),
@@ -257,8 +325,8 @@ enum Value {
 impl Value {
     fn size(&self) -> u8 {
         match self {
-            Self::Enum(_) | Self::U8(_) => 1,
-            Self::U16(_) => 2,
+            Self::Enum(_) | Self::U8(_) | Self::U8z(_) => 1,
+            Self::U16(_) | Self::U16z(_) => 2,
             Self::U32(_) | Self::U32z(_) | Self::S32(_) => 4,
             Self::Str(_, n) => *n,
         }
@@ -268,7 +336,9 @@ impl Value {
         match self {
             Self::Enum(_) => 0x00,
             Self::U8(_) => 0x02,
+            Self::U8z(_) => 0x0A,
             Self::U16(_) => 0x84,
+            Self::U16z(_) => 0x8B,
             Self::S32(_) => 0x85,
             Self::U32(_) => 0x86,
             Self::Str(..) => 0x07,
@@ -279,7 +349,9 @@ impl Value {
     fn write(&self, out: &mut Vec<u8>) {
         match self {
             Self::Enum(v) | Self::U8(v) => out.push(v.unwrap_or(0xFF)),
+            Self::U8z(v) => out.push(v.unwrap_or(0)),
             Self::U16(v) => out.extend_from_slice(&v.unwrap_or(0xFFFF).to_le_bytes()),
+            Self::U16z(v) => out.extend_from_slice(&v.unwrap_or(0).to_le_bytes()),
             Self::U32(v) => out.extend_from_slice(&v.unwrap_or(0xFFFF_FFFF).to_le_bytes()),
             Self::U32z(v) => out.extend_from_slice(&v.to_le_bytes()),
             Self::S32(v) => out.extend_from_slice(&v.unwrap_or(0x7FFF_FFFF).to_le_bytes()),
@@ -385,6 +457,38 @@ pub fn encode(activity: &Activity) -> Vec<u8> {
             (27, Value::Str(activity.product_name.clone(), name_len)),
         ],
     );
+    // The sensors (spec 14 Phase 17 A6), as head units write them.
+    for (i, d) in activity.devices.iter().enumerate() {
+        let index = u8::try_from(i + 1).unwrap_or(u8::MAX - 1);
+        w.message(
+            MESG_DEVICE_INFO,
+            &[
+                (253, Value::U32(Some(start))),
+                (0, Value::U8(Some(index))),
+                (1, Value::U8(d.device_type)),
+                (2, Value::U16(d.manufacturer)),
+                (3, Value::U32z(d.serial_number.unwrap_or(0))),
+                (4, Value::U16(d.product)),
+                (5, u16_of(d.software_version, 100.0, 0.0)),
+                (6, Value::U8(d.hardware_version)),
+                (10, u16_of(d.battery_voltage, 256.0, 0.0)),
+                (11, Value::U8(d.battery_status)),
+                (20, Value::U8z(d.ant_transmission_type)),
+                (21, Value::U16z(d.ant_device_number)),
+                // ant_network: antplus.
+                (
+                    22,
+                    Value::Enum((d.source == Some(SourceType::AntPlus)).then_some(1)),
+                ),
+                (25, Value::Enum(d.source.map(SourceType::fit))),
+                (
+                    27,
+                    Value::Str(d.product_name.clone().unwrap_or_default(), name_len),
+                ),
+                (32, Value::U8(d.battery_level)),
+            ],
+        );
+    }
     let event = |w: &mut Writer, ts: u32, event: u8, event_type: u8| {
         w.message(
             MESG_EVENT,
@@ -570,6 +674,7 @@ mod tests {
             software_version: 10,
             laps: Vec::new(),
             markers: Vec::new(),
+            devices: Vec::new(),
         }
     }
 
@@ -581,6 +686,7 @@ mod tests {
             V::SInt16(x) => f64::from(*x),
             V::UInt32(x) | V::UInt32z(x) => f64::from(*x),
             V::SInt32(x) => f64::from(*x),
+            V::SInt64(x) => *x as f64,
             V::Float32(x) => f64::from(*x),
             V::Float64(x) => *x,
             _ => return None,
@@ -754,6 +860,82 @@ mod tests {
         let pos = |p: &FitDataRecord| msgs.iter().position(|m| std::ptr::eq(m, p)).unwrap();
         let records = of_kind(&msgs, MesgNum::Record);
         assert!(pos(records[4]) < pos(markers[0]) && pos(markers[0]) < pos(records[5]));
+    }
+
+    /// A sensor of the ride as head units write it (spec 14 Phase 17 A6).
+    pub(crate) fn power_meter() -> DeviceInfo {
+        DeviceInfo {
+            source: Some(SourceType::AntPlus),
+            device_type: Some(11),
+            ant_device_number: Some(4004),
+            ant_transmission_type: Some(5),
+            manufacturer: Some(255),
+            product: Some(0x0100),
+            serial_number: Some(0x0042_0FA4),
+            software_version: Some(1.2),
+            hardware_version: Some(2),
+            battery_voltage: Some(3.1),
+            battery_status: Some(2),
+            battery_level: None,
+            product_name: Some("ANT+ power 4004".into()),
+        }
+    }
+
+    /// The sensors' `device_info` (spec 14 Phase 17 A6), read by an
+    /// independent reader: index 1, 2 after the recorder's 0, source type
+    /// antplus, the ANT+ ids, manufacturer, product, serial, versions and
+    /// battery; unknown values left out.
+    #[test]
+    fn sensors_are_device_info_messages() {
+        let mut a = ride(5, false);
+        let strap = DeviceInfo {
+            source: Some(SourceType::AntPlus),
+            device_type: Some(120),
+            ant_device_number: Some(12345),
+            ant_transmission_type: Some(1),
+            ..Default::default()
+        };
+        a.devices = vec![power_meter(), strap];
+        let msgs = fitparser::from_bytes(&encode(&a)).expect("valid FIT file");
+        let infos = of_kind(&msgs, MesgNum::DeviceInfo);
+        assert_eq!(infos.len(), 3, "the recorder and two sensors");
+        let text = |m: &FitDataRecord, name: &str| field(m, name).map(|v| v.to_string());
+        let n = |m: &FitDataRecord, name: &str| field(m, name).and_then(num);
+        let pm = infos[1];
+        assert_eq!(n(pm, "device_index"), Some(1.0), "{pm:?}");
+        assert_eq!(text(pm, "source_type").as_deref(), Some("antplus"));
+        assert_eq!(n(pm, "ant_device_number"), Some(4004.0));
+        assert_eq!(n(pm, "ant_transmission_type"), Some(5.0));
+        assert_eq!(text(pm, "ant_network").as_deref(), Some("antplus"));
+        // The device type is read as the ANT+ one for an ANT+ source.
+        let dt = pm
+            .fields()
+            .iter()
+            .find(|f| f.name().contains("device_type"))
+            .map(|f| f.value().to_string());
+        assert_eq!(dt.as_deref(), Some("bike_power"), "{pm:?}");
+        assert_eq!(text(pm, "manufacturer").as_deref(), Some("development"));
+        assert_eq!(n(pm, "serial_number"), Some(f64::from(0x0042_0FA4u32)));
+        assert_eq!(n(pm, "product"), Some(256.0));
+        assert!((n(pm, "software_version").unwrap() - 1.2).abs() < 1e-6);
+        assert_eq!(n(pm, "hardware_version"), Some(2.0));
+        assert!((n(pm, "battery_voltage").unwrap() - 3.1).abs() < 0.004);
+        assert_eq!(text(pm, "battery_status").as_deref(), Some("good"));
+        assert_eq!(text(pm, "product_name").as_deref(), Some("ANT+ power 4004"));
+        let hr = infos[2];
+        assert_eq!(n(hr, "device_index"), Some(2.0));
+        assert_eq!(n(hr, "ant_device_number"), Some(12345.0));
+        for absent in [
+            "manufacturer",
+            "serial_number",
+            "battery_voltage",
+            "battery_status",
+        ] {
+            assert!(field(hr, absent).is_none(), "{absent}: {hr:?}");
+        }
+        // The recorder stays device 0 with its software version.
+        assert_eq!(text(infos[0], "device_index").as_deref(), Some("creator"));
+        assert_eq!(n(infos[0], "software_version"), Some(0.1));
     }
 
     #[test]

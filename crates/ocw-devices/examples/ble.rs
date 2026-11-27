@@ -108,6 +108,7 @@ fn run(id: &str, control: bool, duration: Duration) {
                 DeviceEvent::Connected { kind } => println!("{t:6.1} s  connected: {kind}"),
                 DeviceEvent::Disconnected => println!("{t:6.1} s  disconnected (reconnecting)"),
                 DeviceEvent::Failed { reason } => println!("{t:6.1} s  failed: {}", reason.text()),
+                other => println!("{t:6.1} s  {other:?}"),
             }
         }
         std::thread::sleep(Duration::from_millis(50));

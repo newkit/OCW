@@ -3,9 +3,12 @@
 //! sampled once per second ([`RideRecorder`]); when the ride ends it is a
 //! FIT activity ([`FinishedRide`], `ocw_fit::encode`) – a file on the
 //! desktop (`<data dir>/ocw/rides/`), a download in the browser – with the
-//! virtual GPS track when the route lies on real roads.
+//! virtual GPS track when the route lies on real roads, and a FIT
+//! `device_info` for each sensor in use (ANT+ sensors: spec 14 Phase 17
+//! A6).
 
-use ocw_fit::{Activity, Marker, MarkerKind, Record};
+use ocw_devices::{SensorInfo, SensorSource};
+use ocw_fit::{Activity, DeviceInfo, Marker, MarkerKind, Record, SourceType};
 use serde::{Deserialize, Serialize};
 
 use crate::client::ClientCore;
@@ -79,6 +82,8 @@ pub struct RideRecorder {
     /// A pause began since the last record (10D.2): the next record
     /// credits no distance (the rider's roll to a stop).
     after_pause: bool,
+    /// The sensors used during the ride (their newest info).
+    sensors: Vec<SensorInfo>,
 }
 
 impl RideRecorder {
@@ -95,7 +100,29 @@ impl RideRecorder {
             markers: Vec::new(),
             last_crash_s: None,
             after_pause: false,
+            sensors: Vec::new(),
         }
+    }
+
+    /// The sensors in use now (the client's list): kept for the FIT file's
+    /// `device_info`, one per sensor, with its newest info; a sensor that
+    /// went during the ride stays in it. Ignored before the first record.
+    pub fn note_sensors(&mut self, sensors: &[SensorInfo]) {
+        if self.start_unix_s.is_none() {
+            return;
+        }
+        for i in sensors {
+            match self.sensors.iter_mut().find(|s| s.same(i)) {
+                Some(s) if s != i => *s = *i,
+                Some(_) => {}
+                None => self.sensors.push(*i),
+            }
+        }
+    }
+
+    /// The sensors of this ride so far.
+    pub fn sensors(&self) -> &[SensorInfo] {
+        &self.sensors
     }
 
     /// A crash that began at game time `game_s` (spec §14 Phase 12E: a
@@ -210,6 +237,7 @@ impl RideRecorder {
         let records = std::mem::take(&mut self.records);
         let laps = std::mem::take(&mut self.laps);
         let markers = std::mem::take(&mut self.markers);
+        let sensors = std::mem::take(&mut self.sensors);
         let start_unix_s = self.start_unix_s.take()?;
         self.last = None;
         self.after_pause = false;
@@ -225,6 +253,7 @@ impl RideRecorder {
                 software_version: software_version(),
                 laps,
                 markers,
+                devices: sensors.iter().map(device_info).collect(),
             },
             meta: RideMeta {
                 name: format!("Open Cycling World: {}", self.route_name),
@@ -236,6 +265,32 @@ impl RideRecorder {
                 folder: None,
             },
         })
+    }
+}
+
+/// A sensor as a FIT `device_info` (spec 14 Phase 17 A6).
+pub fn device_info(s: &SensorInfo) -> DeviceInfo {
+    let SensorSource::AntPlus {
+        device_type,
+        device_number,
+        trans_type,
+    } = s.source;
+    let name = ocw_devices::ant::AntProfile::from_device_type(device_type)
+        .map(|p| format!("{} {device_number}", p.label()));
+    DeviceInfo {
+        source: Some(SourceType::AntPlus),
+        device_type: Some(device_type),
+        ant_device_number: Some(device_number),
+        ant_transmission_type: (trans_type != 0).then_some(trans_type),
+        manufacturer: s.manufacturer,
+        product: s.product,
+        serial_number: s.serial,
+        software_version: s.software_version,
+        hardware_version: s.hardware_version,
+        battery_voltage: s.battery_volts,
+        battery_status: s.battery_status,
+        battery_level: s.battery_pct,
+        product_name: name,
     }
 }
 
@@ -297,6 +352,7 @@ pub fn observe_client(rec: &mut RideRecorder, client: &ClientCore, game_s: f64, 
         sample(client, game_s),
         wall_unix_s,
     );
+    rec.note_sensors(client.sensors());
     if let Some(crash) = client.own_crash(game_s) {
         rec.mark_crash(game_s - crash.elapsed_s);
     }
@@ -342,6 +398,43 @@ mod tests {
             .map(|m| m.elapsed_s)
             .collect();
         assert_eq!(crashes, vec![2.0, 30.0], "one marker per crash");
+    }
+
+    /// The sensors in use become the FIT file's `device_info`s, one per
+    /// sensor with its newest info, read back by the FIT reader (spec 14
+    /// Phase 17 A6).
+    #[test]
+    fn the_sensors_are_device_info_in_the_fit_file() {
+        let src = |t: u8, n: u16| SensorSource::AntPlus {
+            device_type: t,
+            device_number: n,
+            trans_type: 5,
+        };
+        let mut pm = SensorInfo::new(src(11, 4004));
+        let cad = SensorInfo::new(src(121, 2222));
+        let mut r = RideRecorder::new("Loop");
+        r.note_sensors(&[pm]);
+        assert!(r.sensors().is_empty(), "before the first record");
+        let route = ocw_world::Route::test_loop();
+        r.observe(&route, None, sample(0.0, 0.0), 1_800_000_000);
+        r.note_sensors(&[pm, cad]);
+        pm.manufacturer = Some(255);
+        pm.battery_volts = Some(3.1);
+        pm.battery_status = Some(2);
+        r.note_sensors(&[pm]);
+        r.observe(&route, None, sample(5.0, 40.0), 1_800_000_005);
+        let ride = r.finish().unwrap();
+        let d = &ride.activity.devices;
+        assert_eq!(d.len(), 2);
+        assert_eq!(d[0], device_info(&pm));
+        assert_eq!(d[0].product_name.as_deref(), Some("ANT+ power 4004"));
+        assert_eq!(d[1].device_type, Some(121));
+        let back = ocw_fit::decode(&ocw_fit::encode(&ride.activity)).unwrap();
+        assert_eq!(back.devices[0].manufacturer, Some(255));
+        assert_eq!(back.devices[0].source, Some(SourceType::AntPlus));
+        assert_eq!(back.devices[1].ant_device_number, Some(2222));
+        // The next ride starts without them (until they are noted again).
+        assert!(r.sensors().is_empty());
     }
 
     fn sample(t: f64, distance: f64) -> Sample {

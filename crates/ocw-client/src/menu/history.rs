@@ -940,6 +940,7 @@ mod tests {
                 software_version: 1,
                 laps: Vec::new(),
                 markers: Vec::new(),
+                devices: Vec::new(),
             };
             h.add(RideEntry::from_activity(
                 &a,

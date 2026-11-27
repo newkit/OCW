@@ -168,6 +168,7 @@ impl Plugin for MenuPlugin {
                                 "bridge",
                                 "ant",
                                 "devices",
+                                "device",
                                 "traffic",
                             ])
                             .default_value("toggle"),
@@ -175,7 +176,7 @@ impl Plugin for MenuPlugin {
                     .arg(
                         Arg::new("n")
                             .value_parser(clap::value_parser!(usize))
-                            .help("ride: the training history's ride (1 = the newest)"),
+                            .help("ride: the training history's ride (1 = the newest); device: the Devices list's device (1 = the first)"),
                     ),
                 |world, m| {
                     let mut state = world.resource_mut::<MenuState>();
@@ -211,6 +212,10 @@ impl Plugin for MenuPlugin {
                         Some("ant") => Action::OpenSub(sub::Page::Ant),
                         // Settings → Trainer → Devices (scenes).
                         Some("devices") => Action::OpenSub(sub::Page::Devices),
+                        // One device's page (scenes, the ANT+ pictures).
+                        Some("device") => Action::OpenSub(sub::Page::Device(
+                            m.get_one::<usize>("n").copied().unwrap_or(1).max(1) - 1,
+                        )),
                         // Settings → Traffic (spec 14 Phase 18; scenes).
                         Some("traffic") => Action::OpenSub(sub::Page::Traffic),
                         _ if open => Action::Close,
@@ -1013,6 +1018,9 @@ mod tests {
                 link: Link::Connected("Wahoo KICKR".into()),
                 remembered: true,
                 heart_rate: None,
+                cadence: None,
+                reading: None,
+                calibration: None,
             }],
             ..Default::default()
         };

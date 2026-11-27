@@ -1,10 +1,14 @@
 //! A simulated ANT stick (spec 14 Phase 17 Q2: built and tested without
 //! hardware): it reads the host's messages, answers like a stick (channel
 //! responses, start-up, capabilities, channel IDs) and broadcasts the pages
-//! of simulated heart-rate straps and power meters on the open channels
-//! that match them, at the channel period – with the toggle bit,
-//! background pages, R-R timing, extended data (channel ID, signal),
-//! missed messages, lost sensors and search timeouts.
+//! of simulated heart-rate straps, power meters (power-only, or torque
+//! pages only), and speed / cadence sensors on the open channels that
+//! match them, at the channel period – with the toggle bit, background and
+//! common pages, R-R timing, extended data (channel ID, signal), missed
+//! messages, lost sensors and search timeouts. Acknowledged messages from
+//! the host reach the tracked sensor (`EVENT_TRANSFER_TX_COMPLETED`, or
+//! `_FAILED` while it is told to fail them): a power meter answers a
+//! calibration request with its calibration page.
 //!
 //! Pure (the time is given), so the stick core's tests step it by hand;
 //! the native `SimTransport` runs it on the wall clock for the app
@@ -18,8 +22,10 @@
 use std::time::Duration;
 
 use super::codec::{Decoder, Extended, Message, code, id, lib_config};
+use super::common;
 use super::hr;
-use super::power;
+use super::power::{self, Torque};
+use super::spdcad::{self, SpdCadKind};
 use super::stick::response;
 use super::{AntProfile, ChannelId, NetworkKey};
 
@@ -27,12 +33,38 @@ use super::{AntProfile, ChannelId, NetworkKey};
 pub const CHANNELS: usize = 8;
 /// Missed messages before a channel goes back to search.
 pub const MISSES_TO_SEARCH: u32 = 4;
+/// The simulated wheel's circumference (m): 700 × 25C.
+pub const SIM_WHEEL_M: f64 = 2.105;
+/// A simulated power meter's zero offset (its own units).
+pub const SIM_ZERO_OFFSET: i16 = 512;
+/// Every this many messages a power meter sends a common page instead.
+const COMMON_EVERY: u32 = 8;
 
 /// What a simulated sensor is.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SimKind {
-    HeartRate { bpm: f64 },
-    Power { watts: f64, cadence: f64 },
+    HeartRate {
+        bpm: f64,
+    },
+    /// A power meter with the power-only page.
+    Power {
+        watts: f64,
+        cadence: f64,
+    },
+    /// A power meter with torque pages only: crank torque (0x12), or wheel
+    /// torque (0x11, the wheel at `kmh`).
+    Torque {
+        watts: f64,
+        cadence: f64,
+        crank: bool,
+        kmh: f64,
+    },
+    /// A speed / cadence sensor (types 121 – 123).
+    SpeedCadence {
+        kind: SpdCadKind,
+        rpm: f64,
+        kmh: f64,
+    },
 }
 
 /// One simulated sensor.
@@ -49,7 +81,17 @@ pub struct SimSensor {
     pub beating: bool,
     /// A legacy strap: no toggle bit, no pages.
     pub legacy: bool,
-    // The strap's generator.
+    /// Power meters: auto zero (`None`: not supported).
+    pub auto_zero: Option<bool>,
+    /// Power meters: a manual zero fails (the cranks move).
+    pub calibration_fails: bool,
+    /// Power meters: they never answer a calibration.
+    pub calibration_silent: bool,
+    /// Acknowledged messages that fail to arrive before one gets through.
+    pub ack_failures: u32,
+    /// Acknowledged messages it received (calibration requests …).
+    pub received: Vec<[u8; 8]>,
+    // The generator.
     messages: u32,
     last_beat_s: f64,
     prev_beat_s: f64,
@@ -57,6 +99,18 @@ pub struct SimSensor {
     count: u8,
     events: u8,
     accumulated: u16,
+    /// Torque meters and speed / cadence sensors: the next crank / wheel
+    /// event (s), the last one, the counts and sums.
+    next_crank_s: f64,
+    crank_at_s: f64,
+    crank_revs: u16,
+    next_wheel_s: f64,
+    wheel_at_s: f64,
+    wheel_revs: u16,
+    period_sum: f64,
+    torque_sum: f64,
+    /// A calibration answer to send (after this many messages).
+    answer: Option<(u32, [u8; 8])>,
 }
 
 impl SimSensor {
@@ -68,6 +122,11 @@ impl SimSensor {
             present: true,
             beating: true,
             legacy: false,
+            auto_zero: Some(false),
+            calibration_fails: false,
+            calibration_silent: false,
+            ack_failures: 0,
+            received: Vec::new(),
             messages: 0,
             last_beat_s: 0.0,
             prev_beat_s: 0.0,
@@ -75,6 +134,15 @@ impl SimSensor {
             count: 0,
             events: 0,
             accumulated: 0,
+            next_crank_s: 0.0,
+            crank_at_s: 0.0,
+            crank_revs: 0,
+            next_wheel_s: 0.0,
+            wheel_at_s: 0.0,
+            wheel_revs: 0,
+            period_sum: 0.0,
+            torque_sum: 0.0,
+            answer: None,
         }
     }
 
@@ -94,10 +162,127 @@ impl SimSensor {
         )
     }
 
+    /// A crank torque meter that sends no power-only page.
+    pub fn torque_meter(n: u16, watts: f64, cadence: f64) -> Self {
+        Self::new(
+            ChannelId::new(n, AntProfile::BikePower.device_type(), 5),
+            SimKind::Torque {
+                watts,
+                cadence,
+                crank: true,
+                kmh: 0.0,
+            },
+        )
+    }
+
+    /// A wheel torque meter (a power hub) at `kmh`.
+    pub fn wheel_torque_meter(n: u16, watts: f64, kmh: f64) -> Self {
+        Self::new(
+            ChannelId::new(n, AntProfile::BikePower.device_type(), 5),
+            SimKind::Torque {
+                watts,
+                cadence: 0.0,
+                crank: false,
+                kmh,
+            },
+        )
+    }
+
+    /// A speed / cadence sensor of `profile` (121, 122 or 123).
+    pub fn speed_cadence(n: u16, profile: AntProfile, rpm: f64, kmh: f64) -> Self {
+        let kind = match profile {
+            AntProfile::Cadence => SpdCadKind::Cadence,
+            AntProfile::Speed => SpdCadKind::Speed,
+            _ => SpdCadKind::Combined,
+        };
+        let device_type = match kind {
+            SpdCadKind::Combined => AntProfile::SpeedCadence,
+            SpdCadKind::Cadence => AntProfile::Cadence,
+            SpdCadKind::Speed => AntProfile::Speed,
+        }
+        .device_type();
+        Self::new(
+            ChannelId::new(n, device_type, 1),
+            SimKind::SpeedCadence { kind, rpm, kmh },
+        )
+    }
+
+    /// The made-up identity of simulated power meters: manufacturer 255
+    /// (development), hardware 2, model 0x0100, software 1.2, a serial
+    /// from the device number, 3.1 V good.
+    fn common_page(&self, i: u32) -> [u8; 8] {
+        let n = self.id.device_number;
+        match i % 4 {
+            0 => common::manufacturer_page(255, 2, 0x0100),
+            1 => common::product_page(12, 0xFF, 0x0042_0000 | u32::from(n)),
+            2 => common::battery_page(3.1, 2),
+            _ => match self.auto_zero {
+                Some(on) => power::auto_zero_support(on),
+                None => common::battery_page(3.1, 2),
+            },
+        }
+    }
+
+    /// An acknowledged message from the host reached it.
+    fn on_host_page(&mut self, p: [u8; 8]) {
+        self.received.push(p);
+        if !matches!(self.kind, SimKind::Power { .. } | SimKind::Torque { .. })
+            || p[0] != power::PAGE_CALIBRATION
+            || self.calibration_silent
+        {
+            return;
+        }
+        let answer = match p[1] {
+            power::cal::REQUEST => power::calibration_response(
+                !self.calibration_fails,
+                self.auto_zero,
+                SIM_ZERO_OFFSET,
+            ),
+            power::cal::AUTO_ZERO_CONFIG => {
+                if self.auto_zero.is_some() {
+                    self.auto_zero = Some(p[2] == 1);
+                }
+                power::calibration_response(true, self.auto_zero, SIM_ZERO_OFFSET)
+            }
+            _ => return,
+        };
+        // A crank meter takes a moment.
+        self.answer = Some((2, answer));
+    }
+
+    /// Crank (or wheel) events up to `t` for a rate (per second): their
+    /// count added, the last event's time.
+    fn advance(next: &mut f64, last: &mut f64, t: f64, per_s: f64) -> u32 {
+        if per_s <= 0.0 {
+            *next = t + 1.0;
+            return 0;
+        }
+        let step = 1.0 / per_s;
+        if *next == 0.0 {
+            // The counters start with an event now.
+            *next = t + step;
+            *last = t;
+        }
+        let mut n = 0;
+        while t >= *next {
+            *last = *next;
+            *next += step;
+            n += 1;
+        }
+        n
+    }
+
     /// The next page at time `t` (s).
     fn page(&mut self, t: f64) -> [u8; 8] {
         let n = self.messages;
         self.messages += 1;
+        if let Some((wait, a)) = self.answer {
+            if wait == 0 {
+                self.answer = None;
+                return a;
+            }
+            self.answer = Some((wait - 1, a));
+        }
         match self.kind {
             SimKind::HeartRate { bpm } => {
                 if self.next_beat_s == 0.0 {
@@ -136,11 +321,98 @@ impl SimSensor {
                 hr::page(number, toggle, b, time, self.count, computed)
             }
             SimKind::Power { watts, cadence } => {
+                if n % COMMON_EVERY == COMMON_EVERY - 1 {
+                    return self.common_page(n / COMMON_EVERY);
+                }
                 let w = watts.round().clamp(0.0, 65535.0) as u16;
                 self.events = self.events.wrapping_add(1);
                 self.accumulated = self.accumulated.wrapping_add(w);
                 let cad = (cadence > 0.0).then(|| cadence.round().clamp(0.0, 254.0) as u8);
                 power::power_only(self.events, cad, self.accumulated, w)
+            }
+            SimKind::Torque {
+                watts,
+                cadence,
+                crank,
+                kmh,
+            } => {
+                if n % COMMON_EVERY == COMMON_EVERY - 1 {
+                    return self.common_page(n / COMMON_EVERY);
+                }
+                // Event-synchronous: one event per crank (or wheel)
+                // revolution, with its period and its torque.
+                let per_s = if crank {
+                    cadence / 60.0
+                } else {
+                    kmh / 3.6 / SIM_WHEEL_M
+                };
+                let revs = Self::advance(&mut self.next_crank_s, &mut self.crank_at_s, t, per_s);
+                if revs > 0 {
+                    let omega = 2.0 * std::f64::consts::PI * per_s;
+                    let torque_nm = watts / omega;
+                    for _ in 0..revs {
+                        self.events = self.events.wrapping_add(1);
+                        self.period_sum += 2048.0 / per_s;
+                        self.torque_sum += torque_nm * 32.0;
+                    }
+                }
+                let wrap = |x: f64| (x.round() as u64 % 65536) as u16;
+                let instant = if crank {
+                    cadence.round().clamp(0.0, 254.0) as u8
+                } else {
+                    0xFF
+                };
+                Torque {
+                    event: self.events,
+                    ticks: self.events,
+                    cadence: instant,
+                    period: wrap(self.period_sum),
+                    torque: wrap(self.torque_sum),
+                }
+                .page(if crank {
+                    power::PAGE_CRANK_TORQUE
+                } else {
+                    power::PAGE_WHEEL_TORQUE
+                })
+            }
+            SimKind::SpeedCadence { kind, rpm, kmh } => {
+                let c = Self::advance(&mut self.next_crank_s, &mut self.crank_at_s, t, rpm / 60.0);
+                self.crank_revs = self.crank_revs.wrapping_add(c as u16);
+                let w = Self::advance(
+                    &mut self.next_wheel_s,
+                    &mut self.wheel_at_s,
+                    t,
+                    kmh / 3.6 / SIM_WHEEL_M,
+                );
+                self.wheel_revs = self.wheel_revs.wrapping_add(w as u16);
+                let ticks = |s: f64| ((s * 1024.0) as u64 % 65536) as u16;
+                if kind == SpdCadKind::Combined {
+                    return spdcad::combined_page(
+                        ticks(self.crank_at_s),
+                        self.crank_revs,
+                        ticks(self.wheel_at_s),
+                        self.wheel_revs,
+                    );
+                }
+                let (time, revs) = if kind == SpdCadKind::Cadence {
+                    (ticks(self.crank_at_s), self.crank_revs)
+                } else {
+                    (ticks(self.wheel_at_s), self.wheel_revs)
+                };
+                let toggle = (n / 4) % 2 == 1;
+                let (number, b) = if n % 16 == 15 {
+                    match (n / 16) % 3 {
+                        // Manufacturer 255 (development), serial upper 0x0042.
+                        0 => (2, [0xFF, 0x42, 0x00]),
+                        // Hardware 1, software 2.0, model 3.
+                        1 => (3, [1, 20, 3]),
+                        // 2.9 V, good.
+                        _ => (4, [0xFF, 230, 0x22]),
+                    }
+                } else {
+                    (0, [0xFF; 3])
+                };
+                spdcad::page(number, toggle, b, time, revs)
             }
         }
     }
@@ -269,6 +541,42 @@ impl SimRadio {
 
     pub fn sensors(&self) -> &[SimSensor] {
         &self.sensors
+    }
+
+    /// A sensor to change (tests: make its calibration fail, its
+    /// acknowledged messages get lost, …).
+    pub fn sensor(&mut self, n: u16) -> Option<&mut SimSensor> {
+        self.sensor_mut(n)
+    }
+
+    /// A power meter's power, a cadence sensor's cadence (rpm) and a speed
+    /// sensor's speed (km/h).
+    pub fn set_power(&mut self, n: u16, w: f64) {
+        if let Some(s) = self.sensor_mut(n) {
+            match &mut s.kind {
+                SimKind::Power { watts, .. } | SimKind::Torque { watts, .. } => *watts = w,
+                _ => {}
+            }
+        }
+    }
+
+    pub fn set_cadence(&mut self, n: u16, c: f64) {
+        if let Some(s) = self.sensor_mut(n) {
+            match &mut s.kind {
+                SimKind::Power { cadence, .. } | SimKind::Torque { cadence, .. } => *cadence = c,
+                SimKind::SpeedCadence { rpm, .. } => *rpm = c,
+                _ => {}
+            }
+        }
+    }
+
+    pub fn set_speed(&mut self, n: u16, v: f64) {
+        if let Some(s) = self.sensor_mut(n) {
+            match &mut s.kind {
+                SimKind::SpeedCadence { kmh, .. } | SimKind::Torque { kmh, .. } => *kmh = v,
+                _ => {}
+            }
+        }
     }
 
     /// What it would send to the host.
@@ -412,6 +720,35 @@ impl SimRadio {
                 c.next_at = now + c.period();
                 self.respond(m, code::RESPONSE_NO_ERROR);
             }
+            id::ACKNOWLEDGED_DATA if valid && m.data.len() >= 9 => {
+                let c = &self.channels[ch];
+                let target = c
+                    .tracking
+                    .then_some(c.paired)
+                    .flatten()
+                    .map(|p| p.device_number);
+                let mut payload = [0u8; 8];
+                payload.copy_from_slice(&m.data[1..9]);
+                let delivered = match target.and_then(|n| self.sensor_mut(n)) {
+                    Some(s) if s.present && s.ack_failures > 0 => {
+                        s.ack_failures -= 1;
+                        false
+                    }
+                    Some(s) if s.present => {
+                        s.on_host_page(payload);
+                        true
+                    }
+                    _ => false,
+                };
+                self.event(
+                    ch as u8,
+                    if delivered {
+                        code::EVENT_TRANSFER_TX_COMPLETED
+                    } else {
+                        code::EVENT_TRANSFER_TX_FAILED
+                    },
+                );
+            }
             id::CLOSE_CHANNEL if valid => {
                 if !self.channels[ch].open {
                     self.respond(m, wrong);
@@ -510,7 +847,10 @@ impl SimRadio {
 }
 
 /// Reads a `--ant-sim` list: `hr:12345:142,hr:23456:128,power:4004:230`
-/// (kind, device number, bpm or watts; `power:N:W:RPM` with a cadence).
+/// (kind, device number, bpm or watts; `power:N:W:RPM` with a cadence);
+/// `torque:N:W[:RPM]` a crank torque meter without the power-only page,
+/// `wheeltorque:N:W[:KMH]` a power hub, `spdcad:N:RPM:KMH` a combined
+/// speed / cadence sensor, `cadence:N:RPM`, `speed:N:KMH`.
 pub fn parse_sensors(spec: &str) -> Result<Vec<SimSensor>, String> {
     let mut out = Vec::new();
     for item in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
@@ -533,7 +873,32 @@ pub fn parse_sensors(spec: &str) -> Result<Vec<SimSensor>, String> {
                 let cadence = if parts.len() > 3 { num(3)? } else { 90.0 };
                 out.push(SimSensor::power_meter(n, num(2)?, cadence));
             }
-            k => return Err(format!("{item}: kind {k} is not hr or power")),
+            "torque" => {
+                let cadence = if parts.len() > 3 { num(3)? } else { 90.0 };
+                out.push(SimSensor::torque_meter(n, num(2)?, cadence));
+            }
+            "wheeltorque" => {
+                let kmh = if parts.len() > 3 { num(3)? } else { 30.0 };
+                out.push(SimSensor::wheel_torque_meter(n, num(2)?, kmh));
+            }
+            "spdcad" => out.push(SimSensor::speed_cadence(
+                n,
+                AntProfile::SpeedCadence,
+                num(2)?,
+                num(3)?,
+            )),
+            "cadence" => out.push(SimSensor::speed_cadence(
+                n,
+                AntProfile::Cadence,
+                num(2)?,
+                0.0,
+            )),
+            "speed" => out.push(SimSensor::speed_cadence(n, AntProfile::Speed, 0.0, num(2)?)),
+            k => {
+                return Err(format!(
+                    "{item}: kind {k} is not hr, power, torque, wheeltorque, spdcad, cadence or speed"
+                ));
+            }
         }
     }
     if out.is_empty() {
@@ -578,6 +943,56 @@ mod tests {
     }
 
     #[test]
+    fn the_simulated_meters_and_sensors_follow_their_profiles() {
+        use crate::ant::power::PowerDecoder;
+        use crate::ant::spdcad::SpdCadDecoder;
+        let period = 8182.0 / 32768.0;
+        // A crank torque meter: 250 W at 85 rpm from torque pages alone.
+        let mut s = SimSensor::torque_meter(9, 250.0, 85.0);
+        let mut d = PowerDecoder::new();
+        let mut watts = Vec::new();
+        let mut cad = Vec::new();
+        for i in 1..400u32 {
+            let t = f64::from(i) * period;
+            let p = s.page(t);
+            assert_ne!(p[0], power::PAGE_POWER_ONLY);
+            if let Some(r) = d.on_page(&p, Duration::from_secs_f64(t)) {
+                watts.push(r.watts);
+                cad.extend(r.cadence_rpm);
+            }
+        }
+        assert!(watts.len() > 80, "{}", watts.len());
+        assert!(watts.iter().all(|w| (w - 250.0).abs() < 1.5), "{watts:?}");
+        assert!(cad.iter().all(|c| (c - 85.0).abs() < 0.2), "{cad:?}");
+        assert_eq!(d.common.manufacturer, Some(255));
+        assert_eq!(d.common.serial, Some(0x0042_0009));
+        assert_eq!(d.auto_zero, Some(false));
+        // A combined speed / cadence sensor at 90 rpm and 32 km/h.
+        let mut s = SimSensor::speed_cadence(21, AntProfile::SpeedCadence, 90.0, 32.0);
+        let mut d = SpdCadDecoder::new(SpdCadKind::Combined);
+        let mut kmh = Vec::new();
+        let mut rpm = Vec::new();
+        for i in 1..400u32 {
+            let t = f64::from(i) * 8086.0 / 32768.0;
+            let r = d.on_page(&s.page(t), Duration::from_secs_f64(t));
+            rpm.extend(r.cadence_rpm);
+            kmh.extend(r.wheel_rps.map(|w| w * SIM_WHEEL_M * 3.6));
+        }
+        assert!(rpm.iter().all(|c| (c - 90.0).abs() < 0.5), "{rpm:?}");
+        assert!(kmh.iter().all(|v| (v - 32.0).abs() < 0.2), "{kmh:?}");
+        // A cadence sensor with its pages.
+        let mut s = SimSensor::speed_cadence(22, AntProfile::Cadence, 75.0, 0.0);
+        let mut d = SpdCadDecoder::new(SpdCadKind::Cadence);
+        for i in 1..100u32 {
+            let t = f64::from(i) * 8102.0 / 32768.0;
+            d.on_page(&s.page(t), Duration::from_secs_f64(t));
+        }
+        assert!(d.pages_valid());
+        assert_eq!(d.manufacturer, Some(255));
+        assert_eq!(d.model, Some(3));
+    }
+
+    #[test]
     fn the_stick_answers_and_rejects_like_one() {
         let mut r = SimRadio::new(None);
         r.host(&Message::reset().encode(), Duration::ZERO);
@@ -608,6 +1023,21 @@ mod tests {
                 cadence: 85.0
             }
         );
+        let s = parse_sensors("torque:9:250:85,spdcad:21:90:32,cadence:22:80,speed:23:28").unwrap();
+        assert_eq!(s[0].id, ChannelId::new(9, 11, 5));
+        assert!(matches!(s[0].kind, SimKind::Torque { crank: true, .. }));
+        assert_eq!(s[1].id, ChannelId::new(21, 121, 1));
+        assert_eq!(s[2].id, ChannelId::new(22, 122, 1));
+        assert_eq!(s[3].id, ChannelId::new(23, 123, 1));
+        assert_eq!(
+            s[3].kind,
+            SimKind::SpeedCadence {
+                kind: SpdCadKind::Speed,
+                rpm: 0.0,
+                kmh: 28.0
+            }
+        );
+        assert!(parse_sensors("spdcad:21:90").is_err());
         assert!(parse_sensors("").is_err());
         assert!(parse_sensors("fec:1:2").is_err());
         assert!(parse_sensors("hr:0:100").is_err());

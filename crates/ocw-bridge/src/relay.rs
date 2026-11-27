@@ -194,6 +194,13 @@ impl Relay {
                 name: name.into(),
                 state: DeviceState::Failed,
             },
+            // A cadence sensor's cadence, the wheel speed, calibrations and
+            // sensor info stay on the desktop (the bridge relays the ride's
+            // readings: power with cadence, heart rate).
+            DeviceEvent::Cadence { .. }
+            | DeviceEvent::WheelSpeed { .. }
+            | DeviceEvent::Calibration(_)
+            | DeviceEvent::Info(_) => return None,
         })
     }
 }

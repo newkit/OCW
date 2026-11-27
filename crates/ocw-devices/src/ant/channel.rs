@@ -88,6 +88,11 @@ pub enum ChannelEvent {
     Unassigned,
     /// The command `command` failed with `code`.
     Failed { command: u8, code: u8 },
+    /// An acknowledged message we sent reached the sensor
+    /// (`EVENT_TRANSFER_TX_COMPLETED`).
+    TransferDone,
+    /// It did not (`EVENT_TRANSFER_TX_FAILED`): send it again.
+    TransferFailed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -261,6 +266,8 @@ impl Channel {
                         self.state = ChannelState::Searching;
                     }
                 }
+                code::EVENT_TRANSFER_TX_COMPLETED => out.push(ChannelEvent::TransferDone),
+                code::EVENT_TRANSFER_TX_FAILED => out.push(ChannelEvent::TransferFailed),
                 code::EVENT_CHANNEL_CLOSED => {
                     if self.waiting.map(|(w, _)| w) == Some(Wait::Response(id::CLOSE_CHANNEL)) {
                         self.waiting = None;

@@ -10,7 +10,11 @@
 //!   lost, closed;
 //! - [`hr`] (pure): the ANT+ heart-rate pages (toggle bit, legacy straps,
 //!   beat time / count, R-R intervals, staleness, manufacturer / product /
-//!   battery pages); [`power`] (pure): the bike-power page 0x10;
+//!   battery pages); [`power`] (pure): the bike-power pages – power-only
+//!   0x10, wheel and crank torque 0x11 / 0x12, calibration 0x01;
+//!   [`spdcad`] (pure): speed and cadence sensors (types 121 – 123);
+//!   [`common`] (pure): the common pages 0x50 – 0x52 (manufacturer,
+//!   product, battery: the FIT file's `device_info`);
 //! - [`stick`] (pure): the stick core – reset, capabilities, network key,
 //!   extended data once; channels handed out to sensors and the scan,
 //!   messages routed by channel number, reconnects. Driven by bytes and a
@@ -36,9 +40,11 @@
 
 pub mod channel;
 pub mod codec;
+pub mod common;
 pub mod hr;
 pub mod power;
 pub mod sim;
+pub mod spdcad;
 pub mod stick;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -153,30 +159,56 @@ pub enum KeyError {
 pub enum AntProfile {
     /// Heart-rate monitor (device type 120, period 8070).
     HeartRate,
-    /// Bike power (device type 11, period 8182): the power-only page.
+    /// Bike power (device type 11, period 8182): the power-only page, the
+    /// torque pages, calibration.
     BikePower,
+    /// Combined speed and cadence sensor (device type 121, period 8086).
+    SpeedCadence,
+    /// Cadence sensor (device type 122, period 8102).
+    Cadence,
+    /// Speed sensor (device type 123, period 8118).
+    Speed,
 }
 
 impl AntProfile {
-    pub const ALL: [Self; 2] = [Self::HeartRate, Self::BikePower];
+    pub const ALL: [Self; 5] = [
+        Self::HeartRate,
+        Self::BikePower,
+        Self::SpeedCadence,
+        Self::Cadence,
+        Self::Speed,
+    ];
 
     /// The ANT+ device type.
     pub fn device_type(self) -> u8 {
         match self {
             Self::HeartRate => 120,
             Self::BikePower => 11,
+            Self::SpeedCadence => 121,
+            Self::Cadence => 122,
+            Self::Speed => 123,
         }
+    }
+
+    /// Whether it gives a cadence of its own (a cadence sensor, not a
+    /// power meter).
+    pub fn is_cadence_sensor(self) -> bool {
+        matches!(self, Self::SpeedCadence | Self::Cadence)
     }
 
     pub fn from_device_type(t: u8) -> Option<Self> {
         Self::ALL.into_iter().find(|p| p.device_type() == t & 0x7F)
     }
 
-    /// The channel period (1/32768 s): 8070 ≈ 4.06 Hz, 8182 ≈ 4.00 Hz.
+    /// The channel period (1/32768 s): 8070 ≈ 4.06 Hz, 8182 ≈ 4.00 Hz,
+    /// speed / cadence 8086, 8102, 8118 (≈ 4 Hz each).
     pub fn period(self) -> u16 {
         match self {
             Self::HeartRate => 8070,
             Self::BikePower => 8182,
+            Self::SpeedCadence => 8086,
+            Self::Cadence => 8102,
+            Self::Speed => 8118,
         }
     }
 
@@ -185,6 +217,9 @@ impl AntProfile {
         match self {
             Self::HeartRate => "heart-rate sensor (ANT+)",
             Self::BikePower => "power meter (ANT+)",
+            Self::SpeedCadence => "speed/cadence sensor (ANT+)",
+            Self::Cadence => "cadence sensor (ANT+)",
+            Self::Speed => "speed sensor (ANT+)",
         }
     }
 
@@ -193,6 +228,9 @@ impl AntProfile {
         match self {
             Self::HeartRate => "ANT+ heart rate",
             Self::BikePower => "ANT+ power",
+            Self::SpeedCadence => "ANT+ speed/cadence",
+            Self::Cadence => "ANT+ cadence",
+            Self::Speed => "ANT+ speed",
         }
     }
 
@@ -202,6 +240,7 @@ impl AntProfile {
         match self {
             Self::HeartRate => Profile::HeartRate,
             Self::BikePower => Profile::CyclingPower,
+            Self::SpeedCadence | Self::Cadence | Self::Speed => Profile::SpeedCadence,
         }
     }
 }
@@ -424,6 +463,19 @@ mod tests {
         assert_eq!(p.profile, AntProfile::BikePower);
         assert_eq!(AntDeviceId::parse("ant:120:0:1"), None);
         assert_eq!(AntDeviceId::parse("ant:17:5:1"), None, "FE-C: later");
+        let c = AntDeviceId::parse("ant:121:2222:1").unwrap();
+        assert_eq!(c.profile, AntProfile::SpeedCadence);
+        assert_eq!(c.name(), "ANT+ speed/cadence 2222");
+        assert_eq!(c.found(None).profiles, [Profile::SpeedCadence]);
+        assert_eq!(
+            AntDeviceId::parse("ant:122:7:1").unwrap().profile,
+            AntProfile::Cadence
+        );
+        assert_eq!(
+            AntDeviceId::parse("ant:123:8:1").unwrap().profile,
+            AntProfile::Speed
+        );
+        assert_eq!(AntProfile::Speed.period(), 8118);
         assert_eq!(AntDeviceId::parse("hci0/dev_AA"), None);
         assert!(AntDeviceId::is_ant("ant:120:1:1"));
         let f = id.found(Some(-55));

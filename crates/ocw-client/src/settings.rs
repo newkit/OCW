@@ -42,6 +42,18 @@ pub enum Kind {
     Keys,
 }
 
+/// The choices of `trainer.wheel_mm`: the bike's, or a tyre's rolling
+/// circumference in mm.
+pub const WHEEL_CHOICES: [&str; 9] = [
+    "bike", "2096", "2105", "2136", "2155", "2168", "2200", "2288", "2326",
+];
+
+/// The rider's wheel circumference of `trainer.wheel_mm` (`None`: the
+/// bike's).
+pub fn wheel_mm(value: &str) -> Option<u32> {
+    value.trim().parse().ok().filter(|mm| *mm > 0)
+}
+
 /// Longest [`Kind::Text`] value.
 pub const MAX_TEXT_LEN: usize = 200;
 
@@ -244,6 +256,14 @@ pub const SETTINGS: &[SettingDef] = &[
         description: "Trainer difficulty in percent: how much of the road gradient SIM mode sends",
         scope: Scope::Live,
         apply: Apply::Command("trainer.difficulty {}"),
+    },
+    SettingDef {
+        key: "trainer.wheel_mm",
+        kind: Kind::Choice(&WHEEL_CHOICES),
+        default: "bike",
+        description: "The wheel's circumference (mm) for a speed sensor's speed: bike (from the bike: road 2105, gravel 2200, MTB 2288), or 2096 (700x23C), 2105 (700x25C), 2136 (700x28C), 2155 (700x32C), 2168 (700x35C), 2200 (700x40C), 2288 (29x2.25), 2326 (29x2.4) (spec 14 Phase 17)",
+        scope: Scope::Live,
+        apply: Apply::App,
     },
     SettingDef {
         key: "trainer.virtual_power",

@@ -1498,6 +1498,8 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
                 "trainer.virtual_power",
                 "Virtual trainer power (W)",
             ),
+            // A speed sensor's speed (spec 14 Phase 17, 17E).
+            setting_row(settings, "trainer.wheel_mm", "Wheel circumference (mm)"),
             // Scan, connect, forget (spec §3.2.1 *Devices*; the value
             // comes from the app's devices, `ocw_ui::menu`).
             open_row("Devices", None, Page::Devices),
@@ -1933,6 +1935,11 @@ mod tests {
             row(&trainer, "Devices").confirm,
             Some(Activate::Open(Page::Devices))
         );
+        let wheel = row(&trainer, "Wheel circumference (mm)");
+        assert_eq!(wheel.value.as_deref(), Some("bike"));
+        assert_eq!(wheel.confirm, cmd("set trainer.wheel_mm 2096"));
+        assert_eq!(crate::settings::wheel_mm("bike"), None);
+        assert_eq!(crate::settings::wheel_mm("2105"), Some(2105));
         let controls = rows(Page::Controls, &s, &Riders::default());
         assert_eq!(controls[0].confirm, cmd("set controls.autodrive off"));
         let strava = rows(Page::Strava, &s, &Riders::default());

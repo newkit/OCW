@@ -32,6 +32,11 @@ pub struct KnownDevices {
     /// (c)): with two straps only its heart rate is used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heart_rate: Option<String>,
+    /// The device chosen with *Use for cadence* (the same rule for a
+    /// cadence sensor next to a trainer or power meter, spec 14 Phase 17,
+    /// 17E).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cadence: Option<String>,
     #[serde(default, rename = "device")]
     pub devices: Vec<KnownDevice>,
 }
@@ -90,6 +95,9 @@ impl KnownDevices {
         self.devices.retain(|d| d.id != id);
         if self.heart_rate.as_deref() == Some(id) {
             self.heart_rate = None;
+        }
+        if self.cadence.as_deref() == Some(id) {
+            self.cadence = None;
         }
         self.devices.len() != before
     }

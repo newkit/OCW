@@ -48,6 +48,129 @@ pub enum DeviceEvent {
     /// A connection attempt failed (sent before the `Disconnected` that
     /// starts the next attempt): why, for the menu's status line.
     Failed { reason: FailReason },
+    /// Cadence from a cadence sensor (ANT+ speed / cadence sensors, spec
+    /// 14 Phase 17, 17E): crank revolutions, 0 once the crank stops. Power
+    /// events carry the cadence of trainers and power meters.
+    Cadence { rpm: f64, timestamp: Duration },
+    /// Wheel revolutions per second from a speed sensor (0 once the wheel
+    /// stops); the app turns it into a speed with the wheel's
+    /// circumference ([`wheel_speed_mps`]). Information only: the ride's
+    /// speed comes from the physics (5.2).
+    WheelSpeed {
+        revs_per_s: f64,
+        timestamp: Duration,
+    },
+    /// A power meter answered a calibration ([`DeviceCommand::Calibrate`],
+    /// [`DeviceCommand::SetAutoZero`]).
+    Calibration(Calibration),
+    /// What the sensor says about itself (manufacturer, product, serial,
+    /// versions, battery): sent once connected and again when it changes
+    /// (the FIT file's `device_info`, spec 14 Phase 17 A6).
+    Info(SensorInfo),
+}
+
+/// The wheel's speed (m/s) from its revolutions per second.
+pub fn wheel_speed_mps(revs_per_s: f64, circumference_m: f64) -> f64 {
+    revs_per_s * circumference_m
+}
+
+/// A power meter's answer to a calibration (ANT+ common page 0x01).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Calibration {
+    /// Manual zero done: the meter's zero offset (its own units; `None`
+    /// if it does not say) and whether auto zero is on (`None`: not
+    /// supported or not said).
+    Done {
+        offset: Option<i16>,
+        auto_zero: Option<bool>,
+    },
+    /// The meter says the calibration failed (pedals moving?).
+    Failed { offset: Option<i16> },
+    /// No answer: the request was not delivered or not answered in time.
+    NoAnswer,
+    /// The meter supports auto zero, and whether it is on (its own page).
+    AutoZero { on: bool },
+}
+
+impl Calibration {
+    /// For the device page: "done, offset 512", "failed", ...
+    pub fn text(&self) -> String {
+        match self {
+            Self::Done { offset, auto_zero } => {
+                let mut s = "done".to_owned();
+                if let Some(o) = offset {
+                    s.push_str(&format!(", offset {o}"));
+                }
+                if let Some(a) = auto_zero {
+                    s.push_str(if *a {
+                        ", auto zero on"
+                    } else {
+                        ", auto zero off"
+                    });
+                }
+                s
+            }
+            Self::Failed { offset: Some(o) } => {
+                format!("failed (offset {o}): keep the cranks still")
+            }
+            Self::Failed { offset: None } => "failed: keep the cranks still".into(),
+            Self::NoAnswer => "no answer from the meter".into(),
+            Self::AutoZero { on } => format!("auto zero {}", if *on { "on" } else { "off" }),
+        }
+    }
+}
+
+/// How a sensor is reached (the FIT `source_type`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SensorSource {
+    /// An ANT+ sensor: its device type, device number and transmission
+    /// type.
+    AntPlus {
+        device_type: u8,
+        device_number: u16,
+        trans_type: u8,
+    },
+}
+
+/// What a sensor says about itself (ANT+ common pages 80 / 81 / 82, the
+/// heart-rate and speed / cadence background pages). `None`: not said
+/// (yet).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SensorInfo {
+    pub source: SensorSource,
+    /// The ANT+ / FIT manufacturer id (1 Garmin, 32 Wahoo, …).
+    pub manufacturer: Option<u16>,
+    /// The manufacturer's model number.
+    pub product: Option<u16>,
+    pub serial: Option<u32>,
+    pub hardware_version: Option<u8>,
+    /// The software version (3.12 = 3.12).
+    pub software_version: Option<f64>,
+    pub battery_volts: Option<f64>,
+    /// 1 new, 2 good, 3 ok, 4 low, 5 critical (ANT+ and FIT alike).
+    pub battery_status: Option<u8>,
+    pub battery_pct: Option<u8>,
+}
+
+impl SensorInfo {
+    pub fn new(source: SensorSource) -> Self {
+        Self {
+            source,
+            manufacturer: None,
+            product: None,
+            serial: None,
+            hardware_version: None,
+            software_version: None,
+            battery_volts: None,
+            battery_status: None,
+            battery_pct: None,
+        }
+    }
+
+    /// The same sensor (by its source).
+    pub fn same(&self, other: &SensorInfo) -> bool {
+        self.source == other.source
+    }
 }
 
 /// Why a connection attempt failed (spec §3.2.1 *Devices*): what the menu
@@ -115,6 +238,12 @@ pub enum DeviceCommand {
     SetTargetPower(f64),
     /// Virtual devices only: the power to report, in watts.
     SetVirtualPower(f64),
+    /// Power meters: a manual zero offset calibration (ANT+ common page
+    /// 0x01; the cranks still, unloaded); answered by
+    /// [`DeviceEvent::Calibration`].
+    Calibrate,
+    /// Power meters that support it: auto zero on or off.
+    SetAutoZero(bool),
     /// Stop the backend thread.
     Shutdown,
 }

@@ -164,6 +164,18 @@ pub struct ClientCore {
     power_w: f64,
     cadence_rpm: Option<f64>,
     heart_rate_bpm: Option<f64>,
+    /// A cadence sensor gives the cadence (spec 14 Phase 17, 17E): the
+    /// power events' cadence is not used while it does; `None` inside: the
+    /// sensor has none now (lost: no frozen value).
+    sensor_cadence: Option<Option<f64>>,
+    /// The wheel's revolutions per second from a speed sensor (info).
+    wheel_rps: Option<f64>,
+    /// The rider's wheel circumference (mm) for the speed sensor; `None`:
+    /// the bike family's ([`ocw_core::bike::BikeType::wheel_circumference_mm`]).
+    wheel_mm: Option<u32>,
+    /// What the sensors in use said about themselves (the FIT
+    /// `device_info`, spec 14 Phase 17 A6), one per sensor.
+    sensors: Vec<ocw_devices::SensorInfo>,
     /// Extra power from the keyboard, on top of the device power.
     key_power_w: f64,
     /// The power device is virtual (the virtual trainer): no hearts
@@ -312,6 +324,10 @@ impl ClientCore {
             power_w: 0.0,
             cadence_rpm: None,
             heart_rate_bpm: None,
+            sensor_cadence: None,
+            wheel_rps: None,
+            wheel_mm: None,
+            sensors: Vec::new(),
             key_power_w: 0.0,
             virtual_device: false,
             hearts: 0,
@@ -611,12 +627,33 @@ impl ClientCore {
                 self.heart_rate_bpm = (bpm > 0.0).then_some(bpm);
                 return None;
             }
+            DeviceEvent::Cadence { rpm, .. } => {
+                // Sent with the next power sample, as the heart rate.
+                self.sensor_cadence = Some(Some(rpm.max(0.0)));
+                self.cadence_rpm = Some(rpm.max(0.0));
+                return None;
+            }
+            DeviceEvent::WheelSpeed { revs_per_s, .. } => {
+                self.wheel_rps = Some(revs_per_s.max(0.0));
+                return None;
+            }
+            DeviceEvent::Info(info) => {
+                match self.sensors.iter_mut().find(|s| s.same(&info)) {
+                    Some(s) => *s = info,
+                    None => self.sensors.push(info),
+                }
+                return None;
+            }
             DeviceEvent::Connected { .. }
             | DeviceEvent::Disconnected
-            | DeviceEvent::Failed { .. } => return None,
+            | DeviceEvent::Failed { .. }
+            | DeviceEvent::Calibration(_) => return None,
         };
         self.power_w = watts;
-        self.cadence_rpm = cadence_rpm;
+        self.cadence_rpm = match self.sensor_cadence {
+            Some(sensor) => sensor,
+            None => cadence_rpm,
+        };
         self.last_sample_us = timestamp.as_micros() as u64;
         Some(self.sample())
     }
@@ -2927,6 +2964,49 @@ impl ClientCore {
     pub fn cadence_rpm(&self) -> Option<f64> {
         self.cadence_rpm.filter(|_| !self.paused)
     }
+
+    /// Whether a cadence sensor gives the cadence (not the power events).
+    pub fn cadence_from_sensor(&self) -> bool {
+        self.sensor_cadence.is_some()
+    }
+
+    /// The cadence sensor in use is gone (`true`: the ride has no cadence
+    /// until it is back – no frozen value, no other source: spec 14 Phase
+    /// 17 Q6 (c)), or the cadence comes from the power events again
+    /// (`false`: the rider chose a trainer or power meter).
+    pub fn cadence_sensor_lost(&mut self, keep_waiting: bool) {
+        if keep_waiting {
+            self.sensor_cadence = Some(None);
+            self.cadence_rpm = None;
+        } else {
+            self.sensor_cadence = None;
+        }
+    }
+
+    /// The wheel circumference (mm) for the speed sensor: the rider's
+    /// setting, else the bike family's.
+    pub fn wheel_mm(&self) -> u32 {
+        self.wheel_mm
+            .unwrap_or_else(|| self.profile.bike.bike().wheel_circumference_mm())
+    }
+
+    /// Sets the rider's wheel circumference (mm; `None` or 0: the bike's).
+    pub fn set_wheel_mm(&mut self, mm: Option<u32>) {
+        self.wheel_mm = mm.filter(|m| *m > 0);
+    }
+
+    /// The speed sensor's speed (m/s; information only: the ride's speed
+    /// is the physics').
+    pub fn sensor_speed_mps(&self) -> Option<f64> {
+        self.wheel_rps
+            .map(|r| ocw_devices::wheel_speed_mps(r, f64::from(self.wheel_mm()) / 1000.0))
+    }
+
+    /// What the sensors in use said about themselves (the FIT file's
+    /// `device_info`).
+    pub fn sensors(&self) -> &[ocw_devices::SensorInfo] {
+        &self.sensors
+    }
     pub fn heart_rate_bpm(&self) -> Option<f64> {
         self.heart_rate_bpm.filter(|_| !self.paused)
     }
@@ -3695,6 +3775,74 @@ mod tests {
             timestamp: Duration::ZERO,
         });
         assert_eq!(c.heart_rate_bpm(), None);
+    }
+
+    /// A cadence sensor's cadence replaces the power events' one; lost, the
+    /// ride has none (no frozen value); the wheel speed and the sensors'
+    /// info are kept (spec 14 Phase 17, 17E / A6).
+    #[test]
+    fn cadence_sensors_speed_and_sensor_info() {
+        let mut c = ClientCore::new(route(), "A", RiderProfile::default());
+        let cadence_of = |bytes: Vec<u8>| match ocw_protocol::decode_client(&bytes).unwrap() {
+            C::Sample(s) => s.cadence_rpm,
+            other => panic!("unexpected {other:?}"),
+        };
+        let power = |w: f64, rpm: Option<f64>| DeviceEvent::Power {
+            watts: w,
+            cadence_rpm: rpm,
+            timestamp: Duration::ZERO,
+        };
+        assert_eq!(
+            cadence_of(c.on_device_event(power(200.0, Some(70.0))).unwrap()),
+            Some(70.0)
+        );
+        assert!(!c.cadence_from_sensor());
+        assert!(
+            c.on_device_event(DeviceEvent::Cadence {
+                rpm: 92.0,
+                timestamp: Duration::ZERO
+            })
+            .is_none()
+        );
+        assert!(c.cadence_from_sensor());
+        assert_eq!(
+            cadence_of(c.on_device_event(power(200.0, Some(70.0))).unwrap()),
+            Some(92.0),
+            "the sensor's, not the trainer's"
+        );
+        c.cadence_sensor_lost(true);
+        assert_eq!(
+            cadence_of(c.on_device_event(power(200.0, Some(70.0))).unwrap()),
+            None
+        );
+        c.cadence_sensor_lost(false);
+        assert_eq!(
+            cadence_of(c.on_device_event(power(200.0, Some(70.0))).unwrap()),
+            Some(70.0)
+        );
+        // The wheel speed with the bike's wheel (road: 2105 mm), then the
+        // rider's.
+        assert_eq!(c.wheel_mm(), 2105);
+        c.on_device_event(DeviceEvent::WheelSpeed {
+            revs_per_s: 4.0,
+            timestamp: Duration::ZERO,
+        });
+        assert!((c.sensor_speed_mps().unwrap() - 8.42).abs() < 1e-9);
+        c.set_wheel_mm(Some(2000));
+        assert!((c.sensor_speed_mps().unwrap() - 8.0).abs() < 1e-9);
+        c.set_wheel_mm(Some(0));
+        assert_eq!(c.wheel_mm(), 2105);
+        // Sensor info: one per sensor, the newest kept.
+        let src = ocw_devices::SensorSource::AntPlus {
+            device_type: 11,
+            device_number: 4004,
+            trans_type: 5,
+        };
+        let mut i = ocw_devices::SensorInfo::new(src);
+        c.on_device_event(DeviceEvent::Info(i));
+        i.battery_volts = Some(3.1);
+        c.on_device_event(DeviceEvent::Info(i));
+        assert_eq!(c.sensors(), [i]);
     }
 
     /// Desktop client ↔ server through the real protocol (spec §14, Phase 1).

@@ -195,7 +195,27 @@ pub struct Entry {
     /// whether this one gives the heart rate (*Use for heart rate*);
     /// `None` otherwise.
     pub heart_rate: Option<bool>,
+    /// With two or more cadence sources (a cadence sensor and a trainer or
+    /// power meter; the same rule): whether this one gives the cadence
+    /// (*Use for cadence*); `None` otherwise.
+    pub cadence: Option<bool>,
+    /// The latest reading, for the device's page ("92 rpm, 32.4 km/h").
+    pub reading: Option<String>,
+    /// A power meter that can be calibrated (ANT+): the *Calibrate* row.
+    pub calibration: Option<CalibrationInfo>,
 }
+
+/// A power meter's calibration on its page (spec 14 Phase 17, 17E).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CalibrationInfo {
+    /// "not yet", "calibrating ...", "done, offset 512", "failed: …".
+    pub state: String,
+    /// Auto zero, if the meter supports it.
+    pub auto_zero: Option<bool>,
+}
+
+/// The device page's note on calibrating (the status line while it runs).
+pub const CALIBRATE_HINT: &str = "Unclip, cranks still (one pedal down): then Calibrate";
 
 impl Entry {
     /// An ANT+ sensor (its id `ant:…`), not Bluetooth.
@@ -219,6 +239,9 @@ impl Entry {
         }
         if self.heart_rate == Some(true) {
             parts.push("HR in use".into());
+        }
+        if self.cadence == Some(true) {
+            parts.push("cadence in use".into());
         }
         if self.remembered {
             parts.push("remembered".into());
@@ -631,11 +654,38 @@ fn device_rows(e: &Entry, info: &DevicesInfo) -> Vec<Row> {
         "Remembered",
         Some(if e.remembered { "yes" } else { "no" }.into()),
     ));
+    if let Some(r) = &e.reading {
+        out.push(info_row("Reading", Some(short_label(r, 40))));
+    }
     // Two heart-rate sources: the rider picks one (spec 14 Phase 17 Q6 (c)).
     if let Some(used) = e.heart_rate {
         let mut r = Row::action("Use for heart rate", format!("devices.hr {}", e.id));
         r.value = Some(if used { "yes" } else { "no" }.into());
         out.push(r);
+    }
+    // Two cadence sources: the same rule.
+    if let Some(used) = e.cadence {
+        let mut r = Row::action("Use for cadence", format!("devices.cadence {}", e.id));
+        r.value = Some(if used { "yes" } else { "no" }.into());
+        out.push(r);
+    }
+    // A power meter's zero offset (ANT+ calibration, page 0x01).
+    if let Some(c) = &e.calibration {
+        let mut r = Row::action("Calibrate", format!("devices.calibrate {}", e.id));
+        r.value = Some(short_label(&c.state, 32));
+        out.push(r);
+        if let Some(on) = c.auto_zero {
+            let mut r = Row::action(
+                "Auto zero",
+                format!(
+                    "devices.autozero {} {}",
+                    e.id,
+                    if on { "off" } else { "on" }
+                ),
+            );
+            r.value = Some(if on { "on" } else { "off" }.into());
+            out.push(r);
+        }
     }
     if matches!(e.link, Link::Idle | Link::Failed(_)) {
         let line = match info.scan {
@@ -715,6 +765,9 @@ mod tests {
             link,
             remembered,
             heart_rate: None,
+            cadence: None,
+            reading: None,
+            calibration: None,
         }
     }
 
@@ -1003,7 +1056,63 @@ mod tests {
             link: Link::Connected("heart-rate sensor (ANT+)".into()),
             remembered: true,
             heart_rate: used,
+            cadence: None,
+            reading: None,
+            calibration: None,
         }
+    }
+
+    /// An ANT+ torque power meter and a speed / cadence sensor next to a
+    /// trainer (spec 14 Phase 17, 17E): the reading, *Use for cadence*,
+    /// *Calibrate* with its result, *Auto zero*.
+    #[test]
+    fn cadence_sensors_and_power_meter_calibration() {
+        let mut sensor = strap("ant:121:2222:1", "ANT+ speed/cadence 2222", None);
+        sensor.role = Role::Cadence;
+        sensor.cadence = Some(true);
+        sensor.reading = Some("91 rpm, 32.1 km/h".into());
+        let mut meter = strap("ant:11:4005:5", "ANT+ power 4005", None);
+        meter.role = Role::Power;
+        meter.cadence = Some(false);
+        meter.calibration = Some(CalibrationInfo {
+            state: "done, offset 512".into(),
+            auto_zero: Some(false),
+        });
+        let info = DevicesInfo {
+            entries: vec![sensor, meter],
+            ..Default::default()
+        };
+        let r = rows(Page::Devices, &info);
+        assert_eq!(
+            r[1].value.as_deref(),
+            Some("cadence / speed, ANT+, -58 dBm, connected, cadence in use, remembered")
+        );
+        let d = rows(Page::Device(0), &info);
+        let reading = d.iter().find(|r| r.label == "Reading").unwrap();
+        assert_eq!(reading.value.as_deref(), Some("91 rpm, 32.1 km/h"));
+        assert!(!d.iter().any(|r| r.label == "Calibrate"));
+        let d = rows(Page::Device(1), &info);
+        let use_it = d.iter().find(|r| r.label == "Use for cadence").unwrap();
+        assert_eq!(use_it.value.as_deref(), Some("no"));
+        assert_eq!(
+            use_it.confirm,
+            Some(Activate::Command("devices.cadence ant:11:4005:5".into()))
+        );
+        let cal = d.iter().find(|r| r.label == "Calibrate").unwrap();
+        assert_eq!(cal.value.as_deref(), Some("done, offset 512"));
+        assert_eq!(
+            cal.confirm,
+            Some(Activate::Command("devices.calibrate ant:11:4005:5".into()))
+        );
+        let az = d.iter().find(|r| r.label == "Auto zero").unwrap();
+        assert_eq!(az.value.as_deref(), Some("off"));
+        assert_eq!(
+            az.confirm,
+            Some(Activate::Command(
+                "devices.autozero ant:11:4005:5 on".into()
+            ))
+        );
+        assert!(CALIBRATE_HINT.is_ascii());
     }
 
     #[test]
