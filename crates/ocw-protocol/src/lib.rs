@@ -13,6 +13,7 @@ pub mod v1 {
 
 pub mod join;
 pub mod photo;
+pub mod traffic;
 pub use photo::{photo_from_wire, photo_message, photo_to_wire};
 mod weather;
 pub use weather::{
@@ -956,6 +957,9 @@ pub fn event_start(spec: &EventSpec, bots: Option<u32>) -> v1::EventStart {
         aids: None,
         chaotic_bots: None,
         time_limit_s: None,
+        // No road traffic unless the organiser asks (spec 14 Phase 18, Q2).
+        road_traffic: None,
+        driver_manners: None,
     }
 }
 
@@ -1043,6 +1047,9 @@ pub fn event_state(ev: Option<&Event>, standings: &[Standing], tick: u64) -> v1:
         time_limit_s: ev
             .time_limit_s
             .map(|t| t.round().clamp(0.0, f64::from(u32::MAX)) as u32),
+        // The organiser's road traffic: set by the server (it owns it).
+        road_traffic: 0,
+        driver_manners: 0,
     }
 }
 
@@ -1678,6 +1685,7 @@ mod tests {
             chaotic_bots: true,
             weather: None,
             damage: true,
+            traffic: None,
         };
         let bytes = encode(&server_message(S::Snapshot(snapshot.clone())));
         match decode_server(&bytes).unwrap() {

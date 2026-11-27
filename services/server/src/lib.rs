@@ -34,6 +34,7 @@ pub mod public_stats;
 pub mod stats;
 // Snapshot timing at a client (interval, jitter, age; spec §14 Phase 10 B3).
 pub mod timing;
+pub mod traffic;
 pub mod voice;
 /// Voice blocks: who exchanges no voice with whom (spec §7.1.7 Q9).
 pub mod voice_block;
@@ -188,6 +189,22 @@ pub struct ServerConfig {
     /// as the starter's (`ocw-server --check-parts`). `None`: every part
     /// counts (a local server, the apps' own wallets).
     pub ownership: Option<Ownership>,
+    /// The session's road traffic (spec 14 Phase 18, 18A; Q1: off): the
+    /// local servers follow the rider's `traffic.road` (a
+    /// [`v1::TrafficRequest`] after the hello), `ocw-server --traffic`.
+    pub road_traffic: ocw_core::traffic::RoadTraffic,
+    /// How drivers behave around riders (Q8: `traffic.manners`),
+    /// `ocw-server --driver-manners`.
+    pub driver_manners: ocw_core::traffic::DriverManners,
+    /// Who may change the road traffic ([`v1::TrafficRequest`], Q2): the
+    /// single player on the local servers, the host of a shared session
+    /// (the default), nobody when the organiser fixed it
+    /// (`ocw-server --traffic-control`). During an event its organiser's
+    /// rule applies (absent: no road traffic) and nobody changes it.
+    pub traffic_access: ClockAccess,
+    /// Seed of the session's simulated aircraft and UFOs (`Welcome.
+    /// air_seed`, 18A; `None`: from the session's start instant).
+    pub air_seed: Option<u64>,
 }
 
 /// What an account owns, as its garage last said.
@@ -341,6 +358,8 @@ pub struct GameServer {
     /// The organiser's weather of the current event (spec §14 Phase 9,
     /// S5): its id and weather; locks the weather until the event is over.
     event_weather: Option<(u32, ocw_weather::machine::EventWeather)>,
+    /// The session's road traffic and air seed (spec 14 Phase 18, T1).
+    traffic: traffic::ServerTraffic,
     /// Real weather (spec §14 Phase 9, S7), while it is on.
     real: Option<realweather::RealSession>,
     /// Performs real weather's requests (`None`: this server has no
@@ -543,7 +562,9 @@ impl GameServer {
         let real = config
             .real_weather
             .map(|c| realweather::RealSession::new(c, 0.0));
+        let traffic = traffic::ServerTraffic::new(&config, epoch);
         Self {
+            traffic,
             clock,
             weather,
             config,
@@ -1200,6 +1221,7 @@ impl GameServer {
             (C::Voice(req), Some(rider)) => Some(S::Voice(self.voice_grant(conn, rider, &req))),
             (C::Echo(req), Some(rider)) => Some(self.echo_request(rider, req)),
             (C::Rules(req), Some(rider)) => Some(self.rules_request(rider, req)),
+            (C::Traffic(req), Some(rider)) => Some(self.traffic_request(rider, &req)),
             (C::Damage(req), Some(rider)) => {
                 let r = if req.repair {
                     self.session.request_repair(rider)
@@ -1527,6 +1549,8 @@ impl GameServer {
             display_name: hello.display_name.clone(),
             name_note,
             hearts_credited: self.config.hearts_credits.is_some(),
+            traffic: Some(self.traffic_message()),
+            air_seed: self.air_seed(),
         })
     }
 
@@ -2210,10 +2234,14 @@ impl GameServer {
                 // until the event is over.
                 let rules = ocw_protocol::event_rules(&start);
                 let weather = ocw_protocol::event_weather(&start);
+                // The organiser's road traffic (spec 14 Phase 18, Q2;
+                // absent: none, races included).
+                let road = ocw_protocol::traffic::event_traffic(&start);
                 let started = self.session.start_event(spec).map(|e| e.id);
                 if let Ok(id) = started {
                     self.session.set_event_rules(&rules);
                     self.set_event_weather(id, weather);
+                    self.set_event_traffic(id, road);
                 }
                 match started.map(|_| self.session.event().expect("just started")) {
                     Ok(ev) => {
@@ -2236,6 +2264,9 @@ impl GameServer {
                             weather.push_str(", weather physics on");
                         }
                         weather.push_str(&organiser_summary(ev));
+                        if let Some(r) = self.event_traffic().filter(|r| r.level.is_on()) {
+                            weather.push_str(&format!(", road traffic {}", r.summary()));
+                        }
                         result(
                             true,
                             format!(
@@ -2298,6 +2329,11 @@ impl GameServer {
                 .as_ref()
                 .filter(|(id, _)| *id == ev.id)
                 .map(|(_, w)| ocw_protocol::event_weather_to_wire(w));
+            // The organiser's road traffic (spec 14 Phase 18, Q2).
+            if let Some((_, r)) = self.traffic.event.filter(|(id, _)| *id == ev.id) {
+                e.road_traffic = ocw_protocol::traffic::road_to_wire(r.level);
+                e.driver_manners = ocw_protocol::traffic::manners_to_wire(r.manners);
+            }
             // Crashes and the condition (spec §14 Phase 12E: the results
             // show them), with damage on.
             let damage = self.session.damage_on();
@@ -2424,6 +2460,7 @@ impl GameServer {
             chaotic_bots: self.session.chaotic_bots(),
             weather: Some(self.weather_message()),
             damage: self.session.damage_on(),
+            traffic: Some(self.traffic_message()),
         };
         out.push(encode(&server_message(S::Snapshot(snapshot))));
         out

@@ -224,6 +224,8 @@ pub struct ClientCore {
     /// the server, the own autodrive's avoidance (as the server's), the
     /// own rider down in the last snapshot, the proximity cue setting.
     collisions: crate::collisions::CollisionClient,
+    /// The session's road traffic and air seed (spec 14 Phase 18, T1).
+    traffic: crate::traffic::TrafficClient,
     avoid: ocw_sim::avoid::AvoidState,
     was_down: bool,
     proximity_cue: bool,
@@ -338,6 +340,7 @@ impl ClientCore {
             god_others: Default::default(),
             god_notice: None,
             collisions: Default::default(),
+            traffic: Default::default(),
             avoid: Default::default(),
             was_down: false,
             proximity_cue: false,
@@ -777,6 +780,7 @@ impl ClientCore {
                 self.world_access = Some(ocw_protocol::access_from_wire(w.world_access));
                 self.god_access = Some(ocw_protocol::access_from_wire(w.god_access));
                 self.collisions.on_welcome(&w);
+                self.traffic.on_welcome(&w);
                 self.damage.on_welcome(&w);
                 // A ghost to the others again for the first seconds, as
                 // the server keeps a joining rider (spec §14 Phase 12A).
@@ -1107,6 +1111,7 @@ impl ClientCore {
             self.weather.on_message(weather, now_s, self.snapshot_age_s);
         }
         self.collisions.on_snapshot(s, now_s, self.rider_id);
+        self.traffic.on_snapshot(s);
         self.damage.on_snapshot(s, now_s, self.rider_id);
         // The damage's effects: the prediction rides as the server does.
         self.predictor
@@ -2155,6 +2160,30 @@ impl ClientCore {
             .is_none_or(|a| a.allows(self.rider_id, self.clock_info.and_then(|c| c.host)))
     }
 
+    /// The session's traffic as the server sent it (spec 14 Phase 18).
+    pub fn traffic(&self) -> &crate::traffic::TrafficClient {
+        &self.traffic
+    }
+
+    /// The session's host as the clock last said (`None`: not told).
+    pub fn host_rider(&self) -> Option<RiderId> {
+        self.clock_info.and_then(|c| c.host)
+    }
+
+    /// Whether this rider may change the road traffic (the server checks
+    /// again).
+    pub fn may_change_traffic(&self) -> bool {
+        self.traffic.may_change(self.rider_id, self.host_rider())
+    }
+
+    /// The road-traffic request (`traffic road …`, `traffic manners …`).
+    pub fn traffic_message(
+        road: Option<ocw_core::traffic::RoadTraffic>,
+        manners: Option<ocw_core::traffic::DriverManners>,
+    ) -> Vec<u8> {
+        encode(&ocw_protocol::traffic::traffic_request(road, manners))
+    }
+
     /// The rules request (`ride.collisions`, `ride.chaotic_bots`).
     pub fn rules_message(collisions: Option<bool>, chaotic_bots: Option<bool>) -> Vec<u8> {
         encode(&ocw_protocol::rules_request(collisions, chaotic_bots, None))
@@ -2618,7 +2647,22 @@ impl ClientCore {
         weather: Option<&ocw_weather::machine::EventWeather>,
         rules: &ocw_sim::event::Rules,
     ) -> Vec<u8> {
-        let start = ocw_protocol::with_event_rules(ocw_protocol::event_start(spec, bots), rules);
+        Self::event_start_message_with_traffic(spec, bots, weather, rules, None)
+    }
+
+    /// [`ClientCore::event_start_message_organiser`] with the organiser's
+    /// road traffic (spec 14 Phase 18, Q2; `None`: no road traffic).
+    pub fn event_start_message_with_traffic(
+        spec: &ocw_sim::EventSpec,
+        bots: Option<u32>,
+        weather: Option<&ocw_weather::machine::EventWeather>,
+        rules: &ocw_sim::event::Rules,
+        traffic: Option<ocw_core::traffic::RoadRules>,
+    ) -> Vec<u8> {
+        let start = ocw_protocol::traffic::with_event_traffic(
+            ocw_protocol::with_event_rules(ocw_protocol::event_start(spec, bots), rules),
+            traffic,
+        );
         encode(&client_message(C::Event(v1::EventRequest {
             req: Some(v1::event_request::Req::Start(v1::EventStart {
                 weather: weather.map(ocw_protocol::event_weather_to_wire),
@@ -3325,6 +3369,43 @@ mod tests {
         let now = h.client.world_ms(h.time_s).unwrap();
         // One second at x600 = 10 minutes (within a snapshot interval).
         assert!((now - (fixed + 600_000)).abs() <= 600 * 110, "{now}");
+    }
+
+    /// Traffic (spec 14 Phase 18, T1): the welcome brings the session's
+    /// road traffic and the air seed; on the local server the single
+    /// player changes it, and the next snapshots say so.
+    #[test]
+    fn the_sessions_traffic_reaches_the_client_and_the_rider_changes_it() {
+        use ocw_core::traffic::{DriverManners, RoadTraffic};
+        let server = GameServer::new(
+            route(),
+            ServerConfig {
+                air_seed: Some(1234),
+                ..ocw_server::local::local_config(0, 0.0)
+            },
+        );
+        let mut h = Harness::with(
+            server,
+            ClientCore::new(route(), "Ada Rider", RiderProfile::default()),
+        );
+        assert_eq!(h.client.traffic().road().level, RoadTraffic::Off, "Q1");
+        assert_eq!(h.client.traffic().air_seed(), 1234);
+        assert!(h.client.may_change_traffic(), "the single player");
+        h.send(&ClientCore::traffic_message(
+            Some(RoadTraffic::Busy),
+            Some(DriverManners::MostlyPolite),
+        ));
+        assert!(
+            matches!(h.notices.last(), Some(Notice::CommandResult(m)) if m.starts_with("road traffic: busy")),
+            "{:?}",
+            h.notices.last()
+        );
+        h.ride(0.0, 0.5);
+        assert_eq!(h.client.traffic().road().level, RoadTraffic::Busy);
+        assert_eq!(
+            h.client.traffic().road().manners,
+            DriverManners::MostlyPolite
+        );
     }
 
     /// Voice (spec §7): the welcome says whether the server offers voice,

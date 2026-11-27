@@ -65,6 +65,12 @@ pub fn local_config(bots: u32, start_m: f64) -> ServerConfig {
         // The app's own garage: every part counts (4O W5d checks hosted
         // servers only).
         ownership: None,
+        // No road traffic until the rider's `traffic.road` asks for it
+        // (spec 14 Phase 18, Q1); the single player decides (Q2).
+        road_traffic: Default::default(),
+        driver_manners: Default::default(),
+        traffic_access: crate::ClockAccess::Anyone,
+        air_seed: None,
     }
 }
 

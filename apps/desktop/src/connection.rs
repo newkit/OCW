@@ -79,6 +79,8 @@ impl Plugin for ConnectionPlugin {
                 ocw_ui::events::EventsPlugin,
                 // The rider status signs (spec §2.6).
                 ocw_ui::status::StatusPlugin,
+                // `traffic` and the `[traffic]` settings (spec 14 Phase 18).
+                ocw_ui::traffic::TrafficPlugin,
             ));
         }
         register_commands(app);
@@ -306,6 +308,16 @@ pub fn start_session_with(world: &mut World, route: Route, keep_link: bool) {
     }
     // … and damage (12E, Q1: off unless the rider switched it on).
     if let Some(m) = rules.damage_message() {
+        server.send(m);
+    }
+    // Road traffic (spec 14 Phase 18, Q1 / Q2): the local and hosted
+    // servers follow the rider's `traffic.road` / `traffic.manners`; a
+    // joined ride's is its host's.
+    if !matches!(server, ServerLink::Remote(_))
+        && let Some(m) = world
+            .get_resource::<ocw_ui::traffic::TrafficSettings>()
+            .and_then(|t| t.session_message())
+    {
         server.send(m);
     }
     // Weather physics (spec §14 Phase 9, S6): local rides follow the

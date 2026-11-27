@@ -313,6 +313,9 @@ impl Plugin for WebUiPlugin {
             ocw_ui::timemachine::TimeMachinePlugin,
             ocw_ui::riders_page::RidersPagePlugin,
             ocw_ui::collisions::CollisionsPlugin,
+            // Aircraft and UFOs (spec 14 Phase 18; road traffic is the
+            // desktop's only, Q9).
+            ocw_ui::traffic::TrafficPlugin,
             ocw_ui::events::EventsPlugin,
             // The rider status signs (spec §2.6), as on the desktop.
             ocw_ui::status::StatusPlugin,

@@ -208,6 +208,8 @@ mod tests {
             CharacterFace,
             CharacterHair,
             CharacterFacialHair,
+            Traffic,
+            TrafficMore,
         ]
         .into_iter()
         .chain(ocw_client::menu::character::Attr::ALL.map(CharacterPick))
@@ -229,7 +231,8 @@ mod tests {
                 | HostWeather | HostOptions | HostSummary | HostLink | Start | Devices
                 | Device(_) | Bridge | Ant | AntDriver | AntAccess | Calendar(_)
                 | CalendarDates(_) | Season | Character | CharacterBody | CharacterFace
-                | CharacterHair | CharacterFacialHair | CharacterPick(_) => {}
+                | CharacterHair | CharacterFacialHair | CharacterPick(_) | Traffic
+                | TrafficMore => {}
             }
         }
         all

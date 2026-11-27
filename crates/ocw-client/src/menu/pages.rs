@@ -246,6 +246,13 @@ pub enum Page {
     /// The desktop's start choice (spec 3.2.4; rows from `menu::start`):
     /// Connect to a server, or Ride locally.
     Start,
+    /// Settings → Traffic (spec 14 Phase 18, 18A; rows from
+    /// `menu::traffic`): the master switch, road traffic and driver
+    /// manners (desktop), aircraft, UFOs.
+    Traffic,
+    /// Traffic → Sound and live data: the sounds, *Aircraft: live* and
+    /// *Live traffic data* (dimmed until their sources are built).
+    TrafficMore,
 }
 
 impl Page {
@@ -351,6 +358,8 @@ impl Page {
             Self::HostSummary => "Host a ride",
             Self::HostLink => "Hosting: join link",
             Self::Start => "Open Cycling World",
+            Self::Traffic => "Traffic",
+            Self::TrafficMore => "Traffic: sound, live data",
         }
     }
 
@@ -468,7 +477,10 @@ impl Page {
             Self::WorldSource(_) => Some(Self::WorldSources),
             Self::VoiceDevices | Self::VoiceParticipants | Self::VoiceSelect => Some(Self::Voice),
             Self::VoiceRider(_) | Self::VoiceBlocked => Some(Self::VoiceParticipants),
-            Self::AudioVoice => Some(Self::Audio),
+            // Settings → Audio, voice → Voice (spec 14 Phase 18: Traffic
+            // took Voice's place on the Settings page).
+            Self::AudioVoice => Some(Self::VoiceDevices),
+            Self::Voice => Some(Self::Audio),
             Self::RidingAids | Self::UnicornControls | Self::Bindings => Some(Self::Controls),
             Self::BindGroup(_) | Self::BindReset => Some(Self::Bindings),
             Self::Graphics | Self::Accessibility | Self::Hud => Some(Self::Display),
@@ -483,6 +495,7 @@ impl Page {
             Self::HostWeather => Some(Self::HostTime),
             Self::HostOptions => Some(Self::HostWeather),
             Self::HostSummary => Some(Self::HostOptions),
+            Self::TrafficMore => Some(Self::Traffic),
             _ => None,
         }
     }
@@ -671,6 +684,8 @@ impl Page {
             ],
             Self::HostLink => &[],
             Self::Start => &[super::start::NOTE],
+            Self::Traffic => &[super::traffic::NOTE],
+            Self::TrafficMore => &[super::traffic::MORE_NOTE],
         }
     }
 }
@@ -1329,29 +1344,10 @@ pub fn audio_rows(settings: &Settings, devices: &AudioDevices) -> Vec<Row> {
         volume("audio.master", "Master volume", "test"),
         volume("audio.effects", "Effects (bike, wind)", "test-effects"),
         volume("audio.others", "Other riders", "test-others"),
-        Row {
-            label: "Voice".into(),
-            value: Some(format!(
-                "{} %{}",
-                settings
-                    .get("audio.voice")
-                    .map(|v| v.to_string())
-                    .unwrap_or_default(),
-                if settings
-                    .get("audio.echo_bot")
-                    .ok()
-                    .and_then(|v| v.as_bool())
-                    == Some(true)
-                {
-                    " - echo test"
-                } else {
-                    ""
-                }
-            )),
-            left: None,
-            right: None,
-            confirm: Some(Activate::Open(Page::AudioVoice)),
-        },
+        // Voice chat (spec 7; the Settings page's Voice item until
+        // Traffic took its place, spec 14 Phase 18); the voice volume and
+        // the echo test are under its Devices and options.
+        open_row("Voice", None, Page::Voice),
         setting_row(settings, "audio.mute", "Mute"),
         Row {
             label: "Output".into(),
@@ -1469,6 +1465,12 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         | Page::HostLink
         // The start choice (`menu::start`).
         | Page::Start => Vec::new(),
+        // Settings → Traffic (`menu::traffic`; the app passes the session).
+        Page::Traffic | Page::TrafficMore => super::traffic::rows(
+            page,
+            settings,
+            &super::traffic::TrafficMenuInfo::alone(super::model::Platform::Desktop),
+        ),
         // The organiser's rules (spec §14 Phase 12 K6): six rows.
         Page::EventRules => vec![
             setting_row(settings, "event.collisions", "Collisions"),
@@ -2132,12 +2134,9 @@ mod tests {
         assert_eq!(master.left.as_deref(), Some("set audio.master 75"));
         assert_eq!(master.right.as_deref(), Some("set audio.master 85"));
         assert_eq!(master.confirm, cmd("audio.play test"));
-        // Voice opens Audio → Voice (volume and the echo test).
-        assert_eq!(
-            row(&a, "Voice").confirm,
-            Some(Activate::Open(Page::AudioVoice))
-        );
-        assert_eq!(row(&a, "Voice").value.as_deref(), Some("100 %"));
+        // Voice opens the voice chat page (Settings → Audio, voice →
+        // Voice; spec 14 Phase 18).
+        assert_eq!(row(&a, "Voice").confirm, Some(Activate::Open(Page::Voice)));
         let others = row(&a, "Other riders");
         assert_eq!(others.value.as_deref(), Some("80"));
         assert_eq!(others.left.as_deref(), Some("set audio.others 75"));

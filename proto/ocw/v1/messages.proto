@@ -33,7 +33,55 @@ message ClientMessage {
     VoiceBlocks voice_blocks = 20;
     // Who hears this rider and whom it listens to (spec §7.1.7 Q6, Q8).
     VoiceAudience voice_audience = 21;
+    // The session's road traffic (spec 14 Phase 18, 18A, T1).
+    TrafficRequest traffic = 22;
   }
+}
+
+// The rider asks for the session's road traffic (spec 14 Phase 18, 18A,
+// Q2): `traffic.road` and `traffic.manners`. The server decides who may
+// change it (SessionTraffic.access: the local servers' single player, the
+// host of a shared session, nobody while an organiser's event runs) and
+// answers with a DevCommandResult; the new state reaches everyone in the
+// next Snapshot. Aircraft and UFOs are each rider's own and never sent.
+// Reliable.
+message TrafficRequest {
+  optional RoadTrafficLevel road = 1;
+  optional DriverManners manners = 2;
+}
+
+// How much road traffic (spec 14 Phase 18, 18A; Q4: lunatic). 0 = off,
+// so an older server's absent field means no traffic.
+enum RoadTrafficLevel {
+  ROAD_TRAFFIC_LEVEL_OFF = 0;
+  ROAD_TRAFFIC_LEVEL_LIGHT = 1;
+  ROAD_TRAFFIC_LEVEL_NORMAL = 2;
+  ROAD_TRAFFIC_LEVEL_BUSY = 3;
+  // Drivers speed and overtake in stupid and dangerous places (Q4).
+  ROAD_TRAFFIC_LEVEL_LUNATIC = 4;
+}
+
+// How drivers behave around riders (spec 14 Phase 18, Q8).
+enum DriverManners {
+  // Legal distance and a free oncoming lane, no horns.
+  DRIVER_MANNERS_POLITE = 0;
+  // An occasional honk at a rider in the middle of the road.
+  DRIVER_MANNERS_MOSTLY_POLITE = 1;
+  // Now and then a close pass that never touches.
+  DRIVER_MANNERS_SOME_REALISM = 2;
+}
+
+// The session's road traffic as the server decided it (spec 14 Phase 18,
+// 18A): in Welcome and every Snapshot.
+message SessionTraffic {
+  RoadTrafficLevel road = 1;
+  DriverManners manners = 2;
+  // Who may change it (TrafficRequest): ServerConfig.traffic_access, or
+  // nobody while an organiser's event sets it.
+  ClockAccess access = 3;
+  // Set by the running event's organiser (its rule applies until the
+  // event is over).
+  bool event = 4;
 }
 
 // The rider asks the server about their damage (spec §14 Phase 12E, K4):
@@ -400,6 +448,11 @@ message EventStart {
   // The organiser's time limit after the winner (s, 30 – 7200; absent:
   // 120 s or a quarter of the winner's time, whichever is longer).
   optional uint32 time_limit_s = 13;
+  // The organiser's road traffic and driver manners (spec 14 Phase 18,
+  // Q2; absent: no road traffic in any event, races included). Riders
+  // cannot change it until the event is over.
+  optional RoadTrafficLevel road_traffic = 14;
+  optional DriverManners driver_manners = 15;
 }
 
 // An event's weather (spec §14 Phase 9, S5, Q4: the organizer decides).
@@ -870,6 +923,10 @@ message EventState {
   // The organiser's time limit after the winner (s; absent: the default
   // rule).
   optional uint32 time_limit_s = 20;
+  // The event's road traffic (spec 14 Phase 18, Q2: the organiser's;
+  // absent: none), shown in the event's info.
+  RoadTrafficLevel road_traffic = 21;
+  DriverManners driver_manners = 22;
 }
 
 message EventStanding {
@@ -988,6 +1045,13 @@ message Welcome {
   // certified by the project's root key (spec 14 Phase 4, 4O Q19 (a)).
   // The app then uploads no ride summary for this ride.
   bool hearts_credited = 23;
+  // The session's road traffic (spec 14 Phase 18, 18A); absent from older
+  // servers (no traffic).
+  SessionTraffic traffic = 24;
+  // The air seed (18A): every client simulates the same aircraft and UFOs
+  // from it and the world clock, so riders who show them see the same
+  // ones in the same places.
+  fixed64 air_seed = 25;
 }
 
 enum ClockMode {
@@ -1056,6 +1120,9 @@ message Snapshot {
   SessionWeather weather = 7;
   // Damage in force (spec §14 Phase 12E).
   bool damage = 8;
+  // The session's road traffic now (spec 14 Phase 18, 18A: the host may
+  // change it during the ride).
+  SessionTraffic traffic = 9;
 }
 
 // The weather at one moment (spec §14 Phase 9, 9E; ocw_weather::WeatherState).

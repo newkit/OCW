@@ -209,6 +209,22 @@ pub fn rows(page: Page, settings: &Settings, info: &VoiceMenuInfo) -> Vec<Row> {
             setting_row(settings, "voice.volume", "Voice volume (%)"),
             setting_row(settings, "voice.spatial", "Spatial voice"),
             setting_row(settings, "voice.max_voices", "Voices heard at most"),
+            // The voice volume and the echo test (on the Audio page's
+            // Voice row until Settings → Voice made room for Traffic, spec
+            // 14 Phase 18).
+            open(
+                "Volume and echo test",
+                format!(
+                    "{} %{}",
+                    text("audio.voice"),
+                    if on("audio.echo_bot") {
+                        " - echo test"
+                    } else {
+                        ""
+                    }
+                ),
+                Page::AudioVoice,
+            ),
         ],
         Page::VoiceSelect => {
             let here: Vec<&ChoiceRider> = info.choices.iter().filter(|c| c.here).collect();
@@ -581,6 +597,18 @@ mod tests {
         };
         let r = rows(Page::AudioVoice, &Settings::default(), &off);
         assert!(r.len() < crate::menu::model::MAX_ITEMS, "fits one page");
+        assert_eq!(Page::AudioVoice.parent(), Some(Page::VoiceDevices));
+        // Reached from Voice → Devices and options (spec 14 Phase 18).
+        let d = rows(Page::VoiceDevices, &Settings::default(), &off);
+        assert!(d.len() < crate::menu::model::MAX_ITEMS);
+        assert_eq!(
+            row(&d, "Volume and echo test").confirm,
+            Some(Activate::Open(Page::AudioVoice))
+        );
+        assert_eq!(
+            row(&d, "Volume and echo test").value.as_deref(),
+            Some("100 %")
+        );
         let vol = row(&r, "Voice volume");
         assert_eq!(vol.confirm, cmd("audio.play test-voice"));
         let echo = row(&r, "Echo test");

@@ -67,6 +67,7 @@ pub mod road_bumps;
 pub mod settings;
 pub mod sky;
 pub mod strava;
+pub mod traffic;
 pub mod trainer;
 pub mod view;
 pub mod view_distance;
