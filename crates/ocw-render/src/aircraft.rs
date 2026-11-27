@@ -53,6 +53,14 @@ pub const MIN_PX: f32 = 3.0;
 /// The light dots' size on the screen (px).
 pub const DOT_PX: f32 = 2.2;
 
+/// How much an aircraft of `size_m` is enlarged at `dist` m with `focal`
+/// px per radian: never smaller than [`MIN_PX`] on the screen, and true
+/// size (1) whenever it is that big anyway – up close and well beyond the
+/// switch to `lod1` – so only far dots grow.
+pub fn draw_scale(dist: f32, focal: f32, size_m: f32) -> f32 {
+    (MIN_PX * dist.max(1.0) / focal / size_m).clamp(1.0, 80.0)
+}
+
 /// Where a kind switches to `lod1` (m): aircraft are big and far.
 pub fn lod_m(kind: AirKind) -> f32 {
     match kind {
@@ -508,9 +516,7 @@ fn sync_aircraft(
     for a in list {
         let pos = Vec3::new(a.pos[0] as f32, a.pos[1] as f32, a.pos[2] as f32);
         let km = models.kinds.get(&a.kind).cloned().expect("every kind");
-        let dist = eye.distance(pos).max(1.0);
-        // Never smaller than MIN_PX on the screen.
-        let scale = (MIN_PX * dist / focal / km.size_m).clamp(1.0, 80.0);
+        let scale = draw_scale(eye.distance(pos), focal, km.size_m);
         info.insert(a.id, (a, scale));
         if let Some(&e) = planes.roots.get(&a.id) {
             if let Ok((mut p, mut tf)) = roots.get_mut(e) {
@@ -879,6 +885,72 @@ mod tests {
         assert_eq!(budget(Q::High), (30, true));
         assert_eq!(budget(Q::Low), (10, true));
         assert_eq!(budget(Q::Quest1), (6, false));
+    }
+
+    /// The models are drawn at their true size (metres, not centimetres):
+    /// an airliner of 30–40 m span and length, a small plane of ~11 m, a
+    /// helicopter's rotor ~11 m, a sailplane of 15–18 m, a balloon ~23 m
+    /// tall with its basket – and the far model (`lod1`) as big as the near one.
+    #[test]
+    fn aircraft_are_drawn_at_their_true_size() {
+        // (kind, span range (x), length range (z), height range (y)), m.
+        type Range = (f32, f32);
+        let real: [(AirKind, Range, Range, Range); 5] = [
+            (AirKind::Airliner, (33.0, 40.0), (35.0, 42.0), (9.0, 14.0)),
+            (AirKind::SmallPlane, (9.5, 12.0), (7.0, 9.5), (2.2, 3.5)),
+            // The rotor's blades are not along x at rest: its disc below.
+            (AirKind::Helicopter, (8.5, 12.0), (9.5, 13.5), (2.8, 4.0)),
+            (AirKind::Glider, (14.0, 19.0), (6.0, 8.5), (1.0, 2.0)),
+            // The envelope ~18 m and the basket under it: ~21–24 m overall.
+            (AirKind::Balloon, (13.0, 20.0), (13.0, 20.0), (15.0, 25.0)),
+        ];
+        for (k, span, len, high) in real {
+            let m = ocw_assets::shipped::model(k.model_id());
+            let (lo, hi) = m.near_bounds().expect("near model");
+            let d = hi - lo;
+            let within = |v: f32, (a, b): (f32, f32)| (a..=b).contains(&v);
+            assert!(
+                within(d.x, span) && within(d.z, len) && within(d.y, high),
+                "{k:?}: {:.1} m span, {:.1} m long, {:.1} m high",
+                d.x,
+                d.z,
+                d.y
+            );
+            if k == AirKind::Helicopter {
+                let r = m.node("rotor_main").expect("rotor");
+                let (rlo, rhi) = m.bounds_where(|i| m.is_below(i, r)).expect("rotor");
+                // The blades' widest extent: at most the disc's diameter.
+                let blades = (rhi - rlo).max_element();
+                assert!((8.5..=12.0).contains(&blades), "rotor {blades:.1} m");
+            }
+            let lod = m.node("lod1").expect("lod1");
+            let (flo, fhi) = m.bounds_where(|i| m.is_below(i, lod)).expect("far model");
+            let f = fhi - flo;
+            assert!(
+                (f.max_element() / d.max_element() - 1.0).abs() < 0.1,
+                "{k:?}: lod1 {f:?} vs near {d:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_far_aircraft_grow_to_stay_visible() {
+        // 1080 rows at the default field of view (~45°): ~1300 px per rad.
+        let focal = 1080.0 / (2.0 * (0.785f32 / 2.0).tan());
+        let mut meshes = Assets::<Mesh>::default();
+        for k in AirKind::ALL {
+            let km = kind_model(&ocw_assets::shipped::model(k.model_id()), &mut meshes);
+            // True size alongside, at the switch to lod1 and well past it.
+            for d in [0.0, 5.0, 30.0, 120.0, lod_m(k), 3.0 * lod_m(k)] {
+                assert_eq!(draw_scale(d, focal, km.size_m), 1.0, "{k:?} at {d} m");
+            }
+            // A dot of MIN_PX far away.
+            let far = 60_000.0;
+            let s = draw_scale(far, focal, km.size_m);
+            assert!(s > 1.0, "{k:?}");
+            let px = km.size_m * s / far * focal;
+            assert!((px - MIN_PX).abs() < 0.01 || s == 80.0, "{k:?}: {px} px");
+        }
     }
 
     #[test]

@@ -6032,3 +6032,29 @@ at = ["0.5=time 2026-11-27 10:30", "0.5=weather clear clouds=0.2 type=cirrus tem
 video = 12
 warmup = 6
 pick = false
+
+# --- Close-up flybys (air.follow: a camera and the unicorn flying with one
+# aircraft; keys are RIGHT UP AHEAD metres in the aircraft's level frame,
+# looking at a point of it, the last number the eye's lag in seconds) -------
+
+[[scene]]
+name = "air-flyby-tenerife-airliner-video"
+description = "Video, 1080p: a drone camera flies with an airliner on its 3° final approach at golden hour (`air.follow pick airliner,arrival --below 340` steps the clock to the arrival nearest in time – with this seed one to Tenerife South, gear down, navigation lights on) – from behind and above with the Teide in view, alongside past the unicorn flying in formation beside the right wing with its rainbow trail, round the nose over the coast and back along the left side – then the airliner pulls away towards the runway (the eye's lag grows to 6 s; spec 18C, T8)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0", "--window", "1920x1080"]
+at = ["0.5=time 2026-07-15 20:00", "1.5=time golden-hour", "0.5=weather clear wind=6 dir=300", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --hair long --hair-colour #C8A2C8 --glasses 2", "2=god.flight hover", "3=god on", "4=air.follow pick airliner,arrival --below 340 --in 10", "4=air.follow unicorn 24 2 3", "4=air.follow key 0 -55 16 -95 6 0 0", "4=air.follow key 6 50 5 -8 12 0 0", "4=air.follow key 12 48 1 58 4 0 0", "4=air.follow key 17 3 -7 88 0 0 0", "4=air.follow key 22 -52 10 42 0 0 0", "4=air.follow key 27 -48 9 -55 0 0 0", "4=air.follow key 36 -38 16 -70 0 0 0 6", "14=air.follow play"]
+warmup = 14
+video = 36
+max_video_mb = 30
+pick = false
+
+[[scene]]
+name = "air-flyby-tenerife-helicopter-video"
+description = "Video, 1080p: the drone camera with a helicopter over Tenerife at golden hour, the unicorn flying beside its rotor disc (spec 18C, T8; air.follow)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "15000,-20000", "--bots", "0", "--power", "0", "--window", "1920x1080"]
+at = ["0.5=time 2026-07-15 20:00", "1.5=time golden-hour", "0.5=weather clear wind=6 dir=300", "0.5=quality high", "0.5=hud off", "0.5=hud.profile off", "1=fps off", "1=character --hair short --hair-colour #2B1B12", "2=god.flight hover", "3=god on", "4=air.follow pick helicopter", "4=air.follow unicorn 9 0 -2", "4=air.follow key 0 -30 8 -30 0 0 0", "4=air.follow key 7 22 3 -8 2 0 0", "4=air.follow key 13 14 -2 26 0 0 0", "4=air.follow key 16 14 4 26 0 0 0 3", "12=air.follow play"]
+warmup = 12
+video = 16
+max_video_mb = 30
+pick = false

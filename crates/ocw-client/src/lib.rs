@@ -7,6 +7,7 @@
 //!   [`aids`]: the "last moment" warning and the proximity arrow (12D),
 //!   [`camera_fx`]: the chase camera's shake and wider orbit after a crash (12C),
 //! - [`camera_path`]: guided camera paths for flyover videos (Phase 13 G5),
+//!   [`air_follow`]: a camera and the unicorn flying with an aircraft (T8),
 //! - [`rider_list`]: the session's riders for the menu (who flies, damage dots),
 //! - [`damage`]: the riders' damage, the HUD widget and the carried condition (12E, 12F),
 //! - [`event`]: events, standings and ghosts on the client,
@@ -39,6 +40,7 @@ pub mod account;
 pub mod activities;
 pub mod aids;
 pub mod air;
+pub mod air_follow;
 pub mod arrival;
 pub mod audio;
 pub mod bindings;
